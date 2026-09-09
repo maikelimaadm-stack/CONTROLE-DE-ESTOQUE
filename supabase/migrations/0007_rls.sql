@@ -122,3 +122,8 @@ create policy mf_api on erp.member_farms for all to erp_app using (true) with ch
 -- Nunca conceder nada ao papel anon além de referência pública.
 revoke all on all tables in schema erp from anon;
 grant select on erp.states, erp.cities, erp.banks to anon;
+
+-- Auditoria: a API grava eventos sem organização (ex.: login) e lê logs de login dos membros
+create policy audit_api_insert on erp.audit_logs for insert to erp_app with check (organization_id is null or erp.tenant_visible(organization_id));
+create policy audit_api_select_login on erp.audit_logs for select to erp_app using (organization_id is null and user_id in (select m.user_id from erp.organization_members m where m.organization_id = erp.current_org_id()));
+-- Notificações e chaves de idempotência seguem a política padrão (organization_id sempre presente).

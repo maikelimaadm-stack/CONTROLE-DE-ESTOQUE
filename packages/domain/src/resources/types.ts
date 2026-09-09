@@ -63,6 +63,8 @@ export interface ResourceDef {
   tree?: boolean;
   /** tabela sem organization_id, referência global (somente leitura) */
   reference?: boolean;
+  /** tabela com registros padrão do sistema (organization_id null) visíveis a todas as organizações */
+  sharedDefaults?: boolean;
 }
 
 export const yesNo: FieldOption[] = [{ value: "true", label: "Sim" }, { value: "false", label: "Não" }];
