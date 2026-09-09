@@ -1,0 +1,23 @@
+{
+  "name": "agro-erp",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.33.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "lint": "pnpm -r --if-present lint",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "test:integration": "pnpm --filter @agro/db test:integration && pnpm --filter @agro/api test:integration",
+    "build": "pnpm -r --if-present build",
+    "db:migrate": "pnpm --filter @agro/db migrate",
+    "db:seed": "pnpm --filter @agro/db seed",
+    "db:reset": "pnpm --filter @agro/db reset",
+    "dev:api": "pnpm --filter @agro/api dev",
+    "dev:web": "pnpm --filter @agro/web dev",
+    "e2e": "pnpm --filter @agro/web e2e"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

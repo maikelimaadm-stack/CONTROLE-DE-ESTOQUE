@@ -1,0 +1,2 @@
+import base from "@agro/config/eslint.base.mjs";
+export default base;
