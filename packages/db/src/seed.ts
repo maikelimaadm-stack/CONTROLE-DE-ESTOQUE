@@ -13,6 +13,15 @@ const EQUIPMENT_FAMILIES: [string, number, number][] = [["Construções e Instal
 const ID_TYPES = ["Brinco de Manejo","Brinco RFID","Brinco SISBOV","Brinco SIRBOV-TO","Brinco SRBIPA","Marca a fogo","Tatuagem"];
 const BEEF_CATEGORIES: [string, "M"|"F", number|null, number|null, number][] = [["Bezerro",'M',0,12,0.25],["Bezerra",'F',0,12,0.25],["Garrote",'M',13,24,0.5],["Novilha",'F',13,24,0.5],["Boi Magro",'M',25,36,0.75],["Boi Gordo",'M',25,null,1],["Vaca",'F',25,null,1],["Touro",'M',36,null,1.25],["Matriz",'F',36,null,1]];
 
+/** Sincroniza o catálogo de permissões (idempotente) e concede as novas chaves aos perfis "Administrador" de sistema. */
+export async function seedPermissions(db: Db, log: (m: string) => void = console.log) {
+  await withTx(db, { orgId: null, userId: null }, async (tx) => {
+    for (const p of permissionRows()) await tx.query("insert into erp.permissions(key,module,resource,action,label) values ($1,$2,$3,$4,$5) on conflict (key) do update set module=excluded.module,resource=excluded.resource,label=excluded.label", [p.key, p.module, p.resource, p.action, p.label]);
+    await tx.query("insert into erp.role_permissions(role_id, permission_key) select r.id, p.key from erp.roles r cross join erp.permissions p where r.is_system and r.name='Administrador' on conflict do nothing");
+  });
+  log("permissions synced");
+}
+
 export async function seedReference(db: Db, log: (m: string) => void = console.log) {
   await withTx(db, { orgId: null, userId: null }, async (tx) => {
     for (const [code, name, ibge] of STATES) await tx.query("insert into erp.states(code,name,ibge_code) values ($1,$2,$3) on conflict (code) do nothing", [code, name, ibge]);
