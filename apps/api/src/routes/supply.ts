@@ -114,7 +114,8 @@ export default async function supplyRoutes(app: FastifyInstance) {
         if (!a && !ctx.membership.isOwner) throw err("PERMISSION_DENIED", "Usuário não é autorizador");
         const total = r.approved_total ?? r.estimated_total;
         const quotes = (await ctx.tx.query<{ n: string }>("select count(*) n from erp.purchase_quotations where request_id=$1", [id])).rows[0]!.n;
-        if (a && action === "approve") { const chk = authorizerCanApprove({ maxValue: a.max_value, isActive: a.is_active, minQuotes: a.min_quotes }, { approvedTotal: total, quotationCount: Number(quotes) }); if (!chk.ok) throw err("PERMISSION_DENIED", chk.reason!); }
+        // Regra: mínimo de cotações do autorizador aplica-se a solicitações de produto (serviço/adiantamento/diária não cotam)
+        if (a && action === "approve") { const chk = authorizerCanApprove({ maxValue: a.max_value, isActive: a.is_active, minQuotes: r.request_type === "product" ? a.min_quotes : 0 }, { approvedTotal: total, quotationCount: Number(quotes) }); if (!chk.ok) throw err("PERMISSION_DENIED", chk.reason!); }
         if (a) await ctx.tx.query("insert into erp.purchase_approvals(request_id,authorizer_id,level,decision,justification,decided_by) values ($1,$2,$3,$4,$5,$6)", [id, a.id, a.levels?.[0] ?? 1, action === "approve" ? "approved" : "rejected", d.justification, ctx.user.id]);
         if (action === "approve") { const buyer = (await ctx.tx.query<{ user_id: string }>("select m.user_id from erp.organization_members m join erp.role_permissions rp on rp.role_id=m.role_id where m.organization_id=$1 and rp.permission_key='purchase_buy.edit' and m.is_active limit 1", [ctx.orgId])).rows[0]?.user_id ?? null; const next = await transition(ctx, id, action, d.justification, { expectedVersion: d.version, responsible: buyer ?? ctx.user.id }); return { id, status: next }; }
       }

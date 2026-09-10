@@ -36,7 +36,10 @@ export function Label({ className, required, children, ...p }: React.LabelHTMLAt
 }
 export function Field({ label, required, error, help, children, className, span = 3 }: { label?: string; required?: boolean; error?: string; help?: string; children: React.ReactNode; className?: string; span?: number }) {
   const spans: Record<number, string> = { 1: "md:col-span-1", 2: "md:col-span-2", 3: "md:col-span-3", 4: "md:col-span-4", 5: "md:col-span-5", 6: "md:col-span-6", 7: "md:col-span-7", 8: "md:col-span-8", 9: "md:col-span-9", 10: "md:col-span-10", 11: "md:col-span-11", 12: "md:col-span-12" };
-  return <div className={cn("col-span-12", spans[span] ?? "md:col-span-3", className)}>{label && <Label required={required} title={help}>{label}</Label>}{children}{error && <p className="mt-0.5 text-[11px] text-red-600">{error}</p>}{!error && help && <p className="mt-0.5 text-[11px] text-slate-400 line-clamp-1" title={help}>{help}</p>}</div>;
+  const id = React.useId();
+  // Associa o rótulo ao controle (acessibilidade e testes): injeta id no filho único sem id
+  const child = React.isValidElement(children) && !(children.props as { id?: string }).id ? React.cloneElement(children as React.ReactElement<{ id?: string }>, { id }) : children;
+  return <div className={cn("col-span-12", spans[span] ?? "md:col-span-3", className)}>{label && <Label required={required} title={help} htmlFor={id}>{label}</Label>}{child}{error && <p className="mt-0.5 text-[11px] text-red-600">{error}</p>}{!error && help && <p className="mt-0.5 text-[11px] text-slate-400 line-clamp-1" title={help}>{help}</p>}</div>;
 }
 export const Card = ({ className, children, ...p }: React.HTMLAttributes<HTMLDivElement>) => <div className={cn("rounded-lg border bg-white shadow-xs", className)} {...p}>{children}</div>;
 export const CardHeader = ({ title, actions, subtitle }: { title: React.ReactNode; subtitle?: React.ReactNode; actions?: React.ReactNode }) => (
