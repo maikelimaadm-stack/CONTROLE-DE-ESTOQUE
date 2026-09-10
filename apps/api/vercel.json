@@ -1,0 +1,5 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "_comment": "A API (Fastify, processo de longa duração) é implantada no Railway (apps/api/Dockerfile + railway.json). Um projeto Vercel apontado para apps/api não tem o que construir; este ignoreCommand cancela o build em vez de falhar o status do commit. O projeto Vercel do frontend deve usar a raiz do monorepo (vercel.json da raiz).",
+  "ignoreCommand": "echo 'apps/api é implantada no Railway; build Vercel ignorado' && exit 0"
+}
