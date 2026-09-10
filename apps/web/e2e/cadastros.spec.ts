@@ -22,6 +22,6 @@ test("cria e localiza um produto no cadastro genérico", async ({ page }) => {
   await Promise.race([page.waitForURL(/\/cadastros\/products$/), toast.waitFor()]);
   if ((await toast.textContent())?.includes("sucesso")) await page.waitForURL(/\/cadastros\/products$/);
   if (!/\/cadastros\/products$/.test(page.url())) throw new Error("Falha ao salvar: " + (await toast.textContent()) + " | erros: " + (await page.locator("p.text-red-600").allTextContents()).join("; "));
-  await page.getByLabel(/^Pesquisar por/).fill(name); await page.getByRole("button", { name: "Filtrar" }).click();
+  await page.getByLabel("Pesquisar", { exact: true }).click(); await page.getByPlaceholder(/^Pesquisar por/).fill(name); await page.keyboard.press("Enter");
   await expect(page.locator("tbody").getByText(name).first()).toBeVisible();
 });

@@ -19,12 +19,12 @@ export interface FilterOperator { value: string; label: string; /** 0 = sem valo
 export const FILTER_OPERATORS: Record<FilterKind, FilterOperator[]> = {
   text: [
     { value: "contains", label: "Contém", arity: 1 }, { value: "not_contains", label: "Não contém", arity: 1 }, { value: "eq", label: "Igual a", arity: 1 },
-    { value: "starts_with", label: "Começa com", arity: 1 }, { value: "ends_with", label: "Termina com", arity: 1 },
+    { value: "starts_with", label: "Começa com", arity: 1 }, { value: "ends_with", label: "Termina com", arity: 1 }, { value: "in", label: "Está na lista", arity: 1 },
     { value: "is_empty", label: "Está vazio", arity: 0 }, { value: "is_not_empty", label: "Não está vazio", arity: 0 }
   ],
   number: [
     { value: "eq", label: "Igual a", arity: 1 }, { value: "ne", label: "Diferente de", arity: 1 }, { value: "gt", label: "Maior que", arity: 1 }, { value: "gte", label: "Maior ou igual", arity: 1 },
-    { value: "lt", label: "Menor que", arity: 1 }, { value: "lte", label: "Menor ou igual", arity: 1 }, { value: "between", label: "Entre", arity: 2 },
+    { value: "lt", label: "Menor que", arity: 1 }, { value: "lte", label: "Menor ou igual", arity: 1 }, { value: "between", label: "Entre", arity: 2 }, { value: "in", label: "Está na lista", arity: 1 },
     { value: "is_empty", label: "Está vazio", arity: 0 }, { value: "is_not_empty", label: "Não está vazio", arity: 0 }
   ],
   date: [
@@ -33,9 +33,9 @@ export const FILTER_OPERATORS: Record<FilterKind, FilterOperator[]> = {
     { value: "this_month", label: "Este mês", arity: 0 }, { value: "last_month", label: "Mês passado", arity: 0 }, { value: "this_year", label: "Este ano", arity: 0 },
     { value: "is_empty", label: "Está vazio", arity: 0 }, { value: "is_not_empty", label: "Não está vazio", arity: 0 }
   ],
-  enum: [{ value: "eq", label: "Igual a", arity: 1 }, { value: "ne", label: "Diferente de", arity: 1 }, { value: "is_empty", label: "Está vazio", arity: 0 }, { value: "is_not_empty", label: "Não está vazio", arity: 0 }],
+  enum: [{ value: "eq", label: "Igual a", arity: 1 }, { value: "ne", label: "Diferente de", arity: 1 }, { value: "in", label: "Está na lista", arity: 1 }, { value: "is_empty", label: "Está vazio", arity: 0 }, { value: "is_not_empty", label: "Não está vazio", arity: 0 }],
   boolean: [{ value: "eq", label: "Igual a", arity: 1 }],
-  ref: [{ value: "eq", label: "Igual a", arity: 1 }, { value: "ne", label: "Diferente de", arity: 1 }, { value: "is_empty", label: "Está vazio", arity: 0 }, { value: "is_not_empty", label: "Não está vazio", arity: 0 }]
+  ref: [{ value: "eq", label: "Igual a", arity: 1 }, { value: "ne", label: "Diferente de", arity: 1 }, { value: "in", label: "Está na lista", arity: 1 }, { value: "is_empty", label: "Está vazio", arity: 0 }, { value: "is_not_empty", label: "Não está vazio", arity: 0 }]
 };
 
 /** Mapeia o tipo de campo declarativo para a família de operadores. */
@@ -65,6 +65,12 @@ export function parseFilterKey(key: string): { field: string; op: string } | nul
 }
 export const filterKey = (field: string, op: string) => `${field}${FILTER_OP_SEPARATOR}${op}`;
 export function encodeRange(a: string, b: string) { return `${a}${FILTER_RANGE_SEPARATOR}${b}`; }
+/** Listas de valores (operador `in`) usam o separador de unidade (U+001F), que não ocorre em valores digitados. */
+export const FILTER_LIST_SEPARATOR = "\u001f";
+export const encodeList = (values: string[]) => values.join(FILTER_LIST_SEPARATOR);
+export const decodeList = (v: string): string[] => v.split(FILTER_LIST_SEPARATOR).filter((x) => x !== "");
+/** Operador que recebe uma lista de valores (seleção múltipla no chip de filtro). */
+export const isListOperator = (op: string) => op === "in";
 export function decodeRange(v: string): [string, string] { const i = v.indexOf(FILTER_RANGE_SEPARATOR); return i < 0 ? [v, ""] : [v.slice(0, i), v.slice(i + 1)]; }
 
 /** Intervalo de datas (ISO) para operadores relativos, em relação a `today` (AAAA-MM-DD). */
@@ -92,12 +98,14 @@ export interface ListPreferences {
   columns: { visible?: string[]; order?: string[]; widths?: Record<string, number>; frozen?: number };
   sort?: { key: string; dir: "asc" | "desc" };
   pageSize?: number;
-  view: { mode: "table" | "cards"; cardFields?: string[]; cardsPerRow?: 2 | 3 | 4; density?: "compact" | "normal" };
+  view: { mode: "table" | "cards"; cardFields?: string[]; cardsPerRow?: 1 | 2 | 3 | 4; density?: "compact" | "normal" };
   filters: { visible?: string[]; operators?: Record<string, string>; saved?: SavedFilter[]; defaultSaved?: string | null };
   meta?: { revision?: number; updatedAt?: string };
 }
 export interface ListKnown { columns?: string[]; filters?: string[]; filterKinds?: Record<string, FilterKind> }
 export const LIST_PAGE_SIZES = [10, 20, 30, 50, 80, 100, 200] as const;
+/** Quantidade de registros por carregamento no rodapé do modelo base (limite do servidor: 200). */
+export const BASE1_PAGE_SIZES = [20, 50, 100, 200] as const;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const strList = (v: unknown, known?: string[], max = 200): string[] | undefined => {
@@ -124,7 +132,7 @@ export function normalizeListPreferences(raw: unknown, known: ListKnown = {}): L
   const view = isObj(raw["view"]) ? raw["view"] : {};
   d.view.mode = view["mode"] === "cards" ? "cards" : "table";
   d.view.cardFields = strList(view["cardFields"], known.columns, 12);
-  if (view["cardsPerRow"] === 2 || view["cardsPerRow"] === 3 || view["cardsPerRow"] === 4) d.view.cardsPerRow = view["cardsPerRow"];
+  if (view["cardsPerRow"] === 1 || view["cardsPerRow"] === 2 || view["cardsPerRow"] === 3 || view["cardsPerRow"] === 4) d.view.cardsPerRow = view["cardsPerRow"];
   if (view["density"] === "compact" || view["density"] === "normal") d.view.density = view["density"];
   const fl = isObj(raw["filters"]) ? raw["filters"] : {};
   d.filters.visible = strList(fl["visible"], known.filters);

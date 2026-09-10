@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getResource, RESOURCES, type FieldDef, type ResourceDef } from "@agro/domain";
-import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, relativeDateRange } from "@agro/shared";
+import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, decodeList, relativeDateRange } from "@agro/shared";
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
 import { runService, nextCode, requirePermission } from "../lib/service.js";
@@ -57,6 +57,13 @@ export function advancedClause(f: FieldDef, op: string, raw: string, b: SqlBuild
   const col = ident(f.name);
   if (op === "is_empty") return kind === "text" ? `(${col} is null or ${col}::text = '')` : `${col} is null`;
   if (op === "is_not_empty") return kind === "text" ? `(${col} is not null and ${col}::text <> '')` : `${col} is not null`;
+  if (op === "in") {
+    const list = decodeList(raw).slice(0, 500); if (!list.length) return null;
+    if (kind === "number") { for (const x of list) if (!/^-?\d+(\.\d+)?$/.test(x.trim())) throw validation(`Valor numérico inválido no filtro ${f.label}`); return `${col} = any(${b.add(list.map((x) => x.trim()))}::numeric[])`; }
+    if (f.type === "tags") return `${col} && ${b.add(list)}::text[]`;
+    if (f.type === "ref") { for (const x of list) if (!/^[0-9a-f-]{36}$/i.test(x)) throw validation(`Referência inválida no filtro ${f.label}`); return `${col} = any(${b.add(list)}::uuid[])`; }
+    return `${col}::text = any(${b.add(list)}::text[])`;
+  }
   if (kind === "text") {
     const v = escapeLike(raw);
     switch (op) {
@@ -220,11 +227,36 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
   return r.rows;
 }
 
+/**
+ * Valores distintos de um campo filtrável (lista do chip de filtro do modelo base), com contagem e rótulo resolvido para
+ * referências. Respeita tenant/fazenda como a listagem e nunca aceita nome de coluna do cliente (só campos da definição).
+ */
+export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, field: string, search: string | undefined, limit: number) {
+  const f = def.fields.find((x) => x.name === field && (x.filter || x.list)); if (!f) throw validation("Campo não filtrável");
+  const existing = await checkColumns(ctx, def); if (!existing.has(f.name)) return [];
+  const b = new SqlBuilder(); const where: string[] = [];
+  if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(t.organization_id is null or t.organization_id = ${b.add(ctx.orgId)})` : `t.organization_id = ${b.add(ctx.orgId)}`);
+  if (def.softDelete) where.push("t.deleted_at is null");
+  // mesmo recorte da listagem: fazenda ativa e fazendas do vínculo
+  if (def.farmScoped && ctx.farmId && existing.has("farm_id")) where.push(`t.farm_id = ${b.add(ctx.farmId)}`);
+  if (def.farmScoped && ctx.membership.farmIds.length && existing.has("farm_id")) where.push(`t.farm_id = any(${b.add(ctx.membership.farmIds)}::uuid[])`);
+  const col = `t.${ident(f.name)}`;
+  const rdef = f.type === "ref" && f.ref ? getResource(f.ref.resource) : undefined;
+  const labelExpr = rdef ? `r.${ident(rdef.labelField)}::text` : f.type === "tags" ? "x.tag" : `${col}::text`;
+  const from = rdef ? `erp.${ident(def.table)} t left join erp.${ident(rdef.table)} r on r.id = ${col}` : f.type === "tags" ? `erp.${ident(def.table)} t, unnest(${col}) as x(tag)` : `erp.${ident(def.table)} t`;
+  const valueExpr = f.type === "tags" ? "x.tag" : `${col}::text`;
+  where.push(`${col} is not null`);
+  if (search) where.push(`${labelExpr} ilike ${b.add(`%${escapeLike(search)}%`)}`);
+  const r = await ctx.tx.query<{ value: string; label: string | null; n: string }>(`select ${valueExpr} as value, ${labelExpr} as label, count(*)::text as n from ${from} where ${where.join(" and ")} group by 1, 2 order by 2 nulls last, 1 limit ${Math.min(Math.max(limit, 1), 500)}`, b.params);
+  return r.rows.map((x) => ({ value: x.value, label: f.type === "select" ? f.options?.find((o) => o.value === x.value)?.label ?? x.value : f.type === "boolean" ? (x.value === "true" ? "Sim" : "Não") : x.label ?? x.value, count: Number(x.n) }));
+}
+
 export default async function resourceRoutes(app: FastifyInstance) {
   app.get("/resources", async (req) => { const ctx = app.requireCtx(req); return RESOURCES.filter((r) => hasPermission(ctx, `${r.permission}.view`)).map(({ key, label, labelPlural, route, permission }) => ({ key, label, labelPlural, route, permission })); });
   app.get("/resources/:key/definition", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); app.requireCtx(req); return def; });
   app.get("/resources/:key", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => listResource(ctx, def, req.query as Record<string, unknown>)); });
   app.get("/resources/:key/options", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const { search, ...extra } = req.query as Record<string, string>; return runService(app, req, null, (ctx) => options(ctx, def, search, extra)); });
+  app.get("/resources/:key/distinct", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ field: z.string().regex(/^[a-z_][a-z0-9_]*$/), search: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query); return runService(app, req, `${def.permission}.view`, (ctx) => distinctValues(ctx, def, q.field, q.search, q.limit)); });
   app.get("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => getOne(ctx, def, id)); });
   app.post("/resources/:key", async (req, reply) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const r = await runService(app, req, `${def.permission}.create`, (ctx) => createOne(ctx, def, req.body)); return reply.status(201).send(r); });
   app.put("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.edit`, (ctx) => updateOne(ctx, def, id, req.body)); });

@@ -4,18 +4,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Plus, MoreVertical, Trash2 } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { api, qs, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, monthStartISO, todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Input, NativeSelect, Field, Menu, Confirm, Badge, Spinner, ErrorBox, Dialog } from "@/components/ui";
-import { DataTable, type Column } from "@/components/ui/data-table";
+import type { Column } from "@/components/ui/data-table";
 import { RefSelect } from "@/components/ui/ref-select";
 import { Bookmark } from "lucide-react";
-import type { FilterKind } from "@agro/shared";
-import { useListPrefs, applyListColumns } from "@/features/listing/list-prefs";
-import { ListSettingsDialog, ListSettingsButton } from "@/features/listing/list-settings";
-import { CardsView } from "@/features/listing/cards-view";
+
+import { Base1List } from "@/features/base1/list";
+import type { Base1Column, Base1FilterDef, FilterValues } from "@/features/base1/types";
 
 export type Row = Record<string, unknown>;
 export const statusTone = (s: string): "green" | "red" | "amber" | "slate" | "blue" | "violet" => s === "confirmed" || s === "paid" || s === "finished" || s === "signed" ? "green" : s === "cancelled" || s === "reversed" ? "red" : s === "pending" || s === "draft" || s === "awaiting_signature" || s === "open" ? "amber" : "slate";
@@ -38,38 +37,30 @@ export function FilterBar({ filters, f, set, reset, onApply, visible, saved, onS
   </form>;
 }
 
-/** Lista genérica de documentos transacionais (com cancelamento e detalhe). */
-export function DocList({ title, endpoint, base, columns, filters, canCreate, canCancel, cancelPath, extraActions, totals, defaultFilters, rowActions, createLabel = "Adicionar Novo", hideNew }: { title: string; endpoint: string; base: string; columns: Column<Row>[]; filters?: Filter[]; canCreate?: boolean; canCancel?: boolean; cancelPath?: (id: string) => string; extraActions?: React.ReactNode; totals?: (t: Record<string, string>) => React.ReactNode; defaultFilters?: Record<string, string>; rowActions?: (r: Row) => { label: string; onClick?: () => void; href?: string; danger?: boolean }[]; createLabel?: string; hideNew?: boolean }) {
+/**
+ * Lista genérica de documentos transacionais (lançamentos) no MODELO BASE1: chips de filtro, grade/cards
+ * configuráveis, modo Registro (abre o detalhe), rodapé com contadores, cancelamento com estorno.
+ */
+export function DocList({ title, endpoint, base, columns, filters, canCreate, canCancel, cancelPath, extraActions, totals, defaultFilters, rowActions, createLabel = "Novo", hideNew }: { title: string; endpoint: string; base: string; columns: Column<Row>[]; filters?: Filter[]; canCreate?: boolean; canCancel?: boolean; cancelPath?: (id: string) => string; extraActions?: React.ReactNode; totals?: (t: Record<string, string>) => React.ReactNode; defaultFilters?: Record<string, string>; rowActions?: (r: Row) => { label: string; onClick?: () => void; href?: string; danger?: boolean }[]; createLabel?: string; hideNew?: boolean }) {
   const router = useRouter(); const qc = useQueryClient();
-  const { f, set, reset, setAll } = useFilters(defaultFilters ?? {}); const [applied, setApplied] = React.useState(defaultFilters ?? {});
-  const [page, setPage] = React.useState(1); const [pageSize, setPageSize] = React.useState<number | undefined>(); const [cancel, setCancel] = React.useState<string | null>(null); const [settings, setSettings] = React.useState(false);
+  const [cancel, setCancel] = React.useState<string | null>(null);
   // preferências da listagem ("modelo base"): módulo derivado do endpoint (ex.: /api/stock/entries → stock.entries)
   const moduleId = React.useMemo(() => endpoint.replace(/^\/api\//, "").replace(/[^a-z0-9_.-]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 64), [endpoint]);
-  const colInfo = React.useMemo(() => columns.map((c) => ({ key: c.key, label: c.label })), [columns]);
-  const kindOf = (t: Filter["type"]): FilterKind => t === "date" ? "date" : t === "select" ? "enum" : t === "ref" ? "ref" : "text";
-  const filterInfo = React.useMemo(() => (filters ?? []).map((x) => ({ key: x.name, label: x.label, kind: kindOf(x.type) })), [filters]);
-  const p = useListPrefs(moduleId, colInfo, filterInfo);
-  const effPageSize = pageSize ?? p.prefs.pageSize ?? 20;
-  const q = useQuery({ queryKey: ["doc", endpoint, applied, page, effPageSize], queryFn: () => api<{ items: Row[]; total: number; totals?: Record<string, string> }>(`${endpoint}${qs({ ...applied, page, pageSize: effPageSize })}`) });
-  const cancelMut = useMutation({ mutationFn: (id: string) => api((cancelPath ?? ((i) => `${endpoint}/${i}/cancel`))(id), { method: "POST", body: { reason: "Cancelado pelo usuário" } }), onSuccess: () => { toast.success("Documento cancelado"); setCancel(null); void qc.invalidateQueries({ queryKey: ["doc", endpoint] }); }, onError: (e) => toast.error((e as Error).message) });
-  const cols = applyListColumns(columns, p.prefs);
-  const acts = (r: Row) => <Menu trigger={<button className="rounded p-1 hover:bg-slate-100" aria-label="Ações"><MoreVertical className="h-4 w-4" /></button>} items={[{ label: "Visualizar", href: `${base}/${r["id"]}` }, ...(rowActions?.(r) ?? []), ...(canCancel && r["status"] !== "cancelled" && r["status"] !== "reversed" ? [{ label: "Cancelar", danger: true, onClick: () => setCancel(String(r["id"])) }] : [])]} />;
-  const onPageSize = (s: number) => { setPageSize(s); setPage(1); p.update((x) => ({ ...x, pageSize: s })); };
-  return <Card>
-    <CardHeader title={title} actions={<>{extraActions}<ListSettingsButton onClick={() => setSettings(true)} customized={p.source !== "default"} />{canCreate && !hideNew && <Link href={`${base}/new`}><Button size="sm"><Plus className="h-3.5 w-3.5" /> {createLabel}</Button></Link>}</>} />
-    <CardBody>
-      {filters && <FilterBar filters={filters} f={f} set={set} reset={() => { reset(); setApplied(defaultFilters ?? {}); setPage(1); }} onApply={() => { setApplied({ ...f }); setPage(1); }} visible={p.prefs.filters.visible}
-        saved={p.prefs.filters.saved} onApplySaved={(v) => { setAll({ ...(defaultFilters ?? {}), ...v }); setApplied({ ...(defaultFilters ?? {}), ...v }); setPage(1); }}
-        onSaveFilter={(name) => p.update((x) => ({ ...x, filters: { ...x.filters, saved: [...(x.filters.saved ?? []).filter((s) => s.name !== name), { name, values: Object.fromEntries(Object.entries(f).filter(([, v]) => v !== "")) }] } }))}
-        onDeleteFilter={(name) => p.update((x) => ({ ...x, filters: { ...x.filters, saved: (x.filters.saved ?? []).filter((s) => s.name !== name) } }))} />}
-      {q.error && <ErrorBox error={q.error} />}
-      {p.prefs.view.mode === "cards"
-        ? <><CardsView rows={q.data?.items ?? []} columns={columns} fields={p.prefs.view.cardFields} perRow={p.prefs.view.cardsPerRow ?? 3} loading={q.isLoading} onClick={(r) => router.push(`${base}/${r["id"]}`)} actions={acts} /><DataTable columns={[]} rows={[]} total={q.data?.total} page={page} pageSize={effPageSize} onPage={setPage} onPageSize={onPageSize} caption={`N. Registros: ${q.data?.total ?? 0}`} emptyText=" " /></>
-        : <DataTable columns={cols} rows={q.data?.items ?? []} total={q.data?.total} page={page} pageSize={effPageSize} onPage={setPage} onPageSize={onPageSize} loading={q.isLoading} onRowClick={(r) => router.push(`${base}/${r["id"]}`)} footer={totals && q.data?.totals ? totals(q.data.totals) : undefined} actions={acts} />}
-      <Confirm open={Boolean(cancel)} onOpenChange={() => setCancel(null)} title="Cancelar documento" text="O cancelamento estorna os lançamentos vinculados (estoque/financeiro) e fica registrado na auditoria. Continuar?" danger loading={cancelMut.isPending} onConfirm={() => cancel && cancelMut.mutate(cancel)} />
-      <ListSettingsDialog open={settings} onOpenChange={setSettings} columns={colInfo} filters={filterInfo} p={p} supportsFilterOperators={false} />
-    </CardBody>
-  </Card>;
+  const b1cols = React.useMemo<Base1Column[]>(() => columns.map((c) => ({ key: c.key, label: c.label, align: c.align, sortable: false, render: c.render, text: (r) => { const v = r[c.key]; return v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); } })), [columns]);
+  // filtros: start_date/end_date viram um único chip "Período"; demais são simples (campo=valor)
+  const b1filters = React.useMemo<Base1FilterDef[]>(() => { const fs = filters ?? []; const out: Base1FilterDef[] = []; const hasRange = fs.some((x) => x.name === "start_date") && fs.some((x) => x.name === "end_date"); if (hasRange) out.push({ key: "periodo", label: "Período", kind: "date", mode: "simple", range: { from: "start_date", to: "end_date" } }); for (const x of fs) { if (hasRange && (x.name === "start_date" || x.name === "end_date")) continue; out.push({ key: x.name, label: x.label, kind: x.type === "date" ? "date" : x.type === "select" ? "enum" : x.type === "ref" ? "ref" : "text", mode: "simple", resource: x.resource, resourceFilter: x.extra, options: x.options }); } return out; }, [filters]);
+  const { defaultValues, fixed } = React.useMemo(() => { const dv: FilterValues = {}; const fx: Record<string, string> = {}; const d = defaultFilters ?? {}; const keys = b1filters.map((f) => f.key); if (d["start_date"] || d["end_date"]) dv["periodo"] = { op: "between", value: d["start_date"] ?? "", value2: d["end_date"] ?? "" }; for (const [k, v] of Object.entries(d)) { if (k === "start_date" || k === "end_date") continue; if (keys.includes(k)) dv[k] = { op: "eq", value: v, values: [v] }; else fx[k] = v; } return { defaultValues: dv, fixed: fx }; }, [defaultFilters, b1filters]);
+  const cancelMut = useMutation({ mutationFn: (id: string) => api((cancelPath ?? ((i) => `${endpoint}/${i}/cancel`))(id), { method: "POST", body: { reason: "Cancelado pelo usuário" } }), onSuccess: () => { toast.success("Documento cancelado"); setCancel(null); void qc.invalidateQueries({ queryKey: ["b1", moduleId] }); }, onError: (e) => toast.error((e as Error).message) });
+  const footer = totals ? (t: Record<string, string>) => { const el = totals(t); return React.isValidElement(el) ? React.cloneElement(el as React.ReactElement<{ children?: React.ReactNode }>, {}, <td />, (el as React.ReactElement<{ children?: React.ReactNode }>).props.children) : el; } : undefined;
+  return <>
+    <Base1List moduleId={moduleId} title={title} columns={b1cols} filters={b1filters} defaultValues={defaultValues} queryKeyExtra={fixed} csvName={moduleId}
+      fetchPage={(p) => api<{ items: Row[]; total: number; totals?: Record<string, string> }>(`${endpoint}${qs({ ...p.filters, ...fixed, page: p.page, pageSize: p.pageSize })}`)}
+      canCreate={Boolean(canCreate) && !hideNew} onNew={() => router.push(`${base}/new`)} createLabel={createLabel} extraToolbar={extraActions}
+      onOpen={(r) => router.push(`${base}/${r["id"]}`)}
+      rowActions={(r) => [{ label: "Visualizar", onClick: () => router.push(`${base}/${r["id"]}`) }, ...(rowActions?.(r) ?? []).map((a) => ({ label: a.label, danger: a.danger, onClick: () => { if (a.href) router.push(a.href); else a.onClick?.(); } })), ...(canCancel && r["status"] !== "cancelled" && r["status"] !== "reversed" ? [{ label: "Cancelar", danger: true, onClick: () => setCancel(String(r["id"])) }] : [])]}
+      footerTotals={footer} />
+    <Confirm open={Boolean(cancel)} onOpenChange={() => setCancel(null)} title="Cancelar documento" text="O cancelamento estorna os lançamentos vinculados (estoque/financeiro) e fica registrado na auditoria. Continuar?" danger loading={cancelMut.isPending} onConfirm={() => cancel && cancelMut.mutate(cancel)} />
+  </>;
 }
 
 export const colDate = (key: string, label: string): Column<Row> => ({ key, label, render: (r) => dateBR(r[key] as string) });
