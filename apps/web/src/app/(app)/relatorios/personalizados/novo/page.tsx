@@ -93,7 +93,7 @@ function Builder() {
           </div>
           <div className="col-span-12 md:col-span-7">
             <div className="mb-1 text-[11px] font-semibold uppercase text-slate-500">Filtros</div>
-            <AdvancedFilterBar fields={filterFields} prefs={prefs} updatePrefs={(fn) => setPrefs(fn)} values={values} onChange={setValues} onApply={() => run.mutate()} onClear={() => { setValues({}); setSearch(""); }} search={search} onSearch={setSearch} searchLabel="Pesquisa livre" />
+            <AdvancedFilterBar fields={filterFields} prefs={prefs} updatePrefs={(fn) => setPrefs(fn)} values={values} onChange={setValues} onApply={() => run.mutate()} onApplyValues={() => setTimeout(() => run.mutate(), 0)} onClear={() => { setValues({}); setSearch(""); }} search={search} onSearch={setSearch} searchLabel="Pesquisa livre" />
           </div>
         </div>}
       </CardBody>

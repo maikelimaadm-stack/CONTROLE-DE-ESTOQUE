@@ -22,7 +22,9 @@ const revisionOf = (p: unknown): number | undefined => (p as { meta?: { revision
 export function useScreenPrefs<T extends { meta?: { revision?: number } }>(module: string, screen: string, normalize: (raw: unknown) => T, enabled = true): ScreenPrefs<T> {
   const qc = useQueryClient();
   const key = storageKey(module, screen);
-  const q = useQuery({ queryKey: ["prefs", module, screen], queryFn: () => api<PrefResponse>(`/api/preferences/${module}/${screen}`), enabled, staleTime: 60_000 });
+  // chave inclui organização e usuário: troca de conta no mesmo navegador não reaproveita o cache
+  const qk = React.useMemo(() => ["prefs", key], [key]);
+  const q = useQuery({ queryKey: qk, queryFn: () => api<PrefResponse>(`/api/preferences/${module}/${screen}`), enabled, staleTime: 60_000 });
   const [local, setLocal] = React.useState<unknown>(() => (typeof window === "undefined" ? null : readLocal(key)));
   const [saving, setSaving] = React.useState(false);
   const timer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -51,8 +53,8 @@ export function useScreenPrefs<T extends { meta?: { revision?: number } }>(modul
     } catch (e) {
       if (e instanceof ApiError && e.status === 409) { const cur = (e.details as { current?: PrefRecord })?.current; if (cur) { setLocal(cur.preferences); writeLocal(key, cur.preferences); } toast.warning("Preferências alteradas em outra aba: versão mais recente carregada"); }
       else toast.error("Não foi possível salvar suas preferências de tela");
-    } finally { setSaving(false); void qc.invalidateQueries({ queryKey: ["prefs", module, screen] }); }
-  }, [module, screen, key, qc]);
+    } finally { setSaving(false); void qc.invalidateQueries({ queryKey: qk }); }
+  }, [module, screen, key, qc, qk]);
   const update = React.useCallback((fn: (p: T) => T) => {
     // parte da última edição ainda não salva (várias atualizações em sequência não se sobrescrevem)
     const base = (pending.current ?? prefs) as T;
@@ -62,8 +64,8 @@ export function useScreenPrefs<T extends { meta?: { revision?: number } }>(modul
     timer.current = setTimeout(() => { void flush(); }, 400);
   }, [prefs, local, q.data, key, flush]);
   React.useEffect(() => () => { if (timer.current) { clearTimeout(timer.current); void flush(); } }, [flush]);
-  const reset = React.useCallback(async () => { if (timer.current) clearTimeout(timer.current); pending.current = null; await api(`/api/preferences/${module}/${screen}?scope=user`, { method: "DELETE" }); setLocal(null); writeLocal(key, null); await qc.invalidateQueries({ queryKey: ["prefs", module, screen] }); toast.success("Preferências restauradas"); }, [module, screen, key, qc]);
-  const saveAsOrgDefault = React.useCallback(async () => { const { meta: _m, ...doc } = prefs as T & { meta?: unknown }; void _m; await api(`/api/preferences/${module}/${screen}?scope=org`, { method: "PUT", body: { preferences: doc } }); await qc.invalidateQueries({ queryKey: ["prefs", module, screen] }); toast.success("Definido como padrão da organização"); }, [prefs, module, screen, qc]);
-  const clearOrgDefault = React.useCallback(async () => { await api(`/api/preferences/${module}/${screen}?scope=org`, { method: "DELETE" }); await qc.invalidateQueries({ queryKey: ["prefs", module, screen] }); toast.success("Padrão da organização removido"); }, [module, screen, qc]);
+  const reset = React.useCallback(async () => { if (timer.current) clearTimeout(timer.current); pending.current = null; await api(`/api/preferences/${module}/${screen}?scope=user`, { method: "DELETE" }); setLocal(null); writeLocal(key, null); await qc.invalidateQueries({ queryKey: qk }); toast.success("Preferências restauradas"); }, [module, screen, key, qc, qk]);
+  const saveAsOrgDefault = React.useCallback(async () => { const { meta: _m, ...doc } = prefs as T & { meta?: unknown }; void _m; await api(`/api/preferences/${module}/${screen}?scope=org`, { method: "PUT", body: { preferences: doc } }); await qc.invalidateQueries({ queryKey: qk }); toast.success("Definido como padrão da organização"); }, [prefs, module, screen, qc, qk]);
+  const clearOrgDefault = React.useCallback(async () => { await api(`/api/preferences/${module}/${screen}?scope=org`, { method: "DELETE" }); await qc.invalidateQueries({ queryKey: qk }); toast.success("Padrão da organização removido"); }, [module, screen, qc, qk]);
   return { prefs, source, loaded: q.isFetched || Boolean(local), canEditOrg: q.data?.canEditOrg ?? false, saving, hasOrgDefault: Boolean(q.data?.org), update, reset, saveAsOrgDefault, clearOrgDefault };
 }
