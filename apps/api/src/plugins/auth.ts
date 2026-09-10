@@ -29,7 +29,13 @@ export default fp(async function authPlugin(app: FastifyInstance) {
   app.decorate("issueLocalToken", async (user: AuthUser) =>
     new SignJWT({ email: user.email, name: user.name }).setProtectedHeader({ alg: "HS256" }).setSubject(user.id).setIssuedAt().setExpirationTime("12h").sign(localSecret(cfg)));
 
-  app.decorate("requireCtx", (req: FastifyRequest) => { if (!req.ctx) throw new DomainError("UNAUTHENTICATED", "Autenticação necessária"); return req.ctx; });
+  app.decorate("requireCtx", (req: FastifyRequest) => {
+    if (!req.auth) throw new DomainError("UNAUTHENTICATED", "Autenticação necessária");
+    // Autenticado mas sem organização selecionada: erro de validação (422), não de sessão (401),
+    // para que o cliente não encerre a sessão por uma chamada feita antes de escolher a organização.
+    if (!req.ctx) throw new DomainError("VALIDATION_ERROR", "Cabeçalho X-Org-Id obrigatório: selecione a organização");
+    return req.ctx;
+  });
 
   app.addHook("onRequest", async (req) => {
     const h = req.headers.authorization;

@@ -38,6 +38,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const toggleFav = () => { if (!ctx) return; const label = crumbs[crumbs.length - 1] ?? pathname; const favs = isFav ? ctx.favorites.filter((f) => f.route !== pathname) : [...ctx.favorites, { route: pathname, label }]; favMut.mutate(favs); };
   if (loading) return <div className="flex h-screen items-center justify-center"><Spinner /></div>;
   if (!session?.token) return null;
+  if (!ctx) return <div className="flex h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600"><div>Não foi possível carregar sua organização.</div><div className="flex gap-2"><button className="rounded border px-3 py-1 hover:bg-slate-100" onClick={() => void refresh()}>Tentar novamente</button><button className="rounded border px-3 py-1 hover:bg-slate-100" onClick={logout}>Sair</button></div></div>;
   const unread = notif?.items.filter((n) => !n.read_at).length ?? 0;
   return (
     <div className="flex min-h-screen">
