@@ -48,3 +48,30 @@ test("listagem personalizável: coluna oculta, modo cards e filtro salvo persist
   await expect(page.locator("table").first()).toBeVisible();
   await expect(page.locator("th", { hasText: "Sigla" })).toBeVisible();
 });
+
+test("layout de formulário configurável: campo oculto, rótulo e obrigatório persistem; restaurar padrão", async ({ page }) => {
+  await login(page);
+  await page.goto("/cadastros/warehouses/new");
+  await page.getByTitle("Configurar layout do formulário").click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: "Restaurar padrão" }).click();
+  await page.getByRole("button", { name: "Confirmar" }).click();
+  // seleciona o campo "Ativo" (não obrigatório) e o oculta; renomeia "Sigla"
+  await dialog.getByRole("button", { name: /^Ativo/ }).first().click();
+  await dialog.getByLabel("Oculto no formulário").check();
+  await dialog.getByRole("button", { name: /^Sigla/ }).first().click();
+  await dialog.getByLabel("Rótulo exibido").fill("Sigla do armazém");
+  await dialog.locator("button", { hasText: "Fechar" }).click();
+  await expect(page.getByLabel(/^Sigla do armazém/)).toBeVisible();
+  await expect(page.getByLabel(/^Ativo/)).toHaveCount(0);
+  await page.waitForTimeout(800);
+  await page.reload();
+  await expect(page.getByLabel(/^Sigla do armazém/)).toBeVisible();
+  await expect(page.getByLabel(/^Ativo/)).toHaveCount(0);
+  await page.getByTitle("Configurar layout do formulário").click();
+  await dialog.getByRole("button", { name: "Restaurar padrão" }).click();
+  await page.getByRole("button", { name: "Confirmar" }).click();
+  await dialog.locator("button", { hasText: "Fechar" }).click();
+  await expect(page.getByLabel(/^Sigla/).first()).toBeVisible();
+  await expect(page.getByLabel(/^Ativo/)).toBeVisible();
+});

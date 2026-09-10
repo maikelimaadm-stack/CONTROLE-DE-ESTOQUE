@@ -54,7 +54,9 @@ export function useScreenPrefs<T extends { meta?: { revision?: number } }>(modul
     } finally { setSaving(false); void qc.invalidateQueries({ queryKey: ["prefs", module, screen] }); }
   }, [module, screen, key, qc]);
   const update = React.useCallback((fn: (p: T) => T) => {
-    const next = fn(prefs); const withMeta = { ...next, meta: { revision: revisionOf(local) ?? q.data?.user?.revision ?? 0, updatedAt: new Date().toISOString() } } as T;
+    // parte da última edição ainda não salva (várias atualizações em sequência não se sobrescrevem)
+    const base = (pending.current ?? prefs) as T;
+    const next = fn(base); const withMeta = { ...next, meta: { revision: revisionOf(pending.current ?? local) ?? q.data?.user?.revision ?? 0, updatedAt: new Date().toISOString() } } as T;
     setLocal(withMeta); writeLocal(key, withMeta); pending.current = withMeta;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => { void flush(); }, 400);
