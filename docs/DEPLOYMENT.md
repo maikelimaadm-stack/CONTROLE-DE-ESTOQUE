@@ -1,32 +1,34 @@
 # Deploy
 
 ## Supabase (banco + auth + storage)
-1. Criar projeto; anotar `Project URL`, `anon key`, `service role key`, `JWT secret` (Settings › API) e a connection string (pooler, porta 6543 para a API).
-2. Criar papel da aplicação: `create role erp_app login password '<senha-forte>'; grant usage on schema erp to erp_app;` (as migrations concedem privilégios de tabela).
+1. Criar projeto; anotar `Project URL`, `anon key`, `service role key`, `JWT secret` (Settings › API) e a connection string do **pooler em modo sessão** (`aws-0-<região>.pooler.supabase.com`, porta 5432). **Não** acrescente `?sslmode=require` à URL: o `pg` passa a exigir certificado verificado e a conexão falha com `self-signed certificate in certificate chain`; o pool já negocia TLS sozinho.
+2. Papéis: `erp_app` (login, **sem** bypass de RLS; usado pela API em `DATABASE_URL`) e `erp_migrator` (login, `bypassrls`, dono do schema `erp`; usado só pelo pre-deploy em `MIGRATE_DATABASE_URL`). Senhas fortes, nunca versionadas.
 3. Aplicar `supabase/migrations/*.sql` em ordem (`pnpm db:migrate` com `DATABASE_URL` do projeto, ou MCP `apply_migration`). Depois `pnpm db:seed` para dados de referência + organização inicial.
 4. Auth: habilitar e-mail/senha; ao criar usuários no Supabase, preencher `erp.users.auth_user_id`. Storage: bucket privado `attachments`.
-5. **Status nesta entrega**: o usuário optou por não aplicar no Supabase agora (projeto novo bloqueado por fatura; projetos existentes são de outros apps). Migrations prontas e testadas em Postgres 16 local/CI.
+5. **Status nesta entrega**: aplicado no projeto `CONTROLE-DE-ESTOQUE` (ref `dcroxgdzzgqgiquvfffa`, sa-east-1, Postgres 17) — ver tabela abaixo.
 
 ## Railway (API)
 - Serviço a partir do repositório, `railway.json` na raiz: build por `apps/api/Dockerfile`, health `/health`, pre-deploy `node dist/migrate.js` (aplica migrations pendentes).
-- Variáveis: `DATABASE_URL` (Supabase pooler, usuário `erp_app`), `AUTH_MODE=supabase`, `SUPABASE_JWT_SECRET`, `SUPABASE_URL`, `WEB_ORIGIN=https://<app>.vercel.app`, `PORT=3333`, `API_LOG_LEVEL=info`, `RATE_LIMIT_MAX`.
+- Variáveis: `DATABASE_URL` (pooler, usuário `erp_app`), `MIGRATE_DATABASE_URL` (pooler, usuário `erp_migrator`), `MIGRATIONS_DIR=/app/supabase/migrations`, `AUTH_MODE=local` + `LOCAL_AUTH_SECRET` (login por e-mail/senha na tabela `erp.users`; `AUTH_MODE=supabase` + `SUPABASE_JWT_SECRET` fica como evolução, pois o web ainda não usa Supabase Auth), `SUPABASE_URL`, `WEB_ORIGIN=https://<app>.vercel.app`, `PORT=3333`, `API_LOG_LEVEL=info`, `RATE_LIMIT_MAX`.
+- Seed inicial: definir uma única vez `SEED_ON_DEPLOY=1`, `ORG_NAME`, `ORG_SLUG`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`; o pre-deploy cria dados de referência + organização + usuário owner; depois voltar `SEED_ON_DEPLOY=0`.
+- Como o `railway.json` (config-as-code) não é honrado, pre-deploy (`node dist/migrate.js`) e healthcheck (`/health`) foram definidos nas configurações do serviço.
 
 ## Vercel (web)
 - Projeto Git na raiz do monorepo com `vercel.json` (o build compila os pacotes antes do `next build`; Root Directory = raiz, output `apps/web/.next`).
-- Variáveis: `NEXT_PUBLIC_API_URL=https://api-production-0b38.up.railway.app`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+- Variáveis: `NEXT_PUBLIC_API_URL=https://api-production-ec77.up.railway.app`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 - `NEXT_PUBLIC_API_URL` é embutida no build: alterar a URL da API exige novo deploy.
 
 ## Checklist de go-live
-- [ ] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS
-- [ ] `AUTH_MODE=supabase` e segredo JWT configurado
-- [ ] CORS (`WEB_ORIGIN`) apontando para o domínio final
-- [ ] Backups automáticos do Supabase ativos
-- [ ] Usuário owner criado e vinculado (`organization_members.is_owner`)
+- [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
+- [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)
+- [ ] CORS (`WEB_ORIGIN`) apontando para o domínio final do frontend na Vercel
+- [ ] Backups automáticos do Supabase ativos (plano do projeto)
+- [x] Usuário owner criado e vinculado (`organization_members.is_owner`)
 
 ## Estado real desta entrega (10/09/2026)
 | Recurso | Estado | Evidência |
 |---|---|---|
-| Railway projeto `controle-de-estoque` › serviço `api` | Criado e conectado ao repositório (branch `claude/agro365-system-replication-ydu48v`). **Build Docker OK e container em execução** (deployment `c8634fb5…` SUCCESS, log "Server listening at http://[::]:3333"). Variáveis definidas (`DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_JWT_SECRET` com **placeholders** até existir o projeto Supabase; `HOST=::`). **Pendência**: o domínio `https://api-production-0b38.up.railway.app` responde 404 `Application not found` (`x-railway-fallback: true`, requisições não chegam ao container) — problema de roteamento no edge da Railway; ação sugerida: em Settings › Networking remover e gerar novamente o domínio público (ou abrir ticket). **Atenção**: existe um patch *staged* (`38e57bf9…`, criado pelo agente de diagnóstico da Railway) que **removeria todas as 11 variáveis** — descartar no dashboard, não aplicar. Pre-deploy `node dist/migrate.js` deve ser configurado no dashboard quando `DATABASE_URL` for real (config-as-code `railway.json` está depreciado na Railway). | serviço `484f8e8d-d3da-4a5d-94a9-68e52c98843a` |
-| Supabase | Não aplicado (decisão do usuário); migrations prontas | `supabase/migrations` |
-| Vercel | Existe um projeto `controle-de-estoque-api` (escopo `httpsgithubcommaikelimaadm-stackmak`) com Root Directory `apps/api`, que falha a cada push porque a API Fastify não é implantável na Vercel; `apps/api/vercel.json` cancela esse build (`ignoreCommand`) para não marcar o commit como falho. O projeto do **frontend** ainda não existe: a integração Vercel↔GitHub do time não autorizou este escopo via API (403). Ação: no dashboard da Vercel, apontar o projeto existente para Root Directory = raiz do monorepo (usa o `vercel.json` da raiz) ou criar um projeto novo para o web, e definir `NEXT_PUBLIC_API_URL` | comentário do bot Vercel no PR #1 |
-| Pull request | O repositório remoto só possui a branch de trabalho (não há `main`); criar a branch base e abrir o PR a partir dela | `git ls-remote` |
+| Supabase projeto `CONTROLE-DE-ESTOQUE` (`dcroxgdzzgqgiquvfffa`) | **Aplicado**: 7 migrations via MCP `apply_migration` (registradas também em `public.erp_migrations`, tabela com RLS e sem acesso de `anon`); 171 tabelas, RLS forçada em todas, 187 políticas; papéis `erp_app` (login, sem bypass) e `erp_migrator` (bypass, dono do schema `erp`, privilégios padrão para novas tabelas → `erp_app`). Seed executado pelo pre-deploy: 27 UFs, 773 permissões, organização `Controle de Estoque` (slug `principal`) com owner `maike.lima.adm@gmail.com`, 2 fazendas de exemplo (`[DEMO]`) e cadastros de exemplo. Advisor de segurança: só avisos (search_path mutável em 12 funções; `citext` em `public`). | `list_migrations`, `execute_sql`, `get_advisors` |
+| Railway serviço `api` | **Em produção** em `https://api-production-ec77.up.railway.app` (deployment `4525526d…` SUCCESS). Pre-deploy `node dist/migrate.js` e healthcheck `/health` configurados no serviço. Verificado: `GET /health` → `{"status":"ok","db":"ok"}`; `POST /api/auth/login` 200 com o owner e 401 com senha errada; `GET /api/auth/context` devolve organização e fazendas; `GET /api/resources/products` lista com `X-Org-Id` correto, **403** com organização alheia e **401** sem token. Pooler correto para este projeto: `aws-0-sa-east-1` (o `aws-1` responde `tenant/user not found`). Região do container: `sfo` (latência ~1 s na primeira consulta; migrar para região mais próxima quando disponível). `WEB_ORIGIN` ainda precisa apontar para a URL final do frontend. | logs do deployment; `curl` |
+| Vercel (frontend) | **Não provisionado via API**: o token disponível não tem acesso ao time `httpsgithubcommaikelimaadm-stackmak` (403) e não há projetos no escopo pessoal. Passos no dashboard: *Add New › Project* → importar `maikelimaadm-stack/CONTROLE-DE-ESTOQUE`, Root Directory = **raiz** (usa `vercel.json`), Production Branch = `main`, variáveis `NEXT_PUBLIC_API_URL=https://api-production-ec77.up.railway.app`, `NEXT_PUBLIC_SUPABASE_URL=https://dcroxgdzzgqgiquvfffa.supabase.co`, `NEXT_PUBLIC_SUPABASE_ANON_KEY=<publishable key>`; depois ajustar `WEB_ORIGIN` na Railway para a URL gerada. O projeto antigo `controle-de-estoque-api` (Root `apps/api`) pode ser removido — seu build já é cancelado por `apps/api/vercel.json`. | MCP Vercel `list_teams` vazio |
+| Pull request | PR #1 (`claude/agro365-system-replication-ydu48v` → `main`), CI verde, merge autorizado pelo usuário | GitHub |
