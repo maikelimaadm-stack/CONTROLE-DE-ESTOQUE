@@ -13,7 +13,7 @@
 
 ## Vercel (web)
 - Projeto Git na raiz do monorepo com `vercel.json` (o build compila os pacotes antes do `next build`; Root Directory = raiz, output `apps/web/.next`).
-- Variáveis: `NEXT_PUBLIC_API_URL=https://<api>.up.railway.app`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
+- Variáveis: `NEXT_PUBLIC_API_URL=https://api-production-0b38.up.railway.app`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 - `NEXT_PUBLIC_API_URL` é embutida no build: alterar a URL da API exige novo deploy.
 
 ## Checklist de go-live
@@ -22,3 +22,11 @@
 - [ ] CORS (`WEB_ORIGIN`) apontando para o domínio final
 - [ ] Backups automáticos do Supabase ativos
 - [ ] Usuário owner criado e vinculado (`organization_members.is_owner`)
+
+## Estado real desta entrega (10/09/2026)
+| Recurso | Estado | Evidência |
+|---|---|---|
+| Railway projeto `controle-de-estoque` › serviço `api` | Criado, conectado ao repositório (branch `claude/agro365-system-replication-ydu48v`), domínio `https://api-production-0b38.up.railway.app`, variáveis definidas (`DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_JWT_SECRET` com **placeholders** até existir o projeto Supabase) | serviço `484f8e8d-d3da-4a5d-94a9-68e52c98843a` |
+| Supabase | Não aplicado (decisão do usuário); migrations prontas | `supabase/migrations` |
+| Vercel | Projeto não criado: a integração Vercel↔GitHub do time não tem autorização para o escopo do repositório (erro 403 `Not authorized … scope`). Ação: em Vercel › Settings › Git, reconectar o GitHub e importar o repositório com Root Directory = raiz (`vercel.json`) | — |
+| Pull request | O repositório remoto só possui a branch de trabalho (não há `main`); criar a branch base e abrir o PR a partir dela | `git ls-remote` |
