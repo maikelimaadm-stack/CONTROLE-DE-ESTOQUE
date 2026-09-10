@@ -1,7 +1,5 @@
-import DecimalNS from "decimal.js";
-const Decimal = DecimalNS.Decimal ?? DecimalNS;
-type Decimal = DecimalNS.Decimal;
-type DecimalValue = DecimalNS.Decimal.Value;
+import { Decimal } from "decimal.js";
+type DecimalValue = Decimal.Value;
 
 Decimal.set({ precision: 28, rounding: Decimal.ROUND_HALF_EVEN });
 

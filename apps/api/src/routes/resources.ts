@@ -160,13 +160,20 @@ export async function deleteOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
 export async function options(ctx: ServiceCtx, def: ResourceDef, search: string | undefined, extra: Record<string, string>) {
   const existing = await checkColumns(ctx, def);
   const b = new SqlBuilder(); const where: string[] = [];
-  if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(organization_id is null or organization_id=${b.add(ctx.orgId)})` : `organization_id=${b.add(ctx.orgId)}`);
-  if (def.softDelete) where.push("deleted_at is null");
-  if (existing.has("is_active") && !extra["include_inactive"]) where.push("is_active");
-  if (search) where.push(`${ident(def.labelField)}::text ilike ${b.add(`%${search}%`)}`);
-  for (const [k, v] of Object.entries(extra)) if (existing.has(k) && k !== "include_inactive") where.push(`${ident(k)} = ${b.add(v)}`);
-  const codeSel = existing.has("code") ? ", code::text as code" : ", null as code";
-  const r = await ctx.tx.query(`select id, ${ident(def.labelField)}::text as label ${codeSel} from erp.${ident(def.table)} ${where.length ? "where " + where.join(" and ") : ""} order by ${ident(def.labelField)} limit 200`, b.params);
+  // labelField que é referência (ex.: authorizers.user_id) mostra o rótulo da tabela referenciada
+  const lf = def.fields.find((f) => f.name === def.labelField);
+  const refDef = lf?.type === "ref" && lf.ref ? getResource(lf.ref.resource) : undefined;
+  const labelExpr = refDef ? `r.${ident(refDef.labelField)}::text` : `t.${ident(def.labelField)}::text`;
+  const join = refDef ? `left join erp.${ident(refDef.table)} r on r.id = t.${ident(def.labelField)}` : "";
+  if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(t.organization_id is null or t.organization_id=${b.add(ctx.orgId)})` : `t.organization_id=${b.add(ctx.orgId)}`);
+  // Usuários são globais (sem organization_id): restringe aos membros ativos da organização atual (isolamento multi-tenant)
+  if (def.table === "users") where.push(`t.id in (select m.user_id from erp.organization_members m where m.organization_id=${b.add(ctx.orgId)} and m.is_active)`);
+  if (def.softDelete) where.push("t.deleted_at is null");
+  if (existing.has("is_active") && !extra["include_inactive"]) where.push("t.is_active");
+  if (search) where.push(`${labelExpr} ilike ${b.add(`%${search}%`)}`);
+  for (const [k, v] of Object.entries(extra)) if (existing.has(k) && k !== "include_inactive") where.push(`t.${ident(k)} = ${b.add(v)}`);
+  const codeSel = existing.has("code") ? ", t.code::text as code" : ", null as code";
+  const r = await ctx.tx.query(`select t.id, ${labelExpr} as label ${codeSel} from erp.${ident(def.table)} t ${join} ${where.length ? "where " + where.join(" and ") : ""} order by 2 limit 200`, b.params);
   return r.rows;
 }
 
