@@ -1,17 +1,21 @@
 @import "tailwindcss";
 
 @theme {
-  --color-brand-50: #f0f8f1; --color-brand-100: #dcefdf; --color-brand-200: #b9dfc0; --color-brand-300: #8cc797; --color-brand-400: #5aa86a;
-  --color-brand-500: #3a8c4b; --color-brand-600: #2b6f3a; --color-brand-700: #245a30; --color-brand-800: #1f4828; --color-brand-900: #1a3b22;
+  /* verde do MODELO BASE1 (sistema de referência MG) */
+  --color-brand-50: #ecfdf3; --color-brand-100: #d4f7e1; --color-brand-200: #a9efc6; --color-brand-300: #6fe3a3; --color-brand-400: #3fd486;
+  --color-brand-500: #2ec46e; --color-brand-600: #22a85c; --color-brand-700: #1c8a4c; --color-brand-800: #196d3f; --color-brand-900: #155a36;
   --color-earth-100: #f5efe6; --color-earth-500: #a67c52; --color-earth-700: #6b4f2f;
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-dm-sans), "DM Sans", ui-sans-serif, system-ui, sans-serif;
 }
 :root { color-scheme: light; }
-body { @apply bg-slate-50 text-slate-800 antialiased text-[13px]; }
+body { @apply bg-[#f4f6f9] text-slate-800 antialiased text-[13px]; }
 * { @apply border-slate-200; }
 input, select, textarea { @apply text-[13px]; }
 .table-dense th { @apply text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500 px-2 py-1.5 bg-slate-100 border-b whitespace-nowrap; }
 .table-dense td { @apply px-2 py-1 border-b border-slate-100 align-middle whitespace-nowrap; }
 .table-dense tr:hover td { @apply bg-brand-50/60; }
 .num { @apply text-right tabular-nums; }
+/* MODELO BASE1: barra de rolagem fina e sem setas nos inputs numéricos das caixas de campo */
+.b1 ::-webkit-scrollbar { height: 8px; width: 8px; } .b1 ::-webkit-scrollbar-thumb { @apply rounded-full bg-slate-300; }
+.b1 input[type="date"]::-webkit-calendar-picker-indicator { opacity: .5; }
 @media print { .no-print { display: none !important; } body { background: white; font-size: 11px; } }

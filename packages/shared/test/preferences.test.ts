@@ -50,3 +50,17 @@ describe("layout de formulário", () => {
     expect(missing.layout.cards.find((c) => c.id === "outros")?.rows[0]!.fieldIds).toEqual(["name", "note"]);
   });
 });
+
+import { encodeList, decodeList, isListOperator } from "../src/preferences.js";
+describe("operador de lista (chip de filtro)", () => {
+  it("codifica e decodifica listas com valores que contêm separadores comuns", () => {
+    const vals = ["a,b", "c|d", "e f", ""];
+    expect(decodeList(encodeList(vals))).toEqual(["a,b", "c|d", "e f"]);
+    expect(isListOperator("in")).toBe(true); expect(isListOperator("eq")).toBe(false);
+    expect(isValidOperator("ref", "in")).toBe(true); expect(isValidOperator("date", "in")).toBe(false);
+  });
+  it("aceita 1 card por linha na visualização", () => {
+    expect(normalizeListPreferences({ view: { mode: "cards", cardsPerRow: 1 } }).view.cardsPerRow).toBe(1);
+    expect(normalizeListPreferences({ view: { mode: "cards", cardsPerRow: 5 } }).view.cardsPerRow).toBeUndefined();
+  });
+});
