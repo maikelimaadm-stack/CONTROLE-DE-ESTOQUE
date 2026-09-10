@@ -3,7 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@10.33.0",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "lint": "pnpm -r --if-present lint",
     "typecheck": "pnpm -r --if-present typecheck",
@@ -15,7 +17,10 @@
     "db:reset": "pnpm --filter @agro/db reset",
     "dev:api": "pnpm --filter @agro/api dev",
     "dev:web": "pnpm --filter @agro/web dev",
-    "e2e": "pnpm --filter @agro/web e2e"
+    "e2e": "pnpm --filter @agro/web e2e",
+    "parity": "node scripts/parity.mjs",
+    "parity:check": "node scripts/parity.mjs --check",
+    "db:seed:e2e": "DATABASE_URL=${E2E_DATABASE_URL:-postgresql://postgres@127.0.0.1:5433/agro_erp_e2e} pnpm --filter @agro/db exec tsx src/cli.ts seed"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

@@ -1,0 +1,210 @@
+{
+  "screens": {
+    "total": 455,
+    "TESTADO": 116,
+    "IMPLEMENTADO": 280,
+    "MELHORADO": 21,
+    "EM IMPLEMENTAÇÃO": 7,
+    "MAPEADO": 6,
+    "BLOQUEADO": 0,
+    "NÃO INICIADO": 25,
+    "NÃO APLICÁVEL": 0,
+    "coverage": "417/455 (91.6%)"
+  },
+  "reports": {
+    "total": 120,
+    "ours": 107,
+    "TESTADO": 5,
+    "IMPLEMENTADO": 111,
+    "MELHORADO": 0,
+    "EM IMPLEMENTAÇÃO": 3,
+    "MAPEADO": 0,
+    "BLOQUEADO": 0,
+    "NÃO INICIADO": 1,
+    "NÃO APLICÁVEL": 0,
+    "coverage": "116/120 (96.7%)"
+  },
+  "actions": {
+    "total": 577,
+    "TESTADO": 111,
+    "IMPLEMENTADO": 137,
+    "MELHORADO": 34,
+    "EM IMPLEMENTAÇÃO": 35,
+    "MAPEADO": 3,
+    "BLOQUEADO": 0,
+    "NÃO INICIADO": 24,
+    "NÃO APLICÁVEL": 233,
+    "coverage": "282/344 (82.0%)"
+  },
+  "modules": [
+    {
+      "module": "Painel de Controle",
+      "coverage": "1/1 (100.0%)"
+    },
+    {
+      "module": "Dashboards",
+      "coverage": "13/13 (100.0%)"
+    },
+    {
+      "module": "Cadastros Base",
+      "coverage": "121/133 (91.0%)"
+    },
+    {
+      "module": "Administrativo",
+      "coverage": "65/67 (97.0%)"
+    },
+    {
+      "module": "Financeiro",
+      "coverage": "25/26 (96.2%)"
+    },
+    {
+      "module": "Gestão Fiscal",
+      "coverage": "3/13 (23.1%)"
+    },
+    {
+      "module": "Operacional",
+      "coverage": "75/80 (93.8%)"
+    },
+    {
+      "module": "Gestão de Frota",
+      "coverage": "9/9 (100.0%)"
+    },
+    {
+      "module": "Relatórios",
+      "coverage": "104/108 (96.3%)"
+    },
+    {
+      "module": "Integrações",
+      "coverage": "1/5 (20.0%)"
+    }
+  ],
+  "gaps": [
+    {
+      "id": "SCR-007",
+      "title": "DFe Recebidas",
+      "route": "/admin/dfe",
+      "status": "EM IMPLEMENTAÇÃO",
+      "note": "Fila de DFe e manifestação registradas localmente; consulta automática à SEFAZ (certificado A1) não integrada"
+    },
+    {
+      "id": "SCR-014",
+      "title": "NFe",
+      "route": "/admin/nfe",
+      "status": "NÃO INICIADO",
+      "note": "Emissão de NF-e exige certificado digital e homologação SEFAZ — fora do escopo desta entrega"
+    },
+    {
+      "id": "SCR-015",
+      "title": "NFSe Recebidas",
+      "route": "/admin/nfses",
+      "status": "NÃO INICIADO",
+      "note": "Consulta de NFS-e recebidas depende de integração municipal"
+    },
+    {
+      "id": "SCR-044",
+      "title": "Emissor NFe",
+      "route": "/admin/issue",
+      "status": "NÃO INICIADO",
+      "note": "Emissor NF-e (certificado) — gap fiscal"
+    },
+    {
+      "id": "SCR-045",
+      "title": "Sincronização DFe",
+      "route": "/admin/issue-dfe-sync-time",
+      "status": "NÃO INICIADO",
+      "note": "Depende do emissor/SEFAZ"
+    },
+    {
+      "id": "SCR-046",
+      "title": "Sincronização NFS-e",
+      "route": "/admin/issue-nfse-sync-time",
+      "status": "NÃO INICIADO",
+      "note": "Depende de integração municipal"
+    },
+    {
+      "id": "SCR-048",
+      "title": "Contadores",
+      "route": "/admin/contador",
+      "status": "MAPEADO",
+      "note": "Contador é uma pessoa com papel; envio de arquivos ao contador não implementado"
+    },
+    {
+      "id": "SCR-057",
+      "title": "Custo Retroativo",
+      "route": "/admin/animal-retroactive-costs",
+      "status": "NÃO INICIADO",
+      "note": "Custo retroativo de animais: coluna existe no custeio por lote, tela de lançamento não construída"
+    },
+    {
+      "id": "SCR-097",
+      "title": "Inventariado Animais",
+      "route": "/admin/inventoried-animals",
+      "status": "NÃO INICIADO",
+      "note": "Inventário físico de animais (conferência) não construído"
+    },
+    {
+      "id": "SCR-107",
+      "title": "Pré-Lotes",
+      "route": "/admin/purchase-lots",
+      "status": "MAPEADO",
+      "note": "Pré-lotes representados pelos lotes por contagem (herd_lots) da compra; sem tela própria"
+    },
+    {
+      "id": "SCR-117",
+      "title": "Lotes/Reprodução",
+      "route": "/admin/breeding-batch",
+      "status": "MAPEADO",
+      "note": "Lotes de reprodução por estação: filtro por lote no picker de matrizes; sem entidade própria"
+    },
+    {
+      "id": "SCR-142",
+      "title": "Planilha de Movimentos",
+      "route": "/admin/movement-sheets",
+      "status": "NÃO INICIADO",
+      "note": "Planilha de movimentos (importação em massa) não construída; exportação disponível"
+    },
+    {
+      "id": "SCR-149",
+      "title": "MDFe",
+      "route": "/admin/mdfe",
+      "status": "NÃO INICIADO",
+      "note": "MDF-e depende de emissão fiscal"
+    },
+    {
+      "id": "SCR-151",
+      "title": "LCDPR - Livro Caixa Digital do Produtor Rural",
+      "route": "/admin/cash-book",
+      "status": "EM IMPLEMENTAÇÃO",
+      "note": "Dados do livro caixa capturados (contas 'livro caixa', dedutibilidade); geração do arquivo LCDPR não implementada"
+    },
+    {
+      "id": "SCR-152",
+      "title": "SPED Fiscal - EFD ICMS/IPI",
+      "route": "/admin/sped-fiscal",
+      "status": "NÃO INICIADO",
+      "note": "SPED EFD ICMS/IPI depende de emissão fiscal"
+    },
+    {
+      "id": "SCR-262",
+      "title": "Integração Domínio",
+      "route": "/admin/integration-dominios",
+      "status": "NÃO INICIADO",
+      "note": "Integração contábil Domínio não construída; exportação CSV/XLSX disponível"
+    },
+    {
+      "id": "SCR-263",
+      "title": "Integração CTA Smart",
+      "route": "/admin/integration-cta-smart",
+      "status": "NÃO INICIADO",
+      "note": "Campo 'origem' preparado (cta_smart); importação automática não construída"
+    },
+    {
+      "id": "SCR-264",
+      "title": "CTA Smart - Abastecimentos Importados",
+      "route": "/admin/cta-smart-supplies",
+      "status": "NÃO INICIADO",
+      "note": "Idem CTA Smart"
+    }
+  ],
+  "pages": 107
+}

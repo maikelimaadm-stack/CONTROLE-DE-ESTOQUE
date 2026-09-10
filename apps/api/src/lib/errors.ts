@@ -7,7 +7,7 @@ export const err = (code: ErrorCode, message: string, details?: unknown) => new 
 
 /** Converte exceções do Postgres (raise exception 'CODE: msg') em DomainError. */
 export function fromPgError(e: unknown): DomainError | null {
-  const pe = e as { code?: string; message?: string; constraint?: string; detail?: string };
+  const pe = e as { code?: string; message?: string; constraint?: string; detail?: string; column?: string };
   if (!pe || typeof pe !== "object") return null;
   if (pe.code === "P0001" && pe.message) {
     const m = /^([A-Z_]+):\s*(.*)$/.exec(pe.message.replace(/^error:\s*/i, ""));
