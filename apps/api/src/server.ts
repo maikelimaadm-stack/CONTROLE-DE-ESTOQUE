@@ -10,6 +10,7 @@ import healthRoutes from "./routes/health.js";
 import authRoutes from "./routes/auth.js";
 import resourceRoutes from "./routes/resources.js";
 import preferenceRoutes from "./routes/preferences.js";
+import savedReportRoutes from "./routes/saved-reports.js";
 import adminRoutes from "./routes/admin.js";
 import stockRoutes from "./routes/stock.js";
 import supplyRoutes from "./routes/supply.js";
@@ -35,6 +36,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(authRoutes, { prefix: "/api" });
   await app.register(resourceRoutes, { prefix: "/api" });
   await app.register(preferenceRoutes, { prefix: "/api" });
+  await app.register(savedReportRoutes, { prefix: "/api" });
   await app.register(adminRoutes, { prefix: "/api" });
   await app.register(stockRoutes, { prefix: "/api" });
   await app.register(supplyRoutes, { prefix: "/api" });

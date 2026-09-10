@@ -8,7 +8,7 @@ import { withTx } from "@agro/db";
 import { runService } from "../lib/service.js";
 
 export default async function authRoutes(app: FastifyInstance) {
-  app.post("/auth/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (req) => {
+  app.post("/auth/login", { config: { rateLimit: { max: app.config.LOGIN_RATE_LIMIT_MAX, timeWindow: "1 minute" } } }, async (req) => {
     if (app.config.AUTH_MODE !== "local") throw new DomainError("VALIDATION_ERROR", "Login local desabilitado: use Supabase Auth");
     const { email, password } = z.object({ email: z.string().email(), password: z.string().min(6) }).parse(req.body);
     const user = await verifyLocalPassword(app.db, email.toLowerCase(), password);

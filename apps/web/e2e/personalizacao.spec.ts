@@ -75,3 +75,20 @@ test("layout de formulário configurável: campo oculto, rótulo e obrigatório 
   await expect(page.getByLabel(/^Sigla/).first()).toBeVisible();
   await expect(page.getByLabel(/^Ativo/)).toBeVisible();
 });
+
+test("relatório personalizado: prévia agrupada, salvar e listar", async ({ page }) => {
+  await login(page);
+  await page.goto("/relatorios/personalizados/novo?resource=warehouses");
+  await expect(page.getByLabel("Entidade")).toHaveValue("warehouses");
+  await page.getByLabel("Agrupar por").selectOption("type");
+  await page.getByRole("button", { name: "Gerar prévia" }).click();
+  await expect(page.locator("table").last().locator("tbody tr").first()).toBeVisible();
+  await expect(page.getByText(/linha\(s\)/)).toBeVisible();
+  const name = `Armazéns por tipo ${Date.now().toString(36).slice(-4)}`;
+  await page.getByRole("button", { name: /^Salvar/ }).click();
+  await page.getByLabel("Nome").fill(name);
+  await page.getByRole("dialog").getByRole("button", { name: "Salvar" }).click();
+  await expect(page.locator("[data-sonner-toast]").first()).toContainText("Relatório salvo");
+  await page.goto("/relatorios/personalizados");
+  await expect(page.getByRole("link", { name })).toBeVisible();
+});

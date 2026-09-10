@@ -54,7 +54,11 @@ async function upsert(ctx: ServiceCtx, scope: "user" | "org", module: string, sc
   const revision = (cur?.revision ?? 0) + 1;
   const doc = { ...next, meta: { revision, updatedAt: new Date().toISOString() } };
   if (cur) { await ctx.tx.query("update erp.user_screen_preferences set preferences=$1, revision=$2 where id=$3", [JSON.stringify(doc), revision, cur.id]); }
-  else await ctx.tx.query("insert into erp.user_screen_preferences(organization_id,user_id,module,screen,preferences,revision) values ($1,$2,$3,$4,$5,$6)", [ctx.orgId, scope === "user" ? ctx.user.id : null, module, screen, JSON.stringify(doc), revision]);
+  else {
+    // duas abas criando a primeira preferência ao mesmo tempo: a perdedora cai no conflito e recebe 409 com o estado atual
+    const ins = await ctx.tx.query("insert into erp.user_screen_preferences(organization_id,user_id,module,screen,preferences,revision) values ($1,$2,$3,$4,$5,$6) on conflict (organization_id, coalesce(user_id, '00000000-0000-0000-0000-000000000000'::uuid), module, screen) do nothing returning id", [ctx.orgId, scope === "user" ? ctx.user.id : null, module, screen, JSON.stringify(doc), revision]);
+    if (!ins.rowCount) { const now = await current(ctx, scope, module, screen); throw new DomainError("CONFLICT", "Preferência foi criada em outra aba/sessão", { current: now && pub(now) }); }
+  }
   return pub((await current(ctx, scope, module, screen))!);
 }
 

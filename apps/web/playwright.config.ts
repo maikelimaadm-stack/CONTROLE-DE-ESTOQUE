@@ -11,7 +11,7 @@ export default defineConfig({
   use: { baseURL: `http://127.0.0.1:${WEB_PORT}`, trace: "retain-on-failure", screenshot: "only-on-failure", locale: "pt-BR" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], launchOptions: process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {} } }],
   webServer: [
-    { command: `npx tsx src/main.ts`, cwd: "../api", port: API_PORT, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { DATABASE_URL: DB, PORT: String(API_PORT), WEB_ORIGIN: `http://127.0.0.1:${WEB_PORT}`, API_LOG_LEVEL: "warn", AUTH_MODE: "local", LOCAL_AUTH_SECRET: "e2e-secret-not-for-prod", NODE_ENV: "test" } },
+    { command: `npx tsx src/main.ts`, cwd: "../api", port: API_PORT, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { DATABASE_URL: DB, PORT: String(API_PORT), WEB_ORIGIN: `http://127.0.0.1:${WEB_PORT}`, API_LOG_LEVEL: "warn", AUTH_MODE: "local", LOCAL_AUTH_SECRET: "e2e-secret-not-for-prod", NODE_ENV: "test", LOGIN_RATE_LIMIT_MAX: "1000" } },
     { command: `npx next start -p ${WEB_PORT}`, port: WEB_PORT, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { NEXT_PUBLIC_API_URL: `http://127.0.0.1:${API_PORT}` } }
   ]
 });

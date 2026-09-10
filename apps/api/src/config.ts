@@ -11,7 +11,9 @@ const schema = z.object({
   LOCAL_AUTH_SECRET: z.string().min(8).default("dev-only-secret-change-me"),
   SUPABASE_JWT_SECRET: z.string().optional(),
   SUPABASE_URL: z.string().optional(),
-  RATE_LIMIT_MAX: z.coerce.number().default(300)
+  RATE_LIMIT_MAX: z.coerce.number().default(300),
+  /** tentativas de login por IP por minuto (proteção contra força bruta) */
+  LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10)
 });
 export type Config = z.infer<typeof schema>;
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {

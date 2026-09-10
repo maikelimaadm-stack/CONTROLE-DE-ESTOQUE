@@ -11,7 +11,7 @@ import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, cn } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Menu, Confirm, Badge } from "@/components/ui";
 import { DataTable, type Column } from "@/components/ui/data-table";
-import { MoreVertical, Plus } from "lucide-react";
+import { MoreVertical, Plus, FileBarChart } from "lucide-react";
 import { useListPrefs, applyListColumns, type ListFilterInfo } from "@/features/listing/list-prefs";
 import { ListSettingsDialog, ListSettingsButton } from "@/features/listing/list-settings";
 import { CardsView } from "@/features/listing/cards-view";
@@ -72,9 +72,9 @@ export function ResourceList({ resourceKey, title, fixedFilters, extraActions, b
   const searchable = fields.filter((f) => f.search);
   return (
     <Card>
-      <CardHeader title={title ?? def.labelPlural} actions={<>{extraActions}<ListSettingsButton onClick={() => setSettings(true)} customized={p.source !== "default"} />{def.importExport && can(`${perm}.export`) && <Button variant="outline" size="sm" onClick={() => download(`/api/exports/${resourceKey}${qs({ ...all, search: applied.search, format: "xlsx" })}`, `${resourceKey}.xlsx`)}>Exportar</Button>}{can(`${perm}.create`) && <Link href={`${base}/new${qs(fixedFilters ?? {})}`}><Button size="sm"><Plus className="h-3.5 w-3.5" /> Adicionar Novo</Button></Link>}</>} />
+      <CardHeader title={title ?? def.labelPlural} actions={<>{extraActions}<ListSettingsButton onClick={() => setSettings(true)} customized={p.source !== "default"} />{can("saved_reports.create") && <Link href={`/relatorios/personalizados/novo?resource=${resourceKey}&f=${encodeURIComponent(JSON.stringify({ ...applied.params, ...(applied.search ? { search: applied.search } : {}) }))}`}><Button variant="outline" size="sm" title="Montar relatório personalizado com estes filtros"><FileBarChart className="h-3.5 w-3.5" /> Relatório</Button></Link>}{def.importExport && can(`${perm}.export`) && <Button variant="outline" size="sm" onClick={() => download(`/api/exports/${resourceKey}${qs({ ...all, search: applied.search, format: "xlsx" })}`, `${resourceKey}.xlsx`)}>Exportar</Button>}{can(`${perm}.create`) && <Link href={`${base}/new${qs(fixedFilters ?? {})}`}><Button size="sm"><Plus className="h-3.5 w-3.5" /> Adicionar Novo</Button></Link>}</>} />
       <CardBody className={cn(p.prefs.view.density === "compact" && "text-[12px]")}>
-        <AdvancedFilterBar fields={filterFields} prefs={p.prefs} updatePrefs={p.update} values={values} onChange={setValues} onApply={apply} onClear={clear}
+        <AdvancedFilterBar fields={filterFields} prefs={p.prefs} updatePrefs={p.update} values={values} onChange={setValues} onApply={apply} onApplyValues={(v, sq) => { setApplied({ search: sq, params: toQueryParams(filterFields, v) }); setPage(1); }} onClear={clear}
           search={searchable.length ? search : undefined} onSearch={searchable.length ? setSearch : undefined} searchLabel={`Pesquisar por ${searchable.map((f) => f.label.toLowerCase()).slice(0, 3).join("/")}`} />
         {p.prefs.view.mode === "cards"
           ? <><CardsView rows={q.data?.items ?? []} columns={baseColumns} fields={p.prefs.view.cardFields} perRow={p.prefs.view.cardsPerRow ?? 3} loading={q.isLoading} onClick={(r) => router.push(`${base}/${r["id"]}`)} actions={rowActions} />

@@ -48,13 +48,13 @@ function ValueInput({ f, v, onChange }: { f: AdvancedFilterField; v: FilterValue
  * Barra de filtros com operadores por campo, campos visíveis configuráveis e filtros salvos.
  * `search` é a pesquisa textual livre (opcional).
  */
-export function AdvancedFilterBar({ fields, prefs, updatePrefs, values, onChange, onApply, onClear, search, onSearch, searchLabel }: { fields: AdvancedFilterField[]; prefs: ListPreferences; updatePrefs: (fn: (p: ListPreferences) => ListPreferences) => void; values: FilterValues; onChange: (v: FilterValues) => void; onApply: () => void; onClear: () => void; search?: string; onSearch?: (s: string) => void; searchLabel?: string }) {
+export function AdvancedFilterBar({ fields, prefs, updatePrefs, values, onChange, onApply, onApplyValues, onClear, search, onSearch, searchLabel }: { fields: AdvancedFilterField[]; prefs: ListPreferences; updatePrefs: (fn: (p: ListPreferences) => ListPreferences) => void; values: FilterValues; onChange: (v: FilterValues) => void; onApply: () => void; /** aplica valores informados diretamente (filtro salvo), sem depender do estado atual */ onApplyValues?: (values: FilterValues, search: string) => void; onClear: () => void; search?: string; onSearch?: (s: string) => void; searchLabel?: string }) {
   const visible = fields.filter((f) => (prefs.filters.visible ?? fields.map((x) => x.key)).includes(f.key));
   const [saveOpen, setSaveOpen] = React.useState(false); const [saveName, setSaveName] = React.useState("");
   const saved = prefs.filters.saved ?? [];
   const get = (f: AdvancedFilterField): FilterValue => values[f.key] ?? { op: prefs.filters.operators?.[f.key] ?? defaultOperatorFor(f.kind), value: "" };
   const setV = (f: AdvancedFilterField, v: FilterValue) => onChange({ ...values, [f.key]: v });
-  const applySaved = (s: SavedFilter) => { onChange(fromQueryParams(fields, s.values, prefs.filters.operators)); if (onSearch) onSearch(s.values["search"] ?? ""); setTimeout(onApply, 0); };
+  const applySaved = (s: SavedFilter) => { const v = fromQueryParams(fields, s.values, prefs.filters.operators); const q = s.values["search"] ?? ""; onChange(v); if (onSearch) onSearch(q); if (onApplyValues) onApplyValues(v, q); else setTimeout(onApply, 0); };
   const saveCurrent = () => { const name = saveName.trim(); if (!name) return; const params = toQueryParams(fields, values); if (search) params["search"] = search; updatePrefs((p) => ({ ...p, filters: { ...p.filters, saved: [...(p.filters.saved ?? []).filter((x) => x.name !== name), { name, values: params }] } })); setSaveOpen(false); setSaveName(""); toast.success(`Filtro "${name}" salvo`); };
   const removeSaved = (name: string) => updatePrefs((p) => ({ ...p, filters: { ...p.filters, saved: (p.filters.saved ?? []).filter((x) => x.name !== name) } }));
   const active = Object.entries(values).filter(([k, v]) => { const f = fields.find((x) => x.key === k); return f && v && (operatorArity(f.kind, v.op) === 0 || v.value); }).length;
