@@ -13,6 +13,10 @@ describe("saúde e autenticação", () => {
     expect((await h.app.inject({ method: "GET", url: "/api/resources/products", headers: { "x-org-id": h.demo.orgId } })).statusCode).toBe(401);
     expect((await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: h.demo.adminEmail, password: "errada123" } })).statusCode).toBe(401);
   });
+  it("autenticado sem X-Org-Id responde 422 (não 401, para o cliente não encerrar a sessão)", async () => {
+    const r = await h.app.inject({ method: "GET", url: "/api/dashboards/home", headers: { authorization: `Bearer ${h.token}` } });
+    expect(st(r, 422)).toBe(422); expect((j(r) as { error: { code: string } }).error.code).toBe("VALIDATION_ERROR");
+  });
   it("contexto retorna fazendas e permissões", async () => { const r = await h.app.inject({ method: "GET", url: "/api/auth/context", headers: h.headers() }); expect(r.statusCode).toBe(200); const c = j(r) as { farms: unknown[]; permissions: string[]; isOwner: boolean }; expect(c.farms.length).toBe(2); expect(c.isOwner).toBe(true); expect(c.permissions.length).toBeGreaterThan(600); });
 });
 

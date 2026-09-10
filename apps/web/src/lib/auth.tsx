@@ -23,6 +23,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     const s = getSession(); setS(s);
     if (!s?.token) { setCtx(null); setLoading(false); return; }
+    // Bloqueia a renderização das telas até a organização e as permissões estarem carregadas,
+    // evitando chamadas à API sem X-Org-Id logo após o login.
+    setLoading(true);
     try {
       if (!s.orgId) { const me = await api<{ organizations: { id: string }[] }>("/api/auth/me"); const first = me.organizations[0]; if (first) { setSession({ ...s, orgId: first.id }); setS({ ...s, orgId: first.id }); } else { setCtx(null); setLoading(false); return; } }
       const c = await api<AppContext>("/api/auth/context"); setCtx(c);
