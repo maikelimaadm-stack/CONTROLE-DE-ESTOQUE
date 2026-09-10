@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Filter, Plus, Search, EyeOff, Eye, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, PanelLeftClose, PanelLeftOpen, Trash2, Building2, RotateCcw } from "lucide-react";
 import { BASE1_PAGE_SIZES, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
+import { getSession } from "@/lib/api";
 import { Confirm, ErrorBox, NativeSelect } from "@/components/ui";
 import { useListPrefs, type ListFilterInfo } from "@/features/listing/list-prefs";
 import { IconBtn, PillBtn, ViewSwitch, B1Popover, MenuList, RoundInput, type ViewMode } from "./ui";
@@ -106,7 +107,13 @@ export function Base1List(props: Base1ListProps) {
   const one = selectedRows.length === 1 ? selectedRows[0]! : null;
   const exportCsv = () => { const cols = visibleColumns; const esc = (s: string) => `"${s.replace(/"/g, '""')}"`; const lines = [cols.map((c) => esc(c.label)).join(";"), ...rows.map((r) => cols.map((c) => esc(c.text ? c.text(r) : String(r[c.key] ?? ""))).join(";"))]; const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${csvName ?? moduleId}.csv`; a.click(); URL.revokeObjectURL(a.href); };
   const enterRecord = (r?: Row) => { if (!Record) { if (r) onOpen?.(r); return; } const i = r ? rows.findIndex((x) => x["id"] === r["id"]) : one ? rows.findIndex((x) => x["id"] === one["id"]) : 0; setRecIndex(Math.max(0, i)); setRecMode("view"); setCopyFrom(null); setView("record"); };
-  const goRecord = (i: number) => { if (i < 0) return; if (i >= rows.length) { if (q.hasNextPage) void q.fetchNextPage().then(() => setRecIndex(i)); return; } setRecIndex(i); setRecMode("view"); };
+  // navega para um índice ainda não carregado buscando quantas páginas forem necessárias (ex.: "Último")
+  const goRecord = async (i: number) => {
+    if (i < 0) return;
+    let loaded = rows.length; let hasNext = q.hasNextPage;
+    while (i >= loaded && hasNext) { const r = await q.fetchNextPage(); loaded = r.data?.pages.reduce((n, pg) => n + pg.items.length, 0) ?? loaded; hasNext = Boolean(r.hasNextPage); if (!r.data || loaded === 0) break; }
+    if (i < loaded) { setRecIndex(i); setRecMode("view"); }
+  };
   const newRecord = () => { if (Record) { setCopyFrom(null); setRecMode("new"); setView("record"); } else onNew?.(); };
   const duplicate = (r: Row) => { if (onDuplicate) return onDuplicate(r); if (Record) { setCopyFrom(r); setRecMode("new"); setView("record"); } };
   const menuItems = [
@@ -138,6 +145,8 @@ export function Base1List(props: Base1ListProps) {
     <ViewSwitch value={view} recordDisabled={!Record && !onOpen} onChange={(m) => { if (m === "record") enterRecord(); else { setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } })); } }} />
     <B1Popover className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><MoreHorizontal className="h-4 w-4" /></IconBtn>}><MenuList items={menuItems} onPick={onMenu} /></B1Popover>
   </div>;
+  const sess = getSession();
+  const chipScope = `${moduleId}:${sess?.orgId ?? "-"}:${sess?.farmId ?? "-"}:${sess?.user?.id ?? "-"}:${JSON.stringify(queryKeyExtra ?? null)}`;
   const distinctFor = (f: Base1FilterDef) => distinct && f.mode === "advanced" && f.kind !== "boolean" && !f.options ? (s: string) => distinct(f.key, s) : undefined;
   const cardFields = prefs.view.cardFields ?? columns.slice(0, 7).map((c) => c.key);
 
@@ -161,7 +170,7 @@ export function Base1List(props: Base1ListProps) {
       <IconBtn size="sm" aria-label="Recolher faixa de filtros" title="Recolher faixa de filtros" active onClick={() => setShowChips(false)}><PanelLeftClose className="h-4 w-4" /></IconBtn>
       <IconBtn size="sm" aria-label="Rolar filtros para a esquerda" onClick={() => scrollStrip(-240)}><ChevronLeft className="h-4 w-4" /></IconBtn>
       <div ref={stripRef} className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto [scrollbar-width:none]">
-        {chips.map((f) => <FilterChip key={f.key} f={f} value={values[f.key]} open={openChip === f.key} onOpenChange={(o) => setOpenChip(o ? f.key : null)} distinct={distinctFor(f)}
+        {chips.map((f) => <FilterChip key={f.key} f={f} value={values[f.key]} open={openChip === f.key} onOpenChange={(o) => setOpenChip(o ? f.key : null)} distinct={distinctFor(f)} scope={chipScope}
           onApply={(v) => { const nv = { ...values, [f.key]: v }; setValues(nv); apply(nv, search); }} onClear={() => { const nv = { ...values, [f.key]: emptyValue(f) }; setValues(nv); apply(nv, search); }} />)}
         {chips.length === 0 && <span className="px-2 text-[11.5px] text-slate-400">Esta tela não possui filtros por coluna.</span>}
       </div>
@@ -179,7 +188,7 @@ export function Base1List(props: Base1ListProps) {
         {q.error && <ErrorBox error={q.error} />}
         {view === "cards"
           ? <Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelect={(id, on) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; })} actions={rowActions} />
-          : <Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onOpen={(r) => enterRecord(r)} frozen={frozen} density={prefs.view.density}
+          : <Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onOpen={(r) => enterRecord(r)} frozen={frozen} density={prefs.view.density} actions={rowActions}
             onFreeze={(n) => updCols((c) => ({ ...c, frozen: n }))} onHide={(k) => updCols((c) => ({ ...c, visible: visibleColumns.map((x) => x.key).filter((x) => x !== k) }))} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
             onFilter={(k) => { const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}
             footer={footerTotals && totals ? footerTotals(totals) : undefined} />}

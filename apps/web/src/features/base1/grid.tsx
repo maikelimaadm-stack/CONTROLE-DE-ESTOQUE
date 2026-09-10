@@ -11,10 +11,11 @@ import type { Base1Column, Row } from "./types";
  * congelar, ocultar), ordenação por clique, redimensionamento por arraste, colunas congeladas (sticky),
  * linhas zebradas com destaque e tooltip do valor.
  */
-export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelect, onOpen, frozen, onFreeze, onHide, onResize, onAutoFit, onFilter, density, footer }: {
+export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSelect, onOpen, frozen, onFreeze, onHide, onResize, onAutoFit, onFilter, density, footer, actions }: {
   columns: Base1Column[]; rows: Row[]; loading?: boolean; sort?: { key: string; dir: "asc" | "desc" }; onSort?: (key: string) => void;
   selected: Set<string>; onSelect: (ids: Set<string>) => void; onOpen?: (r: Row) => void; frozen: number; onFreeze: (n: number) => void; onHide: (key: string) => void;
   onResize: (key: string, width: number) => void; onAutoFit: (key: string) => void; onFilter?: (key: string) => void; density?: "compact" | "normal"; footer?: React.ReactNode;
+  /** ações por linha (menu ⋮ na última coluna) */ actions?: (row: Row) => { label: string; onClick: () => void; danger?: boolean }[];
 }) {
   const key = (r: Row) => String(r["id"]);
   const allOn = rows.length > 0 && rows.every((r) => selected.has(key(r)));
@@ -57,15 +58,17 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
             </div>
             <span role="separator" aria-label={`Redimensionar ${c.label}`} onMouseDown={(e) => startResize(e, c)} className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 hover:bg-brand-300 hover:opacity-100" />
           </th>); })}
+        {actions && <th className="w-12 border-b bg-white px-2 py-2 text-right font-semibold text-slate-700">Ação</th>}
       </tr></thead>
       <tbody>
-        {loading && rows.length === 0 && <tr><td colSpan={columns.length + 1} className="py-10 text-center"><Spinner className="mx-auto" /></td></tr>}
-        {!loading && rows.length === 0 && <tr><td colSpan={columns.length + 1}><Empty /></td></tr>}
+        {loading && rows.length === 0 && <tr><td colSpan={columns.length + 2} className="py-10 text-center"><Spinner className="mx-auto" /></td></tr>}
+        {!loading && rows.length === 0 && <tr><td colSpan={columns.length + 2}><Empty /></td></tr>}
         {rows.map((r, ri) => { const id = key(r); const on = selected.has(id); return (
           <tr key={id} data-testid="b1-row" className={cn("group/row", on ? "bg-brand-50" : ri % 2 === 1 ? "bg-slate-50/60" : "bg-white", "hover:bg-sky-50")}>
             <td className={cn("sticky left-0 z-10 border-b border-slate-100 px-2", pad, on ? "bg-brand-50" : ri % 2 === 1 ? "bg-slate-50" : "bg-white")}><input type="checkbox" aria-label="Selecionar linha" checked={on} onChange={() => toggle(id)} className="h-4 w-4 rounded-full accent-brand-500" /></td>
             {columns.map((c, i) => { const isFrozen = i < frozen; const t = cellText(c, r); return (
               <td key={c.key} title={t} onClick={() => onOpen?.(r)} onDoubleClick={() => onOpen?.(r)} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : {}), ...(isFrozen ? { left: lefts[c.key] ?? 0 } : {}) }} className={cn("border-b border-slate-100 px-2 text-slate-700 whitespace-nowrap", pad, onOpen && "cursor-pointer", c.width && "truncate", isFrozen && "sticky z-10 border-r", isFrozen && (on ? "bg-brand-50" : ri % 2 === 1 ? "bg-slate-50" : "bg-white"), c.align === "right" && "text-right tabular-nums")}>{c.render ? c.render(r) : t || <span className="text-slate-400">–</span>}</td>); })}
+            {actions && <td className={cn("border-b border-slate-100 px-2 text-right", pad)}>{(() => { const acts = actions(r); return acts.length ? <B1Popover className="w-44 p-1" trigger={<button type="button" aria-label="Ações" className="rounded-full p-1 text-slate-500 hover:bg-slate-200"><MoreVertical className="h-4 w-4" /></button>}>{acts.map((a) => <button key={a.label} type="button" onClick={a.onClick} className={cn("block w-full rounded-md px-2 py-1.5 text-left text-[12.5px] hover:bg-slate-100", a.danger && "text-red-600")}>{a.label}</button>)}</B1Popover> : null; })()}</td>}
           </tr>); })}
       </tbody>
       {footer && <tfoot className="bg-slate-50 font-semibold">{footer}</tfoot>}

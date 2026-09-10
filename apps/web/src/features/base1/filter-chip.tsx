@@ -15,7 +15,7 @@ import type { Base1FilterDef, FilterValue, DistinctValue } from "./types";
  * pesquisa e lista de valores distintos com seleção múltipla ("(Selecionar Tudo)"), ou campo de valor para
  * operadores que não usam lista. Cancelar descarta; OK aplica.
  */
-export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenChange }: { f: Base1FilterDef; value: FilterValue | undefined; onApply: (v: FilterValue) => void; onClear: () => void; distinct?: (search: string) => Promise<DistinctValue[]>; open?: boolean; onOpenChange?: (o: boolean) => void }) {
+export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenChange, scope }: { f: Base1FilterDef; value: FilterValue | undefined; onApply: (v: FilterValue) => void; onClear: () => void; distinct?: (search: string) => Promise<DistinctValue[]>; open?: boolean; onOpenChange?: (o: boolean) => void; /** identifica a tela/tenant/fazenda de origem dos valores (chave de cache) */ scope?: string }) {
   const [localOpen, setLocalOpen] = React.useState(false);
   const isOpen = open ?? localOpen; const setOpen = onOpenChange ?? setLocalOpen;
   const [draft, setDraft] = React.useState<FilterValue>(value ?? emptyValue(f));
@@ -25,7 +25,7 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
   const listCapable = f.kind === "enum" || f.kind === "ref" || f.kind === "boolean" || (f.mode === "advanced" && (f.kind === "text" || f.kind === "number") && Boolean(distinct));
   const useList = listCapable && (f.mode === "simple" || isListOperator(draft.op) || draft.op === "eq" || draft.op === "ne");
   const q = useQuery({
-    queryKey: ["b1-distinct", f.key, f.resource, search, isOpen],
+    queryKey: ["b1-distinct", scope ?? "", f.key, f.resource, f.resourceFilter ?? null, search],
     queryFn: async (): Promise<DistinctValue[]> => {
       if (f.options) return f.options.filter((o) => !search || o.label.toLowerCase().includes(search.toLowerCase()));
       if (f.kind === "boolean") return [{ value: "true", label: "Sim" }, { value: "false", label: "Não" }];

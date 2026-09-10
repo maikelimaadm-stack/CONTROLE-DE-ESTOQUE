@@ -52,7 +52,10 @@ export function FormLayoutPage({ p, resourceLabel, backHref }: { p: ScreenPrefs<
   /** coloca o campo na linha (ou em nova linha) do card; respeita o máximo por linha */
   const place = (fid: string, target: { cardId: string; rowIdx?: number; before?: string }) => {
     if (!editing) return;
-    setCards((cs) => { const s = strip(cs, fid); return s.map((c) => { if (c.id !== target.cardId) return c; const rows = c.rows.map((r) => ({ ...r, fieldIds: [...r.fieldIds] })); const max = MAX_FIELDS_PER_ROW[c.colSpan]; const row = target.rowIdx !== undefined ? rows[target.rowIdx] : undefined; if (row) { if (row.fieldIds.length >= max) { toast.warning(`Esta linha já tem ${max} campos`); return c; } const at = target.before ? row.fieldIds.indexOf(target.before) : -1; if (at >= 0) row.fieldIds.splice(at, 0, fid); else row.fieldIds.push(fid); } else rows.push({ id: uid("r"), fieldIds: [fid] }); return { ...c, rows: rows.filter((r) => r.fieldIds.length) }; }); });
+    // verifica a capacidade da linha de destino ANTES de retirar o campo da posição atual (rejeição não perde o campo)
+    const dest = l.cards.find((c) => c.id === target.cardId); const destRow = dest && target.rowIdx !== undefined ? dest.rows[target.rowIdx] : undefined;
+    if (dest && destRow && !destRow.fieldIds.includes(fid) && destRow.fieldIds.length >= MAX_FIELDS_PER_ROW[dest.colSpan]) { toast.warning(`Esta linha já tem ${MAX_FIELDS_PER_ROW[dest.colSpan]} campos`); return; }
+    setCards((cs) => { const s = strip(cs, fid); return s.map((c) => { if (c.id !== target.cardId) return c; const rows = c.rows.map((r) => ({ ...r, fieldIds: [...r.fieldIds] })); const row = target.rowIdx !== undefined ? rows[target.rowIdx] : undefined; if (row) { const at = target.before ? row.fieldIds.indexOf(target.before) : -1; if (at >= 0) row.fieldIds.splice(at, 0, fid); else row.fieldIds.push(fid); } else rows.push({ id: uid("r"), fieldIds: [fid] }); return { ...c, rows: rows.filter((r) => r.fieldIds.length) }; }); });
     update((x) => ({ ...x, hiddenFieldIds: x.hiddenFieldIds.filter((h) => h !== fid) }));
     setSel(null); setDrag(null);
   };

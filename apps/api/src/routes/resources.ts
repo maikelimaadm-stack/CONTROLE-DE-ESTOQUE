@@ -237,6 +237,8 @@ export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, field: s
   const b = new SqlBuilder(); const where: string[] = [];
   if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(t.organization_id is null or t.organization_id = ${b.add(ctx.orgId)})` : `t.organization_id = ${b.add(ctx.orgId)}`);
   if (def.softDelete) where.push("t.deleted_at is null");
+  // mesmo recorte da listagem: fazenda ativa e fazendas do vínculo
+  if (def.farmScoped && ctx.farmId && existing.has("farm_id")) where.push(`t.farm_id = ${b.add(ctx.farmId)}`);
   if (def.farmScoped && ctx.membership.farmIds.length && existing.has("farm_id")) where.push(`t.farm_id = any(${b.add(ctx.membership.farmIds)}::uuid[])`);
   const col = `t.${ident(f.name)}`;
   const rdef = f.type === "ref" && f.ref ? getResource(f.ref.resource) : undefined;
