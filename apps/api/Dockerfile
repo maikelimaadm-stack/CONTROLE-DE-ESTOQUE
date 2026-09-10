@@ -9,7 +9,7 @@ COPY apps/api ./apps/api
 COPY supabase ./supabase
 RUN pnpm install --frozen-lockfile --filter @agro/api... 
 RUN pnpm --filter @agro/shared build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build && pnpm --filter @agro/api build
-RUN pnpm --filter @agro/api... deploy --prod /out
+RUN pnpm --filter @agro/api deploy --prod --legacy /out
 
 FROM node:22-alpine
 WORKDIR /app
