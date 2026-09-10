@@ -197,7 +197,9 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("integration.csv_export", "Exportações CSV", "Integrações", ["view", "export"]),
   // Administração do tenant
   R("audit_logs", "Auditoria", "Administração", ["view"]),
-  R("notifications", "Notificações", "Administração", ["view"])
+  R("notifications", "Notificações", "Administração", ["view"]),
+  R("screen_layouts", "Personalização de Telas (padrão da organização)", "Administração", ["edit"]),
+  R("saved_reports", "Relatórios Personalizados", "Relatórios", ["view", "create", "edit", "delete", "share"])
 ];
 
 export const ACTION_LABELS: Record<string, string> = {

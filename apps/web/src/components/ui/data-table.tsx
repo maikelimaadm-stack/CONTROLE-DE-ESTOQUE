@@ -4,7 +4,7 @@ import { ChevronLeft, ChevronRight, ArrowUpDown, Download, Printer } from "lucid
 import { Button, NativeSelect, Spinner, Empty } from "./index";
 import { cn } from "@/lib/utils";
 
-export interface Column<T> { key: string; label: string; render?: (row: T) => React.ReactNode; className?: string; sortable?: boolean; align?: "right" | "left" | "center" }
+export interface Column<T> { key: string; label: string; render?: (row: T) => React.ReactNode; className?: string; sortable?: boolean; align?: "right" | "left" | "center"; /** largura fixa em px (preferência do usuário) */ width?: number }
 export interface DataTableProps<T> {
   columns: Column<T>[]; rows: T[]; total?: number; page?: number; pageSize?: number; onPage?: (p: number) => void; onPageSize?: (s: number) => void;
   sort?: { key: string; dir: "asc" | "desc" }; onSort?: (key: string) => void; loading?: boolean; rowKey?: (r: T) => string; actions?: (row: T) => React.ReactNode;
@@ -27,7 +27,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, rows, to
         <table className="table-dense w-full text-[12.5px]">
           <thead><tr>
             {selectable && <th className="w-6"><input type="checkbox" checked={rows.length > 0 && rows.every((r) => selected?.has(key(r)))} onChange={toggleAll} /></th>}
-            {columns.map((c) => <th key={c.key} className={cn(c.align === "right" && "text-right", c.className)}>{c.sortable && onSort ? <button className="inline-flex items-center gap-1 hover:text-brand-700" onClick={() => onSort(c.key)}>{c.label}<ArrowUpDown className={cn("h-3 w-3", sort?.key === c.key ? "text-brand-700" : "text-slate-300")} /></button> : c.label}</th>)}
+            {columns.map((c) => <th key={c.key} style={c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : undefined} className={cn(c.align === "right" && "text-right", c.className)}>{c.sortable && onSort ? <button className="inline-flex items-center gap-1 hover:text-brand-700" onClick={() => onSort(c.key)}>{c.label}<ArrowUpDown className={cn("h-3 w-3", sort?.key === c.key ? "text-brand-700" : "text-slate-300")} /></button> : c.label}</th>)}
             {actions && <th className="w-10 text-right">Ação</th>}
           </tr></thead>
           <tbody>
@@ -35,7 +35,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, rows, to
             {!loading && rows.length === 0 && <tr><td colSpan={columns.length + 2}><Empty text={emptyText} /></td></tr>}
             {!loading && rows.map((r) => <tr key={key(r)} className={cn(onRowClick && "cursor-pointer", selected?.has(key(r)) && "bg-brand-50")} onClick={() => onRowClick?.(r)}>
               {selectable && <td onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={selected?.has(key(r)) ?? false} onChange={() => { if (!onSelect) return; const n = new Set(selected); if (n.has(key(r))) n.delete(key(r)); else n.add(key(r)); onSelect(n); }} /></td>}
-              {columns.map((c) => <td key={c.key} className={cn(c.align === "right" && "num", c.className)}>{c.render ? c.render(r) : String(r[c.key] ?? "")}</td>)}
+              {columns.map((c) => <td key={c.key} style={c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : undefined} className={cn(c.align === "right" && "num", c.width && "truncate", c.className)}>{c.render ? c.render(r) : String(r[c.key] ?? "")}</td>)}
               {actions && <td className="text-right" onClick={(e) => e.stopPropagation()}>{actions(r)}</td>}
             </tr>)}
           </tbody>

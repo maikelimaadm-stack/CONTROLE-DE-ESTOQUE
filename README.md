@@ -38,6 +38,7 @@ Detalhes em `docs/TESTING.md`. CI em `.github/workflows/ci.yml` (lint, typecheck
 | `docs/DOMAIN-MODEL.md` | Entidades e relacionamentos por módulo |
 | `docs/WORKFLOWS.md` | Fluxos: compras, estoque, financeiro, vendas, pecuária, OS, RH |
 | `docs/DEPLOYMENT.md` | Supabase, Railway, Vercel, variáveis, migrations em produção |
+| `docs/PERSONALIZACAO.md` | Modelo base: preferências de listagem, filtros avançados, filtros salvos, layout de formulário, padrão da organização |
 | `docs/TESTING.md` | Estratégia e como rodar cada camada de teste |
 | `docs/DECISIONS.md` | ADRs: onde divergimos da referência e por quê |
 | `docs/reference/` | Inventário do sistema de referência (455 telas, 120 relatórios, 14 dashboards, 666 permissões, regras) |
