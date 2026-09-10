@@ -8,9 +8,14 @@ import { Plus, MoreVertical, Trash2 } from "lucide-react";
 import { api, qs, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, monthStartISO, todayISO } from "@/lib/utils";
-import { Button, Card, CardHeader, CardBody, Input, NativeSelect, Field, Menu, Confirm, Badge, Spinner, ErrorBox } from "@/components/ui";
+import { Button, Card, CardHeader, CardBody, Input, NativeSelect, Field, Menu, Confirm, Badge, Spinner, ErrorBox, Dialog } from "@/components/ui";
 import { DataTable, type Column } from "@/components/ui/data-table";
 import { RefSelect } from "@/components/ui/ref-select";
+import { Bookmark } from "lucide-react";
+import type { FilterKind } from "@agro/shared";
+import { useListPrefs, applyListColumns } from "@/features/listing/list-prefs";
+import { ListSettingsDialog, ListSettingsButton } from "@/features/listing/list-settings";
+import { CardsView } from "@/features/listing/cards-view";
 
 export type Row = Record<string, unknown>;
 export const statusTone = (s: string): "green" | "red" | "amber" | "slate" | "blue" | "violet" => s === "confirmed" || s === "paid" || s === "finished" || s === "signed" ? "green" : s === "cancelled" || s === "reversed" ? "red" : s === "pending" || s === "draft" || s === "awaiting_signature" || s === "open" ? "amber" : "slate";
@@ -18,32 +23,51 @@ export const STATUS_PT: Record<string, string> = { confirmed: "Confirmado", canc
 export const StatusBadge = ({ s }: { s: string }) => <Badge tone={statusTone(s)}>{STATUS_PT[s] ?? s}</Badge>;
 
 export interface Filter { name: string; label: string; type: "date" | "text" | "select" | "ref"; resource?: string; options?: { value: string; label: string }[]; extra?: Record<string, string> }
-export function useFilters(initial: Record<string, string> = {}) { const [f, setF] = React.useState<Record<string, string>>(initial); const set = (k: string, v: string) => setF((o) => ({ ...o, [k]: v })); return { f, set, reset: () => setF(initial) }; }
-export function FilterBar({ filters, f, set, reset, onApply }: { filters: Filter[]; f: Record<string, string>; set: (k: string, v: string) => void; reset: () => void; onApply: () => void }) {
+export function useFilters(initial: Record<string, string> = {}) { const [f, setF] = React.useState<Record<string, string>>(initial); const set = (k: string, v: string) => setF((o) => ({ ...o, [k]: v })); return { f, set, reset: () => setF(initial), setAll: (v: Record<string, string>) => setF(v) }; }
+export function FilterBar({ filters, f, set, reset, onApply, visible, saved, onSaveFilter, onDeleteFilter, onApplySaved }: { filters: Filter[]; f: Record<string, string>; set: (k: string, v: string) => void; reset: () => void; onApply: () => void; visible?: string[]; saved?: { name: string; values: Record<string, string> }[]; onSaveFilter?: (name: string) => void; onDeleteFilter?: (name: string) => void; onApplySaved?: (values: Record<string, string>) => void }) {
+  const shown = visible ? filters.filter((x) => visible.includes(x.name)) : filters;
+  const [saveOpen, setSaveOpen] = React.useState(false); const [saveName, setSaveName] = React.useState("");
   return <form className="mb-3 grid grid-cols-12 gap-2 no-print" onSubmit={(e) => { e.preventDefault(); onApply(); }}>
-    {filters.map((x) => <Field key={x.name} label={x.label} span={x.type === "text" ? 3 : 2}>
+    {shown.map((x) => <Field key={x.name} label={x.label} span={x.type === "text" ? 3 : 2}>
       {x.type === "date" ? <Input type="date" value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} /> : x.type === "select" ? <NativeSelect value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)}><option value="">Todos</option>{x.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect> : x.type === "ref" ? <RefSelect resource={x.resource!} value={f[x.name] ?? null} onChange={(v) => set(x.name, v ?? "")} placeholder="Todos" filter={x.extra} /> : <Input value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} />}
     </Field>)}
-    <div className="col-span-12 flex items-end gap-2 md:col-span-2"><Button type="submit" size="sm">Filtrar</Button><Button type="button" size="sm" variant="secondary" onClick={reset}>Limpar</Button></div>
+    <div className="col-span-12 flex flex-wrap items-end gap-2 md:col-span-3"><Button type="submit" size="sm">Filtrar</Button><Button type="button" size="sm" variant="secondary" onClick={reset}>Limpar</Button>
+      {onSaveFilter && <Menu trigger={<Button type="button" size="sm" variant="outline" title="Filtros salvos"><Bookmark className="h-3.5 w-3.5" /> Filtros salvos{saved?.length ? ` (${saved.length})` : ""}</Button>} items={[{ label: "Salvar filtro atual…", onClick: () => setSaveOpen(true) }, ...(saved ?? []).map((s) => ({ label: `Aplicar: ${s.name}`, onClick: () => onApplySaved?.(s.values) })), ...(saved ?? []).map((s) => ({ label: `Excluir: ${s.name}`, danger: true, onClick: () => onDeleteFilter?.(s.name) }))]} />}
+    </div>
+    {onSaveFilter && <Dialog open={saveOpen} onOpenChange={setSaveOpen} title="Salvar filtro" size="sm" footer={<><Button variant="outline" onClick={() => setSaveOpen(false)}>Cancelar</Button><Button disabled={!saveName.trim()} onClick={() => { onSaveFilter(saveName.trim()); setSaveOpen(false); setSaveName(""); }}>Salvar</Button></>}><Field label="Nome do filtro" span={12}><Input value={saveName} onChange={(e) => setSaveName(e.target.value)} maxLength={60} autoFocus /></Field></Dialog>}
   </form>;
 }
 
 /** Lista genérica de documentos transacionais (com cancelamento e detalhe). */
 export function DocList({ title, endpoint, base, columns, filters, canCreate, canCancel, cancelPath, extraActions, totals, defaultFilters, rowActions, createLabel = "Adicionar Novo", hideNew }: { title: string; endpoint: string; base: string; columns: Column<Row>[]; filters?: Filter[]; canCreate?: boolean; canCancel?: boolean; cancelPath?: (id: string) => string; extraActions?: React.ReactNode; totals?: (t: Record<string, string>) => React.ReactNode; defaultFilters?: Record<string, string>; rowActions?: (r: Row) => { label: string; onClick?: () => void; href?: string; danger?: boolean }[]; createLabel?: string; hideNew?: boolean }) {
   const router = useRouter(); const qc = useQueryClient();
-  const { f, set, reset } = useFilters(defaultFilters ?? {}); const [applied, setApplied] = React.useState(defaultFilters ?? {});
-  const [page, setPage] = React.useState(1); const [pageSize, setPageSize] = React.useState(20); const [cancel, setCancel] = React.useState<string | null>(null);
-  const q = useQuery({ queryKey: ["doc", endpoint, applied, page, pageSize], queryFn: () => api<{ items: Row[]; total: number; totals?: Record<string, string> }>(`${endpoint}${qs({ ...applied, page, pageSize })}`) });
+  const { f, set, reset, setAll } = useFilters(defaultFilters ?? {}); const [applied, setApplied] = React.useState(defaultFilters ?? {});
+  const [page, setPage] = React.useState(1); const [pageSize, setPageSize] = React.useState<number | undefined>(); const [cancel, setCancel] = React.useState<string | null>(null); const [settings, setSettings] = React.useState(false);
+  // preferências da listagem ("modelo base"): módulo derivado do endpoint (ex.: /api/stock/entries → stock.entries)
+  const moduleId = React.useMemo(() => endpoint.replace(/^\/api\//, "").replace(/[^a-z0-9_.-]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 64), [endpoint]);
+  const colInfo = React.useMemo(() => columns.map((c) => ({ key: c.key, label: c.label })), [columns]);
+  const kindOf = (t: Filter["type"]): FilterKind => t === "date" ? "date" : t === "select" ? "enum" : t === "ref" ? "ref" : "text";
+  const filterInfo = React.useMemo(() => (filters ?? []).map((x) => ({ key: x.name, label: x.label, kind: kindOf(x.type) })), [filters]);
+  const p = useListPrefs(moduleId, colInfo, filterInfo);
+  const effPageSize = pageSize ?? p.prefs.pageSize ?? 20;
+  const q = useQuery({ queryKey: ["doc", endpoint, applied, page, effPageSize], queryFn: () => api<{ items: Row[]; total: number; totals?: Record<string, string> }>(`${endpoint}${qs({ ...applied, page, pageSize: effPageSize })}`) });
   const cancelMut = useMutation({ mutationFn: (id: string) => api((cancelPath ?? ((i) => `${endpoint}/${i}/cancel`))(id), { method: "POST", body: { reason: "Cancelado pelo usuário" } }), onSuccess: () => { toast.success("Documento cancelado"); setCancel(null); void qc.invalidateQueries({ queryKey: ["doc", endpoint] }); }, onError: (e) => toast.error((e as Error).message) });
+  const cols = applyListColumns(columns, p.prefs);
+  const acts = (r: Row) => <Menu trigger={<button className="rounded p-1 hover:bg-slate-100" aria-label="Ações"><MoreVertical className="h-4 w-4" /></button>} items={[{ label: "Visualizar", href: `${base}/${r["id"]}` }, ...(rowActions?.(r) ?? []), ...(canCancel && r["status"] !== "cancelled" && r["status"] !== "reversed" ? [{ label: "Cancelar", danger: true, onClick: () => setCancel(String(r["id"])) }] : [])]} />;
+  const onPageSize = (s: number) => { setPageSize(s); setPage(1); p.update((x) => ({ ...x, pageSize: s })); };
   return <Card>
-    <CardHeader title={title} actions={<>{extraActions}{canCreate && !hideNew && <Link href={`${base}/new`}><Button size="sm"><Plus className="h-3.5 w-3.5" /> {createLabel}</Button></Link>}</>} />
+    <CardHeader title={title} actions={<>{extraActions}<ListSettingsButton onClick={() => setSettings(true)} customized={p.source !== "default"} />{canCreate && !hideNew && <Link href={`${base}/new`}><Button size="sm"><Plus className="h-3.5 w-3.5" /> {createLabel}</Button></Link>}</>} />
     <CardBody>
-      {filters && <FilterBar filters={filters} f={f} set={set} reset={() => { reset(); setApplied(defaultFilters ?? {}); setPage(1); }} onApply={() => { setApplied({ ...f }); setPage(1); }} />}
+      {filters && <FilterBar filters={filters} f={f} set={set} reset={() => { reset(); setApplied(defaultFilters ?? {}); setPage(1); }} onApply={() => { setApplied({ ...f }); setPage(1); }} visible={p.prefs.filters.visible}
+        saved={p.prefs.filters.saved} onApplySaved={(v) => { setAll({ ...(defaultFilters ?? {}), ...v }); setApplied({ ...(defaultFilters ?? {}), ...v }); setPage(1); }}
+        onSaveFilter={(name) => p.update((x) => ({ ...x, filters: { ...x.filters, saved: [...(x.filters.saved ?? []).filter((s) => s.name !== name), { name, values: Object.fromEntries(Object.entries(f).filter(([, v]) => v !== "")) }] } }))}
+        onDeleteFilter={(name) => p.update((x) => ({ ...x, filters: { ...x.filters, saved: (x.filters.saved ?? []).filter((s) => s.name !== name) } }))} />}
       {q.error && <ErrorBox error={q.error} />}
-      <DataTable columns={columns} rows={q.data?.items ?? []} total={q.data?.total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} loading={q.isLoading} onRowClick={(r) => router.push(`${base}/${r["id"]}`)}
-        footer={totals && q.data?.totals ? totals(q.data.totals) : undefined}
-        actions={(r) => <Menu trigger={<button className="rounded p-1 hover:bg-slate-100"><MoreVertical className="h-4 w-4" /></button>} items={[{ label: "Visualizar", href: `${base}/${r["id"]}` }, ...(rowActions?.(r) ?? []), ...(canCancel && r["status"] !== "cancelled" && r["status"] !== "reversed" ? [{ label: "Cancelar", danger: true, onClick: () => setCancel(String(r["id"])) }] : [])]} />} />
+      {p.prefs.view.mode === "cards"
+        ? <><CardsView rows={q.data?.items ?? []} columns={columns} fields={p.prefs.view.cardFields} perRow={p.prefs.view.cardsPerRow ?? 3} loading={q.isLoading} onClick={(r) => router.push(`${base}/${r["id"]}`)} actions={acts} /><DataTable columns={[]} rows={[]} total={q.data?.total} page={page} pageSize={effPageSize} onPage={setPage} onPageSize={onPageSize} caption={`N. Registros: ${q.data?.total ?? 0}`} emptyText=" " /></>
+        : <DataTable columns={cols} rows={q.data?.items ?? []} total={q.data?.total} page={page} pageSize={effPageSize} onPage={setPage} onPageSize={onPageSize} loading={q.isLoading} onRowClick={(r) => router.push(`${base}/${r["id"]}`)} footer={totals && q.data?.totals ? totals(q.data.totals) : undefined} actions={acts} />}
       <Confirm open={Boolean(cancel)} onOpenChange={() => setCancel(null)} title="Cancelar documento" text="O cancelamento estorna os lançamentos vinculados (estoque/financeiro) e fica registrado na auditoria. Continuar?" danger loading={cancelMut.isPending} onConfirm={() => cancel && cancelMut.mutate(cancel)} />
+      <ListSettingsDialog open={settings} onOpenChange={setSettings} columns={colInfo} filters={filterInfo} p={p} supportsFilterOperators={false} />
     </CardBody>
   </Card>;
 }

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getResource, RESOURCES, type FieldDef, type ResourceDef } from "@agro/domain";
-import { isISODate } from "@agro/shared";
+import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, relativeDateRange } from "@agro/shared";
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
 import { runService, nextCode, requirePermission } from "../lib/service.js";
@@ -46,6 +46,47 @@ async function checkColumns(ctx: ServiceCtx, def: ResourceDef): Promise<Set<stri
   return new Set(r.rows.map((x) => x.column_name));
 }
 
+const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+/**
+ * Filtro avançado `campo__operador=valor` (ver @agro/shared/preferences). O nome da coluna vem SEMPRE da definição
+ * declarativa (nunca do cliente) e os valores são parametrizados; operador desconhecido é ignorado.
+ */
+export function advancedClause(f: FieldDef, op: string, raw: string, b: SqlBuilder): string | null {
+  const kind = filterKindOf(f.type);
+  if (!isValidOperator(kind, op)) return null;
+  const col = ident(f.name);
+  if (op === "is_empty") return kind === "text" ? `(${col} is null or ${col}::text = '')` : `${col} is null`;
+  if (op === "is_not_empty") return kind === "text" ? `(${col} is not null and ${col}::text <> '')` : `${col} is not null`;
+  if (kind === "text") {
+    const v = escapeLike(raw);
+    switch (op) {
+      case "contains": return `${col}::text ilike ${b.add(`%${v}%`)}`;
+      case "not_contains": return `(${col} is null or ${col}::text not ilike ${b.add(`%${v}%`)})`;
+      case "starts_with": return `${col}::text ilike ${b.add(`${v}%`)}`;
+      case "ends_with": return `${col}::text ilike ${b.add(`%${v}`)}`;
+      default: return `${col}::text = ${b.add(raw)}`;
+    }
+  }
+  if (kind === "number") {
+    const n = (s: string) => { if (!/^-?\d+(\.\d+)?$/.test(s.trim())) throw validation(`Valor numérico inválido no filtro ${f.label}`); return s.trim(); };
+    if (op === "between") { const [a, c] = decodeRange(raw); return `${col} between ${b.add(n(a))} and ${b.add(n(c))}`; }
+    const cmp: Record<string, string> = { eq: "=", ne: "<>", gt: ">", gte: ">=", lt: "<", lte: "<=" };
+    return `${col} ${cmp[op] ?? "="} ${b.add(n(raw))}`;
+  }
+  if (kind === "date") {
+    const d = (s: string) => { if (!isISODate(s)) throw validation(`Data inválida no filtro ${f.label} (use AAAA-MM-DD)`); return s; };
+    const rel = relativeDateRange(op, new Date().toISOString().slice(0, 10));
+    if (rel) return `${col} between ${b.add(rel[0])} and ${b.add(rel[1])}`;
+    if (op === "between") { const [a, c] = decodeRange(raw); return `${col} between ${b.add(d(a))} and ${b.add(d(c))}`; }
+    if (op === "before") return `${col} < ${b.add(d(raw))}`;
+    if (op === "after") return `${col} > ${b.add(d(raw))}`;
+    return `${col} = ${b.add(d(raw))}`;
+  }
+  if (kind === "boolean") return `${col} = ${b.add(raw === "true")}`;
+  if (f.type === "tags") return op === "ne" ? `not (${b.add(raw)} = any(${col}))` : `${b.add(raw)} = any(${col})`;
+  return op === "ne" ? `(${col} is null or ${col} <> ${b.add(raw)})` : `${col} = ${b.add(raw)}`;
+}
+
 export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Record<string, unknown>) {
   const q = pageQuerySchema.parse(query);
   const filters = extractFilters(q as Record<string, unknown>);
@@ -62,6 +103,8 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
     if (sf.length) { const p = b.add(`%${q.search}%`); where.push("(" + sf.map((c) => `${ident(c)}::text ilike ${p}`).join(" or ") + ")"); }
   }
   for (const [k, v] of Object.entries(filters)) {
+    const adv = parseFilterKey(k);
+    if (adv) { const f = def.fields.find((x) => x.name === adv.field); if (f && existing.has(adv.field) && !Array.isArray(v)) { const clause = advancedClause(f, adv.op, v, b); if (clause) where.push(clause); } continue; }
     const f = def.fields.find((x) => x.name === k);
     if (f && existing.has(k)) {
       if (Array.isArray(v)) where.push(`${ident(k)} = any(${b.add(v)})`);
