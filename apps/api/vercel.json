@@ -1,0 +1,4 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "ignoreCommand": "echo 'apps/api e implantada no Railway (ver docs/DEPLOYMENT.md); build Vercel ignorado' && exit 0"
+}

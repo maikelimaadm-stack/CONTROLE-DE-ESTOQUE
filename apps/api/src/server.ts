@@ -1,0 +1,47 @@
+import Fastify, { type FastifyInstance } from "fastify";
+import cors from "@fastify/cors";
+import helmet from "@fastify/helmet";
+import rateLimit from "@fastify/rate-limit";
+import { createPool, type Db } from "@agro/db";
+import { loadConfig, type Config } from "./config.js";
+import authPlugin from "./plugins/auth.js";
+import errorsPlugin from "./plugins/errors.js";
+import healthRoutes from "./routes/health.js";
+import authRoutes from "./routes/auth.js";
+import resourceRoutes from "./routes/resources.js";
+import adminRoutes from "./routes/admin.js";
+import stockRoutes from "./routes/stock.js";
+import supplyRoutes from "./routes/supply.js";
+import financialRoutes from "./routes/financial.js";
+import salesRoutes from "./routes/sales.js";
+import fleetHrRoutes from "./routes/fleet-hr.js";
+import livestockRoutes from "./routes/livestock.js";
+import reportRoutes from "./routes/reports.js";
+import dashboardRoutes from "./routes/dashboards.js";
+
+export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolean } = {}): Promise<FastifyInstance> {
+  const config = opts.config ?? loadConfig();
+  const app = Fastify({ logger: opts.logger === false ? false : { level: config.API_LOG_LEVEL }, bodyLimit: 5 * 1024 * 1024, trustProxy: true });
+  const db = opts.db ?? createPool(config.DATABASE_URL);
+  app.decorate("db", db);
+  app.decorate("config", config);
+  await app.register(helmet, { contentSecurityPolicy: false });
+  await app.register(cors, { origin: config.WEB_ORIGIN.split(",").map((s) => s.trim()), credentials: true, allowedHeaders: ["Authorization", "Content-Type", "X-Org-Id", "X-Farm-Id", "Idempotency-Key"] });
+  await app.register(rateLimit, { max: config.RATE_LIMIT_MAX, timeWindow: "1 minute" });
+  await app.register(errorsPlugin);
+  await app.register(authPlugin);
+  await app.register(healthRoutes);
+  await app.register(authRoutes, { prefix: "/api" });
+  await app.register(resourceRoutes, { prefix: "/api" });
+  await app.register(adminRoutes, { prefix: "/api" });
+  await app.register(stockRoutes, { prefix: "/api" });
+  await app.register(supplyRoutes, { prefix: "/api" });
+  await app.register(financialRoutes, { prefix: "/api" });
+  await app.register(salesRoutes, { prefix: "/api" });
+  await app.register(fleetHrRoutes, { prefix: "/api" });
+  await app.register(livestockRoutes, { prefix: "/api" });
+  await app.register(reportRoutes, { prefix: "/api" });
+  await app.register(dashboardRoutes, { prefix: "/api" });
+  app.addHook("onClose", async () => { if (!opts.db) await db.end(); });
+  return app;
+}

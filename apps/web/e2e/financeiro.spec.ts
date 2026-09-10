@@ -1,0 +1,27 @@
+import { test, expect } from "@playwright/test";
+import { login, uniq } from "./helpers";
+test("título a pagar: criação com rateio, baixa parcial e cancelamento de baixa", async ({ page }) => {
+  await login(page); const num = uniq("NF");
+  await page.goto("/financeiro/contas-a-pagar/new");
+  await page.getByLabel(/^Nº Documento/).fill(num);
+  const pick = async (label: string, s: string) => { await page.locator("label", { hasText: label }).first().locator("..").locator("button").first().click(); await page.getByPlaceholder("Pesquisar…").fill(s); await page.getByRole("button", { name: new RegExp(s, "i") }).first().click(); };
+  await pick("Fornecedor", "Cerrado");
+  await page.getByLabel(/^Valor\b/).first().fill("1000");
+  await page.getByLabel(/^Observação/).fill("Título E2E");
+  const rateio = page.locator("table").last().locator("tbody tr").first();
+  await rateio.locator("button").nth(0).click(); await page.getByPlaceholder("Pesquisar…").fill("a"); await page.locator("[data-radix-popper-content-wrapper] button").first().click();
+  await rateio.locator("button").nth(1).click(); await page.getByPlaceholder("Pesquisar…").fill("a"); await page.locator("[data-radix-popper-content-wrapper] button").first().click();
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect(page).toHaveURL(/contas-a-pagar\/[0-9a-f-]{36}$/);
+  await expect(page.getByText("Á vencer").first()).toBeVisible();
+  await page.getByRole("button", { name: "Baixar" }).click();
+  const dlg = page.getByRole("dialog");
+  await dlg.locator("label", { hasText: "Conta bancária" }).locator("..").locator("button").first().click(); await page.getByPlaceholder("Pesquisar…").fill("a"); await page.locator("[data-radix-popper-content-wrapper] button").first().click();
+  await dlg.getByLabel(/^Valor\b/).first().fill("400");
+  await dlg.getByRole("button", { name: "Confirmar baixa" }).click();
+  await expect(page.getByText("Baixa Parcial").first()).toBeVisible();
+  await page.getByRole("tab", { name: /Baixas/ }).click();
+  await page.getByRole("button", { name: "Cancelar baixa" }).click();
+  await page.getByRole("dialog").getByLabel(/^Motivo/).fill("erro de digitação"); await page.getByRole("dialog").getByRole("button", { name: "Confirmar" }).click();
+  await expect(page.getByText("Á vencer").first()).toBeVisible();
+});

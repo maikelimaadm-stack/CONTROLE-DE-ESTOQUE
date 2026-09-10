@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import type { Db } from "./pool.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const MIGRATIONS_DIR = path.resolve(here, "../../../supabase/migrations");
+export const MIGRATIONS_DIR = process.env.MIGRATIONS_DIR ?? path.resolve(here, "../../../supabase/migrations");
 
 export function listMigrations(): { name: string; sql: string }[] {
   return fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith(".sql")).sort().map((name) => ({ name, sql: fs.readFileSync(path.join(MIGRATIONS_DIR, name), "utf8") }));

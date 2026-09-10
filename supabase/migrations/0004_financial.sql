@@ -70,7 +70,7 @@ create table erp.financial_titles (
   source_type text, source_id uuid,            -- invoice, purchase_request, sale, order, earnings, farm_transfer, ...
   version int not null default 1,
   created_by uuid references erp.users(id), created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted_at timestamptz,
-  unique (organization_id, code)
+  unique (organization_id, direction, code)
 );
 create index on erp.financial_titles (organization_id, direction, status, due_date);
 create index on erp.financial_titles (organization_id, person_id);

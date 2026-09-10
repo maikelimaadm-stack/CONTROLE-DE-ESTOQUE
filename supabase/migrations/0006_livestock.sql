@@ -197,7 +197,7 @@ create table erp.animal_movements (
   financial_title_id uuid references erp.financial_titles(id),
   status text not null default 'confirmed' check (status in ('pending','confirmed','cancelled')),
   created_by uuid references erp.users(id), created_at timestamptz not null default now(), updated_at timestamptz not null default now(), deleted_at timestamptz,
-  unique (organization_id, code)
+  unique (organization_id, movement_type, code)
 );
 create index on erp.animal_movements (organization_id, movement_type, movement_date);
 create table erp.animal_movement_items (

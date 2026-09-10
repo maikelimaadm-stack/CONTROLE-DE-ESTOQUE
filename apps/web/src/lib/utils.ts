@@ -1,0 +1,10 @@
+import { clsx, type ClassValue } from "clsx";
+import { twMerge } from "tailwind-merge";
+export const cn = (...i: ClassValue[]) => twMerge(clsx(i));
+export const brl = (v: string | number | null | undefined) => v === null || v === undefined || v === "" ? "—" : new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(v));
+export const num = (v: string | number | null | undefined, d = 2) => v === null || v === undefined || v === "" ? "—" : new Intl.NumberFormat("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }).format(Number(v));
+export const dateBR = (v: string | null | undefined) => { if (!v) return "—"; const s = String(v).slice(0, 10); const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s); return m ? `${m[3]}/${m[2]}/${m[1]}` : String(v); };
+export const dateTimeBR = (v: string | null | undefined) => { if (!v) return "—"; const d = new Date(v); return isNaN(d.getTime()) ? String(v) : d.toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }); };
+export const todayISO = () => new Date().toISOString().slice(0, 10);
+export const monthStartISO = () => todayISO().slice(0, 8) + "01";
+export const yearStartISO = () => todayISO().slice(0, 4) + "-01-01";

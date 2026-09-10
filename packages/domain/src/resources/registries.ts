@@ -59,7 +59,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [REF("category_id", "Categoria", "product_categories", { required: true, list: true, filter: true, span: 4 }), T("name", "Nome", { required: true, list: true, search: true, span: 6 }), active()]
   },
   {
-    key: "measurement_units", label: "Unidade de Medida", labelPlural: "Unidades de Medida", table: "measurement_units", permission: "products", labelField: "symbol", route: "/cadastros/unidades",
+    key: "measurement_units", label: "Unidade de Medida", labelPlural: "Unidades de Medida", table: "measurement_units", permission: "products", labelField: "symbol", route: "/cadastros/unidades", sharedDefaults: true,
     fields: [T("symbol", "Sigla", { required: true, list: true, search: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 6 }), { name: "decimals", label: "Casas decimais", type: "integer", default: 2, min: 0, max: 6, span: 2 }]
   },
   {
@@ -211,15 +211,15 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "title_types", label: "Tipo de Título", labelPlural: "Tipos de Título", table: "title_types", permission: "payables", labelField: "name", route: "/cadastros/tipos-de-titulo",
+    key: "title_types", label: "Tipo de Título", labelPlural: "Tipos de Título", table: "title_types", permission: "payables", labelField: "name", route: "/cadastros/tipos-de-titulo", sharedDefaults: true,
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 6 }), B("is_advance", "É adiantamento", { list: true, span: 3 })]
   },
   {
-    key: "payment_methods", label: "Forma de Pagamento", labelPlural: "Formas de Pagamento", table: "payment_methods", permission: "sales", labelField: "name", route: "/cadastros/formas-de-pagamento",
+    key: "payment_methods", label: "Forma de Pagamento", labelPlural: "Formas de Pagamento", table: "payment_methods", permission: "sales", labelField: "name", route: "/cadastros/formas-de-pagamento", sharedDefaults: true,
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 6 }), active()]
   },
   {
-    key: "equipment_families", label: "Família de Bem", labelPlural: "Famílias de Bens", table: "equipment_families", permission: "equipments", labelField: "name", route: "/cadastros/familias-de-bens",
+    key: "equipment_families", label: "Família de Bem", labelPlural: "Famílias de Bens", table: "equipment_families", permission: "equipments", labelField: "name", route: "/cadastros/familias-de-bens", sharedDefaults: true,
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "default_life_years", label: "Vida útil padrão (anos)", type: "integer", list: true, span: 3 }, { name: "default_depreciation_percent", label: "Depreciação padrão (%)", type: "percent", list: true, span: 3 }]
   },
   {
@@ -249,19 +249,19 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), D("param_date", "Data", { required: true, list: true, span: 2 }), T("responsible", "Responsável", { span: 3 }), T("description", "Descrição", { required: true, list: true, search: true, span: 5 }), { name: "initial_weight", label: "Peso Inicial (kg)", type: "quantity", required: true, list: true, span: 3 }, { name: "final_weight", label: "Peso Final (kg)", type: "quantity", required: true, list: true, span: 3 }]
   },
   {
-    key: "animal_species", label: "Espécie", labelPlural: "Espécies", table: "animal_species", permission: "animals", labelField: "name", route: "/pecuaria/especies",
+    key: "animal_species", label: "Espécie", labelPlural: "Espécies", table: "animal_species", permission: "animals", labelField: "name", route: "/pecuaria/especies", sharedDefaults: true,
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 6 })]
   },
   {
-    key: "animal_categories", label: "Categoria Animal", labelPlural: "Categorias de Animais", table: "animal_categories", permission: "animals", labelField: "name", route: "/pecuaria/categorias",
+    key: "animal_categories", label: "Categoria Animal", labelPlural: "Categorias de Animais", table: "animal_categories", permission: "animals", labelField: "name", route: "/pecuaria/categorias", sharedDefaults: true,
     fields: [REF("species_id", "Espécie", "animal_species", { required: true, list: true, filter: true, span: 3 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), S("sex", "Sexo", [["M", "Macho"], ["F", "Fêmea"]], { list: true, span: 2 }), { name: "min_age_months", label: "Idade mín. (meses)", type: "integer", span: 2 }, { name: "max_age_months", label: "Idade máx. (meses)", type: "integer", span: 2 }, { name: "ua_factor", label: "Fator UA", type: "quantity", default: 1, span: 2 }, REF("next_category_id", "Próxima categoria (evolução)", "animal_categories", { span: 4 })]
   },
   {
-    key: "breeds", label: "Raça", labelPlural: "Raças", table: "breeds", permission: "animals", labelField: "name", route: "/pecuaria/racas",
+    key: "breeds", label: "Raça", labelPlural: "Raças", table: "breeds", permission: "animals", labelField: "name", route: "/pecuaria/racas", sharedDefaults: true,
     fields: [REF("species_id", "Espécie", "animal_species", { list: true, filter: true, span: 4 }), T("name", "Nome", { required: true, list: true, search: true, span: 6 })]
   },
   {
-    key: "identification_types", label: "Tipo de Identificação", labelPlural: "Tipos de Identificação", table: "identification_types", permission: "animals", labelField: "name", route: "/pecuaria/tipos-identificacao",
+    key: "identification_types", label: "Tipo de Identificação", labelPlural: "Tipos de Identificação", table: "identification_types", permission: "animals", labelField: "name", route: "/pecuaria/tipos-identificacao", sharedDefaults: true,
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 6 })]
   },
   {
