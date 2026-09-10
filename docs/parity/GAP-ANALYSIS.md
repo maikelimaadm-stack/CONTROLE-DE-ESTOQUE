@@ -7,7 +7,7 @@ _Gerada a partir de `docs/parity/summary.json` (`node scripts/parity.mjs`). Núm
 - Relatórios da referência: **120** · cobertos: **116/120 (96.7%)** · relatórios no nosso runner: 107
 - Ações observadas (excluindo navegação/marketing): cobertas **282/344 (82.0%)**
 - Páginas web nossas: 107 rotas (App Router) · cadastros declarativos: 63 · permissões: 773 chaves (referência 666)
-- Testes: unit 35 · schema/RLS 6 · API 29 · e2e 8 (todos passando em 10/09/2026)
+- Testes: unitários 29 · schema/RLS 6 · integração API 27 · e2e 8 (todos passando em 10/09/2026)
 
 ## Cobertura por módulo
 | Módulo | Cobertura |

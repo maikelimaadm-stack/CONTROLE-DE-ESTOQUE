@@ -10,4 +10,4 @@
 
 Pré-requisitos locais: Postgres 16 em `TEST_DATABASE_URL` (padrão `postgresql://postgres@127.0.0.1:5433/agro_erp_test`); o setup cria o papel `erp_app_test`. E2E: builds de `@agro/api` e `@agro/web` (`NEXT_PUBLIC_API_URL` apontando para `http://127.0.0.1:3333`), Chromium do Playwright (`PLAYWRIGHT_CHROMIUM` para binário customizado).
 
-Resultados da última execução local (10/09/2026): unit 35 ✓ · schema/RLS 6 ✓ · API 29 ✓ · e2e 8 ✓ · paridade ✓.
+Resultados da última execução local (10/09/2026): unitários 29 ✓ (shared 7, domain 20, api 2) · schema/RLS 6 ✓ · integração API 27 ✓ · e2e 8 ✓ · paridade ✓.
