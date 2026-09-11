@@ -1,51 +1,51 @@
 # Paridade de Campos
 
-_Gerado por `node scripts/parity.mjs` em 2026-09-11 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação)._
+_Gerado por `node scripts/parity.mjs` em 2026-09-11 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
 
 Comparação quantitativa por tela: campos de formulário / filtros / colunas observados na referência × campos declarados no nosso código (registro declarativo de cadastros em packages/domain/src/resources ou `<Field>` nas páginas). A comparação nome-a-nome está em docs/reference/screens/*.md (referência) e nos próprios registries (nosso). Diferenças intencionais: campos de marketing/licença omitidos; campos calculados exibidos no detalhe e não no formulário.
 
 | ID | Tela | Nossa rota | Ref.: campos form | Ref.: filtros | Ref.: colunas | Nosso: campos (form/filtros) | Status |
 |---|---|---|---|---|---|---|---|
-| SCR-002 | Indicadores Financeiros | `/dashboards/financeiro` | 0 | 5 | 7 | 0 | IMPLEMENTADO |
-| SCR-003 | Indicadores Pecuária de Corte | `/dashboards/pecuaria` | 0 | 4 | 0 | 0 | TESTADO |
+| SCR-002 | Indicadores Financeiros | `/dashboards/financeiro` | 0 | 5 | 7 | — | UNIFICADO |
+| SCR-003 | Indicadores Pecuária de Corte | `/dashboards/pecuaria` | 0 | 4 | 0 | — | TESTADO |
 | SCR-004 | Funcionários | `/cadastros/people?is_employee=true` | 1 | 4 | 7 | 5 | MELHORADO |
-| SCR-005 | Usuários | `/admin/usuarios` | 1 | 4 | 9 | 7 | TESTADO |
-| SCR-006 | Documento Fiscal | `/estoque/documentos-fiscais` | 0 | 9 | 9 | 0 | TESTADO |
-| SCR-007 | DFe Recebidas | `/estoque/dfe` | 2 | 9 | 12 | 10 | EM IMPLEMENTAÇÃO |
-| SCR-008 | Formulação | `/estoque/formulacoes` | 1 | 4 | 5 | 3 | IMPLEMENTADO |
-| SCR-009 | Contas a Pagar | `/financeiro/contas-a-pagar` | 21 | 28 | 16 | 0 | TESTADO |
-| SCR-010 | Conta a Receber | `/financeiro/contas-a-receber` | 25 | 19 | 16 | 0 | TESTADO |
-| SCR-011 | Movimento Caixa/Bancário | `/financeiro/movimentos` | 1 | 13 | 13 | 0 | TESTADO |
-| SCR-012 | Importar OFX | `/financeiro/ofx` | 0 | 4 | 6 | 3 | TESTADO |
+| SCR-005 | Usuários | `/admin/usuarios` | 1 | 4 | 9 | — | TESTADO |
+| SCR-006 | Documento Fiscal | `/estoque/documentos-fiscais` | 0 | 9 | 9 | — | TESTADO |
+| SCR-007 | DFe Recebidas | `/estoque/dfe` | 2 | 9 | 12 | — | EM IMPLEMENTAÇÃO |
+| SCR-008 | Formulação | `/estoque/formulacoes` | 1 | 4 | 5 | — | UNIFICADO |
+| SCR-009 | Contas a Pagar | `/financeiro/contas-a-pagar` | 21 | 28 | 16 | — | TESTADO |
+| SCR-010 | Conta a Receber | `/financeiro/contas-a-receber` | 25 | 19 | 16 | — | TESTADO |
+| SCR-011 | Movimento Caixa/Bancário | `/financeiro/movimentos` | 1 | 13 | 13 | — | TESTADO |
+| SCR-012 | Importar OFX | `/financeiro/ofx` | 0 | 4 | 6 | — | TESTADO |
 | SCR-014 | NFe | `/fiscal` | 0 | 9 | 11 | 0 | NÃO INICIADO |
 | SCR-015 | NFSe Recebidas | `/fiscal` | 0 | 8 | 10 | 0 | NÃO INICIADO |
-| SCR-016 | Livro Caixa Digital | `/dashboards/livro-caixa` | 0 | 3 | 0 | 0 | IMPLEMENTADO |
-| SCR-017 | Indicadores Suprimentos | `/dashboards/suprimentos` | 0 | 4 | 0 | 0 | IMPLEMENTADO |
-| SCR-018 | Indicadores de Depreciações | `/dashboards/depreciacoes` | 0 | 3 | 0 | 0 | IMPLEMENTADO |
-| SCR-019 | Dashboard de Ativos | `/dashboards/ativos` | 0 | 5 | 0 | 0 | IMPLEMENTADO |
-| SCR-020 | Análise de Usuários | `/dashboards/usuarios` | 0 | 2 | 4 | 0 | IMPLEMENTADO |
-| SCR-021 | Pluviômetro | `/dashboards/pluviometria` | 0 | 4 | 0 | 0 | IMPLEMENTADO |
-| SCR-022 | Lotação de Currais | `/dashboards/confinamento` | 0 | 2 | 0 | 0 | IMPLEMENTADO |
-| SCR-023 | Custos do Confinamento | `/dashboards/confinamento-custos` | 0 | 4 | 0 | 0 | IMPLEMENTADO |
-| SCR-024 | Desempenho de Lotes | `/dashboards/confinamento-desempenho` | 0 | 3 | 11 | 0 | IMPLEMENTADO |
-| SCR-025 | Dashboard Estoque de Nutrição | `/dashboards/estoque-nutricao` | 0 | 1 | 0 | 0 | IMPLEMENTADO |
-| SCR-026 | Dashboard Consumo vs Fornecido | `/dashboards/consumo-racao` | 0 | 3 | 0 | 0 | IMPLEMENTADO |
+| SCR-016 | Livro Caixa Digital | `/dashboards/livro-caixa` | 0 | 3 | 0 | — | UNIFICADO |
+| SCR-017 | Indicadores Suprimentos | `/dashboards/suprimentos` | 0 | 4 | 0 | — | UNIFICADO |
+| SCR-018 | Indicadores de Depreciações | `/dashboards/depreciacoes` | 0 | 3 | 0 | — | UNIFICADO |
+| SCR-019 | Dashboard de Ativos | `/dashboards/ativos` | 0 | 5 | 0 | — | UNIFICADO |
+| SCR-020 | Análise de Usuários | `/dashboards/usuarios` | 0 | 2 | 4 | — | UNIFICADO |
+| SCR-021 | Pluviômetro | `/dashboards/pluviometria` | 0 | 4 | 0 | — | UNIFICADO |
+| SCR-022 | Lotação de Currais | `/dashboards/confinamento` | 0 | 2 | 0 | — | UNIFICADO |
+| SCR-023 | Custos do Confinamento | `/dashboards/confinamento-custos` | 0 | 4 | 0 | — | UNIFICADO |
+| SCR-024 | Desempenho de Lotes | `/dashboards/confinamento-desempenho` | 0 | 3 | 11 | — | UNIFICADO |
+| SCR-025 | Dashboard Estoque de Nutrição | `/dashboards/estoque-nutricao` | 0 | 1 | 0 | — | UNIFICADO |
+| SCR-026 | Dashboard Consumo vs Fornecido | `/dashboards/consumo-racao` | 0 | 3 | 0 | — | UNIFICADO |
 | SCR-027 | Centro de Custo | `/cadastros/cost_centers` | 0 | 0 | 6 | 1 | TESTADO |
 | SCR-028 | Fazendas | `/cadastros/farms` | 0 | 7 | 6 | 1 | IMPLEMENTADO |
 | SCR-029 | Safras | `/cadastros/harvests` | 0 | 0 | 5 | 1 | IMPLEMENTADO |
 | SCR-030 | Endereçamentos | `/cadastros/addressings` | 0 | 0 | 3 | 0 | IMPLEMENTADO |
 | SCR-031 | Produtos | `/cadastros/products` | 1 | 7 | 10 | 6 | TESTADO |
 | SCR-032 | Armazém | `/cadastros/warehouses` | 0 | 0 | 5 | 3 | IMPLEMENTADO |
-| SCR-033 | Saldo Inicial | `/estoque/estoque-inicial` | 1 | 3 | 8 | 8 | TESTADO |
+| SCR-033 | Saldo Inicial | `/estoque/estoque-inicial` | 1 | 3 | 8 | — | TESTADO |
 | SCR-034 | Rateio - Categoria Financeira | `/cadastros/apportionment_categories` | 0 | 0 | 2 | 1 | IMPLEMENTADO |
-| SCR-035 | Perfil Usuário | `/admin/perfis` | 0 | 0 | 5 | 0 | TESTADO |
+| SCR-035 | Perfil Usuário | `/admin/perfis` | 0 | 0 | 5 | — | TESTADO |
 | SCR-036 | Pessoas | `/cadastros/people` | 0 | 2 | 5 | 5 | IMPLEMENTADO |
 | SCR-037 | Proprietários | `/cadastros/people?is_proprietary=true` | 1 | 0 | 6 | 5 | MELHORADO |
 | SCR-038 | Fornecedores | `/cadastros/people?is_provider=true` | 1 | 6 | 7 | 5 | MELHORADO |
 | SCR-039 | Clientes | `/cadastros/people?is_client=true` | 1 | 3 | 6 | 5 | MELHORADO |
 | SCR-040 | Autorizadores | `/cadastros/authorizers` | 0 | 1 | 6 | 1 | TESTADO |
 | SCR-041 | Contas Bancárias | `/cadastros/bank_accounts` | 0 | 0 | 10 | 2 | TESTADO |
-| SCR-042 | Saldo Inicial | `/financeiro/saldo-inicial` | 0 | 4 | 11 | 4 | IMPLEMENTADO |
+| SCR-042 | Saldo Inicial | `/financeiro/saldo-inicial` | 0 | 4 | 11 | — | UNIFICADO |
 | SCR-043 | Categoria Financeira | `/cadastros/financial_categories` | 0 | 6 | 10 | 2 | TESTADO |
 | SCR-044 | Emissor NFe | `/fiscal` | 0 | 0 | 9 | 0 | NÃO INICIADO |
 | SCR-045 | Sincronização DFe | `/fiscal` | 0 | 0 | 4 | 0 | NÃO INICIADO |
@@ -59,103 +59,103 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-053 | Atividades | `/cadastros/activities` | 0 | 2 | 5 | 1 | IMPLEMENTADO |
 | SCR-054 | Parâmetros de Peso | `/cadastros/weight_parameters` | 0 | 0 | 6 | 0 | IMPLEMENTADO |
 | SCR-055 | Forragem | `/cadastros/fodders` | 0 | 0 | 3 | 1 | IMPLEMENTADO |
-| SCR-056 | Animais | `/pecuaria/animais` | 1 | 4 | 8 | 0 | TESTADO |
+| SCR-056 | Animais | `/pecuaria/animais` | 1 | 4 | 8 | — | TESTADO |
 | SCR-057 | Custo Retroativo | — | 11 | 1 | 4 | — | NÃO INICIADO |
 | SCR-058 | Módulos de Pastejo | `/cadastros/grazing_modules` | 0 | 0 | 7 | 1 | IMPLEMENTADO |
 | SCR-059 | Cochos | `/cadastros/troughs` | 0 | 1 | 9 | 2 | IMPLEMENTADO |
 | SCR-060 | Lotes de Animais | `/cadastros/batches` | 1 | 1 | 5 | 3 | IMPLEMENTADO |
-| SCR-061 | Lote/Módulo | `/pecuaria/transferencias/lote-modulo-area` | 0 | 2 | 6 | 7 | MELHORADO |
-| SCR-062 | Lote/Área | `/pecuaria/transferencias/lote-modulo-area` | 0 | 2 | 6 | 7 | MELHORADO |
+| SCR-061 | Lote/Módulo | `/pecuaria/transferencias/lote-modulo-area` | 0 | 2 | 6 | — | UNIFICADO |
+| SCR-062 | Lote/Área | `/pecuaria/transferencias/lote-modulo-area` | 0 | 2 | 6 | — | UNIFICADO |
 | SCR-063 | Inventário | `/cadastros/equipments` | 1 | 6 | 7 | 3 | TESTADO |
-| SCR-064 | Depreciação Mensal | `/frota/depreciacoes` | 1 | 6 | 10 | 2 | TESTADO |
-| SCR-065 | Previsão de Depreciação | `/frota/previsao-depreciacao` | 0 | 2 | 0 | 2 | TESTADO |
-| SCR-066 | Fiscais | `/admin/parametros` | 2 | 0 | 0 | 6 | IMPLEMENTADO |
-| SCR-067 | SLA Status | `/suprimentos/sla` | 0 | 0 | 4 | 0 | IMPLEMENTADO |
+| SCR-064 | Depreciação Mensal | `/frota/depreciacoes` | 1 | 6 | 10 | — | TESTADO |
+| SCR-065 | Previsão de Depreciação | `/frota/previsao-depreciacao` | 0 | 2 | 0 | — | TESTADO |
+| SCR-066 | Fiscais | `/admin/parametros` | 2 | 0 | 0 | — | UNIFICADO |
+| SCR-067 | SLA Status | `/suprimentos/sla` | 0 | 0 | 4 | — | UNIFICADO |
 | SCR-068 | Meus Processos | `/suprimentos/mine` | 8 | 0 | 10 | — | TESTADO |
 | SCR-069 | Solicitação | `/suprimentos/request` | 8 | 5 | 9 | — | TESTADO |
-| SCR-070 | Rejeitados/Cancelados | `/suprimentos/rejected` | 0 | 4 | 9 | — | IMPLEMENTADO |
+| SCR-070 | Rejeitados/Cancelados | `/suprimentos/rejected` | 0 | 4 | 9 | — | UNIFICADO |
 | SCR-071 | Cotações | `/suprimentos/quotation` | 8 | 9 | 11 | — | TESTADO |
 | SCR-072 | Autorização | `/suprimentos/authorization` | 8 | 5 | 9 | — | TESTADO |
 | SCR-073 | Compras | `/suprimentos/buy` | 8 | 9 | 10 | — | TESTADO |
 | SCR-074 | Recebimentos | `/suprimentos/receipts` | 8 | 8 | 13 | — | TESTADO |
-| SCR-075 | Entrada/Insumos | `/estoque/entradas` | 0 | 4 | 7 | 0 | TESTADO |
-| SCR-076 | Aprovação de Notas Fiscais | `/estoque/aprovacao-notas` | 0 | 1 | 6 | 0 | IMPLEMENTADO |
+| SCR-075 | Entrada/Insumos | `/estoque/entradas` | 0 | 4 | 7 | — | TESTADO |
+| SCR-076 | Aprovação de Notas Fiscais | `/estoque/aprovacao-notas` | 0 | 1 | 6 | — | UNIFICADO |
 | SCR-077 | Perfis de Lançamento por Fornecedor | `/cadastros/provider_launch_profiles` | 0 | 2 | 5 | 0 | IMPLEMENTADO |
-| SCR-078 | Baixa de Estoque | `/estoque/baixas` | 0 | 2 | 5 | 0 | IMPLEMENTADO |
-| SCR-079 | Requisição do Estoque | `/estoque/requisicoes` | 2 | 6 | 7 | 0 | TESTADO |
-| SCR-080 | Devolução do Estoque | `/estoque/devolucoes` | 2 | 6 | 6 | 0 | TESTADO |
-| SCR-081 | Correção de Estoque | `/estoque/correcoes` | 1 | 2 | 4 | 9 | IMPLEMENTADO |
-| SCR-082 | Transferência de Armazém | `/estoque/transferencias?kind=warehouse` | 0 | 5 | 9 | 0 | TESTADO |
-| SCR-083 | Transferência de Armazém entre Fazendas | `/estoque/transferencias?kind=farm` | 0 | 5 | 11 | 0 | TESTADO |
-| SCR-084 | Saldo Estoque | `/estoque/saldo` | 0 | 3 | 9 | 0 | TESTADO |
-| SCR-085 | Batida | `/estoque/batidas` | 1 | 4 | 9 | 0 | IMPLEMENTADO |
+| SCR-078 | Baixa de Estoque | `/estoque/baixas` | 0 | 2 | 5 | — | UNIFICADO |
+| SCR-079 | Requisição do Estoque | `/estoque/requisicoes` | 2 | 6 | 7 | — | TESTADO |
+| SCR-080 | Devolução do Estoque | `/estoque/devolucoes` | 2 | 6 | 6 | — | TESTADO |
+| SCR-081 | Correção de Estoque | `/estoque/correcoes` | 1 | 2 | 4 | — | UNIFICADO |
+| SCR-082 | Transferência de Armazém | `/estoque/transferencias?kind=warehouse` | 0 | 5 | 9 | — | TESTADO |
+| SCR-083 | Transferência de Armazém entre Fazendas | `/estoque/transferencias?kind=farm` | 0 | 5 | 11 | — | TESTADO |
+| SCR-084 | Saldo Estoque | `/estoque/saldo` | 0 | 3 | 9 | — | TESTADO |
+| SCR-085 | Batida | `/estoque/batidas` | 1 | 4 | 9 | — | UNIFICADO |
 | SCR-086 | Eventos | `/cadastros/hr_events` | 0 | 3 | 6 | 1 | IMPLEMENTADO |
 | SCR-087 | Funções | `/cadastros/job_functions` | 0 | 1 | 3 | 1 | IMPLEMENTADO |
 | SCR-088 | Equipes | `/cadastros/teams` | 0 | 0 | 4 | 1 | IMPLEMENTADO |
 | SCR-089 | Registro/Faltas | `/cadastros/absences` | 0 | 0 | 4 | 2 | TESTADO |
-| SCR-090 | Adiant. Salarial | `/gestao-pessoal/adiantamentos` | 0 | 0 | 4 | 9 | TESTADO |
+| SCR-090 | Adiant. Salarial | `/gestao-pessoal/adiantamentos` | 0 | 0 | 4 | — | TESTADO |
 | SCR-091 | Registro/Eventos | `/cadastros/bonuses` | 0 | 0 | 5 | 2 | IMPLEMENTADO |
 | SCR-092 | Funcionário x Eventos | `/cadastros/employee_events` | 1 | 0 | 4 | 3 | IMPLEMENTADO |
-| SCR-093 | Apuração Mensal | `/gestao-pessoal/apuracao` | 1 | 6 | 7 | 2 | TESTADO |
+| SCR-093 | Apuração Mensal | `/gestao-pessoal/apuracao` | 1 | 6 | 7 | — | TESTADO |
 | SCR-094 | Tipos de Documento | `/cadastros/document_types` | 0 | 0 | 5 | 1 | IMPLEMENTADO |
 | SCR-095 | Gestão de Documentos | `/cadastros/documents` | 0 | 3 | 5 | 4 | IMPLEMENTADO |
-| SCR-096 | Gestão Animais | `/pecuaria/animais` | 1 | 8 | 8 | 0 | TESTADO |
+| SCR-096 | Gestão Animais | `/pecuaria/animais` | 1 | 8 | 8 | — | TESTADO |
 | SCR-097 | Inventariado Animais | — | 1 | 0 | 6 | — | NÃO INICIADO |
 | SCR-098 | Planejamento Pecuário | `/cadastros/livestock_plannings` | 0 | 0 | 7 | 1 | IMPLEMENTADO |
-| SCR-099 | Evolução de Rebanho | `/pecuaria/transferencias/evolucao` | 0 | 3 | 5 | 2 | IMPLEMENTADO |
-| SCR-100 | Agrupar Lotes | `/pecuaria/transferencias/agrupar-lotes` | 6 | 1 | 4 | 4 | IMPLEMENTADO |
+| SCR-099 | Evolução de Rebanho | `/pecuaria/transferencias/evolucao` | 0 | 3 | 5 | — | UNIFICADO |
+| SCR-100 | Agrupar Lotes | `/pecuaria/transferencias/agrupar-lotes` | 6 | 1 | 4 | — | UNIFICADO |
 | SCR-101 | Venda de Animais | `/pecuaria/movimentacoes/sale` | 0 | 5 | 10 | — | TESTADO |
 | SCR-102 | Compra de Animais | `/pecuaria/movimentacoes/purchase` | 0 | 4 | 9 | — | TESTADO |
-| SCR-103 | Nascimentos | `/pecuaria/movimentacoes/birth` | 1 | 4 | 8 | — | IMPLEMENTADO |
-| SCR-104 | Mortes | `/pecuaria/movimentacoes/death` | 0 | 4 | 5 | — | IMPLEMENTADO |
-| SCR-105 | Perdas | `/pecuaria/movimentacoes/loss` | 0 | 4 | 6 | — | IMPLEMENTADO |
-| SCR-106 | Processamentos | `/pecuaria/processamentos` | 0 | 4 | 8 | 1 | TESTADO |
-| SCR-107 | Pré-Lotes | `/pecuaria/processamentos` | 0 | 0 | 7 | 1 | MAPEADO |
-| SCR-108 | Pesagens | `/pecuaria/pesagens` | 1 | 3 | 10 | 0 | TESTADO |
-| SCR-109 | Nutrição | `/pecuaria/manejo/nutrition` | 1 | 4 | 8 | — | IMPLEMENTADO |
+| SCR-103 | Nascimentos | `/pecuaria/movimentacoes/birth` | 1 | 4 | 8 | — | UNIFICADO |
+| SCR-104 | Mortes | `/pecuaria/movimentacoes/death` | 0 | 4 | 5 | — | UNIFICADO |
+| SCR-105 | Perdas | `/pecuaria/movimentacoes/loss` | 0 | 4 | 6 | — | UNIFICADO |
+| SCR-106 | Processamentos | `/pecuaria/processamentos` | 0 | 4 | 8 | — | TESTADO |
+| SCR-107 | Pré-Lotes | `/pecuaria/processamentos` | 0 | 0 | 7 | — | MAPEADO |
+| SCR-108 | Pesagens | `/pecuaria/pesagens` | 1 | 3 | 10 | — | TESTADO |
+| SCR-109 | Nutrição | `/pecuaria/manejo/nutrition` | 1 | 4 | 8 | — | UNIFICADO |
 | SCR-110 | Sanitários | `/pecuaria/manejo/sanitary` | 0 | 2 | 4 | — | TESTADO |
-| SCR-111 | Desmama | `/pecuaria/manejo/weaning` | 0 | 1 | 4 | — | IMPLEMENTADO |
-| SCR-112 | Apartações | `/pecuaria/manejo/separation` | 0 | 1 | 7 | — | IMPLEMENTADO |
-| SCR-113 | Localizar Animal | `/pecuaria/localizar` | 0 | 1 | 0 | 0 | IMPLEMENTADO |
-| SCR-114 | Pastagem | `/pecuaria/manejo/pasture` | 0 | 3 | 7 | — | IMPLEMENTADO |
+| SCR-111 | Desmama | `/pecuaria/manejo/weaning` | 0 | 1 | 4 | — | UNIFICADO |
+| SCR-112 | Apartações | `/pecuaria/manejo/separation` | 0 | 1 | 7 | — | UNIFICADO |
+| SCR-113 | Localizar Animal | `/pecuaria/localizar` | 0 | 1 | 0 | — | UNIFICADO |
+| SCR-114 | Pastagem | `/pecuaria/manejo/pasture` | 0 | 3 | 7 | — | UNIFICADO |
 | SCR-115 | Gerenciamento Reprodutivo Avançado | `/pecuaria/reproducao` | 0 | 6 | 6 | 0 | IMPLEMENTADO |
 | SCR-116 | Estações de Monta | `/cadastros/breeding_seasons` | 0 | 1 | 7 | 2 | IMPLEMENTADO |
-| SCR-117 | Lotes/Reprodução | `/pecuaria/reproducao/acasalamentos` | 0 | 2 | 5 | 8 | MAPEADO |
+| SCR-117 | Lotes/Reprodução | `/pecuaria/reproducao/acasalamentos` | 0 | 2 | 5 | — | MAPEADO |
 | SCR-118 | Touros/Sêmen/Embrião | `/cadastros/breeding_sires` | 0 | 2 | 5 | 2 | IMPLEMENTADO |
 | SCR-119 | Protocolos/Estação | `/cadastros/breeding_protocols` | 0 | 2 | 6 | 1 | IMPLEMENTADO |
-| SCR-120 | Acasalamento | `/pecuaria/reproducao/acasalamentos` | 0 | 2 | 7 | 8 | IMPLEMENTADO |
+| SCR-120 | Acasalamento | `/pecuaria/reproducao/acasalamentos` | 0 | 2 | 7 | — | UNIFICADO |
 | SCR-121 | Pátio | `/cadastros/feedlot_yards` | 0 | 3 | 6 | 2 | IMPLEMENTADO |
 | SCR-122 | Setores | `/cadastros/feedlot_sectors` | 0 | 4 | 7 | 2 | IMPLEMENTADO |
 | SCR-123 | Curral | `/cadastros/feedlot_corrals` | 0 | 5 | 11 | 2 | IMPLEMENTADO |
 | SCR-124 | Dietas | `/cadastros/diets` | 1 | 3 | 7 | 1 | IMPLEMENTADO |
 | SCR-125 | Fases/Regras de Troca | `/cadastros/feeding_phases` | 0 | 3 | 6 | 1 | IMPLEMENTADO |
-| SCR-126 | Batelada | `/confinamento/bateladas` | 0 | 3 | 6 | 6 | IMPLEMENTADO |
-| SCR-127 | Trato Diário | `/confinamento/trato` | 0 | 2 | 7 | 7 | IMPLEMENTADO |
-| SCR-128 | Leitura de Cocho | `/confinamento/leitura-cocho` | 0 | 2 | 4 | 6 | IMPLEMENTADO |
+| SCR-126 | Batelada | `/confinamento/bateladas` | 0 | 3 | 6 | — | UNIFICADO |
+| SCR-127 | Trato Diário | `/confinamento/trato` | 0 | 2 | 7 | — | UNIFICADO |
+| SCR-128 | Leitura de Cocho | `/confinamento/leitura-cocho` | 0 | 2 | 4 | — | UNIFICADO |
 | SCR-130 | Pluviometria | `/cadastros/rainfalls` | 1 | 2 | 5 | 2 | IMPLEMENTADO |
-| SCR-131 | Orçamentos | `/vendas/budgets` | 0 | 6 | 7 | 0 | TESTADO |
-| SCR-132 | Pedidos | `/vendas/orders` | 0 | 6 | 7 | 0 | TESTADO |
-| SCR-133 | Vendas | `/vendas/sales` | 0 | 6 | 9 | 0 | TESTADO |
-| SCR-134 | Minhas Ordens de Serviço | `/os?mine=1` | 0 | 4 | 7 | 0 | IMPLEMENTADO |
+| SCR-131 | Orçamentos | `/vendas/budgets` | 0 | 6 | 7 | — | TESTADO |
+| SCR-132 | Pedidos | `/vendas/orders` | 0 | 6 | 7 | — | TESTADO |
+| SCR-133 | Vendas | `/vendas/sales` | 0 | 6 | 9 | — | TESTADO |
+| SCR-134 | Minhas Ordens de Serviço | `/os?mine=1` | 0 | 4 | 7 | 0 | UNIFICADO |
 | SCR-135 | Ordem de Serviço | `/os` | 0 | 4 | 7 | 0 | IMPLEMENTADO |
-| SCR-136 | Monitoramento de Ordens de Serviço | `/os/monitoramento` | 0 | 4 | 7 | 0 | IMPLEMENTADO |
+| SCR-136 | Monitoramento de Ordens de Serviço | `/os/monitoramento` | 0 | 4 | 7 | — | UNIFICADO |
 | SCR-137 | Avaliação de Ordens de Serviço | `/os` | 0 | 4 | 7 | 0 | MELHORADO |
-| SCR-138 | Análise do Fluxo Bancário | `/financeiro/fluxo` | 0 | 5 | 0 | 5 | TESTADO |
+| SCR-138 | Análise do Fluxo Bancário | `/financeiro/fluxo` | 0 | 5 | 0 | — | TESTADO |
 | SCR-139 | Gestão Contratos | `/cadastros/contracts` | 0 | 2 | 5 | 2 | IMPLEMENTADO |
-| SCR-140 | Previsão Orçamentária Anual | `/financeiro/previsao-orcamentaria` | 2 | 0 | 5 | 1 | IMPLEMENTADO |
+| SCR-140 | Previsão Orçamentária Anual | `/financeiro/previsao-orcamentaria` | 2 | 0 | 5 | — | UNIFICADO |
 | SCR-141 | Congelamento Financeiro | `/cadastros/financial_freezes` | 0 | 2 | 8 | 0 | TESTADO |
 | SCR-142 | Planilha de Movimentos | — | 1 | 2 | 4 | — | NÃO INICIADO |
-| SCR-143 | Manutenções | `/frota/manutencoes` | 0 | 3 | 5 | 0 | IMPLEMENTADO |
-| SCR-144 | Abastecimentos | `/frota/abastecimentos` | 1 | 3 | 5 | 0 | TESTADO |
+| SCR-143 | Manutenções | `/frota/manutencoes` | 0 | 3 | 5 | — | UNIFICADO |
+| SCR-144 | Abastecimentos | `/frota/abastecimentos` | 1 | 3 | 5 | — | TESTADO |
 | SCR-145 | Manutenções Preventivas | `/cadastros/preventive_maintenances` | 0 | 3 | 5 | 2 | IMPLEMENTADO |
 | SCR-146 | Revisões Agendadas | `/cadastros/scheduled_reviews` | 0 | 0 | 4 | 2 | IMPLEMENTADO |
-| SCR-147 | Transferência de Máquinas | `/frota/transferencias` | 0 | 2 | 7 | 4 | IMPLEMENTADO |
+| SCR-147 | Transferência de Máquinas | `/frota/transferencias` | 0 | 2 | 7 | — | UNIFICADO |
 | SCR-148 | Arquivos XML | `/estoque/documentos-fiscais/new` | 0 | 6 | 0 | 18 | IMPLEMENTADO |
 | SCR-149 | MDFe | `/fiscal` | 0 | 11 | 10 | 0 | NÃO INICIADO |
 | SCR-150 | MDFe | `/fiscal/new` | 63 | 0 | 35 | — | NÃO INICIADO |
-| SCR-151 | LCDPR - Livro Caixa Digital do Produtor Rural | `/dashboards/livro-caixa` | 0 | 0 | 4 | 0 | EM IMPLEMENTAÇÃO |
+| SCR-151 | LCDPR - Livro Caixa Digital do Produtor Rural | `/dashboards/livro-caixa` | 0 | 0 | 4 | — | EM IMPLEMENTAÇÃO |
 | SCR-152 | SPED Fiscal - EFD ICMS/IPI | `/fiscal` | 0 | 0 | 5 | 0 | NÃO INICIADO |
-| SCR-153 | Partida Dobrada | `/fiscal/partida-dobrada` | 0 | 6 | 7 | 0 | IMPLEMENTADO |
+| SCR-153 | Partida Dobrada | `/fiscal/partida-dobrada` | 0 | 6 | 7 | — | UNIFICADO |
 | SCR-154 | Relatório Inventário Patrimonial | `/relatorios/equipment` | 0 | 5 | 0 | — | IMPLEMENTADO |
 | SCR-155 | Relatorio de Depreciação Acumulada | `/relatorios/accumulated_depreciation` | 0 | 4 | 0 | — | IMPLEMENTADO |
 | SCR-156 | Composição Rebanho | `/relatorios/herd_composition` | 0 | 14 | 0 | — | IMPLEMENTADO |
@@ -264,10 +264,10 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-259 | Relatório Máquinas | `/relatorios/machines` | 7 | 0 | 0 | — | IMPLEMENTADO |
 | SCR-260 | Relatório Máquinas - Abastecimentos | `/relatorios/machine_supplies` | 0 | 7 | 0 | — | IMPLEMENTADO |
 | SCR-261 | Relatório Máquinas - Manutenções | `/relatorios/machine_maintenances` | 0 | 7 | 0 | — | IMPLEMENTADO |
-| SCR-262 | Integração Domínio | `/integracoes/exportacoes` | 0 | 0 | 4 | 0 | NÃO INICIADO |
-| SCR-263 | Integração CTA Smart | `/frota/abastecimentos` | 3 | 0 | 9 | 0 | NÃO INICIADO |
-| SCR-264 | CTA Smart - Abastecimentos Importados | `/frota/abastecimentos` | 1 | 3 | 9 | 0 | NÃO INICIADO |
-| SCR-265 | Exportar CSV - Contas Pagas/Recebidas | `/integracoes/exportacoes` | 0 | 2 | 0 | 0 | IMPLEMENTADO |
+| SCR-262 | Integração Domínio | `/integracoes/exportacoes` | 0 | 0 | 4 | — | NÃO INICIADO |
+| SCR-263 | Integração CTA Smart | `/frota/abastecimentos` | 3 | 0 | 9 | — | NÃO INICIADO |
+| SCR-264 | CTA Smart - Abastecimentos Importados | `/frota/abastecimentos` | 1 | 3 | 9 | — | NÃO INICIADO |
+| SCR-265 | Exportar CSV - Contas Pagas/Recebidas | `/integracoes/exportacoes` | 0 | 2 | 0 | — | UNIFICADO |
 | SCR-267 | Funcionários | `/cadastros/people/new?is_employee=true` | 23 | 0 | 0 | 29 | MELHORADO |
 | SCR-269 | Funcionários | `/cadastros/people/[id]?is_employee=true` | 21 | 0 | 0 | 29 | MELHORADO |
 | SCR-272 | Usuários | `/admin/usuarios/[id]` | 11 | 0 | 0 | — | TESTADO |

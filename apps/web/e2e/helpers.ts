@@ -2,7 +2,7 @@ import { expect, type Page } from "@playwright/test";
 export const ADMIN = { email: process.env.E2E_ADMIN_EMAIL ?? "admin@demo.local", password: process.env.E2E_ADMIN_PASSWORD ?? "Demo@12345" };
 export async function login(page: Page, u = ADMIN) {
   await page.goto("/login"); await page.fill("#email", u.email); await page.fill("#password", u.password); await page.getByRole("button", { name: "Entrar" }).click();
-  await expect(page.getByText("Painel de Controle").first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Início" })).toBeVisible();
 }
 /** Seleciona uma opção em um RefSelect (popover com busca). */
 export async function pickRef(page: Page, fieldLabel: string, search: string) {

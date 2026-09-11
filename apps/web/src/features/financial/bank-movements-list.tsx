@@ -1,0 +1,13 @@
+"use client";
+import { useAuth } from "@/lib/auth";
+import { brl } from "@/lib/utils";
+import { Badge } from "@/components/ui";
+import { DocList, colDate, colMoney, colStatus } from "@/features/docs/shared";
+const CAT: Record<string, string> = { in: "Entrada", out: "Saída", internal_transfer: "Transf. interna", financing: "Financiamento", check_return: "Devolução de cheque", opening_balance: "Saldo inicial" };
+export function BankMovementsList() {
+  const { can } = useAuth();
+  return <DocList title="Movimentos Bancários" endpoint="/api/financial/bank-movements" base="/financeiro/movimentos" canCreate={can("bank_movements.create")} canCancel={can("bank_movements.delete")}
+    filters={[{ name: "bank_account_id", label: "Conta", type: "ref", resource: "bank_accounts" }, { name: "start_date", label: "Dt. Início", type: "date" }, { name: "end_date", label: "Dt. Fim", type: "date" }, { name: "type", label: "Tipo", type: "select", options: [{ value: "in", label: "Entrada" }, { value: "out", label: "Saída" }] }, { name: "category_type", label: "Categoria do mov.", type: "select", options: Object.entries(CAT).map(([value, label]) => ({ value, label })) }, { name: "category_id", label: "Categoria financeira", type: "ref", resource: "financial_categories" }, { name: "person_id", label: "Pessoa", type: "ref", resource: "people" }, { name: "proprietary_id", label: "Proprietário", type: "ref", resource: "people", extra: { is_proprietary: "true" } }, { name: "harvest_id", label: "Safra", type: "ref", resource: "harvests" }, { name: "start_value", label: "Valor de", type: "text" }, { name: "end_value", label: "Valor até", type: "text" }, { name: "status", label: "Status", type: "select", options: [{ value: "confirmed", label: "Confirmado" }, { value: "cancelled", label: "Cancelado" }] }]}
+    columns={[colDate("movement_date", "Data"), { key: "bank_account_name", label: "Conta" }, { key: "type", label: "Tipo", render: (r) => <Badge tone={r["type"] === "in" ? "green" : "red"}>{r["type"] === "in" ? "Entrada" : "Saída"}</Badge> }, { key: "category_type", label: "Categoria", render: (r) => CAT[String(r["category_type"])] ?? String(r["category_type"]) }, { key: "document", label: "Documento" }, { key: "person_name", label: "Pessoa" }, colMoney("amount", "Valor"), colMoney("interest", "Juros"), { key: "note", label: "Observação", className: "max-w-[280px] truncate" }, { key: "source_type", label: "Origem" }, colStatus()]}
+    totals={(t) => <tr><td colSpan={6} className="px-2 py-1">Entradas: {brl(t["in"] ?? "0")} · Saídas: {brl(t["out"] ?? "0")} · Juros: {brl(t["interest"] ?? "0")}</td><td className="num" colSpan={2}>Líquido: {brl(t["net"] ?? "0")}</td><td colSpan={3} /></tr>} />;
+}

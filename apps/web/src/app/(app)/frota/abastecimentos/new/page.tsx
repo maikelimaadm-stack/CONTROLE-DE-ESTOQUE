@@ -9,7 +9,7 @@ export default function Page() {
   const router = useRouter(); const farm = useFarmDefault();
   const [h, setH] = React.useState({ farm_id: "", supply_date: todayISO(), equipment_id: "", operator_person_id: "", warehouse_id: "", product_id: "", quantity: "", unit_value: "", hour_meter: "", mileage: "", cost_center_id: "", harvest_id: "", note: "", origin: "manual" });
   React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
-  const create = useCreate("/api/fleet/fuel-supplies", () => router.push("/frota/abastecimentos"));
+  const create = useCreate("/api/fleet/fuel-supplies", () => router.push("/frota?tab=abastecimentos"));
   const submit = () => create.mutate({ ...h, operator_person_id: h.operator_person_id || null, warehouse_id: h.warehouse_id || null, unit_value: h.unit_value || null, hour_meter: h.hour_meter || null, mileage: h.mileage || null, cost_center_id: h.cost_center_id || null, harvest_id: h.harvest_id || null, note: h.note || null });
   return <Card><CardHeader title="Novo Abastecimento" subtitle="Com armazém/tanque informado o combustível é baixado do estoque ao custo médio; sem armazém, usa o valor unitário informado." actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.equipment_id || !h.product_id || !h.quantity} onClick={submit}>Salvar</Button></>} /><CardBody>
     <div className="grid grid-cols-12 gap-3">

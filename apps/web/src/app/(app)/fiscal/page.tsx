@@ -1,14 +1,21 @@
 "use client";
-import Link from "next/link";
-import { Badge, Card, CardHeader, CardBody } from "@/components/ui";
-const ITEMS = [
-  { t: "Documentos fiscais de entrada (NF-e XML)", s: "IMPLEMENTADO", d: "Importação do XML da NF-e com itens, fornecedor e entrada no estoque/financeiro.", h: "/estoque/documentos-fiscais" },
-  { t: "Consulta DFe / manifestação", s: "PARCIAL", d: "Fila de DFe recebidas e aprovação de notas implementadas no sistema; a consulta automática à SEFAZ (certificado A1) não está integrada.", h: "/estoque/dfe" },
-  { t: "Emissão de NF-e / NFC-e", s: "NÃO INICIADO", d: "Exige certificado digital, homologação SEFAZ e provedor de emissão. Fora do escopo desta entrega (gap documentado).", h: null },
-  { t: "MDF-e / CT-e", s: "NÃO INICIADO", d: "Dependem de emissão fiscal; documentados no GAP-ANALYSIS.", h: null },
-  { t: "SPED / LCDPR (livro caixa digital)", s: "PARCIAL", d: "Dados-base (livro caixa, dedutibilidade, tributos) capturados; geração do arquivo não implementada.", h: "/dashboards/livro-caixa" },
-  { t: "Partida dobrada (plano de contas)", s: "IMPLEMENTADO", d: "Conta contábil por rateio de título; visão de débito/crédito por conta no relatório Razão.", h: "/fiscal/partida-dobrada" }
-];
-export default function Page() {
-  return <Card><CardHeader title="Fiscal" subtitle="Status de cada capacidade fiscal nesta reimplementação (honesto: o que existe, o que é parcial e o que ficou fora de escopo)." /><CardBody><ul className="divide-y">{ITEMS.map((i) => <li key={i.t} className="flex items-start gap-3 py-2 text-sm"><Badge tone={i.s === "IMPLEMENTADO" ? "green" : i.s === "PARCIAL" ? "amber" : "slate"}>{i.s}</Badge><div><div className="font-medium">{i.h ? <Link className="hover:underline" href={i.h}>{i.t}</Link> : i.t}</div><div className="text-xs text-slate-500">{i.d}</div></div></li>)}</ul></CardBody></Card>;
+import { Suspense } from "react";
+import { Workspace } from "@/components/workspace";
+import { Dashboard } from "@/features/dashboards/dashboard";
+import { FiscalStatusPanel } from "@/features/fiscal/status";
+import { DoubleEntryPanel } from "@/features/fiscal/ledger";
+import { InvoicesList } from "@/features/stock/invoices-list";
+
+/**
+ * Fiscal: só o que funciona hoje aparece como aba (documentos de entrada, partida dobrada, livro caixa). Emissão de
+ * NF-e/MDF-e/SPED continua documentada como não iniciada na aba "Situação" — nada incompleto é exposto como pronto.
+ */
+function Inner() {
+  return <Workspace title="Fiscal" tabs={[
+    { key: "situacao", label: "Situação", content: <div className="ws-scroll"><FiscalStatusPanel /></div> },
+    { key: "documentos", label: "Documentos de entrada", perm: "invoices.view", content: <InvoicesList /> },
+    { key: "partida-dobrada", label: "Partida dobrada", perm: "journal_entries.view", content: <div className="ws-scroll"><DoubleEntryPanel /></div> },
+    { key: "livro-caixa", label: "Livro Caixa", perm: ["dashboard.cash_book.view", "report.cash_book.view"], content: <Dashboard k="livro-caixa" title="Livro Caixa (LCDPR)" /> }
+  ]} />;
 }
+export default function Page() { return <Suspense><Inner /></Suspense>; }

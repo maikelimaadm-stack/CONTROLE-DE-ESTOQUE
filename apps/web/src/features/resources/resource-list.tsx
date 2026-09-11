@@ -50,12 +50,12 @@ export function cellText(f: FieldDef, row: Record<string, unknown>): string {
  * Listagem genérica de cadastros no MODELO BASE1: chips de filtro por coluna com valores distintos, grade
  * configurável (colunas, congelar, larguras), cards, modo Registro com o formulário embutido, rodapé com contadores.
  */
-export function ResourceList({ resourceKey, title, fixedFilters, basePath }: { resourceKey: string; title?: string; fixedFilters?: Record<string, string>; basePath?: string }) {
+export function ResourceList({ resourceKey, title, fixedFilters, basePath, extraRowActions }: { resourceKey: string; title?: string; fixedFilters?: Record<string, string>; basePath?: string; /** ações contextuais por registro (ex.: "Transferir" na máquina) */ extraRowActions?: (row: Row) => { label: string; onClick: () => void; danger?: boolean }[] }) {
   const def = getResource(resourceKey); const router = useRouter(); const sp = useSearchParams(); const { can } = useAuth();
   const fields = React.useMemo(() => def?.fields ?? [], [def]);
   const columns = React.useMemo<Base1Column[]>(() => fields.filter((f) => f.list).map((f) => ({ key: f.name, label: f.label, kind: filterKindOf(f.type), sortable: f.type !== "ref" && f.type !== "json", align: ["money", "quantity", "number", "percent", "integer"].includes(f.type) ? "right" : "left", render: (r) => formatCell(f, r), text: (r) => cellText(f, r) })), [fields]);
   const filters = React.useMemo<Base1FilterDef[]>(() => fields.filter((f) => (f.filter || f.list) && f.type !== "json" && f.type !== "textarea" && !(fixedFilters && f.name in fixedFilters)).map((f) => ({ key: f.name, label: f.label, kind: filterKindOf(f.type), mode: "advanced" as const, resource: f.ref?.resource, options: f.options })), [fields, fixedFilters]);
-  const urlParams = React.useMemo(() => { const o: Record<string, string> = {}; sp.forEach((v, k) => { if (k !== "view") o[k] = v; }); return o; }, [sp]);
+  const urlParams = React.useMemo(() => { const o: Record<string, string> = {}; sp.forEach((v, k) => { if (k !== "view" && k !== "tab" && k !== "sub") o[k] = v; }); return o; }, [sp]);
   if (!def) return <div>Recurso desconhecido</div>;
   const base = basePath ?? `/cadastros/${resourceKey}`;
   const perm = def.permission;
@@ -72,7 +72,7 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath }: { r
     canCreate={can(`${perm}.create`)} onNew={() => router.push(`${base}/new${qs(fixed)}`)}
     canDelete={can(`${perm}.delete`)} onDelete={async (r) => { await api(`/api/resources/${resourceKey}/${r["id"]}`, { method: "DELETE" }); toast.success("Registro excluído"); }} deleteText={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`}
     Record={Record}
-    rowActions={(r) => [{ label: "Visualizar", onClick: () => router.push(`${base}/${r["id"]}?view=1`) }, ...(can(`${perm}.edit`) ? [{ label: "Editar", onClick: () => router.push(`${base}/${r["id"]}`) }] : [])]}
+    rowActions={(r) => [{ label: "Visualizar", onClick: () => router.push(`${base}/${r["id"]}?view=1`) }, ...(can(`${perm}.edit`) ? [{ label: "Editar", onClick: () => router.push(`${base}/${r["id"]}`) }] : []), ...(extraRowActions?.(r) ?? [])]}
     exportXlsx={def.importExport && can(`${perm}.export`) ? (p) => download(`/api/exports/${resourceKey}${qs({ ...p.filters, ...fixed, search: p.search, format: "xlsx" })}`, `${resourceKey}.xlsx`) : undefined}
     reportHref={can("saved_reports.create") ? (p) => `/relatorios/personalizados/novo?resource=${resourceKey}&f=${encodeURIComponent(JSON.stringify({ ...p.filters, ...(p.search ? { search: p.search } : {}) }))}` : undefined}
   />;

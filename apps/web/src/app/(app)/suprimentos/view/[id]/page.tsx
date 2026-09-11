@@ -28,7 +28,7 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
   const doAction = (a: string, v: Record<string, string>) => act.mutate({ path: `/api/supply/requests/${id}/actions/${a}`, body: { justification: v["justification"] || ACTIONS[a]?.label, version: d?.["version"], authorizer_id: v["authorizer_id"] || null } });
   const allowed = (d?.allowed_actions ?? []).filter((a) => ACTIONS[a] && can(ACTIONS[a]!.perm));
   const isOwnerOrResponsible = d && (d["current_responsible_user_id"] === ctx?.user.id || d["requester_user_id"] === ctx?.user.id || ctx?.isOwner);
-  return <DetailShell title={`Solicitação ${d?.["code"] ?? ""}`} back="/suprimentos/mine" actions={<>
+  return <DetailShell title={`Solicitação ${d?.["code"] ?? ""}`} back="/compras?tab=processos&sub=mine" actions={<>
     {d && allowed.map((a) => <Button key={a} size="sm" variant={ACTIONS[a]!.danger ? "danger" : a === "back_step" ? "outline" : "default"} onClick={() => setAction(a)}>{ACTIONS[a]!.label}</Button>)}
     {d?.can_transfer && <Button size="sm" variant="outline" onClick={() => setTransfer(true)}>Transferir responsável</Button>}
     {d && can("purchase_requests.financial") && <Button size="sm" variant="outline" onClick={() => setFin(true)}>Financeiro</Button>}

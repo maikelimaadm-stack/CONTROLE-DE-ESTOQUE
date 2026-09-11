@@ -1,15 +1,20 @@
 "use client";
-import * as React from "react";
-import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { Card, CardHeader, CardBody, Input, Spinner, Button } from "@/components/ui";
-interface R { key: string; label: string; module: string }
-export default function Page() {
-  const q = useQuery({ queryKey: ["reports"], queryFn: () => api<R[]>("/api/reports") }); const [s, setS] = React.useState("");
-  const groups = new Map<string, R[]>(); for (const r of q.data ?? []) if (!s || r.label.toLowerCase().includes(s.toLowerCase())) groups.set(r.module, [...(groups.get(r.module) ?? []), r]);
-  return <Card><CardHeader title="Relatórios" subtitle={`${q.data?.length ?? 0} relatórios disponíveis para o seu perfil · exportação CSV/XLSX e impressão`} actions={<><Link href="/relatorios/personalizados"><Button size="sm" variant="outline">Relatórios personalizados</Button></Link><Input placeholder="Buscar relatório…" value={s} onChange={(e) => setS(e.target.value)} className="w-64" /></>} /><CardBody>
-    {q.isLoading && <Spinner />}
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">{[...groups.entries()].map(([m, rs]) => <div key={m}><h3 className="mb-1 text-xs font-semibold uppercase text-brand-700">{m} ({rs.length})</h3><ul className="space-y-0.5 text-sm">{rs.map((r) => <li key={r.key}><Link className="text-slate-700 hover:text-brand-700 hover:underline" href={`/relatorios/${r.key}`}>{r.label}</Link></li>)}</ul></div>)}</div>
-  </CardBody></Card>;
+import { Suspense } from "react";
+import { useAuth } from "@/lib/auth";
+import { Workspace, NewChooser } from "@/components/workspace";
+import { ReportsCatalog, useReportCatalog } from "@/features/reports/catalog";
+import { SavedReportsPanel } from "@/features/reports/saved-reports";
+
+/** Relatórios: área única organizada por módulo (Favoritos · módulos · Personalizados). */
+function Inner() {
+  const { can } = useAuth(); const q = useReportCatalog();
+  const modules = [...new Set((q.data ?? []).map((r) => r.module))];
+  const key = (m: string) => m.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-");
+  return <Workspace title="Relatórios" actions={<NewChooser items={[{ label: "Novo relatório personalizado", href: "/relatorios/personalizados/novo", perm: "saved_reports.create" }]} />} tabs={[
+    { key: "favoritos", label: "Favoritos", content: <ReportsCatalog favoritesOnly /> },
+    { key: "todos", label: "Todos", content: <ReportsCatalog /> },
+    ...modules.map((m) => ({ key: key(m), label: m, content: <ReportsCatalog module={m} /> })),
+    ...(can("saved_reports.view") ? [{ key: "personalizados", label: "Personalizados", content: <div className="ws-scroll"><SavedReportsPanel /></div> }] : [])
+  ]} defaultTab="todos" />;
 }
+export default function Page() { return <Suspense><Inner /></Suspense>; }

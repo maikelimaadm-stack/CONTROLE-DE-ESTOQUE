@@ -2,21 +2,25 @@
   "screens": {
     "total": 455,
     "TESTADO": 116,
-    "IMPLEMENTADO": 280,
-    "MELHORADO": 21,
+    "IMPLEMENTADO": 228,
+    "MELHORADO": 19,
+    "UNIFICADO": 54,
     "EM IMPLEMENTAÇÃO": 7,
     "MAPEADO": 6,
     "BLOQUEADO": 0,
     "NÃO INICIADO": 25,
     "NÃO APLICÁVEL": 0,
-    "coverage": "417/455 (91.6%)"
+    "coverage": "417/455 (91.6%)",
+    "unified_areas": 12,
+    "unified_screens": 98
   },
   "reports": {
     "total": 120,
     "ours": 107,
     "TESTADO": 5,
-    "IMPLEMENTADO": 111,
+    "IMPLEMENTADO": 102,
     "MELHORADO": 0,
+    "UNIFICADO": 9,
     "EM IMPLEMENTAÇÃO": 3,
     "MAPEADO": 0,
     "BLOQUEADO": 0,
@@ -27,8 +31,9 @@
   "actions": {
     "total": 577,
     "TESTADO": 111,
-    "IMPLEMENTADO": 137,
-    "MELHORADO": 34,
+    "IMPLEMENTADO": 113,
+    "MELHORADO": 32,
+    "UNIFICADO": 26,
     "EM IMPLEMENTAÇÃO": 35,
     "MAPEADO": 3,
     "BLOQUEADO": 0,
@@ -84,7 +89,7 @@
       "title": "DFe Recebidas",
       "route": "/admin/dfe",
       "status": "EM IMPLEMENTAÇÃO",
-      "note": "Fila de DFe e manifestação registradas localmente; consulta automática à SEFAZ (certificado A1) não integrada"
+      "note": "Fila de DFe e manifestação registradas localmente; consulta automática à SEFAZ (certificado A1) não integrada; UNIFICADO: aba da área /estoque (rota antiga redireciona)"
     },
     {
       "id": "SCR-014",
@@ -147,14 +152,14 @@
       "title": "Pré-Lotes",
       "route": "/admin/purchase-lots",
       "status": "MAPEADO",
-      "note": "Pré-lotes representados pelos lotes por contagem (herd_lots) da compra; sem tela própria"
+      "note": "Pré-lotes representados pelos lotes por contagem (herd_lots) da compra; sem tela própria; UNIFICADO: aba da área /pecuaria (rota antiga redireciona)"
     },
     {
       "id": "SCR-117",
       "title": "Lotes/Reprodução",
       "route": "/admin/breeding-batch",
       "status": "MAPEADO",
-      "note": "Lotes de reprodução por estação: filtro por lote no picker de matrizes; sem entidade própria"
+      "note": "Lotes de reprodução por estação: filtro por lote no picker de matrizes; sem entidade própria; UNIFICADO: aba da área /pecuaria/reproducao (rota antiga redireciona)"
     },
     {
       "id": "SCR-142",
@@ -175,7 +180,7 @@
       "title": "LCDPR - Livro Caixa Digital do Produtor Rural",
       "route": "/admin/cash-book",
       "status": "EM IMPLEMENTAÇÃO",
-      "note": "Dados do livro caixa capturados (contas 'livro caixa', dedutibilidade); geração do arquivo LCDPR não implementada"
+      "note": "Dados do livro caixa capturados (contas 'livro caixa', dedutibilidade); geração do arquivo LCDPR não implementada; UNIFICADO: aba da área /fiscal (rota antiga redireciona)"
     },
     {
       "id": "SCR-152",
@@ -189,22 +194,22 @@
       "title": "Integração Domínio",
       "route": "/admin/integration-dominios",
       "status": "NÃO INICIADO",
-      "note": "Integração contábil Domínio não construída; exportação CSV/XLSX disponível"
+      "note": "Integração contábil Domínio não construída; exportação CSV/XLSX disponível; UNIFICADO: aba da área /configuracoes (rota antiga redireciona)"
     },
     {
       "id": "SCR-263",
       "title": "Integração CTA Smart",
       "route": "/admin/integration-cta-smart",
       "status": "NÃO INICIADO",
-      "note": "Campo 'origem' preparado (cta_smart); importação automática não construída"
+      "note": "Campo 'origem' preparado (cta_smart); importação automática não construída; UNIFICADO: aba da área /frota (rota antiga redireciona)"
     },
     {
       "id": "SCR-264",
       "title": "CTA Smart - Abastecimentos Importados",
       "route": "/admin/cta-smart-supplies",
       "status": "NÃO INICIADO",
-      "note": "Idem CTA Smart"
+      "note": "Idem CTA Smart; UNIFICADO: aba da área /frota (rota antiga redireciona)"
     }
   ],
-  "pages": 110
+  "pages": 61
 }

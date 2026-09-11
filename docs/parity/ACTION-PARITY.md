@@ -1,6 +1,6 @@
 # Paridade de Ações
 
-_Gerado por `node scripts/parity.mjs` em 2026-09-11 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação)._
+_Gerado por `node scripts/parity.mjs` em 2026-09-11 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
 
 Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências em 308 telas). Cobertura: 282/344 (82.0%). Ações padrão (Adicionar/Visualizar/Editar/Excluir/Exportar/Imprimir) herdam o status da tela.
 
@@ -27,7 +27,7 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-007 | DFe Recebidas | Manifestar | EM IMPLEMENTAÇÃO | Manifestação registrada localmente; envio à SEFAZ não integrado |
 | SCR-007 | DFe Recebidas | Lançar Despesa em Lote | EM IMPLEMENTAÇÃO | Lançamento a partir da DFe via aprovação de notas (individual) |
 | SCR-007 | DFe Recebidas | Buscar DFe | NÃO INICIADO | Consulta SEFAZ exige certificado |
-| SCR-008 | Formulação | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-008 | Formulação | Adicionar Novo | UNIFICADO |  |
 | SCR-009 | Contas a Pagar | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-009 | Contas a Pagar | Simular Crédito | NÃO APLICÁVEL | Oferta de crédito do fornecedor (marketing) |
 | SCR-009 | Contas a Pagar | Baixar Contas | TESTADO | Baixa em lote (movimento único ou separado) |
@@ -75,7 +75,7 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-014 | NFe | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-014 | NFe | Adicionar Novo | NÃO INICIADO |  |
 | SCR-015 | NFSe Recebidas | Buscar DFe | NÃO INICIADO | Consulta SEFAZ exige certificado |
-| SCR-017 | Indicadores Suprimentos | Filtrar | IMPLEMENTADO |  |
+| SCR-017 | Indicadores Suprimentos | Filtrar | UNIFICADO |  |
 | SCR-027 | Centro de Custo | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-027 | Centro de Custo | Visualizar | TESTADO |  |
 | SCR-027 | Centro de Custo | Cria descendente | TESTADO | Árvore (centro de custo/plano de contas/categoria) |
@@ -163,7 +163,7 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-041 | Contas Bancárias | Excluir | TESTADO | Exclusão lógica (soft delete) com auditoria; documentos transacionais são cancelados com estorno |
 | SCR-042 | Saldo Inicial | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-042 | Saldo Inicial | Simular Crédito | NÃO APLICÁVEL | Oferta de crédito do fornecedor (marketing) |
-| SCR-042 | Saldo Inicial | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-042 | Saldo Inicial | Adicionar Novo | UNIFICADO |  |
 | SCR-043 | Categoria Financeira | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-043 | Categoria Financeira | fas fa-print | TESTADO | Impressão do navegador |
 | SCR-043 | Categoria Financeira | Visualizar | TESTADO |  |
@@ -220,15 +220,15 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-059 | Cochos | Excluir | IMPLEMENTADO | Exclusão lógica (soft delete) com auditoria; documentos transacionais são cancelados com estorno |
 | SCR-060 | Lotes de Animais | Importar | EM IMPLEMENTAÇÃO | Importação CSV disponível apenas para produtos/pessoas (registro importExport); demais cadastros pendentes |
 | SCR-060 | Lotes de Animais | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-061 | Lote/Módulo | Adicionar Novo | MELHORADO |  |
-| SCR-062 | Lote/Área | Adicionar Novo | MELHORADO |  |
+| SCR-061 | Lote/Módulo | Adicionar Novo | UNIFICADO |  |
+| SCR-062 | Lote/Área | Adicionar Novo | UNIFICADO |  |
 | SCR-063 | Inventário | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-063 | Inventário | Importar | EM IMPLEMENTAÇÃO | Importação CSV disponível apenas para produtos/pessoas (registro importExport); demais cadastros pendentes |
 | SCR-063 | Inventário | Exportar | TESTADO | CSV/XLSX |
 | SCR-063 | Inventário | Adicionar Novo | TESTADO |  |
 | SCR-064 | Depreciação Mensal | Safra | IMPLEMENTADO |  |
 | SCR-064 | Depreciação Mensal | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
-| SCR-067 | SLA Status | Editar | IMPLEMENTADO |  |
+| SCR-067 | SLA Status | Editar | UNIFICADO |  |
 | SCR-068 | Meus Processos | Visualizar | TESTADO |  |
 | SCR-068 | Meus Processos | Relatório SLA | IMPLEMENTADO | /relatorios/supply_sla |
 | SCR-068 | Meus Processos | Acusar ciência | TESTADO |  |
@@ -255,7 +255,7 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-076 | Aprovação de Notas Fiscais | DFe Recebidas | EM IMPLEMENTAÇÃO |  |
 | SCR-077 | Perfis de Lançamento por Fornecedor | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-078 | Baixa de Estoque | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
-| SCR-078 | Baixa de Estoque | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-078 | Baixa de Estoque | Adicionar Novo | UNIFICADO |  |
 | SCR-079 | Requisição do Estoque | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-079 | Requisição do Estoque | Importar | EM IMPLEMENTAÇÃO | Importação CSV disponível apenas para produtos/pessoas (registro importExport); demais cadastros pendentes |
 | SCR-079 | Requisição do Estoque | Adicionar Novo | TESTADO |  |
@@ -271,7 +271,7 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-084 | Saldo Estoque | fas fa-print | TESTADO | Impressão do navegador |
 | SCR-084 | Saldo Estoque | Exportar | TESTADO | CSV/XLSX |
 | SCR-084 | Saldo Estoque | Visualizar | TESTADO |  |
-| SCR-085 | Batida | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-085 | Batida | Adicionar Novo | UNIFICADO |  |
 | SCR-086 | Eventos | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-086 | Eventos | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-086 | Eventos | Visualizar | IMPLEMENTADO |  |
@@ -323,13 +323,13 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-097 | Inventariado Animais | Importar | EM IMPLEMENTAÇÃO | Importação CSV disponível apenas para produtos/pessoas (registro importExport); demais cadastros pendentes |
 | SCR-098 | Planejamento Pecuário | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-100 | Agrupar Lotes | Agrupar | IMPLEMENTADO |  |
-| SCR-100 | Agrupar Lotes | Novo Lote | IMPLEMENTADO | Cadastro de lotes |
+| SCR-100 | Agrupar Lotes | Novo Lote | UNIFICADO | Cadastro de lotes |
 | SCR-101 | Venda de Animais | Adicionar Novo | TESTADO |  |
 | SCR-102 | Compra de Animais | Adicionar Novo | TESTADO |  |
 | SCR-103 | Nascimentos | Importar | EM IMPLEMENTAÇÃO | Importação CSV disponível apenas para produtos/pessoas (registro importExport); demais cadastros pendentes |
-| SCR-103 | Nascimentos | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-104 | Mortes | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-105 | Perdas | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-103 | Nascimentos | Adicionar Novo | UNIFICADO |  |
+| SCR-104 | Mortes | Adicionar Novo | UNIFICADO |  |
+| SCR-105 | Perdas | Adicionar Novo | UNIFICADO |  |
 | SCR-106 | Processamentos | Processar | TESTADO |  |
 | SCR-107 | Pré-Lotes | Adicionar Novo | MAPEADO |  |
 | SCR-108 | Pesagens | Importar | EM IMPLEMENTAÇÃO | Importação CSV disponível apenas para produtos/pessoas (registro importExport); demais cadastros pendentes |
@@ -339,29 +339,29 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-108 | Pesagens | Exportar Excel | TESTADO | XLSX |
 | SCR-108 | Pesagens | Editar | TESTADO |  |
 | SCR-108 | Pesagens | Excluir | TESTADO | Exclusão lógica (soft delete) com auditoria; documentos transacionais são cancelados com estorno |
-| SCR-109 | Nutrição | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-109 | Nutrição | Adicionar Novo | UNIFICADO |  |
 | SCR-110 | Sanitários | Adicionar Novo | TESTADO |  |
-| SCR-111 | Desmama | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-112 | Apartações | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-114 | Pastagem | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-114 | Pastagem | Visualizar | IMPLEMENTADO |  |
+| SCR-111 | Desmama | Adicionar Novo | UNIFICADO |  |
+| SCR-112 | Apartações | Adicionar Novo | UNIFICADO |  |
+| SCR-114 | Pastagem | Adicionar Novo | UNIFICADO |  |
+| SCR-114 | Pastagem | Visualizar | UNIFICADO |  |
 | SCR-114 | Pastagem | Finalizar | IMPLEMENTADO |  |
-| SCR-114 | Pastagem | Excluir | IMPLEMENTADO | Exclusão lógica (soft delete) com auditoria; documentos transacionais são cancelados com estorno |
+| SCR-114 | Pastagem | Excluir | UNIFICADO | Exclusão lógica (soft delete) com auditoria; documentos transacionais são cancelados com estorno |
 | SCR-115 | Gerenciamento Reprodutivo Avançado | Adicionar Novo Acasalamento | IMPLEMENTADO |  |
 | SCR-116 | Estações de Monta | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-116 | Estações de Monta | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-117 | Lotes/Reprodução | Adicionar Novo | MAPEADO |  |
 | SCR-118 | Touros/Sêmen/Embrião | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-119 | Protocolos/Estação | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-120 | Acasalamento | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-120 | Acasalamento | Adicionar Novo | UNIFICADO |  |
 | SCR-121 | Pátio | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-122 | Setores | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-123 | Curral | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-124 | Dietas | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-125 | Fases/Regras de Troca | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-126 | Batelada | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-127 | Trato Diário | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-128 | Leitura de Cocho | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-126 | Batelada | Adicionar Novo | UNIFICADO |  |
+| SCR-127 | Trato Diário | Adicionar Novo | UNIFICADO |  |
+| SCR-128 | Leitura de Cocho | Adicionar Novo | UNIFICADO |  |
 | SCR-130 | Pluviometria | Importar | EM IMPLEMENTAÇÃO | Importação CSV disponível apenas para produtos/pessoas (registro importExport); demais cadastros pendentes |
 | SCR-130 | Pluviometria | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-131 | Orçamentos | Adicionar Novo | TESTADO |  |
@@ -371,13 +371,13 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-138 | Análise do Fluxo Bancário | Simular Crédito | NÃO APLICÁVEL | Oferta de crédito do fornecedor (marketing) |
 | SCR-139 | Gestão Contratos | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-140 | Previsão Orçamentária Anual | Importar | EM IMPLEMENTAÇÃO | Importação CSV disponível apenas para produtos/pessoas (registro importExport); demais cadastros pendentes |
-| SCR-140 | Previsão Orçamentária Anual | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-140 | Previsão Orçamentária Anual | Adicionar Novo | UNIFICADO |  |
 | SCR-141 | Congelamento Financeiro | Adicionar Novo | TESTADO |  |
 | SCR-142 | Planilha de Movimentos | Importar | EM IMPLEMENTAÇÃO | Importação CSV disponível apenas para produtos/pessoas (registro importExport); demais cadastros pendentes |
-| SCR-143 | Manutenções | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-143 | Manutenções | Adicionar Novo | UNIFICADO |  |
 | SCR-144 | Abastecimentos | Adicionar Novo | TESTADO |  |
 | SCR-145 | Manutenções Preventivas | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-147 | Transferência de Máquinas | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-147 | Transferência de Máquinas | Adicionar Novo | UNIFICADO |  |
 | SCR-148 | Arquivos XML | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-149 | MDFe | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-149 | MDFe | Consultar não encerrados | IMPLEMENTADO | Filtro de status |
@@ -385,7 +385,7 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-150 | MDFe | Voltar | NÃO APLICÁVEL | Navegação |
 | SCR-151 | LCDPR - Livro Caixa Digital do Produtor Rural | Adicionar Novo | EM IMPLEMENTAÇÃO |  |
 | SCR-152 | SPED Fiscal - EFD ICMS/IPI | Adicionar Novo | NÃO INICIADO |  |
-| SCR-153 | Partida Dobrada | Adicionar Novo | IMPLEMENTADO |  |
+| SCR-153 | Partida Dobrada | Adicionar Novo | UNIFICADO |  |
 | SCR-262 | Integração Domínio | Adicionar Novo | NÃO INICIADO |  |
 | SCR-263 | Integração CTA Smart | Abastecimentos Importados | NÃO INICIADO | CTA Smart |
 | SCR-264 | CTA Smart - Abastecimentos Importados | Configuração | NÃO INICIADO | Emissor fiscal |

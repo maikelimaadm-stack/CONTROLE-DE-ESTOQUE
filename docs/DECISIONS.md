@@ -17,3 +17,6 @@
 | 13 | Datas pt-BR só na UI; ISO no transporte | Evita ambiguidade | — |
 | 14 | Transferência Lote/Módulo/Área unificada | Um único movimento com histórico em vez de duas telas | MELHORADO |
 | 15 | Avaliação de OS no detalhe | Menos telas, mesma funcionalidade | MELHORADO |
+| 16 | Áreas de trabalho por módulo (abas/sub-abas por permissão) em vez de uma tela por etapa/tipo | Menu de ~150 para 47 itens; o usuário acompanha um processo sem trocar de módulo; backend, schema, permissões e ledger intocados; rotas antigas redirecionam (`apps/web/redirects.mjs`) | 98 telas da referência viram abas/filtros/ações (UNIFICADO) — `docs/UX-ARCHITECTURE.md` |
+| 17 | Dashboards dentro do módulo ("Visão Geral") | Sem seção de 13 dashboards soltos; mesmas consultas | UNIFICADO |
+| 18 | Cadastros técnicos em Configurações; cadastros frequentes no contexto de uso | Fim do conceito "Cadastros Base" na navegação; `/cadastros/<recurso>` permanece como rota de registro | UNIFICADO |

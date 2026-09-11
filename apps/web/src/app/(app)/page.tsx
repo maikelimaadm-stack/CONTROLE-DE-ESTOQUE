@@ -15,7 +15,7 @@ export default function HomePage() {
   const d = q.data;
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-2"><h1 className="text-lg font-semibold mr-auto">Painel de Controle</h1><div><label className="text-[11px] text-slate-500">Início</label><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div><div><label className="text-[11px] text-slate-500">Fim</label><Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div></div>
+      <div className="flex flex-wrap items-end gap-2"><h1 className="text-lg font-semibold mr-auto">Início</h1><div><label className="text-[11px] text-slate-500">Início</label><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div><div><label className="text-[11px] text-slate-500">Fim</label><Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div></div>
       {q.isLoading && <Spinner />}
       {d && <>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
@@ -26,17 +26,17 @@ export default function HomePage() {
           <Stat label="Resultado c/ estoque" value={brl(d.operational_result.result_with_stock)} tone={Number(d.operational_result.result_with_stock) >= 0 ? "green" : "red"} hint="Inclui consumo de insumos" />
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-          <Link href="/financeiro/contas-a-pagar?status=overdue"><Stat label="Títulos a pagar vencidos" value={d.alerts.overdue_payables} tone={Number(d.alerts.overdue_payables) ? "red" : "slate"} /></Link>
-          <Link href="/financeiro/contas-a-receber?status=overdue"><Stat label="Títulos a receber vencidos" value={d.alerts.overdue_receivables} tone={Number(d.alerts.overdue_receivables) ? "amber" : "slate"} /></Link>
-          <Link href="/estoque/saldo?below_min=true"><Stat label="Produtos abaixo do mínimo" value={d.alerts.low_stock} tone={Number(d.alerts.low_stock) ? "amber" : "slate"} /></Link>
-          <Link href="/suprimentos/mine"><Stat label="Solicitações em andamento" value={d.alerts.pending_requests} /></Link>
-          <Link href="/pecuaria/processamentos"><Stat label="Processamentos pendentes" value={d.alerts.pending_processings} /></Link>
+          <Link href="/financeiro?tab=contas&sub=pagar&status=overdue"><Stat label="Títulos a pagar vencidos" value={d.alerts.overdue_payables} tone={Number(d.alerts.overdue_payables) ? "red" : "slate"} /></Link>
+          <Link href="/financeiro?tab=contas&sub=receber&status=overdue"><Stat label="Títulos a receber vencidos" value={d.alerts.overdue_receivables} tone={Number(d.alerts.overdue_receivables) ? "amber" : "slate"} /></Link>
+          <Link href="/estoque?tab=saldo&below_min=true"><Stat label="Produtos abaixo do mínimo" value={d.alerts.low_stock} tone={Number(d.alerts.low_stock) ? "amber" : "slate"} /></Link>
+          <Link href="/compras?tab=processos&sub=mine"><Stat label="Solicitações em andamento" value={d.alerts.pending_requests} /></Link>
+          <Link href="/pecuaria?tab=rebanho&sub=processamentos"><Stat label="Processamentos pendentes" value={d.alerts.pending_processings} /></Link>
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
           <Card><CardHeader title="Previsão de Receitas x Despesas" subtitle="Por mês de vencimento (previsto) e baixas (realizado)" /><CardBody><Bars data={d.forecast_vs_actual} x="month" series={[{ key: "income_forecast", label: "Receita prevista", color: "#8cc797" }, { key: "income_done", label: "Receita realizada", color: "#2b6f3a" }, { key: "expense_forecast", label: "Despesa prevista", color: "#fca5a5" }, { key: "expense_done", label: "Despesa realizada", color: "#dc2626" }]} /></CardBody></Card>
           <Card><CardHeader title="Custo de Produção por Centro de Custo" subtitle="Despesas (títulos) no período" /><CardBody>{d.production_cost_by_center.length ? <Donut data={d.production_cost_by_center} nameKey="cost_center" valueKey="expense" /> : <p className="text-sm text-slate-400">Sem despesas no período.</p>}</CardBody></Card>
         </div>
-        <div className="flex gap-2 no-print"><Link href="/relatorios"><Button variant="outline" size="sm">Relatórios</Button></Link><Link href="/dashboards/financeiro"><Button variant="outline" size="sm">Indicadores financeiros</Button></Link><Link href="/dashboards/pecuaria"><Button variant="outline" size="sm">Pecuária de corte</Button></Link></div>
+        <div className="flex gap-2 no-print"><Link href="/relatorios"><Button variant="outline" size="sm">Relatórios</Button></Link><Link href="/financeiro?tab=visao-geral"><Button variant="outline" size="sm">Indicadores financeiros</Button></Link><Link href="/pecuaria?tab=visao-geral"><Button variant="outline" size="sm">Pecuária de corte</Button></Link></div>
       </>}
     </div>
   );
