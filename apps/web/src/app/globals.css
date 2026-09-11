@@ -18,7 +18,12 @@ input, select, textarea { @apply text-[13px]; }
 /* MODELO BASE1: barra de rolagem fina e sem setas nos inputs numéricos das caixas de campo */
 .b1 ::-webkit-scrollbar { height: 8px; width: 8px; } .b1 ::-webkit-scrollbar-thumb { @apply rounded-full bg-slate-300; }
 .b1 input[type="date"]::-webkit-calendar-picker-indicator { opacity: .5; }
-@media print { .no-print { display: none !important; } body { background: white; font-size: 11px; } }
+@media print {
+  .no-print { display: none !important; } body { background: white; font-size: 11px; }
+  /* impressão: sem altura fixa nem rolagem interna — o documento cresce por todas as páginas */
+  .mg-app-shell, main, .mg-shell--fill, .mg-shell--table, .mg-grid-wrap, .mg-shell__scroll, .mg-form-scroll, .b1 { height: auto !important; max-height: none !important; overflow: visible !important; }
+  .mg-grid thead th, .mg-grid tfoot th, .mg-grid tfoot td, .mg-grid .is-frozen, .mg-grid .th-select, .mg-grid .td-select { position: static !important; }
+}
 
 /* ================================================================================================
    MODELO BASE1 — tokens e classes replicados do makgestao (src/styles/mg-prototype.css do PROJETOMG)

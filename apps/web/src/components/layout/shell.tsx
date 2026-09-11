@@ -51,7 +51,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const menuOpen = pinned || hover;
   const closeIfFloating = () => { if (!pinned) setHover(false); };
   return (
-    <div className="flex h-dvh flex-col overflow-hidden">
+    <div className="mg-app-shell flex h-dvh flex-col overflow-hidden">
       <header className="mg-topbar no-print sticky top-0 z-40">
         <div className="flex min-w-0 items-center gap-2">
           <div className="relative inline-flex items-center" onMouseEnter={() => { if (!pinned) setHover(true); }} onMouseLeave={() => { if (!pinned) setHover(false); }}>
