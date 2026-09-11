@@ -72,7 +72,7 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath }: { r
     canCreate={can(`${perm}.create`)} onNew={() => router.push(`${base}/new${qs(fixed)}`)}
     canDelete={can(`${perm}.delete`)} onDelete={async (r) => { await api(`/api/resources/${resourceKey}/${r["id"]}`, { method: "DELETE" }); toast.success("Registro excluído"); }} deleteText={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`}
     Record={Record}
-    rowActions={(r) => [{ label: "Visualizar", onClick: () => router.push(`${base}/${r["id"]}?view=1`) }, ...(can(`${perm}.edit`) ? [{ label: "Editar", onClick: () => router.push(`${base}/${r["id"]}`) }] : []), ...(can(`${perm}.create`) ? [{ label: "Duplicar", onClick: () => router.push(`${base}/new?copy=${r["id"]}`) }] : [])]}
+    rowActions={(r) => [{ label: "Visualizar", onClick: () => router.push(`${base}/${r["id"]}?view=1`) }, ...(can(`${perm}.edit`) ? [{ label: "Editar", onClick: () => router.push(`${base}/${r["id"]}`) }] : [])]}
     exportXlsx={def.importExport && can(`${perm}.export`) ? (p) => download(`/api/exports/${resourceKey}${qs({ ...p.filters, ...fixed, search: p.search, format: "xlsx" })}`, `${resourceKey}.xlsx`) : undefined}
     reportHref={can("saved_reports.create") ? (p) => `/relatorios/personalizados/novo?resource=${resourceKey}&f=${encodeURIComponent(JSON.stringify({ ...p.filters, ...(p.search ? { search: p.search } : {}) }))}` : undefined}
   />;
