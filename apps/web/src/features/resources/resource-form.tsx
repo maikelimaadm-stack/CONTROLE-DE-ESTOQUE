@@ -138,7 +138,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
         {embedded?.rightSlot ?? <div className="ml-auto flex items-center gap-1.5">{!embedded && <Link href={back}><IconBtn aria-label="Voltar para a listagem" title="Voltar para a listagem"><ArrowLeft className="h-4 w-4" /></IconBtn></Link>}</div>}
       </div>
       {/* cabeçalho do registro + navegação */}
-      <div className="mg-toolbar mg-card flex-wrap !min-h-[32px] !py-1">
+      <div className="mg-toolbar mg-card flex-wrap">
         <Bookmark className="h-4 w-4 text-[var(--mg-icon)]" /><span className="text-[13px] font-semibold text-slate-800">{code && <>{code} <span className="text-slate-400">•</span> </>}{title || def.label}</span>
         {!readOnly && (() => { const req = fields.filter((f) => visible(f) && (Boolean(f.required) || l.requiredFieldIds.includes(f.name)) && !(isNew && f.readOnly)); const pend = req.filter((f) => { const v = values[f.name]; return f.type === "boolean" ? false : Array.isArray(v) ? v.length === 0 : v === "" || v === null || v === undefined; }); return <RequiredPill total={req.length} filled={req.length - pend.length} pending={pend.map((f) => l.fieldLabels[f.name] ?? f.label)} />; })()}
         <span className="ml-auto flex items-center gap-1">

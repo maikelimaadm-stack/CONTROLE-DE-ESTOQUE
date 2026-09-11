@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
-import { Plus, EyeOff, Eye, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, PanelLeftClose, Trash2, Building2, RotateCcw } from "lucide-react";
+import { Plus, Pencil, EyeOff, Eye, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, PanelLeftClose, Trash2, Building2, RotateCcw } from "lucide-react";
 import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { getSession } from "@/lib/api";
@@ -72,6 +72,11 @@ export function Base1List(props: Base1ListProps) {
   const [search, setSearch] = React.useState(""); const [favOnly, setFavOnly] = React.useState(false);
   const [showChips, setShowChips] = React.useState(true);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  // favoritos (estrela do card / "Buscar favoritos"): lembrados por tela neste navegador
+  const favKey = `agro.fav.${moduleId}`;
+  const [favorites, setFavorites] = React.useState<Set<string>>(new Set());
+  React.useEffect(() => { try { const raw = localStorage.getItem(favKey); setFavorites(new Set(raw ? (JSON.parse(raw) as string[]) : [])); } catch { /* sem storage */ } }, [favKey]);
+  const toggleFavorite = (id: string, on: boolean) => setFavorites((f) => { const n = new Set(f); if (on) n.add(id); else n.delete(id); try { localStorage.setItem(favKey, JSON.stringify([...n])); } catch { /* sem storage */ } return n; });
   const [openChip, setOpenChip] = React.useState<string | null>(null);
   const [colsDlg, setColsDlg] = React.useState(false); const [histDlg, setHistDlg] = React.useState(false); const [delRow, setDelRow] = React.useState<Row | null>(null);
   const [sortLocal, setSortLocal] = React.useState<{ key: string; dir: "asc" | "desc" } | undefined>();
@@ -94,7 +99,7 @@ export function Base1List(props: Base1ListProps) {
   });
   const allRows = React.useMemo(() => q.data?.pages.flatMap((pg) => pg.items) ?? [], [q.data]);
   // "Buscar favoritos": mostra só os registros marcados (selecionados) entre os carregados
-  const rows = React.useMemo(() => (favOnly ? allRows.filter((r) => selected.has(String(r["id"]))) : allRows), [allRows, favOnly, selected]);
+  const rows = React.useMemo(() => (favOnly ? allRows.filter((r) => favorites.has(String(r["id"]))) : allRows), [allRows, favOnly, favorites]);
   const total = q.data?.pages[0]?.total ?? 0; const totals = q.data?.pages[0]?.totals;
   const filtersActive = Object.keys(applied.params).length > 0 || Boolean(applied.search);
   const sess = getSession();
@@ -148,8 +153,8 @@ export function Base1List(props: Base1ListProps) {
     extraMenu?.find((m) => m.key === k)?.onClick();
   };
   const rightSlot = <div className="ml-auto flex items-center gap-1.5">
-    {searchable && <SearchBox value={search} onChange={setSearch} active={Boolean(applied.search) || favOnly} placeholder={props.searchPlaceholder} onApply={() => apply(values, search)} onApplyFavorites={() => { if (search !== applied.search) setApplied((a) => ({ ...a, search })); setFavOnly(true); }} favoritesDisabled={selected.size === 0} onClear={() => { setSearch(""); setFavOnly(false); setApplied((a) => ({ ...a, search: "" })); }}
-      columns={columns} scope={chipScope} fetchResults={(s) => fetchPage({ page: 1, pageSize: 20, search: s, filters: applied.params })} onPick={(r) => { setSelected(new Set([String(r["id"])])); enterRecord(r); }} isFavorite={(r) => selected.has(String(r["id"]))}
+    {searchable && <SearchBox value={search} onChange={setSearch} active={Boolean(applied.search) || favOnly} placeholder={props.searchPlaceholder} onApply={() => apply(values, search)} onApplyFavorites={() => { if (search !== applied.search) setApplied((a) => ({ ...a, search })); setFavOnly(true); }} favoritesDisabled={favorites.size === 0} onClear={() => { setSearch(""); setFavOnly(false); setApplied((a) => ({ ...a, search: "" })); }}
+      columns={columns} scope={chipScope} fetchResults={(s) => fetchPage({ page: 1, pageSize: 20, search: s, filters: applied.params })} onPick={(r) => { setSelected(new Set([String(r["id"])])); enterRecord(r); }} isFavorite={(r) => favorites.has(String(r["id"]))}
       detailFields={prefs.search?.fields ?? columns.filter((c) => !["code", "name", "description", "title"].includes(c.key)).slice(0, 3).map((c) => c.key)} onDetailFieldsChange={(keys) => p.update((x) => ({ ...x, search: { ...(x.search ?? {}), fields: keys } }))} onDetailFieldsRestore={() => p.update((x) => ({ ...x, search: undefined }))} />}
     <IconBtn aria-label={showChips ? "Recolher faixa de filtros" : "Exibir faixa de filtros"} title={showChips ? "Recolher faixa de filtros" : "Exibir faixa de filtros"} onClick={() => setShowChips((s) => !s)}>{showChips ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</IconBtn>
     <ViewSwitch value={view} recordDisabled={!Record && !onOpen} onChange={(m) => { if (m === "record") enterRecord(); else { setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } })); } }} />
@@ -159,7 +164,7 @@ export function Base1List(props: Base1ListProps) {
   const cardFields = prefs.view.cardFields ?? columns.slice(0, 7).map((c) => c.key);
 
   if (view === "record" && Record) {
-    return <div className={cn("b1 flex min-h-0 flex-1 flex-col", props.className)}>
+    return <div key={`rec-${recMode === "new" ? "new" : String(rows[recIndex]?.["id"] ?? recIndex)}`} className={cn("b1 mg-motion-swap flex min-h-0 flex-1 flex-col", props.className)}>
       <Record row={recMode === "new" ? null : rows[recIndex] ?? null} index={recIndex} total={total} go={goRecord} onExit={() => { setView(prefs.view.mode); void q.refetch(); }} refresh={() => void q.refetch()} rightSlot={rightSlot} mode={recMode} setMode={setRecMode} copyFrom={copyFrom} />
       {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={rows[recIndex] ? String(rows[recIndex]!["id"]) : undefined} title={title} />}
     </div>;
@@ -169,7 +174,9 @@ export function Base1List(props: Base1ListProps) {
     <div className="mg-toolbar mg-card flex-wrap no-print">
       {canCreate !== false && (onNew || Record) && <PillBtn onClick={newRecord}><Plus className="h-4 w-4" /> {props.createLabel ?? "Novo"}</PillBtn>}
       {props.extraToolbar}
-      {canDelete && onDelete && one && <PillBtn tone="red" onClick={() => setDelRow(one)}><Trash2 className="h-4 w-4" /> Excluir</PillBtn>}
+      {one && (Record || onOpen) && <PillBtn tone="gray" onClick={() => { enterRecord(one); if (Record) setRecMode("edit"); }}><Pencil className="h-3.5 w-3.5" /> Editar</PillBtn>}
+      {one && canCreate !== false && (onDuplicate || Record) && <PillBtn tone="gray" onClick={() => duplicate(one)}><Copy className="h-3.5 w-3.5" /> Duplicar</PillBtn>}
+      {canDelete && onDelete && selectedRows.length > 0 && <PillBtn tone="red" onClick={() => setDelRow(one ?? selectedRows[0]!)}><Trash2 className="h-4 w-4" /> Excluir{selectedRows.length > 1 ? ` (${selectedRows.length})` : ""}</PillBtn>}
       {rightSlot}
     </div>
     {/* faixa de chips de filtro */}
@@ -192,11 +199,11 @@ export function Base1List(props: Base1ListProps) {
       <div className="mg-shell mg-shell--fill min-w-0 flex-1">
         {q.error && <div className="p-2"><ErrorBox error={q.error} /></div>}
         {view === "cards"
-          ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelect={(id, on) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; })} actions={rowActions} /></div>
-          : <Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onOpen={(r) => enterRecord(r)} frozen={frozen}
+          ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelect={(id, on) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; })} actions={rowActions} favorites={favorites} onFavorite={toggleFavorite} /></div>
+          : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onOpen={(r) => enterRecord(r)} frozen={frozen}
             onFreeze={(n) => updCols((c) => ({ ...c, frozen: n }))} onHide={(k) => updCols((c) => ({ ...c, visible: visibleColumns.map((x) => x.key).filter((x) => x !== k) }))} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
             onFilter={(k) => { const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}
-            footer={footerTotals && totals ? footerTotals(totals) : undefined} />}
+            footer={footerTotals && totals ? footerTotals(totals) : undefined} /></div>}
         {/* rodapé (mg-records-summary) */}
         <div className="mg-summary no-print">
           <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {selected.size}</span><span className="mg-summary__item">Listados: {allRows.length}</span><span className="mg-summary__item">Filtrados: {total}</span><span className="mg-summary__item">Totais: {filtersActive ? grand.data ?? "…" : total}</span></div>
@@ -209,6 +216,6 @@ export function Base1List(props: Base1ListProps) {
     </div>
     <ColumnsDialog open={colsDlg} onOpenChange={setColsDlg} columns={columns} visible={visibleColumns.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: keys }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
     {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={one ? String(one["id"]) : undefined} title={title} />}
-    {onDelete && <Confirm open={Boolean(delRow)} onOpenChange={() => setDelRow(null)} title="Confirme a exclusão" text={props.deleteText ?? "Excluir o registro selecionado? A ação fica registrada na auditoria."} danger onConfirm={async () => { if (delRow) { await onDelete(delRow); setDelRow(null); setSelected(new Set()); void q.refetch(); } }} />}
+    {onDelete && <Confirm open={Boolean(delRow)} onOpenChange={() => setDelRow(null)} title="Confirme a exclusão" text={props.deleteText ?? (selectedRows.length > 1 ? `Excluir os ${selectedRows.length} registros selecionados? A ação fica registrada na auditoria.` : "Excluir o registro selecionado? A ação fica registrada na auditoria.")} danger onConfirm={async () => { if (delRow) { for (const r of selectedRows.length > 1 ? selectedRows : [delRow]) await onDelete(r); setDelRow(null); setSelected(new Set()); void q.refetch(); } }} />}
   </div>;
 }

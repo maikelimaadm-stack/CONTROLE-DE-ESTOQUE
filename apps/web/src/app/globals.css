@@ -92,7 +92,7 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 /* --- painéis brancos (contêiner de tabela/cards/formulário) --- */
 .mg-shell { background: var(--mg-bg-card); border: 1px solid rgba(15,23,42,.06); border-radius: 14px; box-shadow: var(--mg-card-shadow); overflow: hidden; }
 .mg-card { background: var(--mg-bg-card); border: var(--mg-container-border); border-radius: var(--mg-radius-card); box-shadow: var(--mg-card-shadow); }
-.mg-toolbar { display: flex; align-items: center; gap: 8px; min-height: var(--mg-toolbar-h); padding: 4px 12px; }
+.mg-toolbar { display: flex; align-items: center; gap: 8px; height: var(--mg-toolbar-h); min-height: var(--mg-toolbar-h); padding: 4px 12px; box-sizing: border-box; }
 
 /* --- grade (emp-table-pro) --- */
 .mg-grid-wrap { overflow: auto; }
@@ -215,6 +215,11 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 @keyframes mg-motion-text-in { from { opacity: 0; } to { opacity: 1; } }
 .mg-motion-panel--animate { animation: mg-motion-panel-fade .22s cubic-bezier(.2,.8,.2,1) both; }
 .mg-page-enter { animation: mg-motion-text-in .22s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes mg-motion-swap-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+.mg-motion-swap { animation: mg-motion-swap-in .22s cubic-bezier(.2,.8,.2,1) both; }
+/* card selecionado (mesma seleção verde da grade) e estrela de favorito */
+.mg-card.is-selected { background: var(--mg-selection-bg); box-shadow: inset 0 0 0 1px var(--mg-focus-border); }
+.mg-record-fav-btn { color: var(--mg-icon); } .mg-record-fav-btn.is-active { color: var(--mg-accent); }
 
 /* --- painéis do registro: abas horizontais (seg-control) ou lista lateral (mg-panel-list) --- */
 .mg-panel-tabs-rail { display: flex; align-items: stretch; gap: 6px; min-height: 36px; }

@@ -10,7 +10,7 @@ const initials = (s: string) => s.replace(/[^\p{L}\p{N} ]/gu, "").trim().slice(0
 const gridCls: Record<number, string> = { 1: "grid-cols-1", 2: "md:grid-cols-2", 3: "md:grid-cols-2 xl:grid-cols-3", 4: "md:grid-cols-2 xl:grid-cols-4" };
 
 /** Cards do modelo base: avatar com iniciais, "CÓDIGO • título", linhas rótulo: valor. */
-export function Base1Cards({ rows, columns, fields, perRow, loading, onOpen, selected, onSelect, actions }: { rows: Row[]; columns: Base1Column[]; fields: string[]; perRow: 1 | 2 | 3 | 4; loading?: boolean; onOpen?: (r: Row) => void; selected: Set<string>; onSelect: (id: string, on: boolean) => void; actions?: (r: Row) => { label: string; onClick: () => void; danger?: boolean }[] }) {
+export function Base1Cards({ rows, columns, fields, perRow, loading, onOpen, selected, onSelect, actions, favorites, onFavorite }: { rows: Row[]; columns: Base1Column[]; fields: string[]; perRow: 1 | 2 | 3 | 4; loading?: boolean; onOpen?: (r: Row) => void; selected: Set<string>; onSelect: (id: string, on: boolean) => void; actions?: (r: Row) => { label: string; onClick: () => void; danger?: boolean }[]; favorites?: Set<string>; onFavorite?: (id: string, on: boolean) => void }) {
   const byKey = new Map(columns.map((c) => [c.key, c]));
   const text = (c: Base1Column, r: Row) => c.text ? c.text(r) : String(r[c.key] ?? "");
   const titleCol = byKey.get("name") ?? byKey.get("description") ?? byKey.get("title") ?? columns.find((c) => c.key !== "code") ?? columns[0];
@@ -20,12 +20,12 @@ export function Base1Cards({ rows, columns, fields, perRow, loading, onOpen, sel
   if (!rows.length) return <Empty />;
   return <div className={cn("grid grid-cols-1 gap-3", gridCls[perRow])}>
     {rows.map((r) => { const id = String(r["id"]); const t = titleCol ? text(titleCol, r) : ""; const code = codeCol ? text(codeCol, r) : ""; const acts = actions?.(r) ?? []; return (
-      <div key={id} data-testid="b1-card" className={cn("mg-card group p-4 transition-shadow hover:shadow-[0_6px_20px_rgba(0,0,0,.09)]", selected.has(id) && "ring-2 ring-[var(--mg-focus-border)]")} onDoubleClick={() => onOpen?.(r)}>
+      <div key={id} data-testid="b1-card" role="option" aria-selected={selected.has(id)} className={cn("mg-card group cursor-pointer select-none p-4 transition-shadow hover:shadow-[0_6px_20px_rgba(0,0,0,.09)]", selected.has(id) && "is-selected")} onClick={() => onSelect(id, !selected.has(id))} onDoubleClick={() => onOpen?.(r)}>
         <div className="flex items-center gap-2">
           <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--mg-accent)] text-[11px] font-bold text-white">{initials(t)}</span>
-          <button type="button" aria-label={selected.has(id) ? "Desmarcar" : "Marcar"} onClick={() => onSelect(id, !selected.has(id))} className={cn("rounded p-0.5 text-slate-400 hover:text-brand-600", selected.has(id) && "text-brand-600")}><Bookmark className={cn("h-4 w-4", selected.has(id) && "fill-current")} /></button>
-          <button type="button" className="min-w-0 flex-1 truncate text-left text-[12.5px] font-semibold text-slate-800 hover:text-brand-700" onClick={() => onOpen?.(r)}>{code && <span className="text-slate-500">{code} • </span>}{t}</button>
-          {acts.length > 0 && <B1Popover className="w-44 p-1" trigger={<IconBtn size="sm" aria-label="Ações do registro" className="bg-transparent"><MoreVertical className="h-4 w-4" /></IconBtn>}>{acts.map((a) => <button key={a.label} type="button" onClick={a.onClick} className={cn("block w-full rounded-md px-2 py-1.5 text-left text-[12.5px] hover:bg-slate-100", a.danger && "text-red-600")}>{a.label}</button>)}</B1Popover>}
+          <button type="button" aria-label={favorites?.has(id) ? "Remover dos favoritos" : "Adicionar aos favoritos"} title={favorites?.has(id) ? "Remover dos favoritos" : "Favoritar"} onClick={(e) => { e.stopPropagation(); onFavorite?.(id, !favorites?.has(id)); }} className={cn("mg-record-fav-btn rounded p-0.5", favorites?.has(id) && "is-active")}><Bookmark className={cn("h-4 w-4", favorites?.has(id) && "fill-current")} /></button>
+          <span className="min-w-0 flex-1 truncate text-left text-[12.5px] font-semibold text-slate-800">{code && <span className="text-slate-500">{code} • </span>}{t}</span>
+          {acts.length > 0 && <B1Popover className="w-44 p-1" trigger={<IconBtn size="sm" aria-label="Ações do registro" className="bg-transparent" onClick={(e) => e.stopPropagation()}><MoreVertical className="h-4 w-4" /></IconBtn>}>{acts.map((a) => <button key={a.label} type="button" onClick={(e) => { e.stopPropagation(); a.onClick(); }} className={cn("block w-full rounded-md px-2 py-1.5 text-left text-[12.5px] hover:bg-slate-100", a.danger && "text-red-600")}>{a.label}</button>)}</B1Popover>}
         </div>
         <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-[12px]">
           {shown.map((c) => <React.Fragment key={c.key}><dt className="truncate text-slate-500">{c.label}:</dt><dd className="truncate font-medium text-slate-800" title={text(c, r)}>{c.render ? c.render(r) : text(c, r) || "–"}</dd></React.Fragment>)}
