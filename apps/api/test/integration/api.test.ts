@@ -225,6 +225,13 @@ describe("suprimentos: workflow completo", () => {
     const order = j(await h.app.inject({ method: "GET", url: `/api/supply/requests/${reqId}/order`, headers: h.headers() }));
     expect(order.text).toContain("Pedido de compra");
   });
+  it("listagem de processos (todas as etapas) e filtro genérico por coluna", async () => {
+    for (const url of ["/api/supply/requests?stage=all&page=1&pageSize=100", "/api/supply/requests?stage=all&code__contains=x", "/api/supply/requests?stage=receipts&request_date__this_year=1"]) {
+      const r = await h.app.inject({ method: "GET", url, headers: h.headers() });
+      expect(r.statusCode, url).toBe(200); expect(Array.isArray(j(r).items)).toBe(true);
+    }
+    expect((await h.app.inject({ method: "GET", url: "/api/supply/requests?stage=all&nope__contains=x", headers: h.headers() })).statusCode).toBe(422);
+  });
   it("controle otimista (version) e operador sem permissão de aprovar", async () => {
     const r2 = j(await h.app.inject({ method: "POST", url: "/api/supply/requests", headers: h.headers(), payload: { farm_id: I.farm, request_date: "2026-09-02", request_type: "service", description: "Serviço", justification: "x", items: [{ description: "Conserto", quantity: "1", amount: "300" }] } })).id;
     const stale = await h.app.inject({ method: "POST", url: `/api/supply/requests/${r2}/actions/send_to_approval`, headers: h.headers(), payload: { justification: "x", version: 999 } });
@@ -247,6 +254,12 @@ describe("vendas, frota, RH e pecuária", () => {
     const after = j(await h.app.inject({ method: "GET", url: `/api/stock/balances/${I.warehouse}/${I.product2}`, headers: h.headers() })).quantity;
     expect(Number(before) - Number(after)).toBe(10);
     expect((await h.app.inject({ method: "POST", url: `/api/sales/sales/${j(s).id}/confirm`, headers: h.headers() })).statusCode).toBe(409);
+  });
+  it("listagem de vendas com e sem filtro genérico por coluna", async () => {
+    for (const url of ["/api/sales/sales", "/api/sales/budgets?client_name__contains=a", "/api/sales/orders?total__gte=0"]) {
+      const r = await h.app.inject({ method: "GET", url, headers: h.headers() });
+      expect(r.statusCode, url).toBe(200); expect(Array.isArray(j(r).items)).toBe(true);
+    }
   });
   it("abastecimento baixa combustível do estoque e atualiza horímetro; depreciação mensal roda idempotente", async () => {
     const diesel = j(await h.app.inject({ method: "GET", url: "/api/resources/products?search=Diesel", headers: h.headers() })).items![0] as { id: string };
