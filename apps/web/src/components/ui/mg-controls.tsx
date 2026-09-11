@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 export interface SelectOption { value: string; label: string; code?: string | null }
 
 /** Painel de opções do modelo base (cmd-panel): caixa de pesquisa + lista com destaque por teclado. */
-export function CmdPanel({ options, value, onPick, search, onSearch, searchable = true, loading, emptyText = "Nenhuma opção", placeholder = "Pesquisar...", autoFocus = true }: { options: SelectOption[]; value?: string | null; onPick: (o: SelectOption) => void; search: string; onSearch: (s: string) => void; searchable?: boolean; loading?: boolean; emptyText?: string; placeholder?: string; autoFocus?: boolean }) {
+export function CmdPanel({ options, value, onPick, search, onSearch, searchable = true, loading, emptyText = "Nenhuma opção", placeholder = "Pesquisar...", autoFocus = true, footer }: { options: SelectOption[]; value?: string | null; onPick: (o: SelectOption) => void; search: string; onSearch: (s: string) => void; searchable?: boolean; loading?: boolean; emptyText?: string; placeholder?: string; autoFocus?: boolean; /** rodapé fixo (ex.: "+ Cadastrar novo") */ footer?: React.ReactNode }) {
   const [hi, setHi] = React.useState(0);
   React.useEffect(() => { setHi(0); }, [search, options.length]);
   const listRef = React.useRef<HTMLDivElement>(null);
@@ -30,13 +30,14 @@ export function CmdPanel({ options, value, onPick, search, onSearch, searchable 
       {!loading && options.length === 0 && <div className="cmd-panel__empty">{emptyText}</div>}
       {options.map((o, i) => <button type="button" key={o.value} role="option" aria-selected={o.value === value} className={cn("cmd-option", o.value === value && "selected", i === hi && "highlighted")} onMouseEnter={() => setHi(i)} onClick={() => onPick(o)}>{o.code && <span className="cmd-option__code">{o.code}</span>}<span className="truncate">{o.label}</span></button>)}
     </div>
+    {footer && !loading && <div className="cmd-panel__footer">{footer}</div>}
   </div>;
 }
 
 /** Gatilho do seletor (cmd-display + chevron), para uso dentro de um campo `.mg-field`. */
 export const CmdDisplay = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { placeholder?: string; empty?: boolean; onClear?: () => void; wrapClassName?: string }>(({ className, placeholder = "Selecione", empty, onClear, children, disabled, wrapClassName, ...p }, ref) => (
   <span className={cn("relative flex w-full min-w-0 items-center", wrapClassName)}>
-    <button ref={ref} type="button" role="combobox" disabled={disabled} className={cn("cmd-display", className)} {...p}>{empty ? <span className="cmd-display-placeholder">{placeholder}</span> : children}</button>
+    <button ref={ref} type="button" role="combobox" disabled={disabled} className={cn("cmd-display", empty && "is-empty", className)} {...p}>{empty ? <span className="cmd-display-placeholder">{placeholder}</span> : children}</button>
     {!empty && onClear && !disabled && <X className="cmd-clear" aria-label="Limpar" role="button" onClick={(e) => { e.stopPropagation(); onClear(); }} />}
     <ChevronDown className="cmd-chevron" aria-hidden />
   </span>

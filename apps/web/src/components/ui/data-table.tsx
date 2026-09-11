@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import type { FilterKind } from "@agro/shared";
 import { ChevronLeft, ChevronRight, Download, Printer } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BASE1_PAGE_SIZES } from "@agro/shared";
@@ -7,7 +8,7 @@ import { Base1Grid } from "@/features/base1/grid";
 import { IconBtn } from "@/features/base1/ui";
 import type { Base1Column, Row } from "@/features/base1/types";
 
-export interface Column<T> { key: string; label: string; render?: (row: T) => React.ReactNode; className?: string; sortable?: boolean; align?: "right" | "left" | "center"; /** largura fixa em px (preferência do usuário) */ width?: number }
+export interface Column<T> { key: string; label: string; render?: (row: T) => React.ReactNode; className?: string; sortable?: boolean; align?: "right" | "left" | "center"; /** largura fixa em px (preferência do usuário) */ width?: number; /** família do filtro (chip/cabeçalho): texto, número, data, enumeração… */ kind?: FilterKind; /** opções fixas (kind enum) */ options?: { value: string; label: string }[] }
 export interface DataTableProps<T> {
   columns: Column<T>[]; rows: T[]; total?: number; page?: number; pageSize?: number; onPage?: (p: number) => void; onPageSize?: (s: number) => void;
   sort?: { key: string; dir: "asc" | "desc" }; onSort?: (key: string) => void; loading?: boolean; rowKey?: (r: T) => string; actions?: (row: T) => React.ReactNode;

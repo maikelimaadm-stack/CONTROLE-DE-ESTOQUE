@@ -6,6 +6,7 @@ import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../li
 import { notFound, validation, err } from "../lib/errors.js";
 import { farmAllowed, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
+import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, currentBalance, lineTotal } from "../services/stock-core.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 
@@ -25,8 +26,10 @@ async function listDocs(ctx: ServiceCtx, table: string, dateCol: string, query: 
   if (f.status) { params.push(f.status); where.push(`d.status=$${params.length}`); }
   if (f.search) { params.push(`%${f.search}%`); where.push(`(d.code ilike $${params.length} or coalesce(d.note,'') ilike $${params.length})`); }
   if (f.warehouse_id) { params.push(f.warehouse_id); where.push(`(d.warehouse_id=$${params.length})`); }
-  const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.${table} d ${joins} where ${where.join(" and ")}`, params);
-  const r = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name ${extraSelect} from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by ${joins} where ${where.join(" and ")} order by d.${dateCol} desc, d.created_at desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+  // filtros genéricos por coluna (chips de qualquer coluna exibida) aplicados sobre o resultado (CTE)
+  const w = wrapListing(`select d.*, f.name as farm_name, u.name as created_by_name ${extraSelect} from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by ${joins} where ${where.join(" and ")} order by d.${dateCol} desc, d.created_at desc`, params, query, q);
+  const total = await ctx.tx.query<{ n: string }>(w.countSql, w.params);
+  const r = await ctx.tx.query(w.pageSql, w.params);
   return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
 }
 async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: string, fk: string) {
@@ -63,8 +66,9 @@ export default async function stockRoutes(app: FastifyInstance) {
     if (f.start_date) { params.push(f.start_date); where.push(`m.movement_date>=$${params.length}`); }
     if (f.end_date) { params.push(f.end_date); where.push(`m.movement_date<=$${params.length}`); }
     if (f.cost_center_id) { params.push(f.cost_center_id); where.push(`m.cost_center_id=$${params.length}`); }
-    const total = await ctx.tx.query<{ n: string; in_qty: string; out_qty: string }>(`select count(*) n, coalesce(sum(case when direction=1 then quantity end),0) in_qty, coalesce(sum(case when direction=-1 then quantity end),0) out_qty from erp.stock_movements m where ${where.join(" and ")}`, params);
-    const r = await ctx.tx.query(`select m.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name, u.name as created_by_name from erp.stock_movements m join erp.products p on p.id=m.product_id left join erp.measurement_units mu on mu.id=p.measurement_id join erp.warehouses w on w.id=m.warehouse_id left join erp.cost_centers cc on cc.id=m.cost_center_id left join erp.users u on u.id=m.created_by where ${where.join(" and ")} order by m.movement_date desc, m.created_at desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+    const wl = wrapListing(`select m.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name, u.name as created_by_name from erp.stock_movements m join erp.products p on p.id=m.product_id left join erp.measurement_units mu on mu.id=p.measurement_id join erp.warehouses w on w.id=m.warehouse_id left join erp.cost_centers cc on cc.id=m.cost_center_id left join erp.users u on u.id=m.created_by where ${where.join(" and ")} order by m.movement_date desc, m.created_at desc`, params, req.query as Record<string, unknown>, q, ", coalesce(sum(case when t.direction=1 then t.quantity end),0)::text in_qty, coalesce(sum(case when t.direction=-1 then t.quantity end),0)::text out_qty");
+    const total = await ctx.tx.query<{ n: string; in_qty: string; out_qty: string }>(wl.countSql, wl.params);
+    const r = await ctx.tx.query(wl.pageSql, wl.params);
     return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { in: total.rows[0]!.in_qty, out: total.rows[0]!.out_qty } };
   }));
   app.get("/stock/balances/:warehouseId/:productId", async (req) => runService(app, req, "stocks.view", async (ctx) => { const { warehouseId, productId } = req.params as { warehouseId: string; productId: string }; const b = await currentBalance(ctx, warehouseId, productId); const lots = await ctx.tx.query("select provider_lot, quantity, average_cost, total_value, expiration_date from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and quantity<>0 order by expiration_date nulls last", [ctx.orgId, warehouseId, productId]); return { ...b, lots: lots.rows }; }));

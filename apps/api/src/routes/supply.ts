@@ -6,6 +6,7 @@ import { runService, nextCode, idempotent, audit } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { farmAllowed, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
+import { wrapListing } from "../lib/column-filters.js";
 import { createTitles } from "../services/financial-core.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
@@ -54,8 +55,9 @@ export default async function supplyRoutes(app: FastifyInstance) {
     if (f.responsible_user_id) { params.push(f.responsible_user_id); where.push(`r.current_responsible_user_id=$${params.length}`); }
     if (f.start_date) { params.push(f.start_date); where.push(`r.request_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`r.request_date<=$${params.length}`); }
     if (f.search) { params.push(`%${f.search}%`); where.push(`(r.code ilike $${params.length} or r.description ilike $${params.length})`); }
-    const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.purchase_requests r where ${where.join(" and ")}`, params);
-    const r = await ctx.tx.query(`select r.id, r.code, r.request_date, r.description, r.priority, r.request_type, r.status, r.status_changed_at, r.estimated_total, r.approved_total, r.invoice_number, r.updated_at, r.version, f.name as farm_name, u.name as requester_name, cu.name as current_responsible_name, extract(epoch from now()-r.status_changed_at)/3600 as hours_in_status, (select count(*) from erp.purchase_quotations q where q.request_id=r.id)::int as quotation_count, (select max_hours from erp.supply_status_sla s where s.organization_id=r.organization_id and s.status=r.status) as sla_hours, r.invoice_id is not null as launched from erp.purchase_requests r join erp.farms f on f.id=r.farm_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where ${where.join(" and ")} order by r.request_date desc, r.created_at desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+    const wl = wrapListing(`select r.id, r.code, r.request_date, r.description, r.priority, r.request_type, r.status, r.status_changed_at, r.estimated_total, r.approved_total, r.invoice_number, r.updated_at, r.version, f.name as farm_name, u.name as requester_name, cu.name as current_responsible_name, extract(epoch from now()-r.status_changed_at)/3600 as hours_in_status, (select count(*) from erp.purchase_quotations q where q.request_id=r.id)::int as quotation_count, (select max_hours from erp.supply_status_sla s where s.organization_id=r.organization_id and s.status=r.status) as sla_hours, r.invoice_id is not null as launched from erp.purchase_requests r join erp.farms f on f.id=r.farm_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where ${where.join(" and ")} order by r.request_date desc, r.created_at desc`, params, req.query as Record<string, unknown>, q);
+    const total = await ctx.tx.query<{ n: string }>(wl.countSql, wl.params);
+    const r = await ctx.tx.query(wl.pageSql, wl.params);
     return { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), status_label: PURCHASE_STATUS_LABELS[(x as { status: PurchaseRequestStatus }).status], sla: slaStatus(new Date((x as { status_changed_at: string }).status_changed_at), new Date(), Number((x as { sla_hours: number | null }).sla_hours ?? 0)) })), total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
   }));
   app.get("/supply/requests/:id", async (req) => runService(app, req, "purchase_requests.view", async (ctx) => {

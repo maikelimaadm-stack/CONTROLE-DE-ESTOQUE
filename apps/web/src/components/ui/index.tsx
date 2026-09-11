@@ -23,7 +23,7 @@ Button.displayName = "Button";
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => {
   if (p.type === "date") return <DateInput ref={ref} className={className} {...p} />;
-  return <input ref={ref} className={cn("mg-input", className)} {...p} />;
+  return <input ref={ref} className={cn("mg-input", className)} placeholder={p.placeholder ?? " "} {...p} />;
 });
 Input.displayName = "Input";
 /** Campo de data = calendário do modelo base; mantém um <input hidden> com name/ref para react-hook-form (onChange recebe {target:{name,value}}). */
@@ -44,7 +44,7 @@ const DateInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<H
 });
 DateInput.displayName = "DateInput";
 export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...p }, ref) => (
-  <textarea ref={ref} className={cn("mg-input", className)} {...p} />
+  <textarea ref={ref} className={cn("mg-input", className)} placeholder={p.placeholder ?? " "} {...p} />
 ));
 Textarea.displayName = "Textarea";
 export const NativeSelect = React.forwardRef<HTMLSelectElement, React.SelectHTMLAttributes<HTMLSelectElement>>(({ className, children, ...p }, ref) => (
@@ -59,7 +59,11 @@ export function Field({ label, required, error, help, children, className, span 
   const id = React.useId();
   // Associa o rótulo ao controle (acessibilidade e testes): injeta id no filho único sem id
   const child = React.isValidElement(children) && !(children.props as { id?: string }).id ? React.cloneElement(children as React.ReactElement<{ id?: string }>, { id }) : children;
-  return <div className={cn("col-span-12", spans[span] ?? "md:col-span-3", className)}>{label && <Label required={required} title={help} htmlFor={id}>{label}</Label>}{child}{error && <p className="mt-0.5 text-[11px] text-red-600">{error}</p>}{!error && help && <p className="mt-0.5 text-[11px] text-slate-400 line-clamp-1" title={help}>{help}</p>}</div>;
+  // campo padrão do modelo (mg-field): rótulo flutuante detectado por CSS (:has) — mesmo visual dos cadastros declarativos
+  return <div className={cn("col-span-12", spans[span] ?? "md:col-span-3", className)}>
+    <div className={cn("mg-field mg-field--auto", error && "is-invalid")} title={help}>{label && <label htmlFor={id} className="mg-field__label">{label}{required && <span className="req text-red-500"> *</span>}</label>}<div className="mg-field__control">{child}</div></div>
+    {error && <p className="mt-0.5 text-[11px] text-red-600">{error}</p>}
+  </div>;
 }
 export const Card = ({ className, children, ...p }: React.HTMLAttributes<HTMLDivElement>) => <div className={cn("mg-card", className)} {...p}>{children}</div>;
 export const CardHeader = ({ title, actions, subtitle }: { title: React.ReactNode; subtitle?: React.ReactNode; actions?: React.ReactNode }) => (

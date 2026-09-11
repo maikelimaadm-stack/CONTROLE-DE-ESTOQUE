@@ -65,7 +65,7 @@ function LayoutCardView({ label, collapsible, colSpan, children }: { label: stri
  * Renderiza o layout configurável (painéis → cards → linhas → campos) com campos ocultos/travados/obrigatórios,
  * rótulos e valores padrão definidos pelo usuário ou pela organização.
  */
-export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }: { resourceKey: string; id: string; basePath?: string; afterSave?: (row: Values) => void; embedded?: EmbeddedForm }) {
+export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, onCancel }: { resourceKey: string; id: string; basePath?: string; afterSave?: (row: Values) => void; embedded?: EmbeddedForm; /** modo diálogo: cancelar fecha o diálogo em vez de navegar */ onCancel?: () => void }) {
   const def = getResource(resourceKey); const router = useRouter(); const sp = useSearchParams(); const qc = useQueryClient(); const { can } = useAuth();
   const fields = React.useMemo(() => def?.fields ?? [], [def]);
   const layout = useFormLayout(resourceKey, fields);
@@ -120,7 +120,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
   const labelOf = (name: string) => l.fieldLabels[name] ?? byId.get(name)?.label ?? name;
   // obrigatórios pendentes: marca cada campo e avisa no canto superior quais faltam (como o modelo base do MG)
   const submit = form.handleSubmit((v) => save.mutate(v), (errs) => { const names = Object.keys(errs); toast.warning("Campos obrigatórios pendentes", { description: names.map(labelOf).join(", "), duration: 6000 }); const el = document.querySelector<HTMLElement>(`[name="${names[0]}"]`); el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus?.(); });
-  const cancel = () => { if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset(fromRecord(def.fields, q.data)); embedded.setMode("view"); } } else router.push(back); };
+  const cancel = () => { if (onCancel) { onCancel(); return; } if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset(fromRecord(def.fields, q.data)); embedded.setMode("view"); } } else router.push(back); };
   return (
     <form onSubmit={submit} className="b1 flex min-h-0 flex-1 flex-col gap-2" data-testid="b1-form">
       {/* barra de ações */}
@@ -130,12 +130,12 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
           {!isNew && canEdit && <PillBtn tone="gray" onClick={() => (embedded ? embedded.setMode("edit") : router.push(`${back}/${id}`))}><Pencil className="h-3.5 w-3.5" /> Editar</PillBtn>}
           {!isNew && canDelete && <PillBtn tone="red" onClick={() => setConfirmDel(true)}><Trash2 className="h-3.5 w-3.5" /> Excluir</PillBtn>}
           {!isNew && canCreate && <PillBtn tone="gray" onClick={() => (embedded ? router.push(`${back}/new?copy=${id}`) : router.push(`${back}/new?copy=${id}`))}><Copy className="h-3.5 w-3.5" /> Duplicar</PillBtn>}
-          {!embedded && <Link href={back}><PillBtn tone="outline"><ArrowLeft className="h-3.5 w-3.5" /> Voltar</PillBtn></Link>}
+          {!embedded && !onCancel && <Link href={back}><PillBtn tone="outline"><ArrowLeft className="h-3.5 w-3.5" /> Voltar</PillBtn></Link>}
         </> : <>
           <PillBtn type="submit" disabled={save.isPending}>{save.isPending ? "Salvando…" : "Salvar"}</PillBtn>
           <PillBtn tone="gray" onClick={cancel}>Cancelar</PillBtn>
         </>}
-        {embedded?.rightSlot ?? <div className="ml-auto flex items-center gap-1.5">{!embedded && <Link href={back}><IconBtn aria-label="Voltar para a listagem" title="Voltar para a listagem"><ArrowLeft className="h-4 w-4" /></IconBtn></Link>}</div>}
+        {embedded?.rightSlot ?? <div className="ml-auto flex items-center gap-1.5">{!embedded && !onCancel && <Link href={back}><IconBtn aria-label="Voltar para a listagem" title="Voltar para a listagem"><ArrowLeft className="h-4 w-4" /></IconBtn></Link>}</div>}
       </div>
       {/* cabeçalho do registro + navegação */}
       <div className="mg-toolbar mg-card flex-wrap">
