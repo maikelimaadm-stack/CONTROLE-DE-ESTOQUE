@@ -36,7 +36,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, rows, to
         <IconBtn aria-label="Imprimir" title="Imprimir" onClick={() => window.print()}><Printer /></IconBtn>
       </span>
     </div>}
-    <Base1Grid columns={cols} rows={rows as Row[]} loading={loading} sort={sort} onSort={onSort} selected={sel} onSelect={setSel} onOpen={onRowClick ? (r) => onRowClick(r as T) : undefined} rowKey={key} footer={footer} emptyText={emptyText} />
+    <Base1Grid columns={cols} rows={rows as Row[]} loading={loading} sort={sort} onSort={onSort} selected={sel} onSelectClick={(id, mod) => { const s = sel; if (mod.ctrl) { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); setSel(n); return; } setSel(s.size === 1 && s.has(id) ? new Set() : new Set([id])); }} onToggle={(id) => { const n = new Set(sel); if (n.has(id)) n.delete(id); else n.add(id); setSel(n); }} onToggleAll={(on) => setSel(on ? new Set(rows.map((r) => key(r as Row))) : new Set())} onOpen={onRowClick ? (r) => onRowClick(r as T) : undefined} rowKey={key} footer={footer} emptyText={emptyText} />
     <div className="mg-summary no-print">
       <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {sel.size}</span><span className="mg-summary__item">Listados: {rows.length}</span><span className="mg-summary__item">Filtrados: {total ?? rows.length}</span><span className="mg-summary__item">Totais: {total ?? rows.length}</span></div>
       {total !== undefined && onPage && <span className="flex items-center gap-2">

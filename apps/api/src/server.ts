@@ -12,6 +12,7 @@ import resourceRoutes from "./routes/resources.js";
 import preferenceRoutes from "./routes/preferences.js";
 import savedReportRoutes from "./routes/saved-reports.js";
 import adminRoutes from "./routes/admin.js";
+import attachmentRoutes from "./routes/attachments.js";
 import stockRoutes from "./routes/stock.js";
 import supplyRoutes from "./routes/supply.js";
 import financialRoutes from "./routes/financial.js";
@@ -38,6 +39,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(preferenceRoutes, { prefix: "/api" });
   await app.register(savedReportRoutes, { prefix: "/api" });
   await app.register(adminRoutes, { prefix: "/api" });
+  await app.register(attachmentRoutes, { prefix: "/api" });
   await app.register(stockRoutes, { prefix: "/api" });
   await app.register(supplyRoutes, { prefix: "/api" });
   await app.register(financialRoutes, { prefix: "/api" });

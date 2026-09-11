@@ -45,7 +45,7 @@ export function FilterBar({ filters, f, set, reset, onApply, visible, saved, onS
  * Lista genérica de documentos transacionais (lançamentos) no MODELO BASE1: chips de filtro, grade/cards
  * configuráveis, modo Registro (abre o detalhe), rodapé com contadores, cancelamento com estorno.
  */
-export function DocList({ title, endpoint, base, columns, filters, canCreate, canCancel, cancelPath, extraActions, totals, defaultFilters, rowActions, createLabel = "Novo", hideNew }: { title: string; endpoint: string; base: string; columns: Column<Row>[]; filters?: Filter[]; canCreate?: boolean; canCancel?: boolean; cancelPath?: (id: string) => string; extraActions?: React.ReactNode; totals?: (t: Record<string, string>) => React.ReactNode; defaultFilters?: Record<string, string>; rowActions?: (r: Row) => { label: string; onClick?: () => void; href?: string; danger?: boolean }[]; createLabel?: string; hideNew?: boolean }) {
+export function DocList({ title, endpoint, base, columns, filters, canCreate, canCancel, cancelPath, extraActions, totals, defaultFilters, rowActions, createLabel = "Novo", hideNew, entity }: { title: string; endpoint: string; base: string; columns: Column<Row>[]; filters?: Filter[]; canCreate?: boolean; canCancel?: boolean; cancelPath?: (id: string) => string; extraActions?: React.ReactNode; totals?: (t: Record<string, string>) => React.ReactNode; defaultFilters?: Record<string, string>; rowActions?: (r: Row) => { label: string; onClick?: () => void; href?: string; danger?: boolean }[]; createLabel?: string; hideNew?: boolean; /** tabela da auditoria/anexos */ entity?: string }) {
   const router = useRouter(); const qc = useQueryClient();
   const [cancel, setCancel] = React.useState<string | null>(null);
   // preferências da listagem ("modelo base"): módulo derivado do endpoint (ex.: /api/stock/entries → stock.entries)
@@ -61,7 +61,7 @@ export function DocList({ title, endpoint, base, columns, filters, canCreate, ca
   const cancelMut = useMutation({ mutationFn: (id: string) => api((cancelPath ?? ((i) => `${endpoint}/${i}/cancel`))(id), { method: "POST", body: { reason: "Cancelado pelo usuário" } }), onSuccess: () => { toast.success("Documento cancelado"); setCancel(null); void qc.invalidateQueries({ queryKey: ["b1", moduleId] }); }, onError: (e) => toast.error((e as Error).message) });
   const footer = totals ? (t: Record<string, string>) => { const el = totals(t); return React.isValidElement(el) ? React.cloneElement(el as React.ReactElement<{ children?: React.ReactNode }>, {}, <td />, (el as React.ReactElement<{ children?: React.ReactNode }>).props.children) : el; } : undefined;
   return <>
-    <Base1List moduleId={moduleId} title={title} columns={b1cols} filters={b1filters} defaultValues={defaultValues} queryKeyExtra={fixed} csvName={moduleId}
+    <Base1List moduleId={moduleId} title={title} columns={b1cols} filters={b1filters} defaultValues={defaultValues} queryKeyExtra={fixed} csvName={moduleId} entity={entity}
       fetchPage={(p) => api<{ items: Row[]; total: number; totals?: Record<string, string> }>(`${endpoint}${qs({ ...p.filters, ...fixed, page: p.page, pageSize: p.pageSize })}`)}
       canCreate={Boolean(canCreate) && !hideNew} onNew={() => router.push(`${base}/new`)} createLabel={createLabel} extraToolbar={extraActions}
       onOpen={(r) => router.push(`${base}/${r["id"]}`)}

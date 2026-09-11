@@ -1,0 +1,83 @@
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { runService, audit } from "../lib/service.js";
+import { notFound, validation } from "../lib/errors.js";
+
+/**
+ * Anexos por registro (modelo base do MG): qualquer entidade (`entity` = nome da tabela) + `entity_id`.
+ * O conteúdo fica no banco (erp.attachment_blobs, bytea) — sem dependência de storage externo; `bucket='db'`.
+ * Envio em JSON base64 (limite 20 MB por arquivo), prévia/download por GET /attachments/:id/content.
+ */
+export const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+const ALLOWED_MIME = new Set(["application/pdf", "image/png", "image/jpeg", "image/webp", "image/gif", "text/plain", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.ms-excel", "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/xml", "text/xml"]);
+const IDENT = /^[a-z_][a-z0-9_]{0,62}$/;
+
+/** Assinatura ("magic bytes") deve bater com o tipo informado nos formatos binários conhecidos. */
+export function contentMatchesMime(buf: Buffer, mime: string): boolean {
+  const h = (n: number) => buf.subarray(0, n);
+  if (mime === "application/pdf") return h(5).toString("latin1") === "%PDF-";
+  if (mime === "image/png") return h(8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (mime === "image/jpeg") return buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
+  if (mime === "image/gif") return h(4).toString("latin1") === "GIF8";
+  if (mime === "image/webp") return h(4).toString("latin1") === "RIFF" && buf.subarray(8, 12).toString("latin1") === "WEBP";
+  if (mime.includes("openxmlformats")) return h(2).toString("latin1") === "PK";
+  if (mime === "application/msword" || mime === "application/vnd.ms-excel") return h(8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) || h(2).toString("latin1") === "PK";
+  return true; // texto/xml: sem assinatura
+}
+const safeName = (s: string) => s.replace(/[\\/:*?"<>|\s\u0000-\u001f-]/g, "_").trim().slice(0, 180) || "arquivo";
+
+const createSchema = z.object({
+  entity: z.string().regex(IDENT), entity_id: z.string().uuid(),
+  file_name: z.string().min(1).max(200), mime_type: z.string().min(1).max(120),
+  description: z.string().max(200).optional().nullable(),
+  data_base64: z.string().min(1)
+});
+const listSchema = z.object({ entity: z.string().regex(IDENT), entity_id: z.string().uuid() });
+
+export default async function attachmentRoutes(app: FastifyInstance) {
+  app.get("/attachments", async (req) => runService(app, req, "attachments.view", async (ctx) => {
+    const f = listSchema.parse(req.query);
+    const r = await ctx.tx.query("select a.id, a.entity, a.entity_id, a.file_name, a.mime_type, a.size_bytes, a.description, a.created_at, u.name as uploaded_by_name from erp.attachments a left join erp.users u on u.id=a.uploaded_by where a.organization_id=$1 and a.entity=$2 and a.entity_id=$3 order by a.created_at desc", [ctx.orgId, f.entity, f.entity_id]);
+    return { items: r.rows };
+  }));
+
+  app.post("/attachments", { bodyLimit: Math.ceil(ATTACHMENT_MAX_BYTES * 1.4) + 4096 }, async (req, reply) => runService(app, req, "attachments.create", async (ctx) => {
+    const d = createSchema.parse(req.body);
+    if (!ALLOWED_MIME.has(d.mime_type)) throw validation("Tipo de arquivo não permitido", { mime_type: d.mime_type });
+    const buf = Buffer.from(d.data_base64, "base64");
+    if (!buf.length) throw validation("Arquivo vazio");
+    if (buf.length > ATTACHMENT_MAX_BYTES) throw validation("Arquivo excede 20 MB");
+    if (!contentMatchesMime(buf, d.mime_type)) throw validation("Conteúdo do arquivo não corresponde ao tipo informado");
+    const name = safeName(d.file_name);
+    const ins = await ctx.tx.query<{ id: string }>("insert into erp.attachments(organization_id,entity,entity_id,bucket,object_path,file_name,mime_type,size_bytes,description,uploaded_by) values ($1,$2,$3,'db',$4,$5,$6,$7,$8,$9) returning id", [ctx.orgId, d.entity, d.entity_id, `db/${d.entity}/${d.entity_id}/${name}`, name, d.mime_type, buf.length, d.description ?? null, ctx.user.id]);
+    const id = ins.rows[0]!.id;
+    await ctx.tx.query("insert into erp.attachment_blobs(attachment_id,organization_id,data) values ($1,$2,$3)", [id, ctx.orgId, buf]);
+    await audit(ctx.tx, ctx, d.entity, d.entity_id, "attachment_added", { attachment_id: id, file_name: name, size_bytes: buf.length });
+    reply.code(201);
+    return { id, entity: d.entity, entity_id: d.entity_id, file_name: name, mime_type: d.mime_type, size_bytes: buf.length, description: d.description ?? null };
+  }));
+
+  app.get("/attachments/:id/content", async (req, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const download = (req.query as Record<string, string>)["download"] === "1";
+    const row = await runService(app, req, "attachments.view", async (ctx) => {
+      const r = await ctx.tx.query<{ file_name: string; mime_type: string | null; data: Buffer }>("select a.file_name, a.mime_type, b.data from erp.attachments a join erp.attachment_blobs b on b.attachment_id=a.id where a.id=$1 and a.organization_id=$2", [id, ctx.orgId]);
+      if (!r.rows[0]) throw notFound("Anexo");
+      return r.rows[0];
+    });
+    const encoded = encodeURIComponent(row.file_name);
+    reply.header("Content-Type", row.mime_type ?? "application/octet-stream");
+    reply.header("Content-Disposition", `${download ? "attachment" : "inline"}; filename="${row.file_name.replace(/[^\x20-\x7e]/g, "_").replace(/"/g, "")}"; filename*=UTF-8''${encoded}`);
+    reply.header("Cache-Control", "private, max-age=300");
+    reply.header("X-Content-Type-Options", "nosniff");
+    return reply.send(row.data);
+  });
+
+  app.delete("/attachments/:id", async (req) => runService(app, req, "attachments.delete", async (ctx) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    const r = await ctx.tx.query<{ entity: string; entity_id: string; file_name: string }>("delete from erp.attachments where id=$1 and organization_id=$2 returning entity, entity_id, file_name", [id, ctx.orgId]);
+    if (!r.rows[0]) throw notFound("Anexo");
+    await audit(ctx.tx, ctx, r.rows[0].entity, r.rows[0].entity_id, "attachment_removed", { attachment_id: id, file_name: r.rows[0].file_name });
+    return { ok: true };
+  }));
+}

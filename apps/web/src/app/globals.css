@@ -250,7 +250,8 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-grid .mg-check { width: 16px; height: 16px; box-shadow: none; } .mg-grid .mg-check__icon { width: 10px; height: 10px; }
 .mg-grid .th-select, .mg-grid .td-select { width: 36px !important; min-width: 36px !important; max-width: 36px !important; padding: 0 !important; text-align: center !important; vertical-align: middle !important; }
 .mg-grid .td-select > .mg-check, .mg-grid .th-select > .mg-check { margin: 0 auto; }
-.mg-grid th.is-frozen, .mg-grid td.is-frozen { position: sticky; box-shadow: inset -1px 0 0 0 var(--mg-accent); }
+.mg-grid th.is-frozen, .mg-grid td.is-frozen { position: sticky; }
+.mg-grid th.is-frozen-anchor, .mg-grid td.is-frozen-anchor { box-shadow: inset -2px 0 0 0 var(--mg-accent), 4px 0 8px -4px rgba(0,0,0,.18); }
 .mg-grid { min-width: 100%; }
 
 /* --- pesquisa (mg-desktop-search / mg-search-pill / mg-search-dropdown do MG) --- */
@@ -394,3 +395,13 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .mg-field--auto:has(textarea) .mg-field__label { align-self: start; padding: 4px 10px 0; font-size: 9px; line-height: 1; }
 .mg-field--auto:has(textarea) .mg-field__control { height: auto; }
 .mg-field--auto:has(textarea) .mg-field__control textarea { height: auto !important; min-height: 64px; padding: 20px 10px 8px !important; }
+
+/* selo de seleção do card (mg-emp-card__select-badge do MG) */
+.b1-card__badge { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; background: var(--mg-accent); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.b1-card:focus-visible { outline: 2px solid var(--mg-focus-border); outline-offset: 1px; }
+/* anexos: lista + prévia lado a lado */
+.b1-attach__preview { min-width: 0; flex: 1 1 50%; }
+.b1-attach__frame { flex: 1; min-height: 360px; max-height: 70vh; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--mg-bg-page); border: var(--mg-container-border); border-radius: var(--mg-radius-card); }
+.b1-attach__frame iframe { border: 0; background: #fff; }
+.b1-attach__table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
+@media (max-width: 900px) { .b1-attach--preview { flex-direction: column; } }

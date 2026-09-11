@@ -30,6 +30,13 @@ Réplica do **MODELO BASE1** do sistema PROJETOMG (o modelo de tela usado no cad
 
 UI: "Configuração de colunas" (colunas disponíveis × em uso, numeradas, busca, setas, ↺), menus de coluna, popovers dos cards e itens "Salvar tela como padrão da organização" / "Restaurar padrão da tela" em **Mais opções**.
 
+## Seleção, modo Registro, histórico e anexos (regras do MG)
+- **Seleção**: clique na linha/card seleciona só aquele registro; clicar no já selecionado desmarca; Ctrl (⌘) alterna sem desmarcar os demais; Shift seleciona o intervalo; o controle de seleção da linha alterna individualmente e o do cabeçalho marca/desmarca todos. Duplo clique abre o registro.
+- **Registro**: o botão "Registro" abre o único selecionado (com 2+ selecionados avisa "Selecione apenas um registro"; sem seleção abre o primeiro). Anterior/Próximo/Primeiro/Último ficam no cabeçalho do registro e bloqueados durante a edição; em **Novo** não existem. Em edição/novo a barra mostra só **Salvar/Cancelar** e some a pesquisa, a alternância de modo e o menu (só Anexos permanece). Ao voltar para Tabela/Cards o registro aberto continua selecionado e é rolado para a área visível.
+- **Histórico** (menu Mais opções): habilitado só com exatamente um registro selecionado ou no modo Registro (nunca em Novo).
+- **Anexos** (botão ao lado da pesquisa, `attachments.view/create/delete`): mesma regra do histórico; diálogo com "Nome do anexo" + arquivos (PDF, imagens, texto/CSV/XML, Excel, Word; 20 MB), lista Nome/Arquivo/Tamanho/Enviado em, **prévia** embutida (imagem, PDF, texto), download e exclusão (auditadas como `attachment_added`/`attachment_removed`). Conteúdo em `erp.attachment_blobs`, servido por `GET /api/attachments/:id/content` (`?download=1` força download). Lançamentos (`DocList`) recebem `entity` para habilitar histórico/anexos.
+- **Congelar colunas** (`columns.frozen` = quantidade à esquerda, como no MG): "Congelar coluna" na coluna N congela todas até N; o menu da última congelada (âncora, com sombra) mostra "Descongelar colunas"; ocultar/reordenar colunas ajusta a contagem; os deslocamentos são medidos por `ResizeObserver` (redimensionar não desalinha).
+
 ## Filtros avançados (cadastros declarativos)
 Query string `campo__operador=valor` (intervalos: `valor|valor2`). Operadores por família:
 - texto: contém, não contém, igual, começa com, termina com, vazio, não vazio
