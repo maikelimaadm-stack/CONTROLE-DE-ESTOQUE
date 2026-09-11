@@ -42,7 +42,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
     const where = ["r.organization_id=$1", "r.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
     const stage = f.stage; // request | quotation | authorization | buy | receipts | rejected | mine
-    const stageStatuses: Record<string, PurchaseRequestStatus[]> = { request: ["request"], quotation: ["awaiting_awareness", "quotation_in_progress"], authorization: ["awaiting_approval", "awaiting_awareness", "under_review"], buy: ["awaiting_purchase", "purchase_done"], receipts: ["purchase_done", "purchase_received", "finished"], rejected: ["not_approved", "cancelled"] };
+    const stageStatuses: Record<string, PurchaseRequestStatus[]> = { request: ["request"], quotation: ["awaiting_awareness", "quotation_in_progress"], authorization: ["awaiting_approval", "awaiting_awareness", "under_review"], buy: ["awaiting_purchase", "purchase_done"], receipts: ["purchase_done", "purchase_received", "finished"], finished: ["finished"], rejected: ["not_approved", "cancelled"] };
     if (stage && stageStatuses[stage]) { params.push(stageStatuses[stage]); where.push(`r.status = any($${params.length})`); }
     if (stage === "mine") { params.push(ctx.user.id); where.push(`(r.current_responsible_user_id=$${params.length} or r.requester_user_id=$${params.length}) and r.status not in ('finished','cancelled')`); }
     if (f.status) { params.push(f.status); where.push(`r.status=$${params.length}`); }

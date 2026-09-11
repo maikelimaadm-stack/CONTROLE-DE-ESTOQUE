@@ -29,7 +29,7 @@ docs/           documentação e referência
 - **Cadastros declarativos**: `packages/domain/src/resources/registries.ts` descreve tabela, campos, filtros, colunas, permissões; API e UI derivam formulário, listagem, validação zod, opções de referência e exportação.
 
 ## Frontend
-- Rotas espelham a estrutura funcional da referência com nomes próprios (`docs/parity/SCREEN-PARITY.md`).
+- Navegação por **áreas de trabalho** (`/modulo?tab=…&sub=…`, `components/workspace.tsx`): abas e ações montadas pelas permissões; rotas antigas redirecionam (`apps/web/redirects.mjs`). Ver `docs/UX-ARCHITECTURE.md` (antes → depois por módulo).
 - `features/docs/shared.tsx`: listagem transacional (`DocList`), editores de itens/rateio/parcelamento, detalhe, filtros.
 - Permissões: `useAuth().can(perm)` só esconde/mostra; a autorização real é no servidor (403 `PERMISSION_DENIED`).
 - Sessão em `localStorage` (token + org + fazenda ativa); 401 redireciona ao login.

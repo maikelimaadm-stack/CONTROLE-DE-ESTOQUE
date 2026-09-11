@@ -13,8 +13,8 @@ export default function Page() {
   React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
   const formulas = useQuery({ queryKey: ["formulas"], queryFn: () => api<{ items: (Row & { items: { product_name: string; quantity: string }[] | null })[] }>("/api/stock/feed-formulas") });
   const f = formulas.data?.items.find((x) => x["id"] === h.formula_id);
-  const create = useCreate("/api/stock/feed-batches", () => router.push("/estoque/batidas"));
-  return <Card><CardHeader title="Nova Batida" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.formula_id || !h.quantity_produced} onClick={() => create.mutate(h)}>Salvar</Button></>} /><CardBody className="space-y-4">
+  const create = useCreate("/api/stock/feed-batches", () => router.push("/estoque?tab=fabrica&sub=producoes"));
+  return <Card><CardHeader title="Nova Produção de Ração" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.formula_id || !h.quantity_produced} onClick={() => create.mutate(h)}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
       <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.batch_date} onChange={(e) => setH({ ...h, batch_date: e.target.value })} /></Field>

@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { useRouter } from "next/navigation";
 import * as DialogP from "@radix-ui/react-dialog";
 import * as TabsP from "@radix-ui/react-tabs";
 import * as DropdownP from "@radix-ui/react-dropdown-menu";
@@ -92,10 +93,11 @@ export function Tabs({ tabs, defaultValue, className }: { tabs: { value: string;
   );
 }
 export function Menu({ trigger, items }: { trigger: React.ReactNode; items: { label: string; onClick?: () => void; href?: string; danger?: boolean; disabled?: boolean }[] }) {
+  const router = useRouter();
   return (
     <DropdownP.Root><DropdownP.Trigger asChild>{trigger}</DropdownP.Trigger><DropdownP.Portal>
       <DropdownP.Content align="end" className="z-50 min-w-[160px] rounded-md border bg-white p-1 shadow-lg text-[13px]">
-        {items.map((i, k) => <DropdownP.Item key={k} disabled={i.disabled} onSelect={() => { if (i.href) location.href = i.href; else i.onClick?.(); }} className={cn("cursor-pointer rounded px-2 py-1.5 outline-none data-[highlighted]:bg-slate-100 data-[disabled]:opacity-40", i.danger && "text-red-600")}>{i.label}</DropdownP.Item>)}
+        {items.map((i, k) => <DropdownP.Item key={k} disabled={i.disabled} onSelect={() => { if (i.href) router.push(i.href); else i.onClick?.(); }} className={cn("cursor-pointer rounded px-2 py-1.5 outline-none data-[highlighted]:bg-slate-100 data-[disabled]:opacity-40", i.danger && "text-red-600")}>{i.label}</DropdownP.Item>)}
       </DropdownP.Content>
     </DropdownP.Portal></DropdownP.Root>
   );

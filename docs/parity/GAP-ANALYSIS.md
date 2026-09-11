@@ -6,8 +6,8 @@ _Gerada a partir de `docs/parity/summary.json` (`node scripts/parity.mjs`). Núm
 - Telas da referência: **455** · implementadas/testadas/melhoradas: **417/455 (91.6%)** · testadas: 116 · em implementação: 7 · mapeadas: 6 · não iniciadas: 25
 - Relatórios da referência: **120** · cobertos: **116/120 (96.7%)** · relatórios no nosso runner: 107
 - Ações observadas (excluindo navegação/marketing): cobertas **282/344 (82.0%)**
-- Páginas web nossas: 107 rotas (App Router) · cadastros declarativos: 63 · permissões: 773 chaves (referência 666)
-- Testes: unitários 29 · schema/RLS 6 · integração API 27 · e2e 8 (todos passando em 10/09/2026)
+- Páginas web nossas: 61 rotas (App Router; 98 telas da referência absorvidas como abas/filtros/ações em 12 áreas — status UNIFICADO, ver `docs/UX-ARCHITECTURE.md`) · cadastros declarativos: 63 · permissões: 773 chaves (referência 666)
+- Testes: unitários 29 · schema/RLS 6 · integração API 27 · e2e 20 (todos passando em 11/09/2026)
 
 ## Cobertura por módulo
 | Módulo | Cobertura |

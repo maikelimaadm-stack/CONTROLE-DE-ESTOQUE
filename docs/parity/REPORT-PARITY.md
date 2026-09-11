@@ -1,14 +1,14 @@
 # Paridade de Relatórios
 
-_Gerado por `node scripts/parity.mjs` em 2026-09-11 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação)._
+_Gerado por `node scripts/parity.mjs` em 2026-09-11 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
 
 Referência: 120 telas de relatório (docs/reference/REPORTS.md). Nosso runner genérico (`/relatorios/[key]`) possui 107 relatórios com filtros server-side, totais, CSV e XLSX. Cobertura: 116/120 (96.7%).
 
 | ID | Relatório (referência) | Módulo | Nosso relatório | Status | Observação |
 |---|---|---|---|---|---|
-| SCR-013 | Meses Conciliados | Conciliação | `/financeiro/ofx/relatorio` | IMPLEMENTADO |  |
+| SCR-013 | Meses Conciliados | Conciliação | `/financeiro/ofx/relatorio` | UNIFICADO | UNIFICADO: aba da área /financeiro (rota antiga redireciona) |
 | SCR-030 | Endereçamentos | Estrutura > Produtos | `/cadastros/addressings` | IMPLEMENTADO |  |
-| SCR-138 | Análise do Fluxo Bancário | Financeiro | `/financeiro/fluxo` | TESTADO |  |
+| SCR-138 | Análise do Fluxo Bancário | Financeiro | `/financeiro/fluxo` | TESTADO | UNIFICADO: aba da área /financeiro (rota antiga redireciona) |
 | SCR-154 | Relatório Inventário Patrimonial | Bens/Ativo | `/relatorios/equipment` | IMPLEMENTADO |  |
 | SCR-155 | Relatorio de Depreciação Acumulada | Bens/Ativo | `/relatorios/accumulated_depreciation` | IMPLEMENTADO |  |
 | SCR-156 | Composição Rebanho | Pecuária | `/relatorios/herd_composition` | IMPLEMENTADO |  |
@@ -117,15 +117,15 @@ Referência: 120 telas de relatório (docs/reference/REPORTS.md). Nosso runner g
 | SCR-259 | Relatório Máquinas | Gestão de Frotas | `/relatorios/machines` | IMPLEMENTADO |  |
 | SCR-260 | Relatório Máquinas - Abastecimentos | Gestão de Frotas | `/relatorios/machine_supplies` | IMPLEMENTADO |  |
 | SCR-261 | Relatório Máquinas - Manutenções | Gestão de Frotas | `/relatorios/machine_maintenances` | IMPLEMENTADO |  |
-| SCR-266 | Funcionários | Pessoas | `/integracoes/exportacoes` | IMPLEMENTADO |  |
-| SCR-301 | Produtos | Estrutura > Produtos | `/integracoes/exportacoes` | IMPLEMENTADO |  |
-| SCR-318 | Proprietários | Pessoas | `/integracoes/exportacoes` | IMPLEMENTADO |  |
-| SCR-322 | Fornecedores | Pessoas | `/integracoes/exportacoes` | IMPLEMENTADO |  |
-| SCR-326 | Clientes | Pessoas | `/integracoes/exportacoes` | IMPLEMENTADO |  |
-| SCR-348 | Plano de Contas | Fiscais | `/integracoes/exportacoes` | IMPLEMENTADO |  |
+| SCR-266 | Funcionários | Pessoas | `/integracoes/exportacoes` | UNIFICADO | UNIFICADO: aba da área /configuracoes (rota antiga redireciona) |
+| SCR-301 | Produtos | Estrutura > Produtos | `/integracoes/exportacoes` | UNIFICADO | UNIFICADO: aba da área /configuracoes (rota antiga redireciona) |
+| SCR-318 | Proprietários | Pessoas | `/integracoes/exportacoes` | UNIFICADO | UNIFICADO: aba da área /configuracoes (rota antiga redireciona) |
+| SCR-322 | Fornecedores | Pessoas | `/integracoes/exportacoes` | UNIFICADO | UNIFICADO: aba da área /configuracoes (rota antiga redireciona) |
+| SCR-326 | Clientes | Pessoas | `/integracoes/exportacoes` | UNIFICADO | UNIFICADO: aba da área /configuracoes (rota antiga redireciona) |
+| SCR-348 | Plano de Contas | Fiscais | `/integracoes/exportacoes` | UNIFICADO | UNIFICADO: aba da área /configuracoes (rota antiga redireciona) |
 | SCR-381 | Saldo Estoque | Estoque | `/relatorios/stocks_consolidated` | TESTADO |  |
-| SCR-389 | Equipes | Gestão Pessoal | `/integracoes/exportacoes` | IMPLEMENTADO |  |
-| SCR-394 | Funcionário X Eventos | Gestão Pessoal | `/integracoes/exportacoes` | IMPLEMENTADO |  |
+| SCR-389 | Equipes | Gestão Pessoal | `/integracoes/exportacoes` | UNIFICADO | UNIFICADO: aba da área /configuracoes (rota antiga redireciona) |
+| SCR-394 | Funcionário X Eventos | Gestão Pessoal | `/integracoes/exportacoes` | UNIFICADO | UNIFICADO: aba da área /configuracoes (rota antiga redireciona) |
 
 ## Relatórios nossos sem equivalente direto
 

@@ -68,7 +68,7 @@ function Builder() {
   return <div className="space-y-4">
     <Card>
       <CardHeader title={editId ? `Relatório: ${name || "…"}` : "Novo relatório personalizado"} subtitle="Escolha a entidade, as colunas, os filtros e o agrupamento; gere a prévia e salve ou exporte" actions={<>
-        <Link href="/relatorios/personalizados"><Button size="sm" variant="outline">Voltar</Button></Link>
+        <Link href="/relatorios?tab=personalizados"><Button size="sm" variant="outline">Voltar</Button></Link>
         <Button size="sm" variant="outline" onClick={() => run.mutate()} disabled={!resourceKey || !columns.length} loading={run.isPending}>Gerar prévia</Button>
         <Button size="sm" variant="outline" onClick={() => void exportAs("csv")} disabled={!result}><Download className="h-3.5 w-3.5" /> CSV</Button>
         <Button size="sm" variant="outline" onClick={() => void exportAs("xlsx")} disabled={!result}><Download className="h-3.5 w-3.5" /> Excel</Button>
