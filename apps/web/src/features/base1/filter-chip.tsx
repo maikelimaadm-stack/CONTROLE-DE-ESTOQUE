@@ -36,7 +36,7 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
     enabled: isOpen && useList, staleTime: 30_000
   });
   const values = q.data ?? [];
-  const selected = new Set(draft.values ?? (draft.value ? [draft.value] : []));
+  const selected = new Set(draft.values?.length ? draft.values : draft.value ? [draft.value] : []);
   const allSelected = values.length > 0 && values.every((v) => selected.has(v.value));
   const toggle = (v: string, on: boolean) => { const s = new Set(selected); if (on) s.add(v); else s.delete(v); setDraft({ ...draft, values: [...s], value: "" }); };
   const labelCache = React.useRef<Record<string, string>>({});

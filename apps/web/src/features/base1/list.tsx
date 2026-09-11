@@ -97,8 +97,10 @@ export function Base1List(props: Base1ListProps) {
   const rows = React.useMemo(() => (favOnly ? allRows.filter((r) => selected.has(String(r["id"]))) : allRows), [allRows, favOnly, selected]);
   const total = q.data?.pages[0]?.total ?? 0; const totals = q.data?.pages[0]?.totals;
   const filtersActive = Object.keys(applied.params).length > 0 || Boolean(applied.search);
+  const sess = getSession();
+  const chipScope = `${moduleId}:${sess?.orgId ?? "-"}:${sess?.farmId ?? "-"}:${sess?.user?.id ?? "-"}:${JSON.stringify(queryKeyExtra ?? null)}`;
   // "Totais" (sem filtro) só precisa de consulta própria quando há filtro aplicado
-  const grand = useQuery({ queryKey: ["b1-total", moduleId, queryKeyExtra], queryFn: async () => (await fetchPage({ page: 1, pageSize: 1, filters: {} })).total, staleTime: 120_000, enabled: filtersActive });
+  const grand = useQuery({ queryKey: ["b1-total", moduleId, queryKeyExtra, chipScope], queryFn: async () => (await fetchPage({ page: 1, pageSize: 1, filters: {} })).total, staleTime: 120_000, enabled: filtersActive });
   const apply = (v: FilterValues = values, s: string = search) => { setApplied({ search: s, params: toParams(filters, v) }); setSelected(new Set()); setFavOnly(false); };
   const clearAll = () => { const v = defaultValues ?? {}; setValues(v); setSearch(""); setApplied({ search: "", params: toParams(filters, v) }); setSelected(new Set()); setFavOnly(false); };
   const onSort = (k: string) => { const next = { key: k, dir: (sort?.key === k && sort.dir === "asc" ? "desc" : "asc") as "asc" | "desc" }; setSortLocal(next); p.update((x) => ({ ...x, sort: next })); };
@@ -151,8 +153,6 @@ export function Base1List(props: Base1ListProps) {
     <ViewSwitch value={view} recordDisabled={!Record && !onOpen} onChange={(m) => { if (m === "record") enterRecord(); else { setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } })); } }} />
     <B1Popover className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><MoreHorizontal className="h-4 w-4" /></IconBtn>}><MenuList items={menuItems} onPick={onMenu} /></B1Popover>
   </div>;
-  const sess = getSession();
-  const chipScope = `${moduleId}:${sess?.orgId ?? "-"}:${sess?.farmId ?? "-"}:${sess?.user?.id ?? "-"}:${JSON.stringify(queryKeyExtra ?? null)}`;
   const distinctFor = (f: Base1FilterDef) => distinct && f.mode === "advanced" && f.kind !== "boolean" && !f.options ? (s: string) => distinct(f.key, s) : undefined;
   const cardFields = prefs.view.cardFields ?? columns.slice(0, 7).map((c) => c.key);
 
