@@ -1,6 +1,6 @@
 # Paridade de Telas
 
-_Gerado por `node scripts/parity.mjs` em 2026-09-10 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação)._
+_Gerado por `node scripts/parity.mjs` em 2026-09-11 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação)._
 
 Resumo: 417/455 (91.6%) telas implementadas ou melhoradas. TESTADO: 116 · IMPLEMENTADO: 280 · MELHORADO: 21 · EM IMPLEMENTAÇÃO: 7 · MAPEADO: 6 · BLOQUEADO: 0 · NÃO INICIADO: 25 · NÃO APLICÁVEL: 0
 

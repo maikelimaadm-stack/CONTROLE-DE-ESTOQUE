@@ -1,6 +1,6 @@
 # Paridade de Relatórios
 
-_Gerado por `node scripts/parity.mjs` em 2026-09-10 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação)._
+_Gerado por `node scripts/parity.mjs` em 2026-09-11 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação)._
 
 Referência: 120 telas de relatório (docs/reference/REPORTS.md). Nosso runner genérico (`/relatorios/[key]`) possui 107 relatórios com filtros server-side, totais, CSV e XLSX. Cobertura: 116/120 (96.7%).
 

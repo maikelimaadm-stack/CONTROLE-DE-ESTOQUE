@@ -10,7 +10,7 @@ test("entrada de insumos gera saldo e ledger; cancelamento estorna", async ({ pa
   await row.locator("input[type=number]").nth(0).fill("10"); await row.locator("input[type=number]").nth(1).fill("6.5");
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect(page).toHaveURL(/\/estoque\/entradas$/);
-  await page.locator("tbody tr").first().click();
+  await page.locator("tbody tr").first().dblclick();
   await expect(page.getByText("Movimentações de estoque (ledger)")).toBeVisible();
   await expect(page.locator("tbody tr", { hasText: "Entrada" }).first()).toBeVisible();
   await page.getByRole("button", { name: /Cancelar documento/ }).click(); await page.getByRole("button", { name: "Confirmar" }).click();

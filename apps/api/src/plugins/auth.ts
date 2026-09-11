@@ -60,13 +60,20 @@ export default fp(async function authPlugin(app: FastifyInstance) {
     }
   });
 
+  // Vínculo/permissões em cache por (usuário, organização) por 30 s: evita 5 idas ao banco em toda requisição
+  // (o banco fica em outra região). Alterações de perfil/vínculo passam a valer em até 30 s.
+  type MemberRow = { organization_id: string; org_name: string; role_id: string | null; is_owner: boolean; member_id: string };
+  const ctxCache = new Map<string, { at: number; value: { row: MemberRow; farms: { rows: { farm_id: string }[] }; perms: string[] } }>();
+  const CTX_TTL_MS = 30_000;
+  app.decorate("clearContextCache", () => ctxCache.clear());
   // Contexto de tenant: cabeçalhos X-Org-Id (obrigatório nas rotas de negócio) e X-Farm-Id (fazenda ativa)
   app.addHook("preHandler", async (req) => {
     if (!req.auth) return;
     const orgId = (req.headers["x-org-id"] as string | undefined) ?? null;
     if (!orgId) return;
     const userId = req.auth.id;
-    const { row, farms, perms } = await withTx(app.db, { orgId, userId }, async (tx) => {
+    const cacheKey = `${userId}:${orgId}`; const cached = ctxCache.get(cacheKey);
+    const { row, farms, perms } = cached && Date.now() - cached.at < CTX_TTL_MS ? cached.value : await withTx(app.db, { orgId, userId }, async (tx) => {
       const m = await tx.query<{ organization_id: string; org_name: string; role_id: string | null; is_owner: boolean; member_id: string }>(
         "select m.id as member_id, m.organization_id, o.name as org_name, m.role_id, m.is_owner from erp.organization_members m join erp.organizations o on o.id=m.organization_id where m.user_id=$1 and m.organization_id=$2 and m.is_active and o.deleted_at is null",
         [userId, orgId]);
@@ -74,8 +81,9 @@ export default fp(async function authPlugin(app: FastifyInstance) {
       if (!row) throw new DomainError("PERMISSION_DENIED", "Usuário não é membro desta organização");
       const farms = await tx.query<{ farm_id: string }>("select farm_id from erp.member_farms where member_id=$1", [row.member_id]);
       const perms = row.is_owner ? [] : (await tx.query<{ permission_key: string }>("select permission_key from erp.role_permissions where role_id=$1", [row.role_id])).rows.map((r) => r.permission_key);
-      return { row, farms, perms };
+      return { row, farms: { rows: farms.rows }, perms };
     });
+    if (!cached || Date.now() - cached.at >= CTX_TTL_MS) ctxCache.set(cacheKey, { at: Date.now(), value: { row, farms, perms } });
     const membership: Membership = { orgId: row.organization_id, orgName: row.org_name, roleId: row.role_id, isOwner: row.is_owner, farmIds: farms.rows.map((f) => f.farm_id) };
     const farmId = (req.headers["x-farm-id"] as string | undefined) ?? null;
     if (farmId && membership.farmIds.length && !membership.farmIds.includes(farmId)) throw new DomainError("PERMISSION_DENIED", "Sem acesso à fazenda selecionada");

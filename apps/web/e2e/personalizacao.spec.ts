@@ -59,7 +59,7 @@ test("modo Registro: abre o formulário embutido, navega entre registros e edita
   await login(page);
   await page.goto("/cadastros/warehouses");
   await expect(page.getByTestId("b1-list")).toBeVisible();
-  await page.getByTestId("b1-row").first().locator("td").nth(2).click();
+  await page.getByTestId("b1-row").first().locator("td").nth(2).dblclick();
   await expect(page.getByTestId("b1-form")).toBeVisible();
   await expect(page.getByText(/^1\/\d+$/)).toBeVisible();
   await page.getByLabel("Próximo").click();

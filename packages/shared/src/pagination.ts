@@ -15,4 +15,4 @@ export interface Page<T> {
 }
 export const PAGE_SIZES = [10, 20, 30, 50, 80, 100, 200] as const;
 export const DEFAULT_PAGE_SIZE = 20;
-export const MAX_PAGE_SIZE = 200;
+export const MAX_PAGE_SIZE = 1000;
