@@ -91,6 +91,13 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 
 /* --- grade (emp-table-pro) --- */
 .mg-grid-wrap { overflow: auto; }
+/* painel que preenche a altura (mg-view-stack do MG): cabeçalho da grade e rodapé fixos, só os dados rolam */
+.mg-shell--fill { display: flex; flex-direction: column; min-height: 0; }
+.mg-shell--fill > .mg-grid-wrap, .mg-shell--fill > .mg-shell__scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.mg-shell--fill > .mg-summary { flex-shrink: 0; }
+.mg-shell--table { max-height: calc(100dvh - 190px); }
+.mg-shell--table > .mg-grid-wrap { min-height: 120px; }
+.mg-grid tfoot th, .mg-grid tfoot td { position: sticky; bottom: 0; background: #f8fafc; z-index: 3; }
 .mg-grid { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; font-size: 12px; }
 .mg-grid thead th { position: sticky; top: 0; z-index: 3; height: 30px; padding: 0 9px; background: #fff; color: #334155; font-size: 12px; font-weight: 600; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--mg-table-line); border-right: 1px solid var(--mg-table-line); }
 .mg-grid thead th:last-child, .mg-grid tbody td:last-child { border-right: 0; }

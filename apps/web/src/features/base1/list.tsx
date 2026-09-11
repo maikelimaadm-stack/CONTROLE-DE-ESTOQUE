@@ -159,12 +159,12 @@ export function Base1List(props: Base1ListProps) {
   const cardFields = prefs.view.cardFields ?? columns.slice(0, 7).map((c) => c.key);
 
   if (view === "record" && Record) {
-    return <div className={cn("b1", props.className)}>
+    return <div className={cn("b1 flex min-h-0 flex-1 flex-col", props.className)}>
       <Record row={recMode === "new" ? null : rows[recIndex] ?? null} index={recIndex} total={total} go={goRecord} onExit={() => { setView(prefs.view.mode); void q.refetch(); }} refresh={() => void q.refetch()} rightSlot={rightSlot} mode={recMode} setMode={setRecMode} copyFrom={copyFrom} />
       {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={rows[recIndex] ? String(rows[recIndex]!["id"]) : undefined} title={title} />}
     </div>;
   }
-  return <div className={cn("b1 flex flex-col gap-2", props.className)} data-testid="b1-list">
+  return <div className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", props.className)} data-testid="b1-list">
     {/* barra superior */}
     <div className="mg-toolbar mg-card flex-wrap no-print">
       {canCreate !== false && (onNew || Record) && <PillBtn onClick={newRecord}><Plus className="h-4 w-4" /> {props.createLabel ?? "Novo"}</PillBtn>}
@@ -188,11 +188,11 @@ export function Base1List(props: Base1ListProps) {
         : <IconBtn size="sm" aria-label="Configurar colunas da tabela" title="Configurar colunas da tabela" onClick={() => setColsDlg(true)}><Columns3 className="h-4 w-4" /></IconBtn>}
     </div>}
     {/* corpo */}
-    <div className="flex gap-2">
-      <div className="mg-shell min-w-0 flex-1">
+    <div className="flex min-h-0 flex-1 gap-2">
+      <div className="mg-shell mg-shell--fill min-w-0 flex-1">
         {q.error && <div className="p-2"><ErrorBox error={q.error} /></div>}
         {view === "cards"
-          ? <div key="cards" className="mg-motion-panel--animate p-2.5"><Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelect={(id, on) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; })} actions={rowActions} /></div>
+          ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelect={(id, on) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; })} actions={rowActions} /></div>
           : <Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onOpen={(r) => enterRecord(r)} frozen={frozen}
             onFreeze={(n) => updCols((c) => ({ ...c, frozen: n }))} onHide={(k) => updCols((c) => ({ ...c, visible: visibleColumns.map((x) => x.key).filter((x) => x !== k) }))} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
             onFilter={(k) => { const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}

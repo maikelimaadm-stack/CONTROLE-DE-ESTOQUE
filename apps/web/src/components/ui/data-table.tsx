@@ -27,7 +27,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, rows, to
     ...(actions ? [{ key: "__actions", label: "Ação", sortable: false, width: 90, align: "center" as const, render: (r: Row) => <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>{actions(r as T)}</span>, text: () => "" }] : [])
   ], [columns, actions]);
   const sizes = React.useMemo(() => Array.from(new Set([...BASE1_PAGE_SIZES, pageSize])).sort((a, b) => a - b), [pageSize]);
-  return <div className="mg-shell">
+  return <div className="mg-shell mg-shell--fill mg-shell--table">
     {(onExport || caption) && <div className="mg-toolbar no-print border-b" style={{ borderColor: "var(--mg-divider)" }}>
       <span className="mg-page-subtitle">{caption}</span>
       <span className="ml-auto flex items-center gap-1.5">
