@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
-import { Plus, Pencil, EyeOff, Eye, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, PanelLeftClose, Trash2, Building2, RotateCcw } from "lucide-react";
+import { Plus, Pencil, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw } from "lucide-react";
 import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { getSession } from "@/lib/api";
@@ -156,7 +156,6 @@ export function Base1List(props: Base1ListProps) {
     {searchable && <SearchBox value={search} onChange={setSearch} active={Boolean(applied.search) || favOnly} placeholder={props.searchPlaceholder} onApply={() => apply(values, search)} onApplyFavorites={() => { if (search !== applied.search) setApplied((a) => ({ ...a, search })); setFavOnly(true); }} favoritesDisabled={favorites.size === 0} onClear={() => { setSearch(""); setFavOnly(false); setApplied((a) => ({ ...a, search: "" })); }}
       columns={columns} scope={chipScope} fetchResults={(s) => fetchPage({ page: 1, pageSize: 20, search: s, filters: applied.params })} onPick={(r) => { setSelected(new Set([String(r["id"])])); enterRecord(r); }} isFavorite={(r) => favorites.has(String(r["id"]))}
       detailFields={prefs.search?.fields ?? columns.filter((c) => !["code", "name", "description", "title"].includes(c.key)).slice(0, 3).map((c) => c.key)} onDetailFieldsChange={(keys) => p.update((x) => ({ ...x, search: { ...(x.search ?? {}), fields: keys } }))} onDetailFieldsRestore={() => p.update((x) => ({ ...x, search: undefined }))} />}
-    <IconBtn aria-label={showChips ? "Recolher faixa de filtros" : "Exibir faixa de filtros"} title={showChips ? "Recolher faixa de filtros" : "Exibir faixa de filtros"} onClick={() => setShowChips((s) => !s)}>{showChips ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</IconBtn>
     <ViewSwitch value={view} recordDisabled={!Record && !onOpen} onChange={(m) => { if (m === "record") enterRecord(); else { setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } })); } }} />
     <B1Popover className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><MoreHorizontal className="h-4 w-4" /></IconBtn>}><MenuList items={menuItems} onPick={onMenu} /></B1Popover>
   </div>;
@@ -180,8 +179,10 @@ export function Base1List(props: Base1ListProps) {
       {rightSlot}
     </div>
     {/* faixa de chips de filtro */}
-    {showChips && <div className="mg-rail mg-card no-print">
-      <IconBtn size="sm" aria-label="Recolher faixa de filtros" title="Recolher faixa de filtros" active onClick={() => setShowChips(false)}><PanelLeftClose className="h-4 w-4" /></IconBtn>
+    {/* faixa de filtros (mg-filter-pills-rail do MG): o botão recolhe/expande o CONTEÚDO da faixa com animação; a linha nunca some */}
+    <div className={cn("mg-rail mg-card no-print mg-pills-rail", showChips ? "is-expanded" : "is-collapsed")}>
+      <IconBtn size="sm" aria-label={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} title={showChips ? "Recolher faixa de filtros" : "Mostrar faixa de filtros"} active={showChips} aria-expanded={showChips} onClick={() => setShowChips((v) => !v)}>{showChips ? <ListX className="h-4 w-4" /> : <ListPlus className="h-4 w-4" />}</IconBtn>
+      <div className="mg-pills-rail__content" aria-hidden={!showChips}>
       <IconBtn size="sm" aria-label="Rolar filtros para a esquerda" onClick={() => scrollStrip(-240)}><ChevronLeft className="h-4 w-4" /></IconBtn>
       <div ref={stripRef} className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-0.5 [scrollbar-width:none]">
         {chips.map((f) => <FilterChip key={f.key} f={f} value={values[f.key]} open={openChip === f.key} onOpenChange={(o) => setOpenChip(o ? f.key : null)} distinct={distinctFor(f)} scope={chipScope}
@@ -193,7 +194,8 @@ export function Base1List(props: Base1ListProps) {
       <span className="mx-1 h-5 w-px bg-[var(--mg-divider)]" />
       {view === "cards" ? <><CardsLayoutPopover value={prefs.view.cardsPerRow ?? 4} onChange={(n) => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: n } }))} onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardsPerRow: undefined } }))} /><CardFieldsPopover columns={columns} value={cardFields} onChange={(keys) => p.update((x) => ({ ...x, view: { ...x.view, cardFields: keys } }))} onRestore={() => p.update((x) => ({ ...x, view: { ...x.view, cardFields: undefined } }))} /></>
         : <IconBtn size="sm" aria-label="Configurar colunas da tabela" title="Configurar colunas da tabela" onClick={() => setColsDlg(true)}><Columns3 className="h-4 w-4" /></IconBtn>}
-    </div>}
+      </div>
+    </div>
     {/* corpo */}
     <div className="flex min-h-0 flex-1 gap-2">
       <div className="mg-shell mg-shell--fill min-w-0 flex-1">

@@ -5,7 +5,7 @@ import { ChevronDown, X, Loader2 } from "lucide-react";
 import { FILTER_OPERATORS, operatorArity, isListOperator } from "@agro/shared";
 import { api, qs } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { NativeSelect } from "@/components/ui";
+import { MgSelect } from "@/components/ui/mg-controls";
 import { B1Popover, PillBtn, CheckRow, RoundInput } from "./ui";
 import { emptyValue, isActive, describe } from "./params";
 import type { Base1FilterDef, FilterValue, DistinctValue } from "./types";
@@ -56,7 +56,7 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
     <div className="px-3 pt-2.5">
       <div className="text-[12px] font-semibold text-slate-700">{f.label}</div>
       <button type="button" onClick={() => { onClear(); setOpen(false); }} disabled={!active} className="mt-1 flex items-center gap-1.5 text-[11.5px] text-slate-500 hover:text-red-600 disabled:opacity-40"><X className="h-3.5 w-3.5" /> Limpar Filtro de &apos;{f.label}&apos;</button>
-      {ops.length > 0 && <NativeSelect aria-label={`Operador ${f.label}`} className="mt-2 h-8 rounded-lg bg-slate-50" value={draft.op} onChange={(e) => setDraft({ ...emptyValue(f, e.target.value) })}>{ops.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>}
+      {ops.length > 0 && <div className="mt-2"><MgSelect id={`op-${f.key}`} options={ops.map((o) => ({ value: o.value, label: o.label }))} value={draft.op} onChange={(v) => setDraft({ ...emptyValue(f, v) })} className="!h-8 !rounded-lg" /></div>}
       {arity === 0 ? <div className="mt-2 rounded-lg bg-slate-50 px-2 py-1.5 text-[11.5px] text-slate-500">Este operador não usa valor.</div>
         : useList ? <>
           <div className="relative mt-2"><RoundInput aria-label={`Pesquisar ${f.label}`} placeholder="Pesquisar…" value={search} onChange={(e) => setSearch(e.target.value)} />{q.isFetching && <Loader2 className="absolute right-3 top-2 h-4 w-4 animate-spin text-slate-400" />}</div>

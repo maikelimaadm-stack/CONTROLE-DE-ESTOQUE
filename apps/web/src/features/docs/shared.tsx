@@ -12,6 +12,7 @@ import { brl, num, dateBR, monthStartISO, todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Input, NativeSelect, Field, Menu, Confirm, Badge, Spinner, ErrorBox, Dialog } from "@/components/ui";
 import type { Column } from "@/components/ui/data-table";
 import { RefSelect } from "@/components/ui/ref-select";
+import { MgSelect } from "@/components/ui/mg-controls";
 import { Bookmark } from "lucide-react";
 
 import { Base1List } from "@/features/base1/list";
@@ -31,7 +32,7 @@ export function FilterBar({ filters, f, set, reset, onApply, visible, saved, onS
   // faixa de filtros no MODELO BASE1 (mg-rail): pílulas cinza com rótulo, botões Filtrar / Limpar
   return <form className="mg-rail mg-card mb-2 flex-wrap no-print" onSubmit={(e) => { e.preventDefault(); onApply(); }}>
     {shown.map((x) => <label key={x.name} className="flex items-center gap-1.5"><span className="whitespace-nowrap text-[11px] text-[var(--mg-text-2)]">{x.label}</span>
-      {x.type === "date" ? <Input type="date" className={cls} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} /> : x.type === "select" ? <NativeSelect className={cls} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)}><option value="">Todos</option>{x.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect> : x.type === "ref" ? <RefSelect resource={x.resource!} value={f[x.name] ?? null} onChange={(v) => set(x.name, v ?? "")} placeholder="Todos" filter={x.extra} className={cls} /> : <Input className={cn(cls, "w-52")} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} />}
+      {x.type === "date" ? <Input type="date" className={cls} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} /> : x.type === "select" ? <MgSelect className={cn(cls, "!bg-[var(--mg-gray-fill)]")} value={f[x.name] ?? ""} onChange={(v) => set(x.name, v)} allowEmpty placeholder="Todos" options={x.options ?? []} /> : x.type === "ref" ? <RefSelect resource={x.resource!} value={f[x.name] ?? null} onChange={(v) => set(x.name, v ?? "")} placeholder="Todos" filter={x.extra} className={cls} /> : <Input className={cn(cls, "w-52")} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} />}
     </label>)}
     <span className="flex items-center gap-1.5"><Button type="submit">Filtrar</Button><Button type="button" variant="secondary" onClick={reset}>Limpar</Button>
       {onSaveFilter && <Menu trigger={<Button type="button" variant="outline" title="Filtros salvos"><Bookmark className="h-3.5 w-3.5" /> Filtros salvos{saved?.length ? ` (${saved.length})` : ""}</Button>} items={[{ label: "Salvar filtro atual…", onClick: () => setSaveOpen(true) }, ...(saved ?? []).map((s) => ({ label: `Aplicar: ${s.name}`, onClick: () => onApplySaved?.(s.values) })), ...(saved ?? []).map((s) => ({ label: `Excluir: ${s.name}`, danger: true, onClick: () => onDeleteFilter?.(s.name) }))]} />}
@@ -49,9 +50,13 @@ export function DocList({ title, endpoint, base, columns, filters, canCreate, ca
   const [cancel, setCancel] = React.useState<string | null>(null);
   // preferências da listagem ("modelo base"): módulo derivado do endpoint (ex.: /api/stock/entries → stock.entries)
   const moduleId = React.useMemo(() => endpoint.replace(/^\/api\//, "").replace(/[^a-z0-9_.-]+/g, ".").replace(/^\.|\.$/g, "").slice(0, 64), [endpoint]);
-  const b1cols = React.useMemo<Base1Column[]>(() => columns.map((c) => ({ key: c.key, label: c.label, align: c.align, sortable: false, render: c.render, text: (r) => { const v = r[c.key]; return v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); } })), [columns]);
+  const b1cols = React.useMemo<Base1Column[]>(() => columns.map((c) => ({ key: c.key, label: c.label, kind: c.kind ?? (c.align === "right" ? "number" : "text"), align: c.align, sortable: false, render: c.render, text: (r) => { const v = r[c.key]; return v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); } })), [columns]);
   // filtros: start_date/end_date viram um único chip "Período"; demais são simples (campo=valor)
-  const b1filters = React.useMemo<Base1FilterDef[]>(() => { const fs = filters ?? []; const out: Base1FilterDef[] = []; const hasRange = fs.some((x) => x.name === "start_date") && fs.some((x) => x.name === "end_date"); if (hasRange) out.push({ key: "periodo", label: "Período", kind: "date", mode: "simple", range: { from: "start_date", to: "end_date" } }); for (const x of fs) { if (hasRange && (x.name === "start_date" || x.name === "end_date")) continue; out.push({ key: x.name, label: x.label, kind: x.type === "date" ? "date" : x.type === "select" ? "enum" : x.type === "ref" ? "ref" : "text", mode: "simple", resource: x.resource, resourceFilter: x.extra, options: x.options }); } return out; }, [filters]);
+  const b1filters = React.useMemo<Base1FilterDef[]>(() => { const fs = filters ?? []; const out: Base1FilterDef[] = []; const hasRange = fs.some((x) => x.name === "start_date") && fs.some((x) => x.name === "end_date"); if (hasRange) out.push({ key: "periodo", label: "Período", kind: "date", mode: "simple", range: { from: "start_date", to: "end_date" } }); for (const x of fs) { if (hasRange && (x.name === "start_date" || x.name === "end_date")) continue; out.push({ key: x.name, label: x.label, kind: x.type === "date" ? "date" : x.type === "select" ? "enum" : x.type === "ref" ? "ref" : "text", mode: "simple", resource: x.resource, resourceFilter: x.extra, options: x.options }); }
+    // toda coluna exibida vira chip de filtro (operadores por tipo: contém/igual/maior/entre/hoje…), resolvido pela API com `coluna__operador`
+    const taken = new Set(out.map((f) => f.key));
+    for (const c of columns) { if (taken.has(c.key) || c.key.startsWith("__")) continue; out.push({ key: c.key, label: c.label, kind: c.kind ?? (c.align === "right" ? "number" : "text"), mode: "advanced", options: c.options }); }
+    return out; }, [filters, columns]);
   const { defaultValues, fixed } = React.useMemo(() => { const dv: FilterValues = {}; const fx: Record<string, string> = {}; const d = defaultFilters ?? {}; const keys = b1filters.map((f) => f.key); if (d["start_date"] || d["end_date"]) dv["periodo"] = { op: "between", value: d["start_date"] ?? "", value2: d["end_date"] ?? "" }; for (const [k, v] of Object.entries(d)) { if (k === "start_date" || k === "end_date") continue; if (keys.includes(k)) dv[k] = { op: "eq", value: v, values: [v] }; else fx[k] = v; } return { defaultValues: dv, fixed: fx }; }, [defaultFilters, b1filters]);
   const cancelMut = useMutation({ mutationFn: (id: string) => api((cancelPath ?? ((i) => `${endpoint}/${i}/cancel`))(id), { method: "POST", body: { reason: "Cancelado pelo usuário" } }), onSuccess: () => { toast.success("Documento cancelado"); setCancel(null); void qc.invalidateQueries({ queryKey: ["b1", moduleId] }); }, onError: (e) => toast.error((e as Error).message) });
   const footer = totals ? (t: Record<string, string>) => { const el = totals(t); return React.isValidElement(el) ? React.cloneElement(el as React.ReactElement<{ children?: React.ReactNode }>, {}, <td />, (el as React.ReactElement<{ children?: React.ReactNode }>).props.children) : el; } : undefined;
@@ -66,10 +71,10 @@ export function DocList({ title, endpoint, base, columns, filters, canCreate, ca
   </>;
 }
 
-export const colDate = (key: string, label: string): Column<Row> => ({ key, label, render: (r) => dateBR(r[key] as string) });
-export const colMoney = (key: string, label: string): Column<Row> => ({ key, label, align: "right", render: (r) => brl(r[key] as string) });
-export const colQty = (key: string, label: string, d = 2): Column<Row> => ({ key, label, align: "right", render: (r) => num(r[key] as string, d) });
-export const colStatus = (key = "status"): Column<Row> => ({ key, label: "Status", render: (r) => <StatusBadge s={String(r[key])} /> });
+export const colDate = (key: string, label: string): Column<Row> => ({ key, label, kind: "date", render: (r) => dateBR(r[key] as string) });
+export const colMoney = (key: string, label: string): Column<Row> => ({ key, label, kind: "number", align: "right", render: (r) => brl(r[key] as string) });
+export const colQty = (key: string, label: string, d = 2): Column<Row> => ({ key, label, kind: "number", align: "right", render: (r) => num(r[key] as string, d) });
+export const colStatus = (key = "status"): Column<Row> => ({ key, label: "Status", kind: "enum", options: Object.entries(STATUS_PT).map(([value, label]) => ({ value, label })), render: (r) => <StatusBadge s={String(r[key])} /> });
 export const colText = (key: string, label: string): Column<Row> => ({ key, label, render: (r) => String(r[key] ?? "") });
 export const dateFilters: Filter[] = [{ name: "start_date", label: "Dt. Início", type: "date" }, { name: "end_date", label: "Dt. Fim", type: "date" }];
 export const monthRange = () => ({ start_date: monthStartISO(), end_date: todayISO() });

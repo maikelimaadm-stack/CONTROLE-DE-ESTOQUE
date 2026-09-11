@@ -3,7 +3,8 @@ import * as React from "react";
 import { Bookmark, X } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { FILTER_OPERATORS, defaultOperatorFor, operatorArity, filterKey, encodeRange, decodeRange, parseFilterKey, type FilterKind, type ListPreferences, type SavedFilter } from "@agro/shared";
-import { Button, Input, NativeSelect, Field, Menu, Dialog } from "@/components/ui";
+import { Button, Input, Field, Menu, Dialog } from "@/components/ui";
+import { MgSelect } from "@/components/ui/mg-controls";
 import { RefSelect } from "@/components/ui/ref-select";
 
 export interface AdvancedFilterField { key: string; label: string; kind: FilterKind; resource?: string; options?: { value: string; label: string }[] }
@@ -37,8 +38,8 @@ function ValueInput({ f, v, onChange }: { f: AdvancedFilterField; v: FilterValue
   const arity = operatorArity(f.kind, v.op);
   if (arity === 0) return <span className="block h-8 rounded border border-dashed px-2 py-1.5 text-[11px] text-slate-400">sem valor</span>;
   if (f.kind === "ref" && f.resource) return <RefSelect resource={f.resource} value={v.value || null} onChange={(x) => onChange({ ...v, value: x ?? "" })} placeholder="Todos" />;
-  if (f.kind === "boolean") return <NativeSelect value={v.value} onChange={(e) => onChange({ ...v, value: e.target.value })}><option value="">Todos</option><option value="true">Sim</option><option value="false">Não</option></NativeSelect>;
-  if (f.kind === "enum") return <NativeSelect value={v.value} onChange={(e) => onChange({ ...v, value: e.target.value })}><option value="">Todos</option>{f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>;
+  if (f.kind === "boolean") return <MgSelect value={v.value} onChange={(x) => onChange({ ...v, value: x })} allowEmpty placeholder="Todos" options={[{ value: "true", label: "Sim" }, { value: "false", label: "Não" }]} />;
+  if (f.kind === "enum") return <MgSelect value={v.value} onChange={(x) => onChange({ ...v, value: x })} allowEmpty placeholder="Todos" options={f.options ?? []} />;
   const type = f.kind === "date" ? "date" : f.kind === "number" ? "number" : "text";
   if (arity === 2) return <div className="flex gap-1"><Input type={type} value={v.value} onChange={(e) => onChange({ ...v, value: e.target.value })} aria-label={`${f.label} de`} /><Input type={type} value={v.value2 ?? ""} onChange={(e) => onChange({ ...v, value2: e.target.value })} aria-label={`${f.label} até`} /></div>;
   return <Input type={type} value={v.value} onChange={(e) => onChange({ ...v, value: e.target.value })} />;
@@ -62,7 +63,7 @@ export function AdvancedFilterBar({ fields, prefs, updatePrefs, values, onChange
     <div className="grid grid-cols-12 gap-2">
       {onSearch && <Field label={searchLabel ?? "Pesquisar"} span={3}><Input value={search ?? ""} onChange={(e) => onSearch(e.target.value)} /></Field>}
       {visible.map((f) => { const v = get(f); return <Field key={f.key} label={f.label} span={operatorArity(f.kind, v.op) === 2 ? 4 : 3}>
-        <div className="flex gap-1"><NativeSelect className="w-[42%] shrink-0" value={v.op} onChange={(e) => setV(f, { op: e.target.value, value: v.value, value2: v.value2 })} aria-label={`Operador ${f.label}`}>{FILTER_OPERATORS[f.kind].map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect><div className="min-w-0 flex-1"><ValueInput f={f} v={v} onChange={(x) => setV(f, x)} /></div></div>
+        <div className="flex gap-1"><div className="w-[42%] shrink-0"><MgSelect value={v.op} onChange={(op) => setV(f, { op, value: v.value, value2: v.value2 })} options={FILTER_OPERATORS[f.kind].map((o) => ({ value: o.value, label: o.label }))} /></div><div className="min-w-0 flex-1"><ValueInput f={f} v={v} onChange={(x) => setV(f, x)} /></div></div>
       </Field>; })}
       <div className="col-span-12 flex flex-wrap items-end gap-2 md:col-span-3">
         <Button type="submit" size="sm">Filtrar</Button>

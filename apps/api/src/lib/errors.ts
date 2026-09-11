@@ -18,6 +18,7 @@ export function fromPgError(e: unknown): DomainError | null {
   if (pe.code === "23514") return new DomainError("VALIDATION_ERROR", "Valor inválido para o campo", { constraint: pe.constraint });
   if (pe.code === "23502") return new DomainError("VALIDATION_ERROR", `Campo obrigatório ausente${pe.column ? `: ${pe.column}` : ""}`, { column: pe.column, detail: pe.detail });
   if (pe.code === "42501") return new DomainError("PERMISSION_DENIED", "Acesso negado pela política de segurança (RLS)");
+  if (pe.code === "42703") return new DomainError("VALIDATION_ERROR", "Coluna de filtro desconhecida", { column: pe.column, detail: pe.message });
   if (pe.code === "40001" || pe.code === "40P01") return new DomainError("CONCURRENCY_CONFLICT", "Conflito de concorrência, tente novamente");
   return null;
 }

@@ -6,6 +6,7 @@ import { runService, idempotent, audit, assertPeriodOpen, nextCode } from "../li
 import { notFound, validation, err } from "../lib/errors.js";
 import { farmAllowed, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
+import { wrapListing } from "../lib/column-filters.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
@@ -61,9 +62,10 @@ async function listTitles(ctx: ServiceCtx, direction: "payable" | "receivable", 
   else if (st === "cancelled") where.push("t.status='cancelled'");
   else if (!st) where.push("t.status<>'cancelled'");
   const w = where.join(" and ");
-  const tot = await ctx.tx.query<{ n: string; amount: string; balance: string; paid: string }>(`select count(*) n, coalesce(sum(t.amount - t.discount),0) amount, coalesce(sum(t.balance),0) balance, coalesce(sum(t.paid_amount),0) paid from erp.financial_titles t where ${w}`, params);
   const sort = ["due_date", "emission_date", "amount", "number", "code", "balance"].includes(q.sort ?? "") ? q.sort : "due_date";
-  const r = await ctx.tx.query(`select t.*, p.name as person_name, pr.name as proprietary_name, tt.name as title_type_name, f.name as farm_name, (select max(settlement_date) from erp.title_settlements s where s.title_id=t.id and s.status='confirmed') as last_settlement_date, (select count(*) from erp.attachments a where a.entity='financial_title' and a.entity_id=t.id)::int as attachment_count from erp.financial_titles t left join erp.people p on p.id=t.person_id left join erp.people pr on pr.id=t.proprietary_id left join erp.title_types tt on tt.id=t.title_type_id join erp.farms f on f.id=t.farm_id where ${w} order by t.${sort} ${q.dir ?? "asc"}, t.code limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+  const wl = wrapListing(`select t.*, p.name as person_name, pr.name as proprietary_name, tt.name as title_type_name, f.name as farm_name, (select max(settlement_date) from erp.title_settlements s where s.title_id=t.id and s.status='confirmed') as last_settlement_date, (select count(*) from erp.attachments a where a.entity='financial_title' and a.entity_id=t.id)::int as attachment_count from erp.financial_titles t left join erp.people p on p.id=t.person_id left join erp.people pr on pr.id=t.proprietary_id left join erp.title_types tt on tt.id=t.title_type_id join erp.farms f on f.id=t.farm_id where ${w} order by t.${sort} ${q.dir ?? "asc"}, t.code`, params, query, q, ", coalesce(sum(t.amount - t.discount),0)::text amount, coalesce(sum(t.balance),0)::text balance, coalesce(sum(t.paid_amount),0)::text paid");
+  const tot = await ctx.tx.query<{ n: string; amount: string; balance: string; paid: string }>(wl.countSql, wl.params);
+  const r = await ctx.tx.query(wl.pageSql, wl.params);
   const today = todayISO();
   return { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), status_label: displayTitleStatus({ status: (x as { status: TitleStatus }).status, dueDate: (x as { due_date: string }).due_date, paymentType: (x as { payment_type: string }).payment_type }, today) })), total: Number(tot.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { amount: tot.rows[0]!.amount, balance: tot.rows[0]!.balance, paid: tot.rows[0]!.paid } };
 }

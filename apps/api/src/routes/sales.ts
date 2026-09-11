@@ -6,6 +6,7 @@ import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../li
 import { notFound, validation, err } from "../lib/errors.js";
 import { farmAllowed, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
+import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock } from "../services/stock-core.js";
 import { createTitles, installmentPlanSchema } from "../services/financial-core.js";
 
@@ -60,8 +61,9 @@ export default async function salesRoutes(app: FastifyInstance) {
       if (f.search) { params.push(`%${f.search}%`); where.push(`(d.code ilike $${params.length} or c.name ilike $${params.length})`); }
       if (f.product_id) { params.push(f.product_id); where.push(`exists (select 1 from erp.sales_document_items i where i.document_id=d.id and i.product_id=$${params.length})`); }
       const w = where.join(" and ");
-      const tot = await ctx.tx.query<{ n: string; total: string }>(`select count(*) n, coalesce(sum(d.total),0) total from erp.sales_documents d join erp.people c on c.id=d.client_id where ${w}`, params);
-      const r = await ctx.tx.query(`select d.id, d.code, d.document_date, d.shipping_date, d.due_date, d.status, d.total, d.subtotal, d.nfe_id, c.name as client_name, u.name as responsible_name, f.name as farm_name, (select count(*) from erp.sales_document_items i where i.document_id=d.id)::int as item_count from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.users u on u.id=d.responsible_user_id join erp.farms f on f.id=d.farm_id where ${w} order by d.document_date desc, d.created_at desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+      const wl = wrapListing(`select d.id, d.code, d.document_date, d.shipping_date, d.due_date, d.status, d.total, d.subtotal, d.nfe_id, c.name as client_name, u.name as responsible_name, f.name as farm_name, (select count(*) from erp.sales_document_items i where i.document_id=d.id)::int as item_count from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.users u on u.id=d.responsible_user_id join erp.farms f on f.id=d.farm_id where ${w} order by d.document_date desc, d.created_at desc`, params, req.query as Record<string, unknown>, q, ", coalesce(sum(t.total),0)::text total");
+      const tot = await ctx.tx.query<{ n: string; total: string }>(wl.countSql, wl.params);
+      const r = await ctx.tx.query(wl.pageSql, wl.params);
       return { items: r.rows, total: Number(tot.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { total: tot.rows[0]!.total } };
     }));
     app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id)));

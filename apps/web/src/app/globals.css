@@ -170,24 +170,24 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 
 /* --- calendário (mg-dp do MG): 320×320, dias circulares, meses/anos por níveis --- */
 .mg-dp-icon { position: absolute; right: 10px; top: 50%; width: 14px; height: 14px; margin-top: -7px; color: var(--mg-text-3); pointer-events: none; z-index: 1; } .mg-dp-icon svg { width: 14px; height: 14px; }
-.mg-dp-panel { width: 320px; height: 320px; display: flex; flex-direction: column; box-sizing: border-box; background: #fff; border: 1px solid var(--mg-gray-fill); border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.12); overflow: hidden; animation: mg-dp-slide .18s ease; z-index: 10001; }
+.mg-dp-panel { width: 280px; height: 280px; display: flex; flex-direction: column; box-sizing: border-box; background: #fff; border: 1px solid var(--mg-gray-fill); border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,.12); overflow: hidden; animation: mg-dp-slide .18s ease; z-index: 10001; }
 @keyframes mg-dp-slide { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
-.mg-dp-header { display: flex; align-items: center; justify-content: space-between; height: 48px; min-height: 48px; padding: 0 8px; flex-shrink: 0; }
+.mg-dp-header { display: flex; align-items: center; justify-content: space-between; height: 40px; min-height: 40px; padding: 0 8px; flex-shrink: 0; }
 .mg-dp-nav { width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: 0; background: none; border-radius: 8px; color: var(--mg-text-2); cursor: pointer; transition: background .12s, color .12s; flex-shrink: 0; } .mg-dp-nav:hover { background: var(--mg-gray-fill); color: var(--mg-text-1); } .mg-dp-nav svg { width: 16px; height: 16px; }
 .mg-dp-title { flex: 1; min-width: 0; font-size: 13px; font-weight: 600; color: var(--mg-text-1); border: 0; background: none; cursor: pointer; padding: 4px 8px; border-radius: 6px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background .12s; } .mg-dp-title:hover { background: var(--mg-gray-fill); }
-.mg-dp-body { height: 272px; overflow: hidden; } .mg-dp-viewport { height: 272px; overflow: hidden; position: relative; }
+.mg-dp-body { height: 240px; overflow: hidden; } .mg-dp-viewport { height: 240px; overflow: hidden; position: relative; }
 .mg-dp-view-track { will-change: transform; transition: transform 220ms cubic-bezier(0,0,.2,1); }
-.mg-dp-view-layer { height: 272px; box-sizing: border-box; } .mg-dp-view-layer--days { display: flex; flex-direction: column; } .mg-dp-view-layer--grid { display: flex; align-items: center; justify-content: center; padding: 0 12px; }
-.mg-dp-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); height: 24px; padding: 0 8px; flex-shrink: 0; }
+.mg-dp-view-layer { height: 240px; box-sizing: border-box; } .mg-dp-view-layer--days { display: flex; flex-direction: column; } .mg-dp-view-layer--grid { display: flex; align-items: center; justify-content: center; padding: 0 12px; }
+.mg-dp-weekdays { display: grid; grid-template-columns: repeat(7, 1fr); height: 22px; padding: 0 8px; flex-shrink: 0; }
 .mg-dp-wd { display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: var(--mg-text-3); text-transform: uppercase; letter-spacing: .02em; }
-.mg-dp-days { display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(6, 1fr); height: 248px; padding: 0 8px 8px; box-sizing: border-box; }
-.mg-dp-day { width: 100%; height: 100%; max-width: 36px; max-height: 36px; margin: auto; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; color: var(--mg-text-1); background: none; border: 2px solid transparent; border-radius: 50%; cursor: pointer; padding: 0; transition: background .12s, color .12s, border-color .12s; }
+.mg-dp-days { display: grid; grid-template-columns: repeat(7, 1fr); grid-template-rows: repeat(6, 1fr); height: 218px; padding: 0 8px 6px; box-sizing: border-box; }
+.mg-dp-day { width: 100%; height: 100%; max-width: 30px; max-height: 30px; margin: auto; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; color: var(--mg-text-1); background: none; border: 2px solid transparent; border-radius: 50%; cursor: pointer; padding: 0; transition: background .12s, color .12s, border-color .12s; }
 .mg-dp-day:hover:not(:disabled):not(.other):not(.selected) { background: var(--mg-gray-fill); }
 .mg-dp-day.today:not(.selected) { border-color: var(--mg-accent); color: var(--mg-accent); font-weight: 600; }
 .mg-dp-day.selected { background: var(--mg-accent); color: #fff; font-weight: 700; border-color: var(--mg-accent); }
 .mg-dp-day.other { color: var(--mg-text-3); opacity: .25; cursor: default; }
-.mg-dp-grid { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); width: 100%; height: 220px; gap: 4px; }
-.mg-dp-pick { width: 100%; height: 100%; max-width: 56px; max-height: 56px; margin: auto; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; border: 2px solid transparent; background: none; border-radius: 50%; cursor: pointer; color: var(--mg-text-1); padding: 0; transition: background .12s, color .12s, border-color .12s; }
+.mg-dp-grid { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); width: 100%; height: 196px; gap: 4px; }
+.mg-dp-pick { width: 100%; height: 100%; max-width: 50px; max-height: 50px; margin: auto; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; border: 2px solid transparent; background: none; border-radius: 50%; cursor: pointer; color: var(--mg-text-1); padding: 0; transition: background .12s, color .12s, border-color .12s; }
 .mg-dp-pick:hover:not(.selected) { background: var(--mg-gray-fill); color: var(--mg-accent); } .mg-dp-pick.selected { background: var(--mg-accent); color: #fff; font-weight: 600; border-color: var(--mg-accent); }
 
 /* --- avisos (erp-toast-panel do MG) --- */
@@ -366,3 +366,31 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .ws-tabs--side { flex-direction: column; align-items: stretch; gap: 2px; }
 .ws-overview-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
 .ws-scroll { min-height: 0; flex: 1 1 auto; overflow: auto; }
+
+/* ===== faixa de filtros (mg-filter-pills-rail do MG): recolher = conteúdo encolhe com animação; a linha permanece ===== */
+.mg-pills-rail__content { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; max-width: 100%; opacity: 1; transform-origin: left center; transition: max-width .26s cubic-bezier(.2,.8,.2,1), opacity .22s, transform .26s cubic-bezier(.2,.8,.2,1); overflow: hidden; }
+.mg-pills-rail.is-collapsed .mg-pills-rail__content { max-width: 0; opacity: 0; transform: scaleX(.96); pointer-events: none; }
+/* ===== tabelas simples (detalhes, painéis, editores de itens) com o cabeçalho do modelo (mg-grid) ===== */
+.table-dense thead th { height: 30px; padding: 0 9px; background: #fff; color: #334155; font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: 0; border-bottom: 1px solid var(--mg-divider); border-right: 1px solid var(--mg-divider); }
+.table-dense thead th:last-child { border-right: 0; }
+.table-dense tbody td { height: 30px; padding: 0 9px; font-size: 12.5px; color: var(--mg-text-1); border-bottom: 1px solid var(--mg-divider); border-right: 1px solid var(--mg-divider); }
+.table-dense tbody td:last-child { border-right: 0; }
+.table-dense tbody tr:nth-child(even) td { background: #fafbfc; }
+.table-dense tbody tr:hover td { background: var(--mg-selection-bg, #f1f8f4); }
+.table-dense tbody td .mg-input, .table-dense tbody td .cmd-display { height: 26px; }
+/* ===== campo padrão (mg-field) nos formulários de lançamento: valor detectado por CSS (:has) ===== */
+.mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)), .mg-field--auto:has(textarea:not(:placeholder-shown)), .mg-field--auto:has(select), .mg-field--auto:has(.cmd-display:not(.is-empty)), .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)) { --mg-auto-has-value: 1; }
+.mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)) .mg-field__label, .mg-field--auto:has(textarea:not(:placeholder-shown)) .mg-field__label, .mg-field--auto:has(select) .mg-field__label, .mg-field--auto:has(.cmd-display:not(.is-empty)) .mg-field__label, .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)) .mg-field__label { align-self: start; padding: 4px 10px 0; font-size: 9px; line-height: 1; }
+.mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(textarea:not(:placeholder-shown)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(select) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(.cmd-display:not(.is-empty)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field), .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)) .mg-field__control :is(input, select, textarea, .cmd-display, .mg-dp-field) { padding-top: 17px !important; padding-bottom: 5px !important; }
+.mg-field--auto:has(input:not([type=hidden]):not(:placeholder-shown)):not(.mg-field--disabled):not(.mg-field--locked), .mg-field--auto:has(textarea:not(:placeholder-shown)):not(.mg-field--disabled), .mg-field--auto:has(select):not(.mg-field--disabled), .mg-field--auto:has(.cmd-display:not(.is-empty)):not(.mg-field--disabled), .mg-field--auto:has(.mg-dp-field:not(:placeholder-shown)):not(.mg-field--disabled) { background: #fff; border-color: #e7eaee; box-shadow: none; }
+.mg-field--auto .mg-field__control input[type=file] { padding-top: 14px !important; font-size: 11px; }
+.mg-field--auto .mg-field__control input[type=checkbox] { height: 16px !important; width: 16px; margin: auto 10px; padding: 0 !important; }
+
+.cmd-panel__footer { border-top: 1px solid var(--mg-divider); padding: 4px; background: #fff; }
+.cmd-panel__create { display: flex; width: 100%; align-items: center; gap: 6px; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: #1f6a47; font-size: 12px; font-weight: 600; cursor: pointer; }
+.cmd-panel__create:hover { background: var(--mg-accent-light); }
+
+.mg-field--auto:has(textarea) { grid-template-rows: auto; min-height: 64px; }
+.mg-field--auto:has(textarea) .mg-field__label { align-self: start; padding: 4px 10px 0; font-size: 9px; line-height: 1; }
+.mg-field--auto:has(textarea) .mg-field__control { height: auto; }
+.mg-field--auto:has(textarea) .mg-field__control textarea { height: auto !important; min-height: 64px; padding: 20px 10px 8px !important; }
