@@ -400,7 +400,8 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .b1-card__badge { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 999px; background: var(--mg-accent); color: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 .b1-card:focus-visible { outline: 2px solid var(--mg-focus-border); outline-offset: 1px; }
 /* anexos: lista + prévia lado a lado */
-.b1-attach__preview { min-width: 0; flex: 1 1 50%; }
+.b1-attach__preview { min-width: 0; flex: 1 1 52%; }
+.b1-attach--preview > .flex.min-w-0.flex-1:first-child { flex: 1 1 48%; min-width: 360px; }
 .b1-attach__frame { flex: 1; min-height: 360px; max-height: 70vh; overflow: hidden; display: flex; align-items: center; justify-content: center; background: var(--mg-bg-page); border: var(--mg-container-border); border-radius: var(--mg-radius-card); }
 .b1-attach__frame iframe { border: 0; background: #fff; }
 .b1-attach__table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; }

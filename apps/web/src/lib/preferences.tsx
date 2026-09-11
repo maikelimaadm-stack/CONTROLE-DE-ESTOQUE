@@ -39,22 +39,34 @@ export function useScreenPrefs<T extends { meta?: { revision?: number } }>(modul
   }, [q.data]);
   const source: PrefSource = local ? "user" : q.data?.org ? "org" : "default";
   const prefs = React.useMemo(() => normalize(local ?? q.data?.org?.preferences ?? null), [local, q.data, normalize]);
+  const inflight = React.useRef(false);
+  // salva em série: enquanto um PUT está em andamento, novas edições ficam em `pending` e vão no próximo envio com a
+  // revisão devolvida pelo servidor (evita 409 por revisão antiga quando a rede é lenta). Em 409 reenvia uma vez com a
+  // revisão atual — é o mesmo usuário (outra aba/sessão), então a edição mais recente prevalece.
   const flush = React.useCallback(async () => {
+    if (inflight.current) return;
     const doc = pending.current; pending.current = null; if (!doc) return;
-    setSaving(true);
+    inflight.current = true; setSaving(true);
+    const send = (d: T) => api<PrefRecord>(`/api/preferences/${module}/${screen}?scope=user`, { method: "PUT", body: { preferences: d, expectedRevision: d.meta?.revision } });
     try {
-      const r = await api<PrefRecord>(`/api/preferences/${module}/${screen}?scope=user`, { method: "PUT", body: { preferences: doc, expectedRevision: doc.meta?.revision } });
+      let r: PrefRecord;
+      try { r = await send(doc); }
+      catch (e) {
+        const cur = e instanceof ApiError && e.status === 409 ? (e.details as { current?: PrefRecord })?.current : undefined;
+        if (!cur) throw e;
+        try { r = await send({ ...doc, meta: { ...(doc.meta ?? {}), revision: cur.revision } } as T); }
+        catch { setLocal(cur.preferences); writeLocal(key, cur.preferences); toast.warning("Preferências alteradas em outra aba: versão mais recente carregada"); return; }
+      }
       const cur = pending.current as T | null;
       if (cur) {
-        // houve nova edição enquanto salvava: mantém o conteúdo local mais novo, só avança a revisão
+        // houve nova edição enquanto salvava: mantém o conteúdo local mais novo, só avança a revisão, e envia em seguida
         const newer = { ...cur, meta: { ...(cur.meta ?? {}), revision: r.revision } } as T;
         pending.current = newer; setLocal(newer); writeLocal(key, newer);
       } else { setLocal(r.preferences); writeLocal(key, r.preferences); }
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 409) { const cur = (e.details as { current?: PrefRecord })?.current; if (cur) { setLocal(cur.preferences); writeLocal(key, cur.preferences); } toast.warning("Preferências alteradas em outra aba: versão mais recente carregada"); }
-      else toast.error("Não foi possível salvar suas preferências de tela");
-    } finally { setSaving(false); void qc.invalidateQueries({ queryKey: qk }); }
+    } catch { toast.error("Não foi possível salvar suas preferências de tela"); }
+    finally { inflight.current = false; setSaving(false); void qc.invalidateQueries({ queryKey: qk }); if (pending.current) void flushRef.current(); }
   }, [module, screen, key, qc, qk]);
+  const flushRef = React.useRef(flush); flushRef.current = flush;
   const update = React.useCallback((fn: (p: T) => T) => {
     // parte da última edição ainda não salva (várias atualizações em sequência não se sobrescrevem)
     const base = (pending.current ?? prefs) as T;
