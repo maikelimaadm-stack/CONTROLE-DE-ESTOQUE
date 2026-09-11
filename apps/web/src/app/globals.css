@@ -18,7 +18,12 @@ input, select, textarea { @apply text-[13px]; }
 /* MODELO BASE1: barra de rolagem fina e sem setas nos inputs numéricos das caixas de campo */
 .b1 ::-webkit-scrollbar { height: 8px; width: 8px; } .b1 ::-webkit-scrollbar-thumb { @apply rounded-full bg-slate-300; }
 .b1 input[type="date"]::-webkit-calendar-picker-indicator { opacity: .5; }
-@media print { .no-print { display: none !important; } body { background: white; font-size: 11px; } }
+@media print {
+  .no-print { display: none !important; } body { background: white; font-size: 11px; }
+  /* impressão: sem altura fixa nem rolagem interna — o documento cresce por todas as páginas */
+  .mg-app-shell, main, .mg-shell--fill, .mg-shell--table, .mg-grid-wrap, .mg-shell__scroll, .mg-form-scroll, .b1 { height: auto !important; max-height: none !important; overflow: visible !important; }
+  .mg-grid thead th, .mg-grid tfoot th, .mg-grid tfoot td, .mg-grid .is-frozen, .mg-grid .th-select, .mg-grid .td-select { position: static !important; }
+}
 
 /* ================================================================================================
    MODELO BASE1 — tokens e classes replicados do makgestao (src/styles/mg-prototype.css do PROJETOMG)
@@ -87,10 +92,17 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 /* --- painéis brancos (contêiner de tabela/cards/formulário) --- */
 .mg-shell { background: var(--mg-bg-card); border: 1px solid rgba(15,23,42,.06); border-radius: 14px; box-shadow: var(--mg-card-shadow); overflow: hidden; }
 .mg-card { background: var(--mg-bg-card); border: var(--mg-container-border); border-radius: var(--mg-radius-card); box-shadow: var(--mg-card-shadow); }
-.mg-toolbar { display: flex; align-items: center; gap: 8px; min-height: var(--mg-toolbar-h); padding: 4px 12px; }
+.mg-toolbar { display: flex; align-items: center; gap: 8px; height: var(--mg-toolbar-h); min-height: var(--mg-toolbar-h); padding: 4px 12px; box-sizing: border-box; }
 
 /* --- grade (emp-table-pro) --- */
 .mg-grid-wrap { overflow: auto; }
+/* painel que preenche a altura (mg-view-stack do MG): cabeçalho da grade e rodapé fixos, só os dados rolam */
+.mg-shell--fill { display: flex; flex-direction: column; min-height: 0; }
+.mg-shell--fill > .mg-grid-wrap, .mg-shell--fill > .mg-shell__scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+.mg-shell--fill > .mg-summary { flex-shrink: 0; }
+.mg-shell--table { max-height: calc(100dvh - 190px); }
+.mg-shell--table > .mg-grid-wrap { min-height: 120px; }
+.mg-grid tfoot th, .mg-grid tfoot td { position: sticky; bottom: 0; background: #f8fafc; z-index: 3; }
 .mg-grid { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: auto; font-size: 12px; }
 .mg-grid thead th { position: sticky; top: 0; z-index: 3; height: 30px; padding: 0 9px; background: #fff; color: #334155; font-size: 12px; font-weight: 600; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--mg-table-line); border-right: 1px solid var(--mg-table-line); }
 .mg-grid thead th:last-child, .mg-grid tbody td:last-child { border-right: 0; }
@@ -203,6 +215,11 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 @keyframes mg-motion-text-in { from { opacity: 0; } to { opacity: 1; } }
 .mg-motion-panel--animate { animation: mg-motion-panel-fade .22s cubic-bezier(.2,.8,.2,1) both; }
 .mg-page-enter { animation: mg-motion-text-in .22s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes mg-motion-swap-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+.mg-motion-swap { animation: mg-motion-swap-in .22s cubic-bezier(.2,.8,.2,1) both; }
+/* card selecionado (mesma seleção verde da grade) e estrela de favorito */
+.mg-card.is-selected { background: var(--mg-selection-bg); box-shadow: inset 0 0 0 1px var(--mg-focus-border); }
+.mg-record-fav-btn { color: var(--mg-icon); } .mg-record-fav-btn.is-active { color: var(--mg-accent); }
 
 /* --- painéis do registro: abas horizontais (seg-control) ou lista lateral (mg-panel-list) --- */
 .mg-panel-tabs-rail { display: flex; align-items: stretch; gap: 6px; min-height: 36px; }
