@@ -1,51 +1,68 @@
 "use client";
+import * as React from "react";
 import { Suspense } from "react";
-import { Workspace, SubTabs, NewChooser } from "@/components/workspace";
+import { useAuth } from "@/lib/auth";
+import { Workspace, ViewSegment, NewChooser, FilterChips, useUrlParam, tab } from "@/components/workspace";
 import { Dashboard } from "@/features/dashboards/dashboard";
 import { ResourceList } from "@/features/resources/resource-list";
 import { AnimalsList } from "@/features/livestock/animals-list";
-import { LocateAnimalPanel } from "@/features/livestock/locate";
-import { ProcessingsPanel } from "@/features/livestock/processings";
-import { LivestockMovementsList } from "@/features/livestock/movements-list";
+import { LivestockMovementsList, MOVEMENT_TYPES } from "@/features/livestock/movements-list";
 import { HandlingsList } from "@/features/livestock/handlings-list";
 import { WeighingsList } from "@/features/livestock/weighings-list";
-import { TransferAnimalsToBatch } from "@/features/livestock/transfer-animals-batch";
-import { GroupBatches } from "@/features/livestock/transfer-group-batches";
-import { TransferBatchLocation } from "@/features/livestock/transfer-batch-location";
-import { TransferToFarm } from "@/features/livestock/transfer-farm";
 import { HerdEvolutionPanel } from "@/features/livestock/evolution";
+import { HerdActionDialog, HerdTransfersHistory, useHerdAction } from "@/features/livestock/herd-actions";
 import { MOV_PT, HANDLING_PT } from "@/features/livestock/shared";
 
-/** Pecuária: Rebanho, Movimentações (compra/venda/nascimento/morte/perda), Manejos e Movimentar Rebanho em uma área. */
-const MOV: { key: string; perm: string }[] = [{ key: "purchase", perm: "animal_purchases" }, { key: "sale", perm: "animal_sales" }, { key: "birth", perm: "animal_births" }, { key: "death", perm: "animal_deaths" }, { key: "loss", perm: "animal_losses" }];
-const HAND: { key: string; perm: string }[] = [{ key: "sanitary", perm: "sanitaries" }, { key: "nutrition", perm: "nutritions" }, { key: "weaning", perm: "weanings" }, { key: "separation", perm: "separations" }, { key: "pasture", perm: "pastures" }];
+/**
+ * Pecuária (Compactação V2): Visão Geral · Rebanho (Animais / Lotes / Reclassificações / Transferências) ·
+ * Movimentações (uma lista, tipo como filtro) · Manejos (uma lista, tipo como filtro; pesagem usa fluxo próprio).
+ * "Movimentar rebanho" deixou de ser aba: nasce do animal/lote (ações contextuais). Reprodução tem rota própria.
+ */
+const MOV_PERM: Record<string, string> = { purchase: "animal_purchases", sale: "animal_sales", birth: "animal_births", death: "animal_deaths", loss: "animal_losses" };
+const HAND_PERM: Record<string, string> = { sanitary: "sanitaries", nutrition: "nutritions", weaning: "weanings", separation: "separations", pasture: "pastures" };
 const scroll = (c: React.ReactNode) => <div className="ws-scroll">{c}</div>;
+
+function Movements() {
+  const { can } = useAuth(); const [type, setType] = useUrlParam("type", "");
+  const ok = MOVEMENT_TYPES.filter((t) => can(`${MOV_PERM[t]}.view`)); const cur = type && ok.includes(type) ? type : "";
+  return <div className="flex min-h-0 flex-1 flex-col gap-2">
+    <div className="mg-card ws-filters no-print"><FilterChips label="Tipo" testId="mov-type" value={cur || "all"} onChange={(v) => setType(v === "all" ? "" : v)} options={[{ value: "all", label: "Todos" }, ...ok.map((t) => ({ value: t, label: MOV_PT[t]! }))]} /></div>
+    <LivestockMovementsList type={cur} />
+  </div>;
+}
+function Handlings() {
+  const { can } = useAuth(); const [type, setType] = useUrlParam("type", "");
+  const ok = Object.keys(HANDLING_PT).filter((t) => can(`${HAND_PERM[t]}.view`)); const cur = type === "weighing" && can("weighings.view") ? "weighing" : type && ok.includes(type) ? type : "";
+  return <div className="flex min-h-0 flex-1 flex-col gap-2">
+    <div className="mg-card ws-filters no-print"><FilterChips label="Tipo" testId="handling-type" value={cur || "all"} onChange={(v) => setType(v === "all" ? "" : v)} options={[{ value: "all", label: "Todos os manejos" }, { value: "weighing", label: "Pesagem", perm: "weighings.view", hint: "Pesagens usam fluxo próprio (GMD por lote)" }, ...ok.map((t) => ({ value: t, label: HANDLING_PT[t]! }))]} /></div>
+    {cur === "weighing" ? <WeighingsList /> : <HandlingsList type={cur} />}
+  </div>;
+}
+function Batches() {
+  const { can } = useAuth(); const herd = useHerdAction();
+  return <><ResourceList resourceKey="batches" extraRowActions={(r) => [
+    ...(can("batch_module_area_transfer.create") ? [{ label: "Mover de local (módulo / área / curral)", onClick: () => herd.open("lote-local", { batchId: String(r["id"]) }) }] : []),
+    ...(can("batch_farm_transfer.create") ? [{ label: "Transferir de fazenda", onClick: () => herd.open("fazendas", { batchId: String(r["id"]) }) }] : []),
+    ...(can("batch_grouping.create") ? [{ label: "Agrupar com outros lotes", onClick: () => herd.open("agrupar", { batchIds: [String(r["id"])] }) }] : [])
+  ]} />
+  <HerdActionDialog action={herd.action} ctx={herd.ctx} onClose={herd.close} /></>;
+}
+function Transfers() { const herd = useHerdAction(); return <><HerdTransfersHistory /><HerdActionDialog action={herd.action} ctx={herd.ctx} onClose={herd.close} /></>; }
 function Inner() {
-  return <Workspace title="Pecuária" actions={<NewChooser items={[
+  return <Workspace title="Pecuária" defaultTab="rebanho" actions={<NewChooser items={[
     { label: "Cadastrar animal", href: "/pecuaria/animais/new", perm: "animals.create" },
-    ...MOV.map((m) => ({ label: `Nova movimentação: ${MOV_PT[m.key]}`, href: `/pecuaria/movimentacoes/${m.key}/new`, perm: `${m.perm}.create` })),
-    { label: "Nova pesagem", href: "/pecuaria/pesagens/new", perm: "weighings.create" },
-    ...HAND.map((h) => ({ label: `Novo manejo: ${HANDLING_PT[h.key]}`, href: `/pecuaria/manejo/${h.key}/new`, perm: `${h.perm}.create` }))
+    { label: "Movimentação", children: MOVEMENT_TYPES.map((m) => ({ label: MOV_PT[m]!, href: `/pecuaria/movimentacoes/${m}/new`, perm: `${MOV_PERM[m]}.create` })) },
+    { label: "Manejo", children: [{ label: "Pesagem", href: "/pecuaria/pesagens/new", perm: "weighings.create" }, ...Object.keys(HANDLING_PT).map((h) => ({ label: HANDLING_PT[h]!, href: `/pecuaria/manejo/${h}/new`, perm: `${HAND_PERM[h]}.create` }))] }
   ]} />} tabs={[
-    { key: "visao-geral", label: "Visão Geral", perm: "dashboard.livestock.view", content: <Dashboard k="pecuaria" title="Indicadores da pecuária de corte" /> },
-    { key: "rebanho", label: "Rebanho", perm: ["animals.view", "animals_management.view", "processings.view", "locate_animals.view", "batches.view"], content: <SubTabs tabs={[
-      { key: "animais", label: "Animais", perm: ["animals.view", "animals_management.view"], content: scroll(<AnimalsList />) },
-      { key: "buscar", label: "Buscar animal (localização)", perm: "locate_animals.view", content: scroll(<LocateAnimalPanel />) },
-      { key: "processamentos", label: "Pendentes de processamento", perm: "processings.view", hint: "Animais comprados por contagem aguardando identificação individual", content: scroll(<ProcessingsPanel />) },
-      { key: "lotes", label: "Lotes", perm: "batches.view", content: <ResourceList resourceKey="batches" /> }
-    ]} /> },
-    { key: "movimentacoes", label: "Movimentações", perm: MOV.map((m) => `${m.perm}.view`), content: <SubTabs tabs={MOV.map((m) => ({ key: m.key, label: MOV_PT[m.key]!, perm: `${m.perm}.view`, content: <LivestockMovementsList type={m.key} /> }))} /> },
-    { key: "manejos", label: "Manejos", perm: ["weighings.view", ...HAND.map((h) => `${h.perm}.view`), "herd_evolution.view"], content: <SubTabs tabs={[
-      { key: "weighing", label: "Pesagens", perm: "weighings.view", content: <WeighingsList /> },
-      ...HAND.map((h) => ({ key: h.key, label: HANDLING_PT[h.key]!, perm: `${h.perm}.view`, content: <HandlingsList type={h.key} /> })),
-      { key: "evolution", label: "Evolução de categoria", perm: "herd_evolution.view", hint: "Reclassificação automática por idade", content: scroll(<HerdEvolutionPanel />) }
-    ]} /> },
-    { key: "movimentar", label: "Movimentar Rebanho", perm: ["animal_batch_transfer.view", "batch_grouping.view", "batch_module_area_transfer.view", "batch_farm_transfer.view"], content: <SubTabs tabs={[
-      { key: "animais-lote", label: "Animais entre lotes", perm: "animal_batch_transfer.view", content: scroll(<TransferAnimalsToBatch />) },
-      { key: "lote-local", label: "Lote → módulo / área / curral", perm: "batch_module_area_transfer.view", content: scroll(<TransferBatchLocation />) },
-      { key: "fazendas", label: "Entre fazendas", perm: "batch_farm_transfer.view", content: scroll(<TransferToFarm />) },
-      { key: "agrupar", label: "Agrupar lotes", perm: "batch_grouping.view", content: scroll(<GroupBatches />) }
-    ]} /> }
+    tab("pecuaria.visao-geral", <Dashboard k="pecuaria" title="Indicadores da pecuária de corte" />),
+    tab("pecuaria.rebanho", <ViewSegment tabs={[
+      tab("pecuaria.rebanho.animais", scroll(<AnimalsList />)),
+      tab("pecuaria.rebanho.lotes", <Batches />),
+      tab("pecuaria.rebanho.reclassificacoes", scroll(<HerdEvolutionPanel />)),
+      tab("pecuaria.rebanho.transferencias", <Transfers />)
+    ]} />),
+    tab("pecuaria.movimentacoes", <Movements />),
+    tab("pecuaria.manejos", <Handlings />)
   ]} />;
 }
 export default function Page() { return <Suspense><Inner /></Suspense>; }

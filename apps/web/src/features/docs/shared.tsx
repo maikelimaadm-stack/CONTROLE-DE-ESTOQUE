@@ -45,7 +45,7 @@ export function FilterBar({ filters, f, set, reset, onApply, visible, saved, onS
  * Lista genérica de documentos transacionais (lançamentos) no MODELO BASE1: chips de filtro, grade/cards
  * configuráveis, modo Registro (abre o detalhe), rodapé com contadores, cancelamento com estorno.
  */
-export function DocList({ title, endpoint, base, columns, filters, canCreate, canCancel, cancelPath, extraActions, totals, defaultFilters, rowActions, createLabel = "Novo", hideNew, entity }: { title: string; endpoint: string; base: string; columns: Column<Row>[]; filters?: Filter[]; canCreate?: boolean; canCancel?: boolean; cancelPath?: (id: string) => string; extraActions?: React.ReactNode; totals?: (t: Record<string, string>) => React.ReactNode; defaultFilters?: Record<string, string>; rowActions?: (r: Row) => { label: string; onClick?: () => void; href?: string; danger?: boolean }[]; createLabel?: string; hideNew?: boolean; /** tabela da auditoria/anexos */ entity?: string }) {
+export function DocList({ title, endpoint, base, columns, filters, canCreate, canCancel, cancelPath, extraActions, totals, defaultFilters, rowActions, createLabel = "Novo", hideNew, entity, rowHref }: { title: string; endpoint: string; base: string; columns: Column<Row>[]; filters?: Filter[]; canCreate?: boolean; canCancel?: boolean; cancelPath?: (id: string) => string; extraActions?: React.ReactNode; totals?: (t: Record<string, string>) => React.ReactNode; defaultFilters?: Record<string, string>; rowActions?: (r: Row) => { label: string; onClick?: () => void; href?: string; danger?: boolean }[]; createLabel?: string; hideNew?: boolean; /** tabela da auditoria/anexos */ entity?: string; /** rota do detalhe por linha (listas com tipos mistos) */ rowHref?: (r: Row) => string }) {
   const router = useRouter(); const qc = useQueryClient();
   const [cancel, setCancel] = React.useState<string | null>(null);
   // preferências da listagem ("modelo base"): módulo derivado do endpoint (ex.: /api/stock/entries → stock.entries)
@@ -64,8 +64,8 @@ export function DocList({ title, endpoint, base, columns, filters, canCreate, ca
     <Base1List moduleId={moduleId} title={title} columns={b1cols} filters={b1filters} defaultValues={defaultValues} queryKeyExtra={fixed} csvName={moduleId} entity={entity}
       fetchPage={(p) => api<{ items: Row[]; total: number; totals?: Record<string, string> }>(`${endpoint}${qs({ ...p.filters, ...fixed, page: p.page, pageSize: p.pageSize })}`)}
       canCreate={Boolean(canCreate) && !hideNew} onNew={() => router.push(`${base}/new`)} createLabel={createLabel} extraToolbar={extraActions}
-      onOpen={(r) => router.push(`${base}/${r["id"]}`)}
-      rowActions={(r) => [{ label: "Visualizar", onClick: () => router.push(`${base}/${r["id"]}`) }, ...(rowActions?.(r) ?? []).map((a) => ({ label: a.label, danger: a.danger, onClick: () => { if (a.href) router.push(a.href); else a.onClick?.(); } })), ...(canCancel && r["status"] !== "cancelled" && r["status"] !== "reversed" ? [{ label: "Cancelar", danger: true, onClick: () => setCancel(String(r["id"])) }] : [])]}
+      onOpen={(r) => router.push(rowHref ? rowHref(r) : `${base}/${r["id"]}`)}
+      rowActions={(r) => [{ label: "Visualizar", onClick: () => router.push(rowHref ? rowHref(r) : `${base}/${r["id"]}`) }, ...(rowActions?.(r) ?? []).map((a) => ({ label: a.label, danger: a.danger, onClick: () => { if (a.href) router.push(a.href); else a.onClick?.(); } })), ...(canCancel && r["status"] !== "cancelled" && r["status"] !== "reversed" ? [{ label: "Cancelar", danger: true, onClick: () => setCancel(String(r["id"])) }] : [])]}
       footerTotals={footer} />
     <Confirm open={Boolean(cancel)} onOpenChange={() => setCancel(null)} title="Cancelar documento" text="O cancelamento estorna os lançamentos vinculados (estoque/financeiro) e fica registrado na auditoria. Continuar?" danger loading={cancelMut.isPending} onConfirm={() => cancel && cancelMut.mutate(cancel)} />
   </>;

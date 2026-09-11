@@ -16,7 +16,7 @@ function Inner() {
   const [items, setItems] = React.useState<ItemRow[]>([]);
   React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
   React.useEffect(() => { const d = req.data; if (!d) return; setH((o) => ({ ...o, farm_id: String(d["farm_id"] ?? o.farm_id) })); setItems(d.items.map((i) => ({ warehouse_id: String(i["warehouse_id"] ?? ""), product_id: String(i["product_id"] ?? ""), quantity: String(i["quantity"] ?? "0"), unit_value: "0", cost_center_id: String(i["cost_center_id"] ?? "") }))); }, [req.data]);
-  const create = useCreate("/api/stock/devolutions", () => router.push("/estoque?tab=saidas&sub=devolucoes"));
+  const create = useCreate("/api/stock/devolutions", () => router.push("/estoque?tab=operacoes&sub=devolucoes"));
   return <Card><CardHeader title={reqId ? `Devolução de itens da requisição ${String(req.data?.["code"] ?? "")}` : "Devolução do Estoque (entrada)"} actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!items.length} onClick={() => create.mutate({ ...h, responsible_person_id: h.responsible_person_id || null, harvest_id: h.harvest_id || null, items: items.map((i) => ({ warehouse_id: i.warehouse_id, product_id: i.product_id, quantity: i.quantity, unit_value: i.unit_value && Number(i.unit_value) > 0 ? i.unit_value : null, cost_center_id: i.cost_center_id || null })) })}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
       <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>

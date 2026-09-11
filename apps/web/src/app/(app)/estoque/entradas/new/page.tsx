@@ -10,7 +10,7 @@ export default function Page() {
   const [h, setH] = React.useState({ farm_id: "", entry_date: todayISO(), harvest_id: "", proprietary_id: "", note: "", pay: "false", account_id: "", movement_date: todayISO() });
   const [items, setItems] = React.useState<ItemRow[]>([]);
   React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
-  const create = useCreate("/api/stock/input-entries", () => router.push("/estoque?tab=entradas&sub=manuais"));
+  const create = useCreate("/api/stock/input-entries", () => router.push("/estoque?tab=recebimentos&sub=manuais"));
   const submit = () => create.mutate({ farm_id: h.farm_id, entry_date: h.entry_date, harvest_id: h.harvest_id || null, proprietary_id: h.proprietary_id || null, note: h.note || null, items: items.map((i) => ({ product_id: i.product_id, quantity: i.quantity, unit_value: i.unit_value, generate_stock: i.generate_stock !== false, warehouse_id: i.warehouse_id || null, provider_lot: i.provider_lot || null, expiration_date: i.expiration_date || null, financial_category_id: i.financial_category_id || null, cost_center_id: i.cost_center_id || null })), bank_movement: h.pay === "true" ? { account_id: h.account_id, date: h.movement_date } : null });
   return <Card><CardHeader title="Nova Entrada / Insumos" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} onClick={submit} disabled={!items.length}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">

@@ -11,7 +11,7 @@ export default function Page() {
   const [h, setH] = React.useState({ farm_id: "", writeoff_date: todayISO(), reason: "loss", reason_note: "", cost_center_id: "", warehouse_id: "", justification: "" });
   const [items, setItems] = React.useState<ItemRow[]>([]);
   React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
-  const create = useCreate("/api/stock/writeoffs", () => router.push("/estoque?tab=saidas&sub=diretas"));
+  const create = useCreate("/api/stock/writeoffs", () => router.push("/estoque?tab=operacoes&sub=diretas"));
   return <Card><CardHeader title="Baixa de Estoque" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!items.length || !h.warehouse_id} onClick={() => create.mutate({ ...h, cost_center_id: h.cost_center_id || null, reason_note: h.reason_note || null, items: items.map((i) => ({ product_id: i.product_id, quantity: i.quantity, provider_lot: i.provider_lot || null })) })}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
       <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "", warehouse_id: "" })} /></Field>

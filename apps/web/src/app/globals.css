@@ -406,3 +406,13 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .b1-attach__frame iframe { border: 0; background: #fff; }
 .b1-attach__table td { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0; }
 @media (max-width: 900px) { .b1-attach--preview { flex-direction: column; } }
+/* Compactação V2: chips de filtro (escopo/etapa/tipo) dentro da área — diferença de status/tipo vira filtro, não aba */
+.ws-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ws-chips__label { margin-right: 2px; font-size: 11px; font-weight: 600; color: var(--mg-text-3); text-transform: uppercase; letter-spacing: .02em; }
+.ws-chip { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid transparent; background: var(--mg-gray-fill); color: var(--mg-text-2); font-size: 12px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer; transition: background .15s, color .15s; }
+.ws-chip:hover { background: var(--mg-bg-page); color: var(--mg-text-1); }
+.ws-chip.is-active { background: var(--mg-accent-light); color: #1f6a47; border-color: rgba(64,222,99,.35); }
+.ws-chip:focus-visible { outline: 2px solid var(--mg-focus-border); outline-offset: 1px; }
+.ws-chip__count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 999px; background: rgba(0,0,0,.08); font-size: 10.5px; font-weight: 600; }
+.ws-chip.is-active .ws-chip__count { background: var(--mg-accent); color: #fff; }
+.ws-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 4px 10px; }

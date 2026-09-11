@@ -170,7 +170,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const ids = d.animal_ids?.length ? d.animal_ids : (await ctx.tx.query<{ id: string }>("select id from erp.animals where batch_id=$1 and status='active' and organization_id=$2", [d.batch_id, ctx.orgId])).rows.map((x) => x.id);
     for (const a of ids) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]);
     await ctx.tx.query("update erp.animal_movements set quantity=$2 where id=$1", [r.rows[0]!.id, ids.length]);
-    await ctx.tx.query("insert into erp.notifications(organization_id,kind,title,route) values ($1,'batch_transfer','Você possui uma transferência de lote a ser processada.','/pecuaria/transferencias/lote-fazenda')", [ctx.orgId]);
+    await ctx.tx.query("insert into erp.notifications(organization_id,kind,title,route) values ($1,'batch_transfer','Você possui uma transferência de lote a ser processada.','/pecuaria?tab=rebanho&sub=transferencias&type=farm_transfer')", [ctx.orgId]);
     return { id: r.rows[0]!.id, code, animals: ids.length, status: "pending" };
   })));
   // Processar transferência na fazenda destino (aceite)

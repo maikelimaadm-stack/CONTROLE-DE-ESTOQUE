@@ -9,7 +9,7 @@ test("entrada de insumos gera saldo e ledger; cancelamento estorna", async ({ pa
   await row.locator("button").nth(1).click(); await page.getByPlaceholder("Pesquisar...").fill("Diesel"); await page.getByRole("option", { name: /Diesel/i }).first().click();
   await row.locator("input[type=number]").nth(0).fill("10"); await row.locator("input[type=number]").nth(1).fill("6.5");
   await page.getByRole("button", { name: "Salvar" }).click();
-  await expect(page).toHaveURL(/\/estoque\?tab=entradas&sub=manuais/);
+  await expect(page).toHaveURL(/\/estoque\?tab=recebimentos&sub=manuais/);
   await page.locator("tbody tr").first().dblclick();
   await expect(page.getByText("Movimentações de estoque (ledger)")).toBeVisible();
   await expect(page.locator("tbody tr", { hasText: "Entrada" }).first()).toBeVisible();

@@ -38,6 +38,19 @@ async function transition(ctx: ServiceCtx, id: string, action: PurchaseAction, j
 }
 
 export default async function supplyRoutes(app: FastifyInstance) {
+  // Contadores por etapa (uma consulta agregada por status; alimenta os chips de etapa da área Compras)
+  app.get("/supply/requests/counts", async (req) => runService(app, req, "purchase_requests.view", async (ctx) => {
+    const f = req.query as Record<string, string>; const where = ["r.organization_id=$1", "r.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
+    if (f.scope === "mine") { params.push(ctx.user.id); where.push(`(r.current_responsible_user_id=$${params.length} or r.requester_user_id=$${params.length})`); }
+    if (ctx.farmId) { params.push(ctx.farmId); where.push(`r.farm_id=$${params.length}`); }
+    if (ctx.membership.farmIds.length) { params.push(ctx.membership.farmIds); where.push(`r.farm_id = any($${params.length}::uuid[])`); }
+    const r = await ctx.tx.query<{ status: PurchaseRequestStatus; n: string }>(`select r.status, count(*)::text n from erp.purchase_requests r where ${where.join(" and ")} group by r.status`, params);
+    const by = new Map(r.rows.map((x) => [x.status, Number(x.n)]));
+    const stageStatuses: Record<string, PurchaseRequestStatus[]> = { request: ["request"], quotation: ["awaiting_awareness", "quotation_in_progress"], authorization: ["awaiting_approval", "awaiting_awareness", "under_review"], buy: ["awaiting_purchase", "purchase_done"], receipts: ["purchase_done", "purchase_received", "finished"], finished: ["finished"], rejected: ["not_approved", "cancelled"] };
+    const out: Record<string, number> = { all: r.rows.reduce((a, x) => a + Number(x.n), 0) };
+    for (const [k, sts] of Object.entries(stageStatuses)) out[k] = sts.reduce((a, st) => a + (by.get(st) ?? 0), 0);
+    return out;
+  }));
   // Listagem por etapa (Solicitação, Cotações, Autorização, Compras, Recebimentos, Rejeitados, Meus processos)
   app.get("/supply/requests", async (req) => runService(app, req, "purchase_requests.view", async (ctx) => {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
@@ -46,6 +59,8 @@ export default async function supplyRoutes(app: FastifyInstance) {
     const stageStatuses: Record<string, PurchaseRequestStatus[]> = { request: ["request"], quotation: ["awaiting_awareness", "quotation_in_progress"], authorization: ["awaiting_approval", "awaiting_awareness", "under_review"], buy: ["awaiting_purchase", "purchase_done"], receipts: ["purchase_done", "purchase_received", "finished"], finished: ["finished"], rejected: ["not_approved", "cancelled"] };
     if (stage && stageStatuses[stage]) { params.push(stageStatuses[stage]); where.push(`r.status = any($${params.length})`); }
     if (stage === "mine") { params.push(ctx.user.id); where.push(`(r.current_responsible_user_id=$${params.length} or r.requester_user_id=$${params.length}) and r.status not in ('finished','cancelled')`); }
+    // escopo "Meus" combinável com a etapa (Compactação V2): sou responsável atual ou solicitante
+    if (f.scope === "mine" && stage !== "mine") { params.push(ctx.user.id); where.push(`(r.current_responsible_user_id=$${params.length} or r.requester_user_id=$${params.length})`); }
     if (f.status) { params.push(f.status); where.push(`r.status=$${params.length}`); }
     if (f.request_type) { params.push(f.request_type); where.push(`r.request_type=$${params.length}`); }
     if (f.priority) { params.push(f.priority); where.push(`r.priority=$${params.length}`); }

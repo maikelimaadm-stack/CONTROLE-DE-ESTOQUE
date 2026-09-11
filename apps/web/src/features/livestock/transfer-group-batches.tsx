@@ -5,10 +5,10 @@ import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect } from "
 import { RefSelect } from "@/components/ui/ref-select";
 import { useFarmDefault, useCreate } from "@/features/docs/shared";
 import { Trash2 } from "lucide-react";
-export function GroupBatches() {
-  const farm = useFarmDefault(); const [f, setF] = React.useState({ farm_id: "", movement_date: todayISO(), destination_batch_id: "", close_sources: "true" }); const [src, setSrc] = React.useState<string[]>([""]);
+export function GroupBatches({ sourceBatchIds, onDone }: { sourceBatchIds?: string[]; onDone?: () => void } = {}) {
+  const farm = useFarmDefault(); const [f, setF] = React.useState({ farm_id: "", movement_date: todayISO(), destination_batch_id: "", close_sources: "true" }); const [src, setSrc] = React.useState<string[]>(sourceBatchIds?.length ? sourceBatchIds : [""]);
   React.useEffect(() => { setF((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
-  const create = useCreate("/api/livestock/transfers/group-batches", () => setSrc([""]));
+  const create = useCreate("/api/livestock/transfers/group-batches", () => { setSrc([""]); onDone?.(); });
   const ids = src.filter(Boolean);
   return <Card><CardHeader title="Agrupar Lotes" subtitle="Move todos os animais (identificados e por contagem) dos lotes de origem para o lote de destino; opcionalmente encerra os lotes de origem." actions={<Button size="sm" loading={create.isPending} disabled={!ids.length || !f.destination_batch_id} onClick={() => create.mutate({ farm_id: f.farm_id, movement_date: f.movement_date, source_batch_ids: ids, destination_batch_id: f.destination_batch_id, close_sources: f.close_sources === "true" })}>Agrupar</Button>} /><CardBody className="space-y-3">
     <div className="grid grid-cols-12 gap-2"><Field label="Fazenda" span={3}><RefSelect resource="farms" value={f.farm_id} onChange={(v) => setF({ ...f, farm_id: v ?? "" })} /></Field><Field label="Data" span={2}><Input type="date" value={f.movement_date} onChange={(e) => setF({ ...f, movement_date: e.target.value })} /></Field><Field label="Lote de destino" required span={4}><RefSelect resource="batches" value={f.destination_batch_id} onChange={(v) => setF({ ...f, destination_batch_id: v ?? "" })} /></Field><Field label="Encerrar lotes de origem" span={3}><NativeSelect value={f.close_sources} onChange={(e) => setF({ ...f, close_sources: e.target.value })}><option value="true">Sim</option><option value="false">Não</option></NativeSelect></Field></div>
