@@ -15,13 +15,15 @@ test("área de estoque: abas, sub-abas, saldo com ação contextual de ajuste e 
   await page.goto("/estoque?tab=saldo");
   await expect(page.getByRole("tab", { name: "Saldo" })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("table")).toBeVisible();
-  await page.getByRole("button", { name: "Ajustar estoque" }).first().click();
-  await expect(page.getByRole("dialog").getByRole("heading", { name: "Ajustar estoque" })).toBeVisible(); await page.keyboard.press("Escape");
-  await page.getByRole("tab", { name: "Saídas" }).click(); await expect(page).toHaveURL(/tab=saidas/);
-  await page.getByRole("tab", { name: /Saídas diretas/ }).click(); await expect(page).toHaveURL(/sub=diretas/);
+  // ação contextual por linha (quando há saldo) e pelo seletor "+ Novo" (sempre): ambos abrem o mesmo diálogo de ajuste
+  const rowAction = page.getByRole("button", { name: "Ajustar estoque" }).first();
+  if (await rowAction.count()) { await rowAction.click(); await expect(page.getByRole("dialog").getByRole("heading", { name: "Ajustar estoque" })).toBeVisible(); await page.keyboard.press("Escape"); await expect(page.getByRole("dialog")).toBeHidden(); }
   await page.getByTestId("ws-new").click();
   await expect(page.getByRole("menuitem", { name: /Requisição/ })).toBeVisible();
-  await expect(page.getByRole("menuitem", { name: /Ajuste de estoque/ })).toBeVisible();
+  await page.getByRole("menuitem", { name: /Ajuste de estoque/ }).click();
+  await expect(page.getByRole("dialog").getByRole("heading", { name: "Ajustar estoque" })).toBeVisible(); await page.keyboard.press("Escape"); await expect(page.getByRole("dialog")).toBeHidden();
+  await page.getByRole("tab", { name: "Saídas" }).click(); await expect(page).toHaveURL(/tab=saidas/);
+  await page.getByRole("tab", { name: /Saídas diretas/ }).click(); await expect(page).toHaveURL(/sub=diretas/);
 });
 test("menu principal enxuto: módulos funcionais, sem 'Cadastros Base'; configurações agrupam cadastros técnicos", async ({ page }) => {
   await login(page);
