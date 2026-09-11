@@ -109,7 +109,13 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 /* --- formulário (fg / campos de rótulo flutuante) --- */
 .mg-field { position: relative; min-height: var(--mg-field-h); border-radius: var(--mg-radius-control); background: var(--mg-gray-fill); box-shadow: var(--mg-field-edge-shadow); display: flex; flex-direction: column; justify-content: flex-end; padding: 11px 10px 3px; transition: background .22s, box-shadow .22s; }
 .mg-field:focus-within { background: #fff; box-shadow: var(--mg-field-edge-shadow), var(--mg-focus-ring), 0 0 0 1px var(--mg-focus-border); }
-.mg-field--disabled { background: #f6f7f8; }
+.mg-field--disabled { background: #f6f7f8; pointer-events: none; }
+.mg-field--disabled:focus-within { background: #f6f7f8; box-shadow: var(--mg-field-edge-shadow); }
+.mg-field.is-invalid { box-shadow: var(--mg-field-edge-shadow), 0 0 0 1px rgba(220,38,38,.55); }
+.mg-field.is-invalid .mg-field__label { color: var(--mg-red); }
+/* controles dentro da caixa: nunca desenham a própria caixa (só a moldura externa) */
+.mg-field .mg-input, .mg-field .mg-input:focus, .mg-field .mg-input:focus-visible, .mg-field input:focus, .mg-field select:focus, .mg-field textarea:focus, .mg-field button:focus { background: transparent !important; box-shadow: none !important; border: 0 !important; outline: none !important; height: auto; min-height: 20px; padding: 0; border-radius: 0; }
+.mg-field select.mg-input { background-position: right 0 center; padding-right: 18px; }
 .mg-field__label { position: absolute; left: 10px; top: 4px; font-size: 9px; font-weight: 500; line-height: 1; color: var(--mg-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: calc(100% - 16px); pointer-events: none; }
 .mg-field__label .req { color: var(--mg-red); }
 .mg-field__control { min-height: 20px; }
@@ -131,6 +137,8 @@ body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 .mg-grid .mg-check { width: 16px; height: 16px; box-shadow: none; } .mg-grid .mg-check__icon { width: 10px; height: 10px; }
 .mg-grid .th-select, .mg-grid .td-select { width: 36px !important; min-width: 36px !important; max-width: 36px !important; padding: 0 !important; text-align: center !important; vertical-align: middle !important; }
 .mg-grid .td-select > .mg-check, .mg-grid .th-select > .mg-check { margin: 0 auto; }
+.mg-grid th.is-frozen, .mg-grid td.is-frozen { position: sticky; box-shadow: inset -1px 0 0 0 var(--mg-accent); }
+.mg-grid { min-width: 100%; }
 
 /* --- pesquisa (mg-desktop-search / mg-search-pill / mg-search-dropdown do MG) --- */
 .mg-desktop-search { position: relative; display: flex; align-items: center; justify-content: center; width: var(--mg-btn-h); height: var(--mg-btn-h); flex-shrink: 0; }

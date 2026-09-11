@@ -62,7 +62,7 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath }: { r
   const searchable = fields.filter((f) => f.search);
   const fixed = fixedFilters ?? {};
   // componente estável (não remonta o formulário a cada renderização da listagem)
-  const Record = React.useMemo(() => function ResourceRecord(rp: RecordProps) { return <ResourceForm resourceKey={resourceKey} id={rp.row ? String(rp.row["id"]) : "new"} basePath={base} embedded={{ mode: rp.mode, setMode: rp.setMode, onExit: rp.onExit, refresh: rp.refresh, copyFrom: rp.copyFrom, rightSlot: rp.rightSlot, nav: { index: rp.index, total: rp.total, go: rp.go } }} />; }, [resourceKey, base]);
+  const Record = React.useMemo(() => function ResourceRecord(rp: RecordProps) { return <ResourceForm resourceKey={resourceKey} id={rp.row ? String(rp.row["id"]) : "new"} basePath={base} embedded={{ mode: rp.mode, row: rp.row, setMode: rp.setMode, onExit: rp.onExit, refresh: rp.refresh, copyFrom: rp.copyFrom, rightSlot: rp.rightSlot, nav: { index: rp.index, total: rp.total, go: rp.go } }} />; }, [resourceKey, base]);
   return <Base1List
     moduleId={resourceKey} title={title ?? def.labelPlural} columns={columns} filters={filters} entity={def.table} csvName={resourceKey}
     fetchPage={(p) => api<{ items: Row[]; total: number }>(`/api/resources/${resourceKey}${qs({ page: p.page, pageSize: p.pageSize, sort: p.sort, dir: p.dir, search: p.search, ...p.filters, ...fixed })}`)}

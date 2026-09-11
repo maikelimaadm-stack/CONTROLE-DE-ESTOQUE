@@ -17,7 +17,7 @@ import { IconBtn, PillBtn } from "@/features/base1/ui";
 import { useFormLayout } from "./form-layout";
 
 type Values = Record<string, unknown>;
-export interface EmbeddedForm { mode: "view" | "edit" | "new"; setMode: (m: "view" | "edit" | "new") => void; onExit: () => void; refresh: () => void; copyFrom?: Values | null; rightSlot?: React.ReactNode; nav?: { index: number; total: number; go: (i: number) => void } }
+export interface EmbeddedForm { mode: "view" | "edit" | "new"; /** linha já carregada na listagem: evita tela de carregamento ao navegar entre registros */ row?: Values | null; setMode: (m: "view" | "edit" | "new") => void; onExit: () => void; refresh: () => void; copyFrom?: Values | null; rightSlot?: React.ReactNode; nav?: { index: number; total: number; go: (i: number) => void } }
 
 function defaults(fields: FieldDef[], preset: Record<string, string>, layoutDefaults: Record<string, unknown>): Values { const v: Values = {}; for (const f of fields) { const ld = layoutDefaults[f.name]; v[f.name] = preset[f.name] ?? (ld !== undefined ? (f.type === "boolean" ? ld === true || ld === "true" : ld) : f.default !== undefined ? f.default : f.type === "boolean" ? false : f.type === "tags" ? [] : f.type === "json" ? {} : ""); } return v; }
 function fromRecord(fields: FieldDef[], data: Values): Values { const v: Values = {}; for (const f of fields) { const x = data[f.name]; v[f.name] = f.type === "json" ? JSON.stringify(x ?? {}, null, 2) : x === null || x === undefined ? (f.type === "tags" ? [] : "") : f.type === "date" ? String(x).slice(0, 10) : x; } return v; }
@@ -28,11 +28,11 @@ const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] fo
 function FieldControl({ f, form, dis, required, isNew, values, id }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string }) {
   const rules = { required: required ? "Obrigatório" : false };
   if (f.type === "ref") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <RefSelect resource={f.ref!.resource} value={field.value as string} onChange={(v) => field.onChange(v ?? "")} disabled={dis} includeInactive={!isNew} className={cn(ctl, "h-6 justify-between")} />} />;
-  if (f.type === "select") return <NativeSelect id={id} disabled={dis} className={ctl} {...form.register(f.name, rules)}><option value="">Selecione</option>{f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>;
+  if (f.type === "select") return <NativeSelect id={id} disabled={dis} tabIndex={dis ? -1 : undefined} className={ctl} {...form.register(f.name, rules)}><option value="">Selecione</option>{f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>;
   if (f.type === "boolean") return <NativeSelect id={id} disabled={dis} className={ctl} value={values[f.name] === true || values[f.name] === "true" ? "true" : "false"} onChange={(e) => form.setValue(f.name, e.target.value === "true", { shouldDirty: true })}><option value="true">Sim</option><option value="false">Não</option></NativeSelect>;
-  if (f.type === "textarea" || f.type === "json") return <Textarea id={id} readOnly={dis} className={cn(ctl, "h-auto min-h-[56px] py-0.5", f.type === "json" && "font-mono text-xs")} {...form.register(f.name, rules)} />;
+  if (f.type === "textarea" || f.type === "json") return <Textarea id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={cn(ctl, "h-auto min-h-[56px] py-0.5", f.type === "json" && "font-mono text-xs")} {...form.register(f.name, rules)} />;
   if (f.type === "tags") return <div className="flex flex-wrap gap-2 pt-1">{f.options?.map((o) => <label key={o.value} className="flex items-center gap-1 text-[12.5px]"><input type="checkbox" disabled={dis} className="accent-brand-500" checked={(values[f.name] as string[] | undefined)?.includes(o.value) ?? false} onChange={(e) => { const cur = new Set((values[f.name] as string[]) ?? []); if (e.target.checked) cur.add(o.value); else cur.delete(o.value); form.setValue(f.name, [...cur], { shouldDirty: true }); }} />{o.label}</label>)}</div>;
-  return <Input id={id} readOnly={dis} className={ctl} type={f.type === "date" ? "date" : f.type === "email" ? "email" : ["money", "quantity", "number", "percent", "integer"].includes(f.type) ? "number" : "text"} step={f.type === "integer" ? 1 : f.type === "money" ? "0.01" : "0.0001"} maxLength={f.maxLength} {...form.register(f.name, rules)} />;
+  return <Input id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={ctl} type={f.type === "date" ? "date" : f.type === "email" ? "email" : ["money", "quantity", "number", "percent", "integer"].includes(f.type) ? "number" : "text"} step={f.type === "integer" ? 1 : f.type === "money" ? "0.01" : "0.0001"} maxLength={f.maxLength} {...form.register(f.name, rules)} />;
 }
 
 const SPAN: Record<number, string> = { 1: "md:col-span-1", 2: "md:col-span-2", 3: "md:col-span-3", 4: "md:col-span-4", 5: "md:col-span-5", 6: "md:col-span-6", 7: "md:col-span-7", 8: "md:col-span-8", 9: "md:col-span-9", 10: "md:col-span-10", 11: "md:col-span-11", 12: "md:col-span-12" };
@@ -41,7 +41,7 @@ export function B1Field({ label, required, error, help, span = 3, disabled, chil
   const id = React.useId();
   const child = React.isValidElement(children) && !(children.props as { id?: string }).id ? React.cloneElement(children as React.ReactElement<{ id?: string }>, { id }) : children;
   return <div className={cn(flex ? "min-w-[140px] flex-1" : cn("col-span-12", SPAN[span] ?? "md:col-span-3"), className)}>
-    <div className={cn("mg-field", disabled && "mg-field--disabled")}>
+    <div className={cn("mg-field", disabled && "mg-field--disabled", error && "is-invalid")}>
       <label htmlFor={id} title={help} className="mg-field__label">{label}{required && <span className="req text-red-500"> *</span>}</label>
       <div className="mg-field__control">{child}</div>
     </div>
@@ -73,7 +73,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
   const readOnly = embedded ? embedded.mode === "view" : sp.get("view") === "1" || (!isNew && !canEdit);
   const preset = React.useMemo(() => { const p: Record<string, string> = {}; if (!embedded) sp.forEach((v, k) => { if (k !== "view" && k !== "copy") p[k] = v; }); return p; }, [sp, embedded]);
   const copyId = embedded ? null : sp.get("copy");
-  const q = useQuery({ queryKey: ["res", resourceKey, id], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${id}`), enabled: !isNew && id !== "new" });
+  const q = useQuery({ queryKey: ["res", resourceKey, id], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${id}`), enabled: !isNew && id !== "new", placeholderData: embedded?.row && String(embedded.row["id"]) === id ? embedded.row : undefined, staleTime: 30_000 });
   const copyQ = useQuery({ queryKey: ["res", resourceKey, copyId], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${copyId}`), enabled: Boolean(copyId) });
   const form = useForm<Values>({ defaultValues: defaults(fields, preset, l.fieldDefaultValues) });
   const appliedDefaults = React.useRef(false);
@@ -88,11 +88,11 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
   const save = useMutation({
     mutationFn: (v: Values) => isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body: toApi(def!.fields, v, l.lockedFieldIds) }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body: toApi(def!.fields, v, l.lockedFieldIds) }),
     onSuccess: (row) => { toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
-    onError: (e) => { const err = e as Error & { details?: { path: string; message: string }[] }; toast.error(err.message); err.details?.forEach?.((d) => { if (d.path) form.setError(d.path, { message: d.message }); }); }
+    onError: (e) => { const err = e as Error & { details?: { path: string; message: string }[] }; const det = err.details?.filter((d) => d.path) ?? []; det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning("Campos obrigatórios pendentes", { description: missing.map((d) => labelOf(d.path)).join(", "), duration: 6000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
   });
   const remove = useMutation({ mutationFn: () => api(`/api/resources/${resourceKey}/${id}`, { method: "DELETE" }), onSuccess: () => { toast.success("Registro excluído"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); setConfirmDel(false); if (embedded) { embedded.refresh(); embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); }, onError: (e) => toast.error((e as Error).message) });
   if (!def) return <div>Recurso desconhecido</div>;
-  if (!isNew && q.isLoading) return <div className="p-6"><Spinner /></div>;
+  if (!isNew && q.isLoading && !q.data) return <div className="p-6"><Spinner /></div>;
   if (q.error) return <ErrorBox error={q.error} />;
   const values = form.watch();
   const visible = (f: FieldDef) => !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || values[f.visibleWhen.field] === f.visibleWhen.equals || String(values[f.visibleWhen.field]) === String(f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
@@ -109,7 +109,9 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
   const title = isNew ? `Novo ${def.label.toLowerCase()}` : String(q.data?.[def.labelField] ?? q.data?.["name"] ?? q.data?.["description"] ?? "");
   const code = !isNew && q.data?.["code"] ? String(q.data["code"]) : null;
   const nav = embedded?.nav;
-  const submit = form.handleSubmit((v) => save.mutate(v));
+  const labelOf = (name: string) => l.fieldLabels[name] ?? byId.get(name)?.label ?? name;
+  // obrigatórios pendentes: marca cada campo e avisa no canto superior quais faltam (como o modelo base do MG)
+  const submit = form.handleSubmit((v) => save.mutate(v), (errs) => { const names = Object.keys(errs); toast.warning("Campos obrigatórios pendentes", { description: names.map(labelOf).join(", "), duration: 6000 }); const el = document.querySelector<HTMLElement>(`[name="${names[0]}"]`); el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus?.(); });
   const cancel = () => { if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset(fromRecord(def.fields, q.data)); embedded.setMode("view"); } } else router.push(back); };
   return (
     <form onSubmit={submit} className="b1 flex flex-col gap-2" data-testid="b1-form">
