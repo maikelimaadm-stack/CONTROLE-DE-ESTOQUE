@@ -178,18 +178,24 @@ export interface LayoutFieldInfo { id: string; label: string; section?: string; 
 export const MAX_FIELDS_PER_ROW: Record<6 | 12, number> = { 12: 7, 6: 4 };
 const slug = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "geral";
 
-/** Layout padrão derivado da definição declarativa: um painel, um card por seção, linhas por soma de largura (12 colunas). */
+/** A partir deste número de campos o formulário padrão é dividido em abas (painéis): as duas primeiras seções ficam em "Principal" e cada seção seguinte vira uma aba. */
+export const FORM_TABS_THRESHOLD = 16;
+
+/** Layout padrão derivado da definição declarativa: um card por seção, linhas por soma de largura (12 colunas); formulários grandes ganham abas por seção. */
 export function buildDefaultFormLayout(fields: LayoutFieldInfo[]): FormLayout {
   const sections = [...new Set(fields.map((f) => f.section ?? ""))];
+  const tabbed = fields.length >= FORM_TABS_THRESHOLD && sections.length > 2;
+  const panels: LayoutPanel[] = [{ id: "principal", label: "Principal", order: 1 }];
+  const panelOf = (s: string, i: number) => { if (!tabbed || i < 2) return "principal"; const id = `p_${slug(s)}`; if (!panels.some((p) => p.id === id)) panels.push({ id, label: s || "Outros", order: panels.length + 1 }); return id; };
   const cards: LayoutCard[] = sections.map((s, i) => {
     const fs = fields.filter((f) => (f.section ?? "") === s);
     const rows: LayoutRow[] = []; let cur: string[] = []; let width = 0;
     for (const f of fs) { const w = f.span ?? 3; if (width + w > 12 || cur.length >= MAX_FIELDS_PER_ROW[12]) { rows.push({ id: `r${rows.length + 1}`, fieldIds: cur }); cur = []; width = 0; } cur.push(f.id); width += w; }
     if (cur.length) rows.push({ id: `r${rows.length + 1}`, fieldIds: cur });
-    return { id: s ? slug(s) : "geral", panelId: "principal", label: s || "Dados", order: i + 1, colSpan: 12, rows };
+    return { id: s ? slug(s) : "geral", panelId: panelOf(s, i), label: s || "Dados", order: i + 1, colSpan: 12, rows };
   });
   const fieldSizes: Record<string, number> = {}; for (const f of fields) if (f.span) fieldSizes[f.id] = f.span;
-  return { version: FORM_LAYOUT_VERSION, panels: [{ id: "principal", label: "Principal", order: 1 }], cards, hiddenFieldIds: [], lockedFieldIds: [], requiredFieldIds: [], fieldSizes, fieldLabels: {}, fieldDefaultValues: {} };
+  return { version: FORM_LAYOUT_VERSION, panels, cards, hiddenFieldIds: [], lockedFieldIds: [], requiredFieldIds: [], fieldSizes, fieldLabels: {}, fieldDefaultValues: {} };
 }
 
 export interface LayoutIssue { path: string; message: string }
