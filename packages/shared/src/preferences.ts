@@ -100,8 +100,12 @@ export interface ListPreferences {
   pageSize?: number;
   view: { mode: "table" | "cards"; cardFields?: string[]; cardsPerRow?: 1 | 2 | 3 | 4; density?: "compact" | "normal" };
   filters: { visible?: string[]; operators?: Record<string, string>; saved?: SavedFilter[]; defaultSaved?: string | null };
+  /** pesquisa: colunas exibidas como linhas de detalhe nos resultados da lista suspensa (máx. SEARCH_DROPDOWN_MAX_FIELDS) */
+  search?: { fields?: string[] };
   meta?: { revision?: number; updatedAt?: string };
 }
+/** Máximo de campos de detalhe nos resultados da pesquisa (como no MG: 5). */
+export const SEARCH_DROPDOWN_MAX_FIELDS = 5;
 export interface ListKnown { columns?: string[]; filters?: string[]; filterKinds?: Record<string, FilterKind> }
 export const LIST_PAGE_SIZES = [10, 20, 30, 50, 80, 100, 200, 300, 400, 500, 1000] as const;
 /** Quantidade de registros por carregamento no rodapé do modelo base (como no MG: 100…1000). */
@@ -144,6 +148,8 @@ export function normalizeListPreferences(raw: unknown, known: ListKnown = {}): L
     d.filters.saved = s;
   }
   if (typeof fl["defaultSaved"] === "string" && d.filters.saved?.some((s) => s.name === fl["defaultSaved"])) d.filters.defaultSaved = fl["defaultSaved"];
+  const se = isObj(raw["search"]) ? raw["search"] : {};
+  const sfields = strList(se["fields"], known.columns); if (sfields) d.search = { fields: sfields.slice(0, SEARCH_DROPDOWN_MAX_FIELDS) };
   if (isObj(raw["meta"])) d.meta = { revision: typeof raw["meta"]["revision"] === "number" ? raw["meta"]["revision"] : undefined, updatedAt: typeof raw["meta"]["updatedAt"] === "string" ? raw["meta"]["updatedAt"] : undefined };
   return d;
 }

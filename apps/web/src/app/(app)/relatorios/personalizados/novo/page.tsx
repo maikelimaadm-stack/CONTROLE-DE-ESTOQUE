@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { ArrowDown, ArrowUp, Download, Printer, Save } from "lucide-react";
 import { defaultListPreferences, filterKindOf, type ListPreferences } from "@agro/shared";
 import { api, ApiError, getSession } from "@/lib/api";

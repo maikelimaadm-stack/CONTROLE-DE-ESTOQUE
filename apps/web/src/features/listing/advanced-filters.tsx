@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { Bookmark, X } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { FILTER_OPERATORS, defaultOperatorFor, operatorArity, filterKey, encodeRange, decodeRange, parseFilterKey, type FilterKind, type ListPreferences, type SavedFilter } from "@agro/shared";
 import { Button, Input, NativeSelect, Field, Menu, Dialog } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";

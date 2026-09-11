@@ -4,7 +4,7 @@ import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Plus, Trash2 } from "lucide-react";
 import { api, qs, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";

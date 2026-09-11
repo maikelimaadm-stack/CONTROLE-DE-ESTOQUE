@@ -4,15 +4,16 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller, type UseFormReturn } from "react-hook-form";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { getResource, type FieldDef } from "@agro/domain";
 import { cardFieldIds, type FormLayout } from "@agro/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { dateTimeBR, cn } from "@/lib/utils";
-import { Input, NativeSelect, Textarea, Spinner, ErrorBox, Confirm } from "@/components/ui";
+import { Input, Textarea, Spinner, ErrorBox, Confirm } from "@/components/ui";
+import { MgSelect, MgDatePicker, RequiredPill, REQUIRED_FIELDS_MESSAGE } from "@/components/ui/mg-controls";
 import { RefSelect } from "@/components/ui/ref-select";
-import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Pencil, Plus, Trash2, PanelTop, Rows3 } from "lucide-react";
+import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Pencil, Plus, Trash2, LayoutGrid, PanelLeft } from "lucide-react";
 import { IconBtn, PillBtn } from "@/features/base1/ui";
 import { useFormLayout } from "./form-layout";
 
@@ -25,23 +26,24 @@ function toApi(fields: FieldDef[], v: Values, locked: string[] = []): Values { c
 
 const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--mg-text-1)] shadow-none focus:ring-0 focus:outline-none read-only:bg-transparent disabled:bg-transparent disabled:text-[var(--mg-text-1)]";
 /** Controle de um campo declarativo (mesmo componente para todos os tipos), estilo "rótulo flutuante" do modelo base. */
-function FieldControl({ f, form, dis, required, isNew, values, id }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string }) {
+function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpenChange }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string; record?: Values | null; onOpenChange?: (o: boolean) => void }) {
   const rules = { required: required ? "Obrigatório" : false };
-  if (f.type === "ref") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <RefSelect resource={f.ref!.resource} value={field.value as string} onChange={(v) => field.onChange(v ?? "")} disabled={dis} includeInactive={!isNew} className={cn(ctl, "h-6 justify-between")} />} />;
-  if (f.type === "select") return <NativeSelect id={id} disabled={dis} tabIndex={dis ? -1 : undefined} className={ctl} {...form.register(f.name, rules)}><option value="">Selecione</option>{f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>;
-  if (f.type === "boolean") return <NativeSelect id={id} disabled={dis} className={ctl} value={values[f.name] === true || values[f.name] === "true" ? "true" : "false"} onChange={(e) => form.setValue(f.name, e.target.value === "true", { shouldDirty: true })}><option value="true">Sim</option><option value="false">Não</option></NativeSelect>;
+  if (f.type === "ref") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <RefSelect resource={f.ref!.resource} value={field.value as string} onOpenChange={onOpenChange} labelHint={record && record[f.name] === field.value ? (record[`${f.name}_label`] as string | null) : null} onChange={(v) => field.onChange(v ?? "")} disabled={dis} includeInactive={!isNew} className={cn(ctl, "h-6 justify-between")} />} />;
+  if (f.type === "select") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgSelect id={id} value={String(field.value ?? "")} onChange={field.onChange} options={f.options ?? []} disabled={dis} allowEmpty={!required} onOpenChange={onOpenChange} />} />;
+  if (f.type === "boolean") return <MgSelect id={id} value={values[f.name] === true || values[f.name] === "true" ? "true" : "false"} onChange={(v) => form.setValue(f.name, v === "true", { shouldDirty: true })} options={[{ value: "true", label: "Sim" }, { value: "false", label: "Não" }]} disabled={dis} onOpenChange={onOpenChange} />;
+  if (f.type === "date") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgDatePicker id={id} value={String(field.value ?? "")} onChange={field.onChange} disabled={dis} onOpenChange={onOpenChange} />} />;
   if (f.type === "textarea" || f.type === "json") return <Textarea id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={cn(ctl, "h-auto min-h-[56px] py-0.5", f.type === "json" && "font-mono text-xs")} {...form.register(f.name, rules)} />;
   if (f.type === "tags") return <div className="flex flex-wrap gap-2 pt-1">{f.options?.map((o) => <label key={o.value} className="flex items-center gap-1 text-[12.5px]"><input type="checkbox" disabled={dis} className="accent-brand-500" checked={(values[f.name] as string[] | undefined)?.includes(o.value) ?? false} onChange={(e) => { const cur = new Set((values[f.name] as string[]) ?? []); if (e.target.checked) cur.add(o.value); else cur.delete(o.value); form.setValue(f.name, [...cur], { shouldDirty: true }); }} />{o.label}</label>)}</div>;
-  return <Input id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={ctl} type={f.type === "date" ? "date" : f.type === "email" ? "email" : ["money", "quantity", "number", "percent", "integer"].includes(f.type) ? "number" : "text"} step={f.type === "integer" ? 1 : f.type === "money" ? "0.01" : "0.0001"} maxLength={f.maxLength} {...form.register(f.name, rules)} />;
+  return <Input id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={ctl} type={f.type === "email" ? "email" : ["money", "quantity", "number", "percent", "integer"].includes(f.type) ? "number" : "text"} step={f.type === "integer" ? 1 : f.type === "money" ? "0.01" : "0.0001"} maxLength={f.maxLength} {...form.register(f.name, rules)} />;
 }
 
 const SPAN: Record<number, string> = { 1: "md:col-span-1", 2: "md:col-span-2", 3: "md:col-span-3", 4: "md:col-span-4", 5: "md:col-span-5", 6: "md:col-span-6", 7: "md:col-span-7", 8: "md:col-span-8", 9: "md:col-span-9", 10: "md:col-span-10", 11: "md:col-span-11", 12: "md:col-span-12" };
 /** Campo do modelo base: caixa cinza arredondada com rótulo pequeno acima do valor (como o cadastro de Empresas do MG). */
-export function B1Field({ label, required, error, help, span = 3, disabled, children, className, flex }: { label: string; required?: boolean; error?: string; help?: string; span?: number; disabled?: boolean; children: React.ReactNode; className?: string; flex?: boolean }) {
+export function B1Field({ label, required, error, help, span = 3, disabled, locked, hasValue = true, multiline, open, children, className, flex }: { label: string; required?: boolean; error?: string; help?: string; span?: number; /** modo visualização */ disabled?: boolean; /** travado em edição (somente leitura) */ locked?: boolean; /** rótulo pequeno no topo e valor na base; vazio = rótulo centralizado */ hasValue?: boolean; multiline?: boolean; /** seletor/calendário aberto */ open?: boolean; children: React.ReactNode; className?: string; flex?: boolean }) {
   const id = React.useId();
   const child = React.isValidElement(children) && !(children.props as { id?: string }).id ? React.cloneElement(children as React.ReactElement<{ id?: string }>, { id }) : children;
   return <div className={cn(flex ? "min-w-[140px] flex-1" : cn("col-span-12", SPAN[span] ?? "md:col-span-3"), className)}>
-    <div className={cn("mg-field", disabled && "mg-field--disabled", error && "is-invalid")}>
+    <div className={cn("mg-field", disabled && "mg-field--disabled", locked && !disabled && "mg-field--locked", hasValue && "mg-has-value", multiline && "mg-field--multiline", open && "is-open", error && "is-invalid")}>
       <label htmlFor={id} title={help} className="mg-field__label">{label}{required && <span className="req text-red-500"> *</span>}</label>
       <div className="mg-field__control">{child}</div>
     </div>
@@ -84,11 +86,16 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
   const copySrc = embedded?.copyFrom ?? copyQ.data ?? null;
   React.useEffect(() => { if (isNew && def) { if (copySrc) { const v = fromRecord(def.fields, copySrc); for (const f of def.fields) if (f.name === "code" || f.readOnly) v[f.name] = f.type === "boolean" ? false : f.type === "tags" ? [] : ""; form.reset(v); } else form.reset(defaults(fields, preset, l.fieldDefaultValues)); } }, [isNew, copySrc, def]);
   const [confirmDel, setConfirmDel] = React.useState(false);
-  const [stacked, setStacked] = React.useState(false);
+  const [openField, setOpenField] = React.useState<string | null>(null);
+  // painéis em abas horizontais ("tabs") ou lista lateral ("sidebar"), como o modelo base do MG; lembrado por cadastro
+  const panelStyleKey = `agro.launchPanelStyle.${resourceKey}`;
+  const [panelStyle, setPanelStyle] = React.useState<"tabs" | "sidebar">("tabs");
+  React.useEffect(() => { try { const v = localStorage.getItem(panelStyleKey); if (v === "sidebar") setPanelStyle("sidebar"); } catch { /* sem storage */ } }, [panelStyleKey]);
+  const togglePanelStyle = () => setPanelStyle((p) => { const n = p === "tabs" ? "sidebar" : "tabs"; try { localStorage.setItem(panelStyleKey, n); } catch { /* sem storage */ } return n; });
   const save = useMutation({
     mutationFn: (v: Values) => isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body: toApi(def!.fields, v, l.lockedFieldIds) }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body: toApi(def!.fields, v, l.lockedFieldIds) }),
     onSuccess: (row) => { toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
-    onError: (e) => { const err = e as Error & { details?: { path: string; message: string }[] }; const det = err.details?.filter((d) => d.path) ?? []; det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning("Campos obrigatórios pendentes", { description: missing.map((d) => labelOf(d.path)).join(", "), duration: 6000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
+    onError: (e) => { const err = e as Error & { details?: { path: string; message: string }[] }; const det = err.details?.filter((d) => d.path) ?? []; det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
   });
   const remove = useMutation({ mutationFn: () => api(`/api/resources/${resourceKey}/${id}`, { method: "DELETE" }), onSuccess: () => { toast.success("Registro excluído"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); setConfirmDel(false); if (embedded) { embedded.refresh(); embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); }, onError: (e) => toast.error((e as Error).message) });
   if (!def) return <div>Recurso desconhecido</div>;
@@ -100,9 +107,10 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
   const byId = new Map(fields.map((f) => [f.name, f]));
   const renderField = (fid: string) => {
     const f = byId.get(fid); if (!f || !visible(f)) return null;
-    const err = form.formState.errors[f.name]?.message as string | undefined; const dis = readOnly || Boolean(f.readOnly) || l.lockedFieldIds.includes(f.name);
+    const err = form.formState.errors[f.name]?.message as string | undefined; const locked = Boolean(f.readOnly) || l.lockedFieldIds.includes(f.name); const dis = readOnly || locked;
     const required = Boolean(f.required) || l.requiredFieldIds.includes(f.name);
-    return <B1Field key={f.name} flex label={l.fieldLabels[f.name] ?? f.label} required={required} error={err} help={f.help} disabled={dis}><FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} /></B1Field>;
+    const v = values[f.name]; const hasValue = f.type === "boolean" ? true : Array.isArray(v) ? v.length > 0 : v !== "" && v !== null && v !== undefined;
+    return <B1Field key={f.name} flex label={l.fieldLabels[f.name] ?? f.label} required={required} error={err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}><FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={(o) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur))} /></B1Field>;
   };
   const panels = l.panels.filter((p) => !p.hidden);
   const renderPanel = (panelId: string) => <div className="grid grid-cols-12 gap-3">{l.cards.filter((c) => c.panelId === panelId).map((c) => { const ids = cardFieldIds(c).filter((fid) => { const f = byId.get(fid); return f && visible(f); }); if (!ids.length) return null; return <LayoutCardView key={c.id} label={c.label} collapsible={c.collapsible} colSpan={c.colSpan}>{c.rows.map((r) => { const els = r.fieldIds.map(renderField).filter(Boolean); return els.length ? <div key={r.id} className="flex flex-wrap gap-2">{els}</div> : null; })}</LayoutCardView>; })}</div>;
@@ -132,27 +140,33 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
       {/* cabeçalho do registro + navegação */}
       <div className="mg-toolbar mg-card flex-wrap !min-h-[32px] !py-1">
         <Bookmark className="h-4 w-4 text-[var(--mg-icon)]" /><span className="text-[13px] font-semibold text-slate-800">{code && <>{code} <span className="text-slate-400">•</span> </>}{title || def.label}</span>
+        {!readOnly && (() => { const req = fields.filter((f) => visible(f) && (Boolean(f.required) || l.requiredFieldIds.includes(f.name)) && !(isNew && f.readOnly)); const pend = req.filter((f) => { const v = values[f.name]; return f.type === "boolean" ? false : Array.isArray(v) ? v.length === 0 : v === "" || v === null || v === undefined; }); return <RequiredPill total={req.length} filled={req.length - pend.length} pending={pend.map((f) => l.fieldLabels[f.name] ?? f.label)} />; })()}
         <span className="ml-auto flex items-center gap-1">
           <Link href={`${back}/configuracao-layout`} title="Layout do formulário" aria-label="Layout do formulário"><IconBtn size="sm" className={cn(layout.source !== "default" && "text-brand-700")}><LayoutPanelTop className="h-4 w-4" /></IconBtn></Link>
           {nav && <><IconBtn size="sm" aria-label="Primeiro" disabled={nav.index <= 0} onClick={() => nav.go(0)}><ChevronsLeft className="h-4 w-4" /></IconBtn><IconBtn size="sm" aria-label="Anterior" disabled={nav.index <= 0} onClick={() => nav.go(nav.index - 1)}><ChevronLeft className="h-4 w-4" /></IconBtn><span className="px-1 text-[12px] text-slate-600">{isNew ? "novo" : `${nav.index + 1}/${nav.total}`}</span><IconBtn size="sm" aria-label="Próximo" disabled={nav.index >= nav.total - 1} onClick={() => nav.go(nav.index + 1)}><ChevronRight className="h-4 w-4" /></IconBtn><IconBtn size="sm" aria-label="Último" disabled={nav.index >= nav.total - 1} onClick={() => nav.go(nav.total - 1)}><ChevronsRight className="h-4 w-4" /></IconBtn></>}
         </span>
       </div>
       {/* painéis */}
-      {panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} stacked={stacked} onToggleStacked={() => setStacked((s) => !s)} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
+      {panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} style={panelStyle} onToggleStyle={togglePanelStyle} animate={!readOnly} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
       {!isNew && q.data && <div className="px-2 text-[11px] text-slate-400">Criado em {dateTimeBR(q.data["created_at"] as string)} · atualizado em {dateTimeBR(q.data["updated_at"] as string)}</div>}
       <Confirm open={confirmDel} onOpenChange={setConfirmDel} title="Confirme a exclusão" text={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`} danger loading={remove.isPending} onConfirm={() => remove.mutate()} />
     </form>
   );
 }
-function PanelTabs({ panels, render, stacked, onToggleStacked }: { panels: { id: string; label: string }[]; render: (id: string) => React.ReactNode; stacked: boolean; onToggleStacked: () => void }) {
+function PanelTabs({ panels, render, style, onToggleStyle, animate }: { panels: { id: string; label: string }[]; render: (id: string) => React.ReactNode; style: "tabs" | "sidebar"; onToggleStyle: () => void; animate: boolean }) {
   const [active, setActive] = React.useState(panels[0]?.id ?? "");
   const cur = panels.some((p) => p.id === active) ? active : panels[0]?.id ?? "";
+  const sidebar = style === "sidebar";
+  const toggleLabel = sidebar ? "Mostrar painéis em abas horizontais" : "Mostrar painéis em lista lateral";
+  const toggle = <button type="button" className={cn("mg-nav-btn mg-panel-style-toggle", sidebar && "is-active")} onClick={onToggleStyle} title={toggleLabel} aria-label={toggleLabel} aria-pressed={sidebar}>{sidebar ? <LayoutGrid strokeWidth={2.1} /> : <PanelLeft strokeWidth={2.1} />}</button>;
+  // todos os painéis ficam montados para que a validação e os valores não se percam ao trocar de aba; a troca faz um fade suave (instantâneo ao navegar entre registros)
+  const body = panels.map((p) => <div key={p.id} className={cn(cur !== p.id && "hidden", animate && cur === p.id && "mg-motion-panel--animate")}>{render(p.id)}</div>);
+  if (sidebar) return <div className="mg-panel-sidebar-layout">
+    <aside className="mg-panel-sidebar-layout__tabs"><div className="mg-panel-list" role="tablist"><div className="mg-panel-list__leading">{toggle}</div>{panels.map((p) => <button key={p.id} type="button" role="tab" aria-selected={cur === p.id} onClick={() => setActive(p.id)} className={cn("mg-panel-list__tab", cur === p.id && "is-active")}>{p.label}</button>)}</div></aside>
+    <div className="mg-panel-sidebar-layout__content">{body}</div>
+  </div>;
   return <div>
-    <div className="mg-tabs mb-2 px-1">
-      <IconBtn size="sm" aria-label={stacked ? "Exibir painéis em abas" : "Exibir painéis empilhados"} title={stacked ? "Exibir painéis em abas" : "Exibir painéis empilhados"} onClick={onToggleStacked} className="mr-1">{stacked ? <PanelTop className="h-4 w-4" /> : <Rows3 className="h-4 w-4" />}</IconBtn>
-      {panels.map((p) => <button key={p.id} type="button" role="tab" aria-selected={!stacked && cur === p.id} onClick={() => setActive(p.id)} className={cn("seg-tab", !stacked && cur === p.id && "active")}>{p.label}</button>)}
-    </div>
-    {/* todos os painéis ficam montados para que a validação e os valores não se percam ao trocar de aba */}
-    {panels.map((p) => <div key={p.id} className={cn(!stacked && cur !== p.id && "hidden", stacked && "mb-3")}>{stacked && <div className="mg-card-title mb-1 px-1">{p.label}</div>}{render(p.id)}</div>)}
+    <div className="mg-panel-tabs-rail mb-2 px-1"><div className="mg-panel-tabs-rail__leading">{toggle}</div><div className="mg-tabs flex-1" role="tablist">{panels.map((p) => <button key={p.id} type="button" role="tab" aria-selected={cur === p.id} onClick={() => setActive(p.id)} className={cn("seg-tab", cur === p.id && "active")}>{p.label}</button>)}</div></div>
+    {body}
   </div>;
 }

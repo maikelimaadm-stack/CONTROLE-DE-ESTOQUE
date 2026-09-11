@@ -6,6 +6,7 @@ import * as DropdownP from "@radix-ui/react-dropdown-menu";
 import { cva, type VariantProps } from "class-variance-authority";
 import { Loader2, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { MgDatePicker } from "./mg-controls";
 
 export const buttonVariants = cva("tb-btn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400", {
   variants: {
@@ -19,10 +20,28 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(({ classN
 ));
 Button.displayName = "Button";
 
-export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => (
-  <input ref={ref} className={cn("mg-input", className)} {...p} />
-));
+export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => {
+  if (p.type === "date") return <DateInput ref={ref} className={className} {...p} />;
+  return <input ref={ref} className={cn("mg-input", className)} {...p} />;
+});
 Input.displayName = "Input";
+/** Campo de data = calendário do modelo base; mantém um <input hidden> com name/ref para react-hook-form (onChange recebe {target:{name,value}}). */
+const DateInput = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, value, defaultValue, onChange, onBlur, name, id, disabled, readOnly, placeholder, type: _type, ...rest }, ref) => {
+  const inner = React.useRef<HTMLInputElement | null>(null);
+  const [local, setLocal] = React.useState(String(defaultValue ?? ""));
+  const controlled = value !== undefined;
+  const cur = controlled ? String(value ?? "") : local;
+  // react-hook-form (register) lê o valor via ref e recebe notificações pelo onChange do input escondido
+  const emit = (iso: string) => { if (!controlled) setLocal(iso); const el = inner.current; if (el) { el.value = iso; const ev = { target: el, currentTarget: el, type: "change" } as unknown as React.ChangeEvent<HTMLInputElement>; onChange?.(ev); onBlur?.(ev as unknown as React.FocusEvent<HTMLInputElement>); } };
+  const setRef = (el: HTMLInputElement | null) => { inner.current = el; if (typeof ref === "function") ref(el); else if (ref) (ref as React.MutableRefObject<HTMLInputElement | null>).current = el; };
+  // quando o formulário faz reset(), o input escondido recebe o valor por ref: espelha no calendário
+  React.useEffect(() => { const el = inner.current; if (!el || controlled) return; const t = setInterval(() => { if (el.value !== local) setLocal(el.value); }, 250); return () => clearInterval(t); }, [controlled, local]);
+  return <>
+    <input ref={setRef} type="hidden" name={name} value={cur} readOnly {...(rest as object)} />
+    <MgDatePicker id={id} value={cur} onChange={emit} disabled={disabled || readOnly} className={cn("mg-input", className)} placeholder={placeholder} />
+  </>;
+});
+DateInput.displayName = "DateInput";
 export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...p }, ref) => (
   <textarea ref={ref} className={cn("mg-input", className)} {...p} />
 ));

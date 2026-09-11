@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { getResource, type FieldDef } from "@agro/domain";
 import { filterKindOf } from "@agro/shared";
 import { api, qs, download } from "@/lib/api";

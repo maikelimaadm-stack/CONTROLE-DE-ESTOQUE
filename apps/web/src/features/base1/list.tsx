@@ -1,14 +1,15 @@
 "use client";
 import * as React from "react";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-query";
+import { toast } from "@/lib/toast";
 import { Plus, EyeOff, Eye, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, PanelLeftClose, Trash2, Building2, RotateCcw } from "lucide-react";
 import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { getSession } from "@/lib/api";
 import { Confirm, ErrorBox } from "@/components/ui";
 import { useListPrefs, type ListFilterInfo } from "@/features/listing/list-prefs";
-import { IconBtn, PillBtn, ViewSwitch, B1Popover, MenuList, SearchBox, type ViewMode } from "./ui";
+import { IconBtn, PillBtn, ViewSwitch, B1Popover, MenuList, type ViewMode } from "./ui";
+import { SearchBox } from "./search-box";
 import { FilterChip } from "./filter-chip";
 import { ColumnsDialog } from "./columns-dialog";
 import { Base1Cards, CardsLayoutPopover, CardFieldsPopover } from "./cards";
@@ -87,7 +88,7 @@ export function Base1List(props: Base1ListProps) {
   const frozen = Math.min(prefs.columns.frozen ?? 0, visibleColumns.length);
   const qk = ["b1", moduleId, applied, sort, pageSize, queryKeyExtra];
   const q = useInfiniteQuery({
-    queryKey: qk, initialPageParam: 1,
+    queryKey: qk, initialPageParam: 1, placeholderData: keepPreviousData,
     queryFn: ({ pageParam }) => fetchPage({ page: pageParam, pageSize, sort: sort?.key, dir: sort?.dir, search: applied.search || undefined, filters: applied.params }),
     getNextPageParam: (last, all) => (all.reduce((n, pg) => n + pg.items.length, 0) < last.total ? all.length + 1 : undefined)
   });
@@ -147,7 +148,9 @@ export function Base1List(props: Base1ListProps) {
     extraMenu?.find((m) => m.key === k)?.onClick();
   };
   const rightSlot = <div className="ml-auto flex items-center gap-1.5">
-    {searchable && <SearchBox value={search} onChange={setSearch} active={Boolean(applied.search) || favOnly} placeholder={props.searchPlaceholder} onApply={() => apply(values, search)} onApplyFavorites={() => { if (search !== applied.search) setApplied((a) => ({ ...a, search })); setFavOnly(true); }} favoritesDisabled={selected.size === 0} onClear={() => { setSearch(""); setFavOnly(false); setApplied((a) => ({ ...a, search: "" })); }} onConfig={() => setColsDlg(true)} />}
+    {searchable && <SearchBox value={search} onChange={setSearch} active={Boolean(applied.search) || favOnly} placeholder={props.searchPlaceholder} onApply={() => apply(values, search)} onApplyFavorites={() => { if (search !== applied.search) setApplied((a) => ({ ...a, search })); setFavOnly(true); }} favoritesDisabled={selected.size === 0} onClear={() => { setSearch(""); setFavOnly(false); setApplied((a) => ({ ...a, search: "" })); }}
+      columns={columns} scope={chipScope} fetchResults={(s) => fetchPage({ page: 1, pageSize: 20, search: s, filters: applied.params })} onPick={(r) => { setSelected(new Set([String(r["id"])])); enterRecord(r); }} isFavorite={(r) => selected.has(String(r["id"]))}
+      detailFields={prefs.search?.fields ?? columns.filter((c) => !["code", "name", "description", "title"].includes(c.key)).slice(0, 3).map((c) => c.key)} onDetailFieldsChange={(keys) => p.update((x) => ({ ...x, search: { ...(x.search ?? {}), fields: keys } }))} onDetailFieldsRestore={() => p.update((x) => ({ ...x, search: undefined }))} />}
     <IconBtn aria-label={showChips ? "Recolher faixa de filtros" : "Exibir faixa de filtros"} title={showChips ? "Recolher faixa de filtros" : "Exibir faixa de filtros"} onClick={() => setShowChips((s) => !s)}>{showChips ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</IconBtn>
     <ViewSwitch value={view} recordDisabled={!Record && !onOpen} onChange={(m) => { if (m === "record") enterRecord(); else { setView(m); p.update((x) => ({ ...x, view: { ...x.view, mode: m } })); } }} />
     <B1Popover className="w-64 p-1.5" trigger={<IconBtn aria-label="Mais opções" title="Mais opções"><MoreHorizontal className="h-4 w-4" /></IconBtn>}><MenuList items={menuItems} onPick={onMenu} /></B1Popover>
@@ -189,7 +192,7 @@ export function Base1List(props: Base1ListProps) {
       <div className="mg-shell min-w-0 flex-1">
         {q.error && <div className="p-2"><ErrorBox error={q.error} /></div>}
         {view === "cards"
-          ? <div className="p-2.5"><Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelect={(id, on) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; })} actions={rowActions} /></div>
+          ? <div key="cards" className="mg-motion-panel--animate p-2.5"><Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelect={(id, on) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; })} actions={rowActions} /></div>
           : <Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onOpen={(r) => enterRecord(r)} frozen={frozen}
             onFreeze={(n) => updCols((c) => ({ ...c, frozen: n }))} onHide={(k) => updCols((c) => ({ ...c, visible: visibleColumns.map((x) => x.key).filter((x) => x !== k) }))} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
             onFilter={(k) => { const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}

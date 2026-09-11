@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { api, ApiError, getSession } from "./api";
 
 /**

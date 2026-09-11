@@ -9,7 +9,7 @@ import { useAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { cn, dateTimeBR } from "@/lib/utils";
 import { Menu, Spinner } from "@/components/ui";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 /**
  * Moldura do MODELO BASE1 (réplica do makgestao): barra superior verde (☰, trilha de navegação, ícones à direita)
@@ -88,7 +88,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="mg-topbar-logo" aria-hidden="true"><Hexagon className="h-4 w-4 text-white" strokeWidth={2.2} /></div>
         </div>
       </header>
-      <main className="flex-1 p-3">{children}</main>
+      <main key={pathname} className="mg-page-enter flex-1 p-3">{children}</main>
     </div>
   );
 }
