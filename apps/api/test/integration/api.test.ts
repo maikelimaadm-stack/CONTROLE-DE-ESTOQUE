@@ -242,6 +242,30 @@ describe("suprimentos: workflow completo", () => {
   });
 });
 
+describe("anexos por registro", () => {
+  it("envia, lista, baixa (inline/download), audita e exclui; valida tipo, assinatura e permissão", async () => {
+    const pdf = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n").toString("base64");
+    const up = await h.app.inject({ method: "POST", url: "/api/attachments", headers: h.headers(), payload: { entity: "farms", entity_id: I.farm, file_name: "contrato: 2026.pdf", mime_type: "application/pdf", description: "Contrato", data_base64: pdf } });
+    expect(up.statusCode, up.body).toBe(201); const id = j(up).id as string; expect(j(up).file_name).toBe("contrato__2026.pdf");
+    const list = j(await h.app.inject({ method: "GET", url: `/api/attachments?entity=farms&entity_id=${I.farm}`, headers: h.headers() })) as { items: { id: string; size_bytes: string | number }[] };
+    expect(list.items.map((x) => x.id)).toContain(id);
+    const inline = await h.app.inject({ method: "GET", url: `/api/attachments/${id}/content`, headers: h.headers() });
+    expect(inline.statusCode).toBe(200); expect(inline.headers["content-type"]).toContain("application/pdf"); expect(String(inline.headers["content-disposition"])).toMatch(/^inline/); expect(inline.rawPayload.subarray(0, 5).toString()).toBe("%PDF-");
+    const dl = await h.app.inject({ method: "GET", url: `/api/attachments/${id}/content?download=1`, headers: h.headers() });
+    expect(String(dl.headers["content-disposition"])).toMatch(/^attachment/);
+    // tipo não permitido e assinatura divergente
+    expect((await h.app.inject({ method: "POST", url: "/api/attachments", headers: h.headers(), payload: { entity: "farms", entity_id: I.farm, file_name: "x.exe", mime_type: "application/x-msdownload", data_base64: pdf } })).statusCode).toBe(422);
+    expect((await h.app.inject({ method: "POST", url: "/api/attachments", headers: h.headers(), payload: { entity: "farms", entity_id: I.farm, file_name: "x.png", mime_type: "image/png", data_base64: pdf } })).statusCode).toBe(422);
+    // operador pode ver/enviar, não pode excluir
+    expect((await h.app.inject({ method: "GET", url: `/api/attachments?entity=farms&entity_id=${I.farm}`, headers: h.opHeaders() })).statusCode).toBe(200);
+    expect((await h.app.inject({ method: "DELETE", url: `/api/attachments/${id}`, headers: h.opHeaders() })).statusCode).toBe(403);
+    expect((await h.app.inject({ method: "DELETE", url: `/api/attachments/${id}`, headers: h.headers() })).statusCode).toBe(200);
+    expect((await h.app.inject({ method: "GET", url: `/api/attachments/${id}/content`, headers: h.headers() })).statusCode).toBe(404);
+    const aud = j(await h.app.inject({ method: "GET", url: `/api/admin/audit?entity=farms&entity_id=${I.farm}`, headers: h.headers() })) as { items: { action: string }[] };
+    expect(aud.items.map((a) => a.action)).toEqual(expect.arrayContaining(["attachment_added", "attachment_removed"]));
+  });
+});
+
 describe("vendas, frota, RH e pecuária", () => {
   it("orçamento → pedido → venda confirmada gera baixa de estoque e conta a receber", async () => {
     const b = await h.app.inject({ method: "POST", url: "/api/sales/budgets", headers: h.headers(), payload: { farm_id: I.farm, document_date: "2026-09-10", client_id: I.client, items: [{ product_id: I.product2, warehouse_id: I.warehouse, quantity: "10", unit_price: "5", discount_percent: "10" }], freight: "20" } });

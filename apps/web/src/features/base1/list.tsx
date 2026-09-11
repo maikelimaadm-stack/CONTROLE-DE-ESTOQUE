@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useInfiniteQuery, useQuery, keepPreviousData } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
-import { Plus, Pencil, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw } from "lucide-react";
+import { Plus, Pencil, MoreHorizontal, ChevronLeft, ChevronRight, ChevronsDown, FilterX, Columns3, Copy, Printer, Download, History, Settings, FileDown, FileBarChart, ListPlus, ListX, Trash2, Building2, RotateCcw, Paperclip } from "lucide-react";
 import { BASE1_PAGE_SIZES, BASE1_DEFAULT_PAGE_SIZE, type ListPreferences } from "@agro/shared";
 import { cn } from "@/lib/utils";
 import { getSession } from "@/lib/api";
@@ -15,6 +15,8 @@ import { ColumnsDialog } from "./columns-dialog";
 import { Base1Cards, CardsLayoutPopover, CardFieldsPopover } from "./cards";
 import { Base1Grid } from "./grid";
 import { HistoryDialog } from "./history-dialog";
+import { AttachmentsDialog } from "./attachments-dialog";
+import type { SelectClick } from "./cards";
 import { toParams, fromParams, emptyValue } from "./params";
 import type { Base1Column, Base1FilterDef, DistinctValue, FilterValues, Row } from "./types";
 
@@ -78,7 +80,7 @@ export function Base1List(props: Base1ListProps) {
   React.useEffect(() => { try { const raw = localStorage.getItem(favKey); setFavorites(new Set(raw ? (JSON.parse(raw) as string[]) : [])); } catch { /* sem storage */ } }, [favKey]);
   const toggleFavorite = (id: string, on: boolean) => setFavorites((f) => { const n = new Set(f); if (on) n.add(id); else n.delete(id); try { localStorage.setItem(favKey, JSON.stringify([...n])); } catch { /* sem storage */ } return n; });
   const [openChip, setOpenChip] = React.useState<string | null>(null);
-  const [colsDlg, setColsDlg] = React.useState(false); const [histDlg, setHistDlg] = React.useState(false); const [delRow, setDelRow] = React.useState<Row | null>(null);
+  const [colsDlg, setColsDlg] = React.useState(false); const [histDlg, setHistDlg] = React.useState(false); const [attachDlg, setAttachDlg] = React.useState(false); const [scrollToId, setScrollToId] = React.useState<string | null>(null); const lastPick = React.useRef<string | null>(null); const [delRow, setDelRow] = React.useState<Row | null>(null);
   const [sortLocal, setSortLocal] = React.useState<{ key: string; dir: "asc" | "desc" } | undefined>();
   const [pageSizeLocal, setPageSizeLocal] = React.useState<number | undefined>();
   const [recIndex, setRecIndex] = React.useState(0); const [recMode, setRecMode] = React.useState<"view" | "edit" | "new">("view"); const [copyFrom, setCopyFrom] = React.useState<Row | null>(null);
@@ -115,8 +117,32 @@ export function Base1List(props: Base1ListProps) {
   const scrollStrip = (dx: number) => stripRef.current?.scrollBy({ left: dx, behavior: "smooth" });
   const selectedRows = rows.filter((r) => selected.has(String(r["id"])));
   const one = selectedRows.length === 1 ? selectedRows[0]! : null;
+  const rowId = (r: Row) => String(r["id"]);
+  // seleção como no MG: clique = só aquele registro (clicar no selecionado desmarca); Ctrl alterna; Shift intervalo; o controle alterna sem desmarcar os demais
+  const onSelectClick = (id: string, mod: SelectClick) => { setScrollToId(null); setSelected((s) => {
+    if (mod.shift && lastPick.current) { const ids = rows.map(rowId); const a = ids.indexOf(lastPick.current); const b = ids.indexOf(id); if (a >= 0 && b >= 0) { const [lo, hi] = a < b ? [a, b] : [b, a]; const n = new Set(mod.ctrl ? s : []); for (const x of ids.slice(lo, hi + 1)) n.add(x); return n; } }
+    lastPick.current = id;
+    if (mod.ctrl) { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; }
+    return s.size === 1 && s.has(id) ? new Set() : new Set([id]);
+  }); };
+  const onToggle = (id: string) => { lastPick.current = id; setScrollToId(null); setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; }); };
+  const onToggleAll = (on: boolean) => { setScrollToId(null); setSelected(on ? new Set(rows.map(rowId)) : new Set()); };
+  // modo registro: registro aberto (null em "novo"); histórico e anexos só com exatamente um registro (tabela/cards) ou no registro aberto
+  const inRecord = view === "record" && Boolean(Record);
+  const recordRow = inRecord && recMode !== "new" ? rows[recIndex] ?? null : null;
+  const target = inRecord ? recordRow : one;
+  const locked = inRecord && recMode !== "view";
+  const targetHint = inRecord ? (recordRow ? undefined : "Salve o registro antes") : selectedRows.length === 0 ? "Selecione um registro" : selectedRows.length > 1 ? "Selecione apenas um registro" : undefined;
   const exportCsv = () => { const cols = visibleColumns; const esc = (s: string) => `"${s.replace(/"/g, '""')}"`; const lines = [cols.map((c) => esc(c.label)).join(";"), ...rows.map((r) => cols.map((c) => esc(c.text ? c.text(r) : String(r[c.key] ?? ""))).join(";"))]; const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" }); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${csvName ?? moduleId}.csv`; a.click(); URL.revokeObjectURL(a.href); };
-  const enterRecord = (r?: Row) => { if (!Record) { if (r) onOpen?.(r); return; } const i = r ? rows.findIndex((x) => x["id"] === r["id"]) : one ? rows.findIndex((x) => x["id"] === one["id"]) : 0; setRecIndex(Math.max(0, i)); setRecMode("view"); setCopyFrom(null); setView("record"); };
+  const enterRecord = (r?: Row) => {
+    if (!Record) { if (r) onOpen?.(r); return; }
+    if (!r && selectedRows.length > 1) { toast.info("Selecione apenas um registro para abrir"); return; }
+    const i = r ? rows.findIndex((x) => x["id"] === r["id"]) : one ? rows.findIndex((x) => x["id"] === one["id"]) : 0;
+    const row = rows[Math.max(0, i)]; if (row) setSelected(new Set([rowId(row)]));
+    setRecIndex(Math.max(0, i)); setRecMode("view"); setCopyFrom(null); setView("record");
+  };
+  // ao sair do registro para a tabela/cards, o registro aberto continua selecionado e visível
+  const exitRecord = () => { const cur = recMode !== "new" ? rows[recIndex] : null; if (cur) { setSelected(new Set([rowId(cur)])); lastPick.current = rowId(cur); setScrollToId(rowId(cur)); } setView(prefs.view.mode); void q.refetch(); };
   // navega para um índice ainda não carregado buscando quantas páginas forem necessárias (ex.: "Último")
   const goRecord = async (i: number) => {
     if (i < 0) return;
@@ -124,6 +150,7 @@ export function Base1List(props: Base1ListProps) {
     while (i >= loaded && hasNext) { const r = await q.fetchNextPage(); loaded = r.data?.pages.reduce((n, pg) => n + pg.items.length, 0) ?? loaded; hasNext = Boolean(r.hasNextPage); if (!r.data || loaded === 0) break; }
     if (i < loaded) { setRecIndex(i); setRecMode("view"); }
   };
+  React.useEffect(() => { if (view === "record" && recMode !== "new") { const cur = rows[recIndex]; if (cur) setSelected(new Set([rowId(cur)])); } }, [view, recMode, recIndex, rows.length]);
   const newRecord = () => { if (Record) { setCopyFrom(null); setRecMode("new"); setView("record"); } else onNew?.(); };
   const duplicate = (r: Row) => { if (onDuplicate) return onDuplicate(r); if (Record) { setCopyFrom(r); setRecMode("new"); setView("record"); } };
   const rowMenu = one && rowActions ? rowActions(one) : [];
@@ -132,7 +159,7 @@ export function Base1List(props: Base1ListProps) {
     { key: "dup", label: "Duplicar", icon: <Copy className="h-4 w-4" />, disabled: !one || (!onDuplicate && !Record) },
     { key: "print", label: "Imprimir", icon: <Printer className="h-4 w-4" /> },
     { key: "export", label: exportXlsx ? "Exportar (Excel)" : "Exportar (CSV)", icon: <Download className="h-4 w-4" /> },
-    ...(entity ? [{ key: "hist", label: "Histórico", icon: <History className="h-4 w-4" /> }] : []),
+    ...(entity ? [{ key: "hist", label: targetHint ? `Histórico (${targetHint.toLowerCase()})` : "Histórico", icon: <History className="h-4 w-4" />, disabled: !target }] : []),
     { key: "cfg", label: "Configurações", icon: <Settings className="h-4 w-4" /> },
     { key: "pdf", label: "Exportar PDF", icon: <FileDown className="h-4 w-4" /> },
     ...(reportHref ? [{ key: "report", label: "Relatório personalizado", icon: <FileBarChart className="h-4 w-4" /> }] : []),
@@ -145,14 +172,17 @@ export function Base1List(props: Base1ListProps) {
     if (k === "dup" && one) duplicate(one);
     if (k === "print" || k === "pdf") window.print();
     if (k === "export") { if (exportXlsx) void exportXlsx({ search: applied.search || undefined, filters: applied.params }); else exportCsv(); }
-    if (k === "hist") setHistDlg(true);
+    if (k === "hist" && target) setHistDlg(true);
     if (k === "cfg") setColsDlg(true);
     if (k === "report" && reportHref) location.href = reportHref({ search: applied.search || undefined, filters: applied.params });
     if (k === "org") void p.saveAsOrgDefault();
     if (k === "reset") void p.reset().then(() => { setSortLocal(undefined); setPageSizeLocal(undefined); toast.success("Tela restaurada ao padrão"); });
     extraMenu?.find((m) => m.key === k)?.onClick();
   };
-  const rightSlot = <div className="ml-auto flex items-center gap-1.5">
+  const attachBtn = entity ? <IconBtn aria-label="Anexos" title={targetHint ? `Anexos — ${targetHint.toLowerCase()}` : "Anexos"} disabled={!target} onClick={() => setAttachDlg(true)} data-testid="b1-attach"><Paperclip className="h-4 w-4" /></IconBtn> : null;
+  // em edição/novo (secondaryToolsLocked do MG) ficam só os anexos: pesquisa, alternância de modo e menu somem
+  const rightSlot = locked ? <div className="ml-auto flex items-center gap-1.5">{attachBtn}</div> : <div className="ml-auto flex items-center gap-1.5">
+    {attachBtn}
     {searchable && <SearchBox value={search} onChange={setSearch} active={Boolean(applied.search) || favOnly} placeholder={props.searchPlaceholder} onApply={() => apply(values, search)} onApplyFavorites={() => { if (search !== applied.search) setApplied((a) => ({ ...a, search })); setFavOnly(true); }} favoritesDisabled={favorites.size === 0} onClear={() => { setSearch(""); setFavOnly(false); setApplied((a) => ({ ...a, search: "" })); }}
       columns={columns} scope={chipScope} fetchResults={(s) => fetchPage({ page: 1, pageSize: 20, search: s, filters: applied.params })} onPick={(r) => { setSelected(new Set([String(r["id"])])); enterRecord(r); }} isFavorite={(r) => favorites.has(String(r["id"]))}
       detailFields={prefs.search?.fields ?? columns.filter((c) => !["code", "name", "description", "title"].includes(c.key)).slice(0, 3).map((c) => c.key)} onDetailFieldsChange={(keys) => p.update((x) => ({ ...x, search: { ...(x.search ?? {}), fields: keys } }))} onDetailFieldsRestore={() => p.update((x) => ({ ...x, search: undefined }))} />}
@@ -164,8 +194,9 @@ export function Base1List(props: Base1ListProps) {
 
   if (view === "record" && Record) {
     return <div key={`rec-${recMode === "new" ? "new" : String(rows[recIndex]?.["id"] ?? recIndex)}`} className={cn("b1 mg-motion-swap flex min-h-0 flex-1 flex-col", props.className)}>
-      <Record row={recMode === "new" ? null : rows[recIndex] ?? null} index={recIndex} total={total} go={goRecord} onExit={() => { setView(prefs.view.mode); void q.refetch(); }} refresh={() => void q.refetch()} rightSlot={rightSlot} mode={recMode} setMode={setRecMode} copyFrom={copyFrom} />
-      {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={rows[recIndex] ? String(rows[recIndex]!["id"]) : undefined} title={title} />}
+      <Record row={recMode === "new" ? null : rows[recIndex] ?? null} index={recIndex} total={total} go={goRecord} onExit={exitRecord} refresh={() => void q.refetch()} rightSlot={rightSlot} mode={recMode} setMode={setRecMode} copyFrom={copyFrom} />
+      {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={recordRow ? rowId(recordRow) : undefined} title={title} />}
+      {entity && <AttachmentsDialog open={attachDlg} onOpenChange={setAttachDlg} entity={entity} entityId={recordRow ? rowId(recordRow) : null} title={title} />}
     </div>;
   }
   return <div className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", props.className)} data-testid="b1-list">
@@ -201,9 +232,9 @@ export function Base1List(props: Base1ListProps) {
       <div className="mg-shell mg-shell--fill min-w-0 flex-1">
         {q.error && <div className="p-2"><ErrorBox error={q.error} /></div>}
         {view === "cards"
-          ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelect={(id, on) => setSelected((s) => { const n = new Set(s); if (on) n.add(id); else n.delete(id); return n; })} actions={rowActions} favorites={favorites} onFavorite={toggleFavorite} /></div>
-          : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelect={setSelected} onOpen={(r) => enterRecord(r)} frozen={frozen}
-            onFreeze={(n) => updCols((c) => ({ ...c, frozen: n }))} onHide={(k) => updCols((c) => ({ ...c, visible: visibleColumns.map((x) => x.key).filter((x) => x !== k) }))} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
+          ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelectClick={onSelectClick} actions={rowActions} favorites={favorites} onFavorite={toggleFavorite} scrollToId={scrollToId} /></div>
+          : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelectClick={onSelectClick} onToggle={onToggle} onToggleAll={onToggleAll} onOpen={(r) => enterRecord(r)} frozen={frozen} scrollToId={scrollToId}
+            onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n, visibleColumns.length)) }))} onHide={(k) => updCols((c) => { const keys = visibleColumns.map((x) => x.key); const idx = keys.indexOf(k); const fz = c.frozen ?? 0; return { ...c, visible: keys.filter((x) => x !== k), frozen: idx >= 0 && idx < fz ? fz - 1 : fz }; })} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
             onFilter={(k) => { const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}
             footer={footerTotals && totals ? footerTotals(totals) : undefined} /></div>}
         {/* rodapé (mg-records-summary) */}
@@ -216,8 +247,9 @@ export function Base1List(props: Base1ListProps) {
         </div>
       </div>
     </div>
-    <ColumnsDialog open={colsDlg} onOpenChange={setColsDlg} columns={columns} visible={visibleColumns.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: keys }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
-    {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={one ? String(one["id"]) : undefined} title={title} />}
+    <ColumnsDialog open={colsDlg} onOpenChange={setColsDlg} columns={columns} visible={visibleColumns.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: [...keys, ...columns.map((x) => x.key).filter((x) => !keys.includes(x))], frozen: Math.min(c.frozen ?? 0, keys.length) }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
+    {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={one ? rowId(one) : undefined} title={title} />}
+    {entity && <AttachmentsDialog open={attachDlg} onOpenChange={setAttachDlg} entity={entity} entityId={one ? rowId(one) : null} title={title} />}
     {onDelete && <Confirm open={Boolean(delRow)} onOpenChange={() => setDelRow(null)} title="Confirme a exclusão" text={props.deleteText ?? (selectedRows.length > 1 ? `Excluir os ${selectedRows.length} registros selecionados? A ação fica registrada na auditoria.` : "Excluir o registro selecionado? A ação fica registrada na auditoria.")} danger onConfirm={async () => { if (delRow) { for (const r of selectedRows.length > 1 ? selectedRows : [delRow]) await onDelete(r); setDelRow(null); setSelected(new Set()); void q.refetch(); } }} />}
   </div>;
 }

@@ -130,7 +130,7 @@ export function normalizeListPreferences(raw: unknown, known: ListKnown = {}): L
   d.columns.visible = strList(cols["visible"], known.columns);
   d.columns.order = strList(cols["order"], known.columns);
   if (isObj(cols["widths"])) { const w: Record<string, number> = {}; for (const [k, v] of Object.entries(cols["widths"])) if (typeof v === "number" && v >= 40 && v <= 1200 && (!known.columns || known.columns.includes(k))) w[k] = Math.round(v); d.columns.widths = w; }
-  if (typeof cols["frozen"] === "number" && cols["frozen"] >= 0 && cols["frozen"] <= 5) d.columns.frozen = Math.round(cols["frozen"]);
+  if (typeof cols["frozen"] === "number" && cols["frozen"] >= 0) d.columns.frozen = Math.min(30, Math.round(cols["frozen"]));
   const sort = raw["sort"];
   if (isObj(sort) && typeof sort["key"] === "string" && (sort["dir"] === "asc" || sort["dir"] === "desc") && (!known.columns || known.columns.includes(sort["key"]))) d.sort = { key: sort["key"], dir: sort["dir"] };
   if (typeof raw["pageSize"] === "number" && (LIST_PAGE_SIZES as readonly number[]).includes(raw["pageSize"])) d.pageSize = raw["pageSize"];
