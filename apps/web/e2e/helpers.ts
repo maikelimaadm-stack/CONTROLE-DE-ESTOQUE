@@ -8,7 +8,7 @@ export async function login(page: Page, u = ADMIN) {
 export async function pickRef(page: Page, fieldLabel: string, search: string) {
   const field = page.locator("label", { hasText: fieldLabel }).first().locator("..");
   await field.locator("button").first().click();
-  const input = page.getByPlaceholder("Pesquisar…"); await input.fill(search);
-  await page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last().getByRole("button", { name: new RegExp(search.slice(0, 12), "i") }).first().click();
+  const input = page.getByPlaceholder("Pesquisar..."); await input.fill(search);
+  await page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last().getByRole("option", { name: new RegExp(search.slice(0, 12), "i") }).first().click();
 }
 export const uniq = (p: string) => `${p} ${Date.now().toString(36)}`;

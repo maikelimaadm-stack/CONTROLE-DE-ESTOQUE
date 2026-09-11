@@ -86,6 +86,7 @@ test("configuração de layout: retira campo, renomeia rótulo e restaura padrã
   await page.getByRole("button", { name: "Sigla", exact: true }).click();
   await page.getByLabel("Rótulo exibido").fill("Sigla do armazém");
   await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Salvar", exact: true }).click();
   await page.waitForTimeout(800);
   await page.goto("/cadastros/warehouses/new");
   await expect(page.getByLabel(/^Sigla do armazém/)).toBeVisible();

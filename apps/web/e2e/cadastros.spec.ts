@@ -15,7 +15,8 @@ test("cria e localiza um produto no cadastro genérico", async ({ page }) => {
   await page.goto("/cadastros/products/new");
   await page.getByLabel(/^Descrição/).first().fill(name);
   await fillRequiredRefs(page);
-  // categoria financeira é obrigatória quando o produto controla estoque (regra de negócio)
+  // categoria financeira é obrigatória quando o produto controla estoque (regra de negócio); o campo fica na aba "Estoque"
+  const estoqueTab = page.getByRole("tab", { name: "Estoque" }); if (await estoqueTab.count()) await estoqueTab.click();
   await page.locator("label", { hasText: "Cat. Financeira" }).first().locator("..").locator("button[type=button]").first().click(); await page.locator("[data-radix-popper-content-wrapper] button").first().click();
   await page.getByRole("button", { name: /^Salvar/ }).click();
   const toast = page.locator("[data-sonner-toast]").first();

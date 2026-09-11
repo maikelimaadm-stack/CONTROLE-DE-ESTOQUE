@@ -5,8 +5,8 @@ test("entrada de insumos gera saldo e ledger; cancelamento estorna", async ({ pa
   await page.goto("/estoque/entradas/new");
   await page.getByRole("button", { name: "Adicionar item" }).click();
   const row = page.locator("tbody tr").first();
-  await row.locator("button").nth(0).click(); await page.getByPlaceholder("Pesquisar…").fill("Almox"); await page.getByRole("button", { name: /Almox/i }).first().click();
-  await row.locator("button").nth(1).click(); await page.getByPlaceholder("Pesquisar…").fill("Diesel"); await page.getByRole("button", { name: /Diesel/i }).first().click();
+  await row.locator("button").nth(0).click(); await page.getByPlaceholder("Pesquisar...").fill("Almox"); await page.getByRole("option", { name: /Almox/i }).first().click();
+  await row.locator("button").nth(1).click(); await page.getByPlaceholder("Pesquisar...").fill("Diesel"); await page.getByRole("option", { name: /Diesel/i }).first().click();
   await row.locator("input[type=number]").nth(0).fill("10"); await row.locator("input[type=number]").nth(1).fill("6.5");
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect(page).toHaveURL(/\/estoque\/entradas$/);

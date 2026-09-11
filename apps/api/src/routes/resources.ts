@@ -140,19 +140,24 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   const rows = await ctx.tx.query(`select ${cols.map(ident).join(",")}, count(*) over()::text as __total from erp.${ident(def.table)} ${wsql} order by ${ident(sortCol)} ${dir} nulls last, id limit ${q.pageSize} offset ${offset}`, b.params);
   let total = Number((rows.rows[0] as { __total?: string } | undefined)?.__total ?? 0);
   if (!rows.rows.length && q.page > 1) { const c = await ctx.tx.query<{ n: string }>(`select count(*) as n from erp.${ident(def.table)} ${wsql}`, b.params); total = Number(c.rows[0]!.n); }
-  // rótulos de todas as referências numa única consulta (union all por recurso referenciado)
+  const labelRows = await refLabels(ctx, def, rows.rows as Record<string, unknown>[]);
+  const items = rows.rows.map((r, i) => { const o = { ...(r as Record<string, unknown>), ...labelRows[i] } as Record<string, unknown>; delete o["__total"]; return o; });
+  return { items, page: q.page, pageSize: q.pageSize, total };
+}
+
+/** Rótulos de todas as referências das linhas numa única consulta (union all por recurso referenciado) → { campo_label } por linha. */
+async function refLabels(ctx: ServiceCtx, def: ResourceDef, rows: Record<string, unknown>[]): Promise<Record<string, string | null>[]> {
   const refs = def.fields.filter((f) => f.type === "ref" && f.ref && getResource(f.ref.resource));
   const labels: Record<string, Record<string, string>> = {};
   const parts: string[] = []; const lb = new SqlBuilder();
   for (const f of refs) {
     const rdef = getResource(f.ref!.resource)!;
-    const ids = [...new Set(rows.rows.map((r) => (r as Record<string, unknown>)[f.name]).filter(Boolean))] as string[];
+    const ids = [...new Set(rows.map((r) => r[f.name]).filter(Boolean))] as string[];
     if (!ids.length) continue;
     parts.push(`select ${lb.add(f.name)}::text as f, id::text as id, ${ident(rdef.labelField)}::text as label from erp.${ident(rdef.table)} where id = any(${lb.add(ids)}::uuid[])`);
   }
   if (parts.length) { const lr = await ctx.tx.query<{ f: string; id: string; label: string }>(parts.join(" union all "), lb.params); for (const r of lr.rows) (labels[r.f] ??= {})[r.id] = r.label; }
-  const items = rows.rows.map((r) => { const o = { ...(r as Record<string, unknown>) } as Record<string, unknown>; delete o["__total"]; for (const f of refs) { const v = o[f.name] as string | null; o[`${f.name}_label`] = v ? labels[f.name]?.[v] ?? null : null; } return o; });
-  return { items, page: q.page, pageSize: q.pageSize, total };
+  return rows.map((r) => { const o: Record<string, string | null> = {}; for (const f of refs) { const v = r[f.name] as string | null; o[`${f.name}_label`] = v ? labels[f.name]?.[v] ?? null : null; } return o; });
 }
 
 export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
@@ -161,7 +166,8 @@ export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   const orgCond = existing.has("organization_id") ? (def.reference || def.sharedDefaults ? "and (organization_id is null or organization_id=$2)" : "and organization_id=$2") : "";
   const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 ${orgCond} ${def.softDelete ? "and deleted_at is null" : ""}`, orgCond ? [id, ctx.orgId] : [id]);
   if (!r.rows[0]) throw notFound(def.label);
-  return r.rows[0] as Record<string, unknown>;
+  const row = r.rows[0] as Record<string, unknown>;
+  return { ...row, ...(await refLabels(ctx, def, [row]))[0] };
 }
 
 function coerceValue(f: FieldDef, v: unknown): unknown {

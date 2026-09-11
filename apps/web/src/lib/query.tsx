@@ -5,5 +5,5 @@ import { Toaster } from "sonner";
 import { AuthProvider } from "./auth";
 export function Providers({ children }: { children: React.ReactNode }) {
   const [qc] = useState(() => new QueryClient({ defaultOptions: { queries: { staleTime: 15_000, retry: 1, refetchOnWindowFocus: false } } }));
-  return <QueryClientProvider client={qc}><AuthProvider>{children}<Toaster richColors position="top-right" closeButton /></AuthProvider></QueryClientProvider>;
+  return <QueryClientProvider client={qc}><AuthProvider>{children}<Toaster position="top-right" expand visibleToasts={5} offset={16} gap={10} /></AuthProvider></QueryClientProvider>;
 }

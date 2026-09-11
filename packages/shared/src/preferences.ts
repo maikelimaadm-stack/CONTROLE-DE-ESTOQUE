@@ -100,8 +100,12 @@ export interface ListPreferences {
   pageSize?: number;
   view: { mode: "table" | "cards"; cardFields?: string[]; cardsPerRow?: 1 | 2 | 3 | 4; density?: "compact" | "normal" };
   filters: { visible?: string[]; operators?: Record<string, string>; saved?: SavedFilter[]; defaultSaved?: string | null };
+  /** pesquisa: colunas exibidas como linhas de detalhe nos resultados da lista suspensa (máx. SEARCH_DROPDOWN_MAX_FIELDS) */
+  search?: { fields?: string[] };
   meta?: { revision?: number; updatedAt?: string };
 }
+/** Máximo de campos de detalhe nos resultados da pesquisa (como no MG: 5). */
+export const SEARCH_DROPDOWN_MAX_FIELDS = 5;
 export interface ListKnown { columns?: string[]; filters?: string[]; filterKinds?: Record<string, FilterKind> }
 export const LIST_PAGE_SIZES = [10, 20, 30, 50, 80, 100, 200, 300, 400, 500, 1000] as const;
 /** Quantidade de registros por carregamento no rodapé do modelo base (como no MG: 100…1000). */
@@ -144,6 +148,8 @@ export function normalizeListPreferences(raw: unknown, known: ListKnown = {}): L
     d.filters.saved = s;
   }
   if (typeof fl["defaultSaved"] === "string" && d.filters.saved?.some((s) => s.name === fl["defaultSaved"])) d.filters.defaultSaved = fl["defaultSaved"];
+  const se = isObj(raw["search"]) ? raw["search"] : {};
+  const sfields = strList(se["fields"], known.columns); if (sfields) d.search = { fields: sfields.slice(0, SEARCH_DROPDOWN_MAX_FIELDS) };
   if (isObj(raw["meta"])) d.meta = { revision: typeof raw["meta"]["revision"] === "number" ? raw["meta"]["revision"] : undefined, updatedAt: typeof raw["meta"]["updatedAt"] === "string" ? raw["meta"]["updatedAt"] : undefined };
   return d;
 }
@@ -178,18 +184,24 @@ export interface LayoutFieldInfo { id: string; label: string; section?: string; 
 export const MAX_FIELDS_PER_ROW: Record<6 | 12, number> = { 12: 7, 6: 4 };
 const slug = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "geral";
 
-/** Layout padrão derivado da definição declarativa: um painel, um card por seção, linhas por soma de largura (12 colunas). */
+/** A partir deste número de campos o formulário padrão é dividido em abas (painéis): as duas primeiras seções ficam em "Principal" e cada seção seguinte vira uma aba. */
+export const FORM_TABS_THRESHOLD = 16;
+
+/** Layout padrão derivado da definição declarativa: um card por seção, linhas por soma de largura (12 colunas); formulários grandes ganham abas por seção. */
 export function buildDefaultFormLayout(fields: LayoutFieldInfo[]): FormLayout {
   const sections = [...new Set(fields.map((f) => f.section ?? ""))];
+  const tabbed = fields.length >= FORM_TABS_THRESHOLD && sections.length > 2;
+  const panels: LayoutPanel[] = [{ id: "principal", label: "Principal", order: 1 }];
+  const panelOf = (s: string, i: number) => { if (!tabbed || i < 2) return "principal"; const id = `p_${slug(s)}`; if (!panels.some((p) => p.id === id)) panels.push({ id, label: s || "Outros", order: panels.length + 1 }); return id; };
   const cards: LayoutCard[] = sections.map((s, i) => {
     const fs = fields.filter((f) => (f.section ?? "") === s);
     const rows: LayoutRow[] = []; let cur: string[] = []; let width = 0;
     for (const f of fs) { const w = f.span ?? 3; if (width + w > 12 || cur.length >= MAX_FIELDS_PER_ROW[12]) { rows.push({ id: `r${rows.length + 1}`, fieldIds: cur }); cur = []; width = 0; } cur.push(f.id); width += w; }
     if (cur.length) rows.push({ id: `r${rows.length + 1}`, fieldIds: cur });
-    return { id: s ? slug(s) : "geral", panelId: "principal", label: s || "Dados", order: i + 1, colSpan: 12, rows };
+    return { id: s ? slug(s) : "geral", panelId: panelOf(s, i), label: s || "Dados", order: i + 1, colSpan: 12, rows };
   });
   const fieldSizes: Record<string, number> = {}; for (const f of fields) if (f.span) fieldSizes[f.id] = f.span;
-  return { version: FORM_LAYOUT_VERSION, panels: [{ id: "principal", label: "Principal", order: 1 }], cards, hiddenFieldIds: [], lockedFieldIds: [], requiredFieldIds: [], fieldSizes, fieldLabels: {}, fieldDefaultValues: {} };
+  return { version: FORM_LAYOUT_VERSION, panels, cards, hiddenFieldIds: [], lockedFieldIds: [], requiredFieldIds: [], fieldSizes, fieldLabels: {}, fieldDefaultValues: {} };
 }
 
 export interface LayoutIssue { path: string; message: string }

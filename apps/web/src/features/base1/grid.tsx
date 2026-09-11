@@ -26,7 +26,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   const [lefts, setLefts] = React.useState<Record<string, number>>({});
   // deslocamento das colunas congeladas (sticky) medido após o layout
   React.useLayoutEffect(() => {
-    const out: Record<string, number> = {}; let acc = 34;
+    const out: Record<string, number> = {}; let acc = 36;
     for (const c of columns.slice(0, frozen)) { out[c.key] = acc; acc += ths.current[c.key]?.getBoundingClientRect().width ?? 160; }
     setLefts(out);
   }, [columns, frozen, rows.length]);
@@ -44,7 +44,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
       <thead><tr>
         <th className="th-select sticky left-0 z-[4]"><MgCheck aria-label="Selecionar todos" checked={allOn} indeterminate={someOn} onChange={toggleAll} /></th>
         {columns.map((c, i) => { const isFrozen = i < frozen; return (
-          <th key={c.key} ref={(el) => { ths.current[c.key] = el; }} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : { minWidth: 110 }), ...(isFrozen ? { left: lefts[c.key] ?? 0, zIndex: 4 } : {}) }} className={cn("group relative", isFrozen && "sticky", c.align === "right" && "!text-right")}>
+          <th key={c.key} ref={(el) => { ths.current[c.key] = el; }} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : { minWidth: 110 }), ...(isFrozen ? { left: lefts[c.key] ?? 0, zIndex: 4 } : {}) }} className={cn("group relative", isFrozen && "is-frozen", c.align === "right" && "!text-right")}>
             <div className="flex h-[30px] items-center gap-1">
               <button type="button" className={cn("inline-flex min-w-0 flex-1 items-center gap-1 truncate text-left", !onSort && "cursor-default")} onClick={() => c.sortable !== false && onSort?.(c.key)} title={c.label}><span className="truncate">{c.label}</span>{sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 text-[var(--mg-accent)]" /> : <ArrowDown className="h-3 w-3 text-[var(--mg-accent)]" />)}</button>
               <B1Popover className="w-52 p-1" align="start" trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className="th-menu"><MoreVertical /></button>}>
@@ -66,7 +66,7 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
           <tr key={id} data-testid="b1-row" className={cn(on && "selected", ri % 2 === 1 ? "odd" : "even")} onClick={() => toggle(id)} onDoubleClick={() => onOpen?.(r)}>
             <td className="td-select sticky left-0 z-[2]" style={{ background: stickyBg(on, ri) }} onClick={(e) => e.stopPropagation()}><MgCheck aria-label="Selecionar linha" checked={on} onChange={() => toggle(id)} /></td>
             {columns.map((c, i) => { const isFrozen = i < frozen; const t = cellText(c, r); return (
-              <td key={c.key} title={t} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : {}), ...(isFrozen ? { left: lefts[c.key] ?? 0, position: "sticky", zIndex: 2, background: stickyBg(on, ri) } : {}) }} className={cn(onOpen && "cursor-pointer", c.align === "right" && "!text-right tabular-nums")}>{c.render ? c.render(r) : t || <span className="text-slate-400">–</span>}</td>); })}
+              <td key={c.key} title={t} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : {}), ...(isFrozen ? { left: lefts[c.key] ?? 0, zIndex: 2, background: stickyBg(on, ri) } : {}) }} className={cn(onOpen && "cursor-pointer", isFrozen && "is-frozen", c.align === "right" && "!text-right tabular-nums")}>{c.render ? c.render(r) : t || <span className="text-slate-400">–</span>}</td>); })}
           </tr>); })}
       </tbody>
       {footer && <tfoot className="bg-slate-50 font-semibold">{footer}</tfoot>}
