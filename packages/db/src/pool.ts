@@ -24,8 +24,9 @@ export interface TenantContext { orgId: string | null; userId: string | null }
 export async function withTx<T>(db: Db, ctx: TenantContext, fn: (tx: Tx) => Promise<T>): Promise<T> {
   const client = await db.connect();
   try {
-    await client.query("begin");
-    await client.query("select set_config('app.org_id', $1, true), set_config('app.user_id', $2, true)", [ctx.orgId ?? "", ctx.userId ?? ""]);
+    // begin + contexto de tenant numa única ida ao banco (os valores são uuids validados, nunca texto livre)
+    const uuid = (v: string | null) => (v && /^[0-9a-f-]{36}$/i.test(v) ? v : "");
+    await client.query(`begin; select set_config('app.org_id', '${uuid(ctx.orgId)}', true), set_config('app.user_id', '${uuid(ctx.userId)}', true)`);
     const out = await fn(client);
     await client.query("commit");
     return out;

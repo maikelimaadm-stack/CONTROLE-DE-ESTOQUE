@@ -13,7 +13,7 @@ export function FilterDrawer({ open, onClose, filters, values, onChange, onApply
   const get = (f: Base1FilterDef) => values[f.key] ?? emptyValue(f);
   const set = (f: Base1FilterDef, patch: Partial<FilterValues[string]>) => onChange({ ...values, [f.key]: { ...get(f), ...patch } });
   const cls = "h-9 rounded-lg border-0 bg-slate-100 px-3 text-[12.5px] focus:bg-white";
-  return <aside data-testid="b1-filters" className="flex w-64 shrink-0 flex-col rounded-2xl bg-white p-3 shadow-sm" aria-label="Filtros">
+  return <aside data-testid="b1-filters" className="mg-card flex w-64 shrink-0 flex-col p-3" aria-label="Filtros">
     <div className="mb-2 flex items-center justify-between"><span className="text-[13px] font-semibold text-slate-800">Filtros</span><button type="button" aria-label="Fechar filtros" onClick={onClose} className="rounded-full p-1 text-slate-500 hover:bg-slate-100"><X className="h-4 w-4" /></button></div>
     <form className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto" onSubmit={(e) => { e.preventDefault(); onApply(); }}>
       {filters.map((f) => { const v = get(f); return <label key={f.key} className="block">

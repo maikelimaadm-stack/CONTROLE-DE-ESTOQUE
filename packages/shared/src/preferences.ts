@@ -103,9 +103,10 @@ export interface ListPreferences {
   meta?: { revision?: number; updatedAt?: string };
 }
 export interface ListKnown { columns?: string[]; filters?: string[]; filterKinds?: Record<string, FilterKind> }
-export const LIST_PAGE_SIZES = [10, 20, 30, 50, 80, 100, 200] as const;
-/** Quantidade de registros por carregamento no rodapé do modelo base (limite do servidor: 200). */
-export const BASE1_PAGE_SIZES = [20, 50, 100, 200] as const;
+export const LIST_PAGE_SIZES = [10, 20, 30, 50, 80, 100, 200, 300, 400, 500, 1000] as const;
+/** Quantidade de registros por carregamento no rodapé do modelo base (como no MG: 100…1000). */
+export const BASE1_PAGE_SIZES = [100, 200, 300, 400, 500, 1000] as const;
+export const BASE1_DEFAULT_PAGE_SIZE = 100;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const strList = (v: unknown, known?: string[], max = 200): string[] | undefined => {

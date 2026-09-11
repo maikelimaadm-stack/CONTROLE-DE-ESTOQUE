@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ChevronUp, X, Loader2 } from "lucide-react";
+import { ChevronDown, X, Loader2 } from "lucide-react";
 import { FILTER_OPERATORS, operatorArity, isListOperator } from "@agro/shared";
 import { api, qs } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -36,7 +36,7 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
     enabled: isOpen && useList, staleTime: 30_000
   });
   const values = q.data ?? [];
-  const selected = new Set(draft.values ?? (draft.value ? [draft.value] : []));
+  const selected = new Set(draft.values?.length ? draft.values : draft.value ? [draft.value] : []);
   const allSelected = values.length > 0 && values.every((v) => selected.has(v.value));
   const toggle = (v: string, on: boolean) => { const s = new Set(selected); if (on) s.add(v); else s.delete(v); setDraft({ ...draft, values: [...s], value: "" }); };
   const labelCache = React.useRef<Record<string, string>>({});
@@ -52,9 +52,7 @@ export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenC
   const arity = f.mode === "advanced" ? operatorArity(f.kind, draft.op) : (f.kind === "date" ? 2 : 1);
   const inputType = f.kind === "date" ? "date" : f.kind === "number" ? "number" : "text";
   return <B1Popover open={isOpen} onOpenChange={setOpen} align="start" className="w-[280px] p-0"
-    trigger={<button type="button" aria-label={`Filtro ${f.label}`} className={cn("inline-flex h-8 shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-3 text-[12px] font-medium transition-colors", active ? "bg-brand-100 text-brand-800 ring-1 ring-brand-300" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}>
-      <span className="max-w-[180px] truncate">{f.label}{desc && <span className="ml-1 font-normal text-slate-500">· {desc}</span>}</span>{isOpen ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
-    </button>}>
+    trigger={<span className={cn("mg-filter-pill", isOpen && "is-open", active && "is-active")}><button type="button" aria-label={`Filtro ${f.label}`} className="mg-filter-pill__trigger"><span className="truncate">{f.label}{desc && <span className="ml-1 font-normal text-slate-500">· {desc}</span>}</span></button><span className="mg-filter-pill__icon"><ChevronDown /></span></span>}>
     <div className="px-3 pt-2.5">
       <div className="text-[12px] font-semibold text-slate-700">{f.label}</div>
       <button type="button" onClick={() => { onClear(); setOpen(false); }} disabled={!active} className="mt-1 flex items-center gap-1.5 text-[11.5px] text-slate-500 hover:text-red-600 disabled:opacity-40"><X className="h-3.5 w-3.5" /> Limpar Filtro de &apos;{f.label}&apos;</button>

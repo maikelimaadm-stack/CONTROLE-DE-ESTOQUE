@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -26,13 +27,15 @@ export function useFilters(initial: Record<string, string> = {}) { const [f, set
 export function FilterBar({ filters, f, set, reset, onApply, visible, saved, onSaveFilter, onDeleteFilter, onApplySaved }: { filters: Filter[]; f: Record<string, string>; set: (k: string, v: string) => void; reset: () => void; onApply: () => void; visible?: string[]; saved?: { name: string; values: Record<string, string> }[]; onSaveFilter?: (name: string) => void; onDeleteFilter?: (name: string) => void; onApplySaved?: (values: Record<string, string>) => void }) {
   const shown = visible ? filters.filter((x) => visible.includes(x.name)) : filters;
   const [saveOpen, setSaveOpen] = React.useState(false); const [saveName, setSaveName] = React.useState("");
-  return <form className="mb-3 grid grid-cols-12 gap-2 no-print" onSubmit={(e) => { e.preventDefault(); onApply(); }}>
-    {shown.map((x) => <Field key={x.name} label={x.label} span={x.type === "text" ? 3 : 2}>
-      {x.type === "date" ? <Input type="date" value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} /> : x.type === "select" ? <NativeSelect value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)}><option value="">Todos</option>{x.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect> : x.type === "ref" ? <RefSelect resource={x.resource!} value={f[x.name] ?? null} onChange={(v) => set(x.name, v ?? "")} placeholder="Todos" filter={x.extra} /> : <Input value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} />}
-    </Field>)}
-    <div className="col-span-12 flex flex-wrap items-end gap-2 md:col-span-3"><Button type="submit" size="sm">Filtrar</Button><Button type="button" size="sm" variant="secondary" onClick={reset}>Limpar</Button>
-      {onSaveFilter && <Menu trigger={<Button type="button" size="sm" variant="outline" title="Filtros salvos"><Bookmark className="h-3.5 w-3.5" /> Filtros salvos{saved?.length ? ` (${saved.length})` : ""}</Button>} items={[{ label: "Salvar filtro atual…", onClick: () => setSaveOpen(true) }, ...(saved ?? []).map((s) => ({ label: `Aplicar: ${s.name}`, onClick: () => onApplySaved?.(s.values) })), ...(saved ?? []).map((s) => ({ label: `Excluir: ${s.name}`, danger: true, onClick: () => onDeleteFilter?.(s.name) }))]} />}
-    </div>
+  const cls = "!h-7 !rounded-full !shadow-none w-40 text-[12px]";
+  // faixa de filtros no MODELO BASE1 (mg-rail): pílulas cinza com rótulo, botões Filtrar / Limpar
+  return <form className="mg-rail mg-card mb-2 flex-wrap no-print" onSubmit={(e) => { e.preventDefault(); onApply(); }}>
+    {shown.map((x) => <label key={x.name} className="flex items-center gap-1.5"><span className="whitespace-nowrap text-[11px] text-[var(--mg-text-2)]">{x.label}</span>
+      {x.type === "date" ? <Input type="date" className={cls} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} /> : x.type === "select" ? <NativeSelect className={cls} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)}><option value="">Todos</option>{x.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect> : x.type === "ref" ? <RefSelect resource={x.resource!} value={f[x.name] ?? null} onChange={(v) => set(x.name, v ?? "")} placeholder="Todos" filter={x.extra} className={cls} /> : <Input className={cn(cls, "w-52")} value={f[x.name] ?? ""} onChange={(e) => set(x.name, e.target.value)} />}
+    </label>)}
+    <span className="flex items-center gap-1.5"><Button type="submit">Filtrar</Button><Button type="button" variant="secondary" onClick={reset}>Limpar</Button>
+      {onSaveFilter && <Menu trigger={<Button type="button" variant="outline" title="Filtros salvos"><Bookmark className="h-3.5 w-3.5" /> Filtros salvos{saved?.length ? ` (${saved.length})` : ""}</Button>} items={[{ label: "Salvar filtro atual…", onClick: () => setSaveOpen(true) }, ...(saved ?? []).map((s) => ({ label: `Aplicar: ${s.name}`, onClick: () => onApplySaved?.(s.values) })), ...(saved ?? []).map((s) => ({ label: `Excluir: ${s.name}`, danger: true, onClick: () => onDeleteFilter?.(s.name) }))]} />}
+    </span>
     {onSaveFilter && <Dialog open={saveOpen} onOpenChange={setSaveOpen} title="Salvar filtro" size="sm" footer={<><Button variant="outline" onClick={() => setSaveOpen(false)}>Cancelar</Button><Button disabled={!saveName.trim()} onClick={() => { onSaveFilter(saveName.trim()); setSaveOpen(false); setSaveName(""); }}>Salvar</Button></>}><Field label="Nome do filtro" span={12}><Input value={saveName} onChange={(e) => setSaveName(e.target.value)} maxLength={60} autoFocus /></Field></Dialog>}
   </form>;
 }

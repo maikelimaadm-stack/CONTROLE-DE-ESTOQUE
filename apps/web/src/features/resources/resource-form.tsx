@@ -23,7 +23,7 @@ function defaults(fields: FieldDef[], preset: Record<string, string>, layoutDefa
 function fromRecord(fields: FieldDef[], data: Values): Values { const v: Values = {}; for (const f of fields) { const x = data[f.name]; v[f.name] = f.type === "json" ? JSON.stringify(x ?? {}, null, 2) : x === null || x === undefined ? (f.type === "tags" ? [] : "") : f.type === "date" ? String(x).slice(0, 10) : x; } return v; }
 function toApi(fields: FieldDef[], v: Values, locked: string[] = []): Values { const o: Values = {}; for (const f of fields) { if (f.readOnly || locked.includes(f.name)) continue; /* campos travados pelo layout não vão no payload (mantêm o valor atual) */ let x = v[f.name]; if (x === "" || x === undefined) x = null; if (f.type === "json" && typeof x === "string") { try { x = JSON.parse(x); } catch { throw new Error(`JSON inválido em ${f.label}`); } } if (f.type === "integer" && x !== null) x = Number(x); if (f.type === "boolean") x = Boolean(x); if (f.type === "date" && typeof x === "string") x = x.slice(0, 10); if (x === null && !f.required && f.type === "boolean") x = false; if (x === null && ["money", "quantity", "number", "percent", "integer"].includes(f.type)) continue; /* numérico vazio: deixa o default do banco (0) valer */ o[f.name] = x; } return o; }
 
-const ctl = "h-6 w-full rounded-none border-0 bg-transparent px-0 text-[13px] font-medium text-slate-800 shadow-none focus:ring-0 focus:outline-none read-only:bg-transparent disabled:bg-transparent disabled:text-slate-700";
+const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--mg-text-1)] shadow-none focus:ring-0 focus:outline-none read-only:bg-transparent disabled:bg-transparent disabled:text-[var(--mg-text-1)]";
 /** Controle de um campo declarativo (mesmo componente para todos os tipos), estilo "rótulo flutuante" do modelo base. */
 function FieldControl({ f, form, dis, required, isNew, values, id }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string }) {
   const rules = { required: required ? "Obrigatório" : false };
@@ -41,9 +41,9 @@ export function B1Field({ label, required, error, help, span = 3, disabled, chil
   const id = React.useId();
   const child = React.isValidElement(children) && !(children.props as { id?: string }).id ? React.cloneElement(children as React.ReactElement<{ id?: string }>, { id }) : children;
   return <div className={cn(flex ? "min-w-[140px] flex-1" : cn("col-span-12", SPAN[span] ?? "md:col-span-3"), className)}>
-    <div className={cn("rounded-lg bg-slate-100/90 px-3 pb-1.5 pt-1.5 transition-shadow focus-within:bg-white focus-within:ring-2 focus-within:ring-brand-300", disabled && "bg-slate-50")}>
-      <label htmlFor={id} title={help} className="block text-[10.5px] leading-tight text-slate-500">{label}{required && <span className="text-red-500"> *</span>}</label>
-      {child}
+    <div className={cn("mg-field", disabled && "mg-field--disabled")}>
+      <label htmlFor={id} title={help} className="mg-field__label">{label}{required && <span className="req text-red-500"> *</span>}</label>
+      <div className="mg-field__control">{child}</div>
     </div>
     {error && <p className="mt-0.5 text-[11px] text-red-600">{error}</p>}
   </div>;
@@ -51,8 +51,8 @@ export function B1Field({ label, required, error, help, span = 3, disabled, chil
 
 function LayoutCardView({ label, collapsible, colSpan, children }: { label: string; collapsible?: boolean; colSpan: 6 | 12; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(true);
-  return <div className={cn("col-span-12 rounded-2xl bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,.04),0_4px_14px_rgba(0,0,0,.05)]", colSpan === 6 && "md:col-span-6")}>
-    <h3 className="mb-3 text-[13px] font-semibold text-slate-800">{collapsible ? <button type="button" className="flex items-center gap-1" onClick={() => setOpen((o) => !o)}>{open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}{label}</button> : label}</h3>
+  return <div className={cn("mg-card col-span-12 p-3", colSpan === 6 && "md:col-span-6")}>
+    <h3 className="mg-card-title mb-2.5">{collapsible ? <button type="button" className="flex items-center gap-1" onClick={() => setOpen((o) => !o)}>{open ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}{label}</button> : label}</h3>
     {open && <div className="space-y-2">{children}</div>}
   </div>;
 }
@@ -114,7 +114,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
   return (
     <form onSubmit={submit} className="b1 flex flex-col gap-2" data-testid="b1-form">
       {/* barra de ações */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white px-3 py-2 shadow-sm no-print">
+      <div className="mg-toolbar mg-card flex-wrap no-print">
         {readOnly ? <>
           {embedded && canCreate && <PillBtn onClick={() => embedded.setMode("new")}><Plus className="h-4 w-4" /> Novo</PillBtn>}
           {!isNew && canEdit && <PillBtn tone="gray" onClick={() => (embedded ? embedded.setMode("edit") : router.push(`${back}/${id}`))}><Pencil className="h-3.5 w-3.5" /> Editar</PillBtn>}
@@ -128,8 +128,8 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded }:
         {embedded?.rightSlot ?? <div className="ml-auto flex items-center gap-1.5">{!embedded && <Link href={back}><IconBtn aria-label="Voltar para a listagem" title="Voltar para a listagem"><ArrowLeft className="h-4 w-4" /></IconBtn></Link>}</div>}
       </div>
       {/* cabeçalho do registro + navegação */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl bg-white px-3 py-1.5 shadow-sm">
-        <Bookmark className="h-4 w-4 text-slate-500" /><span className="text-[13px] font-semibold text-slate-800">{code && <>{code} <span className="text-slate-400">•</span> </>}{title || def.label}</span>
+      <div className="mg-toolbar mg-card flex-wrap !min-h-[32px] !py-1">
+        <Bookmark className="h-4 w-4 text-[var(--mg-icon)]" /><span className="text-[13px] font-semibold text-slate-800">{code && <>{code} <span className="text-slate-400">•</span> </>}{title || def.label}</span>
         <span className="ml-auto flex items-center gap-1">
           <Link href={`${back}/configuracao-layout`} title="Layout do formulário" aria-label="Layout do formulário"><IconBtn size="sm" className={cn(layout.source !== "default" && "text-brand-700")}><LayoutPanelTop className="h-4 w-4" /></IconBtn></Link>
           {nav && <><IconBtn size="sm" aria-label="Primeiro" disabled={nav.index <= 0} onClick={() => nav.go(0)}><ChevronsLeft className="h-4 w-4" /></IconBtn><IconBtn size="sm" aria-label="Anterior" disabled={nav.index <= 0} onClick={() => nav.go(nav.index - 1)}><ChevronLeft className="h-4 w-4" /></IconBtn><span className="px-1 text-[12px] text-slate-600">{isNew ? "novo" : `${nav.index + 1}/${nav.total}`}</span><IconBtn size="sm" aria-label="Próximo" disabled={nav.index >= nav.total - 1} onClick={() => nav.go(nav.index + 1)}><ChevronRight className="h-4 w-4" /></IconBtn><IconBtn size="sm" aria-label="Último" disabled={nav.index >= nav.total - 1} onClick={() => nav.go(nav.total - 1)}><ChevronsRight className="h-4 w-4" /></IconBtn></>}
@@ -146,11 +146,11 @@ function PanelTabs({ panels, render, stacked, onToggleStacked }: { panels: { id:
   const [active, setActive] = React.useState(panels[0]?.id ?? "");
   const cur = panels.some((p) => p.id === active) ? active : panels[0]?.id ?? "";
   return <div>
-    <div className="mb-2 flex items-center gap-1 border-b px-1">
+    <div className="mg-tabs mb-2 px-1">
       <IconBtn size="sm" aria-label={stacked ? "Exibir painéis em abas" : "Exibir painéis empilhados"} title={stacked ? "Exibir painéis em abas" : "Exibir painéis empilhados"} onClick={onToggleStacked} className="mr-1">{stacked ? <PanelTop className="h-4 w-4" /> : <Rows3 className="h-4 w-4" />}</IconBtn>
-      {panels.map((p) => <button key={p.id} type="button" role="tab" aria-selected={!stacked && cur === p.id} onClick={() => setActive(p.id)} className={cn("-mb-px border-b-2 px-3 py-2 text-[12.5px] font-medium", !stacked && cur === p.id ? "border-slate-800 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-800")}>{p.label}</button>)}
+      {panels.map((p) => <button key={p.id} type="button" role="tab" aria-selected={!stacked && cur === p.id} onClick={() => setActive(p.id)} className={cn("seg-tab", !stacked && cur === p.id && "active")}>{p.label}</button>)}
     </div>
     {/* todos os painéis ficam montados para que a validação e os valores não se percam ao trocar de aba */}
-    {panels.map((p) => <div key={p.id} className={cn(!stacked && cur !== p.id && "hidden", stacked && "mb-3")}>{stacked && <div className="mb-1 px-1 text-[12px] font-semibold text-slate-600">{p.label}</div>}{render(p.id)}</div>)}
+    {panels.map((p) => <div key={p.id} className={cn(!stacked && cur !== p.id && "hidden", stacked && "mb-3")}>{stacked && <div className="mg-card-title mb-1 px-1">{p.label}</div>}{render(p.id)}</div>)}
   </div>;
 }

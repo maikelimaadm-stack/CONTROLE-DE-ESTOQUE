@@ -41,9 +41,18 @@ function listColumns(def: ResourceDef): string[] {
   return [...cols];
 }
 
+/**
+ * Colunas existentes por tabela, em cache por processo: o esquema só muda em deploy (migrations no pré-deploy),
+ * então a consulta ao information_schema (cara e longe do banco) acontece uma vez por tabela.
+ */
+const columnCache = new Map<string, Set<string>>();
+export function clearColumnCache() { columnCache.clear(); }
 async function checkColumns(ctx: ServiceCtx, def: ResourceDef): Promise<Set<string>> {
+  const hit = columnCache.get(def.table); if (hit) return hit;
   const r = await ctx.tx.query<{ column_name: string }>("select column_name from information_schema.columns where table_schema='erp' and table_name=$1", [def.table]);
-  return new Set(r.rows.map((x) => x.column_name));
+  const set = new Set(r.rows.map((x) => x.column_name));
+  if (set.size) columnCache.set(def.table, set);
+  return set;
 }
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -126,21 +135,24 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   const sortCol = q.sort && existing.has(q.sort) ? q.sort : (def.defaultSort && existing.has(def.defaultSort) ? def.defaultSort : (existing.has("created_at") ? "created_at" : "id"));
   const dir = q.dir ?? (sortCol === "created_at" ? "desc" : "asc");
   const wsql = where.length ? "where " + where.join(" and ") : "";
-  const total = await ctx.tx.query<{ n: string }>(`select count(*) as n from erp.${ident(def.table)} ${wsql}`, b.params);
   const offset = (q.page - 1) * q.pageSize;
-  const rows = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} ${wsql} order by ${ident(sortCol)} ${dir} nulls last, id limit ${q.pageSize} offset ${offset}`, b.params);
-  // resolve rótulos de referências (evita N+1: uma query por recurso referenciado)
-  const refs = def.fields.filter((f) => f.type === "ref" && f.ref);
+  // linhas + total na mesma consulta (contagem em janela): uma ida ao banco em vez de duas
+  const rows = await ctx.tx.query(`select ${cols.map(ident).join(",")}, count(*) over()::text as __total from erp.${ident(def.table)} ${wsql} order by ${ident(sortCol)} ${dir} nulls last, id limit ${q.pageSize} offset ${offset}`, b.params);
+  let total = Number((rows.rows[0] as { __total?: string } | undefined)?.__total ?? 0);
+  if (!rows.rows.length && q.page > 1) { const c = await ctx.tx.query<{ n: string }>(`select count(*) as n from erp.${ident(def.table)} ${wsql}`, b.params); total = Number(c.rows[0]!.n); }
+  // rótulos de todas as referências numa única consulta (union all por recurso referenciado)
+  const refs = def.fields.filter((f) => f.type === "ref" && f.ref && getResource(f.ref.resource));
   const labels: Record<string, Record<string, string>> = {};
+  const parts: string[] = []; const lb = new SqlBuilder();
   for (const f of refs) {
-    const rdef = getResource(f.ref!.resource); if (!rdef) continue;
+    const rdef = getResource(f.ref!.resource)!;
     const ids = [...new Set(rows.rows.map((r) => (r as Record<string, unknown>)[f.name]).filter(Boolean))] as string[];
     if (!ids.length) continue;
-    const lr = await ctx.tx.query<{ id: string; label: string }>(`select id, ${ident(rdef.labelField)}::text as label from erp.${ident(rdef.table)} where id = any($1::uuid[])`, [ids]);
-    labels[f.name] = Object.fromEntries(lr.rows.map((r) => [r.id, r.label]));
+    parts.push(`select ${lb.add(f.name)}::text as f, id::text as id, ${ident(rdef.labelField)}::text as label from erp.${ident(rdef.table)} where id = any(${lb.add(ids)}::uuid[])`);
   }
-  const items = rows.rows.map((r) => { const o = { ...(r as Record<string, unknown>) } as Record<string, unknown>; for (const f of refs) { const v = o[f.name] as string | null; o[`${f.name}_label`] = v ? labels[f.name]?.[v] ?? null : null; } return o; });
-  return { items, page: q.page, pageSize: q.pageSize, total: Number(total.rows[0]!.n) };
+  if (parts.length) { const lr = await ctx.tx.query<{ f: string; id: string; label: string }>(parts.join(" union all "), lb.params); for (const r of lr.rows) (labels[r.f] ??= {})[r.id] = r.label; }
+  const items = rows.rows.map((r) => { const o = { ...(r as Record<string, unknown>) } as Record<string, unknown>; delete o["__total"]; for (const f of refs) { const v = o[f.name] as string | null; o[`${f.name}_label`] = v ? labels[f.name]?.[v] ?? null : null; } return o; });
+  return { items, page: q.page, pageSize: q.pageSize, total };
 }
 
 export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {

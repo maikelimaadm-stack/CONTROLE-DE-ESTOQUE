@@ -20,9 +20,9 @@ export function Base1Cards({ rows, columns, fields, perRow, loading, onOpen, sel
   if (!rows.length) return <Empty />;
   return <div className={cn("grid grid-cols-1 gap-3", gridCls[perRow])}>
     {rows.map((r) => { const id = String(r["id"]); const t = titleCol ? text(titleCol, r) : ""; const code = codeCol ? text(codeCol, r) : ""; const acts = actions?.(r) ?? []; return (
-      <div key={id} data-testid="b1-card" className={cn("group rounded-2xl bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,.04),0_4px_14px_rgba(0,0,0,.05)] transition-shadow hover:shadow-[0_6px_20px_rgba(0,0,0,.09)]", selected.has(id) && "ring-2 ring-brand-300")} onDoubleClick={() => onOpen?.(r)}>
+      <div key={id} data-testid="b1-card" className={cn("mg-card group p-4 transition-shadow hover:shadow-[0_6px_20px_rgba(0,0,0,.09)]", selected.has(id) && "ring-2 ring-[var(--mg-focus-border)]")} onDoubleClick={() => onOpen?.(r)}>
         <div className="flex items-center gap-2">
-          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-brand-500 text-[11px] font-bold text-white">{initials(t)}</span>
+          <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--mg-accent)] text-[11px] font-bold text-white">{initials(t)}</span>
           <button type="button" aria-label={selected.has(id) ? "Desmarcar" : "Marcar"} onClick={() => onSelect(id, !selected.has(id))} className={cn("rounded p-0.5 text-slate-400 hover:text-brand-600", selected.has(id) && "text-brand-600")}><Bookmark className={cn("h-4 w-4", selected.has(id) && "fill-current")} /></button>
           <button type="button" className="min-w-0 flex-1 truncate text-left text-[12.5px] font-semibold text-slate-800 hover:text-brand-700" onClick={() => onOpen?.(r)}>{code && <span className="text-slate-500">{code} • </span>}{t}</button>
           {acts.length > 0 && <B1Popover className="w-44 p-1" trigger={<IconBtn size="sm" aria-label="Ações do registro" className="bg-transparent"><MoreVertical className="h-4 w-4" /></IconBtn>}>{acts.map((a) => <button key={a.label} type="button" onClick={a.onClick} className={cn("block w-full rounded-md px-2 py-1.5 text-left text-[12.5px] hover:bg-slate-100", a.danger && "text-red-600")}>{a.label}</button>)}</B1Popover>}

@@ -20,7 +20,7 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
   return (
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild>
-        <button type="button" disabled={disabled} className={cn("flex h-8 w-full items-center justify-between rounded-md border bg-white px-2.5 text-left text-[13px] disabled:bg-slate-50", !value && "text-slate-400", className)}>
+        <button type="button" disabled={disabled} className={cn("mg-input flex items-center justify-between text-left", !value && "!text-[var(--mg-text-3)]", className)}>
           <span className="truncate">{value ? label || "…" : placeholder}</span>
           <span className="flex items-center gap-1">{value && allowEmpty && !disabled && <X className="h-3.5 w-3.5 text-slate-400 hover:text-red-500" onClick={(e) => { e.stopPropagation(); onChange(null); }} />}<ChevronsUpDown className="h-3.5 w-3.5 text-slate-400" /></span>
         </button>
