@@ -34,7 +34,7 @@ test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta
   const dlg = page.getByRole("dialog");
   await expect(dlg.getByText("Configuração de colunas")).toBeVisible();
   await dlg.getByRole("button", { name: "Sigla" }).dblclick();
-  await dlg.getByRole("button", { name: "Ok" }).click();
+  await dlg.getByRole("button", { name: "OK" }).click();
   await expect(page.locator("th", { hasText: "Sigla" })).toBeVisible();
   await page.getByLabel("Abrir menu da coluna Sigla").click();
   await page.getByRole("menuitem", { name: "Ocultar coluna" }).click();
@@ -43,7 +43,7 @@ test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta
   await expect(page.getByTestId("b1-card").first()).toBeVisible();
   await page.getByLabel("Configurar layout dos cards").click();
   await page.getByRole("radio", { name: /2 cards por linha/ }).click();
-  await page.getByRole("button", { name: "Ok" }).click();
+  await page.getByRole("button", { name: "OK" }).click();
   // recarrega sem cache local: preferências vêm do servidor
   await page.waitForTimeout(800);
   await page.evaluate(() => { Object.keys(localStorage).filter((k) => k.startsWith("agro:prefs:")).forEach((k) => localStorage.removeItem(k)); });

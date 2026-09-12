@@ -10,14 +10,14 @@ test("solicitação de compra percorre o fluxo até aguardando compra", async ({
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect(page).toHaveURL(/\/suprimentos\/view\//);
   await expect(page.getByText("Solicitação", { exact: true }).first()).toBeVisible();
-  const steps: [string, string][] = [["Enviar para ciência", "Aguardando Ciência"], ["Dar ciência", "Cotação em Andamento"], ["Enviar para autorização", "Aguardando Aprovação"], ["Aprovar", "Aguardando a Compra"]];
+  const steps: [string, string][] = [["Enviar para ciência", "Aguardando ciência"], ["Dar ciência", "Cotação em andamento"], ["Enviar para autorização", "Aguardando aprovação"], ["Aprovar", "Aguardando a compra"]];
   for (const [action, status] of steps) {
     await page.getByRole("button", { name: action, exact: true }).click();
     await page.getByRole("dialog").getByRole("button", { name: "Confirmar" }).click();
     await expect(page.getByRole("dialog")).toBeHidden();
     await expect(page.getByText(status, { exact: true }).first()).toBeVisible();
   }
-  await expect(page.getByText("Aguardando a Compra").first()).toBeVisible();
+  await expect(page.getByText("Aguardando a compra").first()).toBeVisible();
   await page.getByRole("tab", { name: /Histórico/ }).click();
   await expect(page.locator("tbody tr")).toHaveCount(5);
 });

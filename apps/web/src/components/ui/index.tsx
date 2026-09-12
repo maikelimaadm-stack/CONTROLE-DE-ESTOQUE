@@ -8,6 +8,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { Loader2, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MgDatePicker } from "./mg-controls";
+import { COPY } from "@/lib/copy";
 
 export const buttonVariants = cva("tb-btn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400", {
   variants: {
@@ -107,11 +108,11 @@ export function Menu({ trigger, items }: { trigger: React.ReactNode; items: { la
   );
 }
 export const Spinner = ({ className }: { className?: string }) => <Loader2 className={cn("h-5 w-5 animate-spin text-brand-600", className)} />;
-export const Empty = ({ text = "Nenhum registro encontrado." }: { text?: string }) => <div className="py-10 text-center text-sm text-slate-400">{text}</div>;
-export const ErrorBox = ({ error }: { error: unknown }) => <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">{(error as Error)?.message ?? "Erro"}</div>;
+export const Empty = ({ text = COPY.nenhumRegistro }: { text?: string }) => <div className="py-10 text-center text-sm text-slate-400">{text}</div>;
+export const ErrorBox = ({ error }: { error: unknown }) => <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">{(error as Error)?.message ?? COPY.erro}</div>;
 export const Chevron = ChevronDown;
 export function Confirm({ open, onOpenChange, title, text, onConfirm, danger, loading, children }: { open: boolean; onOpenChange: (o: boolean) => void; title: string; text?: string; onConfirm: () => void; danger?: boolean; loading?: boolean; children?: React.ReactNode }) {
-  return <Dialog open={open} onOpenChange={onOpenChange} title={title} size="sm" footer={<><Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button><Button variant={danger ? "danger" : "default"} loading={loading} onClick={onConfirm}>Confirmar</Button></>}><p className="text-sm text-slate-600">{text}</p>{children}</Dialog>;
+  return <Dialog open={open} onOpenChange={onOpenChange} title={title} size="sm" footer={<><Button variant="outline" onClick={() => onOpenChange(false)}>{COPY.fechar}</Button><Button variant={danger ? "danger" : "default"} loading={loading} onClick={onConfirm}>{COPY.confirmar}</Button></>}><p className="text-sm text-slate-600">{text}</p>{children}</Dialog>;
 }
 export function Stat({ label, value, hint, tone }: { label: string; value: React.ReactNode; hint?: React.ReactNode; tone?: "green" | "red" | "slate" | "amber" }) {
   const c = { green: "text-green-700", red: "text-red-700", slate: "text-slate-800", amber: "text-amber-700" }[tone ?? "slate"];

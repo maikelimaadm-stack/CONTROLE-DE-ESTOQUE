@@ -4,6 +4,7 @@ import * as Popover from "@radix-ui/react-popover";
 import { toast } from "sonner";
 import { ChevronDown, ChevronLeft, ChevronRight, Calendar, X, Check, Info, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { COPY } from "@/lib/copy";
 
 /* ================================================================================================
    Controles do MODELO BASE1 replicados do PROJETOMG: seletor de opções (cmd-select), calendário (mg-dp),
@@ -116,8 +117,8 @@ export function MgDatePicker({ value, onChange, disabled, id, name, className, o
 
 /* ---------- avisos ---------- */
 type ToastKind = "success" | "error" | "warning" | "info";
-const TOAST_META: Record<ToastKind, { title: string; Icon: React.ComponentType<{ className?: string }>; ms: number }> = { success: { title: "Sucesso!", Icon: Check, ms: 3000 }, info: { title: "Informação", Icon: Info, ms: 4000 }, warning: { title: "Atenção", Icon: AlertTriangle, ms: 5000 }, error: { title: "Erro", Icon: X, ms: 6000 } };
-export const REQUIRED_FIELDS_MESSAGE = "Existem campos obrigatórios que precisam ser preenchidos.";
+const TOAST_META: Record<ToastKind, { title: string; Icon: React.ComponentType<{ className?: string }>; ms: number }> = { success: { title: COPY.sucesso, Icon: Check, ms: 3000 }, info: { title: COPY.informacoes, Icon: Info, ms: 4000 }, warning: { title: COPY.aviso, Icon: AlertTriangle, ms: 5000 }, error: { title: COPY.erro, Icon: X, ms: 6000 } };
+export const REQUIRED_FIELDS_MESSAGE = COPY.camposObrigatorios;
 
 /** Aviso no canto superior direito no visual do MG (erp-toast-panel): selo colorido, título fixo por tipo, descrição. */
 export function notify(kind: ToastKind, message?: string, opts?: { title?: string; duration?: number }) {
@@ -126,7 +127,7 @@ export function notify(kind: ToastKind, message?: string, opts?: { title?: strin
     <div className={`erp-toast-panel erp-toast-panel--${kind}`} role="status">
       <div className={`erp-toast-panel__icon-badge erp-toast-panel__icon-badge--${kind}`}><meta.Icon /></div>
       <div className="min-w-0"><p className="erp-toast-panel__message">{opts?.title ?? meta.title}</p>{message && <p className="erp-toast-panel__description">{message}</p>}</div>
-      <button type="button" className="erp-toast-panel__close" aria-label="Fechar aviso" onClick={() => toast.dismiss(id)}><X /></button>
+      <button type="button" className="erp-toast-panel__close" aria-label={COPY.fecharAviso} onClick={() => toast.dismiss(id)}><X /></button>
     </div>
   ), { duration: opts?.duration ?? meta.ms });
 }

@@ -70,7 +70,7 @@ export function SearchBox({ value, onChange, onApply, onApplyFavorites, onClear,
               <div className="mg-search-dropdown__config-footer">
                 <button type="button" className="tb-btn tb-btn-ghost mg-search-dropdown__footer-btn" onClick={() => { onDetailFieldsRestore(); setConfig(false); }}>Restaurar</button>
                 <span className="mg-search-dropdown__config-counter" aria-live="polite">{draftCount}/{SEARCH_DROPDOWN_MAX_FIELDS}</span>
-                <button type="button" className="tb-btn tb-btn-green mg-search-dropdown__footer-btn" onClick={() => { onDetailFieldsChange(draft.filter((k) => !primaries.has(k))); setConfig(false); }}>Ok</button>
+                <button type="button" className="tb-btn tb-btn-green mg-search-dropdown__footer-btn" onClick={() => { onDetailFieldsChange(draft.filter((k) => !primaries.has(k))); setConfig(false); }}>OK</button>
               </div>
             </div> : <>
               <div className={cn("mg-search-dropdown__list", !hasQuery && "mg-search-dropdown__list--idle")} role="listbox">

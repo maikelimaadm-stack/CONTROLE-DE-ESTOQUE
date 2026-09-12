@@ -35,11 +35,11 @@ function Depreciation() {
 }
 function Inner() {
   return <Workspace title="Frota e Ativos" defaultTab="equipamentos" actions={<NewChooser items={[
-    { label: "Nova máquina / equipamento", href: "/cadastros/equipments/new", perm: "equipments.create" },
+    { label: "Novo equipamento", href: "/cadastros/equipments/new", perm: "equipments.create" },
     { label: "Novo abastecimento", href: "/frota/abastecimentos/new", perm: "fuel_supplies.create" },
     { label: "Manutenção", children: [{ label: "Nova manutenção (corretiva)", href: "/frota/manutencoes/new", perm: "maintenances.create" }, { label: "Novo plano preventivo", href: "/cadastros/preventive_maintenances/new", perm: "preventive_maintenances.create" }, { label: "Agendar revisão", href: "/cadastros/scheduled_reviews/new", perm: "scheduled_reviews.create" }] }
   ]} />} tabs={[
-    tab("frota.visao-geral", <Dashboard k="ativos" title="Ativos e custos da frota" />),
+    tab("frota.visao-geral", <Dashboard k="ativos" title="Bens e custos da frota" />),
     tab("frota.equipamentos", <ViewSegment tabs={[
       tab("frota.equipamentos.inventario", <Inventory />),
       tab("frota.equipamentos.transferencias", scroll(<EquipmentTransfersPanel />)),

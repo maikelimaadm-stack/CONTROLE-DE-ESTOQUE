@@ -16,21 +16,21 @@ const CRUD = ["view", "create", "edit", "delete"] as const;
 const R = (key: string, label: string, module: string, actions: readonly PermAction[] = CRUD): PermissionResource => ({ key, label, module, actions });
 
 export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
-  // Painel / Dashboards
+  // Painel / painéis por módulo
   R("dashboard.home", "Painel de Controle", "Painel", ["view"]),
-  R("dashboard.financial", "Dashboard Financeiro", "Dashboards", ["view"]),
-  R("dashboard.cash_book", "Dashboard Livro Caixa", "Dashboards", ["view"]),
-  R("dashboard.supply", "Dashboard Suprimentos", "Dashboards", ["view"]),
-  R("dashboard.livestock", "Dashboard Pecuária de Corte", "Dashboards", ["view"]),
-  R("dashboard.depreciation", "Dashboard Depreciações", "Dashboards", ["view"]),
-  R("dashboard.assets", "Dashboard Ativos", "Dashboards", ["view"]),
-  R("dashboard.user_analysis", "Dashboard Análise de Usuários", "Dashboards", ["view"]),
-  R("dashboard.rainfall", "Dashboard Pluviometria", "Dashboards", ["view"]),
-  R("dashboard.feedlot", "Dashboard Lotação de Currais", "Dashboards", ["view"]),
-  R("dashboard.feedlot_cost", "Dashboard Custos do Confinamento", "Dashboards", ["view"]),
-  R("dashboard.feedlot_performance", "Dashboard Desempenho de Lotes", "Dashboards", ["view"]),
-  R("dashboard.nutrition_stock", "Dashboard Estoque Nutrição", "Dashboards", ["view"]),
-  R("dashboard.feed_consumption", "Dashboard Consumo de Ração", "Dashboards", ["view"]),
+  R("dashboard.financial", "Painel Financeiro", "Painéis", ["view"]),
+  R("dashboard.cash_book", "Painel Livro Caixa", "Painéis", ["view"]),
+  R("dashboard.supply", "Painel Suprimentos", "Painéis", ["view"]),
+  R("dashboard.livestock", "Painel Pecuária de Corte", "Painéis", ["view"]),
+  R("dashboard.depreciation", "Painel Depreciações", "Painéis", ["view"]),
+  R("dashboard.assets", "Painel Bens e Frota", "Painéis", ["view"]),
+  R("dashboard.user_analysis", "Painel Análise de Usuários", "Painéis", ["view"]),
+  R("dashboard.rainfall", "Painel Pluviometria", "Painéis", ["view"]),
+  R("dashboard.feedlot", "Painel Lotação de Currais", "Painéis", ["view"]),
+  R("dashboard.feedlot_cost", "Painel Custos do Confinamento", "Painéis", ["view"]),
+  R("dashboard.feedlot_performance", "Painel Desempenho de Lotes", "Painéis", ["view"]),
+  R("dashboard.nutrition_stock", "Painel Estoque de Nutrição", "Painéis", ["view"]),
+  R("dashboard.feed_consumption", "Painel Consumo de Ração", "Painéis", ["view"]),
   // Cadastros base
   R("cost_centers", "Centros de Custo", "Cadastros Base > Estrutura"),
   R("farms", "Fazendas", "Cadastros Base > Estrutura", [...CRUD, "import_kml"]),
@@ -83,7 +83,7 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("purchase_buy", "Compras", "Administrativo > Suprimentos", ["view", "edit"]),
   R("purchase_receipts", "Recebimentos", "Administrativo > Suprimentos", ["view", "edit"]),
   // Administrativo > Estoque
-  R("invoices", "Doc. Fiscal/Entrada", "Administrativo > Estoque"),
+  R("invoices", "Documento Fiscal de Entrada", "Administrativo > Estoque"),
   R("input_entries", "Entrada/Insumos", "Administrativo > Estoque"),
   R("dfe", "DFe Recebidas", "Administrativo > Estoque", ["view", "create", "manifest", "launch", "danfe", "xml"]),
   R("dfe_drafts", "Aprovação de Notas", "Administrativo > Estoque", ["view", "approve", "ignore"]),
@@ -169,7 +169,7 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("fuel_supplies", "Abastecimentos", "Gestão de Frota"),
   R("preventive_maintenances", "Manutenções Preventivas", "Gestão de Frota"),
   R("scheduled_reviews", "Revisões Agendadas", "Gestão de Frota"),
-  R("equipment_transfers", "Transferência de Máquinas", "Gestão de Frota", ["view", "create"]),
+  R("equipment_transfers", "Transferência de Equipamentos", "Gestão de Frota", ["view", "create"]),
   // Fiscal
   R("nfe", "NFe Emitidas", "Gestão Fiscal > NFe", [...CRUD, "transmit", "cancel"]),
   R("xml_files", "Arquivos XML", "Gestão Fiscal > NFe", ["view", "export"]),
@@ -181,15 +181,15 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   // Relatórios (uma permissão por relatório, como no sistema de referência)
   ...[
     ["report.equipment", "Inventário"], ["report.accumulated_depreciation", "Depreciação Acumulada"],
-    ["report.herd_composition", "Composição Rebanho"], ["report.costing_livestock_area", "Custeio/Área Pecuária"], ["report.weighing_animal", "Pesagem/Animal"], ["report.weighing_batch", "Pesagem/Lote"], ["report.feedlot_weighing", "Pesagem Confinamento"], ["report.nutrition_batch", "Nutrição Consumo/Lote"], ["report.sanitary_batch", "Sanitário/Lote"], ["report.management_batch", "Manejo/Lote"], ["report.category_animal", "Estq. Animais/Categoria"], ["report.transfer_batch_area", "Transf/Lote/Módulo/Área"], ["report.animals", "Estoque/Rebanho"], ["report.application_management", "Aplicação/Manejo"], ["report.animal_movements", "Movimentação/Rebanho"], ["report.weaning", "Desmamas"], ["report.birth", "Nascimentos"], ["report.death", "Mortes"], ["report.animal_record", "Ficha Animal"], ["report.pregnant_cows", "Vacas Prenhas"], ["report.animal_sales", "Vendas/Animais"], ["report.animal_purchases", "Compras/Animais"], ["report.herd_evolution", "Evolução/Rebanho"], ["report.sisbov_identification", "Identificação/SISBOV"], ["report.sisbov_death", "Mortes/SISBOV"], ["report.sisbov_birth", "Nascimentos/SISBOV"], ["report.costing_batch", "Custeio/Lote"], ["report.costing_module", "Custeio/Módulo"], ["report.costing_animal", "Custeio/Animal"], ["report.reproduction_cost", "Custo Total/Reprodução"], ["report.batch_profitability", "Performance Animal"], ["report.reproductive_history", "Histórico Reprodutivo"], ["report.family_tree", "Registro Genealógico"], ["report.bull_efficiency", "Eficiência Reprodutiva Touro"], ["report.batch_movement_analysis", "Análise Mov. Lote"], ["report.receiver_productivity", "Prod. Receptora"], ["report.animals_per_batch", "Animais por Lote"], ["report.animal_batch_history", "Histórico de Animais/Lote"], ["report.feedlot_batch_control", "Lotes Confinamento"], ["report.feedlot_planned_consumption", "Consumo/Planejado"], ["report.feedlot_activity", "Atividades/Confinamento"],
+    ["report.herd_composition", "Composição Rebanho"], ["report.costing_livestock_area", "Custeio/Área Pecuária"], ["report.weighing_animal", "Pesagem/Animal"], ["report.weighing_batch", "Pesagem/Lote"], ["report.feedlot_weighing", "Pesagem Confinamento"], ["report.nutrition_batch", "Nutrição Consumo/Lote"], ["report.sanitary_batch", "Sanitário/Lote"], ["report.management_batch", "Manejo/Lote"], ["report.category_animal", "Estq. Animais/Categoria"], ["report.transfer_batch_area", "Transf/Lote/Módulo/Área"], ["report.animals", "Estoque/Rebanho"], ["report.application_management", "Aplicação/Manejo"], ["report.animal_movements", "Movimentação/Rebanho"], ["report.weaning", "Desmamas"], ["report.birth", "Nascimentos"], ["report.death", "Mortes"], ["report.animal_record", "Ficha Animal"], ["report.pregnant_cows", "Vacas Prenhas"], ["report.animal_sales", "Vendas/Animais"], ["report.animal_purchases", "Compras/Animais"], ["report.herd_evolution", "Evolução/Rebanho"], ["report.sisbov_identification", "Identificação/SISBOV"], ["report.sisbov_death", "Mortes/SISBOV"], ["report.sisbov_birth", "Nascimentos/SISBOV"], ["report.costing_batch", "Custeio/Lote"], ["report.costing_module", "Custeio/Módulo"], ["report.costing_animal", "Custeio/Animal"], ["report.reproduction_cost", "Custo Total/Reprodução"], ["report.batch_profitability", "Performance Animal"], ["report.reproductive_history", "Histórico Reprodutivo"], ["report.family_tree", "Registro Genealógico"], ["report.bull_efficiency", "Eficiência Reprodutiva Touro"], ["report.batch_movement_analysis", "Análise de Movimentação de Lote"], ["report.receiver_productivity", "Prod. Receptora"], ["report.animals_per_batch", "Animais por Lote"], ["report.animal_batch_history", "Histórico de Animais/Lote"], ["report.feedlot_batch_control", "Lotes Confinamento"], ["report.feedlot_planned_consumption", "Consumo/Planejado"], ["report.feedlot_activity", "Atividades/Confinamento"],
     ["report.rainfall", "Pluviometria"],
-    ["report.payment_schedule", "Agenda/Pagamentos"], ["report.receipt_schedule", "Agenda/Recebimentos"], ["report.payables", "C. à Pagar"], ["report.paid", "C. Pagas"], ["report.receivables", "C. à Receber"], ["report.received", "C. Recebidas"], ["report.received_interest", "Juros Recebidos"], ["report.paid_interest", "Juros Pagos"], ["report.bank_statement", "Extrato Financeiro"], ["report.ledger", "Livro Razão"], ["report.ledger_category", "Razão por Categoria"], ["report.rec_prev_real", "Rec. Prev. x Real"], ["report.pag_prev_real", "Pag. Prev. x Real"], ["report.budget_predicted", "Prev. x Realizado Anual"], ["report.cash_flow_category", "Fluxo de Caixa Mensal"], ["report.cash_flow_forecast", "Fluxo de Caixa Mensal Previsto"], ["report.financial_movement", "Movimento Bancário"], ["report.fiscal_difference", "Fiscal/Não Fiscal"], ["report.income_statement", "Custo de Produção"], ["report.accumulated_income_statement", "Custo de Produção Acumulado"], ["report.dre", "DRE"], ["report.dre_annual", "DRE Anual"], ["report.payment_cashflow", "Fluxo Mensal de Pagamento"], ["report.receipt_cashflow", "Fluxo Mensal de Recebimento"], ["report.cashflow_product", "Estoque Financeiro"], ["report.cost_center", "Centro de Custo"], ["report.cost_calculation", "Apuração de Custo"], ["report.financings", "Financiamentos"], ["report.advance_titles", "Adiantamento"], ["report.account_reconciliation", "Conciliação de Contas"], ["report.cost_centers_unified", "Centro de Custo/Unificado"], ["report.tax_accounts", "Contas Tributárias"], ["report.payable_receivable", "Consolidado Pagar/Receber"], ["report.provider_balance", "Saldo Devedor/Fornecedor"],
-    ["report.stock_movement", "Mov. Estoque"], ["report.requisitions", "Requisição/Saída"], ["report.stock_writeoffs", "Baixas Estoque"], ["report.dfe", "DFe/Lançadas"], ["report.feed_batch_cost", "Custo Produção Batida"], ["report.stocks_abc", "Curva ABC/Estoque"], ["report.receipts", "Recebimentos"], ["report.stocks_consolidated", "Estoque Consolidado"], ["report.stocks_lot_provider", "Lote/Fornecedor"], ["report.exits_cost_center", "Saídas x Centro Custo"],
-    ["report.supplies", "Suprimentos"], ["report.savings", "Savings"], ["report.ans", "ANS"], ["report.quotations", "Orçamentos (Cotações)"], ["report.purchase_forecast", "Produtos x Prev. Entrega"], ["report.supply_sla", "Relatório SLA"], ["report.purchase_management", "Gerencial de Solicitações"],
+    ["report.payment_schedule", "Agenda/Pagamentos"], ["report.receipt_schedule", "Agenda/Recebimentos"], ["report.payables", "Contas a Pagar"], ["report.paid", "Contas Pagas"], ["report.receivables", "Contas a Receber"], ["report.received", "Contas Recebidas"], ["report.received_interest", "Juros Recebidos"], ["report.paid_interest", "Juros Pagos"], ["report.bank_statement", "Extrato Financeiro"], ["report.ledger", "Livro Razão"], ["report.ledger_category", "Razão por Categoria"], ["report.rec_prev_real", "Recebimentos Previsto x Realizado"], ["report.pag_prev_real", "Pagamentos Previsto x Realizado"], ["report.budget_predicted", "Previsto x Realizado Anual"], ["report.cash_flow_category", "Fluxo de Caixa Mensal"], ["report.cash_flow_forecast", "Fluxo de Caixa Mensal Previsto"], ["report.financial_movement", "Movimento Bancário"], ["report.fiscal_difference", "Fiscal/Não Fiscal"], ["report.income_statement", "Custo de Produção"], ["report.accumulated_income_statement", "Custo de Produção Acumulado"], ["report.dre", "DRE"], ["report.dre_annual", "DRE Anual"], ["report.payment_cashflow", "Fluxo Mensal de Pagamento"], ["report.receipt_cashflow", "Fluxo Mensal de Recebimento"], ["report.cashflow_product", "Estoque Financeiro"], ["report.cost_center", "Centro de Custo"], ["report.cost_calculation", "Apuração de Custo"], ["report.financings", "Financiamentos"], ["report.advance_titles", "Adiantamento"], ["report.account_reconciliation", "Conciliação de Contas"], ["report.cost_centers_unified", "Centro de Custo/Unificado"], ["report.tax_accounts", "Contas Tributárias"], ["report.payable_receivable", "Consolidado Pagar/Receber"], ["report.provider_balance", "Saldo Devedor/Fornecedor"],
+    ["report.stock_movement", "Movimentação de Estoque"], ["report.requisitions", "Requisição/Saída"], ["report.stock_writeoffs", "Baixas Estoque"], ["report.dfe", "DFe/Lançadas"], ["report.feed_batch_cost", "Custo Produção Batida"], ["report.stocks_abc", "Curva ABC/Estoque"], ["report.receipts", "Recebimentos"], ["report.stocks_consolidated", "Estoque Consolidado"], ["report.stocks_lot_provider", "Lote/Fornecedor"], ["report.exits_cost_center", "Saídas x Centro Custo"],
+    ["report.supplies", "Suprimentos"], ["report.savings", "Savings"], ["report.ans", "ANS"], ["report.quotations", "Orçamentos (Cotações)"], ["report.purchase_forecast", "Produtos x Previsão de Entrega"], ["report.supply_sla", "Relatório SLA"], ["report.purchase_management", "Gerencial de Solicitações"],
     ["report.sales_client", "Vendas/Cliente"], ["report.sales_product", "Vendas/Produto"], ["report.sales_client_product", "Cliente/Produto"], ["report.sales_employee", "Vendas/Funcionário"], ["report.sales_abc", "Curva ABC Vendas"],
     ["report.monthly_calculation", "Apuração Mensal"], ["report.birthdays", "Aniversariantes"], ["report.logged_hours", "Horas Logadas"], ["report.active_employees", "Funcionários Ativos"], ["report.advances", "Adiantamento Salarial"],
     ["report.journal_entries", "Partida Dobrada"], ["report.nfe", "NFe/Emitidas"], ["report.nfe_product", "Faturamento"], ["report.cash_book", "Livro Caixa"],
-    ["report.machines", "Máquinas"], ["report.machine_supplies", "Abastecimentos"], ["report.machine_maintenances", "Manutenções"]
+    ["report.machines", "Equipamentos"], ["report.machine_supplies", "Abastecimentos"], ["report.machine_maintenances", "Manutenções"]
   ].map(([k, l]) => R(k!, l!, "Relatórios", ["view", "export"])),
   // Integrações
   R("integration.dominio", "Software Domínio", "Integrações", ["view", "edit", "export"]),

@@ -5,7 +5,7 @@ import { Plus, Trash2, Download, Eye, FileText, Image as ImageIcon, File as File
 import { api, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
+import { cn, num } from "@/lib/utils";
 import { Dialog, Spinner, Confirm, Field, Input } from "@/components/ui";
 import { IconBtn, PillBtn } from "./ui";
 
@@ -16,7 +16,7 @@ import { IconBtn, PillBtn } from "./ui";
  */
 export interface Attachment { id: string; file_name: string; mime_type: string | null; size_bytes: string | number | null; description: string | null; created_at: string; uploaded_by_name?: string | null }
 const MAX_BYTES = 20 * 1024 * 1024;
-export const formatSize = (n: number) => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`;
+export const formatSize = (n: number) => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${num(n / 1024, 1)} KB` : `${num(n / 1024 / 1024, 1)} MB`;
 const isImage = (m?: string | null) => Boolean(m?.startsWith("image/"));
 const isPdf = (m?: string | null) => m === "application/pdf";
 const isText = (m?: string | null) => Boolean(m && (m.startsWith("text/") || m.endsWith("/xml")));

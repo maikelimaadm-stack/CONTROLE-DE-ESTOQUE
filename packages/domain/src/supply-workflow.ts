@@ -17,10 +17,10 @@ export const PurchaseRequestStatus = {
 export type PurchaseRequestStatus = (typeof PurchaseRequestStatus)[keyof typeof PurchaseRequestStatus];
 
 export const PURCHASE_STATUS_LABELS: Record<PurchaseRequestStatus, string> = {
-  request: "Solicitação", quotation_in_progress: "Cotação em Andamento", awaiting_approval: "Aguardando Aprovação",
-  awaiting_awareness: "Aguardando Ciência", not_approved: "Pedido Não Aprovado", awaiting_purchase: "Aguardando a Compra",
-  purchase_done: "Compra Efetuada", purchase_received: "Compra Recebida", finished: "Pedido Finalizado",
-  cancelled: "Pedido Cancelado", under_review: "Analisar Processo"
+  request: "Solicitação", quotation_in_progress: "Cotação em andamento", awaiting_approval: "Aguardando aprovação",
+  awaiting_awareness: "Aguardando ciência", not_approved: "Pedido não aprovado", awaiting_purchase: "Aguardando a compra",
+  purchase_done: "Compra efetuada", purchase_received: "Compra recebida", finished: "Pedido finalizado",
+  cancelled: "Pedido cancelado", under_review: "Analisar processo"
 };
 
 export type PurchaseAction = "submit" | "acknowledge" | "start_quotation" | "send_to_approval" | "approve" | "reject" | "review" | "mark_purchased" | "mark_received" | "finish" | "cancel" | "back_step";

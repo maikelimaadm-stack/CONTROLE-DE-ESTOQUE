@@ -21,7 +21,7 @@ function Inner() {
     <div className="grid grid-cols-12 gap-3">
       <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.devolution_date} onChange={(e) => setH({ ...h, devolution_date: e.target.value })} /></Field>
-      <Field label="Responsável Devolução" span={4}><RefSelect resource="people" value={h.responsible_person_id} onChange={(v) => setH({ ...h, responsible_person_id: v ?? "" })} /></Field>
+      <Field label="Responsável pela devolução" span={4}><RefSelect resource="people" value={h.responsible_person_id} onChange={(v) => setH({ ...h, responsible_person_id: v ?? "" })} /></Field>
       <Field label="Safra" span={3}><RefSelect resource="harvests" value={h.harvest_id} onChange={(v) => setH({ ...h, harvest_id: v ?? "" })} /></Field>
     </div>
     <ItemsEditor items={items} onChange={setItems} fields={["warehouse", "product", "quantity", "unit_value", "cost_center"]} />

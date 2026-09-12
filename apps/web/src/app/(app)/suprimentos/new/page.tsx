@@ -19,7 +19,7 @@ export default function Page() {
   const isProduct = h.request_type === "product" || h.request_type === "finished_product";
   const total = items.reduce((a, i) => a + (Number(i.amount) || Number(i.reference_value || 0) * Number(i.quantity || 0)), 0);
   const submit = () => create.mutate({ ...h, authorizer_id: h.authorizer_id || null, observation: h.observation || null, items: items.map((i) => ({ product_id: i.product_id || null, description: i.description, quantity: i.quantity, reference_value: i.reference_value || null, amount: i.amount || null, observation: i.observation || null })) });
-  return <Card><CardHeader title="Nova Solicitação de Compra" subtitle="A solicitação entra no fluxo: Solicitação → Ciência → Cotação → Autorização → Compra → Recebimento → Finalizado" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.description || !h.justification || items.some((i) => !i.description)} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
+  return <Card><CardHeader title="Nova solicitação de compra" subtitle="A solicitação entra no fluxo: Solicitação → Ciência → Cotação → Autorização → Compra → Recebimento → Finalizado" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.description || !h.justification || items.some((i) => !i.description)} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
       <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.request_date} onChange={(e) => setH({ ...h, request_date: e.target.value })} /></Field>
@@ -31,7 +31,7 @@ export default function Page() {
       <Field label="Observação" span={12}><Textarea value={h.observation} onChange={(e) => setH({ ...h, observation: e.target.value })} /></Field>
     </div>
     <h3 className="text-xs font-semibold uppercase text-brand-700">Itens</h3>
-    <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>{isProduct && <th className="min-w-[220px]">Produto</th>}<th className="min-w-[220px]">Descrição</th><th className="w-24">Qtd.</th><th className="w-28">Vl. Referência</th><th className="w-28">Valor total</th><th>Observação</th><th className="w-8" /></tr></thead><tbody>
+    <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>{isProduct && <th className="min-w-[220px]">Produto</th>}<th className="min-w-[220px]">Descrição</th><th className="w-24">Quantidade</th><th className="w-28">Valor de referência</th><th className="w-28">Valor total</th><th>Observação</th><th className="w-8" /></tr></thead><tbody>
       {items.map((it, i) => <tr key={i}>
         {isProduct && <td><RefSelect resource="products" value={it.product_id || null} onChange={(v, o) => { upd(i, "product_id", v ?? ""); if (o && !it.description) upd(i, "description", o.label); }} /></td>}
         <td><Input value={it.description} onChange={(e) => upd(i, "description", e.target.value)} /></td>

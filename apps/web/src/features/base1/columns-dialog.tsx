@@ -50,7 +50,7 @@ export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, o
           </div>
         </div>
       </div>
-      <div className="flex justify-end gap-2 border-t px-5 py-3"><PillBtn tone="gray" onClick={() => onOpenChange(false)}>Cancelar</PillBtn><PillBtn onClick={() => { onApply(inUse); onOpenChange(false); }}>Ok</PillBtn></div>
+      <div className="flex justify-end gap-2 border-t px-5 py-3"><PillBtn tone="gray" onClick={() => onOpenChange(false)}>Cancelar</PillBtn><PillBtn onClick={() => { onApply(inUse); onOpenChange(false); }}>OK</PillBtn></div>
     </DialogP.Content>
   </DialogP.Portal></DialogP.Root>;
 }

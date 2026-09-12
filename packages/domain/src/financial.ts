@@ -1,16 +1,16 @@
 import { D, DomainError, addDays, addMonths, money, splitEvenly, sum, type DecimalString, type ISODate } from "@agro/shared";
 
 export type TitleStatus = "open" | "partially_paid" | "paid" | "cancelled";
-export const TITLE_STATUS_LABELS: Record<TitleStatus, string> = { open: "Á vencer", partially_paid: "Baixa Parcial", paid: "Baixada", cancelled: "Cancelada" };
+export const TITLE_STATUS_LABELS: Record<TitleStatus, string> = { open: "A vencer", partially_paid: "Baixa parcial", paid: "Baixada", cancelled: "Cancelada" };
 
 /** Status exibido na listagem (à vencer / vencida derivam da data). */
 export function displayTitleStatus(t: { status: TitleStatus; dueDate: ISODate; paymentType?: string }, today: ISODate): string {
   if (t.status === "paid") return t.paymentType === "advance" ? "Adiantamento/Baixado" : t.paymentType === "invoice_group" ? "Fatura/Baixado" : "Baixada";
   if (t.status === "cancelled") return "Cancelada";
-  if (t.status === "partially_paid") return "Baixa Parcial";
+  if (t.status === "partially_paid") return "Baixa parcial";
   if (t.paymentType === "advance") return "Adiantamento/Pendente";
   if (t.paymentType === "invoice_group") return "Fatura/Pendente";
-  return t.dueDate < today ? "Vencida" : "Á vencer";
+  return t.dueDate < today ? "Vencida" : "A vencer";
 }
 
 export interface InstallmentPlanInput {
