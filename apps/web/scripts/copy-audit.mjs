@@ -30,7 +30,7 @@ const ENUM_COLS = "status|title_status|payment_type|origin|source_type|classific
 const PROPS = "label|labelPlural|title|subtitle|placeholder|text|hint|emptyText|aria-label|description|submitLabel|cancelLabel|deleteText|module";
 
 const RULES = [
-  { id: "ingles", test: (t) => /(^|[^A-Za-z])(Status|Dashboard|Information|Warning|Success|Error|Upload|Download|Loading|Submit|Cancel|Delete|Save|Search|Settings|Unknown|Undefined|None)([^A-Za-z]|$)/.test(t), hint: "PT-BR: Situação, Painel, Informações, Aviso, Sucesso, Erro, Enviar/Importar, Baixar…" },
+  { id: "ingles", test: (t) => /(^|[^A-Za-z])(Status|Dashboard|Information|Warning|Success|Error|Upload|Download|Loading|Submit|Cancel|Delete|Save|Search|Settings|Unknown|Undefined|None|Docs|Logins?|Lead time)([^A-Za-z]|$)/.test(t), hint: "PT-BR: Situação, Painel, Informações, Aviso, Sucesso, Erro, Enviar/Importar, Baixar…" },
   { id: "ok", test: (t) => t.trim() === "Ok", hint: "usar \"OK\" (COPY.ok)" },
   { id: "acento", test: (t) => /Á vencer/.test(t), hint: "\"A vencer\" (sem crase)" },
   { id: "abreviacao", test: (t) => /(^|[^A-Za-zÀ-ÿ])(Dt|Vl|Qtd|Qtde|Cód|Obs|Máx|Mín|Transf|Doc|Cat|Venc|Tel|Insc|Prev|Núm|Últ|Exec|Cond|Int|pagto|reprod|Mov|Unit)\.(?!\.)/i.test(t) || /(^|\s)[csp]\/\s/i.test(t), hint: "escrever por extenso (Data, Valor, Quantidade, Código, Observação, Transferência, Documento…)" }
