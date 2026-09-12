@@ -15,7 +15,7 @@ const routesDir = path.join(here, "../../src/routes");
 /** Tabelas de erp.* com coluna farm_id (fonte: information_schema no banco de testes — manter em sincronia ao migrar). */
 const FARM_TABLES = ["animal_handlings", "animal_movements", "animal_retroactive_costs", "animals", "areas", "bank_movements", "batches", "breeding_seasons", "budget_plannings", "contracts", "devolutions", "dfe_documents", "diet_batches", "documents", "earnings", "equipments", "feed_batches", "feed_deliveries", "feedlot_yards", "financial_freezes", "financial_titles", "fuel_supplies", "grazing_modules", "herd_lots", "input_entries", "invoices", "journal_entries", "livestock_plannings", "maintenances", "opening_balances", "processings", "purchase_requests", "rainfalls", "requisitions", "salary_advances", "sales_documents", "service_orders", "stock_corrections", "stock_movements", "stock_writeoffs", "trough_readings", "warehouses", "weighings"];
 /** Marcadores que comprovam escopo de fazenda (helpers) ou uso de carregador compartilhado já protegido. */
-const SCOPE_MARKERS = ["farmScope(", "farmScopeSql(", "scopedById(", "allowedFarms(", "assertFarmVisible(", "farmAllowed(", "membership.farmIds", "farms(ctx", "farmClause(", "loadForWrite(", "listDocs(", "getDoc(", "getTitle(", "loadRequest(", "listResource(", "getOne(", "listTitles(", "assertFarm(", "settle(ctx", "createTitles(", "createBankMovement(", "transition(ctx"];
+const SCOPE_MARKERS = ["farmScope(", "farmScopeSql(", "scopedById(", "allowedFarms(", "assertFarmVisible(", "farmAllowed(", "membership.farmIds", "farms(ctx", "farmClause(", "loadForWrite(", "listDocs(", "getDoc(", "getTitle(", "loadRequest(", "listResource(", "getOne(", "listTitles(", "assertFarm(", "settle(ctx", "createTitles(", "createBankMovement(", "transition(ctx", "authorizeAttachmentParent("];
 /** Handlers organization-scoped por desenho (não filtram por fazenda) — cada um com a razão. */
 const ALLOW: Record<string, string> = {
   "financial.ts:/financial/bank-accounts/balances": "contas bancárias são da organização (bank_account_farms é vínculo informativo)",
@@ -41,10 +41,7 @@ const ALLOW: Record<string, string> = {
   "resources.ts:/resources/:key/:id": "getOne / updateOne / deleteOne aplicam escopo internamente",
   "reports.ts:/reports/:key": "cada relatório usa farmClause (membership + fazenda)",
   "reports.ts:/exports/:resource": "usa listResource",
-  "saved-reports.ts:/saved-reports/run": "usa listResource",
-  "attachments.ts:/attachments": "anexo é recurso filho genérico (entity/entity_id): autorização pela permissão attachments.* + tenant; escopo por fazenda do registro pai é pendência documentada",
-  "attachments.ts:/attachments/:id/content": "idem",
-  "attachments.ts:/attachments/:id": "idem"
+  "saved-reports.ts:/saved-reports/run": "usa listResource"
 };
 
 function handlers(file: string): { url: string; body: string }[] {

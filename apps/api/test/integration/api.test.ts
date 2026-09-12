@@ -257,7 +257,7 @@ describe("anexos por registro", () => {
     expect((await h.app.inject({ method: "POST", url: "/api/attachments", headers: h.headers(), payload: { entity: "farms", entity_id: I.farm, file_name: "x.exe", mime_type: "application/x-msdownload", data_base64: pdf } })).statusCode).toBe(422);
     expect((await h.app.inject({ method: "POST", url: "/api/attachments", headers: h.headers(), payload: { entity: "farms", entity_id: I.farm, file_name: "x.png", mime_type: "image/png", data_base64: pdf } })).statusCode).toBe(422);
     // operador pode ver/enviar, não pode excluir
-    expect((await h.app.inject({ method: "GET", url: `/api/attachments?entity=farms&entity_id=${I.farm}`, headers: h.opHeaders() })).statusCode).toBe(200);
+    expect((await h.app.inject({ method: "GET", url: `/api/attachments?entity=farms&entity_id=${I.farm}`, headers: h.opHeaders() })).statusCode).toBe(403); // attachments.view não contorna farms.view (permissão do pai)
     expect((await h.app.inject({ method: "DELETE", url: `/api/attachments/${id}`, headers: h.opHeaders() })).statusCode).toBe(403);
     expect((await h.app.inject({ method: "DELETE", url: `/api/attachments/${id}`, headers: h.headers() })).statusCode).toBe(200);
     expect((await h.app.inject({ method: "GET", url: `/api/attachments/${id}/content`, headers: h.headers() })).statusCode).toBe(404);

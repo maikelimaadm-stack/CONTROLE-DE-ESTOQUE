@@ -42,6 +42,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       for (const p of d.permissions) await ctx.tx.query("insert into erp.role_permissions(role_id,permission_key) values ($1,$2) on conflict do nothing", [id, p]);
     }
     await audit(ctx.tx, ctx, "roles", id, "update", { permissions: d.permissions.length });
+    app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto
     return { id };
   }));
   app.delete("/admin/roles/:id", async (req) => runService(app, req, "roles.delete", async (ctx) => {
@@ -50,6 +51,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!cur.rows[0]) throw notFound("Perfil"); if (cur.rows[0].is_system) throw validation("Perfil de sistema não pode ser excluído");
     const inUse = await ctx.tx.query("select 1 from erp.organization_members where role_id=$1 and is_active limit 1", [id]); if (inUse.rowCount) throw validation("Perfil em uso por usuários");
     await ctx.tx.query("update erp.roles set deleted_at=now() where id=$1", [id]);
+    app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto
     return { id, deleted: true };
   }));
 
@@ -73,6 +75,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, u.rows[0]!.id]);
     for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, u.rows[0]!.id, b]);
     await audit(ctx.tx, ctx, "users", u.rows[0]!.id, "create");
+    app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto
     return { id: u.rows[0]!.id, member_id: m.rows[0]!.id };
   })));
   app.put("/admin/members/:userId", async (req) => runService(app, req, "users.edit", async (ctx) => {
@@ -87,6 +90,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (d.farm_ids) { await ctx.tx.query("delete from erp.member_farms where member_id=$1", [m.rows[0].id]); for (const f of d.farm_ids) await ctx.tx.query("insert into erp.member_farms(member_id,farm_id) values ($1,$2) on conflict do nothing", [m.rows[0].id, f]); }
     if (d.boss_user_ids) { await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, userId]); for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, userId, b]); }
     await audit(ctx.tx, ctx, "users", userId, "update");
+    app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto
     return { id: userId };
   }));
 
