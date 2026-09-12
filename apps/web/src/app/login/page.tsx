@@ -5,6 +5,9 @@ import { Tractor } from "lucide-react";
 import { api, setSession } from "@/lib/api";
 import { Button, Input, Label } from "@/components/ui";
 
+/** Credenciais de demonstração só aparecem quando o ambiente declara NEXT_PUBLIC_DEMO_MODE=true (nunca em produção). */
+const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+
 export default function LoginPage() {
   const [email, setEmail] = useState(""); const [password, setPassword] = useState(""); const [error, setError] = useState<string | null>(null); const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -23,7 +26,7 @@ export default function LoginPage() {
           {error && <p className="text-xs text-red-600">{error}</p>}
           <Button type="submit" className="w-full" size="lg" loading={loading}>Entrar</Button>
         </div>
-        <p className="mt-4 text-center text-[11px] text-slate-400">Ambiente de demonstração: admin@demo.local / Demo@12345</p>
+        {DEMO_MODE && <p className="mt-4 text-center text-[11px] text-slate-400">Ambiente de demonstração: admin@demo.local / Demo@12345</p>}
       </form>
     </div>
   );
