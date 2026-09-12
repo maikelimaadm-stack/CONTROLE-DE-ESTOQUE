@@ -3,6 +3,8 @@ import { ENTIDADES_ID_GLOBAL, resolverRegistroGlobal, validarRegistroIdGlobal } 
 import { colunaDiscriminadora, variantesDeclaradas } from "@erp/plataforma";
 import { allPermissionKeys, MANEJOS_REBANHO, MOVIMENTACOES_INTERNAS, MOVIMENTACOES_REBANHO, TODOS_TIPOS_MOVIMENTACAO, permissaoManejo, permissaoMovimentacao } from "@agro/domain";
 import { readFileSync } from "node:fs";
+// @ts-expect-error — parser de migrations em JS puro, compartilhado com os gates de documentação
+import { companyColumnsOf, isSoftDeletable, readSchema } from "../../../../scripts/lib/schema.mjs";
 import { ATTACHMENT_PARENTS } from "../../src/lib/attachment-parent.js";
 
 /**
@@ -85,6 +87,26 @@ describe("registry de ID Global × catálogo de permissões", () => {
     };
     expect(valores("movement_type")).toEqual([...TODOS_TIPOS_MOVIMENTACAO].sort());
     expect(valores("handling_type")).toEqual(MANEJOS_REBANHO.map((o) => o.tipo).sort());
+  });
+
+  /**
+   * §14 — EXISTÊNCIA FUNCIONAL. `exclusaoLogica` decide se o resolvedor filtra `deleted_at is null`; se ela
+   * divergir do schema real, ou o ID Global abre um registro excluído (que a rota canônica esconde) ou o SQL
+   * quebra numa coluna inexistente. A verdade é a migration.
+   */
+  it("exclusaoLogica de cada entidade espelha o schema real, e a coluna de empresa existe", () => {
+    const schema = readSchema();
+    const divergencias: string[] = [];
+    for (const e of ENTIDADES_ID_GLOBAL) {
+      const t = schema.get(e.tabela);
+      if (!t) { divergencias.push(`${e.tipoEntidade}: tabela ${e.tabela} não existe nas migrations`); continue; }
+      if (isSoftDeletable(t) !== e.exclusaoLogica) divergencias.push(`${e.tipoEntidade}: exclusaoLogica=${e.exclusaoLogica}, schema=${isSoftDeletable(t)}`);
+      if (e.colunaEmpresa && !t.columns.has(e.colunaEmpresa)) divergencias.push(`${e.tipoEntidade}: coluna de empresa ${e.colunaEmpresa} inexistente`);
+      if (!e.colunaEmpresa && companyColumnsOf(t).length) divergencias.push(`${e.tipoEntidade}: declara registro da organização mas tem ${companyColumnsOf(t).join("/")}`);
+      if (!t.columns.has("organization_id")) divergencias.push(`${e.tipoEntidade}: tabela sem organization_id`);
+    }
+    expect(divergencias).toEqual([]);
+    expect(ENTIDADES_ID_GLOBAL.length).toBeGreaterThanOrEqual(23);
   });
 
   it("o schema de criação de movimentação aceita só os tipos com tela própria", () => {

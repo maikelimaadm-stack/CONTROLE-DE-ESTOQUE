@@ -46,6 +46,20 @@ const criar = async (url: string, payload: Record<string, unknown>): Promise<str
   expect(r.statusCode, `${url}: ${r.body}`).toBe(201);
   return j(r).id as string;
 };
+/**
+ * Movimentação criada direto no banco: usada para cobrir tipos que a rota de criação não aceita (internos) e
+ * para mudar a empresa de um registro sem passar por regra de negócio.
+ */
+async function inserirMovimentacao(tipo: string, codigo: string, farmId?: string): Promise<string> {
+  const admin = createPool(TEST_URL, { max: 1 });
+  try {
+    const r = await admin.query<{ id: string }>(
+      "insert into erp.animal_movements(organization_id,farm_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,$4,'2026-09-10',$5) returning id",
+      [h.demo.orgId, farmId ?? I.farm, codigo, tipo, h.demo.adminUserId]);
+    return r.rows[0]!.id;
+  } finally { await admin.end(); }
+}
+
 const resolver = (idGlobal: number, headers: Hdr) => h.app.inject({ method: "GET", url: `/api/registros-globais/${idGlobal}`, headers });
 
 beforeAll(async () => { h = await harness(); I = await ids(h); }, 180_000);
@@ -80,10 +94,35 @@ describe("ID Global — alocação", () => {
     } finally { await admin.end(); }
   });
 
-  it("recusa entidade não elegível e variante sem tela canônica (nunca cria registro irresolvível)", async () => {
+  /**
+   * MATRIZ C — a ponte global nunca aponta para o vazio. Entidade não elegível, registro inexistente e
+   * variante sem tela canônica são recusados ANTES de consumir um número.
+   */
+  it("recusa entidade não elegível, registro inexistente e variante sem tela canônica", async () => {
     await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "input_entry_items", I.product!))).rejects.toThrow(/sem ID Global/i);
-    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", I.animal!))).rejects.toThrow(/handling_type/i);
-    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", I.animal!))).rejects.toThrow(/movement_type/i);
+    // UUID que não existe em lugar algum: nunca vira ponte
+    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "animals", "cccccccc-cccc-4ccc-8ccc-cccccccccccc"))).rejects.toThrow(/inexistente/i);
+    // id de um animal usado como se fosse manejo: o registro não existe NAQUELA tabela
+    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", I.animal!))).rejects.toThrow(/inexistente/i);
+    // registro real cujo tipo é INTERNO (efeito de outra operação): existe, mas não tem tela própria
+    const interna = await inserirMovimentacao("inventory", "GID-INT1");
+    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", interna))).rejects.toThrow(/movement_type/i);
+    const admin = createPool(TEST_URL, { max: 1 });
+    try {
+      const r = await admin.query("select 1 from erp.registros_globais where organization_id=$1 and tipo_entidade='animal_movements' and id_entidade=$2", [h.demo.orgId, interna]);
+      expect(r.rowCount, "movimentação interna não pode ter ponte global").toBe(0);
+    } finally { await admin.end(); }
+  });
+
+  it("registro excluído deixa de ser navegável pelo ID Global (mesma existência da rota canônica)", async () => {
+    const entrada = await criar("/api/stock/input-entries", { farm_id: I.farm, entry_date: "2026-09-03", items: [{ product_id: I.product, quantity: "1", unit_value: "2", warehouse_id: I.warehouse }] });
+    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "input_entries", entrada));
+    expect((await resolver(idGlobal, h.headers())).statusCode).toBe(200);
+    const admin = createPool(TEST_URL, { max: 1 });
+    try { await admin.query("update erp.input_entries set deleted_at=now() where id=$1", [entrada]); } finally { await admin.end(); }
+    const depois = await resolver(idGlobal, h.headers());
+    expect(depois.statusCode, depois.body).toBe(404);
+    expect(j(depois).error?.code).toBe("NOT_FOUND");
   });
 
   it("grava a rota canônica resolvida a partir do registro", async () => {
@@ -247,6 +286,42 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
     const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", I.animal!));
     const semAnimais = await membro("Sem Animais", "sem.animais@demo.local", [], ["products.view"]);
     expect((await resolver(idGlobal, semAnimais)).statusCode).toBe(404);
+  });
+});
+
+/**
+ * MATRIZ B — O ÍNDICE NÃO É A AUTORIDADE.
+ * `erp.registros_globais.empresa_id` é índice denormalizado: quando o animal muda de empresa, ele envelhece.
+ * A autorização precisa usar a empresa ATUAL do registro fonte — senão quem só tem acesso à empresa antiga
+ * continuaria abrindo o registro, e quem tem acesso à empresa nova levaria 404.
+ */
+describe("ID Global — empresa vem do registro fonte, não do índice", () => {
+  it("animal transferido de empresa passa a responder pela empresa NOVA", async () => {
+    const animal = await criar("/api/livestock/animals", {
+      farm_id: I.farm, species_id: (await comoServico(async (ctx) => (await ctx.tx.query<{ id: string }>("select id from erp.animal_species order by name limit 1")).rows[0]!.id)),
+      category_id: I.speciesCategory, entry_date: "2026-09-01", sex: "M",
+      identifications: [{ identification_type_id: I.idType, value: `GID-EMP-${Date.now()}`, is_primary: true }]
+    });
+    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", animal));
+
+    const soEmpresaA = await membro("Rebanho Empresa A", "rebanho.a@demo.local", [I.farm!], ["animals.view"]);
+    const soEmpresaB = await membro("Rebanho Empresa B", "rebanho.b@demo.local", [I.farm2!], ["animals.view"]);
+    expect((await resolver(idGlobal, soEmpresaA)).statusCode).toBe(200);
+    expect((await resolver(idGlobal, soEmpresaB)).statusCode).toBe(404);
+
+    // transferência: o índice global continua apontando para a empresa antiga de propósito
+    const admin = createPool(TEST_URL, { max: 1 });
+    try {
+      await admin.query("update erp.animals set farm_id=$2 where id=$1", [animal, I.farm2]);
+      const indice = await admin.query<{ empresa_id: string }>("select empresa_id from erp.registros_globais where organization_id=$1 and tipo_entidade='animals' and id_entidade=$2", [h.demo.orgId, animal]);
+      expect(indice.rows[0]!.empresa_id, "o índice denormalizado deve mesmo estar desatualizado neste teste").toBe(I.farm);
+    } finally { await admin.end(); }
+
+    const depoisA = await resolver(idGlobal, soEmpresaA);
+    expect(depoisA.statusCode, depoisA.body).toBe(404);
+    const depoisB = await resolver(idGlobal, soEmpresaB);
+    expect(depoisB.statusCode, depoisB.body).toBe(200);
+    expect(j(depoisB).empresaId, "a resposta mostra a empresa ATUAL").toBe(I.farm2);
   });
 });
 
