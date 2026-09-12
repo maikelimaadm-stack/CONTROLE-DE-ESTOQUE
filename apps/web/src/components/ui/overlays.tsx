@@ -12,10 +12,22 @@ import { Button } from "./button";
  * e Drawer (painel lateral). Tamanhos oficiais: sm · md · lg · xl — nenhuma tela define largura própria.
  */
 export type OverlaySize = "sm" | "md" | "lg" | "xl";
+/**
+ * Perfil dimensional (altura) do Dialog — docs/UI-STANDARD.md › Overlays:
+ *   compact   altura pelo conteúdo, limitada (confirmações, formulários curtos)
+ *   content   altura pelo conteúdo até --mg-dialog-max-h (formulários comuns estáticos)
+ *   standard  frame fixo --mg-dialog-h-standard (conteúdo assíncrono/variável: o frame nasce no tamanho final)
+ *   large     frame fixo --mg-dialog-h-large (grades, histórico, anexos, formulários extensos)
+ *   workspace frame quase viewport (fluxos complexos) — nunca para CRUD simples
+ * Padrão por largura: sm → compact · md → content · lg → large · xl → workspace. Header e footer são fixos; só o
+ * corpo rola — o frame não muda de altura entre LoadingState, ErrorState, EmptyState e conteúdo.
+ */
+export type OverlayProfile = "compact" | "content" | "standard" | "large" | "workspace";
 const DIALOG_W: Record<OverlaySize, string> = { sm: "max-w-md", md: "max-w-2xl", lg: "max-w-4xl", xl: "max-w-6xl" };
+const DEFAULT_PROFILE: Record<OverlaySize, OverlayProfile> = { sm: "compact", md: "content", lg: "large", xl: "workspace" };
 const DRAWER_W: Record<OverlaySize, string> = { sm: "w-[360px]", md: "w-[480px]", lg: "w-[640px]", xl: "w-[860px]" };
 
-interface OverlayBase { open: boolean; onOpenChange: (open: boolean) => void; title: string; /** descrição visível sob o título (também é a descrição acessível); sem ela o título faz o papel */ description?: React.ReactNode; children?: React.ReactNode; footer?: React.ReactNode; size?: OverlaySize; /** bloqueia ESC, clique fora e o botão fechar (operação em curso / etapa crítica) */ preventClose?: boolean; hideClose?: boolean; className?: string; bodyClassName?: string; testId?: string }
+interface OverlayBase { open: boolean; onOpenChange: (open: boolean) => void; title: string; /** descrição visível sob o título (também é a descrição acessível); sem ela o título faz o papel */ description?: React.ReactNode; children?: React.ReactNode; footer?: React.ReactNode; size?: OverlaySize; /** perfil de altura (padrão derivado de `size`) */ profile?: OverlayProfile; /** bloqueia ESC, clique fora e o botão fechar (operação em curso / etapa crítica) */ preventClose?: boolean; hideClose?: boolean; className?: string; bodyClassName?: string; testId?: string }
 
 /**
  * Devolve o foco a quem abriu o overlay. O Radix só refoca o seu próprio `Trigger`; aqui os overlays abrem por estado
@@ -35,12 +47,13 @@ function Header({ title, description, hideClose, preventClose, kind }: { title: 
   </div>;
 }
 
-export function Dialog({ open, onOpenChange, title, description, children, footer, size = "md", preventClose, hideClose, className, bodyClassName, testId }: OverlayBase) {
+export function Dialog({ open, onOpenChange, title, description, children, footer, size = "md", profile, preventClose, hideClose, className, bodyClassName, testId }: OverlayBase) {
+  const prof = profile ?? DEFAULT_PROFILE[size];
   const guard = (e: Event) => { if (preventClose) e.preventDefault(); };
   const focus = useRestoreFocus();
   return <DialogP.Root open={open} onOpenChange={(o) => { if (!o && preventClose) return; onOpenChange(o); }}><DialogP.Portal>
     <DialogP.Overlay className="mg-overlay" />
-    <DialogP.Content className={cn("mg-dialog", DIALOG_W[size], className)} data-size={size} data-testid={testId ?? "dialog"} onEscapeKeyDown={guard} onPointerDownOutside={guard} onInteractOutside={guard} {...focus}>
+    <DialogP.Content className={cn("mg-dialog", DIALOG_W[size], className)} data-size={size} data-profile={prof} data-testid={testId ?? "dialog"} onEscapeKeyDown={guard} onPointerDownOutside={guard} onInteractOutside={guard} {...focus}>
       <Header kind="dialog" title={title} description={description} hideClose={hideClose} preventClose={preventClose} />
       <div className={cn("mg-dialog__body", bodyClassName)}>{children}</div>
       {footer && <div className="mg-dialog__footer">{footer}</div>}
@@ -60,7 +73,7 @@ export function ConfirmDialog({ open, onOpenChange, title, description, text, co
 /** compatibility alias — usar ConfirmDialog. */
 export const Confirm = ConfirmDialog;
 
-export function Drawer({ open, onOpenChange, title, description, children, footer, side = "right", size = "md", preventClose, hideClose, className, bodyClassName, testId }: OverlayBase & { side?: "right" | "left" }) {
+export function Drawer({ open, onOpenChange, title, description, children, footer, side = "right", size = "md", preventClose, hideClose, className, bodyClassName, testId }: Omit<OverlayBase, "profile"> & { side?: "right" | "left" }) {
   const guard = (e: Event) => { if (preventClose) e.preventDefault(); };
   const focus = useRestoreFocus();
   return <DialogP.Root open={open} onOpenChange={(o) => { if (!o && preventClose) return; onOpenChange(o); }}><DialogP.Portal>

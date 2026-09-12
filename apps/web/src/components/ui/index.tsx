@@ -83,7 +83,7 @@ export { Button, buttonVariants, type ButtonProps } from "./button";
 export { Card, CardBody } from "./card";
 export { Badge } from "./badge";
 export { Spinner } from "./spinner";
-export { Dialog, ConfirmDialog, Confirm, Drawer, type OverlaySize, type ConfirmDialogProps } from "./overlays";
+export { Dialog, ConfirmDialog, Confirm, Drawer, type OverlaySize, type OverlayProfile, type ConfirmDialogProps } from "./overlays";
 export { LoadingState, EmptyState, ErrorState, Empty, ErrorBox, safeErrorMessage } from "./states";
 export { StatusBadge, statusTone, TONE_BADGE, type StatusTone, type BadgeTone, type StatusBadgeProps } from "./status-badge";
 export { PageHeader, CardHeader, type PageHeaderProps, type Crumb } from "./page-header";

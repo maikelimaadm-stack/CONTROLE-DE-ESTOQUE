@@ -43,6 +43,8 @@ input, select, textarea { @apply text-[13px]; }
   /* primitives (UI-02): overlays, cabeçalho de página e espaçamento — sem redesenho, só valores antes repetidos */
   --mg-overlay-bg: rgba(15, 23, 42, .45); --mg-radius-dialog: var(--mg-radius-card); --mg-dialog-shadow: 0 24px 48px rgba(15, 23, 42, .18), 0 4px 12px rgba(15, 23, 42, .08);
   --mg-z-overlay: 40; --mg-z-dialog: 50; --mg-page-gap: 8px;
+  /* perfis dimensionais de overlay (UI-STAB-01): o frame nasce no tamanho final; só o corpo rola */
+  --mg-dialog-safe-gap: 48px; --mg-dialog-max-h: calc(100dvh - var(--mg-dialog-safe-gap)); --mg-dialog-h-standard: min(560px, var(--mg-dialog-max-h)); --mg-dialog-h-large: min(720px, var(--mg-dialog-max-h)); --mg-dialog-h-workspace: calc(100dvh - 32px); --mg-dialog-h-compact-max: min(70dvh, var(--mg-dialog-max-h));
 }
 body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 
@@ -426,11 +428,19 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 @keyframes mg-drawer-in-right { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 @keyframes mg-drawer-in-left { from { transform: translateX(-24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
 .mg-overlay { position: fixed; inset: 0; z-index: var(--mg-z-overlay); background: var(--mg-overlay-bg); animation: mg-overlay-in .15s ease both; }
-.mg-dialog { position: fixed; left: 50%; top: 50%; z-index: var(--mg-z-dialog); display: flex; flex-direction: column; width: 95vw; max-height: 92dvh; transform: translate(-50%, -50%); background: var(--mg-bg-card); border-radius: var(--mg-radius-dialog); box-shadow: var(--mg-dialog-shadow); outline: none; animation: mg-dialog-in .18s cubic-bezier(.2,.8,.2,1) both; }
+.mg-dialog { position: fixed; left: 50%; top: 50%; z-index: var(--mg-z-dialog); display: flex; flex-direction: column; width: 95vw; max-height: var(--mg-dialog-max-h); transform: translate(-50%, -50%); background: var(--mg-bg-card); border-radius: var(--mg-radius-dialog); box-shadow: var(--mg-dialog-shadow); outline: none; animation: mg-dialog-in .18s cubic-bezier(.2,.8,.2,1) both; }
 .mg-dialog__header, .mg-drawer__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--mg-divider); }
 .mg-dialog__title, .mg-drawer__title { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.35; color: var(--mg-text-1); }
 .mg-dialog__description, .mg-drawer__description { margin: 2px 0 0; font-size: 11.5px; color: var(--mg-text-2); }
 .mg-dialog__body, .mg-drawer__body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 16px; }
+.mg-dialog__header, .mg-dialog__footer, .mg-drawer__header, .mg-drawer__footer { flex: 0 0 auto; }
+.mg-dialog[data-profile="compact"] { max-height: var(--mg-dialog-h-compact-max); }
+.mg-dialog[data-profile="standard"] { height: var(--mg-dialog-h-standard); }
+.mg-dialog[data-profile="large"] { height: var(--mg-dialog-h-large); }
+.mg-dialog[data-profile="workspace"] { height: var(--mg-dialog-h-workspace); width: calc(100vw - 32px); max-width: none; }
+/* estados genéricos ocupam o corpo sem alterar o frame; tabelas rolam por dentro com cabeçalho fixo */
+.mg-dialog__body > [data-testid="loading-state"], .mg-dialog__body > [data-testid="error-state"][class*="py-8"], .mg-dialog__body > [data-testid="empty-state"], .mg-drawer__body > [data-testid="loading-state"] { min-height: 100%; }
+.mg-dialog__body .mg-shell--table, .mg-drawer__body .mg-shell--table { max-height: 100%; }
 .mg-dialog__footer, .mg-drawer__footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--mg-divider); }
 .mg-drawer { position: fixed; top: 0; bottom: 0; z-index: var(--mg-z-dialog); display: flex; flex-direction: column; max-width: 100vw; background: var(--mg-bg-card); box-shadow: var(--mg-dialog-shadow); outline: none; }
 .mg-drawer--right { right: 0; border-radius: var(--mg-radius-dialog) 0 0 var(--mg-radius-dialog); animation: mg-drawer-in-right .2s cubic-bezier(.2,.8,.2,1) both; }
