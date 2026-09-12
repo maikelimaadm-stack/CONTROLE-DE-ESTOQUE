@@ -5,11 +5,11 @@ import { useQuery } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, dateBR, todayISO } from "@/lib/utils";
-import { Badge, Button, Card, CardHeader, CardBody, Dialog, Field, Input } from "@/components/ui";
+import { Button, Card, CardHeader, CardBody, Dialog, Field, Input, StatusBadge } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { DataTable } from "@/components/ui/data-table";
 import { useCreate, useFarmDefault, type Row } from "@/features/docs/shared";
-import { COPY, enumLabel, statusLabel } from "@/lib/copy";
+import { COPY, enumLabel } from "@/lib/copy";
 export function SalaryAdvancesPanel() {
   const { can } = useAuth(); const farm = useFarmDefault(); const [open, setOpen] = React.useState(false); const [page, setPage] = React.useState(1);
   const q = useQuery({ queryKey: ["advances", page], queryFn: () => api<{ items: Row[]; total: number }>(`/api/hr/advances${qs({ page, pageSize: 20 })}`) });
@@ -17,7 +17,7 @@ export function SalaryAdvancesPanel() {
   React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
   const create = useCreate("/api/hr/advances", () => { setOpen(false); void q.refetch(); });
   return <Card><CardHeader title="Adiantamentos Salariais" subtitle="Gera conta a pagar ao funcionário; é descontado automaticamente na apuração do mês." actions={can("salary_advances.create") && <Button size="sm" onClick={() => setOpen(true)}>Novo adiantamento</Button>} /><CardBody>
-    <DataTable rows={q.data?.items ?? []} total={q.data?.total} page={page} pageSize={20} onPage={setPage} loading={q.isLoading} columns={[{ key: "code", label: "Código" }, { key: "advance_date", label: "Data", render: (r) => dateBR(r["advance_date"] as string) }, { key: "person_name", label: "Funcionário" }, { key: "farm_name", label: "Fazenda" }, { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }, { key: "installments", label: "Parcelas" }, { key: "status", label: COPY.situacao, render: (r) => <Badge tone={r["status"] === "open" ? "amber" : "green"}>{statusLabel(r["status"])}</Badge> }, { key: "title_status", label: "Título", render: (r) => r["title_id"] ? <Link className="text-brand-700 underline" href={`/financeiro/contas-a-pagar/${r["title_id"]}`}>{enumLabel("title_status", r["title_status"])} ({brl(r["title_balance"] as string)})</Link> : "—" }, { key: "note", label: "Observação" }]} />
+    <DataTable rows={q.data?.items ?? []} total={q.data?.total} page={page} pageSize={20} onPage={setPage} loading={q.isLoading} columns={[{ key: "code", label: "Código" }, { key: "advance_date", label: "Data", render: (r) => dateBR(r["advance_date"] as string) }, { key: "person_name", label: "Funcionário" }, { key: "farm_name", label: "Fazenda" }, { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }, { key: "installments", label: "Parcelas" }, { key: "status", label: COPY.situacao, render: (r) => <StatusBadge domain="status" value={r["status"]} /> }, { key: "title_status", label: "Título", render: (r) => r["title_id"] ? <Link className="text-brand-700 underline" href={`/financeiro/contas-a-pagar/${r["title_id"]}`}>{enumLabel("title_status", r["title_status"])} ({brl(r["title_balance"] as string)})</Link> : "—" }, { key: "note", label: "Observação" }]} />
     <Dialog open={open} onOpenChange={setOpen} title="Novo adiantamento" footer={<Button size="sm" loading={create.isPending} disabled={!h.person_id || !h.amount} onClick={() => create.mutate({ ...h, installments: Number(h.installments), note: h.note || null, due_date: h.due_date || undefined, financial_category_id: h.financial_category_id || undefined, cost_center_id: h.cost_center_id || undefined })}>Salvar</Button>}>
       <div className="grid grid-cols-12 gap-2">
         <Field label="Fazenda" required span={6}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field><Field label="Data" span={3}><Input type="date" value={h.advance_date} onChange={(e) => setH({ ...h, advance_date: e.target.value })} /></Field><Field label="Vencimento" span={3}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>

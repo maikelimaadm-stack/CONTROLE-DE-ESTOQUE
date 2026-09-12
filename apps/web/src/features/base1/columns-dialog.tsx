@@ -22,7 +22,7 @@ export function ColumnsDialog({ open, onOpenChange, columns, visible, onApply, o
   const remove = (k: string) => setInUse((u) => (u.length > 1 ? u.filter((x) => x !== k) : u));
   const move = (k: string, dir: -1 | 1) => setInUse((u) => { const i = u.indexOf(k); const j = i + dir; if (i < 0 || j < 0 || j >= u.length) return u; const c = [...u]; [c[i], c[j]] = [c[j]!, c[i]!]; return c; });
   return <DialogP.Root open={open} onOpenChange={onOpenChange}><DialogP.Portal>
-    <DialogP.Overlay className="fixed inset-0 z-40 bg-black/50" />
+    <DialogP.Overlay className="mg-overlay" />
     <DialogP.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[90vh] w-[95vw] max-w-4xl -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
       <div className="flex items-center justify-between px-5 py-3"><DialogP.Title className="text-[13px] font-semibold text-slate-800">Configuração de colunas</DialogP.Title><DialogP.Description className="sr-only">Escolha e ordene as colunas da tabela</DialogP.Description>
         <div className="flex items-center gap-1"><button type="button" className="rounded-full p-1.5 text-slate-500 hover:bg-slate-100" title="Restaurar padrão" aria-label="Restaurar padrão" onClick={() => { onRestore(); onOpenChange(false); }}><RotateCcw className="h-4 w-4" /></button><DialogP.Close className="rounded-full p-1.5 text-slate-500 hover:bg-slate-100" aria-label="Fechar"><X className="h-4 w-4" /></DialogP.Close></div></div>

@@ -3,7 +3,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 import { brl, dateBR, monthStartISO, todayISO } from "@/lib/utils";
-import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Spinner, Stat, ErrorBox } from "@/components/ui";
+import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Stat, LoadingState, ErrorState } from "@/components/ui";
 import { Lines } from "@/components/charts";
 import { SimpleTable, type Row } from "@/features/docs/shared";
 interface CF { opening_balance: string; closing_balance: string; periods: { period: string; in_amount: string; out_amount: string; balance: string }[]; movements: Row[] | null }
@@ -23,7 +23,7 @@ export function CashFlowPanel() {
         <div className="col-span-2 flex items-end"><Button size="sm" onClick={() => setApplied({ ...f, ids: sel })} disabled={!sel.length}>Gerar</Button></div>
       </div>
     </CardBody></Card>
-    {q.isLoading && <Spinner />}{q.error && <ErrorBox error={q.error} />}
+    {q.isLoading && <LoadingState />}{q.error && <ErrorState error={q.error} onRetry={() => void q.refetch()} />}
     {q.data && <>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4"><Stat label="Saldo inicial" value={brl(q.data.opening_balance)} /><Stat label="Entradas" value={brl(q.data.periods.reduce((a, p) => a + Number(p.in_amount), 0))} tone="green" /><Stat label="Saídas" value={brl(q.data.periods.reduce((a, p) => a + Number(p.out_amount), 0))} tone="red" /><Stat label="Saldo final" value={brl(q.data.closing_balance)} tone={Number(q.data.closing_balance) >= 0 ? "green" : "red"} /></div>
       <Card><CardBody><Lines data={q.data.periods.map((p) => ({ ...p, in: Number(p.in_amount), out: Number(p.out_amount), bal: Number(p.balance) }))} x="period" series={[{ key: "in", label: "Entradas", color: "#2b6f3a" }, { key: "out", label: "Saídas", color: "#c0392b" }, { key: "bal", label: "Saldo", color: "#2563eb" }]} /></CardBody></Card>
