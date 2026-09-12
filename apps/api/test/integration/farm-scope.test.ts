@@ -13,7 +13,7 @@ let h: Harness; let I: Awaited<ReturnType<typeof ids>>;
 type Hdr = Record<string, string>;
 let A: Hdr; let AB: Hdr; let OWNER: Hdr; let farmA: string; let farmB: string; let whA: string; let whB: string;
 const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { items?: Record<string, unknown>[]; error?: { code: string } };
-const PERMS = ["payables.view", "receivables.view", "bank_movements.view", "budgets.view", "orders.view", "sales.view", "stocks.view", "input_entries.view", "requisitions.view", "service_orders.view", "service_orders.monitor", "depreciations.view", "maintenances.view", "equipments.view", "purchase_requests.view", "animals.view", "weighings.view", "sanitaries.view", "nutritions.view", "dashboard.home.view", "dashboard.financial.view", "dashboard.supply.view", "dashboard.livestock.view", "dashboard.assets.view", "report.stock_movement.view", "report.payables.view", "report.payables.export", "warehouses.view", "batches.view", "salary_advances.view", "earnings.view"];
+const PERMS = ["payables.view", "receivables.view", "bank_movements.view", "budgets.view", "orders.view", "sales.view", "stocks.view", "input_entries.view", "requisitions.view", "service_orders.view", "service_orders.monitor", "depreciations.view", "maintenances.view", "equipments.view", "purchase_requests.view", "animals.view", "weighings.view", "sanitaries.view", "nutritions.view", "dashboard.home.view", "dashboard.financial.view", "dashboard.supply.view", "dashboard.livestock.view", "dashboard.assets.view", "report.stock_movement.view", "report.payables.view", "report.payables.export", "warehouses.view", "batches.view", "salary_advances.view", "earnings.view", "feed_batches.view", "feed_formulas.view"];
 
 async function member(name: string, email: string, farmIds: string[]): Promise<Hdr> {
   const role = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${name}`, permissions: PERMS } });
@@ -104,6 +104,17 @@ describe("matriz cross-farm: leituras, detalhes, contadores, dashboards, relató
     const assetsA = j(await get("/api/dashboards/assets", A)).by_farm as { farm: string }[]; const assetsO = j(await get("/api/dashboards/assets", OWNER)).by_farm as { farm: string }[]; expect(assetsO.length).toBeGreaterThan(assetsA.length);
     // USER_A não pode rodar depreciação da fazenda B nem transferir bem para B
     expect((await h.app.inject({ method: "POST", url: "/api/assets/depreciations/run", headers: A, payload: { period_month: "2026-08-01", farm_id: farmB } })).statusCode).toBe(403);
+  });
+  it("FÁBRICA DE RAÇÃO: produções (lista/detalhe) respeitam member_farms; id inválido/inexistente → 404 (UI-STAB-01)", async () => {
+    const entry = (farm: string, wh: string) => ({ farm_id: farm, entry_date: "2026-09-01", items: [{ product_id: I.product, quantity: "50", unit_value: "3", warehouse_id: wh, financial_category_id: I.category, cost_center_id: I.costCenter }] });
+    await mk("/api/stock/input-entries", entry(farmA, whA)); await mk("/api/stock/input-entries", entry(farmB, whB));
+    const formula = await mk("/api/stock/feed-formulas", { name: "Fórmula matriz", product_id: I.product2, items: [{ product_id: I.product, quantity: "2" }] });
+    const batch = (farm: string, wh: string) => ({ farm_id: farm, batch_date: "2026-09-02", formula_id: formula, origin_warehouse_id: wh, destination_warehouse_id: wh, quantity_produced: "2" });
+    const fa = await mk("/api/stock/feed-batches", batch(farmA, whA)); const fb = await mk("/api/stock/feed-batches", batch(farmB, whB));
+    await matrix("feed-batches", "/api/stock/feed-batches", fa, fb);
+    const det = j(await get(`/api/stock/feed-batches/${fa}`, OWNER)); expect(det.formula_name).toBe("Fórmula matriz"); expect((det.items as unknown[]).length).toBe(1); expect((det.movements as unknown[]).length).toBeGreaterThan(0);
+    expect((await get("/api/stock/feed-batches/nao-e-uuid", OWNER)).statusCode).toBe(404);
+    expect((await get("/api/stock/feed-batches/00000000-0000-4000-8000-000000000000", OWNER)).statusCode).toBe(404);
   });
   it("COMPRAS: solicitações (lista/detalhe/contadores) continuam corretas", async () => {
     const reqp = (farm: string) => ({ farm_id: farm, request_date: "2026-09-01", request_type: "product", description: "Matriz", justification: "x", priority: "high", items: [{ product_id: I.product, description: "Sal", quantity: "1", reference_value: "5" }] });
