@@ -6,22 +6,22 @@ O núcleo do ERP precisa deixar de depender do nicho agro: **Fazenda → Empresa
 (`docs/MULTI-COMPANY-CONTRACT.md`, `docs/DOMAIN-NAMING-STANDARD.md`). Este inventário mede a superfície real
 antes de qualquer renomeação — localizar/substituir em massa aqui quebraria contrato de API, RLS e dados.
 
-Total medido: **2671** ocorrências em 11 superfícies · 50 tabelas com coluna de empresa.
+Total medido: **2681** ocorrências em 11 superfícies · 50 tabelas com coluna de empresa.
 
 ## Por superfície
 
 | Superfície | Ocorrências | Catraca | Observação |
 | --- | ---: | --- | --- |
 | Schema (migrations) | 148 | sim | não pode crescer |
-| API — código | 991 | sim | não pode crescer |
-| API — testes | 239 | sim | não pode crescer |
+| API — código | 993 | sim | não pode crescer |
+| API — testes | 245 | sim | não pode crescer |
 | Núcleo neutro de nicho (plataforma) | 0 | sim | zerado: o catálogo do produto saiu da plataforma (mecanismo puro) |
 | Pacotes compartilhados | 103 | sim | não pode crescer |
 | Web — código | 425 | sim | não pode crescer |
 | Web — navegação/rotas | 13 | sim | não pode crescer |
 | Web — testes ponta a ponta | 57 | sim | não pode crescer |
 | Scripts e gates | 5 | sim | não pode crescer |
-| Documentação ativa | 177 | não | documentação: acompanha a migração |
+| Documentação ativa | 179 | não | documentação: acompanha a migração |
 | Documentação histórica (referência externa) | 513 | não | histórico externo: preservado, fora da catraca |
 
 ## Por símbolo (o que precisa migrar)
@@ -29,10 +29,10 @@ Total medido: **2671** ocorrências em 11 superfícies · 50 tabelas com coluna 
 | Símbolo atual | Natureza | Ocorrências | Destino canônico |
 | --- | --- | ---: | --- |
 | `farm_id` | dado | 1106 | `empresa_id` |
-| `farms` | dado | 103 | `erp.empresas` |
+| `farms` | dado | 107 | `erp.empresas` |
 | `member_farms` | dado | 33 | `member_empresas` |
-| `ctx_farmId` | contrato | 157 | `empresaSelecionada` |
-| `farmIds` | contrato | 107 | `empresasPermitidas` |
+| `ctx_farmId` | contrato | 159 | `empresaSelecionada` |
+| `farmIds` | contrato | 111 | `empresasPermitidas` |
 | `x_farm_id` | contrato | 39 | `X-Empresa-Id` |
 | `farmScope` | contrato | 43 | `escopoEmpresa` |
 | `allowedFarms` | contrato | 122 | `escopoEmpresa (@erp/plataforma)` |

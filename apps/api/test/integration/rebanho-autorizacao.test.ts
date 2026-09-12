@@ -1,7 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createPool } from "@agro/db";
+import { createPool, withTx } from "@agro/db";
 import { MOVIMENTACOES_INTERNAS, MOVIMENTACOES_REBANHO } from "@agro/domain";
 import { harness, ids, TEST_URL, type Harness } from "./setup.js";
+import { atribuirIdGlobal } from "../../src/lib/id-global.js";
+import type { ServiceCtx } from "../../src/lib/context.js";
 
 /**
  * MATRIZES D, E, F e G — UMA PERMISSÃO POR TIPO DE MOVIMENTAÇÃO.
@@ -39,6 +41,18 @@ async function inserir(tipo: string, codigo: string): Promise<string> {
       [h.demo.orgId, I.farm, codigo, tipo, h.demo.adminUserId]);
     return r.rows[0]!.id;
   } finally { await admin.end(); }
+}
+
+/** Contexto de serviço direto (alocar ID Global fora de rota: as escritas só passam a alocar em PRE-BASE2-04). */
+async function comoServico<T>(fn: (ctx: ServiceCtx) => Promise<T>): Promise<T> {
+  return withTx(h.db, { orgId: h.demo.orgId, userId: h.demo.adminUserId }, (tx) =>
+    fn({
+      tx,
+      user: { id: h.demo.adminUserId, email: h.demo.adminEmail, name: "Administrador" },
+      orgId: h.demo.orgId, farmId: null,
+      membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: true, farmIds: [] },
+      permissions: new Set<string>()
+    }));
 }
 
 const TIPOS = MOVIMENTACOES_REBANHO.map((o) => o.tipo);
@@ -183,5 +197,63 @@ describe("MATRIZ G — anexos fail-closed por tipo", () => {
       manejo = (await admin.query<{ id: string }>("select gen_random_uuid() id")).rows[0]!.id;
     } finally { await admin.end(); }
     expect((await listarAnexos("animal_handlings", manejo, h.headers())).statusCode).toBe(404);
+  });
+});
+
+/**
+ * EXISTÊNCIA FUNCIONAL — uma regra só para `erp.animal_movements`.
+ *
+ * Lista, detalhe, cancelamento, anexos e ID Global precisam concordar: registro com `deleted_at` preenchido
+ * é INEXISTENTE por todas essas portas. Cancelado é outra coisa — `status='cancelled'` com `deleted_at` nulo
+ * continua existindo e continua consultável conforme a permissão do tipo.
+ */
+describe("exclusão lógica da movimentação: todas as portas concordam", () => {
+  const marcarExcluida = async (id: string) => {
+    const admin = createPool(TEST_URL, { max: 1 });
+    try { await admin.query("update erp.animal_movements set deleted_at=now() where id=$1", [id]); } finally { await admin.end(); }
+  };
+  const anexos = (id: string, hd: Hdr) => h.app.inject({ method: "GET", url: `/api/attachments?entity=animal_movements&entity_id=${id}`, headers: hd });
+  const naLista = async (id: string, hd: Hdr) => {
+    const r = await h.app.inject({ method: "GET", url: "/api/livestock/movements?pageSize=500", headers: hd });
+    return (j(r).items ?? []).some((x) => x["id"] === id);
+  };
+
+  it("antes da exclusão o registro existe em todas as portas; depois, nenhuma o enxerga", async () => {
+    const id = await inserir("sale", `MTX-DEL-${Date.now()}`);
+    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", id));
+    const hd = h.headers();
+
+    expect(await naLista(id, hd), "lista antes").toBe(true);
+    expect((await detalhe(id, hd)).statusCode, "detalhe antes").toBe(200);
+    expect((await anexos(id, hd)).statusCode, "anexos antes").toBe(200);
+    expect((await h.app.inject({ method: "GET", url: `/api/registros-globais/${idGlobal}`, headers: hd })).statusCode, "ID Global antes").toBe(200);
+
+    await marcarExcluida(id);
+
+    expect(await naLista(id, hd), "lista depois").toBe(false);
+    for (const [porta, r] of [
+      ["detalhe", await detalhe(id, hd)],
+      ["cancelamento", await h.app.inject({ method: "POST", url: `/api/livestock/movements/${id}/cancel`, headers: hd })],
+      ["anexos", await anexos(id, hd)],
+      ["ID Global", await h.app.inject({ method: "GET", url: `/api/registros-globais/${idGlobal}`, headers: hd })]
+    ] as const) {
+      expect(r.statusCode, `${porta} depois da exclusão: ${r.body}`).toBe(404);
+      expect(j(r).error?.code, porta).toBe("NOT_FOUND");
+    }
+  });
+
+  it("CANCELADO NÃO É EXCLUÍDO: continua na lista, no detalhe, nos anexos e no ID Global", async () => {
+    const id = await inserir("sale", `MTX-CANC-${Date.now()}`);
+    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", id));
+    const hd = h.headers();
+    const cancelado = await h.app.inject({ method: "POST", url: `/api/livestock/movements/${id}/cancel`, headers: hd });
+    expect(cancelado.statusCode, cancelado.body).toBe(200);
+
+    expect(await naLista(id, hd), "lista").toBe(true);
+    const det = await detalhe(id, hd);
+    expect(det.statusCode, det.body).toBe(200);
+    expect(j(det)["status"]).toBe("cancelled");
+    expect((await anexos(id, hd)).statusCode, "anexos").toBe(200);
+    expect((await h.app.inject({ method: "GET", url: `/api/registros-globais/${idGlobal}`, headers: hd })).statusCode, "ID Global").toBe(200);
   });
 });

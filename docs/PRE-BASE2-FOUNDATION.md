@@ -52,11 +52,19 @@ Dois princípios que a fundação passa a garantir por construção, e não por 
 - **A autorização de empresa é explícita.** `{ modo: "todas" }` e `{ modo: "selecionadas", empresaIds: [] }`
   são estados distintos; a sentinela "lista vazia = todas" do mecanismo legado é traduzida na ponte
   `apps/api/src/lib/empresa.ts` e não entra no núcleo (`docs/MULTI-COMPANY-CONTRACT.md` §2).
+- **A empresa de um lançamento é a interseção `autorização ∩ disponíveis`.** A lista de empresas disponíveis é
+  carregada pelo servidor (`empresasDisponiveis`, tenant-scoped, sem excluídas nem inativas) e é parâmetro
+  OBRIGATÓRIO da regra: "todas" quer dizer todas as empresas da organização, nunca "qualquer identificador
+  enviado pelo cliente". Sem empresa efetiva o resultado é o estado explícito `indisponivel` — não existe
+  empresa padrão inventada (`docs/MULTI-COMPANY-CONTRACT.md` §4).
 - **O índice não é autoridade de segurança.** `erp.registros_globais.empresa_id` é denormalizado e pode
   envelhecer; a empresa que autoriza vem sempre do **registro fonte vivo**, junto com o discriminador e a
   existência (`docs/GLOBAL-ID-CONTRACT.md` §5.1).
 - **Nenhuma porta usa permissão vizinha como padrão.** Variante desconhecida ou interna nega com 404
   (fail-closed), nas três portas de rebanho e na autorização de anexos.
+- **Existência funcional é uma regra só.** Numa entidade com exclusão lógica, lista, detalhe, cancelamento,
+  anexos e ID Global concordam: `deleted_at` preenchido = inexistente (404). Cancelado não é excluído —
+  `status='cancelled'` com `deleted_at` nulo continua existindo e continua consultável.
 
 ## 3. Banco (migration 0010, estritamente aditiva)
 

@@ -74,21 +74,47 @@ describe("autorização por empresa", () => {
 });
 
 describe("seleção de empresa no lançamento", () => {
+  /**
+   * `disponiveis` é SERVER-AUTHORITATIVE: são as empresas que a organização realmente tem. A regra efetiva é
+   * a interseção autorização ∩ disponíveis — é isso que impede o modo "todas" de virar "qualquer UUID".
+   */
   it("uma única empresa efetiva é preenchida automaticamente", () => {
-    expect(selecionarEmpresaDoLancamento(empresasSelecionadas([A]))).toEqual({ situacao: "automatica", empresaId: A });
+    expect(selecionarEmpresaDoLancamento(empresasSelecionadas([A]), { disponiveis: [A] })).toEqual({ situacao: "automatica", empresaId: A });
     expect(selecionarEmpresaDoLancamento(TODAS_AS_EMPRESAS, { disponiveis: [A] })).toEqual({ situacao: "automatica", empresaId: A });
   });
-  it("mais de uma empresa exige seleção explícita", () => {
-    expect(selecionarEmpresaDoLancamento(empresasSelecionadas([A, B]))).toEqual({ situacao: "obrigatoria", opcoes: [A, B] });
+  it("autorizado a duas mas só uma disponível: automática (a interseção manda)", () => {
+    expect(selecionarEmpresaDoLancamento(empresasSelecionadas([A, B]), { disponiveis: [A] })).toEqual({ situacao: "automatica", empresaId: A });
   });
-  it("empresa pedida fora da autorização é recusada", () => {
-    expect(selecionarEmpresaDoLancamento(empresasSelecionadas([A]), { pedida: B })).toEqual({ situacao: "recusada", empresaId: B });
-    expect(selecionarEmpresaDoLancamento(NENHUMA, { pedida: A })).toEqual({ situacao: "recusada", empresaId: A });
+  it("mais de uma empresa efetiva exige seleção explícita", () => {
+    expect(selecionarEmpresaDoLancamento(empresasSelecionadas([A, B]), { disponiveis: [A, B, C] })).toEqual({ situacao: "obrigatoria", opcoes: [A, B] });
+    expect(selecionarEmpresaDoLancamento(TODAS_AS_EMPRESAS, { disponiveis: [A, B, C] })).toEqual({ situacao: "obrigatoria", opcoes: [A, B, C] });
+  });
+  it("MODO \"TODAS\" NÃO É \"QUALQUER UUID\": empresa fora das disponíveis é recusada", () => {
+    expect(selecionarEmpresaDoLancamento(TODAS_AS_EMPRESAS, { disponiveis: [A, B], pedida: A })).toEqual({ situacao: "escolhida", empresaId: A });
+    expect(selecionarEmpresaDoLancamento(TODAS_AS_EMPRESAS, { disponiveis: [A, B], pedida: C })).toEqual({ situacao: "recusada", empresaId: C });
+    // sem nenhuma empresa na organização, "todas" não autoriza nada
+    expect(selecionarEmpresaDoLancamento(TODAS_AS_EMPRESAS, { disponiveis: [], pedida: A })).toEqual({ situacao: "recusada", empresaId: A });
+  });
+  it("empresa pedida fora da autorização é recusada mesmo estando disponível", () => {
+    expect(selecionarEmpresaDoLancamento(empresasSelecionadas([A]), { disponiveis: [A, B], pedida: B })).toEqual({ situacao: "recusada", empresaId: B });
+    expect(selecionarEmpresaDoLancamento(NENHUMA, { disponiveis: [A, B], pedida: A })).toEqual({ situacao: "recusada", empresaId: A });
+  });
+  it("zero empresas efetivas é um estado EXPLÍCITO — nunca \"obrigatória\" com lista vazia, nunca padrão inventado", () => {
+    // autorizado a empresas que a organização não tem (ou que foram excluídas/desativadas)
+    expect(selecionarEmpresaDoLancamento(empresasSelecionadas([A, B]), { disponiveis: [C] })).toEqual({ situacao: "indisponivel" });
+    // autorizado a nenhuma empresa
+    expect(selecionarEmpresaDoLancamento(NENHUMA, { disponiveis: [A, B] })).toEqual({ situacao: "indisponivel" });
+    // organização sem empresa disponível
+    expect(selecionarEmpresaDoLancamento(TODAS_AS_EMPRESAS, { disponiveis: [] })).toEqual({ situacao: "indisponivel" });
   });
   it("\"todas as empresas\" nunca vira empresa de um lançamento", () => {
-    expect(() => selecionarEmpresaDoLancamento(empresasSelecionadas([A, B]), { pedida: TODAS_EMPRESAS })).toThrowError(/escopo de consulta/i);
+    expect(() => selecionarEmpresaDoLancamento(empresasSelecionadas([A, B]), { disponiveis: [A, B], pedida: TODAS_EMPRESAS })).toThrowError(/escopo de consulta/i);
+    expect(() => selecionarEmpresaDoLancamento(TODAS_AS_EMPRESAS, { disponiveis: [A], pedida: TODAS_EMPRESAS })).toThrowError(/escopo de consulta/i);
     expect(() => exigirEmpresaPersistivel(TODAS_EMPRESAS)).toThrowError(/não pode ser gravado/i);
     expect(() => exigirEmpresaPersistivel(null)).toThrowError(/obrigatória/i);
     expect(exigirEmpresaPersistivel(A)).toBe(A);
+  });
+  it("a ordem das opções segue a lista server-side e duplicatas não contam duas vezes", () => {
+    expect(selecionarEmpresaDoLancamento(TODAS_AS_EMPRESAS, { disponiveis: [B, A, B] })).toEqual({ situacao: "obrigatoria", opcoes: [B, A] });
   });
 });

@@ -14,10 +14,10 @@
  * cross-empresa de integração.
  */
 import {
-  empresasSelecionadas, resolverEscopoEmpresa, TODAS_AS_EMPRESAS,
-  type AutorizacaoEmpresas, type EscopoEmpresaResolvido, type IdEmpresa
+  empresasSelecionadas, resolverEscopoEmpresa, selecionarEmpresaDoLancamento, TODAS_AS_EMPRESAS,
+  type AutorizacaoEmpresas, type EscopoEmpresaResolvido, type IdEmpresa, type SelecaoEmpresa
 } from "@erp/plataforma";
-import type { RequestContext } from "./context.js";
+import type { RequestContext, ServiceCtx } from "./context.js";
 
 /**
  * Converte a autorização LEGADA (lista de fazendas, vazia = todas) para o contrato explícito.
@@ -39,4 +39,38 @@ export const empresaSelecionada = (ctx: RequestContext): IdEmpresa | null => ctx
  */
 export function escopoEmpresa(ctx: RequestContext, pedidas?: readonly IdEmpresa[] | string | null): EscopoEmpresaResolvido {
   return resolverEscopoEmpresa(autorizacaoEmpresas(ctx), { pedidas: pedidas ?? null, selecionada: empresaSelecionada(ctx) });
+}
+
+/**
+ * EMPRESAS DISPONÍVEIS NA ORGANIZAÇÃO — FONTE SERVER-SIDE.
+ *
+ * A regra pura de seleção (`selecionarEmpresaDoLancamento`) exige a lista de empresas que realmente existem
+ * para o tenant atual; ela não pode ser enviada pelo cliente. Aqui é onde a Empresa ainda é materializada
+ * pela infraestrutura herdada (`erp.farms`) — a API conhece a materialização, o núcleo não.
+ *
+ * `somenteAtivas` (padrão) é a política para LANÇAMENTO: não se lança em empresa inativa. Uma consulta
+ * histórica que precise enxergar empresa desativada pede `{ somenteAtivas: false }` — mas nunca empresa
+ * excluída: `deleted_at` é exclusão, não desativação.
+ */
+export async function empresasDisponiveis(ctx: ServiceCtx, opts: { somenteAtivas?: boolean } = {}): Promise<IdEmpresa[]> {
+  const ativas = opts.somenteAtivas !== false;
+  const r = await ctx.tx.query<{ id: string }>(
+    `select id from erp.farms where organization_id=$1 and deleted_at is null${ativas ? " and is_active" : ""} order by code`,
+    [ctx.orgId]);
+  return r.rows.map((f) => f.id);
+}
+
+/**
+ * Seleção da empresa de um LANÇAMENTO, já cruzada com a lista server-side.
+ *
+ * A empresa pedida pelo cliente é PEDIDO, nunca autorização: mesmo no modo "todas" ela só passa se estiver
+ * entre as empresas da organização atual. É o único caminho aprovado para decidir a empresa de uma escrita.
+ */
+export async function selecionarEmpresaParaLancamento(
+  ctx: ServiceCtx,
+  pedida?: IdEmpresa | null,
+  opts: { somenteAtivas?: boolean } = {}
+): Promise<SelecaoEmpresa> {
+  const disponiveis = await empresasDisponiveis(ctx, opts);
+  return selecionarEmpresaDoLancamento(autorizacaoEmpresas(ctx), { disponiveis, pedida: pedida ?? null });
 }

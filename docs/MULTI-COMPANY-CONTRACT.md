@@ -85,14 +85,37 @@ auditoria e para 403 quando a seleção foi explícita.
 
 ## 4. Empresa no lançamento
 
-Um lançamento pertence **sempre a uma empresa concreta**. `selecionarEmpresaDoLancamento` resolve:
+Um lançamento pertence **sempre a uma empresa concreta**, e a decisão nunca é tomada só com a autorização:
+`selecionarEmpresaDoLancamento` exige a lista **server-side** das empresas realmente disponíveis na
+organização e resolve pela **interseção `autorização ∩ disponíveis`**.
+
+Por que a lista é obrigatória: `modo: "todas"` significa *todas as empresas da organização*, e **não**
+"qualquer identificador que o cliente mandar". Sem o cruzamento, um id de outra organização — ou de empresa
+excluída/inativa — passaria pela autorização "todas". Isso é exatamente a regra de ouro do §2 invertida.
 
 | Situação | Resultado |
 | --- | --- |
+| Nenhuma empresa efetiva | `indisponivel` — estado explícito; não se inventa empresa padrão. |
 | Uma única empresa efetiva | `automatica` — a interface preenche sem perguntar. |
 | Mais de uma empresa efetiva | `obrigatoria` — seleção explícita, sem padrão implícito. |
-| Empresa pedida fora da autorização | `recusada`. |
+| Empresa pedida dentro da interseção | `escolhida`. |
+| Empresa pedida fora da interseção | `recusada` — **inclusive no modo "todas"**. |
 | Pedido com `"todas"` | Erro de validação (escopo não é empresa). |
+
+Exemplos da interseção (`disponiveis` = `[A, B, C]` salvo indicação):
+
+| Autorização | Disponíveis | Efetivas |
+| --- | --- | --- |
+| `{ modo: "todas" }` | `[A, B, C]` | `[A, B, C]` |
+| `{ modo: "selecionadas", [A, B] }` | `[A, B, C]` | `[A, B]` |
+| `{ modo: "selecionadas", [A, B] }` | `[A]` | `[A]` |
+| `{ modo: "selecionadas", [A, B] }` | `[C]` | `[]` → `indisponivel` |
+| `{ modo: "selecionadas", [] }` | `[A, B]` | `[]` → `indisponivel` |
+
+**O que entra em `disponiveis`:** empresas da organização atual, não excluídas (`deleted_at is null`) e
+ativas quando a operação exige empresa ativa — carregadas pelo servidor
+(`empresasDisponiveis`, em `apps/api/src/lib/empresa.ts`). A consulta ao banco fica na API: o núcleo
+`@erp/plataforma` continua puro, sem banco, e não conhece a materialização atual (`erp.farms`).
 
 ## 5. Como usar
 
@@ -101,12 +124,28 @@ Um lançamento pertence **sempre a uma empresa concreta**. `selecionarEmpresaDoL
 const escopo = escopoEmpresa(ctx, req.query.empresa_id);       // apps/api/src/lib/empresa.ts
 if (escopo.empresaIds) where.push(`t.farm_id = any($n::uuid[])`);  // null = sem recorte
 
-// Escrita (lançamento)
-const selecao = selecionarEmpresaDoLancamento(autorizacaoEmpresas(ctx), { pedida: body.empresa_id });
-if (selecao.situacao === "recusada") throw new DomainError("NOT_FOUND", "Registro não encontrado");
-if (selecao.situacao === "obrigatoria") throw new DomainError("VALIDATION_ERROR", "Selecione a empresa do lançamento.");
-const empresaId = selecao.empresaId;
+// Escrita (lançamento): a empresa do corpo é PEDIDO, nunca autorização.
+// 1. o servidor carrega as empresas disponíveis da organização (tenant-scoped, sem excluídas/inativas);
+// 2. a autorização legada é convertida para o contrato explícito;
+// 3. a regra cruza as duas e só então decide.
+const selecao = await selecionarEmpresaParaLancamento(ctx, body.empresa_id);  // apps/api/src/lib/empresa.ts
+switch (selecao.situacao) {
+  case "recusada":     throw new DomainError("NOT_FOUND", "Registro não encontrado");  // nunca 403
+  case "indisponivel": throw new DomainError("VALIDATION_ERROR", "Nenhuma empresa disponível para lançamento.");
+  case "obrigatoria":  throw new DomainError("VALIDATION_ERROR", "Selecione a empresa do lançamento.");
+}
+const empresaId = selecao.empresaId;   // "escolhida" ou "automatica"
 ```
+
+Equivalente, quando a lista já está em mãos (regra pura, sem banco):
+
+```ts
+const disponiveis = await empresasDisponiveis(ctx);                    // server-side, tenant-scoped
+const selecao = selecionarEmpresaDoLancamento(autorizacaoEmpresas(ctx), { disponiveis, pedida: body.empresa_id });
+```
+
+> **Nunca** chamar `selecionarEmpresaDoLancamento` sem `disponiveis`: o parâmetro é obrigatório por contrato
+> justamente para que não exista caminho fail-open.
 
 ## 6. Compatibilidade e migração
 

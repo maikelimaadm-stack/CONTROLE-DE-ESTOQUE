@@ -108,7 +108,8 @@ export default async function livestockRoutes(app: FastifyInstance) {
   /** Detalhe: a permissão sai do TIPO DO PRÓPRIO REGISTRO. Tipo interno ou desconhecido → 404, nunca 403. */
   app.get("/livestock/movements/:id", async (req) => runService(app, req, null, async (ctx) => {
     const { id } = req.params as { id: string };
-    const m = await ctx.tx.query<Record<string, unknown>>("select m.*, p.name as person_name, b.description as batch_name, f.name as farm_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id join erp.farms f on f.id=m.farm_id where m.id=$1 and m.organization_id=$2" + scopedById(ctx, "m", id).sql, scopedById(ctx, "m", id).params);
+    // exclusão lógica: registro excluído não existe para nenhuma porta operacional (mesma existência da lista e do ID Global)
+    const m = await ctx.tx.query<Record<string, unknown>>("select m.*, p.name as person_name, b.description as batch_name, f.name as farm_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id join erp.farms f on f.id=m.farm_id where m.id=$1 and m.organization_id=$2 and m.deleted_at is null" + scopedById(ctx, "m", id).sql, scopedById(ctx, "m", id).params);
     if (!m.rows[0]) throw notFound();
     const permissao = permissaoMovimentacao(String(m.rows[0]["movement_type"] ?? ""), "view");
     if (!permissao || !hasPermission(ctx, permissao)) throw notFound();
@@ -165,7 +166,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
   })));
   // Cancelamento: permissão do tipo do registro (tipo interno não é cancelável por esta porta → 404).
   app.post("/livestock/movements/:id/cancel", async (req) => runService(app, req, null, async (ctx) => {
-    const { id } = req.params as { id: string }; const m = await ctx.tx.query<{ status: string; movement_type: string; farm_id: string }>("select status, movement_type, farm_id from erp.animal_movements where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound(); assertFarmVisible(ctx, m.rows[0].farm_id, "Movimentação");
+    const { id } = req.params as { id: string }; const m = await ctx.tx.query<{ status: string; movement_type: string; farm_id: string }>("select status, movement_type, farm_id from erp.animal_movements where id=$1 and organization_id=$2 and deleted_at is null for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound(); assertFarmVisible(ctx, m.rows[0].farm_id, "Movimentação");
     const permissao = permissaoMovimentacao(m.rows[0].movement_type, "delete"); if (!permissao) throw notFound(); requirePermission(ctx, permissao); if (m.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
     const paid = await ctx.tx.query("select 1 from erp.financial_titles where source_type='animal_movements' and source_id=$1 and paid_amount>0", [id]); if (paid.rowCount) throw err("CONFLICT", "Títulos com baixa");
     const items = await ctx.tx.query<{ animal_id: string | null; herd_lot_id: string | null; quantity: number }>("select animal_id, herd_lot_id, quantity from erp.animal_movement_items where movement_id=$1", [id]);
@@ -216,7 +217,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
   // Processar transferência na fazenda destino (aceite)
   app.post("/livestock/transfers/:id/process", async (req) => runService(app, req, "batch_farm_transfer.process", async (ctx) => {
     const { id } = req.params as { id: string }; const d = z.object({ destination_batch_id: uuid.optional().nullable() }).parse(req.body ?? {});
-    const m = await ctx.tx.query<{ status: string; destination_farm_id: string; destination_batch_id: string | null; batch_id: string | null }>("select status, destination_farm_id, destination_batch_id, batch_id from erp.animal_movements where id=$1 and organization_id=$2 and movement_type='farm_transfer' for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound(); if (m.rows[0].status !== "pending") throw err("ALREADY_CONFIRMED", "Transferência já processada");
+    const m = await ctx.tx.query<{ status: string; destination_farm_id: string; destination_batch_id: string | null; batch_id: string | null }>("select status, destination_farm_id, destination_batch_id, batch_id from erp.animal_movements where id=$1 and organization_id=$2 and movement_type='farm_transfer' and deleted_at is null for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound(); if (m.rows[0].status !== "pending") throw err("ALREADY_CONFIRMED", "Transferência já processada");
     if (!farmAllowed(ctx, m.rows[0].destination_farm_id)) throw err("PERMISSION_DENIED", "Sem acesso à fazenda destino");
     const dest = d.destination_batch_id ?? m.rows[0].destination_batch_id;
     const u = await ctx.tx.query("update erp.animals set farm_id=$2, batch_id=$3, updated_at=now() where id in (select animal_id from erp.animal_movement_items where movement_id=$1 and animal_id is not null) returning id", [id, m.rows[0].destination_farm_id, dest]);

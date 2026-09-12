@@ -115,30 +115,45 @@ export function exigirEmpresaVisivel(auth: AutorizacaoEmpresas, empresaId: IdEmp
 }
 
 /**
- * Seleção de empresa para LANÇAMENTO (documento operacional). Um lançamento pertence sempre a UMA empresa:
- *  - uma única empresa efetiva  → `automatica` (a interface preenche sem perguntar);
- *  - várias empresas efetivas   → `obrigatoria` (seleção explícita, sem padrão implícito);
- *  - empresa pedida fora da autorização → `recusada`.
- * `disponiveis` são as empresas ativas da organização; só é consultada quando a autorização é "todas".
+ * Seleção de empresa para LANÇAMENTO (documento operacional). Um lançamento pertence sempre a UMA empresa.
+ *
+ * `disponiveis` é OBRIGATÓRIO e SERVER-AUTHORITATIVE: são as empresas que existem na organização atual, não
+ * excluídas e (quando a operação exige) ativas — carregadas pelo servidor, nunca enviadas pelo cliente. A
+ * regra efetiva é a INTERSEÇÃO `autorização ∩ disponíveis`:
+ *
+ *   • `modo: "todas"` significa TODAS AS EMPRESAS DA ORGANIZAÇÃO — jamais "qualquer UUID que o cliente mande".
+ *     Sem cruzar com `disponiveis`, um id de outra organização (ou de empresa excluída) passaria: é fail-open.
+ *   • `modo: "selecionadas"` recorta ainda mais: só o que está autorizado E disponível.
+ *
+ * Resultados:
+ *   • nenhuma empresa efetiva     → `indisponivel` (não existe padrão a inventar);
+ *   • uma única empresa efetiva   → `automatica` (a interface preenche sem perguntar);
+ *   • duas ou mais               → `obrigatoria` (seleção explícita, sem padrão implícito);
+ *   • empresa pedida na interseção → `escolhida`;
+ *   • empresa pedida fora dela    → `recusada` (inclusive no modo "todas");
+ *   • `TODAS_EMPRESAS` como pedido → erro: escopo de consulta não é empresa de lançamento.
  */
 export type SelecaoEmpresa =
   | { situacao: "escolhida"; empresaId: IdEmpresa }
   | { situacao: "automatica"; empresaId: IdEmpresa }
   | { situacao: "obrigatoria"; opcoes: IdEmpresa[] }
-  | { situacao: "recusada"; empresaId: IdEmpresa };
+  | { situacao: "recusada"; empresaId: IdEmpresa }
+  | { situacao: "indisponivel" };
 
 export function selecionarEmpresaDoLancamento(
   auth: AutorizacaoEmpresas,
-  opts: { disponiveis?: readonly IdEmpresa[]; pedida?: IdEmpresa | null } = {}
+  opts: { disponiveis: readonly IdEmpresa[]; pedida?: IdEmpresa | null }
 ): SelecaoEmpresa {
-  const efetivas = auth.modo === "todas" ? [...(opts.disponiveis ?? [])] : [...auth.empresaIds];
+  const disponiveis = [...new Set(opts.disponiveis)];
+  // interseção: autorização NUNCA amplia além do que a organização realmente tem
+  const efetivas = auth.modo === "todas" ? disponiveis : disponiveis.filter((e) => auth.empresaIds.includes(e));
   const pedida = opts.pedida?.trim() ? opts.pedida.trim() : null;
   if (pedida) {
     if (pedida === TODAS_EMPRESAS) throw new DomainError("VALIDATION_ERROR", "Um lançamento pertence a uma empresa: \"todas as empresas\" é um escopo de consulta");
-    if (!empresaAutorizada(auth, pedida)) return { situacao: "recusada", empresaId: pedida };
-    if (efetivas.length && !efetivas.includes(pedida)) return { situacao: "recusada", empresaId: pedida };
+    if (!efetivas.includes(pedida)) return { situacao: "recusada", empresaId: pedida };
     return { situacao: "escolhida", empresaId: pedida };
   }
+  if (efetivas.length === 0) return { situacao: "indisponivel" };
   if (efetivas.length === 1) return { situacao: "automatica", empresaId: efetivas[0]! };
   return { situacao: "obrigatoria", opcoes: efetivas };
 }

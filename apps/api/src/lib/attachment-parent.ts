@@ -48,7 +48,7 @@ const EXPLICIT: Record<string, ParentRule> = {
   purchase_requests: { kind: "farm", viewPerm: "purchase_requests.view", load: byId("purchase_requests", { farm: true, softDelete: true }), origin: "explicit" },
   weighings: { kind: "farm", viewPerm: "weighings.view", load: byId("weighings", { farm: true, softDelete: true }), origin: "explicit" },
   animal_handlings: { kind: "farm", viewPerm: (row) => permissaoManejo(String(row["handling_type"] ?? ""), "view"), load: byId("animal_handlings", { farm: true, softDelete: true }), origin: "explicit" },
-  animal_movements: { kind: "farm", viewPerm: (row) => permissaoMovimentacao(String(row["movement_type"] ?? ""), "view"), load: byId("animal_movements", { farm: true }), origin: "explicit" },
+  animal_movements: { kind: "farm", viewPerm: (row) => permissaoMovimentacao(String(row["movement_type"] ?? ""), "view"), load: byId("animal_movements", { farm: true, softDelete: true }), origin: "explicit" },
   financial_titles: { kind: "farm", viewPerm: (row) => (row["direction"] === "payable" ? "payables.view" : row["direction"] === "receivable" ? "receivables.view" : null), load: byId("financial_titles", { farm: true, softDelete: true }), origin: "explicit" },
   animals: { kind: "farm", viewPerm: "animals.view", load: byId("animals", { farm: true, softDelete: true }), origin: "explicit" },
   // filhas: fazenda herdada do pátio (feedlot_yards.farm_id)
