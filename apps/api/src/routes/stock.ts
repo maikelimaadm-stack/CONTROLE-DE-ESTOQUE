@@ -35,10 +35,12 @@ async function listDocs(ctx: ServiceCtx, table: string, dateCol: string, query: 
   const r = await ctx.tx.query(w.pageSql, w.params);
   return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
 }
-async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: string, fk: string) {
-  const d = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by where d.id=$1 and d.organization_id=$2` + scopedById(ctx, "d", id).sql, scopedById(ctx, "d", id).params);
+/** Detalhe de documento de estoque. `headerWarehouse`: o armazém está no cabeçalho (baixa direta) e as linhas não têm warehouse_id/cost_center_id. */
+async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: string, fk: string, opts: { headerWarehouse?: boolean } = {}) {
+  const d = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name${opts.headerWarehouse ? ", hw.description as warehouse_name" : ""} from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by${opts.headerWarehouse ? " left join erp.warehouses hw on hw.id=d.warehouse_id" : ""} where d.id=$1 and d.organization_id=$2` + scopedById(ctx, "d", id).sql, scopedById(ctx, "d", id).params);
   if (!d.rows[0]) throw notFound("Documento");
-  const items = await ctx.tx.query(`select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name from erp.${itemsTable} i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id left join erp.cost_centers cc on cc.id=i.cost_center_id where i.${fk}=$1 order by i.id`, [id]);
+  const itemJoins = opts.headerWarehouse ? `left join erp.${table} h on h.id=i.${fk} left join erp.warehouses w on w.id=h.warehouse_id left join erp.cost_centers cc on cc.id=h.cost_center_id` : "left join erp.warehouses w on w.id=i.warehouse_id left join erp.cost_centers cc on cc.id=i.cost_center_id";
+  const items = await ctx.tx.query(`select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name from erp.${itemsTable} i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id ${itemJoins} where i.${fk}=$1 order by i.id`, [id]);
   const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, table, id]);
   return { ...(d.rows[0] as Record<string, unknown>), items: items.rows, movements: movements.rows };
 }
@@ -239,7 +241,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   // ---------- Baixa de estoque ----------
   const writeoffSchema = z.object({ farm_id: uuid, writeoff_date: date, reason: z.enum(["loss", "deterioration", "theft", "damage", "inventory", "accounting", "burglary", "expiration", "gift", "donation", "consumption", "payment_with_product", "other"]), reason_note: z.string().optional().nullable(), cost_center_id: uuid.optional().nullable(), warehouse_id: uuid, justification: z.string().min(3), items: z.array(z.object({ product_id: uuid, provider_lot: z.string().optional().nullable(), quantity: dec })).min(1) });
   app.get("/stock/writeoffs", async (req) => runService(app, req, "stock_writeoffs.view", (ctx) => listDocs(ctx, "stock_writeoffs", "writeoff_date", req.query as Record<string, unknown>, ", w.description as warehouse_name", "left join erp.warehouses w on w.id=d.warehouse_id")));
-  app.get("/stock/writeoffs/:id", async (req) => runService(app, req, "stock_writeoffs.view", (ctx) => getDoc(ctx, "stock_writeoffs", (req.params as { id: string }).id, "stock_writeoff_items", "writeoff_id")));
+  app.get("/stock/writeoffs/:id", async (req) => runService(app, req, "stock_writeoffs.view", (ctx) => getDoc(ctx, "stock_writeoffs", (req.params as { id: string }).id, "stock_writeoff_items", "writeoff_id", { headerWarehouse: true })));
   app.post("/stock/writeoffs", async (req, reply) => reply.status(201).send(await runService(app, req, "stock_writeoffs.create", async (ctx) => {
     const d = writeoffSchema.parse(req.body); assertFarm(ctx, d.farm_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
