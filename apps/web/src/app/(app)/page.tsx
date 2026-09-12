@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 import { brl, yearStartISO, todayISO } from "@/lib/utils";
-import { Card, CardHeader, CardBody, Stat, Input, Button, Spinner } from "@/components/ui";
+import { Card, CardHeader, CardBody, Stat, Input, Button, LoadingState, ErrorState, PageHeader } from "@/components/ui";
 import { Bars, Donut } from "@/components/charts";
 
 interface Home { period: { start: string; end: string }; forecast_vs_actual: { month: string; income_forecast: string; expense_forecast: string; income_done: string; expense_done: string }[]; production_cost_by_center: { cost_center: string; expense: string }[]; operational_result: { income: string; expense: string; stock_consumption: string; result: string; result_with_stock: string }; alerts: { overdue_payables: string; overdue_receivables: string; low_stock: string; pending_requests: string; pending_processings: string } }
@@ -15,8 +15,8 @@ export default function HomePage() {
   const d = q.data;
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-2"><h1 className="text-lg font-semibold mr-auto">Início</h1><div><label className="text-[11px] text-slate-500">Início</label><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div><div><label className="text-[11px] text-slate-500">Fim</label><Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div></div>
-      {q.isLoading && <Spinner />}
+      <PageHeader title="Início" subtitle="Resultado do período, alertas e indicadores" actions={<><div><label className="text-[11px] text-slate-500" htmlFor="home-start">Início</label><Input id="home-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div><div><label className="text-[11px] text-slate-500" htmlFor="home-end">Fim</label><Input id="home-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div></>} />
+      {q.isLoading && <LoadingState />}{q.error && <ErrorState error={q.error} onRetry={() => void q.refetch()} />}
       {d && <>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <Stat label="Receitas realizadas" value={brl(d.operational_result.income)} tone="green" />

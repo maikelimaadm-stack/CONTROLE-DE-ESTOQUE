@@ -3,7 +3,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 import { brl, num, pct, dateBR, yearStartISO, todayISO } from "@/lib/utils";
-import { Card, CardHeader, CardBody, Input, Stat, LoadingState, ErrorState } from "@/components/ui";
+import { Card, CardHeader, CardBody, Input, Stat, LoadingState, ErrorState, PageHeader } from "@/components/ui";
 import { Bars, Lines, Donut } from "@/components/charts";
 import { SimpleTable, type Row } from "@/features/docs/shared";
 import { COPY, enumLabel, statusLabel } from "@/lib/copy";
@@ -22,7 +22,7 @@ export function Dashboard({ k: key, title }: { k: string; title?: string }) {
   if (!cfg) return <ErrorState message="Painel não encontrado." variant="block" />;
   const d = q.data;
   return <div className="ws-scroll space-y-4">
-    <div className="flex flex-wrap items-end gap-2 no-print"><h1 className="mr-auto text-[13px] font-semibold text-slate-800">{title ?? cfg.title}</h1>{cfg.period && <><div><label className="text-[11px] text-slate-500">Início</label><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div><div><label className="text-[11px] text-slate-500">Fim</label><Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div></>}{cfg.year && <div><label className="text-[11px] text-slate-500">Ano</label><Input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} className="w-28" /></div>}</div>
+    <PageHeader title={title ?? cfg.title} actions={<>{cfg.period && <><div><label className="text-[11px] text-slate-500">Início</label><Input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></div><div><label className="text-[11px] text-slate-500">Fim</label><Input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></div></>}{cfg.year && <div><label className="text-[11px] text-slate-500">Ano</label><Input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} className="w-28" /></div>}</>} />
     {q.isLoading && <LoadingState />}{q.error && <ErrorState error={q.error} onRetry={() => void q.refetch()} />}
     {d && <Body k={key} d={d} />}
   </div>;
