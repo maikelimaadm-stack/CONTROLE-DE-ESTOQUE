@@ -1,7 +1,7 @@
 "use client";
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { api, getSession, setSession, type Session } from "./api";
+import { api, getSession, setSession, writeSession, type Session } from "./api";
 
 export interface AppContext {
   user: { id: string; email: string; name: string };
@@ -38,7 +38,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value: AuthState = useMemo(() => ({
     session, ctx, loading,
     can: (p) => Boolean(ctx?.isOwner) || perms.has(p),
-    setFarm: (id) => { const s = getSession(); if (s) setSession({ ...s, farmId: id }); },
+    // fazenda: não recarrega organização/permissões nem remonta as telas — o shell fecha abas farm-scoped e invalida consultas
+    setFarm: (id) => { const s = getSession(); if (s) { const n = { ...s, farmId: id }; writeSession(n); setS(n); } },
     setOrg: async (id) => { const s = getSession(); if (s) { setSession({ ...s, orgId: id, farmId: null }); } },
     refresh,
     logout: () => { setSession(null); router.replace("/login"); }

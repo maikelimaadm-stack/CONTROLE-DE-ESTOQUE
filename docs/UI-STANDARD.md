@@ -107,7 +107,7 @@ visual (verde `--mg-accent`, controles de 28 px, cartões de 12 px); os primitiv
 | **EmptyState** | `icon`, `title` (padrão "Nenhum registro encontrado."), `description`, `action`, `compact`. `data-testid="empty-state"`. | `Empty({ text })` = alias compacto |
 | **LoadingState** | `label` (padrão "Carregando…"), `variant` `block` · `compact` · `inline`; reusa `Spinner`; `role="status"`. | `Spinner` continua para uso inline |
 | **ErrorState** | `title` (padrão "Erro"), `error` ou `message`, `onRetry` (+ `retryLabel` "Tentar novamente"), `variant` `inline` · `block`; `role="alert"`; mostra só a primeira linha da mensagem (nunca stack trace) via `safeErrorMessage`. | `ErrorBox({ error })` = alias inline |
-| **Dialog** | Radix: `open`, `onOpenChange`, `title` (obrigatório, `Title` acessível), `description` (visível; sem ela o título vira descrição sr-only), `children` (corpo rolável), `footer`, `size` `sm` (28 rem) · `md` (42 rem) · `lg` (56 rem) · `xl` (72 rem), `preventClose` (bloqueia ESC, clique fora e fechar), `hideClose`, `testId`. Overlay, sombra, raio e espaçamento pelas classes `mg-overlay` / `mg-dialog__*`; foco preso e devolvido, ESC. | — |
+| **Dialog** | Radix: `open`, `onOpenChange`, `title` (obrigatório, `Title` acessível), `description` (visível; sem ela o título vira descrição sr-only), `children` (corpo rolável), `footer`, `size` `sm` (28 rem) · `md` (42 rem) · `lg` (56 rem) · `xl` (72 rem), `preventClose` (bloqueia ESC, clique fora e fechar), `hideClose`, `testId`, **`profile`** (altura): `compact` (pelo conteúdo, máx. 70 dvh) · `content` (pelo conteúdo até `--mg-dialog-max-h`) · `standard` (frame fixo `--mg-dialog-h-standard`) · `large` (frame fixo `--mg-dialog-h-large`) · `workspace` (viewport − 32 px) — padrão por `size` (sm → compact, md → content, lg → large, xl → workspace). Header e footer fixos, só o corpo rola; LoadingState/ErrorState/EmptyState ocupam o corpo sem mudar o frame (`docs/UI-OVERLAY-MATRIX.md`). Overlay, sombra, raio e espaçamento pelas classes `mg-overlay` / `mg-dialog__*`; foco preso e devolvido, ESC. | — |
 | **ConfirmDialog** | `title`, `description` (alias `text`), `confirmLabel` ("Confirmar"), `dismissLabel` ("Fechar"), `danger`, `loading` (impede fechar), `children`, `onConfirm`, `size` (sm). `data-testid="confirm-dialog"`, botão `confirm-dialog-confirm`. | `Confirm` = alias |
 | **ActionDialog** (`features/docs/actions.tsx`) | compõe Dialog + Field + rodapé Cancelar/Confirmar; campos declarativos (`text`, `number`, `date`, `textarea`, `select`, `ref`). | — |
 | **Drawer** | mesmo `@radix-ui/react-dialog` (sem lib nova): `side` `right` (padrão) · `left`, `title`, `description`, `children`, `footer`, `size` sm 360 · md 480 · lg 640 · xl 860 px, `preventClose`, `hideClose`. `role="dialog"`, título/descrição, ESC, foco preso e devolvido, overlay e botão fechar (`drawer-close`). | — |
@@ -131,3 +131,45 @@ Tabela de itens de documento (`ItemsEditor` hoje): `columns` declarativas (`key`
 remoção por botão-ícone com `aria-label`, rodapé de totais (`num`/`brl`), validação por linha com `Field error`, teclado
 (Enter = próxima célula, ESC = descarta edição), `EmptyState compact` quando vazio. Migração dos editores existentes é
 slice futura; até lá cada editor mantém sua implementação.
+
+## App Shell & Workspace (`apps/web/src/components/layout`, `apps/web/src/lib/workspace-tabs.tsx`)
+
+Referência de interação: *Painel Multi-Telas* (protótipo HTML entregue em UI-STAB-01). Foi usado como referência
+visual/comportamental de header, mega-menu, busca, contexto e barra de abas — **não** é dependência de runtime, não
+entra no bundle e sua NAV demonstrativa não foi copiada: a fonte única de navegação continua `apps/web/nav.registry.mjs`.
+
+```
+AppShell
+├ TopNavigation   marca · ModuleMenu (13 módulos + "Mais") · GlobalSearch (Ctrl K) · FarmSelector · Favoritos · Notificações · UserMenu
+├ WorkspaceTabs   abas globais (uma por tela) sincronizadas com a URL real
+└ ActiveWorkspace trilha (Módulo › Área › Registro) + tela ativa (só ela é montada)
+```
+
+### TopNavigation e MegaMenu
+- Módulos = `NAV` (derivado de `MODULES`) filtrados por `permOk(modulePerm)`. Os que não cabem na largura vão para o
+  botão **Mais** (medição por `ResizeObserver`; nenhum módulo fica inacessível em 1024–1920).
+- Mega-menu = `megaMenuFor(moduleId, can)` (`lib/mega-menu.ts`): grupos = áreas do módulo, itens = sub-áreas (ou a
+  própria área), grupo **Ações** = `type:"action"`; tudo por permissão. Abre no hover/clique/Enter/seta ↓, fecha com
+  Escape (foco volta ao botão), clique fora ou ao sair do header; painel em portal preso à viewport (nunca cortado).
+- Busca global reutiliza `searchNav` (módulos, áreas, sub-áreas, ações, configurações; módulos respeitam
+  `modulePerm`). Ctrl K e o botão **+** da barra de abas focam a busca; escolher um resultado = `openTab(href)`.
+- Fazenda: `<select>` do contexto (`X-Farm-Id`); a troca não recarrega organização/permissões (sem remontar o shell).
+- Favoritos: menu ★ (adicionar/remover a tela atual; abrir favorito = `openTab` da rota canônica).
+
+### WorkspaceTabs — identidade, URL e persistência
+| Regra | Implementação |
+|---|---|
+| Aba = tela real | `tabFor(pathname, search)`: rota de detalhe (`DETAIL_ROUTES`) ou criação (`/new`) → chave = pathname completo (cada registro é uma aba); página de módulo (`MODULES.path`) → chave = path do módulo; demais telas → pathname |
+| Abas internas ≠ abas globais | `?tab=`/`?sub=`/filtros ficam **dentro** da aba do módulo; o `href` da aba guarda a última URL e é restaurado ao focar |
+| URL é a autoridade | navegar (link, deep link, voltar/avançar, redirect) → `sync` cria/foca a aba; focar aba → `router.push(href)`; copiar/refresh/deep link funcionam |
+| Deduplicação | por chave (rota canônica + identidade do registro); `?page`, `?sort`, `?search` não criam abas |
+| Título dinâmico | `useTabTitle(título)` — `DetailShell` publica o título ("Abastecimento 00125") sem mudar a chave |
+| Aba raiz | **Início** (`/`) não fechável; fechar todas as outras mantém Início |
+| Fechar | ativa a vizinha à esquerda (senão à direita) e sincroniza a URL; `Delete` no teclado; clique do meio |
+| Muitas abas | rail com rolagem horizontal + menu de abas (lista todas, "Fechar as outras") + contador |
+| Persistência | `sessionStorage` `agro.tabs.<org>.<usuário>` com **só metadados** (`key, href, label, kind, module`); restauração revalida permissões (`tabAllowed`) — nunca dados de registros, respostas ou permissões |
+| Troca de organização | chave de armazenamento diferente → workspace limpo |
+| Troca de fazenda | fecha abas de registro/criação (farm-scoped), invalida todas as consultas React Query; se a aba ativa fechou, navega para o módulo/Início; com alterações não salvas pede confirmação |
+| Dirty | `useDirtyTab(dirty)` — indicador na aba; fechar aba, trocar fazenda e sair pedem `ConfirmDialog`; `beforeunload` só com alterações |
+| Teclado/ARIA | `role="tablist"` "Abas abertas", `role="tab"`/`aria-selected`, setas/Home/End movem o foco, botão × com `aria-label="Fechar aba …"` |
+| Performance | só a tela ativa é montada (roteamento Next); estado preservado = URL + cache React Query (`staleTime` 15 s); sem árvores React paralelas, sem cache por aba |

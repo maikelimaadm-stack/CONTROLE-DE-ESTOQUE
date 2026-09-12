@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import type { FilterKind } from "@agro/shared";
-import { ChevronLeft, ChevronRight, Download, Printer } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Printer, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BASE1_PAGE_SIZES } from "@agro/shared";
 import { Base1Grid } from "@/features/base1/grid";
@@ -25,8 +25,9 @@ export function DataTable<T extends Record<string, unknown>>({ columns, rows, to
   const pages = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : 1;
   const cols = React.useMemo<Base1Column[]>(() => [
     ...columns.map((c) => ({ key: c.key, label: c.label, align: c.align, sortable: c.sortable, width: c.width, render: c.render ? (r: Row) => c.render!(r as T) : undefined, text: (r: Row) => { const v = r[c.key]; return v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); } })),
-    ...(actions ? [{ key: "__actions", label: "Ação", sortable: false, width: 90, align: "center" as const, render: (r: Row) => <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()}>{actions(r as T)}</span>, text: () => "" }] : [])
-  ], [columns, actions]);
+    // "Visualizar" explícito: toda linha que abre um registro (onRowClick) ganha a ação visível; o duplo clique continua como atalho
+    ...(actions || onRowClick ? [{ key: "__actions", label: "Ação", sortable: false, width: actions ? 120 : 60, align: "center" as const, render: (r: Row) => <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>{onRowClick && <IconBtn size="sm" aria-label="Visualizar" title="Visualizar" data-testid="row-view" onClick={() => onRowClick(r as T)}><Eye /></IconBtn>}{actions?.(r as T)}</span>, text: () => "" }] : [])
+  ], [columns, actions, onRowClick]);
   const sizes = React.useMemo(() => Array.from(new Set([...BASE1_PAGE_SIZES, pageSize])).sort((a, b) => a - b), [pageSize]);
   return <div className="mg-shell mg-shell--fill mg-shell--table">
     {(onExport || caption) && <div className="mg-toolbar no-print border-b" style={{ borderColor: "var(--mg-divider)" }}>

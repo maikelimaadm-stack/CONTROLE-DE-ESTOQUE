@@ -24,7 +24,7 @@ test("rotas antigas redirecionam para a rota canônica preservando parâmetros (
 test("área de estoque: abas, seletor interno, '+ Novo' em dois níveis e ajuste contextual a partir do saldo", async ({ page }) => {
   await login(page);
   await page.goto("/estoque?tab=estoque&sub=saldo");
-  await expect(page.getByRole("tab", { name: "Estoque", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("main").getByRole("tab", { name: "Estoque", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("table")).toBeVisible();
   const rowAction = page.getByRole("button", { name: "Ajustar estoque" }).first();
   if (await rowAction.count()) { await rowAction.click(); await expect(page.getByRole("dialog").getByRole("heading", { name: "Ajustar estoque" })).toBeVisible(); await page.keyboard.press("Escape"); await expect(page.getByRole("dialog")).toBeHidden(); }
@@ -39,8 +39,8 @@ test("área de estoque: abas, seletor interno, '+ Novo' em dois níveis e ajuste
 });
 test("menu principal: só módulos (≤ 14), sem abas repetidas; breadcrumbs derivados da navegação", async ({ page }) => {
   await login(page);
-  await page.getByLabel("Fixar menu").click();
   const nav = page.getByRole("navigation", { name: "Menu principal" });
+  const more = nav.getByTestId("nav-more"); if (await more.count()) await more.click(); // módulos que não couberam ficam em "Mais"
   const modules = nav.getByTestId("nav-module"); const n = await modules.count(); expect(n).toBeGreaterThanOrEqual(10); expect(n).toBeLessThanOrEqual(13);
   await expect(nav.getByText("Cadastros Base")).toHaveCount(0); await expect(nav.getByText("Saldo e Movimentações")).toHaveCount(0); await expect(nav.getByText("Entradas e Recebimentos")).toHaveCount(0);
   for (const m of ["Compras", "Estoque", "Financeiro", "Vendas", "Pecuária", "Confinamento", "Frota e Ativos", "Pessoas e RH", "Ordens de Serviço", "Fiscal", "Relatórios", "Configurações"]) await expect(modules.filter({ hasText: m }).first()).toBeVisible();
@@ -50,8 +50,8 @@ test("menu principal: só módulos (≤ 14), sem abas repetidas; breadcrumbs der
 });
 test("permissões: operador de estoque não vê o módulo Financeiro; Estoque aparece com permissão parcial e as abas respeitam permissões", async ({ page }) => {
   await login(page, { email: "operador@demo.local", password: "Demo@12345" });
-  await page.getByLabel("Fixar menu").click();
   const nav = page.getByRole("navigation", { name: "Menu principal" });
+  const more = nav.getByTestId("nav-more"); if (await more.count()) await more.click();
   await expect(nav.getByTestId("nav-module").filter({ hasText: "Financeiro" })).toHaveCount(0);
   await expect(nav.getByTestId("nav-module").filter({ hasText: "Estoque" })).toHaveCount(1);
   await page.goto("/financeiro?tab=contas"); await expect(page.getByText(/Sem permissão/)).toBeVisible();

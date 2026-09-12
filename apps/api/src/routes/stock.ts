@@ -18,9 +18,10 @@ const idem = (req: { headers: Record<string, unknown> }) => req.headers["idempot
 function assertFarm(ctx: ServiceCtx, farmId: string) { if (!farmAllowed(ctx, farmId)) throw validation("Sem acesso à fazenda informada"); }
 /** Documento carregado por id para cancelar/estornar: fora do escopo de fazendas → 404. */
 async function loadForWrite(ctx: ServiceCtx, table: string, id: string, what = "Documento") { const r = await ctx.tx.query<{ status: string; farm_id: string | null }>(`select status, farm_id from erp.${table} where id=$1 and organization_id=$2 for update`, [id, ctx.orgId]); if (!r.rows[0]) throw notFound(what); assertFarmVisible(ctx, r.rows[0].farm_id, what); return r.rows[0]; }
-async function listDocs(ctx: ServiceCtx, table: string, dateCol: string, query: Record<string, unknown>, extraSelect = "", joins = "") {
+async function listDocs(ctx: ServiceCtx, table: string, dateCol: string, query: Record<string, unknown>, extraSelect = "", joins = "", opts: { softDelete?: boolean } = {}) {
   const q = pageQuerySchema.parse(query); const f = query as Record<string, string>;
-  const where = ["d.organization_id=$1", "d.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
+  // feed_batches não tem deleted_at (cancelamento é por status): sem o filtro de soft delete a listagem quebrava com "column d.deleted_at does not exist"
+  const where = ["d.organization_id=$1", ...(opts.softDelete === false ? [] : ["d.deleted_at is null"])]; const params: unknown[] = [ctx.orgId];
   if (f.farm_id) { params.push(f.farm_id); where.push(`d.farm_id=$${params.length}`); } else if (ctx.farmId) { params.push(ctx.farmId); where.push(`d.farm_id=$${params.length}`); }
   if (ctx.membership.farmIds.length) { params.push(ctx.membership.farmIds); where.push(`d.farm_id = any($${params.length}::uuid[])`); }
   if (f.start_date) { params.push(f.start_date); where.push(`d.${dateCol} >= $${params.length}`); }
@@ -34,10 +35,12 @@ async function listDocs(ctx: ServiceCtx, table: string, dateCol: string, query: 
   const r = await ctx.tx.query(w.pageSql, w.params);
   return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
 }
-async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: string, fk: string) {
-  const d = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by where d.id=$1 and d.organization_id=$2` + scopedById(ctx, "d", id).sql, scopedById(ctx, "d", id).params);
+/** Detalhe de documento de estoque. `headerWarehouse`: o armazém está no cabeçalho (baixa direta) e as linhas não têm warehouse_id/cost_center_id. */
+async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: string, fk: string, opts: { headerWarehouse?: boolean } = {}) {
+  const d = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name${opts.headerWarehouse ? ", hw.description as warehouse_name" : ""} from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by${opts.headerWarehouse ? " left join erp.warehouses hw on hw.id=d.warehouse_id" : ""} where d.id=$1 and d.organization_id=$2` + scopedById(ctx, "d", id).sql, scopedById(ctx, "d", id).params);
   if (!d.rows[0]) throw notFound("Documento");
-  const items = await ctx.tx.query(`select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name from erp.${itemsTable} i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id left join erp.cost_centers cc on cc.id=i.cost_center_id where i.${fk}=$1 order by i.id`, [id]);
+  const itemJoins = opts.headerWarehouse ? `left join erp.${table} h on h.id=i.${fk} left join erp.warehouses w on w.id=h.warehouse_id left join erp.cost_centers cc on cc.id=h.cost_center_id` : "left join erp.warehouses w on w.id=i.warehouse_id left join erp.cost_centers cc on cc.id=i.cost_center_id";
+  const items = await ctx.tx.query(`select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name from erp.${itemsTable} i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id ${itemJoins} where i.${fk}=$1 order by i.id`, [id]);
   const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, table, id]);
   return { ...(d.rows[0] as Record<string, unknown>), items: items.rows, movements: movements.rows };
 }
@@ -238,7 +241,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   // ---------- Baixa de estoque ----------
   const writeoffSchema = z.object({ farm_id: uuid, writeoff_date: date, reason: z.enum(["loss", "deterioration", "theft", "damage", "inventory", "accounting", "burglary", "expiration", "gift", "donation", "consumption", "payment_with_product", "other"]), reason_note: z.string().optional().nullable(), cost_center_id: uuid.optional().nullable(), warehouse_id: uuid, justification: z.string().min(3), items: z.array(z.object({ product_id: uuid, provider_lot: z.string().optional().nullable(), quantity: dec })).min(1) });
   app.get("/stock/writeoffs", async (req) => runService(app, req, "stock_writeoffs.view", (ctx) => listDocs(ctx, "stock_writeoffs", "writeoff_date", req.query as Record<string, unknown>, ", w.description as warehouse_name", "left join erp.warehouses w on w.id=d.warehouse_id")));
-  app.get("/stock/writeoffs/:id", async (req) => runService(app, req, "stock_writeoffs.view", (ctx) => getDoc(ctx, "stock_writeoffs", (req.params as { id: string }).id, "stock_writeoff_items", "writeoff_id")));
+  app.get("/stock/writeoffs/:id", async (req) => runService(app, req, "stock_writeoffs.view", (ctx) => getDoc(ctx, "stock_writeoffs", (req.params as { id: string }).id, "stock_writeoff_items", "writeoff_id", { headerWarehouse: true })));
   app.post("/stock/writeoffs", async (req, reply) => reply.status(201).send(await runService(app, req, "stock_writeoffs.create", async (ctx) => {
     const d = writeoffSchema.parse(req.body); assertFarm(ctx, d.farm_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
@@ -392,7 +395,17 @@ export default async function stockRoutes(app: FastifyInstance) {
   }));
   app.delete("/stock/feed-formulas/:id", async (req) => runService(app, req, "feed_formulas.delete", async (ctx) => { await ctx.tx.query("update erp.feed_formulas set deleted_at=now() where id=$1 and organization_id=$2", [(req.params as { id: string }).id, ctx.orgId]); return { deleted: true }; }));
   const feedBatchSchema = z.object({ farm_id: uuid, batch_date: date, formula_id: uuid, origin_warehouse_id: uuid, destination_warehouse_id: uuid, quantity_produced: dec, multiplier: dec.default("1") });
-  app.get("/stock/feed-batches", async (req) => runService(app, req, "feed_batches.view", (ctx) => listDocs(ctx, "feed_batches", "batch_date", req.query as Record<string, unknown>, ", ff.name as formula_name", "left join erp.feed_formulas ff on ff.id=d.formula_id")));
+  app.get("/stock/feed-batches", async (req) => runService(app, req, "feed_batches.view", (ctx) => listDocs(ctx, "feed_batches", "batch_date", req.query as Record<string, unknown>, ", ff.name as formula_name", "left join erp.feed_formulas ff on ff.id=d.formula_id", { softDelete: false })));
+  // detalhe da produção de ração (UI-STAB-01: /estoque/batidas/:id não tinha GET by id) — escopo de organização + fazenda, permissão feed_batches.view, id inválido/inexistente → 404
+  app.get("/stock/feed-batches/:id", async (req) => runService(app, req, "feed_batches.view", async (ctx) => {
+    const id = (req.params as { id: string }).id; if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) throw notFound("Documento");
+    const sc = scopedById(ctx, "d", id);
+    const d = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name, ff.name as formula_name, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name from erp.feed_batches d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by left join erp.feed_formulas ff on ff.id=d.formula_id left join erp.warehouses wo on wo.id=d.origin_warehouse_id left join erp.warehouses wd on wd.id=d.destination_warehouse_id where d.id=$1 and d.organization_id=$2` + sc.sql, sc.params);
+    if (!d.rows[0]) throw notFound("Documento");
+    const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit from erp.feed_batch_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id where i.batch_id=$1 order by i.id", [id]);
+    const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, "feed_batches", id]);
+    return { ...(d.rows[0] as Record<string, unknown>), items: items.rows, movements: movements.rows };
+  }));
   app.post("/stock/feed-batches", async (req, reply) => reply.status(201).send(await runService(app, req, "feed_batches.create", async (ctx) => {
     const d = feedBatchSchema.parse(req.body); assertFarm(ctx, d.farm_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {

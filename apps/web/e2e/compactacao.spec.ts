@@ -1,9 +1,8 @@
 import { test, expect } from "@playwright/test";
-import { login } from "./helpers";
+import { login, logout } from "./helpers";
 /** Compactação V2: busca global, favoritos canônicos, filtros em vez de abas (Compras, OS, Pecuária), Relatórios. */
 test("busca global encontra funções fora do menu, respeita permissão e abre a rota canônica", async ({ page }) => {
   await login(page);
-  await page.getByLabel("Fixar menu").click();
   const box = page.getByLabel("Buscar funcionalidade");
   await box.fill("pesar animal"); const res = page.getByTestId("nav-search-results");
   await expect(res.getByRole("option", { name: /Manejos/ }).first()).toBeVisible();
@@ -11,20 +10,18 @@ test("busca global encontra funções fora do menu, respeita permissão e abre a
   await expect(page).toHaveURL(/\/configuracoes\?tab=financeiro&sub=chart-accounts/);
   await box.fill("dfe"); await expect(res.getByRole("option", { name: /DFe/ }).first()).toBeVisible(); await page.keyboard.press("Escape");
   // operador de estoque: funções financeiras não aparecem na busca
-  await page.getByRole("button", { name: "Sair" }).first().click().catch(() => {});
+  await logout(page);
   await login(page, { email: "operador@demo.local", password: "Demo@12345" });
-  await page.getByLabel("Fixar menu").click();
   await page.getByLabel("Buscar funcionalidade").fill("plano de contas"); await expect(page.getByTestId("nav-search-results")).toHaveCount(0);
   await page.getByLabel("Buscar funcionalidade").fill("requisi"); await expect(page.getByTestId("nav-search-results").getByRole("option", { name: /Requisições/ }).first()).toBeVisible();
 });
 test("favoritos guardam tab + sub e favoritos antigos continuam abrindo o local certo", async ({ page }) => {
   await login(page);
   await page.goto("/estoque?tab=recebimentos&sub=dfe");
-  await page.getByLabel("Favorito").click(); await expect(page.locator("[data-sonner-toast]").first()).toContainText("Favoritos");
-  await page.getByLabel("Fixar menu").click();
-  const fav = page.getByRole("navigation", { name: "Menu principal" }).locator("a", { hasText: "DFe / XML recebidos" }).first();
-  await expect(fav).toHaveAttribute("href", /\/estoque\?tab=recebimentos&sub=dfe/);
-  await page.getByLabel("Favorito").click(); // remove
+  await page.getByLabel("Favoritos").click(); await page.getByRole("menuitem", { name: "Adicionar esta tela aos favoritos" }).click(); await expect(page.locator("[data-sonner-toast]").first()).toContainText("Favoritos");
+  await page.goto("/"); await page.getByLabel("Favoritos").click(); await page.getByRole("menuitem", { name: /DFe \/ XML recebidos/ }).click();
+  await expect(page).toHaveURL(/\/estoque\?tab=recebimentos&sub=dfe/);
+  await page.getByLabel("Favoritos").click(); await page.getByRole("menuitem", { name: "Remover esta tela dos favoritos" }).click(); // remove
   // favorito antigo (V1, `tab=saidas&sub=requisicoes`) abre a rota canonicalizada
   await page.goto("/estoque?tab=saidas&sub=requisicoes"); await expect(page).toHaveURL(/tab=operacoes.*sub=requisicoes/);
 });

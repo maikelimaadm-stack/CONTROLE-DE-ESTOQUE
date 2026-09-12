@@ -162,4 +162,4 @@ function ReceiptDialog({ open, onOpenChange, path }: { open: boolean; onOpenChan
   const q = useQuery({ queryKey: ["receipt", path], queryFn: () => api<{ receipt_text: string }>(path), enabled: open });
   return <ActionDialogRaw open={open} onOpenChange={onOpenChange} title="Recibo" footer={<Button size="sm" onClick={() => window.print()}>Imprimir</Button>}><pre className="whitespace-pre-wrap rounded border bg-slate-50 p-3 text-xs">{q.data?.receipt_text ?? "…"}</pre></ActionDialogRaw>;
 }
-function ActionDialogRaw(p: { open: boolean; onOpenChange: (o: boolean) => void; title: string; footer: React.ReactNode; children: React.ReactNode }) { return <Dialog open={p.open} onOpenChange={p.onOpenChange} title={p.title} size="lg" footer={p.footer}>{p.children}</Dialog>; }
+function ActionDialogRaw(p: { open: boolean; onOpenChange: (o: boolean) => void; title: string; footer: React.ReactNode; children: React.ReactNode }) { return <Dialog open={p.open} onOpenChange={p.onOpenChange} title={p.title} size="lg" profile="content" footer={p.footer}>{p.children}</Dialog>; }
