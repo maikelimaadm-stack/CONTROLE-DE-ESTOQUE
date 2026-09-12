@@ -7,9 +7,10 @@
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "eslint src && node scripts/nav-audit.mjs && node scripts/copy-audit.mjs",
+    "lint": "eslint src && node scripts/nav-audit.mjs && node scripts/copy-audit.mjs && node scripts/ui-audit.mjs",
     "nav:audit": "node scripts/nav-audit.mjs",
     "copy:audit": "node scripts/copy-audit.mjs",
+    "ui:audit": "node scripts/ui-audit.mjs",
     "e2e": "playwright test"
   },
   "dependencies": {

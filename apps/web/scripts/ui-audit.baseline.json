@@ -1,0 +1,11 @@
+{
+  "src/features/base1/columns-dialog.tsx": {
+    "radix-dialog-direto": 1
+  },
+  "src/features/financial/titles.tsx": {
+    "status-badge-local": 1
+  },
+  "src/features/resources/form-layout.tsx": {
+    "overlay-manual": 1
+  }
+}
