@@ -7,7 +7,9 @@
  *  - StatusBadge / statusTone / *Tone locais — usar StatusBadge(value, domain) de @/components/ui;
  *  - Badge com tonalidade decidida a partir de `status` na tela — idem;
  *  - largura própria em Dialog (`className="max-w-…"`) — usar `size` (sm | md | lg | xl);
- *  - importar @radix-ui/react-dialog fora de components/ui — os overlays oficiais já encapsulam.
+ *  - importar @radix-ui/react-dialog fora de components/ui — os overlays oficiais já encapsulam;
+ *  - (regras duras, sem baseline) dentro de components/ui: leaf importando o próprio barrel (./index ou
+ *    @/components/ui) e ciclos de import entre arquivos da pasta — o barrel só reexporta, o grafo é acíclico.
  * A dívida existente fica em scripts/ui-audit.baseline.json (arquivo → contagem por regra). Ocorrência nova falha; ocorrência
  * removida só avisa (atualize o baseline com `node scripts/ui-audit.mjs --update` ao pagar a dívida).
  */
@@ -33,6 +35,22 @@ const RULES = [
   { id: "radix-dialog-direto", re: /from "@radix-ui\/react-dialog"/g, outsideUiOnly: true, hint: "compor Dialog / Drawer de @/components/ui em vez de importar o Radix na tela" }
 ];
 
+/** Regras duras (nunca entram no baseline): integridade do grafo de components/ui. */
+const UI_DIR = path.join(src, "components", "ui");
+const uiFiles = fs.readdirSync(UI_DIR).filter((f) => /\.tsx?$/.test(f)).map((f) => path.join(UI_DIR, f));
+const hard = [];
+const SELF_IMPORT = /from\s+["'](?:\.\/index(?:\.tsx?)?|\.|@\/components\/ui)["']/g;
+const uiEdges = {}; // basename -> Set(basename) (só imports relativos dentro da pasta)
+for (const f of uiFiles) {
+  const base = path.basename(f).replace(/\.tsx?$/, ""); const s = stripComments(fs.readFileSync(f, "utf8"));
+  if (base !== "index") { const n = (s.match(SELF_IMPORT) ?? []).length; if (n) hard.push(`${rel(f)}: ui-barrel-self-import ×${n} — leaf de components/ui não importa o barrel (./index, @/components/ui); importe o arquivo leaf diretamente`); }
+  uiEdges[base] = new Set([...s.matchAll(/from\s+["']\.\/([A-Za-z0-9_-]+)(?:\.tsx?)?["']/g)].map((m) => m[1]));
+}
+const seen = new Set(); const stack = [];
+const visit = (n) => { if (stack.includes(n)) { const cyc = [...stack.slice(stack.indexOf(n)), n]; const key = cyc.join(" -> "); if (!seen.has(key)) { seen.add(key); hard.push(`src/components/ui: ui-import-cycle — ${key}`); } return; } if (seen.has(n)) return; stack.push(n); for (const d of uiEdges[n] ?? []) if (uiEdges[d]) visit(d); stack.pop(); seen.add(n); };
+for (const n of Object.keys(uiEdges)) visit(n);
+if (hard.length) { console.error(`ui-audit: ${hard.length} violação(ões) do grafo de components/ui (sem baseline):\n` + hard.map((e) => "  " + e).join("\n")); process.exit(1); }
+
 const found = {}; // rel(file) -> { rule: count }
 const lines = [];
 for (const f of walk(src)) {
@@ -53,4 +71,4 @@ for (const [file, rules] of Object.entries(baseline)) for (const [rule, b] of Ob
 if (warnings.length) console.warn("ui-audit: baseline desatualizado (não bloqueia):\n" + warnings.map((w) => "  " + w).join("\n"));
 if (errors.length) { console.error(`ui-audit: ${errors.length} ocorrência(s) nova(s) fora das primitives oficiais:\n` + errors.map((e) => "  " + e).join("\n")); process.exit(1); }
 const debt = Object.values(baseline).reduce((a, r) => a + Object.values(r).reduce((x, y) => x + y, 0), 0);
-console.log(`ui-audit: OK (${RULES.length} regras, dívida em baseline: ${debt} ocorrência(s) em ${Object.keys(baseline).length} arquivo(s))`);
+console.log(`ui-audit: OK (${RULES.length} regras + grafo de components/ui acíclico sem self-import [${uiFiles.length} arquivos], dívida em baseline: ${debt} ocorrência(s) em ${Object.keys(baseline).length} arquivo(s))`);

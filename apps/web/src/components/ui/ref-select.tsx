@@ -8,7 +8,7 @@ import { api, qs } from "@/lib/api";
 import { getResource } from "@agro/domain";
 import { Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { Dialog } from "@/components/ui";
+import { Dialog } from "./overlays";
 // carregado sob demanda: evita ciclo de módulos (o formulário declarativo usa RefSelect)
 const ResourceQuickCreate = React.lazy(() => import("@/features/resources/quick-create").then((m) => ({ default: m.ResourceQuickCreate })));
 

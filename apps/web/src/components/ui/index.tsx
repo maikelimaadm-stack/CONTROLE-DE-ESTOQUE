@@ -3,23 +3,10 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import * as TabsP from "@radix-ui/react-tabs";
 import * as DropdownP from "@radix-ui/react-dropdown-menu";
-import { cva, type VariantProps } from "class-variance-authority";
-import { Loader2, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MgDatePicker } from "./mg-controls";
-import { PageHeader } from "./page-header";
-
-export const buttonVariants = cva("tb-btn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400", {
-  variants: {
-    variant: { default: "tb-btn-green", secondary: "tb-btn-gray", outline: "tb-btn-outline", ghost: "tb-btn-ghost", danger: "tb-btn-red", link: "!h-auto !min-h-0 !p-0 !rounded-none text-brand-700 underline-offset-4 hover:underline" },
-    size: { sm: "", md: "", lg: "!h-9 !min-h-9 px-4 text-[13px]", icon: "tb-btn-icon" }
-  }, defaultVariants: { variant: "default", size: "md" }
-});
-export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> { loading?: boolean }
-export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(({ className, variant, size, loading, children, ...p }, ref) => (
-  <button ref={ref} className={cn(buttonVariants({ variant, size }), className)} disabled={loading || p.disabled} aria-busy={loading || undefined} {...p}>{loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}{children}</button>
-));
-Button.displayName = "Button";
+import { Card } from "./card";
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(({ className, ...p }, ref) => {
   if (p.type === "date") return <DateInput ref={ref} className={className} {...p} />;
@@ -65,15 +52,6 @@ export function Field({ label, required, error, help, children, className, span 
     {error && <p className="mt-0.5 text-[11px] text-red-600">{error}</p>}
   </div>;
 }
-export const Card = ({ className, children, ...p }: React.HTMLAttributes<HTMLDivElement>) => <div className={cn("mg-card", className)} {...p}>{children}</div>;
-/** Cabeçalho de cartão = PageHeader `inCard` (mesma família visual do cabeçalho de página). */
-export const CardHeader = ({ title, actions, subtitle }: { title: React.ReactNode; subtitle?: React.ReactNode; actions?: React.ReactNode }) => <PageHeader inCard level={2} title={title} subtitle={subtitle} actions={actions} testId="card-header" />;
-export const CardBody = ({ className, children }: { className?: string; children: React.ReactNode }) => <div className={cn("p-4", className)}>{children}</div>;
-/** Badge genérico (categorias, tags, contadores). Para situação/status use StatusBadge (./status-badge). */
-export const Badge = ({ children, tone = "slate", className, ...rest }: React.HTMLAttributes<HTMLSpanElement> & { tone?: "slate" | "green" | "red" | "amber" | "blue" | "violet" }) => {
-  const t = { slate: "bg-slate-100 text-slate-700", green: "bg-green-100 text-green-800", red: "bg-red-100 text-red-800", amber: "bg-amber-100 text-amber-800", blue: "bg-blue-100 text-blue-800", violet: "bg-violet-100 text-violet-800" }[tone];
-  return <span className={cn("inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium", t, className)} {...rest}>{children}</span>;
-};
 export function Tabs({ tabs, defaultValue, className }: { tabs: { value: string; label: string; content: React.ReactNode; badge?: React.ReactNode }[]; defaultValue?: string; className?: string }) {
   return (
     <TabsP.Root defaultValue={defaultValue ?? tabs[0]?.value} className={className}>
@@ -92,15 +70,21 @@ export function Menu({ trigger, items }: { trigger: React.ReactNode; items: { la
     </DropdownP.Portal></DropdownP.Root>
   );
 }
-export const Spinner = ({ className }: { className?: string }) => <Loader2 className={cn("h-5 w-5 animate-spin text-brand-600", className)} />;
 export const Chevron = ChevronDown;
 export function Stat({ label, value, hint, tone }: { label: string; value: React.ReactNode; hint?: React.ReactNode; tone?: "green" | "red" | "slate" | "amber" }) {
   const c = { green: "text-green-700", red: "text-red-700", slate: "text-slate-800", amber: "text-amber-700" }[tone ?? "slate"];
   return <Card className="p-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div><div className={cn("mt-1 text-xl font-semibold tabular-nums", c)}>{value}</div>{hint && <div className="text-[11px] text-slate-400">{hint}</div>}</Card>;
 }
 
-/* ---- primitives oficiais (docs/UI-STANDARD.md › Primitives visuais); Empty/ErrorBox/Confirm são compatibility aliases ---- */
+/* ---- API pública dos primitives (docs/UI-STANDARD.md › Primitives visuais). Este barrel só reexporta: nenhum leaf
+   importa ./index (grafo acíclico: button/card/badge/spinner → status-badge/overlays/states/page-header → detail-shell).
+   Empty/ErrorBox/Confirm são compatibility aliases. ---- */
+export { Button, buttonVariants, type ButtonProps } from "./button";
+export { Card, CardBody } from "./card";
+export { Badge } from "./badge";
+export { Spinner } from "./spinner";
 export { Dialog, ConfirmDialog, Confirm, Drawer, type OverlaySize, type ConfirmDialogProps } from "./overlays";
 export { LoadingState, EmptyState, ErrorState, Empty, ErrorBox, safeErrorMessage } from "./states";
 export { StatusBadge, statusTone, TONE_BADGE, type StatusTone, type BadgeTone, type StatusBadgeProps } from "./status-badge";
-export { PageHeader, DetailShell, type PageHeaderProps, type DetailShellProps, type Crumb } from "./page-header";
+export { PageHeader, CardHeader, type PageHeaderProps, type Crumb } from "./page-header";
+export { DetailShell, type DetailShellProps } from "./detail-shell";

@@ -3,7 +3,8 @@ import * as React from "react";
 import { AlertTriangle, Inbox } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
-import { Button, Spinner } from "./index";
+import { Button } from "./button";
+import { Spinner } from "./spinner";
 
 /**
  * Estados genéricos oficiais (docs/UI-STANDARD.md › Primitives visuais): carregando, vazio e erro.

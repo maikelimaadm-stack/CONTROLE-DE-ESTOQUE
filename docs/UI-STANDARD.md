@@ -72,11 +72,17 @@ As credenciais demo (`admin@demo.local / Demo@12345`) só aparecem na tela de lo
   `role="dialog"`, `aria-modal`), `StatusBadge`/`statusTone`/`*Tone` locais, `<Badge tone={… r["status"] …}>`,
   largura própria em Dialog/Drawer e import direto de `@radix-ui/react-dialog` nas telas. A dívida existente fica em
   `scripts/ui-audit.baseline.json` (arquivo → regra → contagem): ocorrência **nova** falha; ao pagar dívida, rode
-  `node scripts/ui-audit.mjs --update`.
+  `node scripts/ui-audit.mjs --update`. Regras duras sem baseline: `ui-barrel-self-import` (arquivo de
+  `components/ui` diferente de `index.tsx` importando `./index` ou `@/components/ui`) e `ui-import-cycle` (ciclo de
+  imports entre arquivos da pasta) — o barrel só reexporta e o grafo interno é acíclico:
+  `button/card/badge/spinner → status-badge/overlays/states/page-header → detail-shell → index`.
 
 ## Primitives visuais (`apps/web/src/components/ui`)
 
-Fonte única dos blocos de interface. Toda tela compõe estes blocos; nenhuma tela cria variante própria (Button2,
+Fonte única dos blocos de interface. Organização interna: leaf modules `button.tsx`, `card.tsx`, `badge.tsx`,
+`spinner.tsx`; compostos `status-badge.tsx`, `states.tsx`, `overlays.tsx`, `page-header.tsx` (+ `CardHeader`),
+`detail-shell.tsx`; `index.tsx` é a API pública (`import { … } from "@/components/ui"`) e só reexporta — nenhum
+arquivo da pasta importa o barrel. Toda tela compõe estes blocos; nenhuma tela cria variante própria (Button2,
 DialogV2, CardNew, badge de situação local…). As classes `mg-*` / `tb-*` / `erp-*` continuam sendo a identidade
 visual (verde `--mg-accent`, controles de 28 px, cartões de 12 px); os primitives só as encapsulam.
 

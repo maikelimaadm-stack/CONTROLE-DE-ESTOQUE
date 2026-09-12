@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { Badge } from "./index";
+import { Badge } from "./badge";
 import { enumLabel, type EnumDomain } from "@/lib/copy";
 
 /**

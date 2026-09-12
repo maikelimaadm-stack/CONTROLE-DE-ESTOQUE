@@ -3,9 +3,6 @@ import * as React from "react";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { COPY, type EnumDomain } from "@/lib/copy";
-import { Button, Card, CardBody } from "./index";
-import { StatusBadge } from "./status-badge";
 
 /**
  * PageHeader oficial (docs/UI-STANDARD.md › Primitives visuais): trilha opcional, título, subtítulo, situação, ações
@@ -30,13 +27,5 @@ export function PageHeader({ title, subtitle, breadcrumbs, status, actions, seco
   </header>;
 }
 
-export interface DetailShellProps { title: React.ReactNode; subtitle?: React.ReactNode; /** destino do botão Voltar (alias antigo: back) */ backHref?: string; back?: string; backLabel?: string; breadcrumbs?: Crumb[]; /** valor técnico da situação (vira StatusBadge) ou um nó pronto */ status?: string | React.ReactNode; statusDomain?: EnumDomain; actions?: React.ReactNode; children: React.ReactNode; className?: string; testId?: string }
-/** DetailShell oficial: Card + PageHeader (Voltar, título, situação, ações) + corpo. Só composição — não carrega dados, não conhece API nem permissões. */
-export function DetailShell({ title, subtitle, backHref, back, backLabel = COPY.voltar, breadcrumbs, status, statusDomain = "status", actions, children, className, testId = "detail-shell" }: DetailShellProps) {
-  const href = backHref ?? back;
-  const badge = status === null || status === undefined || status === "" ? null : typeof status === "string" ? <StatusBadge domain={statusDomain} value={status} /> : status;
-  return <Card className={className} data-testid={testId}>
-    <PageHeader inCard title={title} subtitle={subtitle} breadcrumbs={breadcrumbs} status={badge} secondaryActions={href ? <Link href={href}><Button variant="outline" size="sm">{backLabel}</Button></Link> : undefined} actions={actions} />
-    <CardBody className="space-y-4">{children}</CardBody>
-  </Card>;
-}
+/** Cabeçalho de cartão = PageHeader `inCard` (mesma família visual do cabeçalho de página). */
+export const CardHeader = ({ title, actions, subtitle }: { title: React.ReactNode; subtitle?: React.ReactNode; actions?: React.ReactNode }) => <PageHeader inCard level={2} title={title} subtitle={subtitle} actions={actions} testId="card-header" />;

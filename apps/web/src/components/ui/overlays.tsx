@@ -4,7 +4,7 @@ import * as DialogP from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
-import { Button } from "./index";
+import { Button } from "./button";
 
 /**
  * Overlays oficiais (docs/UI-STANDARD.md › Primitives visuais), todos sobre @radix-ui/react-dialog (role=dialog,
