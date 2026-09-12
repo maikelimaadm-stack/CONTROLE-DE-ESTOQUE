@@ -9,7 +9,7 @@ import type { AuthUser, Membership, RequestContext } from "../lib/context.js";
 
 declare module "fastify" {
   interface FastifyRequest { auth?: AuthUser; ctx?: RequestContext }
-  interface FastifyInstance { db: Db; config: Config; issueLocalToken(user: AuthUser): Promise<string>; requireCtx(req: FastifyRequest): RequestContext }
+  interface FastifyInstance { db: Db; config: Config; issueLocalToken(user: AuthUser): Promise<string>; requireCtx(req: FastifyRequest): RequestContext; /** invalida o cache de contexto (perfil/permissões/fazendas) desta instância */ clearContextCache(): void }
 }
 
 const localSecret = (c: Config) => new TextEncoder().encode(c.LOCAL_AUTH_SECRET);

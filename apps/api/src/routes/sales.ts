@@ -4,7 +4,7 @@ import { D, money, isISODate } from "@agro/shared";
 import { documentTotals, itemTotal, nextSalesKind, assertConvertible, type SalesKind } from "@agro/domain";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { farmAllowed, type ServiceCtx } from "../lib/context.js";
+import { farmAllowed, farmScope, scopedById, allowedFarms, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock } from "../services/stock-core.js";
@@ -17,7 +17,7 @@ const docSchema = z.object({ farm_id: uuid, document_date: date, shipping_date: 
 const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "orders" : "sales");
 
 async function getDoc(ctx: ServiceCtx, id: string) {
-  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as farm_name from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.farms f on f.id=d.farm_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null", [id, ctx.orgId]); if (!r.rows[0]) throw notFound("Documento");
+  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as farm_name from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.farms f on f.id=d.farm_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null" + scopedById(ctx, "d", id).sql, scopedById(ctx, "d", id).params); if (!r.rows[0]) throw notFound("Documento");
   const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id where i.document_id=$1 order by i.position", [id]);
   const titles = await ctx.tx.query("select id, code, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by due_date", [ctx.orgId, id]);
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
@@ -56,7 +56,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       const where = ["d.organization_id=$1", "d.kind=$2", "d.deleted_at is null"]; const params: unknown[] = [ctx.orgId, kind];
       if (f.client_id) { params.push(f.client_id); where.push(`d.client_id=$${params.length}`); }
       if (f.status) { params.push(f.status); where.push(`d.status=$${params.length}`); }
-      if (f.farm_id) { params.push(f.farm_id); where.push(`d.farm_id=$${params.length}`); } else if (ctx.farmId) { params.push(ctx.farmId); where.push(`d.farm_id=$${params.length}`); }
+      if (f.farm_id) { params.push(f.farm_id); where.push(`d.farm_id=$${params.length}`); } where.push(...farmScope(ctx, "d", params, { ignoreSelected: Boolean(f.farm_id) }));
       if (f.start_date) { params.push(f.start_date); where.push(`d.document_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`d.document_date<=$${params.length}`); }
       if (f.search) { params.push(`%${f.search}%`); where.push(`(d.code ilike $${params.length} or c.name ilike $${params.length})`); }
       if (f.product_id) { params.push(f.product_id); where.push(`exists (select 1 from erp.sales_document_items i where i.document_id=d.id and i.product_id=$${params.length})`); }
@@ -88,5 +88,5 @@ export default async function salesRoutes(app: FastifyInstance) {
     if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { confirm: (req.params as { id: string }).id }, () => confirmSale(ctx, (req.params as { id: string }).id))).result));
   }
   // Curva ABC e relatórios de vendas simples
-  app.get("/sales/abc", async (req) => runService(app, req, "report.sales_abc.view", async (ctx) => { const f = req.query as Record<string, string>; const r = await ctx.tx.query<{ product_id: string; product_name: string; value: string; quantity: string }>("select i.product_id, p.description as product_name, sum(i.total) as value, sum(i.quantity) as quantity from erp.sales_document_items i join erp.sales_documents d on d.id=i.document_id join erp.products p on p.id=i.product_id where d.organization_id=$1 and d.kind='sale' and d.status in ('confirmed','invoiced') and ($2::date is null or d.document_date>=$2) and ($3::date is null or d.document_date<=$3) group by 1,2 order by 3 desc", [ctx.orgId, f.start_date ?? null, f.end_date ?? null]); const { abcClassify } = await import("@agro/domain"); return { items: abcClassify(r.rows), total: money(r.rows.reduce((a, x) => a.plus(x.value), D(0))) }; }));
+  app.get("/sales/abc", async (req) => runService(app, req, "report.sales_abc.view", async (ctx) => { const f = req.query as Record<string, string>; const r = await ctx.tx.query<{ product_id: string; product_name: string; value: string; quantity: string }>("select i.product_id, p.description as product_name, sum(i.total) as value, sum(i.quantity) as quantity from erp.sales_document_items i join erp.sales_documents d on d.id=i.document_id join erp.products p on p.id=i.product_id where d.organization_id=$1 and d.kind='sale' and d.status in ('confirmed','invoiced') and ($2::date is null or d.document_date>=$2) and ($3::date is null or d.document_date<=$3) and ($4::uuid[] is null or d.farm_id = any($4)) group by 1,2 order by 3 desc", [ctx.orgId, f.start_date ?? null, f.end_date ?? null, allowedFarms(ctx)]); const { abcClassify } = await import("@agro/domain"); return { items: abcClassify(r.rows), total: money(r.rows.reduce((a, x) => a.plus(x.value), D(0))) }; }));
 }

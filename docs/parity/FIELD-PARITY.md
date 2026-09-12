@@ -1,6 +1,6 @@
 # Paridade de Campos
 
-_Gerado por `node scripts/parity.mjs` em 2026-09-11 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
+_Gerado por `node scripts/parity.mjs` em 2026-09-12 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
 
 Comparação quantitativa por tela: campos de formulário / filtros / colunas observados na referência × campos declarados no nosso código (registro declarativo de cadastros em packages/domain/src/resources ou `<Field>` nas páginas). A comparação nome-a-nome está em docs/reference/screens/*.md (referência) e nos próprios registries (nosso). Diferenças intencionais: campos de marketing/licença omitidos; campos calculados exibidos no detalhe e não no formulário.
 
@@ -378,8 +378,8 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-408 | Perdas | `/pecuaria/movimentacoes/loss/new` | 7 | 0 | 0 | — | IMPLEMENTADO |
 | SCR-409 | Pré-Lote | `/pecuaria/processamentos/new` | 9 | 0 | 3 | — | MAPEADO |
 | SCR-410 | Pesagem | `/pecuaria/pesagens/new` | 26 | 0 | 0 | 5 | TESTADO |
-| SCR-411 | Pesagem | `/pecuaria/pesagens/[id]` | 0 | 0 | 6 | — | TESTADO |
-| SCR-412 | Pesagem | `/pecuaria/pesagens/[id]` | 18 | 0 | 0 | — | TESTADO |
+| SCR-411 | Pesagem | `/pecuaria/pesagens/[id]` | 0 | 0 | 6 | 0 | TESTADO |
+| SCR-412 | Pesagem | `/pecuaria/pesagens/[id]` | 18 | 0 | 0 | 0 | TESTADO |
 | SCR-413 | Nutrição | `/pecuaria/manejo/nutrition/new` | 21 | 0 | 3 | — | IMPLEMENTADO |
 | SCR-414 | Sanitário | `/pecuaria/manejo/sanitary/new` | 21 | 0 | 0 | — | TESTADO |
 | SCR-415 | Desmama | `/pecuaria/manejo/weaning/new` | 7 | 0 | 0 | — | IMPLEMENTADO |

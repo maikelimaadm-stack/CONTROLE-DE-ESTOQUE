@@ -30,6 +30,9 @@ Réplica do **MODELO BASE1** do sistema PROJETOMG (o modelo de tela usado no cad
 
 UI: "Configuração de colunas" (colunas disponíveis × em uso, numeradas, busca, setas, ↺), menus de coluna, popovers dos cards e itens "Salvar tela como padrão da organização" / "Restaurar padrão da tela" em **Mais opções**.
 
+## Rotina primeiro, avançado depois (Compactação V2)
+A barra principal do Modelo Base1 mostra só o cotidiano: **Novo**, **busca**, **Registro / Tabela / Cards** e as ações da seleção (Editar, Duplicar, Excluir, Anexos). Configuração de colunas fica na faixa de filtros; configurar layout, congelar/ocultar colunas (menu da coluna), exportações, relatório personalizado, padrão da organização e restaurar padrão ficam em **Mais opções**. Nenhuma capacidade foi removida.
+
 ## Seleção, modo Registro, histórico e anexos (regras do MG)
 - **Seleção**: clique na linha/card seleciona só aquele registro; clicar no já selecionado desmarca; Ctrl (⌘) alterna sem desmarcar os demais; Shift seleciona o intervalo; o controle de seleção da linha alterna individualmente e o do cabeçalho marca/desmarca todos. Duplo clique abre o registro.
 - **Registro**: o botão "Registro" abre o único selecionado (com 2+ selecionados avisa "Selecione apenas um registro"; sem seleção abre o primeiro). Anterior/Próximo/Primeiro/Último ficam no cabeçalho do registro e bloqueados durante a edição; em **Novo** não existem. Em edição/novo a barra mostra só **Salvar/Cancelar** e some a pesquisa, a alternância de modo e o menu (só Anexos permanece). Ao voltar para Tabela/Cards o registro aberto continua selecionado e é rolado para a área visível.

@@ -29,7 +29,8 @@ docs/           documentação e referência
 - **Cadastros declarativos**: `packages/domain/src/resources/registries.ts` descreve tabela, campos, filtros, colunas, permissões; API e UI derivam formulário, listagem, validação zod, opções de referência e exportação.
 
 ## Frontend
-- Navegação por **áreas de trabalho** (`/modulo?tab=…&sub=…`, `components/workspace.tsx`): abas e ações montadas pelas permissões; rotas antigas redirecionam (`apps/web/redirects.mjs`). Ver `docs/UX-ARCHITECTURE.md` (antes → depois por módulo).
+- Navegação por **áreas de trabalho** (`/modulo?tab=…&sub=…`, `components/workspace.tsx`) derivada da **fonte única de navegação** `apps/web/nav.registry.mjs` (menu só com módulos, busca global, breadcrumbs, favoritos canônicos, redirecionamentos e canonicalização de abas antigas). Diferenças de status/tipo/escopo são filtros; operações com registro de origem são ações contextuais. Ver `docs/UX-ARCHITECTURE.md` (Compactação V2).
+- **Anexos**: índice em `erp.attachments` (`bucket` + `object_path`) e conteúdo hoje no banco (`erp.attachment_blobs`, bytea, 20 MB) atrás da abstração `apps/api/src/lib/attachment-storage.ts`; trocar para Supabase Storage/S3 é outra implementação da interface, sem mudar rotas ou UI.
 - `features/docs/shared.tsx`: listagem transacional (`DocList`), editores de itens/rateio/parcelamento, detalhe, filtros.
 - Permissões: `useAuth().can(perm)` só esconde/mostra; a autorização real é no servidor (403 `PERMISSION_DENIED`).
 - Sessão em `localStorage` (token + org + fazenda ativa); 401 redireciona ao login.

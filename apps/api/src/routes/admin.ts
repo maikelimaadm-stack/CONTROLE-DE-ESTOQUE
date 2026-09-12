@@ -42,6 +42,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       for (const p of d.permissions) await ctx.tx.query("insert into erp.role_permissions(role_id,permission_key) values ($1,$2) on conflict do nothing", [id, p]);
     }
     await audit(ctx.tx, ctx, "roles", id, "update", { permissions: d.permissions.length });
+    app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto
     return { id };
   }));
   app.delete("/admin/roles/:id", async (req) => runService(app, req, "roles.delete", async (ctx) => {
@@ -50,6 +51,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (!cur.rows[0]) throw notFound("Perfil"); if (cur.rows[0].is_system) throw validation("Perfil de sistema não pode ser excluído");
     const inUse = await ctx.tx.query("select 1 from erp.organization_members where role_id=$1 and is_active limit 1", [id]); if (inUse.rowCount) throw validation("Perfil em uso por usuários");
     await ctx.tx.query("update erp.roles set deleted_at=now() where id=$1", [id]);
+    app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto
     return { id, deleted: true };
   }));
 
@@ -73,6 +75,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, u.rows[0]!.id]);
     for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, u.rows[0]!.id, b]);
     await audit(ctx.tx, ctx, "users", u.rows[0]!.id, "create");
+    app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto
     return { id: u.rows[0]!.id, member_id: m.rows[0]!.id };
   })));
   app.put("/admin/members/:userId", async (req) => runService(app, req, "users.edit", async (ctx) => {
@@ -87,6 +90,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (d.farm_ids) { await ctx.tx.query("delete from erp.member_farms where member_id=$1", [m.rows[0].id]); for (const f of d.farm_ids) await ctx.tx.query("insert into erp.member_farms(member_id,farm_id) values ($1,$2) on conflict do nothing", [m.rows[0].id, f]); }
     if (d.boss_user_ids) { await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, userId]); for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, userId, b]); }
     await audit(ctx.tx, ctx, "users", userId, "update");
+    app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto
     return { id: userId };
   }));
 
@@ -122,13 +126,13 @@ export default async function adminRoutes(app: FastifyInstance) {
     const pend = await ctx.tx.query<{ code: string; id: string; days: number; current_responsible_user_id: string | null }>("select code, id, extract(day from now()-status_changed_at)::int as days, current_responsible_user_id from erp.purchase_requests where organization_id=$1 and status not in ('finished','cancelled') and status_changed_at < now() - interval '3 days'", [ctx.orgId]);
     for (const p of pend.rows) await add("purchase_pending", `Compras nº ${p.code} pendente há ${p.days} dia(s)`, null, `/suprimentos/view/${p.id}`, p.current_responsible_user_id);
     const low = await ctx.tx.query<{ description: string; id: string }>("select p.description, p.id from erp.products p where p.organization_id=$1 and p.min_stock > 0 and coalesce((select sum(quantity) from erp.stock_balances sb where sb.product_id=p.id),0) <= p.min_stock and p.deleted_at is null", [ctx.orgId]);
-    for (const l of low.rows) await add("stock_min", `Estoque mínimo atingido: ${l.description}`, null, `/estoque/saldo?product_id=${l.id}`);
+    for (const l of low.rows) await add("stock_min", `Estoque mínimo atingido: ${l.description}`, null, `/estoque?tab=estoque&sub=saldo&product_id=${l.id}`);
     const due = await ctx.tx.query<{ n: string }>("select count(*) n from erp.financial_titles where organization_id=$1 and status in ('open','partially_paid') and due_date between current_date and current_date + 3", [ctx.orgId]);
     if (Number(due.rows[0]!.n) > 0) await add("title_due", `${due.rows[0]!.n} título(s) vencendo nos próximos 3 dias`, null, "/financeiro?tab=contas&sub=pagar&due_soon=1");
     const bday = await ctx.tx.query<{ name: string; birthday: string }>("select p.name, e.birthday from erp.employee_profiles e join erp.people p on p.id=e.person_id where p.organization_id=$1 and e.is_active and to_char(e.birthday,'MM-DD')=to_char(current_date,'MM-DD')", [ctx.orgId]);
-    for (const b of bday.rows) await add("birthday", `${b.name} está fazendo aniversário hoje`, null, "/pessoas?tab=pessoas");
+    for (const b of bday.rows) await add("birthday", `${b.name} está fazendo aniversário hoje`, null, "/pessoas?tab=pessoas&role=employee");
     const docs = await ctx.tx.query<{ title: string; id: string }>("select title, id from erp.documents where organization_id=$1 and status='active' and expiration_date between current_date and current_date + 15", [ctx.orgId]);
-    for (const d of docs.rows) await add("document_expiring", `Documento vencendo: ${d.title}`, null, `/documentos/${d.id}`);
+    for (const d of docs.rows) await add("document_expiring", `Documento vencendo: ${d.title}`, null, `/cadastros/documents/${d.id}`);
     return { ok: true };
   }));
 

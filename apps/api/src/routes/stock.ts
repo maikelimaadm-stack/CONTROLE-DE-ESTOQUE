@@ -4,7 +4,7 @@ import { D, money, isISODate } from "@agro/shared";
 import { batchCost } from "@agro/domain";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { farmAllowed, type ServiceCtx } from "../lib/context.js";
+import { farmAllowed, farmScope, farmScopeSql, scopedById, assertFarmVisible, allowedFarms, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, currentBalance, lineTotal } from "../services/stock-core.js";
@@ -16,6 +16,8 @@ const uuid = z.string().uuid();
 const idem = (req: { headers: Record<string, unknown> }) => req.headers["idempotency-key"] as string | undefined;
 
 function assertFarm(ctx: ServiceCtx, farmId: string) { if (!farmAllowed(ctx, farmId)) throw validation("Sem acesso à fazenda informada"); }
+/** Documento carregado por id para cancelar/estornar: fora do escopo de fazendas → 404. */
+async function loadForWrite(ctx: ServiceCtx, table: string, id: string, what = "Documento") { const r = await ctx.tx.query<{ status: string; farm_id: string | null }>(`select status, farm_id from erp.${table} where id=$1 and organization_id=$2 for update`, [id, ctx.orgId]); if (!r.rows[0]) throw notFound(what); assertFarmVisible(ctx, r.rows[0].farm_id, what); return r.rows[0]; }
 async function listDocs(ctx: ServiceCtx, table: string, dateCol: string, query: Record<string, unknown>, extraSelect = "", joins = "") {
   const q = pageQuerySchema.parse(query); const f = query as Record<string, string>;
   const where = ["d.organization_id=$1", "d.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
@@ -33,7 +35,7 @@ async function listDocs(ctx: ServiceCtx, table: string, dateCol: string, query: 
   return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
 }
 async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: string, fk: string) {
-  const d = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by where d.id=$1 and d.organization_id=$2`, [id, ctx.orgId]);
+  const d = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by where d.id=$1 and d.organization_id=$2` + scopedById(ctx, "d", id).sql, scopedById(ctx, "d", id).params);
   if (!d.rows[0]) throw notFound("Documento");
   const items = await ctx.tx.query(`select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name from erp.${itemsTable} i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id left join erp.cost_centers cc on cc.id=i.cost_center_id where i.${fk}=$1 order by i.id`, [id]);
   const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, table, id]);
@@ -46,7 +48,7 @@ export default async function stockRoutes(app: FastifyInstance) {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
     const where = ["sb.organization_id=$1", "sb.quantity <> 0"]; const params: unknown[] = [ctx.orgId];
     if (f.warehouse_id) { params.push(f.warehouse_id); where.push(`sb.warehouse_id=$${params.length}`); }
-    if (f.farm_id || ctx.farmId) { params.push(f.farm_id ?? ctx.farmId); where.push(`w.farm_id=$${params.length}`); }
+    if (f.farm_id) { params.push(f.farm_id); where.push(`w.farm_id=$${params.length}`); } where.push(...farmScope(ctx, "w", params, { ignoreSelected: Boolean(f.farm_id) }));
     if (f.product_id) { params.push(f.product_id); where.push(`sb.product_id=$${params.length}`); }
     if (f.search) { params.push(`%${f.search}%`); where.push(`(p.description ilike $${params.length} or sb.provider_lot ilike $${params.length} or coalesce(p.active_principle,'') ilike $${params.length} or p.code ilike $${params.length})`); }
     if (f.below_min === "true") where.push("p.min_stock > 0 and sb.quantity <= p.min_stock");
@@ -61,7 +63,7 @@ export default async function stockRoutes(app: FastifyInstance) {
     const where = ["m.organization_id=$1"]; const params: unknown[] = [ctx.orgId];
     if (f.product_id) { params.push(f.product_id); where.push(`m.product_id=$${params.length}`); }
     if (f.warehouse_id) { params.push(f.warehouse_id); where.push(`m.warehouse_id=$${params.length}`); }
-    if (f.farm_id || ctx.farmId) { params.push(f.farm_id ?? ctx.farmId); where.push(`m.farm_id=$${params.length}`); }
+    if (f.farm_id) { params.push(f.farm_id); where.push(`m.farm_id=$${params.length}`); } where.push(...farmScope(ctx, "m", params, { ignoreSelected: Boolean(f.farm_id) }));
     if (f.movement_type) { params.push(f.movement_type); where.push(`m.movement_type=$${params.length}`); }
     if (f.start_date) { params.push(f.start_date); where.push(`m.movement_date>=$${params.length}`); }
     if (f.end_date) { params.push(f.end_date); where.push(`m.movement_date<=$${params.length}`); }
@@ -71,13 +73,13 @@ export default async function stockRoutes(app: FastifyInstance) {
     const r = await ctx.tx.query(wl.pageSql, wl.params);
     return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { in: total.rows[0]!.in_qty, out: total.rows[0]!.out_qty } };
   }));
-  app.get("/stock/balances/:warehouseId/:productId", async (req) => runService(app, req, "stocks.view", async (ctx) => { const { warehouseId, productId } = req.params as { warehouseId: string; productId: string }; const b = await currentBalance(ctx, warehouseId, productId); const lots = await ctx.tx.query("select provider_lot, quantity, average_cost, total_value, expiration_date from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and quantity<>0 order by expiration_date nulls last", [ctx.orgId, warehouseId, productId]); return { ...b, lots: lots.rows }; }));
+  app.get("/stock/balances/:warehouseId/:productId", async (req) => runService(app, req, "stocks.view", async (ctx) => { const { warehouseId, productId } = req.params as { warehouseId: string; productId: string }; const wh = await ctx.tx.query<{ farm_id: string }>("select farm_id from erp.warehouses where id=$1 and organization_id=$2", [warehouseId, ctx.orgId]); if (!wh.rows[0]) throw notFound("Armazém"); assertFarmVisible(ctx, wh.rows[0].farm_id, "Armazém"); const b = await currentBalance(ctx, warehouseId, productId); const lots = await ctx.tx.query("select provider_lot, quantity, average_cost, total_value, expiration_date from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and quantity<>0 order by expiration_date nulls last", [ctx.orgId, warehouseId, productId]); return { ...b, lots: lots.rows }; }));
 
   // ---------- Estoque inicial ----------
   const openingSchema = z.object({ farm_id: uuid, warehouse_id: uuid, product_id: uuid, quantity: dec, unit_value: dec, provider_lot: z.string().max(60).optional().nullable(), expiration_date: date.optional().nullable(), cultivation_id: uuid.optional().nullable() });
   app.get("/stock/opening-balances", async (req) => runService(app, req, "opening_balances.view", async (ctx) => {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
-    const where = ["o.organization_id=$1"]; const params: unknown[] = [ctx.orgId];
+    const where = ["o.organization_id=$1"]; const params: unknown[] = [ctx.orgId]; where.push(...farmScope(ctx, "o", params));
     if (f.warehouse_id) { params.push(f.warehouse_id); where.push(`o.warehouse_id=$${params.length}`); }
     if (f.search) { params.push(`%${f.search}%`); where.push(`p.description ilike $${params.length}`); }
     const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.opening_balances o join erp.products p on p.id=o.product_id where ${where.join(" and ")}`, params);
@@ -98,7 +100,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   })));
   app.delete("/stock/opening-balances/:id", async (req) => runService(app, req, "opening_balances.delete", async (ctx) => {
     const { id } = req.params as { id: string };
-    const o = await ctx.tx.query<{ status: string }>("select status from erp.opening_balances where id=$1 and organization_id=$2", [id, ctx.orgId]); if (!o.rows[0]) throw notFound(); if (o.rows[0].status === "reversed") throw err("ALREADY_CANCELLED", "Já estornado");
+    const o_ = await loadForWrite(ctx, "opening_balances", id, "Estoque inicial"); const o = { rows: [o_] as [typeof o_] }; if (o.rows[0].status === "reversed") throw err("ALREADY_CANCELLED", "Já estornado");
     await reverseStock(ctx, "opening_balances", id, new Date().toISOString().slice(0, 10));
     await ctx.tx.query("update erp.opening_balances set status='reversed', updated_at=now() where id=$1", [id]);
     await audit(ctx.tx, ctx, "opening_balances", id, "reverse");
@@ -134,7 +136,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   })));
   app.post("/stock/input-entries/:id/cancel", async (req) => runService(app, req, "input_entries.delete", async (ctx) => {
     const { id } = req.params as { id: string };
-    const e = await ctx.tx.query<{ status: string; bank_movement_id: string | null; entry_date: string }>("select status, bank_movement_id, entry_date from erp.input_entries where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!e.rows[0]) throw notFound(); if (e.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Entrada já cancelada");
+    await loadForWrite(ctx, "input_entries", id, "Entrada"); const e = await ctx.tx.query<{ status: string; bank_movement_id: string | null; entry_date: string }>("select status, bank_movement_id, entry_date from erp.input_entries where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!e.rows[0]) throw notFound(); if (e.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Entrada já cancelada");
     await reverseStock(ctx, "input_entries", id, new Date().toISOString().slice(0, 10));
     if (e.rows[0].bank_movement_id) await ctx.tx.query("update erp.bank_movements set status='cancelled' where id=$1", [e.rows[0].bank_movement_id]);
     await ctx.tx.query("update erp.input_entries set status='cancelled', updated_at=now() where id=$1", [id]);
@@ -222,7 +224,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   })));
   app.post("/stock/invoices/:id/cancel", async (req) => runService(app, req, "invoices.delete", async (ctx) => {
     const { id } = req.params as { id: string };
-    const inv = await ctx.tx.query<{ status: string }>("select status from erp.invoices where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!inv.rows[0]) throw notFound(); if (inv.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Documento já cancelado");
+    const inv_ = await loadForWrite(ctx, "invoices", id, "Documento fiscal"); const inv = { rows: [inv_] as [typeof inv_] }; if (inv.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Documento já cancelado");
     const paid = await ctx.tx.query("select 1 from erp.financial_titles where organization_id=$1 and source_type='invoices' and source_id=$2 and paid_amount > 0 limit 1", [ctx.orgId, id]);
     if (paid.rowCount) throw err("CONFLICT", "Existem títulos com baixa: cancele as baixas antes");
     await reverseStock(ctx, "invoices", id, new Date().toISOString().slice(0, 10));
@@ -253,7 +255,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       return { id, code, total_amount: money(total) };
     })).result;
   })));
-  app.post("/stock/writeoffs/:id/cancel", async (req) => runService(app, req, "stock_writeoffs.delete", async (ctx) => { const { id } = req.params as { id: string }; const w = await ctx.tx.query<{ status: string }>("select status from erp.stock_writeoffs where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!w.rows[0]) throw notFound(); if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "stock_writeoffs", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.stock_writeoffs set status='cancelled' where id=$1", [id]); await audit(ctx.tx, ctx, "stock_writeoffs", id, "cancel"); return { id, status: "cancelled" }; }));
+  app.post("/stock/writeoffs/:id/cancel", async (req) => runService(app, req, "stock_writeoffs.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "stock_writeoffs", id, "Baixa"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "stock_writeoffs", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.stock_writeoffs set status='cancelled' where id=$1", [id]); await audit(ctx.tx, ctx, "stock_writeoffs", id, "cancel"); return { id, status: "cancelled" }; }));
 
   // ---------- Requisição/Saída ----------
   const reqSchema = z.object({ farm_id: uuid, requisition_date: date, classification: z.enum(["unclassified", "capex", "opex"]).default("unclassified"), requester_person_id: uuid.optional().nullable(), area_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), items: z.array(z.object({ warehouse_id: uuid, product_id: uuid, provider_lot: z.string().optional().nullable(), quantity: dec, cost_center_id: uuid.optional().nullable(), addressing: z.string().optional().nullable() })).min(1) });
@@ -280,8 +282,8 @@ export default async function stockRoutes(app: FastifyInstance) {
       return { id, code, total_amount: money(total) };
     })).result;
   })));
-  app.post("/stock/requisitions/:id/sign", async (req) => runService(app, req, "requisitions.edit", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ signed_document_path: z.string().optional().nullable() }).parse(req.body ?? {}); const u = await ctx.tx.query("update erp.requisitions set signature_status='signed', signed_document_path=coalesce($3,signed_document_path), updated_at=now() where id=$1 and organization_id=$2 and status='confirmed' returning id", [id, ctx.orgId, d.signed_document_path ?? null]); if (!u.rowCount) throw notFound(); await audit(ctx.tx, ctx, "requisitions", id, "sign"); return { id, signature_status: "signed" }; }));
-  app.post("/stock/requisitions/:id/cancel", async (req) => runService(app, req, "requisitions.delete", async (ctx) => { const { id } = req.params as { id: string }; const w = await ctx.tx.query<{ status: string }>("select status from erp.requisitions where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!w.rows[0]) throw notFound(); if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "requisitions", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.requisitions set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "requisitions", id, "cancel"); return { id, status: "cancelled" }; }));
+  app.post("/stock/requisitions/:id/sign", async (req) => runService(app, req, "requisitions.edit", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ signed_document_path: z.string().optional().nullable() }).parse(req.body ?? {}); const sp: unknown[] = [id, ctx.orgId, d.signed_document_path ?? null]; const u = await ctx.tx.query("update erp.requisitions set signature_status='signed', signed_document_path=coalesce($3,signed_document_path), updated_at=now() where id=$1 and organization_id=$2 and status='confirmed'" + farmScopeSql(ctx, "farm_id", sp) + " returning id", sp); if (!u.rowCount) throw notFound(); await audit(ctx.tx, ctx, "requisitions", id, "sign"); return { id, signature_status: "signed" }; }));
+  app.post("/stock/requisitions/:id/cancel", async (req) => runService(app, req, "requisitions.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "requisitions", id, "Requisição"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "requisitions", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.requisitions set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "requisitions", id, "cancel"); return { id, status: "cancelled" }; }));
 
   // ---------- Devolução/Entrada ----------
   const devSchema = z.object({ farm_id: uuid, devolution_date: date, responsible_person_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), items: z.array(z.object({ warehouse_id: uuid, product_id: uuid, quantity: dec, unit_value: dec.optional().nullable(), cost_center_id: uuid.optional().nullable() })).min(1) });
@@ -304,7 +306,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       return { id, code, total_amount: money(total) };
     })).result;
   })));
-  app.post("/stock/devolutions/:id/cancel", async (req) => runService(app, req, "devolutions.delete", async (ctx) => { const { id } = req.params as { id: string }; const w = await ctx.tx.query<{ status: string }>("select status from erp.devolutions where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!w.rows[0]) throw notFound(); if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "devolutions", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.devolutions set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "devolutions", id, "cancel"); return { id, status: "cancelled" }; }));
+  app.post("/stock/devolutions/:id/cancel", async (req) => runService(app, req, "devolutions.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "devolutions", id, "Devolução"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "devolutions", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.devolutions set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "devolutions", id, "cancel"); return { id, status: "cancelled" }; }));
 
   // ---------- Correção de estoque ----------
   const corrSchema = z.object({ farm_id: uuid, correction_date: date, warehouse_id: uuid, product_id: uuid, provider_lot: z.string().optional().nullable(), new_quantity: dec, unit_value: dec.optional().nullable(), justification: z.string().min(3) });
@@ -330,7 +332,7 @@ export default async function stockRoutes(app: FastifyInstance) {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
     const where = ["d.organization_id=$1", "d.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
     if (f.kind) { params.push(f.kind); where.push(`d.kind=$${params.length}`); }
-    if (ctx.farmId) { params.push(ctx.farmId); where.push(`(d.origin_farm_id=$${params.length} or d.destination_farm_id=$${params.length})`); }
+    if (ctx.farmId) { params.push(ctx.farmId); where.push(`(d.origin_farm_id=$${params.length} or d.destination_farm_id=$${params.length})`); } if (ctx.membership.farmIds.length) { params.push(ctx.membership.farmIds); where.push(`(d.origin_farm_id = any($${params.length}::uuid[]) or d.destination_farm_id = any($${params.length}::uuid[]))`); }
     if (f.start_date) { params.push(f.start_date); where.push(`d.transfer_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`d.transfer_date<=$${params.length}`); }
     const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.warehouse_transfers d where ${where.join(" and ")}`, params);
     const r = await ctx.tx.query(`select d.*, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name, fo.name as origin_farm_name, fd.name as destination_farm_name, u.name as created_by_name, (select count(*) from erp.warehouse_transfer_items i where i.transfer_id=d.id)::int as item_count from erp.warehouse_transfers d join erp.warehouses wo on wo.id=d.origin_warehouse_id join erp.warehouses wd on wd.id=d.destination_warehouse_id join erp.farms fo on fo.id=d.origin_farm_id join erp.farms fd on fd.id=d.destination_farm_id left join erp.users u on u.id=d.created_by where ${where.join(" and ")} order by d.transfer_date desc, d.created_at desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
@@ -338,7 +340,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   }));
   app.get("/stock/transfers/:id", async (req) => runService(app, req, "warehouse_transfers.view", async (ctx) => {
     const id = (req.params as { id: string }).id;
-    const d = await ctx.tx.query("select d.*, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name, fo.name as origin_farm_name, fd.name as destination_farm_name from erp.warehouse_transfers d join erp.warehouses wo on wo.id=d.origin_warehouse_id join erp.warehouses wd on wd.id=d.destination_warehouse_id join erp.farms fo on fo.id=d.origin_farm_id join erp.farms fd on fd.id=d.destination_farm_id where d.id=$1 and d.organization_id=$2", [id, ctx.orgId]); if (!d.rows[0]) throw notFound();
+    const d = await ctx.tx.query("select d.*, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name, fo.name as origin_farm_name, fd.name as destination_farm_name from erp.warehouse_transfers d join erp.warehouses wo on wo.id=d.origin_warehouse_id join erp.warehouses wd on wd.id=d.destination_warehouse_id join erp.farms fo on fo.id=d.origin_farm_id join erp.farms fd on fd.id=d.destination_farm_id where d.id=$1 and d.organization_id=$2 and ($3::uuid[] is null or d.origin_farm_id = any($3) or d.destination_farm_id = any($3))", [id, ctx.orgId, allowedFarms(ctx)]); if (!d.rows[0]) throw notFound();
     const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit from erp.warehouse_transfer_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id where i.transfer_id=$1", [id]);
     const titles = await ctx.tx.query("select id, code, direction, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='warehouse_transfers' and source_id=$2", [ctx.orgId, id]);
     return { ...d.rows[0], items: items.rows, titles: titles.rows };
@@ -346,7 +348,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.post("/stock/transfers", async (req, reply) => reply.status(201).send(await runService(app, req, "warehouse_transfers.create", async (ctx) => {
     const d = transferSchema.parse(req.body); assertFarm(ctx, d.origin_farm_id);
     const destFarm = d.kind === "farm" ? d.destination_farm_id : d.origin_farm_id;
-    if (!destFarm) throw validation("Fazenda destino obrigatória");
+    if (!destFarm) throw validation("Fazenda destino obrigatória"); assertFarm(ctx, destFarm);
     if (d.kind === "farm" && destFarm === d.origin_farm_id) throw validation("Transferência entre fazendas exige fazendas distintas");
     if (d.origin_warehouse_id === d.destination_warehouse_id) throw err("SAME_WAREHOUSE_TRANSFER", "Armazém de origem e destino iguais");
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
@@ -370,7 +372,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       return { id, code, total_value: money(total) };
     })).result;
   })));
-  app.post("/stock/transfers/:id/cancel", async (req) => runService(app, req, "warehouse_transfers.delete", async (ctx) => { const { id } = req.params as { id: string }; const w = await ctx.tx.query<{ status: string }>("select status from erp.warehouse_transfers where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!w.rows[0]) throw notFound(); if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); const paid = await ctx.tx.query("select 1 from erp.financial_titles where source_type='warehouse_transfers' and source_id=$1 and paid_amount>0", [id]); if (paid.rowCount) throw err("CONFLICT", "Títulos com baixa: cancele as baixas antes"); await reverseStock(ctx, "warehouse_transfers", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.financial_titles set status='cancelled' where source_type='warehouse_transfers' and source_id=$1", [id]); await ctx.tx.query("update erp.warehouse_transfers set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "warehouse_transfers", id, "cancel"); return { id, status: "cancelled" }; }));
+  app.post("/stock/transfers/:id/cancel", async (req) => runService(app, req, "warehouse_transfers.delete", async (ctx) => { const { id } = req.params as { id: string }; const w = await ctx.tx.query<{ status: string; origin_farm_id: string; destination_farm_id: string }>("select status, origin_farm_id, destination_farm_id from erp.warehouse_transfers where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!w.rows[0]) throw notFound(); if (!farmAllowed(ctx, w.rows[0].origin_farm_id) && !farmAllowed(ctx, w.rows[0].destination_farm_id)) throw notFound("Transferência"); if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); const paid = await ctx.tx.query("select 1 from erp.financial_titles where source_type='warehouse_transfers' and source_id=$1 and paid_amount>0", [id]); if (paid.rowCount) throw err("CONFLICT", "Títulos com baixa: cancele as baixas antes"); await reverseStock(ctx, "warehouse_transfers", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.financial_titles set status='cancelled' where source_type='warehouse_transfers' and source_id=$1", [id]); await ctx.tx.query("update erp.warehouse_transfers set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "warehouse_transfers", id, "cancel"); return { id, status: "cancelled" }; }));
 
   // ---------- Fábrica: formulação e batida ----------
   const formulaSchema = z.object({ name: z.string().min(1), description: z.string().optional().nullable(), product_id: uuid.optional().nullable(), items: z.array(z.object({ product_id: uuid, quantity: dec })).min(1) });
@@ -413,12 +415,12 @@ export default async function stockRoutes(app: FastifyInstance) {
       return { id, code, production_cost: cost.total, unit_cost: cost.unit };
     })).result;
   })));
-  app.post("/stock/feed-batches/:id/cancel", async (req) => runService(app, req, "feed_batches.delete", async (ctx) => { const { id } = req.params as { id: string }; const w = await ctx.tx.query<{ status: string }>("select status from erp.feed_batches where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!w.rows[0]) throw notFound(); if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "feed_batches", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.feed_batches set status='cancelled' where id=$1", [id]); return { id, status: "cancelled" }; }));
+  app.post("/stock/feed-batches/:id/cancel", async (req) => runService(app, req, "feed_batches.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "feed_batches", id, "Batida"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "feed_batches", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.feed_batches set status='cancelled' where id=$1", [id]); return { id, status: "cancelled" }; }));
 
   // ---------- DFe recebidas e rascunhos de aprovação ----------
   app.get("/stock/dfe", async (req) => runService(app, req, "dfe.view", async (ctx) => {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
-    const where = ["organization_id=$1"]; const params: unknown[] = [ctx.orgId];
+    const where = ["organization_id=$1"]; const params: unknown[] = [ctx.orgId]; where.push(...farmScope(ctx, "farm_id", params, { nullable: true }));
     if (f.launch_status) { params.push(f.launch_status); where.push(`launch_status=$${params.length}`); }
     if (f.manifest_status) { params.push(f.manifest_status); where.push(`manifest_status=$${params.length}`); }
     if (f.search) { params.push(`%${f.search}%`); where.push(`(access_key ilike $${params.length} or issuer_name ilike $${params.length} or number ilike $${params.length})`); }
@@ -428,7 +430,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   }));
   /** Registro manual/importação de DFe (a captura automática na SEFAZ depende de integração de certificado — ver GAP-ANALYSIS). */
   app.post("/stock/dfe", async (req, reply) => reply.status(201).send(await runService(app, req, "dfe.create", async (ctx) => {
-    const d = z.object({ farm_id: uuid.optional().nullable(), access_key: z.string().length(44), document_type: z.enum(["nfe", "cte", "nfse"]).default("nfe"), number: z.string().optional().nullable(), series: z.string().optional().nullable(), issuer_document: z.string().optional().nullable(), issuer_name: z.string().optional().nullable(), emission_date: date.optional().nullable(), total: dec.optional().nullable(), raw: z.record(z.string(), z.unknown()).optional().nullable() }).parse(req.body);
+    const d = z.object({ farm_id: uuid.optional().nullable(), access_key: z.string().length(44), document_type: z.enum(["nfe", "cte", "nfse"]).default("nfe"), number: z.string().optional().nullable(), series: z.string().optional().nullable(), issuer_document: z.string().optional().nullable(), issuer_name: z.string().optional().nullable(), emission_date: date.optional().nullable(), total: dec.optional().nullable(), raw: z.record(z.string(), z.unknown()).optional().nullable() }).parse(req.body); if (d.farm_id) assertFarm(ctx, d.farm_id);
     const r = await ctx.tx.query<{ id: string }>("insert into erp.dfe_documents(organization_id,farm_id,access_key,document_type,number,series,issuer_document,issuer_name,emission_date,total,raw) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) on conflict (organization_id,access_key) do update set issuer_name=coalesce(excluded.issuer_name,erp.dfe_documents.issuer_name) returning id", [ctx.orgId, d.farm_id ?? null, d.access_key, d.document_type, d.number ?? null, d.series ?? null, d.issuer_document ?? null, d.issuer_name ?? null, d.emission_date ?? null, d.total ?? null, d.raw ? JSON.stringify(d.raw) : null]);
     const id = r.rows[0]!.id;
     // Perfil de lançamento do fornecedor → gera rascunho automaticamente
@@ -442,13 +444,13 @@ export default async function stockRoutes(app: FastifyInstance) {
     }
     return { id };
   })));
-  app.post("/stock/dfe/:id/manifest", async (req) => runService(app, req, "dfe.manifest", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ status: z.enum(["awareness", "confirmed", "unknown", "not_performed"]) }).parse(req.body); const u = await ctx.tx.query("update erp.dfe_documents set manifest_status=$3, updated_at=now() where id=$1 and organization_id=$2 returning id", [id, ctx.orgId, d.status]); if (!u.rowCount) throw notFound(); await audit(ctx.tx, ctx, "dfe_documents", id, "manifest", d); return { id, manifest_status: d.status }; }));
-  app.post("/stock/dfe/:id/ignore", async (req) => runService(app, req, "dfe_drafts.ignore", async (ctx) => { const { id } = req.params as { id: string }; await ctx.tx.query("update erp.dfe_documents set launch_status='ignored' where id=$1 and organization_id=$2", [id, ctx.orgId]); await ctx.tx.query("update erp.dfe_drafts set status='ignored', reviewed_by=$3, reviewed_at=now() where dfe_id=$1 and organization_id=$2 and status='pending'", [id, ctx.orgId, ctx.user.id]); return { id, launch_status: "ignored" }; }));
-  app.get("/stock/dfe-drafts", async (req) => runService(app, req, "dfe_drafts.view", async (ctx) => { const r = await ctx.tx.query("select dr.*, d.access_key, d.number, d.issuer_name, d.total, d.emission_date from erp.dfe_drafts dr join erp.dfe_documents d on d.id=dr.dfe_id where dr.organization_id=$1 and dr.status='pending' order by dr.created_at desc", [ctx.orgId]); return { items: r.rows, total: r.rowCount }; }));
+  app.post("/stock/dfe/:id/manifest", async (req) => runService(app, req, "dfe.manifest", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ status: z.enum(["awareness", "confirmed", "unknown", "not_performed"]) }).parse(req.body); const mp: unknown[] = [id, ctx.orgId, d.status]; const u = await ctx.tx.query("update erp.dfe_documents set manifest_status=$3, updated_at=now() where id=$1 and organization_id=$2" + farmScopeSql(ctx, "farm_id", mp, { nullable: true }) + " returning id", mp); if (!u.rowCount) throw notFound(); await audit(ctx.tx, ctx, "dfe_documents", id, "manifest", d); return { id, manifest_status: d.status }; }));
+  app.post("/stock/dfe/:id/ignore", async (req) => runService(app, req, "dfe_drafts.ignore", async (ctx) => { const { id } = req.params as { id: string }; const ip: unknown[] = [id, ctx.orgId]; const ig = await ctx.tx.query("update erp.dfe_documents set launch_status='ignored' where id=$1 and organization_id=$2" + farmScopeSql(ctx, "farm_id", ip, { nullable: true }) + " returning id", ip); if (!ig.rowCount) throw notFound(); await ctx.tx.query("update erp.dfe_drafts set status='ignored', reviewed_by=$3, reviewed_at=now() where dfe_id=$1 and organization_id=$2 and status='pending'", [id, ctx.orgId, ctx.user.id]); return { id, launch_status: "ignored" }; }));
+  app.get("/stock/dfe-drafts", async (req) => runService(app, req, "dfe_drafts.view", async (ctx) => { const r = await ctx.tx.query("select dr.*, d.access_key, d.number, d.issuer_name, d.total, d.emission_date from erp.dfe_drafts dr join erp.dfe_documents d on d.id=dr.dfe_id where dr.organization_id=$1 and dr.status='pending' and ($2::uuid[] is null or d.farm_id is null or d.farm_id = any($2)) order by dr.created_at desc", [ctx.orgId, allowedFarms(ctx)]); return { items: r.rows, total: r.rowCount }; }));
   app.post("/stock/dfe-drafts/:id/approve", async (req) => runService(app, req, "dfe_drafts.approve", async (ctx) => {
     const { id } = req.params as { id: string };
     const dr = await ctx.tx.query<{ dfe_id: string; proposed: Record<string, unknown>; status: string }>("select dfe_id, proposed, status from erp.dfe_drafts where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!dr.rows[0]) throw notFound(); if (dr.rows[0].status !== "pending") throw err("ALREADY_CONFIRMED", "Rascunho já processado");
-    const p = dr.rows[0].proposed; const farmId = ctx.farmId ?? (await ctx.tx.query<{ id: string }>("select id from erp.farms where organization_id=$1 and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0]!.id;
+    const p = dr.rows[0].proposed; const farmId = ctx.farmId ?? ctx.membership.farmIds[0] ?? (await ctx.tx.query<{ id: string }>("select id from erp.farms where organization_id=$1 and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0]!.id; assertFarm(ctx, farmId);
     // Nota de despesa: gera conta a pagar diretamente com rateio do perfil
     const app_ = (p["apportionment"] as { financial_category_id: string; cost_center_id: string; percentage: string }[]) ?? [];
     if (!app_.length || !p["total"]) throw validation("Rascunho sem rateio/total: lance manualmente pela tela de Documento Fiscal");

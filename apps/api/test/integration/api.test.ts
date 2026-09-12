@@ -257,7 +257,7 @@ describe("anexos por registro", () => {
     expect((await h.app.inject({ method: "POST", url: "/api/attachments", headers: h.headers(), payload: { entity: "farms", entity_id: I.farm, file_name: "x.exe", mime_type: "application/x-msdownload", data_base64: pdf } })).statusCode).toBe(422);
     expect((await h.app.inject({ method: "POST", url: "/api/attachments", headers: h.headers(), payload: { entity: "farms", entity_id: I.farm, file_name: "x.png", mime_type: "image/png", data_base64: pdf } })).statusCode).toBe(422);
     // operador pode ver/enviar, não pode excluir
-    expect((await h.app.inject({ method: "GET", url: `/api/attachments?entity=farms&entity_id=${I.farm}`, headers: h.opHeaders() })).statusCode).toBe(200);
+    expect((await h.app.inject({ method: "GET", url: `/api/attachments?entity=farms&entity_id=${I.farm}`, headers: h.opHeaders() })).statusCode).toBe(403); // attachments.view não contorna farms.view (permissão do pai)
     expect((await h.app.inject({ method: "DELETE", url: `/api/attachments/${id}`, headers: h.opHeaders() })).statusCode).toBe(403);
     expect((await h.app.inject({ method: "DELETE", url: `/api/attachments/${id}`, headers: h.headers() })).statusCode).toBe(200);
     expect((await h.app.inject({ method: "GET", url: `/api/attachments/${id}/content`, headers: h.headers() })).statusCode).toBe(404);
@@ -290,6 +290,10 @@ describe("vendas, frota, RH e pecuária", () => {
     await h.app.inject({ method: "POST", url: "/api/stock/opening-balances", headers: h.headers(), payload: { farm_id: I.farm, warehouse_id: I.warehouse, product_id: diesel.id, quantity: "500", unit_value: "6" } });
     const s = await h.app.inject({ method: "POST", url: "/api/fleet/fuel-supplies", headers: h.headers(), payload: { farm_id: I.farm, supply_date: "2026-09-10", equipment_id: I.equipment, warehouse_id: I.warehouse, product_id: diesel.id, quantity: "50", hour_meter: "1200" } });
     expect(s.statusCode).toBe(201); expect(j(s).total).toBe("300.00");
+    // checkpoint V2: "Visualizar" abastecimento abre o registro real
+    const one = await h.app.inject({ method: "GET", url: `/api/fleet/fuel-supplies/${j(s).id}`, headers: h.headers() });
+    expect(one.statusCode, one.body).toBe(200); expect(j(one).quantity).toBe("50.0000"); expect(j(one).equipment_id).toBe(I.equipment);
+    expect((await h.app.inject({ method: "GET", url: "/api/fleet/fuel-supplies/00000000-0000-4000-8000-000000000000", headers: h.headers() })).statusCode).toBe(404);
     const eq = j(await h.app.inject({ method: "GET", url: `/api/resources/equipments/${I.equipment}`, headers: h.headers() })); expect(eq.hour_meter).toBe("1200.00");
     const d1 = await h.app.inject({ method: "POST", url: "/api/assets/depreciations/run", headers: h.headers(), payload: { period_month: "2026-09-01" } });
     expect(d1.statusCode).toBe(201); expect(j(d1).count).toBe(3);
@@ -316,6 +320,17 @@ describe("vendas, frota, RH e pecuária", () => {
     expect(a.weighings[1]!.gmd).toBe("1.000"); expect(a.current_weight).toBe("290.00");
     const san = await h.app.inject({ method: "POST", url: "/api/livestock/handlings", headers: h.headers(), payload: { farm_id: I.farm, handling_type: "sanitary", handling_date: "2026-09-12", batch_id: I.batch, product_id: I.productLot, warehouse_id: null, dose: "2", items: [{ animal_id: I.animal, quantity: "1" }] } });
     expect(san.statusCode).toBe(201);
+    // checkpoint V2: detalhe de manejo e de pesagem por id (404 para inexistente, 403 para operador sem a permissão do tipo)
+    const hd = await h.app.inject({ method: "GET", url: `/api/livestock/handlings/${j(san).id}`, headers: h.headers() });
+    expect(hd.statusCode).toBe(200); expect(j(hd).handling_type).toBe("sanitary"); expect((j(hd).items as unknown[]).length).toBe(1);
+    expect((await h.app.inject({ method: "GET", url: "/api/livestock/handlings/00000000-0000-4000-8000-000000000000", headers: h.headers() })).statusCode).toBe(404);
+    expect((await h.app.inject({ method: "GET", url: `/api/livestock/handlings/${j(san).id}`, headers: h.opHeaders() })).statusCode).toBe(403);
+    // código único por organização (constraint é por tabela, não por tipo): manejo de outro tipo não pode dar 409
+    const nut = await h.app.inject({ method: "POST", url: "/api/livestock/handlings", headers: h.headers(), payload: { farm_id: I.farm, handling_type: "nutrition", handling_date: "2026-09-12", batch_id: I.batch, items: [{ animal_id: I.animal, quantity: "1" }] } });
+    expect(nut.statusCode, nut.body).toBe(201); expect(j(nut).code).not.toBe(j(san).code);
+    const wd = await h.app.inject({ method: "GET", url: `/api/livestock/weighings/${j(w2).id}`, headers: h.headers() });
+    expect(wd.statusCode).toBe(200); expect((j(wd).items as { gmd: string }[])[0]!.gmd).toBe("1.000");
+    expect((await h.app.inject({ method: "GET", url: "/api/livestock/weighings/00000000-0000-4000-8000-000000000000", headers: h.headers() })).statusCode).toBe(404);
     const ivm = j(await h.app.inject({ method: "GET", url: "/api/resources/products?search=Ivermectina", headers: h.headers() })).items![0] as { id: string };
     await h.app.inject({ method: "POST", url: "/api/stock/opening-balances", headers: h.headers(), payload: { farm_id: I.farm, warehouse_id: I.warehouse, product_id: ivm.id, quantity: "10", unit_value: "85", provider_lot: "L1", expiration_date: "2027-01-01" } });
     const san2 = await h.app.inject({ method: "POST", url: "/api/livestock/handlings", headers: h.headers(), payload: { farm_id: I.farm, handling_type: "sanitary", handling_date: "2026-09-12", batch_id: I.batch, product_id: ivm.id, warehouse_id: I.warehouse, dose: "0.01", items: [{ animal_id: I.animal, quantity: "1" }] } });
@@ -348,5 +363,51 @@ describe("vendas, frota, RH e pecuária", () => {
     expect(badRole.statusCode).toBe(422);
     const notif = await h.app.inject({ method: "POST", url: "/api/admin/notifications/refresh", headers: h.headers() }); expect(notif.statusCode).toBe(200);
     const list = j(await h.app.inject({ method: "GET", url: "/api/admin/notifications", headers: h.headers() })); expect(list.items!.length).toBeGreaterThan(0);
+  });
+});
+
+describe("segurança: escopo de fazenda em leituras por id (mesma organização, mesma permissão, fazenda não autorizada)", () => {
+  it("usuário restrito à Fazenda A lê registros de A e recebe 404 para B; proprietário (todas as fazendas) lê ambos", async () => {
+    const diesel = j(await h.app.inject({ method: "GET", url: "/api/resources/products?search=Diesel", headers: h.headers() })).items![0] as { id: string };
+    // perfil com as permissões de visualização necessárias + membro restrito à fazenda A
+    const role = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: "Leitor Fazenda A", permissions: ["sanitaries.view", "nutritions.view", "weighings.view", "fuel_supplies.view", "animals.view", "animal_sales.view", "animal_purchases.view"] } });
+    expect(role.statusCode, role.body).toBe(201);
+    const mem = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: "Restrito A", email: "restrito-a@demo.local", password: "Restrito@12345", role_id: j(role).id, farm_ids: [I.farm] } });
+    expect(mem.statusCode, mem.body).toBe(201);
+    const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "restrito-a@demo.local", password: "Restrito@12345" } });
+    expect(login.statusCode, login.body).toBe(200);
+    const rh = { authorization: `Bearer ${j(login).token}`, "x-org-id": h.demo.orgId };
+    // registros em A e em B (criados pelo proprietário)
+    const mk = async (url: string, payload: Record<string, unknown>) => { const r = await h.app.inject({ method: "POST", url, headers: h.headers(), payload }); expect(r.statusCode, `${url}: ${r.body}`).toBe(201); return j(r).id as string; };
+    const hA = await mk("/api/livestock/handlings", { farm_id: I.farm, handling_type: "sanitary", handling_date: "2026-09-20", batch_id: I.batch, items: [{ animal_id: I.animal, quantity: "1" }] });
+    const hB = await mk("/api/livestock/handlings", { farm_id: I.farm2, handling_type: "sanitary", handling_date: "2026-09-20", batch_id: I.batch, items: [{ animal_id: I.animal, quantity: "1" }] });
+    const wA = await mk("/api/livestock/weighings", { farm_id: I.farm, weighing_date: "2026-09-20", batch_id: I.batch, items: [{ animal_id: I.animal, weight: "300" }] });
+    const wB = await mk("/api/livestock/weighings", { farm_id: I.farm2, weighing_date: "2026-09-21", batch_id: I.batch, items: [{ animal_id: I.animal, weight: "301" }] });
+    const sA = await mk("/api/fleet/fuel-supplies", { farm_id: I.farm, supply_date: "2026-09-20", equipment_id: I.equipment, product_id: diesel.id, quantity: "5" });
+    const sB = await mk("/api/fleet/fuel-supplies", { farm_id: I.farm2, supply_date: "2026-09-20", equipment_id: I.equipment, product_id: diesel.id, quantity: "5" });
+    const get = async (url: string, headers: Record<string, string>) => h.app.inject({ method: "GET", url, headers });
+    for (const [a, b, base] of [[hA, hB, "/api/livestock/handlings"], [wA, wB, "/api/livestock/weighings"], [sA, sB, "/api/fleet/fuel-supplies"]] as const) {
+      // restrito: A permitido, B invisível (404 — não expõe existência), sem cabeçalho x-farm-id (farmId vazio não amplia o escopo)
+      expect((await get(`${base}/${a}`, rh)).statusCode, `${base} A restrito`).toBe(200);
+      const denied = await get(`${base}/${b}`, rh); expect(denied.statusCode, `${base} B restrito`).toBe(404); expect(j(denied).error!.code).toBe("NOT_FOUND");
+      // x-farm-id da fazenda B é recusado na entrada (403)
+      expect((await get(`${base}/${b}`, { ...rh, "x-farm-id": I.farm2 })).statusCode).toBe(403);
+      // listagem do restrito nunca traz registro de B
+      const ls = j(await get(base, rh)) as { items: { id: string; farm_id: string }[] };
+      expect(ls.items.some((r) => r.id === b)).toBe(false); expect(ls.items.every((r) => r.farm_id === I.farm)).toBe(true); expect(ls.items.some((r) => r.id === a)).toBe(true);
+      // proprietário (member_farms vazio = todas as fazendas): A e B
+      expect((await get(`${base}/${a}`, h.headers())).statusCode).toBe(200); expect((await get(`${base}/${b}`, h.headers())).statusCode).toBe(200);
+      const all = j(await get(base, h.headers())) as { items: { id: string }[] }; expect(all.items.some((r) => r.id === b)).toBe(true);
+      // fazenda selecionada (x-farm-id=A) continua restringindo o proprietário
+      const selA = j(await get(base, h.headers({ "x-farm-id": I.farm }))) as { items: { id: string }[] }; expect(selA.items.some((r) => r.id === b)).toBe(false);
+    }
+    // endpoints preexistentes do mesmo fluxo (animal, movimentação, manutenção) seguem o mesmo escopo
+    const mB = await mk("/api/livestock/movements", { farm_id: I.farm2, movement_type: "purchase", movement_date: "2026-09-22", person_id: I.provider, batch_id: I.batch, items: [{ category_id: I.speciesCategory, quantity: 1, weight: "200", unit_value: "1000" }] });
+    expect((await get(`/api/livestock/movements/${mB}`, rh)).statusCode).toBe(404); expect((await get(`/api/livestock/movements/${mB}`, h.headers())).statusCode).toBe(200);
+    const animalB = j(await get(`/api/livestock/animals?farm_id=${I.farm2}&pageSize=1`, h.headers())).items![0] as { id: string } | undefined;
+    if (animalB) expect((await get(`/api/livestock/animals/${animalB.id}`, rh)).statusCode).toBe(404);
+    expect((await get(`/api/livestock/animals/${I.animal}`, rh)).statusCode).toBe(200);
+    // permissão funcional continua valendo: operador (sem permissão de pesagem) recebe 403 mesmo em fazenda permitida
+    expect((await get(`/api/livestock/weighings/${wA}`, h.opHeaders())).statusCode).toBe(403);
   });
 });

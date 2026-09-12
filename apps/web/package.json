@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "lint": "eslint src",
+    "lint": "eslint src && node scripts/nav-audit.mjs",
+    "nav:audit": "node scripts/nav-audit.mjs",
     "e2e": "playwright test"
   },
   "dependencies": {

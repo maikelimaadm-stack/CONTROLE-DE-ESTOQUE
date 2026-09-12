@@ -10,7 +10,7 @@ export default function Page() {
   const [h, setH] = React.useState({ farm_id: "", requisition_date: todayISO(), classification: "unclassified", requester_person_id: "", area_id: "", harvest_id: "" });
   const [items, setItems] = React.useState<ItemRow[]>([]);
   React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
-  const create = useCreate("/api/stock/requisitions", () => router.push("/estoque?tab=saidas&sub=requisicoes"));
+  const create = useCreate("/api/stock/requisitions", () => router.push("/estoque?tab=operacoes&sub=requisicoes"));
   return <Card><CardHeader title="Requisição do Estoque (saída)" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!items.length} onClick={() => create.mutate({ ...h, requester_person_id: h.requester_person_id || null, area_id: h.area_id || null, harvest_id: h.harvest_id || null, items: items.map((i) => ({ warehouse_id: i.warehouse_id, product_id: i.product_id, quantity: i.quantity, provider_lot: i.provider_lot || null, cost_center_id: i.cost_center_id || null })) })}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
       <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>

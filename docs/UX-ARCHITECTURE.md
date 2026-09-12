@@ -1,4 +1,110 @@
-# Arquitetura de UX — reorganização funcional
+# Arquitetura de UX — Compactação Funcional V2
+
+> Segunda fase da reorganização: **reduzir a quantidade de decisões** que o usuário toma para realizar uma tarefa.
+> Poucos módulos + poucas áreas + filtros inteligentes + ações contextuais + busca global + regras internas robustas.
+> O motor (APIs, serviços, máquinas de estado, ledger, auditoria, idempotência, RLS, permissões, schema) **não mudou**.
+
+## Regras da V2
+
+- **Módulo → Área** é o fluxo normal (dois níveis). Diferenças de **status / tipo / etapa / escopo** viram **filtros
+  (chips)** na própria lista, não abas. Fontes de dados diferentes dentro de uma área ficam num **seletor compacto**
+  (`?sub=`, `ViewSegment`), não numa terceira camada de abas. Configurações é a exceção administrativa (3 níveis).
+- **Ação contextual**: operação que exige registro de origem nasce dele (saída → devolver; saldo → ajustar; animal →
+  mover para lote; lote → mover de local / transferir de fazenda / agrupar; máquina → transferir; OS → avaliar;
+  funcionário → eventos fixos).
+- **Menu principal só com módulos** (13): as áreas aparecem dentro do módulo. Um módulo aparece se o usuário tiver
+  qualquer permissão de qualquer área dele; abas, chips e ações continuam respeitando as permissões individualmente.
+- **Uma função, um lugar**: LOCAL OPERACIONAL ou LOCAL DE CONFIGURAÇÃO — nunca os dois.
+- **Rotina primeiro, avançado depois** (Modelo Base1): a barra mostra Novo, busca, visualização e ações da seleção;
+  configurar layout/colunas, exportações avançadas, relatórios personalizados e restaurar padrão ficam em "Mais opções".
+
+## Fonte única de verdade de navegação (SSOT)
+
+`apps/web/nav.registry.mjs` — só metadados (sem React): módulos, áreas, sub-áreas, ações e configurações com `id` estável,
+rótulo, rota canônica (`path` + `tab` + `sub` + `query` estável), permissões, aliases antigos, palavras-chave, descrição,
+tipo e flags de menu/busca; `LEGACY_TABS` mapeia abas/sub-abas da V1 para a estrutura atual; `EXTRA_REDIRECTS` cobre rotas
+com parâmetros dinâmicos.
+
+| Consumidor | Como deriva |
+|---|---|
+| Menu principal | `NAV` em `src/lib/nav.ts` (módulos; permissão = união das áreas) |
+| Busca global (`Buscar função…`) | `searchNav()` — rótulo, descrição, palavras-chave, aliases e trilha; só entradas permitidas |
+| Breadcrumbs | `crumbsFor(pathname, search)` — Módulo › Área › Sub (rotas de detalhe herdam o módulo dono) |
+| Favoritos | `favoriteRoute()` — caminho + `tab` + `sub` + parâmetros estáveis (`type`, `scope`, `stage`, `kind`, `role`, `view`, `action`); filtros temporários ficam de fora; favoritos antigos são canonicalizados na leitura |
+| Abas das páginas | `tab("modulo.area.sub", <conteúdo/>)` — rótulo/permissão/descrição vêm do registro (`components/workspace.tsx`) |
+| Rotas antigas | `redirects.mjs` (307, parâmetros preservados) derivado dos aliases → `next.config.ts` e `scripts/parity.mjs` |
+| Abas antigas (`?tab=saidas&sub=…`) | `canonicalize()` no `Workspace` (replace no cliente, demais parâmetros preservados) |
+| Notificações | rotas canônicas; notificação de registro abre o registro (`/suprimentos/view/:id`, `/cadastros/documents/:id`) |
+| Rotas de detalhe | `DETAIL_ROUTES` no registro (padrões, ex.: `/pecuaria/manejo/:type/:id`, `/pecuaria/pesagens/:id`, `/frota/abastecimentos/:id`) — `detailRouteFor()` dá módulo/área/rótulo ao breadcrumb; toda lista com "Visualizar" aponta para um padrão registrado |
+| Auditoria | `apps/web/scripts/nav-audit.mjs` (roda no `lint`): ids únicos, aliases/abas antigas/redirects com destino existente, `tab("id")` das páginas válidos, **links internos estáticos** (`href`, `base`, `back`, `router.push`) casando com página existente ou padrão de `DETAIL_ROUTES` — link para rota antiga (só válida por redirect) é erro —, guardrails (≤ 14 módulos; > 5 áreas gera aviso). Rotas montadas dinamicamente (`${…}`) ficam fora do regex de propósito |
+
+## Menu antes → depois
+
+| V1 (47 entradas) | V2 (13 módulos) |
+|---|---|
+| Início · Compras (2) · Estoque (6) · Financeiro (6) · Vendas (1) · Pecuária (7) · Frota e Ativos (5) · Pessoas e RH (5) · OS · Fiscal · Relatórios · Configurações (12) — abas repetidas no menu lateral | Início · Compras · Estoque · Financeiro · Vendas · Pecuária · Confinamento · Frota e Ativos · Pessoas e RH · Ordens de Serviço · Fiscal · Relatórios · Configurações — as áreas ficam dentro do módulo; a busca encontra qualquer função (áreas, sub-áreas, ações, configurações) |
+
+## Antes → depois por módulo (V1 → V2)
+
+| Módulo | V1 | V2 |
+|---|---|---|
+| **Compras** | Visão Geral · Processos com 9 sub-abas (Todos, Meus, Solicitações, Cotações, Autorização, Compras, Recebimentos, Finalizados, Rejeitados) | Visão Geral · **Processos**: uma lista, **Escopo** [Todos \| Meus] e **Etapa** como chips com contadores (`GET /api/supply/requests/counts`, uma consulta agregada); `?scope=`/`?stage=` |
+| **Estoque** | Visão Geral · Saldo · Movimentações (ledger/ajustes) · Entradas e Recebimentos (4) · Saídas (3) · Transferências (2) · Fábrica (4); "+ Novo" com 9 opções | Visão Geral · **Estoque** (saldo / movimentações / ajustes) · **Recebimentos** (fiscais / manuais / DFe / conferência) · **Operações** (requisições / saídas diretas / transferências com chip armazéns–fazendas / devoluções) · **Fábrica de Ração**; "+ Novo" em dois níveis (Entrada, Saída, Transferência, Produção); ajuste só a partir do saldo; devolução só a partir da requisição |
+| **Financeiro** | Visão Geral · Contas (2) · Tesouraria (3) · Conciliação (3) · Planejamento · Contratos | Visão Geral · **Contas** (A Pagar / A Receber / Compromissos-contratos) · **Caixa e Bancos** (extrato / fluxo / conciliação com chip "somente pendências" / meses conciliados / contas bancárias) · **Planejamento** (único lugar; removido de Configurações) |
+| **Vendas** | Orçamentos · Pedidos · Vendas | mantido (documentos conceitualmente distintos) |
+| **Pecuária** | Visão Geral · Rebanho (Animais, Buscar animal, Pendentes de processamento, Lotes) · Movimentações (5 sub-abas por tipo) · Manejos (7 sub-abas) · Movimentar Rebanho (4 sub-abas) | Visão Geral · **Rebanho** (Animais com pesquisa por identificação, "Localizar animal" e chip "Processamento pendente: N" que abre o painel; Lotes; Reclassificações [evolução de categoria]; Transferências [histórico]) · **Movimentações** (uma lista, tipo como chip) · **Manejos** (Registro: Manejos | Pesagens; em Manejos, "Todos os manejos" + tipo como chip — pesagens **não** entram em "todos": têm endpoint e semântica próprios [GMD por animal]; detalhe real em `/pecuaria/manejo/:tipo/:id` e `/pecuaria/pesagens/:id`) · "Movimentar rebanho" virou ação contextual (animal → mover para lote / transferir; lote → mover de local / transferir de fazenda / agrupar) em diálogo |
+| **Reprodução** | Visão Geral · Estações · Reprodutores · Protocolos · Acasalamentos | Visão Geral · Estações · Acasalamentos e Diagnósticos; **reprodutores e protocolos → Configurações › Pecuária** (cadastros técnicos raros) |
+| **Confinamento** | Visão Geral (2) · Estrutura (3) · Dietas (2) · Produção · Trato · Leitura de Cocho · Mapa · Desempenho (3) — 8 abas | **Hoje** (produção → trato → leitura) · **Currais** (árvore pátio → setor → curral + lista do nível; Mapa e Lotação como modos `?view=`) · **Dietas** (dietas / fases) · **Desempenho** (ganho, custos, consumo e estoque de nutrição num painel com seletor de seção) |
+| **Frota e Ativos** | Visão Geral · Máquinas (inventário, famílias, transferências) · Abastecimentos · Manutenções (4) · Depreciação (3) | Visão Geral · **Equipamentos** (inventário com "Transferir para outra fazenda" em diálogo; histórico de transferências; depreciação/patrimônio como visão) · **Abastecimentos** · **Manutenções** (corretivas / planos preventivos / agenda / alertas); **famílias só em Configurações › Frota** |
+| **Pessoas e RH** | Pessoas (4 sub-abas) · Funcionários · Ocorrências (3) · Adiantamentos · Apuração | **Pessoas** (uma lista, papel como chip: Todos / Funcionários / Clientes / Fornecedores / Proprietários; eventos fixos a partir do funcionário) · **Ocorrências** (faltas / bonificações) · **Folha** (adiantamentos / apuração) |
+| **Ordens de Serviço** | Todas · Minhas · Em andamento · Atrasadas (monitoramento) · Finalizadas | uma lista: **Escopo** [Todas \| Minhas] · **Status** (com contadores do monitoramento) · **[ ] Somente atrasadas** (`late=1` no endpoint) |
+| **Fiscal** | Situação · Documentos · Partida dobrada · Livro Caixa | Documentos de entrada · Partida dobrada · Livro Caixa; **capacidades/status → Configurações › Fiscal** |
+| **Relatórios** | Favoritos · Todos · uma aba por módulo · Personalizados | área única: **busca** + **módulo** (seletor) + acesso rápido [Todos \| ★ Favoritos \| Personalizados] |
+| **Configurações** | 12 seções; planejamento orçamentário duplicado; sem busca | 12 seções + **Buscar configuração**; sem duplicidades (planejamento no Financeiro; famílias só aqui; reprodutores/protocolos aqui); Fiscal › Capacidades; Documentos = **Biblioteca de Documentos** |
+
+## Duplicidades eliminadas
+
+| Função | Ficou em | Saiu de |
+|---|---|---|
+| Planejamento orçamentário | Financeiro › Planejamento (operacional) | Configurações › Financeiro |
+| Famílias de bens | Configurações › Frota | Frota › Máquinas |
+| Reprodutores / protocolos | Configurações › Pecuária | Reprodução |
+| Situação fiscal (capacidades) | Configurações › Fiscal › Capacidades | Fiscal (aba operacional) |
+| Buscar animal / processamentos | ação e indicador dentro de Animais | sub-abas do Rebanho |
+| Monitoramento de OS | contadores nos chips + filtro "atrasadas" | aba própria (`features/os/monitoring.tsx` removido) |
+
+## Documentos × Anexos
+
+`documents` (cadastro declarativo, `document_types`, vencimento com notificação "Documento vencendo") é uma **biblioteca
+documental independente** (licenças, certificados, contratos institucionais, documentos da propriedade): mantida e
+renomeada para **Biblioteca de Documentos** em Configurações › Fiscal e Documentos. Arquivos ligados a um registro usam os
+**Anexos por registro** (`erp.attachments` + `erp.attachment_blobs`, diálogo do Modelo Base1). Nenhum dado migrado ou
+apagado.
+
+## Rotas canônicas e compatibilidade
+
+Cada função pesquisável tem rota canônica (`canonicalHref(entrada)`); favoritos, busca e notificações usam-na. Rotas
+antigas: 78 redirecionamentos (aliases do registro + `EXTRA_REDIRECTS`) e 103 abas/sub-abas da V1 canonicalizadas no
+cliente. Exemplos verificados por e2e (`apps/web/e2e/navegacao.spec.ts`, `compactacao.spec.ts`):
+
+| Rota antiga | Canônica |
+|---|---|
+| `/pecuaria/localizar` | `/pecuaria?tab=rebanho&sub=animais&locate=1` (abre o localizador) |
+| `/dashboards/estoque-nutricao` | `/confinamento?tab=desempenho&view=nutricao` |
+| `/suprimentos/mine` · `/suprimentos/quotation` | `/compras?tab=processos&scope=mine` · `…&stage=quotation` |
+| `/estoque?tab=saidas&sub=requisicoes&x=1` (V1) | `/estoque?tab=operacoes&sub=requisicoes&x=1` |
+| `/pecuaria?tab=movimentar&sub=animais-lote` (V1) | `/pecuaria?tab=rebanho&sub=transferencias&action=animais-lote` (abre o diálogo) |
+| `/os/monitoramento` | `/os?late=1` |
+| `/fiscal?tab=situacao` (V1) | `/configuracoes?tab=fiscal&sub=capacidades` |
+
+## Guardrails numéricos
+
+Menu: 13 módulos (máx. 14). Áreas principais por módulo: 2–5 (Configurações é exceção). Sub-áreas só quando a fonte de
+dados é outra; status/tipo/escopo sempre como chip. Profundidade cotidiana: Módulo → Área.
+
+---
+
+# Arquitetura de UX — reorganização funcional (V1, histórico)
 
 O sistema nasceu replicando a estrutura de telas do sistema de referência (455 telas, menu com 9 grupos de "Cadastros Base",
 13 dashboards soltos, uma tela por etapa/tipo). A partir desta reorganização a qualidade **não** é medida por quantidade de
@@ -153,8 +259,8 @@ futuro consome os mesmos endpoints (`/api/stock/*`, `/api/supply/requests?stage=
 
 ## Código
 
-- `apps/web/src/lib/nav.ts` — árvore do menu (47 entradas) e utilitários (`navKey`, `permOk`).
-- `apps/web/src/components/workspace.tsx` — `Workspace`, `SubTabs`, `NewChooser`.
+- `apps/web/nav.registry.mjs` — fonte única de navegação (V2); `apps/web/src/lib/nav.ts` — derivações (menu, busca, breadcrumbs, favoritos, canonicalização).
+- `apps/web/src/components/workspace.tsx` — `Workspace`, `ViewSegment`, `FilterChips`, `useUrlParam`, `NewChooser` (dois níveis), `tab()`.
 - `apps/web/src/features/<módulo>/*` — componentes de listagem/painéis (antes eram `page.tsx`); as páginas de área em
   `apps/web/src/app/(app)/<módulo>/page.tsx` apenas compõem abas.
 - Removidos: 61 `page.tsx` de listagem/dashboard substituídos por redirecionamentos (nenhum componente ficou órfão — ver
