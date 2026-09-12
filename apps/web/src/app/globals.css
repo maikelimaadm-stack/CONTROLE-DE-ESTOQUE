@@ -26,7 +26,8 @@ input, select, textarea { @apply text-[13px]; }
 }
 
 /* ================================================================================================
-   MODELO BASE1 — tokens e classes replicados do makgestao (src/styles/mg-prototype.css do PROJETOMG)
+   MODELO BASE1 — tokens e classes do nosso modelo de tela padrão (docs/PERSONALIZACAO.md).
+   O material histórico do sistema de referência externo fica em docs/reference/ — nunca no runtime.
    ================================================================================================ */
 :root {
   --mg-accent: #40de63; --mg-accent-hover: #36c956; --mg-accent-light: rgba(64, 222, 99, .12);

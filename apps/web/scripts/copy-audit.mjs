@@ -21,7 +21,8 @@ const ALLOW = new Map([
 ]);
 
 const walk = (d, out = []) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) { if (e.name !== "node_modules" && e.name !== "dist" && e.name !== ".next") walk(p, out); } else if (/\.(tsx?|mjs)$/.test(e.name) && !/\.(test|spec)\./.test(e.name)) out.push(p); } return out; };
-const files = [...walk(path.join(root, "src")), ...walk(path.join(repo, "packages/domain/src"))];
+// Catálogos de tradução (@agro/platform) entram na auditoria: é de lá que sai o texto pt-BR da interface.
+const files = [...walk(path.join(root, "src")), ...walk(path.join(repo, "packages/domain/src")), ...walk(path.join(repo, "packages/platform/src/locales"))];
 
 /** Remove comentários (bloco e linha inteira) preservando a numeração de linhas. */
 const stripComments = (src) => src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/^\s*\/\/.*$/gm, "");
@@ -41,7 +42,7 @@ const report = (file, line, text, rule) => { if (ALLOW.has(text.trim())) return;
 const lineOf = (src, idx) => src.slice(0, idx).split("\n").length;
 
 for (const file of files) {
-  const raw = fs.readFileSync(file, "utf8"); const src = stripComments(raw); const isDomain = file.includes("packages/domain"); const isTsx = file.endsWith(".tsx");
+  const raw = fs.readFileSync(file, "utf8"); const src = stripComments(raw); const isDomain = file.includes("packages/domain") || file.includes("packages/platform"); const isTsx = file.endsWith(".tsx");
   const candidates = [];
   if (isDomain) { for (const m of src.matchAll(/"([^"\\\n]*)"/g)) if (/[A-Za-zÀ-ÿ]/.test(m[1]) && !/^[a-z0-9_./:-]+$/.test(m[1])) candidates.push({ text: m[1], idx: m.index }); }
   else {

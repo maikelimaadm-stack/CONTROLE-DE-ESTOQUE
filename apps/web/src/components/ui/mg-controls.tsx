@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
 
 /* ================================================================================================
-   Controles do MODELO BASE1 replicados do PROJETOMG: seletor de opções (cmd-select), calendário (mg-dp),
+   Controles do MODELO BASE1 (docs/PERSONALIZACAO.md): seletor de opções (cmd-select), calendário (mg-dp),
    avisos (erp-toast-panel) e pílula de obrigatórios (form-validation-status).
    ================================================================================================ */
 
