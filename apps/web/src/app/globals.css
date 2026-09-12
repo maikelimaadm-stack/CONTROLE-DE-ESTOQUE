@@ -458,7 +458,8 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 /* ================================================================================================
    APP SHELL & WORKSPACE (UI-STAB-01): TopNavigation · mega-menu · abas globais · trilha (docs/UI-STANDARD.md)
    ================================================================================================ */
-:root { --mg-topnav-h: 42px; --mg-tabbar-h: 40px; --mg-z-topnav: 70; --mg-z-mega: 80; }
+/* camadas: shell (topnav 30, mega-menu/busca 39) ABAIXO do overlay (40) e dos diálogos (50) — um Dialog nunca fica por baixo da barra superior */
+:root { --mg-topnav-h: 42px; --mg-tabbar-h: 40px; --mg-z-topnav: 30; --mg-z-mega: 39; }
 .mg-topnav { position: relative; z-index: var(--mg-z-topnav); display: flex; align-items: center; gap: 8px; min-height: var(--mg-topnav-h); padding: 0 12px; background: var(--mg-accent); box-shadow: inset 0 1px 0 rgba(255,255,255,.9), 0 2px 6px rgba(15,23,42,.12); }
 .mg-topnav__brand { display: flex; align-items: center; gap: 8px; flex-shrink: 0; margin-right: 6px; color: #fff; text-decoration: none; }
 .mg-topnav__logo { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 7px; background: rgba(255,255,255,.2); color: #fff; }
