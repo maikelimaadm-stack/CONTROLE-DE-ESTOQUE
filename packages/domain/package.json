@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@agro/shared": "workspace:*",
+    "@erp/plataforma": "workspace:*",
     "zod": "^4.6.0"
   },
   "devDependencies": {

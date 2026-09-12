@@ -5,5 +5,7 @@ export * from "./labels.js";
 export * from "./stock.js";
 export * from "./assets.js";
 export * from "./livestock.js";
+export * from "./rebanho.js";
+export * from "./id-global.js";
 export * from "./sales.js";
 export * from "./resources/index.js";

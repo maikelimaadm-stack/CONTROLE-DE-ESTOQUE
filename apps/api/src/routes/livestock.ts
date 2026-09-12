@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, todayISO } from "@agro/shared";
-import { gmd, withdrawalUntil, expectedBirth, ageMonths, evolveCategory } from "@agro/domain";
+import { gmd, withdrawalUntil, expectedBirth, ageMonths, evolveCategory, permissaoMovimentacao, tiposMovimentacaoVisiveis } from "@agro/domain";
 import { runService, nextCode, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { farmAllowed, farmScope, scopedById, assertFarmVisible, allowedFarms, type ServiceCtx } from "../lib/context.js";
+import { farmAllowed, farmScope, scopedById, assertFarmVisible, allowedFarms, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing, hasColumnFilters } from "../lib/column-filters.js";
 import { postStock } from "../services/stock-core.js";
@@ -83,12 +83,44 @@ export default async function livestockRoutes(app: FastifyInstance) {
 
   // ---------- Movimentações: compra, venda, nascimento, morte, perda ----------
   const movSchema = z.object({ farm_id: uuid, movement_type: z.enum(["purchase", "sale", "birth", "death", "loss"]), movement_date: date, person_id: uuid.optional().nullable(), batch_id: uuid.optional().nullable(), cause: z.string().optional().nullable(), note: z.string().optional().nullable(), invoice_number: z.string().optional().nullable(), generate_financial: z.boolean().default(false), due_date: date.optional().nullable(), financial_category_id: uuid.optional().nullable(), cost_center_id: uuid.optional().nullable(), items: z.array(z.object({ animal_id: uuid.optional().nullable(), herd_lot_id: uuid.optional().nullable(), category_id: uuid.optional().nullable(), breed_id: uuid.optional().nullable(), sex: z.enum(["M", "F"]).optional().nullable(), quantity: z.number().int().min(1).default(1), weight: dec.optional().nullable(), unit_value: dec.optional().nullable(), identifications: z.array(z.object({ identification_type_id: uuid, value: z.string().min(1) })).optional(), mother_id: uuid.optional().nullable(), father_id: uuid.optional().nullable(), birth_date: date.optional().nullable() })).min(1) });
-  app.get("/livestock/movements", async (req) => runService(app, req, "animal_sales.view", async (ctx) => { const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>; const where = ["m.organization_id=$1", "m.deleted_at is null"]; const params: unknown[] = [ctx.orgId]; if (f.movement_type) { params.push(f.movement_type); where.push(`m.movement_type=$${params.length}`); } where.push(...farmScope(ctx, "m", params)); if (f.start_date) { params.push(f.start_date); where.push(`m.movement_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`m.movement_date<=$${params.length}`); } if (f.person_id) { params.push(f.person_id); where.push(`m.person_id=$${params.length}`); } const w = where.join(" and "); return paged(ctx, `select m.*, p.name as person_name, b.description as batch_name, f.name as farm_name, u.name as created_by_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id join erp.farms f on f.id=m.farm_id left join erp.users u on u.id=m.created_by where ${w} order by m.movement_date desc, m.created_at desc`, `select count(*) n from erp.animal_movements m where ${w}`, params, q, req.query as Record<string, unknown>); }));
-  app.get("/livestock/movements/:id", async (req) => runService(app, req, "animal_sales.view", async (ctx) => { const { id } = req.params as { id: string }; const m = await ctx.tx.query("select m.*, p.name as person_name, b.description as batch_name, f.name as farm_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id join erp.farms f on f.id=m.farm_id where m.id=$1 and m.organization_id=$2" + scopedById(ctx, "m", id).sql, scopedById(ctx, "m", id).params); if (!m.rows[0]) throw notFound(); const items = await ctx.tx.query("select mi.*, c.name as category_name, (select string_agg(i.value, ', ') from erp.animal_identifications i where i.animal_id=mi.animal_id) as identifications from erp.animal_movement_items mi left join erp.animal_categories c on c.id=coalesce(mi.new_category_id, mi.category_id) where mi.movement_id=$1", [id]); return { ...m.rows[0], items: items.rows }; }));
-  app.post("/livestock/movements", async (req, reply) => reply.status(201).send(await runService(app, req, "animal_sales.create", async (ctx) => {
+  /**
+   * LISTAGEM DE MOVIMENTAÇÕES — UMA PERMISSÃO POR TIPO (docs/GLOBAL-ID-CONTRACT.md).
+   * A tabela guarda cinco operações com telas e permissões distintas, mais as movimentações internas (efeito
+   * de transferência, evolução, inventário, processamento), que não têm porta própria. A listagem devolve
+   * SOMENTE as linhas cujo tipo o usuário pode ver — e total/página/contagem refletem só essas linhas, porque
+   * o recorte entra no mesmo WHERE da contagem. Sem nenhum tipo visível, a resposta é uma página vazia (nunca
+   * 403: não revela existência).
+   */
+  app.get("/livestock/movements", async (req) => runService(app, req, null, async (ctx) => {
+    const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
+    const visiveis = tiposMovimentacaoVisiveis((p) => hasPermission(ctx, p));
+    const tipos = f.movement_type ? visiveis.filter((t) => t === f.movement_type) : visiveis;
+    if (!tipos.length) return { items: [], total: 0, page: q.page, pageSize: q.pageSize };
+    const where = ["m.organization_id=$1", "m.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
+    params.push(tipos); where.push(`m.movement_type = any($${params.length}::text[])`);
+    where.push(...farmScope(ctx, "m", params));
+    if (f.start_date) { params.push(f.start_date); where.push(`m.movement_date>=$${params.length}`); }
+    if (f.end_date) { params.push(f.end_date); where.push(`m.movement_date<=$${params.length}`); }
+    if (f.person_id) { params.push(f.person_id); where.push(`m.person_id=$${params.length}`); }
+    const w = where.join(" and ");
+    return paged(ctx, `select m.*, p.name as person_name, b.description as batch_name, f.name as farm_name, u.name as created_by_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id join erp.farms f on f.id=m.farm_id left join erp.users u on u.id=m.created_by where ${w} order by m.movement_date desc, m.created_at desc`, `select count(*) n from erp.animal_movements m where ${w}`, params, q, req.query as Record<string, unknown>);
+  }));
+  /** Detalhe: a permissão sai do TIPO DO PRÓPRIO REGISTRO. Tipo interno ou desconhecido → 404, nunca 403. */
+  app.get("/livestock/movements/:id", async (req) => runService(app, req, null, async (ctx) => {
+    const { id } = req.params as { id: string };
+    const m = await ctx.tx.query<Record<string, unknown>>("select m.*, p.name as person_name, b.description as batch_name, f.name as farm_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id join erp.farms f on f.id=m.farm_id where m.id=$1 and m.organization_id=$2" + scopedById(ctx, "m", id).sql, scopedById(ctx, "m", id).params);
+    if (!m.rows[0]) throw notFound();
+    const permissao = permissaoMovimentacao(String(m.rows[0]["movement_type"] ?? ""), "view");
+    if (!permissao || !hasPermission(ctx, permissao)) throw notFound();
+    const items = await ctx.tx.query("select mi.*, c.name as category_name, (select string_agg(i.value, ', ') from erp.animal_identifications i where i.animal_id=mi.animal_id) as identifications from erp.animal_movement_items mi left join erp.animal_categories c on c.id=coalesce(mi.new_category_id, mi.category_id) where mi.movement_id=$1", [id]);
+    return { ...m.rows[0], items: items.rows };
+  }));
+  // Criação: a permissão é a DO TIPO pedido. Não há porta externa de venda cobrindo compra, nascimento, morte ou perda.
+  app.post("/livestock/movements", async (req, reply) => reply.status(201).send(await runService(app, req, null, async (ctx) => {
     const d = movSchema.parse(req.body); if (!farmAllowed(ctx, d.farm_id)) throw validation("Sem acesso à fazenda");
-    const permMap = { purchase: "animal_purchases.create", sale: "animal_sales.create", birth: "animal_births.create", death: "animal_deaths.create", loss: "animal_losses.create" } as const;
-    const { requirePermission } = await import("../lib/service.js"); requirePermission(ctx, permMap[d.movement_type]);
+    const permissao = permissaoMovimentacao(d.movement_type, "create");
+    if (!permissao) throw notFound();
+    requirePermission(ctx, permissao);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
       const code = await animalCode(ctx, `animal_${d.movement_type}`);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,farm_id,code,movement_type,movement_date,person_id,batch_id,cause,note,invoice_number,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.farm_id, code, d.movement_type, d.movement_date, d.person_id ?? null, d.batch_id ?? null, d.cause ?? null, d.note ?? null, d.invoice_number ?? null, ctx.user.id]);
@@ -131,8 +163,10 @@ export default async function livestockRoutes(app: FastifyInstance) {
       return { id, code, quantity: qty, total_value: money(value), title_ids: titleIds };
     })).result;
   })));
-  app.post("/livestock/movements/:id/cancel", async (req) => runService(app, req, "animal_sales.delete", async (ctx) => {
-    const { id } = req.params as { id: string }; const m = await ctx.tx.query<{ status: string; movement_type: string; farm_id: string }>("select status, movement_type, farm_id from erp.animal_movements where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound(); assertFarmVisible(ctx, m.rows[0].farm_id, "Movimentação"); if (m.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
+  // Cancelamento: permissão do tipo do registro (tipo interno não é cancelável por esta porta → 404).
+  app.post("/livestock/movements/:id/cancel", async (req) => runService(app, req, null, async (ctx) => {
+    const { id } = req.params as { id: string }; const m = await ctx.tx.query<{ status: string; movement_type: string; farm_id: string }>("select status, movement_type, farm_id from erp.animal_movements where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound(); assertFarmVisible(ctx, m.rows[0].farm_id, "Movimentação");
+    const permissao = permissaoMovimentacao(m.rows[0].movement_type, "delete"); if (!permissao) throw notFound(); requirePermission(ctx, permissao); if (m.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
     const paid = await ctx.tx.query("select 1 from erp.financial_titles where source_type='animal_movements' and source_id=$1 and paid_amount>0", [id]); if (paid.rowCount) throw err("CONFLICT", "Títulos com baixa");
     const items = await ctx.tx.query<{ animal_id: string | null; herd_lot_id: string | null; quantity: number }>("select animal_id, herd_lot_id, quantity from erp.animal_movement_items where movement_id=$1", [id]);
     for (const it of items.rows) {

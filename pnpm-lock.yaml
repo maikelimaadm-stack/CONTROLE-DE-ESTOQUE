@@ -251,6 +251,9 @@ importers:
       '@agro/shared':
         specifier: workspace:*
         version: link:../shared
+      '@erp/plataforma':
+        specifier: workspace:*
+        version: link:../plataforma
       zod:
         specifier: ^4.6.0
         version: 4.6.0

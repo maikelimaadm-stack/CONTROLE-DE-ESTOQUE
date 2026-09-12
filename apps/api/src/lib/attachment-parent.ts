@@ -1,4 +1,4 @@
-import { RESOURCES } from "@agro/domain";
+import { RESOURCES, permissaoManejo, permissaoMovimentacao } from "@agro/domain";
 import { farmAllowed, hasPermission, scopedById, type ServiceCtx } from "./context.js";
 import { notFound, validation, denied } from "./errors.js";
 
@@ -16,15 +16,21 @@ import { notFound, validation, denied } from "./errors.js";
 export type ParentKind = "farm" | "org" | "child";
 export interface ParentRule {
   kind: ParentKind;
-  /** Permissão de visualização do pai; pode depender da linha (tipo/direção). */
-  viewPerm: string | ((row: Record<string, unknown>) => string);
+  /**
+   * Permissão de visualização do pai; pode depender da linha (tipo/direção).
+   * `null` = tipo sem porta funcional (desconhecido ou interno): NEGA com 404, nunca cai numa permissão vizinha.
+   */
+  viewPerm: string | ((row: Record<string, unknown>) => string | null);
   /** Carrega a linha do pai dentro do tenant + escopo; null = não existe / invisível. SQL fixo por entidade (sem entity dinâmico). */
   load: (ctx: ServiceCtx, id: string) => Promise<Record<string, unknown> | null>;
   origin: "registry" | "explicit";
 }
 
-const HANDLING_PERM: Record<string, string> = { nutrition: "nutritions.view", sanitary: "sanitaries.view", weaning: "weanings.view", separation: "separations.view", pasture: "pastures.view", locate: "locate_animals.view" };
-const MOVEMENT_PERM: Record<string, string> = { purchase: "animal_purchases.view", sale: "animal_sales.view", birth: "animal_births.view", death: "animal_deaths.view", loss: "animal_losses.view" };
+/**
+ * As matrizes de manejo e movimentação de rebanho NÃO são copiadas aqui: vêm da fonte única de operações
+ * (`@agro/domain`), a mesma consumida pelas rotas operacionais e pelo registry de ID Global. Tipo desconhecido
+ * ou interno devolve `null` — fail-closed. Não existe mais `?? "animal_sales.view"` nem `?? "nutritions.view"`.
+ */
 
 /** Consulta por id com tenant e (opcional) escopo de fazenda/soft delete — tabela e colunas são literais do registry. */
 function byId(table: string, opts: { farm?: boolean; softDelete?: boolean; shared?: boolean }) {
@@ -41,9 +47,9 @@ const EXPLICIT: Record<string, ParentRule> = {
   service_orders: { kind: "farm", viewPerm: "service_orders.view", load: byId("service_orders", { farm: true, softDelete: true }), origin: "explicit" },
   purchase_requests: { kind: "farm", viewPerm: "purchase_requests.view", load: byId("purchase_requests", { farm: true, softDelete: true }), origin: "explicit" },
   weighings: { kind: "farm", viewPerm: "weighings.view", load: byId("weighings", { farm: true, softDelete: true }), origin: "explicit" },
-  animal_handlings: { kind: "farm", viewPerm: (row) => HANDLING_PERM[String(row["handling_type"])] ?? "nutritions.view", load: byId("animal_handlings", { farm: true, softDelete: true }), origin: "explicit" },
-  animal_movements: { kind: "farm", viewPerm: (row) => MOVEMENT_PERM[String(row["movement_type"])] ?? "animal_sales.view", load: byId("animal_movements", { farm: true }), origin: "explicit" },
-  financial_titles: { kind: "farm", viewPerm: (row) => (row["direction"] === "payable" ? "payables.view" : "receivables.view"), load: byId("financial_titles", { farm: true, softDelete: true }), origin: "explicit" },
+  animal_handlings: { kind: "farm", viewPerm: (row) => permissaoManejo(String(row["handling_type"] ?? ""), "view"), load: byId("animal_handlings", { farm: true, softDelete: true }), origin: "explicit" },
+  animal_movements: { kind: "farm", viewPerm: (row) => permissaoMovimentacao(String(row["movement_type"] ?? ""), "view"), load: byId("animal_movements", { farm: true }), origin: "explicit" },
+  financial_titles: { kind: "farm", viewPerm: (row) => (row["direction"] === "payable" ? "payables.view" : row["direction"] === "receivable" ? "receivables.view" : null), load: byId("financial_titles", { farm: true, softDelete: true }), origin: "explicit" },
   animals: { kind: "farm", viewPerm: "animals.view", load: byId("animals", { farm: true, softDelete: true }), origin: "explicit" },
   // filhas: fazenda herdada do pátio (feedlot_yards.farm_id)
   feedlot_sectors: { kind: "child", viewPerm: "feedlot_sectors.view", origin: "explicit", load: async (ctx, id) => {
@@ -84,6 +90,8 @@ export async function authorizeAttachmentParent(ctx: ServiceCtx, entity: string,
   const row = await rule.load(ctx, entityId);
   if (!row) throw notFound("Registro");
   const perm = typeof rule.viewPerm === "function" ? rule.viewPerm(row) : rule.viewPerm;
+  // tipo sem porta funcional: o registro é tratado como inexistente (404), nunca resolvido por permissão vizinha
+  if (!perm) throw notFound("Registro");
   if (!hasPermission(ctx, perm)) throw denied(perm);
   void action; // política única para view/create/delete (ver cabeçalho); mantido na assinatura para evolução sem mudar chamadores
   return { rule, row };

@@ -53,17 +53,17 @@ afterAll(async () => { await h.app.close(); await h.db.end(); });
 
 describe("ID Global — alocação", () => {
   it("é sequencial por organização e compartilhado pelas empresas da organização", async () => {
-    const a = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", I.animal!, { farm_id: I.farm }));
-    const b = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product!, {}));
+    const a = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", I.animal!));
+    const b = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product!));
     expect(b).toBe(a + 1);
     const entrada = await criar("/api/stock/input-entries", { farm_id: I.farm2, entry_date: "2026-09-01", items: [{ product_id: I.product, quantity: "5", unit_value: "2", warehouse_id: I.warehouseFarm2 }] });
-    const c = await comoServico((ctx) => atribuirIdGlobal(ctx, "input_entries", entrada, { farm_id: I.farm2 }));
+    const c = await comoServico((ctx) => atribuirIdGlobal(ctx, "input_entries", entrada));
     expect(c).toBe(b + 1);
   });
 
   it("é idempotente: o mesmo registro nunca recebe dois ID Globais", async () => {
-    const primeiro = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product2!, {}));
-    const denovo = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product2!, {}));
+    const primeiro = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product2!));
+    const denovo = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product2!));
     expect(denovo).toBe(primeiro);
   });
 
@@ -73,7 +73,7 @@ describe("ID Global — alocação", () => {
       const linhas = await admin.query<{ id: string }>("select id from erp.people where organization_id=$1 order by code limit 10", [h.demo.orgId]);
       const alvos = linhas.rows.map((r) => r.id);
       expect(alvos.length).toBeGreaterThanOrEqual(5);
-      const alocados = await Promise.all(alvos.map((id) => comoServico((ctx) => atribuirIdGlobal(ctx, "people", id, {}))));
+      const alocados = await Promise.all(alvos.map((id) => comoServico((ctx) => atribuirIdGlobal(ctx, "people", id))));
       expect(new Set(alocados).size).toBe(alvos.length);
       const dup = await admin.query<{ n: string }>("select count(*) n from (select id_global from erp.registros_globais where organization_id=$1 group by id_global having count(*)>1) x", [h.demo.orgId]);
       expect(Number(dup.rows[0]!.n)).toBe(0);
@@ -81,9 +81,9 @@ describe("ID Global — alocação", () => {
   });
 
   it("recusa entidade não elegível e variante sem tela canônica (nunca cria registro irresolvível)", async () => {
-    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "input_entry_items", I.product!, {}))).rejects.toThrow(/sem ID Global/i);
-    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", I.animal!, { farm_id: I.farm }))).rejects.toThrow(/handling_type/i);
-    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", I.animal!, { farm_id: I.farm, movement_type: "inventory" }))).rejects.toThrow(/movement_type/i);
+    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "input_entry_items", I.product!))).rejects.toThrow(/sem ID Global/i);
+    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", I.animal!))).rejects.toThrow(/handling_type/i);
+    await expect(comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", I.animal!))).rejects.toThrow(/movement_type/i);
   });
 
   it("grava a rota canônica resolvida a partir do registro", async () => {
@@ -100,7 +100,7 @@ describe("ID Global — alocação", () => {
 
 describe("ID Global — resolução e escopo", () => {
   it("resolve #N no registro real, aceitando as duas grafias", async () => {
-    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", I.animal!, { farm_id: I.farm }));
+    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", I.animal!));
     for (const caminho of [String(idGlobal), `%23${idGlobal}`]) {
       const r = await h.app.inject({ method: "GET", url: `/api/registros-globais/${caminho}`, headers: h.headers() });
       expect(r.statusCode, r.body).toBe(200);
@@ -130,7 +130,7 @@ describe("ID Global — resolução e escopo", () => {
 
   it("respeita o escopo de empresa: registro de outra empresa responde 404", async () => {
     const entrada = await criar("/api/stock/input-entries", { farm_id: I.farm2, entry_date: "2026-09-02", items: [{ product_id: I.product, quantity: "3", unit_value: "2", warehouse_id: I.warehouseFarm2 }] });
-    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "input_entries", entrada, { farm_id: I.farm2 }));
+    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "input_entries", entrada));
     const soEmpresaA = await membro("Empresa A", "empresa.a@demo.local", [I.farm!]);
     const negado = await resolver(idGlobal, soEmpresaA);
     expect(negado.statusCode, negado.body).toBe(404);
@@ -139,13 +139,13 @@ describe("ID Global — resolução e escopo", () => {
   });
 
   it("resolução direta no serviço concorda com a rota HTTP", async () => {
-    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product!, {}));
+    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product!));
     const direto = await comoServico((ctx) => resolverRegistro(ctx, idGlobal));
     expect(direto).toMatchObject({ idGlobal, tipoEntidade: "products", idEntidade: I.product, empresaId: null });
   });
 
   it("rota canônica de cadastro abre em consulta (?view=1), não em edição", async () => {
-    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product!, {}));
+    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product!));
     const r = await resolver(idGlobal, h.headers());
     expect(r.statusCode, r.body).toBe(200);
     expect(j(r).rota).toBe(`/cadastros/products/${I.product}?view=1`);
@@ -161,8 +161,8 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
   it("financeiro: conta a pagar e conta a receber exigem permissões distintas", async () => {
     const pagar = await criar("/api/financial/payables", { farm_id: I.farm, number: "GID-P1", person_id: I.provider, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "gid", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] });
     const receber = await criar("/api/financial/receivables", { farm_id: I.farm, number: "GID-R1", person_id: I.client, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "gid", apportionment: [{ financial_category_id: I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }] });
-    const gidPagar = await comoServico((ctx) => atribuirIdGlobal(ctx, "financial_titles", pagar, { farm_id: I.farm, direction: "payable" }));
-    const gidReceber = await comoServico((ctx) => atribuirIdGlobal(ctx, "financial_titles", receber, { farm_id: I.farm, direction: "receivable" }));
+    const gidPagar = await comoServico((ctx) => atribuirIdGlobal(ctx, "financial_titles", pagar));
+    const gidReceber = await comoServico((ctx) => atribuirIdGlobal(ctx, "financial_titles", receber));
 
     const soPagar = await membro("Só Pagar", "so.pagar@demo.local", [], ["payables.view"]);
     const soReceber = await membro("Só Receber", "so.receber@demo.local", [], ["receivables.view"]);
@@ -185,7 +185,7 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
       sale: await criar("/api/sales/sales", { farm_id: I.farm, document_date: "2026-09-10", client_id: I.client, items: item })
     };
     const gid: Record<string, number> = {};
-    for (const [tipo, id] of Object.entries(docs)) gid[tipo] = await comoServico((ctx) => atribuirIdGlobal(ctx, "sales_documents", id, { farm_id: I.farm, kind: tipo }));
+    for (const [tipo, id] of Object.entries(docs)) gid[tipo] = await comoServico((ctx) => atribuirIdGlobal(ctx, "sales_documents", id));
 
     const usuarios: Record<string, Hdr> = {
       budget: await membro("Só Orçamento", "so.orcamento@demo.local", [], ["budgets.view"]),
@@ -205,8 +205,8 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
   it("pecuária: cada tipo de manejo exige a permissão do próprio tipo", async () => {
     const sanitario = await criar("/api/livestock/handlings", { farm_id: I.farm, handling_type: "sanitary", handling_date: "2026-09-10", batch_id: I.batch, dose: "1", items: [{ animal_id: I.animal, quantity: "1" }] });
     const nutricao = await criar("/api/livestock/handlings", { farm_id: I.farm, handling_type: "nutrition", handling_date: "2026-09-10", batch_id: I.batch, items: [{ animal_id: I.animal, quantity: "1" }] });
-    const gidSanitario = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", sanitario, { farm_id: I.farm, handling_type: "sanitary" }));
-    const gidNutricao = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", nutricao, { farm_id: I.farm, handling_type: "nutrition" }));
+    const gidSanitario = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", sanitario));
+    const gidNutricao = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", nutricao));
 
     const soSanitario = await membro("Só Sanitário", "so.sanitario@demo.local", [], ["sanitaries.view"]);
     const soNutricao = await membro("Só Nutrição", "so.nutricao@demo.local", [], ["nutritions.view"]);
@@ -230,8 +230,8 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
       venda = await insere("sale", "GID-MV1");
       nascimento = await insere("birth", "GID-MV2");
     } finally { await admin.end(); }
-    const gidVenda = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", venda, { farm_id: I.farm, movement_type: "sale" }));
-    const gidNascimento = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", nascimento, { farm_id: I.farm, movement_type: "birth" }));
+    const gidVenda = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", venda));
+    const gidNascimento = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_movements", nascimento));
 
     const soVenda = await membro("Só Venda de Animais", "so.venda.animais@demo.local", [], ["animal_sales.view"]);
     const soNascimento = await membro("Só Nascimentos", "so.nascimentos@demo.local", [], ["animal_births.view"]);
@@ -244,7 +244,7 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
   });
 
   it("permissão de outra entidade não abre nada (sem OR genérico entre telas)", async () => {
-    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", I.animal!, { farm_id: I.farm }));
+    const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", I.animal!));
     const semAnimais = await membro("Sem Animais", "sem.animais@demo.local", [], ["products.view"]);
     expect((await resolver(idGlobal, semAnimais)).statusCode).toBe(404);
   });

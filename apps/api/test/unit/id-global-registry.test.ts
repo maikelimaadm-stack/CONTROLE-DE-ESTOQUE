@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { ENTIDADES_ID_GLOBAL, colunaDiscriminadora, resolverRegistroGlobal, validarRegistroIdGlobal, variantesDeclaradas } from "@erp/plataforma";
-import { allPermissionKeys } from "@agro/domain";
+import { ENTIDADES_ID_GLOBAL, resolverRegistroGlobal, validarRegistroIdGlobal } from "@agro/domain";
+import { colunaDiscriminadora, variantesDeclaradas } from "@erp/plataforma";
+import { allPermissionKeys, MANEJOS_REBANHO, MOVIMENTACOES_INTERNAS, MOVIMENTACOES_REBANHO, TODOS_TIPOS_MOVIMENTACAO, permissaoManejo, permissaoMovimentacao } from "@agro/domain";
+import { readFileSync } from "node:fs";
+import { ATTACHMENT_PARENTS } from "../../src/lib/attachment-parent.js";
 
 /**
  * O registry de ID Global vive no núcleo neutro (`@erp/plataforma`), que por contrato NUNCA importa o
@@ -43,14 +46,51 @@ describe("registry de ID Global × catálogo de permissões", () => {
     }
   });
 
-  it("a matriz de manejo e movimentação é a mesma já usada na autorização de anexos", () => {
-    const manejo: Record<string, string> = { nutrition: "nutritions.view", sanitary: "sanitaries.view", weaning: "weanings.view", separation: "separations.view", pasture: "pastures.view", locate: "locate_animals.view" };
-    const movimento: Record<string, string> = { purchase: "animal_purchases.view", sale: "animal_sales.view", birth: "animal_births.view", death: "animal_deaths.view", loss: "animal_losses.view" };
-    for (const [tipo, permissao] of Object.entries(manejo)) {
-      expect(resolverRegistroGlobal("animal_handlings", "id", { handling_type: tipo })?.permissao, tipo).toBe(permissao);
+  /**
+   * §12 — UMA FONTE SÓ. Os três consumidores da matriz de variantes de rebanho (registry de ID Global,
+   * autorização de anexos e rotas operacionais) e o CHECK da coluna no banco não podem divergir. Se um tipo
+   * entrar no banco sem entrar na fonte única — ou se algum consumidor voltar a manter cópia própria — este
+   * teste quebra antes de virar brecha.
+   */
+  it("registry, anexos e rotas operacionais consomem a MESMA matriz de rebanho", () => {
+    for (const o of MOVIMENTACOES_REBANHO) {
+      const doRegistry = resolverRegistroGlobal("animal_movements", "id", { movement_type: o.tipo })?.permissao;
+      const dosAnexos = (ATTACHMENT_PARENTS["animal_movements"]!.viewPerm as (r: Record<string, unknown>) => string | null)({ movement_type: o.tipo });
+      expect(doRegistry, o.tipo).toBe(`${o.recurso}.view`);
+      expect(dosAnexos, o.tipo).toBe(doRegistry);
+      expect(permissaoMovimentacao(o.tipo, "view"), o.tipo).toBe(doRegistry);
     }
-    for (const [tipo, permissao] of Object.entries(movimento)) {
-      expect(resolverRegistroGlobal("animal_movements", "id", { movement_type: tipo })?.permissao, tipo).toBe(permissao);
+    for (const o of MANEJOS_REBANHO) {
+      const doRegistry = resolverRegistroGlobal("animal_handlings", "id", { handling_type: o.tipo })?.permissao;
+      const dosAnexos = (ATTACHMENT_PARENTS["animal_handlings"]!.viewPerm as (r: Record<string, unknown>) => string | null)({ handling_type: o.tipo });
+      expect(doRegistry, o.tipo).toBe(`${o.recurso}.view`);
+      expect(dosAnexos, o.tipo).toBe(doRegistry);
+      expect(permissaoManejo(o.tipo, "view"), o.tipo).toBe(doRegistry);
     }
+  });
+
+  it("tipos internos são fail-closed nos três consumidores (sem ID Global, sem anexo, sem porta)", () => {
+    for (const t of MOVIMENTACOES_INTERNAS) {
+      expect(resolverRegistroGlobal("animal_movements", "id", { movement_type: t }), t).toBeNull();
+      expect((ATTACHMENT_PARENTS["animal_movements"]!.viewPerm as (r: Record<string, unknown>) => string | null)({ movement_type: t }), t).toBeNull();
+      expect(permissaoMovimentacao(t, "view"), t).toBeNull();
+    }
+  });
+
+  it("a fonte única cobre exatamente os valores aceitos pelo banco (CHECK da coluna)", () => {
+    const sql = readFileSync(new URL("../../../../supabase/migrations/0006_livestock.sql", import.meta.url), "utf8");
+    const valores = (coluna: string) => {
+      const m = new RegExp(`${coluna} text not null check \\(${coluna} in \\(([^)]*)\\)`, "s").exec(sql);
+      return m![1]!.split(",").map((v) => v.trim().replace(/^'|'$/g, "")).filter(Boolean).sort();
+    };
+    expect(valores("movement_type")).toEqual([...TODOS_TIPOS_MOVIMENTACAO].sort());
+    expect(valores("handling_type")).toEqual(MANEJOS_REBANHO.map((o) => o.tipo).sort());
+  });
+
+  it("o schema de criação de movimentação aceita só os tipos com tela própria", () => {
+    const rota = readFileSync(new URL("../../src/routes/livestock.ts", import.meta.url), "utf8");
+    const m = /movement_type: z\.enum\(\[([^\]]*)\]\)/.exec(rota);
+    const aceitos = m![1]!.split(",").map((v) => v.trim().replace(/^"|"$/g, "")).filter(Boolean).sort();
+    expect(aceitos).toEqual(MOVIMENTACOES_REBANHO.map((o) => o.tipo).sort());
   });
 });

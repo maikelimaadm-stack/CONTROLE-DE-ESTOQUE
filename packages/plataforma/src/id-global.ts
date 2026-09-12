@@ -9,6 +9,10 @@
  * O ID Global é alocado pelo BANCO, nunca pelo cliente, e não é derivado da URL: a rota canônica é resolvida
  * a partir do REGISTRO. Sequências de organizações diferentes são independentes.
  *
+ * ESTE MÓDULO É MECANISMO, NÃO CATÁLOGO. As entidades elegíveis são CONFIGURAÇÃO DE PRODUTO e ficam no
+ * pacote de domínio (que depende desta plataforma, nunca o contrário) — é o que mantém o núcleo neutro de
+ * segmento de negócio: aqui não há nome de tabela, de coluna nem de módulo deste produto.
+ *
  * PERMISSÃO É DO REGISTRO, NÃO DA ENTIDADE
  * ----------------------------------------
  * Há tabelas em que uma linha representa coisas com permissões diferentes: um título financeiro é conta a
@@ -42,86 +46,15 @@ export interface EntidadeIdGlobal {
   rotulo: string;
   modulo: string;
   tabela: string;
-  /**
-   * Coluna que amarra o registro à EMPRESA; `null` = registro da organização inteira (cadastro compartilhado).
-   * Nomes de coluna da infraestrutura legada que hoje materializa Empresa — dependência inventariada em
-   * docs/FARM-DEPENDENCY-INVENTORY.md e substituída em PRE-BASE2-03 sem mudar este contrato.
-   */
+  /** Coluna que amarra o registro à EMPRESA; `null` = registro da organização inteira (cadastro compartilhado). */
   colunaEmpresa: string | null;
+  /**
+   * A tabela esconde registros excluídos por marca de exclusão? Quando true, o resolvedor só enxerga o que a
+   * rota canônica enxerga: registro excluído não vira atalho navegável por ID Global.
+   */
+  exclusaoLogica: boolean;
   resolucao: ResolucaoEntidade;
 }
-
-const fixa = (rota: string, permissao: string): ResolucaoEntidade => ({ tipo: "fixa", rota, permissao });
-const porVariante = (coluna: string, variantes: Readonly<Record<string, VarianteEntidade>>): ResolucaoEntidade => ({ tipo: "variante", coluna, variantes });
-
-const E = (tipoEntidade: string, rotulo: string, modulo: string, tabela: string, resolucao: ResolucaoEntidade, colunaEmpresa: string | null = "farm_id"): EntidadeIdGlobal =>
-  ({ tipoEntidade, rotulo, modulo, tabela, resolucao, colunaEmpresa });
-
-/**
- * Modo de visualização dos cadastros genéricos (Modelo Base1): o ID Global é uma CONSULTA, então a rota
- * canônica abre o registro para VER, nunca no fluxo de edição.
- */
-export const CONSULTA_CADASTRO = "?view=1";
-
-/**
- * Entidades ELEGÍVEIS a ID Global (identidade própria e ciclo de vida próprio, consultáveis pelo usuário).
- * Acrescentar aqui é decisão de contrato: exige rota de detalhe real e permissão de leitura existente.
- */
-export const ENTIDADES_ID_GLOBAL: readonly EntidadeIdGlobal[] = [
-  // Compras
-  E("purchase_requests", "Solicitação de Compra", "compras", "erp.purchase_requests", fixa("/suprimentos/view/:id", "purchase_requests.view")),
-  // Estoque
-  E("input_entries", "Entrada Manual", "estoque", "erp.input_entries", fixa("/estoque/entradas/:id", "input_entries.view")),
-  E("invoices", "Documento Fiscal", "estoque", "erp.invoices", fixa("/estoque/documentos-fiscais/:id", "invoices.view")),
-  E("requisitions", "Requisição", "estoque", "erp.requisitions", fixa("/estoque/requisicoes/:id", "requisitions.view")),
-  E("stock_writeoffs", "Saída Direta", "estoque", "erp.stock_writeoffs", fixa("/estoque/baixas/:id", "stock_writeoffs.view")),
-  E("devolutions", "Devolução", "estoque", "erp.devolutions", fixa("/estoque/devolucoes/:id", "devolutions.view")),
-  E("warehouse_transfers", "Transferência", "estoque", "erp.warehouse_transfers", fixa("/estoque/transferencias/:id", "warehouse_transfers.view"), "origin_farm_id"),
-  E("feed_batches", "Produção de Ração", "estoque", "erp.feed_batches", fixa("/estoque/batidas/:id", "feed_batches.view")),
-  // Financeiro — uma tabela, duas telas e DUAS permissões distintas
-  E("financial_titles", "Título Financeiro", "financeiro", "erp.financial_titles", porVariante("direction", {
-    payable: { rota: "/financeiro/contas-a-pagar/:id", permissao: "payables.view" },
-    receivable: { rota: "/financeiro/contas-a-receber/:id", permissao: "receivables.view" }
-  })),
-  E("bank_movements", "Movimento Bancário", "financeiro", "erp.bank_movements", fixa("/financeiro/movimentos/:id", "bank_movements.view")),
-  E("ofx_imports", "Importação OFX", "financeiro", "erp.ofx_imports", fixa("/financeiro/ofx/:id", "ofx_imports.view"), null),
-  // Vendas — orçamento, pedido e venda têm permissões próprias
-  E("sales_documents", "Documento de Venda", "vendas", "erp.sales_documents", porVariante("kind", {
-    budget: { rota: "/vendas/budgets/:id", permissao: "budgets.view" },
-    order: { rota: "/vendas/orders/:id", permissao: "orders.view" },
-    sale: { rota: "/vendas/sales/:id", permissao: "sales.view" }
-  })),
-  // Pecuária
-  E("animals", "Animal", "pecuaria", "erp.animals", fixa("/pecuaria/animais/:id", "animals.view")),
-  E("animal_movements", "Movimentação de Rebanho", "pecuaria", "erp.animal_movements", porVariante("movement_type", {
-    purchase: { rota: "/pecuaria/movimentacoes/purchase/:id", permissao: "animal_purchases.view" },
-    sale: { rota: "/pecuaria/movimentacoes/sale/:id", permissao: "animal_sales.view" },
-    birth: { rota: "/pecuaria/movimentacoes/birth/:id", permissao: "animal_births.view" },
-    death: { rota: "/pecuaria/movimentacoes/death/:id", permissao: "animal_deaths.view" },
-    loss: { rota: "/pecuaria/movimentacoes/loss/:id", permissao: "animal_losses.view" }
-  })),
-  E("animal_handlings", "Manejo", "pecuaria", "erp.animal_handlings", porVariante("handling_type", {
-    nutrition: { rota: "/pecuaria/manejo/nutrition/:id", permissao: "nutritions.view" },
-    sanitary: { rota: "/pecuaria/manejo/sanitary/:id", permissao: "sanitaries.view" },
-    weaning: { rota: "/pecuaria/manejo/weaning/:id", permissao: "weanings.view" },
-    separation: { rota: "/pecuaria/manejo/separation/:id", permissao: "separations.view" },
-    pasture: { rota: "/pecuaria/manejo/pasture/:id", permissao: "pastures.view" },
-    locate: { rota: "/pecuaria/manejo/locate/:id", permissao: "locate_animals.view" }
-  })),
-  E("weighings", "Pesagem", "pecuaria", "erp.weighings", fixa("/pecuaria/pesagens/:id", "weighings.view")),
-  // Frota e ativos
-  E("fuel_supplies", "Abastecimento", "frota", "erp.fuel_supplies", fixa("/frota/abastecimentos/:id", "fuel_supplies.view")),
-  E("maintenances", "Manutenção", "frota", "erp.maintenances", fixa("/frota/manutencoes/:id", "maintenances.view")),
-  E("equipments", "Equipamento", "frota", "erp.equipments", fixa(`/cadastros/equipments/:id${CONSULTA_CADASTRO}`, "equipments.view")),
-  // Ordens de serviço
-  E("service_orders", "Ordem de Serviço", "os", "erp.service_orders", fixa("/os/:id", "service_orders.view")),
-  // Cadastros compartilhados pela organização (sem empresa)
-  E("products", "Produto", "cadastros", "erp.products", fixa(`/cadastros/products/:id${CONSULTA_CADASTRO}`, "products.view"), null),
-  E("people", "Pessoa", "cadastros", "erp.people", fixa(`/cadastros/people/:id${CONSULTA_CADASTRO}`, "people.view"), null),
-  E("roles", "Perfil de Acesso", "configuracoes", "erp.roles", fixa("/admin/perfis/:id", "roles.view"), null)
-];
-
-const POR_TIPO = new Map(ENTIDADES_ID_GLOBAL.map((e) => [e.tipoEntidade, e]));
 
 /**
  * Padrões de tabela NÃO elegíveis: linhas técnicas sem identidade própria para o usuário
@@ -145,10 +78,6 @@ export function tabelaTecnica(tabela: string): { tecnica: boolean; motivo?: stri
   }
   return { tecnica: false };
 }
-
-export const elegivelAIdGlobal = (tipoEntidade: string): boolean => POR_TIPO.has(tipoEntidade);
-export const entidadeIdGlobal = (tipoEntidade: string): EntidadeIdGlobal | undefined => POR_TIPO.get(tipoEntidade);
-export const tiposEntidadeIdGlobal = (): string[] => ENTIDADES_ID_GLOBAL.map((e) => e.tipoEntidade);
 
 /** Coluna do registro que decide rota e permissão; null quando a entidade é fixa. */
 export const colunaDiscriminadora = (entidade: EntidadeIdGlobal): string | null =>
@@ -180,13 +109,10 @@ export interface RegistroResolvido {
 
 /**
  * Resolve rota e permissão a partir do REGISTRO — sempre juntas, sempre da mesma coluna.
- * `linha` é a linha do banco (só é consultada quando a entidade tem variantes).
- * Devolve `null` quando a entidade não é elegível, o discriminador está ausente ou o valor não está
+ * `linha` é a linha VIVA do banco. Devolve `null` quando o discriminador está ausente ou o valor não está
  * declarado: o chamador NEGA (404). Nunca há queda para uma permissão mais ampla.
  */
-export function resolverRegistroGlobal(tipoEntidade: string, idEntidade: string, linha: Readonly<Record<string, unknown>> = {}): RegistroResolvido | null {
-  const entidade = POR_TIPO.get(tipoEntidade);
-  if (!entidade) return null;
+export function resolverRegistroDaEntidade(entidade: EntidadeIdGlobal, idEntidade: string, linha: Readonly<Record<string, unknown>> = {}): RegistroResolvido | null {
   const r = entidade.resolucao;
   if (r.tipo === "fixa") return { rota: r.rota.replace(":id", idEntidade), permissao: r.permissao };
   const valor = linha[r.coluna];
@@ -196,13 +122,13 @@ export function resolverRegistroGlobal(tipoEntidade: string, idEntidade: string,
   return { rota: variante.rota.replace(":id", idEntidade), permissao: variante.permissao };
 }
 
-/** Consistência do registry (usada pelos testes e pelo gate). Lista vazia = registry íntegro. */
-export function validarRegistroIdGlobal(): string[] {
+/** Consistência de um catálogo de entidades (usada pelos testes e pelo gate). Lista vazia = íntegro. */
+export function validarEntidadesIdGlobal(entidades: readonly EntidadeIdGlobal[]): string[] {
   const problemas: string[] = [];
   const vistos = new Set<string>();
   const permValida = (p: string) => /^[a-z_]+\.[a-z_]+$/.test(p);
   const rotaValida = (r: string) => r.includes(":id") && r.startsWith("/");
-  for (const e of ENTIDADES_ID_GLOBAL) {
+  for (const e of entidades) {
     const onde = e.tipoEntidade;
     if (vistos.has(onde)) problemas.push(`${onde}: tipo de entidade duplicado`);
     vistos.add(onde);

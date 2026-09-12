@@ -3,7 +3,7 @@
  * GERADOR E GATE DO DICIONÁRIO DE DADOS (docs/DATA-DICTIONARY.md).
  *
  * Metade técnica DERIVADA das migrations (tabelas, colunas, tipos, nulidade, chaves, enums) + metade funcional
- * CURADA em packages/plataforma/dicionario-dados.mjs. Nenhuma linha do documento é escrita à mão.
+ * CURADA em packages/domain/dicionario-dados.mjs. Nenhuma linha do documento é escrita à mão.
  *
  *   node scripts/data-dictionary.mjs            regenera docs/DATA-DICTIONARY.md
  *   node scripts/data-dictionary.mjs --check    valida o dicionário e recusa documento desatualizado (gate)
@@ -11,7 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readSchema, REPO_ROOT, companyColumnsOf, isOrgScoped, isSoftDeletable } from "./lib/schema.mjs";
-import { DICIONARIO_DE_DADOS, VERSAO_DICIONARIO, MODULOS_DICIONARIO, validarDicionarioDeDados } from "../packages/plataforma/dicionario-dados.mjs";
+import { DICIONARIO_DE_DADOS, VERSAO_DICIONARIO, MODULOS_DICIONARIO, validarDicionarioDeDados } from "../packages/domain/dicionario-dados.mjs";
 
 const OUT = path.join(REPO_ROOT, "docs", "DATA-DICTIONARY.md");
 const check = process.argv.includes("--check");
@@ -52,7 +52,7 @@ function render(schema) {
   out.push("> **Documento gerado.** Não edite à mão: `node scripts/data-dictionary.mjs`.");
   out.push("> A parte técnica (tabelas, colunas, tipos, nulidade, chaves, enums) é derivada de `supabase/migrations/*.sql`;");
   out.push("> a parte funcional (nome, descrição, módulo, rota, TOP futura, notas de migração) é curada em");
-  out.push("> `packages/plataforma/dicionario-dados.mjs`. O gate `--check` recusa entrada que aponte para tabela/coluna inexistente.", "");
+  out.push("> `packages/domain/dicionario-dados.mjs`. O gate `--check` recusa entrada que aponte para tabela/coluna inexistente.", "");
   out.push(`Formato do dicionário: versão **${VERSAO_DICIONARIO}**. Taxonomia própria e neutra \`ERP-<MÓDULO>-<ENTIDADE>\` (não reproduz códigos do sistema de referência nem amarra o núcleo a um segmento de negócio).`, "");
   out.push("## Panorama", "");
   out.push("| Métrica | Valor |", "| --- | ---: |");
@@ -98,7 +98,7 @@ function render(schema) {
 
   out.push("## Apêndice — tabelas ainda não curadas", "");
   out.push("Metadados técnicos derivados do schema. Acrescentar a entrada funcional em");
-  out.push("`packages/plataforma/dicionario-dados.mjs` promove a tabela para as seções acima.", "");
+  out.push("`packages/domain/dicionario-dados.mjs` promove a tabela para as seções acima.", "");
   out.push("| Tabela | Campos | Organização | Empresa | Exclusão lógica |", "| --- | ---: | --- | --- | --- |");
   for (const t of [...schema.values()].sort((a, b) => a.table.localeCompare(b.table))) {
     if (byTable.has(t.table)) continue;

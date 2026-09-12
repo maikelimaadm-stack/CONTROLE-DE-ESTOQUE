@@ -21,7 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "./lib/schema.mjs";
-import { DICIONARIO_DE_DADOS } from "../packages/plataforma/dicionario-dados.mjs";
+import { DICIONARIO_DE_DADOS } from "../packages/domain/dicionario-dados.mjs";
 
 const BASELINE = path.join(REPO_ROOT, "scripts", "naming-audit.baseline.json");
 const update = process.argv.includes("--update");

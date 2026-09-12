@@ -1,33 +1,40 @@
 import { describe, it, expect } from "vitest";
 import {
-  CONSULTA_CADASTRO, ENTIDADES_ID_GLOBAL, colunaDiscriminadora, elegivelAIdGlobal, entidadeIdGlobal,
-  formatarIdGlobal, interpretarIdGlobal, resolverRegistroGlobal, tabelaTecnica, tiposEntidadeIdGlobal,
-  validarRegistroIdGlobal, variantesDeclaradas
+  colunaDiscriminadora, formatarIdGlobal, interpretarIdGlobal, resolverRegistroDaEntidade,
+  tabelaTecnica, validarEntidadesIdGlobal, variantesDeclaradas, type EntidadeIdGlobal
 } from "../src/id-global.js";
-import { DICIONARIO_DE_DADOS } from "../dicionario-dados.mjs";
 
+/**
+ * MECANISMO, NÃO CATÁLOGO. Aqui se prova o comportamento neutro de nicho: elegibilidade técnica, formato do
+ * número, resolução conjunta de rota+permissão e fail-closed. O catálogo de entidades deste produto (e a sua
+ * consistência com o dicionário de dados) é testado em packages/domain/test/id-global.test.ts.
+ */
 const ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
-describe("registry de elegibilidade", () => {
-  it("é internamente consistente (sem duplicados, rota com :id, permissão válida, nada técnico)", () => {
-    expect(validarRegistroIdGlobal()).toEqual([]);
-  });
-  it("entidades com identidade própria são elegíveis", () => {
-    for (const t of ["input_entries", "financial_titles", "animals", "service_orders", "products", "roles"]) {
-      expect(elegivelAIdGlobal(t), t).toBe(true);
-    }
-  });
-  it("linhas técnicas NUNCA são elegíveis", () => {
-    for (const t of ["input_entry_items", "title_apportionments", "member_farms", "role_permissions", "service_order_lines"]) {
-      expect(elegivelAIdGlobal(t), t).toBe(false);
+const fixa = (): EntidadeIdGlobal => ({
+  tipoEntidade: "documentos", rotulo: "Documento", modulo: "exemplo", tabela: "erp.documentos",
+  colunaEmpresa: "empresa_id", exclusaoLogica: true, resolucao: { tipo: "fixa", rota: "/exemplo/documentos/:id", permissao: "documentos.view" }
+});
+const comVariantes = (): EntidadeIdGlobal => ({
+  tipoEntidade: "titulos", rotulo: "Título", modulo: "exemplo", tabela: "erp.titulos",
+  colunaEmpresa: "empresa_id", exclusaoLogica: true,
+  resolucao: { tipo: "variante", coluna: "sentido", variantes: {
+    a_pagar: { rota: "/exemplo/a-pagar/:id", permissao: "a_pagar.view" },
+    a_receber: { rota: "/exemplo/a-receber/:id", permissao: "a_receber.view" }
+  } }
+});
+
+describe("elegibilidade técnica (sem conhecer o produto)", () => {
+  it("linhas sem identidade própria nunca são elegíveis", () => {
+    for (const t of ["pedido_items", "nota_lines", "title_apportionments", "member_farms", "role_permissions"]) {
       expect(tabelaTecnica(`erp.${t}`).tecnica, t).toBe(true);
     }
   });
-  it("infraestrutura interna não é elegível", () => {
-    expect(tabelaTecnica("erp.code_sequences").tecnica).toBe(true);
-    expect(tabelaTecnica("erp.sequencias_id_global").tecnica).toBe(true);
-    expect(tabelaTecnica("erp.registros_globais").tecnica).toBe(true);
-    expect(tabelaTecnica("erp.input_entries").tecnica).toBe(false);
+  it("infraestrutura interna não é elegível; tabela de negócio é", () => {
+    for (const t of ["code_sequences", "sequencias_id_global", "registros_globais", "idempotency_keys", "audit_logs"]) {
+      expect(tabelaTecnica(`erp.${t}`).tecnica, t).toBe(true);
+    }
+    expect(tabelaTecnica("erp.documentos").tecnica).toBe(false);
   });
 });
 
@@ -45,100 +52,42 @@ describe("formato do ID Global", () => {
 });
 
 describe("rota e permissão vêm do MESMO registro", () => {
-  it("entidade fixa resolve rota e permissão sem consultar discriminador", () => {
-    expect(resolverRegistroGlobal("input_entries", ID)).toEqual({ rota: `/estoque/entradas/${ID}`, permissao: "input_entries.view" });
-    expect(colunaDiscriminadora(entidadeIdGlobal("input_entries")!)).toBeNull();
+  it("entidade fixa resolve sem discriminador", () => {
+    expect(resolverRegistroDaEntidade(fixa(), ID)).toEqual({ rota: `/exemplo/documentos/${ID}`, permissao: "documentos.view" });
+    expect(colunaDiscriminadora(fixa())).toBeNull();
   });
-
-  it("título financeiro: pagar e receber têm permissões DIFERENTES", () => {
-    expect(resolverRegistroGlobal("financial_titles", ID, { direction: "payable" }))
-      .toEqual({ rota: `/financeiro/contas-a-pagar/${ID}`, permissao: "payables.view" });
-    expect(resolverRegistroGlobal("financial_titles", ID, { direction: "receivable" }))
-      .toEqual({ rota: `/financeiro/contas-a-receber/${ID}`, permissao: "receivables.view" });
+  it("entidade com variantes resolve rota e permissão juntas, da mesma coluna", () => {
+    const e = comVariantes();
+    expect(colunaDiscriminadora(e)).toBe("sentido");
+    expect(variantesDeclaradas(e).sort()).toEqual(["a_pagar", "a_receber"]);
+    expect(resolverRegistroDaEntidade(e, ID, { sentido: "a_pagar" })).toEqual({ rota: `/exemplo/a-pagar/${ID}`, permissao: "a_pagar.view" });
+    expect(resolverRegistroDaEntidade(e, ID, { sentido: "a_receber" })).toEqual({ rota: `/exemplo/a-receber/${ID}`, permissao: "a_receber.view" });
   });
-
-  it("documento de venda: orçamento, pedido e venda têm permissões DIFERENTES", () => {
-    expect(resolverRegistroGlobal("sales_documents", ID, { kind: "budget" })).toEqual({ rota: `/vendas/budgets/${ID}`, permissao: "budgets.view" });
-    expect(resolverRegistroGlobal("sales_documents", ID, { kind: "order" })).toEqual({ rota: `/vendas/orders/${ID}`, permissao: "orders.view" });
-    expect(resolverRegistroGlobal("sales_documents", ID, { kind: "sale" })).toEqual({ rota: `/vendas/sales/${ID}`, permissao: "sales.view" });
-  });
-
-  it("manejo e movimentação: uma permissão por tipo, igual à matriz funcional já usada nos anexos", () => {
-    const manejo: Record<string, string> = { nutrition: "nutritions.view", sanitary: "sanitaries.view", weaning: "weanings.view", separation: "separations.view", pasture: "pastures.view", locate: "locate_animals.view" };
-    for (const [tipo, permissao] of Object.entries(manejo)) {
-      expect(resolverRegistroGlobal("animal_handlings", ID, { handling_type: tipo }), tipo).toEqual({ rota: `/pecuaria/manejo/${tipo}/${ID}`, permissao });
-    }
-    const movimento: Record<string, string> = { purchase: "animal_purchases.view", sale: "animal_sales.view", birth: "animal_births.view", death: "animal_deaths.view", loss: "animal_losses.view" };
-    for (const [tipo, permissao] of Object.entries(movimento)) {
-      expect(resolverRegistroGlobal("animal_movements", ID, { movement_type: tipo }), tipo).toEqual({ rota: `/pecuaria/movimentacoes/${tipo}/${ID}`, permissao });
-    }
-  });
-
-  it("FAIL-CLOSED: discriminador ausente, desconhecido ou de outro tipo NEGA (nunca cai em permissão mais ampla)", () => {
-    expect(resolverRegistroGlobal("financial_titles", ID)).toBeNull();
-    expect(resolverRegistroGlobal("financial_titles", ID, { direction: "outro" })).toBeNull();
-    expect(resolverRegistroGlobal("financial_titles", ID, { direction: null })).toBeNull();
-    // tipos de movimentação que são efeito de outra operação e não têm tela própria
-    for (const t of ["evolution", "batch_transfer", "farm_transfer", "module_area_transfer", "inventory", "processing"]) {
-      expect(resolverRegistroGlobal("animal_movements", ID, { movement_type: t }), t).toBeNull();
-    }
-    expect(resolverRegistroGlobal("nao_existe", ID)).toBeNull();
-  });
-
-  it("nenhuma entidade com variantes resolve todas para a mesma permissão", () => {
-    for (const e of ENTIDADES_ID_GLOBAL) {
-      if (e.resolucao.tipo !== "variante") continue;
-      const permissoes = new Set(Object.values(e.resolucao.variantes).map((v) => v.permissao));
-      expect(permissoes.size, `${e.tipoEntidade}: variantes com permissão única deveriam ser resolução fixa`).toBeGreaterThan(1);
-    }
-  });
-
-  it("toda variante declarada tem rota e permissão próprias e resolvíveis", () => {
-    for (const e of ENTIDADES_ID_GLOBAL) {
-      const coluna = colunaDiscriminadora(e);
-      if (!coluna) continue;
-      for (const valor of variantesDeclaradas(e)) {
-        const r = resolverRegistroGlobal(e.tipoEntidade, ID, { [coluna]: valor });
-        expect(r, `${e.tipoEntidade}[${valor}]`).not.toBeNull();
-        expect(r!.rota).toContain(ID);
-        expect(r!.permissao).toMatch(/^[a-z_]+\.[a-z_]+$/);
-      }
-    }
+  it("FAIL-CLOSED: discriminador ausente, nulo ou desconhecido NEGA (nunca permissão mais ampla)", () => {
+    const e = comVariantes();
+    expect(resolverRegistroDaEntidade(e, ID)).toBeNull();
+    expect(resolverRegistroDaEntidade(e, ID, { sentido: null })).toBeNull();
+    expect(resolverRegistroDaEntidade(e, ID, { sentido: "outro" })).toBeNull();
+    expect(resolverRegistroDaEntidade(e, ID, { sentido: 7 })).toBeNull();
   });
 });
 
-describe("rota canônica de cadastro abre em consulta", () => {
-  it("cadastros genéricos (Modelo Base1) usam o modo de visualização, não o de edição", () => {
-    for (const t of ["products", "people", "equipments"]) {
-      const r = resolverRegistroGlobal(t, ID)!;
-      expect(r.rota, t).toBe(`/cadastros/${t}/${ID}${CONSULTA_CADASTRO}`);
-    }
+describe("validação de catálogo", () => {
+  it("catálogo íntegro não acusa problema", () => {
+    expect(validarEntidadesIdGlobal([fixa(), comVariantes()])).toEqual([]);
   });
-  it("telas de detalhe próprias não recebem o parâmetro de consulta", () => {
-    expect(resolverRegistroGlobal("roles", ID)!.rota).toBe(`/admin/perfis/${ID}`);
-    expect(resolverRegistroGlobal("service_orders", ID)!.rota).toBe(`/os/${ID}`);
-  });
-});
-
-describe("dicionário de dados × registry de ID Global", () => {
-  it("as duas fontes concordam sobre quem recebe ID Global", () => {
-    const doDicionario = DICIONARIO_DE_DADOS.filter((e) => e.idGlobal).map((e) => e.tabela.replace(/^erp\./, "")).sort();
-    expect(doDicionario).toEqual(tiposEntidadeIdGlobal().sort());
-  });
-  it("as rotas canônicas do dicionário são as mesmas do registry, variante a variante", () => {
-    for (const e of DICIONARIO_DE_DADOS.filter((d) => d.idGlobal)) {
-      const tipo = e.tabela.replace(/^erp\./, "");
-      const entidade = entidadeIdGlobal(tipo)!;
-      if (e.discriminador || e.rotas) {
-        expect(colunaDiscriminadora(entidade), e.codigo).toBe(e.discriminador);
-        expect(Object.keys(e.rotas ?? {}).sort(), e.codigo).toEqual(variantesDeclaradas(entidade).sort());
-        for (const [valor, rota] of Object.entries(e.rotas ?? {})) {
-          expect(resolverRegistroGlobal(tipo, ":id", { [e.discriminador!]: valor })!.rota, `${e.codigo}[${valor}]`).toBe(rota);
-        }
-      } else {
-        expect(colunaDiscriminadora(entidade), e.codigo).toBeNull();
-        expect(e.rota, e.codigo).toBe(resolverRegistroGlobal(tipo, ":id")!.rota);
-      }
-    }
+  it("acusa duplicidade, tabela técnica, rota sem :id, permissão inválida e variantes com permissão única", () => {
+    const problemas = validarEntidadesIdGlobal([
+      fixa(), fixa(),
+      { ...fixa(), tipoEntidade: "itens", tabela: "erp.documento_items" },
+      { ...fixa(), tipoEntidade: "rota_ruim", tabela: "erp.a", resolucao: { tipo: "fixa", rota: "/sem-id", permissao: "X.view" } },
+      { ...comVariantes(), tipoEntidade: "iguais", tabela: "erp.b", resolucao: { tipo: "variante", coluna: "sentido", variantes: {
+        a: { rota: "/a/:id", permissao: "mesma.view" }, b: { rota: "/b/:id", permissao: "mesma.view" } } } }
+    ]);
+    expect(problemas.some((p) => /duplicado/.test(p))).toBe(true);
+    expect(problemas.some((p) => /item de documento/.test(p))).toBe(true);
+    expect(problemas.some((p) => /rota canônica inválida/.test(p))).toBe(true);
+    expect(problemas.some((p) => /permissão inválida/.test(p))).toBe(true);
+    expect(problemas.some((p) => /mesma permissão/.test(p))).toBe(true);
   });
 });

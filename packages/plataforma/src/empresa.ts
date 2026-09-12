@@ -36,10 +36,23 @@ export type TodasEmpresas = typeof TODAS_EMPRESAS;
 
 export const ESCOPO_TODAS_EMPRESAS: EscopoEmpresa = { tipo: "todas" };
 
-/** Autorização do usuário na organização. `autorizadas` vazio = todas as empresas da organização. */
-export interface AutorizacaoEmpresas {
-  autorizadas: readonly IdEmpresa[];
-}
+/**
+ * Autorização do usuário na organização — EXPLÍCITA POR CONTRATO.
+ *
+ * Não existe sentinela implícita: "todas", "nenhuma" e "um subconjunto" são estados distintos e
+ * indistinguíveis por engano. Uma lista vazia significa NENHUMA empresa, nunca "todas" — a convenção
+ * inversa do mecanismo legado fica confinada à camada de compatibilidade (apps/api/src/lib/empresa.ts),
+ * que traduz antes de entrar aqui. Num sistema multiempresa com autorização estrita, confundir
+ * "autorizado a tudo" com "autorizado a nada" é a diferença entre um painel vazio e um vazamento.
+ */
+export type AutorizacaoEmpresas =
+  | { modo: "todas" }
+  | { modo: "selecionadas"; empresaIds: readonly IdEmpresa[] };
+
+/** Autorizado a todas as empresas da organização. */
+export const TODAS_AS_EMPRESAS: AutorizacaoEmpresas = { modo: "todas" };
+/** Autorizado exatamente a estas empresas — lista vazia = nenhuma. */
+export const empresasSelecionadas = (empresaIds: readonly IdEmpresa[]): AutorizacaoEmpresas => ({ modo: "selecionadas", empresaIds: [...empresaIds] });
 
 /** Pedido de escopo vindo da borda (query string, cabeçalho, seleção de contexto) — sempre não confiável. */
 export interface PedidoEscopoEmpresa {
@@ -72,25 +85,28 @@ const comoLista = (v: PedidoEscopoEmpresa["pedidas"]): IdEmpresa[] => {
 };
 
 export function resolverEscopoEmpresa(auth: AutorizacaoEmpresas, pedido: PedidoEscopoEmpresa = {}): EscopoEmpresaResolvido {
-  const autorizadas = auth.autorizadas;
   const pedidas = comoLista(pedido.pedidas);
   const pediuTodas = pedido.pedidas === TODAS_EMPRESAS || (Array.isArray(pedido.pedidas) && pedido.pedidas.includes(TODAS_EMPRESAS as IdEmpresa));
   // "todas" pedido explicitamente ignora a seleção de trabalho; sem pedido, a seleção vale como recorte.
   const alvo = pedidas.length ? pedidas : pediuTodas ? [] : pedido.selecionada ? [pedido.selecionada] : [];
-  if (!alvo.length) {
-    const todas = autorizadas.length ? [...autorizadas] : null;
-    return { empresaIds: todas, recusadas: [], todas: true };
+  if (auth.modo === "todas") {
+    if (!alvo.length) return { empresaIds: null, recusadas: [], todas: true };
+    return { empresaIds: [...new Set(alvo)], recusadas: [], todas: false };
   }
-  if (!autorizadas.length) return { empresaIds: [...new Set(alvo)], recusadas: [], todas: false };
+  const autorizadas = auth.empresaIds;
+  if (!alvo.length) return { empresaIds: [...autorizadas], recusadas: [], todas: true };
   const permitidas = alvo.filter((c) => autorizadas.includes(c));
   const recusadas = alvo.filter((c) => !autorizadas.includes(c));
   return { empresaIds: [...new Set(permitidas)], recusadas, todas: false };
 }
 
-/** O usuário pode operar nesta empresa? (lista de autorização vazia = todas as empresas da organização) */
+/**
+ * O usuário pode operar nesta empresa?
+ * `empresaId` nulo = registro da organização inteira (cadastro compartilhado), visível a qualquer membro.
+ */
 export function empresaAutorizada(auth: AutorizacaoEmpresas, empresaId: IdEmpresa | null | undefined): boolean {
   if (!empresaId) return true;
-  return auth.autorizadas.length === 0 || auth.autorizadas.includes(empresaId);
+  return auth.modo === "todas" || auth.empresaIds.includes(empresaId);
 }
 
 /** Mesma convenção das leituras: empresa fora do escopo não existe para o usuário (nunca expõe existência). */
@@ -115,7 +131,7 @@ export function selecionarEmpresaDoLancamento(
   auth: AutorizacaoEmpresas,
   opts: { disponiveis?: readonly IdEmpresa[]; pedida?: IdEmpresa | null } = {}
 ): SelecaoEmpresa {
-  const efetivas = auth.autorizadas.length ? [...auth.autorizadas] : [...(opts.disponiveis ?? [])];
+  const efetivas = auth.modo === "todas" ? [...(opts.disponiveis ?? [])] : [...auth.empresaIds];
   const pedida = opts.pedida?.trim() ? opts.pedida.trim() : null;
   if (pedida) {
     if (pedida === TODAS_EMPRESAS) throw new DomainError("VALIDATION_ERROR", "Um lançamento pertence a uma empresa: \"todas as empresas\" é um escopo de consulta");
@@ -140,12 +156,4 @@ export function descreverEscopoEmpresa(escopo: EscopoEmpresaResolvido): EscopoEm
   if (escopo.empresaIds === null) return { tipo: "todas" };
   if (escopo.empresaIds.length === 1) return { tipo: "uma", empresaId: escopo.empresaIds[0]! };
   return { tipo: "conjunto", empresaIds: escopo.empresaIds };
-}
-
-/**
- * Compatibilidade com o mecanismo de escopo legado da API (mesma entrada, mesma saída). Existe para ser
- * testada explicitamente enquanto os dois nomes coexistem (PRE-BASE2-02/03).
- */
-export function empresasPermitidasLegado(autorizadas: readonly IdEmpresa[], selecionada: IdEmpresa | null, pedidas?: readonly IdEmpresa[] | string | null): IdEmpresa[] | null {
-  return resolverEscopoEmpresa({ autorizadas }, { pedidas: pedidas ?? null, selecionada }).empresaIds;
 }
