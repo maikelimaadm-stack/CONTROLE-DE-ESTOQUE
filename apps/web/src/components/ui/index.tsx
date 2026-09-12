@@ -1,14 +1,13 @@
 "use client";
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import * as DialogP from "@radix-ui/react-dialog";
 import * as TabsP from "@radix-ui/react-tabs";
 import * as DropdownP from "@radix-ui/react-dropdown-menu";
 import { cva, type VariantProps } from "class-variance-authority";
-import { Loader2, X, ChevronDown } from "lucide-react";
+import { Loader2, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MgDatePicker } from "./mg-controls";
-import { COPY } from "@/lib/copy";
+import { PageHeader } from "./page-header";
 
 export const buttonVariants = cva("tb-btn focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand-400", {
   variants: {
@@ -18,7 +17,7 @@ export const buttonVariants = cva("tb-btn focus-visible:outline-none focus-visib
 });
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> { loading?: boolean }
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(({ className, variant, size, loading, children, ...p }, ref) => (
-  <button ref={ref} className={cn(buttonVariants({ variant, size }), className)} disabled={loading || p.disabled} {...p}>{loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{children}</button>
+  <button ref={ref} className={cn(buttonVariants({ variant, size }), className)} disabled={loading || p.disabled} aria-busy={loading || undefined} {...p}>{loading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}{children}</button>
 ));
 Button.displayName = "Button";
 
@@ -67,28 +66,14 @@ export function Field({ label, required, error, help, children, className, span 
   </div>;
 }
 export const Card = ({ className, children, ...p }: React.HTMLAttributes<HTMLDivElement>) => <div className={cn("mg-card", className)} {...p}>{children}</div>;
-export const CardHeader = ({ title, actions, subtitle }: { title: React.ReactNode; subtitle?: React.ReactNode; actions?: React.ReactNode }) => (
-  <div className="mg-toolbar flex-wrap justify-between border-b" style={{ borderColor: "var(--mg-divider)" }}><div><h2 className="mg-page-title">{title}</h2>{subtitle && <p className="mg-page-subtitle">{subtitle}</p>}</div>{actions && <div className="flex flex-wrap items-center gap-2 no-print">{actions}</div>}</div>
-);
+/** Cabeçalho de cartão = PageHeader `inCard` (mesma família visual do cabeçalho de página). */
+export const CardHeader = ({ title, actions, subtitle }: { title: React.ReactNode; subtitle?: React.ReactNode; actions?: React.ReactNode }) => <PageHeader inCard level={2} title={title} subtitle={subtitle} actions={actions} testId="card-header" />;
 export const CardBody = ({ className, children }: { className?: string; children: React.ReactNode }) => <div className={cn("p-4", className)}>{children}</div>;
-export const Badge = ({ children, tone = "slate", className }: { children: React.ReactNode; tone?: "slate" | "green" | "red" | "amber" | "blue" | "violet"; className?: string }) => {
+/** Badge genérico (categorias, tags, contadores). Para situação/status use StatusBadge (./status-badge). */
+export const Badge = ({ children, tone = "slate", className, ...rest }: React.HTMLAttributes<HTMLSpanElement> & { tone?: "slate" | "green" | "red" | "amber" | "blue" | "violet" }) => {
   const t = { slate: "bg-slate-100 text-slate-700", green: "bg-green-100 text-green-800", red: "bg-red-100 text-red-800", amber: "bg-amber-100 text-amber-800", blue: "bg-blue-100 text-blue-800", violet: "bg-violet-100 text-violet-800" }[tone];
-  return <span className={cn("inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium", t, className)}>{children}</span>;
+  return <span className={cn("inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium", t, className)} {...rest}>{children}</span>;
 };
-export function Dialog({ open, onOpenChange, title, children, footer, size = "md" }: { open: boolean; onOpenChange: (o: boolean) => void; title: string; children: React.ReactNode; footer?: React.ReactNode; size?: "sm" | "md" | "lg" | "xl" }) {
-  const w = { sm: "max-w-md", md: "max-w-2xl", lg: "max-w-4xl", xl: "max-w-6xl" }[size];
-  return (
-    <DialogP.Root open={open} onOpenChange={onOpenChange}><DialogP.Portal>
-      <DialogP.Overlay className="fixed inset-0 z-40 bg-black/40" />
-      <DialogP.Content className={cn("fixed left-1/2 top-1/2 z-50 max-h-[92vh] w-[95vw] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-lg bg-white shadow-xl", w)}>
-        <div className="flex items-center justify-between border-b px-4 py-2.5"><DialogP.Title className="text-sm font-semibold">{title}</DialogP.Title><DialogP.Close className="rounded p-1 hover:bg-slate-100" aria-label="Fechar"><X className="h-4 w-4" /></DialogP.Close></div>
-        <DialogP.Description className="sr-only">{title}</DialogP.Description>
-        <div className="p-4">{children}</div>
-        {footer && <div className="flex justify-end gap-2 border-t px-4 py-2.5">{footer}</div>}
-      </DialogP.Content>
-    </DialogP.Portal></DialogP.Root>
-  );
-}
 export function Tabs({ tabs, defaultValue, className }: { tabs: { value: string; label: string; content: React.ReactNode; badge?: React.ReactNode }[]; defaultValue?: string; className?: string }) {
   return (
     <TabsP.Root defaultValue={defaultValue ?? tabs[0]?.value} className={className}>
@@ -108,13 +93,14 @@ export function Menu({ trigger, items }: { trigger: React.ReactNode; items: { la
   );
 }
 export const Spinner = ({ className }: { className?: string }) => <Loader2 className={cn("h-5 w-5 animate-spin text-brand-600", className)} />;
-export const Empty = ({ text = COPY.nenhumRegistro }: { text?: string }) => <div className="py-10 text-center text-sm text-slate-400">{text}</div>;
-export const ErrorBox = ({ error }: { error: unknown }) => <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">{(error as Error)?.message ?? COPY.erro}</div>;
 export const Chevron = ChevronDown;
-export function Confirm({ open, onOpenChange, title, text, onConfirm, danger, loading, children }: { open: boolean; onOpenChange: (o: boolean) => void; title: string; text?: string; onConfirm: () => void; danger?: boolean; loading?: boolean; children?: React.ReactNode }) {
-  return <Dialog open={open} onOpenChange={onOpenChange} title={title} size="sm" footer={<><Button variant="outline" onClick={() => onOpenChange(false)}>{COPY.fechar}</Button><Button variant={danger ? "danger" : "default"} loading={loading} onClick={onConfirm}>{COPY.confirmar}</Button></>}><p className="text-sm text-slate-600">{text}</p>{children}</Dialog>;
-}
 export function Stat({ label, value, hint, tone }: { label: string; value: React.ReactNode; hint?: React.ReactNode; tone?: "green" | "red" | "slate" | "amber" }) {
   const c = { green: "text-green-700", red: "text-red-700", slate: "text-slate-800", amber: "text-amber-700" }[tone ?? "slate"];
   return <Card className="p-3"><div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div><div className={cn("mt-1 text-xl font-semibold tabular-nums", c)}>{value}</div>{hint && <div className="text-[11px] text-slate-400">{hint}</div>}</Card>;
 }
+
+/* ---- primitives oficiais (docs/UI-STANDARD.md › Primitives visuais); Empty/ErrorBox/Confirm são compatibility aliases ---- */
+export { Dialog, ConfirmDialog, Confirm, Drawer, type OverlaySize, type ConfirmDialogProps } from "./overlays";
+export { LoadingState, EmptyState, ErrorState, Empty, ErrorBox, safeErrorMessage } from "./states";
+export { StatusBadge, statusTone, TONE_BADGE, type StatusTone, type BadgeTone, type StatusBadgeProps } from "./status-badge";
+export { PageHeader, DetailShell, type PageHeaderProps, type DetailShellProps, type Crumb } from "./page-header";
