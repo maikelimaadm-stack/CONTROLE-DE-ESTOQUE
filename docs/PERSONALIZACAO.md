@@ -18,6 +18,7 @@ Réplica do **MODELO BASE1** do sistema PROJETOMG (o modelo de tela usado no cad
 - **Precedência**: personalização do usuário > padrão da organização (`user_id null`, definido por quem tem `screen_layouts.edit` ou é owner) > padrão do código.
 - **Mesma validação no cliente e no servidor**: `packages/shared/src/preferences.ts` (`normalizeListPreferences`, `normalizeFormLayout`, catálogo de operadores). A API valida contra a definição do recurso (colunas/campos conhecidos), descartando o que não existe.
 - **Cache local + sincronização**: o frontend lê `localStorage` imediatamente e sincroniza com a API com debounce (400 ms), adotando a versão do servidor quando ela é mais nova.
+- **Idioma e terminologia**: rótulos, enums e formatação seguem o contrato em `docs/UI-STANDARD.md` (Situação/Painel, Buscar × Pesquisar, Excluir × Remover, Fechar × Cancelar, `enumLabel`, `brl/num/pct/dateBR`); o `copy-audit` roda no lint.
 
 ## Listagens (`screen = list`)
 | Seção | Conteúdo |

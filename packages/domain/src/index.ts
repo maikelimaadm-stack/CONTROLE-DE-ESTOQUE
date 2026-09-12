@@ -1,6 +1,7 @@
 export * from "./permissions.js";
 export * from "./supply-workflow.js";
 export * from "./financial.js";
+export * from "./labels.js";
 export * from "./stock.js";
 export * from "./assets.js";
 export * from "./livestock.js";
