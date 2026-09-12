@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login } from "./helpers";
+import { login, logout } from "./helpers";
 
 /** Chamada à API com a sessão do navegador (token + organização), para preparar dados do cenário. */
 async function apiCall<T = Record<string, unknown>>(page: Page, method: string, path: string, body?: unknown): Promise<T> {
@@ -52,7 +52,7 @@ test.describe("manejos: detalhe real (sem 404), breadcrumb, retorno com filtro e
     const fx = await fixtures(page);
     const h = await apiCall<{ id: string }>(page, "POST", "/api/livestock/handlings", { farm_id: fx.farmId, handling_type: "nutrition", handling_date: "2026-09-10", batch_id: fx.batchId, items: [{ animal_id: fx.animalId, quantity: "1" }] });
     await page.goto(`/pecuaria/manejo/nutrition/${h.id}`); await expect(page.getByRole("heading", { name: /^Nutrição/ })).toBeVisible();
-    await page.getByLabel("Fixar menu").click(); await page.getByRole("button", { name: "Sair" }).first().click();
+    await logout(page);
     await login(page, { email: "operador@demo.local", password: "Demo@12345" });
     await page.goto(`/pecuaria/manejo/nutrition/${h.id}`); await expect(page.getByText(/Sem permissão/)).toBeVisible();
   });

@@ -111,7 +111,7 @@ export function searchNav(query: string, can: (p: string) => boolean, limit = 12
   const hits: SearchHit[] = [];
   for (const e of ALL) {
     if (e.search === false || !permOk(can, e.perm)) continue;
-    if (e.type !== "module" && !permOk(can, modulePerm(e.module))) continue;
+    if (!permOk(can, modulePerm(e.module))) continue; // módulos (união das áreas) e destinos do módulo
     const mod = moduleOf(e.module); const area = e.type === "sub" && e.tab ? ALL.find((x) => x.module === e.module && x.tab === e.tab && (x.type === "area" || x.type === "config") && !x.sub) : undefined;
     const path = [mod?.label, area && area.label !== mod?.label ? area.label : undefined, e.type !== "module" && e.label !== area?.label ? e.label : undefined].filter((x): x is string => Boolean(x));
     const label = norm(e.label); const kw = (e.keywords ?? []).map(norm); const desc = norm(e.description ?? ""); const crumbs = norm(path.join(" ")); const aliases = (e.aliases ?? []).map(norm);

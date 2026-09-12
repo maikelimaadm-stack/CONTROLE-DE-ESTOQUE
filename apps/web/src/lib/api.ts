@@ -7,6 +7,8 @@ export class ApiError extends Error {
 const KEY = "agro.session";
 export interface Session { token: string; orgId: string | null; farmId: string | null; user?: { id: string; email: string; name: string } }
 export function getSession(): Session | null { if (typeof window === "undefined") return null; try { const s = localStorage.getItem(KEY); return s ? (JSON.parse(s) as Session) : null; } catch { return null; } }
+/** Grava a sessão sem disparar `agro:session` (troca de fazenda: só o cabeçalho X-Farm-Id muda; contexto/permissões não). */
+export function writeSession(s: Session) { if (typeof window !== "undefined") localStorage.setItem(KEY, JSON.stringify(s)); }
 export function setSession(s: Session | null) { if (typeof window === "undefined") return; if (s) localStorage.setItem(KEY, JSON.stringify(s)); else localStorage.removeItem(KEY); window.dispatchEvent(new Event("agro:session")); }
 
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; idempotencyKey?: string } = {}): Promise<T> {
