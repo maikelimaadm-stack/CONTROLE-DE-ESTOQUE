@@ -7,20 +7,21 @@
 
 | Fundamento | Onde vive | Contrato |
 | --- | --- | --- |
-| Organização × Empresa, escopo e permissão por empresa | `packages/platform/src/company.ts` · ponte em `apps/api/src/lib/company.ts` | `docs/MULTI-COMPANY-CONTRACT.md` |
-| ID Global (`#55`) e registro de resolução | `packages/platform/src/global-id.ts` · `apps/api/src/lib/global-id.ts` · migration 0010 | `docs/GLOBAL-ID-CONTRACT.md` |
-| Internacionalização e formatação por idioma | `packages/platform/src/i18n.ts`, `locale.ts`, `locales/pt-BR.ts` · `apps/web/src/lib/i18n.ts` | `docs/I18N-CONTRACT.md` |
+| Organização × Empresa, escopo e permissão por empresa | `packages/plataforma/src/empresa.ts` · ponte em `apps/api/src/lib/empresa.ts` | `docs/MULTI-COMPANY-CONTRACT.md` |
+| ID Global (`#55`) e registro de resolução | `packages/plataforma/src/id-global.ts` · `apps/api/src/lib/id-global.ts` · migration 0010 | `docs/GLOBAL-ID-CONTRACT.md` |
+| Internacionalização e formatação por idioma | `packages/plataforma/src/idioma.ts`, `formatacao.ts`, `idiomas/pt-BR.ts` · `apps/web/src/lib/i18n.ts` | `docs/I18N-CONTRACT.md` |
 | Nomenclatura e independência do sistema de referência | `scripts/naming-audit.mjs` | `docs/DOMAIN-NAMING-STANDARD.md` |
-| Dicionário de dados versionado | `packages/platform/data-dictionary.registry.mjs` · `scripts/data-dictionary.mjs` | `docs/DATA-DICTIONARY.md` (gerado) |
+| Dicionário de dados versionado | `packages/plataforma/dicionario-dados.mjs` · `scripts/data-dictionary.mjs` | `docs/DATA-DICTIONARY.md` (gerado) |
 | Inventário da dependência de "fazenda" | `scripts/farm-inventory.mjs` | `docs/FARM-DEPENDENCY-INVENTORY.md` (gerado) |
 | Roteiro das próximas missões | — | `docs/PRE-BASE2-ROADMAP.md` |
 
 ## 2. Núcleo neutro de nicho
 
-`@agro/platform` é o núcleo que não conhece o agro. A regra de dependência é unidirecional:
+`@erp/plataforma` é o núcleo que não conhece segmento de negócio — a começar pelo próprio nome. A regra de
+dependência é unidirecional:
 
 ```
-@agro/platform   (organização, empresa, ID Global, idioma, formatação)
+@erp/plataforma  (organização, empresa, ID Global, idioma, formatação)
       ▲
       │  depende
 @agro/domain     (permissões, enums, recursos — inclui o nicho agro)
@@ -28,8 +29,15 @@
 apps/api · apps/web
 ```
 
-`@agro/platform` **nunca** importa `@agro/domain`. É isso que permite atender outro nicho sem reescrever a
-fundação: troca-se o domínio, a plataforma fica.
+`@erp/plataforma` **nunca** importa o pacote de domínio. É isso que permite atender outro segmento sem
+reescrever a fundação: troca-se o domínio, a plataforma fica. O cruzamento entre os dois (por exemplo,
+conferir que toda permissão do registry existe no catálogo) acontece na camada que já depende dos dois —
+`apps/api/test/unit/id-global-registry.test.ts` —, nunca invertendo a dependência.
+
+**O que ainda é configuração de produto dentro do núcleo:** a *lista* de entidades elegíveis a ID Global e o
+dicionário de dados descrevem este produto (inclusive módulos de nicho). O *mecanismo* é neutro; a lista é
+configuração. Separá-la em um pacote de produto só se paga quando existir um segundo produto — está
+registrado como dívida inventariada (catraca `nucleo-neutro-nicho`), não como esquecimento.
 
 Módulos de nicho (Pecuária, Confinamento, Reprodução) continuam específicos e não contaminam o núcleo —
 autenticação, usuários, permissões, estoque, financeiro, auditoria, anexos, busca, cadastros e plataforma
@@ -39,10 +47,13 @@ são neutros por contrato.
 
 | Objeto | Papel |
 | --- | --- |
-| `erp.organizations.default_language` | Idioma padrão da organização (`pt-BR`). |
-| `erp.users.language` | Idioma do usuário (nulo = segue a organização). |
-| `erp.global_id_sequences` + `erp.next_global_id(uuid)` | Sequência atômica de ID Global por organização. |
-| `erp.global_records` | Resolve `#N` → registro (organização, empresa, tipo, UUID, módulo, rota canônica). |
+| `erp.organizations.idioma_padrao` | Idioma padrão da organização (`pt-BR`). |
+| `erp.users.idioma` | Idioma do usuário (nulo = segue a organização). |
+| `erp.sequencias_id_global` + `erp.proximo_id_global(uuid)` | Sequência atômica de ID Global por organização. |
+| `erp.registros_globais` | Resolve `#N` → registro (organização, empresa, tipo, identificador, módulo, rota canônica). |
+
+Estrutura nova nasce com o nome canônico em português (`docs/DOMAIN-NAMING-STANDARD.md`); `organization_id`
+permanece como exceção registrada, por ser convenção transversal das 176 tabelas e do RLS.
 
 Nada existente foi alterado, renomeado ou removido; nenhuma estrutura de `farms`/`farm_id` foi tocada. As
 duas tabelas novas declaram a própria política de RLS (o laço genérico da 0007 já havia rodado) com a mesma
@@ -88,6 +99,7 @@ node scripts/farm-inventory.mjs --check    catraca: a dependência de "fazenda" 
 node scripts/data-dictionary.mjs --check   dicionário íntegro e documento em dia
 ```
 
-Mais 61 testes unitários em `@agro/platform` e 15 testes de integração em
-`apps/api/test/integration/platform.test.ts` (alocação, concorrência, idempotência, isolamento por
-organização/empresa/permissão, preferência de idioma).
+Mais 64 testes unitários em `@erp/plataforma`, 4 de contrato em `apps/api/test/unit/id-global-registry.test.ts`
+(toda permissão declarada existe no catálogo real) e 20 de integração em
+`apps/api/test/integration/plataforma.test.ts` — incluindo a matriz de permissão por variante: quem tem a
+permissão de uma tela resolve só o ID Global da sua, nos dois sentidos.

@@ -10,7 +10,7 @@ export interface AppContext {
   farms: { id: string; code: number; name: string }[];
   permissions: string[];
   /** Idioma da sessão (docs/I18N-CONTRACT.md): precedência usuário › organização › padrão, resolvida no servidor. */
-  language?: { organization: string | null; user: string | null; effective: string };
+  idioma?: { organizacao: string | null; usuario: string | null; efetivo: string };
   favorites: { route: string; label: string }[];
   unreadNotifications: number;
 }

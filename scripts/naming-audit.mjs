@@ -21,7 +21,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "./lib/schema.mjs";
-import { DATA_DICTIONARY } from "../packages/platform/data-dictionary.registry.mjs";
+import { DICIONARIO_DE_DADOS } from "../packages/plataforma/dicionario-dados.mjs";
 
 const BASELINE = path.join(REPO_ROOT, "scripts", "naming-audit.baseline.json");
 const update = process.argv.includes("--update");
@@ -31,11 +31,22 @@ const FORBIDDEN = [
   { id: "agro365", re: /agro-?365/gi },
   { id: "wagro", re: /\bw-?agro\b/gi },
   { id: "makgestao", re: /makgest(a|ã)o/gi },
-  { id: "projetomg", re: /projeto-?mg/gi }
+  { id: "projetomg", re: /projeto-?mg/gi },
+  // A fundação de plataforma é NEUTRA DE NICHO: nome de pacote e prefixo de taxonomia não podem amarrar o
+  // núcleo a um segmento de negócio (docs/DOMAIN-NAMING-STANDARD.md §1 e §3).
+  { id: "pacote-plataforma-de-nicho", re: /@agro\/platform\b/g },
+  { id: "taxonomia-de-nicho", re: /\bAGR-[A-Z]{2,12}-[A-Z]/g }
 ];
 
 /** Identificadores herdados: não proibidos hoje, mas a dívida não pode crescer. */
 const LEGACY_IDENTIFIERS = [{ id: "prefixo-mg", re: /\bmg-[a-z0-9-]+/gi, note: "prefixo derivado das iniciais do sistema de referência" }];
+
+/**
+ * NÚCLEO NEUTRO: o pacote de plataforma não pode depender semanticamente de um segmento de negócio.
+ * Restam apenas os nomes de coluna da infraestrutura legada que hoje materializa Empresa (o registry
+ * precisa saber qual coluna ler). É dívida INVENTARIADA — pode diminuir, nunca crescer; PRE-BASE2-03 zera.
+ */
+const NUCLEO_NEUTRO = { dir: "packages/plataforma/", id: "nucleo-neutro-nicho", re: /\bfarms?\b|\bfarm_id\b|\bfazendas?\b/gi };
 
 /** Superfícies auditadas como PRODUTO (categorias A e B). Documentação fica fora por definição. */
 const PRODUCT = [
@@ -89,12 +100,16 @@ for (const file of walk(REPO_ROOT)) {
     const n = (src.match(leg.re) ?? []).length;
     if (n) legacy.set(leg.id, (legacy.get(leg.id) ?? 0) + n);
   }
+  if (r.startsWith(NUCLEO_NEUTRO.dir)) {
+    const n = (src.match(NUCLEO_NEUTRO.re) ?? []).length;
+    if (n) legacy.set(NUCLEO_NEUTRO.id, (legacy.get(NUCLEO_NEUTRO.id) ?? 0) + n);
+  }
 }
 
 /** A taxonomia do dicionário precisa ser própria (nunca códigos/siglas do sistema de referência). */
-for (const entry of DATA_DICTIONARY) {
-  for (const term of FORBIDDEN) if (term.re.test(entry.code)) findings.push(`dicionário: código "${entry.code}" reproduz nomenclatura externa`);
-  if (!/^AGR-/.test(entry.code)) findings.push(`dicionário: código "${entry.code}" fora da taxonomia própria (AGR-…)`);
+for (const entry of DICIONARIO_DE_DADOS) {
+  for (const term of FORBIDDEN) if (term.re.test(entry.codigo)) findings.push(`dicionário: código "${entry.codigo}" reproduz nomenclatura externa`);
+  if (!/^ERP-/.test(entry.codigo)) findings.push(`dicionário: código "${entry.codigo}" fora da taxonomia própria (ERP-…)`);
 }
 
 const counts = Object.fromEntries([...legacy].sort());
@@ -107,7 +122,7 @@ if (update) {
 if (findings.length) {
   console.error(`naming-audit: ${findings.length} referência(s) proibida(s) em código de produto`);
   for (const f of findings) console.error(`  - ${f}`);
-  console.error("  O histórico do sistema de referência fica em docs/reference/ (categoria C), nunca no runtime.");
+  console.error("  Histórico do sistema de referência: docs/reference/ (categoria C). Fundação nova: nome neutro (docs/DOMAIN-NAMING-STANDARD.md).");
   process.exit(1);
 }
 
@@ -116,10 +131,10 @@ const grown = Object.entries(counts).filter(([k, v]) => v > (base[k] ?? 0));
 if (grown.length) {
   console.error("naming-audit: identificadores herdados aumentaram (a dívida só pode diminuir):");
   for (const [k, v] of grown) {
-    const note = LEGACY_IDENTIFIERS.find((l) => l.id === k)?.note ?? "";
+    const note = LEGACY_IDENTIFIERS.find((l) => l.id === k)?.note ?? (k === NUCLEO_NEUTRO.id ? "dependência da infraestrutura legada de Empresa no núcleo neutro" : "");
     console.error(`  - ${k}: ${base[k] ?? 0} → ${v} (${note})`);
   }
-  console.error("  Use tokens neutros no código novo; se a mudança for deliberada, rode `node scripts/naming-audit.mjs --update` no mesmo commit.");
+  console.error("  Código novo nasce neutro; se a mudança for deliberada, rode `node scripts/naming-audit.mjs --update` no mesmo commit.");
   process.exit(1);
 }
 console.log(`naming-audit: OK (${scanned} arquivos de produto; dívida herdada: ${Object.entries(counts).map(([k, v]) => `${k}=${v}`).join(", ") || "nenhuma"})`);

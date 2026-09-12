@@ -3,9 +3,9 @@
 > **Documento gerado.** Não edite à mão: `node scripts/data-dictionary.mjs`.
 > A parte técnica (tabelas, colunas, tipos, nulidade, chaves, enums) é derivada de `supabase/migrations/*.sql`;
 > a parte funcional (nome, descrição, módulo, rota, TOP futura, notas de migração) é curada em
-> `packages/platform/data-dictionary.registry.mjs`. O gate `--check` recusa entrada que aponte para tabela/coluna inexistente.
+> `packages/plataforma/dicionario-dados.mjs`. O gate `--check` recusa entrada que aponte para tabela/coluna inexistente.
 
-Formato do dicionário: versão **1**. Taxonomia própria `AGR-<MÓDULO>-<ENTIDADE>` (não reproduz códigos do sistema de referência).
+Formato do dicionário: versão **1**. Taxonomia própria e neutra `ERP-<MÓDULO>-<ENTIDADE>` (não reproduz códigos do sistema de referência nem amarra o núcleo a um segmento de negócio).
 
 ## Panorama
 
@@ -23,7 +23,7 @@ Cobertura é incremental por projeto: a certificação de 100% é a missão **DA
 
 ## Plataforma
 
-### AGR-PLAT-ORGANIZACAO — Organização
+### ERP-PLATAFORMA-ORGANIZACAO — Organização
 
 Tenant do ERP: o cliente contratante. Agrupa empresas, usuários, permissões e a sequência de ID Global. Nunca se confunde com Empresa.
 
@@ -39,17 +39,17 @@ Tenant do ERP: o cliente contratante. Agrupa empresas, usuários, permissões e 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
-| `name` | Nome | text | sim |  |  |  | Nome do grupo/contratante. |
+| `name` |  | text | sim |  |  |  |  |
 | `legal_name` |  | text | não |  |  |  |  |
-| `document` | Documento | text | não |  |  |  | CNPJ/CPF do contratante. |
+| `document` |  | text | não |  |  |  |  |
 | `slug` |  | citext | não |  |  |  |  |
-| `parameters` | Parâmetros | jsonb | sim |  |  |  | Parametrizações do tenant (JSON). |
+| `parameters` |  | jsonb | sim |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
-| `default_language` | Idioma padrão | text | sim |  |  |  | Idioma padrão da organização (BCP 47). Usuário pode sobrepor. |
+| `idioma_padrao` |  | text | sim |  |  |  |  |
 
-### AGR-PLAT-EMPRESA — Empresa
+### ERP-PLATAFORMA-EMPRESA — Empresa
 
 Entidade operacional/jurídica dos registros: é a EMPRESA do contrato multiempresa. Hoje materializada na tabela `farms` (nome herdado do nicho agro).
 
@@ -67,10 +67,10 @@ Entidade operacional/jurídica dos registros: é a EMPRESA do contrato multiempr
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `code` | Código | int | sim |  |  |  | Código curto da empresa dentro da organização. |
-| `name` | Nome | text | sim |  |  |  | Nome da empresa. |
+| `code` |  | int | sim |  |  |  |  |
+| `name` |  | text | sim |  |  |  |  |
 | `legal_name` |  | text | não |  |  |  |  |
-| `document` | Documento | text | não |  |  |  | CNPJ/CPF da empresa. |
+| `document` |  | text | não |  |  |  |  |
 | `state_registration` |  | text | não |  |  |  |  |
 | `address_street` |  | text | não |  |  |  |  |
 | `address_number` |  | text | não |  |  |  |  |
@@ -88,7 +88,7 @@ Entidade operacional/jurídica dos registros: é a EMPRESA do contrato multiempr
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-PLAT-USUARIO — Usuário
+### ERP-PLATAFORMA-USUARIO — Usuário
 
 Pessoa que acessa o sistema. Autenticação local (desenvolvimento/teste) ou provedor externo.
 
@@ -113,9 +113,9 @@ Pessoa que acessa o sistema. Autenticação local (desenvolvimento/teste) ou pro
 | `last_login_at` |  | timestamptz | não |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
-| `language` | Idioma | text | não |  |  |  | Idioma preferido do usuário (BCP 47). Vazio = idioma da organização. |
+| `idioma` |  | text | não |  |  |  |  |
 
-### AGR-PLAT-VINCULO — Vínculo de Usuário
+### ERP-PLATAFORMA-VINCULO — Vínculo de Usuário
 
 Vínculo usuário × organização com perfil de acesso. Sem identidade própria para o usuário final.
 
@@ -139,7 +139,7 @@ Vínculo usuário × organização com perfil de acesso. Sem identidade própria
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 
-### AGR-PLAT-EMPRESA-PERMITIDA — Empresa Permitida
+### ERP-PLATAFORMA-EMPRESA-PERMITIDA — Empresa Permitida
 
 Empresas que o vínculo pode acessar. Lista vazia significa TODAS as empresas da organização. É a autoridade de autorização por empresa.
 
@@ -158,7 +158,7 @@ Empresas que o vínculo pode acessar. Lista vazia significa TODAS as empresas da
 | `member_id` |  | uuid | sim | PK | `erp.organization_members` |  |  |
 | `farm_id` |  | uuid | sim | PK | `erp.farms` |  |  |
 
-### AGR-PLAT-PERFIL — Perfil de Acesso
+### ERP-PLATAFORMA-PERFIL — Perfil de Acesso
 
 Conjunto de permissões atribuível a usuários da organização.
 
@@ -183,7 +183,7 @@ Conjunto de permissões atribuível a usuários da organização.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-PLAT-PERMISSAO-PERFIL — Permissão do Perfil
+### ERP-PLATAFORMA-PERMISSAO-PERFIL — Permissão do Perfil
 
 Vínculo perfil × chave de permissão. Estrutura interna: nunca recebe ID Global.
 
@@ -201,7 +201,7 @@ Vínculo perfil × chave de permissão. Estrutura interna: nunca recebe ID Globa
 | `role_id` |  | uuid | sim | PK | `erp.roles` |  |  |
 | `permission_key` |  | text | sim | PK | `erp.permissions` |  |  |
 
-### AGR-PLAT-AUDITORIA — Registro de Auditoria
+### ERP-PLATAFORMA-AUDITORIA — Registro de Auditoria
 
 Trilha imutável de eventos (criação, alteração, cancelamento, login) por organização e usuário.
 
@@ -228,7 +228,7 @@ Trilha imutável de eventos (criação, alteração, cancelamento, login) por or
 | `ip` |  | text | não |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 
-### AGR-PLAT-SEQUENCIA-CODIGO — Sequência de Código
+### ERP-PLATAFORMA-SEQUENCIA-CODIGO — Sequência de Código
 
 Contador por organização × entidade que gera o código/número próprio de cada entidade.
 
@@ -247,13 +247,13 @@ Contador por organização × entidade que gera o código/número próprio de ca
 | `entity` |  | text | sim | PK |  |  |  |
 | `last_value` |  | bigint | sim |  |  |  |  |
 
-### AGR-PLAT-SEQUENCIA-ID-GLOBAL — Sequência de ID Global
+### ERP-PLATAFORMA-SEQUENCIA-ID-GLOBAL — Sequência de ID Global
 
 Contador ÚNICO por organização que gera o ID Global. Compartilhado por todas as empresas da organização; independente entre organizações.
 
 | Propriedade | Valor |
 | --- | --- |
-| Tabela | `erp.global_id_sequences` |
+| Tabela | `erp.sequencias_id_global` |
 | Natureza | infraestrutura |
 | Escopo de organização | sim |
 | Escopo de empresa | não (registro da organização) |
@@ -263,15 +263,15 @@ Contador ÚNICO por organização que gera o ID Global. Compartilhado por todas 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `organization_id` |  | uuid | não | PK | `erp.organizations` |  |  |
-| `last_value` |  | bigint | sim |  |  |  |  |
+| `ultimo_valor` |  | bigint | sim |  |  |  |  |
 
-### AGR-PLAT-REGISTRO-GLOBAL — Registro Global
+### ERP-PLATAFORMA-REGISTRO-GLOBAL — Registro Global
 
 Índice que resolve um ID Global no registro real: organização, empresa, tipo de entidade, UUID, módulo e rota canônica.
 
 | Propriedade | Valor |
 | --- | --- |
-| Tabela | `erp.global_records` |
+| Tabela | `erp.registros_globais` |
 | Natureza | infraestrutura |
 | Escopo de organização | sim |
 | Escopo de empresa | `empresa_id` |
@@ -281,18 +281,18 @@ Contador ÚNICO por organização que gera o ID Global. Compartilhado por todas 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `organization_id` |  | uuid | sim | PK | `erp.organizations` |  |  |
-| `global_id` | ID Global | bigint | sim | PK |  |  | Número sequencial por organização, exibido como #55. |
-| `entity_type` | Tipo de Entidade | text | sim |  |  |  | Chave canônica do tipo (registry de elegibilidade em @agro/platform). |
-| `entity_id` |  | uuid | sim |  |  |  |  |
+| `id_global` |  | bigint | sim | PK |  |  |  |
+| `tipo_entidade` |  | text | sim |  |  |  |  |
+| `id_entidade` |  | uuid | sim |  |  |  |  |
 | `empresa_id` |  | uuid | não | FK | `erp.farms` |  |  |
-| `module` |  | text | sim |  |  |  |  |
-| `canonical_route` | Rota Canônica | text | sim |  |  |  | Rota de detalhe resolvida na criação; a URL deriva do registro, nunca o contrário. |
-| `created_by` |  | uuid | não | FK | `erp.users` |  |  |
-| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `modulo` |  | text | sim |  |  |  |  |
+| `rota_canonica` |  | text | sim |  |  |  |  |
+| `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `criado_em` |  | timestamptz | sim |  |  |  |  |
 
 ## Cadastros
 
-### AGR-CAD-PRODUTO — Produto
+### ERP-CADASTROS-PRODUTO — Produto
 
 Item de estoque, insumo ou serviço. Compartilhado pela organização (não pertence a uma empresa).
 
@@ -304,7 +304,7 @@ Item de estoque, insumo ou serviço. Compartilhado pela organização (não pert
 | Escopo de empresa | não (registro da organização) |
 | Exclusão lógica | sim |
 | ID Global | sim |
-| Rota canônica | `/cadastros/products/:id` |
+| Rota canônica | `/cadastros/products/:id?view=1` |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -347,7 +347,7 @@ Item de estoque, insumo ou serviço. Compartilhado pela organização (não pert
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-CAD-PESSOA — Pessoa
+### ERP-CADASTROS-PESSOA — Pessoa
 
 Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente, funcionário, proprietário) são perfis dela.
 
@@ -359,7 +359,7 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | Escopo de empresa | não (registro da organização) |
 | Exclusão lógica | sim |
 | ID Global | sim |
-| Rota canônica | `/cadastros/people/:id` |
+| Rota canônica | `/cadastros/people/:id?view=1` |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -398,7 +398,7 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-CAD-ARMAZEM — Armazém
+### ERP-CADASTROS-ARMAZEM — Armazém
 
 Local de guarda de estoque, pertencente a uma empresa.
 
@@ -426,7 +426,7 @@ Local de guarda de estoque, pertencente a uma empresa.
 
 ## Estoque
 
-### AGR-EST-ENTRADA — Entrada Manual
+### ERP-ESTOQUE-ENTRADA — Entrada Manual
 
 Lançamento de entrada de produtos sem documento fiscal vinculado.
 
@@ -460,7 +460,7 @@ Lançamento de entrada de produtos sem documento fiscal vinculado.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-EST-ENTRADA-ITEM — Item da Entrada
+### ERP-ESTOQUE-ENTRADA-ITEM — Item da Entrada
 
 Produto, quantidade e valor de uma entrada. Identidade pertence ao documento: nunca recebe ID Global.
 
@@ -492,7 +492,7 @@ Produto, quantidade e valor de uma entrada. Identidade pertence ao documento: nu
 | `cost_center_id` |  | uuid | não | FK | `erp.cost_centers` |  |  |
 | `position` |  | int | sim |  |  |  |  |
 
-### AGR-EST-DOCUMENTO-FISCAL — Documento Fiscal
+### ERP-ESTOQUE-DOCUMENTO-FISCAL — Documento Fiscal
 
 Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financeiro.
 
@@ -543,7 +543,7 @@ Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financei
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-EST-REQUISICAO — Requisição
+### ERP-ESTOQUE-REQUISICAO — Requisição
 
 Consumo interno de produtos por centro de custo/área.
 
@@ -579,7 +579,7 @@ Consumo interno de produtos por centro de custo/área.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-EST-SAIDA-DIRETA — Saída Direta
+### ERP-ESTOQUE-SAIDA-DIRETA — Saída Direta
 
 Baixa de estoque por perda, deterioração, doação e outros motivos.
 
@@ -614,7 +614,7 @@ Baixa de estoque por perda, deterioração, doação e outros motivos.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-EST-DEVOLUCAO — Devolução
+### ERP-ESTOQUE-DEVOLUCAO — Devolução
 
 Retorno de produtos ao estoque a partir de uma requisição.
 
@@ -644,7 +644,7 @@ Retorno de produtos ao estoque a partir de uma requisição.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-EST-TRANSFERENCIA — Transferência
+### ERP-ESTOQUE-TRANSFERENCIA — Transferência
 
 Movimentação de produtos entre armazéns ou entre empresas.
 
@@ -681,7 +681,7 @@ Movimentação de produtos entre armazéns ou entre empresas.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-EST-PRODUCAO-RACAO — Produção de Ração
+### ERP-ESTOQUE-PRODUCAO-RACAO — Produção de Ração
 
 Produção de ração a partir de uma fórmula: consome insumos e gera produto acabado. Específico do nicho agro.
 
@@ -711,7 +711,7 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 
-### AGR-EST-MOVIMENTO — Movimento de Estoque
+### ERP-ESTOQUE-MOVIMENTO — Movimento de Estoque
 
 Razão imutável de estoque (custo médio e saldo). Não é lançamento: é consequência contábil de um.
 
@@ -753,7 +753,7 @@ Razão imutável de estoque (custo médio e saldo). Não é lançamento: é cons
 
 ## Compras
 
-### AGR-CMP-SOLICITACAO — Solicitação de Compra
+### ERP-COMPRAS-SOLICITACAO — Solicitação de Compra
 
 Pedido interno de compra que percorre autorização, cotação e recebimento.
 
@@ -801,7 +801,7 @@ Pedido interno de compra que percorre autorização, cotação e recebimento.
 
 ## Financeiro
 
-### AGR-FIN-TITULO — Título Financeiro
+### ERP-FINANCEIRO-TITULO — Título Financeiro
 
 Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/receber) — uma tabela, duas telas.
 
@@ -813,7 +813,8 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | Escopo de empresa | `farm_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
-| Rota canônica | `/financeiro/contas-a-pagar/:id` |
+| Discriminador | `direction` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
+| Rotas por variante | `payable` → `/financeiro/contas-a-pagar/:id` · `receivable` → `/financeiro/contas-a-receber/:id` |
 | TOP futura (contrato) | Conta a pagar / Conta a receber |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -822,7 +823,7 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
-| `direction` | Sentido | text | sim |  |  | `payable` · `receivable` | payable = conta a pagar; receivable = conta a receber. Valor canônico: nunca traduzido no banco. |
+| `direction` |  | text | sim |  |  | `payable` · `receivable` |  |
 | `number` |  | text | sim |  |  |  |  |
 | `title_type_id` |  | uuid | não | FK | `erp.title_types` |  |  |
 | `proprietary_id` |  | uuid | não | FK | `erp.people` |  |  |
@@ -857,7 +858,7 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-FIN-BAIXA — Baixa de Título
+### ERP-FINANCEIRO-BAIXA — Baixa de Título
 
 Pagamento/recebimento parcial ou total de um título. Identidade pertence ao título.
 
@@ -897,7 +898,7 @@ Pagamento/recebimento parcial ou total de um título. Identidade pertence ao tí
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 
-### AGR-FIN-MOVIMENTO-BANCARIO — Movimento Bancário
+### ERP-FINANCEIRO-MOVIMENTO-BANCARIO — Movimento Bancário
 
 Lançamento em conta bancária (transferência, tarifa, aplicação).
 
@@ -943,7 +944,7 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-FIN-IMPORTACAO-OFX — Importação OFX
+### ERP-FINANCEIRO-IMPORTACAO-OFX — Importação OFX
 
 Importação de extrato bancário para conciliação. Pertence à conta bancária, não a uma empresa.
 
@@ -974,7 +975,7 @@ Importação de extrato bancário para conciliação. Pertence à conta bancári
 
 ## Vendas
 
-### AGR-VND-DOCUMENTO — Documento de Venda
+### ERP-VENDAS-DOCUMENTO — Documento de Venda
 
 Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido, venda).
 
@@ -986,7 +987,8 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | Escopo de empresa | `farm_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
-| Rota canônica | `/vendas/sales/:id` |
+| Discriminador | `kind` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
+| Rotas por variante | `budget` → `/vendas/budgets/:id` · `order` → `/vendas/orders/:id` · `sale` → `/vendas/sales/:id` |
 | TOP futura (contrato) | Orçamento / Pedido / Venda |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -994,7 +996,7 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
-| `kind` | Tipo | text | sim |  |  | `budget` · `order` · `sale` | budget \| order \| sale. Valor canônico persistido; o rótulo é traduzido na apresentação. |
+| `kind` |  | text | sim |  |  | `budget` · `order` · `sale` |  |
 | `code` |  | text | sim |  |  |  |  |
 | `document_date` |  | date | sim |  |  |  |  |
 | `shipping_date` |  | date | não |  |  |  |  |
@@ -1023,7 +1025,7 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 
 ## Pecuária
 
-### AGR-PEC-ANIMAL — Animal
+### ERP-PECUARIA-ANIMAL — Animal
 
 Animal identificado individualmente. Módulo específico do nicho agro (não faz parte do núcleo neutro).
 
@@ -1075,7 +1077,7 @@ Animal identificado individualmente. Módulo específico do nicho agro (não faz
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-PEC-MOVIMENTACAO — Movimentação de Rebanho
+### ERP-PECUARIA-MOVIMENTACAO — Movimentação de Rebanho
 
 Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica.
 
@@ -1087,7 +1089,8 @@ Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica.
 | Escopo de empresa | `farm_id` · `destination_farm_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
-| Rota canônica | `/pecuaria/movimentacoes/:movement_type/:id` |
+| Discriminador | `movement_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
+| Rotas por variante | `purchase` → `/pecuaria/movimentacoes/purchase/:id` · `sale` → `/pecuaria/movimentacoes/sale/:id` · `birth` → `/pecuaria/movimentacoes/birth/:id` · `death` → `/pecuaria/movimentacoes/death/:id` · `loss` → `/pecuaria/movimentacoes/loss/:id` |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1116,7 +1119,7 @@ Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-PEC-MANEJO — Manejo
+### ERP-PECUARIA-MANEJO — Manejo
 
 Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 
@@ -1128,7 +1131,8 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | Escopo de empresa | `farm_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
-| Rota canônica | `/pecuaria/manejo/:handling_type/:id` |
+| Discriminador | `handling_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
+| Rotas por variante | `nutrition` → `/pecuaria/manejo/nutrition/:id` · `sanitary` → `/pecuaria/manejo/sanitary/:id` · `weaning` → `/pecuaria/manejo/weaning/:id` · `separation` → `/pecuaria/manejo/separation/:id` · `pasture` → `/pecuaria/manejo/pasture/:id` · `locate` → `/pecuaria/manejo/locate/:id` |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1152,7 +1156,7 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-PEC-PESAGEM — Pesagem
+### ERP-PECUARIA-PESAGEM — Pesagem
 
 Evento de pesagem de animais, base de desempenho e ganho de peso.
 
@@ -1184,7 +1188,7 @@ Evento de pesagem de animais, base de desempenho e ganho de peso.
 
 ## Frota e Ativos
 
-### AGR-FRT-EQUIPAMENTO — Equipamento
+### ERP-FROTA-EQUIPAMENTO — Equipamento
 
 Bem/máquina da empresa, com depreciação e histórico de manutenção.
 
@@ -1196,7 +1200,7 @@ Bem/máquina da empresa, com depreciação e histórico de manutenção.
 | Escopo de empresa | `farm_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
-| Rota canônica | `/cadastros/equipments/:id` |
+| Rota canônica | `/cadastros/equipments/:id?view=1` |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1241,7 +1245,7 @@ Bem/máquina da empresa, com depreciação e histórico de manutenção.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-FRT-ABASTECIMENTO — Abastecimento
+### ERP-FROTA-ABASTECIMENTO — Abastecimento
 
 Consumo de combustível por equipamento, com baixa de estoque.
 
@@ -1281,7 +1285,7 @@ Consumo de combustível por equipamento, com baixa de estoque.
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 
-### AGR-FRT-MANUTENCAO — Manutenção
+### ERP-FROTA-MANUTENCAO — Manutenção
 
 Serviço e peças aplicados a um ou mais equipamentos.
 
@@ -1315,7 +1319,7 @@ Serviço e peças aplicados a um ou mais equipamentos.
 
 ## Ordens de Serviço
 
-### AGR-OS-ORDEM — Ordem de Serviço
+### ERP-OS-ORDEM — Ordem de Serviço
 
 Serviço planejado/executado com apontamento de recursos.
 
@@ -1363,7 +1367,7 @@ Serviço planejado/executado com apontamento de recursos.
 ## Apêndice — tabelas ainda não curadas
 
 Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
-`packages/platform/data-dictionary.registry.mjs` promove a tabela para as seções acima.
+`packages/plataforma/dicionario-dados.mjs` promove a tabela para as seções acima.
 
 | Tabela | Campos | Organização | Empresa | Exclusão lógica |
 | --- | ---: | --- | --- | --- |

@@ -6,37 +6,38 @@ O núcleo do ERP precisa deixar de depender do nicho agro: **Fazenda → Empresa
 (`docs/MULTI-COMPANY-CONTRACT.md`, `docs/DOMAIN-NAMING-STANDARD.md`). Este inventário mede a superfície real
 antes de qualquer renomeação — localizar/substituir em massa aqui quebraria contrato de API, RLS e dados.
 
-Total medido: **2640** ocorrências em 10 superfícies · 50 tabelas com coluna de empresa.
+Total medido: **2638** ocorrências em 11 superfícies · 50 tabelas com coluna de empresa.
 
 ## Por superfície
 
 | Superfície | Ocorrências | Catraca | Observação |
 | --- | ---: | --- | --- |
-| Schema (migrations) | 153 | sim | não pode crescer |
-| API — código | 990 | sim | não pode crescer |
-| API — testes | 193 | sim | não pode crescer |
-| Pacotes compartilhados | 116 | sim | não pode crescer |
+| Schema (migrations) | 148 | sim | não pode crescer |
+| API — código | 988 | sim | não pode crescer |
+| API — testes | 209 | sim | não pode crescer |
+| Núcleo neutro de nicho (plataforma) | 5 | sim | só nomes de coluna do registry; PRE-BASE2-03 zera |
+| Pacotes compartilhados | 98 | sim | não pode crescer |
 | Web — código | 425 | sim | não pode crescer |
 | Web — navegação/rotas | 13 | sim | não pode crescer |
 | Web — testes ponta a ponta | 57 | sim | não pode crescer |
 | Scripts e gates | 5 | sim | não pode crescer |
-| Documentação ativa | 175 | não | documentação: acompanha a migração |
+| Documentação ativa | 177 | não | documentação: acompanha a migração |
 | Documentação histórica (referência externa) | 513 | não | histórico externo: preservado, fora da catraca |
 
 ## Por símbolo (o que precisa migrar)
 
 | Símbolo atual | Natureza | Ocorrências | Destino canônico |
 | --- | --- | ---: | --- |
-| `farm_id` | dado | 1099 | `empresa_id` |
-| `farms` | dado | 108 | `erp.empresas` |
+| `farm_id` | dado | 1113 | `empresa_id` |
+| `farms` | dado | 103 | `erp.empresas` |
 | `member_farms` | dado | 33 | `member_empresas` |
 | `ctx_farmId` | contrato | 153 | `empresaSelecionada` |
-| `farmIds` | contrato | 81 | `empresasPermitidas` |
-| `x_farm_id` | contrato | 40 | `X-Empresa-Id` |
+| `farmIds` | contrato | 78 | `empresasPermitidas` |
+| `x_farm_id` | contrato | 39 | `X-Empresa-Id` |
 | `farmScope` | contrato | 43 | `escopoEmpresa` |
-| `allowedFarms` | contrato | 120 | `companyScope (@agro/platform)` |
+| `allowedFarms` | contrato | 116 | `escopoEmpresa (@erp/plataforma)` |
 | `farms` | contrato | 109 | `/empresas` |
-| `fazenda` | texto | 854 | `Empresa (i18n: termos.empresa)` |
+| `fazenda` | texto | 851 | `Empresa (i18n: termos.empresa)` |
 
 `dado` = exige migration e backfill · `contrato` = quebra clientes se mudar sem compatibilidade · `texto` = rótulo, resolvido por i18n.
 
@@ -123,11 +124,11 @@ Ordem de ataque sugerida: quem concentra mais ocorrências define o risco da mig
 | `docs/reference/REPORTS.md` | Documentação histórica (referência externa) | 34 |
 | `supabase/migrations/0003_stock_supply.sql` | Schema (migrations) | 31 |
 | `apps/api/src/routes/supply.ts` | API — código | 30 |
+| `apps/api/test/integration/plataforma.test.ts` | API — testes | 30 |
 | `apps/api/test/unit/farm-scope-guard.test.ts` | API — testes | 30 |
 | `apps/api/src/routes/sales.ts` | API — código | 29 |
 | `docs/AUTHORIZATION.md` | Documentação ativa | 29 |
 | `supabase/migrations/0002_registries.sql` | Schema (migrations) | 28 |
-| `docs/parity/SCREEN-PARITY.md` | Documentação ativa | 24 |
 
 ## Como esta catraca funciona
 

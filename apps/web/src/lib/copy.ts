@@ -3,14 +3,14 @@
  * divergência. Rótulos de enums vêm de `@agro/domain` (`enumLabel`), nunca do valor técnico.
  *
  * A partir de PRE-BASE2-01 estes textos NÃO são mais literais aqui: são derivados do catálogo pt-BR de
- * `@agro/platform` (docs/I18N-CONTRACT.md), que é a fonte única de tradução. `COPY` continua existindo com a
+ * `@erp/plataforma` (docs/I18N-CONTRACT.md), que é a fonte única de tradução. `COPY` continua existindo com a
  * mesma forma para não exigir mudança de tela; código novo deve preferir `t("acoes.salvar")` (lib/i18n.ts).
  */
 export { ENUM_LABELS, enumLabel, enumOptions, hasEnumLabel, NOT_INFORMED, UNKNOWN_VALUE, type EnumDomain } from "@agro/domain";
 import { enumLabel } from "@agro/domain";
-import { ptBR } from "@agro/platform";
+import { ptBR } from "@erp/plataforma";
 
-const m = ptBR.messages;
+const m = ptBR.mensagens;
 
 export const COPY = {
   situacao: m["termos.situacao"]!,

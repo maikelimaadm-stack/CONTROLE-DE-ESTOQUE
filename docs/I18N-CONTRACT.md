@@ -1,7 +1,7 @@
 # Contrato de internacionalização
 
-> Contrato de plataforma (PRE-BASE2-01). Implementação: `packages/platform/src/i18n.ts`,
-> `packages/platform/src/locale.ts`, catálogo `packages/platform/src/locales/pt-BR.ts`,
+> Contrato de plataforma (PRE-BASE2-01). Implementação: `packages/plataforma/src/idioma.ts`,
+> `packages/plataforma/src/formatacao.ts`, catálogo `packages/plataforma/src/idiomas/pt-BR.ts`,
 > ligação da interface em `apps/web/src/lib/i18n.ts`.
 
 ## 1. Três coisas que nunca se misturam
@@ -16,14 +16,14 @@
 qualquer idioma e traduzida só na apresentação. Persistir "Pendente"/"Pending"/"Pendiente" quebraria
 consulta, índice, integração e relatório — e é o erro que este contrato existe para impedir.
 
-A ponte entre os dois mundos é `enumMessageKey("status", "pending")` → `enums.status.pending`.
+A ponte entre os dois mundos é `chaveDeEnum("status", "pending")` → `enums.status.pending`.
 
 ## 2. Idiomas
 
 - Idioma inicial obrigatório: **pt-BR** (`DEFAULT_LOCALE`), que é também a **referência de completude**.
-- `SUPPORTED_LOCALES` lista os idiomas com catálogo publicado. Acrescentar um idioma é acrescentar um
+- `IDIOMAS_PUBLICADOS` lista os idiomas com catálogo publicado. Acrescentar um idioma é acrescentar um
   catálogo e uma entrada — nenhuma tela muda.
-- `missingMessageKeys(catálogo, ptBR)` aponta exatamente o que falta traduzir.
+- `chavesFaltantes(catálogo, ptBR)` aponta exatamente o que falta traduzir.
 
 ## 3. Precedência e negociação
 
@@ -31,28 +31,28 @@ A ponte entre os dois mundos é `enumMessageKey("status", "pending")` → `enums
 idioma do usuário  ›  idioma padrão da organização  ›  padrão do sistema (pt-BR)
 ```
 
-- `erp.organizations.default_language` — obrigatório, `pt-BR` por padrão.
-- `erp.users.language` — opcional; nulo significa "seguir a organização".
+- `erp.organizations.idioma_padrao` — obrigatório, `pt-BR` por padrão.
+- `erp.users.idioma` — opcional; nulo significa "seguir a organização".
 - Idioma pedido sem catálogo publicado **cai para o próximo da cadeia**; a tela nunca quebra por causa de
   idioma. Idioma sem região casa com a região publicada (`pt` → `pt-BR`).
 
 O servidor resolve e entrega o resultado pronto: `/api/auth/context` devolve
-`language: { organization, user, effective }`; `GET|PUT /api/platform/language` lê e grava a preferência do
+`idioma: { organizacao, usuario, efetivo }`; `GET|PUT /api/plataforma/idioma` lê e grava a preferência do
 usuário. Idioma não publicado é recusado na escrita — preferência inválida não entra no banco.
 
 ## 4. Formatação
 
-Data, hora, número, moeda e percentual saem de **um lugar só** (`packages/platform/src/locale.ts`). Código
+Data, hora, número, moeda e percentual saem de **um lugar só** (`packages/plataforma/src/formatacao.ts`). Código
 novo não formata à mão: nada de `toFixed`, concatenação de `dd/mm/aaaa` ou `Intl` espalhado pela tela.
 
 | Função | Observação |
 | --- | --- |
-| `formatDate` | Data de negócio (`AAAA-MM-DD`) sem deslocamento de fuso. |
-| `formatDateTime` | Timestamp com fuso explícito. |
-| `formatNumber` / `formatQuantity` | Casas decimais controladas. |
-| `formatCurrency` | Moeda vem do idioma (`pt-BR` → BRL) e pode ser sobrescrita. |
-| `formatPercent` | Entrada em **pontos percentuais** (12.5 → "12,5%"), como o domínio persiste. |
-| `createFormatter({ locale })` | Formatadores já amarrados ao idioma — o que a tela usa (`useFormatter`). |
+| `formatarData` | Data de negócio (`AAAA-MM-DD`) sem deslocamento de fuso. |
+| `formatarDataHora` | Timestamp com fuso explícito. |
+| `formatarNumero` / `formatarQuantidade` | Casas decimais controladas. |
+| `formatarMoeda` | Moeda vem do idioma (`pt-BR` → BRL) e pode ser sobrescrita. |
+| `formatarPercentual` | Entrada em **pontos percentuais** (12.5 → "12,5%"), como o domínio persiste. |
+| `criarFormatador({ idioma })` | Formatadores já amarrados ao idioma — o que a tela usa (`useFormatador`). |
 
 Valor ausente devolve string vazia, nunca "R$ 0,00": zero é um dado, ausência é outro.
 
@@ -62,12 +62,12 @@ Decimais trafegam como **string** (`"1234.56"`) e só viram número na apresenta
 ## 5. Como a interface usa
 
 ```ts
-const tr = useTranslator();     // tradutor do idioma da sessão
-const f  = useFormatter();      // formatadores do idioma da sessão
+const tr = useTradutor();      // tradutor do idioma da sessão
+const f  = useFormatador();    // formatadores do idioma da sessão
 
-tr("acoes.salvar")              // "Salvar"
-f.currencyValue("1234.56")      // "R$ 1.234,56"
-f.date("2026-09-12")            // "12/09/2026"
+tr("acoes.salvar")             // "Salvar"
+f.valor("1234.56")             // "R$ 1.234,56"
+f.data("2026-09-12")           // "12/09/2026"
 ```
 
 `COPY` (`apps/web/src/lib/copy.ts`) continua existindo com a mesma forma, mas **deriva do catálogo**: há uma
@@ -81,6 +81,6 @@ oficial (Situação, Painel, sem abreviações — `docs/UI-STANDARD.md`) vale p
 | Item | Missão |
 | --- | --- |
 | Tradução de 100% das telas atuais (migração de literais para chaves) | Incremental; obrigatório para componente novo desde já. |
-| Segundo idioma publicado | Quando houver demanda: catálogo + entrada em `SUPPORTED_LOCALES`. |
+| Segundo idioma publicado | Quando houver demanda: catálogo + entrada em `IDIOMAS_PUBLICADOS`. |
 | Rótulos de enum servidos por `enums.<domínio>.<valor>` | DATA-GOV (hoje vêm de `@agro/domain`). |
 | Seletor de idioma na interface | PRE-BASE2-05 (contrato e API já prontos). |

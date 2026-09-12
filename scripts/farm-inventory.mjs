@@ -31,7 +31,7 @@ const SYMBOLS = [
   { id: "contexto.farmIds", re: /\bfarmIds\b/g, target: "empresasPermitidas", kind: "contrato" },
   { id: "cabecalho.x_farm_id", re: /["']?[xX]-[fF]arm-[iI]d["']?/g, target: "X-Empresa-Id", kind: "contrato" },
   { id: "escopo.farmScope", re: /\bfarmScope(?:Sql)?\b/g, target: "escopoEmpresa", kind: "contrato" },
-  { id: "escopo.allowedFarms", re: /\ballowedFarms\b|\bfarmAllowed\b|\bassertFarmVisible\b/g, target: "companyScope (@agro/platform)", kind: "contrato" },
+  { id: "escopo.allowedFarms", re: /\ballowedFarms\b|\bfarmAllowed\b|\bassertFarmVisible\b/g, target: "escopoEmpresa (@erp/plataforma)", kind: "contrato" },
   { id: "rota.farms", re: /\/farms\b|["']farms["']/g, target: "/empresas", kind: "contrato" },
   { id: "texto.fazenda", re: /\bFazendas?\b|\bfazendas?\b/g, target: "Empresa (i18n: termos.empresa)", kind: "texto" }
 ];
@@ -41,7 +41,8 @@ const SURFACES = [
   { id: "schema", label: "Schema (migrations)", match: (f) => f.startsWith("supabase/migrations/"), ratchet: true },
   { id: "api", label: "API — código", match: (f) => f.startsWith("apps/api/src/"), ratchet: true },
   { id: "api-test", label: "API — testes", match: (f) => f.startsWith("apps/api/test/"), ratchet: true },
-  { id: "packages", label: "Pacotes compartilhados", match: (f) => f.startsWith("packages/"), ratchet: true },
+  { id: "core-neutro", label: "Núcleo neutro de nicho (plataforma)", match: (f) => f.startsWith("packages/plataforma/"), ratchet: true },
+  { id: "packages", label: "Pacotes compartilhados", match: (f) => f.startsWith("packages/") && !f.startsWith("packages/plataforma/"), ratchet: true },
   { id: "web", label: "Web — código", match: (f) => f.startsWith("apps/web/src/"), ratchet: true },
   { id: "web-nav", label: "Web — navegação/rotas", match: (f) => /^apps\/web\/(nav\.registry|redirects)/.test(f), ratchet: true },
   { id: "web-test", label: "Web — testes ponta a ponta", match: (f) => f.startsWith("apps/web/e2e/"), ratchet: true },
@@ -121,7 +122,7 @@ function render() {
   out.push("## Por superfície", "");
   out.push("| Superfície | Ocorrências | Catraca | Observação |", "| --- | ---: | --- | --- |");
   for (const s of SURFACES) {
-    const nota = s.ratchet ? "não pode crescer" : s.id === "reference" ? "histórico externo: preservado, fora da catraca" : "documentação: acompanha a migração";
+    const nota = s.id === "core-neutro" ? "só nomes de coluna do registry; PRE-BASE2-03 zera" : s.ratchet ? "não pode crescer" : s.id === "reference" ? "histórico externo: preservado, fora da catraca" : "documentação: acompanha a migração";
     out.push(`| ${s.label} | ${counts[s.id]} | ${s.ratchet ? "sim" : "não"} | ${nota} |`);
   }
   out.push("");

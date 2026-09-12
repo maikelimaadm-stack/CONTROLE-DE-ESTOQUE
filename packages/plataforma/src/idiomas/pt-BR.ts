@@ -5,11 +5,11 @@
  * A terminologia segue docs/UI-STANDARD.md ("Idioma e terminologia"): Situação (nunca "Status"),
  * Painel (nunca "Dashboard"), sem abreviações. O guardrail de copy audita este arquivo.
  */
-import type { Catalog } from "../i18n.js";
+import type { Catalogo } from "../idioma.js";
 
-export const ptBR: Catalog = {
-  locale: "pt-BR",
-  messages: {
+export const ptBR: Catalogo = {
+  idioma: "pt-BR",
+  mensagens: {
     // Ações
     "acoes.salvar": "Salvar",
     "acoes.cancelar": "Cancelar",
