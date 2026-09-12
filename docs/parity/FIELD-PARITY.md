@@ -378,8 +378,8 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-408 | Perdas | `/pecuaria/movimentacoes/loss/new` | 7 | 0 | 0 | — | IMPLEMENTADO |
 | SCR-409 | Pré-Lote | `/pecuaria/processamentos/new` | 9 | 0 | 3 | — | MAPEADO |
 | SCR-410 | Pesagem | `/pecuaria/pesagens/new` | 26 | 0 | 0 | 5 | TESTADO |
-| SCR-411 | Pesagem | `/pecuaria/pesagens/[id]` | 0 | 0 | 6 | — | TESTADO |
-| SCR-412 | Pesagem | `/pecuaria/pesagens/[id]` | 18 | 0 | 0 | — | TESTADO |
+| SCR-411 | Pesagem | `/pecuaria/pesagens/[id]` | 0 | 0 | 6 | 0 | TESTADO |
+| SCR-412 | Pesagem | `/pecuaria/pesagens/[id]` | 18 | 0 | 0 | 0 | TESTADO |
 | SCR-413 | Nutrição | `/pecuaria/manejo/nutrition/new` | 21 | 0 | 3 | — | IMPLEMENTADO |
 | SCR-414 | Sanitário | `/pecuaria/manejo/sanitary/new` | 21 | 0 | 0 | — | TESTADO |
 | SCR-415 | Desmama | `/pecuaria/manejo/weaning/new` | 7 | 0 | 0 | — | IMPLEMENTADO |

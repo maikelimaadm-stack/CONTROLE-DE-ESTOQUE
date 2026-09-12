@@ -28,4 +28,4 @@
 | 24 | Uma função, um lugar: planejamento orçamentário só no Financeiro; famílias de bens, reprodutores, protocolos e capacidades fiscais só em Configurações | Fim das duplicidades operacional × configuração | — |
 | 25 | `documents` mantido como Biblioteca de Documentos (independente dos anexos por registro) | Semântica distinta (documentos institucionais com vencimento e notificação); nenhum dado migrado | — |
 | 26 | Conteúdo de anexos no banco atrás de `attachment-storage.ts` (interface put/get/remove) | Troca futura para Supabase Storage/S3 sem mudar UI/rotas; migração de armazenamento não faz parte da V2 | — |
-
+| 27 | "Todos os manejos" não soma pesagens: seletor Registro (Manejos \| Pesagens) + Tipo de manejo; rotas de detalhe registradas em `DETAIL_ROUTES` e `nav-audit` valida links estáticos | Honestidade semântica (pesagem tem GMD e endpoint próprios) sem endpoint composto; "Visualizar" nunca leva a 404 — o lint falha antes | Checkpoint V2 — MELHORADO |

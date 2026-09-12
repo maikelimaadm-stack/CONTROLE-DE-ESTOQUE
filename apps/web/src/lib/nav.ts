@@ -3,7 +3,7 @@
  * módulos), a busca global de funcionalidades, os breadcrumbs, a rota canônica dos favoritos e a canonicalização de
  * abas antigas (`?tab=`/`?sub=` da V1). Ver docs/UX-ARCHITECTURE.md (Compactação V2).
  */
-import { MODULES, AREAS, ALL, LEGACY_TABS, canonicalHref, type NavEntry } from "../../nav.registry.mjs";
+import { MODULES, AREAS, ALL, LEGACY_TABS, DETAIL_ROUTES, canonicalHref, type NavEntry, type DetailRoute } from "../../nav.registry.mjs";
 
 export type { NavEntry };
 export interface NavItem { id: string; label: string; href: string; perm?: string | string[]; description?: string }
@@ -59,8 +59,14 @@ export function entryFor(pathname: string, search?: string | URLSearchParams | n
   return moduleForPath(pathname);
 }
 
-/** Breadcrumbs derivados da arquitetura: Módulo › Área › Sub (rotas de detalhe recebem o módulo dono). */
+const patternRe = (pattern: string) => new RegExp("^" + pattern.replace(/:[a-z]+/g, "[^/]+") + "$");
+/** Padrão de rota de detalhe que casa com o caminho (ex.: /pecuaria/manejo/sanitary/<id>). */
+export const detailRouteFor = (pathname: string): DetailRoute | undefined => DETAIL_ROUTES.find((d) => patternRe(d.pattern).test(pathname));
+
+/** Breadcrumbs derivados da arquitetura: Módulo › Área › Sub; rotas de detalhe = Módulo › Área › Registro. */
 export function crumbsFor(pathname: string, search?: string | URLSearchParams | null): string[] {
+  const det = detailRouteFor(pathname);
+  if (det) { const mod = moduleOf(det.module); const area = det.area ? ALL.find((x) => x.module === det.module && x.tab === det.area && (x.type === "area" || x.type === "config") && !x.sub) : undefined; return [mod?.label, area?.label, det.label].filter((x): x is string => Boolean(x)); }
   const e = entryFor(pathname, search); if (!e) return [];
   const mod = moduleOf(e.module); const out: string[] = mod ? [mod.label] : [];
   if (e.type === "module") return out;

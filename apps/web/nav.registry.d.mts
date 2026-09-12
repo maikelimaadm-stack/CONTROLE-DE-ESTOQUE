@@ -11,4 +11,6 @@ export const AREAS: NavEntry[];
 export const ALL: NavEntry[];
 export const LEGACY_TABS: Record<string, Record<string, LegacyTabTarget>>;
 export const EXTRA_REDIRECTS: RedirectRule[];
+export interface DetailRoute { id: string; module: string; area: string | null; label: string; pattern: string; perm?: string | string[] | null }
+export const DETAIL_ROUTES: DetailRoute[];
 export function canonicalHref(e: NavEntry): string;

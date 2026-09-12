@@ -290,6 +290,10 @@ describe("vendas, frota, RH e pecuária", () => {
     await h.app.inject({ method: "POST", url: "/api/stock/opening-balances", headers: h.headers(), payload: { farm_id: I.farm, warehouse_id: I.warehouse, product_id: diesel.id, quantity: "500", unit_value: "6" } });
     const s = await h.app.inject({ method: "POST", url: "/api/fleet/fuel-supplies", headers: h.headers(), payload: { farm_id: I.farm, supply_date: "2026-09-10", equipment_id: I.equipment, warehouse_id: I.warehouse, product_id: diesel.id, quantity: "50", hour_meter: "1200" } });
     expect(s.statusCode).toBe(201); expect(j(s).total).toBe("300.00");
+    // checkpoint V2: "Visualizar" abastecimento abre o registro real
+    const one = await h.app.inject({ method: "GET", url: `/api/fleet/fuel-supplies/${j(s).id}`, headers: h.headers() });
+    expect(one.statusCode, one.body).toBe(200); expect(j(one).quantity).toBe("50.0000"); expect(j(one).equipment_id).toBe(I.equipment);
+    expect((await h.app.inject({ method: "GET", url: "/api/fleet/fuel-supplies/00000000-0000-4000-8000-000000000000", headers: h.headers() })).statusCode).toBe(404);
     const eq = j(await h.app.inject({ method: "GET", url: `/api/resources/equipments/${I.equipment}`, headers: h.headers() })); expect(eq.hour_meter).toBe("1200.00");
     const d1 = await h.app.inject({ method: "POST", url: "/api/assets/depreciations/run", headers: h.headers(), payload: { period_month: "2026-09-01" } });
     expect(d1.statusCode).toBe(201); expect(j(d1).count).toBe(3);
@@ -316,6 +320,17 @@ describe("vendas, frota, RH e pecuária", () => {
     expect(a.weighings[1]!.gmd).toBe("1.000"); expect(a.current_weight).toBe("290.00");
     const san = await h.app.inject({ method: "POST", url: "/api/livestock/handlings", headers: h.headers(), payload: { farm_id: I.farm, handling_type: "sanitary", handling_date: "2026-09-12", batch_id: I.batch, product_id: I.productLot, warehouse_id: null, dose: "2", items: [{ animal_id: I.animal, quantity: "1" }] } });
     expect(san.statusCode).toBe(201);
+    // checkpoint V2: detalhe de manejo e de pesagem por id (404 para inexistente, 403 para operador sem a permissão do tipo)
+    const hd = await h.app.inject({ method: "GET", url: `/api/livestock/handlings/${j(san).id}`, headers: h.headers() });
+    expect(hd.statusCode).toBe(200); expect(j(hd).handling_type).toBe("sanitary"); expect((j(hd).items as unknown[]).length).toBe(1);
+    expect((await h.app.inject({ method: "GET", url: "/api/livestock/handlings/00000000-0000-4000-8000-000000000000", headers: h.headers() })).statusCode).toBe(404);
+    expect((await h.app.inject({ method: "GET", url: `/api/livestock/handlings/${j(san).id}`, headers: h.opHeaders() })).statusCode).toBe(403);
+    // código único por organização (constraint é por tabela, não por tipo): manejo de outro tipo não pode dar 409
+    const nut = await h.app.inject({ method: "POST", url: "/api/livestock/handlings", headers: h.headers(), payload: { farm_id: I.farm, handling_type: "nutrition", handling_date: "2026-09-12", batch_id: I.batch, items: [{ animal_id: I.animal, quantity: "1" }] } });
+    expect(nut.statusCode, nut.body).toBe(201); expect(j(nut).code).not.toBe(j(san).code);
+    const wd = await h.app.inject({ method: "GET", url: `/api/livestock/weighings/${j(w2).id}`, headers: h.headers() });
+    expect(wd.statusCode).toBe(200); expect((j(wd).items as { gmd: string }[])[0]!.gmd).toBe("1.000");
+    expect((await h.app.inject({ method: "GET", url: "/api/livestock/weighings/00000000-0000-4000-8000-000000000000", headers: h.headers() })).statusCode).toBe(404);
     const ivm = j(await h.app.inject({ method: "GET", url: "/api/resources/products?search=Ivermectina", headers: h.headers() })).items![0] as { id: string };
     await h.app.inject({ method: "POST", url: "/api/stock/opening-balances", headers: h.headers(), payload: { farm_id: I.farm, warehouse_id: I.warehouse, product_id: ivm.id, quantity: "10", unit_value: "85", provider_lot: "L1", expiration_date: "2027-01-01" } });
     const san2 = await h.app.inject({ method: "POST", url: "/api/livestock/handlings", headers: h.headers(), payload: { farm_id: I.farm, handling_type: "sanitary", handling_date: "2026-09-12", batch_id: I.batch, product_id: ivm.id, warehouse_id: I.warehouse, dose: "0.01", items: [{ animal_id: I.animal, quantity: "1" }] } });

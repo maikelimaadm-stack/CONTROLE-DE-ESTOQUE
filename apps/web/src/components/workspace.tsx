@@ -24,6 +24,8 @@ export function useTabParam<T extends { key: string; perm?: string | string[] }>
   const visible = tabs.filter((t) => permOk(can, t.perm));
   const wanted = sp.get(param);
   const active = visible.find((t) => t.key === wanted) ?? visible.find((t) => t.key === defaultTab) ?? visible[0];
+  // aba pedida inexistente/sem permissão (preferência ou link antigo): a URL passa a refletir a aba realmente exibida
+  React.useEffect(() => { if (wanted && active && wanted !== active.key && !canonicalize(pathname, sp)) { const next = new URLSearchParams(sp.toString()); next.set(param, active.key); if (param === "tab") next.delete("sub"); router.replace(`${pathname}?${next.toString()}`, { scroll: false }); } }, [wanted, active?.key]);
   const set = React.useCallback((key: string) => {
     const next = new URLSearchParams(sp.toString()); next.set(param, key);
     if (param === "tab") next.delete("sub");

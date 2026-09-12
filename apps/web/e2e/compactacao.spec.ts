@@ -52,7 +52,7 @@ test("pecuária: pesquisa de animal, filtro de movimentação, filtro de manejo 
   await expect(page.getByLabel("Identificação (brinco, SISBOV, chip, nome)")).toBeVisible(); await expect(page.getByTestId("animals-locate")).toBeVisible();
   await expect(page.getByRole("tab", { name: /Buscar animal/ })).toHaveCount(0); await expect(page.getByRole("tab", { name: /Movimentar Rebanho/ })).toHaveCount(0);
   await page.getByRole("tab", { name: "Movimentações" }).click(); await page.getByTestId("mov-type").getByRole("radio", { name: "Venda" }).click(); await expect(page).toHaveURL(/type=sale/); await expect(page.locator("table")).toBeVisible();
-  await page.getByRole("tab", { name: "Manejos" }).click(); await page.getByTestId("handling-type").getByRole("radio", { name: "Pesagem" }).click(); await expect(page).toHaveURL(/type=weighing/);
+  await page.getByRole("tab", { name: "Manejos" }).click(); await page.getByTestId("handling-kind").getByRole("radio", { name: "Pesagens" }).click(); await expect(page).toHaveURL(/type=weighing/); await expect(page.getByTestId("handling-type")).toHaveCount(0);
   await page.getByRole("tab", { name: "Rebanho" }).click(); await page.getByRole("tab", { name: "Lotes" }).click();
   const row = page.getByTestId("b1-row").first();
   if (await row.count()) { await row.click(); await page.getByLabel("Mais opções").click(); await expect(page.getByRole("menuitem", { name: /Mover de local/ })).toBeVisible(); await page.getByRole("menuitem", { name: /Mover de local/ }).click(); await expect(page.getByRole("dialog").getByRole("heading", { name: "Mover lote de local" })).toBeVisible(); await page.keyboard.press("Escape"); }

@@ -32,10 +32,15 @@ function Movements() {
 }
 function Handlings() {
   const { can } = useAuth(); const [type, setType] = useUrlParam("type", "");
-  const ok = Object.keys(HANDLING_PT).filter((t) => can(`${HAND_PERM[t]}.view`)); const cur = type === "weighing" && can("weighings.view") ? "weighing" : type && ok.includes(type) ? type : "";
+  const ok = Object.keys(HANDLING_PT).filter((t) => can(`${HAND_PERM[t]}.view`));
+  // Pesagem tem endpoint e fluxo próprios (GMD por animal): não é somada a "todos os manejos" — o seletor deixa isso explícito
+  const weighing = type === "weighing" && can("weighings.view"); const cur = weighing ? "" : type && ok.includes(type) ? type : "";
   return <div className="flex min-h-0 flex-1 flex-col gap-2">
-    <div className="mg-card ws-filters no-print"><FilterChips label="Tipo" testId="handling-type" value={cur || "all"} onChange={(v) => setType(v === "all" ? "" : v)} options={[{ value: "all", label: "Todos os manejos" }, { value: "weighing", label: "Pesagem", perm: "weighings.view", hint: "Pesagens usam fluxo próprio (GMD por lote)" }, ...ok.map((t) => ({ value: t, label: HANDLING_PT[t]! }))]} /></div>
-    {cur === "weighing" ? <WeighingsList /> : <HandlingsList type={cur} />}
+    <div className="mg-card ws-filters no-print">
+      <FilterChips label="Registro" testId="handling-kind" value={weighing ? "weighing" : "handling"} onChange={(v) => setType(v === "weighing" ? "weighing" : "")} options={[{ value: "handling", label: "Manejos", hint: "Nutrição, sanitário, desmama, apartação e pastagem" }, { value: "weighing", label: "Pesagens", perm: "weighings.view", hint: "Pesagens usam fluxo próprio (GMD por animal)" }]} />
+      {!weighing && <FilterChips label="Tipo de manejo" testId="handling-type" value={cur || "all"} onChange={(v) => setType(v === "all" ? "" : v)} options={[{ value: "all", label: "Todos os manejos" }, ...ok.map((t) => ({ value: t, label: HANDLING_PT[t]! }))]} />}
+    </div>
+    {weighing ? <WeighingsList /> : <HandlingsList type={cur} />}
   </div>;
 }
 function Batches() {

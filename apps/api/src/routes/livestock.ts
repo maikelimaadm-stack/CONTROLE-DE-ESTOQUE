@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, todayISO } from "@agro/shared";
 import { gmd, withdrawalUntil, expectedBirth, ageMonths, evolveCategory } from "@agro/domain";
-import { runService, nextCode, idempotent, audit } from "../lib/service.js";
+import { runService, nextCode, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { farmAllowed, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
@@ -22,6 +22,11 @@ async function paged(ctx: ServiceCtx, sql: string, countSql: string, params: unk
   return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
 }
 async function animalCode(ctx: ServiceCtx, entity: string) { return nextCode(ctx.tx, ctx.orgId, entity, 5); }
+/** Código único por organização na tabela (a unicidade é por tabela, não por tipo): sequência única por tabela; pula códigos já usados por sequências antigas por tipo. */
+async function uniqueCode(ctx: ServiceCtx, table: "animal_handlings", entity: string) {
+  for (let i = 0; i < 10000; i++) { const code = await animalCode(ctx, entity); const ex = await ctx.tx.query(`select 1 from erp.${table} where organization_id=$1 and code=$2`, [ctx.orgId, code]); if (!ex.rowCount) return code; }
+  throw new Error("Não foi possível gerar código único");
+}
 
 export default async function livestockRoutes(app: FastifyInstance) {
   // ---------- Animais ----------
@@ -198,6 +203,14 @@ export default async function livestockRoutes(app: FastifyInstance) {
 
   // ---------- Manejo: pesagem, nutrição/sanitário/desmama/apartação ----------
   app.get("/livestock/weighings", async (req) => runService(app, req, "weighings.view", async (ctx) => { const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>; const where = ["w.organization_id=$1", "w.deleted_at is null"]; const params: unknown[] = [ctx.orgId]; if (ctx.farmId) { params.push(ctx.farmId); where.push(`w.farm_id=$${params.length}`); } if (f.batch_id) { params.push(f.batch_id); where.push(`w.batch_id=$${params.length}`); } if (f.start_date) { params.push(f.start_date); where.push(`w.weighing_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`w.weighing_date<=$${params.length}`); } const w = where.join(" and "); return paged(ctx, `select w.*, b.description as batch_name, (select round(avg(wi.gmd),3) from erp.weighing_items wi where wi.weighing_id=w.id) as avg_gmd from erp.weighings w left join erp.batches b on b.id=w.batch_id where ${w} order by w.weighing_date desc`, `select count(*) n from erp.weighings w where ${w}`, params, q, req.query as Record<string, unknown>); }));
+  // Detalhe de uma pesagem (itens com identificação do animal, peso anterior e GMD) — usado por /pecuaria/pesagens/:id
+  app.get("/livestock/weighings/:id", async (req) => runService(app, req, "weighings.view", async (ctx) => {
+    const { id } = req.params as { id: string };
+    const w = await ctx.tx.query("select w.*, b.description as batch_name, f.name as farm_name, u.name as created_by_name from erp.weighings w left join erp.batches b on b.id=w.batch_id join erp.farms f on f.id=w.farm_id left join erp.users u on u.id=w.created_by where w.id=$1 and w.organization_id=$2 and w.deleted_at is null", [id, ctx.orgId]);
+    if (!w.rows[0]) throw notFound("Pesagem");
+    const items = await ctx.tx.query("select wi.*, (select string_agg(i.value, ', ' order by i.is_primary desc) from erp.animal_identifications i where i.animal_id=wi.animal_id) as identifications, c.name as category_name from erp.weighing_items wi join erp.animals a on a.id=wi.animal_id left join erp.animal_categories c on c.id=a.category_id where wi.weighing_id=$1 order by wi.weight desc", [id]);
+    return { ...w.rows[0], items: items.rows };
+  }));
   app.post("/livestock/weighings", async (req, reply) => reply.status(201).send(await runService(app, req, "weighings.create", async (ctx) => {
     const d = z.object({ farm_id: uuid, weighing_date: date, batch_id: uuid.optional().nullable(), responsible: z.string().optional().nullable(), note: z.string().optional().nullable(), items: z.array(z.object({ animal_id: uuid, weight: dec })).min(1) }).parse(req.body);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
@@ -219,11 +232,21 @@ export default async function livestockRoutes(app: FastifyInstance) {
   })));
   const handlingSchema = z.object({ farm_id: uuid, handling_type: z.enum(["nutrition", "sanitary", "weaning", "separation", "pasture"]), handling_date: date, batch_id: uuid.optional().nullable(), product_id: uuid.optional().nullable(), warehouse_id: uuid.optional().nullable(), dose: dec.optional().nullable(), responsible: z.string().optional().nullable(), note: z.string().optional().nullable(), items: z.array(z.object({ animal_id: uuid.optional().nullable(), herd_lot_id: uuid.optional().nullable(), quantity: dec.default("1"), new_batch_id: uuid.optional().nullable(), new_category_id: uuid.optional().nullable() })).min(1) });
   app.get("/livestock/handlings", async (req) => runService(app, req, "nutritions.view", async (ctx) => { const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>; const where = ["h.organization_id=$1", "h.deleted_at is null"]; const params: unknown[] = [ctx.orgId]; if (f.handling_type) { params.push(f.handling_type); where.push(`h.handling_type=$${params.length}`); } if (ctx.farmId) { params.push(ctx.farmId); where.push(`h.farm_id=$${params.length}`); } if (f.batch_id) { params.push(f.batch_id); where.push(`h.batch_id=$${params.length}`); } if (f.start_date) { params.push(f.start_date); where.push(`h.handling_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`h.handling_date<=$${params.length}`); } const w = where.join(" and "); return paged(ctx, `select h.*, b.description as batch_name, p.description as product_name from erp.animal_handlings h left join erp.batches b on b.id=h.batch_id left join erp.products p on p.id=h.product_id where ${w} order by h.handling_date desc`, `select count(*) n from erp.animal_handlings h where ${w}`, params, q, req.query as Record<string, unknown>); }));
+  // Detalhe de um manejo (nutrição, sanitário, desmama, apartação, pastagem) — permissão de visualização do próprio tipo
+  app.get("/livestock/handlings/:id", async (req) => runService(app, req, null, async (ctx) => {
+    const { id } = req.params as { id: string };
+    const h = await ctx.tx.query<{ handling_type: string }>("select h.*, b.description as batch_name, p.description as product_name, w.description as warehouse_name, f.name as farm_name, u.name as created_by_name from erp.animal_handlings h left join erp.batches b on b.id=h.batch_id left join erp.products p on p.id=h.product_id left join erp.warehouses w on w.id=h.warehouse_id join erp.farms f on f.id=h.farm_id left join erp.users u on u.id=h.created_by where h.id=$1 and h.organization_id=$2 and h.deleted_at is null", [id, ctx.orgId]);
+    if (!h.rows[0]) throw notFound("Manejo");
+    const viewPerm: Record<string, string> = { nutrition: "nutritions.view", sanitary: "sanitaries.view", weaning: "weanings.view", separation: "separations.view", pasture: "pastures.view", locate: "locate_animals.view" };
+    requirePermission(ctx, viewPerm[h.rows[0].handling_type] ?? "nutritions.view");
+    const items = await ctx.tx.query("select hi.*, (select string_agg(i.value, ', ' order by i.is_primary desc) from erp.animal_identifications i where i.animal_id=hi.animal_id) as identifications, c.name as category_name, hc.name as herd_lot_category, nb.description as new_batch_name, nc.name as new_category_name from erp.animal_handling_items hi left join erp.animals a on a.id=hi.animal_id left join erp.animal_categories c on c.id=a.category_id left join erp.herd_lots hl on hl.id=hi.herd_lot_id left join erp.animal_categories hc on hc.id=hl.category_id left join erp.batches nb on nb.id=hi.new_batch_id left join erp.animal_categories nc on nc.id=hi.new_category_id where hi.handling_id=$1 order by identifications", [id]);
+    return { ...h.rows[0], items: items.rows };
+  }));
   app.post("/livestock/handlings", async (req, reply) => reply.status(201).send(await runService(app, req, "nutritions.create", async (ctx) => {
     const d = handlingSchema.parse(req.body);
     const permMap = { nutrition: "nutritions.create", sanitary: "sanitaries.create", weaning: "weanings.create", separation: "separations.create", pasture: "pastures.create" } as const; const { requirePermission } = await import("../lib/service.js"); requirePermission(ctx, permMap[d.handling_type]);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
-      const code = await animalCode(ctx, `handling_${d.handling_type}`);
+      const code = await uniqueCode(ctx, "animal_handlings", "animal_handling");
       const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_handlings(organization_id,farm_id,code,handling_type,handling_date,batch_id,product_id,warehouse_id,responsible,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.farm_id, code, d.handling_type, d.handling_date, d.batch_id ?? null, d.product_id ?? null, d.warehouse_id ?? null, d.responsible ?? null, d.note ?? null, ctx.user.id]);
       const id = r.rows[0]!.id; let qty = D(0); let count = 0;
       for (const it of d.items) {

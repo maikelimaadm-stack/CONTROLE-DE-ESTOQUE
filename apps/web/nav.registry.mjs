@@ -319,6 +319,35 @@ export const EXTRA_REDIRECTS = [
   { source: "/documentos", destination: "/configuracoes?tab=fiscal&sub=documents" }
 ];
 
+/**
+ * Padrões de rota de DETALHE (registro individual): a SSOT define o padrão, não cada id. Usados pelos breadcrumbs
+ * (Módulo › Área › Registro) e pela auditoria de links (`scripts/nav-audit.mjs`: toda ação "Visualizar"/link estático
+ * precisa casar com uma página existente ou com um destes padrões).
+ */
+export const DETAIL_ROUTES = [
+  { id: "compras.processos.detalhe", module: "compras", area: "processos", label: "Processo de compra", pattern: "/suprimentos/view/:id", perm: "purchase_requests.view" },
+  { id: "estoque.recebimentos.manuais.detalhe", module: "estoque", area: "recebimentos", label: "Entrada manual", pattern: "/estoque/entradas/:id", perm: "input_entries.view" },
+  { id: "estoque.recebimentos.fiscais.detalhe", module: "estoque", area: "recebimentos", label: "Documento fiscal", pattern: "/estoque/documentos-fiscais/:id", perm: "invoices.view" },
+  { id: "estoque.operacoes.requisicoes.detalhe", module: "estoque", area: "operacoes", label: "Requisição", pattern: "/estoque/requisicoes/:id", perm: "requisitions.view" },
+  { id: "estoque.operacoes.diretas.detalhe", module: "estoque", area: "operacoes", label: "Saída direta", pattern: "/estoque/baixas/:id", perm: "stock_writeoffs.view" },
+  { id: "estoque.operacoes.devolucoes.detalhe", module: "estoque", area: "operacoes", label: "Devolução", pattern: "/estoque/devolucoes/:id", perm: "devolutions.view" },
+  { id: "estoque.operacoes.transferencias.detalhe", module: "estoque", area: "operacoes", label: "Transferência", pattern: "/estoque/transferencias/:id", perm: ["warehouse_transfers.view", "farm_transfers.view"] },
+  { id: "estoque.fabrica.producoes.detalhe", module: "estoque", area: "fabrica", label: "Produção de ração", pattern: "/estoque/batidas/:id", perm: "feed_batches.view" },
+  { id: "financeiro.contas.pagar.detalhe", module: "financeiro", area: "contas", label: "Conta a pagar", pattern: "/financeiro/contas-a-pagar/:id", perm: "payables.view" },
+  { id: "financeiro.contas.receber.detalhe", module: "financeiro", area: "contas", label: "Conta a receber", pattern: "/financeiro/contas-a-receber/:id", perm: "receivables.view" },
+  { id: "financeiro.caixa.extrato.detalhe", module: "financeiro", area: "caixa", label: "Movimento bancário", pattern: "/financeiro/movimentos/:id", perm: "bank_movements.view" },
+  { id: "financeiro.caixa.conciliacao.detalhe", module: "financeiro", area: "caixa", label: "Importação OFX", pattern: "/financeiro/ofx/:id", perm: "ofx_imports.view" },
+  { id: "vendas.detalhe", module: "vendas", area: null, label: "Documento de venda", pattern: "/vendas/:kind/:id", perm: ["budgets.view", "orders.view", "sales.view"] },
+  { id: "pecuaria.rebanho.animais.detalhe", module: "pecuaria", area: "rebanho", label: "Animal", pattern: "/pecuaria/animais/:id", perm: ["animals.view", "animals_management.view"] },
+  { id: "pecuaria.movimentacoes.detalhe", module: "pecuaria", area: "movimentacoes", label: "Movimentação", pattern: "/pecuaria/movimentacoes/:type/:id", perm: P.LIVESTOCK_MOV },
+  { id: "pecuaria.manejos.detalhe", module: "pecuaria", area: "manejos", label: "Manejo", pattern: "/pecuaria/manejo/:type/:id", perm: ["nutritions.view", "sanitaries.view", "weanings.view", "separations.view", "pastures.view"] },
+  { id: "pecuaria.manejos.pesagem.detalhe", module: "pecuaria", area: "manejos", label: "Pesagem", pattern: "/pecuaria/pesagens/:id", perm: "weighings.view" },
+  { id: "frota.abastecimentos.detalhe", module: "frota", area: "abastecimentos", label: "Abastecimento", pattern: "/frota/abastecimentos/:id", perm: "fuel_supplies.view" },
+  { id: "frota.manutencoes.detalhe", module: "frota", area: "manutencoes", label: "Manutenção", pattern: "/frota/manutencoes/:id", perm: "maintenances.view" },
+  { id: "os.detalhe", module: "os", area: null, label: "Ordem de serviço", pattern: "/os/:id", perm: "service_orders.view" },
+  { id: "cadastros.detalhe", module: "configuracoes", area: null, label: "Registro", pattern: "/cadastros/:resource/:id", perm: null }
+];
+
 /** Rota canônica de uma entrada (path + tab + sub + query estável). */
 export function canonicalHref(e) {
   if (e.href) return e.href;
