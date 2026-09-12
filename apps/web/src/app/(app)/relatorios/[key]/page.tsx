@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, qs, download } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, pct } from "@/lib/utils";
-import { Button, Card, CardHeader, CardBody, Spinner, ErrorBox } from "@/components/ui";
+import { Button, Card, CardHeader, CardBody, LoadingState, ErrorState } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
 import { FilterBar, useFilters, monthRange, type Filter, type Row } from "@/features/docs/shared";
 interface Col { key: string; label: string; type?: "money" | "qty" | "date" | "percent" | "int" | "text" }
@@ -23,9 +23,9 @@ export default function Page({ params }: { params: Promise<{ key: string }> }) {
   const [page, setPage] = React.useState(1); const [pageSize, setPageSize] = React.useState(50);
   const rows = q.data?.rows.slice((page - 1) * pageSize, page * pageSize) ?? [];
   return <Card><CardHeader title={def?.label ?? "Relatório"} subtitle={def ? `Módulo ${def.module} · ${q.data ? `${q.data.count} linha(s)` : ""}` : undefined} actions={<><Button size="sm" variant="outline" onClick={() => window.print()}>Imprimir</Button>{applied && def && can(`report.${key}.export`) && <><Button size="sm" variant="outline" onClick={() => download(`/api/reports/${key}${qs({ ...applied, format: "csv" })}`, `${key}.csv`)}>CSV</Button><Button size="sm" variant="outline" onClick={() => download(`/api/reports/${key}${qs({ ...applied, format: "xlsx" })}`, `${key}.xlsx`)}>XLSX</Button></>}</>} /><CardBody>
-    {defs.isLoading && <Spinner />}{defs.data && !def && <ErrorBox error={new Error("Relatório não encontrado ou sem permissão")} />}
+    {defs.isLoading && <LoadingState />}{defs.data && !def && <ErrorState message="Relatório não encontrado ou sem permissão." variant="block" />}
     {def && <FilterBar filters={filters} f={f} set={set} reset={() => { reset(); setApplied(null); }} onApply={() => { setApplied({ ...f }); setPage(1); }} />}
-    {q.error && <ErrorBox error={q.error} />}
+    {q.error && <ErrorState error={q.error} onRetry={() => void q.refetch()} />}
     {q.data && <DataTable rows={rows} total={q.data.count} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} loading={q.isFetching} rowKey={(r) => String(r["id"] ?? JSON.stringify(r))} columns={q.data.columns.map((c) => ({ key: c.key, label: c.label, align: c.type === "money" || c.type === "qty" || c.type === "percent" || c.type === "int" ? "right" as const : undefined, render: (r: Row) => fmt(c, r[c.key]) }))}
       footer={Object.keys(q.data.totals).length > 0 ? <tr>{q.data.columns.map((c, i) => <td key={c.key} className={i === 0 ? "px-2 py-1" : "num"}>{i === 0 ? "Totais" : q.data!.totals[c.key] !== undefined ? fmt({ ...c, type: c.type ?? "money" }, q.data!.totals[c.key]) : ""}</td>)}</tr> : undefined} />}
   </CardBody></Card>;

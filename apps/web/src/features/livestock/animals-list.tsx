@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, qs, download } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR } from "@/lib/utils";
-import { Button, Card, CardHeader, CardBody, Badge, Dialog, Menu } from "@/components/ui";
+import { Button, Card, CardHeader, CardBody, Dialog, Menu, StatusBadge } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
 import { FilterBar, useFilters, type Row } from "@/features/docs/shared";
 import { useUrlParam } from "@/components/workspace";
@@ -14,7 +14,7 @@ import { LocateAnimalPanel } from "./locate";
 import { ProcessingsPanel } from "./processings";
 import { HerdActionDialog, useHerdAction } from "./herd-actions";
 import { Plus, MapPin, MoreHorizontal } from "lucide-react";
-import { COPY, enumLabel, enumOptions, statusLabel } from "@/lib/copy";
+import { COPY, enumLabel, enumOptions } from "@/lib/copy";
 /**
  * Animais (Compactação V2): a listagem recebe a pesquisa por identificação (brinco, SISBOV, chip, nome), o
  * localizador físico (diálogo `?locate=1`), o indicador "Processamento pendente: N" (abre o painel, `?processing=1`)
@@ -39,7 +39,7 @@ export function AnimalsList() {
     {can("animals.create") && <Link href="/pecuaria/animais/new"><Button size="sm"><Plus className="h-3.5 w-3.5" /> Cadastrar animal</Button></Link>}</>} /><CardBody>
     <FilterBar f={f} set={set} reset={() => { reset(); setApplied({}); }} onApply={() => { setApplied({ ...f }); setPage(1); }} filters={[{ name: "search", label: "Identificação (brinco, SISBOV, chip, nome)", type: "text" }, { name: "batch_id", label: "Lote", type: "ref", resource: "batches" }, { name: "category_id", label: "Categoria", type: "ref", resource: "animal_categories" }, { name: "breed_id", label: "Raça", type: "ref", resource: "breeds" }, { name: "sex", label: "Sexo", type: "select", options: [{ value: "M", label: "Macho" }, { value: "F", label: "Fêmea" }] }, { name: "status", label: COPY.situacao, type: "select", options: enumOptions("status", ["active", "sold", "dead", "lost", "transferred"]) }, { name: "farm_id", label: "Fazenda", type: "ref", resource: "farms" }]} />
     <DataTable rows={q.data?.items ?? []} total={q.data?.total} page={page} pageSize={pageSize} onPage={setPage} onPageSize={setPageSize} loading={q.isLoading} onRowClick={(r) => router.push(`/pecuaria/animais/${r["id"]}`)} actions={(r) => <Menu trigger={<button type="button" className="tb-btn tb-btn-icon tb-btn-sm" aria-label="Mais opções do animal" onClick={(e) => e.stopPropagation()}><MoreHorizontal className="h-4 w-4" /></button>} items={rowMenu(r)} />} onExport={can("animals.export") ? (fmt) => download(`/api/reports/animals${qs({ ...applied, format: fmt })}`, `animais.${fmt}`) : undefined}
-      columns={[{ key: "identifications", label: "Identificação" }, { key: "category_name", label: "Categoria" }, { key: "breed_name", label: "Raça" }, { key: "sex", label: "Sexo", render: (r) => r["sex"] ? enumLabel("sex", r["sex"]) : "" }, { key: "batch_name", label: "Lote" }, { key: "farm_name", label: "Fazenda" }, { key: "birth_date", label: "Nascimento", render: (r) => r["birth_date"] ? dateBR(r["birth_date"] as string) : "" }, { key: "entry_date", label: "Entrada", render: (r) => dateBR(r["entry_date"] as string) }, { key: "current_weight", label: "Peso (kg)", align: "right", render: (r) => r["current_weight"] ? num(r["current_weight"] as string, 1) : "" }, { key: "unit_value", label: "Valor", align: "right", render: (r) => r["unit_value"] ? brl(r["unit_value"] as string) : "" }, { key: "status", label: COPY.situacao, render: (r) => <Badge tone={r["status"] === "active" ? "green" : "slate"}>{statusLabel(r["status"])}</Badge> }]}
+      columns={[{ key: "identifications", label: "Identificação" }, { key: "category_name", label: "Categoria" }, { key: "breed_name", label: "Raça" }, { key: "sex", label: "Sexo", render: (r) => r["sex"] ? enumLabel("sex", r["sex"]) : "" }, { key: "batch_name", label: "Lote" }, { key: "farm_name", label: "Fazenda" }, { key: "birth_date", label: "Nascimento", render: (r) => r["birth_date"] ? dateBR(r["birth_date"] as string) : "" }, { key: "entry_date", label: "Entrada", render: (r) => dateBR(r["entry_date"] as string) }, { key: "current_weight", label: "Peso (kg)", align: "right", render: (r) => r["current_weight"] ? num(r["current_weight"] as string, 1) : "" }, { key: "unit_value", label: "Valor", align: "right", render: (r) => r["unit_value"] ? brl(r["unit_value"] as string) : "" }, { key: "status", label: COPY.situacao, render: (r) => <StatusBadge domain="status" value={r["status"]} /> }]}
       footer={q.data && <tr><td colSpan={8} className="px-2 py-1">Totais</td><td className="num">{num(q.data.totals.weight, 1)} kg</td><td className="num">{brl(q.data.totals.value)}</td><td /></tr>} />
   </CardBody></Card>
   <Dialog open={locate === "1"} onOpenChange={(o) => { if (!o) setLocate(""); }} title="Localizar animal" size="xl"><LocateAnimalPanel /></Dialog>

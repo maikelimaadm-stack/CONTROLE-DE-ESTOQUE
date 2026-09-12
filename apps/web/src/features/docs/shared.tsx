@@ -1,7 +1,6 @@
 "use client";
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
@@ -9,7 +8,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { api, qs, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, monthStartISO, todayISO } from "@/lib/utils";
-import { Button, Card, CardHeader, CardBody, Input, NativeSelect, Field, Menu, Confirm, Badge, Spinner, ErrorBox, Dialog } from "@/components/ui";
+import { Button, Input, NativeSelect, Field, Menu, Confirm, Dialog, LoadingState, ErrorState, StatusBadge as UiStatusBadge, statusTone as uiStatusTone, TONE_BADGE, type BadgeTone } from "@/components/ui";
 import type { Column } from "@/components/ui/data-table";
 import { RefSelect } from "@/components/ui/ref-select";
 import { MgSelect } from "@/components/ui/mg-controls";
@@ -17,12 +16,14 @@ import { Bookmark } from "lucide-react";
 
 import { Base1List } from "@/features/base1/list";
 import type { Base1Column, Base1FilterDef, FilterValues } from "@/features/base1/types";
-import { COPY, ENUM_LABELS, statusLabel } from "@/lib/copy";
+import { COPY, ENUM_LABELS } from "@/lib/copy";
 
 export type Row = Record<string, unknown>;
-export const statusTone = (s: string): "green" | "red" | "amber" | "slate" | "blue" | "violet" => s === "confirmed" || s === "paid" || s === "finished" || s === "signed" ? "green" : s === "cancelled" || s === "reversed" ? "red" : s === "pending" || s === "draft" || s === "awaiting_signature" || s === "open" ? "amber" : "slate";
+/** compatibility alias — tonalidade de Badge para um `status` de documento; a resolução oficial é `statusTone(value, domain)` de @/components/ui. */
+export const statusTone = (s: string): BadgeTone => TONE_BADGE[uiStatusTone(s, "status")];
 export const STATUS_PT: Record<string, string> = ENUM_LABELS.status;
-export const StatusBadge = ({ s }: { s: string }) => <Badge tone={statusTone(s)}>{statusLabel(s)}</Badge>;
+/** compatibility alias — usar `<StatusBadge domain="status" value={…} />` de @/components/ui (rótulo por enumLabel, tonalidade central). */
+export const StatusBadge = ({ s }: { s: string }) => <UiStatusBadge domain="status" value={s} />;
 
 export interface Filter { name: string; label: string; type: "date" | "text" | "select" | "ref"; resource?: string; options?: { value: string; label: string }[]; extra?: Record<string, string> }
 export function useFilters(initial: Record<string, string> = {}) { const [f, setF] = React.useState<Record<string, string>>(initial); const set = (k: string, v: string) => setF((o) => ({ ...o, [k]: v })); return { f, set, reset: () => setF(initial), setAll: (v: Record<string, string>) => setF(v) }; }
@@ -144,12 +145,12 @@ export function useCreate<T = { id: string }>(endpoint: string, onDone: (r: T) =
   const qc = useQueryClient(); const key = React.useRef(newIdem());
   return useMutation({ mutationFn: (body: unknown) => api<T>(endpoint, { method: "POST", body, idempotencyKey: key.current }), onSuccess: (r) => { toast.success("Salvo com sucesso"); void qc.invalidateQueries(); onDone(r); }, onError: (e) => { toast.error((e as Error).message); key.current = newIdem(); } });
 }
-export function DetailShell({ title, back, children, actions, status }: { title: string; back: string; children: React.ReactNode; actions?: React.ReactNode; status?: string }) {
-  return <Card><CardHeader title={<span className="flex items-center gap-2">{title}{status && <StatusBadge s={status} />}</span>} actions={<><Link href={back}><Button variant="outline" size="sm">Voltar</Button></Link>{actions}</>} /><CardBody className="space-y-4">{children}</CardBody></Card>;
-}
+/** DetailShell oficial vive em @/components/ui (PageHeader + StatusBadge + Card); reexportado aqui por compatibilidade (`back` continua aceito como alias de `backHref`). */
+export { DetailShell } from "@/components/ui";
 export function KV({ items }: { items: [string, React.ReactNode][] }) { return <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-4">{items.map(([k, v]) => <div key={k}><dt className="text-[10.5px] font-semibold uppercase text-slate-500">{k}</dt><dd>{v ?? "—"}</dd></div>)}</dl>; }
 export function SimpleTable({ cols, rows }: { cols: { key: string; label: string; render?: (r: Row) => React.ReactNode; align?: "right" }[]; rows: Row[] }) {
   return <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>{cols.map((c) => <th key={c.key} className={c.align === "right" ? "text-right" : ""}>{c.label}</th>)}</tr></thead><tbody>{rows.length === 0 && <tr><td colSpan={cols.length} className="py-3 text-center text-slate-400">{COPY.nenhumItem}</td></tr>}{rows.map((r, i) => <tr key={String(r["id"] ?? i)}>{cols.map((c) => <td key={c.key} className={c.align === "right" ? "num" : ""}>{c.render ? c.render(r) : String(r[c.key] ?? "")}</td>)}</tr>)}</tbody></table></div>;
 }
 export function useDoc<T = Row>(path: string, enabled = true) { return useQuery({ queryKey: ["docone", path], queryFn: () => api<T>(path), enabled }); }
-export const LoadingOr = ({ q, children }: { q: { isLoading: boolean; error: unknown }; children: React.ReactNode }) => q.isLoading ? <Spinner /> : q.error ? <ErrorBox error={q.error} /> : <>{children}</>;
+/** Carregando / erro / conteúdo com os estados oficiais (LoadingState, ErrorState com "Tentar novamente" quando a query expõe refetch). */
+export const LoadingOr = ({ q, children }: { q: { isLoading: boolean; error: unknown; refetch?: () => unknown }; children: React.ReactNode }) => q.isLoading ? <LoadingState /> : q.error ? <ErrorState error={q.error} onRetry={q.refetch ? () => void q.refetch?.() : undefined} /> : <>{children}</>;

@@ -30,7 +30,9 @@ export const COPY = {
   desconhecido: "Desconhecido",
   camposObrigatorios: "Existem campos obrigatórios que precisam ser preenchidos.",
   alteracoesNaoSalvas: "Existem alterações não salvas.",
-  fecharAviso: "Fechar aviso"
+  fecharAviso: "Fechar aviso",
+  tentarNovamente: "Tentar novamente",
+  erroGenerico: "Não foi possível concluir. Tente novamente."
 } as const;
 
 /** Situação genérica de documentos/registros (ver `ENUM_LABELS.status`). */

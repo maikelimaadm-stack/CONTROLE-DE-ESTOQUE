@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, dateTimeBR } from "@/lib/utils";
-import { Badge, Button, Dialog, Field, Input, Tabs, Textarea } from "@/components/ui";
+import { Badge, Button, Dialog, Field, Input, Tabs, Textarea, StatusBadge } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { DetailShell, KV, SimpleTable, useDoc, LoadingOr, type Row } from "@/features/docs/shared";
 import { ActionDialog, useAction, type ActionField } from "@/features/docs/actions";
@@ -35,7 +35,7 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
     {d && can("purchase_requests.financial") && <Button size="sm" variant="outline" onClick={() => setFin(true)}>Financeiro</Button>}
   </>}>
     <LoadingOr q={q}>{d && <>
-      <div className="flex flex-wrap items-center gap-2"><Badge tone={d["status"] === "finished" ? "green" : d["status"] === "cancelled" || d["status"] === "not_approved" ? "red" : "blue"}>{String(d["status_label"])}</Badge>{!isOwnerOrResponsible && <span className="text-xs text-slate-500">Você não é o responsável atual por este processo.</span>}</div>
+      <div className="flex flex-wrap items-center gap-2"><StatusBadge domain="purchase_status" value={d["status"]} label={String(d["status_label"])} />{!isOwnerOrResponsible && <span className="text-xs text-slate-500">Você não é o responsável atual por este processo.</span>}</div>
       <KV items={[["Fazenda", String(d["farm_name"])], ["Data", dateBR(d["request_date"] as string)], ["Tipo", enumLabel("request_type", d["request_type"])], ["Prioridade", enumLabel("priority", d["priority"])], ["Solicitante", String(d["requester_name"] ?? "")], ["Responsável atual", String(d["current_responsible_name"] ?? "—")], ["Valor estimado", brl(d["estimated_total"] as string)], ["Valor aprovado", d["approved_total"] ? brl(d["approved_total"] as string) : "—"], ["Descrição", String(d["description"])], ["Justificativa", String(d["justification"])], ["Observação", String(d["observation"] ?? "—")], ["Versão", String(d["version"])], ["Classificação", enumLabel("classification", d["classification"] ?? "unclassified")], ["Vencimento financeiro", d["financial_due_date"] ? dateBR(d["financial_due_date"] as string) : "—"], ["Nota fiscal", String(d["invoice_number"] ?? "—")], ["Documento fiscal lançado", d["invoice_id"] ? "Sim" : "Não"]]} />
       <Tabs tabs={[
         { value: "items", label: "Itens", badge: d.items.length, content: <SimpleTable rows={d.items} cols={[{ key: "product_name", label: "Produto", render: (r) => String(r["product_name"] ?? "—") }, { key: "description", label: "Descrição" }, { key: "quantity", label: "Quantidade", align: "right", render: (r) => num(r["quantity"] as string, 4) }, { key: "reference_value", label: "Valor de referência", align: "right", render: (r) => r["reference_value"] ? brl(r["reference_value"] as string) : "—" }, { key: "amount", label: "Valor", align: "right", render: (r) => r["amount"] ? brl(r["amount"] as string) : "—" }, { key: "observation", label: "Observação" }]} /> },
