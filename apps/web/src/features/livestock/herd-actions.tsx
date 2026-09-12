@@ -5,11 +5,11 @@ import { encodeList } from "@agro/shared";
 import { Dialog } from "@/components/ui";
 import { FilterChips, useUrlParam } from "@/components/workspace";
 import { DocList, colDate, colStatus } from "@/features/docs/shared";
-import { MOV_PT } from "@/features/livestock/shared";
 import { TransferAnimalsToBatch } from "./transfer-animals-batch";
 import { TransferBatchLocation } from "./transfer-batch-location";
 import { TransferToFarm } from "./transfer-farm";
 import { GroupBatches } from "./transfer-group-batches";
+import { enumLabel } from "@/lib/copy";
 
 /**
  * Movimentar rebanho como AÇÃO CONTEXTUAL (Compactação V2): as quatro operações nascem do registro de origem
@@ -48,6 +48,6 @@ export function HerdTransfersHistory() {
   return <div className="flex min-h-0 flex-1 flex-col gap-2">
     <div className="mg-card ws-filters no-print"><FilterChips label="Tipo" testId="herd-transfer-type" value={type || "all"} onChange={(v) => setType(v === "all" ? "" : v)} options={[{ value: "all", label: "Todas" }, ...TRANSFER_TYPES.map((t) => ({ value: t, label: TRANSFER_PT[t]! }))]} /></div>
     <DocList key={type || "all"} title="Transferências do rebanho" endpoint="/api/livestock/movements" base="/pecuaria/movimentacoes" rowHref={(r) => `/pecuaria/movimentacoes/${String(r["movement_type"])}/${r["id"]}`} defaultFilters={type ? { movement_type: type } : { movement_type__in: encodeList(TRANSFER_TYPES) }} hideNew entity="animal_movements"
-      columns={[{ key: "code", label: "Código" }, colDate("movement_date", "Data"), { key: "movement_type", label: "Tipo", kind: "enum", options: TRANSFER_TYPES.map((v) => ({ value: v, label: TRANSFER_PT[v]! })), render: (r) => TRANSFER_PT[String(r["movement_type"])] ?? MOV_PT[String(r["movement_type"])] ?? String(r["movement_type"]) }, { key: "farm_name", label: "Fazenda" }, { key: "batch_name", label: "Lote" }, { key: "quantity", label: "Cabeças", align: "right" }, { key: "note", label: "Destino / obs." }, colStatus()]} />
+      columns={[{ key: "code", label: "Código" }, colDate("movement_date", "Data"), { key: "movement_type", label: "Tipo", kind: "enum", options: TRANSFER_TYPES.map((v) => ({ value: v, label: TRANSFER_PT[v]! })), render: (r) => TRANSFER_PT[String(r["movement_type"])] ?? enumLabel("animal_movement_type", r["movement_type"]) }, { key: "farm_name", label: "Fazenda" }, { key: "batch_name", label: "Lote" }, { key: "quantity", label: "Cabeças", align: "right" }, { key: "note", label: "Destino / observação" }, colStatus()]} />
   </div>;
 }

@@ -62,7 +62,7 @@ describe("financeiro", () => {
   });
   it("status exibido", () => {
     expect(displayTitleStatus({ status: "open", dueDate: "2026-01-01" }, "2026-02-01")).toBe("Vencida");
-    expect(displayTitleStatus({ status: "open", dueDate: "2026-03-01" }, "2026-02-01")).toBe("Á vencer");
+    expect(displayTitleStatus({ status: "open", dueDate: "2026-03-01" }, "2026-02-01")).toBe("A vencer");
     expect(displayTitleStatus({ status: "paid", dueDate: "2026-03-01", paymentType: "advance" }, "2026-02-01")).toBe("Adiantamento/Baixado");
   });
   it("recorrência", () => {

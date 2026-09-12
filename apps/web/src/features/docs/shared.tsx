@@ -1,7 +1,6 @@
 "use client";
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
@@ -9,7 +8,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { api, qs, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, monthStartISO, todayISO } from "@/lib/utils";
-import { Button, Card, CardHeader, CardBody, Input, NativeSelect, Field, Menu, Confirm, Badge, Spinner, ErrorBox, Dialog } from "@/components/ui";
+import { Button, Input, NativeSelect, Field, Menu, Confirm, Dialog, LoadingState, ErrorState, StatusBadge as UiStatusBadge, statusTone as uiStatusTone, TONE_BADGE, type BadgeTone } from "@/components/ui";
 import type { Column } from "@/components/ui/data-table";
 import { RefSelect } from "@/components/ui/ref-select";
 import { MgSelect } from "@/components/ui/mg-controls";
@@ -17,11 +16,14 @@ import { Bookmark } from "lucide-react";
 
 import { Base1List } from "@/features/base1/list";
 import type { Base1Column, Base1FilterDef, FilterValues } from "@/features/base1/types";
+import { COPY, ENUM_LABELS } from "@/lib/copy";
 
 export type Row = Record<string, unknown>;
-export const statusTone = (s: string): "green" | "red" | "amber" | "slate" | "blue" | "violet" => s === "confirmed" || s === "paid" || s === "finished" || s === "signed" ? "green" : s === "cancelled" || s === "reversed" ? "red" : s === "pending" || s === "draft" || s === "awaiting_signature" || s === "open" ? "amber" : "slate";
-export const STATUS_PT: Record<string, string> = { confirmed: "Confirmado", cancelled: "Cancelado", pending: "Pendente", draft: "Rascunho", reversed: "Estornado", open: "Aberto", paid: "Baixado", partially_paid: "Baixa parcial", finished: "Finalizado", signed: "Assinado", awaiting_signature: "Aguardando assinatura", approved: "Aprovado", converted: "Convertido", invoiced: "Faturado", in_progress: "Em andamento", evaluated: "Avaliado", scheduled: "Agendada", done: "Realizada", active: "Ativo", closed: "Encerrado", sold: "Vendido", dead: "Morto", lost: "Perdido", transferred: "Transferido", inventoried: "Inventariado", imported: "Importado", reconciling: "Conciliando", reconciled: "Conciliado", launched: "Lançado", ignored: "Ignorado", matched: "Conciliado", financial_generated: "Financeiro gerado", under_review: "Em análise" };
-export const StatusBadge = ({ s }: { s: string }) => <Badge tone={statusTone(s)}>{STATUS_PT[s] ?? s}</Badge>;
+/** compatibility alias — tonalidade de Badge para um `status` de documento; a resolução oficial é `statusTone(value, domain)` de @/components/ui. */
+export const statusTone = (s: string): BadgeTone => TONE_BADGE[uiStatusTone(s, "status")];
+export const STATUS_PT: Record<string, string> = ENUM_LABELS.status;
+/** compatibility alias — usar `<StatusBadge domain="status" value={…} />` de @/components/ui (rótulo por enumLabel, tonalidade central). */
+export const StatusBadge = ({ s }: { s: string }) => <UiStatusBadge domain="status" value={s} />;
 
 export interface Filter { name: string; label: string; type: "date" | "text" | "select" | "ref"; resource?: string; options?: { value: string; label: string }[]; extra?: Record<string, string> }
 export function useFilters(initial: Record<string, string> = {}) { const [f, setF] = React.useState<Record<string, string>>(initial); const set = (k: string, v: string) => setF((o) => ({ ...o, [k]: v })); return { f, set, reset: () => setF(initial), setAll: (v: Record<string, string>) => setF(v) }; }
@@ -74,9 +76,9 @@ export function DocList({ title, endpoint, base, columns, filters, canCreate, ca
 export const colDate = (key: string, label: string): Column<Row> => ({ key, label, kind: "date", render: (r) => dateBR(r[key] as string) });
 export const colMoney = (key: string, label: string): Column<Row> => ({ key, label, kind: "number", align: "right", render: (r) => brl(r[key] as string) });
 export const colQty = (key: string, label: string, d = 2): Column<Row> => ({ key, label, kind: "number", align: "right", render: (r) => num(r[key] as string, d) });
-export const colStatus = (key = "status"): Column<Row> => ({ key, label: "Status", kind: "enum", options: Object.entries(STATUS_PT).map(([value, label]) => ({ value, label })), render: (r) => <StatusBadge s={String(r[key])} /> });
+export const colStatus = (key = "status"): Column<Row> => ({ key, label: COPY.situacao, kind: "enum", options: Object.entries(STATUS_PT).map(([value, label]) => ({ value, label })), render: (r) => <StatusBadge s={String(r[key])} /> });
 export const colText = (key: string, label: string): Column<Row> => ({ key, label, render: (r) => String(r[key] ?? "") });
-export const dateFilters: Filter[] = [{ name: "start_date", label: "Dt. Início", type: "date" }, { name: "end_date", label: "Dt. Fim", type: "date" }];
+export const dateFilters: Filter[] = [{ name: "start_date", label: "Data inicial", type: "date" }, { name: "end_date", label: "Data final", type: "date" }];
 export const monthRange = () => ({ start_date: monthStartISO(), end_date: todayISO() });
 
 /** Editor de itens (produto, qtd, valor) usado nos documentos de estoque/vendas. */
@@ -87,7 +89,7 @@ export function ItemsEditor({ items, onChange, fields, defaults }: { items: Item
   const totalOf = (it: ItemRow) => { const g = Number(it.quantity || 0) * Number(it.unit_value || 0); return g - Number(it.discount || 0) - g * Number(it.discount_percent || 0) / 100; };
   const has = (k: (typeof fields)[number]) => fields.includes(k);
   return <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>
-    {has("warehouse") && <th className="min-w-[160px]">Armazém</th>}<th className="min-w-[240px]">Produto</th>{has("stock") && <th className="text-right">Estoque</th>}<th className="w-24">Qtd.</th>{has("unit_value") && <th className="w-28">Vl. Unit.</th>}{has("discount") && <th className="w-24">Desconto</th>}{has("discount_percent") && <th className="w-20">Desc. %</th>}<th className="w-28 text-right">Vl. Total</th>{has("generate_stock") && <th className="w-24">Gera estoque</th>}{has("lot") && <th className="w-28">Lote</th>}{has("expiration") && <th className="w-32">Validade</th>}{has("financial_category") && <th className="min-w-[180px]">Cat. Financeira</th>}{has("cost_center") && <th className="min-w-[160px]">Centro de Custo</th>}<th className="w-8" />
+    {has("warehouse") && <th className="min-w-[160px]">Armazém</th>}<th className="min-w-[240px]">Produto</th>{has("stock") && <th className="text-right">Estoque</th>}<th className="w-24">Quantidade</th>{has("unit_value") && <th className="w-28">Valor unitário</th>}{has("discount") && <th className="w-24">Desconto</th>}{has("discount_percent") && <th className="w-20">Desconto %</th>}<th className="w-28 text-right">Valor total</th>{has("generate_stock") && <th className="w-24">Gera estoque</th>}{has("lot") && <th className="w-28">Lote</th>}{has("expiration") && <th className="w-32">Validade</th>}{has("financial_category") && <th className="min-w-[180px]">Categoria financeira</th>}{has("cost_center") && <th className="min-w-[160px]">Centro de custo</th>}<th className="w-8" />
   </tr></thead><tbody>
     {items.map((it, i) => <tr key={i}>
       {has("warehouse") && <td><RefSelect resource="warehouses" value={it.warehouse_id ?? null} onChange={(v) => upd(i, "warehouse_id", v ?? "")} /></td>}
@@ -128,10 +130,10 @@ export const toAppLines = (l: AppLine[]) => l.map((x) => ({ financial_category_i
 export interface Plan { installments: number; first_due_date: string; mode: "interval" | "fixed_day"; interval_days: number; due_day?: number; has_down_payment: boolean; down_payment_value?: string; down_payment_date?: string }
 export function PlanEditor({ plan, onChange }: { plan: Plan; onChange: (p: Plan) => void }) {
   return <div className="grid grid-cols-12 gap-2">
-    <Field label="Nº Parcelas" span={2}><Input type="number" min={1} max={120} value={plan.installments} onChange={(e) => onChange({ ...plan, installments: Number(e.target.value) })} /></Field>
-    <Field label="Venc. 1ª PC" span={2}><Input type="date" value={plan.first_due_date} onChange={(e) => onChange({ ...plan, first_due_date: e.target.value })} /></Field>
+    <Field label="Nº de parcelas" span={2}><Input type="number" min={1} max={120} value={plan.installments} onChange={(e) => onChange({ ...plan, installments: Number(e.target.value) })} /></Field>
+    <Field label="1º vencimento" span={2}><Input type="date" value={plan.first_due_date} onChange={(e) => onChange({ ...plan, first_due_date: e.target.value })} /></Field>
     <Field label="Modo" span={2}><NativeSelect value={plan.mode} onChange={(e) => onChange({ ...plan, mode: e.target.value as Plan["mode"] })}><option value="interval">Por intervalo (dias)</option><option value="fixed_day">Dia fixo do mês</option></NativeSelect></Field>
-    {plan.mode === "interval" ? <Field label="Int. Parcelas (dias)" span={2}><Input type="number" min={1} value={plan.interval_days} onChange={(e) => onChange({ ...plan, interval_days: Number(e.target.value) })} /></Field> : <Field label="Dia de vencimento" span={2}><Input type="number" min={1} max={31} value={plan.due_day ?? ""} onChange={(e) => onChange({ ...plan, due_day: Number(e.target.value) })} /></Field>}
+    {plan.mode === "interval" ? <Field label="Intervalo entre parcelas (dias)" span={2}><Input type="number" min={1} value={plan.interval_days} onChange={(e) => onChange({ ...plan, interval_days: Number(e.target.value) })} /></Field> : <Field label="Dia de vencimento" span={2}><Input type="number" min={1} max={31} value={plan.due_day ?? ""} onChange={(e) => onChange({ ...plan, due_day: Number(e.target.value) })} /></Field>}
     <Field label="Possui entrada" span={2}><NativeSelect value={plan.has_down_payment ? "true" : "false"} onChange={(e) => onChange({ ...plan, has_down_payment: e.target.value === "true" })}><option value="false">Não</option><option value="true">Sim</option></NativeSelect></Field>
     {plan.has_down_payment && <><Field label="Valor entrada" span={2}><Input type="number" step="0.01" value={plan.down_payment_value ?? ""} onChange={(e) => onChange({ ...plan, down_payment_value: e.target.value })} /></Field><Field label="Data entrada" span={2}><Input type="date" value={plan.down_payment_date ?? ""} onChange={(e) => onChange({ ...plan, down_payment_date: e.target.value })} /></Field></>}
   </div>;
@@ -143,12 +145,12 @@ export function useCreate<T = { id: string }>(endpoint: string, onDone: (r: T) =
   const qc = useQueryClient(); const key = React.useRef(newIdem());
   return useMutation({ mutationFn: (body: unknown) => api<T>(endpoint, { method: "POST", body, idempotencyKey: key.current }), onSuccess: (r) => { toast.success("Salvo com sucesso"); void qc.invalidateQueries(); onDone(r); }, onError: (e) => { toast.error((e as Error).message); key.current = newIdem(); } });
 }
-export function DetailShell({ title, back, children, actions, status }: { title: string; back: string; children: React.ReactNode; actions?: React.ReactNode; status?: string }) {
-  return <Card><CardHeader title={<span className="flex items-center gap-2">{title}{status && <StatusBadge s={status} />}</span>} actions={<><Link href={back}><Button variant="outline" size="sm">Voltar</Button></Link>{actions}</>} /><CardBody className="space-y-4">{children}</CardBody></Card>;
-}
+/** DetailShell oficial vive em @/components/ui (PageHeader + StatusBadge + Card); reexportado aqui por compatibilidade (`back` continua aceito como alias de `backHref`). */
+export { DetailShell } from "@/components/ui";
 export function KV({ items }: { items: [string, React.ReactNode][] }) { return <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-[12.5px] md:grid-cols-4">{items.map(([k, v]) => <div key={k}><dt className="text-[10.5px] font-semibold uppercase text-slate-500">{k}</dt><dd>{v ?? "—"}</dd></div>)}</dl>; }
 export function SimpleTable({ cols, rows }: { cols: { key: string; label: string; render?: (r: Row) => React.ReactNode; align?: "right" }[]; rows: Row[] }) {
-  return <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>{cols.map((c) => <th key={c.key} className={c.align === "right" ? "text-right" : ""}>{c.label}</th>)}</tr></thead><tbody>{rows.length === 0 && <tr><td colSpan={cols.length} className="py-3 text-center text-slate-400">Nenhum item</td></tr>}{rows.map((r, i) => <tr key={String(r["id"] ?? i)}>{cols.map((c) => <td key={c.key} className={c.align === "right" ? "num" : ""}>{c.render ? c.render(r) : String(r[c.key] ?? "")}</td>)}</tr>)}</tbody></table></div>;
+  return <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>{cols.map((c) => <th key={c.key} className={c.align === "right" ? "text-right" : ""}>{c.label}</th>)}</tr></thead><tbody>{rows.length === 0 && <tr><td colSpan={cols.length} className="py-3 text-center text-slate-400">{COPY.nenhumItem}</td></tr>}{rows.map((r, i) => <tr key={String(r["id"] ?? i)}>{cols.map((c) => <td key={c.key} className={c.align === "right" ? "num" : ""}>{c.render ? c.render(r) : String(r[c.key] ?? "")}</td>)}</tr>)}</tbody></table></div>;
 }
 export function useDoc<T = Row>(path: string, enabled = true) { return useQuery({ queryKey: ["docone", path], queryFn: () => api<T>(path), enabled }); }
-export const LoadingOr = ({ q, children }: { q: { isLoading: boolean; error: unknown }; children: React.ReactNode }) => q.isLoading ? <Spinner /> : q.error ? <ErrorBox error={q.error} /> : <>{children}</>;
+/** Carregando / erro / conteúdo com os estados oficiais (LoadingState, ErrorState com "Tentar novamente" quando a query expõe refetch). */
+export const LoadingOr = ({ q, children }: { q: { isLoading: boolean; error: unknown; refetch?: () => unknown }; children: React.ReactNode }) => q.isLoading ? <LoadingState /> : q.error ? <ErrorState error={q.error} onRetry={q.refetch ? () => void q.refetch?.() : undefined} /> : <>{children}</>;

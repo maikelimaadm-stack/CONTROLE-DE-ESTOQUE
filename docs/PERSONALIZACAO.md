@@ -2,6 +2,9 @@
 
 Réplica do **MODELO BASE1** do sistema PROJETOMG (o modelo de tela usado no cadastro de Empresas do makgestao.com), reimplementada sobre a arquitetura declarativa deste sistema e aplicada a **todos os cadastros** (`ResourceList`/`ResourceForm`) e **lançamentos** (`DocList`). Código em `apps/web/src/features/base1`.
 
+> Blocos de interface (cabeçalho de página, botões, campos, cartões, badges de situação, estados vazio/carregando/erro,
+> diálogos, confirmação, painel lateral e DetailShell): ver `docs/UI-STANDARD.md` › **Primitives visuais**.
+
 ## Anatomia da tela (listagem)
 1. **Barra superior**: ícone de filtros (abre o painel lateral "Filtros"), botão verde **Novo** (e **Excluir** quando há um registro selecionado); à direita: pesquisa (ícone → pílula de 300 px com a lista "Buscar todos / Buscar favoritos / configurar"; Enter aplica; X limpa), ocultar/exibir faixa de filtros, alternância **Registro / Tabela / Cards** e **Mais opções** (ações do registro selecionado — Visualizar/Editar/Cancelar —, Duplicar, Imprimir, Exportar Excel/CSV, Histórico, Configurações, Exportar PDF, Relatório personalizado, Salvar tela como padrão da organização, Restaurar padrão da tela).
 2. **Faixa de chips de filtro**: um chip por coluna/campo filtrável. O chip abre um popover com "Limpar Filtro de 'X'", **operador** (cadastros), pesquisa e a **lista de valores distintos** com contagem e "(Selecionar Tudo)" (vários valores → operador `in`), ou campo de valor/intervalo. Botões de rolagem, "Limpar todos os filtros" e, à direita, **Configurar colunas da tabela** (tabela) ou **Configurar layout dos cards** / **Configurar campos dos cards** (cards).
@@ -18,6 +21,7 @@ Réplica do **MODELO BASE1** do sistema PROJETOMG (o modelo de tela usado no cad
 - **Precedência**: personalização do usuário > padrão da organização (`user_id null`, definido por quem tem `screen_layouts.edit` ou é owner) > padrão do código.
 - **Mesma validação no cliente e no servidor**: `packages/shared/src/preferences.ts` (`normalizeListPreferences`, `normalizeFormLayout`, catálogo de operadores). A API valida contra a definição do recurso (colunas/campos conhecidos), descartando o que não existe.
 - **Cache local + sincronização**: o frontend lê `localStorage` imediatamente e sincroniza com a API com debounce (400 ms), adotando a versão do servidor quando ela é mais nova.
+- **Idioma e terminologia**: rótulos, enums e formatação seguem o contrato em `docs/UI-STANDARD.md` (Situação/Painel, Buscar × Pesquisar, Excluir × Remover, Fechar × Cancelar, `enumLabel`, `brl/num/pct/dateBR`); o `copy-audit` roda no lint.
 
 ## Listagens (`screen = list`)
 | Seção | Conteúdo |

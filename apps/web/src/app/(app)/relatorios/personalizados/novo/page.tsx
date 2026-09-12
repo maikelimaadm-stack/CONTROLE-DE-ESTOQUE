@@ -9,7 +9,7 @@ import { ArrowDown, ArrowUp, Download, Printer, Save } from "lucide-react";
 import { defaultListPreferences, filterKindOf, type ListPreferences } from "@agro/shared";
 import { api, ApiError, getSession } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { brl, num, dateBR, cn } from "@/lib/utils";
+import { brl, num, dateBR, cn, pct } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Input, NativeSelect, Field, Spinner, ErrorBox, Dialog, Badge } from "@/components/ui";
 import { AdvancedFilterBar, toQueryParams, fromQueryParams, type AdvancedFilterField, type FilterValues } from "@/features/listing/advanced-filters";
 
@@ -19,7 +19,7 @@ interface Definition { columns: string[]; filters: Record<string, string>; searc
 interface Result { columns: { key: string; label: string; type: string }[]; rows: Record<string, unknown>[]; groups: { label: string; rows: Record<string, unknown>[]; totals: Record<string, string> }[] | null; totals: Record<string, string>; count: number; truncated: boolean }
 interface Saved { id: string; resource_key: string; name: string; definition: Definition; is_shared: boolean; mine?: boolean }
 const NUMERIC = ["number", "integer", "money", "quantity", "percent"];
-const fmt = (type: string, v: unknown) => v === null || v === undefined || v === "" ? "" : type === "money" ? brl(v as string) : type === "quantity" || type === "number" ? num(v as string, 2) : type === "percent" ? `${num(v as string, 2)}%` : type === "integer" ? String(v) : type === "date" ? dateBR(String(v)) : String(v);
+const fmt = (type: string, v: unknown) => v === null || v === undefined || v === "" ? "" : type === "money" ? brl(v as string) : type === "quantity" || type === "number" ? num(v as string, 2) : type === "percent" ? pct(v as string, 2) : type === "integer" ? String(v) : type === "date" ? dateBR(String(v)) : String(v);
 
 /** Construtor de relatório personalizado: entidade → colunas → filtros → agrupamento/totais → prévia → salvar/exportar. */
 function Builder() {

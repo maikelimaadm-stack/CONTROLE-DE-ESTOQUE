@@ -40,6 +40,9 @@ input, select, textarea { @apply text-[13px]; }
   --mg-btn-h: 28px; --mg-btn-font: 13px; --mg-btn-font-compact: 12px; --mg-toolbar-h: 36px;
   --mg-field-h: 38px; --mg-selection-bg: rgba(64, 222, 99, .12);
   --mg-table-line: #e7eaee; --mg-row-alt: #fafbfc; --mg-row-hover: #eef6ff;
+  /* primitives (UI-02): overlays, cabeçalho de página e espaçamento — sem redesenho, só valores antes repetidos */
+  --mg-overlay-bg: rgba(15, 23, 42, .45); --mg-radius-dialog: var(--mg-radius-card); --mg-dialog-shadow: 0 24px 48px rgba(15, 23, 42, .18), 0 4px 12px rgba(15, 23, 42, .08);
+  --mg-z-overlay: 40; --mg-z-dialog: 50; --mg-page-gap: 8px;
 }
 body { background: var(--mg-bg-page); color: var(--mg-text-1); }
 
@@ -416,3 +419,28 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .ws-chip__count { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 16px; padding: 0 5px; border-radius: 999px; background: rgba(0,0,0,.08); font-size: 10.5px; font-weight: 600; }
 .ws-chip.is-active .ws-chip__count { background: var(--mg-accent); color: #fff; }
 .ws-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 4px 10px; }
+
+/* --- primitives oficiais (docs/UI-STANDARD.md › Primitives visuais): overlays e cabeçalho --- */
+@keyframes mg-overlay-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes mg-dialog-in { from { opacity: 0; transform: translate(-50%, -50%) scale(.97); } to { opacity: 1; transform: translate(-50%, -50%) scale(1); } }
+@keyframes mg-drawer-in-right { from { transform: translateX(24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes mg-drawer-in-left { from { transform: translateX(-24px); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.mg-overlay { position: fixed; inset: 0; z-index: var(--mg-z-overlay); background: var(--mg-overlay-bg); animation: mg-overlay-in .15s ease both; }
+.mg-dialog { position: fixed; left: 50%; top: 50%; z-index: var(--mg-z-dialog); display: flex; flex-direction: column; width: 95vw; max-height: 92dvh; transform: translate(-50%, -50%); background: var(--mg-bg-card); border-radius: var(--mg-radius-dialog); box-shadow: var(--mg-dialog-shadow); outline: none; animation: mg-dialog-in .18s cubic-bezier(.2,.8,.2,1) both; }
+.mg-dialog__header, .mg-drawer__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--mg-divider); }
+.mg-dialog__title, .mg-drawer__title { margin: 0; font-size: 13px; font-weight: 600; line-height: 1.35; color: var(--mg-text-1); }
+.mg-dialog__description, .mg-drawer__description { margin: 2px 0 0; font-size: 11.5px; color: var(--mg-text-2); }
+.mg-dialog__body, .mg-drawer__body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 16px; }
+.mg-dialog__footer, .mg-drawer__footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--mg-divider); }
+.mg-drawer { position: fixed; top: 0; bottom: 0; z-index: var(--mg-z-dialog); display: flex; flex-direction: column; max-width: 100vw; background: var(--mg-bg-card); box-shadow: var(--mg-dialog-shadow); outline: none; }
+.mg-drawer--right { right: 0; border-radius: var(--mg-radius-dialog) 0 0 var(--mg-radius-dialog); animation: mg-drawer-in-right .2s cubic-bezier(.2,.8,.2,1) both; }
+.mg-drawer--left { left: 0; border-radius: 0 var(--mg-radius-dialog) var(--mg-radius-dialog) 0; animation: mg-drawer-in-left .2s cubic-bezier(.2,.8,.2,1) both; }
+.mg-page-header { display: flex; flex-direction: column; gap: 4px; }
+.mg-page-header--page { padding: 8px 12px; }
+.mg-page-header--card { min-height: var(--mg-toolbar-h); padding: 4px 12px; border-bottom: 1px solid var(--mg-divider); justify-content: center; }
+.mg-page-header__row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.mg-page-header__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+.mg-page-header__crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11px; color: var(--mg-text-3); }
+.mg-page-header__crumbs a { color: var(--mg-text-2); }
+.mg-page-header__extra { padding-top: 4px; }
+@media (max-width: 1023px) { .mg-page-header__actions { margin-left: 0; width: 100%; } .mg-dialog { width: 96vw; } .mg-drawer { max-width: 92vw; } }
