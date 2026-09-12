@@ -6,7 +6,7 @@ import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
 import { runService, nextCode, requirePermission } from "../lib/service.js";
 import { notFound, validation } from "../lib/errors.js";
-import { farmAllowed, hasPermission, type ServiceCtx } from "../lib/context.js";
+import { farmAllowed, farmScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
 export function buildSchema(def: ResourceDef, partial = false) {
@@ -164,7 +164,10 @@ export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   const existing = await checkColumns(ctx, def);
   const cols = listColumns(def).filter((c) => existing.has(c));
   const orgCond = existing.has("organization_id") ? (def.reference || def.sharedDefaults ? "and (organization_id is null or organization_id=$2)" : "and organization_id=$2") : "";
-  const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 ${orgCond} ${def.softDelete ? "and deleted_at is null" : ""}`, orgCond ? [id, ctx.orgId] : [id]);
+  const gp: unknown[] = orgCond ? [id, ctx.orgId] : [id];
+  // fazenda: registro fora do escopo do membro não é visível (mesma regra da listagem)
+  const farmCond = def.farmScoped && existing.has("farm_id") ? farmScopeSql(ctx, "farm_id", gp, { ignoreSelected: true }) : "";
+  const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 ${orgCond} ${def.softDelete ? "and deleted_at is null" : ""}${farmCond}`, gp);
   if (!r.rows[0]) throw notFound(def.label);
   const row = r.rows[0] as Record<string, unknown>;
   return { ...row, ...(await refLabels(ctx, def, [row]))[0] };
@@ -238,6 +241,8 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
   if (def.table === "users") where.push(`t.id in (select m.user_id from erp.organization_members m where m.organization_id=${b.add(ctx.orgId)} and m.is_active)`);
   if (def.softDelete) where.push("t.deleted_at is null");
   if (existing.has("is_active") && !extra["include_inactive"]) where.push("t.is_active");
+  // autocomplete de recurso por fazenda: só fazendas autorizadas (a fazenda selecionada é filtro do chamador via `extra.farm_id`)
+  if (def.farmScoped && existing.has("farm_id") && ctx.membership.farmIds.length) where.push(`t.farm_id = any(${b.add(ctx.membership.farmIds)}::uuid[])`);
   if (search) where.push(`${labelExpr} ilike ${b.add(`%${search}%`)}`);
   for (const [k, v] of Object.entries(extra)) if (existing.has(k) && k !== "include_inactive") where.push(`t.${ident(k)} = ${b.add(v)}`);
   const codeSel = existing.has("code") ? ", t.code::text as code" : ", null as code";

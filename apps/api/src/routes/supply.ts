@@ -4,7 +4,7 @@ import { D, money, isISODate } from "@agro/shared";
 import { nextPurchaseStatus, allowedPurchaseActions, authorizerCanApprove, PURCHASE_STATUS_LABELS, slaStatus, type PurchaseRequestStatus, type PurchaseAction } from "@agro/domain";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { farmAllowed, hasPermission, type ServiceCtx } from "../lib/context.js";
+import { farmAllowed, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { createTitles } from "../services/financial-core.js";
@@ -17,7 +17,7 @@ const requestSchema = z.object({ farm_id: uuid, request_date: date, priority: z.
 
 async function loadRequest(ctx: ServiceCtx, id: string, lock = false) {
   if (lock) await ctx.tx.query("select 1 from erp.purchase_requests where id=$1 and organization_id=$2 for update", [id, ctx.orgId]);
-  const r = await ctx.tx.query("select r.*, f.name as farm_name, u.name as requester_name, cu.name as current_responsible_name from erp.purchase_requests r join erp.farms f on f.id=r.farm_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where r.id=$1 and r.organization_id=$2 and r.deleted_at is null", [id, ctx.orgId]);
+  const r = await ctx.tx.query("select r.*, f.name as farm_name, u.name as requester_name, cu.name as current_responsible_name from erp.purchase_requests r join erp.farms f on f.id=r.farm_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where r.id=$1 and r.organization_id=$2 and r.deleted_at is null" + scopedById(ctx, "r", id).sql, scopedById(ctx, "r", id).params);
   if (!r.rows[0]) throw notFound("Solicitação");
   return r.rows[0] as Record<string, unknown> & { id: string; status: PurchaseRequestStatus; farm_id: string; farm_name: string; version: number; requester_user_id: string; current_responsible_user_id: string | null; estimated_total: string; approved_total: string | null; selected_quotation_id: string | null; code: string; request_type: string; request_date: string; observation: string | null; status_changed_at: Date };
 }
