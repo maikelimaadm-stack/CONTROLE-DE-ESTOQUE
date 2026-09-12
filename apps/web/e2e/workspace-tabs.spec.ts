@@ -87,4 +87,16 @@ test.describe("abas globais", () => {
     await expect(activeTab(page)).toHaveText("Compras"); await expect(page).toHaveURL(/\/compras/);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
   });
+
+  test("alterações não salvas: a aba mostra indicador e fechar pede confirmação (cancelar mantém, confirmar fecha)", async ({ page }) => {
+    await login(page);
+    await page.goto("/cadastros/products/new"); await expect(activeTab(page)).toHaveText(/Novo/);
+    await page.locator("main input:not([type=hidden]):not([readonly])").first().fill("Produto dirty e2e");
+    const tab = tabs(page).filter({ hasText: /Novo/ }); await expect(tab.getByLabel("Alterações não salvas")).toBeVisible();
+    await tab.getByRole("button", { name: /Fechar aba/ }).click();
+    const dlg = page.getByTestId("confirm-dialog"); await expect(dlg).toBeVisible(); await expect(dlg.getByRole("heading", { name: /alterações não salvas/ })).toBeVisible();
+    await dlg.locator(".mg-dialog__footer").getByRole("button", { name: "Fechar", exact: true }).click(); await expect(dlg).toBeHidden(); await expect(tab).toHaveCount(1);
+    await tab.getByRole("button", { name: /Fechar aba/ }).click(); await page.getByTestId("confirm-dialog-confirm").click();
+    await expect(tab).toHaveCount(0); await expect(activeTab(page)).toHaveText("Início");
+  });
 });

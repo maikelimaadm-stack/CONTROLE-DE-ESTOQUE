@@ -28,16 +28,16 @@ export function tabFor(pathname: string, search?: string | URLSearchParams | nul
   const qs = typeof search === "string" ? search : search?.toString() ?? "";
   const href = qs ? `${pathname}?${qs}` : pathname;
   if (pathname === "/") return { key: HOME_KEY, href: "/", label: "Início", kind: "home", module: "inicio" };
-  const det = detailRouteFor(pathname);
-  if (det) return { key: pathname, href, label: det.label, kind: "detail", module: det.module };
-  const mod = MODULES.find((m) => m.path === pathname);
-  if (mod) return { key: pathname, href, label: mod.label, kind: "module", module: mod.id };
   const owner = moduleForPath(pathname);
   if (isNewPath(pathname)) {
     const act = ALL.find((e) => e.type === "action" && e.href && split(e.href)[0] === pathname);
     const crumbs = crumbsFor(pathname, qs);
     return { key: pathname, href, label: act?.label ?? (crumbs.length ? `Novo · ${crumbs[crumbs.length - 1]}` : "Novo registro"), kind: "new", module: owner?.id };
   }
+  const det = detailRouteFor(pathname);
+  if (det) return { key: pathname, href, label: det.label, kind: "detail", module: det.module };
+  const mod = MODULES.find((m) => m.path === pathname);
+  if (mod) return { key: pathname, href, label: mod.label, kind: "module", module: mod.id };
   const crumbs = crumbsFor(pathname, qs);
   return { key: pathname, href, label: crumbs[crumbs.length - 1] ?? pathname, kind: "page", module: owner?.id };
 }
@@ -105,25 +105,30 @@ export function WorkspaceTabsProvider({ orgId, userId, can, children }: { orgId:
   // URL real → aba (link, deep link, voltar/avançar, redirecionamentos)
   React.useLayoutEffect(() => { if (canonicalize(pathname, sp)) return; dispatch({ type: "sync", tab: tabFor(pathname, sp) }); }, [pathname, sp]);
   React.useEffect(() => { try { sessionStorage.setItem(skey, JSON.stringify({ tabs: state.tabs.map(({ key, href, label, kind, module }) => ({ key, href, label, kind, module })), active: state.active })); } catch { /* ignore */ } }, [state, skey]);
-  React.useEffect(() => { if (!dirty.size) return; const h = (e: BeforeUnloadEvent) => { e.preventDefault(); }; window.addEventListener("beforeunload", h); return () => window.removeEventListener("beforeunload", h); }, [dirty]);
-  const api = React.useMemo<WorkspaceTabsApi>(() => ({
-    tabs: state.tabs, active: state.active, dirty,
-    openTab: (href) => { const [p, q] = split(href); const canon = canonicalize(p, q) ?? href; const [cp, cq] = split(canon); dispatch({ type: "sync", tab: tabFor(cp, cq) }); router.push(canon); },
-    focusTab: (key) => { const t = state.tabs.find((x) => x.key === key); if (!t) return; router.push(t.href); },
-    closeTab: (key, force) => {
-      if (dirty.has(key) && !force) return false;
-      const i = state.tabs.findIndex((t) => t.key === key); if (i < 0 || key === HOME_KEY) return true;
-      if (dirty.has(key)) setDirtyState((d) => { const n = new Set(d); n.delete(key); return n; });
-      dispatch({ type: "close", key });
-      if (state.active === key) { const next = state.tabs[i - 1] ?? state.tabs[i + 1] ?? HOME; router.push(next.href); }
-      return true;
-    },
-    closeOthers: (key) => { dispatch({ type: "closeOthers", key }); const t = state.tabs.find((x) => x.key === key); if (t && state.active !== key) router.push(t.href); },
-    closeScoped: () => { const cur = state.tabs.find((t) => t.key === state.active); dispatch({ type: "closeKinds", kinds: ["detail", "new"] }); setDirtyState(new Set()); return Boolean(cur && (cur.kind === "detail" || cur.kind === "new")); },
-    setTitle: (key, label) => dispatch({ type: "title", key, label }),
-    setDirty: (key, d) => setDirtyState((prev) => { if (prev.has(key) === d) return prev; const n = new Set(prev); if (d) n.add(key); else n.delete(key); return n; }),
-    hasDirty: () => dirty.size > 0
-  }), [state, dirty, router]);
+  // beforeunload só para o descarregamento REAL da página (refresh/fechar): o Next.js dispara um beforeunload sintético
+  // (isTrusted=false) antes de navegações de cliente e cancelaria qualquer router.push com preventDefault
+  React.useEffect(() => { if (!dirty.size) return; const h = (e: BeforeUnloadEvent) => { if (!e.isTrusted) return; e.preventDefault(); }; window.addEventListener("beforeunload", h); return () => window.removeEventListener("beforeunload", h); }, [dirty]);
+  // ações ESTÁVEIS (leem o estado por ref): quem as usa em efeitos (useDirtyTab/useTabTitle) não pode depender de um objeto
+  // que muda a cada render — antes, api mudava a cada setDirty e o efeito de limpeza/re-execução entrava em loop
+  const stateRef = React.useRef(state); stateRef.current = state;
+  const dirtyRef = React.useRef(dirty); dirtyRef.current = dirty;
+  const openTab = React.useCallback((href: string) => { const [p, q] = split(href); const canon = canonicalize(p, q) ?? href; const [cp, cq] = split(canon); dispatch({ type: "sync", tab: tabFor(cp, cq) }); router.push(canon); }, [router]);
+  const focusTab = React.useCallback((key: string) => { const t = stateRef.current.tabs.find((x) => x.key === key); if (t) router.push(t.href); }, [router]);
+  const closeTab = React.useCallback((key: string, force?: boolean) => {
+    const st = stateRef.current; const d = dirtyRef.current;
+    if (d.has(key) && !force) return false;
+    const i = st.tabs.findIndex((t) => t.key === key); if (i < 0 || key === HOME_KEY) return true;
+    if (d.has(key)) setDirtyState((prev) => { const n = new Set(prev); n.delete(key); return n; });
+    dispatch({ type: "close", key });
+    if (st.active === key) { const next = st.tabs[i - 1] ?? st.tabs[i + 1] ?? HOME; router.push(next.href); }
+    return true;
+  }, [router]);
+  const closeOthers = React.useCallback((key: string) => { const st = stateRef.current; dispatch({ type: "closeOthers", key }); const t = st.tabs.find((x) => x.key === key); if (t && st.active !== key) router.push(t.href); }, [router]);
+  const closeScoped = React.useCallback(() => { const st = stateRef.current; const cur = st.tabs.find((t) => t.key === st.active); dispatch({ type: "closeKinds", kinds: ["detail", "new"] }); setDirtyState(new Set()); return Boolean(cur && (cur.kind === "detail" || cur.kind === "new")); }, []);
+  const setTitle = React.useCallback((key: string, label: string) => dispatch({ type: "title", key, label }), []);
+  const setDirty = React.useCallback((key: string, d: boolean) => setDirtyState((prev) => { if (prev.has(key) === d) return prev; const n = new Set(prev); if (d) n.add(key); else n.delete(key); return n; }), []);
+  const hasDirty = React.useCallback(() => dirtyRef.current.size > 0, []);
+  const api = React.useMemo<WorkspaceTabsApi>(() => ({ tabs: state.tabs, active: state.active, dirty, openTab, focusTab, closeTab, closeOthers, closeScoped, setTitle, setDirty, hasDirty }), [state, dirty, openTab, focusTab, closeTab, closeOthers, closeScoped, setTitle, setDirty, hasDirty]);
   return <Ctx.Provider value={api}>{children}</Ctx.Provider>;
 }
 
@@ -132,11 +137,11 @@ export const useWorkspaceTabs = () => React.useContext(Ctx);
 
 /** Título dinâmico da aba da tela atual (ex.: "Abastecimento 00125"); não altera a identidade da aba. */
 export function useTabTitle(title?: string | null) {
-  const api = useWorkspaceTabs(); const pathname = usePathname();
-  React.useEffect(() => { if (api && title && title.trim()) api.setTitle(tabKeyFor(pathname), title.trim()); }, [api, title, pathname]);
+  const setTitle = useWorkspaceTabs()?.setTitle; const pathname = usePathname();
+  React.useEffect(() => { if (setTitle && title && title.trim()) setTitle(tabKeyFor(pathname), title.trim()); }, [setTitle, title, pathname]);
 }
 /** Contrato de estado não salvo: a aba mostra indicador e fechar/trocar fazenda/sair pedem confirmação. */
 export function useDirtyTab(dirty: boolean) {
-  const api = useWorkspaceTabs(); const pathname = usePathname(); const key = tabKeyFor(pathname);
-  React.useEffect(() => { if (!api) return; api.setDirty(key, dirty); return () => api.setDirty(key, false); }, [api, key, dirty]);
+  const setDirty = useWorkspaceTabs()?.setDirty; const pathname = usePathname(); const key = tabKeyFor(pathname);
+  React.useEffect(() => { if (!setDirty) return; setDirty(key, dirty); return () => setDirty(key, false); }, [setDirty, key, dirty]);
 }
