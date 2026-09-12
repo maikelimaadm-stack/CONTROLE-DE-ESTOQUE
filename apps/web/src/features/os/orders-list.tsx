@@ -21,12 +21,12 @@ export function ServiceOrdersList() {
   return <div className="flex min-h-0 flex-1 flex-col gap-2">
     <div className="mg-card ws-filters no-print">
       <FilterChips label="Escopo" testId="os-scope" value={scope} onChange={setScope} options={[{ value: "all", label: "Todas" }, { value: "mine", label: "Minhas", hint: "Ordens criadas por mim" }]} />
-      <FilterChips label="Status" testId="os-status" value={status} onChange={setStatus} options={STATUS_OPTIONS.map((o) => ({ ...o, count: count(o.value) }))} />
+      <FilterChips label="Situação" testId="os-status" value={status} onChange={setStatus} options={STATUS_OPTIONS.map((o) => ({ ...o, count: count(o.value) }))} />
       <button type="button" role="checkbox" aria-checked={late === "1"} className={cn("ws-chip", late === "1" && "is-active")} data-testid="os-late" onClick={() => setLate(late === "1" ? "" : "1")}>{late === "1" ? "☑" : "☐"} Somente atrasadas{mon.data && <span className="ws-chip__count">{mon.data.late.length}</span>}</button>
     </div>
     <DocList key={JSON.stringify(fixed)} title={scope === "mine" ? "Minhas Ordens de Serviço" : "Ordens de Serviço"} endpoint="/api/service-orders" base="/os" canCreate={can("service_orders.create")} hideNew defaultFilters={fixed} entity="service_orders"
-      filters={[{ name: "start_date", label: "Dt. Início", type: "date" }, { name: "end_date", label: "Dt. Fim", type: "date" }]}
-      columns={[{ key: "code", label: "Código" }, colDate("order_date", "Data"), { key: "description", label: "Descrição" }, { key: "activity_name", label: "Atividade" }, { key: "operation_name", label: "Operação" }, { key: "responsible_name", label: "Responsável" }, { key: "team_name", label: "Equipe" }, colDate("planned_end", "Prev. término"), colMoney("total", "Custo"), { key: "rating", label: "Nota", render: (r) => r["rating"] ? "★".repeat(Number(r["rating"])) : "" }, colStatus()]}
+      filters={[{ name: "start_date", label: "Data inicial", type: "date" }, { name: "end_date", label: "Data final", type: "date" }]}
+      columns={[{ key: "code", label: "Código" }, colDate("order_date", "Data"), { key: "description", label: "Descrição" }, { key: "activity_name", label: "Atividade" }, { key: "operation_name", label: "Operação" }, { key: "responsible_name", label: "Responsável" }, { key: "team_name", label: "Equipe" }, colDate("planned_end", "Previsão de término"), colMoney("total", "Custo"), { key: "rating", label: "Nota", render: (r) => r["rating"] ? "★".repeat(Number(r["rating"])) : "" }, colStatus()]}
       totals={(t) => <tr><td colSpan={8} className="px-2 py-1">Total</td><td className="num">{brl(t["total"] ?? "0")}</td><td colSpan={2} /></tr>} />
   </div>;
 }

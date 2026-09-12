@@ -34,18 +34,19 @@ test("listagem MODELO BASE1: chip de filtro com valores distintos, coluna oculta
   const dlg = page.getByRole("dialog");
   await expect(dlg.getByText("Configuração de colunas")).toBeVisible();
   await dlg.getByRole("button", { name: "Sigla" }).dblclick();
-  await dlg.getByRole("button", { name: "Ok" }).click();
+  await dlg.getByRole("button", { name: "OK" }).click();
   await expect(page.locator("th", { hasText: "Sigla" })).toBeVisible();
   await page.getByLabel("Abrir menu da coluna Sigla").click();
   await page.getByRole("menuitem", { name: "Ocultar coluna" }).click();
-  // modo cards + cards por linha
+  // modo cards + cards por linha — espera o PUT de preferências com o modo "cards" chegar ao servidor antes de recarregar
+  const saved = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes("/api/preferences/") && r.ok() && (r.request().postData() ?? "").includes("cards"));
   await page.getByRole("button", { name: "Cards", exact: true }).click();
   await expect(page.getByTestId("b1-card").first()).toBeVisible();
   await page.getByLabel("Configurar layout dos cards").click();
   await page.getByRole("radio", { name: /2 cards por linha/ }).click();
-  await page.getByRole("button", { name: "Ok" }).click();
+  await page.getByRole("button", { name: "OK" }).click();
+  await saved;
   // recarrega sem cache local: preferências vêm do servidor
-  await page.waitForTimeout(800);
   await page.evaluate(() => { Object.keys(localStorage).filter((k) => k.startsWith("agro:prefs:")).forEach((k) => localStorage.removeItem(k)); });
   await page.reload();
   await expect(page.getByTestId("b1-card").first()).toBeVisible();

@@ -4,7 +4,7 @@ import { use } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, qs, download } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { brl, num, dateBR } from "@/lib/utils";
+import { brl, num, dateBR, pct } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Spinner, ErrorBox } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
 import { FilterBar, useFilters, monthRange, type Filter, type Row } from "@/features/docs/shared";
@@ -19,7 +19,7 @@ export default function Page({ params }: { params: Promise<{ key: string }> }) {
   const { f, set, reset } = useFilters(init); const [applied, setApplied] = React.useState<Record<string, string> | null>(null);
   React.useEffect(() => { if (def && !applied && !def.filters.some((x) => x.required)) setApplied(init); }, [def, applied, init]);
   const q = useQuery({ queryKey: ["report", key, applied], queryFn: () => api<Result>(`/api/reports/${key}${qs(applied!)}`), enabled: Boolean(applied) });
-  const fmt = (c: Col, v: unknown) => v == null || v === "" ? "" : c.type === "money" ? brl(v as string) : c.type === "qty" ? num(v as string, 3) : c.type === "date" ? dateBR(String(v)) : c.type === "percent" ? `${num(v as string)}%` : String(v);
+  const fmt = (c: Col, v: unknown) => v == null || v === "" ? "" : c.type === "money" ? brl(v as string) : c.type === "qty" ? num(v as string, 3) : c.type === "date" ? dateBR(String(v)) : c.type === "percent" ? pct(v as string, 2) : String(v);
   const [page, setPage] = React.useState(1); const [pageSize, setPageSize] = React.useState(50);
   const rows = q.data?.rows.slice((page - 1) * pageSize, page * pageSize) ?? [];
   return <Card><CardHeader title={def?.label ?? "Relatório"} subtitle={def ? `Módulo ${def.module} · ${q.data ? `${q.data.count} linha(s)` : ""}` : undefined} actions={<><Button size="sm" variant="outline" onClick={() => window.print()}>Imprimir</Button>{applied && def && can(`report.${key}.export`) && <><Button size="sm" variant="outline" onClick={() => download(`/api/reports/${key}${qs({ ...applied, format: "csv" })}`, `${key}.csv`)}>CSV</Button><Button size="sm" variant="outline" onClick={() => download(`/api/reports/${key}${qs({ ...applied, format: "xlsx" })}`, `${key}.xlsx`)}>XLSX</Button></>}</>} /><CardBody>

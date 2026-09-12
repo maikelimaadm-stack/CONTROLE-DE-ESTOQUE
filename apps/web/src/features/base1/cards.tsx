@@ -53,7 +53,7 @@ export function CardsLayoutPopover({ value, onChange, onRestore }: { value: 1 | 
   const [open, setOpen] = React.useState(false); const [draft, setDraft] = React.useState(value);
   React.useEffect(() => { if (open) setDraft(value); }, [open, value]);
   return <B1Popover open={open} onOpenChange={setOpen} trigger={<IconBtn aria-label="Configurar layout dos cards" title="Configurar layout dos cards" active={open}><LayoutGrid className="h-4 w-4" /></IconBtn>}
-    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); setOpen(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); setOpen(false); }}>Ok</PillBtn></>}>
+    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); setOpen(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); setOpen(false); }}>OK</PillBtn></>}>
     <div role="radiogroup" aria-label="Cards por linha">{PER_ROW.map((o) => <RadioRow key={o.n} checked={draft === o.n} onClick={() => setDraft(o.n)} title={`${o.n} card${o.n > 1 ? "s" : ""} por linha`} hint={o.hint} />)}</div>
   </B1Popover>;
 }
@@ -63,7 +63,7 @@ export function CardFieldsPopover({ columns, value, onChange, onRestore }: { col
   const [open, setOpen] = React.useState(false); const [draft, setDraft] = React.useState<string[]>(value);
   React.useEffect(() => { if (open) setDraft(value); }, [open, value]);
   return <B1Popover open={open} onOpenChange={setOpen} className="w-72" trigger={<IconBtn aria-label="Configurar campos dos cards" title="Configurar campos dos cards" active={open}><ListChecks className="h-4 w-4" /></IconBtn>}
-    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); setOpen(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); setOpen(false); }}>Ok</PillBtn></>}>
+    footer={<><PillBtn tone="gray" className="flex-1 justify-center" onClick={() => { onRestore(); setOpen(false); }}>Restaurar</PillBtn><PillBtn className="flex-1 justify-center" onClick={() => { onChange(draft); setOpen(false); }}>OK</PillBtn></>}>
     <div className="max-h-72 overflow-auto">{[...columns].sort((a, b) => a.label.localeCompare(b.label)).map((c) => <CheckRow key={c.key} checked={draft.includes(c.key)} onChange={(on) => setDraft((d) => (on ? [...d, c.key] : d.filter((k) => k !== c.key)))} label={c.label} />)}</div>
   </B1Popover>;
 }

@@ -23,7 +23,7 @@ export default function HomePage() {
           <Stat label="Despesas realizadas" value={brl(d.operational_result.expense)} tone="red" />
           <Stat label="Consumo de estoque" value={brl(d.operational_result.stock_consumption)} tone="amber" />
           <Stat label="Resultado operacional" value={brl(d.operational_result.result)} tone={Number(d.operational_result.result) >= 0 ? "green" : "red"} hint="Receitas − despesas (caixa)" />
-          <Stat label="Resultado c/ estoque" value={brl(d.operational_result.result_with_stock)} tone={Number(d.operational_result.result_with_stock) >= 0 ? "green" : "red"} hint="Inclui consumo de insumos" />
+          <Stat label="Resultado com estoque" value={brl(d.operational_result.result_with_stock)} tone={Number(d.operational_result.result_with_stock) >= 0 ? "green" : "red"} hint="Inclui consumo de insumos" />
         </div>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
           <Link href="/financeiro?tab=contas&sub=pagar&status=overdue"><Stat label="Títulos a pagar vencidos" value={d.alerts.overdue_payables} tone={Number(d.alerts.overdue_payables) ? "red" : "slate"} /></Link>
@@ -33,8 +33,8 @@ export default function HomePage() {
           <Link href="/pecuaria?tab=rebanho&sub=processamentos"><Stat label="Processamentos pendentes" value={d.alerts.pending_processings} /></Link>
         </div>
         <div className="grid gap-3 lg:grid-cols-2">
-          <Card><CardHeader title="Previsão de Receitas x Despesas" subtitle="Por mês de vencimento (previsto) e baixas (realizado)" /><CardBody><Bars data={d.forecast_vs_actual} x="month" series={[{ key: "income_forecast", label: "Receita prevista", color: "#8cc797" }, { key: "income_done", label: "Receita realizada", color: "#2b6f3a" }, { key: "expense_forecast", label: "Despesa prevista", color: "#fca5a5" }, { key: "expense_done", label: "Despesa realizada", color: "#dc2626" }]} /></CardBody></Card>
-          <Card><CardHeader title="Custo de Produção por Centro de Custo" subtitle="Despesas (títulos) no período" /><CardBody>{d.production_cost_by_center.length ? <Donut data={d.production_cost_by_center} nameKey="cost_center" valueKey="expense" /> : <p className="text-sm text-slate-400">Sem despesas no período.</p>}</CardBody></Card>
+          <Card><CardHeader title="Previsão de receitas x despesas" subtitle="Por mês de vencimento (previsto) e baixas (realizado)" /><CardBody><Bars data={d.forecast_vs_actual} x="month" series={[{ key: "income_forecast", label: "Receita prevista", color: "#8cc797" }, { key: "income_done", label: "Receita realizada", color: "#2b6f3a" }, { key: "expense_forecast", label: "Despesa prevista", color: "#fca5a5" }, { key: "expense_done", label: "Despesa realizada", color: "#dc2626" }]} /></CardBody></Card>
+          <Card><CardHeader title="Custo de produção por centro de custo" subtitle="Despesas (títulos) no período" /><CardBody>{d.production_cost_by_center.length ? <Donut data={d.production_cost_by_center} nameKey="cost_center" valueKey="expense" /> : <p className="text-sm text-slate-400">Sem despesas no período.</p>}</CardBody></Card>
         </div>
         <div className="flex gap-2 no-print"><Link href="/relatorios"><Button variant="outline" size="sm">Relatórios</Button></Link><Link href="/financeiro?tab=visao-geral"><Button variant="outline" size="sm">Indicadores financeiros</Button></Link><Link href="/pecuaria?tab=visao-geral"><Button variant="outline" size="sm">Pecuária de corte</Button></Link></div>
       </>}

@@ -19,6 +19,6 @@ export function OpeningMovementsPanel() {
       <Field label="Documento" span={2}><Input value={h.document} onChange={(e) => setH({ ...h, document: e.target.value })} /></Field>
       <div className="col-span-2 flex items-end"><Button size="sm" loading={create.isPending} disabled={!h.bank_account_id || !h.amount} onClick={() => create.mutate({ ...h, document: h.document || null, note: h.note || null })}>Lançar</Button></div>
     </div></CardBody></Card>}
-    <Card><CardHeader title="Saldos atuais por conta" /><CardBody><SimpleTable rows={q.data?.items ?? []} cols={[{ key: "code", label: "Cód." }, { key: "description", label: "Conta" }, { key: "bank_code", label: "Banco" }, { key: "opening_balance", label: "Saldo inicial (cadastro)", align: "right", render: (r) => brl(r["opening_balance"] as string) }, { key: "balance", label: "Saldo atual", align: "right", render: (r) => brl(r["balance"] as string) }]} /></CardBody></Card>
+    <Card><CardHeader title="Saldos atuais por conta" /><CardBody><SimpleTable rows={q.data?.items ?? []} cols={[{ key: "code", label: "Código" }, { key: "description", label: "Conta" }, { key: "bank_code", label: "Banco" }, { key: "opening_balance", label: "Saldo inicial (cadastro)", align: "right", render: (r) => brl(r["opening_balance"] as string) }, { key: "balance", label: "Saldo atual", align: "right", render: (r) => brl(r["balance"] as string) }]} /></CardBody></Card>
   </div>;
 }
