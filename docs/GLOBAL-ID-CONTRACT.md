@@ -141,10 +141,16 @@ empresa nova. Por isso a resolução de `#N` segue esta ordem, sem atalho:
 
 Nenhum dado da entidade sai antes do passo 8, e toda negativa é a mesma 404.
 
-**Existência funcional.** O resolvedor enxerga exatamente o que a rota canônica enxerga: registro com
-exclusão lógica marcada não é navegável por ID Global. `exclusaoLogica` é declarado por entidade e conferido
-contra o schema real das migrations por teste. **Cancelado não é excluído**: um lançamento cancelado continua
-existindo e continua navegável — a tela é que mostra a situação.
+**Existência funcional — a regra vale nos DOIS sentidos.** O resolvedor enxerga o que a rota canônica
+enxerga, e a rota canônica enxerga o que o resolvedor enxerga: num registro com exclusão lógica marcada,
+lista, detalhe, portas de escrita (cancelar, confirmar), anexos e ID Global respondem 404 juntos. O contrário
+— sumir da lista e do ID Global mas continuar abrindo por URL direta — é o "registro fantasma" que esta
+regra existe para impedir. `exclusaoLogica` é declarado por entidade e conferido contra o schema real das
+migrations por teste (`apps/api/test/unit/id-global-registry.test.ts`), e a concordância das portas é testada
+em `apps/api/test/integration/existencia-funcional.test.ts` e `rebanho-autorizacao.test.ts`.
+
+**Cancelado não é excluído**: um lançamento cancelado (`status='cancelled'`, `deleted_at` nulo) continua
+existindo, continua na lista e continua navegável — a tela é que mostra a situação.
 
 **A alocação não confia no chamador.** `atribuirIdGlobal(ctx, tipoEntidade, idEntidade)` lê o registro na
 mesma transação; UUID inexistente (ou já excluído) nunca vira ponte global.

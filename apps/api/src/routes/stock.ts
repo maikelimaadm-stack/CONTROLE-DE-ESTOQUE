@@ -35,9 +35,14 @@ async function listDocs(ctx: ServiceCtx, table: string, dateCol: string, query: 
   const r = await ctx.tx.query(w.pageSql, w.params);
   return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
 }
-/** Detalhe de documento de estoque. `headerWarehouse`: o armazém está no cabeçalho (baixa direta) e as linhas não têm warehouse_id/cost_center_id. */
+/**
+ * Detalhe de documento de estoque. `headerWarehouse`: o armazém está no cabeçalho (baixa direta) e as linhas
+ * não têm warehouse_id/cost_center_id.
+ * EXISTÊNCIA FUNCIONAL: documento com exclusão lógica marcada não existe aqui — a mesma existência da
+ * listagem e do ID Global (docs/GLOBAL-ID-CONTRACT.md §5.1). Cancelado é outra coisa: continua visível.
+ */
 async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: string, fk: string, opts: { headerWarehouse?: boolean } = {}) {
-  const d = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name${opts.headerWarehouse ? ", hw.description as warehouse_name" : ""} from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by${opts.headerWarehouse ? " left join erp.warehouses hw on hw.id=d.warehouse_id" : ""} where d.id=$1 and d.organization_id=$2` + scopedById(ctx, "d", id).sql, scopedById(ctx, "d", id).params);
+  const d = await ctx.tx.query(`select d.*, f.name as farm_name, u.name as created_by_name${opts.headerWarehouse ? ", hw.description as warehouse_name" : ""} from erp.${table} d left join erp.farms f on f.id=d.farm_id left join erp.users u on u.id=d.created_by${opts.headerWarehouse ? " left join erp.warehouses hw on hw.id=d.warehouse_id" : ""} where d.id=$1 and d.organization_id=$2 and d.deleted_at is null` + scopedById(ctx, "d", id).sql, scopedById(ctx, "d", id).params);
   if (!d.rows[0]) throw notFound("Documento");
   const itemJoins = opts.headerWarehouse ? `left join erp.${table} h on h.id=i.${fk} left join erp.warehouses w on w.id=h.warehouse_id left join erp.cost_centers cc on cc.id=h.cost_center_id` : "left join erp.warehouses w on w.id=i.warehouse_id left join erp.cost_centers cc on cc.id=i.cost_center_id";
   const items = await ctx.tx.query(`select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name from erp.${itemsTable} i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id ${itemJoins} where i.${fk}=$1 order by i.id`, [id]);
@@ -343,7 +348,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   }));
   app.get("/stock/transfers/:id", async (req) => runService(app, req, "warehouse_transfers.view", async (ctx) => {
     const id = (req.params as { id: string }).id;
-    const d = await ctx.tx.query("select d.*, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name, fo.name as origin_farm_name, fd.name as destination_farm_name from erp.warehouse_transfers d join erp.warehouses wo on wo.id=d.origin_warehouse_id join erp.warehouses wd on wd.id=d.destination_warehouse_id join erp.farms fo on fo.id=d.origin_farm_id join erp.farms fd on fd.id=d.destination_farm_id where d.id=$1 and d.organization_id=$2 and ($3::uuid[] is null or d.origin_farm_id = any($3) or d.destination_farm_id = any($3))", [id, ctx.orgId, allowedFarms(ctx)]); if (!d.rows[0]) throw notFound();
+    const d = await ctx.tx.query("select d.*, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name, fo.name as origin_farm_name, fd.name as destination_farm_name from erp.warehouse_transfers d join erp.warehouses wo on wo.id=d.origin_warehouse_id join erp.warehouses wd on wd.id=d.destination_warehouse_id join erp.farms fo on fo.id=d.origin_farm_id join erp.farms fd on fd.id=d.destination_farm_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and ($3::uuid[] is null or d.origin_farm_id = any($3) or d.destination_farm_id = any($3))", [id, ctx.orgId, allowedFarms(ctx)]); if (!d.rows[0]) throw notFound();
     const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit from erp.warehouse_transfer_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id where i.transfer_id=$1", [id]);
     const titles = await ctx.tx.query("select id, code, direction, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='warehouse_transfers' and source_id=$2", [ctx.orgId, id]);
     return { ...d.rows[0], items: items.rows, titles: titles.rows };
