@@ -9,6 +9,8 @@ export interface AppContext {
   isOwner: boolean;
   farms: { id: string; code: number; name: string }[];
   permissions: string[];
+  /** Idioma da sessão (docs/I18N-CONTRACT.md): precedência usuário › organização › padrão, resolvida no servidor. */
+  language?: { organization: string | null; user: string | null; effective: string };
   favorites: { route: string; label: string }[];
   unreadNotifications: number;
 }

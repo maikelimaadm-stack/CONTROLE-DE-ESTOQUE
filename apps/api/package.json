@@ -15,6 +15,7 @@
   "dependencies": {
     "@agro/db": "workspace:*",
     "@agro/domain": "workspace:*",
+    "@agro/platform": "workspace:*",
     "@agro/shared": "workspace:*",
     "@fastify/cors": "^11.3.0",
     "@fastify/helmet": "^13.1.1",
