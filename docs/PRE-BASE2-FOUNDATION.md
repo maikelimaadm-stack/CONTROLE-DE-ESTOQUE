@@ -8,10 +8,11 @@
 | Fundamento | Onde vive | Contrato |
 | --- | --- | --- |
 | Organização × Empresa, escopo e permissão por empresa | `packages/plataforma/src/empresa.ts` · ponte em `apps/api/src/lib/empresa.ts` | `docs/MULTI-COMPANY-CONTRACT.md` |
-| ID Global (`#55`) e registro de resolução | `packages/plataforma/src/id-global.ts` · `apps/api/src/lib/id-global.ts` · migration 0010 | `docs/GLOBAL-ID-CONTRACT.md` |
+| ID Global (`#55`) e registro de resolução | mecanismo em `packages/plataforma/src/id-global.ts` · catálogo em `packages/domain/src/id-global.ts` · serviço em `apps/api/src/lib/id-global.ts` · migration 0010 | `docs/GLOBAL-ID-CONTRACT.md` |
 | Internacionalização e formatação por idioma | `packages/plataforma/src/idioma.ts`, `formatacao.ts`, `idiomas/pt-BR.ts` · `apps/web/src/lib/i18n.ts` | `docs/I18N-CONTRACT.md` |
 | Nomenclatura e independência do sistema de referência | `scripts/naming-audit.mjs` | `docs/DOMAIN-NAMING-STANDARD.md` |
-| Dicionário de dados versionado | `packages/plataforma/dicionario-dados.mjs` · `scripts/data-dictionary.mjs` | `docs/DATA-DICTIONARY.md` (gerado) |
+| Matriz única das operações de rebanho | `packages/domain/src/rebanho.ts` | `docs/GLOBAL-ID-CONTRACT.md` §4 |
+| Dicionário de dados versionado | `packages/domain/dicionario-dados.mjs` · `scripts/data-dictionary.mjs` | `docs/DATA-DICTIONARY.md` (gerado) |
 | Inventário da dependência de "fazenda" | `scripts/farm-inventory.mjs` | `docs/FARM-DEPENDENCY-INVENTORY.md` (gerado) |
 | Roteiro das próximas missões | — | `docs/PRE-BASE2-ROADMAP.md` |
 
@@ -34,14 +35,28 @@ reescrever a fundação: troca-se o domínio, a plataforma fica. O cruzamento en
 conferir que toda permissão do registry existe no catálogo) acontece na camada que já depende dos dois —
 `apps/api/test/unit/id-global-registry.test.ts` —, nunca invertendo a dependência.
 
-**O que ainda é configuração de produto dentro do núcleo:** a *lista* de entidades elegíveis a ID Global e o
-dicionário de dados descrevem este produto (inclusive módulos de nicho). O *mecanismo* é neutro; a lista é
-configuração. Separá-la em um pacote de produto só se paga quando existir um segundo produto — está
-registrado como dívida inventariada (catraca `nucleo-neutro-nicho`), não como esquecimento.
+**Mecanismo e configuração estão separados.** O núcleo guarda só o *mecanismo* — tipos, resolução conjunta de
+rota e permissão, validação de catálogo, contrato de empresa, idioma e formatação. A *configuração deste
+produto* — a lista de entidades elegíveis a ID Global, a matriz de operações de rebanho e o dicionário de
+dados — vive em `@agro/domain`, que pode conhecer tabelas, módulos e permissões. Com isso a catraca
+`nucleo-neutro-nicho` foi **zerada**: não há mais nome de tabela nem de coluna de nicho dentro da plataforma.
 
 Módulos de nicho (Pecuária, Confinamento, Reprodução) continuam específicos e não contaminam o núcleo —
 autenticação, usuários, permissões, estoque, financeiro, auditoria, anexos, busca, cadastros e plataforma
 são neutros por contrato.
+
+### 2.1 Autorização e autoridade do dado
+
+Dois princípios que a fundação passa a garantir por construção, e não por disciplina:
+
+- **A autorização de empresa é explícita.** `{ modo: "todas" }` e `{ modo: "selecionadas", empresaIds: [] }`
+  são estados distintos; a sentinela "lista vazia = todas" do mecanismo legado é traduzida na ponte
+  `apps/api/src/lib/empresa.ts` e não entra no núcleo (`docs/MULTI-COMPANY-CONTRACT.md` §2).
+- **O índice não é autoridade de segurança.** `erp.registros_globais.empresa_id` é denormalizado e pode
+  envelhecer; a empresa que autoriza vem sempre do **registro fonte vivo**, junto com o discriminador e a
+  existência (`docs/GLOBAL-ID-CONTRACT.md` §5.1).
+- **Nenhuma porta usa permissão vizinha como padrão.** Variante desconhecida ou interna nega com 404
+  (fail-closed), nas três portas de rebanho e na autorização de anexos.
 
 ## 3. Banco (migration 0010, estritamente aditiva)
 

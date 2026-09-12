@@ -45,11 +45,24 @@ existissem:
 **Regra de ouro:** empresa vinda do cliente é sempre pedido, nunca autorização. O servidor cruza o pedido
 com a autorização do vínculo e o resultado só pode diminuir o escopo, jamais aumentá-lo.
 
-### Convenção de lista vazia
+### A autorização é EXPLÍCITA (sem sentinela)
 
-`autorizadas = []` significa **todas as empresas da organização** (é a semântica atual de `member_farms`,
-preservada deliberadamente para que a migração seja compatível). Restringir um usuário é acrescentar
-empresas à lista, nunca esvaziá-la.
+O contrato canônico não tem lista vazia ambígua. `AutorizacaoEmpresas` é uma união discriminada:
+
+| Valor | Significado |
+| --- | --- |
+| `{ modo: "todas" }` | Autorizado a todas as empresas da organização. |
+| `{ modo: "selecionadas", empresaIds: [A, B] }` | Autorizado exatamente a A e B. |
+| `{ modo: "selecionadas", empresaIds: [] }` | Autorizado a **NENHUMA** empresa. |
+
+Num sistema multiempresa com autorização estrita, "autorizado a tudo" e "autorizado a nada" não podem ser o
+mesmo valor: a diferença entre os dois é a diferença entre um painel vazio e um vazamento.
+
+**Compatibilidade com o mecanismo legado.** A infraestrutura herdada (`member_farms`, `membership.farmIds`)
+usa a convenção inversa — lista vazia significa "todas". Essa tradução acontece em **um único lugar**, a
+ponte `apps/api/src/lib/empresa.ts` (`autorizacaoDeFarmIdsLegado`), antes de qualquer regra: o núcleo nunca
+enxerga a sentinela. A equivalência com o escopo que a API aplica hoje é testada caso a caso em
+`apps/api/test/unit/empresa-bridge.test.ts`.
 
 ## 3. "Todas as empresas" é escopo, não empresa
 

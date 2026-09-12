@@ -122,7 +122,7 @@ function render() {
   out.push("## Por superfície", "");
   out.push("| Superfície | Ocorrências | Catraca | Observação |", "| --- | ---: | --- | --- |");
   for (const s of SURFACES) {
-    const nota = s.id === "core-neutro" ? "só nomes de coluna do registry; PRE-BASE2-03 zera" : s.ratchet ? "não pode crescer" : s.id === "reference" ? "histórico externo: preservado, fora da catraca" : "documentação: acompanha a migração";
+    const nota = s.id === "core-neutro" ? "zerado: o catálogo do produto saiu da plataforma (mecanismo puro)" : s.ratchet ? "não pode crescer" : s.id === "reference" ? "histórico externo: preservado, fora da catraca" : "documentação: acompanha a migração";
     out.push(`| ${s.label} | ${counts[s.id]} | ${s.ratchet ? "sim" : "não"} | ${nota} |`);
   }
   out.push("");

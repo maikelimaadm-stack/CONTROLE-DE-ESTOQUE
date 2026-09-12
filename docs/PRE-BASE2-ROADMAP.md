@@ -8,7 +8,7 @@
 | # | Missão | Entrega | Depende de |
 | --- | --- | --- | --- |
 | 1 | **PRE-BASE2-01** — Fundação | Contratos (empresa, ID Global, i18n), dicionário de dados, inventário de "fazenda", auditores e gates. ✅ concluída | — |
-| 2 | **PRE-BASE2-02** — Empresa e permissões | Modelo de permissão por empresa (granularidade por módulo), camada de compatibilidade sobre o mecanismo de fazenda atual, `member_empresas` com semântica preservada. | 01 |
+| 2 | **PRE-BASE2-02** — Empresa e permissões | Modelo de permissão por empresa (granularidade por módulo), camada de compatibilidade sobre o mecanismo de fazenda atual, `member_empresas` gravando a autorização já no formato explícito do contrato (`todas` × `selecionadas`), aposentando a ponte de compatibilidade. | 01 |
 | 3 | **PRE-BASE2-03** — Migração fazenda → empresa | Colunas, cabeçalhos, rotas e RLS migrados com compatibilidade nos dois sentidos; catraca do inventário cai de verdade. | 02 |
 | 4 | **PRE-BASE2-04** — ID Global | Alocação nas rotas de escrita, backfill determinístico, resolução na busca global (`#55`), exibição no registro. | 01 (03 recomendada) |
 | 5 | **PRE-BASE2-05** — Contexto multiempresa | Seletor "todas / uma / conjunto", filtros e painéis consolidados, seleção obrigatória no lançamento, seletor de idioma. | 02, 03 |

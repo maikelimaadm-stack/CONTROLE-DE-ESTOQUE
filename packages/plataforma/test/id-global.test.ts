@@ -26,7 +26,7 @@ const comVariantes = (): EntidadeIdGlobal => ({
 
 describe("elegibilidade técnica (sem conhecer o produto)", () => {
   it("linhas sem identidade própria nunca são elegíveis", () => {
-    for (const t of ["pedido_items", "nota_lines", "title_apportionments", "member_farms", "role_permissions"]) {
+    for (const t of ["pedido_items", "nota_lines", "title_apportionments", "member_empresas", "role_permissions"]) {
       expect(tabelaTecnica(`erp.${t}`).tecnica, t).toBe(true);
     }
   });

@@ -29,7 +29,7 @@
 | --- | --- | --- | --- | --- |
 | Tenant/cliente do ERP | Organização | `organization_id`, `erp.organizations`, `X-Org-Id` | mantido por ora | Renomear organização é DATA-GOV; não há ganho funcional antes disso. |
 | Entidade operacional/jurídica | **Empresa** | `erp.farms`, `farm_id`, `origin_farm_id`, `destination_farm_id` | `erp.empresas`, `empresa_id` | PRE-BASE2-03: coluna nova + cópia + gatilho/visão de leitura + troca dos consumidores + remoção. |
-| Empresas permitidas ao usuário | Empresas permitidas | `erp.member_farms`, `membership.farmIds` | `member_empresas`, `empresasPermitidas` | PRE-BASE2-02. Semântica preservada: **lista vazia = todas**. |
+| Empresas permitidas ao usuário | Empresas permitidas | `erp.member_farms`, `membership.farmIds` | `member_empresas`, `empresasPermitidas` | PRE-BASE2-02. A sentinela "lista vazia = todas" é do mecanismo legado e fica confinada à ponte `apps/api/src/lib/empresa.ts`; o contrato canônico é explícito (`modo: todas | selecionadas`). |
 | Empresa selecionada | Empresa selecionada | `ctx.farmId`, `X-Farm-Id` | `empresaSelecionada`, `X-Empresa-Id` | PRE-BASE2-03 aceitando os dois cabeçalhos na transição. |
 | Escopo de empresa em SQL | Escopo de empresa | `farmScope`, `farmScopeSql`, `allowedFarms`, `farmAllowed` | `escopoEmpresa` (`@erp/plataforma`) | Ponte já existe: `apps/api/src/lib/empresa.ts`. |
 | Rota de cadastro | Empresas | `/cadastros/farms` | `/cadastros/empresas` | PRE-BASE2-03 com redirecionamento da rota antiga. |
@@ -61,7 +61,7 @@ obriga, destino e a missão que a remove.
 | `agro365`, `wagro`, `makgestao`, `projetomg` e domínios associados | **Proibido** em runtime e código de produto | `scripts/naming-audit.mjs` falha o build. |
 | Pacote de plataforma com nome de nicho (`@agro/platform`) | **Proibido** | O núcleo neutro é `@erp/plataforma`; o auditor falha se o nome antigo voltar. |
 | Prefixo de taxonomia com nicho (`AGR-…`) | **Proibido** | Códigos canônicos usam `ERP-…`; o auditor e o gate do dicionário recusam. |
-| Nome legado de Empresa dentro do núcleo neutro | **Depreciado** | Catraca `nucleo-neutro-nicho`: só os nomes de coluna que o registry precisa ler; não pode crescer, PRE-BASE2-03 zera. |
+| Nome legado de Empresa dentro do núcleo neutro | **Depreciado** | Catraca `nucleo-neutro-nicho`: **zerada** — o catálogo de entidades saiu da plataforma para `@agro/domain`, e o núcleo não cita mais tabela nem coluna de nicho. |
 | Prefixo `mg-` (iniciais do sistema de referência) em classes/tokens | **Depreciado** | Catraca: a dívida (`scripts/naming-audit.baseline.json`) não pode crescer. Código novo usa token neutro. |
 | Novo símbolo com `farm`/`fazenda` no núcleo | **Depreciado** | Catraca do inventário: superfícies de produto não podem crescer. |
 | Código canônico copiado do sistema de referência | **Proibido** | Dicionário só aceita `ERP-…`. |

@@ -3,7 +3,7 @@
 > **Documento gerado.** Não edite à mão: `node scripts/data-dictionary.mjs`.
 > A parte técnica (tabelas, colunas, tipos, nulidade, chaves, enums) é derivada de `supabase/migrations/*.sql`;
 > a parte funcional (nome, descrição, módulo, rota, TOP futura, notas de migração) é curada em
-> `packages/plataforma/dicionario-dados.mjs`. O gate `--check` recusa entrada que aponte para tabela/coluna inexistente.
+> `packages/domain/dicionario-dados.mjs`. O gate `--check` recusa entrada que aponte para tabela/coluna inexistente.
 
 Formato do dicionário: versão **1**. Taxonomia própria e neutra `ERP-<MÓDULO>-<ENTIDADE>` (não reproduz códigos do sistema de referência nem amarra o núcleo a um segmento de negócio).
 
@@ -1367,7 +1367,7 @@ Serviço planejado/executado com apontamento de recursos.
 ## Apêndice — tabelas ainda não curadas
 
 Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
-`packages/plataforma/dicionario-dados.mjs` promove a tabela para as seções acima.
+`packages/domain/dicionario-dados.mjs` promove a tabela para as seções acima.
 
 | Tabela | Campos | Organização | Empresa | Exclusão lógica |
 | --- | ---: | --- | --- | --- |
