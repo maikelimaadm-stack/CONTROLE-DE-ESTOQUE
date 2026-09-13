@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, type Db } from "@agro/db";
 // @ts-expect-error — classificação em JS puro, compartilhada com o gerador da matriz
-import { EXCECOES_RLS_EMPRESA, classificarTabela, politicaEsperada } from "../../../../packages/domain/empresa-rls.mjs";
+import { EXCECOES_RLS_EMPRESA, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
 import { TEST_URL } from "./setup.js";
 import { resetSchema, migrate } from "@agro/db";
 
@@ -40,38 +40,60 @@ async function tabelasComEmpresa(): Promise<Tabela[]> {
 }
 
 describe("classificação × políticas reais", () => {
-  it("toda tabela com coluna de empresa tem a política que a matriz promete", async () => {
+  it("toda tabela com coluna de empresa tem as políticas que a matriz promete, COMANDO A COMANDO", async () => {
     const problemas: string[] = [];
     for (const t of await tabelasComEmpresa()) {
       const categoria = classificarTabela(t.tabela, t.colunas, t.anulavel);
-      const esperada = politicaEsperada(categoria);
-      const p = await db.query<{ policyname: string; qual: string }>(
-        "select policyname, coalesce(qual,'') qual from pg_policies where schemaname='erp' and tablename=$1", [t.tabela]);
-      const nomes = p.rows.map((x) => x.policyname);
-      if (esperada === "tenant_e_empresa") {
-        if (!nomes.includes("tenant_e_empresa")) { problemas.push(`${t.tabela} (cat. ${categoria}): sem política tenant_e_empresa`); continue; }
-        const qual = p.rows.find((x) => x.policyname === "tenant_e_empresa")!.qual;
-        // O predicado de leitura é escrito INLINE na política (sublink escalar + sublink não correlacionado)
-        // para o planejador resolvê-lo uma vez por consulta, e não por linha — ver a nota de plano na 0015.
-        // Por isso a prova textual procura o CONJUNTO (`empresas_do_membro`) e o corte total, não um nome só.
-        if (!/empresas_do_membro/.test(qual) || !/escopo_empresa_total/.test(qual)) {
-          problemas.push(`${t.tabela}: a política existe mas não cita o escopo de empresa — ${qual}`);
+      const esperadas = politicasEsperadas(categoria) as Record<string, { cmd: string; using: string | null; check: string | null; gatilho?: string }> | null;
+      const p = await db.query<{ policyname: string; cmd: string; qual: string; with_check: string }>(
+        "select policyname, cmd, coalesce(qual,'') qual, coalesce(with_check,'') with_check from pg_policies where schemaname='erp' and tablename=$1", [t.tabela]);
+      if (!esperadas) {
+        if (!p.rows.length && !EXCECOES_RLS_EMPRESA[t.tabela]) problemas.push(`${t.tabela} (cat. ${categoria}): sem política nenhuma`);
+        continue;
+      }
+      for (const [nome, forma] of Object.entries(esperadas) as [string, { cmd: string; using: string | null; check: string | null; gatilho?: string }][]) {
+        if (forma.gatilho) {
+          // Onde a regra depende de OLD vs NEW, a política não basta: quem a sustenta é o gatilho.
+          const g = await db.query<{ n: string }>(
+            "select count(*)::text n from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace ns on ns.oid=c.relnamespace where ns.nspname='erp' and c.relname=$1 and t.tgname=$2 and not t.tgisinternal", [t.tabela, forma.gatilho]);
+          if (g.rows[0]!.n === "0") problemas.push(`${t.tabela}: falta o gatilho ${forma.gatilho}, que é quem impede redirecionar as pontas`);
         }
-      } else if (!nomes.length && !EXCECOES_RLS_EMPRESA[t.tabela]) {
-        problemas.push(`${t.tabela} (cat. ${categoria}): sem política nenhuma`);
+        const achada = p.rows.find((x) => x.policyname === nome);
+        if (!achada) { problemas.push(`${t.tabela} (cat. ${categoria}): falta a política ${nome} (${forma.cmd})`); continue; }
+        if (achada.cmd !== forma.cmd) problemas.push(`${t.tabela}.${nome}: comando ${achada.cmd}, esperado ${forma.cmd}`);
+        // O predicado é escrito INLINE na política (sublink escalar + sublink não correlacionado) para o
+        // planejador resolvê-lo uma vez por consulta — ver a nota de plano na 0015. Por isso a prova textual
+        // procura o CONJUNTO (`empresas_do_membro`) e o corte total, não um nome de função só.
+        const cita = (e: string) => /empresas_do_membro/.test(e) && /escopo_empresa_total/.test(e);
+        const soTenant = (e: string) => /tenant_visible/.test(e) && !/empresas_do_membro/.test(e);
+        const confere = (rotulo: "leitura" | "escrita" | "tenant", e: string) => (rotulo === "tenant" ? soTenant(e) : cita(e));
+        if (forma.using && !confere(forma.using as "leitura" | "escrita" | "tenant", achada.qual)) problemas.push(`${t.tabela}.${nome}: USING não é "${forma.using}" — ${achada.qual}`);
+        if (forma.check && !confere(forma.check as "leitura" | "escrita" | "tenant", achada.with_check)) problemas.push(`${t.tabela}.${nome}: WITH CHECK não é "${forma.check}" — ${achada.with_check}`);
+        // A DIFERENÇA que este round existe para garantir: onde a escrita é mais restrita que a leitura,
+        // o predicado de escrita NÃO pode aceitar o nulo como aceitação livre.
+        if (forma.using === "escrita" && /empresa_id is null or/.test(achada.qual)) {
+          problemas.push(`${t.tabela}.${nome}: o USING de ${forma.cmd} usa o predicado PERMISSIVO (aceita nulo) — poder ler viraria poder escrever`);
+        }
       }
     }
     expect(problemas).toEqual([]);
   });
 
-  it("NENHUMA tabela de empresa ficou com a política tenant-only ao lado — seria um OR que reabre tudo", async () => {
+  it("NENHUMA tabela de empresa ficou com uma política permissiva EXTRA no mesmo comando — seria um OR que reabre tudo", async () => {
     const problemas: string[] = [];
     for (const t of await tabelasComEmpresa()) {
       const categoria = classificarTabela(t.tabela, t.colunas, t.anulavel);
-      if (politicaEsperada(categoria) !== "tenant_e_empresa") continue;
-      const p = await db.query<{ policyname: string }>(
-        "select policyname from pg_policies where schemaname='erp' and tablename=$1 and permissive='PERMISSIVE' and policyname <> 'tenant_e_empresa'", [t.tabela]);
-      if (p.rows.length) problemas.push(`${t.tabela}: política permissiva extra ${p.rows.map((x) => x.policyname).join(", ")}`);
+      const esperadas = politicasEsperadas(categoria) as Record<string, { cmd: string }> | null;
+      if (!esperadas) continue;
+      const declaradas = new Set(Object.keys(esperadas));
+      const p = await db.query<{ policyname: string; cmd: string }>(
+        "select policyname, cmd from pg_policies where schemaname='erp' and tablename=$1 and permissive='PERMISSIVE'", [t.tabela]);
+      const extras = p.rows.filter((x) => !declaradas.has(x.policyname));
+      if (extras.length) problemas.push(`${t.tabela}: política permissiva extra ${extras.map((x) => `${x.policyname}/${x.cmd}`).join(", ")}`);
+      // Duas políticas PERMISSIVE do MESMO comando se somam com OR: a mais frouxa vence.
+      const porComando = new Map<string, string[]>();
+      for (const x of p.rows) porComando.set(x.cmd, [...(porComando.get(x.cmd) ?? []), x.policyname]);
+      for (const [cmd, nomes] of porComando) if (nomes.length > 1) problemas.push(`${t.tabela}: ${nomes.length} políticas permissivas em ${cmd} (${nomes.join(", ")}) — combinam com OR`);
     }
     expect(problemas).toEqual([]);
   });

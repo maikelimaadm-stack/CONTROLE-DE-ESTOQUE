@@ -140,3 +140,98 @@ describe("nome legado de tabela/entidade", () => {
     expect(canonico.statusCode, canonico.body).toBe(201);
   });
 });
+
+/**
+ * CADASTRO DE EMPRESA — o cadastro que a própria renomeação quebrou.
+ *
+ * `erp.empresas.code` é `int not null` e não vem do cliente (campo `readOnly`). Quem o gerava era um caso
+ * especial em `createOne` comparando `def.key === "farms"`. A renomeação trocou a chave do recurso para
+ * `empresas` e a comparação virou letra morta EM SILÊNCIO: o INSERT passou a sair sem `code` e a violar o
+ * NOT NULL. Nenhum teste cobria a criação da empresa, então a suíte seguiu verde.
+ */
+describe("cadastro de Empresa", () => {
+  const criar = (url: string, nome: string) => h.app.inject({
+    method: "POST", url, headers: comCabecalhos({ "content-type": "application/json" }),
+    payload: { name: nome, is_active: true }
+  });
+
+  it("POST na rota CANÔNICA cria a empresa e gera o código", async () => {
+    const r = await criar("/api/resources/empresas", "[TEST] Empresa Canônica");
+    expect(r.statusCode, JSON.stringify(j(r))).toBe(201);
+    const b = j(r);
+    expect(b.id, "a empresa foi persistida").toBeTruthy();
+    expect(Number(b["code"]), "o código foi gerado pela sequência").toBeGreaterThan(0);
+  });
+
+  it("POST na rota LEGADA cria do mesmo jeito — é a mesma tela e o mesmo registro", async () => {
+    const r = await criar("/api/resources/farms", "[TEST] Empresa Legada");
+    expect(r.statusCode, JSON.stringify(j(r))).toBe(201);
+    expect(Number(j(r)["code"])).toBeGreaterThan(0);
+  });
+
+  it("a rota canônica consegue RELER o que acabou de criar", async () => {
+    const criada = j(await criar("/api/resources/empresas", "[TEST] Empresa Releitura"));
+    const r = await h.app.inject({ method: "GET", url: `/api/resources/empresas/${criada.id}`, headers: comCabecalhos({}) });
+    expect(r.statusCode).toBe(200);
+    expect(j(r)["name"]).toBe("[TEST] Empresa Releitura");
+  });
+
+  it("as duas rotas usam UMA sequência: os códigos não se repetem", async () => {
+    const a = Number(j(await criar("/api/resources/empresas", "[TEST] Seq A"))["code"]);
+    const b = Number(j(await criar("/api/resources/farms", "[TEST] Seq B"))["code"]);
+    expect(b, "numerar por duas chaves daria o mesmo código a empresas diferentes").not.toBe(a);
+  });
+});
+
+/**
+ * QUEM PODE CRIAR EMPRESA — e por que a pergunta precisa ser feita ANTES do INSERT.
+ *
+ * `erp.empresas` é o único cadastro cuja RLS de LEITURA depende do escopo de empresa do próprio membro, e a
+ * empresa recém-criada não está no escopo de ninguém. Sem uma regra explícita, um membro de escopo PARCIAL
+ * inseria a linha (o `with check` da política é só de tenant), o `getOne` do create não a encontrava, a rota
+ * respondia 404 e a transação voltava atrás: o cadastro "não salvava" sem nenhuma mensagem que explicasse.
+ *
+ * A regra é a MESMA pergunta que o `using` da política faz (`erp.escopo_empresa_total(null)`): escopo total
+ * em ALGUM módulo. Quem passa nela cria e consegue reler; quem não passa recebe uma recusa explícita. Nada
+ * de auto-concessão de escopo — ninguém passa a enxergar empresa que não enxergava.
+ */
+describe("criar Empresa exige alcance de organização", () => {
+  const senha = "Demo@12345";
+  let parcial = ""; let total = "";
+
+  beforeAll(async () => {
+    const hash = (await admin.query<{ password_hash: string }>("select password_hash from erp.users where email='operador@demo.local'")).rows[0]!.password_hash;
+    const papel = (await admin.query<{ id: string }>("insert into erp.roles(organization_id,name) values ($1,'[TEST] Cadastra Empresa') returning id", [h.demo.orgId])).rows[0]!.id;
+    await admin.query("insert into erp.role_permissions(role_id,permission_key) values ($1,'farms.create'),($1,'farms.view'),($1,'farms.edit')", [papel]);
+    const criar = async (email: string, modo: string) => {
+      const u = (await admin.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ($1,$2,$3) returning id", [email, email, hash])).rows[0]!.id;
+      const m = (await admin.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,role_id,is_owner,is_active) values ($1,$2,$3,false,true) returning id", [h.demo.orgId, u, papel])).rows[0]!.id;
+      await admin.query("insert into erp.membro_escopos_empresa(organization_id,membro_id,modulo,modo) values ($1,$2,'estoque',$3)", [h.demo.orgId, m, modo]);
+      if (modo === "selecionadas") await admin.query("insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) values ($1,$2,'estoque','selecionadas',$3)", [h.demo.orgId, m, I.farm]);
+      const r = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: senha } });
+      return (r.json() as { token: string }).token;
+    };
+    parcial = await criar("parcial-empresa@demo.local", "selecionadas");
+    total = await criar("total-empresa@demo.local", "todas");
+  }, 60_000);
+
+  const post = (token: string, nome: string) => h.app.inject({
+    method: "POST", url: "/api/resources/empresas",
+    headers: { authorization: `Bearer ${token}`, "x-org-id": h.demo.orgId, "content-type": "application/json" },
+    payload: { name: nome, is_active: true }
+  });
+
+  it("membro com escopo PARCIAL é recusado com mensagem, não com 404 depois de inserir", async () => {
+    const r = await post(parcial, "[TEST] Nao deveria existir");
+    expect(r.statusCode, JSON.stringify(j(r))).toBe(422);
+    expect(j(r).error?.message).toContain("organização inteira");
+    const sobrou = await admin.query("select 1 from erp.empresas where name='[TEST] Nao deveria existir'");
+    expect(sobrou.rowCount, "nada pode ter ficado no banco").toBe(0);
+  });
+
+  it("membro com escopo TOTAL em algum módulo cria e consegue reler", async () => {
+    const r = await post(total, "[TEST] Empresa por nao-owner");
+    expect(r.statusCode, JSON.stringify(j(r))).toBe(201);
+    expect(Number(j(r)["code"])).toBeGreaterThan(0);
+  });
+});

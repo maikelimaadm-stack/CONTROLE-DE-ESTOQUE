@@ -17,6 +17,7 @@ import { harness, ids, TEST_URL, type Harness } from "./setup.js";
 let h: Harness; let admin: Db; let I: Awaited<ReturnType<typeof ids>>;
 let ORG = ""; let A = ""; let B = ""; let USUARIO = ""; let MEMBRO = "";
 let OUTRA_ORG = ""; let EMPRESA_OUTRA_ORG = "";
+let USUARIO_TOTAL = ""; let USUARIO_DESTINO = ""; let CONGELAMENTO_GLOBAL = ""; let TRANSFERENCIA = "";
 
 /** Consulta sob o papel da aplicação, com o contexto de tenant e o módulo da transação. */
 const comoApp = <T extends Record<string, unknown>>(modulo: string | null, sql: string, params: unknown[] = []) =>
@@ -46,6 +47,32 @@ beforeAll(async () => {
 
   // um armazém em cada empresa, com iniciais reconhecíveis
   await admin.query("insert into erp.warehouses(organization_id,empresa_id,initials,description,type) values ($1,$2,'RA','Armazem A','inputs'),($1,$3,'RB','Armazem B','inputs')", [ORG, A, B]);
+
+  // MEMBRO TOTAL no financeiro: a contraprova de todo teste de escrita da categoria B.
+  const ut = await admin.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ('rls-total@demo.local','Usuario Total','x') returning id");
+  USUARIO_TOTAL = ut.rows[0]!.id;
+  const mt = await admin.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,is_owner,is_active) values ($1,$2,false,true) returning id", [ORG, USUARIO_TOTAL]);
+  await admin.query("insert into erp.membro_escopos_empresa(organization_id,membro_id,modulo,modo) values ($1,$2,'financeiro','todas'),($1,$2,'frota_ativos','todas')", [ORG, mt.rows[0]!.id]);
+
+  // MEMBRO QUE SÓ ENXERGA O DESTINO da transferência (frota_ativos = [B]).
+  const ud = await admin.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ('rls-destino@demo.local','So Destino','x') returning id");
+  USUARIO_DESTINO = ud.rows[0]!.id;
+  const md = await admin.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,is_owner,is_active) values ($1,$2,false,true) returning id", [ORG, USUARIO_DESTINO]);
+  await admin.query("insert into erp.membro_escopos_empresa(organization_id,membro_id,modulo,modo) values ($1,$2,'frota_ativos','selecionadas')", [ORG, md.rows[0]!.id]);
+  await admin.query("insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) values ($1,$2,'frota_ativos','selecionadas',$3)", [ORG, md.rows[0]!.id, B]);
+  // o membro da matriz vê a ORIGEM (A) no mesmo módulo
+  await admin.query("insert into erp.membro_escopos_empresa(organization_id,membro_id,modulo,modo) values ($1,$2,'frota_ativos','selecionadas')", [ORG, MEMBRO]);
+  await admin.query("insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) values ($1,$2,'frota_ativos','selecionadas',$3)", [ORG, MEMBRO, A]);
+
+  // CATEGORIA B: congelamento financeiro SEM empresa = vale para a organização inteira.
+  const cg = await admin.query<{ id: string }>("insert into erp.financial_freezes(organization_id,empresa_id,year,month,is_frozen) values ($1,null,2031,7,true) returning id", [ORG]);
+  CONGELAMENTO_GLOBAL = cg.rows[0]!.id;
+
+  // CATEGORIA C: transferência de equipamento da empresa A para a B.
+  const fam = await admin.query<{ id: string }>("insert into erp.equipment_families(organization_id,name) values ($1,'[TEST] Familia RLS') returning id", [ORG]);
+  const eq = await admin.query<{ id: string }>("insert into erp.equipments(organization_id,empresa_id,family_id,code,description) values ($1,$2,$3,'RLS-EQ','Trator RLS') returning id", [ORG, A, fam.rows[0]!.id]);
+  const tr = await admin.query<{ id: string }>("insert into erp.equipment_transfers(organization_id,code,transfer_date,equipment_id,empresa_origem_id,empresa_destino_id) values ($1,'RLS-TR','2031-07-01',$2,$3,$4) returning id", [ORG, eq.rows[0]!.id, A, B]);
+  TRANSFERENCIA = tr.rows[0]!.id;
 
   // outra organização, para o teste de tenant
   const o = await admin.query<{ id: string }>("insert into erp.organizations(name,slug) values ('[TEST] Outra RLS','outra-rls') returning id");
@@ -196,5 +223,74 @@ describe("erp.v_bank_account_balances não é mais uma porta dos fundos", () => 
     const temOutraOrg = await comoApp<{ n: string }>(null,
       "select count(*) n from erp.v_bank_account_balances where organization_id=$1", [OUTRA_ORG]);
     expect(temOutraOrg.rows[0]!.n, "saldo de outra organização não pode aparecer").toBe("0");
+  });
+});
+
+/** Consulta sob o papel da aplicação com OUTRO usuário (as contraprovas de escrita usam papéis distintos). */
+const comoUsuario = <T extends Record<string, unknown>>(usuario: string, modulo: string | null, sql: string, params: unknown[] = []) =>
+  withTx(h.db, { orgId: ORG, userId: usuario, modulo }, (tx) => tx.query<T>(sql, params));
+/** Quantas linhas a instrução REALMENTE alterou. A RLS não levanta erro no UPDATE/DELETE: ela some com a linha. */
+const afetadas = async (usuario: string, modulo: string | null, sql: string, params: unknown[] = []) =>
+  (await comoUsuario<{ n: string }>(usuario, modulo, `with alvo as (${sql} returning 1) select count(*)::text n from alvo`, params)).rows[0]!.n;
+
+describe("CATEGORIA B — empresa NULA é da organização: legível por quem vê parte, mutável só por quem vê tudo", () => {
+  it("quem enxerga só uma empresa LÊ o registro sem empresa", async () => {
+    const r = await comoUsuario<{ n: string }>(USUARIO, "financeiro", "select count(*)::text n from erp.financial_freezes where id=$1", [CONGELAMENTO_GLOBAL]);
+    expect(r.rows[0]!.n).toBe("1");
+  });
+  it("mas NÃO o altera", async () => {
+    expect(await afetadas(USUARIO, "financeiro", "update erp.financial_freezes set is_frozen=false where id=$1", [CONGELAMENTO_GLOBAL])).toBe("0");
+  });
+  it("e NÃO o transforma num registro da empresa que ele enxerga — o caminho que o `for all` deixava aberto", async () => {
+    // OLD passava no `using` permissivo (`empresa_id is null`) e NEW passava no `with check` (empresa B no
+    // escopo): a linha da organização virava linha da empresa dele, sem erro nenhum.
+    expect(await afetadas(USUARIO, "financeiro", "update erp.financial_freezes set empresa_id=$2 where id=$1", [CONGELAMENTO_GLOBAL, B])).toBe("0");
+  });
+  it("e NÃO o apaga — DELETE não tem `with check` para segurá-lo", async () => {
+    expect(await afetadas(USUARIO, "financeiro", "delete from erp.financial_freezes where id=$1", [CONGELAMENTO_GLOBAL])).toBe("0");
+  });
+  it("quem tem escopo TOTAL do módulo altera", async () => {
+    expect(await afetadas(USUARIO_TOTAL, "financeiro", "update erp.financial_freezes set is_frozen=false where id=$1", [CONGELAMENTO_GLOBAL])).toBe("1");
+  });
+  it("quem tem escopo TOTAL do módulo apaga", async () => {
+    expect(await afetadas(USUARIO_TOTAL, "financeiro", "delete from erp.financial_freezes where id=$1", [CONGELAMENTO_GLOBAL])).toBe("1");
+  });
+});
+
+describe("CATEGORIA C — transferência: lê-se por qualquer ponta, escreve-se pela ORIGEM", () => {
+  it("quem enxerga só o DESTINO vê a transferência chegando", async () => {
+    const r = await comoUsuario<{ n: string }>(USUARIO_DESTINO, "frota_ativos", "select count(*)::text n from erp.equipment_transfers where id=$1", [TRANSFERENCIA]);
+    expect(r.rows[0]!.n).toBe("1");
+  });
+  it("e ALTERA o andamento — aceitar e cancelar são atos do destinatário no domínio", async () => {
+    // `POST /livestock/transfers/:id/process` é literalmente "processar na empresa destino" e
+    // `POST /stock/transfers/:id/cancel` autoriza origem OU destino. Os dois são UPDATE de `status`.
+    // Um `using` restrito à origem não os recusaria: faria UPDATE de ZERO linhas, e a rota não confere
+    // `rowCount` — o usuário veria "confirmado" com o banco intacto.
+    expect(await afetadas(USUARIO_DESTINO, "frota_ativos", "update erp.equipment_transfers set note='aceite' where id=$1", [TRANSFERENCIA])).toBe("1");
+  });
+  it("mas NÃO redireciona a ORIGEM para uma empresa sua — o gatilho recusa, porque `with check` só vê a linha nova", async () => {
+    await expect(comoUsuario(USUARIO_DESTINO, "frota_ativos", "update erp.equipment_transfers set empresa_origem_id=$2 where id=$1", [TRANSFERENCIA, B]))
+      .rejects.toThrow(/autoridade sobre a empresa de ORIGEM/);
+  });
+  it("nem muda o DESTINO", async () => {
+    await expect(comoUsuario(USUARIO_DESTINO, "frota_ativos", "update erp.equipment_transfers set empresa_destino_id=$2 where id=$1", [TRANSFERENCIA, A]))
+      .rejects.toThrow(/autoridade sobre a empresa de ORIGEM/);
+  });
+  it("e NÃO a apaga — receber não é poder desfazer o envio", async () => {
+    expect(await afetadas(USUARIO_DESTINO, "frota_ativos", "delete from erp.equipment_transfers where id=$1", [TRANSFERENCIA])).toBe("0");
+  });
+  it("quem enxerga a ORIGEM altera", async () => {
+    expect(await afetadas(USUARIO, "frota_ativos", "update erp.equipment_transfers set note='ok' where id=$1", [TRANSFERENCIA])).toBe("1");
+  });
+  it("quem enxerga a ORIGEM apaga", async () => {
+    expect(await afetadas(USUARIO, "frota_ativos", "delete from erp.equipment_transfers where id=$1", [TRANSFERENCIA])).toBe("1");
+  });
+  it("INSERIR para uma empresa que o autor NÃO enxerga continua permitido: é o caso normal do negócio", async () => {
+    const eq = await admin.query<{ id: string }>("insert into erp.equipments(organization_id,empresa_id,family_id,code,description) select $1,$2,family_id,'RLS-EQ2','Trator 2' from erp.equipments where code='RLS-EQ' returning id", [ORG, A]);
+    const n = await afetadas(USUARIO, "frota_ativos",
+      "insert into erp.equipment_transfers(organization_id,code,transfer_date,equipment_id,empresa_origem_id,empresa_destino_id) values ($1,'RLS-TR2','2031-08-01',$2,$3,$4)",
+      [ORG, eq.rows[0]!.id, A, B]);
+    expect(n).toBe("1");
   });
 });
