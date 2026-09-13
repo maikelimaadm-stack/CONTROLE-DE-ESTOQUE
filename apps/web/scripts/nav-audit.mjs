@@ -33,6 +33,26 @@ for (const [mod, map] of Object.entries(LEGACY_TABS)) {
   for (const [k, t] of Object.entries(map)) { const p = t.path ?? base; const sp = new URLSearchParams(); if (t.tab) sp.set("tab", t.tab); if (t.sub) sp.set("sub", t.sub); const href = sp.toString() ? `${p}?${sp}` : p; if (!isKnown(href)) errors.push(`LEGACY_TABS ${mod}.${k} → ${href}: destino não existe no registro`); }
 }
 for (const r of LEGACY_REDIRECTS) { if (r.destination.includes(":")) continue; if (r.destination.startsWith("/cadastros/")) continue; if (!isKnown(r.destination)) errors.push(`redirect ${r.source} → ${r.destination}: destino não é rota canônica conhecida`); }
+/**
+ * CICLO DE REDIRECIONAMENTO. Um redirect para a PRÓPRIA origem não dá erro em lugar nenhum: o Next devolve
+ * 308 para a mesma URL, o navegador tenta de novo e a tela morre em ERR_TOO_MANY_REDIRECTS — inclusive a
+ * tela canônica, que nem precisava de redirect. Aconteceu de verdade na renomeação do cadastro de Empresas:
+ * a troca de nome pegou os DOIS lados da MESMA regra e transformou `<rota antiga> → /cadastros/empresas` em
+ * `/cadastros/empresas → /cadastros/empresas`. É barato de escrever por acidente e caro de descobrir.
+ */
+// `has` é a exceção legítima: `/os → /os?scope=mine` só dispara com `?mine=1` na URL, e o destino não tem
+// esse parâmetro — a regra deixa de casar no segundo passo. Sem `has`, mesmo caminho de origem é laço.
+const destinoBase = (d) => d.split("?")[0];
+for (const r of LEGACY_REDIRECTS) {
+  if (destinoBase(r.destination) === r.source && !r.has?.length) {
+    errors.push(`redirect ${r.source} → ${r.destination}: aponta para a própria origem (laço infinito)`);
+  }
+}
+for (const a of LEGACY_REDIRECTS) for (const b of LEGACY_REDIRECTS) {
+  if (a !== b && destinoBase(a.destination) === b.source && destinoBase(b.destination) === a.source) {
+    errors.push(`redirects ${a.source} ⇄ ${b.source}: ciclo de dois passos`);
+  }
+}
 // páginas: tab("id") deve existir
 const appDir = path.join(here, "../src/app/(app)");
 const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((f) => (f.isDirectory() ? walk(path.join(d, f.name)) : f.name === "page.tsx" ? [path.join(d, f.name)] : []));

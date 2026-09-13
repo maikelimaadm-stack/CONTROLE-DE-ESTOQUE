@@ -13,7 +13,7 @@ import { WorkspaceTabsBar } from "./workspace-tabs";
 
 /**
  * AppShell (docs/UI-STANDARD.md › App Shell & Workspace):
- *   TopNavigation (marca · módulos · busca · fazenda · notificações · favoritos · usuário)
+ *   TopNavigation (marca · módulos · busca · empresa · notificações · favoritos · usuário)
  *   WorkspaceTabs (abas globais sincronizadas com a URL real)
  *   ActiveWorkspace (trilha + tela ativa; só a tela ativa é montada)
  * Identidade visual MODELO BASE1 (barra verde, pílulas, cartões). O menu deriva de nav.registry (SSOT).
@@ -24,18 +24,18 @@ function Crumbs() {
   return <nav className="mg-crumbs" aria-label="Navegação">{(crumbs.length ? crumbs : ["Início"]).map((c, i, arr) => <React.Fragment key={i}>{i > 0 && <ChevronRight className="mg-crumb-sep" aria-hidden />}<span className={cn("mg-crumb", i === arr.length - 1 && "mg-crumb--current")}>{c}</span></React.Fragment>)}</nav>;
 }
 
-/** Troca de fazenda com invalidação: fecha abas de registro/criação (dados farm-scoped), invalida consultas e pede confirmação se houver alterações não salvas. */
+/** Troca de EMPRESA com invalidação: fecha abas de registro/criação (dados de empresa), invalida consultas e pede confirmação se houver alterações não salvas. */
 function ContextGuard({ children }: { children: React.ReactNode }) {
-  const { session, setFarm } = useAuth(); const ws = useWorkspaceTabs(); const qc = useQueryClient(); const pathname = usePathname();
-  const prevFarm = React.useRef(session?.farmId ?? null); const [pending, setPending] = React.useState<string | null | undefined>(undefined);
+  const { session, setEmpresa } = useAuth(); const ws = useWorkspaceTabs(); const qc = useQueryClient(); const pathname = usePathname();
+  const prevEmpresa = React.useRef(session?.empresaId ?? null); const [pending, setPending] = React.useState<string | null | undefined>(undefined);
   React.useEffect(() => {
-    const farm = session?.farmId ?? null; if (farm === prevFarm.current) return; prevFarm.current = farm;
+    const empresa = session?.empresaId ?? null; if (empresa === prevEmpresa.current) return; prevEmpresa.current = empresa;
     const activeClosed = ws?.closeScoped() ?? false; void qc.invalidateQueries();
     if (activeClosed && ws) { const mod = ws.tabs.find((t) => t.kind === "module" && pathname.startsWith(t.key + "/")); ws.openTab(mod?.href ?? "/"); }
-  }, [session?.farmId, ws, qc, pathname]);
-  // intercepta a troca de fazenda quando há abas sujas (o <select> chama setFarm; aqui o guard observa o pedido)
-  React.useEffect(() => { const h = (e: Event) => { const id = (e as CustomEvent<string | null>).detail; if (ws?.hasDirty()) { setPending(id); e.preventDefault(); } else setFarm(id); }; window.addEventListener("agro:farm-request", h); return () => window.removeEventListener("agro:farm-request", h); }, [ws, setFarm]);
-  return <>{children}<ConfirmDialog open={pending !== undefined} onOpenChange={(o) => { if (!o) setPending(undefined); }} title="Trocar de fazenda com alterações não salvas?" description="As telas com alterações não salvas serão fechadas e as alterações descartadas." confirmLabel="Trocar mesmo assim" danger onConfirm={() => { if (pending !== undefined) setFarm(pending); setPending(undefined); }} /></>;
+  }, [session?.empresaId, ws, qc, pathname]);
+  // intercepta a troca de empresa quando há abas sujas (o <select> chama setEmpresa; aqui o guard observa o pedido)
+  React.useEffect(() => { const h = (e: Event) => { const id = (e as CustomEvent<string | null>).detail; if (ws?.hasDirty()) { setPending(id); e.preventDefault(); } else setEmpresa(id); }; window.addEventListener("agro:empresa-request", h); return () => window.removeEventListener("agro:empresa-request", h); }, [ws, setEmpresa]);
+  return <>{children}<ConfirmDialog open={pending !== undefined} onOpenChange={(o) => { if (!o) setPending(undefined); }} title="Trocar de empresa com alterações não salvas?" description="As telas com alterações não salvas serão fechadas e as alterações descartadas." confirmLabel="Trocar mesmo assim" danger onConfirm={() => { if (pending !== undefined) setEmpresa(pending); setPending(undefined); }} /></>;
 }
 
 function ShellInner({ children }: { children: React.ReactNode }) {

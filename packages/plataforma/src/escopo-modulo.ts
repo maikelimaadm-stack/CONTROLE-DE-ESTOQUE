@@ -66,5 +66,15 @@ export function escopoDoModulo(auth: AutorizacaoPorModulo, modulo: string | null
 export const moduloAcessivel = (auth: AutorizacaoPorModulo, modulo: string | null | undefined): boolean =>
   escopoDoModulo(auth, modulo).tipo !== "nenhuma";
 
+/**
+ * Escopo TOTAL em ALGUM módulo — a pergunta que vale para ato de ORGANIZAÇÃO, onde não há módulo ativo.
+ *
+ * É o espelho exato de `erp.escopo_empresa_total(null)` no banco, e existe para que a aplicação e a RLS
+ * respondam a MESMA pergunta. Quando as duas divergem o efeito não é um erro de permissão: é a escrita
+ * passar e a leitura seguinte não achar a própria linha.
+ */
+export const escopoTotalEmAlgumModulo = (auth: AutorizacaoPorModulo): boolean =>
+  auth.todosOsModulos || [...auth.modos.values()].some((m) => m === "todas");
+
 /** Módulos com alguma configuração (para exibição/administração; proprietário não usa esta lista). */
 export const modulosConfigurados = (auth: AutorizacaoPorModulo): string[] => [...auth.modos.keys()].sort();

@@ -23,10 +23,10 @@ type Hdr = Record<string, string>;
 const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { items?: Record<string, unknown>[]; error?: { code: string } };
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF").toString("base64");
 
-async function membro(nome: string, email: string, perms: string[], farmIds: string[] = []): Promise<Hdr> {
+async function membro(nome: string, email: string, perms: string[], empresaIds: string[] = []): Promise<Hdr> {
   const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome}`, permissions: perms } });
   expect(papel.statusCode, papel.body).toBe(201);
-  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Rebanho@12345", role_id: j(papel).id, farm_ids: farmIds } });
+  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Rebanho@12345", role_id: j(papel).id, farm_ids: empresaIds } });
   expect(vinculo.statusCode, vinculo.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Rebanho@12345" } });
   expect(login.statusCode, login.body).toBe(200);
@@ -50,7 +50,7 @@ async function comoServico<T>(fn: (ctx: ServiceCtx) => Promise<T>): Promise<T> {
     fn({
       tx,
       user: { id: h.demo.adminUserId, email: h.demo.adminEmail, name: "Administrador" },
-      orgId: h.demo.orgId, farmId: null,
+      orgId: h.demo.orgId, empresaId: null,
       membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: true, memberId: "m", escopos: AUTORIZACAO_PROPRIETARIO },
       permissions: new Set<string>()
     }));

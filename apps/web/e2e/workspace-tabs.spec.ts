@@ -4,13 +4,13 @@ import { login } from "./helpers";
 /**
  * UI-STAB-01 — abas globais de trabalho: identidade (dedupe por tela, registros distintos = abas distintas), URL real
  * como autoridade (deep link, voltar/avançar, refresh), fechar (vizinha assume), "+" abre a busca, aba Início fixa,
- * troca de fazenda fecha abas de registro (farm-scoped).
+ * troca de empresa fecha abas de registro (empresa-scoped).
  */
 async function apiCall<T = Record<string, unknown>>(page: Page, method: string, path: string, body?: unknown): Promise<T> {
   const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
   return page.evaluate(async ({ method, path, body, api }) => {
-    const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; farmId: string | null };
-    const res = await fetch(`${api}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${s.token}`, ...(s.orgId ? { "x-org-id": s.orgId } : {}), ...(s.farmId ? { "x-farm-id": s.farmId } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; empresaId: string | null };
+    const res = await fetch(`${api}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${s.token}`, ...(s.orgId ? { "x-org-id": s.orgId } : {}), ...(s.empresaId ? { "x-empresa-id": s.empresaId } : {}) }, body: body ? JSON.stringify(body) : undefined });
     const text = await res.text(); const data = text ? JSON.parse(text) : {};
     if (!res.ok) throw new Error(`${res.status} ${path}: ${text.slice(0, 200)}`);
     return data as T;
@@ -24,9 +24,9 @@ const openVia = async (page: Page, module: string, item: RegExp | string) => {
   await btn.hover(); await page.getByTestId("mega-menu").getByTestId("mega-item").filter({ hasText: item }).first().click();
 };
 async function fuelSupply(page: Page, note: string) {
-  const eq = await apiCall<{ items: { id: string; farm_id: string }[] }>(page, "GET", "/api/resources/equipments?pageSize=1"); const e = eq.items[0]!;
+  const eq = await apiCall<{ items: { id: string; empresa_id: string }[] }>(page, "GET", "/api/resources/equipments?pageSize=1"); const e = eq.items[0]!;
   const prods = await apiCall<{ id: string }[]>(page, "GET", "/api/resources/products/options?search=Diesel"); const p = prods[0]!;
-  return apiCall<{ id: string; code: string }>(page, "POST", "/api/fleet/fuel-supplies", { farm_id: e.farm_id, supply_date: "2026-09-10", equipment_id: e.id, product_id: p.id, quantity: "5", unit_value: "6.2", note });
+  return apiCall<{ id: string; code: string }>(page, "POST", "/api/fleet/fuel-supplies", { empresa_id: e.empresa_id, supply_date: "2026-09-10", equipment_id: e.id, product_id: p.id, quantity: "5", unit_value: "6.2", note });
 }
 
 test.describe("abas globais", () => {
@@ -70,11 +70,11 @@ test.describe("abas globais", () => {
     await page.goForward(); await expect(page).toHaveURL(/\/estoque\?tab=estoque&sub=saldo/); await expect(activeTab(page)).toHaveText("Estoque"); await expect(page.getByRole("heading", { name: "Saldo de Estoque" })).toBeVisible();
   });
 
-  test("aba de registro (farm-scoped) fecha ao trocar de fazenda; abas de módulo permanecem", async ({ page }) => {
+  test("aba de registro (empresa-scoped) fecha ao trocar de empresa; abas de módulo permanecem", async ({ page }) => {
     await login(page);
-    const a = await fuelSupply(page, "farm switch"); await openVia(page, "Estoque", "Saldo");
+    const a = await fuelSupply(page, "empresa switch"); await openVia(page, "Estoque", "Saldo");
     await page.goto(`/frota/abastecimentos/${a.id}`); await expect(activeTab(page)).toHaveText(`Abastecimento ${a.code}`);
-    await page.getByLabel("Fazenda ativa").selectOption({ index: 1 });
+    await page.getByLabel("Empresa ativa").selectOption({ index: 1 });
     await expect(tabs(page).filter({ hasText: "Abastecimento" })).toHaveCount(0); await expect(tabs(page).filter({ hasText: "Estoque" })).toHaveCount(1);
     await expect(page).not.toHaveURL(new RegExp(a.id)); await expect(page.getByTestId("error-state")).toHaveCount(0);
   });

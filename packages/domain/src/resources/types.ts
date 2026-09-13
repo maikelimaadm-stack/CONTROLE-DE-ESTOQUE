@@ -42,15 +42,15 @@ export interface ResourceDef {
   table: string;
   /** chave de permissão (recurso) */
   permission: string;
-  /** possui farm_id (escopo por fazenda ativa) */
-  farmScoped?: boolean;
+  /** possui `empresa_id` NOT NULL (escopo da empresa do registro) */
+  empresaScoped?: boolean;
   /**
-   * possui farm_id ANULÁVEL, em que nulo = registro da ORGANIZAÇÃO (vale para todas as empresas).
+   * possui `empresa_id` ANULÁVEL, em que nulo = registro da ORGANIZAÇÃO (vale para todas as empresas).
    * O recorte de leitura é o mesmo, com semântica nullable: o registro sem empresa continua visível.
    * Na ESCRITA, criar um registro sem empresa alcança todas elas — então só quem tem o módulo em
    * `todas` (ou o proprietário) pode fazê-lo; quem tem `selecionadas` precisa dizer a empresa.
    */
-  farmScopedNulo?: boolean;
+  empresaScopedNulo?: boolean;
   /** entidade de sequência para código automático (coluna code) */
   codeEntity?: string;
   fields: FieldDef[];

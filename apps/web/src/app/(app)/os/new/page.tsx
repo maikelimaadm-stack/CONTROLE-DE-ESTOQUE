@@ -4,23 +4,23 @@ import { useRouter } from "next/navigation";
 import { todayISO, brl } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { useCreate, useFarmDefault } from "@/features/docs/shared";
+import { useCreate, useEmpresaPadrao } from "@/features/docs/shared";
 import { Trash2, Plus } from "lucide-react";
 const SEC: Record<string, string> = { labor: "Mão de obra", machine: "Equipamentos", input: "Insumos", ppe: "EPIs", production: "Produção" };
 interface Line { section: string; person_id: string; equipment_id: string; product_id: string; warehouse_id: string; quantity: string; unit_value: string; hours: string; note: string }
 export default function Page() {
-  const router = useRouter(); const farm = useFarmDefault();
-  const [h, setH] = React.useState({ farm_id: "", order_date: todayISO(), harvest_id: "", activity_id: "", operation_id: "", cost_center_id: "", responsible_person_id: "", team_id: "", description: "", planned_start: "", planned_end: "" });
+  const router = useRouter(); const empresa = useEmpresaPadrao();
+  const [h, setH] = React.useState({ empresa_id: "", order_date: todayISO(), harvest_id: "", activity_id: "", operation_id: "", cost_center_id: "", responsible_person_id: "", team_id: "", description: "", planned_start: "", planned_end: "" });
   const [lines, setLines] = React.useState<Line[]>([]);
-  React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
+  React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const create = useCreate<{ id: string }>("/api/service-orders", (r) => router.push(`/os/${r.id}`));
   const upd = (i: number, p: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...p } : l)));
   const add = (section: string) => setLines([...lines, { section, person_id: "", equipment_id: "", product_id: "", warehouse_id: "", quantity: "1", unit_value: "0", hours: "", note: "" }]);
   const total = lines.reduce((a, l) => a + Number(l.quantity || 0) * Number(l.unit_value || 0), 0);
   const submit = () => create.mutate({ ...h, harvest_id: h.harvest_id || null, activity_id: h.activity_id || null, operation_id: h.operation_id || null, cost_center_id: h.cost_center_id || null, responsible_person_id: h.responsible_person_id || null, team_id: h.team_id || null, description: h.description || null, planned_start: h.planned_start || null, planned_end: h.planned_end || null, lines: lines.map((l) => ({ section: l.section, person_id: l.person_id || null, equipment_id: l.equipment_id || null, product_id: l.product_id || null, warehouse_id: l.warehouse_id || null, quantity: l.quantity || "0", unit_value: l.unit_value || "0", hours: l.hours || null, note: l.note || null })) });
-  return <Card><CardHeader title="Nova ordem de serviço" subtitle="Insumos/EPIs com armazém são baixados do estoque ao finalizar a OS." actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.farm_id} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
+  return <Card><CardHeader title="Nova ordem de serviço" subtitle="Insumos/EPIs com armazém são baixados do estoque ao finalizar a OS." actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.empresa_id} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
-      <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>
+      <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.order_date} onChange={(e) => setH({ ...h, order_date: e.target.value })} /></Field>
       <Field label="Safra" span={3}><RefSelect resource="harvests" value={h.harvest_id} onChange={(v) => setH({ ...h, harvest_id: v ?? "" })} /></Field>
       <Field label="Atividade" span={2}><RefSelect resource="activities" value={h.activity_id} onChange={(v) => setH({ ...h, activity_id: v ?? "" })} /></Field>

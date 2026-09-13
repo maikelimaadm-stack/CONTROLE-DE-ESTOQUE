@@ -105,7 +105,7 @@ export function Base1List(props: Base1ListProps) {
   const total = q.data?.pages[0]?.total ?? 0; const totals = q.data?.pages[0]?.totals;
   const filtersActive = Object.keys(applied.params).length > 0 || Boolean(applied.search);
   const sess = getSession();
-  const chipScope = `${moduleId}:${sess?.orgId ?? "-"}:${sess?.farmId ?? "-"}:${sess?.user?.id ?? "-"}:${JSON.stringify(queryKeyExtra ?? null)}`;
+  const chipScope = `${moduleId}:${sess?.orgId ?? "-"}:${sess?.empresaId ?? "-"}:${sess?.user?.id ?? "-"}:${JSON.stringify(queryKeyExtra ?? null)}`;
   // "Totais" (sem filtro) só precisa de consulta própria quando há filtro aplicado
   const grand = useQuery({ queryKey: ["b1-total", moduleId, queryKeyExtra, chipScope], queryFn: async () => (await fetchPage({ page: 1, pageSize: 1, filters: {} })).total, staleTime: 120_000, enabled: filtersActive });
   const apply = (v: FilterValues = values, s: string = search) => { setApplied({ search: s, params: toParams(filters, v) }); setSelected(new Set()); setFavOnly(false); };

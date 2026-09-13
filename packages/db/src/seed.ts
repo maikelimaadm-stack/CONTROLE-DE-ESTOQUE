@@ -41,7 +41,7 @@ export async function seedReference(db: Db, log: (m: string) => void = console.l
   log("reference data seeded");
 }
 
-export interface DemoOrg { orgId: string; adminUserId: string; farmIds: string[]; adminEmail: string; adminPassword: string }
+export interface DemoOrg { orgId: string; adminUserId: string; empresaIds: string[]; adminEmail: string; adminPassword: string }
 
 /** Cria uma organização DEMO completa (claramente marcada) com usuário admin local. */
 export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: string; adminPassword?: string; slug?: string } = {}, log: (m: string) => void = console.log): Promise<DemoOrg> {
@@ -74,18 +74,24 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
        where m.organization_id=$1 and m.is_active
        on conflict (organization_id, membro_id, modulo) do nothing`, [orgId]);
 
-    const farmIds: string[] = [];
+    const empresaIds: string[] = [];
     for (const [code, name, city] of [[1, "[DEMO] Fazenda Santa Luzia", 5208707], [2, "[DEMO] Fazenda Boa Vista", 1709500]] as const) {
-      const f = await tx.query<{ id: string }>("insert into erp.farms(organization_id,code,name,document,address_city,address_state,area_ha,created_by) values ($1,$2,$3,'00000000000191',(select name from erp.cities where id=$4),(select state_code from erp.cities where id=$4),1200,$5) on conflict (organization_id,code) do update set name=excluded.name returning id", [orgId, code, name, city, adminUserId]);
-      farmIds.push(f.rows[0]!.id);
+      const f = await tx.query<{ id: string }>("insert into erp.empresas(organization_id,code,name,document,address_city,address_state,area_ha,created_by) values ($1,$2,$3,'00000000000191',(select name from erp.cities where id=$4),(select state_code from erp.cities where id=$4),1200,$5) on conflict (organization_id,code) do update set name=excluded.name returning id", [orgId, code, name, city, adminUserId]);
+      empresaIds.push(f.rows[0]!.id);
     }
+    // O código das empresas do seed é escrito à mão (1 e 2) para o seed ser reexecutável. Se o contador
+    // ficar em zero, a PRIMEIRA empresa criada pela tela pede 1 e colide com a empresa 1 que já existe.
+    // Alinhar o contador com o acervo é o que faz o cadastro funcionar num banco recém-semeado.
+    await tx.query(`insert into erp.code_sequences (organization_id, entity, last_value)
+                    select organization_id, 'farm', max(code) from erp.empresas where organization_id=$1 group by organization_id
+                    on conflict (organization_id, entity) do update set last_value = greatest(erp.code_sequences.last_value, excluded.last_value)`, [orgId]);
     // Centros de custo
     const cc = async (code: string, name: string, kind: string, parent: string | null) => (await tx.query<{ id: string }>("insert into erp.cost_centers(organization_id,code,name,kind,parent_id) values ($1,$2,$3,$4,$5) on conflict (organization_id,code) do update set name=excluded.name returning id", [orgId, code, name, kind, parent])).rows[0]!.id;
     const ccAdm = await cc("1.01", "Administração", "synthetic", null); const ccAdmGeral = await cc("1.01.001", "Adm Geral", "analytic", ccAdm);
     const ccEst = await cc("1.02", "Estoque", "synthetic", null); await cc("1.02.001", "Estoque Insumos", "analytic", ccEst); const ccMaq = await cc("1.03.001", "Parque de Máquinas", "analytic", null);
     const ccPec = await cc("2.01", "Pecuária", "synthetic", null); const ccCria = await cc("2.01.001", "Cria", "analytic", ccPec); await cc("2.01.002", "Recria", "analytic", ccPec); const ccEng = await cc("2.01.003", "Engorda/Confinamento", "analytic", ccPec);
     const ccAgro = await cc("3.01", "Agricultura", "synthetic", null); await cc("3.01.001", "Soja", "analytic", ccAgro);
-    for (const fid of farmIds) for (const c of [ccAdmGeral, ccMaq, ccCria, ccEng]) await tx.query("insert into erp.farm_cost_centers(farm_id,cost_center_id) values ($1,$2) on conflict do nothing", [fid, c]);
+    for (const fid of empresaIds) for (const c of [ccAdmGeral, ccMaq, ccCria, ccEng]) await tx.query("insert into erp.empresa_cost_centers(empresa_id,cost_center_id) values ($1,$2) on conflict do nothing", [fid, c]);
     // Safras
     await tx.query("insert into erp.harvests(organization_id,description,start_date,end_date,is_current,first_semester_month,second_semester_month) values ($1,'Safra 2025/2026','2025-07-01','2026-06-30',false,1,7),($1,'Safra 2026/2027','2026-07-01','2027-06-30',true,1,7) on conflict do nothing", [orgId]);
     // Categorias financeiras
@@ -109,14 +115,14 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
     const unit = async (s: string) => (await tx.query<{ id: string }>("select id from erp.measurement_units where organization_id is null and symbol=$1", [s])).rows[0]!.id;
     const uKg = await unit("kg"), uSc = await unit("sc"), uL = await unit("L"), uUn = await unit("un"), uDose = await unit("dose"), uTon = await unit("ton");
     const wh: Record<string, string> = {};
-    for (const [i, fid] of farmIds.entries()) {
-      const w = await tx.query<{ id: string }>("insert into erp.warehouses(organization_id,farm_id,initials,description,type) values ($1,$2,$3,$4,'inputs') on conflict (farm_id,initials) do update set description=excluded.description returning id", [orgId, fid, "ALM", `Almoxarifado Central ${i + 1}`]);
+    for (const [i, fid] of empresaIds.entries()) {
+      const w = await tx.query<{ id: string }>("insert into erp.warehouses(organization_id,empresa_id,initials,description,type) values ($1,$2,$3,$4,'inputs') on conflict (empresa_id,initials) do update set description=excluded.description returning id", [orgId, fid, "ALM", `Almoxarifado Central ${i + 1}`]);
       wh[fid] = w.rows[0]!.id;
-      await tx.query("insert into erp.warehouses(organization_id,farm_id,initials,description,type) values ($1,$2,'FAB','Fábrica de Ração','formulation'),($1,$2,'SILO','Silo de Grãos','production') on conflict do nothing", [orgId, fid]);
+      await tx.query("insert into erp.warehouses(organization_id,empresa_id,initials,description,type) values ($1,$2,'FAB','Fábrica de Ração','formulation'),($1,$2,'SILO','Silo de Grãos','production') on conflict do nothing", [orgId, fid]);
     }
     const prod = async (desc: string, g: string, c: string, k: string, u: string, fcat: string, extra: Record<string, unknown> = {}) => {
       const code = String((await tx.query<{ n: string }>("select erp.next_code($1,'product') n", [orgId])).rows[0]!.n).padStart(5, "0");
-      return (await tx.query<{ id: string }>("insert into erp.products(organization_id,code,description,group_id,category_id,kind_id,measurement_id,financial_category_id,control_stock,has_lot,min_stock,reference_price,default_warehouse_id,withdrawal_period_days,ncm_code,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10,$11,$12,$13,$14,$15) returning id", [orgId, code, desc, g, c, k, u, fcat, extra.has_lot ?? false, extra.min_stock ?? 0, extra.price ?? 0, wh[farmIds[0]!], extra.withdrawal ?? null, extra.ncm ?? null, adminUserId])).rows[0]!.id;
+      return (await tx.query<{ id: string }>("insert into erp.products(organization_id,code,description,group_id,category_id,kind_id,measurement_id,financial_category_id,control_stock,has_lot,min_stock,reference_price,default_warehouse_id,withdrawal_period_days,ncm_code,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10,$11,$12,$13,$14,$15) returning id", [orgId, code, desc, g, c, k, u, fcat, extra.has_lot ?? false, extra.min_stock ?? 0, extra.price ?? 0, wh[empresaIds[0]!], extra.withdrawal ?? null, extra.ncm ?? null, adminUserId])).rows[0]!.id;
     };
     const existing = await tx.query("select 1 from erp.products where organization_id=$1 limit 1", [orgId]);
     let products: Record<string, string> = {};
@@ -150,7 +156,7 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
         const fn = await tx.query<{ id: string }>("insert into erp.job_functions(organization_id,name,description,base_salary,monthly_hours,hour_value) values ($1,'Vaqueiro','Manejo de gado',2200,220,10) returning id", [orgId]);
         await tx.query("insert into erp.employee_profiles(person_id,function_id,base_salary,cost_center_id,birthday,admission_date) values ($1,$2,2200,$3,'1990-05-20','2024-02-01') on conflict do nothing", [emp1, fn.rows[0]!.id, ccCria]);
       }
-      if (owner) { await tx.query("insert into erp.proprietary_profiles(person_id) values ($1) on conflict do nothing", [owner]); for (const fid of farmIds) await tx.query("insert into erp.proprietary_farms(person_id,farm_id,percentage) values ($1,$2,100) on conflict do nothing", [owner, fid]); }
+      if (owner) { await tx.query("insert into erp.proprietary_profiles(person_id) values ($1) on conflict do nothing", [owner]); for (const fid of empresaIds) await tx.query("insert into erp.proprietary_farms(person_id,empresa_id,percentage) values ($1,$2,100) on conflict do nothing", [owner, fid]); }
     }
     // Contas bancárias
     await tx.query("insert into erp.bank_accounts(organization_id,code,description,bank_code,agency,account_number,type,opening_balance) values ($1,'CXF','Caixa Fazenda','000','0','0','cash',5000),($1,'BB','Banco do Brasil Principal','001','1234','56789-0','checking',150000) on conflict do nothing", [orgId]);
@@ -160,30 +166,30 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
     await tx.query("insert into erp.authorizers(organization_id,user_id,max_value,min_quotes,levels) values ($1,$2,100000,1,'{1,2}') on conflict do nothing", [orgId, adminUserId]);
     // Bens
     for (const [code, desc, fam, val] of [["0001", "Trator 4x4 110cv", "Máquinas Agrícolas", 380000], ["0002", "Caminhonete Cabine Dupla", "Veículos", 220000], ["0003", "Balança Bovina 3.000kg", "Equipamentos Agrícolas", 25000]] as const) {
-      await tx.query("insert into erp.equipments(organization_id,farm_id,code,description,family_id,equipment_type,hour_value,year_model,has_depreciation,acquisition_value,acquisition_date,depreciation_type,residual_percent,life_years,depreciation_percent,residual_value,depreciable_value,features) values ($1,$2,$3,$4,(select id from erp.equipment_families where name=$5 and organization_id is null),'own',120,'2023',true,$6,'2023-03-01','with_residual',10,10,10,$6*0.1,$6*0.9,'{supply,maintenance}') on conflict do nothing", [orgId, farmIds[0], code, desc, fam, val]);
+      await tx.query("insert into erp.equipments(organization_id,empresa_id,code,description,family_id,equipment_type,hour_value,year_model,has_depreciation,acquisition_value,acquisition_date,depreciation_type,residual_percent,life_years,depreciation_percent,residual_value,depreciable_value,features) values ($1,$2,$3,$4,(select id from erp.equipment_families where name=$5 and organization_id is null),'own',120,'2023',true,$6,'2023-03-01','with_residual',10,10,10,$6*0.1,$6*0.9,'{supply,maintenance}') on conflict do nothing", [orgId, empresaIds[0], code, desc, fam, val]);
     }
     // Pecuária: lotes, módulos, áreas, animais
     const species = (await tx.query<{ id: string }>("select id from erp.animal_species where organization_id is null and name='Bovinos de Corte'")).rows[0]!.id;
     const cat = async (n: string) => (await tx.query<{ id: string }>("select id from erp.animal_categories where species_id=$1 and name=$2", [species, n])).rows[0]!.id;
     const fodder = await tx.query<{ id: string }>("insert into erp.fodders(organization_id,description) values ($1,'Brachiaria Marandu') returning id", [orgId]);
-    const mod = await tx.query<{ id: string }>("insert into erp.grazing_modules(organization_id,farm_id,code,module_date,description,fodder_id,color) values ($1,$2,'M01',current_date,'Módulo Pastejo 01',$3,'#2e7d32') on conflict do nothing returning id", [orgId, farmIds[0], fodder.rows[0]!.id]);
-    if (mod.rowCount) for (const a of ["01", "02", "03", "04"]) await tx.query("insert into erp.areas(organization_id,farm_id,grazing_module_id,code,name,area_ha,fodder_id) values ($1,$2,$3,$4,$5,25,$6) on conflict do nothing", [orgId, farmIds[0], mod.rows[0]!.id, a, `Piquete ${a}`, fodder.rows[0]!.id]);
+    const mod = await tx.query<{ id: string }>("insert into erp.grazing_modules(organization_id,empresa_id,code,module_date,description,fodder_id,color) values ($1,$2,'M01',current_date,'Módulo Pastejo 01',$3,'#2e7d32') on conflict do nothing returning id", [orgId, empresaIds[0], fodder.rows[0]!.id]);
+    if (mod.rowCount) for (const a of ["01", "02", "03", "04"]) await tx.query("insert into erp.areas(organization_id,empresa_id,grazing_module_id,code,name,area_ha,fodder_id) values ($1,$2,$3,$4,$5,25,$6) on conflict do nothing", [orgId, empresaIds[0], mod.rows[0]!.id, a, `Piquete ${a}`, fodder.rows[0]!.id]);
     const haveAnimals = await tx.query("select 1 from erp.animals where organization_id=$1 limit 1", [orgId]);
     if (!haveAnimals.rowCount) {
-      const b1 = (await tx.query<{ id: string }>("insert into erp.batches(organization_id,farm_id,code,batch_date,description,species_id,batch_type,grazing_module_id,entry_date) values ($1,$2,'L0001',current_date,'Lote Recria Machos','$3','pasture',$4,current_date) returning id".replace("'$3'", "$3"), [orgId, farmIds[0], species, mod.rows[0]?.id ?? null])).rows[0]!.id;
-      const b2 = (await tx.query<{ id: string }>("insert into erp.batches(organization_id,farm_id,code,batch_date,description,species_id,batch_type,entry_date) values ($1,$2,'L0002',current_date,'Lote Matrizes',$3,'breeding',current_date) returning id", [orgId, farmIds[0], species])).rows[0]!.id;
+      const b1 = (await tx.query<{ id: string }>("insert into erp.batches(organization_id,empresa_id,code,batch_date,description,species_id,batch_type,grazing_module_id,entry_date) values ($1,$2,'L0001',current_date,'Lote Recria Machos','$3','pasture',$4,current_date) returning id".replace("'$3'", "$3"), [orgId, empresaIds[0], species, mod.rows[0]?.id ?? null])).rows[0]!.id;
+      const b2 = (await tx.query<{ id: string }>("insert into erp.batches(organization_id,empresa_id,code,batch_date,description,species_id,batch_type,entry_date) values ($1,$2,'L0002',current_date,'Lote Matrizes',$3,'breeding',current_date) returning id", [orgId, empresaIds[0], species])).rows[0]!.id;
       const breed = (await tx.query<{ id: string }>("select id from erp.breeds where name='Nelore' and organization_id is null")).rows[0]!.id;
       const idType = (await tx.query<{ id: string }>("select id from erp.identification_types where name='Brinco de Manejo' and organization_id is null")).rows[0]!.id;
       const catGar = await cat("Garrote"), catMat = await cat("Matriz");
       for (let i = 1; i <= 20; i++) {
         const isFemale = i > 12;
-        const a = await tx.query<{ id: string }>("insert into erp.animals(organization_id,farm_id,species_id,category_id,breed_id,batch_id,sex,entry_date,birth_date,current_weight,entry_weight,price_arroba_alive,unit_value,created_by) values ($1,$2,$3,$4,$5,$6,$7,current_date - 90,$8,$9,$9,300,$10,$11) returning id", [orgId, farmIds[0], species, isFemale ? catMat : catGar, breed, isFemale ? b2 : b1, isFemale ? "F" : "M", isFemale ? "2021-03-10" : "2024-09-15", isFemale ? 430 : 260, isFemale ? 4300 : 2600, adminUserId]);
+        const a = await tx.query<{ id: string }>("insert into erp.animals(organization_id,empresa_id,species_id,category_id,breed_id,batch_id,sex,entry_date,birth_date,current_weight,entry_weight,price_arroba_alive,unit_value,created_by) values ($1,$2,$3,$4,$5,$6,$7,current_date - 90,$8,$9,$9,300,$10,$11) returning id", [orgId, empresaIds[0], species, isFemale ? catMat : catGar, breed, isFemale ? b2 : b1, isFemale ? "F" : "M", isFemale ? "2021-03-10" : "2024-09-15", isFemale ? 430 : 260, isFemale ? 4300 : 2600, adminUserId]);
         await tx.query("insert into erp.animal_identifications(animal_id,organization_id,identification_type_id,value,is_primary) values ($1,$2,$3,$4,true)", [a.rows[0]!.id, orgId, idType, `DEMO-${String(i).padStart(4, "0")}`]);
       }
-      await tx.query("insert into erp.herd_lots(organization_id,farm_id,batch_id,species_id,category_id,breed_id,quantity,average_weight,unit_value,entry_date) values ($1,$2,$3,$4,$5,$6,35,180,1800,current_date - 60)", [orgId, farmIds[0], b1, species, await cat("Bezerro"), breed]);
+      await tx.query("insert into erp.herd_lots(organization_id,empresa_id,batch_id,species_id,category_id,breed_id,quantity,average_weight,unit_value,entry_date) values ($1,$2,$3,$4,$5,$6,35,180,1800,current_date - 60)", [orgId, empresaIds[0], b1, species, await cat("Bezerro"), breed]);
     }
     // Confinamento
-    const yard = await tx.query<{ id: string }>("insert into erp.feedlot_yards(organization_id,farm_id,code,name) values ($1,$2,'P1','Pátio 1') on conflict do nothing returning id", [orgId, farmIds[0]]);
+    const yard = await tx.query<{ id: string }>("insert into erp.feedlot_yards(organization_id,empresa_id,code,name) values ($1,$2,'P1','Pátio 1') on conflict do nothing returning id", [orgId, empresaIds[0]]);
     if (yard.rowCount) {
       const sec = await tx.query<{ id: string }>("insert into erp.feedlot_sectors(organization_id,yard_id,code,name) values ($1,$2,'S1','Setor A') returning id", [orgId, yard.rows[0]!.id]);
       for (const c of ["C01", "C02", "C03"]) await tx.query("insert into erp.feedlot_corrals(organization_id,sector_id,code,name,capacity,area_m2) values ($1,$2,$3,$4,120,1800)", [orgId, sec.rows[0]!.id, c, `Curral ${c}`]);
@@ -192,7 +198,7 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
       await tx.query("insert into erp.feeding_phases(organization_id,name,diet_id,days_in_phase) values ($1,'Adaptação',$2,14)", [orgId, diet.rows[0]!.id]);
     }
     log(`demo org ${orgId} seeded (admin ${adminEmail})`);
-    return { orgId, adminUserId, farmIds, adminEmail, adminPassword };
+    return { orgId, adminUserId, empresaIds, adminEmail, adminPassword };
   });
 }
 

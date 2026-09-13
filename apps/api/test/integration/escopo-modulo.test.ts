@@ -48,7 +48,7 @@ async function alocarIdGlobal(tipoEntidade: string, idEntidade: string): Promise
   return withTx(h.db, { orgId: h.demo.orgId, userId: h.demo.adminUserId }, (tx) => atribuirIdGlobal({
     tx,
     user: { id: h.demo.adminUserId, email: h.demo.adminEmail, name: "Administrador" },
-    orgId: h.demo.orgId, farmId: null, moduloEmpresa: null,
+    orgId: h.demo.orgId, empresaId: null, moduloEmpresa: null,
     membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: true, memberId: "m", escopos: AUTORIZACAO_PROPRIETARIO },
     permissions: new Set<string>()
   }, tipoEntidade, idEntidade));

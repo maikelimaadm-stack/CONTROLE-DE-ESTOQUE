@@ -24,33 +24,33 @@ async function apiPost<T>(page: Page, path: string, body: unknown): Promise<T> {
   }, { path, body, api });
 }
 const first = async <T,>(page: Page, path: string): Promise<T> => { const d = await apiGet<{ items?: T[] } | T[]>(page, path); const items = Array.isArray(d) ? d : (d.items ?? []); if (!items[0]) throw new Error(`fixture: sem registro em ${path}`); return items[0]; };
-type Refs = { farm: string; animal: string; batch: string; wh: string; prod: string; supplier: string; client: string; cat: string; cc: string; eq: string };
+type Refs = { empresa: string; animal: string; batch: string; wh: string; prod: string; supplier: string; client: string; cat: string; cc: string; eq: string };
 /** Referências do seed (cadastros) usadas pelas fixtures — resolvidas uma vez por teste. */
 async function refs(page: Page): Promise<Refs> {
-  const a = await first<{ id: string; farm_id: string; batch_id: string }>(page, "/api/livestock/animals?pageSize=1");
+  const a = await first<{ id: string; empresa_id: string; batch_id: string }>(page, "/api/livestock/animals?pageSize=1");
   const [wh, prod, supplier, client, cat, cc, eq] = await Promise.all([
-    first<{ id: string }>(page, `/api/resources/warehouses?farm_id=${a.farm_id}&pageSize=1`), first<{ id: string }>(page, "/api/resources/products?pageSize=1"),
+    first<{ id: string }>(page, `/api/resources/warehouses?empresa_id=${a.empresa_id}&pageSize=1`), first<{ id: string }>(page, "/api/resources/products?pageSize=1"),
     first<{ id: string }>(page, "/api/resources/people?is_supplier=true&pageSize=1"), first<{ id: string }>(page, "/api/resources/people?is_client=true&pageSize=1"),
     first<{ id: string }>(page, "/api/resources/financial_categories?pageSize=1"), first<{ id: string }>(page, "/api/resources/cost_centers?pageSize=1"), first<{ id: string }>(page, "/api/resources/equipments?pageSize=1")
   ]);
-  return { farm: a.farm_id, animal: a.id, batch: a.batch_id, wh: wh.id, prod: prod.id, supplier: supplier.id, client: client.id, cat: cat.id, cc: cc.id, eq: eq.id };
+  return { empresa: a.empresa_id, animal: a.id, batch: a.batch_id, wh: wh.id, prod: prod.id, supplier: supplier.id, client: client.id, cat: cat.id, cc: cc.id, eq: eq.id };
 }
-const title = (r: Refs, dir: "payable" | "receivable") => ({ farm_id: r.farm, number: `${dir === "payable" ? "PO" : "RO"}-${Date.now().toString(36)}`, person_id: dir === "payable" ? r.supplier : r.client, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "record-open", apportionment: [{ financial_category_id: r.cat, cost_center_id: r.cc, percentage: "100" }] });
-const inputEntry = (r: Refs) => ({ farm_id: r.farm, entry_date: "2026-09-10", note: "record-open", items: [{ product_id: r.prod, quantity: "100", unit_value: "2", generate_stock: true, warehouse_id: r.wh }] });
+const title = (r: Refs, dir: "payable" | "receivable") => ({ empresa_id: r.empresa, number: `${dir === "payable" ? "PO" : "RO"}-${Date.now().toString(36)}`, person_id: dir === "payable" ? r.supplier : r.client, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "record-open", apportionment: [{ financial_category_id: r.cat, cost_center_id: r.cc, percentage: "100" }] });
+const inputEntry = (r: Refs) => ({ empresa_id: r.empresa, entry_date: "2026-09-10", note: "record-open", items: [{ product_id: r.prod, quantity: "100", unit_value: "2", generate_stock: true, warehouse_id: r.wh }] });
 /** Fixtures mínimas pela API para famílias que o seed de demonstração não cobre (o seed traz só cadastros + animais). */
 const fixtures: Record<string, (page: Page, r: Refs) => Promise<void>> = {
-  os: async (page, r) => { await apiPost(page, "/api/service-orders", { farm_id: r.farm, order_date: "2026-09-10", description: "OS record-open", planned_end: "2026-09-30" }); },
-  budget: async (page, r) => { await apiPost(page, "/api/sales/budgets", { farm_id: r.farm, document_date: "2026-09-10", client_id: r.client, items: [{ product_id: r.prod, warehouse_id: r.wh, quantity: "1", unit_price: "5" }] }); },
+  os: async (page, r) => { await apiPost(page, "/api/service-orders", { empresa_id: r.empresa, order_date: "2026-09-10", description: "OS record-open", planned_end: "2026-09-30" }); },
+  budget: async (page, r) => { await apiPost(page, "/api/sales/budgets", { empresa_id: r.empresa, document_date: "2026-09-10", client_id: r.client, items: [{ product_id: r.prod, warehouse_id: r.wh, quantity: "1", unit_price: "5" }] }); },
   receivable: async (page, r) => { await apiPost(page, "/api/financial/receivables", title(r, "receivable")); },
   payable: async (page, r) => { await apiPost(page, "/api/financial/payables", title(r, "payable")); },
   inputEntry: async (page, r) => { await apiPost(page, "/api/stock/input-entries", inputEntry(r)); },
-  requisition: async (page, r) => { await apiPost(page, "/api/stock/input-entries", inputEntry(r)); await apiPost(page, "/api/stock/requisitions", { farm_id: r.farm, requisition_date: "2026-09-10", items: [{ warehouse_id: r.wh, product_id: r.prod, quantity: "1" }] }); },
-  writeoff: async (page, r) => { await apiPost(page, "/api/stock/input-entries", inputEntry(r)); await apiPost(page, "/api/stock/writeoffs", { farm_id: r.farm, writeoff_date: "2026-09-10", reason: "loss", warehouse_id: r.wh, justification: "record-open", items: [{ product_id: r.prod, quantity: "1" }] }); },
-  fuel: async (page, r) => { await apiPost(page, "/api/fleet/fuel-supplies", { farm_id: r.farm, supply_date: "2026-09-10", equipment_id: r.eq, product_id: r.prod, quantity: "5", unit_value: "6.2", note: "record-open" }); },
-  maintenance: async (page, r) => { await apiPost(page, "/api/fleet/maintenances", { farm_id: r.farm, maintenance_date: "2026-09-10", machines: [{ equipment_id: r.eq, service_total: "10", service_description: "record-open" }] }); },
-  purchaseRequest: async (page, r) => { await apiPost(page, "/api/supply/requests", { farm_id: r.farm, request_date: "2026-09-10", request_type: "product", description: "record-open", justification: "record-open", items: [{ product_id: r.prod, description: "item", quantity: "1", reference_value: "5" }] }); },
-  handling: async (page, r) => { await apiPost(page, "/api/livestock/handlings", { farm_id: r.farm, handling_type: "sanitary", handling_date: "2026-09-10", batch_id: r.batch, dose: "1", note: "record-open", items: [{ animal_id: r.animal, quantity: "1" }] }); },
-  weighing: async (page, r) => { await apiPost(page, "/api/livestock/weighings", { farm_id: r.farm, weighing_date: "2026-09-10", batch_id: r.batch, items: [{ animal_id: r.animal, weight: "300" }] }); }
+  requisition: async (page, r) => { await apiPost(page, "/api/stock/input-entries", inputEntry(r)); await apiPost(page, "/api/stock/requisitions", { empresa_id: r.empresa, requisition_date: "2026-09-10", items: [{ warehouse_id: r.wh, product_id: r.prod, quantity: "1" }] }); },
+  writeoff: async (page, r) => { await apiPost(page, "/api/stock/input-entries", inputEntry(r)); await apiPost(page, "/api/stock/writeoffs", { empresa_id: r.empresa, writeoff_date: "2026-09-10", reason: "loss", warehouse_id: r.wh, justification: "record-open", items: [{ product_id: r.prod, quantity: "1" }] }); },
+  fuel: async (page, r) => { await apiPost(page, "/api/fleet/fuel-supplies", { empresa_id: r.empresa, supply_date: "2026-09-10", equipment_id: r.eq, product_id: r.prod, quantity: "5", unit_value: "6.2", note: "record-open" }); },
+  maintenance: async (page, r) => { await apiPost(page, "/api/fleet/maintenances", { empresa_id: r.empresa, maintenance_date: "2026-09-10", machines: [{ equipment_id: r.eq, service_total: "10", service_description: "record-open" }] }); },
+  purchaseRequest: async (page, r) => { await apiPost(page, "/api/supply/requests", { empresa_id: r.empresa, request_date: "2026-09-10", request_type: "product", description: "record-open", justification: "record-open", items: [{ product_id: r.prod, description: "item", quantity: "1", reference_value: "5" }] }); },
+  handling: async (page, r) => { await apiPost(page, "/api/livestock/handlings", { empresa_id: r.empresa, handling_type: "sanitary", handling_date: "2026-09-10", batch_id: r.batch, dose: "1", note: "record-open", items: [{ animal_id: r.animal, quantity: "1" }] }); },
+  weighing: async (page, r) => { await apiPost(page, "/api/livestock/weighings", { empresa_id: r.empresa, weighing_date: "2026-09-10", batch_id: r.batch, items: [{ animal_id: r.animal, weight: "300" }] }); }
 };
 const FAMILIES: Family[] = [
   { name: "Compras › processo", list: "/api/supply/requests?pageSize=1", href: (r) => `/suprimentos/view/${r.id}`, fixture: fixtures.purchaseRequest },

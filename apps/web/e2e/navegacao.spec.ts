@@ -35,7 +35,7 @@ test("área de estoque: abas, seletor interno, '+ Novo' em dois níveis e ajuste
   await menu.getByRole("menuitem", { name: "Saída" }).click(); await expect(menu.getByRole("menuitem", { name: "Requisição" })).toBeVisible(); await page.keyboard.press("Escape");
   await page.getByRole("tab", { name: "Operações" }).click(); await expect(page).toHaveURL(/tab=operacoes/);
   await page.getByRole("tab", { name: /Saídas diretas/ }).click(); await expect(page).toHaveURL(/sub=diretas/);
-  await page.getByRole("tab", { name: "Transferências" }).click(); await page.getByTestId("stock-transfer-kind").getByRole("radio", { name: "Entre fazendas" }).click(); await expect(page).toHaveURL(/kind=farm/);
+  await page.getByRole("tab", { name: "Transferências" }).click(); await page.getByTestId("stock-transfer-kind").getByRole("radio", { name: "Entre empresas" }).click(); await expect(page).toHaveURL(/kind=farm/);
 });
 test("menu principal: só módulos (≤ 14), sem abas repetidas; breadcrumbs derivados da navegação", async ({ page }) => {
   await login(page);

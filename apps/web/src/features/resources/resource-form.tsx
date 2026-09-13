@@ -79,7 +79,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const q = useQuery({ queryKey: ["res", resourceKey, id], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${id}`), enabled: !isNew && id !== "new", placeholderData: embedded?.row && String(embedded.row["id"]) === id ? embedded.row : undefined, staleTime: 30_000 });
   const copyQ = useQuery({ queryKey: ["res", resourceKey, copyId], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${copyId}`), enabled: Boolean(copyId) });
   const form = useForm<Values>({ defaultValues: defaults(fields, preset, l.fieldDefaultValues) });
-  // contrato de estado não salvo do shell: a aba mostra indicador e fechar/trocar fazenda/sair pedem confirmação
+  // contrato de estado não salvo do shell: a aba mostra indicador e fechar/trocar empresa/sair pedem confirmação
   useDirtyTab(!readOnly && form.formState.isDirty);
   const appliedDefaults = React.useRef(false);
   // valores padrão do layout entram só em campos ainda não editados pelo usuário (não descarta o que já foi digitado)

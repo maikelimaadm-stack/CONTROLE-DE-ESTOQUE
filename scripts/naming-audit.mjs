@@ -63,7 +63,7 @@ const PRODUCT = [
 /** Exceções conscientes (categoria D ou razão técnica). Texto exato → motivo. Nunca silencie sem razão. */
 const ALLOW = new Map([]);
 
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist", ".git", "coverage", "test-results", "playwright-report", ".turbo"]);
+const SKIP_DIRS = new Set(["node_modules", ".next", "dist", ".git", "coverage", "test-results", "playwright-report", ".turbo", ".api-anterior"]);
 const EXT = /\.(ts|tsx|mts|mjs|js|jsx|sql|css|json)$/;
 /** A própria ferramenta declara os termos que procura. */
 const SELF = new Set(["scripts/naming-audit.mjs", "scripts/naming-audit.baseline.json"]);

@@ -9,7 +9,7 @@
 | --- | --- | --- | --- |
 | 1 | **PRE-BASE2-01** — Fundação | Contratos (empresa, ID Global, i18n), dicionário de dados, inventário de "fazenda", auditores e gates. ✅ concluída | — |
 | 2 | **PRE-BASE2-02** — Empresa e permissões | Modelo de permissão por empresa (granularidade por módulo), camada de compatibilidade sobre o mecanismo de fazenda atual, `member_empresas` gravando a autorização já no formato explícito do contrato (`todas` × `selecionadas`), aposentando a ponte de compatibilidade. | 01 |
-| 3 | **PRE-BASE2-03** — Migração fazenda → empresa | Colunas, cabeçalhos, rotas e RLS migrados com compatibilidade nos dois sentidos; catraca do inventário cai de verdade. | 02 |
+| 3 | **PRE-BASE2-03** — Migração fazenda → empresa | Tabela, colunas, cabeçalho, rotas e RLS migrados para o idioma canônico, com compatibilidade bidirecional (view `security_invoker`, coluna espelho por gatilho, adaptador de borda) e isolamento por empresa dentro do banco. ✅ concluída | 02 |
 | 4 | **PRE-BASE2-04** — ID Global | Alocação nas rotas de escrita, backfill determinístico, resolução na busca global (`#55`), exibição no registro. | 01 (03 recomendada) |
 | 5 | **PRE-BASE2-05** — Contexto multiempresa | Seletor "todas / uma / conjunto", filtros e painéis consolidados, seleção obrigatória no lançamento, seletor de idioma. | 02, 03 |
 | 6 | **BASE2-01** — Moldura de lançamento | Shell oficial do Modelo Base 2 (cabeçalho, dados principais × itens, totais, histórico, anexos, ações). | 05 |
@@ -22,7 +22,7 @@
 | Missão | Não faz |
 | --- | --- |
 | PRE-BASE2-02 | Não renomeia colunas (isso é 03). |
-| PRE-BASE2-03 | Não muda interface além do necessário para acompanhar a renomeação. |
+| PRE-BASE2-03 | Não muda interface além do necessário para acompanhar a renomeação. Não remove coluna legada, view legada nem cabeçalho legado (isso é 05). Não renomeia VALOR de domínio nem chave de permissão (DATA-GOV). |
 | PRE-BASE2-04 | Não acopla ID Global à URL: a rota deriva do registro. |
 | PRE-BASE2-05 | Não implementa a moldura do Base 2. |
 | BASE2-01 | Não cria motor genérico de regras (tela unificada ≠ regra unificada). |
@@ -31,8 +31,11 @@
 
 ## Critérios de conclusão
 
-**PRE-BASE2-03** só termina quando: a catraca do inventário registrar queda real nas superfícies de produto;
-`X-Farm-Id` e `X-Empresa-Id` coexistirem com teste dos dois; e a matriz cross-empresa continuar verde.
+**PRE-BASE2-03** ✅ terminou com: o inventário classificado em três baldes (legado histórico · compatibilidade
+declarada · dívida de produto) e a catraca travando o terceiro; `X-Farm-Id` e `X-Empresa-Id` coexistindo com
+teste dos dois sentidos de version skew; RLS empresarial nas 49 tabelas de escopo, com matriz em
+`docs/COMPANY-RLS-MATRIX.md` sem nenhuma tabela "não auditada"; e a compatibilidade com prazo e endereço
+(`scripts/lib/empresa-compat-surface.mjs`), removida em PRE-BASE2-05.
 
 **PRE-BASE2-04** só termina quando: todo registro elegível tiver ID Global; não houver duplicidade; o backfill
 for comprovadamente reexecutável sem renumerar; e `#N` resolver respeitando organização, empresa e permissão.

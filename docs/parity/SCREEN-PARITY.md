@@ -2,7 +2,7 @@
 
 _Gerado por `node scripts/parity.mjs` em 2026-09-13 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
 
-Resumo: 417/455 (91.6%) telas implementadas ou melhoradas. TESTADO: 116 · IMPLEMENTADO: 228 · MELHORADO: 19 · UNIFICADO: 54 · EM IMPLEMENTAÇÃO: 7 · MAPEADO: 6 · BLOQUEADO: 0 · NÃO INICIADO: 25 · NÃO APLICÁVEL: 0
+Resumo: 417/455 (91.6%) telas implementadas ou melhoradas. TESTADO: 116 · IMPLEMENTADO: 227 · MELHORADO: 19 · UNIFICADO: 55 · EM IMPLEMENTAÇÃO: 7 · MAPEADO: 6 · BLOQUEADO: 0 · NÃO INICIADO: 25 · NÃO APLICÁVEL: 0
 
 | ID | Módulo | Tela (referência) | Rota referência | Tipo | Nossa rota | Área unificada (nova UX) | Status | Observação |
 |---|---|---|---|---|---|---|---|---|
@@ -33,7 +33,7 @@ Resumo: 417/455 (91.6%) telas implementadas ou melhoradas. TESTADO: 116 · IMPLE
 | SCR-025 | Dashboards | Dashboard Estoque de Nutrição | `/admin/nutrition-stock-dashboard` | Dashboard | `/dashboards/estoque-nutricao` | `/confinamento?tab=desempenho&view=nutricao` | UNIFICADO | UNIFICADO: aba da área /confinamento (rota antiga redireciona) |
 | SCR-026 | Dashboards | Dashboard Consumo vs Fornecido | `/admin/feed-consumption-dashboard` | Dashboard | `/dashboards/consumo-racao` | `/confinamento?tab=desempenho` | UNIFICADO | UNIFICADO: aba da área /confinamento (rota antiga redireciona) |
 | SCR-027 | Cadastros Base › Estrutura | Centro de Custo | `/admin/costcenters` | Listagem | `/cadastros/cost_centers` | — | TESTADO | Árvore hierárquica com 'criar descendente' |
-| SCR-028 | Cadastros Base › Estrutura | Fazendas | `/admin/farms` | Listagem | `/cadastros/farms` | — | IMPLEMENTADO |  |
+| SCR-028 | Cadastros Base › Estrutura | Fazendas | `/admin/farms` | Listagem | `/cadastros/farms` | `/cadastros/empresas` | UNIFICADO | UNIFICADO: aba da área /cadastros/empresas (rota antiga redireciona) |
 | SCR-029 | Cadastros Base › Estrutura | Safras | `/admin/harvests` | Listagem | `/cadastros/harvests` | — | IMPLEMENTADO |  |
 | SCR-030 | Cadastros Base › Estrutura > Produtos | Endereçamentos | `/admin/addressings` | Relatório | `/cadastros/addressings` | — | IMPLEMENTADO |  |
 | SCR-031 | Cadastros Base › Estrutura > Produtos | Produtos | `/admin/products` | Listagem | `/cadastros/products` | — | TESTADO |  |

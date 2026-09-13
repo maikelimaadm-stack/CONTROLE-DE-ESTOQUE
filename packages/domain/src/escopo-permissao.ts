@@ -193,14 +193,14 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
  */
 export const EXCECOES_ESCOPO: Readonly<Record<string, string>> = {
   farms: "A empresa é o próprio registro administrado: quem administra empresas administra a organização (e a lista que o membro enxerga continua recortada pelo escopo dos módulos).",
-  cost_centers: "Cadastro da organização; `erp.farm_cost_centers` é o vínculo que diz em quais empresas o centro de custo se aplica, não um lançamento de empresa.",
-  proprietaries: "Cadastro da organização; `erp.proprietary_farms` é vínculo de abrangência.",
-  authorizers: "Cadastro da organização; `erp.authorizer_farms` é vínculo de abrangência.",
+  cost_centers: "Cadastro da organização; `erp.empresa_cost_centers` é o vínculo que diz em quais empresas o centro de custo se aplica, não um lançamento de empresa.",
+  proprietaries: "Cadastro da organização; `erp.proprietary_empresas` é vínculo de abrangência.",
+  authorizers: "Cadastro da organização; `erp.authorizer_empresas` é vínculo de abrangência.",
   "report.birthdays": "Aniversariantes e quadro de pessoal saem de `erp.people` + `erp.employee_profiles`, cadastros da ORGANIZAÇÃO sem coluna de empresa: não há empresa a cruzar. Os LANÇAMENTOS de pessoal (apuração, adiantamentos) continuam de empresa, no módulo pessoas_rh.",
   "report.active_employees": "Mesmo caso de report.birthdays: quadro de pessoal ativo é cadastro da organização (erp.people/erp.employee_profiles), sem dimensão de empresa.",
   "report.logged_hours": "Horas registradas saem de `erp.audit_logs` — auditoria de uso do sistema por usuário, da organização inteira, sem coluna de empresa (mesma natureza de dashboard.user_analysis).",
   "report.bank_statement": "Extrato de CONTA bancária: parte do saldo inicial da conta (que não tem empresa) e fecha com o saldo da conta. Recortá-lo por empresa produziria um extrato que não reconcilia — número financeiramente falso. Por isso é documento da organização e a porta exige `bank_accounts.view` além da permissão do relatório.",
-  bank_accounts: "Cadastro da organização; `erp.bank_account_farms` é vínculo de abrangência. Os MOVIMENTOS (`erp.bank_movements`) são de empresa, no módulo financeiro.",
+  bank_accounts: "Cadastro da organização; `erp.bank_account_empresas` é vínculo de abrangência. Os MOVIMENTOS (`erp.bank_movements`) são de empresa, no módulo financeiro.",
   users: "Usuário pertence à organização; o acesso dele às empresas é justamente o que esta missão passa a configurar (o vínculo legado de fazendas do membro era autorização, não dado de negócio).",
   notifications: "A caixa de notificações é PORTA DINÂMICA: `erp.notifications` tem empresa, mas a autorização de cada linha vem da FONTE dela (a solicitação de compra, o documento, o título), não de um módulo \"notificações\" — que, se existisse, seria um segundo caminho para o mesmo dado, com escopo próprio e capaz de divergir do primeiro. Por isso cada linha carrega o módulo e a capacidade da origem (`erp.tipos_notificacao` + `notifications_tipo_fk` impedem combinação não declarada) e a leitura resolve CAPACIDADE ∩ ESCOPO em SQL, via `erp.tem_acesso_empresa`. Ver docs/NOTIFICATION-SCOPE-MATRIX.md."
 };

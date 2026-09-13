@@ -8,13 +8,13 @@ import { useAuth } from "@/lib/auth";
 import { Card, CardHeader, CardBody, Button, Dialog, Field, Input, Confirm } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
 import { RefSelect } from "@/components/ui/ref-select";
-import { StatusBadge, useFarmDefault, type Row } from "@/features/docs/shared";
+import { StatusBadge, useEmpresaPadrao, type Row } from "@/features/docs/shared";
 import { COPY } from "@/lib/copy";
 export function OpeningBalancesPanel() {
-  const qc = useQueryClient(); const { can } = useAuth(); const farm = useFarmDefault();
+  const qc = useQueryClient(); const { can } = useAuth(); const empresa = useEmpresaPadrao();
   const [open, setOpen] = React.useState(false); const [rev, setRev] = React.useState<string | null>(null); const [page, setPage] = React.useState(1);
-  const [v, setV] = React.useState({ farm_id: "", warehouse_id: "", product_id: "", quantity: "", unit_value: "", provider_lot: "", expiration_date: "" });
-  React.useEffect(() => { setV((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
+  const [v, setV] = React.useState({ empresa_id: "", warehouse_id: "", product_id: "", quantity: "", unit_value: "", provider_lot: "", expiration_date: "" });
+  React.useEffect(() => { setV((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const q = useQuery({ queryKey: ["opening", page], queryFn: () => api<{ items: Row[]; total: number }>(`/api/stock/opening-balances${qs({ page, pageSize: 30 })}`) });
   const create = useMutation({ mutationFn: () => api("/api/stock/opening-balances", { method: "POST", body: { ...v, provider_lot: v.provider_lot || null, expiration_date: v.expiration_date || null }, idempotencyKey: newIdem() }), onSuccess: () => { toast.success("Estoque inicial lançado"); setOpen(false); setV((o) => ({ ...o, product_id: "", quantity: "", unit_value: "", provider_lot: "", expiration_date: "" })); void qc.invalidateQueries({ queryKey: ["opening"] }); }, onError: (e) => toast.error((e as Error).message) });
   const reverse = useMutation({ mutationFn: (id: string) => api(`/api/stock/opening-balances/${id}`, { method: "DELETE" }), onSuccess: () => { toast.success("Estornado"); setRev(null); void qc.invalidateQueries({ queryKey: ["opening"] }); }, onError: (e) => toast.error((e as Error).message) });
@@ -23,8 +23,8 @@ export function OpeningBalancesPanel() {
       actions={(r) => r["status"] === "confirmed" && can("opening_balances.delete") ? <Button size="sm" variant="ghost" onClick={() => setRev(String(r["id"]))}>Estornar</Button> : null} />
     <Dialog open={open} onOpenChange={setOpen} title="Novo estoque inicial" footer={<><Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button><Button loading={create.isPending} onClick={() => create.mutate()}>Salvar</Button></>}>
       <div className="grid grid-cols-12 gap-3">
-        <Field label="Fazenda" required span={6}><RefSelect resource="farms" value={v.farm_id} onChange={(x) => setV({ ...v, farm_id: x ?? "", warehouse_id: "" })} /></Field>
-        <Field label="Armazém" required span={6}><RefSelect resource="warehouses" value={v.warehouse_id} onChange={(x) => setV({ ...v, warehouse_id: x ?? "" })} filter={{ farm_id: v.farm_id }} /></Field>
+        <Field label="Empresa" required span={6}><RefSelect resource="empresas" value={v.empresa_id} onChange={(x) => setV({ ...v, empresa_id: x ?? "", warehouse_id: "" })} /></Field>
+        <Field label="Armazém" required span={6}><RefSelect resource="warehouses" value={v.warehouse_id} onChange={(x) => setV({ ...v, warehouse_id: x ?? "" })} filter={{ empresa_id: v.empresa_id }} /></Field>
         <Field label="Produto" required span={12}><RefSelect resource="products" value={v.product_id} onChange={(x) => setV({ ...v, product_id: x ?? "" })} /></Field>
         <Field label="Quantidade total" required span={3}><Input type="number" step="0.0001" value={v.quantity} onChange={(e) => setV({ ...v, quantity: e.target.value })} /></Field>
         <Field label="Valor unitário" required span={3}><Input type="number" step="0.000001" value={v.unit_value} onChange={(e) => setV({ ...v, unit_value: e.target.value })} /></Field>

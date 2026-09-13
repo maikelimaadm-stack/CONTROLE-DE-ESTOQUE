@@ -1,18 +1,36 @@
 {
   "generatedBy": "scripts/farm-inventory.mjs",
-  "counts": {
-    "schema": 172,
-    "api": 924,
-    "api-test": 272,
+  "baldes": {
+    "historico": 1070,
+    "compat": 346,
+    "divida": 164
+  },
+  "divida": {
+    "schema": 0,
+    "api": 48,
+    "api-test": 90,
     "core-neutro": 0,
-    "packages": 121,
-    "web": 421,
-    "web-nav": 13,
-    "web-test": 73,
-    "scripts": 13,
-    "docs": 259,
+    "packages": 11,
+    "web": 11,
+    "web-nav": 0,
+    "web-test": 0,
+    "scripts": 4,
+    "docs": 0,
+    "reference": 0
+  },
+  "counts": {
+    "schema": 268,
+    "api": 62,
+    "api-test": 267,
+    "core-neutro": 0,
+    "packages": 65,
+    "web": 30,
+    "web-nav": 7,
+    "web-test": 28,
+    "scripts": 51,
+    "docs": 289,
     "reference": 513
   },
-  "total": 2781,
-  "companyTables": 50
+  "total": 1580,
+  "companyTables": 49
 }

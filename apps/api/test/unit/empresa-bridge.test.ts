@@ -16,9 +16,9 @@ import { empresaScope, empresaScopeAgregado, type RequestContext } from "../../s
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
 
-const ctx = (modos: [string, "todas" | "selecionadas"][], farmId: string | null = null, modulo: string | null = "estoque", owner = false): RequestContext => ({
+const ctx = (modos: [string, "todas" | "selecionadas"][], empresaId: string | null = null, modulo: string | null = "estoque", owner = false): RequestContext => ({
   user: { id: "u", email: "u@x", name: "U" },
-  orgId: "org", farmId,
+  orgId: "org", empresaId,
   membership: { orgId: "org", orgName: "demo", roleId: null, isOwner: owner, memberId: "m", escopos: owner ? AUTORIZACAO_PROPRIETARIO : autorizacaoPorModulo(modos) },
   permissions: new Set<string>(),
   moduloEmpresa: modulo
@@ -70,7 +70,7 @@ describe("forma da cláusula de escopo (substituta do array em memória)", () =>
   it("empresa selecionada (X-Farm-Id) entra como recorte, somada à autorização", () => {
     const params: unknown[] = [];
     const clausulas = empresaScope(ctx([["estoque", "selecionadas"]], A), "m", params);
-    expect(clausulas[0]).toBe("m.farm_id=$1");
+    expect(clausulas[0]).toBe("m.empresa_id=$1");
     expect(params[0]).toBe(A);
     expect(clausulas).toHaveLength(2);
   });
@@ -82,6 +82,6 @@ describe("forma da cláusula de escopo (substituta do array em memória)", () =>
     expect(params[0]).toEqual([B]);
   });
   it("registro sem empresa é da organização e continua visível quando nullable", () => {
-    expect(empresaScope(ctx([["financeiro", "todas"]]), "m", [], { nullable: true })).toEqual(["m.farm_id is null"]);
+    expect(empresaScope(ctx([["financeiro", "todas"]]), "m", [], { nullable: true })).toEqual(["m.empresa_id is null"]);
   });
 });

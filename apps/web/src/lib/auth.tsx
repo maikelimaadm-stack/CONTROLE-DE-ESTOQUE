@@ -7,15 +7,25 @@ export interface AppContext {
   user: { id: string; email: string; name: string };
   organization: { id: string; name: string; parameters: Record<string, unknown> };
   isOwner: boolean;
-  farms: { id: string; code: number; name: string }[];
+  /** Empresas que o usuário enxerga em ALGUM módulo. Campo CANÔNICO (PRE-BASE2-03). */
+  empresas?: { id: string; code: number; name: string }[];
+  /**
+   * LEGADO: a API anterior a PRE-BASE2-03 só devolve `farms`. Enquanto o web novo puder subir ANTES da API
+   * nova (é a ordem em que Vercel e Railway implantam, e não há como sincronizá-las), ler só o canônico
+   * deixaria o seletor de empresa vazio e o usuário sem contexto de trabalho.
+   */
+  farms?: { id: string; code: number; name: string }[];
   permissions: string[];
   /** Idioma da sessão (docs/I18N-CONTRACT.md): precedência usuário › organização › padrão, resolvida no servidor. */
   idioma?: { organizacao: string | null; usuario: string | null; efetivo: string };
   favorites: { route: string; label: string }[];
   unreadNotifications: number;
 }
-interface AuthState { session: Session | null; ctx: AppContext | null; loading: boolean; can: (perm: string) => boolean; setFarm: (id: string | null) => void; setOrg: (id: string) => Promise<void>; refresh: () => Promise<void>; logout: () => void }
+interface AuthState { session: Session | null; ctx: AppContext | null; loading: boolean; can: (perm: string) => boolean; setEmpresa: (id: string | null) => void; setOrg: (id: string) => Promise<void>; refresh: () => Promise<void>; logout: () => void }
 const Ctx = createContext<AuthState | null>(null);
+
+/** Lista de empresas do contexto, venha ela do campo canônico ou do legado. Um lugar só faz a escolha. */
+export const empresasDoContexto = (ctx: AppContext | null | undefined) => ctx?.empresas ?? ctx?.farms ?? [];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setS] = useState<Session | null>(null);
@@ -40,9 +50,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value: AuthState = useMemo(() => ({
     session, ctx, loading,
     can: (p) => Boolean(ctx?.isOwner) || perms.has(p),
-    // fazenda: não recarrega organização/permissões nem remonta as telas — o shell fecha abas farm-scoped e invalida consultas
-    setFarm: (id) => { const s = getSession(); if (s) { const n = { ...s, farmId: id }; writeSession(n); setS(n); } },
-    setOrg: async (id) => { const s = getSession(); if (s) { setSession({ ...s, orgId: id, farmId: null }); } },
+    // empresa: não recarrega organização/permissões nem remonta as telas — o shell fecha abas farm-scoped e invalida consultas
+    setEmpresa: (id) => { const s = getSession(); if (s) { const n = { ...s, empresaId: id }; writeSession(n); setS(n); } },
+    setOrg: async (id) => { const s = getSession(); if (s) { setSession({ ...s, orgId: id, empresaId: null }); } },
     refresh,
     logout: () => { setSession(null); router.replace("/login"); }
   }), [session, ctx, loading, perms, refresh, router]);

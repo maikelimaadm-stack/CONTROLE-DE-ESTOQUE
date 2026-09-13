@@ -1,6 +1,6 @@
 # Banco de dados
 
-Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000N_*.sql`, aplicadas em ordem pelo runner `packages/db` (tabela `public.erp_migrations`). Total: 171 tabelas.
+Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000N_*.sql`, aplicadas em ordem pelo runner `packages/db` (tabela `public.erp_migrations`). Total: 181 tabelas (`node scripts/data-dictionary.mjs`).
 
 | Migration | Conteúdo |
 |---|---|
@@ -16,16 +16,21 @@ Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000
 | 0010_platform_foundation | fundação de plataforma (PRE-BASE2-01): preferência de idioma e `erp.global_records` (ID Global) |
 | 0011_company_permissions | permissões por EMPRESA e MÓDULO (PRE-BASE2-02): catálogo `erp.modulos_escopo_empresa`, `erp.membro_escopos_empresa` (modo por módulo), `erp.membro_empresas`, `erp.tem_acesso_empresa(org,usuario,modulo,empresa)` e a unicidade composta `erp.farms (organization_id, id)` |
 | 0012_notification_scope | escopo empresarial da NOTIFICAÇÃO e leitura por usuário: `escopo_tipo`/`modulo`/`empresa_id`/`permission_key`/`dedupe_key` + `modulo_ref` gerada; catálogo `erp.tipos_notificacao` com as combinações permitidas e `notifications_tipo_fk`; classificação FAIL-CLOSED do legado (tipo desconhecido interrompe a migração); `erp.notificacao_leituras` (recibo por usuário, RLS amarrando o recibo ao usuário da sessão) e `notifications.read_at` como legado |
+| 0013_purchase_request_responsible_tenant | responsável da solicitação de compra amarrado ao TENANT: chave estrangeira composta `(organization_id, current_responsible_user_id) → erp.organization_members(organization_id, user_id)` com `on delete restrict`, depois de auditar acervo cross-tenant (a migration PARA se encontrar) |
+| 0014_company_physical_migration | **migração física fazenda → empresa** (PRE-BASE2-03): `erp.farms` vira `erp.empresas` (tabela) + view `erp.farms` com `security_invoker`; 52 colunas canônicas (`empresa_id`, `empresa_origem_id`, `empresa_destino_id`) criadas ao lado das legadas e sincronizadas por gatilho nos dois sentidos; PK/unicidade/FK movidas para a coluna canônica, FK **composta** `(organization_id, empresa_id)`; 4 tabelas de vínculo renomeadas com view legada; `erp.member_farms` arquivada em `erp.legado_escopo_empresa_v0` e removida; preflight FAIL-CLOSED contra linha apontando para empresa de outra organização |
+| 0015_company_rls | **RLS empresarial** (PRE-BASE2-03): `tenant_isolation` SUBSTITUÍDA por `tenant_e_empresa` nas tabelas de escopo (policies PERMISSIVE se combinam com OR — adicionar manteria o vazamento); `erp.escopo_empresa_total`, `erp.empresa_no_escopo`, `erp.empresa_escrita_permitida`; transferências leem por qualquer ponta e escrevem pela origem; `erp.v_bank_account_balances` recriada com `security_invoker` (era definer e vazava entre organizações) |
 
 ## Invariantes garantidas por trigger
 - `apply_stock_movement`: recalcula saldo e custo médio ponderado; saída maior que o saldo → `INSUFFICIENT_STOCK`.
 - `refresh_title_status`: soma baixas confirmadas, atualiza `paid_amount/balance/status`; baixa acima do saldo → `PAYMENT_EXCEEDS_BALANCE`.
-- `assert_period_open`: bloqueia lançamentos em períodos congelados (`PERIOD_FROZEN`), escopo organização ou fazenda.
+- `assert_period_open(org, empresa, data)`: bloqueia lançamentos em períodos congelados (`PERIOD_FROZEN`), escopo organização ou empresa.
+- `trg_sync_<coluna>` (0014): mantém coluna canônica e coluna legada iguais. No INSERT, um lado preenche o outro; no UPDATE, o lado que MUDOU manda. Os dois com valores divergentes → `VALIDATION_ERROR` (422), nunca escolha silenciosa.
 - `audit_row`: grava antes/depois em `audit_logs` para tabelas auditadas.
 - Códigos sequenciais por organização e entidade (`next_code`) com `unique (organization_id, …, code)`.
 
 ## Convenções
-- `uuid` PK, `organization_id` em toda tabela de tenant, `farm_id` onde há escopo de fazenda, `deleted_at` (soft delete) em cadastros, `created_by/updated_at`.
+- `uuid` PK, `organization_id` em toda tabela de tenant, **`empresa_id`** onde há escopo de empresa (`farm_id` continua como espelho legado até PRE-BASE2-05), `deleted_at` (soft delete) em cadastros, `created_by/updated_at`.
+- Chave estrangeira de empresa é COMPOSTA: `(organization_id, empresa_id) → erp.empresas(organization_id, id)`. Coluna única provaria que o UUID é uma empresa; só a composta prova que é uma empresa DESTA organização.
 - Dinheiro/quantidades: `numeric(18,2)` / `numeric(18,4)`; custos unitários `numeric(18,6)`.
 - Datas: `date`; instantes: `timestamptz`.
 - Documentos transacionais têm `status` (`confirmed/cancelled/…`) e nunca são apagados.

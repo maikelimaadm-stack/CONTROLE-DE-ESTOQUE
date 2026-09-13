@@ -7,6 +7,7 @@ import { withTx, type Db } from "@agro/db";
 import { AUTORIZACAO_PROPRIETARIO, autorizacaoPorModulo } from "@erp/plataforma";
 import type { Config } from "../config.js";
 import type { AuthUser, Membership, RequestContext } from "../lib/context.js";
+import { resolverEmpresaSelecionada } from "../lib/compat-empresa.js";
 
 declare module "fastify" {
   interface FastifyRequest { auth?: AuthUser; ctx?: RequestContext }
@@ -69,7 +70,8 @@ export default fp(async function authPlugin(app: FastifyInstance) {
   const ctxCache = new Map<string, { at: number; value: { row: MemberRow; escopos: EscopoRow[]; perms: string[] } }>();
   const CTX_TTL_MS = 30_000;
   app.decorate("clearContextCache", () => ctxCache.clear());
-  // Contexto de tenant: cabeçalhos X-Org-Id (obrigatório nas rotas de negócio) e X-Farm-Id (empresa ativa)
+  // Contexto de tenant: X-Org-Id (obrigatório nas rotas de negócio) e X-Empresa-Id (empresa ativa;
+  // X-Farm-Id continua aceito durante a transição — ver lib/compat-empresa.ts)
   app.addHook("preHandler", async (req) => {
     if (!req.auth) return;
     const orgId = (req.headers["x-org-id"] as string | undefined) ?? null;
@@ -95,19 +97,22 @@ export default fp(async function authPlugin(app: FastifyInstance) {
       memberId: row.member_id,
       escopos: row.is_owner ? AUTORIZACAO_PROPRIETARIO : autorizacaoPorModulo(escopos.map((e) => [e.modulo, e.modo === "todas" ? "todas" : "selecionadas"] as const))
     };
-    // X-Farm-Id é SELEÇÃO de trabalho, não autorização — e a autorização por MÓDULO é validada na porta
+    // X-Empresa-Id é SELEÇÃO de trabalho, não autorização — e a autorização por MÓDULO é validada na porta
     // (runService conhece o módulo), não aqui. O que se exige neste ponto é que a empresa selecionada seja
     // uma das que este membro enxerga em ALGUM módulo: é exatamente o conjunto que alimenta o seletor de
     // empresa (empresasVisiveisNaOrganizacao). Validar apenas "existe na organização" transformava o
     // cabeçalho em oráculo — 200 para empresa viva, 403 para o resto — e respondia sobre a existência de
     // empresas que o usuário não enxerga. Uma resposta só para os dois casos: não distingue "não existe"
     // de "existe e não é sua".
-    const farmId = (req.headers["x-farm-id"] as string | undefined) ?? null;
-    if (farmId) {
+    // Resolve os dois cabeçalhos numa coisa só e RECUSA antes do banco o que é erro do cliente: cabeçalhos
+    // conflitantes e identificador malformado. Malformado seguia até o PostgreSQL e voltava como "invalid
+    // input syntax for uuid" dentro de um 500 — erro de servidor para o que é erro de requisição.
+    const empresaId = resolverEmpresaSelecionada(req.headers as Record<string, unknown>);
+    if (empresaId) {
       // dentro do contexto de tenant: a consulta passa pelo RLS como qualquer outra leitura da aplicação
       const f = await withTx(app.db, { orgId, userId }, (tx) => tx.query<{ ok: boolean }>(
         `select exists (
-           select 1 from erp.farms f
+           select 1 from erp.empresas f
             where f.id=$1 and f.organization_id=$2 and f.deleted_at is null
               and ($4::boolean or exists (
                 select 1 from erp.membro_escopos_empresa e
@@ -115,9 +120,9 @@ export default fp(async function authPlugin(app: FastifyInstance) {
                    and (e.modo='todas' or exists (
                      select 1 from erp.membro_empresas me
                       where me.organization_id=$2 and me.membro_id=$3 and me.modulo=e.modulo and me.empresa_id=f.id))))
-         ) ok`, [farmId, orgId, membership.memberId, membership.isOwner]));
+         ) ok`, [empresaId, orgId, membership.memberId, membership.isOwner]));
       if (!f.rows[0]?.ok) throw new DomainError("PERMISSION_DENIED", "Sem acesso à empresa selecionada");
     }
-    req.ctx = { user: req.auth, orgId, farmId, membership, permissions: new Set(perms), ip: req.ip };
+    req.ctx = { user: req.auth, orgId, empresaId, membership, permissions: new Set(perms), ip: req.ip };
   });
 });

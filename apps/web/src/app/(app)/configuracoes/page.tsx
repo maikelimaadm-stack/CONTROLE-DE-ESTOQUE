@@ -39,7 +39,7 @@ function ConfigSearch() {
 function Inner() {
   return <Workspace title="Configurações" layout="sidebar" header={<ConfigSearch />} tabs={[
     tab("configuracoes.empresa", <ViewSegment tabs={[
-      res("configuracoes.empresa.farms", "farms"), res("configuracoes.empresa.cost-centers", "cost_centers"), res("configuracoes.empresa.harvests", "harvests"), res("configuracoes.empresa.rainfalls", "rainfalls"),
+      res("configuracoes.empresa.empresas", "empresas"), res("configuracoes.empresa.cost-centers", "cost_centers"), res("configuracoes.empresa.harvests", "harvests"), res("configuracoes.empresa.rainfalls", "rainfalls"),
       tab("configuracoes.empresa.pluviometria", <Dashboard k="pluviometria" title="Pluviometria" />),
       tab("configuracoes.empresa.parametros", scroll(<ParametersPanel />))
     ]} />),

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 /**
  * Guardrail estrutural (docs/AUTHORIZATION.md): todo handler que consulta uma tabela com `farm_id` precisa passar por um
  * dos mecanismos de escopo de fazenda (helpers de `lib/context.ts` ou um carregador compartilhado já protegido).
- * `ctx.farmId` sozinho NÃO é autorização. A verificação é por handler (trecho entre dois `app.<método>(`), determinística
+ * `ctx.empresaId` sozinho NÃO é autorização. A verificação é por handler (trecho entre dois `app.<método>(`), determinística
  * e sem regex sobre SQL: só procura marcadores conhecidos. Handlers organization-scoped legítimos ficam na lista abaixo,
  * com o motivo — para adicionar um novo handler farm-scoped sem escopo é preciso justificar aqui, não silenciar o teste.
  */
@@ -37,6 +37,11 @@ const ALLOW: Record<string, string> = {
   "admin.ts:/admin/members/:userId": "idem",
   "resources.ts:/resources/:key/distinct": "distinctValues aplica o escopo de empresa internamente",
   "resources.ts:/resources/:key/options": "options aplica o escopo do recurso apontado (comPermissaoResolvida)",
+  // O aceite da transferência de rebanho não decide escopo no handler porque o handler NÃO é a
+  // autoridade: quem confere capacidade, empresa de destino, itens vinculados e row counts é
+  // `erp.processar_transferencia_pecuaria_destino`, dentro da transação. Marcar escopo aqui seria
+  // decorar a rota com uma verificação que não é a que decide.
+  "livestock.ts:/livestock/transfers/:id/process": "autoridade dentro de erp.processar_transferencia_pecuaria_destino (capacidade + escopo do destino + row counts)",
   "resources.ts:/resources/:key": "listResource / createOne aplicam escopo internamente",
   "resources.ts:/resources/:key/:id": "getOne / updateOne / deleteOne aplicam escopo internamente",
   "reports.ts:/reports/:key": "cada relatório usa farmClause (membership + fazenda)",
@@ -58,7 +63,7 @@ function handlers(file: string): { url: string; body: string }[] {
 }
 
 describe("guardrail: handlers que tocam tabelas com farm_id passam por escopo de fazenda", () => {
-  it("nenhum handler farm-scoped depende apenas de organization_id/ctx.farmId", () => {
+  it("nenhum handler farm-scoped depende apenas de organization_id/ctx.empresaId", () => {
     const offenders: string[] = [];
     for (const file of fs.readdirSync(routesDir).filter((f) => f.endsWith(".ts"))) {
       for (const h of handlers(file)) {
@@ -66,8 +71,8 @@ describe("guardrail: handlers que tocam tabelas com farm_id passam por escopo de
         if (!touches.length) continue;
         if (SCOPE_MARKERS.some((k) => h.body.includes(k))) continue;
         const key = `${file}:${h.url}`; if (ALLOW[key]) continue;
-        // `ctx.farmId` isolado é o padrão inseguro que este teste existe para barrar
-        offenders.push(`${key} → tabelas ${touches.join(", ")}${h.body.includes("ctx.farmId") ? " (usa só ctx.farmId)" : ""}`);
+        // `ctx.empresaId` isolado é o padrão inseguro que este teste existe para barrar
+        offenders.push(`${key} → tabelas ${touches.join(", ")}${h.body.includes("ctx.empresaId") ? " (usa só ctx.empresaId)" : ""}`);
       }
     }
     expect(offenders, "handlers sem escopo de fazenda:\n" + offenders.join("\n")).toEqual([]);

@@ -2,18 +2,18 @@
  * PONTE ENTRE O CONTRATO DE EMPRESA E A INFRAESTRUTURA ATUAL (docs/MULTI-COMPANY-CONTRACT.md).
  *
  * O contrato vive em `@erp/plataforma` (puro, sem banco, neutro de nicho). Aqui ele encosta no banco, onde a
- * Empresa ainda é materializada pela infraestrutura herdada do primeiro segmento atendido (`erp.farms`,
- * coluna `farm_id`, cabeçalho `X-Farm-Id`). Só a NOMENCLATURA é legada: a AUTORIDADE, desde PRE-BASE2-02, é
+ * Empresa ainda é materializada pela infraestrutura herdada do primeiro segmento atendido (`erp.empresas`,
+ * coluna `empresa_id`, cabeçalho `X-Farm-Id`). Só a NOMENCLATURA é legada: a AUTORIDADE, desde PRE-BASE2-02, é
  * o escopo por módulo (`erp.membro_escopos_empresa` / `erp.membro_empresas`) — nunca mais `erp.member_farms`.
  *
  * A tradução da convenção antiga ("lista vazia = todas") sobrevive apenas na BORDA ADMINISTRATIVA, para
- * clientes que ainda enviam `farm_ids` (apps/api/src/routes/admin.ts). Nenhuma regra de runtime a usa.
+ * clientes que ainda enviam `empresa_ids` (apps/api/src/routes/admin.ts). Nenhuma regra de runtime a usa.
  */
 import { selecionarEmpresaDoLancamento, type IdEmpresa, type SelecaoEmpresa } from "@erp/plataforma";
 import { empresaScopeSql, moduloAtivo, type ServiceCtx } from "./context.js";
 
 /** Empresa selecionada no contexto de trabalho (X-Farm-Id). Seleção, nunca autorização. */
-export const empresaSelecionada = (ctx: ServiceCtx): IdEmpresa | null => ctx.farmId;
+export const empresaSelecionada = (ctx: ServiceCtx): IdEmpresa | null => ctx.empresaId;
 
 /**
  * EMPRESAS DISPONÍVEIS PARA O MEMBRO NAQUELE MÓDULO — fonte server-side.
@@ -34,7 +34,7 @@ export async function empresasDisponiveis(ctx: ServiceCtx, opts: { somenteAtivas
     modulo: opts.modulo !== undefined ? opts.modulo : moduloAtivo(ctx)
   });
   const r = await ctx.tx.query<{ id: string }>(
-    `select f.id from erp.farms f where f.organization_id=$1 and f.deleted_at is null${ativas ? " and f.is_active" : ""}${escopo} order by f.code`,
+    `select f.id from erp.empresas f where f.organization_id=$1 and f.deleted_at is null${ativas ? " and f.is_active" : ""}${escopo} order by f.code`,
     params);
   return r.rows.map((f) => f.id);
 }
@@ -63,7 +63,7 @@ export async function selecionarEmpresaParaLancamento(
  * módulo algum nela. Cada porta continua exigindo o escopo do SEU módulo.
  */
 export async function empresasVisiveisNaOrganizacao(ctx: ServiceCtx): Promise<{ id: string; code: number; name: string }[]> {
-  const base = "select f.id, f.code, f.name from erp.farms f where f.organization_id=$1 and f.deleted_at is null and f.is_active";
+  const base = "select f.id, f.code, f.name from erp.empresas f where f.organization_id=$1 and f.deleted_at is null and f.is_active";
   if (ctx.membership.isOwner) {
     return (await ctx.tx.query<{ id: string; code: number; name: string }>(`${base} order by f.code`, [ctx.orgId])).rows;
   }

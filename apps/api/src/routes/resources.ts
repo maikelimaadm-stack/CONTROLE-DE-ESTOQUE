@@ -5,8 +5,9 @@ import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, 
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
 import { runService, nextCode, requirePermission, comPermissaoResolvida } from "../lib/service.js";
+import { campoCanonico, SEQUENCIA_EMPRESA } from "../lib/compat-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
-import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, farmScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
+import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
 export function buildSchema(def: ResourceDef, partial = false) {
@@ -104,12 +105,12 @@ export function advancedClause(f: FieldDef, op: string, raw: string, b: SqlBuild
 }
 
 /**
- * Recorte de empresa do recurso genérico. `farmScoped` = coluna NOT NULL; `farmScopedNulo` = coluna
+ * Recorte de empresa do recurso genérico. `empresaScoped` = coluna NOT NULL; `empresaScopedNulo` = coluna
  * anulável em que nulo significa "da organização" e por isso continua visível (mesma semântica de
  * `farmClauseNulo` nos relatórios). Sem nenhum dos dois, o recurso não tem dimensão de empresa —
  * e o gate de apps/api/test/unit/report-scope.test.ts cobra isso contra o schema real.
  */
-const escopoDoRecurso = (def: ResourceDef) => ({ ativo: Boolean(def.farmScoped || def.farmScopedNulo), nullable: Boolean(def.farmScopedNulo) });
+const escopoDoRecurso = (def: ResourceDef) => ({ ativo: Boolean(def.empresaScoped || def.empresaScopedNulo), nullable: Boolean(def.empresaScopedNulo) });
 
 export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Record<string, unknown>) {
   const q = pageQuerySchema.parse(query);
@@ -121,8 +122,8 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(organization_id is null or organization_id = ${b.add(ctx.orgId)})` : `organization_id = ${b.add(ctx.orgId)}`);
   if (def.softDelete) where.push("deleted_at is null");
   const escL = escopoDoRecurso(def);
-  if (escL.ativo && ctx.farmId && existing.has("farm_id") && !filters["farm_id"]) where.push(escL.nullable ? `(farm_id is null or farm_id = ${b.add(ctx.farmId)})` : `farm_id = ${b.add(ctx.farmId)}`);
-  if (escL.ativo && existing.has("farm_id")) where.push(...empresaScopeBuilder(ctx, "farm_id", b, { nullable: escL.nullable }));
+  if (escL.ativo && ctx.empresaId && existing.has("empresa_id") && !filters["empresa_id"]) where.push(escL.nullable ? `(empresa_id is null or empresa_id = ${b.add(ctx.empresaId)})` : `empresa_id = ${b.add(ctx.empresaId)}`);
+  if (escL.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, "empresa_id", b, { nullable: escL.nullable }));
   if (q.search) {
     const sf = def.fields.filter((f) => f.search).map((f) => f.name);
     if (sf.length) { const p = b.add(`%${q.search}%`); where.push("(" + sf.map((c) => `${ident(c)}::text ilike ${p}`).join(" or ") + ")"); }
@@ -176,7 +177,7 @@ export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   const gp: unknown[] = orgCond ? [id, ctx.orgId] : [id];
   // fazenda: registro fora do escopo do membro não é visível (mesma regra da listagem)
   const escG = escopoDoRecurso(def);
-  const farmCond = escG.ativo && existing.has("farm_id") ? farmScopeSql(ctx, "farm_id", gp, { ignoreSelected: true, nullable: escG.nullable }) : "";
+  const farmCond = escG.ativo && existing.has("empresa_id") ? empresaScopeSql(ctx, "empresa_id", gp, { ignoreSelected: true, nullable: escG.nullable }) : "";
   const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 ${orgCond} ${def.softDelete ? "and deleted_at is null" : ""}${farmCond}`, gp);
   if (!r.rows[0]) throw notFound(def.label);
   const row = r.rows[0] as Record<string, unknown>;
@@ -195,24 +196,31 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   const data = buildSchema(def).parse(body) as Record<string, unknown>;
   const escC = escopoDoRecurso(def);
   if (escC.ativo) {
-    const pedida = (data["farm_id"] as string | null | undefined) ?? null;
+    const pedida = (data["empresa_id"] as string | null | undefined) ?? null;
     // Registro SEM empresa alcança TODAS elas: um congelamento financeiro sem empresa fecha o período da
     // organização inteira. Quem não enxerga todas as empresas do módulo precisa dizer qual é a empresa.
     if (escC.nullable && !pedida) exigirEscopoTotalDoModulo(ctx, def.label);
     await exigirEmpresaDeLancamento(ctx, pedida);
   }
+  // A EMPRESA é o único cadastro cuja RLS de leitura depende do escopo do próprio membro: a linha nasce
+  // fora do escopo de todo mundo. Ver `exigirEscopoTotalDaOrganizacao`.
+  if (def.table === "empresas") exigirEscopoTotalDaOrganizacao(ctx, def.label);
   const existing = await checkColumns(ctx, def);
   const cols: string[] = []; const vals: unknown[] = [];
   if (existing.has("organization_id")) { cols.push("organization_id"); vals.push(ctx.orgId); }
   if (def.codeEntity && existing.has("code") && !data["code"]) { cols.push("code"); vals.push(await nextCode(ctx.tx, ctx.orgId, def.codeEntity, def.key === "products" ? 5 : 4)); }
   if (existing.has("created_by")) { cols.push("created_by"); vals.push(ctx.user.id); }
-  if (escC.ativo && existing.has("farm_id") && !data["farm_id"] && ctx.farmId) { cols.push("farm_id"); vals.push(ctx.farmId); }
+  if (escC.ativo && existing.has("empresa_id") && !data["empresa_id"] && ctx.empresaId) { cols.push("empresa_id"); vals.push(ctx.empresaId); }
   for (const f of def.fields) {
     if (f.readOnly || !(f.name in data) || !existing.has(f.name)) continue;
     const v = coerceValue(f, data[f.name]); if (v === undefined) continue;
     cols.push(f.name); vals.push(v);
   }
-  if (def.key === "farms" && !cols.includes("code")) { cols.push("code"); vals.push(Number(await nextCode(ctx.tx, ctx.orgId, "farm", 1))); }
+  // O código da Empresa é `int not null` e não vem do cliente (campo `readOnly`). A condição olha a TABELA
+  // canônica, não a chave do recurso: a renomeação trocou a chave de `farms` para `empresas` e a comparação
+  // por chave virou letra morta em silêncio — o INSERT passou a sair sem `code` e a violar o NOT NULL.
+  // A chave da SEQUÊNCIA continua legada de propósito (`SEQUENCIA_EMPRESA`): ver o motivo no adaptador.
+  if (def.table === "empresas" && !cols.includes("code")) { cols.push("code"); vals.push(Number(await nextCode(ctx.tx, ctx.orgId, SEQUENCIA_EMPRESA, 1))); }
   const r = await ctx.tx.query(`insert into erp.${ident(def.table)} (${cols.map(ident).join(",")}) values (${vals.map((_, i) => `$${i + 1}`).join(",")}) returning id`, vals);
   return getOne(ctx, def, (r.rows[0] as { id: string }).id);
 }
@@ -258,9 +266,9 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
   if (def.table === "users") where.push(`t.id in (select m.user_id from erp.organization_members m where m.organization_id=${b.add(ctx.orgId)} and m.is_active)`);
   if (def.softDelete) where.push("t.deleted_at is null");
   if (existing.has("is_active") && !extra["include_inactive"]) where.push("t.is_active");
-  // autocomplete de recurso por fazenda: só fazendas autorizadas (a fazenda selecionada é filtro do chamador via `extra.farm_id`)
+  // autocomplete de recurso por fazenda: só fazendas autorizadas (a fazenda selecionada é filtro do chamador via `extra.empresa_id`)
   const escO = escopoDoRecurso(def);
-  if (escO.ativo && existing.has("farm_id")) where.push(...empresaScopeBuilder(ctx, "t.farm_id", b, { nullable: escO.nullable }));
+  if (escO.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, "t.empresa_id", b, { nullable: escO.nullable }));
   if (search) where.push(`${labelExpr} ilike ${b.add(`%${search}%`)}`);
   for (const [k, v] of Object.entries(extra)) if (existing.has(k) && k !== "include_inactive") where.push(`t.${ident(k)} = ${b.add(v)}`);
   const codeSel = existing.has("code") ? ", t.code::text as code" : ", null as code";
@@ -272,7 +280,9 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
  * Valores distintos de um campo filtrável (lista do chip de filtro do modelo base), com contagem e rótulo resolvido para
  * referências. Respeita tenant/fazenda como a listagem e nunca aceita nome de coluna do cliente (só campos da definição).
  */
-export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, field: string, search: string | undefined, limit: number) {
+export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, campoPedido: string, search: string | undefined, limit: number) {
+  // o cliente pode pedir pelo nome legado (link salvo, versão anterior do web): resolvido aqui, uma vez
+  const field = campoCanonico(campoPedido);
   const f = def.fields.find((x) => x.name === field && (x.filter || x.list)); if (!f) throw validation("Campo não filtrável");
   const existing = await checkColumns(ctx, def); if (!existing.has(f.name)) return [];
   const b = new SqlBuilder(); const where: string[] = [];
@@ -280,8 +290,8 @@ export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, field: s
   if (def.softDelete) where.push("t.deleted_at is null");
   // mesmo recorte da listagem: fazenda ativa e fazendas do vínculo
   const escD = escopoDoRecurso(def);
-  if (escD.ativo && ctx.farmId && existing.has("farm_id")) where.push(escD.nullable ? `(t.farm_id is null or t.farm_id = ${b.add(ctx.farmId)})` : `t.farm_id = ${b.add(ctx.farmId)}`);
-  if (escD.ativo && existing.has("farm_id")) where.push(...empresaScopeBuilder(ctx, "t.farm_id", b, { nullable: escD.nullable }));
+  if (escD.ativo && ctx.empresaId && existing.has("empresa_id")) where.push(escD.nullable ? `(t.empresa_id is null or t.empresa_id = ${b.add(ctx.empresaId)})` : `t.empresa_id = ${b.add(ctx.empresaId)}`);
+  if (escD.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, "t.empresa_id", b, { nullable: escD.nullable }));
   const col = `t.${ident(f.name)}`;
   const rdef = f.type === "ref" && f.ref ? getResource(f.ref.resource) : undefined;
   const labelExpr = rdef ? `r.${ident(rdef.labelField)}::text` : f.type === "tags" ? "x.tag" : `${col}::text`;

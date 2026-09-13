@@ -15,7 +15,7 @@ import type { Base1FilterDef, FilterValue, DistinctValue } from "./types";
  * pesquisa e lista de valores distintos com seleção múltipla ("(Selecionar Tudo)"), ou campo de valor para
  * operadores que não usam lista. Cancelar descarta; OK aplica.
  */
-export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenChange, scope }: { f: Base1FilterDef; value: FilterValue | undefined; onApply: (v: FilterValue) => void; onClear: () => void; distinct?: (search: string) => Promise<DistinctValue[]>; open?: boolean; onOpenChange?: (o: boolean) => void; /** identifica a tela/tenant/fazenda de origem dos valores (chave de cache) */ scope?: string }) {
+export function FilterChip({ f, value, onApply, onClear, distinct, open, onOpenChange, scope }: { f: Base1FilterDef; value: FilterValue | undefined; onApply: (v: FilterValue) => void; onClear: () => void; distinct?: (search: string) => Promise<DistinctValue[]>; open?: boolean; onOpenChange?: (o: boolean) => void; /** identifica a tela/tenant/empresa de origem dos valores (chave de cache) */ scope?: string }) {
   const [localOpen, setLocalOpen] = React.useState(false);
   const isOpen = open ?? localOpen; const setOpen = onOpenChange ?? setLocalOpen;
   const [draft, setDraft] = React.useState<FilterValue>(value ?? emptyValue(f));

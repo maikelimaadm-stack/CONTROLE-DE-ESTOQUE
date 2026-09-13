@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
+import { useAuth, empresasDoContexto } from "@/lib/auth";
 import { dateTimeBR } from "@/lib/utils";
 import { Badge, Button, Card, CardHeader, CardBody, Dialog, Field, Input, NativeSelect } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
@@ -27,7 +27,7 @@ export function UsersPanel() {
         <Field label="Nome" required span={6}><Input value={edit.f.name} onChange={(e) => setEdit({ ...edit, f: { ...edit.f, name: e.target.value } })} /></Field><Field label="E-mail" required span={6}><Input type="email" value={edit.f.email} disabled={Boolean(edit.id)} onChange={(e) => setEdit({ ...edit, f: { ...edit.f, email: e.target.value } })} /></Field>
         <Field label="Telefone" span={4}><Input value={edit.f.phone} onChange={(e) => setEdit({ ...edit, f: { ...edit.f, phone: e.target.value } })} /></Field><Field label={edit.id ? "Nova senha (opcional)" : "Senha (mín. 8)"} required={!edit.id} span={4}><Input type="password" value={edit.f.password} onChange={(e) => setEdit({ ...edit, f: { ...edit.f, password: e.target.value } })} /></Field><Field label="Situação" span={4}><NativeSelect value={edit.f.is_active ? "1" : "0"} onChange={(e) => setEdit({ ...edit, f: { ...edit.f, is_active: e.target.value === "1" } })}><option value="1">Ativo</option><option value="0">Inativo</option></NativeSelect></Field>
         <Field label="Perfil" span={12}><NativeSelect value={edit.f.role_id} onChange={(e) => setEdit({ ...edit, f: { ...edit.f, role_id: e.target.value } })}><option value="">Sem perfil (sem permissões)</option>{roles.data?.items.map((r) => <option key={String(r["id"])} value={String(r["id"])}>{String(r["name"])}</option>)}</NativeSelect></Field>
-        <Field label={tr("acesso_empresa.titulo")} help={tr("acesso_empresa.descricao")} span={12}><AcessoPorEmpresa roleId={edit.f.role_id} empresas={ctx?.farms ?? []} valor={edit.f.escopos_empresas} onChange={(escopos_empresas) => setEdit({ ...edit, f: { ...edit.f, escopos_empresas } })} /></Field>
+        <Field label={tr("acesso_empresa.titulo")} help={tr("acesso_empresa.descricao")} span={12}><AcessoPorEmpresa roleId={edit.f.role_id} empresas={empresasDoContexto(ctx)} valor={edit.f.escopos_empresas} onChange={(escopos_empresas) => setEdit({ ...edit, f: { ...edit.f, escopos_empresas } })} /></Field>
       </div>}
     </Dialog>
   </CardBody></Card>;

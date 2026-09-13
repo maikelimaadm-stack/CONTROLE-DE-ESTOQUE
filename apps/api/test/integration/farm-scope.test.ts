@@ -15,10 +15,10 @@ let A: Hdr; let AB: Hdr; let OWNER: Hdr; let farmA: string; let farmB: string; l
 const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { items?: Record<string, unknown>[]; error?: { code: string } };
 const PERMS = ["payables.view", "receivables.view", "bank_movements.view", "budgets.view", "orders.view", "sales.view", "stocks.view", "input_entries.view", "requisitions.view", "stock_writeoffs.view", "service_orders.view", "service_orders.monitor", "depreciations.view", "maintenances.view", "equipments.view", "purchase_requests.view", "animals.view", "weighings.view", "sanitaries.view", "nutritions.view", "dashboard.home.view", "dashboard.financial.view", "dashboard.supply.view", "dashboard.livestock.view", "dashboard.assets.view", "report.stock_movement.view", "report.payables.view", "report.payables.export", "warehouses.view", "batches.view", "salary_advances.view", "earnings.view", "feed_batches.view", "feed_formulas.view"];
 
-async function member(name: string, email: string, farmIds: string[]): Promise<Hdr> {
+async function member(name: string, email: string, empresaIds: string[]): Promise<Hdr> {
   const role = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${name}`, permissions: PERMS } });
   expect(role.statusCode, role.body).toBe(201);
-  const mem = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name, email, password: "Matriz@12345", role_id: j(role).id, farm_ids: farmIds } });
+  const mem = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name, email, password: "Matriz@12345", role_id: j(role).id, farm_ids: empresaIds } });
   expect(mem.statusCode, mem.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Matriz@12345" } });
   expect(login.statusCode, login.body).toBe(200);

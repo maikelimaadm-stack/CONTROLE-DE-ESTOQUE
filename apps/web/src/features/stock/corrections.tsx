@@ -7,18 +7,18 @@ import { num, dateBR, todayISO } from "@/lib/utils";
 import { Card, CardHeader, CardBody, Button, Dialog, Field, Input, Textarea } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
 import { RefSelect } from "@/components/ui/ref-select";
-import { useCreate, useFarmDefault, StatusBadge, type Row } from "@/features/docs/shared";
+import { useCreate, useEmpresaPadrao, StatusBadge, type Row } from "@/features/docs/shared";
 import { COPY } from "@/lib/copy";
 
-export interface CorrectionPrefill { farm_id?: string; warehouse_id?: string; product_id?: string; provider_lot?: string }
+export interface CorrectionPrefill { empresa_id?: string; warehouse_id?: string; product_id?: string; provider_lot?: string }
 
 /**
  * Ajuste de estoque (correção): ação administrativa/contextual — aberta a partir do Saldo ("Ações › Ajustar estoque")
  * ou do "+ Novo › Ajuste". Gera movimento de correção com justificativa (ledger imutável).
  */
 export function CorrectionDialog({ open, onOpenChange, prefill }: { open: boolean; onOpenChange: (o: boolean) => void; prefill?: CorrectionPrefill }) {
-  const qc = useQueryClient(); const farm = useFarmDefault();
-  const blank = React.useCallback(() => ({ farm_id: prefill?.farm_id || farm, correction_date: todayISO(), warehouse_id: prefill?.warehouse_id ?? "", product_id: prefill?.product_id ?? "", provider_lot: prefill?.provider_lot ?? "", new_quantity: "", unit_value: "", justification: "" }), [prefill, farm]);
+  const qc = useQueryClient(); const empresa = useEmpresaPadrao();
+  const blank = React.useCallback(() => ({ empresa_id: prefill?.empresa_id || empresa, correction_date: todayISO(), warehouse_id: prefill?.warehouse_id ?? "", product_id: prefill?.product_id ?? "", provider_lot: prefill?.provider_lot ?? "", new_quantity: "", unit_value: "", justification: "" }), [prefill, empresa]);
   const [v, setV] = React.useState(blank);
   React.useEffect(() => { if (open) setV(blank()); }, [open, blank]);
   const bal = useQuery({ queryKey: ["bal", v.warehouse_id, v.product_id], queryFn: () => api<{ quantity: string; averageCost: string }>(`/api/stock/balances/${v.warehouse_id}/${v.product_id}`), enabled: open && Boolean(v.warehouse_id && v.product_id) });
@@ -26,8 +26,8 @@ export function CorrectionDialog({ open, onOpenChange, prefill }: { open: boolea
   return <Dialog open={open} onOpenChange={onOpenChange} title="Ajustar estoque" footer={<><Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button><Button loading={create.isPending} disabled={!v.warehouse_id || !v.product_id || !v.new_quantity || !v.justification} onClick={() => create.mutate({ ...v, provider_lot: v.provider_lot || null, unit_value: v.unit_value || null })}>Salvar</Button></>}>
     <p className="mb-3 text-xs text-slate-500">Ajusta o saldo para a quantidade informada com justificativa; gera um movimento de correção no ledger (nunca edita movimentos anteriores).</p>
     <div className="grid grid-cols-12 gap-3">
-      <Field label="Fazenda" required span={6}><RefSelect resource="farms" value={v.farm_id} onChange={(x) => setV({ ...v, farm_id: x ?? "", warehouse_id: "" })} /></Field>
-      <Field label="Armazém" required span={6}><RefSelect resource="warehouses" value={v.warehouse_id} onChange={(x) => setV({ ...v, warehouse_id: x ?? "" })} filter={{ farm_id: v.farm_id }} /></Field>
+      <Field label="Empresa" required span={6}><RefSelect resource="empresas" value={v.empresa_id} onChange={(x) => setV({ ...v, empresa_id: x ?? "", warehouse_id: "" })} /></Field>
+      <Field label="Armazém" required span={6}><RefSelect resource="warehouses" value={v.warehouse_id} onChange={(x) => setV({ ...v, warehouse_id: x ?? "" })} filter={{ empresa_id: v.empresa_id }} /></Field>
       <Field label="Produto" required span={8}><RefSelect resource="products" value={v.product_id} onChange={(x) => setV({ ...v, product_id: x ?? "" })} /></Field>
       <Field label="Lote" span={4}><Input value={v.provider_lot} onChange={(e) => setV({ ...v, provider_lot: e.target.value })} /></Field>
       <Field label="Saldo atual" span={3}><Input readOnly value={bal.data ? num(bal.data.quantity, 4) : ""} /></Field>

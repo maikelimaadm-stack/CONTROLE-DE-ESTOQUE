@@ -1,6 +1,6 @@
 import type { Tx } from "@agro/db";
 import { DomainError } from "@agro/shared";
-import { escopoDoModulo, type AutorizacaoPorModulo } from "@erp/plataforma";
+import { escopoDoModulo, escopoTotalEmAlgumModulo, type AutorizacaoPorModulo } from "@erp/plataforma";
 
 export interface AuthUser { id: string; email: string; name: string }
 
@@ -11,8 +11,9 @@ export interface AuthUser { id: string; email: string; name: string }
  * organização pode ter centenas, e carregá-las a cada requisição não escala. Quando o modo é `selecionadas`,
  * o conjunto é resolvido no SQL (`erp.membro_empresas`), tanto nas listagens quanto nas checagens pontuais.
  *
- * `farmIds` não existe mais: `erp.member_farms` deixou de ser autoridade de runtime em PRE-BASE2-02
- * (docs/MULTI-COMPANY-CONTRACT.md §7). A tabela continua no banco até a migração física da PRE-BASE2-03.
+ * `empresaIds` não existe aqui: o conjunto de empresas vive no banco. `erp.member_farms` deixou de ser
+ * autoridade em PRE-BASE2-02 e foi APOSENTADA fisicamente em PRE-BASE2-03 (arquivo morto
+ * `erp.legado_escopo_empresa_v0`).
  */
 export interface Membership {
   orgId: string;
@@ -27,8 +28,13 @@ export interface Membership {
 export interface RequestContext {
   user: AuthUser;
   orgId: string;
-  /** Empresa selecionada no contexto de trabalho (X-Farm-Id). SELEÇÃO, nunca autorização. */
-  farmId: string | null;
+  /**
+   * Empresa selecionada no contexto de trabalho (`X-Empresa-Id`, ou `X-Farm-Id` durante a transição).
+   * SELEÇÃO, nunca autorização: ela só pode DIMINUIR o escopo da requisição, jamais ampliá-lo.
+   * A tradução do cabeçalho legado acontece na borda (`lib/compat-empresa.ts`); daqui para dentro existe
+   * um nome só.
+   */
+  empresaId: string | null;
   membership: Membership;
   permissions: Set<string>;
   ip?: string;
@@ -57,22 +63,22 @@ export const moduloAtivo = (ctx: RequestContext): string | null => ctx.moduloEmp
  *                      e sem `WHERE IN` gigante montado pelo Node (lista vazia ⇒ nenhuma linha, natural);
  *   • `nenhuma`      → `false`: módulo sem configuração é fail-closed, não "tudo".
  *
- * `col` é um alias de tabela (→ `alias.farm_id`) ou uma expressão terminada em `farm_id`.
+ * `col` é um alias de tabela (→ `alias.empresa_id`) ou uma expressão terminada em `empresa_id`.
  * `nullable`: registro sem empresa (null) é da organização inteira e continua visível.
  * `ignoreSelected`: o chamador já filtrou explicitamente por empresa — só a autorização é acrescentada.
  * Registro fora do escopo simplesmente não é visível (404 em GET por id, ausente em listas).
  */
 /**
- * Coluna de empresa do chamador: um ALIAS de tabela vira `alias.farm_id`; qualquer expressão já qualificada
- * (`f.id`, `y.farm_id`, `me.empresa_id`) é usada como está — o escopo compara com a empresa, não com um nome.
+ * Coluna de empresa do chamador: um ALIAS de tabela vira `alias.empresa_id`; qualquer expressão já qualificada
+ * (`f.id`, `y.empresa_id`, `me.empresa_id`) é usada como está — o escopo compara com a empresa, não com um nome.
  */
-const colunaDeEmpresa = (col: string): string => (col.includes(".") || col.endsWith("farm_id") ? col : `${col}.farm_id`);
+const colunaDeEmpresa = (col: string): string => (col.includes(".") || col.endsWith("empresa_id") ? col : `${col}.empresa_id`);
 
 export function empresaScope(ctx: RequestContext, col: string, params: unknown[], opts: { nullable?: boolean; ignoreSelected?: boolean; modulo?: string | null } = {}): string[] {
   const c = colunaDeEmpresa(col);
   const out: string[] = [];
   const wrap = (expr: string) => (opts.nullable ? `(${c} is null or ${expr})` : expr);
-  if (ctx.farmId && !opts.ignoreSelected) { params.push(ctx.farmId); out.push(wrap(`${c}=$${params.length}`)); }
+  if (ctx.empresaId && !opts.ignoreSelected) { params.push(ctx.empresaId); out.push(wrap(`${c}=$${params.length}`)); }
 
   const modulo = opts.modulo !== undefined ? opts.modulo : moduloAtivo(ctx);
   const escopo = ctx.membership.isOwner ? { tipo: "todas" as const } : escopoDoModulo(ctx.membership.escopos, modulo);
@@ -108,7 +114,7 @@ export function empresaScopeAgregado(ctx: RequestContext, col: string, params: u
   const alvo = req.filter(Boolean);
   const out: string[] = [];
   if (alvo.length) { params.push(alvo); out.push(`${c} = any($${params.length}::uuid[])`); }
-  else if (ctx.farmId) { params.push(ctx.farmId); out.push(`${c}=$${params.length}`); }
+  else if (ctx.empresaId) { params.push(ctx.empresaId); out.push(`${c}=$${params.length}`); }
   const autorizacao = empresaScope(ctx, c, params, { ...opts, ignoreSelected: true });
   const todas = [...out, ...autorizacao].map((x) => (opts.nullable ? `(${c} is null or ${x})` : x));
   return todas.length ? " and " + todas.join(" and ") : "";
@@ -146,7 +152,7 @@ export function empresaScopePar(ctx: RequestContext, cols: [string, string], par
 export async function empresaPermitida(ctx: ServiceCtx, empresaId: string | null | undefined, modulo?: string | null): Promise<boolean> {
   if (!empresaId) return true;
   if (ctx.membership.isOwner) {
-    const r = await ctx.tx.query<{ ok: boolean }>("select exists (select 1 from erp.farms f where f.id=$1 and f.organization_id=$2 and f.deleted_at is null) ok", [empresaId, ctx.orgId]);
+    const r = await ctx.tx.query<{ ok: boolean }>("select exists (select 1 from erp.empresas f where f.id=$1 and f.organization_id=$2 and f.deleted_at is null) ok", [empresaId, ctx.orgId]);
     return Boolean(r.rows[0]?.ok);
   }
   const alvo = modulo !== undefined ? modulo : moduloAtivo(ctx);
@@ -178,6 +184,23 @@ export function exigirEscopoTotalDoModulo(ctx: ServiceCtx, oQue = "Registro"): v
 }
 
 /**
+ * Criar a própria EMPRESA é ato de ORGANIZAÇÃO, e não existe módulo ativo para consultar.
+ *
+ * A pergunta aqui é a MESMA que a RLS de `erp.empresas` faz (`erp.escopo_empresa_total(null)`): o membro
+ * tem escopo total em ALGUM módulo? Precisa ser a mesma por um motivo prático, não estético — a empresa
+ * recém-criada não está no escopo de ninguém, então quem não passa nessa pergunta insere a linha e não
+ * consegue lê-la de volta: o `getOne` do create responde 404 e a transação inteira volta atrás. O usuário
+ * vê "não encontrado" depois de preencher um cadastro que, do ponto de vista dele, foi aceito.
+ *
+ * Recusar ANTES do INSERT troca esse 404 silencioso por uma recusa explícita, sem conceder escopo nenhum:
+ * ninguém passa a enxergar empresa que não enxergava.
+ */
+export function exigirEscopoTotalDaOrganizacao(ctx: ServiceCtx, oQue = "Registro"): void {
+  if (escopoTotalEmAlgumModulo(ctx.membership.escopos)) return;
+  throw new DomainError("VALIDATION_ERROR", `${oQue} alcança a organização inteira: é preciso ter acesso a todas as empresas em algum módulo`);
+}
+
+/**
  * Empresa informada no CORPO de um lançamento: é PEDIDO, nunca autorização. Fora do escopo do módulo →
  * VALIDATION_ERROR (o cliente escolheu explicitamente uma empresa que não pode usar; não há o que revelar
  * sobre existência, porque o id veio dele).
@@ -193,28 +216,17 @@ export async function exigirEmpresaDeLancamento(ctx: ServiceCtx, empresaId: stri
  * lote entre empresas é assim: quem envia não precisa ver quem recebe (quem recebe é que aceita, e aí sim
  * `empresaPermitida` decide). O que não pode é o destino ser um identificador qualquer vindo do corpo da
  * requisição: sem esta checagem, um id de outra organização atravessaria — a chave estrangeira de
- * `erp.animal_movements.destination_farm_id` é de coluna única e não carrega a organização.
+ * `erp.animal_movements.empresa_destino_id` é de coluna única e não carrega a organização.
  */
 export async function exigirEmpresaDaOrganizacao(ctx: ServiceCtx, empresaId: string, oQue = "Empresa"): Promise<void> {
-  const r = await ctx.tx.query("select 1 from erp.farms where id=$1 and organization_id=$2 and deleted_at is null", [empresaId, ctx.orgId]);
-  if (!r.rowCount) throw new DomainError("VALIDATION_ERROR", `${oQue} inválida`);
+  // EXISTÊNCIA no tenant, não VISIBILIDADE no escopo. `erp.empresas` é lida pelo escopo (e tem de ser, senão
+  // o seletor vira um catálogo do que a pessoa não pode usar), mas a pergunta aqui é outra: a emissão de uma
+  // transferência valida o DESTINO, que o remetente legitimamente não enxerga — quem aceita é o destinatário.
+  // Perguntando pela política de leitura, "não vejo" virava "não existe" e a rota recusava com 422 uma
+  // transferência válida. `erp.empresa_da_organizacao_atual` responde só isso, dentro do tenant do servidor.
+  const r = await ctx.tx.query<{ ok: boolean }>("select erp.empresa_da_organizacao_atual($1) as ok", [empresaId]);
+  if (!r.rows[0]?.ok) throw new DomainError("VALIDATION_ERROR", `${oQue} inválida`);
 }
-
-// --------------------------------------------------------------------------------------------------
-// COMPATIBILIDADE DE NOME (PRE-BASE2-03 renomeia fisicamente farm → empresa).
-// Os nomes antigos continuam apenas como APELIDOS do escopo canônico: nenhuma regra nova deve usá-los, e
-// nenhum deles lê `erp.member_farms`. O gate scripts/member-farms-audit.mjs impede regressão.
-// --------------------------------------------------------------------------------------------------
-/** @deprecated use `empresaScope` (PRE-BASE2-03 renomeia). */
-export const farmScope = empresaScope;
-/** @deprecated use `empresaScopeSql`. */
-export const farmScopeSql = empresaScopeSql;
-/** @deprecated use `empresaScopeAgregado` — o padrão de array em memória sai com a renomeação. */
-export const allowedFarmsSql = empresaScopeAgregado;
-/** @deprecated use `empresaPermitida`. */
-export const farmAllowed = empresaPermitida;
-/** @deprecated use `exigirEmpresaVisivel`. */
-export const assertFarmVisible = exigirEmpresaVisivel;
 
 // --------------------------------------------------------------------------------------------------
 // CONSULTA COM ESCOPO POR MARCADOR
@@ -222,12 +234,12 @@ export const assertFarmVisible = exigirEmpresaVisivel;
 /**
  * Substitui marcadores de escopo dentro de um SQL pronto, acrescentando os parâmetros ao final da lista:
  *
- *   `{{escopo:e.farm_id}}`       → escopo do módulo ativo (com a empresa selecionada, quando houver);
- *   `{{escopo_nulo:d.farm_id}}`  → idem, mas registro sem empresa é da organização e continua visível;
- *   `{{escopo_par:a.origin_farm_id,a.destination_farm_id}}` → visível se QUALQUER ponta estiver no escopo.
+ *   `{{escopo:e.empresa_id}}`       → escopo do módulo ativo (com a empresa selecionada, quando houver);
+ *   `{{escopo_nulo:d.empresa_id}}`  → idem, mas registro sem empresa é da organização e continua visível;
+ *   `{{escopo_par:a.empresa_origem_id,a.empresa_destino_id}}` → visível se QUALQUER ponta estiver no escopo.
  *
  * O módulo é o da PERMISSÃO da rota (runService). Painéis que combinam áreas fixam o módulo de cada bloco na
- * própria coluna: `{{escopo:t.farm_id|financeiro}}`.
+ * própria coluna: `{{escopo:t.empresa_id|financeiro}}`.
  *
  * É o substituto do antigo padrão de ARRAY (`($n::uuid[] is null or col = any($n))`), que obrigava a
  * aplicação a carregar todas as empresas autorizadas para a memória — inviável com centenas de empresas

@@ -8,7 +8,7 @@
  *     da aba; o href guarda a última URL para restaurar o estado ao voltar);
  *   - demais telas → pathname.
  * Persistência: sessionStorage por organização+usuário, só metadados (key, href, label, kind); ao restaurar,
- * as abas são revalidadas pelas permissões atuais. Troca de fazenda fecha abas de registro/criação (farm-scoped).
+ * as abas são revalidadas pelas permissões atuais. Troca de empresa fecha abas de registro/criação (farm-scoped).
  */
 import * as React from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -80,7 +80,7 @@ export interface WorkspaceTabsApi {
   /** fecha; devolve false quando a aba está suja e `force` não foi passado. */
   closeTab: (key: string, force?: boolean) => boolean;
   closeOthers: (key: string) => void;
-  /** fecha abas de registro/criação (troca de fazenda): devolve true se a aba ativa foi fechada. */
+  /** fecha abas de registro/criação (troca de empresa): devolve true se a aba ativa foi fechada. */
   closeScoped: () => boolean;
   setTitle: (key: string, label: string) => void;
   setDirty: (key: string, dirty: boolean) => void;
@@ -140,7 +140,7 @@ export function useTabTitle(title?: string | null) {
   const setTitle = useWorkspaceTabs()?.setTitle; const pathname = usePathname();
   React.useEffect(() => { if (setTitle && title && title.trim()) setTitle(tabKeyFor(pathname), title.trim()); }, [setTitle, title, pathname]);
 }
-/** Contrato de estado não salvo: a aba mostra indicador e fechar/trocar fazenda/sair pedem confirmação. */
+/** Contrato de estado não salvo: a aba mostra indicador e fechar/trocar empresa/sair pedem confirmação. */
 export function useDirtyTab(dirty: boolean) {
   const setDirty = useWorkspaceTabs()?.setDirty; const pathname = usePathname(); const key = tabKeyFor(pathname);
   React.useEffect(() => { if (!setDirty) return; setDirty(key, dirty); return () => setDirty(key, false); }, [setDirty, key, dirty]);

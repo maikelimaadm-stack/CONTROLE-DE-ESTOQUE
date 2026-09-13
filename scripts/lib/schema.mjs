@@ -102,12 +102,47 @@ export function readSchema(dir = MIGRATIONS_DIR) {
       const col = parseColumn(m[2].trim());
       if (col) entry.columns.set(col.name, { ...col, addedIn: file });
     }
+    // OBRIGATORIEDADE DECLARADA DEPOIS DA CRIAÇÃO (PRE-BASE2-03): `add column ... not null` sem default é
+    // recusado em tabela que já tem linhas, então a coluna canônica nasce anulável e só depois da cópia
+    // recebe o NOT NULL. Sem ler este passo, o dicionário e a matriz de RLS diriam que 47 colunas
+    // obrigatórias são opcionais — e a matriz classificaria todas como "empresa anulável".
+    const notNullRe = /alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+set\s+not\s+null\s*;/gi;
+    for (let m = notNullRe.exec(sql); m; m = notNullRe.exec(sql)) {
+      const col = tables.get(m[1].toLowerCase())?.columns.get(m[2].toLowerCase());
+      if (col) col.notNull = true;
+    }
+    const dropNotNullRe = /alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+drop\s+not\s+null\s*;/gi;
+    for (let m = dropNotNullRe.exec(sql); m; m = dropNotNullRe.exec(sql)) {
+      const col = tables.get(m[1].toLowerCase())?.columns.get(m[2].toLowerCase());
+      if (col) col.notNull = false;
+    }
+    // RENOMEAÇÃO E REMOÇÃO DE TABELA (PRE-BASE2-03). Sem isto, `alter table erp.farms rename to empresas`
+    // deixaria o dicionário e os gates enxergando um schema que não existe mais — uma tabela fantasma com o
+    // nome antigo e nenhuma com o novo. Rodam DEPOIS das colunas do mesmo arquivo, que é a ordem real da
+    // 0014: a tabela de vínculo ganha a coluna canônica e só então troca de nome.
+    const renameRe = /alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+rename\s+to\s+([a-z_][a-z0-9_]*)\s*;/gi;
+    for (let m = renameRe.exec(sql); m; m = renameRe.exec(sql)) {
+      const antigo = m[1].toLowerCase();
+      const entry = tables.get(antigo);
+      if (!entry) continue;
+      const novo = `${antigo.split(".")[0]}.${m[2].toLowerCase()}`;
+      tables.delete(antigo);
+      tables.set(novo, { ...entry, table: novo, renamedFrom: antigo, renamedIn: file });
+    }
+    const dropRe = /drop\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s*(?:cascade|restrict)?\s*;/gi;
+    for (let m = dropRe.exec(sql); m; m = dropRe.exec(sql)) tables.delete(m[1].toLowerCase());
   }
   return tables;
 }
 
-/** Colunas que amarram um registro à EMPRESA (hoje materializada como fazenda). */
-export const COMPANY_COLUMNS = ["empresa_id", "farm_id", "origin_farm_id", "destination_farm_id"];
+/**
+ * Colunas que amarram um registro à EMPRESA. As CANÔNICAS vêm primeiro (PRE-BASE2-03); as legadas continuam
+ * listadas porque ainda existem como espelho de compatibilidade e uma tabela pode ter as duas.
+ */
+export const COMPANY_COLUMNS = ["empresa_id", "empresa_origem_id", "empresa_destino_id", "farm_id", "origin_farm_id", "destination_farm_id"];
+/** Só as canônicas — o que o runtime novo pode ler e o que os gates de escopo exigem recortar. */
+export const CANONICAL_COMPANY_COLUMNS = ["empresa_id", "empresa_origem_id", "empresa_destino_id"];
+export const canonicalCompanyColumnsOf = (t) => CANONICAL_COMPANY_COLUMNS.filter((c) => t.columns.has(c));
 export const companyColumnsOf = (t) => COMPANY_COLUMNS.filter((c) => t.columns.has(c));
 export const isOrgScoped = (t) => t.columns.has("organization_id");
 export const isSoftDeletable = (t) => t.columns.has("deleted_at");

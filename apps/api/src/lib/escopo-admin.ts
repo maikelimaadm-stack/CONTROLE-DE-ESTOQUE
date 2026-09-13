@@ -10,7 +10,7 @@ import { audit } from "./service.js";
  * O contrato canônico é uma linha POR MÓDULO: o modo (`todas` | `selecionadas`) e, no modo `selecionadas`, as
  * empresas escolhidas. Módulo ausente = SEM empresa nenhuma (fail-closed) — nunca "todas".
  *
- * `erp.member_farms` não é mais autoridade de runtime; o formato legado `farm_ids` continua sendo aceito na
+ * `erp.member_farms` não é mais autoridade de runtime; o formato legado `empresa_ids` continua sendo aceito na
  * API e é TRADUZIDO aqui para o modelo canônico, com a mesma semântica que o sistema tinha antes:
  * lista vazia = todas as empresas, lista preenchida = exatamente aquelas — valendo para todos os módulos.
  */
@@ -22,9 +22,9 @@ export const escopoEmpresaSchema = z.object({
 export type EscopoEmpresaEntrada = z.infer<typeof escopoEmpresaSchema>;
 
 /** Tradução do formato legado: vazio = todas; preenchido = aquelas empresas — em TODOS os módulos. */
-export function deFarmIdsLegado(farmIds: readonly string[]): EscopoEmpresaEntrada[] {
-  const modo = farmIds.length ? "selecionadas" as const : "todas" as const;
-  return CHAVES_MODULO_EMPRESA.map((modulo) => ({ modulo, modo, empresas: modo === "selecionadas" ? [...farmIds] : [] }));
+export function deFarmIdsLegado(empresaIds: readonly string[]): EscopoEmpresaEntrada[] {
+  const modo = empresaIds.length ? "selecionadas" as const : "todas" as const;
+  return CHAVES_MODULO_EMPRESA.map((modulo) => ({ modulo, modo, empresas: modo === "selecionadas" ? [...empresaIds] : [] }));
 }
 
 /**
@@ -74,7 +74,7 @@ export async function exigirEmpresasAtribuiveis(ctx: ServiceCtx, escopos: readon
   const pedidas = [...new Set(escopos.flatMap((e) => (e.modo === "selecionadas" ? e.empresas : [])))];
   if (!pedidas.length) return;
   const r = await ctx.tx.query<{ id: string }>(
-    "select id from erp.farms where id = any($1::uuid[]) and organization_id=$2 and deleted_at is null", [pedidas, ctx.orgId]);
+    "select id from erp.empresas where id = any($1::uuid[]) and organization_id=$2 and deleted_at is null", [pedidas, ctx.orgId]);
   const validas = new Set(r.rows.map((x) => x.id));
   const recusadas = pedidas.filter((id) => !validas.has(id));
   if (recusadas.length) throw new DomainError("VALIDATION_ERROR", `Empresa não pode ser atribuída: ${recusadas.length} identificador(es) inexistente(s), de outra organização ou excluído(s)`);

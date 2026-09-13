@@ -62,7 +62,7 @@ test("o usuário configurado enxerga Estoque na empresa A e Financeiro na empres
 
   // empresas da organização: A e B
   const ctx = await pedir("/api/auth/context");
-  const empresas = (ctx.body.farms as { id: string; name: string }[]).slice(0, 2);
+  const empresas = ((ctx.body.empresas ?? ctx.body.farms) as { id: string; name: string }[]).slice(0, 2);
   const [A, B] = empresas;
   expect(A && B, "a semente precisa ter duas empresas").toBeTruthy();
 
@@ -71,13 +71,13 @@ test("o usuário configurado enxerga Estoque na empresa A e Financeiro na empres
   expect(refs.status).toBe(200);
   const um = async (recurso: string) => (await pedir(`/api/resources/${recurso}?pageSize=1`)).body.items[0].id as string;
   const [produto, fornecedor, categoria, centro] = await Promise.all([um("products"), um("people"), um("financial_categories"), um("cost_centers")]);
-  const armazem = async (farmId: string) => (await pedir(`/api/resources/warehouses?pageSize=50`)).body.items.find((w: { farm_id: string }) => w.farm_id === farmId).id as string;
-  const entrada = async (farmId: string, marca: string) => pedir("/api/stock/input-entries", {
-    farm_id: farmId, entry_date: "2026-09-01", note: marca,
-    items: [{ product_id: produto, quantity: "3", unit_value: "2", warehouse_id: await armazem(farmId), financial_category_id: categoria, cost_center_id: centro }]
+  const armazem = async (empresaId: string) => (await pedir(`/api/resources/warehouses?pageSize=50`)).body.items.find((w: { empresa_id: string }) => w.empresa_id === empresaId).id as string;
+  const entrada = async (empresaId: string, marca: string) => pedir("/api/stock/input-entries", {
+    empresa_id: empresaId, entry_date: "2026-09-01", note: marca,
+    items: [{ product_id: produto, quantity: "3", unit_value: "2", warehouse_id: await armazem(empresaId), financial_category_id: categoria, cost_center_id: centro }]
   });
-  const titulo = (farmId: string, numero: string) => pedir("/api/financial/payables", {
-    farm_id: farmId, number: numero, person_id: fornecedor, amount: "77.00", emission_date: "2026-09-01", due_date: "2026-03-15", note: "E2E acesso",
+  const titulo = (empresaId: string, numero: string) => pedir("/api/financial/payables", {
+    empresa_id: empresaId, number: numero, person_id: fornecedor, amount: "77.00", emission_date: "2026-09-01", due_date: "2026-03-15", note: "E2E acesso",
     apportionment: [{ financial_category_id: categoria, cost_center_id: centro, percentage: "100" }]
   });
   const eA = await entrada(A!.id, "E2E-ESTOQUE-A"); const eB = await entrada(B!.id, "E2E-ESTOQUE-B");
@@ -101,7 +101,7 @@ test("o usuário configurado enxerga Estoque na empresa A e Financeiro na empres
   await login(page, restrito);
   const sessao = await page.evaluate(() => JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string });
   const comoUsuario = { Authorization: `Bearer ${sessao.token}`, "X-Org-Id": sessao.orgId };
-  const comoUsuarioEm = (farmId: string) => ({ ...comoUsuario, "X-Farm-Id": farmId });
+  const comoUsuarioEm = (empresaId: string) => ({ ...comoUsuario, "X-Empresa-Id": empresaId });
 
   const estoque = await pedir("/api/stock/input-entries?pageSize=100", undefined, comoUsuario);
   const idsEstoque = (estoque.body.items as { id: string }[]).map((x) => x.id);

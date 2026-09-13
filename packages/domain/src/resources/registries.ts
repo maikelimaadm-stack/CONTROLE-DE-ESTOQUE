@@ -21,7 +21,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "farms", label: "Fazenda", labelPlural: "Fazendas", table: "farms", permission: "farms", labelField: "name", route: "/cadastros/fazendas", softDelete: true, defaultSort: "code",
+    key: "empresas", label: "Empresa", labelPlural: "Empresas", table: "empresas", permission: "farms", labelField: "name", route: "/cadastros/empresas", softDelete: true, defaultSort: "code",
     fields: [
       { name: "code", label: "Código", type: "integer", readOnly: true, list: true, span: 2 },
       T("name", "Nome", { required: true, list: true, search: true, span: 5 }),
@@ -67,9 +67,9 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("parent_id", "Endereçamento pai", "addressings", { list: true, span: 6 })]
   },
   {
-    key: "warehouses", label: "Armazém", labelPlural: "Armazéns", table: "warehouses", permission: "warehouses", labelField: "description", route: "/cadastros/armazens", softDelete: true, farmScoped: true,
+    key: "warehouses", label: "Armazém", labelPlural: "Armazéns", table: "warehouses", permission: "warehouses", labelField: "description", route: "/cadastros/armazens", softDelete: true, empresaScoped: true,
     fields: [
-      REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }),
+      REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
       T("initials", "Sigla", { required: true, list: true, search: true, span: 2 }), T("description", "Descrição", { required: true, list: true, search: true, span: 4 }),
       S("type", "Tipo", [["inputs", "Insumos"], ["production", "Produção"], ["formulation", "Formulação"]], { required: true, default: "inputs", list: true, filter: true, span: 2 }), active()
     ]
@@ -181,9 +181,9 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "position", label: "Ordem", type: "integer", required: true, default: 0, list: true, span: 2 }, active(), REF("parent_id", "Antecessor", "document_types", { span: 5 })]
   },
   {
-    key: "documents", label: "Documento", labelPlural: "Documentos", table: "documents", permission: "documents", labelField: "title", route: "/documentos", softDelete: true, farmScopedNulo: true,
+    key: "documents", label: "Documento", labelPlural: "Documentos", table: "documents", permission: "documents", labelField: "title", route: "/documentos", softDelete: true, empresaScopedNulo: true,
     fields: [
-      REF("farm_id", "Fazenda", "farms", { list: true, filter: true, span: 4 }), REF("document_type_id", "Tipo", "document_types", { required: true, list: true, filter: true, span: 4 }),
+      REF("empresa_id", "Empresa", "empresas", { list: true, filter: true, span: 4 }), REF("document_type_id", "Tipo", "document_types", { required: true, list: true, filter: true, span: 4 }),
       T("title", "Título", { required: true, list: true, search: true, span: 4 }), D("issue_date", "Emissão", { list: true, span: 3 }), D("expiration_date", "Vencimento", { list: true, filter: true, span: 3 }),
       S("status", "Situação", [["active", "Ativo"], ["expired", "Vencido"], ["archived", "Arquivado"]], { default: "active", list: true, filter: true, span: 3 }),
       { name: "description", label: "Descrição", type: "textarea", span: 12 }
@@ -223,9 +223,9 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "default_life_years", label: "Vida útil padrão (anos)", type: "integer", list: true, span: 3 }, { name: "default_depreciation_percent", label: "Depreciação padrão (%)", type: "percent", list: true, span: 3 }]
   },
   {
-    key: "equipments", label: "Bem/Equipamento", labelPlural: "Inventário de Bens", table: "equipments", permission: "equipments", labelField: "description", route: "/cadastros/inventario", softDelete: true, farmScoped: true, codeEntity: "equipment", printable: true,
+    key: "equipments", label: "Bem/Equipamento", labelPlural: "Inventário de Bens", table: "equipments", permission: "equipments", labelField: "description", route: "/cadastros/inventario", softDelete: true, empresaScoped: true, codeEntity: "equipment", printable: true,
     fields: [
-      T("code", "Código", { readOnly: true, list: true, search: true, span: 2 }), T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }),
+      T("code", "Código", { readOnly: true, list: true, search: true, span: 2 }), T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
       REF("family_id", "Família do bem", "equipment_families", { required: true, list: true, filter: true, span: 4 }), S("equipment_type", "Tipo", [["own", "Próprio"], ["outsourced", "Terceirizado"]], { span: 2 }), REF("proprietary_id", "Proprietário gestor", "people", { span: 3 }),
       S("status", "Situação", [["active", "Ativo"], ["inactive", "Inativo"], ["sold", "Vendido"], ["written_off", "Baixado"]], { default: "active", list: true, filter: true, span: 3 }),
       M("hour_value", "Valor por hora/km", { required: true, span: 2 }), { name: "hour_meter", label: "Horímetro/Km", type: "quantity", span: 2 }, T("year_model", "Ano/modelo", { required: true, span: 2 }), T("brand", "Marca", { span: 2 }), T("model", "Modelo", { span: 2 }), T("patrimony", "Patrimônio", { span: 2 }),
@@ -265,21 +265,21 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 6 })]
   },
   {
-    key: "grazing_modules", label: "Módulo de Pastejo", labelPlural: "Módulos de Pastejo", table: "grazing_modules", permission: "grazing_modules", labelField: "description", route: "/pecuaria/modulos-pastejo", softDelete: true, farmScoped: true, codeEntity: "grazing_module",
-    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }), D("module_date", "Data de cadastro", { required: true, span: 2 }), T("responsible", "Responsável", { span: 4 }), T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("fodder_id", "Forragem", "fodders", { required: true, list: true, span: 3 }), T("color", "Cor do módulo", { span: 2 }), B("control_productivity", "Controla produtividade", { span: 3 })]
+    key: "grazing_modules", label: "Módulo de Pastejo", labelPlural: "Módulos de Pastejo", table: "grazing_modules", permission: "grazing_modules", labelField: "description", route: "/pecuaria/modulos-pastejo", softDelete: true, empresaScoped: true, codeEntity: "grazing_module",
+    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), D("module_date", "Data de cadastro", { required: true, span: 2 }), T("responsible", "Responsável", { span: 4 }), T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("fodder_id", "Forragem", "fodders", { required: true, list: true, span: 3 }), T("color", "Cor do módulo", { span: 2 }), B("control_productivity", "Controla produtividade", { span: 3 })]
   },
   {
-    key: "areas", label: "Área (Piquete)", labelPlural: "Áreas", table: "areas", permission: "batch_area", labelField: "name", route: "/pecuaria/areas", softDelete: true, farmScoped: true,
-    fields: [REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }), T("code", "Código", { required: true, list: true, search: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), { name: "area_ha", label: "Área (ha)", type: "quantity", required: true, list: true, span: 2 }, REF("grazing_module_id", "Módulo de pastejo", "grazing_modules", { list: true, filter: true, span: 4 }), REF("fodder_id", "Forragem", "fodders", { span: 4 }), active()]
+    key: "areas", label: "Área (Piquete)", labelPlural: "Áreas", table: "areas", permission: "batch_area", labelField: "name", route: "/pecuaria/areas", softDelete: true, empresaScoped: true,
+    fields: [REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), T("code", "Código", { required: true, list: true, search: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), { name: "area_ha", label: "Área (ha)", type: "quantity", required: true, list: true, span: 2 }, REF("grazing_module_id", "Módulo de pastejo", "grazing_modules", { list: true, filter: true, span: 4 }), REF("fodder_id", "Forragem", "fodders", { span: 4 }), active()]
   },
   {
     key: "troughs", label: "Cocho", labelPlural: "Cochos", table: "troughs", permission: "troughs", labelField: "description", route: "/pecuaria/cochos", softDelete: true, codeEntity: "trough",
     fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), S("type", "Tipo", [["covered", "Coberto"], ["uncovered", "Descoberto"], ["drinker", "Bebedouro"]], { required: true, list: true, filter: true, span: 2 }), T("description", "Descrição", { required: true, list: true, search: true, span: 4 }), { name: "length_cm", label: "Área (cm)", type: "quantity", span: 2 }, REF("grazing_module_id", "Módulo de pastejo", "grazing_modules", { span: 4 }), REF("area_id", "Área", "areas", { list: true, span: 4 }), REF("corral_id", "Curral", "feedlot_corrals", { span: 4 }), active()]
   },
   {
-    key: "batches", label: "Lote", labelPlural: "Lotes de Animais", table: "batches", permission: "batches", labelField: "description", route: "/pecuaria/lotes", softDelete: true, farmScoped: true, codeEntity: "batch",
+    key: "batches", label: "Lote", labelPlural: "Lotes de Animais", table: "batches", permission: "batches", labelField: "description", route: "/pecuaria/lotes", softDelete: true, empresaScoped: true, codeEntity: "batch",
     fields: [
-      T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }), D("batch_date", "Data", { required: true, list: true, span: 2 }), T("responsible", "Responsável", { span: 4 }),
+      T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), D("batch_date", "Data", { required: true, list: true, span: 2 }), T("responsible", "Responsável", { span: 4 }),
       T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("species_id", "Espécie", "animal_species", { required: true, span: 3 }), REF("weight_parameter_id", "Peso (parâmetro)", "weight_parameters", { span: 3 }),
       S("batch_type", "Tipo", [["pasture", "Pasto"], ["feedlot", "Confinamento"], ["breeding", "Reprodução"], ["pre_batch", "Pré-lote"]], { default: "pasture", list: true, filter: true, span: 3 }),
       REF("grazing_module_id", "Módulo", "grazing_modules", { list: true, span: 3 }), REF("area_id", "Área", "areas", { list: true, span: 3 }), REF("corral_id", "Curral", "feedlot_corrals", { span: 3 }),
@@ -288,8 +288,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "feedlot_yards", label: "Pátio", labelPlural: "Pátios", table: "feedlot_yards", permission: "feedlot_yards", labelField: "name", route: "/confinamento/patios", softDelete: true, farmScoped: true,
-    fields: [REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }), T("code", "Código", { required: true, list: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), active()]
+    key: "feedlot_yards", label: "Pátio", labelPlural: "Pátios", table: "feedlot_yards", permission: "feedlot_yards", labelField: "name", route: "/confinamento/patios", softDelete: true, empresaScoped: true,
+    fields: [REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), T("code", "Código", { required: true, list: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), active()]
   },
   {
     key: "feedlot_sectors", label: "Setor", labelPlural: "Setores", table: "feedlot_sectors", permission: "feedlot_sectors", labelField: "name", route: "/confinamento/setores", softDelete: true,
@@ -308,8 +308,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 4 }), REF("diet_id", "Dieta", "diets", { list: true, span: 4 }), { name: "days_in_phase", label: "Dias na fase", type: "integer", list: true, span: 2 }, REF("next_phase_id", "Próxima fase", "feeding_phases", { span: 4 }), { name: "rules", label: "Regras de troca (JSON)", type: "json", span: 12 }, active()]
   },
   {
-    key: "breeding_seasons", label: "Estação de Monta", labelPlural: "Estações de Monta", table: "breeding_seasons", permission: "breeding_seasons", labelField: "name", route: "/pecuaria/reproducao/estacoes", softDelete: true, farmScoped: true, codeEntity: "breeding_season",
-    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), D("start_date", "Início", { required: true, list: true, span: 2 }), D("end_date", "Fim", { required: true, list: true, span: 2 }), S("status", "Situação", [["open", "Aberta"], ["closed", "Encerrada"]], { default: "open", list: true, filter: true, span: 2 })]
+    key: "breeding_seasons", label: "Estação de Monta", labelPlural: "Estações de Monta", table: "breeding_seasons", permission: "breeding_seasons", labelField: "name", route: "/pecuaria/reproducao/estacoes", softDelete: true, empresaScoped: true, codeEntity: "breeding_season",
+    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), D("start_date", "Início", { required: true, list: true, span: 2 }), D("end_date", "Fim", { required: true, list: true, span: 2 }), S("status", "Situação", [["open", "Aberta"], ["closed", "Encerrada"]], { default: "open", list: true, filter: true, span: 2 })]
   },
   {
     key: "breeding_protocols", label: "Protocolo", labelPlural: "Protocolos/Estação", table: "breeding_protocols", permission: "breeding_protocols", labelField: "name", route: "/pecuaria/reproducao/protocolos",
@@ -328,12 +328,12 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [REF("equipment_id", "Equipamento", "equipments", { required: true, list: true, filter: true, span: 4 }), D("scheduled_date", "Data agendada", { required: true, list: true, span: 3 }), T("description", "Descrição", { required: true, list: true, search: true, span: 5 }), S("status", "Situação", [["scheduled", "Agendada"], ["done", "Realizada"], ["cancelled", "Cancelada"]], { default: "scheduled", list: true, filter: true, span: 3 })]
   },
   {
-    key: "rainfalls", label: "Registro Pluviométrico", labelPlural: "Pluviometria", table: "rainfalls", permission: "rainfalls", labelField: "date", route: "/pluviometria", farmScoped: true, defaultSort: "date",
-    fields: [REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }), D("date", "Data", { required: true, list: true, filter: true, span: 3 }), { name: "millimeters", label: "Milímetros (mm)", type: "quantity", required: true, list: true, span: 3 }, T("note", "Observação", { span: 12 })]
+    key: "rainfalls", label: "Registro Pluviométrico", labelPlural: "Pluviometria", table: "rainfalls", permission: "rainfalls", labelField: "date", route: "/pluviometria", empresaScoped: true, defaultSort: "date",
+    fields: [REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), D("date", "Data", { required: true, list: true, filter: true, span: 3 }), { name: "millimeters", label: "Milímetros (mm)", type: "quantity", required: true, list: true, span: 3 }, T("note", "Observação", { span: 12 })]
   },
   {
-    key: "financial_freezes", label: "Congelamento Financeiro", labelPlural: "Congelamentos Financeiros", table: "financial_freezes", permission: "financial_freezes", labelField: "year", route: "/financeiro/congelamentos", farmScopedNulo: true,
-    fields: [REF("farm_id", "Fazenda (vazio = todas)", "farms", { list: true, span: 4 }), { name: "month", label: "Mês", type: "integer", required: true, min: 1, max: 12, list: true, span: 2 }, { name: "year", label: "Ano", type: "integer", required: true, list: true, span: 2 }, B("is_frozen", "Congelado?", { default: true, list: true, span: 2 })]
+    key: "financial_freezes", label: "Congelamento Financeiro", labelPlural: "Congelamentos Financeiros", table: "financial_freezes", permission: "financial_freezes", labelField: "year", route: "/financeiro/congelamentos", empresaScopedNulo: true,
+    fields: [REF("empresa_id", "Empresa (vazio = todas)", "empresas", { list: true, span: 4 }), { name: "month", label: "Mês", type: "integer", required: true, min: 1, max: 12, list: true, span: 2 }, { name: "year", label: "Ano", type: "integer", required: true, list: true, span: 2 }, B("is_frozen", "Congelado?", { default: true, list: true, span: 2 })]
   },
   {
     key: "supply_status_sla", label: "Parâmetro SLA", labelPlural: "Parâmetros SLA", table: "supply_status_sla", permission: "supply_sla", labelField: "status", route: "/suprimentos/sla",
@@ -348,8 +348,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [REF("provider_id", "Fornecedor", "people", { required: true, list: true, span: 5 }), S("default_destination", "Lançar sempre como", [["product_invoice", "Nota de Produto"], ["expense_invoice", "Nota de Despesa"], ["animal_invoice", "Nota de Animal"]], { required: true, list: true, span: 4 }), REF("default_title_type_id", "Tipo de título padrão", "title_types", { span: 3 })]
   },
   {
-    key: "contracts", label: "Contrato", labelPlural: "Gestão de Contratos", table: "contracts", permission: "contracts", labelField: "number", route: "/financeiro/contratos", softDelete: true, farmScoped: true, codeEntity: "contract",
-    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("farm_id", "Fazenda", "farms", { required: true, filter: true, span: 3 }), T("number", "Nº do contrato", { required: true, list: true, search: true, span: 3 }), D("contract_date", "Data", { required: true, list: true, span: 2 }), D("expiration_date", "Data de vencimento", { required: true, list: true, span: 2 }), REF("responsible_person_id", "Responsável", "people", { required: true, span: 4 }), REF("provider_id", "Fornecedor", "people", { required: true, list: true, span: 4 }), { name: "quantity_sacks", label: "Quantidade (sc)", type: "quantity", required: true, span: 2 }, M("unit_value_sack", "Valor unitário por saca", { required: true, span: 2 }), M("amount", "Valor (R$)", { required: true, list: true, span: 2 }), { name: "installments", label: "Parcelas", type: "integer", required: true, default: 1, span: 2 }, S("status", "Situação", [["active", "Ativo"], ["finished", "Finalizado"], ["cancelled", "Cancelado"]], { default: "active", list: true, filter: true, span: 2 })]
+    key: "contracts", label: "Contrato", labelPlural: "Gestão de Contratos", table: "contracts", permission: "contracts", labelField: "number", route: "/financeiro/contratos", softDelete: true, empresaScoped: true, codeEntity: "contract",
+    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("empresa_id", "Empresa", "empresas", { required: true, filter: true, span: 3 }), T("number", "Nº do contrato", { required: true, list: true, search: true, span: 3 }), D("contract_date", "Data", { required: true, list: true, span: 2 }), D("expiration_date", "Data de vencimento", { required: true, list: true, span: 2 }), REF("responsible_person_id", "Responsável", "people", { required: true, span: 4 }), REF("provider_id", "Fornecedor", "people", { required: true, list: true, span: 4 }), { name: "quantity_sacks", label: "Quantidade (sc)", type: "quantity", required: true, span: 2 }, M("unit_value_sack", "Valor unitário por saca", { required: true, span: 2 }), M("amount", "Valor (R$)", { required: true, list: true, span: 2 }), { name: "installments", label: "Parcelas", type: "integer", required: true, default: 1, span: 2 }, S("status", "Situação", [["active", "Ativo"], ["finished", "Finalizado"], ["cancelled", "Cancelado"]], { default: "active", list: true, filter: true, span: 2 })]
   },
   {
     key: "absences", label: "Registro de Falta", labelPlural: "Registro/Faltas", table: "absences", permission: "absences", labelField: "absence_date", route: "/gestao-pessoal/faltas", softDelete: true,
@@ -364,12 +364,12 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [REF("person_id", "Funcionário", "people", { required: true, list: true, filter: true, span: 4 }), REF("event_id", "Evento", "hr_events", { required: true, list: true, filter: true, span: 4 }), D("reference_month", "Mês de referência", { required: true, list: true, span: 2 }), { name: "quantity", label: "Quantidade", type: "quantity", default: 1, span: 2 }, M("amount", "Valor", { required: true, list: true, span: 2 }), T("note", "Observação", { span: 10 })]
   },
   {
-    key: "livestock_plannings", label: "Planejamento Pecuário", labelPlural: "Planejamento Pecuário", table: "livestock_plannings", permission: "livestock_plannings", labelField: "description", route: "/pecuaria/planejamento", softDelete: true, farmScoped: true, codeEntity: "livestock_planning",
-    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }), REF("harvest_id", "Safra", "harvests", { list: true, span: 3 }), D("planning_date", "Data", { required: true, list: true, span: 3 }), T("description", "Descrição", { required: true, list: true, search: true, span: 12 }), { name: "values", label: "Metas (JSON: categoria → quantidade/peso/receita)", type: "json", span: 12 }]
+    key: "livestock_plannings", label: "Planejamento Pecuário", labelPlural: "Planejamento Pecuário", table: "livestock_plannings", permission: "livestock_plannings", labelField: "description", route: "/pecuaria/planejamento", softDelete: true, empresaScoped: true, codeEntity: "livestock_planning",
+    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), REF("harvest_id", "Safra", "harvests", { list: true, span: 3 }), D("planning_date", "Data", { required: true, list: true, span: 3 }), T("description", "Descrição", { required: true, list: true, search: true, span: 12 }), { name: "values", label: "Metas (JSON: categoria → quantidade/peso/receita)", type: "json", span: 12 }]
   },
   {
-    key: "budget_plannings", label: "Previsão Orçamentária", labelPlural: "Previsões Orçamentárias", table: "budget_plannings", permission: "budget_plannings", labelField: "year", route: "/financeiro/previsao-orcamentaria", softDelete: true, codeEntity: "budget_planning", farmScopedNulo: true,
-    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("farm_id", "Fazenda", "farms", { list: true, filter: true, span: 4 }), D("planning_date", "Data", { required: true, list: true, span: 3 }), { name: "year", label: "Ano", type: "integer", required: true, list: true, filter: true, span: 3 }]
+    key: "budget_plannings", label: "Previsão Orçamentária", labelPlural: "Previsões Orçamentárias", table: "budget_plannings", permission: "budget_plannings", labelField: "year", route: "/financeiro/previsao-orcamentaria", softDelete: true, codeEntity: "budget_planning", empresaScopedNulo: true,
+    fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("empresa_id", "Empresa", "empresas", { list: true, filter: true, span: 4 }), D("planning_date", "Data", { required: true, list: true, span: 3 }), { name: "year", label: "Ano", type: "integer", required: true, list: true, filter: true, span: 3 }]
   },
   {
     key: "integrations", label: "Integração", labelPlural: "Integrações", table: "integrations", permission: "integration.dominio", labelField: "provider", route: "/integracoes",
