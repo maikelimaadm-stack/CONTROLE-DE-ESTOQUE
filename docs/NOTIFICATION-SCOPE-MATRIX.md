@@ -78,8 +78,16 @@ o recibo de leitura é por usuário, e marcar uma notificação invisível respo
 A caixa devolve as **50 mais recentes entre as que o usuário pode ver** — a autorização entra no `where`,
 antes do `limit`; o contrário devolveria “as 50 mais recentes da organização, menos as proibidas”.
 O contador de não lidas usa exatamente a mesma regra de visibilidade (`visibilidadeNotificacaoSql`) e
-conta sem o limite da janela, então em caixas com mais de 50 avisos visíveis ele pode ser maior que a
-lista. É diferença de JANELA, não de autoridade: nada contado está fora do que o usuário pode ver.
+conta sem o limite da janela, então em caixas com mais de 50 avisos visíveis ele é maior que a lista.
+É diferença de JANELA, não de autoridade: nada contado está fora do que o usuário pode ver. O número
+sai de UMA função (`contarNaoLidas`), servida tanto por `GET /admin/notifications` (campo `unread`)
+quanto por `GET /auth/context` (`unreadNotifications`) — duas redações da mesma regra divergiriam na
+primeira edição de só uma delas. O badge lê o campo da CAIXA, que é pollada; ler o contexto, que não
+é, deixava o badge congelado enquanto a caixa já mostrava o número novo.
+
+A contagem tem um TETO de custo (500, não a janela de 50): ela avalia `erp.tem_acesso_empresa` linha a
+linha e roda a cada 60 s por aba aberta — medido com `EXPLAIN ANALYZE` sobre 200 mil avisos, ~7,6 s
+exata contra ~130 ms com teto. Acima dele a resposta marca `unreadTruncado` e o badge mostra "500+".
 
 Plano de execução conferido com `EXPLAIN` sobre 200 mil avisos em 40 organizações: a caixa sai por
 `notifications_caixa_idx` (índice, sem passo de ordenação), a contagem por empresa por

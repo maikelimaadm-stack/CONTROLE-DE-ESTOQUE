@@ -62,6 +62,34 @@ test.describe("shell: menu superior e mega-menu", () => {
     await logout(page);
   });
 
+  /**
+   * O BADGE segue o contador VIVO da caixa, não o contexto congelado.
+   *
+   * A caixa e pollada (refetchInterval); o /auth/context so e recarregado em mount, evento de sessao ou
+   * refresh() explicito. Lendo o contexto, o badge ficava parado em 2 enquanto a caixa ja mostrava 3.
+   *
+   * A prova precisa separar as duas fontes, entao elas respondem numeros DIFERENTES de proposito: o
+   * contexto diz 2, a caixa diz 7 com apenas 3 itens. O badge tem de mostrar 7 — nem 2 (contexto
+   * congelado), nem 3 (derivado da lista truncada, que e o anti-padrao proibido: a caixa para em 50).
+   */
+  test("badge de não lidas vem do contador da caixa, não do contexto nem do tamanho da lista", async ({ page }) => {
+    await page.route("**/api/auth/context", async (route) => {
+      const resposta = await route.fetch();
+      const corpo = await resposta.json();
+      await route.fulfill({ response: resposta, json: { ...corpo, unreadNotifications: 2 } });
+    });
+    await page.route("**/api/admin/notifications", async (route) => {
+      const resposta = await route.fetch();
+      const corpo = await resposta.json();
+      const itens = (corpo.items ?? []).slice(0, 3);
+      await route.fulfill({ response: resposta, json: { items: itens, unread: 7 } });
+    });
+    await login(page);
+    const badge = page.getByTestId("nao-lidas");
+    await expect(badge).toHaveText("7");
+    await logout(page);
+  });
+
   test("permissões: operador não vê Financeiro no menu nem na busca; deep link continua bloqueado", async ({ page }) => {
     await login(page, { email: "operador@demo.local", password: "Demo@12345" });
     const nav = page.getByRole("navigation", { name: "Menu principal" }); const more = nav.getByTestId("nav-more"); if (await more.count()) await more.click();

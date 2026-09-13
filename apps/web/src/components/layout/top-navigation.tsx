@@ -66,12 +66,15 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
   React.useEffect(() => { if (onFocusSearch) onFocusSearch.current = () => { inputRef.current?.focus(); inputRef.current?.select(); }; }, [onFocusSearch]);
   const pick = (href: string) => { setSearch(""); inputRef.current?.blur(); go(href); };
   // notificações, favoritos
-  const { data: notif } = useQuery({ queryKey: ["notifications"], queryFn: () => api<{ items: { id: string; title: string; route: string | null; read_at: string | null; created_at: string }[] }>("/api/admin/notifications"), enabled: Boolean(ctx), refetchInterval: 60_000 });
+  const { data: notif } = useQuery({ queryKey: ["notifications"], queryFn: () => api<{ items: { id: string; title: string; route: string | null; read_at: string | null; created_at: string }[]; unread: number; unreadTruncado: boolean }>("/api/admin/notifications"), enabled: Boolean(ctx), refetchInterval: 60_000 });
   const readAll = useMutation({ mutationFn: () => api("/api/admin/notifications/read-all", { method: "POST" }), onSuccess: () => { void qc.invalidateQueries({ queryKey: ["notifications"] }); void refresh(); } });
-  // O contador AUTORITATIVO é o do servidor (/auth/context), que aplica a mesma regra de visibilidade da
-  // caixa e conta sem o limite da janela. Derivar o número da lista truncada fazia o badge subcontar e,
-  // pior, deixava o contador do servidor sem nenhum consumidor — uma regressão nele não apareceria na tela.
-  const unread = ctx?.unreadNotifications ?? 0;
+  // O contador continua SERVER-AUTHORITATIVE — nunca derivado de `notif.items`, que vem truncado em 50:
+  // quem tem 80 nao lidas precisa ver 80. O que muda e DE ONDE ele vem: a caixa e pollada a cada 60s e o
+  // /auth/context nao e, entao ler o contexto deixava o badge congelado em 2 enquanto a caixa ja mostrava 3.
+  // O contexto fica como valor de partida, ate a primeira resposta da consulta pollada chegar.
+  const unread = notif?.unread ?? ctx?.unreadNotifications ?? 0;
+  // Acima do teto o servidor avisa que truncou, e o badge diz "500+" em vez de mentir um número redondo.
+  const unreadRotulo = notif?.unreadTruncado ? `${unread}+` : String(unread);
   const [confirmLogout, setConfirmLogout] = React.useState(false);
   const askLogout = () => { if (ws?.hasDirty()) setConfirmLogout(true); else logout(); };
   if (!ctx || !session) return null;
@@ -106,7 +109,7 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
         </div>
         <select className="mg-topbar-select" value={session.farmId ?? ""} onChange={(e) => window.dispatchEvent(new CustomEvent("agro:farm-request", { detail: e.target.value || null }))} title="Fazenda ativa" aria-label="Fazenda ativa"><option value="">Todas as fazendas</option>{ctx.farms.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select>
         <FavoriteButton />
-        <Menu trigger={<button type="button" className="mg-topbar-btn relative" aria-label="Notificações"><Bell />{unread > 0 && <span className="mg-topnav__badge">{unread}</span>}</button>} items={[{ label: "Marcar todas como lidas", onClick: () => readAll.mutate() }, ...(notif?.items.slice(0, 8).map((n) => ({ label: `${n.read_at ? "" : "● "}${n.title} · ${dateTimeBR(n.created_at)}`, onClick: () => { if (n.route) go(n.route); } })) ?? []), { label: "Ver todas", href: "/admin/notificacoes" }]} />
+        <Menu trigger={<button type="button" className="mg-topbar-btn relative" aria-label="Notificações"><Bell />{unread > 0 && <span data-testid="nao-lidas" className="mg-topnav__badge">{unreadRotulo}</span>}</button>} items={[{ label: "Marcar todas como lidas", onClick: () => readAll.mutate() }, ...(notif?.items.slice(0, 8).map((n) => ({ label: `${n.read_at ? "" : "● "}${n.title} · ${dateTimeBR(n.created_at)}`, onClick: () => { if (n.route) go(n.route); } })) ?? []), { label: "Ver todas", href: "/admin/notificacoes" }]} />
         <Menu trigger={<button type="button" className="mg-topbar-btn" aria-label="Usuário" title={ctx.user.name}><span className="mg-topbar-initials">{initialsOf(ctx.user.name)}</span></button>} items={[{ label: ctx.user.name, disabled: true }, { label: "Perfil", href: "/admin/perfil" }, { label: "Sair", onClick: askLogout, danger: true }]} />
         <ConfirmDialog open={confirmLogout} onOpenChange={setConfirmLogout} title="Sair com alterações não salvas?" description="As alterações não salvas serão descartadas." confirmLabel="Sair mesmo assim" danger onConfirm={() => { setConfirmLogout(false); logout(); }} />
       </div>

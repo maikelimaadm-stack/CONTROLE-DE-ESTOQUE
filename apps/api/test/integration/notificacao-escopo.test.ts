@@ -125,10 +125,24 @@ describe("notificação da organização: capacidade decide, empresa não interf
 });
 
 describe("contador de não lidas usa a MESMA autoridade da caixa", () => {
-  it("o badge nunca conta o que a caixa não mostra", async () => {
-    const { itens } = await caixa(SO_B);
-    const naoLidasNaCaixa = itens.filter((x) => !x["read"]).length;
-    expect(await naoLidas(SO_B)).toBe(naoLidasNaCaixa);
+  it("as duas portas do servidor devolvem o mesmo número", async () => {
+    // A invariante é entre as DUAS AUTORIDADES DE SERVIDOR. Comparar com `itens.filter(...)` — como este
+    // teste fazia — canonizava no CI justamente a derivação da lista truncada que o contrato proíbe no
+    // cliente: passava só porque o cenário tem menos de 50 avisos, e quebraria por VOLUME, não por defeito.
+    const r = await h.app.inject({ method: "GET", url: "/api/admin/notifications", headers: SO_B });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(j(r).unread as number).toBe(await naoLidas(SO_B));
+  });
+
+  it("o contador não conta nada da empresa proibida", async () => {
+    // a prova de "não conta o que não pode ver" é feita pelo CONTEÚDO (sentinelas), não por aritmética
+    // sobre a janela: as da Empresa A não aparecem na caixa e não entram no número.
+    const { texto } = await caixa(SO_B);
+    for (const sentinela of ["SENTINELA-COMPRA-A", "SENTINELA-PROC-A", "SENTINELA-DOC-A"]) {
+      expect(texto.includes(sentinela), sentinela).toBe(false);
+    }
+    // e quem enxerga as duas empresas conta ESTRITAMENTE mais do que quem enxerga só a B
+    expect(await naoLidas(TODAS)).toBeGreaterThan(await naoLidas(SO_B));
   });
 });
 

@@ -6,15 +6,15 @@ O núcleo do ERP precisa deixar de depender do nicho agro: **Fazenda → Empresa
 (`docs/MULTI-COMPANY-CONTRACT.md`, `docs/DOMAIN-NAMING-STANDARD.md`). Este inventário mede a superfície real
 antes de qualquer renomeação — localizar/substituir em massa aqui quebraria contrato de API, RLS e dados.
 
-Total medido: **2763** ocorrências em 11 superfícies · 50 tabelas com coluna de empresa.
+Total medido: **2767** ocorrências em 11 superfícies · 50 tabelas com coluna de empresa.
 
 ## Por superfície
 
 | Superfície | Ocorrências | Catraca | Observação |
 | --- | ---: | --- | --- |
 | Schema (migrations) | 172 | sim | não pode crescer |
-| API — código | 914 | sim | não pode crescer |
-| API — testes | 268 | sim | não pode crescer |
+| API — código | 915 | sim | não pode crescer |
+| API — testes | 271 | sim | não pode crescer |
 | Núcleo neutro de nicho (plataforma) | 0 | sim | zerado: o catálogo do produto saiu da plataforma (mecanismo puro) |
 | Pacotes compartilhados | 119 | sim | não pode crescer |
 | Web — código | 421 | sim | não pode crescer |
@@ -28,8 +28,8 @@ Total medido: **2763** ocorrências em 11 superfícies · 50 tabelas com coluna 
 
 | Símbolo atual | Natureza | Ocorrências | Destino canônico |
 | --- | --- | ---: | --- |
-| `farm_id` | dado | 1349 | `empresa_id` |
-| `farms` | dado | 129 | `erp.empresas` |
+| `farm_id` | dado | 1351 | `empresa_id` |
+| `farms` | dado | 131 | `erp.empresas` |
 | `member_farms` | dado | 53 | `member_empresas` |
 | `ctx_farmId` | contrato | 169 | `empresaSelecionada` |
 | `farmIds` | contrato | 35 | `empresasPermitidas` |

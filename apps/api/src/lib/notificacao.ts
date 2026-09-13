@@ -45,6 +45,42 @@ export function visibilidadeNotificacaoSql(ctx: ServiceCtx, alias: string, param
     )`;
 }
 
+/**
+ * Teto da contagem. NÃO é a janela da caixa (50): é um limite de CUSTO, muito acima de qualquer número que
+ * um badge comunique. Medido com `EXPLAIN ANALYZE` sobre 200 mil avisos numa organização: a contagem exata
+ * leva ~7,6 s porque avalia `erp.tem_acesso_empresa` linha a linha, e a mesma contagem com teto leva
+ * ~130 ms. O contador roda a cada 60 s por aba aberta (a caixa é pollada), então a versão exata viraria
+ * varredura de tabela por minuto por usuário. Acima do teto o badge diz "500+", que é honesto — o que não
+ * pode é dizer 50 porque a caixa mostra 50.
+ */
+export const TETO_NAO_LIDAS = 500;
+
+/**
+ * Contador de NÃO LIDAS do usuário — a ÚNICA autoridade.
+ *
+ * Tanto o badge (via /auth/context) quanto a caixa (via GET /admin/notifications) precisam responder o mesmo
+ * número; duas redações da mesma regra divergem na primeira vez que alguém editar só uma delas. Por isso a
+ * função é dona do próprio array de parâmetros: `visibilidadeNotificacaoSql` numera `$n` pelo TAMANHO
+ * corrente do array, então um fragmento reaproveitado entre duas consultas herdaria a numeração da outra —
+ * e o alias `l` já é usado pelo `left join` da listagem, que o fragmento sombrearia.
+ *
+ * Conta SEM o limite da JANELA: a caixa mostra as 50 mais recentes, mas quem tem 80 não lidas vê 80.
+ */
+export async function contarNaoLidas(ctx: ServiceCtx): Promise<{ total: number; truncado: boolean }> {
+  const p: unknown[] = [];
+  const visivel = visibilidadeNotificacaoSql(ctx, "n", p);
+  const usuario = `$${p.push(ctx.user.id)}`;
+  const r = await ctx.tx.query<{ n: string }>(
+    `select count(*) n from (
+       select 1 from erp.notifications n
+        where ${visivel}
+          and not exists (select 1 from erp.notificacao_leituras r
+                           where r.organization_id = n.organization_id and r.notificacao_id = n.id and r.usuario_id = ${usuario})
+        limit ${TETO_NAO_LIDAS + 1}) x`, p);
+  const lidos = Number(r.rows[0]?.n ?? 0);
+  return lidos > TETO_NAO_LIDAS ? { total: TETO_NAO_LIDAS, truncado: true } : { total: lidos, truncado: false };
+}
+
 interface NovaNotificacao {
   kind: string;
   title: string;
@@ -60,6 +96,49 @@ interface NovaNotificacao {
   idOrigem?: string | null;
   /** chave extra de deduplicação do dia (além de kind + destinatário + escopo + módulo + empresa) */
   dedupe?: string | null;
+}
+
+/**
+ * O destinatário específico só permanece se ele REALMENTE enxergaria a linha.
+ *
+ * Dirigir um aviso a quem nao o ve e pior que nao dirigir: o predicado (A) da leitura elimina todos os
+ * outros e o (B) ou o (C) eliminam ele — a linha nasce MORTA, sem erro, sem badge, sem ninguem avisado.
+ * Foi o que aconteceu com a solicitacao de compra cujo responsavel tinha escopo de Compras na empresa mas
+ * nao tinha `purchase_requests.view`: verificava-se ESCOPO e nunca CAPACIDADE, e o contrato e a INTERSECAO.
+ *
+ * A pergunta feita aqui e exatamente a que o leitor faz, com o alvo no lugar do usuario da sessao, e quem
+ * responde sao as autoridades que ja existem no banco — nada de reimplementar perfil, membro e escopo:
+ *   (B) capacidade  -> erp.has_permission (mesma fonte: membro ativo + is_owner ou role_permissions)
+ *   (C) escopo      -> organizacao: nada a exigir
+ *                      empresa:     erp.tem_acesso_empresa (a MESMA funcao que a leitura chama)
+ *                      modulo_todas: proprietario ou modo `todas` no modulo. `tem_acesso_empresa` NAO serve
+ *                      aqui: essas linhas tem empresa_id nulo por constraint e a funcao exige empresa nao
+ *                      nula, entao responderia "nao" ate para o dono; e passar uma empresa qualquer daria
+ *                      "sim" para quem tem `selecionadas`, que e justamente quem NAO consolida o agregado.
+ *
+ * Quando o alvo nao passa, o aviso vira DIFUSAO (user_id nulo) — nao se perde: ele continua recortado pela
+ * propria autorizacao da linha (capacidade da fonte + empresa), entao chega a todos os legitimos.
+ */
+async function destinatarioQueEnxerga(
+  ctx: ServiceCtx, alvo: string, permissionKey: string,
+  escopo: EscopoNotificacao, modulo: string | null, empresaId: string | null
+): Promise<string | null> {
+  const r = await ctx.tx.query<{ ok: boolean }>(
+    `select erp.has_permission($1,$2,$3::text)
+        and case
+          when $4::text = 'organizacao' then true
+          when $4::text = 'empresa' then erp.tem_acesso_empresa($1,$2,$5::text,$6::uuid)
+          else exists (
+            select 1 from erp.organization_members m
+             where m.organization_id = $1 and m.user_id = $2 and m.is_active
+               and (m.is_owner or exists (
+                     select 1 from erp.membro_escopos_empresa e
+                      where e.organization_id = $1 and e.membro_id = m.id
+                        and e.modulo = $5::text and e.modo = 'todas'))
+          )
+        end as ok`,
+    [ctx.orgId, alvo, permissionKey, escopo, modulo, empresaId]);
+  return r.rows[0]?.ok ? alvo : null;
 }
 
 /**
@@ -85,6 +164,10 @@ export async function criarNotificacao(ctx: ServiceCtx, n: NovaNotificacao): Pro
   if (escopo === "empresa" && !empresaId) throw validation(`Notificação ${n.kind}: escopo empresa exige a empresa de origem`);
   if (escopo === "organizacao" && n.empresaId) throw validation(`Notificação ${n.kind}: escopo organização não carrega empresa`);
 
+  // O destinatario e decidido ANTES da chave de deduplicacao: o `user_id` entra nela, entao rebaixar depois
+  // procuraria por uma chave e gravaria outra.
+  const destinatario = n.userId ? await destinatarioQueEnxerga(ctx, n.userId, tipo.permissionKey, escopo, modulo, empresaId) : null;
+
   // A chave precisa distinguir o que é realmente distinto. Deduplicar por ROTA não serve: todos os
   // aniversariantes do dia compartilham a mesma rota, e o aviso do primeiro engolia o dos outros.
   // `is not distinct from` só onde o valor pode mesmo ser nulo (destinatário, módulo e empresa): ele NÃO é
@@ -97,13 +180,13 @@ export async function criarNotificacao(ctx: ServiceCtx, n: NovaNotificacao): Pro
         and user_id is not distinct from $3 and escopo_tipo=$4
         and modulo is not distinct from $5 and empresa_id is not distinct from $6
       limit 1`,
-    [ctx.orgId, n.kind, n.userId ?? null, escopo, modulo, empresaId, chave]);
+    [ctx.orgId, n.kind, destinatario, escopo, modulo, empresaId, chave]);
   if (jaExiste.rowCount) return;
 
   await ctx.tx.query(
     `insert into erp.notifications
        (organization_id, user_id, kind, title, body, route, escopo_tipo, modulo, empresa_id, permission_key, entidade_origem, id_origem, dedupe_key)
      values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-    [ctx.orgId, n.userId ?? null, n.kind, n.title, n.body ?? null, n.route ?? null,
+    [ctx.orgId, destinatario, n.kind, n.title, n.body ?? null, n.route ?? null,
       escopo, modulo, empresaId, tipo.permissionKey, n.entidadeOrigem ?? null, n.idOrigem ?? null, chave]);
 }

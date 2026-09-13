@@ -5,7 +5,7 @@ import { PERMISSION_RESOURCES, ACTION_LABELS, MODULOS_ESCOPO_EMPRESA, allPermiss
 import { runService, audit } from "../lib/service.js";
 import { notFound, validation, denied } from "../lib/errors.js";
 import { hasPermission } from "../lib/context.js";
-import { criarNotificacao, visibilidadeNotificacaoSql } from "../lib/notificacao.js";
+import { contarNaoLidas, criarNotificacao, visibilidadeNotificacaoSql } from "../lib/notificacao.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { deFarmIdsLegado, escopoEmpresaSchema, gravarEscoposAuditado, paraFarmIdsLegado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
 
@@ -168,7 +168,10 @@ export default async function adminRoutes(app: FastifyInstance) {
            on l.organization_id = n.organization_id and l.notificacao_id = n.id and l.usuario_id = ${usuario}
         where ${visivel}
         order by n.created_at desc limit 50`, p);
-    return { items: r.rows };
+    // `read` por item é APRESENTAÇÃO (o ponto na linha do menu); o CONTADOR não se deriva dele — a caixa é
+    // truncada em 50 e quem tem 80 não lidas precisa ver 80. Por isso o número vem da autoridade única.
+    const naoLidas = await contarNaoLidas(ctx);
+    return { items: r.rows, unread: naoLidas.total, unreadTruncado: naoLidas.truncado };
   }));
   // Marca como lidas só as que ELE vê e ainda não leu — set-based, sem tocar na leitura de mais ninguém.
   app.post("/admin/notifications/read-all", async (req) => runService(app, req, null, async (ctx) => {
@@ -211,17 +214,25 @@ export default async function adminRoutes(app: FastifyInstance) {
     await ctx.tx.query("select pg_advisory_xact_lock(hashtext($1 || ':notificacoes'))", [ctx.orgId]);
 
     // Compras: a solicitação nasce numa empresa concreta -> escopo de empresa.
+    // Duas exclusoes, pela mesma razao — nao gerar aviso que ninguem consegue ler:
+    //  - `r.deleted_at is null`: solicitacao logicamente excluida nao existe para as rotas oficiais
+    //    (apps/api/src/routes/supply.ts) e nao pode continuar rendendo alerta diario;
+    //  - empresa ATIVA: `erp.tem_acesso_empresa` exige `deleted_at is null` e o ramo `empresa` da leitura
+    //    chama essa funcao SEM atalho de proprietario, entao um aviso de empresa desativada nasce invisivel
+    //    para todos — inclusive para o dono — e volta a nascer todo dia. Mesmo cuidado que a consulta de
+    //    documentos ja tem logo abaixo.
     const pend = await ctx.tx.query<{ code: string; id: string; days: number; farm_id: string; current_responsible_user_id: string | null }>(
-      "select code, id, farm_id, extract(day from now()-status_changed_at)::int as days, current_responsible_user_id from erp.purchase_requests where organization_id=$1 and status not in ('finished','cancelled') and status_changed_at < now() - interval '3 days'", [ctx.orgId]);
+      `select r.code, r.id, r.farm_id, extract(day from now()-r.status_changed_at)::int as days, r.current_responsible_user_id
+         from erp.purchase_requests r
+         join erp.farms f on f.id = r.farm_id and f.deleted_at is null
+        where r.organization_id=$1 and r.deleted_at is null
+          and r.status not in ('finished','cancelled') and r.status_changed_at < now() - interval '3 days'`, [ctx.orgId]);
     for (const p of pend.rows) {
-      // Dirigir o aviso a um responsável que NÃO enxerga a empresa da solicitação cria uma linha que
-      // ninguém vê: o destinatário elimina todos os outros e o escopo elimina ele. Quando o responsável
-      // não alcança a empresa, o aviso volta a ser difusão — já recortada pela própria empresa.
-      const responsavel = p.current_responsible_user_id
-        && (await ctx.tx.query("select 1 where erp.tem_acesso_empresa($1,$2,'compras',$3)", [ctx.orgId, p.current_responsible_user_id, p.farm_id])).rowCount
-        ? p.current_responsible_user_id : null;
+      // O responsavel e apenas PEDIDO: quem decide se ele fica como destinatario e `criarNotificacao`, que
+      // pergunta as duas autoridades do banco (capacidade E escopo) e rebaixa para difusao se ele nao veria
+      // a linha. Checar so o escopo aqui — como se fazia — deixava o aviso morto quando faltava a capacidade.
       await criarNotificacao(ctx, { kind: "purchase_pending", title: `Compras nº ${p.code} pendente há ${p.days} dia(s)`,
-        route: `/suprimentos/view/${p.id}`, userId: responsavel, empresaId: p.farm_id,
+        route: `/suprimentos/view/${p.id}`, userId: p.current_responsible_user_id, empresaId: p.farm_id,
         entidadeOrigem: "purchase_requests", idOrigem: p.id });
     }
 

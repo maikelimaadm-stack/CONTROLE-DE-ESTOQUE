@@ -17,6 +17,7 @@ import { harness, ids, TEST_URL, type Harness } from "./setup.js";
  *     o que aconteceu com o processamento de animais e com a transferência de lote.
  */
 let h: Harness; let I: Awaited<ReturnType<typeof ids>>;
+type Hdr = Record<string, string>;
 const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { items?: Record<string, unknown>[]; id?: string; error?: { code: string } };
 
 interface Linha { kind: string; title: string; escopo_tipo: string; modulo: string | null; empresa_id: string | null; permission_key: string; user_id: string | null; dedupe_key: string }
@@ -173,5 +174,131 @@ describe("o refresh classifica cada agregado pelo que ele realmente é", () => {
     await raiz.end();
     expect((await h.app.inject({ method: "POST", url: "/api/admin/notifications/refresh", headers: h.headers() })).statusCode).toBe(200);
     expect((await linhas("document_expiring")).find((d) => d.title.includes("DOC-EMPRESA-MORTA"))).toBeUndefined();
+  });
+});
+
+/**
+ * DESTINATÁRIO DIRIGIDO (PRE-BASE2-02 §3): capacidade E escopo, nunca só um dos dois.
+ *
+ * Dirigir um aviso a quem não o vê é pior do que não dirigir. O predicado de leitura é conjunção: o
+ * destinatário elimina todos os outros, e então a capacidade (ou o escopo) elimina o próprio destinatário.
+ * A linha nasce MORTA — sem erro, sem badge, sem ninguém avisado. O contrato é a INTERSEÇÃO, e verificar
+ * só o escopo (como se fazia) deixava exatamente essa metade de fora.
+ *
+ * Quando o responsável não passa nas duas dimensões, o aviso NÃO é descartado: vira difusão, que já é
+ * recortada pela própria autorização da linha (capacidade da fonte + empresa de origem).
+ */
+describe("responsável da solicitação: capacidade E escopo decidem o direcionamento", () => {
+  let COMPRADOR: Hdr; let idResponsavelSemCap = ""; let idResponsavelSemEscopo = ""; let idResponsavelValido = "";
+
+  const criarUsuario = async (nome: string, email: string, perms: string[], escopos: Record<string, unknown>[]) => {
+    const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: nome, permissions: perms } });
+    expect(papel.statusCode, papel.body).toBe(201);
+    const membro = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: {
+      name: nome, email, password: "Notif@12345", role_id: j(papel).id, escopos_empresas: escopos } });
+    expect(membro.statusCode, membro.body).toBe(201);
+    const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Notif@12345" } });
+    expect(login.statusCode, login.body).toBe(200);
+    return { id: j(membro).id as string, hdr: { authorization: `Bearer ${j(login).token}`, "x-org-id": h.demo.orgId } as Hdr };
+  };
+
+  /** Solicitação parada há mais de 3 dias na Empresa A, com o responsável pedido. */
+  const solicitacao = async (sufixo: string, responsavel: string | null, excluida = false) => {
+    const raiz = createPool(TEST_URL, { max: 1 });
+    try {
+      const r = await raiz.query<{ id: string }>(
+        `insert into erp.purchase_requests
+           (organization_id, farm_id, code, request_date, request_type, requester_user_id, status,
+            status_changed_at, description, justification, current_responsible_user_id, deleted_at)
+         values ($1,$2,$3,current_date - 10,'product',$4,'request', now() - interval '9 days',
+                 $5, 'teste de destinatario', $6, $7) returning id`,
+        [h.demo.orgId, I.farm, `SC-DEST-${sufixo}`, h.demo.adminUserId, `SENTINELA-DEST-${sufixo}`,
+          responsavel, excluida ? new Date().toISOString() : null]);
+      return r.rows[0]!.id;
+    } finally { await raiz.end(); }
+  };
+
+  const avisoDe = async (sufixo: string): Promise<Linha | undefined> =>
+    (await linhas("purchase_pending")).find((n) => n.title.includes(`SC-DEST-${sufixo}`));
+
+  const veNaCaixa = async (hdr: Hdr, sufixo: string) => {
+    const r = await h.app.inject({ method: "GET", url: "/api/admin/notifications", headers: hdr });
+    expect(r.statusCode, r.body).toBe(200);
+    return r.body.includes(`SC-DEST-${sufixo}`);
+  };
+
+  beforeAll(async () => {
+    // COMPRADOR: as duas dimensões — é quem deve receber a difusão.
+    COMPRADOR = (await criarUsuario("Comprador A", "comprador-a@demo.local", ["purchase_requests.view"],
+      [{ modulo: "compras", modo: "selecionadas", empresas: [I.farm] }])).hdr;
+    // RESPONSÁVEL SEM CAPACIDADE: enxerga a Empresa A em Compras, mas não tem purchase_requests.view.
+    idResponsavelSemCap = (await criarUsuario("Resp sem capacidade", "resp-sem-cap@demo.local", ["stocks.view"],
+      [{ modulo: "compras", modo: "selecionadas", empresas: [I.farm] }])).id;
+    // RESPONSÁVEL SEM ESCOPO: tem a capacidade, mas só enxerga a Empresa B em Compras.
+    idResponsavelSemEscopo = (await criarUsuario("Resp sem escopo", "resp-sem-escopo@demo.local", ["purchase_requests.view"],
+      [{ modulo: "compras", modo: "selecionadas", empresas: [I.farm2] }])).id;
+    // RESPONSÁVEL VÁLIDO: as duas dimensões na Empresa A.
+    idResponsavelValido = (await criarUsuario("Resp valido", "resp-valido@demo.local", ["purchase_requests.view"],
+      [{ modulo: "compras", modo: "selecionadas", empresas: [I.farm] }])).id;
+  }, 120_000);
+
+  it("responsável COM escopo e SEM capacidade não é direcionado — e o aviso não some", async () => {
+    await solicitacao("SEMCAP", idResponsavelSemCap);
+    expect((await h.app.inject({ method: "POST", url: "/api/admin/notifications/refresh", headers: h.headers() })).statusCode).toBe(200);
+    const aviso = await avisoDe("SEMCAP");
+    expect(aviso, "a notificação precisa existir").toBeTruthy();
+    expect(aviso!.user_id, "sem a capacidade, o direcionamento mataria o aviso").toBeNull();
+    expect(aviso!.escopo_tipo).toBe("empresa");
+    expect(aviso!.empresa_id).toBe(I.farm);
+    // difusão: chega a quem tem capacidade E empresa, e ao proprietário
+    expect(await veNaCaixa(COMPRADOR, "SEMCAP"), "o comprador autorizado continua recebendo").toBe(true);
+    expect(await veNaCaixa(h.headers() as Hdr, "SEMCAP"), "o proprietário vê").toBe(true);
+  });
+
+  it("responsável COM capacidade e SEM escopo da empresa também não é direcionado", async () => {
+    await solicitacao("SEMESCOPO", idResponsavelSemEscopo);
+    expect((await h.app.inject({ method: "POST", url: "/api/admin/notifications/refresh", headers: h.headers() })).statusCode).toBe(200);
+    const aviso = await avisoDe("SEMESCOPO");
+    expect(aviso, "a notificação precisa existir").toBeTruthy();
+    expect(aviso!.user_id, "capacidade sem escopo não basta").toBeNull();
+    expect(await veNaCaixa(COMPRADOR, "SEMESCOPO"), "os autorizados da Empresa A continuam recebendo").toBe(true);
+  });
+
+  it("responsável com AS DUAS dimensões continua recebendo o aviso dirigido", async () => {
+    await solicitacao("VALIDO", idResponsavelValido);
+    expect((await h.app.inject({ method: "POST", url: "/api/admin/notifications/refresh", headers: h.headers() })).statusCode).toBe(200);
+    const aviso = await avisoDe("VALIDO");
+    expect(aviso, "a notificação precisa existir").toBeTruthy();
+    expect(aviso!.user_id, "direcionar continua valendo quando é legítimo").toBe(idResponsavelValido);
+    // dirigido é dirigido: outro comprador da mesma empresa NÃO recebe este
+    expect(await veNaCaixa(COMPRADOR, "VALIDO"), "aviso dirigido não vira difusão").toBe(false);
+  });
+
+  it("solicitação de empresa DESATIVADA não gera aviso que ninguém consegue ver", async () => {
+    // `erp.tem_acesso_empresa` exige empresa ativa e o ramo `empresa` da leitura a chama SEM atalho de
+    // proprietário: o aviso nasceria invisível para todos, inclusive o dono, e voltaria a nascer todo dia.
+    const raiz = createPool(TEST_URL, { max: 1 });
+    let morta = "";
+    try {
+      morta = (await raiz.query<{ id: string }>(
+        "insert into erp.farms(organization_id,code,name,deleted_at) values ($1,97,'Empresa desativada compras',now()) returning id",
+        [h.demo.orgId])).rows[0]!.id;
+      await raiz.query(
+        `insert into erp.purchase_requests
+           (organization_id, farm_id, code, request_date, request_type, requester_user_id, status,
+            status_changed_at, description, justification)
+         values ($1,$2,'SC-DEST-MORTA',current_date - 10,'product',$3,'request', now() - interval '9 days',
+                 'SENTINELA-DEST-MORTA','teste')`, [h.demo.orgId, morta, h.demo.adminUserId]);
+    } finally { await raiz.end(); }
+    expect((await h.app.inject({ method: "POST", url: "/api/admin/notifications/refresh", headers: h.headers() })).statusCode).toBe(200);
+    expect(await avisoDe("MORTA")).toBeUndefined();
+  });
+
+  it("solicitação logicamente excluída não gera aviso novo", async () => {
+    // `deleted_at is not null` é inexistente para as rotas oficiais (supply.ts); gerar alerta diário para
+    // ela seria avisar sobre um registro que ninguém consegue abrir.
+    await solicitacao("EXCLUIDA", idResponsavelValido, true);
+    expect((await h.app.inject({ method: "POST", url: "/api/admin/notifications/refresh", headers: h.headers() })).statusCode).toBe(200);
+    expect(await avisoDe("EXCLUIDA")).toBeUndefined();
   });
 });
