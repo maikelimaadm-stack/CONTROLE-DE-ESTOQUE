@@ -3,6 +3,7 @@ import { z } from "zod";
 import { DomainError } from "@agro/shared";
 import { verifyLocalPassword } from "../plugins/auth.js";
 import { hasPermission } from "../lib/context.js";
+import { visibilidadeNotificacaoSql } from "../lib/notificacao.js";
 import { empresasVisiveisNaOrganizacao } from "../lib/empresa.js";
 import { allPermissionKeys } from "@agro/domain";
 import { resolverIdioma } from "@erp/plataforma";
@@ -37,7 +38,16 @@ export default async function authRoutes(app: FastifyInstance) {
     const org = await ctx.tx.query<{ name: string; parameters: unknown; idioma_padrao: string }>("select name, parameters, idioma_padrao from erp.organizations where id=$1", [ctx.orgId]);
     const idiomaUsuario = await ctx.tx.query<{ idioma: string | null }>("select idioma from erp.users where id=$1", [ctx.user.id]);
     const perms = ctx.membership.isOwner ? allPermissionKeys() : [...ctx.permissions];
-    const unread = await ctx.tx.query<{ n: string }>("select count(*) n from erp.notifications where organization_id=$1 and (user_id is null or user_id=$2) and read_at is null", [ctx.orgId, ctx.user.id]);
+    // O badge usa EXATAMENTE a mesma autoridade da listagem: contador e caixa divergirem é como o usuário
+    // acaba com "3 não lidas" e uma caixa com uma linha — ou com o número de avisos que não pode ver.
+    const pn: unknown[] = [];
+    const visivelN = visibilidadeNotificacaoSql(ctx, "n", pn);
+    const usuarioN = `$${pn.push(ctx.user.id)}`;
+    const unread = await ctx.tx.query<{ n: string }>(
+      `select count(*) n from erp.notifications n
+        where ${visivelN}
+          and not exists (select 1 from erp.notificacao_leituras l
+                           where l.organization_id = n.organization_id and l.notificacao_id = n.id and l.usuario_id = ${usuarioN})`, pn);
     const idioma = { organizacao: org.rows[0]?.idioma_padrao ?? null, usuario: idiomaUsuario.rows[0]?.idioma ?? null, efetivo: resolverIdioma({ usuario: idiomaUsuario.rows[0]?.idioma ?? null, organizacao: org.rows[0]?.idioma_padrao ?? null }) };
     // `farms` é a lista de EMPRESAS visíveis (docs/MULTI-COMPANY-CONTRACT.md); o nome do campo migra em PRE-BASE2-03.
     return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, farms: visibleFarms, permissions: perms, favorites: fav.rows, unreadNotifications: Number(unread.rows[0]?.n ?? 0), canViewUsers: hasPermission(ctx, "users.view"), idioma };

@@ -68,7 +68,10 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
   // notificações, favoritos
   const { data: notif } = useQuery({ queryKey: ["notifications"], queryFn: () => api<{ items: { id: string; title: string; route: string | null; read_at: string | null; created_at: string }[] }>("/api/admin/notifications"), enabled: Boolean(ctx), refetchInterval: 60_000 });
   const readAll = useMutation({ mutationFn: () => api("/api/admin/notifications/read-all", { method: "POST" }), onSuccess: () => { void qc.invalidateQueries({ queryKey: ["notifications"] }); void refresh(); } });
-  const unread = notif?.items.filter((n) => !n.read_at).length ?? 0;
+  // O contador AUTORITATIVO é o do servidor (/auth/context), que aplica a mesma regra de visibilidade da
+  // caixa e conta sem o limite da janela. Derivar o número da lista truncada fazia o badge subcontar e,
+  // pior, deixava o contador do servidor sem nenhum consumidor — uma regressão nele não apareceria na tela.
+  const unread = ctx?.unreadNotifications ?? 0;
   const [confirmLogout, setConfirmLogout] = React.useState(false);
   const askLogout = () => { if (ws?.hasDirty()) setConfirmLogout(true); else logout(); };
   if (!ctx || !session) return null;

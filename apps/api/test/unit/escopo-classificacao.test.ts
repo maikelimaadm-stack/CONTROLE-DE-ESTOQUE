@@ -102,6 +102,9 @@ describe("classificação de escopo × schema real", () => {
       const tabela = nome.replace(/^erp\./, "");
       if (NAO_NEGOCIO.has(tabela) || !companyColumnsOf(t).length) continue;
       if (cobertas.has(tabela)) continue;
+      // exceção CONSCIENTE e registrada (EXCECOES_ESCOPO) vale aqui também: senão haveria dois lugares
+      // para declarar a mesma decisão, e o segundo (um Set no meio do teste) não é lido por ninguém.
+      if (EXCECOES_ESCOPO[tabela]) continue;
       // não mapeada pelos dois registries: então precisa existir um recurso homônimo classificado como empresa
       const escopo = escopoDoRecurso(tabela);
       if (escopo?.tipo !== "empresa") semModulo.push(`${tabela}: tabela com coluna de empresa sem recurso de empresa correspondente`);

@@ -11,12 +11,12 @@ Formato do dicionário: versão **1**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 179 |
-| Tabelas com `organization_id` (escopo de organização) | 124 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 52 |
+| Tabelas no schema `erp` | 181 |
+| Tabelas com `organization_id` (escopo de organização) | 125 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 53 |
 | Entidades curadas neste dicionário | 37 |
 | Entidades com ID Global | 23 |
-| Cobertura curada | 20.7% |
+| Cobertura curada | 20.4% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1462,7 +1462,8 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.modulos_escopo_empresa` | 3 | não | — | não |
 | `erp.nature_operations` | 21 | sim | — | sim |
 | `erp.ncm` | 2 | não | — | não |
-| `erp.notifications` | 9 | sim | — | não |
+| `erp.notificacao_leituras` | 4 | sim | — | não |
+| `erp.notifications` | 17 | sim | `empresa_id` | não |
 | `erp.ofx_transactions` | 10 | sim | — | não |
 | `erp.opening_balances` | 15 | sim | `farm_id` | não |
 | `erp.operations` | 11 | sim | — | sim |
@@ -1502,6 +1503,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.tax_rules` | 25 | sim | — | sim |
 | `erp.team_members` | 4 | não | — | não |
 | `erp.teams` | 9 | sim | — | sim |
+| `erp.tipos_notificacao` | 5 | não | — | não |
 | `erp.title_apportionments` | 9 | não | — | não |
 | `erp.title_appropriations` | 5 | não | — | não |
 | `erp.title_types` | 4 | sim | — | não |

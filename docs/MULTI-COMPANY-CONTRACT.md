@@ -319,21 +319,46 @@ como NOT NULL uma coluna anulável não vaza, mas ESCONDE os registros da organi
 As matrizes versionadas estão em `docs/REPORT-SCOPE-MATRIX.md` (gerada e conferida pelo gate, uma linha por
 relatório do catálogo) e `docs/DASHBOARD-SCOPE-MATRIX.md` (painéis, bloco a bloco).
 
-### Resíduo conhecido e NÃO corrigido: notificações derivadas
+### Notificações derivadas (a exceção que deixou de existir)
 
-`erp.notifications` (migration 0002) **não tem dimensão de empresa** — só `organization_id` e um `user_id`
-opcional. `POST /admin/notifications/refresh` gera avisos a partir de registros que TÊM empresa
-(`erp.purchase_requests`, `erp.documents`, `erp.financial_titles`), e o texto carrega dado do registro: o
+Até a migration 0011, `erp.notifications` **não tinha dimensão de empresa** — só `organization_id` e um
+`user_id` opcional. O `refresh` gerava avisos a partir de registros que TÊM empresa
+(`erp.purchase_requests`, `erp.documents`, `erp.financial_titles`) e o texto carregava dado do registro: o
 código da solicitação, o título do documento, a contagem de títulos a vencer somando todas as empresas. Quem
-não enxerga aquela empresa recebe o aviso mesmo assim. Abrir o link dá 404 (a rota de detalhe é recortada),
-mas o TÍTULO já revelou existência e identificação.
+não enxergava aquela empresa recebia o aviso assim mesmo. Abrir o link dava 404 — e isso não corrigia nada,
+porque o TÍTULO já tinha revelado existência e identificação.
 
-Isto **não está corrigido** e não foi disfarçado: corrigir exige decidir a dimensão de empresa da
-notificação, não um predicado a mais. O caminho é (a) `alter table erp.notifications add column farm_id`
-(aditivo), (b) gravar a empresa do registro de origem em cada aviso, e (c) filtrar na leitura com o módulo
-do próprio `kind` (`purchase_pending` → compras, `stock_min` → estoque, `title_due` → financeiro,
-`document_expiring` → o módulo do documento), via `erp.tem_acesso_empresa`, com semântica nullable para o
-aviso que é mesmo da organização. Enquanto isso não existir, o contrato tem aqui uma exceção conhecida.
+A **0012** fecha isso dando à notificação um contrato de escopo explícito, em vez de um predicado a mais:
+
+| Escopo | Significado | Quem enxerga |
+| --- | --- | --- |
+| `organizacao` | não depende de empresa nenhuma (aniversário) | quem tem a CAPACIDADE da fonte |
+| `empresa` | pertence a UMA empresa concreta | capacidade **e** acesso àquela empresa NAQUELE módulo |
+| `modulo_todas` | agregado real da organização dentro de um módulo | só proprietário ou modo `todas` — `selecionadas` nunca |
+
+Quatro decisões sustentam isso:
+
+1. **A autorização é da FONTE, não da caixa.** Cada tipo declara sua capacidade e seu módulo num registry
+   único (`packages/domain/src/notificacoes.ts`); a caixa de notificações é porta dinâmica, como os anexos e
+   o ID Global. `permission_key` é obrigatória: ausência de capacidade declarada nunca significa "todo mundo".
+2. **O estado inválido é impossível no banco.** `erp.tipos_notificacao` enumera as combinações
+   (tipo × escopo × módulo × capacidade) que podem existir, e `notifications_tipo_fk` recusa o resto — por
+   rota, por migration futura ou por `psql`. Sem isso, `organizacao/null/null` satisfaria os checks de
+   coerência para QUALQUER tipo, e um aviso de compra voltaria a alcançar a organização inteira.
+3. **O legado é fail-closed.** Nenhuma linha antiga virou "da organização" por omissão: onde a empresa não é
+   recuperável de forma determinística, a linha virou `modulo_todas` do módulo correspondente — perde-se
+   alcance, não se ganha exposição. Tipo desconhecido **interrompe a migração** em vez de ser classificado
+   no chute, e o título humano nunca é parseado para reconstruir autorização.
+4. **A leitura é do usuário.** `erp.notificacao_leituras` guarda um recibo por usuário, com a RLS amarrando
+   o recibo ao usuário da sessão; `erp.notifications.read_at` fica como legado. Antes, um usuário marcar um
+   aviso compartilhado como lido apagava o "não lida" de todo mundo.
+
+Lista, contador de não lidas, "marcar como lida" e "marcar todas" usam a MESMA regra
+(`visibilidadeNotificacaoSql`), e a autorização entra no `where`, antes do `limit` — o contrário devolveria
+"as 50 mais recentes da organização, menos as proibidas". Marcar como lida uma notificação invisível
+responde **404**, não 403: não há existência a confirmar.
+
+A matriz por tipo, gerada e conferida por gate, está em `docs/NOTIFICATION-SCOPE-MATRIX.md`.
 
 ## 8. O que ainda não existe (e por quê)
 

@@ -186,6 +186,20 @@ export async function exigirEmpresaDeLancamento(ctx: ServiceCtx, empresaId: stri
   if (!(await empresaPermitida(ctx, empresaId, modulo))) throw new DomainError("VALIDATION_ERROR", "Sem acesso à empresa informada");
 }
 
+/**
+ * Empresa de DESTINO de um lançamento: existe, é DESTA organização e está ativa.
+ *
+ * Há operações em que o destino é legitimamente uma empresa que o autor NÃO enxerga — a transferência de
+ * lote entre empresas é assim: quem envia não precisa ver quem recebe (quem recebe é que aceita, e aí sim
+ * `empresaPermitida` decide). O que não pode é o destino ser um identificador qualquer vindo do corpo da
+ * requisição: sem esta checagem, um id de outra organização atravessaria — a chave estrangeira de
+ * `erp.animal_movements.destination_farm_id` é de coluna única e não carrega a organização.
+ */
+export async function exigirEmpresaDaOrganizacao(ctx: ServiceCtx, empresaId: string, oQue = "Empresa"): Promise<void> {
+  const r = await ctx.tx.query("select 1 from erp.farms where id=$1 and organization_id=$2 and deleted_at is null", [empresaId, ctx.orgId]);
+  if (!r.rowCount) throw new DomainError("VALIDATION_ERROR", `${oQue} inválida`);
+}
+
 // --------------------------------------------------------------------------------------------------
 // COMPATIBILIDADE DE NOME (PRE-BASE2-03 renomeia fisicamente farm → empresa).
 // Os nomes antigos continuam apenas como APELIDOS do escopo canônico: nenhuma regra nova deve usá-los, e

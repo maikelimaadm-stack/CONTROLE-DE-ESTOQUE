@@ -5,6 +5,7 @@ import { PERMISSION_RESOURCES, ACTION_LABELS, MODULOS_ESCOPO_EMPRESA, allPermiss
 import { runService, audit } from "../lib/service.js";
 import { notFound, validation, denied } from "../lib/errors.js";
 import { hasPermission } from "../lib/context.js";
+import { criarNotificacao, visibilidadeNotificacaoSql } from "../lib/notificacao.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { deFarmIdsLegado, escopoEmpresaSchema, gravarEscoposAuditado, paraFarmIdsLegado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
 
@@ -103,7 +104,12 @@ export default async function adminRoutes(app: FastifyInstance) {
     const hash = d.password ? await bcrypt.hash(d.password, 10) : null;
     const u = await ctx.tx.query<{ id: string }>("insert into erp.users(email,name,phone,password_hash) values ($1,$2,$3,$4) on conflict (email) do update set name=excluded.name, phone=coalesce(excluded.phone, erp.users.phone), password_hash=coalesce(excluded.password_hash, erp.users.password_hash) returning id", [d.email.toLowerCase(), d.name, d.phone ?? null, hash]);
     const m = await ctx.tx.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,role_id,is_active) values ($1,$2,$3,$4) on conflict (organization_id,user_id) do update set role_id=excluded.role_id, is_active=excluded.is_active returning id", [ctx.orgId, u.rows[0]!.id, d.role_id ?? null, d.is_active]);
-    await gravarEscoposAuditado(ctx, m.rows[0]!.id, escoposPedidos(d) ?? deFarmIdsLegado([]));
+    // Corpo SEM `escopos_empresas` e SEM `farm_ids` = nenhum módulo configurado = NENHUMA empresa. O
+    // fallback anterior (`deFarmIdsLegado([])`) traduzia a ausência em modo `todas` nos onze módulos, ou
+    // seja, criava o membro enxergando a organização inteira — o oposto do contrato em escopo-admin.ts, e
+    // uma concessão total que a auditoria registrava como se fosse pedido. A tradução do legado continua
+    // valendo para `farm_ids` ENVIADO, que é onde "lista vazia = todas" tem história.
+    await gravarEscoposAuditado(ctx, m.rows[0]!.id, escoposPedidos(d) ?? []);
     await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, u.rows[0]!.id]);
     for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, u.rows[0]!.id, b]);
     await audit(ctx.tx, ctx, "users", u.rows[0]!.id, "create");
@@ -146,27 +152,126 @@ export default async function adminRoutes(app: FastifyInstance) {
   }));
 
   // ---------- Notificações ----------
+  // A autorização entra ANTES do LIMIT: filtrar depois devolveria "as 50 mais recentes da organização,
+  // menos as proibidas" — que para um usuário restrito podem ser três. O contrato é "as 50 mais recentes
+  // ENTRE AS QUE ELE PODE VER". `lida` vem do recibo do USUÁRIO, não do read_at legado.
   app.get("/admin/notifications", async (req) => runService(app, req, null, async (ctx) => {
-    const r = await ctx.tx.query("select id,kind,title,body,route,read_at,created_at from erp.notifications where organization_id=$1 and (user_id is null or user_id=$2) order by created_at desc limit 50", [ctx.orgId, ctx.user.id]);
+    const p: unknown[] = [];
+    const visivel = visibilidadeNotificacaoSql(ctx, "n", p);
+    const usuario = `$${p.push(ctx.user.id)}`;
+    const r = await ctx.tx.query(
+      `select n.id, n.kind, n.title, n.body, n.route, n.created_at,
+              (l.usuario_id is not null) as read,
+              l.lida_em as read_at
+         from erp.notifications n
+         left join erp.notificacao_leituras l
+           on l.organization_id = n.organization_id and l.notificacao_id = n.id and l.usuario_id = ${usuario}
+        where ${visivel}
+        order by n.created_at desc limit 50`, p);
     return { items: r.rows };
   }));
-  app.post("/admin/notifications/read-all", async (req) => runService(app, req, null, async (ctx) => { await ctx.tx.query("update erp.notifications set read_at=now() where organization_id=$1 and (user_id is null or user_id=$2) and read_at is null", [ctx.orgId, ctx.user.id]); return { ok: true }; }));
-  app.post("/admin/notifications/:id/read", async (req) => runService(app, req, null, async (ctx) => { await ctx.tx.query("update erp.notifications set read_at=now() where id=$1 and organization_id=$2", [(req.params as { id: string }).id, ctx.orgId]); return { ok: true }; }));
+  // Marca como lidas só as que ELE vê e ainda não leu — set-based, sem tocar na leitura de mais ninguém.
+  app.post("/admin/notifications/read-all", async (req) => runService(app, req, null, async (ctx) => {
+    const p: unknown[] = [];
+    const visivel = visibilidadeNotificacaoSql(ctx, "n", p);
+    const usuario = `$${p.push(ctx.user.id)}`;
+    const r = await ctx.tx.query(
+      `insert into erp.notificacao_leituras (organization_id, notificacao_id, usuario_id)
+       select n.organization_id, n.id, ${usuario} from erp.notifications n where ${visivel}
+       on conflict do nothing`, p);
+    return { ok: true, marcadas: r.rowCount ?? 0 };
+  }));
+  // Antes de gravar o recibo é preciso PROVAR que a notificação é visível: sem isso, qualquer usuário
+  // marcava qualquer linha da organização (inclusive de empresa proibida) e confirmava a existência dela.
+  app.post("/admin/notifications/:id/read", async (req) => runService(app, req, null, async (ctx) => {
+    const p: unknown[] = [];
+    const visivel = visibilidadeNotificacaoSql(ctx, "n", p);
+    const id = `$${p.push((req.params as { id: string }).id)}`;
+    const r = await ctx.tx.query(`select n.id from erp.notifications n where ${visivel} and n.id = ${id}`, p);
+    if (!r.rowCount) throw notFound("Notificação");   // 404, não 403: nada a revelar sobre existência
+    await ctx.tx.query(
+      "insert into erp.notificacao_leituras (organization_id, notificacao_id, usuario_id) values ($1,$2,$3) on conflict do nothing",
+      [ctx.orgId, (req.params as { id: string }).id, ctx.user.id]);
+    return { ok: true };
+  }));
   /** Gera notificações derivadas do estado atual (compras pendentes, estoque mínimo, títulos vencendo, aniversariantes, documentos vencendo). Idempotente por dia. */
-  app.post("/admin/notifications/refresh", async (req) => runService(app, req, null, async (ctx) => {
-    const today = new Date().toISOString().slice(0, 10);
-    const exists = async (kind: string, route: string) => (await ctx.tx.query("select 1 from erp.notifications where organization_id=$1 and kind=$2 and route=$3 and created_at::date=$4::date", [ctx.orgId, kind, route, today])).rowCount;
-    const add = async (kind: string, title: string, body: string | null, route: string, userId: string | null = null) => { if (!(await exists(kind, route))) await ctx.tx.query("insert into erp.notifications(organization_id,user_id,kind,title,body,route) values ($1,$2,$3,$4,$5,$6)", [ctx.orgId, userId, kind, title, body, route]); };
-    const pend = await ctx.tx.query<{ code: string; id: string; days: number; current_responsible_user_id: string | null }>("select code, id, extract(day from now()-status_changed_at)::int as days, current_responsible_user_id from erp.purchase_requests where organization_id=$1 and status not in ('finished','cancelled') and status_changed_at < now() - interval '3 days'", [ctx.orgId]);
-    for (const p of pend.rows) await add("purchase_pending", `Compras nº ${p.code} pendente há ${p.days} dia(s)`, null, `/suprimentos/view/${p.id}`, p.current_responsible_user_id);
+  /**
+   * Gera as notificações derivadas do estado atual. Cada linha nasce CLASSIFICADA (escopo, módulo,
+   * empresa, capacidade) — nenhuma nasce ambígua para ser autorizada por omissão depois. Idempotente
+   * no dia, com a empresa dentro da chave de deduplicação.
+   */
+  // Exige capacidade: a geração varre a organização INTEIRA e materializa linhas para todas as empresas.
+  // Com a porta aberta (`permission: null`), um membro sem permissão nenhuma disparava as cinco varreduras
+  // e media o tempo de resposta — que cresce com o volume de pendências de empresas que ele não enxerga.
+  // O botão que dispara isto vive na tela de administração de notificações, onde a capacidade já é a regra.
+  app.post("/admin/notifications/refresh", async (req) => runService(app, req, "notifications.view", async (ctx) => {
+    // A deduplicação é "procura e insere": duas execuções simultâneas (o app chama isto ao abrir a caixa,
+    // e duas abas abrem juntas) passam as duas pela procura vazia e inserem a mesma linha. Uma trava por
+    // organização serializa as gerações sem prender o resto do banco.
+    await ctx.tx.query("select pg_advisory_xact_lock(hashtext($1 || ':notificacoes'))", [ctx.orgId]);
+
+    // Compras: a solicitação nasce numa empresa concreta -> escopo de empresa.
+    const pend = await ctx.tx.query<{ code: string; id: string; days: number; farm_id: string; current_responsible_user_id: string | null }>(
+      "select code, id, farm_id, extract(day from now()-status_changed_at)::int as days, current_responsible_user_id from erp.purchase_requests where organization_id=$1 and status not in ('finished','cancelled') and status_changed_at < now() - interval '3 days'", [ctx.orgId]);
+    for (const p of pend.rows) {
+      // Dirigir o aviso a um responsável que NÃO enxerga a empresa da solicitação cria uma linha que
+      // ninguém vê: o destinatário elimina todos os outros e o escopo elimina ele. Quando o responsável
+      // não alcança a empresa, o aviso volta a ser difusão — já recortada pela própria empresa.
+      const responsavel = p.current_responsible_user_id
+        && (await ctx.tx.query("select 1 where erp.tem_acesso_empresa($1,$2,'compras',$3)", [ctx.orgId, p.current_responsible_user_id, p.farm_id])).rowCount
+        ? p.current_responsible_user_id : null;
+      await criarNotificacao(ctx, { kind: "purchase_pending", title: `Compras nº ${p.code} pendente há ${p.days} dia(s)`,
+        route: `/suprimentos/view/${p.id}`, userId: responsavel, empresaId: p.farm_id,
+        entidadeOrigem: "purchase_requests", idOrigem: p.id });
+    }
+
+    // Estoque mínimo: `products.min_stock` é cadastro da ORGANIZAÇÃO e o saldo somado é de todos os
+    // armazéns. O número é agregado organizacional do módulo — quem tem `selecionadas` não o consolida.
     const low = await ctx.tx.query<{ description: string; id: string }>("select p.description, p.id from erp.products p where p.organization_id=$1 and p.min_stock > 0 and coalesce((select sum(quantity) from erp.stock_balances sb where sb.product_id=p.id),0) <= p.min_stock and p.deleted_at is null", [ctx.orgId]);
-    for (const l of low.rows) await add("stock_min", `Estoque mínimo atingido: ${l.description}`, null, `/estoque?tab=estoque&sub=saldo&product_id=${l.id}`);
-    const due = await ctx.tx.query<{ n: string }>("select count(*) n from erp.financial_titles where organization_id=$1 and status in ('open','partially_paid') and due_date between current_date and current_date + 3", [ctx.orgId]);
-    if (Number(due.rows[0]!.n) > 0) await add("title_due", `${due.rows[0]!.n} título(s) vencendo nos próximos 3 dias`, null, "/financeiro?tab=contas&sub=pagar&due_soon=1");
-    const bday = await ctx.tx.query<{ name: string; birthday: string }>("select p.name, e.birthday from erp.employee_profiles e join erp.people p on p.id=e.person_id where p.organization_id=$1 and e.is_active and to_char(e.birthday,'MM-DD')=to_char(current_date,'MM-DD')", [ctx.orgId]);
-    for (const b of bday.rows) await add("birthday", `${b.name} está fazendo aniversário hoje`, null, "/pessoas?tab=pessoas&role=employee");
-    const docs = await ctx.tx.query<{ title: string; id: string }>("select title, id from erp.documents where organization_id=$1 and status='active' and expiration_date between current_date and current_date + 15", [ctx.orgId]);
-    for (const d of docs.rows) await add("document_expiring", `Documento vencendo: ${d.title}`, null, `/cadastros/documents/${d.id}`);
+    for (const l of low.rows) {
+      await criarNotificacao(ctx, { kind: "stock_min", title: `Estoque mínimo atingido: ${l.description}`,
+        route: `/estoque?tab=estoque&sub=saldo&product_id=${l.id}`, entidadeOrigem: "products", idOrigem: l.id });
+    }
+
+    // Títulos vencendo: DUAS correções de semântica no mesmo lugar.
+    //  1. a rota leva para CONTAS A PAGAR, então a contagem é de pagar. Antes somava pagar e receber sob
+    //     rota e permissão de pagar — número que a permissão exibida não autorizava;
+    //  2. a contagem é POR EMPRESA. `financial_titles.farm_id` é obrigatório, então este número se decompõe
+    //     sem mudar de significado — diferente do estoque mínimo, que é cadastro da organização. Um
+    //     agregado da organização inteira sumiria para quem tem `selecionadas`, tirando dele um aviso
+    //     sobre títulos que ele vê na própria tela de Contas a Pagar.
+    const due = await ctx.tx.query<{ n: string; farm_id: string }>(
+      `select count(*) n, farm_id from erp.financial_titles
+        where organization_id=$1 and direction='payable' and status in ('open','partially_paid')
+          and deleted_at is null and due_date between current_date and current_date + 3
+        group by farm_id`, [ctx.orgId]);
+    for (const t of due.rows) {
+      await criarNotificacao(ctx, { kind: "title_due", title: `${t.n} título(s) a pagar vencendo nos próximos 3 dias`,
+        route: "/financeiro?tab=contas&sub=pagar&due_soon=1", empresaId: t.farm_id, dedupe: `title_due:${t.farm_id}` });
+    }
+
+    // Aniversário: cadastro de pessoas da organização, sem dimensão de empresa.
+    const bday = await ctx.tx.query<{ name: string; id: string; birthday: string }>("select p.name, p.id, e.birthday from erp.employee_profiles e join erp.people p on p.id=e.person_id where p.organization_id=$1 and e.is_active and to_char(e.birthday,'MM-DD')=to_char(current_date,'MM-DD')", [ctx.orgId]);
+    for (const b of bday.rows) {
+      await criarNotificacao(ctx, { kind: "birthday", title: `${b.name} está fazendo aniversário hoje`,
+        route: "/pessoas?tab=pessoas&role=employee", dedupe: `birthday:${b.id}`, entidadeOrigem: "people", idOrigem: b.id });
+    }
+
+    // Documento: a empresa é ANULÁVEL. Com empresa, é aviso daquela empresa; sem empresa, é da
+    // organização — e esconder o documento institucional de quem tem a capacidade seria o erro inverso.
+    // Empresa desativada é excluída na origem: `erp.tem_acesso_empresa` exige `deleted_at is null`, então
+    // o aviso de um documento dela nasceria invisível para todo mundo — inclusive para o proprietário —
+    // e se acumularia um por dia, sem ninguém poder lê-lo nem marcá-lo como lido.
+    const docs = await ctx.tx.query<{ title: string; id: string; farm_id: string | null }>(
+      `select d.title, d.id, d.farm_id from erp.documents d
+        where d.organization_id=$1 and d.status='active' and d.expiration_date between current_date and current_date + 15
+          and (d.farm_id is null or exists (select 1 from erp.farms f where f.id=d.farm_id and f.deleted_at is null))`, [ctx.orgId]);
+    for (const d of docs.rows) {
+      await criarNotificacao(ctx, { kind: "document_expiring", title: `Documento vencendo: ${d.title}`,
+        route: `/cadastros/documents/${d.id}`, empresaId: d.farm_id,
+        ...(d.farm_id ? {} : { escopoOverride: "organizacao" as const }),
+        entidadeOrigem: "documents", idOrigem: d.id });
+    }
     return { ok: true };
   }));
 
@@ -192,6 +297,9 @@ export default async function adminRoutes(app: FastifyInstance) {
         const u = await ctx.tx.query<{ password_hash: string | null }>("select password_hash from erp.users where id=$1", [ctx.user.id]);
         if (!d.current_password || !u.rows[0]?.password_hash || !(await bcrypt.compare(d.current_password, u.rows[0].password_hash))) throw denied("senha atual inválida");
         await ctx.tx.query("update erp.users set password_hash=$2 where id=$1", [ctx.user.id, await bcrypt.hash(d.password, 10)]);
+        // Evento de segurança, como a mudança de escopo: ator, horário e IP. SEM metadata e SEM antes/depois
+        // — a senha e o hash não entram na trilha, e não há nada além do fato a registrar.
+        await audit(ctx.tx, ctx, "users", ctx.user.id, "password_change");
       } else throw validation("Troca de senha é feita pelo Supabase Auth");
     }
     await ctx.tx.query("update erp.users set name=coalesce($2,name), phone=coalesce($3,phone) where id=$1", [ctx.user.id, d.name ?? null, d.phone ?? null]);

@@ -143,7 +143,10 @@ export async function gravarEscoposAuditado(ctx: ServiceCtx, membroId: string, e
   const depois = await lerEscopos(ctx, membroId);
   const alterados = modulosAlterados(antes, depois);
   if (alterados.length) {
-    await audit(ctx.tx, ctx, "member_company_scopes", membroId, "update", { membro_id: membroId, before: antes, after: depois, modulos_alterados: alterados });
+    // antes/depois vão para as COLUNAS `before`/`after` de erp.audit_logs; o metadata guarda só o que é
+    // metadado mesmo (de quem é a configuração e quais módulos mudaram), sem duplicar as duas fotos.
+    await audit(ctx.tx, ctx, "member_company_scopes", membroId, "update",
+      { membro_id: membroId, modulos_alterados: alterados }, { before: antes, after: depois });
   }
   return { alterados };
 }

@@ -84,8 +84,16 @@ export async function nextCode(tx: Tx, orgId: string, entity: string, width = 4)
   return String(r.rows[0]!.n).padStart(width, "0");
 }
 
-export async function audit(tx: Tx, ctx: RequestContext, entity: string, entityId: string, action: string, metadata?: unknown) {
-  await tx.query("insert into erp.audit_logs(organization_id,user_id,entity,entity_id,action,metadata,ip) values ($1,$2,$3,$4,$5,$6,$7)", [ctx.orgId, ctx.user.id, entity, entityId, action, metadata ? JSON.stringify(metadata) : null, ctx.ip ?? null]);
+/**
+ * Registro de auditoria. `erp.audit_logs` sempre teve as colunas `before` e `after`, mas o helper só
+ * preenchia `metadata` — então quem gravava antes/depois (a mudança de escopo de empresa) empilhava as
+ * duas fotos dentro do metadata. Passam a ir para as colunas próprias, que é onde qualquer consulta de
+ * auditoria as procura. O parâmetro é opcional: nenhum caller antigo muda.
+ */
+export async function audit(tx: Tx, ctx: RequestContext, entity: string, entityId: string, action: string, metadata?: unknown, mudanca?: { before?: unknown; after?: unknown }) {
+  const json = (v: unknown) => (v === undefined || v === null ? null : JSON.stringify(v));
+  await tx.query("insert into erp.audit_logs(organization_id,user_id,entity,entity_id,action,metadata,before,after,ip) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    [ctx.orgId, ctx.user.id, entity, entityId, action, json(metadata), json(mudanca?.before), json(mudanca?.after), ctx.ip ?? null]);
 }
 
 export async function assertPeriodOpen(tx: Tx, orgId: string, farmId: string | null, date: string) {

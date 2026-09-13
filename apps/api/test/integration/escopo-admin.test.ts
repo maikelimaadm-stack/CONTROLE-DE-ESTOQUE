@@ -124,6 +124,40 @@ describe("a borda LEGADA farm_ids não desvia da validação canônica", () => {
   });
 });
 
+describe("ausência de configuração é NENHUMA empresa, nunca todas", () => {
+  it("membro criado sem escopos_empresas e sem farm_ids não enxerga empresa alguma", async () => {
+    // O fallback antigo traduzia a ausência dos dois campos em modo `todas` nos onze módulos: o membro
+    // nascia enxergando a organização inteira porque o pedido foi OMISSO, não porque alguém concedeu.
+    seq += 1;
+    const email = `sem-escopo-${seq}@demo.local`;
+    const criado = await post("/api/admin/members", { name: "Sem escopo", email, password: "Borda@12345", role_id: papel });
+    expect(criado.statusCode, criado.body).toBe(201);
+    const membroId = j(criado).member_id as string;
+
+    const c = createPool(TEST_URL, { max: 1 });
+    try {
+      const escopos = await c.query<{ n: string }>("select count(*) n from erp.membro_escopos_empresa where organization_id=$1 and membro_id=$2", [h.demo.orgId, membroId]);
+      expect(Number(escopos.rows[0]!.n), "nenhum módulo configurado").toBe(0);
+      // e a autoridade do banco concorda: nenhuma empresa, em nenhum módulo
+      const acesso = await c.query<{ ok: boolean }>("select erp.tem_acesso_empresa($1,$2,'estoque',$3) as ok", [h.demo.orgId, j(criado).id as string, I.farm]);
+      expect(acesso.rows[0]!.ok, "sem configuração = sem acesso").toBe(false);
+    } finally { await c.end(); }
+  });
+
+  it("farm_ids explicitamente vazio continua sendo o legado \"todas\"", async () => {
+    // A tradução legada só vale para o campo ENVIADO: lá, lista vazia sempre significou todas as empresas,
+    // e mudar isso reescreveria o passado de quem já usa a API antiga.
+    seq += 1;
+    const criado = await post("/api/admin/members", { name: "Legado vazio", email: `legado-vazio-${seq}@demo.local`, password: "Borda@12345", role_id: papel, farm_ids: [] });
+    expect(criado.statusCode, criado.body).toBe(201);
+    const c = createPool(TEST_URL, { max: 1 });
+    try {
+      const modos = await c.query<{ modo: string }>("select distinct modo from erp.membro_escopos_empresa where organization_id=$1 and membro_id=$2", [h.demo.orgId, j(criado).member_id as string]);
+      expect(modos.rows.map((x) => x.modo)).toEqual(["todas"]);
+    } finally { await c.end(); }
+  });
+});
+
 describe("auditoria de mudança de escopo (evento de segurança)", () => {
   it("registra ator, membro, antes, depois e módulos alterados — sem segredo algum", async () => {
     seq += 1;
@@ -138,22 +172,34 @@ describe("auditoria de mudança de escopo (evento de segurança)", () => {
     ] });
     expect(alterado.statusCode, alterado.body).toBe(200);
 
+    type Escopo = { modulo: string; modo: string; empresas: string[] };
     const c = createPool(TEST_URL, { max: 1 });
     try {
-      const logs = await c.query<{ user_id: string; organization_id: string; entity_id: string; metadata: Record<string, unknown> }>(
-        "select user_id, organization_id, entity_id, metadata from erp.audit_logs where entity='member_company_scopes' and entity_id=$1 order by created_at", [membroId]);
+      // `before`/`after` são COLUNAS de erp.audit_logs desde sempre; até PRE-BASE2-02 o helper só escrevia
+      // `metadata`, então a foto antes/depois ia empilhada lá dentro — invisível para qualquer consulta de
+      // auditoria, que procura nas colunas. Este teste trava as colunas E a ausência de duplicação.
+      const logs = await c.query<{ user_id: string; organization_id: string; metadata: Record<string, unknown>; before: Escopo[] | null; after: Escopo[] | null }>(
+        "select user_id, organization_id, metadata, before, after from erp.audit_logs where entity='member_company_scopes' and entity_id=$1 order by created_at", [membroId]);
       expect(logs.rowCount, "criação e alteração precisam estar auditadas").toBe(2);
       const criacao = logs.rows[0]!; const update = logs.rows[1]!;
       expect(criacao.organization_id).toBe(h.demo.orgId);
       expect(criacao.user_id).toBe(h.demo.adminUserId); // o ATOR, não o membro alterado
-      expect((criacao.metadata["before"] as unknown[])).toEqual([]);
-      const antes = update.metadata["before"] as { modulo: string; modo: string; empresas: string[] }[];
-      const depois = update.metadata["after"] as { modulo: string; modo: string; empresas: string[] }[];
+      expect(criacao.before, "quem nasce não tinha escopo anterior").toEqual([]);
+
+      const antes = update.before!; const depois = update.after!;
       expect(antes.find((e) => e.modulo === "estoque")?.empresas).toEqual([I.farm]);
       expect(depois.find((e) => e.modulo === "estoque")?.empresas).toEqual([I.farm2]);
       expect(depois.find((e) => e.modulo === "financeiro")?.empresas).toEqual([I.farm]);
+
+      // metadata guarda o que NÃO é foto: quem foi alterado e quais módulos mudaram. Repetir as fotos aqui
+      // devolveria a inconsistência — duas verdades para o mesmo fato, divergindo na primeira alteração.
       expect(update.metadata["modulos_alterados"]).toEqual(["estoque", "financeiro"]);
-      const texto = JSON.stringify(update.metadata).toLowerCase();
+      expect(update.metadata["membro_id"]).toBe(membroId);
+      expect(update.metadata["before"], "foto não se duplica no metadata").toBeUndefined();
+      expect(update.metadata["after"], "foto não se duplica no metadata").toBeUndefined();
+
+      // nenhum dos três campos pode carregar segredo: o evento de segurança é lido por quem audita, não por quem opera
+      const texto = JSON.stringify([update.metadata, update.before, update.after, criacao.metadata, criacao.before, criacao.after]).toLowerCase();
       for (const segredo of ["password", "senha", "hash", "token", "authorization", "borda@12345"]) expect(texto, segredo).not.toContain(segredo);
     } finally { await c.end(); }
   });

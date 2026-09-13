@@ -4,7 +4,8 @@ import { D, money, isISODate, todayISO } from "@agro/shared";
 import { gmd, withdrawalUntil, expectedBirth, ageMonths, evolveCategory, moduloDaPermissao, moduloUnicoDasPermissoes, permissaoManejo, permissaoMovimentacao, tiposMovimentacaoVisiveis } from "@agro/domain";
 import { comPermissaoResolvida, validarEmpresaSelecionada, runService, nextCode, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { consultaEscopada, empresaPermitida, empresaScope, empresaScopeSql, exigirEmpresaDeLancamento, exigirEmpresaVisivel, farmScope, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
+import { consultaEscopada, empresaPermitida, empresaScope, empresaScopeSql, exigirEmpresaDaOrganizacao, exigirEmpresaDeLancamento, exigirEmpresaVisivel, farmScope, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
+import { criarNotificacao } from "../lib/notificacao.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing, hasColumnFilters } from "../lib/column-filters.js";
 import { postStock } from "../services/stock-core.js";
@@ -177,7 +178,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
         const t = await createTitles(ctx, { farmId: d.farm_id, direction: d.movement_type === "purchase" ? "payable" : "receivable", number: d.invoice_number ?? `ANI-${code}`, personId: d.person_id, amount: money(value), emissionDate: d.movement_date, dueDate: d.due_date ?? d.movement_date, note: `${d.movement_type === "purchase" ? "Compra" : "Venda"} de animais ${code} (${qty} cab.)`, apportionment: [{ financialCategoryId: cat, costCenterId: cc, percentage: "100" }], sourceType: "animal_movements", sourceId: id });
         titleIds = t.ids; await ctx.tx.query("update erp.animal_movements set financial_title_id=$2 where id=$1", [id, t.ids[0]]);
       }
-      if (d.movement_type === "purchase" && qty > 0) { const pcode = await animalCode(ctx, "processing"); await ctx.tx.query("insert into erp.processings(organization_id,farm_id,code,processing_date,purchase_movement_id,pre_batch_id,expected_quantity,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8)", [ctx.orgId, d.farm_id, pcode, d.movement_date, id, d.batch_id ?? null, qty, ctx.user.id]); await ctx.tx.query("insert into erp.notifications(organization_id,kind,title,route) values ($1,'processing_pending',$2,$3)", [ctx.orgId, `Você tem animais a serem processados no processamento nº ${pcode}`, `/pecuaria/processamentos`]); }
+      if (d.movement_type === "purchase" && qty > 0) { const pcode = await animalCode(ctx, "processing"); const proc = await ctx.tx.query<{ id: string }>("insert into erp.processings(organization_id,farm_id,code,processing_date,purchase_movement_id,pre_batch_id,expected_quantity,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id", [ctx.orgId, d.farm_id, pcode, d.movement_date, id, d.batch_id ?? null, qty, ctx.user.id]); await criarNotificacao(ctx, { kind: "processing_pending", title: `Você tem animais a serem processados no processamento nº ${pcode}`, route: "/pecuaria/processamentos", empresaId: d.farm_id, dedupe: proc.rows[0]!.id, entidadeOrigem: "processings", idOrigem: proc.rows[0]!.id }); }
       await audit(ctx.tx, ctx, "animal_movements", id, "create", { code, type: d.movement_type, qty });
       return { id, code, quantity: qty, total_value: money(value), title_ids: titleIds };
     })).result;
@@ -226,12 +227,21 @@ export default async function livestockRoutes(app: FastifyInstance) {
   app.post("/livestock/transfers/to-farm", async (req, reply) => reply.status(201).send(await runService(app, req, "batch_farm_transfer.create", async (ctx) => {
     const d = z.object({ farm_id: uuid, destination_farm_id: uuid, movement_date: date, batch_id: uuid.optional().nullable(), animal_ids: z.array(uuid).optional(), destination_batch_id: uuid.optional().nullable(), note: z.string().optional().nullable() }).parse(req.body);
     await exigirEmpresaDeLancamento(ctx, d.farm_id); if (d.farm_id === d.destination_farm_id) throw validation("Fazenda destino deve ser diferente");
+    // O DESTINO vem do corpo da requisição. Quem envia não precisa enxergar quem recebe (é o destino que
+    // aceita, e lá `empresaPermitida` decide), mas precisa ser uma empresa REAL desta organização: sem isto
+    // um id de outra organização passaria, porque a FK de destination_farm_id não carrega a organização.
+    await exigirEmpresaDaOrganizacao(ctx, d.destination_farm_id, "Empresa de destino");
     const code = await animalCode(ctx, "farm_transfer");
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,farm_id,code,movement_type,movement_date,batch_id,destination_farm_id,destination_batch_id,note,status,created_by) values ($1,$2,$3,'farm_transfer',$4,$5,$6,$7,$8,'pending',$9) returning id", [ctx.orgId, d.farm_id, code, d.movement_date, d.batch_id ?? null, d.destination_farm_id, d.destination_batch_id ?? null, d.note ?? null, ctx.user.id]);
     const ids = d.animal_ids?.length ? d.animal_ids : (await ctx.tx.query<{ id: string }>("select id from erp.animals where batch_id=$1 and status='active' and organization_id=$2", [d.batch_id, ctx.orgId])).rows.map((x) => x.id);
     for (const a of ids) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]);
     await ctx.tx.query("update erp.animal_movements set quantity=$2 where id=$1", [r.rows[0]!.id, ids.length]);
-    await ctx.tx.query("insert into erp.notifications(organization_id,kind,title,route) values ($1,'batch_transfer','Você possui uma transferência de lote a ser processada.','/pecuaria?tab=rebanho&sub=transferencias&type=farm_transfer')", [ctx.orgId]);
+    // o aviso é da empresa de DESTINO: é ela que tem a transferência a processar
+    await criarNotificacao(ctx, { kind: "batch_transfer", title: "Você possui uma transferência de lote a ser processada.",
+      route: "/pecuaria?tab=rebanho&sub=transferencias&type=farm_transfer", empresaId: d.destination_farm_id,
+      // a chave do dia é a TRANSFERÊNCIA, não a tela: com a rota (que é constante) a segunda transferência
+      // do dia para a mesma empresa seria engolida em silêncio e ninguém no destino seria avisado
+      dedupe: r.rows[0]!.id, entidadeOrigem: "animal_movements", idOrigem: r.rows[0]!.id });
     return { id: r.rows[0]!.id, code, animals: ids.length, status: "pending" };
   })));
   // Processar transferência na fazenda destino (aceite)

@@ -201,7 +201,8 @@ export const EXCECOES_ESCOPO: Readonly<Record<string, string>> = {
   "report.logged_hours": "Horas registradas saem de `erp.audit_logs` — auditoria de uso do sistema por usuário, da organização inteira, sem coluna de empresa (mesma natureza de dashboard.user_analysis).",
   "report.bank_statement": "Extrato de CONTA bancária: parte do saldo inicial da conta (que não tem empresa) e fecha com o saldo da conta. Recortá-lo por empresa produziria um extrato que não reconcilia — número financeiramente falso. Por isso é documento da organização e a porta exige `bank_accounts.view` além da permissão do relatório.",
   bank_accounts: "Cadastro da organização; `erp.bank_account_farms` é vínculo de abrangência. Os MOVIMENTOS (`erp.bank_movements`) são de empresa, no módulo financeiro.",
-  users: "Usuário pertence à organização; o acesso dele às empresas é justamente o que esta missão passa a configurar (o vínculo legado de fazendas do membro era autorização, não dado de negócio)."
+  users: "Usuário pertence à organização; o acesso dele às empresas é justamente o que esta missão passa a configurar (o vínculo legado de fazendas do membro era autorização, não dado de negócio).",
+  notifications: "A caixa de notificações é PORTA DINÂMICA: `erp.notifications` tem empresa, mas a autorização de cada linha vem da FONTE dela (a solicitação de compra, o documento, o título), não de um módulo \"notificações\" — que, se existisse, seria um segundo caminho para o mesmo dado, com escopo próprio e capaz de divergir do primeiro. Por isso cada linha carrega o módulo e a capacidade da origem (`erp.tipos_notificacao` + `notifications_tipo_fk` impedem combinação não declarada) e a leitura resolve CAPACIDADE ∩ ESCOPO em SQL, via `erp.tem_acesso_empresa`. Ver docs/NOTIFICATION-SCOPE-MATRIX.md."
 };
 
 /** Índice recurso → escopo, montado das listas acima (a fonte continua sendo a declaração explícita). */

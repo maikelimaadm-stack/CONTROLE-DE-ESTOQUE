@@ -95,14 +95,27 @@ export default fp(async function authPlugin(app: FastifyInstance) {
       memberId: row.member_id,
       escopos: row.is_owner ? AUTORIZACAO_PROPRIETARIO : autorizacaoPorModulo(escopos.map((e) => [e.modulo, e.modo === "todas" ? "todas" : "selecionadas"] as const))
     };
-    // X-Farm-Id é SELEÇÃO de trabalho, não autorização — e a autorização agora varia por módulo, então a
-    // validação acontece na porta (runService conhece o módulo), não aqui. O que se exige neste ponto é o
-    // mínimo verificável sem módulo: a empresa selecionada existe nesta organização e não está excluída.
+    // X-Farm-Id é SELEÇÃO de trabalho, não autorização — e a autorização por MÓDULO é validada na porta
+    // (runService conhece o módulo), não aqui. O que se exige neste ponto é que a empresa selecionada seja
+    // uma das que este membro enxerga em ALGUM módulo: é exatamente o conjunto que alimenta o seletor de
+    // empresa (empresasVisiveisNaOrganizacao). Validar apenas "existe na organização" transformava o
+    // cabeçalho em oráculo — 200 para empresa viva, 403 para o resto — e respondia sobre a existência de
+    // empresas que o usuário não enxerga. Uma resposta só para os dois casos: não distingue "não existe"
+    // de "existe e não é sua".
     const farmId = (req.headers["x-farm-id"] as string | undefined) ?? null;
     if (farmId) {
       // dentro do contexto de tenant: a consulta passa pelo RLS como qualquer outra leitura da aplicação
       const f = await withTx(app.db, { orgId, userId }, (tx) => tx.query<{ ok: boolean }>(
-        "select exists (select 1 from erp.farms where id=$1 and organization_id=$2 and deleted_at is null) ok", [farmId, orgId]));
+        `select exists (
+           select 1 from erp.farms f
+            where f.id=$1 and f.organization_id=$2 and f.deleted_at is null
+              and ($4::boolean or exists (
+                select 1 from erp.membro_escopos_empresa e
+                 where e.organization_id=$2 and e.membro_id=$3
+                   and (e.modo='todas' or exists (
+                     select 1 from erp.membro_empresas me
+                      where me.organization_id=$2 and me.membro_id=$3 and me.modulo=e.modulo and me.empresa_id=f.id))))
+         ) ok`, [farmId, orgId, membership.memberId, membership.isOwner]));
       if (!f.rows[0]?.ok) throw new DomainError("PERMISSION_DENIED", "Sem acesso à empresa selecionada");
     }
     req.ctx = { user: req.auth, orgId, farmId, membership, permissions: new Set(perms), ip: req.ip };
