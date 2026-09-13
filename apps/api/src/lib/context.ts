@@ -219,8 +219,13 @@ export async function exigirEmpresaDeLancamento(ctx: ServiceCtx, empresaId: stri
  * `erp.animal_movements.empresa_destino_id` é de coluna única e não carrega a organização.
  */
 export async function exigirEmpresaDaOrganizacao(ctx: ServiceCtx, empresaId: string, oQue = "Empresa"): Promise<void> {
-  const r = await ctx.tx.query("select 1 from erp.empresas where id=$1 and organization_id=$2 and deleted_at is null", [empresaId, ctx.orgId]);
-  if (!r.rowCount) throw new DomainError("VALIDATION_ERROR", `${oQue} inválida`);
+  // EXISTÊNCIA no tenant, não VISIBILIDADE no escopo. `erp.empresas` é lida pelo escopo (e tem de ser, senão
+  // o seletor vira um catálogo do que a pessoa não pode usar), mas a pergunta aqui é outra: a emissão de uma
+  // transferência valida o DESTINO, que o remetente legitimamente não enxerga — quem aceita é o destinatário.
+  // Perguntando pela política de leitura, "não vejo" virava "não existe" e a rota recusava com 422 uma
+  // transferência válida. `erp.empresa_da_organizacao_atual` responde só isso, dentro do tenant do servidor.
+  const r = await ctx.tx.query<{ ok: boolean }>("select erp.empresa_da_organizacao_atual($1) as ok", [empresaId]);
+  if (!r.rows[0]?.ok) throw new DomainError("VALIDATION_ERROR", `${oQue} inválida`);
 }
 
 // --------------------------------------------------------------------------------------------------

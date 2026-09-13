@@ -4,7 +4,7 @@ import { D, money, isISODate, todayISO } from "@agro/shared";
 import { gmd, withdrawalUntil, expectedBirth, ageMonths, evolveCategory, moduloDaPermissao, moduloUnicoDasPermissoes, permissaoManejo, permissaoMovimentacao, tiposMovimentacaoVisiveis } from "@agro/domain";
 import { comPermissaoResolvida, validarEmpresaSelecionada, runService, nextCode, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { consultaEscopada, empresaPermitida, empresaScope, empresaScopeSql, exigirEmpresaDaOrganizacao, exigirEmpresaDeLancamento, exigirEmpresaVisivel, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
+import { consultaEscopada, empresaScope, empresaScopeSql, exigirEmpresaDaOrganizacao, exigirEmpresaDeLancamento, exigirEmpresaVisivel, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { criarNotificacao } from "../lib/notificacao.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing, hasColumnFilters } from "../lib/column-filters.js";
@@ -114,13 +114,13 @@ export default async function livestockRoutes(app: FastifyInstance) {
     if (f.end_date) { params.push(f.end_date); where.push(`m.movement_date<=$${params.length}`); }
     if (f.person_id) { params.push(f.person_id); where.push(`m.person_id=$${params.length}`); }
     const w = where.join(" and ");
-    return paged(ctx, `select m.*, p.name as person_name, b.description as batch_name, f.name as empresa_name, u.name as created_by_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id join erp.empresas f on f.id=m.empresa_id left join erp.users u on u.id=m.created_by where ${w} order by m.movement_date desc, m.created_at desc`, `select count(*) n from erp.animal_movements m where ${w}`, params, q, req.query as Record<string, unknown>);
+    return paged(ctx, `select m.*, p.name as person_name, b.description as batch_name, f.name as empresa_name, u.name as created_by_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id left join erp.empresas f on f.id=m.empresa_id left join erp.users u on u.id=m.created_by where ${w} order by m.movement_date desc, m.created_at desc`, `select count(*) n from erp.animal_movements m where ${w}`, params, q, req.query as Record<string, unknown>);
   }));
   /** Detalhe: a permissão sai do TIPO DO PRÓPRIO REGISTRO. Tipo interno ou desconhecido → 404, nunca 403. */
   app.get("/livestock/movements/:id", async (req) => runService(app, req, null, async (ctx) => {
     const { id } = req.params as { id: string };
     // exclusão lógica: registro excluído não existe para nenhuma porta operacional (mesma existência da lista e do ID Global)
-    const m = await ctx.tx.query<Record<string, unknown>>("select m.*, p.name as person_name, b.description as batch_name, f.name as empresa_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id join erp.empresas f on f.id=m.empresa_id where m.id=$1 and m.organization_id=$2 and m.deleted_at is null", [id, ctx.orgId]);
+    const m = await ctx.tx.query<Record<string, unknown>>("select m.*, p.name as person_name, b.description as batch_name, f.name as empresa_name from erp.animal_movements m left join erp.people p on p.id=m.person_id left join erp.batches b on b.id=m.batch_id left join erp.empresas f on f.id=m.empresa_id where m.id=$1 and m.organization_id=$2 and m.deleted_at is null", [id, ctx.orgId]);
     if (!m.rows[0]) throw notFound();
     const permissao = permissaoMovimentacao(String(m.rows[0]["movement_type"] ?? ""), "view");
     if (!permissao) throw notFound();
@@ -235,25 +235,41 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,empresa_destino_id,destination_batch_id,note,status,created_by) values ($1,$2,$3,'farm_transfer',$4,$5,$6,$7,$8,'pending',$9) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id ?? null, d.empresa_destino_id, d.destination_batch_id ?? null, d.note ?? null, ctx.user.id]);
     const ids = d.animal_ids?.length ? d.animal_ids : (await ctx.tx.query<{ id: string }>("select id from erp.animals where batch_id=$1 and status='active' and organization_id=$2", [d.batch_id, ctx.orgId])).rows.map((x) => x.id);
     for (const a of ids) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]);
-    await ctx.tx.query("update erp.animal_movements set quantity=$2 where id=$1", [r.rows[0]!.id, ids.length]);
+    // O rebanho NÃO IDENTIFICADO do lote entra como ITEM, não como efeito colateral do aceite. Antes ele era
+    // movido por `where batch_id=<lote>` na hora de processar — sem organização no predicado e alcançando
+    // rebanhos que ninguém tinha colocado nesta transferência. O que se transfere é o que está vinculado.
+    const rebanhos = d.batch_id
+      ? (await ctx.tx.query<{ id: string; quantity: number }>("select id, quantity from erp.herd_lots where batch_id=$1 and organization_id=$2 and empresa_id=$3", [d.batch_id, ctx.orgId, d.empresa_id])).rows
+      : [];
+    for (const l of rebanhos) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,herd_lot_id,quantity) values ($1,$2,$3)", [r.rows[0]!.id, l.id, l.quantity]);
+    const cabecas = ids.length + rebanhos.reduce((a, l) => a + Number(l.quantity), 0);
+    if (!cabecas) throw validation("Transferência sem animais ou rebanho: informe animais ou um lote com acervo");
+    await ctx.tx.query("update erp.animal_movements set quantity=$2 where id=$1", [r.rows[0]!.id, cabecas]);
     // o aviso é da empresa de DESTINO: é ela que tem a transferência a processar
     await criarNotificacao(ctx, { kind: "batch_transfer", title: "Você possui uma transferência de lote a ser processada.",
       route: "/pecuaria?tab=rebanho&sub=transferencias&type=farm_transfer", empresaId: d.empresa_destino_id,
       // a chave do dia é a TRANSFERÊNCIA, não a tela: com a rota (que é constante) a segunda transferência
       // do dia para a mesma empresa seria engolida em silêncio e ninguém no destino seria avisado
       dedupe: r.rows[0]!.id, entidadeOrigem: "animal_movements", idOrigem: r.rows[0]!.id });
-    return { id: r.rows[0]!.id, code, animals: ids.length, status: "pending" };
+    return { id: r.rows[0]!.id, code, animals: ids.length, herd_lots: rebanhos.length, heads: cabecas, status: "pending" };
   })));
   // Processar transferência na fazenda destino (aceite)
   app.post("/livestock/transfers/:id/process", async (req) => runService(app, req, "batch_farm_transfer.process", async (ctx) => {
     const { id } = req.params as { id: string }; const d = z.object({ destination_batch_id: uuid.optional().nullable() }).parse(req.body ?? {});
-    const m = await ctx.tx.query<{ status: string; empresa_destino_id: string; destination_batch_id: string | null; batch_id: string | null }>("select status, empresa_destino_id, destination_batch_id, batch_id from erp.animal_movements where id=$1 and organization_id=$2 and movement_type='farm_transfer' and deleted_at is null for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound(); if (m.rows[0].status !== "pending") throw err("ALREADY_CONFIRMED", "Transferência já processada");
-    if (!(await empresaPermitida(ctx, m.rows[0].empresa_destino_id))) throw err("PERMISSION_DENIED", "Sem acesso à empresa de destino");
-    const dest = d.destination_batch_id ?? m.rows[0].destination_batch_id;
-    const u = await ctx.tx.query("update erp.animals set empresa_id=$2, batch_id=$3, updated_at=now() where id in (select animal_id from erp.animal_movement_items where movement_id=$1 and animal_id is not null) returning id", [id, m.rows[0].empresa_destino_id, dest]);
-    if (m.rows[0].batch_id && !u.rowCount) await ctx.tx.query("update erp.herd_lots set empresa_id=$2, batch_id=$3 where batch_id=$1", [m.rows[0].batch_id, m.rows[0].empresa_destino_id, dest]);
-    await ctx.tx.query("update erp.animal_movements set status='confirmed', updated_at=now() where id=$1", [id]);
-    await audit(ctx.tx, ctx, "animal_movements", id, "process"); return { id, status: "confirmed", animals: u.rowCount };
+    // O aceite NÃO é um UPDATE do destinatário: os animais ainda são da ORIGEM, e é o aceite que os traz
+    // para o escopo dele. Antes, o `update` normal batia na RLS, devolvia ZERO linhas e o `status` virava
+    // 'confirmed' assim mesmo — transferência confirmada com o rebanho parado na origem. Quem move é a
+    // operação estreita `erp.processar_transferencia_pecuaria_destino`, que confere capacidade, escopo do
+    // destino, lote de destino e ROW COUNTS antes de confirmar; qualquer divergência derruba a transação.
+    const m = await ctx.tx.query<{ status: string }>("select status from erp.animal_movements where id=$1 and organization_id=$2 and movement_type='farm_transfer' and deleted_at is null", [id, ctx.orgId]);
+    if (!m.rows[0]) throw notFound();
+    if (m.rows[0].status !== "pending") throw err("ALREADY_CONFIRMED", "Transferência já processada");
+    const r = await ctx.tx.query<{ animais: number; rebanhos: number; cabecas: number }>(
+      "select animais, rebanhos, cabecas from erp.processar_transferencia_pecuaria_destino($1,$2)", [id, d.destination_batch_id ?? null]);
+    const efeito = r.rows[0];
+    if (!efeito || efeito.animais + efeito.rebanhos === 0) throw err("CONFLICT", "Aceite não moveu nenhum animal ou rebanho");
+    await audit(ctx.tx, ctx, "animal_movements", id, "process", { animais: efeito.animais, rebanhos: efeito.rebanhos, cabecas: efeito.cabecas });
+    return { id, status: "confirmed", animals: efeito.animais, herd_lots: efeito.rebanhos, heads: efeito.cabecas };
   }));
   // Evolução de rebanho (categoria por idade), executa para animais ativos
   app.post("/livestock/evolution/run", async (req, reply) => reply.status(201).send(await runService(app, req, "herd_evolution.create", async (ctx) => {
