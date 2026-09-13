@@ -8,6 +8,7 @@ import { empresaScope, exigirEmpresaDeLancamento, hasPermission, scopedById, typ
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { createTitles } from "../services/financial-core.js";
+import { atribuirIdGlobal } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -158,6 +159,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
       if (responsible && !(await responsavelElegivel(ctx, d.empresa_id, responsible))) responsible = null;
       const r = await ctx.tx.query<{ id: string }>("insert into erp.purchase_requests(organization_id,empresa_id,code,parent_id,request_date,priority,request_type,requester_user_id,authorizer_id,current_responsible_user_id,description,justification,observation,estimated_total) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id", [ctx.orgId, d.empresa_id, code, d.parent_id ?? null, d.request_date, d.priority, d.request_type, ctx.user.id, d.authorizer_id ?? null, responsible ?? ctx.user.id, d.description, d.justification, d.observation ?? null, money(est)]);
       const id = r.rows[0]!.id;
+      await atribuirIdGlobal(ctx, "purchase_requests", id);
       for (const [i, it] of d.items.entries()) await ctx.tx.query("insert into erp.purchase_request_items(request_id,product_id,description,quantity,reference_value,amount,observation,extra,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [id, it.product_id ?? null, it.description, it.quantity, it.reference_value ?? null, it.amount ?? null, it.observation ?? null, JSON.stringify(it.extra ?? {}), i]);
       await addEvent(ctx, id, null, "request", "create", d.justification);
       // Fluxo simplificado da fazenda: pula direto para "Aguardando a Compra"; senão vai para ciência do encarregado

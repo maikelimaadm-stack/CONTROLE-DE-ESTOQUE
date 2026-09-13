@@ -4,9 +4,11 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, ChevronDown, FolderOpen, Hexagon, MoreHorizontal, Search, Settings2, Star, Zap } from "lucide-react";
+import { Bell, ChevronDown, FolderOpen, Hash, Hexagon, MoreHorizontal, Search, Settings2, Star, Zap } from "lucide-react";
 import { NAV, permOk, searchNav, moduleForPath, favoriteRoute, crumbsFor, canonicalize } from "@/lib/nav";
 import { megaMenuFor, megaColumns, type MegaMenuData } from "@/lib/mega-menu";
+import { interpretarIdGlobal, formatarIdGlobal } from "@erp/plataforma";
+import { useRegistroGlobal } from "@/lib/id-global";
 import { useAuth, empresasDoContexto } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { cn, dateTimeBR } from "@/lib/utils";
@@ -61,6 +63,11 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
   // busca global
   const [search, setSearch] = React.useState(""); const [hi, setHi] = React.useState(0); const inputRef = React.useRef<HTMLInputElement>(null);
   const results = React.useMemo(() => searchNav(search, can), [search, can]);
+  // BUSCA POR ID GLOBAL: quando a consulta INTEIRA é um ID (`#55`, `55`, `ID 55`), o backend resolve o
+  // número no registro real. A busca de navegação continua intacta — as duas convivem, e o resultado do ID
+  // aparece em primeiro lugar porque ele é exato, não aproximado.
+  const idGlobal = React.useMemo(() => interpretarIdGlobal(search), [search]);
+  const { data: registroGlobal, isLoading: carregandoId } = useRegistroGlobal(idGlobal);
   React.useEffect(() => { setHi(0); }, [search]);
   React.useEffect(() => { const h = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); inputRef.current?.focus(); inputRef.current?.select(); } }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
   React.useEffect(() => { if (onFocusSearch) onFocusSearch.current = () => { inputRef.current?.focus(); inputRef.current?.select(); }; }, [onFocusSearch]);
@@ -99,13 +106,21 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
       <div className="mg-topnav__tools">
         <div className="mg-topnav__search" role="combobox" aria-expanded={results.length > 0} aria-haspopup="listbox" aria-controls="nav-search-results">
           <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
-          <input ref={inputRef} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar tela…" aria-label="Buscar funcionalidade" data-testid="global-search"
-            onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setHi((h) => Math.min(h + 1, results.length - 1)); } else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); } else if (e.key === "Enter" && results[hi]) { e.preventDefault(); pick(results[hi]!.href); } else if (e.key === "Escape") { setSearch(""); inputRef.current?.blur(); } }} />
+          <input ref={inputRef} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar tela ou #ID…" aria-label="Buscar funcionalidade" data-testid="global-search"
+            onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setHi((h) => Math.min(h + 1, results.length - 1)); } else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); } else if (e.key === "Enter" && registroGlobal) { e.preventDefault(); pick(registroGlobal.rota); } else if (e.key === "Enter" && results[hi]) { e.preventDefault(); pick(results[hi]!.href); } else if (e.key === "Escape") { setSearch(""); inputRef.current?.blur(); } }} />
           <kbd className="mg-topnav__kbd" aria-hidden>Ctrl K</kbd>
+          {registroGlobal && <div id="nav-search-global-id" role="listbox" aria-label="Registro por ID Global" className="mg-topnav__results" data-testid="nav-search-id-global">
+            <button type="button" role="option" aria-selected className="mg-topnav__result is-active" data-testid="nav-search-id-global-item"
+              onMouseDown={(e) => e.preventDefault()} onClick={() => pick(registroGlobal.rota)}>
+              <Hash className="h-3.5 w-3.5 shrink-0 text-[var(--mg-accent)]" />
+              <span className="min-w-0"><span className="block truncate font-medium text-slate-800">{formatarIdGlobal(registroGlobal.idGlobal)} · {registroGlobal.rotulo}</span>
+                <span className="block truncate text-[10.5px] text-slate-500">{registroGlobal.modulo}</span></span>
+            </button>
+          </div>}
           {results.length > 0 && <div id="nav-search-results" role="listbox" aria-label="Resultados da busca" className="mg-topnav__results" data-testid="nav-search-results">
             {results.map((r, i) => { const Icon = TYPE_ICON[r.type] ?? FolderOpen; return <button key={r.id} type="button" role="option" aria-selected={i === hi} className={cn("mg-topnav__result", i === hi && "is-active")} onMouseEnter={() => setHi(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(r.href)}><Icon className="h-3.5 w-3.5 shrink-0 text-[var(--mg-accent)]" /><span className="min-w-0"><span className="block truncate font-medium text-slate-800">{r.label}</span>{r.path.length > 1 && <span className="block truncate text-[10.5px] text-slate-500">{r.path.join(" › ")}</span>}</span></button>; })}
           </div>}
-          {search.length > 1 && results.length === 0 && <div className="mg-topnav__results px-3 py-2 text-[12px] text-slate-500">Nenhuma função encontrada.</div>}
+          {search.length > 1 && results.length === 0 && !registroGlobal && !(idGlobal !== null && carregandoId) && <div className="mg-topnav__results px-3 py-2 text-[12px] text-slate-500">{idGlobal === null ? "Nenhuma função encontrada." : "Nenhum registro encontrado para este ID Global."}</div>}
         </div>
         <select className="mg-topbar-select" value={session.empresaId ?? ""} onChange={(e) => window.dispatchEvent(new CustomEvent("agro:empresa-request", { detail: e.target.value || null }))} title="Empresa ativa" aria-label="Empresa ativa"><option value="">Todas as empresas</option>{empresasDoContexto(ctx).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select>
         <FavoriteButton />

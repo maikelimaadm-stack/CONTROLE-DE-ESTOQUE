@@ -8,6 +8,7 @@ import { hasPermission } from "../lib/context.js";
 import { contarNaoLidas, criarNotificacao, visibilidadeNotificacaoSql } from "../lib/notificacao.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { deFarmIdsLegado, escopoEmpresaSchema, gravarEscoposAuditado, paraFarmIdsLegado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
+import { atribuirIdGlobal } from "../lib/id-global.js";
 
 /**
  * Acesso por empresa pedido na requisição: o canônico (`escopos_empresas`) ou o legado (`empresa_ids`) —
@@ -41,6 +42,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const d = roleSchema.parse(req.body);
     const valid = new Set(allPermissionKeys()); const bad = d.permissions.filter((p) => !valid.has(p)); if (bad.length) throw validation("Permissões inválidas", bad);
     const r = await ctx.tx.query<{ id: string }>("insert into erp.roles(organization_id,name,description) values ($1,$2,$3) returning id", [ctx.orgId, d.name, d.description ?? null]);
+    await atribuirIdGlobal(ctx, "roles", r.rows[0]!.id);
     for (const p of d.permissions) await ctx.tx.query("insert into erp.role_permissions(role_id,permission_key) values ($1,$2) on conflict do nothing", [r.rows[0]!.id, p]);
     await audit(ctx.tx, ctx, "roles", r.rows[0]!.id, "create", { permissions: d.permissions.length });
     return { id: r.rows[0]!.id };
@@ -289,14 +291,28 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ---------- Auditoria ----------
   app.get("/admin/audit", async (req) => runService(app, req, "audit_logs.view", async (ctx) => {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
-    const where = ["organization_id=$1"]; const params: unknown[] = [ctx.orgId];
-    if (f.entity) { params.push(f.entity); where.push(`entity=$${params.length}`); }
-    if (f.entity_id) { params.push(f.entity_id); where.push(`entity_id=$${params.length}`); }
-    if (f.user_id) { params.push(f.user_id); where.push(`user_id=$${params.length}`); }
-    if (f.created_at_from) { params.push(f.created_at_from); where.push(`created_at >= $${params.length}`); }
-    if (f.created_at_to) { params.push(f.created_at_to); where.push(`created_at < ($${params.length}::date + 1)`); }
-    const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.audit_logs where ${where.join(" and ")}`, params);
-    const r = await ctx.tx.query(`select a.id,a.entity,a.entity_id,a.action,a.before,a.after,a.metadata,a.ip,a.created_at,u.name as user_name from erp.audit_logs a left join erp.users u on u.id=a.user_id where ${where.join(" and ")} order by a.id desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+    // colunas com alias: a leitura ganhou um join no índice global e `entity` sem prefixo viraria ambíguo
+    const where = ["a.organization_id=$1"]; const params: unknown[] = [ctx.orgId];
+    if (f.entity) { params.push(f.entity); where.push(`a.entity=$${params.length}`); }
+    if (f.entity_id) { params.push(f.entity_id); where.push(`a.entity_id=$${params.length}`); }
+    if (f.user_id) { params.push(f.user_id); where.push(`a.user_id=$${params.length}`); }
+    if (f.created_at_from) { params.push(f.created_at_from); where.push(`a.created_at >= $${params.length}`); }
+    if (f.created_at_to) { params.push(f.created_at_to); where.push(`a.created_at < ($${params.length}::date + 1)`); }
+    const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.audit_logs a where ${where.join(" and ")}`, params);
+    // `audit_logs.id` é um bigint PRÓPRIO da auditoria e NÃO é ID Global: exibi-lo com "#" confundiria dois
+    // identificadores que crescem no mesmo formato e nunca coincidem. O ID Global do registro auditado vem
+    // por LEFT JOIN no índice central, no momento da leitura — copiá-lo para dentro do log envelheceria
+    // (o número é do registro, não do evento) e obrigaria a reescrever milhões de linhas no backfill.
+    // Evento técnico, ou de entidade fora do catálogo, simplesmente não tem ID Global: `null`, sem invenção.
+    // `audit_logs.entity_id` é TEXTO (a auditoria registra eventos de coisas que nem sempre têm UUID), então
+    // a junção compara `id_entidade::text`: converter o lado do TEXTO para uuid explodiria no primeiro
+    // evento técnico cujo identificador não é um UUID.
+    const r = await ctx.tx.query(`select a.id,a.entity,a.entity_id,a.action,a.before,a.after,a.metadata,a.ip,a.created_at,u.name as user_name,
+        g.id_global as id_global
+      from erp.audit_logs a
+      left join erp.users u on u.id=a.user_id
+      left join erp.registros_globais g on g.organization_id = a.organization_id and g.tipo_entidade = a.entity and g.id_entidade::text = a.entity_id
+      where ${where.join(" and ")} order by a.id desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
     return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
   }));
 

@@ -2,8 +2,10 @@
 
 > Contrato de plataforma (PRE-BASE2-01). Implementação: `packages/plataforma/src/id-global.ts` (MECANISMO
 > neutro), `packages/domain/src/id-global.ts` (CATÁLOGO deste produto), `packages/domain/src/rebanho.ts`
-> (fonte única das variantes de rebanho), `apps/api/src/lib/id-global.ts` (serviço),
-> `supabase/migrations/0010_platform_foundation.sql`.
+> (fonte única das variantes de rebanho), `packages/domain/src/id-global-rota.ts` (rota aberta → registro),
+> `apps/api/src/lib/id-global.ts` (serviço), `apps/api/src/cli/id-global-backfill.ts` (backfill operacional),
+> `scripts/id-global-audit.mjs` (gate), `supabase/migrations/0010_platform_foundation.sql` e
+> `supabase/migrations/0016_global_id_activation.sql` (ativação, PRE-BASE2-04).
 
 ## 1. Três identificadores, três papéis
 
@@ -162,26 +164,135 @@ variantes, **reresolvida na leitura** a partir do registro vivo.
 dos cadastros genéricos (Modelo Base1) usam o modo de visualização (`?view=1`). Telas de detalhe próprias
 (ordem de serviço, perfil de acesso, lançamentos) não precisam do parâmetro.
 
-## 6. Backfill dos registros existentes (PRE-BASE2-04)
+## 6. Alocação automática (PRE-BASE2-04)
 
-Projeto aprovado nesta missão, execução na missão própria:
+Todo registro elegível criado a partir desta rodada recebe o número **na mesma transação de negócio**:
 
-1. **Ordem determinística:** por entidade, `order by created_at, id` — `id` desempata para o resultado ser
-   idêntico em qualquer reexecução.
-2. **Idempotente:** `insert ... on conflict (organization_id, tipo_entidade, id_entidade) do nothing`; reexecutar
-   não duplica nem renumera.
-3. **Em lotes**, por organização e por entidade, para não travar tabela grande.
-4. **A sequência é ajustada ao fim** (`ultimo_valor = max(id_global)`), de modo que registros novos continuem
-   depois do histórico.
-5. **Documentado ao usuário:** registros anteriores à implantação receberam numeração de migração; a ordem
-   reflete a data de criação, sem prometer precisão quando há empate.
-6. **Verificação obrigatória:** zero duplicidade de `id_global`; zero registro elegível sem ID Global; rota
-   canônica resolvida para todos.
+```
+INSERT do root  →  atribuirIdGlobal(...)  →  demais efeitos e auditoria  →  COMMIT
+```
 
-## 7. O que ainda não existe
+O estado "registro elegível existe e não tem ID Global" é proibido para registros novos: se a alocação
+falhar, a transação inteira volta atrás. Não há fila, não há job posterior, não há "depois a gente numera" —
+qualquer um dos três produziria exatamente o estado que o contrato proíbe.
+
+**Duas portas, uma regra.** As rotas especializadas chamam `atribuirIdGlobal` (falhar é erro); a criação
+genérica de recursos e as tabelas com variantes internas chamam `atribuirIdGlobalSeAplicavel`, que devolve
+`null` em dois casos — tabela fora do catálogo e **variante interna declarada** — e ERRA em variante
+desconhecida. Tratar "não achei a variante" como "é interna" transformaria o esquecimento de declarar uma
+variante nova num registro sem número que ninguém descobre.
+
+**Efeito colateral também é registro.** Um documento que gera títulos financeiros faz os TÍTULOS receberem
+número, não só o documento; a transferência bancária interna numera também o movimento-par da conta de
+destino. A regra é do ROOT, não da porta HTTP.
+
+**Onde isso é provado:** `apps/api/test/integration/id-global-runtime.test.ts` cria um registro de cada tipo
+elegível pela ROTA REAL e confere o índice imediatamente — **sem rodar o backfill antes**, de propósito: o
+backfill numeraria o que a rota esqueceu e esconderia o defeito. O gate `scripts/id-global-audit.mjs`
+completa por estrutura: todo `insert into` numa tabela elegível precisa alocar logo em seguida.
+
+## 7. Backfill dos registros existentes (PRE-BASE2-04)
+
+O acervo anterior é numerado por um comando **operacional**, nunca por migration: percorrer 23 tabelas com
+milhões de linhas dentro de uma transação de DDL seria horas de lock e perda total se falhasse no fim.
+
+```
+pnpm id-global:backfill -- --batch-size 500 [--org <uuid>] [--dry-run] [--verify-only]
+pnpm id-global:verify                          # só as invariantes, sem gravar
+```
+
+| Propriedade | Como |
+| --- | --- |
+| **Fonte única** | Consome `ENTIDADES_ID_GLOBAL` — tabela, coluna de empresa, exclusão lógica, discriminador, variantes, módulo e rota. Não existe segunda lista. |
+| **Ordem determinística** | Organizações por `created_at, id`; entidades por `tipo_entidade` ASC; dentro de cada entidade `created_at ASC, id ASC` (o `id` desempata). |
+| **Lotes curtos** | Uma transação por lote. `--batch-size` padrão 500. |
+| **Reserva de faixa** | `erp.reservar_ids_globais(org, n)` faz UM update atômico de `+n` e devolve a faixa contínua. `erp.proximo_id_global(org)` passou a ser literalmente `reservar_ids_globais(org, 1)`: uma autoridade só. |
+| **Nunca `max()+1`** | Ler o passado para adivinhar o próximo número duplica sob concorrência: dois leitores enxergam o mesmo máximo. O contador é a autoridade e só sobe. |
+| **Retomável** | O lote seguinte é sempre "o que ainda não tem índice". Interromper e continuar não muda nada do que já foi dado. |
+| **Reexecutável** | `on conflict do nothing` + anti-join: rodar de novo atribui zero e o mapa (tipo + UUID → #N) é idêntico. |
+| **Sem carregar tudo em memória** | Lê `--batch-size` linhas por vez; medido com 300 mil registros sob limite de heap de 512 MB. |
+
+**O que NÃO recebe número:** registro excluído (o resolvedor não o enxerga, então o número apontaria para
+lugar nenhum) e variante interna declarada. Variante **desconhecida** não é pulada em silêncio: o lote falha
+com diagnóstico, porque valor fora do catálogo é dado corrompido ou variante nova não declarada.
+
+**`criado_em` e `criado_por` do histórico:** `criado_em` recebe o `created_at` do registro fonte;
+`criado_por` fica **NULL**, porque não houve usuário. Inventar um autor seria pior do que não ter um.
+
+**A honestidade da ordem histórica.** Os números do acervo anterior foram ATRIBUÍDOS por migração. A ordem é
+determinística e reproduzível, mas ela **não prova** que `#100` foi criado antes de `#101` no mundo real:
+entre módulos, e em empates de `created_at`, a ordenação é uma convenção estável, não um fato histórico.
+
+**Lacunas são permitidas; duplicidades não.** Uma corrida entre o backfill e uma criação pela API pode
+consumir números reservados que não chegam a ser usados.
+
+## 8. Invariantes verificáveis (`--verify-only`)
+
+- zero registro elegível sem ID Global;
+- zero duplicidade de `(organization_id, id_global)` e de `(organization_id, tipo_entidade, id_entidade)`;
+- zero índice apontando para registro inexistente, e zero tipo fora do catálogo;
+- zero variante interna com número;
+- `sequencias_id_global.ultimo_valor >= max(id_global)` em toda organização.
+
+## 9. Busca `#N` e exibição na tela
+
+**Parser** (`interpretarIdGlobal`): aceita `55`, `#55`, `ID 55`, `id 55` e espaços em volta. Recusa `#0`,
+`0`, `-1`, `abc`, `#abc`, `55abc`, `ID` sozinho, `1.5` — texto comum segue para a busca de telas. `ID55` sem
+espaço **não** é ID Global: exigir o espaço evita transformar um código de produto em navegação.
+
+**A busca não consulta o índice direto.** O cliente chama `GET /api/registros-globais/:idGlobal`, e é o
+backend que decide — organização, registro fonte vivo, empresa ATUAL, permissão daquele registro. A resposta
+traz metadata segura (`idGlobal`, `tipoEntidade`, `rotulo`, `modulo`, `rota`, `idEntidade`), nunca o conteúdo
+do registro.
+
+**`#N` NUNCA é URL.** Não existe `/registro/55`. O fluxo é `#55 → resolve → UUID → rota canônica existente`,
+e a URL final continua sendo a do registro. Uma rota por número seria uma segunda identidade permanente —
+e uma que resolve sem passar pela autorização daquele registro.
+
+**Cache com organização na chave.** `["id-global", <organização>, 55]`. Sem a organização, o resultado do
+tenant anterior continuaria navegável depois da troca.
+
+**Exibição:** `GET /api/registros-globais/entidade/:tipo/:id` é o caminho inverso, com a MESMA autorização
+(duas portas com dois critérios acabam sempre na mais frouxa). A UI monta o badge UMA vez, ao lado da trilha
+(`IdGlobalDaRotaAtual`), e descobre sozinha — pela rota aberta, derivada do catálogo — qual entidade está na
+tela. É o que dá cobertura de 100% do registry sem editar 23 páginas: entidade nova no catálogo passa a
+exibir o `#N` sem que ninguém toque na UI. Registro ainda sem número (durante o backfill) não renderiza
+nada: 404 é estado normal, não erro.
+
+## 10. Auditoria
+
+`audit_logs.id` é um **bigint próprio da auditoria** e NÃO é ID Global — nunca deve ser exibido como `#123`.
+A leitura da auditoria traz o ID Global do registro auditado por LEFT JOIN no índice central, no momento da
+leitura. Copiá-lo para dentro do log envelheceria (o número é do registro, não do evento) e obrigaria a
+reescrever milhões de linhas no backfill. Evento técnico, ou de entidade fora do catálogo, simplesmente não
+tem ID Global.
+
+## 11. Desempenho
+
+| Caminho | Medido |
+| --- | --- |
+| Resolver `#N` com 300 mil registros indexados | `Index Scan using registros_globais_pkey`, 0,045 ms de execução (nunca varre as 23 tabelas). |
+| Backfill de 300 038 registros, lote 5 000 | 14 s, heap limitado a 512 MB, 3 consultas por lote. |
+
+## 12. Reversão
+
+Depois que um número foi exposto ao usuário ele **não é renumerado**. Voltar a versão da aplicação pode
+deixar `registros_globais` e `sequencias_id_global` intactos: nada quebra, e os números continuam válidos.
+Não apagar números para "voltar", não compactar lacunas. `ultimo_valor` nunca diminui — inclusive quando um
+registro é apagado fisicamente, para que `#55` jamais seja reassociado a outro registro.
+
+## 13. O que ainda não existe
 
 | Item | Missão |
 | --- | --- |
-| Alocação automática nas rotas de escrita | PRE-BASE2-04 (`atribuirIdGlobal` já existe e é testado). |
-| Backfill dos registros históricos | PRE-BASE2-04. |
-| `#55` na busca global (Ctrl K) e exibição no cabeçalho do registro | PRE-BASE2-04 / BASE2-01. |
+| Cabeçalho de lançamento do Base2 (a moldura definitiva onde o `#N` mora) | BASE2-01. |
+| Tipo de Operação (TOP) | BASE2-02. |
+| Remoção da ponte `farm`/`empresa` | PRE-BASE2-05. |
+
+### Divergência de contrato registrada (PRE-BASE2-04)
+
+`animal_handlings` declara a variante **`locate`** (Localização de Animal, `/pecuaria/manejo/locate/:id`,
+`locate_animals.view`), mas o produto **não tem porta de criação** para esse tipo: `/livestock/locate` é uma
+consulta, e o schema de manejo aceita apenas `nutrition`, `sanitary`, `weaning`, `separation` e `pasture`.
+A variante foi mantida como está — removê-la seria redesenhar um contrato aprovado — e fica registrada aqui
+para decisão: ou o produto ganha a porta, ou a variante sai do catálogo numa rodada de governança.

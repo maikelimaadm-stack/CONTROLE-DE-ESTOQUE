@@ -7,6 +7,7 @@ import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
 import { runService, nextCode, requirePermission, comPermissaoResolvida } from "../lib/service.js";
 import { campoCanonico, SEQUENCIA_EMPRESA } from "../lib/compat-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
+import { atribuirIdGlobalSeAplicavel } from "../lib/id-global.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
@@ -222,7 +223,13 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   // A chave da SEQUÊNCIA continua legada de propósito (`SEQUENCIA_EMPRESA`): ver o motivo no adaptador.
   if (def.table === "empresas" && !cols.includes("code")) { cols.push("code"); vals.push(Number(await nextCode(ctx.tx, ctx.orgId, SEQUENCIA_EMPRESA, 1))); }
   const r = await ctx.tx.query(`insert into erp.${ident(def.table)} (${cols.map(ident).join(",")}) values (${vals.map((_, i) => `$${i + 1}`).join(",")}) returning id`, vals);
-  return getOne(ctx, def, (r.rows[0] as { id: string }).id);
+  const id = (r.rows[0] as { id: string }).id;
+  // PORTA GENÉRICA, REGRA ÚNICA: este `insert` grava em dezenas de tabelas, e algumas delas (produto,
+  // pessoa, equipamento, perfil de acesso) são elegíveis a ID Global. A elegibilidade NÃO é decidida aqui
+  // com um `if` por tabela — quem decide é o catálogo (`ENTIDADES_ID_GLOBAL`). Tabela fora do catálogo
+  // devolve null sem erro; tabela dentro dele recebe o número na MESMA transação do cadastro.
+  await atribuirIdGlobalSeAplicavel(ctx, def.table, id);
+  return getOne(ctx, def, id);
 }
 
 export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, body: unknown) {

@@ -8,6 +8,7 @@ import { empresaScope, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaP
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
+import { atribuirIdGlobal } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -305,6 +306,7 @@ export default async function financialRoutes(app: FastifyInstance) {
     const txs = parseOfx(d.content); if (!txs.length) throw validation("Nenhuma transação encontrada no OFX");
     const dates = txs.map((t) => t.date).sort(); const code = await nextCode(ctx.tx, ctx.orgId, "ofx_import");
     const r = await ctx.tx.query<{ id: string }>("insert into erp.ofx_imports(organization_id,code,description,bank_account_id,start_date,end_date,created_by) values ($1,$2,$3,$4,$5,$6,$7) returning id", [ctx.orgId, code, d.description, d.bank_account_id, dates[0], dates[dates.length - 1], ctx.user.id]);
+    await atribuirIdGlobal(ctx, "ofx_imports", r.rows[0]!.id);
     let matched = 0;
     for (const t of txs) {
       const m = await ctx.tx.query<{ id: string }>("select id from erp.bank_movements where organization_id=$1 and bank_account_id=$2 and status='confirmed' and reconciled_at is null and movement_date=$3 and amount=$4 and type=$5 limit 1", [ctx.orgId, d.bank_account_id, t.date, Math.abs(t.amount).toFixed(2), t.amount >= 0 ? "in" : "out"]);

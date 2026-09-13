@@ -10,6 +10,7 @@ import { Spinner, ConfirmDialog, Button } from "@/components/ui";
 import { WorkspaceTabsProvider, useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { TopNavigation } from "./top-navigation";
 import { WorkspaceTabsBar } from "./workspace-tabs";
+import { IdGlobalDaRotaAtual } from "./id-global-registro";
 
 /**
  * AppShell (docs/UI-STANDARD.md › App Shell & Workspace):
@@ -21,7 +22,12 @@ import { WorkspaceTabsBar } from "./workspace-tabs";
 function Crumbs() {
   const pathname = usePathname(); const sp = useSearchParams();
   const crumbs = React.useMemo(() => crumbsFor(pathname, sp), [pathname, sp]);
-  return <nav className="mg-crumbs" aria-label="Navegação">{(crumbs.length ? crumbs : ["Início"]).map((c, i, arr) => <React.Fragment key={i}>{i > 0 && <ChevronRight className="mg-crumb-sep" aria-hidden />}<span className={cn("mg-crumb", i === arr.length - 1 && "mg-crumb--current")}>{c}</span></React.Fragment>)}</nav>;
+  // O `#N` mora ao lado da trilha, e não dentro de cada tela: é UMA integração central que cobre 100% das
+  // rotas canônicas do catálogo, em vez de 23 edições manuais que envelhecem uma a uma.
+  return <div className="trilha-identidade">
+    <nav className="mg-crumbs" aria-label="Navegação">{(crumbs.length ? crumbs : ["Início"]).map((c, i, arr) => <React.Fragment key={i}>{i > 0 && <ChevronRight className="mg-crumb-sep" aria-hidden />}<span className={cn("mg-crumb", i === arr.length - 1 && "mg-crumb--current")}>{c}</span></React.Fragment>)}</nav>
+    <IdGlobalDaRotaAtual />
+  </div>;
 }
 
 /** Troca de EMPRESA com invalidação: fecha abas de registro/criação (dados de empresa), invalida consultas e pede confirmação se houver alterações não salvas. */

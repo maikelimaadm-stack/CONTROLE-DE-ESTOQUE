@@ -40,3 +40,20 @@ Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000
 - Seed de referência (unidades, tipos de título, plano de contas, categorias…) e organização demo: `pnpm db:seed`.
 - Reset (somente dev): `ALLOW_DB_RESET=1 pnpm db:reset`.
 - Supabase: os mesmos arquivos podem ser aplicados via `supabase db push` ou pelo MCP `apply_migration`; o papel `erp_app` deve existir com senha própria (não usar `postgres` na API).
+
+## ID Global — ativação (0016, PRE-BASE2-04)
+
+| Objeto | Papel |
+| --- | --- |
+| `erp.sequencias_id_global` | Contador por organização (0010). Só sobe. |
+| `erp.registros_globais` | Índice `#N` → registro (0010). PK `(organization_id, id_global)`, unique `(organization_id, tipo_entidade, id_entidade)`. |
+| `erp.reservar_ids_globais(org, n)` | **0016.** Reserva uma FAIXA CONTÍNUA num único update atômico; concorrentes recebem faixas disjuntas. É o que torna o backfill em lote viável sem `max()+1`. |
+| `erp.proximo_id_global(org)` | **0016.** Passou a ser `reservar_ids_globais(org, 1)`: a autoridade da sequência é uma só. |
+| `registros_globais_id_positivo` | **0016.** `check (id_global > 0)` — `#0` só poderia vir de escrita fora do contrato. |
+| `registros_globais_entidade_idx` | **0016.** `(organization_id, tipo_entidade, id_entidade)` para o caminho do verificador. |
+
+A resolução de `#N` é sempre um seek pela PK — medido com 300 mil registros: `Index Scan using
+registros_globais_pkey`, 0,045 ms. Nenhuma das 23 tabelas de negócio é varrida para achar um número.
+
+`erp.registros_globais.empresa_id` é **pista denormalizada**, nunca autoridade: a empresa que decide acesso é
+a coluna do REGISTRO FONTE, lida no momento da resolução.

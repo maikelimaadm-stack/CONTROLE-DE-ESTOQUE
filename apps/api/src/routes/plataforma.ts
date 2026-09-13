@@ -9,7 +9,7 @@ import { z } from "zod";
 import { DomainError } from "@agro/shared";
 import { IDIOMAS_PUBLICADOS, idiomaPublicado, interpretarIdGlobal, negociarIdioma, resolverIdioma } from "@erp/plataforma";
 import { runService } from "../lib/service.js";
-import { resolverRegistro } from "../lib/id-global.js";
+import { idGlobalDoRegistro, resolverRegistro } from "../lib/id-global.js";
 
 export default async function plataformaRoutes(app: FastifyInstance) {
   /**
@@ -21,6 +21,17 @@ export default async function plataformaRoutes(app: FastifyInstance) {
     const id = interpretarIdGlobal(bruto);
     if (id === null) throw new DomainError("NOT_FOUND", "Nenhum registro encontrado para este ID Global");
     return resolverRegistro(ctx, id);
+  }));
+
+  /**
+   * Caminho INVERSO: o #N deste registro, para a tela de detalhe exibir a identidade. Mesma autorização da
+   * resolução de `#N` (registro fonte vivo, empresa ATUAL, permissão daquele registro) e mesma superfície de
+   * negativa: 404 para tipo fora do catálogo, registro inexistente/excluído, fora de escopo, sem capacidade
+   * e também para registro elegível que ainda não recebeu número durante o backfill.
+   */
+  app.get("/registros-globais/entidade/:tipo/:id", async (req) => runService(app, req, null, async (ctx) => {
+    const { tipo, id } = req.params as { tipo: string; id: string };
+    return idGlobalDoRegistro(ctx, tipo, id);
   }));
 
   /** Idiomas publicados e o idioma efetivo do usuário nesta organização (usuário › organização › padrão). */

@@ -96,3 +96,21 @@ de linhas** que a mesma consulta a `erp.empresas`. Números diferentes significa
 | Vercel (frontend) | Projeto `controle-de-estoque` configurado (Root `apps/web`, Next.js, Node 22, domínios `controle-de-estoque-erp.vercel.app` e `controle-de-estoque-api-eight.vercel.app`). **Em 10/09/2026 ~16:30 UTC o time da Vercel entrou em bloqueio por fatura em aberto** (`softBlock: UNPAID_INVOICE`, plano Pro com status `canceled`): todas as URLs respondem `402 Payment Required / DEPLOYMENT_DISABLED` e novos deploys não são publicados. Ação do proprietário: regularizar a fatura em vercel.com › Settings › Billing (o deploy volta sozinho) ou manter o frontend na Railway (abaixo). | `curl -I https://controle-de-estoque-erp.vercel.app` → 402 |
 | Railway serviço `web` (frontend, alternativa) | Serviço `web` no mesmo projeto Railway, build por `apps/web/Dockerfile` (Next standalone; `NEXT_PUBLIC_*` embutidas no build a partir das variáveis do serviço), domínio `https://web-production-4a835.up.railway.app`, healthcheck `/login`. `WEB_ORIGIN` da API já inclui esse domínio. | serviço `74264061-f73a-40ee-9748-11be096c0cb6` |
 | Pull requests | PR #1 (sistema) e PR #2 (correção do deploy Vercel) mergeados em `main`; Railway e Vercel implantam a partir de `main` | GitHub |
+
+## PRE-BASE2-04 — ativação do ID Global
+
+A ordem importa, e o motivo de cada fase é o estado intermediário que ela evita.
+
+| Fase | O que sobe | Por que nesta ordem |
+| --- | --- | --- |
+| **1. Banco** | migration `0016_global_id_activation.sql` | Só infraestrutura (reserva de faixa, constraint, índice). Não percorre acervo, então é rápida e reversível. |
+| **2. API** | alocação automática + `/registros-globais/:idGlobal` e `/registros-globais/entidade/:tipo/:id` | A partir daqui **todo registro novo já nasce numerado**. Subir a API antes do backfill é de propósito: enquanto o histórico é numerado, o fluxo novo já está correto. |
+| **3. Backfill** | `pnpm id-global:backfill -- --batch-size 500` | Em lotes, retomável, reexecutável. Rodar até `faltando: 0`. Conferir com `pnpm id-global:verify`. |
+| **4. Web** | busca `#N` e badge de identidade | A UI tolera registro histórico ainda sem número (o badge simplesmente não aparece), então pode subir junto com a API — mas a fase 3 é o que faz a funcionalidade valer para o acervo inteiro. |
+
+**Certificação:** a PRE-BASE2-04 só está concluída quando `pnpm id-global:verify` responde zero pendências.
+
+**Reversão por fase.** Voltar o web: o número continua no banco, ninguém perde identidade. Voltar a API:
+registros novos param de receber número — rodar o backfill de novo depois resolve, sem renumerar nada.
+Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registros_globais` destruiria
+identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.

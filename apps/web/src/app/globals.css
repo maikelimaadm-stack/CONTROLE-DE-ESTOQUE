@@ -513,6 +513,12 @@ select.mg-input { appearance: none; padding-right: 26px; background-image: url("
 .mg-tabbar__btn svg { width: 14px; height: 14px; }
 .mg-tabbar__btn:hover, .mg-tabbar__btn:focus-visible { background: var(--mg-gray-fill); color: var(--mg-text-1); outline: none; }
 .mg-tabbar__count { flex-shrink: 0; margin-left: 2px; font-size: 11px; color: var(--mg-text-3); white-space: nowrap; }
+/* Identidade do registro (#N) ao lado da trilha: uma linha, o `#N` alinhado à direita da trilha. */
+.trilha-identidade { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+.trilha-identidade .mg-crumbs { margin-bottom: 0; }
+.id-global { flex: none; font-size: 11px; font-weight: 700; letter-spacing: .02em; color: var(--mg-text-2); background: var(--mg-surface-2, rgba(0,0,0,.04)); border: 1px solid var(--mg-border, rgba(0,0,0,.08)); border-radius: 999px; padding: 1px 8px; font-variant-numeric: tabular-nums; }
+/* reserva o espaço enquanto carrega: o #N não empurra a trilha quando chega */
+.id-global--carregando { min-width: 44px; height: 18px; background: var(--mg-surface-2, rgba(0,0,0,.04)); border-color: transparent; }
 .mg-crumbs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; font-size: 11px; color: var(--mg-text-3); }
 .mg-crumbs .mg-crumb { color: var(--mg-text-3); font-size: 11px; font-weight: 500; }
 .mg-crumbs .mg-crumb--current { color: var(--mg-text-2); font-weight: 600; }

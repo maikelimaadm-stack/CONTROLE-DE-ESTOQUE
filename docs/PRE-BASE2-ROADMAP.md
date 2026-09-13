@@ -10,7 +10,7 @@
 | 1 | **PRE-BASE2-01** — Fundação | Contratos (empresa, ID Global, i18n), dicionário de dados, inventário de "fazenda", auditores e gates. ✅ concluída | — |
 | 2 | **PRE-BASE2-02** — Empresa e permissões | Modelo de permissão por empresa (granularidade por módulo), camada de compatibilidade sobre o mecanismo de fazenda atual, `member_empresas` gravando a autorização já no formato explícito do contrato (`todas` × `selecionadas`), aposentando a ponte de compatibilidade. | 01 |
 | 3 | **PRE-BASE2-03** — Migração fazenda → empresa | Tabela, colunas, cabeçalho, rotas e RLS migrados para o idioma canônico, com compatibilidade bidirecional (view `security_invoker`, coluna espelho por gatilho, adaptador de borda) e isolamento por empresa dentro do banco. ✅ concluída | 02 |
-| 4 | **PRE-BASE2-04** — ID Global | Alocação nas rotas de escrita, backfill determinístico, resolução na busca global (`#55`), exibição no registro. | 01 (03 recomendada) |
+| 4 | **PRE-BASE2-04** — ID Global | Alocação automática nas 29 portas de escrita + porta genérica, backfill operacional determinístico e retomável, resolução na busca global (`#55`, `ID 55`) e exibição do `#N` no registro. ✅ concluída | 01 (03 recomendada) |
 | 5 | **PRE-BASE2-05** — Contexto multiempresa | Seletor "todas / uma / conjunto", filtros e painéis consolidados, seleção obrigatória no lançamento, seletor de idioma. | 02, 03 |
 | 6 | **BASE2-01** — Moldura de lançamento | Shell oficial do Modelo Base 2 (cabeçalho, dados principais × itens, totais, histórico, anexos, ações). | 05 |
 | 7 | **BASE2-02** — TOP | Registry e contrato inicial de Tipo de Operação; nenhuma regra de negócio fundida. | 06 |
@@ -37,8 +37,15 @@ teste dos dois sentidos de version skew; RLS empresarial nas 49 tabelas de escop
 `docs/COMPANY-RLS-MATRIX.md` sem nenhuma tabela "não auditada"; e a compatibilidade com prazo e endereço
 (`scripts/lib/empresa-compat-surface.mjs`), removida em PRE-BASE2-05.
 
-**PRE-BASE2-04** só termina quando: todo registro elegível tiver ID Global; não houver duplicidade; o backfill
-for comprovadamente reexecutável sem renumerar; e `#N` resolver respeitando organização, empresa e permissão.
+**PRE-BASE2-04** ✅ terminou com: todo registro elegível recebendo ID Global na MESMA transação de negócio,
+nas 29 portas de escrita direta mais a porta genérica do Resource Registry (gate estrutural
+`scripts/id-global-audit.mjs` + matriz de runtime que cria um registro de cada tipo pela rota real, ANTES de
+qualquer backfill); backfill operacional em lotes (`pnpm id-global:backfill`), determinístico, retomável e
+comprovadamente reexecutável sem renumerar (mapa idêntico, medido); zero duplicidade e zero elegível sem
+número (`pnpm id-global:verify`); e `#N` resolvendo por organização, empresa ATUAL do registro e permissão
+DAQUELE registro, com toda negativa na mesma superfície 404. Fica registrada uma divergência de contrato: a
+variante `locate` de `animal_handlings` está declarada e não tem porta de criação
+(ver docs/GLOBAL-ID-CONTRACT.md §13).
 
 **DATA-GOV** só termina quando: o dicionário cobrir 100% das tabelas de negócio; nenhum identificador herdado
 permanecer sem decisão registrada; e os rótulos de enum vierem do catálogo de idioma.

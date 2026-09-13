@@ -8,6 +8,7 @@ export * from "./livestock.js";
 export * from "./rebanho.js";
 export * from "./notificacoes.js";
 export * from "./id-global.js";
+export * from "./id-global-rota.js";
 export * from "./escopo-permissao.js";
 export * from "./sales.js";
 export * from "./resources/index.js";
