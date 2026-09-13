@@ -148,16 +148,18 @@ if (!hasPermission(ctx, permissao)) throw notFound();
 
 ## 6. Compatibilidade e migração
 
-1. `erp.member_farms` **deixou de ser autoridade de runtime** (PRE-BASE2-02). A tabela continua no banco até a
-   migração física da PRE-BASE2-03; o gate `scripts/member-farms-audit.mjs` impede que volte ao código.
+1. `erp.member_farms` **foi removida** na PRE-BASE2-03. O conteúdo dela está arquivado em
+   `erp.legado_escopo_empresa_v0` (sem tela, sem runtime, sem autoridade) para que a migração seja reversível
+   sem backup externo; o gate `scripts/member-farms-audit.mjs` impede que o nome volte ao código.
 2. O backfill traduziu o estado legado sem que ninguém ganhasse ou perdesse acesso — vínculo vazio virou
    `todas`, vínculo preenchido virou `selecionadas` com exatamente as mesmas empresas, em todos os módulos.
    A equivalência é provada em `packages/db/test/backfill-empresas.test.ts` (matriz completa membro × empresa
    × módulo, comparando a autoridade nova com a regra antiga).
 3. A API de administração continua aceitando `farm_ids`; a tradução acontece na borda
    (`apps/api/src/lib/escopo-admin.ts`), nunca no runtime de autorização.
-4. `X-Farm-Id` continua sendo SELEÇÃO de contexto de trabalho. A validação dele passou a ser POR MÓDULO, na
-   porta: seleção explícita que o usuário não pode usar naquele módulo é 403.
+4. `X-Empresa-Id` é o cabeçalho canônico de SELEÇÃO de contexto de trabalho; `X-Farm-Id` continua aceito
+   durante a janela de rollout. A validação dele é POR MÓDULO, na porta: seleção explícita que o usuário não
+   pode usar naquele módulo é 403.
 
 ## 7. Acesso por empresa E módulo (autoridade de runtime)
 
@@ -360,12 +362,92 @@ responde **404**, não 403: não há existência a confirmar.
 
 A matriz por tipo, gerada e conferida por gate, está em `docs/NOTIFICATION-SCOPE-MATRIX.md`.
 
-## 8. O que ainda não existe (e por quê)
+## 8. Migração física (PRE-BASE2-03): schema canônico, espelho legado e RLS empresarial
+
+A renomeação não pôde ser um `rename column` de sexta-feira à tarde: o nome antigo está em cinquenta tabelas,
+num cabeçalho HTTP, em payloads que clientes já instalados enviam e em cada política de RLS. O que a 0014 e a
+0015 fazem é uma migração em **EXPAND → MIGRAR CONSUMIDORES → COMPATIBILIDADE**, em que nenhuma coluna legada é
+removida nesta rodada e o binário imediatamente anterior continua servido.
+
+### 8.1 Autoridade e espelho
+
+| | Canônico (autoridade) | Legado (espelho) |
+| --- | --- | --- |
+| Tabela | `erp.empresas` | view `erp.farms` (`security_invoker = true`) |
+| Coluna | `empresa_id`, `empresa_origem_id`, `empresa_destino_id` | `farm_id`, `origin_farm_id`, `destination_farm_id` |
+| Vínculo membro × empresa | `erp.membro_empresas` + `erp.membro_escopos_empresa` | `erp.legado_escopo_empresa_v0` (arquivo morto) |
+| Cabeçalho | `X-Empresa-Id` | `X-Farm-Id` |
+| Campo de resposta | `empresa_id`, `empresa_name`, `empresas` | `farm_id`, `farm_name`, `farms` |
+
+`erp.farms` é **view com `security_invoker = true`**, e isso não é detalhe de estilo: sem essa opção a view
+roda com os direitos do DONO (o papel de migração, que tem `bypassrls`) e devolve as linhas de **todas as
+organizações** para quem consultá-la — uma view de compatibilidade viraria a maior falha de isolamento do
+sistema. O comportamento foi medido no banco antes de decidir: sob o papel da aplicação, a tabela devolve 1
+linha, a view `security_invoker` devolve 1 e a view definer devolve 2. A mesma correção foi aplicada a
+`erp.v_bank_account_balances`, que já era definer e já vazava.
+
+### 8.2 As duas colunas andam juntas — ou a escrita falha
+
+Cada tabela de escopo ganhou a coluna canônica ao lado da legada, e um gatilho (`trg_sync_<coluna>`) mantém as
+duas iguais em toda escrita:
+
+- **INSERT** — um lado preenchido preenche o outro. Os dois preenchidos com valores **diferentes**:
+  `VALIDATION_ERROR` (422), nunca escolha silenciosa.
+- **UPDATE** — o lado que MUDOU manda. Os dois mudando para valores diferentes na mesma instrução:
+  `VALIDATION_ERROR` (422).
+
+Escolher um dos dois em silêncio é o erro caro: o cliente antigo mandaria `farm_id`, o novo `empresa_id`, e uma
+regra de precedência faria uma das duas escritas ir para a empresa errada sem erro e sem rastro.
+
+PK, unicidade e chave estrangeira migraram para a coluna canônica, e a FK é **composta** —
+`(organization_id, empresa_id) → erp.empresas(organization_id, id)`. Uma FK de coluna única prova que o UUID é
+uma empresa; só a composta prova que é uma empresa **desta organização**.
+
+### 8.3 RLS empresarial
+
+Antes, a RLS isolava organização; empresa era assunto da aplicação. Agora a política das tabelas de escopo é
+`tenant_e_empresa`, com `using` = tenant + `erp.empresa_no_escopo(empresa_id)` e `with check` = tenant +
+`erp.empresa_escrita_permitida(empresa_id)`.
+
+A política antiga foi **substituída**, não acompanhada: políticas `PERMISSIVE` do PostgreSQL se combinam com
+**OR**, então adicionar uma política de empresa ao lado da de tenant manteria o vazamento intacto — o `OR`
+deixaria passar tudo o que a antiga já deixava. "A policy existe" não é prova de nada; a prova está em
+`apps/api/test/integration/rls-empresa.test.ts`, que lê pelo papel da aplicação e conta linhas.
+
+O módulo ativo chega ao banco pela GUC `app.modulo_empresa`, publicada pelo `runService` a partir da PERMISSÃO
+da rota — nunca do cabeçalho, da query string, do corpo, do pathname ou do frontend. **Módulo indefinido é a
+UNIÃO** das empresas visíveis em qualquer módulo: nem "todas" (vazaria) nem "nenhuma" (quebraria leitura
+legítima fora de rota de módulo).
+
+Quatro tabelas fogem da forma padrão, cada uma com motivo registrado em `packages/domain/empresa-rls.mjs` e
+matriz gerada em `docs/COMPANY-RLS-MATRIX.md`:
+
+| Tabela | Política | Por quê |
+| --- | --- | --- |
+| `animal_movements`, `equipment_transfers`, `warehouse_transfers` | lê por QUALQUER uma das duas pontas; escreve só pela ORIGEM | Transferência é um fato com duas empresas. Exigir acesso às duas pontas esconderia do destino o que está chegando para ele. |
+| `erp.empresas` | `using` = a própria empresa no escopo (união entre módulos); `with check` = só tenant | Administrar empresas é ato de organização; a LISTA que o membro enxerga continua recortada pelo escopo. |
+| `notifications` | mantém a política dinâmica de PRE-BASE2-02 (`escopo_tipo` × módulo × empresa) | O escopo do aviso é do TIPO dele, não da coluna. Trocá-la pela forma padrão desfaria a correção de segurança anterior. |
+| `registros_globais` | tenant; `empresa_id` é PISTA, não autoridade | O ID Global é da organização. A autoridade continua sendo o registro fonte. |
+
+### 8.4 O que o cliente vê
+
+Entrada: o adaptador (`apps/api/src/lib/compat-empresa.ts`) traduz corpo e query string de legado para
+canônico antes da validação. Os dois nomes com valores **diferentes** → 422.
+
+Saída: a resposta carrega os DOIS nomes (`empresa_id` **e** `farm_id`), para que o navegador antigo continue
+funcionando durante o rollout.
+
+Isso cobre as duas janelas de version skew que um deploy real produz: **API nova + WEB antigo** e
+**API anterior + WEB novo** (o cliente novo envia os dois cabeçalhos e lê `empresas ?? farms`).
+
+A ponte é uma dívida com prazo e com endereço: os arquivos autorizados a falar o idioma antigo estão
+declarados, um a um e com motivo, em `scripts/lib/empresa-compat-surface.mjs`; dois gates (`farm-compat-allowlist`
+e `farm-inventory`) recusam qualquer nome legado fora dessa lista.
+
+## 9. O que ainda não existe (e por quê)
 
 | Item | Missão |
 | --- | --- |
-| Tabela/coluna com nome `empresa` em todo o schema | PRE-BASE2-03 (migração coordenada com compatibilidade). |
-| `X-Empresa-Id` substituindo `X-Farm-Id` | PRE-BASE2-03 (com aceitação dos dois cabeçalhos durante a transição). |
-| RLS de empresa aplicada às tabelas de negócio | PRE-BASE2-03 (a base — `erp.tem_acesso_empresa` — já existe). |
-| Remoção física de `erp.member_farms` | PRE-BASE2-03. |
+| Remoção das colunas legadas (`farm_id` e irmãs), da view `erp.farms` e de `X-Farm-Id` | PRE-BASE2-05 (a compatibilidade tem prazo; a lista de arquivos a apagar está em `scripts/lib/empresa-compat-surface.mjs`). |
+| Renomear os VALORES de domínio (`farm_transfer`, `transfer_kind='farm'`) e as chaves de permissão (`farms.view`, `farm_transfers.*`) | Fora de PRE-BASE2-03: são DADO em linhas de `erp.role_permissions` e em documentos históricos, não nomenclatura de código. Governança de dados própria. |
 | Seletor multiempresa e consolidação na interface | PRE-BASE2-05. |

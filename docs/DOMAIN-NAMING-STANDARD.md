@@ -28,11 +28,11 @@
 | Conceito funcional | Nome canônico (pt-BR) | Nome técnico atual | Nome técnico futuro | Compatibilidade |
 | --- | --- | --- | --- | --- |
 | Tenant/cliente do ERP | Organização | `organization_id`, `erp.organizations`, `X-Org-Id` | mantido por ora | Renomear organização é DATA-GOV; não há ganho funcional antes disso. |
-| Entidade operacional/jurídica | **Empresa** | `erp.farms`, `farm_id`, `origin_farm_id`, `destination_farm_id` | `erp.empresas`, `empresa_id` | PRE-BASE2-03: coluna nova + cópia + gatilho/visão de leitura + troca dos consumidores + remoção. |
-| Empresas permitidas ao usuário | Empresas permitidas | `erp.member_farms`, `membership.farmIds` | `member_empresas`, `empresasPermitidas` | PRE-BASE2-02. A sentinela "lista vazia = todas" é do mecanismo legado e fica confinada à ponte `apps/api/src/lib/empresa.ts`; o contrato canônico é explícito (`modo: todas | selecionadas`). |
-| Empresa selecionada | Empresa selecionada | `ctx.farmId`, `X-Farm-Id` | `empresaSelecionada`, `X-Empresa-Id` | PRE-BASE2-03 aceitando os dois cabeçalhos na transição. |
-| Escopo de empresa em SQL | Escopo de empresa | `farmScope`, `farmScopeSql`, `allowedFarms`, `farmAllowed` | `escopoEmpresa` (`@erp/plataforma`) | Ponte já existe: `apps/api/src/lib/empresa.ts`. |
-| Rota de cadastro | Empresas | `/cadastros/farms` | `/cadastros/empresas` | PRE-BASE2-03 com redirecionamento da rota antiga. |
+| Entidade operacional/jurídica | **Empresa** | **`erp.empresas`, `empresa_id`, `empresa_origem_id`, `empresa_destino_id`** ✅ | — | Feito na PRE-BASE2-03 (0014). `erp.farms` sobrevive como VIEW `security_invoker` e `farm_id` como coluna espelhada por gatilho; removidos em PRE-BASE2-05. |
+| Empresas permitidas ao usuário | Empresas permitidas | **`erp.membro_empresas`, `erp.membro_escopos_empresa`** ✅ | — | PRE-BASE2-02 (autoridade) + PRE-BASE2-03 (`erp.member_farms` arquivada em `erp.legado_escopo_empresa_v0` e removida). O contrato canônico é explícito (`modo: todas \| selecionadas`); a sentinela "lista vazia = todas" ficou confinada à borda de administração. |
+| Empresa selecionada | Empresa selecionada | **`ctx.empresaId`, `X-Empresa-Id`** ✅ | — | PRE-BASE2-03. `X-Farm-Id` continua aceito na transição; os dois com valores divergentes → 422. |
+| Escopo de empresa em SQL | Escopo de empresa | **`empresaScopeSql`, `empresaPermitida`, `exigirEmpresaVisivel`** ✅ | — | PRE-BASE2-03: os apelidos depreciados (`farmScope`, `allowedFarms`, `farmAllowed`, `assertFarmVisible`) foram removidos do runtime. |
+| Rota de cadastro | Empresas | **`/cadastros/empresas`** ✅ | — | PRE-BASE2-03, com redirecionamento de `/cadastros/farms`, `/cadastros/farms/:id` e `/cadastros/fazendas`. |
 | Rótulo na interface | Empresa | texto "Fazenda" | chave `termos.empresa` | Resolvido por i18n, sem tocar em dado. |
 
 **Estruturas novas já nascem no destino.** A migration 0010 ainda não foi mesclada, então este era o momento
@@ -49,8 +49,8 @@ obriga, destino e a missão que a remove.
 | Identificador | Onde | Motivo / contrato que obriga | Destino | Removido em |
 | --- | --- | --- | --- | --- |
 | `organization_id` | `erp.sequencias_id_global`, `erp.registros_globais` | Convenção transversal das 176 tabelas e das políticas de RLS (`erp.tenant_visible(organization_id)`); divergir em duas tabelas criaria uma segunda convenção de tenant. | `organizacao_id` | DATA-GOV (com todas as tabelas de uma vez) |
-| `farm_id`, `origin_farm_id` | valores de `colunaEmpresa` no registry de ID Global | O registry precisa nomear a coluna real que hoje amarra o registro à Empresa. É dado, não rótulo. | `empresa_id` | PRE-BASE2-03 |
-| `erp.farms`, `erp.member_farms` | entradas do dicionário de dados | O dicionário documenta o schema real; renomear a entrada antes da tabela seria documentação falsa. | `erp.empresas`, `member_empresas` | PRE-BASE2-03 |
+| `farm_id`, `origin_farm_id`, `erp.farms` | camada de compatibilidade e dicionário de dados | A coluna espelho e a view existem NO BANCO: o dicionário documenta o schema real e a ponte serve o cliente anterior. Os arquivos autorizados estão declarados um a um em `scripts/lib/empresa-compat-surface.mjs`. | removidos | PRE-BASE2-05 |
+| `farm_transfer`, `transfer_kind='farm'`, `farms.view`, `farm_transfers.*` | valores de domínio e chaves de permissão | São DADO — linhas de `erp.role_permissions`, `movement_type` de documentos históricos, valores gravados em milhões de linhas. Renomear é migração de dados com reescrita de histórico, não nomenclatura de código. | governança de dados | DATA-GOV |
 | nomes de tabela/coluna das entidades no registry (`erp.input_entries`, `direction`, `kind`, …) | registry de ID Global e dicionário | São o schema atual; o registry é um mapa para ele. | acompanham a tabela | DATA-GOV |
 | `Locale`, `UUID`, `JSON`, `BCP 47` | tipos e documentação | Termos técnicos padronizados, não conceitos do nosso domínio. | permanecem | — |
 
@@ -63,7 +63,7 @@ obriga, destino e a missão que a remove.
 | Prefixo de taxonomia com nicho (`AGR-…`) | **Proibido** | Códigos canônicos usam `ERP-…`; o auditor e o gate do dicionário recusam. |
 | Nome legado de Empresa dentro do núcleo neutro | **Depreciado** | Catraca `nucleo-neutro-nicho`: **zerada** — o catálogo de entidades saiu da plataforma para `@agro/domain`, e o núcleo não cita mais tabela nem coluna de nicho. |
 | Prefixo `mg-` (iniciais do sistema de referência) em classes/tokens | **Depreciado** | Catraca: a dívida (`scripts/naming-audit.baseline.json`) não pode crescer. Código novo usa token neutro. |
-| Novo símbolo com `farm`/`fazenda` no núcleo | **Depreciado** | Catraca do inventário: superfícies de produto não podem crescer. |
+| Novo símbolo com `farm`/`fazenda` no núcleo | **Proibido fora da ponte declarada** | Dois gates: `farm-compat-allowlist` (nenhum nome legado no runtime fora dos arquivos declarados em `scripts/lib/empresa-compat-surface.mjs`) e `farm-inventory --check` (a DÍVIDA DE PRODUTO — balde 3 do inventário — só pode diminuir; arquivo não declarado cai nesse balde por definição). |
 | Código canônico copiado do sistema de referência | **Proibido** | Dicionário só aceita `ERP-…`. |
 
 ## 4. Classificação das referências herdadas (independência)

@@ -80,12 +80,12 @@ Ações de cabeçalho/linha observadas por tela na referência (577 ocorrências
 | SCR-027 | Centro de Custo | Visualizar | TESTADO |  |
 | SCR-027 | Centro de Custo | Cria descendente | TESTADO | Árvore (centro de custo/plano de contas/categoria) |
 | SCR-028 | Fazendas | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
-| SCR-028 | Fazendas | Adicionar Novo | IMPLEMENTADO |  |
-| SCR-028 | Fazendas | Visualizar | IMPLEMENTADO |  |
-| SCR-028 | Fazendas | Adicionar Área | IMPLEMENTADO | Cadastro de áreas vinculado à fazenda |
+| SCR-028 | Fazendas | Adicionar Novo | UNIFICADO |  |
+| SCR-028 | Fazendas | Visualizar | UNIFICADO |  |
+| SCR-028 | Fazendas | Adicionar Área | UNIFICADO | Cadastro de áreas vinculado à fazenda |
 | SCR-028 | Fazendas | Adicionar Multiplas Áreas | NÃO INICIADO | Criação em lote de áreas não construída |
-| SCR-028 | Fazendas | Editar | IMPLEMENTADO |  |
-| SCR-028 | Fazendas | Excluir | IMPLEMENTADO | Exclusão lógica (soft delete) com auditoria; documentos transacionais são cancelados com estorno |
+| SCR-028 | Fazendas | Editar | UNIFICADO |  |
+| SCR-028 | Fazendas | Excluir | UNIFICADO | Exclusão lógica (soft delete) com auditoria; documentos transacionais são cancelados com estorno |
 | SCR-029 | Safras | Saiba + | NÃO APLICÁVEL | Link de ajuda/marketing do fornecedor |
 | SCR-029 | Safras | Adicionar Novo | IMPLEMENTADO |  |
 | SCR-029 | Safras | Visualizar | IMPLEMENTADO |  |

@@ -2,17 +2,17 @@
   "screens": {
     "total": 455,
     "TESTADO": 116,
-    "IMPLEMENTADO": 228,
+    "IMPLEMENTADO": 227,
     "MELHORADO": 19,
-    "UNIFICADO": 54,
+    "UNIFICADO": 55,
     "EM IMPLEMENTAÇÃO": 7,
     "MAPEADO": 6,
     "BLOQUEADO": 0,
     "NÃO INICIADO": 25,
     "NÃO APLICÁVEL": 0,
     "coverage": "417/455 (91.6%)",
-    "unified_areas": 12,
-    "unified_screens": 98
+    "unified_areas": 13,
+    "unified_screens": 99
   },
   "reports": {
     "total": 120,
@@ -31,9 +31,9 @@
   "actions": {
     "total": 577,
     "TESTADO": 111,
-    "IMPLEMENTADO": 113,
+    "IMPLEMENTADO": 108,
     "MELHORADO": 32,
-    "UNIFICADO": 26,
+    "UNIFICADO": 31,
     "EM IMPLEMENTAÇÃO": 35,
     "MAPEADO": 3,
     "BLOQUEADO": 0,

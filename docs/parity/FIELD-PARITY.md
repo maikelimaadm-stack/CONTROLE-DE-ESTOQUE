@@ -31,7 +31,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-025 | Dashboard Estoque de Nutrição | `/dashboards/estoque-nutricao` | 0 | 1 | 0 | — | UNIFICADO |
 | SCR-026 | Dashboard Consumo vs Fornecido | `/dashboards/consumo-racao` | 0 | 3 | 0 | — | UNIFICADO |
 | SCR-027 | Centro de Custo | `/cadastros/cost_centers` | 0 | 0 | 6 | 1 | TESTADO |
-| SCR-028 | Fazendas | `/cadastros/farms` | 0 | 7 | 6 | 1 | IMPLEMENTADO |
+| SCR-028 | Fazendas | `/cadastros/farms` | 0 | 7 | 6 | — | UNIFICADO |
 | SCR-029 | Safras | `/cadastros/harvests` | 0 | 0 | 5 | 1 | IMPLEMENTADO |
 | SCR-030 | Endereçamentos | `/cadastros/addressings` | 0 | 0 | 3 | 0 | IMPLEMENTADO |
 | SCR-031 | Produtos | `/cadastros/products` | 1 | 7 | 10 | 6 | TESTADO |
@@ -287,9 +287,9 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-287 | Importar OFX | `/financeiro/ofx/[id]` | 6 | 0 | 0 | 3 | TESTADO |
 | SCR-288 | NFe | `/fiscal/new` | 140 | 52 | 9 | — | NÃO INICIADO |
 | SCR-291 | Centro de Custo | `/cadastros/cost_centers/[id]` | 292 | 0 | 0 | 6 | TESTADO |
-| SCR-292 | Fazenda | `/cadastros/farms/new` | 33 | 0 | 5 | 15 | IMPLEMENTADO |
-| SCR-293 | Fazendas | `/cadastros/farms/[id]` | 0 | 0 | 4 | 15 | IMPLEMENTADO |
-| SCR-294 | Fazenda | `/cadastros/farms/[id]` | 33 | 0 | 5 | 15 | IMPLEMENTADO |
+| SCR-292 | Fazenda | `/cadastros/farms/new` | 33 | 0 | 5 | — | IMPLEMENTADO |
+| SCR-293 | Fazendas | `/cadastros/farms/[id]` | 0 | 0 | 4 | — | IMPLEMENTADO |
+| SCR-294 | Fazenda | `/cadastros/farms/[id]` | 33 | 0 | 5 | — | IMPLEMENTADO |
 | SCR-295 | Safras | `/cadastros/harvests/new` | 8 | 0 | 0 | 9 | IMPLEMENTADO |
 | SCR-296 | Safras | `/cadastros/harvests/[id]` | 0 | 0 | 8 | 9 | IMPLEMENTADO |
 | SCR-297 | Safras | `/cadastros/harvests/[id]` | 8 | 0 | 0 | 9 | IMPLEMENTADO |

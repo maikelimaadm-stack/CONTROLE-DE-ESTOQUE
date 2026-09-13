@@ -21,6 +21,50 @@
 - `NEXT_PUBLIC_DEMO_MODE=true` só em ambientes de demonstração (mostra as credenciais demo no login); produção não define a variável.
 - Alternativa/backup na Railway: serviço `web` com `apps/web/Dockerfile` (raiz do repositório como contexto de build); variáveis `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `PORT=3000`, `HOSTNAME=0.0.0.0`.
 
+## Janela de rollout da migração fazenda → empresa (PRE-BASE2-03)
+
+As migrations `0014_company_physical_migration.sql` e `0015_company_rls.sql` renomeiam a tabela, criam a coluna
+canônica ao lado da legada e trocam a RLS. Nenhuma coluna legada é removida nesta rodada — é o que permite
+implantar sem janela de indisponibilidade e sem exigir que banco, API e web subam no mesmo segundo.
+
+| Fase | O que sobe | Estado do sistema | Pode voltar? |
+| --- | --- | --- | --- |
+| **1. EXPAND (banco)** | `0014` + `0015` no pre-deploy | `erp.empresas` existe, `erp.farms` vira view, toda tabela de escopo tem as DUAS colunas sincronizadas por gatilho, RLS já recorta por empresa | Sim — a API anterior continua funcionando: ela escreve `farm_id` e o gatilho preenche `empresa_id` |
+| **2. API** | binário novo da API | Aceita `X-Empresa-Id` **e** `X-Farm-Id`; traduz payload legado na borda; responde com os DOIS nomes | Sim — o binário anterior volta a rodar contra o mesmo banco |
+| **3. WEB** | build novo do frontend | Envia os dois cabeçalhos e lê `empresas ?? farms` | Sim — o build anterior continua servido pela API nova |
+| **4. COMPATIBILIDADE (observação)** | nada | Janela em que os dois idiomas convivem; o inventário (`docs/FARM-DEPENDENCY-INVENTORY.md`) mede o que falta | — |
+
+Ordem obrigatória: **1 → 2 → 3**. Subir a API nova antes do banco é o único caminho que quebra (ela escreve
+`empresa_id` numa tabela que ainda não tem a coluna).
+
+**A migration é FAIL-CLOSED antes de tocar em qualquer coisa**: se existir linha apontando para empresa de
+OUTRA organização, a `0014` PARA e imprime a consulta de diagnóstico com os ids. Ela não corrige em silêncio,
+não apaga dado, não troca a empresa e não coloca nulo "para passar" — esse acervo é um incidente e precisa de
+decisão humana.
+
+### Rollback
+
+- **Fase 3 ou 2**: redeploy da versão anterior. Nada a desfazer no banco — os dois idiomas continuam válidos.
+- **Fase 1**: as migrations são aditivas em dados (nenhuma coluna apagada, nenhuma linha removida:
+  `erp.member_farms` está arquivada em `erp.legado_escopo_empresa_v0`). Reverter exige o caminho inverso —
+  `erp.empresas` de volta a `erp.farms` (tabela), `drop view`, e as políticas `tenant_isolation` recriadas.
+  Enquanto o rollback não acontece, a API anterior segue servida pela view e pelos gatilhos, o que torna a
+  reversão uma decisão sem pressa.
+- **Não existe rollback "parcial de uma tabela"**: a coluna canônica é PK/UNIQUE/FK nas 49 tabelas de escopo.
+
+### Verificação pós-deploy (fase 1)
+
+```sql
+select count(*) from erp.empresas;                                  -- tabela canônica responde
+select count(*) from erp.farms;                                     -- view legada responde o mesmo número
+select relrowsecurity from pg_class where oid = 'erp.stock_movements'::regclass;   -- t
+select polname from pg_policy where polrelid = 'erp.stock_movements'::regclass;    -- tenant_e_empresa
+```
+
+Pelo papel da aplicação (`erp_app`, sem bypass): uma consulta a `erp.farms` precisa devolver **o mesmo número
+de linhas** que a mesma consulta a `erp.empresas`. Números diferentes significam view definer — e view definer
+é vazamento entre organizações.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)
