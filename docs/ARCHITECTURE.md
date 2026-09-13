@@ -4,10 +4,13 @@
 ```
 apps/web        Next.js (App Router, client components + TanStack Query) — UI
 apps/api        Fastify — API REST /api/*, regras de negócio, transações
-packages/shared Erros de domínio, dinheiro (decimal.js), datas pt-BR, paginação
-packages/domain Regras puras (máquinas de estado, cálculos), registro declarativo de cadastros, catálogo de permissões
-packages/db     Pool pg, runner de migrations, seed (referência + demo)
-packages/config tsconfig/eslint base
+packages/shared   Erros de domínio, dinheiro (decimal.js), datas pt-BR, paginação
+packages/plataforma  Núcleo NEUTRO DE NICHO (@erp/plataforma): organização × empresa e escopo, ID Global, idioma e
+                  formatação (docs/PRE-BASE2-FOUNDATION.md). Nunca importa packages/domain — o domínio depende da
+                  plataforma, jamais o contrário; o nome do pacote e a taxonomia do dicionário são neutros por contrato
+packages/domain  Regras puras (máquinas de estado, cálculos), registro declarativo de cadastros, catálogo de permissões
+packages/db      Pool pg, runner de migrations, seed (referência + demo)
+packages/config  tsconfig/eslint base
 supabase/       migrations SQL (schema erp), seed
 scripts/        auditoria de paridade
 docs/           documentação e referência

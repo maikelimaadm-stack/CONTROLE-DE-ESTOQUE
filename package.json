@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "lint": "pnpm -r --if-present lint",
+    "lint": "pnpm -r --if-present lint && node scripts/naming-audit.mjs && node scripts/farm-inventory.mjs --check && node scripts/data-dictionary.mjs --check",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "test:integration": "pnpm --filter @agro/db test:integration && pnpm --filter @agro/api test:integration",
@@ -20,7 +20,11 @@
     "e2e": "pnpm --filter @agro/web e2e",
     "parity": "node scripts/parity.mjs",
     "parity:check": "node scripts/parity.mjs --check",
-    "db:seed:e2e": "DATABASE_URL=${E2E_DATABASE_URL:-postgresql://postgres@127.0.0.1:5433/agro_erp_e2e} pnpm --filter @agro/db exec tsx src/cli.ts seed"
+    "db:seed:e2e": "DATABASE_URL=${E2E_DATABASE_URL:-postgresql://postgres@127.0.0.1:5433/agro_erp_e2e} pnpm --filter @agro/db exec tsx src/cli.ts seed",
+    "audit:naming": "node scripts/naming-audit.mjs",
+    "audit:farm": "node scripts/farm-inventory.mjs --check",
+    "audit:dictionary": "node scripts/data-dictionary.mjs --check",
+    "docs:generate": "node scripts/farm-inventory.mjs && node scripts/data-dictionary.mjs"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

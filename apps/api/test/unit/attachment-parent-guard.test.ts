@@ -29,7 +29,16 @@ describe("guardrail: anexos × registro-pai", () => {
       expect(typeof rule.load, entity).toBe("function");
       const vp = rule.viewPerm;
       if (typeof vp === "string") expect(perms.has(vp), `${entity}: ${vp}`).toBe(true);
-      else for (const p of ["nutrition", "sanitary", "purchase", "sale", "payable", "receivable"].map((k) => vp({ handling_type: k, movement_type: k, direction: k }))) expect(perms.has(p), `${entity}: ${p}`).toBe(true);
+      else {
+        const validos = ["nutrition", "sanitary", "purchase", "sale", "payable", "receivable"].map((k) => vp({ handling_type: k, movement_type: k, direction: k })).filter((p): p is string => p !== null);
+        expect(validos.length, `${entity}: nenhuma variante resolvida`).toBeGreaterThan(0);
+        for (const p of validos) expect(perms.has(p), `${entity}: ${p}`).toBe(true);
+        // fail-closed: tipo desconhecido ou interno não cai numa permissão vizinha
+        if (entity === "financial_titles") expect(vp({ direction: "outra" }), entity).toBeNull();
+        if (entity === "animal_handlings" || entity === "animal_movements") {
+          for (const k of ["", "inventory", "farm_transfer", "processing", "inexistente"]) expect(vp({ handling_type: k, movement_type: k }), `${entity}[${k}]`).toBeNull();
+        }
+      }
     }
     // entidades usadas pela UI (DocList/ResourceList) estão cobertas; tabelas internas não
     for (const e of ["service_orders", "purchase_requests", "animal_movements", "animal_handlings", "weighings", "financial_titles", "warehouses", "equipments", "people", "farms", "batches", "feedlot_corrals", "users"]) expect(attachableEntity(e), e).toBeTruthy();

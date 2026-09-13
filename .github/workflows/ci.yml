@@ -21,11 +21,11 @@ jobs:
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
       - name: Build workspace packages
-        run: pnpm --filter @agro/shared build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
+        run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
       - run: pnpm lint
       - run: pnpm typecheck
       - name: Unit tests (shared, domain, api)
-        run: pnpm --filter @agro/shared test && pnpm --filter @agro/domain test && pnpm --filter @agro/api test
+        run: pnpm --filter @agro/shared test && pnpm --filter @erp/plataforma test && pnpm --filter @agro/domain test && pnpm --filter @agro/api test
       - name: Parity audit (all reference screens must be mapped)
         run: node scripts/parity.mjs --check
       - name: Secret scan (no credentials committed)
@@ -47,7 +47,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @agro/shared build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
+      - run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
       - name: Migrations apply cleanly (fresh database)
         run: DATABASE_URL=$TEST_DATABASE_URL pnpm --filter @agro/db exec tsx src/cli.ts migrate
       - name: Schema + RLS tests (tenant isolation, ledger triggers)
@@ -74,7 +74,7 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @agro/shared build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
+      - run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
       - name: Build API and web
         run: pnpm --filter @agro/api build && pnpm --filter @agro/web build
       - name: Seed e2e database (migrations + reference data + demo org)

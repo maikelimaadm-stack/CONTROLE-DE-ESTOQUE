@@ -1,6 +1,7 @@
 # Personalização de telas — MODELO BASE1
 
-Réplica do **MODELO BASE1** do sistema PROJETOMG (o modelo de tela usado no cadastro de Empresas do makgestao.com), reimplementada sobre a arquitetura declarativa deste sistema e aplicada a **todos os cadastros** (`ResourceList`/`ResourceForm`) e **lançamentos** (`DocList`). Código em `apps/web/src/features/base1`.
+Réplica do **MODELO BASE1** observado no sistema de referência externo (registro histórico em `docs/reference/` —
+material de auditoria, **não** fonte de verdade deste produto), reimplementada sobre a arquitetura declarativa deste sistema e aplicada a **todos os cadastros** (`ResourceList`/`ResourceForm`) e **lançamentos** (`DocList`). Código em `apps/web/src/features/base1`.
 
 > Blocos de interface (cabeçalho de página, botões, campos, cartões, badges de situação, estados vazio/carregando/erro,
 > diálogos, confirmação, painel lateral e DetailShell): ver `docs/UI-STANDARD.md` › **Primitives visuais**.

@@ -4,6 +4,7 @@ import { DomainError } from "@agro/shared";
 import { verifyLocalPassword } from "../plugins/auth.js";
 import { hasPermission } from "../lib/context.js";
 import { allPermissionKeys } from "@agro/domain";
+import { resolverIdioma } from "@erp/plataforma";
 import { withTx } from "@agro/db";
 import { runService } from "../lib/service.js";
 
@@ -31,9 +32,12 @@ export default async function authRoutes(app: FastifyInstance) {
     const farms = await ctx.tx.query("select id, code, name from erp.farms where organization_id=$1 and deleted_at is null and is_active order by code", [ctx.orgId]);
     const visibleFarms = farms.rows.filter((f) => ctx.membership.farmIds.length === 0 || ctx.membership.farmIds.includes((f as { id: string }).id));
     const fav = await ctx.tx.query("select route,label,position from erp.user_favorites where user_id=$1 and organization_id=$2 order by position", [ctx.user.id, ctx.orgId]);
-    const org = await ctx.tx.query<{ name: string; parameters: unknown }>("select name, parameters from erp.organizations where id=$1", [ctx.orgId]);
+    const org = await ctx.tx.query<{ name: string; parameters: unknown; idioma_padrao: string }>("select name, parameters, idioma_padrao from erp.organizations where id=$1", [ctx.orgId]);
+    const idiomaUsuario = await ctx.tx.query<{ idioma: string | null }>("select idioma from erp.users where id=$1", [ctx.user.id]);
     const perms = ctx.membership.isOwner ? allPermissionKeys() : [...ctx.permissions];
     const unread = await ctx.tx.query<{ n: string }>("select count(*) n from erp.notifications where organization_id=$1 and (user_id is null or user_id=$2) and read_at is null", [ctx.orgId, ctx.user.id]);
-    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, farms: visibleFarms, permissions: perms, favorites: fav.rows, unreadNotifications: Number(unread.rows[0]?.n ?? 0), canViewUsers: hasPermission(ctx, "users.view") };
+    const idioma = { organizacao: org.rows[0]?.idioma_padrao ?? null, usuario: idiomaUsuario.rows[0]?.idioma ?? null, efetivo: resolverIdioma({ usuario: idiomaUsuario.rows[0]?.idioma ?? null, organizacao: org.rows[0]?.idioma_padrao ?? null }) };
+    // `farms` é a lista de EMPRESAS visíveis (docs/MULTI-COMPANY-CONTRACT.md); o nome do campo migra em PRE-BASE2-03.
+    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, farms: visibleFarms, permissions: perms, favorites: fav.rows, unreadNotifications: Number(unread.rows[0]?.n ?? 0), canViewUsers: hasPermission(ctx, "users.view"), idioma };
   }));
 }

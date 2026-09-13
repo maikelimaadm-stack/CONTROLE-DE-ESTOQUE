@@ -12,9 +12,10 @@ export async function harness(): Promise<Harness> {
   const demo = await seedDemo(admin, {}, () => {});
   await admin.query("do $$ begin if not exists (select 1 from pg_roles where rolname='erp_app_test') then create role erp_app_test login password 'erp_app_test' in role erp_app; end if; end $$;");
   await admin.end();
-  // A API conecta como erp_app (sem bypass de RLS), como em produção
+  // A API conecta como erp_app (sem bypass de RLS), como em produção. Os limites de requisição/login são
+  // afrouxados só no harness (a suíte cria vários usuários e faz login com cada um), como no harness e2e.
   const db = createPool(process.env.TEST_DATABASE_URL_APP ?? "postgresql://erp_app_test:erp_app_test@127.0.0.1:5433/agro_erp_test", { max: 8 });
-  const config = loadConfig({ ...process.env, DATABASE_URL: TEST_URL, AUTH_MODE: "local", LOCAL_AUTH_SECRET: "test-secret-please", NODE_ENV: "test", RATE_LIMIT_MAX: "10000" });
+  const config = loadConfig({ ...process.env, DATABASE_URL: TEST_URL, AUTH_MODE: "local", LOCAL_AUTH_SECRET: "test-secret-please", NODE_ENV: "test", RATE_LIMIT_MAX: "10000", LOGIN_RATE_LIMIT_MAX: "1000" });
   const app = await buildApp({ config, db, logger: process.env.TEST_LOG ? true : false });
   const login = async (email: string, password: string) => { const r = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password } }); if (r.statusCode !== 200) throw new Error("login failed: " + r.body); return (r.json() as { token: string }).token; };
   const token = await login(demo.adminEmail, demo.adminPassword);

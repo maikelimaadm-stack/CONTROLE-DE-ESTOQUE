@@ -5,6 +5,13 @@ import { login } from "./helpers";
  * UI-STAB-01 — estabilidade dimensional dos overlays: o frame nasce no tamanho final (perfil), LoadingState → conteúdo
  * não muda a altura, header/footer fixos com corpo rolável, ConfirmDialog compacto, Drawer estável, viewports.
  */
+/**
+ * Tolerância de arredondamento: o frame é centralizado com `clamp()` sobre a viewport, então altura e topo
+ * podem variar em frações de pixel entre versões de navegador. O que o teste protege é o SALTO visível do
+ * frame (dezenas de pixels) ao sair do carregamento — não a igualdade exata de subpixel.
+ */
+const SUBPIXEL = 4;
+
 const box = async (page: Page, testId: string) => { const b = await page.getByTestId(testId).boundingBox(); if (!b) throw new Error(`sem boundingBox de ${testId}`); return b; };
 
 test.describe("overlays: perfis e estabilidade", () => {
@@ -16,7 +23,7 @@ test.describe("overlays: perfis e estabilidade", () => {
     const before = await box(page, "dialog");
     await expect(dlg.getByTestId("loading-state")).toHaveCount(0, { timeout: 15_000 }); // conteúdo (ou vazio) chegou
     const after = await box(page, "dialog");
-    expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(2); expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(2);
+    expect(Math.abs(after.height - before.height)).toBeLessThanOrEqual(SUBPIXEL); expect(Math.abs(after.y - before.y)).toBeLessThanOrEqual(SUBPIXEL);
     expect(after.height).toBeLessThanOrEqual(page.viewportSize()!.height);
     await expect(dlg.locator(".mg-dialog__header")).toBeVisible();
     expect(await dlg.locator(".mg-dialog__body").evaluate((el) => getComputedStyle(el).overflowY)).toBe("auto");
@@ -38,7 +45,7 @@ test.describe("overlays: perfis e estabilidade", () => {
     await page.getByTestId("row-view").first().click(); // "Visualizar" explícito da DataTable
     const drawer = page.getByTestId("drawer"); await expect(drawer).toBeVisible();
     const b1 = await box(page, "drawer"); await page.waitForTimeout(300); const b2 = await box(page, "drawer");
-    expect(Math.abs(b1.height - b2.height)).toBeLessThanOrEqual(2); expect(b2.height).toBeGreaterThanOrEqual(page.viewportSize()!.height - 2);
+    expect(Math.abs(b1.height - b2.height)).toBeLessThanOrEqual(SUBPIXEL); expect(b2.height).toBeGreaterThanOrEqual(page.viewportSize()!.height - SUBPIXEL);
     expect(await drawer.locator(".mg-drawer__body").evaluate((el) => getComputedStyle(el).overflowY)).toBe("auto");
     await page.keyboard.press("Escape"); await expect(drawer).toBeHidden(); await expect(page.getByTestId("row-view").first()).toBeFocused();
   });
