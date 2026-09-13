@@ -6,7 +6,9 @@ import { defineConfig, devices } from "@playwright/test";
 const API_PORT = Number(process.env.E2E_API_PORT ?? 3333); const WEB_PORT = Number(process.env.E2E_WEB_PORT ?? 3098);
 const DB = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
 export default defineConfig({
-  testDir: "./e2e", timeout: 60_000, expect: { timeout: 10_000 }, fullyParallel: false, workers: 1, retries: process.env.CI ? 1 : 0,
+  // `skew-api-anterior` roda em `playwright.skew.config.ts`, contra a API do commit base. Aqui o servidor
+  // e o cliente sao a MESMA versao: as asserções daquele spec provariam o cenario errado.
+  testDir: "./e2e", testIgnore: /skew-api-anterior\.spec\.ts/, timeout: 60_000, expect: { timeout: 10_000 }, fullyParallel: false, workers: 1, retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: { baseURL: `http://127.0.0.1:${WEB_PORT}`, trace: "retain-on-failure", screenshot: "only-on-failure", locale: "pt-BR" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], launchOptions: process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {} } }],

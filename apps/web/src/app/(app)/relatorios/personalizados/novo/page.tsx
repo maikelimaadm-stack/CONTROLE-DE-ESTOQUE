@@ -8,6 +8,7 @@ import { toast } from "@/lib/toast";
 import { ArrowDown, ArrowUp, Download, Printer, Save } from "lucide-react";
 import { defaultListPreferences, filterKindOf, type ListPreferences } from "@agro/shared";
 import { api, ApiError, getSession, cabecalhosDeContexto } from "@/lib/api";
+import { corpoNoWire } from "@/lib/compat-empresa";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, cn, pct } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Input, NativeSelect, Field, Spinner, ErrorBox, Dialog, Badge } from "@/components/ui";
@@ -57,7 +58,9 @@ function Builder() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Falha ao salvar")
   });
   const exportAs = async (format: "csv" | "xlsx") => {
-    const s = getSession(); const resp = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333"}/api/saved-reports/run`, { method: "POST", headers: { "Content-Type": "application/json", ...cabecalhosDeContexto(s) }, body: JSON.stringify({ resource_key: resourceKey, definition: definition(), format, name: name || res?.label }) });
+    // `fetch` cru porque a resposta é um blob; o corpo ainda passa pela ponte (o `resource_key` viaja como
+    // nome de recurso e a API anterior só conhece o nome antigo dele).
+    const s = getSession(); const resp = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333"}/api/saved-reports/run`, { method: "POST", headers: { "Content-Type": "application/json", ...cabecalhosDeContexto(s) }, body: JSON.stringify(corpoNoWire({ resource_key: resourceKey, definition: definition(), format, name: name || res?.label })) });
     if (!resp.ok) { toast.error("Falha ao exportar"); return; }
     const blob = await resp.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${name || resourceKey}.${format}`; a.click(); URL.revokeObjectURL(url);
   };

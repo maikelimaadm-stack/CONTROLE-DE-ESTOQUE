@@ -20,7 +20,8 @@ export const PONTE_RUNTIME = {
   "apps/api/src/lib/compat-empresa.ts": "O adaptador. É a ponte inteira: tradução de entrada, apelidos de saída, cabeçalho e nomes legados de tabela.",
   "apps/api/src/server.ts": "Declara `X-Farm-Id` em allowedHeaders do CORS — sem isso o navegador do cliente antigo nem envia o cabeçalho.",
   "apps/api/src/lib/escopo-admin.ts": "Borda de administração: traduz o contrato legado `farm_ids` (lista vazia = todas) para o modelo canônico. Documentado em docs/MULTI-COMPANY-CONTRACT.md §6.",
-  "apps/web/src/lib/api.ts": "Cliente HTTP: promove a sessão gravada com `farmId` e envia os dois cabeçalhos durante a janela de rollout.",
+  "apps/web/src/lib/compat-empresa.ts": "O adaptador do CLIENTE. Traduz caminho, query, corpo e resposta entre o idioma interno (empresa) e o idioma do FIO (legado) — necessário porque o CORS da API anterior não aceita `X-Empresa-Id` e o preflight morre no navegador.",
+  "apps/web/src/lib/api.ts": "Cliente HTTP: promove a sessão gravada com `farmId` e envia `X-Farm-Id` como cabeçalho de contexto durante a janela de rollout.",
   "apps/web/src/lib/auth.tsx": "Lê `empresas ?? farms` de /auth/context enquanto a API anterior puder estar no ar.",
   "apps/web/nav.registry.mjs": "Redirecionamentos das rotas legadas de cadastro.",
   "packages/domain/src/resources/index.ts": "Chave de recurso legada `farms` resolvendo para o mesmo ResourceDef de `empresas`."
@@ -41,7 +42,8 @@ export const PONTE_PROVA = {
   "packages/db/test/notificacao-legado.test.ts": "Prova que a notificação legada continua resolvendo pela view.",
   "packages/db/test/schema.test.ts": "Afere a coexistência das duas colunas no schema real.",
   "apps/web/e2e/empresa-compat.spec.ts": "Prova no navegador que sessão antiga e cabeçalho antigo continuam funcionando.",
-  "apps/web/e2e/acesso-empresa.spec.ts": "Lê `empresas ?? farms` como o cliente durante o rollout."
+  "apps/web/e2e/acesso-empresa.spec.ts": "Lê `empresas ?? farms` como o cliente durante o rollout.",
+  "apps/web/e2e/skew-api-anterior.spec.ts": "Version skew B no navegador: web desta PR contra a API EXATA do commit base. Fala o idioma antigo porque é ele que mede — CORS, recurso, corpo, query e resposta."
 };
 
 /** Confinamento: os próprios gates e o dicionário precisam nomear o que vigiam. */

@@ -1,4 +1,5 @@
 "use client";
+import { caminhoNoWire, corpoNoWire, respostaCanonica } from "./compat-empresa";
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 
 export class ApiError extends Error {
@@ -30,26 +31,28 @@ export function setSession(s: Session | null) { if (typeof window === "undefined
  * de relatório faz `fetch` direto para receber o blob —, e foi exatamente aí que o cabeçalho ficou para trás
  * quando o canônico entrou. Um lugar só evita que a próxima chamada crua repita o esquecimento.
  *
- * Os DOIS cabeçalhos saem com o MESMO valor: `X-Empresa-Id` é o canônico e `X-Farm-Id` acompanha porque o
- * web (Vercel) e a API (Railway) não sobem juntas — um web novo contra a API anterior ficaria sem empresa
- * selecionada. A API nova aceita os dois desde que sejam IGUAIS; valores diferentes são recusados com 422.
- * O `X-Farm-Id` sai quando nenhuma versão anterior da API estiver no ar (docs/DEPLOYMENT.md).
+ * A empresa selecionada sai como `X-Farm-Id`, o cabeçalho LEGADO, durante a janela de rollout. Não é
+ * descuido: a API anterior declara `allowedHeaders` sem `X-Empresa-Id`, e um navegador que o envia tem o
+ * PREFLIGHT recusado — a requisição morre antes de chegar ao servidor, e não existe erro de aplicação para
+ * tratar. A API nova aceita os dois. O canônico continua sendo o contrato oficial dela e segue testado;
+ * o que é legado aqui é o FIO, não o produto (apps/web/src/lib/compat-empresa.ts, docs/DEPLOYMENT.md).
  */
 export function cabecalhosDeContexto(s: Session | null): Record<string, string> {
   return {
     ...(s?.token ? { Authorization: `Bearer ${s.token}` } : {}),
     ...(s?.orgId ? { "X-Org-Id": s.orgId } : {}),
-    ...(s?.empresaId ? { "X-Empresa-Id": s.empresaId, "X-Farm-Id": s.empresaId } : {})
+    ...(s?.empresaId ? { "X-Farm-Id": s.empresaId } : {})
   };
 }
 
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; idempotencyKey?: string } = {}): Promise<T> {
   const s = getSession();
   const headers: Record<string, string> = { ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}), ...cabecalhosDeContexto(s), ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}), ...(opts.headers ?? {}) };
-  const res = await fetch(`${API_URL}${path}`, { method: opts.method ?? "GET", headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
+  // Caminho, query e corpo saem no idioma do FIO; a resposta volta para o canônico antes de qualquer tela.
+  const res = await fetch(`${API_URL}${caminhoNoWire(path)}`, { method: opts.method ?? "GET", headers, body: opts.body !== undefined ? JSON.stringify(corpoNoWire(opts.body)) : undefined });
   if (opts.raw) return res as unknown as T;
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = text ? respostaCanonica(JSON.parse(text) as unknown) : null;
   if (!res.ok) { const e = (data as { error?: { code: string; message: string; details?: unknown } })?.error; if (res.status === 401 && (e?.code ?? "UNAUTHENTICATED") === "UNAUTHENTICATED") { setSession(null); if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) location.href = "/login"; } throw new ApiError(res.status, e?.code ?? "ERROR", e?.message ?? res.statusText, e?.details); }
   return data as T;
 }

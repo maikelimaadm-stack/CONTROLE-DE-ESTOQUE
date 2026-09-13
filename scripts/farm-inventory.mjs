@@ -80,7 +80,7 @@ function bucketOf(rel) {
   return "divida";
 }
 
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist", ".git", "coverage", "test-results", "playwright-report", ".turbo"]);
+const SKIP_DIRS = new Set(["node_modules", ".next", "dist", ".git", "coverage", "test-results", "playwright-report", ".turbo", ".api-anterior"]);
 /**
  * Artefatos GERADOS e a própria ferramenta ficam fora da medição: contar o inventário dentro do inventário
  * faria o número crescer a cada regeneração (e a catraca perderia o sentido).

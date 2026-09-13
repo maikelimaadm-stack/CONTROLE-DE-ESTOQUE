@@ -84,3 +84,38 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: failure()
         with: { name: playwright-report, path: apps/web/playwright-report, retention-days: 7 }
+  skew:
+    name: Version skew · web novo × API do commit base
+    runs-on: ubuntu-latest
+    needs: [quality]
+    services:
+      postgres:
+        image: postgres:16
+        env: { POSTGRES_HOST_AUTH_METHOD: trust, POSTGRES_DB: agro_erp_e2e }
+        ports: ["5433:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      E2E_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/agro_erp_e2e
+      NEXT_PUBLIC_API_URL: http://127.0.0.1:3333
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10.33.0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
+      - name: Build web (HEAD novo)
+        run: pnpm --filter @agro/web build
+      # O banco é migrado e semeado pelo HEAD NOVO (0014, 0015 e as correções desta rodada). Só a API é antiga:
+      # é exatamente a combinação da janela de rollout, em que o web sobe antes do servidor.
+      - name: Seed e2e database (HEAD novo)
+        run: DATABASE_URL=$E2E_DATABASE_URL pnpm --filter @agro/db exec tsx src/cli.ts seed
+      - name: Montar a API do commit base (git worktree + build daquele commit)
+        run: node scripts/api-anterior.mjs
+      - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
+      - name: E2E de version skew (web novo × API anterior)
+        run: pnpm --filter @agro/web exec playwright test -c playwright.skew.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-report-skew, path: apps/web/playwright-report, retention-days: 7 }

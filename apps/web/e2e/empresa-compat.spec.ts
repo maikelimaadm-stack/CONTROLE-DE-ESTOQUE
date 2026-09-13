@@ -39,15 +39,40 @@ test.describe("empresa: canônico no produto, legado na ponte", () => {
     await expect(page.getByLabel("Empresa ativa")).toHaveValue(empresaId);
   });
 
-  test("o cliente envia X-Empresa-Id e X-Farm-Id com o mesmo valor, e a API aceita", async ({ page }) => {
+  test("o FIO fala o idioma legado: cabecalho, caminho de recurso e query saem traduzidos", async ({ page }) => {
+    // O CORS da API anterior nao aceita `X-Empresa-Id` — um navegador que o envia tem o PREFLIGHT recusado e
+    // a tela nao carrega. Durante a ponte o fio e legado nos TRES lugares, e e isso que este teste fixa.
     await login(page);
-    const enviados: string[] = [];
-    page.on("request", (r) => { const h = r.headers(); if (h["x-empresa-id"] || h["x-farm-id"]) enviados.push(`${h["x-empresa-id"] ?? "-"}|${h["x-farm-id"] ?? "-"}`); });
+    const enviados: { url: string; empresa?: string; farm?: string }[] = [];
+    page.on("request", (r) => {
+      const h = r.headers();
+      if (r.url().includes("/api/")) enviados.push({ url: r.url(), empresa: h["x-empresa-id"], farm: h["x-farm-id"] });
+    });
     await page.getByLabel("Empresa ativa").selectOption({ index: 1 });
     await page.goto("/cadastros/empresas");
     await expect(page.getByTestId("b1-row").first()).toBeVisible();
-    expect(enviados.length, "alguma requisição levou o contexto de empresa").toBeGreaterThan(0);
-    for (const par of enviados) { const [canonico, legado] = par.split("|"); expect(legado, par).toBe(canonico); }
+
+    const comContexto = enviados.filter((e) => e.farm || e.empresa);
+    expect(comContexto.length, "alguma requisicao levou o contexto de empresa").toBeGreaterThan(0);
+    for (const e of comContexto) {
+      expect(e.farm, `${e.url}: a empresa selecionada sai como X-Farm-Id`).toBeTruthy();
+      expect(e.empresa, `${e.url}: X-Empresa-Id nao pode sair do navegador durante a ponte`).toBeUndefined();
+    }
+    // A tela pede o recurso canonico `empresas`; o fio pede `farms`.
+    const recursos = enviados.map((e) => e.url).filter((u) => u.includes("/api/resources/"));
+    expect(recursos.some((u) => /\/api\/resources\/farms(\/|\?|$)/.test(u)), `recursos vistos: ${recursos.join(" ")}`).toBe(true);
+    expect(recursos.some((u) => /\/api\/resources\/empresas(\/|\?|$)/.test(u)), `nenhuma URL pode pedir o recurso canonico durante a ponte: ${recursos.join(" ")}`).toBe(false);
+  });
+
+  test("filtro por empresa viaja como farm_id na query e a tela continua canonica", async ({ page }) => {
+    await login(page);
+    const urls: string[] = [];
+    page.on("request", (r) => { if (r.url().includes("/api/")) urls.push(r.url()); });
+    await page.goto("/estoque?tab=recebimentos&sub=entradas");
+    await expect(page.getByRole("button", { name: /Empresa/i }).first()).toBeVisible();
+    // A listagem monta a query a partir do contexto; basta que nenhuma delas leve o nome canonico no fio.
+    const comEmpresa = urls.filter((u) => u.includes("empresa_id"));
+    expect(comEmpresa, `nenhuma query pode levar empresa_id no fio: ${comEmpresa.join(" ")}`).toEqual([]);
   });
 
   test("o seletor de empresa continua isolando: trocar de empresa troca o conjunto de dados", async ({ page }) => {

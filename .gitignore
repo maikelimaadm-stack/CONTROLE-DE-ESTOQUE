@@ -16,3 +16,6 @@ supabase/.temp
 
 # cache incremental do TypeScript (artefato de build, nunca versionado)
 *.tsbuildinfo
+
+# árvore da API do commit anterior, montada por scripts/api-anterior.mjs para o teste de version skew
+.api-anterior/
