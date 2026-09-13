@@ -36,8 +36,8 @@ for (const r of LEGACY_REDIRECTS) { if (r.destination.includes(":")) continue; i
 /**
  * CICLO DE REDIRECIONAMENTO. Um redirect para a PRÓPRIA origem não dá erro em lugar nenhum: o Next devolve
  * 308 para a mesma URL, o navegador tenta de novo e a tela morre em ERR_TOO_MANY_REDIRECTS — inclusive a
- * tela canônica, que nem precisava de redirect. Aconteceu de verdade ao renomear fazenda → empresa: a troca
- * de nome pegou os DOIS lados da regra e transformou `/cadastros/fazendas → /cadastros/empresas` em
+ * tela canônica, que nem precisava de redirect. Aconteceu de verdade na renomeação do cadastro de Empresas:
+ * a troca de nome pegou os DOIS lados da MESMA regra e transformou `<rota antiga> → /cadastros/empresas` em
  * `/cadastros/empresas → /cadastros/empresas`. É barato de escrever por acidente e caro de descobrir.
  */
 // `has` é a exceção legítima: `/os → /os?scope=mine` só dispara com `?mine=1` na URL, e o destino não tem
