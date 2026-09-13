@@ -130,6 +130,36 @@ function protegidos(sql: string): Set<string> {
 /** A tabela aparece sem alias nesta consulta? Então as colunas dela são referenciadas sem qualificação. */
 const fonteSemAlias = (sql: string, tabela: string): boolean => fontes(sql).some((f) => f.tabela === tabela && f.semAlias);
 
+/**
+ * PONTO CEGO FECHADO: a análise por ALIAS enxerga a consulta inteira, então ler a MESMA tabela DUAS vezes
+ * com o MESMO alias — uma recortada, outra não — passava despercebido. Foi assim que o `exists` do HAVING
+ * do painel de rebanho leu `erp.herd_lots h` sem predicado enquanto a subconsulta escalar, com o mesmo
+ * alias `h`, carregava o marcador: o alias já estava "semeado" como protegido.
+ *
+ * A contagem fecha isso: um alias que se protege pelo PRÓPRIO predicado precisa ter, no mínimo, tantos
+ * predicados quantas forem as vezes em que a tabela dele aparece. Herança por junção continua tratada pelo
+ * caminho de `protegidos()` — aqui só se cobra de quem respondeu "tenho predicado próprio".
+ */
+function ocorrenciasSemRecorte(sql: string): string[] {
+  const faltas: string[] = [];
+  const porAlias = new Map<string, { tabela: string; n: number }>();
+  for (const { tabela, alias } of fontes(sql)) {
+    const coluna = colunaDeEmpresa(tabela);
+    if (!coluna || NAO_RECORTAVEIS.has(tabela)) continue;
+    const atual = porAlias.get(alias);
+    porAlias.set(alias, { tabela, n: (atual?.n ?? 0) + 1 });
+  }
+  for (const [alias, { tabela, n }] of porAlias) {
+    if (n < 2) continue;
+    const coluna = colunaDeEmpresa(tabela)!;
+    const qualificado = sql.split(`me.empresa_id=${alias}.${coluna}`).length - 1;
+    const nu = sql.split(`me.empresa_id=${coluna}`).length - 1 - qualificado;
+    const predicados = qualificado + (fonteSemAlias(sql, tabela) ? nu : 0);
+    if (predicados > 0 && predicados < n) faltas.push(`${tabela} aparece ${n}x como ${alias} mas só ${predicados}x com predicado próprio — leitura repetida com o mesmo alias esconde a que ficou sem recorte`);
+  }
+  return faltas;
+}
+
 const filtrosVazios: Record<string, string> = {};
 
 /** Uma linha da matriz por relatório: o que ele lê, com que estratégia e sob qual módulo. */
@@ -142,7 +172,12 @@ function linhaDaMatriz(def: typeof REPORTS[number]): string {
   const estrategia = fontesEmpresa.length === 0
     ? "sem fonte de empresa"
     : fontesEmpresa.map((f) => {
-      const comPredicado = texto.includes(`me.empresa_id=${f.alias}.${colunaDeEmpresa(f.tabela)}`);
+      const coluna = colunaDeEmpresa(f.tabela);
+      // tabela sem alias (`from erp.dfe_documents where …`) tem o predicado na coluna NÃO qualificada
+      const comPredicado = texto.includes(`me.empresa_id=${f.alias}.${coluna}`)
+        || (f.semAlias === true && texto.includes(`me.empresa_id=${coluna}`));
+      // relatório de organização não tem módulo a respeitar: dizer "junção" ali seria enganoso
+      if (modulo === "organização") return `${f.tabela} (organização)`;
       return `${f.tabela} (${comPredicado ? "predicado" : derivados[f.alias] ? "derivado" : "junção"})`;
     }).join(", ");
   const status = escopo && escopo.tipo === "organizacao" && fontesEmpresa.length ? "ORGANIZAÇÃO JUSTIFICADO" : "OK";
@@ -210,6 +245,7 @@ describe("escopo empresarial dos relatórios", () => {
         if (paiRecortado || derivados[alias]) continue;
         problemas.push(`${def.key} (${modulo}): ${tabela} como ${alias} pertence a uma empresa por ${rel.via}, mas ${rel.pai} não aparece recortada na consulta`);
       }
+      for (const falta of ocorrenciasSemRecorte(texto)) problemas.push(`${def.key} (${modulo}): ${falta}`);
       for (const alias of Object.keys(derivados)) {
         const fonte = fontes(texto).find((f) => f.alias === alias);
         if (!fonte) { problemas.push(`${def.key}: declaração derivada obsoleta para alias ${alias} (não aparece no SQL)`); continue; }
@@ -269,6 +305,7 @@ describe("escopo empresarial dos relatórios", () => {
           if (DECLARADOS.some((d) => d.arquivo === arquivo && sql.includes(d.trecho) && d.aliases.includes(alias))) continue;
           problemas.push(`${arquivo}: ${tabela} como ${alias} sem recorte próprio — ${sql.slice(0, 120)}`);
         }
+        for (const falta of ocorrenciasSemRecorte(sql)) problemas.push(`${arquivo}: ${falta}`);
       }
     }
     expect(problemas, `rotas operacionais sem escopo:\n${problemas.join("\n")}`).toEqual([]);
@@ -304,6 +341,7 @@ describe("escopo empresarial dos relatórios", () => {
         if (derivado) continue;
         problemas.push(`${tabela} como ${alias} sem recorte: ${sql.slice(0, 110)}`);
       }
+      for (const falta of ocorrenciasSemRecorte(sql)) problemas.push(`${falta} — ${sql.slice(0, 90)}`);
     }
     expect(problemas, `painéis sem escopo:\n${problemas.join("\n")}`).toEqual([]);
   });

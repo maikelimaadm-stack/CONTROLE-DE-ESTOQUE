@@ -292,6 +292,14 @@ trato nem conte o animal da empresa A.
 A declaração `escopo.derivado` existe só para o primeiro caso — tabela SEM coluna de empresa — e sempre com
 justificativa escrita. Declará-la para uma tabela que tem `farm_id` é erro de gate, não escolha de projeto.
 
+**O recorte é por OCORRÊNCIA, não por tabela.** Ler a mesma tabela duas vezes na mesma consulta com o MESMO
+alias — uma leitura recortada e outra não — é indistinguível, para quem olha por alias, de uma leitura só bem
+recortada. Foi assim que o `exists` do HAVING do painel de rebanho leu `erp.herd_lots h` sem predicado: a
+subconsulta escalar acima, com o mesmo alias, já carregava o marcador. Existência de linha também é
+informação da outra empresa — a categoria aparecia zerada, mas só existia porque a empresa não autorizada
+tinha rebanho nela, e isso é a composição do rebanho dela exposta como catálogo em uso. O gate passou a
+contar ocorrências contra predicados.
+
 As matrizes versionadas estão em `docs/REPORT-SCOPE-MATRIX.md` (gerada e conferida pelo gate, uma linha por
 relatório do catálogo) e `docs/DASHBOARD-SCOPE-MATRIX.md` (painéis, bloco a bloco).
 

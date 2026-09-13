@@ -9,6 +9,10 @@ igualdade da junção é entre as próprias colunas de empresa (`a.farm_id = b.f
 negócio entre duas tabelas que têm `farm_id` (`fd.batch_id = b.id`) não recorta nada e não conta como herança.
 Exceção de organização é declarada com motivo.
 
+A contagem é por OCORRÊNCIA, não por tabela: ler a mesma tabela duas vezes com o MESMO alias — uma recortada,
+outra não — passava pelo gate, porque o alias já estava marcado como protegido pela primeira leitura. Hoje o
+gate exige tantos predicados quantas forem as ocorrências de quem se protege pelo predicado próprio.
+
 | Endpoint | Permissão | Bloco | Fonte principal | Empresa derivada de | Escopo aplicado |
 | --- | --- | --- | --- | --- | --- |
 | /dashboards/home | dashboard.home.view (organização) | forecast | financial_titles | farm_id | `{{escopo:farm_id\|financeiro}}` |
@@ -24,7 +28,7 @@ Exceção de organização é declarada com motivo.
 | /dashboards/cash-book | dashboard.cash_book.view (financeiro) | r | bank_movements | m.farm_id (nullable) | `{{escopo_nulo:m.farm_id}}` |
 | /dashboards/supply | dashboard.supply.view (compras) | byStatus, byType | purchase_requests | farm_id | `{{escopo:farm_id}}` |
 | /dashboards/supply | dashboard.supply.view | leadTime, topProviders, sla | purchase_request_events / quotations → purchase_requests | r.farm_id | `{{escopo:r.farm_id}}` |
-| /dashboards/livestock | dashboard.livestock.view (pecuaria) | herd | animals; herd_lots | a.farm_id; h.farm_id | dois marcadores, um por fonte |
+| /dashboards/livestock | dashboard.livestock.view (pecuaria) | herd | animals (`on` do left join); herd_lots (subconsulta escalar); herd_lots (`exists` do HAVING) | a.farm_id; h.farm_id; h.farm_id | TRÊS marcadores, um por OCORRÊNCIA — `erp.herd_lots` é lida duas vezes com o mesmo alias `h` e cada leitura responde pela própria empresa (o `exists` do HAVING decide a EXISTÊNCIA da linha: sem recorte, a categoria em que só a outra empresa tem rebanho aparecia zerada) |
 | /dashboards/livestock | dashboard.livestock.view | movements | animal_movements | farm_id | `{{escopo:farm_id}}` |
 | /dashboards/livestock | dashboard.livestock.view | gmd | weighing_items → weighings | w.farm_id | `{{escopo:w.farm_id}}` |
 | /dashboards/livestock | dashboard.livestock.view | repro | matings → animals (matriz) | a.farm_id | `{{escopo:a.farm_id}}` |

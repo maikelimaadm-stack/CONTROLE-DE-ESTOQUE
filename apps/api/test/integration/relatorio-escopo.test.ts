@@ -20,7 +20,7 @@ const SENT_A_BANCO = "3333.33"; const SENT_B_BANCO = "4444.44";
 const SENT_A_ESTOQUE = "77"; const SENT_B_ESTOQUE = "88";
 // sentinelas do registro CRUZADO: linha da empresa A pendurada num lote da empresa B
 const SENT_A_TRATO = "5555.55"; const SENT_A_PESO = "666.6";
-let loteB = "";
+let loteB = ""; let categoriaSoDeA = "";
 
 const get = (url: string, headers: Hdr) => h.app.inject({ method: "GET", url, headers });
 const criar = async (url: string, payload: Record<string, unknown>) => {
@@ -74,6 +74,11 @@ beforeAll(async () => {
     loteB = (await raiz.query<{ id: string }>("insert into erp.batches (organization_id, farm_id, code, batch_date, description, batch_type, status, entry_date) values ($1,$2,'SENT-B-LOTE','2026-09-01','Lote sentinela B','feedlot','active','2026-09-01') returning id", [h.demo.orgId, B])).rows[0]!.id;
     await raiz.query("insert into erp.feed_deliveries (organization_id, farm_id, delivery_date, batch_id, quantity_kg, cost) values ($1,$2,'2026-09-03',$3,1,$4)", [h.demo.orgId, A, loteB, SENT_A_TRATO]);
     await raiz.query("insert into erp.animals (organization_id, farm_id, species_id, category_id, batch_id, sex, entry_date, status, current_weight) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,$4,'M','2026-09-01','active',$5)", [h.demo.orgId, A, I.speciesCategory, loteB, SENT_A_PESO]);
+    // Categoria em que SÓ a empresa A tem rebanho (um lote sem identificação). O painel de rebanho decidia a
+    // existência da linha por um `exists` sobre erp.herd_lots SEM recorte: a empresa B via a categoria
+    // aparecer — composição de rebanho da empresa que ela não enxerga, exposta como catálogo em uso.
+    categoriaSoDeA = (await raiz.query<{ id: string }>("insert into erp.animal_categories (organization_id, species_id, name, ua_factor) values ($1,(select species_id from erp.animal_categories where id=$2),'Sentinela categoria só de A',1) returning id", [h.demo.orgId, I.speciesCategory])).rows[0]!.id;
+    await raiz.query("insert into erp.herd_lots (organization_id, farm_id, species_id, category_id, quantity, entry_date) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,7,'2026-09-01')", [h.demo.orgId, A, categoriaSoDeA]);
     await raiz.end();
   }
 
@@ -83,7 +88,7 @@ beforeAll(async () => {
     "report.bank_statement.view", "report.supply_sla.view", "report.supplies.view", "report.cost_calculation.view",
     "report.accumulated_income_statement.view", "report.stock_movement.view",
     "dashboard.financial.view", "dashboard.home.view", "dashboard.supply.view", "dashboard.cash_book.view", "bank_movements.view", "payables.view", "purchase_requests.view",
-    "report.costing_batch.view", "report.animals_per_batch.view"
+    "report.costing_batch.view", "report.animals_per_batch.view", "dashboard.livestock.view"
   ];
   const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: "Perfil sentinela", permissions: PERMS } });
   expect(papel.statusCode, papel.body).toBe(201);
@@ -175,6 +180,22 @@ describe("registro da empresa A pendurado em lote da empresa B: a junção não 
         expect(texto.includes(sentinela), `${key} vazou ${sentinela} da empresa A`).toBe(false);
       }
     }
+  });
+});
+
+describe("painel de rebanho: existência de linha também é informação da outra empresa", () => {
+  it("categoria em que só a empresa A tem rebanho NÃO aparece para quem enxerga apenas a empresa B", async () => {
+    const r = await get("/api/dashboards/livestock", USUARIO);
+    expect(r.statusCode, r.body).toBe(200);
+    const herd = (j(r)["herd"] ?? []) as Record<string, unknown>[];
+    const linha = herd.find((x) => x["category"] === "Sentinela categoria só de A");
+    expect(linha, "a linha só existiria por causa do lote da empresa A — zerada, mas revelando a composição do rebanho dela").toBeUndefined();
+  });
+  it("o proprietário vê a categoria, com as 7 cabeças da empresa A (a linha existe mesmo)", async () => {
+    const r = await get("/api/dashboards/livestock", h.headers());
+    expect(r.statusCode, r.body).toBe(200);
+    const herd = (j(r)["herd"] ?? []) as Record<string, unknown>[];
+    expect(herd.find((x) => x["category"] === "Sentinela categoria só de A")).toMatchObject({ unidentified: 7 });
   });
 });
 

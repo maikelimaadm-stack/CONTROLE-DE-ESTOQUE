@@ -16,7 +16,7 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | receipts | report.receipts | estoque | invoices (predicado) | OK |
 | stocks_abc | report.stocks_abc | estoque | warehouses (predicado) | OK |
 | feed_batch_cost | report.feed_batch_cost | estoque | feed_batches (predicado) | OK |
-| dfe | report.dfe | estoque | dfe_documents (junção) | OK |
+| dfe | report.dfe | estoque | dfe_documents (predicado) | OK |
 | payables | report.payables | financeiro | financial_titles (predicado) | OK |
 | paid | report.paid | financeiro | financial_titles (predicado) | OK |
 | receivables | report.receivables | financeiro | financial_titles (predicado) | OK |
@@ -25,7 +25,7 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | receipt_schedule | report.receipt_schedule | financeiro | financial_titles (predicado) | OK |
 | paid_interest | report.paid_interest | financeiro | financial_titles (predicado) | OK |
 | received_interest | report.received_interest | financeiro | financial_titles (predicado) | OK |
-| bank_statement | report.bank_statement | organização | bank_movements (junção), bank_movements (junção) | ORGANIZAÇÃO JUSTIFICADO |
+| bank_statement | report.bank_statement | organização | bank_movements (organização), bank_movements (organização) | ORGANIZAÇÃO JUSTIFICADO |
 | financial_movement | report.financial_movement | financeiro | bank_movements (predicado) | OK |
 | ledger_category | report.ledger_category | financeiro | financial_titles (predicado) | OK |
 | ledger | report.ledger | financeiro | bank_movements (predicado) | OK |
@@ -95,7 +95,7 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | sisbov_death | report.sisbov_death | pecuaria | animals (predicado) | OK |
 | feedlot_batch_control | report.feedlot_batch_control | confinamento | animals (predicado), feed_deliveries (predicado), batches (predicado) | OK |
 | feedlot_planned_consumption | report.feedlot_planned_consumption | confinamento | trough_readings (predicado), feed_deliveries (predicado) | OK |
-| feedlot_activity | report.feedlot_activity | confinamento | feed_deliveries (junção), diet_batches (junção), trough_readings (junção), diet_batches (predicado), feed_deliveries (predicado), trough_readings (predicado) | OK |
+| feedlot_activity | report.feedlot_activity | confinamento | feed_deliveries (predicado), diet_batches (predicado), trough_readings (predicado), diet_batches (predicado), feed_deliveries (predicado), trough_readings (predicado) | OK |
 | equipment | report.equipment | frota_ativos | equipments (predicado) | OK |
 | accumulated_depreciation | report.accumulated_depreciation | frota_ativos | equipments (predicado) | OK |
 | machines | report.machines | frota_ativos | fuel_supplies (predicado), maintenances (predicado), equipments (predicado) | OK |
