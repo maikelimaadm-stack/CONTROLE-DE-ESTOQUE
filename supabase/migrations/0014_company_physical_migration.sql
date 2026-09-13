@@ -166,59 +166,61 @@ comment on function erp.sincronizar_empresa_legado() is 'PRE-BASE2-03: mantem em
 -- silenciosamente. Explícito também é o que permite REVISAR a lista, que é o pedido central desta migração:
 -- nada de substituição cega. Tabela NOVA com `farm_id` não entra aqui sozinha — de propósito: quem cobra
 -- isso é o gate `company-schema-sync`, que falha o CI, e não uma migration que já rodou.
--- A nulabilidade de cada coluna canônica acompanha exatamente a da legada.
-alter table erp.animal_handlings add column empresa_id uuid not null;
+-- Todas nascem ANULÁVEIS: `add column ... not null` sem default é recusado em tabela QUE JÁ TEM LINHAS,
+-- e este é o caso real de quem faz upgrade (o banco fresh, vazio, esconderia o problema). O NOT NULL entra
+-- depois da cópia, só nas que o legado já exigia.
+alter table erp.animal_handlings add column empresa_id uuid;
 alter table erp.animal_movements add column empresa_destino_id uuid;
-alter table erp.animal_movements add column empresa_id uuid not null;
-alter table erp.animal_retroactive_costs add column empresa_id uuid not null;
-alter table erp.animals add column empresa_id uuid not null;
-alter table erp.areas add column empresa_id uuid not null;
-alter table erp.authorizer_farms add column empresa_id uuid not null;
-alter table erp.bank_account_farms add column empresa_id uuid not null;
+alter table erp.animal_movements add column empresa_id uuid;
+alter table erp.animal_retroactive_costs add column empresa_id uuid;
+alter table erp.animals add column empresa_id uuid;
+alter table erp.areas add column empresa_id uuid;
+alter table erp.authorizer_farms add column empresa_id uuid;
+alter table erp.bank_account_farms add column empresa_id uuid;
 alter table erp.bank_movements add column empresa_id uuid;
-alter table erp.batches add column empresa_id uuid not null;
-alter table erp.breeding_seasons add column empresa_id uuid not null;
+alter table erp.batches add column empresa_id uuid;
+alter table erp.breeding_seasons add column empresa_id uuid;
 alter table erp.budget_plannings add column empresa_id uuid;
-alter table erp.contracts add column empresa_id uuid not null;
-alter table erp.devolutions add column empresa_id uuid not null;
+alter table erp.contracts add column empresa_id uuid;
+alter table erp.devolutions add column empresa_id uuid;
 alter table erp.dfe_documents add column empresa_id uuid;
-alter table erp.diet_batches add column empresa_id uuid not null;
+alter table erp.diet_batches add column empresa_id uuid;
 alter table erp.documents add column empresa_id uuid;
-alter table erp.earnings add column empresa_id uuid not null;
-alter table erp.equipment_transfers add column empresa_destino_id uuid not null;
-alter table erp.equipment_transfers add column empresa_origem_id uuid not null;
-alter table erp.equipments add column empresa_id uuid not null;
-alter table erp.farm_cost_centers add column empresa_id uuid not null;
-alter table erp.feed_batches add column empresa_id uuid not null;
-alter table erp.feed_deliveries add column empresa_id uuid not null;
-alter table erp.feedlot_yards add column empresa_id uuid not null;
+alter table erp.earnings add column empresa_id uuid;
+alter table erp.equipment_transfers add column empresa_destino_id uuid;
+alter table erp.equipment_transfers add column empresa_origem_id uuid;
+alter table erp.equipments add column empresa_id uuid;
+alter table erp.farm_cost_centers add column empresa_id uuid;
+alter table erp.feed_batches add column empresa_id uuid;
+alter table erp.feed_deliveries add column empresa_id uuid;
+alter table erp.feedlot_yards add column empresa_id uuid;
 alter table erp.financial_freezes add column empresa_id uuid;
-alter table erp.financial_titles add column empresa_id uuid not null;
-alter table erp.fuel_supplies add column empresa_id uuid not null;
-alter table erp.grazing_modules add column empresa_id uuid not null;
-alter table erp.herd_lots add column empresa_id uuid not null;
-alter table erp.input_entries add column empresa_id uuid not null;
-alter table erp.invoices add column empresa_id uuid not null;
+alter table erp.financial_titles add column empresa_id uuid;
+alter table erp.fuel_supplies add column empresa_id uuid;
+alter table erp.grazing_modules add column empresa_id uuid;
+alter table erp.herd_lots add column empresa_id uuid;
+alter table erp.input_entries add column empresa_id uuid;
+alter table erp.invoices add column empresa_id uuid;
 alter table erp.journal_entries add column empresa_id uuid;
-alter table erp.livestock_plannings add column empresa_id uuid not null;
-alter table erp.maintenances add column empresa_id uuid not null;
-alter table erp.opening_balances add column empresa_id uuid not null;
-alter table erp.processings add column empresa_id uuid not null;
-alter table erp.proprietary_farms add column empresa_id uuid not null;
-alter table erp.purchase_requests add column empresa_id uuid not null;
-alter table erp.rainfalls add column empresa_id uuid not null;
-alter table erp.requisitions add column empresa_id uuid not null;
-alter table erp.salary_advances add column empresa_id uuid not null;
-alter table erp.sales_documents add column empresa_id uuid not null;
-alter table erp.service_orders add column empresa_id uuid not null;
-alter table erp.stock_corrections add column empresa_id uuid not null;
-alter table erp.stock_movements add column empresa_id uuid not null;
-alter table erp.stock_writeoffs add column empresa_id uuid not null;
-alter table erp.trough_readings add column empresa_id uuid not null;
-alter table erp.warehouse_transfers add column empresa_destino_id uuid not null;
-alter table erp.warehouse_transfers add column empresa_origem_id uuid not null;
-alter table erp.warehouses add column empresa_id uuid not null;
-alter table erp.weighings add column empresa_id uuid not null;
+alter table erp.livestock_plannings add column empresa_id uuid;
+alter table erp.maintenances add column empresa_id uuid;
+alter table erp.opening_balances add column empresa_id uuid;
+alter table erp.processings add column empresa_id uuid;
+alter table erp.proprietary_farms add column empresa_id uuid;
+alter table erp.purchase_requests add column empresa_id uuid;
+alter table erp.rainfalls add column empresa_id uuid;
+alter table erp.requisitions add column empresa_id uuid;
+alter table erp.salary_advances add column empresa_id uuid;
+alter table erp.sales_documents add column empresa_id uuid;
+alter table erp.service_orders add column empresa_id uuid;
+alter table erp.stock_corrections add column empresa_id uuid;
+alter table erp.stock_movements add column empresa_id uuid;
+alter table erp.stock_writeoffs add column empresa_id uuid;
+alter table erp.trough_readings add column empresa_id uuid;
+alter table erp.warehouse_transfers add column empresa_destino_id uuid;
+alter table erp.warehouse_transfers add column empresa_origem_id uuid;
+alter table erp.warehouses add column empresa_id uuid;
+alter table erp.weighings add column empresa_id uuid;
 
 -- Cópia do valor legado + gatilho de sincronização + referência canônica.
 do $$
@@ -265,6 +267,53 @@ begin
     end if;
   end loop;
 end $$;
+
+-- Agora que o valor foi copiado, a obrigatoriedade acompanha exatamente a da coluna legada.
+alter table erp.animal_handlings alter column empresa_id set not null;
+alter table erp.animal_movements alter column empresa_id set not null;
+alter table erp.animal_retroactive_costs alter column empresa_id set not null;
+alter table erp.animals alter column empresa_id set not null;
+alter table erp.areas alter column empresa_id set not null;
+alter table erp.authorizer_farms alter column empresa_id set not null;
+alter table erp.bank_account_farms alter column empresa_id set not null;
+alter table erp.batches alter column empresa_id set not null;
+alter table erp.breeding_seasons alter column empresa_id set not null;
+alter table erp.contracts alter column empresa_id set not null;
+alter table erp.devolutions alter column empresa_id set not null;
+alter table erp.diet_batches alter column empresa_id set not null;
+alter table erp.earnings alter column empresa_id set not null;
+alter table erp.equipment_transfers alter column empresa_destino_id set not null;
+alter table erp.equipment_transfers alter column empresa_origem_id set not null;
+alter table erp.equipments alter column empresa_id set not null;
+alter table erp.farm_cost_centers alter column empresa_id set not null;
+alter table erp.feed_batches alter column empresa_id set not null;
+alter table erp.feed_deliveries alter column empresa_id set not null;
+alter table erp.feedlot_yards alter column empresa_id set not null;
+alter table erp.financial_titles alter column empresa_id set not null;
+alter table erp.fuel_supplies alter column empresa_id set not null;
+alter table erp.grazing_modules alter column empresa_id set not null;
+alter table erp.herd_lots alter column empresa_id set not null;
+alter table erp.input_entries alter column empresa_id set not null;
+alter table erp.invoices alter column empresa_id set not null;
+alter table erp.livestock_plannings alter column empresa_id set not null;
+alter table erp.maintenances alter column empresa_id set not null;
+alter table erp.opening_balances alter column empresa_id set not null;
+alter table erp.processings alter column empresa_id set not null;
+alter table erp.proprietary_farms alter column empresa_id set not null;
+alter table erp.purchase_requests alter column empresa_id set not null;
+alter table erp.rainfalls alter column empresa_id set not null;
+alter table erp.requisitions alter column empresa_id set not null;
+alter table erp.salary_advances alter column empresa_id set not null;
+alter table erp.sales_documents alter column empresa_id set not null;
+alter table erp.service_orders alter column empresa_id set not null;
+alter table erp.stock_corrections alter column empresa_id set not null;
+alter table erp.stock_movements alter column empresa_id set not null;
+alter table erp.stock_writeoffs alter column empresa_id set not null;
+alter table erp.trough_readings alter column empresa_id set not null;
+alter table erp.warehouse_transfers alter column empresa_destino_id set not null;
+alter table erp.warehouse_transfers alter column empresa_origem_id set not null;
+alter table erp.warehouses alter column empresa_id set not null;
+alter table erp.weighings alter column empresa_id set not null;
 
 -- Chaves PRIMÁRIAS e ÚNICAS passam para a coluna CANÔNICA.
 -- As duas colunas são provadamente iguais, então a regra de unicidade é a MESMA — o que muda é onde ela

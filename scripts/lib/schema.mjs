@@ -102,6 +102,20 @@ export function readSchema(dir = MIGRATIONS_DIR) {
       const col = parseColumn(m[2].trim());
       if (col) entry.columns.set(col.name, { ...col, addedIn: file });
     }
+    // OBRIGATORIEDADE DECLARADA DEPOIS DA CRIAÇÃO (PRE-BASE2-03): `add column ... not null` sem default é
+    // recusado em tabela que já tem linhas, então a coluna canônica nasce anulável e só depois da cópia
+    // recebe o NOT NULL. Sem ler este passo, o dicionário e a matriz de RLS diriam que 47 colunas
+    // obrigatórias são opcionais — e a matriz classificaria todas como "empresa anulável".
+    const notNullRe = /alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+set\s+not\s+null\s*;/gi;
+    for (let m = notNullRe.exec(sql); m; m = notNullRe.exec(sql)) {
+      const col = tables.get(m[1].toLowerCase())?.columns.get(m[2].toLowerCase());
+      if (col) col.notNull = true;
+    }
+    const dropNotNullRe = /alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+drop\s+not\s+null\s*;/gi;
+    for (let m = dropNotNullRe.exec(sql); m; m = dropNotNullRe.exec(sql)) {
+      const col = tables.get(m[1].toLowerCase())?.columns.get(m[2].toLowerCase());
+      if (col) col.notNull = false;
+    }
     // RENOMEAÇÃO E REMOÇÃO DE TABELA (PRE-BASE2-03). Sem isto, `alter table erp.farms rename to empresas`
     // deixaria o dicionário e os gates enxergando um schema que não existe mais — uma tabela fantasma com o
     // nome antigo e nenhuma com o novo. Rodam DEPOIS das colunas do mesmo arquivo, que é a ordem real da

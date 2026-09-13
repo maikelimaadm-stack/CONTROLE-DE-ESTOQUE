@@ -96,8 +96,32 @@ create or replace function erp.empresa_escrita_permitida(p_empresa uuid) returns
 $$;
 comment on function erp.empresa_escrita_permitida(uuid) is 'WITH CHECK do escopo empresarial. Empresa nula = registro da organizacao inteira: so proprietario ou modo todas pode criar.';
 
+-- CONJUNTO das empresas nomeadas no escopo do membro. Existe por causa do PLANO, não do estilo.
+--
+-- `erp.empresa_no_escopo(empresa_id, modulo)` é um predicado POR LINHA: dentro de uma política de RLS ele
+-- vira um filtro que o executor chama uma vez para CADA linha lida, e cada chamada roda dois `exists`.
+-- Medido em base com volume (200 mil movimentações, 100 mil títulos, 30 empresas, `docs/COMPANY-RLS-MATRIX.md`):
+-- a listagem de títulos em aberto levava **34,7 s**, com o filtro avaliado 100 mil vezes.
+--
+-- A forma abaixo diz a MESMA coisa de um jeito que o planejador resolve UMA vez por consulta:
+--   - `(select erp.escopo_empresa_total(...))` — sublink escalar sem referência à linha → InitPlan;
+--   - `empresa_id in (select erp.empresas_do_membro(...))` — sublink não correlacionado → hashed SubPlan.
+-- A mesma listagem passa a **61 ms** (563×), com `loops=1` nos dois. Por isso o predicado de leitura é
+-- escrito INLINE na política em vez de chamar `empresa_no_escopo(empresa_id)`: embrulhá-lo numa função
+-- devolveria a chamada por linha e o ganho ia embora.
+--
+-- Só LEITURA precisa dessa forma: `with check` roda por linha ESCRITA, onde uma chamada é uma chamada.
+create or replace function erp.empresas_do_membro(p_modulo text) returns setof uuid language sql stable as $$
+  select me.empresa_id from erp.membro_empresas me
+    join erp.organization_members m2 on m2.id = me.membro_id
+   where me.organization_id = erp.current_org_id() and m2.user_id = erp.effective_user_id() and m2.is_active
+     and (p_modulo is null or me.modulo = p_modulo)
+$$;
+comment on function erp.empresas_do_membro(text) is 'Empresas NOMEADAS no escopo do membro (modo selecionadas). Conjunto, nao predicado: usado como sublink nao correlacionado nas politicas para o planejador resolver uma vez por consulta.';
+
 grant execute on function erp.escopo_empresa_total(text), erp.escopo_empresa_total(),
                           erp.empresa_no_escopo(uuid, text), erp.empresa_no_escopo(uuid),
+                          erp.empresas_do_membro(text),
                           erp.empresa_escrita_permitida(uuid) to erp_app;
 
 -- ---------- 2) políticas ----------
@@ -107,6 +131,10 @@ grant execute on function erp.escopo_empresa_total(text), erp.escopo_empresa_tot
 do $$
 declare
   r record;
+  -- Predicado de LEITURA (ver a nota sobre plano acima de `erp.empresas_do_membro`). `%1$I` é a coluna.
+  leitura constant text :=
+    '(%1$I is null or (select erp.escopo_empresa_total(erp.modulo_empresa_atual()))'
+    ' or %1$I in (select erp.empresas_do_membro(erp.modulo_empresa_atual())))';
   -- C — ORIGEM + DESTINO: regra própria (a leitura vale por qualquer ponta; a escrita responde pela origem).
   pares text[] := array['animal_movements','equipment_transfers','warehouse_transfers'];
   -- E/F — PORTA DINÂMICA, CONFIGURAÇÃO DE AUTORIZAÇÃO, DICA DENORMALIZADA e ARQUIVO MORTO.
@@ -128,8 +156,9 @@ begin
     execute format('drop policy if exists tenant_isolation on erp.%I', r.tabela);
     execute format('drop policy if exists tenant_e_empresa on erp.%I', r.tabela);
     execute format($f$create policy tenant_e_empresa on erp.%I for all to erp_app, authenticated
-        using (erp.tenant_visible(organization_id) and erp.empresa_no_escopo(empresa_id))
-        with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_id))$f$, r.tabela);
+        using (erp.tenant_visible(organization_id) and %s)
+        with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_id))$f$,
+        r.tabela, format(leitura, 'empresa_id'));
   end loop;
 
   -- C — transferências entre empresas. A leitura vale pelas DUAS pontas: quem envia acompanha e quem recebe
@@ -138,17 +167,20 @@ begin
   -- duas pontas quebraria a operação. O destino continua provado pela chave estrangeira composta — tem de
   -- ser empresa DESTA organização — e por `exigirEmpresaDaOrganizacao` na API.
   execute $f$drop policy if exists tenant_isolation on erp.animal_movements$f$;
-  execute $f$create policy tenant_e_empresa on erp.animal_movements for all to erp_app, authenticated
-      using (erp.tenant_visible(organization_id) and (erp.empresa_no_escopo(empresa_id) or erp.empresa_no_escopo(empresa_destino_id)))
-      with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_id))$f$;
+  execute format($f$create policy tenant_e_empresa on erp.animal_movements for all to erp_app, authenticated
+      using (erp.tenant_visible(organization_id) and (%s or %s))
+      with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_id))$f$,
+      format(leitura, 'empresa_id'), format(leitura, 'empresa_destino_id'));
   execute $f$drop policy if exists tenant_isolation on erp.equipment_transfers$f$;
-  execute $f$create policy tenant_e_empresa on erp.equipment_transfers for all to erp_app, authenticated
-      using (erp.tenant_visible(organization_id) and (erp.empresa_no_escopo(empresa_origem_id) or erp.empresa_no_escopo(empresa_destino_id)))
-      with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_origem_id))$f$;
+  execute format($f$create policy tenant_e_empresa on erp.equipment_transfers for all to erp_app, authenticated
+      using (erp.tenant_visible(organization_id) and (%s or %s))
+      with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_origem_id))$f$,
+      format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
   execute $f$drop policy if exists tenant_isolation on erp.warehouse_transfers$f$;
-  execute $f$create policy tenant_e_empresa on erp.warehouse_transfers for all to erp_app, authenticated
-      using (erp.tenant_visible(organization_id) and (erp.empresa_no_escopo(empresa_origem_id) or erp.empresa_no_escopo(empresa_destino_id)))
-      with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_origem_id))$f$;
+  execute format($f$create policy tenant_e_empresa on erp.warehouse_transfers for all to erp_app, authenticated
+      using (erp.tenant_visible(organization_id) and (%s or %s))
+      with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_origem_id))$f$,
+      format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
 end $$;
 
 -- D — a própria tabela de Empresas.
@@ -161,7 +193,8 @@ end $$;
 -- criá-la seria circular. Alterar continua limitado ao que o USING deixa enxergar.
 drop policy if exists tenant_isolation on erp.empresas;
 create policy tenant_e_empresa on erp.empresas for all to erp_app, authenticated
-  using (erp.tenant_visible(organization_id) and erp.empresa_no_escopo(id, null))
+  using (erp.tenant_visible(organization_id)
+         and ((select erp.escopo_empresa_total(null::text)) or id in (select erp.empresas_do_membro(null::text))))
   with check (erp.tenant_visible(organization_id));
 
 comment on policy tenant_e_empresa on erp.empresas is 'PRE-BASE2-03: empresa visivel = a que o membro enxerga em ALGUM modulo (uniao), nunca a organizacao inteira. Uniao e nao modulo ativo porque o seletor e compartilhado entre telas de modulos diferentes.';
