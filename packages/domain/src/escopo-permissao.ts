@@ -197,7 +197,7 @@ export const EXCECOES_ESCOPO: Readonly<Record<string, string>> = {
   proprietaries: "Cadastro da organização; `erp.proprietary_farms` é vínculo de abrangência.",
   authorizers: "Cadastro da organização; `erp.authorizer_farms` é vínculo de abrangência.",
   bank_accounts: "Cadastro da organização; `erp.bank_account_farms` é vínculo de abrangência. Os MOVIMENTOS (`erp.bank_movements`) são de empresa, no módulo financeiro.",
-  users: "Usuário pertence à organização; o acesso dele às empresas é justamente o que esta missão passa a configurar (`erp.member_farms` é legado de autorização, não dado de negócio)."
+  users: "Usuário pertence à organização; o acesso dele às empresas é justamente o que esta missão passa a configurar (o vínculo legado de fazendas do membro era autorização, não dado de negócio)."
 };
 
 /** Índice recurso → escopo, montado das listas acima (a fonte continua sendo a declaração explícita). */

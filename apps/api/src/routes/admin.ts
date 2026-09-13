@@ -1,11 +1,23 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { PERMISSION_RESOURCES, ACTION_LABELS, allPermissionKeys } from "@agro/domain";
+import { PERMISSION_RESOURCES, ACTION_LABELS, MODULOS_ESCOPO_EMPRESA, allPermissionKeys, modulosDasPermissoes } from "@agro/domain";
 import { runService, audit } from "../lib/service.js";
 import { notFound, validation, denied } from "../lib/errors.js";
 import { hasPermission } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
+import { deFarmIdsLegado, escopoEmpresaSchema, gravarEscopos, paraFarmIdsLegado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
+
+/**
+ * Acesso por empresa pedido na requisição: o canônico (`escopos_empresas`) ou o legado (`farm_ids`) —
+ * NUNCA os dois, porque não há regra honesta para combiná-los. `undefined` = não mexer no que já existe.
+ */
+function escoposPedidos(d: { farm_ids?: string[]; escopos_empresas?: EscopoEmpresaEntrada[] }): EscopoEmpresaEntrada[] | null {
+  if (d.escopos_empresas && d.farm_ids) throw validation("Envie escopos_empresas OU farm_ids, não os dois");
+  if (d.escopos_empresas) return d.escopos_empresas;
+  if (d.farm_ids) return deFarmIdsLegado(d.farm_ids);
+  return null;
+}
 
 export default async function adminRoutes(app: FastifyInstance) {
   // ---------- Catálogo de permissões (árvore para a tela de perfis) ----------
@@ -61,17 +73,37 @@ export default async function adminRoutes(app: FastifyInstance) {
     const where = ["m.organization_id=$1"]; const params: unknown[] = [ctx.orgId];
     if (q.search) { params.push(`%${q.search}%`); where.push(`(u.name ilike $${params.length} or u.email::text ilike $${params.length})`); }
     const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.organization_members m join erp.users u on u.id=m.user_id where ${where.join(" and ")}`, params);
-    const r = await ctx.tx.query(`select m.id as member_id, u.id, u.name, u.email, u.phone, u.is_active as user_active, m.is_active, m.is_owner, m.role_id, r.name as role_name, u.last_login_at, m.created_at, (select array_agg(farm_id) from erp.member_farms mf where mf.member_id=m.id) as farm_ids from erp.organization_members m join erp.users u on u.id=m.user_id left join erp.roles r on r.id=m.role_id where ${where.join(" and ")} order by u.name limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
-    return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
+    const r = await ctx.tx.query(`select m.id as member_id, u.id, u.name, u.email, u.phone, u.is_active as user_active, m.is_active, m.is_owner, m.role_id, r.name as role_name, u.last_login_at, m.created_at, (select coalesce(json_agg(json_build_object('modulo', e.modulo, 'modo', e.modo, 'empresas', coalesce((select array_agg(me.empresa_id) from erp.membro_empresas me where me.organization_id=e.organization_id and me.membro_id=e.membro_id and me.modulo=e.modulo), '{}')) order by e.modulo), '[]'::json) from erp.membro_escopos_empresa e where e.organization_id=m.organization_id and e.membro_id=m.id) as escopos_empresas from erp.organization_members m join erp.users u on u.id=m.user_id left join erp.roles r on r.id=m.role_id where ${where.join(" and ")} order by u.name limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+    // `farm_ids` continua no contrato por compatibilidade, mas só aparece quando a configuração REAL cabe no
+    // formato antigo; caso contrário vem null (a API não devolve uma lista que mentiria sobre o acesso).
+    const items = r.rows.map((x) => {
+      const escopos = ((x as { escopos_empresas: EscopoEmpresaEntrada[] }).escopos_empresas ?? []).map((e) => ({ ...e, empresas: e.empresas ?? [] }));
+      return { ...(x as Record<string, unknown>), escopos_empresas: escopos, farm_ids: (x as { is_owner: boolean }).is_owner ? [] : paraFarmIdsLegado(escopos) };
+    });
+    return { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
   }));
-  const memberSchema = z.object({ name: z.string().min(1), email: z.string().email(), phone: z.string().optional().nullable(), password: z.string().min(8).optional(), role_id: z.string().uuid().nullable().optional(), farm_ids: z.array(z.string().uuid()).default([]), is_active: z.boolean().default(true), boss_user_ids: z.array(z.string().uuid()).default([]) });
+  /**
+   * Catálogo de módulos de ACESSO POR EMPRESA para a tela de administração. Com `role_id`, diz também em
+   * quais módulos aquele perfil tem permissão FUNCIONAL — a tela desabilita os demais, porque escopo sem
+   * capacidade não dá acesso a nada (a interseção é E, nunca OU). Desabilitar é informação, não autorização.
+   */
+  app.get("/admin/modulos-empresa", async (req) => runService(app, req, "users.view", async (ctx) => {
+    const { role_id: roleId } = req.query as { role_id?: string };
+    let comPermissao: string[] | null = null;
+    if (roleId) {
+      const r = await ctx.tx.query<{ permission_key: string }>(
+        "select rp.permission_key from erp.role_permissions rp join erp.roles ro on ro.id=rp.role_id where rp.role_id=$1 and ro.organization_id=$2", [roleId, ctx.orgId]);
+      comPermissao = modulosDasPermissoes(r.rows.map((x) => x.permission_key));
+    }
+    return { items: MODULOS_ESCOPO_EMPRESA.map((m) => ({ ...m, tem_permissao: comPermissao ? comPermissao.includes(m.chave) : null })) };
+  }));
+  const memberSchema = z.object({ name: z.string().min(1), email: z.string().email(), phone: z.string().optional().nullable(), password: z.string().min(8).optional(), role_id: z.string().uuid().nullable().optional(), farm_ids: z.array(z.string().uuid()).optional(), escopos_empresas: z.array(escopoEmpresaSchema).optional(), is_active: z.boolean().default(true), boss_user_ids: z.array(z.string().uuid()).default([]) });
   app.post("/admin/members", async (req, reply) => reply.status(201).send(await runService(app, req, "users.create", async (ctx) => {
     const d = memberSchema.parse(req.body);
     const hash = d.password ? await bcrypt.hash(d.password, 10) : null;
     const u = await ctx.tx.query<{ id: string }>("insert into erp.users(email,name,phone,password_hash) values ($1,$2,$3,$4) on conflict (email) do update set name=excluded.name, phone=coalesce(excluded.phone, erp.users.phone), password_hash=coalesce(excluded.password_hash, erp.users.password_hash) returning id", [d.email.toLowerCase(), d.name, d.phone ?? null, hash]);
     const m = await ctx.tx.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,role_id,is_active) values ($1,$2,$3,$4) on conflict (organization_id,user_id) do update set role_id=excluded.role_id, is_active=excluded.is_active returning id", [ctx.orgId, u.rows[0]!.id, d.role_id ?? null, d.is_active]);
-    await ctx.tx.query("delete from erp.member_farms where member_id=$1", [m.rows[0]!.id]);
-    for (const f of d.farm_ids) await ctx.tx.query("insert into erp.member_farms(member_id,farm_id) values ($1,$2) on conflict do nothing", [m.rows[0]!.id, f]);
+    await gravarEscopos(ctx, m.rows[0]!.id, escoposPedidos(d) ?? deFarmIdsLegado([]));
     await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, u.rows[0]!.id]);
     for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, u.rows[0]!.id, b]);
     await audit(ctx.tx, ctx, "users", u.rows[0]!.id, "create");
@@ -87,7 +119,9 @@ export default async function adminRoutes(app: FastifyInstance) {
       if (m.rows[0].is_owner && d.is_active === false) throw validation("Proprietário não pode ser desativado");
       await ctx.tx.query("update erp.organization_members set role_id=coalesce($3,role_id), is_active=coalesce($4,is_active) where id=$1 and organization_id=$2", [m.rows[0].id, ctx.orgId, d.role_id ?? null, d.is_active ?? null]);
     }
-    if (d.farm_ids) { await ctx.tx.query("delete from erp.member_farms where member_id=$1", [m.rows[0].id]); for (const f of d.farm_ids) await ctx.tx.query("insert into erp.member_farms(member_id,farm_id) values ($1,$2) on conflict do nothing", [m.rows[0].id, f]); }
+    // trocar de perfil (role_id) NÃO apaga o acesso por empresa: são dimensões independentes (o quê × onde)
+    const escopos = escoposPedidos(d);
+    if (escopos) { await gravarEscopos(ctx, m.rows[0].id, escopos); await audit(ctx.tx, ctx, "member_company_scopes", m.rows[0].id, "update"); }
     if (d.boss_user_ids) { await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, userId]); for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, userId, b]); }
     await audit(ctx.tx, ctx, "users", userId, "update");
     app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto
