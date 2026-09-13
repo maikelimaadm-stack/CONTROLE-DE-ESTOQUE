@@ -4,7 +4,7 @@ import { login } from "./helpers";
 /** Regras do modelo base (MG): seleção, modo Registro, histórico/anexos por registro, congelar colunas. */
 test.describe("modelo base: seleção, registro, anexos", () => {
   test("clique seleciona um só; Ctrl acumula; histórico e anexos exigem exatamente um registro", async ({ page }) => {
-    await login(page); await page.goto("/cadastros/farms");
+    await login(page); await page.goto("/cadastros/empresas");
     const rows = page.getByTestId("b1-row"); await expect(rows.nth(1)).toBeVisible();
     await rows.nth(0).click(); await expect(page.getByText("Selecionados: 1")).toBeVisible();
     await rows.nth(1).click(); await expect(page.getByText("Selecionados: 1")).toBeVisible(); await expect(rows.nth(1)).toHaveClass(/selected/); await expect(rows.nth(0)).not.toHaveClass(/selected/);
@@ -20,7 +20,7 @@ test.describe("modelo base: seleção, registro, anexos", () => {
   });
 
   test("modo registro: abre o selecionado, navega, volta com o registro selecionado; edição só Salvar; novo sem navegação", async ({ page }) => {
-    await login(page); await page.goto("/cadastros/farms");
+    await login(page); await page.goto("/cadastros/empresas");
     const rows = page.getByTestId("b1-row"); await expect(rows.nth(1)).toBeVisible();
     await rows.nth(1).click(); await page.getByLabel("Registro", { exact: true }).click();
     const form = page.getByTestId("b1-form"); await expect(form).toBeVisible(); await expect(form.getByText("2/2")).toBeVisible();
@@ -38,7 +38,7 @@ test.describe("modelo base: seleção, registro, anexos", () => {
   });
 
   test("anexos: envia, mostra prévia, baixa e exclui; congelar colunas", async ({ page }) => {
-    await login(page); await page.goto("/cadastros/farms");
+    await login(page); await page.goto("/cadastros/empresas");
     const rows = page.getByTestId("b1-row"); await expect(rows.nth(0)).toBeVisible(); await rows.nth(0).click();
     await page.getByTestId("b1-attach").click(); const dlg = page.getByRole("dialog"); await expect(dlg.getByRole("heading", { name: /Anexos —/ })).toBeVisible();
     await dlg.getByLabel("Nome do anexo").fill("Laudo E2E");

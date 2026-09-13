@@ -9,8 +9,8 @@ import { login } from "./helpers";
 async function apiCall<T = Record<string, unknown>>(page: Page, method: string, path: string, body?: unknown): Promise<T> {
   const api = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
   return page.evaluate(async ({ method, path, body, api }) => {
-    const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; farmId: string | null };
-    const res = await fetch(`${api}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${s.token}`, ...(s.orgId ? { "x-org-id": s.orgId } : {}), ...(s.farmId ? { "x-farm-id": s.farmId } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; empresaId: string | null };
+    const res = await fetch(`${api}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${s.token}`, ...(s.orgId ? { "x-org-id": s.orgId } : {}), ...(s.empresaId ? { "x-empresa-id": s.empresaId } : {}) }, body: body ? JSON.stringify(body) : undefined });
     const text = await res.text(); const data = text ? JSON.parse(text) : {};
     if (!res.ok) throw new Error(`${res.status} ${path}: ${text.slice(0, 200)}`);
     return data as T;
@@ -32,9 +32,9 @@ test.describe("UI-02 primitives oficiais", () => {
 
   test("DetailShell + StatusBadge + ConfirmDialog no abastecimento (1920 / 1366 / 1024)", async ({ page }) => {
     await login(page);
-    const eq = await apiCall<{ items: { id: string; farm_id: string }[] }>(page, "GET", "/api/resources/equipments?pageSize=1"); const e = eq.items[0]; if (!e) throw new Error("sem equipamentos no seed e2e");
+    const eq = await apiCall<{ items: { id: string; empresa_id: string }[] }>(page, "GET", "/api/resources/equipments?pageSize=1"); const e = eq.items[0]; if (!e) throw new Error("sem equipamentos no seed e2e");
     const prods = await apiCall<{ id: string }[]>(page, "GET", "/api/resources/products/options?search=Diesel"); const p = prods[0]; if (!p) throw new Error("sem produto Diesel no seed e2e");
-    const fs = await apiCall<{ id: string; code: string }>(page, "POST", "/api/fleet/fuel-supplies", { farm_id: e.farm_id, supply_date: "2026-09-10", equipment_id: e.id, product_id: p.id, quantity: "12.5", unit_value: "6.2", note: "e2e primitives" });
+    const fs = await apiCall<{ id: string; code: string }>(page, "POST", "/api/fleet/fuel-supplies", { empresa_id: e.empresa_id, supply_date: "2026-09-10", equipment_id: e.id, product_id: p.id, quantity: "12.5", unit_value: "6.2", note: "e2e primitives" });
     await page.goto(`/frota/abastecimentos/${fs.id}`);
     const shell = page.getByTestId("detail-shell"); await expect(shell).toBeVisible();
     await expect(shell.getByRole("heading", { name: `Abastecimento ${fs.code}` })).toBeVisible();
@@ -58,14 +58,14 @@ test.describe("UI-02 primitives oficiais", () => {
 
   test("DetailShell nos pilotos de manejo e pesagem (trilha, Voltar com filtro)", async ({ page }) => {
     await login(page);
-    const animals = await apiCall<{ items: { id: string; farm_id: string; batch_id: string | null }[] }>(page, "GET", "/api/livestock/animals?pageSize=1"); const a = animals.items[0]; if (!a) throw new Error("sem animais no seed e2e");
+    const animals = await apiCall<{ items: { id: string; empresa_id: string; batch_id: string | null }[] }>(page, "GET", "/api/livestock/animals?pageSize=1"); const a = animals.items[0]; if (!a) throw new Error("sem animais no seed e2e");
     const batches = await apiCall<{ items: { id: string }[] }>(page, "GET", "/api/resources/batches?pageSize=1"); const batchId = a.batch_id ?? batches.items[0]?.id ?? null;
-    const h = await apiCall<{ id: string; code: string }>(page, "POST", "/api/livestock/handlings", { farm_id: a.farm_id, handling_type: "sanitary", handling_date: "2026-09-10", batch_id: batchId, dose: "1", note: "e2e primitives manejo", items: [{ animal_id: a.id, quantity: "1" }] });
+    const h = await apiCall<{ id: string; code: string }>(page, "POST", "/api/livestock/handlings", { empresa_id: a.empresa_id, handling_type: "sanitary", handling_date: "2026-09-10", batch_id: batchId, dose: "1", note: "e2e primitives manejo", items: [{ animal_id: a.id, quantity: "1" }] });
     await page.goto(`/pecuaria/manejo/sanitary/${h.id}`);
     let shell = page.getByTestId("detail-shell"); await expect(shell.getByRole("heading", { name: `Sanitário ${h.code}` })).toBeVisible();
     await expect(shell.getByRole("navigation", { name: "Trilha da tela" }).getByRole("link", { name: "Manejos" })).toHaveAttribute("href", /type=sanitary/);
     await expect(shell.getByRole("link", { name: "Voltar" })).toHaveAttribute("href", /tab=manejos&type=sanitary/);
-    const w = await apiCall<{ id: string; code: string }>(page, "POST", "/api/livestock/weighings", { farm_id: a.farm_id, weighing_date: "2026-09-10", batch_id: batchId, items: [{ animal_id: a.id, weight: "305" }] });
+    const w = await apiCall<{ id: string; code: string }>(page, "POST", "/api/livestock/weighings", { empresa_id: a.empresa_id, weighing_date: "2026-09-10", batch_id: batchId, items: [{ animal_id: a.id, weight: "305" }] });
     await page.goto(`/pecuaria/pesagens/${w.id}`);
     shell = page.getByTestId("detail-shell"); await expect(shell.getByRole("heading", { name: `Pesagem ${w.code}` })).toBeVisible();
     await expect(shell.getByRole("navigation", { name: "Trilha da tela" }).getByRole("link", { name: "Pesagens" })).toHaveAttribute("href", /type=weighing/);

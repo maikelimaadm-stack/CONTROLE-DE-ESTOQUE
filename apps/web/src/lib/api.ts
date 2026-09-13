@@ -25,14 +25,27 @@ export function getSession(): Session | null { if (typeof window === "undefined"
 export function writeSession(s: Session) { if (typeof window !== "undefined") localStorage.setItem(KEY, JSON.stringify(s)); }
 export function setSession(s: Session | null) { if (typeof window === "undefined") return; if (s) localStorage.setItem(KEY, JSON.stringify(s)); else localStorage.removeItem(KEY); window.dispatchEvent(new Event("agro:session")); }
 
+/**
+ * Cabeçalhos de CONTEXTO da requisição. Exportado porque nem toda chamada passa por `api()` — a exportação
+ * de relatório faz `fetch` direto para receber o blob —, e foi exatamente aí que o cabeçalho ficou para trás
+ * quando o canônico entrou. Um lugar só evita que a próxima chamada crua repita o esquecimento.
+ *
+ * Os DOIS cabeçalhos saem com o MESMO valor: `X-Empresa-Id` é o canônico e `X-Farm-Id` acompanha porque o
+ * web (Vercel) e a API (Railway) não sobem juntas — um web novo contra a API anterior ficaria sem empresa
+ * selecionada. A API nova aceita os dois desde que sejam IGUAIS; valores diferentes são recusados com 422.
+ * O `X-Farm-Id` sai quando nenhuma versão anterior da API estiver no ar (docs/DEPLOYMENT.md).
+ */
+export function cabecalhosDeContexto(s: Session | null): Record<string, string> {
+  return {
+    ...(s?.token ? { Authorization: `Bearer ${s.token}` } : {}),
+    ...(s?.orgId ? { "X-Org-Id": s.orgId } : {}),
+    ...(s?.empresaId ? { "X-Empresa-Id": s.empresaId, "X-Farm-Id": s.empresaId } : {})
+  };
+}
+
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; idempotencyKey?: string } = {}): Promise<T> {
   const s = getSession();
-  // Os DOIS cabeçalhos, com o MESMO valor. `X-Empresa-Id` é o canônico; `X-Farm-Id` acompanha porque o web
-  // (Vercel) e a API (Railway) não sobem juntas, e um web novo contra a API anterior ficaria sem empresa
-  // selecionada — o contrário do que o usuário pediu ao escolher a empresa. A API nova aceita os dois desde
-  // que sejam IGUAIS; valores diferentes são recusados com 422, e é por isso que aqui sai um valor só.
-  // O `X-Farm-Id` sai quando nenhuma versão anterior da API estiver no ar (docs/DEPLOYMENT.md).
-  const headers: Record<string, string> = { ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}), ...(s?.token ? { Authorization: `Bearer ${s.token}` } : {}), ...(s?.orgId ? { "X-Org-Id": s.orgId } : {}), ...(s?.empresaId ? { "X-Empresa-Id": s.empresaId, "X-Farm-Id": s.empresaId } : {}), ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}), ...(opts.headers ?? {}) };
+  const headers: Record<string, string> = { ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}), ...cabecalhosDeContexto(s), ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}), ...(opts.headers ?? {}) };
   const res = await fetch(`${API_URL}${path}`, { method: opts.method ?? "GET", headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
   if (opts.raw) return res as unknown as T;
   const text = await res.text();

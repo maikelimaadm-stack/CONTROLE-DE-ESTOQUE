@@ -321,8 +321,7 @@ export const EXTRA_REDIRECTS = [
   // favorito antigo, link colado e histórico do navegador continuam chegando ao mesmo lugar, e não existe
   // uma segunda página a manter em paralelo.
   { source: "/cadastros/farms", destination: "/cadastros/empresas" },
-  { source: "/cadastros/farms/:id", destination: "/cadastros/empresas/:id" },
-  { source: "/cadastros/empresas", destination: "/cadastros/empresas" }
+  { source: "/cadastros/farms/:id", destination: "/cadastros/empresas/:id" }
 ];
 
 /**

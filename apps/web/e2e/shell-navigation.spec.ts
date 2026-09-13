@@ -3,7 +3,7 @@ import { login, logout } from "./helpers";
 
 /**
  * UI-STAB-01 — AppShell: TopNavigation (módulos do nav.registry + "Mais"), mega-menu por módulo, busca global
- * (Ctrl+K), seletor de fazenda, menus de notificações/usuário, acessibilidade por teclado e responsividade.
+ * (Ctrl+K), seletor de empresa, menus de notificações/usuário, acessibilidade por teclado e responsividade.
  */
 const MODULES = ["Compras", "Estoque", "Financeiro", "Vendas", "Pecuária", "Confinamento", "Frota e Ativos", "Pessoas e RH", "Ordens de Serviço", "Fiscal", "Relatórios", "Configurações"];
 
@@ -53,10 +53,10 @@ test.describe("shell: menu superior e mega-menu", () => {
     }
   });
 
-  test("fazenda, notificações e usuário: contexto na barra; Perfil navega; Sair volta ao login", async ({ page }) => {
+  test("empresa, notificações e usuário: contexto na barra; Perfil navega; Sair volta ao login", async ({ page }) => {
     await login(page);
-    const farm = page.getByLabel("Fazenda ativa"); const options = await farm.locator("option").allTextContents(); expect(options.length).toBeGreaterThan(1);
-    await farm.selectOption({ index: 1 }); await expect(farm).not.toHaveValue(""); await expect(page).toHaveURL(/\/$/);
+    const empresa = page.getByLabel("Empresa ativa"); const options = await empresa.locator("option").allTextContents(); expect(options.length).toBeGreaterThan(1);
+    await empresa.selectOption({ index: 1 }); await expect(empresa).not.toHaveValue(""); await expect(page).toHaveURL(/\/$/);
     await page.getByLabel("Notificações").click(); await expect(page.getByRole("menuitem", { name: "Ver todas" })).toBeVisible(); await page.keyboard.press("Escape");
     await page.getByLabel("Usuário").click(); await page.getByRole("menuitem", { name: "Perfil" }).click(); await expect(page).toHaveURL(/\/admin\/perfil/);
     await logout(page);

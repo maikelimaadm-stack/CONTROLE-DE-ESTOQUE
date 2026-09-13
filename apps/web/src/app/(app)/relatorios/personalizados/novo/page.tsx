@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { ArrowDown, ArrowUp, Download, Printer, Save } from "lucide-react";
 import { defaultListPreferences, filterKindOf, type ListPreferences } from "@agro/shared";
-import { api, ApiError, getSession } from "@/lib/api";
+import { api, ApiError, getSession, cabecalhosDeContexto } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, cn, pct } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Input, NativeSelect, Field, Spinner, ErrorBox, Dialog, Badge } from "@/components/ui";
@@ -57,7 +57,7 @@ function Builder() {
     onError: (e) => toast.error(e instanceof ApiError ? e.message : "Falha ao salvar")
   });
   const exportAs = async (format: "csv" | "xlsx") => {
-    const s = getSession(); const resp = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333"}/api/saved-reports/run`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${s?.token}`, "X-Org-Id": s?.orgId ?? "", "X-Farm-Id": s?.empresaId ?? "" }, body: JSON.stringify({ resource_key: resourceKey, definition: definition(), format, name: name || res?.label }) });
+    const s = getSession(); const resp = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333"}/api/saved-reports/run`, { method: "POST", headers: { "Content-Type": "application/json", ...cabecalhosDeContexto(s) }, body: JSON.stringify({ resource_key: resourceKey, definition: definition(), format, name: name || res?.label }) });
     if (!resp.ok) { toast.error("Falha ao exportar"); return; }
     const blob = await resp.blob(); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `${name || resourceKey}.${format}`; a.click(); URL.revokeObjectURL(url);
   };
