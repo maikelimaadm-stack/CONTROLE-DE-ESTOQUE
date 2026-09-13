@@ -72,7 +72,58 @@ export function classificarTabela(tabela, colunas, anulavel) {
   return anulavel ? "B" : "A";
 }
 
-/** Nome da política esperada por categoria (o que o teste confere contra o banco). */
+/**
+ * POLÍTICAS ESPERADAS POR CATEGORIA — por COMANDO, não por tabela.
+ *
+ * O PostgreSQL aplica `using` no SELECT, no UPDATE da linha ANTIGA e no DELETE; e `with check` no INSERT e
+ * no UPDATE da linha NOVA. Enquanto leitura e escrita são a MESMA regra (categoria A: empresa obrigatória),
+ * uma política `for all` diz a coisa certa. Quando divergem — B (nulo = da organização, legível por quem vê
+ * parte, gravável só por quem vê tudo) e C (transferência: lê por qualquer ponta, escreve pela origem) —
+ * `for all` passa a dizer que PODER LER É PODER APAGAR. Por isso a matriz declara o que se espera de cada
+ * comando, e o gate confere comando a comando em vez de perguntar "existe política?".
+ *
+ * `leitura` = o predicado permissivo (empresa no escopo, nulo visível, qualquer ponta).
+ * `escrita` = o predicado restritivo (nulo exige escopo total; transferência responde pela origem).
+ */
+export function politicasEsperadas(categoria) {
+  if (categoria === "A") return { tenant_e_empresa: { cmd: "ALL", using: "leitura", check: "escrita" } };
+  if (categoria === "B") {
+    return {
+      tenant_e_empresa_select: { cmd: "SELECT", using: "leitura", check: null },
+      tenant_e_empresa_insert: { cmd: "INSERT", using: null, check: "escrita" },
+      tenant_e_empresa_update: { cmd: "UPDATE", using: "escrita", check: "escrita" },
+      tenant_e_empresa_delete: { cmd: "DELETE", using: "escrita", check: null }
+    };
+  }
+  // C — transferência. O UPDATE usa o ENVELOPE (qualquer ponta), não a origem: o destinatário ACEITA a
+  // transferência de lote e CANCELA a de armazém, e os dois são UPDATE de `status`. Restringir o `using`
+  // à origem não recusaria esses fluxos — os transformaria em UPDATE de zero linhas, que as rotas não
+  // percebem. O que o destinatário não pode é REDIRECIONAR o envio, e isso é comparação entre OLD e NEW:
+  // fica no gatilho `trg_travar_pontas`, porque `with check` só enxerga a linha nova.
+  if (categoria === "C") {
+    return {
+      tenant_e_empresa_select: { cmd: "SELECT", using: "leitura", check: null },
+      tenant_e_empresa_insert: { cmd: "INSERT", using: null, check: "escrita" },
+      tenant_e_empresa_update: { cmd: "UPDATE", using: "leitura", check: "leitura", gatilho: "trg_travar_pontas" },
+      tenant_e_empresa_delete: { cmd: "DELETE", using: "escrita", check: null }
+    };
+  }
+  // D — a própria tabela de Empresas. O que se ENXERGA é a união dos módulos; o que se CRIA é ato de
+  // organização, e a empresa nova não está no escopo de ninguém: exigir escopo no `with check` seria
+  // circular. Quem pode criar é decidido na API (`exigirEscopoTotalDaOrganizacao`), que faz a MESMA
+  // pergunta do `using` — sem isso o INSERT passa e a leitura de volta não acha a própria linha.
+  if (categoria === "D") {
+    return {
+      tenant_e_empresa_select: { cmd: "SELECT", using: "leitura", check: null },
+      tenant_e_empresa_insert: { cmd: "INSERT", using: null, check: "tenant" },
+      tenant_e_empresa_update: { cmd: "UPDATE", using: "leitura", check: "tenant" },
+      tenant_e_empresa_delete: { cmd: "DELETE", using: "leitura", check: null }
+    };
+  }
+  return null;   // E/F: a proteção é outra (porta dinâmica, tenant puro, arquivo morto)
+}
+
+/** Nome-base da política esperada por categoria (compatibilidade com chamadas antigas). */
 export function politicaEsperada(categoria) {
   return ["A", "B", "C", "D"].includes(categoria) ? "tenant_e_empresa" : "tenant_isolation";
 }

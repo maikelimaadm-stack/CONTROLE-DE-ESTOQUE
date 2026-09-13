@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readSchema, CANONICAL_COMPANY_COLUMNS, REPO_ROOT } from "./lib/schema.mjs";
-import { CATEGORIAS, EXCECOES_RLS_EMPRESA, classificarTabela, politicaEsperada } from "../packages/domain/empresa-rls.mjs";
+import { CATEGORIAS, EXCECOES_RLS_EMPRESA, classificarTabela, politicaEsperada , politicasEsperadas} from "../packages/domain/empresa-rls.mjs";
 
 const DOC = path.join(REPO_ROOT, "docs", "COMPANY-RLS-MATRIX.md");
 const MODULO_POR_TABELA = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "scripts", "company-rls-modules.json"), "utf8"));
@@ -41,12 +41,21 @@ for (const [nome, t] of [...schema].sort(([a], [b]) => a.localeCompare(b))) {
     tabela, colunas, categoria, anulavel,
     modulo: modulo ?? (categoria === "D" ? "(seletor: união dos módulos)" : "—"),
     politica: politicaEsperada(categoria),
+    porComando: (() => {
+      const e = politicasEsperadas(categoria);
+      if (!e) return "— (a proteção é outra; ver justificativa)";
+      const rot = { leitura: "leitura", escrita: "**escrita**", tenant: "tenant" };
+      return Object.values(e).map((f) =>
+        f.cmd === "ALL" ? `ALL: using=${rot[f.using]} · check=${rot[f.check]}`
+        : `${f.cmd}: ${f.using ? `using=${rot[f.using]}` : ""}${f.using && f.check ? " · " : ""}${f.check ? `check=${rot[f.check]}` : ""}`
+      ).join("<br>");
+    })(),
     leitura: categoria === "C" ? "qualquer ponta no escopo"
       : categoria === "D" ? "empresa visível em ALGUM módulo (união)"
       : categoria === "B" ? "empresa no escopo do módulo; registro SEM empresa continua visível"
       : categoria === "A" ? "empresa no escopo do módulo"
       : "regra própria (ver justificativa)",
-    escrita: categoria === "C" ? "ORIGEM no escopo; destino só precisa ser da organização"
+    escrita: categoria === "C" ? "criar e APAGAR respondem pela ORIGEM; alterar vale por qualquer ponta (o destinatário aceita/cancela), e mudar as PONTAS exige a origem — gatilho `trg_travar_pontas`"
       : categoria === "D" ? "tenant (criar empresa é ato de organização)"
       : categoria === "B" ? "empresa no escopo; SEM empresa exige escopo total do módulo"
       : categoria === "A" ? "empresa no escopo do módulo"
@@ -74,6 +83,22 @@ somada, e há um teste que reintroduz a política antiga de propósito e exige q
 
 **Módulo indefinido.** Rota de organização e porta de permissão dinâmica abrem a transação sem módulo. Nesse
 caso o predicado vale a **união** das empresas visíveis em algum módulo — nunca "todas", nunca "nada".
+
+**Uma política POR COMANDO onde leitura ≠ escrita.** O PostgreSQL aplica \`using\` no SELECT, no UPDATE da
+linha ANTIGA e no DELETE; e \`with check\` no INSERT e no UPDATE da linha NOVA. Uma política \`for all\`
+tem um \`using\` só — então, quando a regra de escrita é mais restrita que a de leitura, ela passa a dizer
+que **poder ler é poder apagar**, e que uma linha legível pode ser TRANSFORMADA em qualquer linha que passe
+no \`with check\`. Isso vale para dois casos desta matriz:
+
+- **B (empresa anulável)** — nulo é "da ORGANIZAÇÃO". Quem enxerga uma empresa lê a linha global, mas não
+  pode apagá-la nem convertê-la numa linha da empresa dele.
+- **C (transferência)** — lê-se por qualquer ponta; APAGAR e ALTERAR respondem pela ORIGEM. Receber não é
+  poder desfazer o envio.
+
+Onde leitura = escrita (**A**, empresa obrigatória), a política \`for all\` continua: dividir ali repetiria
+a mesma expressão quatro vezes. A coluna "Semântica POR COMANDO" diz qual predicado cada comando usa, e
+\`apps/api/test/integration/rls-matriz.test.ts\` confere isso contra \`pg_policies\` (cmd, qual, with_check
+e nenhuma segunda política PERMISSIVE no mesmo comando).
 
 **Forma do predicado (e por que ela importa).** O predicado de leitura é escrito INLINE na política:
 
@@ -108,9 +133,9 @@ ${Object.entries(CATEGORIAS).map(([k, v]) => `- **${k}** — ${v} (${contagem[k]
 
 ## Tabelas (${linhas.length})
 
-| Tabela | Coluna(s) canônica(s) | Módulo | Cat. | Nulo? | Leitura | Escrita | Política |
+| Tabela | Coluna(s) canônica(s) | Módulo | Cat. | Nulo? | Leitura | Escrita | Semântica POR COMANDO |
 | --- | --- | --- | :---: | :---: | --- | --- | --- |
-${linhas.map((l) => `| \`erp.${l.tabela}\` | ${l.colunas.map((c) => `\`${c}\``).join(" + ")} | ${l.modulo} | ${l.categoria} | ${l.anulavel ? "sim" : "não"} | ${l.leitura} | ${l.escrita} | \`${l.politica}\` |`).join("\n")}
+${linhas.map((l) => `| \`erp.${l.tabela}\` | ${l.colunas.map((c) => `\`${c}\``).join(" + ")} | ${l.modulo} | ${l.categoria} | ${l.anulavel ? "sim" : "não"} | ${l.leitura} | ${l.escrita} | ${l.porComando} |`).join("\n")}
 
 ## Exceções — por que a RLS empresarial genérica não se aplica
 

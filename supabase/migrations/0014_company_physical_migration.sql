@@ -480,3 +480,19 @@ grant execute on function erp.tem_acesso_empresa(uuid, uuid, text, uuid) to erp_
 grant execute on function erp.sincronizar_empresa_legado() to erp_app;
 grant execute on function erp.sincronizar_empresa_origem_legado() to erp_app;
 grant execute on function erp.sincronizar_empresa_destino_legado() to erp_app;
+
+-- ---------- contador de código da Empresa: alinhar com o acervo ----------
+-- `erp.next_code(org,'farm')` começa em 1 e não olha a tabela. As empresas existentes, porém, nasceram com
+-- código escrito à mão (o seed grava 1 e 2; bancos antigos têm o que tiverem). Resultado: a PRIMEIRA empresa
+-- criada pela tela pede 1 ao contador e colide com a empresa 1 que já existe — `empresas_organization_id_code_key`,
+-- 409 na cara do usuário, sem nada de errado no pedido dele.
+--
+-- O defeito é anterior a esta migração e estava invisível porque nenhum teste criava empresa. Como a
+-- renomeação é o momento em que a tabela passa a ser a canônica, é aqui que o contador é reconciliado com a
+-- realidade: por organização, o último valor passa a ser pelo menos o maior código já usado.
+insert into erp.code_sequences (organization_id, entity, last_value)
+select e.organization_id, 'farm', max(e.code)
+  from erp.empresas e
+ group by e.organization_id
+on conflict (organization_id, entity)
+  do update set last_value = greatest(erp.code_sequences.last_value, excluded.last_value);

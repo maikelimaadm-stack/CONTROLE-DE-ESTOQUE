@@ -128,20 +128,64 @@ grant execute on function erp.escopo_empresa_total(text), erp.escopo_empresa_tot
 -- A tabela é varrida do CATÁLOGO, não de uma lista digitada: tabela nova com coluna de empresa entra no
 -- contrato sozinha. O que é digitado é a EXCEÇÃO — e toda exceção está classificada e justificada em
 -- docs/COMPANY-RLS-MATRIX.md, conferida por gate contra o schema real.
+--
+-- ---------------------------------------------------------------------------------------------------
+-- POR QUE AS POLÍTICAS SÃO SEPARADAS POR COMANDO
+--
+-- Uma política `for all` tem UM `using` e UM `with check`. O PostgreSQL os aplica assim:
+--
+--     SELECT → using
+--     INSERT → with check
+--     UPDATE → using na linha ANTIGA, with check na linha NOVA
+--     DELETE → using                     (não existe `with check` para DELETE)
+--
+-- Enquanto a regra de leitura for IGUAL à de escrita, `for all` diz a coisa certa. Quando elas divergem,
+-- ele passa a dizer que PODER LER É PODER APAGAR — e que uma linha que se pode ler pode ser TRANSFORMADA
+-- em qualquer linha que passe no `with check`. Dois casos reais desta migração divergem:
+--
+--   B) empresa anulável: nulo significa "da ORGANIZAÇÃO inteira". Ler é legítimo para quem enxerga parte
+--      das empresas; ESCREVER alcança todas elas. Com `for all`, quem enxerga só a empresa A satisfazia o
+--      `using` da linha global (`empresa_id is null`) e podia APAGÁ-LA — ou, no UPDATE, pegá-la pelo
+--      `using` e transformá-la numa linha da empresa A, que passa no `with check`.
+--
+--   C) transferência: lê-se por QUALQUER ponta (quem recebe precisa ver o que está chegando), mas
+--      escreve-se pela ORIGEM. Com `for all`, quem enxergava só o DESTINO satisfazia o `using` e podia
+--      apagar a transferência — ou reescrever a origem para uma empresa sua.
+--
+-- Por isso, onde leitura ≠ escrita, cada comando tem a sua política. Onde leitura = escrita (categoria A,
+-- empresa obrigatória), `for all` continua — dividir ali seria repetir a mesma expressão quatro vezes e
+-- criar quatro lugares para ela envelhecer.
+--
+-- A FORMA do predicado não muda: `(select …)` para a parte que não depende da linha (InitPlan) e
+-- `col in (select …)` para o conjunto (hashed SubPlan), os dois resolvidos UMA vez por consulta. Trocar
+-- isso por uma chamada de função por linha custava 34 s onde hoje custa 55 ms (medição no topo do arquivo).
+-- ---------------------------------------------------------------------------------------------------
 do $$
 declare
   r record;
-  -- Predicado de LEITURA (ver a nota sobre plano acima de `erp.empresas_do_membro`). `%1$I` é a coluna.
+  n text;
+  -- LEITURA: registro sem empresa é da organização e continua visível para quem enxerga parte dela.
   leitura constant text :=
     '(%1$I is null or (select erp.escopo_empresa_total(erp.modulo_empresa_atual()))'
     ' or %1$I in (select erp.empresas_do_membro(erp.modulo_empresa_atual())))';
+  -- ESCRITA: o nulo NÃO é permissivo. Criar, alterar ou apagar um registro sem empresa alcança todas elas,
+  -- então exige escopo TOTAL do módulo — a mesma regra de `erp.empresa_escrita_permitida`, escrita inline
+  -- para que UPDATE e DELETE, que avaliam por linha varrida, não paguem uma chamada de função por linha.
+  escrita constant text :=
+    '((select erp.escopo_empresa_total(erp.modulo_empresa_atual()))'
+    ' or (%1$I is not null and %1$I in (select erp.empresas_do_membro(erp.modulo_empresa_atual()))))';
+  tenant constant text := 'erp.tenant_visible(organization_id)';
   -- C — ORIGEM + DESTINO: regra própria (a leitura vale por qualquer ponta; a escrita responde pela origem).
   pares text[] := array['animal_movements','equipment_transfers','warehouse_transfers'];
   -- E/F — PORTA DINÂMICA, CONFIGURAÇÃO DE AUTORIZAÇÃO, DICA DENORMALIZADA e ARQUIVO MORTO.
   especiais text[] := array['notifications','registros_globais','membro_empresas','legado_escopo_empresa_v0'];
+  -- Todo nome que esta migração possa ter criado antes, para que reaplicá-la não deixe duas políticas
+  -- PERMISSIVE do mesmo comando convivendo — que é justamente como o OR devolveria o vazamento.
+  nomes text[] := array['tenant_isolation', 'tenant_e_empresa', 'tenant_e_empresa_select',
+                        'tenant_e_empresa_insert', 'tenant_e_empresa_update', 'tenant_e_empresa_delete'];
 begin
   for r in
-    select c.table_name as tabela
+    select c.table_name as tabela, (c.is_nullable = 'YES') as anulavel
       from information_schema.columns c
       join information_schema.tables t
         on t.table_schema=c.table_schema and t.table_name=c.table_name and t.table_type='BASE TABLE'
@@ -151,50 +195,216 @@ begin
        and not (c.table_name = any(pares)) and not (c.table_name = any(especiais))
      order by c.table_name
   loop
-    -- SUBSTITUI a política tenant-only. Somar uma segunda política PERMISSIVE manteria o vazamento: o
-    -- PostgreSQL combina políticas permissivas com OR, e a antiga sozinha já liberava a organização inteira.
-    execute format('drop policy if exists tenant_isolation on erp.%I', r.tabela);
-    execute format('drop policy if exists tenant_e_empresa on erp.%I', r.tabela);
-    execute format($f$create policy tenant_e_empresa on erp.%I for all to erp_app, authenticated
-        using (erp.tenant_visible(organization_id) and %s)
-        with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_id))$f$,
-        r.tabela, format(leitura, 'empresa_id'));
+    foreach n in array nomes loop execute format('drop policy if exists %I on erp.%I', n, r.tabela); end loop;
+
+    if r.anulavel then
+      -- B — leitura ≠ escrita por causa do NULO: uma política por comando.
+      execute format('create policy tenant_e_empresa_select on erp.%I for select to erp_app, authenticated using (%s and %s)',
+                     r.tabela, tenant, format(leitura, 'empresa_id'));
+      execute format('create policy tenant_e_empresa_insert on erp.%I for insert to erp_app, authenticated with check (%s and %s)',
+                     r.tabela, tenant, format(escrita, 'empresa_id'));
+      execute format('create policy tenant_e_empresa_update on erp.%I for update to erp_app, authenticated using (%s and %s) with check (%s and %s)',
+                     r.tabela, tenant, format(escrita, 'empresa_id'), tenant, format(escrita, 'empresa_id'));
+      execute format('create policy tenant_e_empresa_delete on erp.%I for delete to erp_app, authenticated using (%s and %s)',
+                     r.tabela, tenant, format(escrita, 'empresa_id'));
+    else
+      -- A — empresa obrigatória: o ramo do nulo é inalcançável nas duas expressões, então leitura e
+      -- escrita são a MESMA regra (`empresa no escopo`) e uma política única a diz uma vez só.
+      execute format('create policy tenant_e_empresa on erp.%I for all to erp_app, authenticated using (%s and %s) with check (%s and %s)',
+                     r.tabela, tenant, format(leitura, 'empresa_id'), tenant, format(escrita, 'empresa_id'));
+    end if;
   end loop;
 
-  -- C — transferências entre empresas. A leitura vale pelas DUAS pontas: quem envia acompanha e quem recebe
-  -- precisa ver o que está chegando. A escrita responde pela ORIGEM apenas, de propósito: transferir para
-  -- uma empresa que o autor não enxerga é o caso NORMAL do negócio (quem recebe é que aceita) e exigir as
-  -- duas pontas quebraria a operação. O destino continua provado pela chave estrangeira composta — tem de
-  -- ser empresa DESTA organização — e por `exigirEmpresaDaOrganizacao` na API.
-  execute $f$drop policy if exists tenant_isolation on erp.animal_movements$f$;
-  execute format($f$create policy tenant_e_empresa on erp.animal_movements for all to erp_app, authenticated
-      using (erp.tenant_visible(organization_id) and (%s or %s))
-      with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_id))$f$,
-      format(leitura, 'empresa_id'), format(leitura, 'empresa_destino_id'));
-  execute $f$drop policy if exists tenant_isolation on erp.equipment_transfers$f$;
-  execute format($f$create policy tenant_e_empresa on erp.equipment_transfers for all to erp_app, authenticated
-      using (erp.tenant_visible(organization_id) and (%s or %s))
-      with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_origem_id))$f$,
-      format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
-  execute $f$drop policy if exists tenant_isolation on erp.warehouse_transfers$f$;
-  execute format($f$create policy tenant_e_empresa on erp.warehouse_transfers for all to erp_app, authenticated
-      using (erp.tenant_visible(organization_id) and (%s or %s))
-      with check (erp.tenant_visible(organization_id) and erp.empresa_escrita_permitida(empresa_origem_id))$f$,
-      format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
+  -- C — transferências entre empresas.
+  --
+  -- A leitura vale pelas DUAS pontas: quem envia acompanha e quem recebe precisa ver o que está chegando.
+  --
+  -- A escrita NÃO é "só a origem", e essa foi a lição cara desta rodada. O destinatário tem dois atos
+  -- legítimos e centrais no domínio: ACEITAR a transferência de lote (`POST /livestock/transfers/:id/process`,
+  -- que é literalmente "processar na empresa destino") e CANCELAR a transferência de armazém
+  -- (`POST /stock/transfers/:id/cancel`, que a API autoriza por origem OU destino). Os dois mudam `status`.
+  -- Um `using` de UPDATE restrito à origem não os recusa com erro: ele os transforma em UPDATE de ZERO
+  -- linhas, e as rotas não conferem `rowCount` — o usuário veria "confirmado" sem nada ter mudado.
+  -- Trocar um buraco por um no-op silencioso é piorar.
+  --
+  -- Então a RLS delimita o ENVELOPE (a linha continua entre as mesmas duas pontas, e pelo menos uma delas é
+  -- do autor) e o que a RLS não sabe dizer — "as pontas não mudaram" — fica com um GATILHO, que é quem
+  -- enxerga OLD e NEW. Ser destinatário passa a significar exatamente: pode mexer no andamento, NÃO pode
+  -- redirecionar o envio (gatilho) e NÃO pode apagá-lo (o `delete` responde pela origem).
+  -- O destino continua provado pela chave estrangeira composta — tem de ser empresa DESTA organização —
+  -- e por `exigirEmpresaDaOrganizacao` na API.
+  for r in select unnest(pares) as tabela loop
+    foreach n in array nomes loop execute format('drop policy if exists %I on erp.%I', n, r.tabela); end loop;
+  end loop;
+
+  -- `animal_movements` nomeia a origem como `empresa_id` (o lote sai da empresa do movimento);
+  -- `equipment_transfers` e `warehouse_transfers` nomeiam `empresa_origem_id`.
+  execute format('create policy tenant_e_empresa_select on erp.animal_movements for select to erp_app, authenticated using (%s and (%s or %s))',
+                 tenant, format(leitura, 'empresa_id'), format(leitura, 'empresa_destino_id'));
+  execute format('create policy tenant_e_empresa_insert on erp.animal_movements for insert to erp_app, authenticated with check (%s and %s)',
+                 tenant, format(escrita, 'empresa_id'));
+  execute format('create policy tenant_e_empresa_update on erp.animal_movements for update to erp_app, authenticated using (%s and (%s or %s)) with check (%s and (%s or %s))',
+                 tenant, format(leitura, 'empresa_id'), format(leitura, 'empresa_destino_id'),
+                 tenant, format(leitura, 'empresa_id'), format(leitura, 'empresa_destino_id'));
+  execute format('create policy tenant_e_empresa_delete on erp.animal_movements for delete to erp_app, authenticated using (%s and %s)',
+                 tenant, format(escrita, 'empresa_id'));
+
+  for r in select unnest(array['equipment_transfers','warehouse_transfers']) as tabela loop
+    execute format('create policy tenant_e_empresa_select on erp.%I for select to erp_app, authenticated using (%s and (%s or %s))',
+                   r.tabela, tenant, format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
+    execute format('create policy tenant_e_empresa_insert on erp.%I for insert to erp_app, authenticated with check (%s and %s)',
+                   r.tabela, tenant, format(escrita, 'empresa_origem_id'));
+    execute format('create policy tenant_e_empresa_update on erp.%I for update to erp_app, authenticated using (%s and (%s or %s)) with check (%s and (%s or %s))',
+                   r.tabela, tenant, format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'),
+                   tenant, format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
+    execute format('create policy tenant_e_empresa_delete on erp.%I for delete to erp_app, authenticated using (%s and %s)',
+                   r.tabela, tenant, format(escrita, 'empresa_origem_id'));
+  end loop;
 end $$;
+
+-- ---------- 2b) o que a RLS não sabe dizer: "as pontas não mudaram" ----------
+-- `with check` enxerga só a linha NOVA. "O destinatário não pode redirecionar o envio" é uma comparação
+-- entre a linha VELHA e a NOVA — e isso é um gatilho, não uma política. Sem ele, quem enxerga o destino
+-- passaria no `using` (pela ponta dele) e no `with check` (a linha continua tendo aquele destino) enquanto
+-- reescreve a ORIGEM para uma empresa sua: a transferência mudaria de remetente sem que ninguém recusasse.
+--
+-- A recusa é `VALIDATION_ERROR` (P0001), que a API já traduz para 422 — erro de negócio legível, não 500.
+create or replace function erp.travar_pontas_transferencia_origem() returns trigger language plpgsql as $$
+begin
+  if NEW.empresa_origem_id is distinct from OLD.empresa_origem_id
+     or NEW.empresa_destino_id is distinct from OLD.empresa_destino_id then
+    if not erp.empresa_escrita_permitida(OLD.empresa_origem_id) or not erp.empresa_escrita_permitida(NEW.empresa_origem_id) then
+      raise exception 'VALIDATION_ERROR: mudar a origem ou o destino de uma transferencia exige autoridade sobre a empresa de ORIGEM' using errcode = 'P0001';
+    end if;
+  end if;
+  return NEW;
+end $$;
+-- `erp.animal_movements` chama a origem de `empresa_id` (o movimento sai da empresa dele).
+create or replace function erp.travar_pontas_movimento_animal() returns trigger language plpgsql as $$
+begin
+  if NEW.empresa_id is distinct from OLD.empresa_id
+     or NEW.empresa_destino_id is distinct from OLD.empresa_destino_id then
+    if not erp.empresa_escrita_permitida(OLD.empresa_id) or not erp.empresa_escrita_permitida(NEW.empresa_id) then
+      raise exception 'VALIDATION_ERROR: mudar a origem ou o destino de uma movimentacao exige autoridade sobre a empresa de ORIGEM' using errcode = 'P0001';
+    end if;
+  end if;
+  return NEW;
+end $$;
+drop trigger if exists trg_travar_pontas on erp.equipment_transfers;
+create trigger trg_travar_pontas before update on erp.equipment_transfers for each row execute function erp.travar_pontas_transferencia_origem();
+drop trigger if exists trg_travar_pontas on erp.warehouse_transfers;
+create trigger trg_travar_pontas before update on erp.warehouse_transfers for each row execute function erp.travar_pontas_transferencia_origem();
+drop trigger if exists trg_travar_pontas on erp.animal_movements;
+create trigger trg_travar_pontas before update on erp.animal_movements for each row execute function erp.travar_pontas_movimento_animal();
 
 -- D — a própria tabela de Empresas.
 -- O seletor de empresa não pode depender do módulo ativo: a mesma lista alimenta telas de vários módulos, e
 -- recortá-la pelo módulo da rota faria a empresa sumir do seletor conforme a tela aberta. A regra é a união
 -- — enxerga quem enxerga aquela empresa em ALGUM módulo —, que é exatamente `empresasVisiveisNaOrganizacao`.
 -- Isso NÃO é "listagem aberta do tenant": quem não enxerga a empresa em módulo nenhum não a vê aqui.
--- WITH CHECK é só de tenant: criar empresa é ato de ORGANIZAÇÃO (permissão `farms.create`, classificada como
+--
+-- INSERT é só de tenant: criar empresa é ato de ORGANIZAÇÃO (permissão `farms.create`, classificada como
 -- recurso de organização) e uma empresa recém-criada não está no escopo de ninguém — exigir escopo para
--- criá-la seria circular. Alterar continua limitado ao que o USING deixa enxergar.
+-- criá-la seria circular. Quem pode criar é decidido na API por `exigirEscopoTotalDaOrganizacao`, que faz a
+-- MESMA pergunta do `using` daqui (`escopo_empresa_total(null)`): sem isso o INSERT passaria e a leitura de
+-- volta não acharia a própria linha, devolvendo 404 e desfazendo a transação inteira.
+-- UPDATE e DELETE continuam limitados ao que o `using` deixa enxergar.
 drop policy if exists tenant_isolation on erp.empresas;
-create policy tenant_e_empresa on erp.empresas for all to erp_app, authenticated
+drop policy if exists tenant_e_empresa on erp.empresas;
+drop policy if exists tenant_e_empresa_select on erp.empresas;
+drop policy if exists tenant_e_empresa_insert on erp.empresas;
+drop policy if exists tenant_e_empresa_update on erp.empresas;
+drop policy if exists tenant_e_empresa_delete on erp.empresas;
+create policy tenant_e_empresa_select on erp.empresas for select to erp_app, authenticated
+  using (erp.tenant_visible(organization_id)
+         and ((select erp.escopo_empresa_total(null::text)) or id in (select erp.empresas_do_membro(null::text))));
+create policy tenant_e_empresa_insert on erp.empresas for insert to erp_app, authenticated
+  with check (erp.tenant_visible(organization_id));
+create policy tenant_e_empresa_update on erp.empresas for update to erp_app, authenticated
   using (erp.tenant_visible(organization_id)
          and ((select erp.escopo_empresa_total(null::text)) or id in (select erp.empresas_do_membro(null::text))))
   with check (erp.tenant_visible(organization_id));
+create policy tenant_e_empresa_delete on erp.empresas for delete to erp_app, authenticated
+  using (erp.tenant_visible(organization_id)
+         and ((select erp.escopo_empresa_total(null::text)) or id in (select erp.empresas_do_membro(null::text))));
 
-comment on policy tenant_e_empresa on erp.empresas is 'PRE-BASE2-03: empresa visivel = a que o membro enxerga em ALGUM modulo (uniao), nunca a organizacao inteira. Uniao e nao modulo ativo porque o seletor e compartilhado entre telas de modulos diferentes.';
+comment on policy tenant_e_empresa_select on erp.empresas is 'PRE-BASE2-03: empresa visivel = a que o membro enxerga em ALGUM modulo (uniao), nunca a organizacao inteira. Uniao e nao modulo ativo porque o seletor e compartilhado entre telas de modulos diferentes.';
+
+-- =====================================================================================================
+-- AGREGADO ORGANIZACIONAL DA CONTA BANCÁRIA
+--
+-- O CONTRATO (docs/AUTHORIZATION.md, docs/MULTI-COMPANY-CONTRACT.md §7, DECISIONS #36f): saldo, fluxo e
+-- extrato de CONTA BANCÁRIA são números da ORGANIZAÇÃO. A conta é cadastro da organização, o
+-- `opening_balance` dela não tem empresa, e recortar por empresa devolveria um extrato que NÃO FECHA. Por
+-- isso as três portas exigem a capacidade de ORGANIZAÇÃO (`bank_accounts.view`) por cima da permissão
+-- financeira — ninguém passa a ver o que não via antes.
+--
+-- O QUE A RLS EMPRESARIAL FEZ COM ELE
+--
+-- `erp.bank_movements` tem `empresa_id` anulável e virou categoria B: company-scoped, corretamente. Mas as
+-- rotas de CONTA abrem a transação SEM módulo (são recursos de organização), e sem módulo o predicado vale
+-- a UNIÃO das empresas do membro — que não é "todas as empresas da organização". Resultado medido:
+--
+--     opening_balance ....... 100  (da organização: `bank_accounts` não tem empresa)
+--   + movimento da empresa A .. 10  (visível)
+--   + movimento da empresa B .. 20  (INVISÍVEL para quem só enxerga A)
+--   = saldo devolvido ....... 110, quando o extrato do banco diz 130.
+--
+-- Segurança mais restritiva não pode produzir número financeiro FALSO. Um saldo que não bate com o banco é
+-- pior que um saldo negado: ninguém desconfia dele.
+--
+-- A SAÍDA, E POR QUE ESTA E NÃO OUTRA
+--
+-- Não dá para resolver afrouxando a RLS de `erp.bank_movements` (o recorte por empresa está certo para a
+-- listagem de movimentos), nem somando uma política permissiva condicionada à capacidade (políticas
+-- PERMISSIVE se combinam com OR: a listagem de movimentos também abriria), nem com uma GUC de "modo
+-- organizacional" (uma chave que desliga o recorte é uma chave que alguém vai esquecer ligada).
+--
+-- A saída é uma função ESTREITA: ela não é uma porta para consultar tabela arbitrária, é a única leitura
+-- organizacional de movimento de conta que existe. Cinco propriedades a tornam segura:
+--   1. não recebe organização por parâmetro — lê da GUC que o servidor define (`erp.current_org_id()`);
+--   2. confere as capacidades DE NOVO aqui dentro, e levanta erro se faltarem (a API já confere; esta é a
+--      segunda linha, para o dia em que alguém chamar a função de outro lugar);
+--   3. filtra `organization_id = <organização atual>` nas DUAS tabelas — o tenant nunca depende da RLS
+--      desligada, é predicado explícito;
+--   4. `search_path` fixo e nenhum SQL dinâmico;
+--   5. `execute` revogado de `public` e concedido só ao papel da aplicação.
+-- =====================================================================================================
+
+create or replace function erp.movimentos_conta_organizacao(
+  p_contas uuid[] default null, p_de date default null, p_ate date default null)
+returns table (
+  id uuid, bank_account_id uuid, account_code text, movement_date date, type text,
+  amount numeric, interest numeric, note text, document text, categories text, created_at timestamptz)
+language plpgsql stable security definer set search_path = erp, pg_catalog as $$
+declare
+  v_org uuid := erp.current_org_id();
+  v_user uuid := erp.effective_user_id();
+begin
+  if v_org is null or v_user is null then
+    raise exception 'CONTEXTO_AUSENTE: agregado de conta exige organizacao e usuario na transacao' using errcode = '42501';
+  end if;
+  -- As MESMAS capacidades que a rota exige. `bank_accounts.view` é a de ORGANIZAÇÃO; `bank_movements.view`
+  -- é a financeira por cima. Sem as duas, esta função não é uma porta.
+  if not erp.has_permission(v_org, v_user, 'bank_accounts.view')
+     or not erp.has_permission(v_org, v_user, 'bank_movements.view') then
+    raise exception 'SEM_CAPACIDADE: agregado organizacional de conta exige bank_accounts.view e bank_movements.view' using errcode = '42501';
+  end if;
+  return query
+    select m.id, m.bank_account_id, a.code, m.movement_date, m.type, m.amount, m.interest, m.note, m.document,
+           (select string_agg(fc.name, ', ') from erp.bank_movement_apportionments ap
+              join erp.financial_categories fc on fc.id = ap.financial_category_id
+             where ap.movement_id = m.id) as categories,
+           m.created_at
+      from erp.bank_movements m
+      join erp.bank_accounts a on a.id = m.bank_account_id
+     where m.organization_id = v_org and a.organization_id = v_org
+       and m.status = 'confirmed' and m.deleted_at is null
+       and (p_contas is null or m.bank_account_id = any(p_contas))
+       and (p_de is null or m.movement_date >= p_de)
+       and (p_ate is null or m.movement_date <= p_ate);
+end $$;
+comment on function erp.movimentos_conta_organizacao(uuid[], date, date) is
+  'Movimentos CONFIRMADOS das contas bancarias da organizacao atual, para o agregado ORGANIZACIONAL (saldo, fluxo, extrato). SECURITY DEFINER estreita: organizacao vem da GUC do servidor, capacidades conferidas aqui dentro, tenant por predicado explicito. Nao substitui a RLS de erp.bank_movements, que continua recortando por empresa em toda leitura normal.';
+revoke execute on function erp.movimentos_conta_organizacao(uuid[], date, date) from public;
+grant execute on function erp.movimentos_conta_organizacao(uuid[], date, date) to erp_app;
