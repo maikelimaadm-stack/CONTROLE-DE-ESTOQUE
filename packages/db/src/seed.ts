@@ -64,6 +64,15 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
     const opHash = await bcrypt.hash("Demo@12345", 10);
     const op = await tx.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ('operador@demo.local','Operador DEMO',$1) on conflict (email) do update set name=excluded.name returning id", [opHash]);
     await tx.query("insert into erp.organization_members(organization_id,user_id,role_id,is_owner) values ($1,$2,$3,false) on conflict do nothing", [orgId, op.rows[0]!.id, opRole.rows[0]!.id]);
+    // Acesso por empresa (PRE-BASE2-02): membro sem escopo configurado não enxerga empresa nenhuma
+    // (fail-closed). O seed nasce com o equivalente ao estado legado "sem restrição": todas as empresas em
+    // todos os módulos canônicos. Quem restringe é o administrador, módulo a módulo.
+    await tx.query(
+      `insert into erp.membro_escopos_empresa (organization_id, membro_id, modulo, modo)
+       select m.organization_id, m.id, mm.chave, 'todas'
+       from erp.organization_members m cross join erp.modulos_escopo_empresa mm
+       where m.organization_id=$1 and m.is_active
+       on conflict (organization_id, membro_id, modulo) do nothing`, [orgId]);
 
     const farmIds: string[] = [];
     for (const [code, name, city] of [[1, "[DEMO] Fazenda Santa Luzia", 5208707], [2, "[DEMO] Fazenda Boa Vista", 1709500]] as const) {
