@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { AUTORIZACAO_PROPRIETARIO, autorizacaoPorModulo } from "@erp/plataforma";
-import { escopoDaPermissao } from "@agro/domain";
+import { escopoDaPermissao, RESOURCES } from "@agro/domain";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -160,6 +160,19 @@ function ocorrenciasSemRecorte(sql: string): string[] {
   return faltas;
 }
 
+/** Nulabilidade de uma coluna lida do TEXTO da migration (o parser de schema não a guarda). */
+function colunaAnulavel(arquivo: string, tabela: string, coluna: string): boolean | null {
+  const caminho = path.join(here, "../../../../supabase/migrations", arquivo);
+  if (!fs.existsSync(caminho)) return null;
+  const texto = fs.readFileSync(caminho, "utf8");
+  const inicio = texto.indexOf(`create table erp.${tabela} (`);
+  if (inicio < 0) return null;
+  const corpo = texto.slice(inicio, texto.indexOf("\n);", inicio));
+  const m = new RegExp(`\\b${coluna}\\s+uuid([^,]*)`, "i").exec(corpo);
+  if (!m) return null;
+  return !/not\s+null/i.test(m[1]!);
+}
+
 const filtrosVazios: Record<string, string> = {};
 
 /** Uma linha da matriz por relatório: o que ele lê, com que estratégia e sob qual módulo. */
@@ -309,6 +322,38 @@ describe("escopo empresarial dos relatórios", () => {
       }
     }
     expect(problemas, `rotas operacionais sem escopo:\n${problemas.join("\n")}`).toEqual([]);
+  });
+
+  /**
+   * O recurso genérico (`/api/cadastros/:key`, `/api/exports/:key`, `/api/saved-reports/run`, seletores,
+   * distinct, anexos e a própria escrita) decide o recorte por UMA flag do ResourceDef. Se a flag não
+   * existir, NENHUM predicado é emitido em nenhum desses caminhos — e nada cruzava essa flag com o schema
+   * real. Foi assim que `financial_freezes` e `budget_plannings`, dois recursos do módulo financeiro cujas
+   * tabelas têm `farm_id`, ficaram sem recorte em leitura, exportação, anexo e criação.
+   */
+  it("todo recurso cuja tabela tem coluna de empresa declara o escopo (farmScoped ou farmScopedNulo)", () => {
+    const problemas: string[] = [];
+    for (const def of RESOURCES) {
+      const tabela = schema.get(`erp.${def.table}`);
+      if (!tabela) { problemas.push(`${def.key}: tabela erp.${def.table} não existe no schema`); continue; }
+      const cols = companyColumnsOf(tabela) as string[];
+      const declarado = Boolean(def.farmScoped || def.farmScopedNulo);
+      if (cols.length && !NAO_RECORTAVEIS.has(def.table) && def.table !== "farms" && !declarado) {
+        problemas.push(`${def.key} (erp.${def.table}): tem ${cols.join(", ")} mas não declara farmScoped nem farmScopedNulo — listagem, exportação, seletor, anexo e criação sairiam SEM recorte de empresa`);
+      }
+      if (!cols.length && declarado) problemas.push(`${def.key} (erp.${def.table}): declara escopo de empresa mas a tabela não tem coluna de empresa`);
+      if (def.farmScoped && def.farmScopedNulo) problemas.push(`${def.key}: declara farmScoped E farmScopedNulo — escolha um`);
+      // nulabilidade declarada precisa bater com a do banco: tratar como NOT NULL uma coluna anulável esconde
+      // os registros da organização; tratar como anulável uma NOT NULL afrouxa o predicado sem motivo.
+      // (o parser de schema não guarda nulabilidade por coluna, então ela vem do texto da migration)
+      if (declarado && cols.length) {
+        const anulavel = colunaAnulavel(tabela.file as string, def.table, cols[0]!);
+        if (anulavel === null) continue; // não deu para decidir pelo texto: não inventa veredito
+        if (anulavel && !def.farmScopedNulo) problemas.push(`${def.key}: ${cols[0]} é ANULÁVEL no banco, então o recorte precisa ser farmScopedNulo (nulo = registro da organização)`);
+        if (!anulavel && def.farmScopedNulo) problemas.push(`${def.key}: ${cols[0]} é NOT NULL no banco — farmScopedNulo afrouxa o predicado sem motivo`);
+      }
+    }
+    expect(problemas, `recursos genéricos sem escopo declarado:\n${problemas.join("\n")}`).toEqual([]);
   });
 
   it("nenhuma consulta de painel escapa do escopo: cada fonte de empresa tem predicado ou vem de fonte recortada", () => {

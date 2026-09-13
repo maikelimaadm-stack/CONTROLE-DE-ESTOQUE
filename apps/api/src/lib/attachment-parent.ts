@@ -72,7 +72,7 @@ export const ATTACHMENT_PARENTS: Readonly<Record<string, ParentRule>> = (() => {
   const out: Record<string, ParentRule> = {};
   for (const def of RESOURCES) {
     if (EXPLICIT[def.table] || def.table === "users") continue;
-    out[def.table] = { kind: def.farmScoped ? "farm" : "org", viewPerm: `${def.permission}.view`, origin: "registry", load: byId(def.table, { softDelete: Boolean(def.softDelete), shared: Boolean(def.reference || def.sharedDefaults) }) };
+    out[def.table] = { kind: (def.farmScoped || def.farmScopedNulo) ? "farm" : "org", viewPerm: `${def.permission}.view`, origin: "registry", load: byId(def.table, { softDelete: Boolean(def.softDelete), shared: Boolean(def.reference || def.sharedDefaults) }) };
   }
   return { ...out, ...EXPLICIT };
 })();

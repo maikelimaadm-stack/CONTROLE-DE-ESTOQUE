@@ -300,6 +300,22 @@ informação da outra empresa — a categoria aparecia zerada, mas só existia p
 tinha rebanho nela, e isso é a composição do rebanho dela exposta como catálogo em uso. O gate passou a
 contar ocorrências contra predicados.
 
+### Recursos genéricos (cadastros, exportação, seletores, anexos)
+
+`/api/cadastros/:key`, `/api/exports/:key`, `/api/saved-reports/run`, os seletores de referência, o `distinct`
+das faixas de filtro, os anexos e a própria CRIAÇÃO decidem o recorte por UMA declaração do `ResourceDef`:
+
+| Declaração | Quando | Leitura | Escrita |
+| --- | --- | --- | --- |
+| `farmScoped: true` | a tabela tem `farm_id` NOT NULL | predicado canônico na coluna própria | empresa do corpo é PEDIDO e passa por `exigirEmpresaDeLancamento` |
+| `farmScopedNulo: true` | a tabela tem `farm_id` ANULÁVEL (nulo = da organização) | mesmo predicado com semântica nullable: o registro sem empresa continua visível | criar SEM empresa alcança todas elas, então exige o módulo em `todas` (ou proprietário) |
+| nenhuma | a tabela não tem coluna de empresa | recurso de organização | — |
+
+Se a declaração faltar, **nenhum** predicado é emitido em nenhum desses caminhos — não há recorte parcial, é
+tudo ou nada. Por isso o gate cruza a declaração com o SCHEMA REAL: tabela com coluna de empresa e sem
+declaração falha, declaração sem coluna falha, e a nulabilidade declarada tem de bater com a do banco (tratar
+como NOT NULL uma coluna anulável não vaza, mas ESCONDE os registros da organização de quem tem escopo).
+
 As matrizes versionadas estão em `docs/REPORT-SCOPE-MATRIX.md` (gerada e conferida pelo gate, uma linha por
 relatório do catálogo) e `docs/DASHBOARD-SCOPE-MATRIX.md` (painéis, bloco a bloco).
 

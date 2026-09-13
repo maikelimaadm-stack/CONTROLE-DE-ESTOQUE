@@ -164,6 +164,20 @@ export async function exigirEmpresaVisivel(ctx: ServiceCtx, empresaId: string | 
 }
 
 /**
+ * Criar um registro SEM empresa (coluna anulável em que nulo = "da organização") alcança TODAS as empresas.
+ * Quem enxerga apenas algumas não pode produzir um registro que vale para as outras — é ampliação de
+ * autorização pela porta da escrita. Proprietário e módulo em `todas` podem; `selecionadas` precisa dizer
+ * a empresa; `nenhuma` não escreve nada.
+ */
+export function exigirEscopoTotalDoModulo(ctx: ServiceCtx, oQue = "Registro"): void {
+  if (ctx.membership.isOwner) return;
+  const alvo = moduloAtivo(ctx);
+  const escopo = alvo ? escopoDoModulo(ctx.membership.escopos, alvo) : { tipo: "nenhuma" as const };
+  if (escopo.tipo === "todas") return;
+  throw new DomainError("VALIDATION_ERROR", `${oQue} sem empresa vale para a organização inteira: informe a empresa`);
+}
+
+/**
  * Empresa informada no CORPO de um lançamento: é PEDIDO, nunca autorização. Fora do escopo do módulo →
  * VALIDATION_ERROR (o cliente escolheu explicitamente uma empresa que não pode usar; não há o que revelar
  * sobre existência, porque o id veio dele).
