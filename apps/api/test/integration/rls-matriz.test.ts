@@ -44,7 +44,7 @@ describe("classificação × políticas reais", () => {
     const problemas: string[] = [];
     for (const t of await tabelasComEmpresa()) {
       const categoria = classificarTabela(t.tabela, t.colunas, t.anulavel);
-      const esperadas = politicasEsperadas(categoria) as Record<string, { cmd: string; using: string | null; check: string | null; gatilho?: string }> | null;
+      const esperadas = politicasEsperadas(categoria, t.tabela) as Record<string, { cmd: string; using: string | null; check: string | null; gatilho?: string }> | null;
       const p = await db.query<{ policyname: string; cmd: string; qual: string; with_check: string }>(
         "select policyname, cmd, coalesce(qual,'') qual, coalesce(with_check,'') with_check from pg_policies where schemaname='erp' and tablename=$1", [t.tabela]);
       if (!esperadas) {
@@ -66,13 +66,33 @@ describe("classificação × políticas reais", () => {
         // procura o CONJUNTO (`empresas_do_membro`) e o corte total, não um nome de função só.
         const cita = (e: string) => /empresas_do_membro/.test(e) && /escopo_empresa_total/.test(e);
         const soTenant = (e: string) => /tenant_visible/.test(e) && !/empresas_do_membro/.test(e);
-        const confere = (rotulo: "leitura" | "escrita" | "tenant", e: string) => (rotulo === "tenant" ? soTenant(e) : cita(e));
-        if (forma.using && !confere(forma.using as "leitura" | "escrita" | "tenant", achada.qual)) problemas.push(`${t.tabela}.${nome}: USING não é "${forma.using}" — ${achada.qual}`);
-        if (forma.check && !confere(forma.check as "leitura" | "escrita" | "tenant", achada.with_check)) problemas.push(`${t.tabela}.${nome}: WITH CHECK não é "${forma.check}" — ${achada.with_check}`);
+        /** Quantas COLUNAS de empresa o predicado cobra. Origem sozinha = 1; as duas pontas = 2. */
+        const pontas = (e: string) => new Set(e.match(/empresa(?:_origem|_destino)?_id/gi) ?? []).size;
+        // Os dois gabaritos da 0015 são distinguíveis pelo tratamento do NULO, que é o que os torna
+        // diferentes: LEITURA aceita `col is null` (registro da organização / ponta livre); ESCRITA exige
+        // `col is not null` (nulo alcança todas as empresas, então só passa com escopo total).
+        // O gabarito de ESCRITA é reconhecível por exigir `col is not null` (nulo alcança todas as empresas,
+        // então só passa com escopo total). O de LEITURA não tem essa exigência — em `erp.empresas` nem
+        // existe coluna anulável, e é justamente por isso que a marca é a ESCRITA, não o ramo do nulo.
+        const formaEscrita = (e: string) => /IS NOT NULL/i.test(e);
+        const confere = (rotulo: string, e: string) => {
+          if (rotulo === "tenant") return soTenant(e);
+          if (!cita(e)) return false;
+          if (rotulo === "envelope") return pontas(e) >= 2 && !formaEscrita(e);
+          if (rotulo === "escrita+escrita") return pontas(e) >= 2 && formaEscrita(e);
+          if (rotulo === "escrita") return formaEscrita(e);
+          return !formaEscrita(e);   // "leitura"
+        };
+        if (forma.using && !confere(forma.using, achada.qual)) problemas.push(`${t.tabela}.${nome}: USING não é "${forma.using}" — ${achada.qual}`);
+        if (forma.check && !confere(forma.check, achada.with_check)) problemas.push(`${t.tabela}.${nome}: WITH CHECK não é "${forma.check}" — ${achada.with_check}`);
         // A DIFERENÇA que este round existe para garantir: onde a escrita é mais restrita que a leitura,
         // o predicado de escrita NÃO pode aceitar o nulo como aceitação livre.
-        if (forma.using === "escrita" && /empresa_id is null or/.test(achada.qual)) {
+        if (forma.using?.startsWith("escrita") && /empresa_id is null or/.test(achada.qual)) {
           problemas.push(`${t.tabela}.${nome}: o USING de ${forma.cmd} usa o predicado PERMISSIVO (aceita nulo) — poder ler viraria poder escrever`);
+        }
+        // TRANSFERÊNCIA: escrever pela ORIGEM não pode citar a coluna de DESTINO (seria o envelope de volta).
+        if (forma.using === "escrita" && t.colunas.includes("empresa_destino_id") && /empresa_destino_id/.test(achada.qual)) {
+          problemas.push(`${t.tabela}.${nome}: o USING de ${forma.cmd} aceita a ponta de DESTINO — visibilidade bilateral não é autoridade bilateral`);
         }
       }
     }
@@ -83,7 +103,7 @@ describe("classificação × políticas reais", () => {
     const problemas: string[] = [];
     for (const t of await tabelasComEmpresa()) {
       const categoria = classificarTabela(t.tabela, t.colunas, t.anulavel);
-      const esperadas = politicasEsperadas(categoria) as Record<string, { cmd: string }> | null;
+      const esperadas = politicasEsperadas(categoria, t.tabela) as Record<string, { cmd: string }> | null;
       if (!esperadas) continue;
       const declaradas = new Set(Object.keys(esperadas));
       const p = await db.query<{ policyname: string; cmd: string }>(

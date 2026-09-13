@@ -288,8 +288,8 @@ describe("escopo empresarial dos relatórios", () => {
         motivo: "transferência de equipamento ENTRE empresas: o equipamento é o objeto do documento que o usuário já está autorizado a ver (origem ou destino dentro do escopo). Recortá-lo esconderia o próprio objeto da transferência."
       },
       {
-        arquivo: "stock.ts", trecho: "from erp.warehouse_transfers d join erp.warehouses wo on wo.id=d.origin_warehouse_id", aliases: ["wo", "wd"],
-        motivo: "transferência de armazém ENTRE empresas: origem e destino são as duas pontas do documento já autorizado. Recortar a contraparte deixaria a transferência sem destino legível."
+        arquivo: "stock.ts", trecho: "from erp.warehouse_transfers d left join erp.warehouses wo on wo.id=d.origin_warehouse_id", aliases: ["wo", "wd"],
+        motivo: "transferência de armazém ENTRE empresas: origem e destino são as duas pontas do documento já autorizado. A junção é LEFT e serve só ao rótulo — a RLS de erp.warehouses continua valendo, então o armazém fora do escopo volta NULO em vez de derrubar a linha inteira (com INNER JOIN o destinatário recebia lista vazia e não via o que estava chegando)."
       },
       {
         arquivo: "livestock.ts", trecho: "from erp.herd_lots h join erp.animal_categories c on c.id=h.category_id", aliases: ["bt"],

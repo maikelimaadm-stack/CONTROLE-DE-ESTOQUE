@@ -37,6 +37,11 @@ const ALLOW: Record<string, string> = {
   "admin.ts:/admin/members/:userId": "idem",
   "resources.ts:/resources/:key/distinct": "distinctValues aplica o escopo de empresa internamente",
   "resources.ts:/resources/:key/options": "options aplica o escopo do recurso apontado (comPermissaoResolvida)",
+  // O aceite da transferência de rebanho não decide escopo no handler porque o handler NÃO é a
+  // autoridade: quem confere capacidade, empresa de destino, itens vinculados e row counts é
+  // `erp.processar_transferencia_pecuaria_destino`, dentro da transação. Marcar escopo aqui seria
+  // decorar a rota com uma verificação que não é a que decide.
+  "livestock.ts:/livestock/transfers/:id/process": "autoridade dentro de erp.processar_transferencia_pecuaria_destino (capacidade + escopo do destino + row counts)",
   "resources.ts:/resources/:key": "listResource / createOne aplicam escopo internamente",
   "resources.ts:/resources/:key/:id": "getOne / updateOne / deleteOne aplicam escopo internamente",
   "reports.ts:/reports/:key": "cada relatório usa farmClause (membership + fazenda)",

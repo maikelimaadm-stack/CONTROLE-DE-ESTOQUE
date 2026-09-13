@@ -17,7 +17,7 @@ import { harness, ids, TEST_URL, type Harness } from "./setup.js";
 let h: Harness; let admin: Db; let I: Awaited<ReturnType<typeof ids>>;
 let ORG = ""; let A = ""; let B = ""; let USUARIO = ""; let MEMBRO = "";
 let OUTRA_ORG = ""; let EMPRESA_OUTRA_ORG = "";
-let USUARIO_TOTAL = ""; let USUARIO_DESTINO = ""; let CONGELAMENTO_GLOBAL = ""; let TRANSFERENCIA = "";
+let USUARIO_TOTAL = ""; let USUARIO_DESTINO = ""; let USUARIO_DESTINO2 = ""; let USUARIO_AMBAS = ""; let CONGELAMENTO_GLOBAL = ""; let TRANSFERENCIA = "";
 
 /** Consulta sob o papel da aplicação, com o contexto de tenant e o módulo da transação. */
 const comoApp = <T extends Record<string, unknown>>(modulo: string | null, sql: string, params: unknown[] = []) =>
@@ -63,6 +63,20 @@ beforeAll(async () => {
   // o membro da matriz vê a ORIGEM (A) no mesmo módulo
   await admin.query("insert into erp.membro_escopos_empresa(organization_id,membro_id,modulo,modo) values ($1,$2,'frota_ativos','selecionadas')", [ORG, MEMBRO]);
   await admin.query("insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) values ($1,$2,'frota_ativos','selecionadas',$3)", [ORG, MEMBRO, A]);
+
+  // DESTINO-ONLY NA PECUÁRIA: o aceite é dele, o documento não.
+  const ud2 = await admin.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ('rls-destino-pec@demo.local','So Destino Pecuaria','x') returning id");
+  USUARIO_DESTINO2 = ud2.rows[0]!.id;
+  const md2 = await admin.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,is_owner,is_active) values ($1,$2,false,true) returning id", [ORG, USUARIO_DESTINO2]);
+  await admin.query("insert into erp.membro_escopos_empresa(organization_id,membro_id,modulo,modo) values ($1,$2,'pecuaria','selecionadas')", [ORG, md2.rows[0]!.id]);
+  await admin.query("insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) values ($1,$2,'pecuaria','selecionadas',$3)", [ORG, md2.rows[0]!.id, B]);
+
+  // AS DUAS PONTAS no estoque: a contraprova de toda recusa por ponta única na transferência de armazém.
+  const ua = await admin.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ('rls-ambas@demo.local','Ambas as pontas','x') returning id");
+  USUARIO_AMBAS = ua.rows[0]!.id;
+  const ma = await admin.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,is_owner,is_active) values ($1,$2,false,true) returning id", [ORG, USUARIO_AMBAS]);
+  await admin.query("insert into erp.membro_escopos_empresa(organization_id,membro_id,modulo,modo) values ($1,$2,'estoque','selecionadas')", [ORG, ma.rows[0]!.id]);
+  await admin.query("insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) values ($1,$2,'estoque','selecionadas',$3),($1,$2,'estoque','selecionadas',$4)", [ORG, ma.rows[0]!.id, A, B]);
 
   // CATEGORIA B: congelamento financeiro SEM empresa = vale para a organização inteira.
   const cg = await admin.query<{ id: string }>("insert into erp.financial_freezes(organization_id,empresa_id,year,month,is_frozen) values ($1,null,2031,7,true) returning id", [ORG]);
@@ -177,18 +191,30 @@ describe("transferência entre empresas: leitura pelas duas pontas, escrita pela
     const r = await comoApp<{ code: string }>("financeiro", "select code from erp.warehouse_transfers where id=$1", [transferencia]);
     expect(r.rows.length).toBe(1);
   });
-  it("CRIAR exige a origem no escopo — mas NÃO exige o destino", async () => {
-    // Enviar para uma empresa que o autor não enxerga é o caso NORMAL do negócio: quem recebe é que aceita.
-    // Exigir as duas pontas quebraria a operação que a transferência existe para fazer.
+  it("CRIAR transferência de ARMAZÉM exige as DUAS pontas — a operação lança nas duas", async () => {
+    // A generalização "enviar para uma empresa que o autor não enxerga é o caso normal" NÃO vale para os
+    // três domínios. Aqui a criação dá baixa na origem, dá entrada no destino e pode gerar título nos dois
+    // lados — e a rota já exige `assertFarm` nas duas pontas. Certificar no banco um contrato mais largo
+    // que a operação foi o que permitiu o cancelamento pela metade.
     const whA = (await admin.query<{ id: string }>("select id from erp.warehouses where organization_id=$1 and initials='RA'", [ORG])).rows[0]!.id;
     const whB = (await admin.query<{ id: string }>("select id from erp.warehouses where organization_id=$1 and initials='RB'", [ORG])).rows[0]!.id;
+    // o membro da matriz enxerga A no estoque, mas não B: uma ponta só não cria
     await expect(comoApp("estoque",
       `insert into erp.warehouse_transfers(organization_id,code,transfer_date,empresa_origem_id,empresa_destino_id,origin_warehouse_id,destination_warehouse_id,kind,status,created_by)
-       values ($1,'TR-OK',current_date,$2,$3,$4,$5,'farm','pending',$6)`, [ORG, A, B, whA, whB, h.demo.adminUserId])).resolves.toBeTruthy();
-    // o inverso (origem que ele não enxerga naquele módulo) é recusado
+       values ($1,'TR-UMA',current_date,$2,$3,$4,$5,'farm','pending',$6)`, [ORG, A, B, whA, whB, h.demo.adminUserId])).rejects.toThrow(/row-level security|violates/i);
+    // origem que ele não enxerga naquele módulo continua recusada
     await expect(comoApp("estoque",
       `insert into erp.warehouse_transfers(organization_id,code,transfer_date,empresa_origem_id,empresa_destino_id,origin_warehouse_id,destination_warehouse_id,kind,status,created_by)
        values ($1,'TR-NAO',current_date,$2,$3,$4,$5,'farm','pending',$6)`, [ORG, B, A, whB, whA, h.demo.adminUserId])).rejects.toThrow(/row-level security|violates/i);
+  });
+
+  it("CRIAR transferência de REBANHO exige só a ORIGEM — lá quem aceita é o destinatário", async () => {
+    // O contraste com o caso acima é o ponto: na pecuária o destino não participa da emissão; ele recebe um
+    // aviso e ACEITA depois, e é o aceite que move os animais. O destino é validado como EMPRESA DA
+    // ORGANIZAÇÃO (`erp.empresa_da_organizacao_atual`), não como empresa visível ao remetente.
+    const ok = await afetadas(USUARIO, "pecuaria",
+      "insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,empresa_destino_id,status,quantity) values ($1,$2,'RLSMOV-OK','farm_transfer','2031-04-05',$3,'pending',0)", [ORG, A, B]);
+    expect(ok, "a origem emite sozinha").toBe("1");
   });
 });
 
@@ -257,25 +283,20 @@ describe("CATEGORIA B — empresa NULA é da organização: legível por quem v�
   });
 });
 
-describe("CATEGORIA C — transferência: lê-se por qualquer ponta, escreve-se pela ORIGEM", () => {
+describe("CATEGORIA C — transferência: ler pelas duas pontas NÃO é escrever pelas duas", () => {
   it("quem enxerga só o DESTINO vê a transferência chegando", async () => {
     const r = await comoUsuario<{ n: string }>(USUARIO_DESTINO, "frota_ativos", "select count(*)::text n from erp.equipment_transfers where id=$1", [TRANSFERENCIA]);
     expect(r.rows[0]!.n).toBe("1");
   });
-  it("e ALTERA o andamento — aceitar e cancelar são atos do destinatário no domínio", async () => {
-    // `POST /livestock/transfers/:id/process` é literalmente "processar na empresa destino" e
-    // `POST /stock/transfers/:id/cancel` autoriza origem OU destino. Os dois são UPDATE de `status`.
-    // Um `using` restrito à origem não os recusaria: faria UPDATE de ZERO linhas, e a rota não confere
-    // `rowCount` — o usuário veria "confirmado" com o banco intacto.
-    expect(await afetadas(USUARIO_DESTINO, "frota_ativos", "update erp.equipment_transfers set note='aceite' where id=$1", [TRANSFERENCIA])).toBe("1");
+  it("mas NÃO altera a linha — `note` é do documento, e o documento é da ORIGEM", async () => {
+    // Aqui estava o buraco: o UPDATE em envelope existia para o aceite pecuário e para o cancelamento de
+    // estoque, e acabou dando ao destinatário de QUALQUER transferência autoridade para reescrever a linha
+    // inteira. `equipment_transfers` nem sequer tem rota de aceite — a exceção de domínio tinha de ser tão
+    // estreita quanto a ação de domínio.
+    expect(await afetadas(USUARIO_DESTINO, "frota_ativos", "update erp.equipment_transfers set note='aceite' where id=$1", [TRANSFERENCIA])).toBe("0");
   });
-  it("mas NÃO redireciona a ORIGEM para uma empresa sua — o gatilho recusa, porque `with check` só vê a linha nova", async () => {
-    await expect(comoUsuario(USUARIO_DESTINO, "frota_ativos", "update erp.equipment_transfers set empresa_origem_id=$2 where id=$1", [TRANSFERENCIA, B]))
-      .rejects.toThrow(/autoridade sobre a empresa de ORIGEM/);
-  });
-  it("nem muda o DESTINO", async () => {
-    await expect(comoUsuario(USUARIO_DESTINO, "frota_ativos", "update erp.equipment_transfers set empresa_destino_id=$2 where id=$1", [TRANSFERENCIA, A]))
-      .rejects.toThrow(/autoridade sobre a empresa de ORIGEM/);
+  it("nem redireciona as pontas — a política já o exclui, e o gatilho continua como segunda barreira", async () => {
+    expect(await afetadas(USUARIO_DESTINO, "frota_ativos", "update erp.equipment_transfers set empresa_origem_id=$2 where id=$1", [TRANSFERENCIA, B])).toBe("0");
   });
   it("e NÃO a apaga — receber não é poder desfazer o envio", async () => {
     expect(await afetadas(USUARIO_DESTINO, "frota_ativos", "delete from erp.equipment_transfers where id=$1", [TRANSFERENCIA])).toBe("0");
@@ -286,11 +307,39 @@ describe("CATEGORIA C — transferência: lê-se por qualquer ponta, escreve-se 
   it("quem enxerga a ORIGEM apaga", async () => {
     expect(await afetadas(USUARIO, "frota_ativos", "delete from erp.equipment_transfers where id=$1", [TRANSFERENCIA])).toBe("1");
   });
-  it("INSERIR para uma empresa que o autor NÃO enxerga continua permitido: é o caso normal do negócio", async () => {
-    const eq = await admin.query<{ id: string }>("insert into erp.equipments(organization_id,empresa_id,family_id,code,description) select $1,$2,family_id,'RLS-EQ2','Trator 2' from erp.equipments where code='RLS-EQ' returning id", [ORG, A]);
-    const n = await afetadas(USUARIO, "frota_ativos",
-      "insert into erp.equipment_transfers(organization_id,code,transfer_date,equipment_id,empresa_origem_id,empresa_destino_id) values ($1,'RLS-TR2','2031-08-01',$2,$3,$4)",
-      [ORG, eq.rows[0]!.id, A, B]);
-    expect(n).toBe("1");
+
+  it("MOVIMENTO DE REBANHO: o destino lê, mas o UPDATE normal é da origem — o aceite é a operação privilegiada", async () => {
+    const mov = await admin.query<{ id: string }>(
+      "insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,empresa_destino_id,status,quantity) values ($1,$2,'RLSMOV','farm_transfer','2031-04-01',$3,'pending',0) returning id", [ORG, A, B]);
+    const id = mov.rows[0]!.id;
+    const visto = await comoUsuario<{ n: string }>(USUARIO_DESTINO2, "pecuaria", "select count(*)::text n from erp.animal_movements where id=$1", [id]);
+    expect(visto.rows[0]!.n, "o destinatário precisa ver o que está chegando").toBe("1");
+    expect(await afetadas(USUARIO_DESTINO2, "pecuaria", "update erp.animal_movements set note='aceite' where id=$1", [id]),
+      "aceitar é mover animais, não editar o documento").toBe("0");
+    expect(await afetadas(USUARIO_DESTINO2, "pecuaria", "delete from erp.animal_movements where id=$1", [id])).toBe("0");
+  });
+
+  it("TRANSFERÊNCIA DE ARMAZÉM: escrever exige AS DUAS pontas, porque o estorno desfaz as duas", async () => {
+    const t = await admin.query<{ id: string }>(
+      "insert into erp.warehouse_transfers(organization_id,code,transfer_date,kind,empresa_origem_id,origin_warehouse_id,empresa_destino_id,destination_warehouse_id) select $1,'RLSWT','2031-04-02','farm',$2,wa.id,$3,wb.id from (select id from erp.warehouses where organization_id=$1 and initials='RA') wa, (select id from erp.warehouses where organization_id=$1 and initials='RB') wb returning id", [ORG, A, B]);
+    const id = t.rows[0]!.id;
+    expect((await comoUsuario<{ n: string }>(USUARIO, "estoque", "select count(*)::text n from erp.warehouse_transfers where id=$1", [id])).rows[0]!.n,
+      "quem enxerga uma ponta LÊ").toBe("1");
+    expect(await afetadas(USUARIO, "estoque", "update erp.warehouse_transfers set status='cancelled' where id=$1", [id]),
+      "mas cancelar com uma ponta só deixaria meio ledger estornado").toBe("0");
+    expect(await afetadas(USUARIO_AMBAS, "estoque", "update erp.warehouse_transfers set status='cancelled' where id=$1", [id]),
+      "quem alcança as duas pontas escreve").toBe("1");
+  });
+
+  it("INSERIR transferência de armazém com só uma ponta é recusado; com as duas passa", async () => {
+    const armazens = await admin.query<{ ra: string; rb: string }>(
+      "select (select id from erp.warehouses where organization_id=$1 and initials='RA') ra, (select id from erp.warehouses where organization_id=$1 and initials='RB') rb", [ORG]);
+    const { ra, rb } = armazens.rows[0]!;
+    await expect(comoUsuario(USUARIO, "estoque",
+      "insert into erp.warehouse_transfers(organization_id,code,transfer_date,kind,empresa_origem_id,origin_warehouse_id,empresa_destino_id,destination_warehouse_id) values ($1,'RLSWT2','2031-04-03','farm',$2,$3,$4,$5)", [ORG, A, ra, B, rb]))
+      .rejects.toThrow();
+    const ok = await afetadas(USUARIO_AMBAS, "estoque",
+      "insert into erp.warehouse_transfers(organization_id,code,transfer_date,kind,empresa_origem_id,origin_warehouse_id,empresa_destino_id,destination_warehouse_id) values ($1,'RLSWT3','2031-04-03','farm',$2,$3,$4,$5)", [ORG, A, ra, B, rb]);
+    expect(ok, "com as duas pontas a operação é legítima").toBe("1");
   });
 });
