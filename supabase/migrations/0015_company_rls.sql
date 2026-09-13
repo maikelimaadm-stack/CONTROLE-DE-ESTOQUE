@@ -215,58 +215,76 @@ begin
     end if;
   end loop;
 
-  -- C — transferências entre empresas.
+  -- C — transferências entre empresas. TRÊS DOMÍNIOS, TRÊS CONTRATOS.
   --
-  -- A leitura vale pelas DUAS pontas: quem envia acompanha e quem recebe precisa ver o que está chegando.
+  -- As três tabelas têm a mesma FORMA (duas colunas de empresa) e semânticas diferentes. Tratá-las como uma
+  -- categoria só fez a regra mais permissiva das três virar a regra de todas — e a RLS passou a certificar
+  -- uma autoridade que NENHUMA das operações reais precisa. A exceção de domínio tem de ser tão estreita
+  -- quanto a ação de domínio.
   --
-  -- A escrita NÃO é "só a origem", e essa foi a lição cara desta rodada. O destinatário tem dois atos
-  -- legítimos e centrais no domínio: ACEITAR a transferência de lote (`POST /livestock/transfers/:id/process`,
-  -- que é literalmente "processar na empresa destino") e CANCELAR a transferência de armazém
-  -- (`POST /stock/transfers/:id/cancel`, que a API autoriza por origem OU destino). Os dois mudam `status`.
-  -- Um `using` de UPDATE restrito à origem não os recusa com erro: ele os transforma em UPDATE de ZERO
-  -- linhas, e as rotas não conferem `rowCount` — o usuário veria "confirmado" sem nada ter mudado.
-  -- Trocar um buraco por um no-op silencioso é piorar.
+  --   C1 `animal_movements`  — a origem emite; o destino ACEITA. O aceite move animais que ainda são da
+  --                            ORIGEM, então ele não cabe no UPDATE normal: é a função privilegiada
+  --                            `erp.processar_transferencia_pecuaria_destino` (seção 2c). UPDATE normal e
+  --                            DELETE respondem pela ORIGEM. O destino lê, e só.
+  --   C2 `warehouse_transfers` — a criação já lança no ledger das DUAS empresas (e pode gerar título nos
+  --                            dois lados), e a rota exige `assertFarm` nas duas pontas. O cancelamento
+  --                            precisa ESTORNAR os dois lados, e `reverseStock` lê `erp.stock_movements`
+  --                            pela RLS normal: quem enxerga uma ponta só estornaria metade do ledger.
+  --                            Por isso INSERT/UPDATE/DELETE exigem as DUAS pontas — o banco não certifica
+  --                            um contrato mais largo do que a operação.
+  --   C3 `equipment_transfers` — a criação move o bem na hora e exige origem E destino; NÃO existe rota de
+  --                            aceite posterior. Nada a alterar depois pelo destino: UPDATE/DELETE são da
+  --                            ORIGEM, INSERT exige as duas pontas.
   --
-  -- Então a RLS delimita o ENVELOPE (a linha continua entre as mesmas duas pontas, e pelo menos uma delas é
-  -- do autor) e o que a RLS não sabe dizer — "as pontas não mudaram" — fica com um GATILHO, que é quem
-  -- enxerga OLD e NEW. Ser destinatário passa a significar exatamente: pode mexer no andamento, NÃO pode
-  -- redirecionar o envio (gatilho) e NÃO pode apagá-lo (o `delete` responde pela origem).
-  -- O destino continua provado pela chave estrangeira composta — tem de ser empresa DESTA organização —
-  -- e por `exigirEmpresaDaOrganizacao` na API.
+  -- Em todas as três a LEITURA vale pelas duas pontas: quem recebe precisa ver o que está chegando.
+  -- VISIBILIDADE BILATERAL NÃO É AUTORIDADE DE MUTAÇÃO BILATERAL.
   for r in select unnest(pares) as tabela loop
     foreach n in array nomes loop execute format('drop policy if exists %I on erp.%I', n, r.tabela); end loop;
   end loop;
 
-  -- `animal_movements` nomeia a origem como `empresa_id` (o lote sai da empresa do movimento);
-  -- `equipment_transfers` e `warehouse_transfers` nomeiam `empresa_origem_id`.
+  -- C1 — `animal_movements` nomeia a origem como `empresa_id` (o lote sai da empresa do movimento).
+  -- O destino LÊ pelo envelope; alterar a linha é da ORIGEM. O aceite não é um UPDATE do destinatário:
+  -- é a operação privilegiada da seção 2c, que move os ativos e só então confirma.
   execute format('create policy tenant_e_empresa_select on erp.animal_movements for select to erp_app, authenticated using (%s and (%s or %s))',
                  tenant, format(leitura, 'empresa_id'), format(leitura, 'empresa_destino_id'));
   execute format('create policy tenant_e_empresa_insert on erp.animal_movements for insert to erp_app, authenticated with check (%s and %s)',
                  tenant, format(escrita, 'empresa_id'));
-  execute format('create policy tenant_e_empresa_update on erp.animal_movements for update to erp_app, authenticated using (%s and (%s or %s)) with check (%s and (%s or %s))',
-                 tenant, format(leitura, 'empresa_id'), format(leitura, 'empresa_destino_id'),
-                 tenant, format(leitura, 'empresa_id'), format(leitura, 'empresa_destino_id'));
+  execute format('create policy tenant_e_empresa_update on erp.animal_movements for update to erp_app, authenticated using (%s and %s) with check (%s and %s)',
+                 tenant, format(escrita, 'empresa_id'), tenant, format(escrita, 'empresa_id'));
   execute format('create policy tenant_e_empresa_delete on erp.animal_movements for delete to erp_app, authenticated using (%s and %s)',
                  tenant, format(escrita, 'empresa_id'));
 
-  for r in select unnest(array['equipment_transfers','warehouse_transfers']) as tabela loop
-    execute format('create policy tenant_e_empresa_select on erp.%I for select to erp_app, authenticated using (%s and (%s or %s))',
-                   r.tabela, tenant, format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
-    execute format('create policy tenant_e_empresa_insert on erp.%I for insert to erp_app, authenticated with check (%s and %s)',
-                   r.tabela, tenant, format(escrita, 'empresa_origem_id'));
-    execute format('create policy tenant_e_empresa_update on erp.%I for update to erp_app, authenticated using (%s and (%s or %s)) with check (%s and (%s or %s))',
-                   r.tabela, tenant, format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'),
-                   tenant, format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
-    execute format('create policy tenant_e_empresa_delete on erp.%I for delete to erp_app, authenticated using (%s and %s)',
-                   r.tabela, tenant, format(escrita, 'empresa_origem_id'));
-  end loop;
+  -- C2 — `warehouse_transfers`: a operação toca as DUAS empresas, então a autoridade é das duas.
+  execute format('create policy tenant_e_empresa_select on erp.warehouse_transfers for select to erp_app, authenticated using (%s and (%s or %s))',
+                 tenant, format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
+  execute format('create policy tenant_e_empresa_insert on erp.warehouse_transfers for insert to erp_app, authenticated with check (%s and %s and %s)',
+                 tenant, format(escrita, 'empresa_origem_id'), format(escrita, 'empresa_destino_id'));
+  execute format('create policy tenant_e_empresa_update on erp.warehouse_transfers for update to erp_app, authenticated using (%s and %s and %s) with check (%s and %s and %s)',
+                 tenant, format(escrita, 'empresa_origem_id'), format(escrita, 'empresa_destino_id'),
+                 tenant, format(escrita, 'empresa_origem_id'), format(escrita, 'empresa_destino_id'));
+  execute format('create policy tenant_e_empresa_delete on erp.warehouse_transfers for delete to erp_app, authenticated using (%s and %s and %s)',
+                 tenant, format(escrita, 'empresa_origem_id'), format(escrita, 'empresa_destino_id'));
+
+  -- C3 — `equipment_transfers`: criar exige as duas pontas (o bem muda de dono na hora); depois disso não
+  -- há aceite nenhum, então alterar e apagar respondem pela ORIGEM.
+  execute format('create policy tenant_e_empresa_select on erp.equipment_transfers for select to erp_app, authenticated using (%s and (%s or %s))',
+                 tenant, format(leitura, 'empresa_origem_id'), format(leitura, 'empresa_destino_id'));
+  execute format('create policy tenant_e_empresa_insert on erp.equipment_transfers for insert to erp_app, authenticated with check (%s and %s and %s)',
+                 tenant, format(escrita, 'empresa_origem_id'), format(escrita, 'empresa_destino_id'));
+  execute format('create policy tenant_e_empresa_update on erp.equipment_transfers for update to erp_app, authenticated using (%s and %s) with check (%s and %s)',
+                 tenant, format(escrita, 'empresa_origem_id'), tenant, format(escrita, 'empresa_origem_id'));
+  execute format('create policy tenant_e_empresa_delete on erp.equipment_transfers for delete to erp_app, authenticated using (%s and %s)',
+                 tenant, format(escrita, 'empresa_origem_id'));
 end $$;
 
 -- ---------- 2b) o que a RLS não sabe dizer: "as pontas não mudaram" ----------
--- `with check` enxerga só a linha NOVA. "O destinatário não pode redirecionar o envio" é uma comparação
--- entre a linha VELHA e a NOVA — e isso é um gatilho, não uma política. Sem ele, quem enxerga o destino
--- passaria no `using` (pela ponta dele) e no `with check` (a linha continua tendo aquele destino) enquanto
--- reescreve a ORIGEM para uma empresa sua: a transferência mudaria de remetente sem que ninguém recusasse.
+-- `with check` enxerga só a linha NOVA: "a origem e o destino continuam os mesmos" é uma comparação entre a
+-- linha VELHA e a NOVA, e isso é gatilho, não política.
+--
+-- Depois de estreitar o UPDATE para a ORIGEM (C1/C3) e para as DUAS pontas (C2), o gatilho deixou de ser a
+-- única coisa entre o destinatário e o redirecionamento do envio — e é por isso que ele FICA: uma invariante
+-- de ponta não deve depender de a política de UPDATE continuar estreita. Ele é defesa em profundidade, não
+-- justificativa para abrir as demais colunas a quem só recebe.
 --
 -- A recusa é `VALIDATION_ERROR` (P0001), que a API já traduz para 422 — erro de negócio legível, não 500.
 create or replace function erp.travar_pontas_transferencia_origem() returns trigger language plpgsql as $$
@@ -296,6 +314,143 @@ drop trigger if exists trg_travar_pontas on erp.warehouse_transfers;
 create trigger trg_travar_pontas before update on erp.warehouse_transfers for each row execute function erp.travar_pontas_transferencia_origem();
 drop trigger if exists trg_travar_pontas on erp.animal_movements;
 create trigger trg_travar_pontas before update on erp.animal_movements for each row execute function erp.travar_pontas_movimento_animal();
+
+-- ---------- 2c) o aceite do destinatário: operação ESTREITA, não autoridade ampla ----------
+--
+-- O aceite pecuário é a única exceção legítima de mutação pelo destinatário, e ela tem uma razão exata: o
+-- destinatário ainda NÃO possui os animais, porque é justamente o aceite que os traz para o escopo dele.
+-- Resolver isso abrindo o UPDATE de `erp.animals` seria dar-lhe autoridade sobre TODO o rebanho da origem.
+--
+-- O que a rota fazia antes era pior que um bypass: ela tentava o `update` normal, a RLS devolvia ZERO
+-- linhas, e o `update` seguinte marcava `status='confirmed'` assim mesmo. O resultado não era "acesso
+-- negado", era uma transferência CONFIRMADA com os animais ainda na origem — corrupção de estado que
+-- ninguém reclama no dia e ninguém explica no fechamento.
+--
+-- Esta função é a porta, e ela é estreita de propósito: sabe QUAL transferência, QUAIS entidades, QUAL
+-- origem, QUAL destino e QUAL ação. Não recebe organização do cliente, não monta SQL, não devolve registro
+-- da origem, e confere capacidade E escopo do destino ANTES de mover qualquer coisa. Ou tudo acontece —
+-- ativos, lote de destino e status — ou nada acontece.
+create or replace function erp.processar_transferencia_pecuaria_destino(
+  p_movimento uuid, p_lote_destino uuid default null)
+returns table (animais integer, rebanhos integer, cabecas integer)
+language plpgsql security definer set search_path = erp, pg_catalog as $$
+declare
+  v_org uuid := erp.current_org_id();
+  v_user uuid := erp.effective_user_id();
+  v_origem uuid; v_destino uuid; v_status text; v_lote uuid;
+  v_esp_animais integer; v_esp_rebanhos integer; v_esp_cabecas integer;
+  v_mov_animais integer; v_mov_rebanhos integer; v_mov_cabecas integer;
+begin
+  if v_org is null or v_user is null then
+    raise exception 'CONTEXTO_AUSENTE: aceite de transferencia exige organizacao e usuario na transacao' using errcode = '42501';
+  end if;
+  -- a MESMA capacidade que a rota exige, reconferida aqui: a função é a porta, não um atalho da rota
+  if not erp.has_permission(v_org, v_user, 'batch_farm_transfer.process') then
+    raise exception 'PERMISSION_DENIED: aceitar transferencia de rebanho exige batch_farm_transfer.process' using errcode = 'P0001';
+  end if;
+
+  -- a transferência é identificada pelo PRÓPRIO id; origem e destino saem dela, nunca do payload
+  select m.empresa_id, m.empresa_destino_id, m.status, m.destination_batch_id
+    into v_origem, v_destino, v_status, v_lote
+    from erp.animal_movements m
+   where m.id = p_movimento and m.organization_id = v_org
+     and m.movement_type = 'farm_transfer' and m.deleted_at is null
+   for update;
+  if not found then
+    raise exception 'NOT_FOUND: transferencia de rebanho nao encontrada nesta organizacao' using errcode = 'P0001';
+  end if;
+  if v_status <> 'pending' then
+    raise exception 'ALREADY_CONFIRMED: transferencia ja processada' using errcode = 'P0001';
+  end if;
+  if v_destino is null or v_destino = v_origem then
+    raise exception 'VALIDATION_ERROR: transferencia sem empresa de destino distinta da origem' using errcode = 'P0001';
+  end if;
+  if not exists (select 1 from erp.empresas e
+                  where e.id = v_destino and e.organization_id = v_org and e.deleted_at is null) then
+    raise exception 'VALIDATION_ERROR: empresa de destino nao pertence a esta organizacao' using errcode = 'P0001';
+  end if;
+  -- quem aceita é o DESTINATÁRIO: acesso real à empresa de destino, no módulo do domínio
+  if not erp.tem_acesso_empresa(v_org, v_user, 'pecuaria', v_destino) then
+    raise exception 'PERMISSION_DENIED: aceitar exige acesso a empresa de destino no modulo pecuaria' using errcode = 'P0001';
+  end if;
+
+  v_lote := coalesce(p_lote_destino, v_lote);
+  if v_lote is not null and not exists (
+        select 1 from erp.batches b
+         where b.id = v_lote and b.organization_id = v_org
+           and b.empresa_id = v_destino and b.status = 'active' and b.deleted_at is null) then
+    raise exception 'VALIDATION_ERROR: lote de destino invalido, inativo ou de outra empresa' using errcode = 'P0001';
+  end if;
+
+  -- O QUE a transferência carrega: só o que está EXPLICITAMENTE vinculado a ela.
+  select count(*) filter (where i.animal_id is not null),
+         count(*) filter (where i.herd_lot_id is not null),
+         coalesce(sum(i.quantity), 0)
+    into v_esp_animais, v_esp_rebanhos, v_esp_cabecas
+    from erp.animal_movement_items i where i.movement_id = p_movimento;
+  if v_esp_animais + v_esp_rebanhos = 0 then
+    raise exception 'VALIDATION_ERROR: transferencia sem animais ou rebanhos vinculados' using errcode = 'P0001';
+  end if;
+
+  -- Move SÓ o que está vinculado e SÓ o que ainda está na ORIGEM. O predicado da origem é o que impede
+  -- que um acervo mexido por fora entre carona no aceite.
+  with movidos as (
+    update erp.animals a set empresa_id = v_destino, batch_id = v_lote, updated_at = now()
+     where a.organization_id = v_org and a.empresa_id = v_origem
+       and a.id in (select i.animal_id from erp.animal_movement_items i
+                     where i.movement_id = p_movimento and i.animal_id is not null)
+    returning 1)
+  select count(*)::integer into v_mov_animais from movidos;
+
+  with movidos as (
+    update erp.herd_lots l set empresa_id = v_destino, batch_id = v_lote, updated_at = now()
+     where l.organization_id = v_org and l.empresa_id = v_origem
+       and l.id in (select i.herd_lot_id from erp.animal_movement_items i
+                     where i.movement_id = p_movimento and i.herd_lot_id is not null)
+    returning l.quantity)
+  select count(*)::integer, coalesce(sum(quantity), 0)::integer into v_mov_rebanhos, v_mov_cabecas from movidos;
+
+  -- ROW COUNT: esperado × efetivo. Divergir aqui é rollback total — nunca "confirmado com o que deu".
+  if v_mov_animais <> v_esp_animais or v_mov_rebanhos <> v_esp_rebanhos then
+    raise exception 'VALIDATION_ERROR: a transferencia esperava % animal(is) e % rebanho(s) na empresa de origem; moveu % e %. Nada foi alterado.',
+      v_esp_animais, v_esp_rebanhos, v_mov_animais, v_mov_rebanhos using errcode = 'P0001';
+  end if;
+  if v_mov_animais + v_mov_cabecas <> v_esp_cabecas then
+    raise exception 'VALIDATION_ERROR: a transferencia esperava % cabeca(s) e moveu %. Nada foi alterado.',
+      v_esp_cabecas, v_mov_animais + v_mov_cabecas using errcode = 'P0001';
+  end if;
+
+  -- só DEPOIS do efeito completo o documento vira confirmado
+  update erp.animal_movements
+     set status = 'confirmed', destination_batch_id = v_lote, updated_at = now()
+   where id = p_movimento;
+
+  animais := v_mov_animais; rebanhos := v_mov_rebanhos; cabecas := v_mov_animais + v_mov_cabecas;
+  return next;
+end $$;
+comment on function erp.processar_transferencia_pecuaria_destino(uuid, uuid) is
+  'ACEITE da transferencia de rebanho pela empresa de DESTINO (PRE-BASE2-03). SECURITY DEFINER estreita: organizacao e usuario vem da GUC do servidor, capacidade e escopo do destino conferidos aqui dentro, move SOMENTE os itens vinculados a esta transferencia que ainda estao na empresa de ORIGEM, confere row counts e so entao confirma. Nao e uma porta generica: nao recebe organizacao, nao monta SQL e nao devolve registro algum da origem.';
+revoke execute on function erp.processar_transferencia_pecuaria_destino(uuid, uuid) from public;
+grant execute on function erp.processar_transferencia_pecuaria_destino(uuid, uuid) to erp_app;
+
+-- A EXISTÊNCIA de uma empresa na organização NÃO é uma pergunta de escopo.
+--
+-- `erp.empresas` é lida pelo escopo (categoria D), e é assim que tem de ser para o seletor. Mas "este UUID é
+-- uma empresa da MINHA organização?" é outra pergunta: é ela que a emissão de uma transferência faz sobre o
+-- DESTINO — que o remetente legitimamente não enxerga, porque quem aceita é o destinatário. Respondê-la pela
+-- política de leitura transformava "não vejo" em "não existe", e a rota recusava com 422 uma transferência
+-- perfeitamente válida. Esta função responde só isso, dentro do tenant do servidor, e nada mais: não devolve
+-- nome, nem lista, nem qualquer atributo da empresa.
+create or replace function erp.empresa_da_organizacao_atual(p_empresa uuid) returns boolean
+language sql stable security definer set search_path = erp, pg_catalog as $$
+  select p_empresa is not null and erp.current_org_id() is not null and exists (
+    select 1 from erp.empresas e
+     where e.id = p_empresa and e.organization_id = erp.current_org_id() and e.deleted_at is null)
+$$;
+comment on function erp.empresa_da_organizacao_atual(uuid) is
+  'A empresa existe NESTA organizacao? (PRE-BASE2-03) Pergunta de TENANT, nao de escopo: usada na emissao de transferencia para validar um destino que o remetente nao enxerga. Definer estreita, organizacao da GUC do servidor, devolve apenas booleano.';
+revoke execute on function erp.empresa_da_organizacao_atual(uuid) from public;
+grant execute on function erp.empresa_da_organizacao_atual(uuid) to erp_app;
 
 -- D — a própria tabela de Empresas.
 -- O seletor de empresa não pode depender do módulo ativo: a mesma lista alimenta telas de vários módulos, e

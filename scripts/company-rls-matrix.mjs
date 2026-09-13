@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readSchema, CANONICAL_COMPANY_COLUMNS, REPO_ROOT } from "./lib/schema.mjs";
-import { CATEGORIAS, EXCECOES_RLS_EMPRESA, classificarTabela, politicaEsperada , politicasEsperadas} from "../packages/domain/empresa-rls.mjs";
+import { CATEGORIAS, EXCECOES_RLS_EMPRESA, classificarTabela, politicaEsperada, politicasEsperadas, subcategoriaTransferencia } from "../packages/domain/empresa-rls.mjs";
 
 const DOC = path.join(REPO_ROOT, "docs", "COMPANY-RLS-MATRIX.md");
 const MODULO_POR_TABELA = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "scripts", "company-rls-modules.json"), "utf8"));
@@ -42,20 +42,21 @@ for (const [nome, t] of [...schema].sort(([a], [b]) => a.localeCompare(b))) {
     modulo: modulo ?? (categoria === "D" ? "(seletor: união dos módulos)" : "—"),
     politica: politicaEsperada(categoria),
     porComando: (() => {
-      const e = politicasEsperadas(categoria);
+      const e = politicasEsperadas(categoria, tabela);
       if (!e) return "— (a proteção é outra; ver justificativa)";
-      const rot = { leitura: "leitura", escrita: "**escrita**", tenant: "tenant" };
+      const rot = { leitura: "leitura", escrita: "**escrita (origem)**", "escrita+escrita": "**escrita (AS DUAS pontas)**", envelope: "envelope (qualquer ponta)", tenant: "tenant" };
       return Object.values(e).map((f) =>
         f.cmd === "ALL" ? `ALL: using=${rot[f.using]} · check=${rot[f.check]}`
         : `${f.cmd}: ${f.using ? `using=${rot[f.using]}` : ""}${f.using && f.check ? " · " : ""}${f.check ? `check=${rot[f.check]}` : ""}`
       ).join("<br>");
     })(),
-    leitura: categoria === "C" ? "qualquer ponta no escopo"
+    subcategoria: subcategoriaTransferencia(tabela),
+    leitura: categoria === "C" ? subcategoriaTransferencia(tabela).leitura
       : categoria === "D" ? "empresa visível em ALGUM módulo (união)"
       : categoria === "B" ? "empresa no escopo do módulo; registro SEM empresa continua visível"
       : categoria === "A" ? "empresa no escopo do módulo"
       : "regra própria (ver justificativa)",
-    escrita: categoria === "C" ? "criar e APAGAR respondem pela ORIGEM; alterar vale por qualquer ponta (o destinatário aceita/cancela), e mudar as PONTAS exige a origem — gatilho `trg_travar_pontas`"
+    escrita: categoria === "C" ? `${subcategoriaTransferencia(tabela).escrita}${subcategoriaTransferencia(tabela).privilegiada ? `; aceite do destino pela operação privilegiada \`${subcategoriaTransferencia(tabela).privilegiada}\`` : ""}; mudar as PONTAS exige a origem — gatilho \`trg_travar_pontas\``
       : categoria === "D" ? "tenant (criar empresa é ato de organização)"
       : categoria === "B" ? "empresa no escopo; SEM empresa exige escopo total do módulo"
       : categoria === "A" ? "empresa no escopo do módulo"
