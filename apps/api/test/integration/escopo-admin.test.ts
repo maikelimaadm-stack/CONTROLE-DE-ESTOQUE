@@ -87,6 +87,25 @@ describe("validação das empresas atribuídas", () => {
   });
 });
 
+describe("modo selecionadas com lista VAZIA = nenhuma empresa (fail-closed explícito)", () => {
+  it("é aceito na configuração e resulta em zero acesso no runtime", async () => {
+    seq += 1;
+    const email = `vazio-${seq}@demo.local`;
+    const papelLeitura = await post("/api/admin/roles", { name: `Perfil vazio ${seq}`, permissions: ["input_entries.view", "stocks.view"] });
+    const criado = await post("/api/admin/members", { name: "Vazio", email, password: "Borda@12345", role_id: j(papelLeitura).id, escopos_empresas: [{ modulo: "estoque", modo: "selecionadas", empresas: [] }] });
+    expect(criado.statusCode, criado.body).toBe(201);
+    const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Borda@12345" } });
+    const hd = { authorization: `Bearer ${j(login).token}`, "x-org-id": h.demo.orgId };
+    const lista = await h.app.inject({ method: "GET", url: "/api/stock/input-entries", headers: hd });
+    expect(lista.statusCode, lista.body).toBe(200);
+    expect((lista.json() as { items: unknown[] }).items, "selecionadas com lista vazia é NENHUMA empresa").toEqual([]);
+    // e a configuração devolvida é a canônica, sem virar "todas" no caminho de volta
+    const membros = await h.app.inject({ method: "GET", url: `/api/admin/members?search=${encodeURIComponent(email)}`, headers: h.headers() });
+    const item = (membros.json() as { items: { escopos_empresas: { modulo: string; modo: string; empresas: string[] }[] }[] }).items[0]!;
+    expect(item.escopos_empresas).toEqual([{ modulo: "estoque", modo: "selecionadas", empresas: [] }]);
+  });
+});
+
 describe("a borda LEGADA farm_ids não desvia da validação canônica", () => {
   const casos: [string, () => string][] = [
     ["empresa de outra organização", () => empresaOutraOrg],
