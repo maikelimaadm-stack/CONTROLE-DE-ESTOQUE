@@ -31,11 +31,18 @@ implantar sem janela de indisponibilidade e sem exigir que banco, API e web suba
 | --- | --- | --- | --- |
 | **1. EXPAND (banco)** | `0014` + `0015` no pre-deploy | `erp.empresas` existe, `erp.farms` vira view, toda tabela de escopo tem as DUAS colunas sincronizadas por gatilho, RLS já recorta por empresa | Sim — a API anterior continua funcionando: ela escreve `farm_id` e o gatilho preenche `empresa_id` |
 | **2. API** | binário novo da API | Aceita `X-Empresa-Id` **e** `X-Farm-Id`; traduz payload legado na borda; responde com os DOIS nomes | Sim — o binário anterior volta a rodar contra o mesmo banco |
-| **3. WEB** | build novo do frontend | Envia os dois cabeçalhos e lê `empresas ?? farms` | Sim — o build anterior continua servido pela API nova |
+| **3. WEB** | build novo do frontend | Fala EMPRESA por dentro e LEGADO no fio: envia só `X-Farm-Id`, pede `/api/resources/farms`, manda `farm_id` no corpo e na query, e promove a resposta para o canônico antes de a tela ver o dado | Sim — o build anterior continua servido pela API nova |
 | **4. COMPATIBILIDADE (observação)** | nada | Janela em que os dois idiomas convivem; o inventário (`docs/FARM-DEPENDENCY-INVENTORY.md`) mede o que falta | — |
 
 Ordem obrigatória: **1 → 2 → 3**. Subir a API nova antes do banco é o único caminho que quebra (ela escreve
 `empresa_id` numa tabela que ainda não tem a coluna).
+
+**A fase 3 pode acontecer ANTES da 2 sem quebrar** — e é o cenário que custa mais caro se não for testado,
+porque o que falha não é a aplicação, é o CORS: a API anterior declara `allowedHeaders` sem `X-Empresa-Id`, e
+um navegador que o envia tem o preflight recusado e a tela em branco. Por isso o fio do cliente é legado
+(`docs/MULTI-COMPANY-CONTRACT.md` §8.4) e o CI tem um job dedicado, **Version skew · web novo × API do commit
+base**, que sobe a API daquele commit de verdade (`node scripts/api-anterior.mjs`) contra o banco já migrado
+e roda `apps/web/e2e/skew-api-anterior.spec.ts` no navegador.
 
 **A migration é FAIL-CLOSED antes de tocar em qualquer coisa**: se existir linha apontando para empresa de
 OUTRA organização, a `0014` PARA e imprime a consulta de diagnóstico com os ids. Ela não corrige em silêncio,
@@ -59,6 +66,15 @@ select count(*) from erp.empresas;                                  -- tabela ca
 select count(*) from erp.farms;                                     -- view legada responde o mesmo número
 select relrowsecurity from pg_class where oid = 'erp.stock_movements'::regclass;   -- t
 select polname from pg_policy where polrelid = 'erp.stock_movements'::regclass;    -- tenant_e_empresa
+
+-- tabela com empresa ANULÁVEL: quatro políticas, uma por comando (uma só deixaria DELETE com a regra de leitura)
+select polname, polcmd from pg_policy where polrelid = 'erp.documents'::regclass order by polcmd;
+-- transferência: além das quatro, o gatilho que impede trocar as pontas sem autoridade na origem
+select tgname from pg_trigger where tgrelid = 'erp.warehouse_transfers'::regclass and not tgisinternal;
+
+-- a porta organizacional do saldo é definer, mas estreita: sem execute para public
+select proname, prosecdef, proconfig from pg_proc where proname = 'movimentos_conta_organizacao';
+select has_function_privilege('public', 'erp.movimentos_conta_organizacao(uuid[],date,date)', 'execute');  -- f
 ```
 
 Pelo papel da aplicação (`erp_app`, sem bypass): uma consulta a `erp.farms` precisa devolver **o mesmo número

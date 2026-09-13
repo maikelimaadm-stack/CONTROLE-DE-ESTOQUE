@@ -25,7 +25,7 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | receipt_schedule | report.receipt_schedule | financeiro | financial_titles (predicado) | OK |
 | paid_interest | report.paid_interest | financeiro | financial_titles (predicado) | OK |
 | received_interest | report.received_interest | financeiro | financial_titles (predicado) | OK |
-| bank_statement | report.bank_statement | organização | bank_movements (organização), bank_movements (organização) | ORGANIZAÇÃO JUSTIFICADO |
+| bank_statement | report.bank_statement | organização | sem fonte de empresa | OK |
 | financial_movement | report.financial_movement | financeiro | bank_movements (predicado) | OK |
 | ledger_category | report.ledger_category | financeiro | financial_titles (predicado) | OK |
 | ledger | report.ledger | financeiro | bank_movements (predicado) | OK |

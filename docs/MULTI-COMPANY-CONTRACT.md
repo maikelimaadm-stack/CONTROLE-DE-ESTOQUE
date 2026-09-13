@@ -159,7 +159,11 @@ if (!hasPermission(ctx, permissao)) throw notFound();
    (`apps/api/src/lib/escopo-admin.ts`), nunca no runtime de autorização.
 4. `X-Empresa-Id` é o cabeçalho canônico de SELEÇÃO de contexto de trabalho; `X-Farm-Id` continua aceito
    durante a janela de rollout. A validação dele é POR MÓDULO, na porta: seleção explícita que o usuário não
-   pode usar naquele módulo é 403.
+   pode usar naquele módulo é 403. **O navegador, enquanto a ponte existir, envia só `X-Farm-Id`** — o CORS
+   da API anterior não declara o canônico e o preflight morreria (§8.4).
+5. Empresa criada pela tela recebe o código do contador `erp.code_sequences`, cuja chave de entidade é
+   `SEQUENCIA_EMPRESA` (`"farm"`) — a MESMA de antes da renomeação. Trocar a chave criaria um segundo
+   contador começando em zero e, com ele, códigos duplicados num acervo que já existe.
 
 ## 7. Acesso por empresa E módulo (autoridade de runtime)
 
@@ -262,6 +266,19 @@ segredo (senha, hash, token, cabeçalho) entra nos metadados.
 | --- | --- | --- |
 | saldo da conta, extrato com saldo corrente, fluxo de caixa por conta | **organização** (parte do saldo inicial, que não é decomponível) | exige capacidade de ORGANIZAÇÃO (`bank_accounts.view`) além da permissão financeira; o Extrato Bancário é classificado como recurso de organização, com justificativa registrada |
 | agregados de MOVIMENTOS (razão, fluxo por categoria, conciliação, financiamentos) | **empresa** | recorte por `farm_id` com semântica nullable (movimento sem empresa é da organização) |
+
+Como `erp.bank_movements` TEM empresa, ele é company-scoped na RLS — corretamente. Mas as três portas de
+CONTA abrem a transação SEM módulo, e sem módulo o recorte vale a UNIÃO das empresas do membro: o saldo
+passaria a somar o `opening_balance` da organização com os movimentos de PARTE das empresas. O resultado não
+seria um erro, seria pior — um extrato que fecha em 130 quando a conta tem 130, exibido como 110. Saldo
+negado alguém investiga; saldo ERRADO ninguém questiona até a conciliação.
+
+A porta organizacional é uma função estreita, `erp.movimentos_conta_organizacao(contas, de, até)`:
+`security definer` com `search_path` fixo, organização lida da GUC do servidor (nunca de parâmetro do
+cliente), `bank_accounts.view` **e** `bank_movements.view` reconferidas dentro dela, predicado de tenant
+explícito nas duas tabelas, sem SQL dinâmico e com `execute` revogado de `public`. Ela devolve movimento da
+ORGANIZAÇÃO — e só dela. A listagem normal de movimentos (`/financial/bank-movements`) continua recortada por
+empresa: o que mudou é o AGREGADO DE CONTA, não a leitura de lançamento.
 
 Não existe rateio inventado do saldo inicial: seria trocar um vazamento por um número financeiramente falso.
 No painel financeiro, quem não tem a capacidade de organização recebe o bloco de bancos vazio e sinalizado
@@ -405,9 +422,35 @@ uma empresa; só a composta prova que é uma empresa **desta organização**.
 
 ### 8.3 RLS empresarial
 
-Antes, a RLS isolava organização; empresa era assunto da aplicação. Agora a política das tabelas de escopo é
-`tenant_e_empresa`, com `using` = tenant + `erp.empresa_no_escopo(empresa_id)` e `with check` = tenant +
-`erp.empresa_escrita_permitida(empresa_id)`.
+Antes, a RLS isolava organização; empresa era assunto da aplicação. Agora a política das tabelas de escopo
+recorta por empresa, com `using` = tenant + escopo de LEITURA e `with check` = tenant + escopo de ESCRITA.
+
+**Uma política `for all` só serve onde leitura e escrita são a MESMA pergunta.** No PostgreSQL, `using` vale
+para SELECT, para o OLD do UPDATE e para o DELETE; `with check` vale para o INSERT e para o NEW do UPDATE —
+o DELETE **não tem** `with check`. Onde a regra de escrita é mais estreita que a de leitura, uma política
+única não tem onde escrever a diferença: o DELETE fica com a regra de LEITURA e o UPDATE fica livre para
+mover a linha para fora do que a escrita permitia. Por isso a forma depende da categoria:
+
+| Categoria | Leitura × escrita | Política |
+| --- | --- | --- |
+| A — `empresa_id` NOT NULL | iguais | uma política `tenant_e_empresa` (`for all`) |
+| B — `empresa_id` anulável (nulo = da organização) | **diferentes**: ler o registro sem empresa é de quem tem qualquer escopo; criar/alterar/apagar um registro sem empresa exige alcance de organização | quatro políticas: `tenant_e_empresa_select`, `_insert`, `_update`, `_delete` |
+| C — transferências | **diferentes**: lê por qualquer das duas pontas, escreve pela ORIGEM | quatro políticas + gatilho `trg_travar_pontas` |
+| D — `erp.empresas` | **diferentes**: a lista é recortada pelo escopo; administrar é ato de organização | quatro políticas (`insert`/`update` conferem só o tenant) |
+
+O UPDATE das transferências (categoria C) usa o ENVELOPE (qualquer das duas pontas) nos dois lados, e não a
+origem: o aceite pelo destino (`/livestock/transfers/:id/process`) e o cancelamento (`/stock/transfers/:id/cancel`)
+são UPDATEs feitos pelo destino, e uma política de origem os transformaria em zero linhas afetadas — as rotas
+não conferem `rowCount`, então o usuário veria "sucesso" e nada teria acontecido. O que a origem precisa
+governar é a MUDANÇA DAS PONTAS, e isso a RLS não sabe dizer (ela não compara OLD com NEW). Quem diz é o
+gatilho `erp.travar_pontas_transferencia_origem()`: alterar `empresa_origem_id` ou `empresa_destino_id` sem
+autoridade de escrita na origem levanta `VALIDATION_ERROR`. Segurança que a RLS não expressa não vira
+comentário — vira gatilho.
+
+`docs/COMPANY-RLS-MATRIX.md` lista, por tabela, a política de CADA comando com o predicado que ela usa, e
+`apps/api/test/integration/rls-matriz.test.ts` compara essa matriz com `pg_policy` no banco real: comando,
+`qual`, `with_check`, presença do gatilho, ausência de política permissiva sobrando e ausência de DUAS
+políticas permissivas no mesmo comando (que voltariam a somar com `OR`).
 
 A política antiga foi **substituída**, não acompanhada: políticas `PERMISSIVE` do PostgreSQL se combinam com
 **OR**, então adicionar uma política de empresa ao lado da de tenant manteria o vazamento intacto — o `OR`
@@ -424,8 +467,8 @@ matriz gerada em `docs/COMPANY-RLS-MATRIX.md`:
 
 | Tabela | Política | Por quê |
 | --- | --- | --- |
-| `animal_movements`, `equipment_transfers`, `warehouse_transfers` | lê por QUALQUER uma das duas pontas; escreve só pela ORIGEM | Transferência é um fato com duas empresas. Exigir acesso às duas pontas esconderia do destino o que está chegando para ele. |
-| `erp.empresas` | `using` = a própria empresa no escopo (união entre módulos); `with check` = só tenant | Administrar empresas é ato de organização; a LISTA que o membro enxerga continua recortada pelo escopo. |
+| `animal_movements`, `equipment_transfers`, `warehouse_transfers` | SELECT e UPDATE por QUALQUER uma das duas pontas; INSERT e DELETE só pela ORIGEM; gatilho `trg_travar_pontas` impede trocar as pontas sem autoridade na origem | Transferência é um fato com duas empresas. Exigir acesso às duas pontas esconderia do destino o que está chegando para ele — e prender o UPDATE à origem mataria em silêncio o aceite e o cancelamento feitos pelo destino. |
+| `erp.empresas` | SELECT/UPDATE/DELETE com `using` = a própria empresa no escopo (união entre módulos); `with check` de INSERT/UPDATE = só tenant | Administrar empresas é ato de organização; a LISTA que o membro enxerga continua recortada pelo escopo. Criar empresa pela API exige, além disso, alcance de ORGANIZAÇÃO na aplicação (`exigirEscopoTotalDaOrganizacao`), senão a linha nasce invisível para quem a criou. |
 | `notifications` | mantém a política dinâmica de PRE-BASE2-02 (`escopo_tipo` × módulo × empresa) | O escopo do aviso é do TIPO dele, não da coluna. Trocá-la pela forma padrão desfaria a correção de segurança anterior. |
 | `registros_globais` | tenant; `empresa_id` é PISTA, não autoridade | O ID Global é da organização. A autoridade continua sendo o registro fonte. |
 
@@ -437,8 +480,29 @@ canônico antes da validação. Os dois nomes com valores **diferentes** → 422
 Saída: a resposta carrega os DOIS nomes (`empresa_id` **e** `farm_id`), para que o navegador antigo continue
 funcionando durante o rollout.
 
-Isso cobre as duas janelas de version skew que um deploy real produz: **API nova + WEB antigo** e
-**API anterior + WEB novo** (o cliente novo envia os dois cabeçalhos e lê `empresas ?? farms`).
+Isso cobre as duas janelas de version skew que um deploy real produz, e elas **não são simétricas**:
+
+- **API nova + WEB antigo** — quem cede é o SERVIDOR: ele aceita o idioma antigo e responde nos dois.
+- **API anterior + WEB novo** — quem cede é o CLIENTE, porque o servidor antigo não muda. E a barreira aqui
+  não está no Fastify: está no CORS. A API do commit base declara `allowedHeaders` **sem** `X-Empresa-Id`;
+  um navegador que o envia tem o PREFLIGHT recusado, a requisição morre antes de existir rota, e a tela
+  simplesmente não carrega — sem erro de aplicação para tratar.
+
+Por isso, durante a ponte, o **FIO é legado** nos cinco lugares em que a migração o tocaria: cabeçalho
+(`X-Farm-Id`), caminho de recurso (`/api/resources/farms`), corpo (`farm_id`), query (`farm_id__eq`) e
+leitura da resposta. Funciona nas duas pontas porque a API ANTIGA só entende isso e a API NOVA entende os
+dois — o cliente não precisa descobrir a versão do servidor a cada requisição. A tradução vive inteira em
+`apps/web/src/lib/compat-empresa.ts`; **nenhuma tela conhece o nome antigo**, e quando a ponte cair
+(PRE-BASE2-05) esse arquivo é apagado sem tocar em componente nenhum.
+
+`X-Empresa-Id` continua sendo o contrato oficial da API nova, suportado e testado
+(`apps/api/test/integration/compat-empresa.test.ts`). O que é legado é o TRANSPORTE do navegador.
+
+A prova não é um mock: `apps/web/e2e/skew-api-anterior.spec.ts` roda o navegador contra a API EXATA do commit
+base — montada por `scripts/api-anterior.mjs` a partir do próprio repositório — servindo o mesmo banco já
+migrado pelo HEAD novo. O primeiro teste do arquivo verifica que as cinco quebras do fio realmente existem
+naquele binário, porque contra a API nova todas as outras asserções passariam e o arquivo teria certificado
+o cenário errado.
 
 A ponte é uma dívida com prazo e com endereço: os arquivos autorizados a falar o idioma antigo estão
 declarados, um a um e com motivo, em `scripts/lib/empresa-compat-surface.mjs`; dois gates (`farm-compat-allowlist`
