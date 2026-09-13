@@ -4,6 +4,7 @@ import { SignJWT, jwtVerify } from "jose";
 import bcrypt from "bcryptjs";
 import { DomainError } from "@agro/shared";
 import { withTx, type Db } from "@agro/db";
+import { AUTORIZACAO_PROPRIETARIO, autorizacaoPorModulo } from "@erp/plataforma";
 import type { Config } from "../config.js";
 import type { AuthUser, Membership, RequestContext } from "../lib/context.js";
 
@@ -60,33 +61,48 @@ export default fp(async function authPlugin(app: FastifyInstance) {
     }
   });
 
-  // Vínculo/permissões em cache por (usuário, organização) por 30 s: evita 5 idas ao banco em toda requisição
-  // (o banco fica em outra região). Alterações de perfil/vínculo passam a valer em até 30 s.
+  // Vínculo/permissões/escopos em cache por (usuário, organização) por 30 s: evita várias idas ao banco em
+  // toda requisição (o banco fica em outra região). Alterações de perfil/vínculo passam a valer em até 30 s
+  // nesta instância; a administração chama clearContextCache() e a mudança é imediata onde ela ocorre.
   type MemberRow = { organization_id: string; org_name: string; role_id: string | null; is_owner: boolean; member_id: string };
-  const ctxCache = new Map<string, { at: number; value: { row: MemberRow; farms: { rows: { farm_id: string }[] }; perms: string[] } }>();
+  type EscopoRow = { modulo: string; modo: string };
+  const ctxCache = new Map<string, { at: number; value: { row: MemberRow; escopos: EscopoRow[]; perms: string[] } }>();
   const CTX_TTL_MS = 30_000;
   app.decorate("clearContextCache", () => ctxCache.clear());
-  // Contexto de tenant: cabeçalhos X-Org-Id (obrigatório nas rotas de negócio) e X-Farm-Id (fazenda ativa)
+  // Contexto de tenant: cabeçalhos X-Org-Id (obrigatório nas rotas de negócio) e X-Farm-Id (empresa ativa)
   app.addHook("preHandler", async (req) => {
     if (!req.auth) return;
     const orgId = (req.headers["x-org-id"] as string | undefined) ?? null;
     if (!orgId) return;
     const userId = req.auth.id;
     const cacheKey = `${userId}:${orgId}`; const cached = ctxCache.get(cacheKey);
-    const { row, farms, perms } = cached && Date.now() - cached.at < CTX_TTL_MS ? cached.value : await withTx(app.db, { orgId, userId }, async (tx) => {
-      const m = await tx.query<{ organization_id: string; org_name: string; role_id: string | null; is_owner: boolean; member_id: string }>(
+    const { row, escopos, perms } = cached && Date.now() - cached.at < CTX_TTL_MS ? cached.value : await withTx(app.db, { orgId, userId }, async (tx) => {
+      const m = await tx.query<MemberRow>(
         "select m.id as member_id, m.organization_id, o.name as org_name, m.role_id, m.is_owner from erp.organization_members m join erp.organizations o on o.id=m.organization_id where m.user_id=$1 and m.organization_id=$2 and m.is_active and o.deleted_at is null",
         [userId, orgId]);
       const row = m.rows[0];
       if (!row) throw new DomainError("PERMISSION_DENIED", "Usuário não é membro desta organização");
-      const farms = await tx.query<{ farm_id: string }>("select farm_id from erp.member_farms where member_id=$1", [row.member_id]);
+      // Só os MODOS por módulo — nunca a lista de empresas (podem ser centenas; o conjunto é resolvido no SQL).
+      // `erp.member_farms` não é mais consultada aqui: a autoridade é o escopo por módulo (PRE-BASE2-02).
+      const escopos = row.is_owner ? [] : (await tx.query<EscopoRow>(
+        "select modulo, modo from erp.membro_escopos_empresa where organization_id=$1 and membro_id=$2", [orgId, row.member_id])).rows;
       const perms = row.is_owner ? [] : (await tx.query<{ permission_key: string }>("select permission_key from erp.role_permissions where role_id=$1", [row.role_id])).rows.map((r) => r.permission_key);
-      return { row, farms: { rows: farms.rows }, perms };
+      return { row, escopos, perms };
     });
-    if (!cached || Date.now() - cached.at >= CTX_TTL_MS) ctxCache.set(cacheKey, { at: Date.now(), value: { row, farms, perms } });
-    const membership: Membership = { orgId: row.organization_id, orgName: row.org_name, roleId: row.role_id, isOwner: row.is_owner, farmIds: farms.rows.map((f) => f.farm_id) };
+    if (!cached || Date.now() - cached.at >= CTX_TTL_MS) ctxCache.set(cacheKey, { at: Date.now(), value: { row, escopos, perms } });
+    const membership: Membership = {
+      orgId: row.organization_id, orgName: row.org_name, roleId: row.role_id, isOwner: row.is_owner,
+      memberId: row.member_id,
+      escopos: row.is_owner ? AUTORIZACAO_PROPRIETARIO : autorizacaoPorModulo(escopos.map((e) => [e.modulo, e.modo === "todas" ? "todas" : "selecionadas"] as const))
+    };
+    // X-Farm-Id é SELEÇÃO de trabalho, não autorização — e a autorização agora varia por módulo, então a
+    // validação acontece na porta (runService conhece o módulo), não aqui. O que se exige neste ponto é o
+    // mínimo verificável sem módulo: a empresa selecionada existe nesta organização e não está excluída.
     const farmId = (req.headers["x-farm-id"] as string | undefined) ?? null;
-    if (farmId && membership.farmIds.length && !membership.farmIds.includes(farmId)) throw new DomainError("PERMISSION_DENIED", "Sem acesso à fazenda selecionada");
+    if (farmId) {
+      const f = await app.db.query<{ ok: boolean }>("select exists (select 1 from erp.farms where id=$1 and organization_id=$2 and deleted_at is null) ok", [farmId, orgId]);
+      if (!f.rows[0]?.ok) throw new DomainError("PERMISSION_DENIED", "Sem acesso à empresa selecionada");
+    }
     req.ctx = { user: req.auth, orgId, farmId, membership, permissions: new Set(perms), ip: req.ip };
   });
 });

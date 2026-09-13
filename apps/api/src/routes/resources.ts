@@ -4,9 +4,9 @@ import { getResource, RESOURCES, type FieldDef, type ResourceDef } from "@agro/d
 import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, decodeList, relativeDateRange } from "@agro/shared";
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
-import { runService, nextCode, requirePermission } from "../lib/service.js";
+import { runService, nextCode, requirePermission, comPermissaoResolvida } from "../lib/service.js";
 import { notFound, validation } from "../lib/errors.js";
-import { farmAllowed, farmScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
+import { empresaScopeBuilder, exigirEmpresaDeLancamento, farmScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
 export function buildSchema(def: ResourceDef, partial = false) {
@@ -113,7 +113,7 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(organization_id is null or organization_id = ${b.add(ctx.orgId)})` : `organization_id = ${b.add(ctx.orgId)}`);
   if (def.softDelete) where.push("deleted_at is null");
   if (def.farmScoped && ctx.farmId && existing.has("farm_id") && !filters["farm_id"]) where.push(`farm_id = ${b.add(ctx.farmId)}`);
-  if (def.farmScoped && ctx.membership.farmIds.length && existing.has("farm_id")) where.push(`farm_id = any(${b.add(ctx.membership.farmIds)}::uuid[])`);
+  if (def.farmScoped && existing.has("farm_id")) where.push(...empresaScopeBuilder(ctx, "farm_id", b));
   if (q.search) {
     const sf = def.fields.filter((f) => f.search).map((f) => f.name);
     if (sf.length) { const p = b.add(`%${q.search}%`); where.push("(" + sf.map((c) => `${ident(c)}::text ilike ${p}`).join(" or ") + ")"); }
@@ -183,7 +183,7 @@ function coerceValue(f: FieldDef, v: unknown): unknown {
 
 export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown) {
   const data = buildSchema(def).parse(body) as Record<string, unknown>;
-  if (def.farmScoped && data["farm_id"] && !farmAllowed(ctx, data["farm_id"] as string)) throw validation("Sem acesso à fazenda informada");
+  if (def.farmScoped) await exigirEmpresaDeLancamento(ctx, (data["farm_id"] as string | null | undefined) ?? null);
   const existing = await checkColumns(ctx, def);
   const cols: string[] = []; const vals: unknown[] = [];
   if (existing.has("organization_id")) { cols.push("organization_id"); vals.push(ctx.orgId); }
@@ -242,7 +242,7 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
   if (def.softDelete) where.push("t.deleted_at is null");
   if (existing.has("is_active") && !extra["include_inactive"]) where.push("t.is_active");
   // autocomplete de recurso por fazenda: só fazendas autorizadas (a fazenda selecionada é filtro do chamador via `extra.farm_id`)
-  if (def.farmScoped && existing.has("farm_id") && ctx.membership.farmIds.length) where.push(`t.farm_id = any(${b.add(ctx.membership.farmIds)}::uuid[])`);
+  if (def.farmScoped && existing.has("farm_id")) where.push(...empresaScopeBuilder(ctx, "t.farm_id", b));
   if (search) where.push(`${labelExpr} ilike ${b.add(`%${search}%`)}`);
   for (const [k, v] of Object.entries(extra)) if (existing.has(k) && k !== "include_inactive") where.push(`t.${ident(k)} = ${b.add(v)}`);
   const codeSel = existing.has("code") ? ", t.code::text as code" : ", null as code";
@@ -262,7 +262,7 @@ export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, field: s
   if (def.softDelete) where.push("t.deleted_at is null");
   // mesmo recorte da listagem: fazenda ativa e fazendas do vínculo
   if (def.farmScoped && ctx.farmId && existing.has("farm_id")) where.push(`t.farm_id = ${b.add(ctx.farmId)}`);
-  if (def.farmScoped && ctx.membership.farmIds.length && existing.has("farm_id")) where.push(`t.farm_id = any(${b.add(ctx.membership.farmIds)}::uuid[])`);
+  if (def.farmScoped && existing.has("farm_id")) where.push(...empresaScopeBuilder(ctx, "t.farm_id", b));
   const col = `t.${ident(f.name)}`;
   const rdef = f.type === "ref" && f.ref ? getResource(f.ref.resource) : undefined;
   const labelExpr = rdef ? `r.${ident(rdef.labelField)}::text` : f.type === "tags" ? "x.tag" : `${col}::text`;
@@ -278,7 +278,8 @@ export default async function resourceRoutes(app: FastifyInstance) {
   app.get("/resources", async (req) => { const ctx = app.requireCtx(req); return RESOURCES.filter((r) => hasPermission(ctx, `${r.permission}.view`)).map(({ key, label, labelPlural, route, permission }) => ({ key, label, labelPlural, route, permission })); });
   app.get("/resources/:key/definition", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); app.requireCtx(req); return def; });
   app.get("/resources/:key", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => listResource(ctx, def, req.query as Record<string, unknown>)); });
-  app.get("/resources/:key/options", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const { search, ...extra } = req.query as Record<string, string>; return runService(app, req, null, (ctx) => options(ctx, def, search, extra)); });
+  app.get("/resources/:key/options", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const { search, ...extra } = req.query as Record<string, string>; // seletor de um cadastro referenciado: sem permissão própria, mas o ESCOPO é o do recurso apontado
+    return runService(app, req, null, (ctx) => options(comPermissaoResolvida(ctx, `${def.permission}.view`), def, search, extra)); });
   app.get("/resources/:key/distinct", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ field: z.string().regex(/^[a-z_][a-z0-9_]*$/), search: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query); return runService(app, req, `${def.permission}.view`, (ctx) => distinctValues(ctx, def, q.field, q.search, q.limit)); });
   app.get("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => getOne(ctx, def, id)); });
   app.post("/resources/:key", async (req, reply) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const r = await runService(app, req, `${def.permission}.create`, (ctx) => createOne(ctx, def, req.body)); return reply.status(201).send(r); });

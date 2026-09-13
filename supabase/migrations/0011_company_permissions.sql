@@ -229,3 +229,54 @@ begin
   select count(*) into v_membros from erp.organization_members where is_active;
   raise notice 'PRE-BASE2-02 backfill: % membro(s) ativo(s), % escopo(s) de módulo, % vínculo(s) de empresa.', v_membros, v_escopos, v_empresas;
 end $$;
+
+-- ---------- 7) predicado de escopo para uso INLINE no SQL das consultas ----------
+-- Mesma autoridade da função acima, lendo organização e usuário do CONTEXTO DA TRANSAÇÃO (as mesmas
+-- variáveis que o RLS usa) e o módulo ativo de `app.modulo_empresa`, definido pelo runService a partir da
+-- permissão da rota.
+--
+-- ONDE CADA FORMA É USADA (medido, não suposto): o PostgreSQL NUNCA embute (inline) uma função SQL cujo corpo
+-- contém sublink — `inline_function` recusa em `querytree->hasSubLinks` —, e toda regra de escopo depende de
+-- `exists`. Logo, uma função-predicado custa uma chamada POR LINHA e não vira semi-join. Por isso o caminho de
+-- LEITURA da aplicação (apps/api/src/lib/context.ts, `empresaScope`) emite o `exists` DIRETO na consulta, onde
+-- o planejador o transforma em semi-join sobre a chave primária de erp.membro_empresas. As funções abaixo são
+-- para verificação PONTUAL (uma linha) e para a RLS empresarial da PRE-BASE2-03, onde o predicado é da tabela
+-- e não há SQL de aplicação para carregá-lo.
+create or replace function erp.modulo_empresa_atual() returns text language sql stable as $$
+  select nullif(current_setting('app.modulo_empresa', true), '')
+$$;
+
+create or replace function erp.empresa_no_escopo(p_empresa uuid, p_modulo text) returns boolean language sql stable as $$
+  select p_empresa is null
+    -- Proprietário ou modo "todas": não depende da linha lida.
+    or exists (
+      select 1 from erp.organization_members m
+      where m.organization_id = erp.current_org_id() and m.user_id = erp.effective_user_id() and m.is_active
+        and (
+          m.is_owner
+          or exists (
+            select 1 from erp.membro_escopos_empresa e
+            where e.organization_id = m.organization_id and e.membro_id = m.id
+              and e.modulo = p_modulo and e.modo = 'todas'
+          )
+        )
+    )
+    -- Empresa escolhida: bate exatamente na chave primária de erp.membro_empresas.
+    or exists (
+      select 1 from erp.membro_empresas me
+      join erp.organization_members m2 on m2.id = me.membro_id
+      where me.organization_id = erp.current_org_id() and m2.user_id = erp.effective_user_id() and m2.is_active
+        and me.modulo = p_modulo and me.empresa_id = p_empresa
+    )
+$$;
+
+create or replace function erp.empresa_no_escopo(p_empresa uuid) returns boolean language sql stable as $$
+  select erp.empresa_no_escopo(p_empresa, erp.modulo_empresa_atual())
+$$;
+
+comment on function erp.empresa_no_escopo(uuid, text) is 'Predicado de escopo de empresa para uso INLINE em consultas de leitura (PRE-BASE2-02). Empresa nula = registro da organização inteira. Não repete as checagens de existência/exclusão da empresa (a linha lida já pertence à organização); para ESCRITA e verificação pontual use erp.tem_acesso_empresa, que é estrito.';
+comment on function erp.empresa_no_escopo(uuid) is 'Mesma regra usando o módulo ativo da transação (app.modulo_empresa), definido pelo runService a partir da permissão da rota.';
+
+grant execute on function erp.modulo_empresa_atual() to erp_app;
+grant execute on function erp.empresa_no_escopo(uuid, text) to erp_app;
+grant execute on function erp.empresa_no_escopo(uuid) to erp_app;

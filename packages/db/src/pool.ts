@@ -15,7 +15,16 @@ export function createPool(connectionString: string, opts: { max?: number } = {}
   return pool;
 }
 
-export interface TenantContext { orgId: string | null; userId: string | null }
+export interface TenantContext {
+  orgId: string | null;
+  userId: string | null;
+  /**
+   * Módulo de escopo empresarial ATIVO da transação (`app.modulo_empresa`), derivado pelo runService da
+   * permissão da rota. É o "onde" que o predicado `erp.empresa_no_escopo(empresa)` e a futura RLS empresarial
+   * leem. Nunca vem do cliente; a chave é canônica (`[a-z_]`), validada abaixo antes de virar texto do SQL.
+   */
+  modulo?: string | null;
+}
 
 /**
  * Executa fn dentro de uma transação com contexto de tenant (SET LOCAL app.org_id/app.user_id),
@@ -26,7 +35,8 @@ export async function withTx<T>(db: Db, ctx: TenantContext, fn: (tx: Tx) => Prom
   try {
     // begin + contexto de tenant numa única ida ao banco (os valores são uuids validados, nunca texto livre)
     const uuid = (v: string | null) => (v && /^[0-9a-f-]{36}$/i.test(v) ? v : "");
-    await client.query(`begin; select set_config('app.org_id', '${uuid(ctx.orgId)}', true), set_config('app.user_id', '${uuid(ctx.userId)}', true)`);
+    const chave = (v: string | null | undefined) => (v && /^[a-z_]{1,40}$/.test(v) ? v : "");
+    await client.query(`begin; select set_config('app.org_id', '${uuid(ctx.orgId)}', true), set_config('app.user_id', '${uuid(ctx.userId)}', true), set_config('app.modulo_empresa', '${chave(ctx.modulo)}', true)`);
     const out = await fn(client);
     await client.query("commit");
     return out;

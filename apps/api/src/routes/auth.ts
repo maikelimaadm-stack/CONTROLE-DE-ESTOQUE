@@ -3,6 +3,7 @@ import { z } from "zod";
 import { DomainError } from "@agro/shared";
 import { verifyLocalPassword } from "../plugins/auth.js";
 import { hasPermission } from "../lib/context.js";
+import { empresasVisiveisNaOrganizacao } from "../lib/empresa.js";
 import { allPermissionKeys } from "@agro/domain";
 import { resolverIdioma } from "@erp/plataforma";
 import { withTx } from "@agro/db";
@@ -29,8 +30,9 @@ export default async function authRoutes(app: FastifyInstance) {
 
   // Contexto completo da organização selecionada: fazendas, permissões, favoritos, parâmetros
   app.get("/auth/context", async (req) => runService(app, req, null, async (ctx) => {
-    const farms = await ctx.tx.query("select id, code, name from erp.farms where organization_id=$1 and deleted_at is null and is_active order by code", [ctx.orgId]);
-    const visibleFarms = farms.rows.filter((f) => ctx.membership.farmIds.length === 0 || ctx.membership.farmIds.includes((f as { id: string }).id));
+    // Empresas que o usuário enxerga em ALGUM módulo (é o seletor de contexto de trabalho; a autorização
+    // efetiva de cada tela continua sendo a do módulo daquela tela).
+    const visibleFarms = await empresasVisiveisNaOrganizacao(ctx);
     const fav = await ctx.tx.query("select route,label,position from erp.user_favorites where user_id=$1 and organization_id=$2 order by position", [ctx.user.id, ctx.orgId]);
     const org = await ctx.tx.query<{ name: string; parameters: unknown; idioma_padrao: string }>("select name, parameters, idioma_padrao from erp.organizations where id=$1", [ctx.orgId]);
     const idiomaUsuario = await ctx.tx.query<{ idioma: string | null }>("select idioma from erp.users where id=$1", [ctx.user.id]);

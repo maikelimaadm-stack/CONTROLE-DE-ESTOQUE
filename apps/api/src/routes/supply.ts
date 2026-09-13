@@ -4,7 +4,7 @@ import { D, money, isISODate } from "@agro/shared";
 import { nextPurchaseStatus, allowedPurchaseActions, authorizerCanApprove, PURCHASE_STATUS_LABELS, slaStatus, type PurchaseRequestStatus, type PurchaseAction } from "@agro/domain";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { farmAllowed, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
+import { empresaScope, exigirEmpresaDeLancamento, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { createTitles } from "../services/financial-core.js";
@@ -43,7 +43,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     const f = req.query as Record<string, string>; const where = ["r.organization_id=$1", "r.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
     if (f.scope === "mine") { params.push(ctx.user.id); where.push(`(r.current_responsible_user_id=$${params.length} or r.requester_user_id=$${params.length})`); }
     if (ctx.farmId) { params.push(ctx.farmId); where.push(`r.farm_id=$${params.length}`); }
-    if (ctx.membership.farmIds.length) { params.push(ctx.membership.farmIds); where.push(`r.farm_id = any($${params.length}::uuid[])`); }
+    where.push(...empresaScope(ctx, "r", params, { ignoreSelected: true }));
     const r = await ctx.tx.query<{ status: PurchaseRequestStatus; n: string }>(`select r.status, count(*)::text n from erp.purchase_requests r where ${where.join(" and ")} group by r.status`, params);
     const by = new Map(r.rows.map((x) => [x.status, Number(x.n)]));
     const stageStatuses: Record<string, PurchaseRequestStatus[]> = { request: ["request"], quotation: ["awaiting_awareness", "quotation_in_progress"], authorization: ["awaiting_approval", "awaiting_awareness", "under_review"], buy: ["awaiting_purchase", "purchase_done"], receipts: ["purchase_done", "purchase_received", "finished"], finished: ["finished"], rejected: ["not_approved", "cancelled"] };
@@ -65,7 +65,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     if (f.request_type) { params.push(f.request_type); where.push(`r.request_type=$${params.length}`); }
     if (f.priority) { params.push(f.priority); where.push(`r.priority=$${params.length}`); }
     if (f.farm_id) { params.push(f.farm_id); where.push(`r.farm_id=$${params.length}`); } else if (ctx.farmId) { params.push(ctx.farmId); where.push(`r.farm_id=$${params.length}`); }
-    if (ctx.membership.farmIds.length) { params.push(ctx.membership.farmIds); where.push(`r.farm_id = any($${params.length}::uuid[])`); }
+    where.push(...empresaScope(ctx, "r", params, { ignoreSelected: true }));
     if (f.requester_user_id) { params.push(f.requester_user_id); where.push(`r.requester_user_id=$${params.length}`); }
     if (f.responsible_user_id) { params.push(f.responsible_user_id); where.push(`r.current_responsible_user_id=$${params.length}`); }
     if (f.start_date) { params.push(f.start_date); where.push(`r.request_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`r.request_date<=$${params.length}`); }
@@ -87,7 +87,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     return { ...r, status_label: PURCHASE_STATUS_LABELS[r.status], items: items.rows, events: events.rows.map((e) => ({ ...(e as Record<string, unknown>), to_status_label: PURCHASE_STATUS_LABELS[(e as { to_status: PurchaseRequestStatus }).to_status] })), quotations: quotations.rows, approvals: approvals.rows, children: children.rows, attachments: attachments.rows, allowed_actions: allowedPurchaseActions(r.status), can_transfer: canTransfer };
   }));
   app.post("/supply/requests", async (req, reply) => reply.status(201).send(await runService(app, req, "purchase_requests.create", async (ctx) => {
-    const d = requestSchema.parse(req.body); if (!farmAllowed(ctx, d.farm_id)) throw validation("Sem acesso à fazenda");
+    const d = requestSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.farm_id);
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => {
       const code = await nextCode(ctx.tx, ctx.orgId, "purchase_request");
       const est = d.items.reduce((a, i) => a.plus(D(i.amount ?? D(i.reference_value ?? 0).mul(i.quantity))), D(0));

@@ -296,3 +296,15 @@ export function resumoClassificacaoEscopo(): { recursos: number; organizacao: nu
   }
   return { recursos: PERMISSION_RESOURCES.length, organizacao, empresa, porModulo };
 }
+
+/**
+ * Módulo ÚNICO de um conjunto de permissões — para portas cuja permissão varia por LINHA (tipo de
+ * movimentação, direção do título, espécie do documento). Todas as variantes da mesma porta precisam
+ * pertencer ao mesmo módulo de escopo: se divergirem, a porta não tem um "onde" definido e a classificação
+ * está errada. Lança em vez de escolher uma das opções — escolher seria ampliar ou reduzir acesso em silêncio.
+ */
+export function moduloUnicoDasPermissoes(permissoes: Iterable<string>): string | null {
+  const modulos = modulosDasPermissoes(permissoes);
+  if (modulos.length > 1) throw new Error(`Permissões da mesma porta em módulos diferentes: ${modulos.join(", ")}`);
+  return modulos[0] ?? null;
+}
