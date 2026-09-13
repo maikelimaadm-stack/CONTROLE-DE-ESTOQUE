@@ -37,7 +37,8 @@ describe("integridade cross-tenant do responsável de solicitação de compra", 
       name: nome, email, password: "Resp@12345", role_id: j(papel).id, is_active: ativo,
       escopos_empresas: [{ modulo: "compras", modo: "selecionadas", empresas }] } });
     expect(membro.statusCode, membro.body).toBe(201);
-    return j(membro).id;
+    const id = j(membro).id; expect(id, membro.body).toBeTruthy();
+    return id!;
   };
 
   /** Solicitação de compra na empresa pedida, criada pelo administrador. */
@@ -46,7 +47,8 @@ describe("integridade cross-tenant do responsável de solicitação de compra", 
       farm_id: empresa, request_date: new Date().toISOString().slice(0, 10), request_type: "product",
       description: descricao, justification: descricao, items: [{ description: "Item", quantity: "1", reference_value: "10" }] } });
     expect(r.statusCode, r.body).toBe(201);
-    return j(r).id;
+    const id = j(r).id; expect(id, r.body).toBeTruthy();
+    return id!;
   };
 
   const responsavelNoBanco = async (id: string) => {
