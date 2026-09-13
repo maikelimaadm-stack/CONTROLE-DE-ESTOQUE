@@ -394,9 +394,14 @@ begin
 
   -- Move SÓ o que está vinculado e SÓ o que ainda está na ORIGEM. O predicado da origem é o que impede
   -- que um acervo mexido por fora entre carona no aceite.
+  -- `status` e `deleted_at` são reconferidos AQUI, e não só na emissão: entre emitir e aceitar o animal pode
+  -- ter sido vendido, morto, perdido ou excluído. Sem esta releitura o aceite moveria de empresa um animal
+  -- que não existe mais operacionalmente — e o faria por dentro de um SECURITY DEFINER, sem RLS no caminho.
+  -- Quem cair fora do predicado não entra na contagem, e o confronto esperado × efetivo derruba tudo.
   with movidos as (
     update erp.animals a set empresa_id = v_destino, batch_id = v_lote, updated_at = now()
      where a.organization_id = v_org and a.empresa_id = v_origem
+       and a.status = 'active' and a.deleted_at is null
        and a.id in (select i.animal_id from erp.animal_movement_items i
                      where i.movement_id = p_movimento and i.animal_id is not null)
     returning 1)
@@ -404,7 +409,7 @@ begin
 
   with movidos as (
     update erp.herd_lots l set empresa_id = v_destino, batch_id = v_lote, updated_at = now()
-     where l.organization_id = v_org and l.empresa_id = v_origem
+     where l.organization_id = v_org and l.empresa_id = v_origem and l.quantity > 0
        and l.id in (select i.herd_lot_id from erp.animal_movement_items i
                      where i.movement_id = p_movimento and i.herd_lot_id is not null)
     returning l.quantity)
@@ -451,6 +456,164 @@ comment on function erp.empresa_da_organizacao_atual(uuid) is
   'A empresa existe NESTA organizacao? (PRE-BASE2-03) Pergunta de TENANT, nao de escopo: usada na emissao de transferencia para validar um destino que o remetente nao enxerga. Definer estreita, organizacao da GUC do servidor, devolve apenas booleano.';
 revoke execute on function erp.empresa_da_organizacao_atual(uuid) from public;
 grant execute on function erp.empresa_da_organizacao_atual(uuid) to erp_app;
+
+-- A EXISTÊNCIA de um LOTE na empresa também não é pergunta de escopo.
+--
+-- Pelo mesmo motivo do destino: quem emite a transferência informa o lote de DESTINO, que está na empresa
+-- que ele não enxerga. Perguntar isso pela política de leitura transformaria "não vejo" em "não existe" e
+-- recusaria uma emissão legítima. Esta função responde só "este lote é desta organização, desta empresa, e
+-- está ativo?" — booleano, tenant da GUC do servidor, nenhum atributo do lote devolvido.
+create or replace function erp.lote_da_empresa_atual(p_lote uuid, p_empresa uuid) returns boolean
+language sql stable security definer set search_path = erp, pg_catalog as $$
+  select p_lote is not null and p_empresa is not null and erp.current_org_id() is not null and exists (
+    select 1 from erp.batches b
+     where b.id = p_lote and b.organization_id = erp.current_org_id()
+       and b.empresa_id = p_empresa and b.status = 'active' and b.deleted_at is null)
+$$;
+comment on function erp.lote_da_empresa_atual(uuid, uuid) is
+  'O lote e desta organizacao, desta empresa e esta ativo? (PRE-BASE2-03) Pergunta de TENANT/INTEGRIDADE, nao de escopo: usada na emissao de transferencia de rebanho para validar o lote de DESTINO, que o remetente nao enxerga. Definer estreita, organizacao da GUC do servidor, devolve apenas booleano.';
+revoke execute on function erp.lote_da_empresa_atual(uuid, uuid) from public;
+grant execute on function erp.lote_da_empresa_atual(uuid, uuid) to erp_app;
+
+-- ---------- 2d) integridade da EMISSÃO da transferência de rebanho ----------
+--
+-- A emissão recebe do cliente uma LISTA DE UUIDs (`animal_ids`), um lote de origem e um lote de destino. E
+-- as chaves estrangeiras que os recebem são GLOBAIS: `erp.animal_movement_items.animal_id` referencia
+-- `erp.animals(id)` sem organização, `animal_movements.batch_id` referencia `erp.batches(id)` sem empresa.
+--
+-- O que a FK prova é "este UUID existe". O que ela NÃO prova é "este UUID é desta organização". A diferença
+-- não é teórica: um UUID conhecido de outro tenant é um valor perfeitamente aceitável para a FK, e entrava
+-- numa transferência desta organização sem que nada reclamasse. Pior, o mesmo caminho aceitava animal
+-- VENDIDO, MORTO ou EXCLUÍDO como cabeça viva — e o aceite depois o movia de empresa.
+--
+-- A rota já valida em lote e fail-closed. Este guard é a SEGUNDA linha, e existe porque autorização e
+-- integridade que só moram no TypeScript morrem junto com o primeiro `insert` escrito fora da rota.
+--
+-- Ele é ESTREITO de propósito: só olha movimento `farm_transfer`. Compra, venda, nascimento, morte,
+-- evolução e transferência entre lotes seguem exatamente como antes — inclusive referenciando animal morto
+-- (é o que o documento de morte FAZ) ou de outra empresa do mesmo tenant. Um guard genérico aqui quebraria
+-- o domínio inteiro para resolver um problema de uma operação só.
+create or replace function erp.validar_item_transferencia_pecuaria() returns trigger
+language plpgsql security definer set search_path = erp, pg_catalog as $$
+declare
+  v_org uuid; v_origem uuid; v_tipo text; v_qtd integer;
+begin
+  select m.organization_id, m.empresa_id, m.movement_type
+    into v_org, v_origem, v_tipo
+    from erp.animal_movements m where m.id = new.movement_id;
+  if v_tipo is distinct from 'farm_transfer' then
+    return new;   -- fora da transferência entre empresas o comportamento legado é preservado
+  end if;
+
+  if new.animal_id is not null then
+    if not exists (select 1 from erp.animals a
+                    where a.id = new.animal_id and a.organization_id = v_org
+                      and a.empresa_id = v_origem and a.status = 'active' and a.deleted_at is null) then
+      -- mensagem GENÉRICA: distinguir "de outro tenant" de "morto" de "inexistente" seria um oráculo
+      raise exception 'VALIDATION_ERROR: animal nao elegivel para esta transferencia de rebanho' using errcode = 'P0001';
+    end if;
+    if exists (select 1 from erp.animal_movement_items i
+                where i.movement_id = new.movement_id and i.animal_id = new.animal_id and i.id <> new.id) then
+      raise exception 'VALIDATION_ERROR: animal repetido na mesma transferencia de rebanho' using errcode = 'P0001';
+    end if;
+  end if;
+
+  if new.herd_lot_id is not null then
+    select l.quantity into v_qtd from erp.herd_lots l
+     where l.id = new.herd_lot_id and l.organization_id = v_org and l.empresa_id = v_origem;
+    if v_qtd is null or v_qtd <= 0 then
+      raise exception 'VALIDATION_ERROR: rebanho nao elegivel para esta transferencia' using errcode = 'P0001';
+    end if;
+    -- a quantidade do item é o SNAPSHOT do rebanho na emissão: é ela que o aceite confere contra o efetivo
+    if new.quantity is distinct from v_qtd then
+      raise exception 'VALIDATION_ERROR: quantidade do rebanho incoerente com o acervo na emissao' using errcode = 'P0001';
+    end if;
+    if exists (select 1 from erp.animal_movement_items i
+                where i.movement_id = new.movement_id and i.herd_lot_id = new.herd_lot_id and i.id <> new.id) then
+      raise exception 'VALIDATION_ERROR: rebanho repetido na mesma transferencia de rebanho' using errcode = 'P0001';
+    end if;
+  end if;
+  return new;
+end $$;
+comment on function erp.validar_item_transferencia_pecuaria() is
+  'Guard de INTEGRIDADE dos itens de farm_transfer (PRE-BASE2-03): o animal/rebanho vinculado tem de ser da organizacao e da empresa de ORIGEM do movimento, ativo, nao excluido, com quantidade coerente e sem repeticao. Nao toca nenhum outro movement_type. Erro generico de proposito: nao distingue tenant alheio, empresa errada, estado invalido ou UUID inexistente.';
+
+-- E os LOTES do próprio documento: `batch_id` é da empresa de ORIGEM, `destination_batch_id` é da empresa
+-- de DESTINO, os dois da organização do movimento. Sem isto, um lote de outro tenant ficaria persistido
+-- dentro de uma transferência desta organização mesmo que nenhum animal se movesse.
+create or replace function erp.validar_lotes_transferencia_pecuaria() returns trigger
+language plpgsql security definer set search_path = erp, pg_catalog as $$
+begin
+  if new.movement_type is distinct from 'farm_transfer' then
+    return new;
+  end if;
+  if new.batch_id is not null and not exists (
+       select 1 from erp.batches b
+        where b.id = new.batch_id and b.organization_id = new.organization_id
+          and b.empresa_id = new.empresa_id and b.deleted_at is null) then
+    raise exception 'VALIDATION_ERROR: lote de origem nao elegivel para esta transferencia' using errcode = 'P0001';
+  end if;
+  if new.destination_batch_id is not null and not exists (
+       select 1 from erp.batches b
+        where b.id = new.destination_batch_id and b.organization_id = new.organization_id
+          and b.empresa_id = new.empresa_destino_id and b.deleted_at is null) then
+    raise exception 'VALIDATION_ERROR: lote de destino nao elegivel para esta transferencia' using errcode = 'P0001';
+  end if;
+  return new;
+end $$;
+comment on function erp.validar_lotes_transferencia_pecuaria() is
+  'Guard de INTEGRIDADE dos lotes de farm_transfer (PRE-BASE2-03): batch_id pertence a organizacao e a empresa de ORIGEM, destination_batch_id a organizacao e a empresa de DESTINO. Nao toca nenhum outro movement_type.';
+
+-- PREFLIGHT: um guard que pode tornar dado existente inválido não se instala às cegas. Se o acervo atual
+-- já violar o invariante, a migration PARA com diagnóstico — não normaliza, não move registro, não apaga
+-- item, não troca empresa. Fail-closed: corrigir dado de produção é decisão de gente, não de migration.
+do $$
+declare
+  v_itens integer; v_rebanhos integer; v_lotes integer; v_destinos integer; v_dup integer;
+begin
+  select count(*) into v_itens
+    from erp.animal_movement_items i join erp.animal_movements m on m.id = i.movement_id
+   where m.movement_type = 'farm_transfer' and i.animal_id is not null
+     and not exists (select 1 from erp.animals a
+                      where a.id = i.animal_id and a.organization_id = m.organization_id and a.empresa_id = m.empresa_id);
+  select count(*) into v_rebanhos
+    from erp.animal_movement_items i join erp.animal_movements m on m.id = i.movement_id
+   where m.movement_type = 'farm_transfer' and i.herd_lot_id is not null
+     and not exists (select 1 from erp.herd_lots l
+                      where l.id = i.herd_lot_id and l.organization_id = m.organization_id and l.empresa_id = m.empresa_id);
+  select count(*) into v_lotes from erp.animal_movements m
+   where m.movement_type = 'farm_transfer' and m.batch_id is not null
+     and not exists (select 1 from erp.batches b
+                      where b.id = m.batch_id and b.organization_id = m.organization_id and b.empresa_id = m.empresa_id);
+  select count(*) into v_destinos from erp.animal_movements m
+   where m.movement_type = 'farm_transfer' and m.destination_batch_id is not null
+     and not exists (select 1 from erp.batches b
+                      where b.id = m.destination_batch_id and b.organization_id = m.organization_id and b.empresa_id = m.empresa_destino_id);
+  select count(*) into v_dup from (
+    select i.movement_id, i.animal_id, i.herd_lot_id from erp.animal_movement_items i
+      join erp.animal_movements m on m.id = i.movement_id
+     where m.movement_type = 'farm_transfer'
+     group by 1, 2, 3 having count(*) > 1) d;
+
+  if v_itens + v_rebanhos + v_lotes + v_destinos + v_dup > 0 then
+    raise exception 'PREFLIGHT PRE-BASE2-03: acervo de farm_transfer viola o invariante de empresa/organizacao antes do guard. Itens de animal fora da origem: %. Itens de rebanho fora da origem: %. Lotes de origem incompativeis: %. Lotes de destino incompativeis: %. Referencias repetidas: %. Nada foi normalizado: corrija o dado e rode a migration de novo.',
+      v_itens, v_rebanhos, v_lotes, v_destinos, v_dup;
+  end if;
+end $$;
+
+-- Os gatilhos disparam DEPOIS dos de compatibilidade (`trg_sync_*`, ordem alfabética do nome), para que
+-- `empresa_id` já esteja preenchido quando o cliente antigo escrever pela coluna legada. E só nas colunas
+-- que participam do invariante: o `update ... set quantity` que a rota faz no fim da emissão, por exemplo,
+-- não precisa reabrir a validação.
+drop trigger if exists trg_validar_item_transferencia_pecuaria on erp.animal_movement_items;
+create trigger trg_validar_item_transferencia_pecuaria
+  before insert or update of movement_id, animal_id, herd_lot_id, quantity on erp.animal_movement_items
+  for each row execute function erp.validar_item_transferencia_pecuaria();
+drop trigger if exists trg_validar_lotes_transferencia_pecuaria on erp.animal_movements;
+create trigger trg_validar_lotes_transferencia_pecuaria
+  before insert or update of movement_type, organization_id, empresa_id, empresa_destino_id, batch_id, destination_batch_id
+  on erp.animal_movements
+  for each row execute function erp.validar_lotes_transferencia_pecuaria();
 
 -- D — a própria tabela de Empresas.
 -- O seletor de empresa não pode depender do módulo ativo: a mesma lista alimenta telas de vários módulos, e

@@ -455,6 +455,45 @@ confere os row counts contra o esperado e só então grava `status='confirmed'`;
 transação inteira. Antes disso, a rota fazia o `update` normal, a RLS devolvia ZERO linhas e o status virava
 confirmado assim mesmo — transferência aceita com o rebanho parado na origem.
 
+### Integridade da EMISSÃO: a FK prova existência, não tenant
+
+A emissão de `farm_transfer` recebe do cliente uma lista de UUIDs (`animal_ids`), um lote de origem e um lote
+de destino, e as chaves estrangeiras que os recebem são GLOBAIS: `animal_movement_items.animal_id` referencia
+`erp.animals(id)` sem organização, `animal_movements.batch_id` referencia `erp.batches(id)` sem empresa. A FK
+prova que o UUID EXISTE; não prova que ele é DESTA organização. Medido antes da correção: um animal ativo de
+outra organização, passado em `animal_ids`, produzia `201` com o item vinculado.
+
+O invariante da emissão, verificado ANTES de o documento existir:
+
+| Referência | Tem de ser |
+| --- | --- |
+| `animal_ids` (explícitos) | da organização atual, da empresa de ORIGEM, `status='active'`, `deleted_at is null`, sem repetição no payload e — quando `batch_id` foi informado — do próprio lote |
+| fallback por `batch_id` | mesmo predicado: organização, empresa de origem, ativo, não excluído (estar no lote NÃO implica ser da mesma empresa) |
+| `herd_lots` do lote | organização atual, empresa de origem, `quantity > 0`; a quantidade do item congela o acervo da emissão |
+| `batch_id` | organização atual, empresa de ORIGEM, ativo, não excluído |
+| `destination_batch_id` | organização atual, empresa de DESTINO, ativo, não excluído |
+
+A validação é em LOTE (conta pedidos × elegíveis) e a recusa é `VALIDATION_ERROR` 422 com mensagem GENÉRICA:
+UUID inexistente, UUID de outro tenant, UUID da empresa errada e UUID em estado inelegível têm a MESMA
+superfície pública. Diferenciá-los transformaria a emissão num oráculo de existência do acervo alheio.
+
+Os lotes são pergunta de TENANT, não de escopo — o de destino está na empresa que o remetente legitimamente
+não enxerga —, então quem responde é `erp.lote_da_empresa_atual(lote, empresa)`: definer estreita, booleano,
+organização da GUC do servidor, nenhum atributo do lote devolvido.
+
+A mesma regra vive no BANCO, em dois gatilhos estreitos a `farm_transfer`
+(`erp.validar_item_transferencia_pecuaria` e `erp.validar_lotes_transferencia_pecuaria`): integridade que só
+mora no TypeScript morre junto com o primeiro `insert` escrito fora da rota. Compra, venda, nascimento,
+morte, evolução e transferência entre lotes seguem exatamente como antes — inclusive referenciando animal
+morto, que é o que um documento de morte FAZ. A migration audita o acervo existente antes de instalar os
+gatilhos e PARA com diagnóstico se ele já violar o invariante: nada é normalizado, movido ou apagado.
+
+E o aceite reconfere `status='active' and deleted_at is null`: entre emitir e aceitar o animal pode ter sido
+vendido, morto, perdido ou excluído, e mover de empresa um animal que não existe mais operacionalmente — por
+dentro de um `security definer`, sem RLS no caminho — seria pior que negar. Quem cai fora do predicado não
+entra na contagem, e o confronto esperado × efetivo derruba a transação inteira: o documento continua
+`pending` e NENHUM outro item se move.
+
 O gatilho `erp.travar_pontas_transferencia_origem()` continua nas três tabelas, agora como defesa em
 profundidade: "as pontas não mudaram" é uma comparação entre OLD e NEW, que `with check` não enxerga. Ele não
 é mais a justificativa para abrir as outras colunas ao destinatário — uma invariante de ponta não deve

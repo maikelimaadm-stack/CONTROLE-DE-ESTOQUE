@@ -231,19 +231,61 @@ export default async function livestockRoutes(app: FastifyInstance) {
     // aceita, e lá `empresaPermitida` decide), mas precisa ser uma empresa REAL desta organização: sem isto
     // um id de outra organização passaria, porque a FK de empresa_destino_id não carrega a organização.
     await exigirEmpresaDaOrganizacao(ctx, d.empresa_destino_id, "Empresa de destino");
-    const code = await animalCode(ctx, "farm_transfer");
-    const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,empresa_destino_id,destination_batch_id,note,status,created_by) values ($1,$2,$3,'farm_transfer',$4,$5,$6,$7,$8,'pending',$9) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id ?? null, d.empresa_destino_id, d.destination_batch_id ?? null, d.note ?? null, ctx.user.id]);
-    const ids = d.animal_ids?.length ? d.animal_ids : (await ctx.tx.query<{ id: string }>("select id from erp.animals where batch_id=$1 and status='active' and organization_id=$2", [d.batch_id, ctx.orgId])).rows.map((x) => x.id);
-    for (const a of ids) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]);
+    // INTEGRIDADE DA EMISSÃO — tudo se prova ANTES de o documento existir.
+    //
+    // As FKs que recebem estes UUIDs são GLOBAIS: `animal_movement_items.animal_id` referencia
+    // `erp.animals(id)` sem organização, `batch_id` referencia `erp.batches(id)` sem empresa. A FK prova
+    // que o UUID EXISTE; não prova que ele é DESTA organização. Sem prova prévia, um id conhecido de outro
+    // tenant entrava numa transferência daqui, e um animal vendido/morto/excluído entrava como cabeça viva.
+    //
+    // A validação é EM LOTE e a recusa é GENÉRICA de propósito: UUID inexistente, UUID de outro tenant,
+    // UUID da empresa errada e UUID em estado inelegível têm de ter a MESMA superfície pública. Dizer qual
+    // dos casos ocorreu transformaria a emissão num oráculo de existência do acervo alheio.
+    const naoElegivel = () => validation("Um ou mais animais informados não são elegíveis para esta transferência");
+    // Os lotes são perguntas de TENANT, não de escopo: o lote de DESTINO está na empresa que o remetente
+    // legitimamente não enxerga (quem aceita é o destinatário), então lê-lo pela política de escopo
+    // devolveria "não existe" para um lote perfeitamente válido. `erp.lote_da_empresa_atual` responde só o
+    // booleano, dentro do tenant do servidor.
+    const loteValido = async (id: string, empresa: string) =>
+      (await ctx.tx.query<{ ok: boolean }>("select erp.lote_da_empresa_atual($1,$2) as ok", [id, empresa])).rows[0]?.ok === true;
+    if (d.batch_id && !(await loteValido(d.batch_id, d.empresa_id))) throw validation("Lote de origem inválido para esta transferência");
+    if (d.destination_batch_id && !(await loteValido(d.destination_batch_id, d.empresa_destino_id))) throw validation("Lote de destino inválido para esta transferência");
+
+    let ids: string[];
+    if (d.animal_ids?.length) {
+      // duplicata é recusada aqui e não descoberta no aceite: a mesma cabeça contada duas vezes é um
+      // documento que nunca vai fechar, e o rollback do aceite chegaria dias depois.
+      if (new Set(d.animal_ids).size !== d.animal_ids.length) throw naoElegivel();
+      // Coerência com o lote: a tela envia OU o lote inteiro OU animais selecionados, nunca os dois. Na
+      // ausência de contrato que autorize o contrário, fail-closed — animal explícito pertence ao lote.
+      const elegiveis = await ctx.tx.query<{ n: string }>(
+        `select count(*)::text n from erp.animals a
+          where a.id = any($1::uuid[]) and a.organization_id=$2 and a.empresa_id=$3
+            and a.status='active' and a.deleted_at is null
+            and ($4::uuid is null or a.batch_id = $4)`, [d.animal_ids, ctx.orgId, d.empresa_id, d.batch_id ?? null]);
+      if (Number(elegiveis.rows[0]!.n) !== d.animal_ids.length) throw naoElegivel();
+      ids = d.animal_ids;
+    } else {
+      // O fallback pelo lote também carrega a empresa no predicado: "está no lote" NÃO implica "é da mesma
+      // empresa" — a relação lote/animal histórica não tem chave composta por empresa.
+      ids = d.batch_id
+        ? (await ctx.tx.query<{ id: string }>("select id from erp.animals where batch_id=$1 and organization_id=$2 and empresa_id=$3 and status='active' and deleted_at is null", [d.batch_id, ctx.orgId, d.empresa_id])).rows.map((x) => x.id)
+        : [];
+    }
     // O rebanho NÃO IDENTIFICADO do lote entra como ITEM, não como efeito colateral do aceite. Antes ele era
     // movido por `where batch_id=<lote>` na hora de processar — sem organização no predicado e alcançando
     // rebanhos que ninguém tinha colocado nesta transferência. O que se transfere é o que está vinculado.
+    // `quantity > 0` porque rebanho zerado não é cabeça: vincular um custaria um aceite que nunca fecha.
     const rebanhos = d.batch_id
-      ? (await ctx.tx.query<{ id: string; quantity: number }>("select id, quantity from erp.herd_lots where batch_id=$1 and organization_id=$2 and empresa_id=$3", [d.batch_id, ctx.orgId, d.empresa_id])).rows
+      ? (await ctx.tx.query<{ id: string; quantity: number }>("select id, quantity from erp.herd_lots where batch_id=$1 and organization_id=$2 and empresa_id=$3 and quantity > 0", [d.batch_id, ctx.orgId, d.empresa_id])).rows
       : [];
-    for (const l of rebanhos) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,herd_lot_id,quantity) values ($1,$2,$3)", [r.rows[0]!.id, l.id, l.quantity]);
     const cabecas = ids.length + rebanhos.reduce((a, l) => a + Number(l.quantity), 0);
     if (!cabecas) throw validation("Transferência sem animais ou rebanho: informe animais ou um lote com acervo");
+
+    const code = await animalCode(ctx, "farm_transfer");
+    const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,empresa_destino_id,destination_batch_id,note,status,created_by) values ($1,$2,$3,'farm_transfer',$4,$5,$6,$7,$8,'pending',$9) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id ?? null, d.empresa_destino_id, d.destination_batch_id ?? null, d.note ?? null, ctx.user.id]);
+    for (const a of ids) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]);
+    for (const l of rebanhos) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,herd_lot_id,quantity) values ($1,$2,$3)", [r.rows[0]!.id, l.id, l.quantity]);
     await ctx.tx.query("update erp.animal_movements set quantity=$2 where id=$1", [r.rows[0]!.id, cabecas]);
     // o aviso é da empresa de DESTINO: é ela que tem a transferência a processar
     await criarNotificacao(ctx, { kind: "batch_transfer", title: "Você possui uma transferência de lote a ser processada.",
