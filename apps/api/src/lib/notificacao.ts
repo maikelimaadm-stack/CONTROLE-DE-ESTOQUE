@@ -87,13 +87,15 @@ export async function criarNotificacao(ctx: ServiceCtx, n: NovaNotificacao): Pro
 
   // A chave precisa distinguir o que é realmente distinto. Deduplicar por ROTA não serve: todos os
   // aniversariantes do dia compartilham a mesma rota, e o aviso do primeiro engolia o dos outros.
+  // `is not distinct from` só onde o valor pode mesmo ser nulo (destinatário, módulo e empresa): ele NÃO é
+  // indexável, e usá-lo na chave de deduplicação — que nunca é nula, porque cai no título quando falta tudo
+  // — trocava o índice `notifications_dedupe_idx` por varredura com filtro, uma vez por candidato do refresh.
   const chave = n.dedupe ?? n.route ?? n.title;
   const jaExiste = await ctx.tx.query(
     `select 1 from erp.notifications
-      where organization_id=$1 and kind=$2 and created_at::date = current_date
+      where organization_id=$1 and kind=$2 and dedupe_key=$7 and created_at::date = current_date
         and user_id is not distinct from $3 and escopo_tipo=$4
         and modulo is not distinct from $5 and empresa_id is not distinct from $6
-        and dedupe_key is not distinct from $7
       limit 1`,
     [ctx.orgId, n.kind, n.userId ?? null, escopo, modulo, empresaId, chave]);
   if (jaExiste.rowCount) return;

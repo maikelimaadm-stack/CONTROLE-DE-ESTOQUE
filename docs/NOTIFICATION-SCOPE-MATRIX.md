@@ -81,6 +81,12 @@ O contador de não lidas usa exatamente a mesma regra de visibilidade (`visibili
 conta sem o limite da janela, então em caixas com mais de 50 avisos visíveis ele pode ser maior que a
 lista. É diferença de JANELA, não de autoridade: nada contado está fora do que o usuário pode ver.
 
+Plano de execução conferido com `EXPLAIN` sobre 200 mil avisos em 40 organizações: a caixa sai por
+`notifications_caixa_idx` (índice, sem passo de ordenação), a contagem por empresa por
+`notifications_empresa_idx` (index-only) e a deduplicação do dia por `notifications_dedupe_idx`. Toda a
+autorização aparece como filtro **abaixo** do `Limit` — nenhum dos três índices é decorativo, e nenhum
+outro se justificou pelo plano.
+
 A leitura é do usuário (`erp.notificacao_leituras`), não do aviso: `erp.notifications.read_at` é legado.
 A política de RLS amarra o recibo ao usuário da sessão — nem pelo papel da aplicação se grava leitura
 em nome de outro.
