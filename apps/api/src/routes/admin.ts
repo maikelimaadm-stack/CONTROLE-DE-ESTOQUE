@@ -6,7 +6,7 @@ import { runService, audit } from "../lib/service.js";
 import { notFound, validation, denied } from "../lib/errors.js";
 import { hasPermission } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
-import { deFarmIdsLegado, escopoEmpresaSchema, gravarEscopos, paraFarmIdsLegado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
+import { deFarmIdsLegado, escopoEmpresaSchema, gravarEscoposAuditado, paraFarmIdsLegado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
 
 /**
  * Acesso por empresa pedido na requisição: o canônico (`escopos_empresas`) ou o legado (`farm_ids`) —
@@ -103,7 +103,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     const hash = d.password ? await bcrypt.hash(d.password, 10) : null;
     const u = await ctx.tx.query<{ id: string }>("insert into erp.users(email,name,phone,password_hash) values ($1,$2,$3,$4) on conflict (email) do update set name=excluded.name, phone=coalesce(excluded.phone, erp.users.phone), password_hash=coalesce(excluded.password_hash, erp.users.password_hash) returning id", [d.email.toLowerCase(), d.name, d.phone ?? null, hash]);
     const m = await ctx.tx.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,role_id,is_active) values ($1,$2,$3,$4) on conflict (organization_id,user_id) do update set role_id=excluded.role_id, is_active=excluded.is_active returning id", [ctx.orgId, u.rows[0]!.id, d.role_id ?? null, d.is_active]);
-    await gravarEscopos(ctx, m.rows[0]!.id, escoposPedidos(d) ?? deFarmIdsLegado([]));
+    await gravarEscoposAuditado(ctx, m.rows[0]!.id, escoposPedidos(d) ?? deFarmIdsLegado([]));
     await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, u.rows[0]!.id]);
     for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, u.rows[0]!.id, b]);
     await audit(ctx.tx, ctx, "users", u.rows[0]!.id, "create");
@@ -121,7 +121,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
     // trocar de perfil (role_id) NÃO apaga o acesso por empresa: são dimensões independentes (o quê × onde)
     const escopos = escoposPedidos(d);
-    if (escopos) { await gravarEscopos(ctx, m.rows[0].id, escopos); await audit(ctx.tx, ctx, "member_company_scopes", m.rows[0].id, "update"); }
+    if (escopos) await gravarEscoposAuditado(ctx, m.rows[0].id, escopos);
     if (d.boss_user_ids) { await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, userId]); for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, userId, b]); }
     await audit(ctx.tx, ctx, "users", userId, "update");
     app.clearContextCache(); // perfil/permissões/fazendas mudaram: próxima requisição recarrega o contexto

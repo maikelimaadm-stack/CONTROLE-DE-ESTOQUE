@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createPool } from "@agro/db";
+import { createPool, withTx } from "@agro/db";
+import { AUTORIZACAO_PROPRIETARIO } from "@erp/plataforma";
+import { atribuirIdGlobal } from "../../src/lib/id-global.js";
 import { harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
@@ -20,6 +22,7 @@ type Hdr = Record<string, string>;
 const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { items?: Record<string, unknown>[]; error?: { code: string }; id?: string };
 let MULTI: Hdr; let A = ""; let B = "";
 let entradaA = ""; let entradaB = ""; let tituloA = ""; let tituloB = ""; let animalA = ""; let pesagemA = ""; let pesagemB = "";
+let idGlobalA = 0; let idGlobalB = 0;
 
 const PERMS = [
   "input_entries.view", "input_entries.create", "stocks.view", "warehouses.view",
@@ -40,6 +43,16 @@ async function membro(nome: string, email: string, escopos: { modulo: string; mo
 }
 const get = (url: string, headers: Hdr) => h.app.inject({ method: "GET", url, headers });
 const post = (url: string, headers: Hdr, payload: Record<string, unknown>) => h.app.inject({ method: "POST", url, headers, payload });
+/** Aloca o ID Global de um registro pela mesma função de produção, dentro de uma transação com contexto. */
+async function alocarIdGlobal(tipoEntidade: string, idEntidade: string): Promise<number> {
+  return withTx(h.db, { orgId: h.demo.orgId, userId: h.demo.adminUserId }, (tx) => atribuirIdGlobal({
+    tx,
+    user: { id: h.demo.adminUserId, email: h.demo.adminEmail, name: "Administrador" },
+    orgId: h.demo.orgId, farmId: null, moduloEmpresa: null,
+    membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: true, memberId: "m", escopos: AUTORIZACAO_PROPRIETARIO },
+    permissions: new Set<string>()
+  }, tipoEntidade, idEntidade));
+}
 const criar = async (url: string, payload: Record<string, unknown>) => { const r = await post(url, h.headers(), payload); expect(r.statusCode, `${url}: ${r.body}`).toBe(201); return j(r).id as string; };
 
 beforeAll(async () => {
@@ -60,6 +73,9 @@ beforeAll(async () => {
   const pesagem = (farm: string, data: string) => ({ farm_id: farm, weighing_date: data, batch_id: I.batch, items: [{ animal_id: I.animal, weight: "300" }] });
   pesagemA = await criar("/api/livestock/weighings", pesagem(A, "2026-09-20"));
   pesagemB = await criar("/api/livestock/weighings", pesagem(B, "2026-09-21"));
+  // ID Global alocado explicitamente para as duas fixtures financeiras (ver teste de ID Global)
+  idGlobalA = await alocarIdGlobal("financial_titles", tituloA);
+  idGlobalB = await alocarIdGlobal("financial_titles", tituloB);
   MULTI = await membro("Multi", "multi-modulo@demo.local", [
     { modulo: "estoque", modo: "selecionadas", empresas: [A] },
     { modulo: "financeiro", modo: "selecionadas", empresas: [B] },
@@ -119,16 +135,20 @@ describe("matriz módulo × empresa (mesmo usuário, mesmas permissões)", () =>
     expect(rel.some((r) => r.number === "MODF-A")).toBe(false);
   });
   it("ID GLOBAL respeita permissão E empresa do registro, no módulo do registro", async () => {
-    const idGlobalDe = async (tabela: string, id: string) => {
-      const c = createPool(TEST_URL, { max: 1 });
-      try { return (await c.query<{ id_global: string }>("select id_global from erp.registros_globais where id_entidade=$1 and tipo_entidade=$2", [id, tabela])).rows[0]?.id_global ?? null; }
-      finally { await c.end(); }
-    };
-    const gB = await idGlobalDe("financial_titles", tituloB); const gA = await idGlobalDe("financial_titles", tituloA);
-    if (!gB || !gA) return; // alocação de ID Global é opcional nesta fase
-    expect((await get(`/api/registros-globais/${gB}`, MULTI)).statusCode).toBe(200);
-    expect((await get(`/api/registros-globais/${gA}`, MULTI)).statusCode).toBe(404);
+    // a alocação automática só liga na PRE-BASE2-04; aqui ela é feita EXPLICITAMENTE, para o teste não ter
+    // saída silenciosa: sem ID Global alocado não há o que provar, e um teste que se auto-pula não prova nada.
+    expect(idGlobalA, "ID Global da empresa A precisa ter sido alocado no preparo").toBeGreaterThan(0);
+    expect(idGlobalB, "ID Global da empresa B precisa ter sido alocado no preparo").toBeGreaterThan(0);
+    const permitido = await get(`/api/registros-globais/${idGlobalB}`, MULTI);
+    expect(permitido.statusCode, permitido.body).toBe(200);
+    expect((j(permitido) as { idEntidade?: string }).idEntidade).toBe(tituloB);
+    const negado = await get(`/api/registros-globais/${idGlobalA}`, MULTI);
+    expect(negado.statusCode, "título da empresa A, fora do escopo financeiro do usuário").toBe(404);
+    expect(j(negado).error?.code).toBe("NOT_FOUND");
+    // e o proprietário, que enxerga tudo, abre os dois — a diferença é o ESCOPO, não a existência do índice
+    expect((await get(`/api/registros-globais/${idGlobalA}`, h.headers())).statusCode).toBe(200);
   });
+
   it("ANEXOS herdam o módulo e a empresa do registro-pai", async () => {
     const ok = await get(`/api/attachments?entity=financial_titles&entity_id=${tituloB}`, MULTI);
     expect(ok.statusCode).toBe(200);

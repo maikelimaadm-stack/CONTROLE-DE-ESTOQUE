@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CHAVES_MODULO_EMPRESA, moduloEmpresaValido } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import type { ServiceCtx } from "./context.js";
+import { audit } from "./service.js";
 
 /**
  * ACESSO POR EMPRESA — borda de administração (docs/MULTI-COMPANY-CONTRACT.md §7).
@@ -40,7 +41,11 @@ export function paraFarmIdsLegado(escopos: readonly EscopoEmpresaEntrada[]): str
   return new Set(chaves).size === 1 ? [...escopos[0]!.empresas].sort() : null;
 }
 
-/** Valida a entrada canônica: módulo existente, sem repetição e sem "selecionadas" com empresa de outra organização. */
+/**
+ * Validação de FORMA da entrada canônica: módulo existente, sem módulo repetido, sem empresa repetida dentro
+ * do mesmo módulo e sem lista em `todas`. Payload administrativo incorreto é RECUSADO, nunca normalizado em
+ * silêncio: deduplicar por conta própria esconderia um erro de quem está concedendo acesso.
+ */
 export function validarEscopos(escopos: readonly EscopoEmpresaEntrada[]): void {
   const vistos = new Set<string>();
   for (const e of escopos) {
@@ -48,7 +53,31 @@ export function validarEscopos(escopos: readonly EscopoEmpresaEntrada[]): void {
     if (vistos.has(e.modulo)) throw new DomainError("VALIDATION_ERROR", `Módulo repetido: ${e.modulo}`);
     vistos.add(e.modulo);
     if (e.modo === "todas" && e.empresas.length) throw new DomainError("VALIDATION_ERROR", `Modo "todas" não leva lista de empresas (${e.modulo})`);
+    const empresasVistas = new Set<string>();
+    for (const empresa of e.empresas) {
+      if (empresasVistas.has(empresa)) throw new DomainError("VALIDATION_ERROR", `Empresa repetida no módulo ${e.modulo}`);
+      empresasVistas.add(empresa);
+    }
   }
+}
+
+/**
+ * Validação de EXISTÊNCIA das empresas pedidas, no servidor e no tenant atual.
+ *
+ * Regra funcional (docs/MULTI-COMPANY-CONTRACT.md §7): empresa INATIVA pode permanecer no escopo — histórico
+ * continua consultável; empresa EXCLUÍDA não pode ser atribuída. Empresa de outra organização e UUID
+ * inexistente são indistinguíveis na resposta (nada é revelado sobre outro tenant): as três recusas dizem
+ * apenas que a empresa não pode ser usada. Sem isto, a FK deixaria passar empresa excluída e um erro cru de
+ * integridade viraria 500.
+ */
+export async function exigirEmpresasAtribuiveis(ctx: ServiceCtx, escopos: readonly EscopoEmpresaEntrada[]): Promise<void> {
+  const pedidas = [...new Set(escopos.flatMap((e) => (e.modo === "selecionadas" ? e.empresas : [])))];
+  if (!pedidas.length) return;
+  const r = await ctx.tx.query<{ id: string }>(
+    "select id from erp.farms where id = any($1::uuid[]) and organization_id=$2 and deleted_at is null", [pedidas, ctx.orgId]);
+  const validas = new Set(r.rows.map((x) => x.id));
+  const recusadas = pedidas.filter((id) => !validas.has(id));
+  if (recusadas.length) throw new DomainError("VALIDATION_ERROR", `Empresa não pode ser atribuída: ${recusadas.length} identificador(es) inexistente(s), de outra organização ou excluído(s)`);
 }
 
 /** Configuração atual do membro, em forma canônica (apenas os módulos configurados). */
@@ -71,6 +100,7 @@ export async function lerEscopos(ctx: ServiceCtx, membroId: string): Promise<Esc
  */
 export async function gravarEscopos(ctx: ServiceCtx, membroId: string, escopos: readonly EscopoEmpresaEntrada[], opts: { substituirTudo?: boolean } = {}): Promise<void> {
   validarEscopos(escopos);
+  await exigirEmpresasAtribuiveis(ctx, escopos);
   const modulos = escopos.map((e) => e.modulo);
   if (opts.substituirTudo === false) {
     await ctx.tx.query("delete from erp.membro_escopos_empresa where organization_id=$1 and membro_id=$2 and modulo = any($3::text[])", [ctx.orgId, membroId, modulos]);
@@ -82,6 +112,38 @@ export async function gravarEscopos(ctx: ServiceCtx, membroId: string, escopos: 
     if (e.modo !== "selecionadas" || !e.empresas.length) continue;
     await ctx.tx.query(
       "insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) select $1,$2,$3,'selecionadas',x from unnest($4::uuid[]) x",
-      [ctx.orgId, membroId, e.modulo, [...new Set(e.empresas)]]);
+      [ctx.orgId, membroId, e.modulo, e.empresas]);
   }
+}
+
+/** Chave estável de comparação de uma configuração (para diferença entre antes e depois). */
+const assinatura = (e: EscopoEmpresaEntrada): string => `${e.modo}:${[...e.empresas].sort().join(",")}`;
+
+/** Módulos cuja configuração mudou entre duas fotos (inclui os que sumiram e os que nasceram). */
+export function modulosAlterados(antes: readonly EscopoEmpresaEntrada[], depois: readonly EscopoEmpresaEntrada[]): string[] {
+  const a = new Map(antes.map((e) => [e.modulo, assinatura(e)]));
+  const d = new Map(depois.map((e) => [e.modulo, assinatura(e)]));
+  const mudou = new Set<string>();
+  for (const [modulo, chave] of d) if (a.get(modulo) !== chave) mudou.add(modulo);
+  for (const [modulo] of a) if (!d.has(modulo)) mudou.add(modulo);
+  return [...mudou].sort();
+}
+
+/**
+ * Grava o acesso por empresa REGISTRANDO O QUE MUDOU (docs/AUTHORIZATION.md).
+ *
+ * Mudança de escopo empresarial é evento de SEGURANÇA: sem `before`/`after` não há como responder "quem deu
+ * acesso à empresa B, quando e a partir de quê". Usa `erp.audit_logs` — o sistema que já existe — e a foto é
+ * lida do banco antes e depois, não do payload (o payload é pedido; o banco é o que valeu). Metadados são
+ * apenas identificadores e configuração: nunca senha, hash, token ou cabeçalho.
+ */
+export async function gravarEscoposAuditado(ctx: ServiceCtx, membroId: string, escopos: readonly EscopoEmpresaEntrada[]): Promise<{ alterados: string[] }> {
+  const antes = await lerEscopos(ctx, membroId);
+  await gravarEscopos(ctx, membroId, escopos);
+  const depois = await lerEscopos(ctx, membroId);
+  const alterados = modulosAlterados(antes, depois);
+  if (alterados.length) {
+    await audit(ctx.tx, ctx, "member_company_scopes", membroId, "update", { membro_id: membroId, before: antes, after: depois, modulos_alterados: alterados });
+  }
+  return { alterados };
 }

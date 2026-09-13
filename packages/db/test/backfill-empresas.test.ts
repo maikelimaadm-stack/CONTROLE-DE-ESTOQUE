@@ -20,6 +20,7 @@ const SEM_VINCULO = "aaaaaaaa-0000-4000-8000-000000000010"; // legado: nenhuma l
 const SO_A = "aaaaaaaa-0000-4000-8000-000000000011";
 const A_E_B = "aaaaaaaa-0000-4000-8000-000000000012";
 const PROPRIETARIO = "aaaaaaaa-0000-4000-8000-000000000013";
+const INATIVO_SO_A = "aaaaaaaa-0000-4000-8000-000000000014"; // desativado ANTES da migração, com vínculo [A]
 
 beforeAll(async () => {
   db = createPool(TEST_URL, { max: 4 });
@@ -36,11 +37,12 @@ beforeAll(async () => {
     [SEM_VINCULO, "sem-vinculo@t.local", false, []],
     [SO_A, "so-a@t.local", false, [EMPRESA_A]],
     [A_E_B, "a-e-b@t.local", false, [EMPRESA_A, EMPRESA_B]],
-    [PROPRIETARIO, "dono@t.local", true, []]
+    [PROPRIETARIO, "dono@t.local", true, []],
+    [INATIVO_SO_A, "inativo@t.local", false, [EMPRESA_A]]
   ];
   for (const [id, email, owner, empresas] of membros) {
     await db.query("insert into erp.users(id,email,name,password_hash) values ($1,$2,$3,'x')", [id, email, email]);
-    await db.query("insert into erp.organization_members(id,organization_id,user_id,is_owner,is_active) values ($1,$2,$1,$3,true)", [id, ORG, owner]);
+    await db.query("insert into erp.organization_members(id,organization_id,user_id,is_owner,is_active) values ($1,$2,$1,$3,$4)", [id, ORG, owner, id !== INATIVO_SO_A]);
     for (const e of empresas) await db.query("insert into erp.member_farms(member_id,farm_id) values ($1,$2)", [id, e]);
   }
   await db.query(zero11!.sql);
@@ -50,7 +52,7 @@ afterAll(async () => { await db.end(); });
 /** Regra LEGADA, escrita aqui como referência independente da implementação nova. */
 const acessoLegado = (membro: string, empresa: string): boolean => {
   if (membro === PROPRIETARIO || membro === SEM_VINCULO) return true;
-  if (membro === SO_A) return empresa === EMPRESA_A;
+  if (membro === SO_A || membro === INATIVO_SO_A) return empresa === EMPRESA_A;
   return true; // A_E_B
 };
 
@@ -72,7 +74,7 @@ describe("backfill de acesso por empresa", () => {
   it("cobre TODOS os módulos canônicos — nenhum membro fica sem configuração e, portanto, sem acesso", async () => {
     const modulos = (await db.query<{ chave: string }>("select chave from erp.modulos_escopo_empresa")).rows.map((x) => x.chave);
     expect(modulos.length).toBeGreaterThanOrEqual(10);
-    for (const membro of [SEM_VINCULO, SO_A, A_E_B]) {
+    for (const membro of [SEM_VINCULO, SO_A, A_E_B, INATIVO_SO_A]) {
       const n = await db.query<{ n: string }>("select count(*) n from erp.membro_escopos_empresa where membro_id=$1", [membro]);
       expect(Number(n.rows[0]!.n), membro).toBe(modulos.length);
     }
@@ -91,6 +93,27 @@ describe("backfill de acesso por empresa", () => {
       }
     }
     expect(divergencias).toEqual([]);
+  });
+
+  it("membro INATIVO: a configuração é migrada, fica inerte enquanto ele está desativado e volta intacta na reativação", async () => {
+    const modulos = (await db.query<{ chave: string }>("select chave from erp.modulos_escopo_empresa")).rows.map((x) => x.chave);
+    // desativado: a configuração existe, mas não autoriza nada (is_active continua decidindo o uso do ERP)
+    for (const modulo of modulos) {
+      const r = await db.query<{ ok: boolean }>("select erp.tem_acesso_empresa($1,$2,$3,$4) ok", [ORG, INATIVO_SO_A, modulo, EMPRESA_A]);
+      expect(r.rows[0]!.ok, `inativo/${modulo}`).toBe(false);
+    }
+    // reativado pelo administrador: reencontra EXATAMENTE o escopo que tinha antes de ser desativado
+    await db.query("update erp.organization_members set is_active=true where id=$1", [INATIVO_SO_A]);
+    try {
+      for (const modulo of modulos) {
+        const a = await db.query<{ ok: boolean }>("select erp.tem_acesso_empresa($1,$2,$3,$4) ok", [ORG, INATIVO_SO_A, modulo, EMPRESA_A]);
+        const b = await db.query<{ ok: boolean }>("select erp.tem_acesso_empresa($1,$2,$3,$4) ok", [ORG, INATIVO_SO_A, modulo, EMPRESA_B]);
+        expect(a.rows[0]!.ok, `reativado/${modulo}/A`).toBe(true);
+        expect(b.rows[0]!.ok, `reativado/${modulo}/B`).toBe(false);
+      }
+    } finally {
+      await db.query("update erp.organization_members set is_active=false where id=$1", [INATIVO_SO_A]);
+    }
   });
 
   it("um MÓDULO NOVO criado depois é fail-closed para quem já existia — não vira acesso automático", async () => {

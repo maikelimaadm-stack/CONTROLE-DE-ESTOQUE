@@ -175,8 +175,10 @@ grant execute on function erp.tem_acesso_empresa(uuid, uuid, text, uuid) to erp_
 -- Regra de equivalência com o mecanismo legado (erp.member_farms):
 --   sem linhas  → 'todas'        (a convenção antiga "lista vazia = todas")
 --   com linhas  → 'selecionadas' + exatamente as mesmas empresas
--- Aplicado a TODOS os módulos canônicos, para que nenhum usuário perca nem ganhe acesso no merge. A partir
--- daqui o administrador diferencia módulo a módulo.
+-- Aplicado a TODOS os módulos canônicos e a TODOS os membros — ATIVOS E INATIVOS. `is_active` decide se o
+-- membro pode USAR o ERP; não decide se a configuração histórica dele é migrada. Um membro desativado e
+-- reativado depois precisa reencontrar exatamente o escopo que tinha: sem a linha migrada, o modelo novo é
+-- fail-closed e ele voltaria sem empresa nenhuma — perda silenciosa de acesso, proibida pelo contrato.
 --
 -- Antes de copiar, a integridade do legado é auditada: vínculo apontando para empresa de OUTRA organização
 -- (ou para empresa/membro inexistente) não é mascarado — a migration falha com mensagem clara.
@@ -198,14 +200,17 @@ begin
     raise exception 'member_farms tem % vínculo(s) inconsistente(s) (membro/empresa inexistente ou empresa de outra organização). Corrija antes de migrar: o backfill não pode mascarar autorização inválida.', v_invalidos;
   end if;
 
-  -- proprietário passa a enxergar todas as empresas da organização (contrato PRE-BASE2-02). Se algum
-  -- proprietário estava restrito por member_farms, isso é uma AMPLIAÇÃO consciente: fica registrada aqui e
-  -- o escopo legado dele é preservado nas tabelas novas (vale se ele deixar de ser proprietário).
+  -- PROPRIETÁRIO LEGADO RESTRITO: no modelo novo o proprietário enxerga todas as empresas. Isso é regra de
+  -- DESTINO, não licença para AMPLIAR autorização existente: no modelo antigo `is_owner` dava todas as
+  -- CAPACIDADES, mas o escopo de fazenda ainda podia estar restrito por member_farms. Migrar em silêncio
+  -- transformaria "proprietário restrito à empresa A" em "proprietário de todas as empresas".
+  -- Por isso a migration PARA (fail-closed) e exige normalização deliberada: ou o vínculo restritivo é
+  -- removido (o proprietário passa a ser total de fato), ou o membro deixa de ser proprietário.
   select count(distinct m.id) into v_owner_restrito
   from erp.organization_members m join erp.member_farms mf on mf.member_id = m.id
   where m.is_owner;
   if v_owner_restrito > 0 then
-    raise notice 'PRE-BASE2-02: % proprietário(s) tinham restrição de empresa em member_farms; pelo contrato o proprietário passa a enxergar todas as empresas da organização.', v_owner_restrito;
+    raise exception 'PRE-BASE2-02: % proprietário(s) possuem escopo empresarial restrito no modelo legado. Migrar automaticamente ampliaria a autorização deles para todas as empresas da organização, o que esta migration não faz em silêncio. Normalize antes de migrar: remova a restrição (proprietário total) ou retire is_owner do membro.', v_owner_restrito;
   end if;
 
   insert into erp.membro_escopos_empresa (organization_id, membro_id, modulo, modo)
@@ -213,7 +218,6 @@ begin
          case when exists (select 1 from erp.member_farms mf where mf.member_id = m.id) then 'selecionadas' else 'todas' end
   from erp.organization_members m
   cross join erp.modulos_escopo_empresa mm
-  where m.is_active
   on conflict (organization_id, membro_id, modulo) do nothing;
   get diagnostics v_escopos = row_count;
 
@@ -222,12 +226,11 @@ begin
   from erp.organization_members m
   join erp.member_farms mf on mf.member_id = m.id
   cross join erp.modulos_escopo_empresa mm
-  where m.is_active
   on conflict (organization_id, membro_id, modulo, empresa_id) do nothing;
   get diagnostics v_empresas = row_count;
 
-  select count(*) into v_membros from erp.organization_members where is_active;
-  raise notice 'PRE-BASE2-02 backfill: % membro(s) ativo(s), % escopo(s) de módulo, % vínculo(s) de empresa.', v_membros, v_escopos, v_empresas;
+  select count(*) into v_membros from erp.organization_members;
+  raise notice 'PRE-BASE2-02 backfill: % membro(s) (ativos e inativos), % escopo(s) de módulo, % vínculo(s) de empresa.', v_membros, v_escopos, v_empresas;
 end $$;
 
 -- ---------- 7) predicado de escopo para uso INLINE no SQL das consultas ----------
