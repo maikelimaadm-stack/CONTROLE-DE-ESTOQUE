@@ -63,7 +63,7 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 
 - **A** — EMPRESA ÚNICA OBRIGATÓRIA (36 tabelas)
 - **B** — EMPRESA ÚNICA ANULÁVEL (6 tabelas)
-- **C** — ORIGEM + DESTINO (3 tabelas)
+- **C** — ORIGEM + DESTINO (três contratos por domínio) (3 tabelas)
 - **D** — TABELA EMPRESAS (1 tabela)
 - **E** — PORTA DINÂMICA / ESPECIAL (7 tabelas)
 - **F** — ORGANIZAÇÃO — SEM RLS EMPRESARIAL (1 tabela)
@@ -72,60 +72,60 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 
 | Tabela | Coluna(s) canônica(s) | Módulo | Cat. | Nulo? | Leitura | Escrita | Semântica POR COMANDO |
 | --- | --- | --- | :---: | :---: | --- | --- | --- |
-| `erp.animal_handlings` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.animal_movements` | `empresa_id` + `empresa_destino_id` | pecuaria | C | não | qualquer ponta no escopo | criar e APAGAR respondem pela ORIGEM; alterar vale por qualquer ponta (o destinatário aceita/cancela), e mudar as PONTAS exige a origem — gatilho `trg_travar_pontas` | SELECT: using=leitura<br>INSERT: check=**escrita**<br>UPDATE: using=leitura · check=leitura<br>DELETE: using=**escrita** |
-| `erp.animal_retroactive_costs` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.animals` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.areas` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
+| `erp.animal_handlings` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.animal_movements` | `empresa_id` + `empresa_destino_id` | pecuaria | C | não | qualquer ponta no escopo | criar, alterar e apagar respondem pela ORIGEM; aceite do destino pela operação privilegiada `erp.processar_transferencia_pecuaria_destino(uuid, uuid)`; mudar as PONTAS exige a origem — gatilho `trg_travar_pontas` | SELECT: using=envelope (qualquer ponta)<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
+| `erp.animal_retroactive_costs` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.animals` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.areas` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.authorizer_empresas` | `empresa_id` | — | E | não | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
 | `erp.bank_account_empresas` | `empresa_id` | — | E | não | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
-| `erp.bank_movements` | `empresa_id` | financeiro | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita**<br>UPDATE: using=**escrita** · check=**escrita**<br>DELETE: using=**escrita** |
-| `erp.batches` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.breeding_seasons` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.budget_plannings` | `empresa_id` | financeiro | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita**<br>UPDATE: using=**escrita** · check=**escrita**<br>DELETE: using=**escrita** |
-| `erp.contracts` | `empresa_id` | financeiro | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.devolutions` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.dfe_documents` | `empresa_id` | fiscal | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita**<br>UPDATE: using=**escrita** · check=**escrita**<br>DELETE: using=**escrita** |
-| `erp.diet_batches` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.documents` | `empresa_id` | documentos | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita**<br>UPDATE: using=**escrita** · check=**escrita**<br>DELETE: using=**escrita** |
-| `erp.earnings` | `empresa_id` | pessoas_rh | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
+| `erp.bank_movements` | `empresa_id` | financeiro | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
+| `erp.batches` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.breeding_seasons` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.budget_plannings` | `empresa_id` | financeiro | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
+| `erp.contracts` | `empresa_id` | financeiro | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.devolutions` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.dfe_documents` | `empresa_id` | fiscal | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
+| `erp.diet_batches` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.documents` | `empresa_id` | documentos | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
+| `erp.earnings` | `empresa_id` | pessoas_rh | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.empresa_cost_centers` | `empresa_id` | — | E | não | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
 | `erp.empresas` | `id` | (seletor: união dos módulos) | D | não | empresa visível em ALGUM módulo (união) | tenant (criar empresa é ato de organização) | SELECT: using=leitura<br>INSERT: check=tenant<br>UPDATE: using=leitura · check=tenant<br>DELETE: using=leitura |
-| `erp.equipment_transfers` | `empresa_origem_id` + `empresa_destino_id` | frota_ativos | C | não | qualquer ponta no escopo | criar e APAGAR respondem pela ORIGEM; alterar vale por qualquer ponta (o destinatário aceita/cancela), e mudar as PONTAS exige a origem — gatilho `trg_travar_pontas` | SELECT: using=leitura<br>INSERT: check=**escrita**<br>UPDATE: using=leitura · check=leitura<br>DELETE: using=**escrita** |
-| `erp.equipments` | `empresa_id` | frota_ativos | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.feed_batches` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.feed_deliveries` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.feedlot_yards` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.financial_freezes` | `empresa_id` | financeiro | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita**<br>UPDATE: using=**escrita** · check=**escrita**<br>DELETE: using=**escrita** |
-| `erp.financial_titles` | `empresa_id` | financeiro | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.fuel_supplies` | `empresa_id` | frota_ativos | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.grazing_modules` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.herd_lots` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.input_entries` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.invoices` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.journal_entries` | `empresa_id` | fiscal | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita**<br>UPDATE: using=**escrita** · check=**escrita**<br>DELETE: using=**escrita** |
+| `erp.equipment_transfers` | `empresa_origem_id` + `empresa_destino_id` | frota_ativos | C | não | qualquer ponta no escopo | criar exige AS DUAS pontas; alterar e apagar respondem pela ORIGEM; mudar as PONTAS exige a origem — gatilho `trg_travar_pontas` | SELECT: using=envelope (qualquer ponta)<br>INSERT: check=**escrita (AS DUAS pontas)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
+| `erp.equipments` | `empresa_id` | frota_ativos | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.feed_batches` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.feed_deliveries` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.feedlot_yards` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.financial_freezes` | `empresa_id` | financeiro | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
+| `erp.financial_titles` | `empresa_id` | financeiro | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.fuel_supplies` | `empresa_id` | frota_ativos | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.grazing_modules` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.herd_lots` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.input_entries` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.invoices` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.journal_entries` | `empresa_id` | fiscal | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
 | `erp.legado_escopo_empresa_v0` | `empresa_id` | — | F | não | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
-| `erp.livestock_plannings` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.maintenances` | `empresa_id` | frota_ativos | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
+| `erp.livestock_plannings` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.maintenances` | `empresa_id` | frota_ativos | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.membro_empresas` | `empresa_id` | — | E | não | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
 | `erp.notifications` | `empresa_id` | — | E | sim | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
-| `erp.opening_balances` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.processings` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
+| `erp.opening_balances` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.processings` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.proprietary_empresas` | `empresa_id` | — | E | não | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
-| `erp.purchase_requests` | `empresa_id` | compras | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.rainfalls` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
+| `erp.purchase_requests` | `empresa_id` | compras | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.rainfalls` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.registros_globais` | `empresa_id` | — | E | sim | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
-| `erp.requisitions` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.salary_advances` | `empresa_id` | pessoas_rh | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.sales_documents` | `empresa_id` | vendas | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.service_orders` | `empresa_id` | ordens_servico | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.stock_corrections` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.stock_movements` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.stock_writeoffs` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.trough_readings` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.warehouse_transfers` | `empresa_origem_id` + `empresa_destino_id` | estoque | C | não | qualquer ponta no escopo | criar e APAGAR respondem pela ORIGEM; alterar vale por qualquer ponta (o destinatário aceita/cancela), e mudar as PONTAS exige a origem — gatilho `trg_travar_pontas` | SELECT: using=leitura<br>INSERT: check=**escrita**<br>UPDATE: using=leitura · check=leitura<br>DELETE: using=**escrita** |
-| `erp.warehouses` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
-| `erp.weighings` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita** |
+| `erp.requisitions` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.salary_advances` | `empresa_id` | pessoas_rh | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.sales_documents` | `empresa_id` | vendas | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.service_orders` | `empresa_id` | ordens_servico | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.stock_corrections` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.stock_movements` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.stock_writeoffs` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.trough_readings` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.warehouse_transfers` | `empresa_origem_id` + `empresa_destino_id` | estoque | C | não | qualquer ponta no escopo | criar, alterar e apagar exigem AS DUAS pontas; mudar as PONTAS exige a origem — gatilho `trg_travar_pontas` | SELECT: using=envelope (qualquer ponta)<br>INSERT: check=**escrita (AS DUAS pontas)**<br>UPDATE: using=**escrita (AS DUAS pontas)** · check=**escrita (AS DUAS pontas)**<br>DELETE: using=**escrita (AS DUAS pontas)** |
+| `erp.warehouses` | `empresa_id` | estoque | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.weighings` | `empresa_id` | pecuaria | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 
 ## Exceções — por que a RLS empresarial genérica não se aplica
 

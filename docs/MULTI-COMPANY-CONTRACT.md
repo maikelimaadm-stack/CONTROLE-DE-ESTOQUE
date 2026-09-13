@@ -438,14 +438,27 @@ mover a linha para fora do que a escrita permitia. Por isso a forma depende da c
 | C — transferências | **diferentes**: lê por qualquer das duas pontas, escreve pela ORIGEM | quatro políticas + gatilho `trg_travar_pontas` |
 | D — `erp.empresas` | **diferentes**: a lista é recortada pelo escopo; administrar é ato de organização | quatro políticas (`insert`/`update` conferem só o tenant) |
 
-O UPDATE das transferências (categoria C) usa o ENVELOPE (qualquer das duas pontas) nos dois lados, e não a
-origem: o aceite pelo destino (`/livestock/transfers/:id/process`) e o cancelamento (`/stock/transfers/:id/cancel`)
-são UPDATEs feitos pelo destino, e uma política de origem os transformaria em zero linhas afetadas — as rotas
-não conferem `rowCount`, então o usuário veria "sucesso" e nada teria acontecido. O que a origem precisa
-governar é a MUDANÇA DAS PONTAS, e isso a RLS não sabe dizer (ela não compara OLD com NEW). Quem diz é o
-gatilho `erp.travar_pontas_transferencia_origem()`: alterar `empresa_origem_id` ou `empresa_destino_id` sem
-autoridade de escrita na origem levanta `VALIDATION_ERROR`. Segurança que a RLS não expressa não vira
-comentário — vira gatilho.
+**VISIBILIDADE BILATERAL NÃO É AUTORIDADE DE MUTAÇÃO BILATERAL.** As três tabelas de transferência têm a
+mesma FORMA (duas colunas de empresa) e semânticas diferentes; tratá-las como uma categoria só fez a regra
+mais permissiva das três virar a regra de todas. O UPDATE em envelope existia para dois fluxos específicos e
+acabou dando ao destinatário de QUALQUER transferência autoridade para reescrever a linha inteira — inclusive
+em `equipment_transfers`, que não tem aceite nenhum. A exceção de domínio tem de ser tão estreita quanto a
+ação de domínio, e é por isso que a categoria C tem três contratos (C1/C2/C3), declarados em
+`packages/domain/empresa-rls.mjs` e gerados na matriz.
+
+O aceite pecuário é a única mutação legítima do destinatário, e ele não é um UPDATE: é
+`erp.processar_transferencia_pecuaria_destino(movimento, lote_destino)` — `security definer` estreita, com
+`search_path` fixo, organização e usuário vindos da GUC do servidor, `batch_farm_transfer.process` e o acesso
+à empresa de DESTINO no módulo `pecuaria` reconferidos dentro, sem SQL dinâmico, `execute` revogado de
+`public`. Ela move SOMENTE os itens vinculados àquela transferência que ainda estão na empresa de ORIGEM,
+confere os row counts contra o esperado e só então grava `status='confirmed'`; qualquer divergência derruba a
+transação inteira. Antes disso, a rota fazia o `update` normal, a RLS devolvia ZERO linhas e o status virava
+confirmado assim mesmo — transferência aceita com o rebanho parado na origem.
+
+O gatilho `erp.travar_pontas_transferencia_origem()` continua nas três tabelas, agora como defesa em
+profundidade: "as pontas não mudaram" é uma comparação entre OLD e NEW, que `with check` não enxerga. Ele não
+é mais a justificativa para abrir as outras colunas ao destinatário — uma invariante de ponta não deve
+depender de a política de UPDATE continuar estreita.
 
 `docs/COMPANY-RLS-MATRIX.md` lista, por tabela, a política de CADA comando com o predicado que ela usa, e
 `apps/api/test/integration/rls-matriz.test.ts` compara essa matriz com `pg_policy` no banco real: comando,
@@ -467,7 +480,9 @@ matriz gerada em `docs/COMPANY-RLS-MATRIX.md`:
 
 | Tabela | Política | Por quê |
 | --- | --- | --- |
-| `animal_movements`, `equipment_transfers`, `warehouse_transfers` | SELECT e UPDATE por QUALQUER uma das duas pontas; INSERT e DELETE só pela ORIGEM; gatilho `trg_travar_pontas` impede trocar as pontas sem autoridade na origem | Transferência é um fato com duas empresas. Exigir acesso às duas pontas esconderia do destino o que está chegando para ele — e prender o UPDATE à origem mataria em silêncio o aceite e o cancelamento feitos pelo destino. |
+| `animal_movements` (C1) | SELECT por qualquer ponta; INSERT/UPDATE/DELETE pela ORIGEM; o aceite do destino é a operação privilegiada `erp.processar_transferencia_pecuaria_destino` | O destinatário ainda não possui os animais — é o aceite que os traz para o escopo dele. Isso não cabe no UPDATE normal (seria autoridade sobre todo o rebanho da origem) nem pode ser um UPDATE que a RLS zera em silêncio. |
+| `warehouse_transfers` (C2) | SELECT por qualquer ponta; INSERT/UPDATE/DELETE exigem AS DUAS | A criação já lança no ledger das duas empresas; o cancelamento tem de estornar as duas, e `reverseStock` lê pela RLS normal. Com uma ponta só, metade do ledger ficava sem estorno e a transferência era marcada como cancelada assim mesmo. |
+| `equipment_transfers` (C3) | SELECT por qualquer ponta; INSERT exige AS DUAS; UPDATE/DELETE pela ORIGEM | A criação move o bem na hora e já exige as duas pontas. Não existe rota de aceite depois — logo não existe ato do destinatário que justifique UPDATE. |
 | `erp.empresas` | SELECT/UPDATE/DELETE com `using` = a própria empresa no escopo (união entre módulos); `with check` de INSERT/UPDATE = só tenant | Administrar empresas é ato de organização; a LISTA que o membro enxerga continua recortada pelo escopo. Criar empresa pela API exige, além disso, alcance de ORGANIZAÇÃO na aplicação (`exigirEscopoTotalDaOrganizacao`), senão a linha nasce invisível para quem a criou. |
 | `notifications` | mantém a política dinâmica de PRE-BASE2-02 (`escopo_tipo` × módulo × empresa) | O escopo do aviso é do TIPO dele, não da coluna. Trocá-la pela forma padrão desfaria a correção de segurança anterior. |
 | `registros_globais` | tenant; `empresa_id` é PISTA, não autoridade | O ID Global é da organização. A autoridade continua sendo o registro fonte. |
