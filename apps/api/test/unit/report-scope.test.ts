@@ -75,6 +75,9 @@ function fontes(sql: string): { tabela: string; alias: string }[] {
  * recortado — é vazamento de verdade: é o caso da tabela que DIRIGE a consulta ou a subconsulta.
  */
 function protegidos(sql: string): Set<string> {
+  // só propaga entre tabelas DE EMPRESA: passar por um cadastro compartilhado (produto, pessoa, categoria)
+  // restringe o conjunto por aquele cadastro, não por empresa — e cadastro é o mesmo para todas elas.
+  const deEmpresa = new Set(fontes(sql).filter((f) => colunaDeEmpresa(f.tabela) && !NAO_RECORTAVEIS.has(f.tabela)).map((f) => f.alias));
   const seeds = new Set<string>();
   const rePred = /me\.empresa_id=([a-z][a-z0-9_]*)\.[a-z_]+/gi;
   for (let m = rePred.exec(sql); m; m = rePred.exec(sql)) seeds.add(m[1]!);
@@ -88,9 +91,12 @@ function protegidos(sql: string): Set<string> {
   const fila = [...seeds];
   while (fila.length) {
     const atual = fila.shift()!;
+    if (!deEmpresa.has(atual) && !seeds.has(atual)) continue;
     for (const [a, b] of arestas) {
-      if (a === atual && !seeds.has(b)) { seeds.add(b); fila.push(b); }
-      if (b === atual && !seeds.has(a)) { seeds.add(a); fila.push(a); }
+      const vizinho = a === atual ? b : b === atual ? a : null;
+      if (!vizinho || seeds.has(vizinho)) continue;
+      if (!deEmpresa.has(atual) || !deEmpresa.has(vizinho)) continue; // a ponte precisa ser entre tabelas de empresa
+      seeds.add(vizinho); fila.push(vizinho);
     }
   }
   return seeds;
@@ -98,7 +104,44 @@ function protegidos(sql: string): Set<string> {
 
 const filtrosVazios: Record<string, string> = {};
 
+/** Uma linha da matriz por relatório: o que ele lê, com que estratégia e sob qual módulo. */
+function linhaDaMatriz(def: typeof REPORTS[number]): string {
+  const escopo = escopoDaPermissao(`${def.permission}.view`);
+  const modulo = escopo && escopo.tipo === "empresa" ? escopo.modulo : "organização";
+  const texto = def.sql(ctxSintetico(escopo && escopo.tipo === "empresa" ? escopo.modulo : null), filtrosVazios).text;
+  const recortados = protegidos(texto);
+  const derivados = def.escopo?.derivado ?? {};
+  const fontesEmpresa = [...new Map(fontes(texto).filter((f) => colunaDeEmpresa(f.tabela) && !NAO_RECORTAVEIS.has(f.tabela)).map((f) => [`${f.tabela}:${f.alias}`, f])).values()];
+  const estrategia = fontesEmpresa.length === 0
+    ? "sem fonte de empresa"
+    : fontesEmpresa.map((f) => {
+      const comPredicado = texto.includes(`me.empresa_id=${f.alias}.${colunaDeEmpresa(f.tabela)}`);
+      return `${f.tabela} (${comPredicado ? "predicado" : derivados[f.alias] ? "derivado" : "junção"})`;
+    }).join(", ");
+  const status = escopo && escopo.tipo === "organizacao" && fontesEmpresa.length ? "ORGANIZAÇÃO JUSTIFICADO" : "OK";
+  return `| ${def.key} | ${def.permission} | ${modulo} | ${estrategia || "—"} | ${status} |`;
+}
+
 describe("escopo empresarial dos relatórios", () => {
+  it("a matriz versionada (docs/REPORT-SCOPE-MATRIX.md) está em dia com o catálogo real", () => {
+    const cabecalho = [
+      "<!-- GERADO por apps/api/test/unit/report-scope.test.ts — rode com UPDATE_REPORT_MATRIX=1 para atualizar -->",
+      "# Matriz de escopo empresarial dos relatórios",
+      "",
+      "Uma linha por relatório do catálogo (`apps/api/src/routes/reports.ts`). `Estratégia` diz, para cada fonte",
+      "com coluna de empresa: **predicado** (recorte próprio), **junção** (recorte herdado de uma fonte já",
+      "recortada) ou **derivado** (declarado na definição, com justificativa). Nenhuma linha fica sem auditoria.",
+      "",
+      "| Relatório | Permissão | Módulo | Fontes de empresa (estratégia) | Situação |",
+      "| --- | --- | --- | --- | --- |"
+    ];
+    const conteudo = [...cabecalho, ...REPORTS.map(linhaDaMatriz), ""].join("\n");
+    const caminho = path.join(here, "../../../../docs/REPORT-SCOPE-MATRIX.md");
+    if (process.env.UPDATE_REPORT_MATRIX) fs.writeFileSync(caminho, conteudo);
+    const atual = fs.existsSync(caminho) ? fs.readFileSync(caminho, "utf8") : "";
+    expect(atual, "matriz desatualizada: rode UPDATE_REPORT_MATRIX=1 pnpm --filter @agro/api test").toBe(conteudo);
+  });
+
   it("toda fonte com coluna de empresa de um relatório company-scoped tem predicado — ou declaração derivada justificada", () => {
     const problemas: string[] = [];
     for (const def of REPORTS) {
@@ -135,22 +178,35 @@ describe("escopo empresarial dos relatórios", () => {
     expect(problemas, `relatórios sem recorte de empresa:\n${problemas.join("\n")}`).toEqual([]);
   });
 
-  it("nenhuma consulta de painel escapa do escopo: dashboards.ts usa consultaEscopada ou declara a exceção", () => {
-    // Exceções: consultas que não leem NENHUMA tabela de empresa (auditoria de usuários) e o bloco de saldo
-    // bancário, que é agregado de ORGANIZAÇÃO e por isso exige capacidade de organização (ver contrato §7).
-    const EXCECOES: Record<string, string> = {
-      "erp.audit_logs": "auditoria de usuários: organização inteira, sem coluna de empresa",
-      "erp.v_bank_account_balances": "saldo bancário é agregado da organização; o bloco só é montado com bank_accounts.view"
-    };
+  it("nenhuma consulta de painel escapa do escopo: cada fonte de empresa tem predicado ou vem de fonte recortada", () => {
+    // Exceções de ORGANIZAÇÃO, com motivo: auditoria de usuários (sem coluna de empresa) e o saldo bancário,
+    // que é agregado da conta e por isso só é montado com a capacidade de organização (contrato §7).
+    const EXCECOES = ["erp.audit_logs", "erp.v_bank_account_balances"];
+    // fontes DERIVADAS de um painel: o conjunto já vem de uma fonte recortada por uma cadeia que passa por
+    // tabela sem coluna de empresa (o curral herda a empresa do pátio). Cada uma com o motivo, como nos relatórios.
+    const DERIVADOS: { trecho: string; aliases: string[]; motivo: string }[] = [
+      {
+        trecho: "from erp.animals a join erp.batches b on b.id=a.batch_id where b.corral_id=c.id",
+        aliases: ["a", "b"],
+        motivo: "ocupação do curral: animais e lotes alcançados pelo curral, que herda a empresa do pátio já recortado (erp.feedlot_yards.farm_id)."
+      }
+    ];
     const texto = fs.readFileSync(path.join(here, "../../src/routes/dashboards.ts"), "utf8");
     const problemas: string[] = [];
-    const re = /ctx\.tx\.query(?:<[^(]*?>)?\(\s*"((?:[^"\\]|\\.)*)"/g;
+    // consultas escopadas (marcadores) e consultas cruas, analisadas com o MESMO critério dos relatórios
+    const re = /(consultaEscopada|ctx\.tx\.query)(?:<[^(]*?>)?\((?:ctx,\s*)?"((?:[^"\\]|\\.)*)"/g;
     for (let m = re.exec(texto); m; m = re.exec(texto)) {
-      const sql = m[1]!;
-      const tabelasDeEmpresa = fontes(sql).filter((f) => colunaDeEmpresa(f.tabela) && !NAO_RECORTAVEIS.has(f.tabela));
-      const justificada = Object.keys(EXCECOES).some((t) => sql.includes(t));
-      if (tabelasDeEmpresa.length && !justificada) {
-        problemas.push(`consulta com ctx.tx.query lendo ${tabelasDeEmpresa.map((t) => t.tabela).join(", ")} sem consultaEscopada: ${sql.slice(0, 120)}`);
+      const cru = m[2]!;
+      if (EXCECOES.some((t) => cru.includes(t))) continue;
+      // o marcador vira o predicado canônico que `empresaScope` emite, para a análise ser a mesma
+      const sql = cru.replace(/\{\{escopo(?:_nulo|_par)?:([^}|]+)(?:\|[a-z_]+)?\}\}/g, (_x, col: string) => `exists (select 1 from erp.membro_empresas me where me.empresa_id=${col.trim()})`);
+      const recortados = protegidos(sql);
+      for (const { tabela, alias } of fontes(sql)) {
+        if (!colunaDeEmpresa(tabela) || NAO_RECORTAVEIS.has(tabela)) continue;
+        if (recortados.has(alias)) continue;
+        const derivado = DERIVADOS.find((d) => sql.includes(d.trecho) && d.aliases.includes(alias));
+        if (derivado) continue;
+        problemas.push(`${tabela} como ${alias} sem recorte: ${sql.slice(0, 110)}`);
       }
     }
     expect(problemas, `painéis sem escopo:\n${problemas.join("\n")}`).toEqual([]);
