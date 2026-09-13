@@ -25,7 +25,7 @@ let tkA = ""; let tkB = ""; let tkAB = "";
 /** id do usuário destino-only: as provas de RLS crua leem pelo papel da aplicação, não pela rota. */
 let usuarioDestino = "";
 let LOTE_B = "";
-let ARM_A = ""; let ARM_B = ""; let PRODUTO = "";
+let ARM_A = ""; let ARM_B = ""; let PRODUTO = ""; let RECEITA = ""; let DESPESA = ""; let CENTRO = "";
 
 type Resposta = { statusCode: number; body: string; json: () => unknown };
 const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { error?: { code: string; message: string } };
@@ -72,7 +72,7 @@ const movimento = async (id: string) =>
 beforeAll(async () => {
   h = await harness(); I = await ids(h); ORG = h.demo.orgId; A = I.farm; B = I.farm2;
   admin = createPool(TEST_URL, { max: 3 });
-  PRODUTO = I.product!;
+  PRODUTO = I.product!; RECEITA = I.incomeCategory!; DESPESA = I.category!; CENTRO = I.costCenter!;
 
   // Armazéns próprios deste teste, um em cada empresa (os do seed já têm saldo e movimento de outras suítes).
   const wa = await admin.query<{ id: string }>("insert into erp.warehouses(organization_id,empresa_id,initials,description,type) values ($1,$2,'TMA','Armazem transf A','inputs') returning id", [ORG, A]);
@@ -86,7 +86,7 @@ beforeAll(async () => {
   LOTE_B = lb.rows[0]!.id;
 
   const PEC = ["batch_farm_transfer.view", "batch_farm_transfer.create", "batch_farm_transfer.process", "animals.view", "batches.view"];
-  const EST = ["warehouse_transfers.view", "warehouse_transfers.create", "warehouse_transfers.delete", "opening_balances.view", "opening_balances.create", "stocks.view", "products.view", "warehouses.view"];
+  const EST = ["warehouse_transfers.view", "warehouse_transfers.create", "warehouse_transfers.delete", "opening_balances.view", "opening_balances.create", "stocks.view", "products.view", "warehouses.view", "farm_transfers.view", "farm_transfers.create", "farm_transfers.delete", "payables.view", "receivables.view"];
   const FRT = ["equipment_transfers.view", "equipment_transfers.create", "equipments.view"];
   tkA = await usuario("transf-a@demo.local", [...PEC, ...EST, ...FRT], [["pecuaria", [A]], ["estoque", [A]], ["frota_ativos", [A]]]);
   tkB = await usuario("transf-b@demo.local", [...PEC, ...EST, ...FRT], [["pecuaria", [B]], ["estoque", [B]], ["frota_ativos", [B]]], (id) => { usuarioDestino = id; });
@@ -242,6 +242,31 @@ describe("ESTOQUE — cancelar estorna os DOIS lados, ou não cancela", () => {
     const revs = (await movimentos(id)).filter((m) => m.movement_type === "reversal");
     if (r.statusCode === 200) expect(revs.length, "se cancelou, os DOIS lados").toBe(2);
     else { expect(revs.length).toBe(0); expect(await saldo(ARM_A)).toBe(a0); expect(await saldo(ARM_B)).toBe(b0); }
+  });
+
+  it("com financeiro, os títulos das DUAS empresas são cancelados juntos — nunca metade", async () => {
+    // O título a receber nasce na ORIGEM e o a pagar no DESTINO, e `erp.financial_titles` é recortada por
+    // empresa. Cancelar vendo uma ponta só deixaria o título da outra vivo, apontando para uma transferência
+    // cancelada. É a mesma razão que obriga as duas pontas no estorno do estoque.
+    const r = await post(tkAB, "/api/stock/transfers", {
+      kind: "farm", transfer_date: "2031-02-15", empresa_origem_id: A, origin_warehouse_id: ARM_A,
+      empresa_destino_id: B, destination_warehouse_id: ARM_B, items: [{ product_id: PRODUTO, quantity: "5" }],
+      generate_financial: true,
+      income_apportionment: [{ financial_category_id: RECEITA, cost_center_id: CENTRO, percentage: "100", amount: "50" }],
+      expense_apportionment: [{ financial_category_id: DESPESA, cost_center_id: CENTRO, percentage: "100", amount: "50" }]
+    });
+    expect(r.statusCode, JSON.stringify(j(r))).toBe(201);
+    const id = String(j(r)["id"]);
+    const titulos = async () => (await admin.query<{ empresa_id: string; status: string }>(
+      "select empresa_id, status from erp.financial_titles where source_type='warehouse_transfers' and source_id=$1 order by direction", [id])).rows;
+    const antes = await titulos();
+    expect(antes.length, "um título em cada empresa").toBe(2);
+    expect(new Set(antes.map((t) => t.empresa_id)).size).toBe(2);
+
+    const c = await post(tkAB, `/api/stock/transfers/${id}/cancel`, {});
+    expect(c.statusCode, JSON.stringify(j(c))).toBe(200);
+    const depois = await titulos();
+    expect(depois.every((t) => t.status === "cancelled"), "nenhum título sobrevive à transferência cancelada").toBe(true);
   });
 
   it("o destino NÃO altera arbitrariamente a linha da transferência de armazém", async () => {
