@@ -35,6 +35,24 @@ const colunaDeEmpresa = (tabela: string): string | null => {
 };
 
 /** Tabelas cuja coluna de empresa NÃO é autoridade de recorte (vínculo/índice), tratadas caso a caso. */
+/**
+ * Tabelas SEM coluna de empresa cujos dados pertencem a uma empresa POR RELAÇÃO. O gate estrutural não as
+ * enxergaria (não têm `farm_id`), mas ler `erp.matings` sem nenhum vínculo com a estação ou com a matriz
+ * mostra reprodução de qualquer empresa. Aqui a exigência é: a tabela-PAI precisa aparecer na consulta e
+ * estar recortada — ou a fonte precisa ser declarada como derivada, com motivo.
+ */
+const EMPRESA_POR_RELACAO: Record<string, { pai: string; via: string }> = {
+  matings: { pai: "breeding_seasons", via: "season_id (not null) — a estação é da empresa" },
+  title_settlements: { pai: "financial_titles", via: "title_id" },
+  title_apportionments: { pai: "financial_titles", via: "title_id" },
+  bank_movement_apportionments: { pai: "bank_movements", via: "movement_id" },
+  purchase_request_events: { pai: "purchase_requests", via: "request_id" },
+  animal_movement_items: { pai: "animal_movements", via: "movement_id" },
+  animal_handling_items: { pai: "animal_handlings", via: "handling_id" },
+  weighing_items: { pai: "weighings", via: "weighing_id" },
+  maintenance_machines: { pai: "maintenances", via: "maintenance_id" }
+};
+
 const NAO_RECORTAVEIS = new Set(["member_farms", "membro_empresas", "registros_globais", "farm_cost_centers", "proprietary_farms", "authorizer_farms", "bank_account_farms"]);
 
 const ctxSintetico = (modulo: string | null): ServiceCtx => ({
@@ -174,6 +192,14 @@ describe("escopo empresarial dos relatórios", () => {
           continue;
         }
         problemas.push(`${def.key} (${modulo}): ${tabela} como ${alias} sem recorte de empresa — nem predicado próprio nem junção com fonte recortada`);
+      }
+      // fontes cuja empresa vem por RELAÇÃO: o pai precisa estar presente e recortado
+      for (const { tabela, alias } of fontes(texto)) {
+        const rel = EMPRESA_POR_RELACAO[tabela];
+        if (!rel || modulo === null) continue;
+        const paiRecortado = fontes(texto).some((f) => f.tabela === rel.pai && recortados.has(f.alias));
+        if (paiRecortado || derivados[alias]) continue;
+        problemas.push(`${def.key} (${modulo}): ${tabela} como ${alias} pertence a uma empresa por ${rel.via}, mas ${rel.pai} não aparece recortada na consulta`);
       }
       for (const alias of Object.keys(derivados)) {
         if (!fontes(texto).some((f) => f.alias === alias)) problemas.push(`${def.key}: declaração derivada obsoleta para alias ${alias} (não aparece no SQL)`);

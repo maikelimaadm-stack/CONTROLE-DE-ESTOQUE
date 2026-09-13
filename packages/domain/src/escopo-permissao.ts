@@ -80,7 +80,7 @@ const RECURSOS_ORGANIZACAO: readonly string[] = [
   // Pessoas (cadastro único da organização)
   "people", "proprietaries", "employees", "providers", "clients", "authorizers",
   // Financeiro: estrutura (os LANÇAMENTOS são de empresa)
-  "bank_accounts", "report.bank_statement", "financial_categories", "chart_accounts",
+  "bank_accounts", "report.bank_statement", "report.birthdays", "report.active_employees", "report.logged_hours", "financial_categories", "chart_accounts",
   // Fiscal: cadastros e credenciais da organização (os DOCUMENTOS emitidos são de empresa)
   "nfe_issuers", "dfe_sync", "nfse_sync", "tax_rules", "accountants", "nature_operations", "additional_infos",
   // Pecuária/frota: taxonomias da organização
@@ -176,7 +176,7 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
   ],
   pessoas_rh: [
     "absences", "salary_advances", "bonuses", "employee_events", "earnings",
-    "report.monthly_calculation", "report.birthdays", "report.logged_hours", "report.active_employees",
+    "report.monthly_calculation",
     "report.advances"
   ],
   ordens_servico: ["service_orders"],
@@ -196,6 +196,9 @@ export const EXCECOES_ESCOPO: Readonly<Record<string, string>> = {
   cost_centers: "Cadastro da organização; `erp.farm_cost_centers` é o vínculo que diz em quais empresas o centro de custo se aplica, não um lançamento de empresa.",
   proprietaries: "Cadastro da organização; `erp.proprietary_farms` é vínculo de abrangência.",
   authorizers: "Cadastro da organização; `erp.authorizer_farms` é vínculo de abrangência.",
+  "report.birthdays": "Aniversariantes e quadro de pessoal saem de `erp.people` + `erp.employee_profiles`, cadastros da ORGANIZAÇÃO sem coluna de empresa: não há empresa a cruzar. Os LANÇAMENTOS de pessoal (apuração, adiantamentos) continuam de empresa, no módulo pessoas_rh.",
+  "report.active_employees": "Mesmo caso de report.birthdays: quadro de pessoal ativo é cadastro da organização (erp.people/erp.employee_profiles), sem dimensão de empresa.",
+  "report.logged_hours": "Horas registradas saem de `erp.audit_logs` — auditoria de uso do sistema por usuário, da organização inteira, sem coluna de empresa (mesma natureza de dashboard.user_analysis).",
   "report.bank_statement": "Extrato de CONTA bancária: parte do saldo inicial da conta (que não tem empresa) e fecha com o saldo da conta. Recortá-lo por empresa produziria um extrato que não reconcilia — número financeiramente falso. Por isso é documento da organização e a porta exige `bank_accounts.view` além da permissão do relatório.",
   bank_accounts: "Cadastro da organização; `erp.bank_account_farms` é vínculo de abrangência. Os MOVIMENTOS (`erp.bank_movements`) são de empresa, no módulo financeiro.",
   users: "Usuário pertence à organização; o acesso dele às empresas é justamente o que esta missão passa a configurar (o vínculo legado de fazendas do membro era autorização, não dado de negócio)."

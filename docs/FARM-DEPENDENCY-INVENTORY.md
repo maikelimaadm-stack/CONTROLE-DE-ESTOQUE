@@ -6,15 +6,15 @@ O núcleo do ERP precisa deixar de depender do nicho agro: **Fazenda → Empresa
 (`docs/MULTI-COMPANY-CONTRACT.md`, `docs/DOMAIN-NAMING-STANDARD.md`). Este inventário mede a superfície real
 antes de qualquer renomeação — localizar/substituir em massa aqui quebraria contrato de API, RLS e dados.
 
-Total medido: **2602** ocorrências em 11 superfícies · 50 tabelas com coluna de empresa.
+Total medido: **2605** ocorrências em 11 superfícies · 50 tabelas com coluna de empresa.
 
 ## Por superfície
 
 | Superfície | Ocorrências | Catraca | Observação |
 | --- | ---: | --- | --- |
 | Schema (migrations) | 169 | sim | não pode crescer |
-| API — código | 823 | sim | não pode crescer |
-| API — testes | 239 | sim | não pode crescer |
+| API — código | 825 | sim | não pode crescer |
+| API — testes | 240 | sim | não pode crescer |
 | Núcleo neutro de nicho (plataforma) | 0 | sim | zerado: o catálogo do produto saiu da plataforma (mecanismo puro) |
 | Pacotes compartilhados | 114 | sim | não pode crescer |
 | Web — código | 421 | sim | não pode crescer |
@@ -28,7 +28,7 @@ Total medido: **2602** ocorrências em 11 superfícies · 50 tabelas com coluna 
 
 | Símbolo atual | Natureza | Ocorrências | Destino canônico |
 | --- | --- | ---: | --- |
-| `farm_id` | dado | 1206 | `empresa_id` |
+| `farm_id` | dado | 1209 | `empresa_id` |
 | `farms` | dado | 121 | `erp.empresas` |
 | `member_farms` | dado | 53 | `member_empresas` |
 | `ctx_farmId` | contrato | 167 | `empresaSelecionada` |
@@ -107,7 +107,7 @@ Ordem de ataque sugerida: quem concentra mais ocorrências define o risco da mig
 | `docs/reference/screens/relatorios.md` | Documentação histórica (referência externa) | 170 |
 | `apps/api/src/routes/stock.ts` | API — código | 159 |
 | `apps/api/src/routes/livestock.ts` | API — código | 131 |
-| `apps/api/src/routes/reports.ts` | API — código | 127 |
+| `apps/api/src/routes/reports.ts` | API — código | 129 |
 | `apps/api/src/routes/fleet-hr.ts` | API — código | 102 |
 | `docs/reference/screens/cadastros-base.md` | Documentação histórica (referência externa) | 97 |
 | `apps/api/src/routes/financial.ts` | API — código | 81 |

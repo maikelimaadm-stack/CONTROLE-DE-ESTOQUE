@@ -76,7 +76,7 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | application_management | report.application_management | pecuaria | animal_handlings (predicado) | OK |
 | pregnant_cows | report.pregnant_cows | pecuaria | animals (predicado), batches (junção) | OK |
 | reproductive_history | report.reproductive_history | pecuaria | breeding_seasons (predicado) | OK |
-| bull_efficiency | report.bull_efficiency | pecuaria | sem fonte de empresa | OK |
+| bull_efficiency | report.bull_efficiency | pecuaria | breeding_seasons (predicado) | OK |
 | family_tree | report.family_tree | pecuaria | animals (predicado) | OK |
 | animal_record | report.animal_record | pecuaria | animal_handlings (derivado), animals (predicado) | OK |
 | costing_batch | report.costing_batch | pecuaria | animals (junção), herd_lots (junção), animal_handlings (junção), feed_deliveries (junção), animal_retroactive_costs (junção), batches (predicado) | OK |
@@ -88,7 +88,7 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | transfer_batch_area | report.transfer_batch_area | pecuaria | animal_movements (predicado), batches (junção), grazing_modules (junção), areas (junção) | OK |
 | animal_batch_history | report.animal_batch_history | pecuaria | animal_movements (predicado), batches (junção) | OK |
 | batch_movement_analysis | report.batch_movement_analysis | pecuaria | animal_movements (junção), animals (junção), batches (predicado) | OK |
-| receiver_productivity | report.receiver_productivity | pecuaria | sem fonte de empresa | OK |
+| receiver_productivity | report.receiver_productivity | pecuaria | breeding_seasons (predicado) | OK |
 | reproduction_cost | report.reproduction_cost | pecuaria | breeding_seasons (predicado) | OK |
 | sisbov_identification | report.sisbov_identification | pecuaria | animals (predicado) | OK |
 | sisbov_birth | report.sisbov_birth | pecuaria | animals (predicado) | OK |
@@ -102,10 +102,10 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | machine_supplies | report.machine_supplies | frota_ativos | fuel_supplies (predicado), equipments (junção) | OK |
 | machine_maintenances | report.machine_maintenances | frota_ativos | maintenances (predicado), equipments (derivado) | OK |
 | monthly_calculation | report.monthly_calculation | pessoas_rh | earnings (predicado) | OK |
-| birthdays | report.birthdays | pessoas_rh | sem fonte de empresa | OK |
-| active_employees | report.active_employees | pessoas_rh | sem fonte de empresa | OK |
+| birthdays | report.birthdays | organização | sem fonte de empresa | OK |
+| active_employees | report.active_employees | organização | sem fonte de empresa | OK |
 | advances | report.advances | pessoas_rh | salary_advances (predicado), financial_titles (junção) | OK |
-| logged_hours | report.logged_hours | pessoas_rh | sem fonte de empresa | OK |
+| logged_hours | report.logged_hours | organização | sem fonte de empresa | OK |
 | rainfall | report.rainfall | pecuaria | rainfalls (predicado) | OK |
 | journal_entries | report.journal_entries | fiscal | journal_entries (predicado) | OK |
 | cash_book | report.cash_book | fiscal | bank_movements (predicado) | OK |
