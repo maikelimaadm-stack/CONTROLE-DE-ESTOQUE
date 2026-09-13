@@ -18,7 +18,7 @@ import { useTradutor } from "@/lib/i18n";
  * não apaga em silêncio o acesso por empresa já configurado).
  */
 export interface EscopoEmpresa { modulo: string; modo: "todas" | "selecionadas"; empresas: string[] }
-interface Modulo { chave: string; nome: string; tem_permissao: boolean | null }
+interface Modulo { chave: string; rotulo: string; tem_permissao: boolean | null }
 type Tradutor = (chave: string, parametros?: Record<string, string | number>) => string;
 
 /** Resumo de uma linha da lista de usuários: "3 módulos • 2 com todas as empresas". */
@@ -55,8 +55,8 @@ export function AcessoPorEmpresa({ roleId, empresas, valor, onChange }: {
       const semPermissao = m.tem_permissao === false;
       return <div key={m.chave} className={semPermissao ? "rounded border border-dashed px-2 py-1 opacity-60" : "rounded border px-2 py-1"}>
         <div className="flex items-center gap-2">
-          <span className="w-40 shrink-0 text-xs font-medium">{m.nome}</span>
-          <NativeSelect value={modo} className="w-56 text-xs" aria-label={`${tr("acesso_empresa.modo")} — ${m.nome}`}
+          <span className="w-40 shrink-0 text-xs font-medium">{m.rotulo}</span>
+          <NativeSelect value={modo} className="w-56 text-xs" aria-label={`${tr("acesso_empresa.modo")} — ${m.rotulo}`}
             onChange={(ev) => {
               const v = ev.target.value;
               definir(m.chave, v === "" ? null : { modulo: m.chave, modo: v as EscopoEmpresa["modo"], empresas: v === "selecionadas" ? (e?.empresas ?? []) : [] });

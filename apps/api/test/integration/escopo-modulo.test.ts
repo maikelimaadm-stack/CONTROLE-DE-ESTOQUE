@@ -18,7 +18,7 @@ import { harness, ids, TEST_URL, type Harness } from "./setup.js";
 let h: Harness; let I: Awaited<ReturnType<typeof ids>>;
 type Hdr = Record<string, string>;
 const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { items?: Record<string, unknown>[]; error?: { code: string }; id?: string };
-let MULTI: Hdr; let OWNER: Hdr; let A = ""; let B = "";
+let MULTI: Hdr; let A = ""; let B = "";
 let entradaA = ""; let entradaB = ""; let tituloA = ""; let tituloB = ""; let animalA = ""; let pesagemA = ""; let pesagemB = "";
 
 const PERMS = [
@@ -43,7 +43,7 @@ const post = (url: string, headers: Hdr, payload: Record<string, unknown>) => h.
 const criar = async (url: string, payload: Record<string, unknown>) => { const r = await post(url, h.headers(), payload); expect(r.statusCode, `${url}: ${r.body}`).toBe(201); return j(r).id as string; };
 
 beforeAll(async () => {
-  h = await harness(); I = await ids(h); OWNER = h.headers(); A = I.farm; B = I.farm2;
+  h = await harness(); I = await ids(h); A = I.farm; B = I.farm2;
   const entrada = (farm: string, wh: string) => ({ farm_id: farm, entry_date: "2026-09-01", items: [{ product_id: I.product, quantity: "7", unit_value: "3", warehouse_id: wh, financial_category_id: I.category, cost_center_id: I.costCenter }] });
   entradaA = await criar("/api/stock/input-entries", entrada(A, I.warehouse!));
   entradaB = await criar("/api/stock/input-entries", entrada(B, I.warehouseFarm2!));

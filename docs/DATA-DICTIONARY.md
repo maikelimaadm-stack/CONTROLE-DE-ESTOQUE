@@ -11,12 +11,12 @@ Formato do dicionário: versão **1**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 176 |
-| Tabelas com `organization_id` (escopo de organização) | 122 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 51 |
+| Tabelas no schema `erp` | 179 |
+| Tabelas com `organization_id` (escopo de organização) | 124 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 52 |
 | Entidades curadas neste dicionário | 37 |
 | Entidades com ID Global | 23 |
-| Cobertura curada | 21.0% |
+| Cobertura curada | 20.7% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1457,6 +1457,9 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.maintenance_machines` | 10 | não | — | não |
 | `erp.matings` | 15 | sim | — | não |
 | `erp.measurement_units` | 5 | sim | — | não |
+| `erp.membro_empresas` | 6 | sim | `empresa_id` | não |
+| `erp.membro_escopos_empresa` | 7 | sim | — | não |
+| `erp.modulos_escopo_empresa` | 3 | não | — | não |
 | `erp.nature_operations` | 21 | sim | — | sim |
 | `erp.ncm` | 2 | não | — | não |
 | `erp.notifications` | 9 | sim | — | não |

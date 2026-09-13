@@ -58,11 +58,13 @@ O contrato canônico não tem lista vazia ambígua. `AutorizacaoEmpresas` é uma
 Num sistema multiempresa com autorização estrita, "autorizado a tudo" e "autorizado a nada" não podem ser o
 mesmo valor: a diferença entre os dois é a diferença entre um painel vazio e um vazamento.
 
-**Compatibilidade com o mecanismo legado.** A infraestrutura herdada (`member_farms`, `membership.farmIds`)
-usa a convenção inversa — lista vazia significa "todas". Essa tradução acontece em **um único lugar**, a
-ponte `apps/api/src/lib/empresa.ts` (`autorizacaoDeFarmIdsLegado`), antes de qualquer regra: o núcleo nunca
-enxerga a sentinela. A equivalência com o escopo que a API aplica hoje é testada caso a caso em
-`apps/api/test/unit/empresa-bridge.test.ts`.
+No runtime (§7) os mesmos três estados aparecem POR MÓDULO: `todas`, `selecionadas` (com ou sem empresas) e
+"módulo sem configuração" — que é o mesmo que nenhuma empresa.
+
+**Compatibilidade com o mecanismo legado.** A convenção herdada — lista vazia de fazendas significando
+"todas" — não existe mais no runtime. Ela sobrevive apenas na BORDA de administração, onde o formato
+`farm_ids` continua sendo aceito e traduzido para o modelo canônico
+(`apps/api/src/lib/escopo-admin.ts`, testado em `apps/api/test/unit/empresa-bridge.test.ts`).
 
 ## 3. "Todas as empresas" é escopo, não empresa
 
@@ -120,49 +122,106 @@ ativas quando a operação exige empresa ativa — carregadas pelo servidor
 ## 5. Como usar
 
 ```ts
-// Leitura (lista, painel, relatório)
-const escopo = escopoEmpresa(ctx, req.query.empresa_id);       // apps/api/src/lib/empresa.ts
-if (escopo.empresaIds) where.push(`t.farm_id = any($n::uuid[])`);  // null = sem recorte
+// LEITURA (lista, painel, relatório): o escopo é uma CLÁUSULA SQL do módulo ativo, nunca uma lista em memória
+const params: unknown[] = [ctx.orgId];
+const where = ["t.organization_id=$1", ...empresaScope(ctx, "t", params)];   // apps/api/src/lib/context.ts
 
-// Escrita (lançamento): a empresa do corpo é PEDIDO, nunca autorização.
-// 1. o servidor carrega as empresas disponíveis da organização (tenant-scoped, sem excluídas/inativas);
-// 2. a autorização legada é convertida para o contrato explícito;
-// 3. a regra cruza as duas e só então decide.
-const selecao = await selecionarEmpresaParaLancamento(ctx, body.empresa_id);  // apps/api/src/lib/empresa.ts
-switch (selecao.situacao) {
-  case "recusada":     throw new DomainError("NOT_FOUND", "Registro não encontrado");  // nunca 403
-  case "indisponivel": throw new DomainError("VALIDATION_ERROR", "Nenhuma empresa disponível para lançamento.");
-  case "obrigatoria":  throw new DomainError("VALIDATION_ERROR", "Selecione a empresa do lançamento.");
-}
-const empresaId = selecao.empresaId;   // "escolhida" ou "automatica"
+// SQL já pronto: marcadores resolvidos na hora da consulta
+const r = await consultaEscopada(ctx, "select … from erp.financial_titles t where t.organization_id=$1 and {{escopo:t.farm_id}}", [ctx.orgId]);
+
+// ESCRITA (lançamento): a empresa do corpo é PEDIDO, nunca autorização
+await exigirEmpresaDeLancamento(ctx, body.farm_id);      // fora do escopo do módulo → VALIDATION_ERROR
+await exigirEmpresaVisivel(ctx, registro.farm_id);       // registro carregado fora do escopo → NOT_FOUND
 ```
 
-Equivalente, quando a lista já está em mãos (regra pura, sem banco):
+Quando a porta não tem permissão fixa (a permissão depende do registro: tipo de movimentação, direção do
+título, entidade do ID Global), o módulo é resolvido a partir da permissão REAL, e só então o escopo é
+aplicado:
 
 ```ts
-const disponiveis = await empresasDisponiveis(ctx);                    // server-side, tenant-scoped
-const selecao = selecionarEmpresaDoLancamento(autorizacaoEmpresas(ctx), { disponiveis, pedida: body.empresa_id });
+const permissao = permissaoMovimentacao(linha.movement_type, "view");
+if (!permissao) throw notFound();
+await comPermissaoResolvida(ctx, permissao);                                  // valida a empresa SELECIONADA
+await exigirEmpresaVisivel(ctx, linha.farm_id, "Movimentação", moduloDaPermissao(permissao));
+if (!hasPermission(ctx, permissao)) throw notFound();
 ```
-
-> **Nunca** chamar `selecionarEmpresaDoLancamento` sem `disponiveis`: o parâmetro é obrigatório por contrato
-> justamente para que não exista caminho fail-open.
 
 ## 6. Compatibilidade e migração
 
-Enquanto empresa e fazenda coexistem:
+1. `erp.member_farms` **deixou de ser autoridade de runtime** (PRE-BASE2-02). A tabela continua no banco até a
+   migração física da PRE-BASE2-03; o gate `scripts/member-farms-audit.mjs` impede que volte ao código.
+2. O backfill traduziu o estado legado sem que ninguém ganhasse ou perdesse acesso — vínculo vazio virou
+   `todas`, vínculo preenchido virou `selecionadas` com exatamente as mesmas empresas, em todos os módulos.
+   A equivalência é provada em `packages/db/test/backfill-empresas.test.ts` (matriz completa membro × empresa
+   × módulo, comparando a autoridade nova com a regra antiga).
+3. A API de administração continua aceitando `farm_ids`; a tradução acontece na borda
+   (`apps/api/src/lib/escopo-admin.ts`), nunca no runtime de autorização.
+4. `X-Farm-Id` continua sendo SELEÇÃO de contexto de trabalho. A validação dele passou a ser POR MÓDULO, na
+   porta: seleção explícita que o usuário não pode usar naquele módulo é 403.
 
-1. A autoridade continua sendo `ctx.membership.farmIds` + `farmScope`/`allowedFarms` — nada neste contrato
-   afrouxa o escopo existente.
-2. `resolverEscopoEmpresa` produz **exatamente** o mesmo resultado do escopo legado. A equivalência é testada
-   em `packages/plataforma/test/empresa.test.ts` (tabela de casos) e no nível de API em
-   `apps/api/test/integration/farm-scope.test.ts`.
-3. Quando PRE-BASE2-03 trocar colunas e cabeçalhos, só a ponte (`apps/api/src/lib/empresa.ts`) muda.
+## 7. Acesso por empresa E módulo (autoridade de runtime)
 
-## 7. O que ainda não existe (e por quê)
+O acesso efetivo é a **interseção** de duas dimensões independentes:
+
+| Dimensão | Pergunta | Fonte |
+| --- | --- | --- |
+| CAPACIDADE | o *quê* o usuário pode fazer | perfil (`erp.role_permissions`) |
+| ESCOPO | *onde* ele pode fazer | `erp.membro_escopos_empresa` + `erp.membro_empresas`, por MÓDULO |
+
+Nunca `OU`. Permissão sem escopo não vê nada; escopo sem permissão não abre porta alguma.
+
+### Granularidade
+
+A granularidade é o **módulo de negócio**, não a tela e não a ação. O catálogo é
+`MODULOS_ESCOPO_EMPRESA` (`packages/domain/src/escopo-permissao.ts`), semeado em
+`erp.modulos_escopo_empresa`. Início, Relatórios e Configurações **não** são escopos: um relatório financeiro
+respeita o escopo de FINANCEIRO, um painel de rebanho respeita PECUÁRIA, e um painel que combina áreas aplica,
+bloco a bloco, o módulo da fonte de cada informação.
+
+Não existe permissão por empresa (`empresa_a.payables.view` multiplicaria o catálogo por número de empresas).
+O que existe é UMA permissão funcional e, ao lado, o conjunto de empresas daquele módulo.
+
+### Modos e fail-closed
+
+| Configuração do módulo | Empresas |
+| --- | --- |
+| ausente | **nenhuma** (fail-closed — módulo novo não vira acesso automático) |
+| `todas` | todas as empresas REAIS da organização (não "qualquer UUID") |
+| `selecionadas` com lista | exatamente aquelas |
+| `selecionadas` com lista vazia | nenhuma |
+| proprietário | todas, em todos os módulos, inclusive os criados depois |
+
+### Como o módulo ativo é decidido
+
+`runService` deriva o módulo da PERMISSÃO exigida pela rota (`moduloDaPermissao`), o expõe em
+`ctx.moduloEmpresa` e o publica na transação (`app.modulo_empresa`). Nunca vem da URL, do pathname, do menu
+nem do cliente. Recurso de organização não tem módulo: a capacidade basta, e não há empresa a cruzar.
+
+### Onde o conjunto de empresas vive
+
+No banco. `RequestContext` carrega apenas os MODOS por módulo — uma organização pode ter centenas de empresas,
+e trafegá-las a cada requisição não escala. No modo `selecionadas`, o recorte é um semi-join
+(`exists (… erp.membro_empresas …)`) sobre a chave primária da tabela, verificado com `EXPLAIN`.
+
+Para verificação PONTUAL (uma linha) e para a RLS empresarial da PRE-BASE2-03 existem as funções SQL
+`erp.tem_acesso_empresa(org, usuário, módulo, empresa)` e `erp.empresa_no_escopo(empresa[, módulo])`. Elas não
+são usadas nas listagens: o PostgreSQL não embute função cujo corpo contém sublink, e toda regra de escopo
+depende de `exists` — embutida seria uma chamada por linha em vez de um semi-join.
+
+### Respostas
+
+| Situação | Resposta |
+| --- | --- |
+| registro fora do escopo (id na URL) | **404** — não se revela existência |
+| empresa proibida escolhida explicitamente (X-Farm-Id ou corpo) | **403** / `VALIDATION_ERROR` — o id veio do cliente |
+| sem a permissão funcional | **403** |
+
+## 8. O que ainda não existe (e por quê)
 
 | Item | Missão |
 | --- | --- |
 | Tabela/coluna com nome `empresa` em todo o schema | PRE-BASE2-03 (migração coordenada com compatibilidade). |
 | `X-Empresa-Id` substituindo `X-Farm-Id` | PRE-BASE2-03 (com aceitação dos dois cabeçalhos durante a transição). |
+| RLS de empresa aplicada às tabelas de negócio | PRE-BASE2-03 (a base — `erp.tem_acesso_empresa` — já existe). |
+| Remoção física de `erp.member_farms` | PRE-BASE2-03. |
 | Seletor multiempresa e consolidação na interface | PRE-BASE2-05. |
-| Permissão por empresa com granularidade por módulo | PRE-BASE2-02. |
