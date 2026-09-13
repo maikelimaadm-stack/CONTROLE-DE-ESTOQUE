@@ -69,6 +69,7 @@ export const ptBR: Catalogo = {
     "acesso_empresa.sem_configuracao": "Sem configuração: nenhuma empresa neste módulo.",
     "acesso_empresa.sem_permissao": "O perfil não tem permissão neste módulo.",
     "acesso_empresa.selecione_empresas": "Selecione ao menos uma empresa.",
+    "acesso_empresa.saldo_organizacao": "Saldo de conta bancária é um número da organização inteira (o saldo inicial da conta não tem empresa). Ver este painel exige a permissão de contas bancárias.",
     "acesso_empresa.proprietario": "Proprietário da organização: acesso a todas as empresas em todos os módulos.",
 
     // ID Global
