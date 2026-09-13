@@ -216,6 +216,63 @@ depende de `exists` — embutida seria uma chamada por linha em vez de um semi-j
 | empresa proibida escolhida explicitamente (X-Farm-Id ou corpo) | **403** / `VALIDATION_ERROR` — o id veio do cliente |
 | sem a permissão funcional | **403** |
 
+### Migração do estado legado (o que a 0011 faz e o que ela recusa)
+
+| Situação no modelo antigo | O que a migration faz |
+| --- | --- |
+| membro ATIVO, sem vínculo de fazenda | `todas`, em todos os módulos |
+| membro ATIVO, com vínculos | `selecionadas` com exatamente aquelas empresas |
+| membro **INATIVO** | migrado igual aos demais: `is_active` decide se ele USA o ERP, não se a configuração dele sobrevive. Sem isso, reativar um usuário o devolveria fail-closed, sem empresa nenhuma — perda silenciosa de acesso |
+| **proprietário com vínculo restritivo** | a migration **PARA**. No modelo antigo `is_owner` dava todas as capacidades, mas o escopo de fazenda ainda podia estar restrito; migrar em silêncio ampliaria a autorização dele para todas as empresas. Exige normalização deliberada: remover a restrição ou retirar `is_owner` |
+| vínculo inconsistente (empresa de outra organização, membro/empresa inexistente) | a migration PARA: integridade inválida não é mascarada |
+
+"Proprietário enxerga todas as empresas" é regra de DESTINO do modelo novo — não licença para ampliar
+autorização já existente. As duas coisas convivem: quem nasce proprietário no modelo novo é total; quem era
+proprietário restrito no modelo antigo exige decisão humana antes de migrar.
+
+### Atribuir empresa a um membro (borda de administração)
+
+| Empresa pedida | Resultado |
+| --- | --- |
+| ativa, da organização | aceita |
+| **inativa**, da organização | **aceita** — histórico continua consultável |
+| **excluída** (`deleted_at`) | recusada (`VALIDATION_ERROR`) |
+| de outra organização | recusada, sem revelar nada sobre o outro tenant |
+| identificador inexistente | recusada |
+| repetida no mesmo módulo | recusada — payload incorreto não é normalizado em silêncio |
+
+A validação é do SERVIDOR e acontece antes de gravar: a chave estrangeira sozinha deixaria passar empresa
+excluída, e um erro de integridade viraria 500 em vez de erro de negócio.
+
+### Auditoria
+
+Mudança de acesso por empresa é evento de SEGURANÇA: cada gravação registra em `erp.audit_logs`
+(`entity = member_company_scopes`) o ator, o membro, o **antes**, o **depois** e os **módulos alterados** —
+as duas fotos lidas do BANCO, não do payload. Alterar só o perfil não inventa evento de escopo. Nenhum
+segredo (senha, hash, token, cabeçalho) entra nos metadados.
+
+### Saldo bancário (decisão explícita)
+
+`erp.bank_accounts` é cadastro da ORGANIZAÇÃO e o `opening_balance` dela **não tem empresa**;
+`erp.bank_movements` tem. Logo:
+
+| Número | Natureza | Contrato |
+| --- | --- | --- |
+| saldo da conta, extrato com saldo corrente, fluxo de caixa por conta | **organização** (parte do saldo inicial, que não é decomponível) | exige capacidade de ORGANIZAÇÃO (`bank_accounts.view`) além da permissão financeira; o Extrato Bancário é classificado como recurso de organização, com justificativa registrada |
+| agregados de MOVIMENTOS (razão, fluxo por categoria, conciliação, financiamentos) | **empresa** | recorte por `farm_id` com semântica nullable (movimento sem empresa é da organização) |
+
+Não existe rateio inventado do saldo inicial: seria trocar um vazamento por um número financeiramente falso.
+No painel financeiro, quem não tem a capacidade de organização recebe o bloco de bancos vazio e sinalizado
+(`banks_escopo: "restrito"`) — nunca um total que soma empresas que a pessoa não enxerga.
+
+### Relatórios e painéis
+
+Todo relatório company-scoped respeita o módulo da própria permissão, em TODAS as suas fontes — inclusive
+subconsultas. Onde o recorte chega por relação (o animal citado por uma movimentação já recortada, o manejo
+do próprio animal, o título rateado para uma área), isso é DECLARADO na definição do relatório com
+justificativa. As matrizes versionadas estão em `docs/REPORT-SCOPE-MATRIX.md` (95 relatórios, gerada e
+conferida pelo gate) e `docs/DASHBOARD-SCOPE-MATRIX.md` (painéis, bloco a bloco).
+
 ## 8. O que ainda não existe (e por quê)
 
 | Item | Missão |

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { REPORTS } from "../../src/routes/reports.js";
-import type { RequestContext, ServiceCtx } from "../../src/lib/context.js";
+import type { ServiceCtx } from "../../src/lib/context.js";
 // @ts-expect-error — parser de migrations em JS puro, compartilhado com os gates de documentação
 import { companyColumnsOf, readSchema } from "../../../../scripts/lib/schema.mjs";
 
@@ -52,13 +52,14 @@ const ctxSintetico = (modulo: string | null): ServiceCtx => ({
 } as unknown as ServiceCtx);
 
 /** Aliases de `erp.<tabela>` no SQL gerado (o texto é montado por código, então o padrão é regular). */
-function fontes(sql: string): { tabela: string; alias: string }[] {
-  const out: { tabela: string; alias: string }[] = [];
-  const re = /erp\.([a-z_][a-z0-9_]*)(?:\s+as)?\s+([a-z][a-z0-9_]*)/gi;
+function fontes(sql: string): { tabela: string; alias: string; semAlias?: boolean }[] {
+  const out: { tabela: string; alias: string; semAlias?: boolean }[] = [];
+  const re = /erp\.([a-z_][a-z0-9_]*)(?:(?:\s+as)?\s+([a-z][a-z0-9_]*))?/gi;
   const PALAVRAS = new Set(["on", "where", "group", "order", "left", "join", "inner", "right", "set", "using", "and", "or", "limit", "having", "union", "select", "from", "cross", "lateral", "full", "outer", "for", "offset", "with", "returning"]);
   for (let m = re.exec(sql); m; m = re.exec(sql)) {
-    const tabela = m[1]!; const alias = m[2]!;
-    if (PALAVRAS.has(alias.toLowerCase())) continue;
+    const tabela = m[1]!; const alias = m[2];
+    // tabela SEM alias (`from erp.dfe_documents where …`): as colunas dela aparecem sem qualificação
+    if (!alias || PALAVRAS.has(alias.toLowerCase())) { out.push({ tabela, alias: tabela, semAlias: true }); continue; }
     out.push({ tabela, alias });
   }
   return out;
@@ -102,6 +103,9 @@ function protegidos(sql: string): Set<string> {
   return seeds;
 }
 
+/** A tabela aparece sem alias nesta consulta? Então as colunas dela são referenciadas sem qualificação. */
+const fonteSemAlias = (sql: string, tabela: string): boolean => fontes(sql).some((f) => f.tabela === tabela && f.semAlias);
+
 const filtrosVazios: Record<string, string> = {};
 
 /** Uma linha da matriz por relatório: o que ele lê, com que estratégia e sob qual módulo. */
@@ -109,7 +113,6 @@ function linhaDaMatriz(def: typeof REPORTS[number]): string {
   const escopo = escopoDaPermissao(`${def.permission}.view`);
   const modulo = escopo && escopo.tipo === "empresa" ? escopo.modulo : "organização";
   const texto = def.sql(ctxSintetico(escopo && escopo.tipo === "empresa" ? escopo.modulo : null), filtrosVazios).text;
-  const recortados = protegidos(texto);
   const derivados = def.escopo?.derivado ?? {};
   const fontesEmpresa = [...new Map(fontes(texto).filter((f) => colunaDeEmpresa(f.tabela) && !NAO_RECORTAVEIS.has(f.tabela)).map((f) => [`${f.tabela}:${f.alias}`, f])).values()];
   const estrategia = fontesEmpresa.length === 0
@@ -165,6 +168,7 @@ describe("escopo empresarial dos relatórios", () => {
           continue;
         }
         if (recortados.has(alias)) continue;
+        if (fonteSemAlias(texto, tabela) && texto.includes(`me.empresa_id=${coluna}`)) continue;
         if (derivados[alias]) {
           if (derivados[alias]!.length < 20) problemas.push(`${def.key}: justificativa curta demais para o alias ${alias}`);
           continue;
@@ -203,7 +207,7 @@ describe("escopo empresarial dos relatórios", () => {
       const recortados = protegidos(sql);
       for (const { tabela, alias } of fontes(sql)) {
         if (!colunaDeEmpresa(tabela) || NAO_RECORTAVEIS.has(tabela)) continue;
-        if (recortados.has(alias)) continue;
+        if (recortados.has(alias) || (fonteSemAlias(sql, tabela) && sql.includes(`me.empresa_id=${colunaDeEmpresa(tabela)}`))) continue;
         const derivado = DERIVADOS.find((d) => sql.includes(d.trecho) && d.aliases.includes(alias));
         if (derivado) continue;
         problemas.push(`${tabela} como ${alias} sem recorte: ${sql.slice(0, 110)}`);
