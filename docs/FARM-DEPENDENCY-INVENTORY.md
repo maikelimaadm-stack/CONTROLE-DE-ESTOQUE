@@ -6,35 +6,35 @@ O núcleo do ERP precisa deixar de depender do nicho agro: **Fazenda → Empresa
 (`docs/MULTI-COMPANY-CONTRACT.md`, `docs/DOMAIN-NAMING-STANDARD.md`). Este inventário mede a superfície real
 antes de qualquer renomeação — localizar/substituir em massa aqui quebraria contrato de API, RLS e dados.
 
-Total medido: **2704** ocorrências em 11 superfícies · 50 tabelas com coluna de empresa.
+Total medido: **2716** ocorrências em 11 superfícies · 50 tabelas com coluna de empresa.
 
 ## Por superfície
 
 | Superfície | Ocorrências | Catraca | Observação |
 | --- | ---: | --- | --- |
 | Schema (migrations) | 169 | sim | não pode crescer |
-| API — código | 886 | sim | não pode crescer |
-| API — testes | 255 | sim | não pode crescer |
+| API — código | 891 | sim | não pode crescer |
+| API — testes | 254 | sim | não pode crescer |
 | Núcleo neutro de nicho (plataforma) | 0 | sim | zerado: o catálogo do produto saiu da plataforma (mecanismo puro) |
 | Pacotes compartilhados | 115 | sim | não pode crescer |
 | Web — código | 421 | sim | não pode crescer |
 | Web — navegação/rotas | 13 | sim | não pode crescer |
 | Web — testes ponta a ponta | 73 | sim | não pode crescer |
 | Scripts e gates | 11 | sim | não pode crescer |
-| Documentação ativa | 248 | não | documentação: acompanha a migração |
+| Documentação ativa | 256 | não | documentação: acompanha a migração |
 | Documentação histórica (referência externa) | 513 | não | histórico externo: preservado, fora da catraca |
 
 ## Por símbolo (o que precisa migrar)
 
 | Símbolo atual | Natureza | Ocorrências | Destino canônico |
 | --- | --- | ---: | --- |
-| `farm_id` | dado | 1304 | `empresa_id` |
+| `farm_id` | dado | 1315 | `empresa_id` |
 | `farms` | dado | 121 | `erp.empresas` |
 | `member_farms` | dado | 53 | `member_empresas` |
 | `ctx_farmId` | contrato | 169 | `empresaSelecionada` |
 | `farmIds` | contrato | 35 | `empresasPermitidas` |
 | `x_farm_id` | contrato | 56 | `X-Empresa-Id` |
-| `farmScope` | contrato | 38 | `escopoEmpresa` |
+| `farmScope` | contrato | 39 | `escopoEmpresa` |
 | `allowedFarms` | contrato | 15 | `escopoEmpresa (@erp/plataforma)` |
 | `farms` | contrato | 112 | `/empresas` |
 | `fazenda` | texto | 801 | `Empresa (i18n: termos.empresa)` |
@@ -110,13 +110,13 @@ Ordem de ataque sugerida: quem concentra mais ocorrências define o risco da mig
 | `apps/api/src/routes/livestock.ts` | API — código | 137 |
 | `apps/api/src/routes/fleet-hr.ts` | API — código | 102 |
 | `docs/reference/screens/cadastros-base.md` | Documentação histórica (referência externa) | 97 |
-| `apps/api/src/routes/financial.ts` | API — código | 81 |
+| `apps/api/src/routes/financial.ts` | API — código | 84 |
 | `docs/reference/screens/financeiro.md` | Documentação histórica (referência externa) | 78 |
-| `docs/DASHBOARD-SCOPE-MATRIX.md` | Documentação ativa | 69 |
+| `docs/DASHBOARD-SCOPE-MATRIX.md` | Documentação ativa | 73 |
 | `apps/api/test/integration/api.test.ts` | API — testes | 67 |
 | `docs/reference/screens/administrativo.md` | Documentação histórica (referência externa) | 61 |
 | `apps/api/test/integration/farm-scope.test.ts` | API — testes | 60 |
-| `apps/api/src/routes/dashboards.ts` | API — código | 52 |
+| `apps/api/src/routes/dashboards.ts` | API — código | 54 |
 | `packages/domain/src/resources/registries.ts` | Pacotes compartilhados | 45 |
 | `apps/api/src/routes/resources.ts` | API — código | 41 |
 | `supabase/migrations/0006_livestock.sql` | Schema (migrations) | 36 |
@@ -124,11 +124,11 @@ Ordem de ataque sugerida: quem concentra mais ocorrências define o risco da mig
 | `docs/reference/REPORTS.md` | Documentação histórica (referência externa) | 34 |
 | `supabase/migrations/0003_stock_supply.sql` | Schema (migrations) | 31 |
 | `supabase/migrations/0002_registries.sql` | Schema (migrations) | 28 |
+| `docs/MULTI-COMPANY-CONTRACT.md` | Documentação ativa | 26 |
 | `apps/api/src/lib/context.ts` | API — código | 25 |
 | `apps/api/test/unit/farm-scope-guard.test.ts` | API — testes | 25 |
 | `apps/api/src/routes/sales.ts` | API — código | 24 |
 | `docs/parity/SCREEN-PARITY.md` | Documentação ativa | 24 |
-| `apps/web/src/app/(app)/estoque/transferencias/new/page.tsx` | Web — código | 23 |
 
 ## Como esta catraca funciona
 

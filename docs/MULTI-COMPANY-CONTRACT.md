@@ -319,6 +319,22 @@ como NOT NULL uma coluna anulável não vaza, mas ESCONDE os registros da organi
 As matrizes versionadas estão em `docs/REPORT-SCOPE-MATRIX.md` (gerada e conferida pelo gate, uma linha por
 relatório do catálogo) e `docs/DASHBOARD-SCOPE-MATRIX.md` (painéis, bloco a bloco).
 
+### Resíduo conhecido e NÃO corrigido: notificações derivadas
+
+`erp.notifications` (migration 0002) **não tem dimensão de empresa** — só `organization_id` e um `user_id`
+opcional. `POST /admin/notifications/refresh` gera avisos a partir de registros que TÊM empresa
+(`erp.purchase_requests`, `erp.documents`, `erp.financial_titles`), e o texto carrega dado do registro: o
+código da solicitação, o título do documento, a contagem de títulos a vencer somando todas as empresas. Quem
+não enxerga aquela empresa recebe o aviso mesmo assim. Abrir o link dá 404 (a rota de detalhe é recortada),
+mas o TÍTULO já revelou existência e identificação.
+
+Isto **não está corrigido** e não foi disfarçado: corrigir exige decidir a dimensão de empresa da
+notificação, não um predicado a mais. O caminho é (a) `alter table erp.notifications add column farm_id`
+(aditivo), (b) gravar a empresa do registro de origem em cada aviso, e (c) filtrar na leitura com o módulo
+do próprio `kind` (`purchase_pending` → compras, `stock_min` → estoque, `title_due` → financeiro,
+`document_expiring` → o módulo do documento), via `erp.tem_acesso_empresa`, com semântica nullable para o
+aviso que é mesmo da organização. Enquanto isso não existir, o contrato tem aqui uma exceção conhecida.
+
 ## 8. O que ainda não existe (e por quê)
 
 | Item | Missão |

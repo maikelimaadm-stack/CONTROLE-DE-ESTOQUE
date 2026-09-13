@@ -362,13 +362,10 @@ describe("escopo empresarial dos relatórios", () => {
     const EXCECOES = ["erp.audit_logs", "erp.v_bank_account_balances"];
     // fontes DERIVADAS de um painel: o conjunto já vem de uma fonte recortada por uma cadeia que passa por
     // tabela sem coluna de empresa (o curral herda a empresa do pátio). Cada uma com o motivo, como nos relatórios.
-    const DERIVADOS: { trecho: string; aliases: string[]; motivo: string }[] = [
-      {
-        trecho: "from erp.animals a join erp.batches b on b.id=a.batch_id where b.corral_id=c.id",
-        aliases: ["a", "b"],
-        motivo: "ocupação do curral: animais e lotes alcançados pelo curral, que herda a empresa do pátio já recortado (erp.feedlot_yards.farm_id)."
-      }
-    ];
+    // Nenhum: a ocupação do curral era declarada aqui ("herda a empresa do pátio"), mas `erp.animals` e
+    // `erp.batches` TÊM coluna de empresa própria e a ligação com o curral é chave de negócio — o lote da
+    // empresa B num curral do pátio da empresa A era contado. Cada um responde pela própria coluna.
+    const DERIVADOS: { trecho: string; aliases: string[]; motivo: string }[] = [];
     const texto = fs.readFileSync(path.join(here, "../../src/routes/dashboards.ts"), "utf8");
     const problemas: string[] = [];
     // consultas escopadas (marcadores) e consultas cruas, analisadas com o MESMO critério dos relatórios

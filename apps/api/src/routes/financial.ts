@@ -331,7 +331,11 @@ export default async function financialRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string }; const p = await ctx.tx.query<{ year: number; farm_id: string | null }>("select year, farm_id from erp.budget_plannings where id=$1 and organization_id=$2" + scopedById(ctx, "farm_id", id, { nullable: true }).sql, scopedById(ctx, "farm_id", id, { nullable: true }).params); if (!p.rows[0]) throw notFound();
     const cats = await ctx.tx.query("select id, code, name, nature, kind, parent_id from erp.financial_categories where organization_id=$1 and deleted_at is null and is_active order by code", [ctx.orgId]);
     const vals = await ctx.tx.query<{ financial_category_id: string; month: number; amount: string }>("select financial_category_id, month, amount from erp.budget_planning_values where planning_id=$1", [id]);
-    const prev = await ctx.tx.query<{ financial_category_id: string; total: string }>("select a.financial_category_id, sum(a.amount) total from erp.title_apportionments a join erp.financial_titles t on t.id=a.title_id where t.organization_id=$1 and t.status<>'cancelled' and extract(year from t.due_date)=$2 and ($3::uuid is null or t.farm_id=$3) group by 1", [ctx.orgId, p.rows[0].year - 1, p.rows[0].farm_id]);
+    // O realizado do ano anterior é agregado de TÍTULOS, que têm empresa própria. O filtro pela empresa do
+    // PLANEJAMENTO não basta: planejamento da organização (farm_id nulo) tornava o predicado `true` e somava
+    // o realizado de todas as empresas para quem enxerga uma só. O escopo do módulo entra por cima.
+    const pp: unknown[] = [ctx.orgId, p.rows[0].year - 1, p.rows[0].farm_id];
+    const prev = await ctx.tx.query<{ financial_category_id: string; total: string }>("select a.financial_category_id, sum(a.amount) total from erp.title_apportionments a join erp.financial_titles t on t.id=a.title_id where t.organization_id=$1 and t.status<>'cancelled' and extract(year from t.due_date)=$2 and ($3::uuid is null or t.farm_id=$3)" + farmScopeSql(ctx, "t.farm_id", pp) + " group by 1", pp);
     const prevMap = new Map(prev.rows.map((r) => [r.financial_category_id, r.total]));
     return { year: p.rows[0].year, categories: cats.rows.map((c) => ({ ...(c as Record<string, unknown>), previous_year: prevMap.get((c as { id: string }).id) ?? "0.00", months: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, vals.rows.find((v) => v.financial_category_id === (c as { id: string }).id && v.month === i + 1)?.amount ?? "0.00"])) })) };
   }));
