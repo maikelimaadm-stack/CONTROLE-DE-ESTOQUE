@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { usePathname, useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
 import { crumbsFor } from "@/lib/nav";
@@ -11,6 +11,7 @@ import { WorkspaceTabsProvider, useWorkspaceTabs } from "@/lib/workspace-tabs";
 import { TopNavigation } from "./top-navigation";
 import { WorkspaceTabsBar } from "./workspace-tabs";
 import { IdGlobalDaRotaAtual } from "./id-global-registro";
+import { lerPedidoEmpresa, type PedidoEmpresa } from "@/lib/empresa-ativa";
 
 /**
  * AppShell (docs/UI-STANDARD.md › App Shell & Workspace):
@@ -30,18 +31,47 @@ function Crumbs() {
   </div>;
 }
 
-/** Troca de EMPRESA com invalidação: fecha abas de registro/criação (dados de empresa), invalida consultas e pede confirmação se houver alterações não salvas. */
+/**
+ * Troca de EMPRESA com invalidação: fecha abas de registro/criação (dados de empresa), invalida consultas e
+ * pede confirmação se houver alterações não salvas.
+ *
+ * COORDENAÇÃO ÚNICA (pedido `agro:empresa-request`). O seletor do cabeçalho pede só a troca; a busca por ID
+ * Global pede "troque para a empresa B e então abra esta rota". As duas entram pela MESMA porta de propósito:
+ * um caminho paralelo (`setEmpresa` + `router.push` direto) passaria por fora da confirmação de aba suja e
+ * descartaria alterações em silêncio — o pedido carrega o destino, ele não ganha um atalho próprio.
+ *
+ * ORDEM: empresa primeiro, navegação depois — e depois do fechamento/invalidação. Navegar antes faria a tela
+ * de destino disparar seus pedidos com o `X-Empresa-Id` ANTIGO; navegar antes do `closeScoped` faria a aba
+ * recém-aberta ser fechada junto com as outras abas de registro.
+ */
 function ContextGuard({ children }: { children: React.ReactNode }) {
-  const { session, setEmpresa } = useAuth(); const ws = useWorkspaceTabs(); const qc = useQueryClient(); const pathname = usePathname();
-  const prevEmpresa = React.useRef(session?.empresaId ?? null); const [pending, setPending] = React.useState<string | null | undefined>(undefined);
+  const { session, setEmpresa } = useAuth(); const ws = useWorkspaceTabs(); const qc = useQueryClient(); const pathname = usePathname(); const router = useRouter();
+  const prevEmpresa = React.useRef(session?.empresaId ?? null);
+  const [pending, setPending] = React.useState<PedidoEmpresa | undefined>(undefined);
+  const destinoRef = React.useRef<string | null>(null);
+  const abrir = React.useCallback((href: string) => { if (ws) ws.openTab(href); else router.push(href); }, [ws, router]);
   React.useEffect(() => {
     const empresa = session?.empresaId ?? null; if (empresa === prevEmpresa.current) return; prevEmpresa.current = empresa;
     const activeClosed = ws?.closeScoped() ?? false; void qc.invalidateQueries();
+    const destino = destinoRef.current; destinoRef.current = null;
+    if (destino) { abrir(destino); return; }
     if (activeClosed && ws) { const mod = ws.tabs.find((t) => t.kind === "module" && pathname.startsWith(t.key + "/")); ws.openTab(mod?.href ?? "/"); }
-  }, [session?.empresaId, ws, qc, pathname]);
-  // intercepta a troca de empresa quando há abas sujas (o <select> chama setEmpresa; aqui o guard observa o pedido)
-  React.useEffect(() => { const h = (e: Event) => { const id = (e as CustomEvent<string | null>).detail; if (ws?.hasDirty()) { setPending(id); e.preventDefault(); } else setEmpresa(id); }; window.addEventListener("agro:empresa-request", h); return () => window.removeEventListener("agro:empresa-request", h); }, [ws, setEmpresa]);
-  return <>{children}<ConfirmDialog open={pending !== undefined} onOpenChange={(o) => { if (!o) setPending(undefined); }} title="Trocar de empresa com alterações não salvas?" description="As telas com alterações não salvas serão fechadas e as alterações descartadas." confirmLabel="Trocar mesmo assim" danger onConfirm={() => { if (pending !== undefined) setEmpresa(pending); setPending(undefined); }} /></>;
+  }, [session?.empresaId, ws, qc, pathname, abrir]);
+  const aplicar = React.useCallback((p: PedidoEmpresa) => {
+    // Mesma empresa (ou pedido sem troca): não há efeito de contexto para esperar — navega direto.
+    if (p.empresaId === (session?.empresaId ?? null)) { if (p.rota) abrir(p.rota); return; }
+    destinoRef.current = p.rota ?? null; setEmpresa(p.empresaId);
+  }, [session?.empresaId, setEmpresa, abrir]);
+  // intercepta a troca de empresa quando há abas sujas (o <select> e a busca por #N só PEDEM; o guard decide)
+  React.useEffect(() => {
+    const h = (e: Event) => {
+      const p = lerPedidoEmpresa((e as CustomEvent<unknown>).detail);
+      if (ws?.hasDirty()) { setPending(p); e.preventDefault(); } else aplicar(p);
+    };
+    window.addEventListener("agro:empresa-request", h);
+    return () => window.removeEventListener("agro:empresa-request", h);
+  }, [ws, aplicar]);
+  return <>{children}<ConfirmDialog open={pending !== undefined} onOpenChange={(o) => { if (!o) setPending(undefined); }} title="Trocar de empresa com alterações não salvas?" description="As telas com alterações não salvas serão fechadas e as alterações descartadas." confirmLabel="Trocar mesmo assim" danger onConfirm={() => { if (pending) aplicar(pending); setPending(undefined); }} /></>;
 }
 
 function ShellInner({ children }: { children: React.ReactNode }) {

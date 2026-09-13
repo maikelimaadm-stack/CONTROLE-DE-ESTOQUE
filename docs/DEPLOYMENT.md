@@ -108,7 +108,17 @@ A ordem importa, e o motivo de cada fase é o estado intermediário que ela evit
 | **3. Backfill** | `pnpm id-global:backfill -- --batch-size 500` | Em lotes, retomável, reexecutável. Rodar até `faltando: 0`. Conferir com `pnpm id-global:verify`. |
 | **4. Web** | busca `#N` e badge de identidade | A UI tolera registro histórico ainda sem número (o badge simplesmente não aparece), então pode subir junto com a API — mas a fase 3 é o que faz a funcionalidade valer para o acervo inteiro. |
 
-**Certificação:** a PRE-BASE2-04 só está concluída quando `pnpm id-global:verify` responde zero pendências.
+**Certificação — o que ainda NÃO aconteceu.** Nada disto foi executado em produção: a PR da PRE-BASE2-04 não
+foi mesclada e nenhuma fase foi disparada. O que está provado é o código, em ambiente de teste (banco novo,
+banco de upgrade com acervo legado, reexecução com mapa idêntico, medição de desempenho). A missão só se
+considera concluída depois de, nesta ordem: **merge aprovado** → **fase 1** → **fase 2** → **fase 3 rodada
+até `faltando: 0`** → **`pnpm id-global:verify` verde** → **fase 4 com smoke real** (buscar `#N` e `ID N`,
+abrir o registro pela rota canônica e conferir o distintivo na tela). Até lá, `docs/PRE-BASE2-ROADMAP.md`
+mantém a missão como "implementação pronta — ativação em produção pendente".
+
+**Smoke da fase 4 (o que olhar):** `#N` e `ID N` na busca (Ctrl+K) devolvem o registro certo; a URL final é a
+rota canônica **com o UUID**; o distintivo mostra o mesmo número na tela do registro; e um `#N` de registro
+fora do escopo do usuário responde a mesma coisa que um número inexistente.
 
 **Reversão por fase.** Voltar o web: o número continua no banco, ninguém perde identidade. Voltar a API:
 registros novos param de receber número — rodar o backfill de novo depois resolve, sem renumerar nada.

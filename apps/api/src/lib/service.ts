@@ -57,12 +57,29 @@ export async function validarEmpresaSelecionada(ctx: ServiceCtx): Promise<void> 
  * Provado em `apps/api/test/integration/rls-empresa.test.ts`.
  */
 export async function comPermissaoResolvida<C extends ServiceCtx>(ctx: C, permissao: string): Promise<C> {
+  const derivado = await publicarModuloEmpresa(ctx, permissao);
+  await validarEmpresaSelecionada(derivado);
+  return derivado;
+}
+
+/**
+ * PUBLICAR o módulo resolvido, sem VALIDAR a empresa selecionada.
+ *
+ * São dois atos distintos que estavam colados num só. Publicar é técnico e vale para qualquer porta
+ * dinâmica: JS e PostgreSQL precisam falar do MESMO módulo dentro da MESMA transação, senão a RLS responde
+ * pela união dos módulos enquanto o JavaScript já recortou por um. Validar a empresa SELECIONADA é uma
+ * regra de produto da rota operacional: "você pediu para trabalhar nesta empresa e não pode".
+ *
+ * O LOCALIZADOR GLOBAL precisa do primeiro e NÃO do segundo (docs/GLOBAL-ID-CONTRACT.md §7): `#N` é um
+ * localizador da ORGANIZAÇÃO, e a empresa que está selecionada na tela é contexto de trabalho, não
+ * autoridade sobre o que pode ser localizado. Por isso a separação existe — e não porque a validação da
+ * rota comum esteja errada: ela continua valendo, inalterada, em `comPermissaoResolvida` e no `runService`.
+ */
+export async function publicarModuloEmpresa<C extends ServiceCtx>(ctx: C, permissao: string): Promise<C> {
   const modulo = moduloDaPermissao(permissao);
   // `set_config(..., true)` é LOCAL à transação: o valor morre no commit, como o resto do contexto.
   await ctx.tx.query("select set_config('app.modulo_empresa', $1, true)", [modulo ?? ""]);
-  const derivado = { ...ctx, moduloEmpresa: modulo };
-  await validarEmpresaSelecionada(derivado);
-  return derivado;
+  return { ...ctx, moduloEmpresa: modulo };
 }
 
 export function requirePermission(ctx: RequestContext, permission: string) {

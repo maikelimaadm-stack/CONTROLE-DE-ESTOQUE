@@ -136,12 +136,50 @@ empresa nova. Por isso a resolução de `#N` segue esta ordem, sem atalho:
 3. carregar o **registro fonte vivo** — tabela literal do catálogo, id parametrizado, `organization_id`, e
    `deleted_at is null` quando a entidade tem exclusão lógica;
 4. obter **do registro fonte**: empresa atual, discriminador e existência/visibilidade;
-5. autorizar a empresa usando **a empresa atual**;
+5. autorizar a empresa usando **a empresa atual do registro** — nunca a empresa SELECIONADA na tela (§5.2);
 6. resolver rota + permissão a partir do registro atual;
 7. verificar a permissão;
 8. só então responder.
 
 Nenhum dado da entidade sai antes do passo 8, e toda negativa é a mesma 404.
+
+### 5.2 A EMPRESA SELECIONADA NÃO DECIDE (correção de certificação)
+
+O ID Global é um **localizador da ORGANIZAÇÃO**. A empresa selecionada no cabeçalho (`ctx.empresaId`) é
+**contexto de trabalho** — um filtro de tela — e não entra na autorização desta porta.
+
+O caso normal deixa isso evidente: um usuário com **Estoque só na empresa A** e **Financeiro só na B**
+precisa localizar `#N` de um título da B enquanto trabalha no Estoque de A. Usar a seleção produzia dois
+defeitos ao mesmo tempo:
+
+* **falso negativo** — o registro autorizado não abria por causa de um filtro de tela;
+* **oráculo de enumeração** — `validarEmpresaSelecionada` responde **403**, e um 403 no meio de uma superfície
+  inteiramente 404 já conta "este número existe, só o seu contexto não bate".
+
+Ignorar a seleção **não afrouxa nada**: o escopo REAL continua decidindo — empresa ATUAL da fonte dentro do
+módulo da permissão DAQUELE registro —, e registro fora dele continua 404.
+
+A separação é explícita no código: `publicarModuloEmpresa` publica o módulo resolvido na transação (técnico:
+RLS e JS precisam falar do mesmo módulo na mesma consulta) e `validarEmpresaSelecionada` valida a seleção
+(regra da **rota operacional**). `comPermissaoResolvida` faz as duas; o localizador global faz só a primeira.
+A rota comum continua recusando com **403** uma seleção explícita inválida no módulo — provado no mesmo
+arquivo de teste (`apps/api/test/integration/id-global-escopo-selecao.test.ts`).
+
+**UUID malformado é a mesma negativa.** No caminho inverso (`/registros-globais/entidade/:tipo/:id`) o `:id`
+é validado como UUID **antes** de qualquer consulta: sem isso o texto livre chegava ao PostgreSQL e voltava
+como 500 com `invalid input syntax for type uuid` — erro de servidor onde deveria haver negativa, e um
+oráculo que distinguia "malformado" de "inexistente". As duas coisas respondem 404, com a mesma mensagem.
+
+**Navegação cross-empresa (interface).** Localizar não basta: se a busca apenas abrisse a rota, a tela de
+destino pediria dados com a empresa ANTIGA no cabeçalho e receberia 403. Quando o registro é de outra
+empresa e a sessão está numa empresa específica, a busca **pede a troca e navega depois**, pela mesma porta
+do seletor do cabeçalho (`agro:empresa-request`) — que é onde mora a confirmação de abas com alterações não
+salvas. Contexto em "todas as empresas" é preservado; registro da organização não escolhe empresa nenhuma.
+A regra pura fica em `@erp/plataforma` (`contexto-empresa.ts`), testada sem navegador.
+
+**Cache do cliente.** A chave continua sendo `["id-global", organização, #N]`: dentro de uma organização o
+número aponta para o mesmo registro, qualquer que seja a empresa selecionada. Pôr a seleção na chave sugeriria
+que ela faz parte da identidade do resultado — e ela não faz.
 
 **Existência funcional — a regra vale nos DOIS sentidos.** O resolvedor enxerga o que a rota canônica
 enxerga, e a rota canônica enxerga o que o resolvedor enxerga: num registro com exclusão lógica marcada,

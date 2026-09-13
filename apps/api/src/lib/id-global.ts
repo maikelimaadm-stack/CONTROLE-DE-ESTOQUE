@@ -14,7 +14,8 @@
  *   2. identificar a entidade no catálogo;
  *   3. carregar o registro fonte vivo (tabela LITERAL do catálogo, id parametrizado, organization_id);
  *   4. obter do registro: empresa ATUAL, discriminador e existência/visibilidade;
- *   5. autorizar a empresa ATUAL;
+ *   5. autorizar a empresa ATUAL DO REGISTRO (nunca a empresa SELECIONADA na tela: `#N` é localizador
+ *      da organização, e a seleção é contexto de trabalho — ver `autorizarEscopoDoRegistro`);
  *   6. resolver rota + permissão a partir do registro atual;
  *   7. verificar a permissão;
  *   8. só então responder.
@@ -28,7 +29,7 @@ import { entidadeIdGlobal, moduloDaPermissao, resolverRegistroGlobal, varianteIn
 import { DomainError } from "@agro/shared";
 import { colunaDiscriminadora, type EntidadeIdGlobal } from "@erp/plataforma";
 import { empresaPermitida, hasPermission, type ServiceCtx } from "./context.js";
-import { validarEmpresaSelecionada } from "./service.js";
+import { publicarModuloEmpresa } from "./service.js";
 
 export interface RegistroGlobal {
   idGlobal: number;
@@ -147,6 +148,32 @@ async function alocar(
   return Number(corrida.rows[0].id_global);
 }
 
+/** Identificador técnico das tabelas fonte. Validado ANTES da consulta: o banco nunca vê texto livre. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * ESCOPO DO LOCALIZADOR GLOBAL — o ponto exato em que esta porta difere de uma rota operacional.
+ *
+ * Autoridade, e só ela: organização + registro fonte vivo + permissão EXATA daquele registro + empresa
+ * ATUAL da fonte dentro do módulo DESSA permissão.
+ *
+ * A empresa SELECIONADA (o cabeçalho de contexto, `ctx.empresaId`) é deliberadamente ignorada. Ela é
+ * contexto de trabalho — um filtro de tela —, e `#N` é um localizador da ORGANIZAÇÃO inteira: quem tem
+ * Estoque só na empresa A e Financeiro só na B precisa localizar um título da B enquanto trabalha na A,
+ * senão o localizador global não é global. Usar a seleção aqui produzia dois defeitos de uma vez:
+ *   (a) FALSO NEGATIVO — o registro autorizado não abria por causa do filtro de tela;
+ *   (b) ORÁCULO DE ENUMERAÇÃO — `validarEmpresaSelecionada` responde 403, e um 403 no meio de uma superfície
+ *       inteiramente 404 revela que aquele número EXISTE; só o contexto é que não bate.
+ * Ignorar a seleção NÃO afrouxa nada: o escopo REAL do registro continua decidindo, e registro fora dele
+ * segue 404. O módulo resolvido é PUBLICADO na transação (RLS e JS falando do mesmo módulo), o que é
+ * técnico; só a validação da seleção, que é regra da rota operacional, fica de fora.
+ */
+async function autorizarEscopoDoRegistro<C extends ServiceCtx>(ctx: C, permissao: string, empresaDoRegistro: string | null, negar: () => DomainError): Promise<C> {
+  const escopado = await publicarModuloEmpresa(ctx, permissao);
+  if (!(await empresaPermitida(escopado, empresaDoRegistro, moduloDaPermissao(permissao)))) throw negar();
+  return escopado;
+}
+
 /**
  * Resolve `#N` no registro real. Responde NOT_FOUND — sem distinguir os motivos, para não expor existência —
  * quando o número não existe na organização, quando o registro sumiu (ou foi excluído), quando o usuário está
@@ -173,10 +200,8 @@ export async function resolverRegistro(ctx: ServiceCtx, idGlobal: number): Promi
   // 6. CAPACIDADE: a permissão daquele registro
   if (!hasPermission(ctx, resolvido.permissao)) throw naoEncontrado();
   // 7. ESCOPO: a empresa ATUAL do registro dentro do MÓDULO DESSA MESMA PERMISSÃO — a mesma fonte funcional
-  //    que a rota canônica usa. O índice denormalizado nunca decide isso.
-  const moduloDoRegistro = moduloDaPermissao(resolvido.permissao);
-  await validarEmpresaSelecionada({ ...ctx, moduloEmpresa: moduloDoRegistro });
-  if (!(await empresaPermitida(ctx, fonte.empresaId, moduloDoRegistro))) throw naoEncontrado();
+  //    que a rota canônica usa. O índice denormalizado nunca decide isso, e a EMPRESA SELECIONADA tampouco.
+  await autorizarEscopoDoRegistro(ctx, resolvido.permissao, fonte.empresaId, naoEncontrado);
   // 8. só agora há resposta
   return {
     idGlobal: Number(indice.id_global),
@@ -206,15 +231,18 @@ export async function idGlobalDoRegistro(ctx: ServiceCtx, tipoEntidade: string, 
   const naoEncontrado = () => new DomainError("NOT_FOUND", "Nenhum ID Global para este registro");
   const entidade = entidadeIdGlobal(tipoEntidade);
   if (!entidade) throw naoEncontrado();
+  // O `:id` da URL vai para uma coluna `uuid`. Sem esta guarda, `/entidade/animals/nao-e-uuid` chega ao
+  // PostgreSQL e volta como 500 com "invalid input syntax for type uuid" — que é, ao mesmo tempo, um erro
+  // de servidor onde deveria haver uma negativa e um oráculo: a mensagem distingue "malformado" de
+  // "inexistente". Aqui as duas coisas são a MESMA negativa, como todas as outras desta porta.
+  if (!UUID.test(idEntidade)) throw naoEncontrado();
   const fonte = await lerRegistroFonte(ctx, entidade, idEntidade);
   if (!fonte) throw naoEncontrado();
   const resolvido = resolverRegistroGlobal(tipoEntidade, idEntidade, fonte.linha);
   if (!resolvido) throw naoEncontrado();
   if (!hasPermission(ctx, resolvido.permissao)) throw naoEncontrado();
-  const moduloDoRegistro = moduloDaPermissao(resolvido.permissao);
-  await validarEmpresaSelecionada({ ...ctx, moduloEmpresa: moduloDoRegistro });
-  if (!(await empresaPermitida(ctx, fonte.empresaId, moduloDoRegistro))) throw naoEncontrado();
-  const r = await ctx.tx.query<{ id_global: string; modulo: string; criado_em: string }>(
+  const escopado = await autorizarEscopoDoRegistro(ctx, resolvido.permissao, fonte.empresaId, naoEncontrado);
+  const r = await escopado.tx.query<{ id_global: string; modulo: string; criado_em: string }>(
     "select id_global, modulo, criado_em from erp.registros_globais where organization_id=$1 and tipo_entidade=$2 and id_entidade=$3",
     [ctx.orgId, tipoEntidade, idEntidade]);
   const indice = r.rows[0];

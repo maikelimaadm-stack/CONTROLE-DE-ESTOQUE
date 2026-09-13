@@ -8,7 +8,8 @@ import { Bell, ChevronDown, FolderOpen, Hash, Hexagon, MoreHorizontal, Search, S
 import { NAV, permOk, searchNav, moduleForPath, favoriteRoute, crumbsFor, canonicalize } from "@/lib/nav";
 import { megaMenuFor, megaColumns, type MegaMenuData } from "@/lib/mega-menu";
 import { interpretarIdGlobal, formatarIdGlobal } from "@erp/plataforma";
-import { useRegistroGlobal } from "@/lib/id-global";
+import { useRegistroGlobal, type RegistroGlobal } from "@/lib/id-global";
+import { empresaDestinoDoRegistro } from "@/lib/empresa-ativa";
 import { useAuth, empresasDoContexto } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { cn, dateTimeBR } from "@/lib/utils";
@@ -72,6 +73,19 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
   React.useEffect(() => { const h = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); inputRef.current?.focus(); inputRef.current?.select(); } }; window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
   React.useEffect(() => { if (onFocusSearch) onFocusSearch.current = () => { inputRef.current?.focus(); inputRef.current?.select(); }; }, [onFocusSearch]);
   const pick = (href: string) => { setSearch(""); inputRef.current?.blur(); go(href); };
+  /**
+   * Abrir um registro localizado por `#N` é DUAS coisas quando ele vive em outra empresa: sincronizar o
+   * contexto e navegar — nessa ordem. Só localizar não basta; a tela de destino sairia pedindo dados com a
+   * empresa antiga no cabeçalho e responderia 403 depois de o usuário já ter clicado no resultado certo.
+   * O pedido vai pela porta única do shell (`agro:empresa-request`), que é onde mora a proteção de abas com
+   * alterações não salvas — trocar aqui direto seria descartá-las em silêncio.
+   */
+  const abrirRegistroGlobal = (r: RegistroGlobal) => {
+    setSearch(""); inputRef.current?.blur();
+    const destino = empresaDestinoDoRegistro(session?.empresaId ?? null, r.empresaId);
+    if (destino) { setOpen(null); setMoreOpen(false); window.dispatchEvent(new CustomEvent("agro:empresa-request", { detail: { empresaId: destino, rota: r.rota } })); return; }
+    go(r.rota);
+  };
   // notificações, favoritos
   const { data: notif } = useQuery({ queryKey: ["notifications"], queryFn: () => api<{ items: { id: string; title: string; route: string | null; read_at: string | null; created_at: string }[]; unread: number; unreadTruncado: boolean }>("/api/admin/notifications"), enabled: Boolean(ctx), refetchInterval: 60_000 });
   const readAll = useMutation({ mutationFn: () => api("/api/admin/notifications/read-all", { method: "POST" }), onSuccess: () => { void qc.invalidateQueries({ queryKey: ["notifications"] }); void refresh(); } });
@@ -107,11 +121,11 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
         <div className="mg-topnav__search" role="combobox" aria-expanded={results.length > 0} aria-haspopup="listbox" aria-controls="nav-search-results">
           <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
           <input ref={inputRef} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar tela ou #ID…" aria-label="Buscar funcionalidade" data-testid="global-search"
-            onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setHi((h) => Math.min(h + 1, results.length - 1)); } else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); } else if (e.key === "Enter" && registroGlobal) { e.preventDefault(); pick(registroGlobal.rota); } else if (e.key === "Enter" && results[hi]) { e.preventDefault(); pick(results[hi]!.href); } else if (e.key === "Escape") { setSearch(""); inputRef.current?.blur(); } }} />
+            onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setHi((h) => Math.min(h + 1, results.length - 1)); } else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); } else if (e.key === "Enter" && registroGlobal) { e.preventDefault(); abrirRegistroGlobal(registroGlobal); } else if (e.key === "Enter" && results[hi]) { e.preventDefault(); pick(results[hi]!.href); } else if (e.key === "Escape") { setSearch(""); inputRef.current?.blur(); } }} />
           <kbd className="mg-topnav__kbd" aria-hidden>Ctrl K</kbd>
           {registroGlobal && <div id="nav-search-global-id" role="listbox" aria-label="Registro por ID Global" className="mg-topnav__results" data-testid="nav-search-id-global">
             <button type="button" role="option" aria-selected className="mg-topnav__result is-active" data-testid="nav-search-id-global-item"
-              onMouseDown={(e) => e.preventDefault()} onClick={() => pick(registroGlobal.rota)}>
+              onMouseDown={(e) => e.preventDefault()} onClick={() => abrirRegistroGlobal(registroGlobal)}>
               <Hash className="h-3.5 w-3.5 shrink-0 text-[var(--mg-accent)]" />
               <span className="min-w-0"><span className="block truncate font-medium text-slate-800">{formatarIdGlobal(registroGlobal.idGlobal)} · {registroGlobal.rotulo}</span>
                 <span className="block truncate text-[10.5px] text-slate-500">{registroGlobal.modulo}</span></span>
