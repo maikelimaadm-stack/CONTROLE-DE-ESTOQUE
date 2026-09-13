@@ -28,8 +28,8 @@ export async function ids(h: Harness) {
   const c = createPool(TEST_URL, { max: 1 });
   const one = async (sql: string) => (await c.query(sql, [h.demo.orgId])).rows[0] as Record<string, string>;
   const out = {
-    farm: h.demo.farmIds[0]!,
-    farm2: h.demo.farmIds[1]!,
+    farm: h.demo.empresaIds[0]!,
+    farm2: h.demo.empresaIds[1]!,
     warehouse: (await one("select id from erp.warehouses where organization_id=$1 and farm_id=(select id from erp.farms where organization_id=$1 order by code limit 1) and initials='ALM'")).id,
     warehouse2: (await one("select id from erp.warehouses where organization_id=$1 and farm_id=(select id from erp.farms where organization_id=$1 order by code limit 1) and initials='SILO'")).id,
     warehouseFarm2: (await one("select id from erp.warehouses where organization_id=$1 and farm_id=(select id from erp.farms where organization_id=$1 order by code desc limit 1) and initials='ALM'")).id,

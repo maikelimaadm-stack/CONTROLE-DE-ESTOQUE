@@ -47,12 +47,12 @@ export const TIPOS_NOTIFICACAO: readonly TipoNotificacao[] = [
   {
     kind: "purchase_pending", rotulo: "Solicitação de compra pendente",
     permissionKey: "purchase_requests.view", escopo: "empresa", modulo: "compras",
-    origem: "erp.purchase_requests — a empresa é a da própria solicitação (farm_id)."
+    origem: "erp.purchase_requests — a empresa é a da própria solicitação (empresa_id)."
   },
   {
     kind: "processing_pending", rotulo: "Processamento de animais pendente",
     permissionKey: "processings.view", escopo: "empresa", modulo: "pecuaria",
-    origem: "erp.processings — a empresa é a do processamento (farm_id)."
+    origem: "erp.processings — a empresa é a do processamento (empresa_id)."
   },
   {
     kind: "batch_transfer", rotulo: "Transferência de lote a processar",
@@ -81,7 +81,7 @@ export const TIPOS_NOTIFICACAO: readonly TipoNotificacao[] = [
   },
   {
     kind: "title_due", rotulo: "Títulos a pagar vencendo",
-    // CONTAS A PAGAR por empresa. `financial_titles.farm_id` é obrigatório: a contagem se decompõe sem
+    // CONTAS A PAGAR por empresa. `financial_titles.empresa_id` é obrigatório: a contagem se decompõe sem
     // mudar de significado, então não há agregado a proteger — e agregar assim mesmo tiraria o aviso de
     // quem tem `selecionadas`, sobre títulos que ele vê na própria tela. (A rota leva para Contas a Pagar
     // e a consulta filtra direction='payable'; antes contava receber e pagar sob permissão de pagar.)

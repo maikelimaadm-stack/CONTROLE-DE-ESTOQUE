@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 /**
  * Guardrail estrutural (docs/AUTHORIZATION.md): todo handler que consulta uma tabela com `farm_id` precisa passar por um
  * dos mecanismos de escopo de fazenda (helpers de `lib/context.ts` ou um carregador compartilhado já protegido).
- * `ctx.farmId` sozinho NÃO é autorização. A verificação é por handler (trecho entre dois `app.<método>(`), determinística
+ * `ctx.empresaId` sozinho NÃO é autorização. A verificação é por handler (trecho entre dois `app.<método>(`), determinística
  * e sem regex sobre SQL: só procura marcadores conhecidos. Handlers organization-scoped legítimos ficam na lista abaixo,
  * com o motivo — para adicionar um novo handler farm-scoped sem escopo é preciso justificar aqui, não silenciar o teste.
  */
@@ -58,7 +58,7 @@ function handlers(file: string): { url: string; body: string }[] {
 }
 
 describe("guardrail: handlers que tocam tabelas com farm_id passam por escopo de fazenda", () => {
-  it("nenhum handler farm-scoped depende apenas de organization_id/ctx.farmId", () => {
+  it("nenhum handler farm-scoped depende apenas de organization_id/ctx.empresaId", () => {
     const offenders: string[] = [];
     for (const file of fs.readdirSync(routesDir).filter((f) => f.endsWith(".ts"))) {
       for (const h of handlers(file)) {
@@ -66,8 +66,8 @@ describe("guardrail: handlers que tocam tabelas com farm_id passam por escopo de
         if (!touches.length) continue;
         if (SCOPE_MARKERS.some((k) => h.body.includes(k))) continue;
         const key = `${file}:${h.url}`; if (ALLOW[key]) continue;
-        // `ctx.farmId` isolado é o padrão inseguro que este teste existe para barrar
-        offenders.push(`${key} → tabelas ${touches.join(", ")}${h.body.includes("ctx.farmId") ? " (usa só ctx.farmId)" : ""}`);
+        // `ctx.empresaId` isolado é o padrão inseguro que este teste existe para barrar
+        offenders.push(`${key} → tabelas ${touches.join(", ")}${h.body.includes("ctx.empresaId") ? " (usa só ctx.empresaId)" : ""}`);
       }
     }
     expect(offenders, "handlers sem escopo de fazenda:\n" + offenders.join("\n")).toEqual([]);

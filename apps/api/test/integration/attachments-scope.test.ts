@@ -14,9 +14,9 @@ const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & 
 const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF").toString("base64");
 const PERMS = ["attachments.view", "attachments.create", "attachments.delete", "weighings.view", "people.view", "feedlot_sectors.view", "warehouses.view"];
 
-async function member(name: string, email: string, farmIds: string[], perms = PERMS): Promise<{ hdr: Hdr; roleId: string }> {
+async function member(name: string, email: string, empresaIds: string[], perms = PERMS): Promise<{ hdr: Hdr; roleId: string }> {
   const role = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${name}`, permissions: perms } }); expect(role.statusCode, role.body).toBe(201);
-  const mem = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name, email, password: "Anexo@12345", role_id: j(role).id, farm_ids: farmIds } }); expect(mem.statusCode, mem.body).toBe(201);
+  const mem = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name, email, password: "Anexo@12345", role_id: j(role).id, farm_ids: empresaIds } }); expect(mem.statusCode, mem.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Anexo@12345" } }); expect(login.statusCode, login.body).toBe(200);
   return { hdr: { authorization: `Bearer ${j(login).token}`, "x-org-id": h.demo.orgId }, roleId: j(role).id as string };
 }

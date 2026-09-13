@@ -32,7 +32,7 @@ const E = (
   opts: { colunaEmpresa?: string | null; exclusaoLogica?: boolean } = {}
 ): EntidadeIdGlobal => ({
   tipoEntidade, rotulo, modulo, tabela, resolucao,
-  colunaEmpresa: opts.colunaEmpresa === undefined ? "farm_id" : opts.colunaEmpresa,
+  colunaEmpresa: opts.colunaEmpresa === undefined ? "empresa_id" : opts.colunaEmpresa,
   exclusaoLogica: opts.exclusaoLogica ?? true
 });
 
@@ -49,7 +49,7 @@ export const ENTIDADES_ID_GLOBAL: readonly EntidadeIdGlobal[] = [
   E("requisitions", "Requisição", "estoque", "erp.requisitions", fixa("/estoque/requisicoes/:id", "requisitions.view")),
   E("stock_writeoffs", "Saída Direta", "estoque", "erp.stock_writeoffs", fixa("/estoque/baixas/:id", "stock_writeoffs.view")),
   E("devolutions", "Devolução", "estoque", "erp.devolutions", fixa("/estoque/devolucoes/:id", "devolutions.view")),
-  E("warehouse_transfers", "Transferência", "estoque", "erp.warehouse_transfers", fixa("/estoque/transferencias/:id", "warehouse_transfers.view"), { colunaEmpresa: "origin_farm_id" }),
+  E("warehouse_transfers", "Transferência", "estoque", "erp.warehouse_transfers", fixa("/estoque/transferencias/:id", "warehouse_transfers.view"), { colunaEmpresa: "empresa_origem_id" }),
   // Produção de ração é a única sem marca de exclusão (a tabela não tem deleted_at)
   E("feed_batches", "Produção de Ração", "estoque", "erp.feed_batches", fixa("/estoque/batidas/:id", "feed_batches.view"), { exclusaoLogica: false }),
   // Financeiro — uma tabela, duas telas e DUAS permissões distintas

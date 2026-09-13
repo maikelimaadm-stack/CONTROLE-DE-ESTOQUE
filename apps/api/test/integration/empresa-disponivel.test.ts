@@ -21,7 +21,7 @@ async function comoServico<T>(fn: (ctx: ServiceCtx) => Promise<T>): Promise<T> {
     fn({
       tx,
       user: { id: h.demo.adminUserId, email: h.demo.adminEmail, name: "Administrador" },
-      orgId: h.demo.orgId, farmId: null, moduloEmpresa: "estoque",
+      orgId: h.demo.orgId, empresaId: null, moduloEmpresa: "estoque",
       membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: true, memberId: "m", escopos: AUTORIZACAO_PROPRIETARIO },
       permissions: new Set<string>()
     }));
@@ -33,7 +33,7 @@ async function comoMembroRestrito<T>(fn: (ctx: ServiceCtx) => Promise<T>): Promi
     fn({
       tx,
       user: { id: usuarioRestrito, email: "restrito-empresa@demo.local", name: "Restrito" },
-      orgId: h.demo.orgId, farmId: null, moduloEmpresa: "estoque",
+      orgId: h.demo.orgId, empresaId: null, moduloEmpresa: "estoque",
       membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: false, memberId: membroRestrito, escopos: autorizacaoPorModulo([["estoque", "selecionadas"]]) },
       permissions: new Set<string>()
     }));
@@ -105,7 +105,7 @@ describe("seleção de empresa para lançamento na ponte da API", () => {
     const disponiveis = await withTx(h.db, { orgId: h.demo.orgId, userId: usuarioRestrito, modulo: "financeiro" }, (tx) =>
       empresasDisponiveis({
         tx, user: { id: usuarioRestrito, email: "restrito-empresa@demo.local", name: "Restrito" },
-        orgId: h.demo.orgId, farmId: null, moduloEmpresa: "financeiro",
+        orgId: h.demo.orgId, empresaId: null, moduloEmpresa: "financeiro",
         membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: false, memberId: membroRestrito, escopos: autorizacaoPorModulo([["estoque", "selecionadas"]]) },
         permissions: new Set<string>()
       }));

@@ -32,25 +32,35 @@ export async function runService<T>(app: FastifyInstance, req: FastifyRequest, p
 }
 
 /**
- * X-Farm-Id é SELEÇÃO de contexto de trabalho, nunca autorização — mas uma seleção EXPLÍCITA que o usuário não
+ * X-Empresa-Id é SELEÇÃO de contexto de trabalho, nunca autorização — mas uma seleção EXPLÍCITA que o usuário não
  * pode usar naquele módulo é erro dele, e não um silêncio: 403. (Registro fora do escopo continua 404; aqui a
  * empresa veio do próprio cliente, então não há existência a revelar.) Para módulo indefinido (recurso de
  * organização ou porta de permissão dinâmica) não há o que validar: quem resolve o módulo valida depois.
  */
 export async function validarEmpresaSelecionada(ctx: ServiceCtx): Promise<void> {
-  if (!ctx.farmId || !ctx.moduloEmpresa || ctx.membership.isOwner) return;
+  if (!ctx.empresaId || !ctx.moduloEmpresa || ctx.membership.isOwner) return;
   const escopo = escopoDoModulo(ctx.membership.escopos, ctx.moduloEmpresa);
   if (escopo.tipo === "todas") return; // existência na organização já validada no plugin de autenticação
-  if (escopo.tipo === "selecionadas" && (await empresaPermitida(ctx, ctx.farmId))) return;
+  if (escopo.tipo === "selecionadas" && (await empresaPermitida(ctx, ctx.empresaId))) return;
   throw new DomainError("PERMISSION_DENIED", "Sem acesso à empresa selecionada neste módulo");
 }
 
 /**
  * Fixa o módulo empresarial ativo a partir de uma permissão resolvida em tempo de execução (portas de
  * permissão dinâmica). Devolve um contexto derivado — o original não é mutado.
+ *
+ * PUBLICA O MÓDULO NA TRANSAÇÃO, e não só em memória. Antes da RLS empresarial bastava atualizar
+ * `ctx.moduloEmpresa`, porque só o JavaScript montava o recorte. Agora o PostgreSQL também decide: as
+ * políticas leem `app.modulo_empresa`. Uma porta dinâmica abre a transação SEM módulo (a permissão ainda
+ * não é conhecida) e, se o GUC não acompanhasse a resolução, JS e banco ficariam com módulos diferentes na
+ * MESMA consulta — o JS recortando por "financeiro" e a RLS ainda respondendo pela união dos módulos.
+ * Provado em `apps/api/test/integration/rls-empresa.test.ts`.
  */
 export async function comPermissaoResolvida<C extends ServiceCtx>(ctx: C, permissao: string): Promise<C> {
-  const derivado = { ...ctx, moduloEmpresa: moduloDaPermissao(permissao) };
+  const modulo = moduloDaPermissao(permissao);
+  // `set_config(..., true)` é LOCAL à transação: o valor morre no commit, como o resto do contexto.
+  await ctx.tx.query("select set_config('app.modulo_empresa', $1, true)", [modulo ?? ""]);
+  const derivado = { ...ctx, moduloEmpresa: modulo };
   await validarEmpresaSelecionada(derivado);
   return derivado;
 }
@@ -96,6 +106,6 @@ export async function audit(tx: Tx, ctx: RequestContext, entity: string, entityI
     [ctx.orgId, ctx.user.id, entity, entityId, action, json(metadata), json(mudanca?.before), json(mudanca?.after), ctx.ip ?? null]);
 }
 
-export async function assertPeriodOpen(tx: Tx, orgId: string, farmId: string | null, date: string) {
-  await tx.query("select erp.assert_period_open($1,$2,$3)", [orgId, farmId, date]);
+export async function assertPeriodOpen(tx: Tx, orgId: string, empresaId: string | null, date: string) {
+  await tx.query("select erp.assert_period_open($1,$2,$3)", [orgId, empresaId, date]);
 }

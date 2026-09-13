@@ -10,13 +10,13 @@ import { pageQuerySchema } from "../lib/pagination.js";
 import { deFarmIdsLegado, escopoEmpresaSchema, gravarEscoposAuditado, paraFarmIdsLegado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
 
 /**
- * Acesso por empresa pedido na requisição: o canônico (`escopos_empresas`) ou o legado (`farm_ids`) —
+ * Acesso por empresa pedido na requisição: o canônico (`escopos_empresas`) ou o legado (`empresa_ids`) —
  * NUNCA os dois, porque não há regra honesta para combiná-los. `undefined` = não mexer no que já existe.
  */
-function escoposPedidos(d: { farm_ids?: string[]; escopos_empresas?: EscopoEmpresaEntrada[] }): EscopoEmpresaEntrada[] | null {
-  if (d.escopos_empresas && d.farm_ids) throw validation("Envie escopos_empresas OU farm_ids, não os dois");
+function escoposPedidos(d: { empresa_ids?: string[]; escopos_empresas?: EscopoEmpresaEntrada[] }): EscopoEmpresaEntrada[] | null {
+  if (d.escopos_empresas && d.empresa_ids) throw validation("Envie escopos_empresas OU empresa_ids, não os dois");
   if (d.escopos_empresas) return d.escopos_empresas;
-  if (d.farm_ids) return deFarmIdsLegado(d.farm_ids);
+  if (d.empresa_ids) return deFarmIdsLegado(d.empresa_ids);
   return null;
 }
 
@@ -75,11 +75,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (q.search) { params.push(`%${q.search}%`); where.push(`(u.name ilike $${params.length} or u.email::text ilike $${params.length})`); }
     const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.organization_members m join erp.users u on u.id=m.user_id where ${where.join(" and ")}`, params);
     const r = await ctx.tx.query(`select m.id as member_id, u.id, u.name, u.email, u.phone, u.is_active as user_active, m.is_active, m.is_owner, m.role_id, r.name as role_name, u.last_login_at, m.created_at, (select coalesce(json_agg(json_build_object('modulo', e.modulo, 'modo', e.modo, 'empresas', coalesce((select array_agg(me.empresa_id) from erp.membro_empresas me where me.organization_id=e.organization_id and me.membro_id=e.membro_id and me.modulo=e.modulo), '{}')) order by e.modulo), '[]'::json) from erp.membro_escopos_empresa e where e.organization_id=m.organization_id and e.membro_id=m.id) as escopos_empresas from erp.organization_members m join erp.users u on u.id=m.user_id left join erp.roles r on r.id=m.role_id where ${where.join(" and ")} order by u.name limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
-    // `farm_ids` continua no contrato por compatibilidade, mas só aparece quando a configuração REAL cabe no
+    // `empresa_ids` continua no contrato por compatibilidade, mas só aparece quando a configuração REAL cabe no
     // formato antigo; caso contrário vem null (a API não devolve uma lista que mentiria sobre o acesso).
     const items = r.rows.map((x) => {
       const escopos = ((x as { escopos_empresas: EscopoEmpresaEntrada[] }).escopos_empresas ?? []).map((e) => ({ ...e, empresas: e.empresas ?? [] }));
-      return { ...(x as Record<string, unknown>), escopos_empresas: escopos, farm_ids: (x as { is_owner: boolean }).is_owner ? [] : paraFarmIdsLegado(escopos) };
+      return { ...(x as Record<string, unknown>), escopos_empresas: escopos, empresa_ids: (x as { is_owner: boolean }).is_owner ? [] : paraFarmIdsLegado(escopos) };
     });
     return { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
   }));
@@ -98,17 +98,17 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
     return { items: MODULOS_ESCOPO_EMPRESA.map((m) => ({ ...m, tem_permissao: comPermissao ? comPermissao.includes(m.chave) : null })) };
   }));
-  const memberSchema = z.object({ name: z.string().min(1), email: z.string().email(), phone: z.string().optional().nullable(), password: z.string().min(8).optional(), role_id: z.string().uuid().nullable().optional(), farm_ids: z.array(z.string().uuid()).optional(), escopos_empresas: z.array(escopoEmpresaSchema).optional(), is_active: z.boolean().default(true), boss_user_ids: z.array(z.string().uuid()).default([]) });
+  const memberSchema = z.object({ name: z.string().min(1), email: z.string().email(), phone: z.string().optional().nullable(), password: z.string().min(8).optional(), role_id: z.string().uuid().nullable().optional(), empresa_ids: z.array(z.string().uuid()).optional(), escopos_empresas: z.array(escopoEmpresaSchema).optional(), is_active: z.boolean().default(true), boss_user_ids: z.array(z.string().uuid()).default([]) });
   app.post("/admin/members", async (req, reply) => reply.status(201).send(await runService(app, req, "users.create", async (ctx) => {
     const d = memberSchema.parse(req.body);
     const hash = d.password ? await bcrypt.hash(d.password, 10) : null;
     const u = await ctx.tx.query<{ id: string }>("insert into erp.users(email,name,phone,password_hash) values ($1,$2,$3,$4) on conflict (email) do update set name=excluded.name, phone=coalesce(excluded.phone, erp.users.phone), password_hash=coalesce(excluded.password_hash, erp.users.password_hash) returning id", [d.email.toLowerCase(), d.name, d.phone ?? null, hash]);
     const m = await ctx.tx.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,role_id,is_active) values ($1,$2,$3,$4) on conflict (organization_id,user_id) do update set role_id=excluded.role_id, is_active=excluded.is_active returning id", [ctx.orgId, u.rows[0]!.id, d.role_id ?? null, d.is_active]);
-    // Corpo SEM `escopos_empresas` e SEM `farm_ids` = nenhum módulo configurado = NENHUMA empresa. O
+    // Corpo SEM `escopos_empresas` e SEM `empresa_ids` = nenhum módulo configurado = NENHUMA empresa. O
     // fallback anterior (`deFarmIdsLegado([])`) traduzia a ausência em modo `todas` nos onze módulos, ou
     // seja, criava o membro enxergando a organização inteira — o oposto do contrato em escopo-admin.ts, e
     // uma concessão total que a auditoria registrava como se fosse pedido. A tradução do legado continua
-    // valendo para `farm_ids` ENVIADO, que é onde "lista vazia = todas" tem história.
+    // valendo para `empresa_ids` ENVIADO, que é onde "lista vazia = todas" tem história.
     await gravarEscoposAuditado(ctx, m.rows[0]!.id, escoposPedidos(d) ?? []);
     await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, u.rows[0]!.id]);
     for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, u.rows[0]!.id, b]);
@@ -221,10 +221,10 @@ export default async function adminRoutes(app: FastifyInstance) {
     //    chama essa funcao SEM atalho de proprietario, entao um aviso de empresa desativada nasce invisivel
     //    para todos — inclusive para o dono — e volta a nascer todo dia. Mesmo cuidado que a consulta de
     //    documentos ja tem logo abaixo.
-    const pend = await ctx.tx.query<{ code: string; id: string; days: number; farm_id: string; current_responsible_user_id: string | null }>(
-      `select r.code, r.id, r.farm_id, extract(day from now()-r.status_changed_at)::int as days, r.current_responsible_user_id
+    const pend = await ctx.tx.query<{ code: string; id: string; days: number; empresa_id: string; current_responsible_user_id: string | null }>(
+      `select r.code, r.id, r.empresa_id, extract(day from now()-r.status_changed_at)::int as days, r.current_responsible_user_id
          from erp.purchase_requests r
-         join erp.farms f on f.id = r.farm_id and f.deleted_at is null
+         join erp.empresas f on f.id = r.empresa_id and f.deleted_at is null
         where r.organization_id=$1 and r.deleted_at is null
           and r.status not in ('finished','cancelled') and r.status_changed_at < now() - interval '3 days'`, [ctx.orgId]);
     for (const p of pend.rows) {
@@ -232,7 +232,7 @@ export default async function adminRoutes(app: FastifyInstance) {
       // pergunta as duas autoridades do banco (capacidade E escopo) e rebaixa para difusao se ele nao veria
       // a linha. Checar so o escopo aqui — como se fazia — deixava o aviso morto quando faltava a capacidade.
       await criarNotificacao(ctx, { kind: "purchase_pending", title: `Compras nº ${p.code} pendente há ${p.days} dia(s)`,
-        route: `/suprimentos/view/${p.id}`, userId: p.current_responsible_user_id, empresaId: p.farm_id,
+        route: `/suprimentos/view/${p.id}`, userId: p.current_responsible_user_id, empresaId: p.empresa_id,
         entidadeOrigem: "purchase_requests", idOrigem: p.id });
     }
 
@@ -247,18 +247,18 @@ export default async function adminRoutes(app: FastifyInstance) {
     // Títulos vencendo: DUAS correções de semântica no mesmo lugar.
     //  1. a rota leva para CONTAS A PAGAR, então a contagem é de pagar. Antes somava pagar e receber sob
     //     rota e permissão de pagar — número que a permissão exibida não autorizava;
-    //  2. a contagem é POR EMPRESA. `financial_titles.farm_id` é obrigatório, então este número se decompõe
+    //  2. a contagem é POR EMPRESA. `financial_titles.empresa_id` é obrigatório, então este número se decompõe
     //     sem mudar de significado — diferente do estoque mínimo, que é cadastro da organização. Um
     //     agregado da organização inteira sumiria para quem tem `selecionadas`, tirando dele um aviso
     //     sobre títulos que ele vê na própria tela de Contas a Pagar.
-    const due = await ctx.tx.query<{ n: string; farm_id: string }>(
-      `select count(*) n, farm_id from erp.financial_titles
+    const due = await ctx.tx.query<{ n: string; empresa_id: string }>(
+      `select count(*) n, empresa_id from erp.financial_titles
         where organization_id=$1 and direction='payable' and status in ('open','partially_paid')
           and deleted_at is null and due_date between current_date and current_date + 3
-        group by farm_id`, [ctx.orgId]);
+        group by empresa_id`, [ctx.orgId]);
     for (const t of due.rows) {
       await criarNotificacao(ctx, { kind: "title_due", title: `${t.n} título(s) a pagar vencendo nos próximos 3 dias`,
-        route: "/financeiro?tab=contas&sub=pagar&due_soon=1", empresaId: t.farm_id, dedupe: `title_due:${t.farm_id}` });
+        route: "/financeiro?tab=contas&sub=pagar&due_soon=1", empresaId: t.empresa_id, dedupe: `title_due:${t.empresa_id}` });
     }
 
     // Aniversário: cadastro de pessoas da organização, sem dimensão de empresa.
@@ -273,14 +273,14 @@ export default async function adminRoutes(app: FastifyInstance) {
     // Empresa desativada é excluída na origem: `erp.tem_acesso_empresa` exige `deleted_at is null`, então
     // o aviso de um documento dela nasceria invisível para todo mundo — inclusive para o proprietário —
     // e se acumularia um por dia, sem ninguém poder lê-lo nem marcá-lo como lido.
-    const docs = await ctx.tx.query<{ title: string; id: string; farm_id: string | null }>(
-      `select d.title, d.id, d.farm_id from erp.documents d
+    const docs = await ctx.tx.query<{ title: string; id: string; empresa_id: string | null }>(
+      `select d.title, d.id, d.empresa_id from erp.documents d
         where d.organization_id=$1 and d.status='active' and d.expiration_date between current_date and current_date + 15
-          and (d.farm_id is null or exists (select 1 from erp.farms f where f.id=d.farm_id and f.deleted_at is null))`, [ctx.orgId]);
+          and (d.empresa_id is null or exists (select 1 from erp.empresas f where f.id=d.empresa_id and f.deleted_at is null))`, [ctx.orgId]);
     for (const d of docs.rows) {
       await criarNotificacao(ctx, { kind: "document_expiring", title: `Documento vencendo: ${d.title}`,
-        route: `/cadastros/documents/${d.id}`, empresaId: d.farm_id,
-        ...(d.farm_id ? {} : { escopoOverride: "organizacao" as const }),
+        route: `/cadastros/documents/${d.id}`, empresaId: d.empresa_id,
+        ...(d.empresa_id ? {} : { escopoOverride: "organizacao" as const }),
         entidadeOrigem: "documents", idOrigem: d.id });
     }
     return { ok: true };

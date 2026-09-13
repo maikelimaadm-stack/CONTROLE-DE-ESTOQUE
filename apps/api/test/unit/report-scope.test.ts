@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { REPORTS } from "../../src/routes/reports.js";
 import type { ServiceCtx } from "../../src/lib/context.js";
 // @ts-expect-error — parser de migrations em JS puro, compartilhado com os gates de documentação
-import { companyColumnsOf, readSchema } from "../../../../scripts/lib/schema.mjs";
+import { canonicalCompanyColumnsOf, readSchema } from "../../../../scripts/lib/schema.mjs";
 
 /**
  * GATE DE ESCOPO EMPRESARIAL DOS RELATÓRIOS (PRE-BASE2-02 §13-§16).
@@ -30,7 +30,10 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const schema = readSchema();
 const colunaDeEmpresa = (tabela: string): string | null => {
   const t = schema.get(`erp.${tabela}`);
-  const cols = t ? (companyColumnsOf(t) as string[]) : [];
+  // CANÔNICAS, não todas: depois da PRE-BASE2-03 cada tabela tem `empresa_id` E o espelho `farm_id`, e
+  // exigir predicado nas duas cobraria duas vezes o mesmo recorte. O runtime novo lê a canônica; é por ela
+  // que o gate cobra.
+  const cols = t ? (canonicalCompanyColumnsOf(t) as string[]) : [];
   return cols.length ? cols[0]! : null;
 };
 
@@ -53,12 +56,12 @@ const EMPRESA_POR_RELACAO: Record<string, { pai: string; via: string }> = {
   maintenance_machines: { pai: "maintenances", via: "maintenance_id" }
 };
 
-const NAO_RECORTAVEIS = new Set(["member_farms", "membro_empresas", "registros_globais", "farm_cost_centers", "proprietary_farms", "authorizer_farms", "bank_account_farms"]);
+const NAO_RECORTAVEIS = new Set(["membro_empresas", "registros_globais", "legado_escopo_empresa_v0", "empresa_cost_centers", "proprietary_empresas", "authorizer_empresas", "bank_account_empresas"]);
 
 const ctxSintetico = (modulo: string | null): ServiceCtx => ({
   user: { id: "00000000-0000-4000-8000-000000000001", email: "u@x", name: "U" },
   orgId: "00000000-0000-4000-8000-0000000000aa",
-  farmId: null,
+  empresaId: null,
   moduloEmpresa: modulo,
   membership: {
     orgId: "00000000-0000-4000-8000-0000000000aa", orgName: "t", roleId: null, isOwner: false,
@@ -313,7 +316,7 @@ describe("escopo empresarial dos relatórios", () => {
         const recortados = protegidos(sql);
         for (const { tabela, alias } of fontes(sql)) {
           const coluna = colunaDeEmpresa(tabela);
-          if (!coluna || NAO_RECORTAVEIS.has(tabela) || tabela === "farms") continue;
+          if (!coluna || NAO_RECORTAVEIS.has(tabela) || tabela === "empresas") continue;
           if (recortados.has(alias) || (fonteSemAlias(sql, tabela) && sql.includes(`me.empresa_id=${coluna}`))) continue;
           if (DECLARADOS.some((d) => d.arquivo === arquivo && sql.includes(d.trecho) && d.aliases.includes(alias))) continue;
           problemas.push(`${arquivo}: ${tabela} como ${alias} sem recorte próprio — ${sql.slice(0, 120)}`);
@@ -331,26 +334,26 @@ describe("escopo empresarial dos relatórios", () => {
    * real. Foi assim que `financial_freezes` e `budget_plannings`, dois recursos do módulo financeiro cujas
    * tabelas têm `farm_id`, ficaram sem recorte em leitura, exportação, anexo e criação.
    */
-  it("todo recurso cuja tabela tem coluna de empresa declara o escopo (farmScoped ou farmScopedNulo)", () => {
+  it("todo recurso cuja tabela tem coluna de empresa declara o escopo (empresaScoped ou empresaScopedNulo)", () => {
     const problemas: string[] = [];
     for (const def of RESOURCES) {
       const tabela = schema.get(`erp.${def.table}`);
       if (!tabela) { problemas.push(`${def.key}: tabela erp.${def.table} não existe no schema`); continue; }
-      const cols = companyColumnsOf(tabela) as string[];
-      const declarado = Boolean(def.farmScoped || def.farmScopedNulo);
-      if (cols.length && !NAO_RECORTAVEIS.has(def.table) && def.table !== "farms" && !declarado) {
-        problemas.push(`${def.key} (erp.${def.table}): tem ${cols.join(", ")} mas não declara farmScoped nem farmScopedNulo — listagem, exportação, seletor, anexo e criação sairiam SEM recorte de empresa`);
+      const cols = canonicalCompanyColumnsOf(tabela) as string[];
+      const declarado = Boolean(def.empresaScoped || def.empresaScopedNulo);
+      if (cols.length && !NAO_RECORTAVEIS.has(def.table) && def.table !== "empresas" && !declarado) {
+        problemas.push(`${def.key} (erp.${def.table}): tem ${cols.join(", ")} mas não declara empresaScoped nem empresaScopedNulo — listagem, exportação, seletor, anexo e criação sairiam SEM recorte de empresa`);
       }
       if (!cols.length && declarado) problemas.push(`${def.key} (erp.${def.table}): declara escopo de empresa mas a tabela não tem coluna de empresa`);
-      if (def.farmScoped && def.farmScopedNulo) problemas.push(`${def.key}: declara farmScoped E farmScopedNulo — escolha um`);
+      if (def.empresaScoped && def.empresaScopedNulo) problemas.push(`${def.key}: declara empresaScoped E empresaScopedNulo — escolha um`);
       // nulabilidade declarada precisa bater com a do banco: tratar como NOT NULL uma coluna anulável esconde
       // os registros da organização; tratar como anulável uma NOT NULL afrouxa o predicado sem motivo.
       // (o parser de schema não guarda nulabilidade por coluna, então ela vem do texto da migration)
       if (declarado && cols.length) {
         const anulavel = colunaAnulavel(tabela.file as string, def.table, cols[0]!);
         if (anulavel === null) continue; // não deu para decidir pelo texto: não inventa veredito
-        if (anulavel && !def.farmScopedNulo) problemas.push(`${def.key}: ${cols[0]} é ANULÁVEL no banco, então o recorte precisa ser farmScopedNulo (nulo = registro da organização)`);
-        if (!anulavel && def.farmScopedNulo) problemas.push(`${def.key}: ${cols[0]} é NOT NULL no banco — farmScopedNulo afrouxa o predicado sem motivo`);
+        if (anulavel && !def.empresaScopedNulo) problemas.push(`${def.key}: ${cols[0]} é ANULÁVEL no banco, então o recorte precisa ser empresaScopedNulo (nulo = registro da organização)`);
+        if (!anulavel && def.empresaScopedNulo) problemas.push(`${def.key}: ${cols[0]} é NOT NULL no banco — empresaScopedNulo afrouxa o predicado sem motivo`);
       }
     }
     expect(problemas, `recursos genéricos sem escopo declarado:\n${problemas.join("\n")}`).toEqual([]);

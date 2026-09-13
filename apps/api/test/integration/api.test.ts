@@ -387,7 +387,7 @@ describe("segurança: escopo de fazenda em leituras por id (mesma organização,
     const sB = await mk("/api/fleet/fuel-supplies", { farm_id: I.farm2, supply_date: "2026-09-20", equipment_id: I.equipment, product_id: diesel.id, quantity: "5" });
     const get = async (url: string, headers: Record<string, string>) => h.app.inject({ method: "GET", url, headers });
     for (const [a, b, base] of [[hA, hB, "/api/livestock/handlings"], [wA, wB, "/api/livestock/weighings"], [sA, sB, "/api/fleet/fuel-supplies"]] as const) {
-      // restrito: A permitido, B invisível (404 — não expõe existência), sem cabeçalho x-farm-id (farmId vazio não amplia o escopo)
+      // restrito: A permitido, B invisível (404 — não expõe existência), sem cabeçalho x-farm-id (empresaId vazio não amplia o escopo)
       expect((await get(`${base}/${a}`, rh)).statusCode, `${base} A restrito`).toBe(200);
       const denied = await get(`${base}/${b}`, rh); expect(denied.statusCode, `${base} B restrito`).toBe(404); expect(j(denied).error!.code).toBe("NOT_FOUND");
       // x-farm-id da fazenda B é recusado na entrada (403)

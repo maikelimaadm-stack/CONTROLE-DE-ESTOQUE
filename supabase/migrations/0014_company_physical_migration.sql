@@ -157,40 +157,92 @@ end $$;
 
 comment on function erp.sincronizar_empresa_legado() is 'PRE-BASE2-03: mantem empresa_id e farm_id iguais durante a janela de compatibilidade. Divergencia na mesma operacao e recusada (VALIDATION_ERROR), nunca resolvida por escolha silenciosa.';
 
--- Aplicação a todas as tabelas com coluna de empresa. A lista NÃO é digitada: sai do catálogo do próprio
--- banco, então uma tabela nova com `farm_id` entra automaticamente no mesmo contrato em vez de ficar de
--- fora sem ninguém perceber.
+-- As 52 colunas canônicas, UMA A UMA.
+--
+-- Poderiam sair de um laço sobre o catálogo do banco, e a primeira versão desta migration fazia isso. Não
+-- serve: o dicionário de dados, o inventário e os gates estruturais leem o SCHEMA A PARTIR DO TEXTO das
+-- migrations (scripts/lib/schema.mjs) — é assim que a documentação não tem como divergir do banco. Coluna
+-- criada dentro de `do $$ … execute format(…)` é invisível para eles, e a documentação passaria a mentir
+-- silenciosamente. Explícito também é o que permite REVISAR a lista, que é o pedido central desta migração:
+-- nada de substituição cega. Tabela NOVA com `farm_id` não entra aqui sozinha — de propósito: quem cobra
+-- isso é o gate `company-schema-sync`, que falha o CI, e não uma migration que já rodou.
+-- A nulabilidade de cada coluna canônica acompanha exatamente a da legada.
+alter table erp.animal_handlings add column empresa_id uuid not null;
+alter table erp.animal_movements add column empresa_destino_id uuid;
+alter table erp.animal_movements add column empresa_id uuid not null;
+alter table erp.animal_retroactive_costs add column empresa_id uuid not null;
+alter table erp.animals add column empresa_id uuid not null;
+alter table erp.areas add column empresa_id uuid not null;
+alter table erp.authorizer_farms add column empresa_id uuid not null;
+alter table erp.bank_account_farms add column empresa_id uuid not null;
+alter table erp.bank_movements add column empresa_id uuid;
+alter table erp.batches add column empresa_id uuid not null;
+alter table erp.breeding_seasons add column empresa_id uuid not null;
+alter table erp.budget_plannings add column empresa_id uuid;
+alter table erp.contracts add column empresa_id uuid not null;
+alter table erp.devolutions add column empresa_id uuid not null;
+alter table erp.dfe_documents add column empresa_id uuid;
+alter table erp.diet_batches add column empresa_id uuid not null;
+alter table erp.documents add column empresa_id uuid;
+alter table erp.earnings add column empresa_id uuid not null;
+alter table erp.equipment_transfers add column empresa_destino_id uuid not null;
+alter table erp.equipment_transfers add column empresa_origem_id uuid not null;
+alter table erp.equipments add column empresa_id uuid not null;
+alter table erp.farm_cost_centers add column empresa_id uuid not null;
+alter table erp.feed_batches add column empresa_id uuid not null;
+alter table erp.feed_deliveries add column empresa_id uuid not null;
+alter table erp.feedlot_yards add column empresa_id uuid not null;
+alter table erp.financial_freezes add column empresa_id uuid;
+alter table erp.financial_titles add column empresa_id uuid not null;
+alter table erp.fuel_supplies add column empresa_id uuid not null;
+alter table erp.grazing_modules add column empresa_id uuid not null;
+alter table erp.herd_lots add column empresa_id uuid not null;
+alter table erp.input_entries add column empresa_id uuid not null;
+alter table erp.invoices add column empresa_id uuid not null;
+alter table erp.journal_entries add column empresa_id uuid;
+alter table erp.livestock_plannings add column empresa_id uuid not null;
+alter table erp.maintenances add column empresa_id uuid not null;
+alter table erp.opening_balances add column empresa_id uuid not null;
+alter table erp.processings add column empresa_id uuid not null;
+alter table erp.proprietary_farms add column empresa_id uuid not null;
+alter table erp.purchase_requests add column empresa_id uuid not null;
+alter table erp.rainfalls add column empresa_id uuid not null;
+alter table erp.requisitions add column empresa_id uuid not null;
+alter table erp.salary_advances add column empresa_id uuid not null;
+alter table erp.sales_documents add column empresa_id uuid not null;
+alter table erp.service_orders add column empresa_id uuid not null;
+alter table erp.stock_corrections add column empresa_id uuid not null;
+alter table erp.stock_movements add column empresa_id uuid not null;
+alter table erp.stock_writeoffs add column empresa_id uuid not null;
+alter table erp.trough_readings add column empresa_id uuid not null;
+alter table erp.warehouse_transfers add column empresa_destino_id uuid not null;
+alter table erp.warehouse_transfers add column empresa_origem_id uuid not null;
+alter table erp.warehouses add column empresa_id uuid not null;
+alter table erp.weighings add column empresa_id uuid not null;
+
+-- Cópia do valor legado + gatilho de sincronização + referência canônica.
 do $$
-declare
-  r record;
-  canonico text; funcao text; gatilho text;
-  tem_org boolean;
+declare r record; canonico text; funcao text; gatilho text; tem_org boolean;
 begin
   for r in
-    select c.table_name as tabela, c.column_name as coluna, c.is_nullable = 'YES' as anulavel
+    select c.table_name as tabela, c.column_name as coluna
       from information_schema.columns c
       join information_schema.tables t
-        on t.table_schema = c.table_schema and t.table_name = c.table_name and t.table_type = 'BASE TABLE'
-     where c.table_schema = 'erp'
+        on t.table_schema=c.table_schema and t.table_name=c.table_name and t.table_type='BASE TABLE'
+     where c.table_schema='erp'
        and c.column_name in ('farm_id','origin_farm_id','destination_farm_id')
-       and c.table_name <> 'member_farms'   -- aposentada na seção 4; não recebe coluna canônica
+       and c.table_name <> 'member_farms'   -- aposentada na seção 4
      order by c.table_name, c.column_name
   loop
-    canonico := case r.coluna
-                  when 'farm_id' then 'empresa_id'
-                  when 'origin_farm_id' then 'empresa_origem_id'
-                  when 'destination_farm_id' then 'empresa_destino_id' end;
-    funcao   := case r.coluna
-                  when 'farm_id' then 'erp.sincronizar_empresa_legado'
-                  when 'origin_farm_id' then 'erp.sincronizar_empresa_origem_legado'
-                  when 'destination_farm_id' then 'erp.sincronizar_empresa_destino_legado' end;
+    canonico := case r.coluna when 'farm_id' then 'empresa_id'
+                              when 'origin_farm_id' then 'empresa_origem_id'
+                              else 'empresa_destino_id' end;
+    funcao   := case r.coluna when 'farm_id' then 'erp.sincronizar_empresa_legado'
+                              when 'origin_farm_id' then 'erp.sincronizar_empresa_origem_legado'
+                              else 'erp.sincronizar_empresa_destino_legado' end;
     gatilho  := 'trg_sync_' || canonico;
 
-    execute format('alter table erp.%I add column if not exists %I uuid', r.tabela, canonico);
-    execute format('update erp.%I set %I = %I where %I is distinct from %I', r.tabela, canonico, r.coluna, canonico, r.coluna);
-    if not r.anulavel then
-      execute format('alter table erp.%I alter column %I set not null', r.tabela, canonico);
-    end if;
+    execute format('update erp.%I set %I = %I', r.tabela, canonico, r.coluna);
     execute format('comment on column erp.%I.%I is %L', r.tabela, canonico,
       'EMPRESA do registro (PRE-BASE2-03). Coluna CANONICA: e ela que o runtime novo le e grava.');
     execute format('comment on column erp.%I.%I is %L', r.tabela, r.coluna,
@@ -199,8 +251,8 @@ begin
     execute format('drop trigger if exists %I on erp.%I', gatilho, r.tabela);
     execute format('create trigger %I before insert or update on erp.%I for each row execute function %s()', gatilho, r.tabela, funcao);
 
-    -- Referência canônica: composta quando a tabela tem organization_id (prova o tenant), simples quando
-    -- não tem (tabelas de vínculo, que herdam a organização do pai — classificadas na matriz de RLS).
+    -- Referência canônica: COMPOSTA quando a tabela tem organization_id (prova o tenant), simples quando não
+    -- tem (tabelas de vínculo, que herdam a organização do pai — classificadas na matriz de RLS).
     select exists (select 1 from information_schema.columns o
                     where o.table_schema='erp' and o.table_name=r.tabela and o.column_name='organization_id')
       into tem_org;
@@ -211,6 +263,39 @@ begin
       execute format('alter table erp.%I add constraint %I foreign key (%I) references erp.empresas (id) on delete cascade',
                      r.tabela, r.tabela || '_' || canonico || '_fkey', canonico);
     end if;
+  end loop;
+end $$;
+
+-- Chaves PRIMÁRIAS e ÚNICAS passam para a coluna CANÔNICA.
+-- As duas colunas são provadamente iguais, então a regra de unicidade é a MESMA — o que muda é onde ela
+-- está DECLARADA. Precisa mudar: `insert ... on conflict (empresa_id, initials)` exige um índice único
+-- sobre o par canônico, e mantê-lo na coluna legada obrigaria todo código novo a citar o nome antigo para
+-- resolver conflito — exatamente a dependência que esta missão remove. Duplicar (uma chave em cada par)
+-- pagaria dois B-tree por escrita para garantir a mesma coisa duas vezes.
+-- CONSEQUÊNCIA ASSUMIDA: `on conflict` sobre o par LEGADO deixa de encontrar índice. Nenhuma rota da API
+-- usa esse padrão (só o seed usava, e ele migrou junto); está registrado em docs/DEPLOYMENT.md.
+do $$
+declare r record; def text; novo text;
+begin
+  for r in
+    select con.oid, con.conname, con.contype, con.conrelid::regclass::text as tabela,
+           pg_get_constraintdef(con.oid) as definicao
+      from pg_constraint con
+     where con.connamespace = 'erp'::regnamespace and con.contype in ('p','u')
+       and pg_get_constraintdef(con.oid) ~ '\mfarm_id\M|\morigin_farm_id\M|\mdestination_farm_id\M'
+       and con.conrelid <> 'erp.member_farms'::regclass   -- aposentada na seção 4; não ganha coluna canônica
+     order by con.conname
+  loop
+    def := replace(replace(replace(r.definicao,
+             'destination_farm_id', 'empresa_destino_id'),
+             'origin_farm_id', 'empresa_origem_id'),
+             'farm_id', 'empresa_id');
+    novo := replace(replace(replace(r.conname,
+             'destination_farm_id', 'empresa_destino_id'),
+             'origin_farm_id', 'empresa_origem_id'),
+             'farm_id', 'empresa_id');
+    execute format('alter table %s drop constraint %I', r.tabela, r.conname);
+    execute format('alter table %s add constraint %I %s', r.tabela, novo, def);
   end loop;
 end $$;
 
@@ -235,26 +320,35 @@ create index if not exists warehouses_org_empresa_idx on erp.warehouses (organiz
 -- tem missão própria; cada termo extra traduzido aqui viraria mais uma compatibilidade para manter, sem
 -- relação com a dependência de FARM que é o objetivo desta.
 -- Cada nome antigo volta como view `security_invoker` — mesma razão e mesma prova de `erp.farms`.
-do $$
-declare r record; nome_novo text;
-begin
-  for r in select * from (values
-      ('authorizer_farms',   'authorizer_empresas'),
-      ('bank_account_farms', 'bank_account_empresas'),
-      ('farm_cost_centers',  'empresa_cost_centers'),
-      ('proprietary_farms',  'proprietary_empresas')
-    ) as v(antigo, novo)
-  loop
-    nome_novo := r.novo;
-    execute format('alter table erp.%I rename to %I', r.antigo, nome_novo);
-    execute format('create view erp.%I with (security_invoker = true) as select * from erp.%I', r.antigo, nome_novo);
-    execute format('comment on view erp.%I is %L', r.antigo,
-      'COMPATIBILIDADE (PRE-BASE2-03): nome legado de erp.' || nome_novo || '. security_invoker = true preserva a RLS da tabela base.');
-    execute format('grant select, insert, update, delete on erp.%I to erp_app', r.antigo);
-    -- busca POR EMPRESA: a chave primária dessas tabelas lidera pela OUTRA coluna, então não serve.
-    execute format('create index if not exists %I on erp.%I (empresa_id)', nome_novo || '_empresa_idx', nome_novo);
-  end loop;
-end $$;
+-- Explícito, e não em laço, pela mesma razão das colunas: o dicionário e os gates leem o TEXTO da migration.
+alter table erp.authorizer_farms rename to authorizer_empresas;
+alter table erp.authorizer_empresas rename constraint authorizer_farms_pkey to authorizer_empresas_pkey;
+create view erp.authorizer_farms with (security_invoker = true) as select * from erp.authorizer_empresas;
+grant select, insert, update, delete on erp.authorizer_farms to erp_app;
+create index if not exists authorizer_empresas_empresa_idx on erp.authorizer_empresas (empresa_id);
+
+alter table erp.bank_account_farms rename to bank_account_empresas;
+alter table erp.bank_account_empresas rename constraint bank_account_farms_pkey to bank_account_empresas_pkey;
+create view erp.bank_account_farms with (security_invoker = true) as select * from erp.bank_account_empresas;
+grant select, insert, update, delete on erp.bank_account_farms to erp_app;
+create index if not exists bank_account_empresas_empresa_idx on erp.bank_account_empresas (empresa_id);
+
+alter table erp.farm_cost_centers rename to empresa_cost_centers;
+alter table erp.empresa_cost_centers rename constraint farm_cost_centers_pkey to empresa_cost_centers_pkey;
+create view erp.farm_cost_centers with (security_invoker = true) as select * from erp.empresa_cost_centers;
+grant select, insert, update, delete on erp.farm_cost_centers to erp_app;
+create index if not exists empresa_cost_centers_empresa_idx on erp.empresa_cost_centers (empresa_id);
+
+alter table erp.proprietary_farms rename to proprietary_empresas;
+alter table erp.proprietary_empresas rename constraint proprietary_farms_pkey to proprietary_empresas_pkey;
+create view erp.proprietary_farms with (security_invoker = true) as select * from erp.proprietary_empresas;
+grant select, insert, update, delete on erp.proprietary_farms to erp_app;
+create index if not exists proprietary_empresas_empresa_idx on erp.proprietary_empresas (empresa_id);
+
+comment on view erp.authorizer_farms is 'COMPATIBILIDADE (PRE-BASE2-03): nome legado de erp.authorizer_empresas. security_invoker = true preserva a RLS da tabela base.';
+comment on view erp.bank_account_farms is 'COMPATIBILIDADE (PRE-BASE2-03): nome legado de erp.bank_account_empresas.';
+comment on view erp.farm_cost_centers is 'COMPATIBILIDADE (PRE-BASE2-03): nome legado de erp.empresa_cost_centers.';
+comment on view erp.proprietary_farms is 'COMPATIBILIDADE (PRE-BASE2-03): nome legado de erp.proprietary_empresas.';
 
 -- ---------- 4) aposentadoria de erp.member_farms ----------
 -- Desde a PRE-BASE2-02 a autoridade é `erp.membro_escopos_empresa` + `erp.membro_empresas`, e o gate

@@ -1,4 +1,5 @@
 import { RESOURCES, moduloDaPermissao, permissaoManejo, permissaoMovimentacao } from "@agro/domain";
+import { tabelaCanonica } from "./compat-empresa.js";
 import { empresaPermitida, hasPermission, type ServiceCtx } from "./context.js";
 import { validarEmpresaSelecionada } from "./service.js";
 import { notFound, validation, denied } from "./errors.js";
@@ -7,9 +8,9 @@ import { notFound, validation, denied } from "./errors.js";
  * Autorização central do REGISTRO-PAI de um anexo (docs/AUTHORIZATION.md, "Anexos").
  * `entity` vem da requisição e NUNCA vira SQL: só entradas deste registry (whitelist estática) determinam tabela e
  * consulta. Cada entidade anexável tem classificação, permissão funcional de visualização do pai e regra de escopo:
- *  - A FARM: tabela com organization_id + farm_id → tenant + scopedById (fora do escopo → 404, não expõe existência);
+ *  - A FARM: tabela com organization_id + empresa_id → tenant + scopedById (fora do escopo → 404, não expõe existência);
  *  - B ORG: tabela da organização inteira → tenant (+ compartilhados com organization_id null);
- *  - C CHILD: sem farm_id próprio → escopo derivado do pai (curral → setor → pátio.farm_id; usuário → membro da organização);
+ *  - C CHILD: sem empresa_id próprio → escopo derivado do pai (curral → setor → pátio.empresa_id; usuário → membro da organização);
  *  - qualquer outra entidade → D NÃO ANEXÁVEL (VALIDATION_ERROR: é erro de parâmetro, não um registro invisível).
  * Política: attachments.view/create/delete + permissão de visualização do pai + escopo do pai — para listar, enviar,
  * baixar e excluir (o modelo de permissões atual não tem "anexos exigem edição do pai"; nada além disso foi inventado).
@@ -51,13 +52,13 @@ const EXPLICIT: Record<string, ParentRule> = {
   animal_movements: { kind: "farm", viewPerm: (row) => permissaoMovimentacao(String(row["movement_type"] ?? ""), "view"), load: byId("animal_movements", { softDelete: true }), origin: "explicit" },
   financial_titles: { kind: "farm", viewPerm: (row) => (row["direction"] === "payable" ? "payables.view" : row["direction"] === "receivable" ? "receivables.view" : null), load: byId("financial_titles", { softDelete: true }), origin: "explicit" },
   animals: { kind: "farm", viewPerm: "animals.view", load: byId("animals", { softDelete: true }), origin: "explicit" },
-  // filhas: fazenda herdada do pátio (feedlot_yards.farm_id)
+  // filhas: fazenda herdada do pátio (feedlot_yards.empresa_id)
   feedlot_sectors: { kind: "child", viewPerm: "feedlot_sectors.view", origin: "explicit", load: async (ctx, id) => {
-    const r = await ctx.tx.query<{ farm_id: string }>("select s.id, y.farm_id from erp.feedlot_sectors s join erp.feedlot_yards y on y.id=s.yard_id where s.id=$1 and s.organization_id=$2 and s.deleted_at is null", [id, ctx.orgId]);
+    const r = await ctx.tx.query<{ empresa_id: string }>("select s.id, y.empresa_id from erp.feedlot_sectors s join erp.feedlot_yards y on y.id=s.yard_id where s.id=$1 and s.organization_id=$2 and s.deleted_at is null", [id, ctx.orgId]);
     return r.rows[0] ?? null;
   } },
   feedlot_corrals: { kind: "child", viewPerm: "feedlot_corrals.view", origin: "explicit", load: async (ctx, id) => {
-    const r = await ctx.tx.query<{ farm_id: string }>("select c.id, y.farm_id from erp.feedlot_corrals c join erp.feedlot_sectors s on s.id=c.sector_id join erp.feedlot_yards y on y.id=s.yard_id where c.id=$1 and c.organization_id=$2 and c.deleted_at is null", [id, ctx.orgId]);
+    const r = await ctx.tx.query<{ empresa_id: string }>("select c.id, y.empresa_id from erp.feedlot_corrals c join erp.feedlot_sectors s on s.id=c.sector_id join erp.feedlot_yards y on y.id=s.yard_id where c.id=$1 and c.organization_id=$2 and c.deleted_at is null", [id, ctx.orgId]);
     return r.rows[0] ?? null;
   } },
   // usuários são globais: o "pai" visível é o membro ativo da organização atual
@@ -67,17 +68,25 @@ const EXPLICIT: Record<string, ParentRule> = {
   } }
 };
 
-/** Registry completo: explícitos + recursos genéricos (metadata de @agro/domain: table, farmScoped, permission, softDelete). */
+/** Registry completo: explícitos + recursos genéricos (metadata de @agro/domain: table, empresaScoped, permission, softDelete). */
 export const ATTACHMENT_PARENTS: Readonly<Record<string, ParentRule>> = (() => {
   const out: Record<string, ParentRule> = {};
   for (const def of RESOURCES) {
     if (EXPLICIT[def.table] || def.table === "users") continue;
-    out[def.table] = { kind: (def.farmScoped || def.farmScopedNulo) ? "farm" : "org", viewPerm: `${def.permission}.view`, origin: "registry", load: byId(def.table, { softDelete: Boolean(def.softDelete), shared: Boolean(def.reference || def.sharedDefaults) }) };
+    out[def.table] = { kind: (def.empresaScoped || def.empresaScopedNulo) ? "farm" : "org", viewPerm: `${def.permission}.view`, origin: "registry", load: byId(def.table, { softDelete: Boolean(def.softDelete), shared: Boolean(def.reference || def.sharedDefaults) }) };
   }
   return { ...out, ...EXPLICIT };
 })();
 
-export function attachableEntity(entity: string): ParentRule | undefined { return Object.prototype.hasOwnProperty.call(ATTACHMENT_PARENTS, entity) ? ATTACHMENT_PARENTS[entity] : undefined; }
+/**
+ * `entity` é o nome da TABELA do pai, e tabela renomeada é contrato quebrado para quem guardou o nome antigo
+ * (anexo enviado por cliente da versão anterior, link salvo). O apelido é resolvido para o MESMO registro —
+ * não há uma segunda regra de anexo, então autorização e escopo não têm como divergir entre os dois nomes.
+ */
+export function attachableEntity(entity: string): ParentRule | undefined {
+  const canonica = tabelaCanonica(entity);
+  return Object.prototype.hasOwnProperty.call(ATTACHMENT_PARENTS, canonica) ? ATTACHMENT_PARENTS[canonica] : undefined;
+}
 
 /**
  * Autoriza a operação `action` sobre anexos do pai (entity, entityId). Ordem: entidade suportada (422) → permissão de
@@ -97,7 +106,7 @@ export async function authorizeAttachmentParent(ctx: ServiceCtx, entity: string,
   if (rule.kind !== "org") {
     const modulo = moduloDaPermissao(perm);
     await validarEmpresaSelecionada({ ...ctx, moduloEmpresa: modulo }); // seleção explícita proibida = 403
-    if (!(await empresaPermitida(ctx, (row["farm_id"] as string | null | undefined) ?? null, modulo))) throw notFound("Registro");
+    if (!(await empresaPermitida(ctx, (row["empresa_id"] as string | null | undefined) ?? null, modulo))) throw notFound("Registro");
   }
   if (!hasPermission(ctx, perm)) throw denied(perm);
   void action; // política única para view/create/delete (ver cabeçalho); mantido na assinatura para evolução sem mudar chamadores

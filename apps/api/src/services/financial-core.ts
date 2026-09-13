@@ -18,7 +18,7 @@ export const installmentPlanSchema = z.object({
 export type InstallmentPlan = z.infer<typeof installmentPlanSchema>;
 
 export interface TitleInput {
-  farmId: string; direction: "payable" | "receivable"; number: string; titleTypeId?: string | null; personId: string | null; proprietaryId?: string | null; branchId?: string | null;
+  empresaId: string; direction: "payable" | "receivable"; number: string; titleTypeId?: string | null; personId: string | null; proprietaryId?: string | null; branchId?: string | null;
   paymentType?: "single" | "installments" | "recurring" | "advance" | "invoice_group"; recurrenceType?: "weekly" | "monthly" | "quarterly" | "yearly" | null;
   classification?: "unclassified" | "capex" | "opex"; documentType?: string | null; isDeductible?: boolean; isTax?: boolean;
   amount: string; discount?: string; emissionDate: string; dueDate: string; note: string; harvestId?: string | null;
@@ -28,7 +28,7 @@ export interface TitleInput {
 
 /** Cria título(s) financeiro(s) com rateio; se houver plano de parcelamento, cria uma linha por parcela (group_id comum). */
 export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<{ ids: string[]; groupId: string | null }> {
-  await assertPeriodOpen(ctx.tx, ctx.orgId, input.farmId, input.emissionDate);
+  await assertPeriodOpen(ctx.tx, ctx.orgId, input.empresaId, input.emissionDate);
   const total = money(input.amount);
   if (D(total).lte(0)) throw validation("Valor do título deve ser positivo");
   const lines = normalizeApportionment(money(D(total).minus(input.discount ?? 0)), input.apportionment);
@@ -42,9 +42,9 @@ export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<
     const code = await nextCode(ctx.tx, ctx.orgId, `title_${input.direction}`, 4);
     const discount = i === parts.length - 1 ? money(input.discount ?? 0) : "0.00";
     const r = await ctx.tx.query<{ id: string }>(
-      `insert into erp.financial_titles(organization_id,farm_id,code,direction,number,title_type_id,proprietary_id,person_id,branch_id,payment_type,recurrence_type,classification,document_type,is_deductible,is_tax,amount,discount,emission_date,due_date,installment_number,installment_count,group_id,appropriation,appropriation_type,note,harvest_id,source_type,source_id,created_by)
+      `insert into erp.financial_titles(organization_id,empresa_id,code,direction,number,title_type_id,proprietary_id,person_id,branch_id,payment_type,recurrence_type,classification,document_type,is_deductible,is_tax,amount,discount,emission_date,due_date,installment_number,installment_count,group_id,appropriation,appropriation_type,note,harvest_id,source_type,source_id,created_by)
        values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29) returning id`,
-      [ctx.orgId, input.farmId, code, input.direction, count > 1 ? `${input.number}-${p.isDownPayment ? "E" : p.number}` : input.number, input.titleTypeId ?? null, input.proprietaryId ?? null, input.personId, input.branchId ?? null,
+      [ctx.orgId, input.empresaId, code, input.direction, count > 1 ? `${input.number}-${p.isDownPayment ? "E" : p.number}` : input.number, input.titleTypeId ?? null, input.proprietaryId ?? null, input.personId, input.branchId ?? null,
         input.paymentType ?? (count > 1 ? "installments" : "single"), input.recurrenceType ?? null, input.classification ?? "unclassified", input.documentType ?? null, input.isDeductible ?? false, input.isTax ?? false,
         p.amount, discount, input.emissionDate, p.dueDate, p.isDownPayment ? 0 : p.number, count, groupId, input.appropriation ?? "direct", input.appropriationType ?? null, input.note, input.harvestId ?? null, input.sourceType ?? null, input.sourceId ?? null, ctx.user.id]);
     const id = r.rows[0]!.id; ids.push(id);
@@ -62,24 +62,24 @@ export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<
 }
 
 export interface BankMovementInput {
-  farmId: string | null; bankAccountId: string; date: string; type: "in" | "out"; categoryType?: string; amount: string; interest?: string; document?: string | null; note?: string | null;
+  empresaId: string | null; bankAccountId: string; date: string; type: "in" | "out"; categoryType?: string; amount: string; interest?: string; document?: string | null; note?: string | null;
   proprietaryId?: string | null; personId?: string | null; harvestId?: string | null; isDeductible?: boolean; generatesObligation?: boolean; sourceType?: string; sourceId?: string; destinationAccountId?: string | null;
   apportionment?: ApportionmentLine[];
 }
 export async function createBankMovement(ctx: ServiceCtx, i: BankMovementInput): Promise<string> {
-  await assertPeriodOpen(ctx.tx, ctx.orgId, i.farmId, i.date);
+  await assertPeriodOpen(ctx.tx, ctx.orgId, i.empresaId, i.date);
   const acc = await ctx.tx.query<{ is_active: boolean }>("select is_active from erp.bank_accounts where id=$1 and organization_id=$2 and deleted_at is null", [i.bankAccountId, ctx.orgId]);
   if (!acc.rows[0]) throw validation("Conta bancária inválida"); if (!acc.rows[0].is_active) throw validation("Conta bancária inativa");
   const code = await nextCode(ctx.tx, ctx.orgId, "bank_movement", 5);
   const r = await ctx.tx.query<{ id: string }>(
-    "insert into erp.bank_movements(organization_id,farm_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,amount,interest,document,generates_obligation,is_deductible,note,proprietary_id,person_id,harvest_id,source_type,source_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) returning id",
-    [ctx.orgId, i.farmId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id]);
+    "insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,amount,interest,document,generates_obligation,is_deductible,note,proprietary_id,person_id,harvest_id,source_type,source_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) returning id",
+    [ctx.orgId, i.empresaId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id]);
   const id = r.rows[0]!.id;
   if (i.apportionment?.length) for (const l of normalizeApportionment(money(i.amount), i.apportionment)) await ctx.tx.query("insert into erp.bank_movement_apportionments(movement_id,financial_category_id,chart_account_id,cost_center_id,harvest_id,percentage,amount) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.financialCategoryId, l.chartAccountId, l.costCenterId, l.harvestId, l.percentage, l.amount]);
   // transferência interna: cria o par na conta destino
   if (i.categoryType === "internal_transfer" && i.destinationAccountId) {
-    const pair = await ctx.tx.query<{ id: string }>("insert into erp.bank_movements(organization_id,farm_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,transfer_pair_id,amount,document,note,proprietary_id,source_type,source_id,created_by) values ($1,$2,$3,$4,$5,$6,'internal_transfer',$7,$8,$9,$10,$11,$12,'bank_movement',$8,$13) returning id",
-      [ctx.orgId, i.farmId, await nextCode(ctx.tx, ctx.orgId, "bank_movement", 5), i.destinationAccountId, i.date, i.type === "out" ? "in" : "out", i.bankAccountId, id, money(i.amount), i.document ?? null, i.note ?? null, i.proprietaryId ?? null, ctx.user.id]);
+    const pair = await ctx.tx.query<{ id: string }>("insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,transfer_pair_id,amount,document,note,proprietary_id,source_type,source_id,created_by) values ($1,$2,$3,$4,$5,$6,'internal_transfer',$7,$8,$9,$10,$11,$12,'bank_movement',$8,$13) returning id",
+      [ctx.orgId, i.empresaId, await nextCode(ctx.tx, ctx.orgId, "bank_movement", 5), i.destinationAccountId, i.date, i.type === "out" ? "in" : "out", i.bankAccountId, id, money(i.amount), i.document ?? null, i.note ?? null, i.proprietaryId ?? null, ctx.user.id]);
     await ctx.tx.query("update erp.bank_movements set transfer_pair_id=$2 where id=$1", [id, pair.rows[0]!.id]);
   }
   return id;

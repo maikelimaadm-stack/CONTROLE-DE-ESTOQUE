@@ -19,23 +19,23 @@ type Hdr = Record<string, string>;
 const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { error?: { code: string } };
 
 /** Contexto de serviço direto (as rotas de escrita só passam a alocar ID Global em PRE-BASE2-04). */
-async function comoServico<T>(fn: (ctx: ServiceCtx) => Promise<T>, opts: { farmIds?: string[]; perms?: string[] } = {}): Promise<T> {
+async function comoServico<T>(fn: (ctx: ServiceCtx) => Promise<T>, opts: { empresaIds?: string[]; perms?: string[] } = {}): Promise<T> {
   return withTx(h.db, { orgId: h.demo.orgId, userId: h.demo.adminUserId }, (tx) =>
     fn({
       tx,
       user: { id: h.demo.adminUserId, email: h.demo.adminEmail, name: "Administrador" },
       orgId: h.demo.orgId,
-      farmId: null,
+      empresaId: null,
       membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: !opts.perms, memberId: "m", escopos: AUTORIZACAO_PROPRIETARIO },
       permissions: new Set(opts.perms ?? [])
     }));
 }
 
 const PERMS_BASE = ["animals.view", "input_entries.view", "products.view"];
-async function membro(nome: string, email: string, farmIds: string[], perms: string[] = PERMS_BASE): Promise<Hdr> {
+async function membro(nome: string, email: string, empresaIds: string[], perms: string[] = PERMS_BASE): Promise<Hdr> {
   const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome}`, permissions: perms } });
   expect(papel.statusCode, papel.body).toBe(201);
-  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Matriz@12345", role_id: j(papel).id, farm_ids: farmIds } });
+  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Matriz@12345", role_id: j(papel).id, farm_ids: empresaIds } });
   expect(vinculo.statusCode, vinculo.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Matriz@12345" } });
   expect(login.statusCode, login.body).toBe(200);
@@ -51,12 +51,12 @@ const criar = async (url: string, payload: Record<string, unknown>): Promise<str
  * Movimentação criada direto no banco: usada para cobrir tipos que a rota de criação não aceita (internos) e
  * para mudar a empresa de um registro sem passar por regra de negócio.
  */
-async function inserirMovimentacao(tipo: string, codigo: string, farmId?: string): Promise<string> {
+async function inserirMovimentacao(tipo: string, codigo: string, empresaId?: string): Promise<string> {
   const admin = createPool(TEST_URL, { max: 1 });
   try {
     const r = await admin.query<{ id: string }>(
       "insert into erp.animal_movements(organization_id,farm_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,$4,'2026-09-10',$5) returning id",
-      [h.demo.orgId, farmId ?? I.farm, codigo, tipo, h.demo.adminUserId]);
+      [h.demo.orgId, empresaId ?? I.farm, codigo, tipo, h.demo.adminUserId]);
     return r.rows[0]!.id;
   } finally { await admin.end(); }
 }

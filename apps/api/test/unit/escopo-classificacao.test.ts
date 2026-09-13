@@ -88,9 +88,11 @@ describe("classificação de escopo × schema real", () => {
   it("toda tabela de negócio com coluna de empresa é governada por um recurso de EMPRESA", () => {
     // tabelas de infraestrutura, vínculo e índice não são recursos de negócio e não têm módulo próprio
     const NAO_NEGOCIO = new Set([
-      "member_farms", "registros_globais", "stock_movements", "herd_lots", "dfe_documents",
-      "farm_cost_centers", "proprietary_farms", "authorizer_farms", "bank_account_farms",
-      "membro_empresas", "membro_escopos_empresa"
+      "registros_globais", "stock_movements", "herd_lots", "dfe_documents",
+      "empresa_cost_centers", "proprietary_empresas", "authorizer_empresas", "bank_account_empresas",
+      "membro_empresas", "membro_escopos_empresa",
+      // arquivo morto de erp.member_farms (PRE-BASE2-03): não é recurso, não tem tela e não tem módulo
+      "legado_escopo_empresa_v0"
     ]);
     const cobertas = new Set<string>();
     for (const [recurso, tabelas] of TABELAS_DO_RECURSO) {

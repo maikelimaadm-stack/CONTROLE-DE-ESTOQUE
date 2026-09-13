@@ -19,14 +19,14 @@ describe("migrations e seed", () => {
     expect(p.rows[0].n).toBe(8);
     const perms = await db.query("select count(*)::int n from erp.permissions");
     expect(perms.rows[0].n).toBeGreaterThan(600);
-    expect(demo.farmIds.length).toBe(2);
+    expect(demo.empresaIds.length).toBe(2);
   });
 });
 
 describe("ledger de estoque (triggers)", () => {
   it("aplica custo médio e bloqueia saldo negativo", async () => {
     const prod = (await db.query("select id, default_warehouse_id from erp.products where organization_id=$1 order by code limit 1", [demo.orgId])).rows[0];
-    const ins = (t: "in" | "out", q: string, c: string) => withTx(db, { orgId: demo.orgId, userId: demo.adminUserId }, (tx) => tx.query("insert into erp.stock_movements(organization_id,farm_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,source_type,source_id,movement_date) values ($1,$2,$3,$4,$5,$6,$7,$8,'test',gen_random_uuid(),current_date) returning balance_after, avg_cost_after", [demo.orgId, demo.farmIds[0], prod.default_warehouse_id, prod.id, t === "in" ? "entry" : "requisition", t === "in" ? 1 : -1, q, c]));
+    const ins = (t: "in" | "out", q: string, c: string) => withTx(db, { orgId: demo.orgId, userId: demo.adminUserId }, (tx) => tx.query("insert into erp.stock_movements(organization_id,farm_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,source_type,source_id,movement_date) values ($1,$2,$3,$4,$5,$6,$7,$8,'test',gen_random_uuid(),current_date) returning balance_after, avg_cost_after", [demo.orgId, demo.empresaIds[0], prod.default_warehouse_id, prod.id, t === "in" ? "entry" : "requisition", t === "in" ? 1 : -1, q, c]));
     const a = await ins("in", "100", "10"); expect(a.rows[0].balance_after).toBe("100.0000");
     const b = await ins("in", "100", "20"); expect(b.rows[0].avg_cost_after).toBe("15.000000");
     const c = await ins("out", "50", "0"); expect(c.rows[0].balance_after).toBe("150.0000");
@@ -64,7 +64,7 @@ describe("isolamento multiempresa (RLS)", () => {
 describe("financeiro (triggers)", () => {
   it("atualiza status do título pelas baixas e bloqueia excesso", async () => {
     const r = await withTx(db, { orgId: demo.orgId, userId: demo.adminUserId }, async (tx) => {
-      const t = await tx.query("insert into erp.financial_titles(organization_id,farm_id,code,direction,number,amount,emission_date,due_date,note) values ($1,$2,'T-TEST','payable','1',100,current_date,current_date,'teste') returning id", [demo.orgId, demo.farmIds[0]]);
+      const t = await tx.query("insert into erp.financial_titles(organization_id,farm_id,code,direction,number,amount,emission_date,due_date,note) values ($1,$2,'T-TEST','payable','1',100,current_date,current_date,'teste') returning id", [demo.orgId, demo.empresaIds[0]]);
       const acc = await tx.query("select id from erp.bank_accounts where organization_id=$1 limit 1", [demo.orgId]);
       await tx.query("insert into erp.title_settlements(organization_id,title_id,settlement_date,bank_account_id,amount,net_amount) values ($1,$2,current_date,$3,40,40)", [demo.orgId, t.rows[0].id, acc.rows[0].id]);
       const s1 = await tx.query("select status, paid_amount, balance from erp.financial_titles where id=$1", [t.rows[0].id]);

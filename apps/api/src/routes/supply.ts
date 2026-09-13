@@ -13,13 +13,13 @@ const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
 const uuid = z.string().uuid();
 const itemSchema = z.object({ product_id: uuid.optional().nullable(), description: z.string().min(1), quantity: dec.default("1"), reference_value: dec.optional().nullable(), amount: dec.optional().nullable(), observation: z.string().optional().nullable(), extra: z.record(z.string(), z.unknown()).optional().nullable() });
-const requestSchema = z.object({ farm_id: uuid, request_date: date, priority: z.enum(["low", "medium", "high"]).default("medium"), request_type: z.enum(["product", "service", "advance", "refund", "daily", "contract", "finished_product"]), authorizer_id: uuid.optional().nullable(), description: z.string().min(1), justification: z.string().min(1), observation: z.string().optional().nullable(), parent_id: uuid.optional().nullable(), items: z.array(itemSchema).min(1) });
+const requestSchema = z.object({ empresa_id: uuid, request_date: date, priority: z.enum(["low", "medium", "high"]).default("medium"), request_type: z.enum(["product", "service", "advance", "refund", "daily", "contract", "finished_product"]), authorizer_id: uuid.optional().nullable(), description: z.string().min(1), justification: z.string().min(1), observation: z.string().optional().nullable(), parent_id: uuid.optional().nullable(), items: z.array(itemSchema).min(1) });
 
 async function loadRequest(ctx: ServiceCtx, id: string, lock = false) {
   if (lock) await ctx.tx.query("select 1 from erp.purchase_requests where id=$1 and organization_id=$2 for update", [id, ctx.orgId]);
-  const r = await ctx.tx.query("select r.*, f.name as farm_name, u.name as requester_name, cu.name as current_responsible_name from erp.purchase_requests r join erp.farms f on f.id=r.farm_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where r.id=$1 and r.organization_id=$2 and r.deleted_at is null" + scopedById(ctx, "r", id).sql, scopedById(ctx, "r", id).params);
+  const r = await ctx.tx.query("select r.*, f.name as empresa_name, u.name as requester_name, cu.name as current_responsible_name from erp.purchase_requests r join erp.empresas f on f.id=r.empresa_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where r.id=$1 and r.organization_id=$2 and r.deleted_at is null" + scopedById(ctx, "r", id).sql, scopedById(ctx, "r", id).params);
   if (!r.rows[0]) throw notFound("Solicitação");
-  return r.rows[0] as Record<string, unknown> & { id: string; status: PurchaseRequestStatus; farm_id: string; farm_name: string; version: number; requester_user_id: string; current_responsible_user_id: string | null; estimated_total: string; approved_total: string | null; selected_quotation_id: string | null; code: string; request_type: string; request_date: string; observation: string | null; status_changed_at: Date };
+  return r.rows[0] as Record<string, unknown> & { id: string; status: PurchaseRequestStatus; empresa_id: string; empresa_name: string; version: number; requester_user_id: string; current_responsible_user_id: string | null; estimated_total: string; approved_total: string | null; selected_quotation_id: string | null; code: string; request_type: string; request_date: string; observation: string | null; status_changed_at: Date };
 }
 /**
  * INVARIANTE DO RESPONSÁVEL DA SOLICITAÇÃO DE COMPRA (PRE-BASE2-02).
@@ -79,11 +79,11 @@ async function addEvent(ctx: ServiceCtx, requestId: string, from: string | null,
  * impossível de rejeitar, presa para sempre no fluxo.
  */
 async function transition(ctx: ServiceCtx, id: string, action: PurchaseAction, justification: string | null, extra: { responsible?: string | null; expectedVersion?: number } = {}) {
-  const r = await ctx.tx.query<{ status: PurchaseRequestStatus; version: number; status_changed_at: Date; requester_user_id: string; farm_id: string }>("select status, version, status_changed_at, requester_user_id, farm_id from erp.purchase_requests where id=$1 and organization_id=$2 and deleted_at is null for update", [id, ctx.orgId]);
+  const r = await ctx.tx.query<{ status: PurchaseRequestStatus; version: number; status_changed_at: Date; requester_user_id: string; empresa_id: string }>("select status, version, status_changed_at, requester_user_id, empresa_id from erp.purchase_requests where id=$1 and organization_id=$2 and deleted_at is null for update", [id, ctx.orgId]);
   const cur = r.rows[0]; if (!cur) throw notFound("Solicitação");
   if (extra.expectedVersion !== undefined && extra.expectedVersion !== cur.version) throw err("CONCURRENCY_CONFLICT", "A solicitação foi alterada por outro usuário; recarregue");
   const next = nextPurchaseStatus(cur.status, action);
-  if (extra.responsible) await exigirResponsavelElegivel(ctx, cur.farm_id, extra.responsible);
+  if (extra.responsible) await exigirResponsavelElegivel(ctx, cur.empresa_id, extra.responsible);
   const responsible = extra.responsible === undefined ? (next === "request" || next === "not_approved" ? cur.requester_user_id : null) : extra.responsible;
   await ctx.tx.query("update erp.purchase_requests set status=$3, status_changed_at=now(), version=version+1, current_responsible_user_id=coalesce($4,current_responsible_user_id) where id=$1 and organization_id=$2", [id, ctx.orgId, next, responsible]);
   await addEvent(ctx, id, cur.status, next, action, justification, cur.status_changed_at);
@@ -96,7 +96,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
   app.get("/supply/requests/counts", async (req) => runService(app, req, "purchase_requests.view", async (ctx) => {
     const f = req.query as Record<string, string>; const where = ["r.organization_id=$1", "r.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
     if (f.scope === "mine") { params.push(ctx.user.id); where.push(`(r.current_responsible_user_id=$${params.length} or r.requester_user_id=$${params.length})`); }
-    if (ctx.farmId) { params.push(ctx.farmId); where.push(`r.farm_id=$${params.length}`); }
+    if (ctx.empresaId) { params.push(ctx.empresaId); where.push(`r.empresa_id=$${params.length}`); }
     where.push(...empresaScope(ctx, "r", params, { ignoreSelected: true }));
     const r = await ctx.tx.query<{ status: PurchaseRequestStatus; n: string }>(`select r.status, count(*)::text n from erp.purchase_requests r where ${where.join(" and ")} group by r.status`, params);
     const by = new Map(r.rows.map((x) => [x.status, Number(x.n)]));
@@ -118,13 +118,13 @@ export default async function supplyRoutes(app: FastifyInstance) {
     if (f.status) { params.push(f.status); where.push(`r.status=$${params.length}`); }
     if (f.request_type) { params.push(f.request_type); where.push(`r.request_type=$${params.length}`); }
     if (f.priority) { params.push(f.priority); where.push(`r.priority=$${params.length}`); }
-    if (f.farm_id) { params.push(f.farm_id); where.push(`r.farm_id=$${params.length}`); } else if (ctx.farmId) { params.push(ctx.farmId); where.push(`r.farm_id=$${params.length}`); }
+    if (f.empresa_id) { params.push(f.empresa_id); where.push(`r.empresa_id=$${params.length}`); } else if (ctx.empresaId) { params.push(ctx.empresaId); where.push(`r.empresa_id=$${params.length}`); }
     where.push(...empresaScope(ctx, "r", params, { ignoreSelected: true }));
     if (f.requester_user_id) { params.push(f.requester_user_id); where.push(`r.requester_user_id=$${params.length}`); }
     if (f.responsible_user_id) { params.push(f.responsible_user_id); where.push(`r.current_responsible_user_id=$${params.length}`); }
     if (f.start_date) { params.push(f.start_date); where.push(`r.request_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`r.request_date<=$${params.length}`); }
     if (f.search) { params.push(`%${f.search}%`); where.push(`(r.code ilike $${params.length} or r.description ilike $${params.length})`); }
-    const wl = wrapListing(`select r.id, r.code, r.request_date, r.created_at, r.description, r.priority, r.request_type, r.status, r.status_changed_at, r.estimated_total, r.approved_total, r.invoice_number, r.updated_at, r.version, f.name as farm_name, u.name as requester_name, cu.name as current_responsible_name, extract(epoch from now()-r.status_changed_at)/3600 as hours_in_status, (select count(*) from erp.purchase_quotations q where q.request_id=r.id)::int as quotation_count, (select max_hours from erp.supply_status_sla s where s.organization_id=r.organization_id and s.status=r.status) as sla_hours, r.invoice_id is not null as launched from erp.purchase_requests r join erp.farms f on f.id=r.farm_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where ${where.join(" and ")} order by r.request_date desc, r.created_at desc`, params, req.query as Record<string, unknown>, q);
+    const wl = wrapListing(`select r.id, r.code, r.request_date, r.created_at, r.description, r.priority, r.request_type, r.status, r.status_changed_at, r.estimated_total, r.approved_total, r.invoice_number, r.updated_at, r.version, f.name as empresa_name, u.name as requester_name, cu.name as current_responsible_name, extract(epoch from now()-r.status_changed_at)/3600 as hours_in_status, (select count(*) from erp.purchase_quotations q where q.request_id=r.id)::int as quotation_count, (select max_hours from erp.supply_status_sla s where s.organization_id=r.organization_id and s.status=r.status) as sla_hours, r.invoice_id is not null as launched from erp.purchase_requests r join erp.empresas f on f.id=r.empresa_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where ${where.join(" and ")} order by r.request_date desc, r.created_at desc`, params, req.query as Record<string, unknown>, q);
     const total = await ctx.tx.query<{ n: string }>(wl.countSql, wl.params);
     const r = await ctx.tx.query(wl.pageSql, wl.params);
     return { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), status_label: PURCHASE_STATUS_LABELS[(x as { status: PurchaseRequestStatus }).status], sla: slaStatus(new Date((x as { status_changed_at: string }).status_changed_at), new Date(), Number((x as { sla_hours: number | null }).sla_hours ?? 0)) })), total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
@@ -141,7 +141,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     return { ...r, status_label: PURCHASE_STATUS_LABELS[r.status], items: items.rows, events: events.rows.map((e) => ({ ...(e as Record<string, unknown>), to_status_label: PURCHASE_STATUS_LABELS[(e as { to_status: PurchaseRequestStatus }).to_status] })), quotations: quotations.rows, approvals: approvals.rows, children: children.rows, attachments: attachments.rows, allowed_actions: allowedPurchaseActions(r.status), can_transfer: canTransfer };
   }));
   app.post("/supply/requests", async (req, reply) => reply.status(201).send(await runService(app, req, "purchase_requests.create", async (ctx) => {
-    const d = requestSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.farm_id);
+    const d = requestSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => {
       const code = await nextCode(ctx.tx, ctx.orgId, "purchase_request");
       const est = d.items.reduce((a, i) => a.plus(D(i.amount ?? D(i.reference_value ?? 0).mul(i.quantity))), D(0));
@@ -155,8 +155,8 @@ export default async function supplyRoutes(app: FastifyInstance) {
       let responsible: string | null = null;
       if (d.authorizer_id) responsible = (await ctx.tx.query<{ user_id: string }>("select user_id from erp.authorizers where id=$1 and organization_id=$2 and is_active", [d.authorizer_id, ctx.orgId])).rows[0]?.user_id ?? null;
       if (!responsible) responsible = (await ctx.tx.query<{ boss_user_id: string }>("select boss_user_id from erp.user_bosses where organization_id=$1 and user_id=$2 limit 1", [ctx.orgId, ctx.user.id])).rows[0]?.boss_user_id ?? null;
-      if (responsible && !(await responsavelElegivel(ctx, d.farm_id, responsible))) responsible = null;
-      const r = await ctx.tx.query<{ id: string }>("insert into erp.purchase_requests(organization_id,farm_id,code,parent_id,request_date,priority,request_type,requester_user_id,authorizer_id,current_responsible_user_id,description,justification,observation,estimated_total) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id", [ctx.orgId, d.farm_id, code, d.parent_id ?? null, d.request_date, d.priority, d.request_type, ctx.user.id, d.authorizer_id ?? null, responsible ?? ctx.user.id, d.description, d.justification, d.observation ?? null, money(est)]);
+      if (responsible && !(await responsavelElegivel(ctx, d.empresa_id, responsible))) responsible = null;
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.purchase_requests(organization_id,empresa_id,code,parent_id,request_date,priority,request_type,requester_user_id,authorizer_id,current_responsible_user_id,description,justification,observation,estimated_total) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id", [ctx.orgId, d.empresa_id, code, d.parent_id ?? null, d.request_date, d.priority, d.request_type, ctx.user.id, d.authorizer_id ?? null, responsible ?? ctx.user.id, d.description, d.justification, d.observation ?? null, money(est)]);
       const id = r.rows[0]!.id;
       for (const [i, it] of d.items.entries()) await ctx.tx.query("insert into erp.purchase_request_items(request_id,product_id,description,quantity,reference_value,amount,observation,extra,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [id, it.product_id ?? null, it.description, it.quantity, it.reference_value ?? null, it.amount ?? null, it.observation ?? null, JSON.stringify(it.extra ?? {}), i]);
       await addEvent(ctx, id, null, "request", "create", d.justification);
@@ -202,10 +202,10 @@ export default async function supplyRoutes(app: FastifyInstance) {
           // `has_permission` também cobre o proprietário, que não tem linha em `role_permissions`).
           const buyer = (await ctx.tx.query<{ user_id: string }>(
             "select m.user_id from erp.organization_members m where m.organization_id=$1 and m.is_active and erp.has_permission($1,m.user_id,'purchase_buy.edit') and erp.has_permission($1,m.user_id,'purchase_requests.view') and erp.tem_acesso_empresa($1,m.user_id,'compras',$2::uuid) order by m.created_at, m.user_id limit 1",
-            [ctx.orgId, r.farm_id])).rows[0]?.user_id ?? null;
+            [ctx.orgId, r.empresa_id])).rows[0]?.user_id ?? null;
           // Sem comprador elegível, o padrão histórico era "fica comigo". Continua sendo — mas só se "comigo"
           // satisfizer a invariante; senão o responsável ATUAL é preservado, em vez de gravar um beco sem saída.
-          const responsible = buyer ?? ((await responsavelElegivel(ctx, r.farm_id, ctx.user.id)) ? ctx.user.id : null);
+          const responsible = buyer ?? ((await responsavelElegivel(ctx, r.empresa_id, ctx.user.id)) ? ctx.user.id : null);
           const next = await transition(ctx, id, action, d.justification, { expectedVersion: d.version, responsible });
           return { id, status: next };
         }
@@ -233,7 +233,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
         const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='expense' and kind='analytic' and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
         const cc = (await ctx.tx.query<{ id: string }>("select id from erp.cost_centers where organization_id=$1 and kind='analytic' and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
         if (total.gt(0) && cat && cc && hasPermission(ctx, "purchase_requests.financial")) {
-          const t = await createTitles(ctx, { farmId: r.farm_id, direction: "payable", number: `SOL-${r.code}`, personId: null, amount: money(total), emissionDate: new Date().toISOString().slice(0, 10), dueDate: ((r as { financial_due_date?: string | null }).financial_due_date) ?? new Date().toISOString().slice(0, 10), note: `Solicitação ${r.code}: ${items.rows.map((i) => i.description).join("; ")}`, apportionment: [{ financialCategoryId: cat.id, costCenterId: cc.id, percentage: "100" }], sourceType: "purchase_requests", sourceId: id });
+          const t = await createTitles(ctx, { empresaId: r.empresa_id, direction: "payable", number: `SOL-${r.code}`, personId: null, amount: money(total), emissionDate: new Date().toISOString().slice(0, 10), dueDate: ((r as { financial_due_date?: string | null }).financial_due_date) ?? new Date().toISOString().slice(0, 10), note: `Solicitação ${r.code}: ${items.rows.map((i) => i.description).join("; ")}`, apportionment: [{ financialCategoryId: cat.id, costCenterId: cc.id, percentage: "100" }], sourceType: "purchase_requests", sourceId: id });
           await addEvent(ctx, id, r.status, r.status, "financial", `Títulos gerados: ${t.ids.length}`);
         }
       }
@@ -242,10 +242,10 @@ export default async function supplyRoutes(app: FastifyInstance) {
     });
   });
   // Transferir responsável (sem mudar status). Não passa por `transition`, então guarda a invariante aqui:
-  // a empresa vem da SOLICITAÇÃO carregada (`r.farm_id`), nunca do cliente.
+  // a empresa vem da SOLICITAÇÃO carregada (`r.empresa_id`), nunca do cliente.
   app.post("/supply/requests/:id/transfer", async (req) => runService(app, req, "purchase_requests.transfer", async (ctx) => {
     const { id } = req.params as { id: string }; const d = z.object({ responsible_user_id: uuid, justification: z.string().min(1) }).parse(req.body); const r = await loadRequest(ctx, id, true);
-    await exigirResponsavelElegivel(ctx, r.farm_id, d.responsible_user_id);
+    await exigirResponsavelElegivel(ctx, r.empresa_id, d.responsible_user_id);
     await ctx.tx.query("update erp.purchase_requests set current_responsible_user_id=$3, version=version+1 where id=$1 and organization_id=$2", [id, ctx.orgId, d.responsible_user_id]);
     await addEvent(ctx, id, r.status, r.status, "transfer", d.justification); return { id };
   }));
@@ -259,7 +259,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
    */
   app.post("/supply/requests/transfer-batch", async (req) => runService(app, req, "purchase_requests.transfer", async (ctx) => {
     const d = z.object({ ids: z.array(uuid).min(1), responsible_user_id: uuid, justification: z.string().min(1) }).parse(req.body);
-    for (const id of d.ids) { const r = await loadRequest(ctx, id, true); await exigirResponsavelElegivel(ctx, r.farm_id, d.responsible_user_id); await ctx.tx.query("update erp.purchase_requests set current_responsible_user_id=$3, version=version+1 where id=$1 and organization_id=$2", [id, ctx.orgId, d.responsible_user_id]); await addEvent(ctx, id, r.status, r.status, "transfer", d.justification); }
+    for (const id of d.ids) { const r = await loadRequest(ctx, id, true); await exigirResponsavelElegivel(ctx, r.empresa_id, d.responsible_user_id); await ctx.tx.query("update erp.purchase_requests set current_responsible_user_id=$3, version=version+1 where id=$1 and organization_id=$2", [id, ctx.orgId, d.responsible_user_id]); await addEvent(ctx, id, r.status, r.status, "transfer", d.justification); }
     return { transferred: d.ids.length };
   }));
   app.post("/supply/requests/:id/comments", async (req) => runService(app, req, "purchase_requests.view", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ text: z.string().min(1) }).parse(req.body); const r = await loadRequest(ctx, id); await addEvent(ctx, id, r.status, r.status, "comment", d.text); return { id }; }));
@@ -297,7 +297,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     const q = await ctx.tx.query("select q.*, p.name as provider_name, p.email as provider_email, p.phone as provider_phone from erp.purchase_quotations q join erp.people p on p.id=q.provider_id where q.request_id=$1 and q.is_selected", [id]);
     const items = await ctx.tx.query("select i.description, i.quantity, qi.unit_price, qi.total from erp.purchase_request_items i left join erp.purchase_quotation_items qi on qi.request_item_id=i.id and qi.quotation_id=$2 where i.request_id=$1 order by i.position", [id, (q.rows[0] as { id?: string } | undefined)?.id ?? null]);
     const lines = items.rows.map((i) => { const x = i as { description: string; quantity: string; unit_price: string | null; total: string | null }; return `- ${x.description} × ${x.quantity}${x.unit_price ? ` @ R$ ${x.unit_price} = R$ ${x.total}` : ""}`; });
-    const text = `Pedido de compra ${r.code} — ${r.farm_name}\nData: ${r.request_date}\n${lines.join("\n")}\nTotal: R$ ${r.approved_total ?? r.estimated_total}\n${r.observation ?? ""}`;
+    const text = `Pedido de compra ${r.code} — ${r.empresa_name}\nData: ${r.request_date}\n${lines.join("\n")}\nTotal: R$ ${r.approved_total ?? r.estimated_total}\n${r.observation ?? ""}`;
     return { code: r.code, provider: q.rows[0] ?? null, items: items.rows, text, whatsapp_url: (q.rows[0] as { provider_phone?: string } | undefined)?.provider_phone ? `https://wa.me/55${String((q.rows[0] as { provider_phone: string }).provider_phone).replace(/\D/g, "")}?text=${encodeURIComponent(text)}` : null, mailto_url: (q.rows[0] as { provider_email?: string } | undefined)?.provider_email ? `mailto:${(q.rows[0] as { provider_email: string }).provider_email}?subject=${encodeURIComponent("Pedido de compra " + r.code)}&body=${encodeURIComponent(text)}` : null };
   }));
   // SLA (parâmetros + relatório por solicitação)

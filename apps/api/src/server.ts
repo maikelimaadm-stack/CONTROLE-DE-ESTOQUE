@@ -4,6 +4,7 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import { createPool, type Db } from "@agro/db";
 import { loadConfig, type Config } from "./config.js";
+import { aliasesLegadosDeResposta, normalizarEntradaEmpresa, normalizarQueryEmpresa } from "./lib/compat-empresa.js";
 import authPlugin from "./plugins/auth.js";
 import errorsPlugin from "./plugins/errors.js";
 import healthRoutes from "./routes/health.js";
@@ -30,7 +31,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   app.decorate("db", db);
   app.decorate("config", config);
   await app.register(helmet, { contentSecurityPolicy: false });
-  await app.register(cors, { origin: config.WEB_ORIGIN.split(",").map((s) => s.trim()), credentials: true, methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type", "X-Org-Id", "X-Farm-Id", "Idempotency-Key"] });
+  await app.register(cors, { origin: config.WEB_ORIGIN.split(",").map((s) => s.trim()), credentials: true, methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type", "X-Org-Id", "X-Empresa-Id", "X-Farm-Id", "Idempotency-Key"] });
   await app.register(rateLimit, { max: config.RATE_LIMIT_MAX, timeWindow: "1 minute" });
   await app.register(errorsPlugin);
   await app.register(authPlugin);
@@ -50,6 +51,17 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(reportRoutes, { prefix: "/api" });
   await app.register(dashboardRoutes, { prefix: "/api" });
   await app.register(plataformaRoutes, { prefix: "/api" });
+  // ------------------------------------------------------------------------------------------------
+  // BORDA DE COMPATIBILIDADE FAZENDA → EMPRESA (PRE-BASE2-03).
+  // Entrada: o corpo e a query chegam podendo falar os dois idiomas e a rota enxerga só o canônico.
+  // Saída: a resposta canônica ganha os apelidos legados, para o web da versão anterior continuar lendo.
+  // Os dois lados ficam em `lib/compat-empresa.ts`; nenhuma rota sabe que a ponte existe.
+  // ------------------------------------------------------------------------------------------------
+  app.addHook("preValidation", async (req) => {
+    if (req.body && typeof req.body === "object") req.body = normalizarEntradaEmpresa(req.body);
+    if (req.query && typeof req.query === "object") req.query = normalizarQueryEmpresa(req.query);
+  });
+  app.addHook("preSerialization", async (_req, _reply, payload) => aliasesLegadosDeResposta(payload));
   app.addHook("onClose", async () => { if (!opts.db) await db.end(); });
   return app;
 }

@@ -4,7 +4,7 @@ import { validation } from "./errors.js";
 /**
  * Filtros genéricos por coluna nas listagens transacionais: `coluna__operador=valor` (mesmo protocolo dos
  * cadastros declarativos, ver packages/shared preferences.ts). A listagem é envolvida numa CTE (`rows`) e o
- * filtro é aplicado sobre as colunas RESULTANTES — inclusive as calculadas/juntadas (ex.: farm_name), por isso
+ * filtro é aplicado sobre as colunas RESULTANTES — inclusive as calculadas/juntadas (ex.: empresa_name), por isso
  * qualquer coluna exibida na tela pode virar chip de filtro sem alterar a consulta de cada rota.
  *
  * Tipos não são conhecidos aqui: comparações numéricas e de data usam conversões tolerantes (texto que não é
