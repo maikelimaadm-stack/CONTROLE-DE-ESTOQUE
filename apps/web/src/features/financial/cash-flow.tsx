@@ -3,15 +3,22 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 import { brl, dateBR, monthStartISO, todayISO } from "@/lib/utils";
-import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Stat, LoadingState, ErrorState } from "@/components/ui";
+import { Button, Card, CardHeader, CardBody, EmptyState, Field, Input, NativeSelect, Stat, LoadingState, ErrorState } from "@/components/ui";
+import { useAuth } from "@/lib/auth";
+import { useTradutor } from "@/lib/i18n";
 import { Lines } from "@/components/charts";
 import { SimpleTable, type Row } from "@/features/docs/shared";
 interface CF { opening_balance: string; closing_balance: string; periods: { period: string; in_amount: string; out_amount: string; balance: string }[]; movements: Row[] | null }
 export function CashFlowPanel() {
+  const { can } = useAuth(); const tr = useTradutor();
+  const podeVerSaldo = can("bank_accounts.view");
   const accounts = useQuery({ queryKey: ["acc-bal"], queryFn: () => api<{ items: Row[]; total_balance: string }>("/api/financial/bank-accounts/balances") });
   const [sel, setSel] = React.useState<string[]>([]); const [f, setF] = React.useState({ period: "monthly", mode: "synthetic", start_date: monthStartISO(), end_date: todayISO() }); const [applied, setApplied] = React.useState<typeof f & { ids: string[] } | null>(null);
   React.useEffect(() => { if (accounts.data && !sel.length) setSel(accounts.data.items.map((a) => String(a["id"]))); }, [accounts.data, sel.length]);
   const q = useQuery({ queryKey: ["cashflow", applied], queryFn: () => api<CF>(`/api/financial/cash-flow${qs({ account_ids: applied!.ids.join(","), period: applied!.period, mode: applied!.mode, start_date: applied!.start_date, end_date: applied!.end_date })}`), enabled: Boolean(applied?.ids.length) });
+  // saldo/fluxo por CONTA é número da organização (o saldo inicial não tem empresa): sem a capacidade de
+  // organização o painel não é montado — em vez de bater numa negação do servidor (MULTI-COMPANY-CONTRACT §7)
+  if (!podeVerSaldo) return <Card><CardHeader title="Fluxo de Caixa (realizado)" /><CardBody><EmptyState title={tr("acesso_empresa.saldo_organizacao")} /></CardBody></Card>;
   return <div className="space-y-3">
     <Card><CardHeader title="Fluxo de Caixa (realizado)" subtitle="Saldo inicial + entradas − saídas por período, por conta bancária" /><CardBody>
       <div className="grid grid-cols-12 gap-2">

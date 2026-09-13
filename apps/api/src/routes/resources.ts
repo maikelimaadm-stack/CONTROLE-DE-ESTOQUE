@@ -4,9 +4,9 @@ import { getResource, RESOURCES, type FieldDef, type ResourceDef } from "@agro/d
 import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, decodeList, relativeDateRange } from "@agro/shared";
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
-import { runService, nextCode, requirePermission } from "../lib/service.js";
+import { runService, nextCode, requirePermission, comPermissaoResolvida } from "../lib/service.js";
 import { notFound, validation } from "../lib/errors.js";
-import { farmAllowed, farmScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
+import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, farmScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
 export function buildSchema(def: ResourceDef, partial = false) {
@@ -103,6 +103,14 @@ export function advancedClause(f: FieldDef, op: string, raw: string, b: SqlBuild
   return op === "ne" ? `(${col} is null or ${col} <> ${b.add(raw)})` : `${col} = ${b.add(raw)}`;
 }
 
+/**
+ * Recorte de empresa do recurso genérico. `farmScoped` = coluna NOT NULL; `farmScopedNulo` = coluna
+ * anulável em que nulo significa "da organização" e por isso continua visível (mesma semântica de
+ * `farmClauseNulo` nos relatórios). Sem nenhum dos dois, o recurso não tem dimensão de empresa —
+ * e o gate de apps/api/test/unit/report-scope.test.ts cobra isso contra o schema real.
+ */
+const escopoDoRecurso = (def: ResourceDef) => ({ ativo: Boolean(def.farmScoped || def.farmScopedNulo), nullable: Boolean(def.farmScopedNulo) });
+
 export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Record<string, unknown>) {
   const q = pageQuerySchema.parse(query);
   const filters = extractFilters(q as Record<string, unknown>);
@@ -112,8 +120,9 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   const where: string[] = [];
   if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(organization_id is null or organization_id = ${b.add(ctx.orgId)})` : `organization_id = ${b.add(ctx.orgId)}`);
   if (def.softDelete) where.push("deleted_at is null");
-  if (def.farmScoped && ctx.farmId && existing.has("farm_id") && !filters["farm_id"]) where.push(`farm_id = ${b.add(ctx.farmId)}`);
-  if (def.farmScoped && ctx.membership.farmIds.length && existing.has("farm_id")) where.push(`farm_id = any(${b.add(ctx.membership.farmIds)}::uuid[])`);
+  const escL = escopoDoRecurso(def);
+  if (escL.ativo && ctx.farmId && existing.has("farm_id") && !filters["farm_id"]) where.push(escL.nullable ? `(farm_id is null or farm_id = ${b.add(ctx.farmId)})` : `farm_id = ${b.add(ctx.farmId)}`);
+  if (escL.ativo && existing.has("farm_id")) where.push(...empresaScopeBuilder(ctx, "farm_id", b, { nullable: escL.nullable }));
   if (q.search) {
     const sf = def.fields.filter((f) => f.search).map((f) => f.name);
     if (sf.length) { const p = b.add(`%${q.search}%`); where.push("(" + sf.map((c) => `${ident(c)}::text ilike ${p}`).join(" or ") + ")"); }
@@ -166,7 +175,8 @@ export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   const orgCond = existing.has("organization_id") ? (def.reference || def.sharedDefaults ? "and (organization_id is null or organization_id=$2)" : "and organization_id=$2") : "";
   const gp: unknown[] = orgCond ? [id, ctx.orgId] : [id];
   // fazenda: registro fora do escopo do membro não é visível (mesma regra da listagem)
-  const farmCond = def.farmScoped && existing.has("farm_id") ? farmScopeSql(ctx, "farm_id", gp, { ignoreSelected: true }) : "";
+  const escG = escopoDoRecurso(def);
+  const farmCond = escG.ativo && existing.has("farm_id") ? farmScopeSql(ctx, "farm_id", gp, { ignoreSelected: true, nullable: escG.nullable }) : "";
   const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 ${orgCond} ${def.softDelete ? "and deleted_at is null" : ""}${farmCond}`, gp);
   if (!r.rows[0]) throw notFound(def.label);
   const row = r.rows[0] as Record<string, unknown>;
@@ -183,13 +193,20 @@ function coerceValue(f: FieldDef, v: unknown): unknown {
 
 export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown) {
   const data = buildSchema(def).parse(body) as Record<string, unknown>;
-  if (def.farmScoped && data["farm_id"] && !farmAllowed(ctx, data["farm_id"] as string)) throw validation("Sem acesso à fazenda informada");
+  const escC = escopoDoRecurso(def);
+  if (escC.ativo) {
+    const pedida = (data["farm_id"] as string | null | undefined) ?? null;
+    // Registro SEM empresa alcança TODAS elas: um congelamento financeiro sem empresa fecha o período da
+    // organização inteira. Quem não enxerga todas as empresas do módulo precisa dizer qual é a empresa.
+    if (escC.nullable && !pedida) exigirEscopoTotalDoModulo(ctx, def.label);
+    await exigirEmpresaDeLancamento(ctx, pedida);
+  }
   const existing = await checkColumns(ctx, def);
   const cols: string[] = []; const vals: unknown[] = [];
   if (existing.has("organization_id")) { cols.push("organization_id"); vals.push(ctx.orgId); }
   if (def.codeEntity && existing.has("code") && !data["code"]) { cols.push("code"); vals.push(await nextCode(ctx.tx, ctx.orgId, def.codeEntity, def.key === "products" ? 5 : 4)); }
   if (existing.has("created_by")) { cols.push("created_by"); vals.push(ctx.user.id); }
-  if (def.farmScoped && existing.has("farm_id") && !data["farm_id"] && ctx.farmId) { cols.push("farm_id"); vals.push(ctx.farmId); }
+  if (escC.ativo && existing.has("farm_id") && !data["farm_id"] && ctx.farmId) { cols.push("farm_id"); vals.push(ctx.farmId); }
   for (const f of def.fields) {
     if (f.readOnly || !(f.name in data) || !existing.has(f.name)) continue;
     const v = coerceValue(f, data[f.name]); if (v === undefined) continue;
@@ -242,7 +259,8 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
   if (def.softDelete) where.push("t.deleted_at is null");
   if (existing.has("is_active") && !extra["include_inactive"]) where.push("t.is_active");
   // autocomplete de recurso por fazenda: só fazendas autorizadas (a fazenda selecionada é filtro do chamador via `extra.farm_id`)
-  if (def.farmScoped && existing.has("farm_id") && ctx.membership.farmIds.length) where.push(`t.farm_id = any(${b.add(ctx.membership.farmIds)}::uuid[])`);
+  const escO = escopoDoRecurso(def);
+  if (escO.ativo && existing.has("farm_id")) where.push(...empresaScopeBuilder(ctx, "t.farm_id", b, { nullable: escO.nullable }));
   if (search) where.push(`${labelExpr} ilike ${b.add(`%${search}%`)}`);
   for (const [k, v] of Object.entries(extra)) if (existing.has(k) && k !== "include_inactive") where.push(`t.${ident(k)} = ${b.add(v)}`);
   const codeSel = existing.has("code") ? ", t.code::text as code" : ", null as code";
@@ -261,8 +279,9 @@ export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, field: s
   if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(t.organization_id is null or t.organization_id = ${b.add(ctx.orgId)})` : `t.organization_id = ${b.add(ctx.orgId)}`);
   if (def.softDelete) where.push("t.deleted_at is null");
   // mesmo recorte da listagem: fazenda ativa e fazendas do vínculo
-  if (def.farmScoped && ctx.farmId && existing.has("farm_id")) where.push(`t.farm_id = ${b.add(ctx.farmId)}`);
-  if (def.farmScoped && ctx.membership.farmIds.length && existing.has("farm_id")) where.push(`t.farm_id = any(${b.add(ctx.membership.farmIds)}::uuid[])`);
+  const escD = escopoDoRecurso(def);
+  if (escD.ativo && ctx.farmId && existing.has("farm_id")) where.push(escD.nullable ? `(t.farm_id is null or t.farm_id = ${b.add(ctx.farmId)})` : `t.farm_id = ${b.add(ctx.farmId)}`);
+  if (escD.ativo && existing.has("farm_id")) where.push(...empresaScopeBuilder(ctx, "t.farm_id", b, { nullable: escD.nullable }));
   const col = `t.${ident(f.name)}`;
   const rdef = f.type === "ref" && f.ref ? getResource(f.ref.resource) : undefined;
   const labelExpr = rdef ? `r.${ident(rdef.labelField)}::text` : f.type === "tags" ? "x.tag" : `${col}::text`;
@@ -278,7 +297,8 @@ export default async function resourceRoutes(app: FastifyInstance) {
   app.get("/resources", async (req) => { const ctx = app.requireCtx(req); return RESOURCES.filter((r) => hasPermission(ctx, `${r.permission}.view`)).map(({ key, label, labelPlural, route, permission }) => ({ key, label, labelPlural, route, permission })); });
   app.get("/resources/:key/definition", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); app.requireCtx(req); return def; });
   app.get("/resources/:key", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => listResource(ctx, def, req.query as Record<string, unknown>)); });
-  app.get("/resources/:key/options", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const { search, ...extra } = req.query as Record<string, string>; return runService(app, req, null, (ctx) => options(ctx, def, search, extra)); });
+  app.get("/resources/:key/options", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const { search, ...extra } = req.query as Record<string, string>; // seletor de um cadastro referenciado: sem permissão própria, mas o ESCOPO é o do recurso apontado
+    return runService(app, req, null, async (ctx) => options(await comPermissaoResolvida(ctx, `${def.permission}.view`), def, search, extra)); });
   app.get("/resources/:key/distinct", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ field: z.string().regex(/^[a-z_][a-z0-9_]*$/), search: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query); return runService(app, req, `${def.permission}.view`, (ctx) => distinctValues(ctx, def, q.field, q.search, q.limit)); });
   app.get("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => getOne(ctx, def, id)); });
   app.post("/resources/:key", async (req, reply) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const r = await runService(app, req, `${def.permission}.create`, (ctx) => createOne(ctx, def, req.body)); return reply.status(201).send(r); });

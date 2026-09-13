@@ -4,13 +4,15 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { brl, todayISO } from "@/lib/utils";
-import { Button, Card, CardHeader, CardBody, Field, Input } from "@/components/ui";
+import { Button, Card, CardHeader, CardBody, EmptyState, Field, Input } from "@/components/ui";
+import { useTradutor } from "@/lib/i18n";
 import { RefSelect } from "@/components/ui/ref-select";
 import { SimpleTable, useCreate, type Row } from "@/features/docs/shared";
 export function OpeningMovementsPanel() {
-  const { can } = useAuth(); const q = useQuery({ queryKey: ["acc-bal"], queryFn: () => api<{ items: Row[]; total_balance: string }>("/api/financial/bank-accounts/balances") });
+  const { can } = useAuth(); const tr = useTradutor(); const q = useQuery({ queryKey: ["acc-bal"], queryFn: () => api<{ items: Row[]; total_balance: string }>("/api/financial/bank-accounts/balances") });
   const [h, setH] = React.useState({ bank_account_id: "", date: todayISO(), amount: "", document: "", note: "" });
   const create = useCreate("/api/financial/opening-movements", () => { setH({ ...h, bank_account_id: "", amount: "" }); void q.refetch(); });
+  if (!can("bank_accounts.view")) return <Card><CardHeader title="Saldo Inicial de Conta Bancária" /><CardBody><EmptyState title={tr("acesso_empresa.saldo_organizacao")} /></CardBody></Card>;
   return <div className="space-y-3">
     {can("opening_movements.create") && <Card><CardHeader title="Saldo Inicial de Conta Bancária" subtitle="Um único lançamento de saldo inicial por conta (categoria 'saldo inicial'). Tentativas duplicadas são rejeitadas." /><CardBody><div className="grid grid-cols-12 gap-3">
       <Field label="Conta" required span={4}><RefSelect resource="bank_accounts" value={h.bank_account_id} onChange={(v) => setH({ ...h, bank_account_id: v ?? "" })} /></Field>

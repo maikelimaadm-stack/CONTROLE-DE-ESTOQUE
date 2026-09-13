@@ -77,7 +77,12 @@ test.describe("UI-02 primitives oficiais", () => {
     await page.goto("/admin/auditoria");
     const row = page.getByTestId("b1-row").first(); await expect(row).toBeVisible(); await row.dblclick();
     const drawer = page.getByTestId("drawer"); await expect(drawer).toBeVisible(); await expect(drawer).toHaveAttribute("role", "dialog"); await expect(drawer).toHaveAttribute("data-side", "right");
-    await expect(drawer.getByRole("heading", { name: "Detalhe do evento" })).toBeVisible(); await expect(drawer.getByText("Depois / metadados")).toBeVisible();
+    await expect(drawer.getByRole("heading", { name: "Detalhe do evento" })).toBeVisible();
+    // Três blocos, não dois: antes/depois passaram a morar nas COLUNAS `before`/`after` de erp.audit_logs, e
+    // o encadeamento `after ?? metadata` do drawer escondia os metadados de todo evento que preenche o depois.
+    for (const bloco of ["Antes", "Depois", "Metadados"]) {
+      await expect(drawer.getByRole("heading", { name: bloco, exact: true })).toBeVisible();
+    }
     await page.keyboard.press("Escape"); await expect(drawer).toBeHidden();
     await row.dblclick(); await expect(drawer).toBeVisible(); await drawer.getByTestId("drawer-close").click(); await expect(drawer).toBeHidden();
     await page.getByRole("textbox", { name: "Entidade" }).fill("zzz-entidade-inexistente"); await page.getByRole("button", { name: "Filtrar" }).click();

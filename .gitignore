@@ -13,3 +13,6 @@ test-results/
 .DS_Store
 supabase/.branches
 supabase/.temp
+
+# cache incremental do TypeScript (artefato de build, nunca versionado)
+*.tsbuildinfo

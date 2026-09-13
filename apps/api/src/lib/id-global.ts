@@ -24,11 +24,11 @@
  * (uma transação que aloca e falha consome o número) nem de ordem temporal perfeita entre registros criados
  * no mesmo instante — ver o contrato.
  */
-import { entidadeIdGlobal, resolverRegistroGlobal } from "@agro/domain";
+import { entidadeIdGlobal, moduloDaPermissao, resolverRegistroGlobal } from "@agro/domain";
 import { DomainError } from "@agro/shared";
-import { colunaDiscriminadora, empresaAutorizada, type EntidadeIdGlobal } from "@erp/plataforma";
-import { autorizacaoEmpresas } from "./empresa.js";
-import { hasPermission, type ServiceCtx } from "./context.js";
+import { colunaDiscriminadora, type EntidadeIdGlobal } from "@erp/plataforma";
+import { empresaPermitida, hasPermission, type ServiceCtx } from "./context.js";
+import { validarEmpresaSelecionada } from "./service.js";
 
 export interface RegistroGlobal {
   idGlobal: number;
@@ -131,13 +131,16 @@ export async function resolverRegistro(ctx: ServiceCtx, idGlobal: number): Promi
   // 3-4. registro fonte vivo: empresa atual, discriminador, existência
   const fonte = await lerRegistroFonte(ctx, entidade, indice.id_entidade);
   if (!fonte) throw naoEncontrado();
-  // 5. autorização pela empresa ATUAL (o índice denormalizado nunca decide isso)
-  if (fonte.empresaId && !empresaAutorizada(autorizacaoEmpresas(ctx), fonte.empresaId)) throw naoEncontrado();
-  // 6. rota + permissão do registro atual, sempre juntas
+  // 5. rota + permissão do registro atual, sempre juntas
   const resolvido = resolverRegistroGlobal(indice.tipo_entidade, indice.id_entidade, fonte.linha);
   if (!resolvido) throw naoEncontrado();
-  // 7. permissão daquele registro
+  // 6. CAPACIDADE: a permissão daquele registro
   if (!hasPermission(ctx, resolvido.permissao)) throw naoEncontrado();
+  // 7. ESCOPO: a empresa ATUAL do registro dentro do MÓDULO DESSA MESMA PERMISSÃO — a mesma fonte funcional
+  //    que a rota canônica usa. O índice denormalizado nunca decide isso.
+  const moduloDoRegistro = moduloDaPermissao(resolvido.permissao);
+  await validarEmpresaSelecionada({ ...ctx, moduloEmpresa: moduloDoRegistro });
+  if (!(await empresaPermitida(ctx, fonte.empresaId, moduloDoRegistro))) throw naoEncontrado();
   // 8. só agora há resposta
   return {
     idGlobal: Number(indice.id_global),

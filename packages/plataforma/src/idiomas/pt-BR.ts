@@ -58,6 +58,20 @@ export const ptBR: Catalogo = {
     "empresa.sem_acesso": "Sem acesso à empresa selecionada.",
     "empresa.escopo_consulta": "\"Todas as empresas\" é um escopo de consulta e não pode ser gravado em um lançamento.",
 
+    // Acesso por empresa e módulo (administração)
+    "acesso_empresa.titulo": "Acesso por Empresa",
+    "acesso_empresa.descricao": "Em quais empresas o usuário atua, módulo a módulo. O perfil define O QUE ele pode fazer; aqui define-se ONDE. É preciso ter as duas coisas.",
+    "acesso_empresa.modulo": "Módulo",
+    "acesso_empresa.modo": "Acesso",
+    "acesso_empresa.modo_todas": "Todas as empresas",
+    "acesso_empresa.modo_selecionadas": "Empresas selecionadas",
+    "acesso_empresa.modo_nenhuma": "Nenhuma empresa",
+    "acesso_empresa.sem_configuracao": "Sem configuração: nenhuma empresa neste módulo.",
+    "acesso_empresa.sem_permissao": "O perfil não tem permissão neste módulo.",
+    "acesso_empresa.selecione_empresas": "Selecione ao menos uma empresa.",
+    "acesso_empresa.saldo_organizacao": "Saldo de conta bancária é um número da organização inteira (o saldo inicial da conta não tem empresa). Ver este painel exige a permissão de contas bancárias.",
+    "acesso_empresa.proprietario": "Proprietário da organização: acesso a todas as empresas em todos os módulos.",
+
     // ID Global
     "id_global.nao_encontrado": "Nenhum registro encontrado para este ID Global.",
     "id_global.buscar": "Buscar por ID Global (#)"

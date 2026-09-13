@@ -2,9 +2,9 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, todayISO } from "@agro/shared";
 import { displayTitleStatus, settlementNet, assertSettlementWithinBalance, recurrenceDates, type TitleStatus } from "@agro/domain";
-import { runService, idempotent, audit, assertPeriodOpen, nextCode } from "../lib/service.js";
+import { runService, idempotent, audit, assertPeriodOpen, nextCode, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { farmAllowed, farmScope, farmScopeSql, scopedById, assertFarmVisible, type ServiceCtx } from "../lib/context.js";
+import { empresaScope, exigirEmpresaDeLancamento, exigirEmpresaVisivel, farmAllowed, farmScope, farmScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
@@ -30,7 +30,7 @@ async function listTitles(ctx: ServiceCtx, direction: "payable" | "receivable", 
   const where = ["t.organization_id=$1", "t.direction=$2", "t.deleted_at is null"]; const params: unknown[] = [ctx.orgId, direction];
   const add = (sql: string, v: unknown) => { params.push(v); where.push(sql.replace("?", `$${params.length}`)); };
   if (f.farm_id) add("t.farm_id=?", f.farm_id); else if (ctx.farmId) add("t.farm_id=?", ctx.farmId);
-  if (ctx.membership.farmIds.length) add("t.farm_id = any(?::uuid[])", ctx.membership.farmIds);
+  where.push(...empresaScope(ctx, "t", params, { ignoreSelected: true }));
   if (f.person_id) add("t.person_id=?", f.person_id);
   if (f.proprietary_id) add("t.proprietary_id=?", f.proprietary_id);
   if (f.document_type) add("t.document_type=?", f.document_type);
@@ -87,7 +87,7 @@ export default async function financialRoutes(app: FastifyInstance) {
     app.get(base, async (req) => runService(app, req, permOf(dir, "view"), (ctx) => listTitles(ctx, dir, req.query as Record<string, unknown>)));
     app.get(`${base}/:id`, async (req) => runService(app, req, permOf(dir, "view"), (ctx) => getTitle(ctx, (req.params as { id: string }).id)));
     app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "create"), async (ctx) => {
-      const d = titleSchema.parse(req.body); if (!farmAllowed(ctx, d.farm_id)) throw validation("Sem acesso à fazenda");
+      const d = titleSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.farm_id);
       if (dir === "receivable" && !d.person_id) throw validation("Cliente obrigatório"); if (dir === "payable" && !d.person_id) throw validation("Fornecedor obrigatório");
       return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
         const lines = d.apportionment.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, areaId: a.area_id ?? null, percentage: a.percentage, amount: a.amount }));
@@ -106,7 +106,7 @@ export default async function financialRoutes(app: FastifyInstance) {
     app.put(`${base}/:id`, async (req) => runService(app, req, permOf(dir, "edit"), async (ctx) => {
       const { id } = req.params as { id: string }; const d = titleSchema.partial().parse(req.body);
       const cur = await ctx.tx.query<{ status: string; paid_amount: string; farm_id: string; emission_date: string; version: number }>("select status, paid_amount, farm_id, emission_date, version from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and deleted_at is null for update", [id, ctx.orgId, dir]);
-      if (!cur.rows[0]) throw notFound("Título"); assertFarmVisible(ctx, cur.rows[0].farm_id, "Título"); if (cur.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Título cancelado");
+      if (!cur.rows[0]) throw notFound("Título"); await exigirEmpresaVisivel(ctx, cur.rows[0].farm_id, "Título"); if (cur.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Título cancelado");
       if (D(cur.rows[0].paid_amount).gt(0) && (d.amount !== undefined || d.discount !== undefined)) throw err("CONFLICT", "Título com baixa: valor não pode ser alterado (cancele a baixa)");
       await assertPeriodOpen(ctx.tx, ctx.orgId, cur.rows[0].farm_id, cur.rows[0].emission_date);
       await ctx.tx.query("update erp.financial_titles set number=coalesce($3,number), title_type_id=coalesce($4,title_type_id), proprietary_id=coalesce($5,proprietary_id), person_id=coalesce($6,person_id), classification=coalesce($7,classification), document_type=coalesce($8,document_type), is_deductible=coalesce($9,is_deductible), is_tax=coalesce($10,is_tax), amount=coalesce($11,amount), discount=coalesce($12,discount), emission_date=coalesce($13,emission_date), due_date=coalesce($14,due_date), note=coalesce($15,note), harvest_id=coalesce($16,harvest_id), appropriation=coalesce($17,appropriation), appropriation_type=coalesce($18,appropriation_type), version=version+1 where id=$1 and organization_id=$2",
@@ -125,7 +125,7 @@ export default async function financialRoutes(app: FastifyInstance) {
     app.post(`${base}/:id/cancel`, async (req) => runService(app, req, permOf(dir, "delete"), async (ctx) => {
       const { id } = req.params as { id: string };
       const cur = await ctx.tx.query<{ status: string; paid_amount: string; farm_id: string; emission_date: string }>("select status, paid_amount, farm_id, emission_date from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 for update", [id, ctx.orgId, dir]);
-      if (!cur.rows[0]) throw notFound("Título"); assertFarmVisible(ctx, cur.rows[0].farm_id, "Título"); if (cur.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado"); if (D(cur.rows[0].paid_amount).gt(0)) throw err("CONFLICT", "Título com baixa: cancele a baixa antes");
+      if (!cur.rows[0]) throw notFound("Título"); await exigirEmpresaVisivel(ctx, cur.rows[0].farm_id, "Título"); if (cur.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado"); if (D(cur.rows[0].paid_amount).gt(0)) throw err("CONFLICT", "Título com baixa: cancele a baixa antes");
       await assertPeriodOpen(ctx.tx, ctx.orgId, cur.rows[0].farm_id, cur.rows[0].emission_date);
       await ctx.tx.query("update erp.financial_titles set status='cancelled', version=version+1 where id=$1", [id]);
       await audit(ctx.tx, ctx, "financial_titles", id, "cancel");
@@ -154,7 +154,7 @@ export default async function financialRoutes(app: FastifyInstance) {
       const { id, sid } = req.params as { id: string; sid: string }; const d = z.object({ reason: z.string().min(1) }).parse(req.body);
       const s = await ctx.tx.query<{ status: string; bank_movement_id: string | null; settlement_date: string; cross_title_id: string | null; amount: string }>("select status, bank_movement_id, settlement_date, cross_title_id, amount from erp.title_settlements where id=$1 and title_id=$2 and organization_id=$3 for update", [sid, id, ctx.orgId]);
       if (!s.rows[0]) throw notFound("Baixa"); if (s.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Baixa já cancelada");
-      const t = await ctx.tx.query<{ farm_id: string }>("select farm_id from erp.financial_titles where id=$1", [id]); assertFarmVisible(ctx, t.rows[0]!.farm_id, "Título"); await assertPeriodOpen(ctx.tx, ctx.orgId, t.rows[0]!.farm_id, s.rows[0].settlement_date);
+      const t = await ctx.tx.query<{ farm_id: string }>("select farm_id from erp.financial_titles where id=$1", [id]); await exigirEmpresaVisivel(ctx, t.rows[0]!.farm_id, "Título"); await assertPeriodOpen(ctx.tx, ctx.orgId, t.rows[0]!.farm_id, s.rows[0].settlement_date);
       await ctx.tx.query("update erp.title_settlements set status='cancelled', cancelled_at=now(), cancelled_by=$2, cancel_reason=$3 where id=$1", [sid, ctx.user.id, d.reason]);
       if (s.rows[0].bank_movement_id) { const shared = await ctx.tx.query<{ n: string }>("select count(*) n from erp.title_settlements where bank_movement_id=$1 and status='confirmed'", [s.rows[0].bank_movement_id]); if (Number(shared.rows[0]!.n) === 0) await ctx.tx.query("update erp.bank_movements set status='cancelled' where id=$1", [s.rows[0].bank_movement_id]); else throw err("CONFLICT", "Movimento bancário compartilhado com outras baixas: cancele todas ou lance ajuste"); }
       if (s.rows[0].cross_title_id) await ctx.tx.query("update erp.title_settlements set status='cancelled', cancelled_at=now(), cancelled_by=$2, cancel_reason=$3 where title_id=$1 and cross_title_id=$4 and status='confirmed'", [s.rows[0].cross_title_id, ctx.user.id, d.reason, id]);
@@ -166,7 +166,7 @@ export default async function financialRoutes(app: FastifyInstance) {
 
   async function settle(ctx: ServiceCtx, titleId: string, d: { settlement_date: string; settlement_kind: "bank_movement" | "cross_settlement" | "advance_compensation"; bank_account_id?: string | null; cross_title_id?: string | null; amount: string; discount?: string; penalty?: string; interest?: string; increase?: string; foreign_amount?: string | null; ptax_rate?: string | null; exchange_adjustment?: string; note?: string | null; movement_mode: "separate" | "single"; shared_movement_id?: string | null }) {
     const t = await ctx.tx.query<{ direction: "payable" | "receivable"; balance: string; status: string; farm_id: string; number: string; person_id: string | null; proprietary_id: string | null; harvest_id: string | null; is_deductible: boolean }>("select direction, balance, status, farm_id, number, person_id, proprietary_id, harvest_id, is_deductible from erp.financial_titles where id=$1 and organization_id=$2 and deleted_at is null for update", [titleId, ctx.orgId]);
-    const title = t.rows[0]; if (!title) throw notFound("Título"); assertFarmVisible(ctx, title.farm_id, "Título"); if (title.status === "cancelled") throw err("ALREADY_CANCELLED", "Título cancelado"); if (title.status === "paid") throw err("ALREADY_CONFIRMED", "Título já baixado");
+    const title = t.rows[0]; if (!title) throw notFound("Título"); await exigirEmpresaVisivel(ctx, title.farm_id, "Título"); if (title.status === "cancelled") throw err("ALREADY_CANCELLED", "Título cancelado"); if (title.status === "paid") throw err("ALREADY_CONFIRMED", "Título já baixado");
     await assertPeriodOpen(ctx.tx, ctx.orgId, title.farm_id, d.settlement_date);
     const input = { amount: d.amount, discount: d.discount ?? "0", penalty: d.penalty ?? "0", interest: d.interest ?? "0", increase: d.increase ?? "0", exchangeAdjustment: d.exchange_adjustment ?? "0" };
     assertSettlementWithinBalance(title.balance, input);
@@ -220,7 +220,7 @@ export default async function financialRoutes(app: FastifyInstance) {
     return { ...r.rows[0], apportionments: app_.rows, settlements: settlements.rows };
   }));
   app.post("/financial/bank-movements", async (req, reply) => reply.status(201).send(await runService(app, req, "bank_movements.create", async (ctx) => {
-    const d = bmSchema.parse(req.body); if (d.farm_id && !farmAllowed(ctx, d.farm_id)) throw validation("Sem acesso à fazenda");
+    const d = bmSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.farm_id);
     if (d.category_type === "internal_transfer" && !d.destination_account_id) throw validation("Conta destino obrigatória em transferência interna");
     if (d.category_type !== "internal_transfer" && !d.apportionment?.length) throw validation("Rateio (categoria/centro de custo) obrigatório");
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
@@ -236,7 +236,7 @@ export default async function financialRoutes(app: FastifyInstance) {
   })));
   app.put("/financial/bank-movements/:id", async (req) => runService(app, req, "bank_movements.edit", async (ctx) => {
     const { id } = req.params as { id: string }; const d = bmSchema.partial().parse(req.body);
-    const cur = await ctx.tx.query<{ source_type: string | null; farm_id: string | null; movement_date: string; status: string }>("select source_type, farm_id, movement_date, status from erp.bank_movements where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!cur.rows[0]) throw notFound("Movimento"); assertFarmVisible(ctx, cur.rows[0].farm_id, "Movimento");
+    const cur = await ctx.tx.query<{ source_type: string | null; farm_id: string | null; movement_date: string; status: string }>("select source_type, farm_id, movement_date, status from erp.bank_movements where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!cur.rows[0]) throw notFound("Movimento"); await exigirEmpresaVisivel(ctx, cur.rows[0].farm_id, "Movimento");
     if (cur.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Movimento cancelado");
     if (cur.rows[0].source_type && cur.rows[0].source_type !== "manual") throw err("CONFLICT", "Movimento gerado por outro documento: altere pela origem");
     await assertPeriodOpen(ctx.tx, ctx.orgId, cur.rows[0].farm_id, cur.rows[0].movement_date);
@@ -247,14 +247,24 @@ export default async function financialRoutes(app: FastifyInstance) {
   }));
   app.post("/financial/bank-movements/:id/cancel", async (req) => runService(app, req, "bank_movements.delete", async (ctx) => {
     const { id } = req.params as { id: string };
-    const cur = await ctx.tx.query<{ status: string; farm_id: string | null; movement_date: string; transfer_pair_id: string | null }>("select status, farm_id, movement_date, transfer_pair_id from erp.bank_movements where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!cur.rows[0]) throw notFound("Movimento"); assertFarmVisible(ctx, cur.rows[0].farm_id, "Movimento"); if (cur.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
+    const cur = await ctx.tx.query<{ status: string; farm_id: string | null; movement_date: string; transfer_pair_id: string | null }>("select status, farm_id, movement_date, transfer_pair_id from erp.bank_movements where id=$1 and organization_id=$2 for update", [id, ctx.orgId]); if (!cur.rows[0]) throw notFound("Movimento"); await exigirEmpresaVisivel(ctx, cur.rows[0].farm_id, "Movimento"); if (cur.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
     const linked = await ctx.tx.query("select 1 from erp.title_settlements where bank_movement_id=$1 and status='confirmed' limit 1", [id]); if (linked.rowCount) throw err("CONFLICT", "Movimento vinculado a baixa de título: cancele a baixa");
     await assertPeriodOpen(ctx.tx, ctx.orgId, cur.rows[0].farm_id, cur.rows[0].movement_date);
     await ctx.tx.query("update erp.bank_movements set status='cancelled', updated_at=now() where id=$1 or id=$2", [id, cur.rows[0].transfer_pair_id ?? id]);
     await audit(ctx.tx, ctx, "bank_movements", id, "cancel");
     return { id, status: "cancelled" };
   }));
-  app.get("/financial/bank-accounts/balances", async (req) => runService(app, req, "bank_movements.view", async (ctx) => {
+  /**
+   * SALDO DE CONTA BANCÁRIA É NÚMERO DA ORGANIZAÇÃO (docs/MULTI-COMPANY-CONTRACT.md §7, "Saldo bancário").
+   *
+   * A conta é cadastro da organização e o `opening_balance` dela não tem empresa — não é decomponível por
+   * empresa sem inventar rateio. Por isso a porta exige CAPACIDADE DE ORGANIZAÇÃO (`bank_accounts.view`), e
+   * não apenas a permissão financeira de empresa: uma permissão company-scoped não pode devolver em silêncio
+   * um agregado que soma movimentos de empresas que o usuário não enxerga. A permissão financeira continua
+   * exigida por cima — ninguém passa a ver o que não via antes.
+   */
+  app.get("/financial/bank-accounts/balances", async (req) => runService(app, req, "bank_accounts.view", async (ctx) => {
+    requirePermission(ctx, "bank_movements.view");
     const r = await ctx.tx.query("select a.id, a.code, a.description, a.type, a.bank_code, a.agency, a.account_number, a.opening_balance, a.credit_limit, b.balance from erp.bank_accounts a join erp.v_bank_account_balances b on b.bank_account_id=a.id where a.organization_id=$1 and a.deleted_at is null and a.is_active order by a.code", [ctx.orgId]);
     return { items: r.rows, total_balance: money(r.rows.reduce((s, x) => s.plus((x as { balance: string }).balance), D(0))) };
   }));
@@ -267,7 +277,10 @@ export default async function financialRoutes(app: FastifyInstance) {
   })));
 
   // ---------- Fluxo bancário (análise) ----------
-  app.get("/financial/cash-flow", async (req) => runService(app, req, "cash_flow.view", async (ctx) => {
+  // Fluxo de caixa por CONTA: parte do `opening_balance` da conta (sem empresa) e acumula saldo — mesmo
+  // contrato do saldo bancário: capacidade de organização + a permissão financeira por cima.
+  app.get("/financial/cash-flow", async (req) => runService(app, req, "bank_accounts.view", async (ctx) => {
+    requirePermission(ctx, "cash_flow.view");
     const q = z.object({ account_ids: z.union([z.string(), z.array(z.string())]).transform((v) => (Array.isArray(v) ? v : v.split(","))), period: z.enum(["daily", "monthly", "yearly"]).default("monthly"), mode: z.enum(["synthetic", "analytic"]).default("synthetic"), start_date: date, end_date: date }).parse(req.query);
     const trunc = q.period === "daily" ? "day" : q.period === "monthly" ? "month" : "year";
     const opening = await ctx.tx.query<{ v: string }>("select coalesce(sum(a.opening_balance),0) + coalesce((select sum(case when m.type='in' then m.amount+m.interest else -(m.amount+m.interest) end) from erp.bank_movements m where m.bank_account_id = any($2::uuid[]) and m.status='confirmed' and m.deleted_at is null and m.movement_date < $3),0) as v from erp.bank_accounts a where a.organization_id=$1 and a.id = any($2::uuid[])", [ctx.orgId, q.account_ids, q.start_date]);
@@ -309,14 +322,20 @@ export default async function financialRoutes(app: FastifyInstance) {
     await ctx.tx.query("update erp.ofx_imports set status=$2 where id=$1", [id, Number(pending.rows[0]!.n) === 0 ? "reconciled" : "reconciling"]);
     return { id: tid, status: "matched", bank_movement_id: mid };
   }));
-  app.get("/financial/ofx-report", async (req) => runService(app, req, "ofx_report.view", async (ctx) => { const r = await ctx.tx.query("select ba.code as account_code, ba.description as account_name, to_char(t.posted_date,'YYYY-MM') as month, count(*)::int as transactions, count(*) filter (where t.status='matched')::int as matched, count(*) filter (where t.status='pending')::int as pending, count(*) filter (where t.status='ignored')::int as ignored from erp.ofx_transactions t join erp.ofx_imports i on i.id=t.import_id join erp.bank_accounts ba on ba.id=i.bank_account_id where t.organization_id=$1 group by 1,2,3 order by 3 desc, 1", [ctx.orgId]); return { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), reconciled: (x as { pending: number }).pending === 0 })) }; }));
+  // Conciliação OFX: `erp.ofx_transactions` é da CONTA (não tem empresa) — agregado de organização.
+  app.get("/financial/ofx-report", async (req) => runService(app, req, "bank_accounts.view", async (ctx) => {
+    requirePermission(ctx, "ofx_report.view"); const r = await ctx.tx.query("select ba.code as account_code, ba.description as account_name, to_char(t.posted_date,'YYYY-MM') as month, count(*)::int as transactions, count(*) filter (where t.status='matched')::int as matched, count(*) filter (where t.status='pending')::int as pending, count(*) filter (where t.status='ignored')::int as ignored from erp.ofx_transactions t join erp.ofx_imports i on i.id=t.import_id join erp.bank_accounts ba on ba.id=i.bank_account_id where t.organization_id=$1 group by 1,2,3 order by 3 desc, 1", [ctx.orgId]); return { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), reconciled: (x as { pending: number }).pending === 0 })) }; }));
 
   // ---------- Previsão orçamentária (valores por categoria × mês) ----------
   app.get("/financial/budget-plannings/:id/values", async (req) => runService(app, req, "budget_plannings.view", async (ctx) => {
     const { id } = req.params as { id: string }; const p = await ctx.tx.query<{ year: number; farm_id: string | null }>("select year, farm_id from erp.budget_plannings where id=$1 and organization_id=$2" + scopedById(ctx, "farm_id", id, { nullable: true }).sql, scopedById(ctx, "farm_id", id, { nullable: true }).params); if (!p.rows[0]) throw notFound();
     const cats = await ctx.tx.query("select id, code, name, nature, kind, parent_id from erp.financial_categories where organization_id=$1 and deleted_at is null and is_active order by code", [ctx.orgId]);
     const vals = await ctx.tx.query<{ financial_category_id: string; month: number; amount: string }>("select financial_category_id, month, amount from erp.budget_planning_values where planning_id=$1", [id]);
-    const prev = await ctx.tx.query<{ financial_category_id: string; total: string }>("select a.financial_category_id, sum(a.amount) total from erp.title_apportionments a join erp.financial_titles t on t.id=a.title_id where t.organization_id=$1 and t.status<>'cancelled' and extract(year from t.due_date)=$2 and ($3::uuid is null or t.farm_id=$3) group by 1", [ctx.orgId, p.rows[0].year - 1, p.rows[0].farm_id]);
+    // O realizado do ano anterior é agregado de TÍTULOS, que têm empresa própria. O filtro pela empresa do
+    // PLANEJAMENTO não basta: planejamento da organização (farm_id nulo) tornava o predicado `true` e somava
+    // o realizado de todas as empresas para quem enxerga uma só. O escopo do módulo entra por cima.
+    const pp: unknown[] = [ctx.orgId, p.rows[0].year - 1, p.rows[0].farm_id];
+    const prev = await ctx.tx.query<{ financial_category_id: string; total: string }>("select a.financial_category_id, sum(a.amount) total from erp.title_apportionments a join erp.financial_titles t on t.id=a.title_id where t.organization_id=$1 and t.status<>'cancelled' and extract(year from t.due_date)=$2 and ($3::uuid is null or t.farm_id=$3)" + farmScopeSql(ctx, "t.farm_id", pp) + " group by 1", pp);
     const prevMap = new Map(prev.rows.map((r) => [r.financial_category_id, r.total]));
     return { year: p.rows[0].year, categories: cats.rows.map((c) => ({ ...(c as Record<string, unknown>), previous_year: prevMap.get((c as { id: string }).id) ?? "0.00", months: Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, vals.rows.find((v) => v.financial_category_id === (c as { id: string }).id && v.month === i + 1)?.amount ?? "0.00"])) })) };
   }));

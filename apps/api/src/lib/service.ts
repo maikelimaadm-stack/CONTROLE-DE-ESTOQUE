@@ -2,14 +2,57 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { withTx, type Tx } from "@agro/db";
 import { createHash } from "node:crypto";
 import { DomainError } from "@agro/shared";
-import { hasPermission, type RequestContext, type ServiceCtx } from "./context.js";
+import { moduloDaPermissao } from "@agro/domain";
+import { escopoDoModulo } from "@erp/plataforma";
+import { empresaPermitida, hasPermission, type RequestContext, type ServiceCtx } from "./context.js";
 import { denied } from "./errors.js";
 
-/** Executa um serviço dentro de transação com contexto de tenant; exige permissão quando informada. */
+/**
+ * Executa um serviço dentro de transação com contexto de tenant.
+ *
+ * A permissão exigida pela rota decide DUAS coisas, da mesma fonte funcional (docs/MULTI-COMPANY-CONTRACT.md §7):
+ *   1. a CAPACIDADE (o perfil permite a ação?);
+ *   2. o MÓDULO DE ESCOPO EMPRESARIAL ativo — de onde os helpers de leitura/escrita tiram "em quais empresas".
+ * O módulo NUNCA vem da URL, do pathname nem do cliente: vem da classificação do recurso em `@agro/domain`.
+ *
+ * `permission = null` é a porta de permissão DINÂMICA (a permissão real só se conhece depois de ler o
+ * registro: tipo de movimentação, direção do título, entidade do ID Global…). Nesse caso o módulo ativo
+ * também fica indefinido, e a rota é obrigada a resolvê-lo com `comModulo`/`resolverPermissaoDoRegistro`
+ * antes de aplicar escopo — um `null` jamais vira "todas as empresas".
+ */
 export async function runService<T>(app: FastifyInstance, req: FastifyRequest, permission: string | null, fn: (ctx: ServiceCtx) => Promise<T>): Promise<T> {
   const ctx = app.requireCtx(req);
   if (permission && !hasPermission(ctx, permission)) throw denied(permission);
-  return withTx(app.db, { orgId: ctx.orgId, userId: ctx.user.id }, (tx) => fn({ ...ctx, tx }));
+  const moduloEmpresa = permission ? moduloDaPermissao(permission) : null;
+  return withTx(app.db, { orgId: ctx.orgId, userId: ctx.user.id, modulo: moduloEmpresa }, async (tx) => {
+    const servico: ServiceCtx = { ...ctx, moduloEmpresa, tx };
+    await validarEmpresaSelecionada(servico);
+    return fn(servico);
+  });
+}
+
+/**
+ * X-Farm-Id é SELEÇÃO de contexto de trabalho, nunca autorização — mas uma seleção EXPLÍCITA que o usuário não
+ * pode usar naquele módulo é erro dele, e não um silêncio: 403. (Registro fora do escopo continua 404; aqui a
+ * empresa veio do próprio cliente, então não há existência a revelar.) Para módulo indefinido (recurso de
+ * organização ou porta de permissão dinâmica) não há o que validar: quem resolve o módulo valida depois.
+ */
+export async function validarEmpresaSelecionada(ctx: ServiceCtx): Promise<void> {
+  if (!ctx.farmId || !ctx.moduloEmpresa || ctx.membership.isOwner) return;
+  const escopo = escopoDoModulo(ctx.membership.escopos, ctx.moduloEmpresa);
+  if (escopo.tipo === "todas") return; // existência na organização já validada no plugin de autenticação
+  if (escopo.tipo === "selecionadas" && (await empresaPermitida(ctx, ctx.farmId))) return;
+  throw new DomainError("PERMISSION_DENIED", "Sem acesso à empresa selecionada neste módulo");
+}
+
+/**
+ * Fixa o módulo empresarial ativo a partir de uma permissão resolvida em tempo de execução (portas de
+ * permissão dinâmica). Devolve um contexto derivado — o original não é mutado.
+ */
+export async function comPermissaoResolvida<C extends ServiceCtx>(ctx: C, permissao: string): Promise<C> {
+  const derivado = { ...ctx, moduloEmpresa: moduloDaPermissao(permissao) };
+  await validarEmpresaSelecionada(derivado);
+  return derivado;
 }
 
 export function requirePermission(ctx: RequestContext, permission: string) {
@@ -41,8 +84,16 @@ export async function nextCode(tx: Tx, orgId: string, entity: string, width = 4)
   return String(r.rows[0]!.n).padStart(width, "0");
 }
 
-export async function audit(tx: Tx, ctx: RequestContext, entity: string, entityId: string, action: string, metadata?: unknown) {
-  await tx.query("insert into erp.audit_logs(organization_id,user_id,entity,entity_id,action,metadata,ip) values ($1,$2,$3,$4,$5,$6,$7)", [ctx.orgId, ctx.user.id, entity, entityId, action, metadata ? JSON.stringify(metadata) : null, ctx.ip ?? null]);
+/**
+ * Registro de auditoria. `erp.audit_logs` sempre teve as colunas `before` e `after`, mas o helper só
+ * preenchia `metadata` — então quem gravava antes/depois (a mudança de escopo de empresa) empilhava as
+ * duas fotos dentro do metadata. Passam a ir para as colunas próprias, que é onde qualquer consulta de
+ * auditoria as procura. O parâmetro é opcional: nenhum caller antigo muda.
+ */
+export async function audit(tx: Tx, ctx: RequestContext, entity: string, entityId: string, action: string, metadata?: unknown, mudanca?: { before?: unknown; after?: unknown }) {
+  const json = (v: unknown) => (v === undefined || v === null ? null : JSON.stringify(v));
+  await tx.query("insert into erp.audit_logs(organization_id,user_id,entity,entity_id,action,metadata,before,after,ip) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+    [ctx.orgId, ctx.user.id, entity, entityId, action, json(metadata), json(mudanca?.before), json(mudanca?.after), ctx.ip ?? null]);
 }
 
 export async function assertPeriodOpen(tx: Tx, orgId: string, farmId: string | null, date: string) {

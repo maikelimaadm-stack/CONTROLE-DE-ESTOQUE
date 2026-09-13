@@ -1,76 +1,79 @@
 /**
- * PONTE ENTRE O CONTRATO DE EMPRESA E O ESCOPO LEGADO (docs/MULTI-COMPANY-CONTRACT.md).
+ * PONTE ENTRE O CONTRATO DE EMPRESA E A INFRAESTRUTURA ATUAL (docs/MULTI-COMPANY-CONTRACT.md).
  *
- * O contrato de empresa vive em `@erp/plataforma` (puro, testável, neutro de nicho) e é EXPLÍCITO:
- * `{ modo: "todas" }` ou `{ modo: "selecionadas"; empresaIds }`. "Autorizado a todas" e "autorizado a
- * nenhuma" são estados distintos no núcleo — não existe lista vazia ambígua.
+ * O contrato vive em `@erp/plataforma` (puro, sem banco, neutro de nicho). Aqui ele encosta no banco, onde a
+ * Empresa ainda é materializada pela infraestrutura herdada do primeiro segmento atendido (`erp.farms`,
+ * coluna `farm_id`, cabeçalho `X-Farm-Id`). Só a NOMENCLATURA é legada: a AUTORIDADE, desde PRE-BASE2-02, é
+ * o escopo por módulo (`erp.membro_escopos_empresa` / `erp.membro_empresas`) — nunca mais `erp.member_farms`.
  *
- * A infraestrutura herdada do primeiro segmento atendido (tabela `farms`, vínculo `member_farms`, cabeçalho
- * `X-Farm-Id`) ainda usa a convenção antiga, na qual `membership.farmIds = []` significa "todas as empresas
- * da organização". ESTA PONTE É O ÚNICO LUGAR ONDE ESSA CONVERSÃO ACONTECE — o núcleo nunca a enxerga.
- *
- * A AUTORIDADE de autorização continua sendo `ctx.membership.farmIds`: nada aqui afrouxa o escopo, e a
- * equivalência com `allowedFarms` é testada em apps/api/test/unit/empresa-bridge.test.ts e na matriz
- * cross-empresa de integração.
+ * A tradução da convenção antiga ("lista vazia = todas") sobrevive apenas na BORDA ADMINISTRATIVA, para
+ * clientes que ainda enviam `farm_ids` (apps/api/src/routes/admin.ts). Nenhuma regra de runtime a usa.
  */
-import {
-  empresasSelecionadas, resolverEscopoEmpresa, selecionarEmpresaDoLancamento, TODAS_AS_EMPRESAS,
-  type AutorizacaoEmpresas, type EscopoEmpresaResolvido, type IdEmpresa, type SelecaoEmpresa
-} from "@erp/plataforma";
-import type { RequestContext, ServiceCtx } from "./context.js";
+import { selecionarEmpresaDoLancamento, type IdEmpresa, type SelecaoEmpresa } from "@erp/plataforma";
+import { empresaScopeSql, moduloAtivo, type ServiceCtx } from "./context.js";
+
+/** Empresa selecionada no contexto de trabalho (X-Farm-Id). Seleção, nunca autorização. */
+export const empresaSelecionada = (ctx: ServiceCtx): IdEmpresa | null => ctx.farmId;
 
 /**
- * Converte a autorização LEGADA (lista de fazendas, vazia = todas) para o contrato explícito.
- * Único ponto de tradução; a partir daqui só existe `modo: "todas" | "selecionadas"`.
- */
-export const autorizacaoDeFarmIdsLegado = (farmIds: readonly IdEmpresa[]): AutorizacaoEmpresas =>
-  farmIds.length === 0 ? TODAS_AS_EMPRESAS : empresasSelecionadas(farmIds);
-
-/** Autorização de empresas do usuário no formato do contrato. */
-export const autorizacaoEmpresas = (ctx: RequestContext): AutorizacaoEmpresas =>
-  autorizacaoDeFarmIdsLegado(ctx.membership.farmIds);
-
-/** Empresa selecionada no contexto de trabalho. Seleção, nunca autorização. */
-export const empresaSelecionada = (ctx: RequestContext): IdEmpresa | null => ctx.farmId;
-
-/**
- * Escopo de empresas para leitura. `empresaIds === null` = sem recorte (todas as empresas da organização);
- * o isolamento por organização continua vindo do tenant + RLS.
- */
-export function escopoEmpresa(ctx: RequestContext, pedidas?: readonly IdEmpresa[] | string | null): EscopoEmpresaResolvido {
-  return resolverEscopoEmpresa(autorizacaoEmpresas(ctx), { pedidas: pedidas ?? null, selecionada: empresaSelecionada(ctx) });
-}
-
-/**
- * EMPRESAS DISPONÍVEIS NA ORGANIZAÇÃO — FONTE SERVER-SIDE.
+ * EMPRESAS DISPONÍVEIS PARA O MEMBRO NAQUELE MÓDULO — fonte server-side.
  *
- * A regra pura de seleção (`selecionarEmpresaDoLancamento`) exige a lista de empresas que realmente existem
- * para o tenant atual; ela não pode ser enviada pelo cliente. Aqui é onde a Empresa ainda é materializada
- * pela infraestrutura herdada (`erp.farms`) — a API conhece a materialização, o núcleo não.
+ * Interseção resolvida no banco: empresas da organização atual × não excluídas (e ativas, quando a operação
+ * exige) × escopo do membro NAQUELE MÓDULO. É a lista que a regra pura de seleção exige — limitada às
+ * empresas da organização e usada em fluxos de escrita/seleção. O recorte de LEITURA não passa por aqui:
+ * é SQL puro (`empresaScope`), sem materializar lista alguma.
  *
- * `somenteAtivas` (padrão) é a política para LANÇAMENTO: não se lança em empresa inativa. Uma consulta
- * histórica que precise enxergar empresa desativada pede `{ somenteAtivas: false }` — mas nunca empresa
- * excluída: `deleted_at` é exclusão, não desativação.
+ * `somenteAtivas` (padrão) é a política de LANÇAMENTO: não se lança em empresa inativa. Consulta histórica
+ * pode pedir `{ somenteAtivas: false }`; empresa excluída, nunca.
  */
-export async function empresasDisponiveis(ctx: ServiceCtx, opts: { somenteAtivas?: boolean } = {}): Promise<IdEmpresa[]> {
+export async function empresasDisponiveis(ctx: ServiceCtx, opts: { somenteAtivas?: boolean; modulo?: string | null } = {}): Promise<IdEmpresa[]> {
   const ativas = opts.somenteAtivas !== false;
+  const params: unknown[] = [ctx.orgId];
+  const escopo = empresaScopeSql(ctx, "f.id", params, {
+    ignoreSelected: true,
+    modulo: opts.modulo !== undefined ? opts.modulo : moduloAtivo(ctx)
+  });
   const r = await ctx.tx.query<{ id: string }>(
-    `select id from erp.farms where organization_id=$1 and deleted_at is null${ativas ? " and is_active" : ""} order by code`,
-    [ctx.orgId]);
+    `select f.id from erp.farms f where f.organization_id=$1 and f.deleted_at is null${ativas ? " and f.is_active" : ""}${escopo} order by f.code`,
+    params);
   return r.rows.map((f) => f.id);
 }
 
 /**
- * Seleção da empresa de um LANÇAMENTO, já cruzada com a lista server-side.
+ * Seleção da empresa de um LANÇAMENTO, já cruzada com a lista server-side do módulo ativo.
  *
- * A empresa pedida pelo cliente é PEDIDO, nunca autorização: mesmo no modo "todas" ela só passa se estiver
- * entre as empresas da organização atual. É o único caminho aprovado para decidir a empresa de uma escrita.
+ * A empresa pedida pelo cliente é PEDIDO, nunca autorização: só passa se estiver entre as empresas
+ * disponíveis do membro NAQUELE MÓDULO — tê-la autorizada em outro módulo não vale.
  */
 export async function selecionarEmpresaParaLancamento(
   ctx: ServiceCtx,
   pedida?: IdEmpresa | null,
-  opts: { somenteAtivas?: boolean } = {}
+  opts: { somenteAtivas?: boolean; modulo?: string | null } = {}
 ): Promise<SelecaoEmpresa> {
   const disponiveis = await empresasDisponiveis(ctx, opts);
-  return selecionarEmpresaDoLancamento(autorizacaoEmpresas(ctx), { disponiveis, pedida: pedida ?? null });
+  // a autorização já foi aplicada ao montar `disponiveis`; a regra pura decide entre
+  // escolhida / automática / obrigatória / indisponível / recusada
+  return selecionarEmpresaDoLancamento({ modo: "selecionadas", empresaIds: disponiveis }, { disponiveis, pedida: pedida ?? null });
+}
+
+/**
+ * Empresas que o membro enxerga em ALGUM módulo — o seletor de contexto de trabalho (X-Farm-Id).
+ *
+ * É a UNIÃO dos escopos, não a autorização de nenhuma tela: poder selecionar a empresa não dá acesso a
+ * módulo algum nela. Cada porta continua exigindo o escopo do SEU módulo.
+ */
+export async function empresasVisiveisNaOrganizacao(ctx: ServiceCtx): Promise<{ id: string; code: number; name: string }[]> {
+  const base = "select f.id, f.code, f.name from erp.farms f where f.organization_id=$1 and f.deleted_at is null and f.is_active";
+  if (ctx.membership.isOwner) {
+    return (await ctx.tx.query<{ id: string; code: number; name: string }>(`${base} order by f.code`, [ctx.orgId])).rows;
+  }
+  const r = await ctx.tx.query<{ id: string; code: number; name: string }>(
+    `${base} and exists (
+       select 1 from erp.membro_escopos_empresa e
+       where e.organization_id=$1 and e.membro_id=$2
+         and (e.modo='todas' or exists (
+           select 1 from erp.membro_empresas me
+           where me.organization_id=$1 and me.membro_id=$2 and me.modulo=e.modulo and me.empresa_id=f.id))
+     ) order by f.code`, [ctx.orgId, ctx.membership.memberId]);
+  return r.rows;
 }

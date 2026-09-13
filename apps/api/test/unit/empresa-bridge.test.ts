@@ -1,72 +1,87 @@
 import { describe, it, expect } from "vitest";
-import { empresaAutorizada, resolverEscopoEmpresa } from "@erp/plataforma";
-import { autorizacaoDeFarmIdsLegado, autorizacaoEmpresas, escopoEmpresa } from "../../src/lib/empresa.js";
-import { allowedFarms, farmAllowed, type RequestContext } from "../../src/lib/context.js";
+import { autorizacaoPorModulo, AUTORIZACAO_PROPRIETARIO } from "@erp/plataforma";
+import { CHAVES_MODULO_EMPRESA } from "@agro/domain";
+import { deFarmIdsLegado, paraFarmIdsLegado, validarEscopos } from "../../src/lib/escopo-admin.js";
+import { empresaScope, empresaScopeAgregado, type RequestContext } from "../../src/lib/context.js";
 
 /**
- * MATRIZ A — a ponte legado → contrato explícito.
+ * MATRIZ A — a ponte do formato legado (`farm_ids`) para o modelo canônico por módulo, e a forma da cláusula
+ * de escopo que substituiu o array em memória.
  *
- * A convenção antiga (`membership.farmIds = []` significa "todas as empresas") existe apenas aqui. O que
- * precisa estar provado: (1) a tradução é exata nos dois sentidos; (2) o resultado continua idêntico ao
- * escopo legado que a API aplica hoje — a correção de contrato não pode afrouxar nem apertar nada.
+ * O que precisa estar provado: (1) a tradução preserva EXATAMENTE a semântica antiga (vazio = todas; lista =
+ * aquelas empresas, em todos os módulos); (2) a volta só acontece quando é honesta; (3) a cláusula SQL diz
+ * "todas" sem recorte, "nenhuma" com `false` e "selecionadas" com um semi-join — nunca uma lista de uuids
+ * montada pela aplicação.
  */
 const A = "11111111-1111-4111-8111-111111111111";
 const B = "22222222-2222-4222-8222-222222222222";
-const C = "33333333-3333-4333-8333-333333333333";
 
-const ctx = (farmIds: string[], farmId: string | null = null): RequestContext => ({
+const ctx = (modos: [string, "todas" | "selecionadas"][], farmId: string | null = null, modulo: string | null = "estoque", owner = false): RequestContext => ({
   user: { id: "u", email: "u@x", name: "U" },
   orgId: "org", farmId,
-  membership: { orgId: "org", orgName: "demo", roleId: null, isOwner: false, farmIds },
-  permissions: new Set<string>()
+  membership: { orgId: "org", orgName: "demo", roleId: null, isOwner: owner, memberId: "m", escopos: owner ? AUTORIZACAO_PROPRIETARIO : autorizacaoPorModulo(modos) },
+  permissions: new Set<string>(),
+  moduloEmpresa: modulo
 });
 
-describe("tradução da autorização legada", () => {
-  it("lista vazia (convenção legada) vira modo \"todas\"", () => {
-    expect(autorizacaoDeFarmIdsLegado([])).toEqual({ modo: "todas" });
-    expect(autorizacaoEmpresas(ctx([]))).toEqual({ modo: "todas" });
+describe("ponte do formato legado farm_ids", () => {
+  it("lista vazia (convenção legada) vira modo \"todas\" em TODOS os módulos", () => {
+    const escopos = deFarmIdsLegado([]);
+    expect(escopos.map((e) => e.modulo).sort()).toEqual([...CHAVES_MODULO_EMPRESA].sort());
+    expect(escopos.every((e) => e.modo === "todas" && e.empresas.length === 0)).toBe(true);
   });
-  it("lista com empresas vira modo \"selecionadas\" com exatamente aquelas empresas", () => {
-    expect(autorizacaoEmpresas(ctx([A, B]))).toEqual({ modo: "selecionadas", empresaIds: [A, B] });
-    expect(empresaAutorizada(autorizacaoEmpresas(ctx([A])), B)).toBe(false);
-    expect(empresaAutorizada(autorizacaoEmpresas(ctx([A])), A)).toBe(true);
+  it("lista com empresas vira \"selecionadas\" com exatamente aquelas empresas", () => {
+    const escopos = deFarmIdsLegado([A, B]);
+    expect(escopos.every((e) => e.modo === "selecionadas")).toBe(true);
+    expect(escopos[0]!.empresas).toEqual([A, B]);
   });
-  it("\"autorizado a nenhuma\" só é expressável no contrato — a ponte nunca o produz por acidente", () => {
-    expect(resolverEscopoEmpresa({ modo: "selecionadas", empresaIds: [] }).empresaIds).toEqual([]);
-    expect(resolverEscopoEmpresa(autorizacaoDeFarmIdsLegado([])).empresaIds).toBeNull();
+  it("a volta ao formato legado só acontece quando ele não mente", () => {
+    expect(paraFarmIdsLegado(deFarmIdsLegado([]))).toEqual([]);
+    expect(paraFarmIdsLegado(deFarmIdsLegado([A, B]))).toEqual([A, B].sort());
+    // configuração que o formato antigo não sabe representar → null (nunca uma lista aproximada)
+    const misto = deFarmIdsLegado([A]).map((e, i) => (i === 0 ? { ...e, modo: "todas" as const, empresas: [] } : e));
+    expect(paraFarmIdsLegado(misto)).toBeNull();
+    expect(paraFarmIdsLegado(deFarmIdsLegado([A]).slice(1))).toBeNull(); // módulo faltando = fail-closed, não "todas"
+  });
+  it("entrada inválida é recusada na borda", () => {
+    expect(() => validarEscopos([{ modulo: "inicio", modo: "todas", empresas: [] }])).toThrowError();
+    expect(() => validarEscopos([{ modulo: "estoque", modo: "todas", empresas: [A] }])).toThrowError();
+    expect(() => validarEscopos([{ modulo: "estoque", modo: "todas", empresas: [] }, { modulo: "estoque", modo: "selecionadas", empresas: [A] }])).toThrowError();
   });
 });
 
-describe("equivalência com o escopo legado da API", () => {
-  const casos: { farmIds: string[]; selecionada: string | null; pedidas?: string[] | string | null }[] = [
-    { farmIds: [], selecionada: null },
-    { farmIds: [], selecionada: A },
-    { farmIds: [A, B], selecionada: null },
-    { farmIds: [A, B], selecionada: A },
-    { farmIds: [A], selecionada: null, pedidas: [B] },
-    { farmIds: [A, B], selecionada: null, pedidas: [B, C] },
-    { farmIds: [], selecionada: null, pedidas: `${A},${B}` },
-    { farmIds: [A, B], selecionada: B, pedidas: null }
-  ];
-  /** Réplica local do escopo legado (allowedFarms + recorte da seleção/pedido), como a API o aplica hoje. */
-  const legado = (farmIds: string[], selecionada: string | null, pedidas?: string[] | string | null): string[] | null => {
-    const req = pedidas == null ? [] : Array.isArray(pedidas) ? pedidas : pedidas.split(",");
-    const alvo = req.filter(Boolean).length ? req.filter(Boolean) : selecionada ? [selecionada] : null;
-    if (!alvo) return farmIds.length ? farmIds : null;
-    return farmIds.length ? alvo.filter((f) => farmIds.includes(f)) : alvo;
-  };
-  it.each(casos)("mesma saída do escopo legado para %o", (c) => {
-    expect(escopoEmpresa(ctx(c.farmIds, c.selecionada), c.pedidas ?? null).empresaIds)
-      .toEqual(legado(c.farmIds, c.selecionada, c.pedidas ?? null));
+describe("forma da cláusula de escopo (substituta do array em memória)", () => {
+  it("modo todas: nenhum recorte de autorização", () => {
+    expect(empresaScope(ctx([["estoque", "todas"]]), "m", [])).toEqual([]);
   });
-  it("allowedFarms e farmAllowed continuam concordando com o contrato", () => {
-    expect(allowedFarms(ctx([]))).toBeNull();
-    expect(allowedFarms(ctx([A, B]))).toEqual([A, B]);
-    for (const farmIds of [[], [A], [A, B]]) {
-      for (const empresa of [A, B, C, null]) {
-        expect(farmAllowed(ctx(farmIds), empresa), `${farmIds}/${empresa}`)
-          .toBe(empresaAutorizada(autorizacaoEmpresas(ctx(farmIds)), empresa));
-      }
-    }
+  it("proprietário: nenhum recorte, em qualquer módulo", () => {
+    expect(empresaScope(ctx([], null, "financeiro", true), "m", [])).toEqual([]);
+  });
+  it("módulo sem configuração: fail-closed (false), nunca \"todas\"", () => {
+    expect(empresaScope(ctx([["financeiro", "todas"]]), "m", [])).toEqual(["false"]);
+  });
+  it("modo selecionadas: semi-join no banco, sem lista de uuids nos parâmetros", () => {
+    const params: unknown[] = [];
+    const [clausula] = empresaScope(ctx([["estoque", "selecionadas"]]), "m", params);
+    expect(clausula).toContain("exists (select 1 from erp.membro_empresas");
+    expect(params).toEqual(["org", "m", "estoque"]);
+    expect(params.some((p) => Array.isArray(p))).toBe(false);
+  });
+  it("empresa selecionada (X-Farm-Id) entra como recorte, somada à autorização", () => {
+    const params: unknown[] = [];
+    const clausulas = empresaScope(ctx([["estoque", "selecionadas"]], A), "m", params);
+    expect(clausulas[0]).toBe("m.farm_id=$1");
+    expect(params[0]).toBe(A);
+    expect(clausulas).toHaveLength(2);
+  });
+  it("agregados: o pedido do usuário recorta, a autorização entra por cima", () => {
+    const params: unknown[] = [];
+    const sql = empresaScopeAgregado(ctx([["estoque", "selecionadas"]]), "e.farm_id", params, [B]);
+    expect(sql).toContain("e.farm_id = any($1::uuid[])");
+    expect(sql).toContain("erp.membro_empresas");
+    expect(params[0]).toEqual([B]);
+  });
+  it("registro sem empresa é da organização e continua visível quando nullable", () => {
+    expect(empresaScope(ctx([["financeiro", "todas"]]), "m", [], { nullable: true })).toEqual(["m.farm_id is null"]);
   });
 });

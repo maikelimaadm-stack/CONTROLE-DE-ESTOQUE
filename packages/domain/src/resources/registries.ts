@@ -181,7 +181,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "position", label: "Ordem", type: "integer", required: true, default: 0, list: true, span: 2 }, active(), REF("parent_id", "Antecessor", "document_types", { span: 5 })]
   },
   {
-    key: "documents", label: "Documento", labelPlural: "Documentos", table: "documents", permission: "documents", labelField: "title", route: "/documentos", softDelete: true, farmScoped: true,
+    key: "documents", label: "Documento", labelPlural: "Documentos", table: "documents", permission: "documents", labelField: "title", route: "/documentos", softDelete: true, farmScopedNulo: true,
     fields: [
       REF("farm_id", "Fazenda", "farms", { list: true, filter: true, span: 4 }), REF("document_type_id", "Tipo", "document_types", { required: true, list: true, filter: true, span: 4 }),
       T("title", "Título", { required: true, list: true, search: true, span: 4 }), D("issue_date", "Emissão", { list: true, span: 3 }), D("expiration_date", "Vencimento", { list: true, filter: true, span: 3 }),
@@ -332,7 +332,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }), D("date", "Data", { required: true, list: true, filter: true, span: 3 }), { name: "millimeters", label: "Milímetros (mm)", type: "quantity", required: true, list: true, span: 3 }, T("note", "Observação", { span: 12 })]
   },
   {
-    key: "financial_freezes", label: "Congelamento Financeiro", labelPlural: "Congelamentos Financeiros", table: "financial_freezes", permission: "financial_freezes", labelField: "year", route: "/financeiro/congelamentos",
+    key: "financial_freezes", label: "Congelamento Financeiro", labelPlural: "Congelamentos Financeiros", table: "financial_freezes", permission: "financial_freezes", labelField: "year", route: "/financeiro/congelamentos", farmScopedNulo: true,
     fields: [REF("farm_id", "Fazenda (vazio = todas)", "farms", { list: true, span: 4 }), { name: "month", label: "Mês", type: "integer", required: true, min: 1, max: 12, list: true, span: 2 }, { name: "year", label: "Ano", type: "integer", required: true, list: true, span: 2 }, B("is_frozen", "Congelado?", { default: true, list: true, span: 2 })]
   },
   {
@@ -368,7 +368,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("farm_id", "Fazenda", "farms", { required: true, list: true, filter: true, span: 4 }), REF("harvest_id", "Safra", "harvests", { list: true, span: 3 }), D("planning_date", "Data", { required: true, list: true, span: 3 }), T("description", "Descrição", { required: true, list: true, search: true, span: 12 }), { name: "values", label: "Metas (JSON: categoria → quantidade/peso/receita)", type: "json", span: 12 }]
   },
   {
-    key: "budget_plannings", label: "Previsão Orçamentária", labelPlural: "Previsões Orçamentárias", table: "budget_plannings", permission: "budget_plannings", labelField: "year", route: "/financeiro/previsao-orcamentaria", softDelete: true, codeEntity: "budget_planning",
+    key: "budget_plannings", label: "Previsão Orçamentária", labelPlural: "Previsões Orçamentárias", table: "budget_plannings", permission: "budget_plannings", labelField: "year", route: "/financeiro/previsao-orcamentaria", softDelete: true, codeEntity: "budget_planning", farmScopedNulo: true,
     fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("farm_id", "Fazenda", "farms", { list: true, filter: true, span: 4 }), D("planning_date", "Data", { required: true, list: true, span: 3 }), { name: "year", label: "Ano", type: "integer", required: true, list: true, filter: true, span: 3 }]
   },
   {

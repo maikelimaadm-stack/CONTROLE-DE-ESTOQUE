@@ -4,7 +4,7 @@ import { D, money, isISODate } from "@agro/shared";
 import { nextPurchaseStatus, allowedPurchaseActions, authorizerCanApprove, PURCHASE_STATUS_LABELS, slaStatus, type PurchaseRequestStatus, type PurchaseAction } from "@agro/domain";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
-import { farmAllowed, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
+import { empresaScope, exigirEmpresaDeLancamento, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { createTitles } from "../services/financial-core.js";
@@ -21,15 +21,69 @@ async function loadRequest(ctx: ServiceCtx, id: string, lock = false) {
   if (!r.rows[0]) throw notFound("Solicitação");
   return r.rows[0] as Record<string, unknown> & { id: string; status: PurchaseRequestStatus; farm_id: string; farm_name: string; version: number; requester_user_id: string; current_responsible_user_id: string | null; estimated_total: string; approved_total: string | null; selected_quotation_id: string | null; code: string; request_type: string; request_date: string; observation: string | null; status_changed_at: Date };
 }
+/**
+ * INVARIANTE DO RESPONSÁVEL DA SOLICITAÇÃO DE COMPRA (PRE-BASE2-02).
+ *
+ * `current_responsible_user_id` referenciava apenas `erp.users(id)`, que é a tabela GLOBAL de identidades:
+ * existir nela não prova tenant nenhum. Qualquer porta que aceitasse um UUID do cliente e o gravasse
+ * estava, na prática, escolhendo um usuário de QUALQUER organização — e `loadRequest` devolve
+ * `current_responsible_name` com um `left join erp.users` sem filtro de organização, então o nome do
+ * usuário escolhido voltava no corpo da resposta: um ORÁCULO DE IDENTIDADE entre tenants.
+ *
+ * Ser responsável por uma solicitação não é "existir": é poder ABRIR aquela solicitação. Isso são quatro
+ * coisas ao mesmo tempo, e a ausência de qualquer uma torna a atribuição um beco sem saída:
+ *
+ *   (A) mesma organização da solicitação;
+ *   (B) vínculo ATIVO nessa organização;
+ *   (C) capacidade `purchase_requests.view`;
+ *   (D) acesso ao módulo `compras` NA EMPRESA da solicitação.
+ *
+ * As quatro já têm dono no banco e este helper não reimplementa nenhuma: `erp.has_permission` decide
+ * (A)+(B)+(C) e `erp.tem_acesso_empresa` decide (D). Reescrever aqui `role_permissions + is_owner +
+ * membro_escopos_empresa + membro_empresas` criaria um QUARTO modelo de autorização que envelheceria em
+ * ritmo próprio — o defeito que a PRE-BASE2-02 existe para não repetir. Uma verdade só.
+ */
+async function responsavelElegivel(ctx: ServiceCtx, empresaId: string, usuarioId: string): Promise<boolean> {
+  const r = await ctx.tx.query<{ ok: boolean }>(
+    "select erp.has_permission($1,$2,'purchase_requests.view') and erp.tem_acesso_empresa($1,$2,'compras',$3::uuid) as ok",
+    [ctx.orgId, usuarioId, empresaId]);
+  return r.rows[0]?.ok === true;
+}
+
+/**
+ * Guarda das atribuições EXPLÍCITAS (o cliente mandou o UUID). Recusa genericamente, de propósito.
+ *
+ * UUID inexistente, usuário de outro tenant, membro inativo, membro sem `purchase_requests.view` e membro
+ * sem acesso àquela empresa respondem todos a MESMA coisa. Distinguir transformaria a porta num
+ * enumerador: quem varre UUIDs aprenderia quais existem, quais são desta organização e quais têm cada
+ * permissão — sem nunca conseguir a transferência. O cliente não precisa saber QUAL condição falhou;
+ * precisa saber que aquele usuário não serve para esta solicitação.
+ */
+async function exigirResponsavelElegivel(ctx: ServiceCtx, empresaId: string, usuarioId: string): Promise<void> {
+  if (!(await responsavelElegivel(ctx, empresaId, usuarioId))) throw validation("Responsável não pode ser atribuído a esta solicitação.");
+}
+
 async function addEvent(ctx: ServiceCtx, requestId: string, from: string | null, to: string, action: string, justification: string | null, since?: Date) {
   const mins = since ? Math.round((Date.now() - new Date(since).getTime()) / 60000) : null;
   await ctx.tx.query("insert into erp.purchase_request_events(request_id,organization_id,user_id,from_status,to_status,action,justification,time_spent_minutes) values ($1,$2,$3,$4,$5,$6,$7,$8)", [requestId, ctx.orgId, ctx.user.id, from, to, action, justification, mins]);
 }
+/**
+ * Ponto central de escrita do responsável: toda transição passa por aqui, então a invariante mora aqui
+ * (as portas que NÃO passam por `transition` guardam por conta própria — ver `/transfer` e `/transfer-batch`).
+ *
+ * A guarda vale para o responsável ATRIBUÍDO pelo chamador (`extra.responsible`), que é a única origem
+ * externa. A devolução ao SOLICITANTE (`cur.requester_user_id`, usada em `submit`/`reject`) não é uma
+ * atribuição nova: é a identidade que criou o registro, gravada a partir de `ctx.user.id` e já validada
+ * contra a empresa no `create`. Revalidá-la aqui não fecharia vetor nenhum — `requester_user_id` nunca
+ * vem do corpo da requisição — e transformaria "o solicitante perdeu a permissão depois" numa solicitação
+ * impossível de rejeitar, presa para sempre no fluxo.
+ */
 async function transition(ctx: ServiceCtx, id: string, action: PurchaseAction, justification: string | null, extra: { responsible?: string | null; expectedVersion?: number } = {}) {
-  const r = await ctx.tx.query<{ status: PurchaseRequestStatus; version: number; status_changed_at: Date; requester_user_id: string }>("select status, version, status_changed_at, requester_user_id from erp.purchase_requests where id=$1 and organization_id=$2 and deleted_at is null for update", [id, ctx.orgId]);
+  const r = await ctx.tx.query<{ status: PurchaseRequestStatus; version: number; status_changed_at: Date; requester_user_id: string; farm_id: string }>("select status, version, status_changed_at, requester_user_id, farm_id from erp.purchase_requests where id=$1 and organization_id=$2 and deleted_at is null for update", [id, ctx.orgId]);
   const cur = r.rows[0]; if (!cur) throw notFound("Solicitação");
   if (extra.expectedVersion !== undefined && extra.expectedVersion !== cur.version) throw err("CONCURRENCY_CONFLICT", "A solicitação foi alterada por outro usuário; recarregue");
   const next = nextPurchaseStatus(cur.status, action);
+  if (extra.responsible) await exigirResponsavelElegivel(ctx, cur.farm_id, extra.responsible);
   const responsible = extra.responsible === undefined ? (next === "request" || next === "not_approved" ? cur.requester_user_id : null) : extra.responsible;
   await ctx.tx.query("update erp.purchase_requests set status=$3, status_changed_at=now(), version=version+1, current_responsible_user_id=coalesce($4,current_responsible_user_id) where id=$1 and organization_id=$2", [id, ctx.orgId, next, responsible]);
   await addEvent(ctx, id, cur.status, next, action, justification, cur.status_changed_at);
@@ -43,7 +97,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     const f = req.query as Record<string, string>; const where = ["r.organization_id=$1", "r.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
     if (f.scope === "mine") { params.push(ctx.user.id); where.push(`(r.current_responsible_user_id=$${params.length} or r.requester_user_id=$${params.length})`); }
     if (ctx.farmId) { params.push(ctx.farmId); where.push(`r.farm_id=$${params.length}`); }
-    if (ctx.membership.farmIds.length) { params.push(ctx.membership.farmIds); where.push(`r.farm_id = any($${params.length}::uuid[])`); }
+    where.push(...empresaScope(ctx, "r", params, { ignoreSelected: true }));
     const r = await ctx.tx.query<{ status: PurchaseRequestStatus; n: string }>(`select r.status, count(*)::text n from erp.purchase_requests r where ${where.join(" and ")} group by r.status`, params);
     const by = new Map(r.rows.map((x) => [x.status, Number(x.n)]));
     const stageStatuses: Record<string, PurchaseRequestStatus[]> = { request: ["request"], quotation: ["awaiting_awareness", "quotation_in_progress"], authorization: ["awaiting_approval", "awaiting_awareness", "under_review"], buy: ["awaiting_purchase", "purchase_done"], receipts: ["purchase_done", "purchase_received", "finished"], finished: ["finished"], rejected: ["not_approved", "cancelled"] };
@@ -65,7 +119,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     if (f.request_type) { params.push(f.request_type); where.push(`r.request_type=$${params.length}`); }
     if (f.priority) { params.push(f.priority); where.push(`r.priority=$${params.length}`); }
     if (f.farm_id) { params.push(f.farm_id); where.push(`r.farm_id=$${params.length}`); } else if (ctx.farmId) { params.push(ctx.farmId); where.push(`r.farm_id=$${params.length}`); }
-    if (ctx.membership.farmIds.length) { params.push(ctx.membership.farmIds); where.push(`r.farm_id = any($${params.length}::uuid[])`); }
+    where.push(...empresaScope(ctx, "r", params, { ignoreSelected: true }));
     if (f.requester_user_id) { params.push(f.requester_user_id); where.push(`r.requester_user_id=$${params.length}`); }
     if (f.responsible_user_id) { params.push(f.responsible_user_id); where.push(`r.current_responsible_user_id=$${params.length}`); }
     if (f.start_date) { params.push(f.start_date); where.push(`r.request_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`r.request_date<=$${params.length}`); }
@@ -87,14 +141,21 @@ export default async function supplyRoutes(app: FastifyInstance) {
     return { ...r, status_label: PURCHASE_STATUS_LABELS[r.status], items: items.rows, events: events.rows.map((e) => ({ ...(e as Record<string, unknown>), to_status_label: PURCHASE_STATUS_LABELS[(e as { to_status: PurchaseRequestStatus }).to_status] })), quotations: quotations.rows, approvals: approvals.rows, children: children.rows, attachments: attachments.rows, allowed_actions: allowedPurchaseActions(r.status), can_transfer: canTransfer };
   }));
   app.post("/supply/requests", async (req, reply) => reply.status(201).send(await runService(app, req, "purchase_requests.create", async (ctx) => {
-    const d = requestSchema.parse(req.body); if (!farmAllowed(ctx, d.farm_id)) throw validation("Sem acesso à fazenda");
+    const d = requestSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.farm_id);
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => {
       const code = await nextCode(ctx.tx, ctx.orgId, "purchase_request");
       const est = d.items.reduce((a, i) => a.plus(D(i.amount ?? D(i.reference_value ?? 0).mul(i.quantity))), D(0));
-      // responsável inicial: encarregado (autorizador) informado ou o "chefe" do solicitante
+      // Responsável inicial: encarregado (autorizador) informado ou o "chefe" do solicitante. Nenhum dos dois
+      // é escolhido pelo cliente como PESSOA — são candidatos DERIVADOS de cadastro (`erp.authorizers`,
+      // `erp.user_bosses`), e cadastro envelhece: o chefe pode ter perdido o acesso à empresa desta
+      // solicitação depois de ter sido cadastrado. Candidato inelegível é DESCARTADO, não vira erro: quem
+      // criou a solicitação não errou nada, e recusar a criação por causa de um cadastro alheio seria punir
+      // a pessoa errada. O fluxo cai para o padrão seguro (o próprio solicitante, que acabou de provar
+      // acesso à empresa em `exigirEmpresaDeLancamento`).
       let responsible: string | null = null;
       if (d.authorizer_id) responsible = (await ctx.tx.query<{ user_id: string }>("select user_id from erp.authorizers where id=$1 and organization_id=$2 and is_active", [d.authorizer_id, ctx.orgId])).rows[0]?.user_id ?? null;
       if (!responsible) responsible = (await ctx.tx.query<{ boss_user_id: string }>("select boss_user_id from erp.user_bosses where organization_id=$1 and user_id=$2 limit 1", [ctx.orgId, ctx.user.id])).rows[0]?.boss_user_id ?? null;
+      if (responsible && !(await responsavelElegivel(ctx, d.farm_id, responsible))) responsible = null;
       const r = await ctx.tx.query<{ id: string }>("insert into erp.purchase_requests(organization_id,farm_id,code,parent_id,request_date,priority,request_type,requester_user_id,authorizer_id,current_responsible_user_id,description,justification,observation,estimated_total) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) returning id", [ctx.orgId, d.farm_id, code, d.parent_id ?? null, d.request_date, d.priority, d.request_type, ctx.user.id, d.authorizer_id ?? null, responsible ?? ctx.user.id, d.description, d.justification, d.observation ?? null, money(est)]);
       const id = r.rows[0]!.id;
       for (const [i, it] of d.items.entries()) await ctx.tx.query("insert into erp.purchase_request_items(request_id,product_id,description,quantity,reference_value,amount,observation,extra,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [id, it.product_id ?? null, it.description, it.quantity, it.reference_value ?? null, it.amount ?? null, it.observation ?? null, JSON.stringify(it.extra ?? {}), i]);
@@ -134,12 +195,28 @@ export default async function supplyRoutes(app: FastifyInstance) {
         // Regra: mínimo de cotações do autorizador aplica-se a solicitações de produto (serviço/adiantamento/diária não cotam)
         if (a && action === "approve") { const chk = authorizerCanApprove({ maxValue: a.max_value, isActive: a.is_active, minQuotes: r.request_type === "product" ? a.min_quotes : 0 }, { approvedTotal: total, quotationCount: Number(quotes) }); if (!chk.ok) throw err("PERMISSION_DENIED", chk.reason!); }
         if (a) await ctx.tx.query("insert into erp.purchase_approvals(request_id,authorizer_id,level,decision,justification,decided_by) values ($1,$2,$3,$4,$5,$6)", [id, a.id, a.levels?.[0] ?? 1, action === "approve" ? "approved" : "rejected", d.justification, ctx.user.id]);
-        if (action === "approve") { const buyer = (await ctx.tx.query<{ user_id: string }>("select m.user_id from erp.organization_members m join erp.role_permissions rp on rp.role_id=m.role_id where m.organization_id=$1 and rp.permission_key='purchase_buy.edit' and m.is_active limit 1", [ctx.orgId])).rows[0]?.user_id ?? null; const next = await transition(ctx, id, action, d.justification, { expectedVersion: d.version, responsible: buyer ?? ctx.user.id }); return { id, status: next }; }
+        if (action === "approve") {
+          // Comprador automático: a etapa exige `purchase_buy.edit`, mas isso sozinho escolhia gente que não
+          // consegue ABRIR a solicitação que acabou de receber — outra empresa, ou sem `purchase_requests.view`.
+          // As três condições entram na MESMA consulta, pelas mesmas autoridades do resto do sistema (e
+          // `has_permission` também cobre o proprietário, que não tem linha em `role_permissions`).
+          const buyer = (await ctx.tx.query<{ user_id: string }>(
+            "select m.user_id from erp.organization_members m where m.organization_id=$1 and m.is_active and erp.has_permission($1,m.user_id,'purchase_buy.edit') and erp.has_permission($1,m.user_id,'purchase_requests.view') and erp.tem_acesso_empresa($1,m.user_id,'compras',$2::uuid) order by m.created_at, m.user_id limit 1",
+            [ctx.orgId, r.farm_id])).rows[0]?.user_id ?? null;
+          // Sem comprador elegível, o padrão histórico era "fica comigo". Continua sendo — mas só se "comigo"
+          // satisfizer a invariante; senão o responsável ATUAL é preservado, em vez de gravar um beco sem saída.
+          const responsible = buyer ?? ((await responsavelElegivel(ctx, r.farm_id, ctx.user.id)) ? ctx.user.id : null);
+          const next = await transition(ctx, id, action, d.justification, { expectedVersion: d.version, responsible });
+          return { id, status: next };
+        }
       }
       if (action === "acknowledge") { await ctx.tx.query("insert into erp.purchase_approvals(request_id,authorizer_id,level,decision,justification,decided_by) select $1, a.id, 1, 'awareness', $2, $3 from erp.authorizers a where a.organization_id=$4 and a.user_id=$3", [id, d.justification, ctx.user.id, ctx.orgId]); }
       if (action === "send_to_approval") {
         const q = await ctx.tx.query<{ n: string }>("select count(*) n from erp.purchase_quotations where request_id=$1", [id]);
-        const minQ = d.authorizer_id ? (await ctx.tx.query<{ min_quotes: number }>("select min_quotes from erp.authorizers where id=$1", [d.authorizer_id])).rows[0]?.min_quotes ?? 0 : 0;
+        // `erp.authorizers` é cadastro de organização e esta consulta não filtrava por organização nenhuma:
+        // um id de outro tenant devolvia o `min_quotes` DELE. Não derrubava a porta, mas fazia da regra de
+        // cotações um oráculo — e a linha logo abaixo, que lê o `user_id` do mesmo cadastro, sempre filtrou.
+        const minQ = d.authorizer_id ? (await ctx.tx.query<{ min_quotes: number }>("select min_quotes from erp.authorizers where id=$1 and organization_id=$2", [d.authorizer_id, ctx.orgId])).rows[0]?.min_quotes ?? 0 : 0;
         if (r.request_type === "product" && Number(q.rows[0]!.n) < minQ) throw validation(`Mínimo de ${minQ} cotações para enviar à autorização`);
         if (!r.selected_quotation_id && Number(q.rows[0]!.n) > 0) throw validation("Selecione a cotação vencedora antes de enviar para autorização");
         const authUser = d.authorizer_id ? (await ctx.tx.query<{ user_id: string }>("select user_id from erp.authorizers where id=$1 and organization_id=$2", [d.authorizer_id, ctx.orgId])).rows[0]?.user_id : null;
@@ -164,15 +241,25 @@ export default async function supplyRoutes(app: FastifyInstance) {
       return { id, status: next, status_label: PURCHASE_STATUS_LABELS[next] };
     });
   });
-  // Transferir responsável (sem mudar status)
+  // Transferir responsável (sem mudar status). Não passa por `transition`, então guarda a invariante aqui:
+  // a empresa vem da SOLICITAÇÃO carregada (`r.farm_id`), nunca do cliente.
   app.post("/supply/requests/:id/transfer", async (req) => runService(app, req, "purchase_requests.transfer", async (ctx) => {
     const { id } = req.params as { id: string }; const d = z.object({ responsible_user_id: uuid, justification: z.string().min(1) }).parse(req.body); const r = await loadRequest(ctx, id, true);
+    await exigirResponsavelElegivel(ctx, r.farm_id, d.responsible_user_id);
     await ctx.tx.query("update erp.purchase_requests set current_responsible_user_id=$3, version=version+1 where id=$1 and organization_id=$2", [id, ctx.orgId, d.responsible_user_id]);
     await addEvent(ctx, id, r.status, r.status, "transfer", d.justification); return { id };
   }));
+  /**
+   * Transferência em lote: TUDO OU NADA. Cada solicitação tem a SUA empresa, então "o destinatário pode
+   * receber" é uma pergunta por solicitação, não uma pergunta do lote — ele pode ter acesso à empresa de
+   * metade delas. Transferir essa metade e recusar o resto deixaria o usuário com um estado que ele não
+   * pediu e não consegue ver de onde parou. Como cada requisição roda dentro de UMA transação
+   * (`runService` → `withTx`), a recusa no meio do laço desfaz as transferências já aplicadas: a
+   * atomicidade é estrutural, e o teste de lote existe para que continue sendo.
+   */
   app.post("/supply/requests/transfer-batch", async (req) => runService(app, req, "purchase_requests.transfer", async (ctx) => {
     const d = z.object({ ids: z.array(uuid).min(1), responsible_user_id: uuid, justification: z.string().min(1) }).parse(req.body);
-    for (const id of d.ids) { const r = await loadRequest(ctx, id, true); await ctx.tx.query("update erp.purchase_requests set current_responsible_user_id=$3, version=version+1 where id=$1 and organization_id=$2", [id, ctx.orgId, d.responsible_user_id]); await addEvent(ctx, id, r.status, r.status, "transfer", d.justification); }
+    for (const id of d.ids) { const r = await loadRequest(ctx, id, true); await exigirResponsavelElegivel(ctx, r.farm_id, d.responsible_user_id); await ctx.tx.query("update erp.purchase_requests set current_responsible_user_id=$3, version=version+1 where id=$1 and organization_id=$2", [id, ctx.orgId, d.responsible_user_id]); await addEvent(ctx, id, r.status, r.status, "transfer", d.justification); }
     return { transferred: d.ids.length };
   }));
   app.post("/supply/requests/:id/comments", async (req) => runService(app, req, "purchase_requests.view", async (ctx) => { const { id } = req.params as { id: string }; const d = z.object({ text: z.string().min(1) }).parse(req.body); const r = await loadRequest(ctx, id); await addEvent(ctx, id, r.status, r.status, "comment", d.text); return { id }; }));

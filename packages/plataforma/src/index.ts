@@ -7,6 +7,7 @@
  * outros segmentos sem reescrever a fundação.
  */
 export * from "./empresa.js";
+export * from "./escopo-modulo.js";
 export * from "./id-global.js";
 export * from "./idioma.js";
 export * from "./formatacao.js";

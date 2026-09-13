@@ -1,3 +1,4 @@
+import { AUTORIZACAO_PROPRIETARIO } from "@erp/plataforma";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, withTx } from "@agro/db";
 import { MOVIMENTACOES_INTERNAS, MOVIMENTACOES_REBANHO } from "@agro/domain";
@@ -50,7 +51,7 @@ async function comoServico<T>(fn: (ctx: ServiceCtx) => Promise<T>): Promise<T> {
       tx,
       user: { id: h.demo.adminUserId, email: h.demo.adminEmail, name: "Administrador" },
       orgId: h.demo.orgId, farmId: null,
-      membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: true, farmIds: [] },
+      membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: true, memberId: "m", escopos: AUTORIZACAO_PROPRIETARIO },
       permissions: new Set<string>()
     }));
 }

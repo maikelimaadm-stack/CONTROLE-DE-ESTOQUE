@@ -11,6 +11,11 @@ Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000
 | 0005_sales_fleet_hr | vendas (orçamento/pedido/venda), manutenções, abastecimentos, depreciações, RH (eventos, faltas, adiantamentos, apuração), ordens de serviço, documentos |
 | 0006_livestock | animais, identificações, lotes por contagem (`herd_lots`), movimentações, pesagens, manejos, reprodução, confinamento (pátios/setores/currais/dietas/bateladas/trato/cocho) |
 | 0007_rls | RLS em todas as tabelas para o papel `erp_app` (sem bypass) via `current_setting('app.org_id')`; tabelas-filho por join no pai; linhas compartilhadas (`organization_id is null`) somente leitura |
+| 0008_screen_preferences | personalização de telas: preferências de listagem, layout de formulário e filtros por (organização, usuário, módulo, tela) |
+| 0009_attachments | `erp.attachment_blobs` — conteúdo do anexo no próprio banco (`bytea`), sem storage externo; `erp.attachments` (0001) continua sendo o índice |
+| 0010_platform_foundation | fundação de plataforma (PRE-BASE2-01): preferência de idioma e `erp.global_records` (ID Global) |
+| 0011_company_permissions | permissões por EMPRESA e MÓDULO (PRE-BASE2-02): catálogo `erp.modulos_escopo_empresa`, `erp.membro_escopos_empresa` (modo por módulo), `erp.membro_empresas`, `erp.tem_acesso_empresa(org,usuario,modulo,empresa)` e a unicidade composta `erp.farms (organization_id, id)` |
+| 0012_notification_scope | escopo empresarial da NOTIFICAÇÃO e leitura por usuário: `escopo_tipo`/`modulo`/`empresa_id`/`permission_key`/`dedupe_key` + `modulo_ref` gerada; catálogo `erp.tipos_notificacao` com as combinações permitidas e `notifications_tipo_fk`; classificação FAIL-CLOSED do legado (tipo desconhecido interrompe a migração); `erp.notificacao_leituras` (recibo por usuário, RLS amarrando o recibo ao usuário da sessão) e `notifications.read_at` como legado |
 
 ## Invariantes garantidas por trigger
 - `apply_stock_movement`: recalcula saldo e custo médio ponderado; saída maior que o saldo → `INSUFFICIENT_STOCK`.
