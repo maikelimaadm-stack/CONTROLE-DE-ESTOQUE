@@ -5,15 +5,34 @@ export class ApiError extends Error {
   constructor(public status: number, public code: string, message: string, public details?: unknown) { super(message); }
 }
 const KEY = "agro.session";
-export interface Session { token: string; orgId: string | null; farmId: string | null; user?: { id: string; email: string; name: string } }
-export function getSession(): Session | null { if (typeof window === "undefined") return null; try { const s = localStorage.getItem(KEY); return s ? (JSON.parse(s) as Session) : null; } catch { return null; } }
-/** Grava a sessão sem disparar `agro:session` (troca de fazenda: só o cabeçalho X-Farm-Id muda; contexto/permissões não). */
+export interface Session { token: string; orgId: string | null; empresaId: string | null; user?: { id: string; email: string; name: string } }
+/**
+ * SESSÃO GRAVADA ANTES DA PRE-BASE2-03 guarda `farmId`. Ela vive no localStorage do navegador: ninguém a
+ * migra num deploy, e quem já estava logado continua com ela. Ler só `empresaId` derrubaria a empresa
+ * selecionada de todo mundo no primeiro acesso à versão nova — sem erro, sem aviso, só o contexto de
+ * trabalho zerado. A promoção acontece na LEITURA, num lugar só, e não reescreve o armazenamento: se a
+ * versão anterior voltar ao ar, ela ainda encontra o `farmId` dela.
+ */
+function promoverSessaoLegada(bruto: Record<string, unknown>): Session {
+  const legado = bruto["farmId"];
+  if (bruto["empresaId"] === undefined && (typeof legado === "string" || legado === null)) {
+    return { ...(bruto as unknown as Session), empresaId: legado as string | null };
+  }
+  return bruto as unknown as Session;
+}
+export function getSession(): Session | null { if (typeof window === "undefined") return null; try { const s = localStorage.getItem(KEY); return s ? promoverSessaoLegada(JSON.parse(s) as Record<string, unknown>) : null; } catch { return null; } }
+/** Grava a sessão sem disparar `agro:session` (troca de empresa: só o cabeçalho muda; contexto/permissões não). */
 export function writeSession(s: Session) { if (typeof window !== "undefined") localStorage.setItem(KEY, JSON.stringify(s)); }
 export function setSession(s: Session | null) { if (typeof window === "undefined") return; if (s) localStorage.setItem(KEY, JSON.stringify(s)); else localStorage.removeItem(KEY); window.dispatchEvent(new Event("agro:session")); }
 
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; idempotencyKey?: string } = {}): Promise<T> {
   const s = getSession();
-  const headers: Record<string, string> = { ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}), ...(s?.token ? { Authorization: `Bearer ${s.token}` } : {}), ...(s?.orgId ? { "X-Org-Id": s.orgId } : {}), ...(s?.farmId ? { "X-Farm-Id": s.farmId } : {}), ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}), ...(opts.headers ?? {}) };
+  // Os DOIS cabeçalhos, com o MESMO valor. `X-Empresa-Id` é o canônico; `X-Farm-Id` acompanha porque o web
+  // (Vercel) e a API (Railway) não sobem juntas, e um web novo contra a API anterior ficaria sem empresa
+  // selecionada — o contrário do que o usuário pediu ao escolher a empresa. A API nova aceita os dois desde
+  // que sejam IGUAIS; valores diferentes são recusados com 422, e é por isso que aqui sai um valor só.
+  // O `X-Farm-Id` sai quando nenhuma versão anterior da API estiver no ar (docs/DEPLOYMENT.md).
+  const headers: Record<string, string> = { ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}), ...(s?.token ? { Authorization: `Bearer ${s.token}` } : {}), ...(s?.orgId ? { "X-Org-Id": s.orgId } : {}), ...(s?.empresaId ? { "X-Empresa-Id": s.empresaId, "X-Farm-Id": s.empresaId } : {}), ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}), ...(opts.headers ?? {}) };
   const res = await fetch(`${API_URL}${path}`, { method: opts.method ?? "GET", headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
   if (opts.raw) return res as unknown as T;
   const text = await res.text();

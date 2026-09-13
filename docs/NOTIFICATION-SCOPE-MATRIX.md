@@ -24,8 +24,8 @@ agregado sem entrar na autorização de quem o recebe.
 
 | Tipo | Rótulo | Escopo | Módulo | Capacidade | De onde sai a empresa |
 | --- | --- | --- | --- | --- | --- |
-| `purchase_pending` | Solicitação de compra pendente | `empresa` | `compras` | `purchase_requests.view` | erp.purchase_requests — a empresa é a da própria solicitação (farm_id). |
-| `processing_pending` | Processamento de animais pendente | `empresa` | `pecuaria` | `processings.view` | erp.processings — a empresa é a do processamento (farm_id). |
+| `purchase_pending` | Solicitação de compra pendente | `empresa` | `compras` | `purchase_requests.view` | erp.purchase_requests — a empresa é a da própria solicitação (empresa_id). |
+| `processing_pending` | Processamento de animais pendente | `empresa` | `pecuaria` | `processings.view` | erp.processings — a empresa é a do processamento (empresa_id). |
 | `batch_transfer` | Transferência de lote a processar | `empresa` | `pecuaria` | `batches.view` | erp.animal_movements (transferência entre empresas) — a empresa é o DESTINO, que é quem precisa processar. |
 | `document_expiring` | Documento vencendo | `empresa` — sem empresa vira `organizacao` | `documentos` | `documents.view` | erp.documents — empresa do documento; documento sem empresa vira notificação de organização. |
 | `birthday` | Aniversário de colaborador | `organizacao` | — | `employees.view` | erp.employee_profiles + erp.people — cadastro da organização, sem dimensão de empresa. |

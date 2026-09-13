@@ -4,18 +4,18 @@ import { useRouter } from "next/navigation";
 import { todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { ApportionmentEditor, toAppLines, useCreate, useFarmDefault, type AppLine } from "@/features/docs/shared";
+import { ApportionmentEditor, toAppLines, useCreate, useEmpresaPadrao, type AppLine } from "@/features/docs/shared";
 export default function Page() {
-  const router = useRouter(); const farm = useFarmDefault();
-  const [h, setH] = React.useState({ farm_id: "", bank_account_id: "", movement_date: todayISO(), type: "out", category_type: "out", destination_account_id: "", amount: "", interest: "0", document: "", generates_obligation: false, is_deductible: false, note: "", proprietary_id: "", person_id: "", harvest_id: "" });
+  const router = useRouter(); const empresa = useEmpresaPadrao();
+  const [h, setH] = React.useState({ empresa_id: "", bank_account_id: "", movement_date: todayISO(), type: "out", category_type: "out", destination_account_id: "", amount: "", interest: "0", document: "", generates_obligation: false, is_deductible: false, note: "", proprietary_id: "", person_id: "", harvest_id: "" });
   const [lines, setLines] = React.useState<AppLine[]>([{ financial_category_id: "", cost_center_id: "", percentage: "100" }]);
-  React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
+  React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const create = useCreate("/api/financial/bank-movements", () => router.push("/financeiro?tab=caixa&sub=extrato"));
   const transfer = h.category_type === "internal_transfer";
-  const submit = () => create.mutate({ ...h, farm_id: h.farm_id || null, destination_account_id: transfer ? h.destination_account_id : null, document: h.document || null, note: h.note || null, proprietary_id: h.proprietary_id || null, person_id: h.person_id || null, harvest_id: h.harvest_id || null, apportionment: transfer ? undefined : toAppLines(lines) });
+  const submit = () => create.mutate({ ...h, empresa_id: h.empresa_id || null, destination_account_id: transfer ? h.destination_account_id : null, document: h.document || null, note: h.note || null, proprietary_id: h.proprietary_id || null, person_id: h.person_id || null, harvest_id: h.harvest_id || null, apportionment: transfer ? undefined : toAppLines(lines) });
   return <Card><CardHeader title="Novo movimento bancário" subtitle="Transferência interna gera saída na origem e entrada no destino em uma única transação." actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.bank_account_id || Number(h.amount) <= 0 || (transfer && !h.destination_account_id)} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
-      <Field label="Fazenda" span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>
+      <Field label="Empresa" span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
       <Field label="Conta bancária" required span={4}><RefSelect resource="bank_accounts" value={h.bank_account_id} onChange={(v) => setH({ ...h, bank_account_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.movement_date} onChange={(e) => setH({ ...h, movement_date: e.target.value })} /></Field>
       <Field label="Categoria do movimento" span={3}><NativeSelect value={h.category_type} onChange={(e) => { const ct = e.target.value; setH({ ...h, category_type: ct, type: ct === "in" || ct === "check_return" || ct === "financing" ? "in" : "out" }); }}><option value="in">Entrada</option><option value="out">Saída</option><option value="internal_transfer">Transferência interna</option><option value="financing">Financiamento</option><option value="check_return">Devolução de cheque</option></NativeSelect></Field>

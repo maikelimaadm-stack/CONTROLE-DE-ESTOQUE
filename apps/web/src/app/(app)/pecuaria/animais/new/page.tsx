@@ -4,18 +4,18 @@ import { useRouter } from "next/navigation";
 import { todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { useCreate, useFarmDefault } from "@/features/docs/shared";
+import { useCreate, useEmpresaPadrao } from "@/features/docs/shared";
 import { Trash2, Plus } from "lucide-react";
 export default function Page() {
-  const router = useRouter(); const farm = useFarmDefault();
-  const [h, setH] = React.useState({ farm_id: "", species_id: "", category_id: "", breed_id: "", batch_id: "", sex: "", entry_date: todayISO(), birth_date: "", reproductive_stage: "", reproductive_status: "", current_weight: "", unit_value: "", mother_id: "", father_id: "", origin_provider_id: "", note: "" });
+  const router = useRouter(); const empresa = useEmpresaPadrao();
+  const [h, setH] = React.useState({ empresa_id: "", species_id: "", category_id: "", breed_id: "", batch_id: "", sex: "", entry_date: todayISO(), birth_date: "", reproductive_stage: "", reproductive_status: "", current_weight: "", unit_value: "", mother_id: "", father_id: "", origin_provider_id: "", note: "" });
   const [ids, setIds] = React.useState<{ identification_type_id: string; value: string }[]>([{ identification_type_id: "", value: "" }]);
-  React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
+  React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const create = useCreate<{ id: string }>("/api/livestock/animals", (r) => router.push(`/pecuaria/animais/${r.id}`));
-  const submit = () => create.mutate({ ...Object.fromEntries(Object.entries(h).map(([k, v]) => [k, v === "" ? null : v])), farm_id: h.farm_id, species_id: h.species_id, category_id: h.category_id, entry_date: h.entry_date, identifications: ids.filter((i) => i.identification_type_id && i.value) });
+  const submit = () => create.mutate({ ...Object.fromEntries(Object.entries(h).map(([k, v]) => [k, v === "" ? null : v])), empresa_id: h.empresa_id, species_id: h.species_id, category_id: h.category_id, entry_date: h.entry_date, identifications: ids.filter((i) => i.identification_type_id && i.value) });
   return <Card><CardHeader title="Cadastrar animal" subtitle="Entrada avulsa no rebanho (sem movimento de compra). Para compras use Pecuária › Movimentações › Compra." actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.species_id || !h.category_id || !ids.some((i) => i.identification_type_id && i.value)} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
-      <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>
+      <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
       <Field label="Espécie" required span={3}><RefSelect resource="animal_species" value={h.species_id} onChange={(v) => setH({ ...h, species_id: v ?? "" })} /></Field>
       <Field label="Categoria" required span={3}><RefSelect resource="animal_categories" value={h.category_id} onChange={(v) => setH({ ...h, category_id: v ?? "" })} /></Field>
       <Field label="Raça" span={3}><RefSelect resource="breeds" value={h.breed_id} onChange={(v) => setH({ ...h, breed_id: v ?? "" })} /></Field>

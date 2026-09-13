@@ -30,7 +30,7 @@ const scroll = (c: React.ReactNode) => <div className="ws-scroll">{c}</div>;
 function Transfers() {
   const [kind, setKind] = useUrlParam("kind", "warehouse");
   return <div className="flex min-h-0 flex-1 flex-col gap-2">
-    <div className="mg-card ws-filters no-print"><FilterChips label="Tipo" testId="stock-transfer-kind" value={kind} onChange={setKind} options={[{ value: "warehouse", label: "Entre armazéns", perm: "warehouse_transfers.view" }, { value: "farm", label: "Entre fazendas", perm: "farm_transfers.view" }]} /></div>
+    <div className="mg-card ws-filters no-print"><FilterChips label="Tipo" testId="stock-transfer-kind" value={kind} onChange={setKind} options={[{ value: "warehouse", label: "Entre armazéns", perm: "warehouse_transfers.view" }, { value: "farm", label: "Entre empresas", perm: "farm_transfers.view" }]} /></div>
     <TransfersList kind={kind} />
   </div>;
 }
@@ -42,12 +42,12 @@ function Inner() {
     <Workspace title="Estoque" defaultTab="estoque" actions={<NewChooser items={[
       { label: "Entrada", children: [{ label: "Entrada manual (insumos)", href: "/estoque/entradas/new", perm: "input_entries.create" }, { label: "Documento fiscal / importar XML", href: "/estoque/documentos-fiscais/new", perm: "invoices.create" }] },
       { label: "Saída", children: [{ label: "Requisição", href: "/estoque/requisicoes/new", perm: "requisitions.create" }, { label: "Saída direta (baixa)", href: "/estoque/baixas/new", perm: "stock_writeoffs.create" }] },
-      { label: "Transferência", children: [{ label: "Entre armazéns", href: "/estoque/transferencias/new?kind=warehouse", perm: "warehouse_transfers.create" }, { label: "Entre fazendas", href: "/estoque/transferencias/new?kind=farm", perm: "farm_transfers.create" }] },
+      { label: "Transferência", children: [{ label: "Entre armazéns", href: "/estoque/transferencias/new?kind=warehouse", perm: "warehouse_transfers.create" }, { label: "Entre empresas", href: "/estoque/transferencias/new?kind=farm", perm: "farm_transfers.create" }] },
       { label: "Produção", children: [{ label: "Produção de ração", href: "/estoque/batidas/new", perm: "feed_batches.create" }] }
     ]} />} tabs={[
       tab("estoque.visao-geral", <StockOverview />),
       tab("estoque.estoque", <ViewSegment tabs={[
-        tab("estoque.estoque.saldo", <BalancesPanel onAdjust={can("stock_corrections.create") ? (r) => openAdjust({ farm_id: String(r["farm_id"] ?? ""), warehouse_id: String(r["warehouse_id"] ?? ""), product_id: String(r["product_id"] ?? ""), provider_lot: String(r["provider_lot"] ?? "") }) : undefined} />),
+        tab("estoque.estoque.saldo", <BalancesPanel onAdjust={can("stock_corrections.create") ? (r) => openAdjust({ empresa_id: String(r["empresa_id"] ?? ""), warehouse_id: String(r["warehouse_id"] ?? ""), product_id: String(r["product_id"] ?? ""), provider_lot: String(r["provider_lot"] ?? "") }) : undefined} />),
         tab("estoque.estoque.ledger", <MovementsPanel />),
         tab("estoque.estoque.ajustes", <CorrectionsPanel />)
       ]} />),

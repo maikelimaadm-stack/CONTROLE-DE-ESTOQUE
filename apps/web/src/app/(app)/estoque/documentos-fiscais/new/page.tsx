@@ -4,14 +4,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Textarea, Tabs } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { ItemsEditor, ApportionmentEditor, PlanEditor, defaultPlan, toAppLines, useCreate, useFarmDefault, type ItemRow, type AppLine, type Plan } from "@/features/docs/shared";
+import { ItemsEditor, ApportionmentEditor, PlanEditor, defaultPlan, toAppLines, useCreate, useEmpresaPadrao, type ItemRow, type AppLine, type Plan } from "@/features/docs/shared";
 import { parseNfeXml } from "@/features/docs/nfe-xml";
 import { enumLabel } from "@/lib/copy";
 export default function Page() {
-  const router = useRouter(); const sp = useSearchParams(); const farm = useFarmDefault();
-  const [h, setH] = React.useState({ farm_id: "", number: "", series: "1", access_key: "", provider_id: "", proprietary_id: "", harvest_id: "", emission_date: todayISO(), delivery_date: "", state_code: "", document_type: "nfe", title_type_id: "", classification: "unclassified", apportionment_type: "by_product", note: "", freight: "0", other_expenses: "0", generate_financial: "true", purchase_request_id: sp.get("purchase_request_id") ?? "", dfe_id: sp.get("dfe_id") ?? "" });
+  const router = useRouter(); const sp = useSearchParams(); const empresa = useEmpresaPadrao();
+  const [h, setH] = React.useState({ empresa_id: "", number: "", series: "1", access_key: "", provider_id: "", proprietary_id: "", harvest_id: "", emission_date: todayISO(), delivery_date: "", state_code: "", document_type: "nfe", title_type_id: "", classification: "unclassified", apportionment_type: "by_product", note: "", freight: "0", other_expenses: "0", generate_financial: "true", purchase_request_id: sp.get("purchase_request_id") ?? "", dfe_id: sp.get("dfe_id") ?? "" });
   const [items, setItems] = React.useState<ItemRow[]>([]); const [lines, setLines] = React.useState<AppLine[]>([]); const [plan, setPlan] = React.useState<Plan>(defaultPlan());
-  React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
+  React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const create = useCreate("/api/stock/invoices", () => router.push("/estoque?tab=recebimentos&sub=fiscais"));
   const total = items.reduce((a, i) => a + Number(i.quantity || 0) * Number(i.unit_value || 0) - Number(i.discount || 0), 0) + Number(h.freight || 0) + Number(h.other_expenses || 0);
   const onXml = async (f: File) => { const p = parseNfeXml(await f.text()); if (!p) return; setH((o) => ({ ...o, number: p.number, series: p.series, access_key: p.accessKey, emission_date: p.emissionDate, state_code: p.state })); setItems(p.items.map((i) => ({ product_id: "", quantity: i.quantity, unit_value: i.unitValue, discount: i.discount, generate_stock: true, xml_product_description: i.description }))); };
@@ -19,7 +19,7 @@ export default function Page() {
   return <Card><CardHeader title="Novo documento fiscal de entrada" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} onClick={submit} disabled={!items.length}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="rounded border border-dashed p-3 text-xs text-slate-500">Importar XML da NF-e: <input type="file" accept=".xml" onChange={(e) => e.target.files?.[0] && onXml(e.target.files[0])} /> <span className="ml-2">Preenche número, série, chave, data e itens (o produto de cada item deve ser vinculado ao cadastro).</span></div>
     <div className="grid grid-cols-12 gap-3">
-      <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>
+      <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
       <Field label="Documento fiscal" required span={2}><Input value={h.number} onChange={(e) => setH({ ...h, number: e.target.value })} /></Field>
       <Field label="Série" required span={1}><Input value={h.series} onChange={(e) => setH({ ...h, series: e.target.value })} /></Field>
       <Field label="Fornecedor" required span={4}><RefSelect resource="people" value={h.provider_id} onChange={(v) => setH({ ...h, provider_id: v ?? "" })} filter={{ is_provider: "true" }} /></Field>

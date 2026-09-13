@@ -80,7 +80,7 @@ export const AREAS = [
   a("estoque", "operacoes", "Operações", ["requisitions.view", "stock_writeoffs.view", "warehouse_transfers.view", "farm_transfers.view", "devolutions.view"], { keywords: ["saída", "requisição", "baixa", "transferência", "devolução"] }),
   s("estoque", "operacoes", "requisicoes", "Requisições", "requisitions.view", { aliases: ["/estoque/requisicoes"], keywords: ["solicitar material", "requisição de estoque", "assinatura"] }),
   s("estoque", "operacoes", "diretas", "Saídas diretas", "stock_writeoffs.view", { aliases: ["/estoque/baixas"], keywords: ["baixa", "consumo", "saída direta"] }),
-  s("estoque", "operacoes", "transferencias", "Transferências", ["warehouse_transfers.view", "farm_transfers.view"], { aliases: ["/estoque/transferencias"], keywords: ["entre armazéns", "entre fazendas", "transferir estoque"] }),
+  s("estoque", "operacoes", "transferencias", "Transferências", ["warehouse_transfers.view", "farm_transfers.view"], { aliases: ["/estoque/transferencias"], keywords: ["entre armazéns", "entre empresas", "transferir estoque"] }),
   s("estoque", "operacoes", "devolucoes", "Devoluções", "devolutions.view", { aliases: ["/estoque/devolucoes"], keywords: ["devolver itens", "retorno ao estoque"] }),
   a("estoque", "fabrica", "Fábrica de Ração", ["feed_formulas.view", "feed_batches.view"], { keywords: ["ração", "fórmula", "batida", "produção de ração", "nutrição"] }),
   s("estoque", "fabrica", "formulas", "Fórmulas", "feed_formulas.view", { aliases: ["/estoque/formulacoes"], keywords: ["formulação", "receita de ração"] }),
@@ -92,7 +92,7 @@ export const AREAS = [
   act("estoque", "requisicao", "Nova requisição", "/estoque/requisicoes/new", "requisitions.create", { keywords: ["solicitar material", "pedir insumo"] }),
   act("estoque", "saida-direta", "Nova saída direta", "/estoque/baixas/new", "stock_writeoffs.create", { keywords: ["baixar estoque"] }),
   act("estoque", "transferencia-armazens", "Transferência entre armazéns", "/estoque/transferencias/new?kind=warehouse", "warehouse_transfers.create"),
-  act("estoque", "transferencia-fazendas", "Transferência entre fazendas", "/estoque/transferencias/new?kind=farm", "farm_transfers.create"),
+  act("estoque", "transferencia-fazendas", "Transferência entre empresas", "/estoque/transferencias/new?kind=farm", "farm_transfers.create"),
   act("estoque", "producao-racao", "Nova produção de ração", "/estoque/batidas/new", "feed_batches.create", { keywords: ["batida", "misturar ração"] }),
   // ---------------- Financeiro ----------------
   a("financeiro", "visao-geral", "Visão Geral", "dashboard.financial.view", { aliases: ["/dashboards/financeiro"], keywords: ["indicadores financeiros"] }),
@@ -121,9 +121,9 @@ export const AREAS = [
   a("pecuaria", "visao-geral", "Visão Geral", "dashboard.livestock.view", { aliases: ["/dashboards/pecuaria"], keywords: ["indicadores da pecuária"] }),
   a("pecuaria", "rebanho", "Rebanho", ["animals.view", "animals_management.view", "processings.view", "locate_animals.view", "batches.view", "herd_evolution.view", ...P.HERD_MOVE], { keywords: ["animais", "lotes", "brinco", "sisbov"] }),
   s("pecuaria", "rebanho", "animais", "Animais", ["animals.view", "animals_management.view", "locate_animals.view", "processings.view"], { aliases: ["/pecuaria/animais"], keywords: ["cadastrar animal", "buscar animal", "localizar animal", "identificação", "processamento pendente", "mover para lote"] }),
-  s("pecuaria", "rebanho", "lotes", "Lotes", "batches.view", { keywords: ["lote", "curral", "mover de local", "agrupar lotes", "transferir de fazenda"] }),
+  s("pecuaria", "rebanho", "lotes", "Lotes", "batches.view", { keywords: ["lote", "curral", "mover de local", "agrupar lotes", "transferir de empresa"] }),
   s("pecuaria", "rebanho", "reclassificacoes", "Reclassificações", "herd_evolution.view", { aliases: ["/pecuaria/transferencias/evolucao"], keywords: ["evolução de categoria", "evolução de rebanho", "reclassificar"] }),
-  s("pecuaria", "rebanho", "transferencias", "Transferências (histórico)", P.HERD_MOVE, { keywords: ["movimentar rebanho", "animais entre lotes", "lote para local", "entre fazendas", "agrupar lotes"] }),
+  s("pecuaria", "rebanho", "transferencias", "Transferências (histórico)", P.HERD_MOVE, { keywords: ["movimentar rebanho", "animais entre lotes", "lote para local", "entre empresas", "agrupar lotes"] }),
   a("pecuaria", "movimentacoes", "Movimentações", P.LIVESTOCK_MOV, { keywords: ["compra de gado", "venda de gado", "nascimento", "morte", "perda"], description: "Uma lista com filtro por tipo" }),
   a("pecuaria", "manejos", "Manejos", P.HANDLING, { keywords: ["pesagem", "pesar animal", "sanitário", "vacina", "medicamento", "nutrição", "desmama", "apartação", "pastagem"], description: "Uma lista com filtro por tipo" }),
   act("pecuaria", "animal", "Cadastrar animal", "/pecuaria/animais/new", "animals.create"),
@@ -150,7 +150,7 @@ export const AREAS = [
   // ---------------- Frota e Ativos ----------------
   a("frota", "visao-geral", "Visão Geral", "dashboard.assets.view", { aliases: ["/dashboards/ativos"], keywords: ["custos da frota", "ativos"] }),
   a("frota", "equipamentos", "Equipamentos", ["equipments.view", "equipment_transfers.view", "depreciations.view", "depreciation_forecast.view", "dashboard.depreciation.view"], { keywords: ["máquina", "trator", "veículo", "inventário", "patrimônio"] }),
-  s("frota", "equipamentos", "inventario", "Inventário", "equipments.view", { keywords: ["cadastrar máquina", "transferir de fazenda", "horímetro"] }),
+  s("frota", "equipamentos", "inventario", "Inventário", "equipments.view", { keywords: ["cadastrar máquina", "transferir de empresa", "horímetro"] }),
   s("frota", "equipamentos", "transferencias", "Transferências (histórico)", "equipment_transfers.view", { aliases: ["/frota/transferencias"] }),
   s("frota", "equipamentos", "depreciacao", "Depreciação / Patrimônio", ["depreciations.view", "depreciation_forecast.view", "dashboard.depreciation.view"], { aliases: ["/frota/depreciacoes", "/frota/previsao-depreciacao", "/dashboards/depreciacoes"], keywords: ["depreciação mensal", "previsão de depreciação", "valor residual"] }),
   a("frota", "abastecimentos", "Abastecimentos", "fuel_supplies.view", { aliases: ["/frota/abastecimentos"], keywords: ["combustível", "diesel", "abastecer máquina"] }),
@@ -183,8 +183,8 @@ export const AREAS = [
   a("relatorios", "catalogo", "Relatórios", ["report.stock_movement.view", "saved_reports.view"], { tab: null, aliases: ["/relatorios/personalizados"], keywords: ["buscar relatório", "favoritos", "personalizados"] }),
   act("relatorios", "personalizado", "Novo relatório personalizado", "/relatorios/personalizados/novo", "saved_reports.create"),
   // ---------------- Configurações (área administrativa; permite 3 níveis) ----------------
-  cfg("empresa", null, "Empresa e Fazendas", P.COMPANY_CFG),
-  cfg("empresa", "farms", "Fazendas", "farms.view", { keywords: ["propriedade", "unidade"] }),
+  cfg("empresa", null, "Empresa e Empresas", P.COMPANY_CFG),
+  cfg("empresa", "empresas", "Empresas", "farms.view", { keywords: ["propriedade", "unidade", "empresa", "fazendas"] }),
   cfg("empresa", "cost-centers", "Centros de Custo", "cost_centers.view"),
   cfg("empresa", "harvests", "Safras", "harvests.view"),
   cfg("empresa", "rainfalls", "Pluviometria", "rainfalls.view", { keywords: ["chuva"] }),
@@ -268,7 +268,7 @@ export const LEGACY_TABS = {
     "rebanho/buscar": { tab: "rebanho", sub: "animais", query: { locate: "1" } }, "rebanho/processamentos": { tab: "rebanho", sub: "animais", query: { processing: "1" } },
     "movimentacoes/purchase": { tab: "movimentacoes", query: { type: "purchase" } }, "movimentacoes/sale": { tab: "movimentacoes", query: { type: "sale" } }, "movimentacoes/birth": { tab: "movimentacoes", query: { type: "birth" } }, "movimentacoes/death": { tab: "movimentacoes", query: { type: "death" } }, "movimentacoes/loss": { tab: "movimentacoes", query: { type: "loss" } },
     "manejos/weighing": { tab: "manejos", query: { type: "weighing" } }, "manejos/sanitary": { tab: "manejos", query: { type: "sanitary" } }, "manejos/nutrition": { tab: "manejos", query: { type: "nutrition" } }, "manejos/weaning": { tab: "manejos", query: { type: "weaning" } }, "manejos/separation": { tab: "manejos", query: { type: "separation" } }, "manejos/pasture": { tab: "manejos", query: { type: "pasture" } }, "manejos/evolution": { tab: "rebanho", sub: "reclassificacoes" },
-    movimentar: { tab: "rebanho", sub: "transferencias" }, "movimentar/animais-lote": { tab: "rebanho", sub: "transferencias", query: { action: "animais-lote" } }, "movimentar/lote-local": { tab: "rebanho", sub: "transferencias", query: { action: "lote-local" } }, "movimentar/fazendas": { tab: "rebanho", sub: "transferencias", query: { action: "fazendas" } }, "movimentar/agrupar": { tab: "rebanho", sub: "transferencias", query: { action: "agrupar" } }
+    movimentar: { tab: "rebanho", sub: "transferencias" }, "movimentar/animais-lote": { tab: "rebanho", sub: "transferencias", query: { action: "animais-lote" } }, "movimentar/lote-local": { tab: "rebanho", sub: "transferencias", query: { action: "lote-local" } }, "movimentar/empresas": { tab: "rebanho", sub: "transferencias", query: { action: "fazendas" } }, "movimentar/agrupar": { tab: "rebanho", sub: "transferencias", query: { action: "agrupar" } }
   },
   "pecuaria/reproducao": { reprodutores: { path: "/configuracoes", tab: "pecuaria", sub: "breeding-sires" }, protocolos: { path: "/configuracoes", tab: "pecuaria", sub: "breeding-protocols" } },
   confinamento: {
@@ -316,7 +316,13 @@ export const EXTRA_REDIRECTS = [
   { source: "/os/monitoramento", destination: "/os?late=1" },
   { source: "/relatorios/personalizados", destination: "/relatorios?view=personalizados" },
   { source: "/documentos/:id", destination: "/cadastros/documents/:id" },
-  { source: "/documentos", destination: "/configuracoes?tab=fiscal&sub=documents" }
+  { source: "/documentos", destination: "/configuracoes?tab=fiscal&sub=documents" },
+  // PRE-BASE2-03: o cadastro de Empresas trocou de chave. UMA tela, DUAS entradas durante a transição —
+  // favorito antigo, link colado e histórico do navegador continuam chegando ao mesmo lugar, e não existe
+  // uma segunda página a manter em paralelo.
+  { source: "/cadastros/farms", destination: "/cadastros/empresas" },
+  { source: "/cadastros/farms/:id", destination: "/cadastros/empresas/:id" },
+  { source: "/cadastros/empresas", destination: "/cadastros/empresas" }
 ];
 
 /**

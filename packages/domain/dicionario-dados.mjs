@@ -59,9 +59,9 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     }
   },
   {
-    codigo: "ERP-PLATAFORMA-EMPRESA", tabela: "erp.farms", nome: "Empresa", modulo: "PLATAFORMA", natureza: "entidade", idGlobal: false,
-    descricao: "Entidade operacional/jurídica dos registros: é a EMPRESA do contrato multiempresa. Hoje materializada na tabela `farms` (nome herdado do nicho agro).",
-    migracao: "PRE-BASE2-02/03: renomeada para empresa/`empresa_id` com camada de compatibilidade. Não renomear em massa antes do plano de migração.",
+    codigo: "ERP-PLATAFORMA-EMPRESA", tabela: "erp.empresas", nome: "Empresa", modulo: "PLATAFORMA", natureza: "entidade", idGlobal: false,
+    descricao: "Entidade operacional/jurídica dos registros: é a EMPRESA do contrato multiempresa. Tabela CANÔNICA desde PRE-BASE2-03; antes chamava-se `erp.farms`, nome herdado do nicho agro.",
+    migracao: "PRE-BASE2-03: `erp.farms` renomeada para `erp.empresas`; o nome antigo continua como VIEW de compatibilidade (`security_invoker`) até nenhuma versão viva usá-lo. A coluna de empresa dos lançamentos é `empresa_id`, com `farm_id` como espelho sincronizado por gatilho.",
     campos: {
       code: { nome: "Código", descricao: "Código curto da empresa dentro da organização." },
       name: { nome: "Nome", descricao: "Nome da empresa." },
@@ -78,9 +78,9 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     descricao: "Vínculo usuário × organização com perfil de acesso. Sem identidade própria para o usuário final."
   },
   {
-    codigo: "ERP-PLATAFORMA-EMPRESA-PERMITIDA", tabela: "erp.member_farms", nome: "Empresa Permitida", modulo: "PLATAFORMA", natureza: "linha", idGlobal: false,
-    descricao: "Empresas que o vínculo pode acessar. Lista vazia significa TODAS as empresas da organização. É a autoridade de autorização por empresa.",
-    migracao: "PRE-BASE2-02: vira `member_empresas` (ou equivalente) mantendo a semântica de lista vazia = todas."
+    codigo: "ERP-PLATAFORMA-EMPRESA-PERMITIDA", tabela: "erp.membro_empresas", nome: "Empresa Permitida", modulo: "PLATAFORMA", natureza: "linha", idGlobal: false,
+    descricao: "Empresas que o vínculo pode acessar DENTRO DE UM MÓDULO, quando o modo daquele módulo é `selecionadas` (erp.membro_escopos_empresa). É a autoridade de autorização por empresa desde PRE-BASE2-02 — não existe mais lista vazia significando TODAS: `todas` é um modo explícito.",
+    migracao: "PRE-BASE2-03: `erp.member_farms`, a autoridade anterior, foi APOSENTADA fisicamente; o conteúdo dela está em `erp.legado_escopo_empresa_v0` (arquivo morto, não é autoridade de nada)."
   },
   {
     codigo: "ERP-PLATAFORMA-PERFIL", tabela: "erp.roles", nome: "Perfil de Acesso", modulo: "PLATAFORMA", natureza: "entidade", idGlobal: true, rota: "/admin/perfis/:id",

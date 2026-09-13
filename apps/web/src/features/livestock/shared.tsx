@@ -13,9 +13,9 @@ export const HANDLING_TYPES = ["nutrition", "sanitary", "weaning", "separation",
 export const HANDLING_PT: Record<string, string> = Object.fromEntries(enumOptions("handling_type", HANDLING_TYPES).map((o) => [o.value, o.label]));
 
 /** Seletor múltiplo de animais ativos (busca por identificação, filtro por lote). */
-export function AnimalPicker({ selected, onChange, batchId, farmId, single }: { selected: string[]; onChange: (ids: string[], rows: Row[]) => void; batchId?: string; farmId?: string; single?: boolean }) {
+export function AnimalPicker({ selected, onChange, batchId, empresaId, single }: { selected: string[]; onChange: (ids: string[], rows: Row[]) => void; batchId?: string; empresaId?: string; single?: boolean }) {
   const [search, setSearch] = React.useState("");
-  const q = useQuery({ queryKey: ["animals-pick", search, batchId, farmId], queryFn: () => api<{ items: Row[] }>(`/api/livestock/animals${qs({ search, batch_id: batchId, farm_id: farmId, pageSize: 200 })}`) });
+  const q = useQuery({ queryKey: ["animals-pick", search, batchId, empresaId], queryFn: () => api<{ items: Row[] }>(`/api/livestock/animals${qs({ search, batch_id: batchId, empresa_id: empresaId, pageSize: 200 })}`) });
   const rows = q.data?.items ?? []; const all = rows.every((r) => selected.includes(String(r["id"]))) && rows.length > 0;
   const toggle = (id: string) => { const next = single ? [id] : selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]; onChange(next, rows.filter((r) => next.includes(String(r["id"])))); };
   return <div className="rounded border">
@@ -28,7 +28,7 @@ export function AnimalPicker({ selected, onChange, batchId, farmId, single }: { 
 }
 
 /** Lotes por contagem (rebanho não individualizado). */
-export function HerdLotSelect({ value, onChange, farmId }: { value: string; onChange: (id: string, row?: Row) => void; farmId?: string }) {
-  const q = useQuery({ queryKey: ["herd-lots", farmId], queryFn: () => api<{ items: Row[] }>(`/api/livestock/herd-lots${qs({ farm_id: farmId })}`) });
+export function HerdLotSelect({ value, onChange, empresaId }: { value: string; onChange: (id: string, row?: Row) => void; empresaId?: string }) {
+  const q = useQuery({ queryKey: ["herd-lots", empresaId], queryFn: () => api<{ items: Row[] }>(`/api/livestock/herd-lots${qs({ empresa_id: empresaId })}`) });
   return <select className="h-8 w-full rounded-md border bg-white px-2 text-[13px]" value={value} onChange={(e) => onChange(e.target.value, q.data?.items.find((r) => r["id"] === e.target.value))}><option value="">Selecione o lote (contagem)</option>{q.data?.items.map((r) => <option key={String(r["id"])} value={String(r["id"])}>{String(r["batch_name"] ?? "sem lote")} · {String(r["category_name"])} {String(r["breed_name"] ?? "")} {r["sex"] ? enumLabel("sex", r["sex"]) : ""} · {String(r["quantity"])} cab.</option>)}</select>;
 }

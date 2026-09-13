@@ -7,7 +7,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Bell, ChevronDown, FolderOpen, Hexagon, MoreHorizontal, Search, Settings2, Star, Zap } from "lucide-react";
 import { NAV, permOk, searchNav, moduleForPath, favoriteRoute, crumbsFor, canonicalize } from "@/lib/nav";
 import { megaMenuFor, megaColumns, type MegaMenuData } from "@/lib/mega-menu";
-import { useAuth } from "@/lib/auth";
+import { useAuth, empresasDoContexto } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { cn, dateTimeBR } from "@/lib/utils";
 import { Menu, ConfirmDialog } from "@/components/ui";
@@ -16,7 +16,7 @@ import { useWorkspaceTabs } from "@/lib/workspace-tabs";
 
 /**
  * TopNavigation (docs/UI-STANDARD.md › App Shell & Workspace): marca · módulos horizontais (SSOT nav.registry) com
- * overflow "Mais" · mega-menu por módulo · busca global (Ctrl+K) · fazenda · notificações · favorito · usuário.
+ * overflow "Mais" · mega-menu por módulo · busca global (Ctrl+K) · empresa · notificações · favorito · usuário.
  * Referência de interação: Painel Multi-Telas (header verde, pílulas, mega-menu preso à viewport).
  */
 const initialsOf = (name: string) => { const p = name.trim().split(/\s+/).filter(Boolean); return (p.length >= 2 ? `${p[0]![0]}${p[1]![0]}` : name.slice(0, 2)).toUpperCase(); };
@@ -107,7 +107,7 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
           </div>}
           {search.length > 1 && results.length === 0 && <div className="mg-topnav__results px-3 py-2 text-[12px] text-slate-500">Nenhuma função encontrada.</div>}
         </div>
-        <select className="mg-topbar-select" value={session.farmId ?? ""} onChange={(e) => window.dispatchEvent(new CustomEvent("agro:farm-request", { detail: e.target.value || null }))} title="Fazenda ativa" aria-label="Fazenda ativa"><option value="">Todas as fazendas</option>{ctx.farms.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select>
+        <select className="mg-topbar-select" value={session.empresaId ?? ""} onChange={(e) => window.dispatchEvent(new CustomEvent("agro:empresa-request", { detail: e.target.value || null }))} title="Empresa ativa" aria-label="Empresa ativa"><option value="">Todas as empresas</option>{empresasDoContexto(ctx).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select>
         <FavoriteButton />
         <Menu trigger={<button type="button" className="mg-topbar-btn relative" aria-label="Notificações"><Bell />{unread > 0 && <span data-testid="nao-lidas" className="mg-topnav__badge">{unreadRotulo}</span>}</button>} items={[{ label: "Marcar todas como lidas", onClick: () => readAll.mutate() }, ...(notif?.items.slice(0, 8).map((n) => ({ label: `${n.read_at ? "" : "● "}${n.title} · ${dateTimeBR(n.created_at)}`, onClick: () => { if (n.route) go(n.route); } })) ?? []), { label: "Ver todas", href: "/admin/notificacoes" }]} />
         <Menu trigger={<button type="button" className="mg-topbar-btn" aria-label="Usuário" title={ctx.user.name}><span className="mg-topbar-initials">{initialsOf(ctx.user.name)}</span></button>} items={[{ label: ctx.user.name, disabled: true }, { label: "Perfil", href: "/admin/perfil" }, { label: "Sair", onClick: askLogout, danger: true }]} />

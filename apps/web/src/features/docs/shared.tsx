@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 import { Plus, Trash2 } from "lucide-react";
 import { api, qs, newIdem } from "@/lib/api";
-import { useAuth } from "@/lib/auth";
+import { useAuth, empresasDoContexto } from "@/lib/auth";
 import { brl, num, dateBR, monthStartISO, todayISO } from "@/lib/utils";
 import { Button, Input, NativeSelect, Field, Menu, Confirm, Dialog, LoadingState, ErrorState, StatusBadge as UiStatusBadge, statusTone as uiStatusTone, TONE_BADGE, type BadgeTone } from "@/components/ui";
 import type { Column } from "@/components/ui/data-table";
@@ -140,7 +140,7 @@ export function PlanEditor({ plan, onChange }: { plan: Plan; onChange: (p: Plan)
 }
 export const defaultPlan = (): Plan => ({ installments: 1, first_due_date: todayISO(), mode: "interval", interval_days: 30, has_down_payment: false });
 
-export function useFarmDefault() { const { ctx, session } = useAuth(); return session?.farmId ?? ctx?.farms[0]?.id ?? ""; }
+export function useEmpresaPadrao() { const { ctx, session } = useAuth(); return session?.empresaId ?? empresasDoContexto(ctx)[0]?.id ?? ""; }
 export function useCreate<T = { id: string }>(endpoint: string, onDone: (r: T) => void) {
   const qc = useQueryClient(); const key = React.useRef(newIdem());
   return useMutation({ mutationFn: (body: unknown) => api<T>(endpoint, { method: "POST", body, idempotencyKey: key.current }), onSuccess: (r) => { toast.success("Salvo com sucesso"); void qc.invalidateQueries(); onDone(r); }, onError: (e) => { toast.error((e as Error).message); key.current = newIdem(); } });

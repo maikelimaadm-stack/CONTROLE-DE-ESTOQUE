@@ -14,15 +14,15 @@ import { DepreciationsPanel } from "@/features/fleet/depreciations";
 import { DepreciationForecastPanel } from "@/features/fleet/depreciation-forecast";
 
 /**
- * Frota e Ativos (Compactação V2): Visão Geral · Equipamentos (inventário; transferir de fazenda é ação do
+ * Frota e Ativos (Compactação V2): Visão Geral · Equipamentos (inventário; transferir de empresa é ação do
  * equipamento; histórico de transferências e depreciação/patrimônio como visões) · Abastecimentos · Manutenções
  * (corretivas, planos preventivos, agenda e alertas numa área). Famílias de bens só em Configurações › Frota.
  */
 const scroll = (c: React.ReactNode) => <div className="ws-scroll">{c}</div>;
 function Inventory() {
   const { can } = useAuth(); const [eq, setEq] = useUrlParam("equipment_id", ""); const [action, setAction] = useUrlParam("action", "");
-  return <><ResourceList resourceKey="equipments" extraRowActions={(r) => can("equipment_transfers.create") ? [{ label: "Transferir para outra fazenda", onClick: () => { setEq(String(r["id"])); setAction("transferir"); } }] : []} />
-    <Dialog open={action === "transferir"} onOpenChange={(o) => { if (!o) { setAction(""); setEq(""); } }} title="Transferir máquina entre fazendas" size="xl"><EquipmentTransfersPanel key={eq} equipmentId={eq || undefined} /></Dialog></>;
+  return <><ResourceList resourceKey="equipments" extraRowActions={(r) => can("equipment_transfers.create") ? [{ label: "Transferir para outra empresa", onClick: () => { setEq(String(r["id"])); setAction("transferir"); } }] : []} />
+    <Dialog open={action === "transferir"} onOpenChange={(o) => { if (!o) { setAction(""); setEq(""); } }} title="Transferir máquina entre empresas" size="xl"><EquipmentTransfersPanel key={eq} equipmentId={eq || undefined} /></Dialog></>;
 }
 function Depreciation() {
   const { can } = useAuth(); const [view, setView] = useUrlParam("view", "mensal");

@@ -13,12 +13,12 @@ import { enumLabel } from "@/lib/copy";
 
 /**
  * Movimentar rebanho como AÇÃO CONTEXTUAL (Compactação V2): as quatro operações nascem do registro de origem
- * (animal → mover para lote / transferir; lote → mover de local / transferir de fazenda / agrupar) e abrem em diálogo.
+ * (animal → mover para lote / transferir; lote → mover de local / transferir de empresa / agrupar) e abrem em diálogo.
  * O histórico continua consultável em Rebanho › Transferências. Endpoints, permissões e regras não mudaram.
  */
 export type HerdAction = "animais-lote" | "lote-local" | "fazendas" | "agrupar";
-export const HERD_ACTION_LABEL: Record<HerdAction, string> = { "animais-lote": "Mover animais para lote", "lote-local": "Mover lote de local", fazendas: "Transferir de fazenda", agrupar: "Agrupar lotes" };
-export const HERD_ACTION_PERM: Record<HerdAction, string> = { "animais-lote": "animal_batch_transfer.create", "lote-local": "batch_module_area_transfer.create", fazendas: "batch_farm_transfer.create", agrupar: "batch_grouping.create" };
+export const HERD_ACTION_LABEL: Record<HerdAction, string> = { "animais-lote": "Mover animais para lote", "lote-local": "Mover lote de local", "fazendas": "Transferir de empresa", agrupar: "Agrupar lotes" };
+export const HERD_ACTION_PERM: Record<HerdAction, string> = { "animais-lote": "animal_batch_transfer.create", "lote-local": "batch_module_area_transfer.create", "fazendas": "batch_farm_transfer.create", agrupar: "batch_grouping.create" };
 export interface HerdActionCtx { animalIds?: string[]; batchId?: string; batchIds?: string[] }
 export function HerdActionDialog({ action, ctx, onClose }: { action: HerdAction | null; ctx?: HerdActionCtx; onClose: () => void }) {
   const qc = useQueryClient();
@@ -41,13 +41,13 @@ export function useHerdAction() {
 }
 
 const TRANSFER_TYPES = ["batch_transfer", "module_area_transfer", "farm_transfer"];
-const TRANSFER_PT: Record<string, string> = { batch_transfer: "Animais → lote / agrupamento", module_area_transfer: "Lote → módulo / área / curral", farm_transfer: "Entre fazendas" };
+const TRANSFER_PT: Record<string, string> = { batch_transfer: "Animais → lote / agrupamento", module_area_transfer: "Lote → módulo / área / curral", farm_transfer: "Entre empresas" };
 /** Histórico de transferências do rebanho (uma lista, filtro por tipo). */
 export function HerdTransfersHistory() {
   const [type, setType] = useUrlParam("type", "");
   return <div className="flex min-h-0 flex-1 flex-col gap-2">
     <div className="mg-card ws-filters no-print"><FilterChips label="Tipo" testId="herd-transfer-type" value={type || "all"} onChange={(v) => setType(v === "all" ? "" : v)} options={[{ value: "all", label: "Todas" }, ...TRANSFER_TYPES.map((t) => ({ value: t, label: TRANSFER_PT[t]! }))]} /></div>
     <DocList key={type || "all"} title="Transferências do rebanho" endpoint="/api/livestock/movements" base="/pecuaria/movimentacoes" rowHref={(r) => `/pecuaria/movimentacoes/${String(r["movement_type"])}/${r["id"]}`} defaultFilters={type ? { movement_type: type } : { movement_type__in: encodeList(TRANSFER_TYPES) }} hideNew entity="animal_movements"
-      columns={[{ key: "code", label: "Código" }, colDate("movement_date", "Data"), { key: "movement_type", label: "Tipo", kind: "enum", options: TRANSFER_TYPES.map((v) => ({ value: v, label: TRANSFER_PT[v]! })), render: (r) => TRANSFER_PT[String(r["movement_type"])] ?? enumLabel("animal_movement_type", r["movement_type"]) }, { key: "farm_name", label: "Fazenda" }, { key: "batch_name", label: "Lote" }, { key: "quantity", label: "Cabeças", align: "right" }, { key: "note", label: "Destino / observação" }, colStatus()]} />
+      columns={[{ key: "code", label: "Código" }, colDate("movement_date", "Data"), { key: "movement_type", label: "Tipo", kind: "enum", options: TRANSFER_TYPES.map((v) => ({ value: v, label: TRANSFER_PT[v]! })), render: (r) => TRANSFER_PT[String(r["movement_type"])] ?? enumLabel("animal_movement_type", r["movement_type"]) }, { key: "empresa_name", label: "Empresa" }, { key: "batch_name", label: "Lote" }, { key: "quantity", label: "Cabeças", align: "right" }, { key: "note", label: "Destino / observação" }, colStatus()]} />
   </div>;
 }

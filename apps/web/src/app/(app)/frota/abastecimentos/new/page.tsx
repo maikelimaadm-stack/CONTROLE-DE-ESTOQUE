@@ -4,16 +4,16 @@ import { useRouter } from "next/navigation";
 import { todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { useCreate, useFarmDefault } from "@/features/docs/shared";
+import { useCreate, useEmpresaPadrao } from "@/features/docs/shared";
 export default function Page() {
-  const router = useRouter(); const farm = useFarmDefault();
-  const [h, setH] = React.useState({ farm_id: "", supply_date: todayISO(), equipment_id: "", operator_person_id: "", warehouse_id: "", product_id: "", quantity: "", unit_value: "", hour_meter: "", mileage: "", cost_center_id: "", harvest_id: "", note: "", origin: "manual" });
-  React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
+  const router = useRouter(); const empresa = useEmpresaPadrao();
+  const [h, setH] = React.useState({ empresa_id: "", supply_date: todayISO(), equipment_id: "", operator_person_id: "", warehouse_id: "", product_id: "", quantity: "", unit_value: "", hour_meter: "", mileage: "", cost_center_id: "", harvest_id: "", note: "", origin: "manual" });
+  React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const create = useCreate("/api/fleet/fuel-supplies", () => router.push("/frota?tab=abastecimentos"));
   const submit = () => create.mutate({ ...h, operator_person_id: h.operator_person_id || null, warehouse_id: h.warehouse_id || null, unit_value: h.unit_value || null, hour_meter: h.hour_meter || null, mileage: h.mileage || null, cost_center_id: h.cost_center_id || null, harvest_id: h.harvest_id || null, note: h.note || null });
   return <Card><CardHeader title="Novo abastecimento" subtitle="Com armazém/tanque informado o combustível é baixado do estoque ao custo médio; sem armazém, usa o valor unitário informado." actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.equipment_id || !h.product_id || !h.quantity} onClick={submit}>Salvar</Button></>} /><CardBody>
     <div className="grid grid-cols-12 gap-3">
-      <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>
+      <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.supply_date} onChange={(e) => setH({ ...h, supply_date: e.target.value })} /></Field>
       <Field label="Equipamento" required span={4}><RefSelect resource="equipments" value={h.equipment_id} onChange={(v) => setH({ ...h, equipment_id: v ?? "" })} /></Field>
       <Field label="Operador" span={3}><RefSelect resource="people" value={h.operator_person_id} onChange={(v) => setH({ ...h, operator_person_id: v ?? "" })} filter={{ is_employee: "true" }} /></Field>

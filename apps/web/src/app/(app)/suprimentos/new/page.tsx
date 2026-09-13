@@ -4,16 +4,16 @@ import { useRouter } from "next/navigation";
 import { todayISO, brl } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { useCreate, useFarmDefault } from "@/features/docs/shared";
+import { useCreate, useEmpresaPadrao } from "@/features/docs/shared";
 import { Trash2, Plus } from "lucide-react";
 
 const TYPES = [["product", "Produto"], ["service", "Serviço"], ["advance", "Adiantamento"], ["refund", "Reembolso"], ["daily", "Diária"], ["contract", "Contrato"], ["finished_product", "Produto acabado"]];
 interface Item { product_id: string; description: string; quantity: string; reference_value: string; amount: string; observation: string }
 export default function Page() {
-  const router = useRouter(); const farm = useFarmDefault();
-  const [h, setH] = React.useState({ farm_id: "", request_date: todayISO(), priority: "medium", request_type: "product", authorizer_id: "", description: "", justification: "", observation: "" });
+  const router = useRouter(); const empresa = useEmpresaPadrao();
+  const [h, setH] = React.useState({ empresa_id: "", request_date: todayISO(), priority: "medium", request_type: "product", authorizer_id: "", description: "", justification: "", observation: "" });
   const [items, setItems] = React.useState<Item[]>([{ product_id: "", description: "", quantity: "1", reference_value: "", amount: "", observation: "" }]);
-  React.useEffect(() => { setH((o) => ({ ...o, farm_id: o.farm_id || farm })); }, [farm]);
+  React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const create = useCreate<{ id: string }>("/api/supply/requests", (r) => router.push(`/suprimentos/view/${r.id}`));
   const upd = (i: number, k: keyof Item, v: string) => setItems(items.map((it, j) => (j === i ? { ...it, [k]: v } : it)));
   const isProduct = h.request_type === "product" || h.request_type === "finished_product";
@@ -21,7 +21,7 @@ export default function Page() {
   const submit = () => create.mutate({ ...h, authorizer_id: h.authorizer_id || null, observation: h.observation || null, items: items.map((i) => ({ product_id: i.product_id || null, description: i.description, quantity: i.quantity, reference_value: i.reference_value || null, amount: i.amount || null, observation: i.observation || null })) });
   return <Card><CardHeader title="Nova solicitação de compra" subtitle="A solicitação entra no fluxo: Solicitação → Ciência → Cotação → Autorização → Compra → Recebimento → Finalizado" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.description || !h.justification || items.some((i) => !i.description)} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
-      <Field label="Fazenda" required span={3}><RefSelect resource="farms" value={h.farm_id} onChange={(v) => setH({ ...h, farm_id: v ?? "" })} /></Field>
+      <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.request_date} onChange={(e) => setH({ ...h, request_date: e.target.value })} /></Field>
       <Field label="Tipo" required span={2}><NativeSelect value={h.request_type} onChange={(e) => setH({ ...h, request_type: e.target.value })}>{TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</NativeSelect></Field>
       <Field label="Prioridade" span={2}><NativeSelect value={h.priority} onChange={(e) => setH({ ...h, priority: e.target.value })}><option value="low">Baixa</option><option value="medium">Média</option><option value="high">Alta</option></NativeSelect></Field>
