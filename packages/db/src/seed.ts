@@ -79,6 +79,12 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
       const f = await tx.query<{ id: string }>("insert into erp.empresas(organization_id,code,name,document,address_city,address_state,area_ha,created_by) values ($1,$2,$3,'00000000000191',(select name from erp.cities where id=$4),(select state_code from erp.cities where id=$4),1200,$5) on conflict (organization_id,code) do update set name=excluded.name returning id", [orgId, code, name, city, adminUserId]);
       empresaIds.push(f.rows[0]!.id);
     }
+    // O código das empresas do seed é escrito à mão (1 e 2) para o seed ser reexecutável. Se o contador
+    // ficar em zero, a PRIMEIRA empresa criada pela tela pede 1 e colide com a empresa 1 que já existe.
+    // Alinhar o contador com o acervo é o que faz o cadastro funcionar num banco recém-semeado.
+    await tx.query(`insert into erp.code_sequences (organization_id, entity, last_value)
+                    select organization_id, 'farm', max(code) from erp.empresas where organization_id=$1 group by organization_id
+                    on conflict (organization_id, entity) do update set last_value = greatest(erp.code_sequences.last_value, excluded.last_value)`, [orgId]);
     // Centros de custo
     const cc = async (code: string, name: string, kind: string, parent: string | null) => (await tx.query<{ id: string }>("insert into erp.cost_centers(organization_id,code,name,kind,parent_id) values ($1,$2,$3,$4,$5) on conflict (organization_id,code) do update set name=excluded.name returning id", [orgId, code, name, kind, parent])).rows[0]!.id;
     const ccAdm = await cc("1.01", "Administração", "synthetic", null); const ccAdmGeral = await cc("1.01.001", "Adm Geral", "analytic", ccAdm);

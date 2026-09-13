@@ -265,7 +265,10 @@ export default async function financialRoutes(app: FastifyInstance) {
    */
   app.get("/financial/bank-accounts/balances", async (req) => runService(app, req, "bank_accounts.view", async (ctx) => {
     requirePermission(ctx, "bank_movements.view");
-    const r = await ctx.tx.query("select a.id, a.code, a.description, a.type, a.bank_code, a.agency, a.account_number, a.opening_balance, a.credit_limit, b.balance from erp.bank_accounts a join erp.v_bank_account_balances b on b.bank_account_id=a.id where a.organization_id=$1 and a.deleted_at is null and a.is_active order by a.code", [ctx.orgId]);
+    // O saldo sai de `erp.movimentos_conta_organizacao`, não da view: a view respeita a RLS empresarial de
+    // `erp.bank_movements` (corretamente, para leitura normal), e sob ela o `opening_balance` da ORGANIZAÇÃO
+    // somaria só os movimentos das empresas do usuário — um saldo que não fecha com o extrato do banco.
+    const r = await ctx.tx.query("select a.id, a.code, a.description, a.type, a.bank_code, a.agency, a.account_number, a.opening_balance, a.credit_limit, (a.opening_balance + coalesce(s.delta,0))::text as balance from erp.bank_accounts a left join (select bank_account_id, sum(case when type='in' then amount+interest else -(amount+interest) end) delta from erp.movimentos_conta_organizacao() group by 1) s on s.bank_account_id=a.id where a.organization_id=$1 and a.deleted_at is null and a.is_active order by a.code", [ctx.orgId]);
     return { items: r.rows, total_balance: money(r.rows.reduce((s, x) => s.plus((x as { balance: string }).balance), D(0))) };
   }));
   // Saldo inicial de conta (tela "Saldo Inicial"): movimento de abertura
@@ -283,11 +286,14 @@ export default async function financialRoutes(app: FastifyInstance) {
     requirePermission(ctx, "cash_flow.view");
     const q = z.object({ account_ids: z.union([z.string(), z.array(z.string())]).transform((v) => (Array.isArray(v) ? v : v.split(","))), period: z.enum(["daily", "monthly", "yearly"]).default("monthly"), mode: z.enum(["synthetic", "analytic"]).default("synthetic"), start_date: date, end_date: date }).parse(req.query);
     const trunc = q.period === "daily" ? "day" : q.period === "monthly" ? "month" : "year";
-    const opening = await ctx.tx.query<{ v: string }>("select coalesce(sum(a.opening_balance),0) + coalesce((select sum(case when m.type='in' then m.amount+m.interest else -(m.amount+m.interest) end) from erp.bank_movements m where m.bank_account_id = any($2::uuid[]) and m.status='confirmed' and m.deleted_at is null and m.movement_date < $3),0) as v from erp.bank_accounts a where a.organization_id=$1 and a.id = any($2::uuid[])", [ctx.orgId, q.account_ids, q.start_date]);
-    const rows = await ctx.tx.query<{ period: string; in_amount: string; out_amount: string }>(`select to_char(date_trunc('${trunc}', movement_date),'YYYY-MM-DD') as period, coalesce(sum(case when type='in' then amount+interest end),0) in_amount, coalesce(sum(case when type='out' then amount+interest end),0) out_amount from erp.bank_movements where organization_id=$1 and bank_account_id = any($2::uuid[]) and status='confirmed' and deleted_at is null and movement_date between $3 and $4 group by 1 order by 1`, [ctx.orgId, q.account_ids, q.start_date, q.end_date]);
+    // Mesmo contrato do saldo: a conta é da organização, então o acumulado dela também é.
+    const opening = await ctx.tx.query<{ v: string }>("select coalesce(sum(a.opening_balance),0) + coalesce((select sum(case when m.type='in' then m.amount+m.interest else -(m.amount+m.interest) end) from erp.movimentos_conta_organizacao($2::uuid[]) m where m.movement_date < $3),0) as v from erp.bank_accounts a where a.organization_id=$1 and a.id = any($2::uuid[])", [ctx.orgId, q.account_ids, q.start_date]);
+    const rows = await ctx.tx.query<{ period: string; in_amount: string; out_amount: string }>(`select to_char(date_trunc('${trunc}', movement_date),'YYYY-MM-DD') as period, coalesce(sum(case when type='in' then amount+interest end),0) in_amount, coalesce(sum(case when type='out' then amount+interest end),0) out_amount from erp.movimentos_conta_organizacao($1::uuid[], $2, $3) group by 1 order by 1`, [q.account_ids, q.start_date, q.end_date]);
     let bal = D(opening.rows[0]!.v);
     const periods = rows.rows.map((r) => { bal = bal.plus(r.in_amount).minus(r.out_amount); return { ...r, balance: money(bal) }; });
-    const detail = q.mode === "analytic" ? (await ctx.tx.query("select m.id, m.movement_date, m.type, m.amount, m.interest, m.note, m.document, ba.code as account_code, (select string_agg(fc.name, ', ') from erp.bank_movement_apportionments a join erp.financial_categories fc on fc.id=a.financial_category_id where a.movement_id=m.id) as categories from erp.bank_movements m join erp.bank_accounts ba on ba.id=m.bank_account_id where m.organization_id=$1 and m.bank_account_id = any($2::uuid[]) and m.status='confirmed' and m.deleted_at is null and m.movement_date between $3 and $4 order by m.movement_date, m.created_at", [ctx.orgId, q.account_ids, q.start_date, q.end_date])).rows : [];
+    // O analítico mostra os movimentos DA CONTA, com a mesma autoridade do sintético — inclusive as
+    // categorias, que a função já traz (as linhas-filhas herdam a visibilidade do movimento pai).
+    const detail = q.mode === "analytic" ? (await ctx.tx.query("select id, movement_date, type, amount, interest, note, document, account_code, categories from erp.movimentos_conta_organizacao($1::uuid[], $2, $3) order by movement_date, created_at", [q.account_ids, q.start_date, q.end_date])).rows : [];
     return { opening_balance: money(opening.rows[0]!.v), closing_balance: money(bal), periods, movements: detail };
   }));
 

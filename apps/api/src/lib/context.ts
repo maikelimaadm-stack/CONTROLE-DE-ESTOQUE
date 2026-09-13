@@ -1,6 +1,6 @@
 import type { Tx } from "@agro/db";
 import { DomainError } from "@agro/shared";
-import { escopoDoModulo, type AutorizacaoPorModulo } from "@erp/plataforma";
+import { escopoDoModulo, escopoTotalEmAlgumModulo, type AutorizacaoPorModulo } from "@erp/plataforma";
 
 export interface AuthUser { id: string; email: string; name: string }
 
@@ -181,6 +181,23 @@ export function exigirEscopoTotalDoModulo(ctx: ServiceCtx, oQue = "Registro"): v
   const escopo = alvo ? escopoDoModulo(ctx.membership.escopos, alvo) : { tipo: "nenhuma" as const };
   if (escopo.tipo === "todas") return;
   throw new DomainError("VALIDATION_ERROR", `${oQue} sem empresa vale para a organização inteira: informe a empresa`);
+}
+
+/**
+ * Criar a própria EMPRESA é ato de ORGANIZAÇÃO, e não existe módulo ativo para consultar.
+ *
+ * A pergunta aqui é a MESMA que a RLS de `erp.empresas` faz (`erp.escopo_empresa_total(null)`): o membro
+ * tem escopo total em ALGUM módulo? Precisa ser a mesma por um motivo prático, não estético — a empresa
+ * recém-criada não está no escopo de ninguém, então quem não passa nessa pergunta insere a linha e não
+ * consegue lê-la de volta: o `getOne` do create responde 404 e a transação inteira volta atrás. O usuário
+ * vê "não encontrado" depois de preencher um cadastro que, do ponto de vista dele, foi aceito.
+ *
+ * Recusar ANTES do INSERT troca esse 404 silencioso por uma recusa explícita, sem conceder escopo nenhum:
+ * ninguém passa a enxergar empresa que não enxergava.
+ */
+export function exigirEscopoTotalDaOrganizacao(ctx: ServiceCtx, oQue = "Registro"): void {
+  if (escopoTotalEmAlgumModulo(ctx.membership.escopos)) return;
+  throw new DomainError("VALIDATION_ERROR", `${oQue} alcança a organização inteira: é preciso ter acesso a todas as empresas em algum módulo`);
 }
 
 /**

@@ -84,6 +84,11 @@ export function normalizarEntradaEmpresa<T>(valor: T): T {
       saida = saida ?? { ...obj };
       saida[canonico] = vLegado;
     }
+    // O legado SAI depois de promovido. "A rota enxerga só o canônico" não era verdade enquanto ele ficava
+    // no objeto: `buildSchema` é `.strict()`, então o recurso genérico respondia 422 "Campo não reconhecido"
+    // para qualquer cliente que falasse o idioma antigo — exatamente o cliente que a ponte existe para servir.
+    saida = saida ?? { ...obj };
+    delete saida[legado];
   }
   return (saida ?? obj) as T;
 }
@@ -105,6 +110,11 @@ export function aliasesLegadosDeResposta(valor: unknown, profundidade = 0): unkn
   const obj = valor as Record<string, unknown>;
   for (const { canonico, legado, forma } of ALIASES_EMPRESA) {
     if (canonico in obj && !(legado in obj) && temAForma(forma, obj[canonico])) obj[legado] = obj[canonico];
+    // O RÓTULO da referência é parte do mesmo contrato: a listagem genérica desenha `<campo>_label`, e o
+    // cliente anterior procura `farm_id_label`. Sem o apelido do rótulo a coluna Empresa dele vem vazia —
+    // não é erro, é uma coluna em branco, que é a forma de defeito que ninguém abre chamado para investigar.
+    const rotulo = `${canonico}_label`, rotuloLegado = `${legado}_label`;
+    if (forma === "id" && rotulo in obj && !(rotuloLegado in obj)) obj[rotuloLegado] = obj[rotulo];
   }
   for (const [chave, v] of Object.entries(obj)) {
     if (VALORES_OPACOS.has(chave)) continue;
@@ -174,6 +184,7 @@ export function normalizarQueryEmpresa<T>(valor: T): T {
     const chaveCanonica = canonico + chave.slice(corte);
     if (chaveCanonica in obj && obj[chaveCanonica] !== v) throw conflito(chaveCanonica, chave);
     escrever(chaveCanonica, v);
+    if (saida) delete saida[chave];   // pelo mesmo motivo do corpo: sobra vira filtro duplicado
   }
   for (const nomeDoParametro of ["field", "sort"]) {
     const v = obj[nomeDoParametro];
@@ -197,3 +208,19 @@ export const TABELAS_LEGADAS: Readonly<Record<string, string>> = {
   proprietary_farms: "proprietary_empresas"
 };
 export const tabelaCanonica = (nome: string): string => TABELAS_LEGADAS[nome] ?? nome;
+
+/**
+ * CHAVE DA SEQUÊNCIA DE CÓDIGO DA EMPRESA — legada de propósito, e a razão é aritmética.
+ *
+ * `erp.next_code(organização, entidade)` guarda o último valor em `erp.code_sequences`, com chave primária
+ * `(organization_id, entity)`. Duas entidades diferentes são DOIS contadores independentes: se a API nova
+ * passasse a numerar por `'empresa'` enquanto a API anterior (que ainda pode estar no ar durante o rollout)
+ * continua numerando por `'farm'`, as duas começariam a devolver 1, 2, 3 em paralelo — duas empresas
+ * diferentes com o MESMO código, cada uma criada por uma versão do servidor.
+ *
+ * Numeração tem de ter UMA autoridade. Durante a ponte a autoridade é a chave que já existe nos bancos em
+ * produção, e ela fica confinada aqui em vez de espalhar o nome antigo pelo runtime. Migrar a chave da
+ * sequência (renomeando a linha de `erp.code_sequences`) é trabalho de governança de dados, depois que a
+ * ponte cair — não durante ela.
+ */
+export const SEQUENCIA_EMPRESA = "farm";

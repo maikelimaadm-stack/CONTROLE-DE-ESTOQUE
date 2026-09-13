@@ -5,9 +5,9 @@ import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, 
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
 import { runService, nextCode, requirePermission, comPermissaoResolvida } from "../lib/service.js";
-import { campoCanonico } from "../lib/compat-empresa.js";
+import { campoCanonico, SEQUENCIA_EMPRESA } from "../lib/compat-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
-import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
+import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
 export function buildSchema(def: ResourceDef, partial = false) {
@@ -202,6 +202,9 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
     if (escC.nullable && !pedida) exigirEscopoTotalDoModulo(ctx, def.label);
     await exigirEmpresaDeLancamento(ctx, pedida);
   }
+  // A EMPRESA é o único cadastro cuja RLS de leitura depende do escopo do próprio membro: a linha nasce
+  // fora do escopo de todo mundo. Ver `exigirEscopoTotalDaOrganizacao`.
+  if (def.table === "empresas") exigirEscopoTotalDaOrganizacao(ctx, def.label);
   const existing = await checkColumns(ctx, def);
   const cols: string[] = []; const vals: unknown[] = [];
   if (existing.has("organization_id")) { cols.push("organization_id"); vals.push(ctx.orgId); }
@@ -213,7 +216,11 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
     const v = coerceValue(f, data[f.name]); if (v === undefined) continue;
     cols.push(f.name); vals.push(v);
   }
-  if (def.key === "farms" && !cols.includes("code")) { cols.push("code"); vals.push(Number(await nextCode(ctx.tx, ctx.orgId, "farm", 1))); }
+  // O código da Empresa é `int not null` e não vem do cliente (campo `readOnly`). A condição olha a TABELA
+  // canônica, não a chave do recurso: a renomeação trocou a chave de `farms` para `empresas` e a comparação
+  // por chave virou letra morta em silêncio — o INSERT passou a sair sem `code` e a violar o NOT NULL.
+  // A chave da SEQUÊNCIA continua legada de propósito (`SEQUENCIA_EMPRESA`): ver o motivo no adaptador.
+  if (def.table === "empresas" && !cols.includes("code")) { cols.push("code"); vals.push(Number(await nextCode(ctx.tx, ctx.orgId, SEQUENCIA_EMPRESA, 1))); }
   const r = await ctx.tx.query(`insert into erp.${ident(def.table)} (${cols.map(ident).join(",")}) values (${vals.map((_, i) => `$${i + 1}`).join(",")}) returning id`, vals);
   return getOne(ctx, def, (r.rows[0] as { id: string }).id);
 }
