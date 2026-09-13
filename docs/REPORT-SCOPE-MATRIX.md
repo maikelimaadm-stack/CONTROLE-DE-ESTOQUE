@@ -7,7 +7,7 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 
 | Relatório | Permissão | Módulo | Fontes de empresa (estratégia) | Situação |
 | --- | --- | --- | --- | --- |
-| stock_movement | report.stock_movement | estoque | stock_movements (predicado), warehouses (junção) | OK |
+| stock_movement | report.stock_movement | estoque | stock_movements (predicado), warehouses (predicado) | OK |
 | stocks_consolidated | report.stocks_consolidated | estoque | warehouses (predicado) | OK |
 | stocks_lot_provider | report.stocks_lot_provider | estoque | warehouses (predicado) | OK |
 | requisitions | report.requisitions | estoque | requisitions (predicado) | OK |
@@ -58,53 +58,53 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | sales_client_product | report.sales_client_product | vendas | sales_documents (predicado) | OK |
 | sales_employee | report.sales_employee | vendas | sales_documents (predicado) | OK |
 | herd_composition | report.herd_composition | pecuaria | animals (predicado), herd_lots (predicado) | OK |
-| animals | report.animals | pecuaria | animals (predicado), batches (junção) | OK |
-| animals_per_batch | report.animals_per_batch | pecuaria | animals (junção), herd_lots (junção), batches (predicado), grazing_modules (junção), areas (junção) | OK |
-| category_animal | report.category_animal | pecuaria | animal_movements (predicado), animals (derivado) | OK |
+| animals | report.animals | pecuaria | animals (predicado), batches (predicado) | OK |
+| animals_per_batch | report.animals_per_batch | pecuaria | animals (predicado), herd_lots (predicado), batches (predicado), grazing_modules (predicado), areas (predicado) | OK |
+| category_animal | report.category_animal | pecuaria | animal_movements (predicado), animals (predicado) | OK |
 | animal_movements | report.animal_movements | pecuaria | animal_movements (predicado) | OK |
-| birth | report.birth | pecuaria | animal_movements (predicado), animals (derivado) | OK |
-| death | report.death | pecuaria | animal_movements (predicado), animals (derivado) | OK |
-| animal_sales | report.animal_sales | pecuaria | animal_movements (predicado), animals (derivado) | OK |
-| animal_purchases | report.animal_purchases | pecuaria | animal_movements (predicado), animals (derivado) | OK |
+| birth | report.birth | pecuaria | animal_movements (predicado), animals (predicado) | OK |
+| death | report.death | pecuaria | animal_movements (predicado), animals (predicado) | OK |
+| animal_sales | report.animal_sales | pecuaria | animal_movements (predicado), animals (predicado) | OK |
+| animal_purchases | report.animal_purchases | pecuaria | animal_movements (predicado), animals (predicado) | OK |
 | weaning | report.weaning | pecuaria | animal_handlings (predicado) | OK |
-| weighing_animal | report.weighing_animal | pecuaria | weighings (predicado), batches (junção) | OK |
-| weighing_batch | report.weighing_batch | pecuaria | weighings (predicado), batches (junção) | OK |
-| feedlot_weighing | report.feedlot_weighing | confinamento | batches (predicado), animals (junção) | OK |
-| nutrition_batch | report.nutrition_batch | pecuaria | animal_handlings (predicado), batches (junção) | OK |
-| sanitary_batch | report.sanitary_batch | pecuaria | animal_handlings (predicado), batches (junção) | OK |
-| management_batch | report.management_batch | pecuaria | animal_handlings (predicado), batches (junção) | OK |
+| weighing_animal | report.weighing_animal | pecuaria | weighings (predicado), batches (predicado) | OK |
+| weighing_batch | report.weighing_batch | pecuaria | weighings (predicado), batches (predicado) | OK |
+| feedlot_weighing | report.feedlot_weighing | confinamento | batches (predicado), animals (predicado) | OK |
+| nutrition_batch | report.nutrition_batch | pecuaria | animal_handlings (predicado), batches (predicado) | OK |
+| sanitary_batch | report.sanitary_batch | pecuaria | animal_handlings (predicado), batches (predicado) | OK |
+| management_batch | report.management_batch | pecuaria | animal_handlings (predicado), batches (predicado) | OK |
 | application_management | report.application_management | pecuaria | animal_handlings (predicado) | OK |
-| pregnant_cows | report.pregnant_cows | pecuaria | animals (predicado), batches (junção) | OK |
+| pregnant_cows | report.pregnant_cows | pecuaria | animals (predicado), batches (predicado) | OK |
 | reproductive_history | report.reproductive_history | pecuaria | breeding_seasons (predicado) | OK |
 | bull_efficiency | report.bull_efficiency | pecuaria | breeding_seasons (predicado) | OK |
 | family_tree | report.family_tree | pecuaria | animals (predicado) | OK |
-| animal_record | report.animal_record | pecuaria | animal_handlings (derivado), animals (predicado) | OK |
-| costing_batch | report.costing_batch | pecuaria | animals (junção), herd_lots (junção), animal_handlings (junção), feed_deliveries (junção), animal_retroactive_costs (junção), batches (predicado) | OK |
-| costing_module | report.costing_module | pecuaria | batches (junção), animal_handlings (junção), grazing_modules (predicado) | OK |
-| costing_animal | report.costing_animal | pecuaria | animal_handlings (derivado), animals (predicado), batches (junção) | OK |
-| costing_livestock_area | report.costing_livestock_area | pecuaria | financial_titles (derivado), areas (predicado) | OK |
-| batch_profitability | report.batch_profitability | pecuaria | animal_handlings (junção), batches (predicado), animals (junção) | OK |
+| animal_record | report.animal_record | pecuaria | animal_handlings (predicado), animals (predicado) | OK |
+| costing_batch | report.costing_batch | pecuaria | animals (predicado), herd_lots (predicado), animal_handlings (predicado), feed_deliveries (predicado), animal_retroactive_costs (predicado), batches (predicado) | OK |
+| costing_module | report.costing_module | pecuaria | batches (predicado), animal_handlings (predicado), grazing_modules (predicado) | OK |
+| costing_animal | report.costing_animal | pecuaria | animal_handlings (predicado), animals (predicado), batches (predicado) | OK |
+| costing_livestock_area | report.costing_livestock_area | pecuaria | financial_titles (predicado), areas (predicado) | OK |
+| batch_profitability | report.batch_profitability | pecuaria | animal_handlings (predicado), batches (predicado), animals (predicado) | OK |
 | herd_evolution | report.herd_evolution | pecuaria | animal_movements (predicado) | OK |
-| transfer_batch_area | report.transfer_batch_area | pecuaria | animal_movements (predicado), batches (junção), grazing_modules (junção), areas (junção) | OK |
-| animal_batch_history | report.animal_batch_history | pecuaria | animal_movements (predicado), batches (junção) | OK |
-| batch_movement_analysis | report.batch_movement_analysis | pecuaria | animal_movements (junção), animals (junção), batches (predicado) | OK |
+| transfer_batch_area | report.transfer_batch_area | pecuaria | animal_movements (predicado), batches (predicado), grazing_modules (predicado), areas (predicado) | OK |
+| animal_batch_history | report.animal_batch_history | pecuaria | animal_movements (predicado), batches (predicado) | OK |
+| batch_movement_analysis | report.batch_movement_analysis | pecuaria | animal_movements (predicado), animals (predicado), batches (predicado) | OK |
 | receiver_productivity | report.receiver_productivity | pecuaria | breeding_seasons (predicado) | OK |
 | reproduction_cost | report.reproduction_cost | pecuaria | breeding_seasons (predicado) | OK |
 | sisbov_identification | report.sisbov_identification | pecuaria | animals (predicado) | OK |
 | sisbov_birth | report.sisbov_birth | pecuaria | animals (predicado) | OK |
 | sisbov_death | report.sisbov_death | pecuaria | animals (predicado) | OK |
-| feedlot_batch_control | report.feedlot_batch_control | confinamento | animals (junção), feed_deliveries (junção), batches (predicado) | OK |
-| feedlot_planned_consumption | report.feedlot_planned_consumption | confinamento | trough_readings (junção), feed_deliveries (predicado) | OK |
+| feedlot_batch_control | report.feedlot_batch_control | confinamento | animals (predicado), feed_deliveries (predicado), batches (predicado) | OK |
+| feedlot_planned_consumption | report.feedlot_planned_consumption | confinamento | trough_readings (predicado), feed_deliveries (predicado) | OK |
 | feedlot_activity | report.feedlot_activity | confinamento | feed_deliveries (junção), diet_batches (junção), trough_readings (junção), diet_batches (predicado), feed_deliveries (predicado), trough_readings (predicado) | OK |
 | equipment | report.equipment | frota_ativos | equipments (predicado) | OK |
 | accumulated_depreciation | report.accumulated_depreciation | frota_ativos | equipments (predicado) | OK |
-| machines | report.machines | frota_ativos | fuel_supplies (junção), equipments (predicado) | OK |
-| machine_supplies | report.machine_supplies | frota_ativos | fuel_supplies (predicado), equipments (junção) | OK |
-| machine_maintenances | report.machine_maintenances | frota_ativos | maintenances (predicado), equipments (derivado) | OK |
+| machines | report.machines | frota_ativos | fuel_supplies (predicado), maintenances (predicado), equipments (predicado) | OK |
+| machine_supplies | report.machine_supplies | frota_ativos | fuel_supplies (predicado), equipments (predicado) | OK |
+| machine_maintenances | report.machine_maintenances | frota_ativos | maintenances (predicado), equipments (predicado) | OK |
 | monthly_calculation | report.monthly_calculation | pessoas_rh | earnings (predicado) | OK |
 | birthdays | report.birthdays | organização | sem fonte de empresa | OK |
 | active_employees | report.active_employees | organização | sem fonte de empresa | OK |
-| advances | report.advances | pessoas_rh | salary_advances (predicado), financial_titles (junção) | OK |
+| advances | report.advances | pessoas_rh | salary_advances (predicado), financial_titles (predicado) | OK |
 | logged_hours | report.logged_hours | organização | sem fonte de empresa | OK |
 | rainfall | report.rainfall | pecuaria | rainfalls (predicado) | OK |
 | journal_entries | report.journal_entries | fiscal | journal_entries (predicado) | OK |

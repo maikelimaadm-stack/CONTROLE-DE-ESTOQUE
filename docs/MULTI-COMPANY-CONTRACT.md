@@ -268,10 +268,32 @@ No painel financeiro, quem não tem a capacidade de organização recebe o bloco
 ### Relatórios e painéis
 
 Todo relatório company-scoped respeita o módulo da própria permissão, em TODAS as suas fontes — inclusive
-subconsultas. Onde o recorte chega por relação (o animal citado por uma movimentação já recortada, o manejo
-do próprio animal, o título rateado para uma área), isso é DECLARADO na definição do relatório com
-justificativa. As matrizes versionadas estão em `docs/REPORT-SCOPE-MATRIX.md` (95 relatórios, gerada e
-conferida pelo gate) e `docs/DASHBOARD-SCOPE-MATRIX.md` (painéis, bloco a bloco).
+subconsultas, cláusulas `on` de `left join` e CTEs.
+
+**Quem tem coluna de empresa responde pela própria coluna.** Esta é a regra, e ela não admite atalho: uma
+tabela com `farm_id` só está recortada quando o predicado canônico cita o `farm_id` DELA. Herdar o recorte de
+uma junção é sólido em apenas dois casos, e o gate estrutural
+(`apps/api/test/unit/report-scope.test.ts`) só aceita esses dois:
+
+| Caso | Por que é sólido |
+| --- | --- |
+| a tabela **não tem** coluna de empresa (`erp.title_apportionments`, `erp.weighing_items`) | as linhas dela só existem em função do pai já recortado: o recorte do pai é o único que existe |
+| a igualdade é entre as **próprias colunas de empresa** (`a.farm_id = b.farm_id`) | a igualdade transporta o recorte de uma para a outra |
+
+Juntar duas tabelas que TÊM `farm_id` por qualquer outra chave **não recorta nada**. Nada no banco impede que
+o abastecimento da empresa B aponte para o equipamento da empresa A (`s.equipment_id = e.id`), que o título da
+empresa B seja rateado para a área da empresa A (`ta.area_id = ar.id`) ou que o trato da empresa A seja
+lançado no lote da empresa B (`fd.batch_id = b.id`) — não existe chave estrangeira composta que ligue o
+`batch_id` ao `farm_id`. Quem confia nessa junção soma dinheiro e conta cabeça de empresa que o usuário não
+enxerga. A prova está em `apps/api/test/integration/relatorio-escopo.test.ts`, que monta exatamente esse
+estado no banco e exige que o usuário autorizado só na empresa B continue vendo o lote e **não** some o
+trato nem conte o animal da empresa A.
+
+A declaração `escopo.derivado` existe só para o primeiro caso — tabela SEM coluna de empresa — e sempre com
+justificativa escrita. Declará-la para uma tabela que tem `farm_id` é erro de gate, não escolha de projeto.
+
+As matrizes versionadas estão em `docs/REPORT-SCOPE-MATRIX.md` (gerada e conferida pelo gate, uma linha por
+relatório do catálogo) e `docs/DASHBOARD-SCOPE-MATRIX.md` (painéis, bloco a bloco).
 
 ## 8. O que ainda não existe (e por quê)
 

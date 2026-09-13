@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { harness, ids, type Harness } from "./setup.js";
+import { harness, ids, TEST_URL, type Harness } from "./setup.js";
+import { createPool } from "@agro/db";
 
 /**
  * MATRIZ A/B DOS RELATÓRIOS E PAINÉIS (PRE-BASE2-02 §17, §20).
@@ -17,6 +18,9 @@ let USUARIO: Hdr; let A = ""; let B = "";
 const SENT_A = "1111.11"; const SENT_B = "2222.22";
 const SENT_A_BANCO = "3333.33"; const SENT_B_BANCO = "4444.44";
 const SENT_A_ESTOQUE = "77"; const SENT_B_ESTOQUE = "88";
+// sentinelas do registro CRUZADO: linha da empresa A pendurada num lote da empresa B
+const SENT_A_TRATO = "5555.55"; const SENT_A_PESO = "666.6";
+let loteB = "";
 
 const get = (url: string, headers: Hdr) => h.app.inject({ method: "GET", url, headers });
 const criar = async (url: string, payload: Record<string, unknown>) => {
@@ -61,12 +65,25 @@ beforeAll(async () => {
   await criar("/api/supply/requests", solicitacao(A, "Sentinela A", SENT_A));
   await criar("/api/supply/requests", solicitacao(B, "Sentinela B", SENT_B));
 
+  // ESTADO QUE O BANCO PERMITE: registro da empresa A pendurado num LOTE da empresa B. Não há constraint
+  // composta ligando `batch_id` a `farm_id`, então trato e animal de A podem apontar para o lote de B. Se o
+  // recorte do relatório viesse "por junção com o lote já recortado", o usuário autorizado só em B somaria
+  // dinheiro e contaria cabeça da empresa A. É a prova direta do §17: cada fonte responde pela PRÓPRIA empresa.
+  {
+    const raiz = createPool(TEST_URL, { max: 1 });
+    loteB = (await raiz.query<{ id: string }>("insert into erp.batches (organization_id, farm_id, code, batch_date, description, batch_type, status, entry_date) values ($1,$2,'SENT-B-LOTE','2026-09-01','Lote sentinela B','feedlot','active','2026-09-01') returning id", [h.demo.orgId, B])).rows[0]!.id;
+    await raiz.query("insert into erp.feed_deliveries (organization_id, farm_id, delivery_date, batch_id, quantity_kg, cost) values ($1,$2,'2026-09-03',$3,1,$4)", [h.demo.orgId, A, loteB, SENT_A_TRATO]);
+    await raiz.query("insert into erp.animals (organization_id, farm_id, species_id, category_id, batch_id, sex, entry_date, status, current_weight) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,$4,'M','2026-09-01','active',$5)", [h.demo.orgId, A, I.speciesCategory, loteB, SENT_A_PESO]);
+    await raiz.end();
+  }
+
   const PERMS = [
     "report.ledger.view", "report.cash_flow_category.view", "report.account_reconciliation.view",
     "report.cost_centers_unified.view", "report.payables.view", "report.financial_movement.view",
     "report.bank_statement.view", "report.supply_sla.view", "report.supplies.view", "report.cost_calculation.view",
     "report.accumulated_income_statement.view", "report.stock_movement.view",
-    "dashboard.financial.view", "dashboard.home.view", "dashboard.supply.view", "dashboard.cash_book.view", "bank_movements.view", "payables.view", "purchase_requests.view"
+    "dashboard.financial.view", "dashboard.home.view", "dashboard.supply.view", "dashboard.cash_book.view", "bank_movements.view", "payables.view", "purchase_requests.view",
+    "report.costing_batch.view", "report.animals_per_batch.view"
   ];
   const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: "Perfil sentinela", permissions: PERMS } });
   expect(papel.statusCode, papel.body).toBe(201);
@@ -76,7 +93,8 @@ beforeAll(async () => {
       { modulo: "financeiro", modo: "selecionadas", empresas: [B] },
       { modulo: "compras", modo: "selecionadas", empresas: [B] },
       { modulo: "estoque", modo: "selecionadas", empresas: [B] },
-      { modulo: "fiscal", modo: "selecionadas", empresas: [B] }
+      { modulo: "fiscal", modo: "selecionadas", empresas: [B] },
+      { modulo: "pecuaria", modo: "selecionadas", empresas: [B] }
     ]
   } });
   expect(membro.statusCode, membro.body).toBe(201);
@@ -129,6 +147,34 @@ describe("extrato bancário é documento da CONTA: exige capacidade de organiza�
   it("o proprietário (capacidade de organização) continua abrindo o extrato completo", async () => {
     const r = await get(`/api/reports/bank_statement?bank_account_id=${I.bankAccount}`, h.headers());
     expect(r.statusCode, r.body).toBe(200);
+  });
+});
+
+describe("registro da empresa A pendurado em lote da empresa B: a junção não recorta, o predicado próprio recorta", () => {
+  const linhaDoLote = async (key: string, headers: Hdr) => {
+    const r = await get(`/api/reports/${key}`, headers);
+    expect(r.statusCode, `${key}: ${r.body}`).toBe(200);
+    return (j(r).rows ?? []).find((x) => x["batch"] === "Lote sentinela B");
+  };
+  it("o proprietário enxerga o registro cruzado (ele existe mesmo, e é da empresa A)", async () => {
+    expect(await linhaDoLote("costing_batch", h.headers())).toMatchObject({ feed_cost: SENT_A_TRATO });
+    expect(await linhaDoLote("animals_per_batch", h.headers())).toMatchObject({ identified: 1, avg_weight: SENT_A_PESO });
+  });
+  it("o usuário autorizado só na empresa B vê o lote, mas NÃO soma o trato nem conta o animal da empresa A", async () => {
+    const custeio = await linhaDoLote("costing_batch", USUARIO);
+    expect(custeio, "o lote da empresa B tem de continuar visível").toBeTruthy();
+    expect(custeio!["feed_cost"], "trato da empresa A somado no lote da empresa B").toBe("0");
+    const animais = await linhaDoLote("animals_per_batch", USUARIO);
+    expect(animais!["identified"], "animal da empresa A contado no lote da empresa B").toBe(0);
+    expect(animais!["avg_weight"], "peso da empresa A na média do lote da empresa B").toBeNull();
+  });
+  it("nenhum dos dois relatórios imprime o valor sentinela da empresa A para o usuário restrito", async () => {
+    for (const key of ["costing_batch", "animals_per_batch"]) {
+      const texto = await textoDoRelatorio(key, USUARIO);
+      for (const sentinela of [SENT_A_TRATO, SENT_A_PESO]) {
+        expect(texto.includes(sentinela), `${key} vazou ${sentinela} da empresa A`).toBe(false);
+      }
+    }
   });
 });
 

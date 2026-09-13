@@ -2,17 +2,17 @@
   "generatedBy": "scripts/farm-inventory.mjs",
   "counts": {
     "schema": 169,
-    "api": 825,
-    "api-test": 240,
+    "api": 879,
+    "api-test": 252,
     "core-neutro": 0,
     "packages": 114,
     "web": 421,
     "web-nav": 13,
     "web-test": 73,
     "scripts": 11,
-    "docs": 226,
+    "docs": 247,
     "reference": 513
   },
-  "total": 2605,
+  "total": 2692,
   "companyTables": 50
 }

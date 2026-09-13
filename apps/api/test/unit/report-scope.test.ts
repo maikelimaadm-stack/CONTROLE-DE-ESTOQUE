@@ -84,37 +84,43 @@ function fontes(sql: string): { tabela: string; alias: string; semAlias?: boolea
 }
 
 /**
- * Alcance do recorte por JUNÇÃO. Uma tabela de empresa pode não ter predicado próprio e mesmo assim não
- * vazar: se as linhas dela só existem em função de uma fonte JÁ RECORTADA (`join erp.warehouses w on
- * w.id=m.warehouse_id`, com `m` recortada), o conjunto já está limitado às empresas autorizadas.
+ * Alcance do recorte por JUNÇÃO. Uma tabela pode não ter predicado próprio e mesmo assim não vazar: se as
+ * linhas dela só existem em função de uma fonte JÁ RECORTADA (`join erp.stock_balances sb on
+ * sb.warehouse_id=w.id`, com `w` recortada), o conjunto já está limitado às empresas autorizadas.
  *
- * O gate reconhece isso estruturalmente: monta o grafo de igualdades entre aliases (ignorando igualdade só
- * por `organization_id`, que não recorta empresa nenhuma) e propaga a proteção a partir dos aliases que têm
- * o predicado canônico. O que sobra — alias de tabela de empresa sem predicado e sem ligação com alguém
- * recortado — é vazamento de verdade: é o caso da tabela que DIRIGE a consulta ou a subconsulta.
+ * Mas essa herança só é sólida em dois casos, e o gate exige um deles:
+ *
+ *  (a) a tabela vizinha NÃO TEM coluna de empresa própria — ela pertence a uma empresa por RELAÇÃO, então o
+ *      recorte do pai é o único recorte que existe (`erp.title_apportionments` pelo título);
+ *  (b) a igualdade é entre as PRÓPRIAS COLUNAS DE EMPRESA das duas (`a.farm_id=b.farm_id`), que transporta
+ *      o recorte de uma para a outra.
+ *
+ * Juntar duas tabelas QUE TÊM coluna de empresa por qualquer outra chave NÃO recorta nada: nada no banco
+ * impede que o abastecimento da empresa B aponte para o equipamento da empresa A (`s.equipment_id=e.id`),
+ * ou que o título da empresa B seja rateado para a área da empresa A (`ta.area_id=ar.id`). Quem tem coluna
+ * de empresa própria responde pela coluna própria — ou declara o derivado com motivo.
  */
 function protegidos(sql: string): Set<string> {
-  // só propaga entre tabelas DE EMPRESA: passar por um cadastro compartilhado (produto, pessoa, categoria)
-  // restringe o conjunto por aquele cadastro, não por empresa — e cadastro é o mesmo para todas elas.
-  const deEmpresa = new Set(fontes(sql).filter((f) => colunaDeEmpresa(f.tabela) && !NAO_RECORTAVEIS.has(f.tabela)).map((f) => f.alias));
+  const colunaDoAlias = new Map<string, string | null>();
+  for (const f of fontes(sql)) if (!colunaDoAlias.has(f.alias)) colunaDoAlias.set(f.alias, NAO_RECORTAVEIS.has(f.tabela) ? null : colunaDeEmpresa(f.tabela));
   const seeds = new Set<string>();
   const rePred = /me\.empresa_id=([a-z][a-z0-9_]*)\.[a-z_]+/gi;
   for (let m = rePred.exec(sql); m; m = rePred.exec(sql)) seeds.add(m[1]!);
-  const arestas: [string, string][] = [];
+  const arestas: { a: string; b: string; porEmpresa: boolean }[] = [];
   const reEq = /\b([a-z][a-z0-9_]*)\.([a-z_]+)\s*=\s*([a-z][a-z0-9_]*)\.([a-z_]+)/gi;
   for (let m = reEq.exec(sql); m; m = reEq.exec(sql)) {
     const [, a, ca, b, cb] = m;
     if (ca === "organization_id" && cb === "organization_id") continue; // não recorta empresa
-    arestas.push([a!, b!]);
+    const colA = colunaDoAlias.get(a!) ?? null, colB = colunaDoAlias.get(b!) ?? null;
+    arestas.push({ a: a!, b: b!, porEmpresa: !!colA && !!colB && ca === colA && cb === colB });
   }
   const fila = [...seeds];
   while (fila.length) {
     const atual = fila.shift()!;
-    if (!deEmpresa.has(atual) && !seeds.has(atual)) continue;
-    for (const [a, b] of arestas) {
-      const vizinho = a === atual ? b : b === atual ? a : null;
+    for (const e of arestas) {
+      const vizinho = e.a === atual ? e.b : e.b === atual ? e.a : null;
       if (!vizinho || seeds.has(vizinho)) continue;
-      if (!deEmpresa.has(atual) || !deEmpresa.has(vizinho)) continue; // a ponte precisa ser entre tabelas de empresa
+      if (colunaDoAlias.get(vizinho) && !e.porEmpresa) continue; // (a) e (b) do cabeçalho
       seeds.add(vizinho); fila.push(vizinho);
     }
   }
@@ -187,11 +193,14 @@ describe("escopo empresarial dos relatórios", () => {
         }
         if (recortados.has(alias)) continue;
         if (fonteSemAlias(texto, tabela) && texto.includes(`me.empresa_id=${coluna}`)) continue;
+        // Chegar aqui significa que a tabela TEM coluna de empresa própria. Nesse caso "derivado" não é
+        // desculpa aceitável: quem tem `farm_id` responde pelo próprio `farm_id`. A declaração derivada
+        // existe para a tabela que NÃO tem coluna de empresa (o laço de EMPRESA_POR_RELACAO, abaixo).
         if (derivados[alias]) {
-          if (derivados[alias]!.length < 20) problemas.push(`${def.key}: justificativa curta demais para o alias ${alias}`);
+          problemas.push(`${def.key} (${modulo}): ${tabela} como ${alias} foi DECLARADA derivada, mas tem coluna de empresa própria (${coluna}) — declaração não substitui predicado`);
           continue;
         }
-        problemas.push(`${def.key} (${modulo}): ${tabela} como ${alias} sem recorte de empresa — nem predicado próprio nem junção com fonte recortada`);
+        problemas.push(`${def.key} (${modulo}): ${tabela} como ${alias} sem recorte de empresa — nem predicado próprio nem junção por coluna de empresa`);
       }
       // fontes cuja empresa vem por RELAÇÃO: o pai precisa estar presente e recortado
       for (const { tabela, alias } of fontes(texto)) {
@@ -202,10 +211,67 @@ describe("escopo empresarial dos relatórios", () => {
         problemas.push(`${def.key} (${modulo}): ${tabela} como ${alias} pertence a uma empresa por ${rel.via}, mas ${rel.pai} não aparece recortada na consulta`);
       }
       for (const alias of Object.keys(derivados)) {
-        if (!fontes(texto).some((f) => f.alias === alias)) problemas.push(`${def.key}: declaração derivada obsoleta para alias ${alias} (não aparece no SQL)`);
+        const fonte = fontes(texto).find((f) => f.alias === alias);
+        if (!fonte) { problemas.push(`${def.key}: declaração derivada obsoleta para alias ${alias} (não aparece no SQL)`); continue; }
+        // a declaração só vale para tabela SEM coluna de empresa: com coluna própria ela é, na melhor das
+        // hipóteses, documentação enganosa (o recorte real é o predicado) e, na pior, a desculpa de um vazamento.
+        if (colunaDeEmpresa(fonte.tabela) && !NAO_RECORTAVEIS.has(fonte.tabela)) problemas.push(`${def.key}: declaração derivada indevida para ${fonte.tabela} como ${alias} — a tabela tem coluna de empresa própria e responde por ela`);
+        else if (derivados[alias]!.length < 20) problemas.push(`${def.key}: justificativa curta demais para o alias ${alias}`);
       }
     }
     expect(problemas, `relatórios sem recorte de empresa:\n${problemas.join("\n")}`).toEqual([]);
+  });
+
+  /**
+   * MESMO CRITÉRIO NAS ROTAS OPERACIONAIS. O vazamento por junção em chave de negócio não é privilégio de
+   * relatório: qualquer consulta que já se declara escopada (usa `{{escopo…}}`) e lê uma segunda tabela de
+   * empresa sem recorte próprio mostra dado de empresa que o usuário não enxerga. O que sobra aqui é
+   * DECLARADO, com motivo, e o gate falha se aparecer um caso novo.
+   */
+  it("nenhuma consulta escopada das rotas operacionais lê fonte de empresa sem recorte próprio (ou está declarada)", () => {
+    /** Cada entrada: o alias tolerado, o arquivo, e por que a exceção é legítima. */
+    const DECLARADOS: { arquivo: string; trecho: string; aliases: string[]; motivo: string }[] = [
+      {
+        arquivo: "fleet-hr.ts", trecho: "from erp.equipment_transfers t join erp.equipments e on e.id=t.equipment_id", aliases: ["e"],
+        motivo: "transferência de equipamento ENTRE empresas: o equipamento é o objeto do documento que o usuário já está autorizado a ver (origem ou destino dentro do escopo). Recortá-lo esconderia o próprio objeto da transferência."
+      },
+      {
+        arquivo: "stock.ts", trecho: "from erp.warehouse_transfers d join erp.warehouses wo on wo.id=d.origin_warehouse_id", aliases: ["wo", "wd"],
+        motivo: "transferência de armazém ENTRE empresas: origem e destino são as duas pontas do documento já autorizado. Recortar a contraparte deixaria a transferência sem destino legível."
+      },
+      {
+        arquivo: "livestock.ts", trecho: "from erp.herd_lots h join erp.animal_categories c on c.id=h.category_id", aliases: ["bt"],
+        motivo: "rótulo do lote do próprio conjunto já recortado (h.farm_id): mostra o nome do lote a que o conjunto pertence."
+      },
+      {
+        arquivo: "livestock.ts", trecho: "from erp.processings p left join erp.animal_movements m on m.id=p.purchase_movement_id", aliases: ["m", "b"],
+        motivo: "rótulos da compra e do pré-lote que ORIGINARAM o processamento já recortado (p.farm_id): são a procedência do registro autorizado."
+      },
+      {
+        arquivo: "livestock.ts", trecho: "from erp.feed_deliveries d left join erp.feedlot_corrals c on c.id=d.corral_id", aliases: ["b"],
+        motivo: "rótulo do lote tratado pelo próprio trato já recortado (d.farm_id)."
+      }
+    ];
+    const dir = path.join(here, "../../src/routes");
+    const problemas: string[] = [];
+    for (const arquivo of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && f !== "reports.ts" && f !== "dashboards.ts")) {
+      const texto = fs.readFileSync(path.join(dir, arquivo), "utf8");
+      const re = /(consultaEscopada|ctx\.tx\.query|tx\.query)(?:<[^(]*?>)?\((?:ctx,\s*)?"((?:[^"\\]|\\.)*)"/g;
+      for (let m = re.exec(texto); m; m = re.exec(texto)) {
+        const cru = m[2]!;
+        if (!cru.includes("{{escopo")) continue; // consulta que não se diz escopada é de organização e tem gate próprio
+        const sql = cru.replace(/\{\{escopo(?:_nulo|_par)?:([^}|]+)(?:\|[a-z_]+)?\}\}/g, (_x, cols: string) => cols.split(",").map((c) => `exists (select 1 from erp.membro_empresas me where me.empresa_id=${c.trim()})`).join(" and "));
+        const recortados = protegidos(sql);
+        for (const { tabela, alias } of fontes(sql)) {
+          const coluna = colunaDeEmpresa(tabela);
+          if (!coluna || NAO_RECORTAVEIS.has(tabela) || tabela === "farms") continue;
+          if (recortados.has(alias) || (fonteSemAlias(sql, tabela) && sql.includes(`me.empresa_id=${coluna}`))) continue;
+          if (DECLARADOS.some((d) => d.arquivo === arquivo && sql.includes(d.trecho) && d.aliases.includes(alias))) continue;
+          problemas.push(`${arquivo}: ${tabela} como ${alias} sem recorte próprio — ${sql.slice(0, 120)}`);
+        }
+      }
+    }
+    expect(problemas, `rotas operacionais sem escopo:\n${problemas.join("\n")}`).toEqual([]);
   });
 
   it("nenhuma consulta de painel escapa do escopo: cada fonte de empresa tem predicado ou vem de fonte recortada", () => {

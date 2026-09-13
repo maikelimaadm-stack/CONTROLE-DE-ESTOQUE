@@ -4,7 +4,10 @@ Uma linha por BLOCO de painel (`apps/api/src/routes/dashboards.ts`). O módulo d
 rota, exceto onde a coluna diz outra coisa: o painel inicial combina áreas e por isso cada bloco fixa o módulo
 da própria fonte (`{{escopo:coluna|modulo}}`). O gate `apps/api/test/unit/report-scope.test.ts` reexecuta esta
 verificação de forma estrutural a cada `pnpm test`: toda fonte com coluna de empresa precisa de predicado
-próprio, de junção com fonte já recortada entre tabelas de empresa, ou de exceção declarada com motivo.
+PRÓPRIO — ou de uma herança sólida, que é só uma destas duas: a tabela vizinha não tem coluna de empresa, ou a
+igualdade da junção é entre as próprias colunas de empresa (`a.farm_id = b.farm_id`). Junção por chave de
+negócio entre duas tabelas que têm `farm_id` (`fd.batch_id = b.id`) não recorta nada e não conta como herança.
+Exceção de organização é declarada com motivo.
 
 | Endpoint | Permissão | Bloco | Fonte principal | Empresa derivada de | Escopo aplicado |
 | --- | --- | --- | --- | --- | --- |
@@ -33,8 +36,8 @@ próprio, de junção com fonte já recortada entre tabelas de empresa, ou de ex
 | /dashboards/user-analysis | dashboard.user_analysis.view (organização) | r, byEntity | audit_logs | **não tem empresa** | ORGANIZAÇÃO: auditoria de usuários, sem coluna de empresa (exceção declarada no gate) |
 | /dashboards/rainfall | dashboard.rainfall.view (pecuaria) | r, prev | rainfalls | r.farm_id | `{{escopo:r.farm_id}}` |
 | /dashboards/feedlot | dashboard.feedlot.view (confinamento) | r | feedlot_corrals → sectors → yards | y.farm_id | `{{escopo:y.farm_id}}`; ocupação (animals/batches) é derivada do curral — exceção declarada com motivo |
-| /dashboards/feedlot-cost | dashboard.feedlot_cost.view (confinamento) | r | batches + feed_deliveries | b.farm_id | `{{escopo:b.farm_id}}` (entregas e animais alcançados pelo lote) |
-| /dashboards/feedlot-performance | dashboard.feedlot_performance.view (confinamento) | r | batches + animals | b.farm_id | `{{escopo:b.farm_id}}` |
+| /dashboards/feedlot-cost | dashboard.feedlot_cost.view (confinamento) | r | batches + feed_deliveries + animals | b.farm_id, fd.farm_id, a.farm_id | `{{escopo:b.farm_id}}` no lote, `{{escopo:a.farm_id}}` na subconsulta de animais e `{{escopo:fd.farm_id}}` no `on` do `left join` do trato (no `where` viraria `inner join`) |
+| /dashboards/feedlot-performance | dashboard.feedlot_performance.view (confinamento) | r | batches + animals | b.farm_id, a.farm_id | `{{escopo:b.farm_id}}` no lote e `{{escopo:a.farm_id}}` no `on` do `left join` dos animais |
 | /dashboards/nutrition-stock | dashboard.nutrition_stock.view (estoque) | r | stock_balances → warehouses; stock_movements (consumo 30d) | w.farm_id; m.farm_id | `{{escopo:w.farm_id}}` no saldo **e** `{{escopo:m.farm_id}}` no consumo |
 | /dashboards/feed-consumption | dashboard.feed_consumption.view (confinamento) | daily | feed_deliveries | farm_id | `{{escopo:farm_id}}` |
 | /dashboards/feed-consumption | dashboard.feed_consumption.view | byDiet | feed_deliveries → diets | fd.farm_id | `{{escopo:fd.farm_id}}` |
