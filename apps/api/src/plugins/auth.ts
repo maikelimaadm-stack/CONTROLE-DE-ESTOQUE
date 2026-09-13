@@ -100,7 +100,9 @@ export default fp(async function authPlugin(app: FastifyInstance) {
     // mínimo verificável sem módulo: a empresa selecionada existe nesta organização e não está excluída.
     const farmId = (req.headers["x-farm-id"] as string | undefined) ?? null;
     if (farmId) {
-      const f = await app.db.query<{ ok: boolean }>("select exists (select 1 from erp.farms where id=$1 and organization_id=$2 and deleted_at is null) ok", [farmId, orgId]);
+      // dentro do contexto de tenant: a consulta passa pelo RLS como qualquer outra leitura da aplicação
+      const f = await withTx(app.db, { orgId, userId }, (tx) => tx.query<{ ok: boolean }>(
+        "select exists (select 1 from erp.farms where id=$1 and organization_id=$2 and deleted_at is null) ok", [farmId, orgId]));
       if (!f.rows[0]?.ok) throw new DomainError("PERMISSION_DENIED", "Sem acesso à empresa selecionada");
     }
     req.ctx = { user: req.auth, orgId, farmId, membership, permissions: new Set(perms), ip: req.ip };

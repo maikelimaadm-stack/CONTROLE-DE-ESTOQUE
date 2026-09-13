@@ -62,8 +62,14 @@ export const moduloAtivo = (ctx: RequestContext): string | null => ctx.moduloEmp
  * `ignoreSelected`: o chamador já filtrou explicitamente por empresa — só a autorização é acrescentada.
  * Registro fora do escopo simplesmente não é visível (404 em GET por id, ausente em listas).
  */
+/**
+ * Coluna de empresa do chamador: um ALIAS de tabela vira `alias.farm_id`; qualquer expressão já qualificada
+ * (`f.id`, `y.farm_id`, `me.empresa_id`) é usada como está — o escopo compara com a empresa, não com um nome.
+ */
+const colunaDeEmpresa = (col: string): string => (col.includes(".") || col.endsWith("farm_id") ? col : `${col}.farm_id`);
+
 export function empresaScope(ctx: RequestContext, col: string, params: unknown[], opts: { nullable?: boolean; ignoreSelected?: boolean; modulo?: string | null } = {}): string[] {
-  const c = col.endsWith("farm_id") ? col : `${col}.farm_id`;
+  const c = colunaDeEmpresa(col);
   const out: string[] = [];
   const wrap = (expr: string) => (opts.nullable ? `(${c} is null or ${expr})` : expr);
   if (ctx.farmId && !opts.ignoreSelected) { params.push(ctx.farmId); out.push(wrap(`${c}=$${params.length}`)); }
@@ -97,7 +103,7 @@ export function scopedById(ctx: RequestContext, col: string, id: string, opts: {
  * empresas: `pedidas` (query string) é o recorte do usuário, e a autorização entra por cima, no banco.
  */
 export function empresaScopeAgregado(ctx: RequestContext, col: string, params: unknown[], pedidas?: string[] | string | null, opts: { nullable?: boolean; modulo?: string | null } = {}): string {
-  const c = col.endsWith("farm_id") ? col : `${col}.farm_id`;
+  const c = colunaDeEmpresa(col);
   const req = pedidas == null ? [] : Array.isArray(pedidas) ? pedidas : pedidas.split(",");
   const alvo = req.filter(Boolean);
   const out: string[] = [];

@@ -1,5 +1,6 @@
 import { RESOURCES, moduloDaPermissao, permissaoManejo, permissaoMovimentacao } from "@agro/domain";
 import { empresaPermitida, hasPermission, type ServiceCtx } from "./context.js";
+import { validarEmpresaSelecionada } from "./service.js";
 import { notFound, validation, denied } from "./errors.js";
 
 /**
@@ -93,7 +94,11 @@ export async function authorizeAttachmentParent(ctx: ServiceCtx, entity: string,
   if (!perm) throw notFound("Registro");
   // ESCOPO antes da CAPACIDADE: registro fora das empresas do módulo do PAI é inexistente (404, anti-enumeração).
   // O módulo vem da permissão do PAI — nunca do módulo da rota de anexos, que é outro assunto.
-  if (rule.kind !== "org" && !(await empresaPermitida(ctx, (row["farm_id"] as string | null | undefined) ?? null, moduloDaPermissao(perm)))) throw notFound("Registro");
+  if (rule.kind !== "org") {
+    const modulo = moduloDaPermissao(perm);
+    await validarEmpresaSelecionada({ ...ctx, moduloEmpresa: modulo }); // seleção explícita proibida = 403
+    if (!(await empresaPermitida(ctx, (row["farm_id"] as string | null | undefined) ?? null, modulo))) throw notFound("Registro");
+  }
   if (!hasPermission(ctx, perm)) throw denied(perm);
   void action; // política única para view/create/delete (ver cabeçalho); mantido na assinatura para evolução sem mudar chamadores
   return { rule, row };

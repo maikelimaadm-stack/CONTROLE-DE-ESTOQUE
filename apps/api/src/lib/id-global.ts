@@ -28,6 +28,7 @@ import { entidadeIdGlobal, moduloDaPermissao, resolverRegistroGlobal } from "@ag
 import { DomainError } from "@agro/shared";
 import { colunaDiscriminadora, type EntidadeIdGlobal } from "@erp/plataforma";
 import { empresaPermitida, hasPermission, type ServiceCtx } from "./context.js";
+import { validarEmpresaSelecionada } from "./service.js";
 
 export interface RegistroGlobal {
   idGlobal: number;
@@ -137,7 +138,9 @@ export async function resolverRegistro(ctx: ServiceCtx, idGlobal: number): Promi
   if (!hasPermission(ctx, resolvido.permissao)) throw naoEncontrado();
   // 7. ESCOPO: a empresa ATUAL do registro dentro do MÓDULO DESSA MESMA PERMISSÃO — a mesma fonte funcional
   //    que a rota canônica usa. O índice denormalizado nunca decide isso.
-  if (!(await empresaPermitida(ctx, fonte.empresaId, moduloDaPermissao(resolvido.permissao)))) throw naoEncontrado();
+  const moduloDoRegistro = moduloDaPermissao(resolvido.permissao);
+  await validarEmpresaSelecionada({ ...ctx, moduloEmpresa: moduloDoRegistro });
+  if (!(await empresaPermitida(ctx, fonte.empresaId, moduloDoRegistro))) throw naoEncontrado();
   // 8. só agora há resposta
   return {
     idGlobal: Number(indice.id_global),

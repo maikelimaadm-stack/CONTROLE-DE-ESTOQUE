@@ -37,7 +37,7 @@ export async function runService<T>(app: FastifyInstance, req: FastifyRequest, p
  * empresa veio do próprio cliente, então não há existência a revelar.) Para módulo indefinido (recurso de
  * organização ou porta de permissão dinâmica) não há o que validar: quem resolve o módulo valida depois.
  */
-async function validarEmpresaSelecionada(ctx: ServiceCtx): Promise<void> {
+export async function validarEmpresaSelecionada(ctx: ServiceCtx): Promise<void> {
   if (!ctx.farmId || !ctx.moduloEmpresa || ctx.membership.isOwner) return;
   const escopo = escopoDoModulo(ctx.membership.escopos, ctx.moduloEmpresa);
   if (escopo.tipo === "todas") return; // existência na organização já validada no plugin de autenticação
@@ -49,8 +49,10 @@ async function validarEmpresaSelecionada(ctx: ServiceCtx): Promise<void> {
  * Fixa o módulo empresarial ativo a partir de uma permissão resolvida em tempo de execução (portas de
  * permissão dinâmica). Devolve um contexto derivado — o original não é mutado.
  */
-export function comPermissaoResolvida<C extends RequestContext>(ctx: C, permissao: string): C {
-  return { ...ctx, moduloEmpresa: moduloDaPermissao(permissao) };
+export async function comPermissaoResolvida<C extends ServiceCtx>(ctx: C, permissao: string): Promise<C> {
+  const derivado = { ...ctx, moduloEmpresa: moduloDaPermissao(permissao) };
+  await validarEmpresaSelecionada(derivado);
+  return derivado;
 }
 
 export function requirePermission(ctx: RequestContext, permission: string) {

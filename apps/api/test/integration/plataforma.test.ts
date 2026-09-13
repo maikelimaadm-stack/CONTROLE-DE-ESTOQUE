@@ -1,3 +1,4 @@
+import { AUTORIZACAO_PROPRIETARIO } from "@erp/plataforma";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, withTx } from "@agro/db";
 import { harness, ids, TEST_URL, type Harness } from "./setup.js";
@@ -25,7 +26,7 @@ async function comoServico<T>(fn: (ctx: ServiceCtx) => Promise<T>, opts: { farmI
       user: { id: h.demo.adminUserId, email: h.demo.adminEmail, name: "Administrador" },
       orgId: h.demo.orgId,
       farmId: null,
-      membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: !opts.perms, farmIds: opts.farmIds ?? [] },
+      membership: { orgId: h.demo.orgId, orgName: "demo", roleId: null, isOwner: !opts.perms, memberId: "m", escopos: AUTORIZACAO_PROPRIETARIO },
       permissions: new Set(opts.perms ?? [])
     }));
 }

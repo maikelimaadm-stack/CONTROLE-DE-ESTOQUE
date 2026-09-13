@@ -15,7 +15,7 @@ const routesDir = path.join(here, "../../src/routes");
 /** Tabelas de erp.* com coluna farm_id (fonte: information_schema no banco de testes — manter em sincronia ao migrar). */
 const FARM_TABLES = ["animal_handlings", "animal_movements", "animal_retroactive_costs", "animals", "areas", "bank_movements", "batches", "breeding_seasons", "budget_plannings", "contracts", "devolutions", "dfe_documents", "diet_batches", "documents", "earnings", "equipments", "feed_batches", "feed_deliveries", "feedlot_yards", "financial_freezes", "financial_titles", "fuel_supplies", "grazing_modules", "herd_lots", "input_entries", "invoices", "journal_entries", "livestock_plannings", "maintenances", "opening_balances", "processings", "purchase_requests", "rainfalls", "requisitions", "salary_advances", "sales_documents", "service_orders", "stock_corrections", "stock_movements", "stock_writeoffs", "trough_readings", "warehouses", "weighings"];
 /** Marcadores que comprovam escopo de fazenda (helpers) ou uso de carregador compartilhado já protegido. */
-const SCOPE_MARKERS = ["farmScope(", "farmScopeSql(", "scopedById(", "allowedFarms(", "assertFarmVisible(", "farmAllowed(", "membership.farmIds", "farms(ctx", "farmClause(", "loadForWrite(", "listDocs(", "getDoc(", "getTitle(", "loadRequest(", "listResource(", "getOne(", "listTitles(", "assertFarm(", "settle(ctx", "createTitles(", "createBankMovement(", "transition(ctx", "authorizeAttachmentParent("];
+const SCOPE_MARKERS = ["farmScope(", "farmScopeSql(", "scopedById(", "empresaScope", "{{escopo", "consultaEscopada(", "assertFarmVisible(", "exigirEmpresaVisivel(", "exigirEmpresaDeLancamento(", "empresaPermitida(", "empresasDisponiveis(", "selecionarEmpresaParaLancamento(", "farmAllowed(", "farms(ctx", "farmClause(", "loadForWrite(", "listDocs(", "getDoc(", "getTitle(", "loadRequest(", "listResource(", "getOne(", "listTitles(", "assertFarm(", "settle(ctx", "createTitles(", "createBankMovement(", "transition(ctx", "authorizeAttachmentParent("];
 /** Handlers organization-scoped por desenho (não filtram por fazenda) — cada um com a razão. */
 const ALLOW: Record<string, string> = {
   "financial.ts:/financial/bank-accounts/balances": "contas bancárias são da organização (bank_account_farms é vínculo informativo)",
@@ -30,13 +30,13 @@ const ALLOW: Record<string, string> = {
   "stock.ts:/stock/feed-formulas/:id": "idem",
   "livestock.ts:/livestock/matings": "escopo pela fazenda da matriz (subconsulta em erp.animals com farmScope)",
   "livestock.ts:/livestock/matings/:id/diagnosis": "escrita sobre acasalamento (organização); matriz validada na criação",
-  "livestock.ts:/livestock/reproduction/overview": "estações de monta filtradas por allowedFarms",
+  "livestock.ts:/livestock/reproduction/overview": "estações de monta filtradas pelo escopo de empresa em SQL",
   "dashboards.ts:/dashboards/user-analysis": "auditoria de usuários (organização)",
   "admin.ts:/admin/notifications/refresh": "gera avisos genéricos da organização (contagens, sem id nem valores de registro); notificação de registro nasce no próprio serviço protegido",
-  "admin.ts:/admin/members": "administração de membros (users.view) — farm_ids é o próprio cadastro de acesso",
+  "admin.ts:/admin/members": "administração de membros (users.view) — o acesso por empresa é o próprio cadastro sendo editado",
   "admin.ts:/admin/members/:userId": "idem",
-  "resources.ts:/resources/:key/distinct": "distinctValues aplica membership.farmIds internamente",
-  "resources.ts:/resources/:key/options": "options aplica membership.farmIds para recursos farmScoped",
+  "resources.ts:/resources/:key/distinct": "distinctValues aplica o escopo de empresa internamente",
+  "resources.ts:/resources/:key/options": "options aplica o escopo do recurso apontado (comPermissaoResolvida)",
   "resources.ts:/resources/:key": "listResource / createOne aplicam escopo internamente",
   "resources.ts:/resources/:key/:id": "getOne / updateOne / deleteOne aplicam escopo internamente",
   "reports.ts:/reports/:key": "cada relatório usa farmClause (membership + fazenda)",

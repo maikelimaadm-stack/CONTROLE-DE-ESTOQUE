@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, todayISO } from "@agro/shared";
 import { gmd, withdrawalUntil, expectedBirth, ageMonths, evolveCategory, moduloDaPermissao, moduloUnicoDasPermissoes, permissaoManejo, permissaoMovimentacao, tiposMovimentacaoVisiveis } from "@agro/domain";
-import { runService, nextCode, idempotent, audit, requirePermission } from "../lib/service.js";
+import { comPermissaoResolvida, validarEmpresaSelecionada, runService, nextCode, idempotent, audit, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { consultaEscopada, empresaPermitida, empresaScope, empresaScopeSql, exigirEmpresaDeLancamento, exigirEmpresaVisivel, farmScope, hasPermission, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
@@ -105,6 +105,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
     if (!tipos.length) return { items: [], total: 0, page: q.page, pageSize: q.pageSize };
     // a porta não tem permissão fixa: o MÓDULO de escopo vem das permissões dos tipos que estão sendo listados
     const modulo = moduloUnicoDasPermissoes(tipos.map((t) => permissaoMovimentacao(t, "view")).filter((x): x is string => Boolean(x)));
+    await validarEmpresaSelecionada({ ...ctx, moduloEmpresa: modulo });
     const where = ["m.organization_id=$1", "m.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
     params.push(tipos); where.push(`m.movement_type = any($${params.length}::text[])`);
     where.push(...farmScope(ctx, "m", params, { modulo }));
@@ -122,7 +123,9 @@ export default async function livestockRoutes(app: FastifyInstance) {
     if (!m.rows[0]) throw notFound();
     const permissao = permissaoMovimentacao(String(m.rows[0]["movement_type"] ?? ""), "view");
     if (!permissao) throw notFound();
-    // ESCOPO com o módulo DESSA permissão (a porta é dinâmica) antes da CAPACIDADE: fora do escopo é 404
+    // ESCOPO com o módulo DESSA permissão (a porta é dinâmica) antes da CAPACIDADE: fora do escopo é 404;
+    // a empresa SELECIONADA no cabeçalho, por ser escolha explícita do cliente, continua sendo 403.
+    await comPermissaoResolvida(ctx, permissao);
     await exigirEmpresaVisivel(ctx, m.rows[0]["farm_id"] as string | null, "Movimentação", moduloDaPermissao(permissao));
     if (!hasPermission(ctx, permissao)) throw notFound();
     const items = await ctx.tx.query("select mi.*, c.name as category_name, (select string_agg(i.value, ', ') from erp.animal_identifications i where i.animal_id=mi.animal_id) as identifications from erp.animal_movement_items mi left join erp.animal_categories c on c.id=coalesce(mi.new_category_id, mi.category_id) where mi.movement_id=$1", [id]);
@@ -134,6 +137,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const permissao = permissaoMovimentacao(d.movement_type, "create");
     if (!permissao) throw notFound();
     // empresa do lançamento dentro do módulo da permissão DO TIPO pedido (porta dinâmica)
+    await comPermissaoResolvida(ctx, permissao);
     await exigirEmpresaDeLancamento(ctx, d.farm_id, moduloDaPermissao(permissao));
     requirePermission(ctx, permissao);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
@@ -182,6 +186,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
   app.post("/livestock/movements/:id/cancel", async (req) => runService(app, req, null, async (ctx) => {
     const { id } = req.params as { id: string }; const m = await ctx.tx.query<{ status: string; movement_type: string; farm_id: string }>("select status, movement_type, farm_id from erp.animal_movements where id=$1 and organization_id=$2 and deleted_at is null for update", [id, ctx.orgId]); if (!m.rows[0]) throw notFound();
     const permissao = permissaoMovimentacao(m.rows[0].movement_type, "delete"); if (!permissao) throw notFound();
+    await comPermissaoResolvida(ctx, permissao);
     await exigirEmpresaVisivel(ctx, m.rows[0].farm_id, "Movimentação", moduloDaPermissao(permissao)); requirePermission(ctx, permissao); if (m.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
     const paid = await ctx.tx.query("select 1 from erp.financial_titles where source_type='animal_movements' and source_id=$1 and paid_amount>0", [id]); if (paid.rowCount) throw err("CONFLICT", "Títulos com baixa");
     const items = await ctx.tx.query<{ animal_id: string | null; herd_lot_id: string | null; quantity: number }>("select animal_id, herd_lot_id, quantity from erp.animal_movement_items where movement_id=$1", [id]);
@@ -291,6 +296,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
     // permissão do PRÓPRIO tipo de manejo (fonte única de operações); tipo desconhecido não vira permissão vizinha
     const permissao = permissaoManejo(h.rows[0].handling_type, "view");
     if (!permissao) throw notFound("Manejo");
+    await comPermissaoResolvida(ctx, permissao);
     await exigirEmpresaVisivel(ctx, (h.rows[0] as unknown as { farm_id: string | null }).farm_id, "Manejo", moduloDaPermissao(permissao));
     requirePermission(ctx, permissao);
     const items = await ctx.tx.query("select hi.*, (select string_agg(i.value, ', ' order by i.is_primary desc) from erp.animal_identifications i where i.animal_id=hi.animal_id) as identifications, c.name as category_name, hc.name as herd_lot_category, nb.description as new_batch_name, nc.name as new_category_name from erp.animal_handling_items hi left join erp.animals a on a.id=hi.animal_id left join erp.animal_categories c on c.id=a.category_id left join erp.herd_lots hl on hl.id=hi.herd_lot_id left join erp.animal_categories hc on hc.id=hl.category_id left join erp.batches nb on nb.id=hi.new_batch_id left join erp.animal_categories nc on nc.id=hi.new_category_id where hi.handling_id=$1 order by identifications", [id]);
