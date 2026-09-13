@@ -7,6 +7,8 @@
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
+    "id-global:backfill": "node dist/cli/id-global-backfill.js",
+    "id-global:verify": "node dist/cli/id-global-backfill.js --verify-only",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "eslint src test",
     "test": "vitest run --project unit",

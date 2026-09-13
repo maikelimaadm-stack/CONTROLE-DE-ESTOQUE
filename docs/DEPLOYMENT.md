@@ -105,8 +105,36 @@ A ordem importa, e o motivo de cada fase é o estado intermediário que ela evit
 | --- | --- | --- |
 | **1. Banco** | migration `0016_global_id_activation.sql` | Só infraestrutura (reserva de faixa, constraint, índice). Não percorre acervo, então é rápida e reversível. |
 | **2. API** | alocação automática + `/registros-globais/:idGlobal` e `/registros-globais/entidade/:tipo/:id` | A partir daqui **todo registro novo já nasce numerado**. Subir a API antes do backfill é de propósito: enquanto o histórico é numerado, o fluxo novo já está correto. |
-| **3. Backfill** | `pnpm id-global:backfill -- --batch-size 500` (usa `MIGRATE_DATABASE_URL`) | Em lotes, retomável, reexecutável. Rodar até `faltando: 0`. Conferir com `pnpm id-global:verify`. |
+| **3. Backfill** | no serviço da API: `npm run id-global:backfill -- --batch-size 500` (usa `MIGRATE_DATABASE_URL`) | Em lotes, retomável, reexecutável. Rodar até `faltando ao fim: 0`. Conferir com `npm run id-global:verify`. |
 | **4. Web** | busca `#N` e badge de identidade | A UI tolera registro histórico ainda sem número (o badge simplesmente não aparece), então pode subir junto com a API — mas a fase 3 é o que faz a funcionalidade valer para o acervo inteiro. |
+
+### Onde o comando da fase 3 roda — e por que não é `pnpm` da raiz
+
+Há DOIS ambientes, e eles têm comandos diferentes porque têm conteúdos diferentes:
+
+| Ambiente | Comando | Por quê |
+| --- | --- | --- |
+| **Repositório / desenvolvimento / CI** | `pnpm id-global:backfill -- --batch-size 500` · `pnpm id-global:verify` | Scripts do `package.json` da RAIZ, executados com `tsx` sobre `src/`. Existe só onde há checkout do monorepo. |
+| **Produção (serviço da API no Railway)** | `npm run id-global:backfill -- --batch-size 500` · `npm run id-global:verify` | Scripts do `apps/api/package.json`, que executam `node dist/cli/id-global-backfill.js`. É o que existe DENTRO da imagem. |
+
+A imagem é construída com `pnpm --filter @agro/api deploy --prod --legacy /out` e o runtime faz
+`COPY --from=build /out ./`: ela contém **o pacote `@agro/api` com suas dependências de produção**, e não um
+checkout do monorepo. Nela **não existe** o `package.json` da raiz (logo, nenhum script `pnpm id-global:*`) e
+**não existe `tsx`** (devDependency, cortada pelo `--prod`). Documentar o comando do repositório para rodar em
+produção seria descobrir o erro no pior momento: migration já aplicada, API nova no ar e acervo ainda sem
+número.
+
+Equivalente direto, se preferir não passar pelo `npm run`:
+
+```
+node dist/cli/id-global-backfill.js --batch-size 500
+node dist/cli/id-global-backfill.js --verify-only
+```
+
+O gate `node scripts/artefato-operacional.mjs` (no `pnpm lint`) prova o contrato — script presente, apontando
+para `node dist/`, sem devDependency, com o Dockerfile levando `/out` para o runtime — e, no job de build da
+CI, `--compilado` **executa o artefato de verdade** e exige que ele recuse por falta de conexão operacional,
+nunca por arquivo ou script ausente.
 
 ### A conexão da fase 3 é a OPERACIONAL, não a da API
 
@@ -135,6 +163,7 @@ Duas barreiras impedem que isso volte:
 Saída esperada do verify (é o que torna um resultado absurdo visível de relance):
 
 ```
+$ npm run id-global:verify
 conexão operacional: papel "erp_migrator" (rolsuper=false, rolbypassrls=true).
 organizações verificadas: 1 · entidades verificadas: 23 · registros globais: 12345 · elegíveis faltando: 0
 ID Global: invariantes OK (zero elegível sem número, zero duplicidade, zero órfão).

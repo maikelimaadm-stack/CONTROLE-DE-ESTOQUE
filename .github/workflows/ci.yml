@@ -77,6 +77,11 @@ jobs:
       - run: pnpm --filter @agro/shared build && pnpm --filter @erp/plataforma build && pnpm --filter @agro/domain build && pnpm --filter @agro/db build
       - name: Build API and web
         run: pnpm --filter @agro/api build && pnpm --filter @agro/web build
+      # O runbook do pós-merge executa um comando DENTRO da imagem da API. Aqui o artefato real é montado
+      # (`pnpm deploy --prod`, como no Dockerfile) e o comando é EXECUTADO: ele tem de recusar por falta de
+      # conexão operacional — nunca por arquivo, script ou `tsx` ausente.
+      - name: Comando operacional existe no artefato de produção
+        run: node scripts/artefato-operacional.mjs --compilado --deploy
       - name: Seed e2e database (migrations + reference data + demo org)
         run: DATABASE_URL=$E2E_DATABASE_URL pnpm --filter @agro/db exec tsx src/cli.ts seed
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
