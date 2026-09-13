@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, todayISO } from "@agro/shared";
 import { displayTitleStatus, settlementNet, assertSettlementWithinBalance, recurrenceDates, type TitleStatus } from "@agro/domain";
-import { runService, idempotent, audit, assertPeriodOpen, nextCode } from "../lib/service.js";
+import { runService, idempotent, audit, assertPeriodOpen, nextCode, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { empresaScope, exigirEmpresaDeLancamento, exigirEmpresaVisivel, farmAllowed, farmScope, farmScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
@@ -254,7 +254,17 @@ export default async function financialRoutes(app: FastifyInstance) {
     await audit(ctx.tx, ctx, "bank_movements", id, "cancel");
     return { id, status: "cancelled" };
   }));
-  app.get("/financial/bank-accounts/balances", async (req) => runService(app, req, "bank_movements.view", async (ctx) => {
+  /**
+   * SALDO DE CONTA BANCÁRIA É NÚMERO DA ORGANIZAÇÃO (docs/MULTI-COMPANY-CONTRACT.md §7, "Saldo bancário").
+   *
+   * A conta é cadastro da organização e o `opening_balance` dela não tem empresa — não é decomponível por
+   * empresa sem inventar rateio. Por isso a porta exige CAPACIDADE DE ORGANIZAÇÃO (`bank_accounts.view`), e
+   * não apenas a permissão financeira de empresa: uma permissão company-scoped não pode devolver em silêncio
+   * um agregado que soma movimentos de empresas que o usuário não enxerga. A permissão financeira continua
+   * exigida por cima — ninguém passa a ver o que não via antes.
+   */
+  app.get("/financial/bank-accounts/balances", async (req) => runService(app, req, "bank_accounts.view", async (ctx) => {
+    requirePermission(ctx, "bank_movements.view");
     const r = await ctx.tx.query("select a.id, a.code, a.description, a.type, a.bank_code, a.agency, a.account_number, a.opening_balance, a.credit_limit, b.balance from erp.bank_accounts a join erp.v_bank_account_balances b on b.bank_account_id=a.id where a.organization_id=$1 and a.deleted_at is null and a.is_active order by a.code", [ctx.orgId]);
     return { items: r.rows, total_balance: money(r.rows.reduce((s, x) => s.plus((x as { balance: string }).balance), D(0))) };
   }));
@@ -267,7 +277,10 @@ export default async function financialRoutes(app: FastifyInstance) {
   })));
 
   // ---------- Fluxo bancário (análise) ----------
-  app.get("/financial/cash-flow", async (req) => runService(app, req, "cash_flow.view", async (ctx) => {
+  // Fluxo de caixa por CONTA: parte do `opening_balance` da conta (sem empresa) e acumula saldo — mesmo
+  // contrato do saldo bancário: capacidade de organização + a permissão financeira por cima.
+  app.get("/financial/cash-flow", async (req) => runService(app, req, "bank_accounts.view", async (ctx) => {
+    requirePermission(ctx, "cash_flow.view");
     const q = z.object({ account_ids: z.union([z.string(), z.array(z.string())]).transform((v) => (Array.isArray(v) ? v : v.split(","))), period: z.enum(["daily", "monthly", "yearly"]).default("monthly"), mode: z.enum(["synthetic", "analytic"]).default("synthetic"), start_date: date, end_date: date }).parse(req.query);
     const trunc = q.period === "daily" ? "day" : q.period === "monthly" ? "month" : "year";
     const opening = await ctx.tx.query<{ v: string }>("select coalesce(sum(a.opening_balance),0) + coalesce((select sum(case when m.type='in' then m.amount+m.interest else -(m.amount+m.interest) end) from erp.bank_movements m where m.bank_account_id = any($2::uuid[]) and m.status='confirmed' and m.deleted_at is null and m.movement_date < $3),0) as v from erp.bank_accounts a where a.organization_id=$1 and a.id = any($2::uuid[])", [ctx.orgId, q.account_ids, q.start_date]);
@@ -309,7 +322,9 @@ export default async function financialRoutes(app: FastifyInstance) {
     await ctx.tx.query("update erp.ofx_imports set status=$2 where id=$1", [id, Number(pending.rows[0]!.n) === 0 ? "reconciled" : "reconciling"]);
     return { id: tid, status: "matched", bank_movement_id: mid };
   }));
-  app.get("/financial/ofx-report", async (req) => runService(app, req, "ofx_report.view", async (ctx) => { const r = await ctx.tx.query("select ba.code as account_code, ba.description as account_name, to_char(t.posted_date,'YYYY-MM') as month, count(*)::int as transactions, count(*) filter (where t.status='matched')::int as matched, count(*) filter (where t.status='pending')::int as pending, count(*) filter (where t.status='ignored')::int as ignored from erp.ofx_transactions t join erp.ofx_imports i on i.id=t.import_id join erp.bank_accounts ba on ba.id=i.bank_account_id where t.organization_id=$1 group by 1,2,3 order by 3 desc, 1", [ctx.orgId]); return { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), reconciled: (x as { pending: number }).pending === 0 })) }; }));
+  // Conciliação OFX: `erp.ofx_transactions` é da CONTA (não tem empresa) — agregado de organização.
+  app.get("/financial/ofx-report", async (req) => runService(app, req, "bank_accounts.view", async (ctx) => {
+    requirePermission(ctx, "ofx_report.view"); const r = await ctx.tx.query("select ba.code as account_code, ba.description as account_name, to_char(t.posted_date,'YYYY-MM') as month, count(*)::int as transactions, count(*) filter (where t.status='matched')::int as matched, count(*) filter (where t.status='pending')::int as pending, count(*) filter (where t.status='ignored')::int as ignored from erp.ofx_transactions t join erp.ofx_imports i on i.id=t.import_id join erp.bank_accounts ba on ba.id=i.bank_account_id where t.organization_id=$1 group by 1,2,3 order by 3 desc, 1", [ctx.orgId]); return { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), reconciled: (x as { pending: number }).pending === 0 })) }; }));
 
   // ---------- Previsão orçamentária (valores por categoria × mês) ----------
   app.get("/financial/budget-plannings/:id/values", async (req) => runService(app, req, "budget_plannings.view", async (ctx) => {

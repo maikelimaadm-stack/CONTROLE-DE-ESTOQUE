@@ -80,7 +80,7 @@ const RECURSOS_ORGANIZACAO: readonly string[] = [
   // Pessoas (cadastro único da organização)
   "people", "proprietaries", "employees", "providers", "clients", "authorizers",
   // Financeiro: estrutura (os LANÇAMENTOS são de empresa)
-  "bank_accounts", "financial_categories", "chart_accounts",
+  "bank_accounts", "report.bank_statement", "financial_categories", "chart_accounts",
   // Fiscal: cadastros e credenciais da organização (os DOCUMENTOS emitidos são de empresa)
   "nfe_issuers", "dfe_sync", "nfse_sync", "tax_rules", "accountants", "nature_operations", "additional_infos",
   // Pecuária/frota: taxonomias da organização
@@ -126,7 +126,7 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
     "dashboard.financial", "dashboard.cash_book",
     "report.payment_schedule", "report.receipt_schedule", "report.payables", "report.paid",
     "report.receivables", "report.received", "report.received_interest", "report.paid_interest",
-    "report.bank_statement", "report.ledger", "report.ledger_category", "report.rec_prev_real",
+    "report.ledger", "report.ledger_category", "report.rec_prev_real",
     "report.pag_prev_real", "report.budget_predicted", "report.cash_flow_category",
     "report.cash_flow_forecast", "report.financial_movement", "report.fiscal_difference",
     "report.income_statement", "report.accumulated_income_statement", "report.dre", "report.dre_annual",
@@ -196,6 +196,7 @@ export const EXCECOES_ESCOPO: Readonly<Record<string, string>> = {
   cost_centers: "Cadastro da organização; `erp.farm_cost_centers` é o vínculo que diz em quais empresas o centro de custo se aplica, não um lançamento de empresa.",
   proprietaries: "Cadastro da organização; `erp.proprietary_farms` é vínculo de abrangência.",
   authorizers: "Cadastro da organização; `erp.authorizer_farms` é vínculo de abrangência.",
+  "report.bank_statement": "Extrato de CONTA bancária: parte do saldo inicial da conta (que não tem empresa) e fecha com o saldo da conta. Recortá-lo por empresa produziria um extrato que não reconcilia — número financeiramente falso. Por isso é documento da organização e a porta exige `bank_accounts.view` além da permissão do relatório.",
   bank_accounts: "Cadastro da organização; `erp.bank_account_farms` é vínculo de abrangência. Os MOVIMENTOS (`erp.bank_movements`) são de empresa, no módulo financeiro.",
   users: "Usuário pertence à organização; o acesso dele às empresas é justamente o que esta missão passa a configurar (o vínculo legado de fazendas do membro era autorização, não dado de negócio)."
 };
