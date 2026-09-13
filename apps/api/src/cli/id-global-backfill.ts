@@ -165,9 +165,28 @@ async function processarLote(tx: Tx, e: EntidadeIdGlobal, org: string, tamanho: 
 }
 
 /** Organizações a processar (todas, ou a informada). */
-async function organizacoes(db: Db, org?: string | null): Promise<string[]> {
-  if (org) return [org];
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Organizações a percorrer — e o ponto em que "não achei nada" deixa de ser confundido com "não há nada".
+ *
+ * `--org` é PROVADO contra o banco, não aceito de palavra: um UUID que não existe devolvia lista de uma
+ * organização fantasma, zero pendentes e sucesso — um certificado para um alvo inexistente. Sem `--org`,
+ * ZERO organizações é ERRO: produção tem organização, e a única forma honesta de ver zero é estar olhando
+ * pelo lugar errado (ver `validarPapelOperacional`). "0 organizações, invariantes OK" não certifica nada.
+ */
+export async function organizacoes(db: Db, org?: string | null): Promise<string[]> {
+  if (org) {
+    if (!UUID.test(org)) throw new Error(`--org inválido: não é um UUID`);
+    const r = await db.query<{ n: string }>("select count(*)::text n from erp.organizations where id=$1", [org]);
+    if (!Number(r.rows[0]!.n)) throw new Error(`--org: organização não encontrada nesta conexão`);
+    return [org];
+  }
   const r = await db.query<{ id: string }>("select id from erp.organizations order by created_at asc, id asc");
+  if (!r.rows.length) {
+    throw new Error("nenhuma organização visível nesta conexão — recusando certificar um resultado vazio. "
+      + "Verifique se o comando está usando a conexão operacional correta.");
+  }
   return r.rows.map((x) => x.id);
 }
 
@@ -207,11 +226,31 @@ export async function executarBackfill(db: Db, opts: OpcoesBackfill): Promise<Re
  * e o gate de certificação: "os testes passaram" não é o mesmo que "o acervo está numerado".
  */
 export async function verificarInvariantes(db: Db, org?: string | null): Promise<string[]> {
+  return (await verificar(db, org)).problemas;
+}
+
+export interface ResumoVerificacao {
+  organizacoes: number;
+  entidades: number;
+  registrosGlobais: number;
+  faltando: number;
+  problemas: string[];
+}
+
+/**
+ * Mesma verificação, com os NÚMEROS que a tornam auditável de relance. Sem eles, "invariantes OK" é uma
+ * frase que sobrevive a um banco vazio e a uma conexão cega — o operador precisa ver quantas organizações
+ * foram realmente percorridas para reconhecer um resultado absurdo.
+ */
+export async function verificar(db: Db, org?: string | null): Promise<ResumoVerificacao> {
   const problemas: string[] = [];
+  let faltandoTotal = 0;
+  let registrosGlobais = 0;
   const orgs = await organizacoes(db, org);
   for (const o of orgs) {
     for (const e of ENTIDADES_ORDENADAS) {
       const faltando = await withTx(db, SEM_TENANT, (tx) => contarFaltando(tx, e, o));
+      faltandoTotal += faltando;
       if (faltando) problemas.push(`${e.tipoEntidade}: ${faltando} registro(s) elegível(is) sem ID Global na organização ${o}`);
       // variante interna DECLARADA não pode ter número: seria identidade para o que não tem tela
       const coluna = colunaDiscriminadora(e);
@@ -242,6 +281,8 @@ export async function verificarInvariantes(db: Db, org?: string | null): Promise
               (select max(id_global)::text from erp.registros_globais where organization_id=$1) maior`, [o]);
     const ultimo = Number(seq.rows[0]?.ultimo ?? 0); const maior = Number(seq.rows[0]?.maior ?? 0);
     if (maior > ultimo) problemas.push(`sequência da organização ${o}: contador ${ultimo} menor que o maior ID entregue ${maior}`);
+    const total = await db.query<{ n: string }>("select count(*)::text n from erp.registros_globais where organization_id=$1", [o]);
+    registrosGlobais += Number(total.rows[0]!.n);
   }
   // duplicidades são impedidas por PK e UNIQUE; a verificação existe para o caso de alguém as afrouxar
   const dupGlobal = await db.query<{ n: string }>(
@@ -250,7 +291,65 @@ export async function verificarInvariantes(db: Db, org?: string | null): Promise
   const dupEntidade = await db.query<{ n: string }>(
     "select count(*)::text n from (select organization_id, tipo_entidade, id_entidade from erp.registros_globais group by 1,2,3 having count(*) > 1) d");
   if (Number(dupEntidade.rows[0]!.n)) problemas.push(`${dupEntidade.rows[0]!.n} mapeamento(s) (organização, tipo, registro) duplicado(s)`);
-  return problemas;
+  return { organizacoes: orgs.length, entidades: ENTIDADES_ORDENADAS.length, registrosGlobais, faltando: faltandoTotal, problemas };
+}
+
+// --------------------------------------------------------------------------------------------------
+// CONEXÃO OPERACIONAL — de onde este comando fala com o banco, e por que não é a conexão da API
+// --------------------------------------------------------------------------------------------------
+/**
+ * A API conecta como `erp_app`, SEM bypass de RLS — é assim que ela deve ser, e não vai mudar por causa
+ * deste comando. Mas este comando percorre TODAS as organizações sem contexto de tenant (`SEM_TENANT`), e
+ * `erp.organizations` tem RLS: pela conexão da API, `select id from erp.organizations` sem `app.org_id`
+ * pode devolver ZERO LINHAS.
+ *
+ * O perigo não é o erro — é a AUSÊNCIA dele. Zero organizações vira zero pendentes, zero atribuídos e
+ * "invariantes OK", com milhares de registros históricos sem número do outro lado da política. Um
+ * certificado falso é pior que uma falha, porque ninguém volta para conferir.
+ *
+ * Por isso NÃO existe `?? process.env.DATABASE_URL`: aceitar a variável da API como último recurso
+ * reconstruiria exatamente esse caminho, e bastaria um operador esquecer de exportar a variável certa.
+ * Sem conexão operacional declarada, o comando NÃO RODA.
+ */
+export function resolverUrlOperacional(env: NodeJS.ProcessEnv): string {
+  const url = env.ID_GLOBAL_DATABASE_URL || env.MIGRATE_DATABASE_URL;
+  if (!url) {
+    throw new Error("MIGRATE_DATABASE_URL não definida para o backfill operacional "
+      + "(ou ID_GLOBAL_DATABASE_URL). A conexão da API (DATABASE_URL) NÃO serve: ela passa por RLS e "
+      + "faria este comando certificar um acervo que não consegue enxergar.");
+  }
+  return url;
+}
+
+export interface PapelOperacional { usuario: string; superusuario: boolean; bypassRls: boolean }
+
+/** O papel realmente conectado — o NOME da variável de ambiente não prova nada sobre ele. */
+export async function inspecionarPapel(db: Db): Promise<PapelOperacional> {
+  const r = await db.query<{ usuario: string; rolsuper: boolean; rolbypassrls: boolean }>(
+    "select current_user as usuario, r.rolsuper, r.rolbypassrls from pg_roles r where r.rolname = current_user");
+  const linha = r.rows[0];
+  if (!linha) throw new Error("não foi possível inspecionar o papel da conexão operacional");
+  return { usuario: linha.usuario, superusuario: linha.rolsuper, bypassRls: linha.rolbypassrls };
+}
+
+/** Atravessa a RLS de verdade? É a única pergunta que importa para um comando que varre todos os tenants. */
+export const papelAtravessaRls = (p: PapelOperacional): boolean => p.superusuario || p.bypassRls;
+
+/**
+ * PREFLIGHT: recusa ANTES de contar organizações, para que um papel sem travessia nunca chegue a produzir
+ * um número. A saída é o operador usar a conexão correta — NUNCA a aplicação conceder o que lhe falta:
+ * `alter role erp_app bypassrls`, `set role`, desligar RLS ou um `security definer` genérico para o
+ * backfill destruiriam, cada um deles, a separação entre runtime e operação que existe de propósito.
+ *
+ * O erro cita o NOME do papel (identificador, não credencial). Nenhum DSN, host ou senha é impresso.
+ */
+export async function validarPapelOperacional(db: Db): Promise<PapelOperacional> {
+  const papel = await inspecionarPapel(db);
+  if (!papelAtravessaRls(papel)) {
+    throw new Error(`conexão operacional recusada: o papel "${papel.usuario}" não tem rolsuper nem `
+      + "rolbypassrls e, sob RLS, enxergaria um acervo vazio. Use a conexão de operação (erp_migrator).");
+  }
+  return papel;
 }
 
 /** Lê as opções da linha de comando. Nunca imprime DSN, senha nem qualquer segredo. */
@@ -268,14 +367,19 @@ export function lerOpcoes(argv: readonly string[]): OpcoesBackfill {
 
 async function main() {
   const opts = lerOpcoes(process.argv.slice(2));
-  const url = process.env.DATABASE_URL;
-  if (!url) { console.error("DATABASE_URL não definida (conexão de operação/migração)."); process.exit(2); }
+  let url: string;
+  try { url = resolverUrlOperacional(process.env); }
+  catch (e) { console.error((e as Error).message); process.exit(2); return; }
   const db = createPool(url, { max: 4 });
   const inicio = Date.now();
   try {
+    const papel = await validarPapelOperacional(db);
+    console.log(`conexão operacional: papel "${papel.usuario}" (rolsuper=${papel.superusuario}, rolbypassrls=${papel.bypassRls}).`);
     if (opts.verifyOnly) {
-      const problemas = await verificarInvariantes(db, opts.org);
-      if (problemas.length) { console.error("INVARIANTES VIOLADAS:"); for (const p of problemas) console.error(`  - ${p}`); process.exit(1); }
+      const r = await verificar(db, opts.org);
+      console.log(`organizações verificadas: ${r.organizacoes} · entidades verificadas: ${r.entidades} · `
+        + `registros globais: ${r.registrosGlobais} · elegíveis faltando: ${r.faltando}`);
+      if (r.problemas.length) { console.error("INVARIANTES VIOLADAS:"); for (const p of r.problemas) console.error(`  - ${p}`); process.exit(1); }
       console.log("ID Global: invariantes OK (zero elegível sem número, zero duplicidade, zero órfão).");
       return;
     }
@@ -284,9 +388,15 @@ async function main() {
       `${opts.dryRun ? "pendentes" : "faltando ao fim"}: ${r.faltando} · ${Math.round((Date.now() - inicio) / 1000)}s`);
     for (const [t, n] of Object.entries(r.porTipo).sort()) console.log(`  ${t}: ${n}`);
     if (opts.dryRun) { console.log("\n--dry-run: nada foi gravado."); return; }
-    const problemas = await verificarInvariantes(db, opts.org);
-    if (problemas.length) { console.error("\nINVARIANTES VIOLADAS:"); for (const p of problemas) console.error(`  - ${p}`); process.exit(1); }
+    const v = await verificar(db, opts.org);
+    console.log(`\norganizações verificadas: ${v.organizacoes} · entidades verificadas: ${v.entidades} · `
+      + `registros globais: ${v.registrosGlobais} · elegíveis faltando: ${v.faltando}`);
+    if (v.problemas.length) { console.error("\nINVARIANTES VIOLADAS:"); for (const p of v.problemas) console.error(`  - ${p}`); process.exit(1); }
     console.log("\nInvariantes OK: zero registro elegível sem ID Global.");
+  } catch (e) {
+    // Mensagem apenas: um stack trace de erro de conexão pode carregar a DSN inteira para o log.
+    console.error(`backfill do ID Global: ${(e as Error).message}`);
+    process.exitCode = 2;
   } finally { await db.end(); }
 }
 

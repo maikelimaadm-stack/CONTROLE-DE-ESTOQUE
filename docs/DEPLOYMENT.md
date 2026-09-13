@@ -105,8 +105,42 @@ A ordem importa, e o motivo de cada fase é o estado intermediário que ela evit
 | --- | --- | --- |
 | **1. Banco** | migration `0016_global_id_activation.sql` | Só infraestrutura (reserva de faixa, constraint, índice). Não percorre acervo, então é rápida e reversível. |
 | **2. API** | alocação automática + `/registros-globais/:idGlobal` e `/registros-globais/entidade/:tipo/:id` | A partir daqui **todo registro novo já nasce numerado**. Subir a API antes do backfill é de propósito: enquanto o histórico é numerado, o fluxo novo já está correto. |
-| **3. Backfill** | `pnpm id-global:backfill -- --batch-size 500` | Em lotes, retomável, reexecutável. Rodar até `faltando: 0`. Conferir com `pnpm id-global:verify`. |
+| **3. Backfill** | `pnpm id-global:backfill -- --batch-size 500` (usa `MIGRATE_DATABASE_URL`) | Em lotes, retomável, reexecutável. Rodar até `faltando: 0`. Conferir com `pnpm id-global:verify`. |
 | **4. Web** | busca `#N` e badge de identidade | A UI tolera registro histórico ainda sem número (o badge simplesmente não aparece), então pode subir junto com a API — mas a fase 3 é o que faz a funcionalidade valer para o acervo inteiro. |
+
+### A conexão da fase 3 é a OPERACIONAL, não a da API
+
+O backfill e o verify leem **`MIGRATE_DATABASE_URL`** (o papel `erp_migrator`, com `bypassrls`) — ou
+`ID_GLOBAL_DATABASE_URL`, se você preferir uma variável dedicada. **Não há queda para `DATABASE_URL`**: sem
+uma das duas, o comando não roda. Não é preciso (nem se deve) copiar segredo para a linha de comando; o
+próprio comando escolhe a variável certa do ambiente, que o serviço da API já possui para o pre-deploy.
+
+O motivo é um falso verde, não uma preferência de estilo. `DATABASE_URL` conecta como `erp_app`, **sem**
+bypass de RLS. O comando percorre todas as organizações **sem contexto de tenant**, e nesse estado
+`erp.tenant_visible(organization_id)` é falso para todas as linhas das 23 tabelas: o backfill conclui com
+`atribuídos: 0`, `faltando: 0` e o verify diz **"invariantes OK"** — com o acervo histórico inteiro sem
+número. Medido em `apps/api/test/integration/id-global-backfill-conexao.test.ts`.
+
+Duas barreiras impedem que isso volte:
+
+1. **preflight de papel** — o comando consulta `pg_roles` e exige `rolsuper` **ou** `rolbypassrls`; qualquer
+   outro papel é recusado **antes** de contar qualquer coisa, citando só o nome do papel (nunca DSN, host ou
+   senha). A saída é usar a conexão certa: a aplicação **nunca** concede a si mesma o que lhe falta —
+   `alter role erp_app bypassrls`, `set role`, desligar RLS ou um `security definer` genérico estão fora de
+   questão, porque destruiriam a separação entre runtime e operação;
+2. **zero organizações não certifica nada** — sem `--org`, nenhuma organização visível é ERRO; e `--org` é
+   provado contra o banco (UUID malformado e organização inexistente falham, em vez de produzir um verde
+   sobre um alvo que não existe).
+
+Saída esperada do verify (é o que torna um resultado absurdo visível de relance):
+
+```
+conexão operacional: papel "erp_migrator" (rolsuper=false, rolbypassrls=true).
+organizações verificadas: 1 · entidades verificadas: 23 · registros globais: 12345 · elegíveis faltando: 0
+ID Global: invariantes OK (zero elegível sem número, zero duplicidade, zero órfão).
+```
+
+`organizações verificadas: 0` nunca aparece: o comando para antes.
 
 **Certificação — o que ainda NÃO aconteceu.** Nada disto foi executado em produção: a PR da PRE-BASE2-04 não
 foi mesclada e nenhuma fase foi disparada. O que está provado é o código, em ambiente de teste (banco novo,
