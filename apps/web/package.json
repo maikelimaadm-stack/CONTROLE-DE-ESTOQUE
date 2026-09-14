@@ -13,7 +13,8 @@
     "ui:audit": "node scripts/ui-audit.mjs",
     "empresa:audit": "node scripts/empresa-canonica-audit.mjs",
     "e2e": "playwright test",
-    "e2e:skew": "node ../../scripts/api-anterior.mjs && playwright test -c playwright.skew.config.ts"
+    "e2e:skew": "node ../../scripts/api-anterior.mjs && playwright test -c playwright.skew.config.ts",
+    "e2e:skew:web-anterior": "node ../../scripts/api-anterior.mjs --web && playwright test -c playwright.skew-web-anterior.config.ts"
   },
   "dependencies": {
     "@agro/domain": "workspace:*",

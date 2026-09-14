@@ -69,67 +69,66 @@ test.describe("empresa: o cliente fala o canônico ponta a ponta", () => {
 });
 
 test.describe("sessão gravada por uma versão anterior", () => {
-  test("sessão com `farmId` é PROMOVIDA e o armazenamento fica só com `empresaId`", async ({ page }) => {
+  /**
+   * A PROMOÇÃO SAIU EM PRE-BASE2-05B. Ela existiu durante o rollout da 05A, quando quem já estava logado
+   * tinha a empresa gravada no formato antigo e ler só o canônico zeraria a seleção de todo mundo. Esse
+   * rollout terminou: o web canônico está em produção e nenhuma versão viva do cliente grava a chave antiga.
+   *
+   * Uma sessão dormante o bastante para ainda tê-la agora pede login de novo. É a troca deliberada desta
+   * fase — um login a mais em vez de uma ponte que ninguém mais atravessa e que voltaria a pedir manutenção
+   * a cada mudança.
+   */
+  test("sessão com a chave anterior NÃO é mais promovida: cai e exige login", async ({ page }) => {
     await login(page);
-    const empresaId = await page.evaluate(async (apiUrl) => {
+    await page.evaluate(async (apiUrl) => {
       const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as Record<string, unknown>;
       const ctx = await fetch(`${apiUrl}/api/auth/context`, { headers: { authorization: `Bearer ${s["token"]}`, "x-org-id": String(s["orgId"]) } }).then((r) => r.json());
-      const id = ctx.empresas[0].id as string;
       // regrava a sessão no formato ANTIGO, exatamente como a versão anterior do web a deixaria
-      localStorage.setItem("agro.session", JSON.stringify({ token: s["token"], orgId: s["orgId"], farmId: id, user: s["user"] }));
-      return id;
+      localStorage.setItem("agro.session", JSON.stringify({ token: s["token"], orgId: s["orgId"], farmId: ctx.empresas[0].id as string, user: s["user"] }));
     }, API);
 
     await page.reload();
-    await expect(page.getByLabel("Empresa ativa"), "sem promoção o usuário perde a empresa no primeiro acesso").toHaveValue(empresaId);
-
-    const gravada = await sessaoBruta(page);
-    expect(gravada["empresaId"], "a promoção é gravada, não recalculada a cada leitura").toBe(empresaId);
-    expect("farmId" in gravada, "a chave legada SAI do armazenamento — a migração acontece uma vez só").toBe(false);
+    await expect(page, "sem contrato canônico na sessão, o caminho honesto é novo login").toHaveURL(/\/login/);
+    expect(await page.evaluate(() => localStorage.getItem("agro.session")), "a sessão fora do contrato é apagada").toBeNull();
   });
 
-  test("a requisição seguinte à promoção já viaja com X-Empresa-Id", async ({ page }) => {
+  test("empresa gravada fora do contrato (não é UUID nem nula) também derruba a sessão", async ({ page }) => {
+    // `localStorage` é editável e sobrevive a qualquer versão. Um `empresaId` inválido viajaria em
+    // `X-Empresa-Id` e voltaria como 422 numa tela sem relação com a causa.
+    await login(page);
+    await page.evaluate(() => {
+      const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as Record<string, unknown>;
+      localStorage.setItem("agro.session", JSON.stringify({ token: s["token"], orgId: s["orgId"], empresaId: "todas", user: s["user"] }));
+    });
+    await page.reload();
+    await expect(page).toHaveURL(/\/login/);
+    expect(await page.evaluate(() => localStorage.getItem("agro.session"))).toBeNull();
+  });
+
+  test("sessão canônica com empresa selecionada segue intacta — a validação não derruba quem está certo", async ({ page }) => {
     await login(page);
     const empresaId = await page.evaluate(async (apiUrl) => {
       const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as Record<string, unknown>;
       const ctx = await fetch(`${apiUrl}/api/auth/context`, { headers: { authorization: `Bearer ${s["token"]}`, "x-org-id": String(s["orgId"]) } }).then((r) => r.json());
       const id = ctx.empresas[0].id as string;
-      localStorage.setItem("agro.session", JSON.stringify({ token: s["token"], orgId: s["orgId"], farmId: id, user: s["user"] }));
+      localStorage.setItem("agro.session", JSON.stringify({ token: s["token"], orgId: s["orgId"], empresaId: id, user: s["user"] }));
       return id;
     }, API);
 
     const enviados: { url: string; empresa?: string; farm?: string }[] = [];
     page.on("request", (r) => { const h = r.headers(); if (r.url().includes("/api/")) enviados.push({ url: r.url(), empresa: h["x-empresa-id"], farm: h["x-farm-id"] }); });
     await page.reload();
+    await expect(page.getByLabel("Empresa ativa")).toHaveValue(empresaId);
     await page.goto("/cadastros/warehouses");
     await expect(page.getByTestId("b1-row").first()).toBeVisible();
 
     const comContexto = enviados.filter((e) => e.empresa || e.farm);
     expect(comContexto.length).toBeGreaterThan(0);
     for (const e of comContexto) {
-      expect(e.empresa, `${e.url}: contexto promovido sai no cabeçalho canônico`).toBe(empresaId);
-      expect(e.farm, `${e.url}: o cabeçalho legado não reaparece depois da promoção`).toBeUndefined();
+      expect(e.empresa, `${e.url}: o contexto sai no cabeçalho canônico`).toBe(empresaId);
+      expect(e.farm, `${e.url}: o cabeçalho anterior não existe mais no cliente`).toBeUndefined();
     }
-  });
-
-  test("`farmId` ≠ `empresaId`: FAIL-SAFE — a sessão cai em vez de escolher uma empresa", async ({ page }) => {
-    await login(page);
-    const empresas = await page.evaluate(async (apiUrl) => {
-      const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as Record<string, unknown>;
-      const ctx = await fetch(`${apiUrl}/api/auth/context`, { headers: { authorization: `Bearer ${s["token"]}`, "x-org-id": String(s["orgId"]) } }).then((r) => r.json());
-      return (ctx.empresas as { id: string }[]).map((e) => e.id);
-    }, API);
-    test.skip(empresas.length < 2, "cenário exige duas empresas reais no ambiente");
-
-    await page.evaluate(([a, b]) => {
-      const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as Record<string, unknown>;
-      // As duas chaves com valores diferentes: nem o armazenamento sabe qual delas foi escrita por último.
-      localStorage.setItem("agro.session", JSON.stringify({ token: s["token"], orgId: s["orgId"], empresaId: b, farmId: a, user: s["user"] }));
-    }, empresas);
-
-    await page.reload();
-    await expect(page, "ambiguidade de empresa não se resolve adivinhando: exige login novo").toHaveURL(/\/login/);
-    expect(await page.evaluate(() => localStorage.getItem("agro.session")), "a sessão ambígua é apagada").toBeNull();
+    expect((await sessaoBruta(page))["empresaId"], "a sessão válida não é reescrita").toBe(empresaId);
   });
 });
 

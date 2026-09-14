@@ -7,19 +7,15 @@ import { notFound, validation, denied } from "../lib/errors.js";
 import { hasPermission } from "../lib/context.js";
 import { contarNaoLidas, criarNotificacao, visibilidadeNotificacaoSql } from "../lib/notificacao.js";
 import { pageQuerySchema } from "../lib/pagination.js";
-import { deFarmIdsLegado, escopoEmpresaSchema, gravarEscoposAuditado, paraFarmIdsLegado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
+import { escopoEmpresaSchema, gravarEscoposAuditado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
 import { atribuirIdGlobal } from "../lib/id-global.js";
+import { recusarEscopoAchatado } from "../lib/contrato-legado.js";
 
 /**
- * Acesso por empresa pedido na requisição: o canônico (`escopos_empresas`) ou o legado (`empresa_ids`) —
- * NUNCA os dois, porque não há regra honesta para combiná-los. `undefined` = não mexer no que já existe.
+ * Acesso por empresa pedido na requisição — contrato ÚNICO desde PRE-BASE2-05B: `escopos_empresas`.
+ * `null` = não mexer no que já existe.
  */
-function escoposPedidos(d: { empresa_ids?: string[]; escopos_empresas?: EscopoEmpresaEntrada[] }): EscopoEmpresaEntrada[] | null {
-  if (d.escopos_empresas && d.empresa_ids) throw validation("Envie escopos_empresas OU empresa_ids, não os dois");
-  if (d.escopos_empresas) return d.escopos_empresas;
-  if (d.empresa_ids) return deFarmIdsLegado(d.empresa_ids);
-  return null;
-}
+const escoposPedidos = (d: { escopos_empresas?: EscopoEmpresaEntrada[] }): EscopoEmpresaEntrada[] | null => d.escopos_empresas ?? null;
 
 export default async function adminRoutes(app: FastifyInstance) {
   // ---------- Catálogo de permissões (árvore para a tela de perfis) ----------
@@ -77,11 +73,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     if (q.search) { params.push(`%${q.search}%`); where.push(`(u.name ilike $${params.length} or u.email::text ilike $${params.length})`); }
     const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.organization_members m join erp.users u on u.id=m.user_id where ${where.join(" and ")}`, params);
     const r = await ctx.tx.query(`select m.id as member_id, u.id, u.name, u.email, u.phone, u.is_active as user_active, m.is_active, m.is_owner, m.role_id, r.name as role_name, u.last_login_at, m.created_at, (select coalesce(json_agg(json_build_object('modulo', e.modulo, 'modo', e.modo, 'empresas', coalesce((select array_agg(me.empresa_id) from erp.membro_empresas me where me.organization_id=e.organization_id and me.membro_id=e.membro_id and me.modulo=e.modulo), '{}')) order by e.modulo), '[]'::json) from erp.membro_escopos_empresa e where e.organization_id=m.organization_id and e.membro_id=m.id) as escopos_empresas from erp.organization_members m join erp.users u on u.id=m.user_id left join erp.roles r on r.id=m.role_id where ${where.join(" and ")} order by u.name limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
-    // `empresa_ids` continua no contrato por compatibilidade, mas só aparece quando a configuração REAL cabe no
-    // formato antigo; caso contrário vem null (a API não devolve uma lista que mentiria sobre o acesso).
+    // A RESPOSTA é canônica desde PRE-BASE2-05B: só `escopos_empresas`. O campo achatado saiu — ele só
+    // conseguia representar a configuração quando todos os módulos coincidiam, e devolvia `null` no resto.
     const items = r.rows.map((x) => {
       const escopos = ((x as { escopos_empresas: EscopoEmpresaEntrada[] }).escopos_empresas ?? []).map((e) => ({ ...e, empresas: e.empresas ?? [] }));
-      return { ...(x as Record<string, unknown>), escopos_empresas: escopos, empresa_ids: (x as { is_owner: boolean }).is_owner ? [] : paraFarmIdsLegado(escopos) };
+      return { ...(x as Record<string, unknown>), escopos_empresas: escopos };
     });
     return { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
   }));
@@ -100,17 +96,16 @@ export default async function adminRoutes(app: FastifyInstance) {
     }
     return { items: MODULOS_ESCOPO_EMPRESA.map((m) => ({ ...m, tem_permissao: comPermissao ? comPermissao.includes(m.chave) : null })) };
   }));
-  const memberSchema = z.object({ name: z.string().min(1), email: z.string().email(), phone: z.string().optional().nullable(), password: z.string().min(8).optional(), role_id: z.string().uuid().nullable().optional(), empresa_ids: z.array(z.string().uuid()).optional(), escopos_empresas: z.array(escopoEmpresaSchema).optional(), is_active: z.boolean().default(true), boss_user_ids: z.array(z.string().uuid()).default([]) });
+  const memberSchema = z.object({ name: z.string().min(1), email: z.string().email(), phone: z.string().optional().nullable(), password: z.string().min(8).optional(), role_id: z.string().uuid().nullable().optional(), escopos_empresas: z.array(escopoEmpresaSchema).optional(), is_active: z.boolean().default(true), boss_user_ids: z.array(z.string().uuid()).default([]) });
   app.post("/admin/members", async (req, reply) => reply.status(201).send(await runService(app, req, "users.create", async (ctx) => {
+    recusarEscopoAchatado(req.body);
     const d = memberSchema.parse(req.body);
     const hash = d.password ? await bcrypt.hash(d.password, 10) : null;
     const u = await ctx.tx.query<{ id: string }>("insert into erp.users(email,name,phone,password_hash) values ($1,$2,$3,$4) on conflict (email) do update set name=excluded.name, phone=coalesce(excluded.phone, erp.users.phone), password_hash=coalesce(excluded.password_hash, erp.users.password_hash) returning id", [d.email.toLowerCase(), d.name, d.phone ?? null, hash]);
     const m = await ctx.tx.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,role_id,is_active) values ($1,$2,$3,$4) on conflict (organization_id,user_id) do update set role_id=excluded.role_id, is_active=excluded.is_active returning id", [ctx.orgId, u.rows[0]!.id, d.role_id ?? null, d.is_active]);
-    // Corpo SEM `escopos_empresas` e SEM `empresa_ids` = nenhum módulo configurado = NENHUMA empresa. O
-    // fallback anterior (`deFarmIdsLegado([])`) traduzia a ausência em modo `todas` nos onze módulos, ou
-    // seja, criava o membro enxergando a organização inteira — o oposto do contrato em escopo-admin.ts, e
-    // uma concessão total que a auditoria registrava como se fosse pedido. A tradução do legado continua
-    // valendo para `empresa_ids` ENVIADO, que é onde "lista vazia = todas" tem história.
+    // Corpo SEM `escopos_empresas` = nenhum módulo configurado = NENHUMA empresa (fail-closed). Um fallback
+    // anterior traduzia a ausência em modo `todas` nos onze módulos — criava o membro enxergando a
+    // organização inteira, e a auditoria registrava a concessão total como se tivesse sido pedida.
     await gravarEscoposAuditado(ctx, m.rows[0]!.id, escoposPedidos(d) ?? []);
     await ctx.tx.query("delete from erp.user_bosses where organization_id=$1 and user_id=$2", [ctx.orgId, u.rows[0]!.id]);
     for (const b of d.boss_user_ids) await ctx.tx.query("insert into erp.user_bosses(organization_id,user_id,boss_user_id) values ($1,$2,$3) on conflict do nothing", [ctx.orgId, u.rows[0]!.id, b]);
@@ -119,6 +114,7 @@ export default async function adminRoutes(app: FastifyInstance) {
     return { id: u.rows[0]!.id, member_id: m.rows[0]!.id };
   })));
   app.put("/admin/members/:userId", async (req) => runService(app, req, "users.edit", async (ctx) => {
+    recusarEscopoAchatado(req.body);
     const { userId } = req.params as { userId: string }; const d = memberSchema.partial().parse(req.body);
     const m = await ctx.tx.query<{ id: string; is_owner: boolean }>("select id, is_owner from erp.organization_members where organization_id=$1 and user_id=$2", [ctx.orgId, userId]);
     if (!m.rows[0]) throw notFound("Usuário");

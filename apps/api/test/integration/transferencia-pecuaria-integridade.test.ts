@@ -67,7 +67,7 @@ async function usuario(email: string, empresas: string[]): Promise<string> {
 }
 
 beforeAll(async () => {
-  h = await harness(); const I = await ids(h); ORG = h.demo.orgId; A = I.farm; B = I.farm2;
+  h = await harness(); const I = await ids(h); ORG = h.demo.orgId; A = I.empresa; B = I.empresa2;
   admin = createPool(TEST_URL, { max: 3 });
   CAT = (await admin.query<{ id: string }>("select id from erp.animal_categories where name='Garrote' limit 1")).rows[0]!.id;
   ESP = (await admin.query<{ id: string }>("select id from erp.animal_species limit 1")).rows[0]!.id;

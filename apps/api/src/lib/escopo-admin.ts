@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CHAVES_MODULO_EMPRESA, moduloEmpresaValido } from "@agro/domain";
+import { moduloEmpresaValido } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import type { ServiceCtx } from "./context.js";
 import { audit } from "./service.js";
@@ -10,9 +10,11 @@ import { audit } from "./service.js";
  * O contrato canônico é uma linha POR MÓDULO: o modo (`todas` | `selecionadas`) e, no modo `selecionadas`, as
  * empresas escolhidas. Módulo ausente = SEM empresa nenhuma (fail-closed) — nunca "todas".
  *
- * `erp.member_farms` não é mais autoridade de runtime; o formato legado `empresa_ids` continua sendo aceito na
- * API e é TRADUZIDO aqui para o modelo canônico, com a mesma semântica que o sistema tinha antes:
- * lista vazia = todas as empresas, lista preenchida = exatamente aquelas — valendo para todos os módulos.
+ * `erp.member_farms` não é mais autoridade de runtime. O formato ACHATADO anterior (`empresa_ids`, em que
+ * lista vazia significava "todas as empresas, em todos os módulos") saiu em PRE-BASE2-05B: ele não consegue
+ * exprimir o contrato por módulo, e traduzi-lo obrigava a inventar o mesmo modo para os onze módulos de uma
+ * vez — concessão em bloco disfarçada de compatibilidade. Hoje ele é RECUSADO na borda administrativa
+ * (`lib/contrato-legado.ts`), nunca reinterpretado.
  */
 export const escopoEmpresaSchema = z.object({
   modulo: z.string().min(1),
@@ -20,26 +22,6 @@ export const escopoEmpresaSchema = z.object({
   empresas: z.array(z.string().uuid()).default([])
 });
 export type EscopoEmpresaEntrada = z.infer<typeof escopoEmpresaSchema>;
-
-/** Tradução do formato legado: vazio = todas; preenchido = aquelas empresas — em TODOS os módulos. */
-export function deFarmIdsLegado(empresaIds: readonly string[]): EscopoEmpresaEntrada[] {
-  const modo = empresaIds.length ? "selecionadas" as const : "todas" as const;
-  return CHAVES_MODULO_EMPRESA.map((modulo) => ({ modulo, modo, empresas: modo === "selecionadas" ? [...empresaIds] : [] }));
-}
-
-/**
- * Representação legada de uma configuração canônica — ou `null` quando ela NÃO cabe no formato antigo
- * (modos diferentes por módulo, ou conjuntos diferentes). A API prefere devolver `null` a devolver uma lista
- * que mentiria sobre o acesso real.
- */
-export function paraFarmIdsLegado(escopos: readonly EscopoEmpresaEntrada[]): string[] | null {
-  if (escopos.length !== CHAVES_MODULO_EMPRESA.length) return null;
-  const modos = new Set(escopos.map((e) => e.modo));
-  if (modos.size !== 1) return null;
-  if (escopos[0]!.modo === "todas") return [];
-  const chaves = escopos.map((e) => [...e.empresas].sort().join(","));
-  return new Set(chaves).size === 1 ? [...escopos[0]!.empresas].sort() : null;
-}
 
 /**
  * Validação de FORMA da entrada canônica: módulo existente, sem módulo repetido, sem empresa repetida dentro

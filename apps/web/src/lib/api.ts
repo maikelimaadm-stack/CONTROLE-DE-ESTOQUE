@@ -9,33 +9,26 @@ const KEY = "agro.session";
 export interface Session { token: string; orgId: string | null; empresaId: string | null; user?: { id: string; email: string; name: string } }
 
 /**
- * LEITURA DA SESSÃO — a única porta onde o formato anterior vira o canônico (PRE-BASE2-05A).
+ * LEITURA DA SESSÃO — porta única do contrato canônico (PRE-BASE2-05B).
  *
  * A regra mora em `@erp/plataforma` (`lerSessaoArmazenada`), fora do navegador, porque é regra e precisa de
  * teste. Aqui fica só o EFEITO, que é o que depende do `localStorage`:
  *
- *   · `migrada`  → regrava JÁ, no formato canônico e sem a chave legada. Migrar na leitura sem regravar
- *                  repetiria a promoção para sempre e deixaria o armazenamento bilíngue indefinidamente;
- *   · `conflito` → a sessão guarda duas empresas diferentes e nada diz qual é a atual. Apagar e exigir novo
- *                  login é a única saída honesta: escolher uma seria decidir no escuro em qual empresa o
- *                  usuário vai lançar. Ver o cabeçalho de `sessao-empresa.ts`;
- *   · `invalida`  → a empresa gravada não respeita o contrato canônico (não é UUID nem nula). Mesmo efeito
- *                  do conflito, por motivo diferente: aqui não há duas verdades, há dado que não serve.
+ *   · `invalida` → a sessão não respeita o contrato (empresa fora do formato, ou a chave canônica ausente —
+ *                  inclusive numa sessão dormante gravada por uma versão anterior). Apagar e exigir novo
+ *                  login é a saída honesta: a alternativa seria adivinhar em qual empresa o usuário opera.
  *
- * A promoção é temporária e sai em PRE-BASE2-05B, quando nenhum cliente anterior puder mais gravar a chave antiga.
+ * A PROMOÇÃO da chave anterior saiu em 05B junto com a borda legada do servidor; a validação fica, porque
+ * `localStorage` é editável e nenhum contrato se sustenta só no servidor. Ver `sessao-empresa.ts`.
  */
 export function getSession(): Session | null {
   if (typeof window === "undefined") return null;
   let bruto: unknown;
   try { const s = localStorage.getItem(KEY); bruto = s ? JSON.parse(s) : null; } catch { return null; }
   const leitura = lerSessaoArmazenada(bruto);
-  switch (leitura.tipo) {
-    case "ausente": return null;
-    case "conflito":
-    case "invalida": try { localStorage.removeItem(KEY); } catch { /* armazenamento indisponível */ } return null;
-    case "migrada": try { localStorage.setItem(KEY, JSON.stringify(leitura.sessao)); } catch { /* idem */ } return leitura.sessao as unknown as Session;
-    case "canonica": return leitura.sessao as unknown as Session;
-  }
+  if (leitura.tipo === "canonica") return leitura.sessao as unknown as Session;
+  if (leitura.tipo === "invalida") try { localStorage.removeItem(KEY); } catch { /* armazenamento indisponível */ }
+  return null;
 }
 
 /** Grava a sessão sem disparar `agro:session` (troca de empresa: só o cabeçalho muda; contexto/permissões não). */
@@ -47,11 +40,9 @@ export function setSession(s: Session | null) { if (typeof window === "undefined
  * de relatório faz `fetch` direto para receber o blob —, e foi exatamente aí que o cabeçalho ficou para trás
  * quando o canônico entrou. Um lugar só evita que a próxima chamada crua repita o esquecimento.
  *
- * A empresa selecionada sai como `X-Empresa-Id`, o cabeçalho CANÔNICO (PRE-BASE2-05A). Durante a
- * PRE-BASE2-03/04 o fio era legado por causa do CORS da API anterior, que não declarava o canônico e fazia o
- * preflight morrer no navegador. Essa razão acabou: a API em produção declara `X-Empresa-Id` em
- * `allowedHeaders` e o resolve na borda. O servidor continua aceitando o cabeçalho ANTERIOR de clientes
- * antigos até PRE-BASE2-05B — quem parou de falar o idioma antigo foi o cliente, não a API.
+ * A empresa selecionada sai como `X-Empresa-Id`, o cabeçalho CANÔNICO. Desde PRE-BASE2-05B ele é também o
+ * ÚNICO que a API entende: o cabeçalho anterior saiu do CORS e é recusado no servidor. Cliente e servidor
+ * falam a mesma língua — não há mais dois nomes para a mesma coisa em lugar nenhum do fio.
  */
 export function cabecalhosDeContexto(s: Session | null): Record<string, string> {
   return {

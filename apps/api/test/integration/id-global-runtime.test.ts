@@ -54,7 +54,7 @@ async function conferir(tipo: string, id: string, esperado: { empresa?: string |
 async function animalAtivo(): Promise<string> {
   const r = await admin.query<{ id: string }>(
     "insert into erp.animals(organization_id,empresa_id,species_id,category_id,batch_id,sex,status,entry_date) select $1,$2,species_id,category_id,$3,'M','active',current_date from erp.animals where id=$4 returning id",
-    [h.demo.orgId, I.farm, LOTE, ANIMAL]);
+    [h.demo.orgId, I.empresa, LOTE, ANIMAL]);
   return r.rows[0]!.id;
 }
 
@@ -67,7 +67,7 @@ beforeAll(async () => {
   h = await harness(); I = await ids(h); admin = createPool(TEST_URL, { max: 2 });
   // saldo para o que consome estoque
   for (const p of [I.product, I.product2]) {
-    const r = await post("/api/stock/opening-balances", { empresa_id: I.farm, warehouse_id: I.warehouse, product_id: p, quantity: "5000", unit_value: "10" });
+    const r = await post("/api/stock/opening-balances", { empresa_id: I.empresa, warehouse_id: I.warehouse, product_id: p, quantity: "5000", unit_value: "10" });
     expect(r.statusCode, r.body).toBe(201);
   }
   // O seed grava os equipamentos de demonstração com códigos fixos ("0001".."0003") SEM avançar
@@ -99,7 +99,7 @@ describe("CADASTROS — a porta GENÉRICA do Resource Registry aloca sem um `if`
   it("equipamento recebe ID Global", async () => {
     // `code` explícito: a sequência de equipamento do seed já consumiu os primeiros códigos e o conflito
     // seria de CÓDIGO DA ENTIDADE, não de ID Global — ruído que esconderia o que este teste mede.
-    const id = await criar("/api/resources/equipments", { description: "Trator ID Global", empresa_id: I.farm, family_id: await opcao("equipment_families"),
+    const id = await criar("/api/resources/equipments", { description: "Trator ID Global", empresa_id: I.empresa, family_id: await opcao("equipment_families"),
       year_model: "2020", hour_value: "0", acquisition_value: "0" });
     await conferir("equipments", id, { modulo: "frota", rota: `/cadastros/equipments/${id}?view=1` });
   });
@@ -111,48 +111,48 @@ describe("CADASTROS — a porta GENÉRICA do Resource Registry aloca sem um `if`
 
 describe("COMPRAS E ESTOQUE", () => {
   it("solicitação de compra", async () => {
-    const id = await criar("/api/supply/requests", { empresa_id: I.farm, request_date: "2031-01-05", request_type: "product", description: "Compra", justification: "Reposição", items: [{ product_id: I.product, description: "Sal", quantity: "10", reference_value: "5" }] });
-    await conferir("purchase_requests", id, { empresa: I.farm, modulo: "compras", rota: `/suprimentos/view/${id}` });
+    const id = await criar("/api/supply/requests", { empresa_id: I.empresa, request_date: "2031-01-05", request_type: "product", description: "Compra", justification: "Reposição", items: [{ product_id: I.product, description: "Sal", quantity: "10", reference_value: "5" }] });
+    await conferir("purchase_requests", id, { empresa: I.empresa, modulo: "compras", rota: `/suprimentos/view/${id}` });
   });
   it("entrada manual", async () => {
-    const id = await criar("/api/stock/input-entries", { empresa_id: I.farm, entry_date: "2031-01-06", items: [{ product_id: I.product, quantity: "10", unit_value: "5", warehouse_id: I.warehouse, financial_category_id: I.category, cost_center_id: I.costCenter }] });
-    await conferir("input_entries", id, { empresa: I.farm, modulo: "estoque", rota: `/estoque/entradas/${id}` });
+    const id = await criar("/api/stock/input-entries", { empresa_id: I.empresa, entry_date: "2031-01-06", items: [{ product_id: I.product, quantity: "10", unit_value: "5", warehouse_id: I.warehouse, financial_category_id: I.category, cost_center_id: I.costCenter }] });
+    await conferir("input_entries", id, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/entradas/${id}` });
   });
   it("documento fiscal", async () => {
-    const id = await criar("/api/stock/invoices", { empresa_id: I.farm, number: "IDG-1", provider_id: I.provider, emission_date: "2031-01-07", items: [{ product_id: I.product, quantity: "5", unit_value: "3", warehouse_id: I.warehouse, financial_category_id: I.category, cost_center_id: I.costCenter }], apportionment_type: "by_product" });
-    await conferir("invoices", id, { empresa: I.farm, modulo: "estoque", rota: `/estoque/documentos-fiscais/${id}` });
+    const id = await criar("/api/stock/invoices", { empresa_id: I.empresa, number: "IDG-1", provider_id: I.provider, emission_date: "2031-01-07", items: [{ product_id: I.product, quantity: "5", unit_value: "3", warehouse_id: I.warehouse, financial_category_id: I.category, cost_center_id: I.costCenter }], apportionment_type: "by_product" });
+    await conferir("invoices", id, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/documentos-fiscais/${id}` });
   });
   it("requisição", async () => {
-    const id = await criar("/api/stock/requisitions", { empresa_id: I.farm, requisition_date: "2031-01-08", items: [{ warehouse_id: I.warehouse, product_id: I.product, quantity: "3" }] });
-    await conferir("requisitions", id, { empresa: I.farm, modulo: "estoque", rota: `/estoque/requisicoes/${id}` });
+    const id = await criar("/api/stock/requisitions", { empresa_id: I.empresa, requisition_date: "2031-01-08", items: [{ warehouse_id: I.warehouse, product_id: I.product, quantity: "3" }] });
+    await conferir("requisitions", id, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/requisicoes/${id}` });
   });
   it("saída direta", async () => {
-    const id = await criar("/api/stock/writeoffs", { empresa_id: I.farm, writeoff_date: "2031-01-09", reason: "loss", warehouse_id: I.warehouse, justification: "Perda medida", items: [{ product_id: I.product, quantity: "1" }] });
-    await conferir("stock_writeoffs", id, { empresa: I.farm, modulo: "estoque", rota: `/estoque/baixas/${id}` });
+    const id = await criar("/api/stock/writeoffs", { empresa_id: I.empresa, writeoff_date: "2031-01-09", reason: "loss", warehouse_id: I.warehouse, justification: "Perda medida", items: [{ product_id: I.product, quantity: "1" }] });
+    await conferir("stock_writeoffs", id, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/baixas/${id}` });
   });
   it("devolução", async () => {
-    const id = await criar("/api/stock/devolutions", { empresa_id: I.farm, devolution_date: "2031-01-10", items: [{ warehouse_id: I.warehouse, product_id: I.product, quantity: "1" }] });
-    await conferir("devolutions", id, { empresa: I.farm, modulo: "estoque", rota: `/estoque/devolucoes/${id}` });
+    const id = await criar("/api/stock/devolutions", { empresa_id: I.empresa, devolution_date: "2031-01-10", items: [{ warehouse_id: I.warehouse, product_id: I.product, quantity: "1" }] });
+    await conferir("devolutions", id, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/devolucoes/${id}` });
   });
   it("transferência de armazém — a pista de empresa é a de ORIGEM", async () => {
-    const id = await criar("/api/stock/transfers", { kind: "warehouse", transfer_date: "2031-01-11", empresa_origem_id: I.farm, origin_warehouse_id: I.warehouse, destination_warehouse_id: I.warehouse2, items: [{ product_id: I.product, quantity: "2" }] });
-    await conferir("warehouse_transfers", id, { empresa: I.farm, modulo: "estoque", rota: `/estoque/transferencias/${id}` });
+    const id = await criar("/api/stock/transfers", { kind: "warehouse", transfer_date: "2031-01-11", empresa_origem_id: I.empresa, origin_warehouse_id: I.warehouse, destination_warehouse_id: I.warehouse2, items: [{ product_id: I.product, quantity: "2" }] });
+    await conferir("warehouse_transfers", id, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/transferencias/${id}` });
   });
   it("produção de ração", async () => {
     FORMULA = await criar("/api/stock/feed-formulas", { name: "Fórmula ID Global", product_id: I.product2, items: [{ product_id: I.product, quantity: "10" }] });
-    const id = await criar("/api/stock/feed-batches", { empresa_id: I.farm, batch_date: "2031-01-12", formula_id: FORMULA, origin_warehouse_id: I.warehouse, destination_warehouse_id: I.warehouse2, quantity_produced: "10" });
-    await conferir("feed_batches", id, { empresa: I.farm, modulo: "estoque", rota: `/estoque/batidas/${id}` });
+    const id = await criar("/api/stock/feed-batches", { empresa_id: I.empresa, batch_date: "2031-01-12", formula_id: FORMULA, origin_warehouse_id: I.warehouse, destination_warehouse_id: I.warehouse2, quantity_produced: "10" });
+    await conferir("feed_batches", id, { empresa: I.empresa, modulo: "estoque", rota: `/estoque/batidas/${id}` });
   });
 });
 
 describe("FINANCEIRO — variante decide rota E permissão", () => {
   it("título A PAGAR resolve para a tela de contas a pagar", async () => {
-    const id = await criar("/api/financial/payables", { empresa_id: I.farm, number: "IDG-P", person_id: I.provider, amount: "100", emission_date: "2031-01-13", due_date: "2031-02-13", note: "Título ID Global", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] });
-    await conferir("financial_titles", id, { empresa: I.farm, modulo: "financeiro", rota: `/financeiro/contas-a-pagar/${id}` });
+    const id = await criar("/api/financial/payables", { empresa_id: I.empresa, number: "IDG-P", person_id: I.provider, amount: "100", emission_date: "2031-01-13", due_date: "2031-02-13", note: "Título ID Global", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] });
+    await conferir("financial_titles", id, { empresa: I.empresa, modulo: "financeiro", rota: `/financeiro/contas-a-pagar/${id}` });
   });
   it("título A RECEBER resolve para a tela de contas a receber", async () => {
-    const id = await criar("/api/financial/receivables", { empresa_id: I.farm, number: "IDG-R", person_id: I.client, amount: "100", emission_date: "2031-01-13", due_date: "2031-02-13", note: "Título ID Global", apportionment: [{ financial_category_id: I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }] });
-    await conferir("financial_titles", id, { empresa: I.farm, modulo: "financeiro", rota: `/financeiro/contas-a-receber/${id}` });
+    const id = await criar("/api/financial/receivables", { empresa_id: I.empresa, number: "IDG-R", person_id: I.client, amount: "100", emission_date: "2031-01-13", due_date: "2031-02-13", note: "Título ID Global", apportionment: [{ financial_category_id: I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }] });
+    await conferir("financial_titles", id, { empresa: I.empresa, modulo: "financeiro", rota: `/financeiro/contas-a-receber/${id}` });
   });
   it("movimento bancário — e o PAR da transferência interna também recebe número", async () => {
     const r = await post("/api/financial/bank-movements", { bank_account_id: I.bankAccount, movement_date: "2031-01-14", type: "out", category_type: "internal_transfer", destination_account_id: I.cashAccount, amount: "50" });
@@ -175,16 +175,16 @@ describe("FINANCEIRO — variante decide rota E permissão", () => {
 describe("VENDAS — três variantes, três permissões", () => {
   for (const [kind, rota, url] of [["budget", "budgets", "/api/sales/budgets"], ["order", "orders", "/api/sales/orders"], ["sale", "sales", "/api/sales/sales"]] as const) {
     it(`documento de venda: ${kind}`, async () => {
-      const id = await criar(url, { empresa_id: I.farm, document_date: "2031-01-16", client_id: I.client, items: [{ product_id: I.product, warehouse_id: I.warehouse, quantity: "1", unit_price: "10" }] });
-      await conferir("sales_documents", id, { empresa: I.farm, modulo: "vendas", rota: `/vendas/${rota}/${id}` });
+      const id = await criar(url, { empresa_id: I.empresa, document_date: "2031-01-16", client_id: I.client, items: [{ product_id: I.product, warehouse_id: I.warehouse, quantity: "1", unit_price: "10" }] });
+      await conferir("sales_documents", id, { empresa: I.empresa, modulo: "vendas", rota: `/vendas/${rota}/${id}` });
     });
   }
 });
 
 describe("PECUÁRIA — cada variante user-facing recebe; as INTERNAS não", () => {
   it("animal", async () => {
-    const id = await criar("/api/livestock/animals", { empresa_id: I.farm, species_id: await opcao("animal_species"), category_id: I.speciesCategory, entry_date: "2031-01-17", sex: "M", identifications: [{ identification_type_id: I.idType, value: "IDG-ANIMAL-1", is_primary: true }] });
-    await conferir("animals", id, { empresa: I.farm, modulo: "pecuaria", rota: `/pecuaria/animais/${id}` });
+    const id = await criar("/api/livestock/animals", { empresa_id: I.empresa, species_id: await opcao("animal_species"), category_id: I.speciesCategory, entry_date: "2031-01-17", sex: "M", identifications: [{ identification_type_id: I.idType, value: "IDG-ANIMAL-1", is_primary: true }] });
+    await conferir("animals", id, { empresa: I.empresa, modulo: "pecuaria", rota: `/pecuaria/animais/${id}` });
   });
   for (const tipo of ["purchase", "sale", "birth", "death", "loss"] as const) {
     it(`movimentação de rebanho: ${tipo}`, async () => {
@@ -194,26 +194,26 @@ describe("PECUÁRIA — cada variante user-facing recebe; as INTERNAS não", () 
       const itens = entrada
         ? [{ category_id: I.speciesCategory, quantity: 1, unit_value: "100", weight: "300" }]
         : [{ animal_id: await animalAtivo(), quantity: 1 }];
-      const id = await criar("/api/livestock/movements", { empresa_id: I.farm, movement_type: tipo, movement_date: "2031-01-18", batch_id: LOTE, items: itens });
-      await conferir("animal_movements", id, { empresa: I.farm, modulo: "pecuaria", rota: `/pecuaria/movimentacoes/${tipo}/${id}` });
+      const id = await criar("/api/livestock/movements", { empresa_id: I.empresa, movement_type: tipo, movement_date: "2031-01-18", batch_id: LOTE, items: itens });
+      await conferir("animal_movements", id, { empresa: I.empresa, modulo: "pecuaria", rota: `/pecuaria/movimentacoes/${tipo}/${id}` });
     });
   }
   for (const tipo of ["nutrition", "sanitary", "weaning", "separation", "pasture"] as const) {
     it(`manejo: ${tipo}`, async () => {
-      const id = await criar("/api/livestock/handlings", { empresa_id: I.farm, handling_type: tipo, handling_date: "2031-01-19", items: [{ animal_id: ANIMAL, quantity: "1" }] });
-      await conferir("animal_handlings", id, { empresa: I.farm, modulo: "pecuaria", rota: `/pecuaria/manejo/${tipo}/${id}` });
+      const id = await criar("/api/livestock/handlings", { empresa_id: I.empresa, handling_type: tipo, handling_date: "2031-01-19", items: [{ animal_id: ANIMAL, quantity: "1" }] });
+      await conferir("animal_handlings", id, { empresa: I.empresa, modulo: "pecuaria", rota: `/pecuaria/manejo/${tipo}/${id}` });
     });
   }
   it("pesagem", async () => {
-    const id = await criar("/api/livestock/weighings", { empresa_id: I.farm, weighing_date: "2031-01-20", items: [{ animal_id: ANIMAL, weight: "320" }] });
-    await conferir("weighings", id, { empresa: I.farm, modulo: "pecuaria", rota: `/pecuaria/pesagens/${id}` });
+    const id = await criar("/api/livestock/weighings", { empresa_id: I.empresa, weighing_date: "2031-01-20", items: [{ animal_id: ANIMAL, weight: "320" }] });
+    await conferir("weighings", id, { empresa: I.empresa, modulo: "pecuaria", rota: `/pecuaria/pesagens/${id}` });
   });
   it("MOVIMENTAÇÃO INTERNA (transferência entre lotes) NÃO recebe ID Global", async () => {
-    const destino = await admin.query<{ id: string }>("insert into erp.batches(organization_id,empresa_id,code,batch_date,description,status) values ($1,$2,$3,current_date,'Destino','active') returning id", [h.demo.orgId, I.farm, `IDG${Math.random().toString(36).slice(2, 8)}`]);
+    const destino = await admin.query<{ id: string }>("insert into erp.batches(organization_id,empresa_id,code,batch_date,description,status) values ($1,$2,$3,current_date,'Destino','active') returning id", [h.demo.orgId, I.empresa, `IDG${Math.random().toString(36).slice(2, 8)}`]);
     const animal = await admin.query<{ id: string }>(
       "insert into erp.animals(organization_id,empresa_id,species_id,category_id,batch_id,sex,status,entry_date) select $1,$2,species_id,category_id,$3,'M','active',current_date from erp.animals where id=$4 returning id",
-      [h.demo.orgId, I.farm, LOTE, ANIMAL]);
-    const r = await post("/api/livestock/transfers/animals-to-batch", { empresa_id: I.farm, movement_date: "2031-01-21", animal_ids: [animal.rows[0]!.id], destination_batch_id: destino.rows[0]!.id });
+      [h.demo.orgId, I.empresa, LOTE, ANIMAL]);
+    const r = await post("/api/livestock/transfers/animals-to-batch", { empresa_id: I.empresa, movement_date: "2031-01-21", animal_ids: [animal.rows[0]!.id], destination_batch_id: destino.rows[0]!.id });
     expect(r.statusCode, r.body).toBe(201);
     const linhas = await indice("animal_movements", String(j(r).id));
     expect(linhas.length, "efeito de outra operação não tem identidade própria para o usuário").toBe(0);
@@ -222,16 +222,16 @@ describe("PECUÁRIA — cada variante user-facing recebe; as INTERNAS não", () 
 
 describe("FROTA, ATIVOS E ORDENS DE SERVIÇO", () => {
   it("abastecimento", async () => {
-    const id = await criar("/api/fleet/fuel-supplies", { empresa_id: I.farm, supply_date: "2031-01-22", equipment_id: EQUIPAMENTO, product_id: DIESEL, warehouse_id: I.warehouse, quantity: "10", unit_value: "6" });
-    await conferir("fuel_supplies", id, { empresa: I.farm, modulo: "frota", rota: `/frota/abastecimentos/${id}` });
+    const id = await criar("/api/fleet/fuel-supplies", { empresa_id: I.empresa, supply_date: "2031-01-22", equipment_id: EQUIPAMENTO, product_id: DIESEL, warehouse_id: I.warehouse, quantity: "10", unit_value: "6" });
+    await conferir("fuel_supplies", id, { empresa: I.empresa, modulo: "frota", rota: `/frota/abastecimentos/${id}` });
   });
   it("manutenção", async () => {
-    const id = await criar("/api/fleet/maintenances", { empresa_id: I.farm, maintenance_date: "2031-01-23", machines: [{ equipment_id: EQUIPAMENTO, service_total: "100", items: [] }] });
-    await conferir("maintenances", id, { empresa: I.farm, modulo: "frota", rota: `/frota/manutencoes/${id}` });
+    const id = await criar("/api/fleet/maintenances", { empresa_id: I.empresa, maintenance_date: "2031-01-23", machines: [{ equipment_id: EQUIPAMENTO, service_total: "100", items: [] }] });
+    await conferir("maintenances", id, { empresa: I.empresa, modulo: "frota", rota: `/frota/manutencoes/${id}` });
   });
   it("ordem de serviço", async () => {
-    const id = await criar("/api/service-orders", { empresa_id: I.farm, order_date: "2031-01-24", description: "OS ID Global", lines: [] });
-    await conferir("service_orders", id, { empresa: I.farm, modulo: "os", rota: `/os/${id}` });
+    const id = await criar("/api/service-orders", { empresa_id: I.empresa, order_date: "2031-01-24", description: "OS ID Global", lines: [] });
+    await conferir("service_orders", id, { empresa: I.empresa, modulo: "os", rota: `/os/${id}` });
   });
 });
 
@@ -283,7 +283,7 @@ describe("COBERTURA E INVARIANTES DA ALOCAÇÃO", () => {
   });
 
   it("IDEMPOTÊNCIA: a mesma operação repetida por idempotency-key não gera segundo número", async () => {
-    const payload = { empresa_id: I.farm, requisition_date: "2031-01-25", items: [{ warehouse_id: I.warehouse, product_id: I.product, quantity: "1" }] };
+    const payload = { empresa_id: I.empresa, requisition_date: "2031-01-25", items: [{ warehouse_id: I.warehouse, product_id: I.product, quantity: "1" }] };
     const a = await post("/api/stock/requisitions", payload, { "idempotency-key": "idg-repeticao" });
     const b = await post("/api/stock/requisitions", payload, { "idempotency-key": "idg-repeticao" });
     expect(a.statusCode, a.body).toBe(201); expect(b.statusCode, b.body).toBe(201);
@@ -296,7 +296,7 @@ describe("COBERTURA E INVARIANTES DA ALOCAÇÃO", () => {
     // A prova anterior passa pela chave de idempotência da rota, que nem chega a repetir a alocação. Esta
     // vai direto no serviço, em DUAS transações separadas: é aqui que se vê se `atribuirIdGlobal` é mesmo
     // idempotente por (organização, tipo, registro) — e não só protegido por uma camada acima.
-    const r = await post("/api/service-orders", { empresa_id: I.farm, order_date: "2031-01-27", description: "OS idempotente", lines: [] });
+    const r = await post("/api/service-orders", { empresa_id: I.empresa, order_date: "2031-01-27", description: "OS idempotente", lines: [] });
     expect(r.statusCode, r.body).toBe(201);
     const id = String(j(r).id);
     const comoServico = <T>(fn: (ctx: ServiceCtx) => Promise<T>): Promise<T> =>
@@ -316,9 +316,9 @@ describe("COBERTURA E INVARIANTES DA ALOCAÇÃO", () => {
   it("CONCORRÊNCIA na MESMA organização, tipos DIFERENTES: nenhum número repetido", async () => {
     const antes = Number((await admin.query<{ n: string }>("select count(*)::text n from erp.registros_globais where organization_id=$1", [h.demo.orgId])).rows[0]!.n);
     const respostas = await Promise.all([
-      ...Array.from({ length: 4 }, (_, i) => post("/api/stock/requisitions", { empresa_id: I.farm, requisition_date: "2031-01-26", note: `c${i}`, items: [{ warehouse_id: I.warehouse, product_id: I.product, quantity: "1" }] })),
-      ...Array.from({ length: 4 }, (_, i) => post("/api/service-orders", { empresa_id: I.farm, order_date: "2031-01-26", description: `OS ${i}`, lines: [] })),
-      ...Array.from({ length: 4 }, (_, i) => post("/api/financial/payables", { empresa_id: I.farm, number: `CC-${i}`, person_id: I.provider, amount: "10", emission_date: "2031-01-26", due_date: "2031-02-26", note: "Concorrência", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] }))
+      ...Array.from({ length: 4 }, (_, i) => post("/api/stock/requisitions", { empresa_id: I.empresa, requisition_date: "2031-01-26", note: `c${i}`, items: [{ warehouse_id: I.warehouse, product_id: I.product, quantity: "1" }] })),
+      ...Array.from({ length: 4 }, (_, i) => post("/api/service-orders", { empresa_id: I.empresa, order_date: "2031-01-26", description: `OS ${i}`, lines: [] })),
+      ...Array.from({ length: 4 }, (_, i) => post("/api/financial/payables", { empresa_id: I.empresa, number: `CC-${i}`, person_id: I.provider, amount: "10", emission_date: "2031-01-26", due_date: "2031-02-26", note: "Concorrência", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] }))
     ]);
     for (const r of respostas) expect(r.statusCode, r.body).toBe(201);
     const r = await admin.query<{ total: string; distintos: string }>(

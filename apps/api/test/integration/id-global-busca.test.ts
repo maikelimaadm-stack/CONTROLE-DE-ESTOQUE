@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, type Db } from "@agro/db";
-import { harness, ids, TEST_URL, type Harness } from "./setup.js";
+import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
  * BUSCA POR ID GLOBAL — SEGURANÇA (PRE-BASE2-04).
@@ -24,7 +24,7 @@ const superficie = (r: { statusCode: number; json: () => unknown }) => ({ status
 async function membro(nome: string, email: string, empresas: string[], perms: string[]): Promise<Hdr> {
   const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome}`, permissions: perms } });
   expect(papel.statusCode, papel.body).toBe(201);
-  const v = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Busca@12345", role_id: j(papel).id, empresa_ids: empresas } });
+  const v = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Busca@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos(empresas) } });
   expect(v.statusCode, v.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Busca@12345" } });
   expect(login.statusCode, login.body).toBe(200);
@@ -41,20 +41,20 @@ beforeAll(async () => {
   const esp = (await admin.query<{ species_id: string }>("select species_id from erp.animals limit 1")).rows[0]!.species_id;
   const cat = (await admin.query<{ id: string }>("select id from erp.animal_categories where name='Garrote' limit 1")).rows[0]!.id;
   const criarAnimal = await h.app.inject({ method: "POST", url: "/api/livestock/animals", headers: h.headers(),
-    payload: { empresa_id: I.farm, species_id: esp, category_id: cat, entry_date: "2031-03-01", sex: "M", identifications: [{ identification_type_id: I.idType, value: "BUSCA-1", is_primary: true }] } });
+    payload: { empresa_id: I.empresa, species_id: esp, category_id: cat, entry_date: "2031-03-01", sex: "M", identifications: [{ identification_type_id: I.idType, value: "BUSCA-1", is_primary: true }] } });
   expect(criarAnimal.statusCode, criarAnimal.body).toBe(201);
   ANIMAL_A = String(j(criarAnimal).id); GID_ANIMAL = await idGlobalDe("animals", ANIMAL_A);
 
   const p = await h.app.inject({ method: "POST", url: "/api/financial/payables", headers: h.headers(),
-    payload: { empresa_id: I.farm, number: "BUSCA-P", person_id: I.provider, amount: "10", emission_date: "2031-03-01", due_date: "2031-04-01", note: "busca", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] } });
+    payload: { empresa_id: I.empresa, number: "BUSCA-P", person_id: I.provider, amount: "10", emission_date: "2031-03-01", due_date: "2031-04-01", note: "busca", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] } });
   expect(p.statusCode, p.body).toBe(201); PAGAR = String(j(p).id); GID_PAGAR = await idGlobalDe("financial_titles", PAGAR);
   const rc = await h.app.inject({ method: "POST", url: "/api/financial/receivables", headers: h.headers(),
-    payload: { empresa_id: I.farm, number: "BUSCA-R", person_id: I.client, amount: "10", emission_date: "2031-03-01", due_date: "2031-04-01", note: "busca", apportionment: [{ financial_category_id: I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }] } });
+    payload: { empresa_id: I.empresa, number: "BUSCA-R", person_id: I.client, amount: "10", emission_date: "2031-03-01", due_date: "2031-04-01", note: "busca", apportionment: [{ financial_category_id: I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }] } });
   expect(rc.statusCode, rc.body).toBe(201); RECEBER = String(j(rc).id); GID_RECEBER = await idGlobalDe("financial_titles", RECEBER);
 
-  hdrA = await membro("Busca A", "busca-a@demo.local", [I.farm], ["animals.view", "payables.view", "receivables.view"]);
-  hdrB = await membro("Busca B", "busca-b@demo.local", [I.farm2], ["animals.view", "payables.view", "receivables.view"]);
-  hdrSemCapacidade = await membro("Busca sem capacidade", "busca-sc@demo.local", [I.farm], ["products.view"]);
+  hdrA = await membro("Busca A", "busca-a@demo.local", [I.empresa], ["animals.view", "payables.view", "receivables.view"]);
+  hdrB = await membro("Busca B", "busca-b@demo.local", [I.empresa2], ["animals.view", "payables.view", "receivables.view"]);
+  hdrSemCapacidade = await membro("Busca sem capacidade", "busca-sc@demo.local", [I.empresa], ["products.view"]);
 }, 240_000);
 afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end(); });
 
@@ -93,7 +93,7 @@ describe("resolução de #N — o caminho feliz", () => {
   });
 
   it("VARIANTE: a pagar e a receber resolvem para telas e permissões DIFERENTES", async () => {
-    const so = await membro("Só a pagar", "busca-pagar@demo.local", [I.farm], ["payables.view"]);
+    const so = await membro("Só a pagar", "busca-pagar@demo.local", [I.empresa], ["payables.view"]);
     const pagar = await resolver(GID_PAGAR, so);
     expect(pagar.statusCode, pagar.body).toBe(200);
     expect(j(pagar)["rota"]).toBe(`/financeiro/contas-a-pagar/${PAGAR}`);
@@ -118,7 +118,7 @@ describe("resolução de #N — toda negativa é a MESMA negativa", () => {
 
     // excluído
     const excluido = await h.app.inject({ method: "POST", url: "/api/livestock/animals", headers: h.headers(),
-      payload: { empresa_id: I.farm, species_id: (await admin.query<{ species_id: string }>("select species_id from erp.animals limit 1")).rows[0]!.species_id,
+      payload: { empresa_id: I.empresa, species_id: (await admin.query<{ species_id: string }>("select species_id from erp.animals limit 1")).rows[0]!.species_id,
         category_id: (await admin.query<{ id: string }>("select id from erp.animal_categories where name='Garrote' limit 1")).rows[0]!.id,
         entry_date: "2031-03-02", sex: "M", identifications: [{ identification_type_id: I.idType, value: "BUSCA-DEL", is_primary: true }] } });
     expect(excluido.statusCode, excluido.body).toBe(201);
@@ -141,7 +141,7 @@ describe("resolução de #N — toda negativa é a MESMA negativa", () => {
   });
 
   it("CANCELADO continua existindo, continua com #N e continua navegável", async () => {
-    const os = await h.app.inject({ method: "POST", url: "/api/service-orders", headers: h.headers(), payload: { empresa_id: I.farm, order_date: "2031-03-03", description: "OS cancelada", lines: [] } });
+    const os = await h.app.inject({ method: "POST", url: "/api/service-orders", headers: h.headers(), payload: { empresa_id: I.empresa, order_date: "2031-03-03", description: "OS cancelada", lines: [] } });
     expect(os.statusCode, os.body).toBe(201);
     const id = String(j(os).id);
     const gid = await idGlobalDe("service_orders", id);
@@ -153,20 +153,20 @@ describe("resolução de #N — toda negativa é a MESMA negativa", () => {
 
   it("EMPRESA ATUAL manda: o animal muda de empresa e a autoridade acompanha — o índice NÃO decide", async () => {
     const indiceAntes = await admin.query<{ empresa_id: string }>("select empresa_id from erp.registros_globais where organization_id=$1 and tipo_entidade='animals' and id_entidade=$2", [h.demo.orgId, ANIMAL_A]);
-    expect(indiceAntes.rows[0]!.empresa_id, "o índice foi gravado com a empresa de origem").toBe(I.farm);
+    expect(indiceAntes.rows[0]!.empresa_id, "o índice foi gravado com a empresa de origem").toBe(I.empresa);
     expect((await resolver(GID_ANIMAL, hdrA)).statusCode, "antes: quem vê a empresa A abre").toBe(200);
     expect((await resolver(GID_ANIMAL, hdrB)).statusCode, "antes: quem vê só a B não abre").toBe(404);
 
-    await admin.query("update erp.animals set empresa_id=$2 where id=$1", [ANIMAL_A, I.farm2]);
+    await admin.query("update erp.animals set empresa_id=$2 where id=$1", [ANIMAL_A, I.empresa2]);
 
     const indiceDepois = await admin.query<{ empresa_id: string }>("select empresa_id from erp.registros_globais where organization_id=$1 and tipo_entidade='animals' and id_entidade=$2", [h.demo.orgId, ANIMAL_A]);
-    expect(indiceDepois.rows[0]!.empresa_id, "a PISTA do índice continua a antiga — e é irrelevante").toBe(I.farm);
+    expect(indiceDepois.rows[0]!.empresa_id, "a PISTA do índice continua a antiga — e é irrelevante").toBe(I.empresa);
     expect((await resolver(GID_ANIMAL, hdrB)).statusCode, "depois: quem vê a empresa NOVA abre").toBe(200);
     expect((await resolver(GID_ANIMAL, hdrA)).statusCode, "depois: quem vê só a ANTIGA não abre mais").toBe(404);
     expect(GID_ANIMAL, "e o número do registro não mudou").toBe(await idGlobalDe("animals", ANIMAL_A));
     const n = await admin.query<{ n: string }>("select count(*)::text n from erp.registros_globais where organization_id=$1 and tipo_entidade='animals' and id_entidade=$2", [h.demo.orgId, ANIMAL_A]);
     expect(n.rows[0]!.n, "nem virou um segundo registro global").toBe("1");
-    await admin.query("update erp.animals set empresa_id=$2 where id=$1", [ANIMAL_A, I.farm]);
+    await admin.query("update erp.animals set empresa_id=$2 where id=$1", [ANIMAL_A, I.empresa]);
   });
 });
 
@@ -194,7 +194,7 @@ describe("caminho inverso — registro → #N, com a MESMA autorização", () =>
     const cat = (await admin.query<{ id: string }>("select id from erp.animal_categories where name='Garrote' limit 1")).rows[0]!.id;
     const semNumero = await admin.query<{ id: string }>(
       "insert into erp.animals(organization_id,empresa_id,species_id,category_id,sex,status,entry_date) values ($1,$2,$3,$4,'M','active',current_date) returning id",
-      [h.demo.orgId, I.farm, esp, cat]);
+      [h.demo.orgId, I.empresa, esp, cat]);
     const r = await reverso("animals", semNumero.rows[0]!.id, hdrA);
     expect(r.statusCode).toBe(404);
     expect(j(r).error?.code).toBe("NOT_FOUND");
@@ -207,7 +207,7 @@ describe("auditoria — o #N do registro, sem confundir com o id do log", () => 
     const esp = (await admin.query<{ species_id: string }>("select species_id from erp.animals limit 1")).rows[0]!.species_id;
     const cat = (await admin.query<{ id: string }>("select id from erp.animal_categories where name='Garrote' limit 1")).rows[0]!.id;
     const criado = await h.app.inject({ method: "POST", url: "/api/livestock/animals", headers: h.headers(),
-      payload: { empresa_id: I.farm, species_id: esp, category_id: cat, entry_date: "2031-03-10", sex: "M", identifications: [{ identification_type_id: I.idType, value: "AUDIT-1", is_primary: true }] } });
+      payload: { empresa_id: I.empresa, species_id: esp, category_id: cat, entry_date: "2031-03-10", sex: "M", identifications: [{ identification_type_id: I.idType, value: "AUDIT-1", is_primary: true }] } });
     expect(criado.statusCode, criado.body).toBe(201);
     const id = String(j(criado).id);
     const gid = await idGlobalDe("animals", id);

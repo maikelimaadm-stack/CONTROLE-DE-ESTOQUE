@@ -62,7 +62,7 @@ test("o usuário configurado enxerga Estoque na empresa A e Financeiro na empres
 
   // empresas da organização: A e B
   const ctx = await pedir("/api/auth/context");
-  const empresas = ((ctx.body.empresas ?? ctx.body.farms) as { id: string; name: string }[]).slice(0, 2);
+  const empresas = (ctx.body.empresas as { id: string; name: string }[]).slice(0, 2);
   const [A, B] = empresas;
   expect(A && B, "a semente precisa ter duas empresas").toBeTruthy();
 
@@ -114,8 +114,8 @@ test("o usuário configurado enxerga Estoque na empresa A e Financeiro na empres
   expect(idsFin, "título da empresa A NÃO pode aparecer no Financeiro").not.toContain(tA.body.id);
 
   // seleção explícita de empresa proibida NAQUELE módulo é recusada pelo servidor
-  expect((await pedir("/api/stock/input-entries", undefined, comoUsuarioEm(B!.id))).status, "X-Farm-Id=B no Estoque").toBe(403);
-  expect((await pedir("/api/financial/payables", undefined, comoUsuarioEm(A!.id))).status, "X-Farm-Id=A no Financeiro").toBe(403);
+  expect((await pedir("/api/stock/input-entries", undefined, comoUsuarioEm(B!.id))).status, "X-Empresa-Id=B no Estoque").toBe(403);
+  expect((await pedir("/api/financial/payables", undefined, comoUsuarioEm(A!.id))).status, "X-Empresa-Id=A no Financeiro").toBe(403);
   // e a seleção permitida continua funcionando
   expect((await pedir("/api/stock/input-entries", undefined, comoUsuarioEm(A!.id))).status).toBe(200);
   expect((await pedir("/api/financial/payables", undefined, comoUsuarioEm(B!.id))).status).toBe(200);

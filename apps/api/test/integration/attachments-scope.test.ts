@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, seedDemo } from "@agro/db";
-import { harness, ids, TEST_URL, type Harness } from "./setup.js";
+import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
  * Anexos × autorização do registro-pai. Matriz: OWNER, USER_A (=[A]), USER_AB (=[A,B]) com as MESMAS permissões
@@ -16,7 +16,7 @@ const PERMS = ["attachments.view", "attachments.create", "attachments.delete", "
 
 async function member(name: string, email: string, empresaIds: string[], perms = PERMS): Promise<{ hdr: Hdr; roleId: string }> {
   const role = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${name}`, permissions: perms } }); expect(role.statusCode, role.body).toBe(201);
-  const mem = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name, email, password: "Anexo@12345", role_id: j(role).id, farm_ids: empresaIds } }); expect(mem.statusCode, mem.body).toBe(201);
+  const mem = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name, email, password: "Anexo@12345", role_id: j(role).id, escopos_empresas: escoposDeTodosOsModulos(empresaIds) } }); expect(mem.statusCode, mem.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Anexo@12345" } }); expect(login.statusCode, login.body).toBe(200);
   return { hdr: { authorization: `Bearer ${j(login).token}`, "x-org-id": h.demo.orgId }, roleId: j(role).id as string };
 }
@@ -28,11 +28,11 @@ const mk = async (url: string, payload: Record<string, unknown>) => { const r = 
 
 let wa = ""; let wb = ""; let attA = ""; let attB = "";
 beforeAll(async () => {
-  h = await harness(); I = await ids(h); farmA = I.farm; farmB = I.farm2; OWNER = h.headers();
+  h = await harness(); I = await ids(h); farmA = I.empresa; farmB = I.empresa2; OWNER = h.headers();
   A = (await member("Anexo A", "anexo-a@demo.local", [farmA])).hdr; AB = (await member("Anexo AB", "anexo-ab@demo.local", [farmA, farmB])).hdr;
   const nv = await member("Anexo sem view", "anexo-noview@demo.local", [farmA], ["attachments.view", "attachments.create", "attachments.delete"]); NOVIEW = nv.hdr; noviewRole = nv.roleId;
-  wa = await mk("/api/livestock/weighings", { farm_id: farmA, weighing_date: "2026-09-20", batch_id: I.batch, items: [{ animal_id: I.animal, weight: "300" }] });
-  wb = await mk("/api/livestock/weighings", { farm_id: farmB, weighing_date: "2026-09-21", batch_id: I.batch, items: [{ animal_id: I.animal, weight: "301" }] });
+  wa = await mk("/api/livestock/weighings", { empresa_id: farmA, weighing_date: "2026-09-20", batch_id: I.batch, items: [{ animal_id: I.animal, weight: "300" }] });
+  wb = await mk("/api/livestock/weighings", { empresa_id: farmB, weighing_date: "2026-09-21", batch_id: I.batch, items: [{ animal_id: I.animal, weight: "301" }] });
   attA = j(await upload("weighings", wa, OWNER, "a.pdf")).id as string; attB = j(await upload("weighings", wb, OWNER, "b.pdf")).id as string;
   expect(attA && attB).toBeTruthy();
 });
@@ -49,8 +49,8 @@ describe("anexos: autorização pelo registro-pai", () => {
     for (const [op, res] of [["list", await list("weighings", wb, A)], ["download", await content(attB, A)], ["create", await upload("weighings", wb, A)], ["delete", await del(attB, A)]] as const) {
       expect(res.statusCode, `USER_A ${op} em B`).toBe(404); expect(j(res).error?.code).toBe("NOT_FOUND");
     }
-    // X-Farm-Id=B recusado na entrada
-    expect((await list("weighings", wb, { ...A, "x-farm-id": farmB })).statusCode).toBe(403);
+    // X-Empresa-Id=B recusado na entrada
+    expect((await list("weighings", wb, { ...A, "x-empresa-id": farmB })).statusCode).toBe(403);
     // anexo de B continua existindo (o DELETE negado não removeu nada)
     expect((await content(attB, OWNER)).statusCode).toBe(200);
     for (const [who, hd] of [["USER_AB", AB], ["OWNER", OWNER]] as const) {
@@ -72,10 +72,10 @@ describe("anexos: autorização pelo registro-pai", () => {
   });
   it("CHILD RESOURCE — setor do confinamento herda a fazenda do pátio", async () => {
     const admin = createPool(TEST_URL, { max: 1 });
-    const s = (await admin.query<{ id: string; farm_id: string }>("select s.id, y.farm_id from erp.feedlot_sectors s join erp.feedlot_yards y on y.id=s.yard_id where s.organization_id=$1 and s.deleted_at is null limit 1", [h.demo.orgId])).rows[0]; await admin.end();
+    const s = (await admin.query<{ id: string; empresa_id: string }>("select s.id, y.empresa_id from erp.feedlot_sectors s join erp.feedlot_yards y on y.id=s.yard_id where s.organization_id=$1 and s.deleted_at is null limit 1", [h.demo.orgId])).rows[0]; await admin.end();
     expect(s).toBeTruthy();
     const up = await upload("feedlot_sectors", s!.id, OWNER); expect(up.statusCode, up.body).toBe(201);
-    const expectA = s!.farm_id === farmA ? 200 : 404;
+    const expectA = s!.empresa_id === farmA ? 200 : 404;
     expect((await list("feedlot_sectors", s!.id, A)).statusCode).toBe(expectA); expect((await content(j(up).id as string, A)).statusCode).toBe(expectA);
     expect((await list("feedlot_sectors", s!.id, AB)).statusCode).toBe(200);
   });

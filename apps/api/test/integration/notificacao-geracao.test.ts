@@ -48,7 +48,7 @@ describe("cada aviso nasce com a empresa da sua FONTE", () => {
     // lote de animais a processar sumiria — e, se o primeiro aviso já estivesse lido, nem o badge subiria.
     const antes = (await linhas("processing_pending")).length;
     const compra = (n: number) => h.app.inject({ method: "POST", url: "/api/livestock/movements", headers: h.headers(), payload: {
-      farm_id: I.farm, movement_type: "purchase", movement_date: "2026-09-17", person_id: I.provider, batch_id: I.batch,
+      empresa_id: I.empresa, movement_type: "purchase", movement_date: "2026-09-17", person_id: I.provider, batch_id: I.batch,
       items: [{ category_id: I.speciesCategory, quantity: n, weight: "200", unit_value: "1500" }] } });
     expect((await compra(3)).statusCode).toBe(201);
     expect((await compra(4)).statusCode).toBe(201);
@@ -58,7 +58,7 @@ describe("cada aviso nasce com a empresa da sua FONTE", () => {
     expect(new Set(novos.map((x) => x.dedupe_key)).size, "a chave do dia é o EVENTO, não a tela").toBe(2);
     for (const n of novos) {
       expect(n.escopo_tipo).toBe("empresa");
-      expect(n.empresa_id, "a empresa é a do processamento").toBe(I.farm);
+      expect(n.empresa_id, "a empresa é a do processamento").toBe(I.empresa);
       expect(n.modulo).toBe("pecuaria");
       expect(n.permission_key).toBe("processings.view");
     }
@@ -67,14 +67,14 @@ describe("cada aviso nasce com a empresa da sua FONTE", () => {
   it("duas transferências para a mesma empresa de destino no mesmo dia geram DOIS avisos", async () => {
     const antes = (await linhas("batch_transfer")).length;
     const transferir = () => h.app.inject({ method: "POST", url: "/api/livestock/transfers/to-farm", headers: h.headers(), payload: {
-      farm_id: I.farm, destination_farm_id: I.farm2, movement_date: "2026-09-18", batch_id: I.batch } });
+      empresa_id: I.empresa, empresa_destino_id: I.empresa2, movement_date: "2026-09-18", batch_id: I.batch } });
     expect((await transferir()).statusCode).toBe(201);
     expect((await transferir()).statusCode).toBe(201);
     const depois = await linhas("batch_transfer");
     expect(depois.length - antes).toBe(2);
     for (const n of depois.slice(antes)) {
       expect(n.escopo_tipo).toBe("empresa");
-      expect(n.empresa_id, "quem processa a transferência é o DESTINO").toBe(I.farm2);
+      expect(n.empresa_id, "quem processa a transferência é o DESTINO").toBe(I.empresa2);
     }
   });
 
@@ -83,10 +83,10 @@ describe("cada aviso nasce com a empresa da sua FONTE", () => {
     const outra = await raiz.query<{ id: string }>(
       "insert into erp.organizations(name,slug) values ('[TEST] Destino alheio','destino-alheio-' || substr(md5(random()::text),1,8)) returning id");
     const alheia = await raiz.query<{ id: string }>(
-      "insert into erp.farms(organization_id,code,name) values ($1,99,'Empresa de outra org') returning id", [outra.rows[0]!.id]);
+      "insert into erp.empresas(organization_id,code,name) values ($1,99,'Empresa de outra org') returning id", [outra.rows[0]!.id]);
     await raiz.end();
     const r = await h.app.inject({ method: "POST", url: "/api/livestock/transfers/to-farm", headers: h.headers(), payload: {
-      farm_id: I.farm, destination_farm_id: alheia.rows[0]!.id, movement_date: "2026-09-18", batch_id: I.batch } });
+      empresa_id: I.empresa, empresa_destino_id: alheia.rows[0]!.id, movement_date: "2026-09-18", batch_id: I.batch } });
     expect(r.statusCode, r.body).toBe(422);
     expect(j(r).error?.code).toBe("VALIDATION_ERROR");
   });
@@ -108,7 +108,7 @@ describe("o refresh classifica cada agregado pelo que ele realmente é", () => {
   });
 
   it("títulos a pagar são contados POR EMPRESA — não é agregado que só quem vê tudo consolida", async () => {
-    // `financial_titles.farm_id` é obrigatório: a contagem se decompõe sem mudar de significado. Agregar
+    // `financial_titles.empresa_id` é obrigatório: a contagem se decompõe sem mudar de significado. Agregar
     // assim mesmo tiraria o aviso de quem tem `selecionadas` sobre títulos da própria empresa dele.
     for (const t of await linhas("title_due")) {
       expect(t.escopo_tipo).toBe("empresa");
@@ -147,9 +147,9 @@ describe("o refresh classifica cada agregado pelo que ele realmente é", () => {
     const raiz = createPool(TEST_URL, { max: 1 });
     const tipo = await tipoDocumento(raiz);
     await raiz.query(
-      `insert into erp.documents(organization_id,farm_id,document_type_id,title,status,expiration_date)
+      `insert into erp.documents(organization_id,empresa_id,document_type_id,title,status,expiration_date)
        values ($1,null,$3,'SEM-EMPRESA-GERACAO','active',current_date + 5), ($1,$2,$3,'COM-EMPRESA-GERACAO','active',current_date + 5)`,
-      [h.demo.orgId, I.farm, tipo]);
+      [h.demo.orgId, I.empresa, tipo]);
     await raiz.end();
     expect((await h.app.inject({ method: "POST", url: "/api/admin/notifications/refresh", headers: h.headers() })).statusCode).toBe(200);
     const docs = await linhas("document_expiring");
@@ -159,7 +159,7 @@ describe("o refresh classifica cada agregado pelo que ele realmente é", () => {
     expect(sem!.escopo_tipo).toBe("organizacao");
     expect(sem!.modulo).toBeNull();
     expect(com!.escopo_tipo).toBe("empresa");
-    expect(com!.empresa_id).toBe(I.farm);
+    expect(com!.empresa_id).toBe(I.empresa);
   });
 
   it("documento de empresa DESATIVADA não gera aviso que ninguém consegue ver", async () => {
@@ -167,9 +167,9 @@ describe("o refresh classifica cada agregado pelo que ele realmente é", () => {
     // proprietário, e voltaria a nascer a cada dia.
     const raiz = createPool(TEST_URL, { max: 1 });
     const morta = await raiz.query<{ id: string }>(
-      "insert into erp.farms(organization_id,code,name,deleted_at) values ($1,98,'Empresa desativada',now()) returning id", [h.demo.orgId]);
+      "insert into erp.empresas(organization_id,code,name,deleted_at) values ($1,98,'Empresa desativada',now()) returning id", [h.demo.orgId]);
     await raiz.query(
-      "insert into erp.documents(organization_id,farm_id,document_type_id,title,status,expiration_date) values ($1,$2,$3,'DOC-EMPRESA-MORTA','active',current_date + 5)",
+      "insert into erp.documents(organization_id,empresa_id,document_type_id,title,status,expiration_date) values ($1,$2,$3,'DOC-EMPRESA-MORTA','active',current_date + 5)",
       [h.demo.orgId, morta.rows[0]!.id, await tipoDocumento(raiz)]);
     await raiz.end();
     expect((await h.app.inject({ method: "POST", url: "/api/admin/notifications/refresh", headers: h.headers() })).statusCode).toBe(200);
@@ -208,11 +208,11 @@ describe("responsável da solicitação: capacidade E escopo decidem o direciona
     try {
       const r = await raiz.query<{ id: string }>(
         `insert into erp.purchase_requests
-           (organization_id, farm_id, code, request_date, request_type, requester_user_id, status,
+           (organization_id, empresa_id, code, request_date, request_type, requester_user_id, status,
             status_changed_at, description, justification, current_responsible_user_id, deleted_at)
          values ($1,$2,$3,current_date - 10,'product',$4,'request', now() - interval '9 days',
                  $5, 'teste de destinatario', $6, $7) returning id`,
-        [h.demo.orgId, I.farm, `SC-DEST-${sufixo}`, h.demo.adminUserId, `SENTINELA-DEST-${sufixo}`,
+        [h.demo.orgId, I.empresa, `SC-DEST-${sufixo}`, h.demo.adminUserId, `SENTINELA-DEST-${sufixo}`,
           responsavel, excluida ? new Date().toISOString() : null]);
       return r.rows[0]!.id;
     } finally { await raiz.end(); }
@@ -230,16 +230,16 @@ describe("responsável da solicitação: capacidade E escopo decidem o direciona
   beforeAll(async () => {
     // COMPRADOR: as duas dimensões — é quem deve receber a difusão.
     COMPRADOR = (await criarUsuario("Comprador A", "comprador-a@demo.local", ["purchase_requests.view"],
-      [{ modulo: "compras", modo: "selecionadas", empresas: [I.farm] }])).hdr;
+      [{ modulo: "compras", modo: "selecionadas", empresas: [I.empresa] }])).hdr;
     // RESPONSÁVEL SEM CAPACIDADE: enxerga a Empresa A em Compras, mas não tem purchase_requests.view.
     idResponsavelSemCap = (await criarUsuario("Resp sem capacidade", "resp-sem-cap@demo.local", ["stocks.view"],
-      [{ modulo: "compras", modo: "selecionadas", empresas: [I.farm] }])).id;
+      [{ modulo: "compras", modo: "selecionadas", empresas: [I.empresa] }])).id;
     // RESPONSÁVEL SEM ESCOPO: tem a capacidade, mas só enxerga a Empresa B em Compras.
     idResponsavelSemEscopo = (await criarUsuario("Resp sem escopo", "resp-sem-escopo@demo.local", ["purchase_requests.view"],
-      [{ modulo: "compras", modo: "selecionadas", empresas: [I.farm2] }])).id;
+      [{ modulo: "compras", modo: "selecionadas", empresas: [I.empresa2] }])).id;
     // RESPONSÁVEL VÁLIDO: as duas dimensões na Empresa A.
     idResponsavelValido = (await criarUsuario("Resp valido", "resp-valido@demo.local", ["purchase_requests.view"],
-      [{ modulo: "compras", modo: "selecionadas", empresas: [I.farm] }])).id;
+      [{ modulo: "compras", modo: "selecionadas", empresas: [I.empresa] }])).id;
   }, 120_000);
 
   it("responsável COM escopo e SEM capacidade não é direcionado — e o aviso não some", async () => {
@@ -249,7 +249,7 @@ describe("responsável da solicitação: capacidade E escopo decidem o direciona
     expect(aviso, "a notificação precisa existir").toBeTruthy();
     expect(aviso!.user_id, "sem a capacidade, o direcionamento mataria o aviso").toBeNull();
     expect(aviso!.escopo_tipo).toBe("empresa");
-    expect(aviso!.empresa_id).toBe(I.farm);
+    expect(aviso!.empresa_id).toBe(I.empresa);
     // difusão: chega a quem tem capacidade E empresa, e ao proprietário
     expect(await veNaCaixa(COMPRADOR, "SEMCAP"), "o comprador autorizado continua recebendo").toBe(true);
     expect(await veNaCaixa(h.headers() as Hdr, "SEMCAP"), "o proprietário vê").toBe(true);
@@ -281,11 +281,11 @@ describe("responsável da solicitação: capacidade E escopo decidem o direciona
     let morta = "";
     try {
       morta = (await raiz.query<{ id: string }>(
-        "insert into erp.farms(organization_id,code,name,deleted_at) values ($1,97,'Empresa desativada compras',now()) returning id",
+        "insert into erp.empresas(organization_id,code,name,deleted_at) values ($1,97,'Empresa desativada compras',now()) returning id",
         [h.demo.orgId])).rows[0]!.id;
       await raiz.query(
         `insert into erp.purchase_requests
-           (organization_id, farm_id, code, request_date, request_type, requester_user_id, status,
+           (organization_id, empresa_id, code, request_date, request_type, requester_user_id, status,
             status_changed_at, description, justification)
          values ($1,$2,'SC-DEST-MORTA',current_date - 10,'product',$3,'request', now() - interval '9 days',
                  'SENTINELA-DEST-MORTA','teste')`, [h.demo.orgId, morta, h.demo.adminUserId]);

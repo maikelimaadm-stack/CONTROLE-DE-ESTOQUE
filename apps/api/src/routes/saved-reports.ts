@@ -3,7 +3,6 @@ import { z } from "zod";
 import ExcelJS from "exceljs";
 import { getResource, RESOURCES, type FieldDef, type ResourceDef } from "@agro/domain";
 import { parseFilterKey, isValidOperator, filterKindOf } from "@agro/shared";
-import { campoCanonico } from "../lib/compat-empresa.js";
 import { runService, requirePermission } from "../lib/service.js";
 import { notFound, validation, DomainError } from "../lib/errors.js";
 import { hasPermission, type ServiceCtx } from "../lib/context.js";
@@ -31,14 +30,13 @@ const saveSchema = z.object({ resource_key: z.string().regex(/^[a-z0-9_]{1,64}$/
 /** Valida a definição contra o recurso (colunas/filtros/agrupamento só de campos existentes). */
 export function normalizeDefinition(def: ResourceDef, d: ReportDefinition): ReportDefinition {
   const byName = new Map(def.fields.map((f) => [f.name, f]));
-  // Relatório salvo ANTES da renomeação guarda `farm_id`; sem resolver o apelido a coluna sumiria do
-  // relatório do usuário em silêncio — e um relatório que só tinha ela viraria "nenhuma coluna válida".
-  const columns = d.columns.map(campoCanonico).filter((c) => byName.has(c));
+  // A resolução do nome ANTERIOR de coluna saiu em PRE-BASE2-05B. Ela existia para relatórios salvos antes
+  // da renomeação, e a medição em produção (docs/PRE-BASE2-05-APOSENTADORIA.md) mostrou ZERO definições com
+  // nome legado: o alias de leitura não protegia relatório nenhum, só mantinha o nome antigo vivo no runtime.
+  const columns = d.columns.filter((c) => byName.has(c));
   if (!columns.length) throw validation("Selecione ao menos uma coluna válida");
   const filters: Record<string, string> = {};
-  for (const [chaveSalva, v] of Object.entries(d.filters)) {
-    const corte = chaveSalva.indexOf("__");
-    const k = corte > 0 ? campoCanonico(chaveSalva.slice(0, corte)) + chaveSalva.slice(corte) : campoCanonico(chaveSalva);
+  for (const [k, v] of Object.entries(d.filters)) {
     const p = parseFilterKey(k); const f = byName.get(p?.field ?? k); if (!f) continue; if (p && !isValidOperator(filterKindOf(f.type), p.op)) continue; filters[k] = v; }
   const sort = d.sort && byName.has(d.sort.key) ? d.sort : undefined;
   const groupBy = d.groupBy && byName.has(d.groupBy) ? d.groupBy : null;

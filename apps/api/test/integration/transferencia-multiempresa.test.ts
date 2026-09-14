@@ -70,7 +70,7 @@ const movimento = async (id: string) =>
   (await admin.query<{ status: string; quantity: number }>("select status, quantity from erp.animal_movements where id=$1", [id])).rows[0]!;
 
 beforeAll(async () => {
-  h = await harness(); I = await ids(h); ORG = h.demo.orgId; A = I.farm; B = I.farm2;
+  h = await harness(); I = await ids(h); ORG = h.demo.orgId; A = I.empresa; B = I.empresa2;
   admin = createPool(TEST_URL, { max: 3 });
   PRODUTO = I.product!; RECEITA = I.incomeCategory!; DESPESA = I.category!; CENTRO = I.costCenter!;
 

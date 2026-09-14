@@ -31,7 +31,7 @@ const iniciais = async (modulo: string | null) =>
   (await comoApp<{ initials: string }>(modulo, "select initials from erp.warehouses where initials in ('RA','RB') order by initials")).rows.map((r) => r.initials).join(",") || "(nenhum)";
 
 beforeAll(async () => {
-  h = await harness(); I = await ids(h); ORG = h.demo.orgId; A = I.farm; B = I.farm2;
+  h = await harness(); I = await ids(h); ORG = h.demo.orgId; A = I.empresa; B = I.empresa2;
   admin = createPool(TEST_URL, { max: 3 });
 
   const u = await admin.query<{ id: string }>(
@@ -194,7 +194,7 @@ describe("transferência entre empresas: leitura pelas duas pontas, escrita pela
   it("CRIAR transferência de ARMAZÉM exige as DUAS pontas — a operação lança nas duas", async () => {
     // A generalização "enviar para uma empresa que o autor não enxerga é o caso normal" NÃO vale para os
     // três domínios. Aqui a criação dá baixa na origem, dá entrada no destino e pode gerar título nos dois
-    // lados — e a rota já exige `assertFarm` nas duas pontas. Certificar no banco um contrato mais largo
+    // lados — e a rota já exige `exigirEmpresa` nas duas pontas. Certificar no banco um contrato mais largo
     // que a operação foi o que permitiu o cancelamento pela metade.
     const whA = (await admin.query<{ id: string }>("select id from erp.warehouses where organization_id=$1 and initials='RA'", [ORG])).rows[0]!.id;
     const whB = (await admin.query<{ id: string }>("select id from erp.warehouses where organization_id=$1 and initials='RB'", [ORG])).rows[0]!.id;

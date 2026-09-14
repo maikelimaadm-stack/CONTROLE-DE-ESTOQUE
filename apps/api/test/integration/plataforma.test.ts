@@ -1,7 +1,7 @@
 import { AUTORIZACAO_PROPRIETARIO } from "@erp/plataforma";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, withTx } from "@agro/db";
-import { harness, ids, TEST_URL, type Harness } from "./setup.js";
+import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 import { atribuirIdGlobal, resolverRegistro } from "../../src/lib/id-global.js";
 import type { ServiceCtx } from "../../src/lib/context.js";
 
@@ -35,7 +35,7 @@ const PERMS_BASE = ["animals.view", "input_entries.view", "products.view"];
 async function membro(nome: string, email: string, empresaIds: string[], perms: string[] = PERMS_BASE): Promise<Hdr> {
   const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome}`, permissions: perms } });
   expect(papel.statusCode, papel.body).toBe(201);
-  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Matriz@12345", role_id: j(papel).id, farm_ids: empresaIds } });
+  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Matriz@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos(empresaIds) } });
   expect(vinculo.statusCode, vinculo.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Matriz@12345" } });
   expect(login.statusCode, login.body).toBe(200);
@@ -55,8 +55,8 @@ async function inserirMovimentacao(tipo: string, codigo: string, empresaId?: str
   const admin = createPool(TEST_URL, { max: 1 });
   try {
     const r = await admin.query<{ id: string }>(
-      "insert into erp.animal_movements(organization_id,farm_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,$4,'2026-09-10',$5) returning id",
-      [h.demo.orgId, empresaId ?? I.farm, codigo, tipo, h.demo.adminUserId]);
+      "insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,$4,'2026-09-10',$5) returning id",
+      [h.demo.orgId, empresaId ?? I.empresa, codigo, tipo, h.demo.adminUserId]);
     return r.rows[0]!.id;
   } finally { await admin.end(); }
 }
@@ -71,7 +71,7 @@ describe("ID Global — alocação", () => {
     const a = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", I.animal!));
     const b = await comoServico((ctx) => atribuirIdGlobal(ctx, "products", I.product!));
     expect(b).toBe(a + 1);
-    const entrada = await criar("/api/stock/input-entries", { farm_id: I.farm2, entry_date: "2026-09-01", items: [{ product_id: I.product, quantity: "5", unit_value: "2", warehouse_id: I.warehouseFarm2 }] });
+    const entrada = await criar("/api/stock/input-entries", { empresa_id: I.empresa2, entry_date: "2026-09-01", items: [{ product_id: I.product, quantity: "5", unit_value: "2", warehouse_id: I.warehouseEmpresa2 }] });
     const c = await comoServico((ctx) => atribuirIdGlobal(ctx, "input_entries", entrada));
     expect(c).toBe(b + 1);
   });
@@ -116,7 +116,7 @@ describe("ID Global — alocação", () => {
   });
 
   it("registro excluído deixa de ser navegável pelo ID Global (mesma existência da rota canônica)", async () => {
-    const entrada = await criar("/api/stock/input-entries", { farm_id: I.farm, entry_date: "2026-09-03", items: [{ product_id: I.product, quantity: "1", unit_value: "2", warehouse_id: I.warehouse }] });
+    const entrada = await criar("/api/stock/input-entries", { empresa_id: I.empresa, entry_date: "2026-09-03", items: [{ product_id: I.product, quantity: "1", unit_value: "2", warehouse_id: I.warehouse }] });
     const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "input_entries", entrada));
     expect((await resolver(idGlobal, h.headers())).statusCode).toBe(200);
     const admin = createPool(TEST_URL, { max: 1 });
@@ -132,7 +132,7 @@ describe("ID Global — alocação", () => {
       const r = await admin.query<{ rota_canonica: string; empresa_id: string | null; modulo: string }>(
         "select rota_canonica, empresa_id, modulo from erp.registros_globais where organization_id=$1 and tipo_entidade='animals' and id_entidade=$2", [h.demo.orgId, I.animal]);
       expect(r.rows[0]!.rota_canonica).toBe(`/pecuaria/animais/${I.animal}`);
-      expect(r.rows[0]!.empresa_id).toBe(I.farm);
+      expect(r.rows[0]!.empresa_id).toBe(I.empresa);
       expect(r.rows[0]!.modulo).toBe("pecuaria");
     } finally { await admin.end(); }
   });
@@ -169,9 +169,9 @@ describe("ID Global — resolução e escopo", () => {
   });
 
   it("respeita o escopo de empresa: registro de outra empresa responde 404", async () => {
-    const entrada = await criar("/api/stock/input-entries", { farm_id: I.farm2, entry_date: "2026-09-02", items: [{ product_id: I.product, quantity: "3", unit_value: "2", warehouse_id: I.warehouseFarm2 }] });
+    const entrada = await criar("/api/stock/input-entries", { empresa_id: I.empresa2, entry_date: "2026-09-02", items: [{ product_id: I.product, quantity: "3", unit_value: "2", warehouse_id: I.warehouseEmpresa2 }] });
     const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "input_entries", entrada));
-    const soEmpresaA = await membro("Empresa A", "empresa.a@demo.local", [I.farm!]);
+    const soEmpresaA = await membro("Empresa A", "empresa.a@demo.local", [I.empresa!]);
     const negado = await resolver(idGlobal, soEmpresaA);
     expect(negado.statusCode, negado.body).toBe(404);
     expect(j(negado).error?.code).toBe("NOT_FOUND");
@@ -199,8 +199,8 @@ describe("ID Global — resolução e escopo", () => {
  */
 describe("ID Global — permissão é do registro, não da tabela", () => {
   it("financeiro: conta a pagar e conta a receber exigem permissões distintas", async () => {
-    const pagar = await criar("/api/financial/payables", { farm_id: I.farm, number: "GID-P1", person_id: I.provider, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "gid", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] });
-    const receber = await criar("/api/financial/receivables", { farm_id: I.farm, number: "GID-R1", person_id: I.client, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "gid", apportionment: [{ financial_category_id: I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }] });
+    const pagar = await criar("/api/financial/payables", { empresa_id: I.empresa, number: "GID-P1", person_id: I.provider, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "gid", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }] });
+    const receber = await criar("/api/financial/receivables", { empresa_id: I.empresa, number: "GID-R1", person_id: I.client, amount: "10.00", emission_date: "2026-09-10", due_date: "2026-10-10", note: "gid", apportionment: [{ financial_category_id: I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }] });
     const gidPagar = await comoServico((ctx) => atribuirIdGlobal(ctx, "financial_titles", pagar));
     const gidReceber = await comoServico((ctx) => atribuirIdGlobal(ctx, "financial_titles", receber));
 
@@ -220,9 +220,9 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
   it("vendas: orçamento, pedido e venda exigem permissões distintas", async () => {
     const item = [{ product_id: I.product, warehouse_id: I.warehouse, quantity: "1", unit_price: "5" }];
     const docs: Record<string, string> = {
-      budget: await criar("/api/sales/budgets", { farm_id: I.farm, document_date: "2026-09-10", client_id: I.client, items: item }),
-      order: await criar("/api/sales/orders", { farm_id: I.farm, document_date: "2026-09-10", client_id: I.client, items: item }),
-      sale: await criar("/api/sales/sales", { farm_id: I.farm, document_date: "2026-09-10", client_id: I.client, items: item })
+      budget: await criar("/api/sales/budgets", { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, items: item }),
+      order: await criar("/api/sales/orders", { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, items: item }),
+      sale: await criar("/api/sales/sales", { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, items: item })
     };
     const gid: Record<string, number> = {};
     for (const [tipo, id] of Object.entries(docs)) gid[tipo] = await comoServico((ctx) => atribuirIdGlobal(ctx, "sales_documents", id));
@@ -243,8 +243,8 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
   });
 
   it("pecuária: cada tipo de manejo exige a permissão do próprio tipo", async () => {
-    const sanitario = await criar("/api/livestock/handlings", { farm_id: I.farm, handling_type: "sanitary", handling_date: "2026-09-10", batch_id: I.batch, dose: "1", items: [{ animal_id: I.animal, quantity: "1" }] });
-    const nutricao = await criar("/api/livestock/handlings", { farm_id: I.farm, handling_type: "nutrition", handling_date: "2026-09-10", batch_id: I.batch, items: [{ animal_id: I.animal, quantity: "1" }] });
+    const sanitario = await criar("/api/livestock/handlings", { empresa_id: I.empresa, handling_type: "sanitary", handling_date: "2026-09-10", batch_id: I.batch, dose: "1", items: [{ animal_id: I.animal, quantity: "1" }] });
+    const nutricao = await criar("/api/livestock/handlings", { empresa_id: I.empresa, handling_type: "nutrition", handling_date: "2026-09-10", batch_id: I.batch, items: [{ animal_id: I.animal, quantity: "1" }] });
     const gidSanitario = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", sanitario));
     const gidNutricao = await comoServico((ctx) => atribuirIdGlobal(ctx, "animal_handlings", nutricao));
 
@@ -265,8 +265,8 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
     let venda: string; let nascimento: string;
     try {
       const insere = async (tipo: string, codigo: string) => (await admin.query<{ id: string }>(
-        "insert into erp.animal_movements(organization_id,farm_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,$4,'2026-09-10',$5) returning id",
-        [h.demo.orgId, I.farm, codigo, tipo, h.demo.adminUserId])).rows[0]!.id;
+        "insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,$4,'2026-09-10',$5) returning id",
+        [h.demo.orgId, I.empresa, codigo, tipo, h.demo.adminUserId])).rows[0]!.id;
       venda = await insere("sale", "GID-MV1");
       nascimento = await insere("birth", "GID-MV2");
     } finally { await admin.end(); }
@@ -299,30 +299,30 @@ describe("ID Global — permissão é do registro, não da tabela", () => {
 describe("ID Global — empresa vem do registro fonte, não do índice", () => {
   it("animal transferido de empresa passa a responder pela empresa NOVA", async () => {
     const animal = await criar("/api/livestock/animals", {
-      farm_id: I.farm, species_id: (await comoServico(async (ctx) => (await ctx.tx.query<{ id: string }>("select id from erp.animal_species order by name limit 1")).rows[0]!.id)),
+      empresa_id: I.empresa, species_id: (await comoServico(async (ctx) => (await ctx.tx.query<{ id: string }>("select id from erp.animal_species order by name limit 1")).rows[0]!.id)),
       category_id: I.speciesCategory, entry_date: "2026-09-01", sex: "M",
       identifications: [{ identification_type_id: I.idType, value: `GID-EMP-${Date.now()}`, is_primary: true }]
     });
     const idGlobal = await comoServico((ctx) => atribuirIdGlobal(ctx, "animals", animal));
 
-    const soEmpresaA = await membro("Rebanho Empresa A", "rebanho.a@demo.local", [I.farm!], ["animals.view"]);
-    const soEmpresaB = await membro("Rebanho Empresa B", "rebanho.b@demo.local", [I.farm2!], ["animals.view"]);
+    const soEmpresaA = await membro("Rebanho Empresa A", "rebanho.a@demo.local", [I.empresa!], ["animals.view"]);
+    const soEmpresaB = await membro("Rebanho Empresa B", "rebanho.b@demo.local", [I.empresa2!], ["animals.view"]);
     expect((await resolver(idGlobal, soEmpresaA)).statusCode).toBe(200);
     expect((await resolver(idGlobal, soEmpresaB)).statusCode).toBe(404);
 
     // transferência: o índice global continua apontando para a empresa antiga de propósito
     const admin = createPool(TEST_URL, { max: 1 });
     try {
-      await admin.query("update erp.animals set farm_id=$2 where id=$1", [animal, I.farm2]);
+      await admin.query("update erp.animals set empresa_id=$2 where id=$1", [animal, I.empresa2]);
       const indice = await admin.query<{ empresa_id: string }>("select empresa_id from erp.registros_globais where organization_id=$1 and tipo_entidade='animals' and id_entidade=$2", [h.demo.orgId, animal]);
-      expect(indice.rows[0]!.empresa_id, "o índice denormalizado deve mesmo estar desatualizado neste teste").toBe(I.farm);
+      expect(indice.rows[0]!.empresa_id, "o índice denormalizado deve mesmo estar desatualizado neste teste").toBe(I.empresa);
     } finally { await admin.end(); }
 
     const depoisA = await resolver(idGlobal, soEmpresaA);
     expect(depoisA.statusCode, depoisA.body).toBe(404);
     const depoisB = await resolver(idGlobal, soEmpresaB);
     expect(depoisB.statusCode, depoisB.body).toBe(200);
-    expect(j(depoisB).empresaId, "a resposta mostra a empresa ATUAL").toBe(I.farm2);
+    expect(j(depoisB).empresaId, "a resposta mostra a empresa ATUAL").toBe(I.empresa2);
   });
 });
 

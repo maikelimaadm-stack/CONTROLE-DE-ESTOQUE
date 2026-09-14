@@ -61,10 +61,12 @@ mesmo valor: a diferença entre os dois é a diferença entre um painel vazio e 
 No runtime (§7) os mesmos três estados aparecem POR MÓDULO: `todas`, `selecionadas` (com ou sem empresas) e
 "módulo sem configuração" — que é o mesmo que nenhuma empresa.
 
-**Compatibilidade com o mecanismo legado.** A convenção herdada — lista vazia de fazendas significando
-"todas" — não existe mais no runtime. Ela sobrevive apenas na BORDA de administração, onde o formato
-`farm_ids` continua sendo aceito e traduzido para o modelo canônico
-(`apps/api/src/lib/escopo-admin.ts`, testado em `apps/api/test/unit/empresa-bridge.test.ts`).
+**O mecanismo legado acabou (PRE-BASE2-05B).** A convenção herdada — lista vazia de empresas significando
+"todas" — não existe mais em lugar nenhum. O formato ACHATADO da borda de administração é **recusado** com
+erro de validação, nunca reinterpretado: ele não consegue exprimir acesso por MÓDULO, e traduzi-lo obrigava
+a inventar o mesmo modo para os onze módulos de uma vez. O contrato único é `escopos_empresas`
+(`apps/api/src/lib/escopo-admin.ts`; recusa em `lib/contrato-legado.ts`, provada em
+`apps/api/test/integration/escopo-admin.test.ts`).
 
 ## 3. "Todas as empresas" é escopo, não empresa
 
@@ -155,12 +157,12 @@ if (!hasPermission(ctx, permissao)) throw notFound();
    `todas`, vínculo preenchido virou `selecionadas` com exatamente as mesmas empresas, em todos os módulos.
    A equivalência é provada em `packages/db/test/backfill-empresas.test.ts` (matriz completa membro × empresa
    × módulo, comparando a autoridade nova com a regra antiga).
-3. A API de administração continua aceitando `farm_ids`; a tradução acontece na borda
-   (`apps/api/src/lib/escopo-admin.ts`), nunca no runtime de autorização.
-4. `X-Empresa-Id` é o cabeçalho canônico de SELEÇÃO de contexto de trabalho; `X-Farm-Id` continua aceito
-   durante a janela de rollout. A validação dele é POR MÓDULO, na porta: seleção explícita que o usuário não
-   pode usar naquele módulo é 403. **O navegador, enquanto a ponte existir, envia só `X-Farm-Id`** — o CORS
-   da API anterior não declara o canônico e o preflight morreria (§8.4).
+3. A API de administração aceita SOMENTE `escopos_empresas`; o formato achatado anterior é recusado na
+   borda (`apps/api/src/lib/contrato-legado.ts`), nunca traduzido.
+4. `X-Empresa-Id` é o cabeçalho canônico — e, desde PRE-BASE2-05B, o ÚNICO. A validação dele é POR MÓDULO,
+   na porta: seleção explícita que o usuário não pode usar naquele módulo é 403. O cabeçalho anterior saiu
+   do CORS e é **recusado** no servidor (§8.4), porque ignorá-lo abriria a leitura para todas as empresas
+   permitidas no módulo — mais amplo do que o cliente pediu.
 5. Empresa criada pela tela recebe o código do contador `erp.code_sequences`, cuja chave de entidade é
    `SEQUENCIA_EMPRESA` (`"farm"`) — a MESMA de antes da renomeação. Trocar a chave criaria um segundo
    contador começando em zero e, com ele, códigos duplicados num acervo que já existe.
@@ -219,7 +221,7 @@ depende de `exists` — embutida seria uma chamada por linha em vez de um semi-j
 | Situação | Resposta |
 | --- | --- |
 | registro fora do escopo (id na URL) | **404** — não se revela existência |
-| empresa proibida escolhida explicitamente (X-Farm-Id ou corpo) | **403** / `VALIDATION_ERROR` — o id veio do cliente |
+| empresa proibida escolhida explicitamente (X-Empresa-Id ou corpo) | **403** / `VALIDATION_ERROR` — o id veio do cliente |
 | sem a permissão funcional | **403** |
 
 ### Migração do estado legado (o que a 0011 faz e o que ela recusa)
@@ -393,8 +395,11 @@ removida nesta rodada e o binário imediatamente anterior continua servido.
 | Tabela | `erp.empresas` | view `erp.farms` (`security_invoker = true`) |
 | Coluna | `empresa_id`, `empresa_origem_id`, `empresa_destino_id` | `farm_id`, `origin_farm_id`, `destination_farm_id` |
 | Vínculo membro × empresa | `erp.membro_empresas` + `erp.membro_escopos_empresa` | `erp.legado_escopo_empresa_v0` (arquivo morto) |
-| Cabeçalho | `X-Empresa-Id` | `X-Farm-Id` |
-| Campo de resposta | `empresa_id`, `empresa_name`, `empresas` | `farm_id`, `farm_name`, `farms` |
+| Cabeçalho | `X-Empresa-Id` | — (o anterior saiu do CORS em 05B e é recusado no servidor) |
+| Campo de resposta | `empresa_id`, `empresa_name`, `empresas` | — (o aliasador de resposta saiu em 05B) |
+
+A coluna de espelho do BANCO continua (é 05C). O que acabou é o espelho do **fio**: desde PRE-BASE2-05B a
+API fala uma língua só.
 
 `erp.farms` é **view com `security_invoker = true`**, e isso não é detalhe de estilo: sem essa opção a view
 roda com os direitos do DONO (o papel de migração, que tem `bypassrls`) e devolve as linhas de **todas as
@@ -528,36 +533,39 @@ matriz gerada em `docs/COMPANY-RLS-MATRIX.md`:
 
 ### 8.4 O que o cliente vê
 
-Entrada: o adaptador (`apps/api/src/lib/compat-empresa.ts`) traduz corpo e query string de legado para
-canônico antes da validação. Os dois nomes com valores **diferentes** → 422.
+**A API fala uma língua só desde PRE-BASE2-05B.** Entrada, saída, filtro, recurso e entidade de anexo são
+canônicos; o contrato anterior é **recusado** com erro de validação (`apps/api/src/lib/contrato-legado.ts`).
 
-Saída: a resposta carrega os DOIS nomes (`empresa_id` **e** `farm_id`), para que o navegador antigo continue
-funcionando durante o rollout.
+Como se chegou aqui, e por que em três movimentos:
 
-Isso cobre as duas janelas de version skew que um deploy real produz, e elas **não são simétricas**:
+| Fase | Quem cedia | O que acontecia |
+| --- | --- | --- |
+| 03/04 | o SERVIDOR | aceitava os dois idiomas e respondia nos dois; o web falava o antigo no fio, porque o CORS da API anterior não declarava `X-Empresa-Id` e o preflight morria no navegador |
+| **05A** | o CLIENTE | o tradutor do web foi apagado: cabeçalho, caminho, corpo, query e leitura canônicos |
+| **05B** | ninguém | a borda legada do servidor saiu; não há mais dois nomes para a mesma coisa em lugar nenhum do fio |
 
-- **API nova + WEB antigo** — quem cede é o SERVIDOR: ele aceita o idioma antigo e responde nos dois.
-- **API anterior + WEB novo** — quem cede é o CLIENTE, porque o servidor antigo não muda. E a barreira aqui
-  não está no Fastify: está no CORS. A API do commit base declara `allowedHeaders` **sem** `X-Empresa-Id`;
-  um navegador que o envia tem o PREFLIGHT recusado, a requisição morre antes de existir rota, e a tela
-  simplesmente não carrega — sem erro de aplicação para tratar.
+**Recusar, não ignorar.** Os schemas de entrada são `z.object`, que descarta chave desconhecida — então
+"remover o suporte" tirando o campo do schema seria trocar tradução por descarte silencioso. E descarte
+silencioso, aqui, é sempre ampliação de escopo: `farm_id` no corpo viraria a empresa do CONTEXTO,
+`farm_id__eq` na query devolveria a lista SEM o recorte, e o cabeçalho anterior ignorado abriria a leitura
+para todas as empresas permitidas no módulo. Um erro de contrato é barulhento e o cliente conserta; um
+pedido ignorado vira lançamento na empresa errada e aparece meses depois.
 
-Por isso, durante a ponte, o **FIO é legado** nos cinco lugares em que a migração o tocaria: cabeçalho
-(`X-Farm-Id`), caminho de recurso (`/api/resources/farms`), corpo (`farm_id`), query (`farm_id__eq`) e
-leitura da resposta. Funciona nas duas pontas porque a API ANTIGA só entende isso e a API NOVA entende os
-dois — o cliente não precisava descobrir a versão do servidor a cada requisição.
+A lápide olha só o nível de cima do corpo e da query: `farm_id` dentro de `extra`, `definition` ou
+`metadata` é dado do usuário e continua intocado. E não vigia vocabulário de domínio (`farm_transfer`,
+`farms.view`): são contratos do servidor, com vida própria.
 
-**Essa fase terminou em PRE-BASE2-05A.** O tradutor do cliente foi apagado: o web envia `X-Empresa-Id`,
-monta caminho, corpo e query canônicos e consome a resposta como ela vem. A razão do fio legado — o CORS da
-API anterior, que não declarava o canônico e fazia o preflight morrer no navegador — deixou de existir
-quando a PRE-BASE2-04 entrou em produção. O **servidor** continua bilíngue até PRE-BASE2-05B: quem parou de
-falar o idioma antigo foi o cliente.
+**A prova não é mock, e agora são dois sentidos.** `scripts/api-anterior.mjs` monta, do próprio repositório,
+a versão da base — API e web. Daí saem as duas combinações que um deploy real produz:
 
-A prova não é um mock: `apps/web/e2e/skew-api-producao.spec.ts` roda o navegador contra a API EXATA do commit
-base — montada por `scripts/api-anterior.mjs` a partir do próprio repositório — servindo o mesmo banco já
-migrado. O primeiro teste do arquivo verifica que aquele binário realmente entende o canônico, porque é essa
-a premissa da 05A: **o cliente canônico só sobe sobre uma API que já entende o canônico**. Se alguém
-reverter a API para antes da PRE-BASE2-03, o teste reprova antes de o produto quebrar no navegador.
+| Sentido | O que prova |
+| --- | --- |
+| web deste HEAD × API da base | o web novo funciona sobre a API que está no ar (o Vercel pode subir antes) |
+| **web da base × API deste HEAD** | **o bundle em produção não depende de nenhum resquício legado** (o Railway pode subir antes) |
+
+O segundo é o que a 05B realmente arrisca: se o cliente publicado dependesse de um cabeçalho, de um apelido
+de resposta ou da chave de recurso antiga, o produto quebraria em produção sem nenhum erro de aplicação
+para investigar — o que falha é o fio.
 
 O plano completo das três fases, com os inventários do que sai em 05B e 05C, está em
 `docs/PRE-BASE2-05-APOSENTADORIA.md`.

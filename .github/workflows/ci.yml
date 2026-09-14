@@ -90,7 +90,7 @@ jobs:
         if: failure()
         with: { name: playwright-report, path: apps/web/playwright-report, retention-days: 7 }
   skew:
-    name: Version skew · web novo × API do commit base
+    name: Version skew · os dois sentidos entre a base e este HEAD
     runs-on: ubuntu-latest
     needs: [quality]
     services:
@@ -116,11 +116,17 @@ jobs:
       # é exatamente a combinação da janela de rollout, em que o web sobe antes do servidor.
       - name: Seed e2e database (HEAD novo)
         run: DATABASE_URL=$E2E_DATABASE_URL pnpm --filter @agro/db exec tsx src/cli.ts seed
-      - name: Montar a API do commit base (git worktree + build daquele commit)
-        run: node scripts/api-anterior.mjs
+      # Uma árvore só serve aos dois sentidos: `--web` acrescenta o build do WEB daquele commit.
+      - name: Montar a base (git worktree + build da API e do web daquele commit)
+        run: node scripts/api-anterior.mjs --web
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
-      - name: E2E de version skew (web novo × API anterior)
+      # SENTIDO 1 — o web desta PR contra a API que está no ar (o Vercel sobe antes do Railway).
+      - name: E2E de version skew (web deste HEAD × API da base)
         run: pnpm --filter @agro/web exec playwright test -c playwright.skew.config.ts
+      # SENTIDO 2 — o que a 05B realmente arrisca: a API canônica sobe antes, e todo navegador aberto ainda
+      # roda o bundle da base. Se aquele cliente dependesse de qualquer resquício legado, quebra aqui.
+      - name: E2E de version skew (web da base × API deste HEAD)
+        run: pnpm --filter @agro/web exec playwright test -c playwright.skew-web-anterior.config.ts
       - uses: actions/upload-artifact@v4
         if: failure()
         with: { name: playwright-report-skew, path: apps/web/playwright-report, retention-days: 7 }

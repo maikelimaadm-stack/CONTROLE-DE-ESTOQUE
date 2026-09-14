@@ -41,7 +41,11 @@ describe("guardrail: anexos × registro-pai", () => {
       }
     }
     // entidades usadas pela UI (DocList/ResourceList) estão cobertas; tabelas internas não
-    for (const e of ["service_orders", "purchase_requests", "animal_movements", "animal_handlings", "weighings", "financial_titles", "warehouses", "equipments", "people", "farms", "batches", "feedlot_corrals", "users"]) expect(attachableEntity(e), e).toBeTruthy();
+    for (const e of ["service_orders", "purchase_requests", "animal_movements", "animal_handlings", "weighings", "financial_titles", "warehouses", "equipments", "people", "empresas", "batches", "feedlot_corrals", "users"]) expect(attachableEntity(e), e).toBeTruthy();
     for (const e of ["attachment_blobs", "organization_members", "role_permissions", "audit_logs", "__proto__", "constructor"]) expect(attachableEntity(e), e).toBeUndefined();
+    // Nome ANTERIOR de tabela não resolve mais (PRE-BASE2-05B): `entity` é canônico, e o apelido morreu com
+    // o adaptador. Traduzir aqui faria a mesma entidade ter duas portas — e só uma delas apareceria numa
+    // auditoria que listasse as entidades anexáveis.
+    for (const e of ["farms", "authorizer_farms", "bank_account_farms", "farm_cost_centers", "proprietary_farms"]) expect(attachableEntity(e), e).toBeUndefined();
   });
 });

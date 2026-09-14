@@ -44,7 +44,7 @@ describe("integridade cross-tenant do responsável de solicitação de compra", 
   /** Solicitação de compra na empresa pedida, criada pelo administrador. */
   const criarSolicitacao = async (empresa: string, descricao: string) => {
     const r = await h.app.inject({ method: "POST", url: "/api/supply/requests", headers: h.headers(), payload: {
-      farm_id: empresa, request_date: new Date().toISOString().slice(0, 10), request_type: "product",
+      empresa_id: empresa, request_date: new Date().toISOString().slice(0, 10), request_type: "product",
       description: descricao, justification: descricao, items: [{ description: "Item", quantity: "1", reference_value: "10" }] } });
     expect(r.statusCode, r.body).toBe(201);
     const id = j(r).id; expect(id, r.body).toBeTruthy();
@@ -71,14 +71,14 @@ describe("integridade cross-tenant do responsável de solicitação de compra", 
     await c.query("insert into erp.organization_members(organization_id,user_id,is_owner,is_active) values ($1,$2,true,true)", [ORG2, USUARIO_OUTRO_TENANT]);
     await c.end();
 
-    valido = await criarMembro("Resp válido", "resp-valido@demo.local", ["purchase_requests.view"], [I.farm]);
-    semCapacidade = await criarMembro("Resp sem capacidade", "resp-sem-cap@demo.local", ["stocks.view"], [I.farm]);
-    semEscopo = await criarMembro("Resp sem escopo", "resp-sem-escopo@demo.local", ["purchase_requests.view"], [I.farm2]);
-    inativo = await criarMembro("Resp inativo", "resp-inativo@demo.local", ["purchase_requests.view"], [I.farm], false);
+    valido = await criarMembro("Resp válido", "resp-valido@demo.local", ["purchase_requests.view"], [I.empresa]);
+    semCapacidade = await criarMembro("Resp sem capacidade", "resp-sem-cap@demo.local", ["stocks.view"], [I.empresa]);
+    semEscopo = await criarMembro("Resp sem escopo", "resp-sem-escopo@demo.local", ["purchase_requests.view"], [I.empresa2]);
+    inativo = await criarMembro("Resp inativo", "resp-inativo@demo.local", ["purchase_requests.view"], [I.empresa], false);
 
-    solA = await criarSolicitacao(I.farm, "Solicitação Empresa A");
-    solA2 = await criarSolicitacao(I.farm, "Solicitação Empresa A (lote)");
-    solB = await criarSolicitacao(I.farm2, "Solicitação Empresa B");
+    solA = await criarSolicitacao(I.empresa, "Solicitação Empresa A");
+    solA2 = await criarSolicitacao(I.empresa, "Solicitação Empresa A (lote)");
+    solB = await criarSolicitacao(I.empresa2, "Solicitação Empresa B");
   }, 180_000);
 
   afterAll(async () => { await h.app.close(); await h.db.end(); });

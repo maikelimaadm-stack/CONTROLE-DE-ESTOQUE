@@ -46,7 +46,7 @@ const semear = async (raiz: ReturnType<typeof createPool>, n: Record<string, unk
 };
 
 beforeAll(async () => {
-  h = await harness(); I = await ids(h); A = I.farm; B = I.farm2;
+  h = await harness(); I = await ids(h); A = I.empresa; B = I.empresa2;
   const escoposB = ["compras", "pecuaria", "estoque", "financeiro", "documentos"].map((m) => ({ modulo: m, modo: "selecionadas", empresas: [B] }));
   const escoposTodas = ["compras", "pecuaria", "estoque", "financeiro", "documentos"].map((m) => ({ modulo: m, modo: "todas" }));
   SO_B = await criarUsuario("Notif só B", "notif-b@demo.local", PERMS, escoposB);
@@ -180,17 +180,17 @@ describe("as portas em volta da caixa", () => {
     expect(j(r).error?.code).toBe("PERMISSION_DENIED");
   });
 
-  it("X-Farm-Id de empresa que o usuário não enxerga responde igual a identificador inexistente", async () => {
+  it("X-Empresa-Id de empresa que o usuário não enxerga responde igual a identificador inexistente", async () => {
     // O cabeçalho é SELEÇÃO de trabalho. Validado apenas contra "existe na organização", ele distinguia
     // empresa viva (200) de identificador qualquer (403) — e virava um jeito de confirmar a existência de
     // empresas alheias sem ler nada delas. As duas respostas precisam ser a mesma.
     const url = "/api/admin/notifications";
-    const naoExiste = await h.app.inject({ method: "GET", url, headers: { ...SO_B, "x-farm-id": "99999999-9999-4999-8999-999999999999" } });
-    const existeAlheia = await h.app.inject({ method: "GET", url, headers: { ...SO_B, "x-farm-id": A } });
+    const naoExiste = await h.app.inject({ method: "GET", url, headers: { ...SO_B, "x-empresa-id": "99999999-9999-4999-8999-999999999999" } });
+    const existeAlheia = await h.app.inject({ method: "GET", url, headers: { ...SO_B, "x-empresa-id": A } });
     expect(existeAlheia.statusCode, "empresa viva que ele não enxerga").toBe(naoExiste.statusCode);
     expect(j(existeAlheia).error?.code).toBe(j(naoExiste).error?.code);
     // e a empresa que ele ENXERGA continua selecionável
-    const propria = await h.app.inject({ method: "GET", url, headers: { ...SO_B, "x-farm-id": B } });
+    const propria = await h.app.inject({ method: "GET", url, headers: { ...SO_B, "x-empresa-id": B } });
     expect(propria.statusCode, propria.body).toBe(200);
   });
 

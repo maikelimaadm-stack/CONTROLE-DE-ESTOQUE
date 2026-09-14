@@ -2,7 +2,7 @@ import { AUTORIZACAO_PROPRIETARIO } from "@erp/plataforma";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, withTx } from "@agro/db";
 import { MOVIMENTACOES_INTERNAS, MOVIMENTACOES_REBANHO } from "@agro/domain";
-import { harness, ids, TEST_URL, type Harness } from "./setup.js";
+import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 import { atribuirIdGlobal } from "../../src/lib/id-global.js";
 import type { ServiceCtx } from "../../src/lib/context.js";
 
@@ -26,7 +26,7 @@ const PDF = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF").toStr
 async function membro(nome: string, email: string, perms: string[], empresaIds: string[] = []): Promise<Hdr> {
   const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome}`, permissions: perms } });
   expect(papel.statusCode, papel.body).toBe(201);
-  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Rebanho@12345", role_id: j(papel).id, farm_ids: empresaIds } });
+  const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Rebanho@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos(empresaIds) } });
   expect(vinculo.statusCode, vinculo.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Rebanho@12345" } });
   expect(login.statusCode, login.body).toBe(200);
@@ -38,8 +38,8 @@ async function inserir(tipo: string, codigo: string): Promise<string> {
   const admin = createPool(TEST_URL, { max: 1 });
   try {
     const r = await admin.query<{ id: string }>(
-      "insert into erp.animal_movements(organization_id,farm_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,$4,'2026-09-11',$5) returning id",
-      [h.demo.orgId, I.farm, codigo, tipo, h.demo.adminUserId]);
+      "insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,$4,'2026-09-11',$5) returning id",
+      [h.demo.orgId, I.empresa, codigo, tipo, h.demo.adminUserId]);
     return r.rows[0]!.id;
   } finally { await admin.end(); }
 }
@@ -140,8 +140,8 @@ describe("MATRIZ E — listagem devolve só o que o usuário pode ver", () => {
 
 describe("MATRIZ F — criação de movimentação por tipo", () => {
   const corpo = (tipo: string): Record<string, unknown> => tipo === "purchase" || tipo === "birth"
-    ? { farm_id: I.farm, movement_type: tipo, movement_date: "2026-09-12", person_id: tipo === "purchase" ? I.provider : null, items: [{ category_id: I.speciesCategory, quantity: 1, weight: "200", unit_value: "100" }] }
-    : { farm_id: I.farm, movement_type: tipo, movement_date: "2026-09-12", items: [{ category_id: I.speciesCategory, quantity: 1, weight: "200", unit_value: "100", herd_lot_id: null }] };
+    ? { empresa_id: I.empresa, movement_type: tipo, movement_date: "2026-09-12", person_id: tipo === "purchase" ? I.provider : null, items: [{ category_id: I.speciesCategory, quantity: 1, weight: "200", unit_value: "100" }] }
+    : { empresa_id: I.empresa, movement_type: tipo, movement_date: "2026-09-12", items: [{ category_id: I.speciesCategory, quantity: 1, weight: "200", unit_value: "100", herd_lot_id: null }] };
 
   it("animal_sales.create NÃO cria compra, nascimento, morte nem perda", async () => {
     const soVenda = await membro("Cria Só Venda", "mtx.cria.venda@demo.local", ["animal_sales.create"]);

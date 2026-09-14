@@ -35,50 +35,50 @@ const textoDoRelatorio = async (key: string, headers: Hdr, query = "") => {
 };
 
 beforeAll(async () => {
-  h = await harness(); I = await ids(h); A = I.farm; B = I.farm2;
+  h = await harness(); I = await ids(h); A = I.empresa; B = I.empresa2;
 
   const titulo = (farm: string, valor: string, numero: string) => ({
-    farm_id: farm, number: numero, person_id: I.provider, amount: valor, emission_date: "2026-09-01", due_date: "2026-04-10", note: "Sentinela",
+    empresa_id: farm, number: numero, person_id: I.provider, amount: valor, emission_date: "2026-09-01", due_date: "2026-04-10", note: "Sentinela",
     apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, percentage: "100" }]
   });
   await criar("/api/financial/payables", titulo(A, SENT_A, "SENT-A"));
   await criar("/api/financial/payables", titulo(B, SENT_B, "SENT-B"));
 
   const movimento = (farm: string, valor: string) => ({
-    farm_id: farm, bank_account_id: I.bankAccount, movement_date: "2026-09-02", type: "in", category_type: "in", amount: valor, note: "Sentinela",
+    empresa_id: farm, bank_account_id: I.bankAccount, movement_date: "2026-09-02", type: "in", category_type: "in", amount: valor, note: "Sentinela",
     apportionment: [{ financial_category_id: I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }]
   });
   await criar("/api/financial/bank-movements", movimento(A, SENT_A_BANCO));
   await criar("/api/financial/bank-movements", movimento(B, SENT_B_BANCO));
 
   const entrada = (farm: string, wh: string, valor: string) => ({
-    farm_id: farm, entry_date: "2026-09-01",
+    empresa_id: farm, entry_date: "2026-09-01",
     items: [{ product_id: I.product, quantity: "1", unit_value: valor, warehouse_id: wh, financial_category_id: I.category, cost_center_id: I.costCenter }]
   });
   await criar("/api/stock/input-entries", entrada(A, I.warehouse!, SENT_A_ESTOQUE));
-  await criar("/api/stock/input-entries", entrada(B, I.warehouseFarm2!, SENT_B_ESTOQUE));
+  await criar("/api/stock/input-entries", entrada(B, I.warehouseEmpresa2!, SENT_B_ESTOQUE));
 
   const solicitacao = (farm: string, marca: string, valor: string) => ({
-    farm_id: farm, request_date: "2026-09-01", request_type: "product", description: marca, justification: marca,
+    empresa_id: farm, request_date: "2026-09-01", request_type: "product", description: marca, justification: marca,
     items: [{ product_id: I.product, description: marca, quantity: "1", estimated_value: valor }]
   });
   await criar("/api/supply/requests", solicitacao(A, "Sentinela A", SENT_A));
   await criar("/api/supply/requests", solicitacao(B, "Sentinela B", SENT_B));
 
   // ESTADO QUE O BANCO PERMITE: registro da empresa A pendurado num LOTE da empresa B. Não há constraint
-  // composta ligando `batch_id` a `farm_id`, então trato e animal de A podem apontar para o lote de B. Se o
+  // composta ligando `batch_id` a `empresa_id`, então trato e animal de A podem apontar para o lote de B. Se o
   // recorte do relatório viesse "por junção com o lote já recortado", o usuário autorizado só em B somaria
   // dinheiro e contaria cabeça da empresa A. É a prova direta do §17: cada fonte responde pela PRÓPRIA empresa.
   {
     const raiz = createPool(TEST_URL, { max: 1 });
-    loteB = (await raiz.query<{ id: string }>("insert into erp.batches (organization_id, farm_id, code, batch_date, description, batch_type, status, entry_date) values ($1,$2,'SENT-B-LOTE','2026-09-01','Lote sentinela B','feedlot','active','2026-09-01') returning id", [h.demo.orgId, B])).rows[0]!.id;
-    await raiz.query("insert into erp.feed_deliveries (organization_id, farm_id, delivery_date, batch_id, quantity_kg, cost) values ($1,$2,'2026-09-03',$3,1,$4)", [h.demo.orgId, A, loteB, SENT_A_TRATO]);
-    await raiz.query("insert into erp.animals (organization_id, farm_id, species_id, category_id, batch_id, sex, entry_date, status, current_weight) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,$4,'M','2026-09-01','active',$5)", [h.demo.orgId, A, I.speciesCategory, loteB, SENT_A_PESO]);
+    loteB = (await raiz.query<{ id: string }>("insert into erp.batches (organization_id, empresa_id, code, batch_date, description, batch_type, status, entry_date) values ($1,$2,'SENT-B-LOTE','2026-09-01','Lote sentinela B','feedlot','active','2026-09-01') returning id", [h.demo.orgId, B])).rows[0]!.id;
+    await raiz.query("insert into erp.feed_deliveries (organization_id, empresa_id, delivery_date, batch_id, quantity_kg, cost) values ($1,$2,'2026-09-03',$3,1,$4)", [h.demo.orgId, A, loteB, SENT_A_TRATO]);
+    await raiz.query("insert into erp.animals (organization_id, empresa_id, species_id, category_id, batch_id, sex, entry_date, status, current_weight) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,$4,'M','2026-09-01','active',$5)", [h.demo.orgId, A, I.speciesCategory, loteB, SENT_A_PESO]);
     // Categoria em que SÓ a empresa A tem rebanho (um lote sem identificação). O painel de rebanho decidia a
     // existência da linha por um `exists` sobre erp.herd_lots SEM recorte: a empresa B via a categoria
     // aparecer — composição de rebanho da empresa que ela não enxerga, exposta como catálogo em uso.
     categoriaSoDeA = (await raiz.query<{ id: string }>("insert into erp.animal_categories (organization_id, species_id, name, ua_factor) values ($1,(select species_id from erp.animal_categories where id=$2),'Sentinela categoria só de A',1) returning id", [h.demo.orgId, I.speciesCategory])).rows[0]!.id;
-    await raiz.query("insert into erp.herd_lots (organization_id, farm_id, species_id, category_id, quantity, entry_date) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,7,'2026-09-01')", [h.demo.orgId, A, categoriaSoDeA]);
+    await raiz.query("insert into erp.herd_lots (organization_id, empresa_id, species_id, category_id, quantity, entry_date) values ($1,$2,(select species_id from erp.animal_categories where id=$3),$3,7,'2026-09-01')", [h.demo.orgId, A, categoriaSoDeA]);
     await raiz.end();
   }
 
