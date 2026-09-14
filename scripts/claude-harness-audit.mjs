@@ -32,7 +32,7 @@ const RAIZ_ESPERADA = ["CLAUDE.md", "REVIEW.md", ".claude/settings.json", ".mcp.
 const REGRAS = ["workflow", "architecture", "security", "backend-api", "frontend-web", "database-migrations", "testing-gates"];
 const SKILLS = ["implement-slice", "certify-pr", "migration-safety", "production-smoke", "multi-company-contract", "id-global-contract", "pre-base2-checkpoint"];
 const AGENTES = ["security-rls-auditor", "migration-auditor", "test-gate-verifier", "frontend-regression-reviewer", "performance-reviewer", "pr-certifier"];
-const HOOKS = ["guard-dangerous-command.mjs"];
+const HOOKS = ["guard-dangerous-command.mjs", "guard-auditor-command.mjs"];
 const DOCS = ["docs/CLAUDE-CODE-ENGINEERING-HARNESS.md", "docs/CLAUDE-CODE-CONNECTORS.md"];
 /** Skills que só o usuário pode disparar (tocar produção não pode ser decisão do modelo). */
 const SKILLS_SEM_INVOCACAO_AUTOMATICA = ["production-smoke"];
@@ -196,6 +196,40 @@ for (const h of HOOKS) {
 }
 
 // -------------------------------------------------------------------------------------------------
+// 6b. O LIMITE DO AUDITOR É MECÂNICO, NÃO UMA FRASE NO PROMPT
+//
+// Os seis subagentes recebem Bash, que escreve arquivo. A garantia de que eles não viram coautores
+// vem do hook por `agent_type` — então o gate prova três coisas: que todo agente declarado está
+// coberto, que um Bash mutante DELE é recusado, e que leitura e gate continuam passando. Sem a
+// terceira, endurecer o guarda a ponto de travar o auditor passaria despercebido.
+// -------------------------------------------------------------------------------------------------
+const GUARDA_AUDITOR = ".claude/hooks/guard-auditor-command.mjs";
+if (existe(GUARDA_AUDITOR)) {
+  const { AUDITORES, SCRIPTS_DE_GATE } = await import(new URL(`../${GUARDA_AUDITOR}`, import.meta.url));
+
+  for (const a of AGENTES) if (!AUDITORES.has(a)) erro(`${GUARDA_AUDITOR}: o subagente "${a}" não está protegido pelo limite de auditor`);
+  for (const a of AUDITORES) if (!AGENTES.includes(a)) erro(`${GUARDA_AUDITOR}: protege "${a}", que não existe em .claude/agents/`);
+
+  // `audit:*` da lista branca tem de existir de fato; script novo exige inclusão consciente.
+  const scripts = Object.keys(JSON.parse(ler("package.json")).scripts ?? {});
+  for (const g of SCRIPTS_DE_GATE) if (g.startsWith("audit:") && !scripts.includes(g)) erro(`${GUARDA_AUDITOR}: libera "${g}", que não existe no package.json`);
+  for (const g of scripts) if (g.startsWith("audit:") && !SCRIPTS_DE_GATE.has(g)) erro(`package.json tem "${g}" e o limite do auditor não o conhece — declare-o ou ele fica recusado`);
+
+  // Prova real pelo hook, com entrada sintética. Nenhum comando é executado.
+  const decisao = (agente, comando) => {
+    const entrada = JSON.stringify({ tool_name: "Bash", hook_event_name: "PreToolUse", agent_type: agente, tool_input: { command: comando } });
+    const saida = execFileSync(process.execPath, [caminho(GUARDA_AUDITOR)], { input: entrada, encoding: "utf8", timeout: 20_000 });
+    return saida.trim() ? "deny" : "allow";
+  };
+  const MUTANTES = ["echo x > apps/api/src/index.ts", "sed -i 's/a/b/' CLAUDE.md", "git commit -m x", "rm REVIEW.md"];
+  const LEITURAS = ["git diff origin/main...HEAD", "pnpm lint", "grep -rn runService apps/api/src", "cat CLAUDE.md"];
+  for (const c of MUTANTES) if (decisao("pr-certifier", c) !== "deny") erro(`${GUARDA_AUDITOR}: auditor conseguiria executar comando que escreve (classe: ${c.split(" ")[0]})`);
+  for (const c of LEITURAS) if (decisao("pr-certifier", c) !== "allow") erro(`${GUARDA_AUDITOR}: auditor ficou sem poder rodar leitura/gate (classe: ${c.split(" ")[0]})`);
+  // O executor principal não é auditor e não pode ser afetado por este hook.
+  if (decisao("", "git commit -m x") !== "allow") erro(`${GUARDA_AUDITOR}: está afetando o executor principal, que não é auditor`);
+}
+
+// -------------------------------------------------------------------------------------------------
 // 7. DOCUMENTAÇÃO
 // -------------------------------------------------------------------------------------------------
 for (const d of DOCS) if (!existe(d)) erro(`falta ${d}`);
@@ -292,4 +326,4 @@ if (problemas.length) {
   for (const p of problemas) console.error(`  - ${p}`);
   process.exit(1);
 }
-console.log(`claude-harness-audit: OK (${REGRAS.length} regras, ${SKILLS.length} skills, ${AGENTES.length} subagentes sem ferramenta de escrita, ${HOOKS.length} hook com autoteste, ${(settings?.permissions?.deny ?? []).length} negações de leitura, conectores só por modelo)`);
+console.log(`claude-harness-audit: OK (${REGRAS.length} regras, ${SKILLS.length} skills, ${AGENTES.length} subagentes com limite de leitura mecânico, ${HOOKS.length} hooks com autoteste, ${(settings?.permissions?.deny ?? []).length} negações de leitura, conectores só por modelo)`);

@@ -32,9 +32,20 @@
           {
             "type": "command",
             "command": "node",
-            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-dangerous-command.mjs"],
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-dangerous-command.mjs"
+            ],
             "timeout": 10,
             "statusMessage": "Conferindo o comando com o harness do repositório"
+          },
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-auditor-command.mjs"
+            ],
+            "timeout": 10,
+            "statusMessage": "Conferindo o limite de leitura do auditor"
           }
         ]
       }

@@ -8,7 +8,9 @@ color: yellow
 ---
 
 Você procura o custo que a fatia acrescentou. Não otimiza, não escreve código.
-Não tem ferramenta de escrita.
+Suas ferramentas são de leitura, e o hook `.claude/hooks/guard-auditor-command.mjs` recusa
+todo Bash que não seja leitura ou gate conhecido — a garantia é mecânica, não uma promessa
+do texto.
 
 ## N+1 primeiro
 

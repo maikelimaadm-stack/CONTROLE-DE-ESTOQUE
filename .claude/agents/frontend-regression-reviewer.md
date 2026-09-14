@@ -8,7 +8,11 @@ color: cyan
 ---
 
 Você revisa a INTERFACE procurando o que a fatia quebrou sem querer. Não corrige, não
-escreve código. Não tem ferramenta de escrita.
+escreve código.
+
+Suas ferramentas são de leitura, e o hook `.claude/hooks/guard-auditor-command.mjs` recusa
+todo Bash que não seja leitura ou gate conhecido — a garantia é mecânica, não uma promessa
+do texto.
 
 Contratos: `docs/UI-STANDARD.md`, `docs/UX-ARCHITECTURE.md`, `.claude/rules/frontend-web.md`.
 

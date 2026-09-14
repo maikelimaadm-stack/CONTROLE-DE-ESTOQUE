@@ -31,7 +31,7 @@ REVIEW.md                     critérios de code review
     multi-company-contract/   Organização × Empresa, capacidade × escopo, 404 vs 403
     id-global-contract/       papéis de UUID, código de entidade e ID Global
     pre-base2-checkpoint/     ordem do roteiro e gates externos
-  agents/                     especialistas com contexto isolado (nenhum escreve arquivo)
+  agents/                     especialistas com contexto isolado (limitados a leitura pelo hook)
     security-rls-auditor.md   opus · xhigh
     migration-auditor.md      opus · xhigh
     performance-reviewer.md   opus · high
@@ -40,6 +40,7 @@ REVIEW.md                     critérios de code review
     test-gate-verifier.md     sonnet · medium
   hooks/
     guard-dangerous-command.mjs   recusa determinística, com autoteste por fixtures
+    guard-auditor-command.mjs     limita os auditores a leitura e gates (fail closed)
 docs/
   CLAUDE-CODE-ENGINEERING-HARNESS.md  este documento
   CLAUDE-CODE-CONNECTORS.md           MCP e conectores
@@ -192,6 +193,17 @@ endurecimento futuro, de fatia própria; **não está habilitado nesta PR**.
 **O hook** cobre os comandos declarados em `.claude/hooks/guard-dangerous-command.mjs`, incluindo shell
 aninhado até três níveis. Fora do shell — por exemplo uma ferramenta MCP que chame a API do
 GitHub — ele não é consultado, porque o matcher é de ferramenta `Bash`/`PowerShell`.
+
+**O limite dos auditores** é mecânico, e não uma frase no prompt. Os seis subagentes recebem
+`Bash`, que escreve arquivo: a lista branca de `tools` tira Write/Edit, mas não tira `>`, `tee`,
+`sed -i`, `rm` nem um script de uma linha. Quem garante é
+`.claude/hooks/guard-auditor-command.mjs`, que roda por `agent_type` e é **fail closed**: só
+passam leitura reconhecida e os gates declarados; qualquer outra coisa, inclusive comando novo e
+inofensivo, é recusada. O executor principal não é afetado.
+
+Consequência de método: **verificação reversa é do executor da fatia**, nunca do auditor. O
+auditor confere que a fixture de sabotagem existe e que o executor registrou a observação — se
+ele mesmo alterasse o código para fabricar a falha, passaria a auditar o próprio trabalho.
 
 **A regra comportamental continua valendo onde o mecanismo não alcança**: Claude nunca lê,
 copia, imprime ou parafraseia segredo, tenha ou não uma barreira técnica no caminho. Os dois

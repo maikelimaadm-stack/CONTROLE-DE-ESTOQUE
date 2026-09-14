@@ -62,9 +62,30 @@ export function removerCorpoDeHeredoc(linha) {
   return saida.join("\n");
 }
 
+/**
+ * Duplicação de descritor (`2>&1`, `>&2`, `2>&-`) não é comando nem escrita de arquivo: é o jeito
+ * normal de juntar stderr à saída de um gate. Sem removê-la antes de tokenizar, o `&` viraria
+ * separador de segmento e o `1` viraria um "programa" — inofensivo no guarda de comandos perigosos,
+ * que só casa programas conhecidos, mas fatal no guarda de auditor, que é fail closed.
+ */
+export function removerDuplicacaoDeDescritor(entrada) {
+  let saida = "";
+  let aspas = null;
+  for (let i = 0; i < entrada.length; i++) {
+    const c = entrada[i];
+    if (aspas) { saida += c; if (c === "\\" && aspas === '"' && i + 1 < entrada.length) saida += entrada[++i]; else if (c === aspas) aspas = null; continue; }
+    if (c === "\\") { saida += c; if (i + 1 < entrada.length) saida += entrada[++i]; continue; }
+    if (c === "'" || c === '"') { aspas = c; saida += c; continue; }
+    const m = /^(\d*)>&(\d+|-)/.exec(entrada.slice(i));
+    if (m) { saida = saida.replace(/\d+$/, ""); i += m[0].length - 1; continue; }
+    saida += c;
+  }
+  return saida;
+}
+
 /** Quebra a linha em segmentos de comando; cada segmento é uma lista de tokens já sem aspas. */
 export function segmentar(entrada) {
-  const linha = removerCorpoDeHeredoc(entrada);
+  const linha = removerDuplicacaoDeDescritor(removerCorpoDeHeredoc(entrada));
   const segmentos = [];
   let tokens = [];
   let atual = "";
@@ -107,6 +128,56 @@ export function segmentar(entrada) {
   return segmentos;
 }
 
+/**
+ * Esqueleto SEM ASPAS de cada comando lógico.
+ *
+ * A tokenização normal quebra em `$(` e `{` para poder auditar substituição de comando — e é isso
+ * que faz `git push origin $(git rev-parse HEAD):main` perder o refspec pelo caminho: sobra
+ * `git push origin`, que parece inofensivo. Aqui o texto é lido cru, ignorando o que está entre
+ * aspas, só para responder "este comando lógico constrói o destino em tempo de execução?".
+ */
+export function comandosLogicosSemAspas(entrada) {
+  const linha = removerCorpoDeHeredoc(entrada);
+  const saida = [];
+  let atual = "";
+  let aspas = null;
+  for (let i = 0; i < linha.length; i++) {
+    const c = linha[i];
+    if (aspas) { if (c === "\\" && aspas === '"') i++; else if (c === aspas) aspas = null; continue; }
+    if (c === "\\") { i++; continue; }
+    if (c === "'" || c === '"') { aspas = c; continue; }
+    if (c === ";" || c === "\n" || c === "|" || c === "&") {
+      if ((c === "&" || c === "|") && linha[i + 1] === c) i++;
+      saida.push(atual); atual = ""; continue;
+    }
+    atual += c;
+  }
+  saida.push(atual);
+  return saida.filter((x) => x.trim());
+}
+
+/**
+ * Redirecionamento que ESCREVE arquivo, fora de aspas. Duplicação de descritor (`2>&1`) não escreve
+ * nada e continua liberada: é o jeito normal de juntar stderr à saída de um gate.
+ */
+export function redirecionamentoDeEscrita(entrada) {
+  const linha = removerCorpoDeHeredoc(entrada);
+  let aspas = null;
+  for (let i = 0; i < linha.length; i++) {
+    const c = linha[i];
+    if (aspas) { if (c === "\\" && aspas === '"') i++; else if (c === aspas) aspas = null; continue; }
+    if (c === "\\") { i++; continue; }
+    if (c === "'" || c === '"') { aspas = c; continue; }
+    if (c !== ">") continue;
+    let j = i + 1;
+    if (linha[j] === ">") j++;                       // >>
+    while (linha[j] === " ") j++;
+    if (linha[j] === "&" && /\d|-/.test(linha[j + 1] ?? "")) { i = j + 1; continue; }  // 2>&1, >&-
+    return true;
+  }
+  return false;
+}
+
 /** Envoltórios que não são o comando de verdade: o programa real vem depois deles. */
 const ENVOLTORIOS = new Set(["sudo", "env", "command", "nohup", "time", "nice", "doas", "exec", "builtin"]);
 
@@ -135,11 +206,12 @@ const flagCurta = (args, letra) => args.some((a) => /^-[A-Za-z]+$/.test(a) && a.
 const VALOR_SEGUINTE = new Set([
   "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix",
   "-R", "--repo", "-m", "--message", "-F", "--file", "-b", "--branch", "--cwd", "-p", "--project",
-  "-X", "--method", "--filter", "--hostname", "--jq", "-q", "--template", "-t"
+  "-X", "--method", "--filter", "--hostname", "--jq", "-q", "--template", "-t",
+  "--dir", "--prefix", "-w", "--workspace"
 ]);
 
 /** Posicionais na ordem: descarta flags e o valor das que consomem o token seguinte. */
-const posicionais = (args) => {
+export const posicionais = (args) => {
   const out = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -152,7 +224,7 @@ const posicionais = (args) => {
 const sub = (args, n) => posicionais(args)[n];
 
 /** Valor de uma opção, na forma `--opcao valor` ou `--opcao=valor`. */
-const valorDeOpcao = (args, ...nomes) => {
+export const valorDeOpcao = (args, ...nomes) => {
   for (let i = 0; i < args.length; i++) {
     for (const n of nomes) {
       if (args[i] === n) return args[i + 1];
@@ -196,9 +268,28 @@ const BRANCHES_PROTEGIDAS = new Set(["main", "master"]);
 
 const METODOS_MUTANTES = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const FLAGS_DE_CORPO = ["-f", "--raw-field", "-F", "--field", "--input"];
-/** Scripts que mutam banco pela conexão herdada do ambiente. */
-const SCRIPTS_DB_DIRETO = new Set(["db:migrate", "db:seed", "db:reset"]);
+/**
+ * Scripts que mutam banco pela conexão herdada do ambiente.
+ *
+ * `migrate`/`seed`/`reset` puros entram aqui porque `packages/db` os declara com esses nomes: a
+ * partir de qualquer diretório, `pnpm reset` é o reset do banco. Julgar pelo diretório de trabalho
+ * seria julgar por um estado que o guarda não controla — `-C`, `--dir`, `--cwd` e `--prefix` mudam
+ * o alvo sem mudar o texto do script.
+ */
+const SCRIPTS_DB_DIRETO = new Set(["db:migrate", "db:seed", "db:reset", "migrate", "seed", "reset"]);
 const SUBCOMANDOS_DB_DIRETO = new Set(["migrate", "seed", "reset"]);
+/** O cli de banco, seja qual for o lançador (pnpm, npx, node, tsx ou caminho direto). */
+const CLI_DE_BANCO = /(^|\/)db\/(src|dist)\/cli\.(ts|js|mjs)$/;
+/** O comando operacional de ID Global: escreve em erp.registros_globais por conexão operacional. */
+const CLI_DE_BACKFILL = /(^|\/)id-global-backfill\.(ts|js|mjs)$/;
+const SCRIPT_DE_BACKFILL = "id-global:backfill";
+/**
+ * As DUAS grafias que o próprio cli reconhece como não-escrita (`argv.includes`). Escrever o guarda
+ * com a mesma comparação exata é o que o mantém alinhado: uma variante errada (`--dryrun`) não casa
+ * aqui E não casaria lá — a diferença é que aqui ela recusa, enquanto lá ela executaria o backfill
+ * inteiro achando que era um ensaio.
+ */
+const LEITURA_DO_BACKFILL = ["--verify-only", "--dry-run"];
 
 export const REGRAS = [
   {
@@ -227,6 +318,17 @@ export const REGRAS = [
     motivo: "apagar branch no remoto é configuração do repositório, e isso é ação humana",
     casa: (p, a) => p === "git" && sub(a, 0) === "push" &&
       (flagLonga(a, "delete") || flagCurta(a, "d") || refspecsDePush(a).some(refspecApaga))
+  },
+  {
+    id: "push-em-lote",
+    motivo: "`--all`, `--mirror` e `--prune` mexem em várias refs de uma vez, inclusive na branch protegida",
+    casa: (p, a) => p === "git" && sub(a, 0) === "push" && flagLonga(a, "all", "mirror", "prune", "tags")
+  },
+  {
+    id: "push-com-refspec-dinamico",
+    motivo: "o destino do push só se resolve em tempo de execução, então não há refspec para auditar antes",
+    casa: (p, a, linha) => p === "git" && sub(a, 0) === "push" &&
+      comandosLogicosSemAspas(linha ?? "").some((c) => /\bgit\b/.test(c) && /\bpush\b/.test(c) && /\$\(|\$\{|`/.test(c))
   },
   {
     id: "push-forcado",
@@ -277,14 +379,22 @@ export const REGRAS = [
     id: "mutacao-direta-de-banco",
     motivo: "migration, seed e reset mudam o banco da conexão herdada do ambiente; produção muda por pipeline",
     casa: (p, a) => {
-      if (!["pnpm", "npm", "yarn", "npx"].includes(p)) return false;
       const pos = posicionais(a);
-      if (pos.some((t) => SCRIPTS_DB_DIRETO.has(t))) return true;     // pnpm db:migrate | db:seed | db:reset
-      const filtro = valorDeOpcao(a, "--filter") ?? "";
-      if (/(^|[/@])db$/.test(filtro) && pos.some((t) => SUBCOMANDOS_DB_DIRETO.has(t))) return true;
-      // invocação direta do cli do pacote de banco (`tsx packages/db/src/cli.ts migrate`)
-      const cli = pos.findIndex((t) => /(^|\/)db\/.*cli\.(ts|js|mjs)$/.test(t));
+      // a) script de gerenciador de pacote, em qualquer diretório e com qualquer forma de apontá-lo
+      if (["pnpm", "npm", "yarn", "npx"].includes(p) && pos.some((t) => SCRIPTS_DB_DIRETO.has(t))) return true;
+      // b) cli do pacote de banco chamado direto — o lançador é irrelevante
+      const cli = pos.findIndex((t) => CLI_DE_BANCO.test(t));
       return cli >= 0 && pos.slice(cli + 1).some((t) => SUBCOMANDOS_DB_DIRETO.has(t));
+    }
+  },
+  {
+    id: "backfill-operacional",
+    motivo: "o backfill escreve o índice de ID Global por conexão operacional, sem RLS, em todas as organizações",
+    casa: (p, a) => {
+      const pos = posicionais(a);
+      const alvo = pos.some((t) => t === SCRIPT_DE_BACKFILL) || pos.some((t) => CLI_DE_BACKFILL.test(t));
+      if (!alvo) return false;
+      return !a.some((t) => LEITURA_DO_BACKFILL.includes(t));         // só as grafias que o cli reconhece
     }
   },
   {
@@ -356,7 +466,7 @@ export function avaliar(linha, profundidade = 0) {
 
     for (const r of REGRAS) {
       let bateu = false;
-      try { bateu = r.casa(programa, args); } catch { bateu = false; }
+      try { bateu = r.casa(programa, args, linha); } catch { bateu = false; }
       // O comando devolvido é só programa + subcomando: a linha inteira pode carregar segredo.
       if (bateu) return { id: r.id, motivo: r.motivo, comando: [programa, sub(args, 0), sub(args, 1)].filter(Boolean).join(" ") };
     }
@@ -432,6 +542,31 @@ export const FIXTURES = {
     ["pnpm --filter @agro/db reset", "mutacao-direta-de-banco"],
     ["pnpm --filter @agro/db exec tsx src/cli.ts migrate", "mutacao-direta-de-banco"],
     ["npx tsx packages/db/src/cli.ts seed", "mutacao-direta-de-banco"],
+    // diretório de trabalho não é proteção: o script do pacote de banco se chama migrate/seed/reset
+    ["cd packages/db && pnpm reset", "mutacao-direta-de-banco"],
+    ["cd packages/db && pnpm migrate", "mutacao-direta-de-banco"],
+    ["pnpm -C packages/db reset", "mutacao-direta-de-banco"],
+    ["yarn --cwd packages/db seed", "mutacao-direta-de-banco"],
+    ["npm --prefix packages/db run migrate", "mutacao-direta-de-banco"],
+    ["tsx packages/db/src/cli.ts reset", "mutacao-direta-de-banco"],
+    ["node packages/db/dist/cli.js migrate", "mutacao-direta-de-banco"],
+    // comando operacional de ID Global: escreve sem RLS, em todas as organizações
+    ["pnpm id-global:backfill", "backfill-operacional"],
+    ["pnpm --filter @agro/api id-global:backfill", "backfill-operacional"],
+    ["node apps/api/dist/cli/id-global-backfill.js", "backfill-operacional"],
+    ["tsx apps/api/src/cli/id-global-backfill.ts --batch-size 500", "backfill-operacional"],
+    ["node dist/cli/id-global-backfill.js --dryrun", "backfill-operacional"],
+    // push em lote mexe em várias refs sem citar nenhuma
+    ["git push origin --all", "push-em-lote"],
+    ["git push --all origin", "push-em-lote"],
+    ["git push --mirror origin", "push-em-lote"],
+    ["git push origin --mirror", "push-em-lote"],
+    ["git push --prune origin", "push-em-lote"],
+    ["git push origin --prune", "push-em-lote"],
+    // destino construído em tempo de execução: não há refspec para auditar
+    ["git push origin $(git rev-parse HEAD):main", "push-com-refspec-dinamico"],
+    ["git push origin ${REF}:main", "push-com-refspec-dinamico"],
+    ["git push origin `echo main`", "push-com-refspec-dinamico"],
     ["vercel --prod", "implantacao-de-producao"],
     ["vercel deploy --prod", "implantacao-de-producao"],
     ["railway redeploy", "implantacao-de-producao"],
@@ -484,6 +619,9 @@ export const FIXTURES = {
     "pnpm build",
     "pnpm parity:check",
     "pnpm db:seed:e2e",
+    "pnpm id-global:verify",
+    "node apps/api/dist/cli/id-global-backfill.js --verify-only",
+    "tsx apps/api/src/cli/id-global-backfill.ts --dry-run",
     "pnpm --filter @agro/db test:integration",
     "pnpm --filter @agro/api test:integration",
     "pnpm --filter @agro/web e2e",
