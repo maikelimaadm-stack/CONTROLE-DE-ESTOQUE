@@ -221,12 +221,57 @@ if (existe(GUARDA_AUDITOR)) {
     const saida = execFileSync(process.execPath, [caminho(GUARDA_AUDITOR)], { input: entrada, encoding: "utf8", timeout: 20_000 });
     return saida.trim() ? "deny" : "allow";
   };
-  const MUTANTES = ["echo x > apps/api/src/index.ts", "sed -i 's/a/b/' CLAUDE.md", "git commit -m x", "rm REVIEW.md"];
-  const LEITURAS = ["git diff origin/main...HEAD", "pnpm lint", "grep -rn runService apps/api/src", "cat CLAUDE.md"];
-  for (const c of MUTANTES) if (decisao("pr-certifier", c) !== "deny") erro(`${GUARDA_AUDITOR}: auditor conseguiria executar comando que escreve (classe: ${c.split(" ")[0]})`);
-  for (const c of LEITURAS) if (decisao("pr-certifier", c) !== "allow") erro(`${GUARDA_AUDITOR}: auditor ficou sem poder rodar leitura/gate (classe: ${c.split(" ")[0]})`);
+  // Modo mutante de programa que, pelo NOME, pareceria leitura — é a classe que reabriu o buraco.
+  const MUTANTES = [
+    "echo x > apps/api/src/index.ts", "sed -i 's/a/b/' CLAUDE.md", "git commit -m x", "rm REVIEW.md",
+    "sort -o saida.txt entrada.txt", "git tag v1", "git branch nova", "pnpm lint -- --fix", "pnpm test -- -u"
+  ];
+  const LEITURAS = [
+    "git diff origin/main...HEAD", "pnpm lint", "grep -rn runService apps/api/src", "cat CLAUDE.md",
+    "git tag --list", "sort entrada.txt", "git branch --show-current"
+  ];
+  for (const c of MUTANTES) if (decisao("pr-certifier", c) !== "deny") erro(`${GUARDA_AUDITOR}: auditor conseguiria executar comando que escreve (classe: ${c.split(" ").slice(0, 2).join(" ")})`);
+  for (const c of LEITURAS) if (decisao("pr-certifier", c) !== "allow") erro(`${GUARDA_AUDITOR}: auditor ficou sem poder rodar leitura/gate (classe: ${c.split(" ").slice(0, 2).join(" ")})`);
   // O executor principal não é auditor e não pode ser afetado por este hook.
   if (decisao("", "git commit -m x") !== "allow") erro(`${GUARDA_AUDITOR}: está afetando o executor principal, que não é auditor`);
+}
+
+// -------------------------------------------------------------------------------------------------
+// 6c. O GUARDA DE COMANDOS PERIGOSOS, PELO HOOK REAL
+//
+// Duas classes que só se provam de ponta a ponta: destino de push que o shell resolve depois, e
+// gate de teste apontado para um banco que não é local. A segunda também prova o SILÊNCIO: a
+// recusa não pode citar host, usuário nem a URL, porque a mensagem vai para o transcript.
+// -------------------------------------------------------------------------------------------------
+const GUARDA_PERIGOSO = ".claude/hooks/guard-dangerous-command.mjs";
+if (existe(GUARDA_PERIGOSO)) {
+  const responder = (comando) => {
+    const entrada = JSON.stringify({ tool_name: "Bash", hook_event_name: "PreToolUse", tool_input: { command: comando } });
+    return execFileSync(process.execPath, [caminho(GUARDA_PERIGOSO)], { input: entrada, encoding: "utf8", timeout: 20_000 });
+  };
+  // nome montado: escrito por extenso casaria o secret scan do CI; host inexistente
+  const VAR_TESTE = `TEST_${"DATABASE_URL"}`;
+  const HOST_REMOTO = "db.exemplo.invalido";
+  const NEGAR = [
+    "git push origin $REF",
+    'git push origin "$REF"',
+    "git push origin --follow-tags claude/x",
+    `${VAR_TESTE}=postgresql://postgres@${HOST_REMOTO}:5432/prod pnpm test:integration`,
+    `${VAR_TESTE}=nao-e-uma-url pnpm test:integration`
+  ];
+  const PERMITIR = [
+    "git push -u origin claude/minha-fatia",
+    "git push origin HEAD:claude/minha-fatia",
+    "echo 'git push origin $REF'",
+    `${VAR_TESTE}=postgresql://postgres@127.0.0.1:5433/agro_erp_test pnpm test:integration`
+  ];
+  for (const c of NEGAR) {
+    const saida = responder(c);
+    if (!saida.trim()) { erro(`${GUARDA_PERIGOSO}: deveria negar e permitiu (classe: ${c.split(" ").slice(0, 2).join(" ")})`); continue; }
+    // o motivo não pode conter o alvo: nem host, nem esquema de conexão
+    if (new RegExp(`${HOST_REMOTO}|postgres|127\\.0\\.0\\.1`).test(saida)) erro(`${GUARDA_PERIGOSO}: a recusa vazou o alvo do banco no motivo`);
+  }
+  for (const c of PERMITIR) if (responder(c).trim()) erro(`${GUARDA_PERIGOSO}: recusou comando legítimo (classe: ${c.split(" ").slice(0, 2).join(" ")})`);
 }
 
 // -------------------------------------------------------------------------------------------------

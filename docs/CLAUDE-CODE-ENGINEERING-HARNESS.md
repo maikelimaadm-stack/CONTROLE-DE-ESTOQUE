@@ -194,12 +194,32 @@ endurecimento futuro, de fatia própria; **não está habilitado nesta PR**.
 aninhado até três níveis. Fora do shell — por exemplo uma ferramenta MCP que chame a API do
 GitHub — ele não é consultado, porque o matcher é de ferramenta `Bash`/`PowerShell`.
 
-**O limite dos auditores** é mecânico, e não uma frase no prompt. Os seis subagentes recebem
+**O limite dos auditores** é mecânico, e não uma frase no prompt — e a classificação é do MODO
+de execução, não do nome do binário. "`sort` é leitura" é falso: `sort -o` escreve arquivo, assim
+como `tree -o`, `yq -i`, `file -C` e `date -s`. No git vale o mesmo: `git branch`, `git tag`,
+`git symbolic-ref` e `git fetch` leem ou escrevem conforme o argumento — `git tag v1` cria
+referência e `git fetch origin main:refs/heads/x` escreve uma ref local arbitrária. E nos gates,
+o nome do script não basta: `pnpm lint -- --fix` reescreve código e `pnpm e2e --update-snapshots`
+regrava snapshots, então a forma aceita é exatamente `<gerenciador> [--filter pacote] <script>`,
+sem argumento extra. Os seis subagentes recebem
 `Bash`, que escreve arquivo: a lista branca de `tools` tira Write/Edit, mas não tira `>`, `tee`,
 `sed -i`, `rm` nem um script de uma linha. Quem garante é
 `.claude/hooks/guard-auditor-command.mjs`, que roda por `agent_type` e é **fail closed**: só
 passam leitura reconhecida e os gates declarados; qualquer outra coisa, inclusive comando novo e
 inofensivo, é recusada. O executor principal não é afetado.
+
+### Gate de teste é mutação de banco
+
+`pnpm test:integration`, `pnpm e2e` e `pnpm db:seed:e2e` parecem verificação, mas o setup dos
+testes chama `resetSchema` + `migrate` + `seed` na URL que vier do AMBIENTE. Com a variável de
+banco de teste apontada por engano para um alvo remoto, "rodar os testes" o destrói — e o comando
+não tem nada de suspeito no texto.
+
+Por isso esses gates só passam quando o alvo é **provado local**: a decisão resolve atribuição
+inline, depois ambiente do processo, depois o default do repositório, e aceita apenas host de
+loopback. Valor que depende de expansão, URL que não parseia e host remoto **recusam**. A recusa
+nunca cita host, usuário ou URL — diz só que o alvo não foi provado local, porque a mensagem vai
+para o transcript. O CI não passa pelo hook e continua montando o próprio banco efêmero.
 
 Consequência de método: **verificação reversa é do executor da fatia**, nunca do auditor. O
 auditor confere que a fixture de sabotagem existe e que o executor registrou a observação — se

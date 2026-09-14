@@ -22,7 +22,8 @@
  *   node .claude/hooks/guard-auditor-command.mjs --autoteste
  */
 import {
-  segmentar, programaEArgumentos, posicionais, valorDeOpcao, redirecionamentoDeEscrita
+  segmentar, programaEArgumentos, posicionais, redirecionamentoDeEscrita,
+  comandosLogicosSemAspas, bancoDeTesteNaoProvadoLocal
 } from "./guard-dangerous-command.mjs";
 
 // -------------------------------------------------------------------------------------------------
@@ -43,12 +44,29 @@ export const AUDITORES = new Set([
 // 2. O QUE UM AUDITOR PODE RODAR
 // -------------------------------------------------------------------------------------------------
 
-/** Programas que só leem, com qualquer argumento. Escrita por redirecionamento é barrada à parte. */
+/**
+ * Programas que leem com QUALQUER argumento — e só estes.
+ *
+ * "Binário X é leitura" é premissa falsa para boa parte das ferramentas de linha de comando:
+ * `sort -o`, `tree -o`, `yq -i`, `file -C` e `date -s` escrevem arquivo ou mudam o sistema. Quem
+ * tem modo mutante sai desta lista e ganha validador próprio abaixo — a classificação é do MODO,
+ * não do nome do programa.
+ */
 const LEITURA_PURA = new Set([
-  "cat", "head", "tail", "wc", "grep", "rg", "egrep", "fgrep", "sort", "uniq", "cut", "tr", "nl",
-  "comm", "diff", "file", "stat", "du", "df", "tree", "jq", "yq", "basename", "dirname", "realpath",
+  "cat", "head", "tail", "wc", "grep", "rg", "egrep", "fgrep", "uniq", "cut", "tr", "nl",
+  "comm", "diff", "stat", "du", "df", "basename", "dirname", "realpath",
   "readlink", "ls", "pwd", "echo", "printf", "true", "false", "cd", "which", "type", "column",
-  "strings", "od", "date", "env", "seq", "test"
+  "strings", "od", "seq", "test"
+]);
+
+/** Programa → opções que o tiram do modo de leitura. Fail closed por opção, não por nome. */
+const MODO_MUTANTE = new Map([
+  ["sort", ["-o", "--output"]],
+  ["tree", ["-o", "--outfile"]],
+  ["yq", ["-i", "--inplace", "--in-place"]],
+  ["file", ["-C", "--compile"]],
+  ["date", ["-s", "--set"]],
+  ["jq", []]
 ]);
 
 /** Subcomandos de leitura do git. Fora desta lista, o git do auditor não roda. */
@@ -58,6 +76,24 @@ const GIT_LEITURA = new Set([
   "symbolic-ref", "count-objects", "check-ignore", "whatchanged", "fetch", "branch", "remote",
   "tag", "stash", "worktree", "config"
 ]);
+
+/** Opções que transformam um subcomando "de leitura" do git em escrita de referência. */
+const GIT_MUTANTE = new Map([
+  ["branch", ["-d", "-D", "-m", "-M", "-c", "-C", "-f", "-u", "--delete", "--move", "--copy",
+              "--force", "--set-upstream", "--set-upstream-to", "--unset-upstream", "--edit-description"]],
+  ["tag", ["-a", "-s", "-d", "-f", "-m", "--annotate", "--sign", "--delete", "--force"]],
+  ["symbolic-ref", ["-d", "--delete", "-m"]],
+  ["fetch", ["--prune", "-p", "--force", "-f", "--update-head-ok", "--tags", "-t", "--all", "--multiple"]]
+]);
+/** Quantos posicionais um subcomando de leitura pode ter (incluindo o próprio subcomando). */
+const GIT_POSICIONAIS_MAXIMOS = new Map([
+  ["branch", 1],          // `git branch <nome>` CRIA referência
+  ["tag", 1],             // `git tag <nome>` CRIA tag
+  ["symbolic-ref", 2],    // ler é `symbolic-ref HEAD`; com destino, escreve
+  ["fetch", 2]            // `fetch <remoto>`; com refspec, escreve ref local arbitrária
+]);
+/** Com estas opções de listagem, um posicional extra é PADRÃO de busca, não criação. */
+const GIT_LISTAGEM = ["--list", "-l", "--contains", "--points-at", "--merged", "--no-merged"];
 
 /** Scripts de gate do repositório. `audit:*` é conferido contra o package.json pelo gate do harness. */
 export const SCRIPTS_DE_GATE = new Set([
@@ -70,10 +106,12 @@ const flagPresente = (args, ...nomes) =>
   args.some((a) => nomes.some((n) => a === n || a.startsWith(`${n}=`)));
 
 /** @returns {string|null} motivo da recusa, ou null quando o comando é aceitável para um auditor. */
-function julgarSegmento(programa, args) {
-  if (LEITURA_PURA.has(programa)) {
-    // `find -delete` e `find -exec` executam e apagam; `sed -i` reescreve o arquivo no lugar.
-    return null;
+function julgarSegmento(programa, args, esqueleto) {
+  if (LEITURA_PURA.has(programa)) return null;
+
+  if (MODO_MUTANTE.has(programa)) {
+    const mutantes = MODO_MUTANTE.get(programa).filter((o) => flagPresente(args, o));
+    return mutantes.length ? `\`${programa}\` em modo de escrita (${mutantes[0]})` : null;
   }
   if (programa === "find") {
     return flagPresente(args, "-delete", "-exec", "-execdir", "-ok", "-okdir", "-fls", "-fprint", "-fprintf")
@@ -83,41 +121,63 @@ function julgarSegmento(programa, args) {
     return flagPresente(args, "-i", "--in-place") || args.some((a) => /^-[a-zA-Z]*i/.test(a))
       ? "`sed` reescrevendo o arquivo no lugar" : null;
   }
+
   if (programa === "git") {
-    const sub = posicionais(args)[0];
-    if (!sub || !GIT_LEITURA.has(sub)) return `git ${sub ?? ""}`.trim() + " não é subcomando de leitura";
-    if (sub === "fetch" && flagPresente(args, "--prune", "-p")) return "`git fetch --prune` apaga referências locais";
-    if (sub === "branch" && args.some((a) => /^-[dDmMcC]$/.test(a) || ["--delete", "--move", "--copy", "--force"].includes(a)))
-      return "`git branch` alterando referência";
-    if (sub === "tag" && args.some((a) => /^-[adfs]$/.test(a) || ["--delete", "--force"].includes(a)))
-      return "`git tag` alterando referência";
-    if (sub === "remote" && posicionais(args)[1] && !["show", "get-url", "-v"].includes(posicionais(args)[1]))
-      return "`git remote` alterando configuração";
-    if (sub === "stash" && posicionais(args)[1] !== "list") return "`git stash` mexe na árvore de trabalho";
-    if (sub === "worktree" && posicionais(args)[1] !== "list") return "`git worktree` cria ou remove árvore";
+    const pos = posicionais(args);
+    const sub = pos[0];
+    if (!sub || !GIT_LEITURA.has(sub)) return `\`git ${sub ?? ""}\`.trim() não é subcomando de leitura`;
+    const mutantes = (GIT_MUTANTE.get(sub) ?? []).filter((o) => flagPresente(args, o));
+    if (mutantes.length) return `\`git ${sub}\` em modo de escrita (${mutantes[0]})`;
+    const maximo = GIT_POSICIONAIS_MAXIMOS.get(sub);
+    if (maximo !== undefined) {
+      // com opção de listagem, um posicional extra é PADRÃO de busca — não criação de referência
+      const folga = flagPresente(args, ...GIT_LISTAGEM) ? 1 : 0;
+      if (pos.length > maximo + folga) return `\`git ${sub}\` com argumento que escreve referência`;
+    }
+    if (sub === "remote" && pos[1] && !["show", "get-url"].includes(pos[1])) return "`git remote` alterando configuração";
+    if (sub === "stash" && pos[1] !== "list") return "`git stash` mexe na árvore de trabalho";
+    if (sub === "worktree" && pos[1] !== "list") return "`git worktree` cria ou remove árvore";
     if (sub === "config" && !flagPresente(args, "--get", "--get-all", "--list", "-l")) return "`git config` gravando";
     return null;
   }
+
   if (["pnpm", "npm", "yarn"].includes(programa)) {
-    const pos = posicionais(args).filter((t) => t !== "run" && t !== "exec");
-    const script = pos.find((t) => !t.startsWith("@") && !t.includes("/"));
-    if (!script) return "comando de pacote sem script reconhecido";
+    /**
+     * FORMA EXATA: `<gerenciador> [--filter <pacote>] [run] <script>` e mais nada.
+     * O nome do script não basta — `pnpm lint -- --fix` reescreve código, `pnpm test -- -u` e
+     * `pnpm e2e --update-snapshots` regravam snapshots. Um argumento extra transforma verificação
+     * em escrita, então argumento extra nenhum passa.
+     */
+    const restante = [];
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === "--filter") { i++; continue; }
+      if (a.startsWith("--filter=")) continue;
+      if (a === "run") continue;
+      restante.push(a);
+    }
+    if (restante.length !== 1) return "forma não é `<gerenciador> [--filter pacote] <script>` sem argumento extra";
+    const script = restante[0];
     if (!SCRIPTS_DE_GATE.has(script)) return `script "${script}" não é gate conhecido`;
-    // `--filter` só escolhe o pacote; o script já foi validado acima.
-    if (valorDeOpcao(args, "--dir", "--prefix", "--cwd", "-C") !== undefined) return "gate apontado para outro diretório";
+    // gates que resetam banco de teste só rodam contra alvo comprovadamente local
+    const banco = bancoDeTesteNaoProvadoLocal(programa, args, esqueleto);
+    if (banco) return banco;
     return null;
   }
+
   return `"${programa}" não está na lista de leitura do auditor`;
 }
 
 /** @returns {{motivo:string}|null} */
 export function avaliarAuditor(linha) {
   if (redirecionamentoDeEscrita(linha)) return { motivo: "redirecionamento que escreve arquivo" };
+  const esqueletos = comandosLogicosSemAspas(linha);
   for (const tokens of segmentar(linha)) {
     const pa = programaEArgumentos(tokens);
     if (!pa) continue;
     const [programa, ...args] = pa;
-    const motivo = julgarSegmento(programa, args);
+    const esqueleto = esqueletos.find((c) => c.includes(programa)) ?? "";
+    const motivo = julgarSegmento(programa, args, esqueleto);
     if (motivo) return { motivo };
   }
   return null;
@@ -126,6 +186,11 @@ export function avaliarAuditor(linha) {
 // -------------------------------------------------------------------------------------------------
 // 3. AUTOTESTE (fixtures — nenhum comando é executado)
 // -------------------------------------------------------------------------------------------------
+
+/** Nome montado de propósito: escrito por extenso, casaria o secret scan do CI. Host inexistente. */
+const V_TESTE = `TEST_${"DATABASE_URL"}`;
+const DSN_LOCAL = "postgresql://postgres@127.0.0.1:5433/agro_erp_test";
+const DSN_REMOTO = "postgresql://postgres@db.exemplo.invalido:5432/prod";
 
 export const FIXTURES = {
   negar: [
@@ -165,7 +230,30 @@ export const FIXTURES = {
     "pnpm docs:generate",
     "pnpm --dir packages/db lint",
     "npx tsx qualquer.ts",
-    "curl https://exemplo.com"
+    "curl https://exemplo.com",
+    // modo mutante de programa que, pelo nome, pareceria leitura
+    "sort -o saida.txt entrada.txt",
+    "tree -o arvore.txt .",
+    "yq -i '.x=1' config.yml",
+    "file -C",
+    "date -s '2026-01-01'",
+    // git de leitura com argumento que escreve referência
+    "git branch nova",
+    "git branch --set-upstream-to=origin/x",
+    "git branch --unset-upstream",
+    "git tag v1",
+    "git symbolic-ref HEAD refs/heads/outra",
+    "git fetch origin main:refs/heads/outra",
+    "git fetch --tags origin",
+    // argumento extra transforma o gate em escrita
+    "pnpm lint -- --fix",
+    "pnpm --filter @agro/api lint -- --fix",
+    "pnpm test -- -u",
+    "pnpm e2e -- --update-snapshots",
+    "pnpm e2e --update-snapshots",
+    "pnpm build --write",
+    // gate que reseta banco de teste com alvo não provado local
+    `${V_TESTE}=${DSN_REMOTO} pnpm test:integration`
   ],
   permitir: [
     "git status",
@@ -199,6 +287,19 @@ export const FIXTURES = {
     "pnpm audit:id-global",
     "pnpm --filter @agro/api test",
     "pnpm lint 2>&1",
+    "sort entrada.txt",
+    "tree .",
+    "yq '.x' config.yml",
+    "file arquivo.txt",
+    "date",
+    "git branch --show-current",
+    "git branch -a",
+    "git branch --list 'claude/*'",
+    "git tag",
+    "git tag --list 'v*'",
+    "git symbolic-ref --short HEAD",
+    "git remote show origin",
+    `${V_TESTE}=${DSN_LOCAL} pnpm test:integration`,
     "grep -c erro relatorio.log 2>&1"
   ]
 };

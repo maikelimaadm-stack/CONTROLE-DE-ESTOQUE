@@ -129,12 +129,16 @@ export function segmentar(entrada) {
 }
 
 /**
- * Esqueleto SEM ASPAS de cada comando lógico.
+ * Esqueleto de cada comando lógico, preservando o que o SHELL ainda expandiria.
  *
  * A tokenização normal quebra em `$(` e `{` para poder auditar substituição de comando — e é isso
  * que faz `git push origin $(git rev-parse HEAD):main` perder o refspec pelo caminho: sobra
- * `git push origin`, que parece inofensivo. Aqui o texto é lido cru, ignorando o que está entre
- * aspas, só para responder "este comando lógico constrói o destino em tempo de execução?".
+ * `git push origin`, que parece inofensivo.
+ *
+ * A distinção entre os dois tipos de aspas é o ponto: aspas SIMPLES impedem expansão, então o que
+ * está dentro delas é texto e some daqui; aspas DUPLAS não impedem nada, então `"$REF"` continua
+ * sendo um destino que só existe em tempo de execução e precisa ser visto. Tratar os dois casos
+ * igual era o que deixava `git push origin "$REF"` passar.
  */
 export function comandosLogicosSemAspas(entrada) {
   const linha = removerCorpoDeHeredoc(entrada);
@@ -143,7 +147,12 @@ export function comandosLogicosSemAspas(entrada) {
   let aspas = null;
   for (let i = 0; i < linha.length; i++) {
     const c = linha[i];
-    if (aspas) { if (c === "\\" && aspas === '"') i++; else if (c === aspas) aspas = null; continue; }
+    if (aspas) {
+      if (c === "\\" && aspas === '"') { i++; continue; }
+      if (c === aspas) { aspas = null; continue; }
+      if (aspas === '"') atual += c;        // aspas duplas não impedem expansão: o conteúdo conta
+      continue;                             // aspas simples: literal, não entra no esqueleto
+    }
     if (c === "\\") { i++; continue; }
     if (c === "'" || c === '"') { aspas = c; continue; }
     if (c === ";" || c === "\n" || c === "|" || c === "&") {
@@ -257,10 +266,104 @@ export const destinoDeRefspec = (refspec) => {
   return destino.replace(/^refs\/heads\//, "");
 };
 
+/** Marcas de coisa que o shell resolve depois: substituição, variável simples ou com chaves. */
+const EXPANSAO = /\$\(|\$\{|\$[A-Za-z_]|`/;
+/** Glob na posição de refspec: o alvo passa a depender do shell/filesystem. */
+const GLOB_EM_REFSPEC = /[*?\[\]{}]/;
+
+/**
+ * O comando lógico começa com este programa? Sem isso, `echo "git push origin $REF"` — que só
+ * imprime texto — seria confundido com um push, porque o esqueleto preserva o conteúdo das aspas
+ * duplas. O que decide é a PRIMEIRA palavra, ignorando atribuições de ambiente e envoltórios.
+ */
+const iniciaCom = (esqueleto, programa) => {
+  for (const palavra of esqueleto.trim().split(/\s+/)) {
+    if (!palavra) continue;
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(palavra)) continue;
+    if (ENVOLTORIOS.has(palavra.replace(/^.*\//, ""))) continue;
+    return palavra.replace(/^.*\//, "") === programa;
+  }
+  return false;
+};
+
 /** Refspec que APAGA a ref remota: origem vazia (`:branch`). */
 const refspecApaga = (refspec) => /^\+?:/.test(refspec);
 
 const BRANCHES_PROTEGIDAS = new Set(["main", "master"]);
+
+// -------------------------------------------------------------------------------------------------
+// 2b. BANCO DE TESTE PRECISA SER PROVADO LOCAL
+//
+// `pnpm test:integration`, `pnpm e2e` e `pnpm db:seed:e2e` parecem verificação, mas o setup dos
+// testes chama `resetSchema` + `migrate` + `seed` na URL que vier do AMBIENTE
+// (`packages/db/test/setup.ts`, `apps/api/test/integration/setup.ts`). Com `TEST_DATABASE_URL`
+// apontada por engano para um banco remoto, "rodar os testes" o destrói — e o comando não tem
+// nada de suspeito no texto.
+//
+// O CI é seguro porque define o alvo explicitamente como loopback. Uma sessão não pode presumir
+// isso. Aqui o alvo é resolvido (atribuição inline > ambiente do processo > default do
+// repositório) e só passa quando o host é comprovadamente local. Valor que depende de expansão,
+// URL que não parseia e host remoto recusam — fail closed.
+//
+// A recusa NUNCA cita a URL, o host, o usuário ou a variável resolvida: diz apenas que o alvo não
+// foi provado local.
+// -------------------------------------------------------------------------------------------------
+
+/** Hosts que provam execução local. Qualquer outro é remoto até prova em contrário. */
+const HOSTS_LOCAIS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+/** Gate de teste → variáveis que decidem o banco que ele vai resetar. */
+const ALVO_DE_BANCO_POR_GATE = new Map([
+  ["test:integration", ["TEST_DATABASE_URL", "TEST_DATABASE_URL_APP"]],
+  ["db:seed:e2e", ["E2E_DATABASE_URL"]],
+  ["e2e", ["E2E_DATABASE_URL"]]
+]);
+
+/**
+ * Atribuições `VAR=valor` que precedem o comando.
+ *
+ * Lidas do ESQUELETO, não dos tokens: a tokenização quebra em `{`, então `VAR=${OUTRA}` viraria
+ * três segmentos e a atribuição sumiria — que foi exatamente como essa forma escapou na primeira
+ * tentativa. No esqueleto ela continua inteira, e `${...}` é justamente o caso que precisa recusar.
+ */
+export function atribuicoesDeAmbiente(esqueleto) {
+  const out = new Map();
+  for (const parte of String(esqueleto ?? "").trim().split(/\s+/)) {
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(parte);
+    if (!m) break;
+    out.set(m[1], m[2]);
+  }
+  return out;
+}
+
+/** @returns {"local"|"remoto"|"indeterminado"|"ausente"} — nunca devolve o valor. */
+export function classificarAlvoDeBanco(valor) {
+  if (valor === undefined || valor === "") return "ausente";
+  if (/\$|`/.test(valor)) return "indeterminado";          // só se resolve em tempo de execução
+  let host;
+  try { host = new URL(valor).hostname; } catch { return "indeterminado"; }
+  if (!host) return "indeterminado";
+  return HOSTS_LOCAIS.has(host.toLowerCase()) ? "local" : "remoto";
+}
+
+/**
+ * O comando é um gate que reseta banco de teste? Em caso afirmativo, o alvo está provado local?
+ * @returns {string|null} motivo da recusa, ou null quando não se aplica ou está provado local.
+ */
+export function bancoDeTesteNaoProvadoLocal(programa, args, esqueleto, ambiente = process.env) {
+  if (!["pnpm", "npm", "yarn"].includes(programa)) return null;
+  const pos = posicionais(args).filter((t) => t !== "run" && t !== "exec");
+  const gate = pos.find((t) => ALVO_DE_BANCO_POR_GATE.has(t));
+  if (!gate) return null;
+  const inline = atribuicoesDeAmbiente(esqueleto);
+  for (const variavel of ALVO_DE_BANCO_POR_GATE.get(gate)) {
+    const bruto = inline.has(variavel) ? inline.get(variavel) : ambiente[variavel];
+    const classe = classificarAlvoDeBanco(bruto);
+    if (classe === "ausente" || classe === "local") continue;          // default do repositório é loopback
+    return `o gate "${gate}" reseta o banco de teste e o alvo não foi provado local`;
+  }
+  return null;
+}
 
 // -------------------------------------------------------------------------------------------------
 // 3. O QUE NUNCA PODE ACONTECER
@@ -321,14 +424,19 @@ export const REGRAS = [
   },
   {
     id: "push-em-lote",
-    motivo: "`--all`, `--mirror` e `--prune` mexem em várias refs de uma vez, inclusive na branch protegida",
-    casa: (p, a) => p === "git" && sub(a, 0) === "push" && flagLonga(a, "all", "mirror", "prune", "tags")
+    motivo: "`--all`, `--mirror`, `--prune`, `--tags` e `--follow-tags` mexem em refs que o comando não nomeia",
+    casa: (p, a) => p === "git" && sub(a, 0) === "push" && flagLonga(a, "all", "mirror", "prune", "tags", "follow-tags")
   },
   {
     id: "push-com-refspec-dinamico",
     motivo: "o destino do push só se resolve em tempo de execução, então não há refspec para auditar antes",
-    casa: (p, a, linha) => p === "git" && sub(a, 0) === "push" &&
-      comandosLogicosSemAspas(linha ?? "").some((c) => /\bgit\b/.test(c) && /\bpush\b/.test(c) && /\$\(|\$\{|`/.test(c))
+    casa: (p, a, linha) => {
+      if (p !== "git" || sub(a, 0) !== "push") return false;
+      // glob na posição de refspec: o alvo passa a depender do shell, não do texto
+      if (refspecsDePush(a).some((r) => GLOB_EM_REFSPEC.test(r))) return true;
+      // expansão dentro do comando lógico que é ESTE push (não de um `echo` vizinho)
+      return comandosLogicosSemAspas(linha ?? "").some((c) => iniciaCom(c, "git") && /\bpush\b/.test(c) && EXPANSAO.test(c));
+    }
   },
   {
     id: "push-forcado",
@@ -395,6 +503,14 @@ export const REGRAS = [
       const alvo = pos.some((t) => t === SCRIPT_DE_BACKFILL) || pos.some((t) => CLI_DE_BACKFILL.test(t));
       if (!alvo) return false;
       return !a.some((t) => LEITURA_DO_BACKFILL.includes(t));         // só as grafias que o cli reconhece
+    }
+  },
+  {
+    id: "banco-de-teste-nao-local",
+    motivo: "o setup dos testes faz reset do schema na URL herdada do ambiente; alvo remoto seria destruído",
+    casa: (p, a, linha) => {
+      const esqueleto = comandosLogicosSemAspas(linha ?? "").find((c) => iniciaCom(c, p)) ?? "";
+      return bancoDeTesteNaoProvadoLocal(p, a, esqueleto) !== null;
     }
   },
   {
@@ -466,7 +582,7 @@ export function avaliar(linha, profundidade = 0) {
 
     for (const r of REGRAS) {
       let bateu = false;
-      try { bateu = r.casa(programa, args, linha); } catch { bateu = false; }
+      try { bateu = r.casa(programa, args, linha, tokens); } catch { bateu = false; }
       // O comando devolvido é só programa + subcomando: a linha inteira pode carregar segredo.
       if (bateu) return { id: r.id, motivo: r.motivo, comando: [programa, sub(args, 0), sub(args, 1)].filter(Boolean).join(" ") };
     }
@@ -493,6 +609,18 @@ export function avaliar(linha, profundidade = 0) {
 // -------------------------------------------------------------------------------------------------
 // 6. AUTOTESTE (fixtures — nenhum comando é executado)
 // -------------------------------------------------------------------------------------------------
+
+/**
+ * Os nomes das variáveis são MONTADOS de propósito: escrito por extenso, o par nome-de-variável
+ * mais conexão casaria o secret scan do CI, que não sabe distinguir fixture de credencial de
+ * verdade — este comentário já tropeçou nisso uma vez. Os hosts abaixo são exemplos inexistentes
+ * e nenhum valor é uma credencial real.
+ */
+const V_TESTE = `TEST_${"DATABASE_URL"}`;
+const V_E2E = `E2E_${"DATABASE_URL"}`;
+const DSN_LOCAL = "postgresql://postgres@127.0.0.1:5433/agro_erp_test";
+const DSN_REMOTO = "postgresql://postgres@db.exemplo.invalido:5432/prod";
+const DSN_REDE = "postgresql://postgres@10.0.0.5:5432/prod";
 
 export const FIXTURES = {
   negar: [
@@ -567,6 +695,23 @@ export const FIXTURES = {
     ["git push origin $(git rev-parse HEAD):main", "push-com-refspec-dinamico"],
     ["git push origin ${REF}:main", "push-com-refspec-dinamico"],
     ["git push origin `echo main`", "push-com-refspec-dinamico"],
+    // variável simples também é destino indeterminado — aspas duplas não impedem expansão
+    ["git push origin $REF", "push-com-refspec-dinamico"],
+    ['git push origin "$REF"', "push-com-refspec-dinamico"],
+    ['git push origin "$SRC:$DST"', "push-com-refspec-dinamico"],
+    ['git push origin "$(echo main)"', "push-com-refspec-dinamico"],
+    ["git push origin HEAD:$DEST", "push-com-refspec-dinamico"],
+    ["git push origin claude/*", "push-com-refspec-dinamico"],
+    ["git push origin --follow-tags claude/x", "push-em-lote"],
+    ["git push --follow-tags origin claude/x", "push-em-lote"],
+    // gate de teste apontado para banco que não é local reseta o schema de lá
+    [`${V_TESTE}=${DSN_REMOTO} pnpm test:integration`, "banco-de-teste-nao-local"],
+    [`${V_TESTE}=${DSN_REDE} pnpm test:integration`, "banco-de-teste-nao-local"],
+    [`${V_E2E}=${DSN_REMOTO} pnpm db:seed:e2e`, "banco-de-teste-nao-local"],
+    [`${V_E2E}=${DSN_REMOTO} pnpm e2e`, "banco-de-teste-nao-local"],
+    [`${V_TESTE}=$DATABASE_URL pnpm test:integration`, "banco-de-teste-nao-local"],
+    [`${V_TESTE}=\${DATABASE_URL} pnpm test:integration`, "banco-de-teste-nao-local"],
+    [`${V_TESTE}=nao-e-uma-url pnpm test:integration`, "banco-de-teste-nao-local"],
     ["vercel --prod", "implantacao-de-producao"],
     ["vercel deploy --prod", "implantacao-de-producao"],
     ["railway redeploy", "implantacao-de-producao"],
@@ -622,6 +767,10 @@ export const FIXTURES = {
     "pnpm id-global:verify",
     "node apps/api/dist/cli/id-global-backfill.js --verify-only",
     "tsx apps/api/src/cli/id-global-backfill.ts --dry-run",
+    `${V_TESTE}=${DSN_LOCAL} pnpm test:integration`,
+    `${V_E2E}=postgresql://postgres@localhost:5433/agro_erp_e2e pnpm db:seed:e2e`,
+    `${V_E2E}=postgresql://postgres@[::1]:5433/agro_erp_e2e pnpm e2e`,
+    "echo 'git push origin $REF'",
     "pnpm --filter @agro/db test:integration",
     "pnpm --filter @agro/api test:integration",
     "pnpm --filter @agro/web e2e",
@@ -650,8 +799,28 @@ export const FIXTURES = {
   ]
 };
 
+/** O caminho "ambiente herdado" é testado com ambiente SINTÉTICO, para não depender da máquina. */
+const FIXTURES_DE_AMBIENTE = [
+  [{}, "pnpm test:integration", "permitir"],                                   // ausente = default loopback
+  [{ [V_TESTE]: DSN_LOCAL }, "pnpm test:integration", "permitir"],
+  [{ [V_TESTE]: DSN_REMOTO }, "pnpm test:integration", "negar"],
+  [{ [V_TESTE]: DSN_LOCAL, TEST_DATABASE_URL_APP: DSN_REMOTO }, "pnpm test:integration", "negar"],
+  [{ [V_E2E]: DSN_REMOTO }, "pnpm e2e", "negar"],
+  [{ [V_E2E]: DSN_LOCAL }, "pnpm e2e", "permitir"],
+  [{ [V_TESTE]: DSN_REMOTO }, "pnpm lint", "permitir"]                         // lint não toca banco
+];
+
 function autoteste() {
   const falhas = [];
+  for (const [ambiente, linha, esperado] of FIXTURES_DE_AMBIENTE) {
+    const tokens = segmentar(linha)[0] ?? [];
+    const pa = programaEArgumentos(tokens);
+    const esqueleto = comandosLogicosSemAspas(linha)[0] ?? "";
+    const r = pa ? bancoDeTesteNaoProvadoLocal(pa[0], pa.slice(1), esqueleto, ambiente) : null;
+    const negou = r !== null;
+    if (negou !== (esperado === "negar")) falhas.push(`ambiente sintético (${esperado}) falhou: ${linha}`);
+    if (negou && /postgres|exemplo|10\.0\.0/.test(r)) falhas.push(`o motivo vazou o alvo: ${linha}`);
+  }
   for (const [linha, esperado] of FIXTURES.negar) {
     const r = avaliar(linha);
     if (!r) falhas.push(`DEVERIA NEGAR e permitiu: ${linha}`);
@@ -666,7 +835,7 @@ function autoteste() {
     for (const f of falhas) console.error(`  - ${f}`);
     process.exit(1);
   }
-  console.log(`guard-dangerous-command: autoteste OK (${FIXTURES.negar.length} negados, ${FIXTURES.permitir.length} permitidos, ${REGRAS.length} regras, shell aninhado até ${PROFUNDIDADE_MAXIMA} níveis)`);
+  console.log(`guard-dangerous-command: autoteste OK (${FIXTURES.negar.length} negados, ${FIXTURES.permitir.length} permitidos, ${FIXTURES_DE_AMBIENTE.length} de ambiente, ${REGRAS.length} regras, shell aninhado até ${PROFUNDIDADE_MAXIMA} níveis)`);
 }
 
 // -------------------------------------------------------------------------------------------------
