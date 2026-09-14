@@ -5,7 +5,7 @@ import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, 
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
 import { runService, nextCode, requirePermission, comPermissaoResolvida } from "../lib/service.js";
-import { campoCanonico, SEQUENCIA_EMPRESA } from "../lib/compat-empresa.js";
+import { SEQUENCIA_EMPRESA } from "../lib/sequencia-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
 import { atribuirIdGlobalSeAplicavel } from "../lib/id-global.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
@@ -220,7 +220,8 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   // O código da Empresa é `int not null` e não vem do cliente (campo `readOnly`). A condição olha a TABELA
   // canônica, não a chave do recurso: a renomeação trocou a chave de `farms` para `empresas` e a comparação
   // por chave virou letra morta em silêncio — o INSERT passou a sair sem `code` e a violar o NOT NULL.
-  // A chave da SEQUÊNCIA continua legada de propósito (`SEQUENCIA_EMPRESA`): ver o motivo no adaptador.
+  // A chave da SEQUÊNCIA continua legada de propósito: trocá-la sem migrar o dado reiniciaria a numeração
+  // do cadastro de Empresa. Ver `lib/sequencia-empresa.ts` — sai na PRE-BASE2-05C, junto com o `update`.
   if (def.table === "empresas" && !cols.includes("code")) { cols.push("code"); vals.push(Number(await nextCode(ctx.tx, ctx.orgId, SEQUENCIA_EMPRESA, 1))); }
   const r = await ctx.tx.query(`insert into erp.${ident(def.table)} (${cols.map(ident).join(",")}) values (${vals.map((_, i) => `$${i + 1}`).join(",")}) returning id`, vals);
   const id = (r.rows[0] as { id: string }).id;
@@ -288,8 +289,7 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
  * referências. Respeita tenant/fazenda como a listagem e nunca aceita nome de coluna do cliente (só campos da definição).
  */
 export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, campoPedido: string, search: string | undefined, limit: number) {
-  // o cliente pode pedir pelo nome legado (link salvo, versão anterior do web): resolvido aqui, uma vez
-  const field = campoCanonico(campoPedido);
+  const field = campoPedido;
   const f = def.fields.find((x) => x.name === field && (x.filter || x.list)); if (!f) throw validation("Campo não filtrável");
   const existing = await checkColumns(ctx, def); if (!existing.has(f.name)) return [];
   const b = new SqlBuilder(); const where: string[] = [];

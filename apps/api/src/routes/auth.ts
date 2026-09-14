@@ -43,9 +43,9 @@ export default async function authRoutes(app: FastifyInstance) {
     // A regra mora num lugar só (`contarNaoLidas`), e é a mesma que GET /admin/notifications devolve.
     const unread = await contarNaoLidas(ctx);
     const idioma = { organizacao: org.rows[0]?.idioma_padrao ?? null, usuario: idiomaUsuario.rows[0]?.idioma ?? null, efetivo: resolverIdioma({ usuario: idiomaUsuario.rows[0]?.idioma ?? null, organizacao: org.rows[0]?.idioma_padrao ?? null }) };
-    // `empresas` é o campo CANÔNICO. `farms` continua ao lado, apontando para a MESMA lista, enquanto o web
-    // da versão anterior puder estar no ar (docs/DEPLOYMENT.md › ordem de implantação): é a única maneira de
-    // a API nova subir antes do web novo sem derrubar o seletor de empresa de quem já está logado.
-    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, farms: empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma };
+    // `empresas` é o campo CANÔNICO e, desde PRE-BASE2-05B, o ÚNICO. O apelido saiu junto com o aliasador
+    // de resposta: o cliente em produção já lê só este campo, e mantê-lo duplicado deixaria a resposta com
+    // duas verdades que ninguém garante que continuariam iguais.
+    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma };
   }));
 }

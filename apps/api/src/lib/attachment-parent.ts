@@ -1,5 +1,4 @@
 import { RESOURCES, moduloDaPermissao, permissaoManejo, permissaoMovimentacao } from "@agro/domain";
-import { tabelaCanonica } from "./compat-empresa.js";
 import { empresaPermitida, hasPermission, type ServiceCtx } from "./context.js";
 import { validarEmpresaSelecionada } from "./service.js";
 import { notFound, validation, denied } from "./errors.js";
@@ -8,7 +7,7 @@ import { notFound, validation, denied } from "./errors.js";
  * Autorização central do REGISTRO-PAI de um anexo (docs/AUTHORIZATION.md, "Anexos").
  * `entity` vem da requisição e NUNCA vira SQL: só entradas deste registry (whitelist estática) determinam tabela e
  * consulta. Cada entidade anexável tem classificação, permissão funcional de visualização do pai e regra de escopo:
- *  - A FARM: tabela com organization_id + empresa_id → tenant + scopedById (fora do escopo → 404, não expõe existência);
+ *  - A EMPRESA: tabela com organization_id + empresa_id → tenant + scopedById (fora do escopo → 404, não expõe existência);
  *  - B ORG: tabela da organização inteira → tenant (+ compartilhados com organization_id null);
  *  - C CHILD: sem empresa_id próprio → escopo derivado do pai (curral → setor → pátio.empresa_id; usuário → membro da organização);
  *  - qualquer outra entidade → D NÃO ANEXÁVEL (VALIDATION_ERROR: é erro de parâmetro, não um registro invisível).
@@ -79,13 +78,13 @@ export const ATTACHMENT_PARENTS: Readonly<Record<string, ParentRule>> = (() => {
 })();
 
 /**
- * `entity` é o nome da TABELA do pai, e tabela renomeada é contrato quebrado para quem guardou o nome antigo
- * (anexo enviado por cliente da versão anterior, link salvo). O apelido é resolvido para o MESMO registro —
- * não há uma segunda regra de anexo, então autorização e escopo não têm como divergir entre os dois nomes.
+ * `entity` é o nome CANÔNICO da tabela do pai. O apelido do nome anterior saiu em PRE-BASE2-05B: duas portas
+ * para a mesma entidade significam duas chances de divergir em autorização, e só uma delas apareceria numa
+ * auditoria que listasse o que é anexável. Nome antigo agora cai em "Entidade não aceita anexos" (422) —
+ * recusa explícita, não um registro invisível.
  */
 export function attachableEntity(entity: string): ParentRule | undefined {
-  const canonica = tabelaCanonica(entity);
-  return Object.prototype.hasOwnProperty.call(ATTACHMENT_PARENTS, canonica) ? ATTACHMENT_PARENTS[canonica] : undefined;
+  return Object.prototype.hasOwnProperty.call(ATTACHMENT_PARENTS, entity) ? ATTACHMENT_PARENTS[entity] : undefined;
 }
 
 /**
