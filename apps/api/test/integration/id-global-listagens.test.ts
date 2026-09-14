@@ -170,10 +170,37 @@ describe("exportação da listagem", () => {
     expect(numerados.length, "o produto criado pela porta real aparece numerado na exportação").toBeGreaterThan(0);
   });
 
+  it("registro sem número exporta célula VAZIA — nunca um número improvisado", async () => {
+    const semNumero = await admin.query<{ n: string }>(
+      "select count(*) n from erp.products p where p.organization_id=$1 and p.deleted_at is null and not exists (select 1 from erp.registros_globais g where g.organization_id=p.organization_id and g.tipo_entidade='products' and g.id_entidade=p.id)", [h.demo.orgId]);
+    if (Number(semNumero.rows[0]!.n) === 0) return; // nada a provar nesta base
+    const r = await h.app.inject({ method: "GET", url: "/api/exports/products?format=csv", headers: h.headers() });
+    expect(r.statusCode, r.body).toBe(200);
+    const linhas = r.body.replace(/^\uFEFF/, "").split("\n").slice(1).filter(Boolean);
+    const vazias = linhas.filter((l) => l.startsWith(";"));
+    expect(vazias.length, "acervo sem índice sai com a primeira célula vazia").toBeGreaterThan(0);
+    expect(linhas.some((l) => /^[^#;][^;]*;/.test(l)), "nenhuma célula de ID Global sai com valor que não seja #N").toBe(false);
+  });
+
+  it("as demais colunas da exportação continuam as mesmas, na mesma ordem", async () => {
+    // O contrato anterior é a lista de campos `list` do recurso; o ID Global entra ANTES, sem reordenar nada.
+    const { getResource } = await import("@agro/domain");
+    const def = getResource("products")!;
+    const esperadas = def.fields.filter((f) => f.list).map((f) => f.label);
+    const r = await h.app.inject({ method: "GET", url: "/api/exports/products?format=csv", headers: h.headers() });
+    const cabecalho = r.body.replace(/^\uFEFF/, "").split("\n")[0]!.split(";");
+    expect(cabecalho[0]).toBe("ID Global");
+    expect(cabecalho.slice(1)).toEqual(esperadas);
+  });
+
   it("recurso fora do catálogo exporta exatamente como antes, sem coluna nova", async () => {
     const r = await h.app.inject({ method: "GET", url: "/api/exports/cost_centers?format=csv", headers: h.headers() });
     expect(r.statusCode, r.body).toBe(200);
-    expect(r.body.replace(/^\uFEFF/, "").split("\n")[0]!.split(";")[0]).not.toBe("ID Global");
+    const { getResource } = await import("@agro/domain");
+    const def = getResource("cost_centers")!;
+    const cabecalho = r.body.replace(/^\uFEFF/, "").split("\n")[0]!.split(";");
+    expect(cabecalho[0]).not.toBe("ID Global");
+    expect(cabecalho).toEqual(def.fields.filter((f) => f.list).map((f) => f.label));
   });
 });
 

@@ -331,6 +331,23 @@ nas tabelas de negócio). Quem procura por número usa a busca global.
 
 **`#N` continua não sendo endereço.** A linha abre pela rota canônica com o UUID.
 
+**Telas que montam a grade por conta própria.** Quatro listagens não passam pelo Modelo Base1 — títulos
+financeiros, animais, importações OFX e perfis de acesso — e recebem a coluna explicitamente. Elas são a
+última milha do frontend: apagar a coluna de uma delas deixaria catálogo, API, matriz das 23 entidades e o
+teste de N+1 verdes, com o número sumindo da tela. Por isso cada uma tem prova de navegador em
+`apps/web/e2e/id-global-listagem.spec.ts`, e o gate cobra, por ARQUIVO, toda tela com `DataTable` que não
+exibe `#N` sem motivo escrito. Essa lista de arquivos de interface não é um segundo catálogo: o catálogo de
+entidades continua sendo um só, no servidor, e o cliente apenas obedece à declaração da resposta.
+
+**A coluna não oferece controle que não funciona.** `Base1Column` declara capacidades
+(`hideable`/`resizable`/`freezable`/`autoFit`, padrão `true`) e a grade só oferece o que a coluna permite. A
+identidade as nega todas, então não tem menu de coluna nem alça de arraste — em vez de um "Ocultar" que não
+oculta. O componente genérico não conhece `id_global`.
+
+**Rodapé de totais.** O `colSpan` é derivado da mesma lista de colunas que a grade desenha
+(`colSpanAteColuna`/`colSpanAposColuna`). Contado à mão ele desanda a cada coluna nova, e um total sob a
+coluna errada parece dado errado.
+
 **Cobertura.** Três caminhos, todos derivados do catálogo: a listagem genérica de recursos e o helper de
 documentos de estoque resolvem o tipo pela TABELA (`tipoEntidadeDaTabela`), e as rotas especializadas
 declaram o tipo no ponto de chamada. O gate `scripts/id-global-audit.mjs` reprova qualquer entidade do

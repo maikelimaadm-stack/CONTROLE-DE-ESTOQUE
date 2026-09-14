@@ -45,15 +45,29 @@ export function IdGlobalCell({ valor, rotulo }: { valor: unknown; rotulo?: strin
   return <span className="id-global" data-testid="id-global-celula" title={`${rotulo ?? "Registro"} · identificador único desta organização`}>{texto}</span>;
 }
 
-/** Coluna do MODELO BASE1 (listagens genéricas e de lançamentos). */
+/**
+ * Coluna do MODELO BASE1 (listagens genéricas e de lançamentos).
+ *
+ * As capacidades são declaradas NEGATIVAMENTE e de propósito: esta coluna é a identidade do registro, vive
+ * fora de `prefs.columns` e é sempre a primeira, congelada. Sem a declaração, a grade ofereceria "Ocultar",
+ * "Auto ajustar", "Congelar" e a alça de arraste — controles que a listagem depois ignoraria, deixando o
+ * usuário sem saber se o sistema falhou ou se ele errou. `sortable: false` segue a mesma lógica: `id_global`
+ * mora em `erp.registros_globais`, e prometer ordenação seria prometer o que a consulta não faz.
+ */
 export const colunaIdGlobalBase1 = (rotulo?: string): Base1Column => ({
-  key: CHAVE_COLUNA_ID_GLOBAL, label: ROTULO_COLUNA_ID_GLOBAL, sortable: false, width: LARGURA,
+  key: CHAVE_COLUNA_ID_GLOBAL, label: ROTULO_COLUNA_ID_GLOBAL, width: LARGURA,
+  sortable: false, hideable: false, resizable: false, freezable: false, autoFit: false,
   render: (r: Row) => <IdGlobalCell valor={r[CHAVE_COLUNA_ID_GLOBAL]} rotulo={rotulo} />,
   text: (r: Row) => textoIdGlobal(r[CHAVE_COLUNA_ID_GLOBAL])
 });
 
-/** Mesma coluna para as listagens que montam a grade por conta própria (DataTable). */
+/**
+ * Mesma coluna para as listagens que montam a grade por conta própria (DataTable). As quatro que existem
+ * hoje — títulos financeiros, animais, importações OFX e perfis de acesso — não passam pelo Base1List, e por
+ * isso a recebem aqui explicitamente; `apps/web/e2e/id-global-listagem.spec.ts` prova cada uma delas.
+ */
 export const colunaIdGlobalTabela = <T extends Record<string, unknown>>(rotulo?: string): Column<T> => ({
   key: CHAVE_COLUNA_ID_GLOBAL, label: ROTULO_COLUNA_ID_GLOBAL, sortable: false, width: LARGURA,
+  hideable: false, resizable: false, freezable: false, autoFit: false,
   render: (r: T) => <IdGlobalCell valor={r[CHAVE_COLUNA_ID_GLOBAL]} rotulo={rotulo} />
 });

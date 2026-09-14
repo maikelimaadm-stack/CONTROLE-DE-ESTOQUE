@@ -64,16 +64,29 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
           <th key={c.key} ref={(el) => { ths.current[c.key] = el; }} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : { minWidth: 110 }), ...(isFrozen ? { left: lefts[c.key] ?? 0, zIndex: 4 } : {}) }} className={cn("group relative", isFrozen && "is-frozen", isAnchor && "is-frozen-anchor", c.align === "right" && "!text-right")}>
             <div className="flex h-[30px] items-center gap-1">
               <button type="button" className={cn("inline-flex min-w-0 flex-1 items-center gap-1 truncate text-left", !onSort && "cursor-default")} onClick={() => c.sortable !== false && onSort?.(c.key)} title={c.label}><span className="truncate">{c.label}</span>{sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 text-[var(--mg-accent)]" /> : <ArrowDown className="h-3 w-3 text-[var(--mg-accent)]" />)}</button>
-              <B1Popover className="w-52 p-1" align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className="th-menu"><MoreVertical /></button>}>
-                <MenuList onPick={(k) => { setMenuFor(null); if (k === "filter") onFilter?.(c.key); if (k === "fit") onAutoFit?.(c.key); if (k === "freeze") onFreeze?.(isAnchor ? 0 : i + 1); if (k === "hide") onHide?.(c.key); }} items={[
-                  { key: "filter", label: "Abrir filtro avançado", icon: <Filter className="h-4 w-4" />, disabled: !onFilter || !c.kind },
-                  { key: "fit", label: "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" />, disabled: !onAutoFit },
-                  { key: "freeze", label: isAnchor ? "Descongelar colunas" : isFrozen ? "Congelar até esta coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" />, disabled: !onFreeze },
-                  { key: "hide", label: "Ocultar coluna", icon: <EyeOff className="h-4 w-4" />, disabled: !onHide || columns.length <= 1 }
-                ]} />
-              </B1Popover>
+              {(() => {
+                /**
+                 * O menu só existe quando ALGUMA ação é realmente possível nesta coluna. Uma coluna que
+                 * declara `hideable/resizable/freezable/autoFit: false` (identidade fixa) não ganha um menu
+                 * com entradas mortas: ela simplesmente não tem menu — e a alça de redimensionar também não
+                 * é renderizada. Controle que não faz nada é pior do que controle ausente.
+                 */
+                const itens = [
+                  ...(c.kind ? [{ key: "filter", label: "Abrir filtro avançado", icon: <Filter className="h-4 w-4" />, disabled: !onFilter }] : []),
+                  ...(c.autoFit === false ? [] : [{ key: "fit", label: "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" />, disabled: !onAutoFit }]),
+                  ...(c.freezable === false ? [] : [{ key: "freeze", label: isAnchor ? "Descongelar colunas" : isFrozen ? "Congelar até esta coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" />, disabled: !onFreeze }]),
+                  ...(c.hideable === false ? [] : [{ key: "hide", label: "Ocultar coluna", icon: <EyeOff className="h-4 w-4" />, disabled: !onHide || columns.length <= 1 }])
+                ];
+                // Nenhuma ação sequer aplicável a esta coluna → nenhum menu. O critério é a DECLARAÇÃO da
+                // coluna, não a ausência de callback: telas que não passam os manipuladores continuam
+                // mostrando o menu como antes, sem mudança de layout.
+                if (!itens.length) return null;
+                return <B1Popover className="w-52 p-1" align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className="th-menu"><MoreVertical /></button>}>
+                  <MenuList onPick={(k) => { setMenuFor(null); if (k === "filter") onFilter?.(c.key); if (k === "fit") onAutoFit?.(c.key); if (k === "freeze") onFreeze?.(isAnchor ? 0 : i + 1); if (k === "hide") onHide?.(c.key); }} items={itens} />
+                </B1Popover>;
+              })()}
             </div>
-            <span role="separator" aria-label={`Redimensionar ${c.label}`} onMouseDown={(e) => startResize(e, c)} className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 hover:bg-[var(--mg-accent)] hover:opacity-60" />
+            {c.resizable !== false && <span role="separator" aria-label={`Redimensionar ${c.label}`} onMouseDown={(e) => startResize(e, c)} className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 hover:bg-[var(--mg-accent)] hover:opacity-60" />}
           </th>); })}
       </tr></thead>
       <tbody>

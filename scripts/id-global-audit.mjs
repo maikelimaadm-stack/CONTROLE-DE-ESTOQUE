@@ -155,6 +155,60 @@ for (const t of declaradasPorEngano) {
   if (!tipos.includes(t)) aviso(`listagem: "${t}" é enriquecido como entidade de ID Global mas não existe no catálogo — o runtime recusaria a listagem inteira`);
 }
 
+// ---------- 4d. SUPERFÍCIES DO CLIENTE QUE NÃO PASSAM PELO MODELO BASE1 ----------
+//
+// O Base1List recebe a coluna de identidade de graça: ela é montada uma vez, a partir da declaração que o
+// servidor manda na resposta. Algumas telas, porém, montam a grade por conta própria com `DataTable` — e
+// nelas a coluna só existe porque alguém a escreveu. Apagá-la de uma delas não acende nenhuma luz: catálogo,
+// enriquecimento da API, matriz das 23 entidades e o teste de N+1 continuam verdes, e o número simplesmente
+// some da tela.
+//
+// ESTA LISTA NÃO É UM SEGUNDO CATÁLOGO. O catálogo de entidades continua sendo um só
+// (`ENTIDADES_ID_GLOBAL`, no domínio) e o runtime do cliente não conhece nenhuma lista de entidades: ele
+// obedece à declaração do servidor. O que está aqui embaixo são ARQUIVOS DE INTERFACE e o motivo escrito de
+// cada um não exibir `#N` — a mesma mecânica de `ESCRITAS_DECLARADAS` acima. Uma tela nova com `DataTable`
+// que liste uma entidade elegível não estará aqui, não usará a coluna, e o gate cobra.
+const LISTAGENS_CUSTOM_SEM_ID_GLOBAL = {
+  "apps/web/src/app/(app)/relatorios/[key]/page.tsx": "relatório parametrizado: linhas agregadas, não registros de uma entidade",
+  "apps/web/src/features/admin/audit.tsx": "eventos de auditoria (audit_logs) — infraestrutura, fora do catálogo por contrato",
+  "apps/web/src/features/admin/users.tsx": "membros da organização: entidade sem ID Global",
+  "apps/web/src/features/fleet/depreciations.tsx": "cálculo de depreciação por equipamento, não uma entidade própria",
+  "apps/web/src/features/hr/advances.tsx": "adiantamentos salariais: entidade fora do catálogo",
+  "apps/web/src/features/livestock/matings.tsx": "coberturas: entidade fora do catálogo",
+  "apps/web/src/features/stock/balances.tsx": "saldo por produto/armazém: agregação, não registro",
+  "apps/web/src/features/stock/corrections.tsx": "ajustes de inventário: entidade fora do catálogo",
+  "apps/web/src/features/stock/dfe-approvals.tsx": "fila fiscal de aprovação: documento ainda não importado",
+  "apps/web/src/features/stock/dfe-queue.tsx": "fila de DF-e recebidos: documento ainda não importado",
+  "apps/web/src/features/stock/feed-formulas.tsx": "formulações de ração: entidade fora do catálogo",
+  "apps/web/src/features/stock/movements.tsx": "movimentos de estoque: efeito de documentos, sem identidade própria",
+  "apps/web/src/features/stock/opening-balances.tsx": "saldos de abertura: carga inicial, não registro navegável"
+};
+
+const telasComGradePropria = [];
+(function varrerWeb(dir) {
+  for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, f.name);
+    if (f.isDirectory()) varrerWeb(p);
+    else if (f.name.endsWith(".tsx") && fs.readFileSync(p, "utf8").includes("<DataTable")) telasComGradePropria.push(path.relative(RAIZ, p));
+  }
+})(path.join(RAIZ, "apps/web/src"));
+
+let telasComIdGlobal = 0;
+for (const rel of telasComGradePropria) {
+  const usa = fs.readFileSync(path.join(RAIZ, rel), "utf8").includes("colunaIdGlobalTabela");
+  const declarada = LISTAGENS_CUSTOM_SEM_ID_GLOBAL[rel];
+  if (usa) { telasComIdGlobal++; if (declarada) aviso(`listagem custom: ${rel} exibe o ID Global mas está declarada como sem ID Global — remova a declaração`); continue; }
+  if (!declarada) aviso(`listagem custom sem ID Global: ${rel} monta a grade por conta própria e não usa colunaIdGlobalTabela — acrescente a coluna ou declare em LISTAGENS_CUSTOM_SEM_ID_GLOBAL o motivo de a entidade não ser elegível`);
+}
+for (const rel of Object.keys(LISTAGENS_CUSTOM_SEM_ID_GLOBAL)) {
+  if (!telasComGradePropria.includes(rel)) aviso(`listagem custom: ${rel} está declarada mas não existe mais (ou deixou de usar DataTable) — a declaração precisa sair junto`);
+}
+// e a prova de navegador de cada uma das que EXIBEM: sem isso, a última milha volta a ficar sem rede
+const e2eListagem = fs.readFileSync(path.join(RAIZ, "apps/web/e2e/id-global-listagem.spec.ts"), "utf8");
+for (const rota of ["/financeiro/contas-a-pagar", "/pecuaria/animais", "/financeiro/ofx", "/admin/perfis"]) {
+  if (!e2eListagem.includes(rota)) aviso(`listagem custom: a rota ${rota} não é aberta por nenhum caso de apps/web/e2e/id-global-listagem.spec.ts`);
+}
+
 // ---------- 4b. CACHE do cliente carrega a ORGANIZAÇÃO ----------
 // `#55` existe em quase toda organização e aponta para coisas diferentes em cada uma. Uma chave
 // `["id-global", 55]` deixaria o resultado da organização anterior navegável depois da troca. Cada
@@ -180,4 +234,4 @@ if (erros.length) {
   for (const e of erros) console.error(`  - ${e}`);
   process.exit(1);
 }
-console.log(`id-global-audit: OK (${ENTIDADES_ID_GLOBAL.length} entidades, ${portas} porta(s) de escrita direta + porta genérica, ${listadas.size} listagem(ns) com #N, exibição central derivada do catálogo)`);
+console.log(`id-global-audit: OK (${ENTIDADES_ID_GLOBAL.length} entidades, ${portas} porta(s) de escrita direta + porta genérica, ${listadas.size} listagem(ns) de API com #N, ${telasComIdGlobal} tela(s) de grade própria com a coluna + ${Object.keys(LISTAGENS_CUSTOM_SEM_ID_GLOBAL).length} declarada(s) sem ID Global, exibição central derivada do catálogo)`);

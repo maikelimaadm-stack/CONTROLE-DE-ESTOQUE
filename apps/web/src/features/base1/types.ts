@@ -19,6 +19,24 @@ export interface Base1Column {
   align?: "left" | "right" | "center";
   sortable?: boolean;
   width?: number;
+  /**
+   * CAPACIDADES DA COLUNA — o que a grade pode OFERECER sobre ela.
+   *
+   * Existem por causa de um defeito real: uma coluna pode ser estruturalmente fixa (a identidade `#N` da
+   * PRE-BASE2-05B.1, por exemplo, que vive fora das preferências do usuário), mas a grade continuava
+   * oferecendo "Ocultar", "Auto ajustar", "Congelar" e a alça de redimensionar para TODA coluna. Os
+   * controles apareciam habilitados e não faziam nada — ou faziam durante o gesto e voltavam depois, que é
+   * pior: o usuário não sabe se o sistema o ignorou ou se ele errou.
+   *
+   * A declaração é da COLUNA, não da grade: nenhum componente genérico precisa conhecer `id_global` nem
+   * qualquer outra chave de domínio, e a próxima coluna travada nasce funcionando.
+   *
+   * Padrão `true` em todas — colunas comuns continuam exatamente como sempre foram.
+   */
+  hideable?: boolean;
+  resizable?: boolean;
+  freezable?: boolean;
+  autoFit?: boolean;
 }
 
 /** Como o filtro vira parâmetro de consulta. `advanced` = `campo__operador=valor` (recursos declarativos); `simple` = `campo=valor`. */

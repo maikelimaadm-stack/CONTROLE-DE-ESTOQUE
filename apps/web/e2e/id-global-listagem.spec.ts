@@ -108,3 +108,139 @@ test.describe("ID Global na listagem", () => {
     await expect(page).toHaveURL(new RegExp(`/os/${os.id}`));
   });
 });
+
+/** Cria um perfil de acesso pela API (porta que aloca o número) e devolve o `#N` dele. */
+async function criarPerfil(page: Page): Promise<{ id: string; idGlobal: number; nome: string }> {
+  return page.evaluate(async (base: string) => {
+    const sessao = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string };
+    const cab = { "content-type": "application/json", authorization: `Bearer ${sessao.token}`, "x-org-id": sessao.orgId };
+    const nome = `Perfil listagem ${Date.now()}`;
+    const novo = await (await fetch(`${base}/api/admin/roles`, { method: "POST", headers: cab,
+      body: JSON.stringify({ name: nome, description: "criado pelo e2e de ID Global", permissions: ["products.view"] }) })).json();
+    if (!novo?.id) throw new Error(`falha ao criar o perfil de teste: ${JSON.stringify(novo)}`);
+    const reg = await (await fetch(`${base}/api/registros-globais/entidade/roles/${novo.id}`, { headers: cab })).json();
+    return { id: novo.id as string, idGlobal: reg.idGlobal as number, nome };
+  }, API);
+}
+
+/**
+ * TELAS QUE NÃO PASSAM PELO MODELO BASE1 (PRE-BASE2-05B.1).
+ *
+ * Quatro listagens montam a grade por conta própria com DataTable e por isso receberam a coluna
+ * explicitamente. Sem estes casos, apagar `colunaIdGlobalTabela(...)` de qualquer uma delas passaria por
+ * catálogo, enriquecimento da API, matriz das 23 entidades e N+1 sem acender nenhuma luz — o número
+ * simplesmente sumiria da tela, que é exatamente o que esta fatia existe para impedir.
+ */
+const CUSTOM: { nome: string; rota: string }[] = [
+  { nome: "títulos financeiros (contas a pagar)", rota: "/financeiro/contas-a-pagar" },
+  { nome: "animais", rota: "/pecuaria/animais" },
+  { nome: "importações OFX", rota: "/financeiro/ofx" },
+  { nome: "perfis de acesso", rota: "/admin/perfis" }
+];
+
+test.describe("ID Global nas listagens que montam a grade por conta própria", () => {
+  for (const tela of CUSTOM) {
+    test(`${tela.nome} — a coluna existe e toda célula é #N ou ausência explícita`, async ({ page }) => {
+      await login(page);
+      await page.goto(tela.rota);
+      await expect(page.getByRole("columnheader", { name: "ID Global" })).toBeVisible();
+      const celulas = page.getByTestId("b1-row").locator('[data-testid="id-global-celula"]');
+      for (let i = 0; i < await celulas.count(); i++) {
+        await expect(celulas.nth(i)).toHaveText(/^#\d+$/);
+      }
+    });
+  }
+
+  test("perfis de acesso: o #N da linha é o mesmo que o backend deu ao registro", async ({ page }) => {
+    await login(page);
+    const perfil = await criarPerfil(page);
+    await page.goto("/admin/perfis");
+    const linha = page.getByTestId("b1-row").filter({ hasText: perfil.nome }).first();
+    await expect(linha).toBeVisible();
+    await expect(linha.getByTestId("id-global-celula").first()).toHaveText(`#${perfil.idGlobal}`);
+    // a linha continua abrindo pelo UUID
+    await linha.dblclick();
+    await expect(page).toHaveURL(new RegExp(`/admin/perfis/${perfil.id}`));
+  });
+});
+
+/**
+ * RODAPÉ DE TOTAIS — alinhamento geométrico, não contagem de células.
+ *
+ * O defeito real que este caso pega: a coluna de identidade entra à esquerda e o `colSpan` do rodapé não
+ * acompanha, então o total de Peso aparece embaixo de Entrada. Nenhum teste de contagem de colunas pegaria
+ * isso; a única pergunta que importa é "o total está sob a SUA coluna?", e ela se responde comparando as
+ * posições que o navegador realmente calculou.
+ */
+async function alinhamentoDeTotal(page: Page, rotuloDaColuna: string, indiceDoTotal: number) {
+  // O cabeçalho é localizado pelo `title` do botão da coluna: o nome acessível do <th> inclui o menu e a
+  // alça de redimensionar, então casá-lo por texto exato é frágil.
+  const th = page.locator(`thead th:has(button[title="${rotuloDaColuna}"])`).first();
+  const td = page.locator("tfoot td.num").nth(indiceDoTotal);
+  await expect(th).toBeVisible();
+  await expect(td).toBeVisible();
+  const [a, b] = [await th.boundingBox(), await td.boundingBox()];
+  expect(a, "cabeçalho medido").toBeTruthy();
+  expect(b, "célula de total medida").toBeTruthy();
+  return Math.abs(a!.x - b!.x);
+}
+
+test.describe("rodapé de totais alinhado mesmo com a coluna de identidade", () => {
+  test("animais: o total de Peso fica sob a coluna Peso, e o de Valor sob Valor", async ({ page }) => {
+    await login(page);
+    await page.goto("/pecuaria/animais");
+    await expect(page.getByRole("columnheader", { name: "ID Global" })).toBeVisible();
+    expect(await alinhamentoDeTotal(page, "Peso (kg)", 0), "total de Peso desalinhado da coluna Peso").toBeLessThan(2);
+    expect(await alinhamentoDeTotal(page, "Valor", 1), "total de Valor desalinhado da coluna Valor").toBeLessThan(2);
+  });
+
+  test("vendas (Modelo Base1): o total fica sob a coluna Total — a compensação central também é cobrada", async ({ page }) => {
+    await login(page);
+    await page.goto("/vendas/sales");
+    await expect(page.getByRole("columnheader", { name: "ID Global" })).toBeVisible();
+    expect(await alinhamentoDeTotal(page, "Total", 0), "total desalinhado da coluna Total").toBeLessThan(2);
+  });
+
+  test("contas a pagar: os totais ficam sob Valor e Saldo", async ({ page }) => {
+    await login(page);
+    await page.goto("/financeiro/contas-a-pagar");
+    await expect(page.getByRole("columnheader", { name: "ID Global" })).toBeVisible();
+    expect(await alinhamentoDeTotal(page, "Valor", 0), "total de Valor desalinhado").toBeLessThan(2);
+    expect(await alinhamentoDeTotal(page, "Saldo", 1), "total de Saldo desalinhado").toBeLessThan(2);
+  });
+});
+
+/**
+ * A COLUNA FIXA NÃO PODE OFERECER CONTROLE QUE NÃO FUNCIONA.
+ *
+ * "Ocultar" que não oculta, "Auto ajustar" que volta ao mesmo tamanho e arraste que se desfaz ao soltar são
+ * piores do que a ausência do controle: o usuário não sabe se o sistema o ignorou ou se ele errou. As
+ * capacidades são declaradas na COLUNA (`hideable`/`resizable`/`freezable`/`autoFit`), então a grade
+ * continua genérica e a próxima coluna travada nasce correta.
+ */
+test.describe("capacidades da coluna de identidade", () => {
+  test("ID Global não oferece menu de coluna nem alça de redimensionar; uma coluna normal continua oferecendo", async ({ page }) => {
+    await login(page);
+    await page.goto("/cadastros/products");
+    await expect(page.getByRole("columnheader", { name: "ID Global" })).toBeVisible();
+
+    await expect(page.getByLabel("Abrir menu da coluna ID Global"), "coluna de identidade não tem menu").toHaveCount(0);
+    await expect(page.getByLabel("Redimensionar ID Global"), "coluna de identidade não tem alça de arraste").toHaveCount(0);
+
+    // controle de coluna comum permanece intacto — a capacidade é por coluna, não um bloqueio global
+    await expect(page.getByLabel("Abrir menu da coluna Descrição")).toHaveCount(1);
+    await expect(page.getByLabel("Redimensionar Descrição")).toHaveCount(1);
+    await page.getByLabel("Abrir menu da coluna Descrição").click();
+    await expect(page.getByRole("menuitem", { name: "Ocultar coluna" })).toBeEnabled();
+    await expect(page.getByRole("menuitem", { name: "Auto ajustar coluna" })).toBeEnabled();
+    await page.keyboard.press("Escape");
+  });
+
+  test("ID Global permanece a primeira coluna e congelada", async ({ page }) => {
+    await login(page);
+    await page.goto("/cadastros/products");
+    const primeiro = page.locator("thead th").nth(1); // 0 = célula de seleção
+    await expect(primeiro).toContainText("ID Global");
+    await expect(primeiro).toHaveClass(/is-frozen/);
+  });
+});
