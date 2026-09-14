@@ -267,10 +267,14 @@ export default async function reportRoutes(app: FastifyInstance) {
     return result;
   });
   /**
-   * Valor de uma célula exportada. O ID Global sai como NÚMERO PURO (PRE-BASE2-05B.2), igual ao que a tela
-   * mostra — e, de quebra, a planilha passa a tratá-lo como número: com o `#` na frente, `54` era texto e
-   * ordenar a coluna no Excel dava 1, 10, 100, 2. A formatação continua vindo de `formatarIdGlobal`, que é o
-   * único lugar onde o número vira texto.
+   * Valor de uma célula exportada. O ID Global sai SEM PREFIXO (PRE-BASE2-05B.2), igual ao que a tela mostra.
+   * A formatação continua vindo de `formatarIdGlobal`, o único lugar onde o número vira texto.
+   *
+   * O QUE ISSO GARANTE, E O QUE NÃO GARANTE. No CSV a célula passa a ser `54` em vez de `#54`, e a planilha
+   * que importar esse CSV lê o campo como número. No XLSX o valor continua sendo uma STRING: é o que
+   * `formatarIdGlobal` devolve e é o que o ExcelJS recebe aqui, então a célula nasce do tipo texto — medido,
+   * não suposto. Trocar o tipo da célula do XLSX é outra mudança, de outro escopo; o que esta fatia promete é
+   * a ausência do `#`, e prometer "agora é número na planilha" seria afirmar um efeito que o código não tem.
    */
   const celulaExportada = (chave: string, valor: unknown) =>
     chave === "id_global" ? (typeof valor === "number" ? formatarIdGlobal(valor) : "") : valor ?? "";

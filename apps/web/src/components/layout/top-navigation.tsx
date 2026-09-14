@@ -4,7 +4,7 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, ChevronDown, FolderOpen, Hash, Hexagon, MoreHorizontal, Search, Settings2, Star, Zap } from "lucide-react";
+import { Bell, ChevronDown, FolderOpen, Hexagon, MoreHorizontal, Search, Settings2, Star, Zap } from "lucide-react";
 import { NAV, permOk, searchNav, moduleForPath, favoriteRoute, crumbsFor, canonicalize } from "@/lib/nav";
 import { megaMenuFor, megaColumns, type MegaMenuData } from "@/lib/mega-menu";
 import { interpretarIdGlobal, formatarIdGlobal } from "@erp/plataforma";
@@ -126,9 +126,20 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
             onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setHi((h) => Math.min(h + 1, results.length - 1)); } else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); } else if (e.key === "Enter" && registroGlobal) { e.preventDefault(); abrirRegistroGlobal(registroGlobal); } else if (e.key === "Enter" && results[hi]) { e.preventDefault(); pick(results[hi]!.href); } else if (e.key === "Escape") { setSearch(""); inputRef.current?.blur(); } }} />
           <kbd className="mg-topnav__kbd" aria-hidden>Ctrl K</kbd>
           {registroGlobal && <div id="nav-search-global-id" role="listbox" aria-label="Registro por ID Global" className="mg-topnav__results" data-testid="nav-search-id-global">
+            {/*
+              SEM ÍCONE DE HASH AQUI (PRE-BASE2-05B.2).
+
+              O resultado trazia um `<Hash />` à esquerda do número. Ele não era texto — o `textContent` já
+              saía "54 · Rótulo" —, mas o usuário lê a TELA, não o DOM: desenhado colado no número, o ícone
+              reconstruía visualmente o `#54` que esta fatia retirou. A decisão de apresentação vale para o
+              que se vê, não só para o que um teste consegue ler.
+
+              Nenhum símbolo entra no lugar: qualquer glifo nessa posição volta a ser um prefixo. Se um dia um
+              ícone NEUTRO fizer falta para alinhar este resultado com os de navegação, isso é uma decisão de
+              UX própria — não um conserto de layout feito de passagem aqui.
+            */}
             <button type="button" role="option" aria-selected className="mg-topnav__result is-active" data-testid="nav-search-id-global-item"
               onMouseDown={(e) => e.preventDefault()} onClick={() => abrirRegistroGlobal(registroGlobal)}>
-              <Hash className="h-3.5 w-3.5 shrink-0 text-[var(--mg-accent)]" />
               <span className="min-w-0"><span className="block truncate font-medium text-slate-800">{formatarIdGlobal(registroGlobal.idGlobal)} · {registroGlobal.rotulo}</span>
                 <span className="block truncate text-[10.5px] text-slate-500">{registroGlobal.modulo}</span></span>
             </button>

@@ -168,8 +168,9 @@ describe("exportação da listagem", () => {
     expect(cabecalho!.split(";")[0]).toBe("ID Global");
     const numerados = linhas.filter((l) => /^\d+;/.test(l));
     expect(numerados.length, "o produto criado pela porta real aparece numerado na exportação").toBeGreaterThan(0);
-    // PRE-BASE2-05B.2: sem o `#`, a célula é um NÚMERO para a planilha — ordenar a coluna no Excel deixa de
-    // dar 1, 10, 100, 2. É o mesmo texto que a tela mostra, não uma segunda representação para exportação.
+    // PRE-BASE2-05B.2: a célula sai sem prefixo — o MESMO texto que a tela mostra, não uma segunda
+    // representação para exportação. O que este caso cobra é a ausência do `#` no CSV; o tipo da célula no
+    // XLSX continua sendo texto e não é promessa desta fatia (ver o comentário de `celulaExportada`).
     expect(linhas.some((l) => l.startsWith("#")), "nenhuma célula exportada volta a trazer o prefixo").toBe(false);
   });
 

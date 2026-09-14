@@ -45,6 +45,21 @@ test.describe("ID Global — busca e identidade", () => {
     await expect(resultado).toContainText(new RegExp(`(^|\\s)${alvo.idGlobal} ·`));
     await expect(resultado, "o resultado diz QUE COISA é, não só o número").toContainText("Ordem de Serviço");
 
+    /**
+     * PROVA DO QUE SE VÊ, NÃO DO QUE O DOM DIZ.
+     *
+     * A asserção de texto acima passava com um `<Hash />` desenhado colado ao número: o `textContent` já era
+     * "54 · Rótulo" enquanto a TELA continuava mostrando um símbolo de hash antes do 54. Quem usa o sistema lê
+     * a tela — a decisão da 05B.2 vale para o glifo, não só para a string.
+     *
+     * O critério é "NENHUM ícone", e não "nenhum ícone de hash": qualquer glifo nessa posição volta a ser um
+     * prefixo visual do número, e uma asserção amarrada ao nome de classe do lucide envelheceria na próxima
+     * versão da biblioteca. Se um ícone NEUTRO for decidido algum dia, este caso se atualiza de propósito —
+     * que é o comportamento certo para uma trava de apresentação.
+     */
+    await expect(resultado.locator("svg"), "nenhum glifo antes do número no resultado da busca").toHaveCount(0);
+    await expect(resultado.locator('[class*="hash"], [class*="Hash"]'), "nem um ícone de hash sob outro nome").toHaveCount(0);
+
     await resultado.click();
     await expect(page).toHaveURL(new RegExp(`/os/${alvo.id}`));
     expect(page.url(), "o ID Global é localizador; a identidade da URL continua sendo o UUID").not.toContain(`/os/${alvo.idGlobal}`);
