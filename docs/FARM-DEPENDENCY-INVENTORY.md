@@ -8,14 +8,14 @@ PRE-BASE2-03, um total único mentiria: `farm_id` numa migration aplicada é his
 cliente HTTP é ponte com prazo, e "fazenda" no comentário de uma rota é o produto ainda falando o
 nicho. Por isso cada ocorrência é classificada em um dos três baldes abaixo — e a catraca trava só o terceiro.
 
-Total medido: **1614** ocorrências · 49 tabelas com coluna de empresa.
+Total medido: **1618** ocorrências · 49 tabelas com coluna de empresa.
 
 ## Classificação (o número que importa é o balde 3)
 
 | # | Balde | Ocorrências | Catraca | O que é |
 | --- | --- | ---: | --- | --- |
 | 1 | **LEGADO HISTÓRICO** | 1097 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
-| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 364 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05 (remoção da compatibilidade: colunas legadas, views e cabeçalho). |
+| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 368 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05 (remoção da compatibilidade: colunas legadas, views e cabeçalho). |
 | 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 153 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
 
 A regra que impede maquiagem: **arquivo não declarado cai no balde 3 por definição.** Esconder dívida
@@ -32,11 +32,11 @@ exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` 
 | Pacotes compartilhados | 0 | 83 | **11** | 94 |
 | Web — código | 0 | 1 | 0 | 1 |
 | Web — navegação/rotas | 0 | 7 | 0 | 7 |
-| Web — testes ponta a ponta | 0 | 26 | 0 | 26 |
+| Web — testes ponta a ponta | 0 | 30 | 0 | 30 |
 | Scripts e gates | 0 | 54 | **4** | 58 |
 | Documentação ativa | 310 | 0 | 0 | 310 |
 | Documentação histórica (referência externa) | 513 | 0 | 0 | 513 |
-| **Total** | **1097** | **364** | **153** | **1614** |
+| **Total** | **1097** | **368** | **153** | **1618** |
 
 ## Balde 2 — a ponte declarada
 
@@ -74,7 +74,7 @@ Cada arquivo abaixo pode falar o idioma antigo por um motivo escrito. Todos saem
 | `packages/db/test/upgrade-rollback.test.ts` | 4 | Mesmo acervo legado, para provar que uma falha depois da janela estrutural da 0014 devolve o ledger protegido. |
 | `apps/web/e2e/empresa-canonica.spec.ts` | 13 | Cutover canônico medido no navegador: cita o nome antigo para provar que ele NÃO sai mais no fio e que a sessão gravada por uma versão anterior migra uma vez. |
 | `apps/web/e2e/acesso-empresa.spec.ts` | 3 | Fixture da matriz de acesso; cita o nome antigo ao montar o estado da tela. |
-| `apps/web/e2e/skew-api-producao.spec.ts` | 10 | Version skew no navegador: web desta PR contra a API EXATA do commit base (a que está no ar). Cita o nome antigo para PROVAR a sua ausência no fio e para verificar que o servidor segue bilíngue até a 05B. |
+| `apps/web/e2e/skew-api-producao.spec.ts` | 14 | Version skew no navegador: web desta PR contra a API EXATA do commit base (a que está no ar). Cita o nome antigo para PROVAR a sua ausência no fio e para verificar que o servidor segue bilíngue até a 05B. |
 | `packages/plataforma/test/sessao-empresa.test.ts` | 1 | Prova a promoção da sessão gravada por uma versão anterior: `farmId` vira `empresaId` uma vez, a chave legada sai do armazenamento e valores divergentes caem em fail-safe. |
 
 ### Confinamento — gates e dicionário
@@ -136,8 +136,8 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `x_farm_id` | contrato | 81 | 17 | `X-Empresa-Id` |
 | `farmScope` | contrato | 5 | 1 | `escopoEmpresa` |
 | `allowedFarms` | contrato | 6 | 0 | `escopoEmpresa (@erp/plataforma)` |
-| `farms` | contrato | 81 | 6 | `/empresas` |
-| `fazenda` | texto | 658 | 51 | `Empresa (i18n: termos.empresa)` |
+| `farms` | contrato | 82 | 6 | `/empresas` |
+| `fazenda` | texto | 661 | 51 | `Empresa (i18n: termos.empresa)` |
 
 `dado` = exige migration e backfill · `contrato` = quebra clientes se mudar sem compatibilidade · `texto` = rótulo, resolvido por i18n.
 
