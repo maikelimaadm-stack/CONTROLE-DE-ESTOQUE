@@ -187,15 +187,24 @@ test("filtrar por empresa realmente filtra — e a query viaja canônica", async
 });
 
 test("nenhuma tela conhece o nome antigo: a moldura do produto é canônica", async ({ page }) => {
+  const v = vigiar(page);
   await login(page);
-  await page.goto("/cadastros/empresas");
+  await page.goto("/cadastros/warehouses");
   await expect(page.getByTestId("b1-row").first()).toBeVisible();
+  /**
+   * A auditoria é da MOLDURA (cabeçalho de coluna, rótulo de campo, aba, menu) — não do DADO. O nome de uma
+   * empresa cadastrada é do usuário: "[DEMO] Fazenda Santa Luzia" continua se chamando assim depois da
+   * migração, e proibir a palavra no conteúdo seria reescrever o cadastro dele, não renomear o produto.
+   */
   const moldura = [
-    ...(await page.locator("thead th").allTextContents()),
-    ...(await page.getByRole("tab").allTextContents()),
-    ...(await page.locator("label").allTextContents())
+    ...await page.locator("thead th").allInnerTexts(),
+    ...await page.locator("label").allInnerTexts(),
+    ...await page.getByRole("tab").allInnerTexts(),
+    ...await page.locator("nav a").allInnerTexts()
   ].map((t) => t.trim()).filter(Boolean);
-  const nicho = moldura.filter((t) => /\bfarm\b|farms/i.test(t));
-  expect(nicho, `a moldura não pode exibir o nome técnico legado: ${moldura.join(" | ")}`).toEqual([]);
-  expect(moldura.some((t) => /^Empresa/i.test(t)), `a coluna canônica está desenhada: ${moldura.join(" | ")}`).toBe(true);
+  const nicho = moldura.filter((t) => /fazenda|farm/i.test(t));
+  expect(nicho, `a moldura do produto ainda fala o nicho: ${nicho.join(" | ")}`).toEqual([]);
+  expect(moldura.some((t) => /^Empresa$/i.test(t)), `a coluna canônica está desenhada: ${moldura.join(" | ")}`).toBe(true);
+  expect(page.url()).not.toMatch(/farms|fazendas/);
+  v.semBloqueio(); v.fioCanonico();
 });
