@@ -19,3 +19,7 @@ supabase/.temp
 
 # árvore da API do commit anterior, montada por scripts/api-anterior.mjs para o teste de version skew
 .api-anterior/
+
+# configuração pessoal do Claude Code: o settings.json do projeto é versionado, este nunca.
+# Sem esta linha, a proteção depende do ignore global de cada máquina (que não viaja com o repo).
+.claude/settings.local.json
