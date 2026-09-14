@@ -41,6 +41,8 @@ export const PONTE_PROVA = {
   "packages/db/test/responsavel-tenant.test.ts": "Consulta pela view legada para provar que ela enxerga o mesmo tenant.",
   "packages/db/test/notificacao-legado.test.ts": "Prova que a notificação legada continua resolvendo pela view.",
   "packages/db/test/schema.test.ts": "Afere a coexistência das duas colunas no schema real.",
+  "packages/db/test/upgrade-acervo.test.ts": "Upgrade com acervo: escreve o histórico no idioma ANTERIOR (`farm_id`), como a API antiga gravava, e só então aplica 0014→0016. Falar o idioma novo aqui inventaria um acervo que nunca existiu e o teste deixaria de provar a migração.",
+  "packages/db/test/upgrade-rollback.test.ts": "Mesmo acervo legado, para provar que uma falha depois da janela estrutural da 0014 devolve o ledger protegido.",
   "apps/web/e2e/empresa-compat.spec.ts": "Prova no navegador que sessão antiga e cabeçalho antigo continuam funcionando.",
   "apps/web/e2e/acesso-empresa.spec.ts": "Lê `empresas ?? farms` como o cliente durante o rollout.",
   "apps/web/e2e/skew-api-anterior.spec.ts": "Version skew B no navegador: web desta PR contra a API EXATA do commit base. Fala o idioma antigo porque é ele que mede — CORS, recurso, corpo, query e resposta."

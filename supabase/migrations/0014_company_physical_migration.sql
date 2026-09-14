@@ -222,9 +222,51 @@ alter table erp.warehouse_transfers add column empresa_origem_id uuid;
 alter table erp.warehouses add column empresa_id uuid;
 alter table erp.weighings add column empresa_id uuid;
 
+-- LEDGER APPEND-ONLY × BACKFILL ESTRUTURAL (correção de upgrade, PRE-BASE2-04)
+-- ---------------------------------------------------------------------------------------------------
+-- `erp.stock_movements` é append-only desde a 0003: `trg_stock_movement_immutable` (BEFORE UPDATE OR
+-- DELETE) recusa QUALQUER update com LEDGER_IMMUTABLE — correção de estoque se faz por ESTORNO, nunca
+-- editando o lançamento. O laço de cópia abaixo, porém, precisa preencher `empresa_id` em toda tabela que
+-- tem `farm_id`, e o ledger é uma delas.
+--
+-- Em banco VAZIO (a CI de migrations) o `update` atinge 0 linhas e o gatilho FOR EACH ROW nunca dispara —
+-- foi por isso que o defeito só apareceu no primeiro upgrade com acervo real: 5 linhas de ledger bastam
+-- para abortar a migration inteira.
+--
+-- A janela de suspensão é a MENOR possível e é ESTRUTURAL, não de negócio:
+--   · um único gatilho, nomeado (`trg_stock_movement_immutable`), numa única tabela;
+--   · em volta de UM único statement, que escreve UMA única coluna (`empresa_id = farm_id`);
+--   · reabilitado imediatamente, dentro do mesmo laço;
+--   · tudo dentro da transação da migration — se qualquer passo posterior abortar, o ROLLBACK restaura o
+--     gatilho junto com o resto (provado em teste, não presumido).
+-- O contrato de domínio NÃO muda: depois da migration, UPDATE e DELETE de dado de negócio continuam
+-- proibidos, `erp.forbid_change()` continua intacta e não existe GUC nem endpoint de bypass.
+--
+-- FAIL-CLOSED: se QUALQUER outra tabela alcançada pelo laço ganhar um guarda append-only, a migration PARA
+-- aqui em vez de descobrir o bloqueio no meio do caminho, no próximo upgrade de produção.
+do $$
+declare v_outras text;
+begin
+  select string_agg(distinct c.relname, ', ' order by c.relname) into v_outras
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_proc p on p.oid = t.tgfoid
+   where n.nspname = 'erp' and not t.tgisinternal
+     and p.proname = 'forbid_change'
+     and (t.tgtype & 16) <> 0                      -- dispara em UPDATE
+     and c.relname <> 'stock_movements'
+     and exists (select 1 from information_schema.columns col
+                  where col.table_schema = 'erp' and col.table_name = c.relname
+                    and col.column_name in ('farm_id','origin_farm_id','destination_farm_id'));
+  if v_outras is not null then
+    raise exception 'PRE-BASE2-03: tabela(s) append-only alcançada(s) pela cópia empresa/fazenda sem tratamento declarado: %. O backfill estrutural precisa de janela explícita para cada uma — não se contorna guarda de ledger por acidente.', v_outras;
+  end if;
+end $$;
+
 -- Cópia do valor legado + gatilho de sincronização + referência canônica.
 do $$
-declare r record; canonico text; funcao text; gatilho text; tem_org boolean;
+declare r record; canonico text; funcao text; gatilho text; tem_org boolean; imutavel text;
 begin
   for r in
     select c.table_name as tabela, c.column_name as coluna
@@ -244,7 +286,24 @@ begin
                               else 'erp.sincronizar_empresa_destino_legado' end;
     gatilho  := 'trg_sync_' || canonico;
 
-    execute format('update erp.%I set %I = %I', r.tabela, canonico, r.coluna);
+    -- Guarda append-only DESTA tabela (hoje só o ledger de estoque a tem). Suspensa apenas em volta do
+    -- update estrutural abaixo, e devolvida na linha seguinte.
+    select t.tgname into imutavel
+      from pg_trigger t
+      join pg_class c on c.oid = t.tgrelid
+      join pg_namespace n on n.oid = c.relnamespace
+      join pg_proc p on p.oid = t.tgfoid
+     where n.nspname = 'erp' and c.relname = r.tabela and not t.tgisinternal
+       and p.proname = 'forbid_change' and (t.tgtype & 16) <> 0;
+
+    if imutavel is not null then
+      execute format('alter table erp.%I disable trigger %I', r.tabela, imutavel);
+      execute format('update erp.%I set %I = %I', r.tabela, canonico, r.coluna);
+      execute format('alter table erp.%I enable trigger %I', r.tabela, imutavel);
+      imutavel := null;
+    else
+      execute format('update erp.%I set %I = %I', r.tabela, canonico, r.coluna);
+    end if;
     execute format('comment on column erp.%I.%I is %L', r.tabela, canonico,
       'EMPRESA do registro (PRE-BASE2-03). Coluna CANONICA: e ela que o runtime novo le e grava.');
     execute format('comment on column erp.%I.%I is %L', r.tabela, r.coluna,
