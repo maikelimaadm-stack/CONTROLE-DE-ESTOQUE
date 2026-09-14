@@ -1,5 +1,5 @@
 "use client";
-import { caminhoNoWire, corpoNoWire, respostaCanonica } from "./compat-empresa";
+import { lerSessaoArmazenada } from "@erp/plataforma";
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3333";
 
 export class ApiError extends Error {
@@ -7,21 +7,37 @@ export class ApiError extends Error {
 }
 const KEY = "agro.session";
 export interface Session { token: string; orgId: string | null; empresaId: string | null; user?: { id: string; email: string; name: string } }
+
 /**
- * SESSÃO GRAVADA ANTES DA PRE-BASE2-03 guarda `farmId`. Ela vive no localStorage do navegador: ninguém a
- * migra num deploy, e quem já estava logado continua com ela. Ler só `empresaId` derrubaria a empresa
- * selecionada de todo mundo no primeiro acesso à versão nova — sem erro, sem aviso, só o contexto de
- * trabalho zerado. A promoção acontece na LEITURA, num lugar só, e não reescreve o armazenamento: se a
- * versão anterior voltar ao ar, ela ainda encontra o `farmId` dela.
+ * LEITURA DA SESSÃO — a única porta onde o formato anterior vira o canônico (PRE-BASE2-05A).
+ *
+ * A regra mora em `@erp/plataforma` (`lerSessaoArmazenada`), fora do navegador, porque é regra e precisa de
+ * teste. Aqui fica só o EFEITO, que é o que depende do `localStorage`:
+ *
+ *   · `migrada`  → regrava JÁ, no formato canônico e sem a chave legada. Migrar na leitura sem regravar
+ *                  repetiria a promoção para sempre e deixaria o armazenamento bilíngue indefinidamente;
+ *   · `conflito` → a sessão guarda duas empresas diferentes e nada diz qual é a atual. Apagar e exigir novo
+ *                  login é a única saída honesta: escolher uma seria decidir no escuro em qual empresa o
+ *                  usuário vai lançar. Ver o cabeçalho de `sessao-empresa.ts`;
+ *   · `invalida`  → a empresa gravada não respeita o contrato canônico (não é UUID nem nula). Mesmo efeito
+ *                  do conflito, por motivo diferente: aqui não há duas verdades, há dado que não serve.
+ *
+ * A promoção é temporária e sai em PRE-BASE2-05B, quando nenhum cliente anterior puder mais gravar a chave antiga.
  */
-function promoverSessaoLegada(bruto: Record<string, unknown>): Session {
-  const legado = bruto["farmId"];
-  if (bruto["empresaId"] === undefined && (typeof legado === "string" || legado === null)) {
-    return { ...(bruto as unknown as Session), empresaId: legado as string | null };
+export function getSession(): Session | null {
+  if (typeof window === "undefined") return null;
+  let bruto: unknown;
+  try { const s = localStorage.getItem(KEY); bruto = s ? JSON.parse(s) : null; } catch { return null; }
+  const leitura = lerSessaoArmazenada(bruto);
+  switch (leitura.tipo) {
+    case "ausente": return null;
+    case "conflito":
+    case "invalida": try { localStorage.removeItem(KEY); } catch { /* armazenamento indisponível */ } return null;
+    case "migrada": try { localStorage.setItem(KEY, JSON.stringify(leitura.sessao)); } catch { /* idem */ } return leitura.sessao as unknown as Session;
+    case "canonica": return leitura.sessao as unknown as Session;
   }
-  return bruto as unknown as Session;
 }
-export function getSession(): Session | null { if (typeof window === "undefined") return null; try { const s = localStorage.getItem(KEY); return s ? promoverSessaoLegada(JSON.parse(s) as Record<string, unknown>) : null; } catch { return null; } }
+
 /** Grava a sessão sem disparar `agro:session` (troca de empresa: só o cabeçalho muda; contexto/permissões não). */
 export function writeSession(s: Session) { if (typeof window !== "undefined") localStorage.setItem(KEY, JSON.stringify(s)); }
 export function setSession(s: Session | null) { if (typeof window === "undefined") return; if (s) localStorage.setItem(KEY, JSON.stringify(s)); else localStorage.removeItem(KEY); window.dispatchEvent(new Event("agro:session")); }
@@ -31,28 +47,28 @@ export function setSession(s: Session | null) { if (typeof window === "undefined
  * de relatório faz `fetch` direto para receber o blob —, e foi exatamente aí que o cabeçalho ficou para trás
  * quando o canônico entrou. Um lugar só evita que a próxima chamada crua repita o esquecimento.
  *
- * A empresa selecionada sai como `X-Farm-Id`, o cabeçalho LEGADO, durante a janela de rollout. Não é
- * descuido: a API anterior declara `allowedHeaders` sem `X-Empresa-Id`, e um navegador que o envia tem o
- * PREFLIGHT recusado — a requisição morre antes de chegar ao servidor, e não existe erro de aplicação para
- * tratar. A API nova aceita os dois. O canônico continua sendo o contrato oficial dela e segue testado;
- * o que é legado aqui é o FIO, não o produto (apps/web/src/lib/compat-empresa.ts, docs/DEPLOYMENT.md).
+ * A empresa selecionada sai como `X-Empresa-Id`, o cabeçalho CANÔNICO (PRE-BASE2-05A). Durante a
+ * PRE-BASE2-03/04 o fio era legado por causa do CORS da API anterior, que não declarava o canônico e fazia o
+ * preflight morrer no navegador. Essa razão acabou: a API em produção declara `X-Empresa-Id` em
+ * `allowedHeaders` e o resolve na borda. O servidor continua aceitando o cabeçalho ANTERIOR de clientes
+ * antigos até PRE-BASE2-05B — quem parou de falar o idioma antigo foi o cliente, não a API.
  */
 export function cabecalhosDeContexto(s: Session | null): Record<string, string> {
   return {
     ...(s?.token ? { Authorization: `Bearer ${s.token}` } : {}),
     ...(s?.orgId ? { "X-Org-Id": s.orgId } : {}),
-    ...(s?.empresaId ? { "X-Farm-Id": s.empresaId } : {})
+    ...(s?.empresaId ? { "X-Empresa-Id": s.empresaId } : {})
   };
 }
 
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; idempotencyKey?: string } = {}): Promise<T> {
   const s = getSession();
   const headers: Record<string, string> = { ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}), ...cabecalhosDeContexto(s), ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}), ...(opts.headers ?? {}) };
-  // Caminho, query e corpo saem no idioma do FIO; a resposta volta para o canônico antes de qualquer tela.
-  const res = await fetch(`${API_URL}${caminhoNoWire(path)}`, { method: opts.method ?? "GET", headers, body: opts.body !== undefined ? JSON.stringify(corpoNoWire(opts.body)) : undefined });
+  // Caminho, query, corpo e resposta são CANÔNICOS ponta a ponta: não há mais tradutor de fio no cliente.
+  const res = await fetch(`${API_URL}${path}`, { method: opts.method ?? "GET", headers, body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined });
   if (opts.raw) return res as unknown as T;
   const text = await res.text();
-  const data = text ? respostaCanonica(JSON.parse(text) as unknown) : null;
+  const data = text ? (JSON.parse(text) as unknown) : null;
   if (!res.ok) { const e = (data as { error?: { code: string; message: string; details?: unknown } })?.error; if (res.status === 401 && (e?.code ?? "UNAUTHENTICATED") === "UNAUTHENTICATED") { setSession(null); if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) location.href = "/login"; } throw new ApiError(res.status, e?.code ?? "ERROR", e?.message ?? res.statusText, e?.details); }
   return data as T;
 }

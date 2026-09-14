@@ -8,15 +8,15 @@ PRE-BASE2-03, um total único mentiria: `farm_id` numa migration aplicada é his
 cliente HTTP é ponte com prazo, e "fazenda" no comentário de uma rota é o produto ainda falando o
 nicho. Por isso cada ocorrência é classificada em um dos três baldes abaixo — e a catraca trava só o terceiro.
 
-Total medido: **1580** ocorrências · 49 tabelas com coluna de empresa.
+Total medido: **1621** ocorrências · 49 tabelas com coluna de empresa.
 
 ## Classificação (o número que importa é o balde 3)
 
 | # | Balde | Ocorrências | Catraca | O que é |
 | --- | --- | ---: | --- | --- |
-| 1 | **LEGADO HISTÓRICO** | 1070 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
-| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 346 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05 (remoção da compatibilidade: colunas legadas, views e cabeçalho). |
-| 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 164 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
+| 1 | **LEGADO HISTÓRICO** | 1097 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
+| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 371 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05 (remoção da compatibilidade: colunas legadas, views e cabeçalho). |
+| 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 153 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
 
 A regra que impede maquiagem: **arquivo não declarado cai no balde 3 por definição.** Esconder dívida
 exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` — e a declaração aparece no diff.
@@ -25,18 +25,18 @@ exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` 
 
 | Superfície | 1. Histórico | 2. Compatibilidade | 3. Dívida (travada) | Total |
 | --- | ---: | ---: | ---: | ---: |
-| Schema (migrations) | 268 | 0 | 0 | 268 |
+| Schema (migrations) | 274 | 0 | 0 | 274 |
 | API — código | 0 | 14 | **48** | 62 |
 | API — testes | 0 | 177 | **90** | 267 |
-| Núcleo neutro de nicho (plataforma) | 0 | 0 | 0 | 0 |
-| Pacotes compartilhados | 0 | 54 | **11** | 65 |
-| Web — código | 0 | 19 | **11** | 30 |
+| Núcleo neutro de nicho (plataforma) | 0 | 2 | 0 | 2 |
+| Pacotes compartilhados | 0 | 83 | **11** | 94 |
+| Web — código | 0 | 0 | 0 | 0 |
 | Web — navegação/rotas | 0 | 7 | 0 | 7 |
-| Web — testes ponta a ponta | 0 | 28 | 0 | 28 |
-| Scripts e gates | 0 | 47 | **4** | 51 |
-| Documentação ativa | 289 | 0 | 0 | 289 |
+| Web — testes ponta a ponta | 0 | 30 | 0 | 30 |
+| Scripts e gates | 0 | 58 | **4** | 62 |
+| Documentação ativa | 310 | 0 | 0 | 310 |
 | Documentação histórica (referência externa) | 513 | 0 | 0 | 513 |
-| **Total** | **1070** | **346** | **164** | **1580** |
+| **Total** | **1097** | **371** | **153** | **1621** |
 
 ## Balde 2 — a ponte declarada
 
@@ -49,11 +49,9 @@ Cada arquivo abaixo pode falar o idioma antigo por um motivo escrito. Todos saem
 | `apps/api/src/lib/compat-empresa.ts` | 12 | O adaptador. É a ponte inteira: tradução de entrada, apelidos de saída, cabeçalho e nomes legados de tabela. |
 | `apps/api/src/server.ts` | 1 | Declara `X-Farm-Id` em allowedHeaders do CORS — sem isso o navegador do cliente antigo nem envia o cabeçalho. |
 | `apps/api/src/lib/escopo-admin.ts` | 1 | Borda de administração: traduz o contrato legado `farm_ids` (lista vazia = todas) para o modelo canônico. Documentado em docs/MULTI-COMPANY-CONTRACT.md §6. |
-| `apps/web/src/lib/compat-empresa.ts` | 13 | O adaptador do CLIENTE. Traduz caminho, query, corpo e resposta entre o idioma interno (empresa) e o idioma do FIO (legado) — necessário porque o CORS da API anterior não aceita `X-Empresa-Id` e o preflight morre no navegador. |
-| `apps/web/src/lib/api.ts` | 5 | Cliente HTTP: promove a sessão gravada com `farmId` e envia `X-Farm-Id` como cabeçalho de contexto durante a janela de rollout. |
-| `apps/web/src/lib/auth.tsx` | 1 | Lê `empresas ?? farms` de /auth/context enquanto a API anterior puder estar no ar. |
 | `apps/web/nav.registry.mjs` | 7 | Redirecionamentos das rotas legadas de cadastro. |
 | `packages/domain/src/resources/index.ts` | 1 | Chave de recurso legada `farms` resolvendo para o mesmo ResourceDef de `empresas`. |
+| `packages/plataforma/src/sessao-empresa.ts` | 1 | PROMOÇÃO DE SESSÃO (PRE-BASE2-05A): a única leitura que ainda conhece `farmId`, para migrar uma vez a sessão gravada no navegador por uma versão anterior e regravá-la canônica. Isolada aqui de propósito, para ser testável sem navegador e removível num arquivo só em PRE-BASE2-05B. |
 
 ### Prova — testes que quebram antes do cliente
 
@@ -71,16 +69,20 @@ Cada arquivo abaixo pode falar o idioma antigo por um motivo escrito. Todos saem
 | `packages/db/test/responsavel-tenant.test.ts` | 2 | Consulta pela view legada para provar que ela enxerga o mesmo tenant. |
 | `packages/db/test/notificacao-legado.test.ts` | 1 | Prova que a notificação legada continua resolvendo pela view. |
 | `packages/db/test/schema.test.ts` | 3 | Afere a coexistência das duas colunas no schema real. |
-| `apps/web/e2e/empresa-compat.spec.ts` | 8 | Prova no navegador que sessão antiga e cabeçalho antigo continuam funcionando. |
-| `apps/web/e2e/acesso-empresa.spec.ts` | 3 | Lê `empresas ?? farms` como o cliente durante o rollout. |
-| `apps/web/e2e/skew-api-anterior.spec.ts` | 17 | Version skew B no navegador: web desta PR contra a API EXATA do commit base. Fala o idioma antigo porque é ele que mede — CORS, recurso, corpo, query e resposta. |
+| `packages/db/test/upgrade-acervo.test.ts` | 25 | Upgrade com acervo: escreve o histórico no idioma ANTERIOR (`farm_id`), como a API antiga gravava, e só então aplica 0014→0016. Falar o idioma novo aqui inventaria um acervo que nunca existiu e o teste deixaria de provar a migração. |
+| `packages/db/test/upgrade-rollback.test.ts` | 4 | Mesmo acervo legado, para provar que uma falha depois da janela estrutural da 0014 devolve o ledger protegido. |
+| `apps/web/e2e/empresa-canonica.spec.ts` | 13 | Cutover canônico medido no navegador: cita o nome antigo para provar que ele NÃO sai mais no fio e que a sessão gravada por uma versão anterior migra uma vez. |
+| `apps/web/e2e/acesso-empresa.spec.ts` | 3 | Fixture da matriz de acesso; cita o nome antigo ao montar o estado da tela. |
+| `apps/web/e2e/skew-api-producao.spec.ts` | 14 | Version skew no navegador: web desta PR contra a API EXATA do commit base (a que está no ar). Cita o nome antigo para PROVAR a sua ausência no fio e para verificar que o servidor segue bilíngue até a 05B. |
+| `packages/plataforma/test/sessao-empresa.test.ts` | 1 | Prova a promoção da sessão gravada por uma versão anterior: `farmId` vira `empresaId` uma vez, a chave legada sai do armazenamento e valores divergentes caem em fail-safe. |
 
 ### Confinamento — gates e dicionário
 
 | Arquivo | Ocorrências | Por que pode |
 | --- | ---: | --- |
 | `scripts/farm-compat-allowlist.mjs` | 22 | O gate que confina a ponte: precisa citar cada símbolo legado para procurá-lo. |
-| `scripts/lib/empresa-compat-surface.mjs` | 12 | Esta lista. |
+| `apps/web/scripts/empresa-canonica-audit.mjs` | 10 | A catraca do cliente canônico (PRE-BASE2-05A): precisa citar cada símbolo legado para PROIBI-LO no web produtivo. Sem o tradutor de fio, um nome legado que voltasse ao cliente não quebraria em runtime — a API bilíngue aceitaria —, e é esta lista que o pega. |
+| `scripts/lib/empresa-compat-surface.mjs` | 13 | Esta lista. |
 | `scripts/company-schema-sync.mjs` | 4 | Confere par a par coluna canônica × coluna legada no schema. |
 | `scripts/member-farms-audit.mjs` | 6 | Impede que `erp.member_farms` volte a ser autoridade de runtime. |
 | `scripts/data-dictionary.mjs` | 1 | Gera o dicionário, que documenta a coluna legada enquanto ela existir. |
@@ -109,7 +111,6 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `apps/api/src/routes/reports.ts` | API — código | 4 |
 | `apps/api/test/integration/existencia-funcional.test.ts` | API — testes | 4 |
 | `apps/api/test/integration/notificacao-escopo.test.ts` | API — testes | 4 |
-| `apps/web/src/features/livestock/herd-actions.tsx` | Web — código | 4 |
 | `apps/api/src/lib/attachment-parent.ts` | API — código | 3 |
 | `apps/api/src/plugins/auth.ts` | API — código | 3 |
 | `apps/api/src/routes/fleet-hr.ts` | API — código | 3 |
@@ -119,22 +120,23 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `scripts/parity-map.mjs` | Scripts e gates | 3 |
 | `apps/api/src/lib/context.ts` | API — código | 2 |
 | `packages/domain/src/escopo-permissao.ts` | Pacotes compartilhados | 2 |
-| _… mais 20 arquivo(s)_ | | 21 |
+| `apps/api/src/routes/attachments.ts` | API — código | 1 |
+| _… mais 13 arquivo(s)_ | | 13 |
 
 ## Por símbolo (o que precisa migrar)
 
 | Símbolo atual | Natureza | Total | dos quais dívida | Destino canônico |
 | --- | --- | ---: | ---: | --- |
-| `farm_id` | dado | 533 | 66 | `empresa_id` |
-| `farms` | dado | 120 | 7 | `erp.empresas` |
-| `member_farms` | dado | 71 | 5 | `member_empresas` |
-| `ctx_farmId` | contrato | 9 | 0 | `empresaSelecionada` |
+| `farm_id` | dado | 572 | 66 | `empresa_id` |
+| `farms` | dado | 127 | 7 | `erp.empresas` |
+| `member_farms` | dado | 72 | 5 | `member_empresas` |
+| `ctx_farmId` | contrato | 14 | 0 | `empresaSelecionada` |
 | `farmIds` | contrato | 0 | 0 | `empresasPermitidas` |
 | `x_farm_id` | contrato | 81 | 17 | `X-Empresa-Id` |
 | `farmScope` | contrato | 5 | 1 | `escopoEmpresa` |
 | `allowedFarms` | contrato | 6 | 0 | `escopoEmpresa (@erp/plataforma)` |
-| `farms` | contrato | 94 | 11 | `/empresas` |
-| `fazenda` | texto | 661 | 57 | `Empresa (i18n: termos.empresa)` |
+| `farms` | contrato | 83 | 6 | `/empresas` |
+| `fazenda` | texto | 661 | 51 | `Empresa (i18n: termos.empresa)` |
 
 `dado` = exige migration e backfill · `contrato` = quebra clientes se mudar sem compatibilidade · `texto` = rótulo, resolvido por i18n.
 

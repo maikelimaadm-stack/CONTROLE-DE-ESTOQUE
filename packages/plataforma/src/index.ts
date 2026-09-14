@@ -9,6 +9,7 @@
 export * from "./empresa.js";
 export * from "./contexto-empresa.js";
 export * from "./escopo-modulo.js";
+export * from "./sessao-empresa.js";
 export * from "./id-global.js";
 export * from "./idioma.js";
 export * from "./formatacao.js";

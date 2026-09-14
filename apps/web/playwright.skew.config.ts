@@ -29,7 +29,7 @@ const DB = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replac
 const API_ANTERIOR = "../../.api-anterior/apps/api";
 
 export default defineConfig({
-  testDir: "./e2e", testMatch: /skew-api-anterior\.spec\.ts/, timeout: 60_000, expect: { timeout: 10_000 },
+  testDir: "./e2e", testMatch: /skew-api-producao\.spec\.ts/, timeout: 60_000, expect: { timeout: 10_000 },
   fullyParallel: false, workers: 1, retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: { baseURL: `http://127.0.0.1:${WEB_PORT}`, trace: "retain-on-failure", screenshot: "only-on-failure", locale: "pt-BR" },

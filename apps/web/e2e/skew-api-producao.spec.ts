@@ -2,24 +2,27 @@ import { test, expect, type Page } from "@playwright/test";
 import { login, uniq } from "./helpers";
 
 /**
- * VERSION SKEW B — O WEB DESTA PR CONTRA A API DO COMMIT BASE (PRE-BASE2-03).
+ * VERSION SKEW — O WEB DESTA PR CONTRA A API QUE ESTÁ NO AR (PRE-BASE2-05A).
  *
- * Roda só em `playwright.skew.config.ts`, que sobe a API EXATA do commit base (montada por
- * `scripts/api-anterior.mjs`) servindo o MESMO banco já migrado por 0014, 0015 e as correções desta rodada.
- * Não há mock: o servidor aqui é o binário que está no ar enquanto esta PR não sobe.
+ * Roda só em `playwright.skew.config.ts`, que sobe a API EXATA do commit BASE desta PR (montada por
+ * `scripts/api-anterior.mjs`) servindo o MESMO banco já migrado. Não há mock: o servidor aqui é o binário
+ * que está em produção enquanto esta PR não sobe.
  *
- * A migração fazenda → empresa é a única desta PR que pode derrubar o produto inteiro SEM um erro de
- * aplicação, porque o que ela muda é o FIO. Cinco coisas quebram, e nenhuma delas aparece como exceção:
- * o preflight do CORS recusa `X-Empresa-Id` e a tela não carrega; `/auth/context` devolve `farms`;
- * `/api/resources/empresas` é 404; um corpo com `empresa_id` é 422; e `empresa_id__eq` na query é
- * DESCARTADO em silêncio — o filtro não erra, ele mente.
+ * O QUE ESTE ARQUIVO MEDIA ANTES, E POR QUE MUDOU
  *
- * Por isso este arquivo é o único que fala o idioma antigo por dentro: ele mede o fio. O produto continua
- * canônico, e o teste "nenhuma tela conhece o nome antigo" é quem garante isso no mesmo navegador.
+ * Até a PRE-BASE2-04 ele apontava para a API anterior à PRE-BASE2-03 e provava o contrário do que prova
+ * agora: que o fio TINHA de ser legado, porque o CORS daquele binário não declarava `X-Empresa-Id` e o
+ * preflight morria no navegador. A PRE-BASE2-05A vira o cliente para o canônico — e aquela combinação
+ * deixa de ser um cenário de produção, porque a API canônica está no ar desde a PRE-BASE2-03 e não volta.
+ *
+ * Apagar seria perder a prova; manter apontado para lá seria certificar um cenário que não existe mais.
+ * Então o arquivo foi RECLASSIFICADO: mede o skew que de fato existe depois do cutover — web novo sobre a
+ * API em produção — e o contrato que a PRE-BASE2-05A assume, que é justamente este: **o cliente canônico
+ * só sobe sobre uma API que já entende o canônico**. Se um dia alguém reverter a API para antes da
+ * PRE-BASE2-03, o primeiro teste aqui reprova antes de o produto quebrar no navegador do cliente.
  */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
 const WIRE_LEGADO = /(^|[?&])(farm_id|origin_farm_id|destination_farm_id)(__[a-z]+)?=/;
-const WIRE_CANONICO = /(^|[?&])(empresa_id|empresa_origem_id|empresa_destino_id)(__[a-z]+)?=/;
 
 /** Sessão gravada pelo web depois do login: token e organização, para falar com a API direto. */
 const sessao = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token?: string; orgId?: string; empresaId?: string | null });
@@ -30,60 +33,63 @@ const sessao = (page: Page) => page.evaluate(() => JSON.parse(localStorage.getIt
  * coletor, a tela renderiza vazia e o teste passa — que é exatamente o modo de falha desta janela.
  */
 function vigiar(page: Page) {
-  const falhas: string[] = []; const urls: string[] = [];
+  const falhas: string[] = []; const urls: string[] = []; const cabecalhos: { url: string; empresa?: string; farm?: string }[] = [];
   page.on("requestfailed", (r) => { if (r.url().includes(API)) falhas.push(`${r.url()} → ${r.failure()?.errorText ?? "?"}`); });
   page.on("console", (m) => { if (m.type() === "error" && /CORS|preflight|Access-Control/i.test(m.text())) falhas.push(`console: ${m.text()}`); });
-  page.on("request", (r) => { if (r.url().includes("/api/")) urls.push(r.url()); });
+  page.on("request", (r) => { if (r.url().includes("/api/")) { urls.push(r.url()); const h = r.headers(); cabecalhos.push({ url: r.url(), empresa: h["x-empresa-id"], farm: h["x-farm-id"] }); } });
   return {
-    urls,
+    urls, cabecalhos,
     semBloqueio: () => expect(falhas, "nenhuma requisição pode morrer no navegador (CORS/preflight)").toEqual([]),
-    /** O fio é legado nas duas pontas: é o único idioma que a API anterior entende e a nova também. */
-    fioLegado: () => {
-      const canonicas = urls.filter((u) => WIRE_CANONICO.test(u) || /\/api\/resources\/empresas(\/|\?|$)/.test(u));
-      expect(canonicas, `o idioma canônico não pode sair no fio durante a ponte: ${canonicas.join(" ")}`).toEqual([]);
+    /** Depois do cutover o fio é canônico nas duas pontas — e o legado não reaparece por descuido. */
+    fioCanonico: () => {
+      const legadas = urls.filter((u) => WIRE_LEGADO.test(u) || /\/api\/resources\/farms(\/|\?|$)/.test(u));
+      expect(legadas, `o idioma legado não pode sair do cliente canônico: ${legadas.join(" ")}`).toEqual([]);
+      const comContexto = cabecalhos.filter((c) => c.empresa || c.farm);
+      const comLegado = comContexto.filter((c) => c.farm);
+      expect(comLegado.map((c) => c.url), "X-Farm-Id não sai mais do navegador").toEqual([]);
     }
   };
 }
 
 test.describe.configure({ mode: "serial" });
 
-test("o servidor É o commit base — as cinco quebras do fio existem de verdade", async ({ page, request }) => {
-  // Sem esta prova o arquivo inteiro é decorativo: contra a API NOVA todas as asserções abaixo passariam,
-  // e o teste teria certificado o cenário errado — a única falha que ele não pode ter.
+test("o servidor É o commit base — e ele entende o canônico, que é a premissa da 05A", async ({ page, request }) => {
+  // Sem esta prova o arquivo inteiro é decorativo: contra uma API pré-PRE-BASE2-03 as asserções abaixo
+  // falhariam por CORS, e é justamente essa regressão que aqui se quer pegar antes do cliente.
   await login(page);
   const s = await sessao(page);
   const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };
 
   const ctx = await (await request.get(`${API}/api/auth/context`, { headers: auth })).json();
-  expect(ctx["farms"], "a API anterior devolve a lista de empresas com o nome antigo").toBeDefined();
-  expect(ctx["empresas"], "…e NÃO devolve o nome canônico: é isso que a torna a versão anterior").toBeUndefined();
+  expect(ctx["empresas"], "a API em produção entrega o campo canônico").toBeDefined();
 
   const pre = await request.fetch(`${API}/api/auth/context`, {
     method: "OPTIONS",
     headers: { origin: page.url().replace(/(https?:\/\/[^/]+).*/, "$1"), "access-control-request-method": "GET", "access-control-request-headers": "x-empresa-id" }
   });
   const permitidos = (pre.headers()["access-control-allow-headers"] ?? "").toLowerCase();
-  expect(permitidos, "o CORS da API anterior declara o cabeçalho legado").toContain("x-farm-id");
-  expect(permitidos, "…e não o canônico: um navegador que o enviasse teria o preflight recusado").not.toContain("x-empresa-id");
+  expect(permitidos, "o CORS declara o cabeçalho canônico — sem isso o preflight mata a tela").toContain("x-empresa-id");
 
-  expect((await request.get(`${API}/api/resources/empresas?pageSize=1`, { headers: auth })).status(), "o recurso canônico não existe naquele binário").toBe(404);
-  expect((await request.get(`${API}/api/resources/farms?pageSize=1`, { headers: auth })).status()).toBe(200);
+  expect((await request.get(`${API}/api/resources/empresas?pageSize=1`, { headers: auth })).status(), "o recurso canônico existe").toBe(200);
 
-  const corpoCanonico = await request.post(`${API}/api/resources/warehouses`, { headers: auth, data: { empresa_id: ctx["farms"][0].id, initials: "SK1", description: "skew", type: "inputs" } });
-  expect(corpoCanonico.status(), "schema .strict(): o nome canônico no corpo é campo não reconhecido").toBe(422);
+  const corpoCanonico = await request.post(`${API}/api/resources/warehouses`, { headers: auth, data: { empresa_id: ctx["empresas"][0].id, initials: "SK1", description: uniq("skew"), type: "inputs" } });
+  // 201 na primeira execução, 409 nas seguintes (sigla repetida). 422 seria o campo canônico NÃO reconhecido
+  // pelo schema `.strict()` — exatamente a quebra que a 05A não pode ter.
+  expect([201, 409], `o corpo canônico é aceito pelo schema (status ${corpoCanonico.status()}: ${await corpoCanonico.text()})`).toContain(corpoCanonico.status());
 
   const todos = await (await request.get(`${API}/api/resources/warehouses?pageSize=100`, { headers: auth })).json();
-  const canonico = await (await request.get(`${API}/api/resources/warehouses?pageSize=100&empresa_id__eq=${ctx["farms"][0].id}`, { headers: auth })).json();
-  const legado = await (await request.get(`${API}/api/resources/warehouses?pageSize=100&farm_id__eq=${ctx["farms"][0].id}`, { headers: auth })).json();
-  expect(canonico["total"], "o filtro canônico é DESCARTADO em silêncio — não erra, mente").toBe(todos["total"]);
-  expect(legado["total"], "só o nome legado filtra de verdade").toBeLessThan(Number(todos["total"]));
+  const canonico = await (await request.get(`${API}/api/resources/warehouses?pageSize=100&empresa_id__eq=${ctx["empresas"][0].id}`, { headers: auth })).json();
+  expect(Number(canonico["total"]), "o filtro canônico RECORTA de verdade — não é descartado em silêncio").toBeLessThan(Number(todos["total"]));
+
+  // E a compatibilidade do SERVIDOR continua de pé: ela só sai em PRE-BASE2-05B.
+  const legado = await (await request.get(`${API}/api/resources/farms?pageSize=1`, { headers: auth })).status();
+  expect(legado, "a API segue bilíngue para clientes anteriores até a 05B").toBe(200);
 });
 
 test("entrar, carregar o contexto e escolher a empresa — sem nenhuma requisição morrer no navegador", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
   const seletor = page.getByLabel("Empresa ativa");
-  // A API anterior respondeu `farms`; o cliente promove para `empresas` antes de a tela ver o dado.
   await expect(seletor.locator("option")).not.toHaveCount(1);   // "Todas as empresas" + as empresas reais
   await seletor.selectOption({ index: 1 });
   await expect(seletor).not.toHaveValue("");
@@ -91,73 +97,72 @@ test("entrar, carregar o contexto e escolher a empresa — sem nenhuma requisiç
   await expect(page.getByTestId("b1-row").first()).toBeVisible();
   const s = await sessao(page);
   expect(s.empresaId, "a empresa escolhida fica na sessão com o nome canônico").toBeTruthy();
-  v.semBloqueio(); v.fioLegado();
+  v.semBloqueio(); v.fioCanonico();
 });
 
-test("/cadastros/empresas abre contra o binário que não conhece esse recurso", async ({ page }) => {
+test("/cadastros/empresas abre pedindo o recurso CANÔNICO", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
   await page.goto("/cadastros/empresas");
-  // `/api/resources/empresas` é 404 naquele servidor: a tela só abre porque o fio pede `farms`.
   await expect(page.getByTestId("b1-row").first()).toBeVisible();
   expect(await page.getByTestId("b1-row").count(), "a listagem trouxe as empresas da organização").toBeGreaterThan(0);
-  expect(v.urls.some((u) => /\/api\/resources\/farms(\/|\?)/.test(u)), `o fio pediu o recurso legado: ${v.urls.join(" ")}`).toBe(true);
-  v.semBloqueio(); v.fioLegado();
+  expect(v.urls.some((u) => /\/api\/resources\/empresas(\/|\?)/.test(u)), `o fio pediu o recurso canônico: ${v.urls.join(" ")}`).toBe(true);
+  v.semBloqueio(); v.fioCanonico();
 });
 
-test("`farm_id` volta como `empresa_id`: a coluna Empresa da listagem genérica não vem vazia", async ({ page }) => {
+test("a resposta já é canônica: a coluna Empresa da listagem genérica não vem vazia", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
-  // A listagem genérica desenha `<campo>_label` — `empresa_id_label`, sem nenhum fallback para o nome antigo.
-  // Se a promoção da RESPOSTA não acontecesse, a coluna existiria e estaria em branco: erro nenhum, dado nenhum.
+  // A listagem genérica desenha `<campo>_label` — `empresa_id_label`. Antes isso só funcionava porque o
+  // cliente promovia `farm_id_label`; agora a API entrega o canônico e não há promoção nenhuma no meio.
   const resposta = page.waitForResponse((r) => /\/api\/resources\/warehouses\?/.test(r.url()) && r.status() === 200);
   await page.goto("/cadastros/warehouses");
   const corpo = await (await resposta).json() as { items: Record<string, unknown>[] };
-  expect(corpo.items[0], "a API anterior responde com o nome antigo").toHaveProperty("farm_id");
-  expect(corpo.items[0]!["empresa_id"], "…e não com o canônico").toBeUndefined();
+  expect(corpo.items[0]?.["empresa_id"], "a API em produção responde com o nome canônico").toBeTruthy();
 
   const colunas = await page.locator("thead th").allInnerTexts();
   const iEmpresa = colunas.findIndex((c) => /^\s*Empresa\s*$/i.test(c));
   expect(iEmpresa, `a coluna Empresa existe na tela: ${colunas.join(" | ")}`).toBeGreaterThanOrEqual(0);
   const celula = page.getByTestId("b1-row").first().locator("td").nth(iEmpresa);
-  await expect(celula, "coluna Empresa preenchida = `farm_id_label` virou `empresa_id_label` no cliente").not.toHaveText("");
-  v.semBloqueio(); v.fioLegado();
+  await expect(celula, "coluna Empresa preenchida direto de `empresa_id_label`").not.toHaveText("");
+  v.semBloqueio(); v.fioCanonico();
 });
 
-test("RefSelect de Empresa e cadastro real: o corpo sai com o nome que o servidor anterior aceita", async ({ page }) => {
+test("RefSelect de Empresa e cadastro real: o corpo sai CANÔNICO e o servidor aceita", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
-  const desc = uniq("Armazém Skew");
+  const desc = uniq("Armazém Canônico");
+  const corpos: string[] = [];
+  page.on("request", (r) => { if (r.method() === "POST" && r.url().includes("/api/resources/warehouses")) corpos.push(r.postData() ?? ""); });
+
   await page.goto("/cadastros/warehouses/new");
   await expect(page.getByTestId("b1-form")).toBeVisible();
 
-  // RefSelect: as opções vêm de `/api/resources/empresas/options`, que no fio vira `farms/options` (404 se não virasse).
+  // As opções vêm de `/api/resources/empresas/options` — sem tradução de caminho no meio.
   const campoEmpresa = page.getByTestId("b1-form").locator("label", { hasText: /^Empresa/ }).first().locator("..");
   await campoEmpresa.locator("button[type=button]").first().click();
   const opcoes = page.locator(".cmd-panel [role=option]");
-  await expect(opcoes.first(), "o seletor de referência listou as empresas vindas da API anterior").toBeVisible();
-  const empresaEscolhida = (await opcoes.first().innerText()).trim();
+  await expect(opcoes.first(), "o seletor de referência listou as empresas").toBeVisible();
   await opcoes.first().click();
 
-  await page.getByLabel(/^Sigla/).first().fill(`SK${Date.now().toString(36).slice(-3).toUpperCase()}`);
+  await page.getByLabel(/^Sigla/).first().fill(`CN${Date.now().toString(36).slice(-3).toUpperCase()}`);
   await page.getByLabel(/^Descrição/).first().fill(desc);
   await page.getByRole("button", { name: /^Salvar/ }).click();
   await page.waitForURL(/\/cadastros\/warehouses$/, { timeout: 20_000 });
 
+  expect(corpos.length, "o formulário enviou o cadastro").toBeGreaterThan(0);
+  for (const c of corpos) expect(c, `o corpo não pode conter nome legado: ${c}`).not.toMatch(/"(farm_id|origin_farm_id|destination_farm_id)"/);
+
   await page.getByLabel("Pesquisar", { exact: true }).click();
   await page.getByPlaceholder(/^Pesquisar por/).fill(desc);
   await page.keyboard.press("Enter");
-  const linha = page.getByTestId("b1-row").filter({ hasText: desc }).first();
-  await expect(linha, "o registro foi gravado pelo servidor anterior, com empresa").toBeVisible();
-  expect(empresaEscolhida.length).toBeGreaterThan(0);
-  v.semBloqueio(); v.fioLegado();
+  await expect(page.getByTestId("b1-row").filter({ hasText: desc }).first(), "o registro foi gravado com empresa").toBeVisible();
+  v.semBloqueio(); v.fioCanonico();
 });
 
-test("filtrar por empresa realmente filtra — e não só parece filtrar", async ({ page }) => {
+test("filtrar por empresa realmente filtra — e a query viaja canônica", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
-  // Sem empresa ativa a listagem traz as duas empresas; o filtro por coluna é quem recorta. Contra a API
-  // anterior, um `empresa_id__eq` seria ignorado e a contagem ficaria IGUAL — o filtro que mente.
   await page.getByLabel("Empresa ativa").selectOption("");
   await page.goto("/cadastros/warehouses");
   await expect(page.getByTestId("b1-row").first()).toBeVisible();
@@ -166,21 +171,19 @@ test("filtrar por empresa realmente filtra — e não só parece filtrar", async
 
   const faixa = page.getByLabel("Mostrar faixa de filtros");
   if (await faixa.count()) await faixa.click();
-  // O nome vem do seletor da moldura, que já foi preenchido pela resposta promovida — não de uma constante
-  // do seed: o teste mede o caminho do dado, não uma string que alguém pode ter copiado para os dois lados.
   const empresa = (await page.getByLabel("Empresa ativa").locator("option").nth(1).innerText()).trim();
   await page.getByRole("button", { name: "Filtro Empresa" }).click();
   const painel = page.locator("[data-radix-popper-content-wrapper]").last();
   await painel.locator("label", { hasText: empresa }).first().click();
   await painel.getByRole("button", { name: "OK" }).click();
 
-  await expect.poll(() => page.getByTestId("b1-row").count(), { message: "o recorte por empresa chegou ao servidor anterior" }).toBeLessThan(antes);
+  await expect.poll(() => page.getByTestId("b1-row").count(), { message: "o recorte por empresa chegou ao servidor" }).toBeLessThan(antes);
   const colunas = await page.locator("thead th").allInnerTexts();
   const iEmpresa = colunas.findIndex((c) => /^\s*Empresa\s*$/i.test(c));
   const empresas = new Set((await page.getByTestId("b1-row").locator(`td:nth-child(${iEmpresa + 1})`).allInnerTexts()).map((t) => t.trim()));
   expect([...empresas], "todas as linhas restantes são da empresa escolhida").toEqual([empresa]);
-  expect(v.urls.some((u) => WIRE_LEGADO.test(u)), `o filtro viajou com o nome legado: ${v.urls.filter((u) => u.includes("warehouses")).join(" ")}`).toBe(true);
-  v.semBloqueio(); v.fioLegado();
+  expect(v.urls.some((u) => /empresa_id(__[a-z]+)?=/.test(u)), `o filtro viajou com o nome canônico: ${v.urls.filter((u) => u.includes("warehouses")).join(" ")}`).toBe(true);
+  v.semBloqueio(); v.fioCanonico();
 });
 
 test("nenhuma tela conhece o nome antigo: a moldura do produto é canônica", async ({ page }) => {
@@ -203,5 +206,5 @@ test("nenhuma tela conhece o nome antigo: a moldura do produto é canônica", as
   expect(nicho, `a moldura do produto ainda fala o nicho: ${nicho.join(" | ")}`).toEqual([]);
   expect(moldura.some((t) => /^Empresa$/i.test(t)), `a coluna canônica está desenhada: ${moldura.join(" | ")}`).toBe(true);
   expect(page.url()).not.toMatch(/farms|fazendas/);
-  v.semBloqueio(); v.fioLegado();
+  v.semBloqueio(); v.fioCanonico();
 });
