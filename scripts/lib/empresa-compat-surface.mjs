@@ -20,7 +20,6 @@ export const PONTE_RUNTIME = {
   "apps/api/src/lib/compat-empresa.ts": "O adaptador. É a ponte inteira: tradução de entrada, apelidos de saída, cabeçalho e nomes legados de tabela.",
   "apps/api/src/server.ts": "Declara `X-Farm-Id` em allowedHeaders do CORS — sem isso o navegador do cliente antigo nem envia o cabeçalho.",
   "apps/api/src/lib/escopo-admin.ts": "Borda de administração: traduz o contrato legado `farm_ids` (lista vazia = todas) para o modelo canônico. Documentado em docs/MULTI-COMPANY-CONTRACT.md §6.",
-  "apps/web/src/lib/api.ts": "Cliente HTTP: envia o cabeçalho CANÔNICO e cita o nome legado apenas para explicar o efeito da promoção de sessão (regra em @erp/plataforma). Sai em PRE-BASE2-05B.",
   "apps/web/nav.registry.mjs": "Redirecionamentos das rotas legadas de cadastro.",
   "packages/domain/src/resources/index.ts": "Chave de recurso legada `farms` resolvendo para o mesmo ResourceDef de `empresas`.",
   "packages/plataforma/src/sessao-empresa.ts": "PROMOÇÃO DE SESSÃO (PRE-BASE2-05A): a única leitura que ainda conhece `farmId`, para migrar uma vez a sessão gravada no navegador por uma versão anterior e regravá-la canônica. Isolada aqui de propósito, para ser testável sem navegador e removível num arquivo só em PRE-BASE2-05B."

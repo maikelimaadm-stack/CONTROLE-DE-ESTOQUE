@@ -8,14 +8,14 @@ PRE-BASE2-03, um total único mentiria: `farm_id` numa migration aplicada é his
 cliente HTTP é ponte com prazo, e "fazenda" no comentário de uma rota é o produto ainda falando o
 nicho. Por isso cada ocorrência é classificada em um dos três baldes abaixo — e a catraca trava só o terceiro.
 
-Total medido: **1618** ocorrências · 49 tabelas com coluna de empresa.
+Total medido: **1621** ocorrências · 49 tabelas com coluna de empresa.
 
 ## Classificação (o número que importa é o balde 3)
 
 | # | Balde | Ocorrências | Catraca | O que é |
 | --- | --- | ---: | --- | --- |
 | 1 | **LEGADO HISTÓRICO** | 1097 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
-| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 368 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05 (remoção da compatibilidade: colunas legadas, views e cabeçalho). |
+| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 371 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05 (remoção da compatibilidade: colunas legadas, views e cabeçalho). |
 | 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 153 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
 
 A regra que impede maquiagem: **arquivo não declarado cai no balde 3 por definição.** Esconder dívida
@@ -30,13 +30,13 @@ exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` 
 | API — testes | 0 | 177 | **90** | 267 |
 | Núcleo neutro de nicho (plataforma) | 0 | 2 | 0 | 2 |
 | Pacotes compartilhados | 0 | 83 | **11** | 94 |
-| Web — código | 0 | 1 | 0 | 1 |
+| Web — código | 0 | 0 | 0 | 0 |
 | Web — navegação/rotas | 0 | 7 | 0 | 7 |
 | Web — testes ponta a ponta | 0 | 30 | 0 | 30 |
-| Scripts e gates | 0 | 54 | **4** | 58 |
+| Scripts e gates | 0 | 58 | **4** | 62 |
 | Documentação ativa | 310 | 0 | 0 | 310 |
 | Documentação histórica (referência externa) | 513 | 0 | 0 | 513 |
-| **Total** | **1097** | **368** | **153** | **1618** |
+| **Total** | **1097** | **371** | **153** | **1621** |
 
 ## Balde 2 — a ponte declarada
 
@@ -49,7 +49,6 @@ Cada arquivo abaixo pode falar o idioma antigo por um motivo escrito. Todos saem
 | `apps/api/src/lib/compat-empresa.ts` | 12 | O adaptador. É a ponte inteira: tradução de entrada, apelidos de saída, cabeçalho e nomes legados de tabela. |
 | `apps/api/src/server.ts` | 1 | Declara `X-Farm-Id` em allowedHeaders do CORS — sem isso o navegador do cliente antigo nem envia o cabeçalho. |
 | `apps/api/src/lib/escopo-admin.ts` | 1 | Borda de administração: traduz o contrato legado `farm_ids` (lista vazia = todas) para o modelo canônico. Documentado em docs/MULTI-COMPANY-CONTRACT.md §6. |
-| `apps/web/src/lib/api.ts` | 1 | Cliente HTTP: envia o cabeçalho CANÔNICO e cita o nome legado apenas para explicar o efeito da promoção de sessão (regra em @erp/plataforma). Sai em PRE-BASE2-05B. |
 | `apps/web/nav.registry.mjs` | 7 | Redirecionamentos das rotas legadas de cadastro. |
 | `packages/domain/src/resources/index.ts` | 1 | Chave de recurso legada `farms` resolvendo para o mesmo ResourceDef de `empresas`. |
 | `packages/plataforma/src/sessao-empresa.ts` | 1 | PROMOÇÃO DE SESSÃO (PRE-BASE2-05A): a única leitura que ainda conhece `farmId`, para migrar uma vez a sessão gravada no navegador por uma versão anterior e regravá-la canônica. Isolada aqui de propósito, para ser testável sem navegador e removível num arquivo só em PRE-BASE2-05B. |
@@ -82,7 +81,7 @@ Cada arquivo abaixo pode falar o idioma antigo por um motivo escrito. Todos saem
 | Arquivo | Ocorrências | Por que pode |
 | --- | ---: | --- |
 | `scripts/farm-compat-allowlist.mjs` | 22 | O gate que confina a ponte: precisa citar cada símbolo legado para procurá-lo. |
-| `apps/web/scripts/empresa-canonica-audit.mjs` | 6 | A catraca do cliente canônico (PRE-BASE2-05A): precisa citar cada símbolo legado para PROIBI-LO no web produtivo. Sem o tradutor de fio, um nome legado que voltasse ao cliente não quebraria em runtime — a API bilíngue aceitaria —, e é esta lista que o pega. |
+| `apps/web/scripts/empresa-canonica-audit.mjs` | 10 | A catraca do cliente canônico (PRE-BASE2-05A): precisa citar cada símbolo legado para PROIBI-LO no web produtivo. Sem o tradutor de fio, um nome legado que voltasse ao cliente não quebraria em runtime — a API bilíngue aceitaria —, e é esta lista que o pega. |
 | `scripts/lib/empresa-compat-surface.mjs` | 13 | Esta lista. |
 | `scripts/company-schema-sync.mjs` | 4 | Confere par a par coluna canônica × coluna legada no schema. |
 | `scripts/member-farms-audit.mjs` | 6 | Impede que `erp.member_farms` volte a ser autoridade de runtime. |
@@ -128,15 +127,15 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 
 | Símbolo atual | Natureza | Total | dos quais dívida | Destino canônico |
 | --- | --- | ---: | ---: | --- |
-| `farm_id` | dado | 571 | 66 | `empresa_id` |
+| `farm_id` | dado | 572 | 66 | `empresa_id` |
 | `farms` | dado | 127 | 7 | `erp.empresas` |
 | `member_farms` | dado | 72 | 5 | `member_empresas` |
-| `ctx_farmId` | contrato | 13 | 0 | `empresaSelecionada` |
+| `ctx_farmId` | contrato | 14 | 0 | `empresaSelecionada` |
 | `farmIds` | contrato | 0 | 0 | `empresasPermitidas` |
 | `x_farm_id` | contrato | 81 | 17 | `X-Empresa-Id` |
 | `farmScope` | contrato | 5 | 1 | `escopoEmpresa` |
 | `allowedFarms` | contrato | 6 | 0 | `escopoEmpresa (@erp/plataforma)` |
-| `farms` | contrato | 82 | 6 | `/empresas` |
+| `farms` | contrato | 83 | 6 | `/empresas` |
 | `fazenda` | texto | 661 | 51 | `Empresa (i18n: termos.empresa)` |
 
 `dado` = exige migration e backfill · `contrato` = quebra clientes se mudar sem compatibilidade · `texto` = rótulo, resolvido por i18n.

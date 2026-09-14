@@ -18,7 +18,9 @@ export interface Session { token: string; orgId: string | null; empresaId: strin
  *                  repetiria a promoção para sempre e deixaria o armazenamento bilíngue indefinidamente;
  *   · `conflito` → a sessão guarda duas empresas diferentes e nada diz qual é a atual. Apagar e exigir novo
  *                  login é a única saída honesta: escolher uma seria decidir no escuro em qual empresa o
- *                  usuário vai lançar. Ver o cabeçalho de `sessao-empresa.ts`.
+ *                  usuário vai lançar. Ver o cabeçalho de `sessao-empresa.ts`;
+ *   · `invalida`  → a empresa gravada não respeita o contrato canônico (não é UUID nem nula). Mesmo efeito
+ *                  do conflito, por motivo diferente: aqui não há duas verdades, há dado que não serve.
  *
  * A promoção é temporária e sai em PRE-BASE2-05B, quando nenhum cliente anterior puder mais gravar a chave antiga.
  */
@@ -29,7 +31,8 @@ export function getSession(): Session | null {
   const leitura = lerSessaoArmazenada(bruto);
   switch (leitura.tipo) {
     case "ausente": return null;
-    case "conflito": try { localStorage.removeItem(KEY); } catch { /* armazenamento indisponível */ } return null;
+    case "conflito":
+    case "invalida": try { localStorage.removeItem(KEY); } catch { /* armazenamento indisponível */ } return null;
     case "migrada": try { localStorage.setItem(KEY, JSON.stringify(leitura.sessao)); } catch { /* idem */ } return leitura.sessao as unknown as Session;
     case "canonica": return leitura.sessao as unknown as Session;
   }
@@ -47,8 +50,8 @@ export function setSession(s: Session | null) { if (typeof window === "undefined
  * A empresa selecionada sai como `X-Empresa-Id`, o cabeçalho CANÔNICO (PRE-BASE2-05A). Durante a
  * PRE-BASE2-03/04 o fio era legado por causa do CORS da API anterior, que não declarava o canônico e fazia o
  * preflight morrer no navegador. Essa razão acabou: a API em produção declara `X-Empresa-Id` em
- * `allowedHeaders` e o resolve na borda. O servidor continua aceitando `X-Farm-Id` de clientes anteriores
- * até PRE-BASE2-05B — quem parou de falar o idioma antigo foi o cliente, não a API.
+ * `allowedHeaders` e o resolve na borda. O servidor continua aceitando o cabeçalho ANTERIOR de clientes
+ * antigos até PRE-BASE2-05B — quem parou de falar o idioma antigo foi o cliente, não a API.
  */
 export function cabecalhosDeContexto(s: Session | null): Record<string, string> {
   return {

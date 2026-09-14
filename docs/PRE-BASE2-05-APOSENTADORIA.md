@@ -46,24 +46,42 @@ bundle novo sobe. A regra vive isolada em `packages/plataforma/src/sessao-empres
 
 | Sessão encontrada | O que acontece |
 | --- | --- |
-| só `empresaId` | segue como está, sem escrever no armazenamento |
+| só `empresaId`, UUID ou `null` | segue como está, sem escrever no armazenamento |
 | só a chave antiga | promove, **regrava** no formato canônico e apaga a chave antiga |
 | as duas, mesmo valor | limpa a sobra e segue |
 | as duas, valores **diferentes** | **fail-safe**: a sessão é apagada e o login é exigido |
+| empresa gravada fora do contrato (número, objeto, `""`, `"abc"`, `"todas"`, UUID malformado) | **inválida**: a sessão é apagada e o login é exigido |
+| nenhuma das duas chaves | **inválida** — ver abaixo |
 
 O fail-safe não é excesso de zelo. Os dois clientes preservam a chave que não conhecem ao regravar a
 sessão, então, quando os valores divergem, o armazenamento **não diz** qual foi escrito por último.
 Escolher um seria decidir no escuro em qual empresa o usuário vai lançar — e empresa errada não é detalhe
 de interface, é lançamento no lugar errado.
 
+O valor também é contrato: `empresaId` é `null` ou UUID. `"todas"` nunca entra — "todas as empresas" é
+**escopo de leitura**, resolvido no servidor a cada requisição, não empresa persistida. Sem essa validação,
+um `localStorage` editado à mão viajaria em `X-Empresa-Id` e voltaria como 422 numa tela sem relação com a
+causa; o backend continua sendo a autoridade, mas contrato que só o servidor faz cumprir não é contrato.
+
+**Sessão sem nenhuma das duas chaves é inválida, não migrada para `null`.** A evidência: todo cliente que já
+gravou sessão neste produto gravou a chave da empresa explicitamente — `empresaId: null` hoje e a chave
+anterior com `null` antes da PRE-BASE2-03 (histórico de `apps/web/src/app/login/page.tsx`). Não há versão
+legítima a acomodar, e inventar compatibilidade sem prova é como um fallback vira arquitetura.
+
 Essa promoção é a única exceção declarada do cliente e **sai em 05B**, quando nenhum cliente anterior
-puder mais gravar a chave antiga.
+puder mais gravar a chave antiga. A **validação** fica: ela é contrato canônico, não ponte.
 
 ### Catraca
 
 `apps/web/scripts/empresa-canonica-audit.mjs` (no `pnpm lint` do web) impede que o contrato legado volte ao
 web produtivo. Ela é necessária **porque** o tradutor saiu: sem adaptador, um `farm_id` que reapareça no
 cliente não quebra nada — a API bilíngue aceita, e o erro some no sucesso.
+
+A allowlist é **vazia**: nenhum arquivo do web produtivo escapa, `src/lib/api.ts` inclusive — excluir o
+arquivo mais crítico do contrato HTTP para poupar uma palavra de comentário desarmaria a catraca justamente
+onde ela mais importa. E a catraca **se autotesta a cada execução**: injeta cada padrão proibido em `api.ts`
+na leitura (o disco não é tocado) e falha se a auditoria não acusar. Catraca que nunca foi vista falhando é
+decoração.
 
 Ela NÃO vigia vocabulário agronômico legítimo nem nomes de permissão/enum do servidor
 (`farm_transfers.view`, `movement_type: "farm_transfer"`): renomeá-los é 05B/05C, e fazê-lo no cliente

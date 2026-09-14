@@ -21,9 +21,17 @@
  * empresa errada não é detalhe de interface, é lançamento no lugar errado. A saída é FAIL-SAFE: invalidar
  * a sessão e exigir login novo, que restabelece o contexto com o usuário olhando.
  *
+ * POR QUE A LEITURA TAMBÉM VALIDA O VALOR, E NÃO SÓ A CHAVE
+ *
+ * `localStorage` é editável pelo usuário e sobrevive a qualquer versão do cliente. Aceitar `empresaId`
+ * só porque a CHAVE canônica existe deixaria passar `42`, `{}`, `""` ou `"abc"` — que seguiriam em
+ * `X-Empresa-Id` e voltariam como 422 em telas sem relação com a causa. O backend continua a autoridade
+ * (não há escalada de autorização aqui), mas um contrato que só o servidor faz cumprir não é contrato:
+ * a sessão inválida é recusada na porta, que é onde o estado nasce.
+ *
  * Este módulo é a promoção temporária citada em docs/MULTI-COMPANY-CONTRACT.md: isolado, testado e com
  * remoção marcada para PRE-BASE2-05B, quando a borda legada do servidor sair e nenhum cliente anterior
- * puder mais gravá-la.
+ * puder mais gravá-la. A VALIDAÇÃO acima permanece: ela é contrato canônico, não ponte.
  */
 
 /** Chave legada da empresa selecionada. Existe só aqui — nenhum outro ponto do cliente a conhece. */
@@ -46,10 +54,23 @@ export type LeituraSessao =
    * As duas chaves existem com valores diferentes e não há como saber qual é a atual. O chamador DEVE
    * invalidar a sessão e exigir novo login. Nunca escolher uma das empresas.
    */
-  | { tipo: "conflito"; canonico: unknown; legado: unknown };
+  | { tipo: "conflito"; canonico: unknown; legado: unknown }
+  /**
+   * O armazenamento tem forma de sessão, mas a empresa gravada não respeita o contrato canônico. Não é
+   * conflito (não há duas verdades disputando) nem ausência (havia algo lá): é dado inválido. O chamador
+   * DEVE apagar a sessão e exigir novo login.
+   */
+  | { tipo: "invalida"; motivo: string };
 
-/** `null` é valor legítimo ("nenhuma empresa selecionada"); qualquer outra coisa que não seja texto, não. */
-const ehIdentificadorDeEmpresa = (v: unknown): v is string | null => v === null || typeof v === "string";
+/**
+ * Contrato canônico do identificador de empresa na sessão: `null` ("nenhuma empresa selecionada", que é
+ * escolha e não ausência) ou UUID.
+ *
+ * `"todas"` NÃO entra aqui de propósito: "todas as empresas" é ESCOPO DE LEITURA, resolvido no servidor a
+ * cada requisição (ver `packages/plataforma/src/empresa.ts`), nunca uma empresa persistida na sessão.
+ */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ehEmpresaIdValido = (v: unknown): v is string | null => v === null || (typeof v === "string" && UUID.test(v));
 
 /**
  * Interpreta o conteúdo BRUTO da sessão gravada e devolve o que fazer com ele.
@@ -64,21 +85,29 @@ export function lerSessaoArmazenada(bruto: unknown): LeituraSessao {
   const temLegado = CHAVE_LEGADA in obj;
   const temCanonico = CHAVE_CANONICA in obj;
 
-  // Caminho comum e final: o armazenamento já fala só o canônico.
-  if (!temLegado) return { tipo: "canonica", sessao: obj };
+  // Caminho comum e final: o armazenamento já fala só o canônico — mas o VALOR ainda precisa ser válido.
+  if (!temLegado) {
+    // Nenhuma das duas chaves. Todo cliente que já gravou sessão neste produto gravou a chave da empresa
+    // explicitamente (`empresaId: null` hoje; a legada com `null` antes de PRE-BASE2-03) — ver o login em
+    // apps/web/src/app/login/page.tsx e seu histórico. Não há versão legítima a acomodar, então isto é
+    // armazenamento adulterado ou truncado: recusar em vez de inventar compatibilidade sem prova.
+    if (!temCanonico) return { tipo: "invalida", motivo: "sessão sem a chave da empresa selecionada" };
+    if (!ehEmpresaIdValido(obj[CHAVE_CANONICA])) return { tipo: "invalida", motivo: "empresa selecionada não é UUID nem nula" };
+    return { tipo: "canonica", sessao: obj };
+  }
 
   const legado = obj[CHAVE_LEGADA];
   const canonico = obj[CHAVE_CANONICA];
 
-  // Duas chaves, valores divergentes: ambíguo por construção (ver cabeçalho). Fail-safe.
+  // Duas chaves, valores divergentes: ambíguo por construção (ver cabeçalho). Fail-safe, e antes da
+  // validação — aqui o problema não é a forma do valor, é não existir resposta para "qual é a atual".
   if (temCanonico && canonico !== legado) return { tipo: "conflito", canonico, legado };
 
-  // Sobrou uma chave legada inútil (tipo inesperado) sem canônico para sustentar a sessão.
-  if (!temCanonico && !ehIdentificadorDeEmpresa(legado)) return { tipo: "conflito", canonico: undefined, legado };
+  const empresaId = temCanonico ? canonico : legado;
+  if (!ehEmpresaIdValido(empresaId)) return { tipo: "invalida", motivo: "empresa da sessão anterior não é UUID nem nula" };
 
   // Promoção: o valor canônico passa a ser a autoridade e a chave legada SAI do armazenamento.
   const sessao = { ...obj };
-  const empresaId = (temCanonico ? canonico : legado) as string | null;
   sessao[CHAVE_CANONICA] = empresaId;
   delete sessao[CHAVE_LEGADA];
   return { tipo: "migrada", sessao, empresaId };
