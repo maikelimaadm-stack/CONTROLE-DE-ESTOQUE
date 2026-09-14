@@ -45,7 +45,7 @@ beforeAll(async () => {
   try {
     orgB = (await admin.query<{ id: string }>("insert into erp.organizations(name,slug) values ('[TEST] Org Empresas','orgempresas') returning id")).rows[0]!.id;
     const nova = async (orgId: string, code: number, nome: string, extra = "") =>
-      (await admin.query<{ id: string }>(`insert into erp.farms(organization_id,code,name${extra ? ",is_active,deleted_at" : ""}) values ($1,$2,$3${extra}) returning id`, [orgId, code, nome])).rows[0]!.id;
+      (await admin.query<{ id: string }>(`insert into erp.empresas(organization_id,code,name${extra ? ",is_active,deleted_at" : ""}) values ($1,$2,$3${extra}) returning id`, [orgId, code, nome])).rows[0]!.id;
     empresaOutraOrg = await nova(orgB, 901, "Empresa de outra organização");
     empresaExcluida = await nova(h.demo.orgId, 902, "Empresa excluída", ",true,now()");
     empresaInativa = await nova(h.demo.orgId, 903, "Empresa inativa", ",false,null");
@@ -53,7 +53,7 @@ beforeAll(async () => {
     const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: "Perfil empresa única", permissions: ["stocks.view"] } });
     const criado = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(),
       payload: { name: "Restrito", email: "restrito-empresa@demo.local", password: "Empresa@12345", role_id: (papel.json() as { id: string }).id,
-        escopos_empresas: [{ modulo: "estoque", modo: "selecionadas", empresas: [I.farm] }] } });
+        escopos_empresas: [{ modulo: "estoque", modo: "selecionadas", empresas: [I.empresa] }] } });
     expect(criado.statusCode, criado.body).toBe(201);
     usuarioRestrito = (criado.json() as { id: string }).id; membroRestrito = (criado.json() as { member_id: string }).member_id;
   } finally { await admin.end(); }
@@ -63,8 +63,8 @@ afterAll(async () => { await h.app.close(); await h.db.end(); });
 describe("lista de empresas disponíveis (server-side)", () => {
   it("é escopada pelo tenant: empresa de outra organização NUNCA entra", async () => {
     const disponiveis = await comoServico((ctx) => empresasDisponiveis(ctx));
-    expect(disponiveis).toContain(I.farm);
-    expect(disponiveis).toContain(I.farm2);
+    expect(disponiveis).toContain(I.empresa);
+    expect(disponiveis).toContain(I.empresa2);
     expect(disponiveis, "empresa de outra organização vazou para a lista").not.toContain(empresaOutraOrg);
   });
   it("empresa excluída e empresa inativa não servem para lançamento", async () => {
@@ -90,16 +90,16 @@ describe("seleção de empresa para lançamento na ponte da API", () => {
     }
   });
   it("empresa real da organização é aceita", async () => {
-    const r = await comoServico((ctx) => selecionarEmpresaParaLancamento(ctx, I.farm));
-    expect(r).toEqual({ situacao: "escolhida", empresaId: I.farm });
+    const r = await comoServico((ctx) => selecionarEmpresaParaLancamento(ctx, I.empresa));
+    expect(r).toEqual({ situacao: "escolhida", empresaId: I.empresa });
   });
   it("autorização restrita corta a lista disponível; sobrando uma, a seleção é automática", async () => {
     const disponiveis = await comoMembroRestrito((ctx) => empresasDisponiveis(ctx));
-    expect(disponiveis).toEqual([I.farm]); // escopo do MÓDULO, resolvido no banco — não uma lista em memória
+    expect(disponiveis).toEqual([I.empresa]); // escopo do MÓDULO, resolvido no banco — não uma lista em memória
     const r = await comoMembroRestrito((ctx) => selecionarEmpresaParaLancamento(ctx));
-    expect(r).toEqual({ situacao: "automatica", empresaId: I.farm });
+    expect(r).toEqual({ situacao: "automatica", empresaId: I.empresa });
     // e a empresa fora do escopo é recusada mesmo sendo real e ativa na organização
-    expect(await comoMembroRestrito((ctx) => selecionarEmpresaParaLancamento(ctx, I.farm2))).toEqual({ situacao: "recusada", empresaId: I.farm2 });
+    expect(await comoMembroRestrito((ctx) => selecionarEmpresaParaLancamento(ctx, I.empresa2))).toEqual({ situacao: "recusada", empresaId: I.empresa2 });
   });
   it("módulo sem configuração é fail-closed: nenhuma empresa disponível", async () => {
     const disponiveis = await withTx(h.db, { orgId: h.demo.orgId, userId: usuarioRestrito, modulo: "financeiro" }, (tx) =>
@@ -114,7 +114,7 @@ describe("seleção de empresa para lançamento na ponte da API", () => {
   it("sem pedido e com mais de uma empresa, a seleção é obrigatória — nunca um padrão inventado", async () => {
     const r = await comoServico((ctx) => selecionarEmpresaParaLancamento(ctx));
     expect(r.situacao).toBe("obrigatoria");
-    expect((r as { opcoes: string[] }).opcoes).toEqual(expect.arrayContaining([I.farm, I.farm2]));
+    expect((r as { opcoes: string[] }).opcoes).toEqual(expect.arrayContaining([I.empresa, I.empresa2]));
     expect((r as { opcoes: string[] }).opcoes).not.toContain(empresaOutraOrg);
   });
   it("a regra pura concorda com a ponte para a mesma lista", async () => {

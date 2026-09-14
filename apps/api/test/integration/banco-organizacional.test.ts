@@ -31,7 +31,7 @@ beforeAll(async () => {
     "insert into erp.bank_accounts(organization_id,code,description,type,opening_balance) values ($1,'ORG1','Conta da organizacao','checking',100) returning id", [h.demo.orgId]);
   CONTA = conta.rows[0]!.id;
   // Um movimento em CADA empresa: é a diferença entre 110 e 130.
-  for (const [empresa, valor, codigo] of [[I.farm, 10, "ORGM1"], [I.farm2, 20, "ORGM2"]] as const) {
+  for (const [empresa, valor, codigo] of [[I.empresa, 10, "ORGM1"], [I.empresa2, 20, "ORGM2"]] as const) {
     await admin.query(
       "insert into erp.bank_movements(organization_id,code,bank_account_id,empresa_id,movement_date,type,category_type,amount,status) values ($1,$2,$3,$4,'2031-03-01','in','in',$5,'confirmed')",
       [h.demo.orgId, codigo, CONTA, empresa, valor]);
@@ -44,7 +44,7 @@ beforeAll(async () => {
   const u = (await admin.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ($1,$2,$3) returning id", ["conta-parcial@demo.local", "Conta Parcial", hash])).rows[0]!.id;
   const m = (await admin.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,role_id,is_owner,is_active) values ($1,$2,$3,false,true) returning id", [h.demo.orgId, u, papel])).rows[0]!.id;
   await admin.query("insert into erp.membro_escopos_empresa(organization_id,membro_id,modulo,modo) values ($1,$2,'financeiro','selecionadas')", [h.demo.orgId, m]);
-  await admin.query("insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) values ($1,$2,'financeiro','selecionadas',$3)", [h.demo.orgId, m, I.farm]);
+  await admin.query("insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) values ($1,$2,'financeiro','selecionadas',$3)", [h.demo.orgId, m, I.empresa]);
   tokenParcial = (j(await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "conta-parcial@demo.local", password: "Demo@12345" } })) as unknown as { token: string }).token;
 
   // Outra organização com a sua própria conta: o agregado nunca pode enxergá-la.

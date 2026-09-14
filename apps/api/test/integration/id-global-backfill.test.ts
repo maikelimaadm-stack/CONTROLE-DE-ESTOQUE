@@ -35,23 +35,23 @@ async function historico() {
   for (let i = 0; i < 12; i++) {
     const r = await admin.query<{ id: string }>(
       "insert into erp.animals(organization_id,empresa_id,species_id,category_id,sex,status,entry_date,created_at) values ($1,$2,$3,$4,'M','active',current_date, now() - ($5 || ' days')::interval) returning id",
-      [h.demo.orgId, I.farm, (esp as unknown as { species_id: string }).species_id, cat, String(100 - i)]);
+      [h.demo.orgId, I.empresa, (esp as unknown as { species_id: string }).species_id, cat, String(100 - i)]);
     criados.animais.push(r.rows[0]!.id);
   }
   // EXCLUÍDO: o resolvedor não o enxerga, então ele não pode ganhar número
   const ex = await admin.query<{ id: string }>(
     "insert into erp.animals(organization_id,empresa_id,species_id,category_id,sex,status,entry_date,deleted_at) values ($1,$2,$3,$4,'M','active',current_date, now()) returning id",
-    [h.demo.orgId, I.farm, (esp as unknown as { species_id: string }).species_id, cat]);
+    [h.demo.orgId, I.empresa, (esp as unknown as { species_id: string }).species_id, cat]);
   criados.excluido = ex.rows[0]!.id;
   // INTERNA: efeito de outra operação, sem tela própria
   const it = await admin.query<{ id: string }>(
     "insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,'farm_transfer',current_date,$4) returning id",
-    [h.demo.orgId, I.farm, `BFI${marca}`, h.demo.adminUserId]);
+    [h.demo.orgId, I.empresa, `BFI${marca}`, h.demo.adminUserId]);
   criados.interna = it.rows[0]!.id;
   // USER-FACING na mesma tabela: recebe
   const vd = await admin.query<{ id: string }>(
     "insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,'sale',current_date,$4) returning id",
-    [h.demo.orgId, I.farm, `BFV${marca}`, h.demo.adminUserId]);
+    [h.demo.orgId, I.empresa, `BFV${marca}`, h.demo.adminUserId]);
   criados.venda = vd.rows[0]!.id;
   return criados;
 }
@@ -132,7 +132,7 @@ describe("BACKFILL — o acervo histórico ganha número sem inventar história"
   it("CONVIVÊNCIA: criar pela API ENQUANTO o backfill roda não duplica nem deixa registro sem número", async () => {
     await historico();
     const criarPelaApi = () => h.app.inject({ method: "POST", url: "/api/service-orders", headers: h.headers(),
-      payload: { empresa_id: I.farm, order_date: "2031-02-01", description: "OS durante backfill", lines: [] } });
+      payload: { empresa_id: I.empresa, order_date: "2031-02-01", description: "OS durante backfill", lines: [] } });
     const [backfill, ...respostas] = await Promise.all([
       rodar({ batchSize: 2 }),
       criarPelaApi(), criarPelaApi(), criarPelaApi(), criarPelaApi()
@@ -164,7 +164,7 @@ describe("BACKFILL — o acervo histórico ganha número sem inventar história"
   it("o PRÓXIMO registro criado depois do backfill continua a sequência, sem colidir", async () => {
     const maiorAntes = Number((await admin.query<{ m: string }>("select coalesce(max(id_global),0)::text m from erp.registros_globais where organization_id=$1", [h.demo.orgId])).rows[0]!.m);
     const r = await h.app.inject({ method: "POST", url: "/api/service-orders", headers: h.headers(),
-      payload: { empresa_id: I.farm, order_date: "2031-02-02", description: "OS pós-backfill", lines: [] } });
+      payload: { empresa_id: I.empresa, order_date: "2031-02-02", description: "OS pós-backfill", lines: [] } });
     expect(r.statusCode, r.body).toBe(201);
     const n = await admin.query<{ id_global: string }>("select id_global from erp.registros_globais where organization_id=$1 and id_entidade=$2", [h.demo.orgId, j(r).id]);
     expect(Number(n.rows[0]!.id_global)).toBeGreaterThan(maiorAntes);

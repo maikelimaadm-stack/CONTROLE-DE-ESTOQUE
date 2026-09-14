@@ -34,19 +34,19 @@ describe("rota canônica e ID Global concordam sobre exclusão lógica", () => {
   const casos: { tipo: string; tabela: string; detalhe: (id: string) => string; criar: () => Promise<string> }[] = [
     {
       tipo: "input_entries", tabela: "erp.input_entries", detalhe: (id) => `/api/stock/input-entries/${id}`,
-      criar: () => criar("/api/stock/input-entries", { farm_id: I.farm, entry_date: "2026-09-04", items: [{ product_id: I.product, quantity: "2", unit_value: "3", warehouse_id: I.warehouse }] })
+      criar: () => criar("/api/stock/input-entries", { empresa_id: I.empresa, entry_date: "2026-09-04", items: [{ product_id: I.product, quantity: "2", unit_value: "3", warehouse_id: I.warehouse }] })
     },
     {
       tipo: "warehouse_transfers", tabela: "erp.warehouse_transfers", detalhe: (id) => `/api/stock/transfers/${id}`,
-      criar: () => criar("/api/stock/transfers", { kind: "warehouse", transfer_date: "2026-09-04", origin_farm_id: I.farm, origin_warehouse_id: I.warehouse, destination_warehouse_id: I.warehouse2, items: [{ product_id: I.product, quantity: "1" }] })
+      criar: () => criar("/api/stock/transfers", { kind: "warehouse", transfer_date: "2026-09-04", empresa_origem_id: I.empresa, origin_warehouse_id: I.warehouse, destination_warehouse_id: I.warehouse2, items: [{ product_id: I.product, quantity: "1" }] })
     },
     {
       tipo: "maintenances", tabela: "erp.maintenances", detalhe: (id) => `/api/fleet/maintenances/${id}`,
-      criar: () => criar("/api/fleet/maintenances", { farm_id: I.farm, maintenance_date: "2026-09-04", machines: [{ equipment_id: I.equipment, services: [{ description: "Existência funcional", quantity: "1" }] }] })
+      criar: () => criar("/api/fleet/maintenances", { empresa_id: I.empresa, maintenance_date: "2026-09-04", machines: [{ equipment_id: I.equipment, services: [{ description: "Existência funcional", quantity: "1" }] }] })
     },
     {
       tipo: "service_orders", tabela: "erp.service_orders", detalhe: (id) => `/api/service-orders/${id}`,
-      criar: () => criar("/api/service-orders", { farm_id: I.farm, order_date: "2026-09-04", description: "Existência funcional" })
+      criar: () => criar("/api/service-orders", { empresa_id: I.empresa, order_date: "2026-09-04", description: "Existência funcional" })
     }
   ];
 

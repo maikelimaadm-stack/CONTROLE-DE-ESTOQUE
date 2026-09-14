@@ -60,7 +60,7 @@ const doContexto = async (hdr: Hdr) => {
 };
 
 beforeAll(async () => {
-  h = await harness(); I = await ids(h); A = I.farm; B = I.farm2;
+  h = await harness(); I = await ids(h); A = I.empresa; B = I.empresa2;
   SO_B = await criarUsuario("Contador só B", "contador-b@demo.local", MODULOS.map((m) => ({ modulo: m, modo: "selecionadas", empresas: [B] })));
   TODAS = await criarUsuario("Contador todas", "contador-todas@demo.local", MODULOS.map((m) => ({ modulo: m, modo: "todas" })));
   idB1 = await semear(B, "CONTADOR-B-1");

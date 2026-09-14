@@ -30,7 +30,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const schema = readSchema();
 const colunaDeEmpresa = (tabela: string): string | null => {
   const t = schema.get(`erp.${tabela}`);
-  // CANÔNICAS, não todas: depois da PRE-BASE2-03 cada tabela tem `empresa_id` E o espelho `farm_id`, e
+  // CANÔNICAS, não todas: depois da PRE-BASE2-03 cada tabela tem `empresa_id` E o espelho `empresa_id`, e
   // exigir predicado nas duas cobraria duas vezes o mesmo recorte. O runtime novo lê a canônica; é por ela
   // que o gate cobra.
   const cols = t ? (canonicalCompanyColumnsOf(t) as string[]) : [];
@@ -40,7 +40,7 @@ const colunaDeEmpresa = (tabela: string): string | null => {
 /** Tabelas cuja coluna de empresa NÃO é autoridade de recorte (vínculo/índice), tratadas caso a caso. */
 /**
  * Tabelas SEM coluna de empresa cujos dados pertencem a uma empresa POR RELAÇÃO. O gate estrutural não as
- * enxergaria (não têm `farm_id`), mas ler `erp.matings` sem nenhum vínculo com a estação ou com a matriz
+ * enxergaria (não têm `empresa_id`), mas ler `erp.matings` sem nenhum vínculo com a estação ou com a matriz
  * mostra reprodução de qualquer empresa. Aqui a exigência é: a tabela-PAI precisa aparecer na consulta e
  * estar recortada — ou a fonte precisa ser declarada como derivada, com motivo.
  */
@@ -95,7 +95,7 @@ function fontes(sql: string): { tabela: string; alias: string; semAlias?: boolea
  *
  *  (a) a tabela vizinha NÃO TEM coluna de empresa própria — ela pertence a uma empresa por RELAÇÃO, então o
  *      recorte do pai é o único recorte que existe (`erp.title_apportionments` pelo título);
- *  (b) a igualdade é entre as PRÓPRIAS COLUNAS DE EMPRESA das duas (`a.farm_id=b.farm_id`), que transporta
+ *  (b) a igualdade é entre as PRÓPRIAS COLUNAS DE EMPRESA das duas (`a.empresa_id=b.empresa_id`), que transporta
  *      o recorte de uma para a outra.
  *
  * Juntar duas tabelas QUE TÊM coluna de empresa por qualquer outra chave NÃO recorta nada: nada no banco
@@ -245,7 +245,7 @@ describe("escopo empresarial dos relatórios", () => {
         if (recortados.has(alias)) continue;
         if (fonteSemAlias(texto, tabela) && texto.includes(`me.empresa_id=${coluna}`)) continue;
         // Chegar aqui significa que a tabela TEM coluna de empresa própria. Nesse caso "derivado" não é
-        // desculpa aceitável: quem tem `farm_id` responde pelo próprio `farm_id`. A declaração derivada
+        // desculpa aceitável: quem tem `empresa_id` responde pelo próprio `empresa_id`. A declaração derivada
         // existe para a tabela que NÃO tem coluna de empresa (o laço de EMPRESA_POR_RELACAO, abaixo).
         if (derivados[alias]) {
           problemas.push(`${def.key} (${modulo}): ${tabela} como ${alias} foi DECLARADA derivada, mas tem coluna de empresa própria (${coluna}) — declaração não substitui predicado`);
@@ -293,15 +293,15 @@ describe("escopo empresarial dos relatórios", () => {
       },
       {
         arquivo: "livestock.ts", trecho: "from erp.herd_lots h join erp.animal_categories c on c.id=h.category_id", aliases: ["bt"],
-        motivo: "rótulo do lote do próprio conjunto já recortado (h.farm_id): mostra o nome do lote a que o conjunto pertence."
+        motivo: "rótulo do lote do próprio conjunto já recortado (h.empresa_id): mostra o nome do lote a que o conjunto pertence."
       },
       {
         arquivo: "livestock.ts", trecho: "from erp.processings p left join erp.animal_movements m on m.id=p.purchase_movement_id", aliases: ["m", "b"],
-        motivo: "rótulos da compra e do pré-lote que ORIGINARAM o processamento já recortado (p.farm_id): são a procedência do registro autorizado."
+        motivo: "rótulos da compra e do pré-lote que ORIGINARAM o processamento já recortado (p.empresa_id): são a procedência do registro autorizado."
       },
       {
         arquivo: "livestock.ts", trecho: "from erp.feed_deliveries d left join erp.feedlot_corrals c on c.id=d.corral_id", aliases: ["b"],
-        motivo: "rótulo do lote tratado pelo próprio trato já recortado (d.farm_id)."
+        motivo: "rótulo do lote tratado pelo próprio trato já recortado (d.empresa_id)."
       }
     ];
     const dir = path.join(here, "../../src/routes");
@@ -332,7 +332,7 @@ describe("escopo empresarial dos relatórios", () => {
    * distinct, anexos e a própria escrita) decide o recorte por UMA flag do ResourceDef. Se a flag não
    * existir, NENHUM predicado é emitido em nenhum desses caminhos — e nada cruzava essa flag com o schema
    * real. Foi assim que `financial_freezes` e `budget_plannings`, dois recursos do módulo financeiro cujas
-   * tabelas têm `farm_id`, ficaram sem recorte em leitura, exportação, anexo e criação.
+   * tabelas têm `empresa_id`, ficaram sem recorte em leitura, exportação, anexo e criação.
    */
   it("todo recurso cuja tabela tem coluna de empresa declara o escopo (empresaScoped ou empresaScopedNulo)", () => {
     const problemas: string[] = [];

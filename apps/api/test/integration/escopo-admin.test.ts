@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool } from "@agro/db";
-import { harness, ids, TEST_URL, type Harness } from "./setup.js";
+import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
  * BORDA DE ADMINISTRAÇÃO DO ACESSO POR EMPRESA (PRE-BASE2-02 §6-§12).
@@ -13,7 +13,7 @@ import { harness, ids, TEST_URL, type Harness } from "./setup.js";
  */
 let h: Harness; let I: Awaited<ReturnType<typeof ids>>;
 type Hdr = Record<string, string>;
-const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { error?: { code: string }; id?: string; member_id?: string; items?: Record<string, unknown>[] };
+const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { error?: { code: string; message?: string }; id?: string; member_id?: string; items?: Record<string, unknown>[] };
 let empresaOutraOrg = ""; let empresaExcluida = ""; let empresaInativa = ""; let papel = "";
 let seq = 0;
 
@@ -32,9 +32,9 @@ beforeAll(async () => {
   const admin = createPool(TEST_URL, { max: 2 });
   try {
     const orgB = (await admin.query<{ id: string }>("insert into erp.organizations(name,slug) values ('[TEST] Org Borda','orgborda') returning id")).rows[0]!.id;
-    empresaOutraOrg = (await admin.query<{ id: string }>("insert into erp.farms(organization_id,code,name) values ($1,911,'Outra organização') returning id", [orgB])).rows[0]!.id;
-    empresaExcluida = (await admin.query<{ id: string }>("insert into erp.farms(organization_id,code,name,deleted_at) values ($1,912,'Excluída',now()) returning id", [h.demo.orgId])).rows[0]!.id;
-    empresaInativa = (await admin.query<{ id: string }>("insert into erp.farms(organization_id,code,name,is_active) values ($1,913,'Inativa',false) returning id", [h.demo.orgId])).rows[0]!.id;
+    empresaOutraOrg = (await admin.query<{ id: string }>("insert into erp.empresas(organization_id,code,name) values ($1,911,'Outra organização') returning id", [orgB])).rows[0]!.id;
+    empresaExcluida = (await admin.query<{ id: string }>("insert into erp.empresas(organization_id,code,name,deleted_at) values ($1,912,'Excluída',now()) returning id", [h.demo.orgId])).rows[0]!.id;
+    empresaInativa = (await admin.query<{ id: string }>("insert into erp.empresas(organization_id,code,name,is_active) values ($1,913,'Inativa',false) returning id", [h.demo.orgId])).rows[0]!.id;
   } finally { await admin.end(); }
   const r = await post("/api/admin/roles", { name: "Perfil borda", permissions: ["stocks.view", "payables.view"] });
   papel = j(r).id as string;
@@ -43,7 +43,7 @@ afterAll(async () => { await h.app.close(); await h.db.end(); });
 
 describe("validação das empresas atribuídas", () => {
   it("A) empresa ativa da organização é aceita", async () => {
-    const r = await criarMembro([{ modulo: "estoque", modo: "selecionadas", empresas: [I.farm] }]);
+    const r = await criarMembro([{ modulo: "estoque", modo: "selecionadas", empresas: [I.empresa] }]);
     expect(r.status, JSON.stringify(r.body)).toBe(201);
   });
   it("B) empresa INATIVA da organização é aceita (histórico continua consultável)", async () => {
@@ -65,25 +65,25 @@ describe("validação das empresas atribuídas", () => {
     expect(r.status).toBe(422);
   });
   it("F) empresa repetida no mesmo módulo é recusada — payload errado não é normalizado em silêncio", async () => {
-    const r = await criarMembro([{ modulo: "estoque", modo: "selecionadas", empresas: [I.farm, I.farm] }]);
+    const r = await criarMembro([{ modulo: "estoque", modo: "selecionadas", empresas: [I.empresa, I.empresa] }]);
     expect(r.status).toBe(422);
     expect(JSON.stringify(r.body)).toMatch(/repetida/i);
   });
   it("G) módulo repetido é recusado", async () => {
     const r = await criarMembro([
-      { modulo: "estoque", modo: "selecionadas", empresas: [I.farm] },
+      { modulo: "estoque", modo: "selecionadas", empresas: [I.empresa] },
       { modulo: "estoque", modo: "todas", empresas: [] }
     ]);
     expect(r.status).toBe(422);
   });
   it("H) modo \"todas\" com lista de empresas é recusado", async () => {
-    const r = await criarMembro([{ modulo: "estoque", modo: "todas", empresas: [I.farm] }]);
+    const r = await criarMembro([{ modulo: "estoque", modo: "todas", empresas: [I.empresa] }]);
     expect(r.status).toBe(422);
   });
-  it("os dois contratos juntos (canônico + legado) são recusados", async () => {
+  it("o contrato ACHATADO anterior é recusado mesmo acompanhado do canônico", async () => {
     seq += 1;
-    const r = await post("/api/admin/members", { name: `Borda ${seq}`, email: `borda-${seq}@demo.local`, password: "Borda@12345", role_id: papel, farm_ids: [I.farm], escopos_empresas: [{ modulo: "estoque", modo: "todas", empresas: [] }] });
-    expect(r.statusCode).toBe(422);
+    const r = await post("/api/admin/members", { name: `Borda ${seq}`, email: `borda-${seq}@demo.local`, password: "Borda@12345", role_id: papel, empresa_ids: [I.empresa], escopos_empresas: [{ modulo: "estoque", modo: "todas", empresas: [] }] });
+    expect(r.statusCode, r.body).toBe(422);
   });
 });
 
@@ -106,28 +106,51 @@ describe("modo selecionadas com lista VAZIA = nenhuma empresa (fail-closed expl�
   });
 });
 
-describe("a borda LEGADA farm_ids não desvia da validação canônica", () => {
-  const casos: [string, () => string][] = [
-    ["empresa de outra organização", () => empresaOutraOrg],
-    ["empresa excluída", () => empresaExcluida],
-    ["identificador inexistente", () => "88888888-8888-4888-8888-888888888888"]
-  ];
-  it.each(casos)("farm_ids com %s é recusado", async (_nome, empresa) => {
-    seq += 1;
-    const r = await post("/api/admin/members", { name: `Legado ${seq}`, email: `legado-${seq}@demo.local`, password: "Borda@12345", role_id: papel, farm_ids: [empresa()] });
+/**
+ * O CONTRATO ACHATADO SAIU EM PRE-BASE2-05B — e precisa ser RECUSADO, não ignorado.
+ *
+ * `empresa_ids` configurava acesso como lista única, em que vazio queria dizer "todas as empresas, em todos
+ * os módulos". Tirá-lo do schema não bastaria: `z.object` descarta chave desconhecida, então um cliente
+ * antigo pedindo acesso a UMA empresa criaria o membro com NENHUMA — ou, no caso da lista vazia, pediria
+ * acesso total e receberia zero. Concessão silenciosamente diferente da pedida, nos dois sentidos.
+ *
+ * O mesmo nome continua CANÔNICO e legítimo como filtro de empresas nos painéis; o que morreu foi o seu uso
+ * como configuração de acesso. Por isso a recusa é local a esta borda, e não um guard global.
+ */
+describe("contrato administrativo achatado (empresa_ids) é recusado", () => {
+  const corpo = (extra: Record<string, unknown>) => { seq += 1; return { name: `Achatado ${seq}`, email: `achatado-${seq}@demo.local`, password: "Borda@12345", role_id: papel, ...extra }; };
+
+  it.each([
+    ["uma empresa válida", () => [I.empresa]],
+    ["lista vazia (o antigo \"todas\")", () => []],
+    ["empresa de outra organização", () => [empresaOutraOrg]],
+    ["empresa excluída", () => [empresaExcluida]],
+    ["empresa inativa", () => [empresaInativa]]
+  ] as [string, () => string[]][])("empresa_ids com %s é recusado", async (_nome, empresas) => {
+    const r = await post("/api/admin/members", corpo({ empresa_ids: empresas() }));
     expect(r.statusCode, r.body).toBe(422);
+    expect(j(r).error?.message ?? "", "a recusa explica o contrato novo").toContain("escopos_empresas");
   });
-  it("farm_ids com empresa inativa continua aceito", async () => {
-    seq += 1;
-    const r = await post("/api/admin/members", { name: `Legado ${seq}`, email: `legado-${seq}@demo.local`, password: "Borda@12345", role_id: papel, farm_ids: [empresaInativa] });
-    expect(r.statusCode, r.body).toBe(201);
+
+  it("a recusa acontece ANTES de qualquer escrita: nenhum usuário nasce do pedido recusado", async () => {
+    const pedido = corpo({ empresa_ids: [I.empresa] });
+    expect((await post("/api/admin/members", pedido)).statusCode).toBe(422);
+    const achado = await h.app.inject({ method: "GET", url: `/api/admin/members?search=${encodeURIComponent(String(pedido.email))}`, headers: h.headers() });
+    expect((achado.json() as { items: unknown[] }).items, "nada foi criado").toEqual([]);
+  });
+
+  it("na EDIÇÃO vale o mesmo — a porta de update não é uma entrada mais frouxa", async () => {
+    const criado = await post("/api/admin/members", corpo({ escopos_empresas: [{ modulo: "estoque", modo: "todas", empresas: [] }] }));
+    expect(criado.statusCode, criado.body).toBe(201);
+    const r = await h.app.inject({ method: "PUT", url: `/api/admin/members/${j(criado).id as string}`, headers: h.headers(), payload: { empresa_ids: [I.empresa] } });
+    expect(r.statusCode, r.body).toBe(422);
   });
 });
 
 describe("ausência de configuração é NENHUMA empresa, nunca todas", () => {
-  it("membro criado sem escopos_empresas e sem farm_ids não enxerga empresa alguma", async () => {
-    // O fallback antigo traduzia a ausência dos dois campos em modo `todas` nos onze módulos: o membro
-    // nascia enxergando a organização inteira porque o pedido foi OMISSO, não porque alguém concedeu.
+  it("membro criado sem escopos_empresas não enxerga empresa alguma", async () => {
+    // O fallback antigo traduzia a ausência em modo `todas` nos onze módulos: o membro nascia enxergando a
+    // organização inteira porque o pedido foi OMISSO, não porque alguém concedeu.
     seq += 1;
     const email = `sem-escopo-${seq}@demo.local`;
     const criado = await post("/api/admin/members", { name: "Sem escopo", email, password: "Borda@12345", role_id: papel });
@@ -139,16 +162,16 @@ describe("ausência de configuração é NENHUMA empresa, nunca todas", () => {
       const escopos = await c.query<{ n: string }>("select count(*) n from erp.membro_escopos_empresa where organization_id=$1 and membro_id=$2", [h.demo.orgId, membroId]);
       expect(Number(escopos.rows[0]!.n), "nenhum módulo configurado").toBe(0);
       // e a autoridade do banco concorda: nenhuma empresa, em nenhum módulo
-      const acesso = await c.query<{ ok: boolean }>("select erp.tem_acesso_empresa($1,$2,'estoque',$3) as ok", [h.demo.orgId, j(criado).id as string, I.farm]);
+      const acesso = await c.query<{ ok: boolean }>("select erp.tem_acesso_empresa($1,$2,'estoque',$3) as ok", [h.demo.orgId, j(criado).id as string, I.empresa]);
       expect(acesso.rows[0]!.ok, "sem configuração = sem acesso").toBe(false);
     } finally { await c.end(); }
   });
 
-  it("farm_ids explicitamente vazio continua sendo o legado \"todas\"", async () => {
-    // A tradução legada só vale para o campo ENVIADO: lá, lista vazia sempre significou todas as empresas,
-    // e mudar isso reescreveria o passado de quem já usa a API antiga.
+  it("acesso total é pedido EXPLICITAMENTE, módulo a módulo, e o banco registra `todas`", async () => {
+    // O que a lista vazia do contrato anterior queria dizer continua exprimível — agora por escrito, com
+    // cada módulo nomeado, em vez de deduzido de um campo vazio.
     seq += 1;
-    const criado = await post("/api/admin/members", { name: "Legado vazio", email: `legado-vazio-${seq}@demo.local`, password: "Borda@12345", role_id: papel, farm_ids: [] });
+    const criado = await post("/api/admin/members", { name: "Acesso total", email: `total-${seq}@demo.local`, password: "Borda@12345", role_id: papel, escopos_empresas: escoposDeTodosOsModulos([]) });
     expect(criado.statusCode, criado.body).toBe(201);
     const c = createPool(TEST_URL, { max: 1 });
     try {
@@ -162,13 +185,13 @@ describe("auditoria de mudança de escopo (evento de segurança)", () => {
   it("registra ator, membro, antes, depois e módulos alterados — sem segredo algum", async () => {
     seq += 1;
     const email = `auditoria-${seq}@demo.local`;
-    const criado = await post("/api/admin/members", { name: "Auditado", email, password: "Borda@12345", role_id: papel, escopos_empresas: [{ modulo: "estoque", modo: "selecionadas", empresas: [I.farm] }] });
+    const criado = await post("/api/admin/members", { name: "Auditado", email, password: "Borda@12345", role_id: papel, escopos_empresas: [{ modulo: "estoque", modo: "selecionadas", empresas: [I.empresa] }] });
     expect(criado.statusCode, criado.body).toBe(201);
     const userId = j(criado).id as string; const membroId = j(criado).member_id as string;
 
     const alterado = await put(`/api/admin/members/${userId}`, { escopos_empresas: [
-      { modulo: "estoque", modo: "selecionadas", empresas: [I.farm2] },
-      { modulo: "financeiro", modo: "selecionadas", empresas: [I.farm] }
+      { modulo: "estoque", modo: "selecionadas", empresas: [I.empresa2] },
+      { modulo: "financeiro", modo: "selecionadas", empresas: [I.empresa] }
     ] });
     expect(alterado.statusCode, alterado.body).toBe(200);
 
@@ -187,9 +210,9 @@ describe("auditoria de mudança de escopo (evento de segurança)", () => {
       expect(criacao.before, "quem nasce não tinha escopo anterior").toEqual([]);
 
       const antes = update.before!; const depois = update.after!;
-      expect(antes.find((e) => e.modulo === "estoque")?.empresas).toEqual([I.farm]);
-      expect(depois.find((e) => e.modulo === "estoque")?.empresas).toEqual([I.farm2]);
-      expect(depois.find((e) => e.modulo === "financeiro")?.empresas).toEqual([I.farm]);
+      expect(antes.find((e) => e.modulo === "estoque")?.empresas).toEqual([I.empresa]);
+      expect(depois.find((e) => e.modulo === "estoque")?.empresas).toEqual([I.empresa2]);
+      expect(depois.find((e) => e.modulo === "financeiro")?.empresas).toEqual([I.empresa]);
 
       // metadata guarda o que NÃO é foto: quem foi alterado e quais módulos mudaram. Repetir as fotos aqui
       // devolveria a inconsistência — duas verdades para o mesmo fato, divergindo na primeira alteração.

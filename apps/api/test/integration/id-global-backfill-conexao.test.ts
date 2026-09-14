@@ -31,7 +31,7 @@ async function historico(n: number): Promise<void> {
   for (let i = 0; i < n; i++) {
     await admin.query(
       "insert into erp.animals(organization_id,empresa_id,species_id,category_id,sex,status,entry_date,created_at) values ($1,$2,$3,$4,'M','active',current_date, now() - ($5 || ' days')::interval)",
-      [h.demo.orgId, I.farm, esp, cat, String(200 - i)]);
+      [h.demo.orgId, I.empresa, esp, cat, String(200 - i)]);
   }
 }
 const elegiveisSemNumero = async (): Promise<number> => Number((await admin.query<{ n: string }>(

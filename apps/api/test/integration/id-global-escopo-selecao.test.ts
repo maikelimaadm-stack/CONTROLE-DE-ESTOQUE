@@ -40,7 +40,7 @@ let hdrU: Hdr; let A = ""; let B = "";
 
 beforeAll(async () => {
   h = await harness(); I = await ids(h); admin = createPool(TEST_URL, { max: 2 });
-  A = I.farm; B = I.farm2;
+  A = I.empresa; B = I.empresa2;
 
   const criar = async (url: string, payload: Record<string, unknown>) => {
     const r = await h.app.inject({ method: "POST", url, headers: h.headers(), payload });

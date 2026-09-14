@@ -118,6 +118,12 @@ describe("classificação × políticas reais", () => {
     expect(problemas).toEqual([]);
   });
 
+  /**
+   * Esta asserção é sobre o SCHEMA FÍSICO, não sobre o fio: ela emparelha a coluna canônica com a coluna
+   * espelho que ainda existe no banco. Os nomes antigos abaixo são de COLUNA e continuam corretos até a
+   * PRE-BASE2-05C — trocá-los pelos canônicos transformaria o `exists` num auto-join que casa com tudo, e
+   * o teste passaria a não provar nada.
+   */
   it("todo par canônico/legado tem gatilho de sincronização no banco", async () => {
     const r = await db.query<{ tabela: string; canonico: string }>(`
       select c.table_name as tabela, c.column_name as canonico
