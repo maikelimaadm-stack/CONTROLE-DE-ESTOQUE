@@ -10,7 +10,9 @@ import type { Base1Column, Row } from "@/features/base1/types";
 
 export interface Column<T> { key: string; label: string; render?: (row: T) => React.ReactNode; className?: string; sortable?: boolean; align?: "right" | "left" | "center"; /** largura fixa em px (preferência do usuário) */ width?: number; /** família do filtro (chip/cabeçalho): texto, número, data, enumeração… */ kind?: FilterKind; /** opções fixas (kind enum) */ options?: { value: string; label: string }[];
   /** capacidades da coluna na grade (ver Base1Column); padrão `true` — uma coluna de IDENTIDADE as nega */
-  hideable?: boolean; resizable?: boolean; freezable?: boolean; autoFit?: boolean }
+  hideable?: boolean; resizable?: boolean; freezable?: boolean; autoFit?: boolean; filterable?: boolean;
+  /** pinagem estrutural à esquerda (ver Base1Column.pinned): fixa mesmo sem congelamento configurado */
+  pinned?: "left" }
 /**
  * RODAPÉ DE TOTAIS ALINHADO À GRADE — derivado das colunas, nunca contado à mão.
  *
@@ -48,7 +50,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, rows, to
   const sel = selected ?? selLocal; const setSel = onSelect ?? setSelLocal;
   const pages = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : 1;
   const cols = React.useMemo<Base1Column[]>(() => [
-    ...columns.map((c) => ({ key: c.key, label: c.label, align: c.align, sortable: c.sortable, width: c.width, hideable: c.hideable, resizable: c.resizable, freezable: c.freezable, autoFit: c.autoFit, render: c.render ? (r: Row) => c.render!(r as T) : undefined, text: (r: Row) => { const v = r[c.key]; return v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); } })),
+    ...columns.map((c) => ({ key: c.key, label: c.label, align: c.align, sortable: c.sortable, width: c.width, hideable: c.hideable, resizable: c.resizable, freezable: c.freezable, autoFit: c.autoFit, filterable: c.filterable, pinned: c.pinned, render: c.render ? (r: Row) => c.render!(r as T) : undefined, text: (r: Row) => { const v = r[c.key]; return v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); } })),
     // "Visualizar" explícito: toda linha que abre um registro (onRowClick) ganha a ação visível; o duplo clique continua como atalho
     ...(actions || onRowClick ? [{ key: "__actions", label: "Ação", sortable: false, width: actions ? 120 : 60, align: "center" as const, render: (r: Row) => <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>{onRowClick && <IconBtn size="sm" aria-label="Visualizar" title="Visualizar" data-testid="row-view" onClick={() => onRowClick(r as T)}><Eye /></IconBtn>}{actions?.(r as T)}</span>, text: () => "" }] : [])
   ], [columns, actions, onRowClick]);

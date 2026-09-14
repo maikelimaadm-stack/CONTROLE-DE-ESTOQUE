@@ -48,6 +48,19 @@ async function criarProduto(page: Page): Promise<{ id: string; idGlobal: number;
   }, API);
 }
 
+/**
+ * As preferências de tela são PERSISTIDAS por usuário. Sem restaurar, um caso que mexe em colunas ou
+ * congelamento contamina os seguintes — e o que falha depois não é o defeito, é o rastro do anterior.
+ */
+async function restaurarTela(page: Page) {
+  await page.getByLabel("Mais opções").first().click();
+  await page.getByRole("menuitem", { name: "Restaurar padrão da tela" }).click();
+  const aviso = page.locator("[data-sonner-toast]").first();
+  await expect(aviso).toContainText("restaurada");
+  // o aviso cobre o canto onde fica "Mais opções": esperar ele sair evita um clique que não chega ao botão
+  await expect(aviso).toHaveCount(0, { timeout: 15_000 });
+}
+
 test.describe("ID Global na listagem", () => {
   test("cadastro genérico: a coluna existe e o registro criado pela porta real traz o #N", async ({ page }) => {
     await login(page);
@@ -79,6 +92,7 @@ test.describe("ID Global na listagem", () => {
     await expect(page.getByTestId("b1-row").first()).toBeVisible();
 
     // o usuário reduz as colunas em uso: a identidade NÃO é uma delas e não pode desaparecer com a escolha
+    // (o caso não precisa de estado inicial limpo — a asserção vale a partir de qualquer configuração)
     await page.getByLabel("Mais opções").first().click();
     await page.getByRole("menuitem", { name: "Configurações" }).click();
     await expect(page.getByText("Configuração de colunas")).toBeVisible();
@@ -90,6 +104,7 @@ test.describe("ID Global na listagem", () => {
     // e continua lá depois de recarregar a tela (a preferência salva não a apaga)
     await page.reload();
     await expect(page.getByRole("columnheader", { name: "ID Global" })).toBeVisible();
+    await restaurarTela(page);
   });
 
   test("o número da listagem é o mesmo que a busca global resolve", async ({ page }) => {
@@ -124,6 +139,52 @@ async function criarPerfil(page: Page): Promise<{ id: string; idGlobal: number; 
 }
 
 /**
+ * FIXTURES PELAS PORTAS REAIS.
+ *
+ * O seed de e2e traz animais e perfis, mas não traz título financeiro nem importação OFX. Sem fixture, a
+ * listagem dessas duas telas abre vazia — e um teste que percorre "as células" de uma tela vazia passa sem
+ * olhar nada. Os dados são criados pela MESMA porta que o usuário usaria, no banco descartável do e2e.
+ */
+async function semearTituloAPagar(page: Page): Promise<void> {
+  const erro = await page.evaluate(async (base: string) => {
+    const sessao = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string };
+    const cab = { "content-type": "application/json", authorization: `Bearer ${sessao.token}`, "x-org-id": sessao.orgId };
+    const um = async (url: string) => ((await (await fetch(`${base}${url}`, { headers: cab })).json()).items ?? [])[0] as { id: string } | undefined;
+    const ctx = await (await fetch(`${base}/api/auth/context`, { headers: cab })).json();
+    const [fornecedor, categoria, centro] = await Promise.all([
+      um("/api/resources/people?is_provider=true&pageSize=1"),
+      um("/api/resources/financial_categories?kind=analytic&nature=expense&pageSize=1"),
+      um("/api/resources/cost_centers?kind=analytic&pageSize=1")
+    ]);
+    if (!fornecedor || !categoria || !centro) return `pré-condição ausente no seed: fornecedor=${!!fornecedor} categoria=${!!categoria} centro=${!!centro}`;
+    const r = await fetch(`${base}/api/financial/payables`, { method: "POST", headers: cab, body: JSON.stringify({
+      empresa_id: ctx.empresas[0].id, number: `LST-${Date.now()}`, person_id: fornecedor.id, amount: "123.45",
+      emission_date: "2031-07-01", due_date: "2031-08-01", note: "fixture do e2e de ID Global",
+      apportionment: [{ financial_category_id: categoria.id, cost_center_id: centro.id, percentage: "100" }]
+    }) });
+    return r.ok ? "" : `falha ao criar o título: ${await r.text()}`;
+  }, API);
+  expect(erro, "fixture de conta a pagar").toBe("");
+}
+
+/** OFX mínimo e VÁLIDO para o parser do próprio sistema (um STMTTRN com DTPOSTED, TRNAMT e FITID). */
+async function semearImportacaoOfx(page: Page): Promise<void> {
+  const erro = await page.evaluate(async (base: string) => {
+    const sessao = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string };
+    const cab = { "content-type": "application/json", authorization: `Bearer ${sessao.token}`, "x-org-id": sessao.orgId };
+    const conta = ((await (await fetch(`${base}/api/resources/bank_accounts?pageSize=1`, { headers: cab })).json()).items ?? [])[0] as { id: string } | undefined;
+    if (!conta) return "pré-condição ausente no seed: nenhuma conta bancária";
+    const ofx = ["<OFX><BANKMSGSRSV1><STMTTRNRS><STMTRS><BANKTRANLIST>",
+      "<STMTTRN><TRNTYPE>DEBIT<DTPOSTED>20310701<TRNAMT>-123.45<FITID>E2E-ID-GLOBAL-1<MEMO>fixture e2e</STMTTRN>",
+      "</BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>"].join("\n");
+    const r = await fetch(`${base}/api/financial/ofx-imports`, { method: "POST", headers: cab,
+      body: JSON.stringify({ bank_account_id: conta.id, description: `Extrato e2e ${Date.now()}`, content: ofx }) });
+    return r.ok ? "" : `falha ao importar OFX: ${await r.text()}`;
+  }, API);
+  expect(erro, "fixture de importação OFX").toBe("");
+}
+
+/**
  * TELAS QUE NÃO PASSAM PELO MODELO BASE1 (PRE-BASE2-05B.1).
  *
  * Quatro listagens montam a grade por conta própria com DataTable e por isso receberam a coluna
@@ -131,23 +192,28 @@ async function criarPerfil(page: Page): Promise<{ id: string; idGlobal: number; 
  * catálogo, enriquecimento da API, matriz das 23 entidades e N+1 sem acender nenhuma luz — o número
  * simplesmente sumiria da tela, que é exatamente o que esta fatia existe para impedir.
  */
-const CUSTOM: { nome: string; rota: string }[] = [
-  { nome: "títulos financeiros (contas a pagar)", rota: "/financeiro/contas-a-pagar" },
+const CUSTOM: { nome: string; rota: string; semear?: (page: Page) => Promise<void> }[] = [
+  { nome: "títulos financeiros (contas a pagar)", rota: "/financeiro/contas-a-pagar", semear: semearTituloAPagar },
   { nome: "animais", rota: "/pecuaria/animais" },
-  { nome: "importações OFX", rota: "/financeiro/ofx" },
+  { nome: "importações OFX", rota: "/financeiro/ofx", semear: semearImportacaoOfx },
   { nome: "perfis de acesso", rota: "/admin/perfis" }
 ];
 
 test.describe("ID Global nas listagens que montam a grade por conta própria", () => {
   for (const tela of CUSTOM) {
-    test(`${tela.nome} — a coluna existe e toda célula é #N ou ausência explícita`, async ({ page }) => {
+    test(`${tela.nome} — uma célula de identidade por linha, cada uma #N ou ausência explícita`, async ({ page }) => {
       await login(page);
+      if (tela.semear) await tela.semear(page);
       await page.goto(tela.rota);
       await expect(page.getByRole("columnheader", { name: "ID Global" })).toBeVisible();
-      const celulas = page.getByTestId("b1-row").locator('[data-testid="id-global-celula"]');
-      for (let i = 0; i < await celulas.count(); i++) {
-        await expect(celulas.nth(i)).toHaveText(/^#\d+$/);
-      }
+
+      const linhas = page.getByTestId("b1-row");
+      // Sem linhas, percorrer "as células" não prova nada: a pré-condição é parte do contrato do teste.
+      await expect(linhas.first(), `${tela.rota} precisa ter pelo menos uma linha para a prova valer`).toBeVisible();
+      const total = await linhas.count();
+      const celulas = linhas.locator('[data-testid="id-global-celula"]');
+      expect(await celulas.count(), "toda linha tem exatamente uma célula de identidade").toBe(total);
+      for (let i = 0; i < total; i++) await expect(celulas.nth(i)).toHaveText(/^(#\d+|–)$/);
     });
   }
 
@@ -223,6 +289,7 @@ test.describe("capacidades da coluna de identidade", () => {
     await login(page);
     await page.goto("/cadastros/products");
     await expect(page.getByRole("columnheader", { name: "ID Global" })).toBeVisible();
+    await restaurarTela(page);
 
     await expect(page.getByLabel("Abrir menu da coluna ID Global"), "coluna de identidade não tem menu").toHaveCount(0);
     await expect(page.getByLabel("Redimensionar ID Global"), "coluna de identidade não tem alça de arraste").toHaveCount(0);
@@ -239,8 +306,104 @@ test.describe("capacidades da coluna de identidade", () => {
   test("ID Global permanece a primeira coluna e congelada", async ({ page }) => {
     await login(page);
     await page.goto("/cadastros/products");
+    await expect(page.getByTestId("b1-row").first()).toBeVisible();
+    await restaurarTela(page);
     const primeiro = page.locator("thead th").nth(1); // 0 = célula de seleção
     await expect(primeiro).toContainText("ID Global");
     await expect(primeiro).toHaveClass(/is-frozen/);
+  });
+});
+
+/**
+ * PINAGEM DE VERDADE — a diferença entre "o usuário não solta" e "está preso".
+ *
+ * `freezable: false` só impede o usuário de mexer. Quem prende a coluna é `pinned: "left"`, e a distinção
+ * aparece justamente nas telas que NUNCA configuram congelamento (toda `DataTable` passa `frozen` zero):
+ * sem a pinagem estrutural, a identidade rolava para fora da tela junto com o resto, e o `#N` deixava de
+ * estar ao lado da linha que ele identifica. Por isso a prova é o comportamento real do navegador ao rolar
+ * na horizontal, não a presença de uma classe CSS.
+ */
+async function permaneceFixaAoRolar(page: Page, rotuloDaColunaQueRola: string) {
+  const th = page.locator('thead th:has-text("ID Global")').first();
+  const outra = page.locator(`thead th:has(button[title="${rotuloDaColunaQueRola}"])`).first();
+  await expect(th).toBeVisible();
+  await expect(outra).toBeVisible();
+  const antes = { id: (await th.boundingBox())!.x, outra: (await outra.boundingBox())!.x };
+  // rola o contêiner da grade de verdade; se não houver transbordo horizontal, o caso não vale
+  const rolagem = await page.evaluate(() => {
+    const el = document.querySelector("table")?.parentElement as HTMLElement | null;
+    if (!el) return 0;
+    el.scrollLeft = el.scrollWidth;
+    return el.scrollLeft;
+  });
+  await page.waitForTimeout(150);
+  const depois = { id: (await th.boundingBox())!.x, outra: (await outra.boundingBox())!.x };
+  return { rolagem, deslocamentoIdentidade: Math.abs(depois.id - antes.id), deslocamentoOutra: Math.abs(depois.outra - antes.outra) };
+}
+
+test.describe("a identidade fica presa à esquerda ao rolar na horizontal", () => {
+  test("Modelo Base1 (produtos)", async ({ page }) => {
+    await login(page);
+    await page.setViewportSize({ width: 700, height: 800 });
+    await page.goto("/cadastros/products");
+    await expect(page.getByTestId("b1-row").first()).toBeVisible();
+    await restaurarTela(page);
+    const r = await permaneceFixaAoRolar(page, "Descrição");
+    expect(r.rolagem, "a grade precisa transbordar para que a rolagem prove algo").toBeGreaterThan(0);
+    expect(r.deslocamentoOutra, "uma coluna de negócio acompanha a rolagem").toBeGreaterThan(10);
+    expect(r.deslocamentoIdentidade, "a identidade continua ancorada à esquerda").toBeLessThan(2);
+  });
+
+  test("grade própria (animais) — onde nenhum congelamento é configurado", async ({ page }) => {
+    await login(page);
+    await page.setViewportSize({ width: 700, height: 800 });
+    await page.goto("/pecuaria/animais");
+    await expect(page.getByTestId("b1-row").first()).toBeVisible();
+    const r = await permaneceFixaAoRolar(page, "Categoria");
+    expect(r.rolagem, "a grade precisa transbordar para que a rolagem prove algo").toBeGreaterThan(0);
+    expect(r.deslocamentoOutra, "uma coluna de negócio acompanha a rolagem").toBeGreaterThan(10);
+    expect(r.deslocamentoIdentidade, "a identidade continua ancorada à esquerda").toBeLessThan(2);
+  });
+
+  test("o usuário não consegue soltar a identidade, e uma coluna comum continua congelável", async ({ page }) => {
+    await login(page);
+    await page.goto("/cadastros/products");
+    await expect(page.getByTestId("b1-row").first()).toBeVisible();
+    await restaurarTela(page);
+    // não há menu na identidade: nenhum caminho de interface leva a "Descongelar"
+    await expect(page.getByLabel("Abrir menu da coluna ID Global")).toHaveCount(0);
+
+    const congeladas = page.locator("thead th.is-frozen");
+    await expect(congeladas, "só a identidade começa congelada").toHaveCount(1);
+    // "Congelar coluna" congela ATÉ ela (contagem à esquerda): identidade + Código + Descrição
+    await page.getByLabel("Abrir menu da coluna Descrição").click();
+    await page.getByRole("menuitem", { name: "Congelar coluna" }).click();
+    await expect(congeladas, "o congelamento do usuário SOMA ao prefixo estrutural").toHaveCount(3);
+    await page.getByLabel("Abrir menu da coluna Descrição").click();
+    await page.getByRole("menuitem", { name: "Descongelar colunas" }).click();
+    await expect(congeladas, "descongelar devolve ao piso: a identidade permanece").toHaveCount(1);
+    await expect(page.locator("thead th").nth(1)).toContainText("ID Global");
+    await restaurarTela(page);
+  });
+});
+
+/**
+ * REGRESSÃO DO MENU DE COLUNA COMUM (bloqueador B).
+ *
+ * Corrigir o menu da identidade não pode mudar o menu das outras: "não aplicável por capacidade" e
+ * "aplicável, mas indisponível agora" continuam sendo coisas diferentes na interface.
+ */
+test.describe("menu das colunas comuns permanece como era", () => {
+  test("coluna sem filtro declarado mantém o item de filtro DESABILITADO, não ausente", async ({ page }) => {
+    await login(page);
+    await page.goto("/pecuaria/animais");
+    await expect(page.getByTestId("b1-row").first()).toBeVisible();
+    // DataTable não passa nenhum manipulador de coluna: todos os itens existem e todos ficam desabilitados
+    await page.getByLabel("Abrir menu da coluna Categoria").click();
+    for (const item of ["Abrir filtro avançado", "Auto ajustar coluna", "Ocultar coluna"]) {
+      await expect(page.getByRole("menuitem", { name: item }), `${item} continua visível`).toBeVisible();
+      await expect(page.getByRole("menuitem", { name: item }), `${item} continua desabilitado`).toBeDisabled();
+    }
+    await page.keyboard.press("Escape");
   });
 });

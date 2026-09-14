@@ -37,6 +37,20 @@ export interface Base1Column {
   resizable?: boolean;
   freezable?: boolean;
   autoFit?: boolean;
+  filterable?: boolean;
+  /**
+   * PINAGEM ESTRUTURAL — diferente de `freezable`, e a distinção é o ponto.
+   *
+   * `freezable: false` diz "o USUÁRIO não muda isto"; não diz que a coluna está fixa. Uma coluna de
+   * identidade precisa das duas coisas: ficar visualmente presa à esquerda ao rolar na horizontal E não
+   * poder ser solta. Sem `pinned`, a listagem que não configura congelamento (é o caso de toda tela montada
+   * com `DataTable`) exibia a identidade como coluna comum — ela saía da tela junto com o resto.
+   *
+   * As colunas pinadas formam o PREFIXO da grade: valem as que estiverem no começo da lista. Uma coluna
+   * marcada como pinada fora desse prefixo não é pinada — pinar do meio exigiria reordenar a grade por
+   * conta própria, que é surpresa pior do que o pedido ignorado.
+   */
+  pinned?: "left";
 }
 
 /** Como o filtro vira parâmetro de consulta. `advanced` = `campo__operador=valor` (recursos declarativos); `simple` = `campo=valor`. */

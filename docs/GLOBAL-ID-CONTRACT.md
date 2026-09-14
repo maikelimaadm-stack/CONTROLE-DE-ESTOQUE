@@ -340,9 +340,16 @@ exibe `#N` sem motivo escrito. Essa lista de arquivos de interface não é um se
 entidades continua sendo um só, no servidor, e o cliente apenas obedece à declaração da resposta.
 
 **A coluna não oferece controle que não funciona.** `Base1Column` declara capacidades
-(`hideable`/`resizable`/`freezable`/`autoFit`, padrão `true`) e a grade só oferece o que a coluna permite. A
-identidade as nega todas, então não tem menu de coluna nem alça de arraste — em vez de um "Ocultar" que não
-oculta. O componente genérico não conhece `id_global`.
+(`hideable`/`resizable`/`freezable`/`autoFit`/`filterable`, padrão `true`) e a grade só oferece o que a
+coluna permite. A identidade as nega todas, então não tem menu de coluna nem alça de arraste — em vez de um
+"Ocultar" que não oculta. O que continua aparecendo desabilitado é a ação APLICÁVEL mas indisponível agora
+(sem manipulador, sem `kind`): são coisas diferentes, e confundi-las mudaria o menu de todas as colunas
+comuns. O componente genérico não conhece `id_global`.
+
+**A identidade fica PRESA à esquerda.** `pinned: "left"` é estrutural e diferente de `freezable: false`: o
+segundo só impede o usuário de mexer. Sem o primeiro, as telas que nunca configuram congelamento (todas as
+montadas com `DataTable`) deixavam o `#N` rolar para fora da tela, longe da linha que ele identifica. O
+pinning é o PISO do congelamento — o do usuário soma, e "descongelar" volta ao piso, nunca abaixo dele.
 
 **Rodapé de totais.** O `colSpan` é derivado da mesma lista de colunas que a grade desenha
 (`colSpanAteColuna`/`colSpanAposColuna`). Contado à mão ele desanda a cada coluna nova, e um total sob a

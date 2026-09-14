@@ -37,9 +37,19 @@ const LARGURA = 96;
 /** O número como TEXTO (célula de tooltip, cards, exportação CSV). Vazio quando não há número. */
 export const textoIdGlobal = (valor: unknown): string => (typeof valor === "number" && Number.isFinite(valor) ? formatarIdGlobal(valor) : "");
 
+/**
+ * A AUSÊNCIA TAMBÉM É UMA CÉLULA DE IDENTIDADE — e por isso carrega o mesmo marcador.
+ *
+ * Quando só o caso com número era identificável, um teste que percorresse "as células de ID Global" de uma
+ * tela cujas linhas fossem TODAS sem número percorria uma lista vazia e passava. A prova virava decoração
+ * exatamente na situação que mais interessa (acervo anterior ao backfill). Com o marcador nos dois casos, dá
+ * para comparar a quantidade de células com a quantidade de linhas, que é a pergunta real.
+ */
+export const SEM_ID_GLOBAL = "–";
+
 export function IdGlobalCell({ valor, rotulo }: { valor: unknown; rotulo?: string }) {
   const texto = textoIdGlobal(valor);
-  if (!texto) return <span className="text-slate-400" title="Registro sem ID Global">–</span>;
+  if (!texto) return <span className="text-slate-400" data-testid="id-global-celula" title="Registro sem ID Global">{SEM_ID_GLOBAL}</span>;
   // Sem texto auxiliar de leitor de tela aqui: o CABEÇALHO da coluna já diz "ID Global", e repeti-lo em cada
   // linha faria a tabela ser lida como "Identificador global #1, Identificador global #2…" a cada célula.
   return <span className="id-global" data-testid="id-global-celula" title={`${rotulo ?? "Registro"} · identificador único desta organização`}>{texto}</span>;
@@ -56,7 +66,7 @@ export function IdGlobalCell({ valor, rotulo }: { valor: unknown; rotulo?: strin
  */
 export const colunaIdGlobalBase1 = (rotulo?: string): Base1Column => ({
   key: CHAVE_COLUNA_ID_GLOBAL, label: ROTULO_COLUNA_ID_GLOBAL, width: LARGURA,
-  sortable: false, hideable: false, resizable: false, freezable: false, autoFit: false,
+  sortable: false, hideable: false, resizable: false, freezable: false, autoFit: false, filterable: false, pinned: "left",
   render: (r: Row) => <IdGlobalCell valor={r[CHAVE_COLUNA_ID_GLOBAL]} rotulo={rotulo} />,
   text: (r: Row) => textoIdGlobal(r[CHAVE_COLUNA_ID_GLOBAL])
 });
@@ -68,6 +78,6 @@ export const colunaIdGlobalBase1 = (rotulo?: string): Base1Column => ({
  */
 export const colunaIdGlobalTabela = <T extends Record<string, unknown>>(rotulo?: string): Column<T> => ({
   key: CHAVE_COLUNA_ID_GLOBAL, label: ROTULO_COLUNA_ID_GLOBAL, sortable: false, width: LARGURA,
-  hideable: false, resizable: false, freezable: false, autoFit: false,
+  hideable: false, resizable: false, freezable: false, autoFit: false, filterable: false, pinned: "left",
   render: (r: T) => <IdGlobalCell valor={r[CHAVE_COLUNA_ID_GLOBAL]} rotulo={rotulo} />
 });
