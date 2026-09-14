@@ -4,7 +4,7 @@
  * Todo registro de negócio COM IDENTIDADE PRÓPRIA tem três identificadores:
  *   1. UUID técnico             — chave primária, nunca exibida como identidade;
  *   2. código/número da entidade — sequência por entidade, quando aplicável;
- *   3. ID GLOBAL (#55)          — sequência ÚNICA por ORGANIZAÇÃO, compartilhada por todas as empresas dela.
+ *   3. ID GLOBAL (55)           — sequência ÚNICA por ORGANIZAÇÃO, compartilhada por todas as empresas dela.
  *
  * O ID Global é alocado pelo BANCO, nunca pelo cliente, e não é derivado da URL: a rota canônica é resolvida
  * a partir do REGISTRO. Sequências de organizações diferentes são independentes.
@@ -87,13 +87,32 @@ export const colunaDiscriminadora = (entidade: EntidadeIdGlobal): string | null 
 export const variantesDeclaradas = (entidade: EntidadeIdGlobal): string[] =>
   entidade.resolucao.tipo === "variante" ? Object.keys(entidade.resolucao.variantes) : [];
 
-export const PREFIXO_ID_GLOBAL = "#";
-/** ID Global é um inteiro positivo por organização; exibido com "#". */
-export const formatarIdGlobal = (n: number | string): string => `${PREFIXO_ID_GLOBAL}${String(n).replace(/^#/, "")}`;
+/**
+ * O NÚMERO COMO TEXTO — número puro, sem prefixo (PRE-BASE2-05B.2).
+ *
+ * `formatarIdGlobal(55) === "55"`. O `#` saiu da EXIBIÇÃO e continua valendo na ENTRADA: `interpretarIdGlobal`
+ * segue aceitando `55`, `#55` e `ID 55`. Apresentação e compatibilidade de leitura são decisões diferentes, e
+ * tratá-las como uma só quebraria uma das duas: quem copiou um `#55` de um documento antigo precisa continuar
+ * achando o registro, mesmo que a tela nunca mais escreva o prefixo.
+ *
+ * Não existe mais constante de prefixo de exibição. Uma `PREFIXO_ID_GLOBAL = "#"` sobrevivendo aqui seria um
+ * convite a recolá-lo na próxima tela — e, pior, um uso legítimo dela seria indistinguível de reincidência
+ * para qualquer gate.
+ *
+ * A função continua existindo mesmo parecendo um `String()`: ela é o ÚNICO ponto por onde o número vira texto
+ * na interface, na exportação e na busca. Enquanto for uma só, mudar a representação outra vez é editar uma
+ * linha; espalhada por 20 telas, seria a fatia inteira de novo. `replace(/^#/, "")` aceita o valor já grafado
+ * à moda antiga (um dado legado que chegue como string) sem devolver `##55`.
+ */
+export const formatarIdGlobal = (n: number | string): string => String(n).replace(/^#/, "");
 
 /**
  * Aceita `55`, `#55`, `ID 55` e `id  55` (com espaços em volta). Devolve null quando não for um ID Global
  * válido — e nunca lança, porque quem chama é a busca: cada tecla digitada passa por aqui.
+ *
+ * O `#` continua aceito DE PROPÓSITO depois de a tela ter parado de exibi-lo (PRE-BASE2-05B.2): a grafia
+ * antiga está em documentos impressos, em conversas e na memória de quem usa o sistema há meses. Recusá-la
+ * transformaria uma simplificação visual em perda de acesso ao registro.
  *
  * O que é recusado é tão importante quanto o que é aceito. `#0`, `0` e `-1` não são ID Global (a sequência
  * começa em 1); `55abc`, `#abc`, `1.5` e `ID` sozinho são texto comum e devem seguir para a busca de

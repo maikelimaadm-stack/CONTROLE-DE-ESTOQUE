@@ -6,13 +6,16 @@ import { useIdGlobalDoRegistro } from "@/lib/id-global";
 import { entidadeDaRota } from "@/lib/id-global-rota";
 
 /**
- * IDENTIDADE DO REGISTRO ABERTO — o `#N` que o usuário lê, fala ao telefone e procura na busca.
+ * IDENTIDADE DO REGISTRO ABERTO — o número que o usuário lê, fala ao telefone e procura na busca.
  *
  * Regras de comportamento, todas por um motivo:
  *  - carrega pela API (o índice é do servidor; o cliente nunca lê `erp.registros_globais`);
  *  - registro sem número ainda (acervo histórico durante o backfill) ou fora da permissão → NÃO RENDERIZA.
  *    404 aqui é estado normal, não erro: a tela do registro continua inteira;
- *  - reserva o espaço enquanto carrega, para o `#N` não empurrar a trilha quando chegar;
+ *  - reserva o espaço enquanto carrega, para o número não empurrar a trilha quando chegar;
+ *  - mostra o NÚMERO PURO, sem prefixo (PRE-BASE2-05B.2). O texto de leitor de tela (`sr-only`) fica e passa
+ *    a ser a única pista de contexto para quem não enxerga o selo: sem ele, a trilha seria lida como um `54`
+ *    solto no meio da navegação;
  *  - é só leitura: não edita, não navega, não muda regra de negócio.
  *
  * PRE-BASE2-04 não desenha a moldura do Base2. Esta é a superfície mínima e central: um badge ao lado da

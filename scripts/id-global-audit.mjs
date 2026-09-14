@@ -14,7 +14,9 @@
  *   3. ESCRITA coberta — todo `insert into` numa tabela elegível, em qualquer lugar de `apps/api/src`, tem a
  *      alocação do ID Global logo em seguida (ou está declarado aqui, com motivo escrito).
  *   4. EXIBIÇÃO coberta — toda rota canônica do catálogo é reconhecida pelo detector da UI, que é o que faz
- *      o `#N` aparecer na tela sem editar 23 páginas.
+ *      o número aparecer na tela sem editar 23 páginas.
+ *   5. APRESENTAÇÃO vigente — número puro e coluna solta (PRE-BASE2-05B.2): o formatador é executado de
+ *      verdade, e nenhuma tela remonta o prefixo ou repina a identidade por fora dele.
  *
  * O que este gate NÃO prova é que a alocação REALMENTE roda: isso é a suíte de integração
  * `id-global-runtime.test.ts`, que cria pela porta real e confere o índice. Estrutura e comportamento são
@@ -27,6 +29,7 @@ import { fileURLToPath } from "node:url";
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const { ENTIDADES_ID_GLOBAL, validarRegistroIdGlobal, variantesInternasDeclaradas } = await import(path.join(RAIZ, "packages/domain/dist/index.js"));
 const { DICIONARIO_DE_DADOS } = await import(path.join(RAIZ, "packages/domain/dicionario-dados.mjs"));
+const { formatarIdGlobal } = await import(path.join(RAIZ, "packages/plataforma/dist/id-global.js"));
 
 const erros = [];
 const aviso = (m) => erros.push(m);
@@ -166,7 +169,7 @@ for (const t of declaradasPorEngano) {
 // ESTA LISTA NÃO É UM SEGUNDO CATÁLOGO. O catálogo de entidades continua sendo um só
 // (`ENTIDADES_ID_GLOBAL`, no domínio) e o runtime do cliente não conhece nenhuma lista de entidades: ele
 // obedece à declaração do servidor. O que está aqui embaixo são ARQUIVOS DE INTERFACE e o motivo escrito de
-// cada um não exibir `#N` — a mesma mecânica de `ESCRITAS_DECLARADAS` acima. Uma tela nova com `DataTable`
+// cada um não exibir o número — a mesma mecânica de `ESCRITAS_DECLARADAS` acima. Uma tela nova com `DataTable`
 // que liste uma entidade elegível não estará aqui, não usará a coluna, e o gate cobra.
 const LISTAGENS_CUSTOM_SEM_ID_GLOBAL = {
   "apps/web/src/app/(app)/relatorios/[key]/page.tsx": "relatório parametrizado: linhas agregadas, não registros de uma entidade",
@@ -229,9 +232,57 @@ for (const e of ENTIDADES_ID_GLOBAL) {
   for (const i of internas) if (declaradas.has(i)) aviso(`${e.tipoEntidade}: "${i}" está ao mesmo tempo como variante navegável e como interna`);
 }
 
+// ---------- 6. APRESENTAÇÃO: número puro, coluna solta (PRE-BASE2-05B.2) ----------
+/**
+ * Duas decisões de interface viraram contrato de código nesta fatia, e nenhuma delas se defende sozinha por
+ * teste de unidade: o formatador é fácil de provar, mas nada impede uma TELA NOVA de escrever o prefixo à mão
+ * ou de repinar a identidade. É esse o buraco que esta seção fecha.
+ *
+ * O primeiro caso é EXECUTADO, não lido: `formatarIdGlobal` roda aqui com um número de verdade. Um gate que
+ * apenas procurasse a string "#" no fonte do pacote passaria tranquilo por uma implementação que remontasse o
+ * prefixo de outro jeito (`String.fromCharCode(35)`, uma constante importada, uma interpolação).
+ *
+ * Os outros dois são estruturais e varrem o código de aplicação com os COMENTÁRIOS REMOVIDOS. Sem isso, a
+ * própria explicação de "por que não há mais `pinned` aqui" reprovaria o arquivo que ela documenta — e o
+ * caminho de saída de um gate assim é apagar a explicação, que é o contrário do que se quer.
+ */
+const semComentarios = (texto) => texto.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+
+const amostra = formatarIdGlobal(54);
+if (!/^\d+$/.test(amostra)) aviso(`apresentação: formatarIdGlobal(54) devolveu ${JSON.stringify(amostra)} — o ID Global é exibido como número puro desde a PRE-BASE2-05B.2`);
+if (formatarIdGlobal("#54") !== "54") aviso(`apresentação: formatarIdGlobal("#54") devolveu ${JSON.stringify(formatarIdGlobal("#54"))} — valor já grafado à moda antiga precisa sair sem prefixo, nunca "##54"`);
+
+const COLUNA_IDENTIDADE = "apps/web/src/features/listing/id-global-coluna.tsx";
+if (/\bpinned\b/.test(semComentarios(fs.readFileSync(path.join(RAIZ, COLUNA_IDENTIDADE), "utf8")))) {
+  aviso(`apresentação: ${COLUNA_IDENTIDADE} voltou a declarar pinagem estrutural — a coluna de ID Global rola com as demais (PRE-BASE2-05B.2). A capacidade genérica \`Base1Column.pinned\` continua existindo para outra coluna que precise dela`);
+}
+
+// `#` colado num valor de ID Global em código de aplicação: o número vira texto SÓ por `formatarIdGlobal`.
+const PREFIXO_REMONTADO = [
+  /#\$\{[^}]*\b(?:idGlobal|id_global|ID_GLOBAL)\b/,
+  /["'`]#["'`]\s*\+\s*[^;)\n]*\b(?:idGlobal|id_global|ID_GLOBAL)\b/,
+  /\b(?:idGlobal|id_global|ID_GLOBAL)\b[^;)\n]*\+\s*["'`]#["'`]/
+];
+for (const base of ["apps/web/src", "apps/api/src"]) {
+  (function varrerApresentacao(dir) {
+    for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p = path.join(dir, f.name);
+      if (f.isDirectory()) { varrerApresentacao(p); continue; }
+      if (!/\.(ts|tsx)$/.test(f.name)) continue;
+      const rel = path.relative(RAIZ, p);
+      const codigo = semComentarios(fs.readFileSync(p, "utf8"));
+      codigo.split("\n").forEach((linha, i) => {
+        if (PREFIXO_REMONTADO.some((r) => r.test(linha))) {
+          aviso(`apresentação: ${rel}:${i + 1} remonta o prefixo "#" no ID Global — a exibição é número puro e sai de formatarIdGlobal, o único ponto onde o número vira texto`);
+        }
+      });
+    }
+  })(path.join(RAIZ, base));
+}
+
 if (erros.length) {
   console.error("id-global-audit: FALHOU");
   for (const e of erros) console.error(`  - ${e}`);
   process.exit(1);
 }
-console.log(`id-global-audit: OK (${ENTIDADES_ID_GLOBAL.length} entidades, ${portas} porta(s) de escrita direta + porta genérica, ${listadas.size} listagem(ns) de API com #N, ${telasComIdGlobal} tela(s) de grade própria com a coluna + ${Object.keys(LISTAGENS_CUSTOM_SEM_ID_GLOBAL).length} declarada(s) sem ID Global, exibição central derivada do catálogo)`);
+console.log(`id-global-audit: OK (${ENTIDADES_ID_GLOBAL.length} entidades, ${portas} porta(s) de escrita direta + porta genérica, ${listadas.size} listagem(ns) de API com ID Global, ${telasComIdGlobal} tela(s) de grade própria com a coluna + ${Object.keys(LISTAGENS_CUSTOM_SEM_ID_GLOBAL).length} declarada(s) sem ID Global, exibição central derivada do catálogo, apresentação em número puro e coluna solta)`);

@@ -2,20 +2,23 @@ import { test, expect, type Page } from "@playwright/test";
 import { login } from "./helpers";
 
 /**
- * PRE-BASE2-05B.1 — O `#N` NA LISTAGEM.
+ * PRE-BASE2-05B.1 — O ID GLOBAL NA LISTAGEM (apresentação revista na PRE-BASE2-05B.2).
  *
  * O que estes testes protegem, e que nem a API nem os testes de unidade pegam:
  *  - a coluna aparece MESMO para quem já configurou as colunas daquela tela. A preferência de colunas guarda
  *    uma lista fechada, e uma coluna criada depois jamais estaria nela: se a identidade dependesse dessa
  *    preferência, justamente os usuários antigos — os que têm registros para localizar — ficariam sem o
- *    número. Por isso o caso abaixo salva uma configuração de colunas e confere que o `#N` continua lá;
- *  - o número da LINHA é o mesmo da tela de detalhe e o mesmo que a busca `#N` resolve — uma identidade só;
- *  - a linha continua abrindo pelo UUID. Se alguém "simplificar" a navegação usando o número, `#N` vira uma
- *    segunda identidade permanente, que resolve sem passar pela autorização daquele registro.
+ *    número. Por isso o caso abaixo salva uma configuração de colunas e confere que ele continua lá;
+ *  - o número da LINHA é o mesmo da tela de detalhe e o mesmo que a busca resolve — uma identidade só;
+ *  - a linha continua abrindo pelo UUID. Se alguém "simplificar" a navegação usando o número, ele vira uma
+ *    segunda identidade permanente, que resolve sem passar pela autorização daquele registro;
+ *  - a célula mostra o NÚMERO PURO e a coluna NÃO nasce presa à esquerda (PRE-BASE2-05B.2). As duas
+ *    afirmações são cobradas pelo comportamento real do navegador — texto da célula e deslocamento ao rolar
+ *    —, não pela leitura do componente.
  */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
 
-/** Cria uma OS pela API, com a sessão do navegador, e devolve o `#N` que o backend deu a ela. */
+/** Cria uma OS pela API, com a sessão do navegador, e devolve o ID Global que o backend deu a ela. */
 async function criarOrdemDeServico(page: Page): Promise<{ id: string; idGlobal: number; descricao: string }> {
   return page.evaluate(async (base: string) => {
     const sessao = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string };
@@ -62,28 +65,30 @@ async function restaurarTela(page: Page) {
 }
 
 test.describe("ID Global na listagem", () => {
-  test("cadastro genérico: a coluna existe e o registro criado pela porta real traz o #N", async ({ page }) => {
+  test("cadastro genérico: a coluna existe e o registro criado pela porta real traz o número", async ({ page }) => {
     await login(page);
     const produto = await criarProduto(page);
     await page.goto("/cadastros/products");
     await expect(page.getByRole("columnheader", { name: "ID Global" })).toBeVisible();
     const linha = page.getByTestId("b1-row").filter({ hasText: produto.descricao }).first();
     await expect(linha).toBeVisible();
-    await expect(linha.getByTestId("id-global-celula").first()).toHaveText(`#${produto.idGlobal}`);
+    await expect(linha.getByTestId("id-global-celula").first(), "a célula mostra o número puro, sem prefixo").toHaveText(String(produto.idGlobal));
   });
 
-  test("lançamento: o #N da linha é o mesmo do registro aberto, e a URL continua sendo o UUID", async ({ page }) => {
+  test("lançamento: o número da linha é o mesmo do registro aberto, e a URL continua sendo o UUID", async ({ page }) => {
     await login(page);
     const os = await criarOrdemDeServico(page);
     await page.goto("/os");
     const linha = page.getByTestId("b1-row").filter({ hasText: os.descricao }).first();
     await expect(linha).toBeVisible();
-    await expect(linha.getByTestId("id-global-celula").first(), "a linha mostra a identidade global do registro").toHaveText(`#${os.idGlobal}`);
+    await expect(linha.getByTestId("id-global-celula").first(), "a linha mostra a identidade global do registro").toHaveText(String(os.idGlobal));
 
     await linha.dblclick();
     await expect(page).toHaveURL(new RegExp(`/os/${os.id}`));
     expect(page.url(), "o ID Global é localizador; o endereço continua sendo o UUID").not.toContain(`/os/${os.idGlobal}`);
-    await expect(page.getByTestId("id-global-registro"), "listagem e detalhe falam do mesmo número").toContainText(`#${os.idGlobal}`);
+    // o selo do detalhe traz um texto de leitor de tela antes do número; a âncora no fim prova que nada
+    // (um `#`, um zero à esquerda) voltou a ser colado nele
+    await expect(page.getByTestId("id-global-registro"), "listagem e detalhe falam do mesmo número").toHaveText(new RegExp(`(^|\\s)${os.idGlobal}$`));
   });
 
   test("a coluna sobrevive a uma configuração de colunas salva pelo usuário", async ({ page }) => {
@@ -107,13 +112,19 @@ test.describe("ID Global na listagem", () => {
     await restaurarTela(page);
   });
 
+  /**
+   * IDA E VOLTA PELA TELA — o texto digitado na busca é LIDO da célula, não montado pelo teste.
+   *
+   * É o que amarra apresentação e entrada numa coisa só: se a grafia exibida mudar outra vez e a busca não
+   * acompanhar, este caso quebra, porque o usuário faria exatamente isto — ler o número e digitá-lo.
+   */
   test("o número da listagem é o mesmo que a busca global resolve", async ({ page }) => {
     await login(page);
     const os = await criarOrdemDeServico(page);
     await page.goto("/os");
     const linha = page.getByTestId("b1-row").filter({ hasText: os.descricao }).first();
     const texto = (await linha.getByTestId("id-global-celula").first().innerText()).trim();
-    expect(texto).toBe(`#${os.idGlobal}`);
+    expect(texto, "a tela mostra o número puro").toBe(String(os.idGlobal));
 
     await page.keyboard.press("Control+k");
     await page.getByTestId("global-search").fill(texto);
@@ -124,7 +135,7 @@ test.describe("ID Global na listagem", () => {
   });
 });
 
-/** Cria um perfil de acesso pela API (porta que aloca o número) e devolve o `#N` dele. */
+/** Cria um perfil de acesso pela API (porta que aloca o número) e devolve o ID Global dele. */
 async function criarPerfil(page: Page): Promise<{ id: string; idGlobal: number; nome: string }> {
   return page.evaluate(async (base: string) => {
     const sessao = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string };
@@ -201,7 +212,7 @@ const CUSTOM: { nome: string; rota: string; semear?: (page: Page) => Promise<voi
 
 test.describe("ID Global nas listagens que montam a grade por conta própria", () => {
   for (const tela of CUSTOM) {
-    test(`${tela.nome} — uma célula de identidade por linha, cada uma #N ou ausência explícita`, async ({ page }) => {
+    test(`${tela.nome} — uma célula de identidade por linha, cada uma número puro ou ausência explícita`, async ({ page }) => {
       await login(page);
       if (tela.semear) await tela.semear(page);
       await page.goto(tela.rota);
@@ -213,17 +224,18 @@ test.describe("ID Global nas listagens que montam a grade por conta própria", (
       const total = await linhas.count();
       const celulas = linhas.locator('[data-testid="id-global-celula"]');
       expect(await celulas.count(), "toda linha tem exatamente uma célula de identidade").toBe(total);
-      for (let i = 0; i < total; i++) await expect(celulas.nth(i)).toHaveText(/^(#\d+|–)$/);
+      // a forma é cobrada em TODA célula: um prefixo que voltasse em uma tela só já reprova aqui
+      for (let i = 0; i < total; i++) await expect(celulas.nth(i)).toHaveText(/^(\d+|–)$/);
     });
   }
 
-  test("perfis de acesso: o #N da linha é o mesmo que o backend deu ao registro", async ({ page }) => {
+  test("perfis de acesso: o número da linha é o mesmo que o backend deu ao registro", async ({ page }) => {
     await login(page);
     const perfil = await criarPerfil(page);
     await page.goto("/admin/perfis");
     const linha = page.getByTestId("b1-row").filter({ hasText: perfil.nome }).first();
     await expect(linha).toBeVisible();
-    await expect(linha.getByTestId("id-global-celula").first()).toHaveText(`#${perfil.idGlobal}`);
+    await expect(linha.getByTestId("id-global-celula").first()).toHaveText(String(perfil.idGlobal));
     // a linha continua abrindo pelo UUID
     await linha.dblclick();
     await expect(page).toHaveURL(new RegExp(`/admin/perfis/${perfil.id}`));
@@ -277,7 +289,7 @@ test.describe("rodapé de totais alinhado mesmo com a coluna de identidade", () 
 });
 
 /**
- * A COLUNA FIXA NÃO PODE OFERECER CONTROLE QUE NÃO FUNCIONA.
+ * A COLUNA DE IDENTIDADE NÃO PODE OFERECER CONTROLE QUE NÃO FUNCIONA.
  *
  * "Ocultar" que não oculta, "Auto ajustar" que volta ao mesmo tamanho e arraste que se desfaz ao soltar são
  * piores do que a ausência do controle: o usuário não sabe se o sistema o ignorou ou se ele errou. As
@@ -303,27 +315,31 @@ test.describe("capacidades da coluna de identidade", () => {
     await page.keyboard.press("Escape");
   });
 
-  test("ID Global permanece a primeira coluna e congelada", async ({ page }) => {
+  test("ID Global permanece a PRIMEIRA coluna e NÃO nasce congelada", async ({ page }) => {
     await login(page);
     await page.goto("/cadastros/products");
     await expect(page.getByTestId("b1-row").first()).toBeVisible();
     await restaurarTela(page);
     const primeiro = page.locator("thead th").nth(1); // 0 = célula de seleção
+    // ordem e pinagem são decisões DIFERENTES: a identidade continua à frente das colunas de negócio (quem a
+    // põe ali é quem monta a lista), e deixou de ficar grudada na borda (PRE-BASE2-05B.2)
     await expect(primeiro).toContainText("ID Global");
-    await expect(primeiro).toHaveClass(/is-frozen/);
+    await expect(primeiro, "a identidade deixou de ser pinada").not.toHaveClass(/is-frozen/);
+    await expect(page.locator("thead th.is-frozen"), "sem congelamento configurado, nenhuma coluna nasce presa").toHaveCount(0);
   });
 });
 
 /**
  * PINAGEM DE VERDADE — a diferença entre "o usuário não solta" e "está preso".
  *
- * `freezable: false` só impede o usuário de mexer. Quem prende a coluna é `pinned: "left"`, e a distinção
- * aparece justamente nas telas que NUNCA configuram congelamento (toda `DataTable` passa `frozen` zero):
- * sem a pinagem estrutural, a identidade rolava para fora da tela junto com o resto, e o `#N` deixava de
- * estar ao lado da linha que ele identifica. Por isso a prova é o comportamento real do navegador ao rolar
- * na horizontal, não a presença de uma classe CSS.
+ * `freezable: false` só impede o usuário de mexer; quem prende uma coluna à borda é `pinned: "left"`. A
+ * PRE-BASE2-05B.2 tirou a segunda da identidade e manteve a primeira, e a distinção só aparece no
+ * comportamento real do navegador ao rolar na horizontal — uma classe CSS ausente provaria bem menos.
+ *
+ * Medir a coluna de negócio JUNTO é o que dá sentido à medida da identidade: se a grade não transbordasse,
+ * ou se a rolagem não acontecesse, as duas ficariam paradas e um teste ingênuo passaria sem olhar nada.
  */
-async function permaneceFixaAoRolar(page: Page, rotuloDaColunaQueRola: string) {
+async function deslocamentoAoRolar(page: Page, rotuloDaColunaQueRola: string) {
   const th = page.locator('thead th:has-text("ID Global")').first();
   const outra = page.locator(`thead th:has(button[title="${rotuloDaColunaQueRola}"])`).first();
   await expect(th).toBeVisible();
@@ -341,17 +357,17 @@ async function permaneceFixaAoRolar(page: Page, rotuloDaColunaQueRola: string) {
   return { rolagem, deslocamentoIdentidade: Math.abs(depois.id - antes.id), deslocamentoOutra: Math.abs(depois.outra - antes.outra) };
 }
 
-test.describe("a identidade fica presa à esquerda ao rolar na horizontal", () => {
+test.describe("a identidade ROLA com as demais colunas (PRE-BASE2-05B.2)", () => {
   test("Modelo Base1 (produtos)", async ({ page }) => {
     await login(page);
     await page.setViewportSize({ width: 700, height: 800 });
     await page.goto("/cadastros/products");
     await expect(page.getByTestId("b1-row").first()).toBeVisible();
     await restaurarTela(page);
-    const r = await permaneceFixaAoRolar(page, "Descrição");
+    const r = await deslocamentoAoRolar(page, "Descrição");
     expect(r.rolagem, "a grade precisa transbordar para que a rolagem prove algo").toBeGreaterThan(0);
     expect(r.deslocamentoOutra, "uma coluna de negócio acompanha a rolagem").toBeGreaterThan(10);
-    expect(r.deslocamentoIdentidade, "a identidade continua ancorada à esquerda").toBeLessThan(2);
+    expect(r.deslocamentoIdentidade, "a identidade acompanha a rolagem como qualquer outra coluna").toBeGreaterThan(10);
   });
 
   test("grade própria (animais) — onde nenhum congelamento é configurado", async ({ page }) => {
@@ -359,30 +375,42 @@ test.describe("a identidade fica presa à esquerda ao rolar na horizontal", () =
     await page.setViewportSize({ width: 700, height: 800 });
     await page.goto("/pecuaria/animais");
     await expect(page.getByTestId("b1-row").first()).toBeVisible();
-    const r = await permaneceFixaAoRolar(page, "Categoria");
+    const r = await deslocamentoAoRolar(page, "Categoria");
     expect(r.rolagem, "a grade precisa transbordar para que a rolagem prove algo").toBeGreaterThan(0);
     expect(r.deslocamentoOutra, "uma coluna de negócio acompanha a rolagem").toBeGreaterThan(10);
-    expect(r.deslocamentoIdentidade, "a identidade continua ancorada à esquerda").toBeLessThan(2);
+    expect(r.deslocamentoIdentidade, "a identidade acompanha a rolagem como qualquer outra coluna").toBeGreaterThan(10);
   });
 
-  test("o usuário não consegue soltar a identidade, e uma coluna comum continua congelável", async ({ page }) => {
+  /**
+   * O CONGELAMENTO DO USUÁRIO CONTINUA INTEIRO — soltar a identidade não podia custar o recurso.
+   *
+   * Havia DOIS mecanismos prendendo a identidade: `pinned: "left"` na coluna e um `+1` incondicional no
+   * `frozen` que o Base1List passa à grade. Tirar só o primeiro deixaria as listagens do Modelo Base1
+   * exatamente como antes, e o caso passaria por engano nas telas de `DataTable`. Por isso o piso é cobrado
+   * aqui: ZERO ao abrir.
+   *
+   * Quando o usuário congela, a identidade vai junto — não por decisão da coluna, mas porque colunas fixas
+   * são um prefixo contíguo: não existe prender a 1ª coluna de negócio deixando solta a que está à esquerda
+   * dela. Descongelar volta a zero, e não a um piso.
+   */
+  test("nada nasce congelado, e o congelamento escolhido pelo usuário continua funcionando", async ({ page }) => {
     await login(page);
     await page.goto("/cadastros/products");
     await expect(page.getByTestId("b1-row").first()).toBeVisible();
     await restaurarTela(page);
-    // não há menu na identidade: nenhum caminho de interface leva a "Descongelar"
+    // a identidade segue sem menu: ela não é congelável POR ELA MESMA, o que é outra pergunta
     await expect(page.getByLabel("Abrir menu da coluna ID Global")).toHaveCount(0);
 
     const congeladas = page.locator("thead th.is-frozen");
-    await expect(congeladas, "só a identidade começa congelada").toHaveCount(1);
+    await expect(congeladas, "sem escolha do usuário, nenhuma coluna começa congelada").toHaveCount(0);
     // "Congelar coluna" congela ATÉ ela (contagem à esquerda): identidade + Código + Descrição
     await page.getByLabel("Abrir menu da coluna Descrição").click();
     await page.getByRole("menuitem", { name: "Congelar coluna" }).click();
-    await expect(congeladas, "o congelamento do usuário SOMA ao prefixo estrutural").toHaveCount(3);
+    await expect(congeladas, "o congelamento do usuário leva junto o que está à esquerda").toHaveCount(3);
     await page.getByLabel("Abrir menu da coluna Descrição").click();
     await page.getByRole("menuitem", { name: "Descongelar colunas" }).click();
-    await expect(congeladas, "descongelar devolve ao piso: a identidade permanece").toHaveCount(1);
-    await expect(page.locator("thead th").nth(1)).toContainText("ID Global");
+    await expect(congeladas, "descongelar volta a ZERO — não existe mais piso estrutural").toHaveCount(0);
+    await expect(page.locator("thead th").nth(1), "a identidade continua sendo a primeira coluna").toContainText("ID Global");
     await restaurarTela(page);
   });
 });

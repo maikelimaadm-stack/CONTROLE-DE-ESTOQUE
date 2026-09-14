@@ -13,7 +13,7 @@
 | --- | --- | --- |
 | **UUID** | Chave técnica, integridade referencial, URL de detalhe. | Banco (`gen_random_uuid()`). |
 | **Código/número da entidade** | Identidade dentro da entidade (`0001` de entradas, `0001` de requisições). | `erp.next_code(org, entidade)`. |
-| **ID Global** (`#55`) | Identidade única do registro **dentro da organização**, atravessando módulos e empresas. | `erp.proximo_id_global(org)`. |
+| **ID Global** (`55`) | Identidade única do registro **dentro da organização**, atravessando módulos e empresas. | `erp.proximo_id_global(org)`. |
 
 O ID Global é o que o usuário digita na busca para chegar a qualquer registro sem saber de que módulo ele é.
 
@@ -22,14 +22,14 @@ O ID Global é o que o usuário digita na busca para chegar a qualquer registro 
 - **Única por organização.** Todas as empresas da organização compartilham a mesma sequência:
 
   ```
-  #54  Empresa A · Estoque
-  #55  Empresa C · Financeiro
-  #56  Empresa B · Pecuária
-  #57  Empresa A · Compras
+  54  Empresa A · Estoque
+  55  Empresa C · Financeiro
+  56  Empresa B · Pecuária
+  57  Empresa A · Compras
   ```
 
-- **Independente entre organizações.** Nunca existe numeração única entre tenants: o `#55` de um cliente
-  não tem relação com o `#55` de outro.
+- **Independente entre organizações.** Nunca existe numeração única entre tenants: o `55` de um cliente
+  não tem relação com o `55` de outro.
 
 ### Garantias (e o que não é garantido)
 
@@ -110,7 +110,7 @@ declarada existe no catálogo real.
 
 ## 5. Registro global (resolução)
 
-`erp.registros_globais` é o índice que resolve `#N` sem varrer tabelas:
+`erp.registros_globais` é o índice que resolve o número sem varrer tabelas:
 
 | Coluna | Papel |
 | --- | --- |
@@ -129,7 +129,7 @@ nunca 403.
 
 `empresa_id` no índice pode envelhecer: um animal transferido de empresa mantém no índice a empresa antiga.
 Autorizar por ele deixaria quem só tem acesso à empresa antiga abrindo o registro, e daria 404 a quem tem a
-empresa nova. Por isso a resolução de `#N` segue esta ordem, sem atalho:
+empresa nova. Por isso a resolução do ID Global segue esta ordem, sem atalho:
 
 1. localizar o índice global dentro da organização;
 2. identificar a entidade no catálogo;
@@ -149,7 +149,7 @@ O ID Global é um **localizador da ORGANIZAÇÃO**. A empresa selecionada no cab
 **contexto de trabalho** — um filtro de tela — e não entra na autorização desta porta.
 
 O caso normal deixa isso evidente: um usuário com **Estoque só na empresa A** e **Financeiro só na B**
-precisa localizar `#N` de um título da B enquanto trabalha no Estoque de A. Usar a seleção produzia dois
+precisa localizar o número de um título da B enquanto trabalha no Estoque de A. Usar a seleção produzia dois
 defeitos ao mesmo tempo:
 
 * **falso negativo** — o registro autorizado não abria por causa de um filtro de tela;
@@ -177,7 +177,7 @@ do seletor do cabeçalho (`agro:empresa-request`) — que é onde mora a confirm
 salvas. Contexto em "todas as empresas" é preservado; registro da organização não escolhe empresa nenhuma.
 A regra pura fica em `@erp/plataforma` (`contexto-empresa.ts`), testada sem navegador.
 
-**Cache do cliente.** A chave continua sendo `["id-global", organização, #N]`: dentro de uma organização o
+**Cache do cliente.** A chave continua sendo `["id-global", organização, número]`: dentro de uma organização o
 número aponta para o mesmo registro, qualquer que seja a empresa selecionada. Pôr a seleção na chave sugeriria
 que ela faz parte da identidade do resultado — e ela não faz.
 
@@ -247,7 +247,7 @@ pnpm id-global:verify                          # só as invariantes, sem gravar
 | **Reserva de faixa** | `erp.reservar_ids_globais(org, n)` faz UM update atômico de `+n` e devolve a faixa contínua. `erp.proximo_id_global(org)` passou a ser literalmente `reservar_ids_globais(org, 1)`: uma autoridade só. |
 | **Nunca `max()+1`** | Ler o passado para adivinhar o próximo número duplica sob concorrência: dois leitores enxergam o mesmo máximo. O contador é a autoridade e só sobe. |
 | **Retomável** | O lote seguinte é sempre "o que ainda não tem índice". Interromper e continuar não muda nada do que já foi dado. |
-| **Reexecutável** | `on conflict do nothing` + anti-join: rodar de novo atribui zero e o mapa (tipo + UUID → #N) é idêntico. |
+| **Reexecutável** | `on conflict do nothing` + anti-join: rodar de novo atribui zero e o mapa (tipo + UUID → número) é idêntico. |
 | **Sem carregar tudo em memória** | Lê `--batch-size` linhas por vez; medido com 300 mil registros sob limite de heap de 512 MB. |
 
 **O que NÃO recebe número:** registro excluído (o resolvedor não o enxerga, então o número apontaria para
@@ -272,7 +272,19 @@ consumir números reservados que não chegam a ser usados.
 - zero variante interna com número;
 - `sequencias_id_global.ultimo_valor >= max(id_global)` em toda organização.
 
-## 9. Busca `#N` e exibição na tela
+## 9. Busca por ID Global e exibição na tela
+
+**Representação: NÚMERO PURO (PRE-BASE2-05B.2).** A tela mostra `54`, não `#54` — no selo do registro, na
+célula da listagem, no resultado da busca e na exportação. Um único ponto transforma o número em texto
+(`formatarIdGlobal`, em `@erp/plataforma`), e é isso que torna a decisão reversível numa linha em vez de numa
+varredura por 20 telas. **Isto é política de UX, não invariante de identidade**: o papel do número — localizador
+humano, por organização, que não endereça e não autoriza — não mudou, e o contrato JSON (`idGlobal`,
+`id_global`) sempre foi e continua sendo numérico.
+
+**A entrada é mais permissiva que a saída, DE PROPÓSITO.** O `#` saiu da exibição e continua aceito na busca.
+A grafia antiga está em documento impresso, em conversa e na memória de quem usa o sistema há meses; recusá-la
+transformaria uma simplificação visual em perda de acesso ao registro. Apresentação e compatibilidade de
+leitura são decisões diferentes, e tratá-las como uma só quebraria uma das duas.
 
 **Parser** (`interpretarIdGlobal`): aceita `55`, `#55`, `ID 55`, `id 55` e espaços em volta. Recusa `#0`,
 `0`, `-1`, `abc`, `#abc`, `55abc`, `ID` sozinho, `1.5` — texto comum segue para a busca de telas. `ID55` sem
@@ -283,7 +295,7 @@ backend que decide — organização, registro fonte vivo, empresa ATUAL, permis
 traz metadata segura (`idGlobal`, `tipoEntidade`, `rotulo`, `modulo`, `rota`, `idEntidade`), nunca o conteúdo
 do registro.
 
-**`#N` NUNCA é URL.** Não existe `/registro/55`. O fluxo é `#55 → resolve → UUID → rota canônica existente`,
+**O NÚMERO NUNCA é URL.** Não existe `/registro/55`. O fluxo é `55 → resolve → UUID → rota canônica existente`,
 e a URL final continua sendo a do registro. Uma rota por número seria uma segunda identidade permanente —
 e uma que resolve sem passar pela autorização daquele registro.
 
@@ -294,14 +306,15 @@ tenant anterior continuaria navegável depois da troca.
 (duas portas com dois critérios acabam sempre na mais frouxa). A UI monta o badge UMA vez, ao lado da trilha
 (`IdGlobalDaRotaAtual`), e descobre sozinha — pela rota aberta, derivada do catálogo — qual entidade está na
 tela. É o que dá cobertura de 100% do registry sem editar 23 páginas: entidade nova no catálogo passa a
-exibir o `#N` sem que ninguém toque na UI. Registro ainda sem número (durante o backfill) não renderiza
-nada: 404 é estado normal, não erro.
+exibir o número sem que ninguém toque na UI. O selo mantém um texto de leitor de tela ("Identificador
+global: ") — sem o prefixo visual, ele passa a ser a única pista de contexto para quem não enxerga a moldura.
+Registro ainda sem número (durante o backfill) não renderiza nada: 404 é estado normal, não erro.
 
-### 9.1 `#N` nas LISTAGENS (PRE-BASE2-05B.1)
+### 9.1 O número nas LISTAGENS (PRE-BASE2-05B.1; apresentação revista na PRE-BASE2-05B.2)
 
-Um localizador só serve a quem consegue LER o número antes de digitá-lo. Enquanto o `#N` existia apenas na
-tela de detalhe, ele servia a quem já o conhecesse — o contrário de um localizador. Desde a PRE-BASE2-05B.1
-**toda listagem de entidade elegível mostra o `#N` da linha**.
+Um localizador só serve a quem consegue LER o número antes de digitá-lo. Enquanto ele existia apenas na tela
+de detalhe, servia a quem já o conhecesse — o contrário de um localizador. Desde a PRE-BASE2-05B.1 **toda
+listagem de entidade elegível mostra o número da linha**.
 
 **O servidor DECLARA, o cliente obedece.** A resposta de uma listagem elegível carrega, além das linhas,
 `idGlobal: { tipoEntidade, rotulo }`. É o que evita uma segunda cópia do catálogo no cliente: sem essa
@@ -316,27 +329,26 @@ porta de detalhe por linha seria N+1 (100 linhas = 100 idas ao banco, mais autor
 **O ID Global não decide o que a listagem mostra.** As linhas chegam ao enriquecimento já filtradas por
 permissão, escopo de empresa, RLS e exclusão lógica. Ele não inclui linha, não exclui linha e não reordena.
 Se decidisse qualquer uma dessas coisas, haveria DUAS autoridades de escopo na mesma resposta — e a mais
-frouxa venceria. A autorização continua inteira e exclusivamente nas portas de `#N`.
+frouxa venceria. A autorização continua inteira e exclusivamente nas portas do ID Global.
 
 **`null` é resposta, não falha.** Acervo anterior ao backfill e EFEITOS internos declarados (uma
 transferência em `animal_movements`) não têm número; a célula mostra um traço. Inventar um número para
 preencher a coluna criaria identidade onde o contrato diz que não há.
 
-**A coluna é identidade, não preferência.** Ela é fixada à esquerda e fica FORA de `prefs.columns`. Se
-entrasse, quem já tivesse salvo a configuração daquela tela ficaria sem a coluna para sempre — a preferência
+**A coluna é identidade, não preferência.** Ela fica FORA de `prefs.columns`. Se entrasse, quem já tivesse salvo a configuração daquela tela ficaria sem a coluna para sempre — a preferência
 guarda uma lista fechada, e uma coluna criada depois nunca está nela; justamente os usuários antigos, os que
 têm registros para localizar, não veriam o número. Ficar de fora também impede que ela vire chip de filtro
 ou critério de ordenação que o backend não sabe resolver (`id_global` mora em `erp.registros_globais`, não
 nas tabelas de negócio). Quem procura por número usa a busca global.
 
-**`#N` continua não sendo endereço.** A linha abre pela rota canônica com o UUID.
+**O número continua não sendo endereço.** A linha abre pela rota canônica com o UUID.
 
 **Telas que montam a grade por conta própria.** Quatro listagens não passam pelo Modelo Base1 — títulos
 financeiros, animais, importações OFX e perfis de acesso — e recebem a coluna explicitamente. Elas são a
 última milha do frontend: apagar a coluna de uma delas deixaria catálogo, API, matriz das 23 entidades e o
 teste de N+1 verdes, com o número sumindo da tela. Por isso cada uma tem prova de navegador em
 `apps/web/e2e/id-global-listagem.spec.ts`, e o gate cobra, por ARQUIVO, toda tela com `DataTable` que não
-exibe `#N` sem motivo escrito. Essa lista de arquivos de interface não é um segundo catálogo: o catálogo de
+exibe o número sem motivo escrito. Essa lista de arquivos de interface não é um segundo catálogo: o catálogo de
 entidades continua sendo um só, no servidor, e o cliente apenas obedece à declaração da resposta.
 
 **A coluna não oferece controle que não funciona.** `Base1Column` declara capacidades
@@ -346,10 +358,22 @@ coluna permite. A identidade as nega todas, então não tem menu de coluna nem a
 (sem manipulador, sem `kind`): são coisas diferentes, e confundi-las mudaria o menu de todas as colunas
 comuns. O componente genérico não conhece `id_global`.
 
-**A identidade fica PRESA à esquerda.** `pinned: "left"` é estrutural e diferente de `freezable: false`: o
-segundo só impede o usuário de mexer. Sem o primeiro, as telas que nunca configuram congelamento (todas as
-montadas com `DataTable`) deixavam o `#N` rolar para fora da tela, longe da linha que ele identifica. O
-pinning é o PISO do congelamento — o do usuário soma, e "descongelar" volta ao piso, nunca abaixo dele.
+**A identidade NÃO é presa à esquerda (PRE-BASE2-05B.2).** `pinned: "left"` é estrutural e diferente de
+`freezable: false`: o segundo só impede o usuário de mexer. A coluna continua negando todas as capacidades — é
+identidade, não preferência — e **deixou de declarar a pinagem**: ela é a primeira coluna e rola com as demais.
+Prender a identidade tomava para o produto uma decisão que nenhuma outra coluna toma pelo usuário e gastava
+largura fixa na única faixa da grade que nunca rola; quem precisa do número ao lado da linha pode congelar, e
+o congelamento continua inteiro.
+
+Eram DOIS mecanismos, e ambos saíram: `pinned: "left"` na coluna e um `+1` incondicional no `frozen` que o
+Base1List passava à grade. Desfazer só um deixaria as listagens do Modelo Base1 exatamente como antes — a
+prova de navegador cobra o piso ZERO justamente por isso. Quando o usuário congela, a identidade vai junto,
+não por decisão dela: colunas fixas são um PREFIXO CONTÍGUO, e não existe prender a 1ª coluna de negócio
+deixando solta a que está à esquerda dela. "Descongelar" volta a zero, não a um piso.
+
+A capacidade genérica **fica**: `Base1Column.pinned`, o cálculo do prefixo pinado e o sticky da grade seguem
+de pé para a coluna que precisar deles. O piso é do MOTOR, não daquela coluna — removê-lo junto com o único
+uso transformaria uma decisão de UX reversível numa capacidade que a grade deixaria de ter.
 
 **Rodapé de totais.** O `colSpan` é derivado da mesma lista de colunas que a grade desenha
 (`colSpanAteColuna`/`colSpanAposColuna`). Contado à mão ele desanda a cada coluna nova, e um total sob a
@@ -373,7 +397,7 @@ tem ID Global.
 
 | Caminho | Medido |
 | --- | --- |
-| Resolver `#N` com 300 mil registros indexados | `Index Scan using registros_globais_pkey`, 0,045 ms de execução (nunca varre as 23 tabelas). |
+| Resolver o número com 300 mil registros indexados | `Index Scan using registros_globais_pkey`, 0,045 ms de execução (nunca varre as 23 tabelas). |
 | Backfill de 300 038 registros, lote 5 000 | 14 s, heap limitado a 512 MB, 3 consultas por lote. |
 
 ## 12. Reversão
@@ -381,13 +405,13 @@ tem ID Global.
 Depois que um número foi exposto ao usuário ele **não é renumerado**. Voltar a versão da aplicação pode
 deixar `registros_globais` e `sequencias_id_global` intactos: nada quebra, e os números continuam válidos.
 Não apagar números para "voltar", não compactar lacunas. `ultimo_valor` nunca diminui — inclusive quando um
-registro é apagado fisicamente, para que `#55` jamais seja reassociado a outro registro.
+registro é apagado fisicamente, para que o `55` jamais seja reassociado a outro registro.
 
 ## 13. O que ainda não existe
 
 | Item | Missão |
 | --- | --- |
-| Cabeçalho de lançamento do Base2 (a moldura definitiva onde o `#N` mora) | BASE2-01. |
+| Cabeçalho de lançamento do Base2 (a moldura definitiva onde o número mora) | BASE2-01. |
 | Tipo de Operação (TOP) | BASE2-02. |
 | Remoção da ponte `farm`/`empresa` | PRE-BASE2-05. |
 

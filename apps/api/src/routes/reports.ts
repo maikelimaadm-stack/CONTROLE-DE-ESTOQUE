@@ -266,7 +266,16 @@ export default async function reportRoutes(app: FastifyInstance) {
     if (format === "xlsx") { const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet(def.label.slice(0, 30)); ws.columns = def.columns.map((c) => ({ header: c.label, key: c.key, width: 18 })); for (const r of result.rows) ws.addRow(Object.fromEntries(def.columns.map((c) => [c.key, c.type === "money" || c.type === "qty" || c.type === "percent" ? Number(r[c.key] ?? 0) : r[c.key] ?? ""]))); if (def.totals?.length) ws.addRow(Object.fromEntries(def.totals.map((t) => [t, Number(result.totals[t])]))); const buf = await wb.xlsx.writeBuffer(); return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${key}.xlsx"`).send(Buffer.from(buf as ArrayBuffer)); }
     return result;
   });
-  /** Valor de uma célula exportada. O ID Global sai com `#` — é assim que o usuário o lê, fala e procura. */
+  /**
+   * Valor de uma célula exportada. O ID Global sai SEM PREFIXO (PRE-BASE2-05B.2), igual ao que a tela mostra.
+   * A formatação continua vindo de `formatarIdGlobal`, o único lugar onde o número vira texto.
+   *
+   * O QUE ISSO GARANTE, E O QUE NÃO GARANTE. No CSV a célula passa a ser `54` em vez de `#54`, e a planilha
+   * que importar esse CSV lê o campo como número. No XLSX o valor continua sendo uma STRING: é o que
+   * `formatarIdGlobal` devolve e é o que o ExcelJS recebe aqui, então a célula nasce do tipo texto — medido,
+   * não suposto. Trocar o tipo da célula do XLSX é outra mudança, de outro escopo; o que esta fatia promete é
+   * a ausência do `#`, e prometer "agora é número na planilha" seria afirmar um efeito que o código não tem.
+   */
   const celulaExportada = (chave: string, valor: unknown) =>
     chave === "id_global" ? (typeof valor === "number" ? formatarIdGlobal(valor) : "") : valor ?? "";
 

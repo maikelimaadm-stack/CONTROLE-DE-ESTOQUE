@@ -2,16 +2,20 @@ import { test, expect, type Page } from "@playwright/test";
 import { login, logout } from "./helpers";
 
 /**
- * PRE-BASE2-04 — ID GLOBAL na interface: busca `#N` (Ctrl+K) e identidade `#N` na tela do registro.
+ * PRE-BASE2-04 — ID GLOBAL na interface: busca (Ctrl+K) e identidade na tela do registro.
  *
  * O que estes testes protegem, e que nenhum teste de API pega:
  *  - a URL que o usuário acaba vendo é a ROTA CANÔNICA com o UUID. Se alguém "otimizar" a busca montando
- *    `/registro/55`, o `#N` vira uma segunda identidade permanente — e uma que resolve SEM a autorização
+ *    `/registro/55`, o número vira uma segunda identidade permanente — e uma que resolve SEM a autorização
  *    daquele registro. Por isso o teste afirma explicitamente que a URL NÃO contém o número;
- *  - o `#N` aparece na tela do registro para quem abriu por navegação normal, não só para quem veio da busca.
+ *  - o número aparece na tela do registro para quem abriu por navegação normal, não só para quem veio da busca;
+ *  - a GRAFIA ANTIGA continua entrando. A tela parou de escrever `#55` na PRE-BASE2-05B.2, e é de propósito
+ *    que os casos abaixo continuam DIGITANDO `#55`: o que saiu foi a exibição, não a compatibilidade de
+ *    leitura. Se a busca passasse a recusar o prefixo, quem o copiou de um documento antigo perderia o
+ *    caminho até o registro — e esta suíte reprovaria.
  */
 
-/** Cria um registro pela API, com a sessão do navegador, e devolve o `#N` que o backend deu a ele. */
+/** Cria um registro pela API, com a sessão do navegador, e devolve o ID Global que o backend deu a ele. */
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
 async function criarComIdGlobal(page: Page): Promise<{ id: string; idGlobal: number; rota: string }> {
   return page.evaluate(async (base: string) => {
@@ -27,7 +31,7 @@ async function criarComIdGlobal(page: Page): Promise<{ id: string; idGlobal: num
 }
 
 test.describe("ID Global — busca e identidade", () => {
-  test("Ctrl+K → `#N` → abre a ROTA CANÔNICA, e a URL tem o UUID, não o número", async ({ page }) => {
+  test("Ctrl+K → `#N` (grafia antiga) → abre a ROTA CANÔNICA, e a URL tem o UUID, não o número", async ({ page }) => {
     await login(page);
     const alvo = await criarComIdGlobal(page);
 
@@ -37,13 +41,29 @@ test.describe("ID Global — busca e identidade", () => {
 
     const resultado = page.getByTestId("nav-search-id-global-item");
     await expect(resultado).toBeVisible();
-    await expect(resultado).toContainText(`#${alvo.idGlobal}`);
+    // o resultado mostra o NÚMERO PURO (PRE-BASE2-05B.2), mesmo tendo sido encontrado por `#N`
+    await expect(resultado).toContainText(new RegExp(`(^|\\s)${alvo.idGlobal} ·`));
     await expect(resultado, "o resultado diz QUE COISA é, não só o número").toContainText("Ordem de Serviço");
+
+    /**
+     * PROVA DO QUE SE VÊ, NÃO DO QUE O DOM DIZ.
+     *
+     * A asserção de texto acima passava com um `<Hash />` desenhado colado ao número: o `textContent` já era
+     * "54 · Rótulo" enquanto a TELA continuava mostrando um símbolo de hash antes do 54. Quem usa o sistema lê
+     * a tela — a decisão da 05B.2 vale para o glifo, não só para a string.
+     *
+     * O critério é "NENHUM ícone", e não "nenhum ícone de hash": qualquer glifo nessa posição volta a ser um
+     * prefixo visual do número, e uma asserção amarrada ao nome de classe do lucide envelheceria na próxima
+     * versão da biblioteca. Se um ícone NEUTRO for decidido algum dia, este caso se atualiza de propósito —
+     * que é o comportamento certo para uma trava de apresentação.
+     */
+    await expect(resultado.locator("svg"), "nenhum glifo antes do número no resultado da busca").toHaveCount(0);
+    await expect(resultado.locator('[class*="hash"], [class*="Hash"]'), "nem um ícone de hash sob outro nome").toHaveCount(0);
 
     await resultado.click();
     await expect(page).toHaveURL(new RegExp(`/os/${alvo.id}`));
     expect(page.url(), "o ID Global é localizador; a identidade da URL continua sendo o UUID").not.toContain(`/os/${alvo.idGlobal}`);
-    await expect(page.getByTestId("id-global-registro"), "o registro aberto mostra a própria identidade").toContainText(`#${alvo.idGlobal}`);
+    await expect(page.getByTestId("id-global-registro"), "o registro aberto mostra a própria identidade, sem prefixo").toHaveText(new RegExp(`(^|\\s)${alvo.idGlobal}$`));
   });
 
   test("`ID N` (com espaço) funciona e Enter abre o registro", async ({ page }) => {
@@ -66,11 +86,11 @@ test.describe("ID Global — busca e identidade", () => {
     await expect(page.getByTestId("nav-search-results")).toBeVisible();
   });
 
-  test("o `#N` aparece ao abrir o registro por navegação normal, em módulos diferentes", async ({ page }) => {
+  test("o número aparece ao abrir o registro por navegação normal, em módulos diferentes", async ({ page }) => {
     await login(page);
     const alvo = await criarComIdGlobal(page);
     await page.goto(`/os/${alvo.id}`);
-    await expect(page.getByTestId("id-global-registro")).toContainText(`#${alvo.idGlobal}`);
+    await expect(page.getByTestId("id-global-registro")).toHaveText(new RegExp(`(^|\\s)${alvo.idGlobal}$`));
 
     // Cadastro compartilhado (Produto): abre em CONSULTA e também mostra a identidade. O produto é CRIADO
     // aqui de propósito — os do seed são acervo histórico e só ganham número depois do backfill, e é
@@ -155,8 +175,8 @@ test.describe("ID Global — localização cross-empresa", () => {
 
     await expect(seletor, "a empresa ativa acompanha o registro").toHaveValue(c.empresaB);
     await expect(page).toHaveURL(new RegExp(`/financeiro/contas-a-pagar/${c.titulo}`));
-    expect(page.url(), "`#N` nunca vira URL").not.toContain(`/${c.idGlobal}`);
-    await expect(page.getByTestId("id-global-registro")).toContainText(`#${c.idGlobal}`);
+    expect(page.url(), "o ID Global nunca vira URL").not.toContain(`/${c.idGlobal}`);
+    await expect(page.getByTestId("id-global-registro")).toHaveText(new RegExp(`(^|\\s)${c.idGlobal}$`));
     expect(respostas.filter((s) => s === 403), "nenhuma chamada da navegação pode ser recusada por contexto").toEqual([]);
   });
 
@@ -186,7 +206,7 @@ test.describe("ID Global — localização cross-empresa", () => {
     await resultado.click();
 
     const pedidos = await page.evaluate(() => (window as unknown as { __pedidos: unknown[] }).__pedidos);
-    expect(pedidos, "a busca por #N não pode ter um atalho próprio para trocar de empresa").toEqual([
+    expect(pedidos, "a busca por ID Global não pode ter um atalho próprio para trocar de empresa").toEqual([
       { empresaId: c.empresaB, rota: `/financeiro/contas-a-pagar/${c.titulo}` }
     ]);
     await expect(seletor).toHaveValue(c.empresaB);
