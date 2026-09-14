@@ -64,9 +64,11 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
   // busca global
   const [search, setSearch] = React.useState(""); const [hi, setHi] = React.useState(0); const inputRef = React.useRef<HTMLInputElement>(null);
   const results = React.useMemo(() => searchNav(search, can), [search, can]);
-  // BUSCA POR ID GLOBAL: quando a consulta INTEIRA é um ID (`#55`, `55`, `ID 55`), o backend resolve o
+  // BUSCA POR ID GLOBAL: quando a consulta INTEIRA é um ID (`55`, `#55`, `ID 55`), o backend resolve o
   // número no registro real. A busca de navegação continua intacta — as duas convivem, e o resultado do ID
   // aparece em primeiro lugar porque ele é exato, não aproximado.
+  // O campo pede "ID Global" porque é essa a grafia que a tela mostra desde a PRE-BASE2-05B.2; as antigas
+  // seguem aceitas no parser, então quem digita `#55` por hábito continua achando o registro.
   const idGlobal = React.useMemo(() => interpretarIdGlobal(search), [search]);
   const { data: registroGlobal, isLoading: carregandoId } = useRegistroGlobal(idGlobal);
   React.useEffect(() => { setHi(0); }, [search]);
@@ -120,7 +122,7 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
       <div className="mg-topnav__tools">
         <div className="mg-topnav__search" role="combobox" aria-expanded={results.length > 0} aria-haspopup="listbox" aria-controls="nav-search-results">
           <Search className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
-          <input ref={inputRef} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar tela ou #ID…" aria-label="Buscar funcionalidade" data-testid="global-search"
+          <input ref={inputRef} value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar tela ou ID Global…" aria-label="Buscar funcionalidade" data-testid="global-search"
             onKeyDown={(e) => { if (e.key === "ArrowDown") { e.preventDefault(); setHi((h) => Math.min(h + 1, results.length - 1)); } else if (e.key === "ArrowUp") { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); } else if (e.key === "Enter" && registroGlobal) { e.preventDefault(); abrirRegistroGlobal(registroGlobal); } else if (e.key === "Enter" && results[hi]) { e.preventDefault(); pick(results[hi]!.href); } else if (e.key === "Escape") { setSearch(""); inputRef.current?.blur(); } }} />
           <kbd className="mg-topnav__kbd" aria-hidden>Ctrl K</kbd>
           {registroGlobal && <div id="nav-search-global-id" role="listbox" aria-label="Registro por ID Global" className="mg-topnav__results" data-testid="nav-search-id-global">

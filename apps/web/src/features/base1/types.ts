@@ -41,10 +41,13 @@ export interface Base1Column {
   /**
    * PINAGEM ESTRUTURAL — diferente de `freezable`, e a distinção é o ponto.
    *
-   * `freezable: false` diz "o USUÁRIO não muda isto"; não diz que a coluna está fixa. Uma coluna de
-   * identidade precisa das duas coisas: ficar visualmente presa à esquerda ao rolar na horizontal E não
-   * poder ser solta. Sem `pinned`, a listagem que não configura congelamento (é o caso de toda tela montada
-   * com `DataTable`) exibia a identidade como coluna comum — ela saía da tela junto com o resto.
+   * `freezable: false` diz "o USUÁRIO não muda isto"; não diz que a coluna está fixa. São duas perguntas
+   * independentes, e uma coluna pode responder sim a uma e não à outra: a identidade (`id_global`) nega todas
+   * as capacidades e, desde a PRE-BASE2-05B.2, NÃO usa `pinned` — ela rola com as demais.
+   *
+   * Quem declara `pinned` fica preso à borda mesmo na listagem que nunca configura congelamento (é o caso de
+   * toda tela montada com `DataTable`, que passa `frozen` zero). Hoje nenhuma coluna do produto declara — o
+   * campo existe para quando uma precisar, e é o motor que sabe honrá-lo.
    *
    * As colunas pinadas formam o PREFIXO da grade: valem as que estiverem no começo da lista. Uma coluna
    * marcada como pinada fora desse prefixo não é pinada — pinar do meio exigiria reordenar a grade por

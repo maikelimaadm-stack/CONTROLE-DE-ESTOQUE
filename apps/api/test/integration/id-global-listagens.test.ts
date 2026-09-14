@@ -161,13 +161,16 @@ describe("pecuária: efeito interno declarado NÃO recebe número, e a listagem 
 });
 
 describe("exportação da listagem", () => {
-  it("o CSV genérico traz o #N como primeira coluna — a planilha mostra o mesmo que a tela", async () => {
+  it("o CSV genérico traz o ID Global como primeira coluna, em número puro — a planilha mostra o mesmo que a tela", async () => {
     const r = await h.app.inject({ method: "GET", url: "/api/exports/products?format=csv", headers: h.headers() });
     expect(r.statusCode, r.body).toBe(200);
     const [cabecalho, ...linhas] = r.body.replace(/^\uFEFF/, "").split("\n");
     expect(cabecalho!.split(";")[0]).toBe("ID Global");
-    const numerados = linhas.filter((l) => /^#\d+;/.test(l));
+    const numerados = linhas.filter((l) => /^\d+;/.test(l));
     expect(numerados.length, "o produto criado pela porta real aparece numerado na exportação").toBeGreaterThan(0);
+    // PRE-BASE2-05B.2: sem o `#`, a célula é um NÚMERO para a planilha — ordenar a coluna no Excel deixa de
+    // dar 1, 10, 100, 2. É o mesmo texto que a tela mostra, não uma segunda representação para exportação.
+    expect(linhas.some((l) => l.startsWith("#")), "nenhuma célula exportada volta a trazer o prefixo").toBe(false);
   });
 
   it("registro sem número exporta célula VAZIA — nunca um número improvisado", async () => {
@@ -179,7 +182,7 @@ describe("exportação da listagem", () => {
     const linhas = r.body.replace(/^\uFEFF/, "").split("\n").slice(1).filter(Boolean);
     const vazias = linhas.filter((l) => l.startsWith(";"));
     expect(vazias.length, "acervo sem índice sai com a primeira célula vazia").toBeGreaterThan(0);
-    expect(linhas.some((l) => /^[^#;][^;]*;/.test(l)), "nenhuma célula de ID Global sai com valor que não seja #N").toBe(false);
+    expect(linhas.some((l) => !/^(\d*);/.test(l)), "célula de ID Global só sai como número ou vazia — nunca um valor improvisado").toBe(false);
   });
 
   it("as demais colunas da exportação continuam as mesmas, na mesma ordem", async () => {

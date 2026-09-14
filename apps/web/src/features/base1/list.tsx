@@ -122,10 +122,10 @@ export function Base1List(props: Base1ListProps) {
   /**
    * ID GLOBAL: COLUNA DE IDENTIDADE, FORA DA CONFIGURAÇÃO DE COLUNAS (PRE-BASE2-05B.1).
    *
-   * Ela é fixada à esquerda e não entra em `prefs.columns` de propósito. Se entrasse, quem já tivesse salvo
-   * a configuração desta tela ficaria SEM a coluna para sempre — a preferência guarda uma lista fechada de
-   * colunas visíveis, e uma coluna criada depois nunca está nela. O efeito seria o contrário do objetivo:
-   * justamente os usuários antigos (os que têm registros para localizar) não veriam o número.
+   * Ela não entra em `prefs.columns` de propósito. Se entrasse, quem já tivesse salvo a configuração desta
+   * tela ficaria SEM a coluna para sempre — a preferência guarda uma lista fechada de colunas visíveis, e uma
+   * coluna criada depois nunca está nela. O efeito seria o contrário do objetivo: justamente os usuários
+   * antigos (os que têm registros para localizar) não veriam o número.
    *
    * Mantê-la fora também resolve o resto sem gambiarra: não vira chip de filtro que o backend não sabe
    * resolver, não vira critério de ordenação que a consulta não suporta, e não desloca a contagem de
@@ -134,9 +134,25 @@ export function Base1List(props: Base1ListProps) {
   const marcaIdGlobal = q.data?.pages[0]?.idGlobal;
   const colunaIdGlobal = React.useMemo(() => (marcaIdGlobal ? colunaIdGlobalBase1(marcaIdGlobal.rotulo) : null), [marcaIdGlobal?.rotulo]);
   const visibleColumns = React.useMemo(() => (colunaIdGlobal ? [colunaIdGlobal, ...colunasDoUsuario] : colunasDoUsuario), [colunaIdGlobal, colunasDoUsuario]);
-  /** Quantas colunas a grade fixa: a identidade sempre, mais as que o usuário congelou. */
+  /**
+   * CONVERSÃO DE ÍNDICE, NÃO PINAGEM (PRE-BASE2-05B.2).
+   *
+   * A identidade entra na frente das colunas do usuário, então a contagem de congelamento vale uma coisa para
+   * ele ("as minhas N primeiras") e outra para a grade ("as N+1 primeiras da lista desenhada"). É isso que
+   * `deslocamentoIdentidade` traduz — nos dois sentidos, aqui e em `onFreeze`.
+   *
+   * Ele NÃO congela nada por conta própria: com o usuário em zero, a grade fica em zero e a identidade rola
+   * junto com o resto. Somar o deslocamento incondicionalmente era a segunda metade da pinagem estrutural
+   * (a primeira era `pinned: "left"` na coluna) e prendia a identidade em toda listagem do Modelo Base1,
+   * mesmo sem ninguém ter pedido congelamento nenhum.
+   *
+   * Quando o usuário congela, porém, a identidade vai junto — e não por decisão desta tela: colunas fixas são
+   * um PREFIXO contíguo da grade, e não existe congelar a 1ª coluna de negócio deixando solta a coluna que
+   * está à esquerda dela.
+   */
   const deslocamentoIdentidade = colunaIdGlobal ? 1 : 0;
-  const frozen = Math.min((prefs.columns.frozen ?? 0) + deslocamentoIdentidade, visibleColumns.length);
+  const congeladasPeloUsuario = prefs.columns.frozen ?? 0;
+  const frozen = congeladasPeloUsuario > 0 ? Math.min(congeladasPeloUsuario + deslocamentoIdentidade, visibleColumns.length) : 0;
   const filtersActive = Object.keys(applied.params).length > 0 || Boolean(applied.search);
   const sess = getSession();
   const chipScope = `${moduleId}:${sess?.orgId ?? "-"}:${sess?.empresaId ?? "-"}:${sess?.user?.id ?? "-"}:${JSON.stringify(queryKeyExtra ?? null)}`;

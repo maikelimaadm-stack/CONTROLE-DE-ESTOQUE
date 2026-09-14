@@ -32,13 +32,30 @@ describe("registry de elegibilidade", () => {
   });
 });
 
-describe("formato do ID Global", () => {
-  it("exibe com # e aceita as duas grafias na leitura", () => {
-    expect(formatarIdGlobal(55)).toBe("#55");
-    expect(formatarIdGlobal("#55")).toBe("#55");
+describe("formato do ID Global — número puro na tela, grafia antiga na entrada (PRE-BASE2-05B.2)", () => {
+  it("exibe o número sem prefixo e continua lendo `#55`", () => {
+    expect(formatarIdGlobal(55)).toBe("55");
+    expect(formatarIdGlobal("#55")).toBe("55");
     expect(interpretarIdGlobal("#55")).toBe(55);
     expect(interpretarIdGlobal(" 55 ")).toBe(55);
     expect(interpretarIdGlobal(55)).toBe(55);
+  });
+  /**
+   * A prova é a FORMA do resultado, não um caso escolhido a dedo: `toBe("55")` sozinho continuaria passando
+   * com um formatador que prefixasse só a partir de dois dígitos, ou que prefixasse só na tela de detalhe.
+   */
+  it("nenhum número exibido carrega prefixo, em nenhuma ordem de grandeza", () => {
+    for (const n of [1, 7, 54, 55, 999, 1_000_000, Number.MAX_SAFE_INTEGER]) {
+      expect(formatarIdGlobal(n), `ID Global ${n}`).toMatch(/^\d+$/);
+      expect(formatarIdGlobal(n), `ID Global ${n}`).toBe(String(n));
+    }
+  });
+  /**
+   * O INVARIANTE que sobrevive a qualquer decisão de UX: o que a tela mostra, a busca lê de volta. Uma
+   * apresentação nova que a busca não aceitasse deixaria o usuário sem caminho a partir do que ele vê.
+   */
+  it("ida e volta sem perda: o que a tela mostra, a busca resolve no mesmo número", () => {
+    for (const n of [1, 42, 55, 123456]) expect(interpretarIdGlobal(formatarIdGlobal(n)), `ida e volta de ${n}`).toBe(n);
   });
   it("recusa entrada inválida sem lançar", () => {
     for (const v of ["", "#", "abc", "#0", "-3", "1.5", "#12a", null, undefined, {}]) expect(interpretarIdGlobal(v as unknown), String(v)).toBeNull();

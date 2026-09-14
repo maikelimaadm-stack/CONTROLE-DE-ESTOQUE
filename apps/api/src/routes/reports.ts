@@ -266,7 +266,12 @@ export default async function reportRoutes(app: FastifyInstance) {
     if (format === "xlsx") { const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet(def.label.slice(0, 30)); ws.columns = def.columns.map((c) => ({ header: c.label, key: c.key, width: 18 })); for (const r of result.rows) ws.addRow(Object.fromEntries(def.columns.map((c) => [c.key, c.type === "money" || c.type === "qty" || c.type === "percent" ? Number(r[c.key] ?? 0) : r[c.key] ?? ""]))); if (def.totals?.length) ws.addRow(Object.fromEntries(def.totals.map((t) => [t, Number(result.totals[t])]))); const buf = await wb.xlsx.writeBuffer(); return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${key}.xlsx"`).send(Buffer.from(buf as ArrayBuffer)); }
     return result;
   });
-  /** Valor de uma célula exportada. O ID Global sai com `#` — é assim que o usuário o lê, fala e procura. */
+  /**
+   * Valor de uma célula exportada. O ID Global sai como NÚMERO PURO (PRE-BASE2-05B.2), igual ao que a tela
+   * mostra — e, de quebra, a planilha passa a tratá-lo como número: com o `#` na frente, `54` era texto e
+   * ordenar a coluna no Excel dava 1, 10, 100, 2. A formatação continua vindo de `formatarIdGlobal`, que é o
+   * único lugar onde o número vira texto.
+   */
   const celulaExportada = (chave: string, valor: unknown) =>
     chave === "id_global" ? (typeof valor === "number" ? formatarIdGlobal(valor) : "") : valor ?? "";
 

@@ -35,9 +35,13 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   /**
    * Congelamento = PREFIXO ESTRUTURAL + escolha do usuário.
    *
-   * O prefixo vem das colunas que se declaram pinadas à esquerda (a identidade `#N`, hoje) e é o piso: a
-   * listagem pode congelar mais, nunca menos. É o que faz a identidade ficar presa mesmo nas telas que nunca
-   * passam `frozen` — e é declarativo, então a grade continua sem conhecer nenhuma coluna de domínio.
+   * O prefixo vem das colunas que se DECLARAM pinadas à esquerda e é o piso: a listagem pode congelar mais,
+   * nunca menos. É o que prende uma coluna mesmo nas telas que nunca passam `frozen` — e é declarativo, então
+   * a grade continua sem conhecer nenhuma coluna de domínio.
+   *
+   * Nenhuma coluna do produto se declara assim hoje: a identidade largou a pinagem na PRE-BASE2-05B.2 e rola
+   * com as demais. O mecanismo fica — o piso é do MOTOR, não daquela coluna, e removê-lo junto com o único
+   * uso transformaria uma decisão de UX reversível numa capacidade que a grade deixaria de ter.
    */
   const pinnedCount = (() => { let n = 0; while (n < columns.length && columns[n]!.pinned === "left") n++; return n; })();
   const frozenCount = Math.max(0, Math.min(Math.max(frozen, pinnedCount), columns.length));
