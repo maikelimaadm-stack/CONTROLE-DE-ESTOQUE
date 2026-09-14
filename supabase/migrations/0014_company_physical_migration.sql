@@ -264,6 +264,39 @@ begin
   end if;
 end $$;
 
+-- PRECONDIÇÃO DO LEDGER: o estado de segurança INICIAL também é explícito.
+-- ---------------------------------------------------------------------------------------------------
+-- A janela abaixo suspende uma proteção — então ela precisa saber que a proteção estava lá, e intacta,
+-- antes de encostar. Sem esta precondição a migration aceitaria três estados perigosos em silêncio:
+--   · o gatilho ausente (alguém já removeu) — o backfill passaria e a migration "instalaria" segurança
+--     que o banco não tinha, escondendo a remoção;
+--   · o gatilho DESABILITADO (o ledger já chegou desprotegido) — o `enable` no fim do laço deixaria o
+--     banco mais protegido do que estava, apagando a evidência de um incidente anterior;
+--   · o gatilho substituído por outra função — suspenderíamos algo cujo contrato não conhecemos.
+-- Uma migration pode suspender uma guarda que ela entende; não pode CONSERTAR uma que encontrou quebrada.
+-- Por isso: exatamente UM gatilho, com o nome esperado, na função esperada, disparando em UPDATE e
+-- habilitado ('O'). Qualquer outra coisa PARA aqui, antes de qualquer escrita estrutural.
+do $$
+declare v_total int; v_habilitado char;
+begin
+  select count(*), min(t.tgenabled) into v_total, v_habilitado
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_proc p on p.oid = t.tgfoid
+   where n.nspname = 'erp' and c.relname = 'stock_movements' and not t.tgisinternal
+     and t.tgname = 'trg_stock_movement_immutable'
+     and p.proname = 'forbid_change'
+     and (t.tgtype & 16) <> 0;                     -- dispara em UPDATE
+
+  if v_total <> 1 then
+    raise exception 'PRE-BASE2-03: erp.stock_movements deveria ter exatamente 1 gatilho trg_stock_movement_immutable sobre erp.forbid_change disparando em UPDATE; encontrado(s): %. O backfill estrutural não suspende uma guarda que não reconhece.', v_total;
+  end if;
+  if v_habilitado <> 'O' then
+    raise exception 'PRE-BASE2-03: trg_stock_movement_immutable não está habilitado (tgenabled=%). O ledger chegou DESPROTEGIDO nesta migração: isso é incidente a investigar, não estado a corrigir de passagem.', v_habilitado;
+  end if;
+end $$;
+
 -- Cópia do valor legado + gatilho de sincronização + referência canônica.
 do $$
 declare r record; canonico text; funcao text; gatilho text; tem_org boolean; imutavel text;
