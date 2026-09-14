@@ -10,6 +10,7 @@ import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing, hasColumnFilters } from "../lib/column-filters.js";
 import { postStock } from "../services/stock-core.js";
 import { createTitles } from "../services/financial-core.js";
+import { atribuirIdGlobal, atribuirIdGlobalSeAplicavel } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -66,6 +67,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
       const mother = d.mother_ref ? (await ctx.tx.query<{ animal_id: string }>("select animal_id from erp.animal_identifications where organization_id=$1 and value=$2 limit 1", [ctx.orgId, d.mother_ref])).rows[0]?.animal_id ?? null : null;
       const father = d.father_ref ? (await ctx.tx.query<{ animal_id: string }>("select animal_id from erp.animal_identifications where organization_id=$1 and value=$2 limit 1", [ctx.orgId, d.father_ref])).rows[0]?.animal_id ?? null : null;
       const a = await ctx.tx.query<{ id: string }>("insert into erp.animals(organization_id,empresa_id,species_id,category_id,breed_id,batch_id,sex,entry_date,birth_date,reproductive_stage,reproductive_status,current_weight,entry_weight,price_kg_alive,price_arroba_alive,unit_value,ua,mother_id,father_id,mother_ref,father_ref,fur_description,birth_forecast,proprietary_id,origin_provider_id,note,depreciation,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) returning id", [ctx.orgId, d.empresa_id, d.species_id, d.category_id, d.breed_id ?? null, d.batch_id ?? null, d.sex ?? null, d.entry_date, d.birth_date ?? null, d.reproductive_stage ?? null, d.reproductive_status ?? null, d.current_weight ?? null, d.price_kg_alive ?? null, d.price_arroba_alive ?? null, d.unit_value ?? null, d.current_weight ? D(d.current_weight).div(450).toFixed(3) : null, mother, father, d.mother_ref ?? null, d.father_ref ?? null, d.fur_description ?? null, d.birth_forecast ?? null, d.proprietary_id ?? null, d.origin_provider_id ?? null, d.note ?? null, JSON.stringify(d.depreciation ?? {}), ctx.user.id]);
+      await atribuirIdGlobal(ctx, "animals", a.rows[0]!.id);
       for (const [i, ident] of d.identifications.entries()) await ctx.tx.query("insert into erp.animal_identifications(animal_id,organization_id,identification_type_id,value,is_primary) values ($1,$2,$3,$4,$5)", [a.rows[0]!.id, ctx.orgId, ident.identification_type_id, ident.value, ident.is_primary || i === 0]);
       await audit(ctx.tx, ctx, "animals", a.rows[0]!.id, "create");
       return { id: a.rows[0]!.id };
@@ -145,6 +147,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
       const code = await animalCode(ctx, `animal_${d.movement_type}`);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,person_id,batch_id,cause,note,invoice_number,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, code, d.movement_type, d.movement_date, d.person_id ?? null, d.batch_id ?? null, d.cause ?? null, d.note ?? null, d.invoice_number ?? null, ctx.user.id]);
       const id = r.rows[0]!.id; let qty = 0, weight = D(0), value = D(0);
+      await atribuirIdGlobal(ctx, "animal_movements", id);
       const species = (await ctx.tx.query<{ id: string }>("select id from erp.animal_species where organization_id is null order by name limit 1")).rows[0]!.id;
       for (const it of d.items) {
         const total = money(D(it.unit_value ?? 0).mul(it.quantity)); value = value.plus(total); weight = weight.plus(D(it.weight ?? 0).mul(it.quantity)); qty += it.quantity;
@@ -154,6 +157,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
           if (it.identifications?.length) {
             const a = await ctx.tx.query<{ id: string }>("insert into erp.animals(organization_id,empresa_id,species_id,category_id,breed_id,batch_id,sex,entry_date,birth_date,current_weight,entry_weight,unit_value,mother_id,father_id,origin_provider_id,status,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12,$13,$14,'active',$15) returning id", [ctx.orgId, d.empresa_id, species, it.category_id, it.breed_id ?? null, d.batch_id ?? null, it.sex ?? null, d.movement_date, it.birth_date ?? (d.movement_type === "birth" ? d.movement_date : null), it.weight ?? null, it.unit_value ?? null, it.mother_id ?? null, it.father_id ?? null, d.movement_type === "purchase" ? d.person_id ?? null : null, ctx.user.id]);
             animalId = a.rows[0]!.id;
+            await atribuirIdGlobal(ctx, "animals", animalId);
             for (const [i, ident] of it.identifications.entries()) await ctx.tx.query("insert into erp.animal_identifications(animal_id,organization_id,identification_type_id,value,is_primary) values ($1,$2,$3,$4,$5)", [animalId, ctx.orgId, ident.identification_type_id, ident.value, i === 0]);
             if (d.movement_type === "birth" && it.mother_id) await ctx.tx.query("update erp.animals set reproductive_status='calved' where id=$1", [it.mother_id]);
           } else {
@@ -206,6 +210,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const b = await ctx.tx.query<{ status: string; empresa_id: string }>("select status, empresa_id from erp.batches where id=$1 and organization_id=$2", [d.destination_batch_id, ctx.orgId]); if (!b.rows[0]) throw notFound("Lote"); if (b.rows[0].status !== "active") throw err("BATCH_CLOSED", "Lote encerrado");
     const code = await animalCode(ctx, "animal_batch_transfer");
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,destination_batch_id,quantity,note,created_by) values ($1,$2,$3,'batch_transfer',$4,$5,$6,$7,$8) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.destination_batch_id, d.animal_ids.length, d.note ?? null, ctx.user.id]);
+    await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
     for (const a of d.animal_ids) { const u = await ctx.tx.query("update erp.animals set batch_id=$2, updated_at=now() where id=$1 and organization_id=$3 and status='active' returning id", [a, d.destination_batch_id, ctx.orgId]); if (!u.rowCount) throw err("ANIMAL_NOT_ACTIVE", `Animal ${a} inativo`); await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]); }
     return { id: r.rows[0]!.id, code, moved: d.animal_ids.length };
   })));
@@ -213,6 +218,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const d = z.object({ empresa_id: uuid, movement_date: date, source_batch_ids: z.array(uuid).min(1), destination_batch_id: uuid, close_sources: z.boolean().default(true) }).parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
     const code = await animalCode(ctx, "animal_batch_transfer"); let n = 0;
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,destination_batch_id,created_by) values ($1,$2,$3,'batch_transfer',$4,$5,$6) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.destination_batch_id, ctx.user.id]);
+    await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
     for (const s of d.source_batch_ids) { if (s === d.destination_batch_id) continue; const u = await ctx.tx.query("update erp.animals set batch_id=$2 where batch_id=$1 and organization_id=$3 and status='active' returning id", [s, d.destination_batch_id, ctx.orgId]); n += u.rowCount ?? 0; await ctx.tx.query("update erp.herd_lots set batch_id=$2 where batch_id=$1", [s, d.destination_batch_id]); if (d.close_sources) await ctx.tx.query("update erp.batches set status='closed', exit_date=$2 where id=$1", [s, d.movement_date]); }
     await ctx.tx.query("update erp.animal_movements set quantity=$2 where id=$1", [r.rows[0]!.id, n]); return { id: r.rows[0]!.id, code, moved: n };
   })));
@@ -222,6 +228,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const u = await ctx.tx.query("update erp.batches set grazing_module_id=$2, area_id=$3, corral_id=$4, updated_at=now() where id=$1 and organization_id=$5 returning id", [d.batch_id, d.grazing_module_id ?? null, d.area_id ?? null, d.corral_id ?? null, ctx.orgId]); if (!u.rowCount) throw notFound("Lote");
     const n = (await ctx.tx.query<{ n: string }>("select count(*) n from erp.animals where batch_id=$1 and status='active'", [d.batch_id])).rows[0]!.n;
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,destination_module_id,destination_area_id,quantity,note,created_by) values ($1,$2,$3,'module_area_transfer',$4,$5,$6,$7,$8,$9,$10) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id, d.grazing_module_id ?? null, d.area_id ?? null, Number(n), d.note ?? null, ctx.user.id]);
+    await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
     return { id: r.rows[0]!.id, code };
   })));
   app.post("/livestock/transfers/to-farm", async (req, reply) => reply.status(201).send(await runService(app, req, "batch_farm_transfer.create", async (ctx) => {
@@ -284,6 +291,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
 
     const code = await animalCode(ctx, "farm_transfer");
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,empresa_destino_id,destination_batch_id,note,status,created_by) values ($1,$2,$3,'farm_transfer',$4,$5,$6,$7,$8,'pending',$9) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id ?? null, d.empresa_destino_id, d.destination_batch_id ?? null, d.note ?? null, ctx.user.id]);
+    await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
     for (const a of ids) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]);
     for (const l of rebanhos) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,herd_lot_id,quantity) values ($1,$2,$3)", [r.rows[0]!.id, l.id, l.quantity]);
     await ctx.tx.query("update erp.animal_movements set quantity=$2 where id=$1", [r.rows[0]!.id, cabecas]);
@@ -320,6 +328,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const animals = await ctx.tx.query<{ id: string; category_id: string; sex: "M" | "F" | null; birth_date: string }>("select id, category_id, sex, birth_date from erp.animals where organization_id=$1 and empresa_id=$2 and status='active' and birth_date is not null and deleted_at is null", [ctx.orgId, d.empresa_id]);
     const code = await animalCode(ctx, "evolution"); let n = 0;
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,created_by) values ($1,$2,$3,'evolution',$4,$5) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, ctx.user.id]);
+    await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
     for (const a of animals.rows) { const next = evolveCategory(cats, { categoryId: a.category_id, sex: a.sex, ageMonths: ageMonths(a.birth_date, d.movement_date) }); if (!next) continue; await ctx.tx.query("update erp.animals set category_id=$2, updated_at=now() where id=$1", [a.id, next]); await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,category_id,new_category_id,quantity) values ($1,$2,$3,$4,1)", [r.rows[0]!.id, a.id, a.category_id, next]); n++; }
     await ctx.tx.query("update erp.animal_movements set quantity=$2 where id=$1", [r.rows[0]!.id, n]);
     return { id: r.rows[0]!.id, code, evolved: n };
@@ -340,6 +349,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
       const code = await animalCode(ctx, "weighing");
       const r = await ctx.tx.query<{ id: string }>("insert into erp.weighings(organization_id,empresa_id,code,weighing_date,batch_id,responsible,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8) returning id", [ctx.orgId, d.empresa_id, code, d.weighing_date, d.batch_id ?? null, d.responsible ?? null, d.note ?? null, ctx.user.id]);
+      await atribuirIdGlobal(ctx, "weighings", r.rows[0]!.id);
       let total = D(0);
       for (const it of d.items) {
         const prev = await ctx.tx.query<{ weight: string; weighing_date: string }>("select wi.weight, w.weighing_date from erp.weighing_items wi join erp.weighings w on w.id=wi.weighing_id where wi.animal_id=$1 and w.weighing_date < $2 order by w.weighing_date desc limit 1", [it.animal_id, d.weighing_date]);
@@ -377,6 +387,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
       const code = await uniqueCode(ctx, "animal_handlings", "animal_handling");
       const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_handlings(organization_id,empresa_id,code,handling_type,handling_date,batch_id,product_id,warehouse_id,responsible,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, code, d.handling_type, d.handling_date, d.batch_id ?? null, d.product_id ?? null, d.warehouse_id ?? null, d.responsible ?? null, d.note ?? null, ctx.user.id]);
       const id = r.rows[0]!.id; let qty = D(0); let count = 0;
+      await atribuirIdGlobal(ctx, "animal_handlings", id);
       for (const it of d.items) {
         const q = d.dose ? D(d.dose).mul(it.quantity) : D(it.quantity); qty = qty.plus(d.product_id ? q : 0); count += Number(it.quantity);
         await ctx.tx.query("insert into erp.animal_handling_items(handling_id,animal_id,herd_lot_id,quantity,dose,new_batch_id,new_category_id) values ($1,$2,$3,$4,$5,$6,$7)", [id, it.animal_id ?? null, it.herd_lot_id ?? null, q.toFixed(4), d.dose ?? null, it.new_batch_id ?? null, it.new_category_id ?? null]);
@@ -401,6 +412,7 @@ export default async function livestockRoutes(app: FastifyInstance) {
       const hl = await ctx.tx.query<{ quantity: number; unit_value: string | null }>("select quantity, unit_value from erp.herd_lots where id=$1 and organization_id=$2 for update", [a.herd_lot_id, ctx.orgId]); if (!hl.rows[0] || hl.rows[0].quantity < 1) throw err("INSUFFICIENT_STOCK", "Lote sem animais a processar");
       await ctx.tx.query("update erp.herd_lots set quantity=quantity-1 where id=$1", [a.herd_lot_id]);
       const an = await ctx.tx.query<{ id: string }>("insert into erp.animals(organization_id,empresa_id,species_id,category_id,breed_id,batch_id,sex,entry_date,current_weight,entry_weight,unit_value,created_by) values ($1,$2,$3,$4,$5,$6,$7,current_date,$8,$8,$9,$10) returning id", [ctx.orgId, p.rows[0].empresa_id, species, a.category_id, a.breed_id ?? null, a.batch_id ?? null, a.sex ?? null, a.weight ?? null, hl.rows[0].unit_value, ctx.user.id]);
+      await atribuirIdGlobal(ctx, "animals", an.rows[0]!.id);
       for (const [i, ident] of a.identifications.entries()) await ctx.tx.query("insert into erp.animal_identifications(animal_id,organization_id,identification_type_id,value,is_primary) values ($1,$2,$3,$4,$5)", [an.rows[0]!.id, ctx.orgId, ident.identification_type_id, ident.value, i === 0]);
       n++;
     }

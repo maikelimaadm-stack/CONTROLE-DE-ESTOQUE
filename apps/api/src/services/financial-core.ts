@@ -4,6 +4,7 @@ import { D, money, isISODate } from "@agro/shared";
 import type { ServiceCtx } from "../lib/context.js";
 import { nextCode, assertPeriodOpen } from "../lib/service.js";
 import { validation } from "../lib/errors.js";
+import { atribuirIdGlobal } from "../lib/id-global.js";
 
 export const apportionmentSchema = z.array(z.object({
   financial_category_id: z.string().uuid(), cost_center_id: z.string().uuid(), chart_account_id: z.string().uuid().nullable().optional(),
@@ -48,6 +49,7 @@ export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<
         input.paymentType ?? (count > 1 ? "installments" : "single"), input.recurrenceType ?? null, input.classification ?? "unclassified", input.documentType ?? null, input.isDeductible ?? false, input.isTax ?? false,
         p.amount, discount, input.emissionDate, p.dueDate, p.isDownPayment ? 0 : p.number, count, groupId, input.appropriation ?? "direct", input.appropriationType ?? null, input.note, input.harvestId ?? null, input.sourceType ?? null, input.sourceId ?? null, ctx.user.id]);
     const id = r.rows[0]!.id; ids.push(id);
+    await atribuirIdGlobal(ctx, "financial_titles", id);
     // rateio proporcional por parcela
     const partNet = D(p.amount).minus(discount);
     const factor = D(total).minus(input.discount ?? 0).isZero() ? D(0) : partNet.div(D(total).minus(input.discount ?? 0));
@@ -75,11 +77,15 @@ export async function createBankMovement(ctx: ServiceCtx, i: BankMovementInput):
     "insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,amount,interest,document,generates_obligation,is_deductible,note,proprietary_id,person_id,harvest_id,source_type,source_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) returning id",
     [ctx.orgId, i.empresaId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id]);
   const id = r.rows[0]!.id;
+  await atribuirIdGlobal(ctx, "bank_movements", id);
   if (i.apportionment?.length) for (const l of normalizeApportionment(money(i.amount), i.apportionment)) await ctx.tx.query("insert into erp.bank_movement_apportionments(movement_id,financial_category_id,chart_account_id,cost_center_id,harvest_id,percentage,amount) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.financialCategoryId, l.chartAccountId, l.costCenterId, l.harvestId, l.percentage, l.amount]);
   // transferência interna: cria o par na conta destino
   if (i.categoryType === "internal_transfer" && i.destinationAccountId) {
     const pair = await ctx.tx.query<{ id: string }>("insert into erp.bank_movements(organization_id,empresa_id,code,bank_account_id,movement_date,type,category_type,destination_account_id,transfer_pair_id,amount,document,note,proprietary_id,source_type,source_id,created_by) values ($1,$2,$3,$4,$5,$6,'internal_transfer',$7,$8,$9,$10,$11,$12,'bank_movement',$8,$13) returning id",
       [ctx.orgId, i.empresaId, await nextCode(ctx.tx, ctx.orgId, "bank_movement", 5), i.destinationAccountId, i.date, i.type === "out" ? "in" : "out", i.bankAccountId, id, money(i.amount), i.document ?? null, i.note ?? null, i.proprietaryId ?? null, ctx.user.id]);
+    // O PAR da transferência interna é outro movimento bancário com identidade própria: ele aparece no
+    // extrato da conta de destino e tem tela própria. Efeito colateral também é registro, e recebe número.
+    await atribuirIdGlobal(ctx, "bank_movements", pair.rows[0]!.id);
     await ctx.tx.query("update erp.bank_movements set transfer_pair_id=$2 where id=$1", [id, pair.rows[0]!.id]);
   }
   return id;

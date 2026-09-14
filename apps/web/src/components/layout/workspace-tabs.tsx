@@ -27,7 +27,7 @@ export function WorkspaceTabsBar({ onNewTab }: { onNewTab: () => void }) {
   };
   return <div className="mg-tabbar no-print" data-testid="workspace-tabs">
     <div ref={railRef} className="mg-tabbar__rail" role="tablist" aria-label="Abas abertas">
-      {ws.tabs.map((t, i) => { const on = t.key === ws.active; const dirty = ws.dirty.has(t.key); return <div key={t.key} className={cn("mg-tab", on && "is-active", dirty && "is-dirty")} data-testid="workspace-tab" data-tab-key={t.key} data-kind={t.kind}>
+      {ws.tabs.map((t, i) => { const on = t.key === ws.active; const dirty = ws.dirty.has(t.key); return <div key={t.key} className={cn("mg-tab", on && "is-active", dirty && "is-dirty")} data-testid="workspace-tab" data-tab-key={t.key} data-kind={t.kind} data-dirty={dirty ? "true" : "false"}>
         <button type="button" role="tab" aria-selected={on} tabIndex={on ? 0 : -1} className="mg-tab__label" title={t.label} onClick={() => { if (!on) ws.focusTab(t.key); }} onKeyDown={(e) => onKey(e, t, i)} onAuxClick={(e) => { if (e.button === 1 && t.key !== HOME_KEY) { e.preventDefault(); close(t); } }}>
           <span className="truncate">{t.label}</span>{dirty && <span className="mg-tab__dirty" aria-label="Alterações não salvas" title="Alterações não salvas" />}
         </button>

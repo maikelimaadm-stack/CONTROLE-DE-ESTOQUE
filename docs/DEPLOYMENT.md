@@ -96,3 +96,94 @@ de linhas** que a mesma consulta a `erp.empresas`. Números diferentes significa
 | Vercel (frontend) | Projeto `controle-de-estoque` configurado (Root `apps/web`, Next.js, Node 22, domínios `controle-de-estoque-erp.vercel.app` e `controle-de-estoque-api-eight.vercel.app`). **Em 10/09/2026 ~16:30 UTC o time da Vercel entrou em bloqueio por fatura em aberto** (`softBlock: UNPAID_INVOICE`, plano Pro com status `canceled`): todas as URLs respondem `402 Payment Required / DEPLOYMENT_DISABLED` e novos deploys não são publicados. Ação do proprietário: regularizar a fatura em vercel.com › Settings › Billing (o deploy volta sozinho) ou manter o frontend na Railway (abaixo). | `curl -I https://controle-de-estoque-erp.vercel.app` → 402 |
 | Railway serviço `web` (frontend, alternativa) | Serviço `web` no mesmo projeto Railway, build por `apps/web/Dockerfile` (Next standalone; `NEXT_PUBLIC_*` embutidas no build a partir das variáveis do serviço), domínio `https://web-production-4a835.up.railway.app`, healthcheck `/login`. `WEB_ORIGIN` da API já inclui esse domínio. | serviço `74264061-f73a-40ee-9748-11be096c0cb6` |
 | Pull requests | PR #1 (sistema) e PR #2 (correção do deploy Vercel) mergeados em `main`; Railway e Vercel implantam a partir de `main` | GitHub |
+
+## PRE-BASE2-04 — ativação do ID Global
+
+A ordem importa, e o motivo de cada fase é o estado intermediário que ela evita.
+
+| Fase | O que sobe | Por que nesta ordem |
+| --- | --- | --- |
+| **1. Banco** | migration `0016_global_id_activation.sql` | Só infraestrutura (reserva de faixa, constraint, índice). Não percorre acervo, então é rápida e reversível. |
+| **2. API** | alocação automática + `/registros-globais/:idGlobal` e `/registros-globais/entidade/:tipo/:id` | A partir daqui **todo registro novo já nasce numerado**. Subir a API antes do backfill é de propósito: enquanto o histórico é numerado, o fluxo novo já está correto. |
+| **3. Backfill** | no serviço da API: `npm run id-global:backfill -- --batch-size 500` (usa `MIGRATE_DATABASE_URL`) | Em lotes, retomável, reexecutável. Rodar até `faltando ao fim: 0`. Conferir com `npm run id-global:verify`. |
+| **4. Web** | busca `#N` e badge de identidade | A UI tolera registro histórico ainda sem número (o badge simplesmente não aparece), então pode subir junto com a API — mas a fase 3 é o que faz a funcionalidade valer para o acervo inteiro. |
+
+### Onde o comando da fase 3 roda — e por que não é `pnpm` da raiz
+
+Há DOIS ambientes, e eles têm comandos diferentes porque têm conteúdos diferentes:
+
+| Ambiente | Comando | Por quê |
+| --- | --- | --- |
+| **Repositório / desenvolvimento / CI** | `pnpm id-global:backfill -- --batch-size 500` · `pnpm id-global:verify` | Scripts do `package.json` da RAIZ, executados com `tsx` sobre `src/`. Existe só onde há checkout do monorepo. |
+| **Produção (serviço da API no Railway)** | `npm run id-global:backfill -- --batch-size 500` · `npm run id-global:verify` | Scripts do `apps/api/package.json`, que executam `node dist/cli/id-global-backfill.js`. É o que existe DENTRO da imagem. |
+
+A imagem é construída com `pnpm --filter @agro/api deploy --prod --legacy /out` e o runtime faz
+`COPY --from=build /out ./`: ela contém **o pacote `@agro/api` com suas dependências de produção**, e não um
+checkout do monorepo. Nela **não existe** o `package.json` da raiz (logo, nenhum script `pnpm id-global:*`) e
+**não existe `tsx`** (devDependency, cortada pelo `--prod`). Documentar o comando do repositório para rodar em
+produção seria descobrir o erro no pior momento: migration já aplicada, API nova no ar e acervo ainda sem
+número.
+
+Equivalente direto, se preferir não passar pelo `npm run`:
+
+```
+node dist/cli/id-global-backfill.js --batch-size 500
+node dist/cli/id-global-backfill.js --verify-only
+```
+
+O gate `node scripts/artefato-operacional.mjs` (no `pnpm lint`) prova o contrato — script presente, apontando
+para `node dist/`, sem devDependency, com o Dockerfile levando `/out` para o runtime — e, no job de build da
+CI, `--compilado` **executa o artefato de verdade** e exige que ele recuse por falta de conexão operacional,
+nunca por arquivo ou script ausente.
+
+### A conexão da fase 3 é a OPERACIONAL, não a da API
+
+O backfill e o verify leem **`MIGRATE_DATABASE_URL`** (o papel `erp_migrator`, com `bypassrls`) — ou
+`ID_GLOBAL_DATABASE_URL`, se você preferir uma variável dedicada. **Não há queda para `DATABASE_URL`**: sem
+uma das duas, o comando não roda. Não é preciso (nem se deve) copiar segredo para a linha de comando; o
+próprio comando escolhe a variável certa do ambiente, que o serviço da API já possui para o pre-deploy.
+
+O motivo é um falso verde, não uma preferência de estilo. `DATABASE_URL` conecta como `erp_app`, **sem**
+bypass de RLS. O comando percorre todas as organizações **sem contexto de tenant**, e nesse estado
+`erp.tenant_visible(organization_id)` é falso para todas as linhas das 23 tabelas: o backfill conclui com
+`atribuídos: 0`, `faltando: 0` e o verify diz **"invariantes OK"** — com o acervo histórico inteiro sem
+número. Medido em `apps/api/test/integration/id-global-backfill-conexao.test.ts`.
+
+Duas barreiras impedem que isso volte:
+
+1. **preflight de papel** — o comando consulta `pg_roles` e exige `rolsuper` **ou** `rolbypassrls`; qualquer
+   outro papel é recusado **antes** de contar qualquer coisa, citando só o nome do papel (nunca DSN, host ou
+   senha). A saída é usar a conexão certa: a aplicação **nunca** concede a si mesma o que lhe falta —
+   `alter role erp_app bypassrls`, `set role`, desligar RLS ou um `security definer` genérico estão fora de
+   questão, porque destruiriam a separação entre runtime e operação;
+2. **zero organizações não certifica nada** — sem `--org`, nenhuma organização visível é ERRO; e `--org` é
+   provado contra o banco (UUID malformado e organização inexistente falham, em vez de produzir um verde
+   sobre um alvo que não existe).
+
+Saída esperada do verify (é o que torna um resultado absurdo visível de relance):
+
+```
+$ npm run id-global:verify
+conexão operacional: papel "erp_migrator" (rolsuper=false, rolbypassrls=true).
+organizações verificadas: 1 · entidades verificadas: 23 · registros globais: 12345 · elegíveis faltando: 0
+ID Global: invariantes OK (zero elegível sem número, zero duplicidade, zero órfão).
+```
+
+`organizações verificadas: 0` nunca aparece: o comando para antes.
+
+**Certificação — o que ainda NÃO aconteceu.** Nada disto foi executado em produção: a PR da PRE-BASE2-04 não
+foi mesclada e nenhuma fase foi disparada. O que está provado é o código, em ambiente de teste (banco novo,
+banco de upgrade com acervo legado, reexecução com mapa idêntico, medição de desempenho). A missão só se
+considera concluída depois de, nesta ordem: **merge aprovado** → **fase 1** → **fase 2** → **fase 3 rodada
+até `faltando: 0`** → **`pnpm id-global:verify` verde** → **fase 4 com smoke real** (buscar `#N` e `ID N`,
+abrir o registro pela rota canônica e conferir o distintivo na tela). Até lá, `docs/PRE-BASE2-ROADMAP.md`
+mantém a missão como "implementação pronta — ativação em produção pendente".
+
+**Smoke da fase 4 (o que olhar):** `#N` e `ID N` na busca (Ctrl+K) devolvem o registro certo; a URL final é a
+rota canônica **com o UUID**; o distintivo mostra o mesmo número na tela do registro; e um `#N` de registro
+fora do escopo do usuário responde a mesma coisa que um número inexistente.
+
+**Reversão por fase.** Voltar o web: o número continua no banco, ninguém perde identidade. Voltar a API:
+registros novos param de receber número — rodar o backfill de novo depois resolve, sem renumerar nada.
+Voltar o banco NÃO é recomendado depois que `#N` foi exibido: apagar `registros_globais` destruiria
+identidades que o usuário já anotou. `sequencias_id_global.ultimo_valor` nunca deve ser diminuído.

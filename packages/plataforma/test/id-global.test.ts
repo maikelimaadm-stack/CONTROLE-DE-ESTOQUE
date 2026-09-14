@@ -91,3 +91,20 @@ describe("validação de catálogo", () => {
     expect(problemas.some((p) => /mesma permissão/.test(p))).toBe(true);
   });
 });
+
+describe("interpretarIdGlobal — o que a busca aceita e, sobretudo, o que ela RECUSA", () => {
+  it("aceita as formas que o usuário realmente digita", () => {
+    for (const [entrada, esperado] of [["55", 55], ["#55", 55], [" #55 ", 55], ["ID 55", 55], ["id 55", 55], ["Id   55", 55], ["  ID 7  ", 7], [1, 1]] as const) {
+      expect(interpretarIdGlobal(entrada), `entrada ${JSON.stringify(entrada)}`).toBe(esperado);
+    }
+  });
+  it("recusa o que NÃO é ID Global — texto comum segue para a busca de navegação", () => {
+    for (const entrada of ["#0", "0", "-1", "abc", "#abc", "55abc", "ID", "id", "1.2", "1,2", "", " ", "55 56", "#-1", "ID55", null, undefined, {}, 0, -3, 1.5, NaN] as const) {
+      expect(interpretarIdGlobal(entrada), `entrada ${JSON.stringify(entrada)} não é ID Global`).toBeNull();
+    }
+  });
+  it("`ID55` sem espaço NÃO é ID Global: exigir o espaço evita transformar um código de produto em navegação", () => {
+    expect(interpretarIdGlobal("ID55")).toBeNull();
+    expect(interpretarIdGlobal("ID 55")).toBe(55);
+  });
+});

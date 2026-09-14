@@ -13,7 +13,7 @@ import {
   resolverRegistroDaEntidade, validarEntidadesIdGlobal,
   type EntidadeIdGlobal, type RegistroResolvido, type ResolucaoEntidade, type VarianteEntidade
 } from "@erp/plataforma";
-import { MANEJOS_REBANHO, MOVIMENTACOES_REBANHO, type OperacaoRebanho } from "./rebanho.js";
+import { MANEJOS_REBANHO, MOVIMENTACOES_INTERNAS, MOVIMENTACOES_REBANHO, type OperacaoRebanho } from "./rebanho.js";
 
 /**
  * Modo de visualização dos cadastros genéricos (Modelo Base1): o ID Global é uma CONSULTA, então a rota
@@ -81,6 +81,31 @@ export const ENTIDADES_ID_GLOBAL: readonly EntidadeIdGlobal[] = [
   E("people", "Pessoa", "cadastros", "erp.people", fixa(`/cadastros/people/:id${CONSULTA_CADASTRO}`, "people.view"), { colunaEmpresa: null }),
   E("roles", "Perfil de Acesso", "configuracoes", "erp.roles", fixa("/admin/perfis/:id", "roles.view"), { colunaEmpresa: null })
 ];
+
+/**
+ * VARIANTES INTERNAS DECLARADAS — a entidade estar no catálogo NÃO significa que toda linha da tabela receba
+ * ID Global. `erp.animal_movements` guarda, na mesma tabela, lançamentos com tela própria (compra, venda,
+ * nascimento, morte, perda) e EFEITOS de outras operações (transferência, evolução, inventário...). Os
+ * efeitos não têm identidade própria para o usuário: não recebem número.
+ *
+ * A distinção precisa ser DECLARADA, e não inferida de "não achei a variante": valor ausente do mapa pode
+ * ser tanto um efeito conhecido quanto dado corrompido ou uma variante nova que alguém esqueceu de declarar.
+ * Tratar os dois como "interno" transformaria esquecimento em silêncio. Por isso: declarado interno → sem
+ * ID, de propósito; desconhecido → FAIL CLOSED, quem chama levanta erro.
+ *
+ * A lista vem da MESMA fonte única das operações de rebanho (`./rebanho.js`), nunca copiada à mão.
+ */
+const VARIANTES_INTERNAS: Readonly<Record<string, readonly string[]>> = {
+  animal_movements: MOVIMENTACOES_INTERNAS
+};
+
+/** Este valor de discriminador é um efeito interno DECLARADO desta entidade (logo, sem ID Global)? */
+export const varianteInternaDeclarada = (tipoEntidade: string, valor: unknown): boolean =>
+  typeof valor === "string" && (VARIANTES_INTERNAS[tipoEntidade] ?? []).includes(valor);
+
+/** Variantes internas declaradas da entidade (vazio quando não há). Usado por gates e pelo backfill. */
+export const variantesInternasDeclaradas = (tipoEntidade: string): readonly string[] =>
+  VARIANTES_INTERNAS[tipoEntidade] ?? [];
 
 const POR_TIPO = new Map(ENTIDADES_ID_GLOBAL.map((e) => [e.tipoEntidade, e]));
 

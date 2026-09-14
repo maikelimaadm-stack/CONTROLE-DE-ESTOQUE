@@ -10,6 +10,7 @@ import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, currentBalance, lineTotal } from "../services/stock-core.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
+import { atribuirIdGlobal } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform((v) => String(v));
 const date = z.string().refine(isISODate, "Data inválida");
@@ -129,6 +130,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       const totalAmount = money(d.items.reduce((a, i) => a.plus(D(i.quantity).mul(i.unit_value)), D(0)));
       const r = await ctx.tx.query<{ id: string }>("insert into erp.input_entries(organization_id,empresa_id,code,entry_date,harvest_id,proprietary_id,responsible_user_id,note,total_amount,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$7) returning id", [ctx.orgId, d.empresa_id, code, d.entry_date, d.harvest_id ?? null, d.proprietary_id ?? null, ctx.user.id, d.note ?? null, totalAmount]);
       const id = r.rows[0]!.id;
+      await atribuirIdGlobal(ctx, "input_entries", id);
       for (const [i, it] of d.items.entries()) {
         if (it.generate_stock && !it.warehouse_id) throw validation(`Item ${i + 1}: armazém obrigatório quando gera estoque`);
         await ctx.tx.query("insert into erp.input_entry_items(entry_id,product_id,measurement_id,quantity,unit_value,total_value,generate_stock,warehouse_id,appropriation_type,provider_lot,expiration_date,cultivation_id,financial_category_id,cost_center_id,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", [id, it.product_id, it.measurement_id ?? null, it.quantity, it.unit_value, lineTotal(it.quantity, it.unit_value), it.generate_stock, it.warehouse_id ?? null, it.appropriation_type ?? null, it.provider_lot ?? null, it.expiration_date ?? null, it.cultivation_id ?? null, it.financial_category_id ?? null, it.cost_center_id ?? null, i]);
@@ -190,6 +192,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       const r = await ctx.tx.query<{ id: string }>("insert into erp.invoices(organization_id,empresa_id,code,number,series,access_key,provider_id,branch_id,proprietary_id,harvest_id,emission_date,delivery_date,state_code,document_type,title_type_id,classification,apportionment_type,note,products_total,discount_total,ipi_total,icms_total,freight,other_expenses,total,origin,purchase_request_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28) returning id",
         [ctx.orgId, d.empresa_id, code, d.number, d.series, d.access_key ?? null, d.provider_id, d.branch_id ?? null, d.proprietary_id ?? null, d.harvest_id ?? null, d.emission_date, d.delivery_date ?? null, d.state_code ?? null, d.document_type, d.title_type_id ?? null, d.classification, d.apportionment_type, d.note ?? null, money(products), money(disc), money(ipi), money(icms), money(d.freight), money(d.other_expenses), total, d.purchase_request_id ? "purchase_request" : d.dfe_id ? "dfe" : d.access_key ? "xml" : "manual", d.purchase_request_id ?? null, ctx.user.id]);
       const id = r.rows[0]!.id;
+      await atribuirIdGlobal(ctx, "invoices", id);
       const prodLines: { financialCategoryId: string; costCenterId: string; amount: string }[] = [];
       for (const [i, it] of d.items.entries()) {
         const itemTotal = money(D(it.quantity).mul(it.unit_value).minus(it.discount).plus(it.ipi));
@@ -200,6 +203,7 @@ export default async function stockRoutes(app: FastifyInstance) {
           const e = await ctx.tx.query<{ id: string }>("insert into erp.equipments(organization_id,empresa_id,code,description,family_id,equipment_type,proprietary_id,hour_value,year_model,brand,has_depreciation,acquisition_value,acquisition_date,provider_id,product_id,status) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,$11,$12,$13,$14,'active') returning id",
             [ctx.orgId, d.empresa_id, ecode, (eq["description"] as string) ?? it.xml_product_description ?? "Bem adquirido", (eq["family_id"] as string) ?? null, (eq["equipment_type"] as string) ?? "own", d.proprietary_id ?? null, eq["hour_value"] ?? 0, (eq["year_model"] as string) ?? String(new Date().getFullYear()), (eq["brand"] as string) ?? null, itemTotal, d.emission_date, d.provider_id, it.product_id]);
           equipmentId = e.rows[0]!.id;
+          await atribuirIdGlobal(ctx, "equipments", equipmentId);
         }
         await ctx.tx.query("insert into erp.invoice_items(invoice_id,product_id,xml_product_description,measurement_id,quantity,unit_value,discount,ipi,icms,total,generate_stock,warehouse_id,appropriation_type,provider_lot,expiration_date,cultivation_id,financial_category_id,cost_center_id,is_equipment,equipment_id,grain_quality,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)",
           [id, it.product_id, it.xml_product_description ?? null, it.measurement_id ?? null, it.quantity, it.unit_value, it.discount, it.ipi, it.icms, itemTotal, it.generate_stock, it.warehouse_id ?? null, it.appropriation_type ?? null, it.provider_lot ?? null, it.expiration_date ?? null, it.cultivation_id ?? null, it.financial_category_id ?? null, it.cost_center_id ?? null, it.is_equipment, equipmentId, JSON.stringify(it.grain_quality ?? {}), i]);
@@ -254,6 +258,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       const code = await nextCode(ctx.tx, ctx.orgId, "stock_writeoff");
       const r = await ctx.tx.query<{ id: string }>("insert into erp.stock_writeoffs(organization_id,empresa_id,code,writeoff_date,reason,reason_note,cost_center_id,warehouse_id,justification,responsible_user_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10) returning id", [ctx.orgId, d.empresa_id, code, d.writeoff_date, d.reason, d.reason_note ?? null, d.cost_center_id ?? null, d.warehouse_id, d.justification, ctx.user.id]);
       const id = r.rows[0]!.id; let total = D(0);
+      await atribuirIdGlobal(ctx, "stock_writeoffs", id);
       for (const it of d.items) {
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: it.product_id, movementType: "writeoff", direction: -1, quantity: it.quantity, providerLot: it.provider_lot, costCenterId: d.cost_center_id, sourceType: "stock_writeoffs", sourceId: id, date: d.writeoff_date, note: d.reason });
         const t = lineTotal(it.quantity, m.unitCost); total = total.plus(t);
@@ -281,6 +286,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       const code = await nextCode(ctx.tx, ctx.orgId, "requisition");
       const r = await ctx.tx.query<{ id: string }>("insert into erp.requisitions(organization_id,empresa_id,code,requisition_date,classification,requester_person_id,responsible_user_id,area_id,harvest_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$7) returning id", [ctx.orgId, d.empresa_id, code, d.requisition_date, d.classification, d.requester_person_id ?? null, ctx.user.id, d.area_id ?? null, d.harvest_id ?? null]);
       const id = r.rows[0]!.id; let total = D(0);
+      await atribuirIdGlobal(ctx, "requisitions", id);
       for (const it of d.items) {
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "requisition", direction: -1, quantity: it.quantity, providerLot: it.provider_lot, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "requisitions", sourceId: id, date: d.requisition_date });
         const t = lineTotal(it.quantity, m.unitCost); total = total.plus(t);
@@ -304,6 +310,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       const code = await nextCode(ctx.tx, ctx.orgId, "devolution");
       const r = await ctx.tx.query<{ id: string }>("insert into erp.devolutions(organization_id,empresa_id,code,devolution_date,responsible_person_id,harvest_id,created_by) values ($1,$2,$3,$4,$5,$6,$7) returning id", [ctx.orgId, d.empresa_id, code, d.devolution_date, d.responsible_person_id ?? null, d.harvest_id ?? null, ctx.user.id]);
       const id = r.rows[0]!.id; let total = D(0);
+      await atribuirIdGlobal(ctx, "devolutions", id);
       for (const it of d.items) {
         const cost = it.unit_value ?? (await ctx.tx.query<{ average_cost: string }>("select average_cost from erp.products where id=$1", [it.product_id])).rows[0]!.average_cost;
         await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "devolution", direction: 1, quantity: it.quantity, unitCost: cost, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "devolutions", sourceId: id, date: d.devolution_date });
@@ -364,6 +371,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       const code = await nextCode(ctx.tx, ctx.orgId, d.kind === "farm" ? "farm_transfer" : "warehouse_transfer");
       const r = await ctx.tx.query<{ id: string }>("insert into erp.warehouse_transfers(organization_id,code,transfer_date,kind,empresa_origem_id,origin_warehouse_id,empresa_destino_id,destination_warehouse_id,harvest_id,generate_financial,proprietary_id,responsible_user_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) returning id", [ctx.orgId, code, d.transfer_date, d.kind, d.empresa_origem_id, d.origin_warehouse_id, destFarm, d.destination_warehouse_id, d.harvest_id ?? null, d.generate_financial, d.proprietary_id ?? null, ctx.user.id]);
       const id = r.rows[0]!.id; let total = D(0);
+      await atribuirIdGlobal(ctx, "warehouse_transfers", id);
       for (const it of d.items) {
         const out = await postStock(ctx, { empresaId: d.empresa_origem_id, warehouseId: d.origin_warehouse_id, productId: it.product_id, movementType: d.kind === "farm" ? "farm_transfer_out" : "transfer_out", direction: -1, quantity: it.quantity, providerLot: it.provider_lot, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "warehouse_transfers", sourceId: id, date: d.transfer_date });
         await postStock(ctx, { empresaId: destFarm, warehouseId: d.destination_warehouse_id, productId: it.product_id, movementType: d.kind === "farm" ? "farm_transfer_in" : "transfer_in", direction: 1, quantity: it.quantity, unitCost: out.unitCost, providerLot: it.provider_lot, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "warehouse_transfers", sourceId: id, date: d.transfer_date });
@@ -442,6 +450,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       const code = await nextCode(ctx.tx, ctx.orgId, "feed_batch");
       const r = await ctx.tx.query<{ id: string }>("insert into erp.feed_batches(organization_id,empresa_id,code,batch_date,formula_id,origin_warehouse_id,destination_warehouse_id,quantity_produced,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id", [ctx.orgId, d.empresa_id, code, d.batch_date, d.formula_id, d.origin_warehouse_id, d.destination_warehouse_id, d.quantity_produced, ctx.user.id]);
       const id = r.rows[0]!.id; const consumed: { quantity: string; unitCost: string }[] = [];
+      await atribuirIdGlobal(ctx, "feed_batches", id);
       for (const it of items.rows) {
         const q = D(it.quantity).mul(d.multiplier).toFixed(4);
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.origin_warehouse_id, productId: it.product_id, movementType: "production_out", direction: -1, quantity: q, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code}` });

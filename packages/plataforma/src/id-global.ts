@@ -91,11 +91,19 @@ export const PREFIXO_ID_GLOBAL = "#";
 /** ID Global é um inteiro positivo por organização; exibido com "#". */
 export const formatarIdGlobal = (n: number | string): string => `${PREFIXO_ID_GLOBAL}${String(n).replace(/^#/, "")}`;
 
-/** Aceita "#55", "55" e " #55 ". Devolve null quando não for um ID Global válido (nunca lança). */
+/**
+ * Aceita `55`, `#55`, `ID 55` e `id  55` (com espaços em volta). Devolve null quando não for um ID Global
+ * válido — e nunca lança, porque quem chama é a busca: cada tecla digitada passa por aqui.
+ *
+ * O que é recusado é tão importante quanto o que é aceito. `#0`, `0` e `-1` não são ID Global (a sequência
+ * começa em 1); `55abc`, `#abc`, `1.5` e `ID` sozinho são texto comum e devem seguir para a busca de
+ * navegação, não virar um número por aproximação. Aceitar "55abc" como 55 faria a busca abrir um registro
+ * que o usuário não pediu.
+ */
 export function interpretarIdGlobal(entrada: unknown): number | null {
   if (typeof entrada === "number") return Number.isSafeInteger(entrada) && entrada > 0 ? entrada : null;
   if (typeof entrada !== "string") return null;
-  const m = /^\s*#?(\d{1,15})\s*$/.exec(entrada);
+  const m = /^\s*(?:#|id\s+)?(\d{1,15})\s*$/i.exec(entrada);
   if (!m) return null;
   const n = Number(m[1]);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
