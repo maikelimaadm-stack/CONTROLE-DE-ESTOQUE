@@ -221,6 +221,16 @@ loopback. Valor que depende de expansão, URL que não parseia e host remoto **r
 nunca cita host, usuário ou URL — diz só que o alvo não foi provado local, porque a mensagem vai
 para o transcript. O CI não passa pelo hook e continua montando o próprio banco efêmero.
 
+**O ambiente do hook só prova o ambiente do gate quando o gate é um comando simples.** O hook roda
+ANTES do shell: `export VAR=...; gate`, `source arquivo && gate` e `env VAR=... gate` mudam o
+ambiente efetivo sem que isso apareça em `process.env` no instante da decisão. Então o gate precisa
+ser o **primeiro executável da linha**, sem envoltório, aceitando apenas atribuições diretas
+prefixadas a ele — lidas do texto cru, porque aspas simples são literais e o valor entre elas não
+pode sumir da leitura.
+
+Etapa DEPOIS do gate (um `| grep`, um `&& echo`) continua liberada: ela não altera o ambiente de um
+processo já lançado, e recusá-la só treinaria o operador a contornar o guarda.
+
 Consequência de método: **verificação reversa é do executor da fatia**, nunca do auditor. O
 auditor confere que a fixture de sabotagem existe e que o executor registrou a observação — se
 ele mesmo alterasse o código para fabricar a falha, passaria a auditar o próprio trabalho.

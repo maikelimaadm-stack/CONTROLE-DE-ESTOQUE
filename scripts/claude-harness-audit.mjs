@@ -251,19 +251,30 @@ if (existe(GUARDA_PERIGOSO)) {
   };
   // nome montado: escrito por extenso casaria o secret scan do CI; host inexistente
   const VAR_TESTE = `TEST_${"DATABASE_URL"}`;
-  const HOST_REMOTO = "db.exemplo.invalido";
+  const HOST_REMOTO = "db.exemplo.invalid";
+  const ASPA = String.fromCharCode(39);
+  const REMOTO = `postgresql://postgres@${HOST_REMOTO}:5432/prod`;
+  const LOCAL = "postgresql://postgres@127.0.0.1:5433/agro_erp_test";
   const NEGAR = [
     "git push origin $REF",
     'git push origin "$REF"',
     "git push origin --follow-tags claude/x",
-    `${VAR_TESTE}=postgresql://postgres@${HOST_REMOTO}:5432/prod pnpm test:integration`,
+    // o alvo do banco pode chegar ao processo por caminhos que o process.env do hook não mostra
+    `${VAR_TESTE}=${REMOTO} pnpm test:integration`,
+    `${VAR_TESTE}=${ASPA}${REMOTO}${ASPA} pnpm test:integration`,
+    `${VAR_TESTE}="${REMOTO}" pnpm test:integration`,
+    `env ${VAR_TESTE}=${ASPA}${REMOTO}${ASPA} pnpm test:integration`,
+    `export ${VAR_TESTE}=${ASPA}${REMOTO}${ASPA}; pnpm test:integration`,
+    "source ./algum-env && pnpm test:integration",
     `${VAR_TESTE}=nao-e-uma-url pnpm test:integration`
   ];
   const PERMITIR = [
     "git push -u origin claude/minha-fatia",
     "git push origin HEAD:claude/minha-fatia",
     "echo 'git push origin $REF'",
-    `${VAR_TESTE}=postgresql://postgres@127.0.0.1:5433/agro_erp_test pnpm test:integration`
+    `${VAR_TESTE}=${LOCAL} pnpm test:integration`,
+    `${VAR_TESTE}=${ASPA}${LOCAL}${ASPA} pnpm test:integration`,
+    `${VAR_TESTE}="${LOCAL}" pnpm test:integration`
   ];
   for (const c of NEGAR) {
     const saida = responder(c);
@@ -272,6 +283,20 @@ if (existe(GUARDA_PERIGOSO)) {
     if (new RegExp(`${HOST_REMOTO}|postgres|127\\.0\\.0\\.1`).test(saida)) erro(`${GUARDA_PERIGOSO}: a recusa vazou o alvo do banco no motivo`);
   }
   for (const c of PERMITIR) if (responder(c).trim()) erro(`${GUARDA_PERIGOSO}: recusou comando legítimo (classe: ${c.split(" ").slice(0, 2).join(" ")})`);
+
+  // O auditor tem de herdar a MESMA decisão — se divergir, existem dois contratos e um deles mente.
+  if (existe(GUARDA_AUDITOR)) {
+    const comoAuditor = (comando) => {
+      const entrada = JSON.stringify({ tool_name: "Bash", hook_event_name: "PreToolUse", agent_type: "pr-certifier", tool_input: { command: comando } });
+      return execFileSync(process.execPath, [caminho(GUARDA_AUDITOR)], { input: entrada, encoding: "utf8", timeout: 20_000 });
+    };
+    if (!comoAuditor(`${VAR_TESTE}=${ASPA}${REMOTO}${ASPA} pnpm test:integration`).trim()) {
+      erro(`${GUARDA_AUDITOR}: auditor rodaria gate de banco com alvo não provado local`);
+    }
+    if (comoAuditor(`${VAR_TESTE}=${ASPA}${LOCAL}${ASPA} pnpm test:integration`).trim()) {
+      erro(`${GUARDA_AUDITOR}: auditor ficou sem poder rodar o gate contra alvo local`);
+    }
+  }
 }
 
 // -------------------------------------------------------------------------------------------------

@@ -320,18 +320,46 @@ const ALVO_DE_BANCO_POR_GATE = new Map([
 ]);
 
 /**
- * Atribuições `VAR=valor` que precedem o comando.
+ * Atribuições `VAR=valor` no INÍCIO do comando, com o valor preservado.
  *
- * Lidas do ESQUELETO, não dos tokens: a tokenização quebra em `{`, então `VAR=${OUTRA}` viraria
- * três segmentos e a atribuição sumiria — que foi exatamente como essa forma escapou na primeira
- * tentativa. No esqueleto ela continua inteira, e `${...}` é justamente o caso que precisa recusar.
+ * Precisa ler o texto CRU, não o esqueleto: o esqueleto descarta o que está entre aspas simples,
+ * então `VAR='postgresql://remoto/prod'` virava `VAR=` — valor vazio, classificado como "ausente",
+ * aceito como default local. O shell, claro, entregava a URL remota ao processo. Era a forma mais
+ * natural de escrever a variável e a que passava.
+ *
+ * Aspas simples são literais (nem `$` expande dentro delas); aspas duplas e texto solto ainda
+ * expandem, e nesse caso o valor é INDETERMINADO — o hook roda antes do shell e não tem como saber
+ * no que vai dar.
+ *
+ * @returns {Map<string, {valor: string, expansao: boolean}>}
  */
-export function atribuicoesDeAmbiente(esqueleto) {
+export function atribuicoesLiterais(comando) {
   const out = new Map();
-  for (const parte of String(esqueleto ?? "").trim().split(/\s+/)) {
-    const m = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(parte);
+  const s = String(comando ?? "");
+  let i = 0;
+  for (;;) {
+    while (s[i] === " " || s[i] === "\t") i++;
+    const m = /^([A-Za-z_][A-Za-z0-9_]*)=/.exec(s.slice(i));
     if (!m) break;
-    out.set(m[1], m[2]);
+    i += m[0].length;
+    let valor = "";
+    let expansao = false;
+    let aspas = null;
+    for (; i < s.length; i++) {
+      const c = s[i];
+      if (aspas === "'") { if (c === "'") { aspas = null; continue; } valor += c; continue; }
+      if (aspas === '"') {
+        if (c === '"') { aspas = null; continue; }
+        if (c === "\\") { valor += s[++i] ?? ""; continue; }
+        if (c === "$" || c === "`") expansao = true;
+        valor += c; continue;
+      }
+      if (c === "'" || c === '"') { aspas = c; continue; }
+      if (c === " " || c === "\t") break;
+      if (c === "$" || c === "`") expansao = true;
+      valor += c;
+    }
+    out.set(m[1], { valor, expansao });
   }
   return out;
 }
@@ -348,17 +376,50 @@ export function classificarAlvoDeBanco(valor) {
 
 /**
  * O comando é um gate que reseta banco de teste? Em caso afirmativo, o alvo está provado local?
+ *
+ * O hook roda ANTES do shell, então "o ambiente do processo do hook" só prova o ambiente do gate
+ * quando nada na mesma linha pode alterá-lo antes. `export VAR=...; gate`, `source arquivo && gate`
+ * e `env VAR=... gate` mudam o ambiente efetivo sem aparecer em `process.env` no momento da
+ * decisão. Daí a exigência de COMANDO SIMPLES: o gate precisa ser o primeiro executável da linha,
+ * sem envoltório, aceitando apenas atribuições diretas prefixadas a ele — que são lidas literalmente.
+ *
+ * Etapa DEPOIS do gate (um `| grep`, um `&& echo`) não altera o ambiente de um processo já lançado
+ * e continua liberada: recusá-la só treinaria o operador a contornar o guarda, sem ganho de segurança.
+ *
  * @returns {string|null} motivo da recusa, ou null quando não se aplica ou está provado local.
  */
-export function bancoDeTesteNaoProvadoLocal(programa, args, esqueleto, ambiente = process.env) {
+export function bancoDeTesteNaoProvadoLocal(programa, args, linha, ambiente = process.env) {
   if (!["pnpm", "npm", "yarn"].includes(programa)) return null;
   const pos = posicionais(args).filter((t) => t !== "run" && t !== "exec");
   const gate = pos.find((t) => ALVO_DE_BANCO_POR_GATE.has(t));
   if (!gate) return null;
-  const inline = atribuicoesDeAmbiente(esqueleto);
+
+  const bruto = removerCorpoDeHeredoc(String(linha ?? ""));
+  const segmentos = segmentar(bruto);
+  let primeiroExecutavel = null;
+  let tokensDoGate = null;
+  for (const tokens of segmentos) {
+    const pa = programaEArgumentos(tokens);
+    if (!pa) continue;
+    if (!primeiroExecutavel) primeiroExecutavel = tokens;
+    const ehOGate = pa[0] === programa && posicionais(pa.slice(1)).includes(gate);
+    if (ehOGate) { tokensDoGate = tokens; break; }
+  }
+  // comando antes do gate pode ter mudado o ambiente que o gate vai herdar
+  if (tokensDoGate && primeiroExecutavel !== tokensDoGate) {
+    return `o gate "${gate}" reseta o banco de teste e há comando antes dele que pode mudar o ambiente`;
+  }
+  // envoltório (`env`, `sudo`, `exec`…) também define ambiente sem aparecer como atribuição direta
+  if (tokensDoGate?.some((t) => ENVOLTORIOS.has(t.replace(/^.*\//, "")))) {
+    return `o gate "${gate}" reseta o banco de teste e o ambiente vem de um envoltório, não de atribuição direta`;
+  }
+
+  const inline = atribuicoesLiterais(bruto.trimStart());
   for (const variavel of ALVO_DE_BANCO_POR_GATE.get(gate)) {
-    const bruto = inline.has(variavel) ? inline.get(variavel) : ambiente[variavel];
-    const classe = classificarAlvoDeBanco(bruto);
+    const declarada = inline.get(variavel);
+    const classe = declarada
+      ? (declarada.expansao ? "indeterminado" : classificarAlvoDeBanco(declarada.valor))
+      : classificarAlvoDeBanco(ambiente[variavel]);
     if (classe === "ausente" || classe === "local") continue;          // default do repositório é loopback
     return `o gate "${gate}" reseta o banco de teste e o alvo não foi provado local`;
   }
@@ -508,10 +569,7 @@ export const REGRAS = [
   {
     id: "banco-de-teste-nao-local",
     motivo: "o setup dos testes faz reset do schema na URL herdada do ambiente; alvo remoto seria destruído",
-    casa: (p, a, linha) => {
-      const esqueleto = comandosLogicosSemAspas(linha ?? "").find((c) => iniciaCom(c, p)) ?? "";
-      return bancoDeTesteNaoProvadoLocal(p, a, esqueleto) !== null;
-    }
+    casa: (p, a, linha) => bancoDeTesteNaoProvadoLocal(p, a, linha) !== null
   },
   {
     id: "implantacao-de-producao",
@@ -618,8 +676,9 @@ export function avaliar(linha, profundidade = 0) {
  */
 const V_TESTE = `TEST_${"DATABASE_URL"}`;
 const V_E2E = `E2E_${"DATABASE_URL"}`;
+const ASPA = String.fromCharCode(39);
 const DSN_LOCAL = "postgresql://postgres@127.0.0.1:5433/agro_erp_test";
-const DSN_REMOTO = "postgresql://postgres@db.exemplo.invalido:5432/prod";
+const DSN_REMOTO = "postgresql://postgres@db.exemplo.invalid:5432/prod";
 const DSN_REDE = "postgresql://postgres@10.0.0.5:5432/prod";
 
 export const FIXTURES = {
@@ -712,6 +771,16 @@ export const FIXTURES = {
     [`${V_TESTE}=$DATABASE_URL pnpm test:integration`, "banco-de-teste-nao-local"],
     [`${V_TESTE}=\${DATABASE_URL} pnpm test:integration`, "banco-de-teste-nao-local"],
     [`${V_TESTE}=nao-e-uma-url pnpm test:integration`, "banco-de-teste-nao-local"],
+    // o valor entre aspas SIMPLES não pode sumir da leitura: era a grafia mais natural e a que passava
+    [`${V_TESTE}=${ASPA}${DSN_REMOTO}${ASPA} pnpm test:integration`, "banco-de-teste-nao-local"],
+    [`${V_E2E}=${ASPA}${DSN_REMOTO}${ASPA} pnpm e2e`, "banco-de-teste-nao-local"],
+    // ambiente definido por envoltório ou por comando anterior não aparece no process.env do hook
+    [`env ${V_TESTE}=${ASPA}${DSN_REMOTO}${ASPA} pnpm test:integration`, "banco-de-teste-nao-local"],
+    [`export ${V_TESTE}=${ASPA}${DSN_REMOTO}${ASPA}; pnpm test:integration`, "banco-de-teste-nao-local"],
+    [`export ${V_TESTE}=${ASPA}${DSN_REMOTO}${ASPA} && pnpm test:integration`, "banco-de-teste-nao-local"],
+    ["source ./algum-env && pnpm test:integration", "banco-de-teste-nao-local"],
+    [". ./algum-env && pnpm test:integration", "banco-de-teste-nao-local"],
+    [`bash -c ${ASPA}export ${V_TESTE}="${DSN_REMOTO}"; pnpm test:integration${ASPA}`, "banco-de-teste-nao-local"],
     ["vercel --prod", "implantacao-de-producao"],
     ["vercel deploy --prod", "implantacao-de-producao"],
     ["railway redeploy", "implantacao-de-producao"],
@@ -770,6 +839,11 @@ export const FIXTURES = {
     `${V_TESTE}=${DSN_LOCAL} pnpm test:integration`,
     `${V_E2E}=postgresql://postgres@localhost:5433/agro_erp_e2e pnpm db:seed:e2e`,
     `${V_E2E}=postgresql://postgres@[::1]:5433/agro_erp_e2e pnpm e2e`,
+    `${V_TESTE}=${ASPA}${DSN_LOCAL}${ASPA} pnpm test:integration`,
+    `${V_TESTE}="postgresql://postgres@localhost:5433/agro_erp_test" pnpm test:integration`,
+    `${V_E2E}=${ASPA}postgresql://postgres@[::1]:5433/agro_erp_e2e${ASPA} pnpm e2e`,
+    // etapa DEPOIS do gate não altera o ambiente de um processo já lançado
+    "pnpm test:integration 2>&1 | grep Tests",
     "echo 'git push origin $REF'",
     "pnpm --filter @agro/db test:integration",
     "pnpm --filter @agro/api test:integration",
@@ -815,8 +889,7 @@ function autoteste() {
   for (const [ambiente, linha, esperado] of FIXTURES_DE_AMBIENTE) {
     const tokens = segmentar(linha)[0] ?? [];
     const pa = programaEArgumentos(tokens);
-    const esqueleto = comandosLogicosSemAspas(linha)[0] ?? "";
-    const r = pa ? bancoDeTesteNaoProvadoLocal(pa[0], pa.slice(1), esqueleto, ambiente) : null;
+    const r = pa ? bancoDeTesteNaoProvadoLocal(pa[0], pa.slice(1), linha, ambiente) : null;
     const negou = r !== null;
     if (negou !== (esperado === "negar")) falhas.push(`ambiente sintético (${esperado}) falhou: ${linha}`);
     if (negou && /postgres|exemplo|10\.0\.0/.test(r)) falhas.push(`o motivo vazou o alvo: ${linha}`);

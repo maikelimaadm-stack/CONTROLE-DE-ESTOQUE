@@ -23,7 +23,7 @@
  */
 import {
   segmentar, programaEArgumentos, posicionais, redirecionamentoDeEscrita,
-  comandosLogicosSemAspas, bancoDeTesteNaoProvadoLocal
+  bancoDeTesteNaoProvadoLocal
 } from "./guard-dangerous-command.mjs";
 
 // -------------------------------------------------------------------------------------------------
@@ -106,7 +106,7 @@ const flagPresente = (args, ...nomes) =>
   args.some((a) => nomes.some((n) => a === n || a.startsWith(`${n}=`)));
 
 /** @returns {string|null} motivo da recusa, ou null quando o comando é aceitável para um auditor. */
-function julgarSegmento(programa, args, esqueleto) {
+function julgarSegmento(programa, args, linha) {
   if (LEITURA_PURA.has(programa)) return null;
 
   if (MODO_MUTANTE.has(programa)) {
@@ -160,7 +160,7 @@ function julgarSegmento(programa, args, esqueleto) {
     const script = restante[0];
     if (!SCRIPTS_DE_GATE.has(script)) return `script "${script}" não é gate conhecido`;
     // gates que resetam banco de teste só rodam contra alvo comprovadamente local
-    const banco = bancoDeTesteNaoProvadoLocal(programa, args, esqueleto);
+    const banco = bancoDeTesteNaoProvadoLocal(programa, args, linha);
     if (banco) return banco;
     return null;
   }
@@ -171,13 +171,11 @@ function julgarSegmento(programa, args, esqueleto) {
 /** @returns {{motivo:string}|null} */
 export function avaliarAuditor(linha) {
   if (redirecionamentoDeEscrita(linha)) return { motivo: "redirecionamento que escreve arquivo" };
-  const esqueletos = comandosLogicosSemAspas(linha);
   for (const tokens of segmentar(linha)) {
     const pa = programaEArgumentos(tokens);
     if (!pa) continue;
     const [programa, ...args] = pa;
-    const esqueleto = esqueletos.find((c) => c.includes(programa)) ?? "";
-    const motivo = julgarSegmento(programa, args, esqueleto);
+    const motivo = julgarSegmento(programa, args, linha);
     if (motivo) return { motivo };
   }
   return null;
