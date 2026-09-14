@@ -73,8 +73,9 @@ test("o servidor É o commit base — e ele entende o canônico, que é a premis
   expect((await request.get(`${API}/api/resources/empresas?pageSize=1`, { headers: auth })).status(), "o recurso canônico existe").toBe(200);
 
   const corpoCanonico = await request.post(`${API}/api/resources/warehouses`, { headers: auth, data: { empresa_id: ctx["empresas"][0].id, initials: "SK1", description: uniq("skew"), type: "inputs" } });
-  expect([201, 409, 422].includes(corpoCanonico.status()), `o corpo canônico é ACEITO pelo schema (status ${corpoCanonico.status()})`).toBe(true);
-  expect(corpoCanonico.status(), "422 aqui significaria campo canônico não reconhecido — a quebra que a 05A não pode ter").not.toBe(422);
+  // 201 na primeira execução, 409 nas seguintes (sigla repetida). 422 seria o campo canônico NÃO reconhecido
+  // pelo schema `.strict()` — exatamente a quebra que a 05A não pode ter.
+  expect([201, 409], `o corpo canônico é aceito pelo schema (status ${corpoCanonico.status()}: ${await corpoCanonico.text()})`).toContain(corpoCanonico.status());
 
   const todos = await (await request.get(`${API}/api/resources/warehouses?pageSize=100`, { headers: auth })).json();
   const canonico = await (await request.get(`${API}/api/resources/warehouses?pageSize=100&empresa_id__eq=${ctx["empresas"][0].id}`, { headers: auth })).json();
@@ -109,58 +110,79 @@ test("/cadastros/empresas abre pedindo o recurso CANÔNICO", async ({ page }) =>
   v.semBloqueio(); v.fioCanonico();
 });
 
-test("a coluna Empresa da listagem genérica vem preenchida sem nenhum apelido legado", async ({ page }) => {
+test("a resposta já é canônica: a coluna Empresa da listagem genérica não vem vazia", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
+  // A listagem genérica desenha `<campo>_label` — `empresa_id_label`. Antes isso só funcionava porque o
+  // cliente promovia `farm_id_label`; agora a API entrega o canônico e não há promoção nenhuma no meio.
   const resposta = page.waitForResponse((r) => /\/api\/resources\/warehouses\?/.test(r.url()) && r.status() === 200);
   await page.goto("/cadastros/warehouses");
-  const corpo = await (await resposta).json();
-  const primeira = (corpo["items"] as Record<string, unknown>[])[0];
-  expect(primeira, "a listagem trouxe pelo menos uma linha").toBeTruthy();
-  expect(primeira?.["empresa_id"], "a resposta já é canônica: o cliente não traduz nada").toBeTruthy();
+  const corpo = await (await resposta).json() as { items: Record<string, unknown>[] };
+  expect(corpo.items[0]?.["empresa_id"], "a API em produção responde com o nome canônico").toBeTruthy();
 
-  await expect(page.getByTestId("b1-row").first()).toBeVisible();
-  const colunas = await page.locator("thead th").allTextContents();
+  const colunas = await page.locator("thead th").allInnerTexts();
   const iEmpresa = colunas.findIndex((c) => /^\s*Empresa\s*$/i.test(c));
-  expect(iEmpresa, `a coluna canônica está desenhada: ${colunas.join(" | ")}`).toBeGreaterThanOrEqual(0);
-  const celula = await page.getByTestId("b1-row").first().locator("td").nth(iEmpresa).textContent();
-  expect((celula ?? "").trim(), "a coluna Empresa não pode vir vazia").not.toBe("");
+  expect(iEmpresa, `a coluna Empresa existe na tela: ${colunas.join(" | ")}`).toBeGreaterThanOrEqual(0);
+  const celula = page.getByTestId("b1-row").first().locator("td").nth(iEmpresa);
+  await expect(celula, "coluna Empresa preenchida direto de `empresa_id_label`").not.toHaveText("");
   v.semBloqueio(); v.fioCanonico();
 });
 
-test("cadastro real com empresa: o corpo sai canônico e o servidor aceita", async ({ page }) => {
+test("RefSelect de Empresa e cadastro real: o corpo sai CANÔNICO e o servidor aceita", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
-  await page.goto("/cadastros/warehouses");
-  await expect(page.getByTestId("b1-row").first()).toBeVisible();
+  const desc = uniq("Armazém Canônico");
   const corpos: string[] = [];
   page.on("request", (r) => { if (r.method() === "POST" && r.url().includes("/api/resources/warehouses")) corpos.push(r.postData() ?? ""); });
 
-  await page.getByRole("button", { name: /Novo/i }).first().click();
-  await page.getByLabel(/Sigla/i).first().fill("C05");
-  await page.getByLabel(/Descrição/i).first().fill(uniq("Almox canônico"));
-  await page.getByRole("button", { name: /Salvar/i }).first().click();
+  await page.goto("/cadastros/warehouses/new");
+  await expect(page.getByTestId("b1-form")).toBeVisible();
 
-  await expect.poll(() => corpos.length, { message: "o formulário enviou o cadastro" }).toBeGreaterThan(0);
-  for (const c of corpos) {
-    expect(c, `o corpo não pode conter nome legado: ${c}`).not.toMatch(/"(farm_id|origin_farm_id|destination_farm_id)"/);
-  }
+  // As opções vêm de `/api/resources/empresas/options` — sem tradução de caminho no meio.
+  const campoEmpresa = page.getByTestId("b1-form").locator("label", { hasText: /^Empresa/ }).first().locator("..");
+  await campoEmpresa.locator("button[type=button]").first().click();
+  const opcoes = page.locator(".cmd-panel [role=option]");
+  await expect(opcoes.first(), "o seletor de referência listou as empresas").toBeVisible();
+  await opcoes.first().click();
+
+  await page.getByLabel(/^Sigla/).first().fill(`CN${Date.now().toString(36).slice(-3).toUpperCase()}`);
+  await page.getByLabel(/^Descrição/).first().fill(desc);
+  await page.getByRole("button", { name: /^Salvar/ }).click();
+  await page.waitForURL(/\/cadastros\/warehouses$/, { timeout: 20_000 });
+
+  expect(corpos.length, "o formulário enviou o cadastro").toBeGreaterThan(0);
+  for (const c of corpos) expect(c, `o corpo não pode conter nome legado: ${c}`).not.toMatch(/"(farm_id|origin_farm_id|destination_farm_id)"/);
+
+  await page.getByLabel("Pesquisar", { exact: true }).click();
+  await page.getByPlaceholder(/^Pesquisar por/).fill(desc);
+  await page.keyboard.press("Enter");
+  await expect(page.getByTestId("b1-row").filter({ hasText: desc }).first(), "o registro foi gravado com empresa").toBeVisible();
   v.semBloqueio(); v.fioCanonico();
 });
 
 test("filtrar por empresa realmente filtra — e a query viaja canônica", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
+  await page.getByLabel("Empresa ativa").selectOption("");
   await page.goto("/cadastros/warehouses");
   await expect(page.getByTestId("b1-row").first()).toBeVisible();
-  const total = await page.getByTestId("b1-row").count();
+  const antes = await page.getByTestId("b1-row").count();
+  expect(antes, "o cenário só discrimina se houver armazém de mais de uma empresa").toBeGreaterThan(1);
 
-  await page.getByLabel("Empresa ativa").selectOption({ index: 1 });
-  await expect.poll(async () => page.getByTestId("b1-row").count(), { message: "a listagem recarregou no escopo da empresa" })
-    .toBeLessThanOrEqual(total);
+  const faixa = page.getByLabel("Mostrar faixa de filtros");
+  if (await faixa.count()) await faixa.click();
+  const empresa = (await page.getByLabel("Empresa ativa").locator("option").nth(1).innerText()).trim();
+  await page.getByRole("button", { name: "Filtro Empresa" }).click();
+  const painel = page.locator("[data-radix-popper-content-wrapper]").last();
+  await painel.locator("label", { hasText: empresa }).first().click();
+  await painel.getByRole("button", { name: "OK" }).click();
 
-  const comEmpresa = v.urls.filter((u) => /empresa_id/.test(u));
-  expect(v.urls.filter((u) => WIRE_LEGADO.test(u)), `nenhuma query pode viajar com o nome legado: ${comEmpresa.join(" ")}`).toEqual([]);
+  await expect.poll(() => page.getByTestId("b1-row").count(), { message: "o recorte por empresa chegou ao servidor" }).toBeLessThan(antes);
+  const colunas = await page.locator("thead th").allInnerTexts();
+  const iEmpresa = colunas.findIndex((c) => /^\s*Empresa\s*$/i.test(c));
+  const empresas = new Set((await page.getByTestId("b1-row").locator(`td:nth-child(${iEmpresa + 1})`).allInnerTexts()).map((t) => t.trim()));
+  expect([...empresas], "todas as linhas restantes são da empresa escolhida").toEqual([empresa]);
+  expect(v.urls.some((u) => /empresa_id(__[a-z]+)?=/.test(u)), `o filtro viajou com o nome canônico: ${v.urls.filter((u) => u.includes("warehouses")).join(" ")}`).toBe(true);
   v.semBloqueio(); v.fioCanonico();
 });
 
