@@ -5,8 +5,9 @@
  * Regra em CLAUDE.md é CONTEXTO: o modelo a lê, pondera e pode ser convencido do contrário por um
  * prompt, por um documento ou por pressa. Hook é MECANISMO: roda antes da ferramenta, não negocia e
  * não depende de o modelo ter lido nada. Por isso aqui mora só o que NUNCA pode acontecer neste
- * repositório — merge, marcação de ready, reescrita de histórico e implantação/destruição direta de
- * produção —, e não julgamento arquitetural, que é papel das rules e da revisão.
+ * repositório — escrever em `main`, mesclar, marcar PR como pronta, reescrever histórico, apagar ref
+ * remota, mutar o GitHub pela API, mutar banco direto e implantar/destruir produção —, e não
+ * julgamento arquitetural, que é papel das rules e da revisão.
  *
  * PARSING POR TOKENS, NÃO POR REGEX NA LINHA INTEIRA. `echo "git push --force"` não empurra nada, e
  * um auditor que bloqueia a MENÇÃO do comando treina o operador a contornar o guarda — que é
@@ -14,9 +15,13 @@
  * nova linha, subshell e substituição de comando), cada segmento vira argv, e a decisão olha o
  * PROGRAMA e seus argumentos. Texto dentro de aspas é argumento, não comando.
  *
- * NUNCA IMPRIME O COMANDO. O motivo da recusa cita só o programa e o subcomando reconhecidos: a
- * linha pode conter cabeçalho de autorização, token ou DSN com senha, e mensagem de hook vai para o
- * transcript.
+ * SHELL ANINHADO É REAVALIADO. `bash -c '<payload>'` executa o payload: ele volta para a mesma
+ * análise, com profundidade limitada. Sem isso, todo o resto deste arquivo seria contornável com
+ * cinco caracteres.
+ *
+ * NUNCA IMPRIME O COMANDO, O PAYLOAD OU A LINHA. O motivo da recusa cita só o programa e o
+ * subcomando reconhecidos: a linha pode conter cabeçalho de autorização, token ou DSN com senha, e
+ * mensagem de hook vai para o transcript.
  *
  * Contrato: https://code.claude.com/docs/en/hooks — stdin recebe JSON com `tool_name` e
  * `tool_input.command`; a recusa sai em `hookSpecificOutput.permissionDecision = "deny"` com
@@ -32,10 +37,10 @@
 /**
  * Corpo de here-document é DADO, não comando.
  *
- * `cat > doc.md <<\'EOF\'` seguido de um texto que MENCIONA um comando proibido não executa nada —
- * e foi exatamente assim que este guarda bloqueou a redação da documentação que o descreve. Bloquear a
- * menção ensina o operador a driblar o guarda, que é o oposto do objetivo. O corpo é removido antes da
- * tokenização; o que vier DEPOIS do delimitador continua sendo comando e continua sendo auditado.
+ * `cat > doc.md <<'EOF'` seguido de um texto que MENCIONA um comando proibido não executa nada — e
+ * foi exatamente assim que este guarda bloqueou a redação da documentação que o descreve. Bloquear a
+ * menção ensina o operador a driblar o guarda, que é o oposto do objetivo. O corpo é removido antes
+ * da tokenização; o que vier DEPOIS do delimitador continua sendo comando e continua sendo auditado.
  *
  * `<<<` (here-string) fica de fora de propósito: é uma linha só, sem corpo a pular.
  */
@@ -129,7 +134,8 @@ const flagCurta = (args, letra) => args.some((a) => /^-[A-Za-z]+$/.test(a) && a.
  */
 const VALOR_SEGUINTE = new Set([
   "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix",
-  "-R", "--repo", "-m", "--message", "-F", "--file", "-b", "--branch", "--cwd", "-p", "--project"
+  "-R", "--repo", "-m", "--message", "-F", "--file", "-b", "--branch", "--cwd", "-p", "--project",
+  "-X", "--method", "--filter", "--hostname", "--jq", "-q", "--template", "-t"
 ]);
 
 /** Posicionais na ordem: descarta flags e o valor das que consomem o token seguinte. */
@@ -145,9 +151,54 @@ const posicionais = (args) => {
 };
 const sub = (args, n) => posicionais(args)[n];
 
+/** Valor de uma opção, na forma `--opcao valor` ou `--opcao=valor`. */
+const valorDeOpcao = (args, ...nomes) => {
+  for (let i = 0; i < args.length; i++) {
+    for (const n of nomes) {
+      if (args[i] === n) return args[i + 1];
+      if (args[i].startsWith(`${n}=`)) return args[i].slice(n.length + 1);
+    }
+  }
+  return undefined;
+};
+
 // -------------------------------------------------------------------------------------------------
-// 2. O QUE NUNCA PODE ACONTECER
+// 2. REFSPEC DE PUSH
 // -------------------------------------------------------------------------------------------------
+
+/**
+ * `git push [<remoto>] [<refspec>...]`. Os refspecs são os posicionais depois de `push` e do remoto.
+ * Sem destino explícito (`git push` puro) não há o que julgar: resolver o upstream exigiria ler a
+ * configuração do repositório, e um guarda que depende de estado externo decide diferente em
+ * máquinas diferentes.
+ */
+const refspecsDePush = (args) => posicionais(args).slice(2);
+
+/**
+ * Destino de um refspec: o lado DEPOIS dos dois-pontos, ou o próprio nome quando não há `:`.
+ * `+` (force) é removido aqui porque o force tem regra própria; o que importa nesta função é o ALVO.
+ */
+export const destinoDeRefspec = (refspec) => {
+  const semForce = refspec.replace(/^\+/, "");
+  const i = semForce.indexOf(":");
+  const destino = i < 0 ? semForce : semForce.slice(i + 1);
+  return destino.replace(/^refs\/heads\//, "");
+};
+
+/** Refspec que APAGA a ref remota: origem vazia (`:branch`). */
+const refspecApaga = (refspec) => /^\+?:/.test(refspec);
+
+const BRANCHES_PROTEGIDAS = new Set(["main", "master"]);
+
+// -------------------------------------------------------------------------------------------------
+// 3. O QUE NUNCA PODE ACONTECER
+// -------------------------------------------------------------------------------------------------
+
+const METODOS_MUTANTES = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const FLAGS_DE_CORPO = ["-f", "--raw-field", "-F", "--field", "--input"];
+/** Scripts que mutam banco pela conexão herdada do ambiente. */
+const SCRIPTS_DB_DIRETO = new Set(["db:migrate", "db:seed", "db:reset"]);
+const SUBCOMANDOS_DB_DIRETO = new Set(["migrate", "seed", "reset"]);
 
 export const REGRAS = [
   {
@@ -166,11 +217,23 @@ export const REGRAS = [
     casa: (p, a) => p === "gh" && sub(a, 0) === "pr" && sub(a, 1) === "edit" && flagLonga(a, "ready")
   },
   {
+    id: "push-para-main",
+    motivo: "toda mudança entra em main por PR com merge humano; escrever direto na branch pula revisão e CI",
+    casa: (p, a) => p === "git" && sub(a, 0) === "push" &&
+      refspecsDePush(a).some((r) => !refspecApaga(r) && BRANCHES_PROTEGIDAS.has(destinoDeRefspec(r)))
+  },
+  {
+    id: "exclusao-de-ref-remota",
+    motivo: "apagar branch no remoto é configuração do repositório, e isso é ação humana",
+    casa: (p, a) => p === "git" && sub(a, 0) === "push" &&
+      (flagLonga(a, "delete") || flagCurta(a, "d") || refspecsDePush(a).some(refspecApaga))
+  },
+  {
     id: "push-forcado",
     motivo: "force push reescreve histórico publicado e invalida o checkout de quem já baixou a branch",
     casa: (p, a) => p === "git" && sub(a, 0) === "push" &&
       (flagLonga(a, "force", "force-with-lease", "force-if-includes") || flagCurta(a, "f") ||
-       posicionais(a).slice(1).some((r) => r.startsWith("+")))
+       refspecsDePush(a).some((r) => r.startsWith("+")))
   },
   {
     id: "reset-destrutivo",
@@ -192,6 +255,37 @@ export const REGRAS = [
     id: "historico-reescrito",
     motivo: "reescrever histórico publicado é proibido neste repositório",
     casa: (p, a) => p === "git" && ["filter-branch", "filter-repo"].includes(sub(a, 0))
+  },
+  {
+    id: "mutacao-pela-api-do-github",
+    motivo: "mutar pelo GitHub por API contorna as recusas especializadas (merge, ready, configuração)",
+    casa: (p, a) => {
+      if (p !== "gh" || sub(a, 0) !== "api") return false;
+      if (sub(a, 1) === "graphql") return true;                       // GraphQL não distingue leitura de mutação na forma
+      const metodo = (valorDeOpcao(a, "-X", "--method") ?? "").toUpperCase();
+      if (METODOS_MUTANTES.has(metodo)) return true;
+      const temCorpo = a.some((t) => FLAGS_DE_CORPO.includes(t) || /^(--raw-field|--field|--input)=/.test(t));
+      return temCorpo && metodo !== "GET";                            // corpo sem GET inequívoco = mutação
+    }
+  },
+  {
+    id: "configuracao-do-repositorio",
+    motivo: "configuração do repositório (branch padrão, visibilidade, exclusão) é ação humana",
+    casa: (p, a) => p === "gh" && sub(a, 0) === "repo" && ["edit", "delete", "archive", "rename"].includes(sub(a, 1))
+  },
+  {
+    id: "mutacao-direta-de-banco",
+    motivo: "migration, seed e reset mudam o banco da conexão herdada do ambiente; produção muda por pipeline",
+    casa: (p, a) => {
+      if (!["pnpm", "npm", "yarn", "npx"].includes(p)) return false;
+      const pos = posicionais(a);
+      if (pos.some((t) => SCRIPTS_DB_DIRETO.has(t))) return true;     // pnpm db:migrate | db:seed | db:reset
+      const filtro = valorDeOpcao(a, "--filter") ?? "";
+      if (/(^|[/@])db$/.test(filtro) && pos.some((t) => SUBCOMANDOS_DB_DIRETO.has(t))) return true;
+      // invocação direta do cli do pacote de banco (`tsx packages/db/src/cli.ts migrate`)
+      const cli = pos.findIndex((t) => /(^|\/)db\/.*cli\.(ts|js|mjs)$/.test(t));
+      return cli >= 0 && pos.slice(cli + 1).some((t) => SUBCOMANDOS_DB_DIRETO.has(t));
+    }
   },
   {
     id: "implantacao-de-producao",
@@ -222,27 +316,72 @@ export const REGRAS = [
 ];
 
 // -------------------------------------------------------------------------------------------------
-// 3. DECISÃO
+// 4. SHELL ANINHADO
+// -------------------------------------------------------------------------------------------------
+
+/** Programa → como ele recebe o payload que VAI EXECUTAR. */
+const WRAPPERS = new Map([
+  ["bash", "posix"], ["sh", "posix"], ["zsh", "posix"], ["dash", "posix"], ["ksh", "posix"],
+  ["pwsh", "powershell"], ["pwsh.exe", "powershell"],
+  ["powershell", "powershell"], ["powershell.exe", "powershell"],
+  ["cmd", "cmd"], ["cmd.exe", "cmd"]
+]);
+export const PROFUNDIDADE_MAXIMA = 3;
+
+/** Payload que o wrapper executa, ou undefined quando não há. */
+const payloadDoWrapper = (estilo, args) => {
+  for (let i = 0; i < args.length; i++) {
+    const t = args[i];
+    const casa = estilo === "posix" ? /^-[A-Za-z]*c$/.test(t)          // -c, -lc, -ic
+      : estilo === "powershell" ? /^-c/i.test(t)                        // -c, -Command, -command
+      : /^\/[ckCK]$/.test(t);                                           // cmd /c, /k
+    if (casa) return args.slice(i + 1).join(" ");
+  }
+  return undefined;
+};
+
+/** Payload que não dá para analisar porque só se resolve em tempo de execução. */
+const indeterminado = (payload) => /^\s*[`$]/.test(payload) || /^\s*\$\{/.test(payload);
+
+// -------------------------------------------------------------------------------------------------
+// 5. DECISÃO
 // -------------------------------------------------------------------------------------------------
 
 /** @returns {{id:string, motivo:string, comando:string}|null} */
-export function avaliar(linha) {
+export function avaliar(linha, profundidade = 0) {
   for (const tokens of segmentar(linha)) {
     const pa = programaEArgumentos(tokens);
     if (!pa) continue;
     const [programa, ...args] = pa;
+
     for (const r of REGRAS) {
       let bateu = false;
       try { bateu = r.casa(programa, args); } catch { bateu = false; }
       // O comando devolvido é só programa + subcomando: a linha inteira pode carregar segredo.
       if (bateu) return { id: r.id, motivo: r.motivo, comando: [programa, sub(args, 0), sub(args, 1)].filter(Boolean).join(" ") };
     }
+
+    // `bash -c '<payload>'` executa o payload: ele é comando e volta para a mesma análise.
+    const estilo = WRAPPERS.get(programa);
+    if (!estilo) continue;
+    const payload = payloadDoWrapper(estilo, args);
+    if (payload === undefined || !payload.trim()) continue;           // wrapper sem payload não executa nada
+    if (profundidade + 1 > PROFUNDIDADE_MAXIMA) {
+      return { id: "shell-aninhado-profundo", comando: programa,
+        motivo: `shell aninhado além de ${PROFUNDIDADE_MAXIMA} níveis não é analisável com segurança` };
+    }
+    if (indeterminado(payload)) {
+      return { id: "payload-indeterminado", comando: programa,
+        motivo: "o comando a executar só se resolve em tempo de execução, então não há o que auditar antes" };
+    }
+    const interno = avaliar(payload, profundidade + 1);
+    if (interno) return interno;
   }
   return null;
 }
 
 // -------------------------------------------------------------------------------------------------
-// 4. AUTOTESTE (fixtures — nenhum comando é executado)
+// 6. AUTOTESTE (fixtures — nenhum comando é executado)
 // -------------------------------------------------------------------------------------------------
 
 export const FIXTURES = {
@@ -252,20 +391,61 @@ export const FIXTURES = {
     ["gh pr ready 30", "merge-de-pr"],
     ["gh pr merge --auto 30", "merge-de-pr"],
     ["gh pr edit 30 --ready", "pr-pronta-para-revisao"],
+    // escrever direto na branch protegida, em qualquer grafia de refspec
+    ["git push origin HEAD:main", "push-para-main"],
+    ["git push origin HEAD:refs/heads/main", "push-para-main"],
+    ["git push origin main", "push-para-main"],
+    ["git -C . push origin HEAD:main", "push-para-main"],
+    ["env FOO=bar git push origin HEAD:main", "push-para-main"],
+    ["git push origin claude/x:main", "push-para-main"],
+    ["git push origin HEAD:master", "push-para-main"],
+    // apagar ref remota
+    ["git push origin --delete alguma-branch", "exclusao-de-ref-remota"],
+    ["git push origin -d alguma-branch", "exclusao-de-ref-remota"],
+    ["git push origin :alguma-branch", "exclusao-de-ref-remota"],
+    ["git push origin :refs/heads/alguma-branch", "exclusao-de-ref-remota"],
     ["git push --force origin x", "push-forcado"],
     ["git push -f origin x", "push-forcado"],
     ["git push --force-with-lease", "push-forcado"],
-    ["git push origin +main", "push-forcado"],
+    ["git push origin +claude/x", "push-forcado"],
     ["git -C /repo push --force", "push-forcado"],
     ["git reset --hard HEAD~1", "reset-destrutivo"],
     ["git clean -fd", "limpeza-destrutiva"],
     ["git clean -fdx", "limpeza-destrutiva"],
     ["git branch -D claude/x", "exclusao-de-branch"],
+    // mutação pela API do GitHub
+    ["gh api -X PUT repos/o/r/pulls/31/merge", "mutacao-pela-api-do-github"],
+    ["gh api --method PATCH repos/o/r", "mutacao-pela-api-do-github"],
+    ["gh api --method=DELETE repos/o/r/git/refs/heads/x", "mutacao-pela-api-do-github"],
+    ["gh api graphql -f query='mutation { qualquerCoisa }'", "mutacao-pela-api-do-github"],
+    ["gh api repos/o/r/pulls/31/merge -f merge_method=squash", "mutacao-pela-api-do-github"],
+    ["gh repo edit --default-branch develop", "configuracao-do-repositorio"],
+    ["gh repo delete o/r", "configuracao-do-repositorio"],
+    // mutação direta de banco
+    ["pnpm db:migrate", "mutacao-direta-de-banco"],
+    ["pnpm db:seed", "mutacao-direta-de-banco"],
+    ["pnpm db:reset", "mutacao-direta-de-banco"],
+    ["ALLOW_DB_RESET=1 pnpm db:reset", "mutacao-direta-de-banco"],
+    ["pnpm run db:migrate", "mutacao-direta-de-banco"],
+    ["pnpm --filter @agro/db migrate", "mutacao-direta-de-banco"],
+    ["pnpm --filter @agro/db seed", "mutacao-direta-de-banco"],
+    ["pnpm --filter @agro/db reset", "mutacao-direta-de-banco"],
+    ["pnpm --filter @agro/db exec tsx src/cli.ts migrate", "mutacao-direta-de-banco"],
+    ["npx tsx packages/db/src/cli.ts seed", "mutacao-direta-de-banco"],
     ["vercel --prod", "implantacao-de-producao"],
     ["vercel deploy --prod", "implantacao-de-producao"],
     ["railway redeploy", "implantacao-de-producao"],
     ["supabase db push", "schema-remoto-direto"],
     ["supabase db reset --linked", "schema-remoto-direto"],
+    // shell aninhado executa de verdade: o payload volta para a mesma análise
+    ["bash -c 'gh pr merge 31'", "merge-de-pr"],
+    ["sh -c 'git push origin HEAD:main'", "push-para-main"],
+    ["zsh -c 'git push --force origin x'", "push-forcado"],
+    ["pwsh -Command 'gh pr ready 31'", "merge-de-pr"],
+    ["powershell -Command 'git push origin HEAD:main'", "push-para-main"],
+    ["bash -lc 'pnpm db:reset'", "mutacao-direta-de-banco"],
+    ["bash -c \"sh -c 'gh pr merge 31'\"", "merge-de-pr"],
+    ["bash -c '$CMD'", "payload-indeterminado"],
     // o perigo continua perigoso depois de um separador, dentro de substituição ou com envoltório
     ["pnpm lint && git push --force", "push-forcado"],
     ["sudo git reset --hard", "reset-destrutivo"],
@@ -282,19 +462,31 @@ export const FIXTURES = {
     "git log --oneline -5",
     "git add -A",
     "git commit -m 'feat: x'",
+    "git push",
     "git push -u origin claude/devex-01-claude-code-engineering-harness",
+    "git push origin claude/minha-fatia",
+    "git push origin HEAD:claude/minha-fatia",
     "git checkout -b claude/nova",
     "git branch -d claude/mesclada",
     "git clean -n",
+    "gh pr view 31",
+    "gh pr list",
+    "gh run view 123",
+    "gh api --method GET repos/o/r/pulls/31",
+    "gh api -X GET repos/o/r/actions/runs/123",
+    "gh api repos/o/r/pulls/31",
+    "gh repo view o/r",
     "pnpm lint",
     "pnpm typecheck",
     "pnpm test",
+    "pnpm test:integration",
     "pnpm e2e",
     "pnpm build",
-    "pnpm db:migrate",
-    "pnpm db:seed:e2e",
-    "pnpm db:reset",
     "pnpm parity:check",
+    "pnpm db:seed:e2e",
+    "pnpm --filter @agro/db test:integration",
+    "pnpm --filter @agro/api test:integration",
+    "pnpm --filter @agro/web e2e",
     "node scripts/claude-harness-audit.mjs",
     "vercel ls",
     "vercel logs",
@@ -302,16 +494,21 @@ export const FIXTURES = {
     "supabase migration list",
     "cat apps/api/src/index.ts",
     "tail -n 100 /tmp/servidor.log",
+    "bash -c 'git status'",
+    "sh -c 'pnpm lint'",
+    "bash -c 'pnpm test:integration'",
     // menção não é execução: o guarda não pode bloquear texto
     "echo 'git push --force'",
     'echo "gh pr merge 30"',
+    "echo \"gh api -X PUT repos/o/r/pulls/31/merge\"",
+    "echo \"bash -c 'gh pr merge 31'\"",
     "grep -rn 'git push --force' docs/",
-    // corpo de here-document é documentação, não execução
-    "cat > doc.md <<'FIM'\no hook recusa gh pr merge e git push --force\nFIM",
-    "cat > doc.md <<\"FIM\"\nvercel --prod nunca roda aqui\nFIM",
-    "python3 - <<PY\nprint('git reset --hard')\nPY",
     "git commit -m 'explica por que git push --force é proibido'",
-    "# gh pr merge 30"
+    "# gh pr merge 30",
+    // corpo de here-document é documentação, não execução
+    "cat > doc.md <<'FIM'\no hook recusa gh pr merge e git push origin HEAD:main\nFIM",
+    "cat > doc.md <<\"FIM\"\nvercel --prod nunca roda aqui\nFIM",
+    "python3 - <<PY\nprint('git reset --hard')\nPY"
   ]
 };
 
@@ -331,11 +528,11 @@ function autoteste() {
     for (const f of falhas) console.error(`  - ${f}`);
     process.exit(1);
   }
-  console.log(`guard-dangerous-command: autoteste OK (${FIXTURES.negar.length} negados, ${FIXTURES.permitir.length} permitidos, ${REGRAS.length} regras)`);
+  console.log(`guard-dangerous-command: autoteste OK (${FIXTURES.negar.length} negados, ${FIXTURES.permitir.length} permitidos, ${REGRAS.length} regras, shell aninhado até ${PROFUNDIDADE_MAXIMA} níveis)`);
 }
 
 // -------------------------------------------------------------------------------------------------
-// 5. ENTRADA
+// 7. ENTRADA
 // -------------------------------------------------------------------------------------------------
 
 const ehPrincipal = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;

@@ -29,7 +29,7 @@ REVIEW.md                     critérios de code review
     migration-safety/         checklist de schema, RLS e ordem de deploy
     production-smoke/         verificação em produção (só o usuário invoca)
     multi-company-contract/   Organização × Empresa, capacidade × escopo, 404 vs 403
-    id-global-contract/       UUID vs código vs #N
+    id-global-contract/       papéis de UUID, código de entidade e ID Global
     pre-base2-checkpoint/     ordem do roteiro e gates externos
   agents/                     especialistas com contexto isolado (nenhum escreve arquivo)
     security-rls-auditor.md   opus · xhigh
@@ -59,7 +59,7 @@ porque nada quebra. A separação abaixo é o que evita isso.
 | `.claude/skills/` | procedimento e checklist | sob demanda | contexto |
 | `.claude/agents/` | especialista com contexto próprio | quando delegado | contexto |
 | `.claude/hooks/` | proibição determinística | antes da ferramenta | **mecanismo** |
-| `.claude/settings.json` | permissão (o que nem é lido) | sempre | **mecanismo** |
+| `.claude/settings.json` | permissão de leitura das ferramentas | sempre | **mecanismo** |
 | `REVIEW.md` | critérios de revisão | na revisão | contexto |
 | MCP | acesso a sistema externo | por configuração | acesso |
 
@@ -153,7 +153,8 @@ node .claude/hooks/guard-dangerous-command.mjs --autoteste  # fixtures do guarda
 
 O autoteste do guarda roda por **fixtures**: nenhum comando perigoso é executado, nem em
 ambiente descartável. Ele confere as duas direções — que o proibido é negado e, igualmente
-importante, que o cotidiano (`git status`, `git push -u`, `pnpm lint`, `pnpm db:migrate`)
+importante, que o cotidiano (`git status`, `git push -u` para a branch da fatia, `pnpm lint`,
+`pnpm test:integration`, `pnpm e2e`)
 continua passando. Guarda que bloqueia trabalho legítimo é desinstalado na primeira semana.
 
 O corpo de here-document é tratado como DADO. Documentar um comando proibido não pode
@@ -175,6 +176,40 @@ que o cobre continua no arquivo.
 Cuidado conhecido: regra com `paths:` **não sobrevive à compactação** por si só — ela é
 recarregada quando um arquivo que casa é lido de novo. Invariante que precisa valer sempre
 vai para `CLAUDE.md` ou para rule sem `paths`.
+
+## Até onde cada garantia vai (e onde ela para)
+
+Prometer mais do que o mecanismo entrega é pior do que não prometer: quem confia relaxa
+onde não devia.
+
+**`permissions.deny`** vale para as ferramentas de arquivo do Claude Code (leitura, edição,
+escrita, busca, menção `@arquivo`) e para os comandos de arquivo reconhecidos no shell
+(`cat`, `head`, `tail`, `sed`, redirecionamentos). Ela **não** é uma proteção de sistema
+operacional: um subprocesso arbitrário — um script Python ou Node que abra o arquivo por
+conta própria — não passa por essa verificação. Sandbox de SO fecharia essa fresta e é
+endurecimento futuro, de fatia própria; **não está habilitado nesta PR**.
+
+**O hook** cobre os comandos declarados em `.claude/hooks/guard-dangerous-command.mjs`, incluindo shell
+aninhado até três níveis. Fora do shell — por exemplo uma ferramenta MCP que chame a API do
+GitHub — ele não é consultado, porque o matcher é de ferramenta `Bash`/`PowerShell`.
+
+**A regra comportamental continua valendo onde o mecanismo não alcança**: Claude nunca lê,
+copia, imprime ou parafraseia segredo, tenha ou não uma barreira técnica no caminho. Os dois
+se somam; nenhum substitui o outro.
+
+### Risco externo: proteção da branch `main`
+
+`main` está hoje **sem branch protection / ruleset efetivo** no GitHub. O harness recusa o
+push direto do lado da sessão, mas isso é uma trava do cliente: qualquer outro cliente, ou
+uma sessão sem este repositório configurado, continua podendo escrever na branch.
+
+```
+MAIN BRANCH PROTECTION: EXTERNAL HARDENING PENDING
+```
+
+Recomendação (ação humana no GitHub, fora de qualquer PR): exigir PR para `main`, exigir CI
+verde, impedir force push, impedir exclusão da branch e manter o merge humano. Nenhuma
+sessão automatizada deve configurar isso.
 
 ## O que NUNCA se automatiza
 

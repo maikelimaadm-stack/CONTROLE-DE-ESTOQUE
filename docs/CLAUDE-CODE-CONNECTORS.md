@@ -18,6 +18,18 @@ futura — inclusive às que ninguém está acompanhando.
 
 O modelo inerte custa uma cópia manual e mantém a decisão com quem tem de tomá-la.
 
+### O modelo é um template canônico
+
+`.mcp.json.example` contém **apenas** o shape que o Claude Code aceita — `mcpServers` no topo
+e nada mais. Ele não carrega comentário nem chave extra, de propósito: como a instrução é
+copiá-lo para `.mcp.json`, qualquer chave decorativa viraria configuração inválida no destino,
+e o erro apareceria como servidor que não conecta em vez de arquivo malformado. A advertência
+mora aqui, no documento, que é onde ela pode ser lida antes da cópia.
+
+**Antes de copiar, entenda o que está aceitando**: o arquivo passa a ser carregado por toda
+sessão do projeto, e em sessão não interativa sem perguntar. Se você só quer o acesso na sua
+máquina, prefira o escopo de usuário.
+
 Para adotar: copie `.mcp.json.example` para `.mcp.json` (fora do versionamento) ou, melhor,
 instale no escopo de USUÁRIO com `claude mcp add --scope user`, que vale para todos os seus
 projetos e não passa pelo repositório.

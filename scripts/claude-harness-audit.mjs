@@ -249,6 +249,11 @@ if (existe(".mcp.json.example")) {
   if (exemplo) {
     const t = ler(".mcp.json.example");
     if (!exemplo.mcpServers) erro(".mcp.json.example: falta a chave mcpServers");
+    // O documento manda COPIAR este arquivo para .mcp.json. Chave decorativa a mais vira
+    // configuração inválida no destino, e o sintoma seria "servidor não conecta" — não
+    // "arquivo errado". O template tem de ser válido como está.
+    const extras = Object.keys(exemplo).filter((k) => k !== "mcpServers");
+    if (extras.length) erro(`.mcp.json.example: chave(s) de topo fora do shape oficial: ${extras.join(", ")} (o destino é um .mcp.json real)`);
     if (!/\$\{[A-Z_]+\}/.test(t)) erro(".mcp.json.example: precisa usar placeholder ${VARIAVEL}, nunca valor real");
     for (const [nome, cfg] of Object.entries(exemplo.mcpServers ?? {})) {
       if (cfg.url && cfg.type !== "http") erro(`.mcp.json.example: servidor "${nome}" tem url sem "type": "http" — seria lido como processo local`);

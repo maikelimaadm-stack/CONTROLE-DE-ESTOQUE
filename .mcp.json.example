@@ -1,5 +1,4 @@
 {
-  "_comentario": "MODELO — NÃO É CARREGADO. Copie para .mcp.json somente se decidir aceitar o escopo de projeto; leia docs/CLAUDE-CODE-CONNECTORS.md antes. Nenhum valor real de credencial entra neste arquivo nem no .mcp.json: o Supabase autentica por OAuth ou por variável de ambiente da sua máquina, e o project_ref vem de ${SUPABASE_PROJECT_REF}.",
   "mcpServers": {
     "supabase": {
       "type": "http",

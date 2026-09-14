@@ -43,8 +43,10 @@ a rule não a recopia — ela aprofunda.
 
 ## Dados
 
-- UUID é a identidade técnica e o endereço. **ID Global (`#N`) é localizador humano** —
-  nunca vira URL, nunca autoriza. Código de entidade é uma terceira coisa, distinta das duas.
+- UUID é a identidade técnica e o endereço. **ID Global é o localizador humano** —
+  um número por organização que nunca vira URL e nunca autoriza. Código de entidade é uma
+  terceira coisa, distinta das duas. Como o número é APRESENTADO (com ou sem prefixo, fixo
+  ou não na listagem) é política de UX do contrato vigente, não invariante deste arquivo.
 - Dinheiro é `numeric` no banco, `decimal.js` no código, string na API. Nunca ponto flutuante.
 - Ledger é imutável: movimento confirmado e baixa não são editados nem apagados para
   "corrigir" histórico — a correção é cancelamento com estorno.
