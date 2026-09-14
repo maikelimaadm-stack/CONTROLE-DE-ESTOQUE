@@ -37,12 +37,24 @@ implantar sem janela de indisponibilidade e sem exigir que banco, API e web suba
 Ordem obrigatória: **1 → 2 → 3**. Subir a API nova antes do banco é o único caminho que quebra (ela escreve
 `empresa_id` numa tabela que ainda não tem a coluna).
 
-**A fase 3 pode acontecer ANTES da 2 sem quebrar** — e é o cenário que custa mais caro se não for testado,
-porque o que falha não é a aplicação, é o CORS: a API anterior declara `allowedHeaders` sem `X-Empresa-Id`, e
-um navegador que o envia tem o preflight recusado e a tela em branco. Por isso o fio do cliente é legado
-(`docs/MULTI-COMPANY-CONTRACT.md` §8.4) e o CI tem um job dedicado, **Version skew · web novo × API do commit
-base**, que sobe a API daquele commit de verdade (`node scripts/api-anterior.mjs`) contra o banco já migrado
-e roda `apps/web/e2e/skew-api-anterior.spec.ts` no navegador.
+**A fase 3 pode acontecer ANTES da 2** — e é o cenário que custa mais caro se não for testado, porque o que
+falha não é a aplicação, é o CORS. Até a PRE-BASE2-04 o fio do cliente era legado por causa disso. Desde a
+**PRE-BASE2-05A** o cliente é canônico, e a ordem passou a ser um requisito explícito: **o web canônico só
+pode subir sobre uma API ≥ PRE-BASE2-03**, que é o que está em produção. O CI mantém o job dedicado,
+**Version skew · web novo × API do commit base**, que sobe a API daquele commit de verdade
+(`node scripts/api-anterior.mjs`) contra o banco já migrado e roda `apps/web/e2e/skew-api-producao.spec.ts`
+no navegador — agora provando que o canônico atravessa, e reprovando se a API regredir.
+
+### PRE-BASE2-05 — aposentadoria da ponte, em três fases
+
+| Fase | O que sai | O que continua |
+| --- | --- | --- |
+| **05A — Cliente canônico** | tradutor de fio do web, `X-Farm-Id` do navegador | API e banco bilíngues |
+| **05B — Servidor canônico** | borda legada da API (cabeçalho, entrada, apelidos, CORS) | banco bilíngue |
+| **05C — Purga física** | colunas legadas, view `erp.farms`, gatilhos de espelho, sequência `entity='farm'` | — |
+
+Cada fase só começa depois de a anterior estar em produção e comprovada. **05A não remove compatibilidade
+nem da API nem do banco.** Detalhes e inventários: `docs/PRE-BASE2-05-APOSENTADORIA.md`.
 
 **A migration é FAIL-CLOSED antes de tocar em qualquer coisa**: se existir linha apontando para empresa de
 OUTRA organização, a `0014` PARA e imprime a consulta de diagnóstico com os ids. Ela não corrige em silêncio,

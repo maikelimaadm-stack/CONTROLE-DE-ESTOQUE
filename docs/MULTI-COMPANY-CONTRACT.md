@@ -545,18 +545,22 @@ Isso cobre as duas janelas de version skew que um deploy real produz, e elas **n
 Por isso, durante a ponte, o **FIO é legado** nos cinco lugares em que a migração o tocaria: cabeçalho
 (`X-Farm-Id`), caminho de recurso (`/api/resources/farms`), corpo (`farm_id`), query (`farm_id__eq`) e
 leitura da resposta. Funciona nas duas pontas porque a API ANTIGA só entende isso e a API NOVA entende os
-dois — o cliente não precisa descobrir a versão do servidor a cada requisição. A tradução vive inteira em
-`apps/web/src/lib/compat-empresa.ts`; **nenhuma tela conhece o nome antigo**, e quando a ponte cair
-(PRE-BASE2-05) esse arquivo é apagado sem tocar em componente nenhum.
+dois — o cliente não precisava descobrir a versão do servidor a cada requisição.
 
-`X-Empresa-Id` continua sendo o contrato oficial da API nova, suportado e testado
-(`apps/api/test/integration/compat-empresa.test.ts`). O que é legado é o TRANSPORTE do navegador.
+**Essa fase terminou em PRE-BASE2-05A.** O tradutor do cliente foi apagado: o web envia `X-Empresa-Id`,
+monta caminho, corpo e query canônicos e consome a resposta como ela vem. A razão do fio legado — o CORS da
+API anterior, que não declarava o canônico e fazia o preflight morrer no navegador — deixou de existir
+quando a PRE-BASE2-04 entrou em produção. O **servidor** continua bilíngue até PRE-BASE2-05B: quem parou de
+falar o idioma antigo foi o cliente.
 
-A prova não é um mock: `apps/web/e2e/skew-api-anterior.spec.ts` roda o navegador contra a API EXATA do commit
+A prova não é um mock: `apps/web/e2e/skew-api-producao.spec.ts` roda o navegador contra a API EXATA do commit
 base — montada por `scripts/api-anterior.mjs` a partir do próprio repositório — servindo o mesmo banco já
-migrado pelo HEAD novo. O primeiro teste do arquivo verifica que as cinco quebras do fio realmente existem
-naquele binário, porque contra a API nova todas as outras asserções passariam e o arquivo teria certificado
-o cenário errado.
+migrado. O primeiro teste do arquivo verifica que aquele binário realmente entende o canônico, porque é essa
+a premissa da 05A: **o cliente canônico só sobe sobre uma API que já entende o canônico**. Se alguém
+reverter a API para antes da PRE-BASE2-03, o teste reprova antes de o produto quebrar no navegador.
+
+O plano completo das três fases, com os inventários do que sai em 05B e 05C, está em
+`docs/PRE-BASE2-05-APOSENTADORIA.md`.
 
 A ponte é uma dívida com prazo e com endereço: os arquivos autorizados a falar o idioma antigo estão
 declarados, um a um e com motivo, em `scripts/lib/empresa-compat-surface.mjs`; dois gates (`farm-compat-allowlist`

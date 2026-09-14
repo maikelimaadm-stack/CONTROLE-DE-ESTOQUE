@@ -8,13 +8,13 @@ PRE-BASE2-03, um total único mentiria: `farm_id` numa migration aplicada é his
 cliente HTTP é ponte com prazo, e "fazenda" no comentário de uma rota é o produto ainda falando o
 nicho. Por isso cada ocorrência é classificada em um dos três baldes abaixo — e a catraca trava só o terceiro.
 
-Total medido: **1596** ocorrências · 49 tabelas com coluna de empresa.
+Total medido: **1614** ocorrências · 49 tabelas com coluna de empresa.
 
 ## Classificação (o número que importa é o balde 3)
 
 | # | Balde | Ocorrências | Catraca | O que é |
 | --- | --- | ---: | --- | --- |
-| 1 | **LEGADO HISTÓRICO** | 1079 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
+| 1 | **LEGADO HISTÓRICO** | 1097 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
 | 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 364 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05 (remoção da compatibilidade: colunas legadas, views e cabeçalho). |
 | 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 153 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
 
@@ -34,9 +34,9 @@ exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` 
 | Web — navegação/rotas | 0 | 7 | 0 | 7 |
 | Web — testes ponta a ponta | 0 | 26 | 0 | 26 |
 | Scripts e gates | 0 | 54 | **4** | 58 |
-| Documentação ativa | 292 | 0 | 0 | 292 |
+| Documentação ativa | 310 | 0 | 0 | 310 |
 | Documentação histórica (referência externa) | 513 | 0 | 0 | 513 |
-| **Total** | **1079** | **364** | **153** | **1596** |
+| **Total** | **1097** | **364** | **153** | **1614** |
 
 ## Balde 2 — a ponte declarada
 
@@ -128,16 +128,16 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 
 | Símbolo atual | Natureza | Total | dos quais dívida | Destino canônico |
 | --- | --- | ---: | ---: | --- |
-| `farm_id` | dado | 566 | 66 | `empresa_id` |
-| `farms` | dado | 122 | 7 | `erp.empresas` |
+| `farm_id` | dado | 571 | 66 | `empresa_id` |
+| `farms` | dado | 127 | 7 | `erp.empresas` |
 | `member_farms` | dado | 72 | 5 | `member_empresas` |
 | `ctx_farmId` | contrato | 13 | 0 | `empresaSelecionada` |
 | `farmIds` | contrato | 0 | 0 | `empresasPermitidas` |
-| `x_farm_id` | contrato | 78 | 17 | `X-Empresa-Id` |
+| `x_farm_id` | contrato | 81 | 17 | `X-Empresa-Id` |
 | `farmScope` | contrato | 5 | 1 | `escopoEmpresa` |
 | `allowedFarms` | contrato | 6 | 0 | `escopoEmpresa (@erp/plataforma)` |
-| `farms` | contrato | 78 | 6 | `/empresas` |
-| `fazenda` | texto | 656 | 51 | `Empresa (i18n: termos.empresa)` |
+| `farms` | contrato | 81 | 6 | `/empresas` |
+| `fazenda` | texto | 658 | 51 | `Empresa (i18n: termos.empresa)` |
 
 `dado` = exige migration e backfill · `contrato` = quebra clientes se mudar sem compatibilidade · `texto` = rótulo, resolvido por i18n.
 
