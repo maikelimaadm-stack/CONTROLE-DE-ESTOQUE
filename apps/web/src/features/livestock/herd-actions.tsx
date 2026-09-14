@@ -7,7 +7,7 @@ import { FilterChips, useUrlParam } from "@/components/workspace";
 import { DocList, colDate, colStatus } from "@/features/docs/shared";
 import { TransferAnimalsToBatch } from "./transfer-animals-batch";
 import { TransferBatchLocation } from "./transfer-batch-location";
-import { TransferToFarm } from "./transfer-farm";
+import { TransferirEntreEmpresas } from "./transfer-empresa";
 import { GroupBatches } from "./transfer-group-batches";
 import { enumLabel } from "@/lib/copy";
 
@@ -16,9 +16,9 @@ import { enumLabel } from "@/lib/copy";
  * (animal → mover para lote / transferir; lote → mover de local / transferir de empresa / agrupar) e abrem em diálogo.
  * O histórico continua consultável em Rebanho › Transferências. Endpoints, permissões e regras não mudaram.
  */
-export type HerdAction = "animais-lote" | "lote-local" | "fazendas" | "agrupar";
-export const HERD_ACTION_LABEL: Record<HerdAction, string> = { "animais-lote": "Mover animais para lote", "lote-local": "Mover lote de local", "fazendas": "Transferir de empresa", agrupar: "Agrupar lotes" };
-export const HERD_ACTION_PERM: Record<HerdAction, string> = { "animais-lote": "animal_batch_transfer.create", "lote-local": "batch_module_area_transfer.create", "fazendas": "batch_farm_transfer.create", agrupar: "batch_grouping.create" };
+export type HerdAction = "animais-lote" | "lote-local" | "empresas" | "agrupar";
+export const HERD_ACTION_LABEL: Record<HerdAction, string> = { "animais-lote": "Mover animais para lote", "lote-local": "Mover lote de local", empresas: "Transferir de empresa", agrupar: "Agrupar lotes" };
+export const HERD_ACTION_PERM: Record<HerdAction, string> = { "animais-lote": "animal_batch_transfer.create", "lote-local": "batch_module_area_transfer.create", empresas: "batch_farm_transfer.create", agrupar: "batch_grouping.create" };
 export interface HerdActionCtx { animalIds?: string[]; batchId?: string; batchIds?: string[] }
 export function HerdActionDialog({ action, ctx, onClose }: { action: HerdAction | null; ctx?: HerdActionCtx; onClose: () => void }) {
   const qc = useQueryClient();
@@ -26,7 +26,7 @@ export function HerdActionDialog({ action, ctx, onClose }: { action: HerdAction 
   return <Dialog open={Boolean(action)} onOpenChange={(o) => { if (!o) onClose(); }} title={action ? HERD_ACTION_LABEL[action] : ""} size="xl">
     {action === "animais-lote" && <TransferAnimalsToBatch animalIds={ctx?.animalIds} onDone={done} />}
     {action === "lote-local" && <TransferBatchLocation batchId={ctx?.batchId} onDone={done} history={false} />}
-    {action === "fazendas" && <TransferToFarm batchId={ctx?.batchId} animalIds={ctx?.animalIds} onDone={done} history={false} />}
+    {action === "empresas" && <TransferirEntreEmpresas batchId={ctx?.batchId} animalIds={ctx?.animalIds} onDone={done} history={false} />}
     {action === "agrupar" && <GroupBatches sourceBatchIds={ctx?.batchIds} onDone={done} />}
   </Dialog>;
 }

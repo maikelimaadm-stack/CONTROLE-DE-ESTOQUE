@@ -47,7 +47,7 @@ function Batches() {
   const { can } = useAuth(); const herd = useHerdAction();
   return <><ResourceList resourceKey="batches" extraRowActions={(r) => [
     ...(can("batch_module_area_transfer.create") ? [{ label: "Mover de local (módulo / área / curral)", onClick: () => herd.open("lote-local", { batchId: String(r["id"]) }) }] : []),
-    ...(can("batch_farm_transfer.create") ? [{ label: "Transferir de empresa", onClick: () => herd.open("fazendas", { batchId: String(r["id"]) }) }] : []),
+    ...(can("batch_farm_transfer.create") ? [{ label: "Transferir de empresa", onClick: () => herd.open("empresas", { batchId: String(r["id"]) }) }] : []),
     ...(can("batch_grouping.create") ? [{ label: "Agrupar com outros lotes", onClick: () => herd.open("agrupar", { batchIds: [String(r["id"])] }) }] : [])
   ]} />
   <HerdActionDialog action={herd.action} ctx={herd.ctx} onClose={herd.close} /></>;

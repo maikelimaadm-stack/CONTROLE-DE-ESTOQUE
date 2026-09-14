@@ -5,7 +5,7 @@ import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect } from "
 import { RefSelect } from "@/components/ui/ref-select";
 import { useEmpresaPadrao, useCreate, DocList, colDate, colStatus } from "@/features/docs/shared";
 import { AnimalPicker } from "@/features/livestock/shared";
-export function TransferToFarm({ batchId, animalIds, onDone, history = true }: { batchId?: string; animalIds?: string[]; onDone?: () => void; history?: boolean } = {}) {
+export function TransferirEntreEmpresas({ batchId, animalIds, onDone, history = true }: { batchId?: string; animalIds?: string[]; onDone?: () => void; history?: boolean } = {}) {
   const empresa = useEmpresaPadrao(); const [f, setF] = React.useState({ empresa_id: "", empresa_destino_id: "", movement_date: todayISO(), batch_id: batchId ?? "", destination_batch_id: "", note: "", mode: animalIds?.length ? "animals" : "batch" }); const [sel, setSel] = React.useState<string[]>(animalIds ?? []);
   React.useEffect(() => { setF((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const create = useCreate("/api/livestock/transfers/to-empresa", () => { setSel([]); onDone?.(); });

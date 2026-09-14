@@ -1,21 +1,24 @@
 #!/usr/bin/env node
 /**
- * SOBE A API DO COMMIT ANTERIOR, DE VERDADE (PRE-BASE2-03 — prova do version skew B).
+ * SOBE A API QUE ESTÁ NO AR, DE VERDADE (prova do version skew "web à frente da API").
  *
  * O rollout não é atômico: o web (Vercel) e a API (Railway) trocam de versão em momentos diferentes. Existe,
- * portanto, uma janela em que o navegador roda o HEAD NOVO e o servidor ainda é o ANTERIOR. Esse é o cenário
- * que nenhum teste com mock prova, porque o que quebra ali não é a aplicação — é o FIO:
+ * portanto, uma janela em que o navegador roda o HEAD NOVO e o servidor ainda é o da BASE. Esse é o cenário
+ * que nenhum teste com mock prova, porque o que quebra ali não é a aplicação — é o FIO: CORS, nome de
+ * recurso, campo de corpo e chave de query. Um mock permissivo responde "ok" a tudo e não prova nada.
  *
- *   · o CORS da API anterior não declara `X-Empresa-Id`: o PREFLIGHT falha e a tela nem chega a pedir dados;
- *   · `/auth/context` devolve `farms`, não `empresas`;
- *   · `/api/resources/empresas` não existe (404) — o recurso se chama `farms`;
- *   · um corpo com `empresa_id` é 422 num schema `.strict()`;
- *   · `empresa_id__eq` na query é IGNORADO em silêncio — o filtro não erra, ele mente.
+ * O QUE ESTE HARNESS MEDE MUDOU NA PRE-BASE2-05A, E DE PROPÓSITO
  *
- * Um mock permissivo responde "ok" às cinco coisas e não prova nenhuma. Por isso este script monta a API
- * EXATA daquele commit, a partir do próprio repositório, e a entrega para o Playwright subir no lugar da
- * atual. O banco é o MESMO banco já migrado pelo HEAD novo (0014, 0015 e as correções desta rodada): é a
- * combinação real de produção na janela de rollout, não uma reconstrução dela.
+ * Até a PRE-BASE2-04 ele apontava para o commit anterior à PRE-BASE2-03 — uma API que NÃO declarava
+ * `X-Empresa-Id` no CORS. Naquele mundo o cliente tinha de falar o idioma legado no fio, e o teste provava
+ * exatamente isso. A PRE-BASE2-05A vira o cliente para o canônico, e com isso aquela combinação deixa de
+ * ser um cenário de produção: ela é impossível por ordem de implantação, porque a API canônica já está em
+ * produção desde a PRE-BASE2-03 e não volta atrás.
+ *
+ * Apagar o teste seria perder a prova; mantê-lo apontado para lá seria certificar um cenário que não
+ * existe. Então ele foi RECLASSIFICADO: passa a medir o skew que de fato existe depois do cutover — web
+ * desta PR contra a API da BASE da PR, que é o binário no ar. O contrato provado é o da PRE-BASE2-05A:
+ * o cliente canônico só pode subir sobre uma API que já entende o canônico.
  *
  * Idempotente: rodar duas vezes não refaz nada. Uso:
  *
@@ -28,10 +31,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * BASE DA PR #25. Não é "o commit anterior" genérico: é o ponto exato a partir do qual esta PR diverge, ou
- * seja, o código que está no ar enquanto a PR não sobe. Trocar este valor troca o significado do teste.
+ * BASE DA PR PRE-BASE2-05A: o merge da PR #27, que é o commit em produção enquanto esta PR não sobe.
+ * Não é "o commit anterior" genérico — é o ponto exato a partir do qual esta PR diverge. Trocar este valor
+ * troca o significado do teste, e é por isso que ele fica fixado por SHA e não por ref móvel.
  */
-export const COMMIT_ANTERIOR = "6c734a2e95107ebf393f2b4e5a1c286f5f0d3270";
+export const COMMIT_ANTERIOR = "2e187ae2b5858c0de9dea110c2a7e2e1fc389e98";
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Fora de `apps/`, para que nenhum tsconfig/eslint/next do repositório enxergue esta árvore. */

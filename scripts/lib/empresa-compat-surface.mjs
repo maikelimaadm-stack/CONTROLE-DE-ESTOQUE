@@ -20,11 +20,10 @@ export const PONTE_RUNTIME = {
   "apps/api/src/lib/compat-empresa.ts": "O adaptador. É a ponte inteira: tradução de entrada, apelidos de saída, cabeçalho e nomes legados de tabela.",
   "apps/api/src/server.ts": "Declara `X-Farm-Id` em allowedHeaders do CORS — sem isso o navegador do cliente antigo nem envia o cabeçalho.",
   "apps/api/src/lib/escopo-admin.ts": "Borda de administração: traduz o contrato legado `farm_ids` (lista vazia = todas) para o modelo canônico. Documentado em docs/MULTI-COMPANY-CONTRACT.md §6.",
-  "apps/web/src/lib/compat-empresa.ts": "O adaptador do CLIENTE. Traduz caminho, query, corpo e resposta entre o idioma interno (empresa) e o idioma do FIO (legado) — necessário porque o CORS da API anterior não aceita `X-Empresa-Id` e o preflight morre no navegador.",
-  "apps/web/src/lib/api.ts": "Cliente HTTP: promove a sessão gravada com `farmId` e envia `X-Farm-Id` como cabeçalho de contexto durante a janela de rollout.",
-  "apps/web/src/lib/auth.tsx": "Lê `empresas ?? farms` de /auth/context enquanto a API anterior puder estar no ar.",
+  "apps/web/src/lib/api.ts": "Cliente HTTP: envia o cabeçalho CANÔNICO e cita o nome legado apenas para explicar o efeito da promoção de sessão (regra em @erp/plataforma). Sai em PRE-BASE2-05B.",
   "apps/web/nav.registry.mjs": "Redirecionamentos das rotas legadas de cadastro.",
-  "packages/domain/src/resources/index.ts": "Chave de recurso legada `farms` resolvendo para o mesmo ResourceDef de `empresas`."
+  "packages/domain/src/resources/index.ts": "Chave de recurso legada `farms` resolvendo para o mesmo ResourceDef de `empresas`.",
+  "packages/plataforma/src/sessao-empresa.ts": "PROMOÇÃO DE SESSÃO (PRE-BASE2-05A): a única leitura que ainda conhece `farmId`, para migrar uma vez a sessão gravada no navegador por uma versão anterior e regravá-la canônica. Isolada aqui de propósito, para ser testável sem navegador e removível num arquivo só em PRE-BASE2-05B."
 };
 
 /** Prova: testes que só valem porque falam o idioma antigo — se a ponte quebrar, eles quebram antes do cliente. */
@@ -43,14 +42,16 @@ export const PONTE_PROVA = {
   "packages/db/test/schema.test.ts": "Afere a coexistência das duas colunas no schema real.",
   "packages/db/test/upgrade-acervo.test.ts": "Upgrade com acervo: escreve o histórico no idioma ANTERIOR (`farm_id`), como a API antiga gravava, e só então aplica 0014→0016. Falar o idioma novo aqui inventaria um acervo que nunca existiu e o teste deixaria de provar a migração.",
   "packages/db/test/upgrade-rollback.test.ts": "Mesmo acervo legado, para provar que uma falha depois da janela estrutural da 0014 devolve o ledger protegido.",
-  "apps/web/e2e/empresa-compat.spec.ts": "Prova no navegador que sessão antiga e cabeçalho antigo continuam funcionando.",
-  "apps/web/e2e/acesso-empresa.spec.ts": "Lê `empresas ?? farms` como o cliente durante o rollout.",
-  "apps/web/e2e/skew-api-anterior.spec.ts": "Version skew B no navegador: web desta PR contra a API EXATA do commit base. Fala o idioma antigo porque é ele que mede — CORS, recurso, corpo, query e resposta."
+  "apps/web/e2e/empresa-canonica.spec.ts": "Cutover canônico medido no navegador: cita o nome antigo para provar que ele NÃO sai mais no fio e que a sessão gravada por uma versão anterior migra uma vez.",
+  "apps/web/e2e/acesso-empresa.spec.ts": "Fixture da matriz de acesso; cita o nome antigo ao montar o estado da tela.",
+  "apps/web/e2e/skew-api-producao.spec.ts": "Version skew no navegador: web desta PR contra a API EXATA do commit base (a que está no ar). Cita o nome antigo para PROVAR a sua ausência no fio e para verificar que o servidor segue bilíngue até a 05B.",
+  "packages/plataforma/test/sessao-empresa.test.ts": "Prova a promoção da sessão gravada por uma versão anterior: `farmId` vira `empresaId` uma vez, a chave legada sai do armazenamento e valores divergentes caem em fail-safe."
 };
 
 /** Confinamento: os próprios gates e o dicionário precisam nomear o que vigiam. */
 export const PONTE_GATES = {
   "scripts/farm-compat-allowlist.mjs": "O gate que confina a ponte: precisa citar cada símbolo legado para procurá-lo.",
+  "apps/web/scripts/empresa-canonica-audit.mjs": "A catraca do cliente canônico (PRE-BASE2-05A): precisa citar cada símbolo legado para PROIBI-LO no web produtivo. Sem o tradutor de fio, um nome legado que voltasse ao cliente não quebraria em runtime — a API bilíngue aceitaria —, e é esta lista que o pega.",
   "scripts/lib/empresa-compat-surface.mjs": "Esta lista.",
   "scripts/company-schema-sync.mjs": "Confere par a par coluna canônica × coluna legada no schema.",
   "scripts/member-farms-audit.mjs": "Impede que `erp.member_farms` volte a ser autoridade de runtime.",
