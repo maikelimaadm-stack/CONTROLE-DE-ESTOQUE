@@ -69,7 +69,11 @@ describe("resolução de #N — o caminho feliz", () => {
     expect(b["modulo"]).toBe("pecuaria");
     expect(b["idEntidade"]).toBe(ANIMAL_A);
     expect(b["rota"], "a URL final é a rota canônica com o UUID — #N é localizador, não endereço").toBe(`/pecuaria/animais/${ANIMAL_A}`);
-    expect(String(b["rota"]), "o número NUNCA vira URL").not.toContain(`/${GID_ANIMAL}`);
+    // Por SEGMENTO, não por substring: o número decimal aparece por acaso dentro de um UUID (`/1` em
+    // `/pecuaria/animais/1d3b...`) e uma asserção de substring reprova por sorteio do #N, não por regressão.
+    const segmentos = String(b["rota"]).split("/").filter(Boolean);
+    expect(segmentos.at(-1), "o endereço do registro é o UUID").toBe(ANIMAL_A);
+    expect(segmentos, "o número NUNCA vira segmento de URL — #N é localizador, não endereço").not.toContain(String(GID_ANIMAL));
   });
 
   it("aceita `#55`, `55` e `ID 55` na própria rota", async () => {
