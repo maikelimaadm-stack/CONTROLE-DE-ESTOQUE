@@ -36,7 +36,7 @@ const zero14 = () => {
  * Ponto-alvo da instrumentação: a linha que DEVOLVE o gatilho. Injetar imediatamente ANTES dela é o que
  * reproduz "falhou com a janela aberta".
  */
-const ALVO_ENABLE = "      execute format('alter table erp.%I enable trigger %I', r.tabela, imutavel);";
+const ALVO_ENABLE = "      execute 'alter table erp.stock_movements enable trigger trg_stock_movement_immutable';";
 
 /**
  * Instrumenta uma cópia da migration REAL — e exige UM único ponto-alvo.
@@ -56,12 +56,10 @@ function instrumentar(sql: string, injecao: string, posicao: "antes" | "depois" 
  * `empresa_id`. É assim que o teste PROVA que parou com a janela aberta e o backfill já feito, em vez de
  * confiar na posição do texto.
  */
-const RAISE_NA_JANELA = `      if r.tabela = 'stock_movements' then
-        raise exception 'FALHA_DENTRO_DA_JANELA tgenabled=% preenchidos=%',
-          (select t.tgenabled from pg_trigger t join pg_class c on c.oid = t.tgrelid
-            where c.relname = 'stock_movements' and t.tgname = 'trg_stock_movement_immutable'),
-          (select count(*) from erp.stock_movements where empresa_id is not null);
-      end if;`;
+const RAISE_NA_JANELA = `      raise exception 'FALHA_DENTRO_DA_JANELA tgenabled=% preenchidos=%',
+        (select t.tgenabled from pg_trigger t join pg_class c on c.oid = t.tgrelid
+          where c.relname = 'stock_movements' and t.tgname = 'trg_stock_movement_immutable'),
+        (select count(*) from erp.stock_movements where empresa_id is not null);`;
 
 /** Executa um SQL como a migration faria (transação própria) e devolve a mensagem de erro, se houver. */
 async function tentarMigration(sql: string, nome = zero14().name): Promise<string> {
@@ -208,7 +206,41 @@ describe("precondição: a 0014 recusa um ledger que chega sem a proteção espe
       `drop trigger trg_stock_movement_immutable on erp.stock_movements;
        create or replace function erp.impostor() returns trigger language plpgsql as $f$ begin return new; end $f$;
        create trigger trg_stock_movement_immutable before update or delete on erp.stock_movements for each row execute function erp.impostor()`);
-    expect(erro).toMatch(/exatamente 1 gatilho trg_stock_movement_immutable/);
+    expect(erro).toMatch(/executa erp\.impostor\(\), e não erp\.forbid_change\(\)/);
+  });
+
+  /**
+   * O caso que `proname` NÃO pega: função pertence a SCHEMA. `shadow.forbid_change()` tem exatamente o
+   * mesmo `pg_proc.proname` da guarda legítima — quem compara só o nome curto aceita o homônimo e suspende
+   * uma proteção cujo contrato desconhece. Por isso a 0014 compara o OID de `erp.forbid_change()`.
+   */
+  it("função HOMÔNIMA em outro schema (shadow.forbid_change): o nome curto é igual, a guarda não é", async () => {
+    const erro = await comGatilho(
+      `drop trigger trg_stock_movement_immutable on erp.stock_movements;
+       create schema if not exists shadow;
+       create or replace function shadow.forbid_change() returns trigger language plpgsql as $f$ begin return new; end $f$;
+       create trigger trg_stock_movement_immutable before update or delete on erp.stock_movements for each row execute function shadow.forbid_change()`);
+    expect(erro, "proname idêntico não pode passar por identidade").toMatch(/executa shadow\.forbid_change\(\), e não erp\.forbid_change\(\)/);
+    expect(erro).toMatch(/Guarda DESCONHECIDA/);
+  });
+
+  /**
+   * DELETE é METADE do contrato append-only: um ledger que aceita exclusão de lançamento já chegou
+   * desprotegido, ainda que recuse UPDATE. A 0014 não pode aceitar esse estado e seguir.
+   */
+  it("gatilho SEM DELETE: proteção incompleta é estado incorreto, não estado a completar de passagem", async () => {
+    const erro = await comGatilho(
+      `drop trigger trg_stock_movement_immutable on erp.stock_movements;
+       create trigger trg_stock_movement_immutable before update on erp.stock_movements for each row execute function erp.forbid_change()`);
+    expect(erro).toMatch(/proteção INCOMPLETA/);
+    expect(erro, "o que falta precisa estar nomeado no diagnóstico").toMatch(/falta: DELETE/);
+  });
+
+  it("gatilho AFTER em vez de BEFORE: o timing declarado pela documentação também é verificado", async () => {
+    const erro = await comGatilho(
+      `drop trigger trg_stock_movement_immutable on erp.stock_movements;
+       create trigger trg_stock_movement_immutable after update or delete on erp.stock_movements for each row execute function erp.forbid_change()`);
+    expect(erro).toMatch(/falta: BEFORE/);
   });
 
   it("gatilho correto e habilitado: a migration segue normalmente", async () => {

@@ -244,16 +244,22 @@ alter table erp.weighings add column empresa_id uuid;
 --
 -- FAIL-CLOSED: se QUALQUER outra tabela alcançada pelo laço ganhar um guarda append-only, a migration PARA
 -- aqui em vez de descobrir o bloqueio no meio do caminho, no próximo upgrade de produção.
+--
+-- A guarda é procurada pela IDENTIDADE EXATA da função (`erp.forbid_change()`), via OID de regprocedure —
+-- nunca por `pg_proc.proname`. Função pertence a schema: `shadow.forbid_change()` tem o mesmo `proname` e
+-- não é a mesma coisa. Decisão de segurança por nome curto é decisão por homônimo.
 do $$
-declare v_outras text;
+declare v_outras text; v_guarda oid := to_regprocedure('erp.forbid_change()');
 begin
+  if v_guarda is null then
+    raise exception 'PRE-BASE2-03: erp.forbid_change() não existe neste banco. A 0014 só roda sobre o schema que a 0003 criou.';
+  end if;
   select string_agg(distinct c.relname, ', ' order by c.relname) into v_outras
     from pg_trigger t
     join pg_class c on c.oid = t.tgrelid
     join pg_namespace n on n.oid = c.relnamespace
-    join pg_proc p on p.oid = t.tgfoid
    where n.nspname = 'erp' and not t.tgisinternal
-     and p.proname = 'forbid_change'
+     and t.tgfoid = v_guarda
      and (t.tgtype & 16) <> 0                      -- dispara em UPDATE
      and c.relname <> 'stock_movements'
      and exists (select 1 from information_schema.columns col
@@ -266,40 +272,76 @@ end $$;
 
 -- PRECONDIÇÃO DO LEDGER: o estado de segurança INICIAL também é explícito.
 -- ---------------------------------------------------------------------------------------------------
--- A janela abaixo suspende uma proteção — então ela precisa saber que a proteção estava lá, e intacta,
--- antes de encostar. Sem esta precondição a migration aceitaria três estados perigosos em silêncio:
---   · o gatilho ausente (alguém já removeu) — o backfill passaria e a migration "instalaria" segurança
---     que o banco não tinha, escondendo a remoção;
---   · o gatilho DESABILITADO (o ledger já chegou desprotegido) — o `enable` no fim do laço deixaria o
+-- A janela abaixo suspende uma proteção — então ela precisa saber que a proteção estava lá, INTEIRA e
+-- INTACTA, antes de encostar. Sem esta precondição a migration aceitaria em silêncio estados perigosos:
+--   · gatilho ausente (alguém já removeu) — o backfill passaria e a migration "instalaria" segurança que
+--     o banco não tinha, escondendo a remoção;
+--   · gatilho DESABILITADO (o ledger já chegou desprotegido) — o `enable` no fim da janela deixaria o
 --     banco mais protegido do que estava, apagando a evidência de um incidente anterior;
---   · o gatilho substituído por outra função — suspenderíamos algo cujo contrato não conhecemos.
+--   · gatilho com o nome certo apontando para OUTRA função — inclusive uma homônima em outro schema
+--     (`shadow.forbid_change()`): suspenderíamos algo cujo contrato não conhecemos;
+--   · gatilho recriado SEM DELETE — o ledger chegou permitindo exclusão de lançamento, que é justamente
+--     metade do contrato append-only.
 -- Uma migration pode suspender uma guarda que ela entende; não pode CONSERTAR uma que encontrou quebrada.
--- Por isso: exatamente UM gatilho, com o nome esperado, na função esperada, disparando em UPDATE e
--- habilitado ('O'). Qualquer outra coisa PARA aqui, antes de qualquer escrita estrutural.
+--
+-- Por isso o contrato é verificado por inteiro, e a função pela IDENTIDADE EXATA (OID de regprocedure),
+-- nunca por `pg_proc.proname`:
+--   nome     trg_stock_movement_immutable   ·   tabela   erp.stock_movements
+--   função   erp.forbid_change()            ·   timing   BEFORE      (tgtype & 2)
+--   nível    FOR EACH ROW (tgtype & 1)      ·   eventos  UPDATE (&16) E DELETE (&8)
+--   estado   tgenabled = 'O'
+-- Qualquer divergência PARA aqui, antes de qualquer escrita estrutural.
 do $$
-declare v_total int; v_habilitado char;
+declare
+  v_guarda oid := to_regprocedure('erp.forbid_change()');
+  v_total  int;
+  v_gat    record;
+  v_faltando text;
 begin
-  select count(*), min(t.tgenabled) into v_total, v_habilitado
+  if v_guarda is null then
+    raise exception 'PRE-BASE2-03: erp.forbid_change() não existe neste banco. A 0014 só roda sobre o schema que a 0003 criou.';
+  end if;
+
+  select count(*) into v_total
     from pg_trigger t
     join pg_class c on c.oid = t.tgrelid
     join pg_namespace n on n.oid = c.relnamespace
-    join pg_proc p on p.oid = t.tgfoid
-   where n.nspname = 'erp' and c.relname = 'stock_movements' and not t.tgisinternal
-     and t.tgname = 'trg_stock_movement_immutable'
-     and p.proname = 'forbid_change'
-     and (t.tgtype & 16) <> 0;                     -- dispara em UPDATE
-
+   where n.nspname = 'erp' and c.relname = 'stock_movements'
+     and not t.tgisinternal and t.tgname = 'trg_stock_movement_immutable';
   if v_total <> 1 then
-    raise exception 'PRE-BASE2-03: erp.stock_movements deveria ter exatamente 1 gatilho trg_stock_movement_immutable sobre erp.forbid_change disparando em UPDATE; encontrado(s): %. O backfill estrutural não suspende uma guarda que não reconhece.', v_total;
+    raise exception 'PRE-BASE2-03: erp.stock_movements deveria ter exatamente 1 gatilho trg_stock_movement_immutable; encontrado(s): %. O backfill estrutural não suspende uma guarda que não reconhece.', v_total;
   end if;
-  if v_habilitado <> 'O' then
-    raise exception 'PRE-BASE2-03: trg_stock_movement_immutable não está habilitado (tgenabled=%). O ledger chegou DESPROTEGIDO nesta migração: isso é incidente a investigar, não estado a corrigir de passagem.', v_habilitado;
+
+  select t.tgfoid, t.tgtype, t.tgenabled into v_gat
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'erp' and c.relname = 'stock_movements'
+     and not t.tgisinternal and t.tgname = 'trg_stock_movement_immutable';
+
+  -- IDENTIDADE EXATA: nome igual não é a mesma função. `shadow.forbid_change()` tem o mesmo `proname`.
+  if v_gat.tgfoid <> v_guarda then
+    raise exception 'PRE-BASE2-03: trg_stock_movement_immutable executa %, e não erp.forbid_change(). Guarda DESCONHECIDA: a 0014 não suspende proteção cujo contrato ela não conhece.', v_gat.tgfoid::regprocedure;
+  end if;
+
+  -- Contrato completo. DELETE é metade da imutabilidade: sem ele o ledger já chegou permitindo exclusão.
+  v_faltando := concat_ws(', ',
+    case when (v_gat.tgtype & 1)  = 0 then 'FOR EACH ROW' end,
+    case when (v_gat.tgtype & 2)  = 0 then 'BEFORE'       end,
+    case when (v_gat.tgtype & 16) = 0 then 'UPDATE'       end,
+    case when (v_gat.tgtype & 8)  = 0 then 'DELETE'       end);
+  if v_faltando <> '' then
+    raise exception 'PRE-BASE2-03: trg_stock_movement_immutable não cumpre o contrato append-only da 0003 (BEFORE UPDATE OR DELETE FOR EACH ROW); falta: %. O ledger chegou com proteção INCOMPLETA — isso é incidente a investigar, não estado a corrigir de passagem.', v_faltando;
+  end if;
+
+  if v_gat.tgenabled <> 'O' then
+    raise exception 'PRE-BASE2-03: trg_stock_movement_immutable não está habilitado (tgenabled=%). O ledger chegou DESPROTEGIDO nesta migração: isso é incidente a investigar, não estado a corrigir de passagem.', v_gat.tgenabled;
   end if;
 end $$;
 
 -- Cópia do valor legado + gatilho de sincronização + referência canônica.
 do $$
-declare r record; canonico text; funcao text; gatilho text; tem_org boolean; imutavel text;
+declare r record; canonico text; funcao text; gatilho text; tem_org boolean;
 begin
   for r in
     select c.table_name as tabela, c.column_name as coluna
@@ -319,21 +361,14 @@ begin
                               else 'erp.sincronizar_empresa_destino_legado' end;
     gatilho  := 'trg_sync_' || canonico;
 
-    -- Guarda append-only DESTA tabela (hoje só o ledger de estoque a tem). Suspensa apenas em volta do
-    -- update estrutural abaixo, e devolvida na linha seguinte.
-    select t.tgname into imutavel
-      from pg_trigger t
-      join pg_class c on c.oid = t.tgrelid
-      join pg_namespace n on n.oid = c.relnamespace
-      join pg_proc p on p.oid = t.tgfoid
-     where n.nspname = 'erp' and c.relname = r.tabela and not t.tgisinternal
-       and p.proname = 'forbid_change' and (t.tgtype & 16) <> 0;
-
-    if imutavel is not null then
-      execute format('alter table erp.%I disable trigger %I', r.tabela, imutavel);
+    -- EXCEÇÃO ÚNICA E NOMEADA: o ledger de estoque. Não há descoberta genérica de "qualquer gatilho cuja
+    -- função se chame forbid_change" — a exceção é UMA tabela e UM gatilho, escritos aqui por extenso, e
+    -- a precondição acima já provou a identidade EXATA (erp.forbid_change(), BEFORE UPDATE OR DELETE,
+    -- FOR EACH ROW, habilitado). Qualquer OUTRA tabela com a mesma guarda já fez o preflight PARAR.
+    if r.tabela = 'stock_movements' then
+      execute 'alter table erp.stock_movements disable trigger trg_stock_movement_immutable';
       execute format('update erp.%I set %I = %I', r.tabela, canonico, r.coluna);
-      execute format('alter table erp.%I enable trigger %I', r.tabela, imutavel);
-      imutavel := null;
+      execute 'alter table erp.stock_movements enable trigger trg_stock_movement_immutable';
     else
       execute format('update erp.%I set %I = %I', r.tabela, canonico, r.coluna);
     end if;
