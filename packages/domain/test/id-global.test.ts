@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { colunaDiscriminadora, formatarIdGlobal, interpretarIdGlobal, tabelaTecnica, variantesDeclaradas } from "@erp/plataforma";
 import {
-  CONSULTA_CADASTRO, ENTIDADES_ID_GLOBAL, elegivelAIdGlobal, entidadeIdGlobal,
-  resolverRegistroGlobal, tiposEntidadeIdGlobal, validarRegistroIdGlobal
+  CONSULTA_CADASTRO, ENTIDADES_ID_GLOBAL, elegivelAIdGlobal, entidadeIdGlobal, entidadeIdGlobalPorTabela,
+  resolverRegistroGlobal, tipoEntidadeDaTabela, tiposEntidadeIdGlobal, validarRegistroIdGlobal
 } from "../src/id-global.js";
 import { MOVIMENTACOES_INTERNAS, MANEJOS_REBANHO, MOVIMENTACOES_REBANHO } from "../src/rebanho.js";
 import { DICIONARIO_DE_DADOS } from "../dicionario-dados.mjs";
@@ -139,5 +139,34 @@ describe("dicionário de dados × registry de ID Global", () => {
         expect(e.rota, e.codigo).toBe(resolverRegistroGlobal(tipo, ":id")!.rota);
       }
     }
+  });
+});
+
+/**
+ * ÍNDICE POR TABELA (PRE-BASE2-05B.1) — a ponte usada pelas listagens genéricas.
+ *
+ * Quem lista tem a TABELA em mãos, não o tipo de entidade. Se esse caminho falhasse em silêncio, a listagem
+ * do recurso sairia sem número e ninguém notaria: por isso ele é coberto entidade por entidade, nas duas
+ * grafias que circulam no código.
+ */
+describe("índice por tabela", () => {
+  it("toda entidade do catálogo é encontrável pela tabela, com e sem o schema", () => {
+    for (const e of ENTIDADES_ID_GLOBAL) {
+      expect(entidadeIdGlobalPorTabela(e.tabela), e.tabela).toBe(e);
+      expect(entidadeIdGlobalPorTabela(e.tabela.replace(/^erp\./, "")), e.tabela).toBe(e);
+      expect(tipoEntidadeDaTabela(e.tabela)).toBe(e.tipoEntidade);
+    }
+  });
+  it("tabela fora do catálogo devolve undefined — a maioria das tabelas não tem ID Global, e isso é o normal", () => {
+    for (const t of ["erp.warehouses", "cost_centers", "erp.invoice_items", "batches", ""]) {
+      expect(entidadeIdGlobalPorTabela(t), t).toBeUndefined();
+      expect(tipoEntidadeDaTabela(t), t).toBeUndefined();
+    }
+  });
+  it("nenhuma tabela é declarada por duas entidades — o índice seria ambíguo e numeraria pelo tipo errado", () => {
+    const tabelas = ENTIDADES_ID_GLOBAL.map((e) => e.tabela.replace(/^erp\./, ""));
+    expect(new Set(tabelas).size).toBe(tabelas.length);
+    // e a validação do catálogo cobra isso sozinha (o gate roda só `validarRegistroIdGlobal`)
+    expect(validarRegistroIdGlobal()).toEqual([]);
   });
 });

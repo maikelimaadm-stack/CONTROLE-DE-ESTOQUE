@@ -297,6 +297,70 @@ tela. É o que dá cobertura de 100% do registry sem editar 23 páginas: entidad
 exibir o `#N` sem que ninguém toque na UI. Registro ainda sem número (durante o backfill) não renderiza
 nada: 404 é estado normal, não erro.
 
+### 9.1 `#N` nas LISTAGENS (PRE-BASE2-05B.1)
+
+Um localizador só serve a quem consegue LER o número antes de digitá-lo. Enquanto o `#N` existia apenas na
+tela de detalhe, ele servia a quem já o conhecesse — o contrário de um localizador. Desde a PRE-BASE2-05B.1
+**toda listagem de entidade elegível mostra o `#N` da linha**.
+
+**O servidor DECLARA, o cliente obedece.** A resposta de uma listagem elegível carrega, além das linhas,
+`idGlobal: { tipoEntidade, rotulo }`. É o que evita uma segunda cópia do catálogo no cliente: sem essa
+declaração, a tela precisaria de uma lista própria de "quais listagens têm número", que envelheceria no
+primeiro acréscimo de entidade.
+
+**Uma página, uma consulta.** `anexarIdsGlobais(ctx, tipoEntidade, linhas)` resolve a página inteira num
+único `select ... where organization_id = $1 and tipo_entidade = $2 and id_entidade = any($3)`. Chamar a
+porta de detalhe por linha seria N+1 (100 linhas = 100 idas ao banco, mais autorização) — o teste de unidade
+`id-global-listagem-lote.test.ts` CONTA as consultas, porque essa garantia não se prova lendo o código.
+
+**O ID Global não decide o que a listagem mostra.** As linhas chegam ao enriquecimento já filtradas por
+permissão, escopo de empresa, RLS e exclusão lógica. Ele não inclui linha, não exclui linha e não reordena.
+Se decidisse qualquer uma dessas coisas, haveria DUAS autoridades de escopo na mesma resposta — e a mais
+frouxa venceria. A autorização continua inteira e exclusivamente nas portas de `#N`.
+
+**`null` é resposta, não falha.** Acervo anterior ao backfill e EFEITOS internos declarados (uma
+transferência em `animal_movements`) não têm número; a célula mostra um traço. Inventar um número para
+preencher a coluna criaria identidade onde o contrato diz que não há.
+
+**A coluna é identidade, não preferência.** Ela é fixada à esquerda e fica FORA de `prefs.columns`. Se
+entrasse, quem já tivesse salvo a configuração daquela tela ficaria sem a coluna para sempre — a preferência
+guarda uma lista fechada, e uma coluna criada depois nunca está nela; justamente os usuários antigos, os que
+têm registros para localizar, não veriam o número. Ficar de fora também impede que ela vire chip de filtro
+ou critério de ordenação que o backend não sabe resolver (`id_global` mora em `erp.registros_globais`, não
+nas tabelas de negócio). Quem procura por número usa a busca global.
+
+**`#N` continua não sendo endereço.** A linha abre pela rota canônica com o UUID.
+
+**Telas que montam a grade por conta própria.** Quatro listagens não passam pelo Modelo Base1 — títulos
+financeiros, animais, importações OFX e perfis de acesso — e recebem a coluna explicitamente. Elas são a
+última milha do frontend: apagar a coluna de uma delas deixaria catálogo, API, matriz das 23 entidades e o
+teste de N+1 verdes, com o número sumindo da tela. Por isso cada uma tem prova de navegador em
+`apps/web/e2e/id-global-listagem.spec.ts`, e o gate cobra, por ARQUIVO, toda tela com `DataTable` que não
+exibe `#N` sem motivo escrito. Essa lista de arquivos de interface não é um segundo catálogo: o catálogo de
+entidades continua sendo um só, no servidor, e o cliente apenas obedece à declaração da resposta.
+
+**A coluna não oferece controle que não funciona.** `Base1Column` declara capacidades
+(`hideable`/`resizable`/`freezable`/`autoFit`/`filterable`, padrão `true`) e a grade só oferece o que a
+coluna permite. A identidade as nega todas, então não tem menu de coluna nem alça de arraste — em vez de um
+"Ocultar" que não oculta. O que continua aparecendo desabilitado é a ação APLICÁVEL mas indisponível agora
+(sem manipulador, sem `kind`): são coisas diferentes, e confundi-las mudaria o menu de todas as colunas
+comuns. O componente genérico não conhece `id_global`.
+
+**A identidade fica PRESA à esquerda.** `pinned: "left"` é estrutural e diferente de `freezable: false`: o
+segundo só impede o usuário de mexer. Sem o primeiro, as telas que nunca configuram congelamento (todas as
+montadas com `DataTable`) deixavam o `#N` rolar para fora da tela, longe da linha que ele identifica. O
+pinning é o PISO do congelamento — o do usuário soma, e "descongelar" volta ao piso, nunca abaixo dele.
+
+**Rodapé de totais.** O `colSpan` é derivado da mesma lista de colunas que a grade desenha
+(`colSpanAteColuna`/`colSpanAposColuna`). Contado à mão ele desanda a cada coluna nova, e um total sob a
+coluna errada parece dado errado.
+
+**Cobertura.** Três caminhos, todos derivados do catálogo: a listagem genérica de recursos e o helper de
+documentos de estoque resolvem o tipo pela TABELA (`tipoEntidadeDaTabela`), e as rotas especializadas
+declaram o tipo no ponto de chamada. O gate `scripts/id-global-audit.mjs` reprova qualquer entidade do
+catálogo sem listagem; `apps/api/test/integration/id-global-listagens.test.ts` bate em cada listagem de
+verdade e compara o conjunto coberto com `tiposEntidadeIdGlobal()` nos dois sentidos.
+
 ## 10. Auditoria
 
 `audit_logs.id` é um **bigint próprio da auditoria** e NÃO é ID Global — nunca deve ser exibido como `#123`.

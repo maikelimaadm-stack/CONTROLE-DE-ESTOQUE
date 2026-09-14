@@ -252,3 +252,65 @@ export async function idGlobalDoRegistro(ctx: ServiceCtx, tipoEntidade: string, 
     modulo: indice.modulo, rota: resolvido.rota, empresaId: fonte.empresaId, criadoEm: indice.criado_em
   };
 }
+
+/**
+ * LISTAGENS — o mesmo `#N` da tela de detalhe, visível na linha (PRE-BASE2-05B.1).
+ *
+ * POR QUE ISTO É UMA CONSULTA SÓ, E NÃO UMA POR LINHA
+ * ---------------------------------------------------
+ * `idGlobalDoRegistro` existe para a tela de DETALHE: um registro, uma autorização completa. Chamá-la por
+ * linha numa listagem seria N+1 — 100 linhas, 100 idas ao banco (mais as de autorização) — e transformaria
+ * uma lista rápida numa lista que trava. Aqui a pergunta é outra e mais barata: "destes registros que a
+ * listagem JÁ autorizou e JÁ devolveu, quais têm número?". Uma página = UMA consulta extra, com `= any($3)`.
+ *
+ * AUTORIZAÇÃO NÃO PASSA POR AQUI — E É DE PROPÓSITO
+ * -------------------------------------------------
+ * Estas linhas são o resultado de uma listagem que já aplicou permissão, escopo de empresa, RLS e exclusão
+ * lógica. O ID Global é ROTULAGEM do que o usuário já está vendo: ele não pode incluir uma linha, não pode
+ * excluir uma linha e não pode mudar a ordem. Se decidisse qualquer uma dessas coisas, haveria DUAS
+ * autoridades de escopo na mesma resposta — e a mais frouxa venceria. A porta de `#N` (resolver e resolver
+ * o inverso) continua sendo a única que autoriza, e continua intocada.
+ *
+ * O `null` é uma resposta legítima, não uma falha: acervo anterior ao backfill e EFEITOS internos declarados
+ * (uma transferência em `animal_movements`) não têm número, e inventar um só para preencher a coluna criaria
+ * identidade onde o contrato diz que não há.
+ */
+const ehUuid = (v: unknown): v is string => typeof v === "string" && UUID.test(v);
+
+export async function anexarIdsGlobais<L extends Record<string, unknown>>(
+  ctx: ServiceCtx, tipoEntidade: string, linhas: readonly L[], opts: { coluna?: string } = {}
+): Promise<(L & { id_global: number | null })[]> {
+  // Tipo fora do catálogo é ERRO de quem chamou (um nome digitado errado), nunca uma listagem silenciosamente
+  // sem número: o gate de cobertura e este erro são o que impede uma entidade de ficar para trás.
+  exigirEntidade(tipoEntidade);
+  const coluna = opts.coluna ?? "id";
+  const ids = [...new Set(linhas.map((l) => l[coluna]).filter(ehUuid))];
+  if (!ids.length) return linhas.map((l) => ({ ...l, id_global: null }));
+  const r = await ctx.tx.query<{ id_entidade: string; id_global: string }>(
+    "select id_entidade, id_global from erp.registros_globais where organization_id=$1 and tipo_entidade=$2 and id_entidade = any($3::uuid[])",
+    [ctx.orgId, tipoEntidade, ids]);
+  const porRegistro = new Map(r.rows.map((x) => [x.id_entidade, Number(x.id_global)]));
+  return linhas.map((l) => ({ ...l, id_global: ehUuid(l[coluna]) ? porRegistro.get(l[coluna]) ?? null : null }));
+}
+
+/** O que a resposta declara sobre o ID Global desta listagem. */
+export interface MarcaIdGlobal {
+  tipoEntidade: string;
+  /** Rótulo humano do TIPO, para a tela não ter de repetir o catálogo. */
+  rotulo: string;
+}
+
+/**
+ * Enriquece uma PÁGINA de listagem e DECLARA, na própria resposta, que esta listagem tem ID Global.
+ *
+ * A declaração é o que evita uma segunda cópia do catálogo no cliente. Sem ela, a tela teria de saber, por
+ * conta própria, quais das dezenas de listagens mostram a coluna — uma lista paralela que envelheceria no
+ * primeiro acréscimo de entidade. Aqui a única fonte continua sendo `ENTIDADES_ID_GLOBAL`: o servidor
+ * resolve e a tela apenas obedece.
+ */
+export async function paginaComIdGlobal<P extends { items: Record<string, unknown>[] }>(
+  ctx: ServiceCtx, tipoEntidade: string, pagina: P, opts: { coluna?: string } = {}
+): Promise<P & { idGlobal: MarcaIdGlobal }> {
+  const entidade = exigirEntidade(tipoEntidade);
+  return { ...pagina, items: await anexarIdsGlobais(ctx, tipoEntidade, pagina.items, opts), idGlobal: { tipoEntidade, rotulo: entidade.rotulo } };
+}

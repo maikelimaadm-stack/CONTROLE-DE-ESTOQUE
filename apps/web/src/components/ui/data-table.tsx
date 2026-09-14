@@ -8,7 +8,33 @@ import { Base1Grid } from "@/features/base1/grid";
 import { IconBtn } from "@/features/base1/ui";
 import type { Base1Column, Row } from "@/features/base1/types";
 
-export interface Column<T> { key: string; label: string; render?: (row: T) => React.ReactNode; className?: string; sortable?: boolean; align?: "right" | "left" | "center"; /** largura fixa em px (preferência do usuário) */ width?: number; /** família do filtro (chip/cabeçalho): texto, número, data, enumeração… */ kind?: FilterKind; /** opções fixas (kind enum) */ options?: { value: string; label: string }[] }
+export interface Column<T> { key: string; label: string; render?: (row: T) => React.ReactNode; className?: string; sortable?: boolean; align?: "right" | "left" | "center"; /** largura fixa em px (preferência do usuário) */ width?: number; /** família do filtro (chip/cabeçalho): texto, número, data, enumeração… */ kind?: FilterKind; /** opções fixas (kind enum) */ options?: { value: string; label: string }[];
+  /** capacidades da coluna na grade (ver Base1Column); padrão `true` — uma coluna de IDENTIDADE as nega */
+  hideable?: boolean; resizable?: boolean; freezable?: boolean; autoFit?: boolean; filterable?: boolean;
+  /** pinagem estrutural à esquerda (ver Base1Column.pinned): fixa mesmo sem congelamento configurado */
+  pinned?: "left" }
+/**
+ * RODAPÉ DE TOTAIS ALINHADO À GRADE — derivado das colunas, nunca contado à mão.
+ *
+ * A grade renderiza uma célula de SELEÇÃO antes da primeira coluna e, quando há ações de linha, uma coluna
+ * de AÇÕES depois da última. Um `colSpan` escrito à mão precisa lembrar das duas — e de toda coluna que
+ * alguém acrescentar no meio depois. Foi assim que o rodapé de Animais foi ficando para trás: uma coluna de
+ * Empresa entrou na PRE-BASE2-03 e outra de ID Global na PRE-BASE2-05B.1, e o `colSpan={8}` não mudou.
+ *
+ * Estes dois helpers leem a MESMA lista que a grade desenha, então não há o que esquecer: o total continua
+ * sob a sua coluna mesmo quando a listagem ganha ou perde colunas.
+ */
+export function colSpanAteColuna<T>(columns: Column<T>[], key: string): number {
+  const i = columns.findIndex((c) => c.key === key);
+  // +1 pela célula de seleção; coluna inexistente ocupa a linha toda em vez de desalinhar em silêncio
+  return (i < 0 ? columns.length : i) + 1;
+}
+/** Células que sobram DEPOIS de `key` (a coluna de ações entra quando a tabela a renderiza). */
+export function colSpanAposColuna<T>(columns: Column<T>[], key: string, comAcoes = false): number {
+  const i = columns.findIndex((c) => c.key === key);
+  return (i < 0 ? 0 : columns.length - 1 - i) + (comAcoes ? 1 : 0);
+}
+
 export interface DataTableProps<T> {
   columns: Column<T>[]; rows: T[]; total?: number; page?: number; pageSize?: number; onPage?: (p: number) => void; onPageSize?: (s: number) => void;
   sort?: { key: string; dir: "asc" | "desc" }; onSort?: (key: string) => void; loading?: boolean; rowKey?: (r: T) => string; actions?: (row: T) => React.ReactNode;
@@ -24,7 +50,7 @@ export function DataTable<T extends Record<string, unknown>>({ columns, rows, to
   const sel = selected ?? selLocal; const setSel = onSelect ?? setSelLocal;
   const pages = total !== undefined ? Math.max(1, Math.ceil(total / pageSize)) : 1;
   const cols = React.useMemo<Base1Column[]>(() => [
-    ...columns.map((c) => ({ key: c.key, label: c.label, align: c.align, sortable: c.sortable, width: c.width, render: c.render ? (r: Row) => c.render!(r as T) : undefined, text: (r: Row) => { const v = r[c.key]; return v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); } })),
+    ...columns.map((c) => ({ key: c.key, label: c.label, align: c.align, sortable: c.sortable, width: c.width, hideable: c.hideable, resizable: c.resizable, freezable: c.freezable, autoFit: c.autoFit, filterable: c.filterable, pinned: c.pinned, render: c.render ? (r: Row) => c.render!(r as T) : undefined, text: (r: Row) => { const v = r[c.key]; return v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v); } })),
     // "Visualizar" explícito: toda linha que abre um registro (onRowClick) ganha a ação visível; o duplo clique continua como atalho
     ...(actions || onRowClick ? [{ key: "__actions", label: "Ação", sortable: false, width: actions ? 120 : 60, align: "center" as const, render: (r: Row) => <span className="inline-flex items-center gap-1" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>{onRowClick && <IconBtn size="sm" aria-label="Visualizar" title="Visualizar" data-testid="row-view" onClick={() => onRowClick(r as T)}><Eye /></IconBtn>}{actions?.(r as T)}</span>, text: () => "" }] : [])
   ], [columns, actions, onRowClick]);

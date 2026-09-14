@@ -32,7 +32,15 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
   const trs = React.useRef<Record<string, HTMLTableRowElement | null>>({});
   const [lefts, setLefts] = React.useState<Record<string, number>>({});
   const [menuFor, setMenuFor] = React.useState<string | null>(null); // menu de coluna aberto (fecha ao escolher uma opção)
-  const frozenCount = Math.max(0, Math.min(frozen, columns.length));
+  /**
+   * Congelamento = PREFIXO ESTRUTURAL + escolha do usuário.
+   *
+   * O prefixo vem das colunas que se declaram pinadas à esquerda (a identidade `#N`, hoje) e é o piso: a
+   * listagem pode congelar mais, nunca menos. É o que faz a identidade ficar presa mesmo nas telas que nunca
+   * passam `frozen` — e é declarativo, então a grade continua sem conhecer nenhuma coluna de domínio.
+   */
+  const pinnedCount = (() => { let n = 0; while (n < columns.length && columns[n]!.pinned === "left") n++; return n; })();
+  const frozenCount = Math.max(0, Math.min(Math.max(frozen, pinnedCount), columns.length));
   // deslocamento das colunas congeladas (sticky): larguras medidas após o layout e a cada redimensionamento
   const measure = React.useCallback(() => {
     const out: Record<string, number> = {}; let acc = SELECT_COLUMN_WIDTH;
@@ -64,16 +72,30 @@ export function Base1Grid({ columns, rows, loading, sort, onSort, selected, onSe
           <th key={c.key} ref={(el) => { ths.current[c.key] = el; }} style={{ ...(c.width ? { width: c.width, minWidth: c.width, maxWidth: c.width } : { minWidth: 110 }), ...(isFrozen ? { left: lefts[c.key] ?? 0, zIndex: 4 } : {}) }} className={cn("group relative", isFrozen && "is-frozen", isAnchor && "is-frozen-anchor", c.align === "right" && "!text-right")}>
             <div className="flex h-[30px] items-center gap-1">
               <button type="button" className={cn("inline-flex min-w-0 flex-1 items-center gap-1 truncate text-left", !onSort && "cursor-default")} onClick={() => c.sortable !== false && onSort?.(c.key)} title={c.label}><span className="truncate">{c.label}</span>{sort?.key === c.key && (sort.dir === "asc" ? <ArrowUp className="h-3 w-3 text-[var(--mg-accent)]" /> : <ArrowDown className="h-3 w-3 text-[var(--mg-accent)]" />)}</button>
-              <B1Popover className="w-52 p-1" align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className="th-menu"><MoreVertical /></button>}>
-                <MenuList onPick={(k) => { setMenuFor(null); if (k === "filter") onFilter?.(c.key); if (k === "fit") onAutoFit?.(c.key); if (k === "freeze") onFreeze?.(isAnchor ? 0 : i + 1); if (k === "hide") onHide?.(c.key); }} items={[
-                  { key: "filter", label: "Abrir filtro avançado", icon: <Filter className="h-4 w-4" />, disabled: !onFilter || !c.kind },
-                  { key: "fit", label: "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" />, disabled: !onAutoFit },
-                  { key: "freeze", label: isAnchor ? "Descongelar colunas" : isFrozen ? "Congelar até esta coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" />, disabled: !onFreeze },
-                  { key: "hide", label: "Ocultar coluna", icon: <EyeOff className="h-4 w-4" />, disabled: !onHide || columns.length <= 1 }
-                ]} />
-              </B1Popover>
+              {(() => {
+                /**
+                 * O menu só existe quando ALGUMA ação é realmente possível nesta coluna. Uma coluna que
+                 * declara `hideable/resizable/freezable/autoFit: false` (identidade fixa) não ganha um menu
+                 * com entradas mortas: ela simplesmente não tem menu — e a alça de redimensionar também não
+                 * é renderizada. Controle que não faz nada é pior do que controle ausente.
+                 */
+                const itens = [
+                  ...(c.filterable === false ? [] : [{ key: "filter", label: "Abrir filtro avançado", icon: <Filter className="h-4 w-4" />, disabled: !onFilter || !c.kind }]),
+                  ...(c.autoFit === false ? [] : [{ key: "fit", label: "Auto ajustar coluna", icon: <Scaling className="h-4 w-4" />, disabled: !onAutoFit }]),
+                  ...(c.freezable === false ? [] : [{ key: "freeze", label: isAnchor ? "Descongelar colunas" : isFrozen ? "Congelar até esta coluna" : "Congelar coluna", icon: <PanelLeft className="h-4 w-4" />, disabled: !onFreeze }]),
+                  ...(c.hideable === false ? [] : [{ key: "hide", label: "Ocultar coluna", icon: <EyeOff className="h-4 w-4" />, disabled: !onHide || columns.length <= 1 }])
+                ];
+                // Nenhuma ação sequer APLICÁVEL a esta coluna → nenhum menu. O critério é a DECLARAÇÃO da
+                // coluna; "aplicável mas indisponível" (sem callback, sem `kind`) continua aparecendo
+                // desabilitado, exatamente como antes. Sem essa separação, corrigir o menu da identidade
+                // mudaria a interface de todas as outras colunas — regressão fora do objetivo.
+                if (!itens.length) return null;
+                return <B1Popover className="w-52 p-1" align="start" open={menuFor === c.key} onOpenChange={(o) => setMenuFor(o ? c.key : null)} trigger={<button type="button" aria-label={`Abrir menu da coluna ${c.label}`} className="th-menu"><MoreVertical /></button>}>
+                  <MenuList onPick={(k) => { setMenuFor(null); if (k === "filter") onFilter?.(c.key); if (k === "fit") onAutoFit?.(c.key); if (k === "freeze") onFreeze?.(isAnchor ? 0 : i + 1); if (k === "hide") onHide?.(c.key); }} items={itens} />
+                </B1Popover>;
+              })()}
             </div>
-            <span role="separator" aria-label={`Redimensionar ${c.label}`} onMouseDown={(e) => startResize(e, c)} className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 hover:bg-[var(--mg-accent)] hover:opacity-60" />
+            {c.resizable !== false && <span role="separator" aria-label={`Redimensionar ${c.label}`} onMouseDown={(e) => startResize(e, c)} className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize opacity-0 hover:bg-[var(--mg-accent)] hover:opacity-60" />}
           </th>); })}
       </tr></thead>
       <tbody>
