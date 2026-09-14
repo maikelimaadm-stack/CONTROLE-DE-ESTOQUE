@@ -8,15 +8,15 @@ PRE-BASE2-03, um total único mentiria: `farm_id` numa migration aplicada é his
 cliente HTTP é ponte com prazo, e "fazenda" no comentário de uma rota é o produto ainda falando o
 nicho. Por isso cada ocorrência é classificada em um dos três baldes abaixo — e a catraca trava só o terceiro.
 
-Total medido: **1621** ocorrências · 49 tabelas com coluna de empresa.
+Total medido: **1416** ocorrências · 49 tabelas com coluna de empresa.
 
 ## Classificação (o número que importa é o balde 3)
 
 | # | Balde | Ocorrências | Catraca | O que é |
 | --- | --- | ---: | --- | --- |
 | 1 | **LEGADO HISTÓRICO** | 1097 | não | Migrations aplicadas e documentação. O nome legado aqui é registro do que aconteceu; reescrever é falsificar história. |
-| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 371 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05 (remoção da compatibilidade: colunas legadas, views e cabeçalho). |
-| 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 153 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
+| 2 | **COMPATIBILIDADE TRANSITÓRIA PERMITIDA** | 205 | não | Arquivos declarados em scripts/lib/empresa-compat-surface.mjs, cada um com motivo. Removidos em PRE-BASE2-05C (purga física: colunas legadas, view erp.farms, gatilhos de espelho e a chave da sequência). |
+| 3 | **DÍVIDA DE PRODUTO PROIBIDA** | 114 | **sim — só diminui** | O produto ainda fala o nicho onde não precisa. Alvo: zero. A catraca só deixa diminuir. |
 
 A regra que impede maquiagem: **arquivo não declarado cai no balde 3 por definição.** Esconder dívida
 exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` — e a declaração aparece no diff.
@@ -26,63 +26,55 @@ exige declarar o arquivo com motivo em `scripts/lib/empresa-compat-surface.mjs` 
 | Superfície | 1. Histórico | 2. Compatibilidade | 3. Dívida (travada) | Total |
 | --- | ---: | ---: | ---: | ---: |
 | Schema (migrations) | 274 | 0 | 0 | 274 |
-| API — código | 0 | 14 | **48** | 62 |
-| API — testes | 0 | 177 | **90** | 267 |
-| Núcleo neutro de nicho (plataforma) | 0 | 2 | 0 | 2 |
-| Pacotes compartilhados | 0 | 83 | **11** | 94 |
+| API — código | 0 | 9 | **48** | 57 |
+| API — testes | 0 | 22 | **51** | 73 |
+| Núcleo neutro de nicho (plataforma) | 0 | 4 | 0 | 4 |
+| Pacotes compartilhados | 0 | 82 | **11** | 93 |
 | Web — código | 0 | 0 | 0 | 0 |
 | Web — navegação/rotas | 0 | 7 | 0 | 7 |
-| Web — testes ponta a ponta | 0 | 30 | 0 | 30 |
-| Scripts e gates | 0 | 58 | **4** | 62 |
+| Web — testes ponta a ponta | 0 | 26 | 0 | 26 |
+| Scripts e gates | 0 | 55 | **4** | 59 |
 | Documentação ativa | 310 | 0 | 0 | 310 |
 | Documentação histórica (referência externa) | 513 | 0 | 0 | 513 |
-| **Total** | **1097** | **371** | **153** | **1621** |
+| **Total** | **1097** | **205** | **114** | **1416** |
 
 ## Balde 2 — a ponte declarada
 
-Cada arquivo abaixo pode falar o idioma antigo por um motivo escrito. Todos saem em **PRE-BASE2-05 (remoção da compatibilidade: colunas legadas, views e cabeçalho)**.
+Cada arquivo abaixo pode falar o idioma antigo por um motivo escrito. Todos saem em **PRE-BASE2-05C (purga física: colunas legadas, view erp.farms, gatilhos de espelho e a chave da sequência)**.
 
 ### Runtime — o que o cliente anterior consome
 
 | Arquivo | Ocorrências | Por que pode |
 | --- | ---: | --- |
-| `apps/api/src/lib/compat-empresa.ts` | 12 | O adaptador. É a ponte inteira: tradução de entrada, apelidos de saída, cabeçalho e nomes legados de tabela. |
-| `apps/api/src/server.ts` | 1 | Declara `X-Farm-Id` em allowedHeaders do CORS — sem isso o navegador do cliente antigo nem envia o cabeçalho. |
-| `apps/api/src/lib/escopo-admin.ts` | 1 | Borda de administração: traduz o contrato legado `farm_ids` (lista vazia = todas) para o modelo canônico. Documentado em docs/MULTI-COMPANY-CONTRACT.md §6. |
-| `apps/web/nav.registry.mjs` | 7 | Redirecionamentos das rotas legadas de cadastro. |
-| `packages/domain/src/resources/index.ts` | 1 | Chave de recurso legada `farms` resolvendo para o mesmo ResourceDef de `empresas`. |
-| `packages/plataforma/src/sessao-empresa.ts` | 1 | PROMOÇÃO DE SESSÃO (PRE-BASE2-05A): a única leitura que ainda conhece `farmId`, para migrar uma vez a sessão gravada no navegador por uma versão anterior e regravá-la canônica. Isolada aqui de propósito, para ser testável sem navegador e removível num arquivo só em PRE-BASE2-05B. |
+| `apps/api/src/lib/contrato-legado.ts` | 9 | CONTRATO NEGATIVO (não é tradutor): nomeia o cabeçalho, os campos e o formato administrativo anteriores para RECUSÁ-LOS com erro de validação. Existe porque `z.object` descarta chave desconhecida — um `farm_id` ignorado em silêncio mudaria a empresa da operação. Sai depois da 05C, e só com tráfego real observado. |
+| `apps/web/nav.registry.mjs` | 7 | Redirecionamentos das rotas legadas de cadastro — navegação de favoritos do usuário, não protocolo de API. Ficam até a 05C. |
 
 ### Prova — testes que quebram antes do cliente
 
 | Arquivo | Ocorrências | Por que pode |
 | --- | ---: | --- |
-| `apps/api/test/integration/compat-empresa.test.ts` | 23 | Prova a tradução de borda: payload legado entra, resposta sai com os dois nomes, valores divergentes falham em 422. |
-| `apps/api/test/unit/empresa-bridge.test.ts` | 3 | Prova o adaptador isoladamente (tabela de apelidos, formas id/texto/lista, valores opacos). |
-| `apps/api/test/integration/api.test.ts` | 67 | Suíte geral escrita no idioma anterior (`farm_id`, `x-farm-id`): é a prova de version-skew de que o cliente antigo continua servido sem alteração. |
-| `apps/api/test/integration/farm-scope.test.ts` | 58 | Escopo por empresa exercitado pelo contrato anterior (cabeçalho e coluna legados). |
-| `apps/api/test/unit/farm-scope-guard.test.ts` | 20 | Guarda de escopo verificada pelos nomes anteriores. |
-| `apps/api/test/integration/setup.ts` | 6 | Semeadura das suítes que ainda inserem pelo nome legado. |
-| `packages/db/test/empresa-compat.test.ts` | 33 | Prova o espelho no banco: gatilhos, divergência recusada, view `erp.farms` com security_invoker. |
-| `packages/db/test/backfill-empresas.test.ts` | 4 | Prova o backfill de `farm_id` → `empresa_id` linha a linha. |
-| `packages/db/test/backfill-owner-restrito.test.ts` | 5 | Prova a conversão do escopo herdado de `erp.member_farms`. |
-| `packages/db/test/responsavel-tenant.test.ts` | 2 | Consulta pela view legada para provar que ela enxerga o mesmo tenant. |
-| `packages/db/test/notificacao-legado.test.ts` | 1 | Prova que a notificação legada continua resolvendo pela view. |
-| `packages/db/test/schema.test.ts` | 3 | Afere a coexistência das duas colunas no schema real. |
-| `packages/db/test/upgrade-acervo.test.ts` | 25 | Upgrade com acervo: escreve o histórico no idioma ANTERIOR (`farm_id`), como a API antiga gravava, e só então aplica 0014→0016. Falar o idioma novo aqui inventaria um acervo que nunca existiu e o teste deixaria de provar a migração. |
-| `packages/db/test/upgrade-rollback.test.ts` | 4 | Mesmo acervo legado, para provar que uma falha depois da janela estrutural da 0014 devolve o ledger protegido. |
-| `apps/web/e2e/empresa-canonica.spec.ts` | 13 | Cutover canônico medido no navegador: cita o nome antigo para provar que ele NÃO sai mais no fio e que a sessão gravada por uma versão anterior migra uma vez. |
-| `apps/web/e2e/acesso-empresa.spec.ts` | 3 | Fixture da matriz de acesso; cita o nome antigo ao montar o estado da tela. |
-| `apps/web/e2e/skew-api-producao.spec.ts` | 14 | Version skew no navegador: web desta PR contra a API EXATA do commit base (a que está no ar). Cita o nome antigo para PROVAR a sua ausência no fio e para verificar que o servidor segue bilíngue até a 05B. |
-| `packages/plataforma/test/sessao-empresa.test.ts` | 1 | Prova a promoção da sessão gravada por uma versão anterior: `farmId` vira `empresaId` uma vez, a chave legada sai do armazenamento e valores divergentes caem em fail-safe. |
+| `apps/api/test/integration/contrato-empresa.test.ts` | 21 | Prova o CONTRATO NEGATIVO com requisições reais: cabeçalho, corpo, query, recurso e entidade de anexo anteriores são recusados — e o canônico funciona. Cita o nome antigo para provar que ele NÃO é aceito. |
+| `apps/api/test/unit/attachment-parent-guard.test.ts` | 1 | Prova que o nome ANTERIOR de tabela não resolve mais como entidade anexável. |
+| `packages/plataforma/test/sessao-empresa.test.ts` | 4 | Prova que a sessão gravada por um cliente anterior à virada canônica é INVÁLIDA (sem promoção) e que o contrato de valor é exigido. |
+| `packages/db/test/empresa-compat.test.ts` | 33 | Prova o espelho no banco: gatilhos, divergência recusada, view `erp.farms` com security_invoker. FÍSICO: sai na 05C. |
+| `packages/db/test/backfill-empresas.test.ts` | 4 | Prova o backfill de `farm_id` → `empresa_id` linha a linha. FÍSICO: sai na 05C. |
+| `packages/db/test/backfill-owner-restrito.test.ts` | 5 | Prova a conversão do escopo herdado de `erp.member_farms`. FÍSICO: sai na 05C. |
+| `packages/db/test/responsavel-tenant.test.ts` | 2 | Consulta pela view legada para provar que ela enxerga o mesmo tenant. FÍSICO: sai na 05C. |
+| `packages/db/test/notificacao-legado.test.ts` | 1 | Prova que a notificação legada continua resolvendo pela view. FÍSICO: sai na 05C. |
+| `packages/db/test/schema.test.ts` | 3 | Afere a coexistência das duas colunas no schema real. FÍSICO: sai na 05C. |
+| `packages/db/test/upgrade-acervo.test.ts` | 25 | Upgrade com acervo: escreve o histórico no idioma ANTERIOR (`farm_id`), como a API antiga gravava, e só então aplica 0014→0016. Falar o idioma novo aqui inventaria um acervo que nunca existiu. FÍSICO: sai na 05C. |
+| `packages/db/test/upgrade-rollback.test.ts` | 4 | Mesmo acervo legado, para provar que uma falha depois da janela estrutural da 0014 devolve o ledger protegido. FÍSICO: sai na 05C. |
+| `apps/web/e2e/empresa-canonica.spec.ts` | 8 | Cutover canônico medido no navegador: cita o nome antigo para provar que ele NÃO sai no fio e que a sessão anterior não é mais promovida. |
+| `apps/web/e2e/skew-api-producao.spec.ts` | 14 | Version skew SENTIDO 1 (web deste HEAD × API da base): cita o nome antigo para provar que ele NÃO sai do cliente canônico. |
+| `apps/web/e2e/skew-web-anterior.spec.ts` | 4 | Version skew SENTIDO 2 (web da base × API deste HEAD): cita o nome antigo para provar que a API nova o RECUSA — e que o cliente em produção não depende dele. |
 
 ### Confinamento — gates e dicionário
 
 | Arquivo | Ocorrências | Por que pode |
 | --- | ---: | --- |
-| `scripts/farm-compat-allowlist.mjs` | 22 | O gate que confina a ponte: precisa citar cada símbolo legado para procurá-lo. |
+| `scripts/farm-compat-allowlist.mjs` | 22 | O gate que confina o que resta: precisa citar cada símbolo legado para procurá-lo. É ELE o guardrail do servidor canônico — o que não estiver declarado aqui reprova. |
 | `apps/web/scripts/empresa-canonica-audit.mjs` | 10 | A catraca do cliente canônico (PRE-BASE2-05A): precisa citar cada símbolo legado para PROIBI-LO no web produtivo. Sem o tradutor de fio, um nome legado que voltasse ao cliente não quebraria em runtime — a API bilíngue aceitaria —, e é esta lista que o pega. |
-| `scripts/lib/empresa-compat-surface.mjs` | 13 | Esta lista. |
+| `scripts/lib/empresa-compat-surface.mjs` | 10 | Esta lista. |
 | `scripts/company-schema-sync.mjs` | 4 | Confere par a par coluna canônica × coluna legada no schema. |
 | `scripts/member-farms-audit.mjs` | 6 | Impede que `erp.member_farms` volte a ser autoridade de runtime. |
 | `scripts/data-dictionary.mjs` | 1 | Gera o dicionário, que documenta a coluna legada enquanto ela existir. |
@@ -96,12 +88,9 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 
 | Arquivo | Superfície | Ocorrências |
 | --- | --- | ---: |
-| `apps/api/test/integration/plataforma.test.ts` | API — testes | 14 |
-| `apps/api/test/integration/notificacao-geracao.test.ts` | API — testes | 13 |
-| `apps/api/test/integration/escopo-modulo.test.ts` | API — testes | 12 |
-| `apps/api/test/integration/attachments-scope.test.ts` | API — testes | 11 |
-| `apps/api/test/unit/report-scope.test.ts` | API — testes | 10 |
-| `apps/api/test/integration/relatorio-escopo.test.ts` | API — testes | 9 |
+| `apps/api/test/integration/api.test.ts` | API — testes | 16 |
+| `apps/api/test/integration/escopo-empresa-matriz.test.ts` | API — testes | 16 |
+| `apps/api/test/unit/escopo-empresa-guard.test.ts` | API — testes | 11 |
 | `apps/api/src/routes/resources.ts` | API — código | 8 |
 | `apps/api/src/routes/stock.ts` | API — código | 7 |
 | `apps/api/src/routes/livestock.ts` | API — código | 5 |
@@ -109,34 +98,37 @@ Onde o produto ainda fala o nicho sem precisar. Ordem de ataque: quem concentra 
 | `apps/api/src/lib/empresa.ts` | API — código | 4 |
 | `apps/api/src/routes/admin.ts` | API — código | 4 |
 | `apps/api/src/routes/reports.ts` | API — código | 4 |
-| `apps/api/test/integration/existencia-funcional.test.ts` | API — testes | 4 |
-| `apps/api/test/integration/notificacao-escopo.test.ts` | API — testes | 4 |
+| `apps/api/test/integration/attachments-scope.test.ts` | API — testes | 4 |
 | `apps/api/src/lib/attachment-parent.ts` | API — código | 3 |
-| `apps/api/src/plugins/auth.ts` | API — código | 3 |
 | `apps/api/src/routes/fleet-hr.ts` | API — código | 3 |
-| `apps/api/test/integration/escopo-admin.test.ts` | API — testes | 3 |
-| `apps/api/test/integration/rebanho-autorizacao.test.ts` | API — testes | 3 |
 | `apps/api/test/integration/rls-matriz.test.ts` | API — testes | 3 |
 | `scripts/parity-map.mjs` | Scripts e gates | 3 |
 | `apps/api/src/lib/context.ts` | API — código | 2 |
+| `apps/api/src/plugins/auth.ts` | API — código | 2 |
 | `packages/domain/src/escopo-permissao.ts` | Pacotes compartilhados | 2 |
+| `apps/api/src/lib/escopo-admin.ts` | API — código | 1 |
 | `apps/api/src/routes/attachments.ts` | API — código | 1 |
-| _… mais 13 arquivo(s)_ | | 13 |
+| `apps/api/src/routes/sales.ts` | API — código | 1 |
+| `apps/api/src/routes/supply.ts` | API — código | 1 |
+| `apps/api/src/server.ts` | API — código | 1 |
+| `apps/api/src/services/stock-core.ts` | API — código | 1 |
+| `apps/api/test/unit/escopo-classificacao.test.ts` | API — testes | 1 |
+| _… mais 5 arquivo(s)_ | | 5 |
 
 ## Por símbolo (o que precisa migrar)
 
 | Símbolo atual | Natureza | Total | dos quais dívida | Destino canônico |
 | --- | --- | ---: | ---: | --- |
-| `farm_id` | dado | 572 | 66 | `empresa_id` |
-| `farms` | dado | 127 | 7 | `erp.empresas` |
-| `member_farms` | dado | 72 | 5 | `member_empresas` |
-| `ctx_farmId` | contrato | 14 | 0 | `empresaSelecionada` |
+| `farm_id` | dado | 434 | 4 | `empresa_id` |
+| `farms` | dado | 118 | 0 | `erp.empresas` |
+| `member_farms` | dado | 69 | 15 | `member_empresas` |
+| `ctx_farmId` | contrato | 9 | 0 | `empresaSelecionada` |
 | `farmIds` | contrato | 0 | 0 | `empresasPermitidas` |
-| `x_farm_id` | contrato | 81 | 17 | `X-Empresa-Id` |
-| `farmScope` | contrato | 5 | 1 | `escopoEmpresa` |
-| `allowedFarms` | contrato | 6 | 0 | `escopoEmpresa (@erp/plataforma)` |
-| `farms` | contrato | 83 | 6 | `/empresas` |
-| `fazenda` | texto | 661 | 51 | `Empresa (i18n: termos.empresa)` |
+| `x_farm_id` | contrato | 44 | 7 | `X-Empresa-Id` |
+| `farmScope` | contrato | 3 | 2 | `escopoEmpresa` |
+| `allowedFarms` | contrato | 6 | 3 | `escopoEmpresa (@erp/plataforma)` |
+| `farms` | contrato | 78 | 6 | `/empresas` |
+| `fazenda` | texto | 655 | 77 | `Empresa (i18n: termos.empresa)` |
 
 `dado` = exige migration e backfill · `contrato` = quebra clientes se mudar sem compatibilidade · `texto` = rótulo, resolvido por i18n.
 

@@ -15,16 +15,18 @@ anterior estar em produção e comprovado**:
 
 | Fase | O que sai | O que continua | Pré-requisito |
 | --- | --- | --- | --- |
-| **05A — Cliente canônico** | o tradutor de fio do web; `X-Farm-Id` do navegador; leitura de apelido legado na resposta | API bilíngue · banco bilíngue | PRE-BASE2-04 ativada em produção |
-| **05B — Servidor canônico** | borda legada da API: cabeçalho, normalização de entrada, apelidos de saída, nomes legados de tabela, CORS | banco bilíngue | 05A em produção, sem cliente anterior no ar |
+| **05A — Cliente canônico** ✅ | o tradutor de fio do web; `X-Farm-Id` do navegador; leitura de apelido legado na resposta | API bilíngue · banco bilíngue | PRE-BASE2-04 ativada em produção |
+| **05B — Servidor canônico** ⬅ esta fase | borda legada da API: cabeçalho, normalização de entrada, apelidos de saída, nomes legados de tabela, CORS, formato administrativo achatado, promoção de sessão | banco bilíngue | 05A em produção |
 | **05C — Purga física do schema** | colunas legadas, view `erp.farms`, gatilhos de espelho, sequência `entity='farm'` | — | 05B em produção |
+
+**05A foi mesclada e publicada** (`main` em `76e669d`). **05B é a fase atual.**
 
 A ordem é obrigatória: o cliente deixa de falar o idioma antigo **antes** de o servidor deixar de entendê-lo,
 e o banco só perde as colunas quando ninguém mais as lê.
 
 ---
 
-## 05A — Cliente canônico (esta fase)
+## 05A — Cliente canônico (concluída, em produção)
 
 O web passa a falar o contrato canônico ponta a ponta:
 
@@ -38,38 +40,26 @@ O web passa a falar o contrato canônico ponta a ponta:
 **O que NÃO muda em 05A:** a API continua aceitando `X-Farm-Id`, `farm_id` no corpo e na query, e o recurso
 `farms`; o banco continua com as colunas espelhadas e a view. Nenhuma migration destrutiva.
 
-### Sessão do navegador — a única migração desta fase
+### Sessão do navegador
 
-A sessão no `localStorage` é o único estado do cliente que atravessa um deploy: ninguém a migra quando o
-bundle novo sobe. A regra vive isolada em `packages/plataforma/src/sessao-empresa.ts` (pura, testada em
-`packages/plataforma/test/sessao-empresa.test.ts`) e o efeito, em `apps/web/src/lib/api.ts`:
+A sessão no `localStorage` é o único estado do cliente que atravessa um deploy. A regra vive isolada em
+`packages/plataforma/src/sessao-empresa.ts` (pura, testada) e o efeito, em `apps/web/src/lib/api.ts`.
+
+Na 05A ela PROMOVIA a chave anterior. Em **05B a promoção saiu** — o rollout que a justificava terminou, e
+nenhuma versão viva do cliente grava a chave antiga. O que ficou é o contrato de valor:
 
 | Sessão encontrada | O que acontece |
 | --- | --- |
-| só `empresaId`, UUID ou `null` | segue como está, sem escrever no armazenamento |
-| só a chave antiga | promove, **regrava** no formato canônico e apaga a chave antiga |
-| as duas, mesmo valor | limpa a sobra e segue |
-| as duas, valores **diferentes** | **fail-safe**: a sessão é apagada e o login é exigido |
-| empresa gravada fora do contrato (número, objeto, `""`, `"abc"`, `"todas"`, UUID malformado) | **inválida**: a sessão é apagada e o login é exigido |
-| nenhuma das duas chaves | **inválida** — ver abaixo |
+| `empresaId` UUID ou `null` | segue como está, sem escrever no armazenamento |
+| `empresaId` fora do contrato (número, objeto, `""`, `"abc"`, `"todas"`, UUID malformado) | **inválida**: sessão apagada, login exigido |
+| sem a chave canônica (inclusive sessão dormante da versão anterior) | **inválida**: sessão apagada, login exigido |
 
-O fail-safe não é excesso de zelo. Os dois clientes preservam a chave que não conhecem ao regravar a
-sessão, então, quando os valores divergem, o armazenamento **não diz** qual foi escrito por último.
-Escolher um seria decidir no escuro em qual empresa o usuário vai lançar — e empresa errada não é detalhe
-de interface, é lançamento no lugar errado.
+`"todas"` nunca entra: "todas as empresas" é **escopo de leitura**, resolvido no servidor a cada requisição,
+não empresa persistida. E a validação não é zelo excessivo — `localStorage` é editável e sobrevive a
+qualquer versão do cliente; contrato que só o servidor faz cumprir não é contrato.
 
-O valor também é contrato: `empresaId` é `null` ou UUID. `"todas"` nunca entra — "todas as empresas" é
-**escopo de leitura**, resolvido no servidor a cada requisição, não empresa persistida. Sem essa validação,
-um `localStorage` editado à mão viajaria em `X-Empresa-Id` e voltaria como 422 numa tela sem relação com a
-causa; o backend continua sendo a autoridade, mas contrato que só o servidor faz cumprir não é contrato.
-
-**Sessão sem nenhuma das duas chaves é inválida, não migrada para `null`.** A evidência: todo cliente que já
-gravou sessão neste produto gravou a chave da empresa explicitamente — `empresaId: null` hoje e a chave
-anterior com `null` antes da PRE-BASE2-03 (histórico de `apps/web/src/app/login/page.tsx`). Não há versão
-legítima a acomodar, e inventar compatibilidade sem prova é como um fallback vira arquitetura.
-
-Essa promoção é a única exceção declarada do cliente e **sai em 05B**, quando nenhum cliente anterior
-puder mais gravar a chave antiga. A **validação** fica: ela é contrato canônico, não ponte.
+O custo de ter removido a promoção é um login a mais para quem está dormante há muito tempo. O custo de
+mantê-la seria uma ponte que ninguém mais atravessa pedindo manutenção a cada mudança.
 
 ### Catraca
 
@@ -89,56 +79,93 @@ quebraria a autorização.
 
 ---
 
-## 05B — Inventário do que o servidor deverá remover
+## 05B — Servidor canônico (esta fase)
 
-Levantado em PRE-BASE2-05A, **sem implementar**.
+A API passa a ter **uma** língua. Não é "parar de traduzir e ignorar o resto": entrada antiga conhecida é
+**recusada**, nunca promovida e nunca descartada em silêncio.
 
-| Item | Onde | Observação |
+| O que saiu | Onde estava | Virou |
 | --- | --- | --- |
-| Adaptador de borda inteiro | `apps/api/src/lib/compat-empresa.ts` | tradução de entrada, apelidos de saída, resolução de cabeçalho e nomes legados de tabela |
-| `X-Farm-Id` no CORS | `apps/api/src/server.ts` (`allowedHeaders`) | sair **junto** com o resolvedor, nunca antes |
-| Resolução do cabeçalho legado | `resolverEmpresaSelecionada` | mantém hoje o conflito 422 entre canônico e legado divergentes |
-| Contrato legado `farm_ids` | `apps/api/src/lib/escopo-admin.ts` | borda de administração; lista vazia = todas (docs/MULTI-COMPANY-CONTRACT.md §6) |
-| Chave de recurso legada | `packages/domain/src/resources/index.ts` (`CHAVES_LEGADAS`) | `farms` → `empresas` |
-| Promoção de sessão do cliente | `packages/plataforma/src/sessao-empresa.ts` + o efeito em `apps/web/src/lib/api.ts` | só depois que nenhum cliente anterior puder gravar a chave antiga |
-| Testes da ponte | `apps/api/test/integration/compat-empresa.test.ts` · `apps/api/test/unit/empresa-bridge.test.ts` | viram prova histórica: saem com o que provam |
-| Suítes escritas no idioma anterior | `apps/api/test/integration/api.test.ts` · `farm-scope.test.ts` · `farm-scope-guard.test.ts` · `setup.ts` | reescrever no canônico, não apagar a cobertura |
-| Provas de espelho no banco | `packages/db/test/empresa-compat.test.ts` · `backfill-empresas.test.ts` · `backfill-owner-restrito.test.ts` · `responsavel-tenant.test.ts` · `notificacao-legado.test.ts` | dependem das colunas e da view: saem com 05C |
-| E2E do fio | `apps/web/e2e/empresa-canonica.spec.ts` (parte da sessão) · `apps/web/e2e/skew-api-producao.spec.ts` (asserção "segue bilíngue") | o resto do arquivo permanece |
-| Redirecionamentos de navegação | `apps/web/nav.registry.mjs` (7 ocorrências) | **decisão: ficam** — ver abaixo |
+| Adaptador de borda inteiro | `apps/api/src/lib/compat-empresa.ts` | **arquivo apagado** |
+| `X-Farm-Id` no CORS e no resolvedor | `server.ts` · `resolverEmpresaSelecionada` | `lib/empresa-header.ts`, que só aceita `X-Empresa-Id` |
+| Normalização de corpo e query | hook `preValidation` | recusa em `lib/contrato-legado.ts` |
+| Apelidos de resposta | hook `preSerialization` | nada — a resposta é canônica |
+| `farms` no `/auth/context` | `routes/auth.ts` | só `empresas` |
+| Nomes legados de tabela | `TABELAS_LEGADAS` / `tabelaCanonica` | `entity` canônico em anexos |
+| Chave de recurso legada | `CHAVES_LEGADAS` em `@agro/domain` | só `empresas` resolve |
+| Contrato admin achatado | `deFarmIdsLegado` / `paraFarmIdsLegado` | só `escopos_empresas`; `empresa_ids` **recusado** |
+| Alias de coluna em relatório salvo | `campoCanonico` | nada (produção tinha **zero** definições legadas) |
+| Promoção de sessão | `sessao-empresa.ts` | só validação canônica |
 
-### Dependência inesperada encontrada
+### Por que RECUSAR e não ignorar
 
-`SEQUENCIA_EMPRESA = "farm"` no backend **não** é compatibilidade de fio: é a chave de uma sequência
-persistida (`erp.code_sequences`, 1 linha em produção). Renomeá-la exige migration de dado e pertence a
-**05C**, não a 05B. Trocar a constante sem migrar reiniciaria a numeração de empresas do zero.
+Os schemas de entrada são `z.object`, que **descarta chave desconhecida**. Tirar `farm_id` do schema não
+seria "remover o suporte" — seria trocar tradução por descarte silencioso:
 
-### Decisão sobre os 7 redirecionamentos de rota
+- corpo: `farm_id: <empresa B>` sumiria e o lançamento iria para a empresa do **contexto**. O cliente pediu
+  B, o servidor grava em A, e nada aparece até o relatório;
+- query: `farm_id__eq` descartado devolve a lista **sem** o recorte — mais linhas do que foram pedidas;
+- cabeçalho: sem empresa selecionada a leitura abre para **todas** as empresas permitidas no módulo.
 
-`/cadastros/farms` → `/cadastros/empresas` (e a variante com `:id`) **não são fio**: são links que usuários
-guardaram em favoritos e que existem fora do nosso controle. Removê-los em 05A ou 05B quebraria um
-bookmark sem ganho nenhum — eles não sustentam nenhuma compatibilidade de protocolo. **Ficam até 05C**,
-onde saem junto com a última referência ao nome antigo, e o teste que os cobre vive em
-`apps/web/e2e/empresa-canonica.spec.ts` sob "compatibilidade de NAVEGAÇÃO".
+Nos três casos o efeito é ampliação silenciosa de escopo. Por isso existe `lib/contrato-legado.ts`: uma
+**lápide**, não um tradutor. Ela nomeia o contrato anterior só para recusá-lo, olha apenas o nível de cima
+do corpo e da query (jsonb do usuário continua intocado) e não vigia vocabulário de domínio
+(`farm_transfer`, `farms.view`) — esses são contratos do servidor, com vida própria.
 
----
+`empresa_ids` é o único nome que exigiu recusa **local**: ele continua canônico e legítimo como filtro de
+empresas dos painéis; o que morreu foi o seu uso como configuração de acesso de um membro.
+
+### O que a 05B NÃO removeu
+
+`SEQUENCIA_EMPRESA = "farm"` — agora sozinha em `apps/api/src/lib/sequencia-empresa.ts`. **Não é nome de
+fio**: é a chave de uma sequência persistida (`erp.code_sequences`, 1 linha em produção). Trocá-la sem
+migrar o dado reiniciaria a numeração do cadastro de Empresa, dando a uma empresa nova um código que já
+existe. A troca é atômica com o `update`, na 05C. Há teste provando que a numeração **continua** de onde
+estava.
+
+Os redirecionamentos de rota (`/cadastros/farms` → `/cadastros/empresas`) também ficam: são favoritos de
+usuário, fora do nosso controle, e navegação não é protocolo. Saem na 05C.
+
+### Version skew: agora os dois sentidos
+
+Na 05A só um sentido era real. Na 05B quem vira é o servidor, e ele pode subir antes ou depois do web:
+
+| Sentido | O que prova | Onde |
+| --- | --- | --- |
+| web 05B × API 05A (base) | o web desta PR funciona sobre a API no ar | `playwright.skew.config.ts` |
+| **web 05A (base) × API 05B** | **o bundle em produção não depende de nenhum resquício legado** | `playwright.skew-web-anterior.config.ts` |
+
+O segundo é o que esta fase realmente arrisca, e nos dois casos o outro lado é montado do próprio
+repositório por `scripts/api-anterior.mjs` — binário e bundle reais, não mock.
 
 ## 05C — Inventário dos objetos físicos
 
-Levantado em PRE-BASE2-05A por leitura do banco de **produção**, **sem implementar**.
+Remedido em PRE-BASE2-05B **contra o schema real** (banco de integração, que roda as mesmas migrations de
+produção), **sem implementar**. A contagem de tabelas caiu de 53 para 49 em relação ao levantamento da 05A:
+aquele número vinha de estimativa, este vem de consulta.
 
 ### Schema
 
 | Objeto | Quantidade | Dependências | Migration | Rollback |
 | --- | ---: | --- | --- | --- |
-| Colunas legadas (`farm_id`, `origin_farm_id`, `destination_farm_id`) | **56** em **53** tabelas | FKs compostas, índices, RLS, gatilhos de espelho | `drop column` por tabela, depois dos gatilhos | recriar coluna + repopular a partir da canônica (o dado não se perde: é espelho) |
+| Colunas legadas (`farm_id`, `origin_farm_id`, `destination_farm_id`) | **56** em **49** tabelas | FKs compostas, índices, RLS, gatilhos de espelho | `drop column` por tabela, depois dos gatilhos | recriar coluna + repopular a partir da canônica (o dado não se perde: é espelho) |
 | View `erp.farms` | **1** | consultas legadas, testes de espelho | `drop view` | `create view` (definição versionada na 0014) |
-| Gatilhos de sincronização (`erp.sincronizar_empresa*`) | **52** | as colunas acima | `drop trigger` + `drop function` **antes** das colunas | recriar a partir da 0014 |
-| Sequência `erp.code_sequences` com `entity='farm'` | **1 linha** | numeração de Empresa em uso | `update ... set entity='empresa'` + troca de `SEQUENCIA_EMPRESA` no mesmo deploy | `update` inverso |
+| Gatilhos de sincronização `trg_sync_*` | **52** | as colunas acima | `drop trigger` **antes** das colunas | recriar a partir da 0014 |
+| Funções `erp.sincronizar_empresa*` | **3** | os gatilhos acima | `drop function` depois dos gatilhos | recriar a partir da 0014 |
+| Chaves estrangeiras que incluem coluna legada | **52** | integridade composta (organização + empresa) | cair junto com a coluna | recriar a partir da 0014 |
+| Índices que incluem coluna legada | **8** | desempenho das consultas legadas | cair junto com a coluna | recriar se a leitura legada voltar (não deve) |
+| Política de RLS citando coluna legada | **1** (`erp.empresa_cost_centers` → `api_child`) | leitura do filho pelo pai | reescrever no canônico **antes** de dropar a coluna | versão anterior da política |
+| Sequência `erp.code_sequences` com `entity='farm'` | **1 linha** (última medição de produção) | numeração de Empresa em uso | `update ... set entity='empresa'` + troca de `SEQUENCIA_EMPRESA` no MESMO deploy | `update` inverso |
+
+A política de RLS é a dependência que o levantamento da 05A não tinha visto, e é a mais perigosa da lista:
+dropar a coluna antes de reescrevê-la quebraria a leitura do filho, não o schema — falha de autorização,
+não erro de migration.
 
 ### Dados persistidos com nomes antigos — medição real
 
-Esta era a pergunta aberta do plano, e a resposta é melhor do que se supunha:
+Esta era a pergunta aberta do plano, e a resposta é melhor do que se supunha. Os números abaixo são a
+**última medição conhecida de produção** (feita na PRE-BASE2-04, com credencial disponível); a 05B não teve
+acesso ao banco de produção e não os remediu. Devem ser refeitos imediatamente antes da 05C:
 
 | Conteúdo | Total | Com nome legado |
 | --- | ---: | ---: |
@@ -151,15 +178,19 @@ Esta era a pergunta aberta do plano, e a resposta é melhor do que se supunha:
 **Conclusão: 05C não precisa de migration de normalização de dados.** É uma purga de DDL. Nenhum JSON
 arbitrário de histórico/auditoria será tocado.
 
-Essa medição vale para o estado atual de produção e deve ser **refeita imediatamente antes da 05C** — o web
-canônico já não cria conteúdo com nome legado (a catraca garante), mas a API segue bilíngue até 05B, e um
-cliente anterior ainda poderia gravar.
+Desde a 05B nenhuma porta escreve conteúdo com nome legado: o cliente é canônico desde a 05A e a API recusa
+o contrato anterior. Ainda assim a medição deve ser **refeita imediatamente antes da 05C** — o que se mede
+aqui é o passado, e o passado só se conhece olhando.
 
 ### Ordem segura de remoção em 05C
 
-1. sequência: `entity='farm'` → `'empresa'` **junto** com a troca de `SEQUENCIA_EMPRESA` no código;
-2. gatilhos de espelho e suas funções;
-3. view `erp.farms`;
-4. colunas legadas, tabela a tabela, com as FKs compostas e índices que dependem delas;
-5. redirecionamentos de rota e o que restar de vocabulário técnico legado;
-6. inventário final: **dívida = 0**.
+1. sequência: `entity='farm'` → `'empresa'` **junto** com a troca de `SEQUENCIA_EMPRESA` no código (atômico:
+   separar os dois reinicia a numeração do cadastro);
+2. **política de RLS** que cita coluna legada, reescrita no canônico — antes de qualquer `drop`;
+3. gatilhos de espelho e, depois deles, suas funções;
+4. view `erp.farms`;
+5. colunas legadas, tabela a tabela, com as FKs compostas e os índices que dependem delas;
+6. redirecionamentos de rota e o que restar de vocabulário técnico legado;
+7. a lápide `apps/api/src/lib/contrato-legado.ts` — e só com tráfego real observado, não por suposição de
+   que ninguém mais fala o idioma antigo;
+8. inventário final: **dívida = 0**.

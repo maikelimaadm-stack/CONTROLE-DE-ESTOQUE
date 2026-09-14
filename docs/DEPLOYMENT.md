@@ -30,8 +30,8 @@ implantar sem janela de indisponibilidade e sem exigir que banco, API e web suba
 | Fase | O que sobe | Estado do sistema | Pode voltar? |
 | --- | --- | --- | --- |
 | **1. EXPAND (banco)** | `0014` + `0015` no pre-deploy | `erp.empresas` existe, `erp.farms` vira view, toda tabela de escopo tem as DUAS colunas sincronizadas por gatilho, RLS já recorta por empresa | Sim — a API anterior continua funcionando: ela escreve `farm_id` e o gatilho preenche `empresa_id` |
-| **2. API** | binário novo da API | Aceita `X-Empresa-Id` **e** `X-Farm-Id`; traduz payload legado na borda; responde com os DOIS nomes | Sim — o binário anterior volta a rodar contra o mesmo banco |
-| **3. WEB** | build novo do frontend | Fala EMPRESA por dentro e LEGADO no fio: envia só `X-Farm-Id`, pede `/api/resources/farms`, manda `farm_id` no corpo e na query, e promove a resposta para o canônico antes de a tela ver o dado | Sim — o build anterior continua servido pela API nova |
+| **2. API** | binário novo da API | **Desde PRE-BASE2-05B fala só o canônico**: aceita `X-Empresa-Id`, recebe e responde `empresa_*`, e RECUSA o contrato anterior com 422 | Sim — o binário anterior volta a rodar contra o mesmo banco (o espelho de coluna continua até 05C) |
+| **3. WEB** | build novo do frontend | **Canônico ponta a ponta desde PRE-BASE2-05A**: `X-Empresa-Id`, `/api/resources/empresas`, `empresa_id` no corpo e na query, resposta consumida como vem | Sim — o build da 05A continua servido pela API da 05B (provado nos dois sentidos do version skew) |
 | **4. COMPATIBILIDADE (observação)** | nada | Janela em que os dois idiomas convivem; o inventário (`docs/FARM-DEPENDENCY-INVENTORY.md`) mede o que falta | — |
 
 Ordem obrigatória: **1 → 2 → 3**. Subir a API nova antes do banco é o único caminho que quebra (ela escreve
@@ -49,8 +49,8 @@ no navegador — agora provando que o canônico atravessa, e reprovando se a API
 
 | Fase | O que sai | O que continua |
 | --- | --- | --- |
-| **05A — Cliente canônico** | tradutor de fio do web, `X-Farm-Id` do navegador | API e banco bilíngues |
-| **05B — Servidor canônico** | borda legada da API (cabeçalho, entrada, apelidos, CORS) | banco bilíngue |
+| **05A — Cliente canônico** ✅ publicada | tradutor de fio do web, o cabeçalho anterior do navegador | API e banco bilíngues |
+| **05B — Servidor canônico** ⬅ atual | borda legada da API (cabeçalho, entrada, apelidos, CORS, recurso, escopo admin achatado, promoção de sessão) | banco bilíngue |
 | **05C — Purga física** | colunas legadas, view `erp.farms`, gatilhos de espelho, sequência `entity='farm'` | — |
 
 Cada fase só começa depois de a anterior estar em produção e comprovada. **05A não remove compatibilidade
