@@ -113,11 +113,44 @@ export const elegivelAIdGlobal = (tipoEntidade: string): boolean => POR_TIPO.has
 export const entidadeIdGlobal = (tipoEntidade: string): EntidadeIdGlobal | undefined => POR_TIPO.get(tipoEntidade);
 export const tiposEntidadeIdGlobal = (): string[] => ENTIDADES_ID_GLOBAL.map((e) => e.tipoEntidade);
 
+/**
+ * ÍNDICE POR TABELA — a ponte de que as listagens genéricas precisam, e a razão de ela existir aqui.
+ *
+ * Quem lista não conhece "tipo de entidade": o Resource Registry recebe `def.table` ("products"), o helper
+ * de documentos de estoque recebe `table` ("invoices"). Sem um índice central, cada módulo acabaria com o
+ * seu próprio `switch (tabela)` — e um switch esquecido é uma listagem sem ID Global que ninguém percebe.
+ * Derivar do MESMO catálogo é o que faz a lista de entidades continuar sendo UMA.
+ *
+ * O nome é normalizado com e sem o schema porque as duas grafias circulam no código (`erp.products` no
+ * catálogo, `products` nos registries). Tabela fora do catálogo devolve `undefined`, sem erro: a maioria das
+ * tabelas não tem ID Global, e isso é o normal, não uma falha.
+ */
+const chaveDeTabela = (tabela: string): string => tabela.trim().toLowerCase().replace(/^erp\./, "");
+const POR_TABELA = new Map(ENTIDADES_ID_GLOBAL.map((e) => [chaveDeTabela(e.tabela), e]));
+
+export const entidadeIdGlobalPorTabela = (tabela: string): EntidadeIdGlobal | undefined => POR_TABELA.get(chaveDeTabela(tabela));
+/** Tipo de entidade desta tabela, ou `undefined` quando a tabela não tem ID Global. */
+export const tipoEntidadeDaTabela = (tabela: string): string | undefined => entidadeIdGlobalPorTabela(tabela)?.tipoEntidade;
+
 /** Rota + permissão deste registro. `linha` é sempre a linha VIVA do banco. `null` = negar. */
 export function resolverRegistroGlobal(tipoEntidade: string, idEntidade: string, linha: Readonly<Record<string, unknown>> = {}): RegistroResolvido | null {
   const entidade = POR_TIPO.get(tipoEntidade);
   return entidade ? resolverRegistroDaEntidade(entidade, idEntidade, linha) : null;
 }
 
-/** Consistência do catálogo (testes e gate). Lista vazia = íntegro. */
-export const validarRegistroIdGlobal = (): string[] => validarEntidadesIdGlobal(ENTIDADES_ID_GLOBAL);
+/**
+ * Consistência do catálogo (testes e gate). Lista vazia = íntegro.
+ *
+ * Além do mecanismo neutro, verifica aqui o que só o catálogo de produto sabe: DUAS entidades não podem
+ * apontar para a MESMA tabela. Se apontassem, `entidadeIdGlobalPorTabela` teria de eleger uma — e a listagem
+ * genérica daquela tabela passaria a numerar registros como se fossem de outro tipo. Uma tabela com dois
+ * tipos é uma decisão de contrato (variantes resolvem isso dentro de UMA entidade), não um acidente a
+ * tolerar em silêncio.
+ */
+export const validarRegistroIdGlobal = (): string[] => {
+  const problemas = validarEntidadesIdGlobal(ENTIDADES_ID_GLOBAL);
+  const porTabela = new Map<string, string[]>();
+  for (const e of ENTIDADES_ID_GLOBAL) { const k = chaveDeTabela(e.tabela); porTabela.set(k, [...(porTabela.get(k) ?? []), e.tipoEntidade]); }
+  for (const [tabela, tipos] of porTabela) if (tipos.length > 1) problemas.push(`${tabela}: tabela declarada por mais de uma entidade (${tipos.join(", ")}) — o índice por tabela ficaria ambíguo`);
+  return problemas;
+};

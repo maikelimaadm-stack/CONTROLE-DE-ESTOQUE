@@ -8,7 +8,7 @@ import { empresaScope, exigirEmpresaDeLancamento, hasPermission, scopedById, typ
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { createTitles } from "../services/financial-core.js";
-import { atribuirIdGlobal } from "../lib/id-global.js";
+import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -128,7 +128,7 @@ export default async function supplyRoutes(app: FastifyInstance) {
     const wl = wrapListing(`select r.id, r.code, r.request_date, r.created_at, r.description, r.priority, r.request_type, r.status, r.status_changed_at, r.estimated_total, r.approved_total, r.invoice_number, r.updated_at, r.version, f.name as empresa_name, u.name as requester_name, cu.name as current_responsible_name, extract(epoch from now()-r.status_changed_at)/3600 as hours_in_status, (select count(*) from erp.purchase_quotations q where q.request_id=r.id)::int as quotation_count, (select max_hours from erp.supply_status_sla s where s.organization_id=r.organization_id and s.status=r.status) as sla_hours, r.invoice_id is not null as launched from erp.purchase_requests r join erp.empresas f on f.id=r.empresa_id left join erp.users u on u.id=r.requester_user_id left join erp.users cu on cu.id=r.current_responsible_user_id where ${where.join(" and ")} order by r.request_date desc, r.created_at desc`, params, req.query as Record<string, unknown>, q);
     const total = await ctx.tx.query<{ n: string }>(wl.countSql, wl.params);
     const r = await ctx.tx.query(wl.pageSql, wl.params);
-    return { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), status_label: PURCHASE_STATUS_LABELS[(x as { status: PurchaseRequestStatus }).status], sla: slaStatus(new Date((x as { status_changed_at: string }).status_changed_at), new Date(), Number((x as { sla_hours: number | null }).sla_hours ?? 0)) })), total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
+    return paginaComIdGlobal(ctx, "purchase_requests", { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), status_label: PURCHASE_STATUS_LABELS[(x as { status: PurchaseRequestStatus }).status], sla: slaStatus(new Date((x as { status_changed_at: string }).status_changed_at), new Date(), Number((x as { sla_hours: number | null }).sla_hours ?? 0)) })), total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize });
   }));
   app.get("/supply/requests/:id", async (req) => runService(app, req, "purchase_requests.view", async (ctx) => {
     const id = (req.params as { id: string }).id; const r = await loadRequest(ctx, id);

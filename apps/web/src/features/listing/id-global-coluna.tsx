@@ -1,0 +1,59 @@
+"use client";
+import * as React from "react";
+import { formatarIdGlobal } from "@erp/plataforma";
+import type { Base1Column, Row } from "@/features/base1/types";
+import type { Column } from "@/components/ui/data-table";
+
+/**
+ * ID GLOBAL NA LISTAGEM (PRE-BASE2-05B.1) — a coluna `#N`, num lugar só.
+ *
+ * O número já existia: no banco, na tela de detalhe e na busca por `#55`. O que faltava era o caminho de
+ * ida — ver o número ANTES de precisar dele. Sem isso o ID Global só servia a quem já o conhecesse, que é o
+ * contrário de um localizador.
+ *
+ * O QUE ESTA COLUNA É, E O QUE ELA NÃO É
+ * --------------------------------------
+ *  • É EXIBIÇÃO do que o servidor mandou em `id_global`. O cliente não consulta o índice, não numera nada e
+ *    não deriva `#N` de coisa alguma — se a linha veio sem número, a coluna mostra a ausência.
+ *  • NÃO é o `código` do documento. Código é sequência POR ENTIDADE (duas entradas diferentes podem ser
+ *    ambas "1"); `#N` é único na ORGANIZAÇÃO inteira. Por isso as duas colunas convivem: trocar uma pela
+ *    outra perderia informação em qualquer dos sentidos.
+ *  • NÃO é endereço. A linha continua abrindo pela rota canônica com o UUID; o número nunca vira URL.
+ *  • NÃO é ordenável nem filtrável AQUI: `id_global` não é coluna das tabelas de negócio (mora em
+ *    `erp.registros_globais`), então prometer ordenação seria prometer o que o backend não faz. Quem procura
+ *    por número usa a busca global, que resolve `#N` na porta certa, com a autorização daquele registro.
+ *
+ * AUSÊNCIA É INFORMAÇÃO, NÃO ERRO
+ * -------------------------------
+ * `null` aparece em dois casos legítimos: acervo anterior ao backfill e EFEITO INTERNO declarado (uma
+ * transferência de rebanho não é lançamento com identidade própria). Inventar um número para preencher a
+ * célula criaria identidade onde o contrato diz que não há — por isso a célula mostra um traço discreto.
+ */
+export const CHAVE_COLUNA_ID_GLOBAL = "id_global";
+export const ROTULO_COLUNA_ID_GLOBAL = "ID Global";
+/** Largura fixa: `#` + até 6 dígitos em fonte tabular, sem empurrar as colunas de negócio. */
+const LARGURA = 96;
+
+/** O número como TEXTO (célula de tooltip, cards, exportação CSV). Vazio quando não há número. */
+export const textoIdGlobal = (valor: unknown): string => (typeof valor === "number" && Number.isFinite(valor) ? formatarIdGlobal(valor) : "");
+
+export function IdGlobalCell({ valor, rotulo }: { valor: unknown; rotulo?: string }) {
+  const texto = textoIdGlobal(valor);
+  if (!texto) return <span className="text-slate-400" title="Registro sem ID Global">–</span>;
+  // Sem texto auxiliar de leitor de tela aqui: o CABEÇALHO da coluna já diz "ID Global", e repeti-lo em cada
+  // linha faria a tabela ser lida como "Identificador global #1, Identificador global #2…" a cada célula.
+  return <span className="id-global" data-testid="id-global-celula" title={`${rotulo ?? "Registro"} · identificador único desta organização`}>{texto}</span>;
+}
+
+/** Coluna do MODELO BASE1 (listagens genéricas e de lançamentos). */
+export const colunaIdGlobalBase1 = (rotulo?: string): Base1Column => ({
+  key: CHAVE_COLUNA_ID_GLOBAL, label: ROTULO_COLUNA_ID_GLOBAL, sortable: false, width: LARGURA,
+  render: (r: Row) => <IdGlobalCell valor={r[CHAVE_COLUNA_ID_GLOBAL]} rotulo={rotulo} />,
+  text: (r: Row) => textoIdGlobal(r[CHAVE_COLUNA_ID_GLOBAL])
+});
+
+/** Mesma coluna para as listagens que montam a grade por conta própria (DataTable). */
+export const colunaIdGlobalTabela = <T extends Record<string, unknown>>(rotulo?: string): Column<T> => ({
+  key: CHAVE_COLUNA_ID_GLOBAL, label: ROTULO_COLUNA_ID_GLOBAL, sortable: false, width: LARGURA,
+  render: (r: T) => <IdGlobalCell valor={r[CHAVE_COLUNA_ID_GLOBAL]} rotulo={rotulo} />
+});

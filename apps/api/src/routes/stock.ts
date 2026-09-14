@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate } from "@agro/shared";
-import { batchCost } from "@agro/domain";
+import { batchCost, tipoEntidadeDaTabela } from "@agro/domain";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { consultaEscopada, empresaScope, empresaScopePar, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaPermitida, empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
@@ -10,7 +10,7 @@ import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, currentBalance, lineTotal } from "../services/stock-core.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
-import { atribuirIdGlobal } from "../lib/id-global.js";
+import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform((v) => String(v));
 const date = z.string().refine(isISODate, "Data inválida");
@@ -35,7 +35,10 @@ async function listDocs(ctx: ServiceCtx, table: string, dateCol: string, query: 
   const w = wrapListing(`select d.*, f.name as empresa_name, u.name as created_by_name ${extraSelect} from erp.${table} d left join erp.empresas f on f.id=d.empresa_id left join erp.users u on u.id=d.created_by ${joins} where ${where.join(" and ")} order by d.${dateCol} desc, d.created_at desc`, params, query, q);
   const total = await ctx.tx.query<{ n: string }>(w.countSql, w.params);
   const r = await ctx.tx.query(w.pageSql, w.params);
-  return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
+  const pagina = { items: r.rows as Record<string, unknown>[], total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
+  // O tipo de entidade sai da TABELA que este helper já recebe — nada de `switch` por documento aqui dentro.
+  const tipoEntidade = tipoEntidadeDaTabela(table);
+  return tipoEntidade ? paginaComIdGlobal(ctx, tipoEntidade, pagina) : pagina;
 }
 /**
  * Detalhe de documento de estoque. `headerWarehouse`: o armazém está no cabeçalho (baixa direta) e as linhas
@@ -352,7 +355,7 @@ export default async function stockRoutes(app: FastifyInstance) {
     if (f.start_date) { params.push(f.start_date); where.push(`d.transfer_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`d.transfer_date<=$${params.length}`); }
     const total = await ctx.tx.query<{ n: string }>(`select count(*) n from erp.warehouse_transfers d where ${where.join(" and ")}`, params);
     const r = await ctx.tx.query(`select d.*, wo.description as origin_warehouse_name, wd.description as destination_warehouse_name, fo.name as empresa_origem_name, fd.name as empresa_destino_name, u.name as created_by_name, (select count(*) from erp.warehouse_transfer_items i where i.transfer_id=d.id)::int as item_count from erp.warehouse_transfers d left join erp.warehouses wo on wo.id=d.origin_warehouse_id left join erp.warehouses wd on wd.id=d.destination_warehouse_id left join erp.empresas fo on fo.id=d.empresa_origem_id left join erp.empresas fd on fd.id=d.empresa_destino_id left join erp.users u on u.id=d.created_by where ${where.join(" and ")} order by d.transfer_date desc, d.created_at desc limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
-    return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize };
+    return paginaComIdGlobal(ctx, "warehouse_transfers", { items: r.rows as Record<string, unknown>[], total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize });
   }));
   app.get("/stock/transfers/:id", async (req) => runService(app, req, "warehouse_transfers.view", async (ctx) => {
     const id = (req.params as { id: string }).id;

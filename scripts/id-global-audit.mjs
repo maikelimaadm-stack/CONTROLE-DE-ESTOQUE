@@ -123,6 +123,38 @@ for (const e of ENTIDADES_ID_GLOBAL) {
 const shell = fs.readFileSync(path.join(RAIZ, "apps/web/src/components/layout/shell.tsx"), "utf8");
 if (!/IdGlobalDaRotaAtual/.test(shell)) aviso("exibição: a shell não monta a identidade do registro (#N)");
 
+// ---------- 4c. LISTAGEM: toda entidade elegível mostra o #N na lista ----------
+// O #N só é um localizador se houver onde LER o número antes de digitá-lo. Enquanto ele existia apenas na
+// tela de detalhe, servia a quem já o conhecesse — o contrário de um localizador. Aqui se prova que cada
+// entidade do catálogo tem uma listagem que anexa o número, e que os dois caminhos GENÉRICOS (Resource
+// Registry e documentos de estoque) continuam derivando o tipo da TABELA, e não de um `switch` à mão.
+const stockSrc = fs.readFileSync(path.join(RAIZ, "apps/api/src/routes/stock.ts"), "utf8");
+if (!/tipoEntidadeDaTabela\(table\)/.test(stockSrc)) aviso("listagem: o helper de documentos de estoque não deriva o tipo da tabela — cada documento novo nasceria sem ID Global na lista");
+if (!/tipoEntidadeDaTabela\(def\.table\)/.test(generica)) aviso("listagem: a listagem genérica de recursos não deriva o tipo da tabela do recurso");
+
+const { RESOURCES } = await import(path.join(RAIZ, "packages/domain/dist/index.js"));
+const listadas = new Set();
+const declaradasPorEngano = new Set();
+for (const arquivo of fontes) {
+  for (const linha of fs.readFileSync(arquivo, "utf8").split("\n")) {
+    // chamada explícita (rotas especializadas)
+    for (const m of linha.matchAll(/paginaComIdGlobal\(ctx,\s*"([a-z_]+)"/g)) { listadas.add(m[1]); declaradasPorEngano.add(m[1]); }
+    // tipo passado como último argumento dos paginadores locais de pecuária e frota
+    for (const m of linha.matchAll(/\b(?:paged|list)\(ctx,[^\n]*,\s*"([a-z_]+)"\s*\)/g)) listadas.add(m[1]);
+    // documentos de estoque: o tipo É a tabela que o helper recebe
+    for (const m of linha.matchAll(/listDocs\(ctx,\s*"([a-z_]+)"/g)) listadas.add(m[1]);
+  }
+}
+// a listagem genérica cobre os cadastros do Resource Registry cuja tabela está no catálogo
+for (const def of RESOURCES) { const e = ENTIDADES_ID_GLOBAL.find((x) => x.tabela.replace(/^erp\./, "") === String(def.table).replace(/^erp\./, "")); if (e) listadas.add(e.tipoEntidade); }
+
+for (const e of ENTIDADES_ID_GLOBAL) {
+  if (!listadas.has(e.tipoEntidade)) aviso(`listagem sem ID Global: ${e.tipoEntidade} está no catálogo mas nenhuma listagem anexa o número — o usuário nunca veria o #N desses registros`);
+}
+for (const t of declaradasPorEngano) {
+  if (!tipos.includes(t)) aviso(`listagem: "${t}" é enriquecido como entidade de ID Global mas não existe no catálogo — o runtime recusaria a listagem inteira`);
+}
+
 // ---------- 4b. CACHE do cliente carrega a ORGANIZAÇÃO ----------
 // `#55` existe em quase toda organização e aponta para coisas diferentes em cada uma. Uma chave
 // `["id-global", 55]` deixaria o resultado da organização anterior navegável depois da troca. Cada
@@ -148,4 +180,4 @@ if (erros.length) {
   for (const e of erros) console.error(`  - ${e}`);
   process.exit(1);
 }
-console.log(`id-global-audit: OK (${ENTIDADES_ID_GLOBAL.length} entidades, ${portas} porta(s) de escrita direta + porta genérica, exibição central derivada do catálogo)`);
+console.log(`id-global-audit: OK (${ENTIDADES_ID_GLOBAL.length} entidades, ${portas} porta(s) de escrita direta + porta genérica, ${listadas.size} listagem(ns) com #N, exibição central derivada do catálogo)`);

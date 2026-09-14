@@ -8,7 +8,7 @@ import { hasPermission } from "../lib/context.js";
 import { contarNaoLidas, criarNotificacao, visibilidadeNotificacaoSql } from "../lib/notificacao.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { escopoEmpresaSchema, gravarEscoposAuditado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
-import { atribuirIdGlobal } from "../lib/id-global.js";
+import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 import { recusarEscopoAchatado } from "../lib/contrato-legado.js";
 
 /**
@@ -24,7 +24,7 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ---------- Perfis ----------
   app.get("/admin/roles", async (req) => runService(app, req, "roles.view", async (ctx) => {
     const r = await ctx.tx.query("select r.id, r.name, r.description, r.is_system, r.created_at, r.updated_at, (select count(*) from erp.role_permissions rp where rp.role_id=r.id)::int as permission_count, (select count(*) from erp.organization_members m where m.role_id=r.id)::int as member_count from erp.roles r where r.organization_id=$1 and r.deleted_at is null order by r.name", [ctx.orgId]);
-    return { items: r.rows, total: r.rowCount };
+    return paginaComIdGlobal(ctx, "roles", { items: r.rows as Record<string, unknown>[], total: r.rowCount });
   }));
   app.get("/admin/roles/:id", async (req) => runService(app, req, "roles.view", async (ctx) => {
     const { id } = req.params as { id: string };

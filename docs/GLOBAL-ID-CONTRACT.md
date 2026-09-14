@@ -297,6 +297,46 @@ tela. É o que dá cobertura de 100% do registry sem editar 23 páginas: entidad
 exibir o `#N` sem que ninguém toque na UI. Registro ainda sem número (durante o backfill) não renderiza
 nada: 404 é estado normal, não erro.
 
+### 9.1 `#N` nas LISTAGENS (PRE-BASE2-05B.1)
+
+Um localizador só serve a quem consegue LER o número antes de digitá-lo. Enquanto o `#N` existia apenas na
+tela de detalhe, ele servia a quem já o conhecesse — o contrário de um localizador. Desde a PRE-BASE2-05B.1
+**toda listagem de entidade elegível mostra o `#N` da linha**.
+
+**O servidor DECLARA, o cliente obedece.** A resposta de uma listagem elegível carrega, além das linhas,
+`idGlobal: { tipoEntidade, rotulo }`. É o que evita uma segunda cópia do catálogo no cliente: sem essa
+declaração, a tela precisaria de uma lista própria de "quais listagens têm número", que envelheceria no
+primeiro acréscimo de entidade.
+
+**Uma página, uma consulta.** `anexarIdsGlobais(ctx, tipoEntidade, linhas)` resolve a página inteira num
+único `select ... where organization_id = $1 and tipo_entidade = $2 and id_entidade = any($3)`. Chamar a
+porta de detalhe por linha seria N+1 (100 linhas = 100 idas ao banco, mais autorização) — o teste de unidade
+`id-global-listagem-lote.test.ts` CONTA as consultas, porque essa garantia não se prova lendo o código.
+
+**O ID Global não decide o que a listagem mostra.** As linhas chegam ao enriquecimento já filtradas por
+permissão, escopo de empresa, RLS e exclusão lógica. Ele não inclui linha, não exclui linha e não reordena.
+Se decidisse qualquer uma dessas coisas, haveria DUAS autoridades de escopo na mesma resposta — e a mais
+frouxa venceria. A autorização continua inteira e exclusivamente nas portas de `#N`.
+
+**`null` é resposta, não falha.** Acervo anterior ao backfill e EFEITOS internos declarados (uma
+transferência em `animal_movements`) não têm número; a célula mostra um traço. Inventar um número para
+preencher a coluna criaria identidade onde o contrato diz que não há.
+
+**A coluna é identidade, não preferência.** Ela é fixada à esquerda e fica FORA de `prefs.columns`. Se
+entrasse, quem já tivesse salvo a configuração daquela tela ficaria sem a coluna para sempre — a preferência
+guarda uma lista fechada, e uma coluna criada depois nunca está nela; justamente os usuários antigos, os que
+têm registros para localizar, não veriam o número. Ficar de fora também impede que ela vire chip de filtro
+ou critério de ordenação que o backend não sabe resolver (`id_global` mora em `erp.registros_globais`, não
+nas tabelas de negócio). Quem procura por número usa a busca global.
+
+**`#N` continua não sendo endereço.** A linha abre pela rota canônica com o UUID.
+
+**Cobertura.** Três caminhos, todos derivados do catálogo: a listagem genérica de recursos e o helper de
+documentos de estoque resolvem o tipo pela TABELA (`tipoEntidadeDaTabela`), e as rotas especializadas
+declaram o tipo no ponto de chamada. O gate `scripts/id-global-audit.mjs` reprova qualquer entidade do
+catálogo sem listagem; `apps/api/test/integration/id-global-listagens.test.ts` bate em cada listagem de
+verdade e compara o conjunto coberto com `tiposEntidadeIdGlobal()` nos dois sentidos.
+
 ## 10. Auditoria
 
 `audit_logs.id` é um **bigint próprio da auditoria** e NÃO é ID Global — nunca deve ser exibido como `#123`.

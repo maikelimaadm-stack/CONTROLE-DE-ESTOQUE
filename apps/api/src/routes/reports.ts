@@ -3,6 +3,7 @@ import ExcelJS from "exceljs";
 import { runService, requirePermission } from "../lib/service.js";
 import { notFound } from "../lib/errors.js";
 import { empresaScopeBuilder, type ServiceCtx } from "../lib/context.js";
+import { formatarIdGlobal } from "@erp/plataforma";
 
 type Col = { key: string; label: string; type?: "money" | "qty" | "date" | "text" | "int" | "percent" };
 interface ReportDef { key: string; label: string; module: string; permission: string; exigeTambem?: string[]; escopo?: { derivado?: Record<string, string>; organizacao?: string }; filters: { name: string; label: string; type: "date" | "ref" | "select" | "text"; resource?: string; options?: string[]; required?: boolean }[]; columns: Col[]; totals?: string[]; sql: (ctx: ServiceCtx, f: Record<string, string>) => { text: string; params: unknown[] } }
@@ -265,15 +266,25 @@ export default async function reportRoutes(app: FastifyInstance) {
     if (format === "xlsx") { const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet(def.label.slice(0, 30)); ws.columns = def.columns.map((c) => ({ header: c.label, key: c.key, width: 18 })); for (const r of result.rows) ws.addRow(Object.fromEntries(def.columns.map((c) => [c.key, c.type === "money" || c.type === "qty" || c.type === "percent" ? Number(r[c.key] ?? 0) : r[c.key] ?? ""]))); if (def.totals?.length) ws.addRow(Object.fromEntries(def.totals.map((t) => [t, Number(result.totals[t])]))); const buf = await wb.xlsx.writeBuffer(); return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${key}.xlsx"`).send(Buffer.from(buf as ArrayBuffer)); }
     return result;
   });
+  /** Valor de uma célula exportada. O ID Global sai com `#` — é assim que o usuário o lê, fala e procura. */
+  const celulaExportada = (chave: string, valor: unknown) =>
+    chave === "id_global" ? (typeof valor === "number" ? formatarIdGlobal(valor) : "") : valor ?? "";
+
   // Exportações genéricas de listagens (produtos, pessoas, títulos, movimentos) em CSV/XLSX
   app.get("/exports/:resource", async (req, reply) => {
     const { resource } = req.params as { resource: string }; const { format = "csv", ...filters } = req.query as Record<string, string>;
     const { getResource } = await import("@agro/domain"); const def = getResource(resource); if (!def) throw notFound("Recurso");
     const { listResource } = await import("./resources.js");
     const data = await runService(app, req, `${def.permission}.export`, (ctx) => listResource(ctx, def, { ...filters, pageSize: "200", page: "1" }));
-    const cols = def.fields.filter((f) => f.list).map((f) => ({ key: f.type === "ref" ? `${f.name}_label` : f.name, label: f.label }));
-    if (format === "xlsx") { const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet(def.labelPlural.slice(0, 30)); ws.columns = cols.map((c) => ({ header: c.label, key: c.key, width: 20 })); for (const r of data.items) ws.addRow(Object.fromEntries(cols.map((c) => [c.key, (r as Record<string, unknown>)[c.key] ?? ""]))); const buf = await wb.xlsx.writeBuffer(); return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${resource}.xlsx"`).send(Buffer.from(buf as ArrayBuffer)); }
-    const lines = [cols.map((c) => c.label).join(";"), ...data.items.map((r) => cols.map((c) => String((r as Record<string, unknown>)[c.key] ?? "").replace(/;/g, ",")).join(";"))];
+    // O ID Global entra como PRIMEIRA coluna da exportação, como na tela: uma planilha que mostrasse colunas
+    // diferentes da listagem faria o usuário procurar por um número que ele acabou de ver e não encontrar.
+    const marcaIdGlobal = (data as { idGlobal?: { rotulo: string } }).idGlobal;
+    const cols = [
+      ...(marcaIdGlobal ? [{ key: "id_global", label: "ID Global" }] : []),
+      ...def.fields.filter((f) => f.list).map((f) => ({ key: f.type === "ref" ? `${f.name}_label` : f.name, label: f.label }))
+    ];
+    if (format === "xlsx") { const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet(def.labelPlural.slice(0, 30)); ws.columns = cols.map((c) => ({ header: c.label, key: c.key, width: 20 })); for (const r of data.items) ws.addRow(Object.fromEntries(cols.map((c) => [c.key, celulaExportada(c.key, (r as Record<string, unknown>)[c.key])]))); const buf = await wb.xlsx.writeBuffer(); return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${resource}.xlsx"`).send(Buffer.from(buf as ArrayBuffer)); }
+    const lines = [cols.map((c) => c.label).join(";"), ...data.items.map((r) => cols.map((c) => String(celulaExportada(c.key, (r as Record<string, unknown>)[c.key])).replace(/;/g, ",")).join(";"))];
     return reply.header("Content-Type", "text/csv; charset=utf-8").header("Content-Disposition", `attachment; filename="${resource}.csv"`).send("﻿" + lines.join("\n"));
   });
 }

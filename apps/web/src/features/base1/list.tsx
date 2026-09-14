@@ -18,9 +18,15 @@ import { HistoryDialog } from "./history-dialog";
 import { AttachmentsDialog } from "./attachments-dialog";
 import type { SelectClick } from "./cards";
 import { toParams, fromParams, emptyValue } from "./params";
+import { CHAVE_COLUNA_ID_GLOBAL, colunaIdGlobalBase1 } from "@/features/listing/id-global-coluna";
 import type { Base1Column, Base1FilterDef, DistinctValue, FilterValues, Row } from "./types";
 
-export interface PageResult { items: Row[]; total: number; totals?: Record<string, string> }
+/**
+ * `idGlobal` é a DECLARAÇÃO do servidor de que esta listagem tem ID Global (PRE-BASE2-05B.1). Ela vem da
+ * resposta, e não de uma lista no cliente, porque quem sabe quais entidades têm número é o catálogo — que
+ * mora no servidor. Copiá-lo para cá criaria uma segunda lista para envelhecer no primeiro acréscimo.
+ */
+export interface PageResult { items: Row[]; total: number; totals?: Record<string, string>; idGlobal?: { tipoEntidade: string; rotulo: string } }
 export interface PageParams { page: number; pageSize: number; sort?: string; dir?: "asc" | "desc"; search?: string; filters: Record<string, string> }
 export interface RecordProps { row: Row | null; index: number; total: number; go: (i: number) => void; onExit: () => void; refresh: () => void; rightSlot: React.ReactNode; mode: "view" | "edit" | "new"; setMode: (m: "view" | "edit" | "new") => void; copyFrom?: Row | null }
 
@@ -58,6 +64,17 @@ export interface Base1ListProps {
 }
 
 /**
+ * Rodapé de totais alinhado à grade: quem monta a linha de totais conta as colunas de NEGÓCIO, e a coluna de
+ * identidade entra na frente delas. Sem esta compensação, todo total escorregaria uma célula para a esquerda
+ * — um erro visual que parece dado errado.
+ */
+function comColunaDeIdentidade(rodape: React.ReactNode, deslocamento: number): React.ReactNode {
+  if (!deslocamento || !React.isValidElement(rodape)) return rodape;
+  const el = rodape as React.ReactElement<{ children?: React.ReactNode }>;
+  return React.cloneElement(el, {}, ...Array.from({ length: deslocamento }, (_, i) => <td key={`identidade-${i}`} />), el.props.children);
+}
+
+/**
  * MODELO BASE1 — listagem completa: barra superior, faixa de chips de filtro, grade / cards / registro,
  * rodapé com contadores e "Carregar mais". Preferências por usuário (padrão da organização opcional).
  */
@@ -91,8 +108,7 @@ export function Base1List(props: Base1ListProps) {
   const pageSize = pageSizeLocal ?? prefs.pageSize ?? BASE1_DEFAULT_PAGE_SIZE;
   const visibleKeys = prefs.columns.visible?.length ? prefs.columns.visible : columns.map((c) => c.key);
   const orderRank = new Map((prefs.columns.order ?? []).map((k, i) => [k, i]));
-  const visibleColumns = React.useMemo(() => columns.filter((c) => visibleKeys.includes(c.key)).sort((a, b) => (orderRank.get(a.key) ?? 1e6) - (orderRank.get(b.key) ?? 1e6)).map((c) => ({ ...c, width: prefs.columns.widths?.[c.key] ?? c.width })), [columns, prefs.columns]);
-  const frozen = Math.min(prefs.columns.frozen ?? 0, visibleColumns.length);
+  const colunasDoUsuario = React.useMemo(() => columns.filter((c) => visibleKeys.includes(c.key)).sort((a, b) => (orderRank.get(a.key) ?? 1e6) - (orderRank.get(b.key) ?? 1e6)).map((c) => ({ ...c, width: prefs.columns.widths?.[c.key] ?? c.width })), [columns, prefs.columns]);
   const qk = ["b1", moduleId, applied, sort, pageSize, queryKeyExtra];
   const q = useInfiniteQuery({
     queryKey: qk, initialPageParam: 1, placeholderData: keepPreviousData,
@@ -103,6 +119,24 @@ export function Base1List(props: Base1ListProps) {
   // "Buscar favoritos": mostra só os registros marcados (selecionados) entre os carregados
   const rows = React.useMemo(() => (favOnly ? allRows.filter((r) => favorites.has(String(r["id"]))) : allRows), [allRows, favOnly, favorites]);
   const total = q.data?.pages[0]?.total ?? 0; const totals = q.data?.pages[0]?.totals;
+  /**
+   * ID GLOBAL: COLUNA DE IDENTIDADE, FORA DA CONFIGURAÇÃO DE COLUNAS (PRE-BASE2-05B.1).
+   *
+   * Ela é fixada à esquerda e não entra em `prefs.columns` de propósito. Se entrasse, quem já tivesse salvo
+   * a configuração desta tela ficaria SEM a coluna para sempre — a preferência guarda uma lista fechada de
+   * colunas visíveis, e uma coluna criada depois nunca está nela. O efeito seria o contrário do objetivo:
+   * justamente os usuários antigos (os que têm registros para localizar) não veriam o número.
+   *
+   * Mantê-la fora também resolve o resto sem gambiarra: não vira chip de filtro que o backend não sabe
+   * resolver, não vira critério de ordenação que a consulta não suporta, e não desloca a contagem de
+   * congelamento que o usuário escolheu — a conversão de índice é feita nos dois sentidos logo abaixo.
+   */
+  const marcaIdGlobal = q.data?.pages[0]?.idGlobal;
+  const colunaIdGlobal = React.useMemo(() => (marcaIdGlobal ? colunaIdGlobalBase1(marcaIdGlobal.rotulo) : null), [marcaIdGlobal?.rotulo]);
+  const visibleColumns = React.useMemo(() => (colunaIdGlobal ? [colunaIdGlobal, ...colunasDoUsuario] : colunasDoUsuario), [colunaIdGlobal, colunasDoUsuario]);
+  /** Quantas colunas a grade fixa: a identidade sempre, mais as que o usuário congelou. */
+  const deslocamentoIdentidade = colunaIdGlobal ? 1 : 0;
+  const frozen = Math.min((prefs.columns.frozen ?? 0) + deslocamentoIdentidade, visibleColumns.length);
   const filtersActive = Object.keys(applied.params).length > 0 || Boolean(applied.search);
   const sess = getSession();
   const chipScope = `${moduleId}:${sess?.orgId ?? "-"}:${sess?.empresaId ?? "-"}:${sess?.user?.id ?? "-"}:${JSON.stringify(queryKeyExtra ?? null)}`;
@@ -191,6 +225,13 @@ export function Base1List(props: Base1ListProps) {
   </div>;
   const distinctFor = (f: Base1FilterDef) => distinct && f.mode === "advanced" && f.kind !== "boolean" && !f.options ? (s: string) => distinct(f.key, s) : undefined;
   const cardFields = prefs.view.cardFields ?? columns.slice(0, 7).map((c) => c.key);
+  /**
+   * Nos cartões o `#N` é o PRIMEIRO campo exibido (`cardFieldsExibidos`), mas entra no fim da lista de
+   * colunas conhecidas de propósito: o cartão elege o título pela primeira coluna que não seja o código, e
+   * pôr a identidade na frente faria o `#N` virar o TÍTULO do cartão em toda listagem de lançamento.
+   */
+  const colunasDosCards = React.useMemo(() => (colunaIdGlobal ? [...columns, colunaIdGlobal] : columns), [colunaIdGlobal, columns]);
+  const cardFieldsExibidos = React.useMemo(() => (colunaIdGlobal ? [CHAVE_COLUNA_ID_GLOBAL, ...cardFields.filter((k) => k !== CHAVE_COLUNA_ID_GLOBAL)] : cardFields), [colunaIdGlobal, cardFields]);
 
   if (view === "record" && Record) {
     return <div key={`rec-${recMode === "new" ? "new" : String(rows[recIndex]?.["id"] ?? recIndex)}`} className={cn("b1 mg-motion-swap flex min-h-0 flex-1 flex-col", props.className)}>
@@ -232,11 +273,11 @@ export function Base1List(props: Base1ListProps) {
       <div className="mg-shell mg-shell--fill min-w-0 flex-1">
         {q.error && <div className="p-2"><ErrorBox error={q.error} /></div>}
         {view === "cards"
-          ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={columns} fields={cardFields} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelectClick={onSelectClick} actions={rowActions} favorites={favorites} onFavorite={toggleFavorite} scrollToId={scrollToId} /></div>
+          ? <div key="cards" className="mg-motion-panel--animate mg-shell__scroll p-2.5"><Base1Cards rows={rows} columns={colunasDosCards} fields={cardFieldsExibidos} perRow={prefs.view.cardsPerRow ?? 4} loading={q.isLoading} onOpen={(r) => enterRecord(r)} selected={selected} onSelectClick={onSelectClick} actions={rowActions} favorites={favorites} onFavorite={toggleFavorite} scrollToId={scrollToId} /></div>
           : <div key="table" className="mg-motion-panel--animate flex min-h-0 flex-1 flex-col"><Base1Grid columns={visibleColumns} rows={rows} loading={q.isLoading} sort={sort} onSort={onSort} selected={selected} onSelectClick={onSelectClick} onToggle={onToggle} onToggleAll={onToggleAll} onOpen={(r) => enterRecord(r)} frozen={frozen} scrollToId={scrollToId}
-            onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n, visibleColumns.length)) }))} onHide={(k) => updCols((c) => { const keys = visibleColumns.map((x) => x.key); const idx = keys.indexOf(k); const fz = c.frozen ?? 0; return { ...c, visible: keys.filter((x) => x !== k), frozen: idx >= 0 && idx < fz ? fz - 1 : fz }; })} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
+            onFreeze={(n) => updCols((c) => ({ ...c, frozen: Math.max(0, Math.min(n - deslocamentoIdentidade, colunasDoUsuario.length)) }))} onHide={(k) => updCols((c) => { if (k === CHAVE_COLUNA_ID_GLOBAL) return c; const keys = colunasDoUsuario.map((x) => x.key); const idx = keys.indexOf(k); const fz = c.frozen ?? 0; return { ...c, visible: keys.filter((x) => x !== k), frozen: idx >= 0 && idx < fz ? fz - 1 : fz }; })} onResize={(k, w) => updCols((c) => ({ ...c, widths: { ...(c.widths ?? {}), [k]: w } }))} onAutoFit={(k) => updCols((c) => { const w = { ...(c.widths ?? {}) }; delete w[k]; return { ...c, widths: w }; })}
             onFilter={(k) => { const f = filters.find((x) => x.key === k); if (!f) { toast.info("Esta coluna não possui filtro"); return; } if (!(prefs.filters.visible ?? filters.map((x) => x.key)).includes(k)) p.update((x) => ({ ...x, filters: { ...x.filters, visible: [...(x.filters.visible ?? filters.map((y) => y.key)), k] } })); setShowChips(true); setTimeout(() => setOpenChip(k), 50); }}
-            footer={footerTotals && totals ? footerTotals(totals) : undefined} /></div>}
+            footer={footerTotals && totals ? comColunaDeIdentidade(footerTotals(totals), deslocamentoIdentidade) : undefined} /></div>}
         {/* rodapé (mg-records-summary) */}
         <div className="mg-summary no-print">
           <div className="mg-summary__counts"><span className="mg-summary__item">Selecionados: {selected.size}</span><span className="mg-summary__item">Listados: {allRows.length}</span><span className="mg-summary__item">Filtrados: {total}</span><span className="mg-summary__item">Totais: {filtersActive ? grand.data ?? "…" : total}</span></div>
@@ -247,7 +288,7 @@ export function Base1List(props: Base1ListProps) {
         </div>
       </div>
     </div>
-    <ColumnsDialog open={colsDlg} onOpenChange={setColsDlg} columns={columns} visible={visibleColumns.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: [...keys, ...columns.map((x) => x.key).filter((x) => !keys.includes(x))], frozen: Math.min(c.frozen ?? 0, keys.length) }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
+    <ColumnsDialog open={colsDlg} onOpenChange={setColsDlg} columns={columns} visible={colunasDoUsuario.map((c) => c.key)} onApply={(keys) => updCols((c) => ({ ...c, visible: keys, order: [...keys, ...columns.map((x) => x.key).filter((x) => !keys.includes(x))], frozen: Math.min(c.frozen ?? 0, keys.length) }))} onRestore={() => updCols((c) => ({ ...c, visible: undefined, order: undefined, widths: undefined, frozen: undefined }))} />
     {entity && <HistoryDialog open={histDlg} onOpenChange={setHistDlg} entity={entity} entityId={one ? rowId(one) : undefined} title={title} />}
     {entity && <AttachmentsDialog open={attachDlg} onOpenChange={setAttachDlg} entity={entity} entityId={one ? rowId(one) : null} title={title} />}
     {onDelete && <Confirm open={Boolean(delRow)} onOpenChange={() => setDelRow(null)} title="Confirme a exclusão" text={props.deleteText ?? (selectedRows.length > 1 ? `Excluir os ${selectedRows.length} registros selecionados? A ação fica registrada na auditoria.` : "Excluir o registro selecionado? A ação fica registrada na auditoria.")} danger onConfirm={async () => { if (delRow) { for (const r of selectedRows.length > 1 ? selectedRows : [delRow]) await onDelete(r); setDelRow(null); setSelected(new Set()); void q.refetch(); } }} />}

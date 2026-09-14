@@ -1,13 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getResource, RESOURCES, type FieldDef, type ResourceDef } from "@agro/domain";
+import { getResource, RESOURCES, tipoEntidadeDaTabela, type FieldDef, type ResourceDef } from "@agro/domain";
 import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, decodeList, relativeDateRange } from "@agro/shared";
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
 import { runService, nextCode, requirePermission, comPermissaoResolvida } from "../lib/service.js";
 import { SEQUENCIA_EMPRESA } from "../lib/sequencia-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
-import { atribuirIdGlobalSeAplicavel } from "../lib/id-global.js";
+import { atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
@@ -153,7 +153,14 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   if (!rows.rows.length && q.page > 1) { const c = await ctx.tx.query<{ n: string }>(`select count(*) as n from erp.${ident(def.table)} ${wsql}`, b.params); total = Number(c.rows[0]!.n); }
   const labelRows = await refLabels(ctx, def, rows.rows as Record<string, unknown>[]);
   const items = rows.rows.map((r, i) => { const o = { ...(r as Record<string, unknown>), ...labelRows[i] } as Record<string, unknown>; delete o["__total"]; return o; });
-  return { items, page: q.page, pageSize: q.pageSize, total };
+  const pagina = { items, page: q.page, pageSize: q.pageSize, total };
+  /**
+   * ID Global na listagem genérica: o tipo vem da TABELA do recurso, pelo índice do catálogo — o Resource
+   * Registry grava em dezenas de tabelas e só três delas são elegíveis hoje. Sem catálogo (a grande maioria)
+   * a página sai exatamente como antes, sem consulta extra e sem coluna.
+   */
+  const tipoEntidade = tipoEntidadeDaTabela(def.table);
+  return tipoEntidade ? paginaComIdGlobal(ctx, tipoEntidade, pagina) : pagina;
 }
 
 /** Rótulos de todas as referências das linhas numa única consulta (union all por recurso referenciado) → { campo_label } por linha. */
