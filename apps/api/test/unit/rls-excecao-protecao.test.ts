@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-// @ts-expect-error — classificação de RLS em JS puro, compartilhada com o gerador da matriz
 import { protecaoDaExcecao, validarProtecaoDaExcecao, TABELAS_DE_EXCECAO } from "../../../../packages/domain/empresa-rls.mjs";
 
 /**
@@ -23,8 +22,14 @@ type Linha = { policyname: string; cmd: string; permissive: string; papeis: stri
 const JUNCAO = (pai: string, filho: string, coluna: string) =>
   `(EXISTS ( SELECT 1\n   FROM ${pai} p\n  WHERE ((p.id = ${filho}.${coluna}) AND erp.tenant_visible(p.organization_id))))`;
 
-/** A política REAL de erp.empresa_cost_centers, copiada do pg_policies (quebras de linha inclusive). */
-const API_CHILD_REAL = JUNCAO("erp.empresas", "empresa_cost_centers", "farm_id");
+/**
+ * A política REAL de erp.empresa_cost_centers, copiada do pg_policies (quebras de linha inclusive).
+ *
+ * A 05C-1 reescreveu essa política de `farm_id` para `empresa_id` e, na mesma fatia, trocou a coluna
+ * declarada no SSOT (`packages/domain/empresa-rls.mjs`). É por isso que a grafia aqui mudou: este fixture
+ * não é uma escolha de estilo, é uma cópia do que o banco responde hoje.
+ */
+const API_CHILD_REAL = JUNCAO("erp.empresas", "empresa_cost_centers", "empresa_id");
 const linha = (extra: Partial<Linha> = {}): Linha => ({
   policyname: "api_child", cmd: "ALL", permissive: "PERMISSIVE", papeis: ["erp_app"],
   qual: API_CHILD_REAL, with_check: API_CHILD_REAL, ...extra
@@ -59,12 +64,12 @@ describe("proteção de exceção — o que precisa passar", () => {
   it("SEM apelido nenhum continua passando — a política qualifica pelo nome da tabela", () => {
     // `FROM erp.empresas WHERE …` é forma legítima, e uma captura de apelido ingênua engoliria a palavra
     // `WHERE` como se fosse o apelido: falso positivo que reprovaria a reescrita CORRETA da 05C-1.
-    const q = "(EXISTS ( SELECT 1 FROM erp.empresas WHERE ((erp.empresas.id = empresa_cost_centers.farm_id) AND erp.tenant_visible(erp.empresas.organization_id))))";
+    const q = "(EXISTS ( SELECT 1 FROM erp.empresas WHERE ((erp.empresas.id = empresa_cost_centers.empresa_id) AND erp.tenant_visible(erp.empresas.organization_id))))";
     expect(conferir([linha({ qual: q, with_check: q })])).toEqual([]);
   });
 
   it("apelido diferente e espaçamento diferente continuam passando — a forma, não a letra", () => {
-    const q = `(EXISTS (SELECT 1 FROM erp.empresas AS pai WHERE pai.id = empresa_cost_centers.farm_id AND erp.tenant_visible( pai.organization_id )))`;
+    const q = `(EXISTS (SELECT 1 FROM erp.empresas AS pai WHERE pai.id = empresa_cost_centers.empresa_id AND erp.tenant_visible( pai.organization_id )))`;
     expect(conferir([linha({ qual: q, with_check: q })])).toEqual([]);
   });
 });
@@ -109,21 +114,21 @@ describe("proteção de exceção — o que precisa REPROVAR", () => {
 
   it("B8 · junta com o pai pela coluna ERRADA", () => {
     const q = JUNCAO("erp.empresas", "empresa_cost_centers", "cost_center_id");
-    expect(conferir([linha({ qual: q, with_check: q })]).join(" | ")).toMatch(/não correlaciona o filho com o pai pela coluna declarada \(farm_id\)/);
+    expect(conferir([linha({ qual: q, with_check: q })]).join(" | ")).toMatch(/não correlaciona o filho com o pai pela coluna declarada \(empresa_id\)/);
   });
 
   it("junta com o pai ERRADO", () => {
-    const q = JUNCAO("erp.cost_centers", "empresa_cost_centers", "farm_id");
+    const q = JUNCAO("erp.cost_centers", "empresa_cost_centers", "empresa_id");
     expect(conferir([linha({ qual: q, with_check: q })]).join(" | ")).toMatch(/não junta com o cadastro pai declarado/);
   });
 
   it("junta corretamente mas NÃO aplica o tenant ao pai", () => {
-    const q = "(EXISTS ( SELECT 1 FROM erp.empresas p WHERE (p.id = empresa_cost_centers.farm_id)))";
+    const q = "(EXISTS ( SELECT 1 FROM erp.empresas p WHERE (p.id = empresa_cost_centers.empresa_id)))";
     expect(conferir([linha({ qual: q, with_check: q })]).join(" | ")).toMatch(/não aplica erp\.tenant_visible ao ORGANIZATION_ID DO PAI/);
   });
 
   it("aplica o tenant à coluna do FILHO em vez de à do pai", () => {
-    const q = "(EXISTS ( SELECT 1 FROM erp.empresas p WHERE ((p.id = empresa_cost_centers.farm_id) AND erp.tenant_visible(empresa_cost_centers.organization_id))))";
+    const q = "(EXISTS ( SELECT 1 FROM erp.empresas p WHERE ((p.id = empresa_cost_centers.empresa_id) AND erp.tenant_visible(empresa_cost_centers.organization_id))))";
     expect(conferir([linha({ qual: q, with_check: q })]).join(" | ")).toMatch(/não aplica erp\.tenant_visible ao ORGANIZATION_ID DO PAI/);
   });
 
@@ -157,28 +162,34 @@ describe("proteção de exceção — o que precisa REPROVAR", () => {
 });
 
 /**
- * B10 · O CONTRATO E A POLÍTICA MUDAM JUNTOS NA 05C-1.
+ * B10 · O CONTRATO E A POLÍTICA MUDAM JUNTOS — E A 05C-1 JÁ FEZ A TROCA.
  *
- * `empresa_cost_centers` é a única exceção cujo vínculo é uma coluna LEGADA. A fatia destrutiva troca
- * `farm_id` por `empresa_id` na política E nesta declaração. Estes dois casos provam que mexer num lado só
- * reprova — que é o que impede a purga de apagar a proteção em silêncio.
+ * `empresa_cost_centers` era a única exceção cujo vínculo era uma coluna LEGADA. A fatia destrutiva trocou
+ * `farm_id` por `empresa_id` na política (`0017_purge_farm_legacy.sql`, item 6) E na declaração do SSOT
+ * (`packages/domain/empresa-rls.mjs`). O acoplamento continua sendo a prova, só que agora medido do outro
+ * lado: o DESVIO é voltar para a coluna legada, num lado só. Sem estes casos, alguém poderia reescrever a
+ * política sem mexer no SSOT — ou o contrário — e a proteção passaria a apontar para uma coluna que não
+ * governa nada, em silêncio.
  */
-describe("B10 · a troca da 05C-1 tem de ser nos dois lados", () => {
-  const comEmpresaId = JUNCAO("erp.empresas", "empresa_cost_centers", "empresa_id");
+describe("B10 · a troca da 05C-1 tem de valer nos dois lados", () => {
+  const comFarmId = JUNCAO("erp.empresas", "empresa_cost_centers", "farm_id");
 
-  it("política reescrita para empresa_id com o SSOT ainda em farm_id: REPROVA", () => {
-    expect(conferir([linha({ qual: comEmpresaId, with_check: comEmpresaId })]).join(" | ")).toMatch(/coluna declarada \(farm_id\)/);
+  it("política de volta para farm_id com o SSOT já em empresa_id: REPROVA", () => {
+    expect(conferir([linha({ qual: comFarmId, with_check: comFarmId })]).join(" | ")).toMatch(/coluna declarada \(empresa_id\)/);
   });
 
-  it("SSOT trocado para empresa_id com a política ainda em farm_id: REPROVA", () => {
-    const futura = { ...(protecaoDaExcecao("empresa_cost_centers") as Record<string, unknown>), colunaVinculo: "empresa_id" };
-    const p = (validarProtecaoDaExcecao("empresa_cost_centers", futura, [linha()]) as string[]).join(" | ");
-    expect(p).toMatch(/coluna declarada \(empresa_id\)/);
+  it("SSOT de volta para farm_id com a política já em empresa_id: REPROVA", () => {
+    const atual = protecaoDaExcecao("empresa_cost_centers");
+    // A premissa é metade do caso: se a tabela deixasse de ser exceção declarada, `atual` viria nulo e o
+    // teste passaria a medir o nada. Falhar aqui é mais honesto do que inverter um SSOT que não existe.
+    if (!atual) throw new Error("empresa_cost_centers precisa estar declarada como exceção para este caso valer");
+    const antiga = { ...atual, colunaVinculo: "farm_id" };
+    const p = validarProtecaoDaExcecao("empresa_cost_centers", antiga, [linha()]).join(" | ");
+    expect(p).toMatch(/coluna declarada \(farm_id\)/);
   });
 
-  it("os dois trocados juntos: PASSA", () => {
-    const futura = { ...(protecaoDaExcecao("empresa_cost_centers") as Record<string, unknown>), colunaVinculo: "empresa_id" };
-    expect(validarProtecaoDaExcecao("empresa_cost_centers", futura, [linha({ qual: comEmpresaId, with_check: comEmpresaId })])).toEqual([]);
+  it("os dois em empresa_id — o estado de hoje: PASSA", () => {
+    expect(conferir([linha()])).toEqual([]);
   });
 });
 

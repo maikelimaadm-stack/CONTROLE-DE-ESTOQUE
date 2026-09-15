@@ -9,7 +9,7 @@
 
 ## Railway (API)
 - Serviço a partir do repositório; configuração definida no próprio serviço (sem `railway.json` na raiz, pois ele valeria para todos os serviços do repositório): Dockerfile `apps/api/Dockerfile`, start `node dist/main.js`, health `/health`, pre-deploy `node dist/migrate.js` (aplica migrations pendentes).
-- **Pre-deploy sem teto de tempo.** O campo *Pre-Deploy Timeout* do serviço está **vazio** (`preDeployTimeoutSeconds = null`, lido em 15/09/2026 pela API do Railway, no `serviceInstance` do serviço `api` em `production`). Pela documentação do Railway, vazio significa **sem limite**: um pre-deploy que trave não falha o deploy — ele o segura. O `healthcheckTimeout` de 120 s não cobre essa janela, porque só começa a contar depois que o pre-deploy termina. O único teto que existe hoje é do lado do banco (`statement_timeout` de 120 s; `lock_timeout` = 0), e ele só alcança o que está DENTRO de um enunciado SQL — DNS, handshake, aquisição de conexão do pool, `seedPermissions` e travamento de código ficam sem teto algum. Relevante para toda migration longa, e especialmente para a 05C-1 (ver `docs/PRE-BASE2-05C-1-PREFLIGHT.md`, U4).
+- **Pre-deploy sem teto de tempo.** O campo *Pre-Deploy Timeout* do serviço está **vazio** (`preDeployTimeoutSeconds = null`, lido em 15/09/2026 pela API do Railway, no `serviceInstance` do serviço `api` em `production`). Pela documentação do Railway, vazio significa **sem limite**: um pre-deploy que trave não falha o deploy — ele o segura. O `healthcheckTimeout` de 120 s não cobre essa janela, porque só começa a contar depois que o pre-deploy termina. O único teto que existe hoje é do lado do banco (`statement_timeout` de 120 s; `lock_timeout` = 0), e ele só alcança o que está DENTRO de um enunciado SQL — DNS, handshake, aquisição de conexão do pool, `seedPermissions` e travamento de código ficam sem teto algum. Relevante para toda migration longa, e especialmente para a 05C-1, onde deixou de ser observação: como o merge em `main` dispara deploy automático, **enquanto este campo estiver vazio a 05C-1 não é liberada para merge** (`OPERATIONAL MERGE BLOCKER`; enunciado, saída e onde o valor medido será registrado em `docs/PRE-BASE2-05C-1-PREFLIGHT.md`, U4).
 - Região: `iad` (US East, Virgínia), a mais próxima disponível de São Paulo (o banco Supabase fica em sa-east-1); em `sfo` cada listagem levava ~3,5 s.
 - Variáveis: `DATABASE_URL` (pooler, usuário `erp_app`), `MIGRATE_DATABASE_URL` (pooler, usuário `erp_migrator`), `MIGRATIONS_DIR=/app/supabase/migrations`, `AUTH_MODE=local` + `LOCAL_AUTH_SECRET` (login por e-mail/senha na tabela `erp.users`; `AUTH_MODE=supabase` + `SUPABASE_JWT_SECRET` fica como evolução, pois o web ainda não usa Supabase Auth), `SUPABASE_URL`, `WEB_ORIGIN=https://<app>.vercel.app`, `PORT=3333`, `API_LOG_LEVEL=info`, `RATE_LIMIT_MAX`.
 - Seed inicial: definir uma única vez `SEED_ON_DEPLOY=1`, `ORG_NAME`, `ORG_SLUG`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`; o pre-deploy cria dados de referência + organização + usuário owner; depois voltar `SEED_ON_DEPLOY=0`.
@@ -53,8 +53,8 @@ no navegador — agora provando que o canônico atravessa, e reprovando se a API
 | **05A — Cliente canônico** ✅ publicada | tradutor de fio do web, o cabeçalho anterior do navegador | API e banco bilíngues |
 | **05B — Servidor canônico** ✅ publicada | borda legada da API (cabeçalho, entrada, apelidos, CORS, recurso, escopo admin achatado, promoção de sessão) | banco bilíngue |
 | **05C-0 — Instrumentos** ✅ mesclada (PR #33) | nada do banco: **NO-DDL**. Calibra os gates que a purga usa como prova | tudo |
-| **05C-G0/G1 — Preflight** ⬅ atual | nada do banco: leitura de produção, correção de documentação, contratos executáveis e runbook. Ver `docs/PRE-BASE2-05C-1-PREFLIGHT.md` | tudo |
-| **05C-1 — Purga física** ⛔ NÃO autorizada | 52 colunas legadas em 49 tabelas, as **cinco** views de nome antigo, 52 gatilhos de espelho NOMEADOS (as tabelas alvo têm 66 gatilhos: 14 são de negócio e ficam) e 3 funções, **52 FKs de coluna única** (as **50** compostas ficam), 8 índices, e o CHECK órfão de `erp.equipment_transfers` só depois do substituto canônico | contador `entity='farm'`; lápides (`contrato-legado.ts`, redirects) |
+| **05C-G0/G1/G2 — Preflight** ✅ concluída | nada do banco: leitura de produção, correção de documentação, contratos executáveis e runbook. Ver `docs/PRE-BASE2-05C-1-PREFLIGHT.md` | tudo |
+| **05C-1 — Purga física** ⬅ atual: migration **escrita** (`0017_purge_farm_legacy.sql`), PR DRAFT, ⛔ **merge NÃO liberado** (U4) | 52 colunas legadas em 49 tabelas, as **cinco** views de nome antigo, 52 gatilhos de espelho NOMEADOS (as tabelas alvo têm 66 gatilhos: 14 são de negócio e ficam) e 3 funções, **52 FKs de coluna única** (as **50** compostas ficam), 8 índices, e o CHECK órfão de `erp.equipment_transfers` só depois do substituto canônico | contador `entity='farm'`; lápides (`contrato-legado.ts`, redirects) |
 | **05C-2 — Contador** | a linha `entity='farm'` de `erp.code_sequences` e a constante `SEQUENCIA_EMPRESA` | — |
 
 Cada fase só começa depois de a anterior estar em produção e comprovada. **05A não remove compatibilidade
@@ -81,20 +81,42 @@ A 05C-1 é a primeira migration **destrutiva** do produto, e por isso o critéri
 gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com preview, `localhost`, CI ou
 "deploy verde" — cada um é uma pergunta respondida contra o objeto real.
 
+**Antes de liberar para MERGE — porque o merge em `main` dispara o deploy sozinho:**
+
+1. **U4 — o pre-deploy precisa ter teto de tempo.** `preDeployTimeoutSeconds` está vazio no serviço `api`
+   (medido em 15/09/2026): um pre-deploy travado não falha o deploy, ele o segura, e nenhum teto de banco
+   alcança DNS, handshake, pool ou `seedPermissions`. Como não existe "mesclar agora e decidir o deploy
+   depois", este é um **`OPERATIONAL MERGE BLOCKER`**: a PR da 05C-1 fica em DRAFT até haver valor medido no
+   campo, ou contenção equivalente aceita por escrito. **Configurar isso é ação humana no painel do
+   Railway; nenhuma fatia altera o serviço.** O valor recomendado vem da medição da própria `0017`, e o
+   lugar de registrá-lo é `docs/PRE-BASE2-05C-1-PREFLIGHT.md`, U4.
+
 **Antes de aplicar (todos obrigatórios; qualquer `PENDING` interrompe):**
 
-1. **Backup restaurável verificado** do banco de produção — restaurado em outro destino e consultado, não
-   apenas listado. Um backup que nunca foi restaurado é uma hipótese.
+1. **P1 — `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`.** O proprietário declarou que o sistema ainda
+   não está em produção operacional, que os dados atuais não precisam ser preservados e que, em falha, é
+   aceitável resetar o banco, reaplicar as migrations e recriar os dados de teste — logo **`RECOVERY =
+   REBUILD FROM ZERO`** (procedimento na seção "Recuperação", abaixo). Isto **não é `PASS`**: o drill de
+   restore continua sem ter sido feito, e um backup que nunca foi restaurado continua sendo hipótese.
+   **Condição de retorno, obrigatória:** antes do PRIMEIRO uso real e antes do PRIMEIRO dado não
+   descartável, o drill de backup + restore volta a ser gate `BLOCKED`, com o enunciado original. O que
+   conta como "dado não descartável", quem declara e o que fazer quando disparar estão em
+   `docs/PRE-BASE2-05C-1-PREFLIGHT.md`, P1 — este item não repete a definição, só a obedece.
 2. **Remedição dos dados persistidos com nome antigo** na produção autenticada (tabela em
    `docs/PRE-BASE2-05-APOSENTADORIA.md`). Se qualquer contagem for > 0, a 05C-1 deixa de ser só DDL e a
    fatia muda de escopo.
 3. **Uma única versão da API servindo** — condição da 05C-2, não da 05C-1, mas registrada aqui porque é o
    gate que as pessoas esquecem entre as duas.
 4. **Gates verdes na PR da 05C-1**, incluindo os instrumentos calibrados na 05C-0: `company-schema-sync` em
-   fase `canonica`, guarda de RLS com a política `api_child` reescrita, `upgrade-acervo` e
-   `upgrade-rollback` atravessando a purga, version skew nos dois sentidos com a base impressa no log.
-5. **G-U5 executado e verde** — o binário da API que está em produção subindo e servindo contra um banco
-   com a `0017` aplicada: boot, login, leitura escopada por empresa e gravação com conferência de ROW
+   fase `canonica`, guarda de RLS com a política `api_child` reescrita, `upgrade-acervo` aplicando a
+   sequência INTEIRA (o laço final não para na 0016: aplica tudo que ficou pendente, 0017 inclusive, e
+   confere que nada sobrou) — `upgrade-rollback` NÃO atravessa a purga, e não deveria: ele prova a janela
+   de suspensão do gatilho do ledger dentro da 0014 e termina ali — version skew nos dois sentidos com a
+   base impressa no log —
+   mais os testes próprios da purga (`packages/db/test/purga-0017-*.test.ts`: base nova, upgrade com
+   acervo, invariantes estruturais e concorrência).
+5. **G-U5 executado e verde** — comando: **`pnpm gate:g-u5`** (`scripts/gate-purga-0017-runtime-anterior.mjs`). Ele NÃO roda no CI, e a razão está escrita: precisa compilar e subir o binário da BASE, o que exige a árvore da base e um banco descartável próprio; o que o CI cobre são os `purga-0017-*`. Por isso é pré-requisito NUMERADO aqui, com comando, e não prosa. O binário da API que
+   está em produção subindo e servindo contra um banco com a `0017` aplicada: boot, login, leitura escopada por empresa e gravação com conferência de ROW
    COUNT. Roda em banco descartável, sem custo. Sem ele, a compatibilidade do runtime anterior com o
    schema pós-purga é derivação de auditoria estática, não fato — e é ela que sustenta a dispensa de
    U1, U2 e U3 em `docs/PRE-BASE2-05C-1-PREFLIGHT.md`.
@@ -102,21 +124,93 @@ gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com pre
    `BLOQUEIA` e sem linha `porteiro_invalido`. Papel sem esse privilégio enxerga menos do que precisa e a
    consulta devolve vazio — vazio por cegueira é indistinguível de vazio por calmaria.
 
-**Depois de aplicar, antes de declarar concluída:**
+**Depois de aplicar, antes de declarar concluída** (lista própria, numeração própria):
 
-5. consulta de catálogo em produção provando que os objetos da tabela de inventário **não existem mais**;
-6. `CHECK` canônico equivalente ao órfão **existe** (a invariante "origem ≠ destino" continua no banco);
-7. cadastro real de uma Empresa em produção, conferindo que o código alocado é novo e não repete;
-8. as categorias `TOMBSTONE` e `PROVA_HISTORICA` da superfície de compatibilidade **ainda declaradas**.
+1. consulta de catálogo em produção provando que os objetos da tabela de inventário **não existem mais**;
+2. `CHECK` canônico equivalente ao órfão **existe** (a invariante "origem ≠ destino" continua no banco);
+3. cadastro real de uma Empresa em produção, conferindo que o código alocado é novo e não repete;
+4. as categorias `TOMBSTONE` e `PROVA_HISTORICA` da superfície de compatibilidade **ainda declaradas**.
 
-**Recuperação.** O caminho de volta da 05C-1 é recriar coluna + repopular a partir da canônica — o dado não
-se perde, porque a coluna legada era espelho. O que **não** volta sozinho é o que foi removido com
-`cascade`: política de RLS e CHECK precisam ser recriados a partir da 0014/0002. Por isso a ordem manda
-reescrever a política e criar o CHECK canônico **antes** de qualquer `drop`: assim o caminho de volta é
-sempre "recriar o que estava versionado", nunca "descobrir o que sumiu junto".
+#### Recuperação — `RECOVERY = REBUILD FROM ZERO`
 
-**A 05C-0 não autoriza a 05C-1.** Mesmo com esta PR mesclada e o CI inteiro verde, a fatia destrutiva
-depende dos gates 1 e 2 acima, que exigem acesso autenticado à produção e decisão do Maike.
+Enquanto valer a declaração de pré-produção (item 1 dos pré-requisitos), o caminho autorizado de
+recuperação **não é restaurar backup**: é **recriar o ambiente**. Está escrito aqui porque é o dono do
+assunto; a política e a condição de retorno que o autorizam moram em
+`docs/PRE-BASE2-05C-1-PREFLIGHT.md`, P1.
+
+**Diga-se antes de tudo o que este caminho NÃO é.** Ele **não recupera dado**: tudo que estiver no banco no
+momento da falha se perde, e nada é reconstruído a partir do que havia. Ele recria um ambiente **novo**, com
+o schema correto e dados de TESTE. Só é aceitável porque, hoje, o dado é descartável por declaração escrita.
+No dia em que deixar de ser, este procedimento deixa de ser recuperação e passa a ser destruição — e o gate
+P1 volta antes disso.
+
+**O procedimento, na ordem:**
+
+1. **Parar de implantar.** O deploy que falhou não é retentado até o fim deste roteiro: uma segunda
+   tentativa em cima de um banco em estado desconhecido troca um problema legível por um ilegível.
+2. **Olhar o ledger antes de mexer** — é ele que diz onde a falha parou:
+   `select count(*), max(name) from public.erp_migrations;`. Como cada migration roda em UMA transação
+   (`begin` → arquivo → `insert` no ledger → `commit`), o ledger só tem a linha se o arquivo inteiro passou.
+   Ledger em `0016` depois de uma tentativa da `0017` significa que a purga voltou atrás por completo —
+   comportamento desejado, não incidente.
+3. **Recriar o banco vazio** (ou um projeto novo, se o dano for do projeto). Nenhuma sessão automatizada faz
+   isso: `.claude/hooks/` recusa `db:reset`, `db:migrate` e `db:seed` justamente porque a conexão vem do
+   ambiente e o guarda não distingue local de remoto.
+4. **Aplicar as migrations em ordem, `0001` a `0017`**, pelo runner do produto (`pnpm db:migrate`, ou o
+   pre-deploy `node dist/migrate.js` no serviço). Nunca aplicar arquivo solto: a ordem é a garantia.
+5. **Recriar os dados de teste** com `pnpm db:seed` (dados de referência, organização, usuário owner,
+   cadastros de exemplo). Em produção isso é `SEED_ON_DEPLOY=1` por UM deploy, voltando a `0` em seguida —
+   e voltar a `0` faz parte do procedimento, não é limpeza opcional.
+6. **Recriar o que o seed não recria**: usuários reais do Auth, `erp.users.auth_user_id`, bucket
+   `attachments` e seus arquivos. Se essa lista doer, a condição de retorno de P1 provavelmente já
+   disparou — pare e releia P1.
+
+**O que conferir no fim** (qualquer resposta fora do esperado significa ambiente não recuperado):
+
+```sql
+select count(*) as migrations, max(name) as ultima from public.erp_migrations;
+-- esperado: 17 / 0017_purge_farm_legacy.sql
+
+select count(*) as colunas_legadas from pg_attribute a
+  join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
+ where n.nspname = 'erp' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
+   and a.attname in ('farm_id','origin_farm_id','destination_farm_id');          -- esperado: 0
+
+select count(*) as fks_compostas from pg_constraint k
+  join pg_class c on c.oid = k.conrelid join pg_namespace n on n.oid = c.relnamespace
+ where n.nspname = 'erp' and k.contype = 'f' and array_length(k.conkey,1) = 2
+   and k.confrelid = 'erp.empresas'::regclass and k.convalidated;                 -- esperado: 50
+
+select count(*) as check_canonico from pg_constraint
+ where conrelid = 'erp.equipment_transfers'::regclass and contype = 'c'
+   and conname = 'equipment_transfers_empresa_origem_destino_check' and convalidated;  -- esperado: 1
+
+select count(*) as empresas from erp.empresas;                                    -- esperado: > 0
+select relrowsecurity from pg_class where oid = 'erp.stock_movements'::regclass;  -- esperado: t
+```
+
+E, no ar: `GET /health` em 200, login do owner em 200, uma listagem escopada por empresa devolvendo linha.
+Schema certo com aplicação fora do ar não é ambiente recuperado.
+
+**Por que a `0017` quase nunca deixa meio caminho.** Ela é atômica e sem `cascade`: se qualquer objeto do
+inventário divergir, ou se qualquer dependência escapar da lista, o comando falha e a transação inteira
+volta atrás — schema como estava, ledger sem a entrada. Medido em laboratório: com o `CHECK` canônico
+sabotado, a migration morreu na própria pós-condição e o banco voltou a 52 colunas legadas, 5 views, 52
+gatilhos e ledger em `0016`; com um `drop trigger` retirado da lista, ela morreu em
+`cannot drop function … because other objects depend on it`, com o mesmo estado íntegro no fim. Falhar
+barato e repetir é o comportamento desejado.
+
+**Reversão da 05C-1, se um dia for preciso desfazer com o banco íntegro.** Recriar coluna + repopular a
+partir da canônica: o dado não se perde, porque a coluna legada era espelho. A política de RLS e o CHECK
+**não** voltam sozinhos, e não porque tenham sido removidos com `cascade` — a `0017` **não usa `cascade` em
+lugar nenhum**: eles saem nomeados, um a um, e por isso a volta é sempre "recriar o que está versionado".
+A política `api_child` se recria a partir da `0014`; o CHECK de `erp.equipment_transfers` nasceu em
+**`supabase/migrations/0005_sales_fleet_hr.sql:142`** — *não* na `0002`, que nem cria essa tabela. É essa a
+razão de a ordem mandar reescrever a política e criar o CHECK canônico **antes** de qualquer `drop`:
+nenhuma proteção some de carona.
+
+**A 05C-0 não autoriza a 05C-1.** Mesmo com aquela PR mesclada e o CI inteiro verde, a fatia destrutiva
+depende dos pré-requisitos acima, que exigem acesso autenticado à produção e decisão do Maike.
 
 ### Verificação pós-deploy (fase 1)
 
@@ -144,7 +238,10 @@ de linhas** que a mesma consulta a `erp.empresas`. Números diferentes significa
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)
 - [x] CORS (`WEB_ORIGIN`) apontando para os domínios do frontend na Vercel
-- [ ] Backups automáticos do Supabase ativos (plano do projeto)
+- [ ] Backups automáticos do Supabase ativos (plano do projeto) — **e restaurados pelo menos uma vez**.
+  Hoje `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`: a recuperação autorizada é
+  `RECOVERY = REBUILD FROM ZERO` (seção "Recuperação"). Esta caixa **não** se marca por declaração de
+  pré-produção — ela continua aberta, e volta a ser obrigatória antes do primeiro uso real.
 - [x] Usuário owner criado e vinculado (`organization_members.is_owner`)
 
 ## Estado real desta entrega (10/09/2026)
