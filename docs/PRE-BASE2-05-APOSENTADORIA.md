@@ -167,7 +167,7 @@ A 05C-2 é separada porque a troca do contador **não é atômica com o deploy**
 | Views de nome antigo | **5** | consultas legadas, testes de espelho | `drop view` **antes** das colunas | `create view` (definição versionada na 0014) |
 | Gatilhos de sincronização `trg_sync_*` | **52** | as colunas acima | `drop trigger` **antes** das colunas | recriar a partir da 0014 |
 | Funções `erp.sincronizar_empresa*` | **3** | os gatilhos acima | `drop function` depois dos gatilhos | recriar a partir da 0014 |
-| Chaves estrangeiras que incluem coluna legada | **52** | integridade composta (organização + empresa) | cair junto com a coluna | recriar a partir da 0014 |
+| Chaves estrangeiras **de coluna única** sobre a coluna legada | **52** | `FOREIGN KEY (farm_id) REFERENCES erp.empresas(id)` — **não** provam tenant | caem junto com a coluna | recriar a partir da 0014 |
 | Índices que incluem coluna legada | **8** | desempenho das consultas legadas | cair junto com a coluna | recriar se a leitura legada voltar (não deve) |
 | **CHECK órfão** `equipment_transfers_check` | **1** | `CHECK (origin_farm_id <> destination_farm_id)` | cai com a coluna; o equivalente canônico precisa **existir antes** | recriar a partir da 0002 |
 | Política de RLS citando coluna legada | **1** (`erp.empresa_cost_centers` → `api_child`) | leitura do filho pelo pai | reescrever no canônico **antes** de dropar a coluna | versão anterior da política |
@@ -195,6 +195,15 @@ deixa de ser garantida pelo banco e ninguém é avisado.
 (`erp.notifications`, `erp.registros_globais`, `erp.membro_empresas`, `erp.legado_escopo_empresa_v0`)
 nasceram canônicas e não têm nome antigo nenhum. Tratar as 56 (ou 52) como uma lista homogênea produziria
 uma migration que tenta dropar coluna que nunca existiu.
+
+**As FKs legadas NÃO são as compostas — e confundi-las seria destrutivo.** As 52 chaves estrangeiras que
+citam a coluna legada são de **coluna única** (`FOREIGN KEY (farm_id) REFERENCES erp.empresas(id)`): elas
+provam que o UUID é uma empresa, e não que é uma empresa DESTA organização. As **compostas** são as
+**canônicas** — 45 no schema atual, `FOREIGN KEY (organization_id, empresa_id)`, criadas na 0014 —, e são a
+única prova de tenant no schema físico. Uma 05C-1 que lesse "dropar as FKs compostas junto com a coluna"
+removeria exatamente a garantia que a PRE-BASE2-03 construiu. O que cai com a coluna legada é só o primeiro
+grupo; o segundo **fica**, e o guarda que o mede (`rls-matriz.test.ts`, "toda coluna canônica de tabela com
+organização tem referência COMPOSTA") continua valendo depois da purga.
 
 **Sobrevivem objetos de NOME legado que não são coluna:** as próprias tabelas renomeadas mantêm índices,
 constraints e sequências com o nome antigo embutido (ex.: `proprietary_farms_pkey` foi renomeada, outros
@@ -244,7 +253,8 @@ servindo — um gate operacional, decidido e executado pelo Maike, não uma prop
 2. **CHECK canônico** equivalente ao órfão de `erp.equipment_transfers`, criado antes;
 3. gatilhos de espelho e, depois deles, suas funções;
 4. as **cinco** views de nome antigo;
-5. colunas legadas, tabela a tabela, com as FKs compostas, os índices e o CHECK que dependem delas;
+5. colunas legadas, tabela a tabela, com as FKs **de coluna única**, os índices e o CHECK que dependem
+   delas — as FKs **compostas** (`organization_id, empresa_id`) NÃO saem: são a prova de tenant;
 6. virar `FASE_ESPELHO` para `"canonica"` em `scripts/lib/empresa-compat-surface.mjs` e inverter
    `packages/db/test/schema.test.ts` — sem isso o gate de espelho fica verde sem ter o que medir;
 7. estender `upgrade-acervo` e `upgrade-rollback` para atravessarem a purga (eles **não** são apagados: são

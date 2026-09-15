@@ -27,6 +27,14 @@
  *    `apps/api/src/lib/sequencia-empresa.ts`); um gate só sai quando o objeto que ele vigia deixa de existir.
  *
  * Então a superfície passa a ser classificada, e cada categoria tem o SEU gatilho.
+ *
+ * O QUE NÃO ESTÁ NAS LISTAS ABAIXO, E POR QUÊ. `apps/api/src/lib/sequencia-empresa.ts` guarda o valor
+ * `"farm"` de `erp.code_sequences.entity` — um DADO vivo, não um nome de fio nem de coluna. As listas daqui
+ * são indexadas por OCORRÊNCIA DE NOME LEGADO, e o inventário (`scripts/farm-inventory.mjs`) não reconhece
+ * essa string como tal: declará-lo aqui produziria uma "declaração sem uso" e quebraria o gate sem
+ * acrescentar informação. O gatilho de remoção dele está declarado onde ele de fato vive — a fatia
+ * PRE-BASE2-05C-2, na tabela de fases de `docs/DEPLOYMENT.md` e na decisão 112 de `docs/DECISIONS.md` —,
+ * e o próprio arquivo explica por que a troca exige janela operacional.
  */
 export const CATEGORIAS_COMPAT = {
   PONTE_FISICA: { marco: "PRE-BASE2-05C-1", explica: "Depende de um OBJETO do banco que a 05C-1 remove (coluna legada, view de nome antigo, gatilho de espelho). Sai junto com o objeto — antes disso quebraria; depois disso não compila contra nada." },

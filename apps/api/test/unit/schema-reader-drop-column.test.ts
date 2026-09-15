@@ -141,6 +141,56 @@ describe("leitor de migrations — REMOÇÃO (PRE-BASE2-05C-0)", () => {
 });
 
 /**
+ * O QUE O LEITOR NÃO MODELA, ELE RECUSA — EM VOZ ALTA (PRE-BASE2-05C-0).
+ *
+ * Tolerar em silêncio o que não se entende só é aceitável enquanto o silêncio erra para o lado seguro.
+ * Duas formas de `alter table` faziam o modelo divergir do PostgreSQL SEM NENHUM SINAL — e a segunda é a
+ * mais perigosa da migração inteira: uma 0017 que RENOMEASSE a coluna em vez de dropá-la faria o dicionário
+ * de dados, a matriz de RLS e o inventário afirmarem, VERDES, que a coluna legada continua existindo.
+ *
+ * Estes dois casos existem porque o comentário antigo dizia que a forma mista era "recusada de propósito"
+ * e ela não era recusada por nada: era aceita pela metade. Um comentário que descreve uma recusa que não
+ * existe é o mesmo defeito que esta fatia remove dos gates, só que em prosa.
+ */
+describe("leitor de migrations — FORMAS RECUSADAS", () => {
+  it("`drop column` misturado com `add column` na MESMA instrução PARA o leitor", () => {
+    limpar();
+    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, legado_id uuid);");
+    escrever("0002_mista.sql", "alter table erp.exemplo drop column legado_id, add column nova text;");
+    // Sem a recusa, o modelo ficava `[id]`: o `drop` era visto e o `add` engolido — uma coluna que o banco
+    // TEM e o modelo não conhece.
+    expect(() => readSchema(dir)).toThrow(/NÃO modela.*add column/s);
+  });
+
+  it("`rename column` PARA o leitor — e o nome antigo não sobrevive em silêncio", () => {
+    limpar();
+    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, legado_id uuid);");
+    escrever("0002_rename.sql", "alter table erp.exemplo rename column legado_id to empresa_id;");
+    // Sem a recusa, o modelo ficava `[id, legado_id]`: a coluna renomeada continuava com o nome ANTIGO,
+    // que é exatamente a afirmação falsa que a fatia destrutiva não pode fazer.
+    expect(() => readSchema(dir)).toThrow(/NÃO modela.*rename column/s);
+  });
+
+  it("o `rename to` de TABELA continua aceito — a recusa é estreita, não uma rede sobre tudo", () => {
+    limpar();
+    escrever("0001_base.sql", "create table erp.antiga (id uuid primary key, legado_id uuid);");
+    escrever("0002_rename.sql", "alter table erp.antiga rename to nova;");
+    expect(colunas("erp.nova")).toEqual(["id", "legado_id"]);
+  });
+
+  it("as demais cláusulas de alter table continuam ignoradas — elas não mudam o CONJUNTO de colunas", () => {
+    limpar();
+    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, a uuid);");
+    escrever("0002_outras.sql", [
+      "alter table erp.exemplo add constraint x check (a is not null);",
+      "alter table erp.exemplo alter column a set default null;",
+      "alter table erp.exemplo enable row level security;"
+    ].join("\n"));
+    expect(colunas("erp.exemplo")).toEqual(["id", "a"]);
+  });
+});
+
+/**
  * A PROVA DE QUE ESTE TESTE PROVA ALGUMA COISA.
  *
  * Um teste de parser passa por engano com facilidade: basta o arquivo de migration não casar com a regex e

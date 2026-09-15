@@ -193,6 +193,37 @@ describe("a sequência continua depois da 0014, com o mesmo acervo", () => {
     expect(r.rows[0]).toEqual({ fn: true, c: true, i: true });
   }, 120_000);
 
+  /**
+   * O RESTO DA SEQUÊNCIA, SEJA QUAL FOR — a calibração que a PRE-BASE2-05C-0 acrescenta.
+   *
+   * Até aqui este arquivo aplicava migrations por PREFIXO LITERAL: 0014, 0015, 0016, e parava. Enquanto a
+   * última migration foi a 0016 isso coincidia com "a sequência inteira". Deixa de coincidir no instante em
+   * que a 0017 existir: ela seria a primeira migration DESTRUTIVA do produto, e este — o único harness que
+   * carrega LEDGER append-only pela migração — nunca a aplicaria. O teste continuaria VERDE sem ter
+   * atravessado a purga, que é precisamente o que ele existe para provar.
+   *
+   * Então o passo final deixa de nomear versão: aplica TUDO o que restou e exige que o banco termine na
+   * ponta da sequência. Hoje o laço não tem o que fazer (a 0016 é a última), e por isso a asserção não é
+   * "apliquei N": é "não sobrou nenhuma". Uma é verdadeira por vacuidade quando a lista esvazia; a outra
+   * fica falsa no dia em que alguém acrescentar uma migration e não passar por aqui.
+   */
+  it("aplica TODO o resto da sequência sobre o mesmo acervo — inclusive a migration que ainda não existe", async () => {
+    const aplicadas = new Set((await db.query<{ name: string }>("select name from public.erp_migrations")).rows.map((r) => r.name));
+    const faltando = listMigrations().filter((m) => !aplicadas.has(m.name));
+    for (const m of faltando) await aplicar(m.name);
+
+    const depois = new Set((await db.query<{ name: string }>("select name from public.erp_migrations")).rows.map((r) => r.name));
+    const naoAplicadas = listMigrations().map((m) => m.name).filter((n) => !depois.has(n));
+    expect(naoAplicadas, "nenhuma migration pode ficar de fora deste harness — é o único com ledger").toEqual([]);
+    // Premissa junto com a conclusão: o acervo continua lá depois de tudo. Sem isto, um `resetSchema`
+    // acidental no meio do caminho faria as asserções seguintes passarem sobre um banco vazio.
+    // `>=` e não `===`: casos anteriores deste arquivo acrescentam linhas ao ledger, e fixar o total aqui
+    // faria o teste quebrar por contágio a cada caso novo — falha por acumulação, não por contrato. O que o
+    // contrato garante é que a sequência inteira NÃO REMOVE acervo.
+    const n = await db.query<{ n: string }>("select count(*)::text n from erp.stock_movements");
+    expect(Number(n.rows[0]!.n), "o ledger atravessou a sequência inteira sem perder linha").toBeGreaterThanOrEqual(LEDGER);
+  }, 240_000);
+
   it("e o ledger segue intacto e imutável no fim da sequência", async () => {
     const r = await db.query<{ n: string; tg: string }>(
       `select (select count(*)::text from erp.stock_movements where empresa_id is null) n,

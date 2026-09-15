@@ -103,8 +103,7 @@ function alteracoesNaOrdemDoArquivo(sql) {
   varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+add\s+column\s+(?:if\s+not\s+exists\s+)?([\s\S]*?);/gi,
     (m) => ({ tipo: "adicionarColuna", tabela: m[1].toLowerCase(), definicao: m[2].trim() }));
   // `drop column a`, `drop column if exists a`, `drop column a cascade` e a forma com várias ações numa
-  // instrução só (`drop column a, drop column b;`). Mistura com `add column` na MESMA instrução não é
-  // suportada de propósito: o repositório não a usa, e aceitá-la meio pela metade seria pior do que recusá-la.
+  // instrução só (`drop column a, drop column b;`).
   varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+(drop\s+column\b[^;]*);/gi, (m) => {
     const nomes = [...m[2].matchAll(/drop\s+column\s+(?:if\s+exists\s+)?([a-z_][a-z0-9_]*)/gi)].map((x) => x[1].toLowerCase());
     return nomes.length ? { tipo: "removerColuna", tabela: m[1].toLowerCase(), colunas: nomes } : null;
@@ -119,6 +118,44 @@ function alteracoesNaOrdemDoArquivo(sql) {
     (m) => ({ tipo: "removerTabela", tabela: m[1].toLowerCase() }));
 
   return ops.sort((a, b) => a.pos - b.pos);
+}
+
+/**
+ * FORMAS QUE ESTE LEITOR RECUSA — EM VOZ ALTA (PRE-BASE2-05C-0).
+ *
+ * Tolerar em silêncio o que não se entende é aceitável enquanto o silêncio ERRA PARA O LADO SEGURO. Com
+ * migrations aditivas era o caso: uma cláusula não reconhecida só deixava de acrescentar alguma coisa. Com
+ * remoção deixa de ser, e duas formas fazem o modelo divergir do PostgreSQL SEM NENHUM SINAL:
+ *
+ *   • `alter table t drop column a, add column b …` — o leitor via o `drop` e engolia o `add`: a coluna `b`
+ *     simplesmente não existia no modelo, e o dicionário de dados, a matriz e o inventário descreveriam uma
+ *     tabela que o banco não tem;
+ *   • `alter table t rename column a to b` — ignorado por inteiro: o modelo mantinha `a` e nunca conhecia
+ *     `b`. Para a PRE-BASE2-05C-1 esta é a pior das duas — uma migration que RENOMEIE em vez de dropar faria
+ *     todos os gates afirmarem, verdes, que a coluna legada continua existindo.
+ *
+ * O comentário anterior dizia que a forma mista "não é suportada de propósito" porque aceitá-la pela metade
+ * seria pior do que recusá-la. Estava certo no princípio e errado no fato: ela era aceita pela metade,
+ * porque não havia recusa nenhuma. Agora há. O leitor PARA, dizendo arquivo e instrução.
+ *
+ * As demais cláusulas de `alter table` (constraint, default, tipo, `enable row level security`) continuam
+ * ignoradas de propósito: elas não mudam o CONJUNTO de colunas, que é o que este modelo afirma.
+ */
+const FORMAS_RECUSADAS = [
+  { re: /alter\s+table\s+(?:if\s+exists\s+)?[a-z_]+\.[a-z_][a-z0-9_]*\s+(?=[^;]*\bdrop\s+column\b)(?=[^;]*\badd\s+column\b)[^;]*;/gi,
+    porque: "mistura `drop column` e `add column` na MESMA instrução; separe em duas instruções, na ordem em que devem valer" },
+  { re: /alter\s+table\s+(?:if\s+exists\s+)?[a-z_]+\.[a-z_][a-z0-9_]*\s+rename\s+column\b[^;]*;/gi,
+    porque: "`rename column` não é modelado; use `add column` + backfill + `drop column`, que é o que a migração de empresa já faz" }
+];
+
+function recusarFormaNaoModelada(sql, file) {
+  for (const { re, porque } of FORMAS_RECUSADAS) {
+    re.lastIndex = 0;
+    const m = re.exec(sql);
+    if (m) {
+      throw new Error(`schema.mjs: ${file} usa uma forma que este leitor NÃO modela — ${porque}.\n  ${m[0].replace(/\s+/g, " ").trim()}\nAceitar pela metade faria o dicionário de dados, a matriz de RLS e o inventário descreverem um schema que não existe — e VERDES.`);
+    }
+  }
 }
 
 function aplicar(tables, op, file) {
@@ -175,6 +212,7 @@ export function readSchema(dir = MIGRATIONS_DIR) {
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
   for (const file of files) {
     const sql = stripSqlComments(fs.readFileSync(path.join(dir, file), "utf8"));
+    recusarFormaNaoModelada(sql, file);
     for (const op of alteracoesNaOrdemDoArquivo(sql)) aplicar(tables, op, file);
   }
   return tables;
