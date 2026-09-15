@@ -5,19 +5,34 @@ import { seedReference, seedDemo } from "../src/seed.js";
 import { TEST_URL } from "./setup.js";
 
 /**
- * MIGRAÇÃO FÍSICA FAZENDA → EMPRESA: O QUE O BANCO GARANTE (PRE-BASE2-03).
+ * MIGRAÇÃO FÍSICA FAZENDA → EMPRESA: O QUE O BANCO GARANTE (PRE-BASE2-03 → 05C-1).
  *
- * Três coisas que nenhum teste de API alcança:
- *   1. a view de compatibilidade devolve o MESMO conjunto que a tabela canônica, sob o papel da aplicação —
- *      e não o conjunto do DONO, que é o que aconteceria sem `security_invoker`;
- *   2. o par legado/canônico é impossível de divergir, e a divergência é RECUSADA em vez de resolvida;
- *   3. a migração sobre um banco REALISTA (não fresh) preserva identificadores, contagens e valores.
+ * Este arquivo nasceu medindo TRÊS coisas. Duas delas eram a própria ponte de compatibilidade — a view de
+ * nome antigo e os gatilhos que espelhavam o par legado/canônico —, e a 05C-1 removeu esses objetos do
+ * banco. Medir o que não existe não vira um teste mais fraco: vira um teste VERDE que não mede nada. Por
+ * isso os dois blocos saíram JUNTO com os objetos, na mesma fatia que os apagou, como o contrato do
+ * espelho (`scripts/lib/empresa-compat-surface.mjs`) sempre disse que sairiam.
+ *
+ * O que ficou é o que sobrevive à purga e continua sendo verdade:
+ *   1. a referência ao tenant é COMPOSTA — coluna única não prova organização;
+ *   2. a migração sobre um banco REALISTA (não fresh) preserva identificadores, contagens e valores,
+ *      agora atravessando também a purga;
+ *   3. o preflight da 0014 PARA diante de acervo cross-tenant, em vez de corrigir em silêncio.
  */
 const migrations = listMigrations();
 const ate0013 = migrations.filter((m) => m.name < "0014");
-const daPreBase203 = migrations.filter((m) => m.name >= "0014");
+/**
+ * Tudo da PRE-BASE2-03 em diante — e isso INCLUI a purga da 05C-1, de propósito.
+ *
+ * A grafia anterior era `m.name >= "0014"` e não tinha teto. Quando a 0017 entrou no diretório, ela passou
+ * a fazer parte desta partição SEM que ninguém decidisse isso: o teste começou a atravessar a purga por
+ * acidente, e uma asserção que comparava as duas colunas quebrou porque uma delas já não existia. O teto
+ * agora é explícito e nomeado. Migration nova entra aqui por decisão, não por ordem alfabética.
+ */
+const ULTIMA_DESTA_PARTICAO = "0017_purge_farm_legacy.sql";
+const daPreBase203 = migrations.filter((m) => m.name >= "0014" && m.name <= ULTIMA_DESTA_PARTICAO);
 
-let db: Db; let app: Db; let ORG = ""; let EMPRESA = ""; let EMPRESA2 = ""; let EMPRESA3 = ""; let ADMIN = "";
+let db: Db; let app: Db; let ORG = "";
 
 beforeAll(async () => {
   db = createPool(TEST_URL, { max: 4 });
@@ -25,9 +40,7 @@ beforeAll(async () => {
   for (const m of migrations) await db.query(m.sql);
   await seedReference(db, () => {});
   const demo = await seedDemo(db, {}, () => {});
-  ORG = demo.orgId; EMPRESA = demo.empresaIds[0]!; EMPRESA2 = demo.empresaIds[1]!; ADMIN = demo.adminUserId;
-  // uma terceira empresa: é preciso três valores distintos para montar um UPDATE de verdade CONTRADITÓRIO
-  EMPRESA3 = (await db.query<{ id: string }>("insert into erp.empresas(organization_id,code,name) values ($1,3,'Empresa 3') returning id", [ORG])).rows[0]!.id;
+  ORG = demo.orgId;
   await db.query("do $$ begin if not exists (select 1 from pg_roles where rolname='erp_app_compat') then create role erp_app_compat login password 'c' in role erp_app; end if; end $$;");
   // A URL de teste é `postgresql://postgres:postgres@…`: trocar o texto "postgres@" acertaria a SENHA e
   // deixaria o usuário como `postgres`, que é SUPERUSUÁRIO e ignora RLS — o teste passaria a medir nada.
@@ -36,105 +49,6 @@ beforeAll(async () => {
   app = createPool(url.toString(), { max: 2 });
 }, 240_000);
 afterAll(async () => { await app?.end(); await db?.end(); });
-
-describe("view de compatibilidade erp.farms", () => {
-  const comoApp = async <T extends Record<string, unknown>>(sql: string, params: unknown[] = []) => {
-    const c = await app.connect();
-    try {
-      await c.query("begin");
-      // com o usuário REAL: é assim que a API fala com o banco, e é o que faz a RLS ter o que decidir
-      await c.query("select set_config('app.org_id',$1,true), set_config('app.user_id',$2,true)", [ORG, ADMIN]);
-      const r = await c.query<T>(sql, params);
-      await c.query("commit");
-      return r;
-    } finally { c.release(); }
-  };
-
-  it("devolve exatamente as mesmas linhas que erp.empresas sob o papel da aplicação", async () => {
-    // Sem `security_invoker = true`, a view rodaria com a RLS do DONO. Onde o dono é superusuário (migração
-    // local, Supabase), não há RLS nenhuma: o nome antigo viraria uma porta dos fundos para o banco inteiro.
-    const canonica = await comoApp<{ id: string }>("select id from erp.empresas order by id");
-    const legada = await comoApp<{ id: string }>("select id from erp.farms order by id");
-    expect(legada.rows.map((r) => r.id)).toEqual(canonica.rows.map((r) => r.id));
-    expect(canonica.rows.length).toBeGreaterThan(0);
-  });
-
-  it("não enxerga empresa de outra organização pelo nome legado", async () => {
-    const outra = await db.query<{ id: string }>("insert into erp.organizations(name,slug) values ('[TEST] Compat DB','compat-db') returning id");
-    await db.query("insert into erp.empresas(organization_id,code,name) values ($1,42,'Invisivel')", [outra.rows[0]!.id]);
-    const r = await comoApp<{ n: string; org: string | null; tv: boolean; esc: boolean }>(
-      `select count(*)::text n,
-              max(organization_id::text) org,
-              bool_or(erp.tenant_visible(organization_id)) tv,
-              bool_or(erp.empresa_no_escopo(id, null)) esc
-         from erp.farms where name='Invisivel'`);
-    expect(r.rows[0]!.n, `org=${r.rows[0]!.org} tenant_visible=${r.rows[0]!.tv} escopo=${r.rows[0]!.esc}`).toBe("0");
-  });
-
-  it("escrita pelo nome legado chega à tabela canônica", async () => {
-    await db.query("insert into erp.farms(organization_id,code,name) values ($1,77,'Criada pela view')", [ORG]);
-    const r = await db.query<{ n: string }>("select count(*) n from erp.empresas where organization_id=$1 and code=77", [ORG]);
-    expect(r.rows[0]!.n, "view simples sobre uma tabela é automaticamente atualizável").toBe("1");
-  });
-});
-
-describe("sincronização empresa_id ↔ farm_id", () => {
-  const inserir = (cols: string, vals: string, params: unknown[]) =>
-    db.query(`insert into erp.purchase_requests(organization_id,code,request_date,request_type,requester_user_id,status,status_changed_at,description,justification,${cols})
-              values ($1,$2,current_date,'product',(select id from erp.users where email='admin@demo.local'),'request',now(),'x','x',${vals})`, params);
-
-  it("INSERT só com o legado preenche o canônico", async () => {
-    await inserir("farm_id", "$3", [ORG, "SYNC-1", EMPRESA]);
-    const r = await db.query<{ e: string }>("select empresa_id e from erp.purchase_requests where code='SYNC-1'");
-    expect(r.rows[0]!.e).toBe(EMPRESA);
-  });
-  it("INSERT só com o canônico preenche o legado", async () => {
-    await inserir("empresa_id", "$3", [ORG, "SYNC-2", EMPRESA]);
-    const r = await db.query<{ f: string }>("select farm_id f from erp.purchase_requests where code='SYNC-2'");
-    expect(r.rows[0]!.f).toBe(EMPRESA);
-  });
-  it("INSERT com os dois IGUAIS é aceito", async () => {
-    await expect(inserir("empresa_id,farm_id", "$3,$3", [ORG, "SYNC-3", EMPRESA])).resolves.toBeTruthy();
-  });
-  it("INSERT com os dois DIFERENTES é RECUSADO, não resolvido por escolha", async () => {
-    // Escolher um dos dois em silêncio gravaria a empresa que o cliente NÃO pediu, e o erro só apareceria
-    // num relatório meses depois — quando ninguém mais liga a causa ao efeito.
-    await expect(inserir("empresa_id,farm_id", "$3,$4", [ORG, "SYNC-4", EMPRESA, EMPRESA2]))
-      .rejects.toThrow(/divergentes/);
-  });
-  it("UPDATE do canônico move o legado", async () => {
-    await db.query("update erp.purchase_requests set empresa_id=$1 where code='SYNC-1'", [EMPRESA2]);
-    const r = await db.query<{ f: string }>("select farm_id f from erp.purchase_requests where code='SYNC-1'");
-    expect(r.rows[0]!.f).toBe(EMPRESA2);
-  });
-  it("UPDATE do legado move o canônico", async () => {
-    await db.query("update erp.purchase_requests set farm_id=$1 where code='SYNC-2'", [EMPRESA2]);
-    const r = await db.query<{ e: string }>("select empresa_id e from erp.purchase_requests where code='SYNC-2'");
-    expect(r.rows[0]!.e).toBe(EMPRESA2);
-  });
-  it("UPDATE contraditório (os dois mudando para valores diferentes) é RECUSADO", async () => {
-    // SYNC-3 está em EMPRESA; mudar um lado para EMPRESA2 e o outro para EMPRESA3 é o único caso em que os
-    // DOIS mudam. Se só um muda, o outro o acompanha — e é isso que mantém o par sempre igual.
-    await expect(db.query("update erp.purchase_requests set empresa_id=$1, farm_id=$2 where code='SYNC-3'", [EMPRESA2, EMPRESA3]))
-      .rejects.toThrow(/divergentes/);
-  });
-  it("coluna ANULÁVEL aceita nulo nos dois lados e continua significando 'da organização'", async () => {
-    await db.query("insert into erp.financial_freezes(organization_id,empresa_id,year,month,is_frozen) values ($1,null,2035,3,true)", [ORG]);
-    const r = await db.query<{ e: string | null; f: string | null }>("select empresa_id e, farm_id f from erp.financial_freezes where year=2035 and month=3");
-    expect(r.rows[0]!.e).toBeNull(); expect(r.rows[0]!.f).toBeNull();
-  });
-  it("nenhuma linha do banco tem o par divergente", async () => {
-    const r = await db.query<{ tabela: string }>(`
-      select c.table_name as tabela from information_schema.columns c
-       where c.table_schema='erp' and c.column_name='empresa_id'
-         and exists (select 1 from information_schema.columns l where l.table_schema='erp' and l.table_name=c.table_name and l.column_name='farm_id')`);
-    for (const { tabela } of r.rows) {
-      const d = await db.query<{ n: string }>(`select count(*) n from erp.${tabela} where empresa_id is distinct from farm_id`);
-      expect(d.rows[0]!.n, `erp.${tabela}`).toBe("0");
-    }
-    expect(r.rows.length).toBeGreaterThan(40);
-  });
-});
 
 describe("referência composta prova o tenant", () => {
   it("empresa de OUTRA organização é recusada pela chave estrangeira", async () => {
@@ -149,6 +63,7 @@ describe("referência composta prova o tenant", () => {
 
 describe("UPGRADE sobre banco realista (não fresh)", () => {
   const antes: { tabela: string; n: string }[] = []; let idsAntes: string[] = [];
+  let empresaAntes: { id: string; farm_id: string | null }[] = [];
   let upgrade: Db;
 
   beforeAll(async () => {
@@ -163,6 +78,12 @@ describe("UPGRADE sobre banco realista (não fresh)", () => {
       antes.push({ tabela: t, n: r.rows[0]!.n });
     }
     idsAntes = (await upgrade.query<{ id: string }>("select id from erp.purchase_requests order by id")).rows.map((r) => r.id);
+    // O valor LEGADO, capturado antes da cadeia. Depois da purga não existe mais coluna legada para
+    // comparar contra — e comparar com o valor capturado é mais forte do que comparar duas colunas vivas:
+    // prova que o canônico carrega exatamente o que o acervo anterior tinha, e não apenas que as duas
+    // grafias concordavam entre si.
+    empresaAntes = (await upgrade.query<{ id: string; farm_id: string | null }>(
+      "select id, farm_id from erp.purchase_requests order by id")).rows;
     for (const m of daPreBase203) await upgrade.query(m.sql);
   }, 240_000);
   afterAll(async () => { await upgrade?.end(); });
@@ -179,8 +100,13 @@ describe("UPGRADE sobre banco realista (não fresh)", () => {
     expect(depois).toEqual(idsAntes);
   });
   it("empresa_id recebeu exatamente o valor legado, linha a linha", async () => {
-    const r = await upgrade.query<{ n: string }>("select count(*) n from erp.purchase_requests where empresa_id is distinct from farm_id");
-    expect(r.rows[0]!.n).toBe("0");
+    expect(empresaAntes.length, "o acervo anterior precisa existir para a comparação valer").toBeGreaterThan(0);
+    const depois = (await upgrade.query<{ id: string; empresa_id: string | null }>(
+      "select id, empresa_id from erp.purchase_requests order by id")).rows;
+    expect(depois.map((r) => r.id)).toEqual(empresaAntes.map((r) => r.id));
+    for (const [i, linha] of depois.entries()) {
+      expect(linha.empresa_id, `erp.purchase_requests ${linha.id}`).toBe(empresaAntes[i]!.farm_id);
+    }
   });
   it("erp.member_farms saiu do schema ativo e o arquivo morto carrega a organização", async () => {
     const viva = await upgrade.query<{ n: string }>("select count(*) n from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='erp' and c.relname='member_farms'");

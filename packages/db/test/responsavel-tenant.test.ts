@@ -27,10 +27,22 @@ const migrations = listMigrations();
 const ate0012 = migrations.filter((m) => m.name < "0013");
 const zero13 = migrations.find((m) => m.name.startsWith("0013"));
 
-/** Mundo mínimo: duas organizações reais, uma empresa na A, um usuário membro de cada. */
-async function mundo(db: Db): Promise<void> {
+/**
+ * Mundo mínimo: duas organizações reais, uma empresa na A, um usuário membro de cada.
+ *
+ * O parâmetro `era` não é conveniência: até a 0012 a tabela de empresas CHAMAVA-SE `erp.farms` e a coluna
+ * de vínculo em `purchase_requests` era `farm_id` — foi a 0014 que renomeou a tabela e criou uma view com o
+ * nome antigo, e é a 05C-1 que remove essa view. O bloco que reconstrói o banco até a 0012 tem de falar o
+ * idioma daquele momento; falar canônico ali inventaria um passado que nunca existiu, e o teste deixaria
+ * de provar o que promete.
+ */
+type Era = "legado" | "canonico";
+const TABELA_EMPRESA = { legado: "erp.farms", canonico: "erp.empresas" } as const;
+const COLUNA_EMPRESA = { legado: "farm_id", canonico: "empresa_id" } as const;
+
+async function mundo(db: Db, era: Era = "canonico"): Promise<void> {
   await db.query("insert into erp.organizations(id,name,slug) values ($1,'[TEST] Org A','resp-a'),($2,'[TEST] Org B','resp-b')", [ORG_A, ORG_B]);
-  await db.query("insert into erp.farms(id,organization_id,code,name) values ($1,$2,1,'Empresa A')", [EMPRESA_A, ORG_A]);
+  await db.query(`insert into ${TABELA_EMPRESA[era]}(id,organization_id,code,name) values ($1,$2,1,'Empresa A')`, [EMPRESA_A, ORG_A]);
   for (const [id, org, email] of [[USUARIO_A, ORG_A, "resp-a@t.local"], [USUARIO_B, ORG_B, "resp-b@t.local"]] as const) {
     await db.query("insert into erp.users(id,email,name,password_hash) values ($1,$2,$3,'x')", [id, email, email]);
     await db.query("insert into erp.organization_members(organization_id,user_id,is_owner,is_active) values ($1,$2,false,true)", [org, id]);
@@ -38,10 +50,10 @@ async function mundo(db: Db): Promise<void> {
 }
 
 /** Insere uma solicitação da ORG A com o responsável pedido. Devolve a mensagem de erro, ou null se passou. */
-async function inserirSolicitacao(db: Db, codigo: string, responsavel: string | null): Promise<string | null> {
+async function inserirSolicitacao(db: Db, codigo: string, responsavel: string | null, era: Era = "canonico"): Promise<string | null> {
   try {
     await db.query(
-      `insert into erp.purchase_requests(organization_id,farm_id,code,request_date,request_type,requester_user_id,
+      `insert into erp.purchase_requests(organization_id,${COLUNA_EMPRESA[era]},code,request_date,request_type,requester_user_id,
          status,status_changed_at,description,justification,current_responsible_user_id)
        values ($1,$2,$3,current_date,'product',$4,'request',now(),'t','t',$5)`,
       [ORG_A, EMPRESA_A, codigo, USUARIO_A, responsavel]);
@@ -105,8 +117,8 @@ describe("a 0013 sobre acervo legado", () => {
   async function bancoAte0012(responsavel: string | null): Promise<void> {
     await resetSchema(db);
     for (const m of ate0012) await db.query(m.sql);
-    await mundo(db);
-    if (responsavel) await inserirSolicitacao(db, "LEGADO-001", responsavel);
+    await mundo(db, "legado");
+    if (responsavel) await inserirSolicitacao(db, "LEGADO-001", responsavel, "legado");
   }
 
   // F1 — dado íntegro: a migration aplica normalmente

@@ -411,7 +411,7 @@ Local de guarda de estoque, pertencente a uma empresa.
 | Tabela | `erp.warehouses` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | não |
 
@@ -419,7 +419,6 @@ Local de guarda de estoque, pertencente a uma empresa.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `initials` |  | text | sim |  |  |  |  |
 | `description` |  | text | sim |  |  |  |  |
 | `type` |  | text | sim |  |  | `inputs` · `production` · `formulation` |  |
@@ -440,7 +439,7 @@ Lançamento de entrada de produtos sem documento fiscal vinculado.
 | Tabela | `erp.input_entries` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/entradas/:id` |
@@ -450,7 +449,6 @@ Lançamento de entrada de produtos sem documento fiscal vinculado.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `entry_date` |  | date | sim |  |  |  |  |
 | `harvest_id` |  | uuid | não | FK | `erp.harvests` |  |  |
@@ -507,7 +505,7 @@ Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financei
 | Tabela | `erp.invoices` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/documentos-fiscais/:id` |
@@ -517,7 +515,6 @@ Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financei
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `number` |  | text | sim |  |  |  |  |
 | `series` |  | text | sim |  |  |  |  |
@@ -559,7 +556,7 @@ Consumo interno de produtos por centro de custo/área.
 | Tabela | `erp.requisitions` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/requisicoes/:id` |
@@ -569,7 +566,6 @@ Consumo interno de produtos por centro de custo/área.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `requisition_date` |  | date | sim |  |  |  |  |
 | `classification` |  | text | sim |  |  | `unclassified` · `capex` · `opex` |  |
@@ -596,7 +592,7 @@ Baixa de estoque por perda, deterioração, doação e outros motivos.
 | Tabela | `erp.stock_writeoffs` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/baixas/:id` |
@@ -606,7 +602,6 @@ Baixa de estoque por perda, deterioração, doação e outros motivos.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `writeoff_date` |  | date | sim |  |  |  |  |
 | `reason` |  | text | sim |  |  | `loss` · `deterioration` · `theft` · `damage` · `inventory` · `accounting` · `burglary` · `expiration` · `gift` · `donation` · `consumption` · `payment_with_product` · `other` |  |
@@ -632,7 +627,7 @@ Retorno de produtos ao estoque a partir de uma requisição.
 | Tabela | `erp.devolutions` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/devolucoes/:id` |
@@ -641,7 +636,6 @@ Retorno de produtos ao estoque a partir de uma requisição.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `devolution_date` |  | date | sim |  |  |  |  |
 | `responsible_person_id` |  | uuid | não | FK | `erp.people` |  |  |
@@ -663,7 +657,7 @@ Movimentação de produtos entre armazéns ou entre empresas.
 | Tabela | `erp.warehouse_transfers` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_origem_id` · `empresa_destino_id` · `origin_farm_id` · `destination_farm_id` |
+| Escopo de empresa | `empresa_origem_id` · `empresa_destino_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/transferencias/:id` |
@@ -676,9 +670,7 @@ Movimentação de produtos entre armazéns ou entre empresas.
 | `code` |  | text | sim |  |  |  |  |
 | `transfer_date` |  | date | sim |  |  |  |  |
 | `kind` |  | text | sim |  |  | `warehouse` · `farm` |  |
-| `origin_farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `origin_warehouse_id` |  | uuid | sim | FK | `erp.warehouses` |  |  |
-| `destination_farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `destination_warehouse_id` |  | uuid | sim | FK | `erp.warehouses` |  |  |
 | `harvest_id` |  | uuid | não | FK | `erp.harvests` |  |  |
 | `generate_financial` |  | boolean | sim |  |  |  |  |
@@ -702,7 +694,7 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 | Tabela | `erp.feed_batches` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | não |
 | ID Global | sim |
 | Rota canônica | `/estoque/batidas/:id` |
@@ -711,7 +703,6 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `batch_date` |  | date | sim |  |  |  |  |
 | `formula_id` |  | uuid | sim | FK | `erp.feed_formulas` |  |  |
@@ -733,7 +724,7 @@ Razão imutável de estoque (custo médio e saldo). Não é lançamento: é cons
 | Tabela | `erp.stock_movements` |
 | Natureza | infraestrutura |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | não |
 | ID Global | não |
 
@@ -741,7 +732,6 @@ Razão imutável de estoque (custo médio e saldo). Não é lançamento: é cons
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `warehouse_id` |  | uuid | sim | FK | `erp.warehouses` |  |  |
 | `product_id` |  | uuid | sim | FK | `erp.products` |  |  |
 | `movement_type` |  | text | sim |  |  | `opening_balance` · `entry` · `invoice_entry` · `receipt` · `devolution` · `requisition` · `writeoff` · `correction_in` · `correction_out` · `transfer_out` · `transfer_in` · `farm_transfer_out` · `farm_transfer_in` · `sale` · `production_in` · `production_out` · `maintenance` · `fuel_supply` · `nutrition` · `reversal` |  |
@@ -776,7 +766,7 @@ Pedido interno de compra que percorre autorização, cotação e recebimento.
 | Tabela | `erp.purchase_requests` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/suprimentos/view/:id` |
@@ -786,7 +776,6 @@ Pedido interno de compra que percorre autorização, cotação e recebimento.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `parent_id` |  | uuid | não | FK | `erp.purchase_requests` |  |  |
 | `request_date` |  | date | sim |  |  |  |  |
@@ -825,7 +814,7 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | Tabela | `erp.financial_titles` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Discriminador | `direction` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
@@ -836,7 +825,6 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `direction` |  | text | sim |  |  | `payable` · `receivable` |  |
 | `number` |  | text | sim |  |  |  |  |
@@ -923,7 +911,7 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | Tabela | `erp.bank_movements` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/financeiro/movimentos/:id` |
@@ -932,7 +920,6 @@ Lançamento em conta bancária (transferência, tarifa, aplicação).
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | não | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `bank_account_id` |  | uuid | sim | FK | `erp.bank_accounts` |  |  |
 | `movement_date` |  | date | sim |  |  |  |  |
@@ -1001,7 +988,7 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | Tabela | `erp.sales_documents` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Discriminador | `kind` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
@@ -1012,7 +999,6 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `kind` |  | text | sim |  |  | `budget` · `order` · `sale` |  |
 | `code` |  | text | sim |  |  |  |  |
 | `document_date` |  | date | sim |  |  |  |  |
@@ -1052,7 +1038,7 @@ Animal identificado individualmente. Módulo específico do nicho agro (não faz
 | Tabela | `erp.animals` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/pecuaria/animais/:id` |
@@ -1061,7 +1047,6 @@ Animal identificado individualmente. Módulo específico do nicho agro (não faz
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `species_id` |  | uuid | sim | FK | `erp.animal_species` |  |  |
 | `category_id` |  | uuid | sim | FK | `erp.animal_categories` |  |  |
 | `breed_id` |  | uuid | não | FK | `erp.breeds` |  |  |
@@ -1105,7 +1090,7 @@ Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica.
 | Tabela | `erp.animal_movements` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `empresa_destino_id` · `farm_id` · `destination_farm_id` |
+| Escopo de empresa | `empresa_id` · `empresa_destino_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Discriminador | `movement_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
@@ -1115,14 +1100,12 @@ Entrada, saída, venda ou morte de animais. O tipo faz parte da rota canônica.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `movement_type` |  | text | sim |  |  | `purchase` · `sale` · `birth` · `death` · `loss` · `evolution` · `batch_transfer` · `farm_transfer` · `module_area_transfer` · `inventory` · `weaning` · `separation` · `processing` |  |
 | `movement_date` |  | date | sim |  |  |  |  |
 | `person_id` |  | uuid | não | FK | `erp.people` |  |  |
 | `batch_id` |  | uuid | não | FK | `erp.batches` |  |  |
 | `destination_batch_id` |  | uuid | não | FK | `erp.batches` |  |  |
-| `destination_farm_id` |  | uuid | não | FK | `erp.farms` |  |  |
 | `destination_module_id` |  | uuid | não | FK | `erp.grazing_modules` |  |  |
 | `destination_area_id` |  | uuid | não | FK | `erp.areas` |  |  |
 | `quantity` |  | int | sim |  |  |  |  |
@@ -1149,7 +1132,7 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | Tabela | `erp.animal_handlings` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Discriminador | `handling_type` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
@@ -1159,7 +1142,6 @@ Manejo sanitário, nutricional ou reprodutivo aplicado a animais/lotes.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `handling_type` |  | text | sim |  |  | `nutrition` · `sanitary` · `weaning` · `separation` · `pasture` · `locate` |  |
 | `handling_date` |  | date | sim |  |  |  |  |
@@ -1187,7 +1169,7 @@ Evento de pesagem de animais, base de desempenho e ganho de peso.
 | Tabela | `erp.weighings` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/pecuaria/pesagens/:id` |
@@ -1196,7 +1178,6 @@ Evento de pesagem de animais, base de desempenho e ganho de peso.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `weighing_date` |  | date | sim |  |  |  |  |
 | `batch_id` |  | uuid | não | FK | `erp.batches` |  |  |
@@ -1220,7 +1201,7 @@ Bem/máquina da empresa, com depreciação e histórico de manutenção.
 | Tabela | `erp.equipments` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/cadastros/equipments/:id?view=1` |
@@ -1229,7 +1210,6 @@ Bem/máquina da empresa, com depreciação e histórico de manutenção.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `description` |  | text | sim |  |  |  |  |
 | `family_id` |  | uuid | não | FK | `erp.equipment_families` |  |  |
@@ -1278,7 +1258,7 @@ Consumo de combustível por equipamento, com baixa de estoque.
 | Tabela | `erp.fuel_supplies` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/frota/abastecimentos/:id` |
@@ -1288,7 +1268,6 @@ Consumo de combustível por equipamento, com baixa de estoque.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `supply_date` |  | date | sim |  |  |  |  |
 | `equipment_id` |  | uuid | sim | FK | `erp.equipments` |  |  |
@@ -1319,7 +1298,7 @@ Serviço e peças aplicados a um ou mais equipamentos.
 | Tabela | `erp.maintenances` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/frota/manutencoes/:id` |
@@ -1329,7 +1308,6 @@ Serviço e peças aplicados a um ou mais equipamentos.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `maintenance_date` |  | date | sim |  |  |  |  |
 | `responsible_user_id` |  | uuid | não | FK | `erp.users` |  |  |
@@ -1354,7 +1332,7 @@ Serviço planejado/executado com apontamento de recursos.
 | Tabela | `erp.service_orders` |
 | Natureza | entidade |
 | Escopo de organização | sim |
-| Escopo de empresa | `empresa_id` · `farm_id` |
+| Escopo de empresa | `empresa_id` |
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/os/:id` |
@@ -1364,7 +1342,6 @@ Serviço planejado/executado com apontamento de recursos.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `farm_id` |  | uuid | sim | FK | `erp.farms` |  |  |
 | `code` |  | text | sim |  |  |  |  |
 | `order_date` |  | date | sim |  |  |  |  |
 | `harvest_id` |  | uuid | não | FK | `erp.harvests` |  |  |
@@ -1407,70 +1384,70 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.animal_handling_items` | 8 | não | — | não |
 | `erp.animal_identifications` | 6 | sim | — | não |
 | `erp.animal_movement_items` | 10 | não | — | não |
-| `erp.animal_retroactive_costs` | 11 | sim | `empresa_id` · `farm_id` | não |
+| `erp.animal_retroactive_costs` | 10 | sim | `empresa_id` | não |
 | `erp.animal_species` | 3 | sim | — | não |
 | `erp.apportionment_categories` | 7 | sim | — | sim |
 | `erp.apportionment_category_items` | 4 | não | — | não |
-| `erp.areas` | 14 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.areas` | 13 | sim | `empresa_id` | sim |
 | `erp.attachment_blobs` | 3 | sim | — | não |
 | `erp.attachments` | 12 | sim | — | não |
-| `erp.authorizer_empresas` | 3 | não | `empresa_id` · `farm_id` | não |
+| `erp.authorizer_empresas` | 2 | não | `empresa_id` | não |
 | `erp.authorizers` | 13 | sim | — | sim |
-| `erp.bank_account_empresas` | 3 | não | `empresa_id` · `farm_id` | não |
+| `erp.bank_account_empresas` | 2 | não | `empresa_id` | não |
 | `erp.bank_account_proprietaries` | 2 | não | — | não |
 | `erp.bank_accounts` | 20 | sim | — | sim |
 | `erp.bank_movement_apportionments` | 8 | não | — | não |
 | `erp.banks` | 2 | não | — | não |
 | `erp.batch_categories` | 2 | não | — | não |
-| `erp.batches` | 22 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.batches` | 21 | sim | `empresa_id` | sim |
 | `erp.bonuses` | 11 | sim | — | sim |
 | `erp.breeding_protocols` | 7 | sim | — | não |
 | `erp.breeding_season_batches` | 2 | não | — | não |
-| `erp.breeding_seasons` | 11 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.breeding_seasons` | 10 | sim | `empresa_id` | sim |
 | `erp.breeding_sires` | 9 | sim | — | não |
 | `erp.breeds` | 4 | sim | — | não |
 | `erp.budget_planning_values` | 4 | não | — | não |
-| `erp.budget_plannings` | 11 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.budget_plannings` | 10 | sim | `empresa_id` | sim |
 | `erp.chart_accounts` | 12 | sim | — | sim |
 | `erp.cities` | 3 | não | — | não |
 | `erp.client_profiles` | 8 | não | — | não |
 | `erp.contract_items` | 6 | não | — | não |
-| `erp.contracts` | 19 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.contracts` | 18 | sim | `empresa_id` | sim |
 | `erp.cost_centers` | 11 | sim | — | sim |
 | `erp.cultivations` | 5 | sim | — | não |
 | `erp.depreciations` | 9 | sim | — | não |
 | `erp.devolution_items` | 8 | não | — | não |
-| `erp.dfe_documents` | 19 | sim | `empresa_id` · `farm_id` | não |
+| `erp.dfe_documents` | 18 | sim | `empresa_id` | não |
 | `erp.dfe_drafts` | 8 | sim | — | não |
 | `erp.diet_batch_items` | 6 | não | — | não |
-| `erp.diet_batches` | 14 | sim | `empresa_id` · `farm_id` | não |
+| `erp.diet_batches` | 13 | sim | `empresa_id` | não |
 | `erp.diet_items` | 5 | não | — | não |
 | `erp.diets` | 11 | sim | — | sim |
 | `erp.document_types` | 9 | sim | — | sim |
-| `erp.documents` | 14 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.documents` | 13 | sim | `empresa_id` | sim |
 | `erp.earning_lines` | 7 | não | — | não |
-| `erp.earnings` | 13 | sim | `empresa_id` · `farm_id` | não |
+| `erp.earnings` | 12 | sim | `empresa_id` | não |
 | `erp.employee_events` | 6 | sim | — | não |
 | `erp.employee_profiles` | 13 | não | — | não |
-| `erp.empresa_cost_centers` | 3 | não | `empresa_id` · `farm_id` | não |
+| `erp.empresa_cost_centers` | 2 | não | `empresa_id` | não |
 | `erp.equipment_cost_centers` | 3 | não | — | não |
 | `erp.equipment_families` | 5 | sim | — | não |
-| `erp.equipment_transfers` | 12 | sim | `empresa_origem_id` · `empresa_destino_id` · `origin_farm_id` · `destination_farm_id` | não |
+| `erp.equipment_transfers` | 10 | sim | `empresa_origem_id` · `empresa_destino_id` | não |
 | `erp.export_jobs` | 10 | sim | — | não |
 | `erp.feed_batch_items` | 6 | não | — | não |
-| `erp.feed_deliveries` | 14 | sim | `empresa_id` · `farm_id` | não |
+| `erp.feed_deliveries` | 13 | sim | `empresa_id` | não |
 | `erp.feed_formula_items` | 5 | não | — | não |
 | `erp.feed_formulas` | 11 | sim | — | sim |
 | `erp.feeding_phases` | 10 | sim | — | sim |
 | `erp.feedlot_corrals` | 10 | sim | — | sim |
 | `erp.feedlot_sectors` | 8 | sim | — | sim |
-| `erp.feedlot_yards` | 9 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.feedlot_yards` | 8 | sim | `empresa_id` | sim |
 | `erp.financial_categories` | 13 | sim | — | sim |
-| `erp.financial_freezes` | 10 | sim | `empresa_id` · `farm_id` | não |
+| `erp.financial_freezes` | 9 | sim | `empresa_id` | não |
 | `erp.fodders` | 7 | sim | — | sim |
-| `erp.grazing_modules` | 14 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.grazing_modules` | 13 | sim | `empresa_id` | sim |
 | `erp.harvests` | 14 | sim | — | sim |
-| `erp.herd_lots` | 14 | sim | `empresa_id` · `farm_id` | não |
+| `erp.herd_lots` | 13 | sim | `empresa_id` | não |
 | `erp.hr_events` | 12 | sim | — | sim |
 | `erp.idempotency_keys` | 6 | sim | — | não |
 | `erp.identification_types` | 3 | sim | — | não |
@@ -1478,9 +1455,9 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.invoice_apportionments` | 8 | não | — | não |
 | `erp.invoice_items` | 23 | não | — | não |
 | `erp.job_functions` | 12 | sim | — | sim |
-| `erp.journal_entries` | 14 | sim | `empresa_id` · `farm_id` | não |
+| `erp.journal_entries` | 13 | sim | `empresa_id` | não |
 | `erp.legado_escopo_empresa_v0` | 4 | sim | `empresa_id` | não |
-| `erp.livestock_plannings` | 13 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.livestock_plannings` | 12 | sim | `empresa_id` | sim |
 | `erp.maintenance_items` | 9 | não | — | não |
 | `erp.maintenance_machines` | 10 | não | — | não |
 | `erp.matings` | 15 | sim | — | não |
@@ -1492,18 +1469,18 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.notificacao_leituras` | 4 | sim | — | não |
 | `erp.notifications` | 17 | sim | `empresa_id` | não |
 | `erp.ofx_transactions` | 10 | sim | — | não |
-| `erp.opening_balances` | 16 | sim | `empresa_id` · `farm_id` | não |
+| `erp.opening_balances` | 15 | sim | `empresa_id` | não |
 | `erp.operations` | 11 | sim | — | sim |
 | `erp.payment_methods` | 4 | sim | — | não |
 | `erp.permissions` | 5 | não | — | não |
 | `erp.preventive_maintenances` | 12 | sim | — | sim |
-| `erp.processings` | 14 | sim | `empresa_id` · `farm_id` | não |
+| `erp.processings` | 13 | sim | `empresa_id` | não |
 | `erp.product_categories` | 5 | sim | — | não |
 | `erp.product_groups` | 4 | sim | — | não |
 | `erp.product_kinds` | 5 | sim | — | não |
 | `erp.product_merges` | 6 | sim | — | não |
 | `erp.product_packages` | 6 | sim | — | não |
-| `erp.proprietary_empresas` | 5 | não | `empresa_id` · `farm_id` | não |
+| `erp.proprietary_empresas` | 4 | não | `empresa_id` | não |
 | `erp.proprietary_profiles` | 2 | não | — | não |
 | `erp.provider_branches` | 8 | não | — | não |
 | `erp.provider_launch_profile_items` | 5 | não | — | não |
@@ -1515,16 +1492,16 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.purchase_quotations` | 14 | sim | — | não |
 | `erp.purchase_request_events` | 10 | sim | — | não |
 | `erp.purchase_request_items` | 10 | não | — | não |
-| `erp.rainfalls` | 9 | sim | `empresa_id` · `farm_id` | não |
+| `erp.rainfalls` | 8 | sim | `empresa_id` | não |
 | `erp.requisition_items` | 10 | não | — | não |
-| `erp.salary_advances` | 15 | sim | `empresa_id` · `farm_id` | sim |
+| `erp.salary_advances` | 14 | sim | `empresa_id` | sim |
 | `erp.sales_document_items` | 11 | não | — | não |
 | `erp.saved_reports` | 11 | sim | — | sim |
 | `erp.scheduled_reviews` | 10 | sim | — | sim |
 | `erp.service_order_lines` | 12 | não | — | não |
 | `erp.states` | 3 | não | — | não |
 | `erp.stock_balances` | 10 | sim | — | não |
-| `erp.stock_corrections` | 17 | sim | `empresa_id` · `farm_id` | não |
+| `erp.stock_corrections` | 16 | sim | `empresa_id` | não |
 | `erp.stock_writeoff_items` | 7 | não | — | não |
 | `erp.supply_status_sla` | 3 | sim | — | não |
 | `erp.tax_rules` | 25 | sim | — | sim |
@@ -1534,7 +1511,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.title_apportionments` | 9 | não | — | não |
 | `erp.title_appropriations` | 5 | não | — | não |
 | `erp.title_types` | 4 | sim | — | não |
-| `erp.trough_readings` | 11 | sim | `empresa_id` · `farm_id` | não |
+| `erp.trough_readings` | 10 | sim | `empresa_id` | não |
 | `erp.troughs` | 12 | sim | — | sim |
 | `erp.user_bosses` | 3 | sim | — | não |
 | `erp.user_favorites` | 5 | sim | — | não |

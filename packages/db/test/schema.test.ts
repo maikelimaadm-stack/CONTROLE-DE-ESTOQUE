@@ -14,6 +14,27 @@ describe("migrations e seed", () => {
     const noRls = await db.query("select relname from pg_class c join pg_namespace n on n.oid=c.relnamespace where n.nspname='erp' and c.relkind='r' and not c.relrowsecurity");
     expect(noRls.rows).toEqual([]);
   });
+  // Este caso nasceu na fase dual aferindo a COEXISTÊNCIA das duas grafias. A 05C-1 o INVERTE, junto com
+  // `FASE_ESPELHO`: o que se exige agora é a AUSÊNCIA da grafia legada. Sem essa inversão, o dia em que a
+  // coluna sumisse o caso passaria a não medir nada e continuaria verde — o falso positivo mais caro
+  // possível, bem no meio da única migration que apaga estrutura.
+  it("a grafia legada não existe mais em coluna nenhuma do schema (fase canônica)", async () => {
+    const r = await db.query<{ tabela: string; coluna: string }>(
+      `select c.relname tabela, a.attname coluna from pg_attribute a
+         join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'erp' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
+          and a.attname in ('farm_id','origin_farm_id','destination_farm_id')
+        order by 1, 2`);
+    expect(r.rows).toEqual([]);
+    // A premissa junto com a conclusão: o schema canônico existe de verdade, senão o vazio acima seria
+    // verdadeiro num banco sem tabela nenhuma.
+    const canonicas = await db.query<{ n: number }>(
+      `select count(*)::int n from pg_attribute a
+         join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname = 'erp' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
+          and a.attname in ('empresa_id','empresa_origem_id','empresa_destino_id')`);
+    expect(canonicas.rows[0]!.n).toBeGreaterThanOrEqual(52);
+  });
   it("seed demo cria organização, fazendas, produtos e permissões", async () => {
     const p = await db.query("select count(*)::int n from erp.products where organization_id=$1", [demo.orgId]);
     expect(p.rows[0].n).toBe(8);
@@ -26,7 +47,7 @@ describe("migrations e seed", () => {
 describe("ledger de estoque (triggers)", () => {
   it("aplica custo médio e bloqueia saldo negativo", async () => {
     const prod = (await db.query("select id, default_warehouse_id from erp.products where organization_id=$1 order by code limit 1", [demo.orgId])).rows[0];
-    const ins = (t: "in" | "out", q: string, c: string) => withTx(db, { orgId: demo.orgId, userId: demo.adminUserId }, (tx) => tx.query("insert into erp.stock_movements(organization_id,farm_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,source_type,source_id,movement_date) values ($1,$2,$3,$4,$5,$6,$7,$8,'test',gen_random_uuid(),current_date) returning balance_after, avg_cost_after", [demo.orgId, demo.empresaIds[0], prod.default_warehouse_id, prod.id, t === "in" ? "entry" : "requisition", t === "in" ? 1 : -1, q, c]));
+    const ins = (t: "in" | "out", q: string, c: string) => withTx(db, { orgId: demo.orgId, userId: demo.adminUserId }, (tx) => tx.query("insert into erp.stock_movements(organization_id,empresa_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,source_type,source_id,movement_date) values ($1,$2,$3,$4,$5,$6,$7,$8,'test',gen_random_uuid(),current_date) returning balance_after, avg_cost_after", [demo.orgId, demo.empresaIds[0], prod.default_warehouse_id, prod.id, t === "in" ? "entry" : "requisition", t === "in" ? 1 : -1, q, c]));
     const a = await ins("in", "100", "10"); expect(a.rows[0].balance_after).toBe("100.0000");
     const b = await ins("in", "100", "20"); expect(b.rows[0].avg_cost_after).toBe("15.000000");
     const c = await ins("out", "50", "0"); expect(c.rows[0].balance_after).toBe("150.0000");
@@ -64,7 +85,7 @@ describe("isolamento multiempresa (RLS)", () => {
 describe("financeiro (triggers)", () => {
   it("atualiza status do título pelas baixas e bloqueia excesso", async () => {
     const r = await withTx(db, { orgId: demo.orgId, userId: demo.adminUserId }, async (tx) => {
-      const t = await tx.query("insert into erp.financial_titles(organization_id,farm_id,code,direction,number,amount,emission_date,due_date,note) values ($1,$2,'T-TEST','payable','1',100,current_date,current_date,'teste') returning id", [demo.orgId, demo.empresaIds[0]]);
+      const t = await tx.query("insert into erp.financial_titles(organization_id,empresa_id,code,direction,number,amount,emission_date,due_date,note) values ($1,$2,'T-TEST','payable','1',100,current_date,current_date,'teste') returning id", [demo.orgId, demo.empresaIds[0]]);
       const acc = await tx.query("select id from erp.bank_accounts where organization_id=$1 limit 1", [demo.orgId]);
       await tx.query("insert into erp.title_settlements(organization_id,title_id,settlement_date,bank_account_id,amount,net_amount) values ($1,$2,current_date,$3,40,40)", [demo.orgId, t.rows[0].id, acc.rows[0].id]);
       const s1 = await tx.query("select status, paid_amount, balance from erp.financial_titles where id=$1", [t.rows[0].id]);

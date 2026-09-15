@@ -179,9 +179,14 @@ describe("classificação × políticas reais", () => {
 
   /**
    * Esta asserção é sobre o SCHEMA FÍSICO, não sobre o fio: ela emparelha a coluna canônica com a coluna
-   * espelho que ainda existe no banco. Os nomes antigos abaixo são de COLUNA e continuam corretos até a
-   * PRE-BASE2-05C — trocá-los pelos canônicos transformaria o `exists` num auto-join que casa com tudo, e
-   * o teste passaria a não provar nada.
+   * espelho do banco. Os nomes antigos abaixo são de COLUNA — trocá-los pelos canônicos transformaria o
+   * `exists` num auto-join que casa com tudo, e o teste passaria a não provar nada.
+   *
+   * A PERGUNTA VIRA COM A FASE, e é por isso que ela não foi apagada na 05C-1. Na fase `dual` o que se
+   * exige é que TODO par tenha gatilho de sincronização; na `canonica`, que não exista par NENHUM nem
+   * gatilho nenhum. Apagar o caso quando a purga rodasse deixaria a pergunta sem dono justo no momento em
+   * que ela muda de lado; mantê-lo como estava o deixaria verde medindo zero linhas — o falso positivo
+   * clássico. `FASE_ESPELHO` é o interruptor consciente que decide qual das duas perguntas vale.
    */
   it("todo par canônico/legado tem gatilho de sincronização no banco", async () => {
     const r = await db.query<{ tabela: string; canonico: string }>(`
@@ -200,6 +205,19 @@ describe("classificação × políticas reais", () => {
         "select count(*) n from pg_trigger tr join pg_class c on c.oid=tr.tgrelid join pg_namespace n on n.oid=c.relnamespace where n.nspname='erp' and c.relname=$1 and tr.tgname=$2 and not tr.tgisinternal",
         [tabela, `trg_sync_${canonico}`]);
       if (g.rows[0]!.n === "0") faltando.push(`erp.${tabela}.${canonico}`);
+    }
+    if (FASE_ESPELHO === "canonica") {
+      // Depois da purga não existe par para emparelhar, e é isso que se exige — com a contraprova de que o
+      // lado canônico continua de pé, senão "zero pares" seria verdade também num banco sem schema.
+      expect(r.rows, "na fase canônica não pode sobrar par legado/canônico").toEqual([]);
+      const g = await db.query<{ n: string }>(
+        "select count(*) n from pg_trigger tr join pg_proc p on p.oid=tr.tgfoid where not tr.tgisinternal and p.proname like 'sincronizar_empresa%'");
+      expect(g.rows[0]!.n, "nem gatilho de espelho").toBe("0");
+      const canonicas = await db.query<{ n: string }>(
+        `select count(*) n from information_schema.columns
+          where table_schema='erp' and column_name in ('empresa_id','empresa_origem_id','empresa_destino_id')`);
+      expect(Number(canonicas.rows[0]!.n), "o lado canônico existe — o vazio acima não é banco vazio").toBeGreaterThan(45);
+      return;
     }
     expect(r.rows.length, "os 52 pares da migração").toBeGreaterThan(45);
     expect(faltando).toEqual([]);
