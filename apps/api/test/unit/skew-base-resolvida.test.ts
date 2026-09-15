@@ -4,7 +4,7 @@ import path from "node:path";
 import os from "node:os";
 import { execFileSync } from "node:child_process";
 // @ts-expect-error — harness de skew em JS puro, fora do grafo de tipos da API
-import { commitAnterior, escolherFonteDaBase, baseDoEventoDePR, garantirWorktree } from "../../../../scripts/api-anterior.mjs";
+import { commitAnterior, escolherFonteDaBase, baseDoEventoDePR, garantirWorktree, refRemoto } from "../../../../scripts/api-anterior.mjs";
 
 /**
  * A BASE DO VERSION SKEW TEM DE SE MOVER COM A PR (PRE-BASE2-05C-0).
@@ -66,6 +66,16 @@ describe("R15 · a fonte da base", () => {
     const f = escolherFonteDaBase({ env: {} }) as { ref: string; exigido: boolean };
     expect(f.ref).toBe("origin/main");
     expect(f.exigido, "só aqui pode haver queda para o primeiro pai do HEAD").toBe(false);
+  });
+
+  it("o ref de RASTREIO vira o nome que o remoto conhece na hora do fetch", () => {
+    // `git fetch origin origin/main` responde `couldn't find remote ref`. Num clone raso — o do CI — o ref
+    // de rastreio não existe localmente, então o fetch é a ÚNICA tentativa: com o prefixo, a resolução
+    // falhava e o script abortava no evento de `push`, onde não há PR para declarar a base.
+    expect(refRemoto("origin/main")).toBe("main");
+    expect(refRemoto("origin/release/2026")).toBe("release/2026");
+    expect(refRemoto("main"), "um nome já remoto passa intacto").toBe("main");
+    expect(refRemoto("a".repeat(40)), "um SHA passa intacto").toBe("a".repeat(40));
   });
 
   it("o payload do evento só é lido em pull_request, e payload ilegível não derruba o script", () => {

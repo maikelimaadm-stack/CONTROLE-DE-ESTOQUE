@@ -143,10 +143,18 @@ export function baseDoEventoDePR(env = process.env, lerArquivo = (f) => readFile
  */
 export const MARCA_DE_ARVORE = "apps/api/src/main.ts";
 
+/**
+ * O NOME QUE O REMOTO CONHECE. `origin/main` é o ref de RASTREIO local; no remoto ele se chama `main`.
+ * `git fetch origin origin/main` responde `couldn't find remote ref` — e num clone raso, onde o ref de
+ * rastreio não existe localmente, essa era a única tentativa: a resolução falhava e o script abortava num
+ * evento de `push`, que é justamente onde não há PR para declarar a base.
+ */
+export const refRemoto = (ref) => String(ref).replace(/^origin\//, "");
+
 /** `<ref>` -> SHA, buscando do remoto quando o clone é raso. `null` quando o ref não existe. */
 function shaDoRef(ref) {
-  try { return git("rev-parse", "--verify", `${ref}^{commit}`); } catch { /* clone raso ou ref remoto ausente */ }
-  try { rodar("git", ["fetch", "--depth=1", "origin", ref], RAIZ); return git("rev-parse", "--verify", "FETCH_HEAD^{commit}"); } catch { return null; }
+  try { return git("rev-parse", "--verify", `${ref}^{commit}`); } catch { /* clone raso ou ref de rastreio ausente */ }
+  try { rodar("git", ["fetch", "--depth=1", "origin", refRemoto(ref)], RAIZ); return git("rev-parse", "--verify", "FETCH_HEAD^{commit}"); } catch { return null; }
 }
 
 /**
