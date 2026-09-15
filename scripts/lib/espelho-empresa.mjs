@@ -160,8 +160,13 @@ export function conferirEspelho(tables, fase) {
  * Por isso a invariante é cobrada POR FASE, do mesmo jeito que o espelho:
  *   `dual`     — o CHECK vive sobre as colunas LEGADAS. É o estado de hoje.
  *   `canonica` — o CHECK vive sobre as colunas CANÔNICAS. A 05C-1 só pode declarar essa fase se tiver
- *                criado o substituto; e como o gate roda depois da migration inteira, criar o substituto
- *                NO MESMO arquivo deixa de ser recomendação de prosa e vira condição de verde.
+ *                criado o substituto.
+ *
+ * O QUE ESTE CONTRATO PROVA, E O QUE NÃO PROVA: ele afirma que, ao FIM de todas as migrations, existe um
+ * CHECK validado na forma da fase. Não afirma em que arquivo ele nasceu — o catálogo não guarda isso, e
+ * uma purga dividida em dois arquivos produziria o mesmo verde. Que o substituto nasça no MESMO arquivo
+ * do drop é decisão de execução (decisão 118), não algo medido aqui. O que está garantido é o essencial:
+ * nenhuma 05C-1 consegue derrubar a invariante e ficar verde.
  *
  * O que se cobra é a FORMA (as duas colunas certas, em desigualdade, validada), nunca o texto: exigir a
  * letra faria o gate quebrar por espaço em branco ou por como o `pg_get_constraintdef` normaliza.
@@ -176,6 +181,26 @@ export const INVARIANTE_TRANSFERENCIA = {
 export const colunasDaInvarianteDeTransferencia = (fase) => INVARIANTE_TRANSFERENCIA.colunasPorFase[fase] ?? null;
 
 /**
+ * As formas ACEITAS da invariante, por igualdade — nunca por conter.
+ *
+ * A primeira versão deste guarda testava SUBSTRING: qualquer predicado que CONTIVESSE `a <> b`
+ * passava. A revisão adversarial mostrou o custo: `NOT (a <> b)` — que afirma o CONTRÁRIO da
+ * invariante — era aprovado, e `(a <> b) OR (note IS NOT NULL)` também. É a mesma família de falha
+ * que a decisão 116 fechou para políticas de RLS: o predicado certo continua visível e não vale mais
+ * nada. Aqui ela é pior, porque o guarda existe exatamente para impedir que a 05C-1 enfraqueça a
+ * regra sem ninguém ver.
+ *
+ * Exigir IGUALDADE com um conjunto pequeno de formas é legítimo neste caso: quem escreve este CHECK
+ * é este repositório, num arquivo, uma vez. E as três formas aceitas são as três maneiras corretas
+ * de dizer a mesma coisa em PostgreSQL — `IS DISTINCT FROM` inclusive, que é ESTRITAMENTE MAIS FORTE
+ * (também recusa a igualdade entre nulos) e que a versão anterior reprovava.
+ */
+const FORMAS_ACEITAS = (a, b) => [`${a}<>${b}`, `${b}<>${a}`, `not${a}=${b}`, `not${b}=${a}`, `${a}isdistinctfrom${b}`, `${b}isdistinctfrom${a}`];
+
+/** `CHECK ((x <> y))` e `check(("x")<>("y"))` são o MESMO predicado: o que varia é a tipografia. */
+const normalizar = (def) => String(def).toLowerCase().replace(/^\s*check\s*/, "").replace(/[()"\s]/g, "").replace(/::[a-z_]+/g, "").replace(/!=/g, "<>");
+
+/**
  * Confere a invariante contra os CHECKs que o banco realmente tem.
  * @param {"dual"|"canonica"} fase
  * @param {{ nome: string, definicao: string, validado?: boolean }[]} checks CHECKs vivos de erp.equipment_transfers
@@ -186,22 +211,24 @@ export function conferirInvarianteDeTransferencia(fase, checks) {
   if (!alvo) return [`fase inválida (${fase}); esperado: ${FASES.join(" | ")}`];
   const [a, b] = alvo;
   const lista = Array.isArray(checks) ? checks : [];
-  // `<>` e `!=` são o mesmo operador; a ordem das pontas é indiferente. O que não é indiferente é a coluna.
-  const desigualdade = (def, x, y) => new RegExp(`\\b${x}\\b\\s*(?:<>|!=)\\s*\\b${y}\\b`).test(String(def).replace(/[()"]/g, " "));
-  const casa = lista.filter((c) => desigualdade(c.definicao, a, b) || desigualdade(c.definicao, b, a));
+  const aceitas = new Set(FORMAS_ACEITAS(a, b));
+  const casa = lista.filter((c) => aceitas.has(normalizar(c.definicao)));
+  // `validado !== true` e não `=== false`: ausente, nulo ou "f" de driver em modo texto NÃO contam
+  // como validado. Fail-closed — "existir não é o mesmo que valer" precisa valer para o default também.
+  const valem = casa.filter((c) => c.validado === true);
   const problemas = [];
-  if (!casa.length) {
-    problemas.push(`erp.${INVARIANTE_TRANSFERENCIA.tabela}: a fase "${fase}" exige um CHECK negando a igualdade entre ${a} e ${b}, e nenhum dos ${lista.length} CHECK(s) da tabela faz isso. Na 05C-1 o \`drop column\` derruba o CHECK legado EM SILÊNCIO: o substituto canônico precisa nascer no MESMO arquivo, antes do drop. Origem do original: ${INVARIANTE_TRANSFERENCIA.origem}`);
+  if (!valem.length) {
+    const quase = casa.length ? ` (${casa.length} CHECK(s) com a forma certa, nenhum validado)` : "";
+    problemas.push(`erp.${INVARIANTE_TRANSFERENCIA.tabela}: a fase "${fase}" exige um CHECK VALIDADO negando a igualdade entre ${a} e ${b}, e nenhum dos ${lista.length} CHECK(s) da tabela faz isso${quase}. Na 05C-1 o \`drop column\` derruba o CHECK legado EM SILÊNCIO: o substituto canônico precisa existir antes do drop. Origem do original: ${INVARIANTE_TRANSFERENCIA.origem}`);
   }
-  // CHECK `NOT VALID` aceita linha nova e ignora o acervo: existir não é o mesmo que valer.
-  for (const c of casa) {
-    if (c.validado === false) problemas.push(`erp.${INVARIANTE_TRANSFERENCIA.tabela}: o CHECK ${c.nome} existe mas está NOT VALID — ele não responde pelo acervo, logo não é a invariante.`);
-  }
-  // A grafia da OUTRA fase sobrevivendo é o sintoma de purga pela metade: as duas gerações vivas ao mesmo
-  // tempo significam que alguém criou o substituto e não removeu o original, ou o contrário.
+  // A grafia da OUTRA fase sobrevivendo é o sintoma de purga pela metade: as duas gerações vivas ao
+  // mesmo tempo significam que alguém criou o substituto e não removeu o original, ou o contrário.
   const outra = colunasDaInvarianteDeTransferencia(fase === "dual" ? "canonica" : "dual");
-  if (fase === "canonica" && outra && lista.some((c) => desigualdade(c.definicao, outra[0], outra[1]) || desigualdade(c.definicao, outra[1], outra[0]))) {
-    problemas.push(`erp.${INVARIANTE_TRANSFERENCIA.tabela}: a fase é "canonica" mas ainda existe CHECK sobre ${outra.join(" / ")} — a coluna legada deveria ter saído e levado o CHECK junto.`);
+  if (fase === "canonica" && outra) {
+    const antigas = new Set(FORMAS_ACEITAS(outra[0], outra[1]));
+    if (lista.some((c) => antigas.has(normalizar(c.definicao)))) {
+      problemas.push(`erp.${INVARIANTE_TRANSFERENCIA.tabela}: a fase é "canonica" mas ainda existe CHECK sobre ${outra.join(" / ")} — a coluna legada deveria ter saído e levado o CHECK junto.`);
+    }
   }
   return problemas;
 }

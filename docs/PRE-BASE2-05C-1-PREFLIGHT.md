@@ -83,7 +83,9 @@ select
   (select count(*) from pg_constraint k join pg_class c on c.oid=k.conrelid
      join pg_namespace n on n.oid=c.relnamespace
     where n.nspname='erp' and k.contype='f' and array_length(k.conkey,1)=2
-      and pg_get_constraintdef(k.oid) ~ 'REFERENCES erp\.empresas\(organization_id, id\)') as fks_compostas; -- 50
+      and k.confrelid = 'erp.empresas'::regclass) as fks_compostas; -- 50
+-- (compara o OID da tabela alvo, não o texto: `pg_get_constraintdef` omite o schema quando `erp`
+--  está no search_path da sessão, e o SQL Editor não garante qual search_path você recebe)
 ```
 
 **P1.4 — registrar o artefato.** Anotar em `docs/DEPLOYMENT.md` (checklist de go-live): data e hora do
@@ -160,10 +162,12 @@ locks com `lock table ... in access exclusive mode nowait` antes de qualquer DDL
 lock_timeout` curto como rede de segurança. Nunca fragmentada, nunca com `commit` no corpo do arquivo,
 nunca com `create index concurrently` (proibido dentro de transação) e nunca com `cascade`.
 
-Por que: a janela medida de `ACCESS EXCLUSIVE` para as 49 relações é de **~20 ms** (num cenário 17× maior
-que a produção). O custo nunca é o trabalho — é a espera. Com `lock_timeout = 0`, que é o valor de
-produção hoje, a mesma purga esperou **120 s** atrás de uma conexão ociosa, falhou sem remover nada, e
-prendeu um leitor inocente por **118 s**.
+Por que: a purga inteira, dentro de uma transação, tem janela de `ACCESS EXCLUSIVE` de **mediana ~71 ms**
+(medida por uma segunda pessoa, n=7; 98 ms num banco com 500 000 linhas). O `lock table` nomeia 54
+relações — 49 tabelas + 5 views — e trava 55, porque a view `erp.farms` arrasta `erp.empresas` junto.
+O custo nunca é o trabalho: é a espera. Com `lock_timeout = 0`, que é o valor de produção hoje, a mesma
+purga esperou **120 s** atrás de uma conexão ociosa, morreu em `57014` sem remover nada, e prendeu um
+leitor inocente — de uma tabela sem contenção nenhuma — por **117 s**.
 
 **O que produção tem hoje**, medido: `lock_timeout = 0` · `statement_timeout = 120000 ms` ·
 `idle_in_transaction_session_timeout = 0` · `erp_migrator` sem ajuste próprio. Nada disso é alterado pela
@@ -201,6 +205,23 @@ idempotente e o arquivo é tudo-ou-nada. Falhar barato e repetir é o comportame
 problema. O que NÃO é aceitável é o deploy ficar pendurado: isso significa que a política não foi aplicada.
 
 ---
+
+## Os quatro que o G0 já fechou — enunciado e como reconferir
+
+Não basta dizer que passaram: quem audita precisa saber **o quê** passou e como repetir. Todos são
+`select` puro; rodar de novo custa segundos.
+
+| Gate | Pergunta | `PASS` quando | Como reconferir |
+| --- | --- | --- | --- |
+| **P2** Dados legados | sobrou nome antigo PERSISTIDO que a purga física pressuponha ausente? | os cinco pré-requisitos em zero; todo o resto classificado (ver `docs/PRE-BASE2-05-APOSENTADORIA.md`, "Dados persistidos com nomes antigos") | as contagens daquela tabela, uma a uma |
+| **P3** Integridade da ponte | os 52 pares canônico/legado têm o mesmo valor em toda linha? | 52 pares medidos, zero divergência de valor e de nulabilidade, nenhum par pela metade | `select count(*) filter (where legada is distinct from canonica)` por par |
+| **P4** Inventário físico | o que existe no banco é o que a 05C-1 pretende remover? | 52/49 colunas · 5 views · 52 gatilhos · 3 funções · 52 FKs de coluna única · 8 índices · 1 CHECK · 1 policy · **50** compostas que FICAM | a consulta 5 de P1.3 acima |
+| **P8** Versão publicada | o que está servindo em produção é o commit que se pensa? | o deploy ativo da API e do web no mesmo commit de `main`, `/health` em 200 | painel do Railway (commit do deploy ativo) + `curl -s .../health` |
+
+Ressalva honesta sobre P3: 24 dos 52 pares estão em tabelas VAZIAS hoje. "Zero divergência" ali é
+verdadeiro por vacuidade — não prova nada sobre dado que não existe. E mesmo nos 28 com dado, os
+gatilhos de espelho copiam um lado no outro, então a integridade medida é a DA PONTE, não evidência de
+que a aplicação já escreve na coluna canônica.
 
 ## Depois dos quatro
 

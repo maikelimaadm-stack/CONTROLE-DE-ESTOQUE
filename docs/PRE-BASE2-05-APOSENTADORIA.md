@@ -172,7 +172,7 @@ A 05C-2 é separada porque a troca do contador **não é atômica com o deploy**
 | Etapa | Estado |
 | --- | --- |
 | **05C-0** — instrumentos, `NO-DDL` | **concluída**, mesclada na PR #33 (`d4639bb`) |
-| **05C-G0** — preflight externo de produção (somente leitura) | **executado**; `BLOCKED` em P1 (restore), P5 (valor de `SEED_ON_DEPLOY`), P6 (semântica de rollout) e P7 (política de lock/timeout); `PASS` em P2, P3, P4 e P8 |
+| **05C-G0** — preflight externo de produção (somente leitura) | **executado**; `BLOCKED` em P1 (restore), P5 (valor de `SEED_ON_DEPLOY`), P6 (semântica de rollout) e P7 (política de lock/timeout); `PASS` em P2 (dados legados), P3 (integridade da ponte), P4 (inventário físico) e P8 (versão publicada) — enunciado e reconferência de cada um em `docs/PRE-BASE2-05C-1-PREFLIGHT.md` |
 | **05C-G1** — hardening do preflight (esta rodada) | documentação corrigida, contratos executáveis reforçados, atomicidade medida, runbook humano em `docs/PRE-BASE2-05C-1-PREFLIGHT.md` |
 | **05C-1** — a purga | **NÃO AUTORIZADA**. Depende dos quatro blockers do G0, que são ação humana |
 | **05C-2** — o contador | futura, depois da 05C-1, com janela operacional |

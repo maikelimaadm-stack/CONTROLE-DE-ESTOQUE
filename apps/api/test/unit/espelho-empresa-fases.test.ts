@@ -228,7 +228,54 @@ describe("invariante origem ≠ destino por fase", () => {
 
   it("fase dual: a ordem das pontas é indiferente, a coluna não", () => {
     expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, definicao: `CHECK ((${LEG_D} <> ${LEG_O}))` }])).toEqual([]);
-    expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, definicao: "CHECK ((origin_warehouse_id <> destination_warehouse_id))" }]).join(" | ")).toMatch(/exige um CHECK negando/);
+    expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, definicao: "CHECK ((origin_warehouse_id <> destination_warehouse_id))" }]).join(" | ")).toMatch(/exige um CHECK VALIDADO negando/);
+  });
+
+  it("as três grafias corretas da mesma regra são aceitas — inclusive a mais forte", () => {
+    for (const d of [`CHECK ((NOT (${LEG_O} = ${LEG_D})))`, `CHECK ((${LEG_O} IS DISTINCT FROM ${LEG_D}))`, `check(("${LEG_O}")<>("${LEG_D}"))`]) {
+      expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, definicao: d }]), d).toEqual([]);
+    }
+  });
+
+  /**
+   * O ataque que derrubou a primeira versão deste guarda: ela testava SUBSTRING, então qualquer
+   * predicado que CONTIVESSE a desigualdade passava — `NOT (a <> b)`, que afirma o CONTRÁRIO da
+   * invariante, inclusive. É a mesma família de falha que a decisão 116 fechou para políticas.
+   */
+  it("predicado que apenas CONTÉM a desigualdade é RECUSADO — inclusive o que a nega", () => {
+    const neutralizados = [
+      `CHECK (((${LEG_O} <> ${LEG_D}) OR (note IS NOT NULL)))`,
+      `CHECK ((true OR (${LEG_O} <> ${LEG_D})))`,
+      `CHECK ((NOT (${LEG_O} <> ${LEG_D})))`,
+      `CHECK (((1 = 0) AND (${LEG_O} <> ${LEG_D})))`,
+      `CHECK ((note <> '${LEG_O} <> ${LEG_D}'::text))`,
+      `CHECK ((${LEG_O} IS NULL OR ${LEG_D} IS NULL OR ${LEG_O} <> ${LEG_D}))`
+    ];
+    for (const d of neutralizados) {
+      expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, definicao: d }]), d).not.toEqual([]);
+    }
+  });
+
+  it("um CHECK válido que casa basta, mesmo com outro NOT VALID ao lado", () => {
+    expect(conferirInvarianteDeTransferencia("dual", [LEGADO, { nome: "rascunho", definicao: LEGADO.definicao, validado: false }])).toEqual([]);
+  });
+
+  it("validado AUSENTE não conta como validado — o default é fail-closed", () => {
+    for (const v of [undefined, null, "f"]) {
+      expect(conferirInvarianteDeTransferencia("dual", [{ nome: "x", definicao: LEGADO.definicao, validado: v as never }]), String(v)).not.toEqual([]);
+    }
+  });
+
+  /**
+   * `INVARIANTE_TRANSFERENCIA.origem` aponta para a linha da migration que criou o CHECK. Sem esta
+   * asserção o ponteiro é uma segunda lista que envelhece em silêncio: o arquivo muda, o texto fica.
+   */
+  it("o ponteiro para a migration de origem ainda descreve o que está lá", () => {
+    const [arquivo, linha] = INVARIANTE_TRANSFERENCIA.origem.split(":");
+    const raiz = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../../..");
+    const conteudo = fs.readFileSync(path.join(raiz, arquivo!), "utf8").split("\n");
+    const [o, d] = INVARIANTE_TRANSFERENCIA.colunasPorFase.dual as [string, string];
+    expect(conteudo[Number(linha) - 1], `${INVARIANTE_TRANSFERENCIA.origem} deveria conter a desigualdade`).toMatch(new RegExp(`${o}\\s*<>\\s*${d}`));
   });
 
   it("fase dual SEM CHECK nenhum REPROVA — é o que o `drop column` produz em silêncio", () => {
@@ -243,12 +290,12 @@ describe("invariante origem ≠ destino por fase", () => {
 
   it("fase canonica com o CHECK LEGADO ainda vivo REPROVA nos dois flancos", () => {
     const p = conferirInvarianteDeTransferencia("canonica", [LEGADO]).join(" | ");
-    expect(p).toMatch(/exige um CHECK negando a igualdade entre empresa_origem_id e empresa_destino_id/);
+    expect(p).toMatch(/exige um CHECK VALIDADO negando a igualdade entre empresa_origem_id e empresa_destino_id/);
     expect(p).toMatch(new RegExp(`ainda existe CHECK sobre ${LEG_O}`));
   });
 
-  it("CHECK NOT VALID não conta como invariante — existir não é valer", () => {
-    expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, validado: false }]).join(" | ")).toMatch(/NOT VALID/);
+  it("CHECK NOT VALID sozinho não conta como invariante — existir não é valer", () => {
+    expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, validado: false }]).join(" | ")).toMatch(/nenhum validado/);
   });
 
   it("fase inválida NEGA — não cai na vizinha", () => {
