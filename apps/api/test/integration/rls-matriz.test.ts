@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, type Db } from "@agro/db";
 // @ts-expect-error — classificação em JS puro, compartilhada com o gerador da matriz
-import { EXCECOES_RLS_EMPRESA, TABELAS_DE_EXCECAO, protecaoDaExcecao, validarProtecaoDaExcecao, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
+import { TABELAS_DE_EXCECAO, SEM_FK_COMPOSTA_DECLARADA, protecaoDaExcecao, validarProtecaoDaExcecao, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
+// @ts-expect-error — contrato de fase em JS puro, compartilhado com o gate de linha de comando
+import { conferirInvarianteDeTransferencia } from "../../../../scripts/lib/espelho-empresa.mjs";
+// @ts-expect-error — a lista canônica de colunas de empresa é SSOT do leitor de schema
+import { CANONICAL_COMPANY_COLUMNS } from "../../../../scripts/lib/schema.mjs";
+// @ts-expect-error — idem
+import { FASE_ESPELHO } from "../../../../scripts/lib/empresa-compat-surface.mjs";
 import { TEST_URL } from "./setup.js";
 import { resetSchema, migrate } from "@agro/db";
 
@@ -130,6 +136,11 @@ describe("classificação × políticas reais", () => {
       // `pg_policies.roles` é `name[]`, e o driver o entrega como TEXTO (`{authenticated,erp_app}`) por não
       // ter decodificador para esse tipo de array. Tratá-lo como array em JS produziria um conjunto de
       // CARACTERES — e um teste que nunca casaria com papel nenhum. O banco converte para `text[]`.
+      // NOTA DE AMBIENTE (05C-G1): a prova do predicado exige `erp.tenant_visible` ANCORADO — decisão 116,
+      // porque sem âncora uma função homônima de outro schema no `search_path` casaria. O preço é que este
+      // caso pressupõe uma sessão sem `erp` no `search_path` (o default do papel, e o que `createPool`
+      // entrega). Rodar com `search_path = erp, public` faz `pg_policies` omitir o schema e este caso
+      // reprova em massa. A leitura certa dessa falha é "o ambiente mudou", NUNCA "tire a âncora".
       const p = await db.query<{ policyname: string; cmd: string; permissive: string; papeis: string[]; qual: string; with_check: string }>(
         `select policyname, cmd, permissive, roles::text[] as papeis, coalesce(qual,'') qual, coalesce(with_check,'') with_check
            from pg_policies where schemaname='erp' and tablename=$1`, [tabela]);
@@ -197,22 +208,92 @@ describe("classificação × políticas reais", () => {
   it("toda coluna canônica de tabela com organização tem referência COMPOSTA", async () => {
     // A referência de coluna única prova que o UUID é uma empresa; não prova que é uma empresa DESTA
     // organização — e foi exatamente esse buraco que a PRE-BASE2-02 fechou à mão para o responsável de
-    // compra. Aqui ele está fechado por construção, para todas as colunas de empresa.
-    const r = await db.query<{ tabela: string; coluna: string }>(`
-      select c.table_name as tabela, c.column_name as coluna
-        from information_schema.columns c
-        join information_schema.tables t on t.table_schema=c.table_schema and t.table_name=c.table_name and t.table_type='BASE TABLE'
-       where c.table_schema='erp' and c.column_name in ('empresa_id','empresa_origem_id','empresa_destino_id')
-         and exists (select 1 from information_schema.columns o where o.table_schema='erp' and o.table_name=c.table_name and o.column_name='organization_id')`);
-    const semComposta: string[] = [];
-    for (const { tabela, coluna } of r.rows) {
-      if (EXCECOES_RLS_EMPRESA[tabela]) continue;
-      const fk = await db.query<{ n: string }>(`
-        select count(*) n from pg_constraint
-         where conrelid = ('erp.' || $1)::regclass and contype='f'
-           and pg_get_constraintdef(oid) ~* ('foreign key \\(organization_id, ' || $2 || '\\)')`, [tabela, coluna]);
-      if (fk.rows[0]!.n === "0") semComposta.push(`erp.${tabela}.${coluna}`);
+    // compra. Aqui ele está fechado por construção, para as colunas de empresa que não estejam
+    // NOMINALMENTE dispensadas no SSOT.
+    //
+    // A DISPENSA EM BLOCO SAIU (PRE-BASE2-05C-G1). Antes, `if (EXCECOES_RLS_EMPRESA[tabela]) continue`
+    // usava uma resposta sobre POLÍTICA como dispensa de INTEGRIDADE REFERENCIAL, que é outra pergunta —
+    // o mesmo erro que o primeiro caso deste arquivo já tinha consertado. Efeito medido: 4 das 52 colunas
+    // não chegavam ao count; DUAS de fato não têm a composta (e ninguém tinha declarado por quê), e as
+    // outras duas TÊM — remover `notifications_empresa_fk` ou `membro_empresas_empresa_fk` passava verde.
+    //
+    // A PROVA É ESTRUTURAL, NÃO TEXTUAL. `pg_get_constraintdef` omite o schema quando a tabela está no
+    // `search_path` da sessão: o mesmo banco intacto responderia "REFERENCES erp.empresas(...)" ou
+    // "REFERENCES empresas(...)" conforme o ambiente, e um guarda que casasse o texto ficaria refém
+    // disso. Aqui se comparam OIDs e números de coluna — `confrelid` é a tabela alvo, `conkey` e
+    // `confkey` são as colunas de origem e destino, na ordem. Também se exige `convalidated` (constraint
+    // NOT VALID não responde pelo acervo) e `organization_id NOT NULL` (com MATCH SIMPLE, que é o
+    // default, linha com tenant nulo não é conferida — e a composta deixaria de provar o que promete).
+    const r = await db.query<{ tabela: string; coluna: string; org_not_null: boolean; composta: number }>(`
+      with canonicas as (
+        select c.oid as tabela_oid, c.relname as tabela, a.attname as coluna, a.attnum,
+               (select o.attnotnull from pg_attribute o where o.attrelid=c.oid and o.attname='organization_id' and o.attnum>0 and not o.attisdropped) as org_not_null,
+               (select o.attnum   from pg_attribute o where o.attrelid=c.oid and o.attname='organization_id' and o.attnum>0 and not o.attisdropped) as org_attnum
+          from pg_class c
+          join pg_namespace n on n.oid=c.relnamespace
+          join pg_attribute a on a.attrelid=c.oid and a.attnum>0 and not a.attisdropped
+         where n.nspname='erp' and c.relkind='r' and a.attname = any($1::text[])
+           and exists (select 1 from pg_attribute o where o.attrelid=c.oid and o.attname='organization_id' and o.attnum>0 and not o.attisdropped))
+      select k.tabela, k.coluna, k.org_not_null,
+             (select count(*) from pg_constraint fk
+               where fk.conrelid=k.tabela_oid and fk.contype='f' and fk.convalidated
+                 and fk.confrelid = 'erp.empresas'::regclass
+                 and fk.conkey  = array[k.org_attnum, k.attnum]::int2[]
+                 and fk.confkey = array[
+                       (select attnum from pg_attribute where attrelid='erp.empresas'::regclass and attname='organization_id'),
+                       (select attnum from pg_attribute where attrelid='erp.empresas'::regclass and attname='id')]::int2[])::int as composta
+        from canonicas k order by k.tabela, k.coluna`, [CANONICAL_COMPANY_COLUMNS]);
+    const problemas: string[] = [];
+    const dispensadas = new Set(Object.keys(SEM_FK_COMPOSTA_DECLARADA as Record<string, string>));
+    const vistas = new Set<string>();
+    let comComposta = 0;
+    for (const { tabela, coluna, org_not_null, composta } of r.rows) {
+      const chave = `${tabela}.${coluna}`;
+      vistas.add(chave);
+      const tem = composta > 0;
+      if (tem) comComposta++;
+      if (tem && !org_not_null) problemas.push(`erp.${chave}: tem a composta, mas organization_id é ANULÁVEL — com MATCH SIMPLE a linha de tenant nulo escapa da conferência`);
+      if (tem && dispensadas.has(chave)) problemas.push(`erp.${chave}: está declarada em SEM_FK_COMPOSTA_DECLARADA mas GANHOU a composta — a dispensa envelheceu, remova-a do SSOT`);
+      if (!tem && !dispensadas.has(chave)) problemas.push(`erp.${chave}: sem FOREIGN KEY (organization_id, ${coluna}) REFERENCES erp.empresas(organization_id, id) validada`);
     }
-    expect(semComposta).toEqual([]);
+    // Dispensa órfã: declarar que uma coluna não tem composta e a coluna nem existir mais esconde o
+    // buraco seguinte. Mesmo desenho do caso "exceção órfã" acima.
+    for (const chave of dispensadas) if (!vistas.has(chave)) problemas.push(`${chave}: declarada em SEM_FK_COMPOSTA_DECLARADA e não existe no schema — dispensa órfã`);
+    // A PREMISSA JUNTO COM A CONCLUSÃO, em três níveis:
+    //  (1) o universo não encolheu — uma consulta que voltasse vazia (rename de schema, coluna
+    //      renomeada) deixaria o laço sem executar asserção nenhuma;
+    //  (2) a contagem FECHA — toda coluna ou tem a composta ou está dispensada, sem sobra;
+    //  (3) a lista de dispensas não cresce sozinha. Um piso do tipo `>= 50` não travaria isso: ele
+    //      só limita a lista como `total - 50`, então bastaria o universo crescer para abrir vaga em
+    //      silêncio. O que se quer travar é o TAMANHO DA DISPENSA, e é ele que está escrito aqui.
+    expect(r.rows.length, "as colunas canônicas de tabela com organização").toBeGreaterThanOrEqual(52);
+    expect(dispensadas.size, "dispensas declaradas em SEM_FK_COMPOSTA_DECLARADA — crescer exige decisão, não parágrafo").toBe(2);
+    expect(comComposta, "toda coluna não dispensada tem a composta validada").toBe(r.rows.length - [...dispensadas].filter((c) => vistas.has(c)).length);
+    expect(problemas).toEqual([]);
+  });
+
+  /**
+   * A INVARIANTE DE NEGÓCIO QUE A PURGA DERRUBA EM SILÊNCIO (PRE-BASE2-05C-G1).
+   *
+   * `erp.equipment_transfers` tem, desde a 0005 (linha 142), um CHECK anônimo e inline negando a igualdade
+   * entre as duas pontas — batizado `equipment_transfers_check` pelo PostgreSQL. Medido em banco
+   * descartável: o `drop column` da 05C-1 leva esse CHECK junto, sem erro e sem `cascade`. A migration
+   * termina com sucesso e a regra "origem ≠ destino" simplesmente deixa de existir.
+   * As grafias de cada fase vivem no SSOT (`scripts/lib/espelho-empresa.mjs`), não aqui: é lá que a 05C-1
+   * vira a chave, e repeti-las neste arquivo criaria a segunda lista que envelhece em silêncio.
+   *
+   * Por isso a invariante é cobrada POR FASE, igual ao espelho: em `dual` sobre as colunas legadas, em
+   * `canonica` sobre as canônicas. O que este caso prova é que, AO FIM de todas as migrations, existe um
+   * CHECK validado na forma que a fase exige — não em que arquivo ele nasceu, que o catálogo não guarda.
+   * Basta para o que importa: nenhuma 05C-1 consegue derrubar a invariante e ficar verde. Que o
+   * substituto nasça no mesmo arquivo do drop é decisão de execução (decisão 118), não algo que este
+   * guarda meça.
+   */
+  it("a invariante origem ≠ destino da transferência de equipamento existe na forma que a FASE exige", async () => {
+    const c = await db.query<{ nome: string; definicao: string; validado: boolean }>(`
+      select conname as nome, pg_get_constraintdef(oid) as definicao, convalidated as validado
+        from pg_constraint where conrelid = 'erp.equipment_transfers'::regclass and contype = 'c'`);
+    expect(c.rows.length, "erp.equipment_transfers tem CHECK para conferir").toBeGreaterThan(0);
+    expect(conferirInvarianteDeTransferencia(FASE_ESPELHO, c.rows)).toEqual([]);
   });
 });

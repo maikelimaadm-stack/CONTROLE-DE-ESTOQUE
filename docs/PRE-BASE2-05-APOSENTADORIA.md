@@ -157,7 +157,7 @@ número errado que vira "o tamanho do trabalho" é mais caro do que um número a
 
 | Fatia | O que faz | O que NÃO faz |
 | --- | --- | --- |
-| **05C-0** (esta) | calibra os instrumentos: leitor de migrations que enxerga remoção, guarda de RLS que confere o `pg_policies` real, base do version skew resolvida, contagem separada, superfície reclassificada, prova do contador | **nenhuma DDL**, nenhuma migration, nenhuma mudança de produção |
+| **05C-0** (concluída, mesclada na PR #33) | calibra os instrumentos: leitor de migrations que enxerga remoção, guarda de RLS que confere o `pg_policies` real, base do version skew resolvida, contagem separada, superfície reclassificada, prova do contador | **nenhuma DDL**, nenhuma migration, nenhuma mudança de produção |
 | **05C-1** | a purga: gatilhos, funções, as cinco views, as colunas legadas com FKs, índices e o CHECK órfão; política de RLS reescrita ANTES | não mexe no contador de código da Empresa |
 | **05C-2** | a troca do contador (`entity='farm'` → `'empresa'` e a constante) | — |
 
@@ -167,19 +167,39 @@ gate nenhum: dá confiança onde não há.
 
 A 05C-2 é separada porque a troca do contador **não é atômica com o deploy** — ver abaixo.
 
+### Onde a 05C está agora
+
+| Etapa | Estado |
+| --- | --- |
+| **05C-0** — instrumentos, `NO-DDL` | **concluída**, mesclada na PR #33 (`d4639bb`) |
+| **05C-G0** — preflight externo de produção (somente leitura) | **executado**; `BLOCKED` em P1 (restore), P5 (valor de `SEED_ON_DEPLOY`), P6 (semântica de rollout) e P7 (política de lock/timeout); `PASS` em P2 (dados legados), P3 (integridade da ponte), P4 (inventário físico) e P8 (versão publicada) — enunciado e reconferência de cada um em `docs/PRE-BASE2-05C-1-PREFLIGHT.md` |
+| **05C-G1** — hardening do preflight (esta rodada) | documentação corrigida, contratos executáveis reforçados, atomicidade medida, runbook humano em `docs/PRE-BASE2-05C-1-PREFLIGHT.md` |
+| **05C-1** — a purga | **NÃO AUTORIZADA**. Depende dos quatro blockers do G0, que são ação humana |
+| **05C-2** — o contador | futura, depois da 05C-1, com janela operacional |
+
+CI verde não move nenhuma dessas linhas: os blockers do G0 exigem acesso e decisão que nenhuma sessão
+automatizada tem.
+
 ### Schema — contagem corrigida
 
 | Objeto | Quantidade | Dependências | Migration | Rollback |
 | --- | ---: | --- | --- | --- |
-| Colunas legadas em TABELAS | **52** em **49** tabelas | FKs compostas, índices, RLS, gatilhos de espelho | `drop column` por tabela, depois dos gatilhos | recriar coluna + repopular a partir da canônica (o dado não se perde: é espelho) |
+| Colunas legadas em TABELAS | **52** em **49** tabelas | FKs **de coluna única**, índices, CHECK e RLS que as citam, gatilhos de espelho — as FKs **compostas** NÃO dependem delas (dependem da canônica e ficam) | `drop column` por tabela, depois dos gatilhos e das views | recriar coluna + repopular a partir da canônica (o dado não se perde: é espelho) |
 | Views de nome antigo | **5** | consultas legadas, testes de espelho | `drop view` **antes** das colunas | `create view` (definição versionada na 0014) |
 | Gatilhos de sincronização `trg_sync_*` | **52** | as colunas acima | `drop trigger` **antes** das colunas | recriar a partir da 0014 |
 | Funções `erp.sincronizar_empresa*` | **3** | os gatilhos acima | `drop function` depois dos gatilhos | recriar a partir da 0014 |
 | Chaves estrangeiras **de coluna única** sobre a coluna legada | **52** | `FOREIGN KEY (farm_id) REFERENCES erp.empresas(id)` — **não** provam tenant | caem junto com a coluna | recriar a partir da 0014 |
 | Índices que incluem coluna legada | **8** | desempenho das consultas legadas | cair junto com a coluna | recriar se a leitura legada voltar (não deve) |
-| **CHECK órfão** `equipment_transfers_check` | **1** | `CHECK (origin_farm_id <> destination_farm_id)` | cai com a coluna; o equivalente canônico precisa **existir antes** | recriar a partir da 0002 |
+| **CHECK órfão** `equipment_transfers_check` | **1** | `CHECK (origin_farm_id <> destination_farm_id)` — anônimo e inline, batizado pelo PostgreSQL | cai com a coluna **em silêncio**; o equivalente canônico (`empresa_origem_id <> empresa_destino_id`) precisa nascer no **mesmo arquivo**, antes do `drop column` | recriar a partir de `supabase/migrations/0005_sales_fleet_hr.sql:142` (a 0002 NÃO cria esta tabela) |
 | Política de RLS citando coluna legada | **1** (`erp.empresa_cost_centers` → `api_child`) | leitura do filho pelo pai | reescrever no canônico **antes** de dropar a coluna | versão anterior da política |
 | Sequência `erp.code_sequences` com `entity='farm'` | **1 linha** | numeração de Empresa em uso | **fatia 05C-2**, com janela operacional | `update` inverso |
+
+**Os gatilhos das 49 tabelas alvo são 66, não 52.** Medido em produção: além dos 52 de espelho, essas mesmas
+tabelas carregam 14 gatilhos de NEGÓCIO que têm de sobreviver — `audit_row` (5), `set_updated_at` (3),
+`travar_pontas_transferencia_origem` (2), `validar_lotes_transferencia_pecuaria`, `forbid_change`,
+`travar_pontas_movimento_animal` e `apply_stock_movement` (1 cada). Uma purga que remova "os gatilhos das
+tabelas alvo" em vez dos **52 nomeados** apaga auditoria e invariantes de transferência. `drop trigger` vai
+por nome, nunca por tabela.
 
 #### O que estava errado, e por quê
 
@@ -207,8 +227,12 @@ uma migration que tenta dropar coluna que nunca existiu.
 **As FKs legadas NÃO são as compostas — e confundi-las seria destrutivo.** As 52 chaves estrangeiras que
 citam a coluna legada são de **coluna única** (`FOREIGN KEY (farm_id) REFERENCES erp.empresas(id)`): elas
 provam que o UUID é uma empresa, e não que é uma empresa DESTA organização. As **compostas** são as
-**canônicas** — 45 no schema atual, `FOREIGN KEY (organization_id, empresa_id)`, criadas na 0014 —, e são a
-única prova de tenant no schema físico. Uma 05C-1 que lesse "dropar as FKs compostas junto com a coluna"
+**canônicas** — **50** no schema atual, criadas na 0014: 45 `(organization_id, empresa_id)`, 3
+`(organization_id, empresa_destino_id)` e 2 `(organization_id, empresa_origem_id)` —, e são a
+única prova de tenant no schema físico. O número 45 sozinho descreve UMA das três famílias, não o conjunto:
+lido como "o que fica", ele deixa desprotegidas exatamente as 5 chaves de origem/destino de
+`animal_movements`, `equipment_transfers` e `warehouse_transfers` — as três tabelas que perdem
+`origin_farm_id`/`destination_farm_id` nesta mesma purga. Uma 05C-1 que lesse "dropar as FKs compostas junto com a coluna"
 removeria exatamente a garantia que a PRE-BASE2-03 construiu. O que cai com a coluna legada é só o primeiro
 grupo; o segundo **fica**, e o guarda que o mede (`rls-matriz.test.ts`, "toda coluna canônica de tabela com
 organização tem referência COMPOSTA") continua valendo depois da purga.
@@ -220,20 +244,44 @@ não). Nome de objeto não é comportamento, e renomeá-los é fatia própria �
 
 ### Dados persistidos com nomes antigos
 
-Os números abaixo são a **última medição conhecida de produção** (PRE-BASE2-04). A 05C-0 é `NO-DDL` e
-**não teve acesso autenticado à produção**: a remedição fica `EXTERNAL-PREFLIGHT-PENDING` e é
-pré-requisito da 05C-1, não desta fatia.
+Remedido em produção autenticada no preflight **PRE-BASE2-05C-G0** (2026-09-15, somente `select`). Os cinco
+pré-requisitos reais da purga física continuam em **zero** — mas o preflight encontrou ocorrências que a
+lista anterior não previa, e elas ficam aqui CLASSIFICADAS, não normalizadas.
 
-| Conteúdo | Total | Com nome legado |
-| --- | ---: | ---: |
-| `erp.saved_reports.definition` | 0 | **0** |
-| `erp.saved_reports.resource_key = 'farms'` | 0 | **0** |
-| `erp.user_screen_preferences.preferences` | 14 | **0** |
-| `erp.user_screen_preferences.screen` com `farms` | 14 | **0** |
-| `erp.attachments.entity = 'farms'` | 2 | **0** |
+| Conteúdo | Total | Com nome legado | Classificação |
+| --- | ---: | ---: | --- |
+| `erp.saved_reports.definition` | 0 | **0** | pré-requisito da purga |
+| `erp.saved_reports.resource_key = 'farms'` | 0 | **0** | pré-requisito da purga |
+| `erp.user_screen_preferences.preferences` | 18 | **0** | pré-requisito da purga |
+| `erp.user_screen_preferences.screen` com `farms` | 18 | **0** | pré-requisito da purga |
+| `erp.attachments.entity = 'farms'` | 2 | **0** | pré-requisito da purga |
+| `erp.user_screen_preferences.module = 'farms'` | 18 | **1** | FORA da purga — dado morto |
+| `erp.audit_logs.entity = 'farms'` | 244 | **4** | FORA da purga — histórico imutável |
+| `erp.audit_logs.metadata` citando coluna legada | 244 | **1** | FORA da purga — histórico imutável |
+| `erp.permissions.key` com `farm` | 782 | **13** | FORA da purga — autorização VIVA |
+| `erp.role_permissions.permission_key` com `farm` | 854 | **13** | FORA da purga — autorização VIVA |
+| `erp.code_sequences.entity = 'farm'` | 20 | **1** | fatia **05C-2** |
+| `erp.client_profiles.farm_name` preenchido | 1 | **0** | vocabulário agronômico legítimo — NUNCA tocar |
 
-Se a medição se confirmar, a 05C-1 é uma purga de DDL e não precisa de migration de normalização de dados.
-Nenhum JSON arbitrário de histórico/auditoria será tocado.
+O que cada classificação obriga:
+
+- **Pré-requisito da purga** — precisa estar em zero antes da 05C-1, e está. É o único grupo que a purga
+  física pressupõe.
+- **Dado morto** — a chave de recurso viva é `empresas`; a preferência gravada sob `module='farms'` não é
+  mais alcançada por nenhuma rota. Some da tela sozinha, sem migration.
+- **Histórico imutável** — trilha de auditoria. `Ledger é imutável` (CLAUDE.md): não se corrige histórico
+  para deixar o inventário bonito. O efeito residual é que essas 4 linhas deixam de resolver para uma
+  entidade viva, e isso é aceito por escrito, não descoberto depois.
+- **Autorização viva** — 13 chaves (`farms.*`, `farm_transfers.*`, `animal_farm_transfer.*`,
+  `batch_farm_transfer.*`) com 13 concessões dependentes por chave estrangeira. Renomeá-las é fatia
+  própria, com migration de `permissions` **e** de `role_permissions`: `seedPermissions` roda a cada deploy
+  com `on conflict (key) do update` e **nunca apaga chave órfã**, então trocar o nome só no código criaria a
+  nova e deixaria a velha viva e concedida.
+- **05C-2** — o contador. Não é assunto da 05C-1 nem "de graça" porque o arquivo está aberto.
+
+A 05C-1 continua sendo uma purga de DDL, sem migration de normalização de dados. Nenhum JSON arbitrário de
+histórico/auditoria será tocado, e `zero substring farm no banco` **não é** critério de conclusão: objetos
+com essa substring sobrevivem legitimamente.
 
 ### O contador da Empresa: não há atomicidade, e por isso é a 05C-2
 
@@ -266,7 +314,9 @@ servindo — um gate operacional, decidido e executado pelo Maike, não uma prop
 3. gatilhos de espelho e, depois deles, suas funções;
 4. as **cinco** views de nome antigo;
 5. colunas legadas, tabela a tabela, com as FKs **de coluna única**, os índices e o CHECK que dependem
-   delas — as FKs **compostas** (`organization_id, empresa_id`) NÃO saem: são a prova de tenant;
+   delas — as FKs **compostas** (`organization_id, empresa_id`, `organization_id, empresa_origem_id`,
+   `organization_id, empresa_destino_id`: as 50) NÃO saem, são a prova de tenant; e o CHECK de
+   `erp.equipment_transfers` só pode cair depois que o substituto canônico existir, no mesmo arquivo;
 6. virar `FASE_ESPELHO` para `"canonica"` em `scripts/lib/empresa-compat-surface.mjs` e inverter
    `packages/db/test/schema.test.ts`. O gate cobra POR PAR HISTÓRICO, nas duas direções: sumir UM espelho
    com a fase ainda em `dual` reprova, e sobreviver UM legado com a fase em `canonica` reprova. A purga é
