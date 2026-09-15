@@ -11,8 +11,16 @@
 --
 -- LISTAS ESTÁTICAS, NÃO SQL DINÂMICO. Todo objeto removido está nomeado, um a um, na ordem de remoção.
 -- Antes de qualquer `drop`, a migration confere que o catálogo contém EXATAMENTE os objetos listados —
--- nem um a mais, nem um a menos. Um objeto legado que alguém tenha acrescentado depois desta lista faz a
--- migration ABORTAR, em vez de sobreviver escondido à purga.
+-- nem um a mais, nem um a menos — em SEIS classes: colunas, FKs de coluna única, gatilhos de espelho,
+-- índices, CHECKs sobre coluna legada e gatilhos que tocam coluna legada por qualquer nome de função.
+-- Um objeto dessas classes acrescentado depois desta lista faz a migration ABORTAR, em vez de sobreviver
+-- escondido à purga.
+--
+-- O QUE ESSA PROMESSA NÃO COBRE, dito aqui para não ser lido como mais amplo do que é: a detecção é por
+-- PREDICADO, e cada predicado enxerga a classe que descreve. Um objeto legado de uma classe que nenhum
+-- predicado descreve — digamos, uma regra de reescrita ou um gatilho cuja função não mencione a coluna no
+-- corpo — não é visto por nenhuma das seis. O inventário é forte porque foi derivado do catálogo real
+-- deste schema, não porque seja uma varredura universal.
 --
 -- COMO REPRODUZIR CADA LISTA (as mesmas consultas rodam nas pré-condições abaixo):
 --   colunas legadas : pg_attribute, schema erp, relkind 'r', attname in (farm_id, origin_farm_id, destination_farm_id)
@@ -403,6 +411,56 @@ begin
 end $$;
 
 do $$
+declare faltando text; sobrando text;
+begin
+  -- 4.4b CHECKs que dependem de coluna legada.
+  -- Esta pré-condição faltava, e a ausência dela era um buraco real: `drop column` apaga um CHECK
+  -- dependente EM SILÊNCIO, sem `cascade`. Um CHECK legado acrescentado depois desta lista sumiria sem
+  -- deixar rastro — inventariado aqui, ele ABORTA a purga.
+  -- A detecção é ESTRUTURAL: `conkey` de um CHECK lista as colunas que ele referencia, então não depende
+  -- de casar texto de `pg_get_constraintdef` (que muda com o search_path).
+  with esperado(tabela, restricao) as (values
+    ('equipment_transfers', 'equipment_transfers_check')
+  ), atual as (
+    select c.relname::text, k.conname::text from pg_constraint k
+      join pg_class c on c.oid = k.conrelid join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'erp' and k.contype = 'c'
+       and exists (select 1 from unnest(k.conkey) ck
+                     join pg_attribute a on a.attrelid = k.conrelid and a.attnum = ck
+                    where a.attname in ('farm_id','origin_farm_id','destination_farm_id'))
+  )
+  select string_agg(format('%s.%s', tabela, restricao), ', '),
+         (select string_agg(format('%s.%s', relname, conname), ', ')
+            from atual a2 where not exists (select 1 from esperado e2
+                 where e2.tabela = a2.relname and e2.restricao = a2.conname))
+    into faltando, sobrando
+    from esperado e where not exists (select 1 from atual a where a.relname = e.tabela and a.conname = e.restricao);
+  if faltando is not null or sobrando is not null then
+    raise exception 'PRE-BASE2-05C-1: inventario de CHECKs sobre coluna legada divergente. Faltando: [%]. Fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
+  end if;
+end $$;
+
+do $$
+declare sobrando text;
+begin
+  -- 4.4c GATILHOS que tocam coluna legada por QUALQUER nome de função.
+  -- A pré-condição 4.3 casa pelo nome `sincronizar_empresa%`, e o red team mostrou o furo: um gatilho de
+  -- espelho criado com função de outro nome atravessava a purga inteira e ficava no catálogo apontando
+  -- para uma coluna que não existe mais. Aqui a busca é pelo CORPO da função, não pelo nome dela.
+  select string_agg(format('%s.%s (funcao %s)', c.relname, t.tgname, p.proname), ', ') into sobrando
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_proc p on p.oid = t.tgfoid
+   where n.nspname = 'erp' and not t.tgisinternal
+     and p.prosrc ~ '(farm_id|origin_farm_id|destination_farm_id)'
+     and p.proname not like 'sincronizar_empresa%';
+  if sobrando is not null then
+    raise exception 'PRE-BASE2-05C-1: gatilho que toca coluna legada fora da lista de espelho: [%]. A purga deixaria um gatilho apontando para coluna inexistente.', sobrando;
+  end if;
+end $$;
+
+do $$
 declare v text; f text;
 begin
   -- 4.5 as cinco views e as três funções de sincronia existem
@@ -702,9 +760,16 @@ drop index erp.warehouses_organization_id_farm_id_idx;
 -- ---------------------------------------------------------------------------------------------------
 -- 13. AS 52 COLUNAS LEGADAS
 -- ---------------------------------------------------------------------------------------------------
--- Sem `cascade`: a esta altura nada mais depende delas — views, gatilhos, CHECK, FKs e índices já saíram,
--- cada um nomeado. Se alguma dependência tivesse escapado do inventário, o `drop column` falharia aqui e
--- a transação inteira voltaria atrás, que é exatamente o comportamento desejado.
+-- Sem `cascade`. E é preciso ser exato sobre o que isso garante, porque a intuição erra aqui:
+--
+--   · VIEW que lê a coluna: `drop column` sem `cascade` RECUSA. Por isso as views saíram no item 7 — se
+--     uma tivesse escapado do inventário, a migration falharia neste ponto e voltaria atrás inteira.
+--   · ÍNDICE, CHAVE ESTRANGEIRA e CHECK que dependem da coluna: o Postgres os remove EM SILÊNCIO junto
+--     com a coluna, sem exigir `cascade` e sem avisar. Não existe rede automática nenhuma para eles.
+--
+-- É exatamente por isso que os itens 10, 11 e 12 os removem um a um, nomeados — e por isso as
+-- pré-condições 4.2, 4.4 e 4.4b exigem que o catálogo contenha EXATAMENTE os que estão listados. A
+-- proteção contra remoção silenciosa é o INVENTÁRIO, não o `drop column`.
 alter table erp.animal_handlings drop column farm_id;
 alter table erp.animal_movements drop column destination_farm_id;
 alter table erp.animal_movements drop column farm_id;
@@ -790,11 +855,29 @@ begin
      and k.confrelid = 'erp.empresas'::regclass and k.convalidated;
   if n <> 50 then raise exception 'PRE-BASE2-05C-1: esperava 50 FKs compostas canonicas validadas, encontrou %.', n; end if;
 
-  -- o CHECK canônico existe e está validado
+  -- o CHECK canônico existe, está validado E DIZ O QUE PROMETE.
+  -- Conferir só o nome deixava passar um CHECK invertido (`=` no lugar de `<>`) ou neutralizado
+  -- (`... or true`): o nome continuaria certo e a proteção estaria morta. A comparação é de FORMA
+  -- normalizada contra as duas grafias aceitas — as únicas duas maneiras de escrever a mesma invariante.
   select count(*) into n from pg_constraint
    where conrelid = 'erp.equipment_transfers'::regclass and contype = 'c'
-     and conname = 'equipment_transfers_empresa_origem_destino_check' and convalidated;
-  if n <> 1 then raise exception 'PRE-BASE2-05C-1: CHECK canonico de transferencia ausente ou nao validado.'; end if;
+     and conname = 'equipment_transfers_empresa_origem_destino_check' and convalidated
+     and replace(replace(replace(lower(pg_get_constraintdef(oid)), ' ', ''), '(', ''), ')', '')
+         in ('checkempresa_origem_id<>empresa_destino_id', 'checkempresa_destino_id<>empresa_origem_id');
+  if n <> 1 then
+    raise exception 'PRE-BASE2-05C-1: CHECK canonico de transferencia ausente, nao validado, ou com forma diferente de (empresa_origem_id <> empresa_destino_id). Definicao encontrada: [%].',
+      coalesce((select pg_get_constraintdef(oid) from pg_constraint where conrelid='erp.equipment_transfers'::regclass and contype='c' and conname='equipment_transfers_empresa_origem_destino_check'), 'ausente');
+  end if;
+
+  -- e nenhum gatilho sobrou tocando coluna legada, por qualquer nome de função (ver 4.4c)
+  select string_agg(format('%s.%s', c.relname, t.tgname), ', ') into txt
+    from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n2 on n2.oid = c.relnamespace
+    join pg_proc p on p.oid = t.tgfoid
+   where n2.nspname = 'erp' and not t.tgisinternal
+     and p.prosrc ~ '(farm_id|origin_farm_id|destination_farm_id)';
+  if txt is not null then
+    raise exception 'PRE-BASE2-05C-1: gatilho remanescente toca coluna legada: [%].', txt;
+  end if;
 
   -- a policy reescrita alcança EXATAMENTE quem alcançava antes. Sem esta conferência, um `create policy`
   -- sem `to` passaria despercebido e ampliaria o alcance para PUBLIC no meio de uma migration de PURGA.

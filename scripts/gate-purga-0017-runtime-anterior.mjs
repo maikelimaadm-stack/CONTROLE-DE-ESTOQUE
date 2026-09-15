@@ -96,14 +96,11 @@ async function main() {
   try {
     // -------------------------------------------------------------------------------------------
     // FASE 1 — O CÓDIGO QUE VAI SUBIR É O DE ec5e771?
-    // A árvore de trabalho desta fatia acrescenta UM arquivo não rastreado (a migration 0017). Se as
-    // árvores git de `apps/` e `packages/` forem idênticas às de ec5e771, subir a API daqui É subir o
-    // binário anterior — e a prova é o hash da árvore, não a leitura do diff.
+    // A fatia da 05C-1 acrescenta migration, testes, documentos e este gate; nada disso é compilado para
+    // dentro da API. Se TODO caminho que entra no binário for idêntico ao da base, subir a API daqui É
+    // subir o binário anterior — e a prova é o hash de cada caminho, não a leitura do diff.
     // -------------------------------------------------------------------------------------------
-    const baseApps = await git(["rev-parse", `${BASE_REF}:apps`]);
-    const headApps = await git(["rev-parse", "HEAD:apps"]);
-    const basePkgs = await git(["rev-parse", `${BASE_REF}:packages`]);
-    const headPkgs = await git(["rev-parse", "HEAD:packages"]);
+
     // O que entra no BINÁRIO é só `src/` (todo tsconfig.build.json do monorepo tem `include: ["src"]`) mais
     // os manifestos que fixam a resolução de dependência. Arquivo de teste, script `.mjs` de auditoria e
     // documento não são compilados — e como outras fatias editam esses caminhos em paralelo, exigir a
@@ -113,10 +110,23 @@ async function main() {
                         "packages/domain/package.json", "packages/shared/package.json",
                         "packages/plataforma/package.json", "pnpm-lock.yaml"];
     const sujo = (await git(["status", "--porcelain", "--", ...COMPILADOS])).trim();
-    exigir("F1.1", baseApps === headApps, `arvore git de apps/ identica a ${BASE_REF} (${headApps.slice(0, 12)})`);
-    exigir("F1.2", basePkgs === headPkgs, `arvore git de packages/ identica a ${BASE_REF} (${headPkgs.slice(0, 12)})`);
-    exigir("F1.3", sujo === "", `nenhuma modificacao local no que compila (src/ e manifestos) [${sujo || "limpo"}]`);
-    if (falhas) throw new Error("o codigo desta arvore NAO e o de " + BASE_REF + ": use `git worktree add` no commit base e construa a API la.");
+
+    // A comparação é POR CAMINHO COMPILADO, não pelas árvores inteiras de `apps/` e `packages/`.
+    // A versão anterior comparava `HEAD:apps` e `HEAD:packages` com a base, o que contradizia o próprio
+    // raciocínio acima: assim que a fatia commitasse qualquer coisa nesses diretórios — um teste novo, um
+    // SSOT `.mjs` que ninguém importa — o gate se recusava a rodar por um motivo que não é o que ele mede.
+    // Comparar caminho a caminho é ao mesmo tempo mais estrito (diz QUAL caminho divergiu) e mais honesto
+    // (só reprova quando o que divergiu entra mesmo no binário).
+    const divergentes = [];
+    for (const caminho of COMPILADOS) {
+      const base = await git(["rev-parse", `${BASE_REF}:${caminho}`]).catch(() => "ausente-na-base");
+      const head = await git(["rev-parse", `HEAD:${caminho}`]).catch(() => "ausente-no-head");
+      if (base !== head) divergentes.push(caminho);
+    }
+    exigir("F1.1", divergentes.length === 0,
+      `todo caminho COMPILADO identico a ${BASE_REF} (${COMPILADOS.length} caminhos)${divergentes.length ? " — divergem: " + divergentes.join(", ") : ""}`);
+    exigir("F1.2", sujo === "", `nenhuma modificacao local no que compila (src/ e manifestos) [${sujo || "limpo"}]`);
+    if (falhas) throw new Error("o codigo compilado desta arvore NAO e o de " + BASE_REF + " (" + divergentes.join(", ") + "): use `git worktree add` no commit base e construa a API la.");
 
     // Reconstrói ANTES de subir. Sem isto o gate mediria um `dist/` de origem desconhecida — possivelmente
     // de outra fatia, possivelmente antigo — e o veredito não falaria sobre o código que acabou de ser
