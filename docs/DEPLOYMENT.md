@@ -9,6 +9,7 @@
 
 ## Railway (API)
 - Serviço a partir do repositório; configuração definida no próprio serviço (sem `railway.json` na raiz, pois ele valeria para todos os serviços do repositório): Dockerfile `apps/api/Dockerfile`, start `node dist/main.js`, health `/health`, pre-deploy `node dist/migrate.js` (aplica migrations pendentes).
+- **Pre-deploy sem teto de tempo.** O campo *Pre-Deploy Timeout* do serviço está **vazio** (`preDeployTimeoutSeconds = null`, lido em 15/09/2026 pela API do Railway, no `serviceInstance` do serviço `api` em `production`). Pela documentação do Railway, vazio significa **sem limite**: um pre-deploy que trave não falha o deploy — ele o segura. O `healthcheckTimeout` de 120 s não cobre essa janela, porque só começa a contar depois que o pre-deploy termina. O único teto que existe hoje é do lado do banco (`statement_timeout` de 120 s; `lock_timeout` = 0), e ele só alcança o que está DENTRO de um enunciado SQL — DNS, handshake, aquisição de conexão do pool, `seedPermissions` e travamento de código ficam sem teto algum. Relevante para toda migration longa, e especialmente para a 05C-1 (ver `docs/PRE-BASE2-05C-1-PREFLIGHT.md`, U4).
 - Região: `iad` (US East, Virgínia), a mais próxima disponível de São Paulo (o banco Supabase fica em sa-east-1); em `sfo` cada listagem levava ~3,5 s.
 - Variáveis: `DATABASE_URL` (pooler, usuário `erp_app`), `MIGRATE_DATABASE_URL` (pooler, usuário `erp_migrator`), `MIGRATIONS_DIR=/app/supabase/migrations`, `AUTH_MODE=local` + `LOCAL_AUTH_SECRET` (login por e-mail/senha na tabela `erp.users`; `AUTH_MODE=supabase` + `SUPABASE_JWT_SECRET` fica como evolução, pois o web ainda não usa Supabase Auth), `SUPABASE_URL`, `WEB_ORIGIN=https://<app>.vercel.app`, `PORT=3333`, `API_LOG_LEVEL=info`, `RATE_LIMIT_MAX`.
 - Seed inicial: definir uma única vez `SEED_ON_DEPLOY=1`, `ORG_NAME`, `ORG_SLUG`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`; o pre-deploy cria dados de referência + organização + usuário owner; depois voltar `SEED_ON_DEPLOY=0`.
@@ -92,6 +93,14 @@ gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com pre
 4. **Gates verdes na PR da 05C-1**, incluindo os instrumentos calibrados na 05C-0: `company-schema-sync` em
    fase `canonica`, guarda de RLS com a política `api_child` reescrita, `upgrade-acervo` e
    `upgrade-rollback` atravessando a purga, version skew nos dois sentidos com a base impressa no log.
+5. **G-U5 executado e verde** — o binário da API que está em produção subindo e servindo contra um banco
+   com a `0017` aplicada: boot, login, leitura escopada por empresa e gravação com conferência de ROW
+   COUNT. Roda em banco descartável, sem custo. Sem ele, a compatibilidade do runtime anterior com o
+   schema pós-purga é derivação de auditoria estática, não fato — e é ela que sustenta a dispensa de
+   U1, U2 e U3 em `docs/PRE-BASE2-05C-1-PREFLIGHT.md`.
+6. **Porteiro de locks lido na hora, por papel com `pg_read_all_stats`** (ou superusuário), sem linha
+   `BLOQUEIA` e sem linha `porteiro_invalido`. Papel sem esse privilégio enxerga menos do que precisa e a
+   consulta devolve vazio — vazio por cegueira é indistinguível de vazio por calmaria.
 
 **Depois de aplicar, antes de declarar concluída:**
 
