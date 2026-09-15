@@ -135,6 +135,14 @@ export function baseDoEventoDePR(env = process.env, lerArquivo = (f) => readFile
   } catch { return null; }   // payload ausente ou ilegível: o degrau seguinte decide
 }
 
+/**
+ * O arquivo cuja presença indica "a árvore já foi montada". `raiz` e `dir` são parâmetros para que o teste
+ * de R16 possa exercitar a função num repositório temporário PRÓPRIO: no CI o checkout é raso
+ * (`fetch-depth: 1`) e `HEAD~1` não existe, então um teste que dependesse de dois commits do repositório
+ * real passaria na máquina e reprovaria no CI — verde local e vermelho remoto pelo mesmo código.
+ */
+export const MARCA_DE_ARVORE = "apps/api/src/main.ts";
+
 /** `<ref>` -> SHA, buscando do remoto quando o clone é raso. `null` quando o ref não existe. */
 function shaDoRef(ref) {
   try { return git("rev-parse", "--verify", `${ref}^{commit}`); } catch { /* clone raso ou ref remoto ausente */ }
@@ -185,17 +193,17 @@ function garantirCommit(sha) {
  * contra o commit ERRADO — de novo verde, de novo medindo outra coisa. Então a árvore é conferida pelo HEAD
  * dela e refeita quando não confere.
  */
-export function garantirWorktree(sha, dir = DIR_ANTERIOR) {
-  if (existsSync(join(dir, "apps/api/src/main.ts"))) {
+export function garantirWorktree(sha, dir = DIR_ANTERIOR, raiz = RAIZ) {
+  if (existsSync(join(dir, MARCA_DE_ARVORE))) {
     let atual = null;
     try { atual = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] }).toString().trim(); } catch { /* árvore quebrada */ }
     if (atual === sha) return false;
     console.log(`[skew] árvore anterior está em ${atual ?? "estado desconhecido"} e a base é ${sha.slice(0, 8)} — refazendo`);
-    try { rodar("git", ["worktree", "remove", "--force", dir], RAIZ); } catch { rmSync(dir, { recursive: true, force: true }); rodar("git", ["worktree", "prune"], RAIZ); }
+    try { rodar("git", ["worktree", "remove", "--force", dir], raiz); } catch { rmSync(dir, { recursive: true, force: true }); rodar("git", ["worktree", "prune"], raiz); }
   }
   mkdirSync(dirname(dir), { recursive: true });
   // `--detach`: sem branch, porque esta árvore é só leitura de um ponto do passado. Nada é commitado dela.
-  rodar("git", ["worktree", "add", "--detach", dir, sha], RAIZ);
+  rodar("git", ["worktree", "add", "--detach", dir, sha], raiz);
   const conferido = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
   if (conferido !== sha) abortar(`a árvore de trabalho ficou em ${conferido}, e a base é ${sha}`);
   return true;

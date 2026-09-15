@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { execFileSync } from "node:child_process";
 // @ts-expect-error — harness de skew em JS puro, fora do grafo de tipos da API
 import { commitAnterior, escolherFonteDaBase, baseDoEventoDePR, garantirWorktree } from "../../../../scripts/api-anterior.mjs";
@@ -83,23 +84,45 @@ describe("R15 · a fonte da base", () => {
  * diretório próprio: não toca a `.api-anterior` real e não dispara `pnpm install`.
  */
 describe("R16 · a árvore de trabalho", () => {
-  const dir = path.join(RAIZ, ".api-anterior-teste-r16");
-  const limpar = () => { try { execFileSync("git", ["worktree", "remove", "--force", dir], { cwd: RAIZ, stdio: "ignore" }); } catch { /* já não existe */ } fs.rmSync(dir, { recursive: true, force: true }); };
-  beforeAll(limpar);
-  afterAll(limpar);
+  /**
+   * Repositório TEMPORÁRIO com dois commits, não o repositório real.
+   *
+   * No CI o checkout é raso (`fetch-depth: 1`): `HEAD~1` não existe, e um teste que dependesse de dois
+   * commits daqui passaria na máquina e reprovaria no runner — pelo mesmo código. O cenário que importa
+   * (árvore em cache noutro commit) não precisa deste repositório: precisa de DOIS commits quaisquer.
+   */
+  let repo: string; let A = ""; let B = "";
+  const g = (args: string[], cwd: string) => execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+
+  beforeAll(() => {
+    repo = fs.mkdtempSync(path.join(os.tmpdir(), "skew-r16-"));
+    g(["init", "-q", "-b", "principal"], repo);
+    g(["config", "user.email", "r16@teste"], repo);
+    g(["config", "user.name", "R16"], repo);
+    // A marca é o arquivo que o harness usa para decidir "a árvore já existe".
+    const marca = path.join(repo, "apps/api/src");
+    fs.mkdirSync(marca, { recursive: true });
+    for (const conteudo of ["primeiro", "segundo"]) {
+      fs.writeFileSync(path.join(marca, "main.ts"), `// ${conteudo}\n`, "utf8");
+      g(["add", "-A"], repo);
+      g(["commit", "-qm", conteudo], repo);
+    }
+    B = g(["rev-parse", "HEAD"], repo);
+    A = g(["rev-parse", "HEAD~1"], repo);
+  });
+  afterAll(() => { fs.rmSync(repo, { recursive: true, force: true }); });
 
   it("monta na base pedida, reaproveita quando confere e REFAZ quando está em outro commit", () => {
-    const base = git("rev-parse", "HEAD");
-    const outro = git("rev-parse", "HEAD~1");
-    expect(base, "a premissa: os dois commits são diferentes").not.toBe(outro);
+    const dir = path.join(repo, ".api-anterior");
+    expect(A, "a premissa: dois commits distintos").not.toBe(B);
 
-    expect(garantirWorktree(outro, dir), "montou do zero").toBe(true);
-    expect(git("-C", dir, "rev-parse", "HEAD")).toBe(outro);
+    expect(garantirWorktree(A, dir, repo), "montou do zero").toBe(true);
+    expect(g(["rev-parse", "HEAD"], dir)).toBe(A);
 
-    expect(garantirWorktree(outro, dir), "no mesmo commit, reaproveita").toBe(false);
+    expect(garantirWorktree(A, dir, repo), "no mesmo commit, reaproveita").toBe(false);
 
-    expect(garantirWorktree(base, dir), "em outro commit, REFAZ").toBe(true);
-    expect(git("-C", dir, "rev-parse", "HEAD"), "e termina exatamente na base pedida").toBe(base);
+    expect(garantirWorktree(B, dir, repo), "em outro commit, REFAZ — não reaproveita por existir arquivo").toBe(true);
+    expect(g(["rev-parse", "HEAD"], dir), "e termina exatamente na base pedida").toBe(B);
   }, 120_000);
 });
 
