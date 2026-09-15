@@ -24,36 +24,63 @@ export const CATEGORIAS = {
 /**
  * EXCEÇÕES CONSCIENTES. Cada uma diz por que a RLS empresarial genérica não se aplica — e o que protege a
  * tabela no lugar dela. Nenhuma linha aqui significa "sem proteção": significa "protegida por outra regra".
+ *
+ * `protecao` É O CONTRATO EXECUTÁVEL (PRE-BASE2-05C-0), e existe porque `protegidaPor` não era um.
+ * ------------------------------------------------------------------------------------------------
+ * `protegidaPor` é prosa: descreve a intenção para quem lê a matriz. Enquanto foi só isso, o guarda de
+ * integração tinha um buraco de forma exata: para as categorias E e F `politicasEsperadas` devolve `null`,
+ * e o teste, ao não achar política nenhuma, PULAVA a tabela justamente porque ela estava declarada aqui.
+ * Resultado: `erp.empresa_cost_centers` podia ficar com `row security forced` e ZERO políticas — isto é,
+ * negando tudo para a aplicação — e o CI ficava verde. O guarda visitava a tabela, consultava as políticas
+ * dela e descartava a resposta.
+ *
+ * Isso importa agora porque a PRE-BASE2-05C-1 vai dropar `farm_id`, e a única política dessas quatro
+ * tabelas de vínculo (`api_child`) é escrita SOBRE essa coluna: um `drop column ... cascade` apagaria a
+ * política inteira em vez de reescrevê-la. Sem contrato executável, a fatia destrutiva passaria verde.
+ *
+ * Então a exceção passa a declarar a política que a protege em forma legível por máquina: nome, comando,
+ * permissiva/restritiva, papéis e se o predicado precisa citar o isolamento de tenant. O teste de
+ * integração compara isso com `pg_policies` REAL — nunca com esta lista contra si mesma, que provaria só
+ * que o arquivo é igual a ele mesmo.
+ *
+ * O que `protecao` NÃO é: uma cópia do texto da política. Exigir o predicado inteiro engessaria a
+ * reescrita legítima que a 05C-1 vai fazer (trocar `farm_id` por `empresa_id`). O que se exige é a FORMA
+ * mínima sem a qual a proteção deixa de existir.
  */
 export const EXCECOES_RLS_EMPRESA = {
   notifications: {
     categoria: "E",
+    protecao: { politica: "tenant_isolation", cmd: "ALL", permissiva: true, papeis: ["authenticated", "erp_app"], citaTenant: true },
     motivo: "Porta DINÂMICA: a autorização de cada aviso vem da FONTE dele (tipo × capacidade × escopo × empresa gravados na própria linha, erp.tipos_notificacao), não do módulo ativo da rota. Uma política pelo módulo da rota recortaria o aviso de compras quando lido pela tela de estoque.",
     protegidaPor: "visibilidadeNotificacaoSql + erp.tipos_notificacao (PRE-BASE2-02), com matriz própria em docs/NOTIFICATION-SCOPE-MATRIX.md"
   },
   registros_globais: {
     categoria: "E",
+    protecao: { politica: "tenant_isolation", cmd: "ALL", permissiva: true, papeis: ["authenticated", "erp_app"], citaTenant: true },
     motivo: "`empresa_id` aqui é DICA denormalizada, não autoridade: a resolução de #N carrega o registro FONTE vivo e tira dele a empresa atual. Recortar pela dica faria o ID Global de um registro transferido de empresa sumir para quem hoje o enxerga.",
     protegidaPor: "resolução pela entidade fonte (docs/GLOBAL-ID-CONTRACT.md); PRE-BASE2-04 cuida da alocação"
   },
   membro_empresas: {
     categoria: "E",
+    protecao: { politica: "tenant_isolation", cmd: "ALL", permissiva: true, papeis: ["authenticated", "erp_app"], citaTenant: true },
     motivo: "É a própria CONFIGURAÇÃO de autorização por empresa. Recortá-la pelo escopo que ela define seria circular: o administrador deixaria de enxergar as empresas que acabou de conceder.",
     protegidaPor: "tenant_isolation + capacidade users.edit na borda de administração"
   },
   legado_escopo_empresa_v0: {
     categoria: "F",
+    protecao: { politica: "tenant_isolation", cmd: "ALL", permissiva: true, papeis: ["authenticated", "erp_app"], citaTenant: true },
     motivo: "Arquivo morto de erp.member_farms (PRE-BASE2-03). Não é autoridade de nada, não tem tela e não é lido por runtime algum; existe para que a migração seja reversível sem backup externo.",
     protegidaPor: "tenant_isolation, sem grant de escrita"
   },
   authorizer_empresas: {
     categoria: "E",
+    protecao: { politica: "api_child", cmd: "ALL", permissiva: true, papeis: ["erp_app"], citaTenant: true },
     motivo: "Vínculo de CONFIGURAÇÃO (cadastro × empresas de abrangência), sem organization_id próprio. Recortá-lo pelo módulo ativo esconderia do administrador empresas já vinculadas — e salvar a tela devolveria uma lista incompleta, apagando vínculos que ele nunca viu.",
     protegidaPor: "política api_child (junção com o cadastro pai, que é da organização) + capacidade do cadastro"
   },
-  bank_account_empresas: { categoria: "E", motivo: "Mesmo caso de authorizer_empresas: vínculo de abrangência de um cadastro de organização.", protegidaPor: "política api_child + bank_accounts.edit" },
-  empresa_cost_centers: { categoria: "E", motivo: "Mesmo caso: diz em quais empresas o centro de custo se aplica.", protegidaPor: "política api_child + cost_centers.edit" },
-  proprietary_empresas: { categoria: "E", motivo: "Mesmo caso: abrangência do proprietário.", protegidaPor: "política api_child + proprietaries.edit" }
+  bank_account_empresas: { protecao: { politica: "api_child", cmd: "ALL", permissiva: true, papeis: ["erp_app"], citaTenant: true }, categoria: "E", motivo: "Mesmo caso de authorizer_empresas: vínculo de abrangência de um cadastro de organização.", protegidaPor: "política api_child + bank_accounts.edit" },
+  empresa_cost_centers: { protecao: { politica: "api_child", cmd: "ALL", permissiva: true, papeis: ["erp_app"], citaTenant: true }, categoria: "E", motivo: "Mesmo caso: diz em quais empresas o centro de custo se aplica.", protegidaPor: "política api_child + cost_centers.edit" },
+  proprietary_empresas: { protecao: { politica: "api_child", cmd: "ALL", permissiva: true, papeis: ["erp_app"], citaTenant: true }, categoria: "E", motivo: "Mesmo caso: abrangência do proprietário.", protegidaPor: "política api_child + proprietaries.edit" }
 };
 
 /** Tabelas com DUAS pontas de empresa (transferência). Derivado do schema, listado aqui só para leitura. */
@@ -171,6 +198,18 @@ export function politicasEsperadas(categoria, tabela) {
   }
   return null;   // E/F: a proteção é outra (porta dinâmica, tenant puro, arquivo morto)
 }
+
+/**
+ * A proteção declarada de uma tabela de exceção, em forma executável — ou `null` se a tabela não é exceção.
+ *
+ * Quem consome isto é o guarda de integração: para toda exceção ele exige que a política nomeada exista no
+ * banco com essa forma. Uma exceção SEM `protecao` é recusada pelo próprio guarda: declarar que a tabela é
+ * especial sem dizer o que a protege é exatamente o buraco que esta estrutura fecha.
+ */
+export const protecaoDaExcecao = (tabela) => EXCECOES_RLS_EMPRESA[tabela]?.protecao ?? null;
+
+/** Toda tabela declarada como exceção, para o guarda percorrer sem depender do schema. */
+export const TABELAS_DE_EXCECAO = Object.keys(EXCECOES_RLS_EMPRESA);
 
 /** Nome-base da política esperada por categoria (compatibilidade com chamadas antigas). */
 export function politicaEsperada(categoria) {

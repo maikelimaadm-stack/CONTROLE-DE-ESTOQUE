@@ -15,7 +15,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "./lib/schema.mjs";
-import { PONTE_RUNTIME } from "./lib/empresa-compat-surface.mjs";
+import { PONTE_RUNTIME, PONTE, CATEGORIAS_COMPAT, categoriaDaPonte } from "./lib/empresa-compat-surface.mjs";
 
 /**
  * Arquivo → por que ele pode falar o idioma antigo. A lista vive em `scripts/lib/empresa-compat-surface.mjs`
@@ -33,8 +33,12 @@ const SIMBOLOS = [
   { re: /\bfarm_ids\b/, nome: "farm_ids" },
   { re: /\bfarmId\b/, nome: "farmId" },
   { re: /X-Farm-Id|x-farm-id/i, nome: "X-Farm-Id" },
-  { re: /erp\.farms\b/, nome: "erp.farms" },
-  { re: /erp\.member_farms\b/, nome: "erp.member_farms" },
+  // AS CINCO VIEWS DE COMPATIBILIDADE da 0014, todas. Até a PRE-BASE2-05C-0 só `erp.farms` era vigiada, e
+  // foi por essa fresta que `packages/db/src/seed.ts` passou a GRAVAR por `erp.proprietary_farms` sem que
+  // nada reclamasse. A 05C-1 dropa as cinco: escrever por qualquer uma delas é um caminho que some — e some
+  // em silêncio, porque um `insert` numa view inexistente só falha em tempo de execução, no seed.
+  ...["farms", "member_farms", "authorizer_farms", "bank_account_farms", "farm_cost_centers", "proprietary_farms"]
+    .map((v) => ({ re: new RegExp(`erp\\.${v}\\b`), nome: `erp.${v}` })),
   { re: /\/cadastros\/farms/, nome: "/cadastros/farms" },
   { re: /(?<!erp)\.farms\b/, nome: ".farms (campo legado de resposta)" }
 ];
@@ -73,6 +77,24 @@ function semComentarios(texto) {
   return texto
     .replace(/\/\*[\s\S]*?\*\//g, (b) => b.replace(/[^\n]/g, " "))  // bloco: preserva a numeração das linhas
     .split("\n").map((l) => l.replace(/\/\/.*$/, "")).join("\n");
+}
+
+/**
+ * TODA DECLARAÇÃO DIZ QUANDO SAI — fail-closed (PRE-BASE2-05C-0).
+ *
+ * Um arquivo declarado sem categoria é uma autorização sem prazo: foi assim que a lista inteira passou a
+ * dizer "sai na 05C", inclusive para provas históricas que não podem sair. A categoria é obrigatória e
+ * precisa ser uma das declaradas — um rótulo novo inventado na hora não vale, porque ninguém saberia o
+ * gatilho dele.
+ */
+const semCategoria = Object.keys(PONTE).filter((f) => !categoriaDaPonte(f) || !Object.hasOwn(CATEGORIAS_COMPAT, categoriaDaPonte(f)));
+if (semCategoria.length) {
+  console.error("farm-compat-allowlist: arquivo declarado na ponte sem categoria válida:");
+  for (const f of semCategoria) console.error(`  - ${f} (categoria: ${categoriaDaPonte(f) ?? "AUSENTE"})`);
+  console.error(`\nCategorias válidas: ${Object.keys(CATEGORIAS_COMPAT).join(", ")}. Declare em CATEGORIA_COMPAT,`);
+  console.error("em scripts/lib/empresa-compat-surface.mjs — é a categoria que diz QUANDO o arquivo sai, e");
+  console.error("duas delas (PROVA_HISTORICA, TOMBSTONE) não saem na fatia destrutiva.");
+  process.exit(1);
 }
 
 const infratores = [];

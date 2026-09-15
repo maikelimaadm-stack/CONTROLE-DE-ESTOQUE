@@ -1,5 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, uniq } from "./helpers";
+import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 
 /**
  * VERSION SKEW — O WEB DESTA PR CONTRA A API QUE ESTÁ NO AR (PRE-BASE2-05A).
@@ -81,9 +84,44 @@ test("o servidor É o commit base — e ele entende o canônico, que é a premis
   const canonico = await (await request.get(`${API}/api/resources/warehouses?pageSize=100&empresa_id__eq=${ctx["empresas"][0].id}`, { headers: auth })).json();
   expect(Number(canonico["total"]), "o filtro canônico RECORTA de verdade — não é descartado em silêncio").toBeLessThan(Number(todos["total"]));
 
-  // E a compatibilidade do SERVIDOR continua de pé: ela só sai em PRE-BASE2-05B.
+  // A PONTE DO SERVIDOR JÁ SAIU (PRE-BASE2-05B), E A BASE TAMBÉM NÃO A TEM.
+  // Enquanto a base desta PR era um commit anterior à 05B, esta linha exigia 200 e distinguia os dois
+  // binários pela ponte. Com a 05B mesclada, a base É canônica: exigir 200 aqui reprovaria um servidor
+  // correto. Trocado pelo fato atual — e a distinção entre base e HEAD passa a ser provada pela IDENTIDADE
+  // do binário, logo abaixo, que é o que ela sempre deveria ter sido: um contrato igual nos dois lados não
+  // consegue dizer qual dos dois está no ar.
   const legado = await (await request.get(`${API}/api/resources/farms?pageSize=1`, { headers: auth })).status();
-  expect(legado, "a API segue bilíngue para clientes anteriores até a 05B").toBe(200);
+  expect(legado, "a chave de recurso anterior não existe mais em nenhum dos dois lados").toBe(404);
+});
+
+/**
+ * O BINÁRIO SOB TESTE É MESMO O DA BASE — provado pelo commit, não pelo contrato.
+ *
+ * Esta fatia não muda nada no fio, então nenhuma resposta HTTP distingue a base deste HEAD. Um teste que
+ * tentasse distingui-los por contrato passaria contra os DOIS servidores e certificaria o cenário errado
+ * — que é o defeito que a PRE-BASE2-05C-0 existe para tirar dos instrumentos. A identidade é verificável
+ * onde ela de fato está: a árvore que o Playwright manda subir (`.api-anterior`) está posicionada no commit
+ * da base, e esse commit não é o HEAD.
+ */
+test("a árvore que serve esta suíte está no commit da BASE, e não neste HEAD", async () => {
+  const raiz = path.resolve(__dirname, "../../..");
+  const rev = (cwd: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
+  const anterior = rev(path.join(raiz, ".api-anterior"));
+  expect(anterior, "40 hexadecimais").toMatch(/^[0-9a-f]{40}$/);
+  expect(anterior, "a API sob teste não pode ser este HEAD — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
+});
+
+/**
+ * O CONTADOR DE EMPRESA, NO SENTIDO 1 (API da base). Ver `skew-contador-empresa.ts` para o porquê: é a
+ * numeração — não a leitura — que a PRE-BASE2-05C-1 arrisca, e a prova precisa criar uma Empresa DE VERDADE
+ * neste sentido e outra no sentido 2, contra o MESMO banco, sem reset entre eles.
+ */
+test("criar Empresa pela API da BASE aloca um código novo, maior e sem repetição", async ({ page, request }) => {
+  await login(page);
+  const s = await sessao(page);
+  const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };
+  const codigo = await criarEmpresaEConferirContador(request, API, auth, "SKEW-BASE");
+  console.log(`[skew] sentido 1 (API da base) alocou o código de Empresa ${codigo}`);
 });
 
 test("entrar, carregar o contexto e escolher a empresa — sem nenhuma requisição morrer no navegador", async ({ page }) => {

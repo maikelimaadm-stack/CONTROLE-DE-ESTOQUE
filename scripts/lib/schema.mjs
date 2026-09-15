@@ -2,8 +2,26 @@
  * Leitor do SCHEMA REAL a partir das migrations (supabase/migrations/*.sql).
  *
  * É a fonte técnica do dicionário de dados e do inventário: nada aqui é digitado à mão, de modo que a
- * documentação não possa divergir do banco. Suporta `create table` e `alter table ... add column`
- * (migrations aditivas), que é tudo o que o repositório usa.
+ * documentação não possa divergir do banco.
+ *
+ * GRAMÁTICA SUPORTADA — deliberadamente a do repositório, não SQL universal:
+ *   create table · alter table … add column · alter column set/drop not null ·
+ *   alter table … rename to · drop table · alter table … DROP COLUMN
+ *
+ * POR QUE `drop column` ENTRA AGORA (PRE-BASE2-05C-0, antes de existir a migration que o usa).
+ * Até aqui o repositório só tinha migrations aditivas, e um leitor que ignorasse remoção dizia a verdade
+ * por acidente. A PRE-BASE2-05C-1 vai remover 52 colunas; se este leitor continuasse cego, o dicionário de
+ * dados, o `company-schema-sync`, a matriz de RLS e o inventário passariam a afirmar que a coluna legada
+ * ainda existe — e afirmariam isso VERDES. Um gate que descreve um schema que não existe mais é pior do que
+ * gate nenhum: ele dá confiança onde não há. O suporte nasce nesta fatia, com teste, para que a fatia
+ * destrutiva encontre o instrumento já calibrado.
+ *
+ * AS ALTERAÇÕES SÃO APLICADAS NA ORDEM EM QUE APARECEM NO ARQUIVO.
+ * Antes, cada tipo de alteração era uma varredura separada: todos os `add column`, depois todos os
+ * `set not null`, depois os `rename`. Enquanto tudo era aditivo isso dava no mesmo. Com remoção deixa de
+ * dar: `drop column x` seguido de `add column x` no MESMO arquivo tem resultado oposto ao da ordem inversa,
+ * e uma varredura por tipo não sabe qual veio antes. Agora as alterações são coletadas com a posição no
+ * texto e aplicadas em ordem — que é o que o PostgreSQL faz.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -70,67 +88,94 @@ function parseColumn(def) {
   };
 }
 
+/**
+ * Coleta as alterações de um arquivo COM A POSIÇÃO no texto, para que possam ser aplicadas em ordem.
+ * Cada entrada é `{ pos, tipo, ... }`; quem aplica é `aplicar`.
+ */
+function alteracoesNaOrdemDoArquivo(sql) {
+  const ops = [];
+  const varrer = (re, montar) => { for (let m = re.exec(sql); m; m = re.exec(sql)) { const op = montar(m); if (op) ops.push({ pos: m.index, ...op }); } };
+
+  varrer(/create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s*\(/gi, (m) => {
+    const block = balanced(sql, m.index + m[0].length - 1);
+    return block ? { tipo: "criarTabela", tabela: m[1].toLowerCase(), corpo: block.body } : null;
+  });
+  varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+add\s+column\s+(?:if\s+not\s+exists\s+)?([\s\S]*?);/gi,
+    (m) => ({ tipo: "adicionarColuna", tabela: m[1].toLowerCase(), definicao: m[2].trim() }));
+  // `drop column a`, `drop column if exists a`, `drop column a cascade` e a forma com várias ações numa
+  // instrução só (`drop column a, drop column b;`). Mistura com `add column` na MESMA instrução não é
+  // suportada de propósito: o repositório não a usa, e aceitá-la meio pela metade seria pior do que recusá-la.
+  varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+(drop\s+column\b[^;]*);/gi, (m) => {
+    const nomes = [...m[2].matchAll(/drop\s+column\s+(?:if\s+exists\s+)?([a-z_][a-z0-9_]*)/gi)].map((x) => x[1].toLowerCase());
+    return nomes.length ? { tipo: "removerColuna", tabela: m[1].toLowerCase(), colunas: nomes } : null;
+  });
+  varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+set\s+not\s+null\s*;/gi,
+    (m) => ({ tipo: "obrigatoriedade", tabela: m[1].toLowerCase(), coluna: m[2].toLowerCase(), notNull: true }));
+  varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+drop\s+not\s+null\s*;/gi,
+    (m) => ({ tipo: "obrigatoriedade", tabela: m[1].toLowerCase(), coluna: m[2].toLowerCase(), notNull: false }));
+  varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+rename\s+to\s+([a-z_][a-z0-9_]*)\s*;/gi,
+    (m) => ({ tipo: "renomearTabela", tabela: m[1].toLowerCase(), novo: m[2].toLowerCase() }));
+  varrer(/drop\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s*(?:cascade|restrict)?\s*;/gi,
+    (m) => ({ tipo: "removerTabela", tabela: m[1].toLowerCase() }));
+
+  return ops.sort((a, b) => a.pos - b.pos);
+}
+
+function aplicar(tables, op, file) {
+  if (op.tipo === "criarTabela") {
+    const entry = tables.get(op.tabela) ?? { table: op.tabela, file, columns: new Map(), constraints: [] };
+    for (const def of splitTopLevel(op.corpo)) {
+      if (CONSTRAINT_START.test(def)) { entry.constraints.push(def.replace(/\s+/g, " ")); continue; }
+      const col = parseColumn(def);
+      if (col) entry.columns.set(col.name, col);
+    }
+    // chave primária declarada como constraint de tabela
+    for (const c of entry.constraints) {
+      const pk = /^primary\s+key\s*\(([^)]*)\)/i.exec(c);
+      if (pk) for (const name of pk[1].split(",").map((s) => s.trim())) { const col = entry.columns.get(name); if (col) col.primaryKey = true; }
+    }
+    tables.set(op.tabela, entry);
+    return;
+  }
+  const entry = tables.get(op.tabela);
+  if (!entry) return;
+  if (op.tipo === "adicionarColuna") {
+    const col = parseColumn(op.definicao);
+    if (col) entry.columns.set(col.name, { ...col, addedIn: file });
+    return;
+  }
+  if (op.tipo === "removerColuna") {
+    // A coluna some do modelo, e a constraint de tabela que a citava some junto — é o que o PostgreSQL faz
+    // com índices e constraints dependentes da coluna removida. Sem isto, `company-schema-sync` e a matriz
+    // continuariam lendo uma FK composta que não existe mais.
+    for (const nome of op.colunas) {
+      entry.columns.delete(nome);
+      entry.constraints = entry.constraints.filter((c) => !new RegExp(`\\b${nome}\\b`, "i").test(c));
+    }
+    entry.droppedIn = file;
+    return;
+  }
+  if (op.tipo === "obrigatoriedade") {
+    const col = entry.columns.get(op.coluna);
+    if (col) col.notNull = op.notNull;
+    return;
+  }
+  if (op.tipo === "renomearTabela") {
+    const novo = `${op.tabela.split(".")[0]}.${op.novo}`;
+    tables.delete(op.tabela);
+    tables.set(novo, { ...entry, table: novo, renamedFrom: op.tabela, renamedIn: file });
+    return;
+  }
+  if (op.tipo === "removerTabela") tables.delete(op.tabela);
+}
+
 /** Map<"erp.tabela", { table, file, columns: Map<coluna, coluna>, constraints: string[] }> */
 export function readSchema(dir = MIGRATIONS_DIR) {
   const tables = new Map();
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
   for (const file of files) {
     const sql = stripSqlComments(fs.readFileSync(path.join(dir, file), "utf8"));
-    const createRe = /create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s*\(/gi;
-    for (let m = createRe.exec(sql); m; m = createRe.exec(sql)) {
-      const table = m[1].toLowerCase();
-      const block = balanced(sql, m.index + m[0].length - 1);
-      if (!block) continue;
-      const entry = tables.get(table) ?? { table, file, columns: new Map(), constraints: [] };
-      for (const def of splitTopLevel(block.body)) {
-        if (CONSTRAINT_START.test(def)) { entry.constraints.push(def.replace(/\s+/g, " ")); continue; }
-        const col = parseColumn(def);
-        if (col) entry.columns.set(col.name, col);
-      }
-      // chave primária declarada como constraint de tabela
-      for (const c of entry.constraints) {
-        const pk = /^primary\s+key\s*\(([^)]*)\)/i.exec(c);
-        if (pk) for (const name of pk[1].split(",").map((s) => s.trim())) { const col = entry.columns.get(name); if (col) col.primaryKey = true; }
-      }
-      tables.set(table, entry);
-    }
-    const alterRe = /alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+add\s+column\s+(?:if\s+not\s+exists\s+)?([\s\S]*?);/gi;
-    for (let m = alterRe.exec(sql); m; m = alterRe.exec(sql)) {
-      const table = m[1].toLowerCase();
-      const entry = tables.get(table);
-      if (!entry) continue;
-      const col = parseColumn(m[2].trim());
-      if (col) entry.columns.set(col.name, { ...col, addedIn: file });
-    }
-    // OBRIGATORIEDADE DECLARADA DEPOIS DA CRIAÇÃO (PRE-BASE2-03): `add column ... not null` sem default é
-    // recusado em tabela que já tem linhas, então a coluna canônica nasce anulável e só depois da cópia
-    // recebe o NOT NULL. Sem ler este passo, o dicionário e a matriz de RLS diriam que 47 colunas
-    // obrigatórias são opcionais — e a matriz classificaria todas como "empresa anulável".
-    const notNullRe = /alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+set\s+not\s+null\s*;/gi;
-    for (let m = notNullRe.exec(sql); m; m = notNullRe.exec(sql)) {
-      const col = tables.get(m[1].toLowerCase())?.columns.get(m[2].toLowerCase());
-      if (col) col.notNull = true;
-    }
-    const dropNotNullRe = /alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+drop\s+not\s+null\s*;/gi;
-    for (let m = dropNotNullRe.exec(sql); m; m = dropNotNullRe.exec(sql)) {
-      const col = tables.get(m[1].toLowerCase())?.columns.get(m[2].toLowerCase());
-      if (col) col.notNull = false;
-    }
-    // RENOMEAÇÃO E REMOÇÃO DE TABELA (PRE-BASE2-03). Sem isto, `alter table erp.farms rename to empresas`
-    // deixaria o dicionário e os gates enxergando um schema que não existe mais — uma tabela fantasma com o
-    // nome antigo e nenhuma com o novo. Rodam DEPOIS das colunas do mesmo arquivo, que é a ordem real da
-    // 0014: a tabela de vínculo ganha a coluna canônica e só então troca de nome.
-    const renameRe = /alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+rename\s+to\s+([a-z_][a-z0-9_]*)\s*;/gi;
-    for (let m = renameRe.exec(sql); m; m = renameRe.exec(sql)) {
-      const antigo = m[1].toLowerCase();
-      const entry = tables.get(antigo);
-      if (!entry) continue;
-      const novo = `${antigo.split(".")[0]}.${m[2].toLowerCase()}`;
-      tables.delete(antigo);
-      tables.set(novo, { ...entry, table: novo, renamedFrom: antigo, renamedIn: file });
-    }
-    const dropRe = /drop\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s*(?:cascade|restrict)?\s*;/gi;
-    for (let m = dropRe.exec(sql); m; m = dropRe.exec(sql)) tables.delete(m[1].toLowerCase());
+    for (const op of alteracoesNaOrdemDoArquivo(sql)) aplicar(tables, op, file);
   }
   return tables;
 }

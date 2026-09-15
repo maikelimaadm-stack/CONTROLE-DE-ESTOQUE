@@ -156,7 +156,10 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
         const fn = await tx.query<{ id: string }>("insert into erp.job_functions(organization_id,name,description,base_salary,monthly_hours,hour_value) values ($1,'Vaqueiro','Manejo de gado',2200,220,10) returning id", [orgId]);
         await tx.query("insert into erp.employee_profiles(person_id,function_id,base_salary,cost_center_id,birthday,admission_date) values ($1,$2,2200,$3,'1990-05-20','2024-02-01') on conflict do nothing", [emp1, fn.rows[0]!.id, ccCria]);
       }
-      if (owner) { await tx.query("insert into erp.proprietary_profiles(person_id) values ($1) on conflict do nothing", [owner]); for (const fid of empresaIds) await tx.query("insert into erp.proprietary_farms(person_id,empresa_id,percentage) values ($1,$2,100) on conflict do nothing", [owner, fid]); }
+      if (owner) { await tx.query("insert into erp.proprietary_profiles(person_id) values ($1) on conflict do nothing", [owner]); // A gravação vai na TABELA canônica, nunca na view de compatibilidade `erp.proprietary_farms`
+        // (PRE-BASE2-05C-0): a view é o nome legado e some na 05C-1, e um seed que escreve por ela deixaria
+        // de semear — em silêncio, porque `on conflict do nothing` não distingue "já existia" de "não gravou".
+        for (const fid of empresaIds) await tx.query("insert into erp.proprietary_empresas(person_id,empresa_id,percentage) values ($1,$2,100) on conflict do nothing", [owner, fid]); }
     }
     // Contas bancárias
     await tx.query("insert into erp.bank_accounts(organization_id,code,description,bank_code,agency,account_number,type,opening_balance) values ($1,'CXF','Caixa Fazenda','000','0','0','cash',5000),($1,'BB','Banco do Brasil Principal','001','1234','56789-0','checking',150000) on conflict do nothing", [orgId]);

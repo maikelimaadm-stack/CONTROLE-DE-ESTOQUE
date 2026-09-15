@@ -33,22 +33,43 @@
  * desta PR contra a API da BASE da PR, que é o binário no ar. O contrato provado é o da PRE-BASE2-05A:
  * o cliente canônico só pode subir sobre uma API que já entende o canônico.
  *
- * Idempotente: rodar duas vezes não refaz nada. Uso:
+ * Idempotente: rodar duas vezes não refaz nada — desde que a BASE não tenha mudado (ver abaixo). Uso:
  *
- *   node scripts/api-anterior.mjs           # prepara e imprime o diretório
- *   node scripts/api-anterior.mjs --dir     # imprime só o diretório (para script de shell)
+ *   node scripts/api-anterior.mjs                 # prepara e imprime o diretório
+ *   node scripts/api-anterior.mjs --dir           # imprime só o diretório (para script de shell)
+ *   node scripts/api-anterior.mjs --base=<sha>    # força a base (investigação, reexecução local)
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * BASE DA PR PRE-BASE2-05B: o merge da PR #28 (cliente canônico), que é o commit em produção enquanto esta
- * PR não sobe. Não é "o commit anterior" genérico — é o ponto exato a partir do qual esta PR diverge.
- * Trocar este valor troca o significado do teste, e é por isso que ele fica fixado por SHA, não por ref.
+ * A BASE É RESOLVIDA, NUNCA DIGITADA (PRE-BASE2-05C-0).
+ *
+ * Até aqui esta constante era um SHA fixo no arquivo. Isso funcionou enquanto alguém se lembrou de trocá-lo
+ * a cada fatia — e parou de funcionar em silêncio quando ninguém trocou: o job de skew continuava VERDE
+ * comparando este HEAD com um commit de várias fatias atrás. O teste não falhava; ele mudava de assunto.
+ * É o modo de falha que esta fatia inteira existe para eliminar, e o mais caro dos três: a prova continua
+ * rodando, continua verde, e deixou de medir o cenário de produção.
+ *
+ * A base passa a sair, nesta ordem, de uma fonte que se MOVE junto com a PR:
+ *   1. `--base=<sha|ref>` ou `SKEW_BASE_COMMIT`  — controle explícito (reexecução local, investigação);
+ *   2. `GITHUB_BASE_REF`                          — no CI de PR, a ponta do ramo de destino: o que está no ar;
+ *   3. ponta de `origin/<RAMO_PADRAO>`            — em qualquer outro lugar;
+ *   4. primeiro pai do HEAD                       — quando a base resolvida É o HEAD (push no próprio ramo
+ *                                                   padrão), porque ali "o que está no ar" é o commit anterior.
+ *
+ * E é FAIL-CLOSED em todas as pontas: se a base não resolve, se o objeto não existe, se não é commit, ou se
+ * é igual ao HEAD, o script ABORTA. Nunca há queda para um SHA embutido — um valor de reserva aqui seria
+ * exatamente o defeito acima, com outro nome. Um job de skew que não sabe contra o que está comparando não
+ * tem resultado melhor do que nenhum; tem um resultado PIOR, porque parece um.
+ *
+ * O SHA resolvido e a fonte dele são IMPRESSOS. Quem lê o log do CI precisa poder responder "comparado com
+ * o quê?" sem abrir o script.
  */
-export const COMMIT_ANTERIOR = "76e669d2244244097c44f10095d0fe65d3db2fe4";
+const RAMO_PADRAO = "main";
+const VAR_BASE = "SKEW_BASE_COMMIT";
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Fora de `apps/`, para que nenhum tsconfig/eslint/next do repositório enxergue esta árvore. */
@@ -56,19 +77,85 @@ export const DIR_ANTERIOR = join(RAIZ, ".api-anterior");
 
 const git = (...args) => execFileSync("git", args, { cwd: RAIZ, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 const rodar = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: "inherit" });
+const abortar = (msg) => { throw new Error(`[skew] BASE NÃO RESOLVIDA — ${msg}. O job de skew não roda sem saber contra qual commit compara.`); };
 
-function garantirCommit() {
-  try { git("cat-file", "-e", `${COMMIT_ANTERIOR}^{commit}`); return; } catch { /* clone raso: falta o objeto */ }
-  // `actions/checkout` traz um commit só. Buscar a base pelo SHA é mais barato e mais determinístico do que
-  // pedir `fetch-depth: 0` — não depende do tamanho do histórico do repositório.
-  rodar("git", ["fetch", "--depth=1", "origin", COMMIT_ANTERIOR], RAIZ);
+/** `<ref>` -> SHA, buscando do remoto quando o clone é raso. `null` quando o ref não existe. */
+function shaDoRef(ref) {
+  try { return git("rev-parse", "--verify", `${ref}^{commit}`); } catch { /* clone raso ou ref remoto ausente */ }
+  try { rodar("git", ["fetch", "--depth=1", "origin", ref], RAIZ); return git("rev-parse", "--verify", "FETCH_HEAD^{commit}"); } catch { return null; }
 }
 
-function garantirWorktree() {
-  if (existsSync(join(DIR_ANTERIOR, "apps/api/src/main.ts"))) return false;
+/** De onde veio a base, para o log e para a mensagem de erro. */
+function resolverBase() {
+  const arg = process.argv.find((a) => a.startsWith("--base="));
+  const explicito = arg ? arg.slice("--base=".length) : process.env[VAR_BASE];
+  if (explicito) {
+    const sha = shaDoRef(explicito);
+    if (!sha) abortar(`\`${explicito}\` (${arg ? "--base=" : `$${VAR_BASE}`}) não é um commit alcançável`);
+    return { sha, origem: arg ? "--base=" : `$${VAR_BASE}` };
+  }
+  // No CI de PR, o destino da PR é o que está em produção enquanto ela não sobe.
+  if (process.env.GITHUB_BASE_REF) {
+    const sha = shaDoRef(`origin/${process.env.GITHUB_BASE_REF}`) ?? shaDoRef(process.env.GITHUB_BASE_REF);
+    if (!sha) abortar(`o ramo de destino da PR (\`${process.env.GITHUB_BASE_REF}\`) não foi alcançado`);
+    return { sha, origem: `GITHUB_BASE_REF=${process.env.GITHUB_BASE_REF}` };
+  }
+  const sha = shaDoRef(`origin/${RAMO_PADRAO}`) ?? shaDoRef(RAMO_PADRAO);
+  if (!sha) abortar(`\`origin/${RAMO_PADRAO}\` não foi alcançado`);
+  return { sha, origem: `origin/${RAMO_PADRAO}` };
+}
+
+/**
+ * A base efetiva, já validada. Exportada como FUNÇÃO de propósito: uma constante de módulo seria avaliada na
+ * importação, e o erro de resolução apareceria longe de quem o causou.
+ */
+export function commitAnterior() {
+  const cabeca = git("rev-parse", "HEAD");
+  let { sha, origem } = resolverBase();
+  if (sha === cabeca) {
+    // Acontece ao empurrar no próprio ramo padrão: a ponta da base É este commit. Comparar o HEAD com ele
+    // mesmo passaria sempre e não provaria nada — então a base vira o commit ANTERIOR, que é o que estava
+    // no ar até este push.
+    try { rodar("git", ["fetch", "--depth=2", "origin", cabeca], RAIZ); } catch { /* histórico já local */ }
+    let pai = null;
+    try { pai = git("rev-parse", "--verify", `${cabeca}^^{commit}`); } catch { /* raiz ou clone raso demais */ }
+    if (!pai) abortar(`a base resolvida (${origem}) é o próprio HEAD e o commit anterior não está disponível`);
+    sha = pai; origem = `${origem} → primeiro pai do HEAD`;
+  }
+  // `rev-parse` já garantiu que é um commit; esta linha garante que ele está NESTE repositório depois do
+  // fetch, que é o que a árvore de trabalho vai precisar.
+  try { git("cat-file", "-e", `${sha}^{commit}`); } catch { abortar(`o objeto ${sha} não está no repositório`); }
+  return { sha, origem, cabeca };
+}
+
+function garantirCommit(sha) {
+  try { git("cat-file", "-e", `${sha}^{commit}`); return; } catch { /* clone raso: falta o objeto */ }
+  // `actions/checkout` traz um commit só. Buscar a base pelo SHA é mais barato e mais determinístico do que
+  // pedir `fetch-depth: 0` — não depende do tamanho do histórico do repositório.
+  rodar("git", ["fetch", "--depth=1", "origin", sha], RAIZ);
+}
+
+/**
+ * A ÁRVORE REAPROVEITADA TEM DE SER A DA BASE ATUAL.
+ *
+ * Antes bastava o arquivo existir para a árvore ser considerada boa. Com a base fixa isso era inofensivo;
+ * com a base resolvida por PR, uma `.api-anterior` deixada por uma execução anterior faria o skew rodar
+ * contra o commit ERRADO — de novo verde, de novo medindo outra coisa. Então a árvore é conferida pelo HEAD
+ * dela e refeita quando não confere.
+ */
+function garantirWorktree(sha) {
+  if (existsSync(join(DIR_ANTERIOR, "apps/api/src/main.ts"))) {
+    let atual = null;
+    try { atual = execFileSync("git", ["rev-parse", "HEAD"], { cwd: DIR_ANTERIOR, stdio: ["ignore", "pipe", "pipe"] }).toString().trim(); } catch { /* árvore quebrada */ }
+    if (atual === sha) return false;
+    console.log(`[skew] árvore anterior está em ${atual ?? "estado desconhecido"} e a base é ${sha.slice(0, 8)} — refazendo`);
+    try { rodar("git", ["worktree", "remove", "--force", DIR_ANTERIOR], RAIZ); } catch { rmSync(DIR_ANTERIOR, { recursive: true, force: true }); rodar("git", ["worktree", "prune"], RAIZ); }
+  }
   mkdirSync(dirname(DIR_ANTERIOR), { recursive: true });
   // `--detach`: sem branch, porque esta árvore é só leitura de um ponto do passado. Nada é commitado dela.
-  rodar("git", ["worktree", "add", "--detach", DIR_ANTERIOR, COMMIT_ANTERIOR], RAIZ);
+  rodar("git", ["worktree", "add", "--detach", DIR_ANTERIOR, sha], RAIZ);
+  const conferido = execFileSync("git", ["rev-parse", "HEAD"], { cwd: DIR_ANTERIOR, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+  if (conferido !== sha) abortar(`a árvore de trabalho ficou em ${conferido}, e a base é ${sha}`);
   return true;
 }
 
@@ -95,15 +182,20 @@ function garantirDependencias(novo) {
 }
 
 export function prepararApiAnterior() {
-  garantirCommit();
-  garantirDependencias(garantirWorktree());
+  const { sha, origem, cabeca } = commitAnterior();
+  console.log(`[skew] base ${sha.slice(0, 8)} (${origem}) × HEAD ${cabeca.slice(0, 8)}`);
+  garantirCommit(sha);
+  garantirDependencias(garantirWorktree(sha));
   return DIR_ANTERIOR;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const soDiretorio = process.argv.includes("--dir");
   const comWeb = process.argv.includes("--web");
-  if (soDiretorio && !comWeb && existsSync(join(DIR_ANTERIOR, "packages/db/dist/index.js"))) { console.log(DIR_ANTERIOR); process.exit(0); }
+  // O atalho de `--dir` só vale se a árvore existente for a da base ATUAL: imprimir um diretório obsoleto
+  // faria o Playwright subir o binário errado sem que nada reclamasse.
+  const base = commitAnterior();
+  if (soDiretorio && !comWeb && existsSync(join(DIR_ANTERIOR, "packages/db/dist/index.js")) && !garantirWorktree(base.sha)) { console.log(DIR_ANTERIOR); process.exit(0); }
   const dir = comWeb ? prepararWebAnterior() : prepararApiAnterior();
-  console.log(soDiretorio ? dir : `API do commit ${COMMIT_ANTERIOR.slice(0, 8)} pronta em ${dir}`);
+  console.log(soDiretorio ? dir : `API do commit ${base.sha.slice(0, 8)} pronta em ${dir}`);
 }

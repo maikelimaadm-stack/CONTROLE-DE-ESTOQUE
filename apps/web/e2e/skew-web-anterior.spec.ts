@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, uniq } from "./helpers";
+import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
 
 /**
  * VERSION SKEW SENTIDO 2 — O WEB EM PRODUÇÃO CONTRA A API DESTA PR (PRE-BASE2-05B).
@@ -132,4 +133,24 @@ test("a rota de cadastro ANTERIOR continua levando o usuário à tela certa (fav
   await page.goto("/cadastros/farms");
   await expect(page).toHaveURL(/\/cadastros\/empresas/);
   await expect(page.getByTestId("b1-row").first()).toBeVisible();
+});
+
+/**
+ * O CONTADOR DE EMPRESA, NO SENTIDO 2 (API deste HEAD) — a outra metade da prova.
+ *
+ * O banco é o MESMO do sentido 1 e não há reset entre as duas execuções. Então a Empresa criada ali já está
+ * gravada quando esta roda, e a exigência "maior que todos os códigos existentes, sem repetir nenhum" passa
+ * a atravessar os dois binários. É essa travessia que a transição de contador da PRE-BASE2-05C-1 quebraria:
+ * com `entity='farm'` e `entity='empresa'` como duas linhas de `erp.code_sequences`, os dois lados emitiriam
+ * o mesmo próximo número e o segundo cadastro morreria no `unique (organization_id, code)`.
+ *
+ * Nenhum valor é fixado (`N === 3`): o banco do e2e é semeado e reutilizado, e um número esperado viraria
+ * falha por acumulação. O que se cobra é a RELAÇÃO, que é o que o contrato garante.
+ */
+test("criar Empresa pela API DESTE HEAD, no mesmo banco do sentido 1, também aloca código novo e único", async ({ page, request }) => {
+  await login(page);
+  const s = await sessao(page);
+  const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };
+  const codigo = await criarEmpresaEConferirContador(request, API, auth, "SKEW-HEAD");
+  console.log(`[skew] sentido 2 (API deste HEAD) alocou o código de Empresa ${codigo}`);
 });
