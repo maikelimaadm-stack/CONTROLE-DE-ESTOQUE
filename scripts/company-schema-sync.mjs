@@ -2,7 +2,7 @@
 /**
  * PAR CANÔNICO ↔ LEGADO: as duas colunas existem juntas e concordam (PRE-BASE2-03).
  *
- * Enquanto a ponte existir, cada coluna de empresa tem duas grafias no schema. Elas precisam ser
+ * Enquanto o espelho existir, cada coluna de empresa tem duas grafias no schema. Elas precisam ser
  * INDISTINGUÍVEIS: mesma obrigatoriedade, mesmo par em toda tabela. Um par meio-criado é pior que nenhum —
  * o runtime novo grava `empresa_id` e a versão anterior lê `farm_id` vazio, sem erro, até alguém reparar
  * num relatório.
@@ -10,34 +10,24 @@
  * Este gate lê o TEXTO das migrations (não precisa de banco: roda no job de qualidade). A existência dos
  * GATILHOS de sincronização é conferida contra o banco em `apps/api/test/integration/rls-matriz.test.ts` —
  * "a migration diz" não é o mesmo que "o banco faz".
+ *
+ * A REGRA mora em `scripts/lib/espelho-empresa.mjs`, pura e testada por
+ * `apps/api/test/unit/espelho-empresa-fases.test.ts`. Aqui fica só a borda de linha de comando: ler o schema,
+ * ler a fase declarada e imprimir. Foi essa separação que tornou possível provar o contrato POR PAR, com
+ * migrations de mentira, em vez de depender de uma sabotagem manual no schema real.
  */
 import { readSchema } from "./lib/schema.mjs";
+import { FASE_ESPELHO } from "./lib/empresa-compat-surface.mjs";
+import { conferirEspelho } from "./lib/espelho-empresa.mjs";
 
-const PARES = [["empresa_id", "farm_id"], ["empresa_origem_id", "origin_farm_id"], ["empresa_destino_id", "destination_farm_id"]];
-const schema = readSchema();
-const problemas = [];
-let pares = 0;
+const r = conferirEspelho(readSchema(), FASE_ESPELHO);
 
-for (const [nome, t] of schema) {
-  for (const [canonico, legado] of PARES) {
-    const c = t.columns.get(canonico);
-    const l = t.columns.get(legado);
-    if (!c && !l) continue;
-    // Coluna canônica SEM espelho legado é o estado correto de quem NASCEU canônico (erp.notifications,
-    // erp.registros_globais, erp.membro_empresas: criadas em 0010–0012 já com `empresa_id`). Não há nome
-    // antigo a ser compatível ali — a versão anterior da API também escreve `empresa_id` nessas tabelas.
-    if (c && !l) { pares++; continue; }
-    if (l && !c) { problemas.push(`${nome}.${legado} existe sem a coluna canônica ${canonico} — o runtime novo não encontraria a coluna`); continue; }
-    if (Boolean(c.notNull) !== Boolean(l.notNull)) {
-      problemas.push(`${nome}: ${canonico} é ${c.notNull ? "NOT NULL" : "anulável"} mas ${legado} é ${l.notNull ? "NOT NULL" : "anulável"} — as duas grafias precisam aceitar exatamente o mesmo`);
-    }
-    pares++;
-  }
-}
-
-if (problemas.length) {
-  console.error("company-schema-sync: par canônico/legado inconsistente:");
-  for (const p of problemas) console.error(`  - ${p}`);
+if (r.problemas.length) {
+  console.error("company-schema-sync: contrato do espelho canônico/legado violado:");
+  for (const p of r.problemas) console.error(`  - ${p}`);
+  console.error(`\nFase declarada: "${FASE_ESPELHO}" (scripts/lib/empresa-compat-surface.mjs).`);
+  console.error("A cobrança é POR PAR HISTÓRICO — um par que existiu na ponte física continua sendo cobrado");
+  console.error("depois da purga. Contagem global não distingue \"nunca teve espelho\" de \"perdeu o espelho\".");
   process.exit(1);
 }
-console.log(`company-schema-sync: OK (${pares} pares de coluna coerentes)`);
+console.log(`company-schema-sync: OK (fase ${FASE_ESPELHO}; ${r.paresHistoricos} pares HISTÓRICOS em ${r.tabelasHistoricas} tabelas, ${r.legadasVivas} com o espelho vivo; ${r.canonicasDeNascenca} canônicas de nascença, que a purga não toca)`);

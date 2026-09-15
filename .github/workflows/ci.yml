@@ -102,6 +102,17 @@ jobs:
     env:
       E2E_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/agro_erp_e2e
       NEXT_PUBLIC_API_URL: http://127.0.0.1:3333
+      # A BASE DA PR, E NÃO A PONTA DE HOJE (PRE-BASE2-05C-0). `pull_request.base.sha` é o SHA da base
+      # CAPTURADO PARA ESTA EXECUÇÃO. Resolver `origin/main` aqui compararia com o que a main for no momento
+      # do job — se outra PR entrar no meio, o skew certifica um binário que não é a base desta. A
+      # propriedade de que precisamos não é eternidade: é ficar PINADO durante o run, em vez de ser relido.
+      # Num evento de push a expressão vem VAZIA, e o script trata vazio como ausente.
+      SKEW_BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+      # DIAGNÓSTICO APENAS. Num evento `pull_request` o `actions/checkout` posiciona a árvore num MERGE REF
+      # sintético (o merge do head com a base), então `git rev-parse HEAD` NÃO é o head da PR. Isto deixa o
+      # head declarado visível no log, separado do checkout. Não participa da resolução da base nem da
+      # montagem da worktree — e o checkout sintético continua legítimo, não se exige igualdade com ele.
+      SKEW_PR_HEAD_COMMIT: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

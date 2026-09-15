@@ -51,7 +51,9 @@ no navegador — agora provando que o canônico atravessa, e reprovando se a API
 | --- | --- | --- |
 | **05A — Cliente canônico** ✅ publicada | tradutor de fio do web, o cabeçalho anterior do navegador | API e banco bilíngues |
 | **05B — Servidor canônico** ⬅ atual | borda legada da API (cabeçalho, entrada, apelidos, CORS, recurso, escopo admin achatado, promoção de sessão) | banco bilíngue |
-| **05C — Purga física** | colunas legadas, view `erp.farms`, gatilhos de espelho, sequência `entity='farm'` | — |
+| **05C-0 — Instrumentos** | nada do banco: **NO-DDL**. Calibra os gates que a purga usa como prova | tudo |
+| **05C-1 — Purga física** | 52 colunas legadas em 49 tabelas, as **cinco** views de nome antigo, 52 gatilhos de espelho e 3 funções, 52 FKs, 8 índices, o CHECK órfão de `erp.equipment_transfers` | contador `entity='farm'`; lápides (`contrato-legado.ts`, redirects) |
+| **05C-2 — Contador** | a linha `entity='farm'` de `erp.code_sequences` e a constante `SEQUENCIA_EMPRESA` | — |
 
 Cada fase só começa depois de a anterior estar em produção e comprovada. **05A não remove compatibilidade
 nem da API nem do banco.** Detalhes e inventários: `docs/PRE-BASE2-05-APOSENTADORIA.md`.
@@ -70,6 +72,41 @@ decisão humana.
   Enquanto o rollback não acontece, a API anterior segue servida pela view e pelos gatilhos, o que torna a
   reversão uma decisão sem pressa.
 - **Não existe rollback "parcial de uma tabela"**: a coluna canônica é PK/UNIQUE/FK nas 49 tabelas de escopo.
+
+### Go-live e recuperação da 05C (fail-closed)
+
+A 05C-1 é a primeira migration **destrutiva** do produto, e por isso o critério de largada é uma lista de
+gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com preview, `localhost`, CI ou
+"deploy verde" — cada um é uma pergunta respondida contra o objeto real.
+
+**Antes de aplicar (todos obrigatórios; qualquer `PENDING` interrompe):**
+
+1. **Backup restaurável verificado** do banco de produção — restaurado em outro destino e consultado, não
+   apenas listado. Um backup que nunca foi restaurado é uma hipótese.
+2. **Remedição dos dados persistidos com nome antigo** na produção autenticada (tabela em
+   `docs/PRE-BASE2-05-APOSENTADORIA.md`). Se qualquer contagem for > 0, a 05C-1 deixa de ser só DDL e a
+   fatia muda de escopo.
+3. **Uma única versão da API servindo** — condição da 05C-2, não da 05C-1, mas registrada aqui porque é o
+   gate que as pessoas esquecem entre as duas.
+4. **Gates verdes na PR da 05C-1**, incluindo os instrumentos calibrados na 05C-0: `company-schema-sync` em
+   fase `canonica`, guarda de RLS com a política `api_child` reescrita, `upgrade-acervo` e
+   `upgrade-rollback` atravessando a purga, version skew nos dois sentidos com a base impressa no log.
+
+**Depois de aplicar, antes de declarar concluída:**
+
+5. consulta de catálogo em produção provando que os objetos da tabela de inventário **não existem mais**;
+6. `CHECK` canônico equivalente ao órfão **existe** (a invariante "origem ≠ destino" continua no banco);
+7. cadastro real de uma Empresa em produção, conferindo que o código alocado é novo e não repete;
+8. as categorias `TOMBSTONE` e `PROVA_HISTORICA` da superfície de compatibilidade **ainda declaradas**.
+
+**Recuperação.** O caminho de volta da 05C-1 é recriar coluna + repopular a partir da canônica — o dado não
+se perde, porque a coluna legada era espelho. O que **não** volta sozinho é o que foi removido com
+`cascade`: política de RLS e CHECK precisam ser recriados a partir da 0014/0002. Por isso a ordem manda
+reescrever a política e criar o CHECK canônico **antes** de qualquer `drop`: assim o caminho de volta é
+sempre "recriar o que estava versionado", nunca "descobrir o que sumiu junto".
+
+**A 05C-0 não autoriza a 05C-1.** Mesmo com esta PR mesclada e o CI inteiro verde, a fatia destrutiva
+depende dos gates 1 e 2 acima, que exigem acesso autenticado à produção e decisão do Maike.
 
 ### Verificação pós-deploy (fase 1)
 

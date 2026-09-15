@@ -24,36 +24,86 @@ export const CATEGORIAS = {
 /**
  * EXCEÇÕES CONSCIENTES. Cada uma diz por que a RLS empresarial genérica não se aplica — e o que protege a
  * tabela no lugar dela. Nenhuma linha aqui significa "sem proteção": significa "protegida por outra regra".
+ *
+ * `protecao` É O CONTRATO EXECUTÁVEL (PRE-BASE2-05C-0), e existe porque `protegidaPor` não era um.
+ * ------------------------------------------------------------------------------------------------
+ * `protegidaPor` é prosa: descreve a intenção para quem lê a matriz. Enquanto foi só isso, o guarda de
+ * integração tinha um buraco de forma exata: para as categorias E e F `politicasEsperadas` devolve `null`,
+ * e o teste, ao não achar política nenhuma, PULAVA a tabela justamente porque ela estava declarada aqui.
+ * `erp.empresa_cost_centers` podia ficar com `row security forced` e ZERO políticas — negando tudo para a
+ * aplicação — e o CI ficava verde.
+ *
+ * O QUE A PRIMEIRA VERSÃO DE `protecao` AINDA DEIXAVA PASSAR
+ * ----------------------------------------------------------
+ * Declarar nome, comando, permissividade e "cita tenant em algum lugar" não era suficiente. Quatro formas
+ * perigosas continuavam verdes, e todas são alcançáveis por acidente:
+ *
+ *   1. `USING (true)` com `WITH CHECK` protegido — os dois textos eram CONCATENADOS antes da busca, então
+ *      bastava um dos lados citar o tenant. Numa política `ALL` isso abre SELECT e DELETE;
+ *   2. o inverso, `WITH CHECK (true)`, abre INSERT e o lado novo do UPDATE;
+ *   3. papéis eram conferidos como SUBCONJUNTO: ganhar `public` ou `authenticated` por acidente não
+ *      reprovava, porque `erp_app` continuava lá. Isso é ampliação de superfície;
+ *   4. uma política PERMISSIVE EXTRA convivendo com a correta não era vista — e o PostgreSQL combina
+ *      PERMISSIVE com OR, então a mais frouxa vence. É o mesmo vazamento que a matriz já proíbe nas
+ *      categorias normais.
+ *
+ * E havia um quinto, específico do `api_child`: citar `tenant_visible` NÃO prova o vínculo pai→filho. A
+ * proteção dessas quatro tabelas de vínculo é a junção com o cadastro pai, e o tenant é aplicado AO PAI.
+ * Uma política que citasse o tenant sem a correlação certa deixaria o filho visível entre registros.
+ *
+ * O PAI NÃO É SEMPRE `erp.empresas` — E É POR ISSO QUE SÓ UMA DELAS QUEBRA NA 05C-1
+ * ---------------------------------------------------------------------------------
+ * Medido no banco: `authorizer_empresas` junta com `erp.authorizers` por `authorizer_id`,
+ * `bank_account_empresas` com `erp.bank_accounts` por `bank_account_id`, `proprietary_empresas` com
+ * `erp.people` por `person_id` — nenhum deles cita coluna legada. Só `empresa_cost_centers` junta com
+ * `erp.empresas` por `farm_id`, e é exatamente essa a política que um `drop column ... cascade` apagaria.
+ * Por isso a coluna de vínculo é DECLARADA por tabela: na 05C-1 ela vira `empresa_id` em uma linha só, e o
+ * guarda exige que a política e a declaração mudem JUNTAS — mudar uma sem a outra reprova.
+ *
+ * O que `protecao` NÃO é: uma cópia do texto da política. Exigir o predicado inteiro engessaria a reescrita
+ * legítima da 05C-1 e quebraria por espaço em branco ou apelido. O que se exige é a FORMA mínima sem a qual
+ * a proteção deixa de existir.
  */
+const tenantDireto = (papeis) => ({ politica: "tenant_isolation", familia: "tenant_direct", cmd: "ALL", permissiva: true, papeis, exigeUsing: true, exigeCheck: true });
+const filhoDe = (pai, colunaVinculo) => ({ politica: "api_child", familia: "api_child", cmd: "ALL", permissiva: true, papeis: ["erp_app"], pai, colunaVinculo, exigeUsing: true, exigeCheck: true });
+const TENANT_PADRAO = ["authenticated", "erp_app"];
+
 export const EXCECOES_RLS_EMPRESA = {
   notifications: {
     categoria: "E",
+    protecao: tenantDireto(TENANT_PADRAO),
     motivo: "Porta DINÂMICA: a autorização de cada aviso vem da FONTE dele (tipo × capacidade × escopo × empresa gravados na própria linha, erp.tipos_notificacao), não do módulo ativo da rota. Uma política pelo módulo da rota recortaria o aviso de compras quando lido pela tela de estoque.",
     protegidaPor: "visibilidadeNotificacaoSql + erp.tipos_notificacao (PRE-BASE2-02), com matriz própria em docs/NOTIFICATION-SCOPE-MATRIX.md"
   },
   registros_globais: {
     categoria: "E",
+    protecao: tenantDireto(TENANT_PADRAO),
     motivo: "`empresa_id` aqui é DICA denormalizada, não autoridade: a resolução de #N carrega o registro FONTE vivo e tira dele a empresa atual. Recortar pela dica faria o ID Global de um registro transferido de empresa sumir para quem hoje o enxerga.",
     protegidaPor: "resolução pela entidade fonte (docs/GLOBAL-ID-CONTRACT.md); PRE-BASE2-04 cuida da alocação"
   },
   membro_empresas: {
     categoria: "E",
+    protecao: tenantDireto(TENANT_PADRAO),
     motivo: "É a própria CONFIGURAÇÃO de autorização por empresa. Recortá-la pelo escopo que ela define seria circular: o administrador deixaria de enxergar as empresas que acabou de conceder.",
     protegidaPor: "tenant_isolation + capacidade users.edit na borda de administração"
   },
   legado_escopo_empresa_v0: {
     categoria: "F",
+    protecao: tenantDireto(TENANT_PADRAO),
     motivo: "Arquivo morto de erp.member_farms (PRE-BASE2-03). Não é autoridade de nada, não tem tela e não é lido por runtime algum; existe para que a migração seja reversível sem backup externo.",
     protegidaPor: "tenant_isolation, sem grant de escrita"
   },
   authorizer_empresas: {
     categoria: "E",
+    protecao: filhoDe("erp.authorizers", "authorizer_id"),
     motivo: "Vínculo de CONFIGURAÇÃO (cadastro × empresas de abrangência), sem organization_id próprio. Recortá-lo pelo módulo ativo esconderia do administrador empresas já vinculadas — e salvar a tela devolveria uma lista incompleta, apagando vínculos que ele nunca viu.",
     protegidaPor: "política api_child (junção com o cadastro pai, que é da organização) + capacidade do cadastro"
   },
-  bank_account_empresas: { categoria: "E", motivo: "Mesmo caso de authorizer_empresas: vínculo de abrangência de um cadastro de organização.", protegidaPor: "política api_child + bank_accounts.edit" },
-  empresa_cost_centers: { categoria: "E", motivo: "Mesmo caso: diz em quais empresas o centro de custo se aplica.", protegidaPor: "política api_child + cost_centers.edit" },
-  proprietary_empresas: { categoria: "E", motivo: "Mesmo caso: abrangência do proprietário.", protegidaPor: "política api_child + proprietaries.edit" }
+  bank_account_empresas: { categoria: "E", protecao: filhoDe("erp.bank_accounts", "bank_account_id"), motivo: "Mesmo caso de authorizer_empresas: vínculo de abrangência de um cadastro de organização.", protegidaPor: "política api_child + bank_accounts.edit" },
+  // A ÚNICA cujo vínculo é uma coluna LEGADA: a 05C-1 troca `farm_id` por `empresa_id` aqui e nesta linha,
+  // no mesmo commit. Mudar só um dos dois reprova — é esse o ponto de declarar a coluna.
+  empresa_cost_centers: { categoria: "E", protecao: filhoDe("erp.empresas", "farm_id"), motivo: "Mesmo caso: diz em quais empresas o centro de custo se aplica.", protegidaPor: "política api_child + cost_centers.edit" },
+  proprietary_empresas: { categoria: "E", protecao: filhoDe("erp.people", "person_id"), motivo: "Mesmo caso: abrangência do proprietário.", protegidaPor: "política api_child + proprietaries.edit" }
 };
 
 /** Tabelas com DUAS pontas de empresa (transferência). Derivado do schema, listado aqui só para leitura. */
@@ -170,6 +220,124 @@ export function politicasEsperadas(categoria, tabela) {
     };
   }
   return null;   // E/F: a proteção é outra (porta dinâmica, tenant puro, arquivo morto)
+}
+
+/**
+ * A proteção declarada de uma tabela de exceção, em forma executável — ou `null` se a tabela não é exceção.
+ *
+ * Quem consome isto é o guarda de integração: para toda exceção ele exige que a política nomeada exista no
+ * banco com essa forma. Uma exceção SEM `protecao` é recusada pelo próprio guarda: declarar que a tabela é
+ * especial sem dizer o que a protege é exatamente o buraco que esta estrutura fecha.
+ */
+export const protecaoDaExcecao = (tabela) => EXCECOES_RLS_EMPRESA[tabela]?.protecao ?? null;
+
+/** Toda tabela declarada como exceção, para o guarda percorrer sem depender do schema. */
+export const TABELAS_DE_EXCECAO = Object.keys(EXCECOES_RLS_EMPRESA);
+
+const escapar = (x) => String(x).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** O texto de `pg_policies` vem com quebras de linha e parênteses próprios; a forma não depende disso. */
+const normalizar = (e) => String(e ?? "").replace(/\s+/g, " ").trim();
+/** `true`, `(true)`, vazio — tudo que NÃO recorta nada. */
+const naoRecorta = (e) => { const n = normalizar(e).replace(/^\(+|\)+$/g, "").toLowerCase(); return n === "" || n === "true"; };
+
+/**
+ * A FORMA MÍNIMA DO PREDICADO, POR FAMÍLIA — e por que é a forma, não a letra.
+ *
+ * Exigir o texto inteiro da política engessaria a reescrita legítima que a PRE-BASE2-05C-1 fará e quebraria
+ * por espaço em branco ou apelido do PostgreSQL. Exigir "cita tenant_visible" não prova nada: uma política
+ * pode citar o tenant e ainda assim não correlacionar o filho com o pai. O que se cobra é o esqueleto sem o
+ * qual a proteção deixa de existir.
+ */
+function conferirPredicado(protecao, expressao, lado, tabela) {
+  const problemas = [];
+  const e = normalizar(expressao);
+  if (naoRecorta(e)) {
+    problemas.push(`${tabela}.${protecao.politica}: ${lado} não recorta nada (${e || "vazio"}) — numa política ${protecao.cmd} isso abre ${lado === "USING" ? "leitura e exclusão" : "inclusão e o lado novo do UPDATE"}`);
+    return problemas;
+  }
+  // DISJUNÇÃO ANULA O RECORTE. `(<junção correta>) OR true` satisfaz qualquer busca por forma e abre a
+  // tabela inteira — o predicado certo continua lá, e é justamente isso que engana quem lê. As oito
+  // políticas de exceção são conjuntivas; um `OR` aqui é sempre uma decisão nova, e uma decisão nova sobre
+  // autorização não entra por acidente.
+  if (/\bor\b/i.test(e)) {
+    problemas.push(`${tabela}.${protecao.politica}: ${lado} contém OR — disjunção num predicado de proteção anula o recorte (o ramo mais frouxo vence) — ${e}`);
+  }
+  // O tenant tem de ser O NOSSO. `tenant_visible` sem qualificação casaria com uma função homônima de outro
+  // schema no `search_path` do papel da aplicação, e o gate estaria conferindo outra função.
+  const TENANT = "\\berp\\.tenant_visible\\s*\\(";
+  if (protecao.familia === "tenant_direct") {
+    if (!new RegExp(`${TENANT}\\s*organization_id\\s*\\)`, "i").test(e)) {
+      problemas.push(`${tabela}.${protecao.politica}: ${lado} não aplica erp.tenant_visible(organization_id) diretamente — ${e}`);
+    }
+    return problemas;
+  }
+  // api_child: a proteção É a junção com o cadastro pai, com o tenant aplicado AO PAI.
+  const pai = escapar(protecao.pai);
+  const paiNu = escapar(protecao.pai.replace(/^[a-z_]+\./i, ""));
+  // A captura do apelido NÃO pode engolir palavra-chave: `FROM erp.empresas WHERE …` é uma política legítima
+  // sem apelido, e capturar `where` como apelido a reprovaria — falso positivo que inviabilizaria a reescrita
+  // da 05C-1 caso ela seja escrita sem apelido.
+  const PALAVRAS = "where|and|or|group|order|limit|having|union|join|on|as|left|right|inner|cross|full";
+  const achouFrom = new RegExp(`\\bfrom\\s+${pai}(?:\\s+(?:as\\s+)?(?!(?:${PALAVRAS})\\b)([a-z_][a-z0-9_]*))?`, "i").exec(e);
+  if (!/\bexists\b/i.test(e) || !achouFrom) {
+    problemas.push(`${tabela}.${protecao.politica}: ${lado} não junta com o cadastro pai declarado (${protecao.pai}) — ${e}`);
+    return problemas;
+  }
+  // Sem apelido, quem qualifica as colunas do pai é o próprio nome da tabela, com ou sem schema.
+  const qualificadores = achouFrom[1] ? [escapar(achouFrom[1])] : [pai, paiNu];
+  const col = escapar(protecao.colunaVinculo);
+  const filho = `(?:${escapar(`erp.${tabela}`)}|${escapar(tabela)})`;
+  const alguem = (montar) => qualificadores.some((q) => new RegExp(montar(q), "i").test(e));
+
+  if (!alguem((q) => `${q}\\.id\\s*=\\s*${filho}\\.${col}\\b|${filho}\\.${col}\\s*=\\s*${q}\\.id\\b`)) {
+    problemas.push(`${tabela}.${protecao.politica}: ${lado} não correlaciona o filho com o pai pela coluna declarada (${protecao.colunaVinculo}) — ${e}`);
+  }
+  if (!alguem((q) => `${TENANT}\\s*${q}\\.organization_id\\s*\\)`)) {
+    problemas.push(`${tabela}.${protecao.politica}: ${lado} não aplica erp.tenant_visible ao ORGANIZATION_ID DO PAI — ${e}`);
+  }
+  return problemas;
+}
+
+/**
+ * VALIDAÇÃO PURA DA PROTEÇÃO DECLARADA — sem banco, para poder ser adversarialmente testada.
+ *
+ * `politicas` são as linhas REAIS de `pg_policies` daquela tabela, já normalizadas em
+ * `{ policyname, cmd, permissive, papeis, qual, with_check }`. A comparação nunca é da lista contra ela
+ * mesma: quem chama traz o banco. Devolve a lista de problemas; vazia = íntegro.
+ */
+export function validarProtecaoDaExcecao(tabela, protecao, politicas) {
+  if (!protecao) return [`${tabela}: declarada como exceção sem \`protecao\` — dizer que a tabela é especial não diz o que a protege`];
+  const problemas = [];
+  const achada = (politicas ?? []).find((x) => x.policyname === protecao.politica);
+  if (!achada) {
+    const existem = (politicas ?? []).map((x) => x.policyname).join(", ") || "NENHUMA";
+    return [`${tabela}: falta a política ${protecao.politica} que a exceção declara (existem: ${existem})`];
+  }
+
+  if (achada.cmd !== protecao.cmd) problemas.push(`${tabela}.${protecao.politica}: comando ${achada.cmd}, declarado ${protecao.cmd}`);
+  const permissiva = String(achada.permissive).toUpperCase() === "PERMISSIVE";
+  if (permissiva !== protecao.permissiva) problemas.push(`${tabela}.${protecao.politica}: ${achada.permissive}, declarada ${protecao.permissiva ? "PERMISSIVE" : "RESTRICTIVE"}`);
+
+  // PAPÉIS SÃO CONJUNTO EXATO, não subconjunto: ganhar `public` por acidente é ampliação de superfície, e
+  // um teste que só exigisse os esperados não veria o papel a mais.
+  const reais = [...new Set(achada.papeis ?? [])].sort();
+  const declarados = [...new Set(protecao.papeis)].sort();
+  if (reais.join(",") !== declarados.join(",")) {
+    problemas.push(`${tabela}.${protecao.politica}: alcança [${reais.join(", ") || "ninguém"}], declarado [${declarados.join(", ")}]`);
+  }
+
+  // USING e WITH CHECK SEPARADAMENTE. Numa política `ALL` eles respondem por comandos diferentes, e juntar
+  // os dois textos antes de procurar deixava um lado aberto satisfazer pelo outro.
+  if (protecao.exigeUsing) problemas.push(...conferirPredicado(protecao, achada.qual, "USING", tabela));
+  if (protecao.exigeCheck) problemas.push(...conferirPredicado(protecao, achada.with_check, "WITH CHECK", tabela));
+
+  // Duas PERMISSIVE se somam com OR: a mais frouxa vence. Numa tabela de exceção, onde `politicasEsperadas`
+  // devolve null, ninguém mais faria esta pergunta.
+  const extras = (politicas ?? []).filter((x) => x.policyname !== protecao.politica && String(x.permissive).toUpperCase() === "PERMISSIVE");
+  if (extras.length) {
+    problemas.push(`${tabela}: política PERMISSIVE extra ${extras.map((x) => `${x.policyname}/${x.cmd}`).join(", ")} — PERMISSIVE combinam com OR e a mais frouxa vence`);
+  }
+  return problemas;
 }
 
 /** Nome-base da política esperada por categoria (compatibilidade com chamadas antigas). */

@@ -8,7 +8,11 @@ const DB = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replac
 export default defineConfig({
   // `skew-api-producao` roda em `playwright.skew.config.ts`, contra a API do commit base. Aqui o servidor
   // e o cliente sao a MESMA versao: as asserções daquele spec provariam o cenario errado.
-  testDir: "./e2e", testIgnore: /skew-api-producao\.spec\.ts/, timeout: 60_000, expect: { timeout: 10_000 }, fullyParallel: false, workers: 1, retries: process.env.CI ? 1 : 0,
+  // OS DOIS specs de skew ficam de fora daqui. Eles têm configs próprias porque exigem a árvore da BASE
+  // montada (`.api-anterior`), e rodá-los na suíte comum os colocaria contra HEAD × HEAD — sem skew nenhum
+  // para medir, verdes por vacuidade. Até a PRE-BASE2-05C-0 só o sentido 1 era excluído, e o sentido 2 vinha
+  // junto certificando um cenário que não existia.
+  testDir: "./e2e", testIgnore: /skew-(api-producao|web-anterior)\.spec\.ts/, timeout: 60_000, expect: { timeout: 10_000 }, fullyParallel: false, workers: 1, retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: { baseURL: `http://127.0.0.1:${WEB_PORT}`, trace: "retain-on-failure", screenshot: "only-on-failure", locale: "pt-BR" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], launchOptions: process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {} } }],

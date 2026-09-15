@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, type Db } from "@agro/db";
 // @ts-expect-error — classificação em JS puro, compartilhada com o gerador da matriz
-import { EXCECOES_RLS_EMPRESA, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
+import { EXCECOES_RLS_EMPRESA, TABELAS_DE_EXCECAO, protecaoDaExcecao, validarProtecaoDaExcecao, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
 import { TEST_URL } from "./setup.js";
 import { resetSchema, migrate } from "@agro/db";
 
@@ -48,7 +48,11 @@ describe("classificação × políticas reais", () => {
       const p = await db.query<{ policyname: string; cmd: string; qual: string; with_check: string }>(
         "select policyname, cmd, coalesce(qual,'') qual, coalesce(with_check,'') with_check from pg_policies where schemaname='erp' and tablename=$1", [t.tabela]);
       if (!esperadas) {
-        if (!p.rows.length && !EXCECOES_RLS_EMPRESA[t.tabela]) problemas.push(`${t.tabela} (cat. ${categoria}): sem política nenhuma`);
+        // "É exceção" NUNCA silencia "não tem política nenhuma" (PRE-BASE2-05C-0). Antes, a exceção era
+        // tratada como dispensa: o guarda consultava as políticas da tabela e DESCARTAVA a resposta, de modo
+        // que `erp.empresa_cost_centers` com RLS forçada e zero políticas passava verde. A exceção diz que a
+        // proteção é OUTRA — e essa outra é verificada logo abaixo, contra o `pg_policies` real.
+        if (!p.rows.length) problemas.push(`${t.tabela} (cat. ${categoria}): sem política nenhuma`);
         continue;
       }
       for (const [nome, forma] of Object.entries(esperadas) as [string, { cmd: string; using: string | null; check: string | null; gatilho?: string }][]) {
@@ -99,11 +103,55 @@ describe("classificação × políticas reais", () => {
     expect(problemas).toEqual([]);
   });
 
+  /**
+   * A EXCEÇÃO TEM DE PROVAR A PROTEÇÃO QUE ALEGA — contra o `pg_policies` VIVO.
+   *
+   * `politicasEsperadas` devolve `null` para E/F porque a RLS empresarial genérica não se aplica a essas
+   * tabelas. Isso descreve o que NÃO as protege; não descreve o que protege. Enquanto o único registro disso
+   * foi `protegidaPor` — prosa —, a diferença entre "protegida por outra regra" e "sem proteção alguma" era
+   * invisível para qualquer gate.
+   *
+   * A REGRA é `validarProtecaoDaExcecao`, pura e adversarialmente testada sem banco em
+   * `apps/api/test/unit/rls-excecao-protecao.test.ts` (USING e WITH CHECK separados, papéis como conjunto
+   * exato, política PERMISSIVE extra, e a correlação pai→filho do `api_child`). Aqui ela é alimentada com as
+   * linhas REAIS do banco. Os dois lados são necessários: a suíte pura prova que o validador RECUSA o
+   * errado — montar aquelas políticas de verdade exigiria DDL, e esta fatia é NO-DDL —, e este caso prova
+   * que ele ACEITA o que o banco realmente tem. Um sem o outro não distingue "recusa o errado" de "recusa
+   * tudo".
+   */
+  it("toda tabela declarada como EXCEÇÃO tem, no banco, a proteção que a exceção declara", async () => {
+    const problemas: string[] = [];
+    let conferidas = 0;
+    for (const tabela of TABELAS_DE_EXCECAO as string[]) {
+      const existe = await db.query<{ n: string }>(
+        "select count(*)::text n from information_schema.tables where table_schema='erp' and table_name=$1 and table_type='BASE TABLE'", [tabela]);
+      if (existe.rows[0]!.n === "0") { problemas.push(`${tabela}: declarada como exceção, mas não existe no schema — exceção órfã`); continue; }
+
+      // `pg_policies.roles` é `name[]`, e o driver o entrega como TEXTO (`{authenticated,erp_app}`) por não
+      // ter decodificador para esse tipo de array. Tratá-lo como array em JS produziria um conjunto de
+      // CARACTERES — e um teste que nunca casaria com papel nenhum. O banco converte para `text[]`.
+      const p = await db.query<{ policyname: string; cmd: string; permissive: string; papeis: string[]; qual: string; with_check: string }>(
+        `select policyname, cmd, permissive, roles::text[] as papeis, coalesce(qual,'') qual, coalesce(with_check,'') with_check
+           from pg_policies where schemaname='erp' and tablename=$1`, [tabela]);
+
+      problemas.push(...(validarProtecaoDaExcecao(tabela, protecaoDaExcecao(tabela), p.rows) as string[]));
+      conferidas++;
+    }
+    // A premissa junto com a conclusão: uma lista de exceções vazia faria o laço acima não executar asserção
+    // nenhuma e o teste passar sem provar coisa alguma.
+    expect(TABELAS_DE_EXCECAO.length, "há exceções declaradas para conferir").toBeGreaterThan(0);
+    expect(problemas).toEqual([]);
+    expect(conferidas, "toda exceção declarada foi conferida contra o banco").toBe(TABELAS_DE_EXCECAO.length);
+  });
+
   it("NENHUMA tabela de empresa ficou com uma política permissiva EXTRA no mesmo comando — seria um OR que reabre tudo", async () => {
     const problemas: string[] = [];
     for (const t of await tabelasComEmpresa()) {
       const categoria = classificarTabela(t.tabela, t.colunas, t.anulavel);
       const esperadas = politicasEsperadas(categoria, t.tabela) as Record<string, { cmd: string }> | null;
+      // E/F não têm gabarito genérico. Isso NÃO é dispensa: a política permissiva extra dessas tabelas é
+      // cobrada pelo caso acima, via `validarProtecaoDaExcecao`, que reprova qualquer PERMISSIVE não
+      // declarada. Era esta a delegação que faltava — antes o `continue` não entregava a pergunta a ninguém.
       if (!esperadas) continue;
       const declaradas = new Set(Object.keys(esperadas));
       const p = await db.query<{ policyname: string; cmd: string }>(

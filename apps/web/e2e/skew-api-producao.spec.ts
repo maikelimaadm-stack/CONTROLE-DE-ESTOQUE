@@ -1,5 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, uniq } from "./helpers";
+import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+import fs from "node:fs";
 
 /**
  * VERSION SKEW — O WEB DESTA PR CONTRA A API QUE ESTÁ NO AR (PRE-BASE2-05A).
@@ -53,7 +57,7 @@ function vigiar(page: Page) {
 
 test.describe.configure({ mode: "serial" });
 
-test("o servidor É o commit base — e ele entende o canônico, que é a premissa da 05A", async ({ page, request }) => {
+test("CONTRATO · a API da base aceita o canônico que o web atual fala", async ({ page, request }) => {
   // Sem esta prova o arquivo inteiro é decorativo: contra uma API pré-PRE-BASE2-03 as asserções abaixo
   // falhariam por CORS, e é justamente essa regressão que aqui se quer pegar antes do cliente.
   await login(page);
@@ -81,9 +85,62 @@ test("o servidor É o commit base — e ele entende o canônico, que é a premis
   const canonico = await (await request.get(`${API}/api/resources/warehouses?pageSize=100&empresa_id__eq=${ctx["empresas"][0].id}`, { headers: auth })).json();
   expect(Number(canonico["total"]), "o filtro canônico RECORTA de verdade — não é descartado em silêncio").toBeLessThan(Number(todos["total"]));
 
-  // E a compatibilidade do SERVIDOR continua de pé: ela só sai em PRE-BASE2-05B.
+  // A PONTE DO SERVIDOR JÁ SAIU (PRE-BASE2-05B), E A BASE TAMBÉM NÃO A TEM.
+  // Enquanto a base desta PR era um commit anterior à 05B, esta linha exigia 200 e distinguia os dois
+  // binários pela ponte. Com a 05B mesclada, a base É canônica: exigir 200 aqui reprovaria um servidor
+  // correto. Trocado pelo fato atual — e a distinção entre base e HEAD passa a ser provada pela IDENTIDADE
+  // do binário, logo abaixo, que é o que ela sempre deveria ter sido: um contrato igual nos dois lados não
+  // consegue dizer qual dos dois está no ar.
   const legado = await (await request.get(`${API}/api/resources/farms?pageSize=1`, { headers: auth })).status();
-  expect(legado, "a API segue bilíngue para clientes anteriores até a 05B").toBe(200);
+  expect(legado, "a chave de recurso anterior não existe mais em nenhum dos dois lados").toBe(404);
+});
+
+/**
+ * A IDENTIDADE DO BINÁRIO É O SHA EXATO DA BASE — não "um commit qualquer diferente do HEAD".
+ *
+ * A versão anterior deste caso só exigia `anterior !== HEAD`. Isso prova que os dois lados não são o mesmo
+ * commit; NÃO prova qual é o outro lado. Um commit X qualquer passaria — inclusive o commit errado que a
+ * resolução por ponta de branch podia escolher, que é justamente o defeito.
+ *
+ * A expectativa é LIDA de `.api-anterior.base`, gravado por quem montou a árvore: uma resolução por
+ * execução, sem rede e sem recálculo. Recalcular aqui reintroduziria o problema pelo outro lado — num
+ * evento de `push` a resolução cai na ponta de `origin/main`, e duas leituras da ponta podem divergir
+ * dentro do mesmo job. Quando o CI injeta `SKEW_BASE_COMMIT` (`pull_request.base.sha`, o SHA da base
+ * CAPTURADO PARA ESTA EXECUÇÃO), a igualdade é cobrada também contra ele: é a PR declarando qual é a sua
+ * base. O que se exige dele não é ser eterno — é ficar PINADO durante o run.
+ *
+ * O outro lado da comparação é o CHECKOUT, não "o head da PR": num evento `pull_request` o runner posiciona
+ * a árvore num merge ref sintético, e exigir que ele fosse o head da PR reprovaria um CI correto. O que
+ * importa é que base e checkout sejam commits DIFERENTES — senão não há skew a medir.
+ */
+test("IDENTIDADE · a árvore da API é exatamente o base SHA desta execução", async () => {
+  const raiz = path.resolve(__dirname, "../../..");
+  const rev = (cwd: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
+  // Lido do ARQUIVO, não recalculado nem importado do harness: o arquivo é o contrato entre quem monta a
+  // árvore e quem a confere, e ler um arquivo não tem como divergir de si mesmo no meio do job.
+  const esperada = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
+  expect(esperada, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
+
+  const doEvento = (process.env.SKEW_BASE_COMMIT ?? "").trim();
+  if (doEvento) expect(esperada, "a base usada é a que a PR declarou no evento").toBe(doEvento);
+
+  const arvore = rev(path.join(raiz, ".api-anterior"));
+  expect(arvore, "a árvore precisa estar na base EXATA, não num commit qualquer").toBe(esperada);
+  expect(arvore, "e a base não pode ser o commit do checkout — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
+});
+/**
+ * O CONTADOR DE EMPRESA, NO SENTIDO 1 (API da base). Ver `skew-contador-empresa.ts` para o porquê: é a
+ * numeração — não a leitura — que a troca de contador arrisca, e quem troca o contador é a
+ * PRE-BASE2-05C-2. A 05C-1 remove colunas e deixa `entity='farm'` intacto; esta prova roda desde já como
+ * rede preventiva. Ela precisa criar uma Empresa DE VERDADE neste sentido e outra no sentido 2, contra o
+ * MESMO banco, sem reset entre eles.
+ */
+test("criar Empresa pela API da BASE aloca um código novo, maior e sem repetição", async ({ page, request }) => {
+  await login(page);
+  const s = await sessao(page);
+  const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };
+  const codigo = await criarEmpresaEConferirContador(request, API, auth, "SKEW-BASE");
+  console.log(`[skew] sentido 1 (API da base) alocou o código de Empresa ${codigo}`);
 });
 
 test("entrar, carregar o contexto e escolher a empresa — sem nenhuma requisição morrer no navegador", async ({ page }) => {

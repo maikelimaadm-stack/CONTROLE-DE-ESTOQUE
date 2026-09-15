@@ -19,6 +19,9 @@ supabase/.temp
 
 # árvore da API do commit anterior, montada por scripts/api-anterior.mjs para o teste de version skew
 .api-anterior/
+# SHA da base resolvida nesta execucao do skew: UMA resolucao por job, e os testes LEEM daqui
+# em vez de recalcular (recalcular em evento de push pode obter outra ponta de origin/main).
+.api-anterior.base
 
 # configuração pessoal do Claude Code: o settings.json do projeto é versionado, este nunca.
 # Sem esta linha, a proteção depende do ignore global de cada máquina (que não viaja com o repo).
