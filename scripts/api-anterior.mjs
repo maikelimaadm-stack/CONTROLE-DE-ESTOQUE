@@ -7,31 +7,33 @@
  * que nenhum teste com mock prova, porque o que quebra ali não é a aplicação — é o FIO: CORS, nome de
  * recurso, campo de corpo e chave de query. Um mock permissivo responde "ok" a tudo e não prova nada.
  *
- * A MATRIZ MUDOU NA PRE-BASE2-05B, E OS DOIS SENTIDOS PASSAM A IMPORTAR
+ * OS DOIS SENTIDOS, DESCRITOS PELO QUE ELES SÃO
  *
- * Na 05A só um sentido era real: o cliente virava canônico, então o risco era o web à frente da API. Na 05B
- * quem vira é o SERVIDOR, e a API canônica pode subir ANTES ou DEPOIS do web desta PR. Então a prova é
- * dupla, e é isto que a ordem de implantação exige:
+ *   SENTIDO 1  web do CHECKOUT atual  × API do SHA BASE desta execução  → `playwright.skew.config.ts`
+ *   SENTIDO 2  web do SHA BASE desta execução × API do CHECKOUT atual   → `playwright.skew-web-anterior.config.ts`
  *
- *   SENTIDO 1  web 05B  × API 05A (base)  → `playwright.skew.config.ts`
- *   SENTIDO 2  web 05A (base) × API 05B   → `playwright.skew-web-anterior.config.ts`
+ * Não são fases nomeadas. A base é o SHA que a execução capturou (ver a resolução abaixo), e o checkout é o
+ * que o runner colocou na árvore. Descrever a combinação como "web 05B × API 05A" — como este cabeçalho
+ * fazia — congela a fatia em que o harness nasceu: quando a base avança, o texto continua afirmando um
+ * pareamento que a execução não tem. Um instrumento que descreve o cenário errado é o defeito que a
+ * PRE-BASE2-05C-0 existe para eliminar, e ele vale para a prosa tanto quanto para a asserção.
  *
- * Só o sentido 2 prova o que esta fase realmente arrisca: que o web JÁ PUBLICADO continua funcionando
- * inteiro contra uma API que deixou de entender o idioma antigo. Se o cliente em produção dependesse de
- * qualquer resquício legado, é aqui que apareceria — antes de aparecer no navegador do usuário.
+ * A HISTÓRIA, que continua verdadeira: na PRE-BASE2-05A o primeiro sentido nasceu (quem virava canônico era
+ * o CLIENTE, então o risco era o web à frente da API); na PRE-BASE2-05B o segundo passou a importar (quem
+ * vira é o SERVIDOR, e ele pode subir antes do web, deixando todo navegador aberto rodando o bundle
+ * anterior). O que mudou não foi o valor dos dois sentidos — foi a impossibilidade de nomeá-los por fase.
  *
- * O QUE ESTE HARNESS MEDE MUDOU NA PRE-BASE2-05A, E DE PROPÓSITO
+ * O QUE ESTE HARNESS MEDIU ANTES, E POR QUE FOI RECLASSIFICADO
  *
  * Até a PRE-BASE2-04 ele apontava para o commit anterior à PRE-BASE2-03 — uma API que NÃO declarava
  * `X-Empresa-Id` no CORS. Naquele mundo o cliente tinha de falar o idioma legado no fio, e o teste provava
- * exatamente isso. A PRE-BASE2-05A vira o cliente para o canônico, e com isso aquela combinação deixa de
- * ser um cenário de produção: ela é impossível por ordem de implantação, porque a API canônica já está em
- * produção desde a PRE-BASE2-03 e não volta atrás.
+ * exatamente isso. A PRE-BASE2-05A virou o cliente para o canônico, e aquela combinação deixou de ser um
+ * cenário de produção: é impossível por ordem de implantação, porque a API canônica está em produção desde
+ * a PRE-BASE2-03 e não volta atrás.
  *
  * Apagar o teste seria perder a prova; mantê-lo apontado para lá seria certificar um cenário que não
- * existe. Então ele foi RECLASSIFICADO: passa a medir o skew que de fato existe depois do cutover — web
- * desta PR contra a API da BASE da PR, que é o binário no ar. O contrato provado é o da PRE-BASE2-05A:
- * o cliente canônico só pode subir sobre uma API que já entende o canônico.
+ * existe. Então ele passou a medir o skew que de fato existe depois do cutover — o web de um lado contra o
+ * binário do outro, seja qual for a base da execução.
  *
  * Idempotente: rodar duas vezes não refaz nada — desde que a BASE não tenha mudado (ver abaixo). Uso:
  *
@@ -56,9 +58,11 @@ import { fileURLToPath } from "node:url";
  *      entre a abertura desta e a execução do job, o skew passa a comparar com um binário que NÃO é a base
  *      desta PR. É o mesmo modo de falha, com outra roupa: verde medindo o commit errado.
  *
- * A autoridade de uma PR sobre qual é a sua base é o PRÓPRIO EVENTO: `pull_request.base.sha`, um SHA
- * imutável. O workflow o injeta em `SKEW_BASE_COMMIT`, e o script também sabe lê-lo do payload
- * (`$GITHUB_EVENT_PATH`) quando a variável não vier. A ponta de `origin/main` só entra onde não existe PR.
+ * A autoridade de uma PR sobre qual é a sua base é o PRÓPRIO EVENTO: `pull_request.base.sha`, o SHA da base
+ * CAPTURADO PARA ESTA EXECUÇÃO. O workflow o injeta em `SKEW_BASE_COMMIT`, e o script também sabe lê-lo do
+ * payload (`$GITHUB_EVENT_PATH`) quando a variável não vier. A propriedade de que precisamos não é que ele
+ * seja eterno — é que fique PINADO durante o run, em vez de ser relido de `origin/main` no meio da prova.
+ * A ponta de `origin/main` só entra onde não existe PR.
  *
  * ORDEM, e o que cada degrau significa:
  *   1. `--base=<sha|ref>`            EXIGIDO  controle explícito (reprodução local, investigação)
@@ -162,7 +166,7 @@ function shaDoRef(ref) {
  * importação, e o erro de resolução apareceria longe de quem o causou.
  */
 export function commitAnterior() {
-  const cabeca = git("rev-parse", "HEAD");
+  const checkout = git("rev-parse", "HEAD");
   const fonte = escolherFonteDaBase({ env: process.env, argv: process.argv, baseDoEvento: baseDoEventoDePR() });
   let sha = shaDoRef(fonte.ref);
   let origem = fonte.origem;
@@ -171,19 +175,19 @@ export function commitAnterior() {
     if (fonte.exigido) abortar(`\`${fonte.ref}\` (${fonte.origem}) não é um commit alcançável`);
     abortar(`\`${fonte.ref}\` não foi alcançado`);
   }
-  if (sha === cabeca) {
+  if (sha === checkout) {
     // Acontece ao empurrar no próprio ramo padrão: a ponta da base É este commit. Comparar o HEAD com ele
     // mesmo passaria sempre e não provaria nada — então a base vira o commit ANTERIOR, que é o que estava
     // no ar até este push. Só vale para o degrau NÃO exigido: se a PR declarou a base, ela manda.
-    if (fonte.exigido) abortar(`a base declarada (${origem}) é o próprio HEAD ${cabeca.slice(0, 8)} — não há skew a medir`);
-    try { rodar("git", ["fetch", "--depth=2", "origin", cabeca], RAIZ); } catch { /* histórico já local */ }
+    if (fonte.exigido) abortar(`a base declarada (${origem}) é o próprio commit do checkout ${checkout.slice(0, 8)} — não há skew a medir`);
+    try { rodar("git", ["fetch", "--depth=2", "origin", checkout], RAIZ); } catch { /* histórico já local */ }
     let pai = null;
-    try { pai = git("rev-parse", "--verify", `${cabeca}^^{commit}`); } catch { /* raiz ou clone raso demais */ }
-    if (!pai) abortar(`a base resolvida (${origem}) é o próprio HEAD e o commit anterior não está disponível`);
-    sha = pai; origem = `${origem} → primeiro pai do HEAD`;
+    try { pai = git("rev-parse", "--verify", `${checkout}^^{commit}`); } catch { /* raiz ou clone raso demais */ }
+    if (!pai) abortar(`a base resolvida (${origem}) é o próprio commit do checkout e o anterior não está disponível`);
+    sha = pai; origem = `${origem} → primeiro pai do checkout`;
   }
   try { git("cat-file", "-e", `${sha}^{commit}`); } catch { abortar(`o objeto ${sha} não está no repositório`); }
-  return { sha, origem, cabeca };
+  return { sha, origem, checkout };
 }
 
 function garantirCommit(sha) {
@@ -240,18 +244,27 @@ function garantirDependencias(novo) {
 }
 
 export function prepararApiAnterior() {
-  const { sha, origem, cabeca } = commitAnterior();
+  const { sha, origem, checkout } = commitAnterior();
   garantirCommit(sha);
   writeFileSync(ARQUIVO_BASE, `${sha}\n`, "utf8");
   garantirDependencias(garantirWorktree(sha));
   // O BLOCO DE IDENTIDADE, no log do job. Quem lê o CI precisa poder responder "comparado com o quê?" sem
   // abrir o script — e precisa ver a IGUALDADE, não só o SHA pretendido.
+  //
+  // "HEAD da PR" era um rótulo FALSO: num evento `pull_request` o `actions/checkout` posiciona a árvore num
+  // MERGE REF SINTÉTICO (o merge do head da PR com a base), e `git rev-parse HEAD` devolve esse commit, que
+  // não existe em branch nenhuma. Chamá-lo de head da PR fazia o log afirmar uma coisa e mostrar outra —
+  // o mesmo pecado dos gates, em prosa. Agora cada linha diz o que é, e o head declarado da PR (quando o
+  // workflow o injeta) aparece SEPARADO, como diagnóstico. O checkout sintético é legítimo: não se exige
+  // que ele seja igual ao head da PR.
   const arvore = execFileSync("git", ["rev-parse", "HEAD"], { cwd: DIR_ANTERIOR, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
-  console.log(`[skew] HEAD da PR ......... ${cabeca}`);
-  console.log(`[skew] BASE esperada ...... ${sha}`);
-  console.log(`[skew] fonte da base ...... ${origem}`);
-  console.log(`[skew] HEAD da .api-anterior ${arvore}`);
-  console.log(`[skew] igualdade .......... ${arvore === sha ? "OK" : "DIVERGENTE"}`);
+  const headDaPR = (process.env.SKEW_PR_HEAD_COMMIT ?? "").trim();
+  console.log(`[skew] checkout sob teste .. ${checkout}`);
+  if (headDaPR) console.log(`[skew] PR head declarado ... ${headDaPR}`);
+  console.log(`[skew] base esperada ....... ${sha}`);
+  console.log(`[skew] fonte da base ....... ${origem}`);
+  console.log(`[skew] .api-anterior HEAD .. ${arvore}`);
+  console.log(`[skew] igualdade ........... ${arvore === sha ? "OK" : "DIVERGENTE"}`);
   if (arvore !== sha) abortar(`a árvore ficou em ${arvore} e a base esperada é ${sha}`);
   return DIR_ANTERIOR;
 }

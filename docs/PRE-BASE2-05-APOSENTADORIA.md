@@ -127,17 +127,25 @@ Os redirecionamentos de rota (`/cadastros/farms` → `/cadastros/empresas`) tamb
 usuário, fora do nosso controle, e navegação não é protocolo. São categoria `TOMBSTONE`: saem depois da
 05C-1, com tráfego real observado — não junto com a purga.
 
-### Version skew: agora os dois sentidos
+### Version skew: os dois sentidos
 
-Na 05A só um sentido era real. Na 05B quem vira é o servidor, e ele pode subir antes ou depois do web:
+Na 05A só um sentido era real (quem virava canônico era o CLIENTE). Na 05B quem vira é o servidor, e ele
+pode subir antes ou depois do web — desde então os dois importam. Mas os sentidos **não são nomeados por
+fase**: cada execução tem um SHA de base e um checkout, e é isso que eles comparam.
 
 | Sentido | O que prova | Onde |
 | --- | --- | --- |
-| web 05B × API 05A (base) | o web desta PR funciona sobre a API no ar | `playwright.skew.config.ts` |
-| **web 05A (base) × API 05B** | **o bundle em produção não depende de nenhum resquício legado** | `playwright.skew-web-anterior.config.ts` |
+| web do CHECKOUT × API do SHA BASE | o web do checkout funciona sobre a API que está no ar | `playwright.skew.config.ts` |
+| **web do SHA BASE × API do CHECKOUT** | **o bundle já publicado não depende de nenhum resquício legado** | `playwright.skew-web-anterior.config.ts` |
 
-O segundo é o que esta fase realmente arrisca, e nos dois casos o outro lado é montado do próprio
-repositório por `scripts/api-anterior.mjs` — binário e bundle reais, não mock.
+Descrever a combinação atual como "web 05B × API 05A" — como esta tabela fazia — congela a fatia em que o
+harness nasceu: quando a base avança, o texto segue afirmando um pareamento que a execução não tem. Desde
+que a 05B mesclou os dois lados já são canônicos, e é por isso que a IDENTIDADE de cada lado é provada pelo
+SHA, não pelo comportamento HTTP — um teste que tentasse distingui-los por contrato passaria contra os dois.
+O contrato continua sendo provado, como contrato: que o idioma antigo é RECUSADO, e com o código certo.
+
+Nos dois casos o outro lado é montado do próprio repositório por `scripts/api-anterior.mjs` — binário e
+bundle reais, não mock.
 
 ## 05C — Purga física, em TRÊS fatias
 

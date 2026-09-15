@@ -59,7 +59,8 @@ describe("transição de contador da Empresa", () => {
       const orgId = await orgDescartavel("[TEST] contador dois lados");
       // Estado de partida realista: o contador legado já numerou empresas.
       await db.query("insert into erp.code_sequences (organization_id, entity, last_value) values ($1,'farm',2)", [orgId]);
-      // O desenho "conservador" da 05C-1: copiar para o nome canônico e deixar os dois de pé.
+      // O desenho "conservador" da troca de contador (fatia 05C-2): copiar para o nome canônico e deixar
+      // os dois de pé. A 05C-1 não chega aqui — ela remove colunas e deixa `entity='farm'` intacto.
       await db.query("insert into erp.code_sequences (organization_id, entity, last_value) select organization_id, 'empresa', last_value from erp.code_sequences where organization_id=$1 and entity='farm'", [orgId]);
 
       const legado = Number((await db.query<{ n: string }>("select erp.next_code($1,'farm')::text n", [orgId])).rows[0]!.n);

@@ -57,7 +57,7 @@ function vigiar(page: Page) {
 
 test.describe.configure({ mode: "serial" });
 
-test("o servidor É o commit base — e ele entende o canônico, que é a premissa da 05A", async ({ page, request }) => {
+test("CONTRATO · a API da base aceita o canônico que o web atual fala", async ({ page, request }) => {
   // Sem esta prova o arquivo inteiro é decorativo: contra uma API pré-PRE-BASE2-03 as asserções abaixo
   // falhariam por CORS, e é justamente essa regressão que aqui se quer pegar antes do cliente.
   await login(page);
@@ -105,10 +105,15 @@ test("o servidor É o commit base — e ele entende o canônico, que é a premis
  * A expectativa é LIDA de `.api-anterior.base`, gravado por quem montou a árvore: uma resolução por
  * execução, sem rede e sem recálculo. Recalcular aqui reintroduziria o problema pelo outro lado — num
  * evento de `push` a resolução cai na ponta de `origin/main`, e duas leituras da ponta podem divergir
- * dentro do mesmo job. Quando o CI injeta `SKEW_BASE_COMMIT` (`pull_request.base.sha`, imutável), a
- * igualdade é cobrada também contra ele: é a PR declarando qual é a sua base.
+ * dentro do mesmo job. Quando o CI injeta `SKEW_BASE_COMMIT` (`pull_request.base.sha`, o SHA da base
+ * CAPTURADO PARA ESTA EXECUÇÃO), a igualdade é cobrada também contra ele: é a PR declarando qual é a sua
+ * base. O que se exige dele não é ser eterno — é ficar PINADO durante o run.
+ *
+ * O outro lado da comparação é o CHECKOUT, não "o head da PR": num evento `pull_request` o runner posiciona
+ * a árvore num merge ref sintético, e exigir que ele fosse o head da PR reprovaria um CI correto. O que
+ * importa é que base e checkout sejam commits DIFERENTES — senão não há skew a medir.
  */
-test("a árvore que serve esta suíte está EXATAMENTE no commit da base da PR", async () => {
+test("IDENTIDADE · a árvore da API é exatamente o base SHA desta execução", async () => {
   const raiz = path.resolve(__dirname, "../../..");
   const rev = (cwd: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
   // Lido do ARQUIVO, não recalculado nem importado do harness: o arquivo é o contrato entre quem monta a
@@ -121,12 +126,14 @@ test("a árvore que serve esta suíte está EXATAMENTE no commit da base da PR",
 
   const arvore = rev(path.join(raiz, ".api-anterior"));
   expect(arvore, "a árvore precisa estar na base EXATA, não num commit qualquer").toBe(esperada);
-  expect(arvore, "e a base não pode ser este HEAD — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
+  expect(arvore, "e a base não pode ser o commit do checkout — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
 });
 /**
  * O CONTADOR DE EMPRESA, NO SENTIDO 1 (API da base). Ver `skew-contador-empresa.ts` para o porquê: é a
- * numeração — não a leitura — que a PRE-BASE2-05C-1 arrisca, e a prova precisa criar uma Empresa DE VERDADE
- * neste sentido e outra no sentido 2, contra o MESMO banco, sem reset entre eles.
+ * numeração — não a leitura — que a troca de contador arrisca, e quem troca o contador é a
+ * PRE-BASE2-05C-2. A 05C-1 remove colunas e deixa `entity='farm'` intacto; esta prova roda desde já como
+ * rede preventiva. Ela precisa criar uma Empresa DE VERDADE neste sentido e outra no sentido 2, contra o
+ * MESMO banco, sem reset entre eles.
  */
 test("criar Empresa pela API da BASE aloca um código novo, maior e sem repetição", async ({ page, request }) => {
   await login(page);

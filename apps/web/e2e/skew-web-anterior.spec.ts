@@ -55,12 +55,16 @@ function vigiar(page: Page) {
 
 test.describe.configure({ mode: "serial" });
 
-test("o cliente é mesmo o ANTERIOR — e a API é a nova: sem essa prova o arquivo é decorativo", async ({ page, request }) => {
+test("CONTRATO · o HEAD mantém o canônico que o web da base usa, e RECUSA o idioma anterior", async ({ page, request }) => {
   await login(page);
   const s = await sessao(page);
   const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };
 
-  // A API deste HEAD já NÃO entende o idioma antigo — é o que distingue este servidor do da base.
+  // CONTRATO, não identidade. Este caso prova o CONTRATO NEGATIVO — que o idioma antigo é RECUSADO, e
+  // recusado com o código certo (404 na chave de recurso, 422 no cabeçalho), em vez de ignorado em silêncio.
+  // Ele NÃO distingue este servidor do da base: desde a 05B a base também recusa, e um teste que tentasse
+  // separar os dois por comportamento HTTP passaria contra os DOIS. Quem prova identidade é o SHA, no caso
+  // IDENTIDADE deste arquivo. As duas provas são necessárias e medem coisas diferentes.
   const recursoAnterior = await request.get(`${API}/api/resources/farms?pageSize=1`, { headers: auth });
   expect(recursoAnterior.status(), "a API desta PR não resolve mais a chave de recurso anterior").toBe(404);
 
@@ -147,9 +151,10 @@ test("a rota de cadastro ANTERIOR continua levando o usuário à tela certa (fav
  *
  * O banco é o MESMO do sentido 1 e não há reset entre as duas execuções. Então a Empresa criada ali já está
  * gravada quando esta roda, e a exigência "maior que todos os códigos existentes, sem repetir nenhum" passa
- * a atravessar os dois binários. É essa travessia que a transição de contador da PRE-BASE2-05C-1 quebraria:
- * com `entity='farm'` e `entity='empresa'` como duas linhas de `erp.code_sequences`, os dois lados emitiriam
- * o mesmo próximo número e o segundo cadastro morreria no `unique (organization_id, code)`.
+ * a atravessar os dois binários. É essa travessia que a troca de contador quebraria — e quem troca o
+ * contador é a PRE-BASE2-05C-2, não a 05C-1: com `entity='farm'` e `entity='empresa'` como duas linhas de
+ * `erp.code_sequences`, os dois lados emitiriam o mesmo próximo número e o segundo cadastro morreria no
+ * `unique (organization_id, code)`.
  *
  * Nenhum valor é fixado (`N === 3`): o banco do e2e é semeado e reutilizado, e um número esperado viraria
  * falha por acumulação. O que se cobra é a RELAÇÃO, que é o que o contrato garante.
@@ -172,10 +177,14 @@ test("criar Empresa pela API DESTE HEAD, no mesmo banco do sentido 1, também al
  * A expectativa é LIDA de `.api-anterior.base`, gravado por quem montou a árvore: uma resolução por
  * execução, sem rede e sem recálculo. Recalcular aqui reintroduziria o problema pelo outro lado — num
  * evento de `push` a resolução cai na ponta de `origin/main`, e duas leituras da ponta podem divergir
- * dentro do mesmo job. Quando o CI injeta `SKEW_BASE_COMMIT` (`pull_request.base.sha`, imutável), a
- * igualdade é cobrada também contra ele: é a PR declarando qual é a sua base.
+ * dentro do mesmo job. Quando o CI injeta `SKEW_BASE_COMMIT` (`pull_request.base.sha`, o SHA da base
+ * CAPTURADO PARA ESTA EXECUÇÃO), a igualdade é cobrada também contra ele: é a PR declarando qual é a sua
+ * base. O que se exige dele não é ser eterno — é ficar PINADO durante o run.
+ *
+ * O outro lado da comparação é o CHECKOUT, não "o head da PR": num evento `pull_request` o runner posiciona
+ * a árvore num merge ref sintético, e exigir que ele fosse o head da PR reprovaria um CI correto.
  */
-test("o BUNDLE do navegador vem EXATAMENTE do commit da base da PR", async () => {
+test("IDENTIDADE · o bundle do navegador é exatamente o base SHA desta execução", async () => {
   const raiz = path.resolve(__dirname, "../../..");
   const rev = (cwd: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
   // Lido do ARQUIVO, não recalculado nem importado do harness: o arquivo é o contrato entre quem monta a
@@ -188,5 +197,5 @@ test("o BUNDLE do navegador vem EXATAMENTE do commit da base da PR", async () =>
 
   const arvore = rev(path.join(raiz, ".api-anterior"));
   expect(arvore, "a árvore precisa estar na base EXATA, não num commit qualquer").toBe(esperada);
-  expect(arvore, "e a base não pode ser este HEAD — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
+  expect(arvore, "e a base não pode ser o commit do checkout — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
 });

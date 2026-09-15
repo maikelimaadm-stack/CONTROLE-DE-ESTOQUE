@@ -93,6 +93,39 @@ describe("R15 · a fonte da base", () => {
  * sobrevivesse a uma troca de base servindo o binário antigo — com todas as asserções verdes. O teste usa um
  * diretório próprio: não toca a `.api-anterior` real e não dispara `pnpm install`.
  */
+/**
+ * OS RÓTULOS DO LOG DIZEM O QUE O VALOR É.
+ *
+ * `[skew] HEAD da PR ......... <git rev-parse HEAD>` era uma afirmação FALSA: num evento `pull_request` o
+ * `actions/checkout` posiciona a árvore num MERGE REF sintético — o merge do head da PR com a base —, que
+ * não é o head de branch nenhuma. O log mostrava um valor e o chamava de outra coisa.
+ *
+ * Isto é o mesmo defeito que a PRE-BASE2-05C-0 corrige nos gates, só que em prosa: quem lê o CI toma
+ * decisão pelo rótulo. O guarda olha o que o script IMPRIME — não os comentários, que precisam citar o
+ * rótulo antigo para explicar por que ele saiu.
+ */
+describe("rótulos do log do skew", () => {
+  const impressoes = () => {
+    const corpo = fs.readFileSync(ARQUIVO, "utf8");
+    return [...corpo.matchAll(/console\.log\(`([^`]*)`/g)].map((m) => m[1]!);
+  };
+
+  it("nenhum rótulo impresso chama o checkout de \"HEAD da PR\"", () => {
+    const suspeitos = impressoes().filter((l) => /HEAD da PR/.test(l));
+    expect(suspeitos, "o checkout do runner não é o head da PR num evento pull_request").toEqual([]);
+  });
+
+  it("o bloco de identidade nomeia checkout, base, fonte, árvore e igualdade", () => {
+    const tudo = impressoes().join(" | ");
+    for (const rotulo of ["checkout sob teste", "base esperada", "fonte da base", ".api-anterior HEAD", "igualdade"]) {
+      expect(tudo, `o log precisa dizer "${rotulo}"`).toContain(rotulo);
+    }
+    // O head declarado da PR é DIAGNÓSTICO e sai de um dado da PR, nunca de `git rev-parse`.
+    expect(tudo).toContain("PR head declarado");
+    expect(impressoes().some((l) => /PR head declarado/.test(l) && /headDaPR/.test(l)), "vem da variável de diagnóstico").toBe(true);
+  });
+});
+
 describe("R16 · a árvore de trabalho", () => {
   /**
    * Repositório TEMPORÁRIO com dois commits, não o repositório real.
@@ -148,12 +181,14 @@ describe("base do version skew", () => {
   });
 
   it("resolve um commit REAL deste repositório, e nunca o próprio HEAD", () => {
-    const { sha, origem, cabeca } = commitAnterior() as { sha: string; origem: string; cabeca: string };
+    const { sha, origem, checkout } = commitAnterior() as { sha: string; origem: string; checkout: string };
     expect(sha, "40 hexadecimais").toMatch(/^[0-9a-f]{40}$/);
     expect(origem, "a origem da base é declarada, para o log do CI responder 'comparado com o quê?'").toBeTruthy();
-    expect(cabeca).toBe(git("rev-parse", "HEAD"));
+    // `checkout`, e não "HEAD da PR": num evento `pull_request` o runner posiciona a árvore num MERGE REF
+    // sintético, que não é o head de branch nenhuma. O nome diz o que o valor é.
+    expect(checkout).toBe(git("rev-parse", "HEAD"));
     // Comparar o HEAD com ele mesmo passaria sempre: é o verde que não prova nada.
-    expect(sha, "a base não pode ser o próprio HEAD").not.toBe(cabeca);
+    expect(sha, "a base não pode ser o próprio commit do checkout").not.toBe(checkout);
     // E o commit existe DE VERDADE — não é uma string com forma de SHA.
     expect(() => git("cat-file", "-e", `${sha}^{commit}`)).not.toThrow();
   });
