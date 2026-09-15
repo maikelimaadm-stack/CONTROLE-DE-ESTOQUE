@@ -49,7 +49,7 @@ describe("classificação × políticas reais", () => {
     const problemas: string[] = [];
     for (const t of await tabelasComEmpresa()) {
       const categoria = classificarTabela(t.tabela, t.colunas, t.anulavel);
-      const esperadas = politicasEsperadas(categoria, t.tabela) as Record<string, { cmd: string; using: string | null; check: string | null; gatilho?: string }> | null;
+      const esperadas = politicasEsperadas(categoria, t.tabela);
       const p = await db.query<{ policyname: string; cmd: string; qual: string; with_check: string }>(
         "select policyname, cmd, coalesce(qual,'') qual, coalesce(with_check,'') with_check from pg_policies where schemaname='erp' and tablename=$1", [t.tabela]);
       if (!esperadas) {
@@ -60,7 +60,7 @@ describe("classificação × políticas reais", () => {
         if (!p.rows.length) problemas.push(`${t.tabela} (cat. ${categoria}): sem política nenhuma`);
         continue;
       }
-      for (const [nome, forma] of Object.entries(esperadas) as [string, { cmd: string; using: string | null; check: string | null; gatilho?: string }][]) {
+      for (const [nome, forma] of Object.entries(esperadas)) {
         if (forma.gatilho) {
           // Onde a regra depende de OLD vs NEW, a política não basta: quem a sustenta é o gatilho.
           const g = await db.query<{ n: string }>(

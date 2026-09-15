@@ -68,7 +68,7 @@ end $$;
 -- mais cara para quem tem mais dado, exatamente ao contrário do que se quer numa migration destrutiva.
 --
 -- Rodar antes é seguro, e o motivo é o próprio objeto que está sendo removido: enquanto os gatilhos de
--- espelho existem — e eles só caem no item 8, bem depois daqui —, nenhuma escrita consegue criar
+-- espelho existem — e eles só caem na seção 9, bem depois daqui —, nenhuma escrita consegue criar
 -- divergência entre o par legado e o canônico; a 0014 RECUSA a escrita divergente em vez de resolvê-la.
 -- Então o que for verdade nesta leitura continua verdade quando o lock chegar. A trava de concorrência do
 -- item 1 já garante que nenhuma outra execução desta mesma migration esteja no meio do caminho.
@@ -709,7 +709,7 @@ drop function erp.sincronizar_empresa_origem_legado();
 -- 11. O CHECK LEGADO
 -- ---------------------------------------------------------------------------------------------------
 -- Removido explicitamente, e não de carona no `drop column`: a substituição canônica já está de pé desde
--- o item 5, e o que sai daqui tem de estar inventariado.
+-- a seção 6, e o que sai daqui tem de estar inventariado.
 alter table erp.equipment_transfers drop constraint equipment_transfers_check;
 
 -- ---------------------------------------------------------------------------------------------------

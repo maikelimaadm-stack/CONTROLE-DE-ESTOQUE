@@ -115,7 +115,7 @@ gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com pre
    base impressa no log —
    mais os testes próprios da purga (`packages/db/test/purga-0017-*.test.ts`: base nova, upgrade com
    acervo, invariantes estruturais e concorrência).
-5. **G-U5 executado e verde** (`scripts/gate-purga-0017-runtime-anterior.mjs`) — o binário da API que
+5. **G-U5 executado e verde** — comando: **`pnpm gate:g-u5`** (`scripts/gate-purga-0017-runtime-anterior.mjs`). Ele NÃO roda no CI, e a razão está escrita: precisa compilar e subir o binário da BASE, o que exige a árvore da base e um banco descartável próprio; o que o CI cobre são os `purga-0017-*`. Por isso é pré-requisito NUMERADO aqui, com comando, e não prosa. O binário da API que
    está em produção subindo e servindo contra um banco com a `0017` aplicada: boot, login, leitura escopada por empresa e gravação com conferência de ROW
    COUNT. Roda em banco descartável, sem custo. Sem ele, a compatibilidade do runtime anterior com o
    schema pós-purga é derivação de auditoria estática, não fato — e é ela que sustenta a dispensa de

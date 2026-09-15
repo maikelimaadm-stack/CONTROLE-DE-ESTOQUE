@@ -44,8 +44,12 @@ export interface SubcategoriaTransferencia {
   escrita: string;
   porque: string;
   prova: string;
-  /** Só onde o aceite é operação privilegiada (C1). */
-  privilegiada?: string;
+  /**
+   * A função de aceite, onde o aceite é operação privilegiada (C1). Está SEMPRE presente, e vale `null`
+   * nas subcategorias sem aceite (C2 e C3) — por isso `string | null` obrigatório, e não opcional:
+   * um consumidor que testasse `=== undefined` erraria nas duas que hoje são nulas.
+   */
+  privilegiada: string | null;
 }
 export declare const SUBCATEGORIAS_TRANSFERENCIA: Record<string, SubcategoriaTransferencia>;
 export declare function subcategoriaTransferencia(tabela: string): SubcategoriaTransferencia | null;
@@ -57,6 +61,12 @@ export interface PoliticaEsperada {
   cmd: string;
   using: string | null;
   check: string | null;
+  /**
+   * Onde a regra depende de OLD vs NEW, a política não basta e quem a sustenta é um gatilho. Hoje só a
+   * categoria C, no UPDATE, declara um (`trg_travar_pontas`). Omitir este campo aqui obrigaria quem
+   * consome a castar — que é a mesma supressão de tipo por outro nome.
+   */
+  gatilho?: string;
 }
 /** `null` para tabela de exceção: ali a pergunta é respondida por `validarProtecaoDaExcecao`. */
 export declare function politicasEsperadas(

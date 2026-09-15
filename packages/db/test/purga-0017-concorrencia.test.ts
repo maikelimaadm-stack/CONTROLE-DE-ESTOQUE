@@ -510,7 +510,7 @@ describe("PARTE 2 — locks e timeouts da 0017 versionada", () => {
       expect(esperas, "a espera observada em pg_locks").toHaveLength(1);
       expect(esperas[0]!.locktype, "não é lock de relação, é de objeto de catálogo").toBe("object");
       expect(esperas[0]!.classe, "o objeto está na pg_proc").toBe("pg_proc");
-      expect(esperas[0]!.proname, "é a função de sincronia que a seção 9 vai remover").toBe("sincronizar_empresa_legado");
+      expect(esperas[0]!.proname, "é a função de sincronia que a seção 10 vai remover").toBe("sincronizar_empresa_legado");
 
       // (e) o tempo da morte: o teto por comando é 2 s, e é nele que ela morre.
       console.log(`[0017] contenção de catálogo: lock table ${msLockTable.toFixed(1)}ms, morte ${msMorte.toFixed(1)}ms, ` +
