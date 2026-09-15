@@ -7,8 +7,8 @@ import { defineConfig, devices } from "@playwright/test";
  * prova o sentido que a 05B realmente arrisca, e que nenhuma fase anterior precisou provar.
  *
  * Quem vira canônico agora é o SERVIDOR. Se a API subir primeiro — e ela pode, porque Railway e Vercel não
- * trocam de versão no mesmo instante —, o navegador de todo mundo estará rodando o bundle da PRE-BASE2-05A
- * contra uma API que deixou de entender o idioma antigo. Se aquele cliente dependesse de QUALQUER resquício
+ * trocam de versão no mesmo instante —, o navegador de todo mundo estará rodando o bundle da BASE DESTA PR
+ * contra uma API mais nova. Se aquele cliente dependesse de QUALQUER resquício
  * legado (um cabeçalho, um apelido de resposta, a chave de recurso, o formato administrativo achatado), o
  * sistema quebraria em produção sem uma linha de erro de aplicação — o que falha é o FIO.
  *

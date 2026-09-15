@@ -40,33 +40,40 @@
  *   node scripts/api-anterior.mjs --base=<sha>    # força a base (investigação, reexecução local)
  */
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
- * A BASE É RESOLVIDA, NUNCA DIGITADA (PRE-BASE2-05C-0).
+ * A BASE É A DA PR, NÃO A PONTA DE HOJE (PRE-BASE2-05C-0).
  *
- * Até aqui esta constante era um SHA fixo no arquivo. Isso funcionou enquanto alguém se lembrou de trocá-lo
- * a cada fatia — e parou de funcionar em silêncio quando ninguém trocou: o job de skew continuava VERDE
- * comparando este HEAD com um commit de várias fatias atrás. O teste não falhava; ele mudava de assunto.
- * É o modo de falha que esta fatia inteira existe para eliminar, e o mais caro dos três: a prova continua
- * rodando, continua verde, e deixou de medir o cenário de produção.
+ * Duas versões deste arquivo erraram o mesmo alvo por caminhos diferentes, e vale registrar as duas porque
+ * a segunda parecia a correção da primeira:
  *
- * A base passa a sair, nesta ordem, de uma fonte que se MOVE junto com a PR:
- *   1. `--base=<sha|ref>` ou `SKEW_BASE_COMMIT`  — controle explícito (reexecução local, investigação);
- *   2. `GITHUB_BASE_REF`                          — no CI de PR, a ponta do ramo de destino: o que está no ar;
- *   3. ponta de `origin/<RAMO_PADRAO>`            — em qualquer outro lugar;
- *   4. primeiro pai do HEAD                       — quando a base resolvida É o HEAD (push no próprio ramo
- *                                                   padrão), porque ali "o que está no ar" é o commit anterior.
+ *   1. um SHA DIGITADO no arquivo. Funcionou enquanto alguém lembrou de trocá-lo; quando ninguém trocou, o
+ *      job seguiu VERDE comparando este HEAD com um commit de várias fatias atrás;
+ *   2. `origin/main`. Resolve sozinho e nunca envelhece — mas é a PONTA DE HOJE. Se outra PR entrar na main
+ *      entre a abertura desta e a execução do job, o skew passa a comparar com um binário que NÃO é a base
+ *      desta PR. É o mesmo modo de falha, com outra roupa: verde medindo o commit errado.
  *
- * E é FAIL-CLOSED em todas as pontas: se a base não resolve, se o objeto não existe, se não é commit, ou se
- * é igual ao HEAD, o script ABORTA. Nunca há queda para um SHA embutido — um valor de reserva aqui seria
- * exatamente o defeito acima, com outro nome. Um job de skew que não sabe contra o que está comparando não
- * tem resultado melhor do que nenhum; tem um resultado PIOR, porque parece um.
+ * A autoridade de uma PR sobre qual é a sua base é o PRÓPRIO EVENTO: `pull_request.base.sha`, um SHA
+ * imutável. O workflow o injeta em `SKEW_BASE_COMMIT`, e o script também sabe lê-lo do payload
+ * (`$GITHUB_EVENT_PATH`) quando a variável não vier. A ponta de `origin/main` só entra onde não existe PR.
  *
- * O SHA resolvido e a fonte dele são IMPRESSOS. Quem lê o log do CI precisa poder responder "comparado com
- * o quê?" sem abrir o script.
+ * ORDEM, e o que cada degrau significa:
+ *   1. `--base=<sha|ref>`            EXIGIDO  controle explícito (reprodução local, investigação)
+ *   2. `SKEW_BASE_COMMIT` não-vazio  EXIGIDO  o que o workflow injeta em PR
+ *   3. `pull_request.base.sha`       EXIGIDO  o evento, quando a variável não veio
+ *   4. `GITHUB_BASE_REF`             EXIGIDO  CI de PR sem payload legível
+ *   5. ponta de `origin/<padrão>`     —       fora de PR
+ *   6. primeiro pai do HEAD           —       quando a base resolvida É o HEAD (push no ramo padrão)
+ *
+ * EXIGIDO quer dizer: se aquele degrau existe e não resolve, o script ABORTA. Não cai para o seguinte —
+ * cair seria trocar a base da PR por outra coisa em silêncio, que é exatamente o defeito. Uma variável
+ * VAZIA não é um degrau: o workflow injeta a expressão sempre, e num evento de push ela vem vazia por não
+ * haver PR. Vazio = ausente; preenchido e irresolvível = aborta.
+ *
+ * Nunca há queda para um SHA embutido. Um valor de reserva aqui seria o defeito nº 1 com outro nome.
  */
 const RAMO_PADRAO = "main";
 const VAR_BASE = "SKEW_BASE_COMMIT";
@@ -74,35 +81,64 @@ const VAR_BASE = "SKEW_BASE_COMMIT";
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Fora de `apps/`, para que nenhum tsconfig/eslint/next do repositório enxergue esta árvore. */
 export const DIR_ANTERIOR = join(RAIZ, ".api-anterior");
+/**
+ * A BASE RESOLVIDA, GRAVADA — resolução UMA VEZ por execução do job.
+ *
+ * Os testes de skew precisam saber contra qual SHA conferir a árvore. Recalcular a resolução dentro do
+ * teste parecia inofensivo e não é: num evento de `push` (o CI roda em `branches: ["**"]`) não há PR, a
+ * resolução cai na ponta de `origin/main` e, em clone raso, cada chamada refaz o `fetch` — duas chamadas
+ * podem obter pontas diferentes se a main mexer no meio do job. O teste ficaria VERMELHO sem defeito
+ * nenhum, e a "prova de igualdade" passaria a depender de REDE dentro de um e2e.
+ *
+ * Então quem monta a árvore grava o SHA aqui, e quem confere LÊ. Uma resolução, um valor, sem rede.
+ */
+export const ARQUIVO_BASE = join(RAIZ, ".api-anterior.base");
+/** O SHA que esta execução usou; `null` se a árvore ainda não foi montada. */
+export const baseGravada = () => { try { const x = readFileSync(ARQUIVO_BASE, "utf8").trim(); return /^[0-9a-f]{40}$/.test(x) ? x : null; } catch { return null; } };
 
 const git = (...args) => execFileSync("git", args, { cwd: RAIZ, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
 const rodar = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, stdio: "inherit" });
 const abortar = (msg) => { throw new Error(`[skew] BASE NÃO RESOLVIDA — ${msg}. O job de skew não roda sem saber contra qual commit compara.`); };
 
+/**
+ * A ESCOLHA DA FONTE, PURA — sem git, sem arquivo, sem rede.
+ *
+ * Separada de propósito: é ela que carrega a regra "a base da PR vence a ponta da branch", e uma regra que
+ * só pudesse ser exercitada mexendo na `main` de verdade não teria como ser provada. Recebe o ambiente e os
+ * argumentos já lidos; devolve o ref a resolver, de onde ele veio, e se aquele degrau é EXIGIDO.
+ *
+ * @param {{ env?: Record<string,string|undefined>, argv?: string[], baseDoEvento?: string|null }} entrada
+ * @returns {{ ref: string, origem: string, exigido: boolean }}
+ */
+export function escolherFonteDaBase({ env = {}, argv = [], baseDoEvento = null } = {}) {
+  const arg = argv.find((a) => a.startsWith("--base="));
+  if (arg && arg.slice("--base=".length)) return { ref: arg.slice("--base=".length), origem: "--base=", exigido: true };
+
+  // Vazio é AUSENTE: o workflow injeta `${{ github.event.pull_request.base.sha }}` sempre, e num push não há PR.
+  const daVar = (env[VAR_BASE] ?? "").trim();
+  if (daVar) return { ref: daVar, origem: `$${VAR_BASE}`, exigido: true };
+
+  if (baseDoEvento) return { ref: baseDoEvento, origem: "pull_request.base.sha", exigido: true };
+
+  const baseRef = (env.GITHUB_BASE_REF ?? "").trim();
+  if (baseRef) return { ref: `origin/${baseRef}`, origem: `GITHUB_BASE_REF=${baseRef}`, exigido: true };
+
+  return { ref: `origin/${RAMO_PADRAO}`, origem: `ponta de origin/${RAMO_PADRAO}`, exigido: false };
+}
+
+/** `pull_request.base.sha` do payload do evento, quando houver. Devolve null em qualquer outro caso. */
+export function baseDoEventoDePR(env = process.env, lerArquivo = (f) => readFileSync(f, "utf8")) {
+  if (env.GITHUB_EVENT_NAME !== "pull_request" || !env.GITHUB_EVENT_PATH) return null;
+  try {
+    const sha = JSON.parse(lerArquivo(env.GITHUB_EVENT_PATH))?.pull_request?.base?.sha;
+    return typeof sha === "string" && sha ? sha : null;
+  } catch { return null; }   // payload ausente ou ilegível: o degrau seguinte decide
+}
+
 /** `<ref>` -> SHA, buscando do remoto quando o clone é raso. `null` quando o ref não existe. */
 function shaDoRef(ref) {
   try { return git("rev-parse", "--verify", `${ref}^{commit}`); } catch { /* clone raso ou ref remoto ausente */ }
   try { rodar("git", ["fetch", "--depth=1", "origin", ref], RAIZ); return git("rev-parse", "--verify", "FETCH_HEAD^{commit}"); } catch { return null; }
-}
-
-/** De onde veio a base, para o log e para a mensagem de erro. */
-function resolverBase() {
-  const arg = process.argv.find((a) => a.startsWith("--base="));
-  const explicito = arg ? arg.slice("--base=".length) : process.env[VAR_BASE];
-  if (explicito) {
-    const sha = shaDoRef(explicito);
-    if (!sha) abortar(`\`${explicito}\` (${arg ? "--base=" : `$${VAR_BASE}`}) não é um commit alcançável`);
-    return { sha, origem: arg ? "--base=" : `$${VAR_BASE}` };
-  }
-  // No CI de PR, o destino da PR é o que está em produção enquanto ela não sobe.
-  if (process.env.GITHUB_BASE_REF) {
-    const sha = shaDoRef(`origin/${process.env.GITHUB_BASE_REF}`) ?? shaDoRef(process.env.GITHUB_BASE_REF);
-    if (!sha) abortar(`o ramo de destino da PR (\`${process.env.GITHUB_BASE_REF}\`) não foi alcançado`);
-    return { sha, origem: `GITHUB_BASE_REF=${process.env.GITHUB_BASE_REF}` };
-  }
-  const sha = shaDoRef(`origin/${RAMO_PADRAO}`) ?? shaDoRef(RAMO_PADRAO);
-  if (!sha) abortar(`\`origin/${RAMO_PADRAO}\` não foi alcançado`);
-  return { sha, origem: `origin/${RAMO_PADRAO}` };
 }
 
 /**
@@ -111,19 +147,25 @@ function resolverBase() {
  */
 export function commitAnterior() {
   const cabeca = git("rev-parse", "HEAD");
-  let { sha, origem } = resolverBase();
+  const fonte = escolherFonteDaBase({ env: process.env, argv: process.argv, baseDoEvento: baseDoEventoDePR() });
+  let sha = shaDoRef(fonte.ref);
+  let origem = fonte.origem;
+  if (!sha) {
+    // EXIGIDO não cai para o degrau seguinte: trocar a base da PR por outra coisa em silêncio É o defeito.
+    if (fonte.exigido) abortar(`\`${fonte.ref}\` (${fonte.origem}) não é um commit alcançável`);
+    abortar(`\`${fonte.ref}\` não foi alcançado`);
+  }
   if (sha === cabeca) {
     // Acontece ao empurrar no próprio ramo padrão: a ponta da base É este commit. Comparar o HEAD com ele
     // mesmo passaria sempre e não provaria nada — então a base vira o commit ANTERIOR, que é o que estava
-    // no ar até este push.
+    // no ar até este push. Só vale para o degrau NÃO exigido: se a PR declarou a base, ela manda.
+    if (fonte.exigido) abortar(`a base declarada (${origem}) é o próprio HEAD ${cabeca.slice(0, 8)} — não há skew a medir`);
     try { rodar("git", ["fetch", "--depth=2", "origin", cabeca], RAIZ); } catch { /* histórico já local */ }
     let pai = null;
     try { pai = git("rev-parse", "--verify", `${cabeca}^^{commit}`); } catch { /* raiz ou clone raso demais */ }
     if (!pai) abortar(`a base resolvida (${origem}) é o próprio HEAD e o commit anterior não está disponível`);
     sha = pai; origem = `${origem} → primeiro pai do HEAD`;
   }
-  // `rev-parse` já garantiu que é um commit; esta linha garante que ele está NESTE repositório depois do
-  // fetch, que é o que a árvore de trabalho vai precisar.
   try { git("cat-file", "-e", `${sha}^{commit}`); } catch { abortar(`o objeto ${sha} não está no repositório`); }
   return { sha, origem, cabeca };
 }
@@ -143,18 +185,18 @@ function garantirCommit(sha) {
  * contra o commit ERRADO — de novo verde, de novo medindo outra coisa. Então a árvore é conferida pelo HEAD
  * dela e refeita quando não confere.
  */
-function garantirWorktree(sha) {
-  if (existsSync(join(DIR_ANTERIOR, "apps/api/src/main.ts"))) {
+export function garantirWorktree(sha, dir = DIR_ANTERIOR) {
+  if (existsSync(join(dir, "apps/api/src/main.ts"))) {
     let atual = null;
-    try { atual = execFileSync("git", ["rev-parse", "HEAD"], { cwd: DIR_ANTERIOR, stdio: ["ignore", "pipe", "pipe"] }).toString().trim(); } catch { /* árvore quebrada */ }
+    try { atual = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] }).toString().trim(); } catch { /* árvore quebrada */ }
     if (atual === sha) return false;
     console.log(`[skew] árvore anterior está em ${atual ?? "estado desconhecido"} e a base é ${sha.slice(0, 8)} — refazendo`);
-    try { rodar("git", ["worktree", "remove", "--force", DIR_ANTERIOR], RAIZ); } catch { rmSync(DIR_ANTERIOR, { recursive: true, force: true }); rodar("git", ["worktree", "prune"], RAIZ); }
+    try { rodar("git", ["worktree", "remove", "--force", dir], RAIZ); } catch { rmSync(dir, { recursive: true, force: true }); rodar("git", ["worktree", "prune"], RAIZ); }
   }
-  mkdirSync(dirname(DIR_ANTERIOR), { recursive: true });
+  mkdirSync(dirname(dir), { recursive: true });
   // `--detach`: sem branch, porque esta árvore é só leitura de um ponto do passado. Nada é commitado dela.
-  rodar("git", ["worktree", "add", "--detach", DIR_ANTERIOR, sha], RAIZ);
-  const conferido = execFileSync("git", ["rev-parse", "HEAD"], { cwd: DIR_ANTERIOR, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+  rodar("git", ["worktree", "add", "--detach", dir, sha], RAIZ);
+  const conferido = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
   if (conferido !== sha) abortar(`a árvore de trabalho ficou em ${conferido}, e a base é ${sha}`);
   return true;
 }
@@ -183,9 +225,18 @@ function garantirDependencias(novo) {
 
 export function prepararApiAnterior() {
   const { sha, origem, cabeca } = commitAnterior();
-  console.log(`[skew] base ${sha.slice(0, 8)} (${origem}) × HEAD ${cabeca.slice(0, 8)}`);
   garantirCommit(sha);
+  writeFileSync(ARQUIVO_BASE, `${sha}\n`, "utf8");
   garantirDependencias(garantirWorktree(sha));
+  // O BLOCO DE IDENTIDADE, no log do job. Quem lê o CI precisa poder responder "comparado com o quê?" sem
+  // abrir o script — e precisa ver a IGUALDADE, não só o SHA pretendido.
+  const arvore = execFileSync("git", ["rev-parse", "HEAD"], { cwd: DIR_ANTERIOR, stdio: ["ignore", "pipe", "pipe"] }).toString().trim();
+  console.log(`[skew] HEAD da PR ......... ${cabeca}`);
+  console.log(`[skew] BASE esperada ...... ${sha}`);
+  console.log(`[skew] fonte da base ...... ${origem}`);
+  console.log(`[skew] HEAD da .api-anterior ${arvore}`);
+  console.log(`[skew] igualdade .......... ${arvore === sha ? "OK" : "DIVERGENTE"}`);
+  if (arvore !== sha) abortar(`a árvore ficou em ${arvore} e a base esperada é ${sha}`);
   return DIR_ANTERIOR;
 }
 

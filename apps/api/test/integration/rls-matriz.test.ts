@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, type Db } from "@agro/db";
 // @ts-expect-error — classificação em JS puro, compartilhada com o gerador da matriz
-import { EXCECOES_RLS_EMPRESA, TABELAS_DE_EXCECAO, protecaoDaExcecao, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
+import { EXCECOES_RLS_EMPRESA, TABELAS_DE_EXCECAO, protecaoDaExcecao, validarProtecaoDaExcecao, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
 import { TEST_URL } from "./setup.js";
 import { resetSchema, migrate } from "@agro/db";
 
@@ -104,25 +104,22 @@ describe("classificação × políticas reais", () => {
   });
 
   /**
-   * A EXCEÇÃO TEM DE PROVAR A PROTEÇÃO QUE ALEGA.
+   * A EXCEÇÃO TEM DE PROVAR A PROTEÇÃO QUE ALEGA — contra o `pg_policies` VIVO.
    *
    * `politicasEsperadas` devolve `null` para E/F porque a RLS empresarial genérica não se aplica a essas
    * tabelas. Isso descreve o que NÃO as protege; não descreve o que protege. Enquanto o único registro disso
    * foi `protegidaPor` — prosa —, a diferença entre "protegida por outra regra" e "sem proteção alguma" era
    * invisível para qualquer gate.
    *
-   * Aqui a forma declarada em `protecao` é conferida contra o `pg_policies` VIVO: nome, comando, permissiva
-   * ou restritiva, papéis e citação do isolamento de tenant no predicado. A comparação nunca é da lista
-   * contra ela mesma — isso provaria apenas que o arquivo é igual a si próprio.
-   *
-   * Por que importa agora: a única política das quatro tabelas de vínculo (`api_child`) é escrita sobre
-   * a COLUNA LEGADA de empresa. Um `drop column ... cascade` na PRE-BASE2-05C-1 apagaria a política inteira em vez de
-   * reescrevê-la, e sem este guarda a fatia destrutiva passaria verde deixando a tabela sem proteção.
-   *
-   * O que NÃO se exige é o texto integral do predicado: a 05C-1 vai legitimamente reescrevê-lo (a coluna
-   * legada vira `empresa_id`), e travar a letra bloquearia a correção em vez de bloquear a regressão.
+   * A REGRA é `validarProtecaoDaExcecao`, pura e adversarialmente testada sem banco em
+   * `apps/api/test/unit/rls-excecao-protecao.test.ts` (USING e WITH CHECK separados, papéis como conjunto
+   * exato, política PERMISSIVE extra, e a correlação pai→filho do `api_child`). Aqui ela é alimentada com as
+   * linhas REAIS do banco. Os dois lados são necessários: a suíte pura prova que o validador RECUSA o
+   * errado — montar aquelas políticas de verdade exigiria DDL, e esta fatia é NO-DDL —, e este caso prova
+   * que ele ACEITA o que o banco realmente tem. Um sem o outro não distingue "recusa o errado" de "recusa
+   * tudo".
    */
-  it("toda tabela declarada como EXCEÇÃO tem, no banco, a política que a exceção nomeia", async () => {
+  it("toda tabela declarada como EXCEÇÃO tem, no banco, a proteção que a exceção declara", async () => {
     const problemas: string[] = [];
     let conferidas = 0;
     for (const tabela of TABELAS_DE_EXCECAO as string[]) {
@@ -130,35 +127,14 @@ describe("classificação × políticas reais", () => {
         "select count(*)::text n from information_schema.tables where table_schema='erp' and table_name=$1 and table_type='BASE TABLE'", [tabela]);
       if (existe.rows[0]!.n === "0") { problemas.push(`${tabela}: declarada como exceção, mas não existe no schema — exceção órfã`); continue; }
 
-      const esperada = protecaoDaExcecao(tabela) as { politica: string; cmd: string; permissiva: boolean; papeis: string[]; citaTenant: boolean } | null;
-      if (!esperada) { problemas.push(`${tabela}: exceção sem \`protecao\` declarada — dizer que a tabela é especial não diz o que a protege`); continue; }
-
       // `pg_policies.roles` é `name[]`, e o driver o entrega como TEXTO (`{authenticated,erp_app}`) por não
       // ter decodificador para esse tipo de array. Tratá-lo como array em JS produziria um conjunto de
-      // CARACTERES — e um teste que nunca casaria com papel nenhum. O banco converte para `text[]`, que o
-      // driver decodifica de verdade.
+      // CARACTERES — e um teste que nunca casaria com papel nenhum. O banco converte para `text[]`.
       const p = await db.query<{ policyname: string; cmd: string; permissive: string; papeis: string[]; qual: string; with_check: string }>(
         `select policyname, cmd, permissive, roles::text[] as papeis, coalesce(qual,'') qual, coalesce(with_check,'') with_check
            from pg_policies where schemaname='erp' and tablename=$1`, [tabela]);
-      const achada = p.rows.find((x) => x.policyname === esperada.politica);
-      if (!achada) {
-        problemas.push(`${tabela}: falta a política ${esperada.politica} que a exceção declara (existem: ${p.rows.map((x) => x.policyname).join(", ") || "NENHUMA"})`);
-        continue;
-      }
-      if (achada.cmd !== esperada.cmd) problemas.push(`${tabela}.${esperada.politica}: comando ${achada.cmd}, declarado ${esperada.cmd}`);
-      const permissiva = achada.permissive.toUpperCase() === "PERMISSIVE";
-      if (permissiva !== esperada.permissiva) problemas.push(`${tabela}.${esperada.politica}: ${achada.permissive}, declarada ${esperada.permissiva ? "PERMISSIVE" : "RESTRICTIVE"}`);
-      const papeis = new Set(achada.papeis ?? []);
-      const faltam = esperada.papeis.filter((r) => !papeis.has(r));
-      if (faltam.length) problemas.push(`${tabela}.${esperada.politica}: não alcança ${faltam.join(", ")} (alcança: ${[...papeis].join(", ") || "ninguém"})`);
-      // O isolamento de tenant é o que sobra quando não há recorte por empresa: se o predicado deixar de
-      // citá-lo, a tabela passa a ser legível entre organizações — que é o vazamento mais grave possível.
-      if (esperada.citaTenant) {
-        const preditivo = `${achada.qual} ${achada.with_check}`;
-        if (!/tenant_visible|organization_id/.test(preditivo)) {
-          problemas.push(`${tabela}.${esperada.politica}: o predicado não cita o isolamento de organização — ${preditivo.trim() || "(vazio)"}`);
-        }
-      }
+
+      problemas.push(...(validarProtecaoDaExcecao(tabela, protecaoDaExcecao(tabela), p.rows) as string[]));
       conferidas++;
     }
     // A premissa junto com a conclusão: uma lista de exceções vazia faria o laço acima não executar asserção
@@ -173,6 +149,9 @@ describe("classificação × políticas reais", () => {
     for (const t of await tabelasComEmpresa()) {
       const categoria = classificarTabela(t.tabela, t.colunas, t.anulavel);
       const esperadas = politicasEsperadas(categoria, t.tabela) as Record<string, { cmd: string }> | null;
+      // E/F não têm gabarito genérico. Isso NÃO é dispensa: a política permissiva extra dessas tabelas é
+      // cobrada pelo caso acima, via `validarProtecaoDaExcecao`, que reprova qualquer PERMISSIVE não
+      // declarada. Era esta a delegação que faltava — antes o `continue` não entregava a pergunta a ninguém.
       if (!esperadas) continue;
       const declaradas = new Set(Object.keys(esperadas));
       const p = await db.query<{ policyname: string; cmd: string }>(

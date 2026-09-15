@@ -249,14 +249,21 @@ servindo — um gate operacional, decidido e executado pelo Maike, não uma prop
 1. **política de RLS** que cita coluna legada (`erp.empresa_cost_centers.api_child`), reescrita no canônico —
    antes de qualquer `drop`. Um `drop column ... cascade` a apagaria inteira em vez de reescrevê-la, e o
    `pg_depend` do tipo `n` faz o `drop` sem `cascade` **abortar**: as duas saídas são ruins, a correção é
-   reescrever antes;
+   reescrever antes. No MESMO commit, trocar `colunaVinculo` de `erp.empresa_cost_centers` de `farm_id` para
+   `empresa_id` em `packages/domain/empresa-rls.mjs` — mudar só um dos dois lados reprova, e é isso que
+   impede a purga de apagar a proteção em silêncio. É a ÚNICA das quatro `api_child` que muda: as outras
+   três juntam com o próprio cadastro pai (`erp.authorizers`, `erp.bank_accounts`, `erp.people`) e não
+   citam coluna legada;
 2. **CHECK canônico** equivalente ao órfão de `erp.equipment_transfers`, criado antes;
 3. gatilhos de espelho e, depois deles, suas funções;
 4. as **cinco** views de nome antigo;
 5. colunas legadas, tabela a tabela, com as FKs **de coluna única**, os índices e o CHECK que dependem
    delas — as FKs **compostas** (`organization_id, empresa_id`) NÃO saem: são a prova de tenant;
 6. virar `FASE_ESPELHO` para `"canonica"` em `scripts/lib/empresa-compat-surface.mjs` e inverter
-   `packages/db/test/schema.test.ts` — sem isso o gate de espelho fica verde sem ter o que medir;
+   `packages/db/test/schema.test.ts`. O gate cobra POR PAR HISTÓRICO, nas duas direções: sumir UM espelho
+   com a fase ainda em `dual` reprova, e sobreviver UM legado com a fase em `canonica` reprova. A purga é
+   de coluna: dropar a TABELA inteira reprova sozinho, e a única remoção consciente do produto (0014) está
+   declarada com o destino do dado;
 7. estender `upgrade-acervo` e `upgrade-rollback` para atravessarem a purga (eles **não** são apagados: são
    prova histórica, e o acervo legado não deixou de ter existido);
 8. remover os testes da categoria `PONTE_FISICA`, e **somente** eles.
@@ -269,7 +276,8 @@ verificável por terceiro:
 
 - os objetos da tabela acima não existem mais no banco de produção, medido por consulta a catálogo;
 - `company-schema-sync` em fase `canonica`, verde, com número de colunas canônicas > 0;
-- o guarda de RLS verde com a política `api_child` **reescrita** e presente no `pg_policies`;
+- o guarda de RLS verde com a política `api_child` **reescrita** e presente no `pg_policies`, com `USING` e
+  `WITH CHECK` conferidos separadamente, papéis como conjunto exato e a junção pai→filho pela coluna nova;
 - `upgrade-acervo` e `upgrade-rollback` verdes atravessando a purga com acervo legado;
 - version skew verde nos dois sentidos, com a base resolvida pela PR e impressa no log;
 - as categorias `TOMBSTONE` e `PROVA_HISTORICA` **ainda declaradas** — se saíram, alguma coisa foi apagada

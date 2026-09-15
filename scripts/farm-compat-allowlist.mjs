@@ -112,7 +112,9 @@ if (infratores.length) {
   console.error("farm-compat-allowlist: nome legado de empresa fora da camada de compatibilidade:");
   for (const x of infratores) console.error(`  - ${x}`);
   console.error("\nO runtime fala `empresa_id`, `empresa_origem_id`, `empresa_destino_id`, `ctx.empresaId` e");
-  console.error("`X-Empresa-Id`. A tradução acontece na BORDA (apps/api/src/lib/compat-empresa.ts). Se este");
+  console.error("`X-Empresa-Id`. NÃO existe mais tradutor de borda: `apps/api/src/lib/compat-empresa.ts` saiu");
+  console.error("na PRE-BASE2-05B. O contrato anterior é RECUSADO (422) por `apps/api/src/lib/contrato-legado.ts`,");
+  console.error("que nomeia o idioma antigo para negá-lo — não para convertê-lo. Se este");
   console.error("arquivo precisa MESMO falar o idioma antigo, declare-o em PERMITIDOS com o motivo — a lista");
   console.error("é o que torna possível remover a ponte um dia.");
   process.exit(1);

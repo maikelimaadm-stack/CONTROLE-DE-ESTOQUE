@@ -102,6 +102,11 @@ jobs:
     env:
       E2E_DATABASE_URL: postgresql://postgres@127.0.0.1:5433/agro_erp_e2e
       NEXT_PUBLIC_API_URL: http://127.0.0.1:3333
+      # A BASE DA PR, E NÃO A PONTA DE HOJE (PRE-BASE2-05C-0). `pull_request.base.sha` é imutável: é o commit
+      # sobre o qual esta PR foi aberta. Resolver `origin/main` aqui compararia com o que a main for no
+      # momento do job — se outra PR entrar no meio, o skew certifica um binário que não é a base desta.
+      # Num evento de push a expressão vem VAZIA, e o script trata vazio como ausente.
+      SKEW_BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

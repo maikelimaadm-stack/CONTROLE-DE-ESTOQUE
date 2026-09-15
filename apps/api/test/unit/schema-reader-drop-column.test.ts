@@ -129,11 +129,14 @@ describe("leitor de migrations — REMOÇÃO (PRE-BASE2-05C-0)", () => {
     expect(colunas("erp.nova")).toEqual(["id", "empresa_id"]);
   });
 
-  it("drop pelo nome ANTIGO depois do rename não apaga nada — e não inventa tabela", () => {
+  // `if exists` de propósito: sem ele o PostgreSQL ABORTARIA a migration, e chamar isso de "inócuo" seria
+  // afirmar uma semântica falsa. Com ele o comando é mesmo inócuo no banco — e o que se prova aqui é que o
+  // leitor também o trata assim, em vez de apagar a coluna de uma tabela que já mudou de nome.
+  it("drop pelo nome ANTIGO depois do rename é inócuo (com `if exists`) — e não inventa tabela", () => {
     limpar();
     escrever("0001_base.sql", "create table erp.antiga (id uuid primary key, legado_id uuid);");
     escrever("0002_rename.sql", "alter table erp.antiga rename to nova;");
-    escrever("0003_engano.sql", "alter table erp.nova drop column legado_id;\nalter table erp.antiga drop column id;");
+    escrever("0003_engano.sql", "alter table erp.nova drop column legado_id;\nalter table erp.antiga drop column if exists id;");
     const mapa = readSchema(dir);
     expect(mapa.has("erp.antiga")).toBe(false);
     expect(colunas("erp.nova"), "o drop no nome antigo é inócuo, não destrutivo").toEqual(["id"]);
@@ -176,6 +179,25 @@ describe("leitor de migrations — FORMAS RECUSADAS", () => {
     escrever("0001_base.sql", "create table erp.antiga (id uuid primary key, legado_id uuid);");
     escrever("0002_rename.sql", "alter table erp.antiga rename to nova;");
     expect(colunas("erp.nova")).toEqual(["id", "legado_id"]);
+  });
+
+  it("DDL de COLUNA por SQL dinâmico PARA o leitor — a purga de 52 colunas pede um laço", () => {
+    limpar();
+    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, legado_id uuid);");
+    escrever("0002_laco.sql", "do $$ begin execute format('alter table erp.%I drop column legado_id', 'exemplo'); end $$;");
+    // Sem a recusa, o modelo diria que a coluna continua lá: o gate de espelho acusaria sobreviventes que
+    // não existem — vermelho pelo motivo errado, com o autor caçando o defeito no lugar errado.
+    expect(() => readSchema(dir)).toThrow(/NÃO modela.*SQL dinâmico/s);
+  });
+
+  it("mas DDL dinâmico que NÃO mexe em coluna continua aceito — as migrations reais usam", () => {
+    limpar();
+    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, a uuid);");
+    escrever("0002_rls.sql", [
+      "do $$ begin execute format('alter table erp.%I enable row level security', 'exemplo'); end $$;",
+      "do $$ begin execute format('alter table erp.%I add constraint x foreign key (a) references erp.outra(id)', 'exemplo'); end $$;"
+    ].join("\n"));
+    expect(colunas("erp.exemplo")).toEqual(["id", "a"]);
   });
 
   it("as demais cláusulas de alter table continuam ignoradas — elas não mudam o CONJUNTO de colunas", () => {

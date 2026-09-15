@@ -145,7 +145,15 @@ const FORMAS_RECUSADAS = [
   { re: /alter\s+table\s+(?:if\s+exists\s+)?[a-z_]+\.[a-z_][a-z0-9_]*\s+(?=[^;]*\bdrop\s+column\b)(?=[^;]*\badd\s+column\b)[^;]*;/gi,
     porque: "mistura `drop column` e `add column` na MESMA instrução; separe em duas instruções, na ordem em que devem valer" },
   { re: /alter\s+table\s+(?:if\s+exists\s+)?[a-z_]+\.[a-z_][a-z0-9_]*\s+rename\s+column\b[^;]*;/gi,
-    porque: "`rename column` não é modelado; use `add column` + backfill + `drop column`, que é o que a migração de empresa já faz" }
+    porque: "`rename column` não é modelado; use `add column` + backfill + `drop column`, que é o que a migração de empresa já faz" },
+  // A purga de 52 colunas pede um laço, e um laço com `execute format` é invisível para este leitor: o
+  // modelo diria que as 52 continuam lá e o gate acusaria 52 sobreviventes que não existem — vermelho pelo
+  // motivo errado, com o autor caçando o defeito no lugar errado. A recusa é ESTREITA de propósito: só o
+  // DDL dinâmico que mexe no CONJUNTO DE COLUNAS. `format('alter table … enable row level security')` e
+  // `format('alter table … add constraint …')` continuam aceitos e ignorados — as migrations 0007 e 0014
+  // usam os dois, e nenhum deles muda a lista de colunas que este modelo afirma.
+  { re: /execute\s+format\s*\(\s*'[^']*\b(?:drop|add)\s+column\b/gi,
+    porque: "DDL de coluna por SQL dinâmico não é modelável a partir do texto; escreva as instruções `alter table … drop column` literais, uma por linha" }
 ];
 
 function recusarFormaNaoModelada(sql, file) {
@@ -160,11 +168,11 @@ function recusarFormaNaoModelada(sql, file) {
 
 function aplicar(tables, op, file) {
   if (op.tipo === "criarTabela") {
-    const entry = tables.get(op.tabela) ?? { table: op.tabela, file, columns: new Map(), constraints: [] };
+    const entry = tables.get(op.tabela) ?? { table: op.tabela, file, columns: new Map(), constraints: [], historico: new Set() };
     for (const def of splitTopLevel(op.corpo)) {
       if (CONSTRAINT_START.test(def)) { entry.constraints.push(def.replace(/\s+/g, " ")); continue; }
       const col = parseColumn(def);
-      if (col) entry.columns.set(col.name, col);
+      if (col) { entry.columns.set(col.name, col); entry.historico.add(col.name); }
     }
     // chave primária declarada como constraint de tabela
     for (const c of entry.constraints) {
@@ -178,7 +186,7 @@ function aplicar(tables, op, file) {
   if (!entry) return;
   if (op.tipo === "adicionarColuna") {
     const col = parseColumn(op.definicao);
-    if (col) entry.columns.set(col.name, { ...col, addedIn: file });
+    if (col) { entry.columns.set(col.name, { ...col, addedIn: file }); entry.historico.add(col.name); }
     return;
   }
   if (op.tipo === "removerColuna") {
@@ -186,6 +194,8 @@ function aplicar(tables, op, file) {
     // com índices e constraints dependentes da coluna removida. Sem isto, `company-schema-sync` e a matriz
     // continuariam lendo uma FK composta que não existe mais.
     for (const nome of op.colunas) {
+      // `historico` NAO perde o nome: e exatamente o que permite ao gate de espelho saber, depois da purga,
+      // que aquele par EXISTIU e portanto ainda deve ser cobrado (ver o bloco de doc de `historico`).
       entry.columns.delete(nome);
       entry.constraints = entry.constraints.filter((c) => !new RegExp(`\\b${nome}\\b`, "i").test(c));
     }
@@ -200,15 +210,47 @@ function aplicar(tables, op, file) {
   if (op.tipo === "renomearTabela") {
     const novo = `${op.tabela.split(".")[0]}.${op.novo}`;
     tables.delete(op.tabela);
+    // O spread leva `historico` junto: a historia e da TABELA, e ela nao comeca do zero por ter mudado de nome.
     tables.set(novo, { ...entry, table: novo, renamedFrom: op.tabela, renamedIn: file });
     return;
   }
-  if (op.tipo === "removerTabela") tables.delete(op.tabela);
+  if (op.tipo === "removerTabela") {
+    // LÁPIDE, não esquecimento. Apagar a entrada faria a tabela — e a história dela — sumirem juntas, e um
+    // gate que conta pares históricos veria 51 onde havia 52 sem nada a reclamar: o mesmo verde de limiar
+    // global que esta fatia existe para eliminar, só que deslocado de coluna para TABELA.
+    tables.removidas?.set(op.tabela, { ...entry, removidaEm: file });
+    tables.delete(op.tabela);
+  }
 }
 
-/** Map<"erp.tabela", { table, file, columns: Map<coluna, coluna>, constraints: string[] }> */
+/**
+ * A HISTORIA DO PAR, E NAO SO O ESTADO FINAL (PRE-BASE2-05C-0).
+ *
+ * `columns` responde "o que existe agora". Para a fatia destrutiva isso nao basta, e o buraco tem forma
+ * exata: depois que a 05C-1 dropar `farm_id` de uma tabela, um leitor que so enxerga o presente nao
+ * consegue distinguir
+ *   (A) coluna canonica que NASCEU sozinha, sem espelho legado nenhum (erp.notifications e mais tres), de
+ *   (B) coluna canonica cujo espelho legado EXISTIA e sumiu.
+ * Sao estados opostos — um e correto por construcao, o outro e perda silenciosa —, e sem a historia os dois
+ * se parecem. Foi assim que o gate de espelho podia ficar VERDE com 51 dos 52 espelhos: o 52o virava, aos
+ * olhos dele, "canonica de nascenca".
+ *
+ * Por isso cada tabela carrega `historico`: TODA coluna que existiu nela em algum momento da sequencia de
+ * migrations. O conjunto so CRESCE — `drop column` tira de `columns` e NAO tira daqui —, atravessa
+ * `rename to` junto com a tabela, e desaparece apenas com `drop table`, que e quando a propria tabela deixa
+ * de ter historia a contar.
+ *
+ * A fonte continua sendo uma so: a sequencia de migrations. Nao existe lista paralela de "pares que
+ * existiram" para envelhecer em silencio.
+ */
+export const jaTeveColuna = (t, coluna) => Boolean(t?.historico?.has(coluna));
+
+/** Map<"erp.tabela", { table, file, columns: Map<coluna, coluna>, constraints: string[], historico: Set<coluna> }> */
 export function readSchema(dir = MIGRATIONS_DIR) {
   const tables = new Map();
+  // Propriedade do Map, não uma entrada: `for…of` e `.size` continuam vendo só as tabelas VIVAS, e nenhum
+  // consumidor precisa mudar para ganhar a lápide.
+  tables.removidas = new Map();
   const files = fs.readdirSync(dir).filter((f) => f.endsWith(".sql")).sort();
   for (const file of files) {
     const sql = stripSqlComments(fs.readFileSync(path.join(dir, file), "utf8"));

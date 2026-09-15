@@ -3,6 +3,7 @@ import { login, uniq } from "./helpers";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
+import fs from "node:fs";
 
 /**
  * VERSION SKEW — O WEB DESTA PR CONTRA A API QUE ESTÁ NO AR (PRE-BASE2-05A).
@@ -95,22 +96,33 @@ test("o servidor É o commit base — e ele entende o canônico, que é a premis
 });
 
 /**
- * O BINÁRIO SOB TESTE É MESMO O DA BASE — provado pelo commit, não pelo contrato.
+ * A IDENTIDADE DO BINÁRIO É O SHA EXATO DA BASE — não "um commit qualquer diferente do HEAD".
  *
- * Esta fatia não muda nada no fio, então nenhuma resposta HTTP distingue a base deste HEAD. Um teste que
- * tentasse distingui-los por contrato passaria contra os DOIS servidores e certificaria o cenário errado
- * — que é o defeito que a PRE-BASE2-05C-0 existe para tirar dos instrumentos. A identidade é verificável
- * onde ela de fato está: a árvore que o Playwright manda subir (`.api-anterior`) está posicionada no commit
- * da base, e esse commit não é o HEAD.
+ * A versão anterior deste caso só exigia `anterior !== HEAD`. Isso prova que os dois lados não são o mesmo
+ * commit; NÃO prova qual é o outro lado. Um commit X qualquer passaria — inclusive o commit errado que a
+ * resolução por ponta de branch podia escolher, que é justamente o defeito.
+ *
+ * A expectativa é LIDA de `.api-anterior.base`, gravado por quem montou a árvore: uma resolução por
+ * execução, sem rede e sem recálculo. Recalcular aqui reintroduziria o problema pelo outro lado — num
+ * evento de `push` a resolução cai na ponta de `origin/main`, e duas leituras da ponta podem divergir
+ * dentro do mesmo job. Quando o CI injeta `SKEW_BASE_COMMIT` (`pull_request.base.sha`, imutável), a
+ * igualdade é cobrada também contra ele: é a PR declarando qual é a sua base.
  */
-test("a árvore que serve esta suíte está no commit da BASE, e não neste HEAD", async () => {
+test("a árvore que serve esta suíte está EXATAMENTE no commit da base da PR", async () => {
   const raiz = path.resolve(__dirname, "../../..");
   const rev = (cwd: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
-  const anterior = rev(path.join(raiz, ".api-anterior"));
-  expect(anterior, "40 hexadecimais").toMatch(/^[0-9a-f]{40}$/);
-  expect(anterior, "a API sob teste não pode ser este HEAD — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
-});
+  // Lido do ARQUIVO, não recalculado nem importado do harness: o arquivo é o contrato entre quem monta a
+  // árvore e quem a confere, e ler um arquivo não tem como divergir de si mesmo no meio do job.
+  const esperada = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
+  expect(esperada, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
 
+  const doEvento = (process.env.SKEW_BASE_COMMIT ?? "").trim();
+  if (doEvento) expect(esperada, "a base usada é a que a PR declarou no evento").toBe(doEvento);
+
+  const arvore = rev(path.join(raiz, ".api-anterior"));
+  expect(arvore, "a árvore precisa estar na base EXATA, não num commit qualquer").toBe(esperada);
+  expect(arvore, "e a base não pode ser este HEAD — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
+});
 /**
  * O CONTADOR DE EMPRESA, NO SENTIDO 1 (API da base). Ver `skew-contador-empresa.ts` para o porquê: é a
  * numeração — não a leitura — que a PRE-BASE2-05C-1 arrisca, e a prova precisa criar uma Empresa DE VERDADE

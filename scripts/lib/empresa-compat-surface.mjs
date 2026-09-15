@@ -70,17 +70,20 @@ export const FASE_ESPELHO = "dual";
  *   · a chave da sequência é um DADO em `erp.code_sequences`, não um nome de fio.
  *
  * Nenhum dos dois pode ser "removido" sozinho: o primeiro depende de observar tráfego real; o segundo, de
- * uma migration atômica. Por isso continuam declarados, com o motivo à vista.
+ * uma JANELA OPERACIONAL em que só uma versão da API sirva (a fatia PRE-BASE2-05C-2; não existe migration
+ * atômica com um binário implantado). Por isso continuam declarados, com o motivo à vista.
  */
 export const PONTE_RUNTIME = {
-  "apps/api/src/lib/contrato-legado.ts": "CONTRATO NEGATIVO (não é tradutor): nomeia o cabeçalho, os campos e o formato administrativo anteriores para RECUSÁ-LOS com erro de validação. Existe porque `z.object` descarta chave desconhecida — um `farm_id` ignorado em silêncio mudaria a empresa da operação. Sai depois da 05C, e só com tráfego real observado.",
-  "apps/web/nav.registry.mjs": "Redirecionamentos das rotas legadas de cadastro — navegação de favoritos do usuário, não protocolo de API. Ficam até a 05C."
+  "apps/api/src/lib/contrato-legado.ts": "CONTRATO NEGATIVO (não é tradutor): nomeia o cabeçalho, os campos e o formato administrativo anteriores para RECUSÁ-LOS com erro de validação. Existe porque `z.object` descarta chave desconhecida — um `farm_id` ignorado em silêncio mudaria a empresa da operação. Sai depois da 05C-1, e só com tráfego real observado.",
+  "apps/web/nav.registry.mjs": "Redirecionamentos das rotas legadas de cadastro — navegação de favoritos do usuário, não protocolo de API. TOMBSTONE: saem depois da 05C-1, com tráfego real observado, nunca junto com a purga."
 };
 
 /** Prova: testes que só valem porque falam o idioma antigo — se a ponte quebrar, eles quebram antes do cliente. */
 export const PONTE_PROVA = {
   "apps/api/test/integration/contrato-empresa.test.ts": "Prova o CONTRATO NEGATIVO com requisições reais: cabeçalho, corpo, query, recurso e entidade de anexo anteriores são recusados — e o canônico funciona. Cita o nome antigo para provar que ele NÃO é aceito.",
   "apps/api/test/unit/attachment-parent-guard.test.ts": "Prova que o nome ANTERIOR de tabela não resolve mais como entidade anexável.",
+  "apps/api/test/unit/espelho-empresa-fases.test.ts": "VOCABULÁRIO: prova o contrato do espelho POR PAR HISTÓRICO com migrations de mentira. Precisa escrever `farm_id` nos fixtures porque é esse o nome que a ponte física usou — é o objeto medido, não uma dependência. Vive enquanto houver par histórico a cobrar, o que inclui DEPOIS da purga: é o lado `canonica` do contrato.",
+  "apps/api/test/unit/rls-excecao-protecao.test.ts": "VOCABULÁRIO: prova que a proteção declarada RECUSA a política perigosa (USING/WITH CHECK abertos, papel extra, PERMISSIVE extra, junção pai→filho quebrada). Cita `farm_id` porque é a coluna de vínculo ATUAL de erp.empresa_cost_centers — a única exceção cujo `api_child` a 05C-1 reescreve, e o caso B10 prova que SSOT e política têm de mudar juntos.",
   "packages/plataforma/test/sessao-empresa.test.ts": "Prova que a sessão gravada por um cliente anterior à virada canônica é INVÁLIDA (sem promoção) e que o contrato de valor é exigido.",
   "packages/db/test/empresa-compat.test.ts": "PONTE FÍSICA: mede gatilhos de espelho, divergência recusada e a view `erp.farms` — objetos que a 05C-1 remove. Sai JUNTO com eles, na mesma fatia, nunca antes.",
   "packages/db/test/backfill-empresas.test.ts": "PROVA HISTÓRICA: o backfill de `farm_id` → `empresa_id`, linha a linha. Continua sendo a evidência de que um acervo anterior é carregado corretamente — o passado não muda quando a coluna sai. NÃO sai na 05C-1.",
@@ -101,7 +104,8 @@ export const PONTE_GATES = {
   "scripts/farm-compat-allowlist.mjs": "O gate que confina o que resta: precisa citar cada símbolo legado para procurá-lo. É ELE o guardrail do servidor canônico — o que não estiver declarado aqui reprova.",
   "apps/web/scripts/empresa-canonica-audit.mjs": "A catraca do cliente canônico (PRE-BASE2-05A): precisa citar cada símbolo legado para PROIBI-LO no web produtivo. Sem o tradutor de fio, um nome legado que voltasse ao cliente não quebraria em runtime — a API bilíngue aceitaria —, e é esta lista que o pega.",
   "scripts/lib/empresa-compat-surface.mjs": "Esta lista.",
-  "scripts/company-schema-sync.mjs": "Confere par a par coluna canônica × coluna legada no schema.",
+  "scripts/company-schema-sync.mjs": "Borda de linha de comando do contrato do espelho; nomeia as duas grafias para conferi-las.",
+  "scripts/lib/espelho-empresa.mjs": "A REGRA do espelho, pura e testável: precisa nomear cada par canônico × legado para cobrá-lo por par histórico. É o instrumento que detecta purga parcial — some no dia em que não houver mais par histórico algum, o que não acontece na 05C-1.",
   "scripts/member-farms-audit.mjs": "Impede que `erp.member_farms` volte a ser autoridade de runtime.",
   "scripts/data-dictionary.mjs": "Gera o dicionário, que documenta a coluna legada enquanto ela existir.",
   "packages/domain/dicionario-dados.mjs": "Dicionário de dados: `erp.farms` e `farm_id` existem no banco e precisam estar documentados.",
@@ -119,6 +123,8 @@ export const CATEGORIA_COMPAT = {
   "apps/web/nav.registry.mjs": "TOMBSTONE",
   "apps/api/test/integration/contrato-empresa.test.ts": "TOMBSTONE",
   "apps/api/test/unit/attachment-parent-guard.test.ts": "TOMBSTONE",
+  "apps/api/test/unit/espelho-empresa-fases.test.ts": "VOCABULARIO",
+  "apps/api/test/unit/rls-excecao-protecao.test.ts": "VOCABULARIO",
   "packages/plataforma/test/sessao-empresa.test.ts": "TOMBSTONE",
   "packages/db/test/empresa-compat.test.ts": "PONTE_FISICA",
   "packages/db/test/backfill-empresas.test.ts": "PROVA_HISTORICA",
@@ -135,6 +141,7 @@ export const CATEGORIA_COMPAT = {
   "apps/web/scripts/empresa-canonica-audit.mjs": "VOCABULARIO",
   "scripts/lib/empresa-compat-surface.mjs": "VOCABULARIO",
   "scripts/company-schema-sync.mjs": "VOCABULARIO",
+  "scripts/lib/espelho-empresa.mjs": "VOCABULARIO",
   "scripts/member-farms-audit.mjs": "VOCABULARIO",
   "scripts/data-dictionary.mjs": "VOCABULARIO",
   "packages/domain/dicionario-dados.mjs": "VOCABULARIO",

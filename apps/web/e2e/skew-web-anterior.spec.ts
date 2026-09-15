@@ -1,13 +1,20 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, uniq } from "./helpers";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+import fs from "node:fs";
 
 /**
- * VERSION SKEW SENTIDO 2 — O WEB EM PRODUÇÃO CONTRA A API DESTA PR (PRE-BASE2-05B).
+ * VERSION SKEW SENTIDO 2 — O WEB EM PRODUÇÃO CONTRA A API DESTA PR.
  *
- * Roda só em `playwright.skew-web-anterior.config.ts`: o navegador executa o bundle EXATO do commit base
- * (o web canônico da PRE-BASE2-05A, que está no ar) e o servidor é a API deste HEAD, que deixou de
- * entender o idioma antigo. Não há mock em nenhuma das duas pontas.
+ * Roda só em `playwright.skew-web-anterior.config.ts`: o navegador executa o bundle EXATO do commit BASE
+ * DESTA PR — seja ele qual for — e o servidor é a API deste HEAD. Não há mock em nenhuma das duas pontas.
+ *
+ * A base NÃO é uma fase nomeada. Ela é o `pull_request.base.sha`, e por isso a identidade é provada por SHA
+ * (último caso deste arquivo), não por comportamento HTTP: desde que a 05B mesclou, os dois lados já são
+ * canônicos, e um teste que tentasse distinguir base de HEAD pelo contrato passaria contra os DOIS
+ * servidores — certificando o cenário errado com a aparência de rigor.
  *
  * POR QUE ESTE SENTIDO É O QUE IMPORTA AGORA
  *
@@ -153,4 +160,33 @@ test("criar Empresa pela API DESTE HEAD, no mesmo banco do sentido 1, também al
   const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };
   const codigo = await criarEmpresaEConferirContador(request, API, auth, "SKEW-HEAD");
   console.log(`[skew] sentido 2 (API deste HEAD) alocou o código de Empresa ${codigo}`);
+});
+
+/**
+ * A IDENTIDADE DO BINÁRIO É O SHA EXATO DA BASE — não "um commit qualquer diferente do HEAD".
+ *
+ * A versão anterior deste caso só exigia `anterior !== HEAD`. Isso prova que os dois lados não são o mesmo
+ * commit; NÃO prova qual é o outro lado. Um commit X qualquer passaria — inclusive o commit errado que a
+ * resolução por ponta de branch podia escolher, que é justamente o defeito.
+ *
+ * A expectativa é LIDA de `.api-anterior.base`, gravado por quem montou a árvore: uma resolução por
+ * execução, sem rede e sem recálculo. Recalcular aqui reintroduziria o problema pelo outro lado — num
+ * evento de `push` a resolução cai na ponta de `origin/main`, e duas leituras da ponta podem divergir
+ * dentro do mesmo job. Quando o CI injeta `SKEW_BASE_COMMIT` (`pull_request.base.sha`, imutável), a
+ * igualdade é cobrada também contra ele: é a PR declarando qual é a sua base.
+ */
+test("o BUNDLE do navegador vem EXATAMENTE do commit da base da PR", async () => {
+  const raiz = path.resolve(__dirname, "../../..");
+  const rev = (cwd: string) => execFileSync("git", ["rev-parse", "HEAD"], { cwd }).toString().trim();
+  // Lido do ARQUIVO, não recalculado nem importado do harness: o arquivo é o contrato entre quem monta a
+  // árvore e quem a confere, e ler um arquivo não tem como divergir de si mesmo no meio do job.
+  const esperada = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
+  expect(esperada, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
+
+  const doEvento = (process.env.SKEW_BASE_COMMIT ?? "").trim();
+  if (doEvento) expect(esperada, "a base usada é a que a PR declarou no evento").toBe(doEvento);
+
+  const arvore = rev(path.join(raiz, ".api-anterior"));
+  expect(arvore, "a árvore precisa estar na base EXATA, não num commit qualquer").toBe(esperada);
+  expect(arvore, "e a base não pode ser este HEAD — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
 });

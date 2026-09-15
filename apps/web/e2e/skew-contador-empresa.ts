@@ -3,14 +3,16 @@ import { expect, type APIRequestContext } from "@playwright/test";
 /**
  * O CONTADOR DE EMPRESA, MEDIDO NOS DOIS SENTIDOS DO SKEW (PRE-BASE2-05C-0).
  *
- * O que a PRE-BASE2-05C-1 arrisca não é a leitura: é a NUMERAÇÃO. O código de uma Empresa é alocado por
+ * O que a troca de contador arrisca não é a leitura: é a NUMERAÇÃO. Quem troca o contador é a
+ * PRE-BASE2-05C-2 — a 05C-1 remove colunas e deixa `entity='farm'` intacto. Esta prova roda desde já, como
+ * rede preventiva: ela não espera a fatia que muda o contador para existir. O código de uma Empresa é alocado por
  * `erp.next_code(organização, entidade)`, cuja chave primária é `(organization_id, entity)`. `'farm'` e
  * `'empresa'` não são dois nomes do mesmo contador: são DUAS LINHAS, dois travamentos e dois valores
  * correntes. Copiar a linha e manter as duas — o desenho que parece conservador — faz a API antiga e a API
  * nova emitirem O MESMO PRÓXIMO NÚMERO, e `unique (organization_id, code)` de `erp.empresas` recusa o
  * segundo. Na janela de rollout as duas APIs estão no ar ao mesmo tempo, que é exatamente quando isso dói.
  *
- * Por isso o instrumento nasce AQUI, uma fatia antes: a prova de skew deixa de ser só "a tela abre" e passa
+ * Por isso o instrumento nasce AQUI, duas fatias antes: a prova de skew deixa de ser só "a tela abre" e passa
  * a CRIAR UMA EMPRESA DE VERDADE em cada sentido, contra o MESMO banco, sem reset entre eles. O que se cobra
  * é a propriedade que a troca de contador quebraria primeiro:
  *
