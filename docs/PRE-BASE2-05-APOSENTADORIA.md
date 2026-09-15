@@ -200,7 +200,7 @@ tem.
 | Funções `erp.sincronizar_empresa*` | **3** | os gatilhos acima | `drop function` depois dos gatilhos | recriar a partir da 0014 |
 | Chaves estrangeiras **de coluna única** sobre a coluna legada | **52** | `FOREIGN KEY (farm_id) REFERENCES erp.empresas(id)` — **não** provam tenant | caem junto com a coluna | recriar a partir da 0014 |
 | Índices que incluem coluna legada | **8** | desempenho das consultas legadas | cair junto com a coluna | recriar se a leitura legada voltar (não deve) |
-| **CHECK órfão** `equipment_transfers_check` | **1** | `CHECK (origin_farm_id <> destination_farm_id)` — anônimo e inline, batizado pelo PostgreSQL | cai com a coluna **em silêncio**; o equivalente canônico (`empresa_origem_id <> empresa_destino_id`) precisa nascer no **mesmo arquivo**, antes do `drop column` — **feito: item 5 da `0017`**, e o legado sai nomeado no item 10, não de carona | recriar a partir de `supabase/migrations/0005_sales_fleet_hr.sql:142` (a 0002 NÃO cria esta tabela) |
+| **CHECK órfão** `equipment_transfers_check` | **1** | `CHECK (origin_farm_id <> destination_farm_id)` — anônimo e inline, batizado pelo PostgreSQL | cai com a coluna **em silêncio**; o equivalente canônico (`empresa_origem_id <> empresa_destino_id`) precisa nascer no **mesmo arquivo**, antes do `drop column` — **feito: item 6 da `0017`**, e o legado sai nomeado no item 11, não de carona | recriar a partir de `supabase/migrations/0005_sales_fleet_hr.sql:142` (a 0002 NÃO cria esta tabela) |
 | Política de RLS citando coluna legada | **1** (`erp.empresa_cost_centers` → `api_child`) | leitura do filho pelo pai | reescrever no canônico **antes** de dropar a coluna | versão anterior da política |
 | Sequência `erp.code_sequences` com `entity='farm'` | **1 linha** | numeração de Empresa em uso | **fatia 05C-2**, com janela operacional | `update` inverso |
 
@@ -325,27 +325,30 @@ consulta e removido em laço, e nada sai por casar com a palavra "farm".
 | # | O que faz | Por que aqui, e não depois |
 | ---: | --- | --- |
 | 1 | `pg_try_advisory_xact_lock(2026, 51)`; se não obtém, aborta com `55P03` | o runner não tem trava própria: dois pre-deploys sobrepostos veriam a `0017` como pendente e tentariam aplicá-la juntos. A trava é transacional — sai no commit ou no rollback — e usa o espaço de DOIS inteiros, distinto do `pg_advisory_xact_lock(bigint)` da rota de notificações |
-| 2 | `set local lock_timeout = '2s'` | sem ele, UMA espera por lock vira 120 s de `ACCESS EXCLUSIVE` retido (medido). É teto por COMANDO, não da janela — a janela não tem teto em lugar nenhum, e é por isso que o porteiro humano continua obrigatório |
-| 3 | `lock table` de **55** relações em `access exclusive mode nowait`, ordem alfabética | ordem fixa para que duas execuções nunca se cruzem em sentidos opostos; `nowait` para falhar em milissegundos em vez de ficar pendurada segurando as outras 54. São as 49 tabelas + as 5 views + `erp.empresas`, nomeada de propósito porque a view `erp.farms` a arrastaria junto e lock implícito não tem ordem declarada |
-| 4 | **pré-condições de inventário**, por igualdade EXATA contra o catálogo: colunas, FKs de coluna única, gatilhos, índices (e o gêmeo canônico de cada um), views e funções | fail-closed nos dois sentidos: falta um objeto da lista → aborta; existe um objeto legado FORA da lista → aborta também. Um objeto acrescentado depois desta lista não sobrevive escondido à purga — ele para a migration |
-| 4.6 | **divergência legado × canônico, linha a linha**, nos 52 pares, com contagem e ids de exemplo | se algum par divergir, a purga apagaria justamente o lado que talvez fosse o certo. A migration PARA e diz onde; não corrige em silêncio. A chave de exemplo é a PK — inclusive as compostas das quatro tabelas de ligação sem coluna `id` |
-| 4.7 | confere que `empresa_origem_id <> empresa_destino_id` já é verdade no acervo | `add constraint … check` valida na hora; criar sobre acervo inválido falharia no meio da purga |
-| 5 | cria o **CHECK canônico** `equipment_transfers_empresa_origem_destino_check` | o CHECK histórico foi escrito sobre as colunas LEGADAS. Se elas caíssem primeiro, a invariante "origem ≠ destino" sumiria junto, **em silêncio**. O canônico nasce antes, e já validado |
-| 6 | **substitui** a policy `api_child` de `erp.empresa_cost_centers` (`drop` + `create`) | era a única política do schema cujo predicado citava coluna legada. Substituída, nunca acompanhada: duas PERMISSIVE no mesmo comando combinam com OR e a mais frouxa acabaria valendo |
-| 7 | remove as **5 views** de nome antigo | elas LEEM as colunas legadas; `drop column` sem `cascade` recusaria enquanto existissem |
-| 8 | remove os **52 gatilhos** de espelho, por nome | as 49 tabelas alvo têm 66 gatilhos: 14 são de NEGÓCIO (auditoria, `set_updated_at`, travas de transferência) e ficam. `drop trigger` vai por nome, nunca por tabela |
-| 9 | remove as **3 funções** `erp.sincronizar_empresa*` | depois dos gatilhos, senão o `drop function` esbarra na dependência |
-| 10 | remove o **CHECK legado** `equipment_transfers_check` | explicitamente, e não de carona no `drop column`: o substituto já está de pé desde o item 5, e o que sai tem de estar inventariado |
-| 11 | remove as **52 FKs de coluna única** | coluna única não prova tenant. Quem fica são as **50 compostas** `(organization_id, empresa_*)` |
-| 12 | remove os **8 índices** legados | os oito gêmeos canônicos já existem desde a 0014, e a pré-condição 4.4 exigiu a presença de cada um: nenhum caminho de acesso se perde |
-| 13 | remove as **52 colunas** legadas | por último, quando nada mais depende delas. Se alguma dependência tivesse escapado do inventário, o `drop column` falha aqui e a transação inteira volta atrás — que é o comportamento desejado |
-| 14 | **pós-condições**: zero colunas, zero views, zero gatilhos, zero funções, **50** FKs compostas validadas, CHECK canônico presente e validado, nenhuma policy citando coluna legada, `erp.code_sequences` intacta | a migration confere o próprio resultado antes de deixar o commit acontecer. Verde por vacuidade não passa: cada zero tem um número esperado do outro lado |
+| 2 | **conferência do acervo, ANTES de qualquer lock**: 2.1 divergência legado × canônico, linha a linha, nos 52 pares, com contagem e ids de exemplo; 2.2 confere que `empresa_origem_id <> empresa_destino_id` já é verdade | se algum par divergir, a purga apagaria justamente o lado que talvez fosse o certo: a migration PARA e diz onde, sem corrigir em silêncio. E fica **fora** da janela de `ACCESS EXCLUSIVE` de propósito — são 52 varreduras completas, e dentro da janela elas a faziam crescer com o tamanho do acervo. Aqui a conferência ainda vale porque os gatilhos de espelho continuam vivos e recusam gravação divergente. A chave de exemplo é a PK, inclusive as compostas das quatro tabelas de ligação sem coluna `id` |
+| 3 | `set local lock_timeout = '2s'` | sem ele, UMA espera por lock vira 120 s de `ACCESS EXCLUSIVE` retido (medido). É teto por COMANDO, não da janela — a janela não tem teto em lugar nenhum, e é por isso que o porteiro humano continua obrigatório |
+| 4 | `lock table` de **55** relações em `access exclusive mode nowait`, ordem alfabética | ordem fixa para que duas execuções nunca se cruzem em sentidos opostos; `nowait` para falhar em milissegundos em vez de ficar pendurada segurando as outras 54. São as 49 tabelas + as 5 views + `erp.empresas`, nomeada de propósito porque a view `erp.farms` a arrastaria junto e lock implícito não tem ordem declarada |
+| 5 | **pré-condições de catálogo**, por igualdade EXATA: 5.1 colunas · 5.2 FKs de coluna única · 5.3 gatilhos (relação E função no schema `erp`) · 5.4 índices, e o gêmeo canônico de cada um · 5.4b CHECKs por `conkey` · 5.4c gatilho que toque coluna legada por QUALQUER nome de função, procurando no `prosrc` · 5.5 views e funções | fail-closed nos dois sentidos: falta um objeto da lista → aborta; existe um objeto legado FORA da lista → aborta também. Um objeto acrescentado depois desta lista não sobrevive escondido à purga — ele para a migration |
+| 6 | cria o **CHECK canônico** `equipment_transfers_empresa_origem_destino_check` | o CHECK histórico foi escrito sobre as colunas LEGADAS. Se elas caíssem primeiro, a invariante "origem ≠ destino" sumiria junto, **em silêncio**. O canônico nasce antes, e já validado. É o único trabalho proporcional ao acervo que sobrou DENTRO da janela: `add constraint … check` valida a `erp.equipment_transfers` inteira |
+| 7 | **substitui** a policy `api_child` de `erp.empresa_cost_centers` (`drop` + `create`, com `to erp_app`) | era a única política do schema cujo predicado citava coluna legada. Substituída, nunca acompanhada: duas PERMISSIVE no mesmo comando combinam com OR e a mais frouxa acabaria valendo. O `to erp_app` está escrito aqui porque perdê-lo faria a política nascer para `PUBLIC` — foi um defeito real desta fatia, achado por revisão independente |
+| 8 | remove as **5 views** de nome antigo | elas LEEM as colunas legadas; `drop column` sem `cascade` recusaria enquanto existissem |
+| 9 | remove os **52 gatilhos** de espelho, por nome | as 49 tabelas alvo têm 66 gatilhos: 14 são de NEGÓCIO (auditoria, `set_updated_at`, travas de transferência) e ficam. `drop trigger` vai por nome, nunca por tabela |
+| 10 | remove as **3 funções** `erp.sincronizar_empresa*` | depois dos gatilhos, senão o `drop function` esbarra na dependência |
+| 11 | remove o **CHECK legado** `equipment_transfers_check` | explicitamente, e não de carona no `drop column`: o substituto já está de pé desde o item 6, e o que sai tem de estar inventariado |
+| 12 | remove as **52 FKs de coluna única** | coluna única não prova tenant. Quem fica são as **50 compostas** `(organization_id, empresa_*)` |
+| 13 | remove os **8 índices** legados | os oito gêmeos canônicos já existem desde a 0014, e a pré-condição 5.4 exigiu a presença de cada um: nenhum caminho de acesso se perde |
+| 14 | remove as **52 colunas** legadas | por último, quando nada mais depende delas. E aqui vale dizer o que o `drop column` sem `cascade` FAZ e o que ele NÃO faz: ele recusa por causa de **view**, e só. Índice, FK e CHECK dependentes ele remove **em silêncio**, sem exigir `cascade`. Logo, a proteção contra remoção silenciosa é o INVENTÁRIO do item 5 — nunca o `drop column` |
+| 15 | **pós-condições**: zero colunas, zero views, zero gatilhos, zero funções, **50** FKs compostas validadas, CHECK canônico presente, validado e com a FORMA normalizada conferida, nenhuma policy alcançando `PUBLIC`, `api_child` com papéis exatamente `{erp_app}`, nenhum gatilho tocando coluna legada, `erp.code_sequences` intacta | a migration confere o próprio resultado antes de deixar o commit acontecer. Verde por vacuidade não passa: cada zero tem um número esperado do outro lado |
 
 No repositório, no MESMO commit: `colunaVinculo` de `erp.empresa_cost_centers` passou de `farm_id` para
 `empresa_id` em `packages/domain/empresa-rls.mjs`, e `FASE_ESPELHO` passou de `dual` para `canonica` em
 `scripts/lib/empresa-compat-surface.mjs`. Mudar só um dos lados REPROVA — é exatamente isso que impede a
 purga de apagar a proteção em silêncio. Os testes de `upgrade-acervo` e `upgrade-rollback` **não** foram
-apagados: atravessam a purga, porque o acervo legado não deixou de ter existido.
+apagados, porque o acervo legado não deixou de ter existido — mas eles provam coisas DIFERENTES, e a
+distinção importa: `upgrade-acervo` atravessa a sequência INTEIRA (o laço final aplica tudo que ficou
+pendente, 0017 inclusive, e confere que nada sobrou); `upgrade-rollback` **não** atravessa a 0017, e não
+deveria — ele mede a janela de suspensão do gatilho do ledger DENTRO da 0014 e termina ali. A prova
+específica da 0017 são os `packages/db/test/purga-0017-*.test.ts` e o G-U5.
 
 #### O que a 0017 deliberadamente NÃO faz
 
@@ -377,7 +380,10 @@ verificável por terceiro:
 - `company-schema-sync` em fase `canonica`, verde, com número de colunas canônicas > 0;
 - o guarda de RLS verde com a política `api_child` **reescrita** e presente no `pg_policies`, com `USING` e
   `WITH CHECK` conferidos separadamente, papéis como conjunto exato e a junção pai→filho pela coluna nova;
-- `upgrade-acervo` e `upgrade-rollback` verdes atravessando a purga com acervo legado;
+- `upgrade-acervo` verde atravessando a sequência inteira com acervo legado (0017 inclusive), e
+  `upgrade-rollback` verde no que ele de fato mede — a janela do ledger na 0014, sem atravessar a 0017;
+- `purga-0017-fresh`, `purga-0017-upgrade`, `purga-0017-invariantes` e `purga-0017-concorrencia` verdes:
+  são eles, com o G-U5, a prova específica da purga;
 - version skew verde nos dois sentidos, com a base resolvida pela PR e impressa no log;
 - as categorias `TOMBSTONE` e `PROVA_HISTORICA` **ainda declaradas** — se saíram, alguma coisa foi apagada
   antes da hora.

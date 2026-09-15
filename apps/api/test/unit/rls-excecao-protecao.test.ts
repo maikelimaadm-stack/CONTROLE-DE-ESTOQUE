@@ -1,5 +1,4 @@
 import { describe, it, expect } from "vitest";
-// @ts-expect-error — classificação de RLS em JS puro, compartilhada com o gerador da matriz
 import { protecaoDaExcecao, validarProtecaoDaExcecao, TABELAS_DE_EXCECAO } from "../../../../packages/domain/empresa-rls.mjs";
 
 /**
@@ -180,8 +179,12 @@ describe("B10 · a troca da 05C-1 tem de valer nos dois lados", () => {
   });
 
   it("SSOT de volta para farm_id com a política já em empresa_id: REPROVA", () => {
-    const antiga = { ...(protecaoDaExcecao("empresa_cost_centers") as Record<string, unknown>), colunaVinculo: "farm_id" };
-    const p = (validarProtecaoDaExcecao("empresa_cost_centers", antiga, [linha()]) as string[]).join(" | ");
+    const atual = protecaoDaExcecao("empresa_cost_centers");
+    // A premissa é metade do caso: se a tabela deixasse de ser exceção declarada, `atual` viria nulo e o
+    // teste passaria a medir o nada. Falhar aqui é mais honesto do que inverter um SSOT que não existe.
+    if (!atual) throw new Error("empresa_cost_centers precisa estar declarada como exceção para este caso valer");
+    const antiga = { ...atual, colunaVinculo: "farm_id" };
+    const p = validarProtecaoDaExcecao("empresa_cost_centers", antiga, [linha()]).join(" | ");
     expect(p).toMatch(/coluna declarada \(farm_id\)/);
   });
 

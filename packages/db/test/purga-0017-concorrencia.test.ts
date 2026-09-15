@@ -42,7 +42,17 @@ const USER = "ecece000-0000-4000-8000-000000000100";
 /** Linhas por bloco de volume. Acervo pequeno demais mediria a latência do driver, não a janela de lock. */
 const VOLUME = 1200;
 
-/** O inventário legado que a purga tem de remover por inteiro — ou não remover nada. */
+/**
+ * O inventário legado que a purga tem de remover por inteiro — ou não remover nada.
+ *
+ * O QUE ESTA COMPARAÇÃO É, E O QUE ELA NÃO É. É um inventário OBSERVÁVEL: contagens de catálogo das seis
+ * classes que a 0017 toca, mais o CHECK legado e o canônico, as compostas canônicas, as policies legadas e
+ * cinco contagens de DADO (ledger, animais, movimentos, saldo bancário, contador `farm`). Quando um caso diz
+ * que a recusa "não mexeu em nada", o que está provado é que ESSE inventário permanece idêntico.
+ * NÃO é comparação byte a byte, nem hash físico de arquivos de dados ou de relações — nada disso foi medido,
+ * e afirmar isso seria vender prova que não existe. Um efeito colateral fora destas contagens passaria por
+ * aqui; o que fecha esse flanco é a pós-condição da própria migration, não este teste.
+ */
 interface Inventario {
   colunas: number; fks_legadas: number; gatilhos: number; funcoes: number; views: number;
   indices: number; check_legado: number; check_canonico: number; fks_compostas: number;
@@ -59,8 +69,11 @@ async function inventariar(alvo: Db = db): Promise<Inventario> {
       join pg_attribute a on a.attrelid=k.conrelid and a.attnum=k.conkey[1]
       where n.nspname='erp' and k.contype='f' and array_length(k.conkey,1)=1
         and a.attname in ('farm_id','origin_farm_id','destination_farm_id'))::int fks_legadas,
-    (select count(*) from pg_trigger t join pg_proc p on p.oid=t.tgfoid
-      where not t.tgisinternal and p.proname like 'sincronizar_empresa%')::int gatilhos,
+    (select count(*) from pg_trigger t
+      join pg_class ct on ct.oid=t.tgrelid join pg_namespace nt on nt.oid=ct.relnamespace
+      join pg_proc p on p.oid=t.tgfoid join pg_namespace np on np.oid=p.pronamespace
+      where not t.tgisinternal and nt.nspname='erp' and np.nspname='erp'
+        and p.proname like 'sincronizar_empresa%')::int gatilhos,
     (select count(*) from pg_proc p join pg_namespace n on n.oid=p.pronamespace
       where n.nspname='erp' and p.proname like 'sincronizar_empresa%')::int funcoes,
     (select count(*) from pg_class c join pg_namespace n on n.oid=c.relnamespace
@@ -343,7 +356,7 @@ describe("PARTE 1 — dois runners ao mesmo tempo", () => {
     expect(sqlstate(reexecucao.erro), "SQLSTATE de coluna inexistente").toBe("42703");
     expect(mensagem(reexecucao.erro), "barrado já na conferência do acervo, que lê as colunas legadas")
       .toMatch(/column "(farm_id|origin_farm_id|destination_farm_id)" does not exist/);
-    expect(await inventariar(), "a recusa não mexeu em nada").toEqual(depois);
+    expect(await inventariar(), "o inventário observável coberto por este gate permanece idêntico").toEqual(depois);
 
     // E o runner de verdade, na mesma situação, nem chega a abrir o arquivo: a 0017 está no ledger.
     await expect(migrate(db, () => {})).resolves.toEqual([]);

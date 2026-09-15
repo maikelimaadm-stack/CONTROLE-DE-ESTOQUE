@@ -5,7 +5,6 @@ import path from "node:path";
 import { createPool, type Db, type Tx } from "../src/pool.js";
 import { migrate, resetSchema, listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
 import { TEST_URL } from "./setup.js";
-// @ts-expect-error — SSOT das dispensas de FK composta em JS puro, compartilhado com o gerador da matriz
 import { SEM_FK_COMPOSTA_DECLARADA } from "../../domain/empresa-rls.mjs";
 
 /**

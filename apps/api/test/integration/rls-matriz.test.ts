@@ -1,6 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, type Db } from "@agro/db";
-// @ts-expect-error — classificação em JS puro, compartilhada com o gerador da matriz
 import { TABELAS_DE_EXCECAO, SEM_FK_COMPOSTA_DECLARADA, protecaoDaExcecao, validarProtecaoDaExcecao, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
 // @ts-expect-error — contrato de fase em JS puro, compartilhado com o gate de linha de comando
 import { conferirInvarianteDeTransferencia } from "../../../../scripts/lib/espelho-empresa.mjs";

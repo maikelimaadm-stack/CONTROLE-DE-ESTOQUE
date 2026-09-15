@@ -479,12 +479,23 @@ fica preparada para receber esse valor, do agente que mede:
 | `node apps/api/dist/migrate.js` contra banco na `0016`, aplicando a `0017` — 5 execuções, laboratório local | **451–476 ms** (mediana 460 ms) | **300 s** | PRE-BASE2-05C-1 |
 | o mesmo comando sem nada pendente (controle) | **381 ms** | — | PRE-BASE2-05C-1 |
 
+**Quatro coisas diferentes, que não podem ser lidas como uma só:**
+
+1. **Tempo NORMAL medido** — 451–476 ms (mediana 460 ms) aplicando a `0017`, 381 ms sem nada pendente.
+   É uma medição de laboratório local, não uma promessa sobre produção.
+2. **`lock_timeout` = 2 s** — teto POR COMANDO dentro da migration. Não é teto da janela nem da transação.
+3. **Não existe teto da transação nem da janela SQL.** Em lugar nenhum. O pior caso teórico é 2 s × número
+   de comandos que esperam, e são cerca de 170 comandos — todos com `ACCESS EXCLUSIVE` retido.
+4. **Não existe teto EXTERNO hoje:** `preDeployTimeoutSeconds = null`.
+
 **Por que 300 s, e não um número colado no tempo medido.** O teto não existe para caber na execução
-normal: existe para matar a execução que TRAVOU. O que ele precisa cobrir, com folga, é a soma de
-(a) a purga em si, que no pior caso de disputa é 2 s por comando que espera — e são cerca de 170 comandos;
+normal: existe para matar a execução que TRAVOU — é **contenção operacional, não promessa de duração**.
+O que ele precisa cobrir, com folga, é a soma de (a) o pior caso de disputa do item 3 acima;
 (b) a diferença entre o laboratório e a produção, que é cross-region (Railway `iad` → Supabase `sa-east-1`)
-e tem muito mais dado; (c) `seedPermissions`, que roda em todo deploy. 300 s é ~650× a medição e continua
-sendo uma fração do que hoje é **infinito**.
+e tem muito mais dado; (c) `seedPermissions`, que roda em todo deploy; (d) a validação do CHECK canônico,
+o único trabalho da janela que cresce com dado — medido em ~120 ms por milhão de linhas de
+`erp.equipment_transfers`, o que mesmo com dez milhões de linhas continua na casa do segundo.
+300 s é ~650× a medição normal e continua sendo uma fração do que hoje é **infinito**.
 
 **Se preferir mais apertado:** 120 s ainda é ~260× a medição e alinha com o `statement_timeout` do
 servidor. Abaixo disso o risco deixa de ser "matar o travado" e passa a ser "matar o lento".
@@ -546,8 +557,8 @@ lock_timeout` curto como rede de segurança. Nunca fragmentada, nunca com `commi
 nunca com `create index concurrently` (proibido dentro de transação) e nunca com `cascade`.
 
 **A política deixou de ser plano: é o arquivo.** `supabase/migrations/0017_purge_farm_legacy.sql` implementa
-os quatro itens — trava de concorrência (item 1), `set local lock_timeout = '2s'` (item 2), `lock table …
-in access exclusive mode nowait` sobre 55 relações em ordem alfabética (item 3) e nenhum `commit`,
+os quatro itens — trava de concorrência (item 1), `set local lock_timeout = '2s'` (item 3), `lock table …
+in access exclusive mode nowait` sobre 55 relações em ordem alfabética (item 4) e nenhum `commit`,
 `concurrently` ou `cascade` no corpo. Conferir é ler o arquivo; ele nomeia cada objeto que remove.
 
 Por que, agora medido sobre a `0017` VERSIONADA — e não mais sobre o rascunho que a decisão 122 usava:
@@ -559,11 +570,29 @@ Por que, agora medido sobre a `0017` VERSIONADA — e não mais sobre o rascunho
 | 6 000 000 de linhas | 1463 ms | **106 ms** |
 
 A leitura importante é a diferença entre as duas colunas. A TRANSAÇÃO escala com o acervo, porque a
-conferência par a par varre tabela inteira 52 vezes. A JANELA não escala — fica plana em torno de 110 ms —
-porque essa conferência foi deliberadamente posta ANTES do `lock table` (item 2 da migration). É o que
+conferência par a par varre tabela inteira 52 vezes. A JANELA não acompanha essa conferência — fica plana em
+torno de 110 ms — porque ela foi deliberadamente posta ANTES do `lock table` (item 2 da migration). É o que
 separa "a purga demora mais em quem tem mais dado" de "a purga BLOQUEIA mais em quem tem mais dado": só a
-primeira é aceitável. A medição anterior, de mediana ~71 ms, era de um rascumo não versionado e de um banco
+primeira é aceitável. A medição anterior, de mediana ~71 ms, era de um rascunho não versionado e de um banco
 pequeno; foi substituída por esta, que é reproduzível contra o arquivo que está no repositório.
+
+**E aqui vale ser exato sobre o que essa tabela NÃO prova.** O volume acima foi montado em
+`erp.dfe_documents`. Ela mede a conferência do acervo, que saiu da janela — e só isso. Dizer a partir dela
+que "a janela não escala com o acervo" seria generalizar além da evidência, porque sobrou UM trabalho
+proporcional a dado DENTRO da janela: o `add constraint … check` do item 6 valida a
+`erp.equipment_transfers` inteira, e essa tabela é variável. Medido, com carga na PRÓPRIA
+`equipment_transfers` (mesmo método, mesmo arquivo versionado):
+
+| Linhas em `erp.equipment_transfers` | Transação inteira | **Janela de `ACCESS EXCLUSIVE`** |
+| --- | --- | --- |
+| 0 | 166,5 ms | **141,7 ms** |
+| 200 000 | 295,3 ms | **142,9 ms** |
+| 1 000 000 | 848,4 ms | **261,2 ms** |
+
+Ou seja: a janela **escala com `erp.equipment_transfers`**, na ordem de ~120 ms por milhão de linhas, e não
+escala com o resto do acervo. A afirmação correta é essa, e não a versão universal. Hoje a tabela é
+pequena em produção; se um dia não for, é ELA — e nenhuma outra — que decide o tamanho da janela, e a
+conta acima é o que se deve refazer antes da janela operacional.
 
 O `lock table` da `0017` nomeia **55**
 relações: as 49 tabelas de escopo, as 5 views de nome antigo e `erp.empresas` — esta última nomeada de
@@ -588,7 +617,7 @@ purga então **passa** pelo `lock table`, reescreve a policy, derruba os 52 gati
 Duas consequências, as duas obrigatórias:
 
 1. **`set local lock_timeout = '2s'` no topo da migration não é rede, é requisito — e não é teto de
-   janela.** *(Implementado: `0017`, item 2.)* Com ele, CADA espera por lock morre em 2 s, com `57014`, rollback total e ledger limpo
+   janela.** *(Implementado: `0017`, item 3.)* Com ele, CADA espera por lock morre em 2 s, com `57014`, rollback total e ledger limpo
    (medido). Sem ele, uma única espera já vira 120 s de indisponibilidade. Mas `lock_timeout` é **por
    comando**, não por transação: a purga adquire mais de trezentos locks de objeto DEPOIS do `lock table`,
    e o pior caso teórico é 2 s × número de comandos que esperam, todo ele com `ACCESS EXCLUSIVE` retido

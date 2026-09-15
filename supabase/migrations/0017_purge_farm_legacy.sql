@@ -601,6 +601,12 @@ end $$;
 -- empresa para ela mesma desapareceria junto — por isso o canônico nasce ANTES, e já validado: como o
 -- `add constraint ... check` roda a verificação na hora e a transação já segura ACCESS EXCLUSIVE na
 -- tabela, não existe janela entre criar e validar.
+--
+-- E este é o ÚNICO trabalho proporcional a DADO que roda dentro da janela: a validação varre
+-- erp.equipment_transfers inteira. Medido em banco descartável, com o arquivo versionado: 0 linhas ->
+-- janela 141,7 ms; 200 000 -> 142,9 ms; 1 000 000 -> 261,2 ms. Ou seja, a janela cresce com ESTA tabela,
+-- na ordem de ~120 ms por milhão de linhas, e não com o resto do acervo (a conferência par a par saiu da
+-- janela na seção 2). Quem for abrir a janela operacional mede ESTA tabela, e nenhuma outra.
 alter table erp.equipment_transfers
   add constraint equipment_transfers_empresa_origem_destino_check
   check (empresa_origem_id <> empresa_destino_id);
