@@ -108,8 +108,11 @@ gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com pre
 3. **Uma única versão da API servindo** — condição da 05C-2, não da 05C-1, mas registrada aqui porque é o
    gate que as pessoas esquecem entre as duas.
 4. **Gates verdes na PR da 05C-1**, incluindo os instrumentos calibrados na 05C-0: `company-schema-sync` em
-   fase `canonica`, guarda de RLS com a política `api_child` reescrita, `upgrade-acervo` e
-   `upgrade-rollback` atravessando a purga, version skew nos dois sentidos com a base impressa no log —
+   fase `canonica`, guarda de RLS com a política `api_child` reescrita, `upgrade-acervo` aplicando a
+   sequência INTEIRA (o laço final não para na 0016: aplica tudo que ficou pendente, 0017 inclusive, e
+   confere que nada sobrou) — `upgrade-rollback` NÃO atravessa a purga, e não deveria: ele prova a janela
+   de suspensão do gatilho do ledger dentro da 0014 e termina ali — version skew nos dois sentidos com a
+   base impressa no log —
    mais os testes próprios da purga (`packages/db/test/purga-0017-*.test.ts`: base nova, upgrade com
    acervo, invariantes estruturais e concorrência).
 5. **G-U5 executado e verde** (`scripts/gate-purga-0017-runtime-anterior.mjs`) — o binário da API que

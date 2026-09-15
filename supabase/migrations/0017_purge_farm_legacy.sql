@@ -32,9 +32,13 @@
 -- O QUE ESTA MIGRATION NÃO FAZ, de propósito:
 --   - não toca em `erp.code_sequences` nem em `erp.next_code`. O contador de transição continua com
 --     `entity = 'farm'`. Trocá-lo é a 05C-2, outra fatia;
---   - não remove nada por conter a palavra "farm": `erp.farm_transfers`, `animal_farm_transfer`,
---     `batch_farm_transfer`, preferências de usuário, nomes de fazenda em cadastro de cliente e chaves de
---     permissão continuam onde estão. O escopo é a PONTE FÍSICA, não o vocabulário;
+--   - não remove nada por conter a palavra "farm". Nenhuma das grafias abaixo é objeto desta purga, e
+--     nenhuma delas é uma relação de ponte: `erp.client_profiles.farm_name` é uma COLUNA de cadastro de
+--     cliente (0002) e continua; `movement_type = 'farm_transfer'` (0006) é VALOR de domínio gravado em
+--     linhas; `farm_transfers.*`, `animal_farm_transfer.*` e `batch_farm_transfer.*` são CHAVES DE
+--     PERMISSÃO — linhas de `erp.role_permissions`, não tabelas (`erp.farm_transfers` nunca existiu).
+--     Renomear qualquer uma delas é governança de DADO (DATA-GOV/05C-2), não esta fatia. O escopo aqui é
+--     a PONTE FÍSICA, não o vocabulário;
 --   - não cria índice novo: os oito índices legados já têm gêmeo canônico criado pela 0014, e a
 --     pré-condição abaixo exige que os oito gêmeos existam ANTES de remover os legados.
 
@@ -56,437 +60,26 @@ begin
 end $$;
 
 -- ---------------------------------------------------------------------------------------------------
--- 2. TETO POR COMANDO
+-- 2. CONFERÊNCIA DO ACERVO — ANTES DO LOCK, DE PROPÓSITO
 -- ---------------------------------------------------------------------------------------------------
--- `lock_timeout` aborta CADA espera por lock que passe de 2 s — de tabela, de índice ou de objeto de
--- catálogo. Ele NÃO é teto da janela inteira: a transação pode acumular várias esperas de até 2 s.
--- Quem reduz a chance de ENTRAR numa espera é o porteiro humano de pré-deploy
--- (docs/PRE-BASE2-05C-1-PREFLIGHT.md, P7.1), não este comando.
-set local lock_timeout = '2s';
-
--- ---------------------------------------------------------------------------------------------------
--- 3. PRÉ-AQUISIÇÃO DETERMINÍSTICA DOS LOCKS DE RELAÇÃO
--- ---------------------------------------------------------------------------------------------------
--- Ordem alfabética, sempre a mesma, para que duas execuções nunca se cruzem em ordens opostas.
--- NOWAIT: se qualquer uma das relações estiver ocupada, a migration falha em milissegundos com 55P03 e a
--- transação inteira volta atrás, em vez de ficar pendurada segurando ACCESS EXCLUSIVE nas demais.
--- A view erp.farms arrasta erp.empresas junto, que por isso também está nomeada aqui.
-lock table
-     erp.animal_handlings,
-     erp.animal_movements,
-     erp.animal_retroactive_costs,
-     erp.animals,
-     erp.areas,
-     erp.authorizer_empresas,
-     erp.authorizer_farms,
-     erp.bank_account_empresas,
-     erp.bank_account_farms,
-     erp.bank_movements,
-     erp.batches,
-     erp.breeding_seasons,
-     erp.budget_plannings,
-     erp.contracts,
-     erp.devolutions,
-     erp.dfe_documents,
-     erp.diet_batches,
-     erp.documents,
-     erp.earnings,
-     erp.empresa_cost_centers,
-     erp.empresas,
-     erp.equipment_transfers,
-     erp.equipments,
-     erp.farm_cost_centers,
-     erp.farms,
-     erp.feed_batches,
-     erp.feed_deliveries,
-     erp.feedlot_yards,
-     erp.financial_freezes,
-     erp.financial_titles,
-     erp.fuel_supplies,
-     erp.grazing_modules,
-     erp.herd_lots,
-     erp.input_entries,
-     erp.invoices,
-     erp.journal_entries,
-     erp.livestock_plannings,
-     erp.maintenances,
-     erp.opening_balances,
-     erp.processings,
-     erp.proprietary_empresas,
-     erp.proprietary_farms,
-     erp.purchase_requests,
-     erp.rainfalls,
-     erp.requisitions,
-     erp.salary_advances,
-     erp.sales_documents,
-     erp.service_orders,
-     erp.stock_corrections,
-     erp.stock_movements,
-     erp.stock_writeoffs,
-     erp.trough_readings,
-     erp.warehouse_transfers,
-     erp.warehouses,
-     erp.weighings
-  in access exclusive mode nowait;
-
--- ---------------------------------------------------------------------------------------------------
--- 4. PRÉ-CONDIÇÕES — a migration para se o banco não for o que ela pressupõe
--- ---------------------------------------------------------------------------------------------------
-do $$
-declare
-  faltando text;
-  sobrando text;
-begin
-  -- 4.1 colunas legadas: o catálogo tem exatamente as 52 listadas?
-  with esperado(tabela, coluna) as (values
-    ('animal_handlings', 'farm_id'),
-    ('animal_movements', 'destination_farm_id'),
-    ('animal_movements', 'farm_id'),
-    ('animal_retroactive_costs', 'farm_id'),
-    ('animals', 'farm_id'),
-    ('areas', 'farm_id'),
-    ('authorizer_empresas', 'farm_id'),
-    ('bank_account_empresas', 'farm_id'),
-    ('bank_movements', 'farm_id'),
-    ('batches', 'farm_id'),
-    ('breeding_seasons', 'farm_id'),
-    ('budget_plannings', 'farm_id'),
-    ('contracts', 'farm_id'),
-    ('devolutions', 'farm_id'),
-    ('dfe_documents', 'farm_id'),
-    ('diet_batches', 'farm_id'),
-    ('documents', 'farm_id'),
-    ('earnings', 'farm_id'),
-    ('empresa_cost_centers', 'farm_id'),
-    ('equipment_transfers', 'destination_farm_id'),
-    ('equipment_transfers', 'origin_farm_id'),
-    ('equipments', 'farm_id'),
-    ('feed_batches', 'farm_id'),
-    ('feed_deliveries', 'farm_id'),
-    ('feedlot_yards', 'farm_id'),
-    ('financial_freezes', 'farm_id'),
-    ('financial_titles', 'farm_id'),
-    ('fuel_supplies', 'farm_id'),
-    ('grazing_modules', 'farm_id'),
-    ('herd_lots', 'farm_id'),
-    ('input_entries', 'farm_id'),
-    ('invoices', 'farm_id'),
-    ('journal_entries', 'farm_id'),
-    ('livestock_plannings', 'farm_id'),
-    ('maintenances', 'farm_id'),
-    ('opening_balances', 'farm_id'),
-    ('processings', 'farm_id'),
-    ('proprietary_empresas', 'farm_id'),
-    ('purchase_requests', 'farm_id'),
-    ('rainfalls', 'farm_id'),
-    ('requisitions', 'farm_id'),
-    ('salary_advances', 'farm_id'),
-    ('sales_documents', 'farm_id'),
-    ('service_orders', 'farm_id'),
-    ('stock_corrections', 'farm_id'),
-    ('stock_movements', 'farm_id'),
-    ('stock_writeoffs', 'farm_id'),
-    ('trough_readings', 'farm_id'),
-    ('warehouse_transfers', 'destination_farm_id'),
-    ('warehouse_transfers', 'origin_farm_id'),
-    ('warehouses', 'farm_id'),
-    ('weighings', 'farm_id')
-  ), atual as (
-    select c.relname::text, a.attname::text from pg_attribute a
-      join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
-     where n.nspname = 'erp' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
-       and a.attname in ('farm_id','origin_farm_id','destination_farm_id')
-  )
-  select string_agg(format('%s.%s', tabela, coluna), ', '),
-         (select string_agg(format('%s.%s', relname, attname), ', ')
-            from atual a2 where not exists (select 1 from esperado e2
-                 where e2.tabela = a2.relname and e2.coluna = a2.attname))
-    into faltando, sobrando
-    from esperado e where not exists (select 1 from atual a where a.relname = e.tabela and a.attname = e.coluna);
-  if faltando is not null or sobrando is not null then
-    raise exception 'PRE-BASE2-05C-1: inventario de COLUNAS legadas divergente. Faltando no banco: [%]. Presente no banco e fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
-  end if;
-end $$;
-
-do $$
-declare faltando text; sobrando text;
-begin
-  -- 4.2 FKs legadas de coluna única
-  with esperado(tabela, restricao) as (values
-    ('animal_handlings', 'animal_handlings_farm_id_fkey'),
-    ('animal_movements', 'animal_movements_destination_farm_id_fkey'),
-    ('animal_movements', 'animal_movements_farm_id_fkey'),
-    ('animal_retroactive_costs', 'animal_retroactive_costs_farm_id_fkey'),
-    ('animals', 'animals_farm_id_fkey'),
-    ('areas', 'areas_farm_id_fkey'),
-    ('authorizer_empresas', 'authorizer_farms_farm_id_fkey'),
-    ('bank_account_empresas', 'bank_account_farms_farm_id_fkey'),
-    ('bank_movements', 'bank_movements_farm_id_fkey'),
-    ('batches', 'batches_farm_id_fkey'),
-    ('breeding_seasons', 'breeding_seasons_farm_id_fkey'),
-    ('budget_plannings', 'budget_plannings_farm_id_fkey'),
-    ('contracts', 'contracts_farm_id_fkey'),
-    ('devolutions', 'devolutions_farm_id_fkey'),
-    ('dfe_documents', 'dfe_documents_farm_id_fkey'),
-    ('diet_batches', 'diet_batches_farm_id_fkey'),
-    ('documents', 'documents_farm_id_fkey'),
-    ('earnings', 'earnings_farm_id_fkey'),
-    ('empresa_cost_centers', 'farm_cost_centers_farm_id_fkey'),
-    ('equipment_transfers', 'equipment_transfers_destination_farm_id_fkey'),
-    ('equipment_transfers', 'equipment_transfers_origin_farm_id_fkey'),
-    ('equipments', 'equipments_farm_id_fkey'),
-    ('feed_batches', 'feed_batches_farm_id_fkey'),
-    ('feed_deliveries', 'feed_deliveries_farm_id_fkey'),
-    ('feedlot_yards', 'feedlot_yards_farm_id_fkey'),
-    ('financial_freezes', 'financial_freezes_farm_id_fkey'),
-    ('financial_titles', 'financial_titles_farm_id_fkey'),
-    ('fuel_supplies', 'fuel_supplies_farm_id_fkey'),
-    ('grazing_modules', 'grazing_modules_farm_id_fkey'),
-    ('herd_lots', 'herd_lots_farm_id_fkey'),
-    ('input_entries', 'input_entries_farm_id_fkey'),
-    ('invoices', 'invoices_farm_id_fkey'),
-    ('journal_entries', 'journal_entries_farm_id_fkey'),
-    ('livestock_plannings', 'livestock_plannings_farm_id_fkey'),
-    ('maintenances', 'maintenances_farm_id_fkey'),
-    ('opening_balances', 'opening_balances_farm_id_fkey'),
-    ('processings', 'processings_farm_id_fkey'),
-    ('proprietary_empresas', 'proprietary_farms_farm_id_fkey'),
-    ('purchase_requests', 'purchase_requests_farm_id_fkey'),
-    ('rainfalls', 'rainfalls_farm_id_fkey'),
-    ('requisitions', 'requisitions_farm_id_fkey'),
-    ('salary_advances', 'salary_advances_farm_id_fkey'),
-    ('sales_documents', 'sales_documents_farm_id_fkey'),
-    ('service_orders', 'service_orders_farm_id_fkey'),
-    ('stock_corrections', 'stock_corrections_farm_id_fkey'),
-    ('stock_movements', 'stock_movements_farm_id_fkey'),
-    ('stock_writeoffs', 'stock_writeoffs_farm_id_fkey'),
-    ('trough_readings', 'trough_readings_farm_id_fkey'),
-    ('warehouse_transfers', 'warehouse_transfers_destination_farm_id_fkey'),
-    ('warehouse_transfers', 'warehouse_transfers_origin_farm_id_fkey'),
-    ('warehouses', 'warehouses_farm_id_fkey'),
-    ('weighings', 'weighings_farm_id_fkey')
-  ), atual as (
-    select c.relname::text, k.conname::text from pg_constraint k
-      join pg_class c on c.oid = k.conrelid join pg_namespace n on n.oid = c.relnamespace
-      join pg_attribute a on a.attrelid = k.conrelid and a.attnum = k.conkey[1]
-     where n.nspname = 'erp' and k.contype = 'f' and array_length(k.conkey,1) = 1
-       and a.attname in ('farm_id','origin_farm_id','destination_farm_id')
-  )
-  select string_agg(format('%s.%s', tabela, restricao), ', '),
-         (select string_agg(format('%s.%s', relname, conname), ', ')
-            from atual a2 where not exists (select 1 from esperado e2
-                 where e2.tabela = a2.relname and e2.restricao = a2.conname))
-    into faltando, sobrando
-    from esperado e where not exists (select 1 from atual a where a.relname = e.tabela and a.conname = e.restricao);
-  if faltando is not null or sobrando is not null then
-    raise exception 'PRE-BASE2-05C-1: inventario de FKs legadas divergente. Faltando: [%]. Fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
-  end if;
-end $$;
-
-do $$
-declare faltando text; sobrando text;
-begin
-  -- 4.3 gatilhos de espelho
-  with esperado(tabela, gatilho) as (values
-    ('animal_handlings', 'trg_sync_empresa_id'),
-    ('animal_movements', 'trg_sync_empresa_destino_id'),
-    ('animal_movements', 'trg_sync_empresa_id'),
-    ('animal_retroactive_costs', 'trg_sync_empresa_id'),
-    ('animals', 'trg_sync_empresa_id'),
-    ('areas', 'trg_sync_empresa_id'),
-    ('authorizer_empresas', 'trg_sync_empresa_id'),
-    ('bank_account_empresas', 'trg_sync_empresa_id'),
-    ('bank_movements', 'trg_sync_empresa_id'),
-    ('batches', 'trg_sync_empresa_id'),
-    ('breeding_seasons', 'trg_sync_empresa_id'),
-    ('budget_plannings', 'trg_sync_empresa_id'),
-    ('contracts', 'trg_sync_empresa_id'),
-    ('devolutions', 'trg_sync_empresa_id'),
-    ('dfe_documents', 'trg_sync_empresa_id'),
-    ('diet_batches', 'trg_sync_empresa_id'),
-    ('documents', 'trg_sync_empresa_id'),
-    ('earnings', 'trg_sync_empresa_id'),
-    ('empresa_cost_centers', 'trg_sync_empresa_id'),
-    ('equipment_transfers', 'trg_sync_empresa_destino_id'),
-    ('equipment_transfers', 'trg_sync_empresa_origem_id'),
-    ('equipments', 'trg_sync_empresa_id'),
-    ('feed_batches', 'trg_sync_empresa_id'),
-    ('feed_deliveries', 'trg_sync_empresa_id'),
-    ('feedlot_yards', 'trg_sync_empresa_id'),
-    ('financial_freezes', 'trg_sync_empresa_id'),
-    ('financial_titles', 'trg_sync_empresa_id'),
-    ('fuel_supplies', 'trg_sync_empresa_id'),
-    ('grazing_modules', 'trg_sync_empresa_id'),
-    ('herd_lots', 'trg_sync_empresa_id'),
-    ('input_entries', 'trg_sync_empresa_id'),
-    ('invoices', 'trg_sync_empresa_id'),
-    ('journal_entries', 'trg_sync_empresa_id'),
-    ('livestock_plannings', 'trg_sync_empresa_id'),
-    ('maintenances', 'trg_sync_empresa_id'),
-    ('opening_balances', 'trg_sync_empresa_id'),
-    ('processings', 'trg_sync_empresa_id'),
-    ('proprietary_empresas', 'trg_sync_empresa_id'),
-    ('purchase_requests', 'trg_sync_empresa_id'),
-    ('rainfalls', 'trg_sync_empresa_id'),
-    ('requisitions', 'trg_sync_empresa_id'),
-    ('salary_advances', 'trg_sync_empresa_id'),
-    ('sales_documents', 'trg_sync_empresa_id'),
-    ('service_orders', 'trg_sync_empresa_id'),
-    ('stock_corrections', 'trg_sync_empresa_id'),
-    ('stock_movements', 'trg_sync_empresa_id'),
-    ('stock_writeoffs', 'trg_sync_empresa_id'),
-    ('trough_readings', 'trg_sync_empresa_id'),
-    ('warehouse_transfers', 'trg_sync_empresa_destino_id'),
-    ('warehouse_transfers', 'trg_sync_empresa_origem_id'),
-    ('warehouses', 'trg_sync_empresa_id'),
-    ('weighings', 'trg_sync_empresa_id')
-  ), atual as (
-    select c.relname::text, t.tgname::text from pg_trigger t
-      join pg_class c on c.oid = t.tgrelid join pg_proc p on p.oid = t.tgfoid
-     where not t.tgisinternal and p.proname like 'sincronizar_empresa%'
-  )
-  select string_agg(format('%s.%s', tabela, gatilho), ', '),
-         (select string_agg(format('%s.%s', relname, tgname), ', ')
-            from atual a2 where not exists (select 1 from esperado e2
-                 where e2.tabela = a2.relname and e2.gatilho = a2.tgname))
-    into faltando, sobrando
-    from esperado e where not exists (select 1 from atual a where a.relname = e.tabela and a.tgname = e.gatilho);
-  if faltando is not null or sobrando is not null then
-    raise exception 'PRE-BASE2-05C-1: inventario de GATILHOS de espelho divergente. Faltando: [%]. Fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
-  end if;
-end $$;
-
-do $$
-declare faltando text; sobrando text; sem_gemeo text;
-begin
-  -- 4.4 índices legados, E o gêmeo canônico de cada um tem de já existir
-  with esperado(indice) as (values
-    ('animals_organization_id_farm_id_status_idx'),
-    ('batches_organization_id_farm_id_status_idx'),
-    ('equipments_organization_id_farm_id_status_idx'),
-    ('financial_titles_organization_id_farm_id_due_date_idx'),
-    ('invoices_organization_id_farm_id_emission_date_idx'),
-    ('purchase_requests_organization_id_status_farm_id_idx'),
-    ('requisitions_organization_id_farm_id_requisition_date_idx'),
-    ('warehouses_organization_id_farm_id_idx')
-  ), atual as (
-    select ic.relname::text from pg_index i
-      join pg_class c on c.oid = i.indrelid join pg_class ic on ic.oid = i.indexrelid
-      join pg_namespace n on n.oid = c.relnamespace
-     where n.nspname = 'erp' and exists (
-       select 1 from pg_attribute a where a.attrelid = i.indrelid and a.attnum = any(i.indkey::int2[])
-         and a.attname in ('farm_id','origin_farm_id','destination_farm_id'))
-  )
-  select string_agg(indice, ', '),
-         (select string_agg(relname, ', ') from atual a2
-           where not exists (select 1 from esperado e2 where e2.indice = a2.relname))
-    into faltando, sobrando
-    from esperado e where not exists (select 1 from atual a where a.relname = e.indice);
-  if faltando is not null or sobrando is not null then
-    raise exception 'PRE-BASE2-05C-1: inventario de INDICES legados divergente. Faltando: [%]. Fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
-  end if;
-
-  -- o gêmeo canônico: mesma tabela, mesma definição com a coluna canônica no lugar da legada
-  select string_agg(l.idx, ', ') into sem_gemeo
-    from (select c.relname tab, ic.relname idx,
-                 replace(replace(replace(replace(pg_get_indexdef(i.indexrelid), ic.relname, '<idx>'),
-                   'destination_farm_id','empresa_destino_id'),'origin_farm_id','empresa_origem_id'),
-                   'farm_id','empresa_id') as def_canonica
-            from pg_index i join pg_class c on c.oid = i.indrelid join pg_class ic on ic.oid = i.indexrelid
-            join pg_namespace n on n.oid = c.relnamespace
-           where n.nspname = 'erp' and exists (
-             select 1 from pg_attribute a where a.attrelid = i.indrelid and a.attnum = any(i.indkey::int2[])
-               and a.attname in ('farm_id','origin_farm_id','destination_farm_id'))) l
-   where not exists (
-     select 1 from pg_index i2 join pg_class c2 on c2.oid = i2.indrelid
-       join pg_class ic2 on ic2.oid = i2.indexrelid join pg_namespace n2 on n2.oid = c2.relnamespace
-      where n2.nspname = 'erp' and c2.relname = l.tab and ic2.relname <> l.idx
-        -- comparação da definição INTEIRA, só com o NOME do índice normalizado: assim `unique`, o método
-        -- (`using btree`) e um eventual `where` entram na conta. Comparar apenas a lista de colunas
-        -- aceitaria como gêmeo um índice de método diferente — e a purga apagaria um caminho de acesso.
-        and replace(pg_get_indexdef(i2.indexrelid), ic2.relname, '<idx>') = l.def_canonica);
-  if sem_gemeo is not null then
-    raise exception 'PRE-BASE2-05C-1: indice legado SEM gemeo canonico: [%]. Remover aqui apagaria um caminho de acesso.', sem_gemeo;
-  end if;
-end $$;
-
-do $$
-declare faltando text; sobrando text;
-begin
-  -- 4.4b CHECKs que dependem de coluna legada.
-  -- Esta pré-condição faltava, e a ausência dela era um buraco real: `drop column` apaga um CHECK
-  -- dependente EM SILÊNCIO, sem `cascade`. Um CHECK legado acrescentado depois desta lista sumiria sem
-  -- deixar rastro — inventariado aqui, ele ABORTA a purga.
-  -- A detecção é ESTRUTURAL: `conkey` de um CHECK lista as colunas que ele referencia, então não depende
-  -- de casar texto de `pg_get_constraintdef` (que muda com o search_path).
-  with esperado(tabela, restricao) as (values
-    ('equipment_transfers', 'equipment_transfers_check')
-  ), atual as (
-    select c.relname::text, k.conname::text from pg_constraint k
-      join pg_class c on c.oid = k.conrelid join pg_namespace n on n.oid = c.relnamespace
-     where n.nspname = 'erp' and k.contype = 'c'
-       and exists (select 1 from unnest(k.conkey) ck
-                     join pg_attribute a on a.attrelid = k.conrelid and a.attnum = ck
-                    where a.attname in ('farm_id','origin_farm_id','destination_farm_id'))
-  )
-  select string_agg(format('%s.%s', tabela, restricao), ', '),
-         (select string_agg(format('%s.%s', relname, conname), ', ')
-            from atual a2 where not exists (select 1 from esperado e2
-                 where e2.tabela = a2.relname and e2.restricao = a2.conname))
-    into faltando, sobrando
-    from esperado e where not exists (select 1 from atual a where a.relname = e.tabela and a.conname = e.restricao);
-  if faltando is not null or sobrando is not null then
-    raise exception 'PRE-BASE2-05C-1: inventario de CHECKs sobre coluna legada divergente. Faltando: [%]. Fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
-  end if;
-end $$;
-
-do $$
-declare sobrando text;
-begin
-  -- 4.4c GATILHOS que tocam coluna legada por QUALQUER nome de função.
-  -- A pré-condição 4.3 casa pelo nome `sincronizar_empresa%`, e o red team mostrou o furo: um gatilho de
-  -- espelho criado com função de outro nome atravessava a purga inteira e ficava no catálogo apontando
-  -- para uma coluna que não existe mais. Aqui a busca é pelo CORPO da função, não pelo nome dela.
-  select string_agg(format('%s.%s (funcao %s)', c.relname, t.tgname, p.proname), ', ') into sobrando
-    from pg_trigger t
-    join pg_class c on c.oid = t.tgrelid
-    join pg_namespace n on n.oid = c.relnamespace
-    join pg_proc p on p.oid = t.tgfoid
-   where n.nspname = 'erp' and not t.tgisinternal
-     and p.prosrc ~ '(farm_id|origin_farm_id|destination_farm_id)'
-     and p.proname not like 'sincronizar_empresa%';
-  if sobrando is not null then
-    raise exception 'PRE-BASE2-05C-1: gatilho que toca coluna legada fora da lista de espelho: [%]. A purga deixaria um gatilho apontando para coluna inexistente.', sobrando;
-  end if;
-end $$;
-
-do $$
-declare v text; f text;
-begin
-  -- 4.5 as cinco views e as três funções de sincronia existem
-  select string_agg(e.nome, ', ') into v from (values ('authorizer_farms'),('bank_account_farms'),
-    ('farm_cost_centers'),('farms'),('proprietary_farms')) e(nome)
-   where not exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
-                      where n.nspname = 'erp' and c.relkind = 'v' and c.relname = e.nome);
-  if v is not null then
-    raise exception 'PRE-BASE2-05C-1: view legada ausente: [%].', v;
-  end if;
-  select string_agg(e.nome, ', ') into f from (values ('sincronizar_empresa_destino_legado'),
-    ('sincronizar_empresa_legado'),('sincronizar_empresa_origem_legado')) e(nome)
-   where not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-                      where n.nspname = 'erp' and p.proname = e.nome);
-  if f is not null then
-    raise exception 'PRE-BASE2-05C-1: funcao de sincronia ausente: [%].', f;
-  end if;
-end $$;
+-- Estas duas conferências varrem TABELA INTEIRA, 52 vezes. Numa base pequena isso custa dezenas de
+-- milissegundos; numa base grande, segundos — e o custo cresce com o acervo, não com o trabalho da purga.
+-- Se rodassem DEPOIS do `lock table`, a janela de ACCESS EXCLUSIVE herdaria essa escala: a purga ficaria
+-- mais cara para quem tem mais dado, exatamente ao contrário do que se quer numa migration destrutiva.
+--
+-- Rodar antes é seguro, e o motivo é o próprio objeto que está sendo removido: enquanto os gatilhos de
+-- espelho existem — e eles só caem no item 8, bem depois daqui —, nenhuma escrita consegue criar
+-- divergência entre o par legado e o canônico; a 0014 RECUSA a escrita divergente em vez de resolvê-la.
+-- Então o que for verdade nesta leitura continua verdade quando o lock chegar. A trava de concorrência do
+-- item 1 já garante que nenhuma outra execução desta mesma migration esteja no meio do caminho.
 
 do $$
 declare par record; divergentes bigint; exemplos text; total bigint := 0;
 begin
-  -- 4.6 FAIL CLOSED SOBRE O ACERVO: nenhum par legado/canônico pode divergir.
+  -- 2.1 FAIL CLOSED SOBRE O ACERVO: nenhum par legado/canônico pode divergir.
   -- Se divergir, a purga apagaria o lado que talvez fosse o certo. A decisão é humana: a migration PARA,
   -- com tabela, coluna, contagem e ids de exemplo. Nunca corrige em silêncio.
-  -- A lista é ESTÁTICA (a mesma do item 4.1); `format` com %I só formata identificadores dessa lista.
+  -- A lista é ESTÁTICA (a mesma do item 5.1); `format` com %I só formata identificadores dessa lista.
   for par in
     with pares(tabela, legada, canonica, chave) as (values
       ('animal_handlings', 'farm_id', 'empresa_id', 'id::text'),
@@ -563,15 +156,445 @@ end $$;
 do $$
 declare n bigint;
 begin
-  -- 4.7 a invariante canônica de transferência tem de ser verdadeira ANTES de virar CHECK
+  -- 2.2 a invariante canônica de transferência tem de ser verdadeira ANTES de virar CHECK
   select count(*) into n from erp.equipment_transfers where empresa_origem_id = empresa_destino_id;
   if n > 0 then
     raise exception 'PRE-BASE2-05C-1: % transferencia(s) de equipamento com origem = destino nas colunas canonicas. O CHECK canonico nao pode ser criado sobre acervo invalido.', n;
   end if;
 end $$;
 
+
 -- ---------------------------------------------------------------------------------------------------
--- 5. INVARIANTE CANÔNICA ANTES DE REMOVER A LEGADA
+-- 3. TETO POR COMANDO
+-- ---------------------------------------------------------------------------------------------------
+-- `lock_timeout` aborta CADA espera por lock que passe de 2 s — de tabela, de índice ou de objeto de
+-- catálogo. Ele NÃO é teto da janela inteira: a transação pode acumular várias esperas de até 2 s.
+-- Quem reduz a chance de ENTRAR numa espera é o porteiro humano de pré-deploy
+-- (docs/PRE-BASE2-05C-1-PREFLIGHT.md, P7.1), não este comando.
+set local lock_timeout = '2s';
+
+-- ---------------------------------------------------------------------------------------------------
+-- 4. PRÉ-AQUISIÇÃO DETERMINÍSTICA DOS LOCKS DE RELAÇÃO
+-- ---------------------------------------------------------------------------------------------------
+-- Ordem alfabética, sempre a mesma, para que duas execuções nunca se cruzem em ordens opostas.
+-- NOWAIT: se qualquer uma das relações estiver ocupada, a migration falha em milissegundos com 55P03 e a
+-- transação inteira volta atrás, em vez de ficar pendurada segurando ACCESS EXCLUSIVE nas demais.
+-- A view erp.farms arrasta erp.empresas junto, que por isso também está nomeada aqui.
+lock table
+     erp.animal_handlings,
+     erp.animal_movements,
+     erp.animal_retroactive_costs,
+     erp.animals,
+     erp.areas,
+     erp.authorizer_empresas,
+     erp.authorizer_farms,
+     erp.bank_account_empresas,
+     erp.bank_account_farms,
+     erp.bank_movements,
+     erp.batches,
+     erp.breeding_seasons,
+     erp.budget_plannings,
+     erp.contracts,
+     erp.devolutions,
+     erp.dfe_documents,
+     erp.diet_batches,
+     erp.documents,
+     erp.earnings,
+     erp.empresa_cost_centers,
+     erp.empresas,
+     erp.equipment_transfers,
+     erp.equipments,
+     erp.farm_cost_centers,
+     erp.farms,
+     erp.feed_batches,
+     erp.feed_deliveries,
+     erp.feedlot_yards,
+     erp.financial_freezes,
+     erp.financial_titles,
+     erp.fuel_supplies,
+     erp.grazing_modules,
+     erp.herd_lots,
+     erp.input_entries,
+     erp.invoices,
+     erp.journal_entries,
+     erp.livestock_plannings,
+     erp.maintenances,
+     erp.opening_balances,
+     erp.processings,
+     erp.proprietary_empresas,
+     erp.proprietary_farms,
+     erp.purchase_requests,
+     erp.rainfalls,
+     erp.requisitions,
+     erp.salary_advances,
+     erp.sales_documents,
+     erp.service_orders,
+     erp.stock_corrections,
+     erp.stock_movements,
+     erp.stock_writeoffs,
+     erp.trough_readings,
+     erp.warehouse_transfers,
+     erp.warehouses,
+     erp.weighings
+  in access exclusive mode nowait;
+
+-- ---------------------------------------------------------------------------------------------------
+-- 5. PRÉ-CONDIÇÕES DE CATÁLOGO — baratas, e DEPOIS do lock: nada pode mudar a partir daqui
+-- ---------------------------------------------------------------------------------------------------
+do $$
+declare
+  faltando text;
+  sobrando text;
+begin
+  -- 5.1 colunas legadas: o catálogo tem exatamente as 52 listadas?
+  with esperado(tabela, coluna) as (values
+    ('animal_handlings', 'farm_id'),
+    ('animal_movements', 'destination_farm_id'),
+    ('animal_movements', 'farm_id'),
+    ('animal_retroactive_costs', 'farm_id'),
+    ('animals', 'farm_id'),
+    ('areas', 'farm_id'),
+    ('authorizer_empresas', 'farm_id'),
+    ('bank_account_empresas', 'farm_id'),
+    ('bank_movements', 'farm_id'),
+    ('batches', 'farm_id'),
+    ('breeding_seasons', 'farm_id'),
+    ('budget_plannings', 'farm_id'),
+    ('contracts', 'farm_id'),
+    ('devolutions', 'farm_id'),
+    ('dfe_documents', 'farm_id'),
+    ('diet_batches', 'farm_id'),
+    ('documents', 'farm_id'),
+    ('earnings', 'farm_id'),
+    ('empresa_cost_centers', 'farm_id'),
+    ('equipment_transfers', 'destination_farm_id'),
+    ('equipment_transfers', 'origin_farm_id'),
+    ('equipments', 'farm_id'),
+    ('feed_batches', 'farm_id'),
+    ('feed_deliveries', 'farm_id'),
+    ('feedlot_yards', 'farm_id'),
+    ('financial_freezes', 'farm_id'),
+    ('financial_titles', 'farm_id'),
+    ('fuel_supplies', 'farm_id'),
+    ('grazing_modules', 'farm_id'),
+    ('herd_lots', 'farm_id'),
+    ('input_entries', 'farm_id'),
+    ('invoices', 'farm_id'),
+    ('journal_entries', 'farm_id'),
+    ('livestock_plannings', 'farm_id'),
+    ('maintenances', 'farm_id'),
+    ('opening_balances', 'farm_id'),
+    ('processings', 'farm_id'),
+    ('proprietary_empresas', 'farm_id'),
+    ('purchase_requests', 'farm_id'),
+    ('rainfalls', 'farm_id'),
+    ('requisitions', 'farm_id'),
+    ('salary_advances', 'farm_id'),
+    ('sales_documents', 'farm_id'),
+    ('service_orders', 'farm_id'),
+    ('stock_corrections', 'farm_id'),
+    ('stock_movements', 'farm_id'),
+    ('stock_writeoffs', 'farm_id'),
+    ('trough_readings', 'farm_id'),
+    ('warehouse_transfers', 'destination_farm_id'),
+    ('warehouse_transfers', 'origin_farm_id'),
+    ('warehouses', 'farm_id'),
+    ('weighings', 'farm_id')
+  ), atual as (
+    select c.relname::text, a.attname::text from pg_attribute a
+      join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'erp' and c.relkind = 'r' and a.attnum > 0 and not a.attisdropped
+       and a.attname in ('farm_id','origin_farm_id','destination_farm_id')
+  )
+  select string_agg(format('%s.%s', tabela, coluna), ', '),
+         (select string_agg(format('%s.%s', relname, attname), ', ')
+            from atual a2 where not exists (select 1 from esperado e2
+                 where e2.tabela = a2.relname and e2.coluna = a2.attname))
+    into faltando, sobrando
+    from esperado e where not exists (select 1 from atual a where a.relname = e.tabela and a.attname = e.coluna);
+  if faltando is not null or sobrando is not null then
+    raise exception 'PRE-BASE2-05C-1: inventario de COLUNAS legadas divergente. Faltando no banco: [%]. Presente no banco e fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
+  end if;
+end $$;
+
+do $$
+declare faltando text; sobrando text;
+begin
+  -- 5.2 FKs legadas de coluna única
+  with esperado(tabela, restricao) as (values
+    ('animal_handlings', 'animal_handlings_farm_id_fkey'),
+    ('animal_movements', 'animal_movements_destination_farm_id_fkey'),
+    ('animal_movements', 'animal_movements_farm_id_fkey'),
+    ('animal_retroactive_costs', 'animal_retroactive_costs_farm_id_fkey'),
+    ('animals', 'animals_farm_id_fkey'),
+    ('areas', 'areas_farm_id_fkey'),
+    ('authorizer_empresas', 'authorizer_farms_farm_id_fkey'),
+    ('bank_account_empresas', 'bank_account_farms_farm_id_fkey'),
+    ('bank_movements', 'bank_movements_farm_id_fkey'),
+    ('batches', 'batches_farm_id_fkey'),
+    ('breeding_seasons', 'breeding_seasons_farm_id_fkey'),
+    ('budget_plannings', 'budget_plannings_farm_id_fkey'),
+    ('contracts', 'contracts_farm_id_fkey'),
+    ('devolutions', 'devolutions_farm_id_fkey'),
+    ('dfe_documents', 'dfe_documents_farm_id_fkey'),
+    ('diet_batches', 'diet_batches_farm_id_fkey'),
+    ('documents', 'documents_farm_id_fkey'),
+    ('earnings', 'earnings_farm_id_fkey'),
+    ('empresa_cost_centers', 'farm_cost_centers_farm_id_fkey'),
+    ('equipment_transfers', 'equipment_transfers_destination_farm_id_fkey'),
+    ('equipment_transfers', 'equipment_transfers_origin_farm_id_fkey'),
+    ('equipments', 'equipments_farm_id_fkey'),
+    ('feed_batches', 'feed_batches_farm_id_fkey'),
+    ('feed_deliveries', 'feed_deliveries_farm_id_fkey'),
+    ('feedlot_yards', 'feedlot_yards_farm_id_fkey'),
+    ('financial_freezes', 'financial_freezes_farm_id_fkey'),
+    ('financial_titles', 'financial_titles_farm_id_fkey'),
+    ('fuel_supplies', 'fuel_supplies_farm_id_fkey'),
+    ('grazing_modules', 'grazing_modules_farm_id_fkey'),
+    ('herd_lots', 'herd_lots_farm_id_fkey'),
+    ('input_entries', 'input_entries_farm_id_fkey'),
+    ('invoices', 'invoices_farm_id_fkey'),
+    ('journal_entries', 'journal_entries_farm_id_fkey'),
+    ('livestock_plannings', 'livestock_plannings_farm_id_fkey'),
+    ('maintenances', 'maintenances_farm_id_fkey'),
+    ('opening_balances', 'opening_balances_farm_id_fkey'),
+    ('processings', 'processings_farm_id_fkey'),
+    ('proprietary_empresas', 'proprietary_farms_farm_id_fkey'),
+    ('purchase_requests', 'purchase_requests_farm_id_fkey'),
+    ('rainfalls', 'rainfalls_farm_id_fkey'),
+    ('requisitions', 'requisitions_farm_id_fkey'),
+    ('salary_advances', 'salary_advances_farm_id_fkey'),
+    ('sales_documents', 'sales_documents_farm_id_fkey'),
+    ('service_orders', 'service_orders_farm_id_fkey'),
+    ('stock_corrections', 'stock_corrections_farm_id_fkey'),
+    ('stock_movements', 'stock_movements_farm_id_fkey'),
+    ('stock_writeoffs', 'stock_writeoffs_farm_id_fkey'),
+    ('trough_readings', 'trough_readings_farm_id_fkey'),
+    ('warehouse_transfers', 'warehouse_transfers_destination_farm_id_fkey'),
+    ('warehouse_transfers', 'warehouse_transfers_origin_farm_id_fkey'),
+    ('warehouses', 'warehouses_farm_id_fkey'),
+    ('weighings', 'weighings_farm_id_fkey')
+  ), atual as (
+    select c.relname::text, k.conname::text from pg_constraint k
+      join pg_class c on c.oid = k.conrelid join pg_namespace n on n.oid = c.relnamespace
+      join pg_attribute a on a.attrelid = k.conrelid and a.attnum = k.conkey[1]
+     where n.nspname = 'erp' and k.contype = 'f' and array_length(k.conkey,1) = 1
+       and a.attname in ('farm_id','origin_farm_id','destination_farm_id')
+  )
+  select string_agg(format('%s.%s', tabela, restricao), ', '),
+         (select string_agg(format('%s.%s', relname, conname), ', ')
+            from atual a2 where not exists (select 1 from esperado e2
+                 where e2.tabela = a2.relname and e2.restricao = a2.conname))
+    into faltando, sobrando
+    from esperado e where not exists (select 1 from atual a where a.relname = e.tabela and a.conname = e.restricao);
+  if faltando is not null or sobrando is not null then
+    raise exception 'PRE-BASE2-05C-1: inventario de FKs legadas divergente. Faltando: [%]. Fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
+  end if;
+end $$;
+
+do $$
+declare faltando text; sobrando text;
+begin
+  -- 5.3 gatilhos de espelho
+  with esperado(tabela, gatilho) as (values
+    ('animal_handlings', 'trg_sync_empresa_id'),
+    ('animal_movements', 'trg_sync_empresa_destino_id'),
+    ('animal_movements', 'trg_sync_empresa_id'),
+    ('animal_retroactive_costs', 'trg_sync_empresa_id'),
+    ('animals', 'trg_sync_empresa_id'),
+    ('areas', 'trg_sync_empresa_id'),
+    ('authorizer_empresas', 'trg_sync_empresa_id'),
+    ('bank_account_empresas', 'trg_sync_empresa_id'),
+    ('bank_movements', 'trg_sync_empresa_id'),
+    ('batches', 'trg_sync_empresa_id'),
+    ('breeding_seasons', 'trg_sync_empresa_id'),
+    ('budget_plannings', 'trg_sync_empresa_id'),
+    ('contracts', 'trg_sync_empresa_id'),
+    ('devolutions', 'trg_sync_empresa_id'),
+    ('dfe_documents', 'trg_sync_empresa_id'),
+    ('diet_batches', 'trg_sync_empresa_id'),
+    ('documents', 'trg_sync_empresa_id'),
+    ('earnings', 'trg_sync_empresa_id'),
+    ('empresa_cost_centers', 'trg_sync_empresa_id'),
+    ('equipment_transfers', 'trg_sync_empresa_destino_id'),
+    ('equipment_transfers', 'trg_sync_empresa_origem_id'),
+    ('equipments', 'trg_sync_empresa_id'),
+    ('feed_batches', 'trg_sync_empresa_id'),
+    ('feed_deliveries', 'trg_sync_empresa_id'),
+    ('feedlot_yards', 'trg_sync_empresa_id'),
+    ('financial_freezes', 'trg_sync_empresa_id'),
+    ('financial_titles', 'trg_sync_empresa_id'),
+    ('fuel_supplies', 'trg_sync_empresa_id'),
+    ('grazing_modules', 'trg_sync_empresa_id'),
+    ('herd_lots', 'trg_sync_empresa_id'),
+    ('input_entries', 'trg_sync_empresa_id'),
+    ('invoices', 'trg_sync_empresa_id'),
+    ('journal_entries', 'trg_sync_empresa_id'),
+    ('livestock_plannings', 'trg_sync_empresa_id'),
+    ('maintenances', 'trg_sync_empresa_id'),
+    ('opening_balances', 'trg_sync_empresa_id'),
+    ('processings', 'trg_sync_empresa_id'),
+    ('proprietary_empresas', 'trg_sync_empresa_id'),
+    ('purchase_requests', 'trg_sync_empresa_id'),
+    ('rainfalls', 'trg_sync_empresa_id'),
+    ('requisitions', 'trg_sync_empresa_id'),
+    ('salary_advances', 'trg_sync_empresa_id'),
+    ('sales_documents', 'trg_sync_empresa_id'),
+    ('service_orders', 'trg_sync_empresa_id'),
+    ('stock_corrections', 'trg_sync_empresa_id'),
+    ('stock_movements', 'trg_sync_empresa_id'),
+    ('stock_writeoffs', 'trg_sync_empresa_id'),
+    ('trough_readings', 'trg_sync_empresa_id'),
+    ('warehouse_transfers', 'trg_sync_empresa_destino_id'),
+    ('warehouse_transfers', 'trg_sync_empresa_origem_id'),
+    ('warehouses', 'trg_sync_empresa_id'),
+    ('weighings', 'trg_sync_empresa_id')
+  ), atual as (
+    select c.relname::text, t.tgname::text from pg_trigger t
+      join pg_class c on c.oid = t.tgrelid
+      join pg_namespace nt on nt.oid = c.relnamespace
+      join pg_proc p on p.oid = t.tgfoid
+      join pg_namespace np on np.oid = p.pronamespace
+     where not t.tgisinternal and nt.nspname = 'erp' and np.nspname = 'erp'
+       and p.proname like 'sincronizar_empresa%'
+  )
+  select string_agg(format('%s.%s', tabela, gatilho), ', '),
+         (select string_agg(format('%s.%s', relname, tgname), ', ')
+            from atual a2 where not exists (select 1 from esperado e2
+                 where e2.tabela = a2.relname and e2.gatilho = a2.tgname))
+    into faltando, sobrando
+    from esperado e where not exists (select 1 from atual a where a.relname = e.tabela and a.tgname = e.gatilho);
+  if faltando is not null or sobrando is not null then
+    raise exception 'PRE-BASE2-05C-1: inventario de GATILHOS de espelho divergente. Faltando: [%]. Fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
+  end if;
+end $$;
+
+do $$
+declare faltando text; sobrando text; sem_gemeo text;
+begin
+  -- 5.4 índices legados, E o gêmeo canônico de cada um tem de já existir
+  with esperado(indice) as (values
+    ('animals_organization_id_farm_id_status_idx'),
+    ('batches_organization_id_farm_id_status_idx'),
+    ('equipments_organization_id_farm_id_status_idx'),
+    ('financial_titles_organization_id_farm_id_due_date_idx'),
+    ('invoices_organization_id_farm_id_emission_date_idx'),
+    ('purchase_requests_organization_id_status_farm_id_idx'),
+    ('requisitions_organization_id_farm_id_requisition_date_idx'),
+    ('warehouses_organization_id_farm_id_idx')
+  ), atual as (
+    select ic.relname::text from pg_index i
+      join pg_class c on c.oid = i.indrelid join pg_class ic on ic.oid = i.indexrelid
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'erp' and exists (
+       select 1 from pg_attribute a where a.attrelid = i.indrelid and a.attnum = any(i.indkey::int2[])
+         and a.attname in ('farm_id','origin_farm_id','destination_farm_id'))
+  )
+  select string_agg(indice, ', '),
+         (select string_agg(relname, ', ') from atual a2
+           where not exists (select 1 from esperado e2 where e2.indice = a2.relname))
+    into faltando, sobrando
+    from esperado e where not exists (select 1 from atual a where a.relname = e.indice);
+  if faltando is not null or sobrando is not null then
+    raise exception 'PRE-BASE2-05C-1: inventario de INDICES legados divergente. Faltando: [%]. Fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
+  end if;
+
+  -- o gêmeo canônico: mesma tabela, mesma definição com a coluna canônica no lugar da legada
+  select string_agg(l.idx, ', ') into sem_gemeo
+    from (select c.relname tab, ic.relname idx,
+                 replace(replace(replace(replace(pg_get_indexdef(i.indexrelid), ic.relname, '<idx>'),
+                   'destination_farm_id','empresa_destino_id'),'origin_farm_id','empresa_origem_id'),
+                   'farm_id','empresa_id') as def_canonica
+            from pg_index i join pg_class c on c.oid = i.indrelid join pg_class ic on ic.oid = i.indexrelid
+            join pg_namespace n on n.oid = c.relnamespace
+           where n.nspname = 'erp' and exists (
+             select 1 from pg_attribute a where a.attrelid = i.indrelid and a.attnum = any(i.indkey::int2[])
+               and a.attname in ('farm_id','origin_farm_id','destination_farm_id'))) l
+   where not exists (
+     select 1 from pg_index i2 join pg_class c2 on c2.oid = i2.indrelid
+       join pg_class ic2 on ic2.oid = i2.indexrelid join pg_namespace n2 on n2.oid = c2.relnamespace
+      where n2.nspname = 'erp' and c2.relname = l.tab and ic2.relname <> l.idx
+        -- comparação da definição INTEIRA, só com o NOME do índice normalizado: assim `unique`, o método
+        -- (`using btree`) e um eventual `where` entram na conta. Comparar apenas a lista de colunas
+        -- aceitaria como gêmeo um índice de método diferente — e a purga apagaria um caminho de acesso.
+        and replace(pg_get_indexdef(i2.indexrelid), ic2.relname, '<idx>') = l.def_canonica);
+  if sem_gemeo is not null then
+    raise exception 'PRE-BASE2-05C-1: indice legado SEM gemeo canonico: [%]. Remover aqui apagaria um caminho de acesso.', sem_gemeo;
+  end if;
+end $$;
+
+do $$
+declare faltando text; sobrando text;
+begin
+  -- 5.4b CHECKs que dependem de coluna legada.
+  -- Esta pré-condição faltava, e a ausência dela era um buraco real: `drop column` apaga um CHECK
+  -- dependente EM SILÊNCIO, sem `cascade`. Um CHECK legado acrescentado depois desta lista sumiria sem
+  -- deixar rastro — inventariado aqui, ele ABORTA a purga.
+  -- A detecção é ESTRUTURAL: `conkey` de um CHECK lista as colunas que ele referencia, então não depende
+  -- de casar texto de `pg_get_constraintdef` (que muda com o search_path).
+  with esperado(tabela, restricao) as (values
+    ('equipment_transfers', 'equipment_transfers_check')
+  ), atual as (
+    select c.relname::text, k.conname::text from pg_constraint k
+      join pg_class c on c.oid = k.conrelid join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'erp' and k.contype = 'c'
+       and exists (select 1 from unnest(k.conkey) ck
+                     join pg_attribute a on a.attrelid = k.conrelid and a.attnum = ck
+                    where a.attname in ('farm_id','origin_farm_id','destination_farm_id'))
+  )
+  select string_agg(format('%s.%s', tabela, restricao), ', '),
+         (select string_agg(format('%s.%s', relname, conname), ', ')
+            from atual a2 where not exists (select 1 from esperado e2
+                 where e2.tabela = a2.relname and e2.restricao = a2.conname))
+    into faltando, sobrando
+    from esperado e where not exists (select 1 from atual a where a.relname = e.tabela and a.conname = e.restricao);
+  if faltando is not null or sobrando is not null then
+    raise exception 'PRE-BASE2-05C-1: inventario de CHECKs sobre coluna legada divergente. Faltando: [%]. Fora da lista: [%].', coalesce(faltando,'-'), coalesce(sobrando,'-');
+  end if;
+end $$;
+
+do $$
+declare sobrando text;
+begin
+  -- 5.4c GATILHOS que tocam coluna legada por QUALQUER nome de função.
+  -- A pré-condição 5.3 casa pelo nome `sincronizar_empresa%`, e o red team mostrou o furo: um gatilho de
+  -- espelho criado com função de outro nome atravessava a purga inteira e ficava no catálogo apontando
+  -- para uma coluna que não existe mais. Aqui a busca é pelo CORPO da função, não pelo nome dela.
+  select string_agg(format('%s.%s (funcao %s)', c.relname, t.tgname, p.proname), ', ') into sobrando
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    join pg_proc p on p.oid = t.tgfoid
+   where n.nspname = 'erp' and not t.tgisinternal
+     and p.prosrc ~ '(farm_id|origin_farm_id|destination_farm_id)'
+     and p.proname not like 'sincronizar_empresa%';
+  if sobrando is not null then
+    raise exception 'PRE-BASE2-05C-1: gatilho que toca coluna legada fora da lista de espelho: [%]. A purga deixaria um gatilho apontando para coluna inexistente.', sobrando;
+  end if;
+end $$;
+
+do $$
+declare v text; f text;
+begin
+  -- 5.5 as cinco views e as três funções de sincronia existem
+  select string_agg(e.nome, ', ') into v from (values ('authorizer_farms'),('bank_account_farms'),
+    ('farm_cost_centers'),('farms'),('proprietary_farms')) e(nome)
+   where not exists (select 1 from pg_class c join pg_namespace n on n.oid = c.relnamespace
+                      where n.nspname = 'erp' and c.relkind = 'v' and c.relname = e.nome);
+  if v is not null then
+    raise exception 'PRE-BASE2-05C-1: view legada ausente: [%].', v;
+  end if;
+  select string_agg(e.nome, ', ') into f from (values ('sincronizar_empresa_destino_legado'),
+    ('sincronizar_empresa_legado'),('sincronizar_empresa_origem_legado')) e(nome)
+   where not exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+                      where n.nspname = 'erp' and p.proname = e.nome);
+  if f is not null then
+    raise exception 'PRE-BASE2-05C-1: funcao de sincronia ausente: [%].', f;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------------------------------------------
+-- 6. INVARIANTE CANÔNICA ANTES DE REMOVER A LEGADA
 -- ---------------------------------------------------------------------------------------------------
 -- O CHECK histórico de erp.equipment_transfers nasceu em 0005_sales_fleet_hr.sql:142 sobre as colunas
 -- LEGADAS. Se as colunas caíssem primeiro, a única proteção contra transferir um equipamento de uma
@@ -583,7 +606,7 @@ alter table erp.equipment_transfers
   check (empresa_origem_id <> empresa_destino_id);
 
 -- ---------------------------------------------------------------------------------------------------
--- 6. RLS: a última política que ainda decidia por coluna legada
+-- 7. RLS: a última política que ainda decidia por coluna legada
 -- ---------------------------------------------------------------------------------------------------
 -- `api_child` era a única política do schema cujo predicado citava uma coluna legada. Ela é SUBSTITUÍDA,
 -- não acompanhada: duas políticas PERMISSIVE no mesmo comando combinam com OR, e a mais frouxa acabaria
@@ -600,7 +623,7 @@ create policy api_child on erp.empresa_cost_centers for all to erp_app
                   where p.id = empresa_cost_centers.empresa_id and erp.tenant_visible(p.organization_id)));
 
 -- ---------------------------------------------------------------------------------------------------
--- 7. VIEWS DE NOME ANTIGO
+-- 8. VIEWS DE NOME ANTIGO
 -- ---------------------------------------------------------------------------------------------------
 -- Primeiro as views: elas leem as colunas legadas, e `drop column` sem `cascade` recusaria enquanto
 -- existissem. Nenhuma depende de outra (verificado em pg_depend), então a ordem entre elas é livre;
@@ -612,7 +635,7 @@ drop view erp.farms;
 drop view erp.proprietary_farms;
 
 -- ---------------------------------------------------------------------------------------------------
--- 8. GATILHOS DE ESPELHO
+-- 9. GATILHOS DE ESPELHO
 -- ---------------------------------------------------------------------------------------------------
 -- Com as views fora, os 52 gatilhos que copiavam um lado no outro perdem a razão de existir. Eles saem
 -- ANTES das funções que executam, senão o `drop function` esbarraria na dependência.
@@ -670,21 +693,21 @@ drop trigger trg_sync_empresa_id on erp.warehouses;
 drop trigger trg_sync_empresa_id on erp.weighings;
 
 -- ---------------------------------------------------------------------------------------------------
--- 9. FUNÇÕES DE SINCRONIA
+-- 10. FUNÇÕES DE SINCRONIA
 -- ---------------------------------------------------------------------------------------------------
 drop function erp.sincronizar_empresa_destino_legado();
 drop function erp.sincronizar_empresa_legado();
 drop function erp.sincronizar_empresa_origem_legado();
 
 -- ---------------------------------------------------------------------------------------------------
--- 10. O CHECK LEGADO
+-- 11. O CHECK LEGADO
 -- ---------------------------------------------------------------------------------------------------
 -- Removido explicitamente, e não de carona no `drop column`: a substituição canônica já está de pé desde
 -- o item 5, e o que sai daqui tem de estar inventariado.
 alter table erp.equipment_transfers drop constraint equipment_transfers_check;
 
 -- ---------------------------------------------------------------------------------------------------
--- 11. CHAVES ESTRANGEIRAS DE COLUNA ÚNICA
+-- 12. CHAVES ESTRANGEIRAS DE COLUNA ÚNICA
 -- ---------------------------------------------------------------------------------------------------
 -- As 52 FKs legadas apontam erp.empresas por UMA coluna. Coluna única não prova tenant: quem fica são as
 -- 50 compostas (organization_id, empresa_*), criadas pela 0014. Alguns nomes preservam a grafia antiga da
@@ -744,7 +767,7 @@ alter table erp.warehouses drop constraint warehouses_farm_id_fkey;
 alter table erp.weighings drop constraint weighings_farm_id_fkey;
 
 -- ---------------------------------------------------------------------------------------------------
--- 12. ÍNDICES LEGADOS
+-- 13. ÍNDICES LEGADOS
 -- ---------------------------------------------------------------------------------------------------
 -- Os oito gêmeos canônicos (*_org_empresa_*) já existem desde a 0014 e a pré-condição 4.4 exigiu a
 -- presença de cada um deles. Nenhum caminho de acesso é perdido aqui.
@@ -758,17 +781,17 @@ drop index erp.requisitions_organization_id_farm_id_requisition_date_idx;
 drop index erp.warehouses_organization_id_farm_id_idx;
 
 -- ---------------------------------------------------------------------------------------------------
--- 13. AS 52 COLUNAS LEGADAS
+-- 14. AS 52 COLUNAS LEGADAS
 -- ---------------------------------------------------------------------------------------------------
 -- Sem `cascade`. E é preciso ser exato sobre o que isso garante, porque a intuição erra aqui:
 --
---   · VIEW que lê a coluna: `drop column` sem `cascade` RECUSA. Por isso as views saíram no item 7 — se
+--   · VIEW que lê a coluna: `drop column` sem `cascade` RECUSA. Por isso as views saíram no item 8 — se
 --     uma tivesse escapado do inventário, a migration falharia neste ponto e voltaria atrás inteira.
 --   · ÍNDICE, CHAVE ESTRANGEIRA e CHECK que dependem da coluna: o Postgres os remove EM SILÊNCIO junto
 --     com a coluna, sem exigir `cascade` e sem avisar. Não existe rede automática nenhuma para eles.
 --
--- É exatamente por isso que os itens 10, 11 e 12 os removem um a um, nomeados — e por isso as
--- pré-condições 4.2, 4.4 e 4.4b exigem que o catálogo contenha EXATAMENTE os que estão listados. A
+-- É exatamente por isso que os itens 11, 12 e 13 os removem um a um, nomeados — e por isso as
+-- pré-condições 5.2, 5.4 e 5.4b exigem que o catálogo contenha EXATAMENTE os que estão listados. A
 -- proteção contra remoção silenciosa é o INVENTÁRIO, não o `drop column`.
 alter table erp.animal_handlings drop column farm_id;
 alter table erp.animal_movements drop column destination_farm_id;
@@ -824,7 +847,7 @@ alter table erp.warehouses drop column farm_id;
 alter table erp.weighings drop column farm_id;
 
 -- ---------------------------------------------------------------------------------------------------
--- 14. PÓS-CONDIÇÕES — a migration confere o próprio resultado antes de deixar o commit acontecer
+-- 15. PÓS-CONDIÇÕES — a migration confere o próprio resultado antes de deixar o commit acontecer
 -- ---------------------------------------------------------------------------------------------------
 do $$
 declare n bigint; txt text;
@@ -840,8 +863,13 @@ begin
      and c.relname in ('farms','proprietary_farms','authorizer_farms','bank_account_farms','farm_cost_centers');
   if n <> 0 then raise exception 'PRE-BASE2-05C-1: sobraram % view(s) de nome antigo.', n; end if;
 
-  select count(*) into n from pg_trigger t join pg_proc p on p.oid = t.tgfoid
-   where not t.tgisinternal and p.proname like 'sincronizar_empresa%';
+  select count(*) into n from pg_trigger t
+    join pg_class ct on ct.oid = t.tgrelid
+    join pg_namespace nt on nt.oid = ct.relnamespace
+    join pg_proc p on p.oid = t.tgfoid
+    join pg_namespace np on np.oid = p.pronamespace
+   where not t.tgisinternal and nt.nspname = 'erp' and np.nspname = 'erp'
+     and p.proname like 'sincronizar_empresa%';
   if n <> 0 then raise exception 'PRE-BASE2-05C-1: sobraram % gatilho(s) de espelho.', n; end if;
 
   select count(*) into n from pg_proc p join pg_namespace n2 on n2.oid = p.pronamespace
@@ -869,7 +897,7 @@ begin
       coalesce((select pg_get_constraintdef(oid) from pg_constraint where conrelid='erp.equipment_transfers'::regclass and contype='c' and conname='equipment_transfers_empresa_origem_destino_check'), 'ausente');
   end if;
 
-  -- e nenhum gatilho sobrou tocando coluna legada, por qualquer nome de função (ver 4.4c)
+  -- e nenhum gatilho sobrou tocando coluna legada, por qualquer nome de função (ver 5.4c)
   select string_agg(format('%s.%s', c.relname, t.tgname), ', ') into txt
     from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n2 on n2.oid = c.relnamespace
     join pg_proc p on p.oid = t.tgfoid

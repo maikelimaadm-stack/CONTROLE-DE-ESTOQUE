@@ -20,9 +20,9 @@ Quem executa: o Maike. Não é preciso saber SQL: tudo que precisa ser rodado es
 > **P5 = `MEDIDO EM 15/09`** — vira `PASS` quando relido na janela do deploy, e não antes: o valor é
 > mutável por qualquer pessoa com acesso ao Railway · **P7 mecanismo = `PASS`** ·
 > **P6 = `PASS CONDICIONAL`, com RISCO DECLARADO.** As cinco perguntas estão respondidas: U1, U2, U3
-> e U5 estão **NON-BLOCKING PENDENTE DE G-U5** — U5 por medição, U1/U2/U3 por derivação; o instrumento do
-> G-U5 **já existe** nesta fatia (`scripts/gate-purga-0017-runtime-anterior.mjs`), e o que falta é a
-> EXECUÇÃO registrada ·
+> e U5 estão **NON-BLOCKING, e o G-U5 RODOU** — U5 por medição, U1/U2/U3 por derivação, e a derivação
+> deixou de ser derivação: o gate (`scripts/gate-purga-0017-runtime-anterior.mjs`) foi executado nesta
+> fatia e APROVOU ·
 > **U4 = `OPERATIONAL MERGE BLOCKER`** — mudou de rótulo. Continua sendo o mesmo fato medido
 > (`preDeployTimeoutSeconds = null`), mas deixou de ser "risco declarado e só": como o merge em `main`
 > dispara deploy automático, **é o merge que liga o risco**. Enquanto não houver contenção, a 05C-1 não é
@@ -36,7 +36,7 @@ Quem executa: o Maike. Não é preciso saber SQL: tudo que precisa ser rodado es
 | **P1** Restore | **SUSPENSO** — `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`. Enquanto vale, a prova exigida não é de RECUPERAÇÃO e sim de RECONSTRUÇÃO: banco recriado do zero, `0001..0017` aplicadas, dados de teste recriados (`RECOVERY = REBUILD FROM ZERO`) | **nunca por este caminho.** A suspensão não produz `PASS`: ela dispensa o gate para esta janela e o devolve inteiro na condição de retorno | existir o primeiro dado não descartável sem que o drill de backup + restore tenha sido feito — aí volta a `BLOCKED`, com o enunciado original | a SUSPENSÃO é do Maike, por escrito; o RETORNO é automático no evento, e só a execução do drill o fecha | reavaliar ANTES do primeiro uso real e ANTES do primeiro dado não descartável |
 | **P5** Seed e papéis | o VALOR de `SEED_ON_DEPLOY` lido com credencial autenticada | o valor foi lido NESTA janela e é diferente de `1` | o valor não tiver sido lido nesta janela — **é o estado de hoje**: a leitura é de 15/09 | leitura automatizada (Railway CLI) ou Maike | reconfirmar imediatamente antes do deploy |
 | **P6** Rollout | as cinco perguntas respondidas: **U4 e U5 por evidência direta**, U1/U2/U3 **dispensados por derivação** | `PASS CONDICIONAL` hoje: vira `PASS` quando **G-U5** rodar, porque é ele que transforma a derivação de U1/U2/U3 em fato | G-U5 não tiver rodado, ou alguma voltar a `UNKNOWN` (ex.: o serviço ser recriado) | leitura automatizada (API do Railway) para U4; painel para o resto | reconfirmar se o serviço mudar |
-| **G-U5** Compatibilidade do binário anterior | o commit da API em produção subindo e servindo contra um banco com a `0017` aplicada | boot, login, leitura escopada e gravação com ROW COUNT, todos verdes | a EXECUÇÃO não estiver registrada. O instrumento deixou de ser hipótese: existe como `scripts/gate-purga-0017-runtime-anterior.mjs` nesta fatia — mas gate que existe e não rodou continua `BLOCKED` | o próprio gate, em banco descartável | dentro da 05C-1, ANTES de qualquer deploy em produção |
+| **G-U5** Compatibilidade do binário anterior ✅ | o commit da API em produção subindo e servindo contra um banco com a `0017` aplicada | boot, login, leitura escopada e gravação com ROW COUNT, todos verdes — **EXECUTADO na 05C-1**: 748 chamadas HTTP reais, 726 `2xx`, zero `5xx`, zero menção a objeto purgado nas respostas e no log, `seedPermissions` 782/782 em duas execuções do pre-deploy | a execução deixar de ser reproduzível (o gate é `scripts/gate-purga-0017-runtime-anterior.mjs`; rodá-lo de novo é um comando) | o próprio gate, em banco descartável | reexecutar antes do deploy, e a cada mudança na API |
 | **U4** Teto do pre-deploy | uma contenção real para o pre-deploy sem teto (`preDeployTimeoutSeconds = null` no serviço `api`, medido em 15/09) | o campo tiver valor, medido e registrado, **ou** existir contenção equivalente aceita por escrito | o campo estiver vazio: **`OPERATIONAL MERGE BLOCKER`** — merge em `main` dispara deploy automático, então liberar a PR para merge é ligar o risco | Maike, no painel do Railway (ação humana, fora desta fatia) | antes de liberar a 05C-1 para merge |
 | **P7** Locks | a consulta de porteiro, sem linha `BLOQUEIA` | nenhum DDL concorrente **sobre objeto de `erp`** no instante do deploy | houver DDL concorrente sobre objeto de `erp` (ou objeto que não resolve) | Maike, no SQL Editor | minutos antes do deploy |
 
@@ -476,7 +476,21 @@ fica preparada para receber esse valor, do agente que mede:
 
 | Origem da medição | Tempo medido do pre-deploy | Teto proposto | Registrado por |
 | --- | --- | --- | --- |
-| *(a preencher — medição da `0017` em laboratório)* | — | — | — |
+| `node apps/api/dist/migrate.js` contra banco na `0016`, aplicando a `0017` — 5 execuções, laboratório local | **451–476 ms** (mediana 460 ms) | **300 s** | PRE-BASE2-05C-1 |
+| o mesmo comando sem nada pendente (controle) | **381 ms** | — | PRE-BASE2-05C-1 |
+
+**Por que 300 s, e não um número colado no tempo medido.** O teto não existe para caber na execução
+normal: existe para matar a execução que TRAVOU. O que ele precisa cobrir, com folga, é a soma de
+(a) a purga em si, que no pior caso de disputa é 2 s por comando que espera — e são cerca de 170 comandos;
+(b) a diferença entre o laboratório e a produção, que é cross-region (Railway `iad` → Supabase `sa-east-1`)
+e tem muito mais dado; (c) `seedPermissions`, que roda em todo deploy. 300 s é ~650× a medição e continua
+sendo uma fração do que hoje é **infinito**.
+
+**Se preferir mais apertado:** 120 s ainda é ~260× a medição e alinha com o `statement_timeout` do
+servidor. Abaixo disso o risco deixa de ser "matar o travado" e passa a ser "matar o lento".
+
+**NÃO APLIQUEI.** Alterar configuração de serviço é ação humana, em outra janela, e esta fatia não pediu
+essa autorização.
 
 ### Um risco que U1 encosta e nenhuma das cinco perguntas cobria — FECHADO NA MIGRATION
 
@@ -536,8 +550,22 @@ os quatro itens — trava de concorrência (item 1), `set local lock_timeout = '
 in access exclusive mode nowait` sobre 55 relações em ordem alfabética (item 3) e nenhum `commit`,
 `concurrently` ou `cascade` no corpo. Conferir é ler o arquivo; ele nomeia cada objeto que remove.
 
-Por que: a purga inteira, dentro de uma transação, tem janela de `ACCESS EXCLUSIVE` de **mediana ~71 ms**
-(medida por uma segunda pessoa, n=7; 98 ms num banco com 500 000 linhas). O `lock table` da `0017` nomeia **55**
+Por que, agora medido sobre a `0017` VERSIONADA — e não mais sobre o rascunho que a decisão 122 usava:
+
+| Acervo no banco | Transação inteira | **Janela de `ACCESS EXCLUSIVE`** |
+| --- | --- | --- |
+| vazio (só o schema) | 148 ms | **117 ms** |
+| 2 000 000 de linhas | 597 ms | **118 ms** |
+| 6 000 000 de linhas | 1463 ms | **106 ms** |
+
+A leitura importante é a diferença entre as duas colunas. A TRANSAÇÃO escala com o acervo, porque a
+conferência par a par varre tabela inteira 52 vezes. A JANELA não escala — fica plana em torno de 110 ms —
+porque essa conferência foi deliberadamente posta ANTES do `lock table` (item 2 da migration). É o que
+separa "a purga demora mais em quem tem mais dado" de "a purga BLOQUEIA mais em quem tem mais dado": só a
+primeira é aceitável. A medição anterior, de mediana ~71 ms, era de um rascumo não versionado e de um banco
+pequeno; foi substituída por esta, que é reproduzível contra o arquivo que está no repositório.
+
+O `lock table` da `0017` nomeia **55**
 relações: as 49 tabelas de escopo, as 5 views de nome antigo e `erp.empresas` — esta última nomeada de
 propósito, porque a view `erp.farms` a arrastaria junto de qualquer jeito e lock implícito não tem ordem
 declarada. (A decisão 118 falava em "nomeia 54, trava 55", descrevendo o plano antes do arquivo existir.)

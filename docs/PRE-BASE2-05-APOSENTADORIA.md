@@ -353,9 +353,13 @@ apagados: atravessam a purga, porque o acervo legado não deixou de ter existido
   `entity = 'farm'` continua viva. Trocá-la é a **05C-2**, que precisa de janela com uma única versão da API
   servindo. A migration inclusive CONFERE, na pós-condição, que `erp.code_sequences` continua existindo —
   para que a fatia não passe perto do contador por acidente;
-- **não remove nada por conter a palavra "farm".** `erp.farm_transfers`, `animal_farm_transfer`,
-  `batch_farm_transfer`, `client_profiles.farm_name`, preferências de usuário, redirecionamentos de rota,
-  `contrato-legado.ts` e as 13 chaves de permissão continuam onde estão. O escopo é a **ponte física**, não
+- **não remove nada por conter a palavra "farm".** E vale distinguir o que cada sobrevivente É, porque a
+  lista antiga dava a entender que havia tabelas aqui: `erp.client_profiles.farm_name` é **coluna** de
+  cadastro de cliente (0002); `movement_type = 'farm_transfer'` (0006) é **valor** de domínio gravado em
+  linhas; `farm_transfers.*`, `animal_farm_transfer.*` e `batch_farm_transfer.*` são **chaves de
+  permissão** — linhas de `erp.role_permissions`. Não existe, e nunca existiu, uma tabela
+  `erp.farm_transfers`. Preferências de usuário, redirecionamentos de rota, `contrato-legado.ts` e as 13
+  chaves de permissão continuam onde estão. O escopo é a **ponte física**, não
   o vocabulário. Nomes históricos de constraint também ficam: `farm_cost_centers_farm_id_fkey` governa uma
   coluna de `erp.empresa_cost_centers` — nome é história, o que importa é a coluna;
 - **não cria índice novo.** Os oito gêmeos canônicos já existiam; a fatia só exige que estejam lá;

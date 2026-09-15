@@ -335,13 +335,14 @@ describe("PARTE 1 — dois runners ao mesmo tempo", () => {
     esperarPurgado(depois, "purga aplicada");
 
     // É o runner cujo ledger foi lido ANTES do commit do vencedor: ele acha que a 0017 está pendente e
-    // tenta o arquivo de novo. Sem a trava no caminho (o vencedor já soltou), quem barra é o LOCK TABLE:
-    // ele nomeia as cinco views de nome antigo, e elas não existem mais. A recusa vem ANTES das
-    // pré-condições de inventário — mais cedo ainda, e igualmente fail-closed.
+    // tenta o arquivo de novo. Sem a trava no caminho (o vencedor já soltou), quem barra é a CONFERÊNCIA
+    // DO ACERVO — a seção 2, que roda ANTES do `lock table` justamente para não escalar a janela: ela lê
+    // as colunas legadas par a par, e a primeira delas já não existe. A recusa é, portanto, mais cedo do
+    // que o `lock table` (que barraria pelas views removidas), e igualmente fail-closed: nada é tocado.
     const reexecucao = await aplicarCru(db);
-    expect(sqlstate(reexecucao.erro), "SQLSTATE de relação inexistente").toBe("42P01");
-    expect(mensagem(reexecucao.erro), "barrado já no LOCK TABLE, que nomeia as views removidas")
-      .toMatch(/relation "erp\.authorizer_farms" does not exist/);
+    expect(sqlstate(reexecucao.erro), "SQLSTATE de coluna inexistente").toBe("42703");
+    expect(mensagem(reexecucao.erro), "barrado já na conferência do acervo, que lê as colunas legadas")
+      .toMatch(/column "(farm_id|origin_farm_id|destination_farm_id)" does not exist/);
     expect(await inventariar(), "a recusa não mexeu em nada").toEqual(depois);
 
     // E o runner de verdade, na mesma situação, nem chega a abrir o arquivo: a 0017 está no ledger.
