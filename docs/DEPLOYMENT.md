@@ -50,9 +50,10 @@ no navegador — agora provando que o canônico atravessa, e reprovando se a API
 | Fase | O que sai | O que continua |
 | --- | --- | --- |
 | **05A — Cliente canônico** ✅ publicada | tradutor de fio do web, o cabeçalho anterior do navegador | API e banco bilíngues |
-| **05B — Servidor canônico** ⬅ atual | borda legada da API (cabeçalho, entrada, apelidos, CORS, recurso, escopo admin achatado, promoção de sessão) | banco bilíngue |
-| **05C-0 — Instrumentos** | nada do banco: **NO-DDL**. Calibra os gates que a purga usa como prova | tudo |
-| **05C-1 — Purga física** | 52 colunas legadas em 49 tabelas, as **cinco** views de nome antigo, 52 gatilhos de espelho e 3 funções, 52 FKs, 8 índices, o CHECK órfão de `erp.equipment_transfers` | contador `entity='farm'`; lápides (`contrato-legado.ts`, redirects) |
+| **05B — Servidor canônico** ✅ publicada | borda legada da API (cabeçalho, entrada, apelidos, CORS, recurso, escopo admin achatado, promoção de sessão) | banco bilíngue |
+| **05C-0 — Instrumentos** ✅ mesclada (PR #33) | nada do banco: **NO-DDL**. Calibra os gates que a purga usa como prova | tudo |
+| **05C-G0/G1 — Preflight** ⬅ atual | nada do banco: leitura de produção, correção de documentação, contratos executáveis e runbook. Ver `docs/PRE-BASE2-05C-1-PREFLIGHT.md` | tudo |
+| **05C-1 — Purga física** ⛔ NÃO autorizada | 52 colunas legadas em 49 tabelas, as **cinco** views de nome antigo, 52 gatilhos de espelho NOMEADOS (as tabelas alvo têm 66 gatilhos: 14 são de negócio e ficam) e 3 funções, **52 FKs de coluna única** (as **50** compostas ficam), 8 índices, e o CHECK órfão de `erp.equipment_transfers` só depois do substituto canônico | contador `entity='farm'`; lápides (`contrato-legado.ts`, redirects) |
 | **05C-2 — Contador** | a linha `entity='farm'` de `erp.code_sequences` e a constante `SEQUENCIA_EMPRESA` | — |
 
 Cada fase só começa depois de a anterior estar em produção e comprovada. **05A não remove compatibilidade

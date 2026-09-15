@@ -143,3 +143,65 @@ export function conferirEspelho(tables, fase) {
 
   return { problemas, paresHistoricos, tabelasHistoricas: tabelasHistoricas.size, canonicasDeNascenca, legadasVivas };
 }
+
+/**
+ * A INVARIANTE DE TRANSFERÊNCIA — a única regra de NEGÓCIO que a purga derruba em silêncio (05C-G1).
+ *
+ * `erp.equipment_transfers` nasceu com `check (origin_farm_id <> destination_farm_id)`
+ * (supabase/migrations/0005_sales_fleet_hr.sql:142), INLINE e SEM NOME — o PostgreSQL a chamou de
+ * `equipment_transfers_check`. Ela é a única garantia, no banco, de que um equipamento não é transferido
+ * para a empresa onde já está.
+ *
+ * O PROBLEMA QUE ESTE CONTRATO FECHA: medido em banco descartável, `alter table ... drop column
+ * origin_farm_id` derruba esse CHECK JUNTO, sem erro, sem aviso e sem `cascade` — é o que o PostgreSQL faz
+ * com toda constraint que depende da coluna removida. A migration termina com sucesso, a suíte fica verde,
+ * e a invariante simplesmente deixou de existir. Nenhum gate deste repositório reprovava isso.
+ *
+ * Por isso a invariante é cobrada POR FASE, do mesmo jeito que o espelho:
+ *   `dual`     — o CHECK vive sobre as colunas LEGADAS. É o estado de hoje.
+ *   `canonica` — o CHECK vive sobre as colunas CANÔNICAS. A 05C-1 só pode declarar essa fase se tiver
+ *                criado o substituto; e como o gate roda depois da migration inteira, criar o substituto
+ *                NO MESMO arquivo deixa de ser recomendação de prosa e vira condição de verde.
+ *
+ * O que se cobra é a FORMA (as duas colunas certas, em desigualdade, validada), nunca o texto: exigir a
+ * letra faria o gate quebrar por espaço em branco ou por como o `pg_get_constraintdef` normaliza.
+ */
+export const INVARIANTE_TRANSFERENCIA = {
+  tabela: "equipment_transfers",
+  origem: "supabase/migrations/0005_sales_fleet_hr.sql:142",
+  colunasPorFase: { dual: ["origin_farm_id", "destination_farm_id"], canonica: ["empresa_origem_id", "empresa_destino_id"] }
+};
+
+/** As duas colunas que a fase exige na desigualdade. Fase desconhecida NEGA — não cai em vizinha. */
+export const colunasDaInvarianteDeTransferencia = (fase) => INVARIANTE_TRANSFERENCIA.colunasPorFase[fase] ?? null;
+
+/**
+ * Confere a invariante contra os CHECKs que o banco realmente tem.
+ * @param {"dual"|"canonica"} fase
+ * @param {{ nome: string, definicao: string, validado?: boolean }[]} checks CHECKs vivos de erp.equipment_transfers
+ * @returns {string[]} problemas
+ */
+export function conferirInvarianteDeTransferencia(fase, checks) {
+  const alvo = colunasDaInvarianteDeTransferencia(fase);
+  if (!alvo) return [`fase inválida (${fase}); esperado: ${FASES.join(" | ")}`];
+  const [a, b] = alvo;
+  const lista = Array.isArray(checks) ? checks : [];
+  // `<>` e `!=` são o mesmo operador; a ordem das pontas é indiferente. O que não é indiferente é a coluna.
+  const desigualdade = (def, x, y) => new RegExp(`\\b${x}\\b\\s*(?:<>|!=)\\s*\\b${y}\\b`).test(String(def).replace(/[()"]/g, " "));
+  const casa = lista.filter((c) => desigualdade(c.definicao, a, b) || desigualdade(c.definicao, b, a));
+  const problemas = [];
+  if (!casa.length) {
+    problemas.push(`erp.${INVARIANTE_TRANSFERENCIA.tabela}: a fase "${fase}" exige um CHECK negando a igualdade entre ${a} e ${b}, e nenhum dos ${lista.length} CHECK(s) da tabela faz isso. Na 05C-1 o \`drop column\` derruba o CHECK legado EM SILÊNCIO: o substituto canônico precisa nascer no MESMO arquivo, antes do drop. Origem do original: ${INVARIANTE_TRANSFERENCIA.origem}`);
+  }
+  // CHECK `NOT VALID` aceita linha nova e ignora o acervo: existir não é o mesmo que valer.
+  for (const c of casa) {
+    if (c.validado === false) problemas.push(`erp.${INVARIANTE_TRANSFERENCIA.tabela}: o CHECK ${c.nome} existe mas está NOT VALID — ele não responde pelo acervo, logo não é a invariante.`);
+  }
+  // A grafia da OUTRA fase sobrevivendo é o sintoma de purga pela metade: as duas gerações vivas ao mesmo
+  // tempo significam que alguém criou o substituto e não removeu o original, ou o contrário.
+  const outra = colunasDaInvarianteDeTransferencia(fase === "dual" ? "canonica" : "dual");
+  if (fase === "canonica" && outra && lista.some((c) => desigualdade(c.definicao, outra[0], outra[1]) || desigualdade(c.definicao, outra[1], outra[0]))) {
+    problemas.push(`erp.${INVARIANTE_TRANSFERENCIA.tabela}: a fase é "canonica" mas ainda existe CHECK sobre ${outra.join(" / ")} — a coluna legada deveria ter saído e levado o CHECK junto.`);
+  }
+  return problemas;
+}

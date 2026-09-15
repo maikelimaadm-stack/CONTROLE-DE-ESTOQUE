@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, type Db } from "@agro/db";
 // @ts-expect-error — classificação em JS puro, compartilhada com o gerador da matriz
-import { EXCECOES_RLS_EMPRESA, TABELAS_DE_EXCECAO, protecaoDaExcecao, validarProtecaoDaExcecao, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
+import { TABELAS_DE_EXCECAO, SEM_FK_COMPOSTA_DECLARADA, protecaoDaExcecao, validarProtecaoDaExcecao, classificarTabela, politicasEsperadas } from "../../../../packages/domain/empresa-rls.mjs";
+// @ts-expect-error — contrato de fase em JS puro, compartilhado com o gate de linha de comando
+import { conferirInvarianteDeTransferencia } from "../../../../scripts/lib/espelho-empresa.mjs";
+// @ts-expect-error — idem
+import { FASE_ESPELHO } from "../../../../scripts/lib/empresa-compat-surface.mjs";
 import { TEST_URL } from "./setup.js";
 import { resetSchema, migrate } from "@agro/db";
 
@@ -198,21 +202,71 @@ describe("classificação × políticas reais", () => {
     // A referência de coluna única prova que o UUID é uma empresa; não prova que é uma empresa DESTA
     // organização — e foi exatamente esse buraco que a PRE-BASE2-02 fechou à mão para o responsável de
     // compra. Aqui ele está fechado por construção, para todas as colunas de empresa.
+    //
+    // A DISPENSA EM BLOCO SAIU (PRE-BASE2-05C-G1). Antes, `if (EXCECOES_RLS_EMPRESA[tabela]) continue`
+    // usava uma resposta sobre POLÍTICA como dispensa de INTEGRIDADE REFERENCIAL, que é outra pergunta —
+    // o mesmo erro que o primeiro caso deste arquivo já tinha consertado. Efeito medido: 4 das 52 colunas
+    // não chegavam ao count; DUAS de fato não têm a composta (e ninguém tinha declarado por quê), e as
+    // outras duas TÊM — remover `notifications_empresa_fk` ou `membro_empresas_empresa_fk` passava verde.
+    // Agora a dispensa é NOMINAL, por (tabela, coluna), com motivo escrito no SSOT, e fail-closed nos dois
+    // sentidos: quem está na lista tem de continuar sem a composta; quem não está, tem de tê-la.
+    //
+    // O ALVO TAMBÉM É COBRADO. O padrão antigo terminava logo depois da coluna e nunca lia o `REFERENCES`:
+    // uma composta apontando para a tabela errada passaria por prova de tenant. E `NOT VALID` deixa de
+    // contar — constraint que não responde pelo acervo não é garantia, é intenção.
     const r = await db.query<{ tabela: string; coluna: string }>(`
       select c.table_name as tabela, c.column_name as coluna
         from information_schema.columns c
         join information_schema.tables t on t.table_schema=c.table_schema and t.table_name=c.table_name and t.table_type='BASE TABLE'
        where c.table_schema='erp' and c.column_name in ('empresa_id','empresa_origem_id','empresa_destino_id')
          and exists (select 1 from information_schema.columns o where o.table_schema='erp' and o.table_name=c.table_name and o.column_name='organization_id')`);
-    const semComposta: string[] = [];
+    const problemas: string[] = [];
+    const dispensadas = new Set(Object.keys(SEM_FK_COMPOSTA_DECLARADA as Record<string, string>));
+    const vistas = new Set<string>();
+    let comComposta = 0;
     for (const { tabela, coluna } of r.rows) {
-      if (EXCECOES_RLS_EMPRESA[tabela]) continue;
+      const chave = `${tabela}.${coluna}`;
+      vistas.add(chave);
       const fk = await db.query<{ n: string }>(`
         select count(*) n from pg_constraint
-         where conrelid = ('erp.' || $1)::regclass and contype='f'
-           and pg_get_constraintdef(oid) ~* ('foreign key \\(organization_id, ' || $2 || '\\)')`, [tabela, coluna]);
-      if (fk.rows[0]!.n === "0") semComposta.push(`erp.${tabela}.${coluna}`);
+         where conrelid = ('erp.' || $1)::regclass and contype='f' and convalidated
+           and pg_get_constraintdef(oid) ~* ('foreign key \\(organization_id, ' || $2 || '\\) references erp\\.empresas\\(organization_id, id\\)')`, [tabela, coluna]);
+      const tem = fk.rows[0]!.n !== "0";
+      if (tem) comComposta++;
+      if (tem && dispensadas.has(chave)) problemas.push(`erp.${chave}: está declarada em SEM_FK_COMPOSTA_DECLARADA mas GANHOU a composta — a dispensa envelheceu, remova-a do SSOT`);
+      if (!tem && !dispensadas.has(chave)) problemas.push(`erp.${chave}: sem FOREIGN KEY (organization_id, ${coluna}) REFERENCES erp.empresas(organization_id, id) validada`);
     }
-    expect(semComposta).toEqual([]);
+    // Dispensa órfã: declarar que uma coluna não tem composta e a coluna nem existir mais esconde o buraco
+    // seguinte. Mesmo desenho do caso "exceção órfã" acima.
+    for (const chave of dispensadas) if (!vistas.has(chave)) problemas.push(`${chave}: declarada em SEM_FK_COMPOSTA_DECLARADA e não existe no schema — dispensa órfã`);
+    // A PREMISSA JUNTO COM A CONCLUSÃO. Sem esta linha, uma consulta que voltasse vazia (rename de schema,
+    // table_type diferente, coluna renomeada pela própria 05C-1) deixaria o laço sem executar asserção
+    // nenhuma e o teste ficaria verde provando nada. São 52 pares (tabela, coluna) hoje, 50 com a composta.
+    expect(r.rows.length, "as colunas canônicas de tabela com organização").toBeGreaterThanOrEqual(52);
+    expect(comComposta, "colunas canônicas com a composta validada apontando para erp.empresas").toBeGreaterThanOrEqual(50);
+    expect(problemas).toEqual([]);
+  });
+
+  /**
+   * A INVARIANTE DE NEGÓCIO QUE A PURGA DERRUBA EM SILÊNCIO (PRE-BASE2-05C-G1).
+   *
+   * `erp.equipment_transfers` tem, desde a 0005 (linha 142), um CHECK anônimo e inline negando a igualdade
+   * entre as duas pontas — batizado `equipment_transfers_check` pelo PostgreSQL. Medido em banco
+   * descartável: o `drop column` da 05C-1 leva esse CHECK junto, sem erro e sem `cascade`. A migration
+   * termina com sucesso e a regra "origem ≠ destino" simplesmente deixa de existir.
+   * As grafias de cada fase vivem no SSOT (`scripts/lib/espelho-empresa.mjs`), não aqui: é lá que a 05C-1
+   * vira a chave, e repeti-las neste arquivo criaria a segunda lista que envelhece em silêncio.
+   *
+   * Por isso a invariante é cobrada POR FASE, igual ao espelho: em `dual` sobre as colunas legadas, em
+   * `canonica` sobre as canônicas. Escrito assim, a 05C-1 só fica verde se criar o substituto — e, como
+   * este gate roda depois da migration inteira, criá-lo no MESMO arquivo deixa de ser prosa e vira
+   * condição de aprovação.
+   */
+  it("a invariante origem ≠ destino da transferência de equipamento existe na forma que a FASE exige", async () => {
+    const c = await db.query<{ nome: string; definicao: string; validado: boolean }>(`
+      select conname as nome, pg_get_constraintdef(oid) as definicao, convalidated as validado
+        from pg_constraint where conrelid = 'erp.equipment_transfers'::regclass and contype = 'c'`);
+    expect(c.rows.length, "erp.equipment_transfers tem CHECK para conferir").toBeGreaterThan(0);
+    expect(conferirInvarianteDeTransferencia(FASE_ESPELHO, c.rows)).toEqual([]);
   });
 });

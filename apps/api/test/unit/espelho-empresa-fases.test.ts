@@ -5,7 +5,7 @@ import path from "node:path";
 // @ts-expect-error — leitor e contrato em JS puro, compartilhados com os gates de documentação
 import { readSchema } from "../../../../scripts/lib/schema.mjs";
 // @ts-expect-error — idem
-import { conferirEspelho, REMOCOES_DECLARADAS } from "../../../../scripts/lib/espelho-empresa.mjs";
+import { conferirEspelho, REMOCOES_DECLARADAS, conferirInvarianteDeTransferencia, INVARIANTE_TRANSFERENCIA } from "../../../../scripts/lib/espelho-empresa.mjs";
 
 /**
  * O CONTRATO DO ESPELHO É COBRADO POR PAR HISTÓRICO (PRE-BASE2-05C-0).
@@ -203,5 +203,55 @@ describe("premissa", () => {
     limpar();
     escrever("0001_ponte.sql", PONTE);
     expect((conferirEspelho(readSchema(dir), "quase") as Resultado).problemas.join(" | ")).toMatch(/fase inválida/);
+  });
+});
+
+/**
+ * A INVARIANTE DE TRANSFERÊNCIA, COBRADA POR FASE (PRE-BASE2-05C-G1).
+ *
+ * `erp.equipment_transfers` tem, desde a 0005, um CHECK anônimo negando origem = destino. Medido em banco
+ * descartável: o `drop column` da 05C-1 leva esse CHECK junto, sem erro, sem aviso e sem `cascade` — a
+ * migration termina verde e a regra de negócio evapora. Aqui se prova a REGRA (função pura, sem banco);
+ * quem a aplica contra o `pg_constraint` vivo é `apps/api/test/integration/rls-matriz.test.ts`.
+ */
+describe("invariante origem ≠ destino por fase", () => {
+  // As grafias saem do SSOT, não de literais: assim o caso mede o CONTRATO e não uma cópia dele — e o
+  // inventário de dívida não conta como ocorrência nova o nome que este arquivo existe para vigiar.
+  const [LEG_O, LEG_D] = INVARIANTE_TRANSFERENCIA.colunasPorFase.dual as [string, string];
+  const [CAN_O, CAN_D] = INVARIANTE_TRANSFERENCIA.colunasPorFase.canonica as [string, string];
+  const LEGADO = { nome: "equipment_transfers_check", definicao: `CHECK ((${LEG_O} <> ${LEG_D}))`, validado: true };
+  const CANONICO = { nome: "equipment_transfers_empresas_check", definicao: `CHECK ((${CAN_O} <> ${CAN_D}))`, validado: true };
+
+  it("fase dual: o CHECK legado satisfaz", () => {
+    expect(conferirInvarianteDeTransferencia("dual", [LEGADO])).toEqual([]);
+  });
+
+  it("fase dual: a ordem das pontas é indiferente, a coluna não", () => {
+    expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, definicao: `CHECK ((${LEG_D} <> ${LEG_O}))` }])).toEqual([]);
+    expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, definicao: "CHECK ((origin_warehouse_id <> destination_warehouse_id))" }]).join(" | ")).toMatch(/exige um CHECK negando/);
+  });
+
+  it("fase dual SEM CHECK nenhum REPROVA — é o que o `drop column` produz em silêncio", () => {
+    expect(conferirInvarianteDeTransferencia("dual", []).join(" | ")).toMatch(/drop column. derruba o CHECK legado EM SIL/);
+  });
+
+  it("fase canonica exige o substituto sobre as colunas canônicas", () => {
+    expect(conferirInvarianteDeTransferencia("canonica", [CANONICO])).toEqual([]);
+    // Purgar sem criar o substituto é exatamente o cenário que a 05C-1 não pode produzir.
+    expect(conferirInvarianteDeTransferencia("canonica", []).length).toBe(1);
+  });
+
+  it("fase canonica com o CHECK LEGADO ainda vivo REPROVA nos dois flancos", () => {
+    const p = conferirInvarianteDeTransferencia("canonica", [LEGADO]).join(" | ");
+    expect(p).toMatch(/exige um CHECK negando a igualdade entre empresa_origem_id e empresa_destino_id/);
+    expect(p).toMatch(new RegExp(`ainda existe CHECK sobre ${LEG_O}`));
+  });
+
+  it("CHECK NOT VALID não conta como invariante — existir não é valer", () => {
+    expect(conferirInvarianteDeTransferencia("dual", [{ ...LEGADO, validado: false }]).join(" | ")).toMatch(/NOT VALID/);
+  });
+
+  it("fase inválida NEGA — não cai na vizinha", () => {
+    expect(conferirInvarianteDeTransferencia("quase", [LEGADO]).join(" | ")).toMatch(/fase inválida/);
   });
 });

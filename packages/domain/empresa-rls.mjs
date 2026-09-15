@@ -344,3 +344,24 @@ export function validarProtecaoDaExcecao(tabela, protecao, politicas) {
 export function politicaEsperada(categoria) {
   return ["A", "B", "C", "D"].includes(categoria) ? "tenant_e_empresa" : "tenant_isolation";
 }
+
+/**
+ * COLUNA DE EMPRESA SEM CHAVE ESTRANGEIRA COMPOSTA — declarada uma a uma, com motivo (PRE-BASE2-05C-G1).
+ *
+ * `(organization_id, <coluna>) → erp.empresas(organization_id, id)` é a única prova de tenant no schema
+ * físico: a FK de coluna única prova que o UUID é uma empresa, não que é uma empresa DESTA organização.
+ * O guarda que cobra isso (`rls-matriz.test.ts`) dispensava, em bloco, toda tabela de EXCECOES_RLS_EMPRESA
+ * — e dispensa em bloco é a mesma falha que a 05C-0 já consertou no primeiro caso daquele arquivo:
+ * uma resposta sobre POLÍTICA sendo usada como dispensa de INTEGRIDADE REFERENCIAL, que é outra pergunta.
+ *
+ * O efeito medido era duplo: escondia as duas tabelas que de fato não têm a composta (abaixo), e dava
+ * impunidade às que TÊM — remover `notifications_empresa_fk` ou `membro_empresas_empresa_fk` passava verde.
+ *
+ * Esta lista é fail-closed nos DOIS sentidos: quem está aqui tem de continuar sem a composta (ganhou a
+ * composta ⇒ a dispensa envelheceu e sai da lista), e quem NÃO está aqui tem de ter a composta.
+ * Uma exceção que envelhece em silêncio é exatamente o que este repositório chama de segunda lista.
+ */
+export const SEM_FK_COMPOSTA_DECLARADA = {
+  "registros_globais.empresa_id": "O `empresa_id` do índice do ID Global é DICA denormalizada e nunca autoriza (docs/GLOBAL-ID-CONTRACT.md): a autoridade é o registro fonte vivo, carregado pelo módulo da permissão dele. A FK de coluna única amarra a dica a uma empresa existente; o recorte por tenant vem da RLS de `tenant_isolation` da própria tabela, não da chave. ATENÇÃO: isto é declaração do estado atual, não elogio — a composta aqui seria estritamente mais forte, e trocá-la é fatia própria, nunca efeito colateral da 05C-1.",
+  "legado_escopo_empresa_v0.empresa_id": "Arquivo morto de erp.member_farms (0014): existe para tornar a PRE-BASE2-03 reversível sem backup externo. Uma FK impediria o arquivo de preservar linha cujo alvo já não existe — que é precisamente a função de um arquivo morto. Não tem tela, não tem escrita e nenhum runtime o lê."
+};
