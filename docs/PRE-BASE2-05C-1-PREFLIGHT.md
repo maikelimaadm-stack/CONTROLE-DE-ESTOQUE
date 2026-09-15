@@ -6,17 +6,20 @@ sessão automatizada tem. Cada gate abaixo termina em `PASS` ou `BLOCKED` — n�
 
 Quem executa: o Maike. Não é preciso saber SQL: tudo que precisa ser rodado está escrito pronto para colar.
 
-> **Estado em 2026-09-15:** P1, P5, P6 e P7 estão `BLOCKED`. A 05C-1 **não está autorizada**.
-> CI verde não muda nenhum deles.
+> **Estado em 2026-09-15, após o fechamento operacional (05C-G2):**
+> **P5 = `PASS`** (medido, ver abaixo) · **P7 mecanismo = `PASS`** · **U5 = NON-BLOCKING BY PROOF** ·
+> **P1 = `BLOCKED`** (só fecha com um restore real, que custa dinheiro e depende de autorização) ·
+> **P6 = `BLOCKED`** em U1–U4, que são leituras de painel.
+> A 05C-1 **não está autorizada**. CI verde não muda nenhum desses.
 
 ## A matriz
 
 | Gate | Evidência exigida | `PASS` quando | `BLOCKED` enquanto | Quem confirma | Momento |
 | --- | --- | --- | --- | --- | --- |
 | **P1** Restore | um backup de produção RESTAURADO em destino isolado e CONSULTADO | as cinco consultas de P1.3 respondem o esperado no destino restaurado | não houver restore real, ou só houver "backup existe" | Maike, no painel da Supabase | uma vez, antes de autorizar a fatia |
-| **P5** Seed e papéis | o VALOR de `SEED_ON_DEPLOY` lido no painel | o valor é diferente de `1` | o valor não tiver sido lido nesta janela | Maike, no painel do Railway | imediatamente antes do deploy |
+| **P5** Seed e papéis ✅ | o VALOR de `SEED_ON_DEPLOY` lido com credencial autenticada | o valor é diferente de `1` | o valor não tiver sido lido nesta janela | leitura automatizada (Railway CLI) ou Maike | reconfirmar imediatamente antes do deploy |
 | **P6** Rollout | as cinco respostas de P6 | as cinco estiverem respondidas por campo real | qualquer uma continuar `UNKNOWN` | Maike, no painel do Railway | uma vez, e reconfirmar se o serviço mudar |
-| **P7** Locks | a consulta de porteiro, com o banco calmo | nenhuma transação aberta sobre `erp` no instante do deploy | a política não estiver versionada, ou o banco estiver ocupado | Maike, no SQL Editor | minutos antes do deploy |
+| **P7** Locks | a consulta de porteiro, sem linha `BLOQUEIA` | nenhum DDL concorrente no instante do deploy | houver DDL concorrente sobre o catálogo | Maike, no SQL Editor | minutos antes do deploy |
 
 ---
 
@@ -94,31 +97,60 @@ projeto restaurado** para não pagar por ele.
 
 **P1 = `PASS`** só com P1.3 respondido no destino restaurado e P1.4 registrado.
 
+### O que exatamente precisa da sua autorização
+
+Uma ação só, e ela custa dinheiro — por isso nenhuma sessão automatizada a executa:
+
+| | |
+| --- | --- |
+| **Ação** | painel do projeto `dcroxgdzzgqgiquvfffa` → Database → Backups → aba **Restore to a New Project**: restaurar o backup diário mais recente num projeto NOVO e isolado, mesma região `sa-east-1`, com nome de descarte (ex.: `CONTROLE-DE-ESTOQUE-RESTORE-TESTE-P1`) |
+| **Custo** | **USD 10,00/mês** por projeto, cobrado pró-rata enquanto existir. PITR **não** é necessário para este drill (seria outro pedido, ~USD 100/mês) |
+| **Tempo de pé** | o mínimo para rodar as consultas — 2 a 4 h, incluindo provisionamento; exclusão no mesmo dia |
+| **Produção é tocada?** | **não**. "Restore to a New Project" lê o backup e cria projeto separado; a origem permanece intacta. **Nunca** use "restore" sobre o projeto de produção |
+| **Quem clica** | você. Depois disso a sessão roda os `select` de P1.3 no restaurado |
+
+Duas armadilhas da própria documentação da Supabase, para não virarem surpresa: o backup diário **não
+guarda a senha de papéis customizados** (`erp_app` e `erp_migrator` precisam de senha nova no restaurado —
+irrelevante para o drill, que só faz `select`), e o restore **não copia** objetos de Storage, Edge
+Functions, configurações de Auth/Realtime nem extensões — também irrelevante para provar schema e dado.
+
+E uma armadilha de inventário: o ledger do CLI da Supabase (`supabase_migrations`) mostra 7 migrations; o
+SSOT do produto é `public.erp_migrations`, com 16. Conferir o ledger errado no restaurado dá a resposta
+errada.
+
 ---
 
-## P5 — seed e conexões
+## P5 — seed e conexões — `PASS`
 
-**P5.1 — o valor de `SEED_ON_DEPLOY`.** Painel do Railway → projeto `controle-de-estoque` → ambiente
-`production` → serviço **api** → aba **Variables** → localizar `SEED_ON_DEPLOY` e revelar o valor.
+Medido em 2026-09-15 com o **Railway CLI autenticado**, em leitura pura
+(`railway variable list -p <projeto> -s <serviço> -e production --json`, executado fora do repositório,
+saída processada por script que emite só booleanos e o arquivo apagado em seguida). O bloqueio do G0 não
+era um gate externo: era a sessão OAuth do MCP, que devolve `valuesRedacted: true`. Com o CLI, o valor se lê.
 
-- `PASS` se o valor for **diferente de `1`** (`0`, vazio ou ausente servem).
-- `BLOCKED` se for `1` — nesse caso o deploy da 05C-1 recriaria dados de referência e a organização demo
-  junto com a purga.
-- `BLOCKED` também se ninguém leu o valor **nesta janela**: comportamento histórico não é configuração
-  atual. (O que a sessão automatizada conseguiu provar é só o EFEITO: o seed de referência rodou **uma
-  única vez** na vida do banco, na provisão, e não rodou em nenhum dos ~25 deploys seguintes. Isso é forte,
-  e ainda assim não é o valor.)
+| Condição | Resultado | Como foi provado |
+| --- | --- | --- |
+| `SEED_ON_DEPLOY != "1"` | **atendida** — o valor é `0` | Railway CLI; a comparação em `migrate.ts:13` é estrita contra a string `"1"` |
+| runtime é `erp_app` | **atendida** | a variável, e o catálogo: conexões vivas chegam como `erp_app` via Supavisor |
+| migrator é `erp_migrator` | **atendida** | a variável, e o catálogo: `erp_migrator` é dono do schema `erp` e das 187 relações |
+| identidades distintas | **atendida** | usuário **e** senha distintos; `erp_app` não é dono de nada e não pode fazer DDL |
 
-**P5.2 — os dois papéis.** Na mesma aba, conferir `DATABASE_URL` e `MIGRATE_DATABASE_URL`. Anotar
-**apenas**: o host, a porta e o nome de usuário antes do `:`. Esperado: usuários **diferentes** —
-`erp_app` na primeira, `erp_migrator` na segunda.
+Contraprova que não depende de ler URL nenhuma: `erp_app` tem `rolbypassrls = false` — exatamente o que
+`.claude/rules/security.md` exige — e `erp_migrator`, que tem `bypassrls`, **não fica conectado em runtime**
+(zero conexões vivas dele; só é usado no pre-deploy).
 
-> **Senha, token e string de conexão inteira nunca vão para chat, PR, relatório ou log** — nem mascarados,
-> nem "de exemplo". Se precisar citar, cite o NOME do papel.
+Conexão: host `aws-0-sa-east-1.pooler.supabase.com`, porta `5432` — pooler em modo **sessão** (o modo
+transação seria 6543), confirmado pelo `application_name = Supavisor` das conexões vivas.
 
-Confirmação independente que já existe, feita pelo lado do banco e sem ler nenhuma URL: `erp_migrator` é
-dono de 100% dos objetos do schema `erp` e do ledger, com `rolbypassrls = true`; as conexões vivas da API
-chegam como `erp_app`, que tem `rolbypassrls = false` e nenhum privilégio de DDL.
+**Reconfirmar antes da janela.** O `PASS` é sobre o estado atual. `SEED_ON_DEPLOY` é variável comum, **não
+selada**: qualquer pessoa com acesso ao Railway pode pô-la em `1`, e o próximo deploy rodaria `seedDemo` em
+produção. Não existe gate automatizado que reprove isso.
+
+**Dois riscos declarados, fora do escopo desta fatia:**
+- `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ORG_NAME` e `ORG_SLUG` continuam no serviço de produção. São as entradas
+  de `seedDemo`. Removê-las, ou fazer `migrate.ts` abortar quando `NODE_ENV=production` e
+  `SEED_ON_DEPLOY="1"`, fecharia o risco por construção — as duas coisas são escrita e decisão sua.
+- `DIRECT_URL` aponta para o papel `postgres` (`rolbypassrls = true`). Quem a consome não foi auditado.
+  `UNKNOWN` explícito, não `PASS`.
 
 **P5.3 — o que o deploy escreve mesmo sem seed.** Todo deploy roda `seedPermissions`, sem condição: ele
 reescreve as 782 linhas de `erp.permissions` com `on conflict (key) do update`. Deploy nunca é operação
@@ -137,10 +169,46 @@ As cinco perguntas abaixo continuam `UNKNOWN` porque a API do Railway não as ex
 | U2 | Qual é o **overlap** entre o container antigo e o novo? | Settings → Deploy → *Overlap* (ou variável `RAILWAY_DEPLOYMENT_OVERLAP_SECONDS`) |
 | U3 | Qual é o **draining** (tempo entre SIGTERM e SIGKILL)? | Settings → Deploy → *Draining* (ou `RAILWAY_DEPLOYMENT_DRAINING_SECONDS`) |
 | U4 | O **pre-deploy** tem timeout configurado? | Settings → Deploy → *Pre-Deploy Command* → campo de timeout |
-| U5 | Um **rollback reexecuta** o `preDeployCommand`? | Nenhuma página oficial afirma nem nega. Só se resolve testando num ambiente que não seja produção, ou perguntando ao suporte |
+| U5 | Um **rollback reexecuta** o `preDeployCommand`? | **RESOLVIDO — ver abaixo. A pergunta deixou de importar.** |
 
-U5 é o mais caro dos cinco: se o rollback reexecuta o pre-deploy, voltar o código faz a migration ANTIGA
-rodar contra um banco já migrado para frente.
+### U5 — NON-BLOCKING BY PROOF
+
+A pergunta certa não era "o rollback reexecuta o pre-deploy", e sim "se reexecutar, o que acontece".
+Medido em banco descartável, com o runner real:
+
+Montou-se um banco cujo ledger já continha uma migration FUTURA (`0017`) que **não existe** no diretório do
+binário anterior — exatamente o estado de um rollback. Rodando o runner ANTERIOR contra esse banco:
+
+```
+RUNNER done = []
+LEDGER = ["0001_base.sql","0002_dual.sql","0017_purga.sql"]    <- 0017 preservada
+MARCADOR = ["0002 ...","0017 purga (futura)"]                  <- o efeito da 0017 intacto
+permissions synced ; PERMISSIONS = 782 ; ROLE_PERMISSIONS = 782
+EXIT = 0
+```
+
+O runner é **forward-only**: ele itera sobre o DIRETÓRIO e usa o ledger apenas para PULAR
+(`packages/db/src/migrate.ts:17-19`). Não tenta desfazer nada, não falha por entrada extra, e o
+`seedPermissions` do binário anterior roda inteiro contra o schema pós-purga.
+
+E o runtime anterior? Auditoria estática de `apps/api/src` e `packages/*/src` (excluindo testes, migrations,
+docs e os arquivos declarados TOMBSTONE/PROVA_HISTORICA): **zero consultas SQL** citam `farm_id`,
+`origin_farm_id`, `destination_farm_id`, qualquer das 5 views de nome antigo ou as 3 funções de
+sincronização. As únicas ocorrências vivas são chave de permissão, valor de enum, discriminador em memória
+e nome de variável — nada que a purga alcance.
+
+**Consequência: U1, U2 e U3 também deixam de ser blockers por si mesmos.** Os três descrevem a mesma
+situação — uma instância do binário anterior servindo contra o schema pós-purga — e é justamente ela que a
+evidência acima não incrimina. O que continua valendo é o teto: **U4 permanece o pior dos quatro**, porque
+sem timeout provado a janela de coexistência não tem limite superior.
+
+### O gate que este veredito cria na 05C-1
+
+**G-U5, obrigatório:** o binário da BASE (o commit da API em produção no momento do deploy) tem de subir e
+servir contra um banco com a `0017` **aplicada**, provando boot sem erro, login, uma leitura escopada por
+empresa e uma gravação com conferência de ROW COUNT. Enquanto esse gate não rodar, a compatibilidade do
+runtime anterior é derivação, não fato. Ele roda em banco descartável: não exige produção nem custo.
+Forma sugerida: estender `packages/db/test/upgrade-rollback.test.ts`, que já atravessa a janela estrutural.
 
 **O que já é fato, e não muda com o painel:**
 
@@ -173,31 +241,80 @@ leitor inocente — de uma tabela sem contenção nenhuma — por **117 s**.
 `idle_in_transaction_session_timeout = 0` · `erp_migrator` sem ajuste próprio. Nada disso é alterado pela
 05C-G1: mudar configuração de servidor é ação humana, em outra janela.
 
-**P7.1 — a consulta de porteiro.** Painel Supabase → SQL Editor, minutos antes do deploy:
+**O que o NOWAIT NÃO cobre — e é por isso que o porteiro existe.** Medido: o `lock table` pré-adquire as 55
+relações, mas **não** os locks de objeto do catálogo. Uma sessão rodando `comment on function
+erp.sincronizar_empresa_legado() is 'x'` — que não toca em tabela nenhuma — segura um lock em `pg_proc`; a
+purga então **passa** pelo `lock table`, reescreve a policy, derruba os 52 gatilhos, e **trava** no
+`drop function`. Com `lock_timeout = 0` (o valor de produção) ela fica presa até o `statement_timeout` de
+120 s, segurando `ACCESS EXCLUSIVE` em 55 relações. Durante a espera, um leitor inocente de
+`erp.warehouses` — tabela sem contenção nenhuma — foi bloqueado e morreu no próprio teto.
+
+Duas consequências, as duas obrigatórias:
+
+1. **`set local lock_timeout = '2s'` no topo da migration não é rede, é requisito.** Com ele, o pior caso
+   vira `57014` com rollback total e ledger limpo (medido). Sem ele, vira 120 s de indisponibilidade.
+2. **O porteiro procura DDL concorrente**, não "banco calmo". Leitura normal não ameaça nada: contra ela o
+   NOWAIT falha em 0,72 ms, sem dano.
+
+**P7.1 — a consulta de porteiro.** Painel Supabase → SQL Editor, minutos antes do deploy. A primeira
+consulta continua sendo a de sessões vivas; a segunda foi **substituída** — a anterior era inatingível
+(`mode like '%Exclusive%'` casa com o `ExclusiveLock` em `virtualxid` que TODA transação segura, e uma
+leitura banal de 2 s já devolvia 8 linhas de ruído; critério inatingível é critério ignorado na hora H).
 
 ```sql
--- sessões vivas neste instante
-select a.pid, a.usename, a.state,
-       date_trunc('second', now() - a.xact_start)::text as transacao_aberta_ha,
-       a.wait_event_type, left(regexp_replace(a.query, '\s+', ' ', 'g'), 60) as consulta
-  from pg_stat_activity a
- where a.datname = current_database() and a.pid <> pg_backend_pid()
-   and (a.state <> 'idle' or a.xact_start is not null)
- order by a.xact_start nulls last;
-
--- locks não concedidos ou exclusivos sobre o schema do produto
-select l.pid, a.usename, l.mode, l.granted, coalesce(c.relname, l.locktype) as objeto
-  from pg_locks l
-  left join pg_class c on c.oid = l.relation
-  left join pg_namespace n on n.oid = c.relnamespace
-  join pg_stat_activity a on a.pid = l.pid
- where l.pid <> pg_backend_pid()
-   and (l.granted = false or l.mode like '%Exclusive%' or n.nspname = 'erp');
+with alvo as (
+  select c.oid from pg_class c join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'erp' and c.relkind in ('r','p','v','m')
+),
+ameaca as (
+  -- BLOQUEIA: DDL concorrente. Lock de objeto de catálogo que o LOCK TABLE não pré-adquire e que o
+  -- NOWAIT não vê: a purga passa do lock table e trava no drop function/trigger.
+  select 'BLOQUEIA'::text as veredito, 'ddl_concorrente'::text as classe, l.pid::text as quem,
+         coalesce(l.classid::regclass::text,'?')||' '||l.mode as detalhe
+    from pg_locks l
+   where l.locktype = 'object' and l.pid <> pg_backend_pid()
+     and l.classid::regclass::text in
+         ('pg_proc','pg_type','pg_class','pg_trigger','pg_constraint','pg_rewrite','pg_namespace')
+  union all
+  -- BLOQUEIA: transação preparada segura lock sem backend vivo; não há quem esperar.
+  select 'BLOQUEIA','two_phase_pendente', gid, prepared::text from pg_prepared_xacts
+  union all
+  -- ADIA: transação aberta há mais de 2 s (o NOWAIT falha barato, mas o deploy só falha de novo)
+  select 'ADIA','transacao_longa', a.pid::text,
+         a.state||' há '||date_trunc('second', now()-a.xact_start)::text
+    from pg_stat_activity a
+   where a.datname = current_database() and a.pid <> pg_backend_pid()
+     and a.xact_start is not null and now()-a.xact_start > interval '2 seconds'
+  union all
+  -- ADIA: idle in transaction sobre erp, de qualquer duração
+  select distinct 'ADIA','idle_in_transaction', a.pid::text, a.state
+    from pg_stat_activity a join pg_locks l on l.pid = a.pid
+   where a.datname = current_database() and a.pid <> pg_backend_pid()
+     and a.state like 'idle in transaction%' and l.relation in (select oid from alvo)
+  union all
+  -- ADIA: já existe fila de lock; o banco não está calmo
+  select 'ADIA','fila_de_lock', l.pid::text,
+         coalesce(l.relation::regclass::text, l.locktype)||' '||l.mode
+    from pg_locks l where l.granted = false and l.pid <> pg_backend_pid()
+  union all
+  -- ADIA: lock sobre erp em modo que não é leitura (escrita ou manutenção em curso)
+  select distinct 'ADIA','escrita_em_curso', l.pid::text,
+         l.relation::regclass::text||' '||l.mode
+    from pg_locks l join pg_stat_activity a on a.pid = l.pid
+   where l.pid <> pg_backend_pid() and l.relation in (select oid from alvo)
+     and l.mode <> 'AccessShareLock'
+)
+select veredito, classe, quem, detalhe from ameaca order by veredito, classe;
 ```
 
-**Critério:** prosseguir só se a primeira consulta não mostrar nenhuma transação aberta há mais de poucos
-segundos, e a segunda vier vazia. Qualquer `idle in transaction` sobre `erp` → **adiar**. Não encerre
-sessão de ninguém para abrir caminho.
+**Critério, em uma frase:** qualquer linha `BLOQUEIA` proíbe o deploy até aquela sessão terminar — é a única
+contenção que o NOWAIT não vê e que custa 120 s de `ACCESS EXCLUSIVE`; linhas `ADIA` prometem apenas um
+`55P03` de 0,7 ms sem dano, então espere alguns segundos e reconsulte; consulta vazia libera.
+
+Validada contra cinco cenários reais: banco parado → vazio · 400 leituras rápidas → vazio (a consulta
+anterior devolvia ruído) · `idle in transaction` → `ADIA` · fila de lock → `ADIA` · `comment on function` →
+`BLOQUEIA`, que é exatamente o único caso em que a purga trava.
+
 
 **P7.2 — o que esperar se der errado.** Com `nowait`, a falha é imediata (`55P03`, ~1 ms), a transação
 inteira volta atrás, o ledger fica vazio e a migration pode ser reexecutada sem nenhum ajuste — o runner é
