@@ -120,11 +120,12 @@ empresas dos painéis; o que morreu foi o seu uso como configuração de acesso 
 `SEQUENCIA_EMPRESA = "farm"` — agora sozinha em `apps/api/src/lib/sequencia-empresa.ts`. **Não é nome de
 fio**: é a chave de uma sequência persistida (`erp.code_sequences`, 1 linha em produção). Trocá-la sem
 migrar o dado reiniciaria a numeração do cadastro de Empresa, dando a uma empresa nova um código que já
-existe. A troca é atômica com o `update`, na 05C. Há teste provando que a numeração **continua** de onde
-estava.
+existe. A troca **não** é atômica com o `update` — isso foi corrigido na 05C-0 e está detalhado abaixo: ela
+é a fatia **05C-2**, com janela operacional. Há teste provando que a numeração **continua** de onde estava.
 
 Os redirecionamentos de rota (`/cadastros/farms` → `/cadastros/empresas`) também ficam: são favoritos de
-usuário, fora do nosso controle, e navegação não é protocolo. Saem na 05C.
+usuário, fora do nosso controle, e navegação não é protocolo. São categoria `TOMBSTONE`: saem depois da
+05C-1, com tráfego real observado — não junto com a purga.
 
 ### Version skew: agora os dois sentidos
 
@@ -138,34 +139,73 @@ Na 05A só um sentido era real. Na 05B quem vira é o servidor, e ele pode subir
 O segundo é o que esta fase realmente arrisca, e nos dois casos o outro lado é montado do próprio
 repositório por `scripts/api-anterior.mjs` — binário e bundle reais, não mock.
 
-## 05C — Inventário dos objetos físicos
+## 05C — Purga física, em TRÊS fatias
 
-Remedido em PRE-BASE2-05B **contra o schema real** (banco de integração, que roda as mesmas migrations de
-produção), **sem implementar**. A contagem de tabelas caiu de 53 para 49 em relação ao levantamento da 05A:
-aquele número vinha de estimativa, este vem de consulta.
+Remedido em **PRE-BASE2-05C-0** contra o schema real, e o levantamento anterior estava errado em pontos que
+mudam o plano. Esta seção é o resultado da remedição; o que ela corrige está dito abertamente, porque um
+número errado que vira "o tamanho do trabalho" é mais caro do que um número ausente.
 
-### Schema
+### Por que três fatias, e não uma
+
+| Fatia | O que faz | O que NÃO faz |
+| --- | --- | --- |
+| **05C-0** (esta) | calibra os instrumentos: leitor de migrations que enxerga remoção, guarda de RLS que confere o `pg_policies` real, base do version skew resolvida, contagem separada, superfície reclassificada, prova do contador | **nenhuma DDL**, nenhuma migration, nenhuma mudança de produção |
+| **05C-1** | a purga: gatilhos, funções, as cinco views, as colunas legadas com FKs, índices e o CHECK órfão; política de RLS reescrita ANTES | não mexe no contador de código da Empresa |
+| **05C-2** | a troca do contador (`entity='farm'` → `'empresa'` e a constante) | — |
+
+A 05C-0 existe porque todos os instrumentos de prova da 05C-1, do jeito que estavam, ficariam **verdes
+medindo o objeto errado** depois da remoção. Um gate que descreve um schema que não existe mais é pior que
+gate nenhum: dá confiança onde não há.
+
+A 05C-2 é separada porque a troca do contador **não é atômica com o deploy** — ver abaixo.
+
+### Schema — contagem corrigida
 
 | Objeto | Quantidade | Dependências | Migration | Rollback |
 | --- | ---: | --- | --- | --- |
-| Colunas legadas (`farm_id`, `origin_farm_id`, `destination_farm_id`) | **56** em **49** tabelas | FKs compostas, índices, RLS, gatilhos de espelho | `drop column` por tabela, depois dos gatilhos | recriar coluna + repopular a partir da canônica (o dado não se perde: é espelho) |
-| View `erp.farms` | **1** | consultas legadas, testes de espelho | `drop view` | `create view` (definição versionada na 0014) |
+| Colunas legadas em TABELAS | **52** em **49** tabelas | FKs compostas, índices, RLS, gatilhos de espelho | `drop column` por tabela, depois dos gatilhos | recriar coluna + repopular a partir da canônica (o dado não se perde: é espelho) |
+| Views de nome antigo | **5** | consultas legadas, testes de espelho | `drop view` **antes** das colunas | `create view` (definição versionada na 0014) |
 | Gatilhos de sincronização `trg_sync_*` | **52** | as colunas acima | `drop trigger` **antes** das colunas | recriar a partir da 0014 |
 | Funções `erp.sincronizar_empresa*` | **3** | os gatilhos acima | `drop function` depois dos gatilhos | recriar a partir da 0014 |
 | Chaves estrangeiras que incluem coluna legada | **52** | integridade composta (organização + empresa) | cair junto com a coluna | recriar a partir da 0014 |
 | Índices que incluem coluna legada | **8** | desempenho das consultas legadas | cair junto com a coluna | recriar se a leitura legada voltar (não deve) |
+| **CHECK órfão** `equipment_transfers_check` | **1** | `CHECK (origin_farm_id <> destination_farm_id)` | cai com a coluna; o equivalente canônico precisa **existir antes** | recriar a partir da 0002 |
 | Política de RLS citando coluna legada | **1** (`erp.empresa_cost_centers` → `api_child`) | leitura do filho pelo pai | reescrever no canônico **antes** de dropar a coluna | versão anterior da política |
-| Sequência `erp.code_sequences` com `entity='farm'` | **1 linha** (última medição de produção) | numeração de Empresa em uso | `update ... set entity='empresa'` + troca de `SEQUENCIA_EMPRESA` no MESMO deploy | `update` inverso |
+| Sequência `erp.code_sequences` com `entity='farm'` | **1 linha** | numeração de Empresa em uso | **fatia 05C-2**, com janela operacional | `update` inverso |
 
-A política de RLS é a dependência que o levantamento da 05A não tinha visto, e é a mais perigosa da lista:
-dropar a coluna antes de reescrevê-la quebraria a leitura do filho, não o schema — falha de autorização,
-não erro de migration.
+#### O que estava errado, e por quê
 
-### Dados persistidos com nomes antigos — medição real
+**"56 colunas em 49 tabelas" não existe.** São **52** colunas em 49 **tabelas**, mais **4** colunas de
+mesmo nome que aparecem nas **views** de compatibilidade. O 56 vinha de uma consulta a
+`information_schema.columns` sem filtrar `table_type='BASE TABLE'`: view tem coluna, e as colunas das views
+foram somadas às das tabelas. A purga não dropa coluna de view — ela dropa a view inteira. Planejar por 56
+é planejar remoção de quatro objetos que não se removem assim.
 
-Esta era a pergunta aberta do plano, e a resposta é melhor do que se supunha. Os números abaixo são a
-**última medição conhecida de produção** (feita na PRE-BASE2-04, com credencial disponível); a 05B não teve
-acesso ao banco de produção e não os remediu. Devem ser refeitos imediatamente antes da 05C:
+**Não é uma view, são cinco:** `erp.farms`, `erp.authorizer_farms`, `erp.bank_account_farms`,
+`erp.farm_cost_centers`, `erp.proprietary_farms`. O levantamento anterior via só a primeira. As outras
+quatro eram, até esta fatia, caminhos de escrita reais — `packages/db/src/seed.ts` gravava por
+`erp.proprietary_farms`, e a catraca não reclamava porque só vigiava `erp.farms`.
+
+**O CHECK órfão.** `CHECK (origin_farm_id <> destination_farm_id)` em `erp.equipment_transfers` é uma
+invariante de domínio escrita sobre as colunas legadas. Um `drop column` a leva junto — **em silêncio**, sem
+erro de migration. A 05C-1 precisa criar o equivalente canônico ANTES; senão a regra "origem ≠ destino"
+deixa de ser garantida pelo banco e ninguém é avisado.
+
+**O mapeamento não é uniforme.** Nem toda tabela tem o par `empresa_id`/`farm_id`: quatro tabelas
+(`erp.notifications`, `erp.registros_globais`, `erp.membro_empresas`, `erp.legado_escopo_empresa_v0`)
+nasceram canônicas e não têm nome antigo nenhum. Tratar as 56 (ou 52) como uma lista homogênea produziria
+uma migration que tenta dropar coluna que nunca existiu.
+
+**Sobrevivem objetos de NOME legado que não são coluna:** as próprias tabelas renomeadas mantêm índices,
+constraints e sequências com o nome antigo embutido (ex.: `proprietary_farms_pkey` foi renomeada, outros
+não). Nome de objeto não é comportamento, e renomeá-los é fatia própria — mas não declarar isso faria o
+"inventário final" parecer incompleto sem motivo.
+
+### Dados persistidos com nomes antigos
+
+Os números abaixo são a **última medição conhecida de produção** (PRE-BASE2-04). A 05C-0 é `NO-DDL` e
+**não teve acesso autenticado à produção**: a remedição fica `EXTERNAL-PREFLIGHT-PENDING` e é
+pré-requisito da 05C-1, não desta fatia.
 
 | Conteúdo | Total | Com nome legado |
 | --- | ---: | ---: |
@@ -175,22 +215,55 @@ acesso ao banco de produção e não os remediu. Devem ser refeitos imediatament
 | `erp.user_screen_preferences.screen` com `farms` | 14 | **0** |
 | `erp.attachments.entity = 'farms'` | 2 | **0** |
 
-**Conclusão: 05C não precisa de migration de normalização de dados.** É uma purga de DDL. Nenhum JSON
-arbitrário de histórico/auditoria será tocado.
+Se a medição se confirmar, a 05C-1 é uma purga de DDL e não precisa de migration de normalização de dados.
+Nenhum JSON arbitrário de histórico/auditoria será tocado.
 
-Desde a 05B nenhuma porta escreve conteúdo com nome legado: o cliente é canônico desde a 05A e a API recusa
-o contrato anterior. Ainda assim a medição deve ser **refeita imediatamente antes da 05C** — o que se mede
-aqui é o passado, e o passado só se conhece olhando.
+### O contador da Empresa: não há atomicidade, e por isso é a 05C-2
 
-### Ordem segura de remoção em 05C
+O plano anterior dizia que a troca seria "atômica com o `update`, no MESMO deploy". **Isso não existe.**
+Uma migration e um binário implantado não compartilham transação, e o rollout não é instantâneo: durante a
+janela, as duas versões da API atendem ao mesmo tempo. As duas saídas aparentemente seguras falham, e a
+falha está **medida** em `apps/api/test/integration/contador-empresa-transicao.test.ts`:
 
-1. sequência: `entity='farm'` → `'empresa'` **junto** com a troca de `SEQUENCIA_EMPRESA` no código (atômico:
-   separar os dois reinicia a numeração do cadastro);
-2. **política de RLS** que cita coluna legada, reescrita no canônico — antes de qualquer `drop`;
+- **mover** a linha (`update ... set entity='empresa'`) enquanto a API antiga serve deixa aquela versão sem
+  contador: `next_code(org,'farm')` **recria** a linha em 1 e recomeça a numeração;
+- **copiar** a linha e manter as duas faz os dois lados emitirem **o mesmo próximo número**, e o segundo
+  cadastro morre no `unique (organization_id, code)` de `erp.empresas`.
+
+`erp.code_sequences` tem chave primária `(organization_id, entity)`: `'farm'` e `'empresa'` são duas linhas,
+dois travamentos e dois contadores. A troca exige uma janela em que **apenas uma versão da API** esteja
+servindo — um gate operacional, decidido e executado pelo Maike, não uma propriedade do código. Por isso ela
+é a fatia 05C-2, depois da purga.
+
+### Ordem segura de remoção na 05C-1
+
+1. **política de RLS** que cita coluna legada (`erp.empresa_cost_centers.api_child`), reescrita no canônico —
+   antes de qualquer `drop`. Um `drop column ... cascade` a apagaria inteira em vez de reescrevê-la, e o
+   `pg_depend` do tipo `n` faz o `drop` sem `cascade` **abortar**: as duas saídas são ruins, a correção é
+   reescrever antes;
+2. **CHECK canônico** equivalente ao órfão de `erp.equipment_transfers`, criado antes;
 3. gatilhos de espelho e, depois deles, suas funções;
-4. view `erp.farms`;
-5. colunas legadas, tabela a tabela, com as FKs compostas e os índices que dependem delas;
-6. redirecionamentos de rota e o que restar de vocabulário técnico legado;
-7. a lápide `apps/api/src/lib/contrato-legado.ts` — e só com tráfego real observado, não por suposição de
-   que ninguém mais fala o idioma antigo;
-8. inventário final: **dívida = 0**.
+4. as **cinco** views de nome antigo;
+5. colunas legadas, tabela a tabela, com as FKs compostas, os índices e o CHECK que dependem delas;
+6. virar `FASE_ESPELHO` para `"canonica"` em `scripts/lib/empresa-compat-surface.mjs` e inverter
+   `packages/db/test/schema.test.ts` — sem isso o gate de espelho fica verde sem ter o que medir;
+7. estender `upgrade-acervo` e `upgrade-rollback` para atravessarem a purga (eles **não** são apagados: são
+   prova histórica, e o acervo legado não deixou de ter existido);
+8. remover os testes da categoria `PONTE_FISICA`, e **somente** eles.
+
+### "Dívida = 0" não é critério de conclusão
+
+O plano anterior encerrava com "inventário final: dívida = 0". Isso é um alvo de contador, não uma prova —
+e um alvo de contador se atinge mexendo no contador. O que conclui a 05C é o conjunto abaixo, cada item
+verificável por terceiro:
+
+- os objetos da tabela acima não existem mais no banco de produção, medido por consulta a catálogo;
+- `company-schema-sync` em fase `canonica`, verde, com número de colunas canônicas > 0;
+- o guarda de RLS verde com a política `api_child` **reescrita** e presente no `pg_policies`;
+- `upgrade-acervo` e `upgrade-rollback` verdes atravessando a purga com acervo legado;
+- version skew verde nos dois sentidos, com a base resolvida pela PR e impressa no log;
+- as categorias `TOMBSTONE` e `PROVA_HISTORICA` **ainda declaradas** — se saíram, alguma coisa foi apagada
+  antes da hora.
+
+Nada disso é "dívida zero": é o conjunto de perguntas que, respondidas, tornam a remoção reversível e
+comprovada. A contagem de ocorrências do nome antigo continua caindo como consequência, não como meta.

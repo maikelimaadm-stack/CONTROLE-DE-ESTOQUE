@@ -40,14 +40,14 @@ describe("leitor de migrations — criação e adição (o que já funcionava, p
     escrever("0001_base.sql", `create table erp.exemplo (
       id uuid primary key,
       organization_id uuid not null,
-      farm_id uuid
+      legado_id uuid
     );`);
-    expect(colunas("erp.exemplo")).toEqual(["id", "organization_id", "farm_id"]);
+    expect(colunas("erp.exemplo")).toEqual(["id", "organization_id", "legado_id"]);
   });
 
   it("add column acrescenta no arquivo seguinte", () => {
     limpar();
-    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, farm_id uuid);");
+    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, legado_id uuid);");
     escrever("0002_add.sql", "alter table erp.exemplo add column empresa_id uuid;");
     expect(colunas("erp.exemplo")).toContain("empresa_id");
   });
@@ -56,10 +56,10 @@ describe("leitor de migrations — criação e adição (o que já funcionava, p
 describe("leitor de migrations — REMOÇÃO (PRE-BASE2-05C-0)", () => {
   it("drop column faz a coluna deixar de existir", () => {
     limpar();
-    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, farm_id uuid, empresa_id uuid);");
-    escrever("0002_purga.sql", "alter table erp.exemplo drop column farm_id;");
+    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, legado_id uuid, empresa_id uuid);");
+    escrever("0002_purga.sql", "alter table erp.exemplo drop column legado_id;");
     const c = colunas("erp.exemplo");
-    expect(c, "a coluna legada some").not.toContain("farm_id");
+    expect(c, "a coluna legada some").not.toContain("legado_id");
     expect(c, "a canônica fica").toContain("empresa_id");
   });
 
@@ -77,7 +77,7 @@ describe("leitor de migrations — REMOÇÃO (PRE-BASE2-05C-0)", () => {
   it("drop de coluna que não existe não derruba o leitor nem apaga outra", () => {
     limpar();
     escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, empresa_id uuid);");
-    escrever("0002_purga.sql", "alter table erp.exemplo drop column if exists farm_id;");
+    escrever("0002_purga.sql", "alter table erp.exemplo drop column if exists legado_id;");
     expect(colunas("erp.exemplo")).toEqual(["id", "empresa_id"]);
   });
 
@@ -86,14 +86,14 @@ describe("leitor de migrations — REMOÇÃO (PRE-BASE2-05C-0)", () => {
     escrever("0001_base.sql", `create table erp.exemplo (
       id uuid primary key,
       organization_id uuid not null,
-      farm_id uuid,
+      legado_id uuid,
       empresa_id uuid,
-      foreign key (organization_id, farm_id) references erp.empresas(organization_id, id),
+      foreign key (organization_id, legado_id) references erp.empresas(organization_id, id),
       foreign key (organization_id, empresa_id) references erp.empresas(organization_id, id)
     );`);
-    escrever("0002_purga.sql", "alter table erp.exemplo drop column farm_id;");
+    escrever("0002_purga.sql", "alter table erp.exemplo drop column legado_id;");
     const t = readSchema(dir).get("erp.exemplo") as { constraints: string[] };
-    expect(t.constraints.some((c) => /farm_id/.test(c)), "a FK legada não sobrevive à coluna").toBe(false);
+    expect(t.constraints.some((c) => /legado_id/.test(c)), "a FK legada não sobrevive à coluna").toBe(false);
     expect(t.constraints.some((c) => /empresa_id/.test(c)), "a FK canônica permanece").toBe(true);
   });
 
@@ -121,22 +121,22 @@ describe("leitor de migrations — REMOÇÃO (PRE-BASE2-05C-0)", () => {
 
   it("rename da tabela + drop pelo nome NOVO aplica na tabela certa", () => {
     limpar();
-    escrever("0001_base.sql", "create table erp.farms (id uuid primary key, farm_id uuid, empresa_id uuid);");
-    escrever("0002_rename.sql", "alter table erp.farms rename to empresas;");
-    escrever("0003_purga.sql", "alter table erp.empresas drop column farm_id;");
+    escrever("0001_base.sql", "create table erp.antiga (id uuid primary key, legado_id uuid, empresa_id uuid);");
+    escrever("0002_rename.sql", "alter table erp.antiga rename to nova;");
+    escrever("0003_purga.sql", "alter table erp.nova drop column legado_id;");
     const mapa = readSchema(dir);
-    expect(mapa.has("erp.farms"), "o nome antigo não sobrevive").toBe(false);
-    expect(colunas("erp.empresas")).toEqual(["id", "empresa_id"]);
+    expect(mapa.has("erp.antiga"), "o nome antigo não sobrevive").toBe(false);
+    expect(colunas("erp.nova")).toEqual(["id", "empresa_id"]);
   });
 
   it("drop pelo nome ANTIGO depois do rename não apaga nada — e não inventa tabela", () => {
     limpar();
-    escrever("0001_base.sql", "create table erp.farms (id uuid primary key, farm_id uuid);");
-    escrever("0002_rename.sql", "alter table erp.farms rename to empresas;");
-    escrever("0003_engano.sql", "alter table erp.empresas drop column farm_id;\nalter table erp.farms drop column id;");
+    escrever("0001_base.sql", "create table erp.antiga (id uuid primary key, legado_id uuid);");
+    escrever("0002_rename.sql", "alter table erp.antiga rename to nova;");
+    escrever("0003_engano.sql", "alter table erp.nova drop column legado_id;\nalter table erp.antiga drop column id;");
     const mapa = readSchema(dir);
-    expect(mapa.has("erp.farms")).toBe(false);
-    expect(colunas("erp.empresas"), "o drop no nome antigo é inócuo, não destrutivo").toEqual(["id"]);
+    expect(mapa.has("erp.antiga")).toBe(false);
+    expect(colunas("erp.nova"), "o drop no nome antigo é inócuo, não destrutivo").toEqual(["id"]);
   });
 });
 
@@ -151,8 +151,8 @@ describe("leitor de migrations — REMOÇÃO (PRE-BASE2-05C-0)", () => {
 describe("premissa do teste", () => {
   it("o diretório temporário é lido de verdade: a tabela existe e as demais colunas continuam lá", () => {
     limpar();
-    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, a uuid, farm_id uuid);");
-    escrever("0002_purga.sql", "alter table erp.exemplo drop column farm_id;");
+    escrever("0001_base.sql", "create table erp.exemplo (id uuid primary key, a uuid, legado_id uuid);");
+    escrever("0002_purga.sql", "alter table erp.exemplo drop column legado_id;");
     const mapa = readSchema(dir);
     expect(mapa.size, "o leitor encontrou a migration de mentira").toBeGreaterThan(0);
     expect(colunas("erp.exemplo")).toEqual(["id", "a"]);

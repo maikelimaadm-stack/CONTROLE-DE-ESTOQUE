@@ -116,11 +116,11 @@ describe("classificação × políticas reais", () => {
    * contra ela mesma — isso provaria apenas que o arquivo é igual a si próprio.
    *
    * Por que importa agora: a única política das quatro tabelas de vínculo (`api_child`) é escrita sobre
-   * `farm_id`. Um `drop column ... cascade` na PRE-BASE2-05C-1 apagaria a política inteira em vez de
+   * a COLUNA LEGADA de empresa. Um `drop column ... cascade` na PRE-BASE2-05C-1 apagaria a política inteira em vez de
    * reescrevê-la, e sem este guarda a fatia destrutiva passaria verde deixando a tabela sem proteção.
    *
-   * O que NÃO se exige é o texto integral do predicado: a 05C-1 vai legitimamente reescrevê-lo (`farm_id`
-   * vira `empresa_id`), e travar a letra bloquearia a correção em vez de bloquear a regressão.
+   * O que NÃO se exige é o texto integral do predicado: a 05C-1 vai legitimamente reescrevê-lo (a coluna
+   * legada vira `empresa_id`), e travar a letra bloquearia a correção em vez de bloquear a regressão.
    */
   it("toda tabela declarada como EXCEÇÃO tem, no banco, a política que a exceção nomeia", async () => {
     const problemas: string[] = [];
