@@ -140,17 +140,41 @@ function esperarPurgado(inv: Inventario, onde: string) {
 
 /** Runner da fase dual: o mesmo mecanismo de `purga-0017-upgrade.test.ts`, com MIGRATIONS_DIR só até a 0016. */
 async function subirAte16() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "purga-conc-ate16-"));
+  await runnerRecortado((nome) => nome < ALVO, 16, (m) =>
+    expect(m, "o runner da fase dual não conhece a purga").not.toContain(ALVO));
+}
+
+/**
+ * O RUNNER COMO ESTE ARQUIVO PRECISA DELE: com teto na 0017 (PRE-BASE2-05C-2).
+ *
+ * Antes da 05C-2 bastava `migrate(db)`, porque a purga era a última do diretório. Com a 0018 versionada,
+ * aquela chamada passaria a aplicar as duas — e a convergência que este arquivo mede deixaria de ser "o
+ * runner converge NA PURGA" para virar "o runner converge no que houver". Pior: a 0018 tem pré-condições
+ * próprias sobre o contador, e o acervo daqui é montado para exercitar a PURGA, não o cutover. Uma recusa
+ * legítima da 0018 apareceria como falha da prova de concorrência da 0017 — verde ou vermelho pelo motivo
+ * errado, que é o defeito que este harness inteiro existe para não ter.
+ *
+ * O teto é explícito e a contagem continua exata. As provas da 0018 vivem em `cutover-0018-*.test.ts`.
+ */
+async function migrarAte17(alvo: Db = db): Promise<string[]> {
+  return runnerRecortado((nome) => nome <= ALVO, 17, (m) =>
+    expect(m, "o runner recortado conhece a purga e para nela").toContain(ALVO), alvo);
+}
+
+async function runnerRecortado(
+  incluir: (nome: string) => boolean, quantas: number, conferir: (nomes: string[]) => void, alvo: Db = db,
+): Promise<string[]> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "purga-conc-"));
   const anterior = process.env.MIGRATIONS_DIR;
   try {
-    const anteriores = listMigrations().map((m) => m.name).filter((nome) => nome < ALVO);
-    expect(anteriores.length, "16 migrations antes da purga").toBe(16);
-    for (const nome of anteriores) fs.copyFileSync(path.join(MIGRATIONS_DIR, nome), path.join(dir, nome));
+    const selecionadas = listMigrations().map((m) => m.name).filter(incluir);
+    expect(selecionadas.length, `${quantas} migrations no recorte`).toBe(quantas);
+    for (const nome of selecionadas) fs.copyFileSync(path.join(MIGRATIONS_DIR, nome), path.join(dir, nome));
     process.env.MIGRATIONS_DIR = dir;
     vi.resetModules();
-    const ate16 = await import("../src/migrate.js");
-    expect(ate16.listMigrations().map((m) => m.name), "o runner da fase dual não conhece a purga").not.toContain(ALVO);
-    await ate16.migrate(db, () => {});
+    const runner = await import("../src/migrate.js");
+    conferir(runner.listMigrations().map((m) => m.name));
+    return await runner.migrate(alvo, () => {});
   } finally {
     if (anterior === undefined) delete process.env.MIGRATIONS_DIR;
     else process.env.MIGRATIONS_DIR = anterior;
@@ -304,11 +328,11 @@ describe("PARTE 1 — dois runners ao mesmo tempo", () => {
     // Solto o concorrente: o runner converge no mesmo banco, sem intervenção.
     await dono.query("rollback");
     dono.release();
-    await expect(migrate(db, () => {})).resolves.toEqual([ALVO]);
+    await expect(migrarAte17()).resolves.toEqual([ALVO]);
     esperarPurgado(await inventariar(), "depois da convergência");
 
     // Reexecução posterior: nada pendente, nada quebrado.
-    await expect(migrate(db, () => {})).resolves.toEqual([]);
+    await expect(migrarAte17()).resolves.toEqual([]);
     esperarPurgado(await inventariar(), "depois da reexecução");
   });
 
@@ -318,7 +342,7 @@ describe("PARTE 1 — dois runners ao mesmo tempo", () => {
     const dbA = createPool(TEST_URL, { max: 2 });
     const dbB = createPool(TEST_URL, { max: 2 });
     try {
-      const corrida = await Promise.allSettled([migrate(dbA, () => {}), migrate(dbB, () => {})]);
+      const corrida = await Promise.allSettled([migrarAte17(dbA), migrarAte17(dbB)]);
       const aplicaram = corrida.filter((r) => r.status === "fulfilled" && r.value.includes(ALVO));
       const recusados = corrida.filter((r) => r.status === "rejected");
       const vazios = corrida.filter((r) => r.status === "fulfilled" && r.value.length === 0);
@@ -333,8 +357,8 @@ describe("PARTE 1 — dois runners ao mesmo tempo", () => {
       }
       esperarPurgado(await inventariar(), "depois da corrida");
       // O ledger é PK por nome: a contagem 1 é conferida em `esperarPurgado`, e a reexecução confirma.
-      await expect(migrate(dbA, () => {})).resolves.toEqual([]);
-      await expect(migrate(dbB, () => {})).resolves.toEqual([]);
+      await expect(migrarAte17(dbA)).resolves.toEqual([]);
+      await expect(migrarAte17(dbB)).resolves.toEqual([]);
       esperarPurgado(await inventariar(), "depois da reexecução dos dois");
     } finally {
       await dbA.end(); await dbB.end();
@@ -343,7 +367,7 @@ describe("PARTE 1 — dois runners ao mesmo tempo", () => {
 
   it("runner atrasado que só chega depois da purga não reaplica nada: as pré-condições recusam o banco já purgado", async () => {
     await montarVespera();
-    await expect(migrate(db, () => {})).resolves.toEqual([ALVO]);
+    await expect(migrarAte17()).resolves.toEqual([ALVO]);
     const depois = await inventariar();
     esperarPurgado(depois, "purga aplicada");
 
@@ -359,7 +383,7 @@ describe("PARTE 1 — dois runners ao mesmo tempo", () => {
     expect(await inventariar(), "o inventário observável coberto por este gate permanece idêntico").toEqual(depois);
 
     // E o runner de verdade, na mesma situação, nem chega a abrir o arquivo: a 0017 está no ledger.
-    await expect(migrate(db, () => {})).resolves.toEqual([]);
+    await expect(migrarAte17()).resolves.toEqual([]);
     expect(await inventariar(), "a reexecução do runner é inerte").toEqual(depois);
   });
 });

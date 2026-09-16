@@ -54,6 +54,11 @@ jobs:
         run: pnpm --filter @agro/db test:integration
       - name: API integration tests (permissions, multi-tenant, transactions, concurrency, idempotency)
         run: pnpm --filter @agro/api test:integration
+      # A matriz do cutover do contador (PRE-BASE2-05C-2): dois quadrantes compatíveis e DOIS PROIBIDOS,
+      # demonstrados contra um banco descartável. Numa PR que não atravessa o cutover — isto é, em toda PR
+      # depois que a 05C-2 estiver em `main` — o gate se declara inativo e passa sem simular nada.
+      - name: Matriz do cutover do contador de Empresa (gate 05C-2)
+        run: pnpm gate:05c2
   e2e:
     name: Build · E2E (Playwright)
     runs-on: ubuntu-latest
@@ -130,6 +135,14 @@ jobs:
       # Uma árvore só serve aos dois sentidos: `--web` acrescenta o build do WEB daquele commit.
       - name: Montar a base (git worktree + build da API e do web daquele commit)
         run: node scripts/api-anterior.mjs --web
+      # ESTA EXECUÇÃO ATRAVESSA O CUTOVER DO CONTADOR? (PRE-BASE2-05C-2)
+      # A 05C-2 renomeia a chave persistida do contador de Empresa, e isso torna a combinação do SENTIDO 1
+      # — API da base × banco deste HEAD — um estado PROIBIDO, não uma janela de rollout. Quando é o caso,
+      # aquele teste passa a exigir a RECUSA em vez da compatibilidade; não se desliga nada. A decisão sai
+      # da comparação entre a constante do contador nos dois commits, então volta sozinha ao normal na
+      # primeira PR cuja base já contenha o cutover. Falha fechado se não conseguir ler a base.
+      - name: Esta execução atravessa o cutover do contador? (05C-2)
+        run: node scripts/skew-cutover-contador.mjs --github-env
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
       # SENTIDO 1 — o web desta PR contra a API que está no ar (o Vercel sobe antes do Railway).
       - name: E2E de version skew (web deste HEAD × API da base)

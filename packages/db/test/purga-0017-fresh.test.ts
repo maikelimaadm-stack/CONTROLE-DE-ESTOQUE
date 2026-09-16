@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createPool, type Db } from "../src/pool.js";
-import { migrate, resetSchema, listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
+import { resetSchema, listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
 import { TEST_URL } from "./setup.js";
 
 /**
@@ -103,19 +103,39 @@ async function inventariar(): Promise<Inventario> {
  * para `supabase/migrations`, e é ele que aplica a 0017 no passo seguinte.
  */
 async function subirAte16(): Promise<string[]> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "purga-fresh-ate16-"));
+  return aplicarSubconjunto((nome) => nome < ALVO, 16, "sem a purga", (m) => expect(m, "e ele NÃO conhece a 0017").not.toContain(ALVO));
+}
+
+/**
+ * Aplica a 0017 e PARA — mesmo mecanismo, com teto na própria purga.
+ *
+ * Antes da PRE-BASE2-05C-2 este passo era `migrate(db)` do módulo estático, e funcionava porque a 0017 era
+ * a última do diretório. Com a 0018 versionada, aquela chamada passaria a aplicar as DUAS, e este arquivo
+ * — que existe para medir a purga — começaria a medir a purga MAIS o que viesse depois. Não é afrouxamento
+ * nenhum: o teto é explícito e nomeado, e a contagem continua exata (`toBe`, nunca `>=`). O que muda é que
+ * o arquivo volta a medir só o seu assunto, em vez de absorver toda migration futura de carona.
+ */
+async function subirAte17(): Promise<string[]> {
+  return aplicarSubconjunto((nome) => nome <= ALVO, 17, "até a purga, inclusive", (m) => expect(m, "e ele conhece a 0017").toContain(ALVO));
+}
+
+async function aplicarSubconjunto(
+  incluir: (nome: string) => boolean, quantas: number, rotulo: string,
+  conferir: (nomes: string[]) => void,
+): Promise<string[]> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "purga-fresh-"));
   const anterior = process.env.MIGRATIONS_DIR;
   try {
-    const anteriores = listMigrations().map((m) => m.name).filter((nome) => nome < ALVO);
-    expect(anteriores.length, "o diretório real precisa ter as 16 migrations anteriores à purga").toBe(16);
-    for (const nome of anteriores) fs.copyFileSync(path.join(MIGRATIONS_DIR, nome), path.join(dir, nome));
+    const selecionadas = listMigrations().map((m) => m.name).filter(incluir);
+    expect(selecionadas.length, `o diretório real precisa ter ${quantas} migrations ${rotulo}`).toBe(quantas);
+    for (const nome of selecionadas) fs.copyFileSync(path.join(MIGRATIONS_DIR, nome), path.join(dir, nome));
 
     process.env.MIGRATIONS_DIR = dir;
     vi.resetModules();
-    const ate16 = await import("../src/migrate.js");
-    expect(ate16.MIGRATIONS_DIR, "o módulo recarregado enxerga o diretório sem a purga").toBe(dir);
-    expect(ate16.listMigrations().map((m) => m.name), "e ele NÃO conhece a 0017").not.toContain(ALVO);
-    return await ate16.migrate(db, () => {});
+    const runner = await import("../src/migrate.js");
+    expect(runner.MIGRATIONS_DIR, `o módulo recarregado enxerga o diretório ${rotulo}`).toBe(dir);
+    conferir(runner.listMigrations().map((m) => m.name));
+    return await runner.migrate(db, () => {});
   } finally {
     if (anterior === undefined) delete process.env.MIGRATIONS_DIR;
     else process.env.MIGRATIONS_DIR = anterior;
@@ -131,20 +151,23 @@ beforeAll(async () => {
   aplicadasAte16 = await subirAte16();
   antes = await inventariar();
 
-  // `migrate` do módulo estático: diretório real, ledger já com 16 linhas, então só a 0017 fica pendente.
-  aplicadasNaPurga = await migrate(db, () => {});
+  // Teto na própria purga: o ledger já tem 16 linhas, então só a 0017 fica pendente NESTE recorte.
+  aplicadasNaPurga = await subirAte17();
   depois = await inventariar();
 }, 300_000);
 
 afterAll(async () => { await db?.end(); });
 
 describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na purga", () => {
-  it("o diretório tem 17 migrations e a última é a purga", () => {
+  it("o diretório tem 18 migrations e a purga é a 17ª", () => {
     const noDisco = listMigrations().map((m) => m.name);
-    // Número explícito de propósito: este é o gate da fatia destrutiva, e uma migration nova precisa passar
-    // por aqui conscientemente — não entrar de carona num `>= 16`.
-    expect(noDisco.length, "17 migrations no repositório").toBe(17);
-    expect(noDisco[noDisco.length - 1], "a purga é a última da ordem").toBe(ALVO);
+    // Números explícitos de propósito: este é o gate da fatia destrutiva, e uma migration nova precisa
+    // passar por aqui conscientemente — não entrar de carona num `>= 16`. A 05C-2 passou: acrescentou a
+    // 0018, e a afirmação "a purga é a ÚLTIMA" — que era verdadeira e deixou de ser — virou a afirmação
+    // que continua verdadeira e é a que este arquivo precisa: a purga ocupa a POSIÇÃO 17.
+    expect(noDisco.length, "18 migrations no repositório").toBe(18);
+    expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
+    expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {
@@ -158,7 +181,10 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
       "select name from public.erp_migrations order by name")).rows.map((r) => r.name);
     expect(ledger.length, "17 linhas no ledger").toBe(17);
     expect(ledger[16], "a última entrada é a purga").toBe(ALVO);
-    expect(ledger, "ledger idêntico ao diretório").toEqual(listMigrations().map((m) => m.name));
+    // O recorte é explícito: este arquivo mede a purga, e o ledger dele fecha NELA. As migrations
+    // posteriores existem no diretório e são medidas pelas suítes das próprias fatias.
+    expect(ledger, "ledger idêntico ao diretório ATÉ a purga")
+      .toEqual(listMigrations().map((m) => m.name).filter((nome) => nome <= ALVO));
   });
 });
 

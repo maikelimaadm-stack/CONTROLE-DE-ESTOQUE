@@ -54,8 +54,8 @@ no navegador — agora provando que o canônico atravessa, e reprovando se a API
 | **05B — Servidor canônico** ✅ publicada | borda legada da API (cabeçalho, entrada, apelidos, CORS, recurso, escopo admin achatado, promoção de sessão) | banco bilíngue |
 | **05C-0 — Instrumentos** ✅ mesclada (PR #33) | nada do banco: **NO-DDL**. Calibra os gates que a purga usa como prova | tudo |
 | **05C-G0/G1/G2 — Preflight** ✅ concluída | nada do banco: leitura de produção, correção de documentação, contratos executáveis e runbook. Ver `docs/PRE-BASE2-05C-1-PREFLIGHT.md` | tudo |
-| **05C-1 — Purga física** ⬅ atual: migration **escrita** (`0017_purge_farm_legacy.sql`), PR DRAFT, ⛔ **merge NÃO liberado** (U4) | 52 colunas legadas em 49 tabelas, as **cinco** views de nome antigo, 52 gatilhos de espelho NOMEADOS (as tabelas alvo têm 66 gatilhos: 14 são de negócio e ficam) e 3 funções, **52 FKs de coluna única** (as **50** compostas ficam), 8 índices, e o CHECK órfão de `erp.equipment_transfers` só depois do substituto canônico | contador `entity='farm'`; lápides (`contrato-legado.ts`, redirects) |
-| **05C-2 — Contador** | a linha `entity='farm'` de `erp.code_sequences` e a constante `SEQUENCIA_EMPRESA` | — |
+| **05C-1 — Purga física** ✅ mesclada (PR #36, `602cda3`) e **aplicada em produção** em 16/09/2026 | 52 colunas legadas em 49 tabelas, as **cinco** views de nome antigo, 52 gatilhos de espelho NOMEADOS (as tabelas alvo têm 66 gatilhos: 14 são de negócio e ficam) e 3 funções, **52 FKs de coluna única** (as **50** compostas ficam), 8 índices, e o CHECK órfão de `erp.equipment_transfers` só depois do substituto canônico | contador `entity='farm'`; lápides (`contrato-legado.ts`, redirects) |
+| **05C-2 — Contador** ⬅ atual: migration **escrita** (`0018_empresa_code_sequence.sql`), PR DRAFT, ⛔ **cutover NÃO autorizado** (janela single-version `BLOCKED`) | a linha `entity='farm'` de `erp.code_sequences`, renomeada para `'empresa'` com o `last_value` preservado, e a constante `SEQUENCIA_EMPRESA` junto | os demais contadores, `farm_transfer` inclusive; lápides (`contrato-legado.ts`, redirects) |
 
 Cada fase só começa depois de a anterior estar em produção e comprovada. **05A não remove compatibilidade
 nem da API nem do banco.** Detalhes e inventários: `docs/PRE-BASE2-05-APOSENTADORIA.md`.
@@ -105,8 +105,10 @@ gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com pre
 2. **Remedição dos dados persistidos com nome antigo** na produção autenticada (tabela em
    `docs/PRE-BASE2-05-APOSENTADORIA.md`). Se qualquer contagem for > 0, a 05C-1 deixa de ser só DDL e a
    fatia muda de escopo.
-3. **Uma única versão da API servindo** — condição da 05C-2, não da 05C-1, mas registrada aqui porque é o
-   gate que as pessoas esquecem entre as duas.
+3. **Uma única versão da API servindo** — **não é gate da 05C-1**, e por isso deixou de morar nesta lista:
+   ele é o gate da **05C-2**, e agora tem endereço próprio em `docs/PRE-BASE2-05C-2-CUTOVER.md` § B, com
+   evidência de por que está `BLOCKED`. Ficava aqui como lembrete, e lembrete hospedado na lista errada é
+   como um gate se perde entre duas fatias.
 4. **Gates verdes na PR da 05C-1**, incluindo os instrumentos calibrados na 05C-0: `company-schema-sync` em
    fase `canonica`, guarda de RLS com a política `api_child` reescrita, `upgrade-acervo` aplicando a
    sequência INTEIRA (o laço final não para na 0016: aplica tudo que ficou pendente, 0017 inclusive, e
@@ -212,11 +214,34 @@ nenhuma proteção some de carona.
 **A 05C-0 não autoriza a 05C-1.** Mesmo com aquela PR mesclada e o CI inteiro verde, a fatia destrutiva
 depende dos pré-requisitos acima, que exigem acesso autenticado à produção e decisão do Maike.
 
+### Go-live da 05C-2 (cutover do contador) — `BLOCKED`
+
+A 05C-1 terminou; a 05C-2 é outra coisa, e **não herda nenhuma autorização dela**. O runbook completo —
+precondições, gate de quiesce, sequência e os quatro pontos de abort — é
+**`docs/PRE-BASE2-05C-2-CUTOVER.md`**, que é o dono do assunto. O que fica registrado aqui é só o que muda
+para quem opera o deploy:
+
+1. **Auto-deploy normal NÃO é seguro para este cutover.** O merge dispara o pre-deploy, e a 0018 executa
+   com o binário anterior ainda servindo — que continua pedindo `next_code(org,'farm')`, uma chave que a
+   migration acabou de aposentar. `next_code` não erra com chave ausente: ele REINICIA em 1.
+2. **O gate "uma única versão da API servindo" está `BLOCKED`**, com evidência: não existe hoje no produto
+   modo de manutenção, flag de readiness, variável que recuse escrita, nem healthcheck derrubável de
+   propósito. As opções concretas (parar o serviço antes do merge; aplicar a 0018 fora do pre-deploy;
+   embutir modo de manutenção em duas entregas) estão no runbook, com o custo de cada uma — nenhuma
+   executada, nenhuma provada.
+3. **U4 volta a valer.** A 05C-2 chega em produção pelo mesmo caminho merge → auto-deploy → pre-deploy, e
+   `preDeployTimeoutSeconds` tem de ser reconferido na config **live** antes do merge; não é assunto
+   encerrado da fatia anterior.
+4. **O rollback da plataforma não desfaz a 0018.** Depois que uma Empresa real receber número pelo contador
+   canônico, voltar ao binário anterior exige migration nova, não redeploy — ver § D do runbook.
+
 ### Verificação pós-deploy (fase 1)
 
 ```sql
 select count(*) from erp.empresas;                                  -- tabela canônica responde
-select count(*) from erp.farms;                                     -- view legada responde o mesmo número
+-- A linha que comparava `erp.farms` com `erp.empresas` saiu: a 0017 REMOVEU a view legada, e pedi-la agora
+-- é erro de objeto inexistente. A conferência equivalente hoje é a ausência dela.
+select to_regclass('erp.farms') is null as view_legada_removida;    -- t, desde a 05C-1
 select relrowsecurity from pg_class where oid = 'erp.stock_movements'::regclass;   -- t
 select polname from pg_policy where polrelid = 'erp.stock_movements'::regclass;    -- tenant_e_empresa
 
@@ -230,9 +255,10 @@ select proname, prosecdef, proconfig from pg_proc where proname = 'movimentos_co
 select has_function_privilege('public', 'erp.movimentos_conta_organizacao(uuid[],date,date)', 'execute');  -- f
 ```
 
-Pelo papel da aplicação (`erp_app`, sem bypass): uma consulta a `erp.farms` precisa devolver **o mesmo número
-de linhas** que a mesma consulta a `erp.empresas`. Números diferentes significam view definer — e view definer
-é vazamento entre organizações.
+Pelo papel da aplicação (`erp_app`, sem bypass): até a 05C-1, uma consulta a `erp.farms` precisava devolver
+**o mesmo número de linhas** que a mesma consulta a `erp.empresas` — números diferentes significariam view
+definer, e view definer é vazamento entre organizações. A view saiu na 0017, então o que resta conferir é
+que ela não voltou, e que `erp_app` continua **sem** bypass de RLS (`rolbypassrls = false`).
 
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)

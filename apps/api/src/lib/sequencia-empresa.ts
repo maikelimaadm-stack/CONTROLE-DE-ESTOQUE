@@ -1,37 +1,39 @@
 /**
- * CHAVE DA SEQUÊNCIA DE CÓDIGO DA EMPRESA — legada de propósito, e a razão é aritmética.
+ * CHAVE DA SEQUÊNCIA DE CÓDIGO DA EMPRESA — canônica desde a PRE-BASE2-05C-2.
  *
  * `erp.next_code(organização, entidade)` guarda o último valor em `erp.code_sequences`, com chave primária
- * `(organization_id, entity)`. Duas entidades diferentes são DOIS contadores independentes: dois travamentos
- * de linha, dois valores correntes, e nenhuma relação entre eles. Trocar esta constante para `'empresa'` sem
- * mover a linha faria o contador começar do zero — a próxima empresa receberia o código 1, que já existe.
- * Não é detalhe de nomenclatura: é a numeração do cadastro, visível ao usuário.
+ * `(organization_id, entity)`. A migration `0018_empresa_code_sequence.sql` RENOMEOU a chave persistida de
+ * `'farm'` para `'empresa'` — um `update` que move a linha, preservando `organization_id` e `last_value`
+ * exatamente. Esta constante é o par de runtime daquela migration: as duas TÊM de andar juntas, e é por
+ * isso que a fatia inteira é um corte single-version.
  *
- * O QUE ESTE COMENTÁRIO DIZIA E ESTAVA ERRADO (corrigido na PRE-BASE2-05C-0)
- * -------------------------------------------------------------------------
- * Ele prometia que a troca seria "ATÔMICA com o dado": `update erp.code_sequences set entity='empresa'` e a
- * mudança desta constante "no MESMO slice". Isso não existe. Uma migration e um binário implantado não
- * compartilham transação, e o rollout não é instantâneo — Railway e Vercel trocam de versão em momentos
- * diferentes, e durante a janela as DUAS versões da API atendem ao mesmo tempo. "Mesmo slice" é uma
- * afirmação sobre o repositório; a atomicidade teria de ser sobre o AR, e ali ela é impossível.
+ * POR QUE A TROCA PRECISOU DE UMA FATIA PRÓPRIA — registro histórico, ainda verdadeiro
+ * -----------------------------------------------------------------------------------
+ * `'farm'` e `'empresa'` nunca foram dois rótulos do mesmo contador: são DUAS LINHAS, dois travamentos de
+ * linha e dois valores correntes independentes. E `next_code` é um `insert ... on conflict do update`:
+ * linha AUSENTE não dá erro, REINICIA EM 1. Disso decorrem as duas armadilhas que fecharam as saídas que
+ * pareciam seguras, ambas MEDIDAS em `apps/api/test/integration/contador-empresa-transicao.test.ts`:
  *
- * As duas saídas que parecem seguras não são:
- *   • MOVER a linha (`update ... set entity='empresa'`) enquanto a API antiga ainda serve deixa aquela
- *     versão sem contador: `next_code(org,'farm')` recria a linha em 1 e recomeça a numeração;
- *   • COPIAR a linha e manter as duas faz os dois lados emitirem O MESMO próximo número, e o segundo
- *     cadastro morre no `unique (organization_id, code)` de `erp.empresas`.
- * As duas estão MEDIDAS, não argumentadas, em
- * `apps/api/test/integration/contador-empresa-transicao.test.ts`.
+ *   • COPIAR a linha e manter as duas ativas durante o rollout faz a API antiga e a API nova emitirem O
+ *     MESMO próximo número; o segundo cadastro morre no `unique (organization_id, code)` de `erp.empresas`;
+ *   • MOVER a linha enquanto a API antiga ainda serve deixa aquela versão sem contador:
+ *     `next_code(org,'farm')` recria a linha em 1 e recomeça a numeração por cima do acervo.
  *
- * POR ISSO A TROCA É UMA FATIA PRÓPRIA (PRE-BASE2-05C-2), E NÃO ACONTECE AQUI
- * --------------------------------------------------------------------------
- * A PRE-BASE2-05C-1 remove colunas; ela NÃO mexe neste contador, e esta constante segue `'farm'` depois
- * dela. A substituição do contador exige uma janela em que apenas UMA versão da API esteja servindo — um
- * gate operacional (drenar a versão anterior), não uma propriedade do código. Enquanto esse gate não for
- * decidido e executado pelo Maike, o nome antigo fica confinado neste arquivo, que existe exatamente para
- * isolá-lo do resto do runtime.
+ * Não existe terceira opção, e nenhuma delas é resolvível no repositório: uma migration e um binário
+ * implantado não compartilham transação, e o rollout não é instantâneo. "Mesmo slice" é uma afirmação
+ * sobre o repositório; a atomicidade teria de ser sobre o AR, e ali ela é impossível.
  *
- * Trocar esta linha sem esse gate é uma regressão de produção, não uma limpeza de nomenclatura — e o teste
- * citado acima reprova quem tentar.
+ * A CONSEQUÊNCIA, QUE CONTINUA VALENDO DEPOIS DO CUTOVER
+ * -----------------------------------------------------
+ * A 05C-2 não tornou a troca segura em rollout normal — ela a executou dentro de uma janela em que apenas
+ * UMA versão da API estava servindo (`docs/PRE-BASE2-05C-2-CUTOVER.md`). Por isso, a partir daqui:
+ *
+ *   • a ÚNICA chave de runtime é `'empresa'`. Não existe fallback `farm || empresa`, e não deve existir:
+ *     um fallback leria o contador errado em silêncio e devolveria um número já usado;
+ *   • um binário ANTERIOR à 05C-2 contra um banco pós-0018 é um estado PROIBIDO, não degradado — ele
+ *     recriaria `'farm'` em 1. A matriz de version skew da fatia prova os dois sentidos proibidos.
+ *
+ * Trocar esta linha de volta para `'farm'` sem mover a linha no banco reintroduz exatamente o defeito que
+ * a fatia existe para eliminar — e o teste citado acima reprova quem tentar.
  */
-export const SEQUENCIA_EMPRESA = "farm";
+export const SEQUENCIA_EMPRESA = "empresa";

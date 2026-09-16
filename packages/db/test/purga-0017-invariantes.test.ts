@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createPool, type Db, type Tx } from "../src/pool.js";
-import { migrate, resetSchema, listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
+import { resetSchema, listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
 import { TEST_URL } from "./setup.js";
 import { SEM_FK_COMPOSTA_DECLARADA } from "../../domain/empresa-rls.mjs";
 
@@ -104,17 +104,31 @@ async function lerEstadoRls(): Promise<EstadoRls> {
  * importado no topo deste arquivo continua apontado para `supabase/migrations`, e é ele que aplica a 0017.
  */
 async function subirAte16(): Promise<string[]> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "purga-inv-ate16-"));
+  return runnerRecortado((nome) => nome < ALVO, 16);
+}
+
+/**
+ * O runner com teto NA PURGA (PRE-BASE2-05C-2). Antes bastava `migrate(db)`, porque a 0017 era a última do
+ * diretório; com a 0018 versionada aquela chamada aplicaria as duas, e este arquivo — que compara o estado
+ * de RLS ANTES e DEPOIS da purga — passaria a atribuir à purga o efeito de outra migration. O teto é
+ * explícito e as contagens continuam exatas.
+ */
+async function migrarAte17(): Promise<string[]> {
+  return runnerRecortado((nome) => nome <= ALVO, 17);
+}
+
+async function runnerRecortado(incluir: (nome: string) => boolean, quantas: number): Promise<string[]> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "purga-inv-"));
   const anterior = process.env.MIGRATIONS_DIR;
   try {
-    const anteriores = listMigrations().map((m) => m.name).filter((nome) => nome < ALVO);
-    expect(anteriores.length, "o diretório real tem as 16 migrations anteriores à purga").toBe(16);
-    for (const nome of anteriores) fs.copyFileSync(path.join(MIGRATIONS_DIR, nome), path.join(dir, nome));
+    const selecionadas = listMigrations().map((m) => m.name).filter(incluir);
+    expect(selecionadas.length, `${quantas} migrations no recorte`).toBe(quantas);
+    for (const nome of selecionadas) fs.copyFileSync(path.join(MIGRATIONS_DIR, nome), path.join(dir, nome));
     process.env.MIGRATIONS_DIR = dir;
     vi.resetModules();
-    const ate16 = await import("../src/migrate.js");
-    expect(ate16.MIGRATIONS_DIR, "o módulo recarregado enxerga o diretório sem a purga").toBe(dir);
-    return await ate16.migrate(db, () => {});
+    const runner = await import("../src/migrate.js");
+    expect(runner.MIGRATIONS_DIR, "o módulo recarregado enxerga o diretório recortado").toBe(dir);
+    return await runner.migrate(db, () => {});
   } finally {
     if (anterior === undefined) delete process.env.MIGRATIONS_DIR;
     else process.env.MIGRATIONS_DIR = anterior;
@@ -153,7 +167,7 @@ beforeAll(async () => {
     const ate16 = await subirAte16();
     expect(ate16.length, "0001..0016 aplicadas em banco zero").toBe(16);
     antes = await lerEstadoRls();
-    const naPurga = await migrate(db, () => {});
+    const naPurga = await migrarAte17();
     expect(naPurga, "só a purga estava pendente, e ela aplicou").toEqual([ALVO]);
     await gravarFoto(antes);
   }

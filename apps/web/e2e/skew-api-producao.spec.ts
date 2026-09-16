@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, uniq } from "./helpers";
-import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
+import { criarEmpresaEConferirContador, provarContadorIncompativel } from "./skew-contador-empresa";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
@@ -139,6 +139,17 @@ test("criar Empresa pela API da BASE aloca um código novo, maior e sem repetiç
   await login(page);
   const s = await sessao(page);
   const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };
+
+  // A PR que ATRAVESSA o cutover do contador (PRE-BASE2-05C-2) inverte o que este caso cobra: ali a
+  // combinação "API da base × banco deste HEAD" é PROIBIDA, e a prova passa a ser a recusa. A decisão vem
+  // de `scripts/lib/cutover-contador.mjs`, que compara a constante do contador nos dois commits — e volta
+  // sozinha ao normal na primeira PR cuja base já contenha o cutover. Ver o runbook do cutover.
+  if (process.env.SKEW_CUTOVER_CONTADOR === "1") {
+    await provarContadorIncompativel(request, API, auth, "SKEW-BASE");
+    console.log("[skew] sentido 1 · cutover do contador ATRAVESSADO: a combinação proibida foi recusada, como se exige");
+    return;
+  }
+
   const codigo = await criarEmpresaEConferirContador(request, API, auth, "SKEW-BASE");
   console.log(`[skew] sentido 1 (API da base) alocou o código de Empresa ${codigo}`);
 });
