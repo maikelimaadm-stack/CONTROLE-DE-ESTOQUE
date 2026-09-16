@@ -11,12 +11,15 @@
 > O que acontece daí em diante depende de haver acervo, e o cadastro roda numa **única transação**
 > (`runService` → `withTx`: `begin` → serviço → `commit`, `rollback` em erro):
 >
-> - **organização com Empresas** — o `insert` bate no `unique (organization_id, code)` e a transação volta
->   atrás inteira. O usuário leva um cadastro recusado, e **nada fica no banco**: nem a Empresa, nem a
->   linha de contador que a tentativa criou. É incompatibilidade barulhenta e sem sequela;
-> - **organização ainda sem Empresa** — não há com o que colidir. O `insert` passa, a transação **comita**,
->   e a chave legada fica **gravada depois do cutover**, sem erro, sem log, sem sintoma. O estrago só
->   aparece adiante, quando o binário canônico pedir a chave canônica e receber o mesmo número.
+> - **o número emitido COLIDE** com um código existente — o `insert` bate no `unique (organization_id,
+>   code)` e a transação volta atrás inteira. O usuário leva um cadastro recusado, e **nada fica no banco**:
+>   nem a Empresa, nem a linha de contador que a tentativa criou. Barulhento e sem sequela;
+> - **o número NÃO colide** — o `insert` passa, a transação **comita**, e a chave legada fica **gravada
+>   depois do cutover**, sem erro, sem log, sem sintoma.
+>
+> E o que separa os dois não é "ter acervo": é a colisão. Uma organização **sem Empresa** cai no segundo
+> caso, e uma organização cuja numeração **não começa em 1** também — só que pior, porque lá nem o cadastro
+> canônico seguinte denuncia o estado. Ver a tabela de quadrantes abaixo.
 >
 > **É o segundo caso que obriga a janela**, e é ele que não se pode contar com "alguém vai ver o erro":
 > ele não levanta nenhum. O sentido inverso (binário novo contra banco pré-0018) tem as mesmas duas
@@ -51,12 +54,30 @@ visível ao usuário. E o cadastro roda numa **única transação**, então quem
 | --- | --- | --- | --- |
 | runtime BASE + banco pré-0018 | qualquer | normal (o mundo de hoje) | numeração segue |
 | runtime HEAD + banco pós-0018 | qualquer | normal (o mundo de depois) | numeração segue |
-| runtime **BASE** + banco **pós-0018** | **com** Empresas | pede `'farm'`, recebe 1, colide no `unique` → **rollback** | **nada** — nem a Empresa, nem a linha de contador da tentativa |
+| runtime **BASE** + banco **pós-0018** | acervo **1..N** | pede `'farm'`, recebe 1, colide no `unique` → **rollback** | **nada** — nem a Empresa, nem a linha de contador da tentativa |
 | runtime **BASE** + banco **pós-0018** | **sem** Empresa | pede `'farm'`, recebe 1, **grava e comita** | **a chave legada, viva depois do cutover** |
-| runtime **HEAD** + banco **pré-0018** | **com** Empresas | pede `'empresa'`, recebe 1, colide → **rollback** | **nada** |
+| runtime **BASE** + banco **pós-0018** | acervo **LACUNAR** | pede `'farm'`, recebe 1, **grava e comita** — e o canônico seguinte TAMBÉM | **as duas chaves, convivendo, sem que nada nunca levante erro** |
+| runtime **HEAD** + banco **pré-0018** | acervo **1..N** | pede `'empresa'`, recebe 1, colide → **rollback** | **nada** |
 | runtime **HEAD** + banco **pré-0018** | **sem** Empresa | pede `'empresa'`, **grava e comita** | a canônica **antes** da migration — e a 0018 passa a ter de RECUSAR aquele banco |
 
-Os seis casos são **demonstrados**, não argumentados, por `pnpm gate:05c2`
+**O discriminador é a COLISÃO, não a existência de acervo.** Esta foi a segunda modelagem errada desta
+fatia, achada por red team independente e reproduzida: o que decide é se o número que a chave
+**ressuscitada** emite bate num código que já existe. Uma organização cuja numeração não começa em 1
+(códigos 5 e 6, por exemplo) tem Empresas **e** não colide — e é o pior caso dos sete, porque em
+"sem Empresa" o cadastro canônico seguinte pelo menos morre e denuncia o estado, enquanto no acervo
+lacunar a chave canônica ficou intacta, emite o próximo livre e **também comita**. As duas chaves passam a
+conviver indefinidamente na mesma organização, sem sintoma nenhum.
+
+Numeração legada arbitrária não é hipótese: a `0014_company_physical_migration.sql` já registra que "as
+empresas existentes nasceram com código escrito à mão" e reconcilia o contador com `greatest`. Pela tela
+de hoje a lacuna não se cria (a unicidade de código é total, sem recorte por `deleted_at`), então o vetor
+é **dado legado ou manual** — e por isso ele entra na conferência pré-cutover do passo A, não na torcida.
+
+E vale para o outro sentido também: a recusa da 0018 (último caso) **não** depende de a organização estar
+vazia. Uma organização com acervo que comite a chave canônica antes da migration deixa o banco **inteiro**
+irrecusável pela 0018 — uma organização suja basta para travar o cutover de produção.
+
+Os sete casos são **demonstrados**, não argumentados, por `pnpm gate:05c2`
 (`scripts/gate-cutover-05c2.mjs`), que executa o cadastro como a API o executa — `begin` → `next_code` →
 `insert` → `commit`/`rollback` — e **inspeciona o estado persistente depois**.
 
@@ -87,6 +108,7 @@ Todas verificáveis antes de tocar em qualquer coisa. Nenhuma se satisfaz por de
 | A10 | zero escritores e zero transações longas sobre `erp.code_sequences` / `erp.empresas` | porteiro P7 (`docs/PRE-BASE2-05C-1-PREFLIGHT.md` § P7.1) |
 | A11 | nenhuma outra migration ou deploy concorrente | Railway: nenhum deployment em curso |
 | A12 | o papel de `MIGRATE_DATABASE_URL` tem **bypass de RLS** | `select current_user, rolsuper, rolbypassrls from pg_roles where rolname = current_user` → um dos dois `true` |
+| A13 | **quais organizações têm numeração lacunar** (acervo que não começa em 1, ou com buraco em `1..max(code)`) — são as que caem no caso silencioso Q3c se o BASE servir depois do cutover | `select organization_id, min(code), max(code), count(*) from erp.empresas group by 1 having min(code) > 1 or count(*) <> max(code);` — o resultado não bloqueia nada, mas dimensiona o risco da janela |
 
 > **Por que A12 existe, e por que ela não é zelo.** `0007_rls.sql` aplica `force row level security` em
 > toda tabela de `erp` — o que vale inclusive para o DONO da tabela — e a política `tenant_isolation` é
@@ -204,12 +226,20 @@ pede — parar o deployment que está servindo:
 | [Deployment Actions → Remove](https://docs.railway.com/deployments/deployment-actions) | remover pelo menu de três pontos "*will remove the deployment and stop any further project usage*" |
 | [CLI `railway down`](https://docs.railway.com/cli/down) | remove o último deployment bem-sucedido — **o serviço não é deletado** |
 
+São **duas operações distintas**, e o passo C usa a primeira: o `Remove` do **dashboard**, sobre o
+deployment. A garantia de que "o serviço não é deletado" está documentada para o `railway down` da **CLI**,
+e a segunda linha fala em "*stop any further project usage*", que é escopo de PROJETO — mais largo que o de
+um deployment. Por isso §B6.1 continua sendo uma confirmação a fazer na conta, sobre a operação do
+dashboard, e não algo que esta tabela já tenha respondido.
+
 **MECANISMO PREFERENCIAL CANDIDATO: `Remove` no deployment ATIVO da API, ANTES do merge.**
 
 Ele é preferencial porque ataca o alvo certo — a instância que serve — em vez de mexer em configuração.
-Custa **indisponibilidade total** da API durante a janela, e isso é aceito explicitamente: sem redundância
-(1 réplica, região `iad`, sem volume), quiesce e indisponibilidade são a mesma coisa. A janela tem de ser
-declarada com hora, e o comportamento do frontend sem backend **não está testado**.
+Custa **indisponibilidade total** da API durante a janela: sem redundância (1 réplica, região `iad`, sem
+volume), quiesce e indisponibilidade são a mesma coisa. Essa aceitação é uma **decisão do Maike que ainda
+não foi tomada**, e este documento não a presume — ela entra em §B6 como item 8, junto com a hora
+declarada da janela. O tamanho do custo, aliás, é desconhecido: o comportamento do frontend sem backend
+**não está testado**.
 
 **Por que NÃO `scale = 0` como primeira opção:** mexer em réplicas é mudar CONFIGURAÇÃO do serviço, o que
 acrescenta um passo de restauração (voltar a 1) e, pior, cai na mesma dúvida de "alterar configuração
@@ -236,7 +266,10 @@ Confirmação **fora desta missão** — nenhuma alteração no Railway foi feit
 5. `Remove` **não executa** pre-deploy nem migration;
 6. **não sobra outra instância** da API servindo (réplicas, região extra, deployment antigo ativo);
 7. **fallback**, caso o autodeploy não inicie sozinho: `Deploy Latest Commit` — só com autorização humana e
-   só depois de confirmar que `main` está no merge aprovado.
+   só depois de confirmar que `main` está no merge aprovado;
+8. a **indisponibilidade total** da API durante a janela é aceita, com **hora declarada** — decisão do
+   Maike, pedida na hora e para aquela janela, ciente de que o comportamento do frontend sem backend não
+   está testado.
 
 ### Ideias que parecem quiesce e não são — descartadas aqui para não voltarem na hora H
 
@@ -305,13 +338,30 @@ Quatro pontos, com respostas diferentes. Misturá-los é o erro caro.
 
 ### D1 — abort ANTES do merge (gate B, A-SQL ou a comprovação do passo D reprovou)
 
-**Nada foi tocado no banco, e a 0018 está ausente.** Mas, se o `Remove` do passo C já aconteceu, a API
-está **parada** — então "abortar" aqui não é não fazer nada: é **restaurar o BASE**.
+**Antes de qualquer restauração, MEÇA — não deduza pelo título desta seção:**
+
+```sql
+select count(*) from public.erp_migrations where name like '0018%';   -- tem de vir 0
+```
+
+Se vier **1**, você **não** está em D1: vá para **D3**, e o BASE **não** sobe. Esta conferência é uma
+guarda, não uma recapitulação: às 3h da manhã, com a API fora do ar, ninguém navega o fluxograma pelo
+título — vai-se direto à seção que promete restaurar o serviço. D1 é a única porta deste documento que
+manda SUBIR O BASE, e subi-lo contra um banco pós-0018 é precisamente o quadrante proibido.
+
+Confirmado o zero: **nada foi tocado no banco, e a 0018 está ausente.** Mas, se o `Remove` do passo C já
+aconteceu, a API está **parada** — então "abortar" aqui não é não fazer nada: é **restaurar o BASE**.
 
 Restaurar é decisão **humana**, e o caminho é subir de volta o deployment anterior (`Deploy Latest Commit`
-sobre o `main` de ANTES do merge, ou o mecanismo equivalente que §B6 tiver confirmado). Como a 0018 não
-foi aplicada, o BASE volta ao seu quadrante normal (runtime BASE + banco pré-0018) e nada de numeração
-ficou pendente. **Não mescle** — a PR continua DRAFT.
+sobre o `main` de ANTES do merge, ou o mecanismo equivalente que §B6 tiver confirmado). Antes de subir,
+confira `SEED_ON_DEPLOY = 0`: o seed da BASE ainda grava `entity='farm'`, e contra um banco pós-0018 ele
+**ressuscita a chave legada já alinhada com o acervo** — sem erro, sem colisão, sem precisar que ninguém
+cadastre Empresa nenhuma. É o dano silencioso por um caminho que o `gate:05c2` não modela, porque o gate
+exercita cadastro, nunca semeadura. Com o zero confirmado e o seed desligado, o BASE volta ao seu
+quadrante normal (runtime BASE + banco pré-0018) e nada de numeração ficou pendente.
+
+Depois de restaurar, releia: `select count(*) from erp.code_sequences where entity='farm'` — e compare com
+o que havia antes. **Não mescle** — a PR continua DRAFT.
 
 ### D2 — a 0018 falhou e a transação reverteu
 
@@ -333,9 +383,13 @@ D1 (zero: BASE pode voltar) ou em D3 (um: BASE **não** pode voltar).
 **O estado mais delicado.** O banco está pós-0018 e o binário que está de pé pode ser o BASE — que é o
 quadrante proibido. Nesta situação:
 
-- **NUNCA suba o BASE contra um banco pós-0018.** É a combinação Q3/Q3b: com acervo o usuário leva erro e
-  o rollback protege, mas numa organização sem Empresa o cadastro **comita a chave legada de volta**, em
-  silêncio, e aí o estrago é persistente. "Voltar para o que funcionava" é precisamente o movimento errado.
+- **NUNCA suba o BASE contra um banco pós-0018.** É a combinação Q3/Q3b/Q3c: quando o número colide o
+  usuário leva erro e o rollback protege, mas onde ele **não** colide — organização sem Empresa, ou com
+  acervo que não começa em 1 — o cadastro **comita a chave legada de volta**, em silêncio, e aí o estrago
+  é persistente. "Voltar para o que funcionava" é precisamente o movimento errado.
+- E isso **não depende de tráfego de usuário**: se o BASE subir com `SEED_ON_DEPLOY = 1`, o seed daquela
+  árvore grava `entity='farm'` já alinhado com o acervo, no próprio pre-deploy. Confira a variável **antes**
+  de qualquer deploy aqui, como em D1.
 
 - **NÃO** faça rollback de imagem no Railway esperando que o banco volte junto. Ele não volta:
   *"O rollback restaura imagem e variáveis. **Não desfaz migration**"* (PREFLIGHT § U4). Voltar a imagem

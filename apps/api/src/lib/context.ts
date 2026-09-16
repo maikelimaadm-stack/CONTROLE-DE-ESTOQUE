@@ -29,10 +29,10 @@ export interface RequestContext {
   user: AuthUser;
   orgId: string;
   /**
-   * Empresa selecionada no contexto de trabalho (`X-Empresa-Id`, ou `X-Farm-Id` durante a transição).
+   * Empresa selecionada no contexto de trabalho (`X-Empresa-Id`).
    * SELEÇÃO, nunca autorização: ela só pode DIMINUIR o escopo da requisição, jamais ampliá-lo.
-   * A tradução do cabeçalho legado acontece na borda (`lib/compat-empresa.ts`); daqui para dentro existe
-   * um nome só.
+   * O cabeçalho anterior NÃO é traduzido — ele é RECUSADO na borda, com 422
+   * (`lib/empresa-header.ts` + `lib/contrato-legado.ts`). Traduzir calado seria ampliar escopo.
    */
   empresaId: string | null;
   membership: Membership;

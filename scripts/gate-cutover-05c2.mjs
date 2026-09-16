@@ -10,11 +10,12 @@
  *
  *   Q1  runtime BASE  + banco PRÉ-0018                  → COMPATÍVEL  (o mundo de hoje)
  *   Q2  runtime HEAD  + banco PÓS-0018                  → COMPATÍVEL  (o mundo de amanhã)
- *   Q3  runtime BASE  + banco PÓS-0018, COM acervo      → a operação legítima FALHA (rollback protege)
- *   Q3b runtime BASE  + banco PÓS-0018, SEM Empresa     → COMITA a chave ERRADA (dano persiste, silencioso)
- *   Q4  runtime HEAD  + banco PRÉ-0018, COM acervo      → a operação legítima FALHA (rollback protege)
- *   Q4b runtime HEAD  + banco PRÉ-0018, SEM Empresa     → COMITA a canônica antes da migration, e a 0018
- *                                                          passa a ter de RECUSAR aquele banco
+ *   Q3  runtime BASE  + banco PÓS-0018, acervo 1..N      → a operação legítima FALHA (rollback protege)
+ *   Q3b runtime BASE  + banco PÓS-0018, SEM Empresa      → COMITA a chave ERRADA (dano persiste, silencioso)
+ *   Q3c runtime BASE  + banco PÓS-0018, acervo LACUNAR   → COMITA, e NUNCA se autodenuncia (o pior caso)
+ *   Q4  runtime HEAD  + banco PRÉ-0018, acervo 1..N      → a operação legítima FALHA (rollback protege)
+ *   Q4b runtime HEAD  + banco PRÉ-0018, SEM Empresa      → COMITA a canônica antes da migration, e a 0018
+ *                                                           passa a ter de RECUSAR aquele banco
  *
  * A raiz é sempre a mesma: `erp.next_code` faz `insert ... on conflict do update`, então uma chave que não
  * existe não produz erro — ela é CRIADA e devolve 1. O gate não se contenta em ver o 1: ele tenta GRAVAR a
@@ -24,16 +25,25 @@
  * MESMO `ctx.tx` para `nextCode` e para o `insert`, dentro do `withTx` (`begin` → serviço → `commit`, com
  * `rollback` em erro). Logo:
  *
- *   • COM acervo (Q3, Q4) o `insert` colide, a transação volta atrás INTEIRA, e a linha de contador que a
- *     tentativa criou NÃO persiste. O sintoma é barulhento e sem sequela: o usuário leva um erro;
- *   • SEM acervo (Q3b, Q4b) não há com o que colidir: o `insert` passa, a transação COMITA, e a chave
- *     ERRADA fica gravada. É o caminho em que o dano persiste, e ele é silencioso.
+ *   • quando o número emitido COLIDE (Q3, Q4) o `insert` bate na unicidade, a transação volta atrás
+ *     INTEIRA, e a linha de contador que a tentativa criou NÃO persiste. Barulhento e sem sequela;
+ *   • quando NÃO colide (Q3b, Q3c, Q4b) o `insert` passa, a transação COMITA, e a chave ERRADA fica
+ *     gravada. É o caminho em que o dano persiste, e ele é silencioso.
+ *
+ * E O DISCRIMINADOR NÃO É "TEM ACERVO / NÃO TEM". Esta era a segunda modelagem errada desta fatia, achada
+ * por red team independente e reproduzida: o que decide é se o próximo número que a chave RESSUSCITADA
+ * emite colide com um código já existente. Uma organização cuja numeração não começa em 1 — códigos 5 e 6,
+ * por exemplo — tem acervo E não colide, então cai no lado silencioso. Pior que Q3b: em Q3b o cadastro
+ * canônico seguinte morre e denuncia o estado; no acervo lacunar as duas chaves convivem indefinidamente,
+ * a legada sobe 1,2,3 e a canônica segue intacta, e NADA levanta erro em momento nenhum.
+ * Numeração legada arbitrária não é hipótese: a própria `0014_company_physical_migration.sql` reconhece
+ * que "as empresas existentes nasceram com código escrito à mão" e reconcilia o contador com `greatest`.
  *
  * Um gate que modelasse isso em autocommit — como este fazia — erraria nos dois sentidos: inventaria uma
  * "ressurreição" persistida em Q3/Q4, que o rollback desfaz, e descreveria mal o que sobra em Q3b/Q4b.
  *
  * A CONCLUSÃO NÃO MUDA: rollout normal continua PROIBIDO. Muda o motivo, e o motivo correto é mais forte,
- * porque não depende de o usuário ter sorte de ver um erro — o caso sem acervo não levanta nenhum.
+ * porque não depende de o usuário ter sorte de ver um erro — o lado silencioso não levanta nenhum.
  *
  * COMO ELE EXPIRA SOZINHO
  * -----------------------
@@ -54,7 +64,7 @@ import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  MIGRATION_CUTOVER, constanteNaArvore, constanteNoCommit, decidir, shaDoRef,
+  CAMINHO_CONSTANTE, MIGRATION_CUTOVER, constanteNaArvore, constanteNoCommit, decidir, shaDoRef,
 } from "./lib/cutover-contador.mjs";
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -88,8 +98,14 @@ const exigir = (cond, m) => { if (cond) ok(m); else { falhas.push(m); console.lo
  *
  * Um gate ancorado em literal congelado não mede a PR: mede o passado. Então a base é resolvida de
  * verdade — `SKEW_BASE_COMMIT` quando a execução a fixa (PR), senão a ponta real de `origin/main` — e,
- * não havendo nenhuma das duas, ABORTA. É a mesma postura do irmão `skew-cutover-contador.mjs`, que já
- * se recusa a decidir sem base: supor "não atravessa" certifica um cenário que pode ser impossível.
+ * não havendo nenhuma das duas, ABORTA.
+ *
+ * O irmão `skew-cutover-contador.mjs` tem a MESMA postura de fail-closed e um degrau de reserva
+ * DIFERENTE: lá a reserva é `.api-anterior.base`, porque o que importa naquele job é o binário que foi de
+ * fato MONTADO; aqui é `origin/main`, porque o que importa é o contrato de banco desta árvore. Dizer que
+ * a postura é a mesma é verdade; dizer que a BASE é a mesma seria falso, e os dois podem decidir sobre
+ * commits diferentes na mesma execução. A recusa a decidir sem base é comum aos dois: supor
+ * "não atravessa" certifica um cenário que pode ser impossível.
  *
  * `BASE_DE_ORIGEM` continua existindo no módulo como PROVENIÊNCIA — e agora é só isso, de fato e não só
  * na documentação.
@@ -130,13 +146,18 @@ async function aplicarCutover(c) {
 }
 
 /** O cenário: uma organização com acervo numerado e o contador em dia. É o estado de produção. */
-async function semear(c, entidade) {
+/**
+ * Semeia uma organização com acervo. `codigos` existe porque a numeração do acervo NÃO é necessariamente
+ * 1..N: bancos antigos têm o que tiverem, e um acervo que começa em 5 muda o desfecho do cutover (Q3c).
+ */
+async function semear(c, entidade, codigos = [1, 2, 3]) {
   const org = (await c.query("insert into erp.organizations (name) values ('[GATE] 05C-2') returning id")).rows[0].id;
-  for (const code of [1, 2, 3]) {
+  for (const code of codigos) {
     await c.query("insert into erp.empresas (organization_id, code, name) values ($1,$2,$3)",
       [org, code, `[GATE] empresa ${code}`]);
   }
-  await c.query("insert into erp.code_sequences (organization_id, entity, last_value) values ($1,$2,3)", [org, entidade]);
+  await c.query("insert into erp.code_sequences (organization_id, entity, last_value) values ($1,$2,$3)",
+    [org, entidade, Math.max(...codigos)]);
   return org;
 }
 
@@ -204,6 +225,18 @@ async function main() {
   }
   const constanteHead = constanteNaArvore(RAIZ);
   const d = decidir({ base: constanteBase, head: constanteHead });
+
+  // O REVERT DA CONSTANTE, NOMEADO — em vez de um stack de Postgres três passos adiante.
+  // Com base resolvida, reverter `SEQUENCIA_EMPRESA` para `'farm'` deixa base='empresa' e head='farm', a
+  // matriz roda ao contrário e morre lá na frente num `aplicarCutover` nu, cuspindo a pré-condição 5.1 da
+  // 0018 crua. Vermelho é o desfecho certo, mas um gate que promete nomear o defeito e entrega um erro de
+  // banco convida à leitura errada ("o gate está quebrado"), que é o primeiro passo para afrouxá-lo.
+  if (constanteHead !== "empresa") {
+    console.error(`\nREPROVADO: a constante canônica do contador é 'empresa'; este HEAD a tem como '${constanteHead}'.`);
+    console.error(`Reverter ${CAMINHO_CONSTANTE} reintroduz exatamente o defeito que a 05C-2 fecha:`);
+    console.error("a API voltaria a pedir a chave aposentada contra um banco que já atravessou a 0018.");
+    process.exit(1);
+  }
 
   console.log("PRE-BASE2-05C-2 · gate da matriz de version skew do contador");
   console.log(`base            ${base.sha} (${base.origem})`);
@@ -279,6 +312,34 @@ async function main() {
     exigir(eb.contadores.join() === `${d.base}=1` && eb.codigos.join() === "1",
       `e a tentativa canônica REVERTEU: sobra só [${eb.contadores}] · códigos [${eb.codigos}] — não ficam dois contadores`);
 
+    // Q3c — O CASO QUE DESMONTA A TAXONOMIA "COM ACERVO = BARULHENTO".
+    // Uma organização cujo acervo NÃO começa em 1 (códigos 5 e 6) tem Empresas e mesmo assim não colide:
+    // a chave ressuscitada emite 1, 2, 3 — todos livres. O cadastro COMITA, e continua comitando. E, ao
+    // contrário do Q3b, aqui nem o cadastro canônico seguinte denuncia o estado: a chave canônica ficou
+    // intacta em 6 e emite 7, que também está livre. As duas chaves passam a conviver indefinidamente,
+    // na MESMA organização, sem que nada levante erro em momento nenhum.
+    passo("Q3c · runtime BASE + banco PÓS-0018, acervo LACUNAR — COMITA e NUNCA se autodenuncia");
+    // Banco novo de propósito: a organização lacunar precisa nascer PRÉ-0018, com a chave legada, e só
+    // então atravessar o cutover — que é a ordem real da janela.
+    await montar(c, MIGRATION_CUTOVER);
+    const orgLacuna = await semear(c, d.base, [5, 6]);
+    await aplicarCutover(c);
+    const numerosQ3c = [];
+    for (let i = 0; i < 3; i += 1) {
+      const u = await cadastrarEmpresa(c, orgLacuna, d.base, `[GATE] Q3c antigo ${i + 1}`);
+      exigir(u.gravou, `cadastro ${i + 1} pelo binário antigo COMITA (número ${u.numero}) — nenhum erro`);
+      numerosQ3c.push(u.numero);
+    }
+    exigir(numerosQ3c.join() === "1,2,3",
+      `a chave legada ressuscitou e subiu ${numerosQ3c.join(",")} — todos livres, porque o acervo começa em 5`);
+    // E o canônico seguinte TAMBÉM passa: é isto que torna o caso pior que o Q3b.
+    const canonicoQ3c = await cadastrarEmpresa(c, orgLacuna, d.head, "[GATE] Q3c canônico");
+    exigir(canonicoQ3c.gravou && canonicoQ3c.numero === 7,
+      `o cadastro canônico seguinte também COMITA (${canonicoQ3c.numero}) — nada denuncia o estado`);
+    const eLac = await estado(c, orgLacuna);
+    exigir(eLac.contadores.join() === `${d.head}=7,${d.base}=3`,
+      `duas chaves convivendo na MESMA organização: [${eLac.contadores}] — e é assim que fica, indefinidamente`);
+
     passo("Q4 · runtime HEAD + banco PRÉ-0018, COM acervo — falha e o rollback protege");
     await montar(c, MIGRATION_CUTOVER);
     org = await semear(c, d.base);
@@ -327,9 +388,11 @@ async function main() {
     for (const f of falhas) console.log(`  - ${f}`);
     process.exit(1);
   }
-  console.log("APROVADO — a matriz fecha: 2 quadrantes compatíveis e 4 incompatíveis, em DUAS formas.");
-  console.log("  COM acervo (Q3, Q4): a operação legítima FALHA e o rollback protege o que já existe.");
-  console.log("  SEM Empresa (Q3b, Q4b): o cadastro COMITA a chave ERRADA — sem erro, e o dano fica.");
+  console.log("APROVADO — a matriz fecha: 2 quadrantes compatíveis e 5 incompatíveis, em DUAS formas.");
+  console.log("  COLIDE (Q3, Q4): a operação legítima FALHA e o rollback protege o que já existe.");
+  console.log("  NÃO COLIDE (Q3b, Q3c, Q4b): o cadastro COMITA a chave ERRADA — sem erro, e o dano fica.");
+  console.log("O discriminador é a COLISÃO, não a existência de acervo: um acervo que não começa em 1");
+  console.log("(Q3c) tem Empresas e mesmo assim cai no lado silencioso — e lá nada nunca denuncia o estado.");
   console.log("É a segunda forma que obriga a janela single-version (docs/PRE-BASE2-05C-2-CUTOVER.md):");
   console.log("ela não depende de alguém ver um erro, porque não levanta nenhum.");
 }

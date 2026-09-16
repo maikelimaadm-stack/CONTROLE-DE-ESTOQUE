@@ -25,10 +25,10 @@
  * num cenário onde ela é impossível — o job ficaria vermelho por um motivo que ninguém entenderia, ou,
  * pior, verde por acidente.
  */
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { constanteNaArvore, constanteNoCommit, decidir } from "./lib/cutover-contador.mjs";
+import { ARQUIVO_DECISAO, constanteNaArvore, constanteNoCommit, decidir } from "./lib/cutover-contador.mjs";
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ARQUIVO_BASE = join(RAIZ, ".api-anterior.base");
@@ -62,6 +62,21 @@ try {
   console.log(`[skew/contador] head ...... '${d.head}'`);
   console.log(`[skew/contador] decisão ... ${d.atravessa ? "ATRAVESSA o cutover" : "não atravessa"}`);
   console.log(`[skew/contador] motivo .... ${d.motivo}`);
+
+  // O ARTEFATO DA DECISÃO — e por que a variável de ambiente não basta.
+  //
+  // `SKEW_CUTOVER_CONTADOR` é o que o e2e lê, e é uma STRING MUTÁVEL: um `env:` de workflow prevalece
+  // sobre o que este passo escreveu em `$GITHUB_ENV`, e o ramo invertido passaria a rodar enquanto este
+  // log continuaria dizendo "não atravessa". Pior, o ramo ligado é o barato (só exige que o cadastro seja
+  // RECUSADO), então um interruptor preso em "1" faria o sentido 1 aceitar QUALQUER falha como prova —
+  // para sempre, sem ninguém mexer em constante nenhuma. Achado por red team independente, e é exatamente
+  // o "interruptor genérico" que a documentação deste módulo afirmava não existir.
+  //
+  // Por isso a decisão também sai em ARQUIVO, com os dois insumos que a produziram. O e2e RECALCULA a
+  // partir dele e usa a variável só como CONFERÊNCIA: divergência REPROVA em vez de escolher um ramo.
+  writeFileSync(join(RAIZ, ARQUIVO_DECISAO),
+    `${JSON.stringify({ baseSha: sha, base: d.base, head: d.head, atravessa: d.atravessa }, null, 2)}\n`);
+  console.log(`[skew/contador] decisão gravada em ${ARQUIVO_DECISAO}`);
 
   if (process.argv.includes("--github-env") && process.env.GITHUB_ENV) {
     appendFileSync(process.env.GITHUB_ENV, `SKEW_CUTOVER_CONTADOR=${d.atravessa ? "1" : "0"}\n`);

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
+import { RESOURCES } from "@agro/domain";
 import path from "node:path";
 // @ts-expect-error — harness de rollout em JS puro, fora do grafo de tipos da API
 import { BASE_DE_ORIGEM, CAMINHO_CONSTANTE, MIGRATION_CUTOVER, constanteNoTexto, constanteNaArvore, decidir } from "../../../../scripts/lib/cutover-contador.mjs";
@@ -139,6 +140,53 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     expect(c, "flag de escopo real").toMatch(/`empresaScoped: true`/);
     expect(c, "flag de escopo anulável real").toMatch(/`empresaScopedNulo: true`/);
     expect(c, "as flags legadas não voltam").not.toMatch(/`farmScoped(Nulo)?: true`/);
+
+    // `docs/TESTING.md` descreve o MESMO gate e dizia `farmScoped` — dois SSOT discordando sobre o mesmo
+    // campo. Quem declarasse `farmScoped: true` num recurso novo não receberia erro do registry: receberia
+    // a reprovação de `report-scope` dizendo que "não declara empresaScoped", sem entender por quê.
+    const t = fs.readFileSync(path.join(RAIZ, "docs/TESTING.md"), "utf8");
+    expect(t, "TESTING.md nomeia a flag real").toMatch(/empresaScoped/);
+    expect(t, "e não a que nunca existiu").not.toMatch(/farmScoped/);
+  });
+
+  it("T6b · os comentários de runtime não mandam o leitor a um tradutor que foi apagado", () => {
+    // O contrato foi corrigido; o código que ele aponta pelo nome (`apps/api/src/lib/empresa.ts`, §4 do
+    // contrato) não estava. Os comentários diziam que o cabeçalho anterior é TRADUZIDO na borda, por
+    // `lib/compat-empresa.ts` — arquivo apagado na 05B. O código faz o OPOSTO: recusa com 422
+    // (`lib/empresa-header.ts`). Um implementador que seguisse o comentário poderia "restaurar" a
+    // tradução, reabrindo exatamente a ampliação silenciosa de escopo que a recusa existe para fechar.
+    //
+    // Este caso existe porque o T6 lê só o `.md`: nada no harness olhava comentário de runtime, e isso
+    // dava impressão de cobertura que não havia.
+    for (const rel of ["apps/api/src/lib/context.ts", "apps/api/src/lib/empresa.ts"]) {
+      const src = fs.readFileSync(path.join(RAIZ, rel), "utf8");
+      expect(src, `${rel} não apresenta o cabeçalho legado como o do sistema`).not.toMatch(/X-Farm-Id/i);
+      expect(src, `${rel} não aponta para o tradutor apagado`).not.toMatch(/compat-empresa/);
+    }
+    // E a recusa continua sendo recusa, não tradução — a premissa do que está escrito acima.
+    const borda = fs.readFileSync(path.join(RAIZ, "apps/api/src/lib/empresa-header.ts"), "utf8");
+    expect(borda, "o cabeçalho anterior é RECUSADO na borda").toMatch(/não é mais aceito/);
+  });
+
+  it("T8 · o cadastro de Empresa aloca o código pelo caminho de SEQUENCIA_EMPRESA, e não pelo genérico", () => {
+    // `createOne` tem DOIS ramos que podem alocar `code`: o genérico `def.codeEntity` e o específico de
+    // `empresas`, que é o único que usa `SEQUENCIA_EMPRESA`. Hoje o registro de `empresas` não declara
+    // `codeEntity`, então só o específico dispara — e é isso que torna fiel tudo o que esta fatia mede.
+    //
+    // Mas o acoplamento é implícito: declarar `codeEntity` em `empresas` faria o ramo genérico VENCER (ele
+    // vem antes e já teria empilhado `code`), `SEQUENCIA_EMPRESA` viraria letra morta em silêncio, e o
+    // `gate:05c2` continuaria VERDE — porque ele lê a CONSTANTE, nunca qual ramo a API executa. Este caso
+    // existe para que essa mudança pare aqui, nomeada, em vez de aparecer como numeração errada em produção.
+    const empresas = RESOURCES.find((r) => r.table === "empresas");
+    expect(empresas, "o registro de Empresa existe").toBeTruthy();
+    expect(empresas!.codeEntity,
+      "declarar codeEntity em `empresas` desvia a alocação para o ramo genérico e desliga SEQUENCIA_EMPRESA")
+      .toBeUndefined();
+
+    // E a premissa do outro lado: o ramo específico continua existindo e continua sendo o que usa a constante.
+    const src = fs.readFileSync(path.join(RAIZ, "apps/api/src/routes/resources.ts"), "utf8");
+    expect(src, "o ramo específico de `empresas` usa SEQUENCIA_EMPRESA")
+      .toMatch(/def\.table === "empresas" && !cols\.includes\("code"\)[\s\S]{0,120}SEQUENCIA_EMPRESA/);
   });
 
   it("T7 · o runbook NÃO afirma que a plataforma não tem mecanismo de quiesce", () => {

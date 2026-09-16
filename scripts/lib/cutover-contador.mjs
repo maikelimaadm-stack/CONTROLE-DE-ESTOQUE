@@ -25,9 +25,14 @@
  *   base !== head  → atravessa → o sentido 1 prova a incompatibilidade.
  *
  * Depois que a 05C-2 estiver em `main`, qualquer PR nova tem base com `'empresa'` e HEAD com `'empresa'`:
- * iguais, exceção inativa, skew normal de volta. Não há nada para lembrar de remover, e não existe
- * interruptor genérico que alguém possa reaproveitar para silenciar outro skew — a única coisa que liga
- * a exceção é a constante do contador ter mudado entre os dois commits.
+ * iguais, exceção inativa, skew normal de volta. Não há nada para lembrar de remover.
+ *
+ * O QUE ESTE BLOCO AFIRMAVA A MAIS, E FOI CORRIGIDO. Ele dizia que "não existe interruptor genérico que
+ * alguém possa reaproveitar". A DECISÃO é pura, sim — mas quem a CONSUMIA era o e2e, através da variável
+ * `SKEW_CUTOVER_CONTADOR`, e variável de ambiente é mutável: um `env:` de workflow prevalece sobre o que
+ * este passo escreve em `$GITHUB_ENV`. O interruptor existia, e estava um degrau depois da decisão.
+ * Fechado por `ARQUIVO_DECISAO`: o e2e RECALCULA a partir dos dois insumos gravados e trata a variável
+ * como conferência, de modo que fixá-la por fora REPROVA em vez de escolher o ramo barato.
  *
  * Ancorar num SHA fixo seria pior, e vale dizer por quê: um rebase legítimo (outra PR entra na main
  * antes desta) mudaria a base e a exceção ou morreria sem motivo ou continuaria ligada sem motivo. A
@@ -46,6 +51,15 @@ export const CAMINHO_CONSTANTE = "apps/api/src/lib/sequencia-empresa.ts";
 
 /** A migration que executa o cutover. */
 export const MIGRATION_CUTOVER = "0018_empresa_code_sequence.sql";
+
+/**
+ * ONDE A DECISÃO É GRAVADA — o nome mora aqui para que produtor e consumidor não tenham duas listas.
+ *
+ * `scripts/skew-cutover-contador.mjs` escreve; `apps/web/e2e/skew-api-producao.spec.ts` lê e RECALCULA.
+ * A variável `SKEW_CUTOVER_CONTADOR` continua existindo para o workflow, mas deixou de ser autoridade:
+ * ela é conferida contra este arquivo, e divergência REPROVA.
+ */
+export const ARQUIVO_DECISAO = ".skew-cutover-contador.json";
 
 /**
  * Extrai o valor de `SEQUENCIA_EMPRESA` do TEXTO do módulo.
@@ -110,12 +124,18 @@ export function constanteNoCommit(sha, cwd = process.cwd()) {
  */
 export function shaDoRef(ref, cwd) {
   const git = (...a) => execFileSync("git", a, { cwd, encoding: "utf8" }).trim();
-  try { return git("rev-parse", "--verify", `${ref}^{commit}`); } catch { /* clone raso ou ref ausente */ }
+  // O REF DE RASTREIO VELHO É UM LITERAL CONGELADO COM OUTRO NOME. Resolver `origin/main` direto do ref
+  // local aceita, sem avisar, uma ponta de meses atrás — o caso normal de quem roda o gate na própria
+  // máquina sem `fetch`. Depois do merge da 05C-2 isso faria o gate anunciar "ATRAVESSA o cutover" numa
+  // PR que não atravessa nada, e como o resultado é VERDE ninguém investiga: a expiração automática que
+  // esta fatia vende simplesmente não aconteceria ali. Por isso o remoto é consultado PRIMEIRO, e o ref
+  // local só serve de reserva quando não há rede.
   try {
     execFileSync("git", ["fetch", "--depth=1", "origin", String(ref).replace(/^origin\//, "")],
       { cwd, stdio: "ignore" });
     return git("rev-parse", "--verify", "FETCH_HEAD^{commit}");
-  } catch { return null; }
+  } catch { /* sem rede, ou ref inexistente no remoto: cai no ref local abaixo */ }
+  try { return git("rev-parse", "--verify", `${ref}^{commit}`); } catch { return null; }
 }
 
 /** A migration do cutover existe nesta árvore? */

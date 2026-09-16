@@ -24,10 +24,14 @@ import {
  *
  * E a distinção que a fatia inteira depende de acertar:
  *
- *   • COM acervo  → o `insert` colide, a transação volta atrás INTEIRA, e a linha de contador criada pela
- *     tentativa NÃO persiste. Barulhento (o usuário vê erro) e sem sequela;
- *   • SEM Empresa → não há com o que colidir, o cadastro COMITA, e a chave ERRADA fica gravada. Silencioso
- *     e com sequela — é este caso que obriga a janela single-version.
+ *   • o número emitido COLIDE  → o `insert` bate na unicidade, a transação volta atrás INTEIRA, e a linha
+ *     de contador criada pela tentativa NÃO persiste. Barulhento (o usuário vê erro) e sem sequela;
+ *   • o número NÃO colide      → o cadastro COMITA, e a chave ERRADA fica gravada. Silencioso e com
+ *     sequela — é este caso que obriga a janela single-version.
+ *
+ * E o discriminador NÃO é "tem acervo / não tem" — esta foi a SEGUNDA modelagem errada desta fatia, achada
+ * por red team independente. Uma organização cuja numeração não começa em 1 tem acervo e mesmo assim não
+ * colide (T5): lá as duas chaves convivem para sempre e NADA levanta erro em momento nenhum.
  *
  * Modelar isso em autocommit (como o gate fazia antes) erra nos DOIS sentidos: inventa uma "ressurreição"
  * persistida no primeiro caso e descreve mal o que sobra no segundo.
@@ -104,7 +108,6 @@ describe("o commit decide o estrago — estado persistente após o cutover", () 
   });
 
   it("T2 · SEM Empresa, o binário ANTIGO COMITA a chave legada — e o dano PERSISTE, em silêncio", async () => {
-    await contador(db, ORG, LEGADA, 0);
     await empresaComCodigo(db, ORG, 1, "[TEST] outra org tem acervo");
     await contador(db, ORG, LEGADA, 1);
     expect((await aplicarCutover(db)).ok).toBe(true);
@@ -137,6 +140,7 @@ describe("o commit decide o estrago — estado persistente após o cutover", () 
 
     expect(r.numero, "o canônico também recebe 1, porque a chave ainda não existe").toBe(1);
     expect(r.comitou, "e colide").toBe(false);
+    expect(r.erro ?? "", "pela mesma unicidade de código de T1").toMatch(/duplicat|unique/i);
     expect(await linhasDaEntidade(db, CANONICA),
       "a chave canônica criada na tentativa NÃO persiste").toBe(0);
     expect(await contadores(ORG), "o contador legado seguiu intacto").toEqual([`${LEGADA}=2`]);
@@ -164,5 +168,31 @@ describe("o commit decide o estrago — estado persistente após o cutover", () 
     const ledger = Number((await db.query<{ n: string }>(
       "select count(*)::text n from public.erp_migrations where name like '0018%'")).rows[0]!.n);
     expect(ledger, "o ledger não registra um cutover que não aconteceu").toBe(0);
+  });
+
+  it("T5 · acervo LACUNAR: tem Empresas, não colide, e NADA nunca denuncia o estado", async () => {
+    // Acervo que não começa em 1 — códigos 5 e 6. É o caso que desmonta "com acervo = barulhento".
+    await empresaComCodigo(db, ORG, 5, "[TEST] e5");
+    await empresaComCodigo(db, ORG, 6, "[TEST] e6");
+    await contador(db, ORG, LEGADA, 6);
+    expect((await aplicarCutover(db)).ok, "premissa: o cutover aplicou").toBe(true);
+
+    // O binário ANTIGO serve três cadastros. A chave ressuscitada emite 1, 2, 3 — todos LIVRES.
+    for (const esperado of [1, 2, 3]) {
+      const r = await cadastrar(ORG, LEGADA, `[TEST] antigo ${esperado}`);
+      expect(r.numero, "a chave legada ressuscitada emite o próximo livre").toBe(esperado);
+      expect(r.comitou, "e COMITA — não há com o que colidir, então nenhum erro é levantado").toBe(true);
+    }
+
+    // E o cadastro canônico seguinte TAMBÉM passa: a chave canônica ficou intacta em 6 e emite 7.
+    // É isto que torna este caso pior que T2, onde o canônico seguinte pelo menos morria.
+    const canonico = await cadastrar(ORG, CANONICA, "[TEST] canônico depois");
+    expect(canonico.numero, "a canônica seguiu do acervo real").toBe(7);
+    expect(canonico.comitou, "e também COMITA — nada denuncia o estado").toBe(true);
+
+    expect(await contadores(ORG), "duas chaves convivendo na MESMA organização, indefinidamente")
+      .toEqual([`${CANONICA}=7`, `${LEGADA}=3`]);
+    expect(await codigos(ORG), "e a numeração de Empresa ficou embaralhada, sem nenhum erro pelo caminho")
+      .toEqual([1, 2, 3, 5, 6, 7]);
   });
 });
