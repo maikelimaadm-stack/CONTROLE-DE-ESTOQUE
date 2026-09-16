@@ -8,7 +8,8 @@
 > `erp.next_code(org, 'farm')` — uma chave que a 0018 acabou de aposentar. `next_code` é
 > `insert ... on conflict do update`: chave ausente **não dá erro**, ela é **criada** e devolve **1**.
 >
-> O que acontece daí em diante depende de haver acervo, e o cadastro roda numa **única transação**
+> O que acontece daí em diante depende de a chave ressuscitada COLIDIR ou não — ela começa em 1 e sobe, e
+> o que a detém é o **menor código positivo já ocupado** (M). O cadastro roda numa **única transação**
 > (`runService` → `withTx`: `begin` → serviço → `commit`, `rollback` em erro):
 >
 > - **o número emitido COLIDE** com um código existente — o `insert` bate no `unique (organization_id,
@@ -20,13 +21,23 @@
 >   ele cobre os cadastros 1..M-1 e só então o erro aparece — **tarde**, com o estrago já gravado.
 >
 > E o que separa os dois não é "ter acervo": é a colisão. Uma organização **sem Empresa** cai no segundo
-> caso, e uma organização cuja numeração **não começa em 1** também — só que pior, porque lá nem o cadastro
-> canônico seguinte denuncia o estado. Ver a tabela de quadrantes abaixo.
+> caso (M não existe), e uma cujo **menor código positivo é M > 1** também, pelos cadastros 1..M-1. Uma
+> cujo acervo começa em 1 cai no primeiro, e buraco INTERNO depois disso é irrelevante — o contador morre
+> em 1 e nunca o alcança. Ver a tabela de quadrantes abaixo.
 >
-> **É o segundo caso que obriga a janela**, e é ele que não se pode contar com "alguém vai ver o erro":
-> ele não levanta nenhum. O sentido inverso (binário novo contra banco pré-0018) tem as mesmas duas
-> formas — e, na organização sem Empresa, deixa a chave canônica gravada ANTES da migration, estado que a
-> própria 0018 depois **recusa**. Tudo isso está demonstrado em `pnpm gate:05c2` (Q3, Q3b, Q4, Q4b).
+> **A janela single-version é obrigatória porque existem combinações incompatíveis, ponto.** Não é um
+> quadrante só que a obriga:
+>
+> - **Q3b** (sem Empresa) e **Q3c** (M > 1) podem COMITAR estado errado **sem falha imediata** — e são os
+>   piores justamente porque não se pode contar com "alguém vai ver o erro": em Q3b ele não vem nunca; em
+>   Q3c ele vem tarde, depois de M-1 cadastros já gravados;
+> - **Q4b** (binário novo contra banco pré-0018, organização sem Empresa) grava a chave CANÔNICA antes da
+>   migration — estado que a própria 0018 depois **recusa**, travando o cutover do banco inteiro;
+> - **Q3 e Q4 também são incompatíveis**, ainda que falhem de imediato: ali o usuário legítimo leva um
+>   cadastro recusado, e isso é indisponibilidade funcional, não "tudo bem".
+>
+> Tudo isso está demonstrado em `pnpm gate:05c2`: **2 quadrantes compatíveis e 6 incompatíveis**
+> (Q3, Q3b, Q3c, Q3d, Q4, Q4b — o Q3d é a prova NEGATIVA, de que lacuna interna não abre janela).
 >
 > **Estado deste runbook: `BLOCKED`.**
 >
@@ -95,8 +106,11 @@ Os casos são **demonstrados**, não argumentados, por `pnpm gate:05c2`
 (`scripts/gate-cutover-05c2.mjs`), que executa o cadastro como a API o executa — `begin` → `next_code` →
 `insert` → `commit`/`rollback` — e **inspeciona o estado persistente depois**.
 
-A linha que obriga a janela é a das organizações **sem Empresa**: ali não há colisão, ninguém vê erro, e o
-dano fica gravado. Contar só a metade barulhenta seria contar a metade que dá menos medo.
+**Nenhum quadrante sozinho "obriga" a janela — o conjunto obriga.** Q3b e Q3c comitam estado errado sem
+falha imediata (em Q3b ninguém vê erro nunca; em Q3c o erro vem depois de M-1 cadastros já gravados), e
+Q4b deixa a chave canônica gravada antes da migration, estado que a 0018 recusa. Q3 e Q4 falham de
+imediato, mas incompatibilidade barulhenta continua sendo incompatibilidade: o usuário legítimo leva um
+cadastro recusado. Contar só a metade silenciosa, ou só a barulhenta, descreve metade do risco.
 
 Não existe terceira via. Copiar a linha e manter as duas ativas faz os dois lados emitirem o mesmo número
 — medido em `apps/api/test/integration/contador-empresa-transicao.test.ts`. Por isso a 0018 é uma

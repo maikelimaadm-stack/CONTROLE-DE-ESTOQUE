@@ -205,6 +205,58 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     expect(rb, "não afirma mais ausência de mecanismo").not.toMatch(/Não existe hoje, neste produto, mecanismo comprovável/);
   });
 
+  it("T9 · o runbook descreve o modelo VIGENTE do cutover, e as frases já refutadas não voltam", () => {
+    // POR QUE ESTE CASO EXISTE. Esta fatia publicou TRÊS modelos antes de acertar, e as duas primeiras
+    // correções foram achadas por auditoria externa, não pelos gates. O padrão de falha foi sempre o
+    // mesmo: o modelo é corrigido num lugar e sobrevive em outro, porque nada mecânico lia a prosa. Um
+    // documento operacional que se contradiz é pior que um desatualizado — às 3h da manhã o operador lê
+    // a frase que encontrar primeiro.
+    //
+    // As asserções são SEMÂNTICAS de propósito: casam com o conceito (M, 1..M-1, Q3c/Q3d) e não com
+    // pontuação, para não quebrarem numa reescrita legítima do texto.
+    const rb = fs.readFileSync(path.join(RAIZ, "docs/PRE-BASE2-05C-2-CUTOVER.md"), "utf8");
+
+    // 1. Os quadrantes que a expansão trouxe estão nomeados.
+    expect(rb, "Q3c (menor código positivo M > 1) é descrito").toMatch(/Q3c/);
+    expect(rb, "Q3d (a prova NEGATIVA da lacuna interna) é descrito").toMatch(/Q3d/);
+
+    // 2. O modelo vigente: a janela vai de 1 até M-1.
+    expect(rb, "o runbook fala do menor código ocupado M, e de M > 1").toMatch(/M *> *1/);
+    expect(rb, "e do intervalo silencioso 1..M-1").toMatch(/1\.\.M-1|M *- *1/);
+
+    // 3. A prova negativa, com o acervo concreto e a janela zero.
+    const lacunaInterna = /\[1, ?3, ?5\]/;
+    expect(rb, "o acervo de lacuna interna é citado").toMatch(lacunaInterna);
+    expect(rb, "e dito que ele NÃO abre janela").toMatch(/lacuna *(?:interna|INTERNA)[^.]*?não *abre|não *abre *janela/i);
+
+    // 4. As frases do modelo REFUTADO não voltam como afirmação vigente.
+    expect(rb, "nenhum quadrante sozinho 'obriga' a janela").not.toMatch(/A linha que obriga a janela/);
+    expect(rb, "o desfecho não depende mais de 'haver acervo'").not.toMatch(/depende de haver acervo/);
+    expect(rb, "a lista de quadrantes do gate não volta a ser a antiga").not.toMatch(/\(Q3, Q3b, Q4, Q4b\)/);
+
+    // 5. O A13 mede o menor código POSITIVO. `count(*) <> max(code)` pode ser CITADO como o que não
+    //    serve, mas não pode voltar a ser CRITÉRIO — então a proibição vale dentro dos blocos SQL.
+    const blocosSql = [...rb.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1] ?? "");
+    expect(blocosSql.length, "o runbook tem blocos SQL executáveis").toBeGreaterThan(0);
+    const sqlDoA13 = blocosSql.filter((b) => /cadastros_silenciosos|min\(e?\.?code\)/.test(b));
+    expect(sqlDoA13.length, "o A13 tem consulta própria").toBeGreaterThan(0);
+    expect(sqlDoA13.join("\n"), "o A13 filtra pelo menor código POSITIVO").toMatch(/filter *\( *where[^)]*code *>= *1 *\)/i);
+    for (const b of blocosSql) {
+      expect(b, "nenhum SQL do runbook usa count(*) <> max(code) como critério")
+        .not.toMatch(/count\(\*\) *<> *max\(code\)/);
+    }
+
+    // 6. §B6 continua com OITO confirmações — a contagem já saiu errada uma vez.
+    const b6 = rb.slice(rb.indexOf("### B6."), rb.indexOf("### Ideias que parecem quiesce"));
+    const itens = [...b6.matchAll(/^\d+\. /gm)].length;
+    expect(itens, `§B6 lista OITO confirmações account-specific (achei ${itens})`).toBe(8);
+    expect(rb, "e o texto não volta a dizer 'sete'").not.toMatch(/sete pontos de §B6/i);
+
+    // 7. O estado operacional NÃO pode ser afrouxado por este caso.
+    expect(rb, "o runbook continua BLOCKED").toMatch(/Estado deste runbook: `BLOCKED`/);
+    expect(rb, "e o Remove segue CANDIDATO, não confirmado").toMatch(/MECANISMO PREFERENCIAL CANDIDATO/);
+  });
+
   it("o gate resolve a base DE VERDADE e ABORTA sem ela — nunca cai no SHA de proveniência", () => {
     // O fail-OPEN que este caso tranca: a versão anterior de `baseDaExecucao()` terminava em
     // `catch { return BASE_DE_ORIGEM }`. Como 602cda3 tem `SEQUENCIA_EMPRESA = 'farm'` para sempre, no CI
