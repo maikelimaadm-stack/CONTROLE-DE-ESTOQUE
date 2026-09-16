@@ -2,9 +2,9 @@
  * PONTE ENTRE O CONTRATO DE EMPRESA E A INFRAESTRUTURA ATUAL (docs/MULTI-COMPANY-CONTRACT.md).
  *
  * O contrato vive em `@erp/plataforma` (puro, sem banco, neutro de nicho). Aqui ele encosta no banco, onde a
- * Empresa ainda é materializada pela infraestrutura herdada do primeiro segmento atendido (`erp.empresas`,
- * coluna `empresa_id`, cabeçalho `X-Farm-Id`). Só a NOMENCLATURA é legada: a AUTORIDADE, desde PRE-BASE2-02, é
- * o escopo por módulo (`erp.membro_escopos_empresa` / `erp.membro_empresas`) — nunca mais `erp.member_farms`.
+ * Empresa é materializada pelo par canônico `erp.empresas` / `empresa_id`, selecionada por `X-Empresa-Id`.
+ * A AUTORIDADE, desde PRE-BASE2-02, é o escopo por módulo (`erp.membro_escopos_empresa` /
+ * `erp.membro_empresas`) — nunca mais `erp.member_farms`, que a 0017 removeu.
  *
  * A tradução da convenção antiga ("lista vazia = todas") sobrevive apenas na BORDA ADMINISTRATIVA, para
  * clientes que ainda enviam `empresa_ids` (apps/api/src/routes/admin.ts). Nenhuma regra de runtime a usa.
@@ -12,7 +12,7 @@
 import { selecionarEmpresaDoLancamento, type IdEmpresa, type SelecaoEmpresa } from "@erp/plataforma";
 import { empresaScopeSql, moduloAtivo, type ServiceCtx } from "./context.js";
 
-/** Empresa selecionada no contexto de trabalho (X-Farm-Id). Seleção, nunca autorização. */
+/** Empresa selecionada no contexto de trabalho (X-Empresa-Id). Seleção, nunca autorização. */
 export const empresaSelecionada = (ctx: ServiceCtx): IdEmpresa | null => ctx.empresaId;
 
 /**
@@ -57,7 +57,7 @@ export async function selecionarEmpresaParaLancamento(
 }
 
 /**
- * Empresas que o membro enxerga em ALGUM módulo — o seletor de contexto de trabalho (X-Farm-Id).
+ * Empresas que o membro enxerga em ALGUM módulo — o seletor de contexto de trabalho (X-Empresa-Id).
  *
  * É a UNIÃO dos escopos, não a autorização de nenhuma tela: poder selecionar a empresa não dá acesso a
  * módulo algum nela. Cada porta continua exigindo o escopo do SEU módulo.

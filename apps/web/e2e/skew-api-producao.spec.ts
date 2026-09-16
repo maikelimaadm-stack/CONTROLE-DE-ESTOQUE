@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, uniq } from "./helpers";
-import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
+import { criarEmpresaEConferirContador, provarContadorIncompativel } from "./skew-contador-empresa";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
@@ -135,10 +135,55 @@ test("IDENTIDADE · a árvore da API é exatamente o base SHA desta execução",
  * rede preventiva. Ela precisa criar uma Empresa DE VERDADE neste sentido e outra no sentido 2, contra o
  * MESMO banco, sem reset entre eles.
  */
-test("criar Empresa pela API da BASE aloca um código novo, maior e sem repetição", async ({ page, request }) => {
+// O NOME VALE NOS DOIS RAMOS, de propósito. Este caso prova coisas OPOSTAS conforme a execução atravesse
+// ou não o cutover, e o relatório do CI mostra só o título: um nome que só descrevesse a alocação passaria
+// verde "alocando código novo" justamente na execução em que provou a RECUSA. Quem audita de fora leria o
+// contrário do que aconteceu. Qual ramo rodou sai no `console.log` de cada um.
+/**
+ * A DECISÃO DO CUTOVER DO CONTADOR, LIDA DO ARTEFATO — nunca inferida, nunca suposta.
+ *
+ * O arquivo é gravado por `scripts/skew-cutover-contador.mjs` (o mesmo passo que exporta a variável) e
+ * carrega os DOIS insumos: a constante do contador na base e a deste HEAD. Ausência do arquivo é falha, não
+ * "então não atravessa": supor o ramo fácil é justamente como um gate se autoaprova.
+ */
+function lerDecisaoDoCutover(): { base: string; head: string; atravessa: boolean } {
+  const arq = path.resolve(__dirname, "../../..", ".skew-cutover-contador.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão do cutover ausente (${arq}): rode scripts/skew-cutover-contador.mjs antes do skew. `
+      + "Sem ela não há como saber qual ramo provar, e escolher o mais fácil seria certificar o que não se mediu.");
+  }
+  return JSON.parse(fs.readFileSync(arq, "utf8"));
+}
+
+test("contador de Empresa pela API da BASE: aloca código novo e único — ou RECUSA, se a execução atravessa o cutover", async ({ page, request }) => {
   await login(page);
   const s = await sessao(page);
   const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };
+
+  // A PR que ATRAVESSA o cutover do contador (PRE-BASE2-05C-2) inverte o que este caso cobra: ali a
+  // combinação "API da base × banco deste HEAD" é PROIBIDA, e a prova passa a ser a recusa. A decisão vem
+  // de `scripts/lib/cutover-contador.mjs`, que compara a constante do contador nos dois commits — e volta
+  // sozinha ao normal na primeira PR cuja base já contenha o cutover. Ver o runbook do cutover.
+  //
+  // E A DECISÃO NÃO VEM DA VARIÁVEL DE AMBIENTE. `SKEW_CUTOVER_CONTADOR` é uma string mutável: um `env:`
+  // de workflow prevalece sobre o que o passo decisor escreveu em `$GITHUB_ENV`, e o ramo invertido
+  // passaria a rodar com o log do CI afirmando o contrário. Como o ramo "atravessa" só exige que o
+  // cadastro seja RECUSADO, um interruptor preso em "1" faria este caso aceitar QUALQUER falha — 500,
+  // timeout, regressão de permissão — como prova de sucesso, para sempre. Então aqui se RECALCULA a
+  // partir do artefato que o decisor gravou, e a variável é só CONFERÊNCIA: divergir REPROVA.
+  const decisao = lerDecisaoDoCutover();
+  const atravessa = decisao.base !== decisao.head;
+  expect(atravessa, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(decisao.atravessa);
+  expect(process.env.SKEW_CUTOVER_CONTADOR ?? "0",
+    "SKEW_CUTOVER_CONTADOR não bate com a decisão recalculada — alguém fixou a variável por fora")
+    .toBe(atravessa ? "1" : "0");
+
+  if (atravessa) {
+    await provarContadorIncompativel(request, API, auth, "SKEW-BASE");
+    console.log(`[skew] sentido 1 · cutover do contador ATRAVESSADO ('${decisao.base}' → '${decisao.head}'): a combinação proibida foi recusada, como se exige`);
+    return;
+  }
+
   const codigo = await criarEmpresaEConferirContador(request, API, auth, "SKEW-BASE");
   console.log(`[skew] sentido 1 (API da base) alocou o código de Empresa ${codigo}`);
 });

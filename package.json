@@ -33,6 +33,7 @@
     "audit:id-global": "node scripts/id-global-audit.mjs",
     "audit:claude-harness": "node scripts/claude-harness-audit.mjs",
     "gate:g-u5": "node scripts/gate-purga-0017-runtime-anterior.mjs",
+    "gate:05c2": "node scripts/gate-cutover-05c2.mjs",
     "docs:generate": "node scripts/farm-inventory.mjs && node scripts/data-dictionary.mjs && node scripts/notification-matrix.mjs && node scripts/company-rls-matrix.mjs"
   },
   "devDependencies": {

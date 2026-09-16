@@ -99,7 +99,9 @@ export const PONTE_PROVA = {
   "packages/db/test/purga-0017-fresh.test.ts": "VOCABULÁRIO (05C-1): mede a ponte física INTEIRA com a 0016 aplicada — 52 colunas, 5 views, 52 gatilhos, 3 funções, 52 FKs, 8 índices — e então exige que todos esses contadores caiam a zero depois da 0017. Cita o nome antigo porque ele É o objeto medido; sem citá-lo, a ausência não teria como ser contada.",
   "packages/db/test/purga-0017-upgrade.test.ts": "VOCABULÁRIO + PROVA HISTÓRICA (05C-1): semeia acervo da fase DUAL, escrevendo pelos dois lados para provar que o espelho da 0014 estava vivo, e só então atravessa a purga conferindo que o dado canônico sobreviveu linha a linha. O idioma antigo aparece porque era assim que o acervo era escrito.",
   "packages/db/test/purga-0017-concorrencia.test.ts": "VOCABULÁRIO (05C-1): prova a trava de concorrência e o comportamento sob contenção de relação e de objeto de catálogo. Cita o nome das funções de sincronia porque é sobre uma delas que a disputa de catálogo é montada, e conta os objetos legados para provar que uma falha NÃO deixou estado parcial.",
-  "packages/db/test/purga-0017-invariantes.test.ts": "VOCABULÁRIO (05C-1): confere FKs compostas, CHECK canônico, papéis da política e isolamento de tenant depois da purga, comparando o estado ANTES e DEPOIS. Precisa nomear a coluna legada para provar que nenhuma política ainda decide por ela."
+  "packages/db/test/purga-0017-invariantes.test.ts": "VOCABULÁRIO (05C-1): confere FKs compostas, CHECK canônico, papéis da política e isolamento de tenant depois da purga, comparando o estado ANTES e DEPOIS. Precisa nomear a coluna legada para provar que nenhuma política ainda decide por ela.",
+  "apps/api/test/unit/cutover-contador-decisao.test.ts": "VOCABULÁRIO (05C-2): prova que a exceção de version skew EXPIRA sozinha e que o SSOT canônico não regride. Para isso precisa CITAR os nomes legados — `erp.farms`, `member_farms`, `farmScoped`, a constante `'farm'` — porque o que ele cobra é justamente que eles NÃO voltem a ser apresentados como estado atual (T6) e que a decisão ative só na troca da constante. Um teste que proíbe um nome sem escrevê-lo não tem como procurá-lo.",
+  "packages/db/test/cutover-0018-fail-closed.test.ts": "VOCABULÁRIO (05C-2): a 0018 exige, como pré-condição, que a ponte física da 05C-1 já tenha saído — se ainda houver coluna legada, a 0017 não terminou e o cutover do contador não pode rodar. Provar essa recusa obriga a REINTRODUZIR uma coluna `farm_id` num banco descartável, dentro de uma transação desfeita: é o estímulo do teste, não uma dependência do produto. Sem citar o nome antigo, a guarda que o procura ficaria sem prova de que reprova."
 };
 
 
@@ -141,6 +143,8 @@ export const CATEGORIA_COMPAT = {
   "packages/db/test/purga-0017-upgrade.test.ts": "PROVA_HISTORICA",
   "packages/db/test/purga-0017-concorrencia.test.ts": "VOCABULARIO",
   "packages/db/test/purga-0017-invariantes.test.ts": "VOCABULARIO",
+  "apps/api/test/unit/cutover-contador-decisao.test.ts": "VOCABULARIO",
+  "packages/db/test/cutover-0018-fail-closed.test.ts": "VOCABULARIO",
   "scripts/gate-purga-0017-runtime-anterior.mjs": "VOCABULARIO",
   "packages/db/test/upgrade-acervo.test.ts": "PROVA_HISTORICA",
   "packages/db/test/upgrade-rollback.test.ts": "PROVA_HISTORICA",

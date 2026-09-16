@@ -4,22 +4,25 @@ import { SEQUENCIA_EMPRESA } from "../../src/lib/sequencia-empresa.js";
 import { TEST_URL } from "./setup.js";
 
 /**
- * DOIS NOMES DE ENTIDADE SÃO DOIS CONTADORES — P0 DA TRANSIÇÃO farm → empresa (PRE-BASE2-05C-0).
+ * DOIS NOMES DE ENTIDADE SÃO DOIS CONTADORES — a prova que motivou a PRE-BASE2-05C-2, e que continua
+ * valendo DEPOIS dela.
  *
- * `erp.code_sequences` tem chave primária `(organization_id, entity)`. Disso decorre um fato que o desenho
- * "conservador" da troca de contador contradiz sem perceber: `'farm'` e `'empresa'` não são dois rótulos do
- * mesmo contador — são DUAS LINHAS, dois travamentos de linha e dois valores correntes independentes.
+ * `erp.code_sequences` tem chave primária `(organization_id, entity)`. Disso decorre o fato que governou a
+ * transição inteira: `'farm'` e `'empresa'` não são dois rótulos do mesmo contador — são DUAS LINHAS, dois
+ * travamentos de linha e dois valores correntes independentes. E `erp.next_code` é um
+ * `insert ... on conflict do update`: linha AUSENTE não é erro, é REINÍCIO EM 1.
  *
- * O plano que parece mais seguro — COPIAR a linha de `'farm'` para `'empresa'` e MANTER AS DUAS durante o
- * rollout, para que nenhuma versão fique sem contador — é justamente o que colide. Durante a janela em que
- * as duas APIs estão no ar (Railway e Vercel não trocam de versão juntos), a antiga incrementa `'farm'`, a
- * nova incrementa `'empresa'`, e as duas devolvem O MESMO próximo número. O segundo cadastro morre no
- * `unique (organization_id, code)` de `erp.empresas` — em produção, no meio do rollout, para o usuário.
+ * O QUE MUDOU NESTA FATIA, E O QUE NÃO MUDOU
+ * ------------------------------------------
+ * MUDOU: a chave persistida agora é `'empresa'` (migration `0018_empresa_code_sequence.sql`), e
+ * `SEQUENCIA_EMPRESA` acompanha. O teste que fixava a constante em `'farm'` virou o teste que a fixa no
+ * estado canônico — e, mais do que isso, que a amarra ao BANCO em vez de a um segundo literal.
  *
- * Este teste NÃO troca o contador (a constante segue `'farm'` nesta fatia, e nenhuma DDL roda aqui): ele
- * MEDE a propriedade do banco que torna a troca perigosa, para que a fatia destrutiva encontre o fato já
- * estabelecido em vez de descobri-lo em produção. Tudo acontece dentro de uma transação desfeita ao final —
- * nenhuma linha sobrevive ao teste.
+ * NÃO MUDOU: as duas armadilhas continuam sendo propriedades reais do banco, e continuam medidas aqui.
+ * Elas não são história: são o motivo de a 05C-2 ter exigido janela single-version, e são o que reprova
+ * quem tentar "voltar atrás" ou "manter os dois por segurança" numa fatia futura.
+ *
+ * Tudo acontece dentro de transações desfeitas ao final — nenhuma linha sobrevive ao teste.
  */
 let db: Db;
 beforeAll(async () => {
@@ -28,11 +31,6 @@ beforeAll(async () => {
 }, 240_000);
 afterAll(async () => { await db?.end(); });
 
-/**
- * Organização própria, criada DENTRO da transação que será desfeita. Reaproveitar a organização semeada
- * amarraria este teste ao estado do seed — e mexer no contador de uma organização real deixaria efeito
- * colateral em quem rodasse depois. Aqui o cenário é inteiro e descartável.
- */
 const orgDescartavel = async (nome: string) =>
   (await db.query<{ id: string }>("insert into erp.organizations (name) values ($1) returning id", [nome])).rows[0]!.id;
 
@@ -47,26 +45,48 @@ describe("transição de contador da Empresa", () => {
     expect(r.rows[0]!.cols).toBe("organization_id,entity");
   });
 
-  it("a constante desta fatia ainda é a LEGADA — a troca é de outra fatia, com o dado junto", () => {
-    // Fixado de propósito: se alguém trocar a constante sem a migration que move a linha, este teste
-    // reprova ANTES de o contador zerar em produção (`last_value` de uma linha inexistente começa em 1).
-    expect(SEQUENCIA_EMPRESA, "trocar isto sem mover a linha de erp.code_sequences zera o contador").toBe("farm");
+  it("a constante de runtime é a CANÔNICA — e quem decide isso é o banco, não um segundo literal", async () => {
+    // Amarrar a constante ao BANCO, e não a `'empresa'` escrito de novo aqui, é o que faz este teste
+    // continuar valendo se a chave mudar outra vez: ele compara o runtime com o que a 0018 de fato
+    // deixou de pé, em vez de comparar duas cópias da mesma opinião.
+    const r = await db.query<{ entity: string }>(`
+      select distinct entity from erp.code_sequences
+       where entity in ('farm', 'empresa')`);
+    const persistidas = r.rows.map((l) => l.entity);
+    expect(persistidas, "depois da 0018 a chave legada não existe mais em banco nenhum").not.toContain("farm");
+    expect(SEQUENCIA_EMPRESA, "o runtime aponta para a chave canônica").toBe("empresa");
+
+    // E o ledger confirma que quem produziu esse estado foi a migration da fatia, não um acaso do seed.
+    const m = await db.query<{ n: string }>(
+      "select count(*)::text n from public.erp_migrations where name = '0018_empresa_code_sequence.sql'");
+    expect(Number(m.rows[0]!.n), "a 0018 está aplicada neste banco").toBe(1);
   });
 
-  it("copiar a linha e MANTER AS DUAS faz os dois lados emitirem o MESMO número", async () => {
+  it("MEDIDO: copiar a linha e MANTER AS DUAS faz os dois lados emitirem o MESMO número", async () => {
     await db.query("begin");
     try {
       const orgId = await orgDescartavel("[TEST] contador dois lados");
-      // Estado de partida realista: o contador legado já numerou empresas.
-      await db.query("insert into erp.code_sequences (organization_id, entity, last_value) values ($1,'farm',2)", [orgId]);
-      // O desenho "conservador" da troca de contador (fatia 05C-2): copiar para o nome canônico e deixar
-      // os dois de pé. A 05C-1 não chega aqui — ela remove colunas e deixa `entity='farm'` intacto.
-      await db.query("insert into erp.code_sequences (organization_id, entity, last_value) select organization_id, 'empresa', last_value from erp.code_sequences where organization_id=$1 and entity='farm'", [orgId]);
+      // O desenho "conservador" da troca — copiar para o nome canônico e deixar os dois de pé — é
+      // exatamente o que colide. É por isso que a 0018 é um `update` (substituição) e não um `insert`.
+      await db.query("insert into erp.code_sequences (organization_id, entity, last_value) values ($1,'empresa',2)", [orgId]);
+      await db.query("insert into erp.code_sequences (organization_id, entity, last_value) select organization_id, 'farm', last_value from erp.code_sequences where organization_id=$1 and entity='empresa'", [orgId]);
 
       const legado = Number((await db.query<{ n: string }>("select erp.next_code($1,'farm')::text n", [orgId])).rows[0]!.n);
       const canonico = Number((await db.query<{ n: string }>("select erp.next_code($1,'empresa')::text n", [orgId])).rows[0]!.n);
       expect(legado, "a API antiga emitiria 3").toBe(3);
       expect(canonico, "e a API nova emitiria 3 TAMBÉM — dois contadores, um espaço de códigos").toBe(legado);
+    } finally { await db.query("rollback"); }
+  });
+
+  it("MEDIDO: a linha AUSENTE não dá erro — ela REINICIA em 1, que é o risco do binário anterior", async () => {
+    // Esta é a metade que explica por que a 05C-2 precisou de janela single-version: depois da 0018 a
+    // chave `'farm'` não existe, e um binário anterior que a chamasse não receberia erro nenhum — ele
+    // receberia `1`, por cima de um acervo já numerado.
+    await db.query("begin");
+    try {
+      const orgId = await orgDescartavel("[TEST] contador ausente reinicia");
+      const semLinha = Number((await db.query<{ n: string }>("select erp.next_code($1,'farm')::text n", [orgId])).rows[0]!.n);
+      expect(semLinha, "contador inexistente devolve 1 em silêncio — nunca um erro").toBe(1);
     } finally { await db.query("rollback"); }
   });
 
@@ -82,13 +102,13 @@ describe("transição de contador da Empresa", () => {
     } finally { await db.query("rollback"); }
   });
 
-  it("um único contador compartilhado NÃO repete — que é a razão de a troca ter de ser uma substituição, não uma cópia", async () => {
+  it("um único contador compartilhado NÃO repete — que é a razão de a troca ter sido substituição, não cópia", async () => {
     await db.query("begin");
     try {
       const orgId = await orgDescartavel("[TEST] contador compartilhado");
-      await db.query("insert into erp.code_sequences (organization_id, entity, last_value) values ($1,'farm',2)", [orgId]);
-      const a = Number((await db.query<{ n: string }>("select erp.next_code($1,'farm')::text n", [orgId])).rows[0]!.n);
-      const b = Number((await db.query<{ n: string }>("select erp.next_code($1,'farm')::text n", [orgId])).rows[0]!.n);
+      await db.query("insert into erp.code_sequences (organization_id, entity, last_value) values ($1,$2,2)", [orgId, SEQUENCIA_EMPRESA]);
+      const a = Number((await db.query<{ n: string }>("select erp.next_code($1,$2)::text n", [orgId, SEQUENCIA_EMPRESA])).rows[0]!.n);
+      const b = Number((await db.query<{ n: string }>("select erp.next_code($1,$2)::text n", [orgId, SEQUENCIA_EMPRESA])).rows[0]!.n);
       expect([a, b], "o mesmo contador, chamado duas vezes, anda").toEqual([3, 4]);
     } finally { await db.query("rollback"); }
   });

@@ -61,3 +61,48 @@ export async function criarEmpresaEConferirContador(
   expect(new Set(depois).size, `nenhum código se repete na organização (${rotulo}) — repetição é o sintoma de DOIS contadores`).toBe(depois.length);
   return alocado;
 }
+
+/**
+ * O MESMO CENÁRIO, QUANDO A RESPOSTA CERTA É "NÃO FUNCIONA" (PRE-BASE2-05C-2).
+ *
+ * Numa PR que ATRAVESSA o cutover do contador, a combinação "API da base × banco deste HEAD" deixa de ser
+ * a janela de rollout e passa a ser um estado PROIBIDO: a 0018 renomeou a chave persistida, e a API da base
+ * ainda pede `next_code(org,'farm')`. Como `next_code` é `insert ... on conflict do update`, a chave que
+ * não existe não produz erro — ela é CRIADA e devolve 1, dentro da transação do próprio pedido.
+ *
+ * NUMA ORGANIZAÇÃO COM ACERVO — que é o caso deste E2E — o `insert` colide com o
+ * `unique (organization_id, code)` e a transação volta atrás inteira: o cadastro é recusado e o acervo
+ * fica intacto. É exatamente essa dupla que as asserções abaixo cobram.
+ *
+ * O QUE ESTE ARQUIVO NÃO COBRE, de propósito: a organização SEM Empresa, em que não há colisão, o cadastro
+ * COMITA a chave errada e o dano PERSISTE em silêncio. Aquilo é estado persistente, não comportamento
+ * observável de uma resposta HTTP, e quem prova é `pnpm gate:05c2` (Q3b/Q4b), que inspeciona o banco
+ * depois do commit. Os dois se complementam: aqui mede-se o que o BINÁRIO REAL responde; lá, o que SOBRA.
+ *
+ * Nesse cenário, exigir que o cadastro funcione seria exigir o impossível; e deixar o job passar assim
+ * mesmo seria CERTIFICAR uma compatibilidade que não existe, que é pior do que não ter o job. Então a
+ * prova se inverte: o que se cobra é que a combinação proibida FALHE, e que ela falhe do jeito previsto —
+ * sem corromper a numeração de quem já existe.
+ *
+ * O que NÃO se cobra aqui é a mensagem exata nem o código HTTP específico: o que importa é que o cadastro
+ * seja RECUSADO e que o acervo permaneça íntegro. Fixar o status amarraria a prova a um detalhe de
+ * contrato que esta fatia não governa.
+ */
+export async function provarContadorIncompativel(
+  request: APIRequestContext, api: string, auth: Record<string, string>, rotulo: string
+): Promise<void> {
+  const antes = await codigos(request, api, auth);
+  expect(antes.length, "o banco do skew tem empresas semeadas — sem acervo não há colisão a provar").toBeGreaterThan(0);
+
+  const criado = await request.post(`${api}/api/resources/empresas`, {
+    headers: auth, data: { name: `${rotulo} ${Date.now().toString(36)}`, is_active: true },
+  });
+  expect(criado.status(),
+    `a combinação PROIBIDA tinha de ser recusada (${rotulo}). Se ela passou, ou a 0018 não está aplicada `
+    + "neste banco, ou o binário da base não é o da base — e, nos dois casos, o cenário medido não é o que "
+    + `o nome do teste diz. Corpo: ${await criado.text()}`).toBeGreaterThanOrEqual(400);
+
+  const depois = await codigos(request, api, auth);
+  expect(depois, "e o acervo existente continua intacto — a recusa não pode ter renumerado ninguém").toEqual(antes);
+  expect(new Set(depois).size, "nenhum código duplicado sobrou").toBe(depois.length);
+}

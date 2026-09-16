@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { QueryResultRow } from "pg";
 import { createPool, type Db } from "../src/pool.js";
-import { migrate, resetSchema, listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
+import { resetSchema, listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
 import { TEST_URL } from "./setup.js";
 
 /**
@@ -154,17 +154,35 @@ async function fotografar(): Promise<Foto> {
 }
 
 async function subirAte16(): Promise<string[]> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "purga-upgrade-ate16-"));
+  return runnerRecortado((nome) => nome < ALVO, 16, (m) =>
+    expect(m, "o runner da fase dual não conhece a purga").not.toContain(ALVO));
+}
+
+/**
+ * O runner com teto NA PURGA (PRE-BASE2-05C-2). Antes bastava `migrate(db)`, porque a 0017 era a última do
+ * diretório; com a 0018 versionada aquela chamada passaria a aplicar as duas, e este arquivo — que mede a
+ * sobrevivência do acervo À PURGA — começaria a medir também o que vier depois. O teto é explícito e as
+ * contagens continuam exatas. As provas da 0018 vivem em `cutover-0018-*.test.ts`.
+ */
+async function migrarAte17(): Promise<string[]> {
+  return runnerRecortado((nome) => nome <= ALVO, 17, (m) =>
+    expect(m, "o runner recortado conhece a purga e para nela").toContain(ALVO));
+}
+
+async function runnerRecortado(
+  incluir: (nome: string) => boolean, quantas: number, conferir: (nomes: string[]) => void,
+): Promise<string[]> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "purga-upgrade-"));
   const anterior = process.env.MIGRATIONS_DIR;
   try {
-    const anteriores = listMigrations().map((m) => m.name).filter((nome) => nome < ALVO);
-    expect(anteriores.length, "16 migrations antes da purga").toBe(16);
-    for (const nome of anteriores) fs.copyFileSync(path.join(MIGRATIONS_DIR, nome), path.join(dir, nome));
+    const selecionadas = listMigrations().map((m) => m.name).filter(incluir);
+    expect(selecionadas.length, `${quantas} migrations no recorte`).toBe(quantas);
+    for (const nome of selecionadas) fs.copyFileSync(path.join(MIGRATIONS_DIR, nome), path.join(dir, nome));
     process.env.MIGRATIONS_DIR = dir;
     vi.resetModules();
-    const ate16 = await import("../src/migrate.js");
-    expect(ate16.listMigrations().map((m) => m.name), "o runner da fase dual não conhece a purga").not.toContain(ALVO);
-    return await ate16.migrate(db, () => {});
+    const runner = await import("../src/migrate.js");
+    conferir(runner.listMigrations().map((m) => m.name));
+    return await runner.migrate(db, () => {});
   } finally {
     if (anterior === undefined) delete process.env.MIGRATIONS_DIR;
     else process.env.MIGRATIONS_DIR = anterior;
@@ -326,7 +344,7 @@ beforeAll(async () => {
   await conferirPares();
 
   // A purga pelo RUNNER REAL: o ledger já tem as 16, então só a 0017 fica pendente.
-  aplicadasNaPurga = await migrate(db, () => {});
+  aplicadasNaPurga = await migrarAte17();
 
   depois = await inventariar();
   fotoDepois = await fotografar();
@@ -498,6 +516,8 @@ describe("e o DADO CANÔNICO sobreviveu — que é o ponto deste arquivo", () =>
     expect(contadorAntes, "premissa: o contador foi semeado com valor próprio").toBe(String(CONTADOR_FARM));
     expect(Number(r.n), "a linha continua lá — a purga não é a 05C-2").toBe(1);
     expect(r.last_value, "e com o mesmo valor").toBe(String(CONTADOR_FARM));
+    // Este recorte para NA 0017 de propósito. Quem aposenta a chave é a 0018
+    // (`cutover-0018-upgrade.test.ts`), e é lá que a preservação do VALOR na troca de nome é medida.
   });
 });
 
