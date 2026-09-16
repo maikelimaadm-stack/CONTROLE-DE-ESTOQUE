@@ -10,12 +10,13 @@
  *
  *   Q1  runtime BASE  + banco PRÉ-0018                  → COMPATÍVEL  (o mundo de hoje)
  *   Q2  runtime HEAD  + banco PÓS-0018                  → COMPATÍVEL  (o mundo de amanhã)
- *   Q3  runtime BASE  + banco PÓS-0018, acervo 1..N      → a operação legítima FALHA (rollback protege)
- *   Q3b runtime BASE  + banco PÓS-0018, SEM Empresa      → COMITA a chave ERRADA (dano persiste, silencioso)
- *   Q3c runtime BASE  + banco PÓS-0018, acervo LACUNAR   → COMITA, e NUNCA se autodenuncia (o pior caso)
- *   Q4  runtime HEAD  + banco PRÉ-0018, acervo 1..N      → a operação legítima FALHA (rollback protege)
- *   Q4b runtime HEAD  + banco PRÉ-0018, SEM Empresa      → COMITA a canônica antes da migration, e a 0018
- *                                                           passa a ter de RECUSAR aquele banco
+ *   Q3  runtime BASE  + banco PÓS-0018, code=1 OCUPADO  → FALHA já na primeira tentativa (rollback protege)
+ *   Q3b runtime BASE  + banco PÓS-0018, SEM Empresa     → COMITA a chave ERRADA (dano persiste, silencioso)
+ *   Q3c runtime BASE  + banco PÓS-0018, min(code)=M > 1 → COMITA 1..M-1 e só então FALHA em M
+ *   Q3d runtime BASE  + banco PÓS-0018, lacuna INTERNA  → FALHA na primeira (prova NEGATIVA: [1,3,5] não é Q3c)
+ *   Q4  runtime HEAD  + banco PRÉ-0018, code=1 OCUPADO  → FALHA (rollback protege)
+ *   Q4b runtime HEAD  + banco PRÉ-0018, SEM Empresa     → COMITA a canônica antes da migration, e a 0018
+ *                                                          passa a ter de RECUSAR aquele banco
  *
  * A raiz é sempre a mesma: `erp.next_code` faz `insert ... on conflict do update`, então uma chave que não
  * existe não produz erro — ela é CRIADA e devolve 1. O gate não se contenta em ver o 1: ele tenta GRAVAR a
@@ -30,12 +31,22 @@
  *   • quando NÃO colide (Q3b, Q3c, Q4b) o `insert` passa, a transação COMITA, e a chave ERRADA fica
  *     gravada. É o caminho em que o dano persiste, e ele é silencioso.
  *
- * E O DISCRIMINADOR NÃO É "TEM ACERVO / NÃO TEM". Esta era a segunda modelagem errada desta fatia, achada
- * por red team independente e reproduzida: o que decide é se o próximo número que a chave RESSUSCITADA
- * emite colide com um código já existente. Uma organização cuja numeração não começa em 1 — códigos 5 e 6,
- * por exemplo — tem acervo E não colide, então cai no lado silencioso. Pior que Q3b: em Q3b o cadastro
- * canônico seguinte morre e denuncia o estado; no acervo lacunar as duas chaves convivem indefinidamente,
- * a legada sobe 1,2,3 e a canônica segue intacta, e NADA levanta erro em momento nenhum.
+ * E O DISCRIMINADOR É O PRIMEIRO CÓDIGO OCUPADO. Esta fatia errou o modelo DUAS vezes antes de acertar:
+ * primeiro tratando tudo como autocommit, depois dizendo que "qualquer acervo lacunar" era silencioso e
+ * que nada nunca levantaria erro. As duas foram corrigidas contra medição, não contra argumento.
+ *
+ * A chave ressuscitada começa SEMPRE em 1 e sobe de um em um. Logo ela COMITA enquanto os números
+ * estiverem livres e COLIDE ao alcançar o MENOR código já ocupado (M). Daí:
+ *
+ *   • M = 1 (o caso comum, acervo 1..N)  → a PRIMEIRA tentativa já colide. Zero dano persistido;
+ *   • sem Empresa nenhuma                → nunca há colisão, e a chave legada fica gravada;
+ *   • M > 1                              → JANELA SILENCIOSA: comita 1..M-1, e só então falha em M.
+ *     O contador legado estaciona em M-1, e o dano daqueles M-1 cadastros JÁ FICOU PERSISTIDO.
+ *
+ * Uma lacuna INTERNA (acervo [1,3,5]) NÃO abre janela nenhuma: o contador morre em 1 e nunca chega aos
+ * buracos. É por isso que o gate prova o caso negativo (Q3d) junto com o positivo — sem ele, "lacuna"
+ * viraria de novo sinônimo de Q3c, que é precisamente o erro que esta rodada corrigiu.
+ *
  * Numeração legada arbitrária não é hipótese: a própria `0014_company_physical_migration.sql` reconhece
  * que "as empresas existentes nasceram com código escrito à mão" e reconcilia o contador com `greatest`.
  *
@@ -43,7 +54,8 @@
  * "ressurreição" persistida em Q3/Q4, que o rollback desfaz, e descreveria mal o que sobra em Q3b/Q4b.
  *
  * A CONCLUSÃO NÃO MUDA: rollout normal continua PROIBIDO. Muda o motivo, e o motivo correto é mais forte,
- * porque não depende de o usuário ter sorte de ver um erro — o lado silencioso não levanta nenhum.
+ * porque a colisão é TARDIA quando M > 1: quando o erro finalmente aparece, o estrago dos cadastros
+ * anteriores já está gravado e não volta atrás sozinho.
  *
  * COMO ELE EXPIRA SOZINHO
  * -----------------------
@@ -283,9 +295,10 @@ async function main() {
     // CRIA a linha e devolve 1. O `insert` então bate na unicidade, e a transação inteira volta atrás —
     // inclusive a linha de contador recém-criada. Ou seja: não há ressurreição persistida aqui; há uma
     // operação de usuário que MORRE. É incompatibilidade de verdade, só que barulhenta e sem sequela.
-    passo("Q3 · runtime BASE + banco PÓS-0018, COM acervo — a operação legítima FALHA");
+    passo("Q3 · runtime BASE + banco PÓS-0018, code=1 OCUPADO — FALHA já na primeira tentativa");
     const antesQ3 = await estado(c, org);
     r = await cadastrarEmpresa(c, org, d.base, "[GATE] Q3 proibido");
+    exigir(antesQ3.codigos[0] === 1, `premissa deste quadrante: o menor código do acervo é ${antesQ3.codigos[0]} — a colisão é IMEDIATA`);
     exigir(r.numero === 1, `a chave '${d.base}' não existe e o contador tenta ${r.numero} dentro da transação`);
     exigir(!r.gravou && /duplicat|unique/i.test(r.erro ?? ""),
       "o cadastro morre na unicidade (organization_id, code) — é o erro que o usuário veria");
@@ -312,33 +325,63 @@ async function main() {
     exigir(eb.contadores.join() === `${d.base}=1` && eb.codigos.join() === "1",
       `e a tentativa canônica REVERTEU: sobra só [${eb.contadores}] · códigos [${eb.codigos}] — não ficam dois contadores`);
 
-    // Q3c — O CASO QUE DESMONTA A TAXONOMIA "COM ACERVO = BARULHENTO".
-    // Uma organização cujo acervo NÃO começa em 1 (códigos 5 e 6) tem Empresas e mesmo assim não colide:
-    // a chave ressuscitada emite 1, 2, 3 — todos livres. O cadastro COMITA, e continua comitando. E, ao
-    // contrário do Q3b, aqui nem o cadastro canônico seguinte denuncia o estado: a chave canônica ficou
-    // intacta em 6 e emite 7, que também está livre. As duas chaves passam a conviver indefinidamente,
-    // na MESMA organização, sem que nada levante erro em momento nenhum.
-    passo("Q3c · runtime BASE + banco PÓS-0018, acervo LACUNAR — COMITA e NUNCA se autodenuncia");
-    // Banco novo de propósito: a organização lacunar precisa nascer PRÉ-0018, com a chave legada, e só
-    // então atravessar o cutover — que é a ordem real da janela.
+    // Q3c — A JANELA SILENCIOSA, E ONDE ELA TERMINA.
+    // Acervo que começa em M = 5. A chave ressuscitada emite 1, 2, 3, 4 — todos livres — e COMITA os
+    // quatro. Ao pedir o quinto número ela recebe 5, que É o menor código ocupado, e aí colide: a
+    // transação reverte e o contador legado ESTACIONA em 4.
+    //
+    // O erro aparece, sim. O que torna o caso grave não é a ausência de erro, é o ATRASO dele: quando a
+    // colisão finalmente acontece, os M-1 cadastros anteriores já estão gravados, com a chave errada de
+    // pé, e nada disso volta atrás sozinho. Dizer que "nunca se autodenuncia" era falso — e foi corrigido
+    // contra medição.
+    passo("Q3c · runtime BASE + banco PÓS-0018, min(code)=5 — COMITA 1..4 e só então FALHA em 5");
     await montar(c, MIGRATION_CUTOVER);
-    const orgLacuna = await semear(c, d.base, [5, 6]);
+    const orgM = await semear(c, d.base, [5, 6]);
     await aplicarCutover(c);
-    const numerosQ3c = [];
-    for (let i = 0; i < 3; i += 1) {
-      const u = await cadastrarEmpresa(c, orgLacuna, d.base, `[GATE] Q3c antigo ${i + 1}`);
-      exigir(u.gravou, `cadastro ${i + 1} pelo binário antigo COMITA (número ${u.numero}) — nenhum erro`);
-      numerosQ3c.push(u.numero);
+
+    const comitados = [];
+    let colisao = null;
+    for (let i = 0; i < 6 && colisao === null; i += 1) {
+      const u = await cadastrarEmpresa(c, orgM, d.base, `[GATE] Q3c antigo ${i + 1}`);
+      if (u.gravou) comitados.push(u.numero); else colisao = u;
     }
-    exigir(numerosQ3c.join() === "1,2,3",
-      `a chave legada ressuscitou e subiu ${numerosQ3c.join(",")} — todos livres, porque o acervo começa em 5`);
-    // E o canônico seguinte TAMBÉM passa: é isto que torna o caso pior que o Q3b.
-    const canonicoQ3c = await cadastrarEmpresa(c, orgLacuna, d.head, "[GATE] Q3c canônico");
+    exigir(comitados.join() === "1,2,3,4",
+      `a janela silenciosa vai de 1 até M-1: comitou ${comitados.join(",")} sem erro nenhum`);
+    exigir(colisao !== null && colisao.numero === 5 && !colisao.gravou,
+      `e TERMINA no primeiro código ocupado: a tentativa de ${colisao?.numero} colide e reverte`);
+    exigir(/duplicat|unique/i.test(colisao?.erro ?? ""), "a colisão é a unicidade de código, como em Q3");
+
+    const eM = await estado(c, orgM);
+    exigir(eM.contadores.join() === `${d.head}=6,${d.base}=4`,
+      `o contador legado ESTACIONA em M-1: [${eM.contadores}] — o dano dos 4 cadastros já ficou persistido`);
+    exigir(eM.codigos.join() === "1,2,3,4,5,6",
+      `e a numeração ficou embaralhada: [${eM.codigos}] — sem nenhum erro até o quinto cadastro`);
+
+    // E o canônico segue do contador canônico, que a 0018 preservou: 6 → 7. As duas chaves coexistem,
+    // mas o lado legado está TRAVADO em 4, não solto.
+    const canonicoQ3c = await cadastrarEmpresa(c, orgM, d.head, "[GATE] Q3c canônico");
     exigir(canonicoQ3c.gravou && canonicoQ3c.numero === 7,
-      `o cadastro canônico seguinte também COMITA (${canonicoQ3c.numero}) — nada denuncia o estado`);
-    const eLac = await estado(c, orgLacuna);
-    exigir(eLac.contadores.join() === `${d.head}=7,${d.base}=3`,
-      `duas chaves convivendo na MESMA organização: [${eLac.contadores}] — e é assim que fica, indefinidamente`);
+      `o runtime canônico continua de onde a 0018 deixou: aloca ${canonicoQ3c.numero} e comita`);
+
+    // Q3d — A PROVA NEGATIVA. Sem ela, "lacuna" volta a virar sinônimo de Q3c na próxima leitura.
+    // Acervo [1,3,5]: há buracos (2 e 4), mas o PRIMEIRO código está ocupado. O contador ressuscitado
+    // morre em 1 e nunca alcança buraco nenhum — janela silenciosa ZERO.
+    passo("Q3d · runtime BASE + banco PÓS-0018, lacuna INTERNA [1,3,5] — NÃO há janela silenciosa");
+    await montar(c, MIGRATION_CUTOVER);
+    const orgInterna = await semear(c, d.base, [1, 3, 5]);
+    await aplicarCutover(c);
+
+    const antesQ3d = await estado(c, orgInterna);
+    const q3d = await cadastrarEmpresa(c, orgInterna, d.base, "[GATE] Q3d antigo");
+    exigir(q3d.numero === 1 && !q3d.gravou,
+      `a primeira tentativa já pede ${q3d.numero}, que está OCUPADO, e morre — buraco interno é irrelevante`);
+    const eI = await estado(c, orgInterna);
+    exigir(eI.contadores.join() === antesQ3d.contadores.join() && eI.codigos.join() === antesQ3d.codigos.join(),
+      `nada persistiu: contador [${eI.contadores}] · códigos [${eI.codigos}]`);
+    const legadoQ3d = Number((await c.query(
+      "select count(*)::text n from erp.code_sequences where entity=$1 and organization_id=$2",
+      [d.base, orgInterna])).rows[0].n);
+    exigir(legadoQ3d === 0, `zero linha '${d.base}' para esta organização — a lacuna interna NÃO é Q3c`);
 
     passo("Q4 · runtime HEAD + banco PRÉ-0018, COM acervo — falha e o rollback protege");
     await montar(c, MIGRATION_CUTOVER);
@@ -388,13 +431,14 @@ async function main() {
     for (const f of falhas) console.log(`  - ${f}`);
     process.exit(1);
   }
-  console.log("APROVADO — a matriz fecha: 2 quadrantes compatíveis e 5 incompatíveis, em DUAS formas.");
-  console.log("  COLIDE (Q3, Q4): a operação legítima FALHA e o rollback protege o que já existe.");
-  console.log("  NÃO COLIDE (Q3b, Q3c, Q4b): o cadastro COMITA a chave ERRADA — sem erro, e o dano fica.");
-  console.log("O discriminador é a COLISÃO, não a existência de acervo: um acervo que não começa em 1");
-  console.log("(Q3c) tem Empresas e mesmo assim cai no lado silencioso — e lá nada nunca denuncia o estado.");
-  console.log("É a segunda forma que obriga a janela single-version (docs/PRE-BASE2-05C-2-CUTOVER.md):");
-  console.log("ela não depende de alguém ver um erro, porque não levanta nenhum.");
+  console.log("APROVADO — a matriz fecha: 2 quadrantes compatíveis e 6 incompatíveis.");
+  console.log("O discriminador é o PRIMEIRO CÓDIGO OCUPADO (M). A chave ressuscitada começa em 1 e sobe:");
+  console.log("  M = 1        (Q3, Q3d, Q4) → colide na primeira tentativa. Zero dano persistido.");
+  console.log("  sem Empresa  (Q3b, Q4b)    → nunca colide. A chave errada fica gravada.");
+  console.log("  M > 1        (Q3c)         → JANELA SILENCIOSA: comita 1..M-1, e só então falha em M.");
+  console.log("Lacuna INTERNA não abre janela (Q3d): o contador morre em 1 e nunca chega aos buracos.");
+  console.log("O que obriga a janela single-version (docs/PRE-BASE2-05C-2-CUTOVER.md) é o ATRASO da");
+  console.log("colisão: quando o erro aparece, o estrago dos cadastros anteriores já está gravado.");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

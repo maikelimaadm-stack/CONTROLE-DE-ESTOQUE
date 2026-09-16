@@ -17,10 +17,22 @@
 --     número; o segundo cadastro morre no `unique (organization_id, code)` de `erp.empresas`;
 --   • MOVER a linha enquanto a API antiga ainda serve deixa aquela versão sem contador:
 --     `next_code(org,'farm')` cria a linha de novo e devolve 1. O cadastro roda numa ÚNICA transação
---     (`runService` -> `withTx`), então o desfecho depende do acervo: numa organização COM Empresas o
---     `insert` colide no `unique` e a transação inteira volta atrás — nada persiste, e o usuário leva um
---     erro; numa organização SEM Empresa não há com o que colidir, o cadastro COMITA, e aí a chave legada
---     fica gravada depois do cutover, em silêncio. É esse segundo caso que obriga a janela.
+--     (`runService` -> `withTx`), então o que decide o desfecho é o `commit` — e o que decide o `commit`
+--     é o MENOR código já ocupado na organização (M). A chave ressuscitada começa SEMPRE em 1 e sobe de
+--     um em um, logo ela comita enquanto o número estiver livre e colide quando alcança M:
+--
+--       - M = 1 (acervo que começa em 1, o caso comum): a PRIMEIRA tentativa já colide, a transação
+--         inteira volta atrás e NADA persiste. O usuário leva um erro e não há sequela;
+--       - organização SEM Empresa nenhuma: não existe M, então nunca há colisão. O cadastro COMITA e a
+--         chave legada fica gravada depois do cutover, em silêncio;
+--       - M > 1 (acervo cuja numeração não começa em 1): JANELA SILENCIOSA. Os cadastros 1..M-1 comitam
+--         sem erro nenhum, e só o de número M colide. O contador legado ESTACIONA em M-1, e o estrago
+--         daqueles M-1 cadastros JÁ está gravado quando o primeiro erro aparece.
+--
+--     Buraco INTERNO no acervo (por exemplo [1,3,5]) não muda nada: o contador morre em 1 e nunca chega
+--     aos buracos. O que abre janela é o começo ocupado ou não, não a existência de lacuna.
+--     São os dois últimos casos que obrigam a janela operacional — o do meio porque não avisa nunca, e o
+--     de baixo porque avisa TARDE DEMAIS.
 --
 -- Não existe terceira opção segura em rollout com DUAS versões no ar. Por isso esta migration é uma
 -- SUBSTITUIÇÃO (um `update` que renomeia a chave), nunca uma cópia, e por isso ela exige uma janela

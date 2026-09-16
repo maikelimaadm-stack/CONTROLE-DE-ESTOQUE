@@ -25,13 +25,20 @@ import {
  * E a distinção que a fatia inteira depende de acertar:
  *
  *   • o número emitido COLIDE  → o `insert` bate na unicidade, a transação volta atrás INTEIRA, e a linha
- *     de contador criada pela tentativa NÃO persiste. Barulhento (o usuário vê erro) e sem sequela;
- *   • o número NÃO colide      → o cadastro COMITA, e a chave ERRADA fica gravada. Silencioso e com
- *     sequela — é este caso que obriga a janela single-version.
+ *     de contador criada pela tentativa NÃO persiste. Barulhento e sem sequela;
+ *   • o número NÃO colide      → o cadastro COMITA, e a chave ERRADA fica gravada.
  *
- * E o discriminador NÃO é "tem acervo / não tem" — esta foi a SEGUNDA modelagem errada desta fatia, achada
- * por red team independente. Uma organização cuja numeração não começa em 1 tem acervo e mesmo assim não
- * colide (T5): lá as duas chaves convivem para sempre e NADA levanta erro em momento nenhum.
+ * E O DISCRIMINADOR É O PRIMEIRO CÓDIGO OCUPADO (M). A chave ressuscitada começa SEMPRE em 1 e sobe de um
+ * em um, então ela comita enquanto os números estiverem livres e colide ao alcançar M:
+ *
+ *   • M = 1        → colide na primeira tentativa (T1). Zero dano persistido;
+ *   • sem Empresa  → nunca colide (T2). A chave errada fica gravada;
+ *   • M > 1        → JANELA SILENCIOSA (T5): comita 1..M-1 e só então falha em M. O contador legado
+ *     ESTACIONA em M-1, e o dano daqueles M-1 cadastros já ficou persistido.
+ *
+ * Esta fatia errou o modelo DUAS vezes: primeiro tratando o cadastro como autocommit, depois afirmando
+ * que "qualquer acervo lacunar" era silencioso e que nada nunca levantaria erro. As duas foram corrigidas
+ * contra medição. T6 é a prova NEGATIVA que impede a segunda de voltar: lacuna INTERNA não é janela.
  *
  * Modelar isso em autocommit (como o gate fazia antes) erra nos DOIS sentidos: inventa uma "ressurreição"
  * persistida no primeiro caso e descreve mal o que sobra no segundo.
@@ -170,29 +177,54 @@ describe("o commit decide o estrago — estado persistente após o cutover", () 
     expect(ledger, "o ledger não registra um cutover que não aconteceu").toBe(0);
   });
 
-  it("T5 · acervo LACUNAR: tem Empresas, não colide, e NADA nunca denuncia o estado", async () => {
-    // Acervo que não começa em 1 — códigos 5 e 6. É o caso que desmonta "com acervo = barulhento".
+  it("T5 · min(code)=5: COMITA 1..4 em silêncio e só então FALHA em 5 — o contador estaciona em 4", async () => {
+    // Acervo que NÃO começa em 1. É aqui que existe janela silenciosa — e é aqui que ela TERMINA.
     await empresaComCodigo(db, ORG, 5, "[TEST] e5");
     await empresaComCodigo(db, ORG, 6, "[TEST] e6");
     await contador(db, ORG, LEGADA, 6);
     expect((await aplicarCutover(db)).ok, "premissa: o cutover aplicou").toBe(true);
 
-    // O binário ANTIGO serve três cadastros. A chave ressuscitada emite 1, 2, 3 — todos LIVRES.
-    for (const esperado of [1, 2, 3]) {
-      const r = await cadastrar(ORG, LEGADA, `[TEST] antigo ${esperado}`);
-      expect(r.numero, "a chave legada ressuscitada emite o próximo livre").toBe(esperado);
-      expect(r.comitou, "e COMITA — não há com o que colidir, então nenhum erro é levantado").toBe(true);
+    // A chave ressuscitada emite 1, 2, 3, 4 — todos livres — e comita os quatro, sem erro nenhum.
+    const comitados: number[] = [];
+    let colisao: { numero: number | null; comitou: boolean; erro: string | null } | null = null;
+    for (let i = 0; i < 6 && colisao === null; i += 1) {
+      const r = await cadastrar(ORG, LEGADA, `[TEST] antigo ${i + 1}`);
+      if (r.comitou) comitados.push(r.numero!); else colisao = r;
     }
+    expect(comitados, "a janela silenciosa vai de 1 até M-1").toEqual([1, 2, 3, 4]);
 
-    // E o cadastro canônico seguinte TAMBÉM passa: a chave canônica ficou intacta em 6 e emite 7.
-    // É isto que torna este caso pior que T2, onde o canônico seguinte pelo menos morria.
+    // E TERMINA no primeiro código ocupado. O erro APARECE — o que assusta é o atraso dele.
+    expect(colisao?.numero, "a tentativa seguinte pede exatamente M").toBe(5);
+    expect(colisao?.comitou, "e colide").toBe(false);
+    expect(colisao?.erro ?? "", "pela unicidade de código").toMatch(/duplicat|unique/i);
+
+    // O contador legado ESTACIONA em M-1: o rollback desfez a tentativa de 5, não as quatro anteriores.
+    expect(await contadores(ORG), "o dano dos quatro cadastros JÁ ficou persistido")
+      .toEqual([`${CANONICA}=6`, `${LEGADA}=4`]);
+    expect(await codigos(ORG)).toEqual([1, 2, 3, 4, 5, 6]);
+
+    // O canônico continua de onde a 0018 deixou (6 → 7): as duas chaves coexistem, mas a legada está
+    // TRAVADA em 4, não solta.
     const canonico = await cadastrar(ORG, CANONICA, "[TEST] canônico depois");
-    expect(canonico.numero, "a canônica seguiu do acervo real").toBe(7);
-    expect(canonico.comitou, "e também COMITA — nada denuncia o estado").toBe(true);
+    expect(canonico.numero, "a canônica segue do contador que a migration preservou").toBe(7);
+    expect(canonico.comitou).toBe(true);
+    expect(await contadores(ORG)).toEqual([`${CANONICA}=7`, `${LEGADA}=4`]);
+  });
 
-    expect(await contadores(ORG), "duas chaves convivendo na MESMA organização, indefinidamente")
-      .toEqual([`${CANONICA}=7`, `${LEGADA}=3`]);
-    expect(await codigos(ORG), "e a numeração de Empresa ficou embaralhada, sem nenhum erro pelo caminho")
-      .toEqual([1, 2, 3, 5, 6, 7]);
+  it("T6 · lacuna INTERNA [1,3,5]: falha na PRIMEIRA tentativa — buraco depois do 1 não abre janela", async () => {
+    // A prova NEGATIVA. Sem ela, "lacuna" volta a virar sinônimo de janela silenciosa na próxima leitura
+    // — que foi exatamente o erro que esta suíte passou a existir para impedir.
+    for (const code of [1, 3, 5]) await empresaComCodigo(db, ORG, code, `[TEST] e${code}`);
+    await contador(db, ORG, LEGADA, 5);
+    expect((await aplicarCutover(db)).ok, "premissa: o cutover aplicou").toBe(true);
+
+    const r = await cadastrar(ORG, LEGADA, "[TEST] antigo");
+
+    expect(r.numero, "a chave ressuscitada começa em 1, e 1 está OCUPADO").toBe(1);
+    expect(r.comitou, "então morre logo na primeira tentativa — os buracos 2 e 4 nunca são alcançados")
+      .toBe(false);
+    expect(await linhasDaEntidade(db, LEGADA), "e nada da chave legada persiste").toBe(0);
+    expect(await contadores(ORG), "só o contador canônico").toEqual([`${CANONICA}=5`]);
+    expect(await codigos(ORG), "o acervo ficou intacto, buracos e tudo").toEqual([1, 3, 5]);
   });
 });
