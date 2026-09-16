@@ -6,25 +6,34 @@
  *
  * O QUE ELE PROVA
  * ---------------
- * Quatro combinações de (runtime, banco). Duas são o funcionamento normal de cada lado; as outras duas
- * são os estados PROIBIDOS que obrigam a janela single-version — e são elas que dão sentido ao runbook.
+ * Combinações de (runtime, banco), com o cadastro executado como a API o executa: UMA transação.
  *
- *   Q1  runtime BASE  + banco PRÉ-0018   → COMPATÍVEL   (o mundo de hoje, antes do merge)
- *   Q2  runtime HEAD  + banco PÓS-0018   → COMPATÍVEL   (o mundo de amanhã, depois do cutover)
- *   Q3  runtime BASE  + banco PÓS-0018   → PROIBIDO     (a migration passou, o binário não trocou)
- *   Q3b o MESMO Q3 numa organização SEM Empresa → PROIBIDO E SILENCIOSO
- *   Q4  runtime HEAD  + banco PRÉ-0018   → PROIBIDO     (o binário trocou, a migration não passou)
+ *   Q1  runtime BASE  + banco PRÉ-0018                  → COMPATÍVEL  (o mundo de hoje)
+ *   Q2  runtime HEAD  + banco PÓS-0018                  → COMPATÍVEL  (o mundo de amanhã)
+ *   Q3  runtime BASE  + banco PÓS-0018, COM acervo      → a operação legítima FALHA (rollback protege)
+ *   Q3b runtime BASE  + banco PÓS-0018, SEM Empresa     → COMITA a chave ERRADA (dano persiste, silencioso)
+ *   Q4  runtime HEAD  + banco PRÉ-0018, COM acervo      → a operação legítima FALHA (rollback protege)
+ *   Q4b runtime HEAD  + banco PRÉ-0018, SEM Empresa     → COMITA a canônica antes da migration, e a 0018
+ *                                                          passa a ter de RECUSAR aquele banco
  *
- * A raiz dos dois proibidos é a mesma: `erp.next_code` faz `insert ... on conflict do update`, então uma
- * chave que não existe não produz erro — ela devolve 1. O gate não se contenta em ver o 1: ele tenta
- * GRAVAR a Empresa com o número devolvido, porque é a gravação que descreve o que o usuário vive.
+ * A raiz é sempre a mesma: `erp.next_code` faz `insert ... on conflict do update`, então uma chave que não
+ * existe não produz erro — ela é CRIADA e devolve 1. O gate não se contenta em ver o 1: ele tenta GRAVAR a
+ * Empresa, porque é a gravação que descreve o que o usuário vive.
  *
- * MAS O SINTOMA NÃO É SEMPRE O MESMO, e é por isso que Q3b existe separado. Com acervo, o reinício em 1
- * esbarra no `unique (organization_id, code)` e ALGUÉM VÊ um erro. Numa organização que ainda não tem
- * Empresa nenhuma não há com o que colidir: o binário antigo grava o 1 COM SUCESSO e ressuscita a chave
- * legada — sem erro, sem log, sem sintoma —, e o estrago só aparece adiante, com os dois contadores já
- * divergidos. Contar só a metade barulhenta seria contar a metade que dá menos medo: a variante muda o
- * argumento do runbook de "apareceria um erro" para "pode não aparecer nada".
+ * O QUE DECIDE O ESTRAGO É O `commit`, E POR ISSO O MODELO TEM DE SER TRANSACIONAL. `createOne` usa o
+ * MESMO `ctx.tx` para `nextCode` e para o `insert`, dentro do `withTx` (`begin` → serviço → `commit`, com
+ * `rollback` em erro). Logo:
+ *
+ *   • COM acervo (Q3, Q4) o `insert` colide, a transação volta atrás INTEIRA, e a linha de contador que a
+ *     tentativa criou NÃO persiste. O sintoma é barulhento e sem sequela: o usuário leva um erro;
+ *   • SEM acervo (Q3b, Q4b) não há com o que colidir: o `insert` passa, a transação COMITA, e a chave
+ *     ERRADA fica gravada. É o caminho em que o dano persiste, e ele é silencioso.
+ *
+ * Um gate que modelasse isso em autocommit — como este fazia — erraria nos dois sentidos: inventaria uma
+ * "ressurreição" persistida em Q3/Q4, que o rollback desfaz, e descreveria mal o que sobra em Q3b/Q4b.
+ *
+ * A CONCLUSÃO NÃO MUDA: rollout normal continua PROIBIDO. Muda o motivo, e o motivo correto é mais forte,
+ * porque não depende de o usuário ter sorte de ver um erro — o caso sem acervo não levanta nenhum.
  *
  * COMO ELE EXPIRA SOZINHO
  * -----------------------
@@ -131,16 +140,56 @@ async function semear(c, entidade) {
   return org;
 }
 
-/** O que a API faz ao cadastrar uma Empresa: pede o número ao contador e grava. */
+/**
+ * O CADASTRO COMO A API O FAZ DE VERDADE: UMA TRANSAÇÃO, UMA CONEXÃO.
+ *
+ * A versão anterior deste gate mandava `next_code` e o `insert` como duas queries AUTOCOMMIT separadas, e
+ * isso não é o que roda em produção. `createOne` (`apps/api/src/routes/resources.ts:232-233`) passa o MESMO
+ * `ctx.tx` para `nextCode(...)` e para o `insert` de `erp.empresas`; `runService` executa dentro de
+ * `withTx`, que é `begin` → serviço → `commit`, com `rollback` em erro (`packages/db/src/pool.ts:33-49`).
+ *
+ * A diferença MUDA O RESULTADO, e não só a forma: em autocommit, a linha que `next_code` cria fica gravada
+ * mesmo quando o `insert` seguinte falha — foi daí que saiu a afirmação, agora corrigida, de que o binário
+ * antigo "ressuscitava" a chave legada em toda tentativa. Numa transação real ela é DESFEITA junto com o
+ * `insert`. Modelar errado exagerava o estrago num caso e escondia a forma real do outro.
+ *
+ * O que NÃO muda é a conclusão da fatia: o rollout normal continua PROIBIDO. Muda o motivo, e o motivo
+ * correto é mais preciso — está escrito no bloco de cada quadrante.
+ */
 async function cadastrarEmpresa(c, org, entidade, rotulo) {
-  const n = Number((await c.query("select erp.next_code($1,$2)::text n", [org, entidade])).rows[0].n);
+  await c.query("begin");
+  let numero = null;
   try {
-    await c.query("insert into erp.empresas (organization_id, code, name) values ($1,$2,$3)", [org, n, rotulo]);
-    return { numero: n, gravou: true, erro: null };
+    numero = Number((await c.query("select erp.next_code($1,$2)::text n", [org, entidade])).rows[0].n);
+    await c.query("insert into erp.empresas (organization_id, code, name) values ($1,$2,$3)", [org, numero, rotulo]);
+    await c.query("commit");
+    return { numero, gravou: true, erro: null };
   } catch (e) {
-    return { numero: n, gravou: false, erro: e.message };
+    // Exatamente o que `withTx` faz quando o serviço lança: a transação inteira volta atrás, inclusive a
+    // linha de contador que `next_code` acabou de criar.
+    await c.query("rollback").catch(() => { /* a transação já pode ter morrido */ });
+    return { numero, gravou: false, erro: e.message };
   }
 }
+
+/** O ESTADO QUE SOBROU — é isto que o commit/rollback decide, e é isto que o gate cobra. */
+async function estado(c, org) {
+  const contadores = (await c.query(
+    "select entity, last_value::text v from erp.code_sequences where organization_id=$1 order by entity",
+    [org])).rows.map((l) => `${l.entity}=${l.v}`);
+  const codigos = (await c.query(
+    "select code from erp.empresas where organization_id=$1 order by code", [org])).rows.map((l) => Number(l.code));
+  return { contadores, codigos };
+}
+
+/** A 0018 aplicada esperando RECUSA: devolve o erro em vez de lançá-lo. */
+async function tentarCutover(c) {
+  try { await aplicarCutover(c); return { ok: true }; }
+  catch (e) { await c.query("rollback").catch(() => { /* ignore */ }); return { ok: false, erro: e.message }; }
+}
+
+const noLedger = async (c) => Number((await c.query(
+  "select count(*)::text n from public.erp_migrations where name like '0018%'")).rows[0].n);
 
 async function main() {
   let base;
@@ -161,6 +210,8 @@ async function main() {
   console.log(`contador BASE   '${d.base}'`);
   console.log(`contador HEAD   '${d.head}'`);
   console.log(`decisão         ${d.motivo}`);
+  console.log("modelo          cadastro em UMA transação (begin → next_code → insert → commit/rollback),");
+  console.log("                como runService/withTx fazem em produção");
 
   if (!d.atravessa) {
     console.log("\nAPROVADO (inativo): esta execução não atravessa o cutover do contador.");
@@ -175,7 +226,10 @@ async function main() {
     await montar(c, MIGRATION_CUTOVER);
     let org = await semear(c, d.base);
     let r = await cadastrarEmpresa(c, org, d.base, "[GATE] Q1");
-    exigir(r.gravou && r.numero === 4, `a API da base aloca ${r.numero} e grava — o contador continua de onde parou`);
+    exigir(r.gravou && r.numero === 4, `a API da base aloca ${r.numero} e COMITA — o contador continua de onde parou`);
+    let e = await estado(c, org);
+    exigir(e.contadores.join() === `${d.base}=4` && e.codigos.join() === "1,2,3,4",
+      `estado persistente: contador [${e.contadores}] · códigos [${e.codigos}]`);
 
     passo("Q2 · a 0018 preserva o contador, e o runtime HEAD continua a numeração");
     const antes = (await c.query("select organization_id::text o, last_value::text v from erp.code_sequences where entity=$1 order by 1", [d.base])).rows;
@@ -186,45 +240,75 @@ async function main() {
     exigir(sobrouLegado === 0, `a chave '${d.base}' não existe mais`);
 
     r = await cadastrarEmpresa(c, org, d.head, "[GATE] Q2");
-    exigir(r.gravou && r.numero === 5, `a API nova aloca ${r.numero} e grava — monotônico, sem repetir`);
+    exigir(r.gravou && r.numero === 5, `a API nova aloca ${r.numero} e COMITA — monotônico, sem repetir`);
+    e = await estado(c, org);
+    exigir(e.contadores.join() === `${d.head}=5` && e.codigos.join() === "1,2,3,4,5",
+      `estado persistente: contador [${e.contadores}] · códigos [${e.codigos}]`);
 
-    passo("Q3 · runtime BASE + banco PÓS-0018 — PROIBIDO, e o gate mostra por quê");
+    // Q3 — COM ACERVO, A OPERAÇÃO LEGÍTIMA FALHA E O ROLLBACK PROTEGE O QUE JÁ EXISTE.
+    // O que o binário antigo faz é pedir uma chave que a 0018 aposentou. `next_code` não dá erro: ele
+    // CRIA a linha e devolve 1. O `insert` então bate na unicidade, e a transação inteira volta atrás —
+    // inclusive a linha de contador recém-criada. Ou seja: não há ressurreição persistida aqui; há uma
+    // operação de usuário que MORRE. É incompatibilidade de verdade, só que barulhenta e sem sequela.
+    passo("Q3 · runtime BASE + banco PÓS-0018, COM acervo — a operação legítima FALHA");
+    const antesQ3 = await estado(c, org);
     r = await cadastrarEmpresa(c, org, d.base, "[GATE] Q3 proibido");
-    exigir(r.numero === 1, `a chave '${d.base}' não existe e o contador REINICIA em ${r.numero} — sem erro nenhum`);
+    exigir(r.numero === 1, `a chave '${d.base}' não existe e o contador tenta ${r.numero} dentro da transação`);
     exigir(!r.gravou && /duplicat|unique/i.test(r.erro ?? ""),
-      "e o cadastro morre na unicidade (organization_id, code) — é o erro que o usuário veria");
-    const ressuscitou = Number((await c.query("select count(*)::text n from erp.code_sequences where entity=$1", [d.base])).rows[0].n);
-    exigir(ressuscitou === 1, `pior: a chave '${d.base}' foi RESSUSCITADA no banco pelo binário antigo`);
+      "o cadastro morre na unicidade (organization_id, code) — é o erro que o usuário veria");
+    const q3 = await estado(c, org);
+    exigir(q3.contadores.join() === antesQ3.contadores.join() && q3.codigos.join() === antesQ3.codigos.join(),
+      `e o ROLLBACK devolve tudo: contador [${q3.contadores}] · códigos [${q3.codigos}] — a linha '${d.base}' da tentativa NÃO persiste`);
 
-    // A VARIANTE SILENCIOSA DO Q3 — e é ela que desmonta o consolo de "o erro apareceria".
-    // Acima, a organização tinha acervo (códigos 1,2,3), então o reinício em 1 esbarra na unicidade e
-    // ALGUÉM VÊ. Numa organização que ainda não tem Empresa nenhuma não há com o que colidir: o binário
-    // antigo pede o número, recebe 1, GRAVA COM SUCESSO e ressuscita a chave legada — sem erro, sem log,
-    // sem sintoma. O estrago só aparece depois, quando os dois contadores já divergiram.
-    //
-    // Sem este caso o gate contaria só a metade barulhenta da história, e a metade barulhenta é a que dá
-    // menos medo. Organização recém-criada durante a janela é exatamente o cenário desta variante.
-    passo("Q3b · a MESMA proibição sem colisão: organização ainda sem Empresa — o dano é SILENCIOSO");
+    // Q3b — SEM ACERVO, O MESMO BINÁRIO ANTIGO COMITA, E É ISSO QUE ASSUSTA.
+    // Sem nenhuma Empresa não há com o que colidir: o `insert` passa, a transação COMITA, e a chave
+    // legada fica gravada DEPOIS do cutover. É o único caminho em que o estrago persiste, e é silencioso.
+    passo("Q3b · runtime BASE + banco PÓS-0018, SEM Empresa — o cadastro COMITA e o dano PERSISTE");
     const orgNova = (await c.query(
       "insert into erp.organizations (name) values ('[GATE] 05C-2 sem acervo') returning id")).rows[0].id;
     const s = await cadastrarEmpresa(c, orgNova, d.base, "[GATE] Q3b primeira");
-    exigir(s.numero === 1, `o contador devolve ${s.numero} para uma organização sem acervo`);
-    exigir(s.gravou, "e o cadastro GRAVA — nenhum erro é levantado, que é o que torna este caso pior");
-    const legadaNova = Number((await c.query(
-      "select count(*)::text n from erp.code_sequences where organization_id=$1 and entity=$2",
-      [orgNova, d.base])).rows[0].n);
-    exigir(legadaNova === 1, `e a chave '${d.base}' nasce de novo nesta organização, já pós-cutover`);
-    // E a prova de que isso é dano, não inocuidade: o runtime HEAD agora emite o MESMO 1 e colide.
+    exigir(s.gravou && s.numero === 1, `o binário antigo aloca ${s.numero} e COMITA — nenhum erro é levantado`);
+    let eb = await estado(c, orgNova);
+    exigir(eb.contadores.join() === `${d.base}=1` && eb.codigos.join() === "1",
+      `estado persistente já pós-cutover: contador [${eb.contadores}] · códigos [${eb.codigos}] — a chave legada voltou a existir`);
+    // E o preço disso aparece no próximo cadastro canônico: ele pede 'empresa', recebe 1 e colide.
     const canonicoQ3b = await cadastrarEmpresa(c, orgNova, d.head, "[GATE] Q3b canônico");
     exigir(canonicoQ3b.numero === 1 && !canonicoQ3b.gravou,
-      "o runtime canônico emite o mesmo 1 e o cadastro morre — os dois contadores divergiram em silêncio");
+      "o runtime canônico pede a chave canônica, recebe o mesmo 1 e o cadastro morre");
+    eb = await estado(c, orgNova);
+    exigir(eb.contadores.join() === `${d.base}=1` && eb.codigos.join() === "1",
+      `e a tentativa canônica REVERTEU: sobra só [${eb.contadores}] · códigos [${eb.codigos}] — não ficam dois contadores`);
 
-    passo("Q4 · runtime HEAD + banco PRÉ-0018 — PROIBIDO pelo mesmo motivo, no sentido inverso");
+    passo("Q4 · runtime HEAD + banco PRÉ-0018, COM acervo — falha e o rollback protege");
     await montar(c, MIGRATION_CUTOVER);
     org = await semear(c, d.base);
+    const antesQ4 = await estado(c, org);
     r = await cadastrarEmpresa(c, org, d.head, "[GATE] Q4 proibido");
-    exigir(r.numero === 1, `a chave '${d.head}' ainda não existe e o contador REINICIA em ${r.numero}`);
+    exigir(r.numero === 1, `a chave '${d.head}' ainda não existe e o contador tenta ${r.numero} dentro da transação`);
     exigir(!r.gravou && /duplicat|unique/i.test(r.erro ?? ""), "e o cadastro morre na mesma unicidade");
+    const q4 = await estado(c, org);
+    exigir(q4.contadores.join() === antesQ4.contadores.join() && q4.codigos.join() === antesQ4.codigos.join(),
+      `ROLLBACK: contador [${q4.contadores}] · códigos [${q4.codigos}] — a linha '${d.head}' da tentativa NÃO persiste`);
+
+    // Q4b — O ESPELHO DO Q3b, E O QUE ELE DEIXA É UM BANCO QUE A 0018 PRECISA RECUSAR.
+    // HEAD contra banco PRÉ-0018, numa organização sem Empresa: nada com que colidir, então o binário
+    // novo COMITA a chave canônica ANTES da migration. Depois disso a 0018 encontra 'empresa' já de pé —
+    // o estado da cópia — e tem de RECUSAR, porque escolher entre as duas linhas é decisão humana.
+    passo("Q4b · runtime HEAD + banco PRÉ-0018, SEM Empresa — comita a chave canônica antes da migration");
+    const orgQ4b = (await c.query(
+      "insert into erp.organizations (name) values ('[GATE] 05C-2 Q4b sem acervo') returning id")).rows[0].id;
+    const t = await cadastrarEmpresa(c, orgQ4b, d.head, "[GATE] Q4b primeira");
+    exigir(t.gravou && t.numero === 1, `o binário novo aloca ${t.numero} e COMITA, ainda pré-0018`);
+    const e4b = await estado(c, orgQ4b);
+    exigir(e4b.contadores.join() === `${d.head}=1` && e4b.codigos.join() === "1",
+      `estado persistente antes da migration: contador [${e4b.contadores}] · códigos [${e4b.codigos}]`);
+    const recusa = await tentarCutover(c);
+    exigir(!recusa.ok, "e a 0018 RECUSA este banco — não escolhe entre as duas chaves");
+    exigir(/entity='empresa'|linha\(s\) entity/i.test(recusa.erro ?? ""),
+      `a recusa NOMEIA o caso: ${(recusa.erro ?? "").split("\n")[0].slice(0, 120)}`);
+    const legadoQ4b = Number((await c.query("select count(*)::text n from erp.code_sequences where entity=$1", [d.base])).rows[0].n);
+    exigir(legadoQ4b > 0 && await noLedger(c) === 0,
+      `sem transição parcial: '${d.base}' segue de pé em ${legadoQ4b} organização(ões) e o ledger não registra 0018`);
 
     passo("Regressão · depois do cutover a chave legada não volta sozinha");
     await montar(c, MIGRATION_CUTOVER);
@@ -243,9 +327,11 @@ async function main() {
     for (const f of falhas) console.log(`  - ${f}`);
     process.exit(1);
   }
-  console.log("APROVADO — a matriz fecha: dois quadrantes compatíveis, dois PROIBIDOS e demonstrados.");
-  console.log("Os dois proibidos são a razão de o cutover exigir janela single-version");
-  console.log("(docs/PRE-BASE2-05C-2-CUTOVER.md). Nenhum deles é degradação: os dois corrompem numeração.");
+  console.log("APROVADO — a matriz fecha: 2 quadrantes compatíveis e 4 incompatíveis, em DUAS formas.");
+  console.log("  COM acervo (Q3, Q4): a operação legítima FALHA e o rollback protege o que já existe.");
+  console.log("  SEM Empresa (Q3b, Q4b): o cadastro COMITA a chave ERRADA — sem erro, e o dano fica.");
+  console.log("É a segunda forma que obriga a janela single-version (docs/PRE-BASE2-05C-2-CUTOVER.md):");
+  console.log("ela não depende de alguém ver um erro, porque não levanta nenhum.");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

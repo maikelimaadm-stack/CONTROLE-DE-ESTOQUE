@@ -16,7 +16,11 @@
 --   • COPIAR a linha e manter as duas ativas faz a API antiga e a API nova emitirem O MESMO próximo
 --     número; o segundo cadastro morre no `unique (organization_id, code)` de `erp.empresas`;
 --   • MOVER a linha enquanto a API antiga ainda serve deixa aquela versão sem contador:
---     `next_code(org,'farm')` recria a linha em 1 e recomeça a numeração por cima do acervo.
+--     `next_code(org,'farm')` cria a linha de novo e devolve 1. O cadastro roda numa ÚNICA transação
+--     (`runService` -> `withTx`), então o desfecho depende do acervo: numa organização COM Empresas o
+--     `insert` colide no `unique` e a transação inteira volta atrás — nada persiste, e o usuário leva um
+--     erro; numa organização SEM Empresa não há com o que colidir, o cadastro COMITA, e aí a chave legada
+--     fica gravada depois do cutover, em silêncio. É esse segundo caso que obriga a janela.
 --
 -- Não existe terceira opção segura em rollout com DUAS versões no ar. Por isso esta migration é uma
 -- SUBSTITUIÇÃO (um `update` que renomeia a chave), nunca uma cópia, e por isso ela exige uma janela
@@ -154,6 +158,27 @@ set local lock_timeout = '2s';
 -- comparação só vale se ninguém inserir uma Empresa com código explícito no meio do caminho. SHARE
 -- bloqueia INSERT/UPDATE/DELETE e continua permitindo leitura — é o mínimo que torna `max(code)`
 -- estável, e não precisamos de mais do que isso porque esta migration não escreve em `erp.empresas`.
+-- 3.1 AS RELAÇÕES EXISTEM — conferido ANTES do `lock table`, e só por causa da MENSAGEM.
+--
+-- `lock table` numa relação inexistente falha com o erro genérico do Postgres ("relation ... does not
+-- exist"), que não diz ao operador NADA sobre esta fatia. Estes dois `to_regclass` trocam isso por uma
+-- recusa nomeada, que é o padrão de todo o resto do arquivo.
+--
+-- POR QUE ISSO NÃO ABRE TOCTOU: o check não adquire lock nenhum e lê apenas o catálogo. Se a relação for
+-- derrubada entre o check e o `lock table`, o lock falha — exatamente como falharia hoje, com a mesma
+-- mensagem genérica e a mesma transação abortada. Não existe caminho novo em que a migration PROSSIGA
+-- sobre uma relação ausente: o lock continua sendo adquirido antes de qualquer leitura ou escrita de dado,
+-- e o `nowait` está intacto. O que muda é só o diagnóstico no caso comum.
+do $$
+begin
+  if to_regclass('erp.code_sequences') is null then
+    raise exception 'PRE-BASE2-05C-2: erp.code_sequences nao existe. O contador nao pode ser movido.';
+  end if;
+  if to_regclass('erp.empresas') is null then
+    raise exception 'PRE-BASE2-05C-2: erp.empresas nao existe. Sem o cadastro nao ha como conferir o acervo numerado.';
+  end if;
+end $$;
+
 lock table erp.code_sequences in access exclusive mode nowait;
 lock table erp.empresas in share mode nowait;
 
@@ -164,14 +189,6 @@ lock table erp.empresas in share mode nowait;
 do $$
 declare chave text; n bigint;
 begin
-  -- 4.1 as relações existem
-  if to_regclass('erp.code_sequences') is null then
-    raise exception 'PRE-BASE2-05C-2: erp.code_sequences nao existe. O contador nao pode ser movido.';
-  end if;
-  if to_regclass('erp.empresas') is null then
-    raise exception 'PRE-BASE2-05C-2: erp.empresas nao existe. Sem o cadastro nao ha como conferir o acervo numerado.';
-  end if;
-
   -- 4.2 a chave do contador continua sendo SEMANTICAMENTE (organization_id, entity).
   -- Toda a aritmética desta fatia depende disso. Se a PK tivesse mudado, "mover a chave" significaria
   -- outra coisa, e o `update` abaixo poderia colidir ou duplicar sem que nada aqui percebesse.

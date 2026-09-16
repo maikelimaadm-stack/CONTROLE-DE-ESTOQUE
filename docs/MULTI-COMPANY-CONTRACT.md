@@ -21,10 +21,18 @@ Uma organização com uma única empresa continua funcionando: a empresa é pree
 (ver §4). O que **não** pode acontecer é tratar organização e empresa como a mesma coisa — isso quebraria
 o isolamento de tenant no dia em que um cliente tiver duas empresas.
 
-> **Estado atual:** a Empresa é materializada pela tabela `erp.farms` e pelo vínculo `erp.member_farms`,
-> nomes herdados do nicho agro. A troca de nomes é progressiva e tem plano próprio
-> (`docs/DOMAIN-NAMING-STANDARD.md`, `docs/FARM-DEPENDENCY-INVENTORY.md`, PRE-BASE2-02/03).
-> Este contrato existe justamente para que a regra não dependa do nome.
+> **Estado atual:** a Empresa é materializada pela tabela **`erp.empresas`**, e o vínculo membro × empresa
+> mora em **`erp.membro_empresas`** e **`erp.membro_escopos_empresa`**. A coluna de empresa nos lançamentos
+> é **`empresa_id`**, e o cabeçalho de seleção é **`X-Empresa-Id`**.
+>
+> Os nomes herdados do nicho agro (`erp.farms`, `erp.member_farms`, `farm_id`, `X-Farm-Id`) **não existem
+> mais como superfície viva**: a PRE-BASE2-03 renomeou a tabela e trocou o vínculo, e a
+> `0017_purge_farm_legacy.sql` removeu as colunas legadas, a view de compatibilidade e os demais restos
+> físicos. O que ainda fala `farm` é VOCABULÁRIO DE DOMÍNIO, com vida própria e fora deste contrato
+> (`farm_transfer`, `transfer_kind='farm'`, as chaves de permissão `farms.view` e `farm_transfers.*`), além
+> dos gates que existem justamente para impedir o nome legado de voltar.
+>
+> Este contrato existe para que a regra não dependa do nome — e é por isso que ele descreve o nome ATUAL.
 
 ## 2. Autorização é do backend, sempre
 
@@ -119,7 +127,7 @@ Exemplos da interseção (`disponiveis` = `[A, B, C]` salvo indicação):
 **O que entra em `disponiveis`:** empresas da organização atual, não excluídas (`deleted_at is null`) e
 ativas quando a operação exige empresa ativa — carregadas pelo servidor
 (`empresasDisponiveis`, em `apps/api/src/lib/empresa.ts`). A consulta ao banco fica na API: o núcleo
-`@erp/plataforma` continua puro, sem banco, e não conhece a materialização atual (`erp.farms`).
+`@erp/plataforma` continua puro, sem banco, e não conhece a materialização atual (`erp.empresas`).
 
 ## 5. Como usar
 
@@ -129,11 +137,11 @@ const params: unknown[] = [ctx.orgId];
 const where = ["t.organization_id=$1", ...empresaScope(ctx, "t", params)];   // apps/api/src/lib/context.ts
 
 // SQL já pronto: marcadores resolvidos na hora da consulta
-const r = await consultaEscopada(ctx, "select … from erp.financial_titles t where t.organization_id=$1 and {{escopo:t.farm_id}}", [ctx.orgId]);
+const r = await consultaEscopada(ctx, "select … from erp.financial_titles t where t.organization_id=$1 and {{escopo:t.empresa_id}}", [ctx.orgId]);
 
 // ESCRITA (lançamento): a empresa do corpo é PEDIDO, nunca autorização
-await exigirEmpresaDeLancamento(ctx, body.farm_id);      // fora do escopo do módulo → VALIDATION_ERROR
-await exigirEmpresaVisivel(ctx, registro.farm_id);       // registro carregado fora do escopo → NOT_FOUND
+await exigirEmpresaDeLancamento(ctx, body.empresa_id);   // fora do escopo do módulo → VALIDATION_ERROR
+await exigirEmpresaVisivel(ctx, registro.empresa_id);    // registro carregado fora do escopo → NOT_FOUND
 ```
 
 Quando a porta não tem permissão fixa (a permissão depende do registro: tipo de movimentação, direção do
@@ -144,7 +152,7 @@ aplicado:
 const permissao = permissaoMovimentacao(linha.movement_type, "view");
 if (!permissao) throw notFound();
 await comPermissaoResolvida(ctx, permissao);                                  // valida a empresa SELECIONADA
-await exigirEmpresaVisivel(ctx, linha.farm_id, "Movimentação", moduloDaPermissao(permissao));
+await exigirEmpresaVisivel(ctx, linha.empresa_id, "Movimentação", moduloDaPermissao(permissao));
 if (!hasPermission(ctx, permissao)) throw notFound();
 ```
 
@@ -164,8 +172,10 @@ if (!hasPermission(ctx, permissao)) throw notFound();
    do CORS e é **recusado** no servidor (§8.4), porque ignorá-lo abriria a leitura para todas as empresas
    permitidas no módulo — mais amplo do que o cliente pediu.
 5. Empresa criada pela tela recebe o código do contador `erp.code_sequences`, cuja chave de entidade é
-   `SEQUENCIA_EMPRESA` (`"farm"`) — a MESMA de antes da renomeação. Trocar a chave criaria um segundo
-   contador começando em zero e, com ele, códigos duplicados num acervo que já existe.
+   `SEQUENCIA_EMPRESA` (`"empresa"`), CANÔNICA desde a PRE-BASE2-05C-2. A chave e o dado viraram JUNTOS:
+   a `0018_empresa_code_sequence.sql` MOVEU a linha de `erp.code_sequences` com um `update`, preservando o
+   valor corrente. Trocar uma sem a outra criaria um segundo contador começando em zero e, com ele, códigos
+   duplicados num acervo que já existe — é exatamente por isso que o cutover exige janela single-version.
 
 ## 7. Acesso por empresa E módulo (autoridade de runtime)
 
@@ -267,7 +277,7 @@ segredo (senha, hash, token, cabeçalho) entra nos metadados.
 | Número | Natureza | Contrato |
 | --- | --- | --- |
 | saldo da conta, extrato com saldo corrente, fluxo de caixa por conta | **organização** (parte do saldo inicial, que não é decomponível) | exige capacidade de ORGANIZAÇÃO (`bank_accounts.view`) além da permissão financeira; o Extrato Bancário é classificado como recurso de organização, com justificativa registrada |
-| agregados de MOVIMENTOS (razão, fluxo por categoria, conciliação, financiamentos) | **empresa** | recorte por `farm_id` com semântica nullable (movimento sem empresa é da organização) |
+| agregados de MOVIMENTOS (razão, fluxo por categoria, conciliação, financiamentos) | **empresa** | recorte por `empresa_id` com semântica nullable (movimento sem empresa é da organização) |
 
 Como `erp.bank_movements` TEM empresa, ele é company-scoped na RLS — corretamente. Mas as três portas de
 CONTA abrem a transação SEM módulo, e sem módulo o recorte vale a UNIÃO das empresas do membro: o saldo
@@ -292,26 +302,26 @@ Todo relatório company-scoped respeita o módulo da própria permissão, em TOD
 subconsultas, cláusulas `on` de `left join` e CTEs.
 
 **Quem tem coluna de empresa responde pela própria coluna.** Esta é a regra, e ela não admite atalho: uma
-tabela com `farm_id` só está recortada quando o predicado canônico cita o `farm_id` DELA. Herdar o recorte de
+tabela com `empresa_id` só está recortada quando o predicado canônico cita o `empresa_id` DELA. Herdar o recorte de
 uma junção é sólido em apenas dois casos, e o gate estrutural
 (`apps/api/test/unit/report-scope.test.ts`) só aceita esses dois:
 
 | Caso | Por que é sólido |
 | --- | --- |
 | a tabela **não tem** coluna de empresa (`erp.title_apportionments`, `erp.weighing_items`) | as linhas dela só existem em função do pai já recortado: o recorte do pai é o único que existe |
-| a igualdade é entre as **próprias colunas de empresa** (`a.farm_id = b.farm_id`) | a igualdade transporta o recorte de uma para a outra |
+| a igualdade é entre as **próprias colunas de empresa** (`a.empresa_id = b.empresa_id`) | a igualdade transporta o recorte de uma para a outra |
 
-Juntar duas tabelas que TÊM `farm_id` por qualquer outra chave **não recorta nada**. Nada no banco impede que
+Juntar duas tabelas que TÊM `empresa_id` por qualquer outra chave **não recorta nada**. Nada no banco impede que
 o abastecimento da empresa B aponte para o equipamento da empresa A (`s.equipment_id = e.id`), que o título da
 empresa B seja rateado para a área da empresa A (`ta.area_id = ar.id`) ou que o trato da empresa A seja
 lançado no lote da empresa B (`fd.batch_id = b.id`) — não existe chave estrangeira composta que ligue o
-`batch_id` ao `farm_id`. Quem confia nessa junção soma dinheiro e conta cabeça de empresa que o usuário não
+`batch_id` ao `empresa_id`. Quem confia nessa junção soma dinheiro e conta cabeça de empresa que o usuário não
 enxerga. A prova está em `apps/api/test/integration/relatorio-escopo.test.ts`, que monta exatamente esse
 estado no banco e exige que o usuário autorizado só na empresa B continue vendo o lote e **não** some o
 trato nem conte o animal da empresa A.
 
 A declaração `escopo.derivado` existe só para o primeiro caso — tabela SEM coluna de empresa — e sempre com
-justificativa escrita. Declará-la para uma tabela que tem `farm_id` é erro de gate, não escolha de projeto.
+justificativa escrita. Declará-la para uma tabela que tem `empresa_id` é erro de gate, não escolha de projeto.
 
 **O recorte é por OCORRÊNCIA, não por tabela.** Ler a mesma tabela duas vezes na mesma consulta com o MESMO
 alias — uma leitura recortada e outra não — é indistinguível, para quem olha por alias, de uma leitura só bem
@@ -328,8 +338,8 @@ das faixas de filtro, os anexos e a própria CRIAÇÃO decidem o recorte por UMA
 
 | Declaração | Quando | Leitura | Escrita |
 | --- | --- | --- | --- |
-| `farmScoped: true` | a tabela tem `farm_id` NOT NULL | predicado canônico na coluna própria | empresa do corpo é PEDIDO e passa por `exigirEmpresaDeLancamento` |
-| `farmScopedNulo: true` | a tabela tem `farm_id` ANULÁVEL (nulo = da organização) | mesmo predicado com semântica nullable: o registro sem empresa continua visível | criar SEM empresa alcança todas elas, então exige o módulo em `todas` (ou proprietário) |
+| `empresaScoped: true` | a tabela tem `empresa_id` NOT NULL | predicado canônico na coluna própria | empresa do corpo é PEDIDO e passa por `exigirEmpresaDeLancamento` |
+| `empresaScopedNulo: true` | a tabela tem `empresa_id` ANULÁVEL (nulo = da organização) | mesmo predicado com semântica nullable: o registro sem empresa continua visível | criar SEM empresa alcança todas elas, então exige o módulo em `todas` (ou proprietário) |
 | nenhuma | a tabela não tem coluna de empresa | recurso de organização | — |
 
 Se a declaração faltar, **nenhum** predicado é emitido em nenhum desses caminhos — não há recorte parcial, é
@@ -392,26 +402,32 @@ removida nesta rodada e o binário imediatamente anterior continua servido.
 
 | | Canônico (autoridade) | Legado (espelho) |
 | --- | --- | --- |
-| Tabela | `erp.empresas` | view `erp.farms` (`security_invoker = true`) |
-| Coluna | `empresa_id`, `empresa_origem_id`, `empresa_destino_id` | `farm_id`, `origin_farm_id`, `destination_farm_id` |
+| Tabela | `erp.empresas` | view `erp.farms` — **removida** pela 0017 |
+| Coluna | `empresa_id`, `empresa_origem_id`, `empresa_destino_id` | `farm_id` e irmãs — **removidas** pela 0017 |
 | Vínculo membro × empresa | `erp.membro_empresas` + `erp.membro_escopos_empresa` | `erp.legado_escopo_empresa_v0` (arquivo morto) |
 | Cabeçalho | `X-Empresa-Id` | — (o anterior saiu do CORS em 05B e é recusado no servidor) |
 | Campo de resposta | `empresa_id`, `empresa_name`, `empresas` | — (o aliasador de resposta saiu em 05B) |
 
-A coluna de espelho do BANCO continua (é 05C). O que acabou é o espelho do **fio**: desde PRE-BASE2-05B a
-API fala uma língua só.
+**Nada dessa coluna de compatibilidade continua vivo.** O espelho do **fio** acabou na PRE-BASE2-05B (a API
+fala uma língua só) e o espelho do **banco** acabou na PRE-BASE2-05C-1: a `0017_purge_farm_legacy.sql`
+removeu as colunas legadas, as views, os gatilhos de sincronia, as funções, as FKs de coluna única e os
+índices. A coluna da direita nesta tabela é HISTÓRICO — está aqui para quem lê um commit antigo entender o
+que existia, não para descrever o schema de hoje.
 
-`erp.farms` é **view com `security_invoker = true`**, e isso não é detalhe de estilo: sem essa opção a view
+O último resto do nome legado era a CHAVE do contador (`erp.code_sequences.entity = 'farm'`), e ela sai na
+PRE-BASE2-05C-2 (`0018_empresa_code_sequence.sql`), que é um cutover com janela própria.
+
+Enquanto existiu, `erp.farms` foi **view com `security_invoker = true`**, e isso não era detalhe de estilo: sem essa opção a view
 roda com os direitos do DONO (o papel de migração, que tem `bypassrls`) e devolve as linhas de **todas as
 organizações** para quem consultá-la — uma view de compatibilidade viraria a maior falha de isolamento do
 sistema. O comportamento foi medido no banco antes de decidir: sob o papel da aplicação, a tabela devolve 1
 linha, a view `security_invoker` devolve 1 e a view definer devolve 2. A mesma correção foi aplicada a
 `erp.v_bank_account_balances`, que já era definer e já vazava.
 
-### 8.2 As duas colunas andam juntas — ou a escrita falha
+### 8.2 As duas colunas andavam juntas — ou a escrita falhava (HISTÓRICO, removido pela 0017)
 
-Cada tabela de escopo ganhou a coluna canônica ao lado da legada, e um gatilho (`trg_sync_<coluna>`) mantém as
-duas iguais em toda escrita:
+Enquanto a ponte existiu, cada tabela de escopo teve a coluna canônica ao lado da legada, e um gatilho
+(`trg_sync_<coluna>`) mantinha as duas iguais em toda escrita:
 
 - **INSERT** — um lado preenchido preenche o outro. Os dois preenchidos com valores **diferentes**:
   `VALIDATION_ERROR` (422), nunca escolha silenciosa.
@@ -578,6 +594,7 @@ e `farm-inventory`) recusam qualquer nome legado fora dessa lista.
 
 | Item | Missão |
 | --- | --- |
-| Remoção das colunas legadas (`farm_id` e irmãs), da view `erp.farms` e de `X-Farm-Id` | PRE-BASE2-05 (a compatibilidade tem prazo; a lista de arquivos a apagar está em `scripts/lib/empresa-compat-surface.mjs`). |
+| ~~Remoção das colunas legadas (`farm_id` e irmãs), da view `erp.farms` e de `X-Farm-Id`~~ | **CONCLUÍDA.** `X-Farm-Id` saiu na PRE-BASE2-05B; colunas, views, gatilhos, funções, FKs e índices legados saíram na PRE-BASE2-05C-1 (`0017_purge_farm_legacy.sql`). A superfície que sobra é declarada em `scripts/lib/empresa-compat-surface.mjs` e vigiada pelos gates. |
+| Cutover da CHAVE do contador (`erp.code_sequences.entity`: `'farm'` → `'empresa'`) | PRE-BASE2-05C-2 (`0018_empresa_code_sequence.sql`) — exige janela single-version; ver `docs/PRE-BASE2-05C-2-CUTOVER.md`. |
 | Renomear os VALORES de domínio (`farm_transfer`, `transfer_kind='farm'`) e as chaves de permissão (`farms.view`, `farm_transfers.*`) | Fora de PRE-BASE2-03: são DADO em linhas de `erp.role_permissions` e em documentos históricos, não nomenclatura de código. Governança de dados própria. |
 | Seletor multiempresa e consolidação na interface | PRE-BASE2-05. |

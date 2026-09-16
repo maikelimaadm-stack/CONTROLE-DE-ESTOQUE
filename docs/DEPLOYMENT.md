@@ -224,11 +224,15 @@ para quem opera o deploy:
 1. **Auto-deploy normal NÃO é seguro para este cutover.** O merge dispara o pre-deploy, e a 0018 executa
    com o binário anterior ainda servindo — que continua pedindo `next_code(org,'farm')`, uma chave que a
    migration acabou de aposentar. `next_code` não erra com chave ausente: ele REINICIA em 1.
-2. **O gate "uma única versão da API servindo" está `BLOCKED`**, com evidência: não existe hoje no produto
-   modo de manutenção, flag de readiness, variável que recuse escrita, nem healthcheck derrubável de
-   propósito. As opções concretas (parar o serviço antes do merge; aplicar a 0018 fora do pre-deploy;
-   embutir modo de manutenção em duas entregas) estão no runbook, com o custo de cada uma — nenhuma
-   executada, nenhuma provada.
+2. **O gate "uma única versão da API servindo" está `BLOCKED`** — mas por CONFIRMAÇÃO, não por ausência de
+   mecanismo, e a diferença importa. No PRODUTO continua não havendo modo de manutenção, flag de
+   readiness, variável que recuse escrita nem healthcheck derrubável de propósito. Na PLATAFORMA existe
+   primitiva documentada: `Remove` **para o deployment que está servindo**
+   (`https://docs.railway.com/deployments/reference`), e é ela o **mecanismo preferencial candidato** —
+   remover o deployment ativo da API ANTES do merge. O que falta é confirmar no projeto real que `Remove`
+   não deleta o service, que o source segue ligado a GitHub/`main`, que o autodeploy continua habilitado
+   e que um commit novo em `main` ainda inicia deployment. Ver `docs/PRE-BASE2-05C-2-CUTOVER.md` §B4–§B6,
+   que é o dono do assunto — nada executado, nada provado aqui.
 3. **U4 volta a valer.** A 05C-2 chega em produção pelo mesmo caminho merge → auto-deploy → pre-deploy, e
    `preDeployTimeoutSeconds` tem de ser reconferido na config **live** antes do merge; não é assunto
    encerrado da fatia anterior.

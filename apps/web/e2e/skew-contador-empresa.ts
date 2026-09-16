@@ -68,7 +68,16 @@ export async function criarEmpresaEConferirContador(
  * Numa PR que ATRAVESSA o cutover do contador, a combinação "API da base × banco deste HEAD" deixa de ser
  * a janela de rollout e passa a ser um estado PROIBIDO: a 0018 renomeou a chave persistida, e a API da base
  * ainda pede `next_code(org,'farm')`. Como `next_code` é `insert ... on conflict do update`, a chave que
- * não existe não produz erro — ela REINICIA EM 1, por cima de um acervo já numerado.
+ * não existe não produz erro — ela é CRIADA e devolve 1, dentro da transação do próprio pedido.
+ *
+ * NUMA ORGANIZAÇÃO COM ACERVO — que é o caso deste E2E — o `insert` colide com o
+ * `unique (organization_id, code)` e a transação volta atrás inteira: o cadastro é recusado e o acervo
+ * fica intacto. É exatamente essa dupla que as asserções abaixo cobram.
+ *
+ * O QUE ESTE ARQUIVO NÃO COBRE, de propósito: a organização SEM Empresa, em que não há colisão, o cadastro
+ * COMITA a chave errada e o dano PERSISTE em silêncio. Aquilo é estado persistente, não comportamento
+ * observável de uma resposta HTTP, e quem prova é `pnpm gate:05c2` (Q3b/Q4b), que inspeciona o banco
+ * depois do commit. Os dois se complementam: aqui mede-se o que o BINÁRIO REAL responde; lá, o que SOBRA.
  *
  * Nesse cenário, exigir que o cadastro funcione seria exigir o impossível; e deixar o job passar assim
  * mesmo seria CERTIFICAR uma compatibilidade que não existe, que é pior do que não ter o job. Então a

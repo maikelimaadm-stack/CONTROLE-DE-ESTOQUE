@@ -227,8 +227,10 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   // O código da Empresa é `int not null` e não vem do cliente (campo `readOnly`). A condição olha a TABELA
   // canônica, não a chave do recurso: a renomeação trocou a chave de `farms` para `empresas` e a comparação
   // por chave virou letra morta em silêncio — o INSERT passou a sair sem `code` e a violar o NOT NULL.
-  // A chave da SEQUÊNCIA continua legada de propósito: trocá-la sem migrar o dado reiniciaria a numeração
-  // do cadastro de Empresa. Ver `lib/sequencia-empresa.ts` — sai na PRE-BASE2-05C, junto com o `update`.
+  // A chave da SEQUÊNCIA é `SEQUENCIA_EMPRESA`, hoje CANÔNICA (`'empresa'`), e ela e o dado viraram JUNTOS:
+  // a `0018_empresa_code_sequence.sql` moveu a linha de `erp.code_sequences` com um `update`, e é por isso
+  // que a numeração continua de onde parou. Trocar uma sem a outra reiniciaria o cadastro de Empresa em 1 —
+  // ver `lib/sequencia-empresa.ts` e `docs/PRE-BASE2-05C-2-CUTOVER.md`.
   if (def.table === "empresas" && !cols.includes("code")) { cols.push("code"); vals.push(Number(await nextCode(ctx.tx, ctx.orgId, SEQUENCIA_EMPRESA, 1))); }
   const r = await ctx.tx.query(`insert into erp.${ident(def.table)} (${cols.map(ident).join(",")}) values (${vals.map((_, i) => `$${i + 1}`).join(",")}) returning id`, vals);
   const id = (r.rows[0] as { id: string }).id;

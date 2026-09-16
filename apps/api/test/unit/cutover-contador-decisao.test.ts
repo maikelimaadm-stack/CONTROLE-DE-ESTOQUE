@@ -92,6 +92,71 @@ describe("decisão da exceção de skew do cutover do contador", () => {
       "e o caminho da constante aponta para um arquivo real").toBe(true);
   });
 
+  it("T5 · o gate modela o cadastro como UMA TRANSAÇÃO — não pode regredir para autocommit", () => {
+    // POR QUE ESTE CASO EXISTE. A primeira versão do gate mandava `next_code` e o `insert` como duas
+    // queries autocommit separadas, e isso não é o que a API faz: `createOne` passa o MESMO `ctx.tx` para
+    // os dois, dentro do `withTx` (`begin` → serviço → `commit`, `rollback` em erro). A diferença não é
+    // estética — ela MUDA O RESULTADO: em autocommit a linha que `next_code` cria fica gravada mesmo
+    // quando o `insert` falha, e foi daí que saiu a afirmação (falsa) de que o binário antigo
+    // "ressuscitava" a chave legada em toda tentativa. Numa transação real ela é DESFEITA junto.
+    //
+    // Sem esta trava, a regressão é silenciosa e convincente: o gate continuaria verde, contando uma
+    // história errada sobre o que sobra no banco — e é o que sobra que decide se o cutover é seguro.
+    const gate = fs.readFileSync(path.join(RAIZ, "scripts/gate-cutover-05c2.mjs"), "utf8");
+    const corpo = gate.slice(gate.indexOf("async function cadastrarEmpresa"), gate.indexOf("async function estado"));
+    expect(corpo, "o cadastro abre transação").toMatch(/query\(\s*["']begin["']\s*\)/);
+    expect(corpo, "e a fecha com commit no caminho feliz").toMatch(/query\(\s*["']commit["']\s*\)/);
+    expect(corpo, "e desfaz com rollback quando o insert falha").toMatch(/query\(\s*["']rollback["']\s*\)/);
+    // A ordem importa: `next_code` tem de estar DENTRO da transação, não antes dela.
+    expect(corpo.indexOf("begin"), "o begin vem antes do next_code").toBeLessThan(corpo.indexOf("next_code"));
+    expect(corpo.indexOf("next_code"), "e o next_code antes do insert").toBeLessThan(corpo.indexOf("insert into erp.empresas"));
+
+    // E os quadrantes sem acervo existem — são eles que provam o dano PERSISTENTE.
+    expect(gate, "Q3b (BASE + pós-0018, organização sem Empresa) é exercitado").toMatch(/Q3b/);
+    expect(gate, "Q4b (HEAD + pré-0018, organização sem Empresa) é exercitado").toMatch(/Q4b/);
+  });
+
+  it("T6 · o contrato multiempresa descreve o SSOT canônico, não o schema legado", () => {
+    // `docs/MULTI-COMPANY-CONTRACT.md` se declara CONTRATO ATUAL de plataforma. Enquanto ele dizia que a
+    // Empresa "é materializada pela tabela `erp.farms` e pelo vínculo `erp.member_farms`", estava
+    // descrevendo um schema que a 0014 renomeou e a 0017 purgou — e um contrato que descreve o passado
+    // manda quem o lê implementar o passado.
+    //
+    // Os nomes NÃO são digitados aqui por gosto: `erp.empresas` vem da 0014, e `membro_empresas` /
+    // `membro_escopos_empresa` são as tabelas que de fato existem (a auditoria externa supôs
+    // `member_empresas`, que não existe — por isso se deriva do repo, não da expectativa).
+    const c = fs.readFileSync(path.join(RAIZ, "docs/MULTI-COMPANY-CONTRACT.md"), "utf8");
+    const estadoAtual = c.slice(c.indexOf("> **Estado atual:**"), c.indexOf("## 2."));
+    expect(estadoAtual, "a tabela canônica").toMatch(/erp\.empresas/);
+    expect(estadoAtual, "o vínculo canônico").toMatch(/membro_empresas/);
+    expect(estadoAtual, "a coluna canônica").toMatch(/empresa_id/);
+    expect(estadoAtual, "o cabeçalho canônico").toMatch(/X-Empresa-Id/);
+    expect(estadoAtual, "e NÃO apresenta o nome legado como a materialização de hoje")
+      .not.toMatch(/é materializada pela tabela `erp\.farms`/);
+
+    // As flags do registry citadas no contrato têm de ser as REAIS (`empresaScoped`), senão o contrato
+    // manda procurar um campo que não existe.
+    expect(c, "flag de escopo real").toMatch(/`empresaScoped: true`/);
+    expect(c, "flag de escopo anulável real").toMatch(/`empresaScopedNulo: true`/);
+    expect(c, "as flags legadas não voltam").not.toMatch(/`farmScoped(Nulo)?: true`/);
+  });
+
+  it("T7 · o runbook NÃO afirma que a plataforma não tem mecanismo de quiesce", () => {
+    // A auditoria externa mostrou que o Railway documenta `Remove`, que PARA o deployment que está
+    // servindo. Afirmar "não existe mecanismo" era impreciso, e a imprecisão é perigosa nos dois sentidos:
+    // some com uma saída real e faz o runbook parecer mais fechado do que é.
+    //
+    // O que continua verdade, e o teste não pode apagar: o gate segue BLOCKED — por falta de confirmação
+    // ACCOUNT-SPECIFIC, não por falta de primitiva.
+    const rb = fs.readFileSync(path.join(RAIZ, "docs/PRE-BASE2-05C-2-CUTOVER.md"), "utf8");
+    expect(rb, "a primitiva documentada é nomeada").toMatch(/Remove/);
+    expect(rb, "e tratada como mecanismo preferencial candidato").toMatch(/MECANISMO PREFERENCIAL CANDIDATO/);
+    expect(rb, "o runbook continua BLOCKED").toMatch(/Estado deste runbook: `BLOCKED`/);
+    expect(rb, "e diz que falta confirmação account-specific").toMatch(/ACCOUNT-SPECIFIC/);
+    // A frase antiga, categórica, não pode voltar.
+    expect(rb, "não afirma mais ausência de mecanismo").not.toMatch(/Não existe hoje, neste produto, mecanismo comprovável/);
+  });
+
   it("o gate resolve a base DE VERDADE e ABORTA sem ela — nunca cai no SHA de proveniência", () => {
     // O fail-OPEN que este caso tranca: a versão anterior de `baseDaExecucao()` terminava em
     // `catch { return BASE_DE_ORIGEM }`. Como 602cda3 tem `SEQUENCIA_EMPRESA = 'farm'` para sempre, no CI
