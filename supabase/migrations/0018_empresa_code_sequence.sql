@@ -31,8 +31,11 @@
 --
 --     Buraco INTERNO no acervo (por exemplo [1,3,5]) não muda nada: o contador morre em 1 e nunca chega
 --     aos buracos. O que abre janela é o começo ocupado ou não, não a existência de lacuna.
---     São os dois últimos casos que obrigam a janela operacional — o do meio porque não avisa nunca, e o
---     de baixo porque avisa TARDE DEMAIS.
+--     NENHUM desses casos sozinho obriga a janela operacional — o CONJUNTO obriga. Os silenciosos porque
+--     não se pode contar com "alguém vai ver o erro" (sem Empresa não avisa nunca; M > 1 avisa tarde
+--     demais, com M-1 cadastros já gravados), e os barulhentos porque recusar o cadastro legítimo do
+--     usuário também é incompatibilidade: é indisponibilidade funcional, não "tudo bem". Contar só uma
+--     das metades descreve metade do risco.
 --
 -- Não existe terceira opção segura em rollout com DUAS versões no ar. Por isso esta migration é uma
 -- SUBSTITUIÇÃO (um `update` que renomeia a chave), nunca uma cópia, e por isso ela exige uma janela

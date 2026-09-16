@@ -437,8 +437,19 @@ async function main() {
   console.log("  sem Empresa  (Q3b, Q4b)    → nunca colide. A chave errada fica gravada.");
   console.log("  M > 1        (Q3c)         → JANELA SILENCIOSA: comita 1..M-1, e só então falha em M.");
   console.log("Lacuna INTERNA não abre janela (Q3d): o contador morre em 1 e nunca chega aos buracos.");
-  console.log("O que obriga a janela single-version (docs/PRE-BASE2-05C-2-CUTOVER.md) é o ATRASO da");
-  console.log("colisão: quando o erro aparece, o estrago dos cadastros anteriores já está gravado.");
+  console.log("");
+  // ATENÇÃO ao que se afirma AQUI: estas são as últimas linhas que o operador e o CI leem numa rodada
+  // verde. A versão anterior dizia que "o que obriga a janela é o ATRASO da colisão" — e isso elegia UM
+  // mecanismo, que só existe em Q3c. Em Q3b e Q4b não há colisão nenhuma, logo não há atraso; em Q3, Q3d
+  // e Q4 a colisão é imediata, logo o atraso é zero. A frase excluía 5 dos 6 quadrantes incompatíveis e
+  // contradizia o runbook que ela mesma citava. Pior: num parque onde toda organização começa em 1, o
+  // A13 reporta janela ZERO, e "sem atraso" leria como "sem necessidade de janela".
+  console.log("NENHUM quadrante sozinho obriga a janela single-version — o CONJUNTO obriga:");
+  console.log("  os silenciosos, porque não se pode contar com 'alguém vai ver o erro' (Q3b nunca avisa,");
+  console.log("  Q3c avisa tarde demais, Q4b trava a própria 0018 depois);");
+  console.log("  e os barulhentos (Q3, Q3d, Q4), porque recusar o cadastro legítimo do usuário também é");
+  console.log("  incompatibilidade — é indisponibilidade funcional, não 'tudo bem'.");
+  console.log("ROLLOUT NORMAL CONTINUA PROIBIDO. Ver docs/PRE-BASE2-05C-2-CUTOVER.md.");
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

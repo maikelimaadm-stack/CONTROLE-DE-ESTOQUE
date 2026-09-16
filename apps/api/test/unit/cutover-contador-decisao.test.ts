@@ -257,6 +257,51 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     expect(rb, "e o Remove segue CANDIDATO, não confirmado").toMatch(/MECANISMO PREFERENCIAL CANDIDATO/);
   });
 
+  it("T9b · nenhum artefato elege UM quadrante como o que obriga a janela — nem o runbook, nem o gate, nem a 0018", () => {
+    // ESTE CASO EXISTE PORQUE O T9 NÃO BASTOU. Red team independente achou, DEPOIS de o runbook estar
+    // correto, que a SAÍDA do `gate:05c2` ainda encerrava dizendo que "o que obriga a janela é o ATRASO da
+    // colisão" — as duas últimas linhas que o operador e o CI leem numa rodada verde. O atraso só existe em
+    // Q3c: em Q3b e Q4b não há colisão, logo não há atraso; em Q3, Q3d e Q4 a colisão é imediata, logo o
+    // atraso é zero. A frase excluía cinco dos seis quadrantes incompatíveis e contradizia o runbook que
+    // ela mesma citava. O cabeçalho da 0018 tinha a variante "os dois últimos casos obrigam a janela".
+    //
+    // A lição é a do defeito recorrente desta fatia: corrigir o modelo num arquivo e deixá-lo sobreviver
+    // noutro. Por isso a trava passa a valer para TODO artefato que descreve o modelo, e não só a prosa
+    // do runbook. E o perigo é concreto, não estético: num parque onde toda organização começa em 1 o A13
+    // reporta janela ZERO, e "sem atraso" leria como "sem necessidade de janela".
+    const artefatos = {
+      "docs/PRE-BASE2-05C-2-CUTOVER.md": fs.readFileSync(path.join(RAIZ, "docs/PRE-BASE2-05C-2-CUTOVER.md"), "utf8"),
+      "docs/TESTING.md": fs.readFileSync(path.join(RAIZ, "docs/TESTING.md"), "utf8"),
+      "scripts/gate-cutover-05c2.mjs": fs.readFileSync(path.join(RAIZ, "scripts/gate-cutover-05c2.mjs"), "utf8"),
+      "supabase/migrations/0018_empresa_code_sequence.sql":
+        fs.readFileSync(path.join(RAIZ, "supabase/migrations/0018_empresa_code_sequence.sql"), "utf8"),
+    };
+
+    // Atribuições EXCLUSIVAS proibidas: elegem um mecanismo ou um subconjunto como a causa da janela.
+    const eleicoes: Array<[RegExp, string]> = [
+      [/(?:O que|o que) obriga a janela[^.\n]*é o ATRASO/, "elege o ATRASO da colisão (só existe em Q3c)"],
+      [/[Ss]ão os dois últimos casos que obrigam a janela/, "elege só a metade silenciosa"],
+      [/A linha que obriga a janela/, "elege um único quadrante"],
+      [/É o segundo caso que obriga a janela/, "elege um único caso"],
+      [/é a forma silenciosa que obriga a janela/i, "elege só a forma silenciosa"],
+    ];
+    for (const [nome, texto] of Object.entries(artefatos)) {
+      for (const [re, porque] of eleicoes) {
+        expect(texto.replace(/^\s*(?:\/\/|--).*$/gm, ""), `${nome}: ${porque}`).not.toMatch(re);
+      }
+    }
+
+    // E os três que AFIRMAM o modelo dizem, positivamente, que é o conjunto.
+    for (const [nome, texto] of Object.entries(artefatos)) {
+      expect(texto, `${nome} atribui a janela ao CONJUNTO de incompatibilidades`)
+        .toMatch(/[Nn]enhum quadrante sozinho|NENHUM quadrante sozinho|NENHUM desses casos sozinho/);
+    }
+
+    // O gate encerra reafirmando a proibição — é a última linha que o CI imprime numa rodada verde.
+    expect(artefatos["scripts/gate-cutover-05c2.mjs"], "a saída do gate termina reafirmando a proibição")
+      .toMatch(/ROLLOUT NORMAL CONTINUA PROIBIDO/);
+  });
+
   it("o gate resolve a base DE VERDADE e ABORTA sem ela — nunca cai no SHA de proveniência", () => {
     // O fail-OPEN que este caso tranca: a versão anterior de `baseDaExecucao()` terminava em
     // `catch { return BASE_DE_ORIGEM }`. Como 602cda3 tem `SEQUENCIA_EMPRESA = 'farm'` para sempre, no CI
