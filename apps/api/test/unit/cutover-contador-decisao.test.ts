@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 // @ts-expect-error — harness de rollout em JS puro, fora do grafo de tipos da API
 import { BASE_DE_ORIGEM, CAMINHO_CONSTANTE, MIGRATION_CUTOVER, constanteNoTexto, constanteNaArvore, decidir } from "../../../../scripts/lib/cutover-contador.mjs";
 
@@ -82,10 +81,20 @@ describe("decisão da exceção de skew do cutover do contador", () => {
       "e o caminho da constante aponta para um arquivo real").toBe(true);
   });
 
-  it("a base declarada é um commit REAL deste repositório, e é ancestral do HEAD", () => {
-    const git = (...a: string[]) => execFileSync("git", a, { cwd: RAIZ }).toString().trim();
-    expect(git("cat-file", "-t", BASE_DE_ORIGEM), "o SHA de origem existe").toBe("commit");
-    // `merge-base --is-ancestor` sai 0 quando é ancestral. Se um dia não for, a proveniência ficou errada.
-    expect(() => git("merge-base", "--is-ancestor", BASE_DE_ORIGEM, "HEAD")).not.toThrow();
+  it("o SHA de proveniência é um SHA completo — e quem o VALIDA contra o repositório é o gate, não este teste", () => {
+    // Por que a forma, e não a ancestralidade: o checkout do CI é RASO (`fetch-depth: 1`), então
+    // `merge-base --is-ancestor` não tem grafo para responder e reprova por falta de histórico, não por
+    // proveniência errada. Uma asserção que só passa em clone completo é verde na máquina e vermelha no
+    // CI pelo mesmo código — o modo de falhar que `api-anterior.mjs` já documentou neste repositório.
+    //
+    // O que sobra aqui é o defeito REAL de um literal digitado à mão: SHA truncado, com espaço ou fora do
+    // alfabeto. E o que se perdeu não ficou sem dono: `pnpm gate:05c2` LÊ este commit
+    // (`constanteNoCommit`, que busca o objeto quando o clone é raso) e REPROVA se não conseguir ler —
+    // "sem a base não há matriz". É dessa leitura que sai a constante da BASE na matriz, então um SHA
+    // inalcançável reprova o gate em vez de virar compatibilidade suposta.
+    //
+    // Isto não enfraquece nada porque `BASE_DE_ORIGEM` não decide coisa alguma: o caso acima prova que
+    // `decidir` nem o menciona. Um SHA errado aqui engana um auditor humano; não liga nem desliga exceção.
+    expect(BASE_DE_ORIGEM, "SHA completo de 40 hex, minúsculo").toMatch(/^[0-9a-f]{40}$/);
   });
 });

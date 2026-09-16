@@ -66,8 +66,34 @@ export function constanteNaArvore(raiz) {
   return constanteNoTexto(readFileSync(caminho, "utf8"));
 }
 
-/** A constante como ela está num COMMIT, sem precisar de worktree montada. */
+/**
+ * GARANTE QUE O OBJETO DO COMMIT ESTÁ AQUI — o checkout do CI é RASO.
+ *
+ * `actions/checkout` traz um commit só (`fetch-depth: 1`), então `git show <sha>:<arquivo>` de qualquer
+ * outro commit falha no CI enquanto passa na máquina de quem tem o histórico. É o modo de falhar que este
+ * repositório já documentou em `api-anterior.mjs`: verde local e vermelho remoto pelo mesmo código.
+ *
+ * A correção segue a convenção que aquele script estabeleceu — buscar o SHA EXATO com profundidade 1, em
+ * vez de pedir `fetch-depth: 0` no workflow. O custo não depende do tamanho do histórico, e a decisão de
+ * quanto histórico o CI clona continua sendo do workflow, não desta biblioteca.
+ *
+ * Silencioso quando o objeto já está presente: no uso normal (clone completo) não há rede nenhuma.
+ */
+function garantirCommit(sha, cwd) {
+  try { execFileSync("git", ["cat-file", "-e", `${sha}^{commit}`], { cwd, stdio: "ignore" }); return; }
+  catch { /* clone raso: o objeto falta e é isso que o fetch abaixo resolve */ }
+  execFileSync("git", ["fetch", "--depth=1", "origin", sha], { cwd, stdio: "ignore" });
+}
+
+/**
+ * A constante como ela está num COMMIT, sem precisar de worktree montada.
+ *
+ * Falha fechado por construção: se o commit não existe e não pode ser buscado, isto LANÇA — e quem chama
+ * (o gate e o decisor de skew) aborta. Um erro alto aqui é o comportamento correto; o perigoso seria
+ * devolver um valor de mentira e deixar a decisão do cutover ser tomada sobre ele.
+ */
 export function constanteNoCommit(sha, cwd = process.cwd()) {
+  garantirCommit(sha, cwd);
   const texto = execFileSync("git", ["show", `${sha}:${CAMINHO_CONSTANTE}`], { cwd, encoding: "utf8" });
   return constanteNoTexto(texto);
 }
