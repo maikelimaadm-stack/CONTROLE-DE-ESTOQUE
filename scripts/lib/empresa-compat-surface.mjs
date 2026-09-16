@@ -58,7 +58,7 @@ export const MARCO_DE_REMOCAO = "PRE-BASE2-05C-1 (purga física: colunas legadas
  * não teria o que comparar e imprimiria OK: o verde que não prova nada, no exato momento mais perigoso da
  * migração. Com ele, esquecer de virar a fase REPROVA.
  */
-export const FASE_ESPELHO = "dual";
+export const FASE_ESPELHO = "canonica";
 
 /**
  * Runtime: o que ainda pode nomear o idioma antigo — e NENHUM deles traduz (PRE-BASE2-05B).
@@ -83,19 +83,23 @@ export const PONTE_PROVA = {
   "apps/api/test/integration/contrato-empresa.test.ts": "Prova o CONTRATO NEGATIVO com requisições reais: cabeçalho, corpo, query, recurso e entidade de anexo anteriores são recusados — e o canônico funciona. Cita o nome antigo para provar que ele NÃO é aceito.",
   "apps/api/test/unit/attachment-parent-guard.test.ts": "Prova que o nome ANTERIOR de tabela não resolve mais como entidade anexável.",
   "apps/api/test/unit/espelho-empresa-fases.test.ts": "VOCABULÁRIO: prova o contrato do espelho POR PAR HISTÓRICO com migrations de mentira. Precisa escrever `farm_id` nos fixtures porque é esse o nome que a ponte física usou — é o objeto medido, não uma dependência. Vive enquanto houver par histórico a cobrar, o que inclui DEPOIS da purga: é o lado `canonica` do contrato.",
-  "apps/api/test/unit/rls-excecao-protecao.test.ts": "VOCABULÁRIO: prova que a proteção declarada RECUSA a política perigosa (USING/WITH CHECK abertos, papel extra, PERMISSIVE extra, junção pai→filho quebrada). Cita `farm_id` porque é a coluna de vínculo ATUAL de erp.empresa_cost_centers — a única exceção cujo `api_child` a 05C-1 reescreve, e o caso B10 prova que SSOT e política têm de mudar juntos.",
+  "apps/api/test/unit/rls-excecao-protecao.test.ts": "VOCABULÁRIO: prova que a proteção declarada RECUSA a política perigosa (USING/WITH CHECK abertos, papel extra, PERMISSIVE extra, junção pai→filho quebrada). A 05C-1 já trocou o vínculo de erp.empresa_cost_centers para `empresa_id` na política E no SSOT; o caso B10 continua provando o acoplamento, agora medindo o desvio na direção oposta — VOLTAR para `farm_id` num lado só REPROVA.",
   "packages/plataforma/test/sessao-empresa.test.ts": "Prova que a sessão gravada por um cliente anterior à virada canônica é INVÁLIDA (sem promoção) e que o contrato de valor é exigido.",
-  "packages/db/test/empresa-compat.test.ts": "PONTE FÍSICA: mede gatilhos de espelho, divergência recusada e a view `erp.farms` — objetos que a 05C-1 remove. Sai JUNTO com eles, na mesma fatia, nunca antes.",
+  "packages/db/test/empresa-compat.test.ts": "PROVA HISTÓRICA, depois da 05C-1. Os blocos que mediam a ponte — a view `erp.farms` e os gatilhos de espelho — saíram JUNTO com os objetos, na fatia que os apagou. O que ficou fala o idioma antigo porque reconstrói um banco até a 0013 (quando `erp.farms` era TABELA) para provar que um acervo real atravessa a cadeia inteira, agora incluindo a purga, sem perder linha nem identificador.",
   "packages/db/test/backfill-empresas.test.ts": "PROVA HISTÓRICA: o backfill de `farm_id` → `empresa_id`, linha a linha. Continua sendo a evidência de que um acervo anterior é carregado corretamente — o passado não muda quando a coluna sai. NÃO sai na 05C-1.",
   "packages/db/test/backfill-owner-restrito.test.ts": "PROVA HISTÓRICA: a conversão do escopo herdado de `erp.member_farms`, que é o estado real de quem veio de antes. NÃO sai na 05C-1.",
-  "packages/db/test/responsavel-tenant.test.ts": "PONTE FÍSICA: consulta pela view de nome antigo para provar que ela enxerga o mesmo tenant. Sai junto com a view, na 05C-1.",
-  "packages/db/test/notificacao-legado.test.ts": "PONTE FÍSICA: prova que a notificação legada resolve pela view de nome antigo. Sai junto com a view, na 05C-1.",
-  "packages/db/test/schema.test.ts": "PONTE FÍSICA: afere a COEXISTÊNCIA das duas colunas. Na 05C-1 ele não é apagado e sim INVERTIDO — passa a exigir que a legada não exista —, junto com FASE_ESPELHO.",
-  "packages/db/test/upgrade-acervo.test.ts": "PROVA HISTÓRICA: escreve o histórico no idioma ANTERIOR (`farm_id`), como a API antiga gravava, e só então aplica as migrations. Falar o idioma novo aqui inventaria um acervo que nunca existiu — e apagar o teste na 05C-1 removeria a única prova de que o banco de um cliente REAL sobe. NÃO sai; será ESTENDIDO na 05C-1 para atravessar também a purga.",
-  "packages/db/test/upgrade-rollback.test.ts": "PROVA HISTÓRICA: mesmo acervo legado, para provar que uma falha depois da janela estrutural devolve o ledger protegido. NÃO sai; será ESTENDIDO na 05C-1 para cobrir a falha DURANTE a purga.",
+  "packages/db/test/responsavel-tenant.test.ts": "PROVA HISTÓRICA: NÃO saiu na 05C-1 — apagá-lo removeria a única prova de que a 0013 PARA diante de acervo cross-tenant. O que mudou é que ele passou a declarar a ERA: o bloco que reconstrói o banco até a 0012 fala `erp.farms`/`farm_id`, porque naquele momento eram a tabela e a coluna de verdade, e o resto fala canônico.",
+  "packages/db/test/notificacao-legado.test.ts": "PROVA HISTÓRICA: reconstrói o banco até a 0011 e escreve em `erp.farms` — que ali é TABELA, não a view que a 05C-1 removeu. Por isso não saiu na purga: o que ele fala é o idioma do acervo daquele momento.",
+  "packages/db/test/schema.test.ts": "VOCABULÁRIO: a 05C-1 já fez a INVERSÃO prometida — o caso que aferia a coexistência das duas colunas agora exige que a legada não exista em coluna nenhuma, com a contraprova de que o lado canônico está de pé. Cita o nome antigo para procurá-lo e não achar.",
+  "packages/db/test/upgrade-acervo.test.ts": "PROVA HISTÓRICA: escreve o histórico no idioma ANTERIOR (`farm_id`), como a API antiga gravava, e só então aplica as migrations. Falar o idioma novo aqui inventaria um acervo que nunca existiu — e apagar o teste na 05C-1 removeria a única prova de que o banco de um cliente REAL sobe. NÃO saiu na 05C-1, e não precisou ser estendido: o laço final do arquivo aplica TUDO que ficou pendente e depois exige que nada tenha sobrado, então ele atravessa a 0017 por construção.",
+  "packages/db/test/upgrade-rollback.test.ts": "PROVA HISTÓRICA: mesmo acervo legado, para provar que uma falha depois da janela estrutural devolve o ledger protegido. NÃO saiu na 05C-1, e NÃO foi estendido: ele mede a janela de suspensão do gatilho do ledger DENTRO da 0014 e termina ali — atravessar a purga não é trabalho dele. A falha DURANTE a purga é coberta por `packages/db/test/purga-0017-concorrencia.test.ts`.",
   "apps/web/e2e/empresa-canonica.spec.ts": "Cutover canônico medido no navegador: cita o nome antigo para provar que ele NÃO sai no fio e que a sessão anterior não é mais promovida.",
   "apps/web/e2e/skew-api-producao.spec.ts": "Version skew SENTIDO 1 (web deste HEAD × API da base): cita o nome antigo para provar que ele NÃO sai do cliente canônico.",
-  "apps/web/e2e/skew-web-anterior.spec.ts": "Version skew SENTIDO 2 (web da base × API deste HEAD): cita o nome antigo para provar que a API nova o RECUSA — e que o cliente em produção não depende dele."
+  "apps/web/e2e/skew-web-anterior.spec.ts": "Version skew SENTIDO 2 (web da base × API deste HEAD): cita o nome antigo para provar que a API nova o RECUSA — e que o cliente em produção não depende dele.",
+  "packages/db/test/purga-0017-fresh.test.ts": "VOCABULÁRIO (05C-1): mede a ponte física INTEIRA com a 0016 aplicada — 52 colunas, 5 views, 52 gatilhos, 3 funções, 52 FKs, 8 índices — e então exige que todos esses contadores caiam a zero depois da 0017. Cita o nome antigo porque ele É o objeto medido; sem citá-lo, a ausência não teria como ser contada.",
+  "packages/db/test/purga-0017-upgrade.test.ts": "VOCABULÁRIO + PROVA HISTÓRICA (05C-1): semeia acervo da fase DUAL, escrevendo pelos dois lados para provar que o espelho da 0014 estava vivo, e só então atravessa a purga conferindo que o dado canônico sobreviveu linha a linha. O idioma antigo aparece porque era assim que o acervo era escrito.",
+  "packages/db/test/purga-0017-concorrencia.test.ts": "VOCABULÁRIO (05C-1): prova a trava de concorrência e o comportamento sob contenção de relação e de objeto de catálogo. Cita o nome das funções de sincronia porque é sobre uma delas que a disputa de catálogo é montada, e conta os objetos legados para provar que uma falha NÃO deixou estado parcial.",
+  "packages/db/test/purga-0017-invariantes.test.ts": "VOCABULÁRIO (05C-1): confere FKs compostas, CHECK canônico, papéis da política e isolamento de tenant depois da purga, comparando o estado ANTES e DEPOIS. Precisa nomear a coluna legada para provar que nenhuma política ainda decide por ela."
 };
 
 
@@ -110,7 +114,8 @@ export const PONTE_GATES = {
   "scripts/data-dictionary.mjs": "Gera o dicionário, que documenta a coluna legada enquanto ela existir.",
   "packages/domain/dicionario-dados.mjs": "Dicionário de dados: `erp.farms` e `farm_id` existem no banco e precisam estar documentados.",
   "packages/domain/empresa-rls.mjs": "Classificação de RLS: nomeia o arquivo morto de `erp.member_farms`.",
-  "scripts/purchase-responsible-audit.mjs": "Mensagem de diagnóstico do gate cita a assinatura anterior."
+  "scripts/purchase-responsible-audit.mjs": "Mensagem de diagnóstico do gate cita a assinatura anterior.",
+  "scripts/gate-purga-0017-runtime-anterior.mjs": "VOCABULÁRIO (G-U5): sobe o binário ANTERIOR da API contra um banco com a 0017 aplicada e varre as respostas procurando menção a objeto purgado. Precisa nomear `farm_id`, `erp.farms` e as funções de sincronia porque são exatamente eles que NÃO podem aparecer. É o instrumento, não a dependência."
 };
 
 /**
@@ -126,12 +131,17 @@ export const CATEGORIA_COMPAT = {
   "apps/api/test/unit/espelho-empresa-fases.test.ts": "VOCABULARIO",
   "apps/api/test/unit/rls-excecao-protecao.test.ts": "VOCABULARIO",
   "packages/plataforma/test/sessao-empresa.test.ts": "TOMBSTONE",
-  "packages/db/test/empresa-compat.test.ts": "PONTE_FISICA",
+  "packages/db/test/empresa-compat.test.ts": "PROVA_HISTORICA",
   "packages/db/test/backfill-empresas.test.ts": "PROVA_HISTORICA",
   "packages/db/test/backfill-owner-restrito.test.ts": "PROVA_HISTORICA",
-  "packages/db/test/responsavel-tenant.test.ts": "PONTE_FISICA",
-  "packages/db/test/notificacao-legado.test.ts": "PONTE_FISICA",
-  "packages/db/test/schema.test.ts": "PONTE_FISICA",
+  "packages/db/test/responsavel-tenant.test.ts": "PROVA_HISTORICA",
+  "packages/db/test/notificacao-legado.test.ts": "PROVA_HISTORICA",
+  "packages/db/test/schema.test.ts": "VOCABULARIO",
+  "packages/db/test/purga-0017-fresh.test.ts": "VOCABULARIO",
+  "packages/db/test/purga-0017-upgrade.test.ts": "PROVA_HISTORICA",
+  "packages/db/test/purga-0017-concorrencia.test.ts": "VOCABULARIO",
+  "packages/db/test/purga-0017-invariantes.test.ts": "VOCABULARIO",
+  "scripts/gate-purga-0017-runtime-anterior.mjs": "VOCABULARIO",
   "packages/db/test/upgrade-acervo.test.ts": "PROVA_HISTORICA",
   "packages/db/test/upgrade-rollback.test.ts": "PROVA_HISTORICA",
   "apps/web/e2e/empresa-canonica.spec.ts": "TOMBSTONE",

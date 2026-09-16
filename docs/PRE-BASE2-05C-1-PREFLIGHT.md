@@ -3,36 +3,99 @@
 Este documento é para **executar**, não para consultar. Ele existe porque a 05C-1 é a primeira migration
 que APAGA coisa em produção, e porque algumas das provas que ela exige dependem de acesso que nenhuma
 sessão automatizada tem. Nasceram quatro assim; três foram fechadas por leitura autenticada desde então, e
-**resta uma**: P1, o restore, que não é questão de acesso e sim de **custo e consentimento**.
-Cada gate abaixo termina em `PASS` ou `BLOCKED` — não existe "quase".
+**resta uma**: P1, o restore, que não é questão de acesso e sim de **custo e consentimento** — e que, por
+decisão escrita do proprietário, está **suspenso enquanto os dados forem descartáveis**, não aprovado.
+Cada gate abaixo termina em `PASS` ou `BLOCKED` — não existe "quase". A única exceção é P1, e ela tem nome
+próprio (`NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`) justamente para não ser lida como `PASS`.
 
 Quem executa: o Maike. Não é preciso saber SQL: tudo que precisa ser rodado está escrito pronto para colar.
 
-> **Estado em 2026-09-15, após o fechamento operacional (05C-G2) e a correção externa da PR #35:**
+> **Estado em 2026-09-15, após o fechamento operacional (05C-G2), a correção externa da PR #35 e a
+> DECLARAÇÃO DE PRÉ-PRODUÇÃO do proprietário:**
+> **P1 = `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`** · **`RECOVERY = REBUILD FROM ZERO`** — o
+> proprietário declarou que o sistema ainda NÃO está em produção operacional, que os dados atuais NÃO
+> precisam ser preservados e que, em caso de falha, é aceitável resetar o banco, reaplicar as migrations e
+> recriar os dados de teste. Isso **não é `PASS`**: o drill de restore continua sem ter sido executado. É
+> uma dispensa com prazo, e o prazo é um evento — ver "Condição de retorno", abaixo ·
 > **P5 = `MEDIDO EM 15/09`** — vira `PASS` quando relido na janela do deploy, e não antes: o valor é
 > mutável por qualquer pessoa com acesso ao Railway · **P7 mecanismo = `PASS`** ·
-> **P1 = `BLOCKED`** — só fecha com um restore real. O custo **não é estimado aqui**: o que se autoriza é
-> o valor que a própria Supabase exibe no resumo, antes da confirmação (ver "O que exatamente precisa da
-> sua autorização") ·
 > **P6 = `PASS CONDICIONAL`, com RISCO DECLARADO.** As cinco perguntas estão respondidas: U1, U2, U3
-> e U5 estão **NON-BLOCKING PENDENTE DE G-U5** — U5 por medição, U1/U2/U3 por derivação, e o gate
-> **ainda não rodou** — e **U4 virou `KNOWN: unbounded`**: o pre-deploy roda **sem teto de tempo**. Saber disso não
-> conserta: é risco operacional nomeado, não gate pendente.
+> e U5 estão **NON-BLOCKING, e o G-U5 RODOU** — U5 por medição, U1/U2/U3 por derivação, e a derivação
+> deixou de ser derivação: o gate (`scripts/gate-purga-0017-runtime-anterior.mjs`) foi executado nesta
+> fatia e APROVOU ·
+> **U4 = `OPERATIONAL MERGE BLOCKER`** — mudou de rótulo. Continua sendo o mesmo fato medido
+> (`preDeployTimeoutSeconds = null`), mas deixou de ser "risco declarado e só": como o merge em `main`
+> dispara deploy automático, **é o merge que liga o risco**. Enquanto não houver contenção, a 05C-1 não é
+> liberada para merge.
 > A 05C-1 **não está autorizada**. CI verde não muda nenhum desses.
 
 ## A matriz
 
 | Gate | Evidência exigida | `PASS` quando | `BLOCKED` enquanto | Quem confirma | Momento |
 | --- | --- | --- | --- | --- | --- |
-| **P1** Restore | um backup de produção RESTAURADO em destino isolado e CONSULTADO | as cinco consultas de P1.3 respondem o esperado no destino restaurado | não houver restore real, ou só houver "backup existe", ou o **custo ainda não tiver sido lido** no resumo da Supabase | Maike, no painel da Supabase | uma vez, antes de autorizar a fatia |
+| **P1** Restore | **SUSPENSO** — `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`. Enquanto vale, a prova exigida não é de RECUPERAÇÃO e sim de RECONSTRUÇÃO: banco recriado do zero, `0001..0017` aplicadas, dados de teste recriados (`RECOVERY = REBUILD FROM ZERO`) | **nunca por este caminho.** A suspensão não produz `PASS`: ela dispensa o gate para esta janela e o devolve inteiro na condição de retorno | existir o primeiro dado não descartável sem que o drill de backup + restore tenha sido feito — aí volta a `BLOCKED`, com o enunciado original | a SUSPENSÃO é do Maike, por escrito; o RETORNO é automático no evento, e só a execução do drill o fecha | reavaliar ANTES do primeiro uso real e ANTES do primeiro dado não descartável |
 | **P5** Seed e papéis | o VALOR de `SEED_ON_DEPLOY` lido com credencial autenticada | o valor foi lido NESTA janela e é diferente de `1` | o valor não tiver sido lido nesta janela — **é o estado de hoje**: a leitura é de 15/09 | leitura automatizada (Railway CLI) ou Maike | reconfirmar imediatamente antes do deploy |
 | **P6** Rollout | as cinco perguntas respondidas: **U4 e U5 por evidência direta**, U1/U2/U3 **dispensados por derivação** | `PASS CONDICIONAL` hoje: vira `PASS` quando **G-U5** rodar, porque é ele que transforma a derivação de U1/U2/U3 em fato | G-U5 não tiver rodado, ou alguma voltar a `UNKNOWN` (ex.: o serviço ser recriado) | leitura automatizada (API do Railway) para U4; painel para o resto | reconfirmar se o serviço mudar |
-| **G-U5** Compatibilidade do binário anterior | o commit da API em produção subindo e servindo contra um banco com a `0017` aplicada | boot, login, leitura escopada e gravação com ROW COUNT, todos verdes | **não tiver sido executado — é o estado de hoje** | o próprio gate, em banco descartável | dentro da 05C-1, ANTES de qualquer deploy em produção |
+| **G-U5** Compatibilidade do binário anterior ✅ | o commit da API em produção subindo e servindo contra um banco com a `0017` aplicada | boot, login, leitura escopada e gravação com ROW COUNT, todos verdes — **EXECUTADO na 05C-1**: 748 chamadas HTTP reais, 726 `2xx`, zero `5xx`, zero menção a objeto purgado nas respostas e no log, `seedPermissions` 782/782 em duas execuções do pre-deploy | a execução deixar de ser reproduzível — reproduzir é **`pnpm gate:g-u5`**, um comando nomeado no `package.json`, não um caminho de arquivo que só quem escreveu conhece. Dos 748, **726 são `2xx` e 22 são `4xx` de contrato** (rota que exige parâmetro, entidade fora do perfil do laboratório), dos quais três são os `422` PRÉ-EXISTENTES declarados no próprio gate (`PRE_EXISTENTES_EC5E771`); `5xx` são zero, e o gate reprova se aparecer um | o próprio gate, em banco descartável | reexecutar antes do deploy, e a cada mudança na API |
+| **U4** Teto do pre-deploy | uma contenção real para o pre-deploy sem teto (`preDeployTimeoutSeconds = null` no serviço `api`, medido em 15/09) | o campo tiver valor, medido e registrado, **ou** existir contenção equivalente aceita por escrito | o campo estiver vazio: **`OPERATIONAL MERGE BLOCKER`** — merge em `main` dispara deploy automático, então liberar a PR para merge é ligar o risco | Maike, no painel do Railway (ação humana, fora desta fatia) | antes de liberar a 05C-1 para merge |
 | **P7** Locks | a consulta de porteiro, sem linha `BLOQUEIA` | nenhum DDL concorrente **sobre objeto de `erp`** no instante do deploy | houver DDL concorrente sobre objeto de `erp` (ou objeto que não resolve) | Maike, no SQL Editor | minutos antes do deploy |
 
 ---
 
-## P1 — restore real — `BLOCKED`
+## P1 — restore real — `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`
+
+### A declaração que suspende este gate
+
+O proprietário declarou, para esta janela, que:
+
+- o sistema **ainda NÃO está em produção operacional**;
+- os dados hoje no banco **NÃO precisam ser preservados**;
+- em caso de falha, **é aceitável resetar o banco, reaplicar as migrations e recriar os dados de teste**.
+
+Enquanto isso for verdade, o gate fica em **`P1 = NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`** e a
+política de recuperação é **`RECOVERY = REBUILD FROM ZERO`**. O procedimento de reconstrução — os passos, na
+ordem, e o que conferir no fim — mora em `docs/DEPLOYMENT.md`, seção "Recuperação"; não é recopiado aqui.
+
+**Isto não é `PASS`, e a diferença não é de vocabulário.** `PASS` significa "a pergunta foi respondida por
+evidência". Aqui a pergunta **não foi respondida**: nenhum backup deste projeto foi restaurado, e portanto
+continua sendo hipótese que ele restaure. O que mudou foi o VALOR da resposta, não a resposta: enquanto o
+dado é descartável, perder o banco custa o tempo de recriá-lo. Escrever `PASS` transformaria uma dispensa
+temporária em fato permanente — e ninguém releria a linha depois.
+
+### Condição de retorno — a parte que não pode ser esquecida
+
+> **Antes do PRIMEIRO uso real e antes do PRIMEIRO dado não descartável, o drill de backup + restore volta a
+> ser gate OBRIGATÓRIO**, com o enunciado original (P1.1 a P1.4, logo abaixo), e a 05C-1 — ou qualquer outra
+> migration destrutiva — volta a depender dele.
+
+Uma política de pré-produção sem retorno obrigatório não adia gate nenhum: apaga. A dispensa acima só é
+legítima porque tem evento de vencimento escrito, e o evento é observável por terceiro.
+
+**O que conta como "dado não descartável"** — basta UM item para a condição disparar:
+
+| Conta | Por quê |
+| --- | --- |
+| qualquer registro criado por **pessoa de fora da equipe de desenvolvimento** contando encontrá-lo depois | recriar não é opção: o dado não está na cabeça de quem opera o deploy |
+| lançamento **financeiro, fiscal ou de estoque** que alguém vá usar para decidir, cobrar, pagar ou declarar | vira evidência contábil; o ledger é imutável por decisão de arquitetura (`CLAUDE.md`), e histórico recriado é histórico falsificado |
+| **ID Global já exibido** a um usuário (`#N` anotado, impresso ou referenciado fora do sistema) | o número é localizador humano: renumerar quebra a referência que a pessoa tem na mão |
+| anexo enviado por um usuário (Storage), que o seed **não** recria | não existe origem para reconstruir |
+| **primeiro login real** de usuário que não seja de teste | a partir daí o sistema está em uso, mesmo que ninguém tenha lançado nada ainda |
+
+**O que NÃO conta:** dados de `seedDemo`, organizações e empresas `[DEMO]`, cadastros de exemplo, usuários
+de teste da equipe — tudo que `pnpm db:seed` refaz sozinho.
+
+**Quem decide: o Maike, por escrito, e a decisão é PONTUAL.** Nenhuma sessão automatizada declara que o dado
+continua descartável, e "ninguém disse que virou produção" não é declaração — a ausência de declaração é
+motivo para PERGUNTAR, não para prosseguir. Na dúvida sobre um item específico, o gate está de volta: o
+critério é fail-closed como o resto deste documento.
+
+**Quando a condição disparar, o que fazer**, em ordem: (1) marcar P1 como `BLOCKED` aqui e em
+`docs/DEPLOYMENT.md`; (2) executar P1.1–P1.4 abaixo, incluindo a leitura do custo no resumo da própria
+Supabase; (3) só então retomar qualquer fatia destrutiva.
+
+### O enunciado original — volta inteiro na condição de retorno
+
+Nada abaixo foi removido ou afrouxado. Está aqui para ser executado no dia em que a suspensão vencer.
 
 **O que NÃO conta como prova:** "o plano tem backup diário"; "o painel mostra um snapshot"; "o PITR está
 ligado"; um print de tela. Backup que nunca foi restaurado é hipótese, não garantia.
@@ -131,8 +194,9 @@ contraprova independente, e é uma decisão consciente, não um esquecimento.
 | **Quem apaga** | o Maike. Nenhuma sessão automatizada apaga projeto |
 | **Depois de apagar** | registrar em `docs/DEPLOYMENT.md` a data/hora da remoção e quem aprovou |
 
-**P1 = `PASS`** só com P1.3 respondido no destino restaurado e P1.4 registrado. A remoção do projeto é
-posterior ao `PASS` e **não** é condição dele.
+**Como este gate fecha, no dia em que voltar a valer:** só com P1.3 respondido no destino restaurado e
+P1.4 registrado — nunca por declaração, nunca por "o backup existe". A remoção do projeto restaurado é
+posterior a esse fechamento e **não** é condição dele. Hoje o gate não está fechado: está SUSPENSO.
 
 ### O que exatamente precisa da sua autorização
 
@@ -382,33 +446,95 @@ O que cai no vão entre os dois: DNS, handshake TLS, aquisição de conexão do 
 Nenhum timeout de banco mata um processo que ainda não chegou a emitir um comando SQL. O
 `healthcheckTimeout` de 120 s também não cobre: ele só começa a contar **depois** que o pre-deploy termina.
 
-**Consequência operacional, escrita como risco e não como bloqueio:** um pre-deploy travado não falha o
-deploy — ele o segura. A falha do pre-deploy ABORTA o deploy (isso é bom e continua valendo); o que não
-existe é quem declare a falha por tempo. Fechar esse risco é configuração de serviço, ação humana, em
-outra janela — **não** é feito por esta fatia e **não** foi feito aqui.
+**Consequência operacional:** um pre-deploy travado não falha o deploy — ele o segura. A falha do
+pre-deploy ABORTA o deploy (isso é bom e continua valendo); o que não existe é quem declare a falha por
+tempo. Fechar esse risco é configuração de serviço, ação humana, em outra janela — **não** é feito por esta
+fatia e **não** foi feito aqui.
 
-### Um risco que U1 encosta e nenhuma das cinco perguntas cobria
+#### U4 é `OPERATIONAL MERGE BLOCKER` da 05C-1
 
-`migrate()` **não tem trava de concorrência**: não há advisory lock nem equivalente. Se dois pre-deploys
-rodarem sobrepostos — retentativa por restart policy, redeploy disparado em cima de outro — os dois leem o
-ledger, os dois veem a `0017` como pendente, e os dois tentam aplicá-la. O segundo falha, porque a purga
-não é idempotente em SQL puro (`drop column` de coluna que já sumiu erra), e a transação inteira volta
-atrás; o dano previsível é deploy vermelho, não banco corrompido. Mas isso é raciocínio, não medição: **não
-existe teste, aqui nem em lugar nenhum do repositório, que exercite duas execuções simultâneas do runner.**
+O fato não mudou; o que mudou foi quem o liga. **Merge em `main` dispara deploy automático** (Railway e
+Vercel implantam a partir de `main`), e o deploy da API roda o pre-deploy, que é onde a `0017` executa.
+Então não existe "mesclar agora e decidir o deploy depois": o merge É a decisão de deploy. Com
+`preDeployTimeoutSeconds` vazio, um pre-deploy que trave segura o deploy indefinidamente, e nenhum teto
+interno alcança isso (tabela acima).
 
-Fica registrado como risco nomeado, com dois caminhos possíveis para a 05C-1 — nenhum deles feito aqui:
-`select pg_try_advisory_xact_lock(<chave fixa>)` como primeiro comando da migration, abortando se não
-obtiver; ou a mesma trava no próprio `migrate()`, o que é mudança de plataforma e pede fatia própria.
+Por isso o rótulo passou de "risco declarado" para **bloqueador de merge**:
+
+| | |
+| --- | --- |
+| **O que bloqueia** | liberar a PR da 05C-1 para merge |
+| **O que NÃO bloqueia** | escrever a fatia, rodar os gates em laboratório, revisar o diff, manter a PR em DRAFT |
+| **Como sai** | valor medido no campo *Pre-Deploy Timeout* do serviço `api`, ou contenção equivalente aceita por escrito |
+| **Quem executa** | o Maike, no painel do Railway. **Esta fatia não altera nada no Railway** |
+
+**O valor recomendado não está escrito aqui, de propósito.** Propor um número sem medir é repetir o erro do
+custo do P1 (decisão 124): um teto chutado baixo derruba deploy legítimo, e um chutado alto não é teto.
+O número tem de vir da medição da própria `0017` — quanto tempo o pre-deploy leva de ponta a ponta, com
+margem para DNS, handshake, pool e `seedPermissions`, que ficam fora de qualquer teto de SQL. Esta linha
+fica preparada para receber esse valor, do agente que mede:
+
+| Origem da medição | Tempo medido do pre-deploy | Teto proposto | Registrado por |
+| --- | --- | --- | --- |
+| `node apps/api/dist/migrate.js` contra banco na `0016`, aplicando a `0017` — 5 execuções, laboratório local | **451–476 ms** (mediana 460 ms) | **300 s** | PRE-BASE2-05C-1 |
+| o mesmo comando sem nada pendente (controle) | **381 ms** | — | PRE-BASE2-05C-1 |
+
+**Quatro coisas diferentes, que não podem ser lidas como uma só:**
+
+1. **Tempo NORMAL medido** — 451–476 ms (mediana 460 ms) aplicando a `0017`, 381 ms sem nada pendente.
+   É uma medição de laboratório local, não uma promessa sobre produção.
+2. **`lock_timeout` = 2 s** — teto POR COMANDO dentro da migration. Não é teto da janela nem da transação.
+3. **Não existe teto da transação nem da janela SQL.** Em lugar nenhum. O pior caso teórico é 2 s × número
+   de comandos que esperam, e são cerca de 170 comandos — todos com `ACCESS EXCLUSIVE` retido.
+4. **Não existe teto EXTERNO hoje:** `preDeployTimeoutSeconds = null`.
+
+**Por que 300 s, e não um número colado no tempo medido.** O teto não existe para caber na execução
+normal: existe para matar a execução que TRAVOU — é **contenção operacional, não promessa de duração**.
+O que ele precisa cobrir, com folga, é a soma de (a) o pior caso de disputa do item 3 acima;
+(b) a diferença entre o laboratório e a produção, que é cross-region (Railway `iad` → Supabase `sa-east-1`)
+e tem muito mais dado; (c) `seedPermissions`, que roda em todo deploy; (d) a validação do CHECK canônico,
+o único trabalho da janela que cresce com dado — medido em ~120 ms por milhão de linhas de
+`erp.equipment_transfers`, o que mesmo com dez milhões de linhas continua na casa do segundo.
+300 s é ~650× a medição normal e continua sendo uma fração do que hoje é **infinito**.
+
+**Se preferir mais apertado:** 120 s ainda é ~260× a medição e alinha com o `statement_timeout` do
+servidor. Abaixo disso o risco deixa de ser "matar o travado" e passa a ser "matar o lento".
+
+**NÃO APLIQUEI.** Alterar configuração de serviço é ação humana, em outra janela, e esta fatia não pediu
+essa autorização.
+
+### Um risco que U1 encosta e nenhuma das cinco perguntas cobria — FECHADO NA MIGRATION
+
+`migrate()` **continua sem trava de concorrência**: não há advisory lock nem equivalente no runner. Se dois
+pre-deploys rodarem sobrepostos — retentativa por restart policy, redeploy disparado em cima de outro — os
+dois leem o ledger, os dois veem a `0017` como pendente, e os dois tentam aplicá-la.
+
+O que mudou é que **a `0017` passou a se defender sozinha**: o primeiro comando do arquivo é
+`pg_try_advisory_xact_lock(2026, 51)`, e a migration ABORTA com `55P03` se a trava já estiver com outra
+transação. A trava é transacional (sai no commit ou no rollback, sem caminho de vazamento) e usa o espaço de
+DOIS inteiros, distinto do `pg_advisory_xact_lock(bigint)` da rota de notificações — não há colisão possível
+entre os dois. O caminho alternativo (trava dentro do `migrate()`) **não** foi tomado: é mudança de
+plataforma, vale para toda migration e pede fatia própria.
+
+Escopo honesto do que isso fecha: protege a `0017` de si mesma, **não** as outras dezesseis migrations, que
+seguem sem trava. E o risco residual continua sendo deploy vermelho, nunca banco pela metade — a transação
+inteira volta atrás.
 
 ### O gate que este veredito cria na 05C-1
 
-**G-U5, obrigatório — e ele ainda NÃO rodou.** Enquanto não rodar, a reclassificação de U1, U2, U3 e U5
-para NON-BLOCKING é derivação, não fato consumado. O binário da BASE (o commit da API em produção no
-momento do deploy) tem de subir e servir contra um banco com a `0017` **aplicada**, provando boot sem erro,
-login, uma leitura escopada por empresa, uma gravação com conferência de ROW COUNT — e `seedPermissions`
-completo, que hoje só tem medição manual. Enquanto esse gate não rodar, a compatibilidade do
-runtime anterior é derivação, não fato. Ele roda em banco descartável: não exige produção nem custo.
-Forma sugerida: estender `packages/db/test/upgrade-rollback.test.ts`, que já atravessa a janela estrutural.
+**G-U5, obrigatório. O instrumento já existe; o que vale é a EXECUÇÃO registrada.** O binário da BASE
+(o commit da API em produção no momento do deploy) tem de subir e servir contra um banco com a `0017`
+**aplicada**, provando boot sem erro, login, uma leitura escopada por empresa, uma gravação com conferência
+de ROW COUNT — e `seedPermissions` completo, que antes desta fatia só tinha medição manual. Ele roda em
+banco descartável: não exige produção nem custo.
+
+Nesta fatia o gate virou `scripts/gate-purga-0017-runtime-anterior.mjs`, e não um teste em
+`packages/db/test/`: o sujeito é o **binário** de `apps/api` (dist compilado), e um teste em `packages/db`
+faria o pacote de baixo depender do artefato de build do pacote de cima — inversão de camada que
+`.claude/rules/architecture.md` proíbe. O próprio script explica as três razões no cabeçalho.
+
+Enquanto a execução não estiver registrada na PR, a reclassificação de U1, U2, U3 e U5 para NON-BLOCKING
+continua sendo derivação, não fato consumado — e existir não é rodar.
 
 **O que já é fato, e não muda com o painel:**
 
@@ -430,9 +556,48 @@ locks com `lock table ... in access exclusive mode nowait` antes de qualquer DDL
 lock_timeout` curto como rede de segurança. Nunca fragmentada, nunca com `commit` no corpo do arquivo,
 nunca com `create index concurrently` (proibido dentro de transação) e nunca com `cascade`.
 
-Por que: a purga inteira, dentro de uma transação, tem janela de `ACCESS EXCLUSIVE` de **mediana ~71 ms**
-(medida por uma segunda pessoa, n=7; 98 ms num banco com 500 000 linhas). O `lock table` nomeia 54
-relações — 49 tabelas + 5 views — e trava 55, porque a view `erp.farms` arrasta `erp.empresas` junto.
+**A política deixou de ser plano: é o arquivo.** `supabase/migrations/0017_purge_farm_legacy.sql` implementa
+os quatro itens — trava de concorrência (item 1), `set local lock_timeout = '2s'` (item 3), `lock table …
+in access exclusive mode nowait` sobre 55 relações em ordem alfabética (item 4) e nenhum `commit`,
+`concurrently` ou `cascade` no corpo. Conferir é ler o arquivo; ele nomeia cada objeto que remove.
+
+Por que, agora medido sobre a `0017` VERSIONADA — e não mais sobre o rascunho que a decisão 122 usava:
+
+| Acervo no banco | Transação inteira | **Janela de `ACCESS EXCLUSIVE`** |
+| --- | --- | --- |
+| vazio (só o schema) | 148 ms | **117 ms** |
+| 2 000 000 de linhas | 597 ms | **118 ms** |
+| 6 000 000 de linhas | 1463 ms | **106 ms** |
+
+A leitura importante é a diferença entre as duas colunas. A TRANSAÇÃO escala com o acervo, porque a
+conferência par a par varre tabela inteira 52 vezes. A JANELA não acompanha essa conferência — fica plana em
+torno de 110 ms — porque ela foi deliberadamente posta ANTES do `lock table` (item 2 da migration). É o que
+separa "a purga demora mais em quem tem mais dado" de "a purga BLOQUEIA mais em quem tem mais dado": só a
+primeira é aceitável. A medição anterior, de mediana ~71 ms, era de um rascunho não versionado e de um banco
+pequeno; foi substituída por esta, que é reproduzível contra o arquivo que está no repositório.
+
+**E aqui vale ser exato sobre o que essa tabela NÃO prova.** O volume acima foi montado em
+`erp.dfe_documents`. Ela mede a conferência do acervo, que saiu da janela — e só isso. Dizer a partir dela
+que "a janela não escala com o acervo" seria generalizar além da evidência, porque sobrou UM trabalho
+proporcional a dado DENTRO da janela: o `add constraint … check` do item 6 valida a
+`erp.equipment_transfers` inteira, e essa tabela é variável. Medido, com carga na PRÓPRIA
+`equipment_transfers` (mesmo método, mesmo arquivo versionado):
+
+| Linhas em `erp.equipment_transfers` | Transação inteira | **Janela de `ACCESS EXCLUSIVE`** |
+| --- | --- | --- |
+| 0 | 166,5 ms | **141,7 ms** |
+| 200 000 | 295,3 ms | **142,9 ms** |
+| 1 000 000 | 848,4 ms | **261,2 ms** |
+
+Ou seja: a janela **escala com `erp.equipment_transfers`**, na ordem de ~120 ms por milhão de linhas, e não
+escala com o resto do acervo. A afirmação correta é essa, e não a versão universal. Hoje a tabela é
+pequena em produção; se um dia não for, é ELA — e nenhuma outra — que decide o tamanho da janela, e a
+conta acima é o que se deve refazer antes da janela operacional.
+
+O `lock table` da `0017` nomeia **55**
+relações: as 49 tabelas de escopo, as 5 views de nome antigo e `erp.empresas` — esta última nomeada de
+propósito, porque a view `erp.farms` a arrastaria junto de qualquer jeito e lock implícito não tem ordem
+declarada. (A decisão 118 falava em "nomeia 54, trava 55", descrevendo o plano antes do arquivo existir.)
 O custo nunca é o trabalho: é a espera. Com `lock_timeout = 0`, que é o valor de produção hoje, a mesma
 purga esperou **120 s** atrás de uma conexão ociosa, morreu em `57014` sem remover nada, e prendeu um
 leitor inocente — de uma tabela sem contenção nenhuma — por **117 s**.
@@ -452,7 +617,7 @@ purga então **passa** pelo `lock table`, reescreve a policy, derruba os 52 gati
 Duas consequências, as duas obrigatórias:
 
 1. **`set local lock_timeout = '2s'` no topo da migration não é rede, é requisito — e não é teto de
-   janela.** Com ele, CADA espera por lock morre em 2 s, com `57014`, rollback total e ledger limpo
+   janela.** *(Implementado: `0017`, item 3.)* Com ele, CADA espera por lock morre em 2 s, com `57014`, rollback total e ledger limpo
    (medido). Sem ele, uma única espera já vira 120 s de indisponibilidade. Mas `lock_timeout` é **por
    comando**, não por transação: a purga adquire mais de trezentos locks de objeto DEPOIS do `lock table`,
    e o pior caso teórico é 2 s × número de comandos que esperam, todo ele com `ACCESS EXCLUSIVE` retido
@@ -580,8 +745,13 @@ está limpo.
 nada segurando o estado: qualquer sessão pode abrir um `comment on function` no segundo seguinte. Por isso
 o resultado vale por poucos minutos — se o deploy não sair logo, releia. O intertravamento de verdade só
 existiria DENTRO da migration, relendo este mesmo critério como primeiro comando da transação e abortando
-se houver linha `BLOQUEIA`. Isso é desenho da 05C-1, e está anotado aqui como requisito dela, não como algo
-que este documento resolve.
+se houver linha `BLOQUEIA`.
+
+**A `0017` NÃO faz isso, e é importante não confundir as duas travas.** O que ela adquire é
+`pg_try_advisory_xact_lock(2026, 51)`, que protege a purga de **outra execução da própria purga** — nada
+mais. Contra DDL concorrente de terceiros sobre objeto de `erp`, o que existe continua sendo o `nowait`
+(que não enxerga lock de objeto de catálogo) e **este porteiro, lido por gente, minutos antes**. O porteiro
+segue obrigatório; ele não foi substituído por nada.
 
 **Validação executada**, em banco descartável local com o schema real (181 tabelas em `erp`, as 3 funções
 de sincronização e os 52 gatilhos presentes). Cada cenário foi montado e as DUAS consultas rodaram sobre o
@@ -644,6 +814,19 @@ que a aplicação já escreve na coluna canônica.
 
 ## Depois dos cinco
 
-Com P1, P5, P6, P7 **e G-U5** em `PASS`, a 05C-1 passa a ser uma fatia normal: branch própria, PR DRAFT, revisão,
-merge manual. **Nenhuma sessão automatizada autoriza a fatia** — a autorização é do Maike, por escrito,
-depois de olhar esta página inteira.
+Com P5, P6, P7 **e G-U5** em `PASS`, e **P1** suspenso pela declaração de pré-produção (ou executado, se a
+condição de retorno já tiver disparado), a 05C-1 passa a ser uma fatia normal: branch própria, PR DRAFT,
+revisão, merge manual. **Nenhuma sessão automatizada autoriza a fatia** — a autorização é do Maike, por
+escrito, depois de olhar esta página inteira.
+
+**E ainda assim falta U4.** Os gates acima dizem que a fatia pode ser APLICADA com segurança; U4 é sobre
+COMO ela chega em produção. Enquanto o pre-deploy não tiver teto, o merge — que dispara o deploy sozinho —
+fica bloqueado. São perguntas diferentes, e é por isso que U4 tem linha própria na matriz: um bloqueador
+que só aparecesse na prosa seria lido como observação, e a decisão 128 já custou essa lição uma vez.
+
+## O que esta fatia (05C-1) entrega, e o que ela não resolve
+
+A migration `0017` existe e foi provada aplicando em base zero. Isso NÃO move nenhuma linha da matriz:
+gate é sobre produção e sobre execução, e um arquivo que aplica em laboratório é pré-requisito, não prova
+de largada. O inventário da fatia e a ordem de remoção estão em `docs/PRE-BASE2-05-APOSENTADORIA.md`; o
+procedimento de recuperação, em `docs/DEPLOYMENT.md`.

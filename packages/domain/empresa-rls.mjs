@@ -102,7 +102,7 @@ export const EXCECOES_RLS_EMPRESA = {
   bank_account_empresas: { categoria: "E", protecao: filhoDe("erp.bank_accounts", "bank_account_id"), motivo: "Mesmo caso de authorizer_empresas: vínculo de abrangência de um cadastro de organização.", protegidaPor: "política api_child + bank_accounts.edit" },
   // A ÚNICA cujo vínculo é uma coluna LEGADA: a 05C-1 troca `farm_id` por `empresa_id` aqui e nesta linha,
   // no mesmo commit. Mudar só um dos dois reprova — é esse o ponto de declarar a coluna.
-  empresa_cost_centers: { categoria: "E", protecao: filhoDe("erp.empresas", "farm_id"), motivo: "Mesmo caso: diz em quais empresas o centro de custo se aplica.", protegidaPor: "política api_child + cost_centers.edit" },
+  empresa_cost_centers: { categoria: "E", protecao: filhoDe("erp.empresas", "empresa_id"), motivo: "Mesmo caso: diz em quais empresas o centro de custo se aplica.", protegidaPor: "política api_child + cost_centers.edit" },
   proprietary_empresas: { categoria: "E", protecao: filhoDe("erp.people", "person_id"), motivo: "Mesmo caso: abrangência do proprietário.", protegidaPor: "política api_child + proprietaries.edit" }
 };
 
