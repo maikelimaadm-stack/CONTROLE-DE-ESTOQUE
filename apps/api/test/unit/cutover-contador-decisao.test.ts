@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 // @ts-expect-error — harness de rollout em JS puro, fora do grafo de tipos da API
-import { BASE_DE_ORIGEM, CAMINHO_CONSTANTE, MIGRATION_CUTOVER, constanteNoTexto, constanteNaArvore, decidir, shaDoRef } from "../../../../scripts/lib/cutover-contador.mjs";
+import { BASE_DE_ORIGEM, CAMINHO_CONSTANTE, MIGRATION_CUTOVER, constanteNoTexto, constanteNaArvore, decidir } from "../../../../scripts/lib/cutover-contador.mjs";
 
 /**
  * A EXCEÇÃO DE VERSION SKEW DA 05C-2 TEM DE EXPIRAR SOZINHA (PRE-BASE2-05C-2).
@@ -104,10 +104,15 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     expect(importado, "o gate não importa mais a constante de proveniência — ela não é base de nada")
       .not.toMatch(/BASE_DE_ORIGEM/);
 
-    // E o degrau que sobra é resolúvel de verdade ou é `null` — e `null` faz o gate abortar.
-    expect(shaDoRef("origin/main", RAIZ), "a ponta de origin/main é resolvível").toMatch(/^[0-9a-f]{40}$/);
-    expect(shaDoRef("origin/ref-que-nao-existe-jamais", RAIZ),
-      "ref inexistente devolve null, e é isso que vira a recusa do gate").toBeNull();
+    // E o caminho que sobra é resolver ou ABORTAR — nunca devolver um literal.
+    const corpo = gate.slice(gate.indexOf("function baseDaExecucao"), gate.indexOf("const migrations ="));
+    expect(corpo, "o degrau final é `throw`, não um valor de reserva").toMatch(/throw new Error/);
+    expect(corpo, "e a resolução real passa por shaDoRef").toMatch(/shaDoRef\(/);
+
+    // Este caso é OFFLINE de propósito: o comportamento de `shaDoRef` contra o remoto depende de rede e de
+    // quanto histórico o clone tem, e uma asserção dessas num teste unitário é verde na máquina e vermelha
+    // no CI — o erro que esta própria fatia já cometeu duas vezes. Quem exercita a resolução DE VERDADE é
+    // `pnpm gate:05c2`, no job de integração: ele resolve a base ou sai 1, então o job passar já é a prova.
   });
 
   it("o SHA de proveniência é um SHA completo — e quem o VALIDA contra o repositório é o gate, não este teste", () => {
