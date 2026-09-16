@@ -126,6 +126,65 @@ describe("a 0018 é fail-closed", () => {
     expect(r.ok ? "" : r.erro).toMatch(/code_sequences/i);
   });
 
+  it("RECUSA quando o papel que aplica NÃO tem bypass de RLS — senão ela atravessa VAZIA e mente no ledger", async () => {
+    // O DEFEITO QUE ESTE CASO TRANCA, medido antes da guarda existir: aplicada por um papel sem bypass,
+    // a 0018 COMMITAVA `{ok:true}`, o ledger registrava `0018`, e `farm=3` continuava de pé. Nada se
+    // movia e nada reclamava — e depois disso o binário HEAD reiniciaria a numeração em 1 sobre o acervo.
+    //
+    // Por que NENHUM outro caso desta suíte pega isso: `setup.ts` conecta como `postgres`, que é
+    // superusuário e portanto ignora RLS. As outras nove provas rodam num mundo onde o defeito é
+    // invisível por construção. É preciso um papel de verdade, sem bypass, para que ele apareça.
+    //
+    // O mecanismo: `0007_rls.sql:62` aplica `force row level security` em toda tabela de `erp` (vale até
+    // para o DONO da tabela), e `tenant_isolation` é `to erp_app, authenticated`. Um papel fora dessas
+    // roles e sem bypass lê ZERO linha — e com zero linha toda conferência da migration passa vazia.
+    const PAPEL = "mig_sem_bypass_0018";
+    const SENHA = "mig_sem_bypass_0018";
+    await db.query(`drop owned by ${PAPEL} cascade`).catch(() => {});
+    await db.query(`drop role if exists ${PAPEL}`).catch(() => {});
+    await db.query(`create role ${PAPEL} login nosuperuser nobypassrls password '${SENHA}'`);
+    // De propósito GENEROSO nos privilégios: assim o único motivo possível de recusa é a guarda de
+    // visibilidade. Um teste que passasse por "permission denied" provaria outra coisa.
+    await db.query(`grant usage on schema erp to ${PAPEL}`);
+    await db.query(`grant all on all tables in schema erp to ${PAPEL}`);
+    await db.query(`grant execute on all functions in schema erp to ${PAPEL}`);
+    await db.query(`grant all on public.erp_migrations to ${PAPEL}`);
+
+    await empresaComCodigo(db, ORG, 1, "[TEST] rls1");
+    await empresaComCodigo(db, ORG, 2, "[TEST] rls2");
+    await contador(db, ORG, LEGADA, 2);
+    const foto = await fotoDoContador(db);
+
+    const url = new URL(TEST_URL);
+    url.username = PAPEL;
+    url.password = SENHA;
+    const fraco = createPool(url.toString(), { max: 2 });
+    try {
+      // A premissa do caso, provada e não suposta: este papel realmente não enxerga o acervo.
+      const visiveis = Number((await fraco.query<{ n: string }>(
+        "select count(*)::text n from erp.code_sequences")).rows[0]!.n);
+      expect(visiveis, "o papel fraco tem de estar CEGO — sem isso o caso não prova nada").toBe(0);
+
+      const r = await aplicarCutover(fraco);
+      expect(r.ok, "a migration tinha de ABORTAR para um papel que não enxerga o acervo").toBe(false);
+      const erro = r.ok ? "" : r.erro;
+      expect(erro, "e a mensagem NOMEIA o papel e o motivo").toMatch(/bypass de RLS/i);
+      expect(erro, "publicar o NOME do papel é o que o operador precisa").toContain(PAPEL);
+    } finally {
+      await fraco.end();
+    }
+
+    // As duas metades que transformam "abortou" em "não fez estrago": estado intacto e ledger limpo.
+    expect(await fotoDoContador(db), "o contador não pode ter se mexido").toEqual(foto);
+    expect(await linhasDaEntidade(db, LEGADA), "a chave legada continua exatamente onde estava").toBe(1);
+    const ledger = Number((await db.query<{ n: string }>(
+      "select count(*)::text n from public.erp_migrations where name like '0018%'")).rows[0]!.n);
+    expect(ledger, "e o ledger NÃO pode registrar um cutover que não aconteceu").toBe(0);
+
+    await db.query(`drop owned by ${PAPEL} cascade`).catch(() => {});
+    await db.query(`drop role if exists ${PAPEL}`).catch(() => {});
+  });
+
   it("ACEITA o caminho feliz — a premissa de todos os casos acima", async () => {
     // Sem este caso, um erro qualquer na montagem faria os oito testes acima "passarem" por motivo errado.
     await empresaComCodigo(db, ORG, 1, "[TEST] ok1");

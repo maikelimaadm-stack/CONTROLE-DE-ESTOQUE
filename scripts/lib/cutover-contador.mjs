@@ -98,6 +98,26 @@ export function constanteNoCommit(sha, cwd = process.cwd()) {
   return constanteNoTexto(texto);
 }
 
+/**
+ * `<ref>` -> SHA, buscando do remoto quando o clone é raso. `null` quando o ref não existe.
+ *
+ * `origin/main` é o nome do ref de RASTREIO local; no remoto ele se chama `main`, e num clone raso o ref
+ * de rastreio pode simplesmente não existir. É a mesma lição de `api-anterior.mjs`, e a razão de existir
+ * aqui é fechar um fail-open concreto: sem isto, quem chama não conseguia resolver a base no CI e caía
+ * num SHA literal congelado, que compara a PR com o passado em vez de com a base dela.
+ *
+ * Recebe o ref por argumento — nada aqui lê ambiente, e o teste da decisão cobra isso do módulo inteiro.
+ */
+export function shaDoRef(ref, cwd) {
+  const git = (...a) => execFileSync("git", a, { cwd, encoding: "utf8" }).trim();
+  try { return git("rev-parse", "--verify", `${ref}^{commit}`); } catch { /* clone raso ou ref ausente */ }
+  try {
+    execFileSync("git", ["fetch", "--depth=1", "origin", String(ref).replace(/^origin\//, "")],
+      { cwd, stdio: "ignore" });
+    return git("rev-parse", "--verify", "FETCH_HEAD^{commit}");
+  } catch { return null; }
+}
+
 /** A migration do cutover existe nesta árvore? */
 export function temMigrationDoCutover(raiz) {
   return existsSync(join(raiz, "supabase/migrations", MIGRATION_CUTOVER));

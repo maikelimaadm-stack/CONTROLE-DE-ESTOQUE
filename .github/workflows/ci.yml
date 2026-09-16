@@ -34,6 +34,13 @@ jobs:
   integration:
     name: Migrations · RLS · API integration
     runs-on: ubuntu-latest
+    env:
+      # A BASE DESTA EXECUÇÃO, para o gate 05C-2 — mesma razão e mesma fonte do job `skew`:
+      # `pull_request.base.sha` é o SHA da base CAPTURADO para esta execução, então ele não muda se outra
+      # PR entrar na main no meio do job. Num evento de `push` a expressão vem VAZIA, e aí o gate resolve
+      # a ponta real de `origin/main` sozinho (buscando-a, porque o checkout é raso). O que ele NÃO faz
+      # mais é cair num SHA literal: um gate ancorado em literal congelado mede o passado, não a PR.
+      SKEW_BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
     services:
       postgres:
         image: postgres:16

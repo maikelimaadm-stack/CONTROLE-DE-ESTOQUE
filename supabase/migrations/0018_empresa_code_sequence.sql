@@ -37,6 +37,77 @@
 
 
 -- ---------------------------------------------------------------------------------------------------
+-- 0. VISIBILIDADE — esta migration precisa ENXERGAR o acervo, e isso NÃO é automático
+-- ---------------------------------------------------------------------------------------------------
+-- O DEFEITO QUE ESTA SEÇÃO EXISTE PARA IMPEDIR, medido antes de ela existir: aplicada por um papel sem
+-- bypass de RLS, a 0018 COMMITAVA com sucesso, o runner gravava `0018` no ledger, e a chave `'farm'`
+-- continuava fisicamente de pé. Nada se movia, e nada reclamava.
+--
+-- O mecanismo é a soma de duas coisas que, isoladas, são corretas. `0007_rls.sql:62` aplica
+-- `force row level security` a TODA tabela do schema `erp` — inclusive para o dono da tabela. E a
+-- política `tenant_isolation` é `to erp_app, authenticated` com `erp.tenant_visible(organization_id)`,
+-- que é falso sem a GUC de tenant. Logo, um papel fora dessas roles e sem bypass enxerga ZERO linha em
+-- `erp.code_sequences` e em `erp.empresas`.
+--
+-- Com zero linha, TODA conferência desta migration passa por VACUIDADE, e é isso que a torna perigosa:
+-- a 5.1 conta 0 contadores canônicos; a 5.2 faz `except` entre dois conjuntos vazios; 5.3 e 5.4 contam
+-- 0; na seção 6 `antes` = `{}` = `depois`, o `update` casa 0 linhas e `movidas` = `esperadas` = 0, de
+-- modo que nenhuma das TRÊS comparações de preservação dispara; e a pós-condição 7.1 lê "0 linhas
+-- 'farm'" porque não vê nenhuma. A aritmética da seção 6 é AUTO-REFERENTE — `esperadas` nasce da mesma
+-- leitura filtrada que alimenta o `update` —, então nenhuma asserção daqui é absoluta quanto a o
+-- cutover ter feito alguma coisa. É o "verde que não prova nada" do CLAUDE.md na forma literal: zero
+-- linhas, zero organizações, asserção vazia, tudo aprovado.
+--
+-- E a consequência é a pior possível, porque é SILENCIOSA E COM REGISTRO DE SUCESSO: a precondição A3
+-- do runbook passa a ler "já aplicada", o binário HEAD entra com `SEQUENCIA_EMPRESA = 'empresa'`,
+-- `next_code(org,'empresa')` não acha linha, REINICIA EM 1 sobre um acervo já numerado, e o cadastro de
+-- Empresa morre no `unique (organization_id, code)` — exatamente o defeito que esta fatia existe para
+-- eliminar, agora com o ledger jurando que o cutover aconteceu.
+--
+-- SÃO DUAS GUARDAS, e elas provam coisas diferentes:
+--
+--   (a) o preflight de papel NOMEIA o problema antes de qualquer lock. Sem ele o operador receberia um
+--       `42501` críptico lá na seção 5 e teria de deduzir a causa. O repositório já usa este preflight
+--       em outro lugar, pelo mesmo motivo: `docs/DEPLOYMENT.md:358` o exige para o backfill de ID
+--       Global, porque `DATABASE_URL` conecta como `erp_app`, sem bypass.
+--   (b) `row_security = off` é a garantia MECÂNICA, e é ela que fecha o buraco de verdade: a partir
+--       daqui, QUALQUER consulta que fosse filtrada por RLS levanta erro em vez de devolver menos
+--       linhas. Não depende de eu ter previsto quais tabelas e quais políticas existirão amanhã.
+--
+-- Por que (b) não basta sozinha e (a) também não: (a) confere um ATRIBUTO DO PAPEL, que é um proxy —
+-- (b) confere a CONDIÇÃO REAL, linha a linha. Um papel com bypass mas com a leitura restrita por outro
+-- caminho passaria em (a) e seria pego por (b).
+--
+-- O que esta seção deliberadamente NÃO faz: exigir que o acervo seja não-vazio. Banco recém-criado tem
+-- zero Empresa e zero contador legitimamente, e `cutover-0018-fresh.test.ts` cobre esse caso. A
+-- distinção que importa é entre VAZIO DE VERDADE (legítimo, atravessa) e INVISÍVEL (defeito, aborta) —
+-- e é exatamente essa a linha que `row_security = off` traça.
+--
+-- Por que é a seção 0 e não a 1: é leitura de catálogo, não custa lock nenhum e decide se o resto faz
+-- sentido. Falhar aqui é falhar antes de disputar a trava da seção 1 com quem quer que seja.
+do $$
+declare
+  papel text := current_user;
+  enxerga_tudo boolean;
+begin
+  select rolsuper or rolbypassrls into enxerga_tudo from pg_roles where rolname = current_user;
+  if not coalesce(enxerga_tudo, false) then
+    -- O NOME DO PAPEL é publicável e é o que o operador precisa (`.claude/rules/security.md`); DSN,
+    -- host e senha não aparecem aqui nem em lugar nenhum.
+    raise exception 'PRE-BASE2-05C-2: o papel "%" nao tem bypass de RLS (rolsuper/rolbypassrls) e '
+                    'enxergaria ZERO linha sob force row level security, fazendo esta migration passar '
+                    'por vacuidade sem mover nada. Aplique o cutover pelo papel de migracao. '
+                    'Nada foi aplicado.', papel
+      using errcode = '42501';
+  end if;
+end $$;
+
+-- A rede mecânica. Para papel com bypass isto é no-op (a RLS já não se aplicava); para qualquer outro,
+-- transforma "ver menos linhas" em ERRO. É o oposto exato do modo de falhar descrito acima.
+set local row_security = off;
+
+
+-- ---------------------------------------------------------------------------------------------------
 -- 1. TRAVA DE CONCORRÊNCIA DA FATIA
 -- ---------------------------------------------------------------------------------------------------
 -- O runner não tem trava própria: dois pre-deploys sobrepostos (retentativa por restart policy, redeploy

@@ -12,13 +12,19 @@
  *   Q1  runtime BASE  + banco PRÉ-0018   → COMPATÍVEL   (o mundo de hoje, antes do merge)
  *   Q2  runtime HEAD  + banco PÓS-0018   → COMPATÍVEL   (o mundo de amanhã, depois do cutover)
  *   Q3  runtime BASE  + banco PÓS-0018   → PROIBIDO     (a migration passou, o binário não trocou)
+ *   Q3b o MESMO Q3 numa organização SEM Empresa → PROIBIDO E SILENCIOSO
  *   Q4  runtime HEAD  + banco PRÉ-0018   → PROIBIDO     (o binário trocou, a migration não passou)
  *
- * Em Q3 e Q4 o sintoma é o MESMO e é silencioso, que é o que o torna perigoso: `erp.next_code` faz
- * `insert ... on conflict do update`, então uma chave que não existe não produz erro — ela devolve 1. O
- * gate não se contenta em ver o 1: ele tenta GRAVAR a Empresa com o número devolvido e mostra a colisão
- * no `unique (organization_id, code)`. É a diferença entre "o contador reiniciou" e "o usuário levou um
- * erro no cadastro", e é a segunda que descreve o que acontece em produção.
+ * A raiz dos dois proibidos é a mesma: `erp.next_code` faz `insert ... on conflict do update`, então uma
+ * chave que não existe não produz erro — ela devolve 1. O gate não se contenta em ver o 1: ele tenta
+ * GRAVAR a Empresa com o número devolvido, porque é a gravação que descreve o que o usuário vive.
+ *
+ * MAS O SINTOMA NÃO É SEMPRE O MESMO, e é por isso que Q3b existe separado. Com acervo, o reinício em 1
+ * esbarra no `unique (organization_id, code)` e ALGUÉM VÊ um erro. Numa organização que ainda não tem
+ * Empresa nenhuma não há com o que colidir: o binário antigo grava o 1 COM SUCESSO e ressuscita a chave
+ * legada — sem erro, sem log, sem sintoma —, e o estrago só aparece adiante, com os dois contadores já
+ * divergidos. Contar só a metade barulhenta seria contar a metade que dá menos medo: a variante muda o
+ * argumento do runbook de "apareceria um erro" para "pode não aparecer nada".
  *
  * COMO ELE EXPIRA SOZINHO
  * -----------------------
@@ -35,12 +41,11 @@
  * o outro.
  */
 import { readFileSync, readdirSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  BASE_DE_ORIGEM, MIGRATION_CUTOVER, constanteNaArvore, constanteNoCommit, decidir,
+  MIGRATION_CUTOVER, constanteNaArvore, constanteNoCommit, decidir, shaDoRef,
 } from "./lib/cutover-contador.mjs";
 
 const RAIZ = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -59,15 +64,38 @@ const passo = (m) => console.log(`\n${m}`);
 const falhas = [];
 const exigir = (cond, m) => { if (cond) ok(m); else { falhas.push(m); console.log(`  ✗ ${m}`); } };
 
-/** A base desta execução: a do CI quando existe, senão a fusão com `origin/main`, senão a de origem. */
+/**
+ * A BASE DESTA EXECUÇÃO — e por que ela NUNCA cai num SHA literal.
+ *
+ * A versão anterior terminava em `catch { return BASE_DE_ORIGEM }`, e isso era fail-OPEN no caso exato
+ * que mais importa. `BASE_DE_ORIGEM` (602cda3) tem `SEQUENCIA_EMPRESA = 'farm'` para sempre. Logo:
+ *
+ *   • no CI, onde `origin/main` não existe em clone raso, TODA execução caía no literal e comparava a PR
+ *     com o passado congelado — de modo que a "expiração automática" que esta fatia vende nunca
+ *     aconteceria, e o gate simularia a matriz para sempre sem ninguém notar, porque continua verde;
+ *   • pior, se alguém um dia REVERTER `SEQUENCIA_EMPRESA` para `'farm'`, base (literal = 'farm') e head
+ *     ('farm') ficariam IGUAIS, `atravessa` viraria false e o gate imprimiria "APROVADO (inativo)"
+ *     exatamente na PR que reintroduz o defeito que ele existe para pegar.
+ *
+ * Um gate ancorado em literal congelado não mede a PR: mede o passado. Então a base é resolvida de
+ * verdade — `SKEW_BASE_COMMIT` quando a execução a fixa (PR), senão a ponta real de `origin/main` — e,
+ * não havendo nenhuma das duas, ABORTA. É a mesma postura do irmão `skew-cutover-contador.mjs`, que já
+ * se recusa a decidir sem base: supor "não atravessa" certifica um cenário que pode ser impossível.
+ *
+ * `BASE_DE_ORIGEM` continua existindo no módulo como PROVENIÊNCIA — e agora é só isso, de fato e não só
+ * na documentação.
+ */
 function baseDaExecucao() {
   const doCi = (process.env.SKEW_BASE_COMMIT ?? "").trim();
-  if (doCi) return doCi;
-  try {
-    return execFileSync("git", ["merge-base", "HEAD", "origin/main"], { cwd: RAIZ, encoding: "utf8" }).trim();
-  } catch {
-    return BASE_DE_ORIGEM;
-  }
+  if (doCi) return { sha: doCi, origem: "SKEW_BASE_COMMIT (fixado por esta execução)" };
+  // Sem merge-base de propósito: ele exige o GRAFO, que o clone raso do CI não tem. A ponta de
+  // `origin/main` é resolvível com um fetch de profundidade 1 e responde a pergunta certa — "este HEAD
+  // difere do que está em main agora?".
+  const daMain = shaDoRef("origin/main", RAIZ);
+  if (daMain) return { sha: daMain, origem: "origin/main (ponta atual)" };
+  throw new Error(
+    "não consegui resolver a base: não há SKEW_BASE_COMMIT e `origin/main` não é alcançável. "
+    + "Sem base não há matriz, e cair num SHA literal faria o gate medir o passado em vez desta execução.");
 }
 
 const migrations = () => readdirSync(MIGRATIONS).filter((f) => f.endsWith(".sql")).sort();
@@ -115,12 +143,13 @@ async function cadastrarEmpresa(c, org, entidade, rotulo) {
 }
 
 async function main() {
-  const base = baseDaExecucao();
+  let base;
   let constanteBase;
   try {
-    constanteBase = constanteNoCommit(base, RAIZ);
+    base = baseDaExecucao();
+    constanteBase = constanteNoCommit(base.sha, RAIZ);
   } catch (e) {
-    console.error(`\nNão consegui ler a constante do contador na base ${base}: ${e.message}`);
+    console.error(`\nNão consegui ler a constante do contador na base: ${e.message}`);
     console.error("Sem a base não há matriz: o gate REPROVA em vez de supor compatibilidade.");
     process.exit(1);
   }
@@ -128,7 +157,7 @@ async function main() {
   const d = decidir({ base: constanteBase, head: constanteHead });
 
   console.log("PRE-BASE2-05C-2 · gate da matriz de version skew do contador");
-  console.log(`base            ${base}`);
+  console.log(`base            ${base.sha} (${base.origem})`);
   console.log(`contador BASE   '${d.base}'`);
   console.log(`contador HEAD   '${d.head}'`);
   console.log(`decisão         ${d.motivo}`);
@@ -166,6 +195,29 @@ async function main() {
       "e o cadastro morre na unicidade (organization_id, code) — é o erro que o usuário veria");
     const ressuscitou = Number((await c.query("select count(*)::text n from erp.code_sequences where entity=$1", [d.base])).rows[0].n);
     exigir(ressuscitou === 1, `pior: a chave '${d.base}' foi RESSUSCITADA no banco pelo binário antigo`);
+
+    // A VARIANTE SILENCIOSA DO Q3 — e é ela que desmonta o consolo de "o erro apareceria".
+    // Acima, a organização tinha acervo (códigos 1,2,3), então o reinício em 1 esbarra na unicidade e
+    // ALGUÉM VÊ. Numa organização que ainda não tem Empresa nenhuma não há com o que colidir: o binário
+    // antigo pede o número, recebe 1, GRAVA COM SUCESSO e ressuscita a chave legada — sem erro, sem log,
+    // sem sintoma. O estrago só aparece depois, quando os dois contadores já divergiram.
+    //
+    // Sem este caso o gate contaria só a metade barulhenta da história, e a metade barulhenta é a que dá
+    // menos medo. Organização recém-criada durante a janela é exatamente o cenário desta variante.
+    passo("Q3b · a MESMA proibição sem colisão: organização ainda sem Empresa — o dano é SILENCIOSO");
+    const orgNova = (await c.query(
+      "insert into erp.organizations (name) values ('[GATE] 05C-2 sem acervo') returning id")).rows[0].id;
+    const s = await cadastrarEmpresa(c, orgNova, d.base, "[GATE] Q3b primeira");
+    exigir(s.numero === 1, `o contador devolve ${s.numero} para uma organização sem acervo`);
+    exigir(s.gravou, "e o cadastro GRAVA — nenhum erro é levantado, que é o que torna este caso pior");
+    const legadaNova = Number((await c.query(
+      "select count(*)::text n from erp.code_sequences where organization_id=$1 and entity=$2",
+      [orgNova, d.base])).rows[0].n);
+    exigir(legadaNova === 1, `e a chave '${d.base}' nasce de novo nesta organização, já pós-cutover`);
+    // E a prova de que isso é dano, não inocuidade: o runtime HEAD agora emite o MESMO 1 e colide.
+    const canonicoQ3b = await cadastrarEmpresa(c, orgNova, d.head, "[GATE] Q3b canônico");
+    exigir(canonicoQ3b.numero === 1 && !canonicoQ3b.gravou,
+      "o runtime canônico emite o mesmo 1 e o cadastro morre — os dois contadores divergiram em silêncio");
 
     passo("Q4 · runtime HEAD + banco PRÉ-0018 — PROIBIDO pelo mesmo motivo, no sentido inverso");
     await montar(c, MIGRATION_CUTOVER);

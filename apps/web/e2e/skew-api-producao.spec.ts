@@ -135,7 +135,11 @@ test("IDENTIDADE · a árvore da API é exatamente o base SHA desta execução",
  * rede preventiva. Ela precisa criar uma Empresa DE VERDADE neste sentido e outra no sentido 2, contra o
  * MESMO banco, sem reset entre eles.
  */
-test("criar Empresa pela API da BASE aloca um código novo, maior e sem repetição", async ({ page, request }) => {
+// O NOME VALE NOS DOIS RAMOS, de propósito. Este caso prova coisas OPOSTAS conforme a execução atravesse
+// ou não o cutover, e o relatório do CI mostra só o título: um nome que só descrevesse a alocação passaria
+// verde "alocando código novo" justamente na execução em que provou a RECUSA. Quem audita de fora leria o
+// contrário do que aconteceu. Qual ramo rodou sai no `console.log` de cada um.
+test("contador de Empresa pela API da BASE: aloca código novo e único — ou RECUSA, se a execução atravessa o cutover", async ({ page, request }) => {
   await login(page);
   const s = await sessao(page);
   const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };

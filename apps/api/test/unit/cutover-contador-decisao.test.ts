@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 // @ts-expect-error — harness de rollout em JS puro, fora do grafo de tipos da API
-import { BASE_DE_ORIGEM, CAMINHO_CONSTANTE, MIGRATION_CUTOVER, constanteNoTexto, constanteNaArvore, decidir } from "../../../../scripts/lib/cutover-contador.mjs";
+import { BASE_DE_ORIGEM, CAMINHO_CONSTANTE, MIGRATION_CUTOVER, constanteNoTexto, constanteNaArvore, decidir, shaDoRef } from "../../../../scripts/lib/cutover-contador.mjs";
 
 /**
  * A EXCEÇÃO DE VERSION SKEW DA 05C-2 TEM DE EXPIRAR SOZINHA (PRE-BASE2-05C-2).
@@ -48,13 +48,24 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     expect(d.atravessa).toBe(true);
   });
 
-  it("a decisão não tem nenhum interruptor de ambiente — não existe bypass genérico para reaproveitar", () => {
+  it("o MÓDULO INTEIRO da decisão não tem interruptor de ambiente — não só a função `decidir`", () => {
     const fonte = fs.readFileSync(path.join(RAIZ, "scripts/lib/cutover-contador.mjs"), "utf8");
-    // `decidir` recebe as duas constantes e só. Se alguém acrescentar um `process.env.X` que force o
-    // resultado, a exceção deixa de ser auto-expirável e vira o bypass que esta fatia não quer criar.
+
+    // POR QUE O MÓDULO INTEIRO, E NÃO SÓ `decidir`. A versão anterior deste caso lia apenas o corpo de
+    // `decidir`, e essa janela estreita é burlável de um jeito óbvio: basta plantar o atalho UMA CAMADA
+    // ACIMA. Um `if (process.env.X === "1") return "empresa";` dentro de `constanteNoTexto` faz base e
+    // head saírem iguais, `decidir` devolve `atravessa: false` sem nunca ler ambiente nenhum, e a
+    // exceção de skew se desliga — com este teste passando, porque o atalho não está onde ele olhava.
+    //
+    // Então o que se cobra é a propriedade real: NENHUMA função deste módulo lê `process.env`. As duas
+    // entradas legítimas são argumento (`decidir({base, head})`) e git (`constanteNoCommit`). Quem lê
+    // ambiente são os CHAMADORES — `gate-cutover-05c2.mjs` e `skew-cutover-contador.mjs` leem
+    // `SKEW_BASE_COMMIT` —, e é lá que isso é auditável como entrada da execução, não como gatilho
+    // escondido da decisão.
+    expect(fonte, "nenhuma função do módulo da decisão lê variável de ambiente").not.toMatch(/process\.env/);
+
     const corpoDecidir = fonte.slice(fonte.indexOf("export function decidir"));
-    expect(corpoDecidir, "a decisão não lê variável de ambiente").not.toMatch(/process\.env/);
-    expect(corpoDecidir, "nem consulta o disco").not.toMatch(/readFileSync|existsSync/);
+    expect(corpoDecidir, "e `decidir` também não consulta o disco").not.toMatch(/readFileSync|existsSync/);
   });
 
   it("a proveniência é registro, não gatilho: o SHA de origem não participa da decisão", () => {
@@ -79,6 +90,24 @@ describe("decisão da exceção de skew do cutover do contador", () => {
       "a migration do cutover está versionada").toBe(true);
     expect(fs.existsSync(path.join(RAIZ, CAMINHO_CONSTANTE)),
       "e o caminho da constante aponta para um arquivo real").toBe(true);
+  });
+
+  it("o gate resolve a base DE VERDADE e ABORTA sem ela — nunca cai no SHA de proveniência", () => {
+    // O fail-OPEN que este caso tranca: a versão anterior de `baseDaExecucao()` terminava em
+    // `catch { return BASE_DE_ORIGEM }`. Como 602cda3 tem `SEQUENCIA_EMPRESA = 'farm'` para sempre, no CI
+    // (clone raso, sem `origin/main`) TODA execução comparava a PR com o passado congelado. E, no dia em
+    // que alguém revertesse a constante para `'farm'`, base e head ficariam iguais e o gate imprimiria
+    // "APROVADO (inativo)" exatamente na PR que reintroduz o defeito. Um gate ancorado em literal mede o
+    // passado, não a execução.
+    const gate = fs.readFileSync(path.join(RAIZ, "scripts/gate-cutover-05c2.mjs"), "utf8");
+    const importado = gate.slice(0, gate.indexOf("const RAIZ"));
+    expect(importado, "o gate não importa mais a constante de proveniência — ela não é base de nada")
+      .not.toMatch(/BASE_DE_ORIGEM/);
+
+    // E o degrau que sobra é resolúvel de verdade ou é `null` — e `null` faz o gate abortar.
+    expect(shaDoRef("origin/main", RAIZ), "a ponta de origin/main é resolvível").toMatch(/^[0-9a-f]{40}$/);
+    expect(shaDoRef("origin/ref-que-nao-existe-jamais", RAIZ),
+      "ref inexistente devolve null, e é isso que vira a recusa do gate").toBeNull();
   });
 
   it("o SHA de proveniência é um SHA completo — e quem o VALIDA contra o repositório é o gate, não este teste", () => {

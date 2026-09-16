@@ -56,6 +56,20 @@ Todas verificáveis antes de tocar em qualquer coisa. Nenhuma se satisfaz por de
 | A9 | `farm.last_value >= max(empresas.code)` em toda organização | idem |
 | A10 | zero escritores e zero transações longas sobre `erp.code_sequences` / `erp.empresas` | porteiro P7 (`docs/PRE-BASE2-05C-1-PREFLIGHT.md` § P7.1) |
 | A11 | nenhuma outra migration ou deploy concorrente | Railway: nenhum deployment em curso |
+| A12 | o papel de `MIGRATE_DATABASE_URL` tem **bypass de RLS** | `select current_user, rolsuper, rolbypassrls from pg_roles where rolname = current_user` → um dos dois `true` |
+
+> **Por que A12 existe, e por que ela não é zelo.** `0007_rls.sql` aplica `force row level security` em
+> toda tabela de `erp` — o que vale inclusive para o DONO da tabela — e a política `tenant_isolation` é
+> `to erp_app, authenticated`. Um papel fora dessas roles e sem bypass enxerga **zero linha** em
+> `erp.code_sequences` e `erp.empresas`. Com zero linha, todas as conferências da 0018 passam por
+> vacuidade e ela COMMITA sem mover nada, deixando o ledger dizer que o cutover aconteceu. Medido: antes
+> da guarda existir, aplicar a 0018 por um papel `nobypassrls` devolvia sucesso, gravava `0018` no ledger
+> e mantinha `entity='farm'` de pé.
+>
+> A migration agora se recusa sozinha nesse caso (seção 0: preflight de papel + `row_security = off`), e
+> `packages/db/test/cutover-0018-fail-closed.test.ts` prova a recusa com um papel real sem bypass. A12
+> continua na lista mesmo assim porque **descobrir isso no pre-deploy é tarde**: a janela já estaria
+> aberta e o serviço já parado. Confira antes de começar, não durante.
 
 **A-SQL — leitura, roda no SQL Editor, cobre A3 e A7 a A9 de uma vez:**
 
@@ -83,9 +97,21 @@ o runbook não substitui o fail-closed, ele evita chegar nele.
 
 > **A5 não é herança da 05C-1.** O `preDeployTimeoutSeconds` foi aplicado para a janela daquela fatia; se
 > ele voltar a ficar nulo, o merge desta liga o mesmo risco outra vez — deploy automático, pre-deploy sem
-> teto externo, migration destrutiva lá dentro. Reconfira na hora, na config **live**, e não no patch
-> staged: em 16/09 a leitura independente encontrou os 300 s **staged e não aplicados**, com a config live
-> ainda sem teto.
+> teto externo, migration destrutiva lá dentro. Reconfira na hora, e na config **live**, nunca no patch
+> staged.
+>
+> Essa distinção não é teórica, e o que aconteceu em 16/09 é a razão de ela estar escrita aqui — em duas
+> leituras, nesta ordem:
+>
+> 1. antes do merge da 05C-1, a leitura independente encontrou os 300 s **staged e NÃO aplicados**, com a
+>    config live ainda sem teto. Isso reprovou a janela (`DECISÃO = BLOCKED`);
+> 2. o proprietário então **aplicou** a mudança, e a releitura confirmou `preDeployTimeoutSeconds` **live
+>    = 300** — foi assim, já fechado, que a 05C-1 seguiu para o merge.
+>
+> Ou seja: o estado final registrado em `docs/PRE-BASE2-05-APOSENTADORIA.md` ("U4 fechado antes do merge,
+> 300 na config live") é o do passo 2, e não contradiz o passo 1. O que o passo 1 prova, e o motivo de
+> ficar aqui, é que `describe-service` mostra staged e live FUNDIDOS: só comparar `get-service-config`
+> com `get-staged-changes` separa os dois. Uma leitura que não faz isso aprova uma janela que não existe.
 
 ---
 
