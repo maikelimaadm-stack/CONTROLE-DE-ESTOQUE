@@ -15,7 +15,9 @@
 >   code)` e a transação volta atrás inteira. O usuário leva um cadastro recusado, e **nada fica no banco**:
 >   nem a Empresa, nem a linha de contador que a tentativa criou. Barulhento e sem sequela;
 > - **o número NÃO colide** — o `insert` passa, a transação **comita**, e a chave legada fica **gravada
->   depois do cutover**, sem erro, sem log, sem sintoma.
+>   depois do cutover**, sem erro, sem log, sem sintoma. Esse silêncio dura **até o primeiro código já
+>   ocupado**: numa organização sem Empresa ele não termina nunca; numa cujo menor código positivo é M,
+>   ele cobre os cadastros 1..M-1 e só então o erro aparece — **tarde**, com o estrago já gravado.
 >
 > E o que separa os dois não é "ter acervo": é a colisão. Uma organização **sem Empresa** cai no segundo
 > caso, e uma organização cuja numeração **não começa em 1** também — só que pior, porque lá nem o cadastro
@@ -194,22 +196,34 @@ estiver livre e colide ao alcançar o **menor código já ocupado** (M). Logo h�
 em risco, e elas se medem separadamente porque o risco delas é diferente:
 
 ```sql
--- Q3b — organizações SEM nenhuma Empresa: não há M, então NUNCA há colisão.
--- A chave legada fica gravada e o dano não tem fim natural.
-select o.id, o.name
+-- UMA consulta, porque as duas populações têm de PARTICIONAR o espaço de risco.
+-- `cadastros_silenciosos` NULL = janela ILIMITADA (nada positivo com que colidir);
+-- número N = a chave legada comita 1..N sem erro e só então falha.
+select o.id,
+       o.name,
+       min(e.code) filter (where e.code >= 1)     as primeiro_codigo_positivo,
+       min(e.code) filter (where e.code >= 1) - 1 as cadastros_silenciosos
   from erp.organizations o
   left join erp.empresas e on e.organization_id = o.id
  group by o.id, o.name
-having count(e.id) = 0;
+having min(e.code) filter (where e.code >= 1) is null    -- sem Empresa, ou só códigos <= 0
+    or min(e.code) filter (where e.code >= 1) > 1        -- numeração não começa em 1
+ order by 4 nulls first;
 
--- Q3c — organizações cuja numeração NÃO começa em 1: a janela vai de 1 até M-1.
--- `min(code) - 1` é literalmente quantos cadastros errados cabem antes do primeiro erro.
-select organization_id, min(code) as primeiro_ocupado, min(code) - 1 as cadastros_silenciosos
-  from erp.empresas
- group by organization_id
-having min(code) > 1
- order by 3 desc;
+-- Sanidade: códigos fora do domínio esperado. `erp.empresas.code` é `int not null` SEM
+-- CHECK, então zero e negativo são legais no schema — e é por isso que o filtro acima é
+-- `>= 1` e não `min(code)`.
+select organization_id, count(*), min(code)
+  from erp.empresas where code < 1 group by 1;
 ```
+
+**Por que `>= 1`, e não `min(code)`.** `erp.empresas.code` é `int not null` **sem CHECK**: código zero ou
+negativo é legal no schema (pela tela não se cria — `code` é `readOnly` no registro e sempre vem de
+`nextCode` —, mas dado legado ou manual pode ter). E código `<= 0` **não colide com nada**, porque a chave
+ressuscitada emite 1, 2, 3… Medido: acervo `[0]` aceitou **oito** cadastros seguidos sem um único erro, e
+um `having min(code) > 1` **não** o classificaria — `min(code)` é 0. Esse acervo pertence à população de
+janela ILIMITADA, e a versão anterior desta consulta o dava como seguro. Sub-reportar aqui é sub-reportar
+para MENOS, que é o sentido perigoso.
 
 **O que NÃO serve como proxy: `count(*) <> max(code)`.** Ele detecta buraco em qualquer posição, e buraco
 *depois* do primeiro código ocupado é irrelevante — o contador ressuscitado morre em M e nunca chega lá.

@@ -8,9 +8,10 @@ import { listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
 /**
  * FERRAMENTAS COMPARTILHADAS DAS PROVAS DA 0018 — PRE-BASE2-05C-2.
  *
- * As quatro suítes do cutover (`fresh`, `upgrade`, `fail-closed`, `concorrencia`) precisam das mesmas duas
- * coisas: montar um banco parado EXATAMENTE na 0017 — o estado que produção tem hoje — e aplicar a 0018
- * sozinha, do jeito que o runner aplica, para poder observar a recusa. Duplicar isso em quatro arquivos
+ * As cinco suítes do cutover (`fresh`, `upgrade`, `fail-closed`, `concorrencia`, `transacao`) precisam das
+ * mesmas duas coisas: montar um banco parado EXATAMENTE na 0017 — o estado que produção tem hoje — e
+ * aplicar a 0018 sozinha, do jeito que o runner aplica, para poder observar a recusa. Duplicar isso em
+ * cinco arquivos
  * faria as provas divergirem em silêncio na primeira correção que alguém esquecesse de replicar.
  */
 

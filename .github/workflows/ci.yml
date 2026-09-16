@@ -61,7 +61,7 @@ jobs:
         run: pnpm --filter @agro/db test:integration
       - name: API integration tests (permissions, multi-tenant, transactions, concurrency, idempotency)
         run: pnpm --filter @agro/api test:integration
-      # A matriz do cutover do contador (PRE-BASE2-05C-2): dois quadrantes compatíveis e DOIS PROIBIDOS,
+      # A matriz do cutover do contador (PRE-BASE2-05C-2): dois quadrantes compatíveis e SEIS PROIBIDOS,
       # demonstrados contra um banco descartável. Numa PR que não atravessa o cutover — isto é, em toda PR
       # depois que a 05C-2 estiver em `main` — o gate se declara inativo e passa sem simular nada.
       - name: Matriz do cutover do contador de Empresa (gate 05C-2)

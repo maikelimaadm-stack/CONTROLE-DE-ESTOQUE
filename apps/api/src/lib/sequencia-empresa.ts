@@ -23,10 +23,14 @@
  * implantado não compartilham transação, e o rollout não é instantâneo. "Mesmo slice" é uma afirmação
  * sobre o repositório; a atomicidade teria de ser sobre o AR, e ali ela é impossível.
  *
- * A CONSEQUÊNCIA, QUE CONTINUA VALENDO DEPOIS DO CUTOVER
- * -----------------------------------------------------
- * A 05C-2 não tornou a troca segura em rollout normal — ela a executou dentro de uma janela em que apenas
- * UMA versão da API estava servindo (`docs/PRE-BASE2-05C-2-CUTOVER.md`). Por isso, a partir daqui:
+ * A CONSEQUÊNCIA, QUE VALE DEPOIS DO CUTOVER
+ * ------------------------------------------
+ * A 05C-2 NÃO torna a troca segura em rollout normal. Ela exige uma janela em que apenas UMA versão da
+ * API esteja servindo (`docs/PRE-BASE2-05C-2-CUTOVER.md`) — janela que, no momento em que este comentário
+ * é escrito, **ainda não foi realizada**: o runbook está `BLOCKED` e a migration não foi aplicada em
+ * produção. O tempo verbal importa aqui: um comentário que afirmasse no passado que o cutover "foi
+ * executado" faria uma auditoria futura concluir que as precondições A2/A3 já estão satisfeitas.
+ * Feita a janela, e a partir dela:
  *
  *   • a ÚNICA chave de runtime é `'empresa'`. Não existe fallback `farm || empresa`, e não deve existir:
  *     um fallback leria o contador errado em silêncio e devolveria um número já usado;
