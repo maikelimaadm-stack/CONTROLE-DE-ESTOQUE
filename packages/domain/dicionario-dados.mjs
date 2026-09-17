@@ -4,7 +4,7 @@
  * Divisão de trabalho deliberada, para que o dicionário não vire um documento manual impossível de manter:
  *   • a parte TÉCNICA (tabelas, colunas, tipos, nulidade, chaves, enums) é DERIVADA das migrations pelo
  *     gerador `scripts/data-dictionary.mjs` — nunca escrita à mão, nunca desatualiza;
- *   • a parte FUNCIONAL (nome funcional, descrição, módulo, tela, TOP futura, observações de migração) é
+ *   • a parte FUNCIONAL (nome funcional, descrição, módulo, tela, Tipo de Operação, observações de migração) é
  *     CURADA aqui, versionada em Git e auditada pelo gate (`node scripts/data-dictionary.mjs --check`).
  *
  * O gate recusa entrada que aponte para tabela/coluna inexistente: o dicionário não pode mentir sobre o schema.
@@ -15,8 +15,13 @@
  * Não reproduzimos códigos, siglas ou numeração do sistema de referência.
  */
 
-/** Versão do formato do dicionário. Incrementar quando a forma das entradas mudar. */
-export const VERSAO_DICIONARIO = 1;
+/**
+ * Versão do formato do dicionário. Incrementar quando a forma das entradas mudar.
+ * 2 (BASE2-02): `top` deixou de ser prosa livre e passou a ser a CHAVE canônica de uma TOP declarada em
+ * `packages/domain/src/tipo-operacao.ts`. É mudança INCOMPATÍVEL de formato — quem lia o campo esperando
+ * uma frase em português passa a receber `estoque.entrada_manual`.
+ */
+export const VERSAO_DICIONARIO = 2;
 
 /** Módulos da taxonomia própria (prefixo dos códigos canônicos). */
 export const MODULOS_DICIONARIO = Object.freeze({
@@ -34,17 +39,29 @@ export const MODULOS_DICIONARIO = Object.freeze({
 
 /**
  * Entrada por ENTIDADE (tabela). Campos:
- *   code        código canônico próprio (ERP-<MÓDULO>-<ENTIDADE>)
- *   table       tabela real (erp.<nome>) — validada contra as migrations
- *   name        nome funcional em português
- *   description o que a entidade representa para o negócio
- *   module      chave de DICTIONARY_MODULES
- *   kind        "entidade" (identidade própria) | "linha" (estrutura interna) | "infraestrutura"
- *   globalId    recebe ID Global? (cruzado com ENTIDADES_ID_GLOBAL pelo teste de contrato)
- *   route       rota canônica de detalhe, quando houver
- *   top         TOP futura que classificará o lançamento (contrato — ainda não implementada)
- *   fields      overrides funcionais por coluna: { coluna: { name, description } }
+ *   codigo      código canônico próprio (ERP-<MÓDULO>-<ENTIDADE>)
+ *   tabela      tabela real (erp.<nome>) — validada contra as migrations
+ *   nome        nome funcional em português
+ *   descricao   o que a entidade representa para o negócio
+ *   modulo      chave de MODULOS_DICIONARIO
+ *   natureza    "entidade" (identidade própria) | "linha" (estrutura interna) | "infraestrutura"
+ *   idGlobal    recebe ID Global? (cruzado com ENTIDADES_ID_GLOBAL pelo teste de contrato)
+ *   rota        rota canônica de detalhe, quando houver
+ *   discriminador / rotas   coluna que decide a variante e a rota de cada valor
+ *   top         CHAVE canônica do Tipo de Operação (BASE2-02), do registry `packages/domain/src/tipo-operacao.ts`.
+ *               Referência estável, nunca prosa: era texto livre até a BASE2-02, e texto livre não tem
+ *               unicidade, não resolve e não reprova quando diverge. Só entrada de natureza "entidade" a recebe.
+ *   tops        quando a tabela tem VARIANTES, a lista das chaves — uma por variante. Exclusivo com `top`:
+ *               "Conta a pagar / Conta a receber" numa string só era a forma de perder uma distinção real.
+ *   discriminadorTop  coluna que decide qual das `tops` o registro é. Obrigatória com `tops`, proibida com `top`.
+ *               É independente de `discriminador` (que decide ROTA): a transferência tem uma rota só e duas
+ *               operações, e o título financeiro tem duas rotas e duas operações — os dois eixos coincidem
+ *               às vezes, e tratá-los como um só apagaria o caso em que não coincidem.
+ *   campos      overrides funcionais por coluna: { coluna: { nome, descricao } }
  *   migracao    observação de migração (renomeação para Empresa, nomenclatura, backfill)
+ *
+ * Os nomes de campo acima são os REAIS (em português). Até a BASE2-02 este bloco descrevia campos em
+ * inglês (`code`, `table`, `name`, `kind`, `globalId`, `route`, `fields`) que o array nunca usou.
  */
 export const DICIONARIO_DE_DADOS = Object.freeze([
   // ---------- Plataforma (núcleo neutro de nicho) ----------
@@ -129,7 +146,7 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   // ---------- Estoque ----------
   {
     codigo: "ERP-ESTOQUE-ENTRADA", tabela: "erp.input_entries", nome: "Entrada Manual", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/entradas/:id",
-    top: "Entrada de estoque sem documento fiscal", descricao: "Lançamento de entrada de produtos sem documento fiscal vinculado."
+    top: "estoque.entrada_manual", descricao: "Lançamento de entrada de produtos sem documento fiscal vinculado."
   },
   {
     codigo: "ERP-ESTOQUE-ENTRADA-ITEM", tabela: "erp.input_entry_items", nome: "Item da Entrada", modulo: "ESTOQUE", natureza: "linha", idGlobal: false,
@@ -137,28 +154,29 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   },
   {
     codigo: "ERP-ESTOQUE-DOCUMENTO-FISCAL", tabela: "erp.invoices", nome: "Documento Fiscal", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/documentos-fiscais/:id",
-    top: "Entrada por documento fiscal", descricao: "Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financeiro."
+    top: "estoque.documento_fiscal", descricao: "Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financeiro."
   },
   {
     codigo: "ERP-ESTOQUE-REQUISICAO", tabela: "erp.requisitions", nome: "Requisição", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/requisicoes/:id",
-    top: "Saída por requisição", descricao: "Consumo interno de produtos por centro de custo/área."
+    top: "estoque.requisicao", descricao: "Consumo interno de produtos por centro de custo/área."
   },
   {
     codigo: "ERP-ESTOQUE-SAIDA-DIRETA", tabela: "erp.stock_writeoffs", nome: "Saída Direta", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/baixas/:id",
-    top: "Baixa de estoque", descricao: "Baixa de estoque por perda, deterioração, doação e outros motivos."
+    top: "estoque.baixa", descricao: "Baixa de estoque por perda, deterioração, doação e outros motivos."
   },
   {
     codigo: "ERP-ESTOQUE-DEVOLUCAO", tabela: "erp.devolutions", nome: "Devolução", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/devolucoes/:id",
-    descricao: "Retorno de produtos ao estoque a partir de uma requisição."
+    top: "estoque.devolucao", descricao: "Retorno de produtos ao estoque a partir de uma requisição."
   },
   {
     codigo: "ERP-ESTOQUE-TRANSFERENCIA", tabela: "erp.warehouse_transfers", nome: "Transferência", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/transferencias/:id",
-    descricao: "Movimentação de produtos entre armazéns ou entre empresas.",
+    discriminadorTop: "kind", tops: ["estoque.transferencia_entre_armazens", "estoque.transferencia_entre_empresas"],
+    descricao: "Movimentação de produtos entre armazéns ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.",
     migracao: "Possui DUAS colunas de empresa (origem e destino): o escopo de leitura considera ambas."
   },
   {
     codigo: "ERP-ESTOQUE-PRODUCAO-RACAO", tabela: "erp.feed_batches", nome: "Produção de Ração", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/batidas/:id",
-    descricao: "Produção de ração a partir de uma fórmula: consome insumos e gera produto acabado. Específico do nicho agro."
+    top: "estoque.producao_de_racao", descricao: "Produção de ração a partir de uma fórmula: consome insumos e gera produto acabado. Específico do nicho agro."
   },
   {
     codigo: "ERP-ESTOQUE-MOVIMENTO", tabela: "erp.stock_movements", nome: "Movimento de Estoque", modulo: "ESTOQUE", natureza: "infraestrutura", idGlobal: false,
@@ -168,14 +186,15 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   // ---------- Compras ----------
   {
     codigo: "ERP-COMPRAS-SOLICITACAO", tabela: "erp.purchase_requests", nome: "Solicitação de Compra", modulo: "COMPRAS", natureza: "entidade", idGlobal: true, rota: "/suprimentos/view/:id",
-    top: "Solicitação de compra", descricao: "Pedido interno de compra que percorre autorização, cotação e recebimento."
+    top: "compras.solicitacao", descricao: "Pedido interno de compra que percorre autorização, cotação e recebimento."
   },
 
   // ---------- Financeiro ----------
   {
     codigo: "ERP-FINANCEIRO-TITULO", tabela: "erp.financial_titles", nome: "Título Financeiro", modulo: "FINANCEIRO", natureza: "entidade", idGlobal: true,
     discriminador: "direction", rotas: { payable: "/financeiro/contas-a-pagar/:id", receivable: "/financeiro/contas-a-receber/:id" },
-    top: "Conta a pagar / Conta a receber", descricao: "Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/receber) — uma tabela, duas telas.",
+    discriminadorTop: "direction",
+    tops: ["financeiro.conta_a_pagar", "financeiro.conta_a_receber"], descricao: "Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/receber) — uma tabela, duas telas.",
     campos: { direction: { nome: "Sentido", descricao: "payable = conta a pagar; receivable = conta a receber. Valor canônico: nunca traduzido no banco." } }
   },
   {
@@ -195,7 +214,8 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   {
     codigo: "ERP-VENDAS-DOCUMENTO", tabela: "erp.sales_documents", nome: "Documento de Venda", modulo: "VENDAS", natureza: "entidade", idGlobal: true,
     discriminador: "kind", rotas: { budget: "/vendas/budgets/:id", order: "/vendas/orders/:id", sale: "/vendas/sales/:id" },
-    top: "Orçamento / Pedido / Venda", descricao: "Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido, venda).",
+    discriminadorTop: "kind",
+    tops: ["vendas.orcamento", "vendas.pedido", "vendas.venda"], descricao: "Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido, venda).",
     campos: { kind: { nome: "Tipo", descricao: "budget | order | sale. Valor canônico persistido; o rótulo é traduzido na apresentação." } }
   },
 
@@ -226,22 +246,30 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   },
   {
     codigo: "ERP-FROTA-ABASTECIMENTO", tabela: "erp.fuel_supplies", nome: "Abastecimento", modulo: "FROTA", natureza: "entidade", idGlobal: true, rota: "/frota/abastecimentos/:id",
-    top: "Abastecimento", descricao: "Consumo de combustível por equipamento, com baixa de estoque."
+    top: "frota_ativos.abastecimento", descricao: "Consumo de combustível por equipamento, com baixa de estoque."
   },
   {
     codigo: "ERP-FROTA-MANUTENCAO", tabela: "erp.maintenances", nome: "Manutenção", modulo: "FROTA", natureza: "entidade", idGlobal: true, rota: "/frota/manutencoes/:id",
-    top: "Manutenção", descricao: "Serviço e peças aplicados a um ou mais equipamentos."
+    top: "frota_ativos.manutencao", descricao: "Serviço e peças aplicados a um ou mais equipamentos."
   },
 
   // ---------- Ordens de serviço ----------
   {
     codigo: "ERP-OS-ORDEM", tabela: "erp.service_orders", nome: "Ordem de Serviço", modulo: "OS", natureza: "entidade", idGlobal: true, rota: "/os/:id",
-    top: "Ordem de serviço", descricao: "Serviço planejado/executado com apontamento de recursos."
+    top: "ordens_servico.ordem_de_servico", descricao: "Serviço planejado/executado com apontamento de recursos."
   }
 ]);
 
-/** Índice por tabela. */
-export const dicionarioPorTabela = () => new Map(DATA_DICTIONARY.map((e) => [e.table, e]));
+/**
+ * Índice por tabela canônica. Devolve as MESMAS referências do SSOT, nunca cópias — quem indexa não
+ * pode acabar lendo uma segunda versão da entrada.
+ *
+ * Esta função esteve QUEBRADA desde que nasceu: referenciava `DATA_DICTIONARY` e `e.table`, nomes que
+ * nunca existiram neste arquivo (são `DICIONARIO_DE_DADOS` e `e.tabela`). Lançava `ReferenceError` a
+ * qualquer chamada, e ninguém percebeu porque ninguém chamava — um exportado sem leitor não é testado
+ * por acidente. Agora funciona e tem teste.
+ */
+export const dicionarioPorTabela = () => new Map(DICIONARIO_DE_DADOS.map((e) => [e.tabela, e]));
 
 /**
  * Validação estrutural + coerência com o schema real.
@@ -253,6 +281,8 @@ export function validarDicionarioDeDados(entradas, schema) {
   const codigosVistos = new Set();
   const tabelasVistas = new Set();
   const NATUREZA = new Set(["entidade", "linha", "infraestrutura"]);
+  // Dono de cada chave de TOP: a mesma operação não pode classificar duas entidades diferentes.
+  const donoDaTop = new Map();
   for (const e of entradas) {
     if (!/^ERP-[A-Z]{2,12}-[A-Z-]+$/.test(e.codigo)) problemas.push(`${e.codigo}: código fora da taxonomia própria (ERP-<MÓDULO>-<ENTIDADE>)`);
     if (codigosVistos.has(e.codigo)) problemas.push(`${e.codigo}: código duplicado`);
@@ -268,9 +298,34 @@ export function validarDicionarioDeDados(entradas, schema) {
     if (e.rota && e.rotas) problemas.push(`${e.codigo}: declare rota fixa OU rotas por variante, nunca as duas`);
     if (e.rotas && !e.discriminador) problemas.push(`${e.codigo}: rotas por variante exigem a coluna discriminadora`);
     if (e.rotas && rotasVariante.length < 2) problemas.push(`${e.codigo}: rotas por variante exigem pelo menos dois valores`);
+
+    // ---- Tipo de Operação (BASE2-02) ----
+    // O dicionário valida a FORMA da referência e a coerência interna; que a chave EXISTA no registry e
+    // que a origem dela aponte para esta mesma tabela é cruzado pelo teste de contrato
+    // (packages/domain/test/tipo-operacao.test.ts), que lê o registry tipado sem depender de build.
+    const tops = e.tops ?? (e.top === undefined ? [] : [e.top]);
+    if (e.top !== undefined && e.tops) problemas.push(`${e.codigo}: declare \`top\` (uma operação) OU \`tops\` (uma por variante), nunca as duas`);
+    if (tops.length && e.natureza !== "entidade") problemas.push(`${e.codigo}: só entidade recebe Tipo de Operação — "${e.natureza}" não é lançamento`);
+    if (e.tops && !e.discriminadorTop) problemas.push(`${e.codigo}: \`tops\` exige \`discriminadorTop\` (a coluna que decide qual variante é)`);
+    if (e.tops && e.tops.length < 2) problemas.push(`${e.codigo}: \`tops\` exige pelo menos duas variantes; use \`top\` para operação única`);
+    if (e.discriminadorTop && !e.tops) problemas.push(`${e.codigo}: \`discriminadorTop\` sem \`tops\` não decide nada`);
+    const vistasNaEntrada = new Set();
+    for (const chave of tops) {
+      if (typeof chave !== "string" || !/^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/.test(chave)) {
+        problemas.push(`${e.codigo}: Tipo de Operação precisa ser a CHAVE canônica <modulo>.<operacao>, não texto livre: "${String(chave)}"`);
+        continue;
+      }
+      if (vistasNaEntrada.has(chave)) problemas.push(`${e.codigo}: Tipo de Operação repetido na mesma entrada: ${chave}`);
+      vistasNaEntrada.add(chave);
+      const dono = donoDaTop.get(chave);
+      if (dono && dono !== e.codigo) problemas.push(`${e.codigo}: Tipo de Operação ${chave} já classifica ${dono}`);
+      donoDaTop.set(chave, e.codigo);
+    }
+
     const t = schema.get(e.tabela);
     if (!t) { problemas.push(`${e.codigo}: tabela inexistente no schema: ${e.tabela}`); continue; }
     if (e.discriminador && !t.columns.has(e.discriminador)) problemas.push(`${e.codigo}: coluna discriminadora inexistente em ${e.tabela}: ${e.discriminador}`);
+    if (e.discriminadorTop && !t.columns.has(e.discriminadorTop)) problemas.push(`${e.codigo}: coluna discriminadora de Tipo de Operação inexistente em ${e.tabela}: ${e.discriminadorTop}`);
     for (const col of Object.keys(e.campos ?? {})) {
       if (!t.columns.has(col)) problemas.push(`${e.codigo}: coluna inexistente em ${e.tabela}: ${col}`);
     }

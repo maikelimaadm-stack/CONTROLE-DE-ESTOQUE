@@ -9,6 +9,8 @@ import { Button, ConfirmDialog, StatusBadge } from "@/components/ui";
 import { Base2Shell, Base2Section, Base2Fields, Base2Items, type Base2Field, type Base2ItemColumn } from "@/features/base2";
 import { useDoc, LoadingOr, type Row } from "./shared";
 import { COPY, enumLabel } from "@/lib/copy";
+import { useTradutor } from "@/lib/i18n";
+import { tipoOperacaoDoRegistro } from "@agro/domain";
 
 /**
  * PILOTO DO MODELO BASE 2 (docs/MODELO-BASE2-CONTRACT.md) — detalhe de documento de estoque.
@@ -44,7 +46,7 @@ export function StockDocDetail({ id, endpoint, base, title, perm, entidade, acei
   /** ações contextuais (ex.: "Devolver itens" na requisição) */
   extraActions?: (d: Row & { items: Row[] }) => React.ReactNode;
 }) {
-  const { can } = useAuth(); const qc = useQueryClient(); const [c, setC] = React.useState(false);
+  const { can } = useAuth(); const tr = useTradutor(); const qc = useQueryClient(); const [c, setC] = React.useState(false);
   const q = useDoc<Row & { items: Row[]; movements: Row[]; titles?: Row[]; apportionments?: Row[]; provider?: Row }>(`${endpoint}/${id}`);
   const cancel = useMutation({ mutationFn: () => api(`${endpoint}/${id}/cancel`, { method: "POST", body: {} }), onSuccess: () => { toast.success("Cancelado"); setC(false); void qc.invalidateQueries(); }, onError: (e) => toast.error((e as Error).message) });
   const d = q.data;
@@ -57,8 +59,17 @@ export function StockDocDetail({ id, endpoint, base, title, perm, entidade, acei
   // total do documento: o valor que o SERVIDOR calculou. A tela nunca soma item a item (ver contrato § Totais).
   const totalDocumento = (d["total_amount"] ?? d["total"] ?? d["total_value"]) as string | undefined;
 
+  // TIPO DE OPERAÇÃO (BASE2-02). A CLASSIFICAÇÃO é resolvida FORA da moldura, aqui no módulo dono da
+  // tela, e chega ao shell como texto já pronto — o `Base2Shell` não sabe o que é uma TOP e não deve
+  // saber. A autoridade é entidade + discriminador declarado no registry (`@agro/domain`), nunca a rota,
+  // o título, a permissão ou o endpoint: derivar de qualquer um deles seria inferir classificação de
+  // apresentação. Registro que não resolve NÃO exibe o campo — a tela cala em vez de afirmar a operação
+  // errada (`ocultarSeVazio`).
+  const top = tipoOperacaoDoRegistro(`erp.${entidade}`, d);
+
   const campos: Base2Field[] = [
     { label: "Código", valor: String(d["code"] ?? "") },
+    { label: tr("termos.tipo_operacao"), valor: top ? tr(top.chaveI18n) : "", ocultarSeVazio: true },
     { label: "Data", valor: dateBR(d[dateKey] as string) },
     { label: "Responsável", valor: String(d["created_by_name"] ?? ""), ocultarSeVazio: true },
     { label: "Documento", valor: d["number"] ? `${d["number"]}/${d["series"] ?? ""}` : "", ocultarSeVazio: true },

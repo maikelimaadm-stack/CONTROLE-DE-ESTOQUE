@@ -82,13 +82,23 @@ Nada existente foi alterado, renomeado ou removido; nenhuma estrutura de `farms`
 duas tabelas novas declaram a própria política de RLS (o laço genérico da 0007 já havia rodado) com a mesma
 regra de tenant do resto do schema.
 
-## 4. Contrato de TOP (ainda não implementada)
+## 4. Contrato de TOP — IMPLEMENTADO na BASE2-02
 
-TOP = **Tipo de Operação** — a classificação funcional que vai organizar os lançamentos e eliminar telas
-duplicadas. Nesta missão fica apenas o contrato; nada de motor genérico.
+> **Estado desta seção.** Quando foi escrita (PRE-BASE2-01), a TOP era só intenção: "ainda não
+> implementada". A **BASE2-02** a implementou como registry canônico — `packages/domain/src/tipo-operacao.ts`,
+> com contrato próprio em **`docs/TIPO-OPERACAO-CONTRACT.md`**, que é hoje o dono do assunto. O texto abaixo
+> fica como o registro da INTENÇÃO original, e a ponte para o contrato vigente.
 
-Uma TOP poderá futuramente determinar: tipo de operação · campos visíveis/obrigatórios · regras permitidas ·
-efeito em estoque · efeito financeiro · efeito fiscal · contabilização · permissões · layout do Base 2.
+TOP = **Tipo de Operação** — a classificação funcional que organiza os lançamentos e elimina telas
+duplicadas. Nesta missão ficou apenas o contrato; nada de motor genérico.
+
+A intenção original previa que uma TOP pudesse futuramente determinar: tipo de operação · campos
+visíveis/obrigatórios · regras permitidas · efeito em estoque · efeito financeiro · efeito fiscal ·
+contabilização · permissões · layout do Base 2.
+
+**A BASE2-02 entregou a PRIMEIRA linha dessa lista e nenhuma das outras**, de propósito: a TOP diz quem o
+lançamento é (CLASSIFICAR) e não decide o que ele faz (EXECUTAR). Campos, efeitos, permissões e layout
+continuam nos donos atuais, e contratos declarativos para eles são evolução futura, em fatia própria.
 
 **Princípio que não pode ser violado:**
 
@@ -98,8 +108,9 @@ Unificar a *apresentação* de lançamentos não autoriza fundir as *regras*. En
 fiscal e requisição podem compartilhar a moldura do Base 2 e continuar com serviços, validações e efeitos
 contábeis distintos. Motor genérico criado cedo demais vira acoplamento irreversível.
 
-O dicionário de dados já registra, por entidade, a **TOP futura** (coluna "TOP futura (contrato)") para que
-BASE2-02 comece de um mapa real em vez de uma folha em branco.
+O dicionário de dados registrava, por entidade, a **TOP futura** em prosa, para que a BASE2-02 começasse de
+um mapa real em vez de uma folha em branco. Desde a BASE2-02 ele registra a **CHAVE canônica** da TOP
+(coluna "Tipo de Operação"), e prosa livre ali é reprovada pelo gate — o mapa virou referência verificável.
 
 ## 5. O que esta missão deliberadamente NÃO fez
 

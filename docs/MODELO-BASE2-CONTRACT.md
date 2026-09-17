@@ -18,7 +18,7 @@ dono disso.
 O custo de confundir as duas coisas é concreto e conhecido: no momento em que a moldura ganhasse um
 `if (modulo === "estoque")`, ela viraria um motor de regras disfarçado de componente de tela — e toda
 mudança de regra de um módulo passaria a exigir mexer num arquivo compartilhado por todos. É exatamente
-o acoplamento que a BASE2-02 (TOP) existe para tratar **com contrato próprio**, e que esta fatia não
+o acoplamento que a BASE2-02 (TOP) trata **com contrato próprio** (`docs/TIPO-OPERACAO-CONTRACT.md`), e que a BASE2-01 não
 antecipa.
 
 Critério prático, aplicável em revisão: se para responder "o que este componente desenha?" for preciso
@@ -227,6 +227,20 @@ situação ou estado genérico · CSS novo onde já existe classe com dono.
 
 ## Estado
 
-Implementada e integrada em um piloto real na BASE2-01 — que está **em PR, DRAFT, ainda NÃO implantada em
-produção**. Migração ampla dos demais módulos pertence à BASE2-03+; o Tipo de Operação pertence à BASE2-02,
-que está **congelada** até a BASE2-01 estar mesclada e em produção, e **não** é antecipado aqui.
+Implementada e integrada em um piloto real na BASE2-01, **mesclada e implantada em produção** (merge
+`9615560`). A **BASE2-02** acrescentou a identidade do **Tipo de Operação** — como APRESENTAÇÃO, ver abaixo.
+Migração ampla dos demais módulos pertence à BASE2-03+, que segue congelada.
+
+### Tipo de Operação na moldura (BASE2-02)
+
+A TOP entra no Modelo Base 2 como **um campo de identidade, e nada além disso**:
+
+- a **resolução acontece fora do shell**, no módulo dono da tela, que chama o registry
+  (`packages/domain/src/tipo-operacao.ts`) e entrega ao `Base2Shell` **texto já pronto**;
+- o shell **não** recebe código de TOP, **não** tem `if (top === …)` e **não** sabe o que uma TOP significa —
+  é o mesmo molde da empresa do registro, que também chega resolvida;
+- o rótulo vem do **catálogo oficial** (`top.*`), nunca de literal na tela;
+- registro cuja TOP não resolve **não exibe o campo**: a tela cala em vez de afirmar a operação errada.
+
+**Nenhum motor entrou na moldura.** A TOP classifica; efeito, endpoint, permissão, validação e transação
+continuam nos donos atuais. O contrato do assunto é `docs/TIPO-OPERACAO-CONTRACT.md`.
