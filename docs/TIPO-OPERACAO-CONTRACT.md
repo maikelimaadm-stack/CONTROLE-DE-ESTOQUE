@@ -173,6 +173,38 @@ Hoje a cobertura é **parcial e deliberada**: entram os sete documentos do pilot
 o dicionário já classificava. Entidade que não se sabe classificar **não entra** — TOP inventada é pior que
 ausência, porque a ausência se vê.
 
+### Variante conhecida e NÃO separada: `erp.invoices.document_type`
+
+Uma omissão que precisa estar escrita, para não parecer esquecimento. `erp.invoices` tem
+`check (document_type in ('nfe','cte','nfse','nfce','danfe','darf','dare','gru','other'))` — nove valores —
+e recebeu **uma** TOP (`estoque.entrada_por_documento_fiscal`), no mesmo contrato que separou `direction`
+e `kind` por princípio.
+
+A assimetria é real e o efeito é concreto: um DARF (guia de tributo) ou um CT-e (frete) gravado nessa
+tabela abre em `/estoque/documentos-fiscais/<id>` e a tela afirma "Entrada por documento fiscal" — para um
+documento que pode não ter dado entrada em estoque nenhum.
+
+Por que não foi separada nesta fatia:
+
+- os três discriminadores separados (`direction`, `kind`, `kind`) tinham **duas ou três** variantes com
+  semântica operacional evidente e já explícita na prosa anterior do dicionário;
+- `document_type` tem **nove**, e dizer o que cada uma é operacionalmente — quais dão entrada de estoque,
+  quais são só fiscais, quais são financeiras — é **decisão de produto**, não leitura de schema. Inventar
+  nove nomes a partir da sigla seria exatamente a TOP inventada que o parágrafo acima proíbe;
+- a classificação atual **não piorou** nada: é a mesma que a prosa dizia antes da BASE2-02.
+
+Fica como o **primeiro item** da evolução de cobertura, e com o discriminador já identificado.
+
+### Outras dívidas declaradas
+
+- **A prop `entidade` das telas não é cruzada com o registry por nenhum gate.** Um erro de digitação faz o
+  campo sumir (fail-closed) em vez de estourar; hoje quem pega é o E2E das sete rotas. Um auditor estático
+  comparando os literais de `entidade` com as origens declaradas fecharia isso.
+- **O gerador do dicionário depende do `dist` de `@erp/plataforma`** para resolver o rótulo. No CI o build
+  precede o lint; local sem build, o gate falha com instrução em vez de omitir a coluna.
+- **Dos onze rótulos de campo do piloto de estoque, só o de Tipo de operação é traduzido.** Os outros dez
+  são literais anteriores a esta fatia. O campo novo está certo; os vizinhos são dívida de i18n.
+
 ## 10. Anti-padrões
 
 | Anti-padrão | Por que é proibido |

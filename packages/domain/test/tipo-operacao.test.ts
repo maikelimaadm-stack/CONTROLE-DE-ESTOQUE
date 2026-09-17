@@ -12,7 +12,11 @@ import {
   validarRegistroTipoOperacao
 } from "../src/tipo-operacao.js";
 import { CHAVES_MODULO_EMPRESA } from "../src/escopo-permissao.js";
+import { allPermissionKeys } from "../src/permissions.js";
 import { DICIONARIO_DE_DADOS } from "../dicionario-dados.mjs";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 /**
  * CONTRATO DO TIPO DE OPERAÇÃO (BASE2-02).
@@ -44,6 +48,9 @@ const referencias = dicionario.flatMap((e) =>
 
 describe("registry de Tipo de Operação: integridade", () => {
   it("1 · o gate do próprio registry não acusa problema", () => {
+    // Guarda de não-vacuidade: metade dos casos desta suíte percorre TIPOS_OPERACAO, e um registry vazio
+    // os deixaria verdes sem provar nada — inclusive os que travam "CLASSIFICAR ≠ EXECUTAR".
+    expect(TIPOS_OPERACAO.length, "registry vazio tornaria metade desta suíte vácua").toBeGreaterThan(0);
     expect(validarRegistroTipoOperacao()).toEqual([]);
   });
 
@@ -130,6 +137,17 @@ describe("registro de TOP × dicionário de dados: uma fonte, não duas", () => 
     }
   });
 
+  it("10b · e o cruzamento vale nos DOIS sentidos: toda TOP declarada é referenciada pelo dicionário", () => {
+    // Sem este caso o cruzamento é de mão única: uma TOP órfã — declarada no registry, ausente do
+    // dicionário — resolveria em produção e apareceria na tela, enquanto o documento gerado não a
+    // listaria. Seria a "segunda lista que envelhece em silêncio" com os papéis invertidos.
+    const referenciadas = new Set(referencias.map((r) => r.chave));
+    for (const t of TIPOS_OPERACAO) {
+      expect(referenciadas.has(t.codigo), `${t.codigo}: declarada no registry e não referenciada por nenhuma entrada do dicionário`).toBe(true);
+    }
+    expect(referenciadas.size, "o dicionário não pode referenciar TOP que não existe").toBe(TIPOS_OPERACAO.length);
+  });
+
   it("11 · nenhuma referência é texto livre — a prosa do formato anterior não pode voltar", () => {
     for (const { entrada, chave } of referencias) {
       expect(chave, `${entrada.codigo}: "${chave}" parece prosa, não chave`).not.toMatch(/[\s/]/);
@@ -202,6 +220,9 @@ describe("resolução: pura, determinística e fail-closed", () => {
     for (const registro of [{}, { kind: 7 }, { outra: "farm" }, null, undefined]) {
       expect(tipoOperacaoDoRegistro("erp.warehouse_transfers", registro as Record<string, unknown>), `registro ${JSON.stringify(registro)} não pode resolver`).toBeUndefined();
     }
+    // Propriedade HERDADA não classifica: um `Object.prototype.kind` faria toda transferência afirmar a
+    // mesma variante, e o registro que não a declara não tem essa variante.
+    expect(tipoOperacaoDoRegistro("erp.warehouse_transfers", Object.create({ kind: "farm" }) as Record<string, unknown>), "propriedade herdada não é do registro").toBeUndefined();
   });
 
   it("19 · o discriminador é declarado pelo registry, não adivinhado por quem lê", () => {
@@ -251,10 +272,36 @@ describe("a definição CLASSIFICA e não EXECUTA", () => {
     }
   });
 
-  it("23 · a TOP não é permissão: nenhum código coincide com uma chave de permissão", () => {
-    // Se um código de TOP fosse igual a uma permission key, alguém acabaria usando um no lugar do outro.
+  it("23 · a TOP não é permissão: nenhum código existe no catálogo real de permissões", () => {
+    // Cruzamento com o SSOT, não heurística de sufixo: se um código de TOP fosse também uma permission
+    // key, alguém acabaria passando um no lugar do outro, e a confusão só apareceria como acesso.
+    const permissoes = new Set(allPermissionKeys());
+    expect(permissoes.size, "o catálogo de permissões precisa estar carregado").toBeGreaterThan(0);
     for (const t of TIPOS_OPERACAO) {
+      expect(permissoes.has(t.codigo), `${t.codigo}: colide com uma chave de permissão real`).toBe(false);
       expect(t.codigo, `${t.codigo}: parece chave de permissão`).not.toMatch(/\.(view|create|edit|delete)$/);
+    }
+  });
+
+  it("24 · o TIPO também é fechado: nenhum campo de execução declarado na interface, mesmo sem valor", () => {
+    // POR QUE ESTE CASO EXISTE. Os casos 20-22 leem as ENTRADAS, e `Object.keys` não vê campo opcional
+    // sem valor. Um `efeitoEstoque?: string` acrescentado à interface e ao construtor, sem povoar nenhuma
+    // TOP, passaria nos quatro — e a fatia seguinte o povoaria com o argumento de que "sempre esteve lá e
+    // o teste sempre passou". É assim que um registry vira motor: em duas etapas, cada uma inocente.
+    // Por isso este caso lê o ARQUIVO-FONTE, como `scripts/naming-audit.mjs` já faz no repositório.
+    const fonte = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/tipo-operacao.ts"), "utf8");
+    const interfaces = [...fonte.matchAll(/export interface (TipoOperacao|OrigemTipoOperacao)\s*\{([\s\S]*?)\n\}/g)];
+    expect(interfaces.length, "as duas interfaces do contrato precisam existir").toBe(2);
+
+    const declarados = interfaces.flatMap(([, , corpo]) => [...corpo!.matchAll(/^\s{2}([a-zA-Z][a-zA-Z0-9_]*)\??:/gm)].map((m) => m[1]!));
+    expect(declarados.sort(), "superfície declarada diferente do contrato").toEqual(
+      ["chaveI18n", "codigo", "discriminador", "modulo", "origem", "tabela", "valor"]
+    );
+
+    // E o nome proibido não volta por outro caminho (campo, tipo auxiliar ou função exportada).
+    for (const proibido of ["efeito", "efeitos", "handler", "endpoint", "posting", "contabiliz", "obrigatori", "workflow", "motor", "engine"]) {
+      const regex = new RegExp(`^\\s*(export (interface|type|function|const) \\w*${proibido}|\\s{2}\\w*${proibido}\\w*\\??:)`, "im");
+      expect(fonte, `"${proibido}" apareceu como superfície declarada — ver docs/TIPO-OPERACAO-CONTRACT.md §2`).not.toMatch(regex);
     }
   });
 });

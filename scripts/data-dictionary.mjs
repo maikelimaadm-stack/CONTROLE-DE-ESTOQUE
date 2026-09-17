@@ -67,7 +67,7 @@ function render(schema) {
   out.push("# Dicionário de Dados", "");
   out.push("> **Documento gerado.** Não edite à mão: `node scripts/data-dictionary.mjs`.");
   out.push("> A parte técnica (tabelas, colunas, tipos, nulidade, chaves, enums) é derivada de `supabase/migrations/*.sql`;");
-  out.push("> a parte funcional (nome, descrição, módulo, rota, TOP futura, notas de migração) é curada em");
+  out.push("> a parte funcional (nome, descrição, módulo, rota, Tipo de Operação, notas de migração) é curada em");
   out.push("> `packages/domain/dicionario-dados.mjs`. O gate `--check` recusa entrada que aponte para tabela/coluna inexistente.", "");
   out.push(`Formato do dicionário: versão **${VERSAO_DICIONARIO}**. Taxonomia própria e neutra \`ERP-<MÓDULO>-<ENTIDADE>\` (não reproduz códigos do sistema de referência nem amarra o núcleo a um segmento de negócio).`, "");
   out.push("## Panorama", "");

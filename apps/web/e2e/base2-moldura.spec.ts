@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login } from "./helpers";
+import { ptBR } from "@erp/plataforma";
 
 /**
  * MOLDURA DO MODELO BASE 2 (docs/MODELO-BASE2-CONTRACT.md) — provas estruturais sobre a tela REAL.
@@ -122,7 +123,7 @@ test("moldura Base 2: identidade da operação presente e sem rolagem horizontal
   // Até a BASE2-01 este teste exigia a AUSÊNCIA de "Tipo de Operação", porque a TOP estava congelada.
   // A BASE2-02 a implementou: a asserção vira o seu oposto exato, e o campo passa a ser identidade
   // obrigatória da tela — com o rótulo e o valor vindos do catálogo, nunca de literal na tela.
-  const campoTop = page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]');
+  const campoTop = page.locator(CAMPO_TOP);
   await expect(campoTop, "a entrada de insumos precisa exibir a sua operação").toBeVisible();
   await expect(campoTop).toContainText("Entrada manual de estoque");
 
@@ -338,24 +339,38 @@ test("moldura Base 2 — ANEXOS: só a entrada de insumos oferece o botão, e o 
  * nada tem a ver com a TOP, e um teste que falha pelo motivo errado não prova o que diz provar.
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-/** Rótulos pt-BR das TOPs, como o catálogo oficial os declara (packages/plataforma/src/idiomas/pt-BR.ts). */
+/**
+ * Rótulos e seletor DERIVADOS do catálogo oficial, nunca copiados.
+ *
+ * Copiar o texto criaria um segundo lugar com o mesmo rótulo, e — pior — usar o rótulo TRADUZIDO como
+ * seletor (`data-campo` é o `label` do campo) faz uma renomeação de copy falhar como "o campo sumiu da
+ * tela". Lendo do catálogo, renomear o rótulo move teste e tela juntos; o que o teste continua provando
+ * é que a tela mostra o rótulo daquela operação, que é o ponto.
+ */
+const rotuloTop = (codigo: string) => {
+  const r = ptBR.mensagens[`top.${codigo}`];
+  if (!r) throw new Error(`catálogo sem rótulo para top.${codigo}`);
+  return r;
+};
+const CAMPO_TOP = `[data-testid="base2-field"][data-campo="${ptBR.mensagens["termos.tipo_operacao"]}"]`;
+
 const OPERACAO = {
-  entrada: "Entrada manual de estoque",
-  notaFiscal: "Entrada por documento fiscal",
-  requisicao: "Requisição de estoque",
-  baixa: "Baixa de estoque",
-  devolucao: "Devolução ao estoque",
-  transferenciaArmazens: "Transferência entre armazéns",
-  transferenciaEmpresas: "Transferência entre empresas",
-  batida: "Produção de ração"
+  entrada: rotuloTop("estoque.entrada_manual"),
+  notaFiscal: rotuloTop("estoque.entrada_por_documento_fiscal"),
+  requisicao: rotuloTop("estoque.requisicao"),
+  baixa: rotuloTop("estoque.baixa"),
+  devolucao: rotuloTop("estoque.devolucao"),
+  transferenciaArmazens: rotuloTop("estoque.transferencia_entre_armazens"),
+  transferenciaEmpresas: rotuloTop("estoque.transferencia_entre_empresas"),
+  batida: rotuloTop("estoque.producao_de_racao")
 } as const;
 
 /** Abre a rota e confere QUAL operação a tela afirma ser. Falha se o campo não existir. */
 async function conferirOperacao(page: Page, url: string, esperado: string) {
   await page.goto(url);
   await expect(page.getByTestId("base2-shell"), `${url}: a tela precisa abrir`).toBeVisible();
-  const campo = page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]');
-  await expect(campo, `${url}: sem o campo Tipo de operação`).toBeVisible();
+  const campo = page.locator(CAMPO_TOP);
+  await expect(campo, `${url}: sem o campo de Tipo de operação`).toBeVisible();
   await expect(campo, `${url}: operação errada`).toContainText(esperado);
 }
 
@@ -421,12 +436,30 @@ test("moldura Base 2 — TIPO DE OPERAÇÃO: as sete rotas do piloto, cada uma c
   await conferirOperacao(page, `/estoque/transferencias/${transferencia.id}`, OPERACAO.transferenciaArmazens);
   await conferirOperacao(page, `/estoque/batidas/${batida.id}`, OPERACAO.batida);
 
-  // A TOP não é o título da tela: numa transferência entre armazéns, a tela continua se chamando
-  // "Transferência" e a OPERAÇÃO é outra coisa. Se a identidade fosse derivada do título, as duas
-  // variantes seriam indistinguíveis — que é exatamente o defeito que a variante existe para evitar.
-  const campoTop = page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]');
+  // A VARIANTE, provada dos dois lados — é o argumento inteiro da separação: MESMA tabela, MESMA rota
+  // de detalhe, MESMO título de tela ("Transferência"), e DUAS operações. Uma asserção só negativa
+  // ("não diz entre empresas" num documento que é entre armazéns) seria vacuamente verdadeira e passaria
+  // até com o campo ausente; o que prova a variante é criar o outro lado e exigir o rótulo dele.
+  const ctx = await api<{ empresas?: { id: string }[] }>(page, "GET", "/api/auth/context");
+  const outra = (ctx.empresas ?? []).map((e) => e.id).find((id) => id !== empresaId);
+  expect(outra, "o contexto precisa de uma SEGUNDA empresa para provar a transferência entre empresas").toBeTruthy();
+  const armazensDestino = await armazensDaEmpresa(page, outra!, 1);
+
+  const entreEmpresas = await api<{ id: string }>(page, "POST", "/api/stock/transfers", {
+    kind: "farm", transfer_date: "2026-09-22", empresa_origem_id: empresaId, empresa_destino_id: outra,
+    origin_warehouse_id: origem, destination_warehouse_id: armazensDestino[0]!,
+    items: [{ product_id: produto, quantity: "1" }]
+  });
+
+  await conferirOperacao(page, `/estoque/transferencias/${entreEmpresas.id}`, OPERACAO.transferenciaEmpresas);
+
+  // e o título da tela é o MESMO nos dois documentos: se a identidade fosse derivada do título, as duas
+  // variantes seriam indistinguíveis.
+  const tituloEntreEmpresas = await page.getByRole("heading", { level: 1 }).first().textContent();
   await page.goto(`/estoque/transferencias/${transferencia.id}`);
-  await expect(campoTop).not.toContainText(OPERACAO.transferenciaEmpresas);
+  await expect(page.locator(CAMPO_TOP), "o documento entre armazéns não pode exibir a operação entre empresas").toContainText(OPERACAO.transferenciaArmazens);
+  const tituloEntreArmazens = await page.getByRole("heading", { level: 1 }).first().textContent();
+  expect(tituloEntreArmazens?.replace(/\s+\S+$/, ""), "as duas variantes compartilham o título da tela").toBe(tituloEntreEmpresas?.replace(/\s+\S+$/, ""));
 });
 
 test("moldura Base 2 — TIPO DE OPERAÇÃO: classifica sem executar (mesma rota, mesmo endpoint, nenhuma porta nova)", async ({ page }) => {
@@ -438,7 +471,7 @@ test("moldura Base 2 — TIPO DE OPERAÇÃO: classifica sem executar (mesma rota
   page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname.startsWith("/api/")) chamadas.push(u.pathname); });
 
   const url = await criarEntradaEAbrir(page);
-  await expect(page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]')).toBeVisible();
+  await expect(page.locator(CAMPO_TOP)).toBeVisible();
 
   expect(chamadas.length, "o teste precisa ter observado requisições").toBeGreaterThan(0);
   for (const proibida of ["/api/top", "/api/tipos-operacao", "/api/tipo-operacao", "/api/base2"]) {
@@ -450,7 +483,7 @@ test("moldura Base 2 — TIPO DE OPERAÇÃO: classifica sem executar (mesma rota
   // Deep link inalterado: a rota canônica é a mesma de antes da TOP, e recarregar reabre a mesma tela.
   expect(url).toMatch(/\/estoque\/entradas\/[0-9a-f-]{36}$/);
   await page.reload();
-  await expect(page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]')).toBeVisible();
+  await expect(page.locator(CAMPO_TOP)).toBeVisible();
 
   // E a TOP não inventou ação: a barra de ações continua com o que o módulo já oferecia.
   await expect(page.getByRole("button", { name: /Tipo de opera/i }), "a TOP não é um botão").toHaveCount(0);

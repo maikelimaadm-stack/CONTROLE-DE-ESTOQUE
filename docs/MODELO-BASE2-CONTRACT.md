@@ -18,7 +18,7 @@ dono disso.
 O custo de confundir as duas coisas é concreto e conhecido: no momento em que a moldura ganhasse um
 `if (modulo === "estoque")`, ela viraria um motor de regras disfarçado de componente de tela — e toda
 mudança de regra de um módulo passaria a exigir mexer num arquivo compartilhado por todos. É exatamente
-o acoplamento que a BASE2-02 (TOP) existe para tratar **com contrato próprio**, e que esta fatia não
+o acoplamento que a BASE2-02 (TOP) trata **com contrato próprio** (`docs/TIPO-OPERACAO-CONTRACT.md`), e que a BASE2-01 não
 antecipa.
 
 Critério prático, aplicável em revisão: se para responder "o que este componente desenha?" for preciso

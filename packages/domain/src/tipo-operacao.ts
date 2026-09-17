@@ -208,7 +208,10 @@ export function resolverTipoOperacao(tabela: string, valorDiscriminador?: string
 export function tipoOperacaoDoRegistro(tabela: string, registro: Readonly<Record<string, unknown>> | null | undefined): TipoOperacao | undefined {
   const discriminador = DISCRIMINADOR_POR_TABELA.get(tabela);
   if (!discriminador) return resolverTipoOperacao(tabela);
-  const bruto = registro?.[discriminador];
+  // Propriedade PRÓPRIA, nunca herdada: um `Object.prototype.kind` em qualquer ponto do bundle faria
+  // TODA transferência afirmar a mesma variante — o dano exato que a resolução fail-closed existe para
+  // impedir. É a mesma guarda que `attachment-parent.ts` usa na whitelist de anexos.
+  const bruto = registro && Object.prototype.hasOwnProperty.call(registro, discriminador) ? registro[discriminador] : undefined;
   return resolverTipoOperacao(tabela, typeof bruto === "string" ? bruto : undefined);
 }
 

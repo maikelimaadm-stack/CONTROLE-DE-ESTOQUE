@@ -411,9 +411,9 @@ registro é apagado fisicamente, para que o `55` jamais seja reassociado a outro
 
 | Item | Missão |
 | --- | --- |
-| Cabeçalho de lançamento do Base2 (a moldura definitiva onde o número mora) | BASE2-01. |
-| Tipo de Operação (TOP) | BASE2-02. |
-| Remoção da ponte `farm`/`empresa` | PRE-BASE2-05. |
+| ~~Cabeçalho de lançamento do Base2 (a moldura definitiva onde o número mora)~~ | **CONCLUÍDO.** BASE2-01, mesclada e implantada em produção (merge `9615560`). Contrato: `docs/MODELO-BASE2-CONTRACT.md`. |
+| ~~Tipo de Operação (TOP)~~ | **IMPLEMENTADO** na BASE2-02: registry canônico em `packages/domain/src/tipo-operacao.ts`, contrato em `docs/TIPO-OPERACAO-CONTRACT.md`. A TOP **classifica** o lançamento e **não** o endereça: o ID Global continua sendo o único localizador humano, e a TOP não autoriza, não endereça e não substitui nenhuma das cinco identidades da §1. |
+| ~~Remoção da ponte `farm`/`empresa`~~ | **CONCLUÍDA.** PRE-BASE2-05, encerrada em produção em 16/09/2026 (cutover 05C-2). |
 
 ### Divergência de contrato registrada (PRE-BASE2-04)
 

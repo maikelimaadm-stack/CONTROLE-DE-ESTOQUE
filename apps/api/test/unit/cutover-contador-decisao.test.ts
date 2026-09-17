@@ -384,13 +384,26 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     const roteiro = ler("docs/PRE-BASE2-ROADMAP.md");
     expect(roteiro, "PRE-BASE2-05 está concluída em produção").toMatch(/\*\*PRE-BASE2-05\*\*[\s\S]{0,400}?CONCLUÍDA EM PRODUÇÃO/);
     expect(roteiro, "e não volta a dizer que a fase não conta como encerrada").not.toMatch(/não conta como encerrada/);
-    // A outra metade da verdade: o roteiro sempre declara ONDE a fronteira está. A BASE2-01 foi mesclada e
-    // implantada (merge 9615560), a BASE2-02 está em PR, e a fase seguinte continua congelada. Esta trava
-    // acompanha a fronteira: ela não fixa uma fase específica, fixa que SEMPRE existe uma congelada e uma
-    // em PR — um roteiro que perdesse as duas marcas deixaria de dizer o que pode começar.
-    expect(roteiro, "BASE2-01 está concluída e implantada em produção").toMatch(/BASE2-01[\s\S]{0,600}?IMPLANTADA EM PRODUÇÃO/);
-    expect(roteiro, "a fatia seguinte está em PR, não implantada").toMatch(/implementação em PR — não implantada/);
-    expect(roteiro, "e a fase depois dela continua congelada").toMatch(/BASE2-03\+[\s\S]{0,400}?CONGELADA/);
+    // A outra metade da verdade: cada fase declara o SEU estado, e a asserção é ANCORADA no nome da fase.
+    // Uma versão anterior desta trava tentou ser genérica ("existe alguma fase em PR"), e afrouxou duas
+    // vezes: um roteiro que dissesse, na MESMA linha da BASE2-01, "implantada em produção" e "em PR"
+    // passaria — e é exatamente a contradição que esta trava existe para impedir.
+    //
+    // Consequência aceita: quando a BASE2-02 for implantada, estas linhas reprovam. Isso é o desenho, não
+    // um defeito — a fatia que muda o estado do roteiro atualiza a trava junto, como já se fez aqui duas
+    // vezes. Uma trava de estado que sobrevive à mudança de estado não está travando nada.
+    expect(roteiro, "BASE2-01 está concluída e implantada em produção").toMatch(/\*\*BASE2-01\*\*[\s\S]{0,800}?IMPLANTADA EM PRODUÇÃO/);
+    expect(roteiro, "BASE2-02 está em PR, não implantada").toMatch(/\*\*BASE2-02\*\*[\s\S]{0,800}?implementação em PR — não implantada/);
+    expect(roteiro, "e a BASE2-03+ continua congelada").toMatch(/\*\*BASE2-03\+\*\*[\s\S]{0,600}?CONGELADA/);
+    // E nenhuma fase afirma dois estados ao mesmo tempo. A verificação é POR LINHA porque o roteiro é uma
+    // tabela markdown: uma fase é uma linha, e é dentro dela que a contradição apareceria.
+    const linhaDaFase = (nome: string) => roteiro.split("\n").find((l) => l.includes(`**${nome}**`)) ?? "";
+    for (const fase of ["BASE2-01", "BASE2-02", "BASE2-03+"]) {
+      const linha = linhaDaFase(fase);
+      expect(linha, `${fase}: fase ausente do roteiro`).not.toBe("");
+      const estados = ["IMPLANTADA EM PRODUÇÃO", "implementação em PR", "CONGELADA"].filter((e) => linha.includes(e));
+      expect(estados, `${fase} declara mais de um estado na mesma linha: ${estados.join(" + ")}`).toHaveLength(1);
+    }
 
     const contrato = ler("docs/MULTI-COMPANY-CONTRACT.md");
     expect(contrato, "o cutover da chave saiu de 'o que ainda não existe'")
