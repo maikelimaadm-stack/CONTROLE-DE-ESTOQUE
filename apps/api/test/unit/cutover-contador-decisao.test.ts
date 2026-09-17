@@ -384,9 +384,13 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     const roteiro = ler("docs/PRE-BASE2-ROADMAP.md");
     expect(roteiro, "PRE-BASE2-05 está concluída em produção").toMatch(/\*\*PRE-BASE2-05\*\*[\s\S]{0,400}?CONCLUÍDA EM PRODUÇÃO/);
     expect(roteiro, "e não volta a dizer que a fase não conta como encerrada").not.toMatch(/não conta como encerrada/);
-    // A outra metade da verdade, que o encerramento da 05 não pode apagar: a BASE2-01 continua em PR.
-    expect(roteiro, "BASE2-01 continua em PR, não implantada").toMatch(/BASE2-01[\s\S]{0,600}?implementação em PR — não implantada/);
-    expect(roteiro, "e a BASE2-02 continua congelada").toMatch(/BASE2-02[\s\S]{0,400}?CONGELADA/);
+    // A outra metade da verdade: o roteiro sempre declara ONDE a fronteira está. A BASE2-01 foi mesclada e
+    // implantada (merge 9615560), a BASE2-02 está em PR, e a fase seguinte continua congelada. Esta trava
+    // acompanha a fronteira: ela não fixa uma fase específica, fixa que SEMPRE existe uma congelada e uma
+    // em PR — um roteiro que perdesse as duas marcas deixaria de dizer o que pode começar.
+    expect(roteiro, "BASE2-01 está concluída e implantada em produção").toMatch(/BASE2-01[\s\S]{0,600}?IMPLANTADA EM PRODUÇÃO/);
+    expect(roteiro, "a fatia seguinte está em PR, não implantada").toMatch(/implementação em PR — não implantada/);
+    expect(roteiro, "e a fase depois dela continua congelada").toMatch(/BASE2-03\+[\s\S]{0,400}?CONGELADA/);
 
     const contrato = ler("docs/MULTI-COMPANY-CONTRACT.md");
     expect(contrato, "o cutover da chave saiu de 'o que ainda não existe'")
