@@ -11,7 +11,6 @@ import { wrapListing, hasColumnFilters } from "../lib/column-filters.js";
 import { postStock } from "../services/stock-core.js";
 import { createTitles } from "../services/financial-core.js";
 import { atribuirIdGlobal, atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
-import { SEQUENCIA_ANIMAL_FARM_TRANSFER } from "../lib/sequencia-transferencia-rebanho.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -37,34 +36,6 @@ async function animalCode(ctx: ServiceCtx, entity: string) { return nextCode(ctx
 async function uniqueCode(ctx: ServiceCtx, table: "animal_handlings", entity: string) {
   for (let i = 0; i < 10000; i++) { const code = await animalCode(ctx, entity); const ex = await ctx.tx.query(`select 1 from erp.${table} where organization_id=$1 and code=$2`, [ctx.orgId, code]); if (!ex.rowCount) return code; }
   throw new Error("Não foi possível gerar código único");
-}
-/**
- * Código de MOVIMENTAÇÃO livre no namespace real dela — `(organização, tipo, código)`.
- *
- * POR QUE A RETENTATIVA É OBRIGATÓRIA AQUI, E NÃO É ZELO EXCESSIVO. `erp.next_code` e o `insert`
- * rodam na MESMA transação (`runService` → `withTx`). Se o `insert` viola a unicidade, a transação
- * inteira volta atrás — INCLUSIVE o incremento do contador. Sem laço, o contador volta ao mesmo valor
- * e a tentativa seguinte aloca EXATAMENTE o mesmo número: não é "um 409 que se resolve depois", é a
- * rota MORTA naquela organização até alguém mexer no banco à mão.
- *
- * Isso deixou de ser hipótese quando o hotfix 0019 passou a aceitar `'farm_transfer'` como ALIAS: o
- * binário anterior pede aquela chave para as DUAS rotas, e a de rebanho recebe número do contador de
- * ESTOQUE durante a janela de rolling deploy. Quando o contador de rebanho alcançar esse número, a
- * colisão acontece — e é ela que travaria para sempre. O laço transforma o travamento em LACUNA de
- * numeração, que o contrato já trata como normal (`.claude/rules/database-migrations.md`).
- *
- * A checagem inclui `movement_type` porque é ESSE o namespace de `erp.animal_movements`: recortar só
- * por `(organização, código)` pularia códigos legitimamente livres de outros tipos.
- */
-async function codigoDeMovimento(ctx: ServiceCtx, movementType: string, entity: string) {
-  for (let i = 0; i < 10000; i++) {
-    const code = await animalCode(ctx, entity);
-    const ex = await ctx.tx.query(
-      "select 1 from erp.animal_movements where organization_id=$1 and movement_type=$2 and code=$3",
-      [ctx.orgId, movementType, code]);
-    if (!ex.rowCount) return code;
-  }
-  throw new Error("Não foi possível gerar código único para a movimentação de rebanho");
 }
 
 export default async function livestockRoutes(app: FastifyInstance) {
@@ -326,16 +297,28 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const cabecas = ids.length + rebanhos.reduce((a, l) => a + Number(l.quantity), 0);
     if (!cabecas) throw validation("Transferência sem animais ou rebanho: informe animais ou um lote com acervo");
 
-    // HOTFIX 0019: a chave nua `'farm_transfer'` era COMPARTILHADA com a numeração de
-    // `erp.warehouse_transfers`, e o alias que a 0019 instala em `erp.next_code` a desviaria para o
-    // contador de estoque. `erp.animal_movements` tem namespace próprio
-    // (`unique (organization_id, movement_type, code)`) e por isso tem contador próprio — com o nome que a
-    // convenção desta rota já usava nas outras movimentações (ver `lib/sequencia-transferencia-rebanho.ts`).
+    // CHAVE DE COMPATIBILIDADE, DE PROPÓSITO — não é descuido, e sair dela AGORA quebraria o rollout.
     //
-    // E a alocação passa pelo laço: enquanto o alias existir, o binário anterior pode ter gravado, nesta
-    // tabela, códigos vindos do contador de ESTOQUE. Sem o laço, o encontro com um deles não seria um 409
-    // isolado — seria a rota travada para sempre, porque o rollback devolve o contador ao mesmo valor.
-    const code = await codigoDeMovimento(ctx, "farm_transfer", SEQUENCIA_ANIMAL_FARM_TRANSFER);
+    // `'farm_transfer'` é uma chave sobrecarregada: `erp.animal_movements` (namespace
+    // `unique (organization_id, movement_type, code)`) a divide com `erp.warehouse_transfers`
+    // (`unique (organization_id, code)`). O hotfix 0019 unifica a numeração de ESTOQUE e transforma esta
+    // chave em ALIAS de `warehouse_transfer` dentro de `erp.next_code`.
+    //
+    // Uma rodada anterior desta fatia deu a esta rota um contador próprio (`animal_farm_transfer`) e isso
+    // INTRODUZIU UMA CORRIDA: durante o rolling deploy o binário anterior pede a chave legada (que o alias
+    // manda para o contador de estoque) e o binário novo pediria o contador próprio — duas LINHAS
+    // diferentes, sem trava em comum, emitindo o MESMO número para esta tabela. Um `select` de "o código
+    // já existe?" não fecha isso: é TOCTOU contra uma transação ainda não commitada.
+    //
+    // Enquanto o alias existir, o caminho seguro é os DOIS binários pedirem a MESMA chave: `erp.next_code`
+    // é `insert ... on conflict do update`, então a linha do contador é travada e as duas transações
+    // SERIALIZAM nela. O preço é numeração intercalada com a de estoque — lacuna, que o contrato trata
+    // como normal. A separação desta rota num contador próprio é o cleanup da fatia que REMOVE o alias,
+    // quando não houver mais versão viva pedindo a chave antiga.
+    //
+    // Declarado em `scripts/sequencia-namespace-audit.mjs` (POR_COMPATIBILIDADE) e provado pelo quadrante
+    // C de `pnpm gate:0019`, que roda as duas alocações em transações concorrentes de verdade.
+    const code = await animalCode(ctx, "farm_transfer");
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,empresa_destino_id,destination_batch_id,note,status,created_by) values ($1,$2,$3,'farm_transfer',$4,$5,$6,$7,$8,'pending',$9) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id ?? null, d.empresa_destino_id, d.destination_batch_id ?? null, d.note ?? null, ctx.user.id]);
     await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
     for (const a of ids) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]);

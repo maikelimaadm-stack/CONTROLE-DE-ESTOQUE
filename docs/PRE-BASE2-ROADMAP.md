@@ -47,22 +47,22 @@ lá numerar por variante é correto, e é por isso que elas não tinham este def
 | Matriz de version skew: BASE × pós-0019, rolling deploy, rollback de binário | `pnpm gate:0019` |
 | Regressão pela porta real: as DUAS variantes na mesma organização | `apps/api/test/integration/transferencia-numeracao.test.ts` |
 | Prova de UI da variante `farm` — o PENDING da BASE2-02, fechado | `apps/web/e2e/base2-moldura.spec.ts` |
-| Divisão da chave SOBRECARREGADA: `erp.animal_movements` ganha contador próprio | seção 6.2 da 0019 + `apps/api/src/lib/sequencia-transferencia-rebanho.ts` |
+| Corrida cross-version provada ausente: BASE e HEAD concorrentes na rota de rebanho | quadrante C de `pnpm gate:0019` (duas conexões, barreiras reais) |
 
-**A chave legada era SOBRECARREGADA — e isso mudou o desenho.** `'farm_transfer'` não servia só à
-transferência de estoque: `erp.animal_movements` (namespace `unique (organization_id, movement_type, code)`)
-numerava com a MESMA chave. Um alias não sabe quem chamou, então canonicalizar sem mais nada mandaria a
-numeração do REBANHO para o contador de ESTOQUE e apagaria a linha que era o contador do rebanho. A 0019
-divide o histórico compartilhado nas duas chaves canônicas antes de apagar a legada.
+**A chave legada é SOBRECARREGADA — e isso mudou o desenho DUAS vezes.** `'farm_transfer'` não serve só
+à transferência de estoque: `erp.animal_movements` (namespace `unique (organization_id, movement_type,
+code)`) numera com a MESMA chave. A primeira resposta foi separar, dando ao rebanho um contador próprio.
+A auditoria externa derrubou essa resposta: separar DURANTE a vida do alias cria uma corrida que não
+existia — o binário anterior pede a chave legada (aliasada para o contador de estoque) e o novo pediria o
+próprio; duas LINHAS sem trava em comum, emitindo o mesmo número para a mesma tabela, e um `select` de
+"já existe?" é TOCTOU, não solução.
 
-Resíduo declarado, depois de o red team da fatia derrubar duas afirmações falsas da primeira redação: na
-janela de rolling deploy, uma transferência de rebanho atendida pelo binário anterior recebe número do
-contador de estoque. Para que isso seja seguro foram precisas DUAS correções — o acervo de rebanho entra no
-baseline do contador aliasado (seção 6.1 + pós-condição 8.5), e a rota de rebanho aloca por laço que pula
-código ocupado, porque `next_code` e o `insert` compartilham a transação e uma colisão sem laço travaria a
-rota para sempre em vez de "se resolver na próxima". Com as duas, o resíduo é apenas LACUNA de numeração.
-Medido em `packages/db/test/hotfix-0019-upgrade.test.ts`, casos 23 a 25 (o 25 reproduz o travamento), e no
-quadrante Q6 do gate.
+A decisão final é a menor que PROVA segurança: **enquanto o alias existir, as duas rotas pedem a MESMA
+chave**, e `erp.next_code` (`insert ... on conflict do update`) serializa as transações na linha do
+contador. Provado com duas conexões e barreiras reais no quadrante C de `pnpm gate:0019`, que também
+reproduz a corrida da arquitetura abandonada. Preço aceito: numeração intercalada, com lacuna nas duas
+tabelas — lacuna é normal no contrato, colisão não é. A separação do contador de rebanho fica declarada
+como cleanup da fatia que REMOVE o alias.
 
 **Por que este hotfix NÃO precisa de janela single-version como a 05C-2.** Lá a chave mudava de nome e o
 banco não tinha como servir os dois binários. Aqui `erp.next_code` canonicaliza `farm_transfer` para

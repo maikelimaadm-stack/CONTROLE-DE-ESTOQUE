@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, seedDemo, type Db, type DemoOrg } from "@agro/db";
 import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../../src/lib/sequencia-warehouse-transfer.js";
-import { SEQUENCIA_ANIMAL_FARM_TRANSFER } from "../../src/lib/sequencia-transferencia-rebanho.js";
 import { harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
@@ -354,12 +353,16 @@ describe("o ALIAS da 0019 é o que torna a chave pedida pela rota indiferente", 
   });
 });
 
-describe("a chave legada era SOBRECARREGADA — o REBANHO tem contador próprio", () => {
-  it("a transferência de rebanho pela ROTA REAL numera pela chave do SEU namespace, sem mover o de estoque", async () => {
-    // `erp.animal_movements` tem `unique (organization_id, movement_type, code)` — namespace próprio — e
-    // numerava com a MESMA chave `'farm_transfer'` que a rota de estoque usava para `kind='farm'`. O alias
-    // da 0019 não sabe quem chamou: sem a divisão feita pela migration, esta criação puxaria número do
-    // contador de ESTOQUE e as duas numerações se intercalariam para sempre.
+describe("a chave legada é SOBRECARREGADA — e as duas rotas dividem a MESMA linha de contador", () => {
+  it("a transferência de rebanho pela ROTA REAL avança o contador canônico — é isso que serializa os binários", async () => {
+    // `erp.animal_movements` tem namespace próprio (`unique (organization_id, movement_type, code)`) e
+    // numera com a MESMA chave `'farm_transfer'` que a rota de estoque usava para `kind='farm'`. Dar a ela
+    // um contador próprio AGORA criaria uma corrida com o binário anterior, que pede a chave legada e é
+    // desviado pelo alias para o contador de estoque: duas LINHAS, sem trava em comum, mesmo número.
+    //
+    // Enquanto o alias existir, as duas rotas pedem a MESMA chave e `erp.next_code` serializa na linha.
+    // Aqui prova-se, pela porta real, que a criação de rebanho de fato move o contador canônico — a
+    // premissa da serialização. A prova COM concorrência está no quadrante C de `pnpm gate:0019`.
     const especie = (await admin.query<{ id: string }>("select id from erp.animal_species limit 1")).rows[0]!.id;
     const categoria = (await admin.query<{ id: string }>("select id from erp.animal_categories where name='Garrote' limit 1")).rows[0]!.id;
     const lote = async (empresa: string, code: string) => (await admin.query<{ id: string }>(
@@ -371,10 +374,7 @@ describe("a chave legada era SOBRECARREGADA — o REBANHO tem contador próprio"
       "insert into erp.herd_lots(organization_id,empresa_id,batch_id,species_id,category_id,quantity,entry_date) values ($1,$2,$3,$4,$5,5,current_date)",
       [ORG, A, origem, especie, categoria]);
 
-    const estoqueAntes = (await contadorCanonico(ORG))!;
-    const rebanhoAntes = Number((await admin.query<{ v: string }>(
-      "select coalesce(last_value,0)::text v from erp.code_sequences where organization_id=$1 and entity=$2",
-      [ORG, SEQUENCIA_ANIMAL_FARM_TRANSFER])).rows[0]?.v ?? "0");
+    const antes = (await contadorCanonico(ORG))!;
 
     const r = await post(h.token, ORG, "/api/livestock/transfers/to-farm", {
       empresa_id: A, empresa_destino_id: B, movement_date: "2031-03-05",
@@ -382,14 +382,15 @@ describe("a chave legada era SOBRECARREGADA — o REBANHO tem contador próprio"
     });
     expect(r.statusCode, `a transferência de rebanho tem de nascer. Resposta: ${r.body}`).toBe(201);
 
-    const rebanhoDepois = Number((await admin.query<{ v: string }>(
-      "select last_value::text v from erp.code_sequences where organization_id=$1 and entity=$2",
-      [ORG, SEQUENCIA_ANIMAL_FARM_TRANSFER])).rows[0]!.v);
-    expect(rebanhoDepois, "o contador do REBANHO avançou exatamente um").toBe(rebanhoAntes + 1);
-    expect(await contadorCanonico(ORG), "e o contador de ESTOQUE não se moveu").toBe(estoqueAntes);
+    expect(await contadorCanonico(ORG), "a criação de REBANHO avança o contador canônico — a linha é a mesma")
+      .toBe(antes + 1);
 
     const legadas = Number((await admin.query<{ n: string }>(
       "select count(*)::text n from erp.code_sequences where organization_id=$1 and entity='farm_transfer'", [ORG])).rows[0]!.n);
-    expect(legadas, "e a chave legada continua sem existir como linha").toBe(0);
+    expect(legadas, "e a chave legada continua sem existir como LINHA — o alias reescreve antes do insert").toBe(0);
+
+    const proprio = Number((await admin.query<{ n: string }>(
+      "select count(*)::text n from erp.code_sequences where organization_id=$1 and entity='animal_farm_transfer'", [ORG])).rows[0]!.n);
+    expect(proprio, "e nenhum contador próprio de rebanho foi criado nesta fatia").toBe(0);
   });
 });

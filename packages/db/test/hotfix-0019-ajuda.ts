@@ -20,16 +20,6 @@ export const ALVO = "0019_warehouse_transfer_code_sequence.sql";
 export const CANONICA = "warehouse_transfer";
 /** A chave que o hotfix aposenta como LINHA e mantém viva como ALIAS. */
 export const LEGADA = "farm_transfer";
-/**
- * A chave canônica do contador de TRANSFERÊNCIA DE REBANHO. O par de runtime é
- * `SEQUENCIA_ANIMAL_FARM_TRANSFER`.
- *
- * Ela existe porque `LEGADA` era SOBRECARREGADA: `erp.animal_movements`
- * (`unique (organization_id, movement_type, code)`) numerava com a MESMA chave que
- * `erp.warehouse_transfers` (`unique (organization_id, code)`). O alias da 0019 não sabe quem chamou,
- * então sem esta separação a numeração do rebanho passaria a sair do contador de estoque.
- */
-export const CANONICA_REBANHO = "animal_farm_transfer";
 
 /**
  * Sobe o banco só até a migration ANTERIOR à 0019 — o estado de produção pós-05C-2.

@@ -22,10 +22,10 @@
  *   Q3   runtime BASE  + banco PÓS-0019   → COMPATÍVEL — o quadrante que esta fatia COMPRA com o alias.
  *   Q4   BASE e HEAD ALTERNANDO, pós-0019 → COMPATÍVEL: o rolling deploy inteiro, sem colisão nem lacuna.
  *   Q5   rollback de binário (HEAD→BASE)  → COMPATÍVEL: voltar não exige tocar no banco.
- *   Q6   a chave legada era SOBRECARREGADA   → a 0019 DIVIDE o histórico: `erp.animal_movements` fica
- *                                               com contador próprio, e o alias não o sequestra.
- *   Q6b  contador legado ATRÁS do acervo      → o contador ALIASADO cobre o acervo de rebanho também,
- *        de rebanho, sem acervo de estoque      senão a primeira criação da janela colidiria.
+ *   C    CORRIDA CROSS-VERSION, com DUAS transações abertas ao mesmo tempo — o quadrante que a auditoria
+ *        externa exigiu. Prova que BASE e HEAD, servindo A MESMA ROTA DE REBANHO simultaneamente,
+ *        SERIALIZAM na linha do contador em vez de emitir o mesmo número. Inclui a REPRODUÇÃO da corrida
+ *        da arquitetura abandonada (dois contadores), para que o quadrante tenha dentes.
  *
  * Q3 É O CONTRÁRIO DA 05C-2, E DE PROPÓSITO. Lá o quadrante equivalente era PROIBIDO — a chave mudava de
  * nome, o banco não tinha como servir os dois binários, e a fatia precisou de janela single-version. Aqui
@@ -364,78 +364,162 @@ async function main() {
     exigir(Number(e.contadores[0].split("=")[1]) >= Math.max(...e.codigos),
       `e o contador [${e.contadores}] continua cobrindo o maior código emitido (${Math.max(...e.codigos)})`);
     // ---------------------------------------------------------------------------------------------
-    passo("Q6 · a chave legada era SOBRECARREGADA — o alias não pode sequestrar o contador do REBANHO");
-    // `'farm_transfer'` servia a DUAS tabelas com namespaces diferentes: `erp.warehouse_transfers`
-    // (unique org+code) e `erp.animal_movements` (unique org+movement_type+code). Um alias não sabe quem
-    // chamou, então sem a divisão da seção 6.2 da 0019 a numeração do rebanho passaria a sair do contador
-    // de estoque e a linha que era o contador do rebanho sumiria.
-    await montar(c, MIGRATION_HOTFIX);
-    cen = await semear(c, "Q6 chave compartilhada", { codigos: [3], kindDoAcervo: "farm", contadores: { [LEGADA]: 9 } });
-    await c.query(
-      `insert into erp.animal_movements
-         (organization_id, empresa_id, code, movement_type, movement_date, status)
-       values ($1,$2,'00008','farm_transfer','2026-01-01','pending')`, [cen.org, cen.e1]);
+    // ---------------------------------------------------------------------------------------------
+    passo("C · CORRIDA CROSS-VERSION — duas transações ABERTAS ao mesmo tempo, na rota de REBANHO");
+    // Este quadrante existe porque a auditoria externa derrubou a arquitetura anterior desta fatia. Ela
+    // dava ao rebanho um contador PRÓPRIO durante a vida do alias, e isso criava uma corrida:
+    //
+    //   binário BASE -> next_code(org,'farm_transfer') -> alias -> warehouse_transfer     -> B+1
+    //   binário HEAD -> next_code(org,'animal_farm_transfer')                             -> B+1
+    //
+    // Duas LINHAS de `erp.code_sequences`: sem trava em comum, sem enxergar a transação do outro, as duas
+    // chegam ao `insert` de `erp.animal_movements` com o MESMO código. Um `select` de "já existe?" não
+    // fecha isso — é TOCTOU. E como os dois contadores nascem no mesmo baseline, a colisão acontece no
+    // PRIMEIRO par concorrente, não num caso raro.
+    //
+    // A arquitetura atual faz as DUAS rotas pedirem a MESMA chave enquanto o alias existir. Aqui isso é
+    // medido com duas conexões de verdade e barreiras explícitas — nunca `Promise.all` sobre um cliente só,
+    // que serializaria por acidente do driver e provaria nada.
+    {
+      const a = new pg.Client({ connectionString: URL_BANCO });
+      const b = new pg.Client({ connectionString: URL_BANCO });
+      await a.connect(); await b.connect();
+      try {
+        const alocar = (cli, org, chave) =>
+          cli.query("select erp.next_code($1,$2)::text n", [org, chave]).then((r) => Number(r.rows[0].n));
+        const gravarRebanho = (cli, cen, numero) => cli.query(
+          `insert into erp.animal_movements
+             (organization_id, empresa_id, code, movement_type, movement_date, status)
+           values ($1,$2,$3,'farm_transfer','2026-07-01','pending')`,
+          [cen.org, cen.e1, String(numero).padStart(5, "0")]);
+        /** true se a promessa AINDA não resolveu depois de `ms` — é assim que se prova bloqueio. */
+        const aindaBloqueada = (pr, ms) => {
+          const marca = Symbol("pendente");
+          return Promise.race([pr.then(() => false, () => false),
+            new Promise((r) => setTimeout(() => r(marca), ms))]).then((x) => x === marca);
+        };
 
-    await aplicarHotfix(c);
+        // C-REPRO · a corrida da arquitetura ABANDONADA, reproduzida.
+        await montar(c, MIGRATION_HOTFIX);
+        cen = await semear(c, "C repro dois contadores");
+        await aplicarHotfix(c);
+        // o estado que a arquitetura abandonada produzia: os dois contadores no MESMO baseline
+        await c.query(
+          `insert into erp.code_sequences (organization_id, entity, last_value)
+           select $1, 'animal_farm_transfer', coalesce(
+             (select last_value from erp.code_sequences where organization_id=$1 and entity=$2), 0)`,
+          [cen.org, CANONICA]);
 
-    const doRebanho = (await c.query(
-      "select last_value::text v from erp.code_sequences where organization_id=$1 and entity=$2",
-      [cen.org, CANONICA_REBANHO])).rows[0];
-    exigir(!!doRebanho, `o rebanho ganhou contador PRÓPRIO ('${CANONICA_REBANHO}'), e não um apelido do de estoque`);
-    exigir(doRebanho && Number(doRebanho.v) === 9,
-      `e ele herda o histórico COMPARTILHADO que estava na chave legada (${doRebanho?.v})`);
+        await a.query("begin");
+        const rA = await alocar(a, cen.org, LEGADA);            // BASE: chave legada, aliasada
+        await gravarRebanho(a, cen, rA);                        // grava, NÃO commita
 
-    const antesEstoque = Number((await c.query(
-      "select last_value::text v from erp.code_sequences where organization_id=$1 and entity=$2",
-      [cen.org, CANONICA])).rows[0].v);
-    const alocadoRebanho = Number((await c.query(
-      "select erp.next_code($1,$2)::text n", [cen.org, CANONICA_REBANHO])).rows[0].n);
-    const depoisEstoque = Number((await c.query(
-      "select last_value::text v from erp.code_sequences where organization_id=$1 and entity=$2",
-      [cen.org, CANONICA])).rows[0].v);
-    exigir(alocadoRebanho === 10, `o rebanho aloca ${alocadoRebanho} pela SUA sequência`);
-    exigir(depoisEstoque === antesEstoque, `e o contador de estoque não se moveu (${antesEstoque})`);
+        await b.query("begin");
+        const rB = await alocar(b, cen.org, CANONICA_REBANHO);  // HEAD antigo: contador PRÓPRIO
+        exigir(rB === rA, `os dois contadores emitem o MESMO numero (${rA} e ${rB}) — nao ha trava em comum`);
 
-    // O RISCO RESIDUAL, MEDIDO E DECLARADO: o binário BASE pede a chave legada para as DUAS rotas, e o
-    // alias só pode acertar uma — ele acerta a de estoque. O que torna isso SEGURO para o rebanho é o
-    // número que sai: acima de todo código de rebanho já emitido, porque a seção 6.1 absorveu o legado.
-    const pelaLegada = Number((await c.query(
-      "select erp.next_code($1,$2)::text n", [cen.org, LEGADA])).rows[0].n);
-    const maiorRebanho = Number((await c.query(
-      "select coalesce(max(code::bigint),0)::text n from erp.animal_movements where organization_id=$1 and movement_type='farm_transfer' and code ~ '^[0-9]+$'",
-      [cen.org])).rows[0].n);
-    exigir(pelaLegada === antesEstoque + 1, `a chave legada cai no contador de ESTOQUE (${pelaLegada}) — o alias acerta a rota do hotfix`);
-    exigir(pelaLegada > maiorRebanho,
-      `e o número emitido fica ACIMA do maior código de rebanho (${maiorRebanho}): uma transferência de rebanho servida pelo binário anterior COMITA em seguranca`);
+        const inserirB = gravarRebanho(b, cen, rB);             // bloqueia no indice unico
+        exigir(await aindaBloqueada(inserirB, 300),
+          "e o segundo insert fica BLOQUEADO no indice unico enquanto a primeira transacao nao decide");
+        await a.query("commit");
+        let erroRepro = "";
+        try { await inserirB; } catch (e) { erroRepro = e.message; }
+        await b.query("rollback").catch(() => {});
+        exigir(/duplicat|unique/i.test(erroRepro),
+          "quando a primeira comita, a segunda MORRE na unicidade: e a corrida, reproduzida");
 
-    // Q6b — O CASO QUE DERRUBOU A PRIMEIRA REDAÇÃO DESTA FATIA.
-    // A garantia acima não é de graça: ela depende de o baseline do contador ALIASADO incluir o acervo de
-    // REBANHO. Aqui a organização tem contador legado ATRÁS do acervo de rebanho e NENHUM acervo de
-    // estoque — e sem a quarta parcela do `greatest` da seção 6.1 o alias emitia um número já ocupado,
-    // colidindo na primeira criação da janela.
-    await montar(c, MIGRATION_HOTFIX);
-    cen = await semear(c, "Q6b rebanho na frente", { contadores: { [LEGADA]: 40 } });
-    for (const code of ["00118", "00119", "00120"]) {
-      await c.query(
-        `insert into erp.animal_movements
-           (organization_id, empresa_id, code, movement_type, movement_date, status)
-         values ($1,$2,$3,'farm_transfer','2026-01-01','pending')`, [cen.org, cen.e1, code]);
+        // C1..C8 · a arquitetura ATUAL: as duas rotas pedem a MESMA chave.
+        await montar(c, MIGRATION_HOTFIX);
+        cen = await semear(c, "C atual chave unica");
+        await aplicarHotfix(c);
+        // Sem linha de contador — o estado REAL de producao medido no preflight. Se nem o `on conflict`
+        // de criacao serializar, a corrida existiria ja no primeiro par.
+        const antesDaCorrida = (await c.query(
+          "select count(*)::text n from erp.code_sequences where organization_id=$1 and entity=$2",
+          [cen.org, CANONICA])).rows[0].n;
+        exigir(antesDaCorrida === "0", "premissa: a organizacao comeca SEM linha de contador, como producao hoje");
+
+        await a.query("begin");
+        const cA = await alocar(a, cen.org, LEGADA);            // BASE
+        await gravarRebanho(a, cen, cA);                        // grava, NAO commita
+
+        await b.query("begin");
+        const pB = alocar(b, cen.org, LEGADA);                  // HEAD: MESMA chave
+        exigir(await aindaBloqueada(pB, 300),
+          "C1 · a alocacao do segundo binario BLOQUEIA na linha do contador — serializacao real, nao sorte");
+        await a.query("commit");
+        const cB = await pB;
+        await gravarRebanho(b, cen, cB);
+        await b.query("commit");
+
+        exigir(cB === cA + 1, `C2/C4 · o segundo recebe ${cB}, um a mais que ${cA} — sem 409 e sem repetir`);
+        const doisDocs = (await c.query(
+          "select count(*)::text n, count(distinct code)::text d from erp.animal_movements where organization_id=$1 and movement_type='farm_transfer'",
+          [cen.org])).rows[0];
+        exigir(doisDocs.n === "2" && doisDocs.d === "2", `C3 · os DOIS documentos persistem, com codigos distintos`);
+
+        // C8 · ordem invertida
+        await b.query("begin");
+        const iB = await alocar(b, cen.org, LEGADA);
+        await gravarRebanho(b, cen, iB);
+        await a.query("begin");
+        const pA2 = alocar(a, cen.org, LEGADA);
+        exigir(await aindaBloqueada(pA2, 300), "C8 · com a ordem invertida, quem chega depois tambem bloqueia");
+        await b.query("commit");
+        const iA = await pA2;
+        await gravarRebanho(a, cen, iA);
+        await a.query("commit");
+        exigir(iA === iB + 1, `C8 · e recebe ${iA}, um a mais que ${iB}`);
+
+        // C7 · repetir nao depende de sorte
+        const rodadas = [];
+        for (let i = 0; i < 5; i++) {
+          await a.query("begin");
+          const x = await alocar(a, cen.org, LEGADA);
+          await gravarRebanho(a, cen, x);
+          await b.query("begin");
+          const py = alocar(b, cen.org, LEGADA);
+          const bloqueou = await aindaBloqueada(py, 150);
+          await a.query("commit");
+          const y = await py;
+          await gravarRebanho(b, cen, y);
+          await b.query("commit");
+          rodadas.push({ bloqueou, ok: y === x + 1 });
+        }
+        exigir(rodadas.every((r) => r.bloqueou && r.ok),
+          `C7 · 5 rodadas seguidas, todas bloqueando e todas contiguas — nao e timing`);
+
+        // C6 · rollback de uma das transacoes nao corrompe o contador
+        const antesRb = Number((await c.query(
+          "select last_value::text v from erp.code_sequences where organization_id=$1 and entity=$2",
+          [cen.org, CANONICA])).rows[0].v);
+        await a.query("begin");
+        await alocar(a, cen.org, LEGADA);
+        await a.query("rollback");
+        const depoisRb = Number((await c.query(
+          "select last_value::text v from erp.code_sequences where organization_id=$1 and entity=$2",
+          [cen.org, CANONICA])).rows[0].v);
+        exigir(depoisRb === antesRb, `C6 · o rollback devolve o contador a ${antesRb} — numero nao consumido`);
+        const depoisDoRb = await alocar(c, cen.org, LEGADA);
+        exigir(depoisDoRb === antesRb + 1, `C6 · e a alocacao seguinte recebe ${depoisDoRb}, sem lacuna nem repeticao`);
+
+        // C5 · a chave legada nao volta a existir como LINHA
+        const legadaViva = Number((await c.query(
+          "select count(*)::text n from erp.code_sequences where entity=$1", [LEGADA])).rows[0].n);
+        exigir(legadaViva === 0, "C5 · nenhuma linha 'farm_transfer' reapareceu — o alias reescreve antes do insert");
+
+        // E o acervo das DUAS tabelas continua sem duplicidade no namespace real de cada uma.
+        const dupRebanho = Number((await c.query(
+          `select count(*)::text n from (select organization_id, code from erp.animal_movements
+             where movement_type='farm_transfer' group by 1,2 having count(*) > 1) d`)).rows[0].n);
+        const dupEstoque = Number((await c.query(
+          `select count(*)::text n from (select organization_id, code from erp.warehouse_transfers
+             group by 1,2 having count(*) > 1) d`)).rows[0].n);
+        exigir(dupRebanho === 0 && dupEstoque === 0, "e nenhuma duplicidade nos dois namespaces");
+      } finally {
+        await a.end().catch(() => {}); await b.end().catch(() => {});
+      }
     }
-    await aplicarHotfix(c);
-
-    const aliasado = Number((await c.query(
-      "select last_value::text v from erp.code_sequences where organization_id=$1 and entity=$2",
-      [cen.org, CANONICA])).rows[0].v);
-    exigir(aliasado === 120,
-      `o contador ALIASADO cobre o acervo de rebanho (${aliasado}), em vez de parar no legado (40)`);
-
-    const emitido = Number((await c.query(
-      "select erp.next_code($1,$2)::text n", [cen.org, LEGADA])).rows[0].n);
-    const ocupado = Number((await c.query(
-      "select count(*)::text n from erp.animal_movements where organization_id=$1 and movement_type='farm_transfer' and code::bigint=$2",
-      [cen.org, emitido])).rows[0].n);
-    exigir(emitido === 121 && ocupado === 0,
-      `e o alias emite ${emitido}, livre naquela tabela — a janela de rolling deploy não colide`);
   } finally {
     await c.end();
   }
@@ -449,9 +533,10 @@ async function main() {
   console.log("APROVADO: a matriz de version skew do hotfix 0019 está provada.");
   console.log("  · Q3/Q4/Q5 compatíveis  → rolling deploy e rollback de binário são SEGUROS com o alias;");
   console.log("  · Q1/Q1b proibidos      → a ordem BANCO → API é necessária, e o pre-deploy a garante;");
-  console.log("  · o alias NÃO sai nesta fatia: ele é o que sustenta Q3, Q4 e Q5;");
-  console.log("  · Q6                     → a chave legada era sobrecarregada, e o histórico foi DIVIDIDO:");
-  console.log("                             erp.animal_movements ficou com contador próprio.");
+  console.log("  · o alias NÃO sai nesta fatia: ele é o que sustenta Q3, Q4, Q5 e C;");
+  console.log("  · C                     → BASE e HEAD concorrentes na rota de REBANHO SERIALIZAM na linha");
+  console.log("                            do contador; a corrida da arquitetura abandonada foi reproduzida");
+  console.log("                            no mesmo quadrante, para que ele tenha dentes.");
 }
 
 main().catch((e) => { console.error(`\nREPROVADO (erro): ${e.message}`); process.exit(1); });

@@ -44,6 +44,11 @@ import { readSchema, REPO_ROOT } from "./lib/schema.mjs";
 const POR_VARIANTE = {
   "title_${...}": { tabela: "erp.financial_titles", discriminador: "direction" },
   "sales_${...}": { tabela: "erp.sales_documents", discriminador: "kind" },
+  // `animalCode(ctx, \`animal_${d.movement_type}\`)` em `apps/api/src/routes/livestock.ts`. Só ficou
+  // visível quando o auditor passou a enxergar os invólucros — e é LEGÍTIMO: `movement_type` está dentro
+  // da UNIQUE de `erp.animal_movements`, então cada tipo de movimentação tem namespace próprio. A metade
+  // (2) cobra essa prova no schema, e é ela que impede a declaração de virar carimbo.
+  "animal_${...}": { tabela: "erp.animal_movements", discriminador: "movement_type" },
 };
 
 /** Normaliza o argumento de entidade para a forma declarada, ou null se não for derivado de variante. */
@@ -56,12 +61,29 @@ function formaDerivada(arg) {
   return null;
 }
 
-/** Extrai o 3º argumento de cada `nextCode(...)` de um texto, contando parênteses e ignorando vírgulas aninhadas. */
+/**
+ * AS PORTAS DE ALOCAÇÃO, e o índice do argumento que carrega a ENTIDADE.
+ *
+ * `nextCode` é a porta crua; `animalCode` é o invólucro de `apps/api/src/routes/livestock.ts`
+ * (`nextCode(ctx.tx, ctx.orgId, entity, 5)`), e `uniqueCode` é o invólucro com laço da mesma rota.
+ *
+ * ISTO NÃO É ZELO: a primeira versão deste auditor só conhecia `nextCode`, e por isso era CEGO
+ * exatamente ao módulo de onde o defeito da chave sobrecarregada veio — `livestock.ts` nunca chama
+ * `nextCode` diretamente. Um auditor que não enxerga o invólucro audita o arquivo errado.
+ */
+const PORTAS = [
+  { nome: "nextCode", arg: 2 },   // nextCode(tx, orgId, entity, width?)
+  { nome: "animalCode", arg: 1 }, // animalCode(ctx, entity)
+  { nome: "uniqueCode", arg: 2 }, // uniqueCode(ctx, table, entity)
+];
+
+/** Extrai o argumento de ENTIDADE de cada porta de alocação, contando parênteses e ignorando vírgulas aninhadas. */
 function entidadesDeNextCode(texto) {
   const achados = [];
-  const re = /\bnextCode\s*\(/g;
+  const re = new RegExp(`\\b(${PORTAS.map((p) => p.nome).join("|")})\\s*\\(`, "g");
   let m;
   while ((m = re.exec(texto)) !== null) {
+    const porta = PORTAS.find((p) => p.nome === m[1]);
     let i = m.index + m[0].length, prof = 1, arg = 0, atual = "";
     const args = [];
     while (i < texto.length && prof > 0) {
@@ -73,7 +95,9 @@ function entidadesDeNextCode(texto) {
       i++;
     }
     args.push(atual);
-    if (args.length >= 3) achados.push({ entidade: args[2], linha: texto.slice(0, m.index).split("\n").length });
+    if (args.length > porta.arg) {
+      achados.push({ entidade: args[porta.arg], porta: porta.nome, linha: texto.slice(0, m.index).split("\n").length });
+    }
   }
   return achados;
 }
@@ -85,11 +109,14 @@ const AMOSTRAS = [
   ["literal fixo NÃO é derivado", 0, 'const code = await nextCode(ctx.tx, ctx.orgId, "input_entry");'],
   ["constante nomeada NÃO é derivada", 0, "const code = await nextCode(ctx.tx, ctx.orgId, SEQUENCIA_WAREHOUSE_TRANSFER);"],
   ["variável genérica NÃO é derivada", 0, "const code = await nextCode(ctx.tx, ctx.orgId, def.codeEntity, 4);"],
+  ["ternário dentro do invólucro animalCode é PEGO", 1, 'const code = await animalCode(ctx, k === "farm" ? "farm_transfer" : "outro");'],
 ];
 /** Amostras da metade 3: a chave legada é proibida no runtime, em qualquer grafia de literal. */
 const AMOSTRAS_LEGADA = [
   ["literal simples é PEGO", 1, `const code = await nextCode(ctx.tx, ctx.orgId, 'farm_transfer');`],
   ["literal duplo é PEGO", 1, 'const code = await nextCode(ctx.tx, ctx.orgId, "farm_transfer", 5);'],
+  ["pelo invólucro animalCode é PEGO", 1, 'const code = await animalCode(ctx, "farm_transfer");'],
+  ["pelo invólucro uniqueCode é PEGO", 1, 'const c = await uniqueCode(ctx, "animal_handlings", "farm_transfer");'],
   ["dentro de ternário é PEGO", 1, 'const code = await nextCode(ctx.tx, ctx.orgId, k === "farm" ? "farm_transfer" : "warehouse_transfer");'],
   ["a canônica do rebanho NÃO é pega", 0, "const code = await nextCode(ctx.tx, ctx.orgId, SEQUENCIA_ANIMAL_FARM_TRANSFER, 5);"],
   ["o TIPO DE MOVIMENTO farm_transfer não é chave de contador", 0, 'const code = await nextCode(ctx.tx, ctx.orgId, "animal_farm_transfer", 5);'],
@@ -175,34 +202,64 @@ if (semDiscriminador.length) {
   process.exit(1);
 }
 
-// ---------- metade 3: a chave legada e SO alias — nenhum runtime pode voltar a pedi-la ----------
-// POR QUE ESTA METADE EXISTE. `farm_transfer` era uma chave SOBRECARREGADA: duas tabelas com namespaces
-// de unicidade DIFERENTES pediam o mesmo contador —
+// ---------- metade 3: o uso da chave LEGADA e permitido, mas so DECLARADO ----------
+// POR QUE ESTA METADE MUDOU DE FORMA. A primeira versao PROIBIA `farm_transfer` no runtime, sob a tese de
+// que a 0019 a tornava alias-only. A auditoria externa mostrou que a tese custava caro demais: dar ao
+// rebanho um contador proprio DURANTE a vida do alias cria uma corrida entre o binario anterior (que pede
+// a chave legada, aliasada para o contador de estoque) e o novo (que pediria o contador proprio). Duas
+// LINHAS de `erp.code_sequences`, sem trava em comum, emitindo o mesmo numero para
+// `erp.animal_movements` — e um `select` de "ja existe?" e TOCTOU, nao solucao.
 //
-//   erp.warehouse_transfers   unique (organization_id, code)                 POST /stock/transfers
-//   erp.animal_movements      unique (organization_id, movement_type, code)  POST /livestock/transfers/to-farm
+// Enquanto o alias existir, o caminho seguro e os DOIS binarios pedirem a MESMA chave: `erp.next_code` e
+// `insert ... on conflict do update`, entao a linha do contador serializa as transacoes.
 //
-// A 0019 dividiu o historico e transformou a chave em ALIAS dentro de `erp.next_code`, para o binario
-// anterior continuar correto durante o rolling deploy. Um alias nao sabe quem chamou: qualquer runtime
-// que volte a pedi-la sera desviado para o contador de ESTOQUE, seja qual for a tabela que ele numera.
-//
-// Por isso a chave e proibida no codigo NOVO. Ela existe apenas no banco, e com data para sair.
+// Logo a chave legada NAO e proibida — ela e COMPATIBILIDADE, e compatibilidade sem prazo vira folclore.
+// Cada uso precisa estar declarado aqui, com o motivo e a condicao de saida. Um uso NOVO e nao declarado
+// reprova, que e o que impede a chave de se espalhar por conveniencia.
+const POR_COMPATIBILIDADE = {
+  "apps/api/src/routes/livestock.ts": {
+    motivo: "erp.animal_movements divide a chave legada com erp.warehouse_transfers; separar agora criaria "
+          + "corrida entre o binario anterior (aliasado) e o novo durante o rolling deploy",
+    sai_quando: "a fatia que REMOVER o alias de erp.next_code separar a numeracao do rebanho",
+  },
+};
+
 const legadas = [];
 for (const f of arquivos) {
+  const rel = path.relative(REPO_ROOT, f);
   const texto = fs.readFileSync(f, "utf8");
   for (const { entidade, linha } of entidadesDeNextCode(texto)) {
-    if (/["'`]farm_transfer["'`]/.test(entidade)) {
-      legadas.push(`${path.relative(REPO_ROOT, f)}:${linha}: pede a chave LEGADA 'farm_transfer' (${entidade.trim()})`);
+    if (!/["'`]farm_transfer["'`]/.test(entidade)) continue;
+    if (!POR_COMPATIBILIDADE[rel]) {
+      legadas.push(`${rel}:${linha}: pede a chave LEGADA 'farm_transfer' (${entidade.trim()}) e nao esta declarada`);
     }
   }
 }
 if (legadas.length) {
-  console.error("sequencia-namespace-audit: runtime pedindo a chave LEGADA de transferencia\n");
+  console.error("sequencia-namespace-audit: uso NAO DECLARADO da chave legada de transferencia\n");
   for (const o of legadas) console.error("  - " + o);
-  console.error("\n'farm_transfer' e ALIAS de compatibilidade da migration 0019, nao chave de runtime: ela");
-  console.error("cai no contador de erp.warehouse_transfers, seja qual for a tabela que voce esta numerando.");
-  console.error("Use a chave canonica do SEU namespace (SEQUENCIA_WAREHOUSE_TRANSFER para estoque,");
-  console.error("SEQUENCIA_ANIMAL_FARM_TRANSFER para movimentacao de rebanho).");
+  console.error("\n'farm_transfer' e ALIAS de compatibilidade da migration 0019: ela cai no contador de");
+  console.error("erp.warehouse_transfers, seja qual for a tabela que voce esta numerando. Se o seu caminho");
+  console.error("PRECISA dela para nao criar contador concorrente durante o rolling deploy, declare o");
+  console.error("arquivo em POR_COMPATIBILIDADE com motivo e condicao de saida. Se nao precisa, use a chave");
+  console.error("canonica do SEU namespace (SEQUENCIA_WAREHOUSE_TRANSFER para estoque).");
+  process.exit(1);
+}
+
+// E a declaracao nao pode envelhecer em silencio: arquivo declarado que DEIXOU de usar a chave vira
+// declaracao morta, e declaracao morta e o comeco de uma allowlist que ninguem revisa.
+const declaracoesMortas = [];
+for (const rel of Object.keys(POR_COMPATIBILIDADE)) {
+  const abs = path.join(REPO_ROOT, rel);
+  if (!fs.existsSync(abs)) { declaracoesMortas.push(`${rel}: declarado em POR_COMPATIBILIDADE e nao existe`); continue; }
+  const usa = entidadesDeNextCode(fs.readFileSync(abs, "utf8"))
+    .some((a) => /["'`]farm_transfer["'`]/.test(a.entidade));
+  if (!usa) declaracoesMortas.push(`${rel}: declarado em POR_COMPATIBILIDADE mas nao pede mais a chave legada`);
+}
+if (declaracoesMortas.length) {
+  console.error("sequencia-namespace-audit: declaracao de compatibilidade MORTA\n");
+  for (const o of declaracoesMortas) console.error("  - " + o);
+  console.error("\nRemova a entrada de POR_COMPATIBILIDADE: compatibilidade que ninguem usa mais e allowlist.");
   process.exit(1);
 }
 
@@ -229,5 +286,5 @@ if (!namespaceUnico) {
 console.log(
   `sequencia-namespace-audit: OK (autoteste ${AMOSTRAS.length + AMOSTRAS_LEGADA.length}/${AMOSTRAS.length + AMOSTRAS_LEGADA.length}; ` +
   `${chamadas} chamadas de nextCode, ${Object.keys(POR_VARIANTE).length} numeracoes por variante declaradas e ` +
-  `provadas na unicidade, chave legada 'farm_transfer' ausente do runtime)`
+  `provadas na unicidade, ${Object.keys(POR_COMPATIBILIDADE).length} uso(s) da chave legada declarado(s) e vivo(s))`
 );

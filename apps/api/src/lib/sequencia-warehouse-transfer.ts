@@ -36,14 +36,27 @@
  * um backup pré-0019 com o binário novo no ar recria as chaves em 1 sobre acervo numerado. O caminho de
  * volta escrito está em `docs/DEPLOYMENT.md`, e é forward-only.
  *
- * A CHAVE LEGADA ERA SOBRECARREGADA — E POR ISSO O ALIAS SOZINHO NÃO BASTAVA
- * -------------------------------------------------------------------------
- * `'farm_transfer'` não pertencia só a esta tabela: `erp.animal_movements`, que tem namespace PRÓPRIO
- * (`unique (organization_id, movement_type, code)`), numerava com a MESMA chave. Um alias não sabe quem
- * chamou, então canonicalizar sem mais nada mandaria a numeração do REBANHO para este contador e a
- * migration apagaria a linha que era o contador do rebanho — o hotfix consertaria uma tabela quebrando
- * outra. A 0019 divide o histórico compartilhado nas duas chaves canônicas antes de apagar a legada, e a
- * do rebanho mora em `sequencia-transferencia-rebanho.ts`, com o resíduo de janela declarado lá.
+ * A CHAVE LEGADA É SOBRECARREGADA — E POR ISSO ELA CONTINUA SENDO A CHAVE DAS DUAS ROTAS
+ * -------------------------------------------------------------------------------------
+ * `'farm_transfer'` não pertence só a esta tabela: `erp.animal_movements`, que tem namespace PRÓPRIO
+ * (`unique (organization_id, movement_type, code)`), numera com a MESMA chave.
+ *
+ * A tentação é separar as duas agora. Uma rodada anterior desta fatia fez isso — deu ao rebanho um
+ * contador `animal_farm_transfer` — e a auditoria externa mostrou que INTRODUZ UMA CORRIDA no rolling
+ * deploy: o binário anterior pede a chave legada (aliasada para ESTE contador) e o novo pediria o próprio;
+ * são LINHAS DIFERENTES, sem trava em comum, emitindo o MESMO número para `erp.animal_movements`. Um
+ * `select` de "já existe?" não fecha isso — é TOCTOU contra transação não commitada — e os dois contadores
+ * nascem no mesmo baseline, então a colisão cai no primeiro par concorrente.
+ *
+ * Por isso, enquanto o alias existir, as DUAS rotas pedem a MESMA chave: `erp.next_code` é
+ * `insert ... on conflict do update`, a linha do contador é travada, e as transações SERIALIZAM nela.
+ * Medido com duas conexões e barreiras reais no quadrante C de `pnpm gate:0019`, que também REPRODUZ a
+ * corrida da arquitetura abandonada para que o quadrante tenha dentes.
+ *
+ * Consequências aceitas e declaradas: (a) a numeração de rebanho fica intercalada com a de estoque, com
+ * lacuna nas duas — lacuna é normal no contrato, colisão não é; (b) como este contador grava nas DUAS
+ * tabelas, o baseline da 0019 inclui o `max(code)` de ambas, com pós-condição própria. A separação do
+ * contador de rebanho é o cleanup da fatia que REMOVE o alias.
  *
  * QUEM REPROVA QUEM VOLTAR ATRÁS — e por que NÃO é o teste de integração
  * ---------------------------------------------------------------------

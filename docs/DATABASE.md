@@ -42,9 +42,14 @@ Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000
   `(organization_id, code)`, como em `erp.warehouse_transfers`, existe UM namespace e tem de haver UM
   contador; dois emitem o mesmo número para a mesma coluna e o segundo documento morre em 409. Foi o
   defeito que a `0019` corrigiu. O gate é `scripts/sequencia-namespace-audit.mjs`, no `pnpm lint`.
-- **Uma chave de contador serve UMA tabela.** `'farm_transfer'` servia duas (`erp.warehouse_transfers` e
-  `erp.animal_movements`) e isso só não colidia por acaso. Desde a `0019` ela não é chave de runtime: é
-  ALIAS de compatibilidade dentro de `erp.next_code`, e o auditor recusa código novo que a peça.
+- **Uma chave de contador serve UMA tabela** — e quando não serve, separar tem HORA. `'farm_transfer'`
+  serve duas (`erp.warehouse_transfers` e `erp.animal_movements`), o que nunca colidiu porque os
+  namespaces são distintos. Desde a `0019` ela é também ALIAS de compatibilidade dentro de
+  `erp.next_code`. Separá-la **enquanto o alias existe** criaria uma corrida: dois contadores em linhas
+  diferentes, sem trava em comum, emitindo o mesmo número para a mesma tabela a partir de binários
+  distintos. Por isso as duas rotas continuam na MESMA chave até a retirada do alias — é a linha do
+  contador que serializa os binários. O uso é DECLARADO em `scripts/sequencia-namespace-audit.mjs`, com
+  motivo e condição de saída, e uso não declarado (ou declaração morta) reprova.
 - **`erp.next_code` e o `insert` rodam na MESMA transação** (`runService` → `withTx`). Uma violação de
   unicidade desfaz o incremento do contador junto, então a tentativa seguinte aloca o MESMO número: onde
   colisão é possível, a alocação precisa de laço que pule código ocupado — não de "tentar de novo". É o

@@ -261,6 +261,13 @@ recebe número do contador canônico, sem criar linha legada. Os dois runtimes f
 banco — provado quadrante a quadrante por `pnpm gate:0019` (Q3 binário anterior × banco novo, Q4 rolling
 deploy com os dois vivos, Q5 rollback de binário).
 
+**E a prova inclui CONCORRÊNCIA, não só alternância.** O quadrante C roda duas transações ABERTAS ao mesmo
+tempo, em conexões diferentes, com barreiras explícitas: o binário anterior e o novo, na mesma rota de
+transferência de rebanho, serializam na linha do contador em vez de emitir o mesmo número. O mesmo
+quadrante REPRODUZ a corrida da arquitetura que foi abandonada (dar ao rebanho um contador próprio durante
+a vida do alias), para que a prova tenha dentes. É por isso que, enquanto o alias existir, a rota de
+rebanho continua pedindo a chave legada: duas rotas na MESMA chave é o que dá o ponto de serialização.
+
 **Ordem obrigatória: BANCO → API.** O quadrante inverso (API nova antes da migration) continua PROIBIDO e
 está medido no gate: sem a `0019`, a API nova pede a chave canônica, a linha não existe, o contador reinicia
 em 1 e colide com o acervo — e quando o acervo não começa em 1 há uma janela SILENCIOSA em que documentos
@@ -277,10 +284,11 @@ A `0019` é destrutiva em dois pontos: apaga a linha `entity='farm_transfer'` de
 substitui `erp.next_code`. Restaurar um estado pré-0019 por baixo de um binário pós-0019 reproduz, na
 direção contrária, exatamente o modo de falhar que a migration existe para evitar:
 
-- `animal_farm_transfer` não existe no backup → a API nova a recria em **1** sobre um acervo de rebanho já
-  numerado → colisão;
 - `warehouse_transfer` volta a um `last_value` anterior aos códigos emitidos depois da migration → colisão
-  na própria tabela do hotfix.
+  na própria tabela do hotfix **e também em `erp.animal_movements`**, porque enquanto o alias existir esse
+  contador é o destino das duas rotas;
+- a linha `farm_transfer` reaparece e volta a ser contador de verdade para o binário anterior, enquanto o
+  novo continua pedindo a canônica — exatamente os dois estados que a `0019` existe para não ter juntos.
 
 Se for mesmo necessário voltar o banco, o caminho é o inverso inteiro e com o serviço parado: restaurar o
 backup, **e então** reaplicar a `0019` antes de qualquer binário pós-hotfix voltar a servir — a migration é
