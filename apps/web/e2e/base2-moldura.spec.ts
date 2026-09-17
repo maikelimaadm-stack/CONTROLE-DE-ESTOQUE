@@ -115,12 +115,16 @@ test("moldura Base 2: deep link e recarga reabrem a mesma tela, no mesmo endpoin
   expect(chamadas.filter((u) => /\/api\/(documentos|base2|lancamentos)\b/.test(u))).toHaveLength(0);
 });
 
-test("moldura Base 2: sem Tipo de Operação e sem rolagem horizontal em viewport menor", async ({ page }) => {
+test("moldura Base 2: identidade da operação presente e sem rolagem horizontal em viewport menor", async ({ page }) => {
   await login(page);
   await criarEntradaEAbrir(page);
 
-  // BASE2-02/TOP está congelada nesta fatia: nenhum vestígio pode ter vazado para a tela
-  await expect(page.getByText(/Tipo de Opera[çc][ãa]o/i)).toHaveCount(0);
+  // Até a BASE2-01 este teste exigia a AUSÊNCIA de "Tipo de Operação", porque a TOP estava congelada.
+  // A BASE2-02 a implementou: a asserção vira o seu oposto exato, e o campo passa a ser identidade
+  // obrigatória da tela — com o rótulo e o valor vindos do catálogo, nunca de literal na tela.
+  const campoTop = page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]');
+  await expect(campoTop, "a entrada de insumos precisa exibir a sua operação").toBeVisible();
+  await expect(campoTop).toContainText("Entrada manual de estoque");
 
   await page.setViewportSize({ width: 768, height: 900 });
   await expect(page.getByTestId("base2-shell")).toBeVisible();
@@ -318,4 +322,136 @@ test("moldura Base 2 — ANEXOS: só a entrada de insumos oferece o botão, e o 
   await expect(page.getByTestId("base2-anexos"), "invoices não está em ATTACHMENT_PARENTS: sem botão").toHaveCount(0);
   // e o histórico, que não depende de whitelist, continua lá — prova que a ausência acima é da whitelist
   await expect(page.getByTestId("base2-historico")).toBeVisible();
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * TIPO DE OPERAÇÃO — AS SETE ROTAS DO PILOTO (BASE2-02)
+ *
+ * A BASE2-02 classifica; ela não executa. Este teste prova as duas metades:
+ *  (a) cada uma das sete rotas exibe a SUA operação, com o rótulo do catálogo — e a transferência prova
+ *      a variante, porque `kind` decide entre duas operações na MESMA tabela e na MESMA rota;
+ *  (b) nada mais mudou: o deep link continua o mesmo, o endpoint chamado continua o original, e não
+ *      existe porta nova de TOP (`/api/top`, `/api/tipos-operacao`, `/api/base2`).
+ *
+ * As fixtures são criadas pela própria API, como o usuário faria. Requisição, baixa e transferência
+ * CONSOMEM estoque, então uma entrada farta é semeada antes — sem saldo elas falhariam por motivo que
+ * nada tem a ver com a TOP, e um teste que falha pelo motivo errado não prova o que diz provar.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Rótulos pt-BR das TOPs, como o catálogo oficial os declara (packages/plataforma/src/idiomas/pt-BR.ts). */
+const OPERACAO = {
+  entrada: "Entrada manual de estoque",
+  notaFiscal: "Entrada por documento fiscal",
+  requisicao: "Requisição de estoque",
+  baixa: "Baixa de estoque",
+  devolucao: "Devolução ao estoque",
+  transferenciaArmazens: "Transferência entre armazéns",
+  transferenciaEmpresas: "Transferência entre empresas",
+  batida: "Produção de ração"
+} as const;
+
+/** Abre a rota e confere QUAL operação a tela afirma ser. Falha se o campo não existir. */
+async function conferirOperacao(page: Page, url: string, esperado: string) {
+  await page.goto(url);
+  await expect(page.getByTestId("base2-shell"), `${url}: a tela precisa abrir`).toBeVisible();
+  const campo = page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]');
+  await expect(campo, `${url}: sem o campo Tipo de operação`).toBeVisible();
+  await expect(campo, `${url}: operação errada`).toContainText(esperado);
+}
+
+test("moldura Base 2 — TIPO DE OPERAÇÃO: as sete rotas do piloto, cada uma com a sua operação", async ({ page }) => {
+  await login(page);
+  await page.goto("/estoque");
+  const empresaId = await empresaAtiva(page);
+  const armazens = await armazensDaEmpresa(page, empresaId, 1);
+  const origem = armazens[0]!; const destino = armazens[1] ?? armazens[0]!;
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const fornecedor = await primeiroId(page, "/api/resources/people?pageSize=1&is_provider=true");
+
+  // saldo para o que consome (requisição, baixa, transferência)
+  const entrada = await api<{ id: string }>(page, "POST", "/api/stock/input-entries", {
+    empresa_id: empresaId, entry_date: "2026-09-22",
+    items: [{ product_id: produto, warehouse_id: origem, quantity: "200", unit_value: "3.00", generate_stock: true }]
+  });
+
+  const nf = await api<{ id: string }>(page, "POST", "/api/stock/invoices", {
+    empresa_id: empresaId, number: `TOP${Date.now().toString().slice(-6)}`, series: "1", provider_id: fornecedor,
+    emission_date: "2026-09-22", generate_financial: false,
+    items: [{ product_id: produto, warehouse_id: origem, quantity: "1", unit_value: "1.00" }]
+  });
+
+  const requisicao = await api<{ id: string }>(page, "POST", "/api/stock/requisitions", {
+    empresa_id: empresaId, requisition_date: "2026-09-22",
+    items: [{ warehouse_id: origem, product_id: produto, quantity: "1" }]
+  });
+
+  const baixa = await api<{ id: string }>(page, "POST", "/api/stock/writeoffs", {
+    empresa_id: empresaId, writeoff_date: "2026-09-22", warehouse_id: origem,
+    reason: "loss", justification: "Perda registrada pelo teste de contrato da BASE2-02",
+    items: [{ product_id: produto, quantity: "1" }]
+  });
+
+  const devolucao = await api<{ id: string }>(page, "POST", "/api/stock/devolutions", {
+    empresa_id: empresaId, devolution_date: "2026-09-22",
+    items: [{ warehouse_id: origem, product_id: produto, quantity: "1", unit_value: "3.00" }]
+  });
+
+  const transferencia = await api<{ id: string }>(page, "POST", "/api/stock/transfers", {
+    kind: "warehouse", transfer_date: "2026-09-22", empresa_origem_id: empresaId,
+    origin_warehouse_id: origem, destination_warehouse_id: destino,
+    items: [{ product_id: produto, quantity: "1" }]
+  });
+
+  const produtos = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/products?pageSize=2");
+  const acabado = produtos.items[1]?.id ?? produto;
+  const formula = await api<{ id: string }>(page, "POST", "/api/stock/feed-formulas", {
+    name: `Fórmula TOP ${Date.now().toString(36)}`, product_id: acabado, items: [{ product_id: produto, quantity: "10" }]
+  });
+  const batida = await api<{ id: string }>(page, "POST", "/api/stock/feed-batches", {
+    empresa_id: empresaId, batch_date: "2026-09-22", formula_id: formula.id,
+    origin_warehouse_id: origem, destination_warehouse_id: destino, quantity_produced: "10"
+  });
+
+  // as sete rotas, uma a uma, pela rota canônica de sempre
+  await conferirOperacao(page, `/estoque/entradas/${entrada.id}`, OPERACAO.entrada);
+  await conferirOperacao(page, `/estoque/documentos-fiscais/${nf.id}`, OPERACAO.notaFiscal);
+  await conferirOperacao(page, `/estoque/requisicoes/${requisicao.id}`, OPERACAO.requisicao);
+  await conferirOperacao(page, `/estoque/baixas/${baixa.id}`, OPERACAO.baixa);
+  await conferirOperacao(page, `/estoque/devolucoes/${devolucao.id}`, OPERACAO.devolucao);
+  await conferirOperacao(page, `/estoque/transferencias/${transferencia.id}`, OPERACAO.transferenciaArmazens);
+  await conferirOperacao(page, `/estoque/batidas/${batida.id}`, OPERACAO.batida);
+
+  // A TOP não é o título da tela: numa transferência entre armazéns, a tela continua se chamando
+  // "Transferência" e a OPERAÇÃO é outra coisa. Se a identidade fosse derivada do título, as duas
+  // variantes seriam indistinguíveis — que é exatamente o defeito que a variante existe para evitar.
+  const campoTop = page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]');
+  await page.goto(`/estoque/transferencias/${transferencia.id}`);
+  await expect(campoTop).not.toContainText(OPERACAO.transferenciaEmpresas);
+});
+
+test("moldura Base 2 — TIPO DE OPERAÇÃO: classifica sem executar (mesma rota, mesmo endpoint, nenhuma porta nova)", async ({ page }) => {
+  await login(page);
+
+  // Tudo o que a tela pede ao servidor, do login em diante. A TOP é resolvida no cliente, a partir de
+  // um registry estático: se alguma porta de TOP tivesse nascido, ela apareceria aqui.
+  const chamadas: string[] = [];
+  page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname.startsWith("/api/")) chamadas.push(u.pathname); });
+
+  const url = await criarEntradaEAbrir(page);
+  await expect(page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]')).toBeVisible();
+
+  expect(chamadas.length, "o teste precisa ter observado requisições").toBeGreaterThan(0);
+  for (const proibida of ["/api/top", "/api/tipos-operacao", "/api/tipo-operacao", "/api/base2"]) {
+    expect(chamadas.some((c) => c.startsWith(proibida)), `nasceu uma porta de TOP: ${proibida}`).toBe(false);
+  }
+  // O endpoint do documento continua sendo o original do módulo.
+  expect(chamadas.some((c) => c.startsWith("/api/stock/input-entries")), "a tela precisa continuar lendo o endpoint de sempre").toBe(true);
+
+  // Deep link inalterado: a rota canônica é a mesma de antes da TOP, e recarregar reabre a mesma tela.
+  expect(url).toMatch(/\/estoque\/entradas\/[0-9a-f-]{36}$/);
+  await page.reload();
+  await expect(page.locator('[data-testid="base2-field"][data-campo="Tipo de operação"]')).toBeVisible();
+
+  // E a TOP não inventou ação: a barra de ações continua com o que o módulo já oferecia.
+  await expect(page.getByRole("button", { name: /Tipo de opera/i }), "a TOP não é um botão").toHaveCount(0);
 });

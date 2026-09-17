@@ -13,6 +13,22 @@ import path from "node:path";
 import { readSchema, REPO_ROOT, companyColumnsOf, isOrgScoped, isSoftDeletable } from "./lib/schema.mjs";
 import { DICIONARIO_DE_DADOS, VERSAO_DICIONARIO, MODULOS_DICIONARIO, validarDicionarioDeDados } from "../packages/domain/dicionario-dados.mjs";
 
+/**
+ * Rótulo pt-BR das TOPs. Vem do catálogo oficial (@erp/plataforma), nunca de uma cópia aqui: o documento
+ * mostra o nome funcional que a interface mostra, e não um texto paralelo que envelheceria sozinho.
+ * Depende do build do pacote — no CI o passo "Build workspace packages" precede o lint. Se faltar, o gate
+ * FALHA com instrução, em vez de omitir a coluna em silêncio (gate que se autodesativa não é gate).
+ */
+let CATALOGO;
+try {
+  ({ ptBR: CATALOGO } = await import("../packages/plataforma/dist/index.js"));
+} catch (e) {
+  console.error("data-dictionary: catálogo pt-BR indisponível — rode `pnpm --filter @erp/plataforma build` antes do gate.");
+  console.error(String(e?.message ?? e));
+  process.exit(1);
+}
+const rotuloTop = (chave) => CATALOGO.mensagens[`top.${chave}`];
+
 const OUT = path.join(REPO_ROOT, "docs", "DATA-DICTIONARY.md");
 const check = process.argv.includes("--check");
 
@@ -61,6 +77,10 @@ function render(schema) {
   out.push(`| Tabelas com coluna de empresa (hoje \`farm_id\`) | ${comEmpresa} |`);
   out.push(`| Entidades curadas neste dicionário | ${curated} |`);
   out.push(`| Entidades com ID Global | ${DICIONARIO_DE_DADOS.filter((e) => e.idGlobal).length} |`);
+  const comTop = DICIONARIO_DE_DADOS.filter((e) => e.top !== undefined || e.tops);
+  const totalTops = comTop.reduce((n, e) => n + (e.tops?.length ?? 1), 0);
+  out.push(`| Entidades com Tipo de Operação | ${comTop.length} |`);
+  out.push(`| Tipos de Operação referenciados | ${totalTops} |`);
   out.push(`| Cobertura curada | ${((curated / schema.size) * 100).toFixed(1)}% |`, "");
   out.push("Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro");
   out.push("(`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.", "");
@@ -85,7 +105,14 @@ function render(schema) {
         out.push(`| Discriminador | \`${entry.discriminador}\` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |`);
         out.push(`| Rotas por variante | ${Object.entries(entry.rotas).map(([v, r]) => `\`${v}\` → \`${r}\``).join(" · ")} |`);
       }
-      if (entry.top) out.push(`| TOP futura (contrato) | ${esc(entry.top)} |`);
+      // Tipo de Operação: chave canônica + rótulo resolvido do catálogo. A chave é a identidade; o rótulo
+      // é apresentação, e aparece aqui só para o documento ser legível por quem não decora chave.
+      const topsDaEntrada = entry.tops ?? (entry.top === undefined ? [] : [entry.top]);
+      if (topsDaEntrada.length) {
+        const rotulo = (c) => `\`${c}\` (${esc(rotuloTop(c) ?? "sem rótulo no catálogo")})`;
+        out.push(`| Tipo de Operação | ${topsDaEntrada.map(rotulo).join(" · ")} |`);
+        if (entry.discriminadorTop) out.push(`| Discriminador do Tipo de Operação | \`${entry.discriminadorTop}\` (decide qual das operações acima o registro é) |`);
+      }
       if (entry.migracao) out.push(`| Migração | ${esc(entry.migracao)} |`);
       out.push("");
       if (!table) { out.push("> Tabela não encontrada no schema.", ""); continue; }

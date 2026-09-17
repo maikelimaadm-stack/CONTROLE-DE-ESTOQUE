@@ -40,6 +40,7 @@ export const ptBR: Catalogo = {
     "termos.empresa": "Empresa",
     "termos.empresas": "Empresas",
     "termos.id_global": "ID Global",
+    "termos.tipo_operacao": "Tipo de operação",
     "termos.idioma": "Idioma",
 
     // Mensagens
@@ -74,7 +75,28 @@ export const ptBR: Catalogo = {
 
     // ID Global
     "id_global.nao_encontrado": "Nenhum registro encontrado para este ID Global.",
-    "id_global.buscar": "Buscar por ID Global (#)"
+    "id_global.buscar": "Buscar por ID Global (#)",
+
+    // Tipo de Operação (TOP) — nome funcional de cada operação declarada em
+    // `packages/domain/src/tipo-operacao.ts`. O registry guarda a CHAVE; o texto mora só aqui, e o gate
+    // do registry reprova chave sem rótulo. Traduzir uma TOP nunca muda a chave nem o dado gravado.
+    "top.estoque.entrada_manual": "Entrada manual de estoque",
+    "top.estoque.entrada_por_documento_fiscal": "Entrada por documento fiscal",
+    "top.estoque.requisicao": "Requisição de estoque",
+    "top.estoque.baixa": "Baixa de estoque",
+    "top.estoque.devolucao": "Devolução ao estoque",
+    "top.estoque.transferencia_entre_armazens": "Transferência entre armazéns",
+    "top.estoque.transferencia_entre_empresas": "Transferência entre empresas",
+    "top.estoque.producao_de_racao": "Produção de ração",
+    "top.compras.solicitacao": "Solicitação de compra",
+    "top.financeiro.conta_a_pagar": "Conta a pagar",
+    "top.financeiro.conta_a_receber": "Conta a receber",
+    "top.vendas.orcamento": "Orçamento de venda",
+    "top.vendas.pedido": "Pedido de venda",
+    "top.vendas.venda": "Venda",
+    "top.frota_ativos.abastecimento": "Abastecimento",
+    "top.frota_ativos.manutencao": "Manutenção",
+    "top.ordens_servico.ordem_de_servico": "Ordem de serviço"
   }
 };
 

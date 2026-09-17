@@ -5,7 +5,7 @@
 > a parte funcional (nome, descrição, módulo, rota, TOP futura, notas de migração) é curada em
 > `packages/domain/dicionario-dados.mjs`. O gate `--check` recusa entrada que aponte para tabela/coluna inexistente.
 
-Formato do dicionário: versão **1**. Taxonomia própria e neutra `ERP-<MÓDULO>-<ENTIDADE>` (não reproduz códigos do sistema de referência nem amarra o núcleo a um segmento de negócio).
+Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO>-<ENTIDADE>` (não reproduz códigos do sistema de referência nem amarra o núcleo a um segmento de negócio).
 
 ## Panorama
 
@@ -16,6 +16,8 @@ Formato do dicionário: versão **1**. Taxonomia própria e neutra `ERP-<MÓDULO
 | Tabelas com coluna de empresa (hoje `farm_id`) | 53 |
 | Entidades curadas neste dicionário | 37 |
 | Entidades com ID Global | 23 |
+| Entidades com Tipo de Operação | 13 |
+| Tipos de Operação referenciados | 17 |
 | Cobertura curada | 20.4% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
@@ -443,7 +445,7 @@ Lançamento de entrada de produtos sem documento fiscal vinculado.
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/entradas/:id` |
-| TOP futura (contrato) | Entrada de estoque sem documento fiscal |
+| Tipo de Operação | `estoque.entrada_manual` (Entrada manual de estoque) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -509,7 +511,7 @@ Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financei
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/documentos-fiscais/:id` |
-| TOP futura (contrato) | Entrada por documento fiscal |
+| Tipo de Operação | `estoque.entrada_por_documento_fiscal` (Entrada por documento fiscal) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -560,7 +562,7 @@ Consumo interno de produtos por centro de custo/área.
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/requisicoes/:id` |
-| TOP futura (contrato) | Saída por requisição |
+| Tipo de Operação | `estoque.requisicao` (Requisição de estoque) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -596,7 +598,7 @@ Baixa de estoque por perda, deterioração, doação e outros motivos.
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/baixas/:id` |
-| TOP futura (contrato) | Baixa de estoque |
+| Tipo de Operação | `estoque.baixa` (Baixa de estoque) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -631,6 +633,7 @@ Retorno de produtos ao estoque a partir de uma requisição.
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/devolucoes/:id` |
+| Tipo de Operação | `estoque.devolucao` (Devolução ao estoque) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -650,7 +653,7 @@ Retorno de produtos ao estoque a partir de uma requisição.
 
 ### ERP-ESTOQUE-TRANSFERENCIA — Transferência
 
-Movimentação de produtos entre armazéns ou entre empresas.
+Movimentação de produtos entre armazéns ou entre empresas. A coluna `kind` decide QUAL das duas operações é: dentro da mesma empresa, ou atravessando a fronteira de empresa — a rota de detalhe é a mesma para as duas, a operação não.
 
 | Propriedade | Valor |
 | --- | --- |
@@ -661,6 +664,8 @@ Movimentação de produtos entre armazéns ou entre empresas.
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/transferencias/:id` |
+| Tipo de Operação | `estoque.transferencia_entre_armazens` (Transferência entre armazéns) · `estoque.transferencia_entre_empresas` (Transferência entre empresas) |
+| Discriminador do Tipo de Operação | `kind` (decide qual das operações acima o registro é) |
 | Migração | Possui DUAS colunas de empresa (origem e destino): o escopo de leitura considera ambas. |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
@@ -698,6 +703,7 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 | Exclusão lógica | não |
 | ID Global | sim |
 | Rota canônica | `/estoque/batidas/:id` |
+| Tipo de Operação | `estoque.producao_de_racao` (Produção de ração) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -770,7 +776,7 @@ Pedido interno de compra que percorre autorização, cotação e recebimento.
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/suprimentos/view/:id` |
-| TOP futura (contrato) | Solicitação de compra |
+| Tipo de Operação | `compras.solicitacao` (Solicitação de compra) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -819,7 +825,8 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | ID Global | sim |
 | Discriminador | `direction` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `payable` → `/financeiro/contas-a-pagar/:id` · `receivable` → `/financeiro/contas-a-receber/:id` |
-| TOP futura (contrato) | Conta a pagar / Conta a receber |
+| Tipo de Operação | `financeiro.conta_a_pagar` (Conta a pagar) · `financeiro.conta_a_receber` (Conta a receber) |
+| Discriminador do Tipo de Operação | `direction` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -993,7 +1000,8 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | ID Global | sim |
 | Discriminador | `kind` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
 | Rotas por variante | `budget` → `/vendas/budgets/:id` · `order` → `/vendas/orders/:id` · `sale` → `/vendas/sales/:id` |
-| TOP futura (contrato) | Orçamento / Pedido / Venda |
+| Tipo de Operação | `vendas.orcamento` (Orçamento de venda) · `vendas.pedido` (Pedido de venda) · `vendas.venda` (Venda) |
+| Discriminador do Tipo de Operação | `kind` (decide qual das operações acima o registro é) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1262,7 +1270,7 @@ Consumo de combustível por equipamento, com baixa de estoque.
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/frota/abastecimentos/:id` |
-| TOP futura (contrato) | Abastecimento |
+| Tipo de Operação | `frota_ativos.abastecimento` (Abastecimento) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1302,7 +1310,7 @@ Serviço e peças aplicados a um ou mais equipamentos.
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/frota/manutencoes/:id` |
-| TOP futura (contrato) | Manutenção |
+| Tipo de Operação | `frota_ativos.manutencao` (Manutenção) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -1336,7 +1344,7 @@ Serviço planejado/executado com apontamento de recursos.
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/os/:id` |
-| TOP futura (contrato) | Ordem de serviço |
+| Tipo de Operação | `ordens_servico.ordem_de_servico` (Ordem de serviço) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
