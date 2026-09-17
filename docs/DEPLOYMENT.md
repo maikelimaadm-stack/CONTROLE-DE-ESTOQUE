@@ -55,7 +55,7 @@ no navegador — agora provando que o canônico atravessa, e reprovando se a API
 | **05C-0 — Instrumentos** ✅ mesclada (PR #33) | nada do banco: **NO-DDL**. Calibra os gates que a purga usa como prova | tudo |
 | **05C-G0/G1/G2 — Preflight** ✅ concluída | nada do banco: leitura de produção, correção de documentação, contratos executáveis e runbook. Ver `docs/PRE-BASE2-05C-1-PREFLIGHT.md` | tudo |
 | **05C-1 — Purga física** ✅ mesclada (PR #36, `602cda3`) e **aplicada em produção** em 16/09/2026 | 52 colunas legadas em 49 tabelas, as **cinco** views de nome antigo, 52 gatilhos de espelho NOMEADOS (as tabelas alvo têm 66 gatilhos: 14 são de negócio e ficam) e 3 funções, **52 FKs de coluna única** (as **50** compostas ficam), 8 índices, e o CHECK órfão de `erp.equipment_transfers` só depois do substituto canônico | contador `entity='farm'`; lápides (`contrato-legado.ts`, redirects) |
-| **05C-2 — Contador** ⬅ atual: migration **escrita** (`0018_empresa_code_sequence.sql`), PR DRAFT, ⛔ **cutover NÃO autorizado** (janela single-version `BLOCKED`) | a linha `entity='farm'` de `erp.code_sequences`, renomeada para `'empresa'` com o `last_value` preservado, e a constante `SEQUENCIA_EMPRESA` junto | os demais contadores, `farm_transfer` inclusive; lápides (`contrato-legado.ts`, redirects) |
+| **05C-2 — Contador** ✅ mesclada (PR #37, merge `935f9dc`) e **aplicada em produção** em 16/09/2026: `0018_empresa_code_sequence.sql` no ledger uma única vez, `entity='farm'` = 0, `entity='empresa'` = 1, `last_value` preservado | a linha `entity='farm'` de `erp.code_sequences`, renomeada para `'empresa'` com o `last_value` preservado, e a constante `SEQUENCIA_EMPRESA` junto | os demais contadores, `farm_transfer` inclusive; lápides (`contrato-legado.ts`, redirects) |
 
 Cada fase só começa depois de a anterior estar em produção e comprovada. **05A não remove compatibilidade
 nem da API nem do banco.** Detalhes e inventários: `docs/PRE-BASE2-05-APOSENTADORIA.md`.
@@ -214,30 +214,35 @@ nenhuma proteção some de carona.
 **A 05C-0 não autoriza a 05C-1.** Mesmo com aquela PR mesclada e o CI inteiro verde, a fatia destrutiva
 depende dos pré-requisitos acima, que exigem acesso autenticado à produção e decisão do Maike.
 
-### Go-live da 05C-2 (cutover do contador) — `BLOCKED`
+### Go-live da 05C-2 (cutover do contador) — ✅ EXECUTADO em 16/09/2026
 
-A 05C-1 terminou; a 05C-2 é outra coisa, e **não herda nenhuma autorização dela**. O runbook completo —
-precondições, gate de quiesce, sequência e os quatro pontos de abort — é
-**`docs/PRE-BASE2-05C-2-CUTOVER.md`**, que é o dono do assunto. O que fica registrado aqui é só o que muda
-para quem opera o deploy:
+O cutover foi **executado e validado em 16/09/2026**, pelo mecanismo preferencial (`Remove` no deployment
+ativo da API antes do merge). O runbook completo, com a execução real registrada, é
+**`docs/PRE-BASE2-05C-2-CUTOVER.md`** § *Encerramento real — 16/09/2026*, que é o dono do assunto.
+
+**Os quatro pontos abaixo são o PROCEDIMENTO PRÉ-CUTOVER, preservado como histórico** — eles descrevem por
+que a janela foi necessária, e continuam valendo como regra para qualquer cutover futuro com esta forma.
+Nenhum deles é tarefa pendente:
 
 1. **Auto-deploy normal NÃO é seguro para este cutover.** O merge dispara o pre-deploy, e a 0018 executa
    com o binário anterior ainda servindo — que continua pedindo `next_code(org,'farm')`, uma chave que a
    migration acabou de aposentar. `next_code` não erra com chave ausente: ele REINICIA em 1.
-2. **O gate "uma única versão da API servindo" está `BLOCKED`** — mas por CONFIRMAÇÃO, não por ausência de
-   mecanismo, e a diferença importa. No PRODUTO continua não havendo modo de manutenção, flag de
-   readiness, variável que recuse escrita nem healthcheck derrubável de propósito. Na PLATAFORMA existe
-   primitiva documentada: `Remove` **para o deployment que está servindo**
-   (`https://docs.railway.com/deployments/reference`), e é ela o **mecanismo preferencial candidato** —
-   remover o deployment ativo da API ANTES do merge. O que falta é confirmar no projeto real que `Remove`
-   não deleta o service, que o source segue ligado a GitHub/`main`, que o autodeploy continua habilitado
-   e que um commit novo em `main` ainda inicia deployment. Ver `docs/PRE-BASE2-05C-2-CUTOVER.md` §B4–§B6,
-   que é o dono do assunto — nada executado, nada provado aqui.
-3. **U4 volta a valer.** A 05C-2 chega em produção pelo mesmo caminho merge → auto-deploy → pre-deploy, e
-   `preDeployTimeoutSeconds` tem de ser reconferido na config **live** antes do merge; não é assunto
-   encerrado da fatia anterior.
-4. **O rollback da plataforma não desfaz a 0018.** Depois que uma Empresa real receber número pelo contador
-   canônico, voltar ao binário anterior exige migration nova, não redeploy — ver § D do runbook.
+2. **O gate "uma única versão da API servindo" foi RESOLVIDO em 16/09/2026** — e o histórico de por que
+   esteve `BLOCKED` continua registrado, porque é ele que explica a regra. No PRODUTO continua não havendo
+   modo de manutenção, flag de readiness, variável que recuse escrita nem healthcheck derrubável de
+   propósito; a alavanca é da PLATAFORMA: `Remove` **para o deployment que está servindo**
+   (`https://docs.railway.com/deployments/reference`). Foi esse o mecanismo usado — deployment BASE
+   `a9df04a8-f4c5-4f69-ab8e-c826bcc7e5b2` removido, **zero réplicas** servindo, e só então o merge. O que
+   faltava era confirmação ACCOUNT-SPECIFIC (`Remove` não deleta o service, source ligado a GitHub/`main`,
+   autodeploy habilitado), obtida na própria janela. Ver `docs/PRE-BASE2-05C-2-CUTOVER.md` §B4–§B6 e
+   § *Encerramento real*, que é o dono do assunto.
+3. **U4 valeu, e foi conferido.** A 05C-2 chegou em produção pelo mesmo caminho merge → auto-deploy →
+   pre-deploy, com `preDeployTimeoutSeconds` reconferido na config **live** antes do merge (A12 `PASS`,
+   `SEED_ON_DEPLOY = 0`, porteiro P7 `OK`/`LIBERA`). A regra permanece para as próximas migrations.
+4. **O rollback da plataforma não desfaz a 0018 — e isso vale AGORA, em produção.** O banco está pós-0018.
+   Voltar ao binário anterior (pré-`SEQUENCIA_EMPRESA = "empresa"`) exige migration nova, não redeploy: a
+   política é **forward-only**, e o version skew `farm` ↔ `empresa` continua inseguro, o cutover concluído
+   não o torna seguro. Ver § D do runbook e `pnpm gate:05c2`.
 
 ### Verificação pós-deploy (fase 1)
 

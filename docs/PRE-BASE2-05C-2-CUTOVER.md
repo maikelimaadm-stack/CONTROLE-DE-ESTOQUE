@@ -39,20 +39,27 @@
 > Tudo isso está demonstrado em `pnpm gate:05c2`: **2 quadrantes compatíveis e 6 incompatíveis**
 > (Q3, Q3b, Q3c, Q3d, Q4, Q4b — o Q3d é a prova NEGATIVA, de que lacuna interna não abre janela).
 >
-> **Estado deste runbook: `BLOCKED`.**
+> **Estado deste runbook: `COMPLETED` / `CLOSED` EM PRODUÇÃO — 16/09/2026.**
 >
-> O bloqueio **mudou de natureza** e é preciso ser exato sobre isso. O PRODUTO não tem alavanca de
-> manutenção (§B3) — isso continua verdade. Mas a **plataforma tem uma primitiva documentada** que faz o
-> que o gate pede: `Remove` **para o deployment que está servindo**
-> ([Deployments Reference](https://docs.railway.com/deployments/reference)). Dizer "não existe mecanismo"
-> era impreciso, e a §B4 passa a tratá-lo como **mecanismo preferencial candidato**: remover o deployment
-> ativo da API ANTES do merge.
+> O cutover foi **executado**, pelo mecanismo preferencial de §B4 (`Remove` no deployment ativo da API
+> antes do merge), e validado. A execução real está registrada na seção
+> **[Encerramento real — 16/09/2026](#encerramento-real--16092026)**, no fim deste documento.
 >
-> O que ainda falta é **confirmação ACCOUNT-SPECIFIC** (§B6): que `Remove` não deleta o service, que o
-> source segue ligado a GitHub/`main`, que o autodeploy continua habilitado e que um commit novo em `main`
-> ainda inicia deployment. Sem isso, a janela pode terminar com a API parada e nenhum caminho de volta.
+> **Tudo o que vem abaixo permanece no documento como REGISTRO HISTÓRICO e continua normativo onde
+> descreve RISCO**: a análise dos quadrantes, Q3/Q4, o A-SQL, o A13, o porteiro P7, a §B6 e a política
+> forward-only não expiram com o cutover. A janela single-version era obrigatória, e o motivo pelo qual
+> era obrigatória não deixou de ser verdade porque a janela já foi cumprida — a matriz de version skew
+> `farm` ↔ `empresa` continua sendo a razão de nunca subir um binário pré-0018 contra banco pós-0018.
 >
-> Nada aqui autoriza o cutover, e **nada aqui foi executado no Railway**.
+> **O estado PRÉ-CUTOVER, preservado para leitura histórica**, era: o runbook estava `BLOCKED`; o PRODUTO
+> não tinha alavanca de manutenção (§B3); a **plataforma tinha uma primitiva documentada** que fazia o que
+> o gate pedia — `Remove` **para o deployment que está servindo**
+> ([Deployments Reference](https://docs.railway.com/deployments/reference)) —, tratada em §B4 como
+> **mecanismo preferencial candidato**; e o que faltava era **confirmação ACCOUNT-SPECIFIC** (§B6). Essa
+> confirmação foi obtida na própria janela, e o mecanismo deixou de ser candidato: foi usado.
+>
+> As frases "nada aqui autoriza o cutover" e "nada aqui foi executado no Railway", que este banner exibia
+> até 16/09/2026, descreviam aquele estado anterior — **não o atual**.
 
 ---
 
@@ -121,6 +128,12 @@ Não existe terceira via. Copiar a linha e manter as duas ativas faz os dois lad
 ## A. PRECONDIÇÕES
 
 Todas verificáveis antes de tocar em qualquer coisa. Nenhuma se satisfaz por declaração.
+
+> **Rótulo temporal.** Estas precondições descrevem o estado exigido **ANTES** da janela de 16/09/2026, e
+> foram todas conferidas então (ver § *Encerramento real*). Lidas hoje, várias já não valem por construção —
+> A3 pede `0018` ausente do ledger, e hoje ela está lá; A1 fala de `main` na BASE `602cda3`, e hoje `main` é
+> o merge `935f9dc`. **Não são tarefas pendentes**: são o gabarito do que se confere antes de um cutover
+> desta forma, e é assim que devem ser reusadas.
 
 | # | Precondição | Como conferir |
 | --- | --- | --- |
@@ -195,7 +208,7 @@ o runbook não substitui o fail-closed, ele evita chegar nele.
 
 ---
 
-## B. QUIESCE / SINGLE-VERSION GATE — `BLOCKED` (por confirmação, não por ausência de mecanismo)
+## B. QUIESCE / SINGLE-VERSION GATE — `RESOLVIDO` em 16/09/2026 (histórico: esteve `BLOCKED` por confirmação, não por ausência de mecanismo)
 
 ### O que o gate exige
 
@@ -303,7 +316,9 @@ e a segunda linha fala em "*stop any further project usage*", que é escopo de P
 um deployment. Por isso §B6.1 continua sendo uma confirmação a fazer na conta, sobre a operação do
 dashboard, e não algo que esta tabela já tenha respondido.
 
-**MECANISMO PREFERENCIAL CANDIDATO: `Remove` no deployment ATIVO da API, ANTES do merge.**
+**MECANISMO PREFERENCIAL: `Remove` no deployment ATIVO da API, ANTES do merge.** Entrou aqui como
+**CANDIDATO** e foi **CONFIRMADO PELO USO** em 16/09/2026 — deployment `a9df04a8-f4c5-4f69-ab8e-c826bcc7e5b2`
+removido, zero réplicas, merge, e o autodeploy iniciou normalmente com o commit novo em `main`.
 
 Ele é preferencial porque ataca o alvo certo — a instância que serve — em vez de mexer em configuração.
 Custa **indisponibilidade total** da API durante a janela: sem redundância (1 réplica, região `iad`, sem
@@ -316,7 +331,7 @@ declarada da janela. O tamanho do custo, aliás, é desconhecido: o comportament
 acrescenta um passo de restauração (voltar a 1) e, pior, cai na mesma dúvida de "alterar configuração
 dispara deployment novo?". `Remove` age sobre o deployment, não sobre a configuração.
 
-### B5. Por que o gate continua BLOCKED mesmo com a primitiva documentada
+### B5. Por que o gate ficou BLOCKED mesmo com a primitiva documentada (registro histórico)
 
 Documentação **não** é confirmação deste projeto. O que falta é ACCOUNT-SPECIFIC, e está listado em §B6.
 Fechar o blocker só com a leitura da documentação seria trocar uma afirmação não verificada ("não existe
@@ -326,9 +341,11 @@ O risco concreto: se `Remove` desligar o autodeploy, desconectar o source ou imp
 `main` inicie deployment, a janela termina com a API parada, a 0018 não aplicada e **nenhum caminho
 automático de volta**.
 
-### B6. O que precisa ser confirmado, SOMENTE LEITURA, antes do merge
+### B6. O que precisou ser confirmado, SOMENTE LEITURA, antes do merge — ✅ CONFIRMADO em 16/09/2026
 
-Confirmação **fora desta missão** — nenhuma alteração no Railway foi feita nem é autorizada aqui:
+Estes oito pontos foram confirmados na conta real antes da janela de 16/09/2026, e foi essa confirmação que
+fechou o gate B. **Nenhuma sessão automatizada alterou o Railway**: a leitura e a condução foram do Maike.
+A lista permanece como CHECKLIST para qualquer cutover futuro com esta forma:
 
 1. `Remove` **não deleta o service** (só o deployment);
 2. o source continua conectado ao **GitHub/`main`**;
@@ -362,16 +379,20 @@ Confirmação **fora desta missão** — nenhuma alteração no Railway foi feit
    deploy N+1 carrega a 0018. É superfície nova (`config.ts` + hook global ou gate em `runService`), com
    verificação reversa própria — portanto **outra PR**, fora da fronteira desta fatia.
 
-> Enquanto os OITO pontos de §B6 não forem confirmados no projeto real, o gate B permanece `BLOCKED`. Ele
-> não se satisfaz com "janela de manutenção" como frase, nem com CI verde, nem com o laboratório da seção
-> E, nem com a documentação da plataforma: nenhum deles prova que só uma versão estava servindo **aqui**.
+> **Critério histórico, cumprido em 16/09/2026:** enquanto os OITO pontos de §B6 não fossem confirmados no
+> projeto real, o gate B permanecia `BLOCKED`. Ele não se satisfazia com "janela de manutenção" como frase,
+> nem com CI verde, nem com o laboratório da seção E, nem com a documentação da plataforma: nenhum deles
+> prova que só uma versão estava servindo **aqui**. O que o fechou foi a observação da plataforma na própria
+> janela — deployment BASE `a9df04a8-f4c5-4f69-ab8e-c826bcc7e5b2` removido e **zero réplicas** servindo.
+> O critério continua valendo para qualquer cutover futuro que precise de janela single-version.
 
 ---
 
 ## C. CUTOVER
 
-Sequência **candidata**, válida somente depois de B resolvido — isto é, depois que os OITO pontos de §B6
-forem confirmados no projeto real. Enquanto B estiver `BLOCKED`, esta seção é plano, não autorização.
+Sequência **executada em 16/09/2026**, depois de B resolvido — isto é, depois que os OITO pontos de §B6
+foram confirmados no projeto real. Até então esta seção era plano, não autorização; hoje é o registro do
+que foi feito, passo a passo, e o roteiro para qualquer cutover futuro com a mesma forma.
 
 O mecanismo assumido aqui é o preferencial de §B4: **remover o deployment ativo da API antes do merge**.
 
@@ -406,6 +427,12 @@ começa no passo C e só termina em J. Não trate o número de laboratório como
 ## D. ROLLBACK / ABORT
 
 Quatro pontos, com respostas diferentes. Misturá-los é o erro caro.
+
+> **Rótulo temporal — leia antes de agir.** Esta seção foi escrita para a janela de 16/09/2026, que já
+> terminou com sucesso. **Hoje o banco está PÓS-0018**, e portanto o caso vigente é o **D3/D4**, nunca o
+> D1: subir o binário anterior contra este banco é o quadrante proibido. D1 continua aqui porque é o
+> procedimento de abort de um cutover desta forma, e porque ele mesmo abre medindo o ledger — a medição,
+> não o título, é que decide em qual caso você está.
 
 ### D1 — abort ANTES do merge (gate B, A-SQL ou a comprovação do passo D reprovou)
 
@@ -560,7 +587,66 @@ do pior caso medido aqui. Tratar o número de laboratório como SLA de produçã
 contrário.
 
 **Não prova, e não pode:** que apenas uma versão da API estava servindo em produção. Isso é observação da
-plataforma, não do banco — e é exatamente o gate B. Nenhum número desta seção autoriza o cutover.
+plataforma, não do banco — e é exatamente o gate B. Nenhum número desta seção autorizou o cutover; quem o
+autorizou foi a observação registrada em §B6 e na seção de encerramento.
+
+---
+
+## Encerramento real — 16/09/2026
+
+Estado: **`COMPLETED` / `CLOSED` EM PRODUÇÃO**. O cutover foi executado pelo mecanismo preferencial de §B4
+(`Remove` no deployment ativo da API **antes** do merge), na ordem da seção C, e validado depois.
+
+### Antes do merge — a janela
+
+| Evidência | Valor |
+| --- | --- |
+| Deployment BASE removido | `a9df04a8-f4c5-4f69-ab8e-c826bcc7e5b2` |
+| Réplicas da API servindo | **zero** |
+| A12 | `PASS` |
+| `SEED_ON_DEPLOY` | `0` |
+| Porteiro P7 (leitura final) | `OK` / `LIBERA` |
+| `0018` no ledger | **ausente** (banco ainda pré-0018) |
+| `code_sequences` `entity='farm'`.`last_value` | `2` |
+| `max(empresas.code)` | `2` |
+| `code_sequences` `entity='empresa'` | **ausente** |
+
+O par `farm.last_value = 2` com `max(code) = 2` é o que o A-SQL exige: contador e acervo coerentes, sem
+lacuna à frente e sem código emitido além do gravado.
+
+### O merge
+
+PR #37 mesclada. Merge commit **`935f9dca645f120b6b1747dab8ae95abc143d4a5`**, pais
+`602cda3acdaf3f92227341181bf2bf83ab37e96f` + `0404764f11fcb1031a99a07d2cf8907284117c09`.
+
+### Depois — a validação
+
+| Evidência | Valor |
+| --- | --- |
+| Deployment da API (Railway) | `1897d712-6123-4a34-8829-ade9550679ea`, `commitHash` `935f9dca645f120b6b1747dab8ae95abc143d4a5` |
+| API | `SUCCESS` / `ONLINE` |
+| Web (Railway) · Vercel | `SUCCESS` · `SUCCESS` |
+| CI do merge | 4/4 `SUCCESS` |
+| Ledger `public.erp_migrations` | 18 linhas; última = `0018_empresa_code_sequence.sql` |
+| `0018` aplicada | exatamente **uma** vez |
+| `entity='farm'` | **0** linhas |
+| `entity='empresa'` | **1** linha |
+| `empresa.last_value` | `2` — **o mesmo** valor de antes da janela |
+| `empresas.code` | `[1, 2]`, `max = 2` |
+| `GET /health` | `200` |
+| Autenticação inválida | `401`, sem `5xx` |
+| Logs | limpos |
+
+`farm` = 0 **e** `empresa` = 1 **e** `last_value` preservado é a prova de que houve SUBSTITUIÇÃO de chave,
+não cópia — que é exatamente o que a decisão 134 exigia e o que a janela existia para garantir.
+
+### O que este encerramento NÃO torna seguro
+
+O cutover estar concluído **não** torna o version skew `farm` ↔ `empresa` seguro. A matriz de
+`pnpm gate:05c2` — 2 quadrantes compatíveis e 6 proibidos — continua descrevendo o que acontece se um
+binário pré-0018 servir contra banco pós-0018, ou o contrário. A política é **forward-only**: nunca subir o
+BASE contra banco pós-0018. O gate, o A13, o porteiro P7 e a §B6 continuam vivos, e valem para qualquer
+cutover futuro com esta forma.
 
 ---
 

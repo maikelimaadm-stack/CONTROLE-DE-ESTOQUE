@@ -18,12 +18,18 @@ anterior estar em produção e comprovado**:
 | --- | --- | --- | --- |
 | **05A — Cliente canônico** ✅ | o tradutor de fio do web; `X-Farm-Id` do navegador; leitura de apelido legado na resposta | API bilíngue · banco bilíngue | PRE-BASE2-04 ativada em produção |
 | **05B — Servidor canônico** ✅ | borda legada da API: cabeçalho, normalização de entrada, apelidos de saída, nomes legados de tabela, CORS, formato administrativo achatado, promoção de sessão | banco bilíngue | 05A em produção |
-| **05C — Purga física do schema** ⬅ fase atual, em três fatias | 05C-0 instrumentos (mesclada) · 05C-1 as 52 colunas legadas, as 5 views, os 52 gatilhos e as 3 funções (**mesclada e aplicada em produção**) · **05C-2 o contador `entity='farm'`** | — | 05B em produção |
+| **05C — Purga física do schema** ✅ **CONCLUÍDA**, nas três fatias | 05C-0 instrumentos (mesclada) · 05C-1 as 52 colunas legadas, as 5 views, os 52 gatilhos e as 3 funções (**mesclada e aplicada em produção**) · 05C-2 o contador `entity='farm'` (**mesclada e aplicada em produção em 16/09/2026**) | — | 05B em produção |
 
-**05A, 05B e 05C-1 foram mescladas e publicadas.** A fase atual é a **05C**, e dentro dela a fatia
-**05C-2**: a migration `supabase/migrations/0018_empresa_code_sequence.sql` está escrita e provada, em PR
-DRAFT, e o cutover **não foi executado** (ver "Onde a 05C está agora"). A sequência `entity='farm'` nunca foi
-assunto da 05C-1 — é exatamente o assunto da 05C-2, e dizer o contrário já produziu plano errado uma vez.
+**05A, 05B, 05C-1 e 05C-2 foram mescladas e publicadas.** A **PRE-BASE2-05 está CONCLUÍDA**: a migration
+`supabase/migrations/0018_empresa_code_sequence.sql` foi aplicada em produção em 16/09/2026 (merge
+`935f9dc`), o cutover foi executado dentro de janela single-version e validado — ver "Onde a 05C está
+agora". **O contador canônico é `entity='empresa'`**, com o `last_value` preservado da chave anterior.
+A sequência `entity='farm'` nunca foi assunto da 05C-1 — foi exatamente o assunto da 05C-2, e dizer o
+contrário já produziu plano errado uma vez.
+
+As **lápides** que permanecem por decisão própria — `contrato-legado.ts`, os redirects de rota antiga — não
+reabrem a PRE-BASE2-05. Elas são compatibilidade de NAVEGAÇÃO e de leitura histórica, com dono e data de
+saída próprios; a aposentadoria do idioma antigo no cliente, no servidor e no schema está encerrada.
 
 A ordem é obrigatória: o cliente deixa de falar o idioma antigo **antes** de o servidor deixar de entendê-lo,
 e o banco só perde as colunas quando ninguém mais as lê.
@@ -163,7 +169,7 @@ número errado que vira "o tamanho do trabalho" é mais caro do que um número a
 | --- | --- | --- |
 | **05C-0** (concluída, mesclada na PR #33) | calibra os instrumentos: leitor de migrations que enxerga remoção, guarda de RLS que confere o `pg_policies` real, base do version skew resolvida, contagem separada, superfície reclassificada, prova do contador | **nenhuma DDL**, nenhuma migration, nenhuma mudança de produção |
 | **05C-1** (concluída, mesclada na PR #36 — `602cda3`) | a purga, nesta ordem: CHECK canônico e policy `api_child` reescritos ANTES; depois as cinco views, os 52 gatilhos, as 3 funções, o CHECK legado, as 52 FKs de coluna única, os 8 índices e as 52 colunas | não mexe no contador de código da Empresa; não remove nada por conter a palavra "farm"; não cria índice novo |
-| **05C-2** (fatia ativa: `0018_empresa_code_sequence.sql`) | a troca do contador: renomeia a chave persistida `entity='farm'` → `'empresa'` preservando `last_value`, e vira a constante `SEQUENCIA_EMPRESA` junto | não copia o contador (duas linhas vivas colidem); não toca em `farm_transfer` nem em nenhum outro contador; não executa o cutover — a janela single-version é humana |
+| **05C-2** (concluída, mesclada na PR #37 — `935f9dc` — e aplicada em produção em 16/09/2026: `0018_empresa_code_sequence.sql`) | a troca do contador: renomeia a chave persistida `entity='farm'` → `'empresa'` preservando `last_value`, e vira a constante `SEQUENCIA_EMPRESA` junto | não copia o contador (duas linhas vivas colidem); não toca em `farm_transfer` nem em nenhum outro contador; não executou o cutover por conta própria — a janela single-version é humana, e foi conduzida pelo Maike em 16/09/2026 |
 
 A 05C-0 existe porque todos os instrumentos de prova da 05C-1, do jeito que estavam, ficariam **verdes
 medindo o objeto errado** depois da remoção. Um gate que descreve um schema que não existe mais é pior que
@@ -179,7 +185,7 @@ A 05C-2 é separada porque a troca do contador **não é atômica com o deploy**
 | **05C-G0** — preflight externo de produção (somente leitura) | **executado**; `BLOCKED` em P1 (restore), P5 (valor de `SEED_ON_DEPLOY`), P6 (semântica de rollout) e P7 (política de lock/timeout); `PASS` em P2 (dados legados), P3 (integridade da ponte), P4 (inventário físico) e P8 (versão publicada) |
 | **05C-G1 / 05C-G2** — hardening do preflight | documentação corrigida, contratos executáveis reforçados, atomicidade medida, porteiro de locks validado em 9 cenários, runbook humano em `docs/PRE-BASE2-05C-1-PREFLIGHT.md` |
 | **05C-1** — a purga | **CONCLUÍDA**. Mesclada na PR #36 (`602cda3`) e aplicada em produção pelo pre-deploy em 16/09/2026 01:26 UTC, uma única vez. Conferido depois: ledger em `0017_purge_farm_legacy.sql`, 52 colunas legadas → 0, 5 views → 0, 52 gatilhos → 0, 3 funções → 0, 52 FKs → 0, 8 índices → 0, CHECK canônico validado, 50 FKs compostas de pé, nenhuma policy alcançando `PUBLIC`, API respondendo. U4 foi fechado antes do merge (`preDeployTimeoutSeconds = 300` na config live) |
-| **05C-2** — o contador | **fatia ATIVA**: `supabase/migrations/0018_empresa_code_sequence.sql` escrita e provada (fresh, upgrade com acervo, fail-closed em 9 estados impossíveis, concorrência com conexões reais, matriz de version skew em `pnpm gate:05c2`). **PR DRAFT.** Migration **NÃO executada** em produção e janela single-version **NÃO realizada** — o gate de quiesce está `BLOCKED`, e o runbook é `docs/PRE-BASE2-05C-2-CUTOVER.md` |
+| **05C-2** — o contador | **CONCLUÍDA**. `supabase/migrations/0018_empresa_code_sequence.sql` provada (fresh, upgrade com acervo, fail-closed em 9 estados impossíveis, concorrência com conexões reais, matriz de version skew em `pnpm gate:05c2`), mesclada na PR #37 (merge `935f9dc`) e **aplicada em produção em 16/09/2026**, uma única vez, dentro de janela single-version: deployment BASE `a9df04a8…` removido e zero réplicas antes do merge; depois, ledger em `0018_empresa_code_sequence.sql`, `entity='farm'` → 0, `entity='empresa'` → 1, `last_value` = 2 preservado, `empresas.code` `[1,2]`, `GET /health` 200. O gate de quiesce, que esteve `BLOCKED`, foi resolvido na própria janela. Runbook com a execução registrada: `docs/PRE-BASE2-05C-2-CUTOVER.md` § *Encerramento real — 16/09/2026* |
 
 O que mudou nesta rodada, e o que não mudou: a purga **deixou de ser plano e virou arquivo**. Isso
 não move nenhum gate. P1 passou a `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE` por declaração escrita
