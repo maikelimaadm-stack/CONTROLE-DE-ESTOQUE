@@ -197,7 +197,7 @@ O vocabulário não é novo: a entidade já se chama **Documento Fiscal** no dic
 da tela de detalhe. A TOP passou a dizer o mesmo que o resto do produto já dizia.
 
 **O que NÃO foi feito, e por quê.** Não existem nove TOPs derivadas das siglas: nomear nove operações a
-partir de `nfe`, `darf`, `gru` seria inventar classificação onde há apenas um código fiscal, e o §2 deste
+partir de `nfe`, `darf`, `gru` seria inventar classificação onde há apenas um código fiscal, e o §9 deste
 contrato proíbe. Também não existe mapa de efeito por `document_type` — isso seria a TOP decidindo o que
 o lançamento FAZ, que é a fronteira que este contrato inteiro protege.
 

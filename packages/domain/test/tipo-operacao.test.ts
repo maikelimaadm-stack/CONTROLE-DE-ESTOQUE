@@ -340,9 +340,20 @@ describe("imutável POR CONSTRUÇÃO, não por convenção", () => {
 
     mutar(() => { (alvo as { codigo: string }).codigo = "sequestrada"; });
     mutar(() => { (alvo.origem as { tabela: string }).tabela = "erp.outra"; });
-    mutar(() => { (TIPOS_OPERACAO as TipoOperacao[]).push(alvo); });
-    mutar(() => { (TIPOS_OPERACAO as TipoOperacao[]).length = 0; });
-    mutar(() => { (CODIGOS_TIPO_OPERACAO as string[]).push("inventada"); });
+    // As mutações de LISTA ficam em try/finally que restaura. Hoje são inertes porque o freeze existe;
+    // no dia em que alguém o remover, este caso reprova (certo) e, sem a restauração, os casos
+    // seguintes reprovariam em cascata sobre um TIPOS_OPERACAO esvaziado, com mensagens que não
+    // apontam a causa. Um gate deve falhar UMA vez, com o diagnóstico certo.
+    const copiaTops = [...TIPOS_OPERACAO];
+    const copiaCodigos = [...CODIGOS_TIPO_OPERACAO];
+    try {
+      mutar(() => { (TIPOS_OPERACAO as TipoOperacao[]).push(alvo); });
+      mutar(() => { (TIPOS_OPERACAO as TipoOperacao[]).length = 0; });
+      mutar(() => { (CODIGOS_TIPO_OPERACAO as string[]).push("inventada"); });
+    } finally {
+      if (!Object.isFrozen(TIPOS_OPERACAO)) (TIPOS_OPERACAO as TipoOperacao[]).splice(0, TIPOS_OPERACAO.length, ...copiaTops);
+      if (!Object.isFrozen(CODIGOS_TIPO_OPERACAO)) (CODIGOS_TIPO_OPERACAO as string[]).splice(0, CODIGOS_TIPO_OPERACAO.length, ...copiaCodigos);
+    }
 
     expect(alvo.codigo, "o código não pode ter mudado").toBe("estoque.entrada_manual");
     expect(alvo.origem.tabela, "a origem não pode ter mudado").toBe("erp.input_entries");
@@ -380,8 +391,11 @@ describe("a TOP responde O QUE O REGISTRO É, não o efeito de alguns dos seus t
     expect(invoice, "erp.invoices tem exatamente UMA TOP, neutra").toHaveLength(1);
     expect(invoice[0]!.codigo, "o código não pode voltar a afirmar entrada de estoque").not.toMatch(/entrada|saida|baixa/);
     // E o registry não ganhou nove TOPs por sigla.
+    // Ancorado por LIMITE DE TOKEN, não por substring: `c.includes("gru")` reprovaria uma TOP
+    // legítima chamada `cadastros.grupo_...`, e gate que acusa o inocente é desligado.
     for (const sigla of ["nfe", "cte", "nfse", "nfce", "danfe", "darf", "dare", "gru"]) {
-      expect(CODIGOS_TIPO_OPERACAO.some((c) => c.includes(sigla)), `TOP inventada a partir da sigla "${sigla}"`).toBe(false);
+      const comoToken = new RegExp(`(^|[._])${sigla}([._]|$)`);
+      expect(CODIGOS_TIPO_OPERACAO.some((c) => comoToken.test(c)), `TOP inventada a partir da sigla "${sigla}"`).toBe(false);
     }
   });
 

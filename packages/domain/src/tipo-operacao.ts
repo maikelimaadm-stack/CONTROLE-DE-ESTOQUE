@@ -160,9 +160,22 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
 
 const POR_CODIGO = new Map(TIPOS_OPERACAO.map((t) => [t.codigo, t]));
 
-/** Índice por origem. A chave carrega o valor da variante para que `kind=warehouse` e `kind=farm` não se atropelem. */
+/**
+ * Índice por origem. A chave carrega o valor da variante para que `kind=warehouse` e `kind=farm` não se
+ * atropelem.
+ *
+ * O separador é `\u0000` ESCRITO COMO ESCAPE, e isso é deliberado nas duas pontas:
+ *  - é NUL, e não espaço, porque nome de tabela e valor de discriminador nunca contêm NUL — com um
+ *    espaço, `chaveDeOrigem("erp.a b")` colidiria com `chaveDeOrigem("erp.a", "b")`, e duas origens
+ *    distintas passariam a disputar a mesma entrada do índice;
+ *  - é o ESCAPE `\u0000`, e não o byte cru, porque um NUL literal no arquivo faz `grep`/`ripgrep`
+ *    classificarem o fonte como binário e PULAREM o arquivo inteiro. O SSOT da TOP ficaria invisível
+ *    para toda busca textual — humana ou automatizada — e o separador apareceria como um espaço comum
+ *    no diff que o revisor lê. Foi o que aconteceu até a R1: `grep -n "^export" neste arquivo`
+ *    respondia "binary file matches".
+ */
 const chaveDeOrigem = (tabela: string, valor?: string | null): string =>
-  valor === undefined || valor === null || valor === "" ? tabela : `${tabela} ${valor}`;
+  valor === undefined || valor === null || valor === "" ? tabela : `${tabela}\u0000${valor}`;
 
 const POR_ORIGEM = new Map(TIPOS_OPERACAO.map((t) => [chaveDeOrigem(t.origem.tabela, t.origem.valor), t]));
 
@@ -253,7 +266,7 @@ export function validarRegistroTipoOperacao(): string[] {
 
     const chave = chaveDeOrigem(tabela, valor);
     const dono = origens.get(chave);
-    if (dono) problemas.push(`${t.codigo}: mesma origem de ${dono} (${chave.replace(" ", " = ")})`);
+    if (dono) problemas.push(`${t.codigo}: mesma origem de ${dono} (${chave.replace("\u0000", " = ")})`);
     origens.set(chave, t.codigo);
 
     // Uma tabela não pode ser decidida por duas colunas diferentes: o leitor não saberia qual consultar.
