@@ -125,12 +125,26 @@ visual (verde `--mg-accent`, controles de 28 px, cartões de 12 px); os primitiv
   de Acesso (Configurações). E2E estrutural: `apps/web/e2e/ui-primitives.spec.ts`.
 - Não faz parte deste padrão (fica como está): menu global, abas internas do Workspace, `nav.registry`, shell e sidebar.
 
-### ItemsTable (contrato desejado — ainda não implementado)
-Tabela de itens de documento (`ItemsEditor` hoje): `columns` declarativas (`key`, `label`, `kind` text/number/money/ref,
-`width`, `align`), `rows` + `onChange`, linha nova por botão "Adicionar item" (`Button variant="outline" size="sm"`),
-remoção por botão-ícone com `aria-label`, rodapé de totais (`num`/`brl`), validação por linha com `Field error`, teclado
-(Enter = próxima célula, ESC = descarta edição), `EmptyState compact` quando vazio. Migração dos editores existentes é
-slice futura; até lá cada editor mantém sua implementação.
+### ItemsTable — metade de LEITURA implementada (BASE2-01)
+
+A **leitura** virou `Base2Items` (`apps/web/src/features/base2/items.tsx`): `colunas` declarativas (`key`, `label`,
+`align`, `render`, `total`), `EmptyState compact` quando vazio, `caption` sr-only e rodapé de totais que emite **uma
+célula por coluna** — sem `colSpan` para ficar desatualizado. O contrato mora em `docs/MODELO-BASE2-CONTRACT.md`;
+regra central: **a tabela não soma**, `total` devolve o valor que o servidor calculou.
+
+A **edição** continua como contrato desejado, não implementado (`ItemsEditor` de cada módulo): `rows` + `onChange`,
+linha nova por botão "Adicionar item" (`Button variant="outline" size="sm"`), remoção por botão-ícone com `aria-label`,
+validação por linha com `Field error`, teclado (Enter = próxima célula, ESC = descarta edição). Migração dos editores
+existentes é slice futura; até lá cada editor mantém sua implementação.
+
+### Moldura de lançamento — MODELO BASE 2 (`apps/web/src/features/base2`)
+
+Camada de composição sobre estes primitives, para telas de **lançamento** (documento com itens e totais). Quatro
+componentes — `Base2Shell` (compõe o `DetailShell`), `Base2Fields`, `Base2Section`, `Base2Items` — e um contrato
+próprio: **`docs/MODELO-BASE2-CONTRACT.md`**, que é o dono do assunto. Este padrão não o repete.
+
+Duas consequências que valem aqui: o título de seção deixou de ser literal solto (`Base2Section` é o dono do estilo),
+e telas de **registro de cadastro** continuam no `DetailShell` direto — a moldura Base 2 é para lançamento.
 
 ## App Shell & Workspace (`apps/web/src/components/layout`, `apps/web/src/lib/workspace-tabs.tsx`)
 

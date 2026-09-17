@@ -1,0 +1,204 @@
+# Contrato do MODELO BASE 2 — moldura do lançamento
+
+Fonte única da **apresentação** de um lançamento (documento transacional) do ERP.
+Implementação: `apps/web/src/features/base2/`. Piloto: `apps/web/src/features/docs/stock-detail.tsx`.
+
+Este documento é dono de UM assunto: como um lançamento se APRESENTA. Ele não repete o que já tem dono —
+primitives em `docs/UI-STANDARD.md`, abas e URL em `docs/UX-ARCHITECTURE.md`, escopo de empresa em
+`docs/MULTI-COMPANY-CONTRACT.md`, número do registro em `docs/GLOBAL-ID-CONTRACT.md`.
+
+## A regra que sustenta todas as outras
+
+**TELA UNIFICADA ≠ REGRA DE NEGÓCIO UNIFICADA.**
+
+A moldura unifica composição, hierarquia visual e interação. Ela **não** unifica serviço, endpoint,
+permissão, validação, transação, efeito contábil, situação, item, total ou comando. Cada módulo continua
+dono disso.
+
+O custo de confundir as duas coisas é concreto e conhecido: no momento em que a moldura ganhasse um
+`if (modulo === "estoque")`, ela viraria um motor de regras disfarçado de componente de tela — e toda
+mudança de regra de um módulo passaria a exigir mexer num arquivo compartilhado por todos. É exatamente
+o acoplamento que a BASE2-02 (TOP) existe para tratar **com contrato próprio**, e que esta fatia não
+antecipa.
+
+Critério prático, aplicável em revisão: se para responder "o que este componente desenha?" for preciso
+saber **de qual módulo** o registro veio, a regra vazou.
+
+## Composição
+
+```
+Base2Shell                    identidade · situação · empresa · ações · histórico
+├ Base2Fields                 dados principais (lista de definição, grade de 12)
+├ Base2Section "Itens"        ├ Base2Items   (colunas declarativas + rodapé de totais)
+├ Base2Section  …             ├ Base2Items   (rateio, títulos, ledger… — o módulo decide quais)
+└ conteúdo livre do módulo
+```
+
+Quatro componentes, superfície pequena de propósito. Composição por slots — nunca `switch` por módulo,
+nunca componente monolítico com trinta props opcionais.
+
+`Base2Shell` compõe o `DetailShell` oficial (`components/ui/detail-shell.tsx`); não o substitui e não o
+duplica. Telas de **registro de cadastro** continuam no `DetailShell` direto: a moldura Base 2 é para
+lançamento, que é a coisa com itens e totais.
+
+## Identidade do lançamento
+
+| Elemento | Onde aparece | Autoridade |
+|---|---|---|
+| **Tipo** ("Baixa de estoque") | título | prop do módulo |
+| **Código** (numeração da entidade) | título, ao lado do tipo | `code` do registro |
+| **Situação** | selo ao lado do título | `StatusBadge` + `enumLabel` |
+| **Empresa** | subtítulo | campo do registro, já recortado por RLS |
+| **ID Global** | trilha do AppShell — **não** na moldura | `IdGlobalDaRotaAtual` |
+
+**O ID Global não é desenhado pela moldura, e isso é deliberado.** Ele já é exibido uma vez pelo
+AppShell, ao lado da trilha (`components/layout/shell.tsx:30` → `IdGlobalDaRotaAtual`), em TODA rota
+canônica do catálogo (`packages/domain/src/id-global.ts`) — o que inclui as sete rotas de documento de
+estoque. Repetir o número na moldura daria duas identidades na mesma tela e, pior, duas superfícies para
+manter iguais: na primeira mudança de grafia, uma das duas ficaria para trás. O número continua sendo
+**localizador humano**: não endereça (a URL é o UUID) e não autoriza.
+
+O título composto (`tipo + código`) é também o rótulo da aba de trabalho, publicado por `useTabTitle`
+dentro do `DetailShell`. A moldura não chama `useTabTitle` de novo — duas publicações do mesmo título
+seriam duas fontes para o mesmo rótulo.
+
+## Cabeçalho, trilha e ações
+
+- Trilha (`breadcrumbs`) e botão **Voltar** vêm do `PageHeader`/`DetailShell`; a moldura só repassa.
+- **Ações são do módulo.** A moldura não cria nenhuma ação de negócio — não sabe cancelar, confirmar,
+  imprimir nem devolver. Recebe `acoes` como nó pronto.
+- A única ação que a própria moldura liga é **Histórico**, porque ela é genérica por natureza (auditoria
+  de qualquer entidade) e porque duplicá-la em cada tela produziria N diálogos de histórico divergentes.
+- `can()` **não** decide acesso: esconde botão. Quem nega é a rota (`CLAUDE.md` › Arquitetura). Por isso
+  a moldura nem recebe permissão de negócio: quem escolhe exibir uma ação é o módulo, que tem o contexto.
+
+## Dados principais
+
+`Base2Fields` — lista de definição (`<dl>`/`<dt>`/`<dd>`) sobre grade de 12 colunas.
+
+- `valor` chega **já formatado** pelo chamador (`brl`, `num`, `dateBR`, `pct`, `enumLabel` de
+  `lib/utils.ts` e `lib/copy.ts`). A moldura não formata moeda nem data: formatar aqui criaria uma
+  segunda política de formatação ao lado da existente, e as duas divergiriam na primeira exceção.
+- **Vazio vira travessão de verdade.** O antecessor (`KV`, `features/docs/shared.tsx:150`) escrevia
+  `{v ?? "—"}`, mas as telas já chegavam com `String(d["campo"] ?? "")`: `null` virava `""` antes, o `??`
+  não pegava, e o campo saía **em branco**. Campo em branco e campo com valor apagado são
+  indistinguíveis para quem lê. `Base2Fields` trata `""`, espaço em branco, `null` e `undefined` como
+  vazio — e `0` e `false` como VALOR, porque são.
+- `span` por campo: frase (observação, justificativa) ocupa mais largura que palavra (código, data).
+- `ocultarSeVazio` some com o campo opcional em vez de gastar uma célula com travessão.
+
+## Itens
+
+`Base2Items` — tabela de itens em **leitura**. É a metade de leitura do `ItemsTable` que
+`docs/UI-STANDARD.md` § "ItemsTable (contrato desejado)" descrevia sem implementação. A metade de
+**edição** continua em cada editor do módulo; unificar edição é fatia futura, não esta.
+
+- Colunas declarativas: `key`, `label`, `align`, `render`, `total`.
+- Reusa `table-dense` e `num` de `app/globals.css` — a identidade visual das tabelas densas já existe e
+  não se reinventa aqui.
+- Vazio = `EmptyState compact`, nunca uma tabela de cabeçalho só.
+- `legenda` alimenta um `<caption class="sr-only">`: quem usa leitor de tela precisa saber de qual
+  documento é a tabela antes de entrar nas linhas.
+
+## Totais
+
+**A moldura não soma.** `total` é uma função do chamador que devolve o total **que o servidor calculou**.
+
+O motivo não é preguiça: um cliente que soma item a item vira uma segunda autoridade contábil. Ela bate
+com o backend enquanto não houver arredondamento, desconto por linha, frete rateado, imposto retido ou
+conversão de unidade — e na primeira dessas regras as duas divergem. Quando divergirem, a tela é que
+parecerá "certa" para quem está olhando, e o erro será relatado contra o número correto.
+
+**O rodapé é alinhado por construção.** Ele emite UMA célula por coluna, na mesma ordem do cabeçalho;
+não existe `colSpan` para ficar desatualizado. O cuidado vem de um defeito real e documentado:
+`components/ui/data-table.tsx` explica que um `colSpan={8}` escrito à mão ficou para trás quando a
+listagem de Animais ganhou a coluna de Empresa (PRE-BASE2-03) e a de ID Global (PRE-BASE2-05B.1), e o
+total passou a aparecer sob a coluna errada. Aqui esse erro é impossível.
+
+**Não se totaliza o que não tem unidade única.** Quantidade de um documento mistura quilo, litro e
+unidade; somar produz um número sem significado. Dinheiro tem uma unidade só — esse totaliza.
+
+## Histórico
+
+Mecanismo oficial e único: `HistoryDialog` (`features/base1/history-dialog.tsx`), sobre
+`GET /api/admin/audit?entity=&entity_id=`. A moldura liga o botão e o diálogo; não reimplementa nada.
+
+- Identificação = par (**nome da tabela**, **UUID**). A tabela é o que o backend grava em
+  `erp.audit_logs.entity` (ex.: `apps/api/src/routes/stock.ts:271`).
+- O nome da tabela é passado como `entidade`, **separado de `perm`**. Nos sete documentos de estoque os
+  dois textos coincidem, mas são conceitos diferentes (um é permissão, outro é entidade de auditoria), e
+  um default silencioso esconderia a divergência no dia em que ela aparecesse — com o sintoma mais caro
+  possível: um histórico **vazio**, que parece "sem eventos" em vez de "consultei a entidade errada".
+- Sem permissão `audit_logs.view`, o botão não aparece (apresentação) **e** a consulta não é emitida
+  (o diálogo já trata isso). Quem nega de fato é a rota.
+
+## Anexos
+
+Seção prevista neste contrato, **ainda não ligada em código** — e a distinção é o ponto.
+
+Hoje `POST/GET /api/attachments` recusa com **422** as entidades de documento de estoque, porque elas não
+estão em `ATTACHMENT_PARENTS` (`apps/api/src/lib/attachment-parent.ts`). Ligar o botão agora produziria
+um controle que aparece e não funciona — exatamente o defeito que `REVIEW.md` § 9 nomeia. E um slot sem
+consumidor é abstração morta, que envelhece sem ninguém notar.
+
+Quando um módulo cujo backend aceite anexos migrar para a moldura, o slot entra **junto com o seu
+consumidor**, reusando `AttachmentsDialog` (`features/base1/attachments-dialog.tsx`) — nunca uma segunda
+implementação. Incluir as entidades de estoque na whitelist é decisão de backend, com revisão de
+autorização própria, e não pertence a uma fatia de apresentação.
+
+## Multiempresa
+
+- A moldura **exibe** a empresa do registro; nunca a seleciona e nunca a troca.
+- A empresa efetiva da sessão é `session.empresaId` (`lib/api.ts`), enviada como `X-Empresa-Id`. Trocar
+  de empresa tem **porta única**: o evento `agro:empresa-request`, tratado em
+  `components/layout/shell.tsx`. Nenhuma tela de lançamento chama `setEmpresa` seguido de navegação — a
+  ordem "empresa primeiro, navegação depois" existe para a tela de destino não disparar com o cabeçalho
+  antigo.
+- Registro de outra empresa, de outro tenant, inexistente ou excluído responde a **mesma 404**. A moldura
+  não sabe distinguir os casos, e não deve: quem não vê, não vê a diferença.
+- Documento com duas empresas (transferência) **não** tem "a" empresa: exibe origem e destino como campos
+  próprios e deixa o subtítulo vazio. A moldura não escolhe uma das duas.
+
+## Estados
+
+`loading` · `error` · `empty` são os oficiais de `components/ui/states.tsx` (`LoadingState`,
+`ErrorState` com `onRetry`, `EmptyState`), já entregues por `LoadingOr` (`features/docs/shared.tsx`).
+A moldura não cria variante própria. Erro mostra só a primeira linha da mensagem — nunca rastreamento de
+pilha (`safeErrorMessage`).
+
+## Alterações não salvas
+
+Tela de lançamento **com edição** marca a aba por `useDirtyTab(dirty)` (`lib/workspace-tabs.tsx:144`) —
+o mecanismo oficial e único. Fechar aba, trocar de empresa e sair pedem confirmação; `beforeunload` só
+dispara com alteração real.
+
+Não existe segundo sistema de abas nem segundo estado de alteração. A **URL continua a autoridade**:
+navegar, recarregar, voltar e abrir por link produzem a mesma tela, e focar a aba devolve a URL guardada.
+
+O piloto desta fatia é **somente leitura**, então não marca nada — marcar uma aba limpa como suja pediria
+confirmação para descartar coisa nenhuma, e o usuário aprenderia a ignorar o aviso.
+
+## Responsividade e acessibilidade
+
+- Grade de 12 colunas empilha em uma coluna abaixo de `md`; a tabela de itens rola horizontalmente dentro
+  do próprio bloco, sem criar rolagem horizontal na página.
+- Ações do cabeçalho quebram linha abaixo de 1024 px (comportamento do `PageHeader`).
+- Cada seção é `<section aria-labelledby>` com título real (`<h3>`), não um `<div>` em negrito: a lista de
+  cabeçalhos é como se navega uma tela longa com leitor de tela.
+- Tabela com `<caption class="sr-only">`, `<th scope="col">` no cabeçalho e `<th scope="row">` na célula
+  de rótulo do rodapé.
+- Dados principais em `<dl>`/`<dt>`/`<dd>`: rótulo e valor ficam associados por semântica, não só por
+  posição.
+- Situação nunca é só cor: `StatusBadge` emite rótulo textual, `data-status` e `data-tone`.
+
+## Fronteiras — o que a moldura nunca faz
+
+Endpoint universal · serviço universal · tabela universal de documentos · registry ou motor de Tipo de
+Operação (TOP) · mapa de regra financeira · `if (modulo === …)` · decisão de autorização · soma contábil ·
+seleção de empresa · segunda implementação de histórico, anexos, overlay, situação ou estado genérico ·
+CSS novo onde já existe classe com dono.
+
+## Estado
+
+Implementada e integrada em um piloto real na BASE2-01. Migração ampla dos demais módulos pertence à
+BASE2-03+; o Tipo de Operação pertence à BASE2-02 e **não** é antecipado aqui.
