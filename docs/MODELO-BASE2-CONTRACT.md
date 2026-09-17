@@ -27,7 +27,7 @@ saber **de qual módulo** o registro veio, a regra vazou.
 ## Composição
 
 ```
-Base2Shell                    identidade · situação · empresa · ações · histórico
+Base2Shell                    identidade · situação · empresa · ações · histórico · anexos
 ├ Base2Fields                 dados principais (lista de definição, grade de 12)
 ├ Base2Section "Itens"        ├ Base2Items   (colunas declarativas, em leitura)
 ├ Base2Section  …             ├ Base2Items   (rateio, títulos, ledger… — o módulo decide quais)
@@ -67,8 +67,9 @@ seriam duas fontes para o mesmo rótulo.
 - Trilha (`breadcrumbs`) e botão **Voltar** vêm do `PageHeader`/`DetailShell`; a moldura só repassa.
 - **Ações são do módulo.** A moldura não cria nenhuma ação de negócio — não sabe cancelar, confirmar,
   imprimir nem devolver. Recebe `acoes` como nó pronto.
-- A única ação que a própria moldura liga é **Histórico**, porque ela é genérica por natureza (auditoria
-  de qualquer entidade) e porque duplicá-la em cada tela produziria N diálogos de histórico divergentes.
+- As duas únicas ações que a própria moldura liga são **Histórico** e **Anexos**, porque são genéricas por
+  natureza (auditoria e arquivos de qualquer entidade) e porque duplicá-las em cada tela produziria N
+  diálogos divergentes. Nenhuma das duas é ação de negócio.
 - `can()` **não** decide acesso: esconde botão. Quem nega é a rota (`CLAUDE.md` › Arquitetura). Por isso
   a moldura nem recebe permissão de negócio: quem escolhe exibir uma ação é o módulo, que tem o contexto.
 
@@ -148,17 +149,29 @@ Mecanismo oficial e único: `HistoryDialog` (`features/base1/history-dialog.tsx`
 
 ## Anexos
 
-Seção prevista neste contrato, **ainda não ligada em código** — e a distinção é o ponto.
+**Ligados, e por ENTIDADE — nunca por tipo de tela.**
 
-Hoje `POST/GET /api/attachments` recusa com **422** as entidades de documento de estoque, porque elas não
-estão em `ATTACHMENT_PARENTS` (`apps/api/src/lib/attachment-parent.ts`). Ligar o botão agora produziria
-um controle que aparece e não funciona — exatamente o defeito que `REVIEW.md` § 9 nomeia. E um slot sem
-consumidor é abstração morta, que envelhece sem ninguém notar.
+`Base2Shell` recebe `anexos?: { entidade, id }` e abre o `AttachmentsDialog` oficial
+(`features/base1/attachments-dialog.tsx`). A moldura não implementa envio, prévia, download nem exclusão,
+e não decide o que é anexável: quem decide é a **whitelist do servidor**, `ATTACHMENT_PARENTS`
+(`apps/api/src/lib/attachment-parent.ts`). A prop é o reflexo dela, não uma segunda autoridade.
 
-Quando um módulo cujo backend aceite anexos migrar para a moldura, o slot entra **junto com o seu
-consumidor**, reusando `AttachmentsDialog` (`features/base1/attachments-dialog.tsx`) — nunca uma segunda
-implementação. Incluir as entidades de estoque na whitelist é decisão de backend, com revisão de
-autorização própria, e não pertence a uma fatia de apresentação.
+A ordem importa e é o contrário da intuição: **primeiro o backend aceita a entidade, depois a tela a
+oferece.** Uma tela que declare `anexos` para um pai que o servidor recusa ganha um botão que abre e falha
+com 422 — "controle que aparece e não funciona é pior que controle ausente"
+(`.claude/rules/frontend-web.md`).
+
+Suporte inicial: **`input_entries`** (entrada de insumos), aberta na BASE2-01 junto com o consumidor que a
+usa. As outras seis rotas do piloto continuam sem o botão porque o servidor ainda as recusa. Cada uma entra
+quando alguém precisar dela, uma de cada vez: a whitelist é superfície de autorização, e abrir as sete de
+uma vez daria acesso a um acervo de arquivos de seis entidades que ninguém pediu.
+
+A regra de autorização não é especial — é a mesma das demais entidades de empresa: tenant + empresa do
+próprio registro + exclusão lógica, com `input_entries.view` como capacidade do pai. Fora do escopo é
+**404** (não revela existência), sem a capacidade é **403**, entidade não suportada é **422**. A matriz
+inteira é provada em `apps/api/test/integration/attachments-input-entries.test.ts`.
+
+O botão só aparece com `can("attachments.view")`, que é apresentação: quem nega é a rota.
 
 ## Multiempresa
 
@@ -209,8 +222,8 @@ confirmação para descartar coisa nenhuma, e o usuário aprenderia a ignorar o 
 
 Endpoint universal · serviço universal · tabela universal de documentos · registry ou motor de Tipo de
 Operação (TOP) · mapa de regra financeira · `if (modulo === …)` · decisão de autorização · soma contábil ·
-seleção de empresa · segunda implementação de histórico, anexos, overlay, situação ou estado genérico ·
-CSS novo onde já existe classe com dono.
+seleção de empresa · decisão sobre o que é anexável · segunda implementação de histórico, anexos, overlay,
+situação ou estado genérico · CSS novo onde já existe classe com dono.
 
 ## Estado
 

@@ -51,6 +51,11 @@ const EXPLICIT: Record<string, ParentRule> = {
   animal_movements: { kind: "farm", viewPerm: (row) => permissaoMovimentacao(String(row["movement_type"] ?? ""), "view"), load: byId("animal_movements", { softDelete: true }), origin: "explicit" },
   financial_titles: { kind: "farm", viewPerm: (row) => (row["direction"] === "payable" ? "payables.view" : row["direction"] === "receivable" ? "receivables.view" : null), load: byId("financial_titles", { softDelete: true }), origin: "explicit" },
   animals: { kind: "farm", viewPerm: "animals.view", load: byId("animals", { softDelete: true }), origin: "explicit" },
+  // Entrada de insumos (estoque): primeiro documento de lançamento anexável, aberto pela BASE2-01 junto com o
+  // consumidor real na tela. A entidade entra UMA de cada vez, e só quando existe tela que a use: whitelist é
+  // superfície de autorização, e abrir as sete de uma vez daria acesso a seis que ninguém pediu.
+  // Nada aqui é especial — a regra é a mesma de `animals`: tenant + empresa do próprio registro + exclusão lógica.
+  input_entries: { kind: "farm", viewPerm: "input_entries.view", load: byId("input_entries", { softDelete: true }), origin: "explicit" },
   // filhas: fazenda herdada do pátio (feedlot_yards.empresa_id)
   feedlot_sectors: { kind: "child", viewPerm: "feedlot_sectors.view", origin: "explicit", load: async (ctx, id) => {
     const r = await ctx.tx.query<{ empresa_id: string }>("select s.id, y.empresa_id from erp.feedlot_sectors s join erp.feedlot_yards y on y.id=s.yard_id where s.id=$1 and s.organization_id=$2 and s.deleted_at is null", [id, ctx.orgId]);

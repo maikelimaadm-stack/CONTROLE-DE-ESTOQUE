@@ -51,3 +51,16 @@ export interface Base2Historico {
   id?: string;
 }
 
+
+/**
+ * Identificação do registro para os ANEXOS oficiais (`features/base1/attachments-dialog`).
+ *
+ * `entidade` é o nome da tabela e precisa estar em `ATTACHMENT_PARENTS` no servidor — a whitelist é a
+ * autoridade, não esta prop. Declarar aqui uma entidade que o servidor não aceita produz um botão que
+ * aparece e não funciona (422 ao abrir), que é pior do que botão nenhum.
+ */
+export interface Base2Anexos {
+  entidade: string;
+  /** UUID do registro salvo. Sem ele não há do que pendurar anexo. */
+  id: string;
+}

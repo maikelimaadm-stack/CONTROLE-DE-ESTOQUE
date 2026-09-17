@@ -127,3 +127,138 @@ test("moldura Base 2: sem Tipo de Operação e sem rolagem horizontal em viewpor
   const estouro = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(estouro, "a página não pode ganhar rolagem horizontal em 768 px").toBeLessThanOrEqual(1);
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * AS QUATRO FORMAS CRÍTICAS (BASE2-01 R3)
+ *
+ * A rodada anterior cobria só a ENTRADA DE INSUMOS — e foi justamente nas formas divergentes que os
+ * defeitos reais apareceram: o rodapé de totais mentia na NOTA FISCAL (total do documento inclui frete
+ * e outras despesas) e saía "—" na BATIDA (que não tem total de documento), e a TRANSFERÊNCIA derrubava
+ * a tela porque o endpoint não devolve `movements`. Nenhum gate pegou: a suíte não abria essas rotas.
+ *
+ * O seed só cria entradas, então cada forma é construída aqui pela própria API — mesma porta que o
+ * usuário usa, sem fixture paralela no banco.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+async function api<T = Record<string, unknown>>(page: Page, method: string, path: string, body?: unknown): Promise<T> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
+  return page.evaluate(async ({ method, path, body, base }) => {
+    const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; empresaId: string | null };
+    const res = await fetch(`${base}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${s.token}`, ...(s.orgId ? { "x-org-id": s.orgId } : {}), ...(s.empresaId ? { "x-empresa-id": s.empresaId } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const text = await res.text(); const data = text ? JSON.parse(text) : {};
+    if (!res.ok) throw new Error(`${res.status} ${path}: ${text.slice(0, 300)}`);
+    return data as T;
+  }, { method, path, body, base });
+}
+/** Primeiro id de um recurso, pela listagem oficial. */
+async function primeiroId(page: Page, path: string): Promise<string> {
+  const r = await api<{ items: { id: string }[] }>(page, "GET", path);
+  const id = r.items?.[0]?.id;
+  expect(id, `sem registro em ${path} para montar a fixture`).toBeTruthy();
+  return id!;
+}
+
+test("moldura Base 2 — NOTA FISCAL: total do documento diverge da soma das linhas sem a tela mentir", async ({ page }) => {
+  await login(page);
+  await page.goto("/estoque");
+  const empresaId = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId: string | null }).empresaId);
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const armazem = await primeiroId(page, "/api/resources/warehouses?pageSize=1");
+  const fornecedor = await primeiroId(page, "/api/resources/people?pageSize=1&is_provider=true");
+
+  // 100 × R$ 100,00 em itens + R$ 500,00 de frete → documento 10.500,00, linhas 10.000,00
+  const nf = await api<{ id: string }>(page, "POST", "/api/stock/invoices", {
+    empresa_id: empresaId, number: `R3${Date.now().toString().slice(-6)}`, series: "1", provider_id: fornecedor,
+    emission_date: "2026-09-22", freight: "500.00", other_expenses: "0", generate_financial: false,
+    items: [{ product_id: produto, warehouse_id: armazem, quantity: "100", unit_value: "100.00" }]
+  });
+
+  await page.goto(`/estoque/documentos-fiscais/${nf.id}`);
+  await expect(page.getByTestId("base2-shell")).toBeVisible();
+
+  const tabela = page.locator('[data-testid="base2-section"][data-secao="Itens"]').getByTestId("base2-items");
+  // o defeito que existiu: rodapé com o total do DOCUMENTO sob a coluna de total dos ITENS
+  await expect(tabela.locator("tfoot")).toHaveCount(0);
+
+  // total do documento = 10.500,00, num campo cujo rótulo diz que total é
+  const campoTotal = page.locator('[data-testid="base2-field"][data-campo="Total"]');
+  await expect(campoTotal).toContainText("10.500,00");
+  // a linha mostra o total DELA: 10.000,00 — os dois números convivem sem se contradizer
+  const cabecalhos = await tabela.locator("thead th").allTextContents();
+  const iTotal = cabecalhos.findIndex((t) => t.trim() === "Total");
+  expect(iTotal).toBeGreaterThan(-1);
+  await expect(tabela.getByTestId("base2-items-linha").first().locator("td").nth(iTotal)).toContainText("10.000,00");
+});
+
+test("moldura Base 2 — TRANSFERÊNCIA: renderiza sem `movements` no payload e não inventa empresa única", async ({ page }) => {
+  await login(page);
+  await page.goto("/estoque");
+  const empresaId = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId: string | null }).empresaId);
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const armazens = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=2");
+  expect(armazens.items.length, "a transferência precisa de dois armazéns").toBeGreaterThan(1);
+
+  const tr = await api<{ id: string }>(page, "POST", "/api/stock/transfers", {
+    kind: "warehouse", transfer_date: "2026-09-22", empresa_origem_id: empresaId,
+    origin_warehouse_id: armazens.items[0]!.id, destination_warehouse_id: armazens.items[1]!.id,
+    items: [{ product_id: produto, quantity: "1" }]
+  });
+
+  await page.goto(`/estoque/transferencias/${tr.id}`);
+  // o endpoint devolve { ...doc, items, titles } SEM `movements`; antes da guarda isso derrubava a tela
+  await expect(page.getByTestId("base2-shell")).toBeVisible();
+  await expect(page.locator('[data-testid="base2-section"][data-secao="Movimentações de estoque (ledger)"]')).toBeVisible();
+
+  // documento de DUAS empresas: origem e destino são campos, e o subtítulo não elege uma delas
+  await expect(page.locator('[data-testid="base2-field"][data-campo="Origem"]')).toBeVisible();
+  await expect(page.locator('[data-testid="base2-field"][data-campo="Destino"]')).toBeVisible();
+  await expect(page.getByTestId("base2-empresa")).toHaveCount(0);
+});
+
+test("moldura Base 2 — BATIDA: renderiza sem total de documento e sem rodapé enganoso", async ({ page }) => {
+  await login(page);
+  await page.goto("/estoque");
+  const empresaId = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId: string | null }).empresaId);
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const armazens = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=2");
+  // o seed não cria fórmula nenhuma: sem criar aqui, o teste passaria por ausência de dado — que é
+  // exatamente o "verde que não prova nada" proibido por .claude/rules/testing-gates.md
+  const formula = await api<{ id: string }>(page, "POST", "/api/stock/feed-formulas", {
+    name: `Fórmula R3 ${Date.now().toString(36)}`, items: [{ product_id: produto, quantity: "10" }]
+  });
+
+  const batida = await api<{ id: string }>(page, "POST", "/api/stock/feed-batches", {
+    empresa_id: empresaId, batch_date: "2026-09-22", formula_id: formula.id,
+    origin_warehouse_id: armazens.items[0]!.id, destination_warehouse_id: armazens.items[1]?.id ?? armazens.items[0]!.id,
+    quantity_produced: "10"
+  });
+
+  await page.goto(`/estoque/batidas/${batida.id}`);
+  await expect(page.getByTestId("base2-shell")).toBeVisible();
+  // feed_batches não tem total_amount/total/total_value: o rodapé saía "—", que em coluna de dinheiro se lê como zero
+  await expect(page.locator('[data-testid="base2-section"][data-secao="Itens"]').getByTestId("base2-items").locator("tfoot")).toHaveCount(0);
+});
+
+test("moldura Base 2 — ANEXOS: só a entrada de insumos oferece o botão, e o diálogo oficial abre", async ({ page }) => {
+  await login(page);
+  const urlEntrada = await criarEntradaEAbrir(page);
+
+  // input_entries está em ATTACHMENT_PARENTS (R3): o botão existe e o diálogo oficial abre
+  const botao = page.getByTestId("base2-anexos");
+  await expect(botao).toBeVisible();
+  await botao.click();
+  const dialogo = page.getByRole("dialog");
+  await expect(dialogo).toBeVisible();
+  await expect(dialogo).toContainText("Anexos");
+  await page.keyboard.press("Escape");
+
+  // as demais entidades NÃO estão na whitelist: nenhum botão, em vez de um botão que abriria com 422
+  const id = await api<{ items: { id: string }[] }>(page, "GET", "/api/stock/writeoffs?pageSize=1")
+    .then((r) => r.items?.[0]?.id ?? null).catch(() => null);
+  if (id) {
+    await page.goto(`/estoque/baixas/${id}`);
+    await expect(page.getByTestId("base2-shell")).toBeVisible();
+    await expect(page.getByTestId("base2-anexos")).toHaveCount(0);
+  }
+  expect(urlEntrada).toContain("/estoque/entradas/");
+});

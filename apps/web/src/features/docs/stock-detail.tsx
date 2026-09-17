@@ -28,13 +28,18 @@ import { COPY, enumLabel } from "@/lib/copy";
  *  - o histórico do registro (auditoria) passou a existir nesta tela: os eventos já eram gravados pelo
  *    backend (`apps/api/src/routes/stock.ts`), mas não havia por onde lê-los aqui.
  *
- * ANEXOS continuam de fora, de propósito: o servidor recusa estas entidades com 422 porque elas não
- * estão em `ATTACHMENT_PARENTS`. Ligar o botão só produziria um controle que aparece e não funciona.
+ * ANEXOS entram POR ENTIDADE, nunca por tipo de tela. Hoje só `input_entries` está em
+ * `ATTACHMENT_PARENTS` (BASE2-01 R3), então só a rota de entradas passa `aceitaAnexos`. As outras seis
+ * continuam sem o botão porque o servidor as recusaria com 422, e controle que aparece e não funciona é
+ * pior do que controle ausente (`.claude/rules/frontend-web.md`). Cada uma entra quando o backend a
+ * aceitar — a whitelist é a autoridade, esta prop é só o reflexo dela.
  */
-export function StockDocDetail({ id, endpoint, base, title, perm, entidade, dateKey, extraKV, cancelLabel = "Cancelar documento", extraActions }: {
+export function StockDocDetail({ id, endpoint, base, title, perm, entidade, aceitaAnexos, dateKey, extraKV, cancelLabel = "Cancelar documento", extraActions }: {
   id: string; endpoint: string; base: string; title: string; perm: string;
   /** Nome da tabela, como o backend a grava na auditoria. Distinto de `perm` por serem conceitos diferentes. */
   entidade: string;
+  /** A entidade está em `ATTACHMENT_PARENTS` no servidor? Só então o botão de anexos aparece. */
+  aceitaAnexos?: boolean;
   dateKey: string; extraKV?: (d: Row) => [string, React.ReactNode][]; cancelLabel?: string;
   /** ações contextuais (ex.: "Devolver itens" na requisição) */
   extraActions?: (d: Row & { items: Row[] }) => React.ReactNode;
@@ -90,6 +95,7 @@ export function StockDocDetail({ id, endpoint, base, title, perm, entidade, date
     empresa={d["empresa_name"] as React.ReactNode}
     voltarHref={base}
     historico={{ entidade, id }}
+    anexos={aceitaAnexos ? { entidade, id } : undefined}
     acoes={<>
       {extraActions?.(d)}
       {d["status"] !== "cancelled" && can(`${perm}.delete`) && <Button size="sm" variant="danger" onClick={() => setC(true)}>{cancelLabel}</Button>}

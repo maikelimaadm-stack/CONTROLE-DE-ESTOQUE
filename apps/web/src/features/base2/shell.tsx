@@ -1,11 +1,12 @@
 "use client";
 import * as React from "react";
-import { History } from "lucide-react";
+import { History, Paperclip } from "lucide-react";
 import { Button, DetailShell, type Crumb } from "@/components/ui";
 import type { EnumDomain } from "@/lib/copy";
 import { useAuth } from "@/lib/auth";
 import { HistoryDialog } from "@/features/base1/history-dialog";
-import type { Base2Historico } from "./types";
+import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
+import type { Base2Anexos, Base2Historico } from "./types";
 
 /**
  * MOLDURA OFICIAL DO LANÇAMENTO — MODELO BASE 2 (docs/MODELO-BASE2-CONTRACT.md).
@@ -29,10 +30,11 @@ import type { Base2Historico } from "./types";
  *  - **Não autoriza.** `can()` no cliente esconde botão; quem nega é a rota (CLAUDE.md, "Arquitetura").
  *    Por isso a moldura nem recebe permissão: quem decide exibir uma ação é o módulo, que já tem o
  *    contexto para isso.
- *  - **Não liga ANEXOS.** O slot existe no contrato, não no código: hoje `POST /api/attachments` recusa
- *    as entidades de documento de estoque com 422, porque elas não estão em `ATTACHMENT_PARENTS`
- *    (`apps/api/src/lib/attachment-parent.ts`). Um slot sem consumidor é abstração morta; ele entra
- *    junto com o primeiro piloto que o backend aceite.
+ *  - **Não decide o que é anexável.** Ela liga o diálogo oficial de anexos quando o módulo passa `anexos`,
+ *    e a autoridade sobre quais entidades aceitam anexo continua sendo a whitelist do servidor
+ *    (`ATTACHMENT_PARENTS`, em `apps/api/src/lib/attachment-parent.ts`). Módulo que declarar aqui uma
+ *    entidade que o servidor recusa ganha um botão que abre e falha com 422 — por isso a prop é opcional
+ *    e cada tela só a passa depois que o backend aceita aquele pai.
  */
 export interface Base2ShellProps {
   /** Nome do tipo de lançamento ("Baixa de estoque"). Não é o código do registro. */
@@ -50,6 +52,8 @@ export interface Base2ShellProps {
   acoes?: React.ReactNode;
   /** Liga o botão e o diálogo de histórico oficiais. Omitido = seção de histórico não existe. */
   historico?: Base2Historico;
+  /** Liga o botão e o diálogo de anexos oficiais. Só passe para entidade aceita por `ATTACHMENT_PARENTS`. */
+  anexos?: Base2Anexos;
   children: React.ReactNode;
   className?: string;
   testId?: string;
@@ -57,13 +61,15 @@ export interface Base2ShellProps {
 
 export function Base2Shell({
   titulo, codigo, situacao, situacaoDominio = "status", empresa, voltarHref, breadcrumbs,
-  acoes, historico, children, className, testId = "base2-shell"
+  acoes, historico, anexos, children, className, testId = "base2-shell"
 }: Base2ShellProps) {
   const { can } = useAuth();
   const [histAberto, setHistAberto] = React.useState(false);
+  const [anexosAberto, setAnexosAberto] = React.useState(false);
   // mesma composição de título de antes da moldura: o rótulo da aba de trabalho não pode mudar de forma
   const tituloCompleto = codigo === null || codigo === undefined || codigo === "" ? titulo : `${titulo} ${String(codigo)}`;
   const mostrarHistorico = Boolean(historico) && can("audit_logs.view");
+  const mostrarAnexos = Boolean(anexos) && can("attachments.view");
 
   return (
     <DetailShell
@@ -77,11 +83,13 @@ export function Base2Shell({
       statusDomain={situacaoDominio}
       actions={<>
         {acoes}
+        {mostrarAnexos && <Button size="sm" variant="outline" data-testid="base2-anexos" onClick={() => setAnexosAberto(true)}><Paperclip className="h-3.5 w-3.5" /> Anexos</Button>}
         {mostrarHistorico && <Button size="sm" variant="outline" data-testid="base2-historico" onClick={() => setHistAberto(true)}><History className="h-3.5 w-3.5" /> Histórico</Button>}
       </>}
     >
       {children}
       {historico && mostrarHistorico && <HistoryDialog open={histAberto} onOpenChange={setHistAberto} entity={historico.entidade} entityId={historico.id} title={tituloCompleto} />}
+      {anexos && mostrarAnexos && <AttachmentsDialog open={anexosAberto} onOpenChange={setAnexosAberto} entity={anexos.entidade} entityId={anexos.id} title={tituloCompleto} />}
     </DetailShell>
   );
 }
