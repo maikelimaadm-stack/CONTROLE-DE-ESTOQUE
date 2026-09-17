@@ -282,7 +282,22 @@ begin
     raise exception 'HOTFIX-0019: erp.warehouse_transfers nao tem as 3 colunas esperadas (organization_id, code, kind); encontrei %.', n;
   end if;
 
-  -- 4.5 A OUTRA TABELA QUE DIVIDIA A CHAVE LEGADA existe e tem a forma que a seção 6.2 supõe. Sem esta
+  -- 4.5 A UNICIDADE DA OUTRA TABELA — espelho exato da 4.3, e pela mesma razão.
+  -- A seção 6.2 restringe `max(code)` a `movement_type = 'farm_transfer'`, e isso SÓ é correto se
+  -- `movement_type` estiver DENTRO da chave única de `erp.animal_movements`. Se ele saísse da UNIQUE, o
+  -- namespace passaria a ser a tabela inteira e o recorte por tipo mediria o pedaço errado — com a
+  -- pós-condição 8.4 usando o MESMO recorte e, portanto, aprovando o erro junto.
+  select count(*) into n
+  from pg_constraint c
+  where c.conrelid = 'erp.animal_movements'::regclass
+    and c.contype = 'u'
+    and pg_get_constraintdef(c.oid) = 'UNIQUE (organization_id, movement_type, code)';
+  if n <> 1 then
+    raise exception 'HOTFIX-0019: erp.animal_movements nao tem exatamente 1 UNIQUE (organization_id, movement_type, code) (encontrei %). '
+                    'A divisao do contador do rebanho supoe esse namespace. Nada foi aplicado.', n;
+  end if;
+
+  -- 4.6 A OUTRA TABELA QUE DIVIDIA A CHAVE LEGADA existe e tem a forma que a seção 6.2 supõe. Sem esta
   -- conferência, uma mudança de schema em `erp.animal_movements` faria a divisão do contador rodar sobre
   -- colunas que não existem — ou, pior, casar zero linhas e "reconciliar" nada com sucesso.
   select count(*) into n
