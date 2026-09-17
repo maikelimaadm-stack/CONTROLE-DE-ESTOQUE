@@ -25,12 +25,14 @@
  *
  * A CONSEQUÊNCIA, QUE VALE DEPOIS DO CUTOVER
  * ------------------------------------------
- * A 05C-2 NÃO torna a troca segura em rollout normal. Ela exige uma janela em que apenas UMA versão da
- * API esteja servindo (`docs/PRE-BASE2-05C-2-CUTOVER.md`) — janela que, no momento em que este comentário
- * é escrito, **ainda não foi realizada**: o runbook está `BLOCKED` e a migration não foi aplicada em
- * produção. O tempo verbal importa aqui: um comentário que afirmasse no passado que o cutover "foi
- * executado" faria uma auditoria futura concluir que as precondições A2/A3 já estão satisfeitas.
- * Feita a janela, e a partir dela:
+ * A 05C-2 NÃO torna a troca segura em rollout normal. Ela exigiu uma janela em que apenas UMA versão da
+ * API estivesse servindo (`docs/PRE-BASE2-05C-2-CUTOVER.md`) — janela **realizada em 16/09/2026**: o
+ * deployment ativo foi removido, o merge `935f9dc` entrou com zero réplicas servindo, a 0018 foi aplicada
+ * uma única vez e a validação fechou (`entity='farm'` = 0, `entity='empresa'` = 1, `last_value`
+ * preservado). O runbook registra a execução em § "Encerramento real — 16/09/2026".
+ *
+ * O cutover estar concluído NÃO torna o version skew seguro, e é por isso que o que vem abaixo continua
+ * valendo como regra, não como histórico:
  *
  *   • a ÚNICA chave de runtime é `'empresa'`. Não existe fallback `farm || empresa`, e não deve existir:
  *     um fallback leria o contador errado em silêncio e devolveria um número já usado;

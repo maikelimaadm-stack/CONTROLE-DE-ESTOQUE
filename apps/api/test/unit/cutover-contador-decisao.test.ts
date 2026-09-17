@@ -194,13 +194,16 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     // servindo. Afirmar "não existe mecanismo" era impreciso, e a imprecisão é perigosa nos dois sentidos:
     // some com uma saída real e faz o runbook parecer mais fechado do que é.
     //
-    // O que continua verdade, e o teste não pode apagar: o gate segue BLOCKED — por falta de confirmação
-    // ACCOUNT-SPECIFIC, não por falta de primitiva.
+    // O que continua verdade, e o teste não pode apagar: a primitiva é nomeada, e o gate de quiesce
+    // EXISTIU e foi resolvido por confirmação ACCOUNT-SPECIFIC — não por ele nunca ter importado.
+    // O cutover foi executado em 16/09/2026; o runbook é hoje CLOSED e registra a execução.
     const rb = fs.readFileSync(path.join(RAIZ, "docs/PRE-BASE2-05C-2-CUTOVER.md"), "utf8");
     expect(rb, "a primitiva documentada é nomeada").toMatch(/Remove/);
-    expect(rb, "e tratada como mecanismo preferencial candidato").toMatch(/MECANISMO PREFERENCIAL CANDIDATO/);
-    expect(rb, "o runbook continua BLOCKED").toMatch(/Estado deste runbook: `BLOCKED`/);
-    expect(rb, "e diz que falta confirmação account-specific").toMatch(/ACCOUNT-SPECIFIC/);
+    expect(rb, "e continua sendo o mecanismo preferencial").toMatch(/MECANISMO PREFERENCIAL/);
+    expect(rb, "o runbook está CLOSED/COMPLETED, não mais BLOCKED")
+      .toMatch(/Estado deste runbook: `COMPLETED` \/ `CLOSED` EM PRODUÇÃO/);
+    expect(rb, "e o estado atual não afirma mais BLOCKED").not.toMatch(/Estado deste runbook: `BLOCKED`/);
+    expect(rb, "a exigência de confirmação account-specific continua registrada").toMatch(/ACCOUNT-SPECIFIC/);
     // A frase antiga, categórica, não pode voltar.
     expect(rb, "não afirma mais ausência de mecanismo").not.toMatch(/Não existe hoje, neste produto, mecanismo comprovável/);
   });
@@ -252,9 +255,22 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     expect(itens, `§B6 lista OITO confirmações account-specific (achei ${itens})`).toBe(8);
     expect(rb, "e o texto não volta a dizer 'sete'").not.toMatch(/sete pontos de §B6/i);
 
-    // 7. O estado operacional NÃO pode ser afrouxado por este caso.
-    expect(rb, "o runbook continua BLOCKED").toMatch(/Estado deste runbook: `BLOCKED`/);
-    expect(rb, "e o Remove segue CANDIDATO, não confirmado").toMatch(/MECANISMO PREFERENCIAL CANDIDATO/);
+    // 7. O ESTADO OPERACIONAL é o de hoje: cutover CONCLUÍDO, com a execução registrada. O que este item
+    //    impede é o inverso do que impedia antes — que alguém volte a publicar "BLOCKED"/"não executado"
+    //    como estado ATUAL, ou que declare CLOSED sem a evidência da janela.
+    expect(rb, "o runbook está CLOSED/COMPLETED em produção")
+      .toMatch(/Estado deste runbook: `COMPLETED` \/ `CLOSED` EM PRODUÇÃO/);
+    expect(rb, "com a seção de encerramento real").toMatch(/Encerramento real — 16\/09\/2026/);
+    expect(rb, "e o merge da janela nomeado").toMatch(/935f9dca645f120b6b1747dab8ae95abc143d4a5/);
+    expect(rb, "a substituição de chave é comprovada, não a cópia").toMatch(/`entity='farm'` *\| *\*\*0\*\*|farm.{0,40}0 *\|/);
+
+    // 8. O QUE O ENCERRAMENTO NÃO AFROUXA. O cutover estar feito não torna o version skew seguro: a
+    //    janela single-version era obrigatória, e o motivo pelo qual era obrigatória continua de pé.
+    expect(rb, "o runbook continua dizendo que a janela single-version era obrigatória")
+      .toMatch(/janela single-version é obrigatória|janela single-version era obrigatória/);
+    expect(rb, "e que o cutover concluído não torna o skew seguro")
+      .toMatch(/não.{0,30}torna o version skew.{0,20}seguro/i);
+    expect(rb, "a política forward-only permanece escrita").toMatch(/forward-only/i);
   });
 
   it("T9b · nenhum artefato elege UM quadrante como o que obriga a janela — nem o runbook, nem o gate, nem a 0018", () => {
