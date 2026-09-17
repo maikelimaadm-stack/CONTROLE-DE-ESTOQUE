@@ -43,12 +43,21 @@ export const MIGRATION_HOTFIX = "0019_warehouse_transfer_code_sequence.sql";
 export const CANONICA = "warehouse_transfer";
 export const LEGADA = "farm_transfer";
 /**
- * A chave canônica do contador de TRANSFERÊNCIA DE REBANHO.
+ * A chave que a ARQUITETURA ABANDONADA daria ao contador de transferência de rebanho.
  *
- * `LEGADA` era SOBRECARREGADA: `erp.animal_movements` (namespace
- * `unique (organization_id, movement_type, code)`) numerava com ela, igual a `erp.warehouse_transfers`
- * (namespace `unique (organization_id, code)`). Um alias não sabe quem chamou, então a 0019 divide o
- * histórico antes de apagar a linha legada. A matriz do gate mede essa divisão.
+ * ELA NÃO EXISTE NO PRODUTO — nem o runtime a pede, nem a 0019 a cria. Vive aqui por UM motivo: o
+ * quadrante C-REPRO do gate a usa para montar, num banco descartável, o estado que a rodada anterior
+ * desta fatia produzia, e então REPRODUZIR a corrida que ela introduzia.
+ *
+ * `LEGADA` é SOBRECARREGADA: `erp.animal_movements` (namespace
+ * `unique (organization_id, movement_type, code)`) numera com ela, igual a `erp.warehouse_transfers`
+ * (namespace `unique (organization_id, code)`). Separar o rebanho num contador próprio ENQUANTO o alias
+ * existe cria duas LINHAS de `erp.code_sequences` sem trava em comum, emitindo o mesmo número para a mesma
+ * tabela a partir de binários diferentes. Por isso as duas rotas continuam na MESMA chave, e a separação é
+ * o cleanup da fatia que remove o alias.
+ *
+ * Um gate que só provasse o caminho feliz não teria dentes: é esta constante que permite provar que a
+ * alternativa descartada realmente colide.
  */
 export const CANONICA_REBANHO = "animal_farm_transfer";
 
