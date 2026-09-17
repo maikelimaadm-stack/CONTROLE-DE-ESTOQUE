@@ -9,4 +9,4 @@ export { Base2Shell, type Base2ShellProps } from "./shell";
 export { Base2Section, type Base2SectionProps } from "./section";
 export { Base2Fields, type Base2FieldsProps } from "./fields";
 export { Base2Items, type Base2ItemsProps } from "./items";
-export type { Base2Field, Base2ItemColumn, Base2Align, Base2Span, Base2Historico, Base2Anexos } from "./types";
+export type { Base2Field, Base2ItemColumn, Base2Align, Base2Span, Base2Historico } from "./types";

@@ -31,18 +31,16 @@ export interface Base2Field {
 /**
  * Coluna da tabela de ITENS.
  *
- * `total` é opcional e recebe as linhas, mas existe para o chamador devolver o total que o SERVIDOR
- * calculou — não para a moldura somar. Ver docs/MODELO-BASE2-CONTRACT.md § Totais: cliente que soma
- * item a item vira uma segunda autoridade contábil, e ela diverge do backend na primeira regra de
- * arredondamento, desconto ou rateio.
+ * Não existe `total` de coluna: ver `items.tsx` e docs/MODELO-BASE2-CONTRACT.md § Totais. O total do
+ * documento é um CAMPO do cabeçalho, porque em documento fiscal ele inclui valores que não estão em
+ * linha nenhuma (frete, outras despesas) — e pôr esse número sob a coluna de totais dos itens faz a
+ * coluna não fechar.
  */
 export interface Base2ItemColumn<T> {
   key: string;
   label: string;
   align?: Base2Align;
   render?: (row: T) => React.ReactNode;
-  /** Célula do rodapé, sob esta mesma coluna. Sem `total`, a célula do rodapé fica vazia. */
-  total?: (rows: readonly T[]) => React.ReactNode;
 }
 
 /** Identificação do registro para o HISTÓRICO oficial (`features/base1/history-dialog`). */
@@ -53,9 +51,3 @@ export interface Base2Historico {
   id?: string;
 }
 
-/** Identificação do registro para os ANEXOS oficiais (`features/base1/attachments-dialog`). */
-export interface Base2Anexos {
-  /** Nome da tabela. Precisa estar em `ATTACHMENT_PARENTS` no servidor, senão a API recusa com 422. */
-  entidade: string;
-  id?: string | null;
-}

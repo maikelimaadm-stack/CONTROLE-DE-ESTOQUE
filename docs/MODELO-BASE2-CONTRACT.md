@@ -29,7 +29,7 @@ saber **de qual módulo** o registro veio, a regra vazou.
 ```
 Base2Shell                    identidade · situação · empresa · ações · histórico
 ├ Base2Fields                 dados principais (lista de definição, grade de 12)
-├ Base2Section "Itens"        ├ Base2Items   (colunas declarativas + rodapé de totais)
+├ Base2Section "Itens"        ├ Base2Items   (colunas declarativas, em leitura)
 ├ Base2Section  …             ├ Base2Items   (rateio, títulos, ledger… — o módulo decide quais)
 └ conteúdo livre do módulo
 ```
@@ -39,7 +39,7 @@ nunca componente monolítico com trinta props opcionais.
 
 `Base2Shell` compõe o `DetailShell` oficial (`components/ui/detail-shell.tsx`); não o substitui e não o
 duplica. Telas de **registro de cadastro** continuam no `DetailShell` direto: a moldura Base 2 é para
-lançamento, que é a coisa com itens e totais.
+lançamento, que é a coisa com itens.
 
 ## Identidade do lançamento
 
@@ -93,30 +93,44 @@ seriam duas fontes para o mesmo rótulo.
 `docs/UI-STANDARD.md` § "ItemsTable (contrato desejado)" descrevia sem implementação. A metade de
 **edição** continua em cada editor do módulo; unificar edição é fatia futura, não esta.
 
-- Colunas declarativas: `key`, `label`, `align`, `render`, `total`.
+- Colunas declarativas: `key`, `label`, `align`, `render`. **Não existe `total` de coluna** — ver § Totais.
 - Reusa `table-dense` e `num` de `app/globals.css` — a identidade visual das tabelas densas já existe e
   não se reinventa aqui.
 - Vazio = `EmptyState compact`, nunca uma tabela de cabeçalho só.
-- `legenda` alimenta um `<caption class="sr-only">`: quem usa leitor de tela precisa saber de qual
-  documento é a tabela antes de entrar nas linhas.
+- `legenda` alimenta um `<caption class="sr-only">` e é obrigatória quando a tela tem mais de uma
+  tabela: quem usa leitor de tela precisa saber de qual documento é a tabela antes de entrar nas linhas.
+  O piloto tem quatro tabelas, e as quatro são nomeadas.
 
 ## Totais
 
-**A moldura não soma.** `total` é uma função do chamador que devolve o total **que o servidor calculou**.
+**O total do DOCUMENTO é um campo do cabeçalho. A tabela de itens não tem rodapé de totais.**
 
-O motivo não é preguiça: um cliente que soma item a item vira uma segunda autoridade contábil. Ela bate
-com o backend enquanto não houver arredondamento, desconto por linha, frete rateado, imposto retido ou
-conversão de unidade — e na primeira dessas regras as duas divergem. Quando divergirem, a tela é que
-parecerá "certa" para quem está olhando, e o erro será relatado contra o número correto.
+Esta regra substitui a primeira versão deste contrato, que mandava o rodapé exibir "o total que o servidor
+calculou" sob a coluna de totais dos itens. Parecia seguro — número do servidor, alinhado por construção — e
+está errado. Medido no próprio repositório:
 
-**O rodapé é alinhado por construção.** Ele emite UMA célula por coluna, na mesma ordem do cabeçalho;
-não existe `colSpan` para ficar desatualizado. O cuidado vem de um defeito real e documentado:
-`components/ui/data-table.tsx` explica que um `colSpan={8}` escrito à mão ficou para trás quando a
-listagem de Animais ganhou a coluna de Empresa (PRE-BASE2-03) e a de ID Global (PRE-BASE2-05B.1), e o
-total passou a aparecer sob a coluna errada. Aqui esse erro é impossível.
+| | total do documento | total da linha |
+|---|---|---|
+| Nota fiscal (`apps/api/src/routes/stock.ts:194` e `:201`) | produtos − desconto + IPI **+ frete + outras despesas** | qtd × unitário − desconto + IPI |
+| Batida (`stock.ts:465`) | **não existe** (só `production_cost`) | qtd × custo unitário |
+| Entrada de insumos (`stock.ts:133` e `:139`) | Σ das linhas | qtd × unitário |
 
-**Não se totaliza o que não tem unidade única.** Quantidade de um documento mistura quilo, litro e
-unidade; somar produz um número sem significado. Dinheiro tem uma unidade só — esse totaliza.
+Numa nota com R$ 10.000,00 em itens e R$ 500,00 de frete, a coluna somaria 10.000 e, logo abaixo dela, em
+negrito, apareceria 10.500. Quem confere o documento conclui que um item está errado — ou aceita 10.500 como
+o total dos produtos. Na batida o rodapé saía "—", que numa coluna de dinheiro se lê como zero.
+
+E o cliente também **não pode somar a coluna**: `CLAUDE.md` proíbe ponto flutuante para dinheiro e o
+`apps/web` não tem `decimal.js`. Não sobra forma correta de produzir um subtotal na tabela — então não se
+produz nenhum. O número do documento fica num campo rotulado "Total", onde o rótulo diz de que total se
+trata, e a coluna de itens mostra só o que é dela.
+
+O que permanece da regra original, e continua valendo: **a moldura não calcula valor contábil.** Um cliente
+que soma vira uma segunda autoridade, e ela diverge do backend na primeira regra de arredondamento,
+desconto, frete rateado ou conversão de unidade — e quando divergir, quem olha a tela considera o número
+dela o certo.
+
+**Quantidade nunca seria totalizada de qualquer forma:** um documento mistura quilo, litro e unidade, e a
+soma seria um número sem significado.
 
 ## Histórico
 

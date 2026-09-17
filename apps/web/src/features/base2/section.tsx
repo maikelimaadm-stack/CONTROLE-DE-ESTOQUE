@@ -31,7 +31,7 @@ export function Base2Section({ titulo, contagem, acoes, descricao, children, cla
     <section className={cn("space-y-1.5", className)} data-testid={testId} data-secao={titulo} aria-labelledby={headingId}>
       <div className="flex flex-wrap items-center gap-2">
         <h3 id={headingId} className="text-xs font-semibold uppercase text-brand-700">{titulo}</h3>
-        {contagem !== undefined && <span className="text-[11px] tabular-nums text-slate-400" data-testid="base2-section-contagem">{contagem}</span>}
+        {contagem !== undefined && <span className="text-[11px] tabular-nums text-slate-400" data-testid="base2-section-contagem">{contagem}<span className="sr-only"> registros nesta seção</span></span>}
         {acoes && <span className="ml-auto flex items-center gap-1.5 no-print">{acoes}</span>}
       </div>
       {descricao && <p className="text-[11px] text-slate-500">{descricao}</p>}

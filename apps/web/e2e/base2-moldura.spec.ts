@@ -49,7 +49,19 @@ test("moldura Base 2: identidade, empresa, seções e dados principais", async (
   await expect(page.locator('[data-testid="base2-section"][data-secao="Movimentações de estoque (ledger)"]')).toBeVisible();
 });
 
-test("moldura Base 2: rodapé de totais cai sob a MESMA coluna do cabeçalho", async ({ page }) => {
+/**
+ * GUARDA DE REGRESSÃO DO TOTAL (docs/MODELO-BASE2-CONTRACT.md § Totais).
+ *
+ * A primeira versão desta moldura punha o total do DOCUMENTO sob a coluna de total dos ITENS. Numa nota
+ * fiscal os dois números são grandezas diferentes — o do documento inclui frete e outras despesas
+ * (`apps/api/src/routes/stock.ts:194` contra `:201`) — e a coluna deixava de fechar; numa batida, que não
+ * tem total de documento, o rodapé saía "—" sob uma coluna de dinheiro.
+ *
+ * Hoje a tabela de itens não tem rodapé nenhum e o tipo `Base2ItemColumn` nem oferece `total`, então o
+ * defeito é impossível em TODAS as sete rotas por construção, não por configuração. Este teste existe
+ * para que voltar a pôr um total ali custe um gate vermelho.
+ */
+test("moldura Base 2: o total do documento é campo, e a tabela de itens não tem rodapé", async ({ page }) => {
   await login(page);
   await criarEntradaEAbrir(page);
 
@@ -58,17 +70,17 @@ test("moldura Base 2: rodapé de totais cai sob a MESMA coluna do cabeçalho", a
   const indiceTotal = cabecalhos.findIndex((t) => t.trim() === "Total");
   expect(indiceTotal, "a tabela de itens precisa ter uma coluna Total").toBeGreaterThan(-1);
 
-  const rodape = tabela.getByTestId("base2-items-totais");
-  await expect(rodape).toBeVisible();
-  // uma célula por coluna: é isso que impede o total de escorregar quando alguém acrescenta uma coluna
-  await expect(rodape.locator("th, td")).toHaveCount(cabecalhos.length);
+  // nenhum rodapé: o número do documento não mora sob a coluna dos itens
+  await expect(tabela.locator("tfoot")).toHaveCount(0);
 
-  // o valor do rodapé está na posição da coluna Total, e é o total do documento (10 × 6,50 = 65,00)
-  const celulaTotal = rodape.locator("th, td").nth(indiceTotal);
-  await expect(celulaTotal).toContainText("65,00");
-  // e as células fora da coluna de total continuam vazias — rodapé não inventa número
-  const celulaQuantidade = rodape.locator("th, td").nth(cabecalhos.findIndex((t) => t.trim() === "Quantidade"));
-  await expect(celulaQuantidade).toHaveText("");
+  // o total do documento (10 × 6,50 = 65,00) aparece como CAMPO, onde o rótulo diz de que total se trata
+  const campoTotal = page.locator('[data-testid="base2-field"][data-campo="Total"]');
+  await expect(campoTotal).toBeVisible();
+  await expect(campoTotal).toContainText("65,00");
+
+  // e a linha do item traz o total DELA na coluna Total — mesma grandeza, lugar certo
+  const celulaItem = tabela.getByTestId("base2-items-linha").first().locator("td").nth(indiceTotal);
+  await expect(celulaItem).toContainText("65,00");
 });
 
 test("moldura Base 2: histórico do registro abre pelo mecanismo oficial", async ({ page }) => {

@@ -10,25 +10,27 @@ import type { Base2ItemColumn } from "./types";
  * `docs/UI-STANDARD.md` § "ItemsTable (contrato desejado)" descrevia sem implementação. A metade de
  * EDIÇÃO continua em cada editor do módulo; unificar edição é fatia própria.
  *
- * RODAPÉ ALINHADO POR CONSTRUÇÃO. O rodapé emite UMA célula por coluna, na mesma ordem do cabeçalho:
- * não existe `colSpan` para ficar desatualizado. Esse cuidado não é teórico — `components/ui/data-table.tsx`
- * carrega um comentário longo explicando que um `colSpan={8}` escrito à mão ficou para trás quando a
- * listagem de Animais ganhou a coluna de Empresa (PRE-BASE2-03) e a de ID Global (PRE-BASE2-05B.1), e o
- * total passou a aparecer sob a coluna errada. Aqui o erro é impossível: quem acrescenta uma coluna
- * acrescenta a célula do rodapé junto, porque é a mesma lista.
+ * SEM RODAPÉ DE TOTAIS, e isso foi MEDIDO, não suposto (ver docs/MODELO-BASE2-CONTRACT.md § Totais e a
+ * decisão 151, retratada). A primeira versão desta moldura punha o total do documento sob a coluna de
+ * total dos itens. Parecia seguro — era o número do servidor, alinhado por construção. Não é:
  *
- * A moldura NÃO SOMA. `total` devolve o que o servidor calculou (ver docs/MODELO-BASE2-CONTRACT.md
- * § Totais). Somar no cliente criaria uma segunda autoridade contábil, que diverge do backend na
- * primeira regra de arredondamento, desconto ou rateio — e a tela passaria a ser a versão "certa".
+ *  - numa NOTA FISCAL o total do documento é `produtos − desconto + IPI + frete + outras despesas`
+ *    (`apps/api/src/routes/stock.ts:194`), enquanto a linha é `qtd × unitário − desconto + IPI`
+ *    (`:201`). Uma nota com R$ 10.000,00 em itens e R$ 500,00 de frete mostraria a coluna somando
+ *    10.000 e, logo abaixo dela, em negrito, 10.500;
+ *  - numa BATIDA não existe total de documento nenhum (só `production_cost`), e o rodapé saía "—",
+ *    que numa coluna de dinheiro se lê como zero.
+ *
+ * E o cliente também não pode somar a coluna: `CLAUDE.md` proíbe ponto flutuante para dinheiro e o
+ * `apps/web` não tem `decimal.js`. Não sobra forma correta de produzir um subtotal aqui — então não se
+ * produz. O total do DOCUMENTO é um campo do cabeçalho, onde o rótulo diz de que total se trata.
  */
 export interface Base2ItemsProps<T> {
   colunas: readonly Base2ItemColumn<T>[];
   linhas: readonly T[];
   /** Chave estável da linha. Padrão: campo `id`, senão o índice. */
   rowKey?: (row: T, index: number) => string;
-  /** Rótulo da primeira célula do rodapé. Só aparece quando a primeira coluna não tem total próprio. */
-  rotuloTotais?: string;
-  /** Resumo da tabela para leitor de tela. */
+  /** Resumo da tabela para leitor de tela. Obrigatório quando há mais de uma tabela na tela. */
   legenda?: string;
   vazioTexto?: string;
   className?: string;
@@ -36,11 +38,8 @@ export interface Base2ItemsProps<T> {
 }
 
 export function Base2Items<T extends Record<string, unknown>>({
-  colunas, linhas, rowKey, rotuloTotais = "Totais", legenda, vazioTexto = COPY.nenhumItem, className, testId = "base2-items"
+  colunas, linhas, rowKey, legenda, vazioTexto = COPY.nenhumItem, className, testId = "base2-items"
 }: Base2ItemsProps<T>) {
-  const temTotais = colunas.some((c) => c.total);
-  // o rótulo só cabe na primeira célula quando aquela coluna não tem total próprio disputando o espaço
-  const rotuloNaPrimeira = temTotais && !colunas[0]?.total;
   const chave = React.useCallback((r: T, i: number) => (rowKey ? rowKey(r, i) : String(r["id"] ?? i)), [rowKey]);
 
   if (linhas.length === 0) return <div className={cn("rounded border", className)} data-testid={testId} data-vazio="sim"><EmptyState title={vazioTexto} compact /></div>;
@@ -63,17 +62,6 @@ export function Base2Items<T extends Record<string, unknown>>({
             </tr>
           ))}
         </tbody>
-        {temTotais && (
-          <tfoot>
-            <tr data-testid="base2-items-totais" className="font-semibold">
-              {colunas.map((c, i) => {
-                const conteudo = c.total ? c.total(linhas) : i === 0 && rotuloNaPrimeira ? rotuloTotais : null;
-                const Cell = i === 0 && rotuloNaPrimeira ? "th" : "td";
-                return <Cell key={c.key} {...(Cell === "th" ? { scope: "row" as const } : {})} className={c.align === "right" ? "num" : c.align === "center" ? "text-center" : ""}>{conteudo}</Cell>;
-              })}
-            </tr>
-          </tfoot>
-        )}
       </table>
     </div>
   );

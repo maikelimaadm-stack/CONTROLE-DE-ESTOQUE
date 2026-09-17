@@ -128,9 +128,10 @@ visual (verde `--mg-accent`, controles de 28 px, cartões de 12 px); os primitiv
 ### ItemsTable — metade de LEITURA implementada (BASE2-01)
 
 A **leitura** virou `Base2Items` (`apps/web/src/features/base2/items.tsx`): `colunas` declarativas (`key`, `label`,
-`align`, `render`, `total`), `EmptyState compact` quando vazio, `caption` sr-only e rodapé de totais que emite **uma
-célula por coluna** — sem `colSpan` para ficar desatualizado. O contrato mora em `docs/MODELO-BASE2-CONTRACT.md`;
-regra central: **a tabela não soma**, `total` devolve o valor que o servidor calculou.
+`align`, `render`), `EmptyState compact` quando vazio e `caption` sr-only. **Sem rodapé de totais, e sem `total` no
+tipo da coluna**: o total do documento é campo do cabeçalho, porque em nota fiscal ele inclui frete e outras despesas
+que não estão em linha nenhuma. O contrato e a medição que levou a isso estão em `docs/MODELO-BASE2-CONTRACT.md`
+§ Totais (decisões 151 retratada e 154).
 
 A **edição** continua como contrato desejado, não implementado (`ItemsEditor` de cada módulo): `rows` + `onChange`,
 linha nova por botão "Adicionar item" (`Button variant="outline" size="sm"`), remoção por botão-ícone com `aria-label`,
