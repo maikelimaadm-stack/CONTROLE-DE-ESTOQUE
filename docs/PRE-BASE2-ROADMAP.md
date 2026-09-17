@@ -14,7 +14,22 @@
 | 5 | **PRE-BASE2-05** — Contexto multiempresa | Seletor "todas / uma / conjunto", filtros e painéis consolidados, seleção obrigatória no lançamento, seletor de idioma. ✅ **CONCLUÍDA EM PRODUÇÃO**: cutover 05C-2 executado em 16/09/2026 (merge `935f9dc`; `0018` no ledger uma única vez; `entity='farm'` = 0 e `entity='empresa'` = 1, `last_value` preservado), e encerramento documental feito — runbook, `DEPLOYMENT.md` e roteiro de aposentadoria registram a execução | 02, 03 |
 | 6 | **BASE2-01** — Moldura de lançamento | Shell oficial do Modelo Base 2 (cabeçalho, dados principais × itens, totais, histórico, **anexos**, ações). Contrato em `MODELO-BASE2-CONTRACT.md`; implementação em `apps/web/src/features/base2/`; piloto no detalhe de documento de estoque. ✅ **CONCLUÍDA / IMPLANTADA EM PRODUÇÃO** — merge `9615560`. ANEXOS: entregues com suporte inicial real — `Base2Shell` integra o `AttachmentsDialog` oficial e `input_entries` foi habilitada em `ATTACHMENT_PARENTS`, com a matriz de autorização provada em integração. As outras seis entidades entram uma a uma, conforme o backend as aceite | 05 |
 | 7 | **BASE2-02** — TOP | Registry e contrato inicial de Tipo de Operação; nenhuma regra de negócio fundida. 🟡 **implementação em PR — não implantada.** Registry canônico em `packages/domain/src/tipo-operacao.ts`, contrato em `docs/TIPO-OPERACAO-CONTRACT.md`, rótulos no catálogo pt-BR e identidade visível nas sete rotas do piloto. CLASSIFICAR ≠ EXECUTAR: nenhuma regra de negócio mudou de dono. | 06 |
-| 8 | **BASE2-03+** — Migração dos módulos | Compras, Estoque, Financeiro, Vendas e demais migrados progressivamente para o Base 2. ⛔ **CONGELADA**: só começa com a BASE2-02 mesclada e em produção. | 07 |
+| 8 | **BASE2-03+** — Migração dos módulos | Compras, Estoque, Financeiro, Vendas e demais migrados progressivamente para o Base 2. ⛔ **CONGELADA**: só começa com a BASE2-02 mesclada e em produção **E** com o HOTFIX de numeração de `erp.warehouse_transfers` entregue (ver a linha abaixo). | 07 + HOTFIX |
+
+### HOTFIX obrigatório antes da BASE2-03 — numeração de `erp.warehouse_transfers`
+
+`POST /api/stock/transfers` gera o código com **dois contadores independentes** (`warehouse_transfer` e
+`farm_transfer`, via `nextCode`) para **uma** tabela com `unique (organization_id, code)`. A primeira
+transferência de cada variante numa organização recebe o mesmo código, e a segunda é recusada com
+`409 CONFLICT`. Numa organização nova, a transferência entre empresas quebra no primeiro documento.
+
+É defeito de PRODUÇÃO, anterior à BASE2-02, no caminho de **escrita**, e **não** é comportamento
+esperado: nenhum teste o exige (`scripts/regressao-invertida-audit.mjs` impede que volte a ser exigido).
+
+**Ordem fixa:** BASE2-02 mesclada → **HOTFIX de numeração** → BASE2-03. A PR seguinte à #39 é o hotfix,
+não a BASE2-03. O hotfix decide a numeração (contador único por tabela ou código único por variante),
+trata o acervo já numerado, traz teste de regressão criando as DUAS variantes na mesma organização, e
+só então a prova de UI da variante `farm` passa a ser escrevível.
 | 9 | **DATA-GOV** — Governança de dados | Nomenclatura final, dicionário com cobertura certificada, rótulos de enum por i18n. | 03, 08 |
 
 ## Fronteiras que não podem ser cruzadas

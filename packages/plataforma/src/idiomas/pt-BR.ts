@@ -81,7 +81,7 @@ export const ptBR: Catalogo = {
     // `packages/domain/src/tipo-operacao.ts`. O registry guarda a CHAVE; o texto mora só aqui, e o gate
     // do registry reprova chave sem rótulo. Traduzir uma TOP nunca muda a chave nem o dado gravado.
     "top.estoque.entrada_manual": "Entrada manual de estoque",
-    "top.estoque.entrada_por_documento_fiscal": "Entrada por documento fiscal",
+    "top.estoque.documento_fiscal": "Documento fiscal",
     "top.estoque.requisicao": "Requisição de estoque",
     "top.estoque.baixa": "Baixa de estoque",
     "top.estoque.devolucao": "Devolução ao estoque",

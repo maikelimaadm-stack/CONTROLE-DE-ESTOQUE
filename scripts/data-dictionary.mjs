@@ -47,13 +47,13 @@ function columnRows(entry, table) {
     const key = col.primaryKey ? "PK" : col.references ? "FK" : "";
     rows.push([
       `\`${col.name}\``,
-      esc(override?.name ?? ""),
+      esc(override?.nome ?? ""),
       esc(col.type),
       yes(col.notNull),
       key,
       col.references ? `\`${col.references}\`` : "",
       values ? values.map((v) => `\`${v}\``).join(" · ") : "",
-      esc(override?.description ?? "")
+      esc(override?.descricao ?? "")
     ]);
   }
   return rows;

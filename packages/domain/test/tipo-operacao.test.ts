@@ -9,7 +9,8 @@ import {
   discriminadorDeTabela,
   resolverTipoOperacao,
   tipoOperacaoDoRegistro,
-  validarRegistroTipoOperacao
+  validarRegistroTipoOperacao,
+  type TipoOperacao
 } from "../src/tipo-operacao.js";
 import { CHAVES_MODULO_EMPRESA } from "../src/escopo-permissao.js";
 import { allPermissionKeys } from "../src/permissions.js";
@@ -293,7 +294,13 @@ describe("a definição CLASSIFICA e não EXECUTA", () => {
     const interfaces = [...fonte.matchAll(/export interface (TipoOperacao|OrigemTipoOperacao)\s*\{([\s\S]*?)\n\}/g)];
     expect(interfaces.length, "as duas interfaces do contrato precisam existir").toBe(2);
 
-    const declarados = interfaces.flatMap(([, , corpo]) => [...corpo!.matchAll(/^\s{2}([a-zA-Z][a-zA-Z0-9_]*)\??:/gm)].map((m) => m[1]!));
+    // `readonly` é EXIGIDO, não apenas tolerado: a propriedade é capturada com o modificador, e a
+    // ausência dele aparece como um nome sem prefixo — que a asserção abaixo reprova pelo próprio valor.
+    const props = interfaces.flatMap(([, , corpo]) => [...corpo!.matchAll(/^\s{2}(readonly\s+)?([a-zA-Z][a-zA-Z0-9_]*)\??:/gm)]);
+    for (const [, modificador, nome] of props) {
+      expect(modificador, `"${nome}" precisa ser \`readonly\` na interface — imutabilidade é do contrato, não do costume`).toBeTruthy();
+    }
+    const declarados = props.map((m) => m[2]!);
     expect(declarados.sort(), "superfície declarada diferente do contrato").toEqual(
       ["chaveI18n", "codigo", "discriminador", "modulo", "origem", "tabela", "valor"]
     );
@@ -303,5 +310,85 @@ describe("a definição CLASSIFICA e não EXECUTA", () => {
       const regex = new RegExp(`^\\s*(export (interface|type|function|const) \\w*${proibido}|\\s{2}\\w*${proibido}\\w*\\??:)`, "im");
       expect(fonte, `"${proibido}" apareceu como superfície declarada — ver docs/TIPO-OPERACAO-CONTRACT.md §2`).not.toMatch(regex);
     }
+  });
+});
+
+describe("imutável POR CONSTRUÇÃO, não por convenção", () => {
+  /**
+   * `readonly` do TypeScript some na compilação: em runtime o objeto continua mutável, e qualquer
+   * consumidor — ou um bundle de terceiro — poderia reescrever a origem de uma TOP e mudar como TODA a
+   * aplicação classifica aquele registro. Um SSOT que o leitor pode reescrever não é fonte única.
+   * Por isso a imutabilidade é verificada em runtime, e não na assinatura.
+   */
+  it("25 · a lista, cada TOP e cada origem estão congeladas, e a lista de códigos também", () => {
+    expect(Object.isFrozen(TIPOS_OPERACAO), "TIPOS_OPERACAO precisa estar congelada").toBe(true);
+    expect(Object.isFrozen(CODIGOS_TIPO_OPERACAO), "CODIGOS_TIPO_OPERACAO precisa estar congelada").toBe(true);
+    for (const t of TIPOS_OPERACAO) {
+      expect(Object.isFrozen(t), `${t.codigo}: a TOP precisa estar congelada`).toBe(true);
+      expect(Object.isFrozen(t.origem), `${t.codigo}: a origem precisa estar congelada`).toBe(true);
+    }
+  });
+
+  it("26 · tentativa de mutação não altera código, origem, resolução nem a quantidade de TOPs", () => {
+    const antes = {
+      quantidade: TIPOS_OPERACAO.length,
+      codigos: [...CODIGOS_TIPO_OPERACAO],
+      resolvida: resolverTipoOperacao("erp.warehouse_transfers", "farm")?.codigo
+    };
+    const alvo = tipoOperacao("estoque.entrada_manual")!;
+    const mutar = (fn: () => void) => { try { fn(); } catch { /* strict mode lança; sloppy ignora — os dois são aceitáveis */ } };
+
+    mutar(() => { (alvo as { codigo: string }).codigo = "sequestrada"; });
+    mutar(() => { (alvo.origem as { tabela: string }).tabela = "erp.outra"; });
+    mutar(() => { (TIPOS_OPERACAO as TipoOperacao[]).push(alvo); });
+    mutar(() => { (TIPOS_OPERACAO as TipoOperacao[]).length = 0; });
+    mutar(() => { (CODIGOS_TIPO_OPERACAO as string[]).push("inventada"); });
+
+    expect(alvo.codigo, "o código não pode ter mudado").toBe("estoque.entrada_manual");
+    expect(alvo.origem.tabela, "a origem não pode ter mudado").toBe("erp.input_entries");
+    expect(TIPOS_OPERACAO.length, "a quantidade de TOPs não pode ter mudado").toBe(antes.quantidade);
+    expect([...CODIGOS_TIPO_OPERACAO], "a lista de códigos não pode ter mudado").toEqual(antes.codigos);
+    expect(resolverTipoOperacao("erp.warehouse_transfers", "farm")?.codigo, "a resolução não pode ter mudado").toBe(antes.resolvida);
+    expect(tipoOperacao("estoque.entrada_manual")?.origem.tabela, "o índice não pode ter mudado").toBe("erp.input_entries");
+  });
+});
+
+describe("a TOP responde O QUE O REGISTRO É, não o efeito de alguns dos seus tipos", () => {
+  /**
+   * `erp.invoices` guarda NOVE tipos de documento. "Entrada por documento fiscal" descrevia o EFEITO
+   * dos que dão entrada de estoque, e era simplesmente falso para um DARF (guia de tributo) ou um CT-e
+   * (frete). Enquanto isso vivia na prosa do dicionário ninguém lia; a partir da BASE2-02 a tela AFIRMA
+   * a classificação, e afirmação falsa na tela é pior que ausência.
+   *
+   * A correção é uma TOP NEUTRA e verdadeira para a tabela inteira — não nove TOPs inventadas a partir
+   * de sigla, que é o que o contrato §9 proíbe, e não um mapa de efeito por `document_type`, que seria
+   * a TOP decidindo o que o lançamento FAZ.
+   */
+  it("27 · a classificação de erp.invoices é NEUTRA: nfe e darf resolvem para a MESMA TOP", () => {
+    const nfe = tipoOperacaoDoRegistro("erp.invoices", { document_type: "nfe" });
+    const darf = tipoOperacaoDoRegistro("erp.invoices", { document_type: "darf" });
+    expect(nfe?.codigo, "nfe precisa resolver").toBe("estoque.documento_fiscal");
+    expect(darf?.codigo, "darf precisa resolver para a MESMA TOP — a tabela inteira é uma classificação só").toBe(nfe?.codigo);
+    for (const tipo of ["cte", "nfse", "nfce", "danfe", "dare", "gru", "other"]) {
+      expect(tipoOperacaoDoRegistro("erp.invoices", { document_type: tipo })?.codigo, `${tipo}: mesma TOP neutra`).toBe(nfe?.codigo);
+    }
+  });
+
+  it("28 · nenhuma TOP afirma EFEITO no nome de uma tabela que mistura tipos com efeitos diferentes", () => {
+    // `erp.invoices` é a tabela com o problema: o gate trava o nome de volta.
+    const invoice = TIPOS_OPERACAO.filter((t) => t.origem.tabela === "erp.invoices");
+    expect(invoice, "erp.invoices tem exatamente UMA TOP, neutra").toHaveLength(1);
+    expect(invoice[0]!.codigo, "o código não pode voltar a afirmar entrada de estoque").not.toMatch(/entrada|saida|baixa/);
+    // E o registry não ganhou nove TOPs por sigla.
+    for (const sigla of ["nfe", "cte", "nfse", "nfce", "danfe", "darf", "dare", "gru"]) {
+      expect(CODIGOS_TIPO_OPERACAO.some((c) => c.includes(sigla)), `TOP inventada a partir da sigla "${sigla}"`).toBe(false);
+    }
+  });
+
+  it("29 · e a tabela inteira sendo uma operação só, o document_type não é discriminador", () => {
+    // Confirma que a neutralidade não foi obtida declarando uma variante silenciosa.
+    expect(discriminadorDeTabela("erp.invoices"), "erp.invoices não tem variante declarada").toBeUndefined();
+    // Registro sem document_type nenhum continua resolvendo: a tabela já é a resposta.
+    expect(tipoOperacaoDoRegistro("erp.invoices", {})?.codigo).toBe("estoque.documento_fiscal");
   });
 });

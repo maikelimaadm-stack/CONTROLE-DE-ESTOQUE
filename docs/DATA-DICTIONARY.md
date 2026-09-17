@@ -41,15 +41,15 @@ Tenant do ERP: o cliente contratante. Agrupa empresas, usuários, permissões e 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
-| `name` |  | text | sim |  |  |  |  |
+| `name` | Nome | text | sim |  |  |  | Nome do grupo/contratante. |
 | `legal_name` |  | text | não |  |  |  |  |
-| `document` |  | text | não |  |  |  |  |
+| `document` | Documento | text | não |  |  |  | CNPJ/CPF do contratante. |
 | `slug` |  | citext | não |  |  |  |  |
-| `parameters` |  | jsonb | sim |  |  |  |  |
+| `parameters` | Parâmetros | jsonb | sim |  |  |  | Parametrizações do tenant (JSON). |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
-| `idioma_padrao` |  | text | sim |  |  |  |  |
+| `idioma_padrao` | Idioma padrão | text | sim |  |  |  | Idioma padrão da organização (BCP 47). Usuário pode sobrepor. |
 
 ### ERP-PLATAFORMA-EMPRESA — Empresa
 
@@ -69,10 +69,10 @@ Entidade operacional/jurídica dos registros: é a EMPRESA do contrato multiempr
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `code` |  | int | sim |  |  |  |  |
-| `name` |  | text | sim |  |  |  |  |
+| `code` | Código | int | sim |  |  |  | Código curto da empresa dentro da organização. |
+| `name` | Nome | text | sim |  |  |  | Nome da empresa. |
 | `legal_name` |  | text | não |  |  |  |  |
-| `document` |  | text | não |  |  |  |  |
+| `document` | Documento | text | não |  |  |  | CNPJ/CPF da empresa. |
 | `state_registration` |  | text | não |  |  |  |  |
 | `address_street` |  | text | não |  |  |  |  |
 | `address_number` |  | text | não |  |  |  |  |
@@ -115,7 +115,7 @@ Pessoa que acessa o sistema. Autenticação local (desenvolvimento/teste) ou pro
 | `last_login_at` |  | timestamptz | não |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
-| `idioma` |  | text | não |  |  |  |  |
+| `idioma` | Idioma | text | não |  |  |  | Idioma preferido do usuário (BCP 47). Vazio = idioma da organização. |
 
 ### ERP-PLATAFORMA-VINCULO — Vínculo de Usuário
 
@@ -287,12 +287,12 @@ Contador ÚNICO por organização que gera o ID Global. Compartilhado por todas 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `organization_id` |  | uuid | sim | PK | `erp.organizations` |  |  |
-| `id_global` |  | bigint | sim | PK |  |  |  |
-| `tipo_entidade` |  | text | sim |  |  |  |  |
+| `id_global` | ID Global | bigint | sim | PK |  |  | Número sequencial por organização, exibido como #55. |
+| `tipo_entidade` | Tipo de Entidade | text | sim |  |  |  | Chave canônica do tipo (registry de elegibilidade em @erp/plataforma). |
 | `id_entidade` |  | uuid | sim |  |  |  |  |
 | `empresa_id` |  | uuid | não | FK | `erp.farms` |  |  |
 | `modulo` |  | text | sim |  |  |  |  |
-| `rota_canonica` |  | text | sim |  |  |  |  |
+| `rota_canonica` | Rota Canônica | text | sim |  |  |  | Rota de detalhe resolvida na criação; a URL deriva do registro. Entidade com variantes é reresolvida na leitura. |
 | `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
 | `criado_em` |  | timestamptz | sim |  |  |  |  |
 
@@ -511,7 +511,7 @@ Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financei
 | Exclusão lógica | sim |
 | ID Global | sim |
 | Rota canônica | `/estoque/documentos-fiscais/:id` |
-| Tipo de Operação | `estoque.entrada_por_documento_fiscal` (Entrada por documento fiscal) |
+| Tipo de Operação | `estoque.documento_fiscal` (Documento fiscal) |
 
 | Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -833,7 +833,7 @@ Obrigação ou direito financeiro. A coluna `direction` decide a tela (pagar/rec
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `code` |  | text | sim |  |  |  |  |
-| `direction` |  | text | sim |  |  | `payable` · `receivable` |  |
+| `direction` | Sentido | text | sim |  |  | `payable` · `receivable` | payable = conta a pagar; receivable = conta a receber. Valor canônico: nunca traduzido no banco. |
 | `number` |  | text | sim |  |  |  |  |
 | `title_type_id` |  | uuid | não | FK | `erp.title_types` |  |  |
 | `proprietary_id` |  | uuid | não | FK | `erp.people` |  |  |
@@ -1007,7 +1007,7 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
-| `kind` |  | text | sim |  |  | `budget` · `order` · `sale` |  |
+| `kind` | Tipo | text | sim |  |  | `budget` · `order` · `sale` | budget \| order \| sale. Valor canônico persistido; o rótulo é traduzido na apresentação. |
 | `code` |  | text | sim |  |  |  |  |
 | `document_date` |  | date | sim |  |  |  |  |
 | `shipping_date` |  | date | não |  |  |  |  |

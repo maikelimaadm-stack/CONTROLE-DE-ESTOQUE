@@ -4,7 +4,7 @@
  * Divisão de trabalho deliberada, para que o dicionário não vire um documento manual impossível de manter:
  *   • a parte TÉCNICA (tabelas, colunas, tipos, nulidade, chaves, enums) é DERIVADA das migrations pelo
  *     gerador `scripts/data-dictionary.mjs` — nunca escrita à mão, nunca desatualiza;
- *   • a parte FUNCIONAL (nome funcional, descrição, módulo, tela, TOP futura, observações de migração) é
+ *   • a parte FUNCIONAL (nome funcional, descrição, módulo, tela, Tipo de Operação, observações de migração) é
  *     CURADA aqui, versionada em Git e auditada pelo gate (`node scripts/data-dictionary.mjs --check`).
  *
  * O gate recusa entrada que aponte para tabela/coluna inexistente: o dicionário não pode mentir sobre o schema.
@@ -154,7 +154,7 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   },
   {
     codigo: "ERP-ESTOQUE-DOCUMENTO-FISCAL", tabela: "erp.invoices", nome: "Documento Fiscal", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/documentos-fiscais/:id",
-    top: "estoque.entrada_por_documento_fiscal", descricao: "Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financeiro."
+    top: "estoque.documento_fiscal", descricao: "Nota fiscal de entrada: itens, impostos, rateios e geração de estoque/financeiro."
   },
   {
     codigo: "ERP-ESTOQUE-REQUISICAO", tabela: "erp.requisitions", nome: "Requisição", modulo: "ESTOQUE", natureza: "entidade", idGlobal: true, rota: "/estoque/requisicoes/:id",
@@ -260,8 +260,16 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   }
 ]);
 
-/** Índice por tabela. */
-export const dicionarioPorTabela = () => new Map(DATA_DICTIONARY.map((e) => [e.table, e]));
+/**
+ * Índice por tabela canônica. Devolve as MESMAS referências do SSOT, nunca cópias — quem indexa não
+ * pode acabar lendo uma segunda versão da entrada.
+ *
+ * Esta função esteve QUEBRADA desde que nasceu: referenciava `DATA_DICTIONARY` e `e.table`, nomes que
+ * nunca existiram neste arquivo (são `DICIONARIO_DE_DADOS` e `e.tabela`). Lançava `ReferenceError` a
+ * qualquer chamada, e ninguém percebeu porque ninguém chamava — um exportado sem leitor não é testado
+ * por acidente. Agora funciona e tem teste.
+ */
+export const dicionarioPorTabela = () => new Map(DICIONARIO_DE_DADOS.map((e) => [e.tabela, e]));
 
 /**
  * Validação estrutural + coerência com o schema real.

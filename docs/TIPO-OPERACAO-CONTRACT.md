@@ -173,51 +173,63 @@ Hoje a cobertura é **parcial e deliberada**: entram os sete documentos do pilot
 o dicionário já classificava. Entidade que não se sabe classificar **não entra** — TOP inventada é pior que
 ausência, porque a ausência se vê.
 
-### Variante conhecida e NÃO separada: `erp.invoices.document_type`
+### `erp.invoices`: classificação NEUTRA, porque a TOP diz o que o registro É
 
-Uma omissão que precisa estar escrita, para não parecer esquecimento. `erp.invoices` tem
-`check (document_type in ('nfe','cte','nfse','nfce','danfe','darf','dare','gru','other'))` — nove valores —
-e recebeu **uma** TOP (`estoque.entrada_por_documento_fiscal`), no mesmo contrato que separou `direction`
-e `kind` por princípio.
+`erp.invoices` guarda nove tipos de documento
+(`check (document_type in ('nfe','cte','nfse','nfce','danfe','darf','dare','gru','other'))`), e nem todos
+dão entrada de estoque: um DARF é guia de tributo, um CT-e é frete.
 
-A assimetria é real e o efeito é concreto: um DARF (guia de tributo) ou um CT-e (frete) gravado nessa
-tabela abre em `/estoque/documentos-fiscais/<id>` e a tela afirma "Entrada por documento fiscal" — para um
-documento que pode não ter dado entrada em estoque nenhum.
+A BASE2-02 classificou a tabela, primeiro, como `estoque.entrada_por_documento_fiscal` — "Entrada por
+documento fiscal". Isso descrevia o **efeito** dos tipos que dão entrada, e era falso para os demais.
+Enquanto vivia na prosa do dicionário, ninguém lia; a partir desta fatia a **tela afirma** a
+classificação, e afirmação falsa na tela é pior que ausência, porque a ausência se vê.
 
-Por que não foi separada nesta fatia:
+A classificação vigente é **neutra e verdadeira para a tabela inteira**:
 
-- os três discriminadores separados (`direction`, `kind`, `kind`) tinham **duas ou três** variantes com
-  semântica operacional evidente e já explícita na prosa anterior do dicionário;
-- `document_type` tem **nove**, e dizer o que cada uma é operacionalmente — quais dão entrada de estoque,
-  quais são só fiscais, quais são financeiras — é **decisão de produto**, não leitura de schema. Inventar
-  nove nomes a partir da sigla seria exatamente a TOP inventada que o parágrafo acima proíbe;
-- a classificação atual **não piorou** nada: é a mesma que a prosa dizia antes da BASE2-02.
+| | |
+|---|---|
+| Código | `estoque.documento_fiscal` |
+| Rótulo pt-BR | Documento fiscal |
+| Origem | `erp.invoices` (sem discriminador — a tabela inteira é uma operação só) |
 
-Fica como o **primeiro item** da evolução de cobertura, e com o discriminador já identificado.
+O vocabulário não é novo: a entidade já se chama **Documento Fiscal** no dicionário
+(`ERP-ESTOQUE-DOCUMENTO-FISCAL`), **Documentos fiscais** na navegação e **Documento fiscal** no título
+da tela de detalhe. A TOP passou a dizer o mesmo que o resto do produto já dizia.
 
-### Bloqueio externo descoberto por esta fatia (NÃO corrigido aqui)
+**O que NÃO foi feito, e por quê.** Não existem nove TOPs derivadas das siglas: nomear nove operações a
+partir de `nfe`, `darf`, `gru` seria inventar classificação onde há apenas um código fiscal, e o §2 deste
+contrato proíbe. Também não existe mapa de efeito por `document_type` — isso seria a TOP decidindo o que
+o lançamento FAZ, que é a fronteira que este contrato inteiro protege.
 
-`POST /api/stock/transfers` numera com **dois contadores independentes** — `warehouse_transfer` e
-`farm_transfer` (`nextCode`, `apps/api/src/routes/stock.ts`) — para **uma** tabela com
-`unique (organization_id, code)` (`supabase/migrations/0003_stock_supply.sql`). A primeira
-transferência de cada variante numa organização recebe o **mesmo** código `0001`, e a segunda é
-recusada com `409 CONFLICT / Registro duplicado`.
+Se algum dia essas nove passarem a ser operações distintas de verdade, isso vem de decisão de produto,
+com nomes funcionais próprios, e não da leitura do `check` do schema.
 
-É defeito de PRODUÇÃO, anterior à BASE2-02, no caminho de **escrita** de estoque. Ficou invisível
-porque nenhum teste do repositório havia criado as duas variantes na MESMA organização: as
-integrações de transferência entre empresas rodam em organizações sem transferência entre armazéns.
-Foi o E2E da variante desta fatia que o encontrou.
+Travado pelos casos 27-29 do teste de contrato: `nfe` e `darf` resolvem para a **mesma** TOP; o código
+não pode voltar a afirmar entrada; e nenhuma sigla vira TOP.
 
-**Não é corrigido aqui, por decisão de fronteira.** A correção muda a numeração VISÍVEL de documento
-e mexe no serviço de estoque — é EXECUTAR, o lado que este contrato existe para não invadir, e
-envolve acervo já numerado. Vira PR própria.
+### Defeito externo de numeração de transferência (documentado, NÃO exigido por teste)
 
-**Consequência dentro da BASE2-02:** a prova positiva da variante `farm` na tela real fica `PENDING`.
-O que a fatia prova hoje: a variante `warehouse` afirma positivamente a sua operação na tela; o
-registry resolve `kind: "farm"` para `estoque.transferencia_entre_empresas` no teste de contrato; e o
-título da tela não contém operação nenhuma, logo a TOP não é derivável dele. O bloqueio está
-**mecânico** no E2E (`apps/web/e2e/base2-moldura.spec.ts`): enquanto o defeito existir, o teste o
-exige; quando for corrigido, o teste reprova e obriga a troca pela prova positiva.
+`POST /api/stock/transfers` numera com **dois contadores independentes** (`warehouse_transfer` e
+`farm_transfer`, via `nextCode`, `apps/api/src/routes/stock.ts`) para **uma** tabela com
+`unique (organization_id, code)` (`supabase/migrations/0003_stock_supply.sql`). A primeira transferência
+de cada variante numa organização recebe o mesmo código `0001`, e a segunda é recusada com
+`409 CONFLICT`. Ficou invisível porque nenhum teste do repositório criava as duas variantes na mesma
+organização.
+
+É defeito de **produção**, anterior à BASE2-02, no caminho de **escrita**. A correção muda a numeração
+visível de documento e alcança acervo já numerado — é EXECUTAR, e por isso vira PR própria, registrada
+como **hotfix obrigatório antes da BASE2-03** em `docs/PRE-BASE2-ROADMAP.md`.
+
+**E não é comportamento esperado.** Uma versão anterior desta fatia chegou a fazer o E2E EXIGIR a recusa
+409 pelo nome da constraint, para "registrar o bloqueio". Isso estava errado, e foi removido: um teste
+que exige o defeito transforma bug em contrato, faz a suíte verde significar "o bug está lá, como
+combinado", e entrega ao próximo o dia da correção na forma de "teste quebrado". Bug conhecido se
+documenta e se corrige; nunca vira asserção. `scripts/regressao-invertida-audit.mjs` roda no `pnpm lint`
+e impede a reincidência em qualquer teste do repositório.
+
+Cobertura da variante `farm` hoje: o teste de contrato do registry
+(`kind:"farm"` → `estoque.transferencia_entre_empresas`), que não depende do caminho de escrita.
+A prova de UI entra junto com o hotfix.
 
 ### Outras dívidas declaradas
 

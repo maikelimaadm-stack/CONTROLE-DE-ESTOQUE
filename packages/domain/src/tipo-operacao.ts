@@ -49,11 +49,11 @@ import { CHAVES_MODULO_EMPRESA } from "./escopo-permissao.js";
  */
 export interface OrigemTipoOperacao {
   /** Tabela canônica do registro classificado, com schema: `erp.input_entries`. */
-  tabela: string;
+  readonly tabela: string;
   /** Coluna que decide a variante. Ausente quando a tabela inteira é uma operação só. */
-  discriminador?: string;
+  readonly discriminador?: string;
   /** Valor persistido do discriminador, exatamente como está no banco. */
-  valor?: string;
+  readonly valor?: string;
 }
 
 /**
@@ -69,13 +69,13 @@ export interface TipoOperacao {
    * É a identidade da TOP no código, em teste e no dicionário — nunca um rótulo humano, que muda com
    * revisão de texto e com idioma.
    */
-  codigo: string;
+  readonly codigo: string;
   /** Módulo dono da operação. Chave de `MODULOS_ESCOPO_EMPRESA` — o mesmo vocabulário do escopo de empresa. */
-  modulo: string;
+  readonly modulo: string;
   /** Chave de tradução do nome funcional, no catálogo oficial. Derivada do código: `top.<codigo>`. */
-  chaveI18n: string;
+  readonly chaveI18n: string;
   /** Que registro esta TOP classifica. */
-  origem: OrigemTipoOperacao;
+  readonly origem: OrigemTipoOperacao;
 }
 
 /** Prefixo obrigatório das chaves de tradução das TOPs. Fixa o namespace e evita colisão com outros termos. */
@@ -88,17 +88,17 @@ const CODIGO_CANONICO = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/;
  * Construtor. `chaveI18n` é DERIVADA do código de propósito: se fosse digitada, um erro de grafia
  * produziria uma tela mostrando a chave crua em vez do rótulo, e o registry pareceria correto.
  */
-const T = (codigo: string, modulo: string, origem: OrigemTipoOperacao): TipoOperacao => ({
+const T = (codigo: string, modulo: string, origem: OrigemTipoOperacao): TipoOperacao => Object.freeze({
   codigo,
   modulo,
   chaveI18n: `${PREFIXO_I18N_TIPO_OPERACAO}${codigo}`,
-  origem
+  origem: Object.freeze(origem)
 });
 
 /** Tabela inteira é uma operação só. */
-const entidade = (tabela: string): OrigemTipoOperacao => ({ tabela });
+const entidade = (tabela: string): OrigemTipoOperacao => Object.freeze({ tabela });
 /** Tabela com variantes: a coluna decide qual operação o registro é. */
-const variante = (tabela: string, discriminador: string, valor: string): OrigemTipoOperacao => ({ tabela, discriminador, valor });
+const variante = (tabela: string, discriminador: string, valor: string): OrigemTipoOperacao => Object.freeze({ tabela, discriminador, valor });
 
 /**
  * AS TOPs DECLARADAS.
@@ -112,10 +112,17 @@ const variante = (tabela: string, discriminador: string, valor: string): OrigemT
  * EFEITO de uma operação, não uma operação (`dicionario-dados.mjs`: "Não é lançamento: é consequência
  * contábil de um").
  */
-export const TIPOS_OPERACAO: readonly TipoOperacao[] = [
+export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
   // ---------- Estoque — os sete documentos do piloto Base 2 ----------
   T("estoque.entrada_manual", "estoque", entidade("erp.input_entries")),
-  T("estoque.entrada_por_documento_fiscal", "estoque", entidade("erp.invoices")),
+  // NEUTRA DE PROPÓSITO. `erp.invoices` guarda NOVE tipos de documento
+  // (check (document_type in ('nfe','cte','nfse','nfce','danfe','darf','dare','gru','other'))), e nem
+  // todos dão entrada de estoque: um DARF é guia de tributo, um CT-e é frete. A classificação anterior,
+  // "Entrada por documento fiscal", afirmava o EFEITO de alguns tipos como se fosse a identidade de
+  // todos — e a partir da BASE2-02 isso aparece na TELA, então deixou de ser imprecisão tolerável.
+  // A TOP responde O QUE O REGISTRO É, não o que alguns dos seus tipos produzem: é um documento fiscal.
+  // Separar em nove seria inventar operação a partir de sigla, que o contrato proíbe (§9).
+  T("estoque.documento_fiscal", "estoque", entidade("erp.invoices")),
   T("estoque.requisicao", "estoque", entidade("erp.requisitions")),
   T("estoque.baixa", "estoque", entidade("erp.stock_writeoffs")),
   T("estoque.devolucao", "estoque", entidade("erp.devolutions")),
@@ -149,7 +156,7 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = [
 
   // ---------- Ordens de Serviço ----------
   T("ordens_servico.ordem_de_servico", "ordens_servico", entidade("erp.service_orders"))
-];
+]);
 
 const POR_CODIGO = new Map(TIPOS_OPERACAO.map((t) => [t.codigo, t]));
 
@@ -165,7 +172,7 @@ const DISCRIMINADOR_POR_TABELA = new Map(
 );
 
 /** Códigos declarados, em ordem de declaração. */
-export const CODIGOS_TIPO_OPERACAO: readonly string[] = TIPOS_OPERACAO.map((t) => t.codigo);
+export const CODIGOS_TIPO_OPERACAO: readonly string[] = Object.freeze(TIPOS_OPERACAO.map((t) => t.codigo));
 
 /** A TOP deste código; `undefined` quando não declarada — quem chama NEGA, nunca escolhe uma vizinha. */
 export const tipoOperacao = (codigo: string): TipoOperacao | undefined =>
