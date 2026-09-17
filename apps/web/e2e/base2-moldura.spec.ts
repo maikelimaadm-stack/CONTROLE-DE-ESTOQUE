@@ -264,6 +264,18 @@ test("moldura Base 2 — ANEXOS: só a entrada de insumos oferece o botão, e o 
   const dialogo = page.getByRole("dialog");
   await expect(dialogo).toBeVisible();
   await expect(dialogo).toContainText("Anexos");
+
+  // ANEXAR DE VERDADE. Abrir o diálogo não prova nada do servidor: com `input_entries` fora da whitelist
+  // o `GET /api/attachments` devolve 422, o react-query fica sem dados e a tabela mostra "Nenhum arquivo
+  // anexado." — sem toast, sem erro visível. O único fato que distingue whitelist ligada de desligada é
+  // um anexo que sobe (201) e volta na listagem (200).
+  await dialogo.getByLabel("Nome do anexo").fill("Conferência da entrada");
+  await dialogo.locator('input[aria-label="Selecionar arquivos"]').setInputFiles({
+    name: "conferencia.txt", mimeType: "text/plain", buffer: Buffer.from("nota de conferencia da entrada")
+  });
+  const linha = dialogo.getByTestId("b1-attachment");
+  await expect(linha, "sem `input_entries` em ATTACHMENT_PARENTS o envio falha e a lista fica vazia").toHaveCount(1);
+  await expect(linha).toContainText("conferencia.txt");
   await page.keyboard.press("Escape");
 
   expect(urlEntrada).toContain("/estoque/entradas/");

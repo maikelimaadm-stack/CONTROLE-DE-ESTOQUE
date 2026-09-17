@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, seedDemo } from "@agro/db";
+import { CHAVES_MODULO_EMPRESA } from "@agro/domain";
 import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
@@ -23,10 +24,10 @@ const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & 
 const TXT = Buffer.from("nota de conferencia da entrada").toString("base64");
 const PERMS = ["attachments.view", "attachments.create", "attachments.delete", "input_entries.view"];
 
-async function membro(nome: string, email: string, empresas: string[], perms = PERMS): Promise<Hdr> {
+async function membro(nome: string, email: string, empresas: string[], perms = PERMS, escopos = escoposDeTodosOsModulos(empresas)): Promise<Hdr> {
   const role = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome}`, permissions: perms } });
   expect(role.statusCode, role.body).toBe(201);
-  const mem = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Anexo@12345", role_id: j(role).id, escopos_empresas: escoposDeTodosOsModulos(empresas) } });
+  const mem = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Anexo@12345", role_id: j(role).id, escopos_empresas: escopos } });
   expect(mem.statusCode, mem.body).toBe(201);
   const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Anexo@12345" } });
   expect(login.statusCode, login.body).toBe(200);
@@ -95,6 +96,20 @@ describe("anexos: entrada de insumos como registro-pai", () => {
     const r = await listar("input_entries", entradaB, USER_A);
     expect(r.statusCode, r.body).toBe(404);
     expect((await enviar("input_entries", entradaB, USER_A)).statusCode).toBe(404);
+  });
+
+  it("D2 — o recorte é do MÓDULO DO PAI: escopo largo em OUTRO módulo não abre a entrada", async () => {
+    // estoque = [A] e pecuária = [A, B]. Se `authorizeAttachmentParent` resolvesse o módulo por qualquer
+    // outra via que não a permissão do PAI (`input_entries.view` → estoque), a empresa B entraria pelo
+    // escopo de pecuária. Os demais casos usam o MESMO conjunto em todos os módulos e não distinguiriam isso.
+    const escopos = CHAVES_MODULO_EMPRESA.map((modulo) => ({
+      modulo, modo: "selecionadas" as const, empresas: modulo === "estoque" ? [empresaA] : [empresaA, empresaB]
+    }));
+    const largoNoOutroModulo = await membro("Entrada pecuária ampla", "entrada-pec@demo.local", [], PERMS, escopos);
+    expect((await listar("input_entries", entradaA, largoNoOutroModulo)).statusCode).toBe(200);
+    const r = await listar("input_entries", entradaB, largoNoOutroModulo);
+    expect(r.statusCode, `empresa B só está no escopo de pecuária: ${r.body}`).toBe(404);
+    expect((await enviar("input_entries", entradaB, largoNoOutroModulo)).statusCode).toBe(404);
   });
 
   it("E — com attachments.* mas sem input_entries.view: 403 (falta capacidade, o registro existe e é visível)", async () => {
