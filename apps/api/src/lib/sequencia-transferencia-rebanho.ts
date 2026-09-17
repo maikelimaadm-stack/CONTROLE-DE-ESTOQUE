@@ -32,14 +32,26 @@
  * o valor entra no baseline do contador de estoque E no desta chave, cada um combinado com o `max(code)`
  * da SUA tabela. Contador que só sobe e lacuna são normais; emitir número já ocupado não é.
  *
- * RISCO RESIDUAL DECLARADO (janela de rolling deploy)
- * --------------------------------------------------
+ * RISCO RESIDUAL DECLARADO (janela de rolling deploy) — E AS DUAS CORREÇÕES QUE ELE EXIGIU
+ * ---------------------------------------------------------------------------------------
  * O binário BASE pede `'farm_transfer'` para as DUAS rotas, e o alias só pode acertar uma — ele acerta a
  * de ESTOQUE, que é o assunto do hotfix. Durante a janela, uma transferência de rebanho atendida pelo
- * binário anterior recebe número do contador de estoque. Ela COMITA em segurança (esse contador está, por
- * construção da 0019, acima de todo código de rebanho já emitido). O resíduo é que o contador de rebanho,
- * subindo depois, pode um dia alcançar aquele número e produzir UM 409 em `unique (organization_id,
- * movement_type, code)` — que se resolve sozinho na tentativa seguinte, porque o contador já terá passado.
- * Está medido em `packages/db/test/hotfix-0019-upgrade.test.ts` e declarado no relatório da fatia.
+ * binário anterior recebe número do contador de estoque e grava NESTA tabela. A primeira redação desta
+ * seção afirmava duas garantias que o código não dava; as duas viraram correção, não prosa:
+ *
+ *  (1) "ela comita em segurança, por construção" era FALSO. O baseline do contador de estoque (seção 6.1
+ *      da 0019) não olhava o acervo de rebanho: bastava uma organização com o contador legado atrás do
+ *      acervo — restauração parcial, importação — para a primeira criação da janela colidir de imediato.
+ *      Agora `max(erp.animal_movements.code)` entra no `greatest`, e a pós-condição 8.5 cobra a
+ *      invariante em vez de confiar nela.
+ *
+ *  (2) "um 409 que se resolve na tentativa seguinte" era FALSO. `erp.next_code` e o `insert` rodam na
+ *      MESMA transação: a violação de unicidade desfaz o incremento junto, a tentativa seguinte aloca
+ *      exatamente o mesmo número, e a rota ficaria MORTA naquela organização. Daí a alocação desta rota
+ *      passar por `codigoDeMovimento`, que pula código já ocupado dentro da própria transação —
+ *      travamento vira LACUNA, que o contrato trata como normal.
+ *
+ * Com as duas, o que sobra é apenas a lacuna. Medido em `packages/db/test/hotfix-0019-upgrade.test.ts`,
+ * casos 23 a 25 — o 25 reproduz o travamento contra o banco e mostra o laço resolvendo.
  */
 export const SEQUENCIA_ANIMAL_FARM_TRANSFER = "animal_farm_transfer";

@@ -81,12 +81,28 @@
 -- rebanho segue a convenção que a própria rota já usava nas outras movimentações (`animal_<tipo>`), e o
 -- runtime a lê de `apps/api/src/lib/sequencia-transferencia-rebanho.ts`.
 --
--- RISCO RESIDUAL, DECLARADO: o binário BASE pede `'farm_transfer'` para as DUAS rotas, e o alias só pode
--- acertar uma — ele acerta a de ESTOQUE, que é o assunto desta fatia. Durante a janela de rolling deploy,
--- uma transferência de REBANHO atendida pelo binário anterior recebe número do contador de estoque; ela
--- comita em segurança (esse contador fica, por construção, acima de todo código de rebanho já emitido), e
--- o resíduo é que o contador de rebanho, subindo depois, pode um dia alcançar aquele número e produzir UM
--- 409 que se resolve na tentativa seguinte. Medido em `packages/db/test/hotfix-0019-upgrade.test.ts`.
+-- RISCO RESIDUAL, DECLARADO — e as DUAS coisas que ele exigiu, porque a primeira redação desta seção
+-- afirmava garantias que o código não dava:
+--
+-- O binário BASE pede `'farm_transfer'` para as DUAS rotas, e o alias só pode acertar uma — ele acerta a
+-- de ESTOQUE, que é o assunto desta fatia. Durante a janela de rolling deploy, uma transferência de
+-- REBANHO atendida pelo binário anterior recebe número do contador de estoque e grava em
+-- `erp.animal_movements`. Disso decorrem dois perigos, e nenhum se resolve sozinho:
+--
+--  (1) o número emitido pode JÁ ESTAR OCUPADO naquela tabela. A primeira versão desta migration dizia
+--      que isso não acontecia "por construção" — e era falso, porque o baseline da seção 6.1 não olhava o
+--      acervo de rebanho. Agora olha (quarta parcela do `greatest`), e a pós-condição 8.5 cobra a
+--      invariante em vez de confiar nela;
+--
+--  (2) o contador de rebanho, subindo depois, alcança um número que a janela já gravou. A primeira
+--      versão dizia que isso era "UM 409 que se resolve na tentativa seguinte" — também falso:
+--      `erp.next_code` e o `insert` rodam na MESMA transação, então a violação de unicidade desfaz o
+--      incremento junto, e a tentativa seguinte aloca exatamente o mesmo número. Seria a rota MORTA
+--      naquela organização. A correção é do runtime: `apps/api/src/routes/livestock.ts` aloca por laço
+--      que pula código ocupado, transformando travamento em LACUNA — que o contrato trata como normal.
+--
+-- As duas afirmações estão medidas em `packages/db/test/hotfix-0019-upgrade.test.ts` (casos 20 a 25),
+-- inclusive a reprodução do travamento que a correção do runtime elimina.
 --
 -- FORMA. O runner (`packages/db/src/migrate.ts`) executa cada arquivo dentro de UMA transação:
 -- begin -> arquivo inteiro -> insert no ledger -> commit. Por isso aqui NÃO existe `commit` e NÃO
@@ -185,11 +201,21 @@ begin
   if to_regclass('erp.code_sequences') is null then
     raise exception 'HOTFIX-0019: erp.code_sequences nao existe. Nao ha contador para reconciliar.';
   end if;
+  if to_regclass('erp.animal_movements') is null then
+    raise exception 'HOTFIX-0019: erp.animal_movements nao existe. A divisao do contador compartilhado (secao 6.2) supoe essa tabela. Nada foi aplicado.';
+  end if;
   if to_regclass('erp.warehouse_transfers') is null then
     raise exception 'HOTFIX-0019: erp.warehouse_transfers nao existe. Sem a tabela nao ha acervo para conferir.';
   end if;
 end $$;
 
+-- ORDEM ALFABÉTICA, e ela não é estética: duas execuções que travassem as mesmas relações em ordens
+-- opostas se cruzariam em deadlock. `erp.animal_movements` entra aqui pela MESMA razão de
+-- `erp.warehouse_transfers` — a seção 6.2 lê `max(code)` dela para montar o baseline do contador de
+-- rebanho, e um `insert` concorrente entre a leitura e o commit deixaria o contador abaixo do acervo.
+-- SHARE, não ACCESS EXCLUSIVE: bloqueia escrita e permite leitura, que é o mínimo de que a migration
+-- precisa (ela não escreve nessa tabela).
+lock table erp.animal_movements in share mode nowait;
 lock table erp.code_sequences in access exclusive mode nowait;
 lock table erp.warehouse_transfers in share mode nowait;
 
@@ -255,6 +281,17 @@ begin
   if n <> 3 then
     raise exception 'HOTFIX-0019: erp.warehouse_transfers nao tem as 3 colunas esperadas (organization_id, code, kind); encontrei %.', n;
   end if;
+
+  -- 4.5 A OUTRA TABELA QUE DIVIDIA A CHAVE LEGADA existe e tem a forma que a seção 6.2 supõe. Sem esta
+  -- conferência, uma mudança de schema em `erp.animal_movements` faria a divisão do contador rodar sobre
+  -- colunas que não existem — ou, pior, casar zero linhas e "reconciliar" nada com sucesso.
+  select count(*) into n
+  from information_schema.columns
+  where table_schema = 'erp' and table_name = 'animal_movements'
+    and column_name in ('organization_id','code','movement_type');
+  if n <> 3 then
+    raise exception 'HOTFIX-0019: erp.animal_movements nao tem as 3 colunas esperadas (organization_id, code, movement_type); encontrei %. A divisao do contador do rebanho supoe essa forma. Nada foi aplicado.', n;
+  end if;
 end $$;
 
 
@@ -268,7 +305,7 @@ begin
   select count(*), coalesce(string_agg(distinct entity, ','), '')
     into n, amostra
   from erp.code_sequences
-  where entity in ('warehouse_transfer','farm_transfer') and last_value < 0;
+  where entity in ('warehouse_transfer','farm_transfer','animal_farm_transfer') and last_value < 0;
   if n > 0 then
     raise exception 'HOTFIX-0019: % contador(es) [%] com last_value negativo. Estado impossivel; a correcao e humana. Nada foi aplicado.', n, amostra;
   end if;
@@ -279,6 +316,16 @@ begin
   from (select organization_id, code from erp.warehouse_transfers group by 1,2 having count(*) > 1) d;
   if n > 0 then
     raise exception 'HOTFIX-0019: % par(es) (organization_id, code) duplicado(s) em erp.warehouse_transfers. Nada foi aplicado.', n;
+  end if;
+
+  -- 5.3 O MESMO, para a OUTRA tabela que dividia a chave legada. A metade nova da reconciliação (6.2)
+  -- merece as mesmas pré-condições da antiga: duplicidade em `(organization_id, movement_type, code)` não
+  -- pode existir, e se existir o schema não é o que a seção 4 conferiu.
+  select count(*) into n
+  from (select organization_id, code from erp.animal_movements
+         where movement_type = 'farm_transfer' group by 1,2 having count(*) > 1) d;
+  if n > 0 then
+    raise exception 'HOTFIX-0019: % par(es) (organization_id, code) duplicado(s) em erp.animal_movements para movement_type=''farm_transfer''. Nada foi aplicado.', n;
   end if;
 end $$;
 
@@ -335,6 +382,10 @@ begin
     select organization_id from erp.warehouse_transfers
     union
     select organization_id from erp.code_sequences where entity in ('warehouse_transfer','farm_transfer')
+    union
+    -- Organização que só tem acervo de REBANHO entra aqui de propósito: o alias faz o contador canônico
+    -- gravar naquela tabela durante a janela, então ela precisa de um contador que já cubra esse acervo.
+    select organization_id from erp.animal_movements where movement_type = 'farm_transfer'
   ),
   baseline as (
     select
@@ -345,7 +396,21 @@ begin
         coalesce((select cs.last_value from erp.code_sequences cs
                    where cs.organization_id = a.organization_id and cs.entity = 'farm_transfer'), 0),
         coalesce((select max(wt.code::bigint) from erp.warehouse_transfers wt
-                   where wt.organization_id = a.organization_id and wt.code ~ '^[0-9]+$'), 0)
+                   where wt.organization_id = a.organization_id and wt.code ~ '^[0-9]+$'), 0),
+        -- A QUARTA PARCELA, E ELA NÃO É ZELO: o contador canônico é o DESTINO DO ALIAS, e o alias é
+        -- pedido pelo binário anterior TAMBÉM na rota de rebanho. Durante a janela de rolling deploy este
+        -- contador grava em `erp.animal_movements`, então o acervo DAQUELA tabela é piso dele também.
+        --
+        -- Sem esta linha a promessa "o número emitido fica acima de todo código de rebanho já existente"
+        -- seria falsa no caso que a própria migration trata como realista (contador atrás do acervo, por
+        -- restauração parcial ou importação): o contador de estoque podia valer 40 com o rebanho já em
+        -- 120, e a primeira transferência de rebanho da janela colidia de imediato.
+        --
+        -- O preço é uma LACUNA na numeração de estoque, que o contrato trata como normal. O preço de não
+        -- pagá-lo é colisão, que ele não trata.
+        coalesce((select max(am.code::bigint) from erp.animal_movements am
+                   where am.organization_id = a.organization_id
+                     and am.movement_type = 'farm_transfer' and am.code ~ '^[0-9]+$'), 0)
       ) as novo_last_value
     from alvo a
   )
@@ -505,7 +570,29 @@ begin
     raise exception 'HOTFIX-0019: % organizacao(oes) [%] com contador de rebanho ABAIXO do maior codigo de transferencia de rebanho existente. A proxima criacao colidiria.', n, amostra;
   end if;
 
-  -- 8.5 O ALIAS NAO CAPTUROU O CONTADOR DO REBANHO. A chave canonica do rebanho existe onde havia
+  -- 8.5 O CONTADOR ALIASADO COBRE O ACERVO DE **TODAS** AS TABELAS QUE O ALIAS ALCANCA.
+  --
+  -- Esta e a assercao que faltava, e a falta dela deixou passar uma afirmacao falsa: enquanto
+  -- `farm_transfer` for alias de `warehouse_transfer`, o binario anterior faz o contador CANONICO gravar
+  -- tambem em `erp.animal_movements`. Cruzar o contador de estoque so com o acervo de estoque (8.3) e o
+  -- contador de rebanho so com o acervo de rebanho (8.4) deixa de fora exatamente o par que o alias poe
+  -- em contato durante a janela de rolling deploy.
+  select count(*), coalesce(string_agg(a.organization_id::text, ','), '')
+    into n, amostra
+  from (
+    select am.organization_id, max(am.code::bigint) as maior
+    from erp.animal_movements am
+    where am.movement_type = 'farm_transfer' and am.code ~ '^[0-9]+$'
+    group by am.organization_id
+  ) a
+  left join erp.code_sequences cs
+    on cs.organization_id = a.organization_id and cs.entity = 'warehouse_transfer'
+  where coalesce(cs.last_value, -1) < a.maior;
+  if n > 0 then
+    raise exception 'HOTFIX-0019: % organizacao(oes) [%] com o contador ALIASADO (warehouse_transfer) abaixo do maior codigo de rebanho. Durante a janela de rolling deploy o binario anterior gravaria colisao em erp.animal_movements.', n, amostra;
+  end if;
+
+  -- 8.6 O ALIAS NAO CAPTUROU O CONTADOR DO REBANHO. A chave canonica do rebanho existe onde havia
   -- historico, e ela e uma LINHA PROPRIA — nao um apelido para a de estoque.
   select count(*) into n
   from erp.animal_movements am
@@ -516,7 +603,7 @@ begin
     raise exception 'HOTFIX-0019: existe transferencia de rebanho sem contador canonico proprio (% movimento(s)). A divisao da secao 6.2 nao alcancou essas organizacoes.', n;
   end if;
 
-  -- 8.6 O ALIAS FUNCIONA — e isto é provado EXECUTANDO, não lendo o catálogo.
+  -- 8.7 O ALIAS FUNCIONA — e isto é provado EXECUTANDO, não lendo o catálogo.
   --
   -- Por que executar: uma `create or replace` que criasse sobrecarga em vez de substituir (seção 4.2
   -- existe para impedir), ou um corpo com o `case` invertido, passariam por qualquer conferência que só
@@ -533,7 +620,7 @@ begin
   -- `exception when sqlstate 'ZZ019'` o captura, e o PL/pgSQL desfaz as ESCRITAS do bloco sem desfazer
   -- as VARIÁVEIS — `v1`, `v2` e `n` são memória, não linha, e sobrevivem para serem asseridos aqui
   -- fora. Qualquer outro erro NÃO casa com o handler e continua propagando, que é o que mantém a
-  -- migration fail-closed. Depois a 8.7 confere que o contador real voltou exatamente ao valor de
+  -- migration fail-closed. Depois a 8.8 confere que o contador real voltou exatamente ao valor de
   -- antes: a prova do alias não pode consumir número de ninguém.
   select cs_org.id into org_teste from erp.organizations cs_org order by cs_org.id limit 1;
 
@@ -571,7 +658,7 @@ begin
       raise exception 'HOTFIX-0019: pedir farm_transfer RECRIOU a linha legada. O alias precisa reescrever a chave ANTES do insert.';
     end if;
 
-    -- 8.7 A PROVA NÃO DEIXOU RASTRO. Se o subbloco não tivesse sido desfeito, o contador da organização
+    -- 8.8 A PROVA NÃO DEIXOU RASTRO. Se o subbloco não tivesse sido desfeito, o contador da organização
     -- teria avançado duas casas — e uma migration que consome número de documento é, ela própria, um
     -- defeito de numeração.
     select last_value into valor_depois

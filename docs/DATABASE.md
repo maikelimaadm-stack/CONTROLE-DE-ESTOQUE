@@ -34,6 +34,21 @@ Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000
 - Dinheiro/quantidades: `numeric(18,2)` / `numeric(18,4)`; custos unitários `numeric(18,6)`.
 - Datas: `date`; instantes: `timestamptz`.
 - Documentos transacionais têm `status` (`confirmed/cancelled/…`) e nunca são apagados.
+- **Numeração de documento acompanha o NAMESPACE DE UNICIDADE da tabela, nunca a variante funcional.**
+  `erp.code_sequences` tem PK `(organization_id, entity)`: cada nome de entidade é um contador próprio,
+  com `last_value` independente. Logo um contador POR VARIANTE só é correto quando o discriminador está
+  DENTRO da chave única da tabela — é o caso de `erp.financial_titles` (`direction`),
+  `erp.sales_documents` (`kind`) e `erp.animal_movements` (`movement_type`). Onde a UNIQUE é só
+  `(organization_id, code)`, como em `erp.warehouse_transfers`, existe UM namespace e tem de haver UM
+  contador; dois emitem o mesmo número para a mesma coluna e o segundo documento morre em 409. Foi o
+  defeito que a `0019` corrigiu. O gate é `scripts/sequencia-namespace-audit.mjs`, no `pnpm lint`.
+- **Uma chave de contador serve UMA tabela.** `'farm_transfer'` servia duas (`erp.warehouse_transfers` e
+  `erp.animal_movements`) e isso só não colidia por acaso. Desde a `0019` ela não é chave de runtime: é
+  ALIAS de compatibilidade dentro de `erp.next_code`, e o auditor recusa código novo que a peça.
+- **`erp.next_code` e o `insert` rodam na MESMA transação** (`runService` → `withTx`). Uma violação de
+  unicidade desfaz o incremento do contador junto, então a tentativa seguinte aloca o MESMO número: onde
+  colisão é possível, a alocação precisa de laço que pule código ocupado — não de "tentar de novo". É o
+  que `codigoDeMovimento`/`uniqueCode` fazem em `apps/api/src/routes/livestock.ts`.
 
 ## Operação
 - Aplicar: `DATABASE_URL=… pnpm db:migrate` (ou `node apps/api/dist/migrate.js` no pre-deploy do Railway).

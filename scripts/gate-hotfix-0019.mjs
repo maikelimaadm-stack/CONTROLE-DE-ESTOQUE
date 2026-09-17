@@ -24,6 +24,8 @@
  *   Q5   rollback de binário (HEAD→BASE)  → COMPATÍVEL: voltar não exige tocar no banco.
  *   Q6   a chave legada era SOBRECARREGADA   → a 0019 DIVIDE o histórico: `erp.animal_movements` fica
  *                                               com contador próprio, e o alias não o sequestra.
+ *   Q6b  contador legado ATRÁS do acervo      → o contador ALIASADO cobre o acervo de rebanho também,
+ *        de rebanho, sem acervo de estoque      senão a primeira criação da janela colidiria.
  *
  * Q3 É O CONTRÁRIO DA 05C-2, E DE PROPÓSITO. Lá o quadrante equivalente era PROIBIDO — a chave mudava de
  * nome, o banco não tinha como servir os dois binários, e a fatia precisou de janela single-version. Aqui
@@ -274,7 +276,13 @@ async function main() {
     exigir(colidiu(r1), "e colide com o acervo que o contador legado já emitiu — falha barulhenta");
     e = await estado(c, cen.org);
     exigir(e.contadores.join() === antesQ1.contadores.join() && e.codigos.join() === antesQ1.codigos.join(),
-      `o ROLLBACK devolve tudo: contador [${e.contadores}] · códigos [${e.codigos}] — sem sequela`);
+      `o ROLLBACK devolve tudo: contador [${e.contadores}] · códigos [${e.codigos}] — o acervo fica intacto`);
+    // E o que o rollback NÃO resolve, medido: como ele desfaz o incremento junto, a tentativa seguinte
+    // aloca EXATAMENTE o mesmo número. Não é ruído, é TRAVAMENTO — e é a razão de a rota de rebanho ter
+    // passado a alocar por laço. Uma versão anterior deste gate dizia "sem sequela" aqui, e subestimava.
+    const deNovo = await criarTransferencia(c, cen, "HEAD", "farm", "Q1 segunda tentativa");
+    exigir(colidiu(deNovo) && deNovo.numero === r1.numero,
+      `a tentativa SEGUINTE aloca o mesmo ${deNovo.numero} e colide igual: a operação fica travada, não apenas barulhenta`);
 
     // ---------------------------------------------------------------------------------------------
     passo("Q1b · o mesmo, com acervo começando em M > 1 — JANELA SILENCIOSA antes da colisão");
@@ -399,6 +407,35 @@ async function main() {
     exigir(pelaLegada === antesEstoque + 1, `a chave legada cai no contador de ESTOQUE (${pelaLegada}) — o alias acerta a rota do hotfix`);
     exigir(pelaLegada > maiorRebanho,
       `e o número emitido fica ACIMA do maior código de rebanho (${maiorRebanho}): uma transferência de rebanho servida pelo binário anterior COMITA em seguranca`);
+
+    // Q6b — O CASO QUE DERRUBOU A PRIMEIRA REDAÇÃO DESTA FATIA.
+    // A garantia acima não é de graça: ela depende de o baseline do contador ALIASADO incluir o acervo de
+    // REBANHO. Aqui a organização tem contador legado ATRÁS do acervo de rebanho e NENHUM acervo de
+    // estoque — e sem a quarta parcela do `greatest` da seção 6.1 o alias emitia um número já ocupado,
+    // colidindo na primeira criação da janela.
+    await montar(c, MIGRATION_HOTFIX);
+    cen = await semear(c, "Q6b rebanho na frente", { contadores: { [LEGADA]: 40 } });
+    for (const code of ["00118", "00119", "00120"]) {
+      await c.query(
+        `insert into erp.animal_movements
+           (organization_id, empresa_id, code, movement_type, movement_date, status)
+         values ($1,$2,$3,'farm_transfer','2026-01-01','pending')`, [cen.org, cen.e1, code]);
+    }
+    await aplicarHotfix(c);
+
+    const aliasado = Number((await c.query(
+      "select last_value::text v from erp.code_sequences where organization_id=$1 and entity=$2",
+      [cen.org, CANONICA])).rows[0].v);
+    exigir(aliasado === 120,
+      `o contador ALIASADO cobre o acervo de rebanho (${aliasado}), em vez de parar no legado (40)`);
+
+    const emitido = Number((await c.query(
+      "select erp.next_code($1,$2)::text n", [cen.org, LEGADA])).rows[0].n);
+    const ocupado = Number((await c.query(
+      "select count(*)::text n from erp.animal_movements where organization_id=$1 and movement_type='farm_transfer' and code::bigint=$2",
+      [cen.org, emitido])).rows[0].n);
+    exigir(emitido === 121 && ocupado === 0,
+      `e o alias emite ${emitido}, livre naquela tabela — a janela de rolling deploy não colide`);
   } finally {
     await c.end();
   }

@@ -39,6 +39,7 @@ const CENARIOS = [
   "acervo-na-frente", // 6. acervo maior que os dois contadores
   "codigo-nao-numerico", // 8. código não numérico convivendo com numéricos
   "chave-compartilhada", // 9. a chave legada servindo TAMBÉM ao contador de rebanho
+  "rebanho-na-frente",   // 10. acervo de REBANHO à frente do contador legado, sem acervo de estoque
 ] as const;
 
 type Cenario = (typeof CENARIOS)[number];
@@ -91,6 +92,17 @@ beforeAll(async () => {
   await contador(db, org["chave-compartilhada"].orgId, LEGADA, 40);
   await transferenciaComCodigo(db, org["chave-compartilhada"], "0038", "farm");
   await movimentoDeRebanhoComCodigo(db, org["chave-compartilhada"], "00039");
+
+  // 10. O CASO QUE A AFIRMAÇÃO FALSA ESCONDIA. O contador legado está ATRÁS do acervo de rebanho
+  //     (restauração parcial, importação — o mesmo cenário que a migration já trata como realista para
+  //     estoque), e a organização NÃO tem acervo de estoque nenhum. A primeira versão desta fatia
+  //     reconciliava o contador canônico sem olhar o acervo de rebanho: ele ficava em 40 com o rebanho
+  //     já em 120, e a primeira transferência de rebanho da janela de rolling deploy — que o alias manda
+  //     para esse contador — colidia de imediato.
+  await contador(db, org["rebanho-na-frente"].orgId, LEGADA, 40);
+  for (const code of ["00118", "00119", "00120"]) {
+    await movimentoDeRebanhoComCodigo(db, org["rebanho-na-frente"], code);
+  }
 
   // Contadores de OUTRAS entidades no meio, para provar que a reconciliação não os arrasta.
   for (const [e, v] of [["product", 99], ["person", 5], ["title_payable", 17]] as const) {
@@ -312,5 +324,118 @@ describe("a chave legada era SOBRECARREGADA — e a 0019 divide o histórico em 
     const canonicas = Number((await db.query<{ n: string }>(
       "select count(*)::text n from erp.code_sequences where entity=$1", [CANONICA_REBANHO])).rows[0]!.n);
     expect(canonicas, "e existe contador canônico de rebanho onde havia histórico").toBeGreaterThan(0);
+  });
+});
+
+describe("o contador ALIASADO cobre o acervo de TODA tabela que o alias alcança", () => {
+  it("23 · organização com acervo de REBANHO à frente do contador legado, e nenhum acervo de estoque", async () => {
+    const o = org["rebanho-na-frente"].orgId;
+    // A premissa, medida: o acervo de rebanho existe e o de estoque não. Sem isso o caso seria vazio.
+    const rebanho = Number((await db.query<{ n: string }>(
+      "select count(*)::text n from erp.animal_movements where organization_id=$1 and movement_type='farm_transfer'", [o])).rows[0]!.n);
+    const estoque = Number((await db.query<{ n: string }>(
+      "select count(*)::text n from erp.warehouse_transfers where organization_id=$1", [o])).rows[0]!.n);
+    expect(rebanho, "a fixture precisa do acervo de rebanho").toBe(3);
+    expect(estoque, "e de NENHUM acervo de estoque — é o que torna o caso perigoso").toBe(0);
+
+    // O contador canônico (destino do alias) tem de cobrir o acervo de REBANHO, não só o de estoque.
+    // Antes da correção ele valia 40 aqui, e a janela de rolling deploy colidia na primeira criação.
+    expect(await valorDoContador(db, o, CANONICA),
+      "o contador aliasado precisa cobrir o maior código de rebanho (120), não parar no legado (40)").toBe(120);
+    expect(await valorDoContador(db, o, CANONICA_REBANHO),
+      "e o contador próprio do rebanho também").toBe(120);
+  });
+
+  it("24 · o número que o ALIAS emite nunca colide com o acervo de rebanho existente", async () => {
+    // É a afirmação que a primeira redação da fatia fazia "por construção" sem construir nada. Aqui ela
+    // é MEDIDA, em todas as organizações da matriz que têm acervo de rebanho.
+    const r = await db.query<{ n: string; amostra: string }>(`
+      select count(*)::text n, coalesce(string_agg(a.organization_id::text, ','), '') amostra
+      from (
+        select am.organization_id, max(am.code::bigint) as maior
+        from erp.animal_movements am
+        where am.movement_type = 'farm_transfer' and am.code ~ '^[0-9]+$'
+        group by am.organization_id
+      ) a
+      left join erp.code_sequences cs
+        on cs.organization_id = a.organization_id and cs.entity = $1
+      where coalesce(cs.last_value, -1) < a.maior`, [CANONICA]);
+    expect(Number(r.rows[0]!.n), `organizações onde o alias emitiria colisão: ${r.rows[0]!.amostra}`).toBe(0);
+
+    // E a prova positiva, pela porta real: pedir a chave LEGADA devolve número livre naquela tabela.
+    const o = org["rebanho-na-frente"].orgId;
+    const emitido = await proximoCodigo(db, o, LEGADA);
+    const ocupado = Number((await db.query<{ n: string }>(
+      "select count(*)::text n from erp.animal_movements where organization_id=$1 and movement_type='farm_transfer' and code::bigint=$2",
+      [o, emitido])).rows[0]!.n);
+    expect(ocupado, `o alias emitiu ${emitido}, e esse código não pode estar ocupado no rebanho`).toBe(0);
+  });
+
+  it("25 · REPRODUZIDO: sem laço de retentativa, a colisão do rebanho TRAVA a rota para sempre", async () => {
+    // O achado que o red team desta fatia derrubou: "um 409 que se resolve na tentativa seguinte" era
+    // FALSO. `erp.next_code` e o `insert` rodam na mesma transação, então a violação desfaz o incremento
+    // junto e a tentativa seguinte aloca EXATAMENTE o mesmo número.
+    //
+    // Aqui isso é reproduzido contra o banco de verdade, e depois se mostra que o laço — a forma que a
+    // rota passou a usar (`codigoDeMovimento`, apps/api/src/routes/livestock.ts) — resolve.
+    const o = org["rebanho-na-frente"];
+    const antes = (await valorDoContador(db, o.orgId, CANONICA_REBANHO))!;
+
+    // Ocupa o PRÓXIMO número, como a janela de rolling deploy faria.
+    await movimentoDeRebanhoComCodigo(db, o, String(antes + 1).padStart(5, "0"));
+
+    /** Uma tentativa SEM laço, do jeito que a rota fazia: alocar e inserir na MESMA transação. */
+    const semLaco = async (): Promise<string> => {
+      const c = await db.connect();
+      try {
+        await c.query("begin");
+        const code = String(Number((await c.query<{ n: string }>(
+          "select erp.next_code($1,$2)::text n", [o.orgId, CANONICA_REBANHO])).rows[0]!.n)).padStart(5, "0");
+        await c.query(
+          `insert into erp.animal_movements (organization_id, empresa_id, code, movement_type, movement_date, status)
+           values ($1,$2,$3,'farm_transfer','2026-01-01','pending')`, [o.orgId, o.empresaId, code]);
+        await c.query("commit");
+        return "";
+      } catch (e) {
+        await c.query("rollback").catch(() => {});
+        return (e as Error).message;
+      } finally { c.release(); }
+    };
+
+    const erro1 = await semLaco();
+    expect(erro1, "a primeira tentativa colide").toMatch(/duplicat|unique/i);
+    expect(await valorDoContador(db, o.orgId, CANONICA_REBANHO),
+      "e o ROLLBACK devolve o contador ao valor anterior — é daqui que vem o travamento").toBe(antes);
+
+    const erro2 = await semLaco();
+    expect(erro2, "a SEGUNDA tentativa colide igual: não se resolve sozinha, nunca").toMatch(/duplicat|unique/i);
+    expect(await valorDoContador(db, o.orgId, CANONICA_REBANHO), "o contador continua parado").toBe(antes);
+
+    /** A forma CORRIGIDA: pular código já ocupado no namespace real, dentro da mesma transação. */
+    const comLaco = async (): Promise<string> => {
+      const c = await db.connect();
+      try {
+        await c.query("begin");
+        let code = "";
+        for (let i = 0; i < 100; i++) {
+          code = String(Number((await c.query<{ n: string }>(
+            "select erp.next_code($1,$2)::text n", [o.orgId, CANONICA_REBANHO])).rows[0]!.n)).padStart(5, "0");
+          const ex = await c.query(
+            "select 1 from erp.animal_movements where organization_id=$1 and movement_type='farm_transfer' and code=$2",
+            [o.orgId, code]);
+          if (!ex.rowCount) break;
+        }
+        await c.query(
+          `insert into erp.animal_movements (organization_id, empresa_id, code, movement_type, movement_date, status)
+           values ($1,$2,$3,'farm_transfer','2026-01-01','pending')`, [o.orgId, o.empresaId, code]);
+        await c.query("commit");
+        return code;
+      } finally { c.release(); }
+    };
+
+    const nasceu = await comLaco();
+    expect(Number(nasceu), "com o laço, a criação nasce — pulando o número ocupado").toBe(antes + 2);
+    expect(await valorDoContador(db, o.orgId, CANONICA_REBANHO),
+      "e o contador ANDOU, porque a transação comitou: travamento virou lacuna").toBe(antes + 2);
   });
 });

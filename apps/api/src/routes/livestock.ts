@@ -38,6 +38,34 @@ async function uniqueCode(ctx: ServiceCtx, table: "animal_handlings", entity: st
   for (let i = 0; i < 10000; i++) { const code = await animalCode(ctx, entity); const ex = await ctx.tx.query(`select 1 from erp.${table} where organization_id=$1 and code=$2`, [ctx.orgId, code]); if (!ex.rowCount) return code; }
   throw new Error("Não foi possível gerar código único");
 }
+/**
+ * Código de MOVIMENTAÇÃO livre no namespace real dela — `(organização, tipo, código)`.
+ *
+ * POR QUE A RETENTATIVA É OBRIGATÓRIA AQUI, E NÃO É ZELO EXCESSIVO. `erp.next_code` e o `insert`
+ * rodam na MESMA transação (`runService` → `withTx`). Se o `insert` viola a unicidade, a transação
+ * inteira volta atrás — INCLUSIVE o incremento do contador. Sem laço, o contador volta ao mesmo valor
+ * e a tentativa seguinte aloca EXATAMENTE o mesmo número: não é "um 409 que se resolve depois", é a
+ * rota MORTA naquela organização até alguém mexer no banco à mão.
+ *
+ * Isso deixou de ser hipótese quando o hotfix 0019 passou a aceitar `'farm_transfer'` como ALIAS: o
+ * binário anterior pede aquela chave para as DUAS rotas, e a de rebanho recebe número do contador de
+ * ESTOQUE durante a janela de rolling deploy. Quando o contador de rebanho alcançar esse número, a
+ * colisão acontece — e é ela que travaria para sempre. O laço transforma o travamento em LACUNA de
+ * numeração, que o contrato já trata como normal (`.claude/rules/database-migrations.md`).
+ *
+ * A checagem inclui `movement_type` porque é ESSE o namespace de `erp.animal_movements`: recortar só
+ * por `(organização, código)` pularia códigos legitimamente livres de outros tipos.
+ */
+async function codigoDeMovimento(ctx: ServiceCtx, movementType: string, entity: string) {
+  for (let i = 0; i < 10000; i++) {
+    const code = await animalCode(ctx, entity);
+    const ex = await ctx.tx.query(
+      "select 1 from erp.animal_movements where organization_id=$1 and movement_type=$2 and code=$3",
+      [ctx.orgId, movementType, code]);
+    if (!ex.rowCount) return code;
+  }
+  throw new Error("Não foi possível gerar código único para a movimentação de rebanho");
+}
 
 export default async function livestockRoutes(app: FastifyInstance) {
   // ---------- Animais ----------
@@ -303,7 +331,11 @@ export default async function livestockRoutes(app: FastifyInstance) {
     // contador de estoque. `erp.animal_movements` tem namespace próprio
     // (`unique (organization_id, movement_type, code)`) e por isso tem contador próprio — com o nome que a
     // convenção desta rota já usava nas outras movimentações (ver `lib/sequencia-transferencia-rebanho.ts`).
-    const code = await animalCode(ctx, SEQUENCIA_ANIMAL_FARM_TRANSFER);
+    //
+    // E a alocação passa pelo laço: enquanto o alias existir, o binário anterior pode ter gravado, nesta
+    // tabela, códigos vindos do contador de ESTOQUE. Sem o laço, o encontro com um deles não seria um 409
+    // isolado — seria a rota travada para sempre, porque o rollback devolve o contador ao mesmo valor.
+    const code = await codigoDeMovimento(ctx, "farm_transfer", SEQUENCIA_ANIMAL_FARM_TRANSFER);
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,empresa_destino_id,destination_batch_id,note,status,created_by) values ($1,$2,$3,'farm_transfer',$4,$5,$6,$7,$8,'pending',$9) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id ?? null, d.empresa_destino_id, d.destination_batch_id ?? null, d.note ?? null, ctx.user.id]);
     await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
     for (const a of ids) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]);

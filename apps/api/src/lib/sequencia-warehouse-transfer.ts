@@ -27,7 +27,14 @@
  * Aqui a compatibilidade mora no BANCO. A `0019` faz `erp.next_code` CANONICALIZAR `'farm_transfer'`
  * para `'warehouse_transfer'`: o binário anterior pede a chave antiga e recebe número do contador
  * canônico, sem criar linha legada nova. Por isso este hotfix roda em AUTODEPLOY NORMAL, e por isso o
- * rollback de binário continua correto contra o banco pós-0019.
+ * rollback de binário continua correto contra o banco pós-0019 — **de UM passo**, até o runtime da 05C-2.
+ * A fronteira é literal: um binário anterior àquele cutover pede `next_code(org,'farm')` para o código de
+ * Empresa, chave que a 0018 apagou, e `docs/DEPLOYMENT.md` já registra que voltar até lá exige migration
+ * nova, não redeploy. Este hotfix não muda essa política forward-only; ele só garante o passo dele.
+ *
+ * E o ROLLBACK DE BANCO não é redeploy: a 0019 apaga linha de contador e substitui função, então restaurar
+ * um backup pré-0019 com o binário novo no ar recria as chaves em 1 sobre acervo numerado. O caminho de
+ * volta escrito está em `docs/DEPLOYMENT.md`, e é forward-only.
  *
  * A CHAVE LEGADA ERA SOBRECARREGADA — E POR ISSO O ALIAS SOZINHO NÃO BASTAVA
  * -------------------------------------------------------------------------

@@ -53,15 +53,24 @@ lá numerar por variante é correto, e é por isso que elas não tinham este def
 transferência de estoque: `erp.animal_movements` (namespace `unique (organization_id, movement_type, code)`)
 numerava com a MESMA chave. Um alias não sabe quem chamou, então canonicalizar sem mais nada mandaria a
 numeração do REBANHO para o contador de ESTOQUE e apagaria a linha que era o contador do rebanho. A 0019
-divide o histórico compartilhado nas duas chaves canônicas antes de apagar a legada. Resíduo declarado: na
+divide o histórico compartilhado nas duas chaves canônicas antes de apagar a legada.
+
+Resíduo declarado, depois de o red team da fatia derrubar duas afirmações falsas da primeira redação: na
 janela de rolling deploy, uma transferência de rebanho atendida pelo binário anterior recebe número do
-contador de estoque — comita em segurança, e o pior caso posterior é um 409 que se resolve na tentativa
-seguinte (medido em `packages/db/test/hotfix-0019-upgrade.test.ts`, caso 21, e no quadrante Q6 do gate).
+contador de estoque. Para que isso seja seguro foram precisas DUAS correções — o acervo de rebanho entra no
+baseline do contador aliasado (seção 6.1 + pós-condição 8.5), e a rota de rebanho aloca por laço que pula
+código ocupado, porque `next_code` e o `insert` compartilham a transação e uma colisão sem laço travaria a
+rota para sempre em vez de "se resolver na próxima". Com as duas, o resíduo é apenas LACUNA de numeração.
+Medido em `packages/db/test/hotfix-0019-upgrade.test.ts`, casos 23 a 25 (o 25 reproduz o travamento), e no
+quadrante Q6 do gate.
 
 **Por que este hotfix NÃO precisa de janela single-version como a 05C-2.** Lá a chave mudava de nome e o
 banco não tinha como servir os dois binários. Aqui `erp.next_code` canonicaliza `farm_transfer` para
 `warehouse_transfer`: o binário anterior pede a chave antiga e recebe número do contador canônico, sem
-criar linha legada. Autodeploy normal, e o rollback de binário continua correto contra o banco pós-0019.
+criar linha legada. Autodeploy normal, e o rollback de binário continua correto contra o banco pós-0019 —
+de **um passo**, até o runtime da 05C-2; voltar além disso continua sendo forward-only, como
+`docs/DEPLOYMENT.md` já registra. Rollback de BANCO é outra coisa e também é forward-only: o caminho de
+volta escrito está em `docs/DEPLOYMENT.md`.
 O alias **não sai nesta fatia** — ele é o caminho de volta; sai em fatia própria, quando não houver mais
 versão viva pedindo a chave antiga.
 
