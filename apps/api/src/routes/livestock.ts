@@ -11,6 +11,7 @@ import { wrapListing, hasColumnFilters } from "../lib/column-filters.js";
 import { postStock } from "../services/stock-core.js";
 import { createTitles } from "../services/financial-core.js";
 import { atribuirIdGlobal, atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
+import { SEQUENCIA_ANIMAL_FARM_TRANSFER } from "../lib/sequencia-transferencia-rebanho.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -297,7 +298,12 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const cabecas = ids.length + rebanhos.reduce((a, l) => a + Number(l.quantity), 0);
     if (!cabecas) throw validation("Transferência sem animais ou rebanho: informe animais ou um lote com acervo");
 
-    const code = await animalCode(ctx, "farm_transfer");
+    // HOTFIX 0019: a chave nua `'farm_transfer'` era COMPARTILHADA com a numeração de
+    // `erp.warehouse_transfers`, e o alias que a 0019 instala em `erp.next_code` a desviaria para o
+    // contador de estoque. `erp.animal_movements` tem namespace próprio
+    // (`unique (organization_id, movement_type, code)`) e por isso tem contador próprio — com o nome que a
+    // convenção desta rota já usava nas outras movimentações (ver `lib/sequencia-transferencia-rebanho.ts`).
+    const code = await animalCode(ctx, SEQUENCIA_ANIMAL_FARM_TRANSFER);
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,empresa_destino_id,destination_batch_id,note,status,created_by) values ($1,$2,$3,'farm_transfer',$4,$5,$6,$7,$8,'pending',$9) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id ?? null, d.empresa_destino_id, d.destination_batch_id ?? null, d.note ?? null, ctx.user.id]);
     await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);
     for (const a of ids) await ctx.tx.query("insert into erp.animal_movement_items(movement_id,animal_id,quantity) values ($1,$2,1)", [r.rows[0]!.id, a]);

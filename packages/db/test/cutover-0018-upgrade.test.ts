@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, type Db } from "../src/pool.js";
-import { resetSchema, migrate } from "../src/migrate.js";
+import { resetSchema, migrate, listMigrations } from "../src/migrate.js";
 import { TEST_URL } from "./setup.js";
 import {
   ALVO, CANONICA, LEGADA, subirAte0017, aplicarCutover, fotoDoContador, linhasDaEntidade,
@@ -126,9 +126,21 @@ describe("0017 → 0018: o contador muda de nome sem mudar de valor", () => {
       "o segundo cadastro com o MESMO código não passa").rejects.toThrow(/unique|duplicate|duplicada/i);
   });
 
-  it("REGRESSÃO: o runner completo em cima de um banco já migrado não reaplica nada", async () => {
+  it("REGRESSÃO: o runner completo em cima de um banco já migrado não reaplica o cutover", async () => {
+    // O que este caso trava é o LEDGER como autoridade: nada até a 0018 — inclusive a própria 0018,
+    // cujo SQL foi aplicado à mão pelo `aplicarCutover` e registrado no ledger — pode voltar a rodar.
+    //
+    // A lista esperada é DERIVADA DO DISCO em vez de fixada em `[]`: este banco para na 0018, então as
+    // migrations POSTERIORES estão legitimamente pendentes e o runner completo tem de aplicá-las. Fixar
+    // `[]` obrigaria a afrouxar a asserção a cada fatia nova; derivar do disco mantém a asserção EXATA
+    // (qualquer reaplicação de 0001..0018 aparece na lista e reprova) e ainda faz o teste exercitar a
+    // sequência inteira por cima de um acervo real, que é justamente onde uma migration nova quebraria.
+    const posteriores = listMigrations().map((m) => m.name).filter((nome) => nome > ALVO);
     const aplicadas = await migrate(db, () => {});
-    expect(aplicadas, "ledger é a autoridade: nada pendente").toEqual([]);
+    expect(aplicadas, "ledger é a autoridade: só o que vem DEPOIS do cutover estava pendente")
+      .toEqual(posteriores);
+    expect(aplicadas.filter((nome) => nome <= ALVO), "nenhuma migration já registrada foi reaplicada")
+      .toEqual([]);
     expect(await linhasDaEntidade(db, LEGADA), "e a chave legada continua sem existir").toBe(0);
   });
 });

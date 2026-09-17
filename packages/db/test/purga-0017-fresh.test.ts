@@ -159,15 +159,18 @@ beforeAll(async () => {
 afterAll(async () => { await db?.end(); });
 
 describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na purga", () => {
-  it("o diretório tem 18 migrations e a purga é a 17ª", () => {
+  it("o diretório tem 19 migrations e a purga é a 17ª", () => {
     const noDisco = listMigrations().map((m) => m.name);
     // Números explícitos de propósito: este é o gate da fatia destrutiva, e uma migration nova precisa
     // passar por aqui conscientemente — não entrar de carona num `>= 16`. A 05C-2 passou: acrescentou a
     // 0018, e a afirmação "a purga é a ÚLTIMA" — que era verdadeira e deixou de ser — virou a afirmação
-    // que continua verdadeira e é a que este arquivo precisa: a purga ocupa a POSIÇÃO 17.
-    expect(noDisco.length, "18 migrations no repositório").toBe(18);
+    // que continua verdadeira e é a que este arquivo precisa: a purga ocupa a POSIÇÃO 17. O hotfix da
+    // numeração de transferências é a terceira a passar por aqui, e acrescenta a própria linha: o que o
+    // arquivo trava é a POSIÇÃO da purga, e ela continua sendo a 17ª.
+    expect(noDisco.length, "19 migrations no repositório").toBe(19);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
+    expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {

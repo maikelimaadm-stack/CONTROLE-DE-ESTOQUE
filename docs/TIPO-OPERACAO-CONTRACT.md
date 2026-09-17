@@ -207,29 +207,45 @@ com nomes funcionais próprios, e não da leitura do `check` do schema.
 Travado pelos casos 27-29 do teste de contrato: `nfe` e `darf` resolvem para a **mesma** TOP; o código
 não pode voltar a afirmar entrada; e nenhuma sigla vira TOP.
 
-### Defeito externo de numeração de transferência (documentado, NÃO exigido por teste)
+### Numeração de transferência — defeito CORRIGIDO pelo hotfix da 0019
 
-`POST /api/stock/transfers` numera com **dois contadores independentes** (`warehouse_transfer` e
-`farm_transfer`, via `nextCode`, `apps/api/src/routes/stock.ts`) para **uma** tabela com
+Esta seção era uma dívida declarada da BASE2-02 e virou registro histórico. O defeito existia, foi
+descrito aqui sem nunca ter sido exigido por teste, e foi corrigido em fatia própria.
+
+**O que era.** `POST /api/stock/transfers` numerava com **dois contadores independentes**
+(`warehouse_transfer` e `farm_transfer`, via `nextCode`) para **uma** tabela com
 `unique (organization_id, code)` (`supabase/migrations/0003_stock_supply.sql`). A primeira transferência
-de cada variante numa organização recebe o mesmo código `0001`, e a segunda é recusada com
+de cada variante numa organização recebia o mesmo código `0001`, e a segunda era recusada com
 `409 CONFLICT`. Ficou invisível porque nenhum teste do repositório criava as duas variantes na mesma
-organização.
+organização — o E2E das sete rotas da BASE2-02 foi o primeiro a tentar.
 
-É defeito de **produção**, anterior à BASE2-02, no caminho de **escrita**. A correção muda a numeração
-visível de documento e alcança acervo já numerado — é EXECUTAR, e por isso vira PR própria, registrada
-como **hotfix obrigatório antes da BASE2-03** em `docs/PRE-BASE2-ROADMAP.md`.
+**O que corrigiu.** O hotfix PRÉ-BASE2-03: `supabase/migrations/0019_warehouse_transfer_code_sequence.sql`
+reconcilia os dois contadores num só e faz `erp.next_code` canonicalizar `farm_transfer` para
+`warehouse_transfer`; `apps/api/src/lib/sequencia-warehouse-transfer.ts` passa a ser a chave única do
+runtime. O princípio que o explica — **a sequência acompanha o namespace de unicidade da tabela, nunca a
+variante funcional** — está travado por `scripts/sequencia-namespace-audit.mjs` no `pnpm lint`.
 
-**E não é comportamento esperado.** Uma versão anterior desta fatia chegou a fazer o E2E EXIGIR a recusa
-409 pelo nome da constraint, para "registrar o bloqueio". Isso estava errado, e foi removido: um teste
-que exige o defeito transforma bug em contrato, faz a suíte verde significar "o bug está lá, como
-combinado", e entrega ao próximo o dia da correção na forma de "teste quebrado". Bug conhecido se
-documenta e se corrige; nunca vira asserção. `scripts/regressao-invertida-audit.mjs` roda no `pnpm lint`
-e impede a reincidência em qualquer teste do repositório.
+**O que a classificação tem a ver com isso: nada, e é esse o ponto.** A TOP continua com DUAS operações
+(`estoque.transferencia_entre_armazens` e `estoque.transferencia_entre_empresas`) para a mesma tabela.
+Unificar a NUMERAÇÃO não unificou a OPERAÇÃO: classificar e numerar são eixos diferentes, e o hotfix não
+tocou no primeiro.
 
-Cobertura da variante `farm` hoje: o teste de contrato do registry
-(`kind:"farm"` → `estoque.transferencia_entre_empresas`), que não depende do caminho de escrita.
-A prova de UI entra junto com o hotfix.
+**E nunca foi comportamento esperado.** Uma versão anterior da BASE2-02 chegou a fazer o E2E EXIGIR a
+recusa 409 pelo nome da constraint, para "registrar o bloqueio". Isso estava errado e foi removido: um
+teste que exige o defeito transforma bug em contrato, faz a suíte verde significar "o bug está lá, como
+combinado", e entrega ao próximo o dia da correção na forma de "teste quebrado". Foi exatamente por não
+ter feito isso que a correção chegou como um teste que **passou a poder ser escrito**.
+`scripts/regressao-invertida-audit.mjs` roda no `pnpm lint` e impede a reincidência.
+
+**Cobertura da variante `farm` hoje — o PENDING está FECHADO.** Além do teste de contrato do registry
+(`kind:"farm"` → `estoque.transferencia_entre_empresas`), que nunca dependeu do caminho de escrita:
+
+| Prova | Onde |
+| --- | --- |
+| UI: as DUAS variantes na mesma organização, cada tela afirmando a SUA operação | `apps/web/e2e/base2-moldura.spec.ts` (E2E das sete rotas) |
+| API: 201 nas duas, códigos distintos, ordem inversa, dois tenants, concorrência, idempotência | `apps/api/test/integration/transferencia-numeracao.test.ts` |
+| Banco: reconciliação, alias e matriz de estados da 0019 | `packages/db/test/hotfix-0019-upgrade.test.ts` |
+| Version skew: BASE × pós-0019, rolling deploy e rollback de binário | `pnpm gate:0019` |
 
 ### Outras dívidas declaradas
 
