@@ -227,5 +227,6 @@ situação ou estado genérico · CSS novo onde já existe classe com dono.
 
 ## Estado
 
-Implementada e integrada em um piloto real na BASE2-01. Migração ampla dos demais módulos pertence à
-BASE2-03+; o Tipo de Operação pertence à BASE2-02 e **não** é antecipado aqui.
+Implementada e integrada em um piloto real na BASE2-01 — que está **em PR, DRAFT, ainda NÃO implantada em
+produção**. Migração ampla dos demais módulos pertence à BASE2-03+; o Tipo de Operação pertence à BASE2-02,
+que está **congelada** até a BASE2-01 estar mesclada e em produção, e **não** é antecipado aqui.

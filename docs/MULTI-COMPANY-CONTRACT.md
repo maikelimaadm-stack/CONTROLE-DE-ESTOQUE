@@ -414,8 +414,9 @@ removeu as colunas legadas, as views, os gatilhos de sincronia, as funções, as
 índices. A coluna da direita nesta tabela é HISTÓRICO — está aqui para quem lê um commit antigo entender o
 que existia, não para descrever o schema de hoje.
 
-O último resto do nome legado era a CHAVE do contador (`erp.code_sequences.entity = 'farm'`), e ela sai na
-PRE-BASE2-05C-2 (`0018_empresa_code_sequence.sql`), que é um cutover com janela própria.
+O último resto do nome legado era a CHAVE do contador (`erp.code_sequences.entity = 'farm'`), e ela **saiu**
+na PRE-BASE2-05C-2 (`0018_empresa_code_sequence.sql`), aplicada em produção em 16/09/2026 dentro de janela
+single-version. A chave canônica é `entity = 'empresa'`.
 
 Enquanto existiu, `erp.farms` foi **view com `security_invoker = true`**, e isso não era detalhe de estilo: sem essa opção a view
 roda com os direitos do DONO (o papel de migração, que tem `bypassrls`) e devolve as linhas de **todas as
@@ -595,6 +596,6 @@ e `farm-inventory`) recusam qualquer nome legado fora dessa lista.
 | Item | Missão |
 | --- | --- |
 | ~~Remoção das colunas legadas (`farm_id` e irmãs), da view `erp.farms` e de `X-Farm-Id`~~ | **CONCLUÍDA.** `X-Farm-Id` saiu na PRE-BASE2-05B; colunas, views, gatilhos, funções, FKs e índices legados saíram na PRE-BASE2-05C-1 (`0017_purge_farm_legacy.sql`). A superfície que sobra é declarada em `scripts/lib/empresa-compat-surface.mjs` e vigiada pelos gates. |
-| Cutover da CHAVE do contador (`erp.code_sequences.entity`: `'farm'` → `'empresa'`) | PRE-BASE2-05C-2 (`0018_empresa_code_sequence.sql`) — exige janela single-version; ver `docs/PRE-BASE2-05C-2-CUTOVER.md`. |
+| ~~Cutover da CHAVE do contador (`erp.code_sequences.entity`: `'farm'` → `'empresa'`)~~ | **CONCLUÍDO.** PRE-BASE2-05C-2 (`0018_empresa_code_sequence.sql`), mesclada na PR #37 (`935f9dc`) e aplicada em produção em 16/09/2026 dentro da janela single-version que ela exigia: `entity='farm'` = 0, `entity='empresa'` = 1, `last_value` preservado. Registro em `docs/PRE-BASE2-05C-2-CUTOVER.md` § *Encerramento real — 16/09/2026*. |
 | Renomear os VALORES de domínio (`farm_transfer`, `transfer_kind='farm'`) e as chaves de permissão (`farms.view`, `farm_transfers.*`) | Fora de PRE-BASE2-03: são DADO em linhas de `erp.role_permissions` e em documentos históricos, não nomenclatura de código. Governança de dados própria. |
 | Seletor multiempresa e consolidação na interface | PRE-BASE2-05. |

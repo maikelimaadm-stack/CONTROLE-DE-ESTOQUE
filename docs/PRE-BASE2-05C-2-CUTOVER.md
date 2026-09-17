@@ -129,6 +129,12 @@ Não existe terceira via. Copiar a linha e manter as duas ativas faz os dois lad
 
 Todas verificáveis antes de tocar em qualquer coisa. Nenhuma se satisfaz por declaração.
 
+> **Rótulo temporal.** Estas precondições descrevem o estado exigido **ANTES** da janela de 16/09/2026, e
+> foram todas conferidas então (ver § *Encerramento real*). Lidas hoje, várias já não valem por construção —
+> A3 pede `0018` ausente do ledger, e hoje ela está lá; A1 fala de `main` na BASE `602cda3`, e hoje `main` é
+> o merge `935f9dc`. **Não são tarefas pendentes**: são o gabarito do que se confere antes de um cutover
+> desta forma, e é assim que devem ser reusadas.
+
 | # | Precondição | Como conferir |
 | --- | --- | --- |
 | A1 | **ANTES do merge**, `main` ainda é a BASE aprovada (`602cda3…`) e a PR #37 é o HEAD aprovado — os dois SHAs exatos, CI aplicável verde no HEAD, e **nenhum commit inesperado** na `main` desde a aprovação. Dizer que "`main` = o commit da PR" antes do merge é impossível, e era o que esta linha dizia. Só **depois** do merge a `main` passa a ser o merge commit, que é o que o passo E confere | GitHub: `main` e o HEAD da PR; CI dos quatro jobs no HEAD |
@@ -335,9 +341,11 @@ O risco concreto: se `Remove` desligar o autodeploy, desconectar o source ou imp
 `main` inicie deployment, a janela termina com a API parada, a 0018 não aplicada e **nenhum caminho
 automático de volta**.
 
-### B6. O que precisa ser confirmado, SOMENTE LEITURA, antes do merge
+### B6. O que precisou ser confirmado, SOMENTE LEITURA, antes do merge — ✅ CONFIRMADO em 16/09/2026
 
-Confirmação **fora desta missão** — nenhuma alteração no Railway foi feita nem é autorizada aqui:
+Estes oito pontos foram confirmados na conta real antes da janela de 16/09/2026, e foi essa confirmação que
+fechou o gate B. **Nenhuma sessão automatizada alterou o Railway**: a leitura e a condução foram do Maike.
+A lista permanece como CHECKLIST para qualquer cutover futuro com esta forma:
 
 1. `Remove` **não deleta o service** (só o deployment);
 2. o source continua conectado ao **GitHub/`main`**;
@@ -419,6 +427,12 @@ começa no passo C e só termina em J. Não trate o número de laboratório como
 ## D. ROLLBACK / ABORT
 
 Quatro pontos, com respostas diferentes. Misturá-los é o erro caro.
+
+> **Rótulo temporal — leia antes de agir.** Esta seção foi escrita para a janela de 16/09/2026, que já
+> terminou com sucesso. **Hoje o banco está PÓS-0018**, e portanto o caso vigente é o **D3/D4**, nunca o
+> D1: subir o binário anterior contra este banco é o quadrante proibido. D1 continua aqui porque é o
+> procedimento de abort de um cutover desta forma, e porque ele mesmo abre medindo o ledger — a medição,
+> não o título, é que decide em qual caso você está.
 
 ### D1 — abort ANTES do merge (gate B, A-SQL ou a comprovação do passo D reprovou)
 
