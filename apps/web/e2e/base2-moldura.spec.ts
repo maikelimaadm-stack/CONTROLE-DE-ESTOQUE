@@ -172,12 +172,24 @@ async function primeiroId(page: Page, path: string): Promise<string> {
   return id!;
 }
 
+/**
+ * Armazéns DA EMPRESA informada. `warehouses` é empresa-scoped: pegar os dois primeiros da listagem
+ * geral mistura empresas, e o servidor recusa com WAREHOUSE_FARM_MISMATCH (422) — foi o que reprovou a
+ * primeira versão da fixture de transferência.
+ */
+async function armazensDaEmpresa(page: Page, empresaId: string, minimo: number): Promise<string[]> {
+  const r = await api<{ items: { id: string; empresa_id?: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=100");
+  const ids = (r.items ?? []).filter((w) => w.empresa_id === empresaId).map((w) => w.id);
+  expect(ids.length, `a empresa precisa de ao menos ${minimo} armazém(ns) para esta fixture`).toBeGreaterThanOrEqual(minimo);
+  return ids;
+}
+
 test("moldura Base 2 — NOTA FISCAL: total do documento diverge da soma das linhas sem a tela mentir", async ({ page }) => {
   await login(page);
   await page.goto("/estoque");
   const empresaId = await empresaAtiva(page);
   const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
-  const armazem = await primeiroId(page, "/api/resources/warehouses?pageSize=1");
+  const armazem = (await armazensDaEmpresa(page, empresaId, 1))[0]!;
   const fornecedor = await primeiroId(page, "/api/resources/people?pageSize=1&is_provider=true");
 
   // 100 × R$ 100,00 em itens + R$ 500,00 de frete → documento 10.500,00, linhas 10.000,00
@@ -209,12 +221,11 @@ test("moldura Base 2 — TRANSFERÊNCIA: renderiza sem `movements` no payload e 
   await page.goto("/estoque");
   const empresaId = await empresaAtiva(page);
   const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
-  const armazens = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=2");
-  expect(armazens.items.length, "a transferência precisa de dois armazéns").toBeGreaterThan(1);
+  const armazens = await armazensDaEmpresa(page, empresaId, 2);
 
   const tr = await api<{ id: string }>(page, "POST", "/api/stock/transfers", {
     kind: "warehouse", transfer_date: "2026-09-22", empresa_origem_id: empresaId,
-    origin_warehouse_id: armazens.items[0]!.id, destination_warehouse_id: armazens.items[1]!.id,
+    origin_warehouse_id: armazens[0]!, destination_warehouse_id: armazens[1]!,
     items: [{ product_id: produto, quantity: "1" }]
   });
 
@@ -233,17 +244,27 @@ test("moldura Base 2 — BATIDA: renderiza sem total de documento e sem rodapé 
   await login(page);
   await page.goto("/estoque");
   const empresaId = await empresaAtiva(page);
-  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
-  const armazens = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=2");
+  const produtos = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/products?pageSize=2");
+  const insumo = produtos.items[0]!.id;
+  // o produto ACABADO é obrigatório na formulação (`stock.ts`: "Formulação sem produto acabado vinculado")
+  // e precisa ser diferente do insumo, senão a batida consome e produz a mesma linha de estoque
+  const acabado = produtos.items[1]?.id ?? insumo;
+  const armazens = await armazensDaEmpresa(page, empresaId, 1);
+  const origem = armazens[0]!; const destino = armazens[1] ?? armazens[0]!;
   // o seed não cria fórmula nenhuma: sem criar aqui, o teste passaria por ausência de dado — que é
   // exatamente o "verde que não prova nada" proibido por .claude/rules/testing-gates.md
   const formula = await api<{ id: string }>(page, "POST", "/api/stock/feed-formulas", {
-    name: `Fórmula R3 ${Date.now().toString(36)}`, items: [{ product_id: produto, quantity: "10" }]
+    name: `Fórmula R3 ${Date.now().toString(36)}`, product_id: acabado, items: [{ product_id: insumo, quantity: "10" }]
+  });
+  // saldo para a batida consumir: a produção dá baixa no armazém de origem
+  await api(page, "POST", "/api/stock/input-entries", {
+    empresa_id: empresaId, entry_date: "2026-09-22",
+    items: [{ product_id: insumo, warehouse_id: origem, quantity: "50", unit_value: "2.00", generate_stock: true }]
   });
 
   const batida = await api<{ id: string }>(page, "POST", "/api/stock/feed-batches", {
     empresa_id: empresaId, batch_date: "2026-09-22", formula_id: formula.id,
-    origin_warehouse_id: armazens.items[0]!.id, destination_warehouse_id: armazens.items[1]?.id ?? armazens.items[0]!.id,
+    origin_warehouse_id: origem, destination_warehouse_id: destino,
     quantity_produced: "10"
   });
 
@@ -285,7 +306,7 @@ test("moldura Base 2 — ANEXOS: só a entrada de insumos oferece o botão, e o 
   // metade do teste condicional, e um teste que pode não rodar não prova nada.
   const empresaId = await empresaAtiva(page);
   const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
-  const armazem = await primeiroId(page, "/api/resources/warehouses?pageSize=1");
+  const armazem = (await armazensDaEmpresa(page, empresaId, 1))[0]!;
   const fornecedor = await primeiroId(page, "/api/resources/people?pageSize=1&is_provider=true");
   const nf = await api<{ id: string }>(page, "POST", "/api/stock/invoices", {
     empresa_id: empresaId, number: `AX${Date.now().toString().slice(-6)}`, series: "1", provider_id: fornecedor,
