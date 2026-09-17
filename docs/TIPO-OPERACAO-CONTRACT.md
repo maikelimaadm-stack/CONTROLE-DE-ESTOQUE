@@ -195,6 +195,30 @@ Por que não foi separada nesta fatia:
 
 Fica como o **primeiro item** da evolução de cobertura, e com o discriminador já identificado.
 
+### Bloqueio externo descoberto por esta fatia (NÃO corrigido aqui)
+
+`POST /api/stock/transfers` numera com **dois contadores independentes** — `warehouse_transfer` e
+`farm_transfer` (`nextCode`, `apps/api/src/routes/stock.ts`) — para **uma** tabela com
+`unique (organization_id, code)` (`supabase/migrations/0003_stock_supply.sql`). A primeira
+transferência de cada variante numa organização recebe o **mesmo** código `0001`, e a segunda é
+recusada com `409 CONFLICT / Registro duplicado`.
+
+É defeito de PRODUÇÃO, anterior à BASE2-02, no caminho de **escrita** de estoque. Ficou invisível
+porque nenhum teste do repositório havia criado as duas variantes na MESMA organização: as
+integrações de transferência entre empresas rodam em organizações sem transferência entre armazéns.
+Foi o E2E da variante desta fatia que o encontrou.
+
+**Não é corrigido aqui, por decisão de fronteira.** A correção muda a numeração VISÍVEL de documento
+e mexe no serviço de estoque — é EXECUTAR, o lado que este contrato existe para não invadir, e
+envolve acervo já numerado. Vira PR própria.
+
+**Consequência dentro da BASE2-02:** a prova positiva da variante `farm` na tela real fica `PENDING`.
+O que a fatia prova hoje: a variante `warehouse` afirma positivamente a sua operação na tela; o
+registry resolve `kind: "farm"` para `estoque.transferencia_entre_empresas` no teste de contrato; e o
+título da tela não contém operação nenhuma, logo a TOP não é derivável dele. O bloqueio está
+**mecânico** no E2E (`apps/web/e2e/base2-moldura.spec.ts`): enquanto o defeito existir, o teste o
+exige; quando for corrigido, o teste reprova e obriga a troca pela prova positiva.
+
 ### Outras dívidas declaradas
 
 - **A prop `entidade` das telas não é cruzada com o registry por nenhum gate.** Um erro de digitação faz o

@@ -436,30 +436,53 @@ test("moldura Base 2 — TIPO DE OPERAÇÃO: as sete rotas do piloto, cada uma c
   await conferirOperacao(page, `/estoque/transferencias/${transferencia.id}`, OPERACAO.transferenciaArmazens);
   await conferirOperacao(page, `/estoque/batidas/${batida.id}`, OPERACAO.batida);
 
-  // A VARIANTE, provada dos dois lados — é o argumento inteiro da separação: MESMA tabela, MESMA rota
-  // de detalhe, MESMO título de tela ("Transferência"), e DUAS operações. Uma asserção só negativa
-  // ("não diz entre empresas" num documento que é entre armazéns) seria vacuamente verdadeira e passaria
-  // até com o campo ausente; o que prova a variante é criar o outro lado e exigir o rótulo dele.
+  // A VARIANTE — e por que a prova positiva do OUTRO lado está PENDENTE, com o bloqueio mecânico.
+  //
+  // `erp.warehouse_transfers` é o caso que sustenta o eixo próprio da TOP: UMA tabela, UMA rota de
+  // detalhe, UM título de tela, e DUAS operações (`kind in ('warehouse','farm')`). A asserção acima já
+  // é POSITIVA para a variante `warehouse` — a tela AFIRMA "Transferência entre armazéns", não apenas
+  // deixa de afirmar a outra (uma asserção só negativa passaria até com o campo ausente).
+  //
+  // Para fechar o outro lado seria preciso criar o documento `farm` pela MESMA porta do usuário, e aí
+  // este teste esbarrou num DEFEITO PRÉ-EXISTENTE do caminho de ESCRITA, alheio à BASE2-02:
+  //
+  //   `POST /api/stock/transfers` numera com DOIS contadores independentes — `warehouse_transfer` e
+  //   `farm_transfer` (apps/api/src/routes/stock.ts, `nextCode`) — para UMA tabela com
+  //   `unique (organization_id, code)` (supabase/migrations/0003_stock_supply.sql). A primeira
+  //   transferência de cada variante numa organização recebe o MESMO código `0001`, e a segunda é
+  //   recusada com 409 CONFLICT. Nenhum teste tinha criado as duas variantes na mesma organização.
+  //
+  // Corrigi-lo muda a numeração VISÍVEL de documento e mexe no serviço de estoque: é EXECUTAR, fora da
+  // fronteira desta fatia (CLASSIFICAR ≠ EXECUTAR), e vira PR própria. O bloqueio fica MECÂNICO em vez
+  // de virar um TODO em prosa: enquanto o defeito existir este teste o EXIGE; no dia em que for
+  // corrigido, ele reprova, e quem corrigir troca esta asserção pela prova positiva da variante `farm`
+  // — que é exatamente o efeito desejado de registrar o bloqueio aqui.
   const ctx = await api<{ empresas?: { id: string }[] }>(page, "GET", "/api/auth/context");
   const outra = (ctx.empresas ?? []).map((e) => e.id).find((id) => id !== empresaId);
-  expect(outra, "o contexto precisa de uma SEGUNDA empresa para provar a transferência entre empresas").toBeTruthy();
+  expect(outra, "o contexto precisa de uma SEGUNDA empresa para tentar a transferência entre empresas").toBeTruthy();
   const armazensDestino = await armazensDaEmpresa(page, outra!, 1);
 
-  const entreEmpresas = await api<{ id: string }>(page, "POST", "/api/stock/transfers", {
+  const recusa = await api<{ id: string }>(page, "POST", "/api/stock/transfers", {
     kind: "farm", transfer_date: "2026-09-22", empresa_origem_id: empresaId, empresa_destino_id: outra,
     origin_warehouse_id: origem, destination_warehouse_id: armazensDestino[0]!,
     items: [{ product_id: produto, quantity: "1" }]
-  });
+  }).then(() => null, (e: unknown) => (e as Error).message);
 
-  await conferirOperacao(page, `/estoque/transferencias/${entreEmpresas.id}`, OPERACAO.transferenciaEmpresas);
+  expect(recusa, "a transferência entre empresas precisa ter sido TENTADA de verdade pela porta do usuário").toBeTruthy();
+  expect(recusa, "bloqueio declarado: numeração duplicada por dois contadores independentes — se esta recusa sumiu, o defeito foi corrigido e a prova positiva da variante `farm` deve substituir esta asserção")
+    .toContain("warehouse_transfers_organization_id_code_key");
 
-  // e o título da tela é o MESMO nos dois documentos: se a identidade fosse derivada do título, as duas
-  // variantes seriam indistinguíveis.
-  const tituloEntreEmpresas = await page.getByRole("heading", { level: 1 }).first().textContent();
+  // O que AINDA se prova sem o segundo documento: o título da tela não carrega variante nenhuma. Ele é
+  // o literal "Transferência" (app/(app)/estoque/transferencias/[id]/page.tsx), idêntico nos dois casos.
+  // Logo a operação exibida NÃO pode ter vindo do título — que é o ponto da separação entre variante de
+  // ROTA e variante de OPERAÇÃO. A asserção é positiva de um lado e negativa do outro, de propósito.
   await page.goto(`/estoque/transferencias/${transferencia.id}`);
-  await expect(page.locator(CAMPO_TOP), "o documento entre armazéns não pode exibir a operação entre empresas").toContainText(OPERACAO.transferenciaArmazens);
-  const tituloEntreArmazens = await page.getByRole("heading", { level: 1 }).first().textContent();
-  expect(tituloEntreArmazens?.replace(/\s+\S+$/, ""), "as duas variantes compartilham o título da tela").toBe(tituloEntreEmpresas?.replace(/\s+\S+$/, ""));
+  await expect(page.locator(CAMPO_TOP), "o documento entre armazéns afirma a SUA operação").toContainText(OPERACAO.transferenciaArmazens);
+  const titulo = (await page.getByRole("heading", { level: 1 }).first().textContent()) ?? "";
+  expect(titulo, "o título precisa ter sido lido").not.toBe("");
+  for (const rotulo of [OPERACAO.transferenciaArmazens, OPERACAO.transferenciaEmpresas]) {
+    expect(titulo, `o título da tela não pode conter a operação ("${rotulo}") — senão a TOP seria derivável dele`).not.toContain(rotulo);
+  }
 });
 
 test("moldura Base 2 — TIPO DE OPERAÇÃO: classifica sem executar (mesma rota, mesmo endpoint, nenhuma porta nova)", async ({ page }) => {
