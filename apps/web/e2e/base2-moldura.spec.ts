@@ -150,6 +150,20 @@ async function api<T = Record<string, unknown>>(page: Page, method: string, path
     return data as T;
   }, { method, path, body, base });
 }
+/**
+ * Empresa efetiva para criar lançamento, pela MESMA regra do app (`useEmpresaPadrao`, features/docs/shared):
+ * a empresa da sessão, ou a primeira do contexto. No harness a sessão começa em "Todas as empresas", e
+ * `session.empresaId` é `null` — foi isso que reprovou a primeira versão destes testes com 422.
+ */
+async function empresaAtiva(page: Page): Promise<string> {
+  const daSessao = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId: string | null }).empresaId);
+  if (daSessao) return daSessao;
+  const ctx = await api<{ empresas?: { id: string }[] }>(page, "GET", "/api/auth/context");
+  const id = ctx.empresas?.[0]?.id;
+  expect(id, "o contexto precisa expor ao menos uma empresa visível").toBeTruthy();
+  return id!;
+}
+
 /** Primeiro id de um recurso, pela listagem oficial. */
 async function primeiroId(page: Page, path: string): Promise<string> {
   const r = await api<{ items: { id: string }[] }>(page, "GET", path);
@@ -161,7 +175,7 @@ async function primeiroId(page: Page, path: string): Promise<string> {
 test("moldura Base 2 — NOTA FISCAL: total do documento diverge da soma das linhas sem a tela mentir", async ({ page }) => {
   await login(page);
   await page.goto("/estoque");
-  const empresaId = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId: string | null }).empresaId);
+  const empresaId = await empresaAtiva(page);
   const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
   const armazem = await primeiroId(page, "/api/resources/warehouses?pageSize=1");
   const fornecedor = await primeiroId(page, "/api/resources/people?pageSize=1&is_provider=true");
@@ -193,7 +207,7 @@ test("moldura Base 2 — NOTA FISCAL: total do documento diverge da soma das lin
 test("moldura Base 2 — TRANSFERÊNCIA: renderiza sem `movements` no payload e não inventa empresa única", async ({ page }) => {
   await login(page);
   await page.goto("/estoque");
-  const empresaId = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId: string | null }).empresaId);
+  const empresaId = await empresaAtiva(page);
   const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
   const armazens = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=2");
   expect(armazens.items.length, "a transferência precisa de dois armazéns").toBeGreaterThan(1);
@@ -218,7 +232,7 @@ test("moldura Base 2 — TRANSFERÊNCIA: renderiza sem `movements` no payload e 
 test("moldura Base 2 — BATIDA: renderiza sem total de documento e sem rodapé enganoso", async ({ page }) => {
   await login(page);
   await page.goto("/estoque");
-  const empresaId = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId: string | null }).empresaId);
+  const empresaId = await empresaAtiva(page);
   const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
   const armazens = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=2");
   // o seed não cria fórmula nenhuma: sem criar aqui, o teste passaria por ausência de dado — que é
@@ -252,13 +266,23 @@ test("moldura Base 2 — ANEXOS: só a entrada de insumos oferece o botão, e o 
   await expect(dialogo).toContainText("Anexos");
   await page.keyboard.press("Escape");
 
-  // as demais entidades NÃO estão na whitelist: nenhum botão, em vez de um botão que abriria com 422
-  const id = await api<{ items: { id: string }[] }>(page, "GET", "/api/stock/writeoffs?pageSize=1")
-    .then((r) => r.items?.[0]?.id ?? null).catch(() => null);
-  if (id) {
-    await page.goto(`/estoque/baixas/${id}`);
-    await expect(page.getByTestId("base2-shell")).toBeVisible();
-    await expect(page.getByTestId("base2-anexos")).toHaveCount(0);
-  }
   expect(urlEntrada).toContain("/estoque/entradas/");
+
+  // as demais entidades NÃO estão na whitelist: nenhum botão, em vez de um botão que abriria com 422.
+  // A nota fiscal é CRIADA aqui de propósito: depender de "se houver registro no seed" deixaria esta
+  // metade do teste condicional, e um teste que pode não rodar não prova nada.
+  const empresaId = await empresaAtiva(page);
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const armazem = await primeiroId(page, "/api/resources/warehouses?pageSize=1");
+  const fornecedor = await primeiroId(page, "/api/resources/people?pageSize=1&is_provider=true");
+  const nf = await api<{ id: string }>(page, "POST", "/api/stock/invoices", {
+    empresa_id: empresaId, number: `AX${Date.now().toString().slice(-6)}`, series: "1", provider_id: fornecedor,
+    emission_date: "2026-09-22", generate_financial: false,
+    items: [{ product_id: produto, warehouse_id: armazem, quantity: "1", unit_value: "1.00" }]
+  });
+  await page.goto(`/estoque/documentos-fiscais/${nf.id}`);
+  await expect(page.getByTestId("base2-shell")).toBeVisible();
+  await expect(page.getByTestId("base2-anexos"), "invoices não está em ATTACHMENT_PARENTS: sem botão").toHaveCount(0);
+  // e o histórico, que não depende de whitelist, continua lá — prova que a ausência acima é da whitelist
+  await expect(page.getByTestId("base2-historico")).toBeVisible();
 });
