@@ -14,10 +14,10 @@
 | 5 | **PRE-BASE2-05** — Contexto multiempresa | Seletor "todas / uma / conjunto", filtros e painéis consolidados, seleção obrigatória no lançamento, seletor de idioma. ✅ **CONCLUÍDA EM PRODUÇÃO**: cutover 05C-2 executado em 16/09/2026 (merge `935f9dc`; `0018` no ledger uma única vez; `entity='farm'` = 0 e `entity='empresa'` = 1, `last_value` preservado), e encerramento documental feito — runbook, `DEPLOYMENT.md` e roteiro de aposentadoria registram a execução | 02, 03 |
 | 6 | **BASE2-01** — Moldura de lançamento | Shell oficial do Modelo Base 2 (cabeçalho, dados principais × itens, totais, histórico, **anexos**, ações). Contrato em `MODELO-BASE2-CONTRACT.md`; implementação em `apps/web/src/features/base2/`; piloto no detalhe de documento de estoque. ✅ **CONCLUÍDA / IMPLANTADA EM PRODUÇÃO** — merge `9615560`. ANEXOS: entregues com suporte inicial real — `Base2Shell` integra o `AttachmentsDialog` oficial e `input_entries` foi habilitada em `ATTACHMENT_PARENTS`, com a matriz de autorização provada em integração. As outras seis entidades entram uma a uma, conforme o backend as aceite | 05 |
 | 7 | **BASE2-02** — TOP | Registry e contrato inicial de Tipo de Operação; nenhuma regra de negócio fundida. ✅ **CONCLUÍDA / IMPLANTADA EM PRODUÇÃO** — merge `dd6e0e0` (PR #39, ancestral de `origin/main`, verificável por `git merge-base --is-ancestor`), CI de push verde nos quatro jobs (run 35258298588) e implantação relatada pelo Maike na abertura deste hotfix: Vercel, Railway web e Railway API com SUCCESS. Este último item é declaração operacional, não verificação feita daqui — a sessão não tem acesso autenticado a produção. Registry canônico em `packages/domain/src/tipo-operacao.ts`, contrato em `docs/TIPO-OPERACAO-CONTRACT.md`, rótulos no catálogo pt-BR e identidade visível nas sete rotas do piloto. CLASSIFICAR ≠ EXECUTAR: nenhuma regra de negócio mudou de dono. A dívida que ela DECLAROU (numeração de `erp.warehouse_transfers`) é o hotfix da linha abaixo. | 06 |
-| 8 | **BASE2-03+** — Migração dos módulos | Compras, Estoque, Financeiro, Vendas e demais migrados progressivamente para o Base 2. ⛔ **CONGELADA**: a BASE2-02 já está mesclada e em produção, mas o HOTFIX de numeração de `erp.warehouse_transfers` está 🟡 **em PR, não implantado** (ver a seção abaixo). A BASE2-03 só começa com o hotfix mesclado **e comprovado em produção**. | 07 + HOTFIX |
+| 8 | **BASE2-03+** — Migração dos módulos | Compras, Estoque, Financeiro, Vendas e demais migrados progressivamente para o Base 2. ✅ **LIBERADA / EM EXECUÇÃO PROGRESSIVA**: a única precondição pendente era o HOTFIX de numeração de `erp.warehouse_transfers`, hoje mesclado (`ca74c56`, PR #40) e certificado no ambiente real (ver a seção abaixo). A migração é POR ENTIDADE, não por módulo inteiro: a primeira fatia é a **BASE2-03A — Compras / Solicitação de Compra** (`erp.purchase_requests`, rota `/suprimentos/view/:id`). | 07 + HOTFIX ✅ |
 | 9 | **DATA-GOV** — Governança de dados | Nomenclatura final, dicionário com cobertura certificada, rótulos de enum por i18n. | 03, 08 |
 
-### HOTFIX obrigatório antes da BASE2-03 — numeração de `erp.warehouse_transfers` · 🟡 EM PR
+### HOTFIX obrigatório antes da BASE2-03 — numeração de `erp.warehouse_transfers` · ✅ CLOSED / IMPLANTADO EM PRODUÇÃO
 
 **O defeito.** `POST /api/stock/transfers` gerava o código com **dois contadores independentes**
 (`warehouse_transfer` e `farm_transfer`, via `nextCode`) para **uma** tabela com
@@ -74,8 +74,26 @@ volta escrito está em `docs/DEPLOYMENT.md`.
 O alias **não sai nesta fatia** — ele é o caminho de volta; sai em fatia própria, quando não houver mais
 versão viva pedindo a chave antiga.
 
-**Ordem fixa:** BASE2-02 mesclada ✅ → **HOTFIX de numeração** 🟡 em PR → BASE2-03 ⛔. A BASE2-03 continua
-congelada até o hotfix estar mesclado e comprovado em produção.
+**Ordem fixa, agora inteira cumprida:** BASE2-02 mesclada ✅ → **HOTFIX de numeração** mesclado e
+implantado ✅ → BASE2-03+ liberada ✅.
+
+**Encerramento — o que foi verificado, e onde.** A fatia só fecha com o artefato EXATO em produção, não
+com "o merge passou":
+
+| O que | Evidência |
+| --- | --- |
+| Merge | PR #40 mesclada em 2026-09-18T02:08:04Z · `ca74c56e7c1bf267f765b46490153b06f85efc9f`, cujos pais são `dd6e0e0` (base) e `f46e7ce` (HEAD da fatia) |
+| CI do merge | run `35298145571`, 4/4 SUCCESS — inclusive o passo "Matriz de version skew da numeração de transferências (gate 0019)" |
+| Railway API | deployment `2fb5d7f0-4eb4-4981-b06c-c5c1ed92cc53`, SUCCESS **no commit do merge** |
+| Railway WEB | deployment `01fa6a35-96be-4560-9389-7a20fd2e2cba`, SUCCESS **no commit do merge** |
+| Vercel | SUCCESS no commit do merge, pelo *commit status* do GitHub (verificado pelo Maike: a sessão não alcança aquele escopo da Vercel) |
+| Migration | `0019_warehouse_transfer_code_sequence.sql` aplicada **exatamente 1×**, em `2026-09-18 02:08:56.545774+00`, e é a última do ledger (19 no total) |
+| Chaves | `farm_transfer` e `animal_farm_transfer` = **0 linhas** em `erp.code_sequences` |
+| Estrutura | UNIQUE de `warehouse_transfers` e de `animal_movements`, PK e FK de `code_sequences`, RLS habilitada e forçada nas três — todas íntegras |
+
+O alias **continua vivo**, como a própria fatia decidiu: ele é o caminho de volta e sai em fatia
+própria, junto com a separação do contador de rebanho. Nenhuma fatia posterior — esta inclusive —
+pode removê-lo por conveniência.
 
 
 ## Fronteiras que não podem ser cruzadas

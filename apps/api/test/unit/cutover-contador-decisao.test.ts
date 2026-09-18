@@ -393,27 +393,40 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     // um defeito — a fatia que muda o estado do roteiro atualiza a trava junto, como já se fez aqui três
     // vezes. Uma trava de estado que sobrevive à mudança de estado não está travando nada.
     //
-    // TERCEIRA MOVIMENTAÇÃO (hotfix da numeração de transferências): a BASE2-02 foi mesclada (`dd6e0e0`) e
-    // implantada, então ela deixa de ser "em PR". O estado "em PR" agora é do HOTFIX, e é ele que a
-    // BASE2-03+ espera — por isso a trava passa a cobrar o estado do hotfix também, em vez de simplesmente
-    // perder a asserção que a BASE2-02 carregava.
+    // QUARTA MOVIMENTAÇÃO (BASE2-03A): o HOTFIX da numeração foi mesclado (`ca74c56`, PR #40) e
+    // CERTIFICADO no ambiente real — CI do merge 4/4, os dois deployments da Railway no commit do merge,
+    // `0019` no ledger exatamente uma vez (2026-09-18T02:08:56Z) e as invariantes de contador conferidas.
+    // Com isso a BASE2-03+ deixou de estar congelada, e esta trava vira o inverso do que era: em vez de
+    // exigir o congelamento, ela passa a RECUSAR a volta do congelamento.
+    //
+    // Por que não simplesmente apagar as duas asserções antigas: o estado obsoleto não some sozinho. Um
+    // documento que volte a dizer "hotfix em PR / BASE2-03 congelada" — por reversão, por conflito mal
+    // resolvido ou por cópia de uma versão velha — congelaria no papel uma fase que já está em execução,
+    // e o CI certificaria a contradição. Trava de estado se MOVE com o estado; não se remove com ele.
     const linhaDaFase = (nome: string) => roteiro.split("\n").find((l) => l.includes(`**${nome}**`)) ?? "";
     expect(roteiro, "BASE2-01 está concluída e implantada em produção").toMatch(/\*\*BASE2-01\*\*[\s\S]{0,800}?IMPLANTADA EM PRODUÇÃO/);
     expect(roteiro, "BASE2-02 está concluída e implantada em produção").toMatch(/\*\*BASE2-02\*\*[\s\S]{0,800}?IMPLANTADA EM PRODUÇÃO/);
-    expect(roteiro, "e a BASE2-03+ continua congelada").toMatch(/\*\*BASE2-03\+\*\*[\s\S]{0,600}?CONGELADA/);
+    expect(roteiro, "a BASE2-03+ está LIBERADA").toMatch(/\*\*BASE2-03\+\*\*[\s\S]{0,600}?LIBERADA/);
+    expect(linhaDaFase("BASE2-03+"), "e não volta a se declarar congelada").not.toMatch(/CONGELADA/);
 
-    // O HOTFIX de numeração: em PR, não implantado — e a BASE2-03+ nomeando a espera por ELE, não mais
-    // pela BASE2-02. Sem esta segunda metade, o roteiro poderia dizer que a BASE2-03 espera uma fase que
-    // já foi entregue, e o gate continuaria verde.
-    expect(roteiro, "o HOTFIX de numeração está em PR, não implantado")
-      .toMatch(/HOTFIX obrigatório antes da BASE2-03[\s\S]{0,200}?EM PR/);
-    expect(linhaDaFase("BASE2-03+"), "a BASE2-03+ declara que espera o HOTFIX").toMatch(/HOTFIX/);
+    // O HOTFIX de numeração: fechado e implantado, com o commit do merge nomeado. Sem o SHA, "implantado"
+    // seria uma afirmação sem endereço — e é justamente o endereço que um terceiro confere.
+    expect(roteiro, "o HOTFIX de numeração está fechado e implantado em produção")
+      .toMatch(/HOTFIX obrigatório antes da BASE2-03[\s\S]{0,200}?IMPLANTADO EM PRODUÇÃO/);
+    // `EM PR\b`, com a fronteira de palavra, e isso NÃO é preciosismo: "EM PR" é prefixo de
+    // "EM PRODUÇÃO". A asserção ANTERIOR — positiva, sem fronteira — teria passado com o roteiro dizendo
+    // "IMPLANTADO EM PRODUÇÃO", ou seja, ela não distinguia os dois estados que existia para distinguir.
+    // O defeito só apareceu quando a trava foi invertida, porque o negativo é quem exercita a diferença.
+    expect(roteiro, "o roteiro não volta a dizer que o hotfix está em PR")
+      .not.toMatch(/HOTFIX obrigatório antes da BASE2-03[\s\S]{0,200}?EM PR\b/);
+    expect(roteiro, "o encerramento do hotfix cita o commit do merge").toMatch(/ca74c56/);
+    expect(roteiro, "a primeira fatia da BASE2-03+ está nomeada").toMatch(/BASE2-03A/);
     // E nenhuma fase afirma dois estados ao mesmo tempo. A verificação é POR LINHA porque o roteiro é uma
     // tabela markdown: uma fase é uma linha, e é dentro dela que a contradição apareceria.
     for (const fase of ["BASE2-01", "BASE2-02", "BASE2-03+"]) {
       const linha = linhaDaFase(fase);
       expect(linha, `${fase}: fase ausente do roteiro`).not.toBe("");
-      const estados = ["IMPLANTADA EM PRODUÇÃO", "implementação em PR", "CONGELADA"].filter((e) => linha.includes(e));
+      const estados = ["IMPLANTADA EM PRODUÇÃO", "implementação em PR", "CONGELADA", "LIBERADA"].filter((e) => linha.includes(e));
       expect(estados, `${fase} declara mais de um estado na mesma linha: ${estados.join(" + ")}`).toHaveLength(1);
     }
 
