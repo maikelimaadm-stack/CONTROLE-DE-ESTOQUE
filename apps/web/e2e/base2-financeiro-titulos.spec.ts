@@ -119,24 +119,38 @@ for (const [variante, topEsperada, topVizinha] of [
   });
 }
 
-test("BASE2-03B: a TOP vem do REGISTRO — abrir pela rota da outra variante não reclassifica o título", async ({ page }) => {
+/** Status CRU de uma porta da API — o helper `api` lança em erro, e aqui o erro é o que se mede. */
+async function statusDaApi(page: Page, path: string): Promise<number> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
+  return page.evaluate(async ({ path, base }) => {
+    const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; empresaId: string | null };
+    const res = await fetch(`${base}${path}`, { headers: { authorization: `Bearer ${s.token}`, ...(s.orgId ? { "x-org-id": s.orgId } : {}), ...(s.empresaId ? { "x-empresa-id": s.empresaId } : {}) } });
+    return res.status;
+  }, { path, base });
+}
+
+test("BASE2-03B: a rota da outra variante NÃO serve o registro — 404 nas duas direções", async ({ page }) => {
   await login(page);
   const pagar = await criarTitulo(page, "payable", { vencimento: "2031-11-05" });
+  const receber = await criarTitulo(page, "receivable", { vencimento: "2031-11-06" });
 
-  // a rota de contas a RECEBER, com o id de um título a PAGAR. Quem manda é `direction` do registro:
-  // se a TOP saísse da rota (ou de `dir`), aqui apareceria "Conta a receber" — a classificação errada.
-  const r = await page.goto(`${ROTA.receivable}/${pagar.id}`);
-  if (r && r.ok()) {
-    const shell = page.getByTestId("base2-shell");
-    if (await shell.isVisible().catch(() => false)) {
-      const tipo = campo(page, ptBR.mensagens["termos.tipo_operacao"]!);
-      if (await tipo.count()) await expect(tipo, "a rota não pode reclassificar o registro").toContainText(TOP_PAGAR);
-    }
-  }
-  // O endpoint filtra por `direction`, então o normal é NÃO encontrar — e não achar também é resposta
-  // correta. O que este teste proíbe é o caso silencioso: encontrar e rotular pela rota.
+  // CONTRATO DURO (R1). `direction` faz parte da AUTORIZAÇÃO, não é filtro de conveniência: a rota de
+  // recebíveis não serve um pagável nem para quem tem `receivables.view`. Antes da R1 esta asserção
+  // aceitava "200 OU 404" — e um 200 aqui era exatamente o defeito passando por cima do gate. Aceitar as
+  // duas respostas é aceitar a que não devia existir.
+  expect(await statusDaApi(page, `/api/financial/receivables/${pagar.id}`), "rota de recebíveis servindo um PAGÁVEL").toBe(404);
+  expect(await statusDaApi(page, `/api/financial/payables/${receber.id}`), "rota de pagáveis servindo um RECEBÍVEL").toBe(404);
+
+  // E a tela pela rota errada não monta o registro: nada do título sai antes da autorização completa.
+  await page.goto(`${ROTA.receivable}/${pagar.id}`);
+  await expect(page.getByTestId("base2-shell")).toHaveCount(0);
+  await expect(page.getByText(pagar.numero, { exact: false })).toHaveCount(0);
+
+  // Pelas rotas certas, cada um abre com a TOP do REGISTRO.
   await abrir(page, pagar);
   await expect(campo(page, ptBR.mensagens["termos.tipo_operacao"]!)).toContainText(TOP_PAGAR);
+  await abrir(page, receber);
+  await expect(campo(page, ptBR.mensagens["termos.tipo_operacao"]!)).toContainText(TOP_RECEBER);
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════

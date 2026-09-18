@@ -162,8 +162,13 @@ export function TitleDetail({ dir, id }: { dir: Dir; id: string }) {
 
   // A variante apresentada sai do REGISTRO (`direction`), não da rota. `dir` continua sendo a porta de
   // navegação, endpoint e permissão — o que ele não pode ser é autoridade sobre o que o registro É.
+  // Variante desconhecida cai em rótulo NEUTRO, nunca no da rota. Herdar o rótulo da configuração de
+  // rota classificaria o registro pela porta por onde ele foi pedido — exatamente o que esta tela não
+  // pode fazer. Não saber o que o registro é não autoriza chutar: dizer "Conta a pagar" de um registro
+  // que o servidor não classificou seria afirmar pela rota o que só o registro pode dizer.
   const top = tipoOperacaoDoRegistro(`erp.${ENTIDADE_TITULO}`, d);
-  const titulo = d["direction"] === "payable" ? "Conta a pagar" : d["direction"] === "receivable" ? "Conta a receber" : c.title;
+  const titulo = d["direction"] === "payable" ? "Conta a pagar" : d["direction"] === "receivable" ? "Conta a receber" : "Título financeiro";
+  const rotuloPessoa = d["direction"] === "payable" ? "Fornecedor" : d["direction"] === "receivable" ? "Cliente" : "Pessoa";
 
   // O RÓTULO é o do servidor (`status_label`); o VALOR TÉCNICO é o status persistido. Os dois juntos,
   // porque respondem a perguntas diferentes: o rótulo diz ao usuário que o título está VENCIDO, e o
@@ -175,7 +180,7 @@ export function TitleDetail({ dir, id }: { dir: Dir; id: string }) {
     { label: "Código", valor: String(d["code"]) },
     { label: tr("termos.tipo_operacao"), valor: top ? tr(top.chaveI18n) : "", ocultarSeVazio: true },
     { label: "Nº do documento", valor: String(d["number"] ?? "—") },
-    { label: c.person, valor: String(d["person_name"] ?? "—") },
+    { label: rotuloPessoa, valor: String(d["person_name"] ?? "—") },
     { label: "Proprietário", valor: String(d["proprietary_name"] ?? "—") },
     { label: "Emissão", valor: dateBR(d["emission_date"] as string), span: 2 },
     { label: "Vencimento", valor: dateBR(d["due_date"] as string), span: 2 },

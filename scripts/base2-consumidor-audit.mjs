@@ -38,20 +38,31 @@ const TELAS = {
   // acusaria o inocente — e gate que acusa o inocente é desligado na semana seguinte.
   "apps/web/src/features/financial/titles.tsx": {
     fatia: "BASE2-03B — títulos financeiros", escopo: "TitleDetail",
-    // POR QUE ESTA REGRA É ESTÁTICA, e não um E2E. `financial_titles` tem duas variantes e DUAS ROTAS,
-    // e cada rota filtra por `direction` no servidor: a rota de contas a receber nunca devolve um título
-    // a pagar. Logo `dir` (a rota) e `d.direction` (o registro) são SEMPRE iguais na tela, e trocar um
-    // pelo outro não muda pixel nenhum — é indistinguível por comportamento, exatamente como a
-    // numeração por variante da decisão 171. O que sobra é o texto: a classificação tem de LER O
-    // REGISTRO, porque no dia em que uma rota servir as duas variantes (uma busca global, um link de
-    // parcela, uma tela unificada) derivar da rota passa a classificar errado — e em silêncio.
+    // POR QUE ESTA REGRA É ESTÁTICA, e não um E2E. `financial_titles` tem duas variantes e DUAS ROTAS, e
+    // cada rota SÓ SERVE a sua variante — `direction` entra no `where` de toda porta de título
+    // (apps/api/src/routes/financial.ts), e variante errada responde 404. Isso é INVARIANTE DE
+    // AUTORIZAÇÃO, provada pela matriz de integração de wrong-route, e não uma coincidência conveniente:
+    // foi justamente o que a auditoria externa da R1 encontrou ABERTO e esta PR fechou.
+    //
+    // O efeito colateral dessa invariante é que, na tela, `dir` (a rota) e `d.direction` (o registro)
+    // coincidem SEMPRE — e por isso trocar um pelo outro não muda pixel nenhum. É indistinguível por
+    // comportamento, exatamente como a numeração por variante da decisão 171. Daí o gate estático: o
+    // teste de segurança do backend prova que a rota errada não serve o registro; esta regra prova que a
+    // tela CLASSIFICA pelo registro. Um não substitui o outro, e nenhum dos dois cobre o que o outro
+    // cobre — no dia em que uma porta servir as duas variantes (busca global, link de parcela, tela
+    // unificada), derivar da rota passa a classificar errado, em silêncio.
     regras: [
       { procura: "tipoOperacaoDoRegistro\\([^)]*,\\s*d\\s*\\)", deve: true, motivo: "a TOP tem de ser resolvida a partir do REGISTRO (`d`), nunca da rota" },
       { procura: "tipoOperacaoDoRegistro\\([^)]*\\bdir\\b", deve: false, motivo: "a TOP não pode ser resolvida a partir de `dir` — `dir` é porta de navegação, não autoridade" },
       // ANCORADA NA ATRIBUIÇÃO. A primeira versão procurava `d["direction"]` em qualquer lugar do corpo
       // e passava com o título derivado de `dir`, porque a legenda do rateio já usava o registro — a
       // regra era satisfeita por uma ocorrência que não era a que ela existe para travar.
-      { procura: "const titulo = d\\[\"direction\"\\]", deve: true, motivo: "o título funcional sai do REGISTRO, não da rota" }
+      { procura: "const titulo = d\\[\"direction\"\\]", deve: true, motivo: "o título funcional sai do REGISTRO, não da rota" },
+      // FALLBACK FAIL-CLOSED (R1 §14). `c` é a configuração DA ROTA: serve para endpoint, permissão e
+      // voltarHref, jamais para dizer o que o registro É. `c.title`/`c.person` no fallback classificavam
+      // pela porta por onde o registro foi pedido — que é a definição do defeito que esta PR fechou.
+      { procura: "c\\.(title|person)\\b", deve: false, motivo: "a identidade apresentada não pode sair da ROTA (`c.title`/`c.person`): variante desconhecida usa rótulo NEUTRO" },
+      { procura: "\"Título financeiro\"", deve: true, motivo: "variante desconhecida precisa de rótulo neutro e fail-closed, nunca o da rota" }
     ]
   }
 };
