@@ -302,10 +302,21 @@ verificada, como manda `.claude/rules/database-migrations.md`.
 -- a chave legada não existe mais como linha (mas continua aceita como alias)
 select count(*) from erp.code_sequences where entity = 'farm_transfer';        -- 0
 
--- e o contador canônico cobre o acervo das DUAS tabelas que o alias alcança
+-- o contador canônico cobre o acervo de ESTOQUE
 select count(*) from (
   select wt.organization_id, max(wt.code::bigint) maior
     from erp.warehouse_transfers wt where wt.code ~ '^[0-9]+$' group by 1
+) a left join erp.code_sequences cs
+  on cs.organization_id = a.organization_id and cs.entity = 'warehouse_transfer'
+where coalesce(cs.last_value, -1) < a.maior;                                    -- 0
+
+-- e o MESMO contador cobre o acervo de REBANHO, porque o alias o faz numerar as duas tabelas.
+-- Esta metade é separada de propósito: uma organização com códigos de rebanho e NENHUMA transferência
+-- de estoque não aparece na consulta acima, e ali o zero não diria nada sobre ela.
+select count(*) from (
+  select am.organization_id, max(am.code::bigint) maior
+    from erp.animal_movements am
+   where am.movement_type = 'farm_transfer' and am.code ~ '^[0-9]+$' group by 1
 ) a left join erp.code_sequences cs
   on cs.organization_id = a.organization_id and cs.entity = 'warehouse_transfer'
 where coalesce(cs.last_value, -1) < a.maior;                                    -- 0

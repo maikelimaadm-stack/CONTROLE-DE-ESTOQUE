@@ -8,10 +8,14 @@ import { listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
 /**
  * FERRAMENTAS COMPARTILHADAS DAS PROVAS DA 0019 — hotfix da numeração de transferências.
  *
- * As suítes do hotfix (`upgrade`, `concorrencia`) precisam das mesmas duas coisas: montar um banco
- * parado EXATAMENTE na 0018 — o estado que produção tem hoje — e aplicar a 0019 sozinha, do jeito que o
- * runner aplica, para poder observar tanto o sucesso quanto a recusa. Mesmo molde de
- * `cutover-0018-ajuda.ts`, pelo mesmo motivo: duplicar isso faria as provas divergirem em silêncio.
+ * A suíte `hotfix-0019-upgrade` precisa de duas coisas: montar um banco parado EXATAMENTE na 0018 — o
+ * estado que produção tem hoje — e aplicar a 0019 sozinha, do jeito que o runner aplica, para poder
+ * observar tanto o sucesso quanto a recusa. Mesmo molde de `cutover-0018-ajuda.ts`, pelo mesmo motivo:
+ * duplicar isso faria as provas divergirem em silêncio.
+ *
+ * A CONCORRÊNCIA da fatia NÃO mora aqui: ela é o quadrante C de `scripts/gate-hotfix-0019.mjs`
+ * (`pnpm gate:0019`), que precisa de DUAS conexões com transações abertas ao mesmo tempo — coisa que o
+ * molde de uma suíte vitest sobre um banco descartável não dá.
  */
 
 export const ALVO = "0019_warehouse_transfer_code_sequence.sql";

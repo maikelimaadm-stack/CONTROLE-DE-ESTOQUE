@@ -35,6 +35,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readSchema, REPO_ROOT } from "./lib/schema.mjs";
+import { MIGRATION_HOTFIX } from "./lib/hotfix-0019.mjs";
 
 /**
  * NUMERAÇÃO POR VARIANTE DECLARADA — cada entrada precisa do discriminador dentro da UNIQUE.
@@ -111,7 +112,11 @@ const AMOSTRAS = [
   ["variável genérica NÃO é derivada", 0, "const code = await nextCode(ctx.tx, ctx.orgId, def.codeEntity, 4);"],
   ["ternário dentro do invólucro animalCode é PEGO", 1, 'const code = await animalCode(ctx, k === "farm" ? "farm_transfer" : "outro");'],
 ];
-/** Amostras da metade 3: a chave legada é proibida no runtime, em qualquer grafia de literal. */
+/**
+ * Amostras da metade 3: todo pedido da chave legada precisa ser VISTO pelo auditor — em qualquer grafia de
+ * literal e através de qualquer invólucro. Ver não é proibir: a metade 3 permite o uso DECLARADO em
+ * `POR_COMPATIBILIDADE`, e chega a reprovar quando a declaração deixa de corresponder a um uso vivo.
+ */
 const AMOSTRAS_LEGADA = [
   ["literal simples é PEGO", 1, `const code = await nextCode(ctx.tx, ctx.orgId, 'farm_transfer');`],
   ["literal duplo é PEGO", 1, 'const code = await nextCode(ctx.tx, ctx.orgId, "farm_transfer", 5);'],
@@ -283,8 +288,217 @@ if (!namespaceUnico) {
   process.exit(1);
 }
 
+// ---------- metade 5: a 0019 nao pode DESCREVER a arquitetura abandonada como estado atual ----------
+// POR QUE ESTA METADE EXISTE. A rodada R1 desta fatia trocou o desenho — o rebanho VOLTOU para a chave
+// compartilhada — mas o TEXTO da migration continuou descrevendo o desenho anterior: "a divisao do contador
+// do rebanho", "baseline do contador de rebanho", "a metade nova da reconciliacao (6.2)". Parte disso vivia
+// em `raise exception`, e mensagem de excecao nao e prosa: e o que o operador le as 3h da manha, com a
+// producao parada, para decidir o que fazer. Uma explicacao falsa ali custa mais do que comentario errado.
+//
+// A 0019 AINDA NAO FOI APLICADA em producao. Depois de aplicada ela vira historia imutavel
+// (`.claude/rules/database-migrations.md`: migration mesclada e aplicada se corrige com migration NOVA),
+// e o texto errado fica para sempre. Por isso a guarda entra agora, e nao na proxima fatia.
+//
+// O QUE ELA PROIBE E O QUE ELA PERMITE. Proibe a frase como descricao do ESTADO ATUAL. PERMITE — e a
+// migration usa essa permissao — a frase como documentacao HISTORICA explicita, porque explicar por que a
+// alternativa foi descartada e justamente o que impede alguem de reintroduzi-la. A diferenca e mecanica:
+// perto da frase tem de haver uma MARCA historica declarada; senao, reprova.
+//
+// Em LINHA DE CODIGO (inclusive dentro de `raise exception`) nenhuma marca salva: ali o texto nao esta
+// contando a historia, esta afirmando o presente para quem opera.
+const CAMINHO_0019 = path.join(REPO_ROOT, "supabase/migrations", MIGRATION_HOTFIX);
+
+/** Frases que descrevem o desenho ABANDONADO (contador proprio para o rebanho durante a vida do alias). */
+const FRASES_ABANDONADAS = [
+  "divisao do contador",
+  "divisao da numeracao",
+  "contador do rebanho",
+  "contador de rebanho",
+  "contador proprio do rebanho",
+  "metade nova da reconciliacao",
+  "animal_farm_transfer",
+];
+
+/** Marcas que tornam a frase HISTORICA em vez de descritiva. Lista fechada: marca vaga nao e marca. */
+const MARCAS_HISTORICAS = [
+  "rodada anterior",
+  "arquitetura abandonada",
+  "c-repro",
+  "fatia que remove o alias",
+  "fica para depois",
+];
+
+/**
+ * Quantas linhas, para cada lado, a marca historica pode estar da frase — DENTRO do mesmo paragrafo de
+ * comentario. Tres porque o comentario deste repositorio quebra em ~100 colunas e a frase pode se partir.
+ *
+ * O raio sozinho nao bastava: ele atravessava linha em branco e caia em outro paragrafo, e uma marca sem
+ * relacao nenhuma com a frase acabava absolvendo-a por proximidade fisica. Paragrafo e a unidade de ideia
+ * aqui, entao a janela e a INTERSECAO das duas coisas: mesmo paragrafo E perto.
+ */
+const JANELA_LINHAS = 3;
+
+/**
+ * NEGACAO NAO E REINCIDENCIA. "a 0019 NAO divide o contador do rebanho" e a descricao CORRETA do desenho
+ * vigente — e era reprovada, porque a busca so via a frase, nunca o "nao" na frente dela. Um gate que
+ * reprova quem escreve a verdade empurra o autor a nao escrever nada, que e o oposto do que ele quer.
+ *
+ * O teste e curto de proposito: o negador tem de estar nos ~60 caracteres imediatamente ANTES da frase,
+ * isto e, colado nela. "Nao" em outra oracao do mesmo paragrafo nao absolve.
+ */
+const NEGADORES = /\b(nao|nunca|nenhum[ a]|jamais|deixa de|deixou de|em vez de|no lugar de|sem)\b/;
+const RAIO_NEGACAO = 60;
+
+// Combinantes escritos por ESCAPE: literais aqui seriam invisiveis no editor e somem em qualquer
+// normalizacao de texto que passe por este arquivo.
+const semAcento = (s) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+
+/**
+ * Acha cada frase abandonada num texto SQL e diz, para cada uma, se ha marca historica por perto e se ela
+ * esta em comentario ou em linha de codigo.
+ *
+ * Normaliza por LINHA (sem acento, minuscula, prefixo `--` fora, espacos colapsados) e depois junta tudo
+ * num plano unico: sem isso, uma frase quebrada pela margem de 100 colunas escaparia da busca — e um gate
+ * que so pega a frase quando ela cabe numa linha e um gate que se contorna com Enter.
+ */
+function ocorrenciasAbandonadas(sql) {
+  const brutas = sql.split("\n");
+  const ehComentario = brutas.map((l) => l.trim().startsWith("--"));
+  const norm = brutas.map((l) =>
+    semAcento(l).toLowerCase().replace(/^\s*--\s?/, "").replace(/\s+/g, " ").trim(),
+  );
+  const inicio = [];
+  let acc = 0;
+  for (const l of norm) { inicio.push(acc); acc += l.length + 1; }
+  const plano = norm.join(" ");
+  const linhaDe = (idx) => {
+    let lo = 0, hi = inicio.length - 1;
+    while (lo < hi) { const m = (lo + hi + 1) >> 1; if (inicio[m] <= idx) lo = m; else hi = m - 1; }
+    return lo;
+  };
+
+  // O PARAGRAFO de cada linha: o maior bloco contiguo de linhas de comentario NAO VAZIAS em volta dela.
+  // Linha em branco, `--` sozinho e linha de codigo cortam. Para linha de codigo o paragrafo e ela mesma.
+  const paragrafo = (l) => {
+    if (!ehComentario[l] || norm[l] === "") return [l, l];
+    let a = l, b = l;
+    while (a > 0 && ehComentario[a - 1] && norm[a - 1] !== "") a--;
+    while (b < norm.length - 1 && ehComentario[b + 1] && norm[b + 1] !== "") b++;
+    return [a, b];
+  };
+
+  const brutos = [];
+  for (const frase of FRASES_ABANDONADAS) {
+    let i = plano.indexOf(frase);
+    while (i !== -1) {
+      brutos.push({ frase, inicio: i, fim: i + frase.length });
+      i = plano.indexOf(frase, i + frase.length);
+    }
+  }
+
+  // SOBREPOSIÇÃO CONTA UMA VEZ: "divisao do contador do rebanho" casa com duas frases da lista, e
+  // reportá-la duas vezes faria o mesmo defeito parecer dois — ruído que atrapalha justamente quem está
+  // tentando consertar. Fica a mais LONGA; empate fica a da esquerda.
+  brutos.sort((a, b) => a.inicio - b.inicio || (b.fim - b.inicio) - (a.fim - a.inicio));
+  const achados = [];
+  let fimAceito = -1;
+  for (const b of brutos) {
+    if (b.inicio < fimAceito) continue;
+    const l = linhaDe(b.inicio);
+    const [pa, pb] = paragrafo(l);
+    const janela = norm
+      .slice(Math.max(pa, l - JANELA_LINHAS), Math.min(pb, l + JANELA_LINHAS) + 1)
+      .join(" ");
+    const antes = plano.slice(Math.max(0, b.inicio - RAIO_NEGACAO), b.inicio);
+    achados.push({
+      frase: b.frase,
+      linha: l + 1,
+      comentario: ehComentario[l],
+      negada: NEGADORES.test(antes),
+      marca: MARCAS_HISTORICAS.find((m) => janela.includes(m)) ?? null,
+      trecho: brutas[l].trim().slice(0, 110),
+    });
+    fimAceito = b.fim;
+  }
+  return achados;
+}
+
+// AUTOTESTE DA METADE 5 — as duas direcoes, porque um gate que so foi visto passar e indistinguivel de um
+// gate quebrado (`.claude/rules/testing-gates.md`).
+const AMOSTRAS_0019 = [
+  ["comentario obsoleto SEM marca reprova", 1,
+    "-- a divisao do contador do rebanho supoe esse namespace"],
+  ["comentario obsoleto COM marca historica passa", 0,
+    "-- uma rodada anterior tentou a divisao do contador do rebanho\n-- arquitetura abandonada, reproduzida pelo quadrante C-REPRO"],
+  ["marca longe demais NAO salva", 1,
+    "-- rodada anterior\n--\n--\n--\n-- a divisao do contador do rebanho"],
+  ["frase quebrada pela margem tambem e pega", 1,
+    "-- ... montar o baseline do contador de\n-- rebanho, e um insert concorrente ..."],
+  ["em RAISE nenhuma marca salva", 1,
+    "  -- rodada anterior, arquitetura abandonada\n  raise exception 'HOTFIX-0019: a divisao do contador do rebanho supoe essa forma.';"],
+  ["a chave abandonada em codigo e pega", 1,
+    "  insert into erp.code_sequences (organization_id, entity) values (o, 'animal_farm_transfer');"],
+  ["texto do desenho ATUAL nao dispara", 0,
+    "-- o contador canonico numera as duas tabelas enquanto o alias existir; a quarta parcela do baseline\n-- cruza o acervo de rebanho."],
+  // RT#5: a frase CORRETA do desenho vigente e uma NEGACAO da frase abandonada. Reprova-la empurraria o
+  // autor a nao escrever a verdade — foi a propria mensagem de erro deste gate que caiu nessa armadilha.
+  ["negacao explicita NAO e reincidencia", 0,
+    "-- esta migration NAO cria contador do rebanho: as duas rotas pedem a mesma chave"],
+  ["negacao em codigo tambem passa", 0,
+    "  raise notice 'HOTFIX-0019: nao existe contador de rebanho separado enquanto o alias viver.';"],
+  ["negador longe da frase NAO absolve", 1,
+    "-- nao ha nada de errado com o resto do arquivo, e o assunto muda completamente aqui: a divisao do contador do rebanho e o que esta secao faz"],
+  // RT#6: a marca tem de estar no MESMO paragrafo. Antes, o raio de 3 linhas atravessava a linha em branco.
+  ["marca em OUTRO paragrafo nao absolve", 1,
+    "-- arquitetura abandonada: outro assunto, encerrado aqui.\n--\n-- a divisao do contador do rebanho supoe esse namespace"],
+  ["marca no MESMO paragrafo absolve", 0,
+    "-- arquitetura abandonada: a divisao do contador do rebanho\n-- era o desenho da rodada anterior"],
+];
+/** REPROVA: frase afirmativa, em codigo/mensagem, ou em comentario sem marca historica no paragrafo. */
+const reprova = (o) => !o.negada && (!o.comentario || !o.marca);
+
+for (const [nome, esperado, amostra] of AMOSTRAS_0019) {
+  const n = ocorrenciasAbandonadas(amostra).filter(reprova).length;
+  if (n !== esperado) {
+    console.error(`sequencia-namespace-audit: AUTOTESTE (0019) FALHOU — "${nome}": esperava ${esperado}, obteve ${n}.`);
+    process.exit(1);
+  }
+}
+
+if (!fs.existsSync(CAMINHO_0019)) {
+  console.error(`sequencia-namespace-audit: ${CAMINHO_0019} nao existe. Gate que nao acha o que auditar esta desligado, nao satisfeito.`);
+  process.exit(1);
+}
+const sql0019 = fs.readFileSync(CAMINHO_0019, "utf8");
+// NAO-VACUIDADE: ler o arquivo errado (ou um truncado) daria "nenhuma frase encontrada" com ar de aprovacao.
+if (sql0019.length < 5000 || !/HOTFIX-0019/.test(sql0019)) {
+  console.error(`sequencia-namespace-audit: ${MIGRATION_HOTFIX} tem ${sql0019.length} bytes e ${/HOTFIX-0019/.test(sql0019) ? "tem" : "NAO tem"} a ancora HOTFIX-0019. Leitura suspeita; nao aprovo por ausencia.`);
+  process.exit(1);
+}
+
+const ocorrencias = ocorrenciasAbandonadas(sql0019);
+const obsoletas = ocorrencias.filter(reprova);
+const historicas = ocorrencias.filter((o) => !reprova(o));
+if (obsoletas.length) {
+  console.error(`sequencia-namespace-audit: ${MIGRATION_HOTFIX} descreve a arquitetura ABANDONADA como estado atual\n`);
+  for (const o of obsoletas) {
+    const onde = o.comentario ? "comentario sem marca historica" : "LINHA DE CODIGO/MENSAGEM (nenhuma marca salva)";
+    console.error(`  - linha ${o.linha} [${onde}] "${o.frase}"\n      ${o.trecho}`);
+  }
+  console.error("\nNo desenho vigente as duas rotas pedem a MESMA chave enquanto o alias existir, e o contador");
+  console.error("canonico numera as duas tabelas — separacao de contador, nenhuma. O baseline da secao 6.1 tem");
+  console.error("QUATRO parcelas (canonico, legado, acervo de estoque, acervo de rebanho) e a 6.2 apenas REMOVE");
+  console.error("a linha legada. Reescreva a frase no sentido atual — ou, se ela documenta de proposito o que");
+  console.error(`foi descartado, diga isso explicitamente a ate ${JANELA_LINHAS} linha(s) dali, com uma marca:`);
+  console.error(`  ${MARCAS_HISTORICAS.map((m) => `"${m}"`).join(", ")}.`);
+  console.error("Em mensagem de excecao nao ha essa saida: ali o texto e instrucao de operador, nao historia.");
+  process.exit(1);
+}
+
 console.log(
-  `sequencia-namespace-audit: OK (autoteste ${AMOSTRAS.length + AMOSTRAS_LEGADA.length}/${AMOSTRAS.length + AMOSTRAS_LEGADA.length}; ` +
+  `sequencia-namespace-audit: OK (autoteste ${AMOSTRAS.length + AMOSTRAS_LEGADA.length + AMOSTRAS_0019.length}/${AMOSTRAS.length + AMOSTRAS_LEGADA.length + AMOSTRAS_0019.length}; ` +
   `${chamadas} chamadas de nextCode, ${Object.keys(POR_VARIANTE).length} numeracoes por variante declaradas e ` +
-  `provadas na unicidade, ${Object.keys(POR_COMPATIBILIDADE).length} uso(s) da chave legada declarado(s) e vivo(s))`
+  `provadas na unicidade, ${Object.keys(POR_COMPATIBILIDADE).length} uso(s) da chave legada declarado(s) e vivo(s), ` +
+  `${MIGRATION_HOTFIX} sem descricao da arquitetura abandonada como atual ` +
+  `(${historicas.length} mencao(oes) historica(s) declarada(s)))`
 );

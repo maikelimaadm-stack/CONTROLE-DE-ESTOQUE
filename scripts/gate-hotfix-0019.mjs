@@ -278,8 +278,9 @@ async function main() {
     exigir(e.contadores.join() === antesQ1.contadores.join() && e.codigos.join() === antesQ1.codigos.join(),
       `o ROLLBACK devolve tudo: contador [${e.contadores}] · códigos [${e.codigos}] — o acervo fica intacto`);
     // E o que o rollback NÃO resolve, medido: como ele desfaz o incremento junto, a tentativa seguinte
-    // aloca EXATAMENTE o mesmo número. Não é ruído, é TRAVAMENTO — e é a razão de a rota de rebanho ter
-    // passado a alocar por laço. Uma versão anterior deste gate dizia "sem sequela" aqui, e subestimava.
+    // aloca EXATAMENTE o mesmo número. Não é ruído, é TRAVAMENTO, e nenhuma retentativa sai dele — é por
+    // isso que a ordem BANCO → API é obrigatória, e não uma preferência de rollout. Uma versão anterior
+    // deste gate dizia "sem sequela" aqui, e subestimava.
     const deNovo = await criarTransferencia(c, cen, "HEAD", "farm", "Q1 segunda tentativa");
     exigir(colidiu(deNovo) && deNovo.numero === r1.numero,
       `a tentativa SEGUINTE aloca o mesmo ${deNovo.numero} e colide igual: a operação fica travada, não apenas barulhenta`);

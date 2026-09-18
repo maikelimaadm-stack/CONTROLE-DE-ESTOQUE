@@ -62,7 +62,8 @@
  * ---------------------------------------------------------------------
  * MEDIDO, não deduzido: com a rota sabotada de volta para
  * `d.kind === "farm" ? "farm_transfer" : "warehouse_transfer"`,
- * `apps/api/test/integration/transferencia-numeracao.test.ts` continua 9/9 VERDE.
+ * `apps/api/test/integration/transferencia-numeracao.test.ts` continua 11/11 VERDE — a suíte INTEIRA,
+ * sem um único caso reprovando.
  *
  * Isso não é falha do teste: é o ALIAS funcionando. A 0019 faz `erp.next_code` canonicalizar
  * `farm_transfer` antes do `insert`, então pedir a chave antiga e pedir a canônica produzem exatamente as

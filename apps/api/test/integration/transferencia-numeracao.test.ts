@@ -31,8 +31,8 @@ import { harness, ids, TEST_URL, type Harness } from "./setup.js";
  * O LIMITE DESTA SUÍTE, MEDIDO E DECLARADO
  * ----------------------------------------
  * Esta suíte NÃO é o gate contra a rota voltar a numerar por variante, e isso foi verificado, não
- * suposto: com a rota sabotada de volta para `d.kind === "farm" ? "farm_transfer" : ...`, os nove casos
- * daqui continuam VERDES.
+ * suposto: com a rota sabotada de volta para `d.kind === "farm" ? "farm_transfer" : ...`, os ONZE casos
+ * daqui continuam VERDES — a suíte inteira, sem um único caso reprovando.
  *
  * A razão é o alias da 0019: `erp.next_code` canonicaliza `farm_transfer` antes do `insert`, então pedir a
  * chave antiga e pedir a canônica produzem as MESMAS linhas. Nenhum experimento de comportamento separa os
@@ -324,8 +324,8 @@ describe("o runtime aponta para a chave que o BANCO de fato tem", () => {
 describe("o ALIAS da 0019 é o que torna a chave pedida pela rota indiferente", () => {
   it("pedir a chave LEGADA e pedir a CANÔNICA move o MESMO contador, e a legada não vira linha", async () => {
     // Este caso não mede a rota: mede a porta de alocação que a rota usa, e é ele que explica por que os
-    // oito casos acima continuariam verdes com a rota pedindo `farm_transfer`. Sem isso escrito, a suíte
-    // pareceria provar mais do que prova.
+    // nove casos acima continuam verdes com a rota pedindo `farm_transfer` — medido, não suposto. Sem
+    // isso escrito, a suíte pareceria provar mais do que prova.
     //
     // Roda numa organização própria e dentro de `begin`/`rollback`: nenhum contador real avança.
     const c = await admin.connect();

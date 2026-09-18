@@ -51,9 +51,12 @@ Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000
   contador que serializa os binários. O uso é DECLARADO em `scripts/sequencia-namespace-audit.mjs`, com
   motivo e condição de saída, e uso não declarado (ou declaração morta) reprova.
 - **`erp.next_code` e o `insert` rodam na MESMA transação** (`runService` → `withTx`). Uma violação de
-  unicidade desfaz o incremento do contador junto, então a tentativa seguinte aloca o MESMO número: onde
-  colisão é possível, a alocação precisa de laço que pule código ocupado — não de "tentar de novo". É o
-  que `codigoDeMovimento`/`uniqueCode` fazem em `apps/api/src/routes/livestock.ts`.
+  unicidade desfaz o incremento do contador junto, então a tentativa seguinte aloca o MESMO número —
+  travamento, não ruído, e "tentar de novo" nunca sai dele. O que fecha a colisão é a SERIALIZAÇÃO: como
+  `erp.next_code` é `insert ... on conflict do update`, a linha do contador é travada e as transações
+  entram em fila nela. Por isso a resposta é as rotas concorrentes pedirem a MESMA chave, e não cada uma
+  a sua. Onde o namespace admite código ocupado por outra origem, `uniqueCode`
+  (`apps/api/src/routes/livestock.ts`, `animal_handlings`) pula o que já existe.
 
 ## Operação
 - Aplicar: `DATABASE_URL=… pnpm db:migrate` (ou `node apps/api/dist/migrate.js` no pre-deploy do Railway).

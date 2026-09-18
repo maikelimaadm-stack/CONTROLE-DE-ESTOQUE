@@ -86,9 +86,10 @@ beforeAll(async () => {
 
   // 9. A CHAVE SOBRECARREGADA. `erp.animal_movements` numerava com a MESMA chave legada — e ela tem
   //    namespace PRÓPRIO (`unique (organization_id, movement_type, code)`). Aqui a organização tem
-  //    acervo das DUAS tabelas e o contador legado à frente de ambos: é o estado em que um alias
-  //    ingênuo levaria a numeração do rebanho para o contador de estoque e apagaria a linha que era o
-  //    contador do rebanho.
+  //    acervo das DUAS tabelas e o contador legado à frente de ambos. Levar a numeração do rebanho ao
+  //    contador canônico é o DESENHO (é o que o alias faz, de propósito); o perigo aqui é outro, e é o
+  //    que este cenário mede: um baseline que olhasse só `erp.warehouse_transfers` nasceria ABAIXO do
+  //    acervo de rebanho, e a primeira transferência de rebanho colidiria.
   await contador(db, org["chave-compartilhada"].orgId, LEGADA, 40);
   await transferenciaComCodigo(db, org["chave-compartilhada"], "0038", "farm");
   await movimentoDeRebanhoComCodigo(db, org["chave-compartilhada"], "00039");
