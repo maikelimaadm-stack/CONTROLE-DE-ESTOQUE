@@ -18,6 +18,11 @@ test("solicitação de compra percorre o fluxo até aguardando compra", async ({
     await expect(page.getByText(status, { exact: true }).first()).toBeVisible();
   }
   await expect(page.getByText("Aguardando a compra").first()).toBeVisible();
-  await page.getByRole("tab", { name: /Histórico/ }).click();
-  await expect(page.locator("tbody tr")).toHaveCount(5);
+  await page.getByRole("tab", { name: /Histórico do processo/ }).click();
+  // O recorte é o PAINEL da aba, não a página: na BASE2-03A a tabela de Itens saiu das abas e
+  // virou `Base2Section` permanente, então `tbody tr` da página inteira deixou de significar
+  // "linhas do histórico" — passou a somar o item. Contar dentro do painel é mais estrito, não
+  // mais frouxo: uma linha a mais no histórico continua reprovando, e agora uma linha de outra
+  // superfície não pode mais compensar uma linha de histórico que sumiu.
+  await expect(page.getByRole("tabpanel").locator("tbody tr")).toHaveCount(5);
 });
