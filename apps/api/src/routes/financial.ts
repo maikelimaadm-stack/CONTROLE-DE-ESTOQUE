@@ -70,8 +70,27 @@ async function listTitles(ctx: ServiceCtx, direction: "payable" | "receivable", 
   const today = todayISO();
   return paginaComIdGlobal(ctx, "financial_titles", { items: r.rows.map((x) => ({ ...(x as Record<string, unknown>), status_label: displayTitleStatus({ status: (x as { status: TitleStatus }).status, dueDate: (x as { due_date: string }).due_date, paymentType: (x as { payment_type: string }).payment_type }, today) })), total: Number(tot.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { amount: tot.rows[0]!.amount, balance: tot.rows[0]!.balance, paid: tot.rows[0]!.paid } });
 }
-async function getTitle(ctx: ServiceCtx, id: string) {
-  const r = await ctx.tx.query("select t.*, p.name as person_name, p.document as person_document, pr.name as proprietary_name, tt.name as title_type_name, f.name as empresa_name, h.description as harvest_name, u.name as created_by_name from erp.financial_titles t left join erp.people p on p.id=t.person_id left join erp.people pr on pr.id=t.proprietary_id left join erp.title_types tt on tt.id=t.title_type_id join erp.empresas f on f.id=t.empresa_id left join erp.harvests h on h.id=t.harvest_id left join erp.users u on u.id=t.created_by where t.id=$1 and t.organization_id=$2 and t.deleted_at is null" + scopedById(ctx, "t", id).sql, scopedById(ctx, "t", id).params);
+/**
+ * FRONTEIRA DE VARIANTE — `direction` FAZ PARTE DA AUTORIZAÇÃO, NÃO É FILTRO DE CONVENIÊNCIA.
+ *
+ * `erp.financial_titles` é UMA tabela com DUAS variantes, e cada variante tem a sua própria família
+ * de capacidades (`payables.*` × `receivables.*`). A capacidade da ROTA não substitui a variante do
+ * REGISTRO: quem tem `receivables.view` não pode ler um pagável só porque pediu o UUID dele pela rota
+ * de recebíveis. Autorização efetiva = CAPACIDADE DA ROTA ∧ DIRECTION DO REGISTRO ∧ TENANT ∧ ESCOPO
+ * DE EMPRESA, combinadas com AND.
+ *
+ * Por isso `expectedDirection` é OBRIGATÓRIO e entra no `where`, não numa conferência posterior:
+ * conferir depois de ler já teria lido. Variante errada responde a MESMA 404 de inexistente — não
+ * revela que o UUID existe na variante vizinha, nem redireciona para ela.
+ *
+ * Os placeholders são montados aqui em vez de por `scopedById` porque aquele helper fixa
+ * `params=[id, org]` e constrói o escopo a partir de `$3`; acrescentar a direction por fora colidiria
+ * com o primeiro placeholder do escopo. O helper global não muda por causa deste caso.
+ */
+async function getTitle(ctx: ServiceCtx, id: string, expectedDirection: "payable" | "receivable") {
+  const params: unknown[] = [id, ctx.orgId, expectedDirection];
+  const escopo = empresaScopeSql(ctx, "t", params);
+  const r = await ctx.tx.query("select t.*, p.name as person_name, p.document as person_document, pr.name as proprietary_name, tt.name as title_type_name, f.name as empresa_name, h.description as harvest_name, u.name as created_by_name from erp.financial_titles t left join erp.people p on p.id=t.person_id left join erp.people pr on pr.id=t.proprietary_id left join erp.title_types tt on tt.id=t.title_type_id join erp.empresas f on f.id=t.empresa_id left join erp.harvests h on h.id=t.harvest_id left join erp.users u on u.id=t.created_by where t.id=$1 and t.organization_id=$2 and t.direction=$3 and t.deleted_at is null" + escopo, params);
   if (!r.rows[0]) throw notFound("Título");
   const t = r.rows[0] as Record<string, unknown> & { status: TitleStatus; due_date: string; payment_type: string; group_id: string | null; empresa_name: string; number: string; code: string; person_name: string | null; amount: string; net_amount: string; note: string };
   const app_ = await ctx.tx.query("select a.*, fc.code as category_code, fc.name as category_name, cc.name as cost_center_name, ca.description as chart_account_name, ar.name as area_name, h.description as harvest_name from erp.title_apportionments a join erp.financial_categories fc on fc.id=a.financial_category_id join erp.cost_centers cc on cc.id=a.cost_center_id left join erp.chart_accounts ca on ca.id=a.chart_account_id left join erp.areas ar on ar.id=a.area_id left join erp.harvests h on h.id=a.harvest_id where a.title_id=$1", [id]);
@@ -86,7 +105,7 @@ export default async function financialRoutes(app: FastifyInstance) {
   for (const dir of ["payable", "receivable"] as const) {
     const base = dir === "payable" ? "/financial/payables" : "/financial/receivables";
     app.get(base, async (req) => runService(app, req, permOf(dir, "view"), (ctx) => listTitles(ctx, dir, req.query as Record<string, unknown>)));
-    app.get(`${base}/:id`, async (req) => runService(app, req, permOf(dir, "view"), (ctx) => getTitle(ctx, (req.params as { id: string }).id)));
+    app.get(`${base}/:id`, async (req) => runService(app, req, permOf(dir, "view"), (ctx) => getTitle(ctx, (req.params as { id: string }).id, dir)));
     app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "create"), async (ctx) => {
       const d = titleSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
       if (dir === "receivable" && !d.person_id) throw validation("Cliente obrigatório"); if (dir === "payable" && !d.person_id) throw validation("Fornecedor obrigatório");
@@ -99,7 +118,7 @@ export default async function financialRoutes(app: FastifyInstance) {
           for (const [i, due] of dates.entries()) { const c = await createTitles(ctx, { ...mapTitle(d, dir), number: `${d.number}-${i + 1}`, dueDate: due, apportionment: lines, plan: null }); ids.push(...c.ids); await ctx.tx.query("update erp.financial_titles set group_id=$2, installment_number=$3, installment_count=$4 where id=$1", [c.ids[0], groupId, i + 1, dates.length]); }
         } else { const c = await createTitles(ctx, { ...mapTitle(d, dir), apportionment: lines, plan: d.plan ?? null }); ids.push(...c.ids); }
         if (d.appropriations?.length) for (const a of d.appropriations) await ctx.tx.query("insert into erp.title_appropriations(title_id,kind,target,amount) values ($1,$2,$3,$4)", [ids[0], a.kind, JSON.stringify(a.target), money(a.amount)]);
-        if (d.auto_settle) for (const id of ids) await settle(ctx, id, { settlement_date: d.auto_settle.date, settlement_kind: "bank_movement", bank_account_id: d.auto_settle.bank_account_id, amount: (await ctx.tx.query<{ b: string }>("select balance b from erp.financial_titles where id=$1", [id])).rows[0]!.b, movement_mode: "separate" });
+        if (d.auto_settle) for (const id of ids) await settle(ctx, id, dir, { settlement_date: d.auto_settle.date, settlement_kind: "bank_movement", bank_account_id: d.auto_settle.bank_account_id, amount: (await ctx.tx.query<{ b: string }>("select balance b from erp.financial_titles where id=$1", [id])).rows[0]!.b, movement_mode: "separate" });
         await audit(ctx.tx, ctx, "financial_titles", ids[0]!, "create", { count: ids.length });
         return { ids, id: ids[0] };
       })).result;
@@ -121,7 +140,7 @@ export default async function financialRoutes(app: FastifyInstance) {
       }
       await ctx.tx.query("select erp.refresh_title_status($1)", [id]);
       await audit(ctx.tx, ctx, "financial_titles", id, "update");
-      return getTitle(ctx, id);
+      return getTitle(ctx, id, dir);
     }));
     app.post(`${base}/:id/cancel`, async (req) => runService(app, req, permOf(dir, "delete"), async (ctx) => {
       const { id } = req.params as { id: string };
@@ -134,39 +153,46 @@ export default async function financialRoutes(app: FastifyInstance) {
     }));
     app.post(`${base}/cancel-batch`, async (req) => runService(app, req, permOf(dir, "delete"), async (ctx) => { const d = z.object({ ids: z.array(uuid).min(1) }).parse(req.body); let n = 0; for (const id of d.ids) { const bp: unknown[] = [id, ctx.orgId, dir]; const r = await ctx.tx.query("update erp.financial_titles set status='cancelled', version=version+1 where id=$1 and organization_id=$2 and direction=$3 and status<>'cancelled' and paid_amount=0" + empresaScopeSql(ctx, "empresa_id", bp), bp); n += r.rowCount ?? 0; } return { cancelled: n, skipped: d.ids.length - n }; }));
     app.post(`${base}/:id/duplicate`, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "duplicate"), async (ctx) => {
-      const { id } = req.params as { id: string }; const t = await getTitle(ctx, id) as Record<string, unknown> & { apportionments: { financial_category_id: string; cost_center_id: string; chart_account_id: string | null; harvest_id: string | null; area_id: string | null; percentage: string }[] };
+      const { id } = req.params as { id: string }; const t = await getTitle(ctx, id, dir) as Record<string, unknown> & { apportionments: { financial_category_id: string; cost_center_id: string; chart_account_id: string | null; harvest_id: string | null; area_id: string | null; percentage: string }[] };
       const c = await createTitles(ctx, { empresaId: t.empresa_id as string, direction: dir, number: `${t.number}-C`, titleTypeId: t.title_type_id as string | null, personId: t.person_id as string | null, proprietaryId: t.proprietary_id as string | null, classification: t.classification as "unclassified", documentType: t.document_type as string | null, isDeductible: t.is_deductible as boolean, isTax: t.is_tax as boolean, amount: t.amount as string, discount: t.discount as string, emissionDate: todayISO(), dueDate: t.due_date as string, note: t.note as string, harvestId: t.harvest_id as string | null, apportionment: t.apportionments.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id, harvestId: a.harvest_id, areaId: a.area_id, percentage: a.percentage })) });
       return { id: c.ids[0] };
     })));
     // Baixa (individual ou em lote: "Baixar Contas")
     const settleSchema = z.object({ settlement_date: date, settlement_kind: z.enum(["bank_movement", "cross_settlement", "advance_compensation"]).default("bank_movement"), bank_account_id: uuid.optional().nullable(), cross_title_id: uuid.optional().nullable(), amount: dec, discount: dec.default("0"), penalty: dec.default("0"), interest: dec.default("0"), increase: dec.default("0"), foreign_amount: dec.optional().nullable(), ptax_rate: dec.optional().nullable(), exchange_adjustment: dec.default("0"), note: z.string().optional().nullable(), movement_mode: z.enum(["separate", "single"]).default("separate") });
-    app.post(`${base}/:id/settle`, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "settle"), async (ctx) => { const { id } = req.params as { id: string }; const d = settleSchema.parse(req.body); return (await idempotent(ctx.tx, ctx.orgId, idem(req), { id, ...d }, () => settle(ctx, id, d))).result; })));
+    app.post(`${base}/:id/settle`, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "settle"), async (ctx) => { const { id } = req.params as { id: string }; const d = settleSchema.parse(req.body); return (await idempotent(ctx.tx, ctx.orgId, idem(req), { id, ...d }, () => settle(ctx, id, dir, d))).result; })));
     app.post(`${base}/settle-batch`, async (req, reply) => reply.status(201).send(await runService(app, req, permOf(dir, "settle"), async (ctx) => {
       const d = z.object({ ids: z.array(uuid).min(1), settlement_date: date, bank_account_id: uuid, movement_mode: z.enum(["separate", "single"]).default("separate"), note: z.string().optional().nullable() }).parse(req.body);
       return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
         const results = []; let sharedMovement: string | null = null; let total = D(0);
-        for (const id of d.ids) { const bal = (await ctx.tx.query<{ balance: string; direction: string; empresa_id: string; number: string }>("select balance, direction, empresa_id, number from erp.financial_titles where id=$1 and organization_id=$2 and status in ('open','partially_paid') for update", [id, ctx.orgId])).rows[0]; if (!bal || !empresaPermitida(ctx, bal.empresa_id)) continue; total = total.plus(bal.balance); }
+        for (const id of d.ids) { const bal = (await ctx.tx.query<{ balance: string; direction: string; empresa_id: string; number: string }>("select balance, direction, empresa_id, number from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and status in ('open','partially_paid') for update", [id, ctx.orgId, dir])).rows[0]; if (!bal || !empresaPermitida(ctx, bal.empresa_id)) continue; total = total.plus(bal.balance); }
         if (d.movement_mode === "single" && total.gt(0)) sharedMovement = await createBankMovement(ctx, { empresaId: ctx.empresaId, bankAccountId: d.bank_account_id, date: d.settlement_date, type: dir === "payable" ? "out" : "in", amount: money(total), note: d.note ?? `Baixa em lote de ${d.ids.length} títulos`, sourceType: "title_settlement_batch", sourceId: d.ids[0] });
-        for (const id of d.ids) { const bal = (await ctx.tx.query<{ balance: string }>("select balance from erp.financial_titles where id=$1 and status in ('open','partially_paid')", [id])).rows[0]; if (!bal) continue; results.push(await settle(ctx, id, { settlement_date: d.settlement_date, settlement_kind: "bank_movement", bank_account_id: d.bank_account_id, amount: bal.balance, note: d.note ?? null, movement_mode: d.movement_mode, shared_movement_id: sharedMovement })); }
+        for (const id of d.ids) { const bal = (await ctx.tx.query<{ balance: string }>("select balance from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and status in ('open','partially_paid')", [id, ctx.orgId, dir])).rows[0]; if (!bal) continue; results.push(await settle(ctx, id, dir, { settlement_date: d.settlement_date, settlement_kind: "bank_movement", bank_account_id: d.bank_account_id, amount: bal.balance, note: d.note ?? null, movement_mode: d.movement_mode, shared_movement_id: sharedMovement })); }
         return { settled: results.length, total: money(total), items: results };
       })).result;
     })));
     app.post(`${base}/:id/settlements/:sid/cancel`, async (req) => runService(app, req, permOf(dir, "cancel_settlement"), async (ctx) => {
       const { id, sid } = req.params as { id: string; sid: string }; const d = z.object({ reason: z.string().min(1) }).parse(req.body);
+      // FRONTEIRA DE VARIANTE: o TÍTULO é provado ANTES de olhar a baixa. Descobrir a direction depois
+      // seria descobrir depois de já ter lido a baixa — e a ordem antiga chegava a `for update` numa linha
+      // que esta rota não tinha o direito de tocar. Variante errada devolve a MESMA 404 de baixa
+      // inexistente: não revela que o título existe na variante vizinha.
+      const t = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and deleted_at is null", [id, ctx.orgId, dir]);
+      if (!t.rows[0]) throw notFound("Baixa");
+      await exigirEmpresaVisivel(ctx, t.rows[0].empresa_id, "Título");
       const s = await ctx.tx.query<{ status: string; bank_movement_id: string | null; settlement_date: string; cross_title_id: string | null; amount: string }>("select status, bank_movement_id, settlement_date, cross_title_id, amount from erp.title_settlements where id=$1 and title_id=$2 and organization_id=$3 for update", [sid, id, ctx.orgId]);
       if (!s.rows[0]) throw notFound("Baixa"); if (s.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Baixa já cancelada");
-      const t = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.financial_titles where id=$1", [id]); await exigirEmpresaVisivel(ctx, t.rows[0]!.empresa_id, "Título"); await assertPeriodOpen(ctx.tx, ctx.orgId, t.rows[0]!.empresa_id, s.rows[0].settlement_date);
+      await assertPeriodOpen(ctx.tx, ctx.orgId, t.rows[0].empresa_id, s.rows[0].settlement_date);
       await ctx.tx.query("update erp.title_settlements set status='cancelled', cancelled_at=now(), cancelled_by=$2, cancel_reason=$3 where id=$1", [sid, ctx.user.id, d.reason]);
       if (s.rows[0].bank_movement_id) { const shared = await ctx.tx.query<{ n: string }>("select count(*) n from erp.title_settlements where bank_movement_id=$1 and status='confirmed'", [s.rows[0].bank_movement_id]); if (Number(shared.rows[0]!.n) === 0) await ctx.tx.query("update erp.bank_movements set status='cancelled' where id=$1", [s.rows[0].bank_movement_id]); else throw err("CONFLICT", "Movimento bancário compartilhado com outras baixas: cancele todas ou lance ajuste"); }
       if (s.rows[0].cross_title_id) await ctx.tx.query("update erp.title_settlements set status='cancelled', cancelled_at=now(), cancelled_by=$2, cancel_reason=$3 where title_id=$1 and cross_title_id=$4 and status='confirmed'", [s.rows[0].cross_title_id, ctx.user.id, d.reason, id]);
       await audit(ctx.tx, ctx, "title_settlements", sid, "cancel", d);
-      return getTitle(ctx, id);
+      return getTitle(ctx, id, dir);
     }));
-    app.get(`${base}/:id/receipt`, async (req) => runService(app, req, permOf(dir, "receipt"), async (ctx) => { const t = await getTitle(ctx, (req.params as { id: string }).id); return { title: t, receipt_text: `RECIBO — ${t.empresa_name}\nTítulo ${t.number} (${t.code})\n${dir === "payable" ? "Pago a" : "Recebido de"}: ${t.person_name ?? "-"}\nValor: R$ ${t.amount} (líquido R$ ${t.net_amount})\nBaixas: ${(t.settlements as { settlement_date: string; net_amount: string }[]).filter(Boolean).map((s) => `${s.settlement_date}: R$ ${s.net_amount}`).join("; ") || "nenhuma"}\nHistórico: ${t.note}` }; }));
+    app.get(`${base}/:id/receipt`, async (req) => runService(app, req, permOf(dir, "receipt"), async (ctx) => { const t = await getTitle(ctx, (req.params as { id: string }).id, dir); return { title: t, receipt_text: `RECIBO — ${t.empresa_name}\nTítulo ${t.number} (${t.code})\n${dir === "payable" ? "Pago a" : "Recebido de"}: ${t.person_name ?? "-"}\nValor: R$ ${t.amount} (líquido R$ ${t.net_amount})\nBaixas: ${(t.settlements as { settlement_date: string; net_amount: string }[]).filter(Boolean).map((s) => `${s.settlement_date}: R$ ${s.net_amount}`).join("; ") || "nenhuma"}\nHistórico: ${t.note}` }; }));
   }
 
-  async function settle(ctx: ServiceCtx, titleId: string, d: { settlement_date: string; settlement_kind: "bank_movement" | "cross_settlement" | "advance_compensation"; bank_account_id?: string | null; cross_title_id?: string | null; amount: string; discount?: string; penalty?: string; interest?: string; increase?: string; foreign_amount?: string | null; ptax_rate?: string | null; exchange_adjustment?: string; note?: string | null; movement_mode: "separate" | "single"; shared_movement_id?: string | null }) {
-    const t = await ctx.tx.query<{ direction: "payable" | "receivable"; balance: string; status: string; empresa_id: string; number: string; person_id: string | null; proprietary_id: string | null; harvest_id: string | null; is_deductible: boolean }>("select direction, balance, status, empresa_id, number, person_id, proprietary_id, harvest_id, is_deductible from erp.financial_titles where id=$1 and organization_id=$2 and deleted_at is null for update", [titleId, ctx.orgId]);
+  async function settle(ctx: ServiceCtx, titleId: string, expectedDirection: "payable" | "receivable", d: { settlement_date: string; settlement_kind: "bank_movement" | "cross_settlement" | "advance_compensation"; bank_account_id?: string | null; cross_title_id?: string | null; amount: string; discount?: string; penalty?: string; interest?: string; increase?: string; foreign_amount?: string | null; ptax_rate?: string | null; exchange_adjustment?: string; note?: string | null; movement_mode: "separate" | "single"; shared_movement_id?: string | null }) {
+    const t = await ctx.tx.query<{ direction: "payable" | "receivable"; balance: string; status: string; empresa_id: string; number: string; person_id: string | null; proprietary_id: string | null; harvest_id: string | null; is_deductible: boolean }>("select direction, balance, status, empresa_id, number, person_id, proprietary_id, harvest_id, is_deductible from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and deleted_at is null for update", [titleId, ctx.orgId, expectedDirection]);
     const title = t.rows[0]; if (!title) throw notFound("Título"); await exigirEmpresaVisivel(ctx, title.empresa_id, "Título"); if (title.status === "cancelled") throw err("ALREADY_CANCELLED", "Título cancelado"); if (title.status === "paid") throw err("ALREADY_CONFIRMED", "Título já baixado");
     await assertPeriodOpen(ctx.tx, ctx.orgId, title.empresa_id, d.settlement_date);
     const input = { amount: d.amount, discount: d.discount ?? "0", penalty: d.penalty ?? "0", interest: d.interest ?? "0", increase: d.increase ?? "0", exchangeAdjustment: d.exchange_adjustment ?? "0" };

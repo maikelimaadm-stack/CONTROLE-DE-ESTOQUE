@@ -14,8 +14,24 @@
 | 5 | **PRE-BASE2-05** — Contexto multiempresa | Seletor "todas / uma / conjunto", filtros e painéis consolidados, seleção obrigatória no lançamento, seletor de idioma. ✅ **CONCLUÍDA EM PRODUÇÃO**: cutover 05C-2 executado em 16/09/2026 (merge `935f9dc`; `0018` no ledger uma única vez; `entity='farm'` = 0 e `entity='empresa'` = 1, `last_value` preservado), e encerramento documental feito — runbook, `DEPLOYMENT.md` e roteiro de aposentadoria registram a execução | 02, 03 |
 | 6 | **BASE2-01** — Moldura de lançamento | Shell oficial do Modelo Base 2 (cabeçalho, dados principais × itens, totais, histórico, **anexos**, ações). Contrato em `MODELO-BASE2-CONTRACT.md`; implementação em `apps/web/src/features/base2/`; piloto no detalhe de documento de estoque. ✅ **CONCLUÍDA / IMPLANTADA EM PRODUÇÃO** — merge `9615560`. ANEXOS: entregues com suporte inicial real — `Base2Shell` integra o `AttachmentsDialog` oficial e `input_entries` foi habilitada em `ATTACHMENT_PARENTS`, com a matriz de autorização provada em integração. As outras seis entidades entram uma a uma, conforme o backend as aceite | 05 |
 | 7 | **BASE2-02** — TOP | Registry e contrato inicial de Tipo de Operação; nenhuma regra de negócio fundida. ✅ **CONCLUÍDA / IMPLANTADA EM PRODUÇÃO** — merge `dd6e0e0` (PR #39, ancestral de `origin/main`, verificável por `git merge-base --is-ancestor`), CI de push verde nos quatro jobs (run 35258298588) e implantação relatada pelo Maike na abertura deste hotfix: Vercel, Railway web e Railway API com SUCCESS. Este último item é declaração operacional, não verificação feita daqui — a sessão não tem acesso autenticado a produção. Registry canônico em `packages/domain/src/tipo-operacao.ts`, contrato em `docs/TIPO-OPERACAO-CONTRACT.md`, rótulos no catálogo pt-BR e identidade visível nas sete rotas do piloto. CLASSIFICAR ≠ EXECUTAR: nenhuma regra de negócio mudou de dono. A dívida que ela DECLAROU (numeração de `erp.warehouse_transfers`) é o hotfix da linha abaixo. | 06 |
-| 8 | **BASE2-03+** — Migração dos módulos | Compras, Estoque, Financeiro, Vendas e demais migrados progressivamente para o Base 2. ✅ **LIBERADA / EM EXECUÇÃO PROGRESSIVA**: a única precondição pendente era o HOTFIX de numeração de `erp.warehouse_transfers`, hoje mesclado (`ca74c56`, PR #40) e certificado no ambiente real (ver a seção abaixo). A migração é POR ENTIDADE, não por módulo inteiro: a primeira fatia é a **BASE2-03A — Compras / Solicitação de Compra** (`erp.purchase_requests`, rota `/suprimentos/view/:id`). | 07 + HOTFIX ✅ |
+| 8 | **BASE2-03+** — Migração dos módulos | Compras, Estoque, Financeiro, Vendas e demais migrados progressivamente para o Base 2. ✅ **LIBERADA / EM EXECUÇÃO PROGRESSIVA**: a única precondição pendente era o HOTFIX de numeração de `erp.warehouse_transfers`, hoje mesclado (`ca74c56`, PR #40) e certificado no ambiente real (ver a seção abaixo). A migração é POR ENTIDADE, não por módulo inteiro — o estado de cada fatia fica na seção "BASE2-03+ — fatias" logo abaixo, e não nesta linha: a linha declara o estado da FASE, e uma fase que acumulasse o estado de cada fatia passaria a declarar vários estados ao mesmo tempo. | 07 + HOTFIX ✅ |
 | 9 | **DATA-GOV** — Governança de dados | Nomenclatura final, dicionário com cobertura certificada, rótulos de enum por i18n. | 03, 08 |
+
+### BASE2-03+ — fatias
+
+A fase é LIBERADA; cada FATIA tem o seu próprio estado, e é aqui que ele mora. Uma fatia só conta como
+implantada com o artefato EXATO em produção — merge, CI do merge, deployments no mesmo commit e ledger
+conferido —, nunca com "a PR foi mesclada".
+
+| Fatia | Entidade · rotas | Estado | Evidência |
+|---|---|---|---|
+| **BASE2-03A** — Compras / Solicitação de Compra | `erp.purchase_requests` · `/suprimentos/view/:id` | ✅ **CLOSED / IMPLANTADA EM PRODUÇÃO** | merge `57c97ef` (PR #41) · CI do merge **4/4 SUCCESS** (run `35340969500`) · Railway API `53ccee7b-2d01-4ce3-9e45-2ce0b3cdec36` e WEB `c82a3e3f-f079-4f18-ab8a-32d1391bc793`, ambos SUCCESS no commit do merge · ledger inalterado (19 migrations, última `0019`, `0019` 1×, zero `0020+`) porque a fatia não traz migration · `/health` 200 com `db: ok` |
+| **BASE2-03B** — Financeiro / Títulos Financeiros | `erp.financial_titles` · `/financeiro/contas-a-pagar/:id` e `/financeiro/contas-a-receber/:id` | 🟡 **EM PR** | DUAS variantes da MESMA entidade (`direction` = `payable` / `receivable`), uma fatia só. Zero migration. |
+
+**PENDING declarado da BASE2-03A.** O smoke autenticado de UI em produção não foi executado: a sessão não
+tem credencial de produção, e gate que exige acesso autenticado não se substitui por preview, `localhost`
+nem E2E. A prova funcional que sustenta o CLOSED é o E2E do COMMIT DE MERGE (105 testes, run
+`35340969500`), somada ao artefato exato implantado e ao ledger conferido em leitura.
 
 ### HOTFIX obrigatório antes da BASE2-03 — numeração de `erp.warehouse_transfers` · ✅ CLOSED / IMPLANTADO EM PRODUÇÃO
 
