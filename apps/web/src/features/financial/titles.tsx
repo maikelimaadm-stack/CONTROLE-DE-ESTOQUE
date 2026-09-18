@@ -5,12 +5,15 @@ import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, qs, download } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { brl, num, dateBR, dateTimeBR, todayISO } from "@/lib/utils";
-import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Textarea, Tabs, Menu, Confirm, ErrorBox, Dialog, PageHeader, StatusBadge, Badge } from "@/components/ui";
+import { brl, num, dateBR, todayISO } from "@/lib/utils";
+import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect, Textarea, Tabs, Menu, Confirm, ErrorBox, Dialog, PageHeader, StatusBadge, Badge, TONE_BADGE, type BadgeTone, type StatusTone } from "@/components/ui";
 import { DataTable, colSpanAteColuna, colSpanAposColuna, type Column } from "@/components/ui/data-table";
 import { colunaIdGlobalTabela } from "@/features/listing/id-global-coluna";
 import { RefSelect } from "@/components/ui/ref-select";
-import { FilterBar, useFilters, ApportionmentEditor, toAppLines, PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, DetailShell, KV, SimpleTable, useDoc, LoadingOr, type Row, type AppLine, type Plan } from "@/features/docs/shared";
+import { FilterBar, useFilters, ApportionmentEditor, toAppLines, PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, SimpleTable, useDoc, LoadingOr, type Row, type AppLine, type Plan } from "@/features/docs/shared";
+import { Base2Shell, Base2Section, Base2Fields, Base2Items, type Base2Field, type Base2ItemColumn } from "@/features/base2";
+import { useTradutor } from "@/lib/i18n";
+import { tipoOperacaoDoRegistro } from "@agro/domain";
 import { ActionDialog, useAction } from "@/features/docs/actions";
 import { MoreVertical, Plus } from "lucide-react";
 import { COPY, enumLabel } from "@/lib/copy";
@@ -21,6 +24,17 @@ const STATUS_OPTS = [["open", "A vencer"], ["overdue", "Vencida"], ["partially_p
 const PAY_TYPES = [["single", "À vista"], ["installments", "Parcelado"], ["recurring", "Recorrente"], ["advance", "Adiantamento"], ["invoice_group", "Fatura"]];
 const DOC_TYPES = ["nfe", "cte", "nfse", "nfce", "danfe", "darf", "dare", "gru", "other"];
 export const titleTone = (s: string) => (s.includes("Baixad") ? "green" : s === "Vencida" ? "red" : s === "Cancelada" ? "slate" : s.includes("Parcial") ? "amber" : "blue");
+
+/**
+ * A MESMA regra visual de `titleTone`, no vocabulário do `StatusBadge`.
+ *
+ * Derivada de `TONE_BADGE` por INVERSÃO, não recopiada: um segundo mapa cor→tom divergiria do oficial
+ * na primeira cor nova, e divergiria em silêncio, porque as duas telas continuariam renderizando.
+ */
+const tomDaSituacao = (rotulo: string): StatusTone => {
+  const cor = titleTone(rotulo) as BadgeTone;
+  return (Object.entries(TONE_BADGE).find(([, badge]) => badge === cor)?.[0] as StatusTone | undefined) ?? "neutral";
+};
 
 export function TitleList({ dir, initialStatus }: { dir: Dir; initialStatus?: string }) {
   const c = dirCfg(dir); const { can } = useAuth(); const router = useRouter(); const qc = useQueryClient();
@@ -104,35 +118,126 @@ export function TitleForm({ dir, id }: { dir: Dir; id?: string }) {
   </CardBody></Card>;
 }
 
+/** Entidade como o servidor a nomeia — vale para o histórico oficial e para `ATTACHMENT_PARENTS`. */
+const ENTIDADE_TITULO = "financial_titles";
+
+/** Colunas do RATEIO. Fora do componente porque não dependem de nada dele — e assim não renascem a cada render. */
+const COLUNAS_RATEIO: Base2ItemColumn<Row>[] = [
+  { key: "category_code", label: "Código" },
+  { key: "category_name", label: "Categoria" },
+  { key: "cost_center_name", label: "Centro de Custo" },
+  { key: "chart_account_name", label: "Conta contábil" },
+  { key: "harvest_name", label: "Safra" },
+  { key: "percentage", label: "%", align: "right", render: (r) => num(r["percentage"] as string) },
+  { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }
+];
+
+/**
+ * DETALHE DO TÍTULO FINANCEIRO — MODELO BASE 2 (BASE2-03B).
+ *
+ * UMA entidade (`erp.financial_titles`), DUAS variantes (`direction`), duas rotas. A tela é a mesma
+ * porque o registro é o mesmo; o que muda é a identidade apresentada, e ela vem do REGISTRO.
+ *
+ * O QUE A MOLDURA PASSOU A DESENHAR: identidade (título + `code`), empresa do registro, situação,
+ * ações, histórico oficial e anexos oficiais. O que ela NÃO passou a decidir: liquidação,
+ * cancelamento, duplicação, recibo, parcelamento, rateio, cálculo, permissão ou transação — tudo isso
+ * continua no módulo e no servidor. Tela unificada ≠ regra de negócio unificada.
+ *
+ * SITUAÇÃO — POR QUE NÃO É `situacaoDominio="title_status"`. O rótulo exibido é `status_label`, que o
+ * servidor calcula com `displayTitleStatus` (packages/domain/src/financial.ts) a partir de status +
+ * VENCIMENTO + forma de pagamento. Um título `status='open'` vencido tem rótulo "Vencida", enquanto o
+ * enum cru traduzido daria "A vencer" — o oposto. Passar o enum aqui não seria simplificação: seria
+ * perder informação que o usuário usa para decidir. Por isso a situação chega como NÓ PRONTO, com o
+ * rótulo do servidor, e a moldura continua sem saber o que é um título vencido.
+ */
 export function TitleDetail({ dir, id }: { dir: Dir; id: string }) {
-  const c = dirCfg(dir); const { can } = useAuth();
+  const c = dirCfg(dir); const { can } = useAuth(); const tr = useTradutor();
   const q = useDoc<Row & { apportionments: Row[]; settlements: Row[]; installments: Row[]; attachments: Row[]; appropriations: Row[] }>(`${c.endpoint}/${id}`);
   const [settle, setSettle] = React.useState(false); const [cancelS, setCancelS] = React.useState<string | null>(null); const [receipt, setReceipt] = React.useState(false); const [cancel, setCancel] = React.useState(false);
   React.useEffect(() => { const p = new URLSearchParams(window.location.search); if (p.get("settle")) setSettle(true); if (p.get("receipt")) setReceipt(true); }, []);
   const act = useAction(() => { setSettle(false); setCancelS(null); setCancel(false); });
-  const d = q.data; const open = d && ["open", "partially_paid"].includes(String(d["status"]));
-  return <DetailShell title={`${c.title} — ${d?.["number"] ?? ""}`} back={c.base} actions={d && <>
-    {open && can(`${c.perm}.settle`) && <Button size="sm" onClick={() => setSettle(true)}>Baixar</Button>}
-    {d["status"] === "open" && can(`${c.perm}.edit`) && <Link href={`${c.base}/${id}/edit`}><Button size="sm" variant="outline">Editar</Button></Link>}
-    {can(`${c.perm}.receipt`) && <Button size="sm" variant="outline" onClick={() => setReceipt(true)}>Recibo</Button>}
-    {can(`${c.perm}.duplicate`) && <Button size="sm" variant="outline" onClick={() => act.mutate({ path: `${c.endpoint}/${id}/duplicate` })}>Duplicar</Button>}
-    {d["status"] !== "cancelled" && can(`${c.perm}.delete`) && <Button size="sm" variant="danger" onClick={() => setCancel(true)}>Cancelar</Button>}
-  </>}>
-    <LoadingOr q={q}>{d && <>
-      <div><Badge tone={titleTone(String(d["status_label"]))}>{String(d["status_label"])}</Badge></div>
-      <KV items={[["Código", String(d["code"])], ["Empresa", String(d["empresa_name"])], [c.person, String(d["person_name"] ?? "—")], ["Proprietário", String(d["proprietary_name"] ?? "—")], ["Emissão", dateBR(d["emission_date"] as string)], ["Vencimento", dateBR(d["due_date"] as string)], ["Valor", brl(d["amount"] as string)], ["Desconto", brl(d["discount"] as string)], ["Valor líquido", brl(d["net_amount"] as string)], ["Saldo", brl(d["balance"] as string)], ["Forma de pagamento", enumLabel("payment_type", d["payment_type"])], ["Parcela", d["installment_number"] ? `${d["installment_number"]}/${d["installment_count"]}` : "1/1"], ["Classificação", enumLabel("classification", d["classification"] ?? "unclassified")], ["Tipo de documento", d["document_type"] ? enumLabel("document_type", d["document_type"]) : "—"], ["Safra", String(d["harvest_name"] ?? "—")], ["Dedutível", d["is_deductible"] ? "Sim" : "Não"], ["Tributo", d["is_tax"] ? "Sim" : "Não"], ["Origem", d["source_type"] ? `${d["source_type"]}` : "Manual"], ["Criado por", String(d["created_by_name"] ?? "")], ["Versão", String(d["version"])], ["Observação", String(d["note"])]]} />
-      <Tabs tabs={[
-        { value: "app", label: "Rateio", content: <SimpleTable rows={d.apportionments} cols={[{ key: "category_code", label: "Código" }, { key: "category_name", label: "Categoria" }, { key: "cost_center_name", label: "Centro de Custo" }, { key: "chart_account_name", label: "Conta contábil" }, { key: "harvest_name", label: "Safra" }, { key: "percentage", label: "%", align: "right", render: (r) => num(r["percentage"] as string) }, { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }]} /> },
-        { value: "settlements", label: "Baixas", badge: d.settlements.length, content: <SimpleTable rows={d.settlements} cols={[{ key: "settlement_date", label: "Data", render: (r) => dateBR(r["settlement_date"] as string) }, { key: "settlement_kind", label: "Tipo", render: (r) => enumLabel("settlement_kind", r["settlement_kind"]) }, { key: "bank_account_name", label: "Conta" }, { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }, { key: "discount", label: "Desconto", align: "right", render: (r) => brl(r["discount"] as string) }, { key: "interest", label: "Juros", align: "right", render: (r) => brl(r["interest"] as string) }, { key: "penalty", label: "Multa", align: "right", render: (r) => brl(r["penalty"] as string) }, { key: "net_amount", label: "Líquido", align: "right", render: (r) => brl(r["net_amount"] as string) }, { key: "status", label: COPY.situacao, render: (r) => <StatusBadge domain="status" value={r["status"]} label={r["status"] === "confirmed" ? "Confirmada" : "Cancelada"} /> }, { key: "created_by_name", label: "Usuário" }, { key: "x", label: "", render: (r) => r["status"] === "confirmed" && can(`${c.perm}.cancel_settlement`) ? <Button size="sm" variant="ghost" onClick={() => setCancelS(String(r["id"]))}>Cancelar baixa</Button> : null }]} /> },
-        { value: "inst", label: "Parcelas", badge: d.installments.length, content: <SimpleTable rows={d.installments} cols={[{ key: "installment_number", label: "PC" }, { key: "code", label: "Código" }, { key: "number", label: "Documento" }, { key: "due_date", label: "Vencimento", render: (r) => dateBR(r["due_date"] as string) }, { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }, { key: "balance", label: "Saldo", align: "right", render: (r) => brl(r["balance"] as string) }, { key: "status", label: COPY.situacao, render: (r) => <Link className="text-brand-700 underline" href={`${c.base}/${r["id"]}`}>{enumLabel("title_status", r["status"])}</Link> }]} /> },
-        { value: "files", label: "Anexos", badge: d.attachments.length, content: <SimpleTable rows={d.attachments} cols={[{ key: "file_name", label: "Arquivo" }, { key: "description", label: "Descrição" }, { key: "created_at", label: "Enviado em", render: (r) => dateTimeBR(r["created_at"] as string) }]} /> }
-      ]} />
-    </>}</LoadingOr>
-    {d && <SettleDialog open={settle} onOpenChange={setSettle} dir={dir} title={d} act={act} />}
+  const d = q.data;
+  if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
+  const open = ["open", "partially_paid"].includes(String(d["status"]));
+
+  // A variante apresentada sai do REGISTRO (`direction`), não da rota. `dir` continua sendo a porta de
+  // navegação, endpoint e permissão — o que ele não pode ser é autoridade sobre o que o registro É.
+  const top = tipoOperacaoDoRegistro(`erp.${ENTIDADE_TITULO}`, d);
+  const titulo = d["direction"] === "payable" ? "Conta a pagar" : d["direction"] === "receivable" ? "Conta a receber" : c.title;
+
+  // O RÓTULO é o do servidor (`status_label`); o VALOR TÉCNICO é o status persistido. Os dois juntos,
+  // porque respondem a perguntas diferentes: o rótulo diz ao usuário que o título está VENCIDO, e o
+  // `data-status` diz à máquina que ele continua `open` — que é o que a API de fato guarda. Achatar um
+  // no outro perderia informação em qualquer direção que se escolhesse.
+  const situacao = <StatusBadge domain="title_status" value={String(d["status"])} label={String(d["status_label"])} tone={tomDaSituacao(String(d["status_label"]))} />;
+
+  const campos: Base2Field[] = [
+    { label: "Código", valor: String(d["code"]) },
+    { label: tr("termos.tipo_operacao"), valor: top ? tr(top.chaveI18n) : "", ocultarSeVazio: true },
+    { label: "Nº do documento", valor: String(d["number"] ?? "—") },
+    { label: c.person, valor: String(d["person_name"] ?? "—") },
+    { label: "Proprietário", valor: String(d["proprietary_name"] ?? "—") },
+    { label: "Emissão", valor: dateBR(d["emission_date"] as string), span: 2 },
+    { label: "Vencimento", valor: dateBR(d["due_date"] as string), span: 2 },
+    { label: "Valor", valor: brl(d["amount"] as string), span: 2 },
+    { label: "Desconto", valor: brl(d["discount"] as string), span: 2 },
+    { label: "Valor líquido", valor: brl(d["net_amount"] as string), span: 2 },
+    { label: "Saldo", valor: brl(d["balance"] as string), span: 2 },
+    { label: "Forma de pagamento", valor: enumLabel("payment_type", d["payment_type"]) },
+    { label: "Parcela", valor: d["installment_number"] ? `${d["installment_number"]}/${d["installment_count"]}` : "1/1", span: 2 },
+    { label: "Classificação", valor: enumLabel("classification", d["classification"] ?? "unclassified") },
+    { label: "Tipo de documento", valor: d["document_type"] ? enumLabel("document_type", d["document_type"]) : "—" },
+    { label: "Safra", valor: String(d["harvest_name"] ?? "—") },
+    { label: "Dedutível", valor: d["is_deductible"] ? "Sim" : "Não", span: 2 },
+    { label: "Tributo", valor: d["is_tax"] ? "Sim" : "Não", span: 2 },
+    { label: "Origem", valor: d["source_type"] ? String(d["source_type"]) : "Manual" },
+    { label: "Criado por", valor: String(d["created_by_name"] ?? "") },
+    { label: "Versão", valor: String(d["version"]), span: 2 },
+    { label: "Observação", valor: String(d["note"] ?? ""), span: 12, ocultarSeVazio: true }
+  ];
+
+  return <Base2Shell
+    titulo={titulo}
+    codigo={String(d["code"])}
+    situacao={situacao}
+    empresa={String(d["empresa_name"])}
+    voltarHref={c.base}
+    historico={{ entidade: ENTIDADE_TITULO, id }}
+    anexos={{ entidade: ENTIDADE_TITULO, id }}
+    acoes={<>
+      {open && can(`${c.perm}.settle`) && <Button size="sm" onClick={() => setSettle(true)}>Baixar</Button>}
+      {d["status"] === "open" && can(`${c.perm}.edit`) && <Link href={`${c.base}/${id}/edit`}><Button size="sm" variant="outline">Editar</Button></Link>}
+      {can(`${c.perm}.receipt`) && <Button size="sm" variant="outline" onClick={() => setReceipt(true)}>Recibo</Button>}
+      {can(`${c.perm}.duplicate`) && <Button size="sm" variant="outline" onClick={() => act.mutate({ path: `${c.endpoint}/${id}/duplicate` })}>Duplicar</Button>}
+      {d["status"] !== "cancelled" && can(`${c.perm}.delete`) && <Button size="sm" variant="danger" onClick={() => setCancel(true)}>Cancelar</Button>}
+    </>}
+  >
+    <Base2Fields campos={campos} />
+
+    {/* O RATEIO é a linha do lançamento, e sai das abas pelo mesmo motivo que os itens saíram na
+        BASE2-03A: é o que o título É, não uma superfície de processo. Valores vêm do servidor; a
+        moldura não totaliza — e `Base2Items` nem oferece rodapé de total. */}
+    <Base2Section titulo="Rateio" contagem={d.apportionments.length}>
+      <Base2Items
+        legenda={`Rateio d${d["direction"] === "payable" ? "a conta a pagar" : "a conta a receber"} ${String(d["code"] ?? "")}`}
+        colunas={COLUNAS_RATEIO}
+        linhas={d.apportionments}
+      />
+    </Base2Section>
+
+    {/* Baixas e Parcelas continuam em abas: são PROCESSO e RELACIONAMENTO do título, com ações e
+        navegação próprias. Converter as duas para `Base2Items` por simetria visual custaria a coluna
+        de ação ("Cancelar baixa") e o link entre parcelas. */}
+    <Tabs tabs={[
+      { value: "settlements", label: "Baixas", badge: d.settlements.length, content: <SimpleTable rows={d.settlements} cols={[{ key: "settlement_date", label: "Data", render: (r) => dateBR(r["settlement_date"] as string) }, { key: "settlement_kind", label: "Tipo", render: (r) => enumLabel("settlement_kind", r["settlement_kind"]) }, { key: "bank_account_name", label: "Conta" }, { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }, { key: "discount", label: "Desconto", align: "right", render: (r) => brl(r["discount"] as string) }, { key: "interest", label: "Juros", align: "right", render: (r) => brl(r["interest"] as string) }, { key: "penalty", label: "Multa", align: "right", render: (r) => brl(r["penalty"] as string) }, { key: "net_amount", label: "Líquido", align: "right", render: (r) => brl(r["net_amount"] as string) }, { key: "status", label: COPY.situacao, render: (r) => <StatusBadge domain="status" value={r["status"]} label={r["status"] === "confirmed" ? "Confirmada" : "Cancelada"} /> }, { key: "created_by_name", label: "Usuário" }, { key: "x", label: "", render: (r) => r["status"] === "confirmed" && can(`${c.perm}.cancel_settlement`) ? <Button size="sm" variant="ghost" onClick={() => setCancelS(String(r["id"]))}>Cancelar baixa</Button> : null }]} /> },
+      { value: "inst", label: "Parcelas", badge: d.installments.length, content: <SimpleTable rows={d.installments} cols={[{ key: "installment_number", label: "PC" }, { key: "code", label: "Código" }, { key: "number", label: "Documento" }, { key: "due_date", label: "Vencimento", render: (r) => dateBR(r["due_date"] as string) }, { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }, { key: "balance", label: "Saldo", align: "right", render: (r) => brl(r["balance"] as string) }, { key: "status", label: COPY.situacao, render: (r) => <Link className="text-brand-700 underline" href={`${c.base}/${r["id"]}`}>{enumLabel("title_status", r["status"])}</Link> }]} /> }
+    ]} />
+
+    <SettleDialog open={settle} onOpenChange={setSettle} dir={dir} title={d} act={act} />
     <ActionDialog open={Boolean(cancelS)} onOpenChange={() => setCancelS(null)} title="Cancelar baixa" text="O movimento bancário vinculado será estornado e o saldo do título restabelecido." danger loading={act.isPending} fields={[{ name: "reason", label: "Motivo", type: "textarea", required: true }]} onSubmit={(v) => act.mutate({ path: `${c.endpoint}/${id}/settlements/${cancelS}/cancel`, body: v })} />
     <ActionDialog open={cancel} onOpenChange={setCancel} title="Cancelar título" danger loading={act.isPending} fields={[{ name: "reason", label: "Motivo", type: "textarea", required: true }]} onSubmit={(v) => act.mutate({ path: `${c.endpoint}/${id}/cancel`, body: v })} />
     <ReceiptDialog open={receipt} onOpenChange={setReceipt} path={`${c.endpoint}/${id}/receipt`} />
-  </DetailShell>;
+  </Base2Shell>;
 }
 
 function SettleDialog({ open, onOpenChange, dir, title, act }: { open: boolean; onOpenChange: (o: boolean) => void; dir: Dir; title: Row; act: ReturnType<typeof useAction> }) {
