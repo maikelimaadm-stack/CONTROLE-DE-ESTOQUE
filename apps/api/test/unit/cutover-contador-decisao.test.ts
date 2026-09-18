@@ -553,4 +553,50 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     }
   });
 
+  /* ═══════════════════════════════════════════════════════════════════════════════════════════════
+   * COERÊNCIA DOCUMENTAL ENTRE FATIAS (HOTFIX pós-BASE2-03B, G-1 e G-3)
+   *
+   * A certificação pós-merge da BASE2-03B encontrou duas incoerências que nenhum gate pegava, porque
+   * documento não roda: (G-1) o roadmap dizia "EM PR" para uma fatia na ÁRVORE DO PRÓPRIO MERGE que a
+   * entregou; (G-3) três documentos afirmavam coisas incompatíveis sobre o estado ATUAL da PRE-BASE2-04.
+   *
+   * Isso importa porque o roadmap é o SSOT da ORDEM das fases: a fatia seguinte lê a precondição ali. Um
+   * estado velho não é detalhe editorial — é uma precondição errada esperando para ser obedecida.
+   * ═══════════════════════════════════════════════════════════════════════════════════════════════ */
+
+  it("T14 · o roadmap não pode declarar EM PR uma fatia que já está mesclada", () => {
+    const texto = fs.readFileSync(path.join(RAIZ, "docs/PRE-BASE2-ROADMAP.md"), "utf8");
+    const linhas = texto.split("\n").filter((l) => l.includes("**BASE2-03B**"));
+    expect(linhas.length, "linha da BASE2-03B sumiu do roadmap — não aprovo por ausência").toBe(1);
+    const linha = linhas[0]!;
+    // Ancorado no literal em NEGRITO: `/EM PR/` solto casa dentro de "EM PRODUÇÃO" e reprovaria
+    // justamente o estado correto. A primeira versão desta regra fazia isso.
+    expect(linha, "BASE2-03B foi mesclada em 475152b: o roadmap não pode voltar ao estado EM PR").not.toMatch(/\*\*EM PR\*\*/);
+    // Estado sem evidência é opinião. A linha tem de carregar o merge que sustenta a afirmação.
+    expect(linha, "estado CLOSED exige o SHA do merge na própria linha").toContain("475152b154dc689fef128ba8d033dfbc9f1b6c76");
+  });
+
+  it("T15 · os documentos não podem afirmar estados ATUAIS opostos sobre a PRE-BASE2-04", () => {
+    const ler = (rel: string) => fs.readFileSync(path.join(RAIZ, rel), "utf8").replace(/\s+/g, " ");
+    const roadmap = ler("docs/PRE-BASE2-ROADMAP.md");
+    const deployment = ler("docs/DEPLOYMENT.md");
+    const aposentadoria = ler("docs/PRE-BASE2-05-APOSENTADORIA.md");
+
+    // FATO MEDIDO em produção (18/09/2026): a migration 0016 está aplicada e `erp.registros_globais` tem
+    // 66 linhas. Logo "nenhuma fase foi disparada" é FALSO, e nenhum documento pode voltar a dizê-lo.
+    expect(deployment, "0016 está aplicada em produção: 'nenhuma fase foi disparada' é factualmente falso")
+      .not.toMatch(/nenhuma fase foi disparada/i);
+    expect(deployment, "a PR da PRE-BASE2-04 FOI mesclada (commit fceb4f2)")
+      .not.toMatch(/a PR da PRE-BASE2-04 não foi mesclada/i);
+
+    // A outra ponta: enquanto backfill/verify/smoke não forem provados, NENHUM documento pode afirmar
+    // ativação. O roadmap é a referência conservadora; os outros dois não podem contradizê-lo.
+    const roadmapDizPendente = /PRE-BASE2-04.{0,400}?ativação em produção PENDENTE/is.test(roadmap);
+    expect(roadmapDizPendente, "o roadmap deixou de manter a PRE-BASE2-04 como ativação PENDENTE").toBe(true);
+    for (const [nome, doc] of [["DEPLOYMENT.md", deployment], ["PRE-BASE2-05-APOSENTADORIA.md", aposentadoria]] as const) {
+      expect(doc, `${nome} afirma ATIVAÇÃO da PRE-BASE2-04 enquanto o roadmap a mantém PENDENTE — estados atuais opostos`)
+        .not.toMatch(/PRE-BASE2-04 ativada em produção/i);
+    }
+  });
+
 });

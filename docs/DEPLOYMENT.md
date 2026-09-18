@@ -469,8 +469,14 @@ ID Global: invariantes OK (zero elegível sem número, zero duplicidade, zero ó
 
 `organizações verificadas: 0` nunca aparece: o comando para antes.
 
-**Certificação — o que ainda NÃO aconteceu.** Nada disto foi executado em produção: a PR da PRE-BASE2-04 não
-foi mesclada e nenhuma fase foi disparada. O que está provado é o código, em ambiente de teste (banco novo,
+**Certificação — o que já aconteceu e o que ainda NÃO.** Até 18/09/2026 este parágrafo negava tanto o merge
+da PRE-BASE2-04 quanto o disparo de qualquer fase. As duas negações eram FALSAS e foram corrigidas: a
+migration `0016_global_id_activation.sql` entrou em `main` no commit `fceb4f2` e está APLICADA em produção
+(ledger medido: 19 migrations, `0016` exatamente 1×), e `erp.registros_globais` tem 66 linhas em 17 tipos de
+entidade — ou seja, a alocação está viva em produção. O que continua NÃO PROVADO, e é o que impede declarar a
+missão concluída: `faltando = 0` nunca foi medido em produção, `pnpm id-global:verify` nunca foi executado
+contra o acervo real, e o smoke de busca (`#N`, `ID N`) e do distintivo na tela nunca foi feito. Migration
+aplicada NÃO é ativação completa. O que está provado do resto é o código, em ambiente de teste (banco novo,
 banco de upgrade com acervo legado, reexecução com mapa idêntico, medição de desempenho). A missão só se
 considera concluída depois de, nesta ordem: **merge aprovado** → **fase 1** → **fase 2** → **fase 3 rodada
 até `faltando: 0`** → **`pnpm id-global:verify` verde** → **fase 4 com smoke real** (buscar `#N` e `ID N`,

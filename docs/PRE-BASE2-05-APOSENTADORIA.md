@@ -16,9 +16,17 @@ anterior estar em produção e comprovado**:
 
 | Fase | O que sai | O que continua | Pré-requisito |
 | --- | --- | --- | --- |
-| **05A — Cliente canônico** ✅ | o tradutor de fio do web; `X-Farm-Id` do navegador; leitura de apelido legado na resposta | API bilíngue · banco bilíngue | PRE-BASE2-04 ativada em produção |
+| **05A — Cliente canônico** ✅ | o tradutor de fio do web; `X-Farm-Id` do navegador; leitura de apelido legado na resposta | API bilíngue · banco bilíngue | PRE-BASE2-04 **implantada** (migration `0016` aplicada e runtime de alocação no ar) — ver nota abaixo |
 | **05B — Servidor canônico** ✅ | borda legada da API: cabeçalho, normalização de entrada, apelidos de saída, nomes legados de tabela, CORS, formato administrativo achatado, promoção de sessão | banco bilíngue | 05A em produção |
 | **05C — Purga física do schema** ✅ **CONCLUÍDA**, nas três fatias | 05C-0 instrumentos (mesclada) · 05C-1 as 52 colunas legadas, as 5 views, os 52 gatilhos e as 3 funções (**mesclada e aplicada em produção**) · 05C-2 o contador `entity='farm'` (**mesclada e aplicada em produção em 16/09/2026**) | — | 05B em produção |
+
+> **Nota de correção (18/09/2026).** Este pré-requisito afirmava ATIVAÇÃO da PRE-BASE2-04 em produção. Essa
+> palavra não se sustenta: o que está provado é a IMPLANTAÇÃO (migration `0016` aplicada em produção e
+> `erp.registros_globais` com 66 linhas em 17 tipos de entidade). O checkpoint de ATIVAÇÃO da PRE-BASE2-04 —
+> backfill até `faltando = 0`, `pnpm id-global:verify` verde e smoke real de `#N` / distintivo — continua
+> PENDENTE, como `docs/PRE-BASE2-ROADMAP.md` sempre manteve. A conclusão da 05A não é desfeita por esta
+> correção: o que a 05A precisava era do contrato canônico implantado, e isso aconteceu. O que se corrige
+> aqui é a AFIRMAÇÃO, não a história.
 
 **05A, 05B, 05C-1 e 05C-2 foram mescladas e publicadas.** A **PRE-BASE2-05 está CONCLUÍDA**: a migration
 `supabase/migrations/0018_empresa_code_sequence.sql` foi aplicada em produção em 16/09/2026 (merge

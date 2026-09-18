@@ -40,11 +40,11 @@ async function membro(nome: string, email: string, perms: string[]): Promise<Hdr
   return { authorization: `Bearer ${(login.json() as { token: string }).token}`, "x-org-id": h.demo.orgId };
 }
 
-async function criar(dir: "payable" | "receivable", numero: string, valor = "500.00"): Promise<string> {
+async function criar(dir: "payable" | "receivable", numero: string, valor = "500.00", empresaId?: string): Promise<string> {
   const r = await h.app.inject({
     method: "POST", url: `/api/financial/${dir}s`, headers: h.headers(),
     payload: {
-      empresa_id: I.empresa, number: numero, person_id: dir === "payable" ? I.provider : I.client,
+      empresa_id: empresaId ?? I.empresa, number: numero, person_id: dir === "payable" ? I.provider : I.client,
       amount: valor, emission_date: "2026-09-01", due_date: "2026-09-30", note: `Fronteira ${numero}`,
       apportionment: [{ financial_category_id: dir === "payable" ? I.category : I.incomeCategory, cost_center_id: I.costCenter, percentage: "100" }]
     }
@@ -71,7 +71,7 @@ async function totalDeTitulos(): Promise<number> {
 }
 
 let pagavel: string; let recebivel: string;
-let soPagavel: Hdr; let soRecebivel: Hdr;
+let soPagavel: Hdr; let soRecebivel: Hdr; let ambos: Hdr;
 
 beforeAll(async () => {
   h = await harness(); I = await ids(h);
@@ -79,6 +79,9 @@ beforeAll(async () => {
   recebivel = await criar("receivable", "FRONT-REC");
   soPagavel = await membro("Só pagáveis", "fronteira.pagavel@demo.local", todasAsCapacidades("payables"));
   soRecebivel = await membro("Só recebíveis", "fronteira.recebivel@demo.local", todasAsCapacidades("receivables"));
+  // Papel com AS DUAS famílias: é ele que prova que a recusa dos casos A/B/E vem da capacidade que
+  // FALTA, e não de outra coisa no caminho. Sem este par, um 403 não distinguiria as duas hipóteses.
+  ambos = await membro("Pagáveis e recebíveis", "fronteira.ambos@demo.local", [...todasAsCapacidades("payables"), ...todasAsCapacidades("receivables")]);
 }, 120_000);
 
 afterAll(async () => { await h.app.close(); await h.db.end(); });
@@ -232,5 +235,214 @@ describe("fronteira de variante: portas mutáveis", () => {
     expect(edit.statusCode, edit.body).toBe(404);
     const cancel = await h.app.inject({ method: "POST", url: `/api/financial/payables/${recebivel}/cancel`, headers: h.headers(), payload: {} });
     expect(cancel.statusCode, cancel.body).toBe(404);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * HOTFIX PÓS-BASE2-03B — BAIXA CRUZADA: A OPERAÇÃO COMPOSTA EXIGE AS DUAS CAPACIDADES
+ *
+ * A PR #42 fechou a fronteira da ROTA. A baixa cruzada escapava por dentro: ela grava, de propósito,
+ * uma linha de baixa no título da variante CONTRÁRIA — e exigia só a capacidade da rota. Quem tinha
+ * `payables.settle` gravava num recebível sem ter `receivables.settle`. O cancelamento tinha o mesmo
+ * furo, e ainda mutava antes de descobrir.
+ *
+ * O que estes casos travam: autorização composta ANTES da primeira mutação, período das DUAS empresas,
+ * trilha de auditoria dos DOIS lados, e identidade exata do espelho quando o mesmo par tem mais de uma
+ * baixa cruzada confirmada.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Baixas de um título, com status — o teste conta linhas, não confia na resposta da rota. */
+async function baixasDe(titleId: string): Promise<{ id: string; status: string; cross_title_id: string | null; nascido: string }[]> {
+  // `created_at` sai como TEXTO com microssegundos de propósito: o `Date` do driver só tem
+  // milissegundos, e comparar em JS esconderia justamente a diferença que amarra o espelho ao par.
+  const c = createPool(TEST_URL, { max: 1 });
+  try { return (await c.query<{ id: string; status: string; cross_title_id: string | null; nascido: string }>("select id, status, cross_title_id, created_at::text as nascido from erp.title_settlements where title_id=$1 order by created_at, id", [titleId])).rows; }
+  finally { await c.end(); }
+}
+
+async function congelar(empresaId: string, ano: number, mes: number): Promise<string> {
+  const c = createPool(TEST_URL, { max: 1 });
+  try {
+    return (await c.query<{ id: string }>("insert into erp.financial_freezes(organization_id,empresa_id,year,month,is_frozen) values ($1,$2,$3,$4,true) returning id", [h.demo.orgId, empresaId, ano, mes])).rows[0]!.id;
+  } finally { await c.end(); }
+}
+async function descongelar(freezeId: string): Promise<void> {
+  const c = createPool(TEST_URL, { max: 1 });
+  try { await c.query("delete from erp.financial_freezes where id=$1", [freezeId]); } finally { await c.end(); }
+}
+
+async function auditoriaDe(entityId: string, action: string): Promise<number> {
+  const c = createPool(TEST_URL, { max: 1 });
+  try { return Number((await c.query<{ n: string }>("select count(*) n from erp.audit_logs where entity='title_settlements' and entity_id=$1 and action=$2", [entityId, action])).rows[0]!.n); }
+  finally { await c.end(); }
+}
+
+/** Baixa cruzada pela porta real. `headers` decide QUEM está pedindo — é disso que o caso trata. */
+const cruzar = (rota: "payables" | "receivables", principal: string, contrario: string, headers: Hdr, valor: string, kind = "cross_settlement", data = "2026-09-20") =>
+  h.app.inject({ method: "POST", url: `/api/financial/${rota}/${principal}/settle`, headers, payload: { settlement_date: data, settlement_kind: kind, cross_title_id: contrario, amount: valor } });
+
+describe("baixa cruzada: autorização composta das duas variantes", () => {
+  it("A — PAYABLE-ONLY não grava no recebível contrário: recusa, e NENHUM dos dois títulos muda", async () => {
+    const p = await criar("payable", "CROSS-A-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-A-REC", "400.00");
+    const antesP = await estado(p); const antesR = await estado(r);
+
+    // O usuário TEM payables.settle (a rota o aceita). Quem nega é a capacidade da variante CONTRÁRIA.
+    const res = await cruzar("payables", p, r, soPagavel, "100.00");
+    expect(res.statusCode, res.body).toBe(403);
+    expect(j(res).error?.code).toBe("PERMISSION_DENIED");
+
+    expect(await estado(p), "título principal não pode ter sido tocado").toEqual(antesP);
+    expect(await estado(r), "título contrário não pode ter sido tocado").toEqual(antesR);
+    expect((await baixasDe(p)).length, "zero baixa no principal").toBe(0);
+    expect((await baixasDe(r)).length, "zero baixa no contrário").toBe(0);
+  });
+
+  it("B — RECEIVABLE-ONLY é o espelho exato de A", async () => {
+    const p = await criar("payable", "CROSS-B-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-B-REC", "400.00");
+    const antesP = await estado(p); const antesR = await estado(r);
+
+    const res = await cruzar("receivables", r, p, soRecebivel, "100.00");
+    expect(res.statusCode, res.body).toBe(403);
+    expect(await estado(p)).toEqual(antesP);
+    expect(await estado(r)).toEqual(antesR);
+    expect((await baixasDe(p)).length + (await baixasDe(r)).length).toBe(0);
+  });
+
+  it("C — com AS DUAS capacidades a baixa cruzada funciona e os DOIS lados refletem a operação", async () => {
+    const p = await criar("payable", "CROSS-C-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-C-REC", "400.00");
+
+    const res = await cruzar("payables", p, r, ambos, "150.00");
+    expect(res.statusCode, res.body).toBe(201);
+
+    const depoisP = await estado(p); const depoisR = await estado(r);
+    expect(depoisP.balance, "saldo do principal cai").toBe("250.00");
+    expect(depoisR.balance, "saldo do contrário TAMBÉM cai — é isso que a capacidade contrária autoriza").toBe("250.00");
+
+    const bp = await baixasDe(p); const br = await baixasDe(r);
+    expect(bp.length).toBe(1); expect(br.length).toBe(1);
+    expect(bp[0]!.cross_title_id, "a baixa do principal aponta para o contrário").toBe(r);
+    expect(br[0]!.cross_title_id, "a baixa espelho aponta de volta para o principal").toBe(p);
+  });
+
+  it("D — ADVANCE_COMPENSATION cai na MESMA fronteira: recusa sem a capacidade contrária, passa com ela", async () => {
+    const p = await criar("payable", "CROSS-D-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-D-REC", "400.00");
+    const antesR = await estado(r);
+
+    const negado = await cruzar("payables", p, r, soPagavel, "100.00", "advance_compensation");
+    expect(negado.statusCode, negado.body).toBe(403);
+    expect(await estado(r)).toEqual(antesR);
+
+    const ok = await cruzar("payables", p, r, ambos, "100.00", "advance_compensation");
+    expect(ok.statusCode, ok.body).toBe(201);
+    expect((await estado(r)).balance).toBe("300.00");
+  });
+
+  it("E — CANCELAMENTO cruzado sem a capacidade contrária: recusa, e as DUAS baixas seguem confirmadas", async () => {
+    const p = await criar("payable", "CROSS-E-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-E-REC", "400.00");
+    const feito = await cruzar("payables", p, r, ambos, "100.00");
+    expect(feito.statusCode, feito.body).toBe(201);
+    const sid = j(feito).settlement_id as string;
+    const antesP = await estado(p); const antesR = await estado(r);
+
+    // soPagavel TEM payables.cancel_settlement — falta receivables.cancel_settlement, que é a do espelho.
+    const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid}/cancel`, headers: soPagavel, payload: { reason: "sem a capacidade contrária" } });
+    expect(res.statusCode, res.body).toBe(403);
+
+    expect(await estado(p)).toEqual(antesP);
+    expect(await estado(r)).toEqual(antesR);
+    expect((await baixasDe(p)).every((b) => b.status === "confirmed"), "baixa principal intacta").toBe(true);
+    expect((await baixasDe(r)).every((b) => b.status === "confirmed"), "baixa espelho intacta").toBe(true);
+  });
+
+  it("F — CANCELAMENTO com as duas capacidades cancela os DOIS lados e devolve os dois saldos", async () => {
+    const p = await criar("payable", "CROSS-F-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-F-REC", "400.00");
+    const feito = await cruzar("payables", p, r, ambos, "100.00");
+    const sid = j(feito).settlement_id as string;
+
+    const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid}/cancel`, headers: ambos, payload: { reason: "cancelamento legítimo dos dois lados" } });
+    expect(res.statusCode, res.body).toBe(200);
+
+    expect((await baixasDe(p)).every((b) => b.status === "cancelled"), "principal cancelada").toBe(true);
+    expect((await baixasDe(r)).every((b) => b.status === "cancelled"), "espelho cancelado").toBe(true);
+    expect((await estado(p)).balance).toBe("400.00");
+    expect((await estado(r)).balance, "o saldo do contrário volta — senão o cancelamento seria pela metade").toBe("400.00");
+  });
+
+  it("G — PERÍODO da empresa CONTRÁRIA congelado barra a operação antes de qualquer mutação", async () => {
+    // O contrário vive em OUTRA empresa: é o único jeito de provar que o período verificado é o DELE.
+    const p = await criar("payable", "CROSS-G-PAG", "400.00", I.empresa);
+    const r = await criar("receivable", "CROSS-G-REC", "400.00", I.empresa2);
+    const antesP = await estado(p); const antesR = await estado(r);
+
+    const freeze = await congelar(I.empresa2, 2026, 9);
+    try {
+      const res = await cruzar("payables", p, r, ambos, "100.00", "cross_settlement", "2026-09-20");
+      expect(res.statusCode, `esperado bloqueio por período da contraparte: ${res.body}`).toBe(409);
+      expect(j(res).error?.code).toBe("PERIOD_FROZEN");
+      expect(await estado(p), "nenhuma mutação no principal").toEqual(antesP);
+      expect(await estado(r), "nenhuma mutação no contrário").toEqual(antesR);
+      expect((await baixasDe(p)).length + (await baixasDe(r)).length).toBe(0);
+    } finally { await descongelar(freeze); }
+
+    // Descongelado, a MESMA operação passa — prova que o que barrou foi o período, não outra coisa.
+    const ok = await cruzar("payables", p, r, ambos, "100.00", "cross_settlement", "2026-09-20");
+    expect(ok.statusCode, ok.body).toBe(201);
+  });
+
+  it("H — duas baixas cruzadas no MESMO par: cancelar uma cancela só o espelho dela", async () => {
+    const p = await criar("payable", "CROSS-H-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-H-REC", "400.00");
+    const um = await cruzar("payables", p, r, ambos, "100.00", "cross_settlement", "2026-09-20");
+    const dois = await cruzar("payables", p, r, ambos, "100.00", "cross_settlement", "2026-09-21");
+    expect(um.statusCode, um.body).toBe(201); expect(dois.statusCode, dois.body).toBe(201);
+    // CANCELA A SEGUNDA, NÃO A PRIMEIRA — e isso é o teste, não um detalhe. A consulta ambígua (sem amarrar
+    // ao par) devolve a PRIMEIRA linha que casa: cancelando a primeira baixa, ela acerta por sorte de
+    // ordenação e o teste passaria com o defeito. A verificação reversa R7 provou exatamente isso na
+    // primeira tentativa. Cancelando a SEGUNDA, acertar exige a amarração real.
+    const sid2 = j(dois).settlement_id as string;
+
+    const principais = await baixasDe(p); const espelhos = await baixasDe(r);
+    expect(principais.length, "duas baixas no principal").toBe(2);
+    expect(espelhos.length, "dois espelhos no contrário").toBe(2);
+
+    // A PREMISSA DO PAREAMENTO, PROVADA e não suposta: as duas linhas de UMA operação nascem na mesma
+    // transação, então compartilham `created_at` (= now() = início da transação). É essa igualdade que
+    // amarra o espelho ao par exato, na ausência de constraint que o faça.
+    const principal2 = principais.find((b) => b.id === sid2)!;
+    const espelhoDoSegundo = espelhos.filter((e) => e.nascido === principal2.nascido);
+    expect(espelhoDoSegundo.length, "exatamente um espelho compartilha o created_at EXATO do principal").toBe(1);
+    expect(principais[0]!.nascido, "as duas operações nasceram em transações distintas").not.toBe(principais[1]!.nascido);
+
+    const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid2}/cancel`, headers: ambos, payload: { reason: "cancelar apenas a SEGUNDA" } });
+    expect(res.statusCode, res.body).toBe(200);
+
+    const depoisEspelhos = await baixasDe(r);
+    expect(depoisEspelhos.filter((e) => e.status === "cancelled").length, "SÓ um espelho pode mudar").toBe(1);
+    // O QUE discrimina: não basta UM cancelado — tem de ser o espelho DAQUELA baixa.
+    expect(depoisEspelhos.find((e) => e.status === "cancelled")!.id, "o espelho cancelado tem de ser o do par da baixa cancelada").toBe(espelhoDoSegundo[0]!.id);
+    expect(depoisEspelhos.filter((e) => e.status === "confirmed").length, "o outro espelho continua confirmado").toBe(1);
+    expect((await baixasDe(p)).filter((b) => b.status === "confirmed").length, "a outra baixa do principal também segue").toBe(1);
+  });
+
+  it("I — AUDITORIA: as duas linhas de baixa têm trilha própria, na criação e no cancelamento", async () => {
+    const p = await criar("payable", "CROSS-I-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-I-REC", "400.00");
+    const feito = await cruzar("payables", p, r, ambos, "100.00");
+    const sid = j(feito).settlement_id as string;
+    const espelhoId = (await baixasDe(r))[0]!.id;
+
+    expect(await auditoriaDe(sid, "create"), "trilha de criação do lado principal").toBe(1);
+    expect(await auditoriaDe(espelhoId, "create"), "trilha de criação do ESPELHO — sem ela o auditor não reconstrói os dois lados").toBe(1);
+
+    const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid}/cancel`, headers: ambos, payload: { reason: "auditar os dois lados" } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(await auditoriaDe(sid, "cancel")).toBe(1);
+    expect(await auditoriaDe(espelhoId, "cancel"), "trilha de cancelamento do ESPELHO").toBe(1);
   });
 });
