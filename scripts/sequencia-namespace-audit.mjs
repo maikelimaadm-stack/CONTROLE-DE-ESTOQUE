@@ -295,9 +295,10 @@ if (!namespaceUnico) {
 // em `raise exception`, e mensagem de excecao nao e prosa: e o que o operador le as 3h da manha, com a
 // producao parada, para decidir o que fazer. Uma explicacao falsa ali custa mais do que comentario errado.
 //
-// A 0019 AINDA NAO FOI APLICADA em producao. Depois de aplicada ela vira historia imutavel
-// (`.claude/rules/database-migrations.md`: migration mesclada e aplicada se corrige com migration NOVA),
-// e o texto errado fica para sempre. Por isso a guarda entra agora, e nao na proxima fatia.
+// Quando esta metade nasceu, a 0019 ainda nao tinha sido aplicada — e era essa a janela: migration
+// mesclada e aplicada vira historia imutavel (`.claude/rules/database-migrations.md`: corrige-se com
+// migration NOVA), e o texto errado ficaria para sempre. A janela fechou com a aplicacao da 0019 em
+// producao, e por isso a guarda continua: o que ela protege agora e o texto JA CONGELADO na historia.
 //
 // O QUE ELA PROIBE E O QUE ELA PERMITE. Proibe a frase como descricao do ESTADO ATUAL. PERMITE — e a
 // migration usa essa permissao — a frase como documentacao HISTORICA explicita, porque explicar por que a

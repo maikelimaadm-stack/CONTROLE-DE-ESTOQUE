@@ -7,7 +7,7 @@
     "node": ">=22"
   },
   "scripts": {
-    "lint": "pnpm -r --if-present lint && node scripts/naming-audit.mjs && node scripts/member-farms-audit.mjs && node scripts/notification-insert-audit.mjs && node scripts/purchase-responsible-audit.mjs && node scripts/farm-compat-allowlist.mjs && node scripts/company-schema-sync.mjs && node scripts/company-rls-matrix.mjs --check && node scripts/notification-matrix.mjs --check && node scripts/farm-inventory.mjs --check && node scripts/data-dictionary.mjs --check && node scripts/id-global-audit.mjs && node scripts/artefato-operacional.mjs && node scripts/sequencia-namespace-audit.mjs && node scripts/regressao-invertida-audit.mjs && node scripts/claude-harness-audit.mjs",
+    "lint": "pnpm -r --if-present lint && node scripts/naming-audit.mjs && node scripts/member-farms-audit.mjs && node scripts/notification-insert-audit.mjs && node scripts/purchase-responsible-audit.mjs && node scripts/farm-compat-allowlist.mjs && node scripts/company-schema-sync.mjs && node scripts/company-rls-matrix.mjs --check && node scripts/notification-matrix.mjs --check && node scripts/farm-inventory.mjs --check && node scripts/data-dictionary.mjs --check && node scripts/id-global-audit.mjs && node scripts/artefato-operacional.mjs && node scripts/sequencia-namespace-audit.mjs && node scripts/base2-consumidor-audit.mjs && node scripts/regressao-invertida-audit.mjs && node scripts/claude-harness-audit.mjs",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "test:integration": "pnpm --filter @agro/db test:integration && pnpm --filter @agro/api test:integration",

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login } from "./helpers";
+import { login, api, empresaAtiva, primeiroId } from "./helpers";
 import { ptBR } from "@erp/plataforma";
 
 /**
@@ -19,9 +19,21 @@ async function criarEntradaEAbrir(page: Page): Promise<string> {
   await row.locator("button").nth(0).click(); await page.getByPlaceholder("Pesquisar...").fill("Almox"); await page.getByRole("option", { name: /Almox/i }).first().click();
   await row.locator("button").nth(1).click(); await page.getByPlaceholder("Pesquisar...").fill("Diesel"); await page.getByRole("option", { name: /Diesel/i }).first().click();
   await row.locator("input[type=number]").nth(0).fill("10"); await row.locator("input[type=number]").nth(1).fill("6.5");
-  await page.getByRole("button", { name: "Salvar" }).click();
+  // O id vem da RESPOSTA do POST, e não da primeira linha da listagem.
+  //
+  // POR QUE. A listagem de recebimentos ordena por DATA DO DOCUMENTO (`order by d.<data> desc,
+  // d.created_at desc`, apps/api/src/routes/stock.ts), e outros testes desta suíte criam entradas com
+  // data FUTURA de propósito. Quando uma delas já existe, "a primeira linha" não é o que este teste
+  // acabou de salvar — e o teste então mede o documento errado: um caso real foi um total de R$ 600,00
+  // onde a asserção esperava os R$ 65,00 deste item. O verde anterior era coincidência de ordenação.
+  const [resposta] = await Promise.all([
+    page.waitForResponse((r) => /\/api\/stock\/input-entries$/.test(new URL(r.url()).pathname) && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Salvar" }).click(),
+  ]);
+  const criado = (await resposta.json()) as { id?: string };
+  expect(criado.id, "o POST da entrada precisa devolver o id do documento criado").toBeTruthy();
   await expect(page).toHaveURL(/\/estoque\?tab=recebimentos&sub=manuais/);
-  await page.locator("tbody tr").first().dblclick();
+  await page.goto(`/estoque/entradas/${criado.id}`);
   await expect(page.getByTestId("base2-shell")).toBeVisible();
   return page.url();
 }
@@ -144,38 +156,6 @@ test("moldura Base 2: identidade da operação presente e sem rolagem horizontal
  * O seed só cria entradas, então cada forma é construída aqui pela própria API — mesma porta que o
  * usuário usa, sem fixture paralela no banco.
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
-
-async function api<T = Record<string, unknown>>(page: Page, method: string, path: string, body?: unknown): Promise<T> {
-  const base = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:3333";
-  return page.evaluate(async ({ method, path, body, base }) => {
-    const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string | null; empresaId: string | null };
-    const res = await fetch(`${base}${path}`, { method, headers: { "content-type": "application/json", authorization: `Bearer ${s.token}`, ...(s.orgId ? { "x-org-id": s.orgId } : {}), ...(s.empresaId ? { "x-empresa-id": s.empresaId } : {}) }, body: body ? JSON.stringify(body) : undefined });
-    const text = await res.text(); const data = text ? JSON.parse(text) : {};
-    if (!res.ok) throw new Error(`${res.status} ${path}: ${text.slice(0, 300)}`);
-    return data as T;
-  }, { method, path, body, base });
-}
-/**
- * Empresa efetiva para criar lançamento, pela MESMA regra do app (`useEmpresaPadrao`, features/docs/shared):
- * a empresa da sessão, ou a primeira do contexto. No harness a sessão começa em "Todas as empresas", e
- * `session.empresaId` é `null` — foi isso que reprovou a primeira versão destes testes com 422.
- */
-async function empresaAtiva(page: Page): Promise<string> {
-  const daSessao = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId: string | null }).empresaId);
-  if (daSessao) return daSessao;
-  const ctx = await api<{ empresas?: { id: string }[] }>(page, "GET", "/api/auth/context");
-  const id = ctx.empresas?.[0]?.id;
-  expect(id, "o contexto precisa expor ao menos uma empresa visível").toBeTruthy();
-  return id!;
-}
-
-/** Primeiro id de um recurso, pela listagem oficial. */
-async function primeiroId(page: Page, path: string): Promise<string> {
-  const r = await api<{ items: { id: string }[] }>(page, "GET", path);
-  const id = r.items?.[0]?.id;
-  expect(id, `sem registro em ${path} para montar a fixture`).toBeTruthy();
-  return id!;
-}
 
 /**
  * OUTRA empresa visível, com armazém — a fixture da transferência ENTRE EMPRESAS.

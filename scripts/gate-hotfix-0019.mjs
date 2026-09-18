@@ -43,7 +43,7 @@
  * -----------------------
  * A forma da alocação de cada lado NÃO é digitada aqui: é lida de `apps/api/src/routes/stock.ts` na base e
  * no HEAD (`scripts/lib/hotfix-0019.mjs`). Iguais nas duas pontas, esta execução não atravessa o hotfix, o
- * gate diz isso e passa — sem simular nada. Depois que o hotfix estiver em `main`, é o que acontece em toda
+ * gate diz isso e passa — sem simular nada. Com o hotfix JÁ em `main` (`ca74c56`), é o que acontece em toda
  * PR nova, para sempre.
  *
  * O QUE ELE NÃO É

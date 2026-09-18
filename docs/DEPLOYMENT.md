@@ -158,8 +158,12 @@ P1 volta antes disso.
 3. **Recriar o banco vazio** (ou um projeto novo, se o dano for do projeto). Nenhuma sessão automatizada faz
    isso: `.claude/hooks/` recusa `db:reset`, `db:migrate` e `db:seed` justamente porque a conexão vem do
    ambiente e o guarda não distingue local de remoto.
-4. **Aplicar as migrations em ordem, `0001` a `0017`**, pelo runner do produto (`pnpm db:migrate`, ou o
-   pre-deploy `node dist/migrate.js` no serviço). Nunca aplicar arquivo solto: a ordem é a garantia.
+4. **Aplicar TODAS as migrations do repositório, em ordem**, da `0001` à última de
+   `supabase/migrations/`, pelo runner do produto (`pnpm db:migrate`, ou o pre-deploy
+   `node dist/migrate.js` no serviço). Nunca aplicar arquivo solto: a ordem é a garantia. O alvo é o
+   DIRETÓRIO, não um número escrito aqui — este passo já parou na `0017` uma vez, e teria reconstruído o
+   ambiente sem o cutover do contador (`0018`) e sem o hotfix da numeração (`0019`), que é exatamente o
+   estado que as duas existem para tornar impossível.
 5. **Recriar os dados de teste** com `pnpm db:seed` (dados de referência, organização, usuário owner,
    cadastros de exemplo). Em produção isso é `SEED_ON_DEPLOY=1` por UM deploy, voltando a `0` em seguida —
    e voltar a `0` faz parte do procedimento, não é limpeza opcional.
@@ -171,7 +175,10 @@ P1 volta antes disso.
 
 ```sql
 select count(*) as migrations, max(name) as ultima from public.erp_migrations;
--- esperado: 17 / 0017_purge_farm_legacy.sql
+-- esperado: o MESMO número de arquivos de supabase/migrations/ (`ls supabase/migrations/*.sql | wc -l`)
+-- e o MESMO nome do último deles. Confira contra o repositório, nunca contra um número decorado:
+-- número escrito à mão aqui envelhece na próxima migration, e envelhece em silêncio, porque continua
+-- parecendo uma verificação.
 
 select count(*) as colunas_legadas from pg_attribute a
   join pg_class c on c.oid = a.attrelid join pg_namespace n on n.oid = c.relnamespace

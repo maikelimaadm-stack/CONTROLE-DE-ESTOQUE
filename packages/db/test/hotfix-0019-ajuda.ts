@@ -9,9 +9,10 @@ import { listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
  * FERRAMENTAS COMPARTILHADAS DAS PROVAS DA 0019 — hotfix da numeração de transferências.
  *
  * A suíte `hotfix-0019-upgrade` precisa de duas coisas: montar um banco parado EXATAMENTE na 0018 — o
- * estado que produção tem hoje — e aplicar a 0019 sozinha, do jeito que o runner aplica, para poder
- * observar tanto o sucesso quanto a recusa. Mesmo molde de `cutover-0018-ajuda.ts`, pelo mesmo motivo:
- * duplicar isso faria as provas divergirem em silêncio.
+ * estado imediatamente ANTERIOR ao hotfix, de onde produção partiu quando a 0019 foi aplicada — e aplicar
+ * a 0019 sozinha, do jeito que o runner aplica, para poder observar tanto o sucesso quanto a recusa.
+ * Mesmo molde de `cutover-0018-ajuda.ts`, pelo mesmo motivo: duplicar isso faria as provas divergirem
+ * em silêncio.
  *
  * A CONCORRÊNCIA da fatia NÃO mora aqui: ela é o quadrante C de `scripts/gate-hotfix-0019.mjs`
  * (`pnpm gate:0019`), que precisa de DUAS conexões com transações abertas ao mesmo tempo — coisa que o
@@ -26,7 +27,8 @@ export const CANONICA = "warehouse_transfer";
 export const LEGADA = "farm_transfer";
 
 /**
- * Sobe o banco só até a migration ANTERIOR à 0019 — o estado de produção pós-05C-2.
+ * Sobe o banco só até a migration ANTERIOR à 0019 — o estado PRÉ-HOTFIX, pós-05C-2, de onde o upgrade
+ * parte. Produção não está aqui: ela já recebeu a 0019.
  *
  * `MIGRATIONS_DIR` é lido na carga do módulo `migrate.js`; recarregar o módulo apontado para um
  * diretório temporário é o que dá um runner que para na 0018 sem mexer no módulo que aplica a 0019
@@ -43,7 +45,7 @@ export async function subirAte0018(db: Db): Promise<string[]> {
     process.env.MIGRATIONS_DIR = dir;
     vi.resetModules();
     const ate18 = await import("../src/migrate.js");
-    expect(ate18.listMigrations().map((m) => m.name), "o runner do estado de produção não conhece o hotfix")
+    expect(ate18.listMigrations().map((m) => m.name), "o runner do estado PRÉ-HOTFIX não pode conhecer a 0019 — senão a suíte mede o upgrade errado")
       .not.toContain(ALVO);
     return await ate18.migrate(db, () => {});
   } finally {

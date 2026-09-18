@@ -393,27 +393,40 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     // um defeito — a fatia que muda o estado do roteiro atualiza a trava junto, como já se fez aqui três
     // vezes. Uma trava de estado que sobrevive à mudança de estado não está travando nada.
     //
-    // TERCEIRA MOVIMENTAÇÃO (hotfix da numeração de transferências): a BASE2-02 foi mesclada (`dd6e0e0`) e
-    // implantada, então ela deixa de ser "em PR". O estado "em PR" agora é do HOTFIX, e é ele que a
-    // BASE2-03+ espera — por isso a trava passa a cobrar o estado do hotfix também, em vez de simplesmente
-    // perder a asserção que a BASE2-02 carregava.
+    // QUARTA MOVIMENTAÇÃO (BASE2-03A): o HOTFIX da numeração foi mesclado (`ca74c56`, PR #40) e
+    // CERTIFICADO no ambiente real — CI do merge 4/4, os dois deployments da Railway no commit do merge,
+    // `0019` no ledger exatamente uma vez (2026-09-18T02:08:56Z) e as invariantes de contador conferidas.
+    // Com isso a BASE2-03+ deixou de estar congelada, e esta trava vira o inverso do que era: em vez de
+    // exigir o congelamento, ela passa a RECUSAR a volta do congelamento.
+    //
+    // Por que não simplesmente apagar as duas asserções antigas: o estado obsoleto não some sozinho. Um
+    // documento que volte a dizer "hotfix em PR / BASE2-03 congelada" — por reversão, por conflito mal
+    // resolvido ou por cópia de uma versão velha — congelaria no papel uma fase que já está em execução,
+    // e o CI certificaria a contradição. Trava de estado se MOVE com o estado; não se remove com ele.
     const linhaDaFase = (nome: string) => roteiro.split("\n").find((l) => l.includes(`**${nome}**`)) ?? "";
     expect(roteiro, "BASE2-01 está concluída e implantada em produção").toMatch(/\*\*BASE2-01\*\*[\s\S]{0,800}?IMPLANTADA EM PRODUÇÃO/);
     expect(roteiro, "BASE2-02 está concluída e implantada em produção").toMatch(/\*\*BASE2-02\*\*[\s\S]{0,800}?IMPLANTADA EM PRODUÇÃO/);
-    expect(roteiro, "e a BASE2-03+ continua congelada").toMatch(/\*\*BASE2-03\+\*\*[\s\S]{0,600}?CONGELADA/);
+    expect(roteiro, "a BASE2-03+ está LIBERADA").toMatch(/\*\*BASE2-03\+\*\*[\s\S]{0,600}?LIBERADA/);
+    expect(linhaDaFase("BASE2-03+"), "e não volta a se declarar congelada").not.toMatch(/CONGELADA/);
 
-    // O HOTFIX de numeração: em PR, não implantado — e a BASE2-03+ nomeando a espera por ELE, não mais
-    // pela BASE2-02. Sem esta segunda metade, o roteiro poderia dizer que a BASE2-03 espera uma fase que
-    // já foi entregue, e o gate continuaria verde.
-    expect(roteiro, "o HOTFIX de numeração está em PR, não implantado")
-      .toMatch(/HOTFIX obrigatório antes da BASE2-03[\s\S]{0,200}?EM PR/);
-    expect(linhaDaFase("BASE2-03+"), "a BASE2-03+ declara que espera o HOTFIX").toMatch(/HOTFIX/);
+    // O HOTFIX de numeração: fechado e implantado, com o commit do merge nomeado. Sem o SHA, "implantado"
+    // seria uma afirmação sem endereço — e é justamente o endereço que um terceiro confere.
+    expect(roteiro, "o HOTFIX de numeração está fechado e implantado em produção")
+      .toMatch(/HOTFIX obrigatório antes da BASE2-03[\s\S]{0,200}?IMPLANTADO EM PRODUÇÃO/);
+    // `EM PR\b`, com a fronteira de palavra, e isso NÃO é preciosismo: "EM PR" é prefixo de
+    // "EM PRODUÇÃO". A asserção ANTERIOR — positiva, sem fronteira — teria passado com o roteiro dizendo
+    // "IMPLANTADO EM PRODUÇÃO", ou seja, ela não distinguia os dois estados que existia para distinguir.
+    // O defeito só apareceu quando a trava foi invertida, porque o negativo é quem exercita a diferença.
+    expect(roteiro, "o roteiro não volta a dizer que o hotfix está em PR")
+      .not.toMatch(/HOTFIX obrigatório antes da BASE2-03[\s\S]{0,200}?EM PR\b/);
+    expect(roteiro, "o encerramento do hotfix cita o commit do merge").toMatch(/ca74c56/);
+    expect(roteiro, "a primeira fatia da BASE2-03+ está nomeada").toMatch(/BASE2-03A/);
     // E nenhuma fase afirma dois estados ao mesmo tempo. A verificação é POR LINHA porque o roteiro é uma
     // tabela markdown: uma fase é uma linha, e é dentro dela que a contradição apareceria.
     for (const fase of ["BASE2-01", "BASE2-02", "BASE2-03+"]) {
       const linha = linhaDaFase(fase);
       expect(linha, `${fase}: fase ausente do roteiro`).not.toBe("");
-      const estados = ["IMPLANTADA EM PRODUÇÃO", "implementação em PR", "CONGELADA"].filter((e) => linha.includes(e));
+      const estados = ["IMPLANTADA EM PRODUÇÃO", "implementação em PR", "CONGELADA", "LIBERADA"].filter((e) => linha.includes(e));
       expect(estados, `${fase} declara mais de um estado na mesma linha: ${estados.join(" + ")}`).toHaveLength(1);
     }
 
@@ -425,6 +438,119 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     expect(runtime, "o comentário do runtime não diz mais que a janela não foi realizada")
       .not.toMatch(/ainda não foi realizada/);
     expect(runtime, "e continua tratando o binário anterior como estado PROIBIDO").toMatch(/PROIBIDO/);
+  });
+
+  it("T11 · o contrato do Modelo Base 2 e o roteiro declaram O MESMO estado da BASE2-03+", () => {
+    // POR QUE ESTE CASO EXISTE. O caso T10 cobria o ROTEIRO, e o roteiro passou a dizer LIBERADA. O
+    // contrato do Modelo Base 2 — que é o dono do assunto "moldura" — continuou dizendo, na seção de
+    // estado, que a BASE2-03+ "segue congelada". Dois documentos canônicos com estados opostos para a
+    // MESMA fase: quem lesse o contrato concluiria que esta migração não podia estar acontecendo, e quem
+    // lesse o roteiro concluiria o contrário. Nenhum gate lia o contrato, então a contradição podia durar
+    // indefinidamente com o CI verde — que é exatamente o modo como documento canônico envelhece.
+    //
+    // A trava é SEMÂNTICA e roda sobre o texto NORMALIZADO (sem `*`, `_`, backtick, e com espaços
+    // colapsados), para não reprovar por uma quebra de linha diferente nem por alguém tirar um negrito.
+    const bruto = fs.readFileSync(path.join(RAIZ, "docs/MODELO-BASE2-CONTRACT.md"), "utf8");
+    const contrato = bruto.replace(/[*_`~]/g, "").replace(/\s+/g, " ");
+
+    // NÃO-VACUIDADE primeiro: um arquivo vazio ou truncado passaria em TODA asserção negativa abaixo, e
+    // o verde não significaria nada. Prova-se a premissa antes da conclusão.
+    expect(contrato.length, "leitura suspeita do contrato — não aprovo por ausência de texto")
+      .toBeGreaterThan(4000);
+    expect(contrato, "o arquivo lido é mesmo o contrato do Modelo Base 2").toMatch(/Modelo Base 2/);
+
+    // (a) O estado obsoleto não volta: a contradição é BASE2-03 e "congelada" na MESMA frase. O recorte é
+    // por frase (nada de ponto final nem quebra entre os dois) de propósito — uma linha HISTÓRICA que
+    // narre, em outra frase, que a fase JÁ ESTEVE congelada continua permitida, e é informação legítima.
+    expect(contrato, "o contrato não volta a declarar a BASE2-03+ congelada")
+      .not.toMatch(/BASE2-03[^.]{0,120}?congelad/i);
+    expect(contrato, "nem na ordem inversa da frase")
+      .not.toMatch(/congelad[^.]{0,120}?BASE2-03/i);
+    expect(contrato, "e não a declara bloqueada, que é a mesma afirmação com outra palavra")
+      .not.toMatch(/BASE2-03[^.]{0,120}?bloquead/i);
+
+    // (b) O estado vigente está AFIRMADO — não basta ter apagado a frase velha. Um contrato que ficasse
+    // calado sobre a fase passaria em (a) e continuaria sem dizer ao leitor o que vale hoje.
+    expect(contrato, "o contrato afirma que a BASE2-03+ está LIBERADA")
+      .toMatch(/BASE2-03\+[^.]{0,80}?LIBERADA/);
+    expect(contrato, "e que a migração é progressiva, por entidade — não um corte único")
+      .toMatch(/progressiv[ao][^.]{0,160}?entidade/i);
+    expect(contrato, "a primeira entidade da sequência está nomeada").toMatch(/BASE2-03A/);
+
+    // (c) A invariante que a liberação NÃO revoga. Migrar apresentação nunca fundiu regra de negócio, e é
+    // justamente ao abrir a fase de migração ampla que essa linha corre risco de ser perdida na reescrita.
+    expect(contrato, "o contrato preserva: tela unificada ≠ regra de negócio unificada")
+      .toMatch(/tela unificada ≠ regra de negócio unificada/i);
+
+    // (d) COERÊNCIA ENTRE OS DOIS DONOS. É este o defeito que o caso existe para impedir: cada documento
+    // sozinho pode estar bem escrito e ainda assim contradizer o outro. Aqui os dois são lidos na mesma
+    // asserção, contra a mesma fase.
+    const roteiro = fs.readFileSync(path.join(RAIZ, "docs/PRE-BASE2-ROADMAP.md"), "utf8");
+    const linhaDaFase = roteiro.split("\n").find((l) => l.includes("**BASE2-03+**")) ?? "";
+    expect(linhaDaFase, "a fase BASE2-03+ precisa existir no roteiro").not.toBe("");
+    expect(linhaDaFase, "o roteiro declara a BASE2-03+ LIBERADA").toMatch(/LIBERADA/);
+    expect(linhaDaFase, "e o roteiro não a declara congelada").not.toMatch(/CONGELADA/);
+  });
+
+  it("T12 · o roteiro de recuperação do DEPLOYMENT não congela o ledger num número de migration", () => {
+    // POR QUE ESTE CASO EXISTE. A varredura desta fatia achou o procedimento VIGENTE de recuperação
+    // mandando aplicar "as migrations em ordem, `0001` a `0017`" e conferir "esperado: 17 /
+    // 0017_purge_farm_legacy.sql". Escrito quando a `0017` era a última, envelheceu em silêncio na `0018`
+    // e de novo na `0019` — e o custo não é cosmético: seguir aquele passo reconstrói o ambiente SEM o
+    // cutover do contador e SEM o hotfix da numeração, que é exatamente o estado que as duas migrations
+    // existem para tornar impossível. Um número decorado num roteiro de recuperação não é documentação
+    // desatualizada: é uma instrução errada, que só é lida no pior dia.
+    //
+    // A trava não exige uma redação: exige que nenhum literal de ledger no documento CONTRADIGA o
+    // diretório. Quem escrever um número volta a reprovar; quem apontar para o repositório passa para
+    // sempre, sem manutenção — que é o que diferencia um gate de um carimbo com data.
+    const migrations = fs.readdirSync(path.join(RAIZ, "supabase/migrations")).filter((f) => f.endsWith(".sql")).sort();
+    const ultima = migrations[migrations.length - 1] ?? "";
+    expect(migrations.length, "leitura suspeita de supabase/migrations — não aprovo por ausência").toBeGreaterThanOrEqual(19);
+    expect(ultima, "o diretório de migrations precisa ter uma última").toMatch(/^\d{4}_.+\.sql$/);
+
+    const deploy = fs.readFileSync(path.join(RAIZ, "docs/DEPLOYMENT.md"), "utf8");
+    expect(deploy, "o roteiro de recuperação continua no documento").toMatch(/RECOVERY = REBUILD FROM ZERO/);
+
+    // (a) Nenhum "esperado: N / 0NNN_arquivo.sql" que discorde do diretório.
+    for (const m of deploy.matchAll(/esperado:\s*(\d+)\s*\/\s*(\d{4}_[a-z0-9_]+\.sql)/g)) {
+      expect(Number(m[1]), `DEPLOYMENT.md espera ${m[1]} migrations; o diretório tem ${migrations.length}`)
+        .toBe(migrations.length);
+      expect(m[2], `DEPLOYMENT.md diz que a última é ${m[2]}; no diretório é ${ultima}`).toBe(ultima);
+    }
+
+    // (b) Nenhum "`0001` a `00NN`" que pare antes da última. O intervalo com teto literal é a outra
+    // forma do mesmo defeito, e foi a que de fato apareceu.
+    for (const m of deploy.matchAll(/`0001`\s*(?:a|à|até|-|–)\s*`(\d{4})[^`]*`/g)) {
+      expect(`${m[1]}`, `DEPLOYMENT.md manda aplicar só até ${m[1]}; a última do diretório é ${ultima}`)
+        .toBe(ultima.slice(0, 4));
+    }
+  });
+
+  it("T13 · nenhuma fixture de migration se apresenta como 'o estado que produção tem hoje'", () => {
+    // POR QUE ESTE CASO EXISTE. As suítes de UPGRADE montam um banco parado na migration ANTERIOR à que
+    // está sendo provada — e descreviam esse ponto de partida como "o estado que produção tem hoje".
+    // Enquanto a migration em prova era a última implantada, a frase era verdadeira por coincidência. Ela
+    // ficou falsa na 0018 e de novo na 0019, e a segunda vez foi encontrada por varredura, não por um
+    // gate: o texto continuava verde porque texto não roda. Uma dessas frases é a mensagem de uma
+    // asserção — o que o operador lê quando o teste reprova —, então o custo não é estético.
+    //
+    // A regra é a mesma das outras duas travas de estado: proibir o literal que envelhece, não a ideia.
+    // A fixture continua livre para dizer "o estado ANTERIOR ao hotfix"; o que não pode é datar-se no
+    // presente ou amarrar "produção" a um número de migration que não é o último do diretório.
+    const dir = path.join(RAIZ, "packages/db/test");
+    const arquivos = fs.readdirSync(dir).filter((f) => f.endsWith(".ts"));
+    expect(arquivos.length, "leitura suspeita de packages/db/test — não aprovo por ausência").toBeGreaterThanOrEqual(5);
+    for (const nome of arquivos) {
+      const texto = fs.readFileSync(path.join(dir, nome), "utf8").replace(/\s+/g, " ");
+      expect(texto, `${nome}: "produção tem hoje" data a frase no momento da LEITURA — e já esteve errada duas vezes`)
+        .not.toMatch(/produção tem hoje/i);
+      // O rótulo inteiro é proibido nestas fixtures, inclusive numa negação: a fixture diz em QUE
+      // MIGRATION ela para ("parado na 0018", "ANTERIOR ao hotfix"), que é verdade para sempre. Assim a
+      // regra não depende de ler a intenção da frase, e a próxima migration não a torna falsa.
+      expect(texto, `${nome}: fixture de migration não se rotula "estado de produção" — diga em que migration ela para`)
+        .not.toMatch(/estado de produção/i);
+    }
   });
 
 });
