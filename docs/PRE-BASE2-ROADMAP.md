@@ -145,6 +145,13 @@ checkpoint operacional (nesta ordem): **merge** → **migration 0016 aplicada** 
 (`#N`, `ID N`) e do distintivo no registro**. Enquanto isso não acontecer, nenhum documento deve afirmar que
 o ID Global está ativo em produção. Runbook em `docs/DEPLOYMENT.md`.
 
+**Estado atual da PRE-BASE2-04: IMPLEMENTAÇÃO PRONTA / ATIVAÇÃO EM PRODUÇÃO PENDENTE.** Esta é a frase
+canônica de ESTADO ATUAL, e ela é a mesma nos três documentos que falam da fase (aqui, `docs/DEPLOYMENT.md`
+e `docs/PRE-BASE2-05-APOSENTADORIA.md`). Ter uma frase única evita a comparação por sinônimo: cada documento
+descreveria a mesma situação com palavras um pouco diferentes, e a divergência só apareceria quando alguém
+lesse os três lado a lado. Registro HISTÓRICO é outra coisa e continua permitido, desde que marcado como
+tal — a gate T15 mede o estado atual, não proíbe citar o passado.
+
 A implementação entregou: todo registro elegível recebendo ID Global na MESMA transação de negócio,
 nas 29 portas de escrita direta mais a porta genérica do Resource Registry (gate estrutural
 `scripts/id-global-audit.mjs` + matriz de runtime que cria um registro de cada tipo pela rota real, ANTES de

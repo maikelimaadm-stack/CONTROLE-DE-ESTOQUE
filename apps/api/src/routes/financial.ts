@@ -191,18 +191,33 @@ export default async function financialRoutes(app: FastifyInstance) {
        * descobrir que falta permissão do outro lado é descobrir tarde demais — mesmo com rollback, o
        * CÓDIGO DE ERRO que sai já teria contado o que não devia.
        *
-       * IDENTIDADE DO ESPELHO. A consulta anterior casava por (title_id, cross_title_id, status) — e
-       * `erp.title_settlements` NÃO tem constraint que torne isso único (0004_financial.sql: só índices
-       * em title_id e em (organization_id, settlement_date)). Com DUAS baixas cruzadas confirmadas
-       * entre o MESMO par, aquele UPDATE cancelava as DUAS. O espelho é amarrado ao par exato pelo
-       * `created_at`, que em Postgres é `now()` = timestamp de início da TRANSAÇÃO: as duas linhas
-       * nascem na mesma transação e compartilham o valor. Isso não é suposição — o teste H prova a
-       * igualdade e prova que cancelar uma não cancela a outra.
+       * IDENTIDADE DO ESPELHO — LOCALIZAR NÃO É PROVAR, ENTÃO A CARDINALIDADE É QUE DECIDE.
        *
-       * A comparação fica DENTRO do SQL, por subconsulta. Trafegar o `created_at` por JavaScript
-       * perderia precisão: `timestamptz` do Postgres tem microssegundos e o `Date` do driver só tem
-       * milissegundos, então o valor voltaria truncado e nunca casaria. O primeiro corte deste hotfix
-       * fazia esse round-trip e silenciosamente não achava espelho nenhum.
+       * `erp.title_settlements` NÃO tem constraint que torne o espelho único (0004_financial.sql: só
+       * índices em title_id e em (organization_id, settlement_date)). Não existe, nesta versão, nenhuma
+       * garantia de BANCO ligando as duas linhas de uma baixa cruzada. Logo a garantia tem de ser da
+       * APLICAÇÃO — e uma garantia de aplicação que aceita "achei alguma coisa" não é garantia.
+       *
+       * Os discriminadores abaixo LOCALIZAM o candidato; quem decide é `rowCount === 1`. O corte anterior
+       * fazia `rows[0]?.id ?? null` e falhava ABERTO nas duas pontas: com ZERO candidatos seguia adiante,
+       * cancelava o principal e deixava o par pela metade, sem erro nenhum; com MAIS DE UM escolhia
+       * arbitrariamente o primeiro e chamava isso de identidade. Zero ou vários agora abortam ANTES do
+       * primeiro UPDATE — nada do principal, nada do espelho, nada do movimento bancário, nada de trilha.
+       *
+       * QUAIS discriminadores, e por que só estes: são os campos que as DUAS linhas recebem do MESMO
+       * valor no momento da criação (ver `settle`) — `organization_id`, o par cruzado de
+       * (`title_id`, `cross_title_id`) invertido, `settlement_kind`, `settlement_date`, `amount`,
+       * `created_by` e `created_at` (= `now()`, o início da TRANSAÇÃO que gravou as duas). Ficam de
+       * fora, de propósito, os campos que comprovadamente DIVERGEM entre os lados: `net_amount` (o
+       * principal soma desconto/juros/multa, o espelho recebe o bruto), `note` (o espelho tem texto
+       * próprio quando o pedido não traz nota) e os acréscimos, que no espelho ficam em zero. Filtrar
+       * por um campo que diverge transformaria toda baixa cruzada com desconto em "zero candidatos".
+       *
+       * A comparação fica DENTRO do SQL. Trafegar `created_at` por JavaScript perderia precisão:
+       * `timestamptz` tem microssegundos e o `Date` do driver só tem milissegundos, então o valor
+       * voltaria truncado e nunca casaria — o primeiro corte deste hotfix fazia esse round-trip e
+       * silenciosamente não achava espelho nenhum. O mesmo vale para `amount`: comparar `numeric` no
+       * banco evita qualquer normalização de string no meio do caminho.
        */
       let espelhoId: string | null = null;
       if (s.rows[0].cross_title_id) {
@@ -212,8 +227,19 @@ export default async function financialRoutes(app: FastifyInstance) {
         if (!ct.rows[0]) throw notFound("Baixa");
         await exigirEmpresaVisivel(ctx, ct.rows[0].empresa_id, "Título");
         await assertPeriodOpen(ctx.tx, ctx.orgId, ct.rows[0].empresa_id, s.rows[0].settlement_date);
-        const e = await ctx.tx.query<{ id: string }>("select id from erp.title_settlements where organization_id=$1 and title_id=$2 and cross_title_id=$3 and status='confirmed' and created_at=(select created_at from erp.title_settlements where id=$4) for update", [ctx.orgId, s.rows[0].cross_title_id, id, sid]);
-        espelhoId = e.rows[0]?.id ?? null;
+        const e = await ctx.tx.query<{ id: string }>(
+          "select e.id from erp.title_settlements e"
+          + " where e.organization_id=$1 and e.title_id=$2 and e.cross_title_id=$3 and e.status='confirmed' and e.id<>$4"
+          + " and exists (select 1 from erp.title_settlements p where p.id=$4 and p.organization_id=$1"
+          + " and e.created_at=p.created_at and e.settlement_kind=p.settlement_kind"
+          + " and e.settlement_date=p.settlement_date and e.amount=p.amount"
+          + " and e.created_by is not distinct from p.created_by)"
+          + " for update",
+          [ctx.orgId, s.rows[0].cross_title_id, id, sid]);
+        // Zero e "mais de um" são o MESMO defeito visto de dois lados: em nenhum dos dois o par está
+        // provado, e cancelar sem o par provado é escrever um estado que ninguém consegue reconstituir.
+        if (e.rowCount !== 1) throw err("CONFLICT", "Par da baixa cruzada não identificado com exatidão: cancelamento bloqueado");
+        espelhoId = e.rows[0]!.id;
       }
       await ctx.tx.query("update erp.title_settlements set status='cancelled', cancelled_at=now(), cancelled_by=$2, cancel_reason=$3 where id=$1", [sid, ctx.user.id, d.reason]);
       if (s.rows[0].bank_movement_id) { const shared = await ctx.tx.query<{ n: string }>("select count(*) n from erp.title_settlements where bank_movement_id=$1 and status='confirmed'", [s.rows[0].bank_movement_id]); if (Number(shared.rows[0]!.n) === 0) await ctx.tx.query("update erp.bank_movements set status='cancelled' where id=$1", [s.rows[0].bank_movement_id]); else throw err("CONFLICT", "Movimento bancário compartilhado com outras baixas: cancele todas ou lance ajuste"); }
@@ -222,7 +248,11 @@ export default async function financialRoutes(app: FastifyInstance) {
         if (r.rowCount !== 1) throw err("CONFLICT", "Baixa espelho não pôde ser cancelada");
         await audit(ctx.tx, ctx, "title_settlements", espelhoId, "cancel", { ...d, title: s.rows[0].cross_title_id, cruzada_com: id, lado: "espelho" });
       }
-      await audit(ctx.tx, ctx, "title_settlements", sid, "cancel", d);
+      // SIMETRIA DA TRILHA. O espelho carregava `cruzada_com`/`lado` e o principal não, então reconstruir o
+      // par a partir de `audit_logs` só funcionava a partir de UM dos lados — e pelo outro exigia voltar à
+      // linha de `title_settlements`, que pode ter mudado de status desde então. Numa operação cruzada os
+      // DOIS lados se nomeiam. Baixa comum (`bank_movement`) mantém a metadata que sempre teve.
+      await audit(ctx.tx, ctx, "title_settlements", sid, "cancel", espelhoId ? { ...d, title: id, cruzada_com: s.rows[0].cross_title_id, lado: "principal" } : d);
       return getTitle(ctx, id, dir);
     }));
     app.get(`${base}/:id/receipt`, async (req) => runService(app, req, permOf(dir, "receipt"), async (ctx) => { const t = await getTitle(ctx, (req.params as { id: string }).id, dir); return { title: t, receipt_text: `RECIBO — ${t.empresa_name}\nTítulo ${t.number} (${t.code})\n${dir === "payable" ? "Pago a" : "Recebido de"}: ${t.person_name ?? "-"}\nValor: R$ ${t.amount} (líquido R$ ${t.net_amount})\nBaixas: ${(t.settlements as { settlement_date: string; net_amount: string }[]).filter(Boolean).map((s) => `${s.settlement_date}: R$ ${s.net_amount}`).join("; ") || "nenhuma"}\nHistórico: ${t.note}` }; }));
@@ -236,6 +266,9 @@ export default async function financialRoutes(app: FastifyInstance) {
     assertSettlementWithinBalance(title.balance, input);
     const net = settlementNet(input);
     let movementId: string | null = d.shared_movement_id ?? null;
+    // Preenchido só na operação cruzada: é o que dá ao lado PRINCIPAL a mesma nomeação do par que o
+    // espelho já tinha. Nulo aqui significa baixa comum, e baixa comum não inventa metadata de par.
+    let ladoPrincipal: { cruzada_com: string; lado: "principal" } | null = null;
     if (d.settlement_kind === "bank_movement") {
       if (!d.bank_account_id) throw validation("Conta bancária obrigatória");
       if (!movementId) {
@@ -276,10 +309,11 @@ export default async function financialRoutes(app: FastifyInstance) {
       // precisa reconstruir os DOIS lados. Sem `returning id` só o lado principal tinha rastro.
       const espelho = await ctx.tx.query<{ id: string }>("insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,cross_title_id,amount,net_amount,note,created_by) values ($1,$2,$3,$4,$5,$6,$6,$7,$8) returning id", [ctx.orgId, d.cross_title_id, d.settlement_date, d.settlement_kind, titleId, money(d.amount), d.note ?? `Baixa cruzada com ${title.number}`, ctx.user.id]);
       await audit(ctx.tx, ctx, "title_settlements", espelho.rows[0]!.id, "create", { title: d.cross_title_id, cruzada_com: titleId, lado: "espelho", net: money(d.amount) });
+      ladoPrincipal = { cruzada_com: d.cross_title_id, lado: "principal" };
     }
     const s = await ctx.tx.query<{ id: string }>("insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,bank_account_id,bank_movement_id,cross_title_id,amount,discount,penalty,interest,increase,foreign_amount,ptax_rate,exchange_adjustment,net_amount,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id",
       [ctx.orgId, titleId, d.settlement_date, d.settlement_kind, d.bank_account_id ?? null, movementId, d.cross_title_id ?? null, money(d.amount), money(input.discount), money(input.penalty), money(input.interest), money(input.increase), d.foreign_amount ?? null, d.ptax_rate ?? null, money(input.exchangeAdjustment), net, d.note ?? null, ctx.user.id]);
-    await audit(ctx.tx, ctx, "title_settlements", s.rows[0]!.id, "create", { title: titleId, net });
+    await audit(ctx.tx, ctx, "title_settlements", s.rows[0]!.id, "create", { title: titleId, net, ...(ladoPrincipal ?? {}) });
     const after = await ctx.tx.query<{ status: string; balance: string }>("select status, balance from erp.financial_titles where id=$1", [titleId]);
     return { settlement_id: s.rows[0]!.id, title_id: titleId, net_amount: net, status: after.rows[0]!.status, balance: after.rows[0]!.balance, bank_movement_id: movementId };
   }

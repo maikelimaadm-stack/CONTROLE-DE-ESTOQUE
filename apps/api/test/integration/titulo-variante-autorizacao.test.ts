@@ -277,6 +277,44 @@ async function auditoriaDe(entityId: string, action: string): Promise<number> {
   finally { await c.end(); }
 }
 
+/** A metadata gravada na trilha — contar linha não prova que o par está NOMEADO nos dois lados. */
+async function metadadosDe(entityId: string, action: string): Promise<Record<string, unknown>[]> {
+  const c = createPool(TEST_URL, { max: 1 });
+  try { return (await c.query<{ metadata: Record<string, unknown> }>("select metadata from erp.audit_logs where entity='title_settlements' and entity_id=$1 and action=$2 order by created_at", [entityId, action])).rows.map((r) => r.metadata); }
+  finally { await c.end(); }
+}
+
+/**
+ * OS DOIS SABOTADORES DE ESTADO DOS CASOS J E K.
+ *
+ * Eles escrevem DIRETO no banco descartável de teste, por fora da API, e é isso que os torna válidos: o
+ * que se quer provar é como a rota se comporta diante de um estado que a rota não consegue produzir
+ * sozinha. Produzir "zero espelhos" ou "dois espelhos idênticos" pela porta oficial é impossível — e
+ * exatamente por isso o código antigo passava: nenhum teste conseguia alcançar o caminho defeituoso.
+ */
+async function removerBaixa(id: string): Promise<void> {
+  const c = createPool(TEST_URL, { max: 1 });
+  try { await c.query("delete from erp.title_settlements where id=$1", [id]); } finally { await c.end(); }
+}
+
+/** `net_amount` das baixas confirmadas de cada título — usado para PROVAR que os dois lados divergem. */
+async function liquidosDe(titleIds: string[]): Promise<string[]> {
+  const c = createPool(TEST_URL, { max: 1 });
+  try { return (await c.query<{ net_amount: string }>("select net_amount from erp.title_settlements where title_id = any($1) and status='confirmed' order by title_id", [titleIds])).rows.map((r) => r.net_amount); }
+  finally { await c.end(); }
+}
+
+/** Cópia EXATA, `created_at` inclusive: a segunda candidata é indistinguível da primeira pela consulta. */
+async function duplicarBaixa(id: string): Promise<string> {
+  const c = createPool(TEST_URL, { max: 1 });
+  try {
+    return (await c.query<{ id: string }>(
+      "insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,bank_account_id,bank_movement_id,cross_title_id,amount,discount,penalty,interest,increase,net_amount,note,status,created_by,created_at)"
+      + " select organization_id,title_id,settlement_date,settlement_kind,bank_account_id,bank_movement_id,cross_title_id,amount,discount,penalty,interest,increase,net_amount,note,status,created_by,created_at"
+      + " from erp.title_settlements where id=$1 returning id", [id])).rows[0]!.id;
+  } finally { await c.end(); }
+}
+
 /** Baixa cruzada pela porta real. `headers` decide QUEM está pedindo — é disso que o caso trata. */
 const cruzar = (rota: "payables" | "receivables", principal: string, contrario: string, headers: Hdr, valor: string, kind = "cross_settlement", data = "2026-09-20") =>
   h.app.inject({ method: "POST", url: `/api/financial/${rota}/${principal}/settle`, headers, payload: { settlement_date: data, settlement_kind: kind, cross_title_id: contrario, amount: valor } });
@@ -395,11 +433,15 @@ describe("baixa cruzada: autorização composta das duas variantes", () => {
     expect(ok.statusCode, ok.body).toBe(201);
   });
 
-  it("H — duas baixas cruzadas no MESMO par: cancelar uma cancela só o espelho dela", async () => {
+  it("H (par normal) — duas baixas cruzadas no MESMO par: cancelar uma cancela só o espelho dela", async () => {
     const p = await criar("payable", "CROSS-H-PAG", "400.00");
     const r = await criar("receivable", "CROSS-H-REC", "400.00");
+    // MESMA data e MESMO valor nas duas operações, de propósito. Com datas diferentes, `settlement_date`
+    // sozinha já separaria os pares e o teste passaria mesmo sem `created_at` na consulta — ou seja, não
+    // provaria que o discriminador que o código diz usar é o que está fazendo o trabalho. Iguais em tudo
+    // o mais, `created_at` (= início da transação) é a ÚNICA coisa que distingue um par do outro.
     const um = await cruzar("payables", p, r, ambos, "100.00", "cross_settlement", "2026-09-20");
-    const dois = await cruzar("payables", p, r, ambos, "100.00", "cross_settlement", "2026-09-21");
+    const dois = await cruzar("payables", p, r, ambos, "100.00", "cross_settlement", "2026-09-20");
     expect(um.statusCode, um.body).toBe(201); expect(dois.statusCode, dois.body).toBe(201);
     // CANCELA A SEGUNDA, NÃO A PRIMEIRA — e isso é o teste, não um detalhe. A consulta ambígua (sem amarrar
     // ao par) devolve a PRIMEIRA linha que casa: cancelando a primeira baixa, ela acerta por sorte de
@@ -440,9 +482,117 @@ describe("baixa cruzada: autorização composta das duas variantes", () => {
     expect(await auditoriaDe(sid, "create"), "trilha de criação do lado principal").toBe(1);
     expect(await auditoriaDe(espelhoId, "create"), "trilha de criação do ESPELHO — sem ela o auditor não reconstrói os dois lados").toBe(1);
 
+    // EXISTIR NÃO BASTA: contar linha só prova que alguém escreveu alguma coisa. O que reconstitui o par
+    // é a metadata NOMEAR os dois lados — e sem isso, partindo do principal, o auditor teria de voltar à
+    // linha de `title_settlements`, cujo status pode ter mudado desde então.
+    const criouPrincipal = (await metadadosDe(sid, "create"))[0]!;
+    expect(criouPrincipal["lado"], "o principal precisa se declarar principal").toBe("principal");
+    expect(criouPrincipal["cruzada_com"], "e apontar para o título contrário").toBe(r);
+    const criouEspelho = (await metadadosDe(espelhoId, "create"))[0]!;
+    expect(criouEspelho["lado"]).toBe("espelho");
+    expect(criouEspelho["cruzada_com"], "o espelho aponta de volta para o principal").toBe(p);
+
     const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid}/cancel`, headers: ambos, payload: { reason: "auditar os dois lados" } });
     expect(res.statusCode, res.body).toBe(200);
     expect(await auditoriaDe(sid, "cancel")).toBe(1);
     expect(await auditoriaDe(espelhoId, "cancel"), "trilha de cancelamento do ESPELHO").toBe(1);
+
+    const cancelouPrincipal = (await metadadosDe(sid, "cancel"))[0]!;
+    expect(cancelouPrincipal["lado"], "a simetria vale também no cancelamento").toBe("principal");
+    expect(cancelouPrincipal["cruzada_com"]).toBe(r);
+    const cancelouEspelho = (await metadadosDe(espelhoId, "cancel"))[0]!;
+    expect(cancelouEspelho["lado"]).toBe("espelho");
+    expect(cancelouEspelho["cruzada_com"]).toBe(p);
+  });
+
+  it("I2 — baixa COMUM não ganha metadata de par: `lado` e `cruzada_com` são da operação cruzada", async () => {
+    // A simetria do caso I não pode virar ruído em toda baixa bancária. Sem este contraste, uma
+    // implementação que carimbasse `lado: "principal"` em tudo passaria no I e destruiria o significado
+    // do campo — quem lê a trilha deixaria de saber o que é par de verdade.
+    const p = await criar("payable", "CROSS-I2-PAG", "400.00");
+    const feito = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settle`, headers: ambos, payload: { settlement_date: "2026-09-20", settlement_kind: "bank_movement", bank_account_id: I.bankAccount, amount: "100.00" } });
+    expect(feito.statusCode, feito.body).toBe(201);
+    const sid = j(feito).settlement_id as string;
+
+    const meta = (await metadadosDe(sid, "create"))[0]!;
+    expect(meta["lado"], "baixa comum não tem lado").toBeUndefined();
+    expect(meta["cruzada_com"], "baixa comum não tem par").toBeUndefined();
+    expect(meta["title"], "o que ela sempre teve continua lá").toBe(p);
+  });
+
+  it("J — ESPELHO AUSENTE: sem par exato o cancelamento falha FECHADO, sem tocar em nada", async () => {
+    const p = await criar("payable", "CROSS-J-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-J-REC", "400.00");
+    const feito = await cruzar("payables", p, r, ambos, "100.00");
+    expect(feito.statusCode, feito.body).toBe(201);
+    const sid = j(feito).settlement_id as string;
+    const espelhoId = (await baixasDe(r))[0]!.id;
+
+    // Some SÓ a linha espelho. O código antigo devolvia `rows[0]?.id ?? null` e seguia adiante: cancelava
+    // o principal, deixava o par pela metade e não acusava nada. Falha ABERTA, e silenciosa.
+    await removerBaixa(espelhoId);
+    expect((await baixasDe(r)).length, "premissa do caso: zero candidatas a espelho").toBe(0);
+    const antesP = await estado(p);
+
+    const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid}/cancel`, headers: ambos, payload: { reason: "espelho ausente" } });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(j(res).error?.code).toBe("CONFLICT");
+
+    expect(await estado(p), "ZERO mutação no principal").toEqual(antesP);
+    expect((await baixasDe(p))[0]!.status, "a baixa principal continua confirmada").toBe("confirmed");
+    expect(await auditoriaDe(sid, "cancel"), "ZERO trilha de cancelamento — não houve cancelamento").toBe(0);
+  });
+
+  it("K — ESPELHO AMBÍGUO: duas candidatas indistinguíveis também falham FECHADO, e nenhuma é cancelada", async () => {
+    const p = await criar("payable", "CROSS-K-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-K-REC", "400.00");
+    const feito = await cruzar("payables", p, r, ambos, "100.00");
+    expect(feito.statusCode, feito.body).toBe(201);
+    const sid = j(feito).settlement_id as string;
+    const espelhoId = (await baixasDe(r))[0]!.id;
+
+    // Cópia com TODOS os discriminadores iguais, `created_at` inclusive: a consulta não tem como escolher.
+    // `rows[0]` escolheria assim mesmo — por ordem de leitura, que não é identidade.
+    const clone = await duplicarBaixa(espelhoId);
+    const candidatas = await baixasDe(r);
+    expect(candidatas.length, "premissa do caso: DUAS candidatas").toBe(2);
+    expect(candidatas[0]!.nascido, "e elas são indistinguíveis até no created_at").toBe(candidatas[1]!.nascido);
+    const antesP = await estado(p);
+
+    const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid}/cancel`, headers: ambos, payload: { reason: "espelho ambíguo" } });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(j(res).error?.code).toBe("CONFLICT");
+
+    expect(await estado(p), "ZERO mutação no principal").toEqual(antesP);
+    expect((await baixasDe(r)).every((b) => b.status === "confirmed"), "NENHUMA das candidatas pode ser cancelada").toBe(true);
+    expect((await baixasDe(p))[0]!.status).toBe("confirmed");
+    expect(await auditoriaDe(sid, "cancel")).toBe(0);
+    expect(await auditoriaDe(espelhoId, "cancel") + await auditoriaDe(clone, "cancel"), "nem trilha das candidatas").toBe(0);
+  });
+
+  it("M — baixa cruzada COM desconto: os lados divergem em net_amount e o cancelamento continua achando o par", async () => {
+    /**
+     * A OUTRA METADE DA REGRA DOS DISCRIMINADORES: o conjunto não pode conter campo que DIVERGE.
+     *
+     * O espelho recebe o valor BRUTO em `net_amount`; o principal recebe o líquido (desconto, juros,
+     * multa). `note` também diverge quando o pedido não traz nota. Incluir qualquer um deles na consulta
+     * do espelho pareceria mais rigoroso e seria o contrário: toda baixa cruzada com desconto viraria
+     * "zero candidatos" e, com a cardinalidade exigida, CONFLICT — um fail-closed disparando sobre
+     * operação legítima. Este caso é o que reprova essa tentação.
+     */
+    const p = await criar("payable", "CROSS-M-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-M-REC", "400.00");
+    const feito = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settle`, headers: ambos, payload: { settlement_date: "2026-09-20", settlement_kind: "cross_settlement", cross_title_id: r, amount: "100.00", discount: "20.00" } });
+    expect(feito.statusCode, feito.body).toBe(201);
+    const sid = j(feito).settlement_id as string;
+
+    const liquidos = await liquidosDe([p, r]);
+    expect(liquidos.length, "as duas linhas existem").toBe(2);
+    expect(liquidos[0], "premissa do caso: os net_amount REALMENTE divergem entre os lados").not.toBe(liquidos[1]);
+
+    const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid}/cancel`, headers: ambos, payload: { reason: "cancelar cruzada com desconto" } });
+    expect(res.statusCode, res.body).toBe(200);
+    expect((await baixasDe(p)).every((b) => b.status === "cancelled"), "principal cancelada").toBe(true);
+    expect((await baixasDe(r)).every((b) => b.status === "cancelled"), "e o espelho TAMBÉM — é isso que um discriminador divergente quebraria").toBe(true);
   });
 });

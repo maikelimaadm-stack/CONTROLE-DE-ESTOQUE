@@ -483,6 +483,9 @@ até `faltando: 0`** → **`pnpm id-global:verify` verde** → **fase 4 com smok
 abrir o registro pela rota canônica e conferir o distintivo na tela). Até lá, `docs/PRE-BASE2-ROADMAP.md`
 mantém a missão como "implementação pronta — ativação em produção pendente".
 
+**Estado atual da PRE-BASE2-04: IMPLEMENTAÇÃO PRONTA / ATIVAÇÃO EM PRODUÇÃO PENDENTE.** (Frase canônica de
+estado atual, idêntica em `docs/PRE-BASE2-ROADMAP.md` e `docs/PRE-BASE2-05-APOSENTADORIA.md`.)
+
 **Smoke da fase 4 (o que olhar):** `#N` e `ID N` na busca (Ctrl+K) devolvem o registro certo; a URL final é a
 rota canônica **com o UUID**; o distintivo mostra o mesmo número na tela do registro; e um `#N` de registro
 fora do escopo do usuário responde a mesma coisa que um número inexistente.

@@ -593,10 +593,54 @@ describe("decisão da exceção de skew do cutover do contador", () => {
     // ativação. O roadmap é a referência conservadora; os outros dois não podem contradizê-lo.
     const roadmapDizPendente = /PRE-BASE2-04.{0,400}?ativação em produção PENDENTE/is.test(roadmap);
     expect(roadmapDizPendente, "o roadmap deixou de manter a PRE-BASE2-04 como ativação PENDENTE").toBe(true);
-    for (const [nome, doc] of [["DEPLOYMENT.md", deployment], ["PRE-BASE2-05-APOSENTADORIA.md", aposentadoria]] as const) {
-      expect(doc, `${nome} afirma ATIVAÇÃO da PRE-BASE2-04 enquanto o roadmap a mantém PENDENTE — estados atuais opostos`)
-        .not.toMatch(/PRE-BASE2-04 ativada em produção/i);
+
+    /**
+     * ESTADO ATUAL É UMA COISA; REGISTRO HISTÓRICO É OUTRA — E O GATE MEDE A PRIMEIRA.
+     *
+     * A primeira versão desta regra proibia a frase "PRE-BASE2-04 ativada em produção" em QUALQUER lugar
+     * dos três documentos. Isso apagava história verdadeira: o pré-requisito registrado à época para a 05A
+     * era exatamente essa frase, e um gate que obriga a apagá-la obriga a reescrever o passado para ficar
+     * verde — que é precisamente o defeito que ele deveria impedir. Um gate assim não protege a verdade,
+     * protege a aparência de coerência.
+     *
+     * A regra correta tem duas metades. (1) Todo documento declara o estado ATUAL com a MESMA frase
+     * canônica: frase única em vez de sinônimos evita que a divergência só apareça para quem ler os três
+     * lado a lado. (2) A frase histórica pode aparecer, desde que MARCADA como registro histórico; sem a
+     * marca, ela é lida como afirmação de estado atual e reprova.
+     */
+    const ESTADO_ATUAL = /Estado atual da PRE-BASE2-04:\s*IMPLEMENTAÇÃO PRONTA \/ ATIVAÇÃO EM PRODUÇÃO PENDENTE/i;
+    const MARCA_HISTORICA = /documentado à época/i;
+    const TODOS = [["PRE-BASE2-ROADMAP.md", roadmap], ["DEPLOYMENT.md", deployment], ["PRE-BASE2-05-APOSENTADORIA.md", aposentadoria]] as const;
+    for (const [nome, doc] of TODOS) {
+      expect(ESTADO_ATUAL.test(doc), `${nome} não declara o estado ATUAL canônico da PRE-BASE2-04 — sem ele o gate aprovaria por ausência`).toBe(true);
+      for (const m of doc.matchAll(/PRE-BASE2-04 ativada em produção/gi)) {
+        const i = m.index ?? 0;
+        const janela = doc.slice(Math.max(0, i - 200), i + m[0].length + 200);
+        expect(MARCA_HISTORICA.test(janela), `${nome}: "${m[0]}" aparece SEM marca de registro histórico — isso se lê como estado ATUAL, e o estado atual é ativação PENDENTE`).toBe(true);
+      }
     }
+  });
+
+  it("T16 · o pré-requisito histórico da 05A não pode ser rebaixado retroativamente", () => {
+    /**
+     * O DEFEITO QUE ESTE TESTE TRAVA: reescrever a REGRA para a evidência caber nela.
+     *
+     * Ao reconciliar a PRE-BASE2-04 com o que se mediu em produção, é tentador rebaixar o pré-requisito da
+     * 05A de "ativada" para "implantada" — aí a história fecha e ninguém precisa dizer "não sabemos". Mas
+     * não existe fonte contemporânea que sustente o rebaixamento, e ausência de evidência sobre o passado
+     * não é licença para editá-lo. Há três estados possíveis (conforme, violado, não re-certificável) e a
+     * evidência disponível só sustenta o terceiro.
+     */
+    const texto = fs.readFileSync(path.join(RAIZ, "docs/PRE-BASE2-05-APOSENTADORIA.md"), "utf8");
+    const linhas = texto.split("\n").filter((l) => l.includes("**05A — Cliente canônico**"));
+    expect(linhas.length, "a linha da 05A sumiu do quadro — não aprovo por ausência").toBe(1);
+    const linha = linhas[0]!;
+    expect(linha, "o pré-requisito REGISTRADO à época era ATIVAÇÃO; trocá-lo por 'implantada' é reescrever a regra histórica").toContain("PRE-BASE2-04 ativada em produção");
+    expect(linha, "e ele precisa estar marcado como histórico, senão vira afirmação de estado ATUAL e cai no T15").toMatch(/documentado à época/i);
+
+    const normalizado = texto.replace(/\s+/g, " ");
+    expect(normalizado, "sem backfill, verify e smoke não há como re-certificar aquela conformidade, e o documento tem de dizer isso em voz alta").toMatch(/não pode ser re-?certificad/i);
+    expect(normalizado, "declarar a conformidade histórica comprovada é afirmar exatamente a prova que falta").not.toMatch(/conformidade histórica[^.]{0,40}\b(está|foi|é)\b[^.]{0,20}(comprovada|certificada|atendida)/i);
   });
 
 });
