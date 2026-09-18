@@ -11,6 +11,7 @@ import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, currentBalance, lineTotal } from "../services/stock-core.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
+import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfer.js";
 
 const dec = z.union([z.number(), z.string()]).transform((v) => String(v));
 const date = z.string().refine(isISODate, "Data inválida");
@@ -371,7 +372,11 @@ export default async function stockRoutes(app: FastifyInstance) {
     if (d.kind === "farm" && destFarm === d.empresa_origem_id) throw validation("Transferência entre fazendas exige fazendas distintas");
     if (d.origin_warehouse_id === d.destination_warehouse_id) throw err("SAME_WAREHOUSE_TRANSFER", "Armazém de origem e destino iguais");
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
-      const code = await nextCode(ctx.tx, ctx.orgId, d.kind === "farm" ? "farm_transfer" : "warehouse_transfer");
+      // HOTFIX 0019: UM contador por namespace de unicidade. `erp.warehouse_transfers` tem
+      // `unique (organization_id, code)` — sem `kind` —, então as duas variantes compartilham o
+      // namespace e precisam compartilhar a sequência. Numerar por variante fazia as duas emitirem
+      // `0001` e a segunda colidir com 409 (ver `lib/sequencia-warehouse-transfer.ts`).
+      const code = await nextCode(ctx.tx, ctx.orgId, SEQUENCIA_WAREHOUSE_TRANSFER);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.warehouse_transfers(organization_id,code,transfer_date,kind,empresa_origem_id,origin_warehouse_id,empresa_destino_id,destination_warehouse_id,harvest_id,generate_financial,proprietary_id,responsible_user_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12) returning id", [ctx.orgId, code, d.transfer_date, d.kind, d.empresa_origem_id, d.origin_warehouse_id, destFarm, d.destination_warehouse_id, d.harvest_id ?? null, d.generate_financial, d.proprietary_id ?? null, ctx.user.id]);
       const id = r.rows[0]!.id; let total = D(0);
       await atribuirIdGlobal(ctx, "warehouse_transfers", id);

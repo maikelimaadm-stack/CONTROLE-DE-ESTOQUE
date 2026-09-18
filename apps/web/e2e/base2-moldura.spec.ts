@@ -178,6 +178,26 @@ async function primeiroId(page: Page, path: string): Promise<string> {
 }
 
 /**
+ * OUTRA empresa visível, com armazém — a fixture da transferência ENTRE EMPRESAS.
+ *
+ * A variante `farm` exige empresas DISTINTAS (a rota recusa origem igual a destino), e o armazém de
+ * destino tem de ser da empresa de destino. Falha explicitamente quando o contexto não tem a segunda
+ * empresa: uma fixture que caísse na mesma empresa provaria a variante errada em silêncio.
+ */
+async function outraEmpresaComArmazem(page: Page, atual: string): Promise<{ empresa: string; armazem: string }> {
+  const ctx = await api<{ empresas?: { id: string }[] }>(page, "GET", "/api/auth/context");
+  const outras = (ctx.empresas ?? []).map((e) => e.id).filter((id) => id !== atual);
+  expect(outras.length, "a transferência ENTRE EMPRESAS precisa de uma segunda empresa visível no contexto")
+    .toBeGreaterThan(0);
+  const w = await api<{ items: { id: string; empresa_id?: string }[] }>(page, "GET", "/api/resources/warehouses?pageSize=100");
+  for (const empresa of outras) {
+    const armazem = (w.items ?? []).find((x) => x.empresa_id === empresa)?.id;
+    if (armazem) return { empresa, armazem };
+  }
+  throw new Error("nenhuma das outras empresas visíveis tem armazém — sem isso a variante `farm` não pode ser criada");
+}
+
+/**
  * Armazéns DA EMPRESA informada. `warehouses` é empresa-scoped: pegar os dois primeiros da listagem
  * geral mistura empresas, e o servidor recusa com WAREHOUSE_FARM_MISMATCH (422) — foi o que reprovou a
  * primeira versão da fixture de transferência.
@@ -411,11 +431,12 @@ test("moldura Base 2 — TIPO DE OPERAÇÃO: as sete rotas do piloto, cada uma c
     items: [{ warehouse_id: origem, product_id: produto, quantity: "1", unit_value: "3.00" }]
   });
 
-  const transferencia = await api<{ id: string }>(page, "POST", "/api/stock/transfers", {
+  const transferencia = await api<{ id: string; code: string }>(page, "POST", "/api/stock/transfers", {
     kind: "warehouse", transfer_date: "2026-09-22", empresa_origem_id: empresaId,
     origin_warehouse_id: origem, destination_warehouse_id: destino,
     items: [{ product_id: produto, quantity: "1" }]
   });
+  const destinoEmpresa = await outraEmpresaComArmazem(page, empresaId);
 
   const produtos = await api<{ items: { id: string }[] }>(page, "GET", "/api/resources/products?pageSize=2");
   const acabado = produtos.items[1]?.id ?? produto;
@@ -436,32 +457,49 @@ test("moldura Base 2 — TIPO DE OPERAÇÃO: as sete rotas do piloto, cada uma c
   await conferirOperacao(page, `/estoque/transferencias/${transferencia.id}`, OPERACAO.transferenciaArmazens);
   await conferirOperacao(page, `/estoque/batidas/${batida.id}`, OPERACAO.batida);
 
-  // A VARIANTE, e por que o outro lado NÃO é provado aqui.
+  // AS DUAS VARIANTES DA MESMA TABELA, NA MESMA ORGANIZAÇÃO — o eixo próprio da TOP, provado inteiro.
   //
-  // `erp.warehouse_transfers` é o caso que sustenta o eixo próprio da TOP: UMA tabela, UMA rota de
-  // detalhe, UM título de tela, e DUAS operações (`kind in ('warehouse','farm')`). A asserção acima já
-  // é POSITIVA para a variante `warehouse` — a tela AFIRMA "Transferência entre armazéns", não apenas
-  // deixa de afirmar a outra (uma asserção só negativa passaria até com o campo ausente).
+  // `erp.warehouse_transfers` é o caso que sustenta o eixo: UMA tabela, UMA rota de detalhe, UM título
+  // de tela, e DUAS operações (`kind in ('warehouse','farm')`). As duas asserções são POSITIVAS — cada
+  // tela AFIRMA a sua operação — porque uma asserção só negativa passaria até com o campo ausente.
   //
-  // A variante `farm` não é criada por este teste. Existe um DEFEITO EXTERNO, anterior à BASE2-02, no
-  // caminho de escrita (numeração de `warehouse_transfers` por dois contadores independentes para uma
-  // coluna de código única), documentado em docs/TIPO-OPERACAO-CONTRACT.md e em docs/DECISIONS.md.
-  // Esse defeito NÃO é comportamento esperado e NÃO é exigido por nenhum teste: uma suíte que exigisse
-  // a recusa transformaria um bug em contrato, e o dia da correção chegaria como "teste quebrado" em
-  // vez de "teste que passou a poder ser escrito". A cobertura da variante `farm` mora no teste de
-  // contrato do registry (`kind:"farm"` → `estoque.transferencia_entre_empresas`), que não depende do
-  // caminho de escrita, e a prova de UI entra na PR do hotfix de numeração.
+  // ATÉ A BASE2-02 SÓ A PRIMEIRA EXISTIA, e o motivo era um defeito externo no caminho de escrita: a
+  // rota numerava `warehouse_transfers` com DOIS contadores independentes para uma coluna de código de
+  // namespace ÚNICO, então a segunda variante criada nesta organização morria com 409. Aquela fatia
+  // registrou o defeito e não o corrigiu (numeração visível de documento estava fora da fronteira dela),
+  // e deliberadamente NÃO escreveu um teste que exigisse a recusa — exigir um bug o transformaria em
+  // contrato, e o dia da correção chegaria como "teste quebrado".
   //
-  // O que AINDA se prova aqui sem o segundo documento: o título da tela não carrega variante nenhuma.
-  // Ele é o literal "Transferência" (app/(app)/estoque/transferencias/[id]/page.tsx), idêntico nos dois
-  // casos. Logo a operação exibida NÃO pode ter vindo do título — que é o ponto da separação entre
-  // variante de ROTA e variante de OPERAÇÃO.
-  await page.goto(`/estoque/transferencias/${transferencia.id}`);
-  await expect(page.locator(CAMPO_TOP), "o documento entre armazéns afirma a SUA operação").toContainText(OPERACAO.transferenciaArmazens);
-  const titulo = (await page.getByRole("heading", { level: 1 }).first().textContent()) ?? "";
-  expect(titulo, "o título precisa ter sido lido").not.toBe("");
-  for (const rotulo of [OPERACAO.transferenciaArmazens, OPERACAO.transferenciaEmpresas]) {
-    expect(titulo, `o título da tela não pode conter a operação ("${rotulo}") — senão a TOP seria derivável dele`).not.toContain(rotulo);
+  // O hotfix da numeração (`supabase/migrations/0019_warehouse_transfer_code_sequence.sql`) corrigiu, e
+  // este bloco é o que aquela fatia deixou escrito como o teste "que passou a poder ser escrito".
+  const transferenciaEntreEmpresas = await api<{ id: string; code: string }>(page, "POST", "/api/stock/transfers", {
+    kind: "farm", transfer_date: "2026-09-22",
+    empresa_origem_id: empresaId, origin_warehouse_id: origem,
+    empresa_destino_id: destinoEmpresa.empresa, destination_warehouse_id: destinoEmpresa.armazem,
+    items: [{ product_id: produto, quantity: "1" }]
+  });
+
+  // A numeração compartilhada, visível no próprio par de documentos: mesma tabela, códigos DIFERENTES.
+  expect(transferenciaEntreEmpresas.code, "as duas variantes não podem receber o mesmo código")
+    .not.toBe(transferencia.code);
+
+  await conferirOperacao(page, `/estoque/transferencias/${transferencia.id}`, OPERACAO.transferenciaArmazens);
+  await conferirOperacao(page, `/estoque/transferencias/${transferenciaEntreEmpresas.id}`, OPERACAO.transferenciaEmpresas);
+
+  // E a prova de que a operação NÃO veio da rota nem do título: as duas telas são a MESMA rota de
+  // detalhe e o MESMO literal de cabeçalho ("Transferência",
+  // app/(app)/estoque/transferencias/[id]/page.tsx), e ainda assim afirmam operações diferentes.
+  for (const [id, esperado] of [
+    [transferencia.id, OPERACAO.transferenciaArmazens],
+    [transferenciaEntreEmpresas.id, OPERACAO.transferenciaEmpresas]
+  ] as const) {
+    await page.goto(`/estoque/transferencias/${id}`);
+    await expect(page.locator(CAMPO_TOP), "o documento afirma a SUA operação").toContainText(esperado);
+    const titulo = (await page.getByRole("heading", { level: 1 }).first().textContent()) ?? "";
+    expect(titulo, "o título precisa ter sido lido").not.toBe("");
+    for (const rotulo of [OPERACAO.transferenciaArmazens, OPERACAO.transferenciaEmpresas]) {
+      expect(titulo, `o título da tela não pode conter a operação ("${rotulo}") — senão a TOP seria derivável dele`).not.toContain(rotulo);
+    }
   }
 });
 

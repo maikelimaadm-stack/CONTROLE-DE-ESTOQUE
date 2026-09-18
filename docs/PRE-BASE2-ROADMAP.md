@@ -13,24 +13,69 @@
 | 4 | **PRE-BASE2-04** — ID Global | Alocação automática nas 29 portas de escrita + porta genérica, backfill operacional determinístico e retomável, resolução na busca global (`55`, `#55`, `ID 55`) e exibição do número no registro. 🟡 **implementação pronta — ativação em produção pendente** | 01 (03 recomendada) |
 | 5 | **PRE-BASE2-05** — Contexto multiempresa | Seletor "todas / uma / conjunto", filtros e painéis consolidados, seleção obrigatória no lançamento, seletor de idioma. ✅ **CONCLUÍDA EM PRODUÇÃO**: cutover 05C-2 executado em 16/09/2026 (merge `935f9dc`; `0018` no ledger uma única vez; `entity='farm'` = 0 e `entity='empresa'` = 1, `last_value` preservado), e encerramento documental feito — runbook, `DEPLOYMENT.md` e roteiro de aposentadoria registram a execução | 02, 03 |
 | 6 | **BASE2-01** — Moldura de lançamento | Shell oficial do Modelo Base 2 (cabeçalho, dados principais × itens, totais, histórico, **anexos**, ações). Contrato em `MODELO-BASE2-CONTRACT.md`; implementação em `apps/web/src/features/base2/`; piloto no detalhe de documento de estoque. ✅ **CONCLUÍDA / IMPLANTADA EM PRODUÇÃO** — merge `9615560`. ANEXOS: entregues com suporte inicial real — `Base2Shell` integra o `AttachmentsDialog` oficial e `input_entries` foi habilitada em `ATTACHMENT_PARENTS`, com a matriz de autorização provada em integração. As outras seis entidades entram uma a uma, conforme o backend as aceite | 05 |
-| 7 | **BASE2-02** — TOP | Registry e contrato inicial de Tipo de Operação; nenhuma regra de negócio fundida. 🟡 **implementação em PR — não implantada.** Registry canônico em `packages/domain/src/tipo-operacao.ts`, contrato em `docs/TIPO-OPERACAO-CONTRACT.md`, rótulos no catálogo pt-BR e identidade visível nas sete rotas do piloto. CLASSIFICAR ≠ EXECUTAR: nenhuma regra de negócio mudou de dono. | 06 |
-| 8 | **BASE2-03+** — Migração dos módulos | Compras, Estoque, Financeiro, Vendas e demais migrados progressivamente para o Base 2. ⛔ **CONGELADA**: só começa com a BASE2-02 mesclada e em produção **E** com o HOTFIX de numeração de `erp.warehouse_transfers` entregue (ver a linha abaixo). | 07 + HOTFIX |
+| 7 | **BASE2-02** — TOP | Registry e contrato inicial de Tipo de Operação; nenhuma regra de negócio fundida. ✅ **CONCLUÍDA / IMPLANTADA EM PRODUÇÃO** — merge `dd6e0e0` (PR #39, ancestral de `origin/main`, verificável por `git merge-base --is-ancestor`), CI de push verde nos quatro jobs (run 35258298588) e implantação relatada pelo Maike na abertura deste hotfix: Vercel, Railway web e Railway API com SUCCESS. Este último item é declaração operacional, não verificação feita daqui — a sessão não tem acesso autenticado a produção. Registry canônico em `packages/domain/src/tipo-operacao.ts`, contrato em `docs/TIPO-OPERACAO-CONTRACT.md`, rótulos no catálogo pt-BR e identidade visível nas sete rotas do piloto. CLASSIFICAR ≠ EXECUTAR: nenhuma regra de negócio mudou de dono. A dívida que ela DECLAROU (numeração de `erp.warehouse_transfers`) é o hotfix da linha abaixo. | 06 |
+| 8 | **BASE2-03+** — Migração dos módulos | Compras, Estoque, Financeiro, Vendas e demais migrados progressivamente para o Base 2. ⛔ **CONGELADA**: a BASE2-02 já está mesclada e em produção, mas o HOTFIX de numeração de `erp.warehouse_transfers` está 🟡 **em PR, não implantado** (ver a seção abaixo). A BASE2-03 só começa com o hotfix mesclado **e comprovado em produção**. | 07 + HOTFIX |
 | 9 | **DATA-GOV** — Governança de dados | Nomenclatura final, dicionário com cobertura certificada, rótulos de enum por i18n. | 03, 08 |
 
-### HOTFIX obrigatório antes da BASE2-03 — numeração de `erp.warehouse_transfers`
+### HOTFIX obrigatório antes da BASE2-03 — numeração de `erp.warehouse_transfers` · 🟡 EM PR
 
-`POST /api/stock/transfers` gera o código com **dois contadores independentes** (`warehouse_transfer` e
-`farm_transfer`, via `nextCode`) para **uma** tabela com `unique (organization_id, code)`. A primeira
-transferência de cada variante numa organização recebe o mesmo código, e a segunda é recusada com
-`409 CONFLICT`. Numa organização nova, a transferência entre empresas quebra no primeiro documento.
+**O defeito.** `POST /api/stock/transfers` gerava o código com **dois contadores independentes**
+(`warehouse_transfer` e `farm_transfer`, via `nextCode`) para **uma** tabela com
+`unique (organization_id, code)`. A primeira transferência de cada variante numa organização recebia o
+mesmo código, e a segunda era recusada com `409 CONFLICT`. Numa organização nova, a transferência entre
+empresas quebrava no primeiro documento. Defeito de PRODUÇÃO, anterior à BASE2-02, no caminho de
+**escrita**, e nunca comportamento esperado: nenhum teste o exigia
+(`scripts/regressao-invertida-audit.mjs` impede que volte a ser exigido).
 
-É defeito de PRODUÇÃO, anterior à BASE2-02, no caminho de **escrita**, e **não** é comportamento
-esperado: nenhum teste o exige (`scripts/regressao-invertida-audit.mjs` impede que volte a ser exigido).
+**A decisão.** A sequência acompanha o **namespace de unicidade da tabela**, nunca a variante funcional.
+Como a UNIQUE de `erp.warehouse_transfers` não inclui `kind`, existe UM namespace por organização e o
+contador passa a ser um só (`warehouse_transfer`). As outras tabelas que numeram por variante
+(`financial_titles`, `sales_documents`, `animal_movements`) têm o discriminador DENTRO da chave única —
+lá numerar por variante é correto, e é por isso que elas não tinham este defeito.
 
-**Ordem fixa:** BASE2-02 mesclada → **HOTFIX de numeração** → BASE2-03. A PR seguinte à #39 é o hotfix,
-não a BASE2-03. O hotfix decide a numeração (contador único por tabela ou código único por variante),
-trata o acervo já numerado, traz teste de regressão criando as DUAS variantes na mesma organização, e
-só então a prova de UI da variante `farm` passa a ser escrevível.
+**A TOP não muda.** Continuam DUAS operações (`estoque.transferencia_entre_armazens` e
+`estoque.transferencia_entre_empresas`). Unificar a NUMERAÇÃO não unifica a OPERAÇÃO.
+
+**O que a PR entrega:**
+
+| Peça | Onde |
+| --- | --- |
+| Migration fail-closed, com reconciliação pelo maior entre contador canônico, legado e acervo | `supabase/migrations/0019_warehouse_transfer_code_sequence.sql` |
+| `farm_transfer` vira ALIAS em `erp.next_code` — a compatibilidade mora no BANCO, não no calendário | seção 7 da 0019 |
+| Chave única do runtime, com o motivo ao lado | `apps/api/src/lib/sequencia-warehouse-transfer.ts` |
+| Gate do princípio (contador por variante exige o discriminador na UNIQUE) | `scripts/sequencia-namespace-audit.mjs`, no `pnpm lint` |
+| Matriz de version skew: BASE × pós-0019, rolling deploy, rollback de binário | `pnpm gate:0019` |
+| Regressão pela porta real: as DUAS variantes na mesma organização | `apps/api/test/integration/transferencia-numeracao.test.ts` |
+| Prova de UI da variante `farm` — o PENDING da BASE2-02, fechado | `apps/web/e2e/base2-moldura.spec.ts` |
+| Corrida cross-version provada ausente: BASE e HEAD concorrentes na rota de rebanho | quadrante C de `pnpm gate:0019` (duas conexões, barreiras reais) |
+
+**A chave legada é SOBRECARREGADA — e isso mudou o desenho DUAS vezes.** `'farm_transfer'` não serve só
+à transferência de estoque: `erp.animal_movements` (namespace `unique (organization_id, movement_type,
+code)`) numera com a MESMA chave. A primeira resposta foi separar, dando ao rebanho um contador próprio.
+A auditoria externa derrubou essa resposta: separar DURANTE a vida do alias cria uma corrida que não
+existia — o binário anterior pede a chave legada (aliasada para o contador de estoque) e o novo pediria o
+próprio; duas LINHAS sem trava em comum, emitindo o mesmo número para a mesma tabela, e um `select` de
+"já existe?" é TOCTOU, não solução.
+
+A decisão final é a menor que PROVA segurança: **enquanto o alias existir, as duas rotas pedem a MESMA
+chave**, e `erp.next_code` (`insert ... on conflict do update`) serializa as transações na linha do
+contador. Provado com duas conexões e barreiras reais no quadrante C de `pnpm gate:0019`, que também
+reproduz a corrida da arquitetura abandonada. Preço aceito: numeração intercalada, com lacuna nas duas
+tabelas — lacuna é normal no contrato, colisão não é. A separação do contador de rebanho fica declarada
+como cleanup da fatia que REMOVE o alias.
+
+**Por que este hotfix NÃO precisa de janela single-version como a 05C-2.** Lá a chave mudava de nome e o
+banco não tinha como servir os dois binários. Aqui `erp.next_code` canonicaliza `farm_transfer` para
+`warehouse_transfer`: o binário anterior pede a chave antiga e recebe número do contador canônico, sem
+criar linha legada. Autodeploy normal, e o rollback de binário continua correto contra o banco pós-0019 —
+de **um passo**, até o runtime da 05C-2; voltar além disso continua sendo forward-only, como
+`docs/DEPLOYMENT.md` já registra. Rollback de BANCO é outra coisa e também é forward-only: o caminho de
+volta escrito está em `docs/DEPLOYMENT.md`.
+O alias **não sai nesta fatia** — ele é o caminho de volta; sai em fatia própria, quando não houver mais
+versão viva pedindo a chave antiga.
+
+**Ordem fixa:** BASE2-02 mesclada ✅ → **HOTFIX de numeração** 🟡 em PR → BASE2-03 ⛔. A BASE2-03 continua
+congelada até o hotfix estar mesclado e comprovado em produção.
 
 
 ## Fronteiras que não podem ser cruzadas

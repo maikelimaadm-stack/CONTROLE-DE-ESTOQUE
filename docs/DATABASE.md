@@ -34,6 +34,29 @@ Schema `erp` em PostgreSQL 16 / Supabase. Migrations em `supabase/migrations/000
 - Dinheiro/quantidades: `numeric(18,2)` / `numeric(18,4)`; custos unitários `numeric(18,6)`.
 - Datas: `date`; instantes: `timestamptz`.
 - Documentos transacionais têm `status` (`confirmed/cancelled/…`) e nunca são apagados.
+- **Numeração de documento acompanha o NAMESPACE DE UNICIDADE da tabela, nunca a variante funcional.**
+  `erp.code_sequences` tem PK `(organization_id, entity)`: cada nome de entidade é um contador próprio,
+  com `last_value` independente. Logo um contador POR VARIANTE só é correto quando o discriminador está
+  DENTRO da chave única da tabela — é o caso de `erp.financial_titles` (`direction`),
+  `erp.sales_documents` (`kind`) e `erp.animal_movements` (`movement_type`). Onde a UNIQUE é só
+  `(organization_id, code)`, como em `erp.warehouse_transfers`, existe UM namespace e tem de haver UM
+  contador; dois emitem o mesmo número para a mesma coluna e o segundo documento morre em 409. Foi o
+  defeito que a `0019` corrigiu. O gate é `scripts/sequencia-namespace-audit.mjs`, no `pnpm lint`.
+- **Uma chave de contador serve UMA tabela** — e quando não serve, separar tem HORA. `'farm_transfer'`
+  serve duas (`erp.warehouse_transfers` e `erp.animal_movements`), o que nunca colidiu porque os
+  namespaces são distintos. Desde a `0019` ela é também ALIAS de compatibilidade dentro de
+  `erp.next_code`. Separá-la **enquanto o alias existe** criaria uma corrida: dois contadores em linhas
+  diferentes, sem trava em comum, emitindo o mesmo número para a mesma tabela a partir de binários
+  distintos. Por isso as duas rotas continuam na MESMA chave até a retirada do alias — é a linha do
+  contador que serializa os binários. O uso é DECLARADO em `scripts/sequencia-namespace-audit.mjs`, com
+  motivo e condição de saída, e uso não declarado (ou declaração morta) reprova.
+- **`erp.next_code` e o `insert` rodam na MESMA transação** (`runService` → `withTx`). Uma violação de
+  unicidade desfaz o incremento do contador junto, então a tentativa seguinte aloca o MESMO número —
+  travamento, não ruído, e "tentar de novo" nunca sai dele. O que fecha a colisão é a SERIALIZAÇÃO: como
+  `erp.next_code` é `insert ... on conflict do update`, a linha do contador é travada e as transações
+  entram em fila nela. Por isso a resposta é as rotas concorrentes pedirem a MESMA chave, e não cada uma
+  a sua. Onde o namespace admite código ocupado por outra origem, `uniqueCode`
+  (`apps/api/src/routes/livestock.ts`, `animal_handlings`) pula o que já existe.
 
 ## Operação
 - Aplicar: `DATABASE_URL=… pnpm db:migrate` (ou `node apps/api/dist/migrate.js` no pre-deploy do Railway).

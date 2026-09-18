@@ -297,6 +297,27 @@ export default async function livestockRoutes(app: FastifyInstance) {
     const cabecas = ids.length + rebanhos.reduce((a, l) => a + Number(l.quantity), 0);
     if (!cabecas) throw validation("Transferência sem animais ou rebanho: informe animais ou um lote com acervo");
 
+    // CHAVE DE COMPATIBILIDADE, DE PROPÓSITO — não é descuido, e sair dela AGORA quebraria o rollout.
+    //
+    // `'farm_transfer'` é uma chave sobrecarregada: `erp.animal_movements` (namespace
+    // `unique (organization_id, movement_type, code)`) a divide com `erp.warehouse_transfers`
+    // (`unique (organization_id, code)`). O hotfix 0019 unifica a numeração de ESTOQUE e transforma esta
+    // chave em ALIAS de `warehouse_transfer` dentro de `erp.next_code`.
+    //
+    // Uma rodada anterior desta fatia deu a esta rota um contador próprio (`animal_farm_transfer`) e isso
+    // INTRODUZIU UMA CORRIDA: durante o rolling deploy o binário anterior pede a chave legada (que o alias
+    // manda para o contador de estoque) e o binário novo pediria o contador próprio — duas LINHAS
+    // diferentes, sem trava em comum, emitindo o MESMO número para esta tabela. Um `select` de "o código
+    // já existe?" não fecha isso: é TOCTOU contra uma transação ainda não commitada.
+    //
+    // Enquanto o alias existir, o caminho seguro é os DOIS binários pedirem a MESMA chave: `erp.next_code`
+    // é `insert ... on conflict do update`, então a linha do contador é travada e as duas transações
+    // SERIALIZAM nela. O preço é numeração intercalada com a de estoque — lacuna, que o contrato trata
+    // como normal. A separação desta rota num contador próprio é o cleanup da fatia que REMOVE o alias,
+    // quando não houver mais versão viva pedindo a chave antiga.
+    //
+    // Declarado em `scripts/sequencia-namespace-audit.mjs` (POR_COMPATIBILIDADE) e provado pelo quadrante
+    // C de `pnpm gate:0019`, que roda as duas alocações em transações concorrentes de verdade.
     const code = await animalCode(ctx, "farm_transfer");
     const r = await ctx.tx.query<{ id: string }>("insert into erp.animal_movements(organization_id,empresa_id,code,movement_type,movement_date,batch_id,empresa_destino_id,destination_batch_id,note,status,created_by) values ($1,$2,$3,'farm_transfer',$4,$5,$6,$7,$8,'pending',$9) returning id", [ctx.orgId, d.empresa_id, code, d.movement_date, d.batch_id ?? null, d.empresa_destino_id, d.destination_batch_id ?? null, d.note ?? null, ctx.user.id]);
     await atribuirIdGlobalSeAplicavel(ctx, "animal_movements", r.rows[0]!.id);

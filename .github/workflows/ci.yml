@@ -66,6 +66,12 @@ jobs:
       # depois que a 05C-2 estiver em `main` — o gate se declara inativo e passa sem simular nada.
       - name: Matriz do cutover do contador de Empresa (gate 05C-2)
         run: pnpm gate:05c2
+      # A matriz de version skew do HOTFIX da numeração de transferências: o quadrante que a fatia COMPRA
+      # (binário BASE contra banco pós-0019, correto pelo alias) e os que continuam proibidos (API nova
+      # antes da migration, com a janela silenciosa quando o acervo não começa em 1). Mesma expiração
+      # automática do 05C-2: numa PR que não atravessa o hotfix, o gate se declara inativo e passa.
+      - name: Matriz de version skew da numeração de transferências (gate 0019)
+        run: pnpm gate:0019
   e2e:
     name: Build · E2E (Playwright)
     runs-on: ubuntu-latest

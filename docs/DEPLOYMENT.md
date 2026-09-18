@@ -55,7 +55,7 @@ no navegador — agora provando que o canônico atravessa, e reprovando se a API
 | **05C-0 — Instrumentos** ✅ mesclada (PR #33) | nada do banco: **NO-DDL**. Calibra os gates que a purga usa como prova | tudo |
 | **05C-G0/G1/G2 — Preflight** ✅ concluída | nada do banco: leitura de produção, correção de documentação, contratos executáveis e runbook. Ver `docs/PRE-BASE2-05C-1-PREFLIGHT.md` | tudo |
 | **05C-1 — Purga física** ✅ mesclada (PR #36, `602cda3`) e **aplicada em produção** em 16/09/2026 | 52 colunas legadas em 49 tabelas, as **cinco** views de nome antigo, 52 gatilhos de espelho NOMEADOS (as tabelas alvo têm 66 gatilhos: 14 são de negócio e ficam) e 3 funções, **52 FKs de coluna única** (as **50** compostas ficam), 8 índices, e o CHECK órfão de `erp.equipment_transfers` só depois do substituto canônico | contador `entity='farm'`; lápides (`contrato-legado.ts`, redirects) |
-| **05C-2 — Contador** ✅ mesclada (PR #37, merge `935f9dc`) e **aplicada em produção** em 16/09/2026: `0018_empresa_code_sequence.sql` no ledger uma única vez, `entity='farm'` = 0, `entity='empresa'` = 1, `last_value` preservado | a linha `entity='farm'` de `erp.code_sequences`, renomeada para `'empresa'` com o `last_value` preservado, e a constante `SEQUENCIA_EMPRESA` junto | os demais contadores, `farm_transfer` inclusive; lápides (`contrato-legado.ts`, redirects) |
+| **05C-2 — Contador** ✅ mesclada (PR #37, merge `935f9dc`) e **aplicada em produção** em 16/09/2026: `0018_empresa_code_sequence.sql` no ledger uma única vez, `entity='farm'` = 0, `entity='empresa'` = 1, `last_value` preservado | a linha `entity='farm'` de `erp.code_sequences`, renomeada para `'empresa'` com o `last_value` preservado, e a constante `SEQUENCIA_EMPRESA` junto | os demais contadores; lápides (`contrato-legado.ts`, redirects). ⚠️ A ressalva "`farm_transfer` inclusive" valeu até o **HOTFIX PRÉ-BASE2-03**: a `0019` aposenta aquela linha e a transforma em alias — ver a seção própria abaixo |
 
 Cada fase só começa depois de a anterior estar em produção e comprovada. **05A não remove compatibilidade
 nem da API nem do banco.** Detalhes e inventários: `docs/PRE-BASE2-05-APOSENTADORIA.md`.
@@ -243,6 +243,84 @@ Nenhum deles é tarefa pendente:
    Voltar ao binário anterior (pré-`SEQUENCIA_EMPRESA = "empresa"`) exige migration nova, não redeploy: a
    política é **forward-only**, e o version skew `farm` ↔ `empresa` continua inseguro, o cutover concluído
    não o torna seguro. Ver § D do runbook e `pnpm gate:05c2`.
+
+> **O ponto 1 é sobre ESTA FORMA de cutover, não sobre toda migration de contador.** O HOTFIX PRÉ-BASE2-03
+> tem a mesma forma aparente (troca a chave que a API pede) e **não** precisa de janela, porque resolve a
+> incompatibilidade DENTRO do banco em vez de no calendário. A diferença está escrita na seção própria
+> abaixo, e é o que separa "cutover de chave" de "cutover com alias".
+
+### HOTFIX PRÉ-BASE2-03 — numeração de `erp.warehouse_transfers` (`0019`)
+
+**Janela de deploy: NÃO precisa.** Autodeploy normal (merge → pre-deploy → rolling), ao contrário da 05C-2.
+
+O motivo é estrutural, não otimismo. A 05C-2 renomeou a chave do contador e não havia como o banco servir
+os dois binários: qualquer ordem deixava uma das versões pedindo uma chave inexistente, e `erp.next_code`
+responde a chave ausente REINICIANDO EM 1. A `0019` resolve isso dentro do banco: `erp.next_code` passa a
+CANONICALIZAR `farm_transfer` para `warehouse_transfer`, então o binário anterior pede a chave antiga e
+recebe número do contador canônico, sem criar linha legada. Os dois runtimes ficam corretos contra o mesmo
+banco — provado quadrante a quadrante por `pnpm gate:0019` (Q3 binário anterior × banco novo, Q4 rolling
+deploy com os dois vivos, Q5 rollback de binário).
+
+**E a prova inclui CONCORRÊNCIA, não só alternância.** O quadrante C roda duas transações ABERTAS ao mesmo
+tempo, em conexões diferentes, com barreiras explícitas: o binário anterior e o novo, na mesma rota de
+transferência de rebanho, serializam na linha do contador em vez de emitir o mesmo número. O mesmo
+quadrante REPRODUZ a corrida da arquitetura que foi abandonada (dar ao rebanho um contador próprio durante
+a vida do alias), para que a prova tenha dentes. É por isso que, enquanto o alias existir, a rota de
+rebanho continua pedindo a chave legada: duas rotas na MESMA chave é o que dá o ponto de serialização.
+
+**Ordem obrigatória: BANCO → API.** O quadrante inverso (API nova antes da migration) continua PROIBIDO e
+está medido no gate: sem a `0019`, a API nova pede a chave canônica, a linha não existe, o contador reinicia
+em 1 e colide com o acervo — e quando o acervo não começa em 1 há uma janela SILENCIOSA em que documentos
+são gravados antes de o erro aparecer. O pre-deploy garante a ordem, e um pre-deploy que falha aborta o
+deploy.
+
+**Rollback de BINÁRIO: seguro, de um passo.** Voltar ao binário imediatamente anterior contra o banco
+pós-0019 é correto — é o que o alias sustenta, e é por isso que ele não sai nesta fatia. A fronteira é a
+mesma do ponto 4 acima: voltar além do runtime da 05C-2 continua exigindo migration nova.
+
+**Rollback de BANCO: FORWARD-ONLY. Não restaure backup pré-0019 com o binário novo no ar.**
+
+A `0019` é destrutiva em dois pontos: apaga a linha `entity='farm_transfer'` de `erp.code_sequences` e
+substitui `erp.next_code`. Restaurar um estado pré-0019 por baixo de um binário pós-0019 reproduz, na
+direção contrária, exatamente o modo de falhar que a migration existe para evitar:
+
+- `warehouse_transfer` volta a um `last_value` anterior aos códigos emitidos depois da migration → colisão
+  na própria tabela do hotfix **e também em `erp.animal_movements`**, porque enquanto o alias existir esse
+  contador é o destino das duas rotas;
+- a linha `farm_transfer` reaparece e volta a ser contador de verdade para o binário anterior, enquanto o
+  novo continua pedindo a canônica — exatamente os dois estados que a `0019` existe para não ter juntos.
+
+Se for mesmo necessário voltar o banco, o caminho é o inverso inteiro e com o serviço parado: restaurar o
+backup, **e então** reaplicar a `0019` antes de qualquer binário pós-hotfix voltar a servir — a migration é
+idempotente (`greatest` só sobe, `delete` de chave ausente casa zero linhas) e reconcilia o estado
+restaurado. Reverter a `0019` sem reaplicá-la exige missão própria, com migration nova e precondição
+verificada, como manda `.claude/rules/database-migrations.md`.
+
+**Verificação pós-deploy:**
+
+```sql
+-- a chave legada não existe mais como linha (mas continua aceita como alias)
+select count(*) from erp.code_sequences where entity = 'farm_transfer';        -- 0
+
+-- o contador canônico cobre o acervo de ESTOQUE
+select count(*) from (
+  select wt.organization_id, max(wt.code::bigint) maior
+    from erp.warehouse_transfers wt where wt.code ~ '^[0-9]+$' group by 1
+) a left join erp.code_sequences cs
+  on cs.organization_id = a.organization_id and cs.entity = 'warehouse_transfer'
+where coalesce(cs.last_value, -1) < a.maior;                                    -- 0
+
+-- e o MESMO contador cobre o acervo de REBANHO, porque o alias o faz numerar as duas tabelas.
+-- Esta metade é separada de propósito: uma organização com códigos de rebanho e NENHUMA transferência
+-- de estoque não aparece na consulta acima, e ali o zero não diria nada sobre ela.
+select count(*) from (
+  select am.organization_id, max(am.code::bigint) maior
+    from erp.animal_movements am
+   where am.movement_type = 'farm_transfer' and am.code ~ '^[0-9]+$' group by 1
+) a left join erp.code_sequences cs
+  on cs.organization_id = a.organization_id and cs.entity = 'warehouse_transfer'
+where coalesce(cs.last_value, -1) < a.maior;                                    -- 0
+```
 
 ### Verificação pós-deploy (fase 1)
 
