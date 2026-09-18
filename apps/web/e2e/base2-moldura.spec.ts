@@ -19,9 +19,21 @@ async function criarEntradaEAbrir(page: Page): Promise<string> {
   await row.locator("button").nth(0).click(); await page.getByPlaceholder("Pesquisar...").fill("Almox"); await page.getByRole("option", { name: /Almox/i }).first().click();
   await row.locator("button").nth(1).click(); await page.getByPlaceholder("Pesquisar...").fill("Diesel"); await page.getByRole("option", { name: /Diesel/i }).first().click();
   await row.locator("input[type=number]").nth(0).fill("10"); await row.locator("input[type=number]").nth(1).fill("6.5");
-  await page.getByRole("button", { name: "Salvar" }).click();
+  // O id vem da RESPOSTA do POST, e não da primeira linha da listagem.
+  //
+  // POR QUE. A listagem de recebimentos ordena por DATA DO DOCUMENTO (`order by d.<data> desc,
+  // d.created_at desc`, apps/api/src/routes/stock.ts), e outros testes desta suíte criam entradas com
+  // data FUTURA de propósito. Quando uma delas já existe, "a primeira linha" não é o que este teste
+  // acabou de salvar — e o teste então mede o documento errado: um caso real foi um total de R$ 600,00
+  // onde a asserção esperava os R$ 65,00 deste item. O verde anterior era coincidência de ordenação.
+  const [resposta] = await Promise.all([
+    page.waitForResponse((r) => /\/api\/stock\/input-entries$/.test(new URL(r.url()).pathname) && r.request().method() === "POST"),
+    page.getByRole("button", { name: "Salvar" }).click(),
+  ]);
+  const criado = (await resposta.json()) as { id?: string };
+  expect(criado.id, "o POST da entrada precisa devolver o id do documento criado").toBeTruthy();
   await expect(page).toHaveURL(/\/estoque\?tab=recebimentos&sub=manuais/);
-  await page.locator("tbody tr").first().dblclick();
+  await page.goto(`/estoque/entradas/${criado.id}`);
   await expect(page.getByTestId("base2-shell")).toBeVisible();
   return page.url();
 }

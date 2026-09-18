@@ -9,7 +9,8 @@ import { listMigrations, MIGRATIONS_DIR } from "../src/migrate.js";
  * FERRAMENTAS COMPARTILHADAS DAS PROVAS DA 0018 — PRE-BASE2-05C-2.
  *
  * As cinco suítes do cutover (`fresh`, `upgrade`, `fail-closed`, `concorrencia`, `transacao`) precisam das
- * mesmas duas coisas: montar um banco parado EXATAMENTE na 0017 — o estado que produção tem hoje — e
+ * mesmas duas coisas: montar um banco parado EXATAMENTE na 0017 — o estado ANTERIOR ao cutover, de onde
+ * produção partiu ao recebê-lo — e
  * aplicar a 0018 sozinha, do jeito que o runner aplica, para poder observar a recusa. Duplicar isso em
  * cinco arquivos
  * faria as provas divergirem em silêncio na primeira correção que alguém esquecesse de replicar.
@@ -23,7 +24,8 @@ export const CANONICA = "empresa";
 export const LEGADA = "farm";
 
 /**
- * Sobe o banco só até a migration ANTERIOR à 0018 — isto é, deixa o banco no estado de produção pós-05C-1.
+ * Sobe o banco só até a migration ANTERIOR à 0018 — isto é, deixa o banco no estado PRÉ-CUTOVER, pós-05C-1.
+ * Produção não está aqui: ela já recebeu a 0018 e, depois dela, a 0019.
  *
  * `MIGRATIONS_DIR` é lido na carga do módulo `migrate.js`; recarregar o módulo apontado para um diretório
  * temporário é o que dá um runner que para na 0017 sem mexer no módulo que aplica a 0018 depois. Mesmo
@@ -40,7 +42,7 @@ export async function subirAte0017(db: Db): Promise<string[]> {
     process.env.MIGRATIONS_DIR = dir;
     vi.resetModules();
     const ate17 = await import("../src/migrate.js");
-    expect(ate17.listMigrations().map((m) => m.name), "o runner do estado de produção não conhece o cutover").not.toContain(ALVO);
+    expect(ate17.listMigrations().map((m) => m.name), "o runner parado na 0017 — o estado ANTERIOR ao cutover — não pode conhecer a 0018").not.toContain(ALVO);
     return await ate17.migrate(db, () => {});
   } finally {
     if (anterior === undefined) delete process.env.MIGRATIONS_DIR;

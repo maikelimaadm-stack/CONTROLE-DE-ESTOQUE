@@ -229,7 +229,18 @@ situação ou estado genérico · CSS novo onde já existe classe com dono.
 
 Implementada e integrada em um piloto real na BASE2-01, **mesclada e implantada em produção** (merge
 `9615560`). A **BASE2-02** acrescentou a identidade do **Tipo de Operação** — como APRESENTAÇÃO, ver abaixo.
-Migração ampla dos demais módulos pertence à BASE2-03+, que segue congelada.
+
+A **BASE2-03+ está LIBERADA**, e a migração dos demais módulos é **progressiva, uma ENTIDADE por fatia** —
+nunca um corte único que arrasta o produto inteiro. A primeira entidade da sequência é **Compras /
+Solicitação de Compra** (fatia **BASE2-03A**). Entidade que a sequência ainda não alcançou permanece na
+composição anterior, e isso não é dívida: a moldura só cobra quem já foi DECLARADO nela. A lista das telas
+declaradas é do gate `scripts/base2-consumidor-audit.mjs` e não se repete aqui — uma segunda lista
+envelheceria na primeira migração seguinte, em silêncio.
+
+Migrar uma entidade é migrar a APRESENTAÇÃO dela. Cada módulo continua dono do próprio workflow, serviço,
+autorização e efeito contábil, e nada disso passa para a moldura ao entrar nela: **tela unificada ≠ regra de
+negócio unificada**. O que muda é quem desenha o cabeçalho, os dados principais, os itens, as ações, o
+histórico e os anexos — não quem decide o que pode acontecer com o registro.
 
 ### Tipo de Operação na moldura (BASE2-02)
 

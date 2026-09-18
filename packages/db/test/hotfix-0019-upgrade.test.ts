@@ -20,7 +20,7 @@ import {
  *     pede durante o rolling deploy;
  *   • contadores de OUTRAS entidades não são tocados.
  *
- * O banco é montado só até a 0018 — exatamente o estado de produção — e recebe um acervo
+ * O banco é montado só até a 0018 — exatamente o estado de onde produção partiu para o hotfix — e recebe um acervo
  * propositalmente desconfortável: organizações em todas as combinações de contador (nenhum, só um, os
  * dois com cada um por cima), uma com o ACERVO à frente dos dois contadores, e códigos não numéricos
  * convivendo com numéricos.

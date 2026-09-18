@@ -15,7 +15,7 @@ import {
  * nenhuma linha executa sem reclamar — uma migration que perdesse o acervo do contador passaria inteira
  * naquele arquivo.
  *
- * Aqui o banco é montado só até a 0017 — exatamente o estado que produção tem hoje — e recebe um acervo
+ * Aqui o banco é montado só até a 0017 — exatamente o estado de onde produção partiu para o cutover — e recebe um acervo
  * de contador propositalmente desconfortável: três organizações, valores diferentes, uma com LACUNA
  * (contador muito à frente do maior código, que é o que uma transação abortada deixa), uma sem Empresa
  * nenhuma, e contadores de OUTRAS entidades no meio para provar que o cutover não os arrasta.
@@ -43,7 +43,7 @@ beforeAll(async () => {
   await resetSchema(db);
   await subirAte0017(db);
 
-  // Estado de produção pós-05C-1: a chave legada de pé, o canônico ausente.
+  // Estado pós-05C-1, anterior ao cutover: a chave legada de pé, o canônico ausente.
   expect(await linhasDaEntidade(db, CANONICA), "antes do cutover não existe contador canônico").toBe(0);
 
   for (const [org, nome] of [[ORG_A, "[TEST] cutover A"], [ORG_B, "[TEST] cutover B"], [ORG_C, "[TEST] cutover C"]] as const) {

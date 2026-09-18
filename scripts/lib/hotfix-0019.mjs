@@ -21,7 +21,7 @@
  * Comparando a FORMA DA ALOCAÇÃO na rota de transferências, lida do texto de `stock.ts` na base e neste
  * HEAD. "Por variante" (um ternário sobre `kind`) contra "canônica" (uma chave só). Se as duas pontas já
  * forem canônicas, esta execução não atravessa o hotfix e o gate se declara inativo — o que acontece em
- * toda PR nova depois que o hotfix estiver em `main`. Não há nada para lembrar de remover.
+ * toda PR nova desde que o hotfix entrou em `main` (`ca74c56`). Não há nada para lembrar de remover.
  *
  * Ler o TEXTO, e não importar o módulo, é o mesmo motivo da 05C-2: a base vem de um commit que não está
  * montado como pacote, e importar exigiria build.
