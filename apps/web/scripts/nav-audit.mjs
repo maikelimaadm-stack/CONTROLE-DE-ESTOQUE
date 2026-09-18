@@ -57,8 +57,14 @@ for (const a of LEGACY_REDIRECTS) for (const b of LEGACY_REDIRECTS) {
 const appDir = path.join(here, "../src/app/(app)");
 const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((f) => (f.isDirectory() ? walk(path.join(d, f.name)) : f.name === "page.tsx" ? [path.join(d, f.name)] : []));
 for (const f of walk(appDir)) { const src = fs.readFileSync(f, "utf8"); for (const m of src.matchAll(/\btab\("([^"]+)"/g)) if (!ids.has(m[1])) errors.push(`${path.relative(appDir, f)}: tab("${m[1]}") não existe no registro`); }
-// links internos estáticos (href="/x", router.push("/x"), base="/x", back="/x") → precisam casar com uma página existente
-// ou com um padrão de DETAIL_ROUTES; rota antiga (só válida por redirect) é erro: o código deve usar a rota canônica
+// links internos estáticos (href="/x", router.push("/x"), base="/x", back="/x", voltarHref="/x") → precisam
+// casar com uma página existente ou com um padrão de DETAIL_ROUTES; rota antiga (só válida por redirect) é
+// erro: o código deve usar a rota canônica.
+//
+// `voltarHref` é a prop de VOLTAR do `Base2Shell` (Modelo Base 2). Sem ela na lista, toda tela migrada para
+// a moldura saía silenciosamente da auditoria: o link continuava lá, apenas deixava de ser conferido. Foi o
+// que aconteceu na BASE2-03A — a contagem de links caiu de 101 para 100 e nada reprovou, porque perder
+// cobertura não é o mesmo que falhar. Cobertura que some sem barulho é a pior forma de perder um gate.
 const rootAppDir = path.join(here, "../src/app");
 const pageRoutes = walk(rootAppDir).map((f) => "/" + path.relative(rootAppDir, path.dirname(f)).split(path.sep).filter((seg) => !/^\(.*\)$/.test(seg)).join("/")).map((r) => (r === "/" ? "/" : r.replace(/\/$/, "")));
 const routeRe = (r) => new RegExp("^" + r.replace(/\[[^\]]+\]/g, "[^/]+").replace(/:[a-z]+/g, "[^/]+") + "$");
@@ -66,7 +72,7 @@ const pageMatchers = [...pageRoutes.map(routeRe), ...DETAIL_ROUTES.map((d) => ro
 const legacyMatchers = LEGACY_REDIRECTS.map((rd) => new RegExp("^" + rd.source.replace(/:([a-z]+)\(([^)]*)\)/g, (_m, _n, alts) => `(${alts})`).replace(/:([a-z]+)/g, "([^/]+)") + "$"));
 const srcDir = path.join(here, "../src");
 const walkAll = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((f) => (f.isDirectory() ? walkAll(path.join(d, f.name)) : /\.(tsx?|mjs)$/.test(f.name) ? [path.join(d, f.name)] : []));
-const linkRe = /(href|base|back|src)=\{?"(\/[^"\s]*)"|router\.(?:push|replace)\("(\/[^"\s]*)"|href: "(\/[^"\s]*)"/g;
+const linkRe = /(href|base|back|src|voltarHref)=\{?"(\/[^"\s]*)"|router\.(?:push|replace)\("(\/[^"\s]*)"|href: "(\/[^"\s]*)"/g;
 // `base="/x"` pode ser página (Voltar) ou prefixo de lista: detalhe `${base}/:id`, `${base}/:tipo/:id` (listas mistas) ou `${base}/new` — validado com id fictício
 const ID = "00000000-0000-4000-8000-000000000000";
 let links = 0;
