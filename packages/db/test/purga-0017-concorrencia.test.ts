@@ -402,15 +402,30 @@ describe("PARTE 2 — locks e timeouts da 0017 versionada", () => {
         // A janela é medida DE FORA, em pg_locks: abre quando o primeiro AccessExclusiveLock de relação
         // aparece (é o `lock table`) e fecha quando o último some (é o commit). Medir o tempo do arquivo
         // pelo cliente incluiria o que roda ANTES do lock table e não faz parte da janela.
-        let abriu = 0, fechou = 0, viu = false, parar = false;
-        const observando = (async () => {
-          while (!parar) {
+        // O VIGIA SÓ TERMINA POR OBSERVAÇÃO OU POR TETO — nunca por ordem de fora.
+        //
+        // A versão anterior parava o laço com um `parar = true` escrito logo após o `commit`, e isso era
+        // uma CORRIDA contra a própria medição: se o vigia estivesse exatamente no teste da condição
+        // naquele instante, ele saía ANTES da amostragem que provaria o fechamento. O resultado era
+        // `viu === true` e `fechou === 0` — a janela tinha fechado de verdade, e o teste reprovava com
+        // "expected 0 to be greater than 0". Num runner carregado o vigia é preterido com mais
+        // frequência, e foi assim que o mesmo commit passou num job do CI e falhou no gêmeo.
+        //
+        // O teto é monotônico e mora no próprio observador. 10 s é ~3x o `begin→commit` medido e o dobro
+        // do teto de 5 s que a mediana já promete; com n = 5 medições o pior caso continua abaixo do
+        // `testTimeout` de 60 s, então uma falha real reprova por asserção, não por estouro de tempo.
+        const TETO_VIGIA_MS = 10_000;
+        let abriu = 0, fechou = 0, viu = false;
+        const limite = performance.now() + TETO_VIGIA_MS;
+        const observando: Promise<"fechou" | "teto"> = (async () => {
+          while (performance.now() < limite) {
             const r = await vigia.query<{ n: number }>(
               "select count(*)::int n from pg_locks where pid=$1 and locktype='relation' and mode='AccessExclusiveLock' and granted", [pid]);
             const agora = performance.now();
             if (r.rows[0]!.n > 0 && !viu) { viu = true; abriu = agora; }
-            else if (r.rows[0]!.n === 0 && viu) { fechou = agora; return; }
+            else if (r.rows[0]!.n === 0 && viu) { fechou = agora; return "fechou"; }
           }
+          return "teto";
         })();
         const t0 = performance.now();
         await c.query("begin");
@@ -418,9 +433,11 @@ describe("PARTE 2 — locks e timeouts da 0017 versionada", () => {
         await c.query(`insert into public.erp_migrations(name) values ($1)`, [ALVO]);
         await c.query("commit");
         const total = performance.now() - t0;
-        parar = true;
-        await observando;
+        const desfecho = await observando;
         expect(viu, "o vigia viu mesmo a janela abrir").toBe(true);
+        // O teto tem de ser a saída EXCEPCIONAL: se ele virar o caminho normal, a medição abaixo estaria
+        // sendo feita sobre uma janela que ninguém viu fechar.
+        expect(desfecho, `o vigia terminou por OBSERVAÇÃO do fechamento, não por estourar o teto de ${TETO_VIGIA_MS} ms`).toBe("fechou");
         expect(fechou, "o vigia viu a janela fechar").toBeGreaterThan(0);
         janelas.push(fechou - abriu);
         totais.push(total);

@@ -1,6 +1,14 @@
 name: CI
 on:
-  push: { branches: ["**"] }
+  # PR-DRIVEN: um único CI por commit.
+  #
+  # `push: ["**"]` + `pull_request` disparavam DUAS suítes completas para o mesmo commit de uma branch
+  # com PR aberta — uma por evento —, e `concurrency` não as funde porque o `github.ref` difere
+  # (`refs/heads/<branch>` contra `refs/pull/<n>/merge`). O custo não era só de minutos: dois resultados
+  # para o MESMO SHA podem discordar, e foi assim que o commit 2363137 ficou verde num run e vermelho no
+  # gêmeo. Agora branch com PR roda só pelo evento `pull_request`; `main` continua com CI pós-merge.
+  push:
+    branches: ["main"]
   pull_request:
 concurrency:
   group: "ci-${{ github.ref }}"
