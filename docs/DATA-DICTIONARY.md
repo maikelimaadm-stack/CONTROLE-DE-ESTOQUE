@@ -1034,6 +1034,7 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_id` |  | uuid, | não |  |  |  |  |
 
 ## Pecuária
 
