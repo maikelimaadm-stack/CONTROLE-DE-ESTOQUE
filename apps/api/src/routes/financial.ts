@@ -316,6 +316,30 @@ export default async function financialRoutes(app: FastifyInstance) {
       if (!ct.rows[0]) throw notFound("Título");
       await exigirEmpresaVisivel(ctx, ct.rows[0].empresa_id, "Título");
       /**
+       * ELEGIBILIDADE DE ESTADO DO CONTRÁRIO — A MESMA QUE O PRINCIPAL JÁ TINHA.
+       *
+       * O principal recusa `cancelled` e `paid` logo acima; o contrário carregava `status` e NÃO o usava.
+       * Isso não é assimetria estética, é inconsistência de ledger, e o schema explica por quê:
+       *
+       *   - `balance` é COLUNA GERADA: `amount - discount - paid_amount` (0004_financial.sql). Cancelar um
+       *     título sem baixa não zera nada — a porta oficial de cancelamento exige `paid_amount = 0` —,
+       *     então um título CANCELADO continua com `balance > 0` e passa direto pela conferência de saldo.
+       *   - `erp.refresh_title_status` começa com `if v_status = 'cancelled' then return`. O gatilho
+       *     DELIBERADAMENTE não recalcula título cancelado.
+       *
+       * Juntando os dois: a linha de baixa entraria `confirmed`, o gatilho não mexeria em
+       * `paid_amount`/`status`, e sobraria um settlement confirmado pendurado num título cancelado, com
+       * o `balance` gerado sem refletir a baixa. Ledger inconsistente, escrito pela própria operação que
+       * esta fatia certifica.
+       *
+       * Só `open` e `partially_paid` seguem — `partially_paid` continua elegível de propósito: barrar
+       * tudo que não fosse `open` seria correção excessiva e quebraria baixa cruzada parcial legítima.
+       * Estado de negócio de um registro que o chamador JÁ está autorizado a operar não se disfarça de
+       * 404: a uniformização da decisão 184 é para inexistência, tenant, escopo, direction e exclusão.
+       */
+      if (ct.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Título contrário cancelado");
+      if (ct.rows[0].status === "paid") throw err("ALREADY_CONFIRMED", "Título contrário já baixado");
+      /**
        * PERÍODO DOS DOIS LADOS. `assertPeriodOpen` já roda para a empresa do título PRINCIPAL. O título
        * contrário pode ser de OUTRA empresa — não existe no contrato nenhuma regra que exija mesma
        * empresa numa baixa cruzada, e inventar uma aqui seria mudar negócio dentro de um hotfix de

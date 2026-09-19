@@ -278,6 +278,13 @@ async function auditoriaDe(entityId: string, action: string): Promise<number> {
 }
 
 /** A metadata gravada na trilha — contar linha não prova que o par está NOMEADO nos dois lados. */
+/** Total de trilhas de `title_settlements` com uma ação — para provar que a tentativa não gravou NADA. */
+async function totalDeAuditoria(action: string): Promise<number> {
+  const c = createPool(TEST_URL, { max: 1 });
+  try { return Number((await c.query<{ n: string }>("select count(*) n from erp.audit_logs where entity='title_settlements' and action=$1 and organization_id=$2", [action, h.demo.orgId])).rows[0]!.n); }
+  finally { await c.end(); }
+}
+
 async function metadadosDe(entityId: string, action: string): Promise<Record<string, unknown>[]> {
   const c = createPool(TEST_URL, { max: 1 });
   try { return (await c.query<{ metadata: Record<string, unknown> }>("select metadata from erp.audit_logs where entity='title_settlements' and entity_id=$1 and action=$2 order by created_at", [entityId, action])).rows.map((r) => r.metadata); }
@@ -634,5 +641,107 @@ describe("baixa cruzada: autorização composta das duas variantes", () => {
     expect(res.statusCode, res.body).toBe(200);
     expect((await baixasDe(p)).every((b) => b.status === "cancelled"), "principal cancelada").toBe(true);
     expect((await baixasDe(r)).every((b) => b.status === "cancelled"), "e o espelho TAMBÉM — é isso que um discriminador divergente quebraria").toBe(true);
+  });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * ELEGIBILIDADE DE ESTADO DO TÍTULO CONTRÁRIO — O LEDGER NÃO ACEITA BAIXA EM TÍTULO CANCELADO.
+ *
+ * O principal sempre recusou `cancelled`/`paid`; o contrário carregava `status` e não o usava. O schema
+ * transforma essa assimetria em inconsistência real: `balance` é coluna GERADA
+ * (`amount - discount - paid_amount`), então um título cancelado SEM baixa mantém saldo positivo e passa
+ * pela conferência de saldo; e `erp.refresh_title_status` começa com `if v_status = 'cancelled' then
+ * return`, ou seja, o gatilho não recalcula título cancelado. A linha entraria `confirmed` e ninguém
+ * atualizaria `paid_amount`. Estes casos travam as duas direções, o kind compartilhado, e — o mais fácil
+ * de errar — provam que `partially_paid` CONTINUA elegível, contra a correção excessiva.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Cancela um título pela porta OFICIAL (exige `paid_amount = 0`), que é como a premissa nasce. */
+async function cancelarTitulo(rota: "payables" | "receivables", id: string, headers: Hdr) {
+  const r = await h.app.inject({ method: "POST", url: `/api/financial/${rota}/${id}/cancel`, headers, payload: {} });
+  expect(r.statusCode, r.body).toBe(200);
+}
+
+describe("baixa cruzada: elegibilidade de estado do título contrário", () => {
+  it("N — PAGÁVEL → RECEBÍVEL CANCELADO: recusa por estado, e nada é gravado", async () => {
+    const p = await criar("payable", "EST-N-PAG", "400.00");
+    const r = await criar("receivable", "EST-N-REC", "400.00");
+    await cancelarTitulo("receivables", r, ambos);
+
+    // A PREMISSA, contada — sem ela o teste poderia estar recusando por outro motivo qualquer.
+    const antesR = await estado(r);
+    expect(antesR.status, "o contrário precisa estar CANCELADO").toBe("cancelled");
+    expect(Number(antesR.balance), "e com saldo POSITIVO: é isso que fura a conferência de saldo").toBeGreaterThan(0);
+    expect(antesR.baixas, "e sem baixa nenhuma").toBe(0);
+    const antesP = await estado(p);
+    const criacoesAntes = await totalDeAuditoria("create");
+
+    const res = await cruzar("payables", p, r, ambos, "100.00");
+    expect(res.statusCode, res.body).toBe(409);
+    expect(j(res).error?.code).toBe("ALREADY_CANCELLED");
+
+    expect(await estado(p), "principal inalterado").toEqual(antesP);
+    expect(await estado(r), "contrário inalterado, e ainda cancelado").toEqual(antesR);
+    expect((await baixasDe(p)).length + (await baixasDe(r)).length, "zero settlement nos dois").toBe(0);
+    expect(await totalDeAuditoria("create"), "zero trilha de criação desta tentativa").toBe(criacoesAntes);
+  });
+
+  it("O — RECEBÍVEL → PAGÁVEL CANCELADO: espelho exato de N, provando a simetria das variantes", async () => {
+    const p = await criar("payable", "EST-O-PAG", "400.00");
+    const r = await criar("receivable", "EST-O-REC", "400.00");
+    await cancelarTitulo("payables", p, ambos);
+
+    const antesP = await estado(p);
+    expect(antesP.status).toBe("cancelled");
+    expect(Number(antesP.balance)).toBeGreaterThan(0);
+    const antesR = await estado(r);
+    const criacoesAntes = await totalDeAuditoria("create");
+
+    const res = await cruzar("receivables", r, p, ambos, "100.00");
+    expect(res.statusCode, res.body).toBe(409);
+    expect(j(res).error?.code).toBe("ALREADY_CANCELLED");
+
+    expect(await estado(p)).toEqual(antesP);
+    expect(await estado(r)).toEqual(antesR);
+    expect((await baixasDe(p)).length + (await baixasDe(r)).length).toBe(0);
+    expect(await totalDeAuditoria("create")).toBe(criacoesAntes);
+  });
+
+  it("P — ADVANCE_COMPENSATION cai na MESMA guarda: o ramo é compartilhado e não pode escapar", async () => {
+    const p = await criar("payable", "EST-P-PAG", "400.00");
+    const r = await criar("receivable", "EST-P-REC", "400.00");
+    await cancelarTitulo("receivables", r, ambos);
+
+    const antesP = await estado(p); const antesR = await estado(r);
+    expect(antesR.status).toBe("cancelled");
+    const criacoesAntes = await totalDeAuditoria("create");
+
+    const res = await cruzar("payables", p, r, ambos, "100.00", "advance_compensation");
+    expect(res.statusCode, res.body).toBe(409);
+    expect(j(res).error?.code).toBe("ALREADY_CANCELLED");
+
+    expect(await estado(p)).toEqual(antesP);
+    expect(await estado(r)).toEqual(antesR);
+    expect((await baixasDe(p)).length + (await baixasDe(r)).length).toBe(0);
+    expect(await totalDeAuditoria("create")).toBe(criacoesAntes);
+  });
+
+  it("Q — contrário PARCIALMENTE PAGO com saldo continua aceito: a guarda não pode virar 'só open'", async () => {
+    const p = await criar("payable", "EST-Q-PAG", "400.00");
+    const r = await criar("receivable", "EST-Q-REC", "400.00");
+
+    // Baixa bancária parcial no contrário: ele fica `partially_paid`, com saldo restante.
+    const parcial = await h.app.inject({ method: "POST", url: `/api/financial/receivables/${r}/settle`, headers: ambos, payload: { settlement_date: "2026-09-20", settlement_kind: "bank_movement", bank_account_id: I.bankAccount, amount: "100.00" } });
+    expect(parcial.statusCode, parcial.body).toBe(201);
+
+    const antesR = await estado(r);
+    expect(antesR.status, "premissa do caso: nem open, nem paid").toBe("partially_paid");
+    expect(antesR.balance, "com saldo suficiente para a cruzada").toBe("300.00");
+
+    const res = await cruzar("payables", p, r, ambos, "50.00");
+    expect(res.statusCode, `partially_paid é elegível — recusar aqui seria correção excessiva: ${res.body}`).toBe(201);
+
+    expect((await estado(p)).balance, "o principal cai").toBe("350.00");
+    expect((await estado(r)).balance, "e o contrário também").toBe("250.00");
   });
 });
