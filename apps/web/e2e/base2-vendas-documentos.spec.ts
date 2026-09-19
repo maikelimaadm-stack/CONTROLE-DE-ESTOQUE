@@ -101,12 +101,21 @@ for (const variante of ["budget", "order", "sale"] as Variante[]) {
     await expect(page.getByTestId("base2-empresa")).not.toHaveText(/Empresa:\s*$/);
     await expect(page.getByTestId("base2-shell").locator("[data-status]").first()).toBeVisible();
 
-    // TOP da variante — e NUNCA a de nenhuma das vizinhas
-    const tipo = campo(page, ptBR.mensagens["termos.tipo_operacao"]!);
-    await expect(tipo).toContainText(V[variante].top);
+    // FAMÍLIA OPERACIONAL da variante — e NUNCA a de nenhuma das vizinhas.
+    // A TOP-CONFIG-02 separou dois conceitos que antes dividiam o mesmo campo: a FAMÍLIA canônica
+    // (código do produto, derivada do `kind` do registro) passou para o campo "Família operacional",
+    // e "Tipo de operação" passou a carregar a TOP CONFIGURADA pela organização. A asserção de
+    // não-cruzamento entre variantes segue valendo — mas no campo que continua sendo derivado do
+    // registro, que é onde ela sempre quis morar.
+    const familia = campo(page, "Família operacional");
+    await expect(familia).toContainText(V[variante].top);
     for (const outra of (["budget", "order", "sale"] as Variante[]).filter((x) => x !== variante)) {
-      await expect(tipo, `${variante} não pode exibir a TOP de ${outra}`).not.toContainText(V[outra].top);
+      await expect(familia, `${variante} não pode exibir a família de ${outra}`).not.toContainText(V[outra].top);
     }
+
+    // Estes documentos nascem pela API SEM `tipo_operacao_id` (acervo/rolling deploy): o campo da TOP
+    // configurada diz isso em letras, e NUNCA inventa um número nem cai na família.
+    await expect(campo(page, ptBR.mensagens["termos.tipo_operacao"]!)).toContainText("Não configurada");
 
     // DADOS PRINCIPAIS — os campos do documento continuam existindo depois da migração
     await expect(page.getByTestId("base2-fields")).toBeVisible();
@@ -183,7 +192,7 @@ test("BASE2-03C: a conversão liga origem e derivado, e cada lado abre na SUA ro
   await page.goto(`/vendas/orders/${convertido.id}`);
   await expect(page.getByTestId("base2-shell")).toBeVisible();
   await expect(page.getByRole("heading", { name: new RegExp(`Pedido de venda\\s+${pedido.code}`) })).toBeVisible();
-  await expect(campo(page, ptBR.mensagens["termos.tipo_operacao"]!)).toContainText(V.order.top);
+  await expect(campo(page, "Família operacional"), "a família sai do registro DERIVADO").toContainText(V.order.top);
   await expect(campo(page, "Origem"), "o pedido nasceu de uma conversão").toContainText("Convertido");
 });
 

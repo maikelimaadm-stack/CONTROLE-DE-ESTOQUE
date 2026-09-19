@@ -9,13 +9,23 @@ import { login, logout } from "./helpers";
  * gravou. A autorização em si é provada no servidor (apps/api/test/integration/escopo-modulo.test.ts) —
  * interface nunca é prova de autorização.
  */
-const email = `e2e-acesso-${Date.now()}@demo.local`;
+const carimbo = Date.now();
+const email = `e2e-acesso-${carimbo}@demo.local`;
+/**
+ * O NOME também é único, e por uma razão de correção — não de estilo.
+ *
+ * A listagem de membros ordena por `u.name` (apps/api/src/routes/admin.ts) e não tem critério de
+ * desempate. Com o nome fixo, cada execução deixava mais um homônimo no banco e o `.first()` abaixo
+ * passava a abrir um usuário QUALQUER entre eles — relendo escopos que este teste nunca gravou.
+ * Num banco recém-semeado existe só um, e a ambiguidade não aparece; ela só surge na reexecução.
+ */
+const nome = `Usuário E2E Acesso ${carimbo}`;
 
 test("matriz de acesso por empresa grava e relê o modelo por módulo", async ({ page }) => {
   await login(page);
   await page.goto("/admin/usuarios");
   await page.getByRole("button", { name: "Novo usuário" }).click();
-  await page.getByRole("textbox", { name: "Nome *" }).fill("Usuário E2E Acesso");
+  await page.getByRole("textbox", { name: "Nome *" }).fill(nome);
   await page.getByRole("textbox", { name: "E-mail *" }).fill(email);
   await page.getByLabel(/Senha/).first().fill("Acesso@12345");
 
@@ -30,8 +40,8 @@ test("matriz de acesso por empresa grava e relê o modelo por módulo", async ({
   await page.getByRole("button", { name: "Salvar" }).click();
 
   // relê: o que voltou é o modelo canônico, módulo a módulo
-  await expect(page.getByText("Usuário E2E Acesso").first()).toBeVisible();
-  const linha = page.getByTestId("b1-row").filter({ hasText: "Usuário E2E Acesso" }).first();
+  await expect(page.getByText(nome).first()).toBeVisible();
+  const linha = page.getByTestId("b1-row").filter({ hasText: nome }).first();
   await linha.getByTestId("row-view").click();
   await expect(page.getByLabel(/Acesso — Estoque/)).toHaveValue("selecionadas");
   await expect(page.getByLabel(/Acesso — Financeiro/)).toHaveValue("todas");
