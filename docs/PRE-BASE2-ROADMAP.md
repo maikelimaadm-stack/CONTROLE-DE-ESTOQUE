@@ -26,7 +26,12 @@ conferido —, nunca com "a PR foi mesclada".
 | Fatia | Entidade · rotas | Estado | Evidência |
 |---|---|---|---|
 | **BASE2-03A** — Compras / Solicitação de Compra | `erp.purchase_requests` · `/suprimentos/view/:id` | ✅ **CLOSED / IMPLANTADA EM PRODUÇÃO** | merge `57c97ef` (PR #41) · CI do merge **4/4 SUCCESS** (run `35340969500`) · Railway API `53ccee7b-2d01-4ce3-9e45-2ce0b3cdec36` e WEB `c82a3e3f-f079-4f18-ab8a-32d1391bc793`, ambos SUCCESS no commit do merge · ledger inalterado (19 migrations, última `0019`, `0019` 1×, zero `0020+`) porque a fatia não traz migration · `/health` 200 com `db: ok` |
-| **BASE2-03B** — Financeiro / Títulos Financeiros | `erp.financial_titles` · `/financeiro/contas-a-pagar/:id` e `/financeiro/contas-a-receber/:id` | 🟡 **EM PR** | DUAS variantes da MESMA entidade (`direction` = `payable` / `receivable`), uma fatia só. Zero migration. |
+| **BASE2-03B** — Financeiro / Títulos Financeiros | `erp.financial_titles` · `/financeiro/contas-a-pagar/:id` e `/financeiro/contas-a-receber/:id` | ✅ **CLOSED / IMPLANTADA EM PRODUÇÃO** | DUAS variantes da MESMA entidade (`direction` = `payable` / `receivable`), uma fatia só. Zero migration. Merge `475152b154dc689fef128ba8d033dfbc9f1b6c76` (PR #42) · CI do merge **4/4 SUCCESS** (run `35353870062`) · Railway API `ba3a73f5-f9eb-4ef0-a7c6-4f1ee9c41542` e WEB `135de2e3-113d-4f95-9d36-c908fe1e3a58`, ambos com `commitHash` exatamente igual ao merge · Vercel `success` **pelo commit status do GitHub** (a API da Vercel respondeu 403 de escopo nesta sessão: a fonte é secundária e está declarada) · ledger medido em 19 migrations, topo `0019_warehouse_transfer_code_sequence.sql`, no checkpoint de certificação de 18/09/2026 — a fatia não criou migration, e o boot da API registrou `migrations aplicadas: []`. |
+| **HOTFIX pós-BASE2-03B** — fronteira da baixa cruzada | `erp.financial_titles` · `settle` e `settlements/:sid/cancel` | 🟠 **EM EXECUÇÃO** | A certificação pós-merge achou D-4: a baixa cruzada muta o título da variante CONTRÁRIA e exigia só a capacidade da rota. O cancelamento cruzado tinha o mesmo furo. Fecha autorização composta, período das duas empresas, auditoria dos dois lados e identidade do espelho. Zero migration. |
+
+**BASE2-03C está BLOQUEADA** até o HOTFIX pós-BASE2-03B estar mesclado, implantado e certificado em produção. A ordem do roteiro é lei: fatia com defeito de autorização aberto não libera a seguinte.
+
+**Nota sobre os gates 05C-2 e 0019 em execução de push pós-merge.** Neles a base resolve na ponta de `origin/main`, que É o próprio commit, e os dois terminam "APROVADO (inativo)". Isso não é prova de version skew — quem compara versões distintas é o job dedicado de version skew, com a base real. Inativo ≠ provado.
 
 **PENDING declarado da BASE2-03A.** O smoke autenticado de UI em produção não foi executado: a sessão não
 tem credencial de produção, e gate que exige acesso autenticado não se substitui por preview, `localhost`
@@ -139,6 +144,13 @@ checkpoint operacional (nesta ordem): **merge** → **migration 0016 aplicada** 
 **backfill oficial executado até `faltando = 0`** → **`pnpm id-global:verify` verde** → **smoke de busca
 (`#N`, `ID N`) e do distintivo no registro**. Enquanto isso não acontecer, nenhum documento deve afirmar que
 o ID Global está ativo em produção. Runbook em `docs/DEPLOYMENT.md`.
+
+**Estado atual da PRE-BASE2-04: IMPLEMENTAÇÃO PRONTA / ATIVAÇÃO EM PRODUÇÃO PENDENTE.** Esta é a frase
+canônica de ESTADO ATUAL, e ela é a mesma nos três documentos que falam da fase (aqui, `docs/DEPLOYMENT.md`
+e `docs/PRE-BASE2-05-APOSENTADORIA.md`). Ter uma frase única evita a comparação por sinônimo: cada documento
+descreveria a mesma situação com palavras um pouco diferentes, e a divergência só apareceria quando alguém
+lesse os três lado a lado. Registro HISTÓRICO é outra coisa e continua permitido, desde que marcado como
+tal — a gate T15 mede o estado atual, não proíbe citar o passado.
 
 A implementação entregou: todo registro elegível recebendo ID Global na MESMA transação de negócio,
 nas 29 portas de escrita direta mais a porta genérica do Resource Registry (gate estrutural

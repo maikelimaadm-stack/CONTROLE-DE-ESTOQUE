@@ -176,16 +176,102 @@ export default async function financialRoutes(app: FastifyInstance) {
       // seria descobrir depois de já ter lido a baixa — e a ordem antiga chegava a `for update` numa linha
       // que esta rota não tinha o direito de tocar. Variante errada devolve a MESMA 404 de baixa
       // inexistente: não revela que o título existe na variante vizinha.
+      // A MENSAGEM TAMBÉM É SUPERFÍCIE DE RECUSA. Todas as recusas desta rota dizem "Baixa não encontrado":
+      // título inexistente, de outro tenant, excluído, de variante errada E fora do escopo de empresa. Com
+      // rótulos diferentes ("Baixa" aqui, "Título" logo abaixo) o 404 de FORA DE ESCOPO se distinguiria do
+      // 404 de INEXISTENTE — e distinguir é confirmar que aquele UUID é um título desta variante neste
+      // tenant. Mesmo status, mesma mensagem, ou a 404 vira oráculo de existência.
       const t = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and deleted_at is null", [id, ctx.orgId, dir]);
       if (!t.rows[0]) throw notFound("Baixa");
-      await exigirEmpresaVisivel(ctx, t.rows[0].empresa_id, "Título");
+      await exigirEmpresaVisivel(ctx, t.rows[0].empresa_id, "Baixa");
       const s = await ctx.tx.query<{ status: string; bank_movement_id: string | null; settlement_date: string; cross_title_id: string | null; amount: string }>("select status, bank_movement_id, settlement_date, cross_title_id, amount from erp.title_settlements where id=$1 and title_id=$2 and organization_id=$3 for update", [sid, id, ctx.orgId]);
       if (!s.rows[0]) throw notFound("Baixa"); if (s.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Baixa já cancelada");
       await assertPeriodOpen(ctx.tx, ctx.orgId, t.rows[0].empresa_id, s.rows[0].settlement_date);
+      /**
+       * CANCELAR UMA BAIXA CRUZADA É DUAS MUTAÇÕES, E A AUTORIZAÇÃO COMPOSTA FECHA ANTES DA PRIMEIRA.
+       *
+       * Quando a baixa tem `cross_title_id`, este cancelamento também cancela a linha ESPELHO, que vive
+       * no título da variante contrária. Só `{variant}.cancel_settlement` da rota não autoriza isso.
+       * Tudo é resolvido ANTES do primeiro UPDATE: deixar a mutação principal acontecer e só depois
+       * descobrir que falta permissão do outro lado é descobrir tarde demais — mesmo com rollback, o
+       * CÓDIGO DE ERRO que sai já teria contado o que não devia.
+       *
+       * IDENTIDADE DO ESPELHO — LOCALIZAR NÃO É PROVAR, ENTÃO A CARDINALIDADE É QUE DECIDE.
+       *
+       * `erp.title_settlements` NÃO tem constraint que torne o espelho único (0004_financial.sql: só
+       * índices em title_id e em (organization_id, settlement_date)). Não existe, nesta versão, nenhuma
+       * garantia de BANCO ligando as duas linhas de uma baixa cruzada. Logo a garantia tem de ser da
+       * APLICAÇÃO — e uma garantia de aplicação que aceita "achei alguma coisa" não é garantia.
+       *
+       * Os discriminadores abaixo LOCALIZAM o candidato; quem decide é `rowCount === 1`. O corte anterior
+       * fazia `rows[0]?.id ?? null` e falhava ABERTO nas duas pontas: com ZERO candidatos seguia adiante,
+       * cancelava o principal e deixava o par pela metade, sem erro nenhum; com MAIS DE UM escolhia
+       * arbitrariamente o primeiro e chamava isso de identidade. Zero ou vários agora abortam ANTES do
+       * primeiro UPDATE — nada do principal, nada do espelho, nada do movimento bancário, nada de trilha.
+       *
+       * QUAIS discriminadores, e por que só estes: são os campos que as DUAS linhas recebem do MESMO
+       * valor no momento da criação (ver `settle`) — `organization_id`, o par cruzado de
+       * (`title_id`, `cross_title_id`) invertido, `settlement_kind`, `settlement_date`, `amount`,
+       * `created_by` e `created_at` (= `now()`, o início da TRANSAÇÃO que gravou as duas). Ficam de
+       * fora, de propósito, os campos que comprovadamente DIVERGEM entre os lados: `net_amount` (o
+       * principal soma desconto/juros/multa, o espelho recebe o bruto), `note` (o espelho tem texto
+       * próprio quando o pedido não traz nota) e os acréscimos, que no espelho ficam em zero. Filtrar
+       * por um campo que diverge transformaria toda baixa cruzada com desconto em "zero candidatos".
+       *
+       * A comparação fica DENTRO do SQL. Trafegar `created_at` por JavaScript perderia precisão:
+       * `timestamptz` tem microssegundos e o `Date` do driver só tem milissegundos, então o valor
+       * voltaria truncado e nunca casaria — o primeiro corte deste hotfix fazia esse round-trip e
+       * silenciosamente não achava espelho nenhum. O mesmo vale para `amount`: comparar `numeric` no
+       * banco evita qualquer normalização de string no meio do caminho.
+       */
+      let espelhoId: string | null = null;
+      if (s.rows[0].cross_title_id) {
+        const contraria = dir === "payable" ? "receivable" : "payable";
+        requirePermission(ctx, permOf(contraria, "cancel_settlement"));
+        const ct = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and deleted_at is null", [s.rows[0].cross_title_id, ctx.orgId, contraria]);
+        if (!ct.rows[0]) throw notFound("Baixa");
+        await exigirEmpresaVisivel(ctx, ct.rows[0].empresa_id, "Baixa");
+        await assertPeriodOpen(ctx.tx, ctx.orgId, ct.rows[0].empresa_id, s.rows[0].settlement_date);
+        const e = await ctx.tx.query<{ id: string }>(
+          "select e.id from erp.title_settlements e"
+          + " where e.organization_id=$1 and e.title_id=$2 and e.cross_title_id=$3 and e.status='confirmed' and e.id<>$4"
+          + " and exists (select 1 from erp.title_settlements p where p.id=$4 and p.organization_id=$1"
+          + " and e.created_at=p.created_at and e.settlement_kind=p.settlement_kind"
+          + " and e.settlement_date=p.settlement_date and e.amount=p.amount"
+          + " and e.created_by is not distinct from p.created_by)"
+          + " for update",
+          [ctx.orgId, s.rows[0].cross_title_id, id, sid]);
+        // Zero e "mais de um" são o MESMO defeito visto de dois lados: em nenhum dos dois o par está
+        // provado, e cancelar sem o par provado é escrever um estado que ninguém consegue reconstituir.
+        if (e.rowCount !== 1) throw err("CONFLICT", "Par da baixa cruzada não identificado com exatidão: cancelamento bloqueado");
+        espelhoId = e.rows[0]!.id;
+      }
       await ctx.tx.query("update erp.title_settlements set status='cancelled', cancelled_at=now(), cancelled_by=$2, cancel_reason=$3 where id=$1", [sid, ctx.user.id, d.reason]);
       if (s.rows[0].bank_movement_id) { const shared = await ctx.tx.query<{ n: string }>("select count(*) n from erp.title_settlements where bank_movement_id=$1 and status='confirmed'", [s.rows[0].bank_movement_id]); if (Number(shared.rows[0]!.n) === 0) await ctx.tx.query("update erp.bank_movements set status='cancelled' where id=$1", [s.rows[0].bank_movement_id]); else throw err("CONFLICT", "Movimento bancário compartilhado com outras baixas: cancele todas ou lance ajuste"); }
-      if (s.rows[0].cross_title_id) await ctx.tx.query("update erp.title_settlements set status='cancelled', cancelled_at=now(), cancelled_by=$2, cancel_reason=$3 where title_id=$1 and cross_title_id=$4 and status='confirmed'", [s.rows[0].cross_title_id, ctx.user.id, d.reason, id]);
-      await audit(ctx.tx, ctx, "title_settlements", sid, "cancel", d);
+      if (espelhoId) {
+        const r = await ctx.tx.query("update erp.title_settlements set status='cancelled', cancelled_at=now(), cancelled_by=$2, cancel_reason=$3 where id=$1", [espelhoId, ctx.user.id, d.reason]);
+        if (r.rowCount !== 1) throw err("CONFLICT", "Baixa espelho não pôde ser cancelada");
+        await audit(ctx.tx, ctx, "title_settlements", espelhoId, "cancel", { ...d, title: s.rows[0].cross_title_id, cruzada_com: id, lado: "par" });
+      }
+      /**
+       * SIMETRIA DA TRILHA — E POR QUE O CANCELAMENTO NÃO USA OS RÓTULOS DA CRIAÇÃO.
+       *
+       * O espelho carregava `cruzada_com` e o principal não, então reconstruir o par a partir de
+       * `audit_logs` só funcionava a partir de UM dos lados; pelo outro exigia voltar à linha de
+       * `title_settlements`, que pode ter mudado de status desde então. Agora os DOIS se nomeiam, e
+       * `title` + `cruzada_com` bastam para reconstituir o par em qualquer caminho.
+       *
+       * `lado` no cancelamento vale "alvo" e "par", NÃO "principal" e "espelho", e a diferença é de
+       * verdade, não de gosto. A linha espelho também tem `cross_title_id`, então ela é cancelável pela
+       * PRÓPRIA rota: nesse caminho quem chega como alvo é o espelho, e o principal original é que vem
+       * como o outro lado. Nada na linha distingue quem foi principal na criação — o espelho não guarda
+       * conta bancária, movimento, acréscimos nem nada que sirva de marca, e as duas nascem no mesmo
+       * `created_at`. Carimbar "principal" no alvo faria o campo dizer, na metade dos caminhos, o
+       * contrário do que a criação registrou: o MESMO id apareceria como `lado: "principal"` no `create`
+       * e `lado: "espelho"` no `cancel`. Papel de criação é irrecuperável aqui; papel NESTA operação é
+       * observável. O campo diz o que é observável.
+       */
+      await audit(ctx.tx, ctx, "title_settlements", sid, "cancel", espelhoId ? { ...d, title: id, cruzada_com: s.rows[0].cross_title_id, lado: "alvo" } : d);
       return getTitle(ctx, id, dir);
     }));
     app.get(`${base}/:id/receipt`, async (req) => runService(app, req, permOf(dir, "receipt"), async (ctx) => { const t = await getTitle(ctx, (req.params as { id: string }).id, dir); return { title: t, receipt_text: `RECIBO — ${t.empresa_name}\nTítulo ${t.number} (${t.code})\n${dir === "payable" ? "Pago a" : "Recebido de"}: ${t.person_name ?? "-"}\nValor: R$ ${t.amount} (líquido R$ ${t.net_amount})\nBaixas: ${(t.settlements as { settlement_date: string; net_amount: string }[]).filter(Boolean).map((s) => `${s.settlement_date}: R$ ${s.net_amount}`).join("; ") || "nenhuma"}\nHistórico: ${t.note}` }; }));
@@ -199,6 +285,9 @@ export default async function financialRoutes(app: FastifyInstance) {
     assertSettlementWithinBalance(title.balance, input);
     const net = settlementNet(input);
     let movementId: string | null = d.shared_movement_id ?? null;
+    // Preenchido só na operação cruzada: é o que dá ao lado PRINCIPAL a mesma nomeação do par que o
+    // espelho já tinha. Nulo aqui significa baixa comum, e baixa comum não inventa metadata de par.
+    let ladoPrincipal: { cruzada_com: string; lado: "principal" } | null = null;
     if (d.settlement_kind === "bank_movement") {
       if (!d.bank_account_id) throw validation("Conta bancária obrigatória");
       if (!movementId) {
@@ -207,14 +296,67 @@ export default async function financialRoutes(app: FastifyInstance) {
       }
     } else if (d.settlement_kind === "cross_settlement" || d.settlement_kind === "advance_compensation") {
       if (!d.cross_title_id) throw validation("Título contrário obrigatório para baixa cruzada");
-      const ct = await ctx.tx.query<{ direction: string; balance: string; status: string }>("select direction, balance, status from erp.financial_titles where id=$1 and organization_id=$2 for update", [d.cross_title_id, ctx.orgId]);
-      if (!ct.rows[0] || ct.rows[0].direction === title.direction) throw validation("Baixa cruzada exige um título de natureza oposta");
+      /**
+       * AUTORIZAÇÃO COMPOSTA — A OPERAÇÃO MUTA DOIS TÍTULOS, ENTÃO EXIGE AS DUAS CAPACIDADES.
+       *
+       * A PR #42 fechou a fronteira da ROTA (capacidade da rota ∧ direction do registro). Mas a baixa
+       * cruzada é, por projeto, uma operação sobre um PAR de variantes opostas: ela grava uma linha de
+       * baixa no título contrário. Exigir só `payables.settle` para gravar num recebível seria a
+       * capacidade de uma família autorizando escrita na outra — o mesmo OR que a decisão 184 proibiu,
+       * agora por dentro. Escopo de empresa e RLS NÃO substituem capacidade: respondem a outra pergunta.
+       *
+       * A conferência vem ANTES de tocar no registro contrário de propósito. Assim o 403 fala apenas do
+       * CHAMADOR — não revela que aquele UUID existe, nem de que variante ele é. Depois disso, tudo que
+       * é do REGISTRO (inexistente, outro tenant, fora de escopo, excluído, direction errada) cai na
+       * MESMA 404, como no resto da entidade.
+       */
+      const contraria = expectedDirection === "payable" ? "receivable" : "payable";
+      requirePermission(ctx, permOf(contraria, "settle"));
+      const ct = await ctx.tx.query<{ direction: string; balance: string; status: string; empresa_id: string }>("select direction, balance, status, empresa_id from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and deleted_at is null for update", [d.cross_title_id, ctx.orgId, contraria]);
+      if (!ct.rows[0]) throw notFound("Título");
+      await exigirEmpresaVisivel(ctx, ct.rows[0].empresa_id, "Título");
+      /**
+       * ELEGIBILIDADE DE ESTADO DO CONTRÁRIO — A MESMA QUE O PRINCIPAL JÁ TINHA.
+       *
+       * O principal recusa `cancelled` e `paid` logo acima; o contrário carregava `status` e NÃO o usava.
+       * Isso não é assimetria estética, é inconsistência de ledger, e o schema explica por quê:
+       *
+       *   - `balance` é COLUNA GERADA: `amount - discount - paid_amount` (0004_financial.sql). Cancelar um
+       *     título sem baixa não zera nada — a porta oficial de cancelamento exige `paid_amount = 0` —,
+       *     então um título CANCELADO continua com `balance > 0` e passa direto pela conferência de saldo.
+       *   - `erp.refresh_title_status` começa com `if v_status = 'cancelled' then return`. O gatilho
+       *     DELIBERADAMENTE não recalcula título cancelado.
+       *
+       * Juntando os dois: a linha de baixa entraria `confirmed`, o gatilho não mexeria em
+       * `paid_amount`/`status`, e sobraria um settlement confirmado pendurado num título cancelado, com
+       * o `balance` gerado sem refletir a baixa. Ledger inconsistente, escrito pela própria operação que
+       * esta fatia certifica.
+       *
+       * Só `open` e `partially_paid` seguem — `partially_paid` continua elegível de propósito: barrar
+       * tudo que não fosse `open` seria correção excessiva e quebraria baixa cruzada parcial legítima.
+       * Estado de negócio de um registro que o chamador JÁ está autorizado a operar não se disfarça de
+       * 404: a uniformização da decisão 184 é para inexistência, tenant, escopo, direction e exclusão.
+       */
+      if (ct.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Título contrário cancelado");
+      if (ct.rows[0].status === "paid") throw err("ALREADY_CONFIRMED", "Título contrário já baixado");
+      /**
+       * PERÍODO DOS DOIS LADOS. `assertPeriodOpen` já roda para a empresa do título PRINCIPAL. O título
+       * contrário pode ser de OUTRA empresa — não existe no contrato nenhuma regra que exija mesma
+       * empresa numa baixa cruzada, e inventar uma aqui seria mudar negócio dentro de um hotfix de
+       * autorização. Preservada a possibilidade, a proteção tem de valer para quem for gravado: fechar
+       * o período de uma empresa precisa barrar a gravação nela, venha ela por qual porta vier.
+       */
+      await assertPeriodOpen(ctx.tx, ctx.orgId, ct.rows[0].empresa_id, d.settlement_date);
       if (D(ct.rows[0].balance).lt(d.amount)) throw err("PAYMENT_EXCEEDS_BALANCE", "Saldo do título contrário insuficiente");
-      await ctx.tx.query("insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,cross_title_id,amount,net_amount,note,created_by) values ($1,$2,$3,$4,$5,$6,$6,$7,$8)", [ctx.orgId, d.cross_title_id, d.settlement_date, d.settlement_kind, titleId, money(d.amount), d.note ?? `Baixa cruzada com ${title.number}`, ctx.user.id]);
+      // A linha ESPELHO recebe trilha própria: são duas linhas de `title_settlements`, e um auditor
+      // precisa reconstruir os DOIS lados. Sem `returning id` só o lado principal tinha rastro.
+      const espelho = await ctx.tx.query<{ id: string }>("insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,cross_title_id,amount,net_amount,note,created_by) values ($1,$2,$3,$4,$5,$6,$6,$7,$8) returning id", [ctx.orgId, d.cross_title_id, d.settlement_date, d.settlement_kind, titleId, money(d.amount), d.note ?? `Baixa cruzada com ${title.number}`, ctx.user.id]);
+      await audit(ctx.tx, ctx, "title_settlements", espelho.rows[0]!.id, "create", { title: d.cross_title_id, cruzada_com: titleId, lado: "espelho", net: money(d.amount) });
+      ladoPrincipal = { cruzada_com: d.cross_title_id, lado: "principal" };
     }
     const s = await ctx.tx.query<{ id: string }>("insert into erp.title_settlements(organization_id,title_id,settlement_date,settlement_kind,bank_account_id,bank_movement_id,cross_title_id,amount,discount,penalty,interest,increase,foreign_amount,ptax_rate,exchange_adjustment,net_amount,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id",
       [ctx.orgId, titleId, d.settlement_date, d.settlement_kind, d.bank_account_id ?? null, movementId, d.cross_title_id ?? null, money(d.amount), money(input.discount), money(input.penalty), money(input.interest), money(input.increase), d.foreign_amount ?? null, d.ptax_rate ?? null, money(input.exchangeAdjustment), net, d.note ?? null, ctx.user.id]);
-    await audit(ctx.tx, ctx, "title_settlements", s.rows[0]!.id, "create", { title: titleId, net });
+    await audit(ctx.tx, ctx, "title_settlements", s.rows[0]!.id, "create", { title: titleId, net, ...(ladoPrincipal ?? {}) });
     const after = await ctx.tx.query<{ status: string; balance: string }>("select status, balance from erp.financial_titles where id=$1", [titleId]);
     return { settlement_id: s.rows[0]!.id, title_id: titleId, net_amount: net, status: after.rows[0]!.status, balance: after.rows[0]!.balance, bank_movement_id: movementId };
   }

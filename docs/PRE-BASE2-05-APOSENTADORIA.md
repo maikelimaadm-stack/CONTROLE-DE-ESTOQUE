@@ -16,9 +16,29 @@ anterior estar em produção e comprovado**:
 
 | Fase | O que sai | O que continua | Pré-requisito |
 | --- | --- | --- | --- |
-| **05A — Cliente canônico** ✅ | o tradutor de fio do web; `X-Farm-Id` do navegador; leitura de apelido legado na resposta | API bilíngue · banco bilíngue | PRE-BASE2-04 ativada em produção |
+| **05A — Cliente canônico** ✅ | o tradutor de fio do web; `X-Farm-Id` do navegador; leitura de apelido legado na resposta | API bilíngue · banco bilíngue | PRE-BASE2-04 ativada em produção — *pré-requisito documentado à época; ver a nota abaixo* |
 | **05B — Servidor canônico** ✅ | borda legada da API: cabeçalho, normalização de entrada, apelidos de saída, nomes legados de tabela, CORS, formato administrativo achatado, promoção de sessão | banco bilíngue | 05A em produção |
 | **05C — Purga física do schema** ✅ **CONCLUÍDA**, nas três fatias | 05C-0 instrumentos (mesclada) · 05C-1 as 52 colunas legadas, as 5 views, os 52 gatilhos e as 3 funções (**mesclada e aplicada em produção**) · 05C-2 o contador `entity='farm'` (**mesclada e aplicada em produção em 16/09/2026**) | — | 05B em produção |
+
+> **Nota de correção (18/09/2026) — o que não se pode re-certificar, e o que também não se pode reescrever.**
+>
+> A célula acima reproduz o pré-requisito como ele foi REGISTRADO na época, palavra por palavra. Uma versão
+> anterior desta nota o havia rebaixado para "implantada" e afirmado que a 05A dependia só disso. Essa
+> afirmação foi retirada: não há fonte contemporânea que a sustente, e a ordem de governança do roteiro
+> sempre exigiu a fase anterior **em produção e comprovada**. Ausência de evidência não autoriza afrouxar a
+> regra histórica para que a evidência disponível caiba nela.
+>
+> O que a medição de 18/09/2026 em produção (somente leitura) PROVA hoje: a migration `0016` está aplicada
+> (ledger com 19 migrations, `0016` exatamente 1×) e `erp.registros_globais` tem 66 linhas em 17 tipos de
+> entidade — a alocação está viva. O que NÃO há como provar com o que existe hoje: backfill até
+> `faltando = 0`, `pnpm id-global:verify` contra o acervo real e smoke de `#N` / `ID N` / distintivo na tela.
+>
+> Conclusão honesta: a conformidade histórica daquele pré-requisito **NÃO PODE SER RE-CERTIFICADA** com a
+> evidência hoje disponível. Isso NÃO afirma que a 05A violou a ordem — afirmar violação exigiria uma prova
+> que também não existe — e NÃO desfaz a PRE-BASE2-05 já implantada. São três coisas diferentes, e este
+> documento fica com a terceira: não sabemos.
+>
+> **Estado atual da PRE-BASE2-04: IMPLEMENTAÇÃO PRONTA / ATIVAÇÃO EM PRODUÇÃO PENDENTE.**
 
 **05A, 05B, 05C-1 e 05C-2 foram mescladas e publicadas.** A **PRE-BASE2-05 está CONCLUÍDA**: a migration
 `supabase/migrations/0018_empresa_code_sequence.sql` foi aplicada em produção em 16/09/2026 (merge
