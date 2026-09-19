@@ -58,6 +58,50 @@ na exclusão, da leitura sob `for update`, que dentro da transação é o valor 
 Sem padrão anterior não se inventa evento. Desativar e excluir a padrão também emitem `unset_default`,
 porque nos dois casos o posto vaga e um `deactivate`/`delete` sozinho não diz isso.
 
+### 0.2 O documento grava SNAPSHOT: identidade + versão (TOP-CONFIG-02)
+
+A partir da TOP-CONFIG-02, um lançamento que usa TOP guarda **dois** ponteiros, nunca um:
+
+| Coluna | O que é |
+| --- | --- |
+| `tipo_operacao_id` | a TOP configurada que o usuário escolheu |
+| `tipo_operacao_versao_id` | a VERSÃO exata dela no instante do lançamento |
+
+**Por que dois.** Guardar só o primeiro faria o documento herdar o nome ATUAL da TOP: renomear
+"Venda de Gado a Prazo" para "Venda de Bovinos a Prazo" reescreveria, em silêncio, o que um documento de
+2024 diz que é. O segundo trava a versão — o documento cita a linha imutável que existia no dia, e a edição
+administrativa de amanhã cria a versão N+1 sem tocar no passado.
+
+**Regras que valem em toda superfície que passar a gravar TOP** (Vendas é o piloto; Compras, Estoque e
+Financeiro seguirão o mesmo contrato):
+
+- **O cliente manda só o `tipo_operacao_id`.** Quem escolhe a versão é o SERVIDOR, na escrita. Deixar o
+  cliente enviar a versão seria deixá-lo escolher qual passado citar, e um cliente desatualizado congelaria
+  uma versão que já não é a corrente.
+- **A TOP tem de ser da FAMÍLIA da variante.** A família sai do registry (`resolverTipoOperacao`), nunca de
+  uma lista copiada na rota. Família errada é recusa — e o banco não pega esse caso: a FK prova tenant e
+  parentesco, não família.
+- **Paridade no banco.** `CHECK ((tipo_operacao_id is null) = (tipo_operacao_versao_id is null))`: meia
+  identidade é pior que nenhuma, porque a leitura cairia de volta no nome atual.
+- **A leitura sai da VERSÃO CONGELADA.** Reaproveitar a consulta administrativa (que junta pela
+  `versao_atual` do pai) faz o documento antigo exibir o nome de hoje. É o erro mais fácil de cometer aqui.
+- **`null` é resposta legítima** — acervo, ou documento criado por cliente anterior à fatia. A tela diz
+  "não configurada", nunca a família canônica disfarçada de TOP, e a listagem usa LEFT JOIN.
+- **Desativar ou excluir a TOP não toca o passado.** Exclusão é lógica; o documento continua legível e
+  continua casando o filtro por id. Só NOVO lançamento deixa de poder usá-la.
+- **Editar outro campo não re-carimba o snapshot.** PUT sem o campo, e PUT com o MESMO id, preservam a
+  versão gravada. Só a troca EXPLÍCITA de TOP captura a versão corrente da nova — e gera evento próprio.
+- **Conversão escolhe a TOP do DESTINO.** A da fonte é de outra família e nunca é herdada; um cliente antigo
+  que converte sem informá-la produz destino legado, e não um documento com TOP da família errada.
+- **A porta de escolha é OPERACIONAL, não administrativa.** Quem pode lançar vê as TOPs ativas da família;
+  `tipos_operacao.*` continua sendo a capacidade de CONFIGURAR. São perguntas diferentes.
+- **Obrigatoriedade é de UX, não do banco.** As colunas são NULLABLE nesta fase — por acervo e por rolling
+  deploy. Torná-las obrigatórias é fatia futura, com backfill consciente e sem cliente legado vivo.
+
+**CLASSIFICAR ≠ EXECUTAR permanece.** Escolher a TOP não mudou efeito de estoque, financeiro, fiscal,
+status ou permissão: confirmar uma venda faz exatamente o que fazia. A TOP é a identidade configurada do
+lançamento; efeitos configuráveis são a TOP-CONFIG-03, e nada nesta fatia os antecipa.
+
 ## 1. O que a TOP é
 
 **Tipo de Operação é a classificação funcional de um lançamento.** Ela responde a uma pergunta só:

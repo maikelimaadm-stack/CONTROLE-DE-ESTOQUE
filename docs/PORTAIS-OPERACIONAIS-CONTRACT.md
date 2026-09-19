@@ -56,7 +56,7 @@ O lançamento futuro escolherá uma TOP configurada dessa família.
 
 ### Portal de Vendas
 Orçamento, pedido e venda — as três variantes de `erp.sales_documents`, que a BASE2-03C já unificou na
-apresentação mantendo serviço, permissão e efeito separados. É o **piloto recomendado** da TOP-CONFIG-02,
+apresentação mantendo serviço, permissão e efeito separados. Foi o **piloto** da TOP-CONFIG-02,
 porque a fronteira entre as variantes já está fechada e provada.
 
 ### Movimentações de Estoque
@@ -85,7 +85,7 @@ decide layout e não decide permissão. Um motor genérico criado cedo demais vi
 | Fatia | Entrega | Estado |
 | --- | --- | --- |
 | **TOP-CONFIG-01** | cadastro versionado de Tipos de Operação (tabela, API administrativa, tela, permissões, RLS, auditoria) | EM PR |
-| **TOP-CONFIG-02** | primeiro lançamento real escolhendo uma TOP cadastrada; `operation_type_id` e `operation_type_version_id` no documento. Piloto: Portal de Vendas / `erp.sales_documents` | não iniciada |
+| **TOP-CONFIG-02** | primeiro lançamento real escolhendo uma TOP cadastrada; `tipo_operacao_id` e `tipo_operacao_versao_id` no documento (nomes em português, §1.6 do padrão — os nomes em inglês desta linha eram provisórios). Piloto: Portal de Vendas / `erp.sales_documents` | 🟡 em PR |
 | **TOP-CONFIG-03+** | portal como experiência unificada, por módulo | não iniciada |
 
 Efeito configurável (estoque, financeiro, fiscal, contábil), workflow genérico, campos obrigatórios

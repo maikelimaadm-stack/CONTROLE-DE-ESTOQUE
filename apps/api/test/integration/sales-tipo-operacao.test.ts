@@ -21,7 +21,7 @@ beforeAll(async () => { h = await harness(); I = await ids(h); }, 180_000);
 afterAll(async () => { await h.app.close(); await h.db.end(); });
 
 type Hdr = Record<string, string>;
-const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { error?: { code: string } };
+const j = (r: { json: () => unknown }) => r.json() as Record<string, unknown> & { error?: { code: string; message: string } };
 
 const ROTA = { budget: "budgets", order: "orders", sale: "sales" } as const;
 type Variante = keyof typeof ROTA;
@@ -358,6 +358,21 @@ describe("TOP no lançamento — conversão escolhe a TOP do DESTINO", () => {
     const r = await converter("budget", orcamento);
     expect(r.statusCode, r.body).toBe(201);
     expect(await colunas(j(r).id as string)).toMatchObject({ tipo_operacao_id: null, tipo_operacao_versao_id: null });
+  }, 120_000);
+
+  it("fonte COM TOP convertida SEM alvo: o destino nasce LEGADO, jamais herdando a da fonte", async () => {
+    // O caso decisivo da não-herança, e o único em que ela seria possível: o cliente antigo não manda TOP
+    // alvo, e a fonte TEM uma. Herdar aqui gravaria no pedido uma TOP da família `vendas.orcamento` —
+    // que a FK da 0021 NÃO impediria (ela prova tenant e parentesco, não família), e que ninguém veria.
+    //
+    // O caso do orçamento SEM TOP, logo acima, não consegue provar isto: não há o que herdar.
+    const topOrcamento = await cadastrarTop("vendas.orcamento", "Fonte com TOP");
+    const orcamento = j(await criar("budget", { tipo_operacao_id: topOrcamento })).id as string;
+    const r = await converter("budget", orcamento);
+    expect(r.statusCode, r.body).toBe(201);
+    expect(await colunas(j(r).id as string), "o destino NÃO herda a TOP da fonte").toMatchObject({ tipo_operacao_id: null, tipo_operacao_versao_id: null });
+    // E a fonte continua com a dela.
+    expect(await topDoDocumento("budget", orcamento)).toMatchObject({ id: topOrcamento });
   }, 120_000);
 });
 
