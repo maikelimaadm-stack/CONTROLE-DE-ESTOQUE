@@ -24,6 +24,32 @@ import { fileURLToPath } from "node:url";
 const RAIZ = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /**
+ * REGRAS DA TELA DE VENDAS — declaradas UMA vez, usadas em DOIS lugares.
+ *
+ * A constante existe para que o autoteste exercite EXATAMENTE o contrato que o repositório cobra. Uma
+ * cópia das regexes dentro do autoteste provaria que a cópia funciona, e não que a regra aplicada à tela
+ * funciona — as duas divergiriam na primeira vez que alguém ajustasse só um lado, e o gate continuaria
+ * "verde com autoteste" sem cobrir nada.
+ *
+ * Elas são deliberadamente tolerantes a ESPAÇO e a ASPA SIMPLES OU DUPLA, porque a formatação é
+ * incidental: um gate que depende de como o arquivo foi formatado é contornado sem intenção nenhuma, no
+ * primeiro `prettier` que rodar diferente. O que elas NÃO tentam é entender JavaScript — não há parser
+ * aqui, e reconhecer toda forma possível de escrever a mesma regressão não é o objetivo.
+ */
+const REGRAS_VENDAS = [
+  { procura: "tipoOperacaoDoRegistro\\([^)]*,\\s*d\\s*\\)", deve: true, motivo: "a TOP tem de ser resolvida a partir do REGISTRO (`d`), nunca da rota" },
+  { procura: "tipoOperacaoDoRegistro\\([^)]*\\bsegmentoDaRota\\b", deve: false, motivo: "a TOP não pode sair do segmento da URL — ele é porta de navegação, não autoridade" },
+  // ANCORADA NA ATRIBUIÇÃO da identidade, não numa ocorrência qualquer de `d["kind"]`: é a linha que
+  // decide o que a tela diz que o registro É.
+  { procura: "const\\s+variante\\s*=\\s*d\\s*\\?\\s*String\\(\\s*d\\[\\s*[\"']kind[\"']\\s*\\]\\s*\\)", deve: true, motivo: "a variante apresentada sai do REGISTRO (`d[\"kind\"]`), não de `params.kind`" },
+  { procura: "DO_REGISTRO\\s*\\[\\s*segmentoDaRota\\s*\\]", deve: false, motivo: "indexar o mapa pelo segmento da URL é classificar pela porta por onde o registro foi pedido" },
+  // O FALLBACK PARA VENDA é o defeito nomeado desta fatia. Ele não pode voltar em forma nenhuma — nem
+  // indexado por rota, nem por registro, e nem com a chave no singular ou no plural.
+  { procura: "\\?\\?\\s*(K|DO_REGISTRO)\\s*\\[\\s*[\"']sale", deve: false, motivo: "variante desconhecida NÃO herda a semântica de venda — o fallback silencioso é o defeito que esta fatia fechou" },
+  { procura: "[\"']Documento de venda[\"']", deve: true, motivo: "variante desconhecida precisa de rótulo NEUTRO e fail-closed" }
+];
+
+/**
  * AS TELAS DECLARADAS NO MODELO BASE 2.
  *
  * Acrescentar uma linha aqui é afirmar que aquele arquivo é o detalhe de um lançamento e que a
@@ -74,18 +100,7 @@ const TELAS = {
   // isto cobre a causa.
   "apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx": {
     fatia: "BASE2-03C — vendas / sales_documents",
-    regras: [
-      { procura: "tipoOperacaoDoRegistro\\([^)]*,\\s*d\\s*\\)", deve: true, motivo: "a TOP tem de ser resolvida a partir do REGISTRO (`d`), nunca da rota" },
-      { procura: "tipoOperacaoDoRegistro\\([^)]*\\bsegmentoDaRota\\b", deve: false, motivo: "a TOP não pode sair do segmento da URL — ele é porta de navegação, não autoridade" },
-      // ANCORADA NA ATRIBUIÇÃO da identidade, não numa ocorrência qualquer de `d["kind"]`: é a linha que
-      // decide o que a tela diz que o registro É.
-      { procura: "const variante = d \\? String\\(d\\[\"kind\"\\]\\)", deve: true, motivo: "a variante apresentada sai do REGISTRO (`d[\"kind\"]`), não de `params.kind`" },
-      { procura: "DO_REGISTRO\\[segmentoDaRota\\]", deve: false, motivo: "indexar o mapa pelo segmento da URL é classificar pela porta por onde o registro foi pedido" },
-      // O FALLBACK PARA VENDA é o defeito nomeado: `K[kind] ?? K["sales"]`. Ele não pode voltar em
-      // forma nenhuma — nem indexado por rota, nem por registro.
-      { procura: "\\?\\?\\s*(K|DO_REGISTRO)\\[\"sale", deve: false, motivo: "variante desconhecida NÃO herda a semântica de venda — o fallback silencioso é o defeito que esta fatia fechou" },
-      { procura: "\"Documento de venda\"", deve: true, motivo: "variante desconhecida precisa de rótulo NEUTRO e fail-closed" }
-    ]
+    regras: REGRAS_VENDAS
   }
 };
 
@@ -183,6 +198,31 @@ const REGRAS_TOP = [
   { procura: "tipoOperacaoDoRegistro\\([^)]*\\bdir\\b", deve: false, motivo: "não resolve pela rota" }
 ];
 
+/**
+ * A TELA DE VENDAS NA FORMA CORRETA, em miniatura.
+ *
+ * Contém tudo que `REGRAS_VENDAS` cobra e nada do que ela proíbe: a moldura, a variante saindo de
+ * `d["kind"]`, o mapa indexado pela VARIANTE, a TOP resolvida pelo registro, o rótulo neutro e o
+ * `segmentoDaRota` no papel legítimo dele — localizar a porta (endpoint e navegação), jamais classificar.
+ * É a presença do `segmentoDaRota` aqui que dá valor aos casos ruins: sem ele, proibir "TOP pela rota"
+ * seria proibir um identificador que a amostra nem teria.
+ */
+const VENDAS_BOA = `
+import { Base2Shell, Base2Section, Base2Fields, Base2Items } from "@/features/base2";
+import { tipoOperacaoDoRegistro } from "@agro/domain";
+const DO_REGISTRO = { budget: { titulo: "Orçamento" }, order: { titulo: "Pedido de venda" }, sale: { titulo: "Venda" } };
+export default function Page({ params }) {
+  const { kind: segmentoDaRota, id } = use(params);
+  const q = useDoc(\`/api/sales/\${segmentoDaRota}/\${id}\`);
+  const d = q.data;
+  const variante = d ? String(d["kind"]) : "";
+  const k = DO_REGISTRO[variante];
+  const titulo = k?.titulo ?? "Documento de venda";
+  const top = tipoOperacaoDoRegistro(\`erp.sales_documents\`, d);
+  return <Base2Shell titulo={titulo} voltarHref={\`/vendas/\${k?.segmento ?? segmentoDaRota}\`}><Base2Fields campos={[]} /><Base2Items colunas={[]} linhas={[]} /></Base2Shell>;
+}
+`;
+
 const AMOSTRAS = [
   ["tela migrada, com SimpleTable legítimo ao lado, PASSA", 0, BOA, undefined],
   ["shell anterior de volta REPROVA", 1, BOA.replace("<Base2Shell titulo=\"x\">", "<DetailShell title=\"x\">"), undefined],
@@ -199,12 +239,48 @@ const AMOSTRAS = [
   // Regras por tela — a forma como a BASE2-03B trava a classificação pelo REGISTRO.
   ["regra `deve: true` satisfeita PASSA", 0, COM_VIZINHO_E_TOP, "Detalhe", REGRAS_TOP],
   ["regra `deve: true` perdida REPROVA", 1, COM_VIZINHO_E_TOP.replace(", d)", ", { ...d, direction: dir })"), "Detalhe", REGRAS_TOP],
-  ["regra `deve: false` violada REPROVA", 1, COM_VIZINHO_E_TOP.replace(", d)", ", dir)"), "Detalhe", REGRAS_TOP]
+  ["regra `deve: false` violada REPROVA", 1, COM_VIZINHO_E_TOP.replace(", d)", ", dir)"), "Detalhe", REGRAS_TOP],
+  // ---- BASE2-03C · as regras DE VENDAS, com as MESMAS `REGRAS_VENDAS` que a tela real é cobrada ----
+  // Cada caso ruim é a regressão que a regra correspondente existe para bloquear, escrita como alguém a
+  // escreveria de verdade — não uma string sintética que só casa com a regex.
+  ["vendas: a forma correta PASSA", 0, VENDAS_BOA, undefined, REGRAS_VENDAS],
+  // `aponta` é um trecho do MOTIVO da regra visada, não do código: é o que distingue "reprovou" de
+  // "reprovou pelo motivo certo". A primeira versão apontava para o nome da função e o caso B passava
+  // satisfeito pela regra VIZINHA — medido, não suposto (reversa G1).
+  ["vendas B1: TOP resolvida fora do REGISTRO REPROVA", 1,
+    VENDAS_BOA.replace("tipoOperacaoDoRegistro(`erp.sales_documents`, d)", "tipoOperacaoDoRegistro(`erp.sales_documents`, registroDaRota)"),
+    undefined, REGRAS_VENDAS, "nunca da rota"],
+  ["vendas B2: TOP resolvida pelo SEGMENTO DA ROTA REPROVA", 1,
+    VENDAS_BOA.replace("tipoOperacaoDoRegistro(`erp.sales_documents`, d)", "tipoOperacaoDoRegistro(`erp.sales_documents`, { ...d, kind: segmentoDaRota })"),
+    undefined, REGRAS_VENDAS, "porta de navegação"],
+  ["vendas C: mapa indexado pelo SEGMENTO DA ROTA REPROVA", 1,
+    VENDAS_BOA.replace("DO_REGISTRO[variante]", "DO_REGISTRO[segmentoDaRota]"), undefined, REGRAS_VENDAS, "classificar pela porta"],
+  ["vendas D: fallback de variante desconhecida para VENDA REPROVA", 1,
+    VENDAS_BOA.replace("const k = DO_REGISTRO[variante];", 'const k = DO_REGISTRO[variante] ?? DO_REGISTRO["sale"];'), undefined, REGRAS_VENDAS, "semântica de venda"],
+  // A mesma regressão com aspa simples e espaços — a forma que a regex ANTERIOR, presa a `["sale`, deixava
+  // passar. Sem este caso o endurecimento da regex seria afirmação, não medida.
+  ["vendas D2: o mesmo fallback com aspa simples e espaços REPROVA", 1,
+    VENDAS_BOA.replace("const k = DO_REGISTRO[variante];", "const k = DO_REGISTRO[variante] ??  DO_REGISTRO[ 'sale' ];"), undefined, REGRAS_VENDAS, "semântica de venda"],
+  ["vendas E: identidade deixa de sair do REGISTRO REPROVA", 1,
+    VENDAS_BOA.replace('const variante = d ? String(d["kind"]) : "";', "const variante = segmentoDaRota.replace(/s$/, \"\");"), undefined, REGRAS_VENDAS, "params.kind"],
+  // O rótulo neutro some sem reintroduzir o fallback, para que o caso meça a regra DELE: um substituto
+  // que também violasse a regra do fallback reprovaria pelo motivo do vizinho.
+  ["vendas F: perda do rótulo NEUTRO REPROVA", 1,
+    VENDAS_BOA.replace('?? "Documento de venda"', '?? "Venda"'), undefined, REGRAS_VENDAS, "rótulo NEUTRO"]
 ];
-for (const [nome, esperado, amostra, escopo, regras] of AMOSTRAS) {
-  const n = problemasDaTela(amostra, escopo, regras).length;
+for (const [nome, esperado, amostra, escopo, regras, aponta] of AMOSTRAS) {
+  const problemas = problemasDaTela(amostra, escopo, regras);
+  const n = problemas.length;
   // o caso bom exige ZERO; os ruins exigem AO MENOS um (trocar o shell também tira `Base2Shell` do texto)
-  const ok = esperado === 0 ? n === 0 : n >= 1;
+  let ok = esperado === 0 ? n === 0 : n >= 1;
+  // CONTAGEM NÃO BASTA. Quando o caso declara `aponta`, a reprovação tem de vir da regra que ele existe
+  // para exercitar: sem isso, uma amostra que reprovasse por um motivo vizinho — um `Base2Items` que
+  // faltou, a regra do fallback disparando no lugar da do rótulo — contaria como prova da regra errada,
+  // e a regra visada poderia estar quebrada sem ninguém perceber.
+  if (ok && aponta && !problemas.some((p) => p.includes(aponta))) {
+    console.error(`base2-consumidor-audit: AUTOTESTE FALHOU — "${nome}": reprovou, mas por outro motivo. Nenhum problema menciona "${aponta}":\n  ${problemas.join("\n  ")}`);
+    process.exit(1);
+  }
   if (!ok) {
     console.error(`base2-consumidor-audit: AUTOTESTE FALHOU — "${nome}": esperava ${esperado === 0 ? "0" : "≥1"}, obteve ${n}.`);
     process.exit(1);
