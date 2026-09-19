@@ -6,28 +6,148 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, pct } from "@/lib/utils";
 import { Button, Confirm } from "@/components/ui";
-import { DetailShell, KV, SimpleTable, useDoc, LoadingOr, type Row } from "@/features/docs/shared";
+import { useDoc, LoadingOr, type Row } from "@/features/docs/shared";
 import { useAction } from "@/features/docs/actions";
+import { Base2Shell, Base2Section, Base2Fields, Base2Items, type Base2Field, type Base2ItemColumn } from "@/features/base2";
+import { tipoOperacaoDoRegistro } from "@agro/domain";
+import { useTradutor } from "@/lib/i18n";
 import { COPY, enumLabel, statusLabel } from "@/lib/copy";
-const K: Record<string, { perm: string; label: string; next?: string; nextLabel?: string; nextPerm?: string }> = { budgets: { perm: "budgets", label: "Orçamento", next: "orders", nextLabel: "Converter em pedido", nextPerm: "orders.create" }, orders: { perm: "orders", label: "Pedido de venda", next: "sales", nextLabel: "Converter em venda", nextPerm: "sales.create" }, sales: { perm: "sales", label: "Venda" } };
+
+/** Nome da tabela como o servidor a grava em `erp.audit_logs.entity`. */
+const ENTIDADE = "sales_documents";
+
+/**
+ * O QUE O REGISTRO É — indexado por `kind`, o valor que o SERVIDOR classificou.
+ *
+ * Não é um mapa de rota. A rota (`params.kind`, o segmento plural) serve para LOCALIZAR a porta:
+ * endpoint e navegação. Ela não diz o que o registro é. Antes desta fatia a tela fazia
+ * um mapa indexado pelo segmento com QUEDA para a entrada de venda: além de classificar pela porta, um
+ * segmento desconhecido HERDAVA a semântica de VENDA — o rótulo, a família de permissão e as ações de
+ * venda, sobre um registro que ninguém sabia o que era. (A forma exata está na regra do gate, em
+ * `scripts/base2-consumidor-audit.mjs`; escrevê-la aqui faria o próprio gate acusar o comentário.) A API agora recusa a rota errada (404), e a tela também não transforma URL em verdade.
+ */
+const DO_REGISTRO: Record<string, { titulo: string; perm: string; segmento: string; proximo?: { segmento: string; perm: string; rotulo: string } }> = {
+  budget: { titulo: "Orçamento", perm: "budgets", segmento: "budgets", proximo: { segmento: "orders", perm: "orders", rotulo: "Converter em pedido" } },
+  order: { titulo: "Pedido de venda", perm: "orders", segmento: "orders", proximo: { segmento: "sales", perm: "sales", rotulo: "Converter em venda" } },
+  sale: { titulo: "Venda", perm: "sales", segmento: "sales" }
+};
+
+const COLUNAS_ITENS: Base2ItemColumn<Row>[] = [
+  { key: "product_code", label: "Código" },
+  { key: "product_name", label: "Produto" },
+  { key: "warehouse_name", label: "Armazém" },
+  { key: "quantity", label: "Quantidade", align: "right", render: (r) => `${num(r["quantity"] as string, 4)} ${r["unit"] ?? ""}` },
+  { key: "unit_price", label: "Valor unitário", align: "right", render: (r) => brl(r["unit_price"] as string) },
+  { key: "discount", label: "Desconto", align: "right", render: (r) => `${brl(r["discount"] as string)} / ${pct(r["discount_percent"] as string)}` },
+  { key: "total", label: "Total", align: "right", render: (r) => brl(r["total"] as string) }
+];
+
+const COLUNAS_TITULOS: Base2ItemColumn<Row>[] = [
+  { key: "number", label: "Título", render: (r) => <Link className="text-brand-700 underline" href={`/financeiro/contas-a-receber/${r["id"]}`}>{String(r["number"])}</Link> },
+  { key: "due_date", label: "Vencimento", render: (r) => dateBR(r["due_date"] as string) },
+  { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) },
+  { key: "balance", label: "Saldo", align: "right", render: (r) => brl(r["balance"] as string) },
+  { key: "status", label: COPY.situacao, render: (r) => enumLabel("title_status", r["status"]) }
+];
+
+const COLUNAS_DERIVADOS: Base2ItemColumn<Row>[] = [
+  { key: "kind", label: "Tipo", render: (r) => enumLabel("sales_kind", r["kind"]) },
+  { key: "code", label: "Código", render: (r) => <Link className="text-brand-700 underline" href={`/vendas/${r["kind"]}s/${r["id"]}`}>{String(r["code"])}</Link> },
+  { key: "status", label: COPY.situacao, render: (r) => statusLabel(r["status"]) }
+];
+
+/**
+ * DETALHE DO DOCUMENTO DE VENDA NO MODELO BASE 2 (BASE2-03C, docs/MODELO-BASE2-CONTRACT.md).
+ *
+ * A moldura passou a desenhar identidade (título + código), empresa, situação, ações, dados principais,
+ * itens e histórico. O que ela NÃO passou a decidir: conversão, confirmação, cancelamento, estoque,
+ * geração de títulos, idempotência, permissão, escopo de empresa, transação e cálculo. Tela unificada ≠
+ * regra de negócio unificada — quem nega é a API.
+ *
+ * DINHEIRO NÃO É RECALCULADO AQUI. `total` é o número do servidor e inclui frete, ICMS de frete e outros
+ * valores, que não estão em linha de item nenhuma: somar a coluna de itens daria outro número, e a
+ * tabela não fecharia com o cabeçalho. `Base2Items` nem oferece rodapé de total, de propósito.
+ *
+ * ANEXOS NÃO SÃO LIGADOS. `sales_documents` não está em `ATTACHMENT_PARENTS`
+ * (apps/api/src/lib/attachment-parent.ts): o botão apareceria e responderia 422. Botão que aparece e
+ * não funciona é pior que botão nenhum — abrir a superfície é outra fatia, com backend.
+ */
 export default function Page({ params }: { params: Promise<{ kind: string; id: string }> }) {
-  const { kind, id } = use(params); const k = K[kind] ?? K["sales"]!; const { can } = useAuth(); const router = useRouter();
-  const q = useDoc<Row & { items: Row[]; titles: Row[]; derived: Row[] }>(`/api/sales/${kind}/${id}`); const d = q.data;
-  const [confirm, setConfirm] = React.useState<"confirm" | "cancel" | "convert" | null>(null);
-  const act = useAction<{ id?: string }>((r) => { setConfirm(null); if (confirm === "convert" && r?.id && k.next) router.push(`/vendas/${k.next}/${r.id}`); });
-  return <LoadingOr q={q}>{d && <DetailShell title={`${k.label} ${String(d["code"])}`} back={`/vendas/${kind}`} status={String(d["status"])} actions={<>
-    {kind === "sales" && ["open", "approved"].includes(String(d["status"])) && can("sales.edit") && <Button size="sm" onClick={() => setConfirm("confirm")}>Confirmar venda</Button>}
-    {k.next && ["open", "approved"].includes(String(d["status"])) && can(k.nextPerm!) && <Button size="sm" onClick={() => setConfirm("convert")}>{k.nextLabel}</Button>}
-    {!["cancelled", "confirmed", "invoiced"].includes(String(d["status"])) && can(`${k.perm}.delete`) && <Button size="sm" variant="danger" onClick={() => setConfirm("cancel")}>Cancelar {k.label.toLowerCase()}</Button>}
-    <Button size="sm" variant="outline" onClick={() => window.print()}>Imprimir</Button>
-  </>}>
-    <KV items={[["Empresa", String(d["empresa_name"])], ["Data", dateBR(d["document_date"] as string)], ["Saída", d["shipping_date"] ? dateBR(d["shipping_date"] as string) : "—"], ["Vencimento", d["due_date"] ? dateBR(d["due_date"] as string) : "—"], ["Cliente", `${d["client_name"]} ${d["client_document"] ?? ""}`], ["Transportadora", String(d["transporter_name"] ?? "—")], ["Motorista", String(d["driver_name"] ?? "—")], ["Forma de pagamento", String(d["payment_method_name"] ?? "—")], ["Responsável", String(d["responsible_name"] ?? "")], ["Subtotal", brl(d["subtotal"] as string)], ["Frete", brl(d["freight"] as string)], ["ICMS frete", brl(d["freight_icms"] as string)], ["Outros", brl(d["other_values"] as string)], ["Desconto", brl(d["discount"] as string)], ["Total", <b key="t">{brl(d["total"] as string)}</b>], ["Origem", d["origin_document_id"] ? "Convertido" : "Manual"], ["Observação", String(d["note"] ?? "")]]} />
-    <h3 className="text-xs font-semibold uppercase text-brand-700">Itens</h3>
-    <SimpleTable rows={d.items} cols={[{ key: "product_code", label: "Código" }, { key: "product_name", label: "Produto" }, { key: "warehouse_name", label: "Armazém" }, { key: "quantity", label: "Quantidade", align: "right", render: (r) => `${num(r["quantity"] as string, 4)} ${r["unit"] ?? ""}` }, { key: "unit_price", label: "Valor unitário", align: "right", render: (r) => brl(r["unit_price"] as string) }, { key: "discount", label: "Desconto", align: "right", render: (r) => `${brl(r["discount"] as string)} / ${pct(r["discount_percent"] as string)}` }, { key: "total", label: "Total", align: "right", render: (r) => brl(r["total"] as string) }]} />
-    {d.titles.length > 0 && <><h3 className="text-xs font-semibold uppercase text-brand-700">Contas a receber geradas</h3><SimpleTable rows={d.titles} cols={[{ key: "number", label: "Título", render: (r) => <Link className="text-brand-700 underline" href={`/financeiro/contas-a-receber/${r["id"]}`}>{String(r["number"])}</Link> }, { key: "due_date", label: "Vencimento", render: (r) => dateBR(r["due_date"] as string) }, { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }, { key: "balance", label: "Saldo", align: "right", render: (r) => brl(r["balance"] as string) }, { key: "status", label: COPY.situacao, render: (r) => enumLabel("title_status", r["status"]) }]} /></>}
-    {d.derived.length > 0 && <><h3 className="text-xs font-semibold uppercase text-brand-700">Documentos derivados</h3><SimpleTable rows={d.derived} cols={[{ key: "kind", label: "Tipo", render: (r) => enumLabel("sales_kind", r["kind"]) }, { key: "code", label: "Código", render: (r) => <Link className="text-brand-700 underline" href={`/vendas/${r["kind"]}s/${r["id"]}`}>{String(r["code"])}</Link> }, { key: "status", label: COPY.situacao, render: (r) => statusLabel(r["status"]) }]} /></>}
-    <Confirm open={confirm === "confirm"} onOpenChange={() => setConfirm(null)} title="Confirmar venda" text="Baixa o estoque dos itens com armazém e gera as contas a receber. Operação atômica e idempotente." loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })} />
-    <Confirm open={confirm === "convert"} onOpenChange={() => setConfirm(null)} title={k.nextLabel ?? ""} loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${kind}/${id}/convert`, idem: true })} />
-    <Confirm open={confirm === "cancel"} onOpenChange={() => setConfirm(null)} title="Cancelar documento" text="Vendas confirmadas têm estoque e títulos estornados." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${kind}/${id}/cancel`, body: { reason: "Cancelado pelo usuário" } })} />
-  </DetailShell>}</LoadingOr>;
+  const { kind: segmentoDaRota, id } = use(params);
+  const { can } = useAuth(); const router = useRouter(); const tr = useTradutor();
+  const q = useDoc<Row & { items: Row[]; titles: Row[]; derived: Row[] }>(`/api/sales/${segmentoDaRota}/${id}`);
+  const [confirmar, setConfirmar] = React.useState<"confirm" | "cancel" | "convert" | null>(null);
+  const d = q.data;
+  const variante = d ? String(d["kind"]) : "";
+  const k = DO_REGISTRO[variante];
+  const act = useAction<{ id?: string }>((r) => { setConfirmar(null); if (confirmar === "convert" && r?.id && k?.proximo) router.push(`/vendas/${k.proximo.segmento}/${r.id}`); });
+  if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
+
+  // Variante que o catálogo não conhece: rótulo NEUTRO, nenhuma ação de variante, nenhuma herança da
+  // rota. Não saber o que o registro é não autoriza chutar que ele é uma venda.
+  const titulo = k?.titulo ?? "Documento de venda";
+  const situacao = String(d["status"]);
+  const editavel = ["open", "approved"].includes(situacao);
+  // A TOP sai do REGISTRO, pelo módulo dono da tela. Nunca da URL, da permissão ou do endpoint.
+  const top = tipoOperacaoDoRegistro(`erp.${ENTIDADE}`, d);
+  // O endereço das ações é o da variante DO REGISTRO — a mesma que a API serve nesta porta.
+  const rota = k?.segmento ?? segmentoDaRota;
+
+  const campos: Base2Field[] = [
+    { label: "Código", valor: String(d["code"]) },
+    { label: tr("termos.tipo_operacao"), valor: top ? tr(top.chaveI18n) : "", ocultarSeVazio: true },
+    { label: "Data", valor: dateBR(d["document_date"] as string), span: 2 },
+    { label: "Saída", valor: d["shipping_date"] ? dateBR(d["shipping_date"] as string) : "—", span: 2 },
+    { label: "Vencimento", valor: d["due_date"] ? dateBR(d["due_date"] as string) : "—", span: 2 },
+    { label: "Cliente", valor: `${d["client_name"]} ${d["client_document"] ?? ""}`.trim(), span: 4 },
+    { label: "Transportadora", valor: String(d["transporter_name"] ?? "—") },
+    { label: "Motorista", valor: String(d["driver_name"] ?? "—"), ocultarSeVazio: true },
+    { label: "Forma de pagamento", valor: String(d["payment_method_name"] ?? "—") },
+    { label: "Responsável", valor: String(d["responsible_name"] ?? "") },
+    { label: "Subtotal", valor: brl(d["subtotal"] as string), span: 2 },
+    { label: "Frete", valor: brl(d["freight"] as string), span: 2 },
+    { label: "ICMS frete", valor: brl(d["freight_icms"] as string), span: 2 },
+    { label: "Outros", valor: brl(d["other_values"] as string), span: 2 },
+    { label: "Desconto", valor: brl(d["discount"] as string), span: 2 },
+    { label: "Total", valor: <b>{brl(d["total"] as string)}</b>, span: 2 },
+    { label: "Origem", valor: d["origin_document_id"] ? "Convertido" : "Manual" },
+    { label: "Observação", valor: String(d["note"] ?? ""), span: 12, ocultarSeVazio: true }
+  ];
+
+  return <Base2Shell
+    titulo={titulo}
+    codigo={String(d["code"])}
+    situacao={situacao}
+    empresa={String(d["empresa_name"])}
+    voltarHref={`/vendas/${rota}`}
+    historico={{ entidade: ENTIDADE, id }}
+    acoes={<>
+      {variante === "sale" && editavel && can("sales.edit") && <Button size="sm" onClick={() => setConfirmar("confirm")}>Confirmar venda</Button>}
+      {/* CONVERTER exige AS DUAS capacidades, como a API passou a exigir: editar a FONTE e criar o
+          DESTINO. Mostrar o botão só com a do destino ofereceria uma ação que a API recusa com 403. */}
+      {k?.proximo && editavel && can(`${k.perm}.edit`) && can(`${k.proximo.perm}.create`) && <Button size="sm" onClick={() => setConfirmar("convert")}>{k.proximo.rotulo}</Button>}
+      {k && !["cancelled", "confirmed", "invoiced"].includes(situacao) && can(`${k.perm}.delete`) && <Button size="sm" variant="danger" onClick={() => setConfirmar("cancel")}>Cancelar {k.titulo.toLowerCase()}</Button>}
+      <Button size="sm" variant="outline" onClick={() => window.print()}>Imprimir</Button>
+    </>}
+  >
+    <Base2Fields campos={campos} />
+
+    <Base2Section titulo="Itens" contagem={d.items.length}>
+      <Base2Items legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${String(d["code"] ?? "")}`} colunas={COLUNAS_ITENS} linhas={d.items} />
+    </Base2Section>
+
+    {/* RELACIONAMENTO, não processo: as duas seções abaixo são leitura com link, sem ação destrutiva
+        embutida — por isso cabem na moldura sem custo de comportamento. Nenhuma soma é introduzida. */}
+    {d.titles.length > 0 && <Base2Section titulo="Contas a receber geradas" contagem={d.titles.length}>
+      <Base2Items legenda={`Contas a receber geradas pelo documento ${String(d["code"] ?? "")}`} colunas={COLUNAS_TITULOS} linhas={d.titles} />
+    </Base2Section>}
+
+    {d.derived.length > 0 && <Base2Section titulo="Documentos derivados" contagem={d.derived.length}>
+      <Base2Items legenda={`Documentos derivados do documento ${String(d["code"] ?? "")}`} colunas={COLUNAS_DERIVADOS} linhas={d.derived} />
+    </Base2Section>}
+
+    <Confirm open={confirmar === "confirm"} onOpenChange={() => setConfirmar(null)} title="Confirmar venda" text="Baixa o estoque dos itens com armazém e gera as contas a receber. Operação atômica e idempotente." loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })} />
+    <Confirm open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={k?.proximo?.rotulo ?? ""} loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/convert`, idem: true })} />
+    <Confirm open={confirmar === "cancel"} onOpenChange={() => setConfirmar(null)} title="Cancelar documento" text="Vendas confirmadas têm estoque e títulos estornados." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, body: { reason: "Cancelado pelo usuário" } })} />
+  </Base2Shell>;
 }

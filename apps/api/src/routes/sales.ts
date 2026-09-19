@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate } from "@agro/shared";
 import { documentTotals, itemTotal, nextSalesKind, assertConvertible, type SalesKind } from "@agro/domain";
-import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
+import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { consultaEscopada, exigirEmpresaDeLancamento, empresaScope, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
@@ -17,8 +17,24 @@ const uuid = z.string().uuid();
 const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_date: date.optional().nullable(), due_date: date.optional().nullable(), client_id: uuid, transporter_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), driver_name: z.string().optional().nullable(), payment_method_id: uuid.optional().nullable(), freight: dec.default("0"), freight_icms: dec.default("0"), other_values: dec.default("0"), discount: dec.default("0"), note: z.string().optional().nullable(), installment_plan: installmentPlanSchema.optional().nullable(), is_deductible: z.boolean().default(false), items: z.array(z.object({ product_id: uuid, warehouse_id: uuid.optional().nullable(), quantity: dec, unit_price: dec, discount: dec.default("0"), discount_percent: dec.default("0"), note: z.string().optional().nullable() })).min(1) });
 const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "orders" : "sales");
 
-async function getDoc(ctx: ServiceCtx, id: string) {
-  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null" + scopedById(ctx, "d", id).sql, scopedById(ctx, "d", id).params); if (!r.rows[0]) throw notFound("Documento");
+/**
+ * CARREGA O DOCUMENTO JÁ AMARRADO À VARIANTE DA PORTA (BASE2-03C).
+ *
+ * `erp.sales_documents` é UMA tabela com TRÊS variantes (`kind`), e cada variante tem a sua própria
+ * família de capacidades: `budgets.*` × `orders.*` × `sales.*`. A porta é variante; o registro também
+ * precisa ser. Antes desta fatia o carregamento olhava id + organização + exclusão + escopo de empresa e
+ * NÃO olhava `kind`: quem tivesse `budgets.view` lia um PEDIDO ou uma VENDA pedindo o UUID pela rota de
+ * orçamentos, e `budgets.delete` cancelava documento de outra variante. A conferência tardia que existia
+ * no PUT chegava DEPOIS de o registro inteiro já ter sido lido — o que é conferência de apresentação,
+ * não de autorização.
+ *
+ * `expectedKind` entra no WHERE da consulta principal. Variante errada é INEXISTENTE PARA AQUELA ROTA:
+ * a mesma 404 de id inexistente, de outro tenant e de fora do escopo de empresa — sem revelar que o UUID
+ * existe na variante vizinha, e sem redirecionar para a rota "certa".
+ */
+async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind) {
+  const sc = scopedById(ctx, "d", id); sc.params.push(expectedKind);
+  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql, sc.params); if (!r.rows[0]) throw notFound("Documento");
   const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id where i.document_id=$1 order by i.position", [id]);
   const titles = await ctx.tx.query("select id, code, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by due_date", [ctx.orgId, id]);
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
@@ -34,8 +50,12 @@ async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docS
   return { id, ...totals };
 }
 async function confirmSale(ctx: ServiceCtx, id: string) {
-  const d = await getDoc(ctx, id) as Record<string, unknown> & { kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; total: string; code: string; installment_plan: Record<string, unknown>; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
-  if (d.kind !== "sale") throw validation("Somente vendas são confirmadas"); if (d.status === "confirmed" || d.status === "invoiced") throw err("ALREADY_CONFIRMED", "Venda já confirmada"); if (d.status === "cancelled") throw err("ALREADY_CANCELLED", "Venda cancelada");
+  const d = await getDoc(ctx, id, "sale") as Record<string, unknown> & { kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; total: string; code: string; installment_plan: Record<string, unknown>; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
+  // A variante já foi amarrada no carregamento (`getDoc(..., "sale")`): orçamento e pedido passados aqui
+  // respondem 404, como qualquer UUID que a rota de vendas não serve. A conferência antiga
+  // (`d.kind !== "sale"` → 422) distinguia "existe na variante vizinha" de "não existe" — diferença que a
+  // superfície de recusa não pode expor.
+  if (d.status === "confirmed" || d.status === "invoiced") throw err("ALREADY_CONFIRMED", "Venda já confirmada"); if (d.status === "cancelled") throw err("ALREADY_CANCELLED", "Venda cancelada");
   await assertPeriodOpen(ctx.tx, ctx.orgId, d.empresa_id, d.document_date);
   for (const it of d.items) if (it.warehouse_id) await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "sale", direction: -1, quantity: it.quantity, sourceType: "sales_documents", sourceId: id, date: d.shipping_date ?? d.document_date, note: `Venda ${d.code}` });
   // Receita: categoria padrão de venda de produtos (1ª analítica de receita) e centro de custo padrão da fazenda
@@ -67,17 +87,30 @@ export default async function salesRoutes(app: FastifyInstance) {
       const r = await ctx.tx.query(wl.pageSql, wl.params);
       return paginaComIdGlobal(ctx, "sales_documents", { items: r.rows as Record<string, unknown>[], total: Number(tot.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { total: tot.rows[0]!.total } });
     }));
-    app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id)));
+    app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id, kind)));
     app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const r = await writeDoc(ctx, kind, d); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create"); return r; })).result; })));
-    app.put(`${base}/:id`, async (req) => runService(app, req, `${perm}.edit`, async (ctx) => { const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id) as { status: string; kind: string }; if (cur.kind !== kind) throw notFound(); if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status"); const d = docSchema.parse(req.body); const r = await writeDoc(ctx, kind, d, id); await audit(ctx.tx, ctx, "sales_documents", id, "update"); return r; }));
+    app.put(`${base}/:id`, async (req) => runService(app, req, `${perm}.edit`, async (ctx) => { const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id, kind) as { status: string; kind: string }; if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status"); const d = docSchema.parse(req.body); const r = await writeDoc(ctx, kind, d, id); await audit(ctx.tx, ctx, "sales_documents", id, "update"); return r; }));
     app.post(`${base}/:id/cancel`, async (req) => runService(app, req, `${perm}.delete`, async (ctx) => {
-      const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id) as { status: string; kind: string };
+      const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id, kind) as { status: string; kind: string };
       if (cur.status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
       if (cur.kind === "sale" && cur.status === "confirmed") { const paid = await ctx.tx.query("select 1 from erp.financial_titles where source_type='sales_documents' and source_id=$1 and paid_amount>0", [id]); if (paid.rowCount) throw err("CONFLICT", "Títulos com baixa: cancele as baixas antes"); await reverseStock(ctx, "sales_documents", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.financial_titles set status='cancelled' where source_type='sales_documents' and source_id=$1", [id]); }
       await ctx.tx.query("update erp.sales_documents set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "sales_documents", id, "cancel"); return { id, status: "cancelled" };
     }));
-    if (kind !== "sale") app.post(`${base}/:id/convert`, async (req, reply) => reply.status(201).send(await runService(app, req, `${permOf(nextSalesKind(kind))}.create`, async (ctx) => {
-      const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id) as Record<string, unknown> & { status: string; kind: SalesKind; items: Record<string, unknown>[] };
+    /**
+     * CONVERSÃO É OPERAÇÃO COMPOSTA — e por isso exige AS DUAS capacidades (BASE2-03C).
+     *
+     * Ela MUTA a variante fonte (status → `converted`) e CRIA um documento da variante destino. Autorizar
+     * só pela criação do destino, como antes, dava a quem tem `orders.create` o poder de encerrar um
+     * ORÇAMENTO que ele não pode editar — capacidade de uma família virando mutação na outra.
+     *
+     * Contrato: `source.edit` ∧ `target.create`, combinados com AND. O `runService` cobra a capacidade da
+     * FONTE (é a variante da rota, e é o registro que vai ser mutado); o `requirePermission` abaixo cobra
+     * a do DESTINO — ANTES de qualquer leitura de registro e de qualquer mutação, de modo que faltar
+     * metade não deixa efeito nenhum. Sem permissão nova: as duas já existem no catálogo.
+     */
+    if (kind !== "sale") app.post(`${base}/:id/convert`, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.edit`, async (ctx) => {
+      requirePermission(ctx, `${permOf(nextSalesKind(kind))}.create`);
+      const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id, kind) as Record<string, unknown> & { status: string; kind: SalesKind; items: Record<string, unknown>[] };
       assertConvertible({ kind: cur.kind, status: cur.status as "open" });
       const next = nextSalesKind(kind);
       const body = docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments ? cur.installment_plan : null, items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
