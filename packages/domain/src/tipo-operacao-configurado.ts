@@ -24,7 +24,7 @@
  * Classificar ≠ executar continua valendo, e vale mais agora: a TOP configurada é um RÓTULO de configuração
  * sobre a família, não um gancho de execução.
  */
-import { CODIGOS_TIPO_OPERACAO, tipoOperacao, tipoOperacaoDeclarada } from "./tipo-operacao.js";
+import { CODIGOS_TIPO_OPERACAO, resolverTipoOperacao, tipoOperacao, tipoOperacaoDeclarada } from "./tipo-operacao.js";
 
 /** Forma aceita para o código que o usuário digita. Começa com letra ou dígito; até 20 caracteres. */
 export const FORMA_CODIGO_TIPO_OPERACAO = /^[A-Za-z0-9][A-Za-z0-9._-]{0,19}$/;
@@ -97,3 +97,32 @@ export function validarTipoOperacaoConfigurado(e: EntradaTipoOperacaoConfigurado
   }
   return recusas;
 }
+
+/**
+ * A TABELA que o Portal de Vendas lança. Uma string, não uma lista.
+ *
+ * Isto NÃO é a segunda lista que o contrato proíbe. A segunda lista seria enumerar as FAMÍLIAS
+ * (`{ budget: "vendas.orcamento", ... }`) — uma cópia que envelheceria na primeira família nova e não
+ * quebraria nada ao envelhecer. Aqui há apenas o ENDEREÇO da tabela no registry; as famílias continuam
+ * saindo de `TIPOS_OPERACAO`, e quem as relaciona ao `kind` é o próprio registry.
+ */
+export const TABELA_DOCUMENTO_VENDA = "erp.sales_documents";
+
+/**
+ * A família canônica que um documento de venda de determinada variante É.
+ *
+ * `budget` → `vendas.orcamento` · `order` → `vendas.pedido` · `sale` → `vendas.venda` — mas nenhum desses
+ * pares está escrito aqui. Eles vivem em `TIPOS_OPERACAO`, declarados como variantes de
+ * `erp.sales_documents` pela coluna `kind`, e esta função apenas PERGUNTA ao registry.
+ *
+ * Por que isso importa numa fatia que "só" adiciona um seletor: a API precisa saber qual família uma TOP
+ * escolhida tem de ter para ser aceita num orçamento, e o caminho curto seria um objeto literal de três
+ * linhas na rota. Esse objeto funcionaria hoje e mentiria no dia em que o registry mudasse — sem quebrar
+ * tipo, teste ou tela. O gate `familia-operacional-ssot-audit` existe para tornar esse silêncio barulhento.
+ *
+ * FAIL-CLOSED: variante desconhecida, vazia ou ausente devolve `undefined`. Não existe queda para a
+ * primeira variante nem para uma família "parecida" — classificar errado um lançamento é pior do que
+ * recusá-lo, porque o documento nasceria afirmando ser uma operação que não é.
+ */
+export const familiaOperacionalDeDocumentoVenda = (kind: string | null | undefined): string | undefined =>
+  resolverTipoOperacao(TABELA_DOCUMENTO_VENDA, kind)?.codigo;

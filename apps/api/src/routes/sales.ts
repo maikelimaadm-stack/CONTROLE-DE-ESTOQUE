@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { D, money, isISODate } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, type SalesKind } from "@agro/domain";
+import { D, money, isISODate, DomainError } from "@agro/shared";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, type SalesKind } from "@agro/domain";
+import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
 import { consultaEscopada, exigirEmpresaDeLancamento, empresaScope, scopedById, type ServiceCtx } from "../lib/context.js";
@@ -14,8 +15,77 @@ import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
 const uuid = z.string().uuid();
-const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_date: date.optional().nullable(), due_date: date.optional().nullable(), client_id: uuid, transporter_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), driver_name: z.string().optional().nullable(), payment_method_id: uuid.optional().nullable(), freight: dec.default("0"), freight_icms: dec.default("0"), other_values: dec.default("0"), discount: dec.default("0"), note: z.string().optional().nullable(), installment_plan: installmentPlanSchema.optional().nullable(), is_deductible: z.boolean().default(false), items: z.array(z.object({ product_id: uuid, warehouse_id: uuid.optional().nullable(), quantity: dec, unit_price: dec, discount: dec.default("0"), discount_percent: dec.default("0"), note: z.string().optional().nullable() })).min(1) });
+const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_date: date.optional().nullable(), due_date: date.optional().nullable(), client_id: uuid, transporter_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), driver_name: z.string().optional().nullable(), payment_method_id: uuid.optional().nullable(), freight: dec.default("0"), freight_icms: dec.default("0"), other_values: dec.default("0"), discount: dec.default("0"), note: z.string().optional().nullable(), installment_plan: installmentPlanSchema.optional().nullable(), is_deductible: z.boolean().default(false), items: z.array(z.object({ product_id: uuid, warehouse_id: uuid.optional().nullable(), quantity: dec, unit_price: dec, discount: dec.default("0"), discount_percent: dec.default("0"), note: z.string().optional().nullable() })).min(1), tipo_operacao_id: uuid.optional().nullable() });
 const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "orders" : "sales");
+const t = criarTradutor(ptBR);
+
+/**
+ * A FAMÍLIA CANÔNICA DA VARIANTE — PERGUNTADA AO REGISTRY, NUNCA ESCRITA AQUI.
+ *
+ * O caminho curto seria `{ budget: "vendas.orcamento", order: "vendas.pedido", sale: "vendas.venda" }`
+ * nestas três linhas. Funcionaria hoje e mentiria no dia em que o registry mudasse — sem quebrar tipo,
+ * teste nem tela, que é o modo de falhar que `docs/TIPO-OPERACAO-CONTRACT.md` §10 nomeia. O helper do
+ * domínio deriva de `TIPOS_OPERACAO`; esta rota só o consome.
+ *
+ * Fail-closed: se o registry deixasse de declarar a variante, a criação PARA aqui em vez de gravar um
+ * documento com família errada.
+ */
+function familiaDaVariante(kind: SalesKind): string {
+  const familia = familiaOperacionalDeDocumentoVenda(kind);
+  if (!familia) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este lançamento", { kind });
+  return familia;
+}
+
+/** O snapshot que o documento grava: identidade da TOP + a versão exata que valia no instante do lançamento. */
+interface TopDoLancamento { tipoOperacaoId: string; tipoOperacaoVersaoId: string; codigo: string; nome: string; versao: number; codigoBase: string }
+
+/**
+ * O snapshot como a tela o lê. `null` é resposta LEGÍTIMA — documento do acervo, ou criado por cliente
+ * anterior a esta fatia —, e a tela o exibe como "não configurada", nunca como a família canônica
+ * disfarçada de TOP.
+ *
+ * O `nome` sai de `top_nome`, que veio da VERSÃO CONGELADA. Reaproveitar aqui a consulta da rota
+ * administrativa (que junta pela `versao_atual` do pai) faria o documento de 2024 exibir o nome de 2026 —
+ * exatamente o histórico reescrito que os dois ponteiros existem para impedir.
+ */
+const topParaTela = (l: { tipo_operacao_id: string | null; top_codigo: string | null; top_codigo_base: string | null; top_nome: string | null; top_versao: number | null }) =>
+  l.tipo_operacao_id && l.top_codigo && l.top_nome
+    ? { id: l.tipo_operacao_id, codigo: l.top_codigo, nome: l.top_nome, versao: l.top_versao, codigoBase: l.top_codigo_base,
+        familiaRotulo: l.top_codigo_base ? t(chaveI18nDaFamiliaOperacional(l.top_codigo_base) ?? l.top_codigo_base) : null }
+    : null;
+
+/**
+ * RESOLVE A TOP ESCOLHIDA E CONGELA A VERSÃO CORRENTE — a única porta por onde o snapshot nasce.
+ *
+ * O cliente manda `tipo_operacao_id` e NADA MAIS. Quem decide qual versão vale é o SERVIDOR, aqui, no
+ * instante da escrita: deixar o cliente enviar `tipo_operacao_versao_id` seria deixá-lo escolher qual
+ * passado citar, e um cliente desatualizado congelaria uma versão que já não é a corrente.
+ *
+ * `for share of t` — SÓ NO PAI, e isso não é descuido. A linha de versão é IMUTÁVEL por construção: a 0020
+ * revogou `update` e `delete` dela do papel da aplicação e pôs um gatilho por cima. Travar uma linha que
+ * ninguém pode alterar não protege de nada, e o banco recusaria de todo modo — `for share` exige privilégio
+ * de UPDATE/DELETE, que é exatamente o que foi revogado ali. O que MUDA é o pai (`versao_atual`, `ativo`,
+ * `excluido_em`), e é ele que o lock segura: enquanto esta transação vive, ninguém desativa, exclui ou
+ * versiona esta TOP. Sem isso, um `update` administrativo entre o `select` e o `insert` gravaria um
+ * documento apontando para uma versão que deixou de ser a corrente.
+ *
+ * SUPERFÍCIE ÚNICA DE RECUSA: inexistente, de outro tenant, de outra família, inativa e excluída caem todas
+ * no MESMO 422. Distinguir transformaria a mensagem num oráculo — quem varresse UUIDs saberia quais existem
+ * na organização vizinha e a que família cada um pertence (`.claude/rules/security.md`).
+ */
+async function resolverTopParaLancamento(ctx: ServiceCtx, familiaEsperada: string, tipoOperacaoId: string): Promise<TopDoLancamento> {
+  const r = await ctx.tx.query<{ id: string; codigo: string; codigo_base: string; versao_id: string; nome: string; versao: number }>(
+    `select t.id, t.codigo, t.codigo_base, v.id as versao_id, v.nome, v.versao
+       from erp.tipos_operacao t
+       join erp.tipos_operacao_versoes v
+         on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
+      where t.id = $1 and t.organization_id = $2 and t.ativo and t.excluido_em is null and t.codigo_base = $3
+        for share of t`,
+    [tipoOperacaoId, ctx.orgId, familiaEsperada]);
+  const top = r.rows[0];
+  if (!top) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este lançamento");
+  return { tipoOperacaoId: top.id, tipoOperacaoVersaoId: top.versao_id, codigo: top.codigo, nome: top.nome, versao: top.versao, codigoBase: top.codigo_base };
+}
 
 /**
  * CARREGA O DOCUMENTO JÁ AMARRADO À VARIANTE DA PORTA (BASE2-03C).
@@ -34,18 +104,38 @@ const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "
  */
 async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind) {
   const sc = scopedById(ctx, "d", id); sc.params.push(expectedKind);
-  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql, sc.params); if (!r.rows[0]) throw notFound("Documento");
+  // LEFT JOIN nos dois, e não INNER: documento legado tem os ponteiros nulos, e um INNER o faria SUMIR da
+  // própria porta de detalhe — 404 num registro que está lá. O nome sai de `topv` (a versão CONGELADA),
+  // nunca da versão corrente do pai: é isso que faz a renomeação administrativa de amanhã não reescrever
+  // o que este documento diz que é.
+  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql, sc.params); if (!r.rows[0]) throw notFound("Documento");
   const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id where i.document_id=$1 order by i.position", [id]);
   const titles = await ctx.tx.query("select id, code, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by due_date", [ctx.orgId, id]);
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
-  return { ...(r.rows[0] as Record<string, unknown>), items: items.rows, titles: titles.rows, derived: derived.rows } as Record<string, unknown>;
+  const linha = r.rows[0] as Record<string, unknown> & { tipo_operacao_id: string | null; top_codigo: string | null; top_codigo_base: string | null; top_nome: string | null; top_versao: number | null };
+  return { ...linha, tipo_operacao: topParaTela(linha), items: items.rows, titles: titles.rows, derived: derived.rows } as Record<string, unknown>;
 }
-async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docSchema>, existingId?: string, origin?: string | null) {
+/**
+ * Grava o documento. `top` tem TRÊS estados, e a diferença entre eles é o contrato de preservação:
+ *
+ *   `undefined` → NÃO TOCA nas colunas de TOP. É o que um PUT sem o campo faz, e é o que preserva o
+ *                 snapshot de um documento antigo quando o usuário salva outro campo qualquer. Sem este
+ *                 estado, editar o frete de uma venda de 2024 a re-carimbaria com a versão de hoje.
+ *   `null`      → grava NULL/NULL. É a criação por cliente legado, que não declarou TOP nenhuma.
+ *   objeto      → grava o snapshot resolvido pelo servidor.
+ */
+async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docSchema>, existingId?: string, origin?: string | null, top?: TopDoLancamento | null) {
   const totals = documentTotals(d.items.map((i) => ({ quantity: i.quantity, unitPrice: i.unit_price, discount: i.discount, discountPercent: i.discount_percent })), { freight: d.freight, freightIcms: d.freight_icms, otherValues: d.other_values, discount: d.discount });
   let id = existingId;
   const plan = d.installment_plan ? { ...d.installment_plan, is_deductible: d.is_deductible } : {};
-  if (!id) { const code = await nextCode(ctx.tx, ctx.orgId, `sales_${kind}`); id = (await ctx.tx.query<{ id: string }>("insert into erp.sales_documents(organization_id,empresa_id,kind,code,document_date,shipping_date,due_date,responsible_user_id,client_id,transporter_id,proprietary_id,driver_name,payment_method_id,subtotal,freight,freight_icms,other_values,discount,total,note,installment_plan,origin_document_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$8) returning id", [ctx.orgId, d.empresa_id, kind, code, d.document_date, d.shipping_date ?? null, d.due_date ?? null, ctx.user.id, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), origin ?? null])).rows[0]!.id; await atribuirIdGlobal(ctx, "sales_documents", id); }
-  else { await ctx.tx.query("update erp.sales_documents set document_date=$3, shipping_date=$4, due_date=$5, client_id=$6, transporter_id=$7, proprietary_id=$8, driver_name=$9, payment_method_id=$10, subtotal=$11, freight=$12, freight_icms=$13, other_values=$14, discount=$15, total=$16, note=$17, installment_plan=$18, updated_at=now() where id=$1 and organization_id=$2", [id, ctx.orgId, d.document_date, d.shipping_date ?? null, d.due_date ?? null, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan)]); await ctx.tx.query("delete from erp.sales_document_items where document_id=$1", [id]); }
+  if (!id) { const code = await nextCode(ctx.tx, ctx.orgId, `sales_${kind}`); id = (await ctx.tx.query<{ id: string }>("insert into erp.sales_documents(organization_id,empresa_id,kind,code,document_date,shipping_date,due_date,responsible_user_id,client_id,transporter_id,proprietary_id,driver_name,payment_method_id,subtotal,freight,freight_icms,other_values,discount,total,note,installment_plan,origin_document_id,tipo_operacao_id,tipo_operacao_versao_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$8) returning id", [ctx.orgId, d.empresa_id, kind, code, d.document_date, d.shipping_date ?? null, d.due_date ?? null, ctx.user.id, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), origin ?? null, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null])).rows[0]!.id; await atribuirIdGlobal(ctx, "sales_documents", id); }
+  else {
+    // As colunas de TOP só entram no SET quando houve decisão explícita. `undefined` preserva o snapshot.
+    const topSet = top === undefined ? "" : ", tipo_operacao_id=$19, tipo_operacao_versao_id=$20";
+    const topParams = top === undefined ? [] : [top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null];
+    await ctx.tx.query(`update erp.sales_documents set document_date=$3, shipping_date=$4, due_date=$5, client_id=$6, transporter_id=$7, proprietary_id=$8, driver_name=$9, payment_method_id=$10, subtotal=$11, freight=$12, freight_icms=$13, other_values=$14, discount=$15, total=$16, note=$17, installment_plan=$18${topSet}, updated_at=now() where id=$1 and organization_id=$2`, [id, ctx.orgId, d.document_date, d.shipping_date ?? null, d.due_date ?? null, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), ...topParams]);
+    await ctx.tx.query("delete from erp.sales_document_items where document_id=$1", [id]);
+  }
   for (const [i, it] of d.items.entries()) await ctx.tx.query("insert into erp.sales_document_items(document_id,product_id,warehouse_id,quantity,unit_price,discount,discount_percent,total,note,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", [id, it.product_id, it.warehouse_id ?? null, it.quantity, it.unit_price, money(it.discount), it.discount_percent, itemTotal({ quantity: it.quantity, unitPrice: it.unit_price, discount: it.discount, discountPercent: it.discount_percent }), it.note ?? null, i]);
   return { id, ...totals };
 }
@@ -81,15 +171,92 @@ export default async function salesRoutes(app: FastifyInstance) {
       if (f.start_date) { params.push(f.start_date); where.push(`d.document_date>=$${params.length}`); } if (f.end_date) { params.push(f.end_date); where.push(`d.document_date<=$${params.length}`); }
       if (f.search) { params.push(`%${f.search}%`); where.push(`(d.code ilike $${params.length} or c.name ilike $${params.length})`); }
       if (f.product_id) { params.push(f.product_id); where.push(`exists (select 1 from erp.sales_document_items i where i.document_id=d.id and i.product_id=$${params.length})`); }
+      // FILTRO POR TOP, server-side. Documento histórico de uma TOP hoje DESATIVADA continua casando: o
+      // filtro é pelo ponteiro gravado, não pelo estado atual da configuração. Desativar uma TOP não pode
+      // fazer lançamento sumir de relatório.
+      if (f.tipo_operacao_id) { params.push(f.tipo_operacao_id); where.push(`d.tipo_operacao_id=$${params.length}`); }
       const w = where.join(" and ");
-      const wl = wrapListing(`select d.id, d.code, d.document_date, d.created_at, d.shipping_date, d.due_date, d.status, d.total, d.subtotal, d.nfe_id, c.name as client_name, u.name as responsible_name, f.name as empresa_name, (select count(*) from erp.sales_document_items i where i.document_id=d.id)::int as item_count from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id where ${w} order by d.document_date desc, d.created_at desc`, params, req.query as Record<string, unknown>, q, ", coalesce(sum(t.total),0)::text total");
+      // Os dois JOINs são LEFT: documento legado (ponteiros nulos) permanece na listagem, com a TOP vazia.
+      const wl = wrapListing(`select d.id, d.code, d.document_date, d.created_at, d.shipping_date, d.due_date, d.status, d.total, d.subtotal, d.nfe_id, c.name as client_name, u.name as responsible_name, f.name as empresa_name, d.tipo_operacao_id, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao, (select count(*) from erp.sales_document_items i where i.document_id=d.id)::int as item_count from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id where ${w} order by d.document_date desc, d.created_at desc`, params, req.query as Record<string, unknown>, q, ", coalesce(sum(t.total),0)::text total");
       const tot = await ctx.tx.query<{ n: string; total: string }>(wl.countSql, wl.params);
       const r = await ctx.tx.query(wl.pageSql, wl.params);
-      return paginaComIdGlobal(ctx, "sales_documents", { items: r.rows as Record<string, unknown>[], total: Number(tot.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { total: tot.rows[0]!.total } });
+      // Em LOTE, sobre as linhas já carregadas: nenhuma consulta por linha. O snapshot veio no mesmo
+      // `select` da página, então montar o objeto é trabalho de memória, não de rede.
+      const items = (r.rows as (Record<string, unknown> & Parameters<typeof topParaTela>[0])[]).map((l) => ({ ...l, tipo_operacao: topParaTela(l) }));
+      return paginaComIdGlobal(ctx, "sales_documents", { items, total: Number(tot.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { total: tot.rows[0]!.total } });
+    }));
+    /**
+     * AS TOPs QUE ESTA VARIANTE PODE LANÇAR — porta OPERACIONAL, não administrativa.
+     *
+     * A capacidade exigida é a de LANÇAR (`${perm}.create`), nunca `tipos_operacao.view`. São perguntas
+     * diferentes: "quem pode vender?" e "quem pode configurar tipos de operação?". Se o seletor do
+     * vendedor chamasse `/api/admin/tipos-operacao`, todo vendedor sem capacidade administrativa deixaria
+     * de conseguir vender — uma tela de configuração derrubando o operacional.
+     *
+     * Devolve SÓ o que serve a esta variante: mesma organização, ativa, não excluída, da família canônica
+     * da rota, com a versão corrente. Nada de campo administrativo.
+     *
+     * `contractVersion` existe para o cliente distinguir "endpoint ausente porque a API é antiga" de
+     * "endpoint presente com outro formato" — é o que sustenta a descoberta de capacidade do §10.2.
+     */
+    app.get(`${base}/operation-types`, async (req) => runService(app, req, `${perm}.create`, async (ctx) => {
+      const familia = familiaDaVariante(kind);
+      const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; versao: number; padrao: boolean }>(
+        `select t.id, t.codigo, v.nome, v.versao, t.padrao
+           from erp.tipos_operacao t
+           join erp.tipos_operacao_versoes v
+             on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
+          where t.organization_id = $1 and t.codigo_base = $2 and t.ativo and t.excluido_em is null
+          order by t.padrao desc, t.codigo, v.nome`,
+        [ctx.orgId, familia]);
+      return {
+        contractVersion: 1,
+        family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
+        defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
+        items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao }))
+      };
     }));
     app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id, kind)));
-    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const r = await writeDoc(ctx, kind, d); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create"); return r; })).result; })));
-    app.put(`${base}/:id`, async (req) => runService(app, req, `${perm}.edit`, async (ctx) => { const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id, kind) as { status: string; kind: string }; if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status"); const d = docSchema.parse(req.body); const r = await writeDoc(ctx, kind, d, id); await audit(ctx.tx, ctx, "sales_documents", id, "update"); return r; }));
+    /**
+     * CRIAÇÃO. `tipo_operacao_id` é OPCIONAL na API — e isso é compatibilidade de rolling deploy, não
+     * frouxidão: durante a janela de implantação a web ANTIGA continua postando sem o campo, e recusá-la
+     * derrubaria a criação de vendas no meio do deploy. Ausente ⇒ documento nasce legado (null/null).
+     *
+     * NÃO SE APLICA O PADRÃO DA FAMÍLIA quando o campo vem ausente. Seria conveniente e estaria errado:
+     * um cliente antigo não declarou intenção nenhuma, e o padrão é administrável — atribuí-lo em silêncio
+     * faria a mesma chamada significar coisas diferentes conforme a configuração do dia. A web NOVA escolhe
+     * explicitamente (podendo PRÉ-SELECIONAR o padrão, com o valor visível).
+     */
+    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const r = await writeDoc(ctx, kind, d, undefined, null, top); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
+    /**
+     * EDIÇÃO. A regra do snapshot está toda nas três linhas de `top` abaixo:
+     *
+     *   campo AUSENTE            → `undefined` → preserva o que está gravado (cliente antigo, e também o
+     *                              caso comum de mexer noutro campo qualquer).
+     *   MESMO id já gravado      → `undefined` → preserva a VERSÃO ANTIGA. Salvar de novo não re-carimba o
+     *                              documento com a versão de hoje só porque a TOP ganhou uma.
+     *   id DIFERENTE (ou anexar
+     *   TOP a documento legado)  → resolve e congela a versão corrente da TOP nova, e AUDITA a troca.
+     */
+    app.put(`${base}/:id`, async (req) => runService(app, req, `${perm}.edit`, async (ctx) => {
+      const { id } = req.params as { id: string };
+      const cur = await getDoc(ctx, id, kind) as { status: string; kind: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null };
+      if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
+      const d = docSchema.parse(req.body);
+      const trocouTop = d.tipo_operacao_id != null && d.tipo_operacao_id !== cur.tipo_operacao_id;
+      const top = trocouTop ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id!) : undefined;
+      const r = await writeDoc(ctx, kind, d, id, undefined, top);
+      await audit(ctx.tx, ctx, "sales_documents", id, "update");
+      // Mudança de identidade do lançamento é evento PRÓPRIO: quem trocou a TOP de um documento não pode
+      // ficar escondido dentro de um `update` genérico sem diff.
+      if (top) {
+        await audit(ctx.tx, ctx, "sales_documents", id, "operation_type_change",
+          { tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao },
+          { before: { tipoOperacaoId: cur.tipo_operacao_id, tipoOperacaoVersaoId: cur.tipo_operacao_versao_id },
+            after: { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId } });
+      }
+      return r;
+    }));
     app.post(`${base}/:id/cancel`, async (req) => runService(app, req, `${perm}.delete`, async (ctx) => {
       const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id, kind) as { status: string; kind: string };
       if (cur.status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
@@ -113,10 +280,21 @@ export default async function salesRoutes(app: FastifyInstance) {
       const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id, kind) as Record<string, unknown> & { status: string; kind: SalesKind; items: Record<string, unknown>[] };
       assertConvertible({ kind: cur.kind, status: cur.status as "open" });
       const next = nextSalesKind(kind);
+      // A TOP DO DESTINO NÃO SE HERDA DA FONTE — nem podia. `1101 — Orçamento padrão` é da família
+      // `vendas.orcamento`; carregá-la para um pedido gravaria um documento cuja TOP é de outra família, e
+      // a FK da 0021 nem sequer impediria (ela prova tenant e parentesco, não família). Por isso o corpo é
+      // montado campo a campo e `tipo_operacao_id` NÃO entra: ele vem do PEDIDO de conversão.
+      //
+      // A resolução acontece ANTES de qualquer escrita. Como tudo roda numa transação só do `runService`,
+      // uma TOP alvo inválida derruba a operação inteira e a fonte NÃO vira `converted` — nem por um
+      // instante, nem em caso de erro no meio.
+      const alvo = z.object({ tipo_operacao_id: uuid.optional().nullable() }).parse(req.body ?? {});
+      const topDestino = alvo.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(next), alvo.tipo_operacao_id) : null;
       const body = docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments ? cur.installment_plan : null, items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
-      const r = await writeDoc(ctx, next, body, undefined, id);
+      const r = await writeDoc(ctx, next, body, undefined, id, topDestino);
       await ctx.tx.query("update erp.sales_documents set status='converted', updated_at=now() where id=$1", [id]);
-      await audit(ctx.tx, ctx, "sales_documents", id, "convert", { to: r.id });
+      await audit(ctx.tx, ctx, "sales_documents", id, "convert", topDestino ? { to: r.id, tipoOperacaoDestinoId: topDestino.tipoOperacaoId, tipoOperacaoDestinoVersaoId: topDestino.tipoOperacaoVersaoId } : { to: r.id });
+      if (topDestino) await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", { tipoOperacaoId: topDestino.tipoOperacaoId, tipoOperacaoVersaoId: topDestino.tipoOperacaoVersaoId, tipoOperacaoCodigo: topDestino.codigo, tipoOperacaoVersao: topDestino.versao, from: id });
       return { id: r.id, kind: next, from: id };
     })));
     if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { confirm: (req.params as { id: string }).id }, () => confirmSale(ctx, (req.params as { id: string }).id))).result));
