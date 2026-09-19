@@ -91,6 +91,9 @@ const RECURSOS_ORGANIZACAO: readonly string[] = [
   "supply_sla", "provider_launch_profiles",
   // Administração do tenant
   "roles", "users", "tenant_parameters", "audit_logs", "notifications", "screen_layouts", "attachments",
+  // TOP configurada: `erp.tipos_operacao` não tem coluna de empresa — pela regra de ouro acima, o recurso é
+  // da ORGANIZAÇÃO. Quem pode configurar tipos de operação, configura para a organização inteira.
+  "tipos_operacao",
   "integration.dominio", "integration.cta_smart", "integration.csv_export",
   // Relatórios personalizados: a definição é da organização; os DADOS que ele lê respeitam o módulo da fonte
   "saved_reports",

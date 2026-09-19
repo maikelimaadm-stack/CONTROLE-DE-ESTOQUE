@@ -74,6 +74,10 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("depreciations", "Depreciação Mensal", "Cadastros Base > Bens/Ativos"),
   R("depreciation_forecast", "Previsão de Depreciação", "Cadastros Base > Bens/Ativos", ["view"]),
   R("tenant_parameters", "Parametrizações", "Cadastros Base > Gerais", ["edit"]),
+  // TOP configurada (TOP-CONFIG-01): configuração da ORGANIZAÇÃO, não de uma empresa. Ativar, desativar e
+  // definir padrão são mudanças de estado do mesmo cadastro, e por isso cabem em `edit` — criar capacidade
+  // separada para cada botão inflaria o catálogo sem nenhuma decisão nova a tomar.
+  R("tipos_operacao", "Tipos de Operação", "Cadastros Base > Gerais"),
   // Administrativo > Suprimentos
   R("supply_sla", "Parâmetros SLA", "Administrativo > Suprimentos", ["view", "edit"]),
   R("purchase_requests", "Solicitações", "Administrativo > Suprimentos", [...CRUD, "transfer", "financial", "back_step", "cancel"]),

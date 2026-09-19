@@ -199,6 +199,10 @@ export const AREAS = [
   cfg("produtos", "addressings", "Endereçamentos", "addressings.view"),
   cfg("produtos", "provider-launch-profiles", "Perfis de Lançamento (NF-e)", "provider_launch_profiles.view"),
   cfg("produtos", "apportionment-categories", "Categorias de Rateio", "apportionments.view"),
+  // Operações: a TOP CONFIGURADA da organização (TOP-CONFIG-01). Fica em Configurações porque é
+  // parametrização, não lançamento — quem opera escolhe a TOP no portal; quem configura, cadastra aqui.
+  cfg("operacoes", null, "Operações", ["tipos_operacao.view"]),
+  cfg("operacoes", "tipos-operacao", "Tipos de Operação", "tipos_operacao.view", { keywords: ["top", "tipo de lançamento", "natureza do lançamento", "família operacional"] }),
   cfg("compras", null, "Compras", ["supply_sla.view", "authorizers.view"]),
   cfg("compras", "sla", "SLA por etapa", "supply_sla.view", { aliases: ["/suprimentos/sla"], keywords: ["prazo", "sla"] }),
   cfg("compras", "authorizers", "Autorizadores", "authorizers.view", { keywords: ["aprovador", "alçada"] }),

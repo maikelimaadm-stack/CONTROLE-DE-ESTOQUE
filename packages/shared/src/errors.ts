@@ -25,7 +25,14 @@ export const ErrorCodes = {
   BATCH_CLOSED: "BATCH_CLOSED",
   ACCOUNT_INACTIVE: "ACCOUNT_INACTIVE",
   RATE_LIMITED: "RATE_LIMITED",
-  INTERNAL_ERROR: "INTERNAL_ERROR"
+  INTERNAL_ERROR: "INTERNAL_ERROR",
+  // TOP configurada (TOP-CONFIG-01). Em português porque nomeiam conceito do NOSSO domínio, como manda
+  // `docs/DOMAIN-NAMING-STANDARD.md` §1.6 para superfície nova — e porque são os mesmos identificadores que
+  // os gatilhos da 0020 levantam em SQL: `fromPgError` converte `^[A-Z_]+:` direto em código, então divergir
+  // aqui produziria um código que este mapa não conhece e uma resposta sem status.
+  TIPO_OPERACAO_BASE_DESCONHECIDA: "TIPO_OPERACAO_BASE_DESCONHECIDA",
+  TIPO_OPERACAO_IDENTIDADE_IMUTAVEL: "TIPO_OPERACAO_IDENTIDADE_IMUTAVEL",
+  TIPO_OPERACAO_VERSAO_IMUTAVEL: "TIPO_OPERACAO_VERSAO_IMUTAVEL"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -54,7 +61,12 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   BATCH_CLOSED: 409,
   ACCOUNT_INACTIVE: 409,
   RATE_LIMITED: 429,
-  INTERNAL_ERROR: 500
+  INTERNAL_ERROR: 500,
+  // 422: o cliente mandou uma família que não existe — entrada inválida, não conflito de estado.
+  TIPO_OPERACAO_BASE_DESCONHECIDA: 422,
+  // 409: o registro existe e o pedido conflita com o que ele já é.
+  TIPO_OPERACAO_IDENTIDADE_IMUTAVEL: 409,
+  TIPO_OPERACAO_VERSAO_IMUTAVEL: 409
 };
 
 export class DomainError extends Error {
