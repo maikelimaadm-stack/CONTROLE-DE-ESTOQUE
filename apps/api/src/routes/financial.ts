@@ -176,9 +176,14 @@ export default async function financialRoutes(app: FastifyInstance) {
       // seria descobrir depois de já ter lido a baixa — e a ordem antiga chegava a `for update` numa linha
       // que esta rota não tinha o direito de tocar. Variante errada devolve a MESMA 404 de baixa
       // inexistente: não revela que o título existe na variante vizinha.
+      // A MENSAGEM TAMBÉM É SUPERFÍCIE DE RECUSA. Todas as recusas desta rota dizem "Baixa não encontrado":
+      // título inexistente, de outro tenant, excluído, de variante errada E fora do escopo de empresa. Com
+      // rótulos diferentes ("Baixa" aqui, "Título" logo abaixo) o 404 de FORA DE ESCOPO se distinguiria do
+      // 404 de INEXISTENTE — e distinguir é confirmar que aquele UUID é um título desta variante neste
+      // tenant. Mesmo status, mesma mensagem, ou a 404 vira oráculo de existência.
       const t = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and deleted_at is null", [id, ctx.orgId, dir]);
       if (!t.rows[0]) throw notFound("Baixa");
-      await exigirEmpresaVisivel(ctx, t.rows[0].empresa_id, "Título");
+      await exigirEmpresaVisivel(ctx, t.rows[0].empresa_id, "Baixa");
       const s = await ctx.tx.query<{ status: string; bank_movement_id: string | null; settlement_date: string; cross_title_id: string | null; amount: string }>("select status, bank_movement_id, settlement_date, cross_title_id, amount from erp.title_settlements where id=$1 and title_id=$2 and organization_id=$3 for update", [sid, id, ctx.orgId]);
       if (!s.rows[0]) throw notFound("Baixa"); if (s.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Baixa já cancelada");
       await assertPeriodOpen(ctx.tx, ctx.orgId, t.rows[0].empresa_id, s.rows[0].settlement_date);
@@ -225,7 +230,7 @@ export default async function financialRoutes(app: FastifyInstance) {
         requirePermission(ctx, permOf(contraria, "cancel_settlement"));
         const ct = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.financial_titles where id=$1 and organization_id=$2 and direction=$3 and deleted_at is null", [s.rows[0].cross_title_id, ctx.orgId, contraria]);
         if (!ct.rows[0]) throw notFound("Baixa");
-        await exigirEmpresaVisivel(ctx, ct.rows[0].empresa_id, "Título");
+        await exigirEmpresaVisivel(ctx, ct.rows[0].empresa_id, "Baixa");
         await assertPeriodOpen(ctx.tx, ctx.orgId, ct.rows[0].empresa_id, s.rows[0].settlement_date);
         const e = await ctx.tx.query<{ id: string }>(
           "select e.id from erp.title_settlements e"
@@ -246,13 +251,27 @@ export default async function financialRoutes(app: FastifyInstance) {
       if (espelhoId) {
         const r = await ctx.tx.query("update erp.title_settlements set status='cancelled', cancelled_at=now(), cancelled_by=$2, cancel_reason=$3 where id=$1", [espelhoId, ctx.user.id, d.reason]);
         if (r.rowCount !== 1) throw err("CONFLICT", "Baixa espelho não pôde ser cancelada");
-        await audit(ctx.tx, ctx, "title_settlements", espelhoId, "cancel", { ...d, title: s.rows[0].cross_title_id, cruzada_com: id, lado: "espelho" });
+        await audit(ctx.tx, ctx, "title_settlements", espelhoId, "cancel", { ...d, title: s.rows[0].cross_title_id, cruzada_com: id, lado: "par" });
       }
-      // SIMETRIA DA TRILHA. O espelho carregava `cruzada_com`/`lado` e o principal não, então reconstruir o
-      // par a partir de `audit_logs` só funcionava a partir de UM dos lados — e pelo outro exigia voltar à
-      // linha de `title_settlements`, que pode ter mudado de status desde então. Numa operação cruzada os
-      // DOIS lados se nomeiam. Baixa comum (`bank_movement`) mantém a metadata que sempre teve.
-      await audit(ctx.tx, ctx, "title_settlements", sid, "cancel", espelhoId ? { ...d, title: id, cruzada_com: s.rows[0].cross_title_id, lado: "principal" } : d);
+      /**
+       * SIMETRIA DA TRILHA — E POR QUE O CANCELAMENTO NÃO USA OS RÓTULOS DA CRIAÇÃO.
+       *
+       * O espelho carregava `cruzada_com` e o principal não, então reconstruir o par a partir de
+       * `audit_logs` só funcionava a partir de UM dos lados; pelo outro exigia voltar à linha de
+       * `title_settlements`, que pode ter mudado de status desde então. Agora os DOIS se nomeiam, e
+       * `title` + `cruzada_com` bastam para reconstituir o par em qualquer caminho.
+       *
+       * `lado` no cancelamento vale "alvo" e "par", NÃO "principal" e "espelho", e a diferença é de
+       * verdade, não de gosto. A linha espelho também tem `cross_title_id`, então ela é cancelável pela
+       * PRÓPRIA rota: nesse caminho quem chega como alvo é o espelho, e o principal original é que vem
+       * como o outro lado. Nada na linha distingue quem foi principal na criação — o espelho não guarda
+       * conta bancária, movimento, acréscimos nem nada que sirva de marca, e as duas nascem no mesmo
+       * `created_at`. Carimbar "principal" no alvo faria o campo dizer, na metade dos caminhos, o
+       * contrário do que a criação registrou: o MESMO id apareceria como `lado: "principal"` no `create`
+       * e `lado: "espelho"` no `cancel`. Papel de criação é irrecuperável aqui; papel NESTA operação é
+       * observável. O campo diz o que é observável.
+       */
+      await audit(ctx.tx, ctx, "title_settlements", sid, "cancel", espelhoId ? { ...d, title: id, cruzada_com: s.rows[0].cross_title_id, lado: "alvo" } : d);
       return getTitle(ctx, id, dir);
     }));
     app.get(`${base}/:id/receipt`, async (req) => runService(app, req, permOf(dir, "receipt"), async (ctx) => { const t = await getTitle(ctx, (req.params as { id: string }).id, dir); return { title: t, receipt_text: `RECIBO — ${t.empresa_name}\nTítulo ${t.number} (${t.code})\n${dir === "payable" ? "Pago a" : "Recebido de"}: ${t.person_name ?? "-"}\nValor: R$ ${t.amount} (líquido R$ ${t.net_amount})\nBaixas: ${(t.settlements as { settlement_date: string; net_amount: string }[]).filter(Boolean).map((s) => `${s.settlement_date}: R$ ${s.net_amount}`).join("; ") || "nenhuma"}\nHistórico: ${t.note}` }; }));

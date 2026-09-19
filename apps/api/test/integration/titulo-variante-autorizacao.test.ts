@@ -297,10 +297,10 @@ async function removerBaixa(id: string): Promise<void> {
   try { await c.query("delete from erp.title_settlements where id=$1", [id]); } finally { await c.end(); }
 }
 
-/** `net_amount` das baixas confirmadas de cada título — usado para PROVAR que os dois lados divergem. */
-async function liquidosDe(titleIds: string[]): Promise<string[]> {
+/** `net_amount` da baixa confirmada DE UM título — por título, não por ordem de UUID, que não diz nada. */
+async function liquidoDe(titleId: string): Promise<string> {
   const c = createPool(TEST_URL, { max: 1 });
-  try { return (await c.query<{ net_amount: string }>("select net_amount from erp.title_settlements where title_id = any($1) and status='confirmed' order by title_id", [titleIds])).rows.map((r) => r.net_amount); }
+  try { return (await c.query<{ net_amount: string }>("select net_amount from erp.title_settlements where title_id=$1 and status='confirmed'", [titleId])).rows[0]!.net_amount; }
   finally { await c.end(); }
 }
 
@@ -497,13 +497,53 @@ describe("baixa cruzada: autorização composta das duas variantes", () => {
     expect(await auditoriaDe(sid, "cancel")).toBe(1);
     expect(await auditoriaDe(espelhoId, "cancel"), "trilha de cancelamento do ESPELHO").toBe(1);
 
-    const cancelouPrincipal = (await metadadosDe(sid, "cancel"))[0]!;
-    expect(cancelouPrincipal["lado"], "a simetria vale também no cancelamento").toBe("principal");
-    expect(cancelouPrincipal["cruzada_com"]).toBe(r);
-    const cancelouEspelho = (await metadadosDe(espelhoId, "cancel"))[0]!;
-    expect(cancelouEspelho["lado"]).toBe("espelho");
-    expect(cancelouEspelho["cruzada_com"]).toBe(p);
+    // No CANCELAMENTO os rótulos são os desta operação — "alvo" e "par" —, não os da criação. O que
+    // reconstitui o par em qualquer caminho é `title` + `cruzada_com`, e esses são exigidos aqui.
+    const cancelouAlvo = (await metadadosDe(sid, "cancel"))[0]!;
+    expect(cancelouAlvo["lado"]).toBe("alvo");
+    expect(cancelouAlvo["title"], "a baixa alvo nomeia o próprio título").toBe(p);
+    expect(cancelouAlvo["cruzada_com"], "e o título do outro lado").toBe(r);
+    const cancelouPar = (await metadadosDe(espelhoId, "cancel"))[0]!;
+    expect(cancelouPar["lado"]).toBe("par");
+    expect(cancelouPar["title"]).toBe(r);
+    expect(cancelouPar["cruzada_com"]).toBe(p);
   });
+
+  it("I3 — cancelar PELA ROTA DO ESPELHO não inverte o significado da trilha", async () => {
+    /**
+     * A linha espelho também tem `cross_title_id`, então ela é cancelável pela própria rota. Se o
+     * cancelamento carimbasse os rótulos da CRIAÇÃO, este caminho gravaria `lado: "principal"` na linha
+     * que nasceu espelho — o MESMO id apareceria como "principal" no cancel e "espelho" no create, e o
+     * campo passaria a dizer por onde o pedido entrou fingindo dizer quem era quem. Papel de criação não
+     * é recuperável destes dados; por isso o cancelamento fala de "alvo" e "par", que são observáveis.
+     */
+    const p = await criar("payable", "CROSS-I3-PAG", "400.00");
+    const r = await criar("receivable", "CROSS-I3-REC", "400.00");
+    const feito = await cruzar("payables", p, r, ambos, "100.00");
+    expect(feito.statusCode, feito.body).toBe(201);
+    const principalId = j(feito).settlement_id as string;
+    const espelhoId = (await baixasDe(r))[0]!.id;
+
+    // Cancela PELO ESPELHO: rota da variante contrária, id da baixa espelho.
+    const res = await h.app.inject({ method: "POST", url: `/api/financial/receivables/${r}/settlements/${espelhoId}/cancel`, headers: ambos, payload: { reason: "cancelar pelo lado do espelho" } });
+    expect(res.statusCode, res.body).toBe(200);
+
+    expect((await baixasDe(p)).every((b) => b.status === "cancelled"), "o par inteiro cai").toBe(true);
+    expect((await baixasDe(r)).every((b) => b.status === "cancelled")).toBe(true);
+
+    const alvo = (await metadadosDe(espelhoId, "cancel"))[0]!;
+    expect(alvo["lado"], "quem entrou pela rota é o ALVO, qualquer que tenha sido seu papel na criação").toBe("alvo");
+    expect(alvo["title"]).toBe(r);
+    expect(alvo["cruzada_com"]).toBe(p);
+    const par = (await metadadosDe(principalId, "cancel"))[0]!;
+    expect(par["lado"]).toBe("par");
+    expect(par["title"]).toBe(p);
+    expect(par["cruzada_com"]).toBe(r);
+    // A criação continua dizendo quem era quem — os dois registros coexistem sem se contradizer.
+    expect((await metadadosDe(principalId, "create"))[0]!["lado"], "o create preserva o papel de criação").toBe("principal");
+    expect((await metadadosDe(espelhoId, "create"))[0]!["lado"]).toBe("espelho");
+  });
+
 
   it("I2 — baixa COMUM não ganha metadata de par: `lado` e `cruzada_com` são da operação cruzada", async () => {
     // A simetria do caso I não pode virar ruído em toda baixa bancária. Sem este contraste, uma
@@ -586,9 +626,9 @@ describe("baixa cruzada: autorização composta das duas variantes", () => {
     expect(feito.statusCode, feito.body).toBe(201);
     const sid = j(feito).settlement_id as string;
 
-    const liquidos = await liquidosDe([p, r]);
-    expect(liquidos.length, "as duas linhas existem").toBe(2);
-    expect(liquidos[0], "premissa do caso: os net_amount REALMENTE divergem entre os lados").not.toBe(liquidos[1]);
+    // Premissa do caso, nomeando QUAL lado recebeu o quê: o principal desconta, o espelho leva o bruto.
+    expect(await liquidoDe(p), "o principal recebe o líquido: 100 - 20 de desconto").toBe("80.00");
+    expect(await liquidoDe(r), "o espelho recebe o BRUTO — é essa divergência que proíbe net_amount como discriminador").toBe("100.00");
 
     const res = await h.app.inject({ method: "POST", url: `/api/financial/payables/${p}/settlements/${sid}/cancel`, headers: ambos, payload: { reason: "cancelar cruzada com desconto" } });
     expect(res.statusCode, res.body).toBe(200);
