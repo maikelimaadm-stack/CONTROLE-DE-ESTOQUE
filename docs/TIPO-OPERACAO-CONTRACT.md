@@ -91,12 +91,42 @@ Financeiro seguirão o mesmo contrato):
   continua casando o filtro por id. Só NOVO lançamento deixa de poder usá-la.
 - **Editar outro campo não re-carimba o snapshot.** PUT sem o campo, e PUT com o MESMO id, preservam a
   versão gravada. Só a troca EXPLÍCITA de TOP captura a versão corrente da nova — e gera evento próprio.
+- **PUT não LIMPA a TOP.** `tipo_operacao_id: null` preserva o que estava gravado; não existe caminho de
+  edição que transforme um documento COM TOP em documento legado. É deliberado e está escrito aqui porque
+  silêncio viraria dúvida: "sem TOP" é um estado de NASCIMENTO (acervo, cliente anterior à fatia), não um
+  destino alcançável por edição. Apagar a identidade de um lançamento já classificado seria reescrever
+  história pela porta da edição, que é exatamente o que o snapshot existe para impedir.
 - **Conversão escolhe a TOP do DESTINO.** A da fonte é de outra família e nunca é herdada; um cliente antigo
   que converte sem informá-la produz destino legado, e não um documento com TOP da família errada.
 - **A porta de escolha é OPERACIONAL, não administrativa.** Quem pode lançar vê as TOPs ativas da família;
   `tipos_operacao.*` continua sendo a capacidade de CONFIGURAR. São perguntas diferentes.
 - **Obrigatoriedade é de UX, não do banco.** As colunas são NULLABLE nesta fase — por acervo e por rolling
   deploy. Torná-las obrigatórias é fatia futura, com backfill consciente e sem cliente legado vivo.
+- **Consequência operacional, e ela tem hora marcada:** como a obrigatoriedade é de UX e NENHUMA TOP nasce
+  pronta (a 0020 não insere nenhuma e o seed não cria nenhuma), toda organização existente tem zero TOPs no
+  instante do deploy — e a tela de lançamento de vendas fica bloqueada até alguém cadastrar uma TOP ativa
+  para `vendas.orcamento`, `vendas.pedido` e `vendas.venda`. A API continua aceitando (o documento nasce
+  legado), então não há perda de dado; há perda de OPERAÇÃO pela interface. Por isso o cadastro dessas três
+  TOPs é pré-requisito NUMERADO de implantação em `docs/DEPLOYMENT.md`, e não uma recomendação.
+
+### O rótulo de cada camada — e a ambiguidade que a TOP-CONFIG-02 abriu
+
+As duas camadas coexistem na mesma tela, então precisam de nomes distintos. A regra, a partir daqui:
+
+| Camada | Rótulo na tela | De onde sai |
+|---|---|---|
+| FAMÍLIA canônica (código do produto) | **Família operacional** | `packages/domain` — derivada do discriminador do registro |
+| TOP configurada (dado da organização) | **Tipo de Operação** (`termos.tipo_operacao`) | `erp.tipos_operacao` + versão do snapshot |
+
+**Dívida declarada, e ela é de vocabulário, não de contrato.** Hoje só o detalhe de venda segue esta
+tabela. As outras três telas que exibem a família — solicitação de compra
+(`apps/web/src/app/(app)/suprimentos/view/[id]/page.tsx`), títulos financeiros
+(`apps/web/src/features/financial/titles.tsx`) e documentos de estoque
+(`apps/web/src/features/docs/stock-detail.tsx`) — ainda a rotulam "Tipo de operação", porque nenhuma
+delas grava TOP configurada e portanto não há o que confundir DENTRO de cada uma. A ambiguidade existe
+entre telas irmãs, e some sozinha quando cada portal ganhar a sua fatia de TOP: a que gravar snapshot
+renomeia a família junto. Renomear as três agora seria mudar tela que esta fatia não toca, e sem o
+segundo campo a renomeação não teria nem motivo visível ao usuário.
 
 **CLASSIFICAR ≠ EXECUTAR permanece.** Escolher a TOP não mudou efeito de estoque, financeiro, fiscal,
 status ou permissão: confirmar uma venda faz exatamente o que fazia. A TOP é a identidade configurada do

@@ -15,6 +15,9 @@ import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
 const uuid = z.string().uuid();
+/** Forma canônica de UUID, para conferir ENTRADA DE FILTRO antes de ela virar parâmetro de SQL. */
+const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_date: date.optional().nullable(), due_date: date.optional().nullable(), client_id: uuid, transporter_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), driver_name: z.string().optional().nullable(), payment_method_id: uuid.optional().nullable(), freight: dec.default("0"), freight_icms: dec.default("0"), other_values: dec.default("0"), discount: dec.default("0"), note: z.string().optional().nullable(), installment_plan: installmentPlanSchema.optional().nullable(), is_deductible: z.boolean().default(false), items: z.array(z.object({ product_id: uuid, warehouse_id: uuid.optional().nullable(), quantity: dec, unit_price: dec, discount: dec.default("0"), discount_percent: dec.default("0"), note: z.string().optional().nullable() })).min(1), tipo_operacao_id: uuid.optional().nullable() });
 const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "orders" : "sales");
 const t = criarTradutor(ptBR);
@@ -174,7 +177,16 @@ export default async function salesRoutes(app: FastifyInstance) {
       // FILTRO POR TOP, server-side. Documento histórico de uma TOP hoje DESATIVADA continua casando: o
       // filtro é pelo ponteiro gravado, não pelo estado atual da configuração. Desativar uma TOP não pode
       // fazer lançamento sumir de relatório.
-      if (f.tipo_operacao_id) { params.push(f.tipo_operacao_id); where.push(`d.tipo_operacao_id=$${params.length}`); }
+      //
+      // A FORMA é conferida ANTES de o valor chegar ao SQL. Sem isso, `?tipo_operacao_id=abc` entra numa
+      // comparação com coluna `uuid`, o Postgres devolve 22P02 — que `fromPgError` não mapeia — e o
+      // cliente recebe 500: um id malformado passaria a ser DISTINGUÍVEL de um id inexistente, que é
+      // exatamente a diferença que `.claude/rules/security.md` proíbe na superfície de recusa. Filtrar
+      // por um id que não existe devolve zero linhas; filtrar por um id que não é id faz o mesmo.
+      if (f.tipo_operacao_id) {
+        if (FORMA_UUID.test(f.tipo_operacao_id)) { params.push(f.tipo_operacao_id); where.push(`d.tipo_operacao_id=$${params.length}`); }
+        else where.push("false");
+      }
       const w = where.join(" and ");
       // Os dois JOINs são LEFT: documento legado (ponteiros nulos) permanece na listagem, com a TOP vazia.
       const wl = wrapListing(`select d.id, d.code, d.document_date, d.created_at, d.shipping_date, d.due_date, d.status, d.total, d.subtotal, d.nfe_id, c.name as client_name, u.name as responsible_name, f.name as empresa_name, d.tipo_operacao_id, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao, (select count(*) from erp.sales_document_items i where i.document_id=d.id)::int as item_count from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id where ${w} order by d.document_date desc, d.created_at desc`, params, req.query as Record<string, unknown>, q, ", coalesce(sum(t.total),0)::text total");
@@ -197,7 +209,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      * da rota, com a versão corrente. Nada de campo administrativo.
      *
      * `contractVersion` existe para o cliente distinguir "endpoint ausente porque a API é antiga" de
-     * "endpoint presente com outro formato" — é o que sustenta a descoberta de capacidade do §10.2.
+     * "endpoint presente com outro formato" — é o que sustenta a descoberta de capacidade descrita no §0.2 deste contrato.
      */
     app.get(`${base}/operation-types`, async (req) => runService(app, req, `${perm}.create`, async (ctx) => {
       const familia = familiaDaVariante(kind);

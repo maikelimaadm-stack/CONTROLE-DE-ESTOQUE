@@ -86,9 +86,12 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const k = DO_REGISTRO[variante];
   const act = useAction<{ id?: string }>((r) => { setConfirmar(null); if (confirmar === "convert" && r?.id && k?.proximo) router.push(`/vendas/${k.proximo.segmento}/${r.id}`); });
   // A TOP do DESTINO da conversão — carregada da variante de destino, nunca da fonte. O hook roda sempre
-  // (regra dos hooks), com a variante que existir; o diálogo só a consome quando há destino.
+  // (regra dos hooks), mas a REQUISIÇÃO é condicional: numa venda não há destino, e perguntar assim
+  // mesmo faria toda abertura de documento chamar `/api/sales/sales/operation-types` — resposta que
+  // ninguém usa e que, para quem tem `.view` sem `.create`, é um 403 registrado em log a cada abertura.
   const [topDestino, setTopDestino] = React.useState("");
-  const estadoTopDestino = useTopsDaVariante(k?.proximo?.segmento ?? segmentoDaRota);
+  const destino = k?.proximo?.segmento;
+  const estadoTopDestino = useTopsDaVariante(destino ?? segmentoDaRota, Boolean(destino) && can(`${k!.proximo!.perm}.create`));
   usePadraoTop(estadoTopDestino, topDestino, setTopDestino);
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
 

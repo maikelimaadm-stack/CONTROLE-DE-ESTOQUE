@@ -409,6 +409,35 @@ Pelo papel da aplicação (`erp_app`, sem bypass): até a 05C-1, uma consulta a 
 definer, e view definer é vazamento entre organizações. A view saiu na 0017, então o que resta conferir é
 que ela não voltou, e que `erp_app` continua **sem** bypass de RLS (`rolbypassrls = false`).
 
+### TOP-CONFIG-02 — pré-requisito de implantação do Portal de Vendas (`0021`)
+
+Não é recomendação: **sem este passo, o lançamento de vendas pela interface fica bloqueado.**
+
+A fatia faz o Portal de Vendas exigir uma TOP ativa da família antes de deixar salvar. Nenhuma TOP nasce
+pronta — a `0020` não insere nenhuma e o seed não cria nenhuma —, então TODA organização já existente tem
+zero TOPs no instante em que a web nova sobe. O efeito é este, e é imediato:
+
+| Superfície | Sem nenhuma TOP cadastrada |
+|---|---|
+| `/vendas/<variante>/new` | campo obrigatório vazio, aviso de família sem TOP, **Salvar desabilitado** |
+| Conversão (orçamento → pedido → venda) | diálogo abre, **Converter desabilitado** (falta a TOP do DESTINO) |
+| `POST /api/sales/<variante>` | continua **201** — o documento nasce legado, sem TOP. Não há perda de dado |
+| Documentos antigos | abrem normalmente, dizendo "Não configurada (registro legado)" |
+
+Ordem, por organização, DEPOIS de a API nova estar no ar:
+
+1. Em **Configurações › Operações › Tipos de Operação**, cadastrar ao menos uma TOP **ativa** para cada uma
+   das três famílias: `vendas.orcamento`, `vendas.pedido` e `vendas.venda`. Uma família sem TOP bloqueia só
+   a sua variante — e a conversão que tem ela como DESTINO.
+2. Marcar uma como **padrão** em cada família. Não é obrigatório; sem padrão o campo abre em "Selecione…" e
+   o usuário escolhe a cada lançamento.
+3. Conferir na tela: abrir `/vendas/budgets/new` e ver o campo Tipo de Operação preenchível e Salvar
+   habilitado. É a verificação que fecha o passo — a ausência de erro no log não prova nada aqui, porque o
+   estado bloqueado é silencioso por construção.
+
+A alternativa consciente é aceitar a janela: a organização fica sem lançar venda pela web até o cadastro. A
+decisão é do Maike, e está escrita aqui para que seja decisão e não surpresa.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)

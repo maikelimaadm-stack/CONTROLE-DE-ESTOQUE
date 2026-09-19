@@ -30,7 +30,7 @@ test("cadastra TOPs, lança pelo Portal de Vendas e o detalhe mostra o snapshot"
 
   // O título do portal foi assumido formalmente nesta fatia.
   await page.goto(PORTAL);
-  await expect(page.getByRole("heading", { name: "Portal de Vendas" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Vendas" })).toBeVisible();
 
   await abrirNovo(page, "sales");
   // O PADRÃO vem PRÉ-SELECIONADO e VISÍVEL — não escondido porque "tem um padrão".
@@ -130,25 +130,35 @@ test("SEM TOP ativa da família: Salvar desabilitado, mensagem e NENHUM POST", a
   expect(posts, "nenhuma tentativa de criação").toEqual([]);
 });
 
-test("SKEW — API ANTIGA (endpoint ausente): a tela bloqueia e NÃO perde a TOP em silêncio", async ({ page }) => {
-  await login(page);
-  // 404 é como uma API anterior à TOP-CONFIG-02 responde a uma rota que ela não tem. Este é O caso que
-  // nenhum teste de servidor pega: a API antiga descartaria `tipo_operacao_id` sem erro, o documento
-  // nasceria sem TOP e o usuário leria "salvo".
-  await page.route("**/api/sales/sales/operation-types", (rota) =>
-    rota.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: { code: "NOT_FOUND", message: "Rota não encontrada" } }) }));
+/**
+ * OS DOIS MODOS EM QUE A LISTA NÃO É CONFIRMADA — e por que este teste NÃO é a prova do version skew.
+ *
+ * Aqui o servidor é simulado, então o que se mede é a REAÇÃO da tela a cada status, não o que o binário
+ * anterior faz. A premissa — qual status a API da base devolve — é fabricada, e teste que fabrica a
+ * própria premissa não prova skew (`.claude/rules/testing-gates.md`: "usa binário e bundle reais, nunca
+ * mock"). A prova com binário real está em `skew-api-producao.spec.ts`, e foi ela que mostrou que o
+ * status é 500, não 404 — o contrário do que a primeira versão desta fatia assumia.
+ *
+ * Os dois casos continuam valendo o que valem: a tela bloqueia em AMBOS, com a mesma mensagem, porque
+ * de dentro do navegador as duas causas são indistinguíveis.
+ */
+for (const [nome, status] of [["500 (a rota cai no `:id` da API anterior)", 500], ["404 (rota simplesmente ausente)", 404]] as [string, number][]) {
+  test(`REAÇÃO — lista não confirmada com ${nome}: a tela bloqueia e NÃO perde a TOP em silêncio`, async ({ page }) => {
+    await login(page);
+    await page.route("**/api/sales/sales/operation-types", (rota) =>
+      rota.fulfill({ status, contentType: "application/json", body: JSON.stringify({ error: { code: status === 404 ? "NOT_FOUND" : "INTERNAL_ERROR", message: "x" } }) }));
 
-  const posts: string[] = [];
-  page.on("request", (r) => { if (r.method() === "POST" && r.url().includes("/api/sales/")) posts.push(r.url()); });
+    const posts: string[] = [];
+    page.on("request", (r) => { if (r.method() === "POST" && r.url().includes("/api/sales/")) posts.push(r.url()); });
 
-  await page.goto("/vendas/sales/new");
-  await expect(page.getByTestId("top-servidor-desatualizado")).toBeVisible();
-  // A mensagem fala de VERSÃO, não de configuração: mandar cadastrar TOP aqui faria o usuário cadastrar
-  // algo que não resolve o problema.
-  await expect(page.getByTestId("top-ausente"), "não pedir cadastro quando o problema é o servidor").toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
-  expect(posts, "ZERO POST: é isto que impede a perda silenciosa").toEqual([]);
-});
+    await page.goto("/vendas/sales/new");
+    await expect(page.getByTestId("top-nao-confirmado")).toBeVisible();
+    // A mensagem NÃO manda cadastrar TOP: o problema não é configuração, e cadastrar não resolveria.
+    await expect(page.getByTestId("top-ausente"), "não pedir cadastro quando o problema é o servidor").toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
+    expect(posts, "ZERO POST: é isto que impede a perda silenciosa").toEqual([]);
+  });
+}
 
 test("LEGADO — documento sem TOP abre, diz que não está configurado e mantém a família", async ({ page }) => {
   await login(page);
@@ -169,7 +179,7 @@ test("LEGADO — documento sem TOP abre, diz que não está configurado e manté
 
   // E continua na listagem: um INNER JOIN o teria feito sumir.
   await page.goto("/vendas?tab=sales");
-  await expect(page.getByRole("heading", { name: "Portal de Vendas" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Vendas" })).toBeVisible();
 });
 
 test("REGRESSÃO: a TOP não mudou a confirmação nem as ações do detalhe", async ({ page }) => {

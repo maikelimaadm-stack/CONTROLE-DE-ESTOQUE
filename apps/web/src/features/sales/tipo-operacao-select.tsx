@@ -16,8 +16,23 @@ import type { Column } from "@/components/ui/data-table";
  * │ leria "salvo". Perda silenciosa de dado, sem erro em lugar nenhum.                               │
  * │                                                                                                  │
  * │ A API nova não pode consertar isso sozinha (o problema está na antiga), então quem se protege é  │
- * │ o cliente: ANTES de oferecer o formulário, ele pergunta se o endpoint operacional existe. Se a   │
- * │ resposta for 404, a API ainda é antiga — e a tela BLOQUEIA a escrita em vez de arriscar.         │
+ * │ o cliente: ANTES de oferecer o formulário, ele pergunta ao endpoint operacional. Se ele não      │
+ * │ responder a lista, a tela BLOQUEIA a escrita em vez de arriscar.                                  │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ O QUE A API ANTERIOR REALMENTE RESPONDE (medido, não suposto) ─────────────────────────────────┐
+ * │ A primeira versão disto tratava 404 como "servidor antigo". Era FALSO, e o binário da base       │
+ * │ provou: ele não tem rota estática `/sales/<variante>/operation-types`, mas TEM `${base}/:id`.    │
+ * │ O roteador casa o nó paramétrico, "operation-types" vira `id`, o SQL recebe a string numa coluna │
+ * │ `uuid`, o Postgres devolve 22P02 — que `fromPgError` não mapeia — e a resposta é 500.            │
+ * │                                                                                                  │
+ * │   $ curl .../api/sales/budgets/operation-types   (API do commit base)                            │
+ * │   HTTP=500 {"error":{"code":"INTERNAL_ERROR","message":"Erro interno"}}                          │
+ * │                                                                                                  │
+ * │ Então NÃO existe status que separe "servidor antigo" de "servidor com defeito": os dois chegam   │
+ * │ aqui como 500. Em vez de inventar um discriminador que não existe, este arquivo passou a         │
+ * │ afirmar só o que sabe — a lista NÃO foi confirmada — e a bloquear nos dois casos, que é a        │
+ * │ resposta certa para ambos. Mentir sobre a causa seria pior do que não saber.                     │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * As TOPs vêm da porta OPERACIONAL (`/api/sales/<variante>/operation-types`), nunca da administrativa:
@@ -31,20 +46,24 @@ export interface TopsDaVariante { contractVersion: number; family: { code: strin
 export type EstadoTop =
   /** Ainda perguntando. */
   | { situacao: "carregando" }
-  /** A API não conhece o endpoint: é ANTIGA. Bloquear escrita — o problema não é do usuário. */
-  | { situacao: "servidor-desatualizado" }
+  /**
+   * O endpoint não confirmou a lista: ou o servidor é ANTERIOR a esta fatia (não tem a rota, e o
+   * `:id` da base transforma o caminho em 500), ou está com defeito. Os dois chegam indistinguíveis;
+   * nos dois a resposta certa é a mesma — bloquear a escrita. O problema não é do usuário.
+   */
+  | { situacao: "nao-confirmado"; status?: number }
   /** A API é nova e não há nenhuma TOP ativa da família: é configuração que falta. */
   | { situacao: "sem-top"; familia: string }
   /** Tudo certo. */
   | { situacao: "pronto"; dados: TopsDaVariante }
-  /** Qualquer outra falha (rede, 403, 500): também bloqueia, mas não mente sobre a causa. */
+  /** Falha que o servidor EXPLICOU (403, 422, rede): também bloqueia, e repete a causa que ele deu. */
   | { situacao: "erro"; mensagem: string };
 
 /**
  * Pergunta ao servidor quais TOPs esta variante pode lançar.
  *
- * `retry: false` é deliberado: um 404 aqui é RESPOSTA (a API é antiga), não falha transitória, e
- * insistir só atrasaria a decisão da tela.
+ * `retry: false` é deliberado: 404 e 500 aqui são RESPOSTA (o servidor não tem a rota), não falha
+ * transitória, e insistir só atrasaria a decisão da tela.
  */
 export function useTopsDaVariante(kind: string, habilitado = true): EstadoTop {
   const q = useQuery<TopsDaVariante, ApiError>({
@@ -56,8 +75,9 @@ export function useTopsDaVariante(kind: string, habilitado = true): EstadoTop {
 
   if (!habilitado || q.isPending) return { situacao: "carregando" };
   if (q.error) {
-    // 404 é o discriminador do version skew: a rota não existe naquele binário.
-    if (q.error.status === 404) return { situacao: "servidor-desatualizado" };
+    // 404 (rota ausente) e 5xx (a rota caiu no `:id` da API anterior, ou o servidor quebrou) são os
+    // dois modos em que a lista não foi confirmada. Ver o bloco medido no cabeçalho.
+    if (q.error.status === 404 || q.error.status >= 500) return { situacao: "nao-confirmado", status: q.error.status };
     return { situacao: "erro", mensagem: q.error.message };
   }
   if (!q.data || q.data.items.length === 0) return { situacao: "sem-top", familia: q.data?.family.label ?? "" };
@@ -69,11 +89,13 @@ export const podeLancar = (e: EstadoTop): e is Extract<EstadoTop, { situacao: "p
 
 /** Mensagem única por estado — quem lê precisa saber se o problema é o servidor ou a configuração. */
 export function MensagemTop({ estado }: { estado: EstadoTop }) {
-  if (estado.situacao === "servidor-desatualizado") {
-    // NÃO pedir para cadastrar TOP: o problema não é ausência de configuração, é incompatibilidade de
-    // versão. Mandar o usuário à tela de Tipos de Operação aqui o faria cadastrar algo que não resolve.
-    return <p data-testid="top-servidor-desatualizado" className="text-sm text-amber-700">
-      Servidor sendo atualizado. Tente novamente em alguns instantes.
+  if (estado.situacao === "nao-confirmado") {
+    // NÃO pedir para cadastrar TOP: o problema não é ausência de configuração. Mandar o usuário à tela
+    // de Tipos de Operação aqui o faria cadastrar algo que não resolve. E não afirmar "servidor sendo
+    // atualizado": isso seria adivinhar entre as duas causas que chegam idênticas até aqui.
+    return <p data-testid="top-nao-confirmado" className="text-sm text-amber-700">
+      Não foi possível confirmar os Tipos de Operação neste servidor. O lançamento está bloqueado para
+      não gravar um documento sem tipo. Tente novamente em alguns instantes.
     </p>;
   }
   if (estado.situacao === "sem-top") {
@@ -122,13 +144,24 @@ export function usePadraoTop(estado: EstadoTop, valor: string, setValor: (v: str
  * Documento legado mostra traço. Não "Venda": afirmar a família canônica na coluna de TOP configurada
  * seria dizer que o registro tem configuração que ele não tem.
  */
+const rotuloDaTop = (r: Row) => {
+  const t = r["tipo_operacao"] as { codigo: string; nome: string } | null | undefined;
+  return t ? `${t.codigo} — ${t.nome}` : "";
+};
+
 export const colTipoOperacao = (): Column<Row> => ({
   key: "tipo_operacao_id",
   label: "Tipo de Operação",
-  render: (r: Row) => {
-    const t = r["tipo_operacao"] as { codigo: string; nome: string } | null | undefined;
-    return t ? `${t.codigo} — ${t.nome}` : "—";
-  }
+  render: (r: Row) => rotuloDaTop(r) || "—",
+  /**
+   * A célula EXIBE o snapshot e a chave GUARDA o UUID. Sem estas duas declarações o motor usaria a chave
+   * para tudo o que não é React: o CSV sairia com `9f0c…-…` na coluna que a tela mostra como
+   * "2103 — Venda de Gado a Prazo", e o chip automático seria uma busca de TEXTO sobre o identificador —
+   * digitar o nome devolveria zero linhas. O filtro ÚTIL por TOP é o `select` que a listagem injeta a
+   * partir do endpoint operacional (`useOpcoesDeTopParaFiltro`); este aqui só atrapalharia.
+   */
+  text: rotuloDaTop,
+  filterable: false
 });
 
 /**
