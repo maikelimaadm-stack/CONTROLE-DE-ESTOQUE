@@ -70,7 +70,25 @@ const count = (list) => Object.fromEntries(ORDER.map((s) => [s, list.filter((r) 
 const pct = (list) => { const ok = list.filter((r) => ["TESTADO", "IMPLEMENTADO", "MELHORADO", "UNIFICADO"].includes(r.status)).length; const den = list.filter((r) => r.status !== "NÃO APLICÁVEL").length; return `${ok}/${den} (${(100 * ok / Math.max(1, den)).toFixed(1)}%)`; };
 const esc = (s) => String(s ?? "").replace(/\|/g, "\\|");
 const hdr = (t, intro) => `# ${t}\n\n_Gerado por \`node scripts/parity.mjs\` em ${new Date().toISOString().slice(0, 10)} a partir de docs/reference/SYSTEM-INVENTORY.md (${inv.length} telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._\n\n${intro}\n\n`;
-const out = (f, s) => fs.writeFileSync(path.join(root, "docs/parity", f), s);
+/**
+ * `--check` NÃO ESCREVE. Um gate que reescreve o repositório ao ser executado não é um gate: ele sujava a
+ * árvore de todo mundo que rodasse `pnpm parity:check`, porque o cabeçalho carimba a data de HOJE. O
+ * resultado eram cinco arquivos alterados em PRs que não tinham nada a ver com paridade — ruído que
+ * atravessa a revisão humana e esconde a mudança de verdade.
+ *
+ * Em vez de escrever, o modo de verificação COMPARA: o corpo gerado tem de bater com o que está
+ * versionado, ignorando apenas a linha da data de geração. Assim o gate passa a pegar também o caso que
+ * antes ele mascarava — mapa de paridade alterado sem regenerar os documentos — em vez de apagá-lo
+ * sobrescrevendo o arquivo. Para (re)gerar de verdade, `pnpm parity`.
+ */
+const semData = (s) => s.replace(/^_Gerado por .*$/m, "_Gerado por (data ignorada na verificação)_");
+const divergentes = [];
+const out = (f, s) => {
+  const destino = path.join(root, "docs/parity", f);
+  if (!check) return fs.writeFileSync(destino, s);
+  const atual = fs.existsSync(destino) ? fs.readFileSync(destino, "utf8") : "";
+  if (semData(atual) !== semData(s)) divergentes.push(f);
+};
 // SCREEN
 out("SCREEN-PARITY.md", hdr("Paridade de Telas", `Resumo: ${pct(rows)} telas implementadas ou melhoradas. ` + ORDER.map((s) => `${s}: ${count(rows)[s]}`).join(" · ")) + "| ID | Módulo | Tela (referência) | Rota referência | Tipo | Nossa rota | Área unificada (nova UX) | Status | Observação |\n|---|---|---|---|---|---|---|---|---|\n" + rows.map((r) => `| ${r.id} | ${esc(r.module)}${r.sub ? " › " + esc(r.sub) : ""} | ${esc(r.title)} | \`${r.route}\` | ${r.type} | ${r.ours ? "`" + r.ours + "`" : "—"} | ${r.area ? "`" + r.area + "`" : "—"} | ${r.status} | ${esc(r.note)} |`).join("\n") + "\n");
 // MODULE
@@ -87,6 +105,12 @@ const fieldRows = rows.filter((r) => r.fields > 0 || r.filters > 0 || r.columns 
 out("FIELD-PARITY.md", hdr("Paridade de Campos", `Comparação quantitativa por tela: campos de formulário / filtros / colunas observados na referência × campos declarados no nosso código (registro declarativo de cadastros em packages/domain/src/resources ou \`<Field>\` nas páginas). A comparação nome-a-nome está em docs/reference/screens/*.md (referência) e nos próprios registries (nosso). Diferenças intencionais: campos de marketing/licença omitidos; campos calculados exibidos no detalhe e não no formulário.`) + "| ID | Tela | Nossa rota | Ref.: campos form | Ref.: filtros | Ref.: colunas | Nosso: campos (form/filtros) | Status |\n|---|---|---|---|---|---|---|---|\n" + fieldRows.map((r) => `| ${r.id} | ${esc(r.title)} | ${r.ours ? "`" + r.ours + "`" : "—"} | ${r.fields} | ${r.filters} | ${r.columns} | ${r.oursFields ?? "—"} | ${r.status} |`).join("\n") + "\n");
 // summary json for GAP-ANALYSIS
 const summary = { screens: { total: rows.length, ...count(rows), coverage: pct(rows), unified_areas: [...new Set(rows.filter((r) => r.area).map((r) => r.area.split("?")[0]))].length, unified_screens: rows.filter((r) => r.area).length }, reports: { total: repRows.length, ours: ourReportKeys.size, ...count(repRows), coverage: pct(repRows) }, actions: { total: actRows.length, ...count(actRows), coverage: pct(actRows) }, modules: mods.map((m) => ({ module: m, coverage: pct(rows.filter((r) => r.module === m)) })), gaps: rows.filter((r) => ["NÃO INICIADO", "EM IMPLEMENTAÇÃO", "MAPEADO", "BLOQUEADO"].includes(r.status) && r.kind === "list").map((r) => ({ id: r.id, title: r.title, route: r.route, status: r.status, note: r.note })), pages: pages.length };
-fs.writeFileSync(path.join(root, "docs/parity/summary.json"), JSON.stringify(summary, null, 2));
+if (!check) fs.writeFileSync(path.join(root, "docs/parity/summary.json"), JSON.stringify(summary, null, 2));
+else { const p = path.join(root, "docs/parity/summary.json"); const atual = fs.existsSync(p) ? fs.readFileSync(p, "utf8") : ""; if (atual.trim() !== JSON.stringify(summary, null, 2).trim()) divergentes.push("summary.json"); }
 console.log(`telas ${summary.screens.coverage} | unificadas ${summary.screens.unified_screens} em ${summary.screens.unified_areas} áreas | relatórios ${summary.reports.coverage} | ações ${summary.actions.coverage} | páginas web ${pages.length} | não mapeadas ${unmapped.length}`);
 if (unmapped.length) { console.log("Sem mapeamento:", unmapped.map((r) => r.route).join(", ")); if (check) process.exit(1); }
+if (check && divergentes.length) {
+  console.error(`\nparity --check: ${divergentes.length} documento(s) de paridade desatualizado(s) em relação ao mapa: ${divergentes.join(", ")}`);
+  console.error("Rode `pnpm parity` e commite o resultado. A verificação não regenera sozinha — corrigir em silêncio esconderia a divergência.");
+  process.exit(1);
+}

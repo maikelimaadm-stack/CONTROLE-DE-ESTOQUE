@@ -15,12 +15,67 @@
 - Seed inicial: definir uma única vez `SEED_ON_DEPLOY=1`, `ORG_NAME`, `ORG_SLUG`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`; o pre-deploy cria dados de referência + organização + usuário owner; depois voltar `SEED_ON_DEPLOY=0`.
 - O serviço `web` usa `apps/web/Dockerfile`, start `node apps/web/server.js` e health `/login`, também configurados no serviço.
 
+## Superfície web
+
+<!-- SUPERFICIE-WEB-CANONICA -->
+CONTRATO_SUPERFICIE_WEB: duas-suportadas
+SUPERFICIE_WEB_RAILWAY: suportada
+SUPERFICIE_WEB_VERCEL: suportada
+
+**Esta seção é o DONO da resposta "qual superfície web é de produção".** Nenhum outro arquivo do
+repositório decide isso; todos os demais referenciam esta. `scripts/superficie-web-canonica-audit.mjs`
+cobra três metades: (1) a âncora com o contrato tem de existir aqui, uma única vez e com valor da
+lista fechada; (2) nenhum arquivo declarado — inclusive ESTE, fora da faixa que vai da âncora até o
+próximo `##` — pode DECLARAR o papel vigente, seja atribuindo posição a um provedor nomeado
+("canônica", "principal", "oficial", "suportada", "secundária", "backup", "alternativa"), seja
+declarando a CARDINALIDADE da topologia ("duas superfícies suportadas"); fora daqui só se
+REFERENCIA esta seção; (3) as duas portas que provam o commit servido (`/api/build` no web e o
+campo `build` no `/health` da API) têm de existir e resolver a identidade do build.
+
+Menção explicitamente marcada como histórica continua legítima em qualquer arquivo — o gate não
+apaga o que já foi verdade, desde que o próprio texto diga que é passado.
+
+O contrato vigente é **DUAS SUPERFÍCIES SUPORTADAS**, e ele descreve o que está no ar, não uma
+preferência:
+
+| Superfície | Domínio | Papel |
+|---|---|---|
+| Railway `web` | `web-production-4a835.up.railway.app` | suportada, implanta de `main` |
+| Vercel | `controle-de-estoque-erp.vercel.app` e `controle-de-estoque-api-eight.vercel.app` | suportada, implanta de `main` |
+
+**A obrigação que vem junto: as duas têm de provar o MESMO commit de `main`.** `GET /api/build` em
+cada superfície devolve `{ build: { sha, provedor, ambiente, origem } }`. Divergência de `sha` entre
+elas, ou `sha` diferente da ponta de `main`, **não é diferença de artefato — é incidente de deploy**,
+e o deploy não está certificado enquanto não fechar.
+
+Por que DUAS e não uma canônica: o `WEB_ORIGIN` da API autoriza hoje as TRÊS origens acima, e todas
+respondem `200` em `/login`. Eleger uma canônica em documento sem remover as outras do `WEB_ORIGIN`
+seria prosa: o runtime continuaria contradizendo o texto. Reduzir para uma superfície é alteração de
+configuração de produção e está registrada como ação manual em "Ações manuais pendentes", abaixo.
+
+**Os artefatos dos dois provedores são legitimamente diferentes byte a byte** — a Vercel usa o Next
+gerenciado e a Railway usa Docker com `output: "standalone"` (`apps/web/next.config.ts`). Portanto
+diferença de HTML, de tamanho ou de caminho de asset **não prova** commit diferente. Quem prova é
+`/api/build`.
+
+### Ações manuais pendentes (MANUAL ACTION REQUIRED — nenhuma executada automaticamente)
+
+1. **Decidir se o contrato vira "uma canônica".** Se sim, é preciso (a) remover as origens não
+   canônicas do `WEB_ORIGIN` do serviço `api` e (b) tirar do ar ou proteger os domínios
+   correspondentes. As duas são alteração de produção e exigem autorização explícita do Maike na
+   hora — e só depois delas o texto pode dizer "canônica" sem mentir.
+2. **`controle-de-estoque-api-eight.vercel.app` serve o app WEB sob um nome que promete uma API**, e
+   está autorizado no `WEB_ORIGIN`. Medido: responde byte a byte igual ao domínio `-erp`. Remover
+   este domínio é a menor redução de superfície disponível.
+3. **A Railway implanta de `main` sem exigir CI verde** (`checkSuites: false` nos dois serviços):
+   `main` vermelha vai a produção. Corrigir é configuração do painel, não do repositório.
+
 ## Vercel (web)
 - Projeto Git com **Root Directory = `apps/web`** (a Vercel instala o workspace pnpm a partir da raiz); `apps/web/vercel.json` compila `@agro/shared`, `@erp/plataforma` e `@agro/domain` antes do `next build` (todo pacote do workspace consumido pelo web precisa entrar aqui e nos Dockerfiles — senão o deploy quebra com o import não resolvido). `output: "standalone"` fica desativado na Vercel (variável `VERCEL`), pois quebra o rastreamento de arquivos da plataforma.
 - Variáveis: `NEXT_PUBLIC_API_URL=https://api-production-ec77.up.railway.app`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`.
 - `NEXT_PUBLIC_API_URL` é embutida no build: alterar a URL da API exige novo deploy.
 - `NEXT_PUBLIC_DEMO_MODE=true` só em ambientes de demonstração (mostra as credenciais demo no login); produção não define a variável.
-- Alternativa/backup na Railway: serviço `web` com `apps/web/Dockerfile` (raiz do repositório como contexto de build); variáveis `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `PORT=3000`, `HOSTNAME=0.0.0.0`.
+- A Railway também constrói o web (o papel de cada superfície está em "## Superfície web"): serviço `web` com `apps/web/Dockerfile` (raiz do repositório como contexto de build); variáveis `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `PORT=3000`, `HOSTNAME=0.0.0.0`.
 
 ## Janela de rollout da migração fazenda → empresa (PRE-BASE2-03)
 
@@ -357,7 +412,7 @@ que ela não voltou, e que `erp_app` continua **sem** bypass de RLS (`rolbypassr
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)
-- [x] CORS (`WEB_ORIGIN`) apontando para os domínios do frontend na Vercel
+- [x] CORS (`WEB_ORIGIN`) apontando para os domínios declarados em "## Superfície web"
 - [ ] Backups automáticos do Supabase ativos (plano do projeto) — **e restaurados pelo menos uma vez**.
   Hoje `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`: a recuperação autorizada é
   `RECOVERY = REBUILD FROM ZERO` (seção "Recuperação"). Esta caixa **não** se marca por declaração de
@@ -369,8 +424,8 @@ que ela não voltou, e que `erp_app` continua **sem** bypass de RLS (`rolbypassr
 |---|---|---|
 | Supabase projeto `CONTROLE-DE-ESTOQUE` (`dcroxgdzzgqgiquvfffa`) | **Aplicado**: 7 migrations via MCP `apply_migration` (registradas também em `public.erp_migrations`, tabela com RLS e sem acesso de `anon`); 171 tabelas, RLS forçada em todas, 187 políticas; papéis `erp_app` (login, sem bypass) e `erp_migrator` (bypass, dono do schema `erp`, privilégios padrão para novas tabelas → `erp_app`). Seed executado pelo pre-deploy: 27 UFs, 773 permissões, organização `Controle de Estoque` (slug `principal`) com owner `maike.lima.adm@gmail.com`, 2 fazendas de exemplo (`[DEMO]`) e cadastros de exemplo. Advisor de segurança: só avisos (search_path mutável em 12 funções; `citext` em `public`). | `list_migrations`, `execute_sql`, `get_advisors` |
 | Railway serviço `api` | **Em produção** em `https://api-production-ec77.up.railway.app` (deployment `4525526d…` SUCCESS). Pre-deploy `node dist/migrate.js` e healthcheck `/health` configurados no serviço. Verificado: `GET /health` → `{"status":"ok","db":"ok"}`; `POST /api/auth/login` 200 com o owner e 401 com senha errada; `GET /api/auth/context` devolve organização e fazendas; `GET /api/resources/products` lista com `X-Org-Id` correto, **403** com organização alheia e **401** sem token. Pooler correto para este projeto: `aws-0-sa-east-1` (o `aws-1` responde `tenant/user not found`). Região do container: `sfo` (latência ~1 s na primeira consulta; migrar para região mais próxima quando disponível). `WEB_ORIGIN` ainda precisa apontar para a URL final do frontend. | logs do deployment; `curl` |
-| Vercel (frontend) | Projeto `controle-de-estoque` configurado (Root `apps/web`, Next.js, Node 22, domínios `controle-de-estoque-erp.vercel.app` e `controle-de-estoque-api-eight.vercel.app`). O bloqueio por fatura em aberto de 10/09/2026 (`softBlock: UNPAID_INVOICE`, `402 DEPLOYMENT_DISABLED`) **foi regularizado**: em 15/09/2026 os dois domínios respondem **200** e a Vercel voltou a publicar — o commit `85666dcc` de `main` tem status `success` ("Deployment has completed"). O frontend servido em produção continua sendo o da Railway (abaixo); a Vercel é a segunda superfície. | `curl -I https://controle-de-estoque-erp.vercel.app` → 200; commit status `Vercel` = success |
-| Railway serviço `web` (frontend, alternativa) | Serviço `web` no mesmo projeto Railway, build por `apps/web/Dockerfile` (Next standalone; `NEXT_PUBLIC_*` embutidas no build a partir das variáveis do serviço), domínio `https://web-production-4a835.up.railway.app`, healthcheck `/login`. `WEB_ORIGIN` da API já inclui esse domínio. | serviço `74264061-f73a-40ee-9748-11be096c0cb6` |
+| Vercel (frontend) | Projeto `controle-de-estoque` configurado (Root `apps/web`, Next.js, Node 22, domínios `controle-de-estoque-erp.vercel.app` e `controle-de-estoque-api-eight.vercel.app`). O bloqueio por fatura em aberto de 10/09/2026 (`softBlock: UNPAID_INVOICE`, `402 DEPLOYMENT_DISABLED`) **foi regularizado**: em 15/09/2026 os dois domínios respondem **200** e a Vercel voltou a publicar — o commit `85666dcc` de `main` tem status `success` ("Deployment has completed"). O papel de cada superfície está em "## Superfície web"; a prova de qual commit cada uma serve é `GET /api/build`. | `curl -I https://controle-de-estoque-erp.vercel.app` → 200; commit status `Vercel` = success |
+| Railway serviço `web` (frontend; papel em "## Superfície web") | Serviço `web` no mesmo projeto Railway, build por `apps/web/Dockerfile` (Next standalone; `NEXT_PUBLIC_*` embutidas no build a partir das variáveis do serviço), domínio `https://web-production-4a835.up.railway.app`, healthcheck `/login`. `WEB_ORIGIN` da API já inclui esse domínio. | serviço `74264061-f73a-40ee-9748-11be096c0cb6` |
 | Pull requests | PR #1 (sistema) e PR #2 (correção do deploy Vercel) mergeados em `main`; Railway e Vercel implantam a partir de `main` | GitHub |
 
 ## Incidente de ativação: 0014 × ledger append-only (resolvido no código, ainda não aplicado)

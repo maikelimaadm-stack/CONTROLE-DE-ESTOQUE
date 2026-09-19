@@ -13,4 +13,5 @@ export * from "./sessao-empresa.js";
 export * from "./id-global.js";
 export * from "./idioma.js";
 export * from "./formatacao.js";
+export * from "./identidade-build.js";
 export { ptBR } from "./idiomas/pt-BR.js";
