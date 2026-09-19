@@ -42,7 +42,17 @@ const REGRAS_VENDAS = [
   // ANCORADA NA ATRIBUIÇÃO da identidade, não numa ocorrência qualquer de `d["kind"]`: é a linha que
   // decide o que a tela diz que o registro É.
   { procura: "const\\s+variante\\s*=\\s*d\\s*\\?\\s*String\\(\\s*d\\[\\s*[\"']kind[\"']\\s*\\]\\s*\\)", deve: true, motivo: "a variante apresentada sai do REGISTRO (`d[\"kind\"]`), não de `params.kind`" },
-  { procura: "DO_REGISTRO\\s*\\[\\s*segmentoDaRota\\s*\\]", deve: false, motivo: "indexar o mapa pelo segmento da URL é classificar pela porta por onde o registro foi pedido" },
+  // VÍNCULO POSITIVO. Exigir que a variável `variante` EXISTA não é o mesmo que exigir que ela seja
+  // USADA: a atribuição de `k` é a linha que decide o título, a família de permissão, as ações, o
+  // próximo documento e a rota funcional. Sem esta regra, `const variante = d["kind"]` podia continuar
+  // no arquivo, intacta e inútil, enquanto `k` voltava a ser escolhido pela URL — e o gate diria OK.
+  { procura: "const\\s+k\\s*=\\s*DO_REGISTRO\\s*\\[\\s*variante\\s*\\]", deve: true, motivo: "a configuração funcional (`k`) tem de ser indexada pela variante DO REGISTRO — é ela que decide título, permissão, ações e próximo documento" },
+  // O ÍNDICE INTEIRO, não só o identificador solto. A forma anterior casava apenas com
+  // `DO_REGISTRO[segmentoDaRota]` e deixava passar `DO_REGISTRO[segmentoDaRota.replace(/s$/, "")]`,
+  // `DO_REGISTRO[String(segmentoDaRota)]` e afins — a mesma classificação pela rota, escrita com uma
+  // transformação no meio. `[^\]\n]*` limita a busca ao conteúdo de UM colchete numa linha: é o
+  // suficiente para ver a rota dentro do índice sem virar parser de JavaScript.
+  { procura: "DO_REGISTRO\\s*\\[[^\\]\\n]*\\bsegmentoDaRota\\b[^\\]\\n]*\\]", deve: false, motivo: "indexar o mapa pelo segmento da URL é classificar pela porta por onde o registro foi pedido" },
   // O FALLBACK PARA VENDA é o defeito nomeado desta fatia. Ele não pode voltar em forma nenhuma — nem
   // indexado por rota, nem por registro, e nem com a chave no singular ou no plural.
   { procura: "\\?\\?\\s*(K|DO_REGISTRO)\\s*\\[\\s*[\"']sale", deve: false, motivo: "variante desconhecida NÃO herda a semântica de venda — o fallback silencioso é o defeito que esta fatia fechou" },
@@ -253,8 +263,21 @@ const AMOSTRAS = [
   ["vendas B2: TOP resolvida pelo SEGMENTO DA ROTA REPROVA", 1,
     VENDAS_BOA.replace("tipoOperacaoDoRegistro(`erp.sales_documents`, d)", "tipoOperacaoDoRegistro(`erp.sales_documents`, { ...d, kind: segmentoDaRota })"),
     undefined, REGRAS_VENDAS, "porta de navegação"],
+  // C0 isola a regra POSITIVA: o índice deixa de ser `variante` sem que a rota apareça, então a regra
+  // negativa não dispara e só a positiva pode acusar. Sem este caso, a regra positiva estaria coberta
+  // apenas por amostras que também violam a negativa — e uma regra que nunca acusa sozinha é
+  // indistinguível de uma regra quebrada.
+  ["vendas C0: `k` deixa de ser indexado pela VARIANTE REPROVA", 1,
+    VENDAS_BOA.replace("const k = DO_REGISTRO[variante];", "const k = DO_REGISTRO[chaveExterna];"),
+    undefined, REGRAS_VENDAS, "indexada pela variante DO REGISTRO"],
   ["vendas C: mapa indexado pelo SEGMENTO DA ROTA REPROVA", 1,
     VENDAS_BOA.replace("DO_REGISTRO[variante]", "DO_REGISTRO[segmentoDaRota]"), undefined, REGRAS_VENDAS, "classificar pela porta"],
+  // C2 é a forma que a regex estreita deixava passar: a rota TRANSFORMADA dentro do índice. Ela também
+  // perde o vínculo positivo, e por isso o `aponta` fixa a regra NEGATIVA — é ela que este caso existe
+  // para exercitar.
+  ["vendas C2: rota TRANSFORMADA dentro do índice REPROVA", 1,
+    VENDAS_BOA.replace("DO_REGISTRO[variante]", 'DO_REGISTRO[segmentoDaRota.replace(/s$/, "")]'),
+    undefined, REGRAS_VENDAS, "classificar pela porta"],
   ["vendas D: fallback de variante desconhecida para VENDA REPROVA", 1,
     VENDAS_BOA.replace("const k = DO_REGISTRO[variante];", 'const k = DO_REGISTRO[variante] ?? DO_REGISTRO["sale"];'), undefined, REGRAS_VENDAS, "semântica de venda"],
   // A mesma regressão com aspa simples e espaços — a forma que a regex ANTERIOR, presa a `["sale`, deixava
