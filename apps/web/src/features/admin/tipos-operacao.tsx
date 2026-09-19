@@ -80,7 +80,10 @@ export function TiposOperacaoPanel() {
     onError: setErro
   });
   const excluir = useMutation({
-    mutationFn: (t: TipoOperacao) => api(`/api/admin/tipos-operacao/${t.id}`, { method: "DELETE" }),
+    // A revisão da LINHA, como toda escrita: a exclusão tem de perder para uma edição que o servidor já
+    // aceitou e esta tela ainda não viu. Vai na query porque DELETE não tem corpo por convenção.
+    mutationFn: (t: TipoOperacao) =>
+      api(`/api/admin/tipos-operacao/${t.id}?revisao=${t.revisao}`, { method: "DELETE" }),
     onSuccess: () => { setExcluindo(null); recarregar(); },
     onError: (e) => { setExcluindo(null); setErro(e); }
   });

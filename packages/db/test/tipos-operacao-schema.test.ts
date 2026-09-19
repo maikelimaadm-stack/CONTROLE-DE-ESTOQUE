@@ -170,3 +170,104 @@ describe("0020 — invariantes", () => {
     expect(depois.rows[0]!.atualizado_em.getTime()).toBeGreaterThanOrEqual(antes.rows[0]!.atualizado_em.getTime());
   });
 });
+
+/**
+ * A VERSÃO CORRENTE SEMPRE EXISTE (bloqueador A da R1).
+ *
+ * `versao_atual` era um inteiro solto, e o runtime CONFIA nele: `SELECAO` monta o `join` com
+ * `v.versao = t.versao_atual` para devolver nome e descrição. Sem chave estrangeira, `versao_atual = 999`
+ * era gravável — e produzia um estado impossível: a identidade existe, o conteúdo corrente não. O efeito
+ * não é um erro: é a TOP SUMIR da lista e do detalhe, porque o `join` interno não casa nada. 404 numa linha
+ * que está lá, sem nenhuma exceção em lugar nenhum.
+ *
+ * A FK é DEFERRABLE INITIALLY DEFERRED porque o POST insere o pai ANTES da versão 1, na mesma transação —
+ * ordem inevitável, já que a versão precisa do id do pai. "Adiada" não é "desligada", e a diferença entre
+ * as duas é exatamente o que os casos 2 e 3 medem.
+ */
+describe("0020 — a versão corrente sempre existe", () => {
+  it("a FK existe, é COMPOSTA com o tenant e é DEFERRABLE INITIALLY DEFERRED", async () => {
+    const r = await db.query<{
+      condeferrable: boolean; condeferred: boolean; confdeltype: string; confupdtype: string;
+      colunas: string[]; referencia: string; referenciadas: string[];
+    }>(
+      `select c.condeferrable, c.condeferred, c.confdeltype, c.confupdtype,
+              c.confrelid::regclass::text as referencia,
+              (select array_agg(a.attname::text order by k.ord)
+                 from unnest(c.conkey) with ordinality k(attnum, ord)
+                 join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum) as colunas,
+              (select array_agg(a.attname::text order by k.ord)
+                 from unnest(c.confkey) with ordinality k(attnum, ord)
+                 join pg_attribute a on a.attrelid = c.confrelid and a.attnum = k.attnum) as referenciadas
+         from pg_constraint c
+        where c.conname = 'fk_tipos_operacao_versao_atual' and c.contype = 'f'`);
+    expect(r.rowCount, "a FK da versão corrente precisa existir").toBe(1);
+    const fk = r.rows[0]!;
+
+    // COMPOSTA COM `organization_id`: coluna única não prova tenant (`.claude/rules/security.md`). Sem ele,
+    // o ponteiro seria validado contra o universo inteiro de versões, não contra as da própria organização.
+    expect(fk.colunas).toEqual(["id", "organization_id", "versao_atual"]);
+    expect(fk.referenciadas).toEqual(["tipo_operacao_id", "organization_id", "versao"]);
+    expect(fk.referencia).toBe("erp.tipos_operacao_versoes");
+    expect([fk.condeferrable, fk.condeferred], "adiada até o COMMIT, e não a cada comando").toEqual([true, true]);
+
+    // `a` = NO ACTION. CASCADE aqui seria catastrófico e silencioso: apagar uma versão apagaria a TOP
+    // inteira. Como o histórico é imutável por gatilho, a ação nunca dispara — mas declarar CASCADE deixaria
+    // a porta armada para o dia em que alguém removesse o gatilho "só para um acerto pontual".
+    expect([fk.confdeltype, fk.confupdtype], "sem CASCADE: a FK trava, não apaga").toEqual(["a", "a"]);
+  });
+
+  it("pai e versão 1 na MESMA transação: é para isto que a FK é adiada", async () => {
+    // A PREMISSA do caso seguinte. Se este falhasse, o `rejects` de lá passaria pelo motivo errado.
+    const id = await criarTop(demo.orgId, demo.adminUserId, "T-VFK-1");
+    const r = await db.query<{ versao_atual: number; n: string }>(
+      `select t.versao_atual, (select count(*) from erp.tipos_operacao_versoes v
+         where v.tipo_operacao_id = t.id and v.versao = t.versao_atual) n
+         from erp.tipos_operacao t where t.id = $1`, [id]);
+    expect([r.rows[0]!.versao_atual, Number(r.rows[0]!.n)]).toEqual([1, 1]);
+  });
+
+  it("pai SEM versão nenhuma FALHA NO COMMIT — adiada não é desligada", async () => {
+    let inseriu = false;
+    await expect(withTx(db, { orgId: demo.orgId, userId: demo.adminUserId, modulo: null }, async (tx) => {
+      const r = await tx.query<{ id: string }>(
+        `insert into erp.tipos_operacao (organization_id, codigo, codigo_base, criado_por)
+         values ($1,'T-VFK-ORFA','vendas.venda',$2) returning id`, [demo.orgId, demo.adminUserId]);
+      // O INSERT em si PASSA: a conferência foi adiada. É o commit que recusa.
+      inseriu = r.rowCount === 1;
+    })).rejects.toThrow(/fk_tipos_operacao_versao_atual|violates foreign key/);
+    expect(inseriu, "o insert passa; quem recusa é o COMMIT — é isso que 'deferred' significa").toBe(true);
+
+    // E o rollback é total: a identidade órfã não sobrou.
+    const sobrou = await db.query("select 1 from erp.tipos_operacao where organization_id=$1 and codigo='T-VFK-ORFA'", [demo.orgId]);
+    expect(sobrou.rowCount, "nada meio gravado").toBe(0);
+  });
+
+  it("promover `versao_atual` para uma versão que não existe é RECUSADO", async () => {
+    const id = await criarTop(demo.orgId, demo.adminUserId, "T-VFK-2");
+    // Este é o estado impossível que a R1 mandou fechar: a linha continuaria existindo e desapareceria da
+    // API, porque o `join` de `SELECAO` não casaria nenhuma versão.
+    await expect(db.query("update erp.tipos_operacao set versao_atual=2 where id=$1", [id]))
+      .rejects.toThrow(/fk_tipos_operacao_versao_atual|violates foreign key/);
+
+    // E a linha continua íntegra depois da recusa — sem efeito parcial.
+    const r = await db.query<{ versao_atual: number }>("select versao_atual from erp.tipos_operacao where id=$1", [id]);
+    expect(r.rows[0]!.versao_atual).toBe(1);
+  });
+
+  it("a mesma promoção é ACEITA assim que a versão 2 nasce", async () => {
+    // A CONCLUSÃO precisa da premissa: sem este caso, o `rejects` acima poderia estar passando por qualquer
+    // outro motivo (uma constraint vizinha, um gatilho) e o teste "provaria" uma FK que não existe.
+    const id = await criarTop(demo.orgId, demo.adminUserId, "T-VFK-3");
+    await withTx(db, { orgId: demo.orgId, userId: demo.adminUserId, modulo: null }, async (tx) => {
+      await tx.query(
+        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, criado_por)
+         values ($1,$2,2,'Nome da versão 2',$3)`, [demo.orgId, id, demo.adminUserId]);
+      await tx.query("update erp.tipos_operacao set versao_atual=2 where id=$1", [id]);
+    });
+    const r = await db.query<{ versao_atual: number; nome: string }>(
+      `select t.versao_atual, v.nome from erp.tipos_operacao t
+         join erp.tipos_operacao_versoes v on v.tipo_operacao_id = t.id and v.versao = t.versao_atual
+        where t.id = $1`, [id]);
+    expect([r.rows[0]!.versao_atual, r.rows[0]!.nome]).toEqual([2, "Nome da versão 2"]);
+  });
+});

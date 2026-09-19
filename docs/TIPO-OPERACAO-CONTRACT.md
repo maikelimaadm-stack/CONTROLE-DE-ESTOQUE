@@ -30,6 +30,34 @@ a tentação de pendurar efeito neles é maior: "toda TOP 2103 gera título a pr
 sendo o serviço de domínio; a TOP configurada é um rótulo de configuração sobre a família, e a família é uma
 classificação. Nenhuma das duas tem handler.
 
+### 0.1 Integridade e escrita da TOP configurada
+
+Quatro invariantes da camada configurada. As três primeiras são do banco; a quarta é da borda da API.
+
+| Invariante | Onde mora | O que acontece se quebrar |
+| --- | --- | --- |
+| A versão corrente EXISTE | `fk_tipos_operacao_versao_atual`, composta com `organization_id` e `deferrable initially deferred` | `versao_atual` órfã não erra: o `join` interno do servidor devolve ZERO linhas e a TOP some da lista e do detalhe sem exceção nenhuma |
+| Conteúdo é imutável | `trg_tipos_operacao_versoes_imutavel` + `grant` sem `update`/`delete` | documento antigo passaria a citar texto novo |
+| No máximo UMA padrão ativa por família | `ux_tipos_operacao_padrao` (índice parcial) | duas padrão, e o serviço escolheria pela ordem da consulta |
+| Entrada é canônica | `.strict()` nos três schemas de escrita | `z.object` descarta chave desconhecida EM SILÊNCIO: `{"ativoo": false}` virava 200 com o campo ignorado |
+
+**Toda escrita é otimista, inclusive a exclusão.** `PUT` recebe `revisao` no corpo e `DELETE` recebe
+`?revisao=` na query (DELETE não tem corpo por convenção). Revisão velha é `409 CONCURRENCY_CONFLICT`;
+registro inexistente, de outro tenant ou já excluído é a MESMA `404` — e a ordem é 404 ANTES de 409, senão
+a diferença entre os dois códigos vira oráculo de existência.
+
+**Salvar sem alterar NÃO é escrita.** Um `PUT` cujo conteúdo e estado coincidem com os atuais não grava, não
+incrementa `revisao`, não move `atualizado_em` e não registra auditoria: devolve o estado corrente. A razão
+não é economizar `update` — é que `revisao` é a moeda do controle de concorrência, e gastá-la à toa
+invalidaria toda outra aba aberta na mesma TOP.
+
+**Mudança de estado tem AUTOR, dos dois lados.** Trocar o padrão altera DUAS linhas: a que assume
+(`set_default`) e a que abdica (`unset_default`, com `novoPadraoId` no metadado). Quem perdeu o posto nunca
+sai da INTENÇÃO da rota, e sim do efeito medido: nas trocas, do `returning` do `update` que liberou o posto;
+na exclusão, da leitura sob `for update`, que dentro da transação é o valor que o `update` sobrescreveu.
+Sem padrão anterior não se inventa evento. Desativar e excluir a padrão também emitem `unset_default`,
+porque nos dois casos o posto vaga e um `deactivate`/`delete` sozinho não diz isso.
+
 ## 1. O que a TOP é
 
 **Tipo de Operação é a classificação funcional de um lançamento.** Ela responde a uma pergunta só:

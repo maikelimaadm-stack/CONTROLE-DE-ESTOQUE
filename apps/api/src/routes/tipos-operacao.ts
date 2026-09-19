@@ -14,6 +14,7 @@ import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, audit } from "../lib/service.js";
 import { notFound } from "../lib/errors.js";
 import { pageQuerySchema } from "../lib/pagination.js";
+import type { ServiceCtx } from "../lib/context.js";
 
 /**
  * ADMINISTRAÇÃO DAS TOPs CONFIGURADAS (TOP-CONFIG-01).
@@ -50,6 +51,14 @@ const codigoSchema = z.string().trim().regex(FORMA_CODIGO_TIPO_OPERACAO, "Códig
 const nomeSchema = z.string().trim().min(1).max(LIMITE_NOME_TIPO_OPERACAO);
 const descricaoSchema = z.string().trim().max(LIMITE_DESCRICAO_TIPO_OPERACAO).optional().nullable();
 
+/**
+ * `.strict()` NAS TRÊS ENTRADAS DE ESCRITA — porque `z.object` descarta chave desconhecida EM SILÊNCIO.
+ *
+ * `{ "ativoo": false, "revisao": 3 }` virava 200 com o campo ignorado: o administrador lia "salvo", e a TOP
+ * continuava ativa. Descarte silencioso de campo é ampliação de escopo pela porta de trás (`backend-api.md`),
+ * e num cadastro de configuração ele é especialmente caro, porque ninguém confere o efeito depois.
+ * Com `.strict()`, o erro de digitação é 422 e nada é escrito.
+ */
 const criarSchema = z.object({
   codigo: codigoSchema,
   codigoBase: z.string().trim(),
@@ -57,7 +66,7 @@ const criarSchema = z.object({
   descricao: descricaoSchema,
   ativo: z.boolean().default(true),
   padrao: z.boolean().default(false)
-});
+}).strict();
 
 /**
  * ENTRADA DA EDIÇÃO — `codigo` e `codigoBase` NÃO ESTÃO AQUI, e isso é deliberado.
@@ -73,7 +82,16 @@ const editarSchema = z.object({
   ativo: z.boolean().optional(),
   padrao: z.boolean().optional(),
   revisao: z.coerce.number().int().min(1)
-});
+}).strict();
+
+/**
+ * A EXCLUSÃO TAMBÉM É UMA ESCRITA, e por isso também exige a revisão conhecida pelo cliente.
+ *
+ * Sem ela: o administrador A lê a revisão 5, o B edita (vira 6), e o A exclui com a tela velha — a exclusão
+ * vence em silêncio uma alteração que o A nunca viu. É o mesmo lost update que o PUT já impedia, pela única
+ * porta que tinha ficado aberta. Vai na query porque o DELETE não tem corpo por convenção.
+ */
+const excluirSchema = z.object({ revisao: z.coerce.number().int().min(1) }).strict();
 
 const SELECAO = `
   select t.id, t.codigo, t.codigo_base, t.ativo, t.padrao, t.versao_atual, t.revisao,
@@ -83,6 +101,9 @@ const SELECAO = `
     join erp.tipos_operacao_versoes v
       on v.tipo_operacao_id = t.id and v.versao = t.versao_atual
 `;
+
+/** O que o `returning` de `liberarPadrao` devolve: exatamente quem o banco alterou. */
+interface PadraoLiberado { id: string; codigo: string; codigo_base: string }
 
 interface LinhaTipoOperacao {
   id: string; codigo: string; codigo_base: string; ativo: boolean; padrao: boolean;
@@ -196,13 +217,14 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           `Família operacional desconhecida: ${d.codigoBase}`, { codigoBase: d.codigoBase });
       }
 
+      const nasceuPadrao = d.padrao && d.ativo;
       // Se nasce como padrão, o posto tem de estar livre — e a troca é atômica (mesma transação).
-      if (d.padrao && d.ativo) await liberarPadrao(ctx, d.codigoBase, null);
+      const liberados = nasceuPadrao ? await liberarPadrao(ctx, d.codigoBase, null) : [];
 
       const pai = await ctx.tx.query<{ id: string }>(
         `insert into erp.tipos_operacao (organization_id, codigo, codigo_base, ativo, padrao, versao_atual, revisao, criado_por)
          values ($1,$2,$3,$4,$5,1,1,$6) returning id`,
-        [ctx.orgId, d.codigo, d.codigoBase, d.ativo, d.padrao && d.ativo, ctx.user.id]);
+        [ctx.orgId, d.codigo, d.codigoBase, d.ativo, nasceuPadrao, ctx.user.id]);
       const id = pai.rows[0]!.id;
 
       await ctx.tx.query(
@@ -211,7 +233,16 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
         [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id]);
 
       await audit(ctx.tx, ctx, "tipos_operacao", id, "create",
-        { codigo: d.codigo, codigoBase: d.codigoBase, ativo: d.ativo, padrao: d.padrao && d.ativo, versao: 1 });
+        { codigo: d.codigo, codigoBase: d.codigoBase, ativo: d.ativo, padrao: nasceuPadrao, versao: 1 });
+      // A TOP anterior perdeu o padrão nesta mesma transação: quem perdeu tem evento próprio, com autor.
+      await auditarPadraoLiberado(ctx, liberados, id);
+      // E quem ASSUMIU também. Sem isto, "esta TOP virou padrão ao nascer" só existiria dentro do payload
+      // do `create`, e a pergunta "desde quando a 2103 é a padrão?" teria de ser respondida lendo dois
+      // formatos de evento diferentes conforme a TOP tenha nascido padrão ou virado padrão depois.
+      if (nasceuPadrao) {
+        await audit(ctx.tx, ctx, "tipos_operacao", id, "set_default",
+          { codigo: d.codigo, codigoBase: d.codigoBase });
+      }
       return { id };
     })));
 
@@ -255,7 +286,22 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const mudouConteudo = nome !== antes.nome || (descricao ?? null) !== (antes.descricao ?? null);
     const versao = mudouConteudo ? antes.versao_atual + 1 : antes.versao_atual;
 
-    if (padrao && !(antes.padrao && antes.ativo)) await liberarPadrao(ctx, antes.codigo_base, id);
+    /**
+     * NO-OP NÃO É ESCRITA — e precisa vir ANTES de `liberarPadrao`, porque um efeito colateral disparado
+     * aqui já teria acontecido quando a conferência chegasse.
+     *
+     * Reenviar o formulário sem mexer em nada incrementava a revisão. O custo não é o `update` inútil: é que
+     * a revisão é a moeda do controle de concorrência. Toda outra aba aberta na mesma TOP passava a estar
+     * "velha" e recebia 409 por uma mudança que não existiu, e a trilha ganhava um `update` sem diff que
+     * ninguém sabe ler. Salvar sem alterar devolve o estado atual, intacto.
+     */
+    if (!mudouConteudo && ativo === antes.ativo && padrao === antes.padrao) {
+      return { id, versao: antes.versao_atual, revisao: antes.revisao };
+    }
+
+    const liberados = padrao && !(antes.padrao && antes.ativo)
+      ? await liberarPadrao(ctx, antes.codigo_base, id)
+      : [];
 
     if (mudouConteudo) {
       await ctx.tx.query(
@@ -285,21 +331,51 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       await audit(ctx.tx, ctx, "tipos_operacao", id, padrao ? "set_default" : "unset_default",
         { codigo: antes.codigo, codigoBase: antes.codigo_base });
     }
+    // A TROCA ALTERA DUAS LINHAS. A que assume já tem evento acima; a que abdica mudava de `padrao` e de
+    // `revisao` sem nenhum autor na trilha — "quem tirou o padrão da 2101?" não tinha resposta.
+    await auditarPadraoLiberado(ctx, liberados, id);
     return { id, versao, revisao: antes.revisao + 1 };
   }));
 
   // ---------- Exclusão lógica ----------
   app.delete("/admin/tipos-operacao/:id", async (req) => runService(app, req, "tipos_operacao.delete", async (ctx) => {
     const { id } = req.params as { id: string };
+    const d = excluirSchema.parse(req.query);
+
+    // A ORDEM É 404 ANTES DE 409. Conferir a revisão primeiro devolveria 409 para um id de outro tenant
+    // sempre que a revisão enviada não coincidisse — e 409 ≠ 404 revela que o id existe em algum lugar.
+    const atual = await ctx.tx.query<{ codigo: string; codigo_base: string; padrao: boolean; revisao: number }>(
+      `select codigo, codigo_base, padrao, revisao from erp.tipos_operacao
+        where id=$1 and organization_id=$2 and excluido_em is null for update`, [id, ctx.orgId]);
+    const antes = atual.rows[0];
+    if (!antes) throw notFound("Tipo de operação");
+    if (antes.revisao !== d.revisao) {
+      throw new DomainError("CONCURRENCY_CONFLICT",
+        "Este tipo de operação foi alterado por outra pessoa; recarregue e tente novamente",
+        { revisaoAtual: antes.revisao, revisaoEnviada: d.revisao });
+    }
+
     // Excluir tira o posto de padrão junto: deixar `padrao` marcado num registro excluído manteria o índice
     // parcial ocupado por alguém que não existe mais, e o próximo candidato seria recusado sem explicação.
-    const u = await ctx.tx.query<{ codigo: string; codigo_base: string }>(
+    const u = await ctx.tx.query(
       `update erp.tipos_operacao set excluido_em=now(), padrao=false, revisao=revisao+1
-        where id=$1 and organization_id=$2 and excluido_em is null
-        returning codigo, codigo_base`, [id, ctx.orgId]);
+        where id=$1 and organization_id=$2 and excluido_em is null and revisao=$3`,
+      [id, ctx.orgId, d.revisao]);
+    // ROW COUNT SOB RLS: fora de escopo a política devolve zero linhas, e zero linha sem conferência vira
+    // sucesso sem efeito.
     if (!u.rowCount) throw notFound("Tipo de operação");
+
+    // Perder o padrão por exclusão é a MESMA perda de estado que perdê-lo numa troca, e merece o mesmo
+    // evento: sem ele, a família fica sem padrão e a trilha só registra um `delete`, de onde ninguém deduz
+    // que o posto vagou. Sem sucessor — por isso `novoPadraoId` é nulo aqui.
+    //
+    // Aqui a origem do "quem perdeu" é a leitura TRAVADA acima, não um `returning`: com a linha sob
+    // `for update` dentro da transação, `antes.padrao` é exatamente o valor que este `update` sobrescreveu.
+    if (antes.padrao) {
+      await auditarPadraoLiberado(ctx, [{ id, codigo: antes.codigo, codigo_base: antes.codigo_base }], null);
+    }
     await audit(ctx.tx, ctx, "tipos_operacao", id, "delete",
-      { codigo: u.rows[0]!.codigo, codigoBase: u.rows[0]!.codigo_base });
+      { codigo: antes.codigo, codigoBase: antes.codigo_base });
     return { ok: true };
   }));
 }
@@ -311,13 +387,33 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
  * entender o quê. A política escolhida é a TROCA ATÔMICA (e não "falhe e peça troca explícita") porque
  * "definir como padrão" já é a declaração explícita de quem deve ser o padrão.
  */
-async function liberarPadrao(
-  ctx: { tx: { query: (sql: string, params: unknown[]) => Promise<{ rowCount: number | null; rows: { id: string }[] }> }; orgId: string },
-  codigoBase: string,
-  exceto: string | null
-): Promise<void> {
-  await ctx.tx.query(
+async function liberarPadrao(ctx: ServiceCtx, codigoBase: string, exceto: string | null): Promise<PadraoLiberado[]> {
+  const r = await ctx.tx.query<PadraoLiberado>(
     `update erp.tipos_operacao set padrao=false, revisao=revisao+1
-      where organization_id=$1 and codigo_base=$2 and padrao and excluido_em is null and ($3::uuid is null or id <> $3)`,
+      where organization_id=$1 and codigo_base=$2 and padrao and excluido_em is null and ($3::uuid is null or id <> $3)
+      returning id, codigo, codigo_base`,
     [ctx.orgId, codigoBase, exceto]);
+  return r.rows;
+}
+
+/**
+ * Registra na trilha quem PERDEU o padrão — e só quem realmente perdeu.
+ *
+ * A troca de padrão altera DUAS linhas: a que assume e a que abdica. A segunda mudava de estado e de revisão
+ * sem nenhum autor na auditoria, então "quem tirou o padrão da 2101?" não tinha resposta.
+ *
+ * O que esta função NÃO faz é decidir quem perdeu: ela recebe a lista pronta. Nas trocas, a lista vem do
+ * `returning` de `liberarPadrao` — do que o banco DE FATO alterou, nunca da intenção da rota, senão um
+ * cenário sem padrão anterior registraria uma perda que não aconteceu. Na exclusão, vem da leitura sob
+ * `for update`, que dentro da transação é o mesmo valor que o `update` sobrescreveu. Em nenhum dos dois
+ * caminhos a origem é "o que a rota pretendia fazer".
+ */
+async function auditarPadraoLiberado(ctx: ServiceCtx, liberados: PadraoLiberado[], novoPadraoId: string | null): Promise<void> {
+  for (const anterior of liberados) {
+    await audit(ctx.tx, ctx, "tipos_operacao", anterior.id, "unset_default", {
+      codigo: anterior.codigo,
+      codigoBase: anterior.codigo_base,
+      ...(novoPadraoId ? { novoPadraoId } : {})
+    });
+  }
 }

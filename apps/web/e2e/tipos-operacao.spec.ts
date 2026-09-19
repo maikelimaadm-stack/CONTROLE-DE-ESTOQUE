@@ -84,6 +84,39 @@ test("cadastra, edita (versão 2), define padrão e desativa um tipo de operaç�
   await expect(depois, "padrão inativo seria oferecido a ninguém e bloquearia o posto").not.toContainText("Padrão");
 });
 
+test("exclui pela tela — e a tela ENVIA a revisão da linha", async ({ page }) => {
+  // A exclusão é escrita otimista como qualquer outra: sem a revisão, um DELETE feito com a tela velha
+  // venceria em silêncio uma edição que o usuário nunca viu. O servidor passou a EXIGIR a revisão, e uma
+  // tela que não a mandasse quebraria com 422 — falha que nenhum teste de servidor pode ver.
+  await login(page);
+  await abrirTela(page);
+
+  const codigo = `22${Date.now().toString().slice(-4)}`;
+  await page.getByRole("button", { name: "Novo tipo de operação" }).click();
+  const forma = page.getByTestId("form-tipo-operacao");
+  await forma.getByLabel("Código").fill(codigo);
+  await forma.getByLabel("Nome").fill(uniq("Para excluir"));
+  await forma.getByLabel("Família operacional").selectOption("vendas.orcamento");
+  await forma.getByRole("button", { name: "Salvar" }).click();
+  await expect(forma).toBeHidden();
+  await expect(page.getByRole("row").filter({ hasText: codigo }).first()).toBeVisible();
+
+  const exclusoes: string[] = [];
+  page.on("request", (r) => {
+    if (r.method() === "DELETE" && r.url().includes("/api/admin/tipos-operacao/")) exclusoes.push(r.url());
+  });
+
+  await abrirMenuDaLinha(page, codigo);
+  await page.getByRole("menuitem", { name: "Excluir" }).click();
+  await page.getByTestId("confirm-dialog-confirm").click();
+
+  await expect(page.getByRole("row").filter({ hasText: codigo })).toHaveCount(0);
+  expect(exclusoes.length, "a tela chamou a exclusão exatamente uma vez").toBe(1);
+  // A asserção que importa: o número vai no pedido. Sem ela, a exclusão poderia estar passando por o
+  // servidor ter voltado a aceitar DELETE sem revisão — e o teste "verde" esconderia a regressão.
+  expect(exclusoes[0]).toMatch(/[?&]revisao=\d+/);
+});
+
 test("a família operacional oferecida vem do servidor, não de uma lista da tela", async ({ page }) => {
   await login(page);
   const doServidor = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");

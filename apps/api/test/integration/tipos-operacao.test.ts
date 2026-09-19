@@ -32,6 +32,20 @@ async function detalhe(id: string, headers = h.headers()) {
 async function editar(id: string, corpo: Record<string, unknown>, headers = h.headers()) {
   return h.app.inject({ method: "PUT", url: `/api/admin/tipos-operacao/${id}`, headers, payload: corpo });
 }
+/** A exclusão também é escrita otimista: sem a revisão da linha na mão, ela não acontece. */
+async function excluir(id: string, revisao: number | string, headers = h.headers()) {
+  return h.app.inject({ method: "DELETE", url: `/api/admin/tipos-operacao/${id}?revisao=${revisao}`, headers });
+}
+/** Trilha de auditoria de UMA linha, na ordem em que aconteceu (`id` desempata dentro do mesmo instante). */
+async function trilha(id: string): Promise<{ action: string; metadata: Record<string, unknown> | null }[]> {
+  const adm = createPool(TEST_URL, { max: 1 });
+  try {
+    const r = await adm.query<{ action: string; metadata: Record<string, unknown> | null }>(
+      "select action, metadata from erp.audit_logs where entity='tipos_operacao' and entity_id=$1 order by created_at, id", [id]);
+    return r.rows;
+  } finally { await adm.end(); }
+}
+const acoes = (t: { action: string }[]) => t.map((x) => x.action);
 
 /** Códigos distintos por caso: a unicidade é por organização e a suíte compartilha uma. */
 let sequencia = 0;
@@ -212,7 +226,7 @@ describe("TOP configurada — exclusão e unicidade de código", () => {
   it("excluir é lógico, preserva versões e NÃO libera o código", async () => {
     const c = codigo();
     const id = (j(await criar({ codigo: c, codigoBase: FAMILIA, nome: "Para excluir" })) as { id: string }).id;
-    expect((await h.app.inject({ method: "DELETE", url: `/api/admin/tipos-operacao/${id}`, headers: h.headers() })).statusCode).toBe(200);
+    expect((await excluir(id, j(await detalhe(id)).revisao as number)).statusCode).toBe(200);
     expect((await detalhe(id)).statusCode, "excluído responde a mesma 404 de inexistente").toBe(404);
 
     const adm = createPool(TEST_URL, { max: 1 });
@@ -234,8 +248,9 @@ describe("TOP configurada — autorização", () => {
       h.app.inject({ method: "GET", url: "/api/admin/tipos-operacao", headers: op }),
       criar({ codigo: codigo(), codigoBase: FAMILIA, nome: "Nao deve nascer" }, op),
       editar(id, { nome: "Nao deve mudar", revisao: 1 }, op),
-      h.app.inject({ method: "DELETE", url: `/api/admin/tipos-operacao/${id}`, headers: op })
+      excluir(id, 1, op)
     ]);
+    // Pedidos BEM FORMADOS: o 403 tem de vir da capacidade que falta, não de um 422 de entrada.
     expect(r.map((x) => x.statusCode)).toEqual([403, 403, 403, 403]);
   });
 
@@ -252,12 +267,193 @@ describe("TOP configurada — autorização", () => {
     expect((await detalhe(id, B)).statusCode).toBe(404);
     expect((await h.app.inject({ method: "GET", url: `/api/admin/tipos-operacao/${id}/versoes`, headers: B })).statusCode).toBe(404);
     expect((await editar(id, { nome: "invadido", revisao: 1 }, B)).statusCode).toBe(404);
-    expect((await h.app.inject({ method: "DELETE", url: `/api/admin/tipos-operacao/${id}`, headers: B })).statusCode).toBe(404);
+    // A revisão REAL da linha de A, na mão de B: mesmo assim 404. A ordem "404 antes de 409" é o que impede
+    // que a diferença entre os dois códigos vire um oráculo de existência.
+    expect((await excluir(id, j(await detalhe(id)).revisao as number, B)).statusCode).toBe(404);
 
     // E o registro de A continua intacto e invisível na lista de B.
     expect(j(await detalhe(id)).nome).toBe("Só da organização A");
     const listaB = j(await h.app.inject({ method: "GET", url: "/api/admin/tipos-operacao", headers: B }));
     expect(listaB.total, "a organização B começa sem nenhuma TOP").toBe(0);
+  });
+});
+
+/**
+ * A TRILHA RESPONDE "QUEM?" PARA TODA MUDANÇA DE ESTADO (bloqueador B da R1).
+ *
+ * A troca de padrão altera DUAS linhas — a que assume e a que abdica. Só a primeira tinha evento. A segunda
+ * mudava de `padrao` e de `revisao` sem autor nenhum, e a pergunta óbvia do administrador ("quem tirou o
+ * padrão da 2101?") não tinha resposta em lugar nenhum: nem na trilha, nem na linha, nem na versão — porque
+ * `padrao` não é conteúdo e não gera versão.
+ *
+ * O que se mede aqui é a trilha da linha QUE PERDEU, que é justamente a que ninguém pensa em consultar.
+ */
+describe("TOP configurada — trilha de auditoria do padrão", () => {
+  it("A) B vira padrão e A era padrão: A registra unset_default, B registra set_default", async () => {
+    const familia = "estoque.transferencia_entre_armazens";
+    const a = (j(await criar({ codigo: codigo(), codigoBase: familia, nome: "Transferência A", padrao: true })) as { id: string }).id;
+    const b = (j(await criar({ codigo: codigo(), codigoBase: familia, nome: "Transferência B" })) as { id: string }).id;
+
+    expect((await editar(b, { padrao: true, revisao: j(await detalhe(b)).revisao as number })).statusCode).toBe(200);
+
+    expect(acoes(await trilha(b)), "quem assume").toEqual(["create", "set_default"]);
+    const trilhaA = await trilha(a);
+    expect(acoes(trilhaA), "quem ABDICA — o evento que faltava").toEqual(["create", "set_default", "unset_default"]);
+    // E o evento diz para QUEM o posto foi: sem isso, a trilha registra a perda e não explica a causa.
+    expect(trilhaA[2]!.metadata).toMatchObject({ novoPadraoId: b });
+  });
+
+  it("B) criar já padrão havendo anterior: a anterior perde o posto COM autor", async () => {
+    const familia = "estoque.transferencia_entre_empresas";
+    const anterior = (j(await criar({ codigo: codigo(), codigoBase: familia, nome: "Entre empresas antiga", padrao: true })) as { id: string }).id;
+    const nova = (j(await criar({ codigo: codigo(), codigoBase: familia, nome: "Entre empresas nova", padrao: true })) as { id: string }).id;
+
+    expect(j(await detalhe(anterior)).padrao).toBe(false);
+    expect(acoes(await trilha(anterior))).toEqual(["create", "set_default", "unset_default"]);
+    expect(acoes(await trilha(nova)), "nascer padrão também é set_default explícito").toEqual(["create", "set_default"]);
+  });
+
+  it("C) a PRIMEIRA padrão da família: create + set_default, e ninguém perde nada", async () => {
+    const familia = "estoque.producao_de_racao";
+    const primeira = (j(await criar({ codigo: codigo(), codigoBase: familia, nome: "Ração padrão", padrao: true })) as { id: string }).id;
+    expect(acoes(await trilha(primeira))).toEqual(["create", "set_default"]);
+    // NÃO INVENTAR EVENTO é a outra metade do bloqueador: auditar a INTENÇÃO (e não o `returning`)
+    // registraria uma perda que não aconteceu, e a trilha passaria a mentir exatamente onde é consultada.
+    const adm = createPool(TEST_URL, { max: 1 });
+    try {
+      const n = await adm.query<{ n: string }>(
+        "select count(*) n from erp.audit_logs where entity='tipos_operacao' and action='unset_default' and metadata->>'codigoBase'=$1", [familia]);
+      expect(Number(n.rows[0]!.n), "sem padrão anterior, nenhum unset_default é inventado").toBe(0);
+    } finally { await adm.end(); }
+  });
+
+  it("D) desativar a padrão registra deactivate E unset_default", async () => {
+    const id = (j(await criar({ codigo: codigo(), codigoBase: "vendas.orcamento", nome: "Orçamento padrão", padrao: true })) as { id: string }).id;
+    expect((await editar(id, { ativo: false, revisao: j(await detalhe(id)).revisao as number })).statusCode).toBe(200);
+    // Duas coisas aconteceram com a linha, e a trilha registra as duas: uma ação por mudança.
+    expect(acoes(await trilha(id))).toEqual(["create", "set_default", "deactivate", "unset_default"]);
+  });
+
+  it("E) excluir a padrão registra unset_default E delete", async () => {
+    const id = (j(await criar({ codigo: codigo(), codigoBase: "financeiro.conta_a_receber", nome: "Receber padrão", padrao: true })) as { id: string }).id;
+    expect((await excluir(id, j(await detalhe(id)).revisao as number)).statusCode).toBe(200);
+    // Sem o unset_default, a família fica sem padrão e a trilha só mostra um `delete` — de onde ninguém
+    // deduz que o posto vagou.
+    expect(acoes(await trilha(id))).toEqual(["create", "set_default", "unset_default", "delete"]);
+  });
+});
+
+/**
+ * SALVAR SEM ALTERAR NÃO É ESCRITA (bloqueador C.1 da R1).
+ *
+ * O custo do `update` inútil não é o `update`: é a REVISÃO. Ela é a moeda do controle de concorrência, e
+ * incrementá-la sem motivo invalidava toda outra aba aberta na mesma TOP — que passava a receber 409 por
+ * uma mudança que nunca existiu. Junto vinha um `update` sem diff na trilha, que ninguém sabe ler.
+ */
+describe("TOP configurada — no-op", () => {
+  it("reenviar o mesmo conteúdo não grava, não versiona, não incrementa e não audita", async () => {
+    const id = (j(await criar({ codigo: codigo(), codigoBase: FAMILIA, nome: "Imutada", descricao: "igual" })) as { id: string }).id;
+    const antes = j(await detalhe(id));
+    const eventosAntes = (await trilha(id)).length;
+
+    const r = await editar(id, {
+      nome: antes.nome, descricao: antes.descricao, ativo: antes.ativo, padrao: antes.padrao, revisao: antes.revisao
+    });
+    expect(r.statusCode, r.body).toBe(200);
+
+    const depois = j(await detalhe(id));
+    expect(depois.revisao, "a revisão NÃO sobe").toBe(antes.revisao);
+    expect(depois.versao, "nenhuma versão nova").toBe(antes.versao);
+    expect(depois.atualizadoEm, "`atualizado_em` intacto").toBe(antes.atualizadoEm);
+    expect((await trilha(id)).length, "nenhum evento de auditoria").toBe(eventosAntes);
+    expect(j(r).revisao, "a resposta devolve o estado atual, não um estado novo").toBe(antes.revisao);
+
+    // A PREMISSA: a mesma rota, com uma mudança de verdade, SOBE a revisão. Sem este par, um handler que
+    // simplesmente não gravasse nada passaria no teste acima.
+    expect((await editar(id, { nome: "Agora mudou", revisao: antes.revisao as number })).statusCode).toBe(200);
+    expect(j(await detalhe(id)).revisao).toBe((antes.revisao as number) + 1);
+  });
+
+  it("o no-op não consome a revisão: a aba ao lado continua podendo editar", async () => {
+    const id = (j(await criar({ codigo: codigo(), codigoBase: FAMILIA, nome: "Duas abas" })) as { id: string }).id;
+    const lida = j(await detalhe(id));
+    // Aba 1 salva sem mexer em nada.
+    expect((await editar(id, { nome: lida.nome, revisao: lida.revisao })).statusCode).toBe(200);
+    // Aba 2, aberta antes, ainda tem a MESMA revisão — e tem de continuar valendo.
+    const r = await editar(id, { nome: "Escrita legítima da aba 2", revisao: lida.revisao });
+    expect(r.statusCode, "o no-op não pode ter invalidado a outra aba").toBe(200);
+    expect(j(await detalhe(id)).nome).toBe("Escrita legítima da aba 2");
+  });
+});
+
+/**
+ * CONTRATO DE ENTRADA NÃO CANÔNICO É RECUSADO (bloqueador C.2 da R1).
+ *
+ * `z.object` descarta chave desconhecida EM SILÊNCIO. `{"ativoo": false}` virava 200 com o campo ignorado:
+ * o administrador lia "salvo" e a TOP continuava ativa. Num cadastro de configuração isso é especialmente
+ * caro, porque ninguém confere o efeito depois.
+ */
+describe("TOP configurada — entrada estrita", () => {
+  it("campo desconhecido na criação é 422, e nada é gravado", async () => {
+    const c = codigo();
+    const r = await criar({ codigo: c, codigoBase: FAMILIA, nome: "Com typo", ativoo: false });
+    expect(r.statusCode, r.body).toBe(422);
+    const lista = j(await h.app.inject({ method: "GET", url: `/api/admin/tipos-operacao?search=${c}`, headers: h.headers() }));
+    expect(lista.total, "recusa não deixa rastro").toBe(0);
+  });
+
+  it("campo desconhecido na edição é 422 — e o estado NÃO muda", async () => {
+    const id = (j(await criar({ codigo: codigo(), codigoBase: FAMILIA, nome: "Estrita", ativo: true })) as { id: string }).id;
+    const antes = j(await detalhe(id));
+    const r = await editar(id, { ativoo: false, revisao: antes.revisao });
+    expect(r.statusCode, r.body).toBe(422);
+    const depois = j(await detalhe(id));
+    // O defeito original: 200 com o campo descartado. A TOP seguia ATIVA e a revisão subia mesmo assim.
+    expect([depois.ativo, depois.revisao]).toEqual([true, antes.revisao]);
+  });
+
+  it("revisão ausente na exclusão é 422 — a porta que tinha ficado aberta", async () => {
+    const id = (j(await criar({ codigo: codigo(), codigoBase: FAMILIA, nome: "Sem revisão" })) as { id: string }).id;
+    const r = await h.app.inject({ method: "DELETE", url: `/api/admin/tipos-operacao/${id}`, headers: h.headers() });
+    expect(r.statusCode, r.body).toBe(422);
+    expect((await detalhe(id)).statusCode, "a TOP continua lá").toBe(200);
+  });
+});
+
+/**
+ * EXCLUIR TAMBÉM PERDE PARA UMA EDIÇÃO MAIS NOVA (bloqueador C.3 da R1).
+ *
+ * Era o único caminho de escrita sem `revisao`: o administrador A lia a revisão 5, o B editava (virava 6), e
+ * o A excluía com a tela velha. A exclusão vencia em silêncio uma alteração que o A nunca viu — o mesmo
+ * lost update que o PUT já impedia, pela porta que tinha sobrado.
+ */
+describe("TOP configurada — concorrência na exclusão", () => {
+  it("revisão velha é 409 e a TOP CONTINUA existindo", async () => {
+    const id = (j(await criar({ codigo: codigo(), codigoBase: FAMILIA, nome: "Disputada na exclusão" })) as { id: string }).id;
+    const lida = j(await detalhe(id));
+
+    // O administrador B edita primeiro.
+    expect((await editar(id, { nome: "Edição que o A não viu", revisao: lida.revisao })).statusCode).toBe(200);
+
+    const r = await excluir(id, lida.revisao as number);
+    expect(r.statusCode, r.body).toBe(409);
+    expect((j(r).error as { code: string }).code).toBe("CONCURRENCY_CONFLICT");
+    // A conclusão que importa: a edição do B sobreviveu.
+    expect((await detalhe(id)).statusCode).toBe(200);
+    expect(j(await detalhe(id)).nome).toBe("Edição que o A não viu");
+  });
+
+  it("com a revisão corrente, a exclusão acontece", async () => {
+    // A PREMISSA do caso acima: sem ela, um handler que recusasse SEMPRE passaria no 409 provando nada.
+    const id = (j(await criar({ codigo: codigo(), codigoBase: FAMILIA, nome: "Recarregada" })) as { id: string }).id;
+    const r = await excluir(id, j(await detalhe(id)).revisao as number);
+    expect(r.statusCode, r.body).toBe(200);
+    expect((await detalhe(id)).statusCode).toBe(404);
+  });
+
+  it("id inexistente responde 404 mesmo com revisão errada — 409 não vira oráculo", async () => {
+    const r = await excluir("00000000-0000-0000-0000-000000000000", 999);
+    expect(r.statusCode).toBe(404);
   });
 });
 

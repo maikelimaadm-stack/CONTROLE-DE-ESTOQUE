@@ -130,7 +130,9 @@ create table erp.tipos_operacao_versoes (
   descricao text check (length(descricao) <= 500),
   criado_por uuid references erp.users(id),
   criado_em timestamptz not null default now(),
-  unique (tipo_operacao_id, versao)
+  -- A chave candidata inclui a organização porque é ela que a FK da versão CORRENTE referencia (seção 4.1):
+  -- sem `organization_id` na chave, a FK do pai poderia ser satisfeita por uma versão de outro tenant.
+  unique (tipo_operacao_id, organization_id, versao)
 );
 
 -- Histórico de UMA TOP, da mais recente para a mais antiga.
@@ -142,6 +144,23 @@ create index ix_tipos_operacao_versoes_historico on erp.tipos_operacao_versoes (
 alter table erp.tipos_operacao add constraint uq_tipos_operacao_tenant unique (id, organization_id);
 alter table erp.tipos_operacao_versoes add constraint fk_tipos_operacao_versoes_tenant
   foreign key (tipo_operacao_id, organization_id) references erp.tipos_operacao (id, organization_id);
+
+-- ---------- 4.1) a VERSÃO CORRENTE tem de existir ----------
+-- `versao_atual` era só um inteiro, e o runtime confia nele para montar o `join` que devolve nome e
+-- descrição. Um `update ... set versao_atual = 999` produzia um ESTADO IMPOSSÍVEL: a identidade existe e o
+-- conteúdo corrente não. A leitura não falhava — ela simplesmente DEVOLVIA ZERO LINHAS, e a TOP sumia da
+-- listagem e do detalhe sem erro nenhum. Invariante crítica mora no banco; a aplicação é complemento.
+--
+-- DEFERRABLE INITIALLY DEFERRED porque a criação insere o PAI antes da versão 1, na mesma transação: a
+-- checagem imediata reprovaria a ordem natural da escrita. Adiada para o COMMIT, ela aceita a transação
+-- correta e recusa a que terminasse com a versão apontada inexistente.
+--
+-- A tripla inclui `organization_id` dos dois lados: uma versão de OUTRO tenant não pode satisfazer a
+-- versão corrente desta TOP — é a mesma razão da chave estrangeira composta acima.
+alter table erp.tipos_operacao add constraint fk_tipos_operacao_versao_atual
+  foreign key (id, organization_id, versao_atual)
+  references erp.tipos_operacao_versoes (tipo_operacao_id, organization_id, versao)
+  deferrable initially deferred;
 
 comment on table erp.tipos_operacao_versoes is
   'Conteúdo IMUTÁVEL e versionado de uma TOP configurada. Editar cria versão N+1; nenhuma versão é sobrescrita ou apagada, porque o documento que citar a versão precisa continuar significando o que significava.';
@@ -230,6 +249,11 @@ begin
    where schemaname = 'erp' and tablename in ('tipos_operacao', 'tipos_operacao_versoes');
   if v_politicas <> 2 then
     raise exception 'TOP-CONFIG-01: esperava exatamente 1 politica por tabela (2 no total), encontrei % — politicas PERMISSIVE combinam com OR e a mais frouxa venceria', v_politicas;
+  end if;
+
+  -- A FK da versão corrente é a diferença entre "o conteúdo atual existe" e "o runtime confia num inteiro".
+  if not exists (select 1 from pg_constraint where conname = 'fk_tipos_operacao_versao_atual' and contype = 'f') then
+    raise exception 'TOP-CONFIG-01: a FK da versao corrente (fk_tipos_operacao_versao_atual) nao foi criada';
   end if;
 
   select count(*) into v_gatilhos from pg_trigger t join pg_class c on c.oid = t.tgrelid
