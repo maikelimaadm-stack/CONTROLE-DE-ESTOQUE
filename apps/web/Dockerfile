@@ -1,4 +1,4 @@
-# Web (Next.js) — imagem para a Railway, uma das DUAS superfícies web suportadas (docs/DEPLOYMENT.md § Superfície web). Build a partir da raiz do monorepo:
+# Web (Next.js) — imagem do web para a Railway; o papel operacional é definido em docs/DEPLOYMENT.md § Superfície web. Build a partir da raiz do monorepo:
 #   docker build -f apps/web/Dockerfile --build-arg NEXT_PUBLIC_API_URL=https://... -t agro-web .
 FROM node:22-alpine AS build
 WORKDIR /app

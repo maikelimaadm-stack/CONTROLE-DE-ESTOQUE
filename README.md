@@ -3,7 +3,7 @@
 Sistema de gestão agropecuária multi-tenant (organizações × fazendas) reimplementado a partir do levantamento funcional de um sistema de referência (ver `docs/reference/`). Nenhum código, asset ou marca do sistema de referência foi copiado: a implementação é própria, com melhorias arquiteturais documentadas (`docs/DECISIONS.md`, `docs/parity/`).
 
 ## Stack
-- **Web**: Next.js 16 (App Router) · React 19 · TypeScript · Tailwind 4 · componentes próprios estilo shadcn · TanStack Query/Table · Recharts — duas superfícies web suportadas, Railway e Vercel, ambas de `main` (`apps/web`; contrato em `docs/DEPLOYMENT.md` § Superfície web).
+- **Web**: Next.js 16 (App Router) · React 19 · TypeScript · Tailwind 4 · componentes próprios estilo shadcn · TanStack Query/Table · Recharts — implantação e topologia conforme `docs/DEPLOYMENT.md` § Superfície web (`apps/web`).
 - **API**: Node 22 · Fastify 5 · zod · pg · decimal.js — deploy no **Railway** (`apps/api`, `apps/api/Dockerfile`).
 - **Banco**: PostgreSQL 16 / **Supabase** (schema `erp`, migrations SQL versionadas, RLS por organização, Auth, Storage) — `supabase/migrations`.
 - **Pacotes**: `packages/shared` (erros, dinheiro, datas), `packages/domain` (regras, máquinas de estado, registro declarativo de cadastros, catálogo de permissões), `packages/db` (pool, migrations, seed), `packages/config` (tsconfig/eslint base).
