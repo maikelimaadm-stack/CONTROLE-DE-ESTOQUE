@@ -175,6 +175,11 @@ const LISTAGENS_CUSTOM_SEM_ID_GLOBAL = {
   "apps/web/src/app/(app)/relatorios/[key]/page.tsx": "relatório parametrizado: linhas agregadas, não registros de uma entidade",
   "apps/web/src/features/admin/audit.tsx": "eventos de auditoria (audit_logs) — infraestrutura, fora do catálogo por contrato",
   "apps/web/src/features/admin/users.tsx": "membros da organização: entidade sem ID Global",
+  // A TOP configurada JÁ NASCE com um localizador humano escolhido pelo próprio usuário — o `codigo`
+  // ("2103"), que é a razão de ser do cadastro. Dar-lhe também um ID Global poria DOIS números humanos na
+  // mesma linha, e o usuário teria de aprender qual dos dois usar para falar do mesmo registro. É
+  // configuração da organização, não lançamento navegável por número.
+  "apps/web/src/features/admin/tipos-operacao.tsx": "tipo de operação configurado: o `codigo` do próprio cadastro já é o localizador humano; um segundo número competiria com ele",
   "apps/web/src/features/fleet/depreciations.tsx": "cálculo de depreciação por equipamento, não uma entidade própria",
   "apps/web/src/features/hr/advances.tsx": "adiantamentos salariais: entidade fora do catálogo",
   "apps/web/src/features/livestock/matings.tsx": "coberturas: entidade fora do catálogo",

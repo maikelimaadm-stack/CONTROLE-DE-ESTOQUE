@@ -14,6 +14,7 @@ import { AuditPanel } from "@/features/admin/audit";
 import { ParametersPanel } from "@/features/admin/parameters";
 import { ExportsPanel } from "@/features/admin/exports";
 import { SupplySlaPanel } from "@/features/supply/sla";
+import { TiposOperacaoPanel } from "@/features/admin/tipos-operacao";
 import { OpeningBalancesPanel } from "@/features/stock/opening-balances";
 import { OpeningMovementsPanel } from "@/features/financial/opening-movements";
 import { FiscalStatusPanel } from "@/features/fiscal/status";
@@ -47,6 +48,7 @@ function Inner() {
       res("configuracoes.produtos.products", "products"), res("configuracoes.produtos.product-groups", "product_groups"), res("configuracoes.produtos.measurement-units", "measurement_units"), res("configuracoes.produtos.cultivations", "cultivations"),
       res("configuracoes.produtos.warehouses", "warehouses"), res("configuracoes.produtos.addressings", "addressings"), res("configuracoes.produtos.provider-launch-profiles", "provider_launch_profiles"), res("configuracoes.produtos.apportionment-categories", "apportionment_categories")
     ]} />),
+    tab("configuracoes.operacoes", <ViewSegment tabs={[tab("configuracoes.operacoes.tipos-operacao", scroll(<TiposOperacaoPanel />))]} />),
     tab("configuracoes.compras", <ViewSegment tabs={[tab("configuracoes.compras.sla", scroll(<SupplySlaPanel />)), res("configuracoes.compras.authorizers", "authorizers")]} />),
     tab("configuracoes.financeiro", <ViewSegment tabs={[
       res("configuracoes.financeiro.financial-categories", "financial_categories"), res("configuracoes.financeiro.title-types", "title_types"), res("configuracoes.financeiro.payment-methods", "payment_methods"),

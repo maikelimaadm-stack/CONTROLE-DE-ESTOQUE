@@ -270,4 +270,10 @@ export const CANONICAL_COMPANY_COLUMNS = ["empresa_id", "empresa_origem_id", "em
 export const canonicalCompanyColumnsOf = (t) => CANONICAL_COMPANY_COLUMNS.filter((c) => t.columns.has(c));
 export const companyColumnsOf = (t) => COMPANY_COLUMNS.filter((c) => t.columns.has(c));
 export const isOrgScoped = (t) => t.columns.has("organization_id");
-export const isSoftDeletable = (t) => t.columns.has("deleted_at");
+/**
+ * Exclusão lógica nas DUAS grafias. `deleted_at` é o acervo; `excluido_em` é a nomenclatura de destino
+ * (`docs/DOMAIN-NAMING-STANDARD.md` §1.6), estreada por `erp.tipos_operacao`. Reconhecer só a primeira faria
+ * o dicionário declarar "não" para uma tabela que É soft-deletable — documento gerado dizendo o contrário do
+ * schema, que é o defeito que este gerador existe para impedir.
+ */
+export const isSoftDeletable = (t) => t.columns.has("deleted_at") || t.columns.has("excluido_em");

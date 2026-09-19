@@ -1,9 +1,34 @@
 # Contrato do Tipo de Operação (TOP)
 
-> Contrato de produto (BASE2-02). Registry: `packages/domain/src/tipo-operacao.ts`.
+> Contrato de produto (BASE2-02, estendido pela TOP-CONFIG-01).
+> Registry das FAMÍLIAS CANÔNICAS: `packages/domain/src/tipo-operacao.ts`.
+> Camada CONFIGURÁVEL: `erp.tipos_operacao` + `packages/domain/src/tipo-operacao-configurado.ts`.
 > Rótulos: `packages/plataforma/src/idiomas/pt-BR.ts` (`top.*`).
 > Referências: `packages/domain/dicionario-dados.mjs` (campos `top` / `tops` / `discriminadorTop`).
-> Gate: `packages/domain/test/tipo-operacao.test.ts` e `node scripts/data-dictionary.mjs --check`.
+> Gates: `packages/domain/test/tipo-operacao.test.ts`, `node scripts/data-dictionary.mjs --check` e
+> `node scripts/familia-operacional-ssot-audit.mjs` (proíbe segunda lista das famílias).
+
+## 0. Duas camadas, desde a TOP-CONFIG-01
+
+Até a BASE2-02 existia UMA coisa chamada TOP. Desde a TOP-CONFIG-01 existem DUAS, e confundi-las é o erro
+que este capítulo existe para impedir.
+
+| | **Família canônica de operação** | **TOP configurada** |
+| --- | --- | --- |
+| O que é | a espécie operacional que o PRODUTO conhece e sabe executar | o tipo que a ORGANIZAÇÃO cadastra e nomeia |
+| Exemplo | `vendas.venda` | `2103 — Venda de Gado a Prazo` |
+| Onde mora | `packages/domain/src/tipo-operacao.ts`, em Git | `erp.tipos_operacao`, no banco, por organização |
+| Quem muda | uma fatia, com revisão e migration | o administrador, pela tela |
+| Quantidade | uma por espécie | zero, uma ou MUITAS por família |
+| Executa efeito? | **não** | **não** |
+
+A TOP configurada **aponta** para uma família (`codigo_base`) e **não pode** apontar para nada que o
+registry não declare — a validação é contra `CODIGOS_TIPO_OPERACAO`, nunca contra uma cópia da lista.
+
+**CLASSIFICAR ≠ EXECUTAR continua valendo, e vale MAIS.** Agora que o usuário pode criar tipos de operação,
+a tentação de pendurar efeito neles é maior: "toda TOP 2103 gera título a prazo". Não. Quem executa continua
+sendo o serviço de domínio; a TOP configurada é um rótulo de configuração sobre a família, e a família é uma
+classificação. Nenhuma das duas tem handler.
 
 ## 1. O que a TOP é
 
@@ -40,12 +65,25 @@ reprova quando diverge.
 
 Declarado sem rodeio, para não precisar de interpretação:
 
-- **TOP NÃO é tabela de banco** nesta fatia. Não existe `erp.tipos_operacao`, não existe `top_id`, e
-  nenhum documento persiste a sua TOP.
-- **TOP NÃO é configuração editável.** Não há CRUD, não há tela administrativa, não há editor.
+- ~~**TOP NÃO é tabela de banco** nesta fatia. Não existe `erp.tipos_operacao`, não existe `top_id`, e
+  nenhum documento persiste a sua TOP.~~
+  **HISTÓRICO DA BASE2-02 / SUPERADO POR TOP-CONFIG-01.** `erp.tipos_operacao` existe desde a migration
+  0020 — mas para a CAMADA CONFIGURÁVEL (§0), não para as famílias canônicas, que continuam só em Git.
+  A parte que **permanece vigente**: nenhum documento persiste TOP ainda (`top_id` não existe em documento
+  nenhum); isso é a TOP-CONFIG-02, e até lá o §9 abaixo continua descrevendo o futuro, não o presente.
+- ~~**TOP NÃO é configuração editável.** Não há CRUD, não há tela administrativa, não há editor.~~
+  **HISTÓRICO DA BASE2-02 / SUPERADO POR TOP-CONFIG-01.** Existe CRUD e existe tela
+  (Configurações › Operações › Tipos de Operação) — da TOP CONFIGURADA. A parte que **permanece vigente, e
+  é a que importava**: a FAMÍLIA CANÔNICA continua não sendo editável. Não há CRUD de família, não há tela
+  que a crie, e o gate `familia-operacional-ssot-audit` impede até que alguém redigite a lista.
 - **TOP NÃO é permission key.** Nenhum código de TOP termina em `.view`/`.create`/`.edit`/`.delete`, e o
   teste de contrato reprova quem tentar.
-- **TOP NÃO é endpoint** nem **service**. Não existe `/api/top`, `/api/tipos-operacao`, `/api/base2`.
+- **TOP NÃO é endpoint de lançamento** nem **service**. Não existe `/api/top` nem `/api/base2`, e nenhuma
+  tela de lançamento consulta a TOP por rede — os detalhes do Modelo Base 2 resolvem a família pelo registry
+  em memória (`tipoOperacaoDoRegistro`). O que existe desde a TOP-CONFIG-01 é
+  `/api/admin/tipos-operacao`, que é **administração de configuração**: serve a tela de cadastro e mais
+  nada. Um consumidor de lançamento que passe a depender dela é regressão, e o E2E do Base 2 prova que não
+  passou.
 - **TOP NÃO é situação (status).** Situação muda com o tempo; a operação é o que o registro sempre foi.
 - **TOP NÃO é ID Global.** O ID Global localiza um registro dentro da organização; a TOP diz que espécie
   de operação ele é. Um é endereço humano, o outro é classe.
