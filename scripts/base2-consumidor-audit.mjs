@@ -64,6 +64,28 @@ const TELAS = {
       { procura: "c\\.(title|person)\\b", deve: false, motivo: "a identidade apresentada não pode sair da ROTA (`c.title`/`c.person`): variante desconhecida usa rótulo NEUTRO" },
       { procura: "\"Título financeiro\"", deve: true, motivo: "variante desconhecida precisa de rótulo neutro e fail-closed, nunca o da rota" }
     ]
+  },
+  // TRÊS variantes na MESMA tabela e na MESMA tela, com TRÊS famílias de capacidade. O mesmo motivo da
+  // BASE2-03B, elevado: aqui a tela já classificava pela ROTA (`K[kind]`) e, pior, um segmento
+  // desconhecido CAÍA em `K["sales"]` — herdava o rótulo, a família de permissão e as ações de VENDA
+  // sobre um registro que ninguém classificou. A API passou a recusar a rota errada (404), o que torna
+  // rota e registro coincidentes nas portas existentes — e portanto a regressão volta a ser
+  // indistinguível por comportamento (decisão 171). Por isso o gate é ESTÁTICO: o E2E cobre o efeito, e
+  // isto cobre a causa.
+  "apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx": {
+    fatia: "BASE2-03C — vendas / sales_documents",
+    regras: [
+      { procura: "tipoOperacaoDoRegistro\\([^)]*,\\s*d\\s*\\)", deve: true, motivo: "a TOP tem de ser resolvida a partir do REGISTRO (`d`), nunca da rota" },
+      { procura: "tipoOperacaoDoRegistro\\([^)]*\\bsegmentoDaRota\\b", deve: false, motivo: "a TOP não pode sair do segmento da URL — ele é porta de navegação, não autoridade" },
+      // ANCORADA NA ATRIBUIÇÃO da identidade, não numa ocorrência qualquer de `d["kind"]`: é a linha que
+      // decide o que a tela diz que o registro É.
+      { procura: "const variante = d \\? String\\(d\\[\"kind\"\\]\\)", deve: true, motivo: "a variante apresentada sai do REGISTRO (`d[\"kind\"]`), não de `params.kind`" },
+      { procura: "DO_REGISTRO\\[segmentoDaRota\\]", deve: false, motivo: "indexar o mapa pelo segmento da URL é classificar pela porta por onde o registro foi pedido" },
+      // O FALLBACK PARA VENDA é o defeito nomeado: `K[kind] ?? K["sales"]`. Ele não pode voltar em
+      // forma nenhuma — nem indexado por rota, nem por registro.
+      { procura: "\\?\\?\\s*(K|DO_REGISTRO)\\[\"sale", deve: false, motivo: "variante desconhecida NÃO herda a semântica de venda — o fallback silencioso é o defeito que esta fatia fechou" },
+      { procura: "\"Documento de venda\"", deve: true, motivo: "variante desconhecida precisa de rótulo NEUTRO e fail-closed" }
+    ]
   }
 };
 
