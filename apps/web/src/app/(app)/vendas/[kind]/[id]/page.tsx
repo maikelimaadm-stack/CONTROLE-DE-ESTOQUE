@@ -181,6 +181,9 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         <CampoTipoOperacao estado={estadoTopDestino} valor={topDestino} onChange={setTopDestino} span={12} />
       </div>
     </Dialog>
-    <Confirm open={confirmar === "cancel"} onOpenChange={() => setConfirmar(null)} title="Cancelar documento" text="Vendas confirmadas têm estoque e títulos estornados." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, body: { reason: "Cancelado pelo usuário" } })} />
+    {/* `idem: true` como na confirmação e na conversão: cancelar venda confirmada ESTORNA estoque e
+        cancela títulos, e um reenvio do MESMO pedido não pode virar um segundo estorno. Era a única das
+        três ações desta tela que mandava o pedido sem chave. */}
+    <Confirm open={confirmar === "cancel"} onOpenChange={() => setConfirmar(null)} title="Cancelar documento" text="Vendas confirmadas têm estoque e títulos estornados." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, idem: true, body: { reason: "Cancelado pelo usuário" } })} />
   </Base2Shell>;
 }

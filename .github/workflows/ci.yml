@@ -164,6 +164,14 @@ jobs:
       # primeira PR cuja base já contenha o cutover. Falha fechado se não conseguir ler a base.
       - name: Esta execução atravessa o cutover do contador? (05C-2)
         run: node scripts/skew-cutover-contador.mjs --github-env
+      # A API DA BASE JÁ TEM A DESCOBERTA DE CAPACIDADE DA TOP? (TOP-CONFIG-02)
+      # A prova do sentido 1 depende do mundo em que ESTA PR vive: com a base anterior à #47 cobra-se o
+      # bloqueio da tela; com a base posterior, cobra-se que a descoberta responde 200 com contractVersion 1
+      # e que o web NÃO trata um servidor compatível como servidor antigo. A decisão sai da MEDIÇÃO da
+      # árvore da base — não de SHA digitado nem de variável que alguém liga —, então expira sozinha e volta
+      # ao mundo legado se a #47 for revertida. Falha fechado se não conseguir ler a base.
+      - name: A API da base já tem a descoberta de capacidade da TOP? (TOP-CONFIG-02)
+        run: node scripts/skew-capacidade-top.mjs --github-env
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
       # SENTIDO 1 — o web desta PR contra a API que está no ar (o Vercel sobe antes do Railway).
       - name: E2E de version skew (web deste HEAD × API da base)
