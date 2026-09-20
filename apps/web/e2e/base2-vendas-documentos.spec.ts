@@ -236,3 +236,30 @@ test("BASE2-03C: o histórico oficial abre com conteúdo real; anexos NÃO são 
   // existe. Abrir a superfície é outra fatia, com backend.
   await expect(page.getByTestId("base2-anexos"), "não abrir anexos sem suporte do servidor").toHaveCount(0);
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * 5 · CANCELAMENTO IDEMPOTENTE (HOTFIX de concorrência)
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+test("HOTFIX: o cancelamento sai da tela COM Idempotency-Key, como a confirmação e a conversão", async ({ page }) => {
+  // Das três ações desta tela, o cancelamento era a única que mandava o pedido sem chave — e é a que
+  // ESTORNA estoque e cancela títulos quando a venda está confirmada. Um reenvio do mesmo pedido sem
+  // chave é indistinguível, para o servidor, de um pedido novo.
+  //
+  // A asserção é sobre o CABEÇALHO que sai do navegador, não sobre o código-fonte da tela: é o que um
+  // proxy, um retry ou uma segunda aba realmente entregariam à API.
+  await login(page);
+  const d = await criar(page, "budget");
+  await abrir(page, d);
+
+  const pedido = page.waitForRequest((r) => r.method() === "POST" && r.url().includes(`/api/sales/${d.rota}/${d.id}/cancel`));
+  await page.getByRole("button", { name: /^Cancelar / }).click();
+  await page.getByTestId("confirm-dialog-confirm").click();
+  const req = await pedido;
+
+  expect(req.headers()["idempotency-key"], "sem chave, o reenvio do cancelamento vira um segundo estorno").toBeTruthy();
+  expect(req.postDataJSON(), "o motivo continua sendo enviado, e agora é conferido pelo servidor").toMatchObject({ reason: expect.any(String) });
+
+  const depois = await api<{ status: string }>(page, "GET", `/api/sales/${d.rota}/${d.id}`);
+  expect(depois.status, "o clique precisa ter cancelado de verdade — cabeçalho certo em pedido que não faz nada não prova nada").toBe("cancelled");
+});
