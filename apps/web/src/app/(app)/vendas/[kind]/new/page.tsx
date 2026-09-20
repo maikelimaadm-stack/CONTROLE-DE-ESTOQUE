@@ -33,7 +33,45 @@ function Inner({ kind }: { kind: string }) {
   const estadoTop = useTopsDaVariante(kind);
   const top = topSelecionada(estadoTop, pedido);
 
-  if (top) return <Formulario kind={kind} top={top} familia={estadoTop.situacao === "pronto" ? estadoTop.dados.family.label : ""} />;
+  /**
+   * A TRAVA DA SESSÃO DE EDIÇÃO — validar uma vez na ENTRADA, não a cada renderização.
+   *
+   * ┌─ O DEFEITO QUE ELA FECHA ──────────────────────────────────────────────────────────────────────┐
+   * │ `top` é DERIVADO da lista que a query devolve. Se a lista for buscada de novo enquanto o        │
+   * │ usuário digita, e a TOP escolhida tiver saído dela no meio do caminho, `top` vira `null`,       │
+   * │ `Formulario` sai da árvore e TUDO o que foi digitado — cliente, datas, itens, observação,       │
+   * │ parcelamento — desaparece sem aviso e sem confirmação. O usuário não fez nada; a tela se        │
+   * │ esvaziou sozinha.                                                                               │
+   * │                                                                                                 │
+   * │ E isso não é hipotético: `components/layout/shell.tsx` chama `qc.invalidateQueries()` SEM chave │
+   * │ ao trocar a empresa selecionada, o que refaz TODA query ativa — esta inclusive. Desligar        │
+   * │ `refetchOnReconnect` não cobriria esse caminho, porque invalidação explícita não é refetch      │
+   * │ automático. Por isso a correção mora aqui, e não nas opções da query.                           │
+   * └─────────────────────────────────────────────────────────────────────────────────────────────────┘
+   *
+   * A trava guarda a TOP que JÁ passou pela validação, junto do pedido que a produziu. Ela só é
+   * ESCRITA a partir de uma validação real — nunca a partir do texto da URL —, então não abre porta
+   * nenhuma: um deep link adulterado não valida, não trava, e cai no lançador como antes.
+   *
+   * O que ela muda é só o INSTANTE da pergunta: "esta TOP vale?" é respondida na ENTRADA do formulário,
+   * e não continuamente enquanto se digita. A entrada continua fechada; o que deixa de existir é a
+   * porta que se fechava com o usuário dentro.
+   *
+   * Trocar de pedido (Alterar operação) ou sair dele zera a trava — é outra sessão de edição, e ela
+   * pergunta de novo. Um F5 também: a trava é memória de componente montado, não armazenamento; a
+   * montagem refaz a descoberta e volta ao lançador se a TOP não valer mais. E o servidor continua
+   * sendo a autoridade final — salvar com uma TOP que foi desativada recebe 422, não um sucesso.
+   *
+   * Escrita durante a renderização de propósito: um `useEffect` só correria DEPOIS, e no quadro entre
+   * os dois o formulário já teria sido desmontado — que é exatamente o que se quer evitar. A escrita é
+   * idempotente (mesmo pedido + mesma TOP ⇒ mesmo valor), então renderizar duas vezes não muda nada.
+   */
+  const trava = React.useRef<{ pedido: string; top: TopOperacional } | null>(null);
+  if (!pedido || trava.current?.pedido !== pedido) trava.current = null;
+  if (pedido && top) trava.current = { pedido, top };
+  const topEfetiva = top ?? (pedido && trava.current?.pedido === pedido ? trava.current.top : null);
+
+  if (topEfetiva) return <Formulario kind={kind} top={topEfetiva} familia={estadoTop.situacao === "pronto" ? estadoTop.dados.family.label : ""} />;
 
   return <LancadorDeTipoOperacao
     estado={estadoTop}

@@ -115,17 +115,29 @@ export function LancadorDeTipoOperacao({ estado, titulo, indisponivel, onContinu
    * O padrão entra como seleção inicial, e `items` é a dependência certa: enquanto a lista não chegou
    * não há o que pré-selecionar, e quando ela chega a escolha do usuário ainda não existe. Um `useState`
    * com valor inicial não veria a lista, que chega depois da primeira renderização.
+   *
+   * SÓ `defaultId` PRÉ-SELECIONA. Uma lista com UM item não pré-seleciona esse item.
+   *
+   * A versão anterior caía para `itens.length === 1 ? itens[0].id : null`, e isso estava errado por
+   * confundir dois conceitos: "única opção disponível" e "operação padrão". Quem decide o padrão é o
+   * cadastro da TOP (`padrao` no banco, `defaultId` na resposta) — e hoje, em produção, 2101/2201/2301
+   * estão todas com `padrao = false`. Marcar sozinho uma TOP que o cadastro NÃO marcou criaria uma
+   * SEGUNDA semântica de padrão, morando no cliente, livre para divergir da do servidor.
+   *
+   * E divergiria logo: no dia em que a família ganhasse a segunda TOP, a marcação sumiria sem que nada
+   * tivesse mudado no cadastro — comportamento que aparece e desaparece conforme a cardinalidade da
+   * lista. Ter uma opção só é sorte do acervo, não decisão de ninguém.
    */
   const [escolhida, setEscolhida] = React.useState<string>("");
   React.useEffect(() => {
     if (!pronto || escolhida) return;
-    const padrao = estado.dados.defaultId ?? (itens.length === 1 ? itens[0]!.id : null);
+    const padrao = estado.dados.defaultId;
     if (padrao) setEscolhida(padrao);
     // `escolhida` é LIDO na guarda mas fica fora das dependências de propósito: este efeito só decide o
     // valor INICIAL. Incluí-lo faria o efeito rodar de novo a cada troca manual — sem consequência hoje
     // (a guarda corta na primeira linha), mas é trabalho por engano. O fecho é recriado sempre que
     // `estado` muda, então um refetch posterior enxerga a escolha ATUAL do usuário, não uma velha.
-  }, [pronto, estado, itens.length]);
+  }, [pronto, estado]);
 
   const top = itens.find((t) => t.id === escolhida) ?? null;
 

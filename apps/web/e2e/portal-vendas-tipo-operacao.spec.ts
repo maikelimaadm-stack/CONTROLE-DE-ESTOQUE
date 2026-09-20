@@ -512,3 +512,142 @@ test("ALTERAR OPERAÇÃO — volta ao lançador, e avisa antes de descartar o qu
   await page.getByTestId("confirm-dialog-confirm").click();
   await esperarLancadorSemFormulario(page);
 });
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────────────────────────────
+ * R1 CORRETIVA — O PADRÃO É DO CADASTRO, E A EDIÇÃO NÃO SE APAGA SOZINHA (TOP-CONFIG-02B R1)
+ * ────────────────────────────────────────────────────────────────────────────────────────────────────
+ */
+
+test("D-DEFAULT-1 — UMA TOP SEM PADRÃO NÃO É PADRÃO: nada vem marcado, e Continuar não avança", async ({ page }) => {
+  await login(page);
+
+  /**
+   * A LISTA É SERVIDA PELA INTERCEPTAÇÃO, e não pelo cadastro. Não é conveniência: a pergunta deste
+   * teste é sobre o CLIENTE — "dada uma lista de UM item e `defaultId` nulo, o que a tela faz?" —, e o
+   * banco de e2e é compartilhado pelo arquivo inteiro. A primeira versão deste teste cadastrou uma TOP
+   * de verdade e mediu 8 opções, porque os outros testes povoam a mesma família; a premissa dependia da
+   * ordem de execução, que é exatamente o tipo de acoplamento que envelhece calado.
+   *
+   * É o mesmo recurso que os casos de contrato (500, 404, contractVersion 2, corpo truncado) já usam
+   * neste arquivo pelo mesmo motivo: a resposta é a ENTRADA do comportamento sob teste.
+   */
+  const soUma = { id: "11111111-1111-4111-8111-111111111111", code: "70001", name: "Orçamento Único", version: 1, isDefault: false };
+  await page.route("**/api/sales/budgets/operation-types", async (rota) => {
+    await rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contractVersion: 1, family: { code: "vendas.orcamento", label: "Orçamento de Venda" }, defaultId: null, items: [soUma] }) });
+  });
+
+  await abrirLancamentoDeVendas(page, "budgets");
+
+  // A PREMISSA, contada e não suposta: é realmente UMA opção, e ela é a que foi servida.
+  await expect(page.getByTestId("top-opcao"), "a lista precisa ter exatamente UMA TOP").toHaveCount(1);
+  await expect(page.locator(`[data-testid="top-opcao"][data-top-id="${soUma.id}"]`)).toBeVisible();
+
+  // E MESMO ASSIM ela não vem marcada: "única opção" não é "operação padrão".
+  await expect(page.locator('[data-testid="top-opcao"] input[type="radio"]'), "nada pré-selecionado sem defaultId").not.toBeChecked();
+  await expect(page.getByTestId("top-continuar"), "sem escolha não há como continuar").toBeDisabled();
+  await expect(page.getByTestId("top-contexto"), "o formulário não pode existir").toHaveCount(0);
+
+  // Depois do clique EXPLÍCITO do usuário, aí sim.
+  await page.locator(`[data-testid="top-opcao"][data-top-id="${soUma.id}"]`).click();
+  await expect(page.locator('[data-testid="top-opcao"] input[type="radio"]')).toBeChecked();
+  await expect(page.getByTestId("top-continuar")).toBeEnabled();
+  await expect(page.getByTestId("top-contexto"), "marcar ainda não é continuar").toHaveCount(0);
+
+  await page.getByTestId("top-continuar").click();
+  await expect(page.getByTestId("top-contexto")).toContainText(soUma.name);
+});
+
+test("D-DEFAULT-2 — PADRÃO DE VERDADE pré-seleciona, mas continua sem auto-avançar", async ({ page }) => {
+  await login(page);
+  const nome = uniq("Pedido Padrão");
+  const top = await cadastrarTop(page, "vendas.pedido", nome, { padrao: true });
+
+  await abrirLancamentoDeVendas(page, "orders");
+
+  // Vem marcada porque o CADASTRO a marcou — a autoridade do padrão é o servidor, via `defaultId`.
+  const opcao = page.locator(`[data-testid="top-opcao"][data-top-id="${top.id}"]`);
+  await expect(opcao.locator("input[type='radio']"), "o padrão do cadastro vem marcado").toBeChecked();
+  await expect(page.getByTestId("top-continuar")).toBeEnabled();
+
+  // E O LANÇADOR CONTINUA NA TELA. Pré-selecionar adianta trabalho; auto-avançar decide pelo usuário.
+  await expect(page.getByTestId("top-lancador")).toBeVisible();
+  await expect(page.getByTestId("top-contexto"), "o padrão NÃO abre o formulário sozinho").toHaveCount(0);
+
+  await page.getByTestId("top-continuar").click();
+  await expect(page.getByTestId("top-contexto")).toContainText(nome);
+});
+
+test("C1 — REVALIDAÇÃO NÃO APAGA O FORMULÁRIO: a TOP sai da lista e o que foi digitado continua lá", async ({ page }) => {
+  await login(page);
+  const top = await cadastrarTop(page, "vendas.venda", uniq("Venda Em Edição"));
+
+  await abrirLancamentoDeVendas(page, "sales");
+  await escolherTopEContinuar(page, top.id);
+
+  const rascunho = "rascunho que não pode sumir sozinho";
+  await page.getByLabel("Observação").fill(rascunho);
+
+  // A lista é CONTADA, para que o teste prove que a revalidação aconteceu de fato — sem isso ele
+  // passaria mesmo que nenhum refetch tivesse sido disparado, provando apenas que nada aconteceu.
+  let buscas = 0;
+  await page.route("**/api/sales/sales/operation-types", async (rota) => { buscas += 1; await rota.fallback(); });
+
+  // O servidor muda de ideia DEPOIS de o formulário estar aberto e preenchido.
+  const atual = await api<{ revisao: number }>(page, "GET", `/api/admin/tipos-operacao/${top.id}`);
+  await api(page, "PUT", `/api/admin/tipos-operacao/${top.id}`, { ativo: false, revisao: atual.revisao });
+
+  /**
+   * O EVENTO REAL, não um atalho: `onlineManager` do React Query escuta `online` na janela, e
+   * `refetchOnReconnect` (ligado por padrão) refaz toda query ATIVA. Era por aqui que o formulário
+   * sumia — e o mesmo vale para a invalidação sem chave que `components/layout/shell.tsx` dispara ao
+   * trocar a empresa selecionada.
+   *
+   * A ESPERA É OBRIGATÓRIA, e é por isso que ela está escrita aqui em vez de escondida num `waitFor`
+   * genérico: `lib/query.tsx` declara `staleTime: 15_000`, e reconexão NÃO refaz query que ainda está
+   * fresca. Sem passar desse prazo o `online` não dispara nada, `buscas` fica em 0 e o teste vira um
+   * verde que não provou coisa alguma — foi exatamente assim que a primeira versão dele reprovou.
+   */
+  await page.waitForTimeout(16_000);
+  await page.evaluate(() => { window.dispatchEvent(new Event("offline")); window.dispatchEvent(new Event("online")); });
+
+  await expect.poll(() => buscas, { message: "a revalidação precisa ter ACONTECIDO, senão o teste não prova nada" }).toBeGreaterThan(0);
+
+  // E o formulário continua inteiro: a validação é da ENTRADA, não de cada renderização.
+  await expect(page.getByTestId("top-contexto"), "o formulário não pode ter sido desmontado").toBeVisible();
+  await expect(page.getByLabel("Observação"), "o que foi digitado continua lá").toHaveValue(rascunho);
+  await expect(page.getByTestId("top-lancador"), "e não voltou ao lançador por conta própria").toHaveCount(0);
+});
+
+test("C2 — O SERVIDOR AINDA MANDA: salvar com a TOP já desativada recusa, e não apaga o formulário", async ({ page }) => {
+  await login(page);
+  const top = await cadastrarTop(page, "vendas.venda", uniq("Venda Recusada"));
+
+  await abrirLancamentoDeVendas(page, "sales");
+  await escolherTopEContinuar(page, top.id);
+
+  const rascunho = "precisa sobreviver à recusa";
+  await page.getByLabel("Observação").fill(rascunho);
+  await pickRef(page, "Cliente", "DEMO");
+  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  const linha = page.locator("tbody tr").first();
+  await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
+  await page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last().getByRole("option").first().click();
+
+  // A TOP é desativada DEPOIS de o formulário estar pronto para salvar.
+  const atual = await api<{ revisao: number }>(page, "GET", `/api/admin/tipos-operacao/${top.id}`);
+  await api(page, "PUT", `/api/admin/tipos-operacao/${top.id}`, { ativo: false, revisao: atual.revisao });
+
+  const respostas: number[] = [];
+  page.on("response", (r) => { if (r.url().endsWith("/api/sales/sales") && r.request().method() === "POST") respostas.push(r.status()); });
+
+  await page.getByRole("button", { name: "Salvar" }).click();
+
+  // O POST SAI e é RECUSADO pelo servidor — a trava do cliente não vira permissão.
+  await expect.poll(() => respostas, { message: "o POST precisa ter sido emitido e respondido" }).toEqual([422]);
+  await expect(page).not.toHaveURL(/\/vendas\/sales\/[0-9a-f-]{36}$/);
+
+  // E a recusa não custa o trabalho do usuário: nada foi apagado, nada foi trocado por outra TOP.
+  await expect(page.getByTestId("top-contexto")).toBeVisible();
+  await expect(page.getByLabel("Observação")).toHaveValue(rascunho);
+});

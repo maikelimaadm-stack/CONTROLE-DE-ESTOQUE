@@ -140,8 +140,28 @@ no cliente fazendo as vezes de autorização.
 malformado caem todos na MESMA frase. Distinguir transformaria a tela num oráculo de quais UUIDs existem
 na organização (`.claude/rules/security.md`).
 
-**O padrão não pula a etapa.** Havendo `defaultId`, ele vem pré-selecionado e marcado — e o lançador
-continua na tela. Auto-avançar gravaria uma identidade operacional que ninguém viu.
+**O padrão não pula a etapa — e só o cadastro define padrão.** Havendo `defaultId`, ele vem
+pré-selecionado e marcado, e o lançador continua na tela; auto-avançar gravaria uma identidade
+operacional que ninguém viu. Sem `defaultId`, NADA vem marcado — **nem quando a família tem uma TOP
+só**. "Única opção disponível" e "operação padrão" são conceitos distintos: o padrão é decisão do
+cadastro (`padrao` no banco), e deduzi-lo da cardinalidade da lista criaria uma segunda semântica de
+padrão no cliente, que sumiria sozinha no dia em que a família ganhasse a segunda TOP.
+
+**A disponibilidade é conferida na ENTRADA do formulário, não a cada renderização.** Uma vez que a TOP
+passou pela validação e o formulário montou, uma revalidação da lista não o desmonta: o documento em
+digitação não pode desaparecer porque uma consulta em segundo plano mudou de resposta. A trava guarda a
+TOP JÁ VALIDADA junto do pedido que a produziu, e só é escrita a partir de uma validação real — nunca do
+texto da URL —, então o deep link adulterado continua caindo no lançador. Trocar de operação ou sair do
+pedido zera a trava; o F5 também, e a montagem refaz a descoberta. E o servidor continua sendo a
+autoridade final: salvar com uma TOP desativada no meio do caminho recebe 422
+`TIPO_OPERACAO_INDISPONIVEL`, nunca um sucesso e nunca uma troca silenciosa de operação.
+
+**O histórico do navegador não é o seletor de etapa.** `Continuar` usa `replace`: lançador e formulário
+são duas caras da mesma etapa de criação, não dois lugares. Voltar SAI da criação, e é assim de
+propósito — `useDirtyTab` protege fechar aba, trocar de empresa e sair da página, mas NÃO intercepta
+`popstate`; com `push`, o Voltar desmontaria um formulário preenchido sem perguntar nada. A porta de
+retorno da etapa é o botão "Alterar operação", que confirma antes de descartar. Back-como-etapa depende
+de uma guarda transversal de dirty state que o produto ainda não tem.
 
 **A CONVERSÃO continua por campo.** Orçamento → Pedido → Venda escolhe a TOP do destino num diálogo, e
 ali `CampoTipoOperacao` permanece: a escolha é parte de uma ação pontual, não uma etapa de criação.
