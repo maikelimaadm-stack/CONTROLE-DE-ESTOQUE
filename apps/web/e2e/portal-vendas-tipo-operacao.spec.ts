@@ -380,8 +380,16 @@ test("E1 VENDA — do Portal ao snapshot: lançador, formulário contextualizado
   await page.getByRole("button", { name: /Adicionar item/ }).click();
   const linha = page.locator("tbody tr").first();
   await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
-  await page.getByPlaceholder("Pesquisar...").fill("DEMO");
-  await page.getByRole("option").first().click();
+  /**
+   * A LISTA DE OPÇÕES TEM DE SER PROCURADA DENTRO DO POPUP, e não na página.
+   *
+   * `page.getByRole("option")` casa TAMBÉM o `<select>` de empresa da barra superior, cujo
+   * `<option>Todas as empresas</option>` nunca fica visível — o clique então espera para sempre por um
+   * elemento que não vai aparecer, e o teste morre por timeout culpando o produto. É o mesmo recorte que
+   * `pickRef` já faz; aqui ele precisa ser explícito porque o campo mora numa linha de tabela, sem label.
+   */
+  const opcoes = page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last();
+  await opcoes.getByRole("option").first().click();
 
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(() => corpo, { message: "o formulário precisa ter emitido o POST" }).not.toBeNull();
