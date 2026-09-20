@@ -464,51 +464,82 @@ duração da janela é o tempo até o cadastro manual — e não o tempo de depl
 
 #### Prova de prontidão (READ-ONLY, por organização)
 
-Executar com a conexão **operacional** (`MIGRATE_DATABASE_URL`), nunca com a da aplicação: sob RLS o
-papel `erp_app` enxerga uma organização só, e uma resposta de uma linha seria verde que não prova nada.
+**Dois passos, nesta ordem. O segundo não vale sem o primeiro.**
+
+**Passo 1 — PREFLIGHT DE PAPEL.** A consulta abaixo responde ZERO linhas quando tudo está pronto. Mas o
+erro operacional mais provável produz exatamente a mesma resposta: rodada por um papel sujeito a RLS
+(`erp_app` via `DATABASE_URL`, `authenticated` no editor SQL do Supabase, PostgREST), não há GUC de
+organização, `erp.current_org_id()` é null, `erp.tenant_visible()` é falso para TODA linha, e
+`erp.organizations` devolve zero — que o operador lê como "pronto para mergear".
+
+É o mesmo defeito que a decisão 67 já fechou no backfill do ID Global e que o cutover 05C-2 verifica em
+A12. Então, ANTES da consulta, com a MESMA conexão:
 
 ```sql
-select
-  o.id                                                                     as organizacao_id,
-  o.name                                                                   as organizacao,
-  coalesce(bool_or(t.codigo_base = 'vendas.orcamento'), false)             as top_orcamento,
-  coalesce(bool_or(t.codigo_base = 'vendas.pedido'),    false)             as top_pedido,
-  coalesce(bool_or(t.codigo_base = 'vendas.venda'),     false)             as top_venda,
-  count(*) filter (where t.padrao)                                         as familias_com_padrao
-from erp.organizations o
-left join erp.tipos_operacao t
-  on  t.organization_id = o.id
-  and t.ativo
-  and t.excluido_em is null
-  and t.codigo_base in ('vendas.orcamento', 'vendas.pedido', 'vendas.venda')
-where o.deleted_at is null
-group by o.id, o.name
-having not (
-      coalesce(bool_or(t.codigo_base = 'vendas.orcamento'), false)
-  and coalesce(bool_or(t.codigo_base = 'vendas.pedido'),    false)
-  and coalesce(bool_or(t.codigo_base = 'vendas.venda'),     false)
-)
-order by o.name;
+select current_user, rolsuper, rolbypassrls from pg_roles where rolname = current_user;
 ```
 
-**Zero linhas = pronto para mergear.** Cada linha devolvida é uma organização que entraria bloqueada, e
-as colunas booleanas dizem qual família falta. `familias_com_padrao` é INFORMATIVO: padrão ausente não
-bloqueia e não reprova. Para inspecionar todas as organizações, inclusive as prontas, remova o `having`.
+**Um dos dois tem de ser `true`.** Se ambos forem `false`, a consulta do passo 2 NÃO PROVA NADA e o
+resultado dela deve ser descartado — não é "pronto", é "não medido". Registre as duas saídas juntas.
+
+**Passo 2 — A CONSULTA.** Executar com `MIGRATE_DATABASE_URL` (a conexão operacional), nunca com a da
+aplicação:
+
+```sql
+with prontidao as (
+  select
+    o.id                                                           as organizacao_id,
+    o.name                                                         as organizacao,
+    coalesce(bool_or(t.codigo_base = 'vendas.orcamento'), false)   as top_orcamento,
+    coalesce(bool_or(t.codigo_base = 'vendas.pedido'),    false)   as top_pedido,
+    coalesce(bool_or(t.codigo_base = 'vendas.venda'),     false)   as top_venda,
+    count(*) filter (where t.padrao)                               as familias_com_padrao
+  from erp.organizations o
+  left join erp.tipos_operacao t
+    on  t.organization_id = o.id
+    and t.ativo
+    and t.excluido_em is null
+    and t.codigo_base in ('vendas.orcamento', 'vendas.pedido', 'vendas.venda')
+  where o.deleted_at is null
+  group by o.id, o.name
+)
+select
+  (select count(*) from prontidao)                                           as organizacoes_conferidas,
+  (select count(*) from prontidao
+    where not (top_orcamento and top_pedido and top_venda))                  as pendentes,
+  p.organizacao_id, p.organizacao, p.top_orcamento, p.top_pedido, p.top_venda, p.familias_com_padrao
+-- O LEFT JOIN a partir de uma linha constante é o que garante que a consulta SEMPRE devolva ao menos uma
+-- linha. Com um `where` no fim, o caso PRONTO devolveria zero linhas — e resposta vazia é justamente o
+-- que este gate não pode usar como sinal, porque é o que a conexão errada também devolve.
+from (select 1) z
+left join prontidao p on not (p.top_orcamento and p.top_pedido and p.top_venda)
+order by p.organizacao;
+```
+
+**O critério de aceite é `pendentes = 0` COM `organizacoes_conferidas > 0`** — nunca "a consulta não
+devolveu nada". Quando há pendências, cada linha nomeia a organização e as colunas booleanas dizem qual
+família falta. Quando não há, a consulta devolve UMA linha com os dois contadores e as colunas de detalhe
+nulas: é essa linha que autoriza o merge, porque ela carrega o DENOMINADOR.
+
+`organizacoes_conferidas = 0` é **REPROVAÇÃO**, não aprovação: ou a conexão não enxerga as organizações
+(volte ao passo 1), ou o banco não tem nenhuma — e nos dois casos nada foi medido.
+
+`familias_com_padrao` é INFORMATIVO: padrão ausente não bloqueia e não reprova. Para inspecionar todas as
+organizações, inclusive as prontas, remova o `where` final.
 
 Por que a consulta tem esta forma, e não a óbvia:
 
+- **Publica o denominador** — um gate cujo sinal de aprovação é "vazio" é indistinguível de um gate que
+  não rodou. Com o total à vista, "0 de 0" e "0 de 7" deixam de ter a mesma cara.
 - **Parte de `erp.organizations`, com LEFT JOIN** — partir de `erp.tipos_operacao` faria a organização
-  com ZERO TOPs, que é exatamente a que precisa reprovar, simplesmente não aparecer. Verde por ausência
-  é o modo de falha que o `CLAUDE.md` nomeia ("zero organizações").
+  com ZERO TOPs, que é exatamente a que precisa reprovar, simplesmente não aparecer.
 - **Os quatro predicados no `on`, não no `where`** — filtro de tabela à direita no `where` degrada o
   LEFT JOIN para INNER e reintroduz o defeito acima.
-- **`coalesce(..., false)` em toda parte** — sem ele, a organização sem nenhuma TOP produz
-  `bool_or` nulo nas três colunas, `null and null and null` é null, `not null` é null, e a linha seria
-  DESCARTADA pelo `having`: o gate aprovaria em silêncio justamente a organização mais vazia de todas.
-  Isto foi MEDIDO, não deduzido: com uma organização sem nenhuma TOP inserida numa transação
-  descartável, a forma acima devolve as duas organizações pendentes e a forma sem `coalesce` devolve
-  só uma — some exatamente a que tinha zero. É o modo de falha mais caro que um gate pode ter, porque
-  o silêncio é indistinguível de aprovação.
+- **`coalesce(..., false)` em toda parte** — sem ele, a organização sem nenhuma TOP produz `bool_or`
+  nulo nas três colunas, `null and null and null` é null, `not null` é null, e a linha seria DESCARTADA:
+  o gate aprovaria em silêncio justamente a organização mais vazia de todas. Isto foi MEDIDO, não
+  deduzido: com uma organização sem nenhuma TOP inserida numa transação descartável, a forma acima a
+  devolve e a forma sem `coalesce` não — some exatamente a que tinha zero.
 - **`t.ativo` e `t.excluido_em is null`** — TOP inativa ou excluída existe e não serve; a exclusão é
   lógica, e o índice único de código não filtra por `excluido_em`.
 - **`o.deleted_at is null`** — organização excluída não opera, e cobrá-la produziria uma reprovação
@@ -517,6 +548,7 @@ Por que a consulta tem esta forma, e não a óbvia:
 Esta prova é **gate operacional**, não gate de CI: ela mede o banco de produção e por isso NÃO entra em
 `pnpm lint` nem no CI contra banco de teste — um gate que se autoaprova não é gate. Enquanto não for
 executada com a credencial real, a prontidão é `PENDING`.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)

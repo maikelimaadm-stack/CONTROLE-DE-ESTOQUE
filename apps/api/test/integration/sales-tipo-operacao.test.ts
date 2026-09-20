@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, seedDemo } from "@agro/db";
-import { harness, ids, TEST_URL, type Harness } from "./setup.js";
+import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
  * O PRIMEIRO LANÇAMENTO REAL COM TOP CADASTRADA (TOP-CONFIG-02).
@@ -445,6 +445,19 @@ describe("PUT com tipo_operacao_id null", () => {
     expect(await colunas(id), "omitir o campo preserva o snapshot").toMatchObject({ tipo_operacao_id: top });
   }, 180_000);
 
+  it("documento JÁ legado aceita `null` — é o estado atual, não um pedido de remoção", async () => {
+    // O acervo é a população que esta fatia promete não quebrar. `GET` devolve `tipo_operacao_id: null` no
+    // topo do documento legado; um cliente read-modify-write (ler, mudar a observação, devolver o objeto
+    // inteiro) repete esse null sem pedir nada. Recusar aí tornaria o acervo INEDITÁVEL por repetir um
+    // campo que o próprio servidor entregou — a recusa ficaria mais larga que o motivo dela.
+    const id = j(await criar("budget", { tipo_operacao_id: null })).id as string;
+    expect(await colunas(id), "premissa: nasceu legado").toMatchObject({ tipo_operacao_id: null });
+
+    const r = await h.app.inject({ method: "PUT", url: `/api/sales/budgets/${id}`, headers: h.headers(), payload: corpo({ tipo_operacao_id: null }) });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await colunas(id), "continua legado, sem efeito nenhum").toMatchObject({ tipo_operacao_id: null, tipo_operacao_versao_id: null });
+  }, 180_000);
+
   it("na CRIAÇÃO, `null` continua legítimo — é o que sustenta o rolling deploy", async () => {
     // A recusa é do PUT, não do contrato inteiro: documento pode NASCER sem TOP, e precisa continuar
     // podendo, senão o binário anterior deixaria de conseguir criar durante a janela de implantação.
@@ -556,6 +569,32 @@ describe("conversão — idempotência e corrida", () => {
     expect(j(r2).error!.code).toBe("CONFLICT");
     expect(await destinos(dois), "a segunda fonte não foi convertida às escondidas").toHaveLength(0);
     expect((await colunas(dois)).status, "e continua aberta, como o usuário a deixou").toBe("open");
+  }, 180_000);
+
+  it("o lock convive com o recorte de EMPRESA — a cláusula entra depois de um WHERE que tem predicado", async () => {
+    // A trava é concatenada DEPOIS do recorte de empresa que `scopedById` injeta. Em toda a suíte esse
+    // recorte vinha VAZIO (dono e modo "todas"), então a forma testada era sempre `... and d.kind=$N for
+    // update of d`. No modo "selecionadas" o recorte vira um predicado de verdade — inclusive um
+    // `exists (...)` —, e é aí que uma cláusula de travamento mal posicionada quebraria a consulta OU
+    // deixaria de travar. Sem este caso, a única execução possível do lock era a mais fácil.
+    const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(),
+      payload: { name: `Perfil escopo ${Date.now()}`, permissions: ["budgets.view", "budgets.create", "budgets.edit", "orders.view", "orders.create"] } });
+    expect(papel.statusCode, papel.body).toBe(201);
+    const email = `e2e-escopo-${Date.now()}@demo.local`;
+    const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(),
+      payload: { name: "Vendedor com escopo", email, password: "Escopo@12345", role_id: j(papel).id,
+        escopos_empresas: escoposDeTodosOsModulos([I.empresa]) } });
+    expect(vinculo.statusCode, vinculo.body).toBe(201);
+    const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Escopo@12345" } });
+    const comEscopo: Hdr = { authorization: `Bearer ${(login.json() as { token: string }).token}`, "x-org-id": h.demo.orgId };
+
+    const top = await cadastrarTop("vendas.pedido", "Alvo com escopo");
+    const orcamento = j(await criar("budget", {}, comEscopo)).id as string;
+
+    const r = await h.app.inject({ method: "POST", url: `/api/sales/budgets/${orcamento}/convert`,
+      headers: comEscopo, payload: { tipo_operacao_id: top } });
+    expect(r.statusCode, `a consulta com trava E recorte de empresa precisa ser válida: ${r.body}`).toBe(201);
+    expect(await destinos(orcamento), "e o efeito é o mesmo de sempre: um destino").toHaveLength(1);
   }, 180_000);
 
   it("T-A5: duas requisições simultâneas com a MESMA chave não criam dois destinos", async () => {

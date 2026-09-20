@@ -81,7 +81,12 @@ export const ehTopsDaVariante = (v: unknown): v is TopsDaVariante =>
   && v.contractVersion === CONTRATO_TOPS
   && ehObjeto(v.family) && ehTexto(v.family.code) && ehTexto(v.family.label)
   && (v.defaultId === null || ehTexto(v.defaultId))
-  && Array.isArray(v.items) && v.items.every(ehTopOperacional);
+  && Array.isArray(v.items) && v.items.every(ehTopOperacional)
+  // O padrão tem de ESTAR na lista. `usePadraoTop` grava `defaultId` no estado do formulário; um id fora
+  // de `items` deixaria o campo mostrando "Selecione…" com o Salvar HABILITADO, e o POST sairia para
+  // morrer em 422 no servidor. Este servidor não produz isso (`defaultId` sai das mesmas linhas de
+  // `items`), mas é exatamente a classe de corpo contra a qual o guarda existe.
+  && (v.defaultId === null || v.items.some((i) => (i as TopOperacional).id === v.defaultId));
 
 /** O que a tela precisa decidir. Três situações distintas, três mensagens distintas — nunca uma só. */
 export type EstadoTop =

@@ -109,7 +109,10 @@ async function resolverTopParaLancamento(ctx: ServiceCtx, familiaEsperada: strin
  * para `t`, `pm`, `u`, `toper` e `topv`, que estão no lado NULLABLE dos LEFT JOIN, e o PostgreSQL RECUSA
  * isso já no planejamento (0A000): a rota quebraria em TODA chamada, não só na corrida.
  *
- * O lock existe para quem LÊ E MUTA a mesma linha — hoje, só a conversão. Sem ele, duas requisições
+ * O lock existe para quem LÊ E MUTA a mesma linha. Nesta fatia só a CONVERSÃO o recebe, e isso é recorte
+ * de escopo, não diagnóstico: `confirmSale` e `cancel` leem-e-mutam do mesmo jeito e continuam SEM trava —
+ * dívida PREEXISTENTE, declarada, que pede fatia própria (duas confirmações simultâneas sem
+ * `Idempotency-Key` duplicariam movimento de estoque e contas a receber). Sem o lock, duas requisições
  * simultâneas leem `open` do MESMO snapshot, criam DOIS destinos e ambas carimbam a fonte como
  * `converted`; e não há UNIQUE em `origin_document_id` para pegar a sobra. Com ele, a segunda espera o
  * commit da primeira, reavalia a linha já atualizada e cai em `assertConvertible` → 409.
@@ -281,10 +284,15 @@ export default async function salesRoutes(app: FastifyInstance) {
        * classificado reescreveria história pela porta da edição — exatamente o que o snapshot existe para
        * impedir. O campo AUSENTE continua sendo compatibilidade legítima e não muda nada.
        *
-       * A recusa é SÓ no PUT. Na criação, `tipo_operacao_id: null` é legítimo e continua nascendo legado:
-       * é o que sustenta o rolling deploy.
+       * A recusa é SÓ no PUT, e SÓ quando há o que remover. Num documento que JÁ é legado, `null` não é
+       * pedido de remoção — é o estado atual, e o servidor acabou de devolvê-lo assim no `GET`. Recusar
+       * aí tornaria o ACERVO inteiro ineditável por qualquer cliente read-modify-write (ler, mudar a
+       * observação, devolver o objeto): ele levaria 422 por repetir um campo que o próprio servidor lhe
+       * entregou. Seria quebrar exatamente a população que esta fatia promete não quebrar.
+       *
+       * Na CRIAÇÃO, `null` é legítimo e continua nascendo legado: é o que sustenta o rolling deploy.
        */
-      if (req.body !== null && typeof req.body === "object" && (req.body as Record<string, unknown>)["tipo_operacao_id"] === null) {
+      if (cur.tipo_operacao_id !== null && req.body !== null && typeof req.body === "object" && (req.body as Record<string, unknown>)["tipo_operacao_id"] === null) {
         throw err("VALIDATION_ERROR", "tipo_operacao_id não pode ser removido de um documento; omita o campo para preservá-lo");
       }
       const trocouTop = d.tipo_operacao_id != null && d.tipo_operacao_id !== cur.tipo_operacao_id;
@@ -343,8 +351,12 @@ export default async function salesRoutes(app: FastifyInstance) {
        * `?? null` porque `undefined` SOME do JSON: sem ele, `{}` e `{"tipo_operacao_id":null}` — que são o
        * mesmo pedido — gerariam hashes diferentes.
        *
-       * FICAM DE FORA do bloco, de propósito: a capacidade do DESTINO e o parse do corpo. Um 403 ou um 422
-       * depois do INSERT da chave deixaria a chave gravada sem resposta, envenenando o retry legítimo.
+       * FICAM DE FORA do bloco a capacidade do DESTINO e o parse do corpo — mas NÃO pelo motivo que esta
+       * linha afirmava antes ("a chave ficaria gravada sem resposta"). Não ficaria: `withTx` desfaz a
+       * transação inteira em qualquer throw, e o INSERT da chave vai junto. O motivo real é mais simples e
+       * continua valendo: autorização e forma do pedido são conferidas ANTES de qualquer efeito, inclusive
+       * antes de reservar chave — é a mesma ordem que o resto do servidor usa, e não depende de a
+       * transação salvar ninguém.
        */
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
         { action: "convert_sales_document", sourceId: id, sourceKind: kind, targetKind: next, tipo_operacao_id: alvo.tipo_operacao_id ?? null },
