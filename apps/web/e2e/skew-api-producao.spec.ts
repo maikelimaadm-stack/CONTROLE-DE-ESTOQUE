@@ -325,12 +325,68 @@ test("nenhuma tela conhece o nome antigo: a moldura do produto é canônica", as
  * casa o nó paramétrico, "operation-types" entra num `where d.id=$1` de coluna `uuid`, o Postgres devolve
  * 22P02, `fromPgError` não mapeia 22P02, e o cliente recebe 500. O mock respondia 404 e certificava um
  * caminho que produção nunca percorre.
+ *
+ * POR QUE ESTES DOIS CASOS TÊM DOIS RAMOS, E POR QUE ISSO NÃO É AFROUXAMENTO
+ * --------------------------------------------------------------------------
+ * "A base não tem o endpoint" é uma verdade COM PRAZO. Valia enquanto a base era anterior à #47 e deixou
+ * de valer no instante em que a #47 entrou na `main` — sem que nenhuma linha de código a quebrasse. Toda
+ * PR aberta depois disso, INCLUSIVE UMA DE DIFF VAZIO, reprovava aqui: o gate cobrava um passado que não
+ * volta.
+ *
+ * O ramo não se escolhe por SHA digitado nem por interruptor de ambiente: mede-se a ÁRVORE DA BASE desta
+ * execução (`scripts/lib/capacidade-top.mjs`), e cada mundo cobra a SUA prova —
+ *
+ *   base SEM a rota  → exatamente a prova original da #47: a base responde 500 e a tela BLOQUEIA;
+ *   base COM a rota  → a prova positiva: a base responde 200 com `contractVersion` 1, e o web NÃO trata
+ *                      um servidor compatível como servidor antigo.
+ *
+ * Nenhum dos dois é um ramo que apenas passa, e é isso que separa isto de desligar o gate. A decisão volta
+ * sozinha ao mundo legado se alguém reverter a #47, e REPROVA de vez se a assinatura da rota deixar de
+ * identificar o que promete identificar.
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test("TOP-CONFIG-02 · o endpoint de descoberta NÃO existe na base — e o que ela devolve é 500, não 404", async ({ page }) => {
+/**
+ * A DECISÃO DA CAPACIDADE DA BASE, LIDA DO ARTEFATO — nunca inferida, nunca suposta.
+ *
+ * Gêmea de `lerDecisaoDoCutover`, e pela mesma razão: o arquivo é gravado por
+ * `scripts/skew-capacidade-top.mjs` (o mesmo passo que exporta a variável) e carrega o insumo que produziu
+ * a decisão. Ausência do arquivo é FALHA, não "então é o mundo legado" — supor o ramo fácil é justamente
+ * como um gate se autoaprova.
+ */
+function lerDecisaoDaCapacidadeTop(): { baseSha: string; ocorrencias: number; capaz: boolean } {
+  const arq = path.resolve(__dirname, "../../..", ".skew-capacidade-top.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão da capacidade de TOP ausente (${arq}): rode scripts/skew-capacidade-top.mjs antes do skew. `
+      + "Sem ela não há como saber qual ramo provar, e escolher o mais fácil seria certificar o que não se mediu.");
+  }
+  return JSON.parse(fs.readFileSync(arq, "utf8"));
+}
+
+/**
+ * RECALCULA o ramo a partir do insumo gravado e CONFERE a variável de ambiente contra ele.
+ *
+ * `SKEW_BASE_TEM_TOP` é string mutável: um `env:` de workflow prevalece sobre o que o passo escreveu em
+ * `$GITHUB_ENV`. Se ela fosse a autoridade, fixá-la por fora trocaria o ramo com o log do CI afirmando o
+ * contrário — exatamente o interruptor que o cutover do contador já levou de red team. Aqui ela só
+ * CONFERE: divergência REPROVA em vez de escolher.
+ */
+function baseTemCapacidadeTop(): boolean {
+  const d = lerDecisaoDaCapacidadeTop();
+  expect(d.ocorrencias, "contagem ambígua não decide ramo nenhum — o produtor deveria ter reprovado antes").toBeLessThanOrEqual(1);
+  const capaz = d.ocorrencias === 1;
+  expect(capaz, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(d.capaz);
+  expect(process.env.SKEW_BASE_TEM_TOP ?? (capaz ? "1" : "0"),
+    "SKEW_BASE_TEM_TOP não bate com a decisão recalculada — alguém fixou a variável por fora")
+    .toBe(capaz ? "1" : "0");
+  console.log(`[skew] TOP-CONFIG-02 · base ${d.baseSha} ${capaz ? "TEM" : "NÃO tem"} a descoberta de capacidade (ocorrências=${d.ocorrencias})`);
+  return capaz;
+}
+
+test("TOP-CONFIG-02 · a descoberta de capacidade, medida contra o binário real da base", async ({ page }) => {
   await login(page);
   const s = await sessao(page);
   const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId! };
+  const capaz = baseTemCapacidadeTop();
 
   // premissa viva: a rota de listagem da MESMA variante funciona neste binário. Sem ela, um 500 abaixo
   // poderia ser servidor caído, e o teste mediria outra coisa.
@@ -339,28 +395,64 @@ test("TOP-CONFIG-02 · o endpoint de descoberta NÃO existe na base — e o que 
 
   for (const variante of ["budgets", "orders", "sales"]) {
     const r = await page.request.get(`${API}/api/sales/${variante}/operation-types`, { headers: cabecalhos });
-    expect(r.status(), `a API da base NÃO tem /api/sales/${variante}/operation-types`).not.toBe(200);
-    // É ISTO que o cliente precisa tratar. Se um dia a base passar a devolver 404 (porque ganhou
-    // validação de uuid, por exemplo), este teste reprova e o cliente é revisto junto — que é o ponto.
-    expect(r.status(), `medido contra o binário da base: /api/sales/${variante}/operation-types`).toBe(500);
+
+    if (!capaz) {
+      // MUNDO LEGADO — a prova original da #47, preservada.
+      //
+      // A base não tem a rota estática, mas tem `${base}/:id`; o roteador casa o nó paramétrico,
+      // "operation-types" entra num `where d.id=$1` de coluna `uuid`, o Postgres devolve 22P02,
+      // `fromPgError` não mapeia 22P02, e o cliente recebe 500. Se um dia a base passar a devolver 404
+      // (porque ganhou validação de uuid), este teste reprova e o cliente é revisto junto — que é o ponto.
+      expect(r.status(), `a API da base NÃO tem /api/sales/${variante}/operation-types`).not.toBe(200);
+      expect(r.status(), `medido contra o binário da base: /api/sales/${variante}/operation-types`).toBe(500);
+      continue;
+    }
+
+    // MUNDO ATUAL — a base JÁ serve a descoberta, e o que se cobra é a FORMA do contrato que o cliente lê.
+    expect(r.status(), `a árvore da base registra a rota, então o binário tem de servi-la: /api/sales/${variante}/operation-types`).toBe(200);
+    const corpo = await r.json() as { contractVersion?: number; family?: { code?: string }; items?: unknown; defaultId?: unknown };
+    expect(corpo.contractVersion, "é por este número que o cliente distingue 'ausente' de 'presente com outro formato'").toBe(1);
+    expect(corpo.family?.code, `a família canônica da variante ${variante} tem de vir declarada`).toBeTruthy();
+    expect(Array.isArray(corpo.items), "`items` é a lista de TOPs aceitas — vazia é legítimo, ausente não").toBe(true);
+    expect(corpo, "`defaultId` é declarado; null é resposta legítima, ausente não é").toHaveProperty("defaultId");
   }
 });
 
-test("TOP-CONFIG-02 · sobre a API da base, a tela de lançamento BLOQUEIA e não emite nenhum POST", async ({ page }) => {
+test("TOP-CONFIG-02 · sobre a API da base, a tela de lançamento não perde a TOP em silêncio", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
+  const capaz = baseTemCapacidadeTop();
 
   const posts: string[] = [];
   page.on("request", (r) => { if (r.method() === "POST" && r.url().includes("/api/sales/")) posts.push(r.url()); });
 
   await page.goto("/vendas/sales/new");
+
+  if (!capaz) {
+    /**
+     * MUNDO LEGADO — a prova que o mock não dava: com o SERVIDOR REAL da base, a tela chega ao estado de
+     * bloqueio, e não ao estado "pronto" com o campo vazio, que gravaria um documento sem TOP em silêncio.
+     */
+    await expect(page.getByTestId("top-nao-confirmado")).toBeVisible();
+    await expect(page.getByTestId("top-ausente"), "não é problema de configuração, é do servidor").toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
+    expect(posts, "ZERO POST contra a API da base: é isto que impede a perda silenciosa").toEqual([]);
+    v.semBloqueio();
+    return;
+  }
+
   /**
-   * A prova que o mock não dava: com o SERVIDOR REAL da base, a tela chega ao estado de bloqueio — e não
-   * ao estado "pronto" com o campo vazio, que gravaria um documento sem TOP em silêncio.
+   * MUNDO ATUAL — a propriedade simétrica, e a que importa daqui para a frente: o web deste HEAD reconhece
+   * a capacidade da API da base e NÃO a trata como servidor antigo. `top-nao-confirmado` é o estado "não
+   * consegui perguntar"; vê-lo aqui significaria que o cliente desistiu da descoberta contra um servidor
+   * que responde — e passaria a bloquear lançamento por um defeito que não existe.
+   *
+   * `top-ausente` é aceitável e não se confunde com aquilo: é "perguntei, e esta organização não tem TOP
+   * ativa para a variante" — configuração, não incompatibilidade. Exigir TOP semeada aqui seria cobrar do
+   * cenário uma garantia que ele não dá.
    */
-  await expect(page.getByTestId("top-nao-confirmado")).toBeVisible();
-  await expect(page.getByTestId("top-ausente"), "não é problema de configuração, é do servidor").toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
-  expect(posts, "ZERO POST contra a API da base: é isto que impede a perda silenciosa").toEqual([]);
+  await expect(page.getByTestId("top-nao-confirmado"),
+    "a base responde a descoberta: tratá-la como servidor antigo é o defeito que este ramo procura").toHaveCount(0);
+  expect(posts, "a tela não dispara POST sozinha, em nenhum dos dois mundos").toEqual([]);
   v.semBloqueio();
 });
