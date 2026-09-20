@@ -1519,7 +1519,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.teams` | 9 | sim | — | sim |
 | `erp.tipos_notificacao` | 5 | não | — | não |
 | `erp.tipos_operacao` | 12 | sim | — | sim |
-| `erp.tipos_operacao_versoes` | 8 | sim | — | não |
+| `erp.tipos_operacao_versoes` | 10 | sim | — | não |
 | `erp.title_apportionments` | 9 | não | — | não |
 | `erp.title_appropriations` | 5 | não | — | não |
 | `erp.title_types` | 4 | sim | — | não |

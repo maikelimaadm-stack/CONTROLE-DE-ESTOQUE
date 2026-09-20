@@ -12,5 +12,6 @@ export * from "./id-global-rota.js";
 export * from "./escopo-permissao.js";
 export * from "./tipo-operacao.js";
 export * from "./tipo-operacao-configurado.js";
+export * from "./tipo-operacao-configuracao.js";
 export * from "./sales.js";
 export * from "./resources/index.js";
