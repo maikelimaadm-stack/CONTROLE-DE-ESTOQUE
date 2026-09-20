@@ -77,7 +77,7 @@ describe("0022 — a configuração versionada existe e tem forma", () => {
   });
 
   it("o check de FORMA recusa payload que não tem as cinco seções", async () => {
-    const id = await criarTop(demo.orgId, demo.ownerId, "C0001");
+    const id = await criarTop(demo.orgId, demo.adminUserId, "C0001");
     await expect(db.query(
       `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, configuracao)
        values ($1,$2,2,'x','{"versaoSchema":1,"geral":{}}'::jsonb)`, [demo.orgId, id]),
@@ -85,7 +85,7 @@ describe("0022 — a configuração versionada existe e tem forma", () => {
   });
 
   it("o check recusa configuração que não é objeto", async () => {
-    const id = await criarTop(demo.orgId, demo.ownerId, "C0002");
+    const id = await criarTop(demo.orgId, demo.adminUserId, "C0002");
     await expect(db.query(
       `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, configuracao)
        values ($1,$2,2,'x','[]'::jsonb)`, [demo.orgId, id]),
@@ -93,7 +93,7 @@ describe("0022 — a configuração versionada existe e tem forma", () => {
   });
 
   it("a coluna de schema e o payload não podem discordar", async () => {
-    const id = await criarTop(demo.orgId, demo.ownerId, "C0003");
+    const id = await criarTop(demo.orgId, demo.adminUserId, "C0003");
     await expect(db.query(
       `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, configuracao, configuracao_schema_version)
        values ($1,$2,2,'x',$3::jsonb,2)`, [demo.orgId, id, JSON.stringify(CONFIG_RICA)]),
@@ -113,11 +113,11 @@ describe("0022 — o acervo foi preservado e preenchido", () => {
   });
 
   it("uma versão inserida SEM citar as colunas novas nasce neutra — é o rolling deploy", async () => {
-    const id = await criarTop(demo.orgId, demo.ownerId, "C0004");
+    const id = await criarTop(demo.orgId, demo.adminUserId, "C0004");
     // Exatamente o INSERT do binário ANTERIOR: ele não conhece `configuracao`.
     await db.query(
       `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, criado_por)
-       values ($1,$2,2,'Versao do binario antigo',$3)`, [demo.orgId, id, demo.ownerId]);
+       values ($1,$2,2,'Versao do binario antigo',$3)`, [demo.orgId, id, demo.adminUserId]);
     const r = await db.query<{ atualizacao: string; schema: number }>(
       `select configuracao->'estoque'->>'atualizacao' as atualizacao, configuracao_schema_version as schema
          from erp.tipos_operacao_versoes where tipo_operacao_id=$1 and versao=2`, [id]);
@@ -128,7 +128,7 @@ describe("0022 — o acervo foi preservado e preenchido", () => {
 
 describe("0022 — a imutabilidade da 0020 continua de pé", () => {
   it("UPDATE da configuração é recusado pelo gatilho: editar cria versão nova, não reescreve a velha", async () => {
-    const id = await criarTop(demo.orgId, demo.ownerId, "C0005");
+    const id = await criarTop(demo.orgId, demo.adminUserId, "C0005");
     await expect(db.query(
       `update erp.tipos_operacao_versoes set configuracao = $2::jsonb where tipo_operacao_id = $1 and versao = 1`,
       [id, JSON.stringify(CONFIG_RICA)]),
@@ -136,7 +136,7 @@ describe("0022 — a imutabilidade da 0020 continua de pé", () => {
   });
 
   it("DELETE de versão continua recusado", async () => {
-    const id = await criarTop(demo.orgId, demo.ownerId, "C0006");
+    const id = await criarTop(demo.orgId, demo.adminUserId, "C0006");
     await expect(db.query(`delete from erp.tipos_operacao_versoes where tipo_operacao_id = $1`, [id]))
       .rejects.toThrow(/TIPO_OPERACAO_VERSAO_IMUTAVEL/);
   });
@@ -150,11 +150,11 @@ describe("0022 — a imutabilidade da 0020 continua de pé", () => {
   });
 
   it("a versão nova carrega a configuração dela, e a anterior continua com a dela", async () => {
-    const id = await criarTop(demo.orgId, demo.ownerId, "C0007");
+    const id = await criarTop(demo.orgId, demo.adminUserId, "C0007");
     await db.query(
       `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, configuracao, criado_por)
        values ($1,$2,2,'Com configuracao',$3::jsonb,$4)`,
-      [demo.orgId, id, JSON.stringify(CONFIG_RICA), demo.ownerId]);
+      [demo.orgId, id, JSON.stringify(CONFIG_RICA), demo.adminUserId]);
     const r = await db.query<{ versao: number; atualizacao: string }>(
       `select versao, configuracao->'estoque'->>'atualizacao' as atualizacao
          from erp.tipos_operacao_versoes where tipo_operacao_id=$1 order by versao`, [id]);
@@ -164,14 +164,14 @@ describe("0022 — a imutabilidade da 0020 continua de pé", () => {
 
 describe("0022 — isolamento por tenant continua valendo para a configuração", () => {
   it("ISOLAMENTO sob RLS: a organização B não lê a configuração da A pelo papel da aplicação", async () => {
-    const id = await criarTop(demo.orgId, demo.ownerId, "C0008");
+    const id = await criarTop(demo.orgId, demo.adminUserId, "C0008");
     await db.query(
       `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, configuracao, criado_por)
        values ($1,$2,2,'Config da A',$3::jsonb,$4)`,
-      [demo.orgId, id, JSON.stringify(CONFIG_RICA), demo.ownerId]);
+      [demo.orgId, id, JSON.stringify(CONFIG_RICA), demo.adminUserId]);
 
     const outraOrg = "00000000-0000-4000-8000-0000000000b0";
-    const r = await withTx(app, { orgId: outraOrg, userId: demo.ownerId, modulo: null }, (tx) =>
+    const r = await withTx(app, { orgId: outraOrg, userId: demo.adminUserId, modulo: null }, (tx) =>
       tx.query(`select 1 from erp.tipos_operacao_versoes where tipo_operacao_id = $1`, [id]));
     expect(r.rowCount, "a organização B não lê a linha da A").toBe(0);
   });

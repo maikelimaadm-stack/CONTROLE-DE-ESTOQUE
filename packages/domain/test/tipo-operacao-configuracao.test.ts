@@ -23,6 +23,18 @@ import {
 
 const clonar = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 
+/**
+ * Trata a configuração como saco de chaves para poder SUJÁ-LA de propósito.
+ *
+ * O tipo existe para impedir que o produto escreva um campo inválido; o teste precisa justamente escrever
+ * um, porque a pergunta é o que acontece com o payload que chega de fora do TypeScript. Passar por
+ * `unknown` é o que torna essa intenção explícita em vez de acidental.
+ */
+const comoSaco = (c: ConfiguracaoTipoOperacaoV1): Record<string, Record<string, unknown>> =>
+  c as unknown as Record<string, Record<string, unknown>>;
+const comoRaiz = (c: ConfiguracaoTipoOperacaoV1): Record<string, unknown> =>
+  c as unknown as Record<string, unknown>;
+
 /** Um candidato válido e NÃO neutro, para os testes de igualdade e diferença terem o que comparar. */
 function configuracaoRica(): ConfiguracaoTipoOperacaoV1 {
   const c = configuracaoNeutraTop();
@@ -85,7 +97,7 @@ describe("configuração da TOP — parse estrito", () => {
   });
 
   it("campo desconhecido é RECUSA, nunca descarte silencioso", () => {
-    const comLixo = clonar(configuracaoNeutraTop()) as Record<string, unknown>;
+    const comLixo = comoRaiz(clonar(configuracaoNeutraTop()));
     comLixo.efeitoSecreto = true;
     const r = lerConfiguracaoTop(comLixo);
     expect(r.ok).toBe(false);
@@ -93,24 +105,24 @@ describe("configuração da TOP — parse estrito", () => {
   });
 
   it("campo desconhecido DENTRO de uma seção também é recusa — inclusive com erro de digitação", () => {
-    const c = clonar(configuracaoNeutraTop()) as Record<string, Record<string, unknown>>;
-    c.estoque.exigeArmazen = true;          // "n" no lugar de "m": o caso que um schema frouxo apagaria
+    const c = comoSaco(clonar(configuracaoNeutraTop()));
+    c.estoque!.exigeArmazen = true;          // "n" no lugar de "m": o caso que um schema frouxo apagaria
     const r = lerConfiguracaoTop(c);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.recusas).toContainEqual({ motivo: "campo_desconhecido", caminho: "estoque.exigeArmazen" });
   });
 
   it("tipo errado é recusa, com o caminho do campo", () => {
-    const c = clonar(configuracaoNeutraTop()) as Record<string, Record<string, unknown>>;
-    c.geral.exigeParceiro = "sim";
+    const c = comoSaco(clonar(configuracaoNeutraTop()));
+    c.geral!.exigeParceiro = "sim";
     const r = lerConfiguracaoTop(c);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.recusas).toContainEqual({ motivo: "tipo_invalido", caminho: "geral.exigeParceiro" });
   });
 
   it("valor fora do enum NEGA — não cai no vizinho nem no padrão", () => {
-    const c = clonar(configuracaoNeutraTop()) as Record<string, Record<string, unknown>>;
-    c.estoque.atualizacao = "saída";        // com acento: parecido, e ainda assim desconhecido
+    const c = comoSaco(clonar(configuracaoNeutraTop()));
+    c.estoque!.atualizacao = "saída";        // com acento: parecido, e ainda assim desconhecido
     const r = lerConfiguracaoTop(c);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.recusas).toContainEqual({ motivo: "valor_invalido", caminho: "estoque.atualizacao" });
@@ -118,7 +130,7 @@ describe("configuração da TOP — parse estrito", () => {
 
   it("seção ausente é recusa", () => {
     for (const secao of SECOES_CONFIGURACAO_TOP) {
-      const c = clonar(configuracaoNeutraTop()) as Record<string, unknown>;
+      const c = comoRaiz(clonar(configuracaoNeutraTop()));
       delete c[secao];
       const r = lerConfiguracaoTop(c);
       expect(r.ok, `sem "${secao}" não pode ser aceito`).toBe(false);
@@ -161,9 +173,9 @@ describe("configuração da TOP — aprovação por valor", () => {
   });
 
   it("número (não string) é recusa: é por aí que 1000.10 vira 1000.0999999", () => {
-    const c = clonar(configuracaoNeutraTop()) as Record<string, Record<string, unknown>>;
-    c.aprovacao.politica = "por_valor";
-    c.aprovacao.valorMinimo = 1000.1;
+    const c = comoSaco(clonar(configuracaoNeutraTop()));
+    c.aprovacao!.politica = "por_valor";
+    c.aprovacao!.valorMinimo = 1000.1;
     const r = lerConfiguracaoTop(c);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.recusas).toContainEqual({ motivo: "tipo_invalido", caminho: "aprovacao.valorMinimo" });

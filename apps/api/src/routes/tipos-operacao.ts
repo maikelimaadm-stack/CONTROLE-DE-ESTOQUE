@@ -7,7 +7,14 @@ import {
   chaveI18nDaFamiliaOperacional,
   familiaOperacionalDeclarada,
   familiasOperacionaisDisponiveis,
-  moduloDaFamiliaOperacional
+  moduloDaFamiliaOperacional,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP,
+  SECOES_CONFIGURACAO_TOP,
+  configuracaoNeutraTop,
+  configuracoesTopIguais,
+  lerConfiguracaoTop,
+  secoesAlteradasTop,
+  type ConfiguracaoTipoOperacaoV1
 } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { criarTradutor, ptBR } from "@erp/plataforma";
@@ -65,7 +72,19 @@ const criarSchema = z.object({
   nome: nomeSchema,
   descricao: descricaoSchema,
   ativo: z.boolean().default(true),
-  padrao: z.boolean().default(false)
+  padrao: z.boolean().default(false),
+  /**
+   * OPCIONAL, E ISSO É O CONTRATO DE COMPATIBILIDADE.
+   *
+   * A web ANTIGA não manda este campo, e durante o rolling deploy ela continua criando TOPs contra a API
+   * nova. Exigir configuração aqui quebraria a criação no meio da implantação. Ausente significa "quem
+   * chamou não declarou nada" — e a leitura honesta disso é o NEUTRO, não uma configuração inventada.
+   *
+   * `z.unknown()` de propósito: quem valida a forma é o DOMÍNIO (`lerConfiguracaoTop`), que é o dono do
+   * contrato. Reescrever o schema em zod aqui criaria uma segunda definição, livre para divergir da
+   * primeira — e divergir para o lado permissivo é exatamente o descarte silencioso que se quer evitar.
+   */
+  configuracao: z.unknown().optional()
 }).strict();
 
 /**
@@ -81,7 +100,9 @@ const editarSchema = z.object({
   descricao: descricaoSchema,
   ativo: z.boolean().optional(),
   padrao: z.boolean().optional(),
-  revisao: z.coerce.number().int().min(1)
+  revisao: z.coerce.number().int().min(1),
+  /** Ausente = PRESERVAR a configuração atual. Ver `configuracaoPedida` e o handler de edição. */
+  configuracao: z.unknown().optional()
 }).strict();
 
 /**
@@ -96,7 +117,7 @@ const excluirSchema = z.object({ revisao: z.coerce.number().int().min(1) }).stri
 const SELECAO = `
   select t.id, t.codigo, t.codigo_base, t.ativo, t.padrao, t.versao_atual, t.revisao,
          t.criado_em, t.atualizado_em,
-         v.nome, v.descricao
+         v.nome, v.descricao, v.configuracao, v.configuracao_schema_version
     from erp.tipos_operacao t
     join erp.tipos_operacao_versoes v
       on v.tipo_operacao_id = t.id and v.versao = t.versao_atual
@@ -109,8 +130,64 @@ interface LinhaTipoOperacao {
   id: string; codigo: string; codigo_base: string; ativo: boolean; padrao: boolean;
   versao_atual: number; revisao: number; criado_em: Date; atualizado_em: Date;
   nome: string; descricao: string | null;
+  configuracao: unknown; configuracao_schema_version: number;
 }
 
+/**
+ * A CONFIGURAÇÃO PEDIDA PELO CLIENTE, VALIDADA — ou uma recusa estável.
+ *
+ * Dois códigos de erro, e não um por campo: quem consome precisa distinguir "o formato é de outra versão
+ * do produto" (nada a corrigir no formulário; é questão de implantação) de "há campo inválido aqui" (o
+ * usuário conserta). Um código por checkbox transformaria o contrato de erro num segundo schema, que
+ * envelheceria à parte do primeiro.
+ *
+ * O `caminho` de cada recusa nomeia a FORMA do payload, nunca dado de outra organização — não há
+ * superfície de vazamento: quem manda o corpo já sabe o que mandou.
+ */
+function configuracaoPedida(bruta: unknown): ConfiguracaoTipoOperacaoV1 {
+  const r = lerConfiguracaoTop(bruta);
+  if (r.ok) return r.valor;
+  const schema = r.recusas.find((x) => x.motivo === "schema_nao_suportado");
+  if (schema) {
+    throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
+      "A configuração enviada usa uma versão de formato que este servidor não conhece",
+      { versaoSuportada: VERSAO_SCHEMA_CONFIGURACAO_TOP });
+  }
+  throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
+    "A configuração operacional enviada é inválida", { recusas: r.recusas });
+}
+
+/**
+ * A CONFIGURAÇÃO GUARDADA, LIDA PARA A TELA — sem nunca derrubar a leitura.
+ *
+ * O payload no banco é `unknown`: ele pode ter sido escrito por uma versão FUTURA do produto (durante um
+ * rollback, por exemplo) ou estar corrompido. Nos dois casos, a leitura do HISTÓRICO precisa continuar
+ * funcionando: quem abre "ver versões" para investigar um documento de dois anos atrás não pode receber
+ * uma tela branca porque UMA das versões não é legível.
+ *
+ * Então o não-legível vira ESTADO DECLARADO (`suportada: false`) em vez de exceção — e, por ser declarado,
+ * a tela pode mostrar "configuração registrada num formato que esta versão não interpreta" no lugar de
+ * inventar valores. O que NUNCA acontece é reinterpretar silenciosamente: um payload v2 lido com o
+ * dicionário v1 não dá erro, dá significado trocado.
+ */
+type ConfiguracaoParaTela =
+  | { suportada: true; versaoSchema: number; valor: ConfiguracaoTipoOperacaoV1 }
+  | { suportada: false; versaoSchema: number };
+
+function configuracaoParaTela(bruta: unknown, versaoSchema: number): ConfiguracaoParaTela {
+  if (versaoSchema !== VERSAO_SCHEMA_CONFIGURACAO_TOP) return { suportada: false, versaoSchema };
+  const r = lerConfiguracaoTop(bruta);
+  return r.ok ? { suportada: true, versaoSchema, valor: r.valor } : { suportada: false, versaoSchema };
+}
+
+/**
+ * A LISTAGEM NÃO CARREGA A CONFIGURAÇÃO INTEIRA.
+ *
+ * Uma página de 50 TOPs traria 50 payloads que ninguém lê para decidir em qual clicar — tráfego e parse
+ * proporcionais ao tamanho do cadastro, para nada. O que a lista precisa é de identidade e estado; a
+ * configuração é do DETALHE, sob demanda. Vai só a versão de schema, que é um inteiro e responde
+ * "esta linha é legível por este cliente?".
+ */
 const paraTela = (r: LinhaTipoOperacao) => ({
   id: r.id,
   codigo: r.codigo,
@@ -122,7 +199,14 @@ const paraTela = (r: LinhaTipoOperacao) => ({
   versao: r.versao_atual,
   revisao: r.revisao,
   criadoEm: r.criado_em,
-  atualizadoEm: r.atualizado_em
+  atualizadoEm: r.atualizado_em,
+  configuracaoSchema: r.configuracao_schema_version
+});
+
+/** O DETALHE — aí sim com a configuração, porque é a tela que vai editá-la. */
+const paraTelaDetalhe = (r: LinhaTipoOperacao) => ({
+  ...paraTela(r),
+  configuracao: configuracaoParaTela(r.configuracao, r.configuracao_schema_version)
 });
 
 export default async function tiposOperacaoRoutes(app: FastifyInstance) {
@@ -135,6 +219,35 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
    */
   app.get("/admin/tipos-operacao/familias", async (req) => runService(app, req, "tipos_operacao.view", async () => ({
     items: familiasOperacionaisDisponiveis().map((c) => familiaParaTela(c))
+  })));
+
+  /**
+   * DESCOBERTA DE CAPACIDADE — o que ESTA API sabe fazer com configuração de TOP.
+   *
+   * ┌─ POR QUE UM ENDPOINT, E NÃO UM `try/catch` NO CLIENTE ─────────────────────────────────────────┐
+   * │ Durante o rolling deploy a WEB NOVA conversa com a API ANTIGA por alguns minutos. A API antiga │
+   * │ valida o corpo com `.strict()`, então mandar `configuracao` para ela produz 422 — o editor     │
+   * │ inteiro pareceria quebrado, e pior: se algum dia um schema frouxo aceitasse e DESCARTASSE o     │
+   * │ campo, o administrador leria "salvo" sobre uma configuração que não existe.                     │
+   * │                                                                                                 │
+   * │ Deduzir a capacidade pela falha é adivinhação: 422 também é o que se recebe por payload         │
+   * │ inválido, e 404 é o que se recebe de uma rota que existe mas está protegida. Perguntar ANTES,   │
+   * │ e não escrever enquanto a resposta não vier, é a diferença entre negociar e torcer.             │
+   * └─────────────────────────────────────────────────────────────────────────────────────────────────┘
+   *
+   * `contractVersion` distingue as três situações que o cliente precisa separar: rota AUSENTE (API
+   * anterior), rota presente com contrato CONHECIDO, e rota presente com contrato FUTURO. Sem ela, as
+   * duas últimas seriam indistinguíveis — e um 200 de formato desconhecido é o modo de falha mais
+   * perigoso, porque parece sucesso.
+   *
+   * A capacidade exigida é `tipos_operacao.view`: perguntar o que a API sabe fazer não é configurar.
+   */
+  app.get("/admin/tipos-operacao/capabilities", async (req) => runService(app, req, "tipos_operacao.view", async () => ({
+    contractVersion: 1,
+    configuracao: {
+      versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP,
+      secoes: [...SECOES_CONFIGURACAO_TOP]
+    }
   })));
 
   // ---------- Lista ----------
@@ -186,7 +299,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const r = await ctx.tx.query<LinhaTipoOperacao>(
       `${SELECAO} where t.id = $1 and t.organization_id = $2 and t.excluido_em is null`, [id, ctx.orgId]);
     if (!r.rows[0]) throw notFound("Tipo de operação");
-    return paraTela(r.rows[0]);
+    return paraTelaDetalhe(r.rows[0]);
   }));
 
   // ---------- Histórico de versões ----------
@@ -197,13 +310,46 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const pai = await ctx.tx.query<{ id: string }>(
       "select id from erp.tipos_operacao where id=$1 and organization_id=$2 and excluido_em is null", [id, ctx.orgId]);
     if (!pai.rows[0]) throw notFound("Tipo de operação");
-    const r = await ctx.tx.query<{ versao: number; nome: string; descricao: string | null; criado_em: Date; criado_por_nome: string | null }>(
-      `select v.versao, v.nome, v.descricao, v.criado_em, u.name as criado_por_nome
+    const r = await ctx.tx.query<{ versao: number; nome: string; descricao: string | null; criado_em: Date; criado_por_nome: string | null; configuracao: unknown; configuracao_schema_version: number }>(
+      `select v.versao, v.nome, v.descricao, v.criado_em, u.name as criado_por_nome,
+              v.configuracao, v.configuracao_schema_version
          from erp.tipos_operacao_versoes v
          left join erp.users u on u.id = v.criado_por
         where v.tipo_operacao_id = $1 and v.organization_id = $2
         order by v.versao desc`, [id, ctx.orgId]);
-    return { items: r.rows.map((v) => ({ versao: v.versao, nome: v.nome, descricao: v.descricao, criadoEm: v.criado_em, criadoPor: v.criado_por_nome })) };
+
+    /**
+     * CADA VERSÃO MOSTRA A CONFIGURAÇÃO DELA — nunca a atual.
+     *
+     * Esta é a razão de a configuração morar na versão. Se o histórico exibisse a configuração vigente ao
+     * lado de nomes antigos, ele estaria MENTINDO com a aparência de registro: a tela diria que a versão 1
+     * baixava estoque porque a versão 7 baixa. O payload sai da própria linha, que é imutável.
+     *
+     * `secoesAlteradas` é DERIVADA aqui, comparando com a versão anterior — e não gravada numa coluna.
+     * Guardá-la criaria uma segunda verdade que pode discordar das versões que ela resume; derivar não
+     * pode divergir do que aconteceu, porque é calculado do que aconteceu.
+     */
+    const linhas = r.rows;
+    const cfg = linhas.map((v) => configuracaoParaTela(v.configuracao, v.configuracao_schema_version));
+    return {
+      items: linhas.map((v, i) => {
+        const atual = cfg[i]!;
+        // As linhas vêm em ordem DECRESCENTE: a anterior desta versão é a do índice seguinte.
+        const anterior = cfg[i + 1];
+        const comparavel = atual.suportada && anterior?.suportada === true;
+        return {
+          versao: v.versao,
+          nome: v.nome,
+          descricao: v.descricao,
+          criadoEm: v.criado_em,
+          criadoPor: v.criado_por_nome,
+          configuracao: atual,
+          // Sem versão anterior legível não há comparação possível — e `[]` afirmaria "nada mudou", que é
+          // diferente de "não dá para saber". `null` diz a segunda coisa.
+          secoesAlteradas: comparavel ? secoesAlteradasTop(anterior.valor, atual.valor) : null
+        };
+      })
+    };
   }));
 
   // ---------- Criação ----------
@@ -227,13 +373,18 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
         [ctx.orgId, d.codigo, d.codigoBase, d.ativo, nasceuPadrao, ctx.user.id]);
       const id = pai.rows[0]!.id;
 
+      // AUSENTE = NEUTRO. Não é o mesmo que "configurado com tudo desligado por decisão": é "ninguém
+      // declarou". O efeito guardado é idêntico, e é o único que não inventa intenção alheia.
+      const configuracao = d.configuracao === undefined ? configuracaoNeutraTop() : configuracaoPedida(d.configuracao);
+
       await ctx.tx.query(
-        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por)
-         values ($1,$2,1,$3,$4,$5)`,
-        [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id]);
+        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version)
+         values ($1,$2,1,$3,$4,$5,$6::jsonb,$7)`,
+        [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP]);
 
       await audit(ctx.tx, ctx, "tipos_operacao", id, "create",
-        { codigo: d.codigo, codigoBase: d.codigoBase, ativo: d.ativo, padrao: nasceuPadrao, versao: 1 });
+        { codigo: d.codigo, codigoBase: d.codigoBase, ativo: d.ativo, padrao: nasceuPadrao, versao: 1,
+          configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP });
       // A TOP anterior perdeu o padrão nesta mesma transação: quem perdeu tem evento próprio, com autor.
       await auditarPadraoLiberado(ctx, liberados, id);
       // E quem ASSUMIU também. Sem isto, "esta TOP virou padrão ao nascer" só existiria dentro do payload
@@ -281,9 +432,34 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
 
     const nome = d.nome ?? antes.nome;
     const descricao = d.descricao === undefined ? antes.descricao : d.descricao;
+
+    /**
+     * A CONFIGURAÇÃO ATUAL, E A PEDIDA.
+     *
+     * A atual vem da VERSÃO CORRENTE, e ela pode ser ilegível — foi escrita por um binário futuro durante
+     * um rollback, ou está corrompida. Nesse caso EDITAR É RECUSADO, e recusar é a única saída honesta:
+     * gravar por cima transformaria uma configuração que não se sabe ler numa que se acabou de inventar,
+     * sem ninguém perceber que algo foi perdido. Ler o histórico continua funcionando (ver
+     * `configuracaoParaTela`); é só a ESCRITA que fecha.
+     */
+    const atualConfig = configuracaoParaTela(antes.configuracao, antes.configuracao_schema_version);
+    if (!atualConfig.suportada) {
+      throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
+        "A configuração vigente deste tipo de operação está num formato que este servidor não interpreta; atualize o servidor antes de editar",
+        { versaoSuportada: VERSAO_SCHEMA_CONFIGURACAO_TOP, versaoEncontrada: antes.configuracao_schema_version });
+    }
+    // AUSENTE = PRESERVAR. É o que a web ANTIGA manda durante o rolling deploy, e interpretar a ausência
+    // como "zerar" apagaria configuração que ninguém pediu para apagar.
+    const configuracao = d.configuracao === undefined ? atualConfig.valor : configuracaoPedida(d.configuracao);
+    const mudouConfiguracao = !configuracoesTopIguais(atualConfig.valor, configuracao);
+
     // CONTEÚDO gera versão; ESTADO não. O nome de uma TOP é o que um documento vai citar — mudou o nome,
     // nasce uma versão nova, e a anterior continua legível. Ativar/desativar não muda o que a TOP É.
-    const mudouConteudo = nome !== antes.nome || (descricao ?? null) !== (antes.descricao ?? null);
+    //
+    // A CONFIGURAÇÃO É CONTEÚDO, pelo mesmo motivo e com mais força: ela é a REGRA que explica o efeito.
+    // E nome + descrição + configuração viajam numa versão SÓ — uma edição que mexe nos três gera UMA
+    // N+1, não três. Versão por aba faria o histórico contar uma sequência de eventos que nunca existiu.
+    const mudouConteudo = nome !== antes.nome || (descricao ?? null) !== (antes.descricao ?? null) || mudouConfiguracao;
     const versao = mudouConteudo ? antes.versao_atual + 1 : antes.versao_atual;
 
     /**
@@ -305,9 +481,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
 
     if (mudouConteudo) {
       await ctx.tx.query(
-        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por)
-         values ($1,$2,$3,$4,$5,$6)`,
-        [ctx.orgId, id, versao, nome, descricao ?? null, ctx.user.id]);
+        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version)
+         values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`,
+        [ctx.orgId, id, versao, nome, descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP]);
     }
 
     const u = await ctx.tx.query(
@@ -320,7 +496,18 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
 
     // Uma ação por mudança, para que a trilha responda "quem desativou isto?" sem interpretar diff.
     if (mudouConteudo) {
-      await audit(ctx.tx, ctx, "tipos_operacao", id, "update", { versaoAnterior: antes.versao_atual, versao },
+      /**
+       * A AUDITORIA REGISTRA QUAIS SEÇÕES MUDARAM, não o payload inteiro.
+       *
+       * Despejar a configuração completa a cada edição faria do log uma SEGUNDA cópia da configuração —
+       * que envelhece em silêncio e diverge da versão, que é a verdade. `["estoque","fiscal"]` responde a
+       * pergunta que se faz numa investigação ("o que mexeram?") e manda o leitor à versão para o detalhe
+       * exato, que está lá, imutável, por construção.
+       */
+      await audit(ctx.tx, ctx, "tipos_operacao", id, "update",
+        { versaoAnterior: antes.versao_atual, versao,
+          secoesAlteradas: mudouConfiguracao ? secoesAlteradasTop(atualConfig.valor, configuracao) : [],
+          configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP },
         { before: { nome: antes.nome, descricao: antes.descricao }, after: { nome, descricao } });
     }
     if (ativo !== antes.ativo) {
