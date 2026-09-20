@@ -109,7 +109,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const passos = useProximosPassos(k?.segmento ?? "", id, Boolean(k));
   /** `can()` aqui é APRESENTAÇÃO: a API cobra a capacidade do destino na conversão. Isto só evita
    *  oferecer um botão que responderia 403. */
-  const podeCriarVariante = (variante: string) => { const v = varianteDeVenda(variante); return Boolean(v) && can(`${v!.perm}.create`); };
+  const podeCriarVariante = (varianteDoDestino: string) => { const v = varianteDeVenda(varianteDoDestino); return Boolean(v) && can(`${v!.perm}.create`); };
   const itens: ProximoPasso[] = passos.situacao === "pronto" ? passos.itens.filter((x) => podeCriarVariante(x.variante)) : [];
 
   /**

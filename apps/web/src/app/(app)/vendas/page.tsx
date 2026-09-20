@@ -35,11 +35,17 @@ function Documentos() {
   // volta a ser "Todos". Pedido da URL é pedido, e o servidor continua sendo quem autoriza.
   const atual = visiveis.some((v) => v.variante === kind) ? kind : "";
   return <div className="flex min-h-0 flex-1 flex-col gap-2">
-    <div className="mg-card ws-filters no-print">
+    {/* `ws-filters` sozinho, sem a classe de cartão: a catraca de nomenclatura (`scripts/naming-audit.mjs`)
+        só deixa a dívida de prefixo herdado DIMINUIR, e superfície criada agora nasce com nome neutro. */}
+    <div className="ws-filters no-print">
       <FilterChips label="Tipo de documento" testId="vendas-tipo" value={atual || "all"} onChange={(v) => setKind(v === "all" ? "" : v)}
         options={[{ value: "all", label: "Todos" }, ...visiveis.map((v) => ({ value: v.variante, label: tr(v.chaveI18n) }))]} />
     </div>
-    <DocumentosDeVendaList kind={atual} />
+    {/* A âncora da LISTA ÚNICA fica no invólucro: `DocList`/`Base1List` são o motor genérico e não
+        recebem identificador de tela — marcar a tela por dentro do motor marcaria todas as outras. */}
+    <div data-testid="vendas-documentos" data-kind={atual} className="flex min-h-0 flex-1 flex-col">
+      <DocumentosDeVendaList kind={atual} />
+    </div>
   </div>;
 }
 
