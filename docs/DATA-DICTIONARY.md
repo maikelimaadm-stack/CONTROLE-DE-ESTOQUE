@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 183 |
-| Tabelas com `organization_id` (escopo de organização) | 128 |
+| Tabelas no schema `erp` | 184 |
+| Tabelas com `organization_id` (escopo de organização) | 129 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 53 |
 | Entidades curadas neste dicionário | 37 |
 | Entidades com ID Global | 23 |
 | Entidades com Tipo de Operação | 13 |
 | Tipos de Operação referenciados | 17 |
-| Cobertura curada | 20.2% |
+| Cobertura curada | 20.1% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1519,6 +1519,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.teams` | 9 | sim | — | sim |
 | `erp.tipos_notificacao` | 5 | não | — | não |
 | `erp.tipos_operacao` | 12 | sim | — | sim |
+| `erp.tipos_operacao_versao_destinos` | 8 | sim | — | não |
 | `erp.tipos_operacao_versoes` | 10 | sim | — | não |
 | `erp.title_apportionments` | 9 | não | — | não |
 | `erp.title_appropriations` | 5 | não | — | não |
