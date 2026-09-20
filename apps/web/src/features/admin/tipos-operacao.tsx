@@ -6,13 +6,20 @@ import { useAuth } from "@/lib/auth";
 import { dateTimeBR } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
 import {
-  Badge, Button, Card, CardBody, ConfirmDialog, Dialog, EmptyState, ErrorState,
-  Field, Input, LoadingState, Menu, NativeSelect, PageHeader, StatusBadge, Textarea
+  Badge, Button, Card, CardBody, ConfirmDialog, EmptyState, ErrorState,
+  Input, LoadingState, Menu, NativeSelect, PageHeader, StatusBadge
 } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
+import { EditorTipoOperacao, type FamiliaTop } from "./top-editor";
+import { HistoricoDeVersoesTop } from "./top-historico";
 
 /**
- * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO (TOP-CONFIG-01).
+ * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO (TOP-CONFIG-01 › TOP-CONFIG-03).
+ *
+ * A LISTAGEM mora aqui; o EDITOR de sete seções mora em `top-editor.tsx` e o histórico em
+ * `top-historico.tsx`. A separação não é estética: o editor conversa com um contrato que pode não existir
+ * no servidor do momento (ver `top-contrato.tsx`), e essa conversa não tem por que atravessar a listagem,
+ * que funciona em qualquer versão da API.
  *
  * O que esta tela configura é a TOP da ORGANIZAÇÃO — "2103 — Venda de Gado a Prazo" —, que aponta para uma
  * FAMÍLIA OPERACIONAL canônica do produto (`vendas.venda`). As famílias NÃO são editáveis aqui e não têm
@@ -22,17 +29,13 @@ import { DataTable } from "@/components/ui/data-table";
  * `can()` aqui só ESCONDE botão. Quem nega é a rota — todas as ações abaixo respondem 403 no servidor para
  * quem não tem a capacidade, e o teste de integração prova isso nas quatro ações.
  */
-interface Familia { codigo: string; rotulo: string; modulo: string | null }
+type Familia = FamiliaTop;
 /** O índice existe porque `DataTable` é genérica sobre `Record<string, unknown>`; os campos continuam tipados. */
 interface TipoOperacao extends Record<string, unknown> {
   id: string; codigo: string; nome: string; descricao: string | null;
   familia: Familia; ativo: boolean; padrao: boolean; versao: number; revisao: number;
   criadoEm: string; atualizadoEm: string;
 }
-interface Versao extends Record<string, unknown> {
-  versao: number; nome: string; descricao: string | null; criadoEm: string; criadoPor: string | null;
-}
-
 const CHAVE = ["tipos-operacao"] as const;
 
 /** Rótulo humano da família com o código técnico discreto ao lado — o usuário nunca vê só a chave crua. */
@@ -155,18 +158,19 @@ export function TiposOperacaoPanel() {
           />}
     </CardBody>
 
-    {criando && <FormularioTipoOperacao
+    {criando && <EditorTipoOperacao
       familias={familias.data?.items ?? []}
       onFechar={() => setCriando(false)}
       onPronto={() => { setCriando(false); recarregar(); }}
     />}
-    {editando && <FormularioTipoOperacao
-      registro={editando}
+    {editando && <EditorTipoOperacao
+      id={editando.id}
+      revisaoConhecida={editando.revisao}
       familias={familias.data?.items ?? []}
       onFechar={() => setEditando(null)}
       onPronto={() => { setEditando(null); recarregar(); }}
     />}
-    {vendoVersoes && <HistoricoDeVersoes registro={vendoVersoes} onFechar={() => setVendoVersoes(null)} />}
+    {vendoVersoes && <HistoricoDeVersoesTop id={vendoVersoes.id} codigo={vendoVersoes.codigo} onFechar={() => setVendoVersoes(null)} />}
     <ConfirmDialog
       open={!!excluindo}
       onOpenChange={(o) => { if (!o) setExcluindo(null); }}
@@ -178,113 +182,4 @@ export function TiposOperacaoPanel() {
       onConfirm={() => excluindo && excluir.mutate(excluindo)}
     />
   </Card>;
-}
-
-/**
- * Formulário de criação e edição.
- *
- * Na EDIÇÃO, código e família aparecem apenas para leitura: mudá-los reclassificaria retroativamente tudo o
- * que já citou este tipo de operação. A rota recusa a troca (409) e o banco também — a tela apenas não
- * oferece o caminho.
- */
-function FormularioTipoOperacao({ registro, familias, onFechar, onPronto }: {
-  registro?: TipoOperacao; familias: Familia[]; onFechar: () => void; onPronto: () => void;
-}) {
-  const edicao = !!registro;
-  const [codigo, setCodigo] = React.useState(registro?.codigo ?? "");
-  const [nome, setNome] = React.useState(registro?.nome ?? "");
-  const [descricao, setDescricao] = React.useState(registro?.descricao ?? "");
-  const [codigoBase, setCodigoBase] = React.useState(registro?.familia.codigo ?? "");
-  const [ativo, setAtivo] = React.useState(registro?.ativo ?? true);
-  const [padrao, setPadrao] = React.useState(registro?.padrao ?? false);
-  const [erro, setErro] = React.useState<unknown>(null);
-
-  const salvar = useMutation({
-    mutationFn: () => edicao
-      ? api(`/api/admin/tipos-operacao/${registro!.id}`, {
-          method: "PUT",
-          body: { nome, descricao: descricao || null, ativo, padrao, revisao: registro!.revisao }
-        })
-      : api("/api/admin/tipos-operacao", {
-          method: "POST",
-          body: { codigo, codigoBase, nome, descricao: descricao || null, ativo, padrao }
-        }),
-    onSuccess: onPronto,
-    onError: setErro
-  });
-
-  const valido = nome.trim().length > 0 && (edicao || (codigo.trim().length > 0 && codigoBase.length > 0));
-
-  return <Dialog
-    open
-    onOpenChange={(o) => { if (!o) onFechar(); }}
-    title={edicao ? "Editar tipo de operação" : "Novo tipo de operação"}
-    description={edicao ? "Alterar o nome ou a descrição cria uma versão nova; o histórico anterior continua legível." : undefined}
-    size="lg"
-    testId="form-tipo-operacao"
-    footer={<>
-      <Button variant="ghost" onClick={onFechar}>{COPY.cancelar}</Button>
-      <Button onClick={() => salvar.mutate()} disabled={!valido || salvar.isPending}>{COPY.salvar}</Button>
-    </>}
-  >
-    <div className="grid grid-cols-12 gap-3">
-      <Field label="Código" required span={3}>
-        <Input value={codigo} readOnly={edicao} disabled={edicao} onChange={(e) => setCodigo(e.target.value)} placeholder="2103" />
-      </Field>
-      <Field label="Nome" required span={9}>
-        <Input value={nome} onChange={(e) => setNome(e.target.value)} placeholder="Venda de Gado a Prazo" />
-      </Field>
-      <Field label="Família operacional" required span={6} help="A família define qual operação do produto este tipo representa. Não muda depois da criação.">
-        {edicao
-          ? <Input value={`${registro!.familia.rotulo} (${registro!.familia.codigo})`} readOnly disabled />
-          : <NativeSelect value={codigoBase} onChange={(e) => setCodigoBase(e.target.value)}>
-              <option value="">Selecione…</option>
-              {familias.map((f) => <option key={f.codigo} value={f.codigo}>{f.rotulo} — {f.codigo}</option>)}
-            </NativeSelect>}
-      </Field>
-      <Field label={COPY.situacao} span={3}>
-        <NativeSelect value={ativo ? "true" : "false"} onChange={(e) => setAtivo(e.target.value === "true")}>
-          <option value="true">Ativo</option>
-          <option value="false">Inativo</option>
-        </NativeSelect>
-      </Field>
-      <Field label="Padrão da família" span={3} help="No máximo um tipo de operação padrão por família. Ao marcar este, o anterior deixa de ser o padrão.">
-        <NativeSelect value={padrao ? "true" : "false"} onChange={(e) => setPadrao(e.target.value === "true")} disabled={!ativo}>
-          <option value="false">Não</option>
-          <option value="true">Sim</option>
-        </NativeSelect>
-      </Field>
-      <Field label="Descrição" span={12}>
-        <Textarea rows={3} value={descricao} onChange={(e) => setDescricao(e.target.value)} />
-      </Field>
-    </div>
-    {erro ? <div className="mt-3"><ErrorState error={erro} /></div> : null}
-  </Dialog>;
-}
-
-/** Histórico imutável: nenhuma versão é editável aqui, porque nenhuma versão é editável em lugar nenhum. */
-function HistoricoDeVersoes({ registro, onFechar }: { registro: TipoOperacao; onFechar: () => void }) {
-  const q = useQuery({
-    queryKey: [...CHAVE, registro.id, "versoes"],
-    queryFn: () => api<{ items: Versao[] }>(`/api/admin/tipos-operacao/${registro.id}/versoes`)
-  });
-  return <Dialog
-    open
-    onOpenChange={(o) => { if (!o) onFechar(); }}
-    title={`Versões de ${registro.codigo}`}
-    description="Cada alteração de nome ou descrição criou uma versão. As versões anteriores não são editáveis."
-    size="lg"
-    testId="versoes-tipo-operacao"
-  >
-    {q.isLoading ? <LoadingState /> : q.isError ? <ErrorState error={q.error} /> : <DataTable
-      rows={q.data?.items ?? []}
-      columns={[
-        { key: "versao", label: "Versão", align: "right", width: 90 },
-        { key: "nome", label: "Nome" },
-        { key: "descricao", label: "Descrição", render: (v: Versao) => v.descricao ?? "—" },
-        { key: "criadoEm", label: "Criado em", render: (v: Versao) => dateTimeBR(v.criadoEm) },
-        { key: "criadoPor", label: "Criado por", render: (v: Versao) => v.criadoPor ?? "—" }
-      ]}
-    />}
-  </Dialog>;
 }
