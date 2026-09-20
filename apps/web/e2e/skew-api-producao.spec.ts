@@ -435,7 +435,15 @@ test("TOP-CONFIG-02 · sobre a API da base, a tela de lançamento não perde a T
      */
     await expect(page.getByTestId("top-nao-confirmado")).toBeVisible();
     await expect(page.getByTestId("top-ausente"), "não é problema de configuração, é do servidor").toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
+    /**
+     * A TOP-CONFIG-02B trocou a âncora, e para melhor: antes se exigia `Salvar` DESABILITADO; agora o
+     * formulário nem é montado sem operação confirmada, então o que se cobra é que ele NÃO EXISTA. É uma
+     * afirmação mais forte — um `disabled` some com uma linha removida por engano; um componente que não
+     * está na árvore não tem botão para reabilitar.
+     */
+    await expect(page.getByTestId("top-lancador"), "a etapa de escolha está na tela").toBeVisible();
+    await expect(page.getByTestId("top-contexto"), "o formulário NÃO pode ter montado contra a API da base").toHaveCount(0);
+    await expect(page.getByTestId("top-continuar"), "sem lista confirmada não há como continuar").toHaveCount(0);
     expect(posts, "ZERO POST contra a API da base: é isto que impede a perda silenciosa").toEqual([]);
     v.semBloqueio();
     return;
@@ -453,6 +461,21 @@ test("TOP-CONFIG-02 · sobre a API da base, a tela de lançamento não perde a T
    */
   await expect(page.getByTestId("top-nao-confirmado"),
     "a base responde a descoberta: tratá-la como servidor antigo é o defeito que este ramo procura").toHaveCount(0);
+
+  /**
+   * E UMA ASSERÇÃO POSITIVA, porque a de cima sozinha é VÁCUO.
+   *
+   * `toHaveCount(0)` é satisfeito de graça por uma tela que não renderizou nada — inclusive por uma tela
+   * quebrada. Sem uma afirmação sobre o que EXISTE, este ramo viraria verde permanente, que é o modo de
+   * falhar que `.claude/rules/testing-gates.md` chama de reprovação.
+   *
+   * O que se exige, então, é que a etapa de escolha esteja de pé contra o binário real da base. A LISTA
+   * em si não é exigida: o cenário não garante TOP cadastrada, e `top-ausente` (nenhuma TOP ativa) é
+   * resposta legítima de um servidor capaz. O lançador estar montado é o que distingue "o web entendeu a
+   * API da base" de "o web desistiu".
+   */
+  await expect(page.getByTestId("top-lancador"), "o lançador monta contra a API da base — o web reconheceu a capacidade").toBeVisible();
+  await expect(page.getByTestId("top-erro"), "e não é um erro explicado pelo servidor").toHaveCount(0);
   expect(posts, "a tela não dispara POST sozinha, em nenhum dos dois mundos").toEqual([]);
   v.semBloqueio();
 });
