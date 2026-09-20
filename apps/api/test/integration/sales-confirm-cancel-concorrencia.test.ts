@@ -607,23 +607,48 @@ describe("fronteiras preservadas", () => {
     expect((await confirmar(venda)).statusCode).toBe(200);
   }, 300_000);
 
-  it("T2: chave de OUTRO usuário não vira replay — o corpo gravado não escapa do escopo pela porta da idempotência", async () => {
-    // O replay devolve a resposta GRAVADA antes de `getDoc` rodar, e é `getDoc` que aplica o recorte de
-    // empresa. Sem o autor dentro do hash, quem tem a capacidade mas NÃO o escopo do documento receberia,
-    // ao reusar a chave alheia, um 200 com `title_ids` — dados que a mesma rota lhe responde 404.
+  it("T2: chave de OUTRO usuário, que ENXERGA o documento — 409, e o corpo gravado não vira resposta dele", async () => {
+    // ESTE é o caso que `actorId` no hash fecha, e é por isso que ele continua ganhando o lugar depois do
+    // preflight. Os dois usuários têm escopo na MESMA empresa, então a conferência de visibilidade passa
+    // para ambos: o que separa um do outro é só o autor dentro do hash. Sem ele, o segundo usuário reusando
+    // a chave do primeiro receberia 200 com `title_ids` de uma operação que ele nunca executou — e o pedido
+    // que ele de fato mandou jamais rodaria.
     const venda = await criar("sale");
     const chave = `conf-t2-${venda}`;
     const original = await confirmar(venda, chave);
     expect(original.statusCode, original.body).toBe(200);
-    expect((j(original).title_ids as string[]).length, "premissa: a resposta gravada carrega dados do documento").toBeGreaterThan(0);
+    const titulos = j(original).title_ids as string[];
+    expect(titulos.length, "premissa: a resposta gravada carrega dados do documento").toBeGreaterThan(0);
+
+    const outro = await membro("Outro vendedor da MESMA empresa", ["sales.view", "sales.edit", "sales.delete"], [I.empresa]);
+    const r = await h.app.inject({ method: "POST", url: `/api/sales/sales/${venda}/confirm`,
+      headers: { ...outro, "idempotency-key": chave } });
+
+    expect(r.statusCode, r.body).toBe(409);
+    expect(j(r).error!.code).toBe("CONFLICT");
+    expect(r.body, "a resposta gravada não pode sair na recusa").not.toContain(titulos[0]!);
+  }, 300_000);
+
+  it("T2b: chave de outro usuário FORA do escopo — 404, e não 409: a recusa não confirma que a chave existe", async () => {
+    // Antes do preflight esta era a mesma asserção do T2 e respondia 409 CONFLICT. O 409 era correto quanto
+    // ao efeito (nada executava, nada vazava) e ERRADO quanto à superfície: dizia "esta chave já está
+    // tomada" a quem nem sequer pode ver o documento — um oráculo pequeno, mas oráculo. Com a conferência
+    // de visibilidade ANTES do helper, a recusa passa a ser a MESMA 404 de id inexistente, de outro tenant
+    // e de outra variante, que é o que `.claude/rules/security.md` exige. A mudança é um APERTO do contrato
+    // de recusa, não um afrouxamento — e está declarada no encerramento da fatia.
+    const venda = await criar("sale");
+    const chave = `conf-t2b-${venda}`;
+    const original = await confirmar(venda, chave);
+    expect(original.statusCode, original.body).toBe(200);
+    const titulos = j(original).title_ids as string[];
 
     const foraDeEscopo = await membro("Vendedor de outra empresa", ["sales.view", "sales.edit", "sales.delete"], [I.empresa2]);
     const r = await h.app.inject({ method: "POST", url: `/api/sales/sales/${venda}/confirm`,
       headers: { ...foraDeEscopo, "idempotency-key": chave } });
 
-    expect(r.statusCode, r.body).toBe(409);
-    expect(j(r).error!.code).toBe("CONFLICT");
-    expect(r.body, "nenhum dado do documento pode sair na recusa").not.toContain((j(original).title_ids as string[])[0]!);
+    expect(r.statusCode, r.body).toBe(404);
+    expect(j(r).error!.code).toBe("NOT_FOUND");
+    expect(r.body, "nenhum dado do documento pode sair na recusa").not.toContain(titulos[0]!);
   }, 300_000);
 
   it("T3: MESMO usuário, MESMA chave, OUTRA empresa selecionada — 404 antes do replay (cancelamento)", async () => {
