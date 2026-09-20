@@ -252,11 +252,16 @@ test("HOTFIX: o cancelamento sai da tela COM Idempotency-Key, como a confirmaç�
   const d = await criar(page, "budget");
   await abrir(page, d);
 
-  const pedido = page.waitForRequest((r) => r.method() === "POST" && r.url().includes(`/api/sales/${d.rota}/${d.id}/cancel`));
+  // Espera a RESPOSTA, não o request: `waitForRequest` resolve quando o pedido SAI, e o `GET` de
+  // conferência logo abaixo correria na frente da mutação — um teste que falharia (ou passaria) pelo
+  // relógio, não pelo comportamento.
+  const resposta = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/api/sales/${d.rota}/${d.id}/cancel`));
   await page.getByRole("button", { name: /^Cancelar / }).click();
   await page.getByTestId("confirm-dialog-confirm").click();
-  const req = await pedido;
+  const res = await resposta;
+  const req = res.request();
 
+  expect(res.status(), `o servidor precisa ter aceitado o cancelamento: ${await res.text()}`).toBe(200);
   expect(req.headers()["idempotency-key"], "sem chave, o reenvio do cancelamento vira um segundo estorno").toBeTruthy();
   expect(req.postDataJSON(), "o motivo continua sendo enviado, e agora é conferido pelo servidor").toMatchObject({ reason: expect.any(String) });
 

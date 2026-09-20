@@ -365,10 +365,14 @@ export default async function salesRoutes(app: FastifyInstance) {
      * cancelamento segue estornando estoque e carimbando `cancelled` sobre um título que acabou de
      * receber baixa — com o movimento bancário vivo e `erp.refresh_title_status` já desistindo de
      * reconciliar, porque ela retorna cedo para título cancelado. Por isso a leitura abaixo é
-     * `for update` SOBRE AS LINHAS DE TÍTULO em que a decisão se apoia, e `order by id` porque ordem de
-     * travamento arbitrária é o outro jeito de produzir 40P01 contra quem trava as mesmas linhas. Fecha os dois sentidos: se a
+     * `for update` SOBRE AS LINHAS DE TÍTULO em que a decisão se apoia. Isso fecha os dois sentidos: se a
      * baixa chega primeiro, o cancelamento lê o `paid_amount` novo e recusa; se chega depois, `settle`
      * espera o commit, relê `status='cancelled'` e recusa com ALREADY_CANCELLED.
+     *
+     * `order by id` não é enfeite: ordem de travamento arbitrária é o outro jeito de produzir 40P01 contra
+     * quem trava as MESMAS linhas — e `settle-batch` as trava na ordem que o CLIENTE mandou. Ordenar deste
+     * lado não elimina o ciclo sozinho (o outro lado continua livre), mas tira daqui a metade não
+     * determinística; a outra metade está declarada no encerramento da fatia.
      *
      * IDEMPOTÊNCIA pelo helper oficial, o mesmo da conversão e da baixa financeira — não um mecanismo novo.
      * Ela resolve outro problema: o REENVIO (retry de rede, proxy, aba duplicada). A trava serializa; a

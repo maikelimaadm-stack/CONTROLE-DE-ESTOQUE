@@ -206,6 +206,26 @@ describe("confirmação concorrente", () => {
     expect(e.titulos).toBe(0);
   }, 180_000);
 
+  it("C6: cancelada primeiro, a venda NÃO confirma — e a recusa é pelo motivo certo", async () => {
+    // X1 mede a corrida, mas quem vence a corrida não se escolhe: o ramo "cancelou antes" pode não rodar
+    // nenhuma vez e o teste passar assim mesmo. Este caso é o mesmo par de decisões em ordem FIXA, para
+    // que o ramo exista sempre — e a asserção é o CÓDIGO do erro, porque 409 sozinho é ambíguo (é o status
+    // de ALREADY_CONFIRMED, ALREADY_CANCELLED, CONFLICT, INVALID_STATUS_TRANSITION e mais quatro).
+    const venda = await criar("sale");
+    const antes = await saldo();
+    expect((await cancelar("sale", venda)).statusCode).toBe(200);
+
+    const r = await confirmar(venda);
+
+    expect(r.statusCode, r.body).toBe(409);
+    expect(j(r).error!.code, "recusa pelo estado que existe, não pelo que não existe").toBe("ALREADY_CANCELLED");
+    const e = await efeitos(venda);
+    expect(e.movimentos).toBe(0);
+    expect(e.titulos).toBe(0);
+    expect(e.auditoria.confirm).toBeUndefined();
+    expect(await saldo(), "nada saiu do estoque").toBe(antes);
+  }, 180_000);
+
   it("C5: chave gravada com o hash ANTERIOR não vira replay nem duplicação — recusa, e a venda fica aberta", async () => {
     // JANELA DE IMPLANTAÇÃO. O hash da confirmação passou a declarar a ação (`confirm_sales_document`).
     // Uma chave reservada pelo binário ANTERIOR, reenviada ao novo durante o rolling deploy, computa um
@@ -247,6 +267,28 @@ describe("cancelamento concorrente", () => {
     expect(e.status).toBe("cancelled");
     expect(e.auditoria.cancel, "um cancelamento efetivo = uma auditoria").toBe(1);
     expect(e.movimentos, "documento aberto não tem efeito de estoque para estornar").toBe(0);
+  }, 240_000);
+
+  it("K1b: dois cancelamentos SIMULTÂNEOS de VENDA aberta — nenhum entra no caminho do estorno", async () => {
+    // K1 usa orçamento, que nunca posta estoque: lá `movimentos === 0` é verdade mesmo com o código
+    // quebrado. Aqui o documento TEM armazém, então a contagem passa a medir alguma coisa — um
+    // cancelamento que entrasse no ramo da venda confirmada estornaria o que nunca saiu.
+    const venda = await criar("sale");
+    const antes = await saldo();
+
+    const [a, b] = await Promise.all([cancelar("sale", venda), cancelar("sale", venda)]);
+
+    expect([a, b].filter((r) => r.statusCode === 200).length, `a: ${a.statusCode} ${a.body} / b: ${b.statusCode} ${b.body}`).toBe(1);
+    const perdedora = [a, b].find((r) => r.statusCode !== 200)!;
+    expect(perdedora.statusCode, perdedora.body).toBe(409);
+    expect(j(perdedora).error!.code).toBe("ALREADY_CANCELLED");
+
+    const e = await efeitos(venda);
+    expect(e.status).toBe("cancelled");
+    expect(e.movimentos, "venda aberta não tem saída para estornar").toBe(0);
+    expect(e.titulos).toBe(0);
+    expect(e.auditoria.cancel).toBe(1);
+    expect(await saldo(), "o saldo não se mexe").toBe(antes);
   }, 240_000);
 
   it("K2: dois cancelamentos SIMULTÂNEOS de venda CONFIRMADA — UM estorno, nunca dois", async () => {
@@ -422,6 +464,32 @@ describe("fronteiras preservadas", () => {
     expect(depois.titulosAtivos, "recusa não cancela título").toBe(antes.titulosAtivos);
     expect(depois.auditoria.cancel, "recusa não audita cancelamento").toBeUndefined();
     expect(await saldo()).toBe(saldoAntes);
+  }, 300_000);
+
+  it("P1b: cancelada a BAIXA, a venda volta a ser cancelável — a recusa de P1 não é beco sem saída", async () => {
+    // Sem este caso, o 409 de P1 seria indistinguível de "esta venda nunca mais se cancela". O guarda diz
+    // "cancele as baixas antes"; aqui se cancela a baixa e se comprova que a frase é verdadeira.
+    const venda = await vendaConfirmada();
+    const aposConfirmar = await saldo();
+    const titulo = await comPool(async (c) => (await c.query<{ id: string }>(
+      "select id from erp.financial_titles where source_type='sales_documents' and source_id=$1", [venda])).rows[0]!);
+    const baixa = await h.app.inject({ method: "POST", url: `/api/financial/receivables/${titulo.id}/settle`, headers: h.headers(),
+      payload: { settlement_date: "2026-09-11", bank_account_id: I.bankAccount, amount: "10.00" } });
+    expect(baixa.statusCode, baixa.body).toBe(201);
+    expect((await cancelar("sale", venda)).statusCode, "premissa: com baixa, recusa").toBe(409);
+
+    const desfaz = await h.app.inject({ method: "POST", url: `/api/financial/receivables/${titulo.id}/settlements/${j(baixa).settlement_id}/cancel`,
+      headers: h.headers(), payload: { reason: "Baixa indevida" } });
+    expect(desfaz.statusCode, desfaz.body).toBe(200);
+
+    const r = await cancelar("sale", venda);
+    expect(r.statusCode, r.body).toBe(200);
+    const e = await efeitos(venda);
+    expect(e.status).toBe("cancelled");
+    expect(e.estornos).toBe(1);
+    expect(e.liquido).toBe(0);
+    expect(e.titulosAtivos).toBe(0);
+    expect(await saldo()).toBe(aposConfirmar + 1);
   }, 300_000);
 
   it("P2: baixa de título e cancelamento SIMULTÂNEOS — nunca um título com baixa E cancelado", async () => {
