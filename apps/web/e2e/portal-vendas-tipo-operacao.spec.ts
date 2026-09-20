@@ -10,10 +10,18 @@ import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLanca
  */
 const PORTAL = "/vendas";
 
-/** Cadastra uma TOP pela API administrativa (o E2E do cadastro em si é da TOP-CONFIG-01). */
+/**
+ * Cadastra uma TOP pela API administrativa (o E2E do cadastro em si é da TOP-CONFIG-01).
+ *
+ * O CÓDIGO VOLTA JUNTO COM O ID porque, a partir da TOP-CONFIG-03, ele é PARTE DO RÓTULO que a tela
+ * escreve no botão de conversão ("Converter em 71234 — Pedido especial"). Sem o código aqui, a asserção
+ * sobre esse rótulo teria de copiar um literal — e um literal copiado passa a valer mesmo quando a tela
+ * deixa de nomear a operação escolhida, que é exatamente o defeito que a asserção existe para pegar.
+ */
 async function cadastrarTop(page: Page, codigoBase: string, nome: string, extra: Record<string, unknown> = {}) {
   const codigo = `7${Math.floor(Math.random() * 90000 + 10000)}`;
-  return api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo, codigoBase, nome, ...extra });
+  const criado = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo, codigoBase, nome, ...extra });
+  return { id: criado.id, codigo };
 }
 
 /**
@@ -93,12 +101,27 @@ test("editar a TOP cria a versão 2 e o documento ANTIGO continua exibindo a ver
 });
 
 test("conversão exige a TOP do DESTINO, e a fonte mantém a dela", async ({ page }) => {
+  /**
+   * ATUALIZADO NA TOP-CONFIG-03 — a MESMA propriedade, pelo caminho novo.
+   *
+   * Antes, a tela oferecia a conversão por uma cadeia fixa e perguntava a TOP do destino num `<select>`
+   * carregado da variante seguinte. Agora quem diz o que este documento pode gerar é a VERSÃO da TOP de
+   * origem que ele cita (`/proximos-passos`), e o leque já vem resolvido em TOPs de destino.
+   *
+   * O QUE ESTE TESTE CONTINUA PROVANDO, sem afrouxar: o documento de destino nasce com a TOP DO DESTINO
+   * (nunca herda a da fonte), a TOP da fonte não é oferecida como próximo passo dela mesma, e a fonte
+   * continua exibindo a sua depois da conversão. Só o mecanismo de escolha mudou de `<select>` para o
+   * leque do grafo.
+   */
   await login(page);
   const empresa = await empresaAtiva(page);
   const nomeOrcamento = uniq("Orçamento padrão");
   const nomePedido = uniq("Pedido especial");
-  const topOrcamento = await cadastrarTop(page, "vendas.orcamento", nomeOrcamento);
   const topPedido = await cadastrarTop(page, "vendas.pedido", nomePedido, { padrao: true });
+  // A ARESTA É A CONFIGURAÇÃO DA ORIGEM: orçamento → este pedido. Sem ela o documento não ofereceria
+  // conversão nenhuma, e o teste mediria a ponte de compatibilidade em vez do grafo.
+  const topOrcamento = await cadastrarTop(page, "vendas.orcamento", nomeOrcamento,
+    { destinos: [{ tipoOperacaoId: topPedido.id, ordem: 0 }] });
 
   const cliente = await primeiroId(page, "/api/resources/people?is_client=true&pageSize=1");
   const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
@@ -108,18 +131,30 @@ test("conversão exige a TOP do DESTINO, e a fonte mantém a dela", async ({ pag
   });
 
   await page.goto(`/vendas/budgets/${orcamento.id}`);
-  await page.getByRole("button", { name: "Converter em pedido" }).click();
+  await expect(page.getByTestId("base2-shell"), "a premissa: o documento abriu").toBeVisible();
+  // O RÓTULO NOMEIA A OPERAÇÃO DE DESTINO. Um destino só não vira "Converter" genérico: o operador
+  // precisa saber, ANTES do clique, em que operação o documento novo nasce.
+  const acao = page.getByTestId("acao-conversao");
+  await expect(acao).toHaveText(`Converter em ${topPedido.codigo} — ${nomePedido}`);
+  await acao.click();
+
   const dialogo = page.getByTestId("dialog-conversao");
   await expect(dialogo).toBeVisible();
-  // O seletor do diálogo carrega as TOPs do DESTINO (pedido), nunca as da fonte (orçamento).
-  const opcoes = await dialogo.getByTestId("select-tipo-operacao").locator("option").evaluateAll((os) =>
-    os.map((o) => (o as HTMLOptionElement).textContent ?? ""));
-  expect(opcoes.some((o) => o.includes(nomePedido)), "a TOP de pedido é oferecida").toBe(true);
-  expect(opcoes.some((o) => o.includes(nomeOrcamento)), "a TOP de orçamento NÃO pode ser oferecida").toBe(false);
+  // O próximo passo é a TOP DO DESTINO — provado pelo id, não pelo texto: só o id distingue "a tela
+  // mostrou a TOP certa" de "a tela mostrou um texto que por acaso contém o mesmo nome".
+  const unico = dialogo.getByTestId("proximo-passo-unico");
+  await expect(unico).toHaveAttribute("data-top-id", topPedido.id);
+  await expect(unico).toContainText(nomePedido);
+  // E a TOP DA FONTE não é oferecida como próximo passo dela mesma.
+  await expect(dialogo.getByText(nomeOrcamento), "a TOP de orçamento NÃO pode ser oferecida").toHaveCount(0);
+  // Com um destino só não há o que escolher — e, portanto, nenhum seletor de TOP do destino: ele era a
+  // pergunta da cadeia anterior, e a política já respondeu.
+  await expect(dialogo.getByTestId("select-tipo-operacao"), "o grafo já respondeu qual é o destino").toHaveCount(0);
 
   await dialogo.getByRole("button", { name: "Converter" }).click();
   await expect(page).toHaveURL(/\/vendas\/orders\//);
   await expect(page.getByText(nomePedido), "o destino usa a TOP dele").toBeVisible();
+  await expect(page.getByText(nomeOrcamento), "e NÃO herda a TOP da fonte").toHaveCount(0);
 
   // E a fonte continua com a dela.
   await page.goto(`/vendas/budgets/${orcamento.id}`);
@@ -353,14 +388,29 @@ test("E1 VENDA — do Portal ao snapshot: lançador, formulário contextualizado
   const nomeTop = uniq("Venda a Prazo");
   const top = await cadastrarTop(page, "vendas.venda", nomeTop);
 
-  // Do PORTAL, pelo caminho que o usuário faz — não por URL digitada.
+  /**
+   * Do PORTAL, pelo caminho que o usuário faz — não por URL digitada.
+   *
+   * ATUALIZADO NA TOP-CONFIG-03: o `+ Novo` deixou de perguntar a VARIANTE ("Nova venda") e passou a
+   * oferecer as OPERAÇÕES agrupadas por família. Escolher a operação já decide a porta, então não há
+   * mais menu de documento — e o caminho do usuário passa a ser um clique, não dois.
+   */
   await page.goto(PORTAL);
-  await page.getByTestId("ws-new").click();
-  await page.getByRole("menuitem", { name: "Nova venda" }).click();
+  await page.getByTestId("vendas-novo").click();
+  const lancador = page.getByTestId("lancador-unificado");
+  await expect(lancador, "o `+ Novo` do portal abre o lançador unificado").toBeVisible();
+  await lancador.locator(`[data-testid="lancador-top"][data-top-id="${top.id}"]`).click();
 
-  await expect(page.getByTestId("top-lancador"), "o Portal leva ao lançador, não ao formulário").toBeVisible();
-  await esperarLancadorSemFormulario(page);
-  await escolherTopEContinuar(page, top.id);
+  /**
+   * A OPERAÇÃO ESCOLHIDA NO PORTAL É PEDIDO, NÃO AUTORIZAÇÃO: ela vira `?tipo_operacao_id=<uuid>` na
+   * rota da variante, e lá o id é reconferido contra a lista que o SERVIDOR devolve para AQUELA
+   * variante. O formulário só monta porque essa conferência passou — o que se afirma abaixo é a URL
+   * (o pedido) E o contexto montado (a resposta), porque só as duas juntas separam "a tela obedeceu à
+   * URL" de "a tela confirmou a operação".
+   */
+  await expect(page).toHaveURL(new RegExp(`/vendas/sales/new\\?tipo_operacao_id=${top.id}`));
+  await expect(page.getByTestId("top-contexto"), "a escolha do portal abre o formulário já contextualizado").toContainText(nomeTop);
+  await expect(page.getByTestId("top-lancador"), "e não devolve o usuário à pergunta que ele já respondeu").toHaveCount(0);
 
   // O contexto operacional está em destaque, no topo — e o campo saiu do grid.
   await expect(page.getByTestId("top-contexto")).toContainText(nomeTop);
@@ -832,6 +882,27 @@ test("V1 — A TRAVA NÃO ATRAVESSA A VARIANTE: TOP de venda não abre formulár
   expect(posts, "e nada foi gravado no caminho").toEqual([]);
 });
 
+/**
+ * ────────────────────────────────────────────────────────────────────────────────────────────────────
+ * CV1/CV2 — O DIÁLOGO DE CONVERSÃO DA CADEIA DE COMPATIBILIDADE (ainda vivo na TOP-CONFIG-03)
+ * ────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * Estes dois casos medem o `<select>` de TOP do DESTINO, que é o diálogo ANTERIOR ao grafo. Ele não
+ * desapareceu: durante o rolling deploy a web NOVA conversa com a API ANTIGA, onde `/proximos-passos`
+ * não existe, e nesse caso a tela cai justamente nele em vez de esconder a conversão de quem depende
+ * dela. O que estes testes provam — "uma TOP única não é um padrão", "o padrão do CADASTRO vem
+ * escolhido e continua trocável" — continua valendo exatamente ali.
+ *
+ * Por isso a descoberta de próximos passos é derrubada de propósito: sem isso, o servidor REAL confirma
+ * a política, o documento não tem transição nenhuma configurada e a conversão simplesmente não é
+ * oferecida — o teste morreria esperando um botão que a fatia nova acerta em não mostrar.
+ */
+async function derrubarProximosPassos(page: Page, segmento: string, status = 404) {
+  await page.route(`**/api/sales/${segmento}/*/proximos-passos`, (rota) =>
+    rota.fulfill({ status, contentType: "application/json",
+      body: JSON.stringify({ error: { code: "NOT_FOUND", message: "x" } }) }));
+}
+
 test("CV1 — CONVERSÃO SEM PADRÃO: nada vem escolhido, e Converter só libera depois da escolha", async ({ page }) => {
   await login(page);
   const empresa = await empresaAtiva(page);
@@ -853,10 +924,21 @@ test("CV1 — CONVERSÃO SEM PADRÃO: nada vem escolhido, e Converter só libera
   await page.route("**/api/sales/orders/operation-types", (rota) =>
     rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contractVersion: 1, family: { code: "vendas.pedido", label: "Pedido de Venda" }, defaultId: null, items: [unica] }) }));
 
+  // A API ANTERIOR à TOP-CONFIG-03 — é o único cenário em que este diálogo ainda aparece.
+  await derrubarProximosPassos(page, "budgets");
+
   await page.goto(`/vendas/budgets/${orcamento.id}`);
-  await page.getByRole("button", { name: "Converter em pedido" }).click();
+  await expect(page.getByTestId("base2-shell"), "a premissa: o orçamento abriu").toBeVisible();
+  const acao = page.getByTestId("acao-conversao");
+  // NA COMPATIBILIDADE O RÓTULO NOMEIA A FAMÍLIA do destino — é tudo o que se sabe antes de perguntar
+  // as TOPs. Afirmar o rótulo aqui é o que distingue "caiu na cadeia anterior" de "leu o grafo".
+  await expect(acao, "sem política confirmada, o destino é a família da cadeia anterior").toHaveText("Converter em Pedido de venda");
+  await acao.click();
   const dialogo = page.getByTestId("dialog-conversao");
   await expect(dialogo).toBeVisible();
+  // E nenhum próximo passo do grafo pode ter sido desenhado: o servidor não confirmou política nenhuma.
+  await expect(dialogo.getByTestId("proximo-passo-unico")).toHaveCount(0);
+  await expect(dialogo.getByTestId("proximo-passo-opcao")).toHaveCount(0);
 
   // UMA opção, e MESMO ASSIM nada escolhido: uma TOP única não é um padrão.
   await expect(dialogo.getByTestId("select-tipo-operacao")).toHaveValue("");
@@ -882,9 +964,13 @@ test("CV2 — CONVERSÃO COM PADRÃO REAL: vem pré-selecionado e visível, e po
   await page.route("**/api/sales/orders/operation-types", (rota) =>
     rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contractVersion: 1, family: { code: "vendas.pedido", label: "Pedido de Venda" }, defaultId: padrao.id, items: [padrao, outra] }) }));
 
+  await derrubarProximosPassos(page, "budgets");
+
   await page.goto(`/vendas/budgets/${orcamento.id}`);
-  await page.getByRole("button", { name: "Converter em pedido" }).click();
+  await expect(page.getByTestId("base2-shell"), "a premissa: o orçamento abriu").toBeVisible();
+  await page.getByTestId("acao-conversao").click();
   const dialogo = page.getByTestId("dialog-conversao");
+  await expect(dialogo).toBeVisible();
 
   await expect(dialogo.getByTestId("select-tipo-operacao"), "o padrão do CADASTRO vem escolhido").toHaveValue(padrao.id);
   await expect(dialogo.getByRole("button", { name: "Converter" })).toBeEnabled();

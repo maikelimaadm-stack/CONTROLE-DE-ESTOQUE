@@ -81,7 +81,10 @@ test.describe("abas globais", () => {
 
   test("muitas abas: rail rola, menu de abas lista todas e foca a escolhida", async ({ page }) => {
     await login(page); await page.setViewportSize({ width: 1024, height: 768 });
-    for (const [m, it] of [["Compras", /Processos/], ["Estoque", "Saldo"], ["Financeiro", "A Pagar"], ["Vendas", /Vendas/], ["Pecuária", /Animais/], ["Frota e Ativos", /Abastecimentos/], ["Configurações", /Auditoria/]] as const) await openVia(page, m, it);
+    // O item de Vendas é "Documentos comerciais" desde a TOP-CONFIG-03: as três áreas (Orçamentos,
+    // Pedidos, Vendas) viraram UMA lista com o tipo como filtro, e o mega-menu sai do registry de
+    // navegação. O que este teste mede continua sendo o rail de abas, não o nome da tela.
+    for (const [m, it] of [["Compras", /Processos/], ["Estoque", "Saldo"], ["Financeiro", "A Pagar"], ["Vendas", /Documentos comerciais/], ["Pecuária", /Animais/], ["Frota e Ativos", /Abastecimentos/], ["Configurações", /Auditoria/]] as const) await openVia(page, m, it);
     await expect(tabs(page)).toHaveCount(8);
     await page.getByTestId("workspace-tabs-menu").click(); await page.getByRole("menuitem", { name: /Compras/ }).click();
     await expect(activeTab(page)).toHaveText("Compras"); await expect(page).toHaveURL(/\/compras/);
