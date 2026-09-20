@@ -192,13 +192,25 @@ export function CampoTipoOperacao({ estado, valor, onChange, span = 4 }: { estad
   </Field>;
 }
 
-/** Sincroniza o padrão da família com o estado do formulário, sem sobrescrever escolha já feita. */
+/**
+ * Sincroniza o padrão da família com o estado do formulário, sem sobrescrever escolha já feita.
+ *
+ * SÓ `defaultId` PRÉ-SELECIONA — uma família com UMA TOP não transforma essa TOP em padrão.
+ *
+ * Havia aqui um `?? (items.length === 1 ? items[0].id : null)`, e ele contradizia a decisão 205: o
+ * padrão é decisão do CADASTRO (`padrao` no banco), não da cardinalidade da lista. Duas semânticas de
+ * padrão no mesmo produto — uma no lançamento, outra na conversão — é a segunda lista que este
+ * repositório evita, e a divergência apareceria calada no dia em que a família ganhasse a segunda TOP:
+ * a marcação sumiria sem que nada tivesse mudado no cadastro.
+ *
+ * O efeito prático é na CONVERSÃO (orçamento → pedido → venda): com destino sem padrão, o campo
+ * continua em "Selecione…" e o usuário escolhe. É mais um clique, e é o clique que faz a operação do
+ * documento novo ser uma decisão em vez de um efeito colateral da quantidade de linhas cadastradas.
+ */
 export function usePadraoTop(estado: EstadoTop, valor: string, setValor: (v: string) => void) {
   React.useEffect(() => {
     if (!podeLancar(estado) || valor) return;
-    const { defaultId, items } = estado.dados;
-    // Com uma única TOP ativa, selecioná-la é o comportamento útil — e ela continua visível no campo.
-    const escolha = defaultId ?? (items.length === 1 ? items[0]!.id : null);
+    const escolha = estado.dados.defaultId;
     if (escolha) setValor(escolha);
   }, [estado, valor, setValor]);
 }

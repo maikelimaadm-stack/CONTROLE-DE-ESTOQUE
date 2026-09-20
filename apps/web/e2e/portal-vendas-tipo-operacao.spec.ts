@@ -651,3 +651,244 @@ test("C2 — O SERVIDOR AINDA MANDA: salvar com a TOP já desativada recusa, e n
   await expect(page.getByTestId("top-contexto")).toBeVisible();
   await expect(page.getByLabel("Observação")).toHaveValue(rascunho);
 });
+
+/**
+ * ────────────────────────────────────────────────────────────────────────────────────────────────────
+ * R2 — O RASCUNHO FICA; A ESCRITA, NÃO (TOP-CONFIG-02B R2)
+ * ────────────────────────────────────────────────────────────────────────────────────────────────────
+ *
+ * A R1 manteve o formulário montado quando a descoberta mudava no meio da edição — e manteve DEMAIS:
+ * o Salvar continuava habilitado. Num rolling deploy isso reabre o buraco da TOP-CONFIG-02, porque a
+ * API que vai receber o POST pode ser a ANTIGA, que IGNORA `tipo_operacao_id` em silêncio. "O servidor
+ * devolve 422" não é garantia quando o servidor talvez não conheça o campo.
+ *
+ * Os testes abaixo medem as duas coisas separadamente: o rascunho SOBREVIVE e o POST NÃO SAI.
+ */
+
+/** Assume a rota de descoberta da variante e permite trocar a resposta no meio do teste. */
+async function descobertaControlada(page: Page, variante: string) {
+  const ctrl: { resposta: { status: number; corpo: unknown } | null; chamadas: number } = { resposta: null, chamadas: 0 };
+  await page.route(`**/api/sales/${variante}/operation-types`, async (rota) => {
+    ctrl.chamadas += 1;
+    if (!ctrl.resposta) return rota.fallback();                       // enquanto null, o servidor real responde
+    await rota.fulfill({ status: ctrl.resposta.status, contentType: "application/json", body: JSON.stringify(ctrl.resposta.corpo) });
+  });
+  return ctrl;
+}
+
+/**
+ * Força uma revalidação REAL da descoberta e só devolve quando ela aconteceu.
+ *
+ * A espera não é folga: `lib/query.tsx` declara `staleTime: 15_000`, e reconexão NÃO refaz query que
+ * ainda está fresca. Sem passar desse prazo o `online` não dispara nada e o teste viraria um verde que
+ * não mediu coisa alguma. O retorno CONTA as chamadas para que isso seja verificável, não suposto.
+ */
+async function revalidar(page: Page, ctrl: { chamadas: number }) {
+  const antes = ctrl.chamadas;
+  await page.waitForTimeout(16_000);
+  await page.evaluate(() => { window.dispatchEvent(new Event("offline")); window.dispatchEvent(new Event("online")); });
+  await expect.poll(() => ctrl.chamadas, { message: "a revalidação precisa ter ACONTECIDO" }).toBeGreaterThan(antes);
+}
+
+/** O estado que interessa depois de uma descoberta adversa: rascunho inteiro, escrita fechada. */
+async function esperarRascunhoSemEscrita(page: Page, rascunho: string, posts: string[]) {
+  await expect(page.getByTestId("top-contexto"), "o formulário continua montado").toBeVisible();
+  await expect(page.getByLabel("Observação"), "o que foi digitado continua lá").toHaveValue(rascunho);
+  await expect(page.getByRole("button", { name: "Salvar" }), "a escrita está fechada").toBeDisabled();
+  await expect(page.getByTestId("top-alterar"), "trocar de operação continua possível").toBeVisible();
+  await expect(page.getByTestId("top-lancador"), "não voltou ao lançador sozinho").toHaveCount(0);
+  expect(posts, "ZERO POST — o cliente JÁ SABE que não pode gravar").toEqual([]);
+}
+
+/**
+ * Abre o formulário de venda com uma TOP real e o deixa PRONTO PARA SALVAR — cliente, item e um
+ * rascunho identificável.
+ *
+ * Preencher tudo NÃO é capricho: é o que dá sentido às asserções de `Salvar desabilitado` que vêm
+ * depois. Com o formulário pela metade o botão já estaria desabilitado por falta de cliente e de item,
+ * e os testes de RD1–RD4 passariam mesmo se o bloqueio por capability não existisse — verdes que não
+ * mediriam nada. Por isso a última linha AFIRMA que o botão está habilitado: é a premissa, provada
+ * junto com a conclusão.
+ */
+async function formularioComRascunho(page: Page, rascunho: string) {
+  const top = await cadastrarTop(page, "vendas.venda", uniq("Venda R2"));
+  await abrirLancamentoDeVendas(page, "sales");
+  await escolherTopEContinuar(page, top.id);
+  await page.getByLabel("Observação").fill(rascunho);
+  await pickRef(page, "Cliente", "DEMO");
+  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  const linha = page.locator("tbody tr").first();
+  await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
+  await page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last().getByRole("option").first().click();
+  await expect(page.getByRole("button", { name: "Salvar" }), "a PREMISSA: sem o bloqueio, este formulário salvaria").toBeEnabled();
+  return top;
+}
+
+test("RD1 — ROLLING DEPLOY: a descoberta cai em 500 durante a edição; rascunho fica, Salvar fecha", async ({ page }) => {
+  await login(page);
+  const posts = vigiarPosts(page);
+  const ctrl = await descobertaControlada(page, "sales");
+  const rascunho = "venda em digitação durante o deploy";
+  await formularioComRascunho(page, rascunho);
+
+  // A PRÓXIMA descoberta cai na API anterior — a que ignoraria `tipo_operacao_id` em silêncio.
+  ctrl.resposta = { status: 500, corpo: { error: { code: "INTERNAL_ERROR", message: "x" } } };
+  await revalidar(page, ctrl);
+
+  await expect(page.getByTestId("top-nao-confirmado"), "a tela diz que o servidor não confirmou").toBeVisible();
+  await esperarRascunhoSemEscrita(page, rascunho, posts);
+});
+
+test("RD2 — CONTRATO FUTURO durante a edição: rascunho fica, Salvar fecha", async ({ page }) => {
+  await login(page);
+  const posts = vigiarPosts(page);
+  const ctrl = await descobertaControlada(page, "sales");
+  const rascunho = "venda em digitação contra contrato 2";
+  await formularioComRascunho(page, rascunho);
+
+  ctrl.resposta = { status: 200, corpo: { contractVersion: 2, family: { code: "vendas.venda", label: "Venda" }, defaultId: null, items: [] } };
+  await revalidar(page, ctrl);
+
+  await expect(page.getByTestId("top-nao-confirmado"), "200 de contrato desconhecido também NEGA").toBeVisible();
+  await esperarRascunhoSemEscrita(page, rascunho, posts);
+});
+
+test("RD3 — A TOP SAIU DA LISTA, servidor compatível: não troca de operação, e não grava", async ({ page }) => {
+  await login(page);
+  const posts = vigiarPosts(page);
+  const ctrl = await descobertaControlada(page, "sales");
+  const rascunho = "venda cuja operação saiu de circulação";
+  await formularioComRascunho(page, rascunho);
+  const nomeDaSessao = await page.getByTestId("top-contexto").textContent();
+
+  /**
+   * Aqui o servidor está COMPATÍVEL — contrato 1, família certa, lista válida. O que mudou é que a
+   * operação ESCOLHIDA não está mais entre as ativas, e há OUTRA no lugar dela. É o caso que separa
+   * "servidor incompatível" de "operação indisponível": a mensagem é outra, e a tentação de trocar
+   * sozinho para a TOP vizinha é exatamente o que não pode acontecer.
+   */
+  const vizinha = { id: "22222222-2222-4222-8222-222222222222", code: "70999", name: "Outra Venda Qualquer", version: 1, isDefault: false };
+  ctrl.resposta = { status: 200, corpo: { contractVersion: 1, family: { code: "vendas.venda", label: "Venda" }, defaultId: null, items: [vizinha] } };
+  await revalidar(page, ctrl);
+
+  await expect(page.getByTestId("top-indisponivel"), "a recusa é a de operação indisponível").toBeVisible();
+  await expect(page.getByTestId("top-nao-confirmado"), "o servidor NÃO está incompatível").toHaveCount(0);
+  await esperarRascunhoSemEscrita(page, rascunho, posts);
+
+  // E a operação da SESSÃO continua sendo a escolhida — nenhuma troca automática pela vizinha.
+  await expect(page.getByTestId("top-contexto")).toHaveText(nomeDaSessao!);
+  await expect(page.getByTestId("top-contexto"), "não adotou a TOP vizinha").not.toContainText(vizinha.name);
+});
+
+test("RD4 — A CAPABILITY VOLTA: Salvar reabilita e o rascunho não foi perdido no caminho", async ({ page }) => {
+  await login(page);
+  const posts = vigiarPosts(page);
+  const ctrl = await descobertaControlada(page, "sales");
+  const rascunho = "rascunho que atravessou a janela de deploy";
+  await formularioComRascunho(page, rascunho);
+
+  ctrl.resposta = { status: 500, corpo: { error: { code: "INTERNAL_ERROR", message: "x" } } };
+  await revalidar(page, ctrl);
+  await esperarRascunhoSemEscrita(page, rascunho, posts);
+
+  // O deploy termina e o servidor volta a responder. Nada aqui remonta o formulário.
+  ctrl.resposta = null;
+  await revalidar(page, ctrl);
+
+  await expect(page.getByTestId("top-nao-confirmado"), "o aviso some quando a causa some").toHaveCount(0);
+  await expect(page.getByLabel("Observação"), "e o rascunho atravessou inteiro").toHaveValue(rascunho);
+  await expect(page.getByTestId("top-contexto"), "sem precisar escolher a operação de novo").toBeVisible();
+  await expect(page.getByRole("button", { name: "Salvar" }), "a escrita reabre").toBeEnabled();
+});
+
+test("V1 — A TRAVA NÃO ATRAVESSA A VARIANTE: TOP de venda não abre formulário de pedido", async ({ page }) => {
+  await login(page);
+  const posts = vigiarPosts(page);
+  const top = await cadastrarTop(page, "vendas.venda", uniq("Venda Só Dela"));
+
+  await abrirLancamentoDeVendas(page, "sales");
+  await escolherTopEContinuar(page, top.id);
+  await expect(page.getByTestId("top-contexto"), "a sessão de VENDA está aberta e travada").toBeVisible();
+
+  /**
+   * O MESMO UUID, agora pedido explicitamente na variante errada. A TOP existe, está ativa e é
+   * desta organização — só não é da FAMÍLIA de pedido. A recusa é a mesma de sempre.
+   *
+   * NOTA HONESTA SOBRE O ALCANCE DESTE TESTE: ele prova a FRONTEIRA, não o ciclo de vida. O caso em
+   * que a instância sobreviveria a uma troca de `kind` não é alcançável neste runtime, e eu tentei:
+   * `history.pushState` atualiza o pathname mas NÃO o `params` (o `kind` é resolvido no servidor),
+   * então nem troca de variante acontece; e uma navegação de verdade entre variantes remonta o
+   * componente, matando a trava antes que a chave precise ser consultada. Não há, a partir da tela do
+   * formulário, um caminho client-side para a outra variante COM query — o "+ Novo" mora no Portal.
+   *
+   * Por isso o `kind` na chave é defesa ESTRUTURAL, e está escrito assim de propósito: a garantia não
+   * pode depender de "o Next remonta, certo?", que é exatamente o tipo de premissa que uma atualização
+   * de framework revoga em silêncio. A reversa R14 é, coerentemente, NÃO OBSERVÁVEL — e isso está
+   * declarado no relatório em vez de fabricado como vermelho.
+   */
+  await page.goto(`/vendas/orders/new?tipo_operacao_id=${top.id}`);
+  await expect(page.getByTestId("top-indisponivel"), "TOP de outra família é recusada").toBeVisible();
+  await esperarLancadorSemFormulario(page);
+  expect(posts, "e nada foi gravado no caminho").toEqual([]);
+});
+
+test("CV1 — CONVERSÃO SEM PADRÃO: nada vem escolhido, e Converter só libera depois da escolha", async ({ page }) => {
+  await login(page);
+  const empresa = await empresaAtiva(page);
+  const topOrcamento = await cadastrarTop(page, "vendas.orcamento", uniq("Orçamento CV1"));
+  const cliente = await primeiroId(page, "/api/resources/people?is_client=true&pageSize=1");
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const orcamento = await api<{ id: string }>(page, "POST", "/api/sales/budgets", {
+    empresa_id: empresa, document_date: "2026-09-01", client_id: cliente, tipo_operacao_id: topOrcamento.id,
+    items: [{ product_id: produto, warehouse_id: null, quantity: "1", unit_price: "10.00" }]
+  });
+
+  /**
+   * A lista do DESTINO é servida aqui porque a organização do e2e é compartilhada: outro teste pode já
+   * ter marcado uma TOP de pedido como padrão, e aí `defaultId` não seria nulo. A pergunta deste teste
+   * é sobre o CLIENTE — "com `defaultId` nulo, ele inventa um padrão?" —, e a resposta não pode
+   * depender da ordem de execução.
+   */
+  const unica = { id: "33333333-3333-4333-8333-333333333333", code: "70777", name: "Pedido Sem Padrão", version: 1, isDefault: false };
+  await page.route("**/api/sales/orders/operation-types", (rota) =>
+    rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contractVersion: 1, family: { code: "vendas.pedido", label: "Pedido de Venda" }, defaultId: null, items: [unica] }) }));
+
+  await page.goto(`/vendas/budgets/${orcamento.id}`);
+  await page.getByRole("button", { name: "Converter em pedido" }).click();
+  const dialogo = page.getByTestId("dialog-conversao");
+  await expect(dialogo).toBeVisible();
+
+  // UMA opção, e MESMO ASSIM nada escolhido: uma TOP única não é um padrão.
+  await expect(dialogo.getByTestId("select-tipo-operacao")).toHaveValue("");
+  await expect(dialogo.getByRole("button", { name: "Converter" }), "sem escolha não converte").toBeDisabled();
+
+  await dialogo.getByTestId("select-tipo-operacao").selectOption(unica.id);
+  await expect(dialogo.getByRole("button", { name: "Converter" }), "depois da escolha explícita, libera").toBeEnabled();
+});
+
+test("CV2 — CONVERSÃO COM PADRÃO REAL: vem pré-selecionado e visível, e pode ser trocado", async ({ page }) => {
+  await login(page);
+  const empresa = await empresaAtiva(page);
+  const topOrcamento = await cadastrarTop(page, "vendas.orcamento", uniq("Orçamento CV2"));
+  const cliente = await primeiroId(page, "/api/resources/people?is_client=true&pageSize=1");
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const orcamento = await api<{ id: string }>(page, "POST", "/api/sales/budgets", {
+    empresa_id: empresa, document_date: "2026-09-01", client_id: cliente, tipo_operacao_id: topOrcamento.id,
+    items: [{ product_id: produto, warehouse_id: null, quantity: "1", unit_price: "10.00" }]
+  });
+
+  const padrao = { id: "44444444-4444-4444-8444-444444444444", code: "70555", name: "Pedido Padrão CV2", version: 1, isDefault: true };
+  const outra = { id: "55555555-5555-4555-8555-555555555555", code: "70556", name: "Pedido Alternativo", version: 1, isDefault: false };
+  await page.route("**/api/sales/orders/operation-types", (rota) =>
+    rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ contractVersion: 1, family: { code: "vendas.pedido", label: "Pedido de Venda" }, defaultId: padrao.id, items: [padrao, outra] }) }));
+
+  await page.goto(`/vendas/budgets/${orcamento.id}`);
+  await page.getByRole("button", { name: "Converter em pedido" }).click();
+  const dialogo = page.getByTestId("dialog-conversao");
+
+  await expect(dialogo.getByTestId("select-tipo-operacao"), "o padrão do CADASTRO vem escolhido").toHaveValue(padrao.id);
+  await expect(dialogo.getByRole("button", { name: "Converter" })).toBeEnabled();
+  // Pré-selecionar não é decidir: o campo continua à vista e trocável.
+  await dialogo.getByTestId("select-tipo-operacao").selectOption(outra.id);
+  await expect(dialogo.getByTestId("select-tipo-operacao")).toHaveValue(outra.id);
+});

@@ -7,7 +7,7 @@ import { useDirtyTab } from "@/lib/workspace-tabs";
 import { Button, Card, CardHeader, CardBody, Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { ItemsEditor, PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
-import { useTopsDaVariante, type TopOperacional } from "@/features/sales/tipo-operacao-select";
+import { MensagemTop, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
@@ -31,47 +31,62 @@ function Inner({ kind }: { kind: string }) {
   const router = useRouter();
   const pedido = useSearchParams().get("tipo_operacao_id");
   const estadoTop = useTopsDaVariante(kind);
-  const top = topSelecionada(estadoTop, pedido);
+  const topAtual = topSelecionada(estadoTop, pedido);
 
   /**
-   * A TRAVA DA SESSÃO DE EDIÇÃO — validar uma vez na ENTRADA, não a cada renderização.
+   * A TRAVA DA SESSÃO DE EDIÇÃO — preserva o RASCUNHO, nunca a AUTORIZAÇÃO DE ESCRITA.
    *
-   * ┌─ O DEFEITO QUE ELA FECHA ──────────────────────────────────────────────────────────────────────┐
-   * │ `top` é DERIVADO da lista que a query devolve. Se a lista for buscada de novo enquanto o        │
-   * │ usuário digita, e a TOP escolhida tiver saído dela no meio do caminho, `top` vira `null`,       │
-   * │ `Formulario` sai da árvore e TUDO o que foi digitado — cliente, datas, itens, observação,       │
-   * │ parcelamento — desaparece sem aviso e sem confirmação. O usuário não fez nada; a tela se        │
-   * │ esvaziou sozinha.                                                                               │
+   * ┌─ AS DUAS PERGUNTAS, QUE NÃO SÃO A MESMA ───────────────────────────────────────────────────────┐
+   * │ 1. O FORMULÁRIO DEVE CONTINUAR MONTADO?  → sim, se a sessão já entrou com uma TOP validada.     │
+   * │ 2. A ESCRITA ESTÁ AUTORIZADA AGORA?      → só se a descoberta ATUAL confirmar a TOP escolhida.  │
    * │                                                                                                 │
-   * │ E isso não é hipotético: `components/layout/shell.tsx` chama `qc.invalidateQueries()` SEM chave │
-   * │ ao trocar a empresa selecionada, o que refaz TODA query ativa — esta inclusive. Desligar        │
-   * │ `refetchOnReconnect` não cobriria esse caminho, porque invalidação explícita não é refetch      │
-   * │ automático. Por isso a correção mora aqui, e não nas opções da query.                           │
+   * │ A primeira versão desta trava respondia as duas com o mesmo valor, e foi um erro: ela mantinha  │
+   * │ o `Salvar` habilitado mesmo depois de a capability cair para `nao-confirmado`. Isso reabria      │
+   * │ exatamente o buraco que a TOP-CONFIG-02 fechou — num rolling deploy, o formulário abre contra a  │
+   * │ API nova e o refetch seguinte pode cair na API ANTIGA, que é justamente a que IGNORA             │
+   * │ `tipo_operacao_id` EM SILÊNCIO. "O servidor devolve 422" não vale como garantia quando o         │
+   * │ servidor que vai responder talvez não conheça o campo.                                          │
    * └─────────────────────────────────────────────────────────────────────────────────────────────────┘
    *
-   * A trava guarda a TOP que JÁ passou pela validação, junto do pedido que a produziu. Ela só é
-   * ESCRITA a partir de uma validação real — nunca a partir do texto da URL —, então não abre porta
-   * nenhuma: um deep link adulterado não valida, não trava, e cai no lançador como antes.
+   * Então a trava vale para estado de tela, e SÓ. Quem autoriza o POST é `escritaTopConfirmada`,
+   * derivado do estado ATUAL da descoberta — fail-closed, como antes desta fatia existir.
    *
-   * O que ela muda é só o INSTANTE da pergunta: "esta TOP vale?" é respondida na ENTRADA do formulário,
-   * e não continuamente enquanto se digita. A entrada continua fechada; o que deixa de existir é a
-   * porta que se fechava com o usuário dentro.
+   * A CHAVE É `kind:pedido`, não o pedido sozinho. Uma TOP de `vendas.venda` não pode valer para
+   * `orders` só porque o UUID veio junto: se o router preservar a instância ao trocar o segmento
+   * dinâmico, a chave muda e a trava é ignorada. Não se apoia em detalhe de ciclo de vida do Next —
+   * segurança que depende de "o componente vai remontar, certo?" é segurança que alguém remove sem ver.
    *
-   * Trocar de pedido (Alterar operação) ou sair dele zera a trava — é outra sessão de edição, e ela
-   * pergunta de novo. Um F5 também: a trava é memória de componente montado, não armazenamento; a
-   * montagem refaz a descoberta e volta ao lançador se a TOP não valer mais. E o servidor continua
-   * sendo a autoridade final — salvar com uma TOP que foi desativada recebe 422, não um sucesso.
-   *
-   * Escrita durante a renderização de propósito: um `useEffect` só correria DEPOIS, e no quadro entre
-   * os dois o formulário já teria sido desmontado — que é exatamente o que se quer evitar. A escrita é
-   * idempotente (mesmo pedido + mesma TOP ⇒ mesmo valor), então renderizar duas vezes não muda nada.
+   * Escrita em `useLayoutEffect`, depois do commit, e não durante a renderização. O quadro inseguro
+   * que eu temia não existe: quando o usuário clica em Continuar, a lista JÁ está em cache, então o
+   * primeiro render do formulário tem `topAtual` e não precisa da trava. Ela só é lida nos renders
+   * SEGUINTES, quando um refetch adverso zerou `topAtual` — e aí ela já foi gravada há muito.
    */
-  const trava = React.useRef<{ pedido: string; top: TopOperacional } | null>(null);
-  if (!pedido || trava.current?.pedido !== pedido) trava.current = null;
-  if (pedido && top) trava.current = { pedido, top };
-  const topEfetiva = top ?? (pedido && trava.current?.pedido === pedido ? trava.current.top : null);
+  const chave = pedido ? `${kind}:${pedido}` : null;
+  const trava = React.useRef<{ chave: string; top: TopOperacional } | null>(null);
+  React.useLayoutEffect(() => {
+    if (!chave) { trava.current = null; return; }
+    if (topAtual) trava.current = { chave, top: topAtual };
+  });
 
-  if (topEfetiva) return <Formulario kind={kind} top={topEfetiva} familia={estadoTop.situacao === "pronto" ? estadoTop.dados.family.label : ""} />;
+  /** A TOP desta sessão de edição: a atual, ou a que já foi validada sob ESTA MESMA chave. */
+  const topDaSessao = chave && trava.current?.chave === chave ? trava.current.top : null;
+  const topEfetiva = topAtual ?? topDaSessao;
+
+  /**
+   * A ESCRITA SÓ É AUTORIZADA PELO ESTADO ATUAL. `podeLancar` continua sendo a regra — a trava não a
+   * afrouxa e não ganhou uma variante permissiva. `topAtual` só é não-nulo quando a descoberta está
+   * `pronto` E a TOP escolhida está na lista de AGORA; as duas condições estão escritas para que
+   * remover uma delas de `topSelecionada` não passe despercebido aqui.
+   */
+  const escritaTopConfirmada = podeLancar(estadoTop) && topAtual !== null;
+
+  if (topEfetiva) return <Formulario
+    kind={kind}
+    top={topEfetiva}
+    familia={estadoTop.situacao === "pronto" ? estadoTop.dados.family.label : ""}
+    estadoTop={estadoTop}
+    escritaTopConfirmada={escritaTopConfirmada}
+  />;
 
   return <LancadorDeTipoOperacao
     estado={estadoTop}
@@ -88,7 +103,15 @@ function Inner({ kind }: { kind: string }) {
   />;
 }
 
-function Formulario({ kind, top, familia }: { kind: string; top: TopOperacional; familia: string }) {
+function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
+  kind: string;
+  top: TopOperacional;
+  familia: string;
+  /** O estado ATUAL da descoberta — o que reabilita o Salvar quando a capability volta. */
+  estadoTop: EstadoTop;
+  /** A descoberta de AGORA confirma esta TOP? Só isso autoriza o POST. */
+  escritaTopConfirmada: boolean;
+}) {
   const router = useRouter(); const empresa = useEmpresaPadrao();
   const [h, setH] = React.useState({ empresa_id: "", document_date: todayISO(), shipping_date: "", due_date: "", client_id: "", transporter_id: "", proprietary_id: "", driver_name: "", payment_method_id: "", freight: "0", freight_icms: "0", other_values: "0", discount: "0", note: "", is_deductible: false, installments: false });
   const [items, setItems] = React.useState<ItemRow[]>([]); const [plan, setPlan] = React.useState<Plan>(defaultPlan());
@@ -113,12 +136,22 @@ function Formulario({ kind, top, familia }: { kind: string; top: TopOperacional;
 
   const create = useCreate<{ id: string }>(`/api/sales/${kind}`, (r) => router.push(`/vendas/${kind}/${r.id}`));
   /** O UUID que vai no corpo é o da TOP VALIDADA contra a lista — nunca o texto cru da URL. */
-  const submit = () => create.mutate({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: h.installments ? plan : null, items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id });
+  const submit = () => {
+    /**
+     * A DEFESA NO HANDLER, e não só no `disabled` do botão.
+     *
+     * `disabled` é apresentação: some com uma linha removida por engano, com um clique programático,
+     * ou com qualquer caminho que chame `submit` sem passar pelo botão. A regra que impede a gravação
+     * de um documento cuja operação não está confirmada tem de estar onde a gravação acontece.
+     */
+    if (!escritaTopConfirmada) return;
+    create.mutate({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: h.installments ? plan : null, items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id });
+  };
 
   const voltarAoLancador = () => router.replace(`/vendas/${kind}/new`);
   const alterarOperacao = () => { if (sujo) setConfirmarTroca(true); else voltarAoLancador(); };
 
-  return <Card><CardHeader title={T[kind] ?? "Novo"} subtitle={kind === "sales" ? "A confirmação da venda baixa o estoque dos itens com armazém e gera as contas a receber." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada."} actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
+  return <Card><CardHeader title={T[kind] ?? "Novo"} subtitle={kind === "sales" ? "A confirmação da venda baixa o estoque dos itens com armazém e gera as contas a receber." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada."} actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!escritaTopConfirmada || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
     {/*
       O CONTEXTO OPERACIONAL, no topo e fora do grid de campos.
       A VERSÃO não aparece aqui de propósito: o que esta tela conhece é a versão CORRENTE no momento da
@@ -137,6 +170,29 @@ function Formulario({ kind, top, familia }: { kind: string; top: TopOperacional;
       </div>
       <Button data-testid="top-alterar" variant="outline" size="sm" onClick={alterarOperacao}>Alterar operação</Button>
     </div>
+
+    {/*
+      POR QUE A ESCRITA ESTÁ BLOQUEADA — dentro do formulário, que continua inteiro.
+
+      A operação da SESSÃO segue no bloco acima: ela não é trocada, não é apagada e não vira outra.
+      O que some é o direito de gravar, e a razão aparece aqui.
+
+      `MensagemTop` cobre os estados que ela já explica (servidor não confirmado, erro, nenhuma TOP
+      cadastrada) — a mesma frase da etapa de escolha, sem segunda redação do mesmo diagnóstico.
+      Sobra UM caso que ela não cobre, e que é novo aqui: o servidor está COMPATÍVEL (contrato 1,
+      lista válida) e ainda assim a TOP desta sessão não está mais em `items`. Não é falha de
+      servidor nem configuração ausente; é a operação escolhida que saiu de circulação. A frase é a
+      mesma da recusa do lançador, e continua sem revelar a causa.
+    */}
+    {!escritaTopConfirmada && <div className="space-y-1 rounded-md bg-amber-50 p-3">
+      <MensagemTop estado={estadoTop} />
+      {estadoTop.situacao === "pronto" && <p data-testid="top-indisponivel" className="text-sm text-amber-800">
+        O Tipo de Operação selecionado não está disponível para este lançamento.
+      </p>}
+      <p className="text-xs text-amber-700">
+        O que já foi preenchido continua aqui. Use “Alterar operação” para escolher outra.
+      </p>
+    </div>}
 
     <div className="grid grid-cols-12 gap-3">
       <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
