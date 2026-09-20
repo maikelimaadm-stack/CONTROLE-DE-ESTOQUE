@@ -2,6 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { NativeSelect, Field } from "@/components/ui";
 import type { Row } from "@/features/docs/shared";
 import type { Column } from "@/components/ui/data-table";
@@ -35,12 +36,52 @@ import type { Column } from "@/components/ui/data-table";
  * │ resposta certa para ambos. Mentir sobre a causa seria pior do que não saber.                     │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
+ * ┌─ E UM 200 TAMBÉM PRECISA SER CONFERIDO ─────────────────────────────────────────────────────────┐
+ * │ `contractVersion` existe para o cliente distinguir "endpoint ausente" de "endpoint presente com  │
+ * │ OUTRO FORMATO". Uma promessa que só o SERVIDOR cumpre não protege ninguém: `api<T>()` é uma      │
+ * │ ASSERÇÃO de tipo, não uma prova — em runtime o corpo é `unknown` e o TypeScript já terminou o    │
+ * │ trabalho dele.                                                                                   │
+ * │                                                                                                  │
+ * │ Sem conferir, um 200 de um servidor MAIS NOVO (contractVersion 2, campos com outro significado)  │
+ * │ chegaria ao estado "pronto": o Salvar liberaria e o POST sairia contra um contrato que ninguém   │
+ * │ leu — a MESMA perda silenciosa que esta tela existe para impedir, só que pelo outro lado da      │
+ * │ janela de deploy. E um corpo truncado, sem `items`, derrubava a tela em `items.length`: tela     │
+ * │ branca, sem nem a mensagem de bloqueio.                                                          │
+ * │                                                                                                  │
+ * │ Então o 200 passa por `ehTopsDaVariante`: versão EXATA e forma conferida campo a campo, item a   │
+ * │ item. O que não se reconhece NEGA. Item inválido NÃO é filtrado da lista — esconder do vendedor  │
+ * │ uma TOP que o servidor ofereceu é o mesmo descarte silencioso, só que do lado de cá.             │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
  * As TOPs vêm da porta OPERACIONAL (`/api/sales/<variante>/operation-types`), nunca da administrativa:
  * quem pode vender não precisa poder configurar tipos de operação.
  */
 
 export interface TopOperacional { id: string; code: string; name: string; version: number; isDefault: boolean }
-export interface TopsDaVariante { contractVersion: number; family: { code: string; label: string }; defaultId: string | null; items: TopOperacional[] }
+export interface TopsDaVariante { contractVersion: typeof CONTRATO_TOPS; family: { code: string; label: string }; defaultId: string | null; items: TopOperacional[] }
+
+/** A ÚNICA versão de contrato que esta tela sabe ler. O servidor a declara em `/operation-types`. */
+export const CONTRATO_TOPS = 1 as const;
+
+const ehTexto = (v: unknown): v is string => typeof v === "string";
+const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Um item só é aceito INTEIRO. `version` é a versão que vai ser CONGELADA no documento: 0, fração ou NaN não existe. */
+const ehTopOperacional = (v: unknown): v is TopOperacional =>
+  ehObjeto(v) && ehTexto(v.id) && ehTexto(v.code) && ehTexto(v.name)
+  && typeof v.version === "number" && Number.isInteger(v.version) && v.version > 0
+  && typeof v.isDefault === "boolean";
+
+/**
+ * O corpo do 200 é `unknown` até aqui. Conferir campo a campo é o que transforma a promessa do
+ * `contractVersion` em garantia — e `items` PRECISA ser array antes de alguém ler `.length`.
+ */
+export const ehTopsDaVariante = (v: unknown): v is TopsDaVariante =>
+  ehObjeto(v)
+  && v.contractVersion === CONTRATO_TOPS
+  && ehObjeto(v.family) && ehTexto(v.family.code) && ehTexto(v.family.label)
+  && (v.defaultId === null || ehTexto(v.defaultId))
+  && Array.isArray(v.items) && v.items.every(ehTopOperacional);
 
 /** O que a tela precisa decidir. Três situações distintas, três mensagens distintas — nunca uma só. */
 export type EstadoTop =
@@ -50,6 +91,8 @@ export type EstadoTop =
    * O endpoint não confirmou a lista: ou o servidor é ANTERIOR a esta fatia (não tem a rota, e o
    * `:id` da base transforma o caminho em 500), ou está com defeito. Os dois chegam indistinguíveis;
    * nos dois a resposta certa é a mesma — bloquear a escrita. O problema não é do usuário.
+   * O TERCEIRO modo é um 200 que não passa em `ehTopsDaVariante` (contrato futuro ou corpo
+   * corrompido). Aí `status` fica AUSENTE: o status foi 200, e anotá-lo aqui enganaria quem lesse.
    */
   | { situacao: "nao-confirmado"; status?: number }
   /** A API é nova e não há nenhuma TOP ativa da família: é configuração que falta. */
@@ -66,9 +109,10 @@ export type EstadoTop =
  * transitória, e insistir só atrasaria a decisão da tela.
  */
 export function useTopsDaVariante(kind: string, habilitado = true): EstadoTop {
-  const q = useQuery<TopsDaVariante, ApiError>({
+  // `unknown` DE PROPÓSITO: o corpo só vira `TopsDaVariante` depois de CONFERIDO, nunca por asserção.
+  const q = useQuery<unknown, ApiError>({
     queryKey: ["sales-operation-types", kind],
-    queryFn: () => api<TopsDaVariante>(`/api/sales/${kind}/operation-types`),
+    queryFn: () => api<unknown>(`/api/sales/${kind}/operation-types`),
     enabled: habilitado,
     retry: false
   });
@@ -80,7 +124,13 @@ export function useTopsDaVariante(kind: string, habilitado = true): EstadoTop {
     if (q.error.status === 404 || q.error.status >= 500) return { situacao: "nao-confirmado", status: q.error.status };
     return { situacao: "erro", mensagem: q.error.message };
   }
-  if (!q.data || q.data.items.length === 0) return { situacao: "sem-top", familia: q.data?.family.label ?? "" };
+  // 200 que não é o contrato desta tela NEGA — e a conferência vem ANTES de qualquer leitura de
+  // `items`, que é o que impede tanto o "pronto" sobre contrato desconhecido quanto o crash em `.length`.
+  if (!ehTopsDaVariante(q.data)) return { situacao: "nao-confirmado" };
+  // Daqui para baixo a forma está PROVADA: lista vazia é resposta legítima do contrato 1 e significa
+  // configuração faltando, não servidor incompatível. Mensagens diferentes porque são problemas de
+  // pessoas diferentes — uma o administrador resolve, a outra não.
+  if (q.data.items.length === 0) return { situacao: "sem-top", familia: q.data.family.label };
   return { situacao: "pronto", dados: q.data };
 }
 
@@ -89,6 +139,8 @@ export const podeLancar = (e: EstadoTop): e is Extract<EstadoTop, { situacao: "p
 
 /** Mensagem única por estado — quem lê precisa saber se o problema é o servidor ou a configuração. */
 export function MensagemTop({ estado }: { estado: EstadoTop }) {
+  const { can } = useAuth();
+  const podeConfigurarTop = can("tipos_operacao.view");
   if (estado.situacao === "nao-confirmado") {
     // NÃO pedir para cadastrar TOP: o problema não é ausência de configuração. Mandar o usuário à tela
     // de Tipos de Operação aqui o faria cadastrar algo que não resolve. E não afirmar "servidor sendo
@@ -99,9 +151,18 @@ export function MensagemTop({ estado }: { estado: EstadoTop }) {
     </p>;
   }
   if (estado.situacao === "sem-top") {
+    // O CAMINHO SÓ É OFERECIDO A QUEM PODE PERCORRÊ-LO. O vendedor sem `tipos_operacao.view` não
+    // enxerga a sub-área de Configurações (o guarda de navegação a esconde), então mandá-lo para lá
+    // seria mandá-lo bater numa porta fechada e concluir que o sistema está quebrado. Quem não
+    // configura precisa saber a quem pedir, não onde clicar.
+    //
+    // Isto é APRESENTAÇÃO, não segurança: o servidor continua sendo a autoridade, e `can()` no cliente
+    // apenas esconde botão (`CLAUDE.md`). Esconder o link não protege nada — só para de mentir.
     return <p data-testid="top-ausente" className="text-sm text-amber-700">
-      Nenhum Tipo de Operação ativo está cadastrado para {estado.familia}. Cadastre um em{" "}
-      <a className="underline" href="/configuracoes?tab=operacoes&sub=tipos-operacao">Configurações › Operações › Tipos de Operação</a>.
+      Nenhum Tipo de Operação ativo está cadastrado para {estado.familia}.{" "}
+      {podeConfigurarTop
+        ? <>Cadastre um em <a className="underline" href="/configuracoes?tab=operacoes&sub=tipos-operacao">Configurações › Operações › Tipos de Operação</a>.</>
+        : <>Procure um administrador para cadastrar.</>}
     </p>;
   }
   if (estado.situacao === "erro") return <p data-testid="top-erro" className="text-sm text-red-700">{estado.mensagem}</p>;

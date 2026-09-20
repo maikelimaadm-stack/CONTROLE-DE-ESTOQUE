@@ -91,11 +91,16 @@ Financeiro seguirão o mesmo contrato):
   continua casando o filtro por id. Só NOVO lançamento deixa de poder usá-la.
 - **Editar outro campo não re-carimba o snapshot.** PUT sem o campo, e PUT com o MESMO id, preservam a
   versão gravada. Só a troca EXPLÍCITA de TOP captura a versão corrente da nova — e gera evento próprio.
-- **PUT não LIMPA a TOP.** `tipo_operacao_id: null` preserva o que estava gravado; não existe caminho de
-  edição que transforme um documento COM TOP em documento legado. É deliberado e está escrito aqui porque
-  silêncio viraria dúvida: "sem TOP" é um estado de NASCIMENTO (acervo, cliente anterior à fatia), não um
-  destino alcançável por edição. Apagar a identidade de um lançamento já classificado seria reescrever
-  história pela porta da edição, que é exatamente o que o snapshot existe para impedir.
+- **PUT RECUSA `tipo_operacao_id: null`, com 422.** Não existe caminho de edição que transforme um
+  documento COM TOP em documento legado: "sem TOP" é estado de NASCIMENTO (acervo, cliente anterior à
+  fatia), não destino alcançável por edição. Apagar a identidade de um lançamento já classificado
+  reescreveria história pela porta da edição — o que o snapshot existe para impedir.
+  A primeira versão desta fatia PRESERVAVA em silêncio: o cliente pedia a remoção, recebia 200, e nada
+  mudava. Descarte silencioso de campo é ampliação de escopo pela porta de trás, e sobre a identidade do
+  lançamento é especialmente caro, porque ninguém confere o efeito depois. A distinção entre `null`
+  explícito e campo AUSENTE é feita no corpo CRU, antes do `z.object` (que entrega `undefined` para os
+  dois). O campo AUSENTE continua sendo compatibilidade legítima e não muda nada, e na CRIAÇÃO `null`
+  segue legítimo — é o que sustenta o rolling deploy.
 - **Conversão escolhe a TOP do DESTINO.** A da fonte é de outra família e nunca é herdada; um cliente antigo
   que converte sem informá-la produz destino legado, e não um documento com TOP da família errada.
 - **A porta de escolha é OPERACIONAL, não administrativa.** Quem pode lançar vê as TOPs ativas da família;

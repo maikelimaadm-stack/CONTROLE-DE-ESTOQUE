@@ -104,14 +104,26 @@ async function resolverTopParaLancamento(ctx: ServiceCtx, familiaEsperada: strin
  * `expectedKind` entra no WHERE da consulta principal. Variante errada é INEXISTENTE PARA AQUELA ROTA:
  * a mesma 404 de id inexistente, de outro tenant e de fora do escopo de empresa — sem revelar que o UUID
  * existe na variante vizinha, e sem redirecionar para a rota "certa".
+ *
+ * `opts.lock` acrescenta `for update of d` — e SÓ `of d`. `FOR UPDATE` sem lista de tabelas valeria também
+ * para `t`, `pm`, `u`, `toper` e `topv`, que estão no lado NULLABLE dos LEFT JOIN, e o PostgreSQL RECUSA
+ * isso já no planejamento (0A000): a rota quebraria em TODA chamada, não só na corrida.
+ *
+ * O lock existe para quem LÊ E MUTA a mesma linha — hoje, só a conversão. Sem ele, duas requisições
+ * simultâneas leem `open` do MESMO snapshot, criam DOIS destinos e ambas carimbam a fonte como
+ * `converted`; e não há UNIQUE em `origin_document_id` para pegar a sobra. Com ele, a segunda espera o
+ * commit da primeira, reavalia a linha já atualizada e cai em `assertConvertible` → 409.
+ *
+ * Leitura pura (detalhe, listagem) continua SEM lock: travar linha para desenhar tela é serializar o que
+ * não disputa nada.
  */
-async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind) {
+async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts: { lock?: boolean } = {}) {
   const sc = scopedById(ctx, "d", id); sc.params.push(expectedKind);
   // LEFT JOIN nos dois, e não INNER: documento legado tem os ponteiros nulos, e um INNER o faria SUMIR da
   // própria porta de detalhe — 404 num registro que está lá. O nome sai de `topv` (a versão CONGELADA),
   // nunca da versão corrente do pai: é isso que faz a renomeação administrativa de amanhã não reescrever
   // o que este documento diz que é.
-  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql, sc.params); if (!r.rows[0]) throw notFound("Documento");
+  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + (opts.lock ? " for update of d" : ""), sc.params); if (!r.rows[0]) throw notFound("Documento");
   const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id where i.document_id=$1 order by i.position", [id]);
   const titles = await ctx.tx.query("select id, code, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by due_date", [ctx.orgId, id]);
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
@@ -255,6 +267,26 @@ export default async function salesRoutes(app: FastifyInstance) {
       const cur = await getDoc(ctx, id, kind) as { status: string; kind: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null };
       if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
       const d = docSchema.parse(req.body);
+      /**
+       * `null` EXPLÍCITO É RECUSADO — e a diferença para o campo AUSENTE é o contrato inteiro.
+       *
+       * `z.object` entrega `undefined` nos dois casos depois do parse, então a distinção tem de ser feita
+       * ANTES, no corpo cru. Sem ela, `{"tipo_operacao_id": null}` caía no mesmo caminho de "não trocou" e
+       * era ignorado em silêncio: o cliente pedia para REMOVER a TOP, recebia 200, e o documento continuava
+       * com a que tinha. Descarte silencioso de campo é ampliação de escopo pela porta de trás
+       * (`.claude/rules/backend-api.md`), e aqui ainda por cima sobre a identidade do lançamento.
+       *
+       * Recusar, e não obedecer, é a escolha certa: "sem TOP" é estado de NASCIMENTO (acervo, cliente
+       * anterior à fatia), não destino alcançável por edição. Apagar a identidade de um lançamento já
+       * classificado reescreveria história pela porta da edição — exatamente o que o snapshot existe para
+       * impedir. O campo AUSENTE continua sendo compatibilidade legítima e não muda nada.
+       *
+       * A recusa é SÓ no PUT. Na criação, `tipo_operacao_id: null` é legítimo e continua nascendo legado:
+       * é o que sustenta o rolling deploy.
+       */
+      if (req.body !== null && typeof req.body === "object" && (req.body as Record<string, unknown>)["tipo_operacao_id"] === null) {
+        throw err("VALIDATION_ERROR", "tipo_operacao_id não pode ser removido de um documento; omita o campo para preservá-lo");
+      }
       const trocouTop = d.tipo_operacao_id != null && d.tipo_operacao_id !== cur.tipo_operacao_id;
       const top = trocouTop ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id!) : undefined;
       const r = await writeDoc(ctx, kind, d, id, undefined, top);
@@ -289,8 +321,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      */
     if (kind !== "sale") app.post(`${base}/:id/convert`, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.edit`, async (ctx) => {
       requirePermission(ctx, `${permOf(nextSalesKind(kind))}.create`);
-      const { id } = req.params as { id: string }; const cur = await getDoc(ctx, id, kind) as Record<string, unknown> & { status: string; kind: SalesKind; items: Record<string, unknown>[] };
-      assertConvertible({ kind: cur.kind, status: cur.status as "open" });
+      const { id } = req.params as { id: string };
       const next = nextSalesKind(kind);
       // A TOP DO DESTINO NÃO SE HERDA DA FONTE — nem podia. `1101 — Orçamento padrão` é da família
       // `vendas.orcamento`; carregá-la para um pedido gravaria um documento cuja TOP é de outra família, e
@@ -301,6 +332,27 @@ export default async function salesRoutes(app: FastifyInstance) {
       // uma TOP alvo inválida derruba a operação inteira e a fonte NÃO vira `converted` — nem por um
       // instante, nem em caso de erro no meio.
       const alvo = z.object({ tipo_operacao_id: uuid.optional().nullable() }).parse(req.body ?? {});
+      /**
+       * IDEMPOTÊNCIA — a web JÁ manda `Idempotency-Key` (`idem: true` no diálogo de conversão) e o
+       * servidor IGNORAVA o cabeçalho: duplo clique, retry de rede ou duas abas convertiam DUAS vezes.
+       *
+       * O hash carrega a IDENTIDADE DA OPERAÇÃO, não só o corpo. A chave é única por (organização, chave)
+       * e nada mais, então a MESMA chave reaproveitada em OUTRO documento devolveria, com 201, a resposta
+       * do primeiro — uma conversão que nunca aconteceu, reportada como sucesso, e a segunda fonte ficando
+       * aberta para sempre. Com fonte e destino dentro do hash isso vira 409, que é a resposta honesta.
+       * `?? null` porque `undefined` SOME do JSON: sem ele, `{}` e `{"tipo_operacao_id":null}` — que são o
+       * mesmo pedido — gerariam hashes diferentes.
+       *
+       * FICAM DE FORA do bloco, de propósito: a capacidade do DESTINO e o parse do corpo. Um 403 ou um 422
+       * depois do INSERT da chave deixaria a chave gravada sem resposta, envenenando o retry legítimo.
+       */
+      return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
+        { action: "convert_sales_document", sourceId: id, sourceKind: kind, targetKind: next, tipo_operacao_id: alvo.tipo_operacao_id ?? null },
+        async () => {
+      // `lock: true` — a fonte é LIDA E MUTADA na mesma transação, e é a única leitura desta rota que
+      // disputa linha com outra requisição. Ver a justificativa inteira no cabeçalho de `getDoc`.
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as Record<string, unknown> & { status: string; kind: SalesKind; items: Record<string, unknown>[] };
+      assertConvertible({ kind: cur.kind, status: cur.status as "open" });
       const topDestino = alvo.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(next), alvo.tipo_operacao_id) : null;
       const body = docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments ? cur.installment_plan : null, items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
       const r = await writeDoc(ctx, next, body, undefined, id, topDestino);
@@ -308,6 +360,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       await audit(ctx.tx, ctx, "sales_documents", id, "convert", topDestino ? { to: r.id, tipoOperacaoDestinoId: topDestino.tipoOperacaoId, tipoOperacaoDestinoVersaoId: topDestino.tipoOperacaoVersaoId } : { to: r.id });
       if (topDestino) await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", { tipoOperacaoId: topDestino.tipoOperacaoId, tipoOperacaoVersaoId: topDestino.tipoOperacaoVersaoId, tipoOperacaoCodigo: topDestino.codigo, tipoOperacaoVersao: topDestino.versao, from: id });
       return { id: r.id, kind: next, from: id };
+        })).result;
     })));
     if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { confirm: (req.params as { id: string }).id }, () => confirmSale(ctx, (req.params as { id: string }).id))).result));
   }

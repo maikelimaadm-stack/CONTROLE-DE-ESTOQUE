@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, primeiroId } from "./helpers";
 
 /**
  * PORTAL DE VENDAS COM TOP CADASTRADA — o caminho que o usuário faz de verdade (TOP-CONFIG-02).
@@ -159,6 +159,127 @@ for (const [nome, status] of [["500 (a rota cai no `:id` da API anterior)", 500]
     expect(posts, "ZERO POST: é isto que impede a perda silenciosa").toEqual([]);
   });
 }
+
+/**
+ * A FORMA DO 200 TAMBÉM É CONTRATO — e é o modo de falha que nenhum status revela.
+ *
+ * Os casos acima medem a tela contra ERRO. Estes medem contra SUCESSO: 200 é o status em que o cliente
+ * mais confia, e é por isso mesmo que um 200 de contrato desconhecido é perigoso. Aqui o servidor é
+ * fabricado de propósito — o que se afirma não é o que a API faz hoje, é o que a TELA faz com um corpo
+ * que ela não sabe ler. A prova contra binário real continua em `skew-api-producao.spec.ts`, intacta.
+ */
+const topValida = { id: "11111111-1111-4111-8111-111111111111", code: "2103", name: "Venda de Gado a Prazo", version: 1, isDefault: true };
+const responderTops = (page: Page, corpo: unknown) =>
+  page.route("**/api/sales/sales/operation-types", (rota) =>
+    rota.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(corpo) }));
+/** ZERO POST é a asserção que mede a perda silenciosa — a mensagem na tela é consequência, não prova. */
+const vigiarPosts = (page: Page) => { const posts: string[] = []; page.on("request", (r) => { if (r.method() === "POST" && r.url().includes("/api/sales/")) posts.push(r.url()); }); return posts; };
+
+test("CONTRATO FUTURO — 200 com contractVersion=2: a tela BLOQUEIA e não emite nenhum POST", async ({ page }) => {
+  await login(page);
+  // Um servidor MAIS NOVO que esta web. Os itens são impecáveis; o que não se conhece é o SIGNIFICADO
+  // deles. Aceitar seria lançar um documento sob um contrato que ninguém leu — a mesma perda silenciosa
+  // da API antiga, só que pelo outro lado da janela de deploy.
+  await responderTops(page, { contractVersion: 2, family: { code: "vendas.venda", label: "Venda" }, defaultId: topValida.id, items: [topValida] });
+  const posts = vigiarPosts(page);
+
+  await page.goto("/vendas/sales/new");
+  await expect(page.getByTestId("top-nao-confirmado")).toBeVisible();
+  await expect(page.getByTestId("top-ausente"), "o problema é o contrato do servidor, não a configuração").toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
+  expect(posts, "contrato desconhecido não autoriza escrita").toEqual([]);
+});
+
+test("CORPO TRUNCADO — 200 sem `items`: a tela não cai, e continua bloqueada", async ({ page }) => {
+  await login(page);
+  // `items.length` sobre um corpo sem `items` era um TypeError em pleno render: tela branca, e o usuário
+  // sem nem a mensagem de bloqueio. Não cair é metade da prova; a outra metade é não liberar.
+  await responderTops(page, { contractVersion: 1, family: { code: "vendas.venda", label: "Venda" }, defaultId: null });
+  const erros: string[] = []; page.on("pageerror", (e) => erros.push(e.message));
+  const posts = vigiarPosts(page);
+
+  await page.goto("/vendas/sales/new");
+  await expect(page.getByTestId("select-tipo-operacao"), "a tela renderizou — não houve crash").toBeVisible();
+  await expect(page.getByTestId("top-nao-confirmado")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
+  expect(erros, `nenhuma exceção de render: ${erros.join(" | ")}`).toEqual([]);
+  expect(posts).toEqual([]);
+});
+
+test("ITEM MALFORMADO — 200 com um item fora da forma: a tela não cai, e continua bloqueada", async ({ page }) => {
+  await login(page);
+  // O item ruim NÃO é filtrado para "salvar" a lista: esconder do vendedor uma TOP que o servidor
+  // ofereceu é o mesmo descarte silencioso que esta fatia combate, só que do lado do cliente. Lista que
+  // não se confere inteira é lista não confirmada.
+  await responderTops(page, { contractVersion: 1, family: { code: "vendas.venda", label: "Venda" }, defaultId: null,
+    items: [topValida, { id: "22222222-2222-4222-8222-222222222222", version: 0, isDefault: "sim" }] });
+  const erros: string[] = []; page.on("pageerror", (e) => erros.push(e.message));
+  const posts = vigiarPosts(page);
+
+  await page.goto("/vendas/sales/new");
+  await expect(page.getByTestId("select-tipo-operacao")).toBeVisible();
+  await expect(page.getByTestId("top-nao-confirmado")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
+  expect(erros, `nenhuma exceção de render: ${erros.join(" | ")}`).toEqual([]);
+  expect(posts).toEqual([]);
+});
+
+test("LISTA VAZIA NO CONTRATO 1 — é configuração faltando, e a tela diz ISSO, não 'servidor'", async ({ page }) => {
+  await login(page);
+  // A conferência não pode ter endurecido a ponto de chamar de incompatível uma resposta perfeitamente
+  // válida. `items: []` no contrato 1 é o servidor CERTO dizendo que ninguém cadastrou TOP — e a saída do
+  // usuário é o caminho de Configurações, que só a mensagem "sem-top" oferece.
+  await responderTops(page, { contractVersion: 1, family: { code: "vendas.venda", label: "Venda" }, defaultId: null, items: [] });
+
+  await page.goto("/vendas/sales/new");
+  await expect(page.getByTestId("top-ausente")).toBeVisible();
+  await expect(page.getByTestId("top-nao-confirmado"), "contrato 1 com lista vazia É confirmado").toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
+});
+
+test("CONTRATO 1 COM TOP VÁLIDA — a conferência deixa passar o que é bom", async ({ page }) => {
+  await login(page);
+  // O contrapeso dos casos acima: um gate que só sabe reprovar bloquearia a tela inteira e ninguém
+  // perceberia, porque "bloqueado" também parece seguro. O caminho feliz tem de seguir vivo.
+  await responderTops(page, { contractVersion: 1, family: { code: "vendas.venda", label: "Venda" }, defaultId: topValida.id, items: [topValida] });
+
+  await page.goto("/vendas/sales/new");
+  await expect(page.getByTestId("top-nao-confirmado")).toHaveCount(0);
+  await expect(page.getByTestId("top-ausente")).toHaveCount(0);
+  await expect(page.getByTestId("select-tipo-operacao")).toBeEnabled();
+  await expect(page.getByTestId("select-tipo-operacao"), "o padrão vem PRÉ-SELECIONADO e visível").toHaveValue(topValida.id);
+});
+
+test("APRESENTAÇÃO — o caminho de Configurações só é oferecido a quem pode percorrê-lo", async ({ page }) => {
+  /**
+   * Quem NÃO tem `tipos_operacao.view` não enxerga a sub-área de Configurações — o guarda de navegação a
+   * esconde. Mandá-lo para lá seria mandá-lo bater numa porta fechada e concluir que o sistema está
+   * quebrado. Quem não configura precisa saber a quem PEDIR, não onde clicar.
+   *
+   * Isto é apresentação, não segurança: o servidor continua sendo a autoridade. Esconder o link não
+   * protege nada — só para de mentir. E é por isso que precisa de teste: uma mentira de interface não
+   * quebra nada, não aparece em log, e sobrevive a todas as suítes de servidor.
+   */
+  await login(page);
+  // Papel que VENDE e não CONFIGURA — exatamente o recorte que o link não pode ignorar.
+  const papel = await api<{ id: string }>(page, "POST", "/api/admin/roles",
+    { name: uniq("Vendedor sem TOP"), permissions: ["sales.view", "sales.create", "people.view", "products.view", "warehouses.view"] });
+  const vendedor = { email: `e2e-vendedor-${Date.now()}@demo.local`, password: "Vendedor@12345" };
+  await api(page, "POST", "/api/admin/members",
+    { name: "Vendedor E2E sem TOP", email: vendedor.email, password: vendedor.password, role_id: papel.id,
+      escopos_empresas: [{ modulo: "vendas", modo: "todas", empresas: [] }] });
+
+  // A família sem TOP é fabricada: o que se mede é a MENSAGEM, não o estado do cadastro.
+  await logout(page);
+  await login(page, vendedor);
+  await responderTops(page, { contractVersion: 1, family: { code: "vendas.venda", label: "Venda" }, defaultId: null, items: [] });
+
+  await page.goto("/vendas/sales/new");
+  const aviso = page.getByTestId("top-ausente");
+  await expect(aviso).toBeVisible();
+  await expect(aviso, "o vendedor é mandado ao administrador, não a uma tela que ele não abre").toContainText("Procure um administrador");
+  await expect(aviso.locator("a"), "nenhum link para Configurações para quem não tem a capacidade").toHaveCount(0);
+});
 
 test("LEGADO — documento sem TOP abre, diz que não está configurado e mantém a família", async ({ page }) => {
   await login(page);

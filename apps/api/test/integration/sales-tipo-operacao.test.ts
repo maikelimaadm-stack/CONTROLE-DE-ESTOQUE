@@ -405,3 +405,178 @@ describe("TOP no lançamento — listagem", () => {
     expect((r.items as { id: string }[]).map((x) => x.id), "o filtro é pelo ponteiro gravado, não pelo estado atual").toContain(venda);
   }, 180_000);
 });
+
+/**
+ * REMOVER A TOP NÃO É OPERAÇÃO DEFINIDA (TOP-CONFIG-02 R1).
+ *
+ * Três casos que parecem o mesmo e não são: campo AUSENTE (compatibilidade, preserva), MESMO id
+ * (preserva a versão antiga) e `null` EXPLÍCITO (pedido de remoção). O terceiro era aceito e IGNORADO —
+ * 200 com o documento intacto —, e é a pior das três respostas possíveis: o cliente lê sucesso para uma
+ * coisa que não aconteceu. Agora é 422.
+ */
+describe("PUT com tipo_operacao_id null", () => {
+  const corpo = (extra: Record<string, unknown> = {}) => ({
+    empresa_id: I.empresa, document_date: "2026-09-02", client_id: I.client,
+    items: [{ product_id: I.product, warehouse_id: I.warehouse, quantity: "2", unit_price: "50.00" }], ...extra
+  });
+
+  it("`null` explícito é RECUSADO com 422 — e nada é gravado", async () => {
+    const top = await cadastrarTop("vendas.orcamento", "Orçamento que não pode ser desconfigurado");
+    const id = j(await criar("budget", { tipo_operacao_id: top })).id as string;
+    const antes = await colunas(id);
+
+    const r = await h.app.inject({ method: "PUT", url: `/api/sales/budgets/${id}`, headers: h.headers(), payload: corpo({ tipo_operacao_id: null }) });
+    expect(r.statusCode, r.body).toBe(422);
+    expect(j(r).error!.code).toBe("VALIDATION_ERROR");
+    // A prova que importa é FORA da rota: uma recusa que gravasse metade responderia igual a uma limpa.
+    expect(await colunas(id), "a recusa não pode deixar efeito").toMatchObject({
+      tipo_operacao_id: antes.tipo_operacao_id, tipo_operacao_versao_id: antes.tipo_operacao_versao_id
+    });
+  }, 180_000);
+
+  it("campo AUSENTE continua preservando — é a compatibilidade que a recusa NÃO pode quebrar", async () => {
+    // Sem este caso, tornar o `null` 422 poderia ter fechado junto o caminho do cliente antigo, que
+    // simplesmente não conhece o campo. São coisas diferentes e continuam diferentes.
+    const top = await cadastrarTop("vendas.orcamento", "Orçamento preservado por omissão");
+    const id = j(await criar("budget", { tipo_operacao_id: top })).id as string;
+
+    const r = await h.app.inject({ method: "PUT", url: `/api/sales/budgets/${id}`, headers: h.headers(), payload: corpo() });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await colunas(id), "omitir o campo preserva o snapshot").toMatchObject({ tipo_operacao_id: top });
+  }, 180_000);
+
+  it("na CRIAÇÃO, `null` continua legítimo — é o que sustenta o rolling deploy", async () => {
+    // A recusa é do PUT, não do contrato inteiro: documento pode NASCER sem TOP, e precisa continuar
+    // podendo, senão o binário anterior deixaria de conseguir criar durante a janela de implantação.
+    const r = await criar("sale", { tipo_operacao_id: null });
+    expect(r.statusCode, r.body).toBe(201);
+    expect(await colunas(j(r).id as string)).toMatchObject({ tipo_operacao_id: null, tipo_operacao_versao_id: null });
+  }, 180_000);
+});
+
+/**
+ * A CONVERSÃO É COMPOSTA E IRREVERSÍVEL (TOP-CONFIG-02 R1).
+ *
+ * Ela MUTA a fonte (status → `converted`) e CRIA um documento novo. Duas execuções da mesma intenção não
+ * produzem "um erro": produzem um PEDIDO FANTASMA — com código, ID Global e efeito contábil a jusante —
+ * que ninguém pediu e que só aparece na conferência do mês.
+ *
+ * "Está dentro de uma transação" NÃO basta: duas transações podem ler o MESMO estado inicial e ambas
+ * serem válidas. A fonte precisa ser SERIALIZADA. E "o cliente manda Idempotency-Key" não é proteção
+ * nenhuma enquanto o servidor não consome o cabeçalho — que era exatamente o caso.
+ */
+describe("conversão — idempotência e corrida", () => {
+  const converterCom = (kind: "budget" | "order", id: string, body: Record<string, unknown>, key?: string) =>
+    h.app.inject({ method: "POST", url: `/api/sales/${ROTA[kind]}/${id}/convert`,
+      headers: key ? h.headers({ "idempotency-key": key }) : h.headers(), payload: body });
+
+  /** Quantos destinos nasceram desta fonte — lido FORA da rota, que é onde a duplicação apareceria. */
+  async function destinos(origem: string): Promise<{ id: string; kind: string }[]> {
+    const c = createPool(TEST_URL, { max: 1 });
+    try {
+      return (await c.query<{ id: string; kind: string }>(
+        "select id, kind from erp.sales_documents where origin_document_id=$1 order by created_at", [origem])).rows;
+    } finally { await c.end(); }
+  }
+
+  it("T-A1: mesma chave e mesmo corpo → uma conversão só, resposta idêntica", async () => {
+    // O DUPLO CLIQUE. O segundo envio é o MESMO pedido, não um pedido novo: tem de devolver a MESMA
+    // resposta, no mesmo status, sem criar nada. Um 201 com id DIFERENTE aqui é o pedido fantasma — e
+    // nada na tela denunciaria, porque os dois parecem sucesso.
+    const topPedido = await cadastrarTop("vendas.pedido", "Idempotente A1");
+    const orcamento = j(await criar("budget")).id as string;
+    const chave = `conv-a1-${orcamento}`;
+
+    const r1 = await converterCom("budget", orcamento, { tipo_operacao_id: topPedido }, chave);
+    expect(r1.statusCode, r1.body).toBe(201);
+    const r2 = await converterCom("budget", orcamento, { tipo_operacao_id: topPedido }, chave);
+
+    // O status do REPLAY é o mesmo da execução original — é assim que toda rota idempotente deste
+    // servidor responde (create, baixa financeira, solicitação de compra). Não existe 200 de replay aqui.
+    expect(r2.statusCode, r2.body).toBe(201);
+    expect(j(r2), "replay devolve a resposta GRAVADA, não uma nova").toEqual(j(r1));
+    expect(await destinos(orcamento), "duplo clique não cria segundo pedido").toHaveLength(1);
+  }, 180_000);
+
+  it("T-A2: duas conversões SIMULTÂNEAS da mesma fonte, sem chave — só uma vence", async () => {
+    // O cliente antigo, o retry de rede e a aba duplicada. Sem `for update of d` as duas transações leem
+    // `open` do mesmo snapshot, criam DOIS destinos e AMBAS carimbam a fonte — e nenhuma das respostas é
+    // um erro. O que se exige aqui é aritmética: um 201, um destino.
+    const orcamento = j(await criar("budget")).id as string;
+
+    const [a, b] = await Promise.all([
+      converterCom("budget", orcamento, {}),
+      converterCom("budget", orcamento, {})
+    ]);
+
+    expect([a, b].filter((r) => r.statusCode === 201).length,
+      `a: ${a.statusCode} ${a.body} / b: ${b.statusCode} ${b.body}`).toBe(1);
+    const perdedor = [a, b].find((r) => r.statusCode !== 201)!;
+    // A perdedora espera o commit da vencedora, reavalia a linha JÁ atualizada e recusa pelo ESTADO.
+    // Nunca um 500, e nunca um segundo 201.
+    expect(perdedor.statusCode, perdedor.body).toBe(409);
+    expect(await destinos(orcamento), "a fonte só pode ter UM destino").toHaveLength(1);
+    expect((await colunas(orcamento)).status).toBe("converted");
+  }, 240_000);
+
+  it("T-A3: mesma chave com corpo DIFERENTE é recusada, e a diferença não é aplicada", async () => {
+    // A chave não é carimbo livre. Reusá-la com outra intenção é erro do cliente, e responder 201 com a
+    // resposta antiga seria mentir: a segunda conversão, com outra TOP, NÃO aconteceu.
+    const topA = await cadastrarTop("vendas.pedido", "Alvo A3-um");
+    const topB = await cadastrarTop("vendas.pedido", "Alvo A3-dois");
+    const orcamento = j(await criar("budget")).id as string;
+    const chave = `conv-a3-${orcamento}`;
+
+    const r1 = await converterCom("budget", orcamento, { tipo_operacao_id: topA }, chave);
+    expect(r1.statusCode, r1.body).toBe(201);
+    const r2 = await converterCom("budget", orcamento, { tipo_operacao_id: topB }, chave);
+    expect(r2.statusCode, r2.body).toBe(409);
+    expect(j(r2).error!.code).toBe("CONFLICT");
+
+    const d = await destinos(orcamento);
+    expect(d, "a recusa não deixou rastro").toHaveLength(1);
+    expect(await colunas(d[0]!.id), "o destino ficou com a TOP que realmente recebeu").toMatchObject({ tipo_operacao_id: topA });
+  }, 180_000);
+
+  it("T-A4: a mesma chave em OUTRA fonte é conflito, nunca o replay da fonte anterior", async () => {
+    // A IDENTIDADE DA OPERAÇÃO ENTRA NO HASH, não só o corpo. A chave é única por (organização, chave) e
+    // nada mais. Se o hash fosse apenas o corpo, reusar a chave em OUTRO orçamento com a MESMA TOP
+    // devolveria 201 com o id do PRIMEIRO pedido: o segundo orçamento ficaria aberto para sempre e o
+    // usuário leria sucesso. Este é o caso que prova que `sourceId` participa do hash.
+    const top = await cadastrarTop("vendas.pedido", "Alvo A4");
+    const um = j(await criar("budget")).id as string;
+    const dois = j(await criar("budget")).id as string;
+    const chave = `conv-a4-${um}`;
+
+    const r1 = await converterCom("budget", um, { tipo_operacao_id: top }, chave);
+    expect(r1.statusCode, r1.body).toBe(201);
+    const r2 = await converterCom("budget", dois, { tipo_operacao_id: top }, chave);
+
+    expect(r2.statusCode, "corpo igual, OPERAÇÃO diferente: não é replay").toBe(409);
+    expect(j(r2).error!.code).toBe("CONFLICT");
+    expect(await destinos(dois), "a segunda fonte não foi convertida às escondidas").toHaveLength(0);
+    expect((await colunas(dois)).status, "e continua aberta, como o usuário a deixou").toBe("open");
+  }, 180_000);
+
+  it("T-A5: duas requisições simultâneas com a MESMA chave não criam dois destinos", async () => {
+    // O duplo clique que a web realmente produz, com as duas requisições em voo ao mesmo tempo. Aqui quem
+    // serializa é o INSERT da chave: a segunda transação espera o commit da primeira. As duas respostas
+    // aceitáveis são 201 (replay) e 409 (operação em andamento). O que NUNCA pode acontecer é dois
+    // pedidos com a mesma origem.
+    const top = await cadastrarTop("vendas.pedido", "Alvo A5");
+    const orcamento = j(await criar("budget")).id as string;
+    const chave = `conv-a5-${orcamento}`;
+
+    const [a, b] = await Promise.all([
+      converterCom("budget", orcamento, { tipo_operacao_id: top }, chave),
+      converterCom("budget", orcamento, { tipo_operacao_id: top }, chave)
+    ]);
+
+    for (const r of [a, b]) expect([201, 409], r.body).toContain(r.statusCode);
+    expect([a, b].filter((r) => r.statusCode === 201).length,
+      `a: ${a.statusCode} / b: ${b.statusCode}`).toBeGreaterThanOrEqual(1);
+    expect(await destinos(orcamento), "mesma chave, duas em voo: UM destino").toHaveLength(1);
+    const oks = [a, b].filter((r) => r.statusCode === 201);
+    if (oks.length === 2) expect(j(oks[0]!), "replay é a resposta gravada, não outra conversão").toEqual(j(oks[1]!));
+  }, 240_000);
+});

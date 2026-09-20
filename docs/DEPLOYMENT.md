@@ -409,13 +409,47 @@ Pelo papel da aplicação (`erp_app`, sem bypass): até a 05C-1, uma consulta a 
 definer, e view definer é vazamento entre organizações. A view saiu na 0017, então o que resta conferir é
 que ela não voltou, e que `erp_app` continua **sem** bypass de RLS (`rolbypassrls = false`).
 
-### TOP-CONFIG-02 — pré-requisito de implantação do Portal de Vendas (`0021`)
+### TOP-CONFIG-02 — prontidão de TOP antes do Portal de Vendas (`0021`)
 
-Não é recomendação: **sem este passo, o lançamento de vendas pela interface fica bloqueado.**
+**Janela de indisponibilidade: NÃO precisa — e evitá-la é o caminho padrão.**
 
 A fatia faz o Portal de Vendas exigir uma TOP ativa da família antes de deixar salvar. Nenhuma TOP nasce
-pronta — a `0020` não insere nenhuma e o seed não cria nenhuma —, então TODA organização já existente tem
-zero TOPs no instante em que a web nova sobe. O efeito é este, e é imediato:
+pronta: a `0020` não insere nenhuma e o seed não cria nenhuma, então TODA organização já existente tem
+zero TOPs no instante em que a web nova sobe.
+
+O que torna a janela evitável é que **a tela de cadastro já está em produção desde a TOP-CONFIG-01**
+(`0020`, mesclada pela #46): banco, `POST /api/admin/tipos-operacao` e **Configurações › Operações ›
+Tipos de Operação** respondem hoje, no binário que está servindo. O cadastro NÃO depende desta fatia —
+só o BLOQUEIO depende. Logo o pré-cadastro fecha a janela inteira, em vez de encurtá-la.
+
+Isso importa porque a ordem de publicação não é controlável: API e web publicam de forma assíncrona a
+partir do MESMO merge, e é a **web** que bloqueia. Mandar cadastrar "depois de a API subir" não fecha
+janela nenhuma — apenas aposta que a web demore mais, e o estado bloqueado é silencioso por construção.
+
+#### Caminho preferencial — SEM JANELA (fazer ANTES do merge da #47)
+
+Por organização, com a #47 ainda em DRAFT:
+
+1. Em **Configurações › Operações › Tipos de Operação** (já implantada), cadastrar ao menos uma TOP
+   **ativa** para cada uma das três famílias: `vendas.orcamento`, `vendas.pedido` e `vendas.venda`. Uma
+   família sem TOP bloqueia só a sua variante — e a conversão que tem ela como DESTINO.
+2. Opcionalmente marcar uma como **padrão** em cada família. **Não é obrigatório**: sem padrão o campo
+   abre em "Selecione…" e o usuário escolhe a cada lançamento. Recomendado por ergonomia, nunca como
+   pré-requisito.
+3. Rodar a **prova de prontidão** abaixo contra a conexão operacional e conferir que ela devolve ZERO
+   linhas. É essa consulta que autoriza o merge — e não a ausência de erro em log, que aqui não prova
+   nada, porque o estado bloqueado não gera erro nenhum.
+4. Só então: merge da #47 → deploy normal. Quando a web nova ficar Ready, o campo já encontra TOP.
+
+O passo 1 é reversível e não escreve em documento nenhum: cadastrar TOP antes do merge não altera o
+comportamento do binário que está no ar hoje, porque só a `0021` liga lançamento e TOP. Não há version
+skew a temer aqui.
+
+#### Caminho alternativo — JANELA ACEITA CONSCIENTEMENTE
+
+Mergear sem pré-cadastro **continua tecnicamente seguro para os dados**: a API aceita TOP nula, os
+documentos existentes continuam abrindo e nada é perdido. O que se perde é a OPERAÇÃO — a web recusa
+novo lançamento e conversão até que alguém configure.
 
 | Superfície | Sem nenhuma TOP cadastrada |
 |---|---|
@@ -424,20 +458,65 @@ zero TOPs no instante em que a web nova sobe. O efeito é este, e é imediato:
 | `POST /api/sales/<variante>` | continua **201** — o documento nasce legado, sem TOP. Não há perda de dado |
 | Documentos antigos | abrem normalmente, dizendo "Não configurada (registro legado)" |
 
-Ordem, por organização, DEPOIS de a API nova estar no ar:
+Este caminho exige **decisão explícita do operador, registrada**, porque aqui a janela é ESCOLHIDA, não
+imposta pela arquitetura. Não é o caminho principal e não é o padrão. Quem o escolher assume que a
+duração da janela é o tempo até o cadastro manual — e não o tempo de deploy.
 
-1. Em **Configurações › Operações › Tipos de Operação**, cadastrar ao menos uma TOP **ativa** para cada uma
-   das três famílias: `vendas.orcamento`, `vendas.pedido` e `vendas.venda`. Uma família sem TOP bloqueia só
-   a sua variante — e a conversão que tem ela como DESTINO.
-2. Marcar uma como **padrão** em cada família. Não é obrigatório; sem padrão o campo abre em "Selecione…" e
-   o usuário escolhe a cada lançamento.
-3. Conferir na tela: abrir `/vendas/budgets/new` e ver o campo Tipo de Operação preenchível e Salvar
-   habilitado. É a verificação que fecha o passo — a ausência de erro no log não prova nada aqui, porque o
-   estado bloqueado é silencioso por construção.
+#### Prova de prontidão (READ-ONLY, por organização)
 
-A alternativa consciente é aceitar a janela: a organização fica sem lançar venda pela web até o cadastro. A
-decisão é do Maike, e está escrita aqui para que seja decisão e não surpresa.
+Executar com a conexão **operacional** (`MIGRATE_DATABASE_URL`), nunca com a da aplicação: sob RLS o
+papel `erp_app` enxerga uma organização só, e uma resposta de uma linha seria verde que não prova nada.
 
+```sql
+select
+  o.id                                                                     as organizacao_id,
+  o.name                                                                   as organizacao,
+  coalesce(bool_or(t.codigo_base = 'vendas.orcamento'), false)             as top_orcamento,
+  coalesce(bool_or(t.codigo_base = 'vendas.pedido'),    false)             as top_pedido,
+  coalesce(bool_or(t.codigo_base = 'vendas.venda'),     false)             as top_venda,
+  count(*) filter (where t.padrao)                                         as familias_com_padrao
+from erp.organizations o
+left join erp.tipos_operacao t
+  on  t.organization_id = o.id
+  and t.ativo
+  and t.excluido_em is null
+  and t.codigo_base in ('vendas.orcamento', 'vendas.pedido', 'vendas.venda')
+where o.deleted_at is null
+group by o.id, o.name
+having not (
+      coalesce(bool_or(t.codigo_base = 'vendas.orcamento'), false)
+  and coalesce(bool_or(t.codigo_base = 'vendas.pedido'),    false)
+  and coalesce(bool_or(t.codigo_base = 'vendas.venda'),     false)
+)
+order by o.name;
+```
+
+**Zero linhas = pronto para mergear.** Cada linha devolvida é uma organização que entraria bloqueada, e
+as colunas booleanas dizem qual família falta. `familias_com_padrao` é INFORMATIVO: padrão ausente não
+bloqueia e não reprova. Para inspecionar todas as organizações, inclusive as prontas, remova o `having`.
+
+Por que a consulta tem esta forma, e não a óbvia:
+
+- **Parte de `erp.organizations`, com LEFT JOIN** — partir de `erp.tipos_operacao` faria a organização
+  com ZERO TOPs, que é exatamente a que precisa reprovar, simplesmente não aparecer. Verde por ausência
+  é o modo de falha que o `CLAUDE.md` nomeia ("zero organizações").
+- **Os quatro predicados no `on`, não no `where`** — filtro de tabela à direita no `where` degrada o
+  LEFT JOIN para INNER e reintroduz o defeito acima.
+- **`coalesce(..., false)` em toda parte** — sem ele, a organização sem nenhuma TOP produz
+  `bool_or` nulo nas três colunas, `null and null and null` é null, `not null` é null, e a linha seria
+  DESCARTADA pelo `having`: o gate aprovaria em silêncio justamente a organização mais vazia de todas.
+  Isto foi MEDIDO, não deduzido: com uma organização sem nenhuma TOP inserida numa transação
+  descartável, a forma acima devolve as duas organizações pendentes e a forma sem `coalesce` devolve
+  só uma — some exatamente a que tinha zero. É o modo de falha mais caro que um gate pode ter, porque
+  o silêncio é indistinguível de aprovação.
+- **`t.ativo` e `t.excluido_em is null`** — TOP inativa ou excluída existe e não serve; a exclusão é
+  lógica, e o índice único de código não filtra por `excluido_em`.
+- **`o.deleted_at is null`** — organização excluída não opera, e cobrá-la produziria uma reprovação
+  permanente e insolúvel, que treina o operador a ignorar o gate.
+
+Esta prova é **gate operacional**, não gate de CI: ela mede o banco de produção e por isso NÃO entra em
+`pnpm lint` nem no CI contra banco de teste — um gate que se autoaprova não é gate. Enquanto não for
+executada com a credencial real, a prontidão é `PENDING`.
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)
