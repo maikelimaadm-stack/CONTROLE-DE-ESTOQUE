@@ -114,6 +114,79 @@ Financeiro seguirão o mesmo contrato):
   legado), então não há perda de dado; há perda de OPERAÇÃO pela interface. Por isso o cadastro dessas três
   TOPs é pré-requisito NUMERADO de implantação em `docs/DEPLOYMENT.md`, e não uma recomendação.
 
+### 0.3 A TOP é escolhida ANTES do formulário (TOP-CONFIG-02B)
+
+Em Vendas, `/vendas/<variante>/new` NÃO abre mais o formulário direto. A rota é a mesma — favoritos,
+Portal e permissões continuam valendo —, mas ela mostra a **etapa de escolha do Tipo de Operação**
+enquanto não houver operação definida:
+
+| URL | O que a tela mostra |
+| --- | --- |
+| `/vendas/<variante>/new` | o LANÇADOR. O formulário não existe na árvore. |
+| `…?tipo_operacao_id=<uuid>` confirmado pela lista | o FORMULÁRIO, já contextualizado |
+| `…?tipo_operacao_id=<uuid>` que a lista recusa | o LANÇADOR + "não está disponível". ZERO POST. |
+
+**Por quê.** A TOP não é um atributo do lançamento: é a identidade operacional que contextualiza o
+documento inteiro e que, a partir da TOP-CONFIG-03, vai decidir efeitos de estoque, financeiro e fiscal.
+Um dado que muda o significado de todos os outros não pode ser preenchido no meio deles.
+
+**`tipo_operacao_id` na URL é PEDIDO, nunca autoridade.** Ele existe para que refresh, Voltar/Avançar e um
+link compartilhado continuem funcionando. Quem decide é a lista que o SERVIDOR devolveu para AQUELA
+variante: o UUID só vale se estiver em `items`. Pertencer à lista prova de uma vez existência, tenant,
+atividade, não-exclusão e FAMÍLIA — e é por isso que não há (nem deve haver) validação de formato de uuid
+no cliente fazendo as vezes de autorização.
+
+**Superfície de recusa única.** Inexistente, de outro tenant, inativa, excluída, de outra família e id
+malformado caem todos na MESMA frase. Distinguir transformaria a tela num oráculo de quais UUIDs existem
+na organização (`.claude/rules/security.md`).
+
+**O padrão não pula a etapa — e só o cadastro define padrão.** (Vale em TODO o produto, lançamento e
+conversão: `usePadraoTop` também não deduz padrão da cardinalidade.) Havendo `defaultId`, ele vem
+pré-selecionado e marcado, e o lançador continua na tela; auto-avançar gravaria uma identidade
+operacional que ninguém viu. Sem `defaultId`, NADA vem marcado — **nem quando a família tem uma TOP
+só**. "Única opção disponível" e "operação padrão" são conceitos distintos: o padrão é decisão do
+cadastro (`padrao` no banco), e deduzi-lo da cardinalidade da lista criaria uma segunda semântica de
+padrão no cliente, que sumiria sozinha no dia em que a família ganhasse a segunda TOP.
+
+**O RASCUNHO é preservado; a AUTORIZAÇÃO DE ESCRITA, não.** São duas perguntas, e confundi-las é o que
+transforma uma proteção em buraco:
+
+| Pergunta | Quem responde |
+| --- | --- |
+| O formulário continua montado? | a TOP atual **ou** a que esta sessão já validou (trava de `kind:pedido`) |
+| O `Salvar` pode emitir POST? | **só** o estado ATUAL da descoberta: `pronto` **e** a TOP na lista de agora |
+
+Uma vez que a TOP passou pela validação e o formulário montou, uma revalidação não o desmonta — o
+documento em digitação não pode desaparecer porque uma consulta em segundo plano mudou de resposta. Mas
+a escrita fecha no mesmo instante em que a descoberta deixa de confirmar a operação. Isso vale para os
+três modos: servidor **não confirmado** (500/404/contrato futuro), **erro explicado**, e **TOP que saiu
+da lista** num servidor compatível — este último com mensagem própria, porque não é falha de servidor
+nem configuração ausente. Em nenhum deles a tela troca sozinha para outra TOP.
+
+Por que a escrita não pode continuar aberta: num rolling deploy o formulário abre contra a API nova e a
+revalidação seguinte pode cair na ANTIGA, que é justamente a que ignora `tipo_operacao_id` em silêncio.
+Contar com o 422 ali seria confiar no servidor NOVO para julgar um POST que talvez chegue no ANTIGO.
+
+A trava só é escrita a partir de uma validação real — nunca do texto da URL —, então o deep link
+adulterado continua caindo no lançador. Trocar de operação ou sair do pedido zera a trava; o F5 também,
+e a montagem refaz a descoberta. Quando a capability volta, o `Salvar` reabre sem remontar o formulário
+e sem perder o que foi digitado.
+
+**E a corrida continua sendo do servidor.** Se a TOP for desativada DEPOIS da última validação do
+cliente, ele ainda a considera válida, o POST sai e recebe 422 `TIPO_OPERACAO_INDISPONIVEL`. As duas
+camadas existem porque nenhuma substitui a outra: o cliente não grava quando JÁ SABE que não pode, e o
+servidor recusa o que o cliente não tinha como saber.
+
+**O histórico do navegador não é o seletor de etapa.** `Continuar` usa `replace`: lançador e formulário
+são duas caras da mesma etapa de criação, não dois lugares. Voltar SAI da criação, e é assim de
+propósito — `useDirtyTab` protege fechar aba, trocar de empresa e sair da página, mas NÃO intercepta
+`popstate`; com `push`, o Voltar desmontaria um formulário preenchido sem perguntar nada. A porta de
+retorno da etapa é o botão "Alterar operação", que confirma antes de descartar. Back-como-etapa depende
+de uma guarda transversal de dirty state que o produto ainda não tem.
+
+**A CONVERSÃO continua por campo.** Orçamento → Pedido → Venda escolhe a TOP do destino num diálogo, e
+ali `CampoTipoOperacao` permanece: a escolha é parte de uma ação pontual, não uma etapa de criação.
+
 ### O rótulo de cada camada — e a ambiguidade que a TOP-CONFIG-02 abriu
 
 As duas camadas coexistem na mesma tela, então precisam de nomes distintos. A regra, a partir daqui:

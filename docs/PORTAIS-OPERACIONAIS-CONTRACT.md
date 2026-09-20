@@ -106,3 +106,23 @@ Preparado pela TOP-CONFIG-01:
 **Não preparado, de propósito:** as colunas `operation_type_id` e `operation_type_version_id` NÃO existem em
 documento nenhum. Criá-las antes de existir o primeiro consumidor seria schema morto — e schema morto
 envelhece sem ninguém notar, exatamente como a segunda lista que este programa evita.
+
+## A etapa de operação, antes do lançamento (TOP-CONFIG-02B)
+
+O Portal continua oferecendo as três categorias documentais — Novo orçamento, Novo pedido, Nova venda —,
+cada uma com a sua permissão (`budgets.create`, `orders.create`, `sales.create`). O que mudou é o que
+acontece depois do clique: em vez do formulário, abre-se a **escolha do Tipo de Operação** da família
+daquela variante.
+
+    Portal de Vendas
+      └─ + Novo ─ Orçamento │ Pedido │ Venda      ← categoria documental (família)
+           └─ escolher o Tipo de Operação         ← identidade operacional configurada
+                └─ formulário já contextualizado  ← dados do lançamento
+
+As três camadas continuam distintas e nenhuma substitui a outra: a **família** restringe quais TOPs
+aparecem; a **TOP** é escolhida antes; o **formulário** nasce sabendo qual é. Unificar a apresentação
+numa etapa só não funde serviço, permissão, endpoint nem efeito contábil — cada variante segue com os
+seus.
+
+O contrato de URL, a superfície de recusa e o comportamento do padrão estão em
+`docs/TIPO-OPERACAO-CONTRACT.md` §0.3, que é o dono do assunto.

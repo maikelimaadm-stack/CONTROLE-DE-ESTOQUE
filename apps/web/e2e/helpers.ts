@@ -49,3 +49,26 @@ export async function primeiroId(page: Page, path: string): Promise<string> {
   expect(id, `sem registro em ${path} para montar a fixture`).toBeTruthy();
   return id!;
 }
+
+/**
+ * A ETAPA DE ESCOLHA DO TIPO DE OPERAÇÃO (TOP-CONFIG-02B).
+ *
+ * `/vendas/<variante>/new` NÃO abre mais o formulário: abre o lançador. Quem quer chegar ao formulário
+ * escolhe a operação primeiro. O passo mora aqui porque três specs precisam dele — duplicá-lo faria cada
+ * um envelhecer por conta própria no dia em que o lançador mudar.
+ */
+export async function abrirLancamentoDeVendas(page: Page, variante: string) {
+  await page.goto(`/vendas/${variante}/new`);
+  await expect(page.getByTestId("top-lancador"), "sem TOP na URL, a rota /new abre o lançador").toBeVisible();
+}
+
+/**
+ * Escolhe a TOP no lançador e confirma. Só retorna quando o formulário montou de fato — devolver antes
+ * faria o teste seguinte medir uma tela em transição e culpar a asserção errada.
+ */
+export async function escolherTopEContinuar(page: Page, topId: string) {
+  await page.locator(`[data-testid="top-opcao"][data-top-id="${topId}"]`).click();
+  await page.getByTestId("top-continuar").click();
+  await expect(page.getByTestId("top-contexto"), "depois de Continuar, o formulário abre contextualizado").toBeVisible();
+  await expect(page, "a escolha fica na URL, para sobreviver a refresh e a Voltar/Avançar").toHaveURL(new RegExp(`tipo_operacao_id=${topId}`));
+}
