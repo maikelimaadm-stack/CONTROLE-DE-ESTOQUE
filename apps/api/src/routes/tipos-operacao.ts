@@ -14,6 +14,12 @@ import {
   configuracoesTopIguais,
   lerConfiguracaoTop,
   secoesAlteradasTop,
+  lerDestinosOperacao,
+  destinosOperacaoIguais,
+  validarDestinoOperacao,
+  varianteDeDocumentoVendaDaFamilia,
+  LIMITE_DESTINOS_POR_VERSAO,
+  type DestinoOperacaoV1,
   type ConfiguracaoTipoOperacaoV1
 } from "@agro/domain";
 import { DomainError } from "@agro/shared";
@@ -84,7 +90,9 @@ const criarSchema = z.object({
    * contrato. Reescrever o schema em zod aqui criaria uma segunda definição, livre para divergir da
    * primeira — e divergir para o lado permissivo é exatamente o descarte silencioso que se quer evitar.
    */
-  configuracao: z.unknown().optional()
+  configuracao: z.unknown().optional(),
+  /** Grafo de próximas operações. Ausente = nenhuma transição declarada. Mesma razão do `z.unknown()`. */
+  destinos: z.unknown().optional()
 }).strict();
 
 /**
@@ -102,7 +110,9 @@ const editarSchema = z.object({
   padrao: z.boolean().optional(),
   revisao: z.coerce.number().int().min(1),
   /** Ausente = PRESERVAR a configuração atual. Ver `configuracaoPedida` e o handler de edição. */
-  configuracao: z.unknown().optional()
+  configuracao: z.unknown().optional(),
+  /** Ausente = PRESERVAR os destinos da versão corrente, pelo mesmo motivo. */
+  destinos: z.unknown().optional()
 }).strict();
 
 /**
@@ -117,7 +127,7 @@ const excluirSchema = z.object({ revisao: z.coerce.number().int().min(1) }).stri
 const SELECAO = `
   select t.id, t.codigo, t.codigo_base, t.ativo, t.padrao, t.versao_atual, t.revisao,
          t.criado_em, t.atualizado_em,
-         v.nome, v.descricao, v.configuracao, v.configuracao_schema_version
+         v.id as versao_id, v.nome, v.descricao, v.configuracao, v.configuracao_schema_version
     from erp.tipos_operacao t
     join erp.tipos_operacao_versoes v
       on v.tipo_operacao_id = t.id and v.versao = t.versao_atual
@@ -129,7 +139,7 @@ interface PadraoLiberado { id: string; codigo: string; codigo_base: string }
 interface LinhaTipoOperacao {
   id: string; codigo: string; codigo_base: string; ativo: boolean; padrao: boolean;
   versao_atual: number; revisao: number; criado_em: Date; atualizado_em: Date;
-  nome: string; descricao: string | null;
+  versao_id: string; nome: string; descricao: string | null;
   configuracao: unknown; configuracao_schema_version: number;
 }
 
@@ -203,6 +213,128 @@ const paraTela = (r: LinhaTipoOperacao) => ({
   configuracaoSchema: r.configuracao_schema_version
 });
 
+/**
+ * OS DESTINOS PEDIDOS, LIDOS E NORMALIZADOS — forma primeiro, existência depois.
+ *
+ * A forma é do domínio (`lerDestinosOperacao`): é lá que mora o que conta como lista válida, o teto, a
+ * recusa de chave desconhecida e a normalização determinística que impede versão falsa por reordenação.
+ */
+function destinosPedidos(bruta: unknown): DestinoOperacaoV1[] {
+  const r = lerDestinosOperacao(bruta);
+  if (r.ok) return r.valor;
+  throw new DomainError("TIPO_OPERACAO_DESTINO_INVALIDO",
+    "A lista de próximas operações enviada é inválida", { recusas: r.recusas, limite: LIMITE_DESTINOS_POR_VERSAO });
+}
+
+/** Uma aresta do grafo, já resolvida para a tela. */
+interface DestinoResolvido {
+  tipoOperacaoId: string; ordem: number; codigo: string; nome: string;
+  codigoBase: string; familiaRotulo: string; ativo: boolean; disponivel: boolean;
+}
+
+/**
+ * CONFERE OS DESTINOS PEDIDOS CONTRA O BANCO E CONTRA O REGISTRY — em UMA consulta.
+ *
+ * ┌─ POR QUE UMA CONSULTA, E NÃO UMA POR DESTINO ───────────────────────────────────────────────────────┐
+ * │ `= any($2::uuid[])` resolve a lista inteira de uma vez. Um `await` dentro de um laço aqui viraria    │
+ * │ vinte consultas numa política com vinte destinos, e nenhuma asserção funcional notaria — o resultado │
+ * │ seria idêntico, só mais lento. É a regra de N+1 do repositório, e ela vale também para escrita.      │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * SUPERFÍCIE ÚNICA DE RECUSA. Destino inexistente, de outro tenant, inativo, excluído e de família
+ * incompatível respondem a MESMA recusa, com a mesma mensagem. Distinguir transformaria o editor num
+ * oráculo: quem tentasse UUIDs saberia quais existem na organização vizinha e de que família cada um é.
+ * É a mesma razão que faz inexistente e fora de escopo responderem a mesma 404.
+ *
+ * `for share` nas linhas de destino: elas não podem ser excluídas entre esta conferência e o `insert` das
+ * arestas, ou a política nasceria apontando para uma TOP que deixou de existir dentro da mesma janela.
+ */
+async function conferirDestinos(
+  ctx: ServiceCtx, origemCodigoBase: string, pedidos: readonly DestinoOperacaoV1[]
+): Promise<DestinoOperacaoV1[]> {
+  if (pedidos.length === 0) return [];
+  const ids = pedidos.map((d) => d.tipoOperacaoId);
+  const r = await ctx.tx.query<{ id: string; codigo_base: string }>(
+    `select id, codigo_base from erp.tipos_operacao
+      where organization_id = $1 and id = any($2::uuid[]) and ativo and excluido_em is null
+      for share`,
+    [ctx.orgId, ids]);
+  const porId = new Map(r.rows.map((x) => [x.id, x]));
+
+  for (const pedido of pedidos) {
+    const achado = porId.get(pedido.tipoOperacaoId);
+    // A recusa NÃO diz qual das cinco razões foi. Ver o bloco acima.
+    if (!achado || validarDestinoOperacao(origemCodigoBase, achado.codigo_base).length > 0) {
+      throw new DomainError("TIPO_OPERACAO_INDISPONIVEL",
+        "Uma das próximas operações escolhidas não está disponível para esta operação");
+    }
+  }
+  return [...pedidos];
+}
+
+/**
+ * OS DESTINOS DE UMA VERSÃO, PARA A TELA — em lote, nunca por linha.
+ *
+ * `disponivel` é a pergunta do PRESENTE ("esta TOP ainda serve hoje?") e é calculada aqui, contra o estado
+ * atual da TOP de destino. Ela é DIFERENTE de a aresta existir: a aresta é história congelada na versão, e
+ * nunca deixa de existir; o destino é que pode ter sido desativado ou excluído desde então. Colapsar as
+ * duas apagaria do histórico uma política que de fato valeu.
+ */
+async function destinosDaVersao(ctx: ServiceCtx, versaoIds: readonly string[]): Promise<Map<string, DestinoResolvido[]>> {
+  const mapa = new Map<string, DestinoResolvido[]>();
+  if (versaoIds.length === 0) return mapa;
+  const r = await ctx.tx.query<{
+    origem_versao_id: string; destino_tipo_operacao_id: string; ordem: number;
+    codigo: string; nome: string; codigo_base: string; ativo: boolean; excluido: boolean;
+  }>(
+    `select d.origem_versao_id, d.destino_tipo_operacao_id, d.ordem,
+            t.codigo, tv.nome, t.codigo_base, t.ativo,
+            (t.excluido_em is not null) as excluido
+       from erp.tipos_operacao_versao_destinos d
+       join erp.tipos_operacao t
+         on t.id = d.destino_tipo_operacao_id and t.organization_id = d.organization_id
+       left join erp.tipos_operacao_versoes tv
+         on tv.tipo_operacao_id = t.id and tv.organization_id = t.organization_id and tv.versao = t.versao_atual
+      where d.organization_id = $1 and d.origem_versao_id = any($2::uuid[])
+      order by d.ordem, t.codigo`,
+    [ctx.orgId, [...versaoIds]]);
+
+  for (const linha of r.rows) {
+    const lista = mapa.get(linha.origem_versao_id) ?? [];
+    lista.push({
+      tipoOperacaoId: linha.destino_tipo_operacao_id,
+      ordem: linha.ordem,
+      codigo: linha.codigo,
+      // O nome sai da versão CORRENTE do destino, porque o destino é identidade estável: quem escolher
+      // esta próxima operação hoje vai criar um documento sob a versão de hoje, e o rótulo tem de
+      // corresponder ao que será criado.
+      nome: linha.nome ?? linha.codigo,
+      codigoBase: linha.codigo_base,
+      familiaRotulo: familiaParaTela(linha.codigo_base).rotulo,
+      ativo: linha.ativo,
+      disponivel: linha.ativo && !linha.excluido
+    });
+    mapa.set(linha.origem_versao_id, lista);
+  }
+  return mapa;
+}
+
+/** Grava as arestas de UMA versão. Uma instrução para a lista inteira: nada de `insert` dentro de laço. */
+async function gravarDestinos(ctx: ServiceCtx, versaoId: string, tipoOperacaoId: string, destinos: readonly DestinoOperacaoV1[]) {
+  if (destinos.length === 0) return;
+  await ctx.tx.query(
+    `insert into erp.tipos_operacao_versao_destinos
+       (organization_id, origem_versao_id, origem_tipo_operacao_id, destino_tipo_operacao_id, ordem, criado_por)
+     select $1, $2, $3, x.destino::uuid, x.ordem::int, $4
+       from jsonb_to_recordset($5::jsonb) as x(destino text, ordem int)`,
+    [ctx.orgId, versaoId, tipoOperacaoId, ctx.user.id,
+     JSON.stringify(destinos.map((d) => ({ destino: d.tipoOperacaoId, ordem: d.ordem })))]);
+}
+
+/** Só a identidade e a ordem entram na comparação de no-op: código e nome são apresentação, não política. */
+const soPolitica = (d: readonly DestinoResolvido[]): DestinoOperacaoV1[] =>
+  d.map((x) => ({ tipoOperacaoId: x.tipoOperacaoId, ordem: x.ordem }));
+
 /** O DETALHE — aí sim com a configuração, porque é a tela que vai editá-la. */
 const paraTelaDetalhe = (r: LinhaTipoOperacao) => ({
   ...paraTela(r),
@@ -247,8 +379,51 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     configuracao: {
       versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP,
       secoes: [...SECOES_CONFIGURACAO_TOP]
-    }
+    },
+    /**
+     * BLOCO PRÓPRIO, E NÃO UMA SEÇÃO DA CONFIGURAÇÃO — porque o grafo não mora no payload: mora em tabela.
+     * Declará-lo aqui permite que um cliente mais novo ligue a aba de próximas operações só quando o
+     * servidor de fato a sustenta, sem deduzir capacidade pela falha de uma escrita.
+     */
+    destinos: { suportado: true, limite: LIMITE_DESTINOS_POR_VERSAO }
   })));
+
+  /**
+   * AS TOPs QUE PODEM SER DESTINO DE UMA ORIGEM — decididas PELO SERVIDOR.
+   *
+   * A tela NÃO monta esta lista. Se ela filtrasse no cliente, precisaria de uma cópia da regra de
+   * compatibilidade de família — a segunda lista que o contrato proíbe — e ela divergiria da regra real na
+   * primeira família nova, oferecendo ao administrador um destino que a escrita vai recusar.
+   *
+   * O recorte é fail-closed em três frentes ao mesmo tempo: RLS resolve o tenant, o `where` resolve o
+   * estado (ativa, não excluída) e o registry resolve a compatibilidade. Família de origem desconhecida
+   * devolve lista VAZIA, nunca "todas".
+   */
+  app.get("/admin/tipos-operacao/destinos-possiveis", async (req) => runService(app, req, "tipos_operacao.view", async (ctx) => {
+    const q = z.object({ codigoBase: z.string().trim().min(1) }).strict().parse(req.query);
+
+    // Origem que o produto não sabe executar não tem próxima operação nenhuma. Recusar aqui evita oferecer
+    // um leque para uma operação cuja conversão não existe.
+    if (!varianteDeDocumentoVendaDaFamilia(q.codigoBase)) return { items: [] };
+
+    const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; codigo_base: string }>(
+      `select t.id, t.codigo, v.nome, t.codigo_base
+         from erp.tipos_operacao t
+         join erp.tipos_operacao_versoes v
+           on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
+        where t.organization_id = $1 and t.ativo and t.excluido_em is null
+        order by t.codigo`,
+      [ctx.orgId]);
+
+    // A COMPATIBILIDADE É APLICADA AQUI, com a MESMA função que a escrita usa. Duas regras (uma para
+    // oferecer, outra para aceitar) divergiriam, e a divergência apareceria como "escolhi e deu erro".
+    return {
+      items: r.rows
+        .filter((x) => validarDestinoOperacao(q.codigoBase, x.codigo_base).length === 0)
+        .map((x) => ({ id: x.id, codigo: x.codigo, nome: x.nome, codigoBase: x.codigo_base,
+                       familiaRotulo: familiaParaTela(x.codigo_base).rotulo }))
+    };
+  }));
 
   // ---------- Lista ----------
   app.get("/admin/tipos-operacao", async (req) => runService(app, req, "tipos_operacao.view", async (ctx) => {
@@ -298,8 +473,12 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const r = await ctx.tx.query<LinhaTipoOperacao>(
       `${SELECAO} where t.id = $1 and t.organization_id = $2 and t.excluido_em is null`, [id, ctx.orgId]);
-    if (!r.rows[0]) throw notFound("Tipo de operação");
-    return paraTelaDetalhe(r.rows[0]);
+    const linha = r.rows[0];
+    if (!linha) throw notFound("Tipo de operação");
+    // UMA consulta para os destinos desta versão — a mesma função que o histórico usa, para as duas telas
+    // nunca discordarem sobre o que a versão declara.
+    const destinos = (await destinosDaVersao(ctx, [linha.versao_id])).get(linha.versao_id) ?? [];
+    return { ...paraTelaDetalhe(linha), destinos };
   }));
 
   // ---------- Histórico de versões ----------
@@ -310,8 +489,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const pai = await ctx.tx.query<{ id: string }>(
       "select id from erp.tipos_operacao where id=$1 and organization_id=$2 and excluido_em is null", [id, ctx.orgId]);
     if (!pai.rows[0]) throw notFound("Tipo de operação");
-    const r = await ctx.tx.query<{ versao: number; nome: string; descricao: string | null; criado_em: Date; criado_por_nome: string | null; configuracao: unknown; configuracao_schema_version: number }>(
-      `select v.versao, v.nome, v.descricao, v.criado_em, u.name as criado_por_nome,
+    const r = await ctx.tx.query<{ id: string; versao: number; nome: string; descricao: string | null; criado_em: Date; criado_por_nome: string | null; configuracao: unknown; configuracao_schema_version: number }>(
+      `select v.id, v.versao, v.nome, v.descricao, v.criado_em, u.name as criado_por_nome,
               v.configuracao, v.configuracao_schema_version
          from erp.tipos_operacao_versoes v
          left join erp.users u on u.id = v.criado_por
@@ -331,6 +510,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      */
     const linhas = r.rows;
     const cfg = linhas.map((v) => configuracaoParaTela(v.configuracao, v.configuracao_schema_version));
+    // UMA consulta para o histórico INTEIRO. Uma por versão viraria N+1 numa TOP com trinta versões, e
+    // nenhuma asserção funcional notaria — a tela ficaria idêntica, só mais lenta a cada edição.
+    const destinosPorVersao = await destinosDaVersao(ctx, linhas.map((v) => v.id));
     return {
       items: linhas.map((v, i) => {
         const atual = cfg[i]!;
@@ -344,6 +526,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           criadoEm: v.criado_em,
           criadoPor: v.criado_por_nome,
           configuracao: atual,
+          // OS DESTINOS DAQUELA ÉPOCA, não os de hoje. É a mesma razão pela qual a configuração sai da
+          // própria linha: o histórico não pode explicar uma conversão antiga com a política atual.
+          destinos: destinosPorVersao.get(v.id) ?? [],
           // Sem versão anterior legível não há comparação possível — e `[]` afirmaria "nada mudou", que é
           // diferente de "não dá para saber". `null` diz a segunda coisa.
           secoesAlteradas: comparavel ? secoesAlteradasTop(anterior.valor, atual.valor) : null
@@ -377,14 +562,19 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // declarou". O efeito guardado é idêntico, e é o único que não inventa intenção alheia.
       const configuracao = d.configuracao === undefined ? configuracaoNeutraTop() : configuracaoPedida(d.configuracao);
 
-      await ctx.tx.query(
+      const versaoNova = await ctx.tx.query<{ id: string }>(
         `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version)
-         values ($1,$2,1,$3,$4,$5,$6::jsonb,$7)`,
+         values ($1,$2,1,$3,$4,$5,$6::jsonb,$7) returning id`,
         [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP]);
+
+      // AS PRÓXIMAS OPERAÇÕES DA VERSÃO 1. Conferidas contra banco e registry ANTES de gravar: uma aresta
+      // para TOP indisponível nasceria como um botão que não tem serviço atrás.
+      const destinos = await conferirDestinos(ctx, d.codigoBase, destinosPedidos(d.destinos));
+      await gravarDestinos(ctx, versaoNova.rows[0]!.id, id, destinos);
 
       await audit(ctx.tx, ctx, "tipos_operacao", id, "create",
         { codigo: d.codigo, codigoBase: d.codigoBase, ativo: d.ativo, padrao: nasceuPadrao, versao: 1,
-          configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP });
+          configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP, destinos: destinos.length });
       // A TOP anterior perdeu o padrão nesta mesma transação: quem perdeu tem evento próprio, com autor.
       await auditarPadraoLiberado(ctx, liberados, id);
       // E quem ASSUMIU também. Sem isto, "esta TOP virou padrão ao nascer" só existiria dentro do payload
@@ -453,13 +643,30 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const configuracao = d.configuracao === undefined ? atualConfig.valor : configuracaoPedida(d.configuracao);
     const mudouConfiguracao = !configuracoesTopIguais(atualConfig.valor, configuracao);
 
+    /**
+     * OS DESTINOS SÃO CONTEÚDO, EXATAMENTE COMO A CONFIGURAÇÃO.
+     *
+     * "Deste orçamento pode sair um pedido especial" é uma REGRA que explica por que um documento pôde
+     * virar outro. Se ela fosse estado do pai, editar o cadastro hoje mudaria retroativamente o leque de
+     * um documento de ontem, e a conversão daquele documento ficaria sem explicação.
+     *
+     * AUSENTE = PRESERVAR, pela mesma razão da configuração: é o que a web antiga manda, e ler a ausência
+     * como "apague todas as transições" destruiria política que ninguém pediu para destruir.
+     */
+    const destinosAtuais = soPolitica((await destinosDaVersao(ctx, [antes.versao_id])).get(antes.versao_id) ?? []);
+    const destinos = d.destinos === undefined
+      ? destinosAtuais
+      : await conferirDestinos(ctx, antes.codigo_base, destinosPedidos(d.destinos));
+    const mudouDestinos = !destinosOperacaoIguais(destinosAtuais, destinos);
+
     // CONTEÚDO gera versão; ESTADO não. O nome de uma TOP é o que um documento vai citar — mudou o nome,
     // nasce uma versão nova, e a anterior continua legível. Ativar/desativar não muda o que a TOP É.
     //
     // A CONFIGURAÇÃO É CONTEÚDO, pelo mesmo motivo e com mais força: ela é a REGRA que explica o efeito.
     // E nome + descrição + configuração viajam numa versão SÓ — uma edição que mexe nos três gera UMA
     // N+1, não três. Versão por aba faria o histórico contar uma sequência de eventos que nunca existiu.
-    const mudouConteudo = nome !== antes.nome || (descricao ?? null) !== (antes.descricao ?? null) || mudouConfiguracao;
+    const mudouConteudo = nome !== antes.nome || (descricao ?? null) !== (antes.descricao ?? null)
+      || mudouConfiguracao || mudouDestinos;
     const versao = mudouConteudo ? antes.versao_atual + 1 : antes.versao_atual;
 
     /**
@@ -480,10 +687,14 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       : [];
 
     if (mudouConteudo) {
-      await ctx.tx.query(
+      const versaoNova = await ctx.tx.query<{ id: string }>(
         `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version)
-         values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8)`,
+         values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8) returning id`,
         [ctx.orgId, id, versao, nome, descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP]);
+      // As arestas são COPIADAS para a versão nova mesmo quando não mudaram: a versão N+1 precisa declarar
+      // a política INTEIRA dela. Herdar por referência faria a versão nova depender da anterior para ser
+      // lida, e o histórico deixaria de ser autossuficiente — que é a única coisa que ele promete ser.
+      await gravarDestinos(ctx, versaoNova.rows[0]!.id, id, destinos);
     }
 
     const u = await ctx.tx.query(
@@ -507,6 +718,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       await audit(ctx.tx, ctx, "tipos_operacao", id, "update",
         { versaoAnterior: antes.versao_atual, versao,
           secoesAlteradas: mudouConfiguracao ? secoesAlteradasTop(atualConfig.valor, configuracao) : [],
+          destinosAlterados: mudouDestinos, destinos: destinos.length,
           configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP },
         { before: { nome: antes.nome, descricao: antes.descricao }, after: { nome, descricao } });
     }

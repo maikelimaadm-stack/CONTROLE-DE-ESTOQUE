@@ -1,11 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, type SalesKind } from "@agro/domain";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
-import { notFound, validation, err } from "../lib/errors.js";
-import { consultaEscopada, exigirEmpresaDeLancamento, empresaScope, scopedById, type ServiceCtx } from "../lib/context.js";
+import { notFound, validation, err, denied } from "../lib/errors.js";
+import { consultaEscopada, exigirEmpresaDeLancamento, empresaScope, scopedById, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock } from "../services/stock-core.js";
@@ -148,6 +148,57 @@ async function resolverTopParaLancamento(ctx: ServiceCtx, familiaEsperada: strin
  * Leitura pura (detalhe, listagem) continua SEM lock: travar linha para desenhar tela é serializar o que
  * não disputa nada.
  */
+/** Uma próxima operação oferecida por um documento, já resolvida para a tela. */
+interface ProximoPasso {
+  tipoOperacaoId: string; codigo: string; nome: string;
+  codigoBase: string; familiaRotulo: string; variante: SalesKind; ordem: number;
+}
+
+/**
+ * OS PRÓXIMOS PASSOS DE UM DOCUMENTO — lidos da VERSÃO que ele cita, filtrados pelo estado de HOJE.
+ *
+ * ┌─ AS DUAS PERGUNTAS, DE NOVO, PORQUE É AQUI QUE ELAS SE ENCONTRAM ───────────────────────────────────┐
+ * │ A POLÍTICA vem de `tipo_operacao_versao_id` do documento: a versão que valia quando ele nasceu. Ela │
+ * │ é história e não muda nunca — editar a TOP amanhã cria a versão N+1 e não mexe neste documento.     │
+ * │                                                                                                      │
+ * │ A DISPONIBILIDADE vem do estado atual da TOP de destino: `ativo and excluido_em is null`. Uma TOP    │
+ * │ desativada some do leque SEM alterar a versão da origem — a política continua registrando que aquele │
+ * │ caminho existiu, e é por isso que a conversão que já aconteceu continua explicável.                  │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * Documento LEGADO (sem TOP) devolve lista vazia. Não há política para ler, e inventar a cadeia fixa aqui
+ * seria transformar ausência de configuração em configuração — exatamente o que a fatia veio desfazer.
+ */
+async function proximosPassos(ctx: ServiceCtx, versaoOrigemId: string | null | undefined): Promise<ProximoPasso[]> {
+  if (!versaoOrigemId) return [];
+  const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; codigo_base: string; ordem: number }>(
+    `select t.id, t.codigo, v.nome, t.codigo_base, d.ordem
+       from erp.tipos_operacao_versao_destinos d
+       join erp.tipos_operacao t
+         on t.id = d.destino_tipo_operacao_id and t.organization_id = d.organization_id
+       join erp.tipos_operacao_versoes v
+         on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
+      where d.organization_id = $1 and d.origem_versao_id = $2
+        and t.ativo and t.excluido_em is null
+      order by d.ordem, t.codigo`,
+    [ctx.orgId, versaoOrigemId]);
+
+  const passos: ProximoPasso[] = [];
+  for (const linha of r.rows) {
+    // FAIL-CLOSED na apresentação também: destino cuja família o produto não sabe criar não é oferecido.
+    // Poderia existir se uma família saísse do registry depois de a aresta ter sido gravada — e oferecer
+    // um botão sem serviço atrás é pior do que oferecer um botão a menos.
+    const variante = varianteDeDocumentoVendaDaFamilia(linha.codigo_base);
+    if (!variante) continue;
+    passos.push({
+      tipoOperacaoId: linha.id, codigo: linha.codigo, nome: linha.nome,
+      codigoBase: linha.codigo_base, familiaRotulo: t(chaveI18nDaFamiliaOperacional(linha.codigo_base) ?? linha.codigo_base),
+      variante: variante as SalesKind, ordem: linha.ordem
+    });
+  }
+  return passos;
+}
+
 async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts: { lock?: boolean } = {}) {
   const sc = scopedById(ctx, "d", id); sc.params.push(expectedKind);
   // LEFT JOIN nos dois, e não INNER: documento legado tem os ponteiros nulos, e um INNER o faria SUMIR da
@@ -298,6 +349,26 @@ export default async function salesRoutes(app: FastifyInstance) {
      * `contractVersion` existe para o cliente distinguir "endpoint ausente porque a API é antiga" de
      * "endpoint presente com outro formato" — é o que sustenta a descoberta de capacidade descrita no §0.2 deste contrato.
      */
+    /**
+     * OS PRÓXIMOS PASSOS DESTE DOCUMENTO.
+     *
+     * Capacidade exigida: `${perm}.view` — PERGUNTAR o que se pode gerar é leitura do documento, não
+     * criação do destino. A capacidade do DESTINO é cobrada na conversão, que é onde o efeito acontece;
+     * cobrá-la aqui esconderia o próximo passo de quem pode ver o documento mas não criar o derivado, e
+     * a tela não conseguiria nem explicar por que o botão não aparece.
+     *
+     * `contractVersion` pelo mesmo motivo da capability da TOP: um 200 de formato desconhecido é o modo de
+     * falha mais perigoso, porque parece sucesso.
+     */
+    app.get(`${base}/:id/proximos-passos`, async (req) => runService(app, req, `${perm}.view`, async (ctx) => {
+      const { id } = req.params as { id: string };
+      // AUTORIZAÇÃO ANTES DOS DADOS: `getDoc` já aplica tenant, escopo de empresa e variante, e responde a
+      // mesma 404 de inexistente. Sem esta leitura, um id de outro tenant devolveria lista vazia com 200 —
+      // resposta diferente de 404 e, portanto, um oráculo de existência.
+      const doc = await getDoc(ctx, id, kind) as Record<string, unknown> & { tipo_operacao_versao_id?: string | null };
+      return { contractVersion: 1, items: await proximosPassos(ctx, doc.tipo_operacao_versao_id) };
+    }));
+
     app.get(`${base}/operation-types`, async (req) => runService(app, req, `${perm}.create`, async (ctx) => {
       const familia = familiaDaVariante(kind);
       const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; versao: number; padrao: boolean }>(
@@ -500,19 +571,69 @@ export default async function salesRoutes(app: FastifyInstance) {
        * transação salvar ninguém.
        */
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
+        // O HASH NÃO MUDA DE FORMA NESTA FATIA, de propósito. `targetKind` continua sendo o destino da
+        // cadeia anterior — é um componente de hash, não uma afirmação sobre o que será criado. Mudar a
+        // forma faria o binário antigo e o novo calcularem chaves DIFERENTES para o mesmo pedido durante o
+        // rolling deploy, e um retry que atravessasse a janela converteria duas vezes. O destino real já
+        // entra no hash por `tipo_operacao_id`, que é o que distingue duas escolhas diferentes.
         { action: "convert_sales_document", sourceId: id, sourceKind: kind, targetKind: next, tipo_operacao_id: alvo.tipo_operacao_id ?? null },
         async () => {
       // `lock: true` — a fonte é LIDA E MUTADA na mesma transação, e é a única leitura desta rota que
       // disputa linha com outra requisição. Ver a justificativa inteira no cabeçalho de `getDoc`.
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as Record<string, unknown> & { status: string; kind: SalesKind; items: Record<string, unknown>[] };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as Record<string, unknown> & { status: string; kind: SalesKind; items: Record<string, unknown>[]; tipo_operacao_versao_id?: string | null };
       assertConvertible({ kind: cur.kind, status: cur.status as "open" });
-      const topDestino = alvo.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(next), alvo.tipo_operacao_id) : null;
+
+      /**
+       * ┌─ QUEM DECIDE O DESTINO: O GRAFO DA VERSÃO DE ORIGEM (TOP-CONFIG-03) ─────────────────────────┐
+       * │ Até aqui a variante de destino saía de `nextSalesKind`, uma constante do produto. Agora ela  │
+       * │ sai da TOP ESCOLHIDA, e o que valida a escolha é a política congelada na versão que ESTE     │
+       * │ documento cita. Orçamento pode ir direto para venda se a organização configurou assim.       │
+       * └──────────────────────────────────────────────────────────────────────────────────────────────┘
+       *
+       * ┌─ A PONTE, E POR QUE ELA EXISTE (medido, não suposto) ────────────────────────────────────────┐
+       * │ TODA TOP que existe hoje tem ZERO destinos: o grafo nasceu vazio nesta fatia. Exigir a aresta │
+       * │ de imediato quebraria TODA conversão de TODA organização no instante do deploy, incluindo a   │
+       * │ do cliente que nunca vai abrir a tela nova. Por isso:                                         │
+       * │                                                                                               │
+       * │   ORIGEM COM GRAFO CONFIGURADO  → o grafo é AUTORIDADE. Destino fora dele é RECUSADO.         │
+       * │   ORIGEM SEM GRAFO NENHUM       → segue a cadeia anterior, idêntica ao que já era.            │
+       * │                                                                                               │
+       * │ Isto NÃO é "inferir a cadeia por conta própria": é preservar, para o acervo ainda não         │
+       * │ configurado, exatamente o contrato que ele tem hoje. A tela NOVA não usa esta ponte — lá,     │
+       * │ versão sem transição mostra `Próximos passos` vazio e não oferece conversão, como manda o     │
+       * │ contrato. A ponte é transitória e tem saída declarada em docs/DECISIONS.md.                   │
+       * └───────────────────────────────────────────────────────────────────────────────────────────────┘
+       */
+      const passos = await proximosPassos(ctx, cur.tipo_operacao_versao_id);
+      let destino: SalesKind = next;
+      let topDestino: TopDoLancamento | null = null;
+
+      if (passos.length > 0) {
+        if (!alvo.tipo_operacao_id) {
+          throw new DomainError("TIPO_OPERACAO_INDISPONIVEL",
+            "Escolha qual próxima operação deve ser gerada a partir deste documento");
+        }
+        const escolhido = passos.find((x) => x.tipoOperacaoId === alvo.tipo_operacao_id);
+        // MESMA recusa para "não está no grafo", "foi desativada" e "não existe": o diálogo de conversão
+        // não pode virar um oráculo de quais TOPs existem na organização.
+        if (!escolhido) {
+          throw new DomainError("TIPO_OPERACAO_INDISPONIVEL",
+            "Esta próxima operação não está disponível para este documento");
+        }
+        destino = escolhido.variante;
+        // A CAPACIDADE DO DESTINO É COBRADA DEPOIS DE SABER QUAL É O DESTINO — e ainda ANTES de qualquer
+        // mutação. Ler com `for update` não é efeito; a fonte só vira `converted` bem mais abaixo.
+        requirePermission(ctx, `${permOf(destino)}.create`);
+        topDestino = await resolverTopParaLancamento(ctx, familiaDaVariante(destino), escolhido.tipoOperacaoId);
+      } else {
+        topDestino = alvo.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(next), alvo.tipo_operacao_id) : null;
+      }
       const body = docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments ? cur.installment_plan : null, items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
-      const r = await writeDoc(ctx, next, body, undefined, id, topDestino);
+      const r = await writeDoc(ctx, destino, body, undefined, id, topDestino);
       await ctx.tx.query("update erp.sales_documents set status='converted', updated_at=now() where id=$1", [id]);
       await audit(ctx.tx, ctx, "sales_documents", id, "convert", topDestino ? { to: r.id, tipoOperacaoDestinoId: topDestino.tipoOperacaoId, tipoOperacaoDestinoVersaoId: topDestino.tipoOperacaoVersaoId } : { to: r.id });
       if (topDestino) await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", { tipoOperacaoId: topDestino.tipoOperacaoId, tipoOperacaoVersaoId: topDestino.tipoOperacaoVersaoId, tipoOperacaoCodigo: topDestino.codigo, tipoOperacaoVersao: topDestino.versao, from: id });
-      return { id: r.id, kind: next, from: id };
+      return { id: r.id, kind: destino, from: id };
         })).result;
     })));
     /**
@@ -532,5 +653,96 @@ export default async function salesRoutes(app: FastifyInstance) {
     if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => { const { id } = req.params as { id: string }; await exigirDocumentoVisivel(ctx, id, "sale"); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { action: "confirm_sales_document", sourceId: id, actorId: ctx.user.id }, () => confirmSale(ctx, id))).result; }));
   }
   // Curva ABC e relatórios de vendas simples
+  /**
+   * ═══ A LISTA ÚNICA DE DOCUMENTOS COMERCIAIS DE VENDA (TOP-CONFIG-03) ═══
+   *
+   * Orçamento, pedido e venda deixam de ser TRÊS PORTAS e passam a ser três valores de uma coluna. O
+   * operador pergunta "onde está o documento do cliente X", não "em qual das três telas ele está" — e
+   * procurar em três lugares era o sintoma de a arquitetura estar modelada pela tabela, não pelo processo.
+   *
+   * ┌─ O RECORTE POR CAPACIDADE É A PARTE PERIGOSA, E É FAIL-CLOSED ──────────────────────────────────────┐
+   * │ Na tela por etapa, a capacidade fechava a PORTA inteira: sem `orders.view`, a aba não existia. Numa  │
+   * │ lista única ela precisa recortar LINHAS, e é aqui que se cometem os dois erros clássicos:            │
+   * │                                                                                                      │
+   * │   1. recortar DEPOIS de paginar — devolve páginas curtas e vaza a contagem real do que não se pode   │
+   * │      ver. Por isso a variante entra no WHERE, antes do `limit`, e não num filtro sobre o resultado.  │
+   * │   2. tratar "nenhuma variante autorizada" como "todas" — a lista vazia nunca vira lista completa.    │
+   * │      Sem nenhuma capacidade de leitura a resposta é 403, não uma lista sem filtro.                   │
+   * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+   *
+   * PORTA DINÂMICA (`permission: null`): a capacidade exigida DEPENDE do que o usuário pode ver, então ela
+   * é resolvida aqui dentro, antes de qualquer dado sair — o padrão que `.claude/rules/backend-api.md`
+   * descreve para permissão que depende da linha. Com módulo indefinido a RLS de empresa passa a valer
+   * pela união das empresas visíveis, que é MAIS LARGA; por isso o recorte de empresa é reaplicado no SQL
+   * com o módulo EXPLÍCITO da permissão de vendas. RLS ∧ SQL = o escopo exato, e nenhum dos dois sozinho
+   * decide.
+   */
+  app.get("/sales/documentos", async (req) => runService(app, req, null, async (ctx) => {
+    const variantes: SalesKind[] = ["budget", "order", "sale"];
+    const permitidas = variantes.filter((k) => hasPermission(ctx, `${permOf(k)}.view`));
+    // "Lista vazia" NUNCA é "todas". Sem nenhuma capacidade de leitura, a recusa é explícita.
+    if (permitidas.length === 0) throw denied(`${permOf("sale")}.view`);
+
+    const q = pageQuerySchema.parse(req.query);
+    const f = req.query as Record<string, string | undefined>;
+    const params: unknown[] = [ctx.orgId];
+    const where = [`d.organization_id=$1`, `d.deleted_at is null`];
+
+    // A VARIANTE ENTRA NO WHERE — sempre, e antes do limite. Este é o recorte de autorização.
+    params.push(permitidas); where.push(`d.kind = any($${params.length}::text[])`);
+
+    // O filtro `kind` do usuário é PEDIDO, nunca autorização: ele só pode DIMINUIR o conjunto já
+    // autorizado acima. Variante desconhecida ou não autorizada não alarga nada — a interseção esvazia.
+    if (f.kind) {
+      const pedidas = f.kind.split(",").map((x) => x.trim()).filter((x) => (permitidas as string[]).includes(x));
+      params.push(pedidas); where.push(`d.kind = any($${params.length}::text[])`);
+    }
+
+    if (f.client_id) { params.push(f.client_id); where.push(`d.client_id=$${params.length}`); }
+    if (f.status) { params.push(f.status); where.push(`d.status=$${params.length}`); }
+    if (f.empresa_id) { params.push(f.empresa_id); where.push(`d.empresa_id=$${params.length}`); }
+    if (f.start_date) { params.push(f.start_date); where.push(`d.document_date>=$${params.length}`); }
+    if (f.end_date) { params.push(f.end_date); where.push(`d.document_date<=$${params.length}`); }
+    if (q.search) { params.push(`%${q.search}%`); where.push(`(d.code ilike $${params.length} or c.name ilike $${params.length})`); }
+    // Forma conferida ANTES de virar parâmetro, como na listagem por variante: id malformado recorta para
+    // zero linhas em vez de virar erro de banco — e não revela nada.
+    if (f.tipo_operacao_id) {
+      if (FORMA_UUID.test(f.tipo_operacao_id)) { params.push(f.tipo_operacao_id); where.push(`d.tipo_operacao_id=$${params.length}`); }
+      else where.push("false");
+    }
+    where.push(...empresaScope(ctx, "d", params, { ignoreSelected: true, modulo: moduloDaPermissao(`${permOf("sale")}.view`) }));
+
+    const filtro = where.join(" and ");
+    const de = `from erp.sales_documents d
+                left join erp.people c on c.id = d.client_id
+                left join erp.empresas e on e.id = d.empresa_id
+                left join erp.tipos_operacao toper on toper.id = d.tipo_operacao_id and toper.organization_id = d.organization_id
+                left join erp.tipos_operacao_versoes topv on topv.id = d.tipo_operacao_versao_id and topv.organization_id = d.organization_id
+               where ${filtro}`;
+
+    const total = await ctx.tx.query<{ n: string; soma: string }>(
+      `select count(*)::text n, coalesce(sum(d.total),0)::text soma ${de}`, params);
+    const r = await ctx.tx.query<Record<string, unknown> & {
+      kind: string; tipo_operacao_id: string | null; top_codigo: string | null;
+      top_codigo_base: string | null; top_nome: string | null; top_versao: number | null;
+    }>(
+      `select d.id, d.code, d.kind, d.document_date, d.status, d.subtotal, d.discount, d.freight, d.total,
+              d.tipo_operacao_id, c.name as client_name, e.name as empresa_name,
+              toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao
+         ${de}
+         order by d.document_date desc, d.created_at desc
+         limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+
+    const items = r.rows.map((x) => ({
+      ...x,
+      // O RÓTULO DO TIPO SAI DO REGISTRY, nunca de um mapa literal no servidor ou no cliente: é a mesma
+      // fonte que decide qual família cada variante é.
+      kind_rotulo: t(chaveI18nDaFamiliaOperacional(familiaOperacionalDeDocumentoVenda(x.kind) ?? "") ?? x.kind),
+      tipo_operacao: topParaTela(x)
+    }));
+    return paginaComIdGlobal(ctx, "sales_documents",
+      { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { total: total.rows[0]!.soma } });
+  }));
+
   app.get("/sales/abc", async (req) => runService(app, req, "report.sales_abc.view", async (ctx) => { const f = req.query as Record<string, string>; const r = await consultaEscopada<{ product_id: string; product_name: string; value: string; quantity: string }>(ctx, "select i.product_id, p.description as product_name, sum(i.total) as value, sum(i.quantity) as quantity from erp.sales_document_items i join erp.sales_documents d on d.id=i.document_id join erp.products p on p.id=i.product_id where d.organization_id=$1 and d.kind='sale' and d.status in ('confirmed','invoiced') and ($2::date is null or d.document_date>=$2) and ($3::date is null or d.document_date<=$3) and {{escopo:d.empresa_id}} group by 1,2 order by 3 desc", [ctx.orgId, f.start_date ?? null, f.end_date ?? null]); const { abcClassify } = await import("@agro/domain"); return { items: abcClassify(r.rows), total: money(r.rows.reduce((a, x) => a.plus(x.value), D(0))) }; }));
 }

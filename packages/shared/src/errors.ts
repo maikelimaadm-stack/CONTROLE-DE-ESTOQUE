@@ -47,7 +47,17 @@ export const ErrorCodes = {
    * que corrigir — ele precisa recarregar. Um código só faria o front tratar as duas como digitação.
    */
   TIPO_OPERACAO_CONFIGURACAO_INVALIDA: "TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
-  TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO: "TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO"
+  TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO: "TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
+  /**
+   * Grafo de próximas operações (TOP-CONFIG-03): a LISTA enviada é malformada — não é lista, excede o
+   * teto, repete um destino ou traz chave desconhecida.
+   *
+   * Note o que NÃO está aqui: "este destino não serve". Destino inexistente, de outro tenant, inativo,
+   * excluído ou de família incompatível respondem `TIPO_OPERACAO_INDISPONIVEL`, que já É a superfície
+   * única de recusa de TOP. Criar um código próprio para cada uma dessas cinco razões transformaria a
+   * resposta num oráculo de quais identificadores existem na organização vizinha.
+   */
+  TIPO_OPERACAO_DESTINO_INVALIDO: "TIPO_OPERACAO_DESTINO_INVALIDO"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -87,7 +97,8 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   TIPO_OPERACAO_INDISPONIVEL: 422,
   // 422 nos dois: contrato de entrada não canônico é RECUSADO, nunca traduzido nem ignorado.
   TIPO_OPERACAO_CONFIGURACAO_INVALIDA: 422,
-  TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO: 422
+  TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO: 422,
+  TIPO_OPERACAO_DESTINO_INVALIDO: 422
 };
 
 export class DomainError extends Error {
