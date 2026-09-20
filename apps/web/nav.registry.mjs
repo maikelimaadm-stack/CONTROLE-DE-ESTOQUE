@@ -111,9 +111,13 @@ export const AREAS = [
   act("financeiro", "receita", "Nova receita (conta a receber)", "/financeiro/contas-a-receber/new", "receivables.create"),
   act("financeiro", "movimento", "Novo movimento bancário", "/financeiro/movimentos/new", "bank_movements.create"),
   // ---------------- Vendas ----------------
-  a("vendas", "budgets", "Orçamentos", "budgets.view", { aliases: ["/vendas/budgets"], keywords: ["proposta", "cotação de venda"] }),
-  a("vendas", "orders", "Pedidos", "orders.view", { aliases: ["/vendas/orders"], keywords: ["pedido de venda"] }),
-  a("vendas", "sales", "Vendas", "sales.view", { aliases: ["/vendas/sales"], keywords: ["faturar", "venda confirmada"] }),
+  // TOP-CONFIG-03: as três áreas (Orçamentos / Pedidos / Vendas) viraram UMA lista com o tipo como
+  // FILTRO. Os aliases continuam aqui porque é deles que `redirects.mjs` deriva: `/vendas/budgets` e
+  // companhia seguem sendo rota viva (sem alias, o caminho não casa página nenhuma e vira 404). O TIPO
+  // não se perde no caminho — a regra dedicada em `EXTRA_REDIRECTS` (`/vendas/:kind` → `?tab=:kind`)
+  // casa antes e preserva o recorte, e `LEGACY_TABS` (logo abaixo) traduz essa aba antiga para a lista
+  // única já filtrada (`?tab=documentos&kind=budget`).
+  a("vendas", "documentos", "Documentos comerciais", ["budgets.view", "orders.view", "sales.view"], { aliases: ["/vendas/budgets", "/vendas/orders", "/vendas/sales"], keywords: ["orçamento", "proposta", "cotação de venda", "pedido de venda", "venda confirmada", "faturar", "documento comercial"], description: "Uma lista com filtro por tipo de documento" }),
   act("vendas", "orcamento", "Novo orçamento", "/vendas/budgets/new", "budgets.create"),
   act("vendas", "pedido", "Novo pedido", "/vendas/orders/new", "orders.create"),
   act("vendas", "venda", "Nova venda", "/vendas/sales/new", "sales.create"),
@@ -292,6 +296,10 @@ export const LEGACY_TABS = {
     funcionarios: { tab: "pessoas", query: { role: "employee" } }, "ocorrencias/faltas": { tab: "ocorrencias", sub: "faltas" }, "ocorrencias/eventos": { tab: "ocorrencias", sub: "eventos" }, "ocorrencias/fixos": { tab: "pessoas", query: { role: "employee" } },
     adiantamentos: { tab: "folha", sub: "adiantamentos" }, apuracao: { tab: "folha", sub: "apuracao" }
   },
+  // TOP-CONFIG-03: `?tab=budgets|orders|sales` (as três abas anteriores) viram a lista única JÁ
+  // FILTRADA. O tipo desce para `kind`, que é parâmetro estável (`STABLE_PARAMS`), então o favorito
+  // antigo continua abrindo exatamente o recorte que ele guardava.
+  vendas: { budgets: { tab: "documentos", query: { kind: "budget" } }, orders: { tab: "documentos", query: { kind: "order" } }, sales: { tab: "documentos", query: { kind: "sale" } } },
   os: { todas: { tab: null }, minhas: { tab: null, query: { scope: "mine" } }, andamento: { tab: null, query: { status: "in_progress" } }, atrasadas: { tab: null, query: { late: "1" } }, finalizadas: { tab: null, query: { status: "finished" } } },
   fiscal: { situacao: { path: "/configuracoes", tab: "fiscal", sub: "capacidades" } },
   relatorios: { favoritos: { tab: null, query: { view: "favoritos" } }, todos: { tab: null }, personalizados: { tab: null, query: { view: "personalizados" } } },
