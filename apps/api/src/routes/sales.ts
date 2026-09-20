@@ -32,8 +32,20 @@ const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "
  * aqui recusaria o cliente que hoje cancela sem corpo nenhum — quebra de contrato numa fatia que promete
  * apenas SERIALIZAR o que já existe. Presente, tem de ser texto com conteúdo: `""` e `"   "` são pedido
  * malformado, não "sem motivo", e traduzir um pelo outro seria decidir pelo cliente.
+ *
+ * `.strict()` PORQUE O CONTRATO PASSOU A DECLARAR O CORPO. `z.object` sem `.strict()` DESCARTA chave
+ * desconhecida em silêncio, e o efeito prático é o defeito que esta fatia acabou de fechar, voltando pela
+ * porta ao lado: `{"reasn": "..."}` — um typo de uma letra — vira `{}`, o cancelamento acontece SEM motivo
+ * e o cliente recebe 200. Quem pediu que o motivo ficasse registrado não tem como saber que ele se perdeu.
+ * Enquanto a rota ignorava o corpo INTEIRO isso era ao menos coerente (nada era lido, nada era prometido);
+ * a partir do momento em que `reason` é conferido, entra no hash e vai para a auditoria, aceitar a
+ * vizinhança do campo sem conferir é prometer registro e entregar descarte. Contrato de entrada não
+ * canônico é RECUSADO (422), nunca traduzido e nunca ignorado — `.claude/rules/backend-api.md`.
+ *
+ * Os dois clientes reais desta rota (`vendas/[kind]/[id]/page.tsx` e o `DocList` genérico de
+ * `features/docs/shared.tsx`) mandam `{ reason }` e nada mais: `.strict()` não quebra nenhum deles.
  */
-const cancelSchema = z.object({ reason: z.string().trim().min(1).max(500).optional().nullable() });
+const cancelSchema = z.object({ reason: z.string().trim().min(1).max(500).optional().nullable() }).strict();
 
 const t = criarTradutor(ptBR);
 
@@ -148,6 +160,33 @@ async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
   const linha = r.rows[0] as Record<string, unknown> & { tipo_operacao_id: string | null; top_codigo: string | null; top_codigo_base: string | null; top_nome: string | null; top_versao: number | null };
   return { ...linha, tipo_operacao: topParaTela(linha), items: items.rows, titles: titles.rows, derived: derived.rows } as Record<string, unknown>;
+}
+
+/**
+ * O DOCUMENTO É VISÍVEL NESTE CONTEXTO? — conferido ANTES de entrar no helper de idempotência.
+ *
+ * `idempotent()` devolve o `response_body` gravado e NÃO executa o handler. Como é o handler que chama
+ * `getDoc`, e é `getDoc` que aplica o recorte de EMPRESA, o replay atravessava a autorização DO REGISTRO:
+ * `runService` confere autenticação, capacidade da rota e a empresa selecionada em termos gerais, e nada
+ * disso olha para ESTE documento.
+ *
+ * `actorId` no hash fecha o replay entre atores DIFERENTES. Não fecha este, porque o ator é o MESMO: um
+ * usuário com acesso às empresas A e B confirma o documento da empresa A com a chave K, troca o contexto
+ * explícito para a empresa B e reenvia K. Sem esta conferência o helper devolve 200 com o corpo gravado
+ * (`title_ids` inclusive) num contexto em que a chamada normal responde 404 — e a superfície de recusa que
+ * `.claude/rules/security.md` exige (fora de escopo indistinguível de inexistente) vaza pela idempotência.
+ *
+ * REUSA `getDoc`, e é por isso que não carrega consulta própria. Uma variante enxuta (`select 1` com
+ * `scopedById`) pouparia três consultas e criaria uma SEGUNDA regra de autorização, livre para divergir da
+ * primeira no dia em que uma das duas mudasse — e divergir para o lado permissivo aqui é exatamente o
+ * vazamento que esta função existe para fechar. A regra tem de ser a MESMA, não "equivalente".
+ *
+ * SEM `lock`: é leitura. A ordem de aquisição da parte MUTANTE não muda — `erp.idempotency_keys` continua
+ * sendo o primeiro lock, e só depois vem o `for update of d` do handler. Inverter isso criaria aresta de
+ * deadlock com toda rota que já reserva a chave antes de tocar o registro.
+ */
+async function exigirDocumentoVisivel(ctx: ServiceCtx, id: string, expectedKind: SalesKind): Promise<void> {
+  await getDoc(ctx, id, expectedKind);
 }
 /**
  * Grava o documento. `top` tem TRÊS estados, e a diferença entre eles é o contrato de preservação:
@@ -398,6 +437,7 @@ export default async function salesRoutes(app: FastifyInstance) {
     app.post(`${base}/:id/cancel`, async (req) => runService(app, req, `${perm}.delete`, async (ctx) => {
       const { id } = req.params as { id: string };
       const motivo = cancelSchema.parse(req.body ?? {}).reason ?? null;
+      await exigirDocumentoVisivel(ctx, id, kind);
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
         { action: "cancel_sales_document", sourceId: id, sourceKind: kind, reason: motivo, actorId: ctx.user.id },
         async () => {
@@ -489,7 +529,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      * recusa explícita, nenhuma execução, nada duplicado — e a web gera chave nova a cada envio, de modo
      * que quem atravessaria a janela é um cliente programático que guarde a própria chave.
      */
-    if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => { const { id } = req.params as { id: string }; return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { action: "confirm_sales_document", sourceId: id, actorId: ctx.user.id }, () => confirmSale(ctx, id))).result; }));
+    if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => { const { id } = req.params as { id: string }; await exigirDocumentoVisivel(ctx, id, "sale"); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { action: "confirm_sales_document", sourceId: id, actorId: ctx.user.id }, () => confirmSale(ctx, id))).result; }));
   }
   // Curva ABC e relatórios de vendas simples
   app.get("/sales/abc", async (req) => runService(app, req, "report.sales_abc.view", async (ctx) => { const f = req.query as Record<string, string>; const r = await consultaEscopada<{ product_id: string; product_name: string; value: string; quantity: string }>(ctx, "select i.product_id, p.description as product_name, sum(i.total) as value, sum(i.quantity) as quantity from erp.sales_document_items i join erp.sales_documents d on d.id=i.document_id join erp.products p on p.id=i.product_id where d.organization_id=$1 and d.kind='sale' and d.status in ('confirmed','invoiced') and ($2::date is null or d.document_date>=$2) and ($3::date is null or d.document_date<=$3) and {{escopo:d.empresa_id}} group by 1,2 order by 3 desc", [ctx.orgId, f.start_date ?? null, f.end_date ?? null]); const { abcClassify } = await import("@agro/domain"); return { items: abcClassify(r.rows), total: money(r.rows.reduce((a, x) => a.plus(x.value), D(0))) }; }));

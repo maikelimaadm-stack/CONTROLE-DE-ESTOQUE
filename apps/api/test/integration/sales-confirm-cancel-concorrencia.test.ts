@@ -369,6 +369,28 @@ describe("cancelamento concorrente", () => {
     // O contrato que já existia continua: sem corpo nenhum, cancela.
     expect((await cancelar("budget", orcamento)).statusCode).toBe(200);
   }, 180_000);
+
+  it("K7: chave DESCONHECIDA no corpo é 422 — um typo não cancela o documento em silêncio", async () => {
+    // `z.object` sem `.strict()` DESCARTA o que não reconhece. Com o corpo agora declarado no contrato,
+    // isso significaria que `{"reasn": ...}` — um typo de uma letra — vira `{}`: o documento é cancelado,
+    // o cliente recebe 200 e o motivo que ele pediu para registrar não existe em lugar nenhum. Recusar é
+    // o único desfecho honesto: contrato de entrada não canônico é RECUSADO, nunca traduzido nem ignorado.
+    const venda = await criar("sale");
+    const antes = await saldo();
+
+    const r = await cancelar("sale", venda, { corpo: { reasn: "Cancelamento" } });
+
+    expect(r.statusCode, r.body).toBe(422);
+    const e = await efeitos(venda);
+    expect(e.status, "recusa de forma não cancela nada").toBe("open");
+    expect(e.auditoria.cancel, "nem audita").toBeUndefined();
+    expect(e.movimentos, "nem toca o estoque").toBe(0);
+    expect(e.titulos).toBe(0);
+    expect(await saldo()).toBe(antes);
+
+    // E o que o contrato ACEITA continua aceito — `.strict()` fecha a vizinhança do campo, não o campo.
+    expect((await cancelar("sale", venda, { corpo: { reason: "Cancelado pelo usuário" } })).statusCode).toBe(200);
+  }, 180_000);
 });
 
 // ---------------------------------------------------------------------------------------------------
@@ -602,5 +624,49 @@ describe("fronteiras preservadas", () => {
     expect(r.statusCode, r.body).toBe(409);
     expect(j(r).error!.code).toBe("CONFLICT");
     expect(r.body, "nenhum dado do documento pode sair na recusa").not.toContain((j(original).title_ids as string[])[0]!);
+  }, 300_000);
+
+  it("T3: MESMO usuário, MESMA chave, OUTRA empresa selecionada — 404 antes do replay (cancelamento)", async () => {
+    // O QUE `actorId` NÃO ALCANÇA. Ele fecha o replay entre atores DIFERENTES (T2). Aqui o ator é o MESMO,
+    // e tem acesso legítimo às duas empresas: o que muda entre as duas chamadas é só a empresa SELECIONADA
+    // — que não entra no hash, e por isso não pode ser o que decide. Sem a conferência de visibilidade
+    // ANTES do helper, o replay devolve 200 com o corpo gravado num contexto em que a chamada normal
+    // responde 404, e o recorte de empresa vaza pela porta da idempotência.
+    const venda = await criar("sale");
+    const u = await membro("Vendedor das duas empresas", ["sales.view", "sales.edit", "sales.delete"], [I.empresa, I.empresa2]);
+    const chave = `canc-t3-${venda}`;
+    const corpo = { reason: "Cancelado pelo usuário" };
+
+    const original = await cancelar("sale", venda, { chave, corpo, headers: { ...u, "x-empresa-id": I.empresa } });
+    expect(original.statusCode, original.body).toBe(200);
+
+    // Mesma chave, mesmo ator, mesmo documento, mesmo corpo: o hash é IDÊNTICO ao da chamada acima.
+    const r = await cancelar("sale", venda, { chave, corpo, headers: { ...u, "x-empresa-id": I.empresa2 } });
+
+    expect(r.statusCode, r.body).toBe(404);
+    expect(j(r).error!.code).toBe("NOT_FOUND");
+    expect(r.body, "a recusa não pode carregar nada do documento").not.toContain(venda);
+    // E a empresa B é uma seleção LEGÍTIMA deste usuário: o 404 é do documento, não da empresa.
+    expect((await h.app.inject({ method: "GET", url: "/api/sales/sales?pageSize=1", headers: { ...u, "x-empresa-id": I.empresa2 } })).statusCode,
+      "premissa: o usuário pode mesmo trabalhar na empresa B").toBe(200);
+  }, 300_000);
+
+  it("T3b: o mesmo, na CONFIRMAÇÃO — e `title_ids` não escapa pelo corpo gravado", async () => {
+    const venda = await criar("sale");
+    const u = await membro("Vendedor das duas empresas", ["sales.view", "sales.edit", "sales.delete"], [I.empresa, I.empresa2]);
+    const chave = `conf-t3b-${venda}`;
+
+    const original = await h.app.inject({ method: "POST", url: `/api/sales/sales/${venda}/confirm`,
+      headers: { ...u, "x-empresa-id": I.empresa, "idempotency-key": chave } });
+    expect(original.statusCode, original.body).toBe(200);
+    const titulos = j(original).title_ids as string[];
+    expect(titulos.length, "premissa: a resposta gravada carrega dados do documento").toBeGreaterThan(0);
+
+    const r = await h.app.inject({ method: "POST", url: `/api/sales/sales/${venda}/confirm`,
+      headers: { ...u, "x-empresa-id": I.empresa2, "idempotency-key": chave } });
+
+    expect(r.statusCode, r.body).toBe(404);
+    expect(j(r).error!.code).toBe("NOT_FOUND");
+    expect(r.body, "nenhum `title_id` pode sair por aqui").not.toContain(titulos[0]!);
   }, 300_000);
 });
