@@ -32,7 +32,14 @@ export const ErrorCodes = {
   // aqui produziria um código que este mapa não conhece e uma resposta sem status.
   TIPO_OPERACAO_BASE_DESCONHECIDA: "TIPO_OPERACAO_BASE_DESCONHECIDA",
   TIPO_OPERACAO_IDENTIDADE_IMUTAVEL: "TIPO_OPERACAO_IDENTIDADE_IMUTAVEL",
-  TIPO_OPERACAO_VERSAO_IMUTAVEL: "TIPO_OPERACAO_VERSAO_IMUTAVEL"
+  TIPO_OPERACAO_VERSAO_IMUTAVEL: "TIPO_OPERACAO_VERSAO_IMUTAVEL",
+  /**
+   * UMA superfície para CINCO motivos: a TOP não existe, é de outro tenant, é de outra família, está
+   * inativa ou foi excluída. Distinguir seria transformar a mensagem num oráculo — quem tentasse UUIDs
+   * saberia quais existem na organização vizinha e qual família cada um tem. É a mesma regra que faz
+   * inexistente e fora de escopo responderem a MESMA 404 (.claude/rules/security.md).
+   */
+  TIPO_OPERACAO_INDISPONIVEL: "TIPO_OPERACAO_INDISPONIVEL"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -66,7 +73,10 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   TIPO_OPERACAO_BASE_DESCONHECIDA: 422,
   // 409: o registro existe e o pedido conflita com o que ele já é.
   TIPO_OPERACAO_IDENTIDADE_IMUTAVEL: 409,
-  TIPO_OPERACAO_VERSAO_IMUTAVEL: 409
+  TIPO_OPERACAO_VERSAO_IMUTAVEL: 409,
+  // 422 e não 404: a recusa fala do PEDIDO de lançamento (a TOP escolhida não serve), não da existência
+  // do documento. 403 seria errado também — quem pode lançar tem a capacidade; o que falta é uma TOP válida.
+  TIPO_OPERACAO_INDISPONIVEL: 422
 };
 
 export class DomainError extends Error {

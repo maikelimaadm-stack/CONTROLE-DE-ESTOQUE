@@ -1,13 +1,16 @@
 import { describe, it, expect } from "vitest";
+import { resolverTipoOperacao } from "../src/tipo-operacao.js";
 import {
   CODIGOS_TIPO_OPERACAO,
   FORMA_CODIGO_TIPO_OPERACAO,
   LIMITE_NOME_TIPO_OPERACAO,
   chaveI18nDaFamiliaOperacional,
   familiaOperacionalDeclarada,
+  familiaOperacionalDeDocumentoVenda,
   familiasOperacionaisDisponiveis,
   moduloDaFamiliaOperacional,
-  validarTipoOperacaoConfigurado
+  validarTipoOperacaoConfigurado,
+  TABELA_DOCUMENTO_VENDA
 } from "../src/index.js";
 import { CHAVES_MODULO_EMPRESA } from "../src/escopo-permissao.js";
 
@@ -82,5 +85,37 @@ describe("TOP configurada — validação de entrada", () => {
     expect(validarTipoOperacaoConfigurado({ ...valida, descricao: null })).toEqual([]);
     expect(validarTipoOperacaoConfigurado({ ...valida, descricao: "d".repeat(501) }).map((x) => x.motivo))
       .toEqual(["descricao_invalida"]);
+  });
+});
+
+/**
+ * A FAMÍLIA DA VARIANTE DE VENDA — derivada do registry, nunca copiada (TOP-CONFIG-02).
+ *
+ * Este bloco é a prova de que o helper NÃO tem uma segunda lista dentro dele. A asserção que vale é a
+ * última: se o registry mudasse, a resposta mudaria junto — é isso que distingue derivar de copiar.
+ */
+describe("familiaOperacionalDeDocumentoVenda", () => {
+  it("resolve as três variantes pelo registry", () => {
+    expect(familiaOperacionalDeDocumentoVenda("budget")).toBe("vendas.orcamento");
+    expect(familiaOperacionalDeDocumentoVenda("order")).toBe("vendas.pedido");
+    expect(familiaOperacionalDeDocumentoVenda("sale")).toBe("vendas.venda");
+  });
+
+  it("FAIL-CLOSED: variante desconhecida, vazia ou ausente devolve undefined", () => {
+    // Nunca cai na primeira variante nem numa família "parecida": classificar errado um lançamento é pior
+    // do que recusá-lo, porque o documento nasceria afirmando ser uma operação que não é.
+    for (const v of ["invoice", "", null, undefined, "SALE", "sales"]) {
+      expect(familiaOperacionalDeDocumentoVenda(v as string), String(v)).toBeUndefined();
+    }
+  });
+
+  it("a resposta É a do registry para `erp.sales_documents` — não uma cópia paralela", () => {
+    // Se alguém trocasse o helper por um objeto literal, esta asserção continuaria passando ENQUANTO os
+    // dois coincidissem — e é exatamente por isso que ela não anda sozinha: o gate estático
+    // `familia-operacional-ssot-audit` reprova a enumeração, e a reversa RT11 prova que ele reprova.
+    for (const kind of ["budget", "order", "sale"]) {
+      expect(familiaOperacionalDeDocumentoVenda(kind))
+        .toBe(resolverTipoOperacao(TABELA_DOCUMENTO_VENDA, kind)?.codigo);
+    }
   });
 });

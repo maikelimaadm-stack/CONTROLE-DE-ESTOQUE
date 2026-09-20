@@ -5,13 +5,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth";
 import { brl, num, dateBR, pct } from "@/lib/utils";
-import { Button, Confirm } from "@/components/ui";
+import { Button, Confirm, Dialog } from "@/components/ui";
 import { useDoc, LoadingOr, type Row } from "@/features/docs/shared";
 import { useAction } from "@/features/docs/actions";
 import { Base2Shell, Base2Section, Base2Fields, Base2Items, type Base2Field, type Base2ItemColumn } from "@/features/base2";
 import { tipoOperacaoDoRegistro } from "@agro/domain";
 import { useTradutor } from "@/lib/i18n";
 import { COPY, enumLabel, statusLabel } from "@/lib/copy";
+import { CampoTipoOperacao, podeLancar, useTopsDaVariante, usePadraoTop } from "@/features/sales/tipo-operacao-select";
+
+/** O snapshot da TOP como o servidor o devolve: nome e versão CONGELADOS no instante do lançamento. */
+interface TopSnapshot { id: string; codigo: string; nome: string; versao: number; codigoBase: string; familiaRotulo: string | null }
 
 /** Nome da tabela como o servidor a grava em `erp.audit_logs.entity`. */
 const ENTIDADE = "sales_documents";
@@ -81,6 +85,14 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const variante = d ? String(d["kind"]) : "";
   const k = DO_REGISTRO[variante];
   const act = useAction<{ id?: string }>((r) => { setConfirmar(null); if (confirmar === "convert" && r?.id && k?.proximo) router.push(`/vendas/${k.proximo.segmento}/${r.id}`); });
+  // A TOP do DESTINO da conversão — carregada da variante de destino, nunca da fonte. O hook roda sempre
+  // (regra dos hooks), mas a REQUISIÇÃO é condicional: numa venda não há destino, e perguntar assim
+  // mesmo faria toda abertura de documento chamar `/api/sales/sales/operation-types` — resposta que
+  // ninguém usa e que, para quem tem `.view` sem `.create`, é um 403 registrado em log a cada abertura.
+  const [topDestino, setTopDestino] = React.useState("");
+  const destino = k?.proximo?.segmento;
+  const estadoTopDestino = useTopsDaVariante(destino ?? segmentoDaRota, Boolean(destino) && can(`${k!.proximo!.perm}.create`));
+  usePadraoTop(estadoTopDestino, topDestino, setTopDestino);
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
 
   // Variante que o catálogo não conhece: rótulo NEUTRO, nenhuma ação de variante, nenhuma herança da
@@ -88,14 +100,26 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const titulo = k?.titulo ?? "Documento de venda";
   const situacao = String(d["status"]);
   const editavel = ["open", "approved"].includes(situacao);
-  // A TOP sai do REGISTRO, pelo módulo dono da tela. Nunca da URL, da permissão ou do endpoint.
+  // DUAS COISAS DIFERENTES, E AS DUAS APARECEM.
+  //
+  //   FAMÍLIA CANÔNICA  o que o PRODUTO sabe executar. Sai do REGISTRO (`kind`), em memória, sem rede —
+  //                     é a classificação que existe desde a BASE2-02 e vale para TODO documento.
+  //   TOP CONFIGURADA   o que a ORGANIZAÇÃO cadastrou e o usuário escolheu ("2103 — Venda de Gado a
+  //                     Prazo"), com a VERSÃO congelada. Só existe a partir da TOP-CONFIG-02.
+  //
+  // Exibir a família no lugar da TOP faria a tela AFIRMAR uma configuração que o documento não tem —
+  // por isso o registro legado diz "não configurada", e não "Venda".
   const top = tipoOperacaoDoRegistro(`erp.${ENTIDADE}`, d);
+  const topConfigurada = d["tipo_operacao"] as TopSnapshot | null;
   // O endereço das ações é o da variante DO REGISTRO — a mesma que a API serve nesta porta.
   const rota = k?.segmento ?? segmentoDaRota;
 
   const campos: Base2Field[] = [
     { label: "Código", valor: String(d["code"]) },
-    { label: tr("termos.tipo_operacao"), valor: top ? tr(top.chaveI18n) : "", ocultarSeVazio: true },
+    { label: tr("termos.tipo_operacao"), valor: topConfigurada ? `${topConfigurada.codigo} — ${topConfigurada.nome}` : "Não configurada (registro legado)", span: 4 },
+    { label: "Família operacional", valor: top ? tr(top.chaveI18n) : "—", span: 2 },
+    // A versão só faz sentido quando há TOP: num legado ela seria um número sem referente.
+    { label: "Versão", valor: topConfigurada ? String(topConfigurada.versao) : "", ocultarSeVazio: true, span: 2 },
     { label: "Data", valor: dateBR(d["document_date"] as string), span: 2 },
     { label: "Saída", valor: d["shipping_date"] ? dateBR(d["shipping_date"] as string) : "—", span: 2 },
     { label: "Vencimento", valor: d["due_date"] ? dateBR(d["due_date"] as string) : "—", span: 2 },
@@ -147,7 +171,16 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     </Base2Section>}
 
     <Confirm open={confirmar === "confirm"} onOpenChange={() => setConfirmar(null)} title="Confirmar venda" text="Baixa o estoque dos itens com armazém e gera as contas a receber. Operação atômica e idempotente." loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })} />
-    <Confirm open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={k?.proximo?.rotulo ?? ""} loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/convert`, idem: true })} />
+    {/* CONVERSÃO NÃO É MAIS UM "TEM CERTEZA?". O documento de destino é de OUTRA família, então precisa
+        da TOP dele — a da fonte não serve e não é herdada. Sem TOP alvo escolhível, o botão não converte. */}
+    <Dialog open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={k?.proximo?.rotulo ?? ""} size="sm" testId="dialog-conversao"
+      footer={<><Button variant="outline" onClick={() => setConfirmar(null)}>Voltar</Button>
+        <Button loading={act.isPending} disabled={!podeLancar(estadoTopDestino) || !topDestino}
+          onClick={() => act.mutate({ path: `/api/sales/${rota}/${id}/convert`, idem: true, body: { tipo_operacao_id: topDestino } })}>Converter</Button></>}>
+      <div className="grid grid-cols-12 gap-3">
+        <CampoTipoOperacao estado={estadoTopDestino} valor={topDestino} onChange={setTopDestino} span={12} />
+      </div>
+    </Dialog>
     <Confirm open={confirmar === "cancel"} onOpenChange={() => setConfirmar(null)} title="Cancelar documento" text="Vendas confirmadas têm estoque e títulos estornados." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, body: { reason: "Cancelado pelo usuário" } })} />
   </Base2Shell>;
 }

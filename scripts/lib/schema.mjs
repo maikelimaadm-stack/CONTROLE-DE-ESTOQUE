@@ -100,8 +100,26 @@ function alteracoesNaOrdemDoArquivo(sql) {
     const block = balanced(sql, m.index + m[0].length - 1);
     return block ? { tipo: "criarTabela", tabela: m[1].toLowerCase(), corpo: block.body } : null;
   });
+  /**
+   * `add column` com VÁRIAS colunas numa instrução só — as duas grafias que o PostgreSQL aceita:
+   *
+   *   alter table t add column a uuid, b uuid;              -- vírgula simples
+   *   alter table t add column a uuid, add column b uuid;   -- `add column` repetido
+   *
+   * Antes, tudo depois do primeiro nome virava UMA definição: `parseColumn` lia `a` com tipo `"uuid,"` e
+   * a coluna `b` simplesmente não existia no modelo. O silêncio errava para o lado inseguro — o mesmo
+   * defeito que as FORMAS_RECUSADAS abaixo existem para impedir, só que pela porta aditiva: a 0021 grava
+   * `tipo_operacao_id` E `tipo_operacao_versao_id`, e o dicionário de dados saía com a primeira (de tipo
+   * inválido) e sem a segunda — justamente o ponteiro que dá sentido à fatia. Nada ficava vermelho,
+   * porque o gate confere o documento contra a saída deste mesmo leitor.
+   */
   varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+add\s+column\s+(?:if\s+not\s+exists\s+)?([\s\S]*?);/gi,
-    (m) => ({ tipo: "adicionarColuna", tabela: m[1].toLowerCase(), definicao: m[2].trim() }));
+    (m) => {
+      const definicoes = splitTopLevel(m[2].trim())
+        .map((d) => d.trim().replace(/^add\s+column\s+(?:if\s+not\s+exists\s+)?/i, "").trim())
+        .filter(Boolean);
+      return definicoes.length ? { tipo: "adicionarColuna", tabela: m[1].toLowerCase(), definicoes } : null;
+    });
   // `drop column a`, `drop column if exists a`, `drop column a cascade` e a forma com várias ações numa
   // instrução só (`drop column a, drop column b;`).
   varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+(drop\s+column\b[^;]*);/gi, (m) => {
@@ -185,8 +203,10 @@ function aplicar(tables, op, file) {
   const entry = tables.get(op.tabela);
   if (!entry) return;
   if (op.tipo === "adicionarColuna") {
-    const col = parseColumn(op.definicao);
-    if (col) { entry.columns.set(col.name, { ...col, addedIn: file }); entry.historico.add(col.name); }
+    for (const definicao of op.definicoes) {
+      const col = parseColumn(definicao);
+      if (col) { entry.columns.set(col.name, { ...col, addedIn: file }); entry.historico.add(col.name); }
+    }
     return;
   }
   if (op.tipo === "removerColuna") {

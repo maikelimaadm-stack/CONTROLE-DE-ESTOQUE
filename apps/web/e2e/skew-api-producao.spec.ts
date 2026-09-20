@@ -310,3 +310,57 @@ test("nenhuma tela conhece o nome antigo: a moldura do produto é canônica", as
   expect(page.url()).not.toMatch(/farms|fazendas/);
   v.semBloqueio(); v.fioCanonico();
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * TOP-CONFIG-02 · A DESCOBERTA DE CAPACIDADE, CONTRA O BINÁRIO REAL DA BASE
+ *
+ * A fatia faz o Portal de Vendas perguntar ao servidor quais Tipos de Operação ele aceita, ANTES de
+ * oferecer o formulário. A razão é uma perda silenciosa: `docSchema` é `z.object` sem `.strict()`, então
+ * a API da base DESCARTA `tipo_operacao_id` sem erro — o documento nasceria sem TOP e o usuário leria
+ * "salvo". Quem se protege é o cliente, porque o defeito mora no binário que já está no ar.
+ *
+ * POR QUE ESTE TESTE PRECISA EXISTIR AQUI, E NÃO SÓ NO E2E NORMAL. A primeira versão desta fatia
+ * afirmava — em código, em teste com mock e em `docs/DECISIONS.md` — que a API anterior responde 404.
+ * É falso, e só o binário real mostra: a base não tem a rota estática, mas tem `${base}/:id`; o roteador
+ * casa o nó paramétrico, "operation-types" entra num `where d.id=$1` de coluna `uuid`, o Postgres devolve
+ * 22P02, `fromPgError` não mapeia 22P02, e o cliente recebe 500. O mock respondia 404 e certificava um
+ * caminho que produção nunca percorre.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+test("TOP-CONFIG-02 · o endpoint de descoberta NÃO existe na base — e o que ela devolve é 500, não 404", async ({ page }) => {
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId! };
+
+  // premissa viva: a rota de listagem da MESMA variante funciona neste binário. Sem ela, um 500 abaixo
+  // poderia ser servidor caído, e o teste mediria outra coisa.
+  expect((await page.request.get(`${API}/api/sales/budgets?pageSize=1`, { headers: cabecalhos })).status(),
+    "premissa: a API da base serve a listagem de orçamentos").toBe(200);
+
+  for (const variante of ["budgets", "orders", "sales"]) {
+    const r = await page.request.get(`${API}/api/sales/${variante}/operation-types`, { headers: cabecalhos });
+    expect(r.status(), `a API da base NÃO tem /api/sales/${variante}/operation-types`).not.toBe(200);
+    // É ISTO que o cliente precisa tratar. Se um dia a base passar a devolver 404 (porque ganhou
+    // validação de uuid, por exemplo), este teste reprova e o cliente é revisto junto — que é o ponto.
+    expect(r.status(), `medido contra o binário da base: /api/sales/${variante}/operation-types`).toBe(500);
+  }
+});
+
+test("TOP-CONFIG-02 · sobre a API da base, a tela de lançamento BLOQUEIA e não emite nenhum POST", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+
+  const posts: string[] = [];
+  page.on("request", (r) => { if (r.method() === "POST" && r.url().includes("/api/sales/")) posts.push(r.url()); });
+
+  await page.goto("/vendas/sales/new");
+  /**
+   * A prova que o mock não dava: com o SERVIDOR REAL da base, a tela chega ao estado de bloqueio — e não
+   * ao estado "pronto" com o campo vazio, que gravaria um documento sem TOP em silêncio.
+   */
+  await expect(page.getByTestId("top-nao-confirmado")).toBeVisible();
+  await expect(page.getByTestId("top-ausente"), "não é problema de configuração, é do servidor").toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
+  expect(posts, "ZERO POST contra a API da base: é isto que impede a perda silenciosa").toEqual([]);
+  v.semBloqueio();
+});
