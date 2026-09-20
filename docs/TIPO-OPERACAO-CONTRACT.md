@@ -489,3 +489,256 @@ ter feito isso que a correção chegou como um teste que **passou a poder ser es
 | TOP em linha de item, em infraestrutura ou em movimento de ledger | não são lançamentos; movimento é consequência de um |
 | Colapsar variantes numa TOP só | apaga uma distinção funcional real |
 | TOP autorizando ou escondendo algo | autorização é capacidade × escopo, e não passa por aqui |
+
+## 11. Configuração operacional versionada (TOP-CONFIG-03)
+
+> Contrato tipado: `packages/domain/src/tipo-operacao-configuracao.ts`.
+> Grafo de próximas operações: `packages/domain/src/tipo-operacao-destinos.ts`.
+> Schema: `supabase/migrations/0022_tipo_operacao_configuracao_versionada.sql`.
+> Borda de escrita e leitura: `apps/api/src/routes/tipos-operacao.ts`.
+> Consumo operacional (próximos passos e conversão): `apps/api/src/routes/sales.ts`.
+
+### 11.1 O que a TOP passou a DECLARAR — cinco seções, e nada mais
+
+A versão da TOP guarda, além de nome e descrição, uma **configuração operacional** com exatamente cinco
+seções, na ordem em que a tela as mostra (`SECOES_CONFIGURACAO_TOP`):
+
+| Seção | O que declara |
+| --- | --- |
+| `geral` | quem dispara a confirmação, se o documento pode ser alterado depois de confirmado, se documento sem itens é aceitável, e as exigências de parceiro, centro de resultado e observação |
+| `estoque` | o sentido da atualização (`nenhuma`/`entrada`/`saida`/`transferencia`), o momento pretendido, se exige armazém e o que fazer com saldo negativo |
+| `financeiro` | o sentido (`nenhuma`/`receber`/`pagar`), se o título é firme ou provisionado, o momento, e as exigências de forma de pagamento, vencimento e centro de resultado |
+| `fiscal` | se a operação é relevante para o fiscal, e as exigências de documento fiscal, natureza de operação e regra tributária, mais a intenção de cálculo tributário |
+| `aprovacao` | se há aprovação (`nenhuma`/`sempre`/`por_valor`), o limite monetário e o momento em que ela trava |
+
+A configuração é **estrita, serializável e declarativa**. Ela é composta apenas de booleanos, enums
+fechados em português e um valor monetário em string decimal. **Não existe — e não é omissão, é
+decisão — campo que aceite função, SQL, JavaScript, expressão, fórmula, callback, DSL ou permissão
+embutida.** Um campo que aceita expressão transforma cadastro em programação: passaria a exigir sandbox,
+versionamento de linguagem, depurador e auditoria de execução, e o "administrador" viraria alguém capaz
+de derrubar o ERP com uma vírgula. Enum fechado e booleano são a fronteira que mantém isto configurável
+por gente de negócio. Permissão também não entra: autorização é CAPACIDADE ∧ ESCOPO, e uma capacidade
+declarada aqui viraria um segundo caminho — que acabaria valendo por OR, pela ponta mais frouxa.
+
+Entrada não canônica é **recusada**, nunca traduzida nem descartada. Chave desconhecida em qualquer
+seção produz `campo_desconhecido` com o `caminho` do problema; valor fora do enum produz
+`valor_invalido`; tipo errado produz `tipo_invalido`. `exigeArmazen` com erro de digitação não é
+ignorado em silêncio: sem isso, o administrador leria "salvo" sobre uma configuração que não foi salva.
+O `caminho` de cada recusa nomeia a FORMA do payload, nunca dado de outra organização.
+
+Dois enums têm **um único valor** (`momento` do efeito e `momento` da aprovação), e isso diz exatamente
+o que o produto contempla hoje. Oferecer valores que nada consumiria faria o administrador escolher
+acreditando ter mudado alguma coisa.
+
+Duas normalizações moram no domínio, não na tela (`normalizarConfiguracaoTop`): seção desligada volta ao
+neutro, e `valorMinimo` é zerado quando a política não é `por_valor`. Na tela isso seria apresentação —
+some com um `curl`. No domínio, é o que torna a comparação semântica confiável e impede que duas
+configurações idênticas no significado tenham bytes diferentes.
+
+### 11.2 `versaoSchema` viaja com o payload
+
+Toda configuração carrega `versaoSchema`, e a coluna `configuracao_schema_version` guarda o mesmo número
+ao lado — um check da 0022 recusa que as duas afirmações discordem.
+
+A leitura **confere o schema ANTES de qualquer campo**. Payload de outra versão é RECUSADO
+(`schema_nao_suportado` na escrita; `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO` na API), nunca
+reinterpretado. Ler um payload com o dicionário errado é como decodificar bytes na codificação errada:
+não dá erro, dá significado trocado.
+
+Os dois lados dessa regra têm comportamentos diferentes, de propósito:
+
+- **LEITURA do histórico nunca cai.** Uma versão ilegível vira estado declarado
+  (`configuracao: { suportada: false, versaoSchema }`), e a tela pode dizer "registrada num formato que
+  esta versão não interpreta" em vez de inventar valores. Quem investiga um documento de dois anos atrás
+  não pode receber tela branca porque UMA das versões não é legível.
+- **ESCRITA fecha.** Editar uma TOP cuja configuração vigente é ilegível é recusado: gravar por cima
+  transformaria uma configuração que não se sabe ler numa que se acabou de inventar.
+
+### 11.3 O neutro tem UM dono
+
+`configuracaoNeutraTop()` é o único lugar do código que sabe qual é o neutro: tudo desligado, nada
+exigido, nenhum efeito declarado. É função e não constante exportada — uma constante compartilhada é um
+objeto único que qualquer consumidor pode mutar sem querer.
+
+A migration precisa de um literal SQL equivalente, porque SQL não importa TypeScript. Essa cópia
+inevitável é um **espelho verificado**: `packages/domain/test/tipo-operacao-configuracao.test.ts` lê o
+arquivo da 0022, extrai o `DEFAULT` da coluna, passa pelo parser do domínio e compara com a função — e
+confere também que a versão de schema declarada no SQL é a mesma. Divergir reprova o gate em vez de
+envelhecer em silêncio.
+
+O acervo recebeu o neutro, e essa é a única leitura honesta: o efeito dos documentos antigos veio do
+CÓDIGO da época, não de configuração — que não existia. Deduzir "esta TOP de venda certamente baixava
+estoque" atribuiria a documentos antigos uma intenção que ninguém declarou.
+
+### 11.4 Versionamento: o que gera versão e o que não gera
+
+| O que muda | Gera versão N+1? |
+| --- | --- |
+| nome, descrição | sim — é CONTEÚDO |
+| configuração operacional | sim — é a REGRA que explica o efeito |
+| lista de próximas operações | sim — é política, pela mesma razão |
+| `ativo` / `padrao` | **não** — é ESTADO; não muda o que a TOP É |
+| nada (reenviar o formulário igual) | **não** — no-op não escreve nada |
+
+Nome, descrição e configuração viajam na MESMA versão: uma edição que mexe nos três gera UMA N+1, não
+três. Versão por aba faria o histórico contar uma sequência de eventos que nunca existiu.
+
+**No-op real não gera nada.** A comparação é semântica: a configuração é normalizada e serializada em
+ordem canônica de chaves antes de comparar, e a lista de destinos é comparada como sequência
+normalizada. Sem isso, salvar sem mexer em nada criaria versão só porque o cliente montou o objeto em
+outra ordem. Um `PUT` cujo conteúdo e estado coincidem com os atuais devolve o estado corrente sem
+gravar, sem incrementar `revisao` e sem auditar — porque `revisao` é a moeda do controle de
+concorrência, e gastá-la à toa manda 409 para toda outra aba aberta por uma mudança que não existiu.
+
+**`revisao` protege lost update.** O `PUT` exige a revisão conhecida pelo cliente e a linha é lida sob
+`for update`: o lock resolve simultaneidade, a revisão resolve a aba aberta há dez minutos. Revisão
+velha é `409 CONCURRENCY_CONFLICT`.
+
+A auditoria da edição registra **quais seções mudaram** (`secoesAlteradasTop`), não o payload inteiro:
+despejar a configuração completa faria do log uma segunda cópia que envelhece em silêncio e diverge da
+versão, que é a verdade. No histórico, `secoesAlteradas` é DERIVADA da comparação com a versão anterior,
+nunca gravada em coluna; quando uma das duas versões é ilegível, o valor é `null` — que diz "não dá para
+saber", diferente de `[]`, que afirmaria "nada mudou".
+
+### 11.5 O grafo de próximas operações
+
+Uma versão da TOP declara para quais TOPs um documento dela pode ser convertido. As arestas moram em
+`erp.tipos_operacao_versao_destinos`.
+
+**Por que tabela, e não uma lista dentro do JSON.** O payload de configuração é um documento: o banco
+confere que é objeto e nada mais. Uma lista de UUIDs ali dentro seria ponteiro sem integridade —
+apontaria para TOP inexistente, de OUTRA ORGANIZAÇÃO ou já apagada, e nada no banco reclamaria. Como
+tabela, cada aresta ganha duas chaves estrangeiras **compostas com o tenant**, e o estado impossível
+deixa de ser representável. As FKs não cascateiam: apagar configuração não pode apagar em silêncio a
+política que explica conversões já feitas. A aresta é tão imutável quanto a versão que a ancora — gatilho
+`trg_tipos_operacao_versao_destinos_imutavel` mais revogação explícita de `update`/`delete`, e RLS
+habilitada, forçada e com política ÚNICA.
+
+**A aresta pendura na VERSÃO da origem; o destino é identidade ESTÁVEL.** Essa assimetria é o desenho
+inteiro, e separa duas perguntas que não podem ter a mesma resposta:
+
+| Pergunta | Fonte | Natureza |
+| --- | --- | --- |
+| *que política valia?* | a versão que o documento cita | congelada — é história |
+| *o destino serve agora?* | a TOP de destino, no estado de hoje (`ativo and excluido_em is null`) | avaliada na ação — é presente |
+
+Um orçamento emitido sob a versão 3 continua oferecendo os destinos que a versão 3 declarava, mesmo
+depois de a TOP ganhar a versão 4. Ler a política do cadastro atual faria a edição de hoje mudar
+retroativamente o que um documento de ontem podia virar; congelar a VERSÃO do destino faria o documento
+novo nascer sob uma regra que o administrador já corrigiu. Por isso a aresta nunca deixa de existir, mas
+uma TOP desativada some do leque sem alterar a versão da origem: a conversão que já aconteceu continua
+explicável. Na administração, a distinção aparece como `disponivel` ao lado de cada destino — a aresta é
+história, a disponibilidade é hoje.
+
+Quando a versão N+1 nasce, as arestas são **copiadas** para ela mesmo sem mudança: a versão nova precisa
+declarar a política inteira dela, senão o histórico deixaria de ser autossuficiente.
+
+**A compatibilidade de família é DERIVADA do registry**, não uma lista. `validarDestinoOperacao` aplica
+duas regras, e as duas se resolvem perguntando ao registry qual variante de `erp.sales_documents` cada
+família é:
+
+1. **as duas pontas precisam ser executáveis** — configurar destino de uma família que o produto não sabe
+   criar seria configurar um botão sem serviço atrás; a configuração passaria, e a falha apareceria no
+   primeiro clique do operador;
+2. **destino não pode ser da MESMA família da origem** — "deste pedido gere outro pedido" não é
+   conversão, é cópia de documento: outra funcionalidade, com outras perguntas, que esta fatia não
+   implementa.
+
+O que **não** existe, deliberadamente: nenhuma ordem obrigatória entre famílias. Orçamento pode apontar
+direto para venda, pulando o pedido, porque isso é decisão da organização — e era exatamente o que a
+cadeia fixa no código impedia.
+
+O banco recusa, por check, o **laço sobre a própria TOP** (`destino_tipo_operacao_id <>
+origem_tipo_operacao_id`): é o único caso de ciclo sempre absurdo. Ciclos mais longos entre TOPs
+diferentes não são barrados, porque podem ser legítimos.
+
+**A superfície de recusa é única.** Destino inexistente, de outro tenant, inativo, excluído ou de família
+incompatível respondem a MESMA recusa `TIPO_OPERACAO_INDISPONIVEL`, com a mesma mensagem. Distinguir
+transformaria o editor num oráculo: quem tentasse UUIDs saberia quais existem na organização vizinha e de
+que família cada um é. A forma da LISTA (chave desconhecida, id malformado, ordem inválida, duplicata,
+teto excedido) tem código próprio, `TIPO_OPERACAO_DESTINO_INVALIDO`, porque descreve o que o cliente
+enviou e não revela nada sobre o acervo. O teto é `LIMITE_DESTINOS_POR_VERSAO` (20), sanidade e não regra
+de negócio.
+
+Quem monta a lista de destinos possíveis é o **servidor**
+(`GET /api/admin/tipos-operacao/destinos-possiveis?codigoBase=…`), com a MESMA função que a escrita usa.
+Filtrar no cliente exigiria uma cópia da regra — a segunda lista que o contrato proíbe — e ela divergiria
+na primeira família nova, oferecendo um destino que a escrita vai recusar. Família de origem desconhecida
+devolve lista VAZIA, nunca "todas".
+
+### 11.6 Capability e version skew
+
+`GET /api/admin/tipos-operacao/capabilities` (capacidade exigida: `tipos_operacao.view` — perguntar o que
+a API sabe fazer não é configurar) devolve:
+
+- `contractVersion`;
+- `configuracao`: `{ versaoSchema, secoes }`;
+- `destinos`: `{ suportado, limite }` — bloco próprio, e não uma seção da configuração, porque o grafo
+  não mora no payload: mora em tabela.
+
+Existe um endpoint em vez de um `try/catch` porque **deduzir capacidade pela falha é adivinhação**: 422
+também é o que se recebe por payload inválido, e 404 é o que se recebe de rota protegida. Os dois
+sentidos do skew são:
+
+- **web NOVA × API ANTIGA** (durante o rolling deploy): a rota de capacidade não existe, e o cliente não
+  deve escrever `configuracao` nem `destinos` — a API antiga valida com `.strict()` e responderia 422,
+  fazendo o editor inteiro parecer quebrado;
+- **web ANTIGA × API NOVA**: os campos são OPCIONAIS nas duas escritas. Ausente na criação significa
+  "quem chamou não declarou nada" e grava o NEUTRO; ausente na edição significa **preservar** — ler a
+  ausência como "zerar" apagaria configuração e destruiria transições que ninguém pediu para destruir. O
+  `DEFAULT` da coluna, que permanece depois da migration, é o que faz o INSERT do binário antigo
+  continuar funcionando.
+
+`contractVersion` distingue as três situações que o cliente precisa separar: rota AUSENTE, rota presente
+com contrato CONHECIDO e rota presente com contrato FUTURO. Sem ela, as duas últimas seriam
+indistinguíveis — e um 200 de formato desconhecido é o modo de falha mais perigoso, porque parece
+sucesso.
+
+### 11.7 A ponte de compatibilidade da conversão — transitória, e declarada
+
+No handler de conversão (`POST /api/sales/{budgets,orders}/:id/convert`) convivem hoje dois caminhos:
+
+| Estado da origem | Quem decide o destino |
+| --- | --- |
+| a versão que o documento cita **tem** destinos configurados | **o grafo é autoridade**: a TOP alvo é obrigatória e precisa estar no leque; fora dele é `TIPO_OPERACAO_INDISPONIVEL` |
+| a versão que o documento cita **não tem** destino nenhum | segue a **cadeia anterior** (`nextSalesKind`), idêntica ao que já era |
+
+**Por que a ponte existe.** O grafo nasceu vazio nesta fatia: toda TOP que existe hoje tem zero destinos.
+Exigir a aresta de imediato quebraria TODA conversão de TODA organização no instante do deploy — inclusive
+a do cliente que nunca vai abrir a tela nova. A ponte não é "inferir a cadeia por conta própria": é
+preservar, para o acervo ainda não configurado, exatamente o contrato que ele já tem.
+
+**Ela é transitória, e a condição de saída está escrita:** a ponte cai quando as organizações tiverem
+configurado o grafo das TOPs em uso e a ausência de destinos puder significar "não converte" em vez de
+"ainda não configurou". A tela nova já não depende dela — lá, versão sem transição mostra `Próximos
+passos` vazio e não oferece conversão.
+
+Duas propriedades que a ponte **não** afrouxa: a capacidade do destino continua sendo cobrada (e, no
+caminho do grafo, é cobrada depois de saber qual é o destino e ainda antes de qualquer mutação — a
+conversão exige `origem.edit` ∧ `destino.create`); e o hash de idempotência **manteve a mesma forma**,
+com `targetKind` da cadeia anterior como componente, para que binário antigo e novo calculem a mesma
+chave para o mesmo pedido durante o rolling deploy. O destino real já entra no hash por
+`tipo_operacao_id`.
+
+### 11.8 O que esta fatia AINDA NÃO EXECUTA
+
+**CONFIGURAR ≠ EXECUTAR.** Nada nesta fatia mudou o que acontece quando um documento é confirmado.
+Declarado sem rodeio, e verificável no código:
+
+- **nenhum serviço lê a configuração para produzir efeito.** `estoque.atualizacao = "saida"` não baixa
+  nada; `financeiro.atualizacao = "receber"` não gera título; `fiscal.habilitado = true` não muda nada
+  no fiscal. Os únicos leitores do contrato são a rota administrativa da TOP e a tela que a edita;
+- **as exigências de preenchimento não são cobradas.** `exigeArmazem`, `exigeParceiro`,
+  `exigeFormaPagamento` e as demais são declarações sem consumidor: nenhuma validação de lançamento as
+  consulta;
+- **não há workflow de aprovação.** `politica`, `valorMinimo` e `momento` são guardados e versionados; não
+  existe fila, alçada, aprovador nem trava;
+- **não há motor tributário.** `calculoTributario: "preparado"` declara intenção; não existe cálculo;
+- **`momento` tem um valor só** porque o produto contempla apenas o efeito na confirmação;
+- **a configuração não guarda referência concreta** a armazém, centro de resultado ou natureza de
+  operação — só EXIGÊNCIAS. Um UUID dentro de um JSON imutável não é validado por chave estrangeira,
+  pode ser de outro tenant e pode ser excluído depois, deixando uma versão que nunca poderá ser
+  corrigida porque versão não se edita. Isso fica como dívida declarada, com arquitetura própria.
+
+Ligar os efeitos é fatia posterior, **com contrato de cutover próprio** — o cutover entre "o código
+decide" e "a configuração decide" é a parte difícil, e não se resolve de passagem.
