@@ -13,7 +13,7 @@ import { tipoOperacaoDoRegistro } from "@agro/domain";
 import { useTradutor } from "@/lib/i18n";
 import { COPY, enumLabel, statusLabel } from "@/lib/copy";
 import { CampoTipoOperacao, useTopsDaVariante, usePadraoTop } from "@/features/sales/tipo-operacao-select";
-import { destinoDeCompatibilidade, useProximosPassos, type ProximoPasso } from "@/features/sales/proximos-passos";
+import { destinoDeCompatibilidade, usaCadeiaDeCompatibilidade, useProximosPassos, type ProximoPasso } from "@/features/sales/proximos-passos";
 import { varianteDeVenda } from "@/features/sales/variantes";
 
 /** O snapshot da TOP como o servidor o devolve: nome e versão CONGELADOS no instante do lançamento. */
@@ -110,16 +110,29 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   /** `can()` aqui é APRESENTAÇÃO: a API cobra a capacidade do destino na conversão. Isto só evita
    *  oferecer um botão que responderia 403. */
   const podeCriarVariante = (varianteDoDestino: string) => { const v = varianteDeVenda(varianteDoDestino); return Boolean(v) && can(`${v!.perm}.create`); };
-  const itens: ProximoPasso[] = passos.situacao === "pronto" ? passos.itens.filter((x) => podeCriarVariante(x.variante)) : [];
+  /**
+   * OS DOIS CAMINHOS SÃO MUTUAMENTE EXCLUSIVOS POR CONSTRUÇÃO — grafo OU ponte, nunca os dois no mesmo
+   * diálogo. Derivar `itens` da mesma pergunta que decide a ponte é o que impede a tela de oferecer, na
+   * mesma janela, um leque de destinos e um seletor de TOP da cadeia anterior — dois modos de escolher a
+   * mesma coisa, um deles fadado a ser recusado pela API.
+   */
+  const ponte = usaCadeiaDeCompatibilidade(passos);
+  const itens: ProximoPasso[] = !ponte && passos.situacao === "pronto" ? passos.itens.filter((x) => podeCriarVariante(x.variante)) : [];
 
   /**
-   * CAPABILITY / ROLLING DEPLOY — EXPLÍCITO: quando `/proximos-passos` responde 404, 5xx ou um corpo que
-   * não é o contrato 1 (servidor ANTERIOR a esta fatia, ou com defeito), a tela NÃO esconde a conversão:
-   * ela cai no comportamento anterior — a cadeia de compatibilidade de `proximos-passos.ts`, com a TOP do
-   * destino escolhida no mesmo diálogo de sempre. Lista vazia CONFIRMADA é o caso oposto: aí o documento
-   * realmente não gera nada, e nenhuma conversão é oferecida.
+   * QUANDO A CADEIA ANTERIOR AINDA VALE — duas causas, uma pergunta só (`usaCadeiaDeCompatibilidade`).
+   *
+   *   1. O servidor não confirmou o contrato (404, 5xx, corpo desconhecido): rolling deploy ou defeito.
+   *   2. A POLÍTICA DESTA OPERAÇÃO NUNCA FOI DECLARADA — o acervo legado, que a API converte pela ponte.
+   *
+   * O caso 2 é a correção R1. Antes, a tela lia `items: []` como "não gera nada" e escondia a conversão
+   * de documentos que a API convertia normalmente: o operador via um documento sem saída e uma chamada
+   * direta à API gerava o próximo documento. Agora as duas pontas leem o MESMO discriminador.
+   *
+   * POLÍTICA DECLARADA E VAZIA continua sendo o caso oposto: nenhuma conversão é oferecida, e a API
+   * recusa a que for pedida por fora.
    */
-  const legado = passos.situacao === "nao-confirmado" ? destinoDeCompatibilidade(variante) : undefined;
+  const legado = ponte ? destinoDeCompatibilidade(variante) : undefined;
   const legadoPermitido = Boolean(legado) && can(`${legado!.perm}.create`);
   // A TOP do DESTINO da conversão — carregada da variante de destino, nunca da fonte. O hook roda sempre
   // (regra dos hooks), mas a REQUISIÇÃO é condicional: sem destino de compatibilidade não há o que
@@ -234,7 +247,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
       <div className="space-y-3" data-testid="proximos-passos">
         {/* UM destino: nada a escolher, mas a operação de destino fica À VISTA — converter sem ver em que
             operação o documento novo nasce é o efeito colateral que esta fatia veio desfazer. */}
-        {passos.situacao === "pronto" && itens.length === 1 && <p data-testid="proximo-passo-unico" data-top-id={itens[0]!.tipoOperacaoId} className="text-sm text-slate-700">
+        {itens.length === 1 && <p data-testid="proximo-passo-unico" data-top-id={itens[0]!.tipoOperacaoId} className="text-sm text-slate-700">
           <span className="font-mono font-semibold">{itens[0]!.codigo}</span> — {itens[0]!.nome}
           <span className="mt-0.5 block text-xs text-slate-500">{itens[0]!.familiaRotulo}</span>
         </p>}
@@ -255,9 +268,9 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
           </label>)}
         </fieldset>)}
 
-        {/* COMPATIBILIDADE: o servidor não confirmou a política. O diálogo volta a ser o de antes —
-            escolher a TOP do destino da cadeia anterior —, e `MensagemTop` continua bloqueando quando
-            nem essa lista vier. */}
+        {/* COMPATIBILIDADE: o servidor não confirmou o contrato, ou esta operação nunca declarou política.
+            O diálogo volta a ser o de antes — escolher a TOP do destino da cadeia anterior —, e
+            `MensagemTop` continua bloqueando quando nem essa lista vier. */}
         {legado && <div className="grid grid-cols-12 gap-3">
           <CampoTipoOperacao estado={estadoTopLegado} valor={topLegado} onChange={setTopLegado} span={12} />
         </div>}

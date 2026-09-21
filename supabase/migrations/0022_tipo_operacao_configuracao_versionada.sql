@@ -125,6 +125,47 @@ alter table erp.tipos_operacao_versoes
     }
   }'::jsonb;
 
+-- A POLÍTICA DE PRÓXIMAS OPERAÇÕES CHEGOU A SER DECLARADA? — o discriminador que a CARDINALIDADE não dá.
+--
+-- O grafo da seção 5 responde "quais destinos", e NUNCA "alguém já decidiu isto". Sem esta coluna, as duas
+-- frases abaixo são a MESMA linha no banco — zero arestas nas duas:
+--
+--   "ninguém nunca declarou política para esta operação"        (acervo, compatibilidade)
+--   "declarei que esta operação NÃO gera próxima operação"      (decisão explícita do administrador)
+--
+-- E elas exigem comportamentos OPOSTOS na conversão: a primeira precisa continuar caindo na cadeia antiga,
+-- ou toda conversão de toda organização quebra no instante do deploy; a segunda tem de RECUSAR a conversão,
+-- porque recusar foi exatamente o que o administrador declarou. Contar arestas não distingue as duas, e um
+-- servidor que não distingue obedece à tela nova e desobedece à chamada direta da API.
+--
+-- ┌─ POR QUE O DEFAULT É `false`, E POR QUE ELE FICA ───────────────────────────────────────────────────┐
+-- │ `false` é a leitura honesta em DUAS frentes ao mesmo tempo, e nenhuma das duas é suposição:         │
+-- │                                                                                                      │
+-- │  (a) ACERVO. Toda versão que já existia antes desta migration nasceu antes de existir onde declarar  │
+-- │      política. Nenhuma delas declarou nada — não porque escolheram o vazio, mas porque não havia     │
+-- │      escolha a fazer. Marcá-las como declaradas inventaria uma decisão que ninguém tomou e faria o   │
+-- │      acervo inteiro parar de converter.                                                              │
+-- │                                                                                                      │
+-- │  (b) ROLLING DEPLOY. O binário ANTIGO insere versão sem citar esta coluna, e ele tampouco sabe       │
+-- │      declarar política: nascer `false` é a descrição exata do que aconteceu naquele INSERT.          │
+-- │                                                                                                      │
+-- │ O DEFAULT PERMANECE depois da migration, pelo mesmo motivo dos outros DEFAULTs deste arquivo (bloco  │
+-- │ (2) do cabeçalho): sem ele, o INSERT do binário antigo falharia por NOT NULL e a criação/edição de   │
+-- │ TOP quebraria no meio da implantação. E, como lá, `ADD COLUMN ... DEFAULT` preenche as linhas        │
+-- │ existentes sem UPDATE — que o gatilho de imutabilidade da 0020 recusaria de todo modo.               │
+-- └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
+--
+-- A COLUNA HERDA A IMUTABILIDADE DA VERSÃO, e por isso NENHUM gatilho novo é criado aqui: ela mora em
+-- `erp.tipos_operacao_versoes`, e `trg_tipos_operacao_versoes_imutavel` (0020) já recusa UPDATE e DELETE
+-- sobre a tabela INTEIRA. Um segundo gatilho seria uma segunda verdade sobre a mesma regra. Declarar
+-- política é, como mudar nome ou configuração, criar a versão N+1.
+--
+-- E É NA VERSÃO, NÃO NO PAI, pela razão do cabeçalho deste arquivo: isto é política HISTÓRICA. Um documento
+-- emitido sob a versão 3 continua explicado pelo que a versão 3 declarava — inclusive por "a versão 3 não
+-- declarava nada".
+alter table erp.tipos_operacao_versoes
+  add column if not exists destinos_configurados boolean not null default false;
+
 -- ---------- 4) checks de FORMA (e só de forma) ----------
 -- O QUE O BANCO CONFERE, E O QUE ELE DELIBERADAMENTE NÃO CONFERE.
 --
@@ -285,6 +326,7 @@ declare
   v_rls int;
   v_gatilho int;
   v_grants_indevidos int;
+  v_destinos_flag int;
   v_fks int;
   v_politicas int;
 begin
@@ -308,6 +350,39 @@ begin
    where configuracao is null or jsonb_typeof(configuracao) <> 'object';
   if v_linhas_sem_config <> 0 then
     raise exception 'TOP-CONFIG-03: % versao(oes) sem configuracao valida apos o backfill', v_linhas_sem_config;
+  end if;
+
+  -- O DISCRIMINADOR DE POLITICA DECLARADA EXISTE — e existe com as DUAS metades do desenho.
+  -- Conferir so a presenca da coluna deixaria passar exatamente os dois modos de falha de que a decisao da
+  -- ponte depende: sem NOT NULL apareceria uma TERCEIRA leitura ("nao se sabe se declarou"), que nenhum
+  -- caminho do servidor trata; sem DEFAULT o INSERT do binario ANTIGO — que nao cita a coluna — quebraria
+  -- no meio do rolling deploy, e a criacao de TOP cairia junto.
+  select count(*) into v_destinos_flag from information_schema.columns
+   where table_schema = 'erp' and table_name = 'tipos_operacao_versoes'
+     and column_name = 'destinos_configurados';
+  if v_destinos_flag <> 1 then
+    raise exception 'TOP-CONFIG-03: a coluna destinos_configurados nao foi criada em tipos_operacao_versoes';
+  end if;
+
+  select count(*) into v_destinos_flag
+    from pg_attribute a
+    join pg_class c on c.oid = a.attrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    left join pg_attrdef ad on ad.adrelid = a.attrelid and ad.adnum = a.attnum
+   where n.nspname = 'erp' and c.relname = 'tipos_operacao_versoes'
+     and a.attname = 'destinos_configurados' and not a.attisdropped
+     and a.attnotnull
+     and pg_get_expr(ad.adbin, ad.adrelid) = 'false';
+  if v_destinos_flag <> 1 then
+    raise exception 'TOP-CONFIG-03: destinos_configurados precisa ser NOT NULL e manter DEFAULT false';
+  end if;
+
+  -- O ACERVO INTEIRO NASCEU COMO NUNCA DECLARADO. `not null` garante que ha valor; esta asercao garante
+  -- QUAL valor — e e ela que separa "a coluna existe" de "nenhuma versao antiga foi promovida a declarada".
+  -- Uma linha `true` aqui seria uma politica que ninguem escreveu, e o efeito dela e recusar conversao.
+  select count(*) into v_destinos_flag from erp.tipos_operacao_versoes where destinos_configurados;
+  if v_destinos_flag <> 0 then
+    raise exception 'TOP-CONFIG-03: % versao(oes) do acervo nasceram com destinos_configurados = true', v_destinos_flag;
   end if;
 
   -- A 0020 continua de pé: RLS forçada, gatilho de imutabilidade vivo e nenhum privilégio de escrita

@@ -97,16 +97,36 @@ export function useTopsDeVendas(): GrupoDeTops[] {
 }
 
 /**
- * As opções do filtro por TOP da LISTA ÚNICA — a união das TOPs das variantes que o usuário pode lançar.
+ * As opções do filtro por TOP da LISTA ÚNICA — a união das TOPs das variantes que o usuário pode LANÇAR.
  *
  * Filtrar é conveniência: sem opções o filtro some e a listagem continua inteira. Quem recorta linhas é
  * o servidor, pela capacidade de LEITURA de cada variante.
+ *
+ * ┌─ O USUÁRIO SOMENTE-LEITURA NÃO RECEBE ESTE FILTRO, E ISSO É DECISÃO DECLARADA ─────────────────┐
+ * │ A única porta que lista TOPs para o portal é a OPERACIONAL, e ela exige `<variante>.create` —   │
+ * │ é a porta do lançamento. Quem só tem `.view` enxerga os documentos na lista (e a coluna "Tipo   │
+ * │ de Operação", que vem do snapshot de cada linha), mas não recebe as opções para filtrar por     │
+ * │ TOP. O filtro então some, em vez de aparecer vazio.                                             │
+ * │                                                                                                  │
+ * │ O QUE NÃO SE FAZ PARA RESOLVER ISSO: afrouxar a permissão de `/operation-types` (ela protege a   │
+ * │ escrita), chamar a porta ADMINISTRATIVA do portal (quem vende não precisa poder configurar TOP), │
+ * │ ou montar as opções a partir das linhas da página atual — esta última ofereceria só as TOPs que  │
+ * │ por acaso estão na página, e um filtro que esconde recortes existentes engana quem o usa.        │
+ * │                                                                                                  │
+ * │ A saída correta é uma fonte de LEITURA para as opções, e ela exige superfície nova na API —      │
+ * │ outra fatia, fora da fronteira desta correção. Fica registrado como pendência de UX, não de      │
+ * │ segurança: nenhum documento é escondido e nenhuma linha extra é revelada por causa disto.        │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 export function useOpcoesDeTopDeVendas(): { value: string; label: string }[] {
   const grupos = useTopsDeVendas();
   const vistos = new Set<string>();
   const opcoes: { value: string; label: string }[] = [];
   for (const g of grupos) {
+    // ESCRITO, e não deixado por conta de `podeLancar`: sem a capacidade a consulta nem é feita, e o
+    // estado fica em "carregando" para sempre. Depender desse detalhe para o filtro sumir seria fazer uma
+    // decisão de produto repousar sobre como uma biblioteca relata uma consulta desabilitada.
+    if (!g.habilitado) continue;
     if (!podeLancar(g.estado)) continue;
     for (const top of g.estado.dados.items) {
       if (vistos.has(top.id)) continue;

@@ -38,6 +38,16 @@ interface VersaoTop {
   /** `null` = não dá para comparar com a anterior (ausente ou ilegível). Diferente de `[]` ("nada mudou"). */
   secoesAlteradas: SecaoConfiguracaoTop[] | null;
   destinos: DestinoDaVersao[] | null;
+  /**
+   * ESTA VERSÃO CHEGOU A DECLARAR POLÍTICA DE PRÓXIMAS OPERAÇÕES?
+   *
+   * `true` declarou · `false` não declarou (vigorava a cadeia anterior) · `null` o servidor não informou.
+   *
+   * É a pergunta que o histórico existe para responder e que `destinos.length` não responde: uma versão
+   * com zero destinos ou não tinha política nenhuma, ou tinha a política "esta operação não gera nada" —
+   * e as duas explicam desfechos OPOSTOS para uma conversão daquela época.
+   */
+  destinosConfigurados: boolean | null;
 }
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> =>
@@ -64,7 +74,11 @@ function lerVersao(bruto: unknown): VersaoTop | null {
       (SECOES_CONFIGURACAO_TOP as readonly string[]).includes(s as string)) ? [...secoes] : null,
     destinos: Array.isArray(bruto.destinos) && bruto.destinos.every(ehDestinoDaVersao)
       ? [...(bruto.destinos as DestinoDaVersao[])].sort((a, b) => a.ordem - b.ordem)
-      : null
+      : null,
+    // Cada campo do histórico degrada SOZINHO para `null` — a mesma régua de `destinos` e
+    // `secoesAlteradas` acima. Aqui `null` vira uma frase que diz que não se sabe; nunca `false`, que
+    // afirmaria "ninguém declarou" sobre uma versão que talvez tenha declarado.
+    destinosConfigurados: typeof bruto.destinosConfigurados === "boolean" ? bruto.destinosConfigurados : null
   };
 }
 
@@ -156,18 +170,44 @@ function DetalheDaVersao({ versao }: { versao: VersaoTop }) {
 
     <div>
       <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Próximas operações</p>
-      {versao.destinos === null
-        ? <p className="text-[12px] text-slate-500">Este servidor não informou as próximas operações desta versão.</p>
-        : versao.destinos.length === 0
-          ? <p className="text-[12px] text-slate-500">Nenhuma próxima operação estava habilitada nesta versão.</p>
-          : <ul className="text-[12px]" data-testid="top-versao-destinos">
-              {versao.destinos.map((d) => <li key={d.tipoOperacaoId}>
-                <span className="tabular-nums text-slate-400">{d.ordem}. </span>
-                {d.codigo} — {d.nome} <span className="text-[11px] text-slate-400">{d.familiaRotulo}</span>
-              </li>)}
-            </ul>}
+      <PoliticaDaVersao versao={versao} />
     </div>
   </div>;
+}
+
+/**
+ * A POLÍTICA DE PRÓXIMAS OPERAÇÕES DAQUELA VERSÃO — o estado primeiro, a lista depois.
+ *
+ * O estado é LIDO do registro (`destinosConfigurados`), nunca inferido de `destinos.length`. Um histórico
+ * que inferisse contaria a história errada exatamente onde ela importa: a versão que declarou "esta
+ * operação não gera nada" apareceria como se nunca tivesse sido configurada, e quem fosse auditar a
+ * conversão de um documento daquela data concluiria o oposto do que aconteceu.
+ */
+function PoliticaDaVersao({ versao }: { versao: VersaoTop }) {
+  const lista = versao.destinos;
+  return <>
+    {versao.destinosConfigurados === null
+      ? <p data-testid="top-versao-politica-desconhecida" className="text-[12px] text-slate-500">
+          Este servidor não informou se esta versão declarou uma política de próximas operações.
+        </p>
+      : versao.destinosConfigurados
+        ? (lista !== null && lista.length === 0) && <p data-testid="top-versao-politica-vazia" className="text-[12px] text-slate-600">
+            Política declarada nesta versão: nenhuma próxima operação. Um documento criado sob ela não é
+            encaminhado para outra operação.
+          </p>
+        : <p data-testid="top-versao-politica-nao-declarada" className="text-[12px] text-slate-600">
+            Política não declarada nesta versão: a conversão seguia o caminho anterior do produto.
+          </p>}
+
+    {lista === null
+      ? <p className="text-[12px] text-slate-500">Este servidor não informou as próximas operações desta versão.</p>
+      : lista.length > 0 && <ul className="text-[12px]" data-testid="top-versao-destinos">
+          {lista.map((d) => <li key={d.tipoOperacaoId}>
+            <span className="tabular-nums text-slate-400">{d.ordem}. </span>
+            {d.codigo} — {d.nome} <span className="text-[11px] text-slate-400">{d.familiaRotulo}</span>
+          </li>)}
+        </ul>}
+  </>;
 }
 
 const simNao = (v: boolean) => (v ? "Sim" : "Não");

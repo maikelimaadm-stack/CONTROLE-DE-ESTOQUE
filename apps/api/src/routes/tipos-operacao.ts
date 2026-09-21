@@ -127,7 +127,8 @@ const excluirSchema = z.object({ revisao: z.coerce.number().int().min(1) }).stri
 const SELECAO = `
   select t.id, t.codigo, t.codigo_base, t.ativo, t.padrao, t.versao_atual, t.revisao,
          t.criado_em, t.atualizado_em,
-         v.id as versao_id, v.nome, v.descricao, v.configuracao, v.configuracao_schema_version
+         v.id as versao_id, v.nome, v.descricao, v.configuracao, v.configuracao_schema_version,
+         v.destinos_configurados
     from erp.tipos_operacao t
     join erp.tipos_operacao_versoes v
       on v.tipo_operacao_id = t.id and v.versao = t.versao_atual
@@ -141,6 +142,14 @@ interface LinhaTipoOperacao {
   versao_atual: number; revisao: number; criado_em: Date; atualizado_em: Date;
   versao_id: string; nome: string; descricao: string | null;
   configuracao: unknown; configuracao_schema_version: number;
+  /**
+   * A POLÍTICA DE PRÓXIMAS OPERAÇÕES CHEGOU A SER DECLARADA NESTA VERSÃO?
+   *
+   * É o único jeito de separar "ninguém nunca declarou" (acervo, e a conversão segue a cadeia antiga) de
+   * "declarei que não há próxima operação" (a conversão é RECUSADA). Contar as arestas responde as duas
+   * coisas com o mesmo zero. Ver o cabeçalho da coluna na migration 0022.
+   */
+  destinos_configurados: boolean;
 }
 
 /**
@@ -338,7 +347,14 @@ const soPolitica = (d: readonly DestinoResolvido[]): DestinoOperacaoV1[] =>
 /** O DETALHE — aí sim com a configuração, porque é a tela que vai editá-la. */
 const paraTelaDetalhe = (r: LinhaTipoOperacao) => ({
   ...paraTela(r),
-  configuracao: configuracaoParaTela(r.configuracao, r.configuracao_schema_version)
+  configuracao: configuracaoParaTela(r.configuracao, r.configuracao_schema_version),
+  /**
+   * LIDO DA COLUNA, NUNCA DEDUZIDO DE `destinos.length`.
+   *
+   * Deduzir devolveria `false` para a versão que declarou "esta operação não gera nada" — e o editor
+   * mostraria o estado de quem nunca configurou a uma política que alguém escreveu de propósito.
+   */
+  destinosConfigurados: r.destinos_configurados
 });
 
 export default async function tiposOperacaoRoutes(app: FastifyInstance) {
@@ -489,9 +505,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const pai = await ctx.tx.query<{ id: string }>(
       "select id from erp.tipos_operacao where id=$1 and organization_id=$2 and excluido_em is null", [id, ctx.orgId]);
     if (!pai.rows[0]) throw notFound("Tipo de operação");
-    const r = await ctx.tx.query<{ id: string; versao: number; nome: string; descricao: string | null; criado_em: Date; criado_por_nome: string | null; configuracao: unknown; configuracao_schema_version: number }>(
+    const r = await ctx.tx.query<{ id: string; versao: number; nome: string; descricao: string | null; criado_em: Date; criado_por_nome: string | null; configuracao: unknown; configuracao_schema_version: number; destinos_configurados: boolean }>(
       `select v.id, v.versao, v.nome, v.descricao, v.criado_em, u.name as criado_por_nome,
-              v.configuracao, v.configuracao_schema_version
+              v.configuracao, v.configuracao_schema_version, v.destinos_configurados
          from erp.tipos_operacao_versoes v
          left join erp.users u on u.id = v.criado_por
         where v.tipo_operacao_id = $1 and v.organization_id = $2
@@ -529,6 +545,13 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           // OS DESTINOS DAQUELA ÉPOCA, não os de hoje. É a mesma razão pela qual a configuração sai da
           // própria linha: o histórico não pode explicar uma conversão antiga com a política atual.
           destinos: destinosPorVersao.get(v.id) ?? [],
+          /**
+           * E SE AQUELA VERSÃO CHEGOU A DECLARAR POLÍTICA — lido da coluna da PRÓPRIA linha, nunca deduzido
+           * do tamanho da lista acima. Uma versão com zero destinos tem duas histórias possíveis, e só esta
+           * coluna sabe qual delas é: "ninguém tinha declarado nada ainda" ou "aqui foi decidido que esta
+           * operação não gera nenhuma outra". O histórico existe justamente para responder isso.
+           */
+          destinosConfigurados: v.destinos_configurados,
           // Sem versão anterior legível não há comparação possível — e `[]` afirmaria "nada mudou", que é
           // diferente de "não dá para saber". `null` diz a segunda coisa.
           secoesAlteradas: comparavel ? secoesAlteradasTop(anterior.valor, atual.valor) : null
@@ -562,10 +585,24 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // declarou". O efeito guardado é idêntico, e é o único que não inventa intenção alheia.
       const configuracao = d.configuracao === undefined ? configuracaoNeutraTop() : configuracaoPedida(d.configuracao);
 
+      /**
+       * DECLAROU A POLÍTICA DE PRÓXIMAS OPERAÇÕES? — PRESENÇA DA CHAVE, NUNCA TAMANHO DA LISTA.
+       *
+       * `d.destinos !== undefined` é literalmente "a chave veio no corpo": JSON não transporta `undefined`,
+       * então a ausência só pode vir de quem não escreveu o campo — a web ANTIGA durante o rolling deploy.
+       * `"destinos": null` e `"destinos": []` CONTAM COMO DECLARAÇÃO, e é essa a diferença que a coluna
+       * existe para guardar: "não declarei nada" (o acervo, que segue a cadeia antiga) não é a mesma coisa
+       * que "declarei que esta operação não gera próxima operação" (que RECUSA a conversão).
+       *
+       * `?? []` resolveria a normalização e apagaria a pergunta. Por isso a presença é lida aqui, antes, e
+       * a normalização de `null` para lista vazia continua sendo trabalho do domínio.
+       */
+      const declarouDestinos = d.destinos !== undefined;
+
       const versaoNova = await ctx.tx.query<{ id: string }>(
-        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version)
-         values ($1,$2,1,$3,$4,$5,$6::jsonb,$7) returning id`,
-        [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP]);
+        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version, destinos_configurados)
+         values ($1,$2,1,$3,$4,$5,$6::jsonb,$7,$8) returning id`,
+        [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP, declarouDestinos]);
 
       // AS PRÓXIMAS OPERAÇÕES DA VERSÃO 1. Conferidas contra banco e registry ANTES de gravar: uma aresta
       // para TOP indisponível nasceria como um botão que não tem serviço atrás.
@@ -574,7 +611,11 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
 
       await audit(ctx.tx, ctx, "tipos_operacao", id, "create",
         { codigo: d.codigo, codigoBase: d.codigoBase, ativo: d.ativo, padrao: nasceuPadrao, versao: 1,
-          configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP, destinos: destinos.length });
+          configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP,
+          // O NÚMERO E O ESTADO, porque um não responde pelo outro: `destinos: 0` com
+          // `destinosConfigurados: true` é "não gera nada, por decisão", e com `false` é "ninguém decidiu".
+          // Sem o booleano, a trilha registra o mesmo zero para as duas e a investigação fica sem resposta.
+          destinosConfigurados: declarouDestinos, destinos: destinos.length });
       // A TOP anterior perdeu o padrão nesta mesma transação: quem perdeu tem evento próprio, com autor.
       await auditarPadraoLiberado(ctx, liberados, id);
       // E quem ASSUMIU também. Sem isto, "esta TOP virou padrão ao nascer" só existiria dentro do payload
@@ -654,10 +695,37 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * como "apague todas as transições" destruiria política que ninguém pediu para destruir.
      */
     const destinosAtuais = soPolitica((await destinosDaVersao(ctx, [antes.versao_id])).get(antes.versao_id) ?? []);
-    const destinos = d.destinos === undefined
-      ? destinosAtuais
-      : await conferirDestinos(ctx, antes.codigo_base, destinosPedidos(d.destinos));
-    const mudouDestinos = !destinosOperacaoIguais(destinosAtuais, destinos);
+    /**
+     * DUAS COISAS MUDAM AQUI, E SÓ UMA DELAS É A LISTA.
+     *
+     * `declarouAgora` é PRESENÇA DA CHAVE (`d.destinos !== undefined`), não tamanho de lista: JSON não
+     * transporta `undefined`, então ausência é "o cliente não escreveu o campo" — o que a web ANTIGA faz
+     * durante o rolling deploy, e o que obriga a PRESERVAR arestas e booleano. `null` e `[]` são presença.
+     */
+    const declarouAgora = d.destinos !== undefined;
+    const destinos = declarouAgora
+      ? await conferirDestinos(ctx, antes.codigo_base, destinosPedidos(d.destinos))
+      : destinosAtuais;
+    /**
+     * A VERSÃO NOVA É AUTOSSUFICIENTE, ENTÃO O BOOLEANO TAMBÉM VIAJA. Quando uma versão nasce por mudança
+     * de nome ou de configuração com `destinos` AUSENTE, ela COPIA o estado da anterior — junto com as
+     * arestas. Herdar por referência faria a versão N+1 depender da N para ser lida.
+     *
+     * DECLARAR NUNCA VOLTA A SER "NÃO DECLARADO": só `true` se sobrepõe, porque `destinos` ausente é
+     * silêncio do cliente, e silêncio não desfaz decisão.
+     */
+    const destinosConfigurados = declarouAgora ? true : antes.destinos_configurados;
+    /**
+     * O CASO CRÍTICO DO NO-OP: versão atual com ZERO arestas e `destinos_configurados = false`, e um PUT
+     * com `destinos: []`. As arestas são idênticas (nenhuma, antes e depois), então comparar só a lista
+     * diria "nada mudou" e a edição seria descartada como no-op — com a tela respondendo "salvo" sobre uma
+     * política que continua NÃO DECLARADA, e a conversão continuando a cair na cadeia antiga.
+     *
+     * Só que a política MUDOU, e mudou no ponto que mais importa: de "ninguém nunca decidiu" para
+     * "decidido: esta operação não gera próxima operação". É conteúdo, e conteúdo cria a versão N+1.
+     */
+    const mudouDestinos = !destinosOperacaoIguais(destinosAtuais, destinos)
+      || (destinosConfigurados && !antes.destinos_configurados);
 
     // CONTEÚDO gera versão; ESTADO não. O nome de uma TOP é o que um documento vai citar — mudou o nome,
     // nasce uma versão nova, e a anterior continua legível. Ativar/desativar não muda o que a TOP É.
@@ -688,9 +756,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
 
     if (mudouConteudo) {
       const versaoNova = await ctx.tx.query<{ id: string }>(
-        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version)
-         values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8) returning id`,
-        [ctx.orgId, id, versao, nome, descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP]);
+        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version, destinos_configurados)
+         values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) returning id`,
+        [ctx.orgId, id, versao, nome, descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP, destinosConfigurados]);
       // As arestas são COPIADAS para a versão nova mesmo quando não mudaram: a versão N+1 precisa declarar
       // a política INTEIRA dela. Herdar por referência faria a versão nova depender da anterior para ser
       // lida, e o histórico deixaria de ser autossuficiente — que é a única coisa que ele promete ser.
@@ -718,7 +786,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       await audit(ctx.tx, ctx, "tipos_operacao", id, "update",
         { versaoAnterior: antes.versao_atual, versao,
           secoesAlteradas: mudouConfiguracao ? secoesAlteradasTop(atualConfig.valor, configuracao) : [],
-          destinosAlterados: mudouDestinos, destinos: destinos.length,
+          // `destinos: 0` sozinho não responde o que aconteceu. Com `destinosConfigurados`, a trilha separa
+          // a edição que DECLAROU "não gera nada" da que apenas não falou do assunto.
+          destinosAlterados: mudouDestinos, destinos: destinos.length, destinosConfigurados,
           configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP },
         { before: { nome: antes.nome, descricao: antes.descricao }, after: { nome, descricao } });
     }

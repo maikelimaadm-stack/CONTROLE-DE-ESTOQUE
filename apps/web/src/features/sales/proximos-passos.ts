@@ -13,8 +13,19 @@ import { varianteDeVenda, type VarianteDeVenda } from "./variantes";
  * │ política sai da VERSÃO da TOP de origem (congelada no documento) e chega pronta do servidor,     │
  * │ já ordenada e já filtrada pelas TOPs de destino ativas.                                          │
  * │                                                                                                  │
- * │ LISTA VAZIA É RESPOSTA: o documento não oferece conversão. Cair na cadeia antiga aqui seria      │
- * │ transformar ausência de política em política — exatamente o que a fatia veio desfazer.           │
+ * │ LISTA VAZIA DECLARADA É RESPOSTA: o documento não oferece conversão. Cair na cadeia antiga aí    │
+ * │ seria transformar ausência de política em política — exatamente o que a fatia veio desfazer.     │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ POR QUE A CARDINALIDADE NÃO DECIDE NADA (correção R1) ────────────────────────────────────────┐
+ * │ `items: []` tem DUAS histórias, e a lista sozinha não distingue uma da outra: ou ninguém nunca  │
+ * │ declarou a política desta operação (acervo legado, em que a conversão segue a cadeia anterior), │
+ * │ ou alguém declarou explicitamente que ela NÃO gera próxima operação. Tratar as duas como a      │
+ * │ mesma coisa foi o defeito: a web escondia a conversão de documentos cuja API ainda convertia    │
+ * │ pela ponte — tela e servidor discordando sobre o mesmo documento.                                │
+ * │                                                                                                  │
+ * │ Quem responde é `politicaConfigurada`, o discriminador que o servidor declara. A lista informa o │
+ * │ QUE pode ser gerado; o booleano informa SE a pergunta já foi respondida por alguém.              │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ CAPABILITY: ROLLING DEPLOY ───────────────────────────────────────────────────────────────────┐
@@ -49,16 +60,32 @@ const ehProximoPasso = (v: unknown): v is ProximoPasso =>
   && ehTexto(v.codigoBase) && ehTexto(v.familiaRotulo) && ehTexto(v.variante)
   && typeof v.ordem === "number" && Number.isFinite(v.ordem);
 
-export const ehRespostaDeProximosPassos = (v: unknown): v is { contractVersion: typeof CONTRATO_PROXIMOS_PASSOS; items: ProximoPasso[] } =>
-  ehObjeto(v) && v.contractVersion === CONTRATO_PROXIMOS_PASSOS && Array.isArray(v.items) && v.items.every(ehProximoPasso);
+/**
+ * `politicaConfigurada` é OPCIONAL na leitura, e isso é medido, não descuido.
+ *
+ * A API desta correção a declara sempre, sob o MESMO `contractVersion: 1` (ela acrescenta informação, não
+ * muda o significado de nada que já existia). Um servidor da fatia anterior serve a rota sem o campo — e
+ * recusar o corpo inteiro por causa disso seria a pior das trocas: o documento com destinos configurados
+ * perderia o leque do grafo e cairia na ponte, cuja escolha AQUELE servidor recusa com 422. Ausência vira
+ * `null`, que é "este servidor não respondeu essa pergunta", e nunca `false`, que seria afirmar por ele.
+ */
+export const ehRespostaDeProximosPassos = (v: unknown): v is { contractVersion: typeof CONTRATO_PROXIMOS_PASSOS; politicaConfigurada?: boolean; items: ProximoPasso[] } =>
+  ehObjeto(v) && v.contractVersion === CONTRATO_PROXIMOS_PASSOS
+  && (v.politicaConfigurada === undefined || typeof v.politicaConfigurada === "boolean")
+  && Array.isArray(v.items) && v.items.every(ehProximoPasso);
 
 export type EstadoProximosPassos =
   /** Ainda perguntando — nenhuma ação de conversão é oferecida enquanto não se sabe. */
   | { situacao: "carregando" }
   /** Rota ausente, servidor com defeito ou corpo que não é o contrato 1: cai na cadeia de compatibilidade. */
   | { situacao: "nao-confirmado" }
-  /** A política chegou. `itens` vazio significa "este documento não gera nada". */
-  | { situacao: "pronto"; itens: ProximoPasso[] };
+  /**
+   * A política chegou.
+   *
+   * `politicaConfigurada`: `true` = declarada (a lista É a política, inclusive vazia); `false` = nunca
+   * declarada (legado, a ponte vale); `null` = o servidor não informou (API anterior a esta correção).
+   */
+  | { situacao: "pronto"; politicaConfigurada: boolean | null; itens: ProximoPasso[] };
 
 /**
  * Pergunta ao servidor o que este documento pode gerar.
@@ -82,15 +109,40 @@ export function useProximosPassos(segmento: string, id: string, habilitado = tru
   if (!habilitado || q.isPending) return { situacao: "carregando" };
   if (q.error) return { situacao: "nao-confirmado" };
   if (!ehRespostaDeProximosPassos(q.data)) return { situacao: "nao-confirmado" };
-  return { situacao: "pronto", itens: q.data.items };
+  return { situacao: "pronto", politicaConfigurada: q.data.politicaConfigurada ?? null, itens: q.data.items };
+}
+
+/**
+ * A CADEIA ANTERIOR AINDA VALE PARA ESTE DOCUMENTO?
+ *
+ * Uma pergunta, um lugar. A tela não pode responder isso com uma escada de `if` própria — foi assim que a
+ * versão anterior acabou lendo "lista vazia" como "nenhuma conversão" para TODO documento, inclusive os
+ * que o servidor ainda converte pela ponte.
+ *
+ *   carregando      não. Enquanto não se sabe, nada é oferecido — nem o grafo, nem a ponte.
+ *   não confirmado  sim. Rota ausente ou corpo desconhecido: volta ao comportamento anterior à fatia.
+ *   declarada       não. A lista é a política, e vazia significa "não gera próxima operação".
+ *   não declarada   sim. É o acervo legado, que a API converte pela ponte — e a tela oferece o mesmo.
+ *   não informada   espelha o próprio servidor que respondeu: sem discriminador, o que a API anterior faz
+ *                   é usar o grafo quando ele existe e a ponte quando ele está vazio. Isto NÃO é inferir
+ *                   política pela cardinalidade: é reproduzir, sem adivinhar, a regra do servidor que está
+ *                   do outro lado — que é a única coisa que se sabe dele.
+ */
+export function usaCadeiaDeCompatibilidade(e: EstadoProximosPassos): boolean {
+  if (e.situacao === "carregando") return false;
+  if (e.situacao === "nao-confirmado") return true;
+  if (e.politicaConfigurada !== null) return !e.politicaConfigurada;
+  return e.itens.length === 0;
 }
 
 /**
  * A CADEIA DE COMPATIBILIDADE — e por que ela ainda existe, escrita, neste arquivo.
  *
  * Isto é a política ANTERIOR (orçamento gera pedido, pedido gera venda), e ela NÃO é fonte de verdade
- * de coisa nenhuma: só é consultada quando o servidor não confirmou o contrato de próximos passos,
- * durante a janela de rolling deploy. Com a API nova em produção, nenhuma tela chega aqui.
+ * de coisa nenhuma: só é consultada quando `usaCadeiaDeCompatibilidade` diz que a ponte vale — servidor
+ * que não confirmou o contrato, ou operação cuja política NUNCA foi declarada. Este segundo caso é o
+ * acervo de hoje (toda TOP nasceu sem grafo) e é exatamente o que a API faz com ele: converter pela
+ * cadeia anterior. Declarada a política, nem a tela nem a API voltam aqui — para aquela operação.
  *
  * Ela fica em UM lugar, nomeada pelo que é, em vez de espalhada pelo campo `proximo` do mapa de
  * variantes — onde parecia (e era lida como) configuração do produto. Quando a API nova estiver

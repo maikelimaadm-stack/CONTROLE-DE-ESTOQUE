@@ -155,7 +155,20 @@ interface ProximoPasso {
 }
 
 /**
- * OS PRÓXIMOS PASSOS DE UM DOCUMENTO — lidos da VERSÃO que ele cita, filtrados pelo estado de HOJE.
+ * A POLÍTICA DE PRÓXIMAS OPERAÇÕES DE UM DOCUMENTO: o ESTADO dela, e os passos que ela oferece HOJE.
+ *
+ * ┌─ POR QUE DUAS COISAS, E NÃO SÓ A LISTA ─────────────────────────────────────────────────────────────┐
+ * │ `itens.length === 0` tem DUAS causas que pedem comportamentos OPOSTOS, e contar não as separa:      │
+ * │                                                                                                      │
+ * │   `configurada: false` → ninguém NUNCA declarou política para esta versão. É o acervo inteiro e é o │
+ * │                          que o binário antigo grava. Só aqui a cadeia antiga continua valendo.       │
+ * │   `configurada: true`  → a política foi declarada, e declarou ZERO destinos. É uma decisão, e o que │
+ * │                          ela decide é que este documento NÃO gera próxima operação.                  │
+ * │                                                                                                      │
+ * │ O discriminador é a coluna `destinos_configurados` da VERSÃO (0022), nunca a cardinalidade. Antes    │
+ * │ desta correção a conversão decidia por `passos.length > 0`, e a consequência era que a web obedecia  │
+ * │ ao administrador e uma chamada direta à API convertia assim mesmo.                                   │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ AS DUAS PERGUNTAS, DE NOVO, PORQUE É AQUI QUE ELAS SE ENCONTRAM ───────────────────────────────────┐
  * │ A POLÍTICA vem de `tipo_operacao_versao_id` do documento: a versão que valia quando ele nasceu. Ela │
@@ -166,37 +179,68 @@ interface ProximoPasso {
  * │ caminho existiu, e é por isso que a conversão que já aconteceu continua explicável.                  │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
- * Documento LEGADO (sem TOP) devolve lista vazia. Não há política para ler, e inventar a cadeia fixa aqui
- * seria transformar ausência de configuração em configuração — exatamente o que a fatia veio desfazer.
+ * E O GRAFO NÃO AUTORIZA NINGUÉM: ele só RESTRINGE o caminho. Quem decide se o usuário pode percorrer o
+ * caminho escolhido é a capacidade dele, cobrada na conversão. Habilitar uma aresta não concede permissão.
+ *
+ * UMA IDA AO BANCO. A versão de origem é o lado FIXO do `left join`: ela responde o estado mesmo quando
+ * não há nenhuma aresta, e as arestas viajam na mesma resposta. Duas consultas dariam o mesmo resultado e
+ * pagariam um `round trip` por documento aberto.
  */
-async function proximosPassos(ctx: ServiceCtx, versaoOrigemId: string | null | undefined): Promise<ProximoPasso[]> {
-  if (!versaoOrigemId) return [];
-  const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; codigo_base: string; ordem: number }>(
-    `select t.id, t.codigo, v.nome, t.codigo_base, d.ordem
-       from erp.tipos_operacao_versao_destinos d
-       join erp.tipos_operacao t
+interface PoliticaDeDestinos { configurada: boolean; itens: ProximoPasso[] }
+
+async function politicaDeDestinos(ctx: ServiceCtx, versaoOrigemId: string | null | undefined): Promise<PoliticaDeDestinos> {
+  // DOCUMENTO SEM TOP — acervo, ou criado por cliente anterior a esta fatia. Não há versão para ler, logo
+  // não há política declarada: `false` é a descrição do que aconteceu, e é o que preserva a cadeia antiga
+  // para esses documentos. Inventar a cadeia fixa como se fosse política seria o contrário do que a fatia
+  // veio fazer.
+  if (!versaoOrigemId) return { configurada: false, itens: [] };
+
+  const r = await ctx.tx.query<{
+    destinos_configurados: boolean; destino_id: string | null; codigo: string | null;
+    nome: string | null; codigo_base: string | null; ordem: number | null;
+  }>(
+    `select vo.destinos_configurados,
+            t.id as destino_id, t.codigo, tv.nome, t.codigo_base, d.ordem
+       from erp.tipos_operacao_versoes vo
+       left join erp.tipos_operacao_versao_destinos d
+         on d.origem_versao_id = vo.id and d.organization_id = vo.organization_id
+       left join erp.tipos_operacao t
          on t.id = d.destino_tipo_operacao_id and t.organization_id = d.organization_id
-       join erp.tipos_operacao_versoes v
-         on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
-      where d.organization_id = $1 and d.origem_versao_id = $2
         and t.ativo and t.excluido_em is null
+       left join erp.tipos_operacao_versoes tv
+         on tv.tipo_operacao_id = t.id and tv.organization_id = t.organization_id and tv.versao = t.versao_atual
+      where vo.organization_id = $1 and vo.id = $2
       order by d.ordem, t.codigo`,
     [ctx.orgId, versaoOrigemId]);
 
-  const passos: ProximoPasso[] = [];
+  const primeira = r.rows[0];
+  if (!primeira) {
+    // A VERSÃO QUE O DOCUMENTO CITA NÃO FOI LIDA — e aqui NÃO se escolhe uma das duas leituras no escuro.
+    // Assumir "nunca declarou" liberaria a cadeia antiga sobre um documento cuja política ninguém
+    // conseguiu ler, que é exatamente a conversão que esta correção existe para impedir. A FK composta da
+    // 0021 (versão + TOP + organização) e a RLS do mesmo tenant tornam este caminho inalcançável enquanto
+    // o documento for visível; se ele for alcançado, é corrupção, e recusar é a única resposta honesta.
+    throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este documento");
+  }
+
+  const itens: ProximoPasso[] = [];
   for (const linha of r.rows) {
+    // LINHA SEM DESTINO é o `left join` falando: ou a versão não tem aresta nenhuma (uma linha só, toda
+    // nula), ou a aresta existe e o destino NÃO passa no filtro de hoje (desativado, excluído). Nos dois
+    // casos não há passo a oferecer — e a aresta continua lá, congelada, explicando o que já aconteceu.
+    if (!linha.destino_id || linha.codigo === null || linha.nome === null || linha.codigo_base === null || linha.ordem === null) continue;
     // FAIL-CLOSED na apresentação também: destino cuja família o produto não sabe criar não é oferecido.
     // Poderia existir se uma família saísse do registry depois de a aresta ter sido gravada — e oferecer
     // um botão sem serviço atrás é pior do que oferecer um botão a menos.
     const variante = varianteDeDocumentoVendaDaFamilia(linha.codigo_base);
     if (!variante) continue;
-    passos.push({
-      tipoOperacaoId: linha.id, codigo: linha.codigo, nome: linha.nome,
+    itens.push({
+      tipoOperacaoId: linha.destino_id, codigo: linha.codigo, nome: linha.nome,
       codigoBase: linha.codigo_base, familiaRotulo: t(chaveI18nDaFamiliaOperacional(linha.codigo_base) ?? linha.codigo_base),
       variante: variante as SalesKind, ordem: linha.ordem
     });
   }
-  return passos;
+  return { configurada: primeira.destinos_configurados, itens };
 }
 
 async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts: { lock?: boolean } = {}) {
@@ -359,6 +403,16 @@ export default async function salesRoutes(app: FastifyInstance) {
      *
      * `contractVersion` pelo mesmo motivo da capability da TOP: um 200 de formato desconhecido é o modo de
      * falha mais perigoso, porque parece sucesso.
+     *
+     * `politicaConfigurada` É O DISCRIMINADOR, e é o que a lista sozinha não consegue dizer: `items: []`
+     * tem duas histórias — "ninguém nunca declarou o que vem depois" (e a conversão pela cadeia antiga
+     * continua existindo para este documento) e "foi declarado que não vem nada depois" (e a conversão é
+     * recusada). A tela precisa das duas separadas para não oferecer um botão que o servidor recusará, nem
+     * esconder um que ele aceitaria.
+     *
+     * PARA POLÍTICA NÃO CONFIGURADA, `items` CONTINUA VAZIO. Seria fácil devolver aqui o destino da cadeia
+     * antiga para a tela ter o que mostrar — e seria inventar uma política que ninguém declarou, exibida
+     * com a mesma aparência das que foram declaradas de verdade.
      */
     app.get(`${base}/:id/proximos-passos`, async (req) => runService(app, req, `${perm}.view`, async (ctx) => {
       const { id } = req.params as { id: string };
@@ -366,7 +420,8 @@ export default async function salesRoutes(app: FastifyInstance) {
       // mesma 404 de inexistente. Sem esta leitura, um id de outro tenant devolveria lista vazia com 200 —
       // resposta diferente de 404 e, portanto, um oráculo de existência.
       const doc = await getDoc(ctx, id, kind) as Record<string, unknown> & { tipo_operacao_versao_id?: string | null };
-      return { contractVersion: 1, items: await proximosPassos(ctx, doc.tipo_operacao_versao_id) };
+      const politica = await politicaDeDestinos(ctx, doc.tipo_operacao_versao_id);
+      return { contractVersion: 1, politicaConfigurada: politica.configurada, items: politica.itens };
     }));
 
     app.get(`${base}/operation-types`, async (req) => runService(app, req, `${perm}.create`, async (ctx) => {
@@ -531,16 +586,24 @@ export default async function salesRoutes(app: FastifyInstance) {
      * CONVERSÃO É OPERAÇÃO COMPOSTA — e por isso exige AS DUAS capacidades (BASE2-03C).
      *
      * Ela MUTA a variante fonte (status → `converted`) e CRIA um documento da variante destino. Autorizar
-     * só pela criação do destino, como antes, dava a quem tem `orders.create` o poder de encerrar um
-     * ORÇAMENTO que ele não pode editar — capacidade de uma família virando mutação na outra.
+     * só pela criação do destino dava a quem tem `orders.create` o poder de encerrar um ORÇAMENTO que ele
+     * não pode editar — capacidade de uma família virando mutação na outra.
      *
      * Contrato: `source.edit` ∧ `target.create`, combinados com AND. O `runService` cobra a capacidade da
-     * FONTE (é a variante da rota, e é o registro que vai ser mutado); o `requirePermission` abaixo cobra
-     * a do DESTINO — ANTES de qualquer leitura de registro e de qualquer mutação, de modo que faltar
-     * metade não deixa efeito nenhum. Sem permissão nova: as duas já existem no catálogo.
+     * FONTE (é a variante da rota, e é o registro que vai ser mutado). A do DESTINO é cobrada LÁ DENTRO,
+     * depois de o destino REAL ser conhecido — e ainda antes de qualquer efeito. Sem permissão nova: as
+     * duas já existem no catálogo.
+     *
+     * ┌─ POR QUE A CAPACIDADE DO DESTINO NÃO PODE MAIS SER COBRADA AQUI EM CIMA ────────────────────────┐
+     * │ Até esta correção, a primeira linha do handler cobrava `permOf(nextSalesKind(kind)).create` — a  │
+     * │ cadeia ANTIGA. Quando a política da versão manda o orçamento direto para VENDA, o destino real é │
+     * │ `sale` e a permissão cobrada era `orders.create`: uma capacidade que não tem nada a ver com o    │
+     * │ que seria criado. Ela recusava quem podia (vendedor com `sales.create` e sem `orders.create`) e  │
+     * │ deixava passar quem não podia — e `sales.create` acabava nunca sendo exigida para criar UMA      │
+     * │ VENDA. Qual é o destino só se sabe depois de ler o documento e o grafo da versão que ele cita.   │
+     * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
      */
     if (kind !== "sale") app.post(`${base}/:id/convert`, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.edit`, async (ctx) => {
-      requirePermission(ctx, `${permOf(nextSalesKind(kind))}.create`);
       const { id } = req.params as { id: string };
       const next = nextSalesKind(kind);
       // A TOP DO DESTINO NÃO SE HERDA DA FONTE — nem podia. `1101 — Orçamento padrão` é da família
@@ -563,12 +626,21 @@ export default async function salesRoutes(app: FastifyInstance) {
        * `?? null` porque `undefined` SOME do JSON: sem ele, `{}` e `{"tipo_operacao_id":null}` — que são o
        * mesmo pedido — gerariam hashes diferentes.
        *
-       * FICAM DE FORA do bloco a capacidade do DESTINO e o parse do corpo — mas NÃO pelo motivo que esta
-       * linha afirmava antes ("a chave ficaria gravada sem resposta"). Não ficaria: `withTx` desfaz a
-       * transação inteira em qualquer throw, e o INSERT da chave vai junto. O motivo real é mais simples e
-       * continua valendo: autorização e forma do pedido são conferidas ANTES de qualquer efeito, inclusive
-       * antes de reservar chave — é a mesma ordem que o resto do servidor usa, e não depende de a
-       * transação salvar ninguém.
+       * FICA DE FORA do bloco o PARSE DO CORPO: forma do pedido não depende de ler registro nenhum, e
+       * conferi-la antes de reservar a chave é a mesma ordem que o resto do servidor usa.
+       *
+       * A CAPACIDADE DO DESTINO, PORÉM, FICA DENTRO — e isto é uma correção do texto que estava aqui, não
+       * um afrouxamento. Ela costumava ser cobrada lá em cima porque o destino era uma constante do
+       * produto; agora ele depende do documento e da política da versão, que só se leem aqui dentro.
+       *
+       * ISSO NÃO DEIXA CHAVE ÓRFÃ, e é o mesmo motivo que já derrubava a justificativa antiga ("a chave
+       * ficaria gravada sem resposta"): a transação do `runService` desfaz TUDO em qualquer throw, e o
+       * INSERT da chave de idempotência vai junto. Um 403 por falta da capacidade do destino não reserva
+       * chave nenhuma — a mesma chave pode ser reenviada depois, e será a primeira execução de verdade.
+       *
+       * O que continua inegociável é a ORDEM DENTRO DO BLOCO: ler e travar a fonte não é efeito; a
+       * permissão do destino REAL é cobrada depois de saber qual é o destino e ANTES de `writeDoc`, antes
+       * de a fonte virar `converted` e antes de qualquer auditoria.
        */
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
         // O HASH NÃO MUDA DE FORMA NESTA FATIA, de propósito. `targetKind` continua sendo o destino da
@@ -590,43 +662,65 @@ export default async function salesRoutes(app: FastifyInstance) {
        * │ documento cita. Orçamento pode ir direto para venda se a organização configurou assim.       │
        * └──────────────────────────────────────────────────────────────────────────────────────────────┘
        *
+       * ┌─ A DECISÃO É PELO ESTADO DA POLÍTICA, NUNCA PELA CARDINALIDADE ──────────────────────────────┐
+       * │ `passos.length > 0` colapsava as duas leituras que a versão sabe distinguir, e o efeito era  │
+       * │ um servidor que desobedecia ao administrador: quem declarasse "esta operação não tem próximo │
+       * │ passo" via a web obedecer e uma chamada direta a esta rota converter assim mesmo. A política │
+       * │ vazia deixava de existir na prática.                                                          │
+       * │                                                                                               │
+       * │   politica.configurada = true   → O GRAFO É AUTORIDADE, INCLUSIVE VAZIO.                      │
+       * │                                   zero itens → RECUSA; destino fora da lista → RECUSA.        │
+       * │   politica.configurada = false  → PONTE LEGADA: segue a cadeia anterior, e SÓ aqui.           │
+       * └───────────────────────────────────────────────────────────────────────────────────────────────┘
+       *
        * ┌─ A PONTE, E POR QUE ELA EXISTE (medido, não suposto) ────────────────────────────────────────┐
-       * │ TODA TOP que existe hoje tem ZERO destinos: o grafo nasceu vazio nesta fatia. Exigir a aresta │
-       * │ de imediato quebraria TODA conversão de TODA organização no instante do deploy, incluindo a   │
-       * │ do cliente que nunca vai abrir a tela nova. Por isso:                                         │
+       * │ Toda versão anterior a esta fatia nasceu com `destinos_configurados = false`: não havia onde  │
+       * │ declarar política. Exigir a aresta de imediato quebraria TODA conversão de TODA organização   │
+       * │ no instante do deploy, incluindo a do cliente que nunca vai abrir a tela nova.                │
        * │                                                                                               │
-       * │   ORIGEM COM GRAFO CONFIGURADO  → o grafo é AUTORIDADE. Destino fora dele é RECUSADO.         │
-       * │   ORIGEM SEM GRAFO NENHUM       → segue a cadeia anterior, idêntica ao que já era.            │
-       * │                                                                                               │
-       * │ Isto NÃO é "inferir a cadeia por conta própria": é preservar, para o acervo ainda não         │
-       * │ configurado, exatamente o contrato que ele tem hoje. A tela NOVA não usa esta ponte — lá,     │
-       * │ versão sem transição mostra `Próximos passos` vazio e não oferece conversão, como manda o     │
-       * │ contrato. A ponte é transitória e tem saída declarada em docs/DECISIONS.md.                   │
+       * │ Isto NÃO é "inferir a cadeia por conta própria": é preservar, para quem NUNCA declarou nada,  │
+       * │ exatamente o contrato que ele tem hoje. Quem declara — mesmo que declare o vazio — sai da     │
+       * │ ponte na mesma hora. A tela NOVA não usa esta ponte: lá, política declarada sem transição     │
+       * │ mostra `Próximos passos` vazio e não oferece conversão. A ponte é transitória e tem saída     │
+       * │ declarada em docs/DECISIONS.md.                                                               │
        * └───────────────────────────────────────────────────────────────────────────────────────────────┘
        */
-      const passos = await proximosPassos(ctx, cur.tipo_operacao_versao_id);
-      let destino: SalesKind = next;
+      const politica = await politicaDeDestinos(ctx, cur.tipo_operacao_versao_id);
+      let destino: SalesKind;
       let topDestino: TopDoLancamento | null = null;
 
-      if (passos.length > 0) {
+      if (politica.configurada) {
+        // POLÍTICA DECLARADA SEM NENHUM DESTINO É UMA DECISÃO, e a decisão é "não converte". Cair na ponte
+        // aqui seria desfazer, no servidor, o que o administrador configurou. A recusa não vaza nada: fala
+        // sobre a operação do documento que o usuário já está vendo.
+        if (politica.itens.length === 0) {
+          throw new DomainError("TIPO_OPERACAO_INDISPONIVEL",
+            "A operação deste documento não gera nenhuma próxima operação");
+        }
         if (!alvo.tipo_operacao_id) {
           throw new DomainError("TIPO_OPERACAO_INDISPONIVEL",
             "Escolha qual próxima operação deve ser gerada a partir deste documento");
         }
-        const escolhido = passos.find((x) => x.tipoOperacaoId === alvo.tipo_operacao_id);
-        // MESMA recusa para "não está no grafo", "foi desativada" e "não existe": o diálogo de conversão
-        // não pode virar um oráculo de quais TOPs existem na organização.
+        const escolhido = politica.itens.find((x) => x.tipoOperacaoId === alvo.tipo_operacao_id);
+        // MESMA recusa para "não está no grafo", "foi desativada", "foi excluída" e "não existe": o diálogo
+        // de conversão não pode virar um oráculo de quais TOPs existem na organização.
         if (!escolhido) {
           throw new DomainError("TIPO_OPERACAO_INDISPONIVEL",
             "Esta próxima operação não está disponível para este documento");
         }
         destino = escolhido.variante;
-        // A CAPACIDADE DO DESTINO É COBRADA DEPOIS DE SABER QUAL É O DESTINO — e ainda ANTES de qualquer
-        // mutação. Ler com `for update` não é efeito; a fonte só vira `converted` bem mais abaixo.
+        // A CAPACIDADE DO DESTINO É COBRADA DEPOIS DE SABER QUAL É O DESTINO REAL — e ainda ANTES de
+        // qualquer efeito. Ler e travar a fonte não é efeito; a fonte só vira `converted` bem mais abaixo,
+        // e um throw aqui desfaz a transação inteira: 403, fonte segue `open`, zero derivado, zero
+        // auditoria. O grafo restringe o caminho; quem autoriza percorrê-lo continua sendo a capacidade.
         requirePermission(ctx, `${permOf(destino)}.create`);
         topDestino = await resolverTopParaLancamento(ctx, familiaDaVariante(destino), escolhido.tipoOperacaoId);
       } else {
-        topDestino = alvo.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(next), alvo.tipo_operacao_id) : null;
+        // PONTE LEGADA — a versão nunca declarou política, então o destino é o da cadeia anterior. A
+        // capacidade cobrada é a DESSE destino, pelo mesmo motivo e no mesmo ponto do ramo de cima.
+        destino = next;
+        requirePermission(ctx, `${permOf(destino)}.create`);
+        topDestino = alvo.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(destino), alvo.tipo_operacao_id) : null;
       }
       const body = docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments ? cur.installment_plan : null, items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
       const r = await writeDoc(ctx, destino, body, undefined, id, topDestino);

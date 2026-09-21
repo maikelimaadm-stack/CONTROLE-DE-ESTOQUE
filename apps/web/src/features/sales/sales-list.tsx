@@ -85,6 +85,9 @@ export function DocumentosDeVendaList({ kind }: { kind: string }) {
       { name: "empresa_id", label: "Empresa", type: "ref", resource: "empresas" },
       { name: "status", label: COPY.situacao, type: "select", options: [{ value: "open", label: "Aberto" }, { value: "approved", label: "Aprovado" }, { value: "converted", label: "Convertido" }, { value: "confirmed", label: "Confirmado" }, { value: "cancelled", label: "Cancelado" }] },
       { name: "search", label: "Código / cliente", type: "text" },
+      // SEM OPÇÕES, SEM FILTRO — um `select` vazio é um controle que aparece e não funciona. É o caso de
+      // quem só tem leitura: a porta que lista TOPs é a do lançamento (`useOpcoesDeTopDeVendas` explica a
+      // decisão e a pendência). A listagem continua inteira, porque filtrar por TOP é conveniência.
       ...(opcoesTop.length ? [{ name: "tipo_operacao_id", label: "Tipo de Operação", type: "select" as const, options: opcoesTop }] : [])
     ]}
     columns={colunas}

@@ -65,7 +65,7 @@ const AJUDA: Record<ChaveAba, string> = {
   geral:
     "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação.",
   destinos:
-    "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém.",
+    "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Enquanto esta operação não declarar a política, a conversão continua seguindo o caminho anterior do produto.",
   estoque:
     "Se esta operação declara movimentação de estoque e em que sentido, além do que ela exige do operador e do que fazer quando o saldo ficaria negativo.",
   financeiro:
@@ -193,6 +193,16 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const configuracaoIlegivel = edicao && !!detalhe && detalhe.configuracao !== null && !detalhe.configuracao.suportada;
   const liberado = configuravel && !configuracaoIlegivel;
 
+  /**
+   * A LISTA DE DESTINOS NÃO FOI LIDA — e por isso não pode ser reescrita.
+   *
+   * O servidor declarou que sustenta próximas operações (`capabilities.destinos.suportado`), mas o detalhe
+   * não trouxe a lista numa forma reconhecível. Abrir a aba assim mostraria uma lista VAZIA que não é a
+   * política — e a gravação seguinte enviaria `[]`, apagando arestas que ninguém viu. É o mesmo erro de
+   * ler ausência como vazio que esta correção existe para desfazer, só que do lado do cliente.
+   */
+  const destinosIlegiveis = edicao && !!detalhe && destinosConfiguraveis && detalhe.destinos === null;
+
   const inicial = React.useMemo<RascunhoTop>(() => ({
     nome: detalhe?.nome ?? "",
     descricao: detalhe?.descricao ?? "",
@@ -203,7 +213,17 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
     configuracao: configuracaoInicial(detalhe?.configuracao ?? null),
     destinos: (detalhe?.destinos ?? []).map((d) => ({
       tipoOperacaoId: d.tipoOperacaoId, codigo: d.codigo, nome: d.nome, familiaRotulo: d.familiaRotulo, disponivel: d.disponivel
-    }))
+    })),
+    /**
+     * SÓ `true` COMEÇA DECLARADO. `false` (legado) e `null` (servidor que não informou) começam como NÃO
+     * declarado — e a gravação então OMITE `destinos`, que é o contrato de "preserve o que está lá".
+     *
+     * O caminho oposto seria começar sempre declarado "porque o editor sabe editar destinos": aí qualquer
+     * gravação de nome ou de configuração converteria, de carona, todo registro legado em "declarado sem
+     * nenhuma próxima operação" — e a conversão daquela operação pararia de funcionar sem que ninguém
+     * tivesse pedido isso, na edição de um campo que nada tem a ver com o assunto.
+     */
+    destinosDeclarados: detalhe?.destinosConfigurados === true
   }), [detalhe]);
 
   const [rascunho, setRascunho] = React.useState<RascunhoTop>(inicial);
@@ -232,7 +252,18 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       // NUNCA ÀS CEGAS: sem contrato confirmado, `configuracao` e `destinos` simplesmente não vão no corpo —
       // e a tela já avisou que essas seções estão bloqueadas, então ninguém lê "salvo" sobre elas.
       if (liberado) base.configuracao = rascunho.configuracao;
-      if (liberado && destinosConfiguraveis) {
+      /**
+       * A PRESENÇA DA CHAVE `destinos` É A DECLARAÇÃO — no servidor e, portanto, aqui.
+       *
+       *   ausente  preserve o que já estava (arestas E o estado da política). É o que sai daqui quando o
+       *            usuário não declarou nada, e é o que mantém intacto o registro legado.
+       *   presente declare. `[]` é uma declaração legítima e VAI como `[]`: "esta operação não gera
+       *            próxima operação" é uma decisão, não a falta de uma.
+       *
+       * Por isso a condição é `destinosDeclarados`, e não `destinos.length` — a lista vazia aparece nos
+       * dois estados, e é justamente o que ela NÃO consegue distinguir.
+       */
+      if (liberado && destinosConfiguraveis && !destinosIlegiveis && rascunho.destinosDeclarados) {
         base.destinos = rascunho.destinos.map((d, i) => ({ tipoOperacaoId: d.tipoOperacaoId, ordem: i + 1 }));
       }
       if (edicao) return api(`/api/admin/tipos-operacao/${id}`, { method: "PUT", body: { ...base, revisao } });
@@ -346,7 +377,13 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
             destinos={rascunho.destinos}
             limite={limite}
             habilitado={destinosConfiguraveis}
-            onChange={(d) => mudar({ destinos: d })}
+            ilegivel={destinosIlegiveis}
+            declarado={rascunho.destinosDeclarados}
+            estadoNoServidor={edicao ? detalhe?.destinosConfigurados ?? null : false}
+            // MEXER NA LISTA É DECLARAR. Incluir, remover ou reordenar são a mesma decisão vista de três
+            // ângulos: a partir daí existe uma política escrita por alguém, e ela vai no corpo da gravação.
+            onChange={(d) => mudar({ destinos: d, destinosDeclarados: true })}
+            onDeclarar={() => mudar({ destinosDeclarados: true })}
           />
         </div>
       </Secao>}
@@ -494,21 +531,47 @@ function BloqueioDeConfiguracao({ estado, ilegivel }: { estado: EstadoCapacidade
  * de família; refazer esse recorte aqui seria uma segunda cópia das regras do grafo, que envelheceria em
  * silêncio na primeira família nova — e uma tela que decide compatibilidade vira autoridade de coisa que
  * não é dela.
+ *
+ * ┌─ DOIS ESTADOS QUE A LISTA VAZIA NÃO DISTINGUE (correção R1) ───────────────────────────────────────┐
+ * │ "Nenhum destino" é a mesma tela para duas realidades OPOSTAS:                                      │
+ * │                                                                                                     │
+ * │   POLÍTICA NÃO DECLARADA  ninguém respondeu à pergunta. A conversão segue o caminho anterior do     │
+ * │                           produto, e é isso que o operador vê acontecer no documento.               │
+ * │   POLÍTICA DECLARADA VAZIA alguém respondeu "esta operação não gera nada". A conversão é recusada.  │
+ * │                                                                                                     │
+ * │ São frases diferentes porque quem lê precisa decidir coisas diferentes: no primeiro caso falta      │
+ * │ configurar; no segundo, está configurado. Uma frase só para os dois faria o administrador "corrigir"│
+ * │ uma decisão que já estava certa — ou deixar sem política uma operação que ele achou configurada.    │
+ * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
-function AbaDestinos({ codigoBase, destinos, limite, habilitado, onChange }: {
+function AbaDestinos({ codigoBase, destinos, limite, habilitado, ilegivel, declarado, estadoNoServidor, onChange, onDeclarar }: {
   codigoBase: string;
   destinos: DestinoEmEdicao[];
   limite: number;
   habilitado: boolean;
+  /** O servidor sustenta destinos, mas o detalhe não trouxe a lista de forma legível: bloqueia. */
+  ilegivel: boolean;
+  /** Este RASCUNHO declara a política? É o que decide se `destinos` vai no corpo da gravação. */
+  declarado: boolean;
+  /** O que a versão GRAVADA diz: `true`/`false` declarados pelo servidor, `null` quando ele não informou. */
+  estadoNoServidor: boolean | null;
   onChange: (d: DestinoEmEdicao[]) => void;
+  onDeclarar: () => void;
 }) {
-  const { itens, carregando, erro } = useDestinosPossiveis(codigoBase, habilitado);
+  const { itens, carregando, erro } = useDestinosPossiveis(codigoBase, habilitado && !ilegivel);
   const [escolhido, setEscolhido] = React.useState("");
 
   if (!habilitado) {
     return <p data-testid="top-destinos-nao-suportado" className="text-[12px] text-amber-700">
       Este servidor não confirmou o recurso de próximas operações. A seção está bloqueada e nenhuma
       alteração de encadeamento é enviada ao salvar; as demais seções continuam funcionando.
+    </p>;
+  }
+  if (ilegivel) {
+    return <p data-testid="top-destinos-ilegiveis" className="text-[12px] text-amber-700">
+      Este servidor não devolveu as próximas operações desta versão em um formato que esta tela reconhece.
+      A seção está bloqueada e nada de encadeamento é enviado ao salvar, para não apagar caminhos que não
+      chegaram a ser lidos. As demais seções continuam funcionando.
     </p>;
   }
   if (!codigoBase) {
@@ -544,6 +607,8 @@ function AbaDestinos({ codigoBase, destinos, limite, habilitado, onChange }: {
   };
 
   return <div data-testid="top-destinos">
+    <EstadoDaPolitica declarado={declarado} estadoNoServidor={estadoNoServidor} vazio={destinos.length === 0} onDeclarar={onDeclarar} />
+
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <NativeSelect aria-label="Operação de destino" className="w-80" data-testid="top-destino-escolha"
         value={escolhido} disabled={disponiveis.length === 0 || noLimite} onChange={(e) => setEscolhido(e.target.value)}>
@@ -556,9 +621,10 @@ function AbaDestinos({ codigoBase, destinos, limite, habilitado, onChange }: {
       <span className="text-[11px] text-slate-500">{destinos.length} de {limite}</span>
     </div>
 
-    {destinos.length === 0
-      ? <p className="text-[12px] text-slate-500">Nenhuma próxima operação habilitada. Um documento deste tipo não é encaminhado para outra operação.</p>
-      : <ul className="divide-y rounded border">
+    {/* A LISTA SÓ APARECE QUANDO EXISTE. O que "nenhum destino" significa é decidido acima, por
+        `EstadoDaPolitica` — e não por esta ausência de linhas, que é igual nos dois estados. */}
+    {destinos.length > 0
+      && <ul className="divide-y rounded border">
           {destinos.map((d, i) => <li key={d.tipoOperacaoId} data-testid="top-destino-linha" className="flex items-center gap-2 px-2 py-1.5 text-[12.5px]">
             <span className="w-6 text-right tabular-nums text-slate-400">{i + 1}</span>
             <span className="min-w-0 flex-1 truncate">
@@ -578,4 +644,50 @@ function AbaDestinos({ codigoBase, destinos, limite, habilitado, onChange }: {
       permissão a ninguém: quem pode criar o documento seguinte continua sendo decidido pelas permissões.
     </p>
   </div>;
+}
+
+/**
+ * O ESTADO DA POLÍTICA, DITO COM TODAS AS LETRAS — nunca deduzido do tamanho da lista.
+ *
+ * Três saídas, e a terceira é o silêncio: com política declarada E destinos na tela, a própria lista já
+ * responde a pergunta e uma frase extra seria ruído. As duas primeiras existem justamente porque a lista
+ * vazia não responde nada sozinha.
+ */
+function EstadoDaPolitica({ declarado, estadoNoServidor, vazio, onDeclarar }: {
+  declarado: boolean;
+  estadoNoServidor: boolean | null;
+  vazio: boolean;
+  onDeclarar: () => void;
+}) {
+  // O SERVIDOR NÃO DISSE, ENTÃO A TELA NÃO AFIRMA. Dizer "ainda não declarou" aqui seria inventar uma
+  // resposta em nome de quem não respondeu — o mesmo defeito, do lado do cliente.
+  if (!declarado && estadoNoServidor === null) {
+    return <p data-testid="top-destinos-estado-desconhecido" className="mb-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-600">
+      Este servidor não informou se esta operação já declarou uma política de próximas operações. A lista
+      abaixo é o que ele devolveu; enquanto nada for alterado nesta aba, a gravação não toca no encadeamento.
+    </p>;
+  }
+  if (!declarado) {
+    return <div data-testid="top-destinos-politica-nao-declarada" className="mb-3 space-y-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
+      <p>
+        Esta operação ainda não declarou uma política de próximas operações. Por compatibilidade, um
+        documento deste tipo continua sendo encaminhado pelo caminho anterior do produto — comportamento
+        herdado, e não uma decisão registrada aqui.
+      </p>
+      <p>
+        Adicione um destino abaixo para dizer para onde esta operação encaminha, ou registre que ela não
+        encaminha para lugar nenhum.
+      </p>
+      <Button size="sm" variant="outline" data-testid="top-destinos-declarar" onClick={onDeclarar}>
+        Declarar que não há próxima operação
+      </Button>
+    </div>;
+  }
+  if (vazio) {
+    return <p data-testid="top-destinos-politica-vazia" className="mb-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-700">
+      Política declarada: esta operação não gera nenhuma próxima operação. Ao salvar, um documento deste
+      tipo deixa de oferecer conversão, e uma conversão pedida fora desta tela é recusada pelo servidor.
+    </p>;
+  }
+  return null;
 }

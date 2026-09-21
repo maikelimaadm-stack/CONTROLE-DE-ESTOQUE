@@ -489,6 +489,9 @@ ter feito isso que a correção chegou como um teste que **passou a poder ser es
 | TOP em linha de item, em infraestrutura ou em movimento de ledger | não são lançamentos; movimento é consequência de um |
 | Colapsar variantes numa TOP só | apaga uma distinção funcional real |
 | TOP autorizando ou escondendo algo | autorização é capacidade × escopo, e não passa por aqui |
+| Decidir política de próximas operações pela CARDINALIDADE (`destinos.length`, `items.length`) | zero arestas tem duas origens opostas — nunca declarada e declarada vazia — e a contagem responde as duas com o mesmo número (§11.7) |
+| Cobrar a capacidade de um destino FIXO antes de saber qual destino o grafo escolheu | recusa quem pode e deixa passar quem não pode; a permissão acompanha o destino efetivo (§11.7) |
+| Marcar `destinos_configurados = true` por automação, backfill ou job | é inventar uma decisão que ninguém tomou, e a decisão inventada recusa conversões (§11.7) |
 
 ## 11. Configuração operacional versionada (TOP-CONFIG-03)
 
@@ -577,6 +580,7 @@ estoque" atribuiria a documentos antigos uma intenção que ninguém declarou.
 | nome, descrição | sim — é CONTEÚDO |
 | configuração operacional | sim — é a REGRA que explica o efeito |
 | lista de próximas operações | sim — é política, pela mesma razão |
+| declarar a política pela PRIMEIRA vez, ainda que vazia | sim — sair de "ninguém decidiu" para "decidido" é conteúdo (§11.7) |
 | `ativo` / `padrao` | **não** — é ESTADO; não muda o que a TOP É |
 | nada (reenviar o formulário igual) | **não** — no-op não escreve nada |
 
@@ -589,6 +593,12 @@ normalizada. Sem isso, salvar sem mexer em nada criaria versão só porque o cli
 outra ordem. Um `PUT` cujo conteúdo e estado coincidem com os atuais devolve o estado corrente sem
 gravar, sem incrementar `revisao` e sem auditar — porque `revisao` é a moeda do controle de
 concorrência, e gastá-la à toa manda 409 para toda outra aba aberta por uma mudança que não existiu.
+
+A comparação das próximas operações **não é só a lista**. Uma versão legada com zero arestas que
+recebe `destinos: []` tem, antes e depois, exatamente as mesmas arestas — nenhuma —, e comparar só a
+lista descartaria a edição como no-op, respondendo "salvo" sobre uma política que continuaria NÃO
+DECLARADA. A transição de `destinos_configurados` de `false` para `true` entra na comparação por isso,
+e é o §11.7 que explica o estado inteiro.
 
 **`revisao` protege lost update.** O `PUT` exige a revisão conhecida pelo cliente e a linha é lida sob
 `for update`: o lock resolve simultaneidade, a revisão resolve a aba aberta há dez minutos. Revisão
@@ -630,8 +640,9 @@ uma TOP desativada some do leque sem alterar a versão da origem: a conversão q
 explicável. Na administração, a distinção aparece como `disponivel` ao lado de cada destino — a aresta é
 história, a disponibilidade é hoje.
 
-Quando a versão N+1 nasce, as arestas são **copiadas** para ela mesmo sem mudança: a versão nova precisa
-declarar a política inteira dela, senão o histórico deixaria de ser autossuficiente.
+Quando a versão N+1 nasce, as arestas são **copiadas** para ela mesmo sem mudança — e o marcador
+`destinos_configurados` viaja junto (§11.7): a versão nova precisa declarar a política inteira dela,
+senão o histórico deixaria de ser autossuficiente.
 
 **A compatibilidade de família é DERIVADA do registry**, não uma lista. `validarDestinoOperacao` aplica
 duas regras, e as duas se resolvem perguntando ao registry qual variante de `erp.sales_documents` cada
@@ -694,31 +705,231 @@ com contrato CONHECIDO e rota presente com contrato FUTURO. Sem ela, as duas úl
 indistinguíveis — e um 200 de formato desconhecido é o modo de falha mais perigoso, porque parece
 sucesso.
 
-### 11.7 A ponte de compatibilidade da conversão — transitória, e declarada
+### 11.7 Ausência ≠ vazio: o marcador `destinos_configurados` e a ponte da conversão
 
-No handler de conversão (`POST /api/sales/{budgets,orders}/:id/convert`) convivem hoje dois caminhos:
+#### O defeito que esta seção corrige
 
-| Estado da origem | Quem decide o destino |
+A redação anterior desta seção descrevia a ponte por **cardinalidade**: "a versão *tem* destinos" contra
+"a versão *não tem* destino nenhum". Era a descrição fiel do código, e o código estava errado —
+`apps/api/src/routes/sales.ts` decidia com `passos.length > 0`.
+
+Zero arestas tem **duas** origens, e elas pedem comportamentos **opostos**:
+
+| O que aconteceu de verdade | O que a conversão precisa fazer |
 | --- | --- |
-| a versão que o documento cita **tem** destinos configurados | **o grafo é autoridade**: a TOP alvo é obrigatória e precisa estar no leque; fora dele é `TIPO_OPERACAO_INDISPONIVEL` |
-| a versão que o documento cita **não tem** destino nenhum | segue a **cadeia anterior** (`nextSalesKind`), idêntica ao que já era |
+| ninguém **nunca** declarou política para esta versão (acervo, compatibilidade) | seguir a cadeia anterior, ou toda conversão de toda organização quebra no deploy |
+| alguém declarou, **e declarou que não há próxima operação** | **recusar** a conversão — recusar foi exatamente o que o administrador configurou |
 
-**Por que a ponte existe.** O grafo nasceu vazio nesta fatia: toda TOP que existe hoje tem zero destinos.
-Exigir a aresta de imediato quebraria TODA conversão de TODA organização no instante do deploy — inclusive
-a do cliente que nunca vai abrir a tela nova. A ponte não é "inferir a cadeia por conta própria": é
-preservar, para o acervo ainda não configurado, exatamente o contrato que ele já tem.
+Contar arestas responde as duas com o mesmo zero. O efeito prático não era teórico: o administrador que
+declarasse "esta operação não tem próximo passo" via a **web obedecer** — a tela não oferecia conversão —
+e uma **chamada direta à API de conversão** cair na cadeia antiga e converter assim mesmo. A regra
+administrativa existia na tela e não existia no servidor, que é onde ela precisa existir.
 
-**Ela é transitória, e a condição de saída está escrita:** a ponte cai quando as organizações tiverem
-configurado o grafo das TOPs em uso e a ausência de destinos puder significar "não converte" em vez de
-"ainda não configurou". A tela nova já não depende dela — lá, versão sem transição mostra `Próximos
-passos` vazio e não oferece conversão.
+#### O marcador vive na VERSÃO
 
-Duas propriedades que a ponte **não** afrouxa: a capacidade do destino continua sendo cobrada (e, no
-caminho do grafo, é cobrada depois de saber qual é o destino e ainda antes de qualquer mutação — a
-conversão exige `origem.edit` ∧ `destino.create`); e o hash de idempotência **manteve a mesma forma**,
-com `targetKind` da cadeia anterior como componente, para que binário antigo e novo calculem a mesma
-chave para o mesmo pedido durante o rolling deploy. O destino real já entra no hash por
-`tipo_operacao_id`.
+```
+erp.tipos_operacao_versoes.destinos_configurados  boolean not null default false
+```
+
+| Valor | Significado | Efeito na conversão |
+| --- | --- | --- |
+| `false` | a política de próximas operações **nunca** foi declarada por cliente compatível com o grafo. É o estado **legado / de compatibilidade** | a ponte da cadeia antiga vale — **e só aqui** |
+| `true` | a política foi declarada explicitamente | **zero arestas ⇒ zero próximos passos** (conversão recusada, sem cair na ponte); **uma ou mais arestas ⇒ exatamente esses destinos** |
+
+**Por que na VERSÃO, e não no pai.** Pela mesma razão que põe a configuração e as arestas lá: isto é
+política **histórica**. Um documento emitido sob a versão 3 continua explicado pelo que a versão 3
+declarava — inclusive por "a versão 3 não declarava nada". Se o marcador morasse em
+`erp.tipos_operacao`, declarar a política hoje reescreveria retroativamente a explicação de toda
+conversão já feita, e a auditoria de um documento de ontem passaria a afirmar uma decisão que, naquele
+dia, ninguém tinha tomado.
+
+**Ele herda a imutabilidade da versão, e por isso a 0022 não cria gatilho nenhum para ele.**
+`trg_tipos_operacao_versoes_imutavel` (0020) já recusa `update` e `delete` sobre a tabela **inteira**; um
+segundo gatilho seria uma segunda verdade sobre a mesma regra. Declarar política é, como mudar nome ou
+configuração, **criar a versão N+1** — nunca corrigir a linha que está lá.
+
+**O `DEFAULT false` preenche o acervo e permanece depois da migration.** O backfill não podia ser
+`UPDATE` (o gatilho de imutabilidade o recusaria, e desligá-lo por conveniência de migration seria abrir
+justamente a porta que ele existe para trancar); `ADD COLUMN … DEFAULT` é DDL e preenche sem `UPDATE`. O
+default **fica** porque o binário ANTIGO insere versão sem citar a coluna: sem ele, o `INSERT` falharia
+por `NOT NULL` e a criação de TOP quebraria no meio do rolling deploy. E `false` é a leitura honesta dos
+dois lados — versão nascida antes de existir onde declarar política não escolheu o vazio, apenas não
+tinha escolha a fazer. A própria 0022 confere, no bloco de verificação, que **nenhuma** linha do acervo
+nasceu `true`: uma linha `true` ali seria uma política que ninguém escreveu, e o efeito dela é recusar
+conversão.
+
+#### Declarar é a PRESENÇA DA CHAVE, nunca o tamanho da lista
+
+Nas duas escritas administrativas (`POST` e `PUT /api/admin/tipos-operacao`), o discriminador é:
+
+```
+presente := (d.destinos !== undefined)
+```
+
+JSON não transporta `undefined`, então isso é literalmente "a chave veio no corpo". Daí decorrem, todas
+implementadas em `apps/api/src/routes/tipos-operacao.ts`:
+
+- **`"destinos": null` conta como PRESENTE** e equivale à lista vazia — o domínio já normaliza `null` para
+  `[]`. `[]` também é presença. Nos dois casos a versão nova nasce com `destinos_configurados = true`;
+- **ausente = preservar**, e preservar são **duas** coisas: as arestas **e** o marcador. É o que a web
+  ANTIGA manda durante o rolling deploy, e ler a ausência como "zerar" destruiria política que ninguém
+  pediu para destruir — e, pior, converteria em silêncio um registro legado em "declarado sem nenhuma
+  próxima operação", parando a conversão daquela operação na edição de um campo que nada tem a ver com o
+  assunto;
+- **declarar nunca volta a ser "não declarado"**: só `true` se sobrepõe (`declarouAgora ? true :
+  antes.destinos_configurados`). Silêncio do cliente não desfaz decisão de ninguém;
+- **o caso crítico do no-op**: versão corrente com zero arestas e `destinos_configurados = false`,
+  recebendo um `PUT` com `destinos: []`. As arestas são idênticas antes e depois, então comparar só a
+  lista diria "nada mudou" e a edição seria descartada como no-op — com a tela respondendo "salvo" sobre
+  uma política que continua NÃO DECLARADA. Por isso `mudouDestinos` inclui explicitamente a transição do
+  marcador: a política mudou no ponto que mais importa, de "ninguém nunca decidiu" para "decidido: não
+  gera próxima operação". É conteúdo, e conteúdo cria a versão N+1;
+- **a versão N+1 é autossuficiente**: quando ela nasce por mudança de nome ou de configuração com
+  `destinos` ausente, o marcador é **copiado** junto com as arestas. Herdar por referência faria a versão
+  nova depender da anterior para ser lida, e o histórico deixaria de ser autossuficiente — que é a única
+  coisa que ele promete ser.
+
+`?? []` resolveria a normalização e **apagaria a pergunta**. Por isso a presença é lida antes, e a
+normalização de `null` continua sendo trabalho do domínio.
+
+#### Onde o estado aparece no contrato da API
+
+| Superfície | Campo | Observação |
+| --- | --- | --- |
+| `GET /api/admin/tipos-operacao/:id` (detalhe) | `destinosConfigurados: boolean` | lido da coluna da versão corrente, **nunca** deduzido de `destinos.length` |
+| `GET /api/admin/tipos-operacao/:id/versoes` (histórico) | `destinosConfigurados: boolean` por versão | é a pergunta que o histórico existe para responder e que a contagem de arestas não responde |
+| `GET /api/sales/{variante}/:id/proximos-passos` | `politicaConfigurada: boolean` | o discriminador operacional, ao lado de `items` |
+| auditoria (`create` e `update` de TOP) | `destinosConfigurados` ao lado de `destinos: <n>` | `destinos: 0` sozinho não responde o que aconteceu; com o booleano, a trilha separa "declarei que não gera nada" de "não falei do assunto" |
+
+A **listagem** administrativa não publica o campo: ela responde "que TOPs existem", não "qual é a política
+de cada uma".
+
+Em `/proximos-passos`, **política não configurada continua devolvendo `items: []`**. Devolver ali o
+destino da cadeia antiga daria à tela o que mostrar e seria inventar uma política que ninguém declarou,
+exibida com a mesma aparência das que foram declaradas de verdade.
+
+Do lado do cliente, `politicaConfigurada` é **opcional na leitura**, e ausência vira `null` — "este
+servidor não respondeu essa pergunta" —, nunca `false`, que seria afirmar por ele. Com `null`, a web
+espelha a regra do servidor que está do outro lado (o da fatia anterior, que usa o grafo quando ele
+existe e a ponte quando está vazio); é reproduzir o que se sabe daquele servidor, não inferir política
+por cardinalidade. A decisão fica em **uma** função (`usaCadeiaDeCompatibilidade`), e não numa escada de
+`if` espalhada pela tela — foi assim que a versão anterior acabou lendo "lista vazia" como "nenhuma
+conversão" para todo documento, inclusive os que o servidor ainda converte pela ponte.
+
+#### Os dois caminhos da conversão
+
+`POST /api/sales/{budgets,orders}/:id/convert` decide pelo **estado**, e a ponte deixou de ser heurística
+de cardinalidade para ser um **estado removível**:
+
+| Estado da versão que o documento cita | Quem decide o destino |
+| --- | --- |
+| `destinos_configurados = true` | **o grafo é autoridade, inclusive vazio.** Zero itens ⇒ recusa; TOP alvo obrigatória; alvo fora do leque ⇒ recusa |
+| `destinos_configurados = false` | **ponte legada**: segue a cadeia anterior (`nextSalesKind`), e **só aqui** |
+
+A **TOP do destino** também se comporta de modo diferente nos dois ramos: no do grafo ela é
+**obrigatória**, porque é ela que diz qual das arestas foi escolhida; na ponte continua **opcional** —
+informada, é resolvida para a família do destino da cadeia anterior; omitida, o documento derivado nasce
+sem TOP, exatamente como nascia antes desta fatia.
+
+**Vazio explícito é política válida, e a resposta é recusa.** Cair na ponte nesse caso seria desfazer, no
+servidor, o que o administrador configurou. As três recusas do ramo configurado usam
+`TIPO_OPERACAO_INDISPONIVEL` e falam apenas sobre a operação do documento que o usuário já está vendo:
+"não gera nenhuma próxima operação", "escolha qual próxima operação deve ser gerada" e "esta próxima
+operação não está disponível para este documento" — esta última é a **mesma** recusa para "não está no
+grafo", "foi desativada", "foi excluída" e "não existe", para que o diálogo de conversão não vire um
+oráculo de quais TOPs existem na organização.
+
+Dois casos de borda, os dois implementados:
+
+- **documento sem TOP** (`tipo_operacao_versao_id` nulo — acervo, ou criado por cliente anterior à
+  TOP-CONFIG-02): não há versão para ler, logo não há política declarada. `configurada: false`, e a ponte
+  vale. Inventar a cadeia fixa como se fosse política seria o contrário do que a fatia veio fazer;
+- **a versão citada não foi lida**: a conversão **recusa** (`TIPO_OPERACAO_INDISPONIVEL`), e não escolhe
+  uma das duas leituras no escuro. Assumir "nunca declarou" liberaria a cadeia antiga sobre um documento
+  cuja política ninguém conseguiu ler — exatamente a conversão que esta correção existe para impedir. A FK
+  composta da 0021 e a RLS do mesmo tenant tornam esse caminho inalcançável enquanto o documento for
+  visível; se for alcançado, é corrupção.
+
+**Por que a ponte existe.** Toda versão anterior a esta fatia nasceu com `destinos_configurados = false`:
+não havia onde declarar política. Exigir a aresta de imediato quebraria TODA conversão de TODA
+organização no instante do deploy, inclusive a do cliente que nunca vai abrir a tela nova. A ponte não é
+"inferir a cadeia por conta própria": é preservar, para quem **nunca declarou nada**, exatamente o
+contrato que ele já tem. Quem declara — mesmo que declare o vazio — sai da ponte na mesma hora, para
+aquela operação. A tela nova não usa a ponte quando a política está declarada.
+
+#### A capacidade cobrada é a do destino EFETIVO
+
+Até esta correção, a **primeira linha** do handler cobrava
+`requirePermission(ctx, permOf(nextSalesKind(kind)).create)` — a capacidade da **cadeia antiga**, antes de
+ler o documento e o grafo. Quando a política da versão manda o orçamento direto para **venda**, o destino
+real é `sale` e a permissão cobrada era `orders.create`: uma capacidade que não tem nada a ver com o que
+seria criado. Ela **recusava quem podia** (vendedor com `sales.create` e sem `orders.create`) e **deixava
+passar quem não podia** — `sales.create` acabava nunca sendo exigida para criar uma venda. Qual é o
+destino só se sabe depois de ler o documento e o grafo da versão que ele cita.
+
+O contrato continua sendo `origem.edit` ∧ `destino.create`, combinados com AND. O que mudou é **onde** a
+segunda metade é cobrada:
+
+- `runService` cobra a capacidade da **fonte** (é a variante da rota, e é o registro que vai ser mutado);
+- a capacidade do **destino real** é cobrada **dentro**, nos dois ramos — no do grafo, depois de resolver
+  qual variante o leque escolheu; na ponte, para o destino da cadeia anterior — e **antes de qualquer
+  efeito**. Ler e travar a fonte não é efeito: a fonte só vira `converted` bem depois, e um `throw` ali
+  desfaz a transação inteira (403, fonte segue `open`, zero derivado, zero auditoria).
+
+**Regra de ouro, e ela vale para todo o §11: o grafo NUNCA autoriza — ele só RESTRINGE o caminho.** A
+capacidade do usuário continua decidindo se ele pode executar aquele caminho. **Habilitar uma aresta não
+concede permissão a ninguém**, e desabilitar uma aresta não é mecanismo de segurança: é configuração de
+processo. Nenhuma permissão nova foi criada — as duas já existem no catálogo.
+
+Cobrar a permissão dentro do bloco idempotente **não deixa chave órfã**: a transação do `runService`
+desfaz tudo em qualquer `throw`, e o `INSERT` da chave vai junto. A mesma chave pode ser reenviada depois
+e será a primeira execução de verdade. E o **hash de idempotência manteve a forma**, com `targetKind` da
+cadeia anterior como componente, para que binário antigo e novo calculem a mesma chave para o mesmo
+pedido durante o rolling deploy (decisão 214); o destino real já entra no hash por `tipo_operacao_id`.
+
+#### Condição de saída da ponte
+
+A ponte é **transitória** e a saída é um **estado medível**, não uma data: ela pode ser removida quando
+não houver mais versões operacionais com `destinos_configurados = false` que precisem da cadeia antiga.
+
+Duas contagens respondem isso, executadas por organização (a RLS recorta o tenant):
+
+```sql
+-- (1) TOPs vivas cuja versão CORRENTE nunca declarou política.
+--     Enquanto for > 0, um documento novo ainda pode nascer citando uma versão que depende da ponte.
+select count(*) as tops_sem_politica
+  from erp.tipos_operacao t
+  join erp.tipos_operacao_versoes v
+    on v.tipo_operacao_id = t.id
+   and v.organization_id  = t.organization_id
+   and v.versao           = t.versao_atual
+ where t.excluido_em is null
+   and not v.destinos_configurados;
+
+-- (2) Documentos AINDA CONVERSÍVEIS que citam uma versão não declarada — ou que não citam versão
+--     nenhuma (acervo anterior ao snapshot da TOP), caso que a conversão também trata como legado.
+select count(*) as documentos_na_ponte
+  from erp.sales_documents d
+  left join erp.tipos_operacao_versoes v
+    on v.id = d.tipo_operacao_versao_id
+   and v.organization_id = d.organization_id
+ where d.deleted_at is null
+   and d.kind   in ('budget', 'order')
+   and d.status not in ('converted', 'cancelled')
+   and coalesce(v.destinos_configurados, false) = false;
+```
+
+A remoção da ponte só é segura com **as duas em zero** em todas as organizações: (1) sozinha deixaria de
+fora os documentos abertos que citam versões antigas; (2) sozinha deixaria a próxima conversão de um
+documento novo sem caminho.
+
+**Nada disso é automatizável, e isto é decisão declarada.** Um job que marcasse `destinos_configurados =
+true` sem decisão humana estaria **inventando intenção que ninguém declarou** — e a intenção inventada
+tem efeito: ou vira "não gera próxima operação" (e para conversões que funcionavam), ou vira uma lista de
+destinos que nenhum administrador escolheu. O marcador só passa a `true` pela escrita administrativa, que
+é onde alguém responde a pergunta. O que o produto oferece para acelerar isso é o editor dizer, com todas
+as letras, que a operação ainda não declarou política — e um botão explícito para declarar que não há
+próxima operação.
 
 ### 11.8 O que esta fatia AINDA NÃO EXECUTA
 

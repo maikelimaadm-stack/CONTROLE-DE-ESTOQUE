@@ -44,6 +44,29 @@ async function aresta(origemVersaoId: string, origemId: string, destinoId: strin
     [orgId, origemVersaoId, origemId, destinoId, ordem, demo.adminUserId]);
 }
 
+/**
+ * INSERT do binário ANTIGO, ao pé da letra: a lista de colunas NÃO cita `destinos_configurados`. Está
+ * escrito literal de propósito — um construtor que montasse a lista de colunas esconderia justamente o que
+ * este helper existe para exibir, que é a AUSÊNCIA da coluna no comando.
+ */
+async function versaoDoBinarioAntigo(topId: string, numero: number, orgId = demo.orgId): Promise<string> {
+  const r = await db.query<{ id: string }>(
+    `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, criado_por)
+     values ($1,$2,$3,$4,$5) returning id`,
+    [orgId, topId, numero, `Versao ${numero} do binario antigo`, demo.adminUserId]);
+  return r.rows[0]!.id;
+}
+
+/** INSERT do binário NOVO: a política é declarada explicitamente, e a declaração viaja na própria versão. */
+async function versaoDeclarada(topId: string, numero: number, configurados: boolean, orgId = demo.orgId): Promise<string> {
+  const r = await db.query<{ id: string }>(
+    `insert into erp.tipos_operacao_versoes
+       (organization_id, tipo_operacao_id, versao, nome, destinos_configurados, criado_por)
+     values ($1,$2,$3,$4,$5,$6) returning id`,
+    [orgId, topId, numero, `Versao ${numero} declarada`, configurados, demo.adminUserId]);
+  return r.rows[0]!.id;
+}
+
 let seq = 0;
 const codigo = () => `D${String(++seq).padStart(3, "0")}`;
 
@@ -174,5 +197,154 @@ describe("0022 — isolamento por tenant do grafo", () => {
     const a = await withTx(app, { orgId: demo.orgId, userId: demo.adminUserId, modulo: null }, (tx) =>
       tx.query(`select 1 from erp.tipos_operacao_versao_destinos where origem_versao_id = $1`, [o.versaoId]));
     expect(a.rowCount, "a organização A lê a própria aresta").toBe(1);
+  });
+});
+
+/**
+ * `destinos_configurados`: o DISCRIMINADOR que separa "nunca declarou" de "declarou que não há destino".
+ *
+ * Sem ele, o único sinal disponível é a CARDINALIDADE das arestas — e zero aresta é o mesmo número nos dois
+ * casos, que têm significados OPOSTOS: um manda cair na cadeia antiga, o outro manda recusar a conversão.
+ * Nenhum teste de aresta acima enxerga essa diferença, porque ela não mora na aresta: mora na VERSÃO, junto
+ * com o resto da política histórica, e herda dela a imutabilidade.
+ *
+ * O `DEFAULT` da coluna sustenta DUAS coisas, e só UMA delas é observável aqui. Este arquivo roda sobre
+ * banco FRESCO, onde não existe versão anterior à 0022: o que ele prova é o ROLLING DEPLOY (INSERT que não
+ * cita a coluna). A outra metade — o ACERVO preenchido por DDL numa tabela que recusa UPDATE — exige linhas
+ * escritas ANTES da migration, e por isso vive em `tipos-operacao-destinos-acervo.test.ts`.
+ */
+describe("0022 — `destinos_configurados` separa LEGADO de POLÍTICA DECLARADA VAZIA", () => {
+  it("a coluna existe na VERSÃO, é booleana, NOT NULL e mantém DEFAULT false", async () => {
+    const r = await db.query<{ data_type: string; is_nullable: string; column_default: string | null }>(
+      `select data_type, is_nullable, column_default from information_schema.columns
+        where table_schema='erp' and table_name='tipos_operacao_versoes' and column_name='destinos_configurados'`);
+    expect(r.rowCount, "a coluna precisa existir em tipos_operacao_versoes").toBe(1);
+    expect(r.rows[0]!.data_type).toBe("boolean");
+    // NOT NULL fecha a TERCEIRA leitura. `null` seria "não se sabe se declarou", e não existe caminho no
+    // servidor que trate esse estado: ele viraria, na prática, um dos dois outros por acidente de código.
+    expect(r.rows[0]!.is_nullable, "sem NOT NULL apareceria um terceiro estado que ninguém trata").toBe("NO");
+    // O DEFAULT sustenta DUAS coisas ao mesmo tempo, e é por isso que ele PERMANECE depois da migration:
+    // o ACERVO (a tabela recusa UPDATE, então preencher linha antiga só é possível pelo DDL) e o ROLLING
+    // DEPLOY (o binário antigo insere versão sem citar a coluna; sem DEFAULT o NOT NULL derrubaria a
+    // criação de TOP no meio da implantação).
+    expect(r.rows[0]!.column_default, "o DEFAULT precisa continuar lá, e precisa ser false").toBe("false");
+  });
+
+  it("a coluna NÃO existe no pai: política histórica não mora em `tipos_operacao`", async () => {
+    // Se morasse no pai, editar o cadastro hoje reescreveria a explicação de todo documento já emitido —
+    // e, pior, haveria DUAS fontes para a mesma pergunta, com a segunda envelhecendo em silêncio.
+    const r = await db.query(
+      `select 1 from information_schema.columns
+        where table_schema='erp' and table_name='tipos_operacao' and column_name='destinos_configurados'`);
+    expect(r.rowCount, "o discriminador pertence à versão, não à TOP").toBe(0);
+  });
+
+  it("A3 — versão inserida SEM citar a coluna nasce `false`: é o rolling deploy", async () => {
+    const o = await criarTop(codigo(), "vendas.orcamento");
+    // Exatamente o INSERT do binário ANTIGO: ele não conhece a coluna e tampouco sabe declarar política.
+    // Nascer `false` é a descrição EXATA do que aconteceu naquele INSERT, não um palpite conservador.
+    const nova = await versaoDoBinarioAntigo(o.id, 2);
+    const r = await db.query<{ destinos_configurados: boolean }>(
+      `select destinos_configurados from erp.tipos_operacao_versoes where id=$1`, [nova]);
+    expect(r.rowCount, "a versão do binário antigo precisa ter sido aceita — é metade da prova").toBe(1);
+    expect(r.rows[0]!.destinos_configurados).toBe(false);
+  });
+
+  it("versão inserida com `true` PERMANECE `true`, e a irmã não declarada permanece `false`", async () => {
+    const o = await criarTop(codigo(), "vendas.orcamento");
+    await versaoDeclarada(o.id, 2, true);
+    await versaoDoBinarioAntigo(o.id, 3);
+    // As três linhas saem da MESMA consulta e da MESMA TOP: é isso que prova que o valor é por LINHA, e
+    // que declarar na versão 2 não promoveu nem a anterior nem a seguinte.
+    const r = await db.query<{ versao: number; configurados: boolean }>(
+      `select versao, destinos_configurados as configurados
+         from erp.tipos_operacao_versoes where tipo_operacao_id=$1 order by versao`, [o.id]);
+    expect(r.rows.map((x) => [x.versao, x.configurados])).toEqual([[1, false], [2, true], [3, false]]);
+  });
+
+  it("UPDATE da coluna é recusado pelo gatilho da 0020 — ela herda a imutabilidade da versão", async () => {
+    const o = await criarTop(codigo(), "vendas.orcamento");
+    // PREMISSA: o valor que se tenta mudar está lá e é o que se afirma. Sem isto, a recusa abaixo poderia
+    // estar acontecendo por a linha não existir.
+    const antes = await db.query<{ d: boolean }>(
+      `select destinos_configurados as d from erp.tipos_operacao_versoes where id=$1`, [o.versaoId]);
+    expect(antes.rowCount).toBe(1);
+    expect(antes.rows[0]!.d).toBe(false);
+
+    // Declarar política é criar a versão N+1, como mudar nome ou configuração. Reescrever a bandeira de uma
+    // versão JÁ EMITIDA mudaria retroativamente o que um documento de ontem pode virar hoje.
+    await expect(db.query(
+      `update erp.tipos_operacao_versoes set destinos_configurados = true where id=$1`, [o.versaoId]))
+      .rejects.toThrow(/TIPO_OPERACAO_VERSAO_IMUTAVEL/);
+
+    const depois = await db.query<{ d: boolean }>(
+      `select destinos_configurados as d from erp.tipos_operacao_versoes where id=$1`, [o.versaoId]);
+    expect(depois.rows[0]!.d, "a recusa não pode ter deixado efeito parcial").toBe(false);
+  });
+
+  it("nenhum gatilho NOVO foi criado para a coluna: a proteção herdada é a única verdade", async () => {
+    // Um segundo gatilho sobre a mesma tabela seria uma segunda afirmação sobre a mesma regra, e as duas
+    // divergiriam no dia em que só uma fosse alterada.
+    const r = await db.query<{ tgname: string }>(
+      `select t.tgname from pg_trigger t join pg_class c on c.oid=t.tgrelid
+         join pg_namespace n on n.oid=c.relnamespace
+        where n.nspname='erp' and c.relname='tipos_operacao_versoes' and not t.tgisinternal
+        order by t.tgname`);
+    expect(r.rows.map((x) => x.tgname)).toEqual(["trg_tipos_operacao_versoes_imutavel"]);
+  });
+
+  it("`true` com ZERO arestas é estado VÁLIDO e representável — e a cardinalidade sozinha não o distingue do legado", async () => {
+    const destino = await criarTop(codigo(), "vendas.pedido");
+    const top = await criarTop(codigo(), "vendas.orcamento"); // versão 1: nasceu antes de haver o que declarar
+    const vazia = await versaoDeclarada(top.id, 2, true);     // declarou: NENHUM próximo passo
+    const cheia = await versaoDeclarada(top.id, 3, true);     // declarou: exatamente um destino
+    await aresta(cheia, top.id, destino.id);
+
+    // Esta é a consulta que monta `Próximos passos`: a bandeira da versão ao lado da CONTAGEM de arestas
+    // daquela versão. O `left join` é obrigatório — com `join` a versão de política vazia sumiria da
+    // resposta, que é a forma mais silenciosa de confundi-la com o legado.
+    const r = await db.query<{ versao: number; configurados: boolean; arestas: string }>(
+      `select v.versao, v.destinos_configurados as configurados, count(d.id)::text as arestas
+         from erp.tipos_operacao_versoes v
+         left join erp.tipos_operacao_versao_destinos d on d.origem_versao_id = v.id
+        where v.tipo_operacao_id = $1
+        group by v.versao, v.destinos_configurados
+        order by v.versao`, [top.id]);
+    expect(r.rows.map((x) => [x.versao, x.configurados, Number(x.arestas)])).toEqual([
+      [1, false, 0], // LEGADO: nunca declarou — só aqui a ponte da cadeia antiga tem o direito de valer
+      [2, true, 0],  // DECLARADO VAZIO: zero próximos passos, e a conversão tem de ser RECUSADA
+      [3, true, 1],  // DECLARADO com um destino: exatamente aquele caminho é permitido
+    ]);
+
+    // O QUE AS DUAS PRIMEIRAS LINHAS PROVAM, E É O DEFEITO INTEIRO: mesma contagem, significados opostos.
+    // Quem decide por `arestas.length > 0` lê as duas como "não configurado" e converte justamente onde o
+    // administrador declarou que não há próximo passo.
+    const zeroArestas = r.rows.filter((x) => Number(x.arestas) === 0);
+    expect(zeroArestas.length, "duas versões com zero arestas").toBe(2);
+    expect(new Set(zeroArestas.map((x) => x.configurados)).size,
+      "…e elas só são separáveis pela coluna, nunca pela contagem").toBe(2);
+
+    // A versão de política vazia existe de fato como LINHA — não é ausência de linha disfarçada de vazio.
+    const v = await db.query(`select 1 from erp.tipos_operacao_versoes where id=$1 and destinos_configurados`, [vazia]);
+    expect(v.rowCount, "a versão declarada vazia é uma linha real, com a bandeira ligada").toBe(1);
+    const semArestas = await db.query(`select 1 from erp.tipos_operacao_versao_destinos where origem_versao_id=$1`, [vazia]);
+    expect(semArestas.rowCount, "e ela não tem nenhuma aresta").toBe(0);
+  });
+
+  it("a bandeira atravessa o papel da aplicação sob RLS: A lê a própria, B não lê a da A", async () => {
+    const top = await criarTop(codigo(), "vendas.orcamento");
+    const declarada = await versaoDeclarada(top.id, 2, true);
+
+    // A PREMISSA: sob o papel SEM bypass de RLS, a organização dona lê a bandeira e lê o valor CERTO.
+    // Sem isto, "B não lê" seria verdade de graça se a coluna não fosse legível por ninguém.
+    const a = await withTx(app, { orgId: demo.orgId, userId: demo.adminUserId, modulo: null }, (tx) =>
+      tx.query<{ d: boolean }>(`select destinos_configurados as d from erp.tipos_operacao_versoes where id=$1`, [declarada]));
+    expect(a.rowCount, "a organização A lê a própria versão").toBe(1);
+    expect(a.rows[0]!.d).toBe(true);
+
+    const outraOrg = "00000000-0000-4000-8000-0000000000b0";
+    const b = await withTx(app, { orgId: outraOrg, userId: demo.adminUserId, modulo: null }, (tx) =>
+      tx.query(`select destinos_configurados from erp.tipos_operacao_versoes where id=$1`, [declarada]));
+    expect(b.rowCount, "a organização B não lê a política da A").toBe(0);
   });
 });

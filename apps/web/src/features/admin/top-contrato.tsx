@@ -260,6 +260,19 @@ export interface DetalheTop {
   revisao: number;
   configuracao: ConfiguracaoDoServidor | null;
   destinos: DestinoConfigurado[] | null;
+  /**
+   * A POLÍTICA DE PRÓXIMAS OPERAÇÕES JÁ FOI DECLARADA NESTA VERSÃO?
+   *
+   * TRÊS valores, porque são três situações e nenhuma responde pela outra:
+   *   `true`   declarada. A lista de destinos É a política — inclusive quando está vazia.
+   *   `false`  nunca declarada. Estado legado: a conversão segue a cadeia anterior.
+   *   `null`   o servidor não informou (API anterior a esta correção). NÃO é `false`: afirmar "ninguém
+   *            declarou" por causa de um campo ausente é exatamente o erro que esta coluna veio corrigir.
+   *
+   * `destinos.length` NÃO responde isto. Zero destinos é o mesmo número nos dois primeiros casos, e a
+   * diferença entre eles decide se um documento converte ou não.
+   */
+  destinosConfigurados: boolean | null;
 }
 
 export function lerDetalheTop(bruto: unknown): DetalheTop | null {
@@ -269,6 +282,9 @@ export function lerDetalheTop(bruto: unknown): DetalheTop | null {
   if (!ehObjeto(f) || !ehTexto(f.codigo) || !ehTexto(f.rotulo)) return null;
   if (typeof bruto.ativo !== "boolean" || typeof bruto.padrao !== "boolean") return null;
   if (!ehInteiroPositivo(bruto.versao) || typeof bruto.revisao !== "number") return null;
+  // AUSENTE é tolerado (API anterior) e vira `null`; PRESENTE com outro tipo é contrato desconhecido e
+  // NEGA o corpo inteiro — a mesma régua do bloco `destinos` das capacidades.
+  if (bruto.destinosConfigurados !== undefined && typeof bruto.destinosConfigurados !== "boolean") return null;
   return {
     id: bruto.id,
     codigo: bruto.codigo,
@@ -280,7 +296,8 @@ export function lerDetalheTop(bruto: unknown): DetalheTop | null {
     versao: bruto.versao,
     revisao: bruto.revisao,
     configuracao: bruto.configuracao === undefined ? null : lerConfiguracaoDoServidor(bruto.configuracao),
-    destinos: bruto.destinos === undefined ? null : lerDestinosConfigurados(bruto.destinos)
+    destinos: bruto.destinos === undefined ? null : lerDestinosConfigurados(bruto.destinos),
+    destinosConfigurados: bruto.destinosConfigurados === undefined ? null : bruto.destinosConfigurados
   };
 }
 
@@ -397,6 +414,18 @@ export interface RascunhoTop {
   codigoBase: string;
   configuracao: ConfiguracaoTipoOperacaoV1;
   destinos: DestinoEmEdicao[];
+  /**
+   * ESTA EDIÇÃO DECLARA A POLÍTICA DE PRÓXIMAS OPERAÇÕES?
+   *
+   * É o que decide se `destinos` VAI NO CORPO da gravação. O contrato do servidor é a PRESENÇA DA CHAVE:
+   * ausente = preservar o que já estava (arestas e estado); presente, mesmo como lista vazia = declarar.
+   *
+   * Nasce `true` quando a versão carregada já declarava — aí toda gravação re-declara o que já vale, e o
+   * administrador não perde a política por editar o nome. Nasce `false` no cadastro novo e no registro
+   * legado: enquanto o usuário não adicionar um destino nem declarar explicitamente que não há próxima
+   * operação, o silêncio dele continua sendo silêncio, e não uma decisão que ninguém tomou.
+   */
+  destinosDeclarados: boolean;
 }
 
 /**
@@ -437,7 +466,11 @@ export function assinaturaRascunho(r: RascunhoTop): string {
     configuracao: r.configuracao,
     // Só identidade e ORDEM viajam na assinatura: código e nome do destino são apresentação e podem mudar
     // no servidor sem que o rascunho do usuário tenha mudado.
-    destinos: r.destinos.map((d) => d.tipoOperacaoId)
+    destinos: r.destinos.map((d) => d.tipoOperacaoId),
+    // DECLARAR É CONTEÚDO, e por isso entra aqui. Sair da tela depois de declarar "esta operação não gera
+    // próxima operação" — sem nenhum destino na lista — é sair com alteração pendente: a lista continua
+    // vazia, mas o significado dela mudou, e é justamente essa mudança que a gravação registra.
+    destinosDeclarados: r.destinosDeclarados
   });
 }
 

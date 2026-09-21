@@ -3,7 +3,7 @@ import * as React from "react";
 import { Suspense, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { todayISO } from "@/lib/utils";
-import { useDirtyTab } from "@/lib/workspace-tabs";
+import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { Button, Card, CardHeader, CardBody, Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { ItemsEditor, PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
@@ -31,6 +31,15 @@ function Inner({ kind }: { kind: string }) {
   const router = useRouter();
   const pedido = useSearchParams().get("tipo_operacao_id");
   const estadoTop = useTopsDaVariante(kind);
+  /**
+   * O RÓTULO DA ABA DE TRABALHO SAI DAQUI, e não mais do registro de navegação.
+   *
+   * Até esta correção a barra de abas lia o rótulo da AÇÃO "Novo orçamento" do `nav.registry.mjs`. Essas
+   * ações saíram do registro — elas ensinavam a escolher a variante antes da operação —, e sem um título
+   * próprio a aba passaria a se chamar "Novo · Vendas" para as três portas. O título pertence à TELA, que
+   * é quem sabe qual variante está sendo criada; o registro voltou a tratar só de navegação.
+   */
+  useTabTitle(T[kind] ?? "Novo lançamento");
   const topAtual = topSelecionada(estadoTop, pedido);
 
   /**
