@@ -490,7 +490,7 @@ ter feito isso que a correção chegou como um teste que **passou a poder ser es
 | Colapsar variantes numa TOP só | apaga uma distinção funcional real |
 | TOP autorizando ou escondendo algo | autorização é capacidade × escopo, e não passa por aqui |
 | Decidir política de próximas operações pela CARDINALIDADE (`destinos.length`, `items.length`) | zero arestas tem duas origens opostas — nunca declarada e declarada vazia — e a contagem responde as duas com o mesmo número (§11.7) |
-| Cobrar a capacidade de um destino FIXO antes de saber qual destino o grafo escolheu | recusa quem pode e deixa passar quem não pode; a permissão acompanha o destino efetivo (§11.7) |
+| Cobrar a capacidade de um destino FIXO antes de saber qual destino o grafo escolheu | soma uma exigência irrelevante à do destino real e recusa quem pode; a permissão acompanha o destino efetivo (§11.7) |
 | Marcar `destinos_configurados = true` por automação, backfill ou job | é inventar uma decisão que ninguém tomou, e a decisão inventada recusa conversões (§11.7) |
 
 ## 11. Configuração operacional versionada (TOP-CONFIG-03)
@@ -861,11 +861,24 @@ aquela operação. A tela nova não usa a ponte quando a política está declara
 
 Até esta correção, a **primeira linha** do handler cobrava
 `requirePermission(ctx, permOf(nextSalesKind(kind)).create)` — a capacidade da **cadeia antiga**, antes de
-ler o documento e o grafo. Quando a política da versão manda o orçamento direto para **venda**, o destino
-real é `sale` e a permissão cobrada era `orders.create`: uma capacidade que não tem nada a ver com o que
-seria criado. Ela **recusava quem podia** (vendedor com `sales.create` e sem `orders.create`) e **deixava
-passar quem não podia** — `sales.create` acabava nunca sendo exigida para criar uma venda. Qual é o
-destino só se sabe depois de ler o documento e o grafo da versão que ele cita.
+ler o documento e o grafo. Ela **não substituía** a cobrança do destino real: o ramo do grafo já cobrava
+`permOf(destino).create` lá dentro, depois de resolver qual era o destino. As duas **somavam**.
+
+O estrago, portanto, tem **uma direção só**. Quando a política da versão manda o orçamento direto para
+**venda**, o requisito efetivo ficava:
+
+| | Requisito efetivo em orçamento → venda direta |
+| --- | --- |
+| **antes** (a primeira linha existia) | `budgets.edit` ∧ `orders.create` ∧ `sales.create` |
+| **depois** (esta correção) | `budgets.edit` ∧ `sales.create` |
+
+`orders.create` era uma capacidade **a mais**, irrelevante para o que seria criado, somada ao requisito
+correto. Ela **recusava quem podia** — o vendedor com `sales.create` e sem `orders.create` levava 403 para
+uma venda que tinha todo o direito de criar. E **só podia recusar a mais**: somar exigência estreita o
+conjunto autorizado, nunca o alarga. **Nunca houve escalação** — não existia, em nenhum ramo do binário
+anterior, caminho em que um documento derivado nascesse sem a capacidade do destino real. Dizer o
+contrário inventaria um segundo defeito que o código não tinha. Qual é o destino só se sabe depois de ler
+o documento e o grafo da versão que ele cita.
 
 O contrato continua sendo `origem.edit` ∧ `destino.create`, combinados com AND. O que mudou é **onde** a
 segunda metade é cobrada:

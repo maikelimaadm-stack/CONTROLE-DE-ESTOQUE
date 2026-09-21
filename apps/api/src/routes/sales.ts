@@ -596,11 +596,22 @@ export default async function salesRoutes(app: FastifyInstance) {
      *
      * ┌─ POR QUE A CAPACIDADE DO DESTINO NÃO PODE MAIS SER COBRADA AQUI EM CIMA ────────────────────────┐
      * │ Até esta correção, a primeira linha do handler cobrava `permOf(nextSalesKind(kind)).create` — a  │
-     * │ cadeia ANTIGA. Quando a política da versão manda o orçamento direto para VENDA, o destino real é │
-     * │ `sale` e a permissão cobrada era `orders.create`: uma capacidade que não tem nada a ver com o    │
-     * │ que seria criado. Ela recusava quem podia (vendedor com `sales.create` e sem `orders.create`) e  │
-     * │ deixava passar quem não podia — e `sales.create` acabava nunca sendo exigida para criar UMA      │
-     * │ VENDA. Qual é o destino só se sabe depois de ler o documento e o grafo da versão que ele cita.   │
+     * │ cadeia ANTIGA. Ela NÃO SUBSTITUÍA a cobrança do destino real: o ramo do grafo já cobrava        │
+     * │ `permOf(destino).create` lá dentro, depois de resolver qual era o destino. As duas SOMAVAM.      │
+     * │                                                                                                  │
+     * │ Por isso o estrago tinha UMA direção só. Em orçamento → venda direta o requisito efetivo era     │
+     * │ `budgets.edit` ∧ `orders.create` ∧ `sales.create`, e passou a ser `budgets.edit` ∧ `sales.create`.│
+     * │ `orders.create` era exigência A MAIS, irrelevante para o que seria criado: ela RECUSAVA QUEM     │
+     * │ PODIA — o vendedor com `sales.create` e sem `orders.create` levava 403 numa venda que tinha      │
+     * │ direito de criar. E só podia recusar a mais, porque somar exigência estreita o conjunto          │
+     * │ autorizado e nunca o alarga.                                                                     │
+     * │                                                                                                  │
+     * │ NÃO HOUVE ESCALAÇÃO, e é importante não inventá-la: em nenhum ramo do binário anterior um        │
+     * │ derivado nascia sem a capacidade do destino real — no ramo da ponte o destino ERA               │
+     * │ `nextSalesKind(kind)`, então a própria linha de cima era a cobrança correta daquele destino. É   │
+     * │ por isso que a correção REMOVEU a cobrança extra e MANTEVE a do destino nos dois ramos, em vez   │
+     * │ de acrescentar uma que faltasse. Qual é o destino só se sabe depois de ler o documento e o       │
+     * │ grafo da versão que ele cita.                                                                    │
      * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
      */
     if (kind !== "sale") app.post(`${base}/:id/convert`, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.edit`, async (ctx) => {
