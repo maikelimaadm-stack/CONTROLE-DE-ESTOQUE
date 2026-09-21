@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { login, api, uniq, empresaAtiva, primeiroId } from "./helpers";
 
 /**
- * PORTAL DE VENDAS UNIFICADO E PRÓXIMOS PASSOS PELO GRAFO (TOP-CONFIG-03) — E11 a E19.
+ * PORTAL DE VENDAS UNIFICADO E PRÓXIMOS PASSOS PELO GRAFO (TOP-CONFIG-03) — E11 a E19 e E21.
  *
  * ┌─ O QUE SÓ ESTE ARQUIVO PODE PROVAR ────────────────────────────────────────────────────────────┐
  * │ A integração já prova, no servidor, que o grafo é lido da VERSÃO congelada e filtrado pelo      │
@@ -322,8 +322,25 @@ test("E16 — documento cuja operação não declara transição NÃO oferece co
   await abrirDocumento(page, "budget", falante);
   await expect(page.getByTestId("acao-conversao"), "premissa: com política, a conversão é oferecida").toBeVisible();
 
+  /**
+   * A MEDIÇÃO ESPERA A RESPOSTA — corrigido na R1, e o defeito era real.
+   *
+   * A tela do documento monta ANTES de perguntar a política (a consulta de próximos passos depende do
+   * `kind`, que só se conhece depois de o DOCUMENTO chegar). Durante essa ida e volta o estado é
+   * `carregando`, nenhuma conversão é oferecida, e `toHaveCount(0)` resolve no primeiro poll. Escrito
+   * como estava, este teste passaria IGUAL se a tela voltasse a oferecer a cadeia antiga aqui: o botão
+   * surgiria um instante depois de o teste ter seguido adiante. "Imprimir" não salvava — ele é
+   * renderizado incondicionalmente e aparece junto com a moldura.
+   */
+  const respostaPolitica = page.waitForResponse((r) =>
+    r.url().includes(`/${mudo.id}/proximos-passos`) && r.request().method() === "GET");
   await abrirDocumento(page, "budget", mudo);
-  // A ação existe na moldura quando há para onde ir; aqui ela não pode existir.
+  const politicaServida = await (await respostaPolitica).json() as { politicaConfigurada?: boolean; items?: unknown[] };
+  expect(politicaServida.politicaConfigurada,
+    "premissa: a política FOI declarada — `cadastrarTop` manda `destinos`, então nem o vazio é silêncio").toBe(true);
+  expect(politicaServida.items, "e ela não tem nenhum destino").toHaveLength(0);
+
+  // AGORA a ausência é afirmação, e não atraso.
   await expect(page.getByTestId("acao-conversao"), "sem transição declarada, nenhuma conversão").toHaveCount(0);
   await expect(page.getByTestId("dialog-conversao"), "e nenhum diálogo pendurado na árvore").toHaveCount(0);
   // As OUTRAS ações do documento continuam lá: é o que prova que a tela montou inteira e que só a
@@ -437,4 +454,148 @@ test("E19 — a URL e a aba antigas entram na lista única JÁ FILTRADA, com o c
   const tabela = lista.locator("table").first();
   await expect(linhaDoDocumento(page, tabela, "budget", orcamento.code), "sem filtro, o orçamento continua").toHaveCount(1);
   await expect(linhaDoDocumento(page, tabela, "sale", venda.code), "e a venda volta à mesma grade").toHaveCount(1);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * E21 — ORÇAMENTO → VENDA DIRETA: o ÚNICO formato em que o grafo e a cadeia fixa discordam
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ┌─ POR QUE ESTE TESTE EXISTE, SENDO QUE P1 JÁ PROVA A CONVERSÃO DIRETA NO SERVIDOR ───────────────┐
+ * │ `sales-conversao-permissao.test.ts` (P1) prova, na API, que orçamento → venda direta converte    │
+ * │ com `sales.create` e SEM `orders.create`. O assunto de P1 é a CAPACIDADE. O assunto daqui é o    │
+ * │ CAMINHO, e ele só existe no cliente: que a TELA ofereça essa saída, que o rótulo nomeie a venda, │
+ * │ que a navegação termine na porta de vendas e que o documento derivado nasça `sale`.              │
+ * │                                                                                                  │
+ * │ NENHUM PERFIL DE PERMISSÃO É MONTADO AQUI — e é essa a razão de o teste não duplicar P1. O       │
+ * │ administrador padrão do harness tem `sales.create`, então o leque não é filtrado por `can()` e a │
+ * │ capacidade sai da equação inteira: o que sobra medido é a rota que a tela escolhe.                │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ A LACUNA REAL QUE ELE FECHA, E QUE NENHUM E2E DESTE REPOSITÓRIO FECHAVA ───────────────────────┐
+ * │ A cadeia de compatibilidade do web é `{ budget: "order", order: "sale" }`                        │
+ * │ (`features/sales/proximos-passos.ts`, `ARESTAS_DE_COMPATIBILIDADE`). Em TODO caso de conversão   │
+ * │ já coberto — E12, E13, E17 (orçamento → pedido) e E18 (pedido → venda), mais "conversão exige a  │
+ * │ TOP do DESTINO" em `portal-vendas-tipo-operacao.spec.ts` — o destino que o GRAFO declara COINCIDE │
+ * │ com o destino que a cadeia fixa escolheria. Uma regressão em que a tela ignorasse a política e    │
+ * │ voltasse a decidir o destino pela cadeia manteria todos eles VERDES: mesma variante de destino,   │
+ * │ mesma URL final.                                                                                  │
+ * │                                                                                                   │
+ * │ Orçamento → VENDA é o único formato em que as duas respostas divergem: o grafo diz `sale`, a      │
+ * │ cadeia diria `order`. É aqui, e só aqui, que a cadeia fixa cai — e por isso este teste afirma o   │
+ * │ destino nos três lugares onde ela apareceria (rótulo do botão, conteúdo do diálogo, URL final).   │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ */
+test("E21 — orçamento cuja política vai DIRETO à venda pula o pedido: rótulo, leque e rota são da venda", async ({ page }) => {
+  await login(page);
+
+  /**
+   * A TOP DE PEDIDO É A ARMADILHA, e ela precisa estar ATIVA para a armadilha funcionar.
+   *
+   * Se a tela caísse na ponte, o diálogo não ficaria vazio: ele montaria o `select-tipo-operacao` da
+   * cadeia anterior, carregado com as TOPs ATIVAS da família de pedido — e esta estaria lá dentro. Sem
+   * uma TOP de pedido ativa no banco, "nenhum pedido é oferecido" seria satisfeito de graça por um
+   * cadastro vazio, e a asserção mediria a ausência de fixture em vez da ausência da ponte.
+   */
+  const pedidoForaDaPolitica = await cadastrarTop(page, "vendas.pedido", "Pedido fora da política E21");
+  /**
+   * O NOME DA TOP DE VENDA NÃO CONTÉM A PALAVRA "VENDA", de propósito. O passo único exibe o rótulo da
+   * FAMÍLIA logo abaixo do nome; se o nome também dissesse "Venda", afirmar que a família à vista é a de
+   * venda seria satisfeito pelo próprio nome, e a asserção não provaria nada sobre o que o servidor
+   * resolveu.
+   */
+  const venda = await cadastrarTop(page, "vendas.venda", "Faturamento direto E21");
+  const orcamento = await cadastrarTop(page, "vendas.orcamento", "Orçamento direto ao faturamento E21", [venda]);
+
+  /**
+   * PREMISSA 1 — A POLÍTICA É MESMO A QUE O TESTE AFIRMA, lida do cadastro e não suposta do `POST`.
+   *
+   * `destinosConfigurados` é o discriminador da correção R1, e ele é a premissa de tudo o que vem
+   * depois: com `false`, a tela cairia legitimamente na ponte e este teste estaria medindo a cadeia
+   * anterior achando que mede o grafo. E o `codigoBase` do destino é a outra metade — é ele que faz o
+   * grafo DISCORDAR da cadeia fixa. Um destino da família de pedido deixaria as duas respostas iguais
+   * de novo, e o teste voltaria a ser uma cópia de E17.
+   */
+  const politica = await api<{ destinosConfigurados: boolean; destinos: { tipoOperacaoId: string; codigoBase: string }[] }>(
+    page, "GET", `/api/admin/tipos-operacao/${orcamento.id}`);
+  expect(politica.destinosConfigurados, "premissa: a política foi DECLARADA — sem isso a tela usaria a ponte, por direito").toBe(true);
+  expect(politica.destinos.map((d) => [d.tipoOperacaoId, d.codigoBase]),
+    "premissa: o único destino é a TOP de VENDA — é o que faz o grafo discordar da cadeia fixa").toEqual([[venda.id, "vendas.venda"]]);
+
+  const doc = await criarDocumento(page, "budget", orcamento);
+  await abrirDocumento(page, "budget", doc);
+
+  /**
+   * O RÓTULO É O PRIMEIRO LUGAR ONDE A CADEIA FIXA CAIRIA — e a comparação é EXATA, não `contains`.
+   *
+   * Na ponte o botão nomeia a FAMÍLIA do destino da cadeia anterior e leria "Converter em Pedido de
+   * venda" (é exatamente o que CV1 afirma em `portal-vendas-tipo-operacao.spec.ts`). No grafo com um
+   * destino só, ele nomeia a TOP: código e nome, os dois vindos do servidor. São dois textos que não se
+   * confundem, então esta única asserção já separa os dois mundos.
+   */
+  const acao = page.getByTestId("acao-conversao");
+  await expect(acao, "o botão nomeia a TOP de VENDA — não a família 'Pedido de venda' da cadeia anterior")
+    .toHaveText(`Converter em ${venda.codigo} — ${venda.nome}`);
+  await acao.click();
+
+  const dialogo = page.getByTestId("dialog-conversao");
+  await expect(dialogo).toBeVisible();
+  const unico = dialogo.getByTestId("proximo-passo-unico");
+  // O ID É A PROVA DE IDENTIDADE: só ele distingue "a tela mostrou a TOP certa" de "a tela mostrou um
+  // texto que por acaso coincide".
+  await expect(unico, "o único próximo passo é a TOP de venda").toHaveAttribute("data-top-id", venda.id);
+  // E A FAMÍLIA À VISTA É A DE VENDA — não-vacuoso porque o nome da TOP não contém a palavra.
+  await expect(unico, "a família exibida é a da VENDA, resolvida pelo servidor").toContainText("Venda");
+
+  /**
+   * NENHUMA OFERTA DE PEDIDO, pelos TRÊS jeitos em que ela apareceria. As três asserções não são a
+   * mesma escrita de três formas: elas trancam mecanismos distintos.
+   */
+  // (1) O seletor da cadeia anterior nem existe na árvore: é o sinal inequívoco de que a ponte não foi
+  //     usada. Grafo e ponte são mutuamente exclusivos por construção — este é o teste dessa exclusão.
+  await expect(dialogo.getByTestId("select-tipo-operacao"), "a política respondeu: a ponte não está em jogo").toHaveCount(0);
+  // (2) A TOP de pedido ATIVA que existe no banco não entrou em lugar nenhum do diálogo — nem como
+  //     opção do leque, nem como item do seletor da ponte.
+  await expect(dialogo.getByText(pedidoForaDaPolitica.nome),
+    "uma TOP de pedido ativa que a política não declarou não pode ser oferecida").toHaveCount(0);
+  // (3) E a família da cadeia anterior não é sequer mencionada.
+  await expect(dialogo.getByText("Pedido de venda"), "nenhuma menção à família do destino da cadeia fixa").toHaveCount(0);
+  // Com um destino só não há escolha a fazer: o desenho de leque é o de dois ou mais.
+  await expect(dialogo.getByTestId("proximo-passo-opcao"), "um destino não é uma escolha").toHaveCount(0);
+
+  await dialogo.getByRole("button", { name: "Converter" }).click();
+
+  /**
+   * A ROTA FINAL É A SEGUNDA QUEDA DA CADEIA FIXA. O segmento de destino é derivado da VARIANTE do
+   * passo escolhido; se viesse da cadeia, a tela levaria a `/vendas/orders/…` — e, como nenhum pedido
+   * foi criado, a `404` apareceria em cima de uma conversão que de fato deu certo.
+   */
+  await expect(page, "a navegação termina na porta de VENDAS, não na de pedidos").toHaveURL(/\/vendas\/sales\/[0-9a-f-]{36}$/);
+  const idNovo = page.url().split("/").pop()!;
+
+  /**
+   * E A VARIANTE É CONFERIDA NO SERVIDOR, não pelo texto da tela. A porta `/api/sales/sales/:id` filtra
+   * por `kind`: um documento `order` responderia 404 nela. Ler 200 aqui já é prova de variante, e o
+   * `kind` do corpo a torna explícita em vez de implícita no código de status.
+   */
+  const derivado = await api<{ kind: string; tipo_operacao: { id: string } | null }>(page, "GET", `/api/sales/sales/${idNovo}`);
+  expect(derivado.kind, "o documento derivado é uma VENDA no servidor").toBe("sale");
+  expect(derivado.tipo_operacao?.id, "e nasceu com a TOP de venda que a política declarou").toBe(venda.id);
+
+  /**
+   * A FONTE FICOU CONVERTIDA — e o derivado dela é ESTE, e é só ele.
+   *
+   * A lista de derivados é o que prova que NENHUM pedido intermediário foi criado no caminho. Sem ela,
+   * "a venda existe" seria compatível com uma tela que tivesse gerado um pedido antes e navegado para a
+   * venda depois — o encadeamento que a política desta operação existe justamente para pular.
+   */
+  const fonte = await api<{ status: string; derived: { id: string; kind: string }[] }>(page, "GET", `/api/sales/budgets/${doc.id}`);
+  expect(fonte.status, "conversão é transição, não cópia: a fonte ficou convertida").toBe("converted");
+  expect(fonte.derived.map((x) => [x.id, x.kind]),
+    "um único derivado, e ele é a venda — nenhum pedido intermediário foi criado").toEqual([[idNovo, "sale"]]);
+
+  // E a tela da fonte diz a mesma coisa que o servidor: o estado do banco chega ao operador.
+  await abrirDocumento(page, "budget", doc);
+  await expect(page.getByTestId("base2-shell").locator("[data-status]").first(),
+    "a fonte aparece convertida também na tela").toHaveText(/Convertid/i);
 });

@@ -1,8 +1,8 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
-import { login, logout, api, uniq } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, primeiroId } from "./helpers";
 
 /**
- * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO — O EDITOR DE SETE SEÇÕES (TOP-CONFIG-03), E1 a E10.
+ * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO — O EDITOR DE SETE SEÇÕES (TOP-CONFIG-03), E1 a E9 e E20.
  *
  * ┌─ O QUE SÓ ESTE ARQUIVO PODE PROVAR ────────────────────────────────────────────────────────────┐
  * │ A integração já prova, no servidor, o que versiona e o que não versiona. O que nenhum teste de  │
@@ -380,4 +380,263 @@ test("E9 — a configuração gravada sobrevive a um recarregamento completo da 
   await reaberta.getByTestId("top-aba-fiscal").click();
   await expect(reaberta.getByTestId("top-campo-fiscal-habilitado")).toHaveValue("true");
   await expect(reaberta.getByTestId("top-campo-fiscal-natureza")).toHaveValue("true");
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * E20 — DECLARAR QUE NÃO HÁ PRÓXIMA OPERAÇÃO
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ┌─ O QUE SÓ ESTE TESTE PROVA ─────────────────────────────────────────────────────────────────────┐
+ * │ Que a AUSÊNCIA de política e a política VAZIA são estados diferentes ATRAVESSANDO A TELA INTEIRA: │
+ * │ o editor mostra frases diferentes para os dois, declarar o vazio cria versão, e o documento       │
+ * │ nascido em cada um deles recebe tratamento OPOSTO na tela de vendas.                              │
+ * │                                                                                                   │
+ * │ Nenhum outro teste cobre esse caminho inteiro. O E16 (portal) já mede "política vazia não oferece │
+ * │ conversão", mas parte de uma TOP semeada pela API JÁ declarada — ele nunca passa pelo estado não  │
+ * │ declarado, e por isso não mediria uma tela que tratasse os dois como a mesma coisa. A integração  │
+ * │ (`tipos-operacao-destinos.test.ts`) prova o mesmo no servidor, e é lá que fica a recusa 422 da     │
+ * │ conversão pedida por fora: aqui não se chama a rota de conversão por `fetch`, porque o que este   │
+ * │ arquivo mede é a TELA, e fabricar um pedido que nenhum botão da tela faz não é medir tela.         │
+ * └───────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ POR QUE O CONTRASTE É OBRIGATÓRIO, E NÃO ENFEITE ──────────────────────────────────────────────┐
+ * │ Uma TOP recém-criada que ninguém tocou TAMBÉM tem zero destinos. Se este teste apenas criasse    │
+ * │ uma TOP e verificasse "o documento dela não oferece conversão", ele passaria IGUALMENTE no        │
+ * │ estado errado — o estado legado, em que a tela DEVE oferecer a conversão pela cadeia anterior —   │
+ * │ e não provaria absolutamente nada. Por isso as duas TOPs abaixo são gêmeas: mesma família, mesmo  │
+ * │ usuário, mesma situação, e as DUAS com a lista de destinos vazia. A ÚNICA diferença entre elas é  │
+ * │ o booleano `destinosConfigurados`, e é a ele que as duas conclusões opostas são atribuídas.       │
+ * └───────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ POR QUE ORÇAMENTO, E NÃO VENDA ────────────────────────────────────────────────────────────────┐
+ * │ A cadeia anterior do produto liga orçamento → pedido → venda. A VENDA é a ponta dela: uma venda   │
+ * │ legada não oferece conversão nenhuma, porque não há aresta de compatibilidade saindo dela. Com    │
+ * │ venda, o contraste seria silencioso (os dois lados sem botão) e o teste voltaria a ser vácuo. O   │
+ * │ orçamento é a única escolha em que o estado legado tem comportamento VISÍVEL para contrastar.     │
+ * └───────────────────────────────────────────────────────────────────────────────────────────────────┘
+ */
+
+/** O detalhe administrativo: a versão corrente, o estado da política e as arestas DAQUELA versão. */
+const politicaNoServidor = (page: Page, id: string) =>
+  api<{ versao: number; destinosConfigurados: boolean; destinos: { tipoOperacaoId: string }[] }>(
+    page, "GET", `/api/admin/tipos-operacao/${id}`);
+
+/** O histórico: é onde o estado da política de CADA época fica legível, versão por versão. */
+const versoesNoServidor = (page: Page, id: string) =>
+  api<{ items: { versao: number; destinosConfigurados: boolean; destinos: unknown[] }[] }>(
+    page, "GET", `/api/admin/tipos-operacao/${id}/versoes`);
+
+/**
+ * Um orçamento citando a TOP dada, semeado pela API.
+ *
+ * A data é arbitrária de propósito: este teste chega ao documento pela URL DELE, nunca por listagem —
+ * então nada aqui depende de ordenação, de paginação ou de quantos lançamentos o banco compartilhado já
+ * acumulou. O que a fixture precisa garantir é outra coisa, e está asseverado abaixo: que o documento
+ * nasceu na variante certa e citando a VERSÃO certa da TOP.
+ */
+const DATA_DO_DOCUMENTO = "2027-12-31";
+async function criarOrcamento(page: Page, topId: string) {
+  const empresa = await empresaAtiva(page);
+  const cliente = await primeiroId(page, "/api/resources/people?is_client=true&pageSize=1");
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const criado = await api<{ id: string }>(page, "POST", "/api/sales/budgets", {
+    empresa_id: empresa, document_date: DATA_DO_DOCUMENTO, client_id: cliente, tipo_operacao_id: topId,
+    items: [{ product_id: produto, warehouse_id: null, quantity: "1", unit_price: "10.00" }]
+  });
+  const lido = await api<{ code: string; kind: string; tipo_operacao: { id: string; versao: number } | null }>(
+    page, "GET", `/api/sales/budgets/${criado.id}`);
+  expect(lido.kind, "a fixture precisa nascer como orçamento").toBe("budget");
+  return { id: criado.id, code: lido.code, top: lido.tipo_operacao };
+}
+
+/** Abre o detalhe e só devolve quando a moldura montou — e quando é o documento CERTO que está nela. */
+async function abrirOrcamento(page: Page, doc: { id: string; code: string }) {
+  await page.goto(`/vendas/budgets/${doc.id}`);
+  await expect(page.getByTestId("base2-shell"), "a premissa: o documento abriu").toBeVisible();
+  await expect(page.getByRole("heading", { name: new RegExp(doc.code) }),
+    "e é o documento da fixture, não outro que por acaso estava na tela").toBeVisible();
+}
+
+test("E20 — declarar pela tela que NÃO há próxima operação cria versão, sobrevive à reabertura, e o documento nascido nela não oferece conversão nenhuma", async ({ page }) => {
+  await login(page);
+
+  /**
+   * AS DUAS GÊMEAS. `topSimples` posta SEM a chave `destinos` — é o que o acervo é, e é o que faz as duas
+   * nascerem com a política NÃO declarada. (O helper `cadastrarTop` do spec do portal manda `destinos: []`
+   * sempre, ou seja, já nasce DECLARADA: usá-lo aqui apagaria justamente o estado de partida deste teste.)
+   */
+  const muda = await topSimples(page, "vendas.orcamento");
+  const legada = await topSimples(page, "vendas.orcamento");
+
+  // (a) PREMISSA NO SERVIDOR: as duas partem do MESMO estado — versão 1, zero destinos, NÃO declarada.
+  for (const [rotulo, top] of [["a que vai declarar", muda], ["a que fica legada", legada]] as const) {
+    const antes = await politicaNoServidor(page, top.id);
+    expect(antes.versao, `${rotulo}: nasce na versão 1`).toBe(1);
+    expect(antes.destinos, `${rotulo}: nasce sem nenhuma aresta`).toHaveLength(0);
+    expect(antes.destinosConfigurados, `${rotulo}: e com a política NÃO declarada — é este o estado de partida`).toBe(false);
+  }
+
+  // (a) E A TELA DIZ ISSO COM TODAS AS LETRAS. Sem esta metade, o clique seguinte seria num botão cuja
+  // razão de existir ninguém verificou — e um editor que mostrasse "política vazia" desde o começo
+  // passaria no resto do teste inteiro sem nunca ter distinguido coisa nenhuma.
+  await abrirTela(page);
+  const forma = await abrirEdicao(page, muda.codigo);
+  await forma.getByTestId("top-aba-destinos").click();
+  await expect(forma.getByTestId("top-destinos"), "a aba de próximas operações montou").toBeVisible();
+  await expect(forma.getByTestId("top-destinos-politica-nao-declarada"),
+    "a premissa: a tela reconhece o estado NÃO DECLARADO").toBeVisible();
+  await expect(forma.getByTestId("top-destinos-politica-vazia"),
+    "e não confunde ausência de política com política vazia").toHaveCount(0);
+  /**
+   * E A ABA NÃO ESTÁ BLOQUEADA POR OUTRO MOTIVO. `top-destinos-estado-desconhecido` (o servidor não
+   * informou o campo) e `top-destinos-ilegiveis` (a lista não veio legível) também escondem a lista e
+   * também impedem a gravação do encadeamento: se qualquer um deles estivesse na tela, o "declarado"
+   * medido adiante seria consequência de um bloqueio, e não da decisão do administrador.
+   */
+  await expect(forma.getByTestId("top-destinos-estado-desconhecido"), "o servidor informou o estado da política").toHaveCount(0);
+  await expect(forma.getByTestId("top-destinos-ilegiveis"), "e devolveu a lista em formato legível").toHaveCount(0);
+  // O ZERO QUE OS DOIS ESTADOS COMPARTILHAM: é por ele ser idêntico aqui e depois que a contagem de
+  // linhas não pode ser o discriminador de nada neste teste.
+  await expect(forma.getByTestId("top-destino-linha"), "não declarada e vazia têm a MESMA lista: nenhuma").toHaveCount(0);
+
+  // (b) DECLARAR O VAZIO PELA TELA — pelo botão que só existe no estado não declarado.
+  await forma.getByTestId("top-destinos-declarar").click();
+  // ANTES DE SALVAR a tela já troca de frase: a decisão é do rascunho, e o administrador lê o que vai
+  // gravar. Se só mudasse depois do salvar, ele confirmaria uma decisão sem nunca a ter visto escrita.
+  await expect(forma.getByTestId("top-destinos-politica-vazia"),
+    "declarar troca a frase da aba, e a troca acontece ANTES da gravação").toBeVisible();
+  await expect(forma.getByTestId("top-destinos-politica-nao-declarada"),
+    "e o aviso de 'ainda não declarou' sai de cena").toHaveCount(0);
+  await forma.getByTestId("top-salvar").click();
+  await expect(forma).toBeHidden();
+
+  /**
+   * (c) NO SERVIDOR: A VERSÃO SUBIU. Este é o ponto em que um defeito muito plausível morreria calado —
+   * as arestas eram zero antes e continuam zero depois, então uma comparação de listas concluiria
+   * "nada mudou" e descartaria a edição como no-op. A tela responderia "salvo" sobre uma política que
+   * continuaria NÃO declarada, e a conversão continuaria caindo na cadeia antiga.
+   */
+  const depois = await politicaNoServidor(page, muda.id);
+  expect(depois.versao, "declarar o vazio é CONTEÚDO: nasce a versão 2").toBe(2);
+  expect(depois.destinosConfigurados, "e o estado da política virou DECLARADA").toBe(true);
+  expect(depois.destinos, "declarada com a lista vazia — que é a decisão, não a falta dela").toHaveLength(0);
+
+  /**
+   * E O HISTÓRICO GUARDA AS DUAS ÉPOCAS SEPARADAS. É a única prova de que a versão 1 não foi reescrita:
+   * se o booleano morasse no cadastro em vez de na versão, as duas linhas abaixo diriam `true` e o
+   * histórico passaria a afirmar que a política sempre existiu.
+   */
+  const historico = await versoesNoServidor(page, muda.id);
+  const v2 = historico.items.find((v) => v.versao === 2);
+  const v1 = historico.items.find((v) => v.versao === 1);
+  expect(v2?.destinosConfigurados, "a versão 2 registra a política declarada").toBe(true);
+  expect(v1?.destinosConfigurados, "e a versão 1 continua registrando que nada tinha sido declarado").toBe(false);
+  expect(v2?.destinos, "as duas versões têm zero arestas — só o booleano as distingue").toHaveLength(0);
+  expect(v1?.destinos, "as duas versões têm zero arestas — só o booleano as distingue").toHaveLength(0);
+
+  /**
+   * (d) REABRIR É A PROVA DO LADO DA TELA. O que volta aqui veio do SERVIDOR, e é o que separa "a tela
+   * gravou a decisão" de "a tela guardou a decisão no estado do React até alguém fechar a aba".
+   */
+  const reaberta = await abrirEdicao(page, muda.codigo);
+  await reaberta.getByTestId("top-aba-destinos").click();
+  await expect(reaberta.getByTestId("top-destinos-politica-vazia"),
+    "reabrindo, a aba continua dizendo que a política foi declarada e é vazia").toBeVisible();
+  await expect(reaberta.getByTestId("top-destinos-politica-nao-declarada"),
+    "e nunca volta a oferecer o estado de quem não declarou").toHaveCount(0);
+  await expect(reaberta.getByTestId("top-destinos-declarar"),
+    "o botão de declarar não reaparece: declarar de novo o que já está declarado não é uma ação").toHaveCount(0);
+  await expect(reaberta.getByTestId("top-destino-linha"), "e continua sem nenhum destino").toHaveCount(0);
+  // DECLARAR O VAZIO NÃO TRANCA A ABA: a decisão é reversível pelo caminho normal, acrescentando um
+  // destino. Sem esta asserção, "a política é vazia" seria indistinguível de "a seção ficou inerte".
+  // `toBeEnabled` e não `toBeVisible`: uma regressão que trancasse a aba depois de declarar o vazio
+  // deixaria o seletor VISÍVEL e desabilitado, e a asserção passaria — medindo o contrário do que o
+  // comentário acima promete. "Editável" é sobre estar habilitado, então é isso que se afirma.
+  await expect(reaberta.getByTestId("top-destino-escolha"),
+    "a decisão continua editável: o seletor de destino segue habilitado").toBeEnabled();
+  await reaberta.getByTestId("top-cancelar").click();
+
+  /**
+   * (e) e (f) OS DOIS DOCUMENTOS — criados AGORA, depois da declaração, para que o de `muda` cite a
+   * versão 2. Criá-lo antes o congelaria na versão 1, que é a política NÃO declarada: o teste mediria o
+   * documento errado e chegaria à conclusão oposta.
+   */
+  const doLegado = await criarOrcamento(page, legada.id);
+  const doDeclarado = await criarOrcamento(page, muda.id);
+
+  // PREMISSA DO SNAPSHOT: cada documento cita a TOP e a VERSÃO que este teste quis medir.
+  expect(doDeclarado.top?.id, "o documento nasceu citando a TOP de política declarada").toBe(muda.id);
+  expect(doDeclarado.top?.versao, "e citando a VERSÃO 2 — a que declara a política vazia").toBe(2);
+  expect(doLegado.top?.versao, "o irmão legado cita a versão 1, a que nunca declarou nada").toBe(1);
+  expect((await politicaNoServidor(page, legada.id)).destinosConfigurados,
+    "e a TOP legada continua NÃO declarada: é só nisto que as duas diferem").toBe(false);
+
+  /**
+   * (f) O IRMÃO LEGADO PRIMEIRO — a premissa. "Não há conversão" é satisfeito de graça por um documento
+   * cancelado, por falta de capacidade, por uma tela que não montou ou por um defeito que apagou a ação
+   * de todo mundo. Um orçamento GÊMEO, criado pelo mesmo usuário no mesmo minuto, com a mesma lista
+   * vazia de destinos, OFERECENDO a conversão é o que transforma a ausência medida adiante numa
+   * afirmação sobre a POLÍTICA.
+   */
+  await abrirOrcamento(page, doLegado);
+  const acaoLegada = page.getByTestId("acao-conversao");
+  /**
+   * O RÓTULO É A ASSINATURA DA PONTE. Pelo grafo, o botão nomearia a TOP de destino ("Converter em 8xxxx
+   * — …") ou apenas convidaria ao diálogo ("Converter"); nomear a FAMÍLIA do destino é exatamente o que
+   * só a cadeia de compatibilidade faz. A asserção portanto não diz só "há um botão": diz QUAL caminho
+   * a tela escolheu, que é a pergunta deste teste.
+   */
+  await expect(acaoLegada, "premissa: política NÃO declarada segue oferecendo a conversão pela cadeia anterior")
+    .toHaveText("Converter em Pedido de venda");
+  await acaoLegada.click();
+  const dialogoLegado = page.getByTestId("dialog-conversao");
+  await expect(dialogoLegado).toBeVisible();
+  await expect(dialogoLegado.getByTestId("select-tipo-operacao"),
+    "e o diálogo é o da cadeia anterior: escolher a TOP do destino").toBeVisible();
+  await expect(dialogoLegado.getByTestId("proximo-passo-unico"), "sem grafo, não há próximo passo único").toHaveCount(0);
+  await expect(dialogoLegado.getByTestId("proximo-passo-opcao"), "nem leque de opções do grafo").toHaveCount(0);
+
+  /**
+   * (e) A CONCLUSÃO — e ela SÓ é uma afirmação depois que a pergunta foi respondida.
+   *
+   * ┌─ POR QUE ESPERAR A RESPOSTA, E NÃO SÓ A TELA ────────────────────────────────────────────────┐
+   * │ A tela do documento monta ANTES de perguntar a política, e não por acaso: a consulta de       │
+   * │ próximos passos é habilitada por `Boolean(k)`, e `k` só existe depois que a consulta do        │
+   * │ DOCUMENTO resolveu. Enquanto a resposta não chega, `situacao` é `carregando`,                  │
+   * │ `usaCadeiaDeCompatibilidade` devolve `false`, o leque está vazio e `ofereceConversao` é falso  │
+   * │ — ou seja, `acao-conversao` está ausente POR CONSTRUÇÃO durante uma ida e volta HTTP inteira.  │
+   * │                                                                                                │
+   * │ Medir a ausência nessa janela passaria IGUAL com a funcionalidade regredida: o botão da ponte  │
+   * │ apareceria um instante depois de o teste já ter seguido adiante. Não é instabilidade — é um    │
+   * │ verde determinístico que não prova nada, que é REPROVAÇÃO neste repositório.                    │
+   * │                                                                                                │
+   * │ Esperar `/proximos-passos` e CONFERIR O CORPO resolve as duas coisas de uma vez: sincroniza o  │
+   * │ instante da medição e prova, no SERVIDOR, que o estado sob teste é mesmo "declarada e vazia".  │
+   * └────────────────────────────────────────────────────────────────────────────────────────────────┘
+   */
+  const respostaPolitica = page.waitForResponse((r) =>
+    r.url().includes(`/${doDeclarado.id}/proximos-passos`) && r.request().method() === "GET");
+  await abrirOrcamento(page, doDeclarado);
+  const politicaServida = await (await respostaPolitica).json() as { politicaConfigurada?: boolean; items?: unknown[] };
+  expect(politicaServida.politicaConfigurada,
+    "o servidor declara a política — sem isto, a ausência abaixo seria do estado legado").toBe(true);
+  expect(politicaServida.items, "e a política declarada é vazia").toHaveLength(0);
+
+  // AGORA a ausência é afirmação: a resposta chegou, a tela já reagiu a ela, e o que não existe
+  // não existe porque a política assim decidiu.
+  await expect(page.getByTestId("acao-conversao"),
+    "política declarada vazia: nenhuma ação de conversão na moldura").toHaveCount(0);
+  // O diálogo é filho de `Dialog open={...}` sem `forceMount`, então esta linha NÃO tem poder
+  // discriminante próprio — o diálogo está fechado sempre. Fica como arame de tropeço contra
+  // renomeação de `data-testid`, e é assim que ela deve ser lida, não como evidência separada.
+  await expect(page.getByTestId("dialog-conversao"), "e nenhum diálogo de conversão aberto").toHaveCount(0);
+
+  /**
+   * E A TELA MONTOU INTEIRA. Note que esta asserção prova APENAS isso: "Imprimir" é renderizado
+   * incondicionalmente, no mesmo fragmento de ações, sem depender da política. Ela descarta a página
+   * quebrada; quem descarta a medição prematura é a espera pela resposta, lá em cima.
+   */
+  await expect(page.getByRole("button", { name: "Imprimir" }),
+    "a tela montou: as demais ações do documento seguem lá").toBeVisible();
 });
