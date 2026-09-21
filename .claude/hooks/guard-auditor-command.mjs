@@ -99,7 +99,10 @@ const GIT_LISTAGEM = ["--list", "-l", "--contains", "--points-at", "--merged", "
 export const SCRIPTS_DE_GATE = new Set([
   "lint", "typecheck", "test", "test:integration", "e2e", "build", "parity", "parity:check",
   "audit:naming", "audit:member-farms", "audit:notifications", "audit:responsavel",
-  "audit:empresa", "audit:farm", "audit:dictionary", "audit:id-global", "audit:claude-harness"
+  "audit:empresa", "audit:farm", "audit:dictionary", "audit:id-global", "audit:claude-harness",
+  // Leitura pura: confere que a dívida DEFERRED da matriz de suporte continua versionada e
+  // executável. Não roda teste, não toca banco, não escreve nada.
+  "audit:ui-support", "e2e:mobile"
 ]);
 
 const flagPresente = (args, ...nomes) =>
