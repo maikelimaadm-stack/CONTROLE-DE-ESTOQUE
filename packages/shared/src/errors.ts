@@ -39,7 +39,25 @@ export const ErrorCodes = {
    * saberia quais existem na organização vizinha e qual família cada um tem. É a mesma regra que faz
    * inexistente e fora de escopo responderem a MESMA 404 (.claude/rules/security.md).
    */
-  TIPO_OPERACAO_INDISPONIVEL: "TIPO_OPERACAO_INDISPONIVEL"
+  TIPO_OPERACAO_INDISPONIVEL: "TIPO_OPERACAO_INDISPONIVEL",
+  /**
+   * Configuração versionada da TOP (TOP-CONFIG-03). DOIS códigos, e não um, porque descrevem situações
+   * que o cliente resolve de formas diferentes: um payload malformado é erro DELE, corrigível agora; uma
+   * versão de schema que este servidor não conhece é SKEW de implantação, e o cliente antigo não tem o
+   * que corrigir — ele precisa recarregar. Um código só faria o front tratar as duas como digitação.
+   */
+  TIPO_OPERACAO_CONFIGURACAO_INVALIDA: "TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
+  TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO: "TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
+  /**
+   * Grafo de próximas operações (TOP-CONFIG-03): a LISTA enviada é malformada — não é lista, excede o
+   * teto, repete um destino ou traz chave desconhecida.
+   *
+   * Note o que NÃO está aqui: "este destino não serve". Destino inexistente, de outro tenant, inativo,
+   * excluído ou de família incompatível respondem `TIPO_OPERACAO_INDISPONIVEL`, que já É a superfície
+   * única de recusa de TOP. Criar um código próprio para cada uma dessas cinco razões transformaria a
+   * resposta num oráculo de quais identificadores existem na organização vizinha.
+   */
+  TIPO_OPERACAO_DESTINO_INVALIDO: "TIPO_OPERACAO_DESTINO_INVALIDO"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -76,7 +94,11 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   TIPO_OPERACAO_VERSAO_IMUTAVEL: 409,
   // 422 e não 404: a recusa fala do PEDIDO de lançamento (a TOP escolhida não serve), não da existência
   // do documento. 403 seria errado também — quem pode lançar tem a capacidade; o que falta é uma TOP válida.
-  TIPO_OPERACAO_INDISPONIVEL: 422
+  TIPO_OPERACAO_INDISPONIVEL: 422,
+  // 422 nos dois: contrato de entrada não canônico é RECUSADO, nunca traduzido nem ignorado.
+  TIPO_OPERACAO_CONFIGURACAO_INVALIDA: 422,
+  TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO: 422,
+  TIPO_OPERACAO_DESTINO_INVALIDO: 422
 };
 
 export class DomainError extends Error {

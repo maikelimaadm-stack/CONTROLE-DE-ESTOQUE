@@ -12,7 +12,9 @@ import { Base2Shell, Base2Section, Base2Fields, Base2Items, type Base2Field, typ
 import { tipoOperacaoDoRegistro } from "@agro/domain";
 import { useTradutor } from "@/lib/i18n";
 import { COPY, enumLabel, statusLabel } from "@/lib/copy";
-import { CampoTipoOperacao, podeLancar, useTopsDaVariante, usePadraoTop } from "@/features/sales/tipo-operacao-select";
+import { CampoTipoOperacao, useTopsDaVariante, usePadraoTop } from "@/features/sales/tipo-operacao-select";
+import { destinoDeCompatibilidade, usaCadeiaDeCompatibilidade, useProximosPassos, type ProximoPasso } from "@/features/sales/proximos-passos";
+import { varianteDeVenda } from "@/features/sales/variantes";
 
 /** O snapshot da TOP como o servidor o devolve: nome e versão CONGELADOS no instante do lançamento. */
 interface TopSnapshot { id: string; codigo: string; nome: string; versao: number; codigoBase: string; familiaRotulo: string | null }
@@ -29,10 +31,15 @@ const ENTIDADE = "sales_documents";
  * segmento desconhecido HERDAVA a semântica de VENDA — o rótulo, a família de permissão e as ações de
  * venda, sobre um registro que ninguém sabia o que era. (A forma exata está na regra do gate, em
  * `scripts/base2-consumidor-audit.mjs`; escrevê-la aqui faria o próprio gate acusar o comentário.) A API agora recusa a rota errada (404), e a tela também não transforma URL em verdade.
+ *
+ * O CAMPO `proximo` SAIU DAQUI (TOP-CONFIG-03). Ele dizia, por escrito, que orçamento vira pedido e
+ * pedido vira venda — política de negócio morando no cliente, igual para toda organização. Agora a
+ * política vem da VERSÃO da TOP que o documento cita (`/proximos-passos`). O que sobra neste mapa é o
+ * que continua sendo da ROTA e da VARIANTE: título, família de capacidade e segmento da porta.
  */
-const DO_REGISTRO: Record<string, { titulo: string; perm: string; segmento: string; proximo?: { segmento: string; perm: string; rotulo: string } }> = {
-  budget: { titulo: "Orçamento", perm: "budgets", segmento: "budgets", proximo: { segmento: "orders", perm: "orders", rotulo: "Converter em pedido" } },
-  order: { titulo: "Pedido de venda", perm: "orders", segmento: "orders", proximo: { segmento: "sales", perm: "sales", rotulo: "Converter em venda" } },
+const DO_REGISTRO: Record<string, { titulo: string; perm: string; segmento: string }> = {
+  budget: { titulo: "Orçamento", perm: "budgets", segmento: "budgets" },
+  order: { titulo: "Pedido de venda", perm: "orders", segmento: "orders" },
   sale: { titulo: "Venda", perm: "sales", segmento: "sales" }
 };
 
@@ -84,16 +91,76 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const d = q.data;
   const variante = d ? String(d["kind"]) : "";
   const k = DO_REGISTRO[variante];
-  const act = useAction<{ id?: string }>((r) => { setConfirmar(null); if (confirmar === "convert" && r?.id && k?.proximo) router.push(`/vendas/${k.proximo.segmento}/${r.id}`); });
+  /**
+   * O SEGMENTO DO DESTINO, guardado em `ref` e não lido do fecho: o destino só é conhecido no CLIQUE
+   * (ele depende do próximo passo escolhido), e o retorno chega depois. Ler uma variável de render aqui
+   * daria o valor do render em que o `useAction` foi criado.
+   */
+  const destinoDaConversao = React.useRef("");
+  const act = useAction<{ id?: string }>((r) => { setConfirmar(null); if (confirmar === "convert" && r?.id && destinoDaConversao.current) router.push(`/vendas/${destinoDaConversao.current}/${r.id}`); });
+
+  /**
+   * OS PRÓXIMOS PASSOS — a política do documento, não a cadeia fixa da tela.
+   *
+   * Perguntado pela porta da VARIANTE DO REGISTRO (`k.segmento`), que é a mesma que serviu o detalhe.
+   * Variante desconhecida não pergunta nada: não há porta para perguntar, e chutar uma seria classificar
+   * o registro pela rota.
+   */
+  const passos = useProximosPassos(k?.segmento ?? "", id, Boolean(k));
+  /** `can()` aqui é APRESENTAÇÃO: a API cobra a capacidade do destino na conversão. Isto só evita
+   *  oferecer um botão que responderia 403. */
+  const podeCriarVariante = (varianteDoDestino: string) => { const v = varianteDeVenda(varianteDoDestino); return Boolean(v) && can(`${v!.perm}.create`); };
+  /**
+   * OS DOIS CAMINHOS SÃO MUTUAMENTE EXCLUSIVOS POR CONSTRUÇÃO — grafo OU ponte, nunca os dois no mesmo
+   * diálogo. Derivar `itens` da mesma pergunta que decide a ponte é o que impede a tela de oferecer, na
+   * mesma janela, um leque de destinos e um seletor de TOP da cadeia anterior — dois modos de escolher a
+   * mesma coisa, um deles fadado a ser recusado pela API.
+   */
+  const ponte = usaCadeiaDeCompatibilidade(passos);
+  const itens: ProximoPasso[] = !ponte && passos.situacao === "pronto" ? passos.itens.filter((x) => podeCriarVariante(x.variante)) : [];
+
+  /**
+   * QUANDO A CADEIA ANTERIOR AINDA VALE — duas causas, uma pergunta só (`usaCadeiaDeCompatibilidade`).
+   *
+   *   1. O servidor não confirmou o contrato (404, 5xx, corpo desconhecido): rolling deploy ou defeito.
+   *   2. A POLÍTICA DESTA OPERAÇÃO NUNCA FOI DECLARADA — o acervo legado, que a API converte pela ponte.
+   *
+   * O caso 2 é a correção R1. Antes, a tela lia `items: []` como "não gera nada" e escondia a conversão
+   * de documentos que a API convertia normalmente: o operador via um documento sem saída e uma chamada
+   * direta à API gerava o próximo documento. Agora as duas pontas leem o MESMO discriminador.
+   *
+   * POLÍTICA DECLARADA E VAZIA continua sendo o caso oposto: nenhuma conversão é oferecida, e a API
+   * recusa a que for pedida por fora.
+   */
+  const legado = ponte ? destinoDeCompatibilidade(variante) : undefined;
+  const legadoPermitido = Boolean(legado) && can(`${legado!.perm}.create`);
   // A TOP do DESTINO da conversão — carregada da variante de destino, nunca da fonte. O hook roda sempre
-  // (regra dos hooks), mas a REQUISIÇÃO é condicional: numa venda não há destino, e perguntar assim
-  // mesmo faria toda abertura de documento chamar `/api/sales/sales/operation-types` — resposta que
-  // ninguém usa e que, para quem tem `.view` sem `.create`, é um 403 registrado em log a cada abertura.
-  const [topDestino, setTopDestino] = React.useState("");
-  const destino = k?.proximo?.segmento;
-  const estadoTopDestino = useTopsDaVariante(destino ?? segmentoDaRota, Boolean(destino) && can(`${k!.proximo!.perm}.create`));
-  usePadraoTop(estadoTopDestino, topDestino, setTopDestino);
+  // (regra dos hooks), mas a REQUISIÇÃO é condicional: sem destino de compatibilidade não há o que
+  // perguntar, e perguntar assim mesmo faria toda abertura de documento chamar
+  // `/api/sales/sales/operation-types` — resposta que ninguém usa e que, para quem tem `.view` sem
+  // `.create`, é um 403 registrado em log a cada abertura.
+  const [topLegado, setTopLegado] = React.useState("");
+  const estadoTopLegado = useTopsDaVariante(legado?.segmento ?? segmentoDaRota, Boolean(legado) && legadoPermitido);
+  usePadraoTop(estadoTopLegado, topLegado, setTopLegado);
+
+  /** Escolha entre 2+ próximos passos. Com UM item não há escolha a fazer — e com zero não há diálogo. */
+  const [passoEscolhido, setPassoEscolhido] = React.useState("");
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
+
+  const passoSelecionado = itens.length === 1 ? itens[0]! : itens.find((x) => x.tipoOperacaoId === passoEscolhido) ?? null;
+  const topDaConversao = passoSelecionado ? passoSelecionado.tipoOperacaoId : legado ? topLegado : "";
+  const segmentoDoDestino = passoSelecionado ? varianteDeVenda(passoSelecionado.variante)?.segmento ?? "" : legado?.segmento ?? "";
+  const ofereceConversao = itens.length > 0 || legadoPermitido;
+  /**
+   * O RÓTULO NUNCA É UM UUID. Com um destino só, o botão nomeia a TOP (código e nome, os dois do
+   * servidor); com vários, ele apenas convida ao diálogo, onde a escolha aparece inteira; na
+   * compatibilidade, nomeia a FAMÍLIA do destino, que é tudo o que se sabe antes de perguntar as TOPs.
+   */
+  const rotuloDaConversao = itens.length === 1 ? `Converter em ${itens[0]!.codigo} — ${itens[0]!.nome}`
+    : itens.length > 1 ? "Converter"
+      : legado ? `Converter em ${tr(legado.chaveI18n)}` : "";
+  /** Agrupa por família só quando há mais de uma: um cabeçalho único sobre a lista inteira é ruído. */
+  const familias = [...new Set(itens.map((x) => x.familiaRotulo))];
 
   // Variante que o catálogo não conhece: rótulo NEUTRO, nenhuma ação de variante, nenhuma herança da
   // rota. Não saber o que o registro é não autoriza chutar que ele é uma venda.
@@ -149,7 +216,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
       {variante === "sale" && editavel && can("sales.edit") && <Button size="sm" onClick={() => setConfirmar("confirm")}>Confirmar venda</Button>}
       {/* CONVERTER exige AS DUAS capacidades, como a API passou a exigir: editar a FONTE e criar o
           DESTINO. Mostrar o botão só com a do destino ofereceria uma ação que a API recusa com 403. */}
-      {k?.proximo && editavel && can(`${k.perm}.edit`) && can(`${k.proximo.perm}.create`) && <Button size="sm" onClick={() => setConfirmar("convert")}>{k.proximo.rotulo}</Button>}
+      {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <Button size="sm" data-testid="acao-conversao" onClick={() => setConfirmar("convert")}>{rotuloDaConversao}</Button>}
       {k && !["cancelled", "confirmed", "invoiced"].includes(situacao) && can(`${k.perm}.delete`) && <Button size="sm" variant="danger" onClick={() => setConfirmar("cancel")}>Cancelar {k.titulo.toLowerCase()}</Button>}
       <Button size="sm" variant="outline" onClick={() => window.print()}>Imprimir</Button>
     </>}
@@ -173,12 +240,40 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     <Confirm open={confirmar === "confirm"} onOpenChange={() => setConfirmar(null)} title="Confirmar venda" text="Baixa o estoque dos itens com armazém e gera as contas a receber. Operação atômica e idempotente." loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })} />
     {/* CONVERSÃO NÃO É MAIS UM "TEM CERTEZA?". O documento de destino é de OUTRA família, então precisa
         da TOP dele — a da fonte não serve e não é herdada. Sem TOP alvo escolhível, o botão não converte. */}
-    <Dialog open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={k?.proximo?.rotulo ?? ""} size="sm" testId="dialog-conversao"
+    <Dialog open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={rotuloDaConversao} size="sm" testId="dialog-conversao"
       footer={<><Button variant="outline" onClick={() => setConfirmar(null)}>Voltar</Button>
-        <Button loading={act.isPending} disabled={!podeLancar(estadoTopDestino) || !topDestino}
-          onClick={() => act.mutate({ path: `/api/sales/${rota}/${id}/convert`, idem: true, body: { tipo_operacao_id: topDestino } })}>Converter</Button></>}>
-      <div className="grid grid-cols-12 gap-3">
-        <CampoTipoOperacao estado={estadoTopDestino} valor={topDestino} onChange={setTopDestino} span={12} />
+        <Button loading={act.isPending} disabled={!topDaConversao || !segmentoDoDestino}
+          onClick={() => { destinoDaConversao.current = segmentoDoDestino; act.mutate({ path: `/api/sales/${rota}/${id}/convert`, idem: true, body: { tipo_operacao_id: topDaConversao } }); }}>Converter</Button></>}>
+      <div className="space-y-3" data-testid="proximos-passos">
+        {/* UM destino: nada a escolher, mas a operação de destino fica À VISTA — converter sem ver em que
+            operação o documento novo nasce é o efeito colateral que esta fatia veio desfazer. */}
+        {itens.length === 1 && <p data-testid="proximo-passo-unico" data-top-id={itens[0]!.tipoOperacaoId} className="text-sm text-slate-700">
+          <span className="font-mono font-semibold">{itens[0]!.codigo}</span> — {itens[0]!.nome}
+          <span className="mt-0.5 block text-xs text-slate-500">{itens[0]!.familiaRotulo}</span>
+        </p>}
+
+        {/* DOIS OU MAIS: a escolha é do usuário, agrupada por família quando houver mais de uma. Rádio
+            nativo pelo mesmo motivo do lançador: teclado, leitor de tela e rótulo associado de graça. */}
+        {itens.length > 1 && familias.map((familia) => <fieldset key={familia} className="space-y-1.5">
+          {familias.length > 1 && <legend className="text-[12px] font-semibold uppercase tracking-wide text-slate-500">{familia}</legend>}
+          {itens.filter((x) => x.familiaRotulo === familia).map((x) => <label key={x.tipoOperacaoId} data-testid="proximo-passo-opcao" data-top-id={x.tipoOperacaoId}
+            className={`flex cursor-pointer items-center gap-3 rounded-lg border p-2.5 ${x.tipoOperacaoId === passoEscolhido ? "border-brand-600 bg-brand-50 ring-1 ring-brand-600" : "border-slate-200 hover:border-slate-300"}`}>
+            <input type="radio" name="proximo-passo" className="peer sr-only" value={x.tipoOperacaoId} checked={x.tipoOperacaoId === passoEscolhido} onChange={() => setPassoEscolhido(x.tipoOperacaoId)} />
+            <span aria-hidden className={`grid h-4 w-4 shrink-0 place-items-center rounded-full border peer-focus-visible:ring-2 peer-focus-visible:ring-brand-600 ${x.tipoOperacaoId === passoEscolhido ? "border-brand-600" : "border-slate-400"}`}>
+              {x.tipoOperacaoId === passoEscolhido && <span className="h-2 w-2 rounded-full bg-brand-600" />}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="font-mono text-sm font-semibold text-slate-900">{x.codigo}</span> <span className="text-sm text-slate-700">{x.nome}</span>
+            </span>
+          </label>)}
+        </fieldset>)}
+
+        {/* COMPATIBILIDADE: o servidor não confirmou o contrato, ou esta operação nunca declarou política.
+            O diálogo volta a ser o de antes — escolher a TOP do destino da cadeia anterior —, e
+            `MensagemTop` continua bloqueando quando nem essa lista vier. */}
+        {legado && <div className="grid grid-cols-12 gap-3">
+          <CampoTipoOperacao estado={estadoTopLegado} valor={topLegado} onChange={setTopLegado} span={12} />
+        </div>}
       </div>
     </Dialog>
     {/* `idem: true` como na confirmação e na conversão: cancelar venda confirmada ESTORNA estoque e

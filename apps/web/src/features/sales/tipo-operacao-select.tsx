@@ -121,22 +121,34 @@ export function useTopsDaVariante(kind: string, habilitado = true): EstadoTop {
     enabled: habilitado,
     retry: false
   });
+  return estadoDeTops({ habilitado, carregando: q.isPending, erro: q.error, dados: q.data });
+}
 
-  if (!habilitado || q.isPending) return { situacao: "carregando" };
-  if (q.error) {
+/**
+ * A CLASSIFICAÇÃO, separada da forma de perguntar.
+ *
+ * O PORTAL UNIFICADO precisa das TOPs das TRÊS variantes na MESMA renderização, e a regra dos hooks não
+ * permite um `useTopsDaVariante` dentro de um laço. Quem pergunta em lote (`useTopsDeVendas`, sobre
+ * `useQueries`) precisa chegar EXATAMENTE ao mesmo veredito — e uma segunda cópia desta escada de `if`
+ * divergiria em silêncio na primeira vez que alguém ajustasse só um lado. Por isso a decisão mora aqui,
+ * numa função pura, e as duas formas de perguntar a chamam.
+ */
+export function estadoDeTops({ habilitado, carregando, erro, dados }: { habilitado: boolean; carregando: boolean; erro: ApiError | null; dados: unknown }): EstadoTop {
+  if (!habilitado || carregando) return { situacao: "carregando" };
+  if (erro) {
     // 404 (rota ausente) e 5xx (a rota caiu no `:id` da API anterior, ou o servidor quebrou) são os
     // dois modos em que a lista não foi confirmada. Ver o bloco medido no cabeçalho.
-    if (q.error.status === 404 || q.error.status >= 500) return { situacao: "nao-confirmado", status: q.error.status };
-    return { situacao: "erro", mensagem: q.error.message };
+    if (erro.status === 404 || erro.status >= 500) return { situacao: "nao-confirmado", status: erro.status };
+    return { situacao: "erro", mensagem: erro.message };
   }
   // 200 que não é o contrato desta tela NEGA — e a conferência vem ANTES de qualquer leitura de
   // `items`, que é o que impede tanto o "pronto" sobre contrato desconhecido quanto o crash em `.length`.
-  if (!ehTopsDaVariante(q.data)) return { situacao: "nao-confirmado" };
+  if (!ehTopsDaVariante(dados)) return { situacao: "nao-confirmado" };
   // Daqui para baixo a forma está PROVADA: lista vazia é resposta legítima do contrato 1 e significa
   // configuração faltando, não servidor incompatível. Mensagens diferentes porque são problemas de
   // pessoas diferentes — uma o administrador resolve, a outra não.
-  if (q.data.items.length === 0) return { situacao: "sem-top", familia: q.data.family.label };
-  return { situacao: "pronto", dados: q.data };
+  if (dados.items.length === 0) return { situacao: "sem-top", familia: dados.family.label };
+  return { situacao: "pronto", dados };
 }
 
 /** A escrita pode acontecer? Só quando há TOP escolhível. Fail-closed em todos os outros estados. */
