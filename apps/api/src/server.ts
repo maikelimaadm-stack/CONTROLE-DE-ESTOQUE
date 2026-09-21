@@ -24,6 +24,7 @@ import livestockRoutes from "./routes/livestock.js";
 import reportRoutes from "./routes/reports.js";
 import dashboardRoutes from "./routes/dashboards.js";
 import plataformaRoutes from "./routes/plataforma.js";
+import { normalizarSufixos, politicaDeOrigem } from "./lib/cors-origem.js";
 
 export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolean } = {}): Promise<FastifyInstance> {
   const config = opts.config ?? loadConfig();
@@ -32,7 +33,9 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   app.decorate("db", db);
   app.decorate("config", config);
   await app.register(helmet, { contentSecurityPolicy: false });
-  await app.register(cors, { origin: config.WEB_ORIGIN.split(",").map((s) => s.trim()), credentials: true, methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type", "X-Org-Id", "X-Empresa-Id", "Idempotency-Key"] });
+  // Origem exata (produção) OU preview ancorado na conta do projeto. A decisão mora em `cors-origem.ts`,
+  // com o porquê de não existir curinga de provedor aqui: `credentials` está ligado.
+  await app.register(cors, { origin: politicaDeOrigem(config.WEB_ORIGIN.split(","), normalizarSufixos(config.WEB_ORIGIN_PREVIEW_SUFFIX)), credentials: true, methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type", "X-Org-Id", "X-Empresa-Id", "Idempotency-Key"] });
   await app.register(rateLimit, { max: config.RATE_LIMIT_MAX, timeWindow: "1 minute" });
   await app.register(errorsPlugin);
   await app.register(authPlugin);

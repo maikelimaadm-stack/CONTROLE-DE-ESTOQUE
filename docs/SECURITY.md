@@ -29,7 +29,11 @@
 - **Views**: toda view do schema `erp` é `security_invoker = true`. Sem isso a view roda com os direitos do DONO (papel de migração, com `bypassrls`) e devolve linhas de todas as organizações — foi o caso de `erp.v_bank_account_balances`, corrigido na 0015.
 - **Autorização**: permissão por rota (`runService`) + verificações de empresa (`empresaPermitida`, `exigirEmpresaDeLancamento`) + regras de negócio (autorizador, valor máximo, cotações mínimas). Ver `docs/AUTHORIZATION.md`.
 - **Segredos**: nunca commitados (`.env.example` só com placeholders; CI faz varredura). `SUPABASE_SERVICE_ROLE_KEY` só no backend; o frontend usa apenas `NEXT_PUBLIC_*`.
-- **Transporte**: helmet, CORS restrito a `WEB_ORIGIN`, rate limit global (`RATE_LIMIT_MAX`/min).
+- **Transporte**: helmet, CORS restrito a `WEB_ORIGIN` (origens exatas) e, opcionalmente, aos previews do
+  próprio projeto por `WEB_ORIGIN_PREVIEW_SUFFIX` — sufixo ANCORADO na conta, nunca curinga de provedor.
+  A API responde com `credentials`, então um `*.vercel.app` genérico entregaria a API autenticada a
+  qualquer conta daquele provedor. Variável ausente = nenhum preview aceito (`lib/cors-origem.ts`).
+  Rate limit global (`RATE_LIMIT_MAX`/min).
 - **Entrada**: validação zod em todo corpo/query; SQL sempre parametrizado (`SqlBuilder`); identificadores de tabela/coluna vêm do registro declarativo, nunca do cliente.
 - **Auditoria**: trigger de linha + eventos de aplicação (`audit()`), consultável em `/admin/auditoria`.
 - **Idempotência/concorrência**: ver `docs/ARCHITECTURE.md`.

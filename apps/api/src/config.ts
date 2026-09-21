@@ -7,6 +7,13 @@ const schema = z.object({
   DATABASE_URL: z.string().min(1),
   API_LOG_LEVEL: z.string().default("info"),
   WEB_ORIGIN: z.string().default("http://localhost:3000"),
+  /**
+   * Sufixos de host que identificam os previews DESTE projeto (ex.: `-minhaconta.vercel.app`).
+   * Lista separada por vírgula. AUSENTE = nenhum preview aceito: a falta de configuração nunca vira
+   * permissão. Nunca use aqui um sufixo genérico de provedor (`.vercel.app` cru): com `credentials`
+   * ligado, isso entrega a API autenticada a qualquer conta daquele provedor.
+   */
+  WEB_ORIGIN_PREVIEW_SUFFIX: z.string().optional(),
   AUTH_MODE: z.enum(["local", "supabase"]).default("local"),
   LOCAL_AUTH_SECRET: z.string().min(8).default("dev-only-secret-change-me"),
   SUPABASE_JWT_SECRET: z.string().optional(),
