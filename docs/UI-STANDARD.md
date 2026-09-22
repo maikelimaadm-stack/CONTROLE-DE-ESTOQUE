@@ -77,6 +77,15 @@ As credenciais demo (`admin@demo.local / Demo@12345`) só aparecem na tela de lo
   imports entre arquivos da pasta) — o barrel só reexporta e o grafo interno é acíclico:
   `button/card/badge/spinner → status-badge/overlays/states/page-header → detail-shell → index`.
 
+## Formato de tela e responsividade
+
+O dono é **`docs/UI-SUPPORT-MATRIX.md`**. Não repita a tabela aqui: uma segunda cópia envelhece em
+silêncio, e o formato novo simplesmente não aparece nela.
+
+Em uma frase: **desktop é gate obrigatório, tablet é best effort, mobile está DEFERRED.** Um cenário
+fora do escopo suportado não bloqueia entrega — e continua com a dívida versionada, etiquetada e
+executável por `pnpm e2e:mobile`, nunca apagada nem marcada como resolvida.
+
 ## Primitives visuais (`apps/web/src/components/ui`)
 
 Fonte única dos blocos de interface. Organização interna: leaf modules `button.tsx`, `card.tsx`, `badge.tsx`,

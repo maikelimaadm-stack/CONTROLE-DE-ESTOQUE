@@ -647,7 +647,19 @@ test("UX14 — ESC fecha a janela mesmo com pesquisa digitada, e o foco volta pa
  * UX15 — TELA ESTREITA: a janela continua utilizável, e a grade vira pilha
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test.describe("UX15 — celular", () => {
+/**
+ * ETIQUETA `@mobile` — DÍVIDA DECLARADA, NÃO TESTE DESLIGADO.
+ *
+ * Mobile está DEFERRED em `docs/UI-SUPPORT-MATRIX.md`: o produto decidiu não entregar este formato
+ * nesta fase. Por isso a suíte obrigatória (`pnpm e2e`) exclui esta etiqueta e `pnpm e2e:mobile` a
+ * executa sozinha, podendo ficar VERMELHA.
+ *
+ * O que NÃO foi feito, de propósito: nada de `.skip`, nada de `.fixme`, nenhuma asserção afrouxada,
+ * nenhum `force: true`, nenhum timeout inflado. O teste continua reproduzindo o defeito de verdade —
+ * é ele a evidência viva de que a dívida existe, e `scripts/ui-support-matrix-audit.mjs` reprova quem
+ * o apagar, pular ou afrouxar. Teste apagado deixa de ser dívida e vira esquecimento.
+ */
+test.describe("UX15 — celular", { tag: "@mobile" }, () => {
   test.use({ viewport: { width: 390, height: 844 } });
 
   test("UX15 — em tela estreita a janela cabe, sem rolagem horizontal, e lança até o fim", async ({ page }) => {

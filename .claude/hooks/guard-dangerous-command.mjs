@@ -216,7 +216,11 @@ const VALOR_SEGUINTE = new Set([
   "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix",
   "-R", "--repo", "-m", "--message", "-F", "--file", "-b", "--branch", "--cwd", "-p", "--project",
   "-X", "--method", "--filter", "--hostname", "--jq", "-q", "--template", "-t",
-  "--dir", "--prefix", "-w", "--workspace"
+  "--dir", "--prefix",
+  // `-w`/`--workspace-root` do pnpm são BOOLEANOS (conferido em `pnpm run --help`). Tratá-los como
+  // consumidores do token seguinte fazia `pnpm -w e2e` engolir o nome do script: posicionais ficava
+  // vazio, nenhum gate era reconhecido, e a forma curta passava enquanto a longa era recusada.
+  "--workspace"
 ]);
 
 /** Posicionais na ordem: descarta flags e o valor das que consomem o token seguinte. */
@@ -312,12 +316,44 @@ const BRANCHES_PROTEGIDAS = new Set(["main", "master"]);
 /** Hosts que provam execução local. Qualquer outro é remoto até prova em contrário. */
 const HOSTS_LOCAIS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
-/** Gate de teste → variáveis que decidem o banco que ele vai resetar. */
-const ALVO_DE_BANCO_POR_GATE = new Map([
+/**
+ * Gate de teste → variáveis que decidem o banco que ele vai resetar.
+ *
+ * EXPORTADO porque `scripts/claude-harness-audit.mjs` confere mecanicamente que nenhum script de
+ * E2E fica fora desta decisão. O casamento é por TOKEN EXATO (`Map.has`, mais abaixo), então cada
+ * alias novo nasce DESPROTEGIDO por omissão — foi assim que `e2e:mobile`, `e2e:skew` e
+ * `e2e:skew:web-anterior` passaram a aceitar alvo remoto enquanto `e2e` era recusado. Trocar o nome
+ * do script nunca pode retirar a proteção, e é o auditor que transforma isso em lei.
+ *
+ * POR QUE `TEST_DATABASE_URL` TAMBÉM NOS GATES DE E2E: `apps/web/playwright.config.ts` resolve o
+ * alvo como `E2E_DATABASE_URL ?? TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e")`. Esse
+ * `replace` troca só o NOME do banco e PRESERVA o host — então declarar apenas `E2E_DATABASE_URL`
+ * deixava a porta dos fundos aberta pela variável que o próprio config lê em seguida.
+ */
+export const ALVO_DE_BANCO_POR_GATE = new Map([
   ["test:integration", ["TEST_DATABASE_URL", "TEST_DATABASE_URL_APP"]],
   ["db:seed:e2e", ["E2E_DATABASE_URL"]],
-  ["e2e", ["E2E_DATABASE_URL"]]
+  ["e2e", ["E2E_DATABASE_URL", "TEST_DATABASE_URL"]],
+  ["e2e:mobile", ["E2E_DATABASE_URL", "TEST_DATABASE_URL"]],
+  ["e2e:skew", ["E2E_DATABASE_URL", "TEST_DATABASE_URL"]],
+  ["e2e:skew:web-anterior", ["E2E_DATABASE_URL", "TEST_DATABASE_URL"]]
 ]);
+
+/**
+ * Script de E2E que comprovadamente NÃO abre banco (relatório, instalação de browser, codegen).
+ *
+ * Existe para que o auditor do harness possa exigir DECLARAÇÃO de todo script `e2e*` sem forçar
+ * mentira no mapa acima: pôr um `e2e:report` (que só abre um HTML) em `ALVO_DE_BANCO_POR_GATE`
+ * seria AFIRMAR que ele reseta banco, e passaria a recusá-lo sempre que a variável estivesse
+ * remota no shell — gate que acusa o inocente é desligado na primeira semana.
+ *
+ * O NOME DO SCRIPT É O GATILHO DA OBRIGAÇÃO DE DECLARAR, nunca a afirmação sobre o comportamento.
+ * Allowlist sem motivo vira carimbo: cada entrada diz por que o alvo de banco não se aplica a ela.
+ *
+ * Nasce VAZIA de propósito: os quatro scripts de E2E de hoje sobem a API contra o banco resolvido
+ * pelo config do Playwright, então todos têm alvo declarado no mapa acima.
+ */
+export const SEM_ALVO_DE_BANCO_DECLARADO = new Map([]);
 
 /**
  * Atribuições `VAR=valor` no INÍCIO do comando, com o valor preservado.
@@ -881,7 +917,31 @@ const FIXTURES_DE_AMBIENTE = [
   [{ [V_TESTE]: DSN_LOCAL, TEST_DATABASE_URL_APP: DSN_REMOTO }, "pnpm test:integration", "negar"],
   [{ [V_E2E]: DSN_REMOTO }, "pnpm e2e", "negar"],
   [{ [V_E2E]: DSN_LOCAL }, "pnpm e2e", "permitir"],
-  [{ [V_TESTE]: DSN_REMOTO }, "pnpm lint", "permitir"]                         // lint não toca banco
+  [{ [V_TESTE]: DSN_REMOTO }, "pnpm lint", "permitir"],                        // lint não toca banco
+
+  // ALIASES DE E2E — a regressão que esta bateria existe para prender.
+  // O casamento é por token exato, então `e2e:mobile` NÃO herda nada de `e2e`: sem estas linhas,
+  // trocar o nome do script devolveria a permissão em silêncio, e o autoteste continuaria verde.
+  [{ [V_E2E]: DSN_REMOTO }, "pnpm e2e:mobile", "negar"],
+  [{ [V_E2E]: DSN_LOCAL }, "pnpm e2e:mobile", "permitir"],
+  [{}, "pnpm e2e:mobile", "permitir"],                                         // ausente = default loopback
+  [{ [V_E2E]: DSN_REMOTO }, "pnpm --filter @agro/web e2e:mobile", "negar"],
+  [{ [V_E2E]: DSN_REMOTO }, "pnpm --filter @agro/web e2e:skew", "negar"],
+  [{ [V_E2E]: DSN_LOCAL }, "pnpm --filter @agro/web e2e:skew", "permitir"],
+  [{ [V_E2E]: DSN_REMOTO }, "pnpm --filter @agro/web e2e:skew:web-anterior", "negar"],
+
+  // A VARIÁVEL QUE O CONFIG LÊ DEPOIS. `playwright.config.ts` cai em `TEST_DATABASE_URL` quando
+  // `E2E_DATABASE_URL` falta, e o `replace` dele preserva o HOST. Sem estas linhas, o alvo remoto
+  // entrava pela porta dos fundos com o gate de E2E "protegido".
+  [{ [V_TESTE]: DSN_REMOTO }, "pnpm e2e", "negar"],
+  [{ [V_TESTE]: DSN_REMOTO }, "pnpm e2e:mobile", "negar"],
+  [{ [V_TESTE]: DSN_LOCAL }, "pnpm e2e:mobile", "permitir"],
+
+  // `-w` é BOOLEANO no pnpm: se o parser o tratar como consumidor de valor, ele engole o nome do
+  // script e o gate desaparece. A forma curta tem de ser recusada igual à longa.
+  [{ [V_E2E]: DSN_REMOTO }, "pnpm -w e2e", "negar"],
+  [{ [V_E2E]: DSN_REMOTO }, "pnpm -w e2e:mobile", "negar"],
+  [{ [V_E2E]: DSN_REMOTO }, "pnpm --workspace-root e2e:mobile", "negar"]
 ];
 
 function autoteste() {

@@ -44,6 +44,17 @@ Carregada ao trabalhar na interface. Documentos canônicos: `docs/UI-STANDARD.md
 `apps/web/nav.registry.mjs` é a fonte única. Link interno aponta para rota canônica —
 nunca para rota antiga que só existe por redirect. Nenhuma lista de navegação paralela.
 
+## Formato de tela
+
+A matriz de suporte é `docs/UI-SUPPORT-MATRIX.md` — ela é o dono, e esta regra não a recopia.
+
+- Mudança visual respeita a matriz: o que é SUPORTADO não pode regredir para viabilizar o que está
+  DEFERRED. Trabalho de um formato futuro nunca se paga com o formato que já é contrato.
+- Formato DEFERRED **não** se declara resolvido, nem em relatório, nem em PR, nem em comentário.
+  Enquanto estiver DEFERRED, a dívida dele fica versionada, etiquetada e executável — quem a apaga,
+  pula ou afrouxa é reprovado por `scripts/ui-support-matrix-audit.mjs`.
+- Encerrar dívida é consertar o defeito e então tirar a linha da tabela. Nessa ordem, nunca a inversa.
+
 ## Regressão
 
 Mudança de UX não toca o motor: API, serviço, máquina de estado, ledger, auditoria,
