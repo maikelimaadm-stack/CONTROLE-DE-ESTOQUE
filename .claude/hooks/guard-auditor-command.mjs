@@ -100,9 +100,15 @@ export const SCRIPTS_DE_GATE = new Set([
   "lint", "typecheck", "test", "test:integration", "e2e", "build", "parity", "parity:check",
   "audit:naming", "audit:member-farms", "audit:notifications", "audit:responsavel",
   "audit:empresa", "audit:farm", "audit:dictionary", "audit:id-global", "audit:claude-harness",
-  // Leitura pura: confere que a dívida DEFERRED da matriz de suporte continua versionada e
-  // executável. Não roda teste, não toca banco, não escreve nada.
-  "audit:ui-support", "e2e:mobile"
+  // `audit:ui-support` é AUDITORIA ESTÁTICA: lê a matriz de suporte e os arquivos declarados,
+  // não executa teste, não abre banco, não escreve nada.
+  "audit:ui-support",
+  // `e2e:mobile` é o oposto: GATE E2E EXECUTÁVEL, que sobe API e web e reseta o banco de teste
+  // como qualquer outro Playwright. Ele só é liberado ao auditor porque a linha 166 o submete a
+  // `bancoDeTesteNaoProvadoLocal`, que exige alvo comprovadamente local. Trocar o nome do script
+  // não retira essa proteção: o mapa do guarda de banco declara o alias, e
+  // `scripts/claude-harness-audit.mjs` reprova quem criar um `e2e*` sem declarar alvo.
+  "e2e:mobile"
 ]);
 
 const flagPresente = (args, ...nomes) =>
@@ -190,6 +196,7 @@ export function avaliarAuditor(linha) {
 
 /** Nome montado de propósito: escrito por extenso, casaria o secret scan do CI. Host inexistente. */
 const V_TESTE = `TEST_${"DATABASE_URL"}`;
+const V_E2E = `E2E_${"DATABASE_URL"}`;
 const DSN_LOCAL = "postgresql://postgres@127.0.0.1:5433/agro_erp_test";
 const DSN_REMOTO = "postgresql://postgres@db.exemplo.invalido:5432/prod";
 
@@ -254,7 +261,13 @@ export const FIXTURES = {
     "pnpm e2e --update-snapshots",
     "pnpm build --write",
     // gate que reseta banco de teste com alvo não provado local
-    `${V_TESTE}=${DSN_REMOTO} pnpm test:integration`
+    `${V_TESTE}=${DSN_REMOTO} pnpm test:integration`,
+    // ALIAS DE E2E COM ALVO REMOTO — o auditor não ganha permissão por o script ter outro nome.
+    // Antes destas linhas, `e2e:mobile` estava em SCRIPTS_DE_GATE e o guarda de banco não o
+    // reconhecia: o auditor passava direto com alvo remoto, ao contrário de `pnpm e2e`.
+    `${V_E2E}=${DSN_REMOTO} pnpm e2e:mobile`,
+    `${V_E2E}=${DSN_REMOTO} pnpm --filter @agro/web e2e:mobile`,
+    `${V_TESTE}=${DSN_REMOTO} pnpm e2e:mobile`
   ],
   permitir: [
     "git status",
@@ -301,6 +314,9 @@ export const FIXTURES = {
     "git symbolic-ref --short HEAD",
     "git remote show origin",
     `${V_TESTE}=${DSN_LOCAL} pnpm test:integration`,
+    // o mesmo alias com alvo comprovadamente local continua permitido ao auditor
+    `${V_E2E}=${DSN_LOCAL} pnpm e2e:mobile`,
+    `${V_E2E}=${DSN_LOCAL} pnpm --filter @agro/web e2e:mobile`,
     "grep -c erro relatorio.log 2>&1"
   ]
 };

@@ -37,7 +37,14 @@ decidiu, explicitamente, não entregar mobile nesta fase. A dívida continua:
 - **não declarada verde** — nenhum baseline afirma que o cenário passou.
 
 Um teste apagado deixa de ser dívida e vira esquecimento. Por isso o auditor
-`scripts/ui-support-matrix-audit.mjs` reprova quem remover, pular ou afrouxar um débito declarado.
+`scripts/ui-support-matrix-audit.mjs` reprova quem **remover** o débito ou a etiqueta, e quem
+introduzir um dos afrouxamentos **mecanicamente detectáveis** que ele nomeia (`.skip`, `.fixme`,
+`test.fail`, `force: true`, timeout inflado, `test.slow`).
+
+O que ele **não** faz, para ninguém confundir cobertura com garantia: ele **não analisa asserção**.
+Casa texto contra uma lista fechada de padrões. Trocar um limite por outro mais frouxo, esvaziar o
+corpo do teste ou mudar o viewport para desktop passam por ele sem uma ofensa sequer. Contra esses,
+a proteção continua sendo revisão humana — e é por isso que a dívida também fica escrita aqui.
 
 ## Débitos declarados (formato DEFERRED)
 

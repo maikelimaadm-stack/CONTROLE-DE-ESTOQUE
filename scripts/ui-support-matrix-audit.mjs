@@ -11,19 +11,28 @@
  *   - apagar o teste da suíte mobile — a dívida some do repositório e o documento continua afirmando
  *     que ela é "reproduzível";
  *   - marcar `.skip`/`.fixme` — `pnpm e2e:mobile` fica VERDE, e verde vazio lê-se como resolvido;
- *   - afrouxar a asserção, inflar timeout ou usar `force: true` — o teste passa sem o defeito ter
- *     sido consertado, que é a forma mais cara de mentira porque parece prova.
+ *   - neutralizar o teste por um punhado de formas conhecidas (`force: true`, timeout inflado,
+ *     `test.slow`) — ele passa sem o defeito ter saído, que é a forma mais cara de mentira porque
+ *     se parece com prova.
  *
  * O QUE ELE CONFERE, para cada débito declarado na tabela do documento:
  *   1. o arquivo existe;
- *   2. o débito aparece lá dentro, com a etiqueta declarada;
- *   3. não está pulado (`.skip`, `.fixme`, `test.fail`) nem condicionalmente pulado;
- *   4. não tem os afrouxamentos típicos de quem quer esconder o vermelho;
- *   5. a suíte obrigatória EXCLUI a etiqueta e a suíte da dívida a INCLUI — senão a separação existe
+ *   2. a identificação do débito e a etiqueta declarada aparecem no arquivo, fora de comentário;
+ *   3. o arquivo não contém nenhum dos PADRÕES CONCRETOS da lista `AFROUXAMENTOS`;
+ *   4. a suíte obrigatória EXCLUI a etiqueta e a suíte da dívida a INCLUI — senão a separação existe
  *      só no texto, e o gate obrigatório voltaria a carregar (ou a perder) a dívida sem ninguém notar.
  *
- * O QUE ELE NÃO FAZ. Não roda teste e não julga se o defeito ainda existe: isso é papel de
- * `pnpm e2e:mobile`. Aqui se confere que a dívida continua VERSIONADA, MARCADA e EXECUTÁVEL.
+ * O QUE ELE NÃO FAZ — e é importante não confundir cobertura com garantia:
+ *   - Não roda teste e não julga se o defeito ainda existe: isso é papel de `pnpm e2e:mobile`.
+ *   - NÃO analisa asserção. Ele casa TEXTO contra uma lista FECHADA de padrões. Trocar
+ *     `toBeLessThanOrEqual(1)` por `(99999)`, esvaziar o corpo do teste, mudar o viewport para
+ *     desktop ou pôr um `return` no início passam por ele sem uma ofensa sequer — medido.
+ *   - O casamento é por SUBSTRING no arquivo inteiro: ele confere que a etiqueta e o identificador
+ *     existem em algum lugar, não que estejam no bloco certo.
+ *
+ * Ou seja: ele reprova os afrouxamentos MECANICAMENTE DETECTÁVEIS que a lista nomeia, e a proteção
+ * real contra o resto continua sendo revisão humana. Prometer mais do que isso transformaria o gate
+ * numa garantia falsa, que é pior do que não ter gate — porque ninguém mais olha.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -37,7 +46,13 @@ const AFROUXAMENTOS = [
   { re: /\.(skip|fixme)\s*\(/, nome: "`.skip`/`.fixme`" },
   { re: /test\.fail\s*\(/, nome: "`test.fail`" },
   { re: /\bforce:\s*true/, nome: "`force: true`" },
-  { re: /\btimeout:\s*\d{6,}/, nome: "timeout inflado (≥ 100000ms)" }
+  { re: /\btimeout:\s*\d{6,}/, nome: "timeout inflado (≥ 100000ms)" },
+  // A FORMA REAL DO PLAYWRIGHT. `test.setTimeout(999999)` recebe o número DIRETO — a primeira
+  // versão desta lista só cobria a forma de objeto (`{ timeout: ... }`), que a API não usa, e a
+  // amostra do autoteste repetia o mesmo engano. Padrão que só casa uma grafia inexistente é
+  // decoração: passava verde enquanto a inflação de verdade entrava sem ser vista.
+  { re: /\btest\.setTimeout\s*\(\s*\d{6,}/, nome: "`test.setTimeout` inflado (≥ 100000ms)" },
+  { re: /\btest\.slow\s*\(/, nome: "`test.slow`" }
 ];
 
 /**
@@ -101,7 +116,10 @@ const AMOSTRAS = [
   ["marcado fixme", () => ofensasDoDebito(DEB, OK + "\ntest.fixme(true);"), 1],
   ["test.fail", () => ofensasDoDebito(DEB, OK + "\ntest.fail();"), 1],
   ["force click", () => ofensasDoDebito(DEB, OK + "\nawait b.click({ force: true });"), 1],
-  ["timeout inflado", () => ofensasDoDebito(DEB, OK + "\ntest.setTimeout({ timeout: 999999 });"), 1],
+  // A grafia REAL da API, não a de objeto que a versão anterior desta amostra inventou.
+  ["timeout inflado", () => ofensasDoDebito(DEB, OK + "\ntest.setTimeout(999999);"), 1],
+  ["timeout inflado em objeto", () => ofensasDoDebito(DEB, OK + "\nawait page.click('x', { timeout: 999999 });"), 1],
+  ["test.slow", () => ofensasDoDebito(DEB, OK + "\ntest.slow();"), 1],
   ["scripts íntegros", () => ofensasDosScripts({ e2e: "playwright test --grep-invert @mobile", "e2e:mobile": "playwright test --grep @mobile" }, ["@mobile"]), 0],
   ["obrigatória não exclui", () => ofensasDosScripts({ e2e: "playwright test", "e2e:mobile": "playwright test --grep @mobile" }, ["@mobile"]), 1],
   // UMA ofensa, não duas: sem o script não há o que auditar dentro dele, e repetir a mesma causa em
