@@ -18,9 +18,24 @@
  * │ vazamento de credencial entre origens, e o navegador não nos protegeria porque nós é que teríamos │
  * │ dito que aquela origem é confiável.                                                               │
  * │                                                                                                   │
- * │ O sufixo de preview da Vercel carrega o identificador da CONTA. Ancorar nele aceita os previews   │
- * │ do projeto e recusa os de qualquer outra conta — que é a diferença entre "as minhas telas" e "a   │
- * │ internet".                                                                                        │
+ * │ O sufixo de preview da Vercel carrega o identificador da CONTA, e ancorar nele é o que separa    │
+ * │ "as minhas telas" de "a internet": em vez de confiar num provedor inteiro, confia-se num nome.    │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ ATÉ ONDE A ÂNCORA VAI, E ONDE ELA PARA — limite declarado ──────────────────────────────────────┐
+ * │ O que se verifica é que o host TERMINA em `-<conta>.vercel.app` com UM rótulo na frente. O que    │
+ * │ vem nesse rótulo é livre: `https://qualquercoisa-<conta>.vercel.app` é aceito.                    │
+ * │                                                                                                   │
+ * │ Para os hostnames que a plataforma GERA, essa é a âncora certa — ali o identificador da conta é   │
+ * │ o fim do nome e não se escolhe. Mas `*.vercel.app` é um NAMESPACE GLOBAL do provedor, e se ele    │
+ * │ permitir que outra conta reivindique um subdomínio ESCOLHIDO terminado em `-<nossa-conta>`, essa  │
+ * │ origem passa nesta verificação. Este repositório NÃO confirmou a política de namespace do         │
+ * │ provedor, e é por isso que a frase honesta é esta, e não "recusa os de qualquer outra conta".     │
+ * │                                                                                                   │
+ * │ O que a âncora garante: "ninguém entra só por ter conta no provedor". O que ela NÃO garante:      │
+ * │ "ninguém além de nós consegue um nome que case". Fechar o resto exigiria a FORMA COMPLETA do      │
+ * │ hostname gerado, o que é mudança de comportamento (arrisca recusar preview legítimo) fora do      │
+ * │ contrato desta fatia. Fica declarado, não silenciado.                                             │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ E POR QUE UM COMENTÁRIO NÃO BASTAVA (CORS-PREVIEW-01 R1) ───────────────────────────────────────┐
@@ -66,14 +81,38 @@ export const FORMATO_SUFIXO_DE_PREVIEW = /^-[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?
 /** O que o erro de startup mostra a quem digitou o valor errado. Um exemplo vale mais que a regex. */
 export const EXEMPLO_DE_SUFIXO = "-minhaconta.vercel.app";
 
-/** Configuração de segurança malformada. Existe para derrubar o processo, nunca para ser capturada. */
+/**
+ * ASCII IMPRIMÍVEL, SEM ESPAÇO — conferido ANTES de dobrar a caixa, e a ordem é o conserto.
+ *
+ * `toLowerCase()` não é uma tabela A–Z: `U+212A` (SINAL DE KELVIN) minúsculo é `k`. Sem esta
+ * conferência, `-<KELVIN>onta.vercel.app` — que a regex canônica RECUSA — virava
+ * `-konta.vercel.app`, que ela ACEITA, e o processo subia confiando num host DIFERENTE do que está
+ * escrito na variável. É a correção silenciosa que esta fatia existe para proibir, vinda de dentro.
+ * Nome de host não tem caractere fora do ASCII imprimível; exigir isso primeiro elimina de uma vez o
+ * Kelvin, os homóglifos e os invisíveis no MEIO do valor (ZWSP, BOM, hífen suave).
+ */
+const SOMENTE_ASCII_IMPRIMIVEL = /^[\x21-\x7E]+$/;
+
+/**
+ * Configuração de segurança malformada. Existe para derrubar o processo, nunca para ser capturada.
+ *
+ * NÃO CARREGA O VALOR RECUSADO, e isso é regra do repositório, não estilo. `CLAUDE.md` § Segredos:
+ * "Nunca ponha credencial em relatório, PR, comentário ou log — nem mascarada". Esta variável é
+ * preenchida à mão no painel da plataforma de implantação, ao lado das que guardam DSN e token —
+ * colar a errada no campo errado é o engano mais comum que existe ali. A primeira versão desta
+ * classe ecoava o valor, e um DSN colado por engano ia INTEIRO para o log de startup, com senha.
+ * Posição e formato esperado bastam para consertar: quem configurou tem o valor na frente.
+ */
 export class SufixoDePreviewInvalido extends Error {
-  constructor(readonly invalidos: readonly string[]) {
+  constructor(readonly posicoes: readonly number[], readonly total: number) {
     super(
-      `WEB_ORIGIN_PREVIEW_SUFFIX inválido: ${invalidos.map((s) => JSON.stringify(s)).join(", ")}. ` +
-      `Cada sufixo tem de ser "-<conta>.vercel.app" (ex.: "${EXEMPLO_DE_SUFIXO}") — ` +
-      `sufixo genérico de provedor, esquema, porta, caminho, credencial embutida e curinga são RECUSADOS. ` +
-      `Para não aceitar nenhum preview, deixe a variável vazia ou ausente.`
+      `WEB_ORIGIN_PREVIEW_SUFFIX inválido: ${posicoes.length === 1 ? "o item" : "os itens"} ` +
+      `${posicoes.join(", ")} de ${total} não ${posicoes.length === 1 ? "está" : "estão"} no formato ` +
+      `"-<conta>.vercel.app" (ex.: "${EXEMPLO_DE_SUFIXO}"). São RECUSADOS, sem correção silenciosa: ` +
+      `sufixo genérico de provedor (".vercel.app", "vercel.app"), curinga, esquema colado, porta, ` +
+      `caminho, credencial embutida, conta com ponto e qualquer caractere fora do ASCII imprimível. ` +
+      `O valor recusado NÃO é impresso, de propósito: se alguém colar um segredo nesta variável por ` +
+      `engano, ele não vai para o log. Para não aceitar nenhum preview, deixe a variável vazia ou ausente.`
     );
     this.name = "SufixoDePreviewInvalido";
   }
@@ -102,16 +141,27 @@ export class SufixoDePreviewInvalido extends Error {
  */
 export function sufixosDePreview(bruto: string | undefined | null): string[] {
   if (bruto === undefined || bruto === null) return [];
-  const itens = bruto.split(",").map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0);
-  const invalidos = itens.filter((s) => !FORMATO_SUFIXO_DE_PREVIEW.test(s));
-  if (invalidos.length > 0) throw new SufixoDePreviewInvalido(invalidos);
-  return itens;
+  const itens = bruto.split(",").map((s) => s.trim()).filter((s) => s.length > 0);
+  const validos: string[] = [];
+  const posicoesInvalidas: number[] = [];
+  itens.forEach((item, i) => {
+    // ASCII PRIMEIRO, caixa DEPOIS. Invertida, a ordem deixa `toLowerCase()` fabricar um host que a
+    // regex canônica nunca aceitaria — ver `SOMENTE_ASCII_IMPRIMIVEL`.
+    if (!SOMENTE_ASCII_IMPRIMIVEL.test(item)) { posicoesInvalidas.push(i + 1); return; }
+    const canonico = item.toLowerCase();
+    if (!FORMATO_SUFIXO_DE_PREVIEW.test(canonico)) { posicoesInvalidas.push(i + 1); return; }
+    validos.push(canonico);
+  });
+  if (posicoesInvalidas.length > 0) throw new SufixoDePreviewInvalido(posicoesInvalidas, itens.length);
+  return validos;
 }
 
 /**
  * A ORIGEM É DE UM PREVIEW DESTE PROJETO?
  *
- * Recebe a lista JÁ VALIDADA por `sufixosDePreview`. Exige, em conjunto — e a conjunção é o ponto:
+ * CASADOR PURO. Recebe a lista já validada quando vem de `politicaDeOrigem` (o único caminho de
+ * produção) e NÃO revalida: quem a chamar direto com lixo recebe o veredito daquele lixo. Exige, em
+ * conjunto — e a conjunção é o ponto:
  *  1. esquema `https` literal. `http://` cai fora: preview da Vercel é sempre TLS, e aceitar texto
  *     claro abriria a porta para quem controla a rede.
  *  2. host terminando EXATAMENTE no sufixo declarado. Sufixo é fim de cadeia, não "contém" — senão
@@ -138,9 +188,14 @@ export function ehPreviewDoProjeto(origem: string, sufixos: readonly string[]): 
 /**
  * A FUNÇÃO QUE O CORS CONSULTA.
  *
- * Recebe o sufixo **BRUTO** da configuração e o valida aqui dentro, de propósito: assim não existe
- * caminho por onde uma lista não verificada chegue à decisão. Quem chamar isto com `.vercel.app`
- * recebe uma exceção antes de existir servidor — não uma política permissiva.
+ * Recebe o sufixo **BRUTO** da configuração e o valida aqui dentro, de propósito: nenhum caminho de
+ * PRODUÇÃO constrói política a partir de lista não verificada, porque a única porta que o servidor usa
+ * é esta. Quem chamar isto com `.vercel.app` recebe uma exceção antes de existir servidor — não uma
+ * política permissiva.
+ *
+ * `ehPreviewDoProjeto` continua exportada e continua aceitando lista arbitrária: ela é o CASADOR puro,
+ * e os testes a chamam com sufixo genérico justamente para mostrar o que aconteceria se um valor desses
+ * chegasse até lá. Não é uma segunda porta de produção; é o corpo de delito.
  *
  * Devolve o predicado no formato que o `@fastify/cors` espera. Origem ausente (requisição que não
  * veio de navegador: `curl`, health check, servidor a servidor) é liberada porque CORS não se aplica

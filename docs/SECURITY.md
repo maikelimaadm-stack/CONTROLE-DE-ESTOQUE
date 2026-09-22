@@ -34,10 +34,18 @@
   A API responde com `credentials`, então um `*.vercel.app` genérico entregaria a API autenticada a
   qualquer conta daquele provedor. **O formato é VERIFICADO no startup**: cada item tem de ser
   `-<conta>.vercel.app`, e um valor genérico ou malformado (`.vercel.app`, `vercel.app`, `*.vercel.app`,
-  esquema colado, porta, caminho, credencial embutida, conta com ponto) **derruba o processo** em
-  `loadConfig` e em `buildApp` — nunca é corrigido em silêncio, porque remover o `https://` de um valor
-  errado produz um valor plausível e quem digitou não descobre. Variável ausente = nenhum preview aceito.
-  Dono do contrato: `apps/api/src/lib/cors-origem.ts`. Rate limit global (`RATE_LIMIT_MAX`/min).
+  esquema colado, porta, caminho, credencial embutida, conta com ponto, caractere fora do ASCII
+  imprimível) **derruba o processo** em `loadConfig` e em `buildApp` — nunca é corrigido em silêncio,
+  porque remover o `https://` de um valor errado produz um valor plausível e quem digitou não descobre.
+  O erro de startup **não imprime o valor recusado**, só a posição dele na lista: a variável fica ao lado
+  das que guardam DSN e token, e colar a errada no campo errado é o engano mais comum ali. Variável
+  ausente = nenhum preview aceito. Dono do contrato: `apps/api/src/lib/cors-origem.ts`.
+  **Limite declarado da âncora**: o que se verifica é o FIM do host (`-<conta>.vercel.app` com um rótulo
+  na frente); o rótulo em si é livre, então a âncora garante "ninguém entra só por ter conta no provedor"
+  e **não** garante "ninguém além de nós consegue um nome que case" — `*.vercel.app` é namespace global
+  do provedor e a política de reivindicação dele não foi confirmada por este repositório. Fechar o resto
+  exigiria a forma completa do hostname gerado, com risco de recusar preview legítimo.
+  Rate limit global (`RATE_LIMIT_MAX`/min).
 - **Entrada**: validação zod em todo corpo/query; SQL sempre parametrizado (`SqlBuilder`); identificadores de tabela/coluna vêm do registro declarativo, nunca do cliente.
 - **Auditoria**: trigger de linha + eventos de aplicação (`audit()`), consultável em `/admin/auditoria`.
 - **Idempotência/concorrência**: ver `docs/ARCHITECTURE.md`.

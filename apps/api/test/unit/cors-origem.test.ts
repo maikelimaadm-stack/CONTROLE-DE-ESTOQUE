@@ -102,6 +102,19 @@ describe("CORS · o sufixo de preview é VERIFICADO no startup", () => {
     recusadoEmTodaPorta("vercel.app", "domínio do provedor cru");
   });
 
+  it("C5b · o hífen inicial é OBRIGATÓRIO — sem ele a âncora deixa de ser âncora", () => {
+    // Esta asserção existe por uma mutação específica que C4/C5/C6 NÃO pegariam: trocar `^-` por
+    // `^-?` no formato canônico. Nem `.vercel.app` nem `vercel.app` passam a casar com isso (são
+    // curtos demais para terminar em `.vercel.app`), então os três testes acima continuariam verdes
+    // enquanto `conta.vercel.app` — um sufixo SEM âncora, que aceita qualquer `Xconta.vercel.app` —
+    // viraria configuração válida. Um teste que não distingue a regra da sua versão frouxa não está
+    // protegendo a regra.
+    recusadoEmTodaPorta("conta.vercel.app", "sem o hífen inicial");
+    recusadoEmTodaPorta("contadoprojeto.vercel.app", "sem o hífen inicial, nome longo");
+    expect(FORMATO_SUFIXO_DE_PREVIEW.source.startsWith("^-["),
+      "o `-` do formato canônico não pode ser opcional nem sumir").toBe(true);
+  });
+
   it("C6 · `-vercel.app` (hífen sem conta nenhuma) REPROVA", () => {
     // Parece ancorado e não é: o rótulo da conta está vazio, então a âncora não ancora em ninguém.
     recusadoEmTodaPorta("-vercel.app", "âncora vazia");
@@ -145,17 +158,75 @@ describe("CORS · o sufixo de preview é VERIFICADO no startup", () => {
     expect(sufixosDePreview(" , ")).toEqual([]);
   });
 
-  it("a mensagem do erro diz o valor recusado e o formato esperado", () => {
-    // Um erro de startup que não diz o que fazer vira uma reexecução e um `git revert`.
+  it("a mensagem do erro localiza o item e ensina o formato — sem NUNCA ecoar o valor", () => {
+    // Um erro de startup que não diz o que fazer vira uma reexecução e um `git revert`. E um erro
+    // que ecoa o valor vira vazamento: esta variável é preenchida à mão no painel da plataforma, ao
+    // lado das que guardam DSN e token, e colar a errada no campo errado é o engano mais comum ali.
+    // A primeira versão desta classe imprimia o valor; um DSN colado por engano ia INTEIRO para o
+    // log, com senha. `CLAUDE.md` § Segredos: "nem mascarada".
+    const SEGREDO_FALSO = "postgresql://erp_app:Tr0ub4dor-FALSO@db.interno:5432/erp";
     try {
-      startup(".vercel.app");
+      startup(`${SUFIXO},${SEGREDO_FALSO}`);
       throw new Error("deveria ter reprovado");
     } catch (e) {
       const m = (e as Error).message;
-      expect(m).toContain(".vercel.app");
-      expect(m).toContain("-minhaconta.vercel.app");
+      expect(m, "o item errado é o segundo, e a mensagem tem de dizer isso").toMatch(/o item 2 de 2/);
+      expect(m, "sem o formato esperado, quem lê não sabe o que corrigir").toContain("-minhaconta.vercel.app");
       expect(m, "quem só quer desligar precisa saber como").toContain("vazia ou ausente");
+      // O coração deste teste: nem o valor inteiro, nem a senha, nem o host, nem o usuário.
+      for (const pedaco of [SEGREDO_FALSO, "Tr0ub4dor-FALSO", "tr0ub4dor-falso", "db.interno", "erp_app"]) {
+        expect(m, `"${pedaco}" não pode aparecer no log de startup`).not.toContain(pedaco);
+      }
     }
+  });
+
+  it("caixa é dobrada DEPOIS da conferência de ASCII — senão o `toLowerCase` fabrica um host", () => {
+    // `U+212A` (SINAL DE KELVIN) minúsculo é `k`. Com a ordem invertida, `-<KELVIN>onta.vercel.app`
+    // — que a regex canônica RECUSA — virava `-konta.vercel.app`, que ela ACEITA: o processo subiria
+    // confiando num host DIFERENTE do que está escrito na variável. É a correção silenciosa que esta
+    // fatia existe para proibir, só que vinda de dentro.
+    const kelvin = "-\u212Aonta.vercel.app";
+    expect(FORMATO_SUFIXO_DE_PREVIEW.test(kelvin), "a regex sozinha já recusa").toBe(false);
+    expect(() => sufixosDePreview(kelvin), "e o parser NÃO pode desfazer essa recusa").toThrow(SufixoDePreviewInvalido);
+    expect(() => startup(kelvin)).toThrow(/WEB_ORIGIN_PREVIEW_SUFFIX inválido/);
+    // Invisível no MEIO do valor também reprova (nas bordas o `trim` resolve, e isso é identidade).
+    for (const ruim of ["-con\u200Bta.vercel.app", "-con\u00ADta.vercel.app", "-cont\u0430.vercel.app"]) {
+      expect(() => sufixosDePreview(ruim), JSON.stringify(ruim)).toThrow(SufixoDePreviewInvalido);
+    }
+    // ASCII legítimo em caixa alta continua passando: a conferência não é xenofobia com maiúscula.
+    expect(sufixosDePreview("-CONTA.VERCEL.APP")).toEqual(["-conta.vercel.app"]);
+  });
+});
+
+/**
+ * O LIMITE DECLARADO DA ÂNCORA — o que ela NÃO promete.
+ *
+ * Um teste que fixa uma limitação conhecida parece estranho até a primeira vez que alguém lê o
+ * documento, acredita na promessa larga e desenha em cima dela. A âncora garante "ninguém entra só
+ * por ter conta no provedor"; ela NÃO garante "ninguém além de nós consegue um nome que case", porque
+ * o rótulo na frente do sufixo é livre e `*.vercel.app` é um namespace global do provedor.
+ */
+describe("CORS · o que a âncora de conta NÃO garante (limite declarado)", () => {
+  it("qualquer rótulo antes do sufixo é aceito — a garantia é sobre o FIM do host, não sobre o começo", () => {
+    for (const host of ["umprojetoqualquer", "atacante", "x"]) {
+      expect(ehPreviewDoProjeto(`https://${host}${SUFIXO}`, [SUFIXO]), host).toBe(true);
+    }
+    // O que a âncora DE FATO barra, e que é o motivo de ela existir: o vizinho de provedor.
+    expect(permitido("https://atacante.vercel.app", SUFIXO)).toBe(false);
+    expect(permitido("https://atacante-outraconta.vercel.app", SUFIXO)).toBe(false);
+  });
+
+  it("a limitação está ESCRITA onde quem confia na garantia vai ler", () => {
+    // Promessa larga em comentário é pior que ausência de comentário: ela é acreditada.
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const lib = fs.readFileSync(path.join(here, "../../src/lib/cors-origem.ts"), "utf8");
+    expect(lib, "o limite tem de estar no dono do contrato").toContain("limite declarado");
+    expect(lib, "e tem de dizer POR QUE o limite existe").toContain("NAMESPACE GLOBAL");
+    // A frase larga só pode aparecer sendo REPUDIADA. Proibi-la por inteiro reprovaria o parágrafo
+    // que explica por que ela é falsa — auditor que acusa a própria documentação ensina a apagá-la.
+    const usos = lib.split("recusa os de qualquer outra conta").length - 1;
+    expect(usos, "a frase larga existe uma vez só, e é a que a desmente").toBe(1);
+    expect(lib).toContain('e não "recusa os de qualquer outra conta"');
   });
 });
 
