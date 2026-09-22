@@ -20,6 +20,7 @@ import path from "node:path";
 const RAIZ = path.resolve(new URL("..", import.meta.url).pathname);
 const problemas = [];
 const erro = (m) => problemas.push(m);
+const CONTAGEM_E2E = { total: 0, semBanco: 0 };
 const caminho = (p) => path.join(RAIZ, p);
 const existe = (p) => existsSync(caminho(p));
 const ler = (p) => readFileSync(caminho(p), "utf8");
@@ -244,7 +245,67 @@ if (existe(GUARDA_AUDITOR)) {
 // recusa não pode citar host, usuário nem a URL, porque a mensagem vai para o transcript.
 // -------------------------------------------------------------------------------------------------
 const GUARDA_PERIGOSO = ".claude/hooks/guard-dangerous-command.mjs";
+
+// -------------------------------------------------------------------------------------------------
+// TODO SCRIPT DE E2E TEM ALVO DE BANCO DECLARADO.
+//
+// POR QUE ESTA REGRA EXISTE. `bancoDeTesteNaoProvadoLocal` casa o gate por TOKEN EXATO. Isso
+// significa que `e2e` é protegido e `e2e:mobile` NÃO era — o mesmo Playwright, o mesmo reset de
+// banco, e a proteção perdida só por o script ter outro nome. Aconteceu três vezes em silêncio
+// (`e2e:mobile`, `e2e:skew`, `e2e:skew:web-anterior`) e nenhum gate reclamou, porque não havia
+// gate: a lista era uma enumeração que ninguém confrontava com os scripts que existem de fato.
+//
+// O NOME DO SCRIPT É O GATILHO DA OBRIGAÇÃO DE DECLARAR, NÃO A AFIRMAÇÃO SOBRE O COMPORTAMENTO.
+// Um `e2e*` pode legitimamente não abrir banco (um `e2e:report` que só abre HTML). Forçá-lo para
+// dentro do mapa de alvos seria escrever mentira no SSOT — e pior, passaria a recusá-lo sempre que
+// a variável estivesse remota no shell. Gate que acusa o inocente é desligado na primeira semana.
+// Por isso a saída honesta tem duas portas, e exatamente uma delas: ou o script declara alvo de
+// banco, ou declara, com motivo escrito, que não tem alvo.
+//
+// O QUE ELA NÃO FAZ, para a cobertura não ser confundida com garantia: ela casa NOME DE SCRIPT.
+// Não alcança `pnpm exec playwright test`, `npx playwright test` nem um script que rode Playwright
+// com outro nome (`smoke`, `teste-visual`). Também não cobre `gate:05c2`/`gate:0019`, que resetam
+// schema por caminho próprio. Fechar o eixo do PROGRAMA é fatia própria, declarada na PR.
+// -------------------------------------------------------------------------------------------------
 if (existe(GUARDA_PERIGOSO)) {
+  const { ALVO_DE_BANCO_POR_GATE, SEM_ALVO_DE_BANCO_DECLARADO } = await import(new URL(`../${GUARDA_PERIGOSO}`, import.meta.url));
+
+  // O workspace inteiro, não só a raiz: `e2e:skew` e `e2e:skew:web-anterior` só existem em
+  // `apps/web/package.json`. Uma regra lida só da raiz não os enxergaria — verde que não prova nada.
+  const pacotes = ["package.json"];
+  for (const base of ["apps", "packages"]) {
+    if (!existe(base)) continue;
+    for (const nome of readdirSync(caminho(base))) {
+      if (nome.startsWith(".")) continue;                       // `.api-anterior` é árvore de build
+      const pj = `${base}/${nome}/package.json`;
+      if (existe(pj)) pacotes.push(pj);
+    }
+  }
+
+  const scriptsE2E = new Map();                                 // nome → pacote onde foi declarado
+  for (const pj of pacotes) {
+    for (const nome of Object.keys(JSON.parse(ler(pj)).scripts ?? {})) {
+      if (nome === "e2e" || nome.startsWith("e2e:")) if (!scriptsE2E.has(nome)) scriptsE2E.set(nome, pj);
+    }
+  }
+
+  for (const [nome, pj] of scriptsE2E) {
+    const temAlvo = ALVO_DE_BANCO_POR_GATE.has(nome);
+    const semAlvo = SEM_ALVO_DE_BANCO_DECLARADO.has(nome);
+    if (temAlvo && semAlvo) erro(`${pj}: "${nome}" está nas DUAS listas do ${GUARDA_PERIGOSO} — decida qual, porque elas se contradizem`);
+    if (!temAlvo && !semAlvo) erro(`${pj}: "${nome}" é script de E2E sem alvo de banco declarado — acrescente-o a ALVO_DE_BANCO_POR_GATE (e o guarda prova o host) ou a SEM_ALVO_DE_BANCO_DECLARADO com o motivo escrito`);
+    if (semAlvo && !String(SEM_ALVO_DE_BANCO_DECLARADO.get(nome) ?? "").trim()) erro(`${GUARDA_PERIGOSO}: "${nome}" está declarado sem alvo de banco e sem motivo — declaração sem motivo é carimbo`);
+  }
+  // Os dois sentidos: declaração órfã sai junto com o script, senão a lista vira ficção.
+  for (const nome of ALVO_DE_BANCO_POR_GATE.keys()) {
+    if ((nome === "e2e" || nome.startsWith("e2e:")) && !scriptsE2E.has(nome)) erro(`${GUARDA_PERIGOSO}: ALVO_DE_BANCO_POR_GATE declara "${nome}", que não existe em package.json nenhum — a declaração precisa sair junto`);
+  }
+  for (const nome of SEM_ALVO_DE_BANCO_DECLARADO.keys()) {
+    if (!scriptsE2E.has(nome)) erro(`${GUARDA_PERIGOSO}: SEM_ALVO_DE_BANCO_DECLARADO declara "${nome}", que não existe em package.json nenhum — a declaração precisa sair junto`);
+  }
+  CONTAGEM_E2E.total = scriptsE2E.size;
+  CONTAGEM_E2E.semBanco = SEM_ALVO_DE_BANCO_DECLARADO.size;
+
   const responder = (comando) => {
     const entrada = JSON.stringify({ tool_name: "Bash", hook_event_name: "PreToolUse", tool_input: { command: comando } });
     return execFileSync(process.execPath, [caminho(GUARDA_PERIGOSO)], { input: entrada, encoding: "utf8", timeout: 20_000 });
@@ -396,4 +457,7 @@ if (problemas.length) {
   for (const p of problemas) console.error(`  - ${p}`);
   process.exit(1);
 }
-console.log(`claude-harness-audit: OK (${REGRAS.length} regras, ${SKILLS.length} skills, ${AGENTES.length} subagentes com limite de leitura mecânico, ${HOOKS.length} hooks com autoteste, ${(settings?.permissions?.deny ?? []).length} negações de leitura, conectores só por modelo)`);
+// A contagem de E2E vai na linha verde de propósito: um escaneamento que achasse ZERO scripts
+// também passaria calado, e "0 script de E2E auditado" é visivelmente errado num repositório que
+// tem quatro. Verde que não prova nada é reprovação — então o verde diz o que contou.
+console.log(`claude-harness-audit: OK (${REGRAS.length} regras, ${SKILLS.length} skills, ${AGENTES.length} subagentes com limite de leitura mecânico, ${HOOKS.length} hooks com autoteste, ${(settings?.permissions?.deny ?? []).length} negações de leitura, ${CONTAGEM_E2E.total} script(s) de E2E com alvo de banco declarado (${CONTAGEM_E2E.semBanco} declarado(s) sem banco), conectores só por modelo)`);

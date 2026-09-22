@@ -81,7 +81,7 @@ jobs:
       - name: Matriz de version skew da numeração de transferências (gate 0019)
         run: pnpm gate:0019
   e2e:
-    name: Build · E2E (Playwright)
+    name: Build · E2E do escopo SUPORTADO (Playwright)
     runs-on: ubuntu-latest
     needs: [quality]
     services:
@@ -111,7 +111,12 @@ jobs:
       - name: Seed e2e database (migrations + reference data + demo org)
         run: DATABASE_URL=$E2E_DATABASE_URL pnpm --filter @agro/db exec tsx src/cli.ts seed
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
-      - run: pnpm --filter @agro/web e2e
+      # Escopo SUPORTADO de docs/UI-SUPPORT-MATRIX.md. O recorte mora no script `e2e` do pacote
+      # (`--grep-invert @mobile`), e não aqui: um filtro escrito no workflow divergiria em silêncio
+      # do que o desenvolvedor roda na máquina dele. Formato DEFERRED não bloqueia entrega, e por
+      # isso não tem job obrigatório — a dívida continua executável por `pnpm e2e:mobile`.
+      - name: E2E do escopo suportado (mobile está DEFERRED e fora do gate)
+        run: pnpm --filter @agro/web e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with: { name: playwright-report, path: apps/web/playwright-report, retention-days: 7 }

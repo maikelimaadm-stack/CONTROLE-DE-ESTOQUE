@@ -76,6 +76,8 @@ a rule não a recopia — ela aprofunda.
 - Nada de `any`, `@ts-expect-error` ou disable amplo de lint só para resolver CI.
 - Gate novo nasce com verificação reversa: quebre a regra, veja o gate reprovar, restaure.
 - Verde que não prova nada é REPROVAÇÃO (zero linhas, zero organizações, asserção vazia).
+- Responsividade segue `docs/UI-SUPPORT-MATRIX.md`: cenário fora da matriz suportada não vira gate
+  obrigatório sem mudança explícita do contrato, e dívida adiada continua versionada e executável.
 
 ## Segredos
 
