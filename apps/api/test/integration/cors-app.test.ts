@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../../src/server.js";
 import { loadConfig, type Config } from "../../src/config.js";
+import type { Db } from "@agro/db";
 import { TEST_URL } from "./setup.js";
 
 /**
@@ -125,7 +126,14 @@ describe("CORS na app real · C · configuração genérica derruba o startup", 
     // `toBeLessThan(-1)` reprova). Aceitava o culpado e acusava o inocente.
     //
     // Agora a ordem é medida onde ela importa: quantos pools nasceram antes da recusa.
-    const contar = () => { let n = 0; return { n: () => n, criar: (() => { n++; return {} as never; }) as (dsn: string) => never }; };
+    // O dublê só precisa saber MORRER: é a única coisa que `buildApp` faz com o pool neste caminho
+    // (`onClose` chama `db.end()` quando o pool foi criado por ele). A primeira versão devolvia `{}`,
+    // e o `afterAll` estourava com "db.end is not a function" — os 9 testes passavam e o ARQUIVO
+    // reprovava. Pior: eu li a saída por `grep "Tests"`, que mostra só a linha verde, e reportei
+    // "9 passed" duas vezes sobre um arquivo vermelho. Filtro que esconde o vermelho é o mesmo
+    // defeito dos outros três desta fatia — prova que não prova.
+    const poolDeMentira = () => ({ end: async () => {} }) as unknown as Db;
+    const contar = () => { let n = 0; return { n: () => n, criar: (_dsn: string) => { n++; return poolDeMentira(); } }; };
 
     const mau = contar();
     const maquiado: Config = { ...configuracao(SUFIXO), WEB_ORIGIN_PREVIEW_SUFFIX: ".vercel.app" };
