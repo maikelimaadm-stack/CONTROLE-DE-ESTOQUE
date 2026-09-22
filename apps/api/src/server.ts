@@ -24,15 +24,31 @@ import livestockRoutes from "./routes/livestock.js";
 import reportRoutes from "./routes/reports.js";
 import dashboardRoutes from "./routes/dashboards.js";
 import plataformaRoutes from "./routes/plataforma.js";
+import { politicaDeOrigem } from "./lib/cors-origem.js";
 
-export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolean } = {}): Promise<FastifyInstance> {
+/**
+ * `criarPool` existe para que a ORDEM de "falha cedo" seja provável por EFEITO, e não por leitura do
+ * arquivo. A primeira versão do teste conferia a posição de um substring em `server.ts`; ela passava
+ * quando a chamada real migrava para depois do pool (bastava sobrar um comentário citando o nome) e
+ * reprovava quando alguém extraía as opções do Fastify para uma variável. Uma catraca que aceita o
+ * culpado e acusa o inocente não guarda nada. Com a costura, o teste conta quantos pools nasceram
+ * antes da recusa, e a resposta certa é ZERO.
+ */
+export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolean; criarPool?: (dsn: string) => Db } = {}): Promise<FastifyInstance> {
   const config = opts.config ?? loadConfig();
+  // PRIMEIRA COISA, antes de existir servidor e antes de existir pool: a política de origem é montada
+  // a partir do valor BRUTO da configuração e VALIDA o sufixo de preview ali dentro. Sufixo genérico
+  // ou malformado lança aqui, e o processo morre sem nunca ter atendido requisição. `loadConfig` já
+  // recusa o mesmo valor; esta linha fecha o caminho de quem monta um `Config` à mão (os testes).
+  const politicaDeCors = politicaDeOrigem(config.WEB_ORIGIN.split(","), config.WEB_ORIGIN_PREVIEW_SUFFIX);
   const app = Fastify({ logger: opts.logger === false ? false : { level: config.API_LOG_LEVEL }, bodyLimit: 5 * 1024 * 1024, trustProxy: true });
-  const db = opts.db ?? createPool(config.DATABASE_URL);
+  const db = opts.db ?? (opts.criarPool ?? createPool)(config.DATABASE_URL);
   app.decorate("db", db);
   app.decorate("config", config);
   await app.register(helmet, { contentSecurityPolicy: false });
-  await app.register(cors, { origin: config.WEB_ORIGIN.split(",").map((s) => s.trim()), credentials: true, methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type", "X-Org-Id", "X-Empresa-Id", "Idempotency-Key"] });
+  // Origem exata (produção) OU preview ancorado na conta do projeto. A decisão mora em `cors-origem.ts`,
+  // com o porquê de não existir curinga de provedor aqui: `credentials` está ligado.
+  await app.register(cors, { origin: politicaDeCors, credentials: true, methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], allowedHeaders: ["Authorization", "Content-Type", "X-Org-Id", "X-Empresa-Id", "Idempotency-Key"] });
   await app.register(rateLimit, { max: config.RATE_LIMIT_MAX, timeWindow: "1 minute" });
   await app.register(errorsPlugin);
   await app.register(authPlugin);
