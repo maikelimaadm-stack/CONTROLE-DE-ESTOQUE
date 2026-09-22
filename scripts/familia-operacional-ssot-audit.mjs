@@ -32,6 +32,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { REPO_ROOT } from "./lib/schema.mjs";
+import { semComentarios } from "./lib/sem-comentarios.mjs";
 
 /** O DONO — o único lugar onde a enumeração é legítima. */
 const DONO = "packages/domain/src/tipo-operacao.ts";
@@ -50,15 +51,6 @@ const EXCECOES = {
 const RAIZES = ["apps/web/src", "apps/api/src", "packages/domain/src", "packages/plataforma/src", "packages/shared/src", "packages/db/src"];
 const EXTENSOES = new Set([".ts", ".tsx", ".mjs", ".js"]);
 const IGNORAR = new Set(["node_modules", "dist", ".next", "build", "coverage", "reference"]);
-
-/**
- * Remove comentário de linha e de bloco antes de contar.
- * Não é um parser: uma `//` dentro de string vira corte indevido. O erro possível é para o lado SEGURO —
- * deixar de ver uma enumeração —, e a forma que importa (um array de códigos) não mora dentro de string.
- */
-export function semComentarios(texto) {
-  return texto.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
-}
 
 /**
  * Códigos canônicos lidos do DONO — nunca copiados para cá, senão este gate seria a segunda lista.

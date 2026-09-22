@@ -22,7 +22,12 @@ supabase/.temp
 # SHA da base resolvida nesta execucao do skew: UMA resolucao por job, e os testes LEEM daqui
 # em vez de recalcular (recalcular em evento de push pode obter outra ponta de origin/main).
 .api-anterior.base
+# As DECISÕES que a execução grava antes do skew (qual ramo provar). São derivadas da árvore da base,
+# valem só para este job e não podem virar arquivo versionado — uma decisão commitada congelaria em
+# `main` o mundo de UMA execução, e a execução seguinte leria a decisão de outra. `-contador` já
+# estava aqui; `-capacidade-top` ficou de fora quando nasceu, e um `git add -A` o levaria junto.
 .skew-cutover-contador.json
+.skew-capacidade-top.json
 
 # configuração pessoal do Claude Code: o settings.json do projeto é versionado, este nunca.
 # Sem esta linha, a proteção depende do ignore global de cada máquina (que não viaja com o repo).

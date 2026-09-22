@@ -102,7 +102,7 @@ export const SCRIPTS_DE_GATE = new Set([
   "audit:empresa", "audit:farm", "audit:dictionary", "audit:id-global", "audit:claude-harness",
   // `audit:ui-support` é AUDITORIA ESTÁTICA: lê a matriz de suporte e os arquivos declarados,
   // não executa teste, não abre banco, não escreve nada.
-  "audit:ui-support",
+  "audit:ui-support", "audit:fonte-remota",
   // `e2e:mobile` é o oposto: GATE E2E EXECUTÁVEL, que sobe API e web e reseta o banco de teste
   // como qualquer outro Playwright. Ele só é liberado ao auditor porque a linha 166 o submete a
   // `bancoDeTesteNaoProvadoLocal`, que exige alvo comprovadamente local. Trocar o nome do script
