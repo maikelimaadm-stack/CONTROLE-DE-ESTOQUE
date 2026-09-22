@@ -41,11 +41,10 @@
  *   node scripts/api-anterior.mjs --dir           # imprime só o diretório (para script de shell)
  *   node scripts/api-anterior.mjs --base=<sha>    # força a base (investigação, reexecução local)
  */
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { blocoDeDiagnostico, diagnosticar } from "./diagnostico-de-build-web.mjs";
 
 /**
  * A BASE É A DA PR, NÃO A PONTA DE HOJE (PRE-BASE2-05C-0).
@@ -229,38 +228,9 @@ export function garantirWorktree(sha, dir = DIR_ANTERIOR, raiz = RAIZ) {
 export function prepararWebAnterior() {
   prepararApiAnterior();
   if (!existsSync(join(DIR_ANTERIOR, "apps/web/.next/BUILD_ID"))) {
-    construirWebAnterior();
+    rodar("pnpm", ["--filter", "@agro/web", "build"], DIR_ANTERIOR);
   }
   return DIR_ANTERIOR;
-}
-
-/**
- * O BUILD DO WEB DA BASE, E O QUE O VERMELHO DELE SIGNIFICA.
- *
- * Fica separado de `rodar` por uma razão só: aqui a saída é LIDA depois de o build falhar. Nada dela é
- * escondido — stdout e stderr saem inteiros, na ordem em que o `pnpm` os produziu, exatamente como
- * saíam com `stdio: "inherit"`. A única diferença é que, quando a falha tem assinatura externa
- * conhecida, um bloco de diagnóstico aparece DEPOIS do log dizendo o que aconteceu.
- *
- * O preço de capturar em vez de herdar é que o log aparece de uma vez, no fim, em vez de ao vivo. Num
- * passo de ~40 s dentro de um job que só é lido depois de terminar, isso não custa nada; e o que se
- * compra é um vermelho que diz a verdade sobre si mesmo.
- *
- * O QUE ESTA FUNÇÃO NÃO FAZ, e não pode passar a fazer:
- * não reexecuta, não tem fallback, não tem `|| true`, não converte falha em aviso e não consulta o
- * diagnóstico para decidir coisa alguma. Se o build falha, ela lança — com assinatura reconhecida ou
- * sem. Um diagnóstico que virasse condição de sucesso seria o caminho mais curto para um gate que se
- * autoaprova quando o texto certo aparece no log.
- */
-function construirWebAnterior(dir = DIR_ANTERIOR) {
-  const r = spawnSync("pnpm", ["--filter", "@agro/web", "build"], { cwd: dir, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
-  if (r.stdout) process.stdout.write(r.stdout);
-  if (r.stderr) process.stderr.write(r.stderr);
-  if (r.error) throw r.error;
-  if (r.status === 0) return;
-  const assinatura = diagnosticar(`${r.stdout ?? ""}\n${r.stderr ?? ""}`);
-  if (assinatura) process.stderr.write(blocoDeDiagnostico(assinatura, "o build do web da BASE não chegou a terminar"));
-  throw new Error(`[skew] o build do web da base FALHOU (código ${r.status}). A base não foi montada, e nenhum dos dois sentidos do skew foi medido.`);
 }
 
 function garantirDependencias(novo) {

@@ -11,8 +11,13 @@ a rule não a recopia — ela aprofunda.
 ## Fluxo
 
 - Uma fatia ativa por vez. Branch `claude/<fatia>`, criada de `origin/main` atual.
-- Corrigir uma PR é atualizar **a mesma branch e a mesma PR**. Nunca abra uma segunda.
-- PR nova só depois que a anterior estiver mesclada ou fechada.
+- **PRE-PR-01 — uma PR aberta por vez, e a lei vence o pedido.** Existindo QUALQUER PR sua
+  aberta, abrir outra é PROIBIDO: `PRs abertas > 0 ⇒ PR nova = PROIBIDA`. Corrigir é atualizar
+  **a mesma branch e a mesma PR**; PR nova só depois que a anterior estiver mesclada ou fechada.
+- Você não desobstrui o caminho: fechar, mesclar, marcar *ready*, criar branch concorrente ou
+  abrir PR "temporária" para poder abrir a próxima é a mesma proibição por outra porta.
+- Se um pedido mandar abrir PR nova e houver uma aberta, **PRE-PR-01 vence o pedido**: diga qual
+  PR está aberta e entregue na mesma. Fechar ou mesclar é decisão do Maike, nunca sua.
 - **Você nunca faz merge.** Nunca marca PR como *ready*. O merge é manual, do Maike,
   depois de revisão e CI verde. Isso vale mesmo com tudo verde e a fatia perfeita.
 - Sem commit direto em `main`, sem force push, sem reescrita de histórico.

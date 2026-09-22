@@ -1,11 +1,19 @@
 # Dependência remota em tempo de build
 
-**Dono único deste assunto.** O que o `next build` busca na REDE enquanto constrói, de quem busca,
-o que acontece quando aquela resposta vem numa forma que a ferramenta não sabe ler, e qual é a
-condição de saída. `CLAUDE.md`, `.claude/rules/testing-gates.md` e `docs/TESTING.md` referenciam
-este documento; nenhum deles recopia a tabela.
+**Estado: CLOSED — `FONTE-LOCAL-01` cumprida.** Nenhum `next build` deste repositório busca fonte na
+rede. A contagem de dependências remotas de fonte em tempo de build é **0**.
+
+**Dono único deste assunto.** O que o `next build` buscava na REDE enquanto construía, de quem
+buscava, o que acontecia quando aquela resposta vinha numa forma que a ferramenta não sabia ler, e
+como a dívida foi encerrada. `CLAUDE.md`, `.claude/rules/testing-gates.md` e `docs/TESTING.md`
+referenciam este documento; nenhum deles recopia a medição.
 
 Gate: `scripts/fonte-remota-audit.mjs`, encadeado em `pnpm lint`.
+
+Este documento continua existindo depois do conserto por um motivo: a medição que justificou a
+mudança é cara de refazer e é ela que impede a próxima pessoa de reintroduzir a busca remota por
+achar que o problema era teórico. O incidente é história — não é aviso para não mexer na fonte.
+A fonte É mexível; o que não volta é a busca em tempo de build.
 
 ---
 
@@ -26,15 +34,18 @@ antes de existir binário para comparar, e **nenhum dos dois sentidos do skew ch
 
 ## 2. A dependência declarada
 
-<!-- DEPENDENCIAS:INICIO -->
 | Família | Arquivo | Serviço buscado em tempo de build | Fatia que encerra |
 |---|---|---|---|
-| `DM_Sans` | `apps/web/src/app/layout.tsx` | `fonts.googleapis.com` + `fonts.gstatic.com` | `FONTE-LOCAL-01` |
-<!-- DEPENDENCIAS:FIM -->
+| *(nenhuma)* | — | — | — |
 
-A tabela acima é lida por máquina. Uma linha a mais só entra com a fatia que a encerra declarada;
-uma família que sair do código tem de sair daqui junto, e vice-versa — o gate confere os dois
-sentidos. **A contagem é catraca: ela só diminui.**
+**Zero linhas, e a tabela vazia não é o que prova zero.** Quem prova é
+`scripts/fonte-remota-audit.mjs`, varrendo `apps/web/src` atrás de `next/font/google` em suas três
+formas de import. A diferença importa: uma tabela que se esvaziasse sozinha seria exatamente o
+defeito que este documento existe para impedir — a dívida sumindo do papel sem sair do código.
+Agora a afirmação está ancorada no efeito, e o texto só descreve.
+
+Se uma família nova precisar entrar no produto, ela entra pelo mesmo caminho da DM Sans: pacote de
+fonte congelado no lockfile, servido por `next/font/local`. Não há linha a acrescentar aqui.
 
 ---
 
@@ -58,13 +69,13 @@ Turbopack, na mesma URL — **6 respostas na forma dinâmica em 200**, **7 em 21
 Somadas, **21 em 860 ≈ 2,4%**. Nunca misturado: ou os 8 blocos `@font-face` vêm na forma dinâmica,
 ou nenhum vem.
 
-> **Esta taxa NÃO vale para o runner, e a diferença é grande.** As três amostras saíram da rede
-> desta sessão. No histórico de CI deste repositório houve **uma** ocorrência desta falha
+> **Esta taxa NÃO valia para o runner, e a diferença é grande.** As três amostras saíram da rede
+> daquela sessão. No histórico de CI deste repositório houve **uma** ocorrência desta falha
 > (run `35729528090`), contra as várias que 2,4% previriam para a mesma quantidade de builds. As
-> duas explicações possíveis são que a taxa a partir da saída do GitHub Actions seja muito menor,
-> ou que a forma dinâmica seja mudança recente do lado do Google. **Nenhuma das duas foi medida**,
-> e nenhuma é mensurável retroativamente. Quem for decidir com base em probabilidade, decida com
-> esta frase, e não com os 2,4%.
+> duas explicações possíveis são que a taxa a partir da saída do GitHub Actions fosse muito menor,
+> ou que a forma dinâmica fosse mudança recente do lado do Google. **Nenhuma das duas foi medida**,
+> e nenhuma é mensurável retroativamente. O conserto não dependeu de qual delas era verdade: com a
+> fonte servida localmente, a taxa deixou de existir como variável.
 
 **Reprodução controlada:** mesma árvore, mesma folha de estilo, **única variável = a forma da URL**
 (injetada por `NEXT_FONT_GOOGLE_MOCKED_RESPONSES`, o mecanismo do próprio Next):
@@ -79,9 +90,9 @@ ou nenhum vem.
 
 ---
 
-## 4. Raio de exposição
+## 4. Raio de exposição — o que a dívida alcançava
 
-Cada `next build` faz a sua **própria** busca — não há cache entre eles. São cinco pontos:
+Cada `next build` fazia a sua **própria** busca — não havia cache entre eles. Eram cinco pontos:
 
 | # | Ponto | Onde |
 |---|---|---|
@@ -91,25 +102,29 @@ Cada `next build` faz a sua **própria** busca — não há cache entre eles. S�
 | 4 | Implantação na Vercel | `apps/web/vercel.json` |
 | 5 | Imagem Docker (Railway) | `apps/web/Dockerfile` |
 
-São **três por execução de CI**, e cada um é um sorteio próprio: não há cache de resposta entre
-builds. Esse número — 3 — é medido e não depende de taxa nenhuma.
+Eram **três por execução de CI**, e cada um era um sorteio próprio. Esse número — 3 — foi medido e
+não dependia de taxa nenhuma.
 
-O que **não** se pode escrever aqui é quantas execuções de CI isso derruba: multiplicar os 2,4%
-desta rede pelos três builds daria uma frequência que o histórico do repositório contradiz (§3).
+O que **não** se podia escrever era quantas execuções de CI isso derrubava: multiplicar os 2,4%
+daquela rede pelos três builds daria uma frequência que o histórico do repositório contradiz (§3).
 Uma conta assim pareceria medição e seria aritmética sobre um número emprestado do ambiente errado.
 
-Os pontos 4 e 5 são **implantação**: ali a mesma falha derruba um deploy, e não tem nada a ver com
-skew nem com testes. É por isso que o raio importa mesmo com a frequência desconhecida — a dívida
-não está no gate, está no build.
+Os pontos 4 e 5 eram **implantação**: ali a mesma falha derrubava um deploy, e não tinha nada a ver
+com skew nem com testes. É por isso que o raio importava mesmo com a frequência desconhecida — a
+dívida não estava no gate, estava no build. **Os cinco pontos deixaram de buscar fonte na rede
+com `FONTE-LOCAL-01`; o `.woff2` sai do `node_modules`, congelado no lockfile.**
 
 ---
 
-## 5. O que NÃO resolve
+## 5. O que NÃO resolvia
+
+Registro das saídas consideradas e recusadas, porque cada uma volta a parecer razoável quando o
+incidente esfria.
 
 | Tentativa | Por que não |
 |---|---|
 | Atualizar o Next | O arquivo do `canary` é **byte a byte idêntico** ao da v16.3.4 — o defeito está lá também |
-| Reexecutar o job | Reexecutar é **sortear de novo**, não corrigir — e "rerodar até verde" é proibido. Note ainda que ninguém mediu quanto vale esse sorteio no runner (§3): quem reexecuta não sabe nem a própria chance |
+| Reexecutar o job | Reexecutar é **sortear de novo**, não corrigir — e "rerodar até verde" é proibido. Note ainda que ninguém mediu quanto valia esse sorteio no runner (§3): quem reexecutava não sabia nem a própria chance |
 | `max_retries` do cliente de fetch | Não alcança o caso: o `bail!` acontece em `mod.rs:399`, **antes** da única chamada de rede daquele quadro (`fetch_from_google_fonts`, linha 420). Nenhuma requisição do arquivo de fonte chega a ser emitida, então não há falha para a guarda de retry examinar |
 | Trocar o User-Agent | Constante compilada no binário; e nenhum UA testado produz `&` na URL |
 | Mocar a resposta no CI | O bundle do version skew tem de ser **real**, nunca mock (`.claude/rules/testing-gates.md`) |
@@ -128,38 +143,57 @@ fn severity(&self) -> IssueSeverity { if self.is_dev { IssueSeverity::Warning } 
 ```
 
 O texto `" from Google Fonts. Using a fallback font instead."` existe **só** no ramo `is_dev`. Ou
-seja: **ficar sem rede também reprova o build.** Não há caminho gentil.
+seja: **ficar sem rede também reprovava o build.** Não havia caminho gentil.
 
-Isso torna a dívida maior, não menor — os dois modos de falha derrubam o build, e um deles não
-precisa nem que o Google responda errado: basta a rede oscilar. E `max_retries` não alcança nenhum
-dos dois casos aqui: no da forma dinâmica o `bail!` acontece **antes** de qualquer requisição do
-arquivo de fonte.
+Isso é o que tornou a dívida maior, não menor — os dois modos de falha derrubavam o build, e um
+deles não precisava nem que o Google respondesse errado: bastava a rede oscilar. E `max_retries`
+não alcançava nenhum dos dois casos: no da forma dinâmica o `bail!` acontece **antes** de qualquer
+requisição do arquivo de fonte.
 
-**O caso desta ocorrência é o segundo — a busca funcionou, e o corpo veio na outra forma.**
-
----
-
-## 6. O que esta fatia entregou, e o que ela deliberadamente NÃO fez
-
-Entregou **diagnóstico**, não conserto: `scripts/diagnostico-de-build-web.mjs` reconhece a
-assinatura e imprime, abaixo do log, o que de fato aconteceu. O build continua falhando, com o mesmo
-código de saída, e o gate continua vermelho — o que muda é o vermelho parar de afirmar uma
-reprovação de compatibilidade que não houve.
-
-**Não** removeu `next/font/google`, **não** trocou a fonte, **não** alterou tipografia, **não**
-baixou arquivo de fonte para o repositório e **não** mexeu em nada visível. A correção de verdade é
-uma mudança de produto, e mudança de produto por causa desta descoberta precisa de autorização
-explícita — está registrado como `FONTE-LOCAL-01`.
+**O caso da ocorrência de 2026-09-22 foi o segundo — a busca funcionou, e o corpo veio na outra
+forma.**
 
 ---
 
-## 7. Condição de saída (`FONTE-LOCAL-01`)
+## 6. Como a dívida foi encerrada (`FONTE-LOCAL-01`)
 
-A dívida encerra quando **nenhum** `next build` deste repositório precisar da rede para construir.
-O caminho conhecido é servir a fonte do próprio projeto (`next/font/local` com o arquivo
-versionado), o que remove a busca sem mudar uma linha de tipografia — mesma família, mesmos pesos,
-mesmo `display`.
+A DM Sans passou a ser servida **do próprio projeto**. `apps/web/src/app/layout.tsx` troca
+`next/font/google` por `next/font/local` apontando para o arquivo de
+`@fontsource-variable/dm-sans` — dependência declarada no `package.json` e congelada no
+`pnpm-lock.yaml`, licença **OFL-1.1** no LICENSE do pacote. Não é binário baixado de URL avulsa,
+não é cópia sem procedência, não é base64 no repositório e não é CDN alternativo.
 
-Encerrar é: consertar, e **então** remover a linha da tabela do §2. Nessa ordem. Remover a linha
-antes faz o gate passar sobre uma dívida que continua existindo, que é o defeito que este documento
-existe para impedir.
+**Mesma fonte, mesma aparência.** O eixo `wght` do arquivo variável vai de 100 a 1000, então os
+quatro pesos em uso (400, 500, 600, 700) continuam disponíveis — num arquivo só, em vez de quatro. O
+subconjunto é `latin`, o mesmo que `subsets: ["latin"]` pedia. `display: "swap"` e a variável CSS
+`--font-dm-sans` não mudaram, e por isso `globals.css` não precisou ser tocado. Nenhuma alteração de
+tipografia, paleta, token, espaçamento ou layout entrou junto.
+
+Medido no artefato construído, e não só no código-fonte:
+
+| O que se conferiu | Resultado |
+|---|---|
+| Referências a `fonts.googleapis.com` / `fonts.gstatic.com` no que é SERVIDO (`.next/static`, `.next/server`) | **0** |
+| `@font-face` gerado | `src: url(../media/dm_sans_latin_wght_normal-….woff2)`, caminho do próprio bundle |
+| `.woff2` servido × arquivo do pacote | **byte a byte idêntico** (`cmp`) |
+| `pnpm build` com a árvore limpa (`rm -rf apps/web/.next`) | `exit 0` |
+
+O que a fatia **NÃO** fez: não mudou tipografia, não mexeu em design, não tocou banco, migration,
+TOP, estoque, financeiro, fiscal nem mobile.
+
+---
+
+## 7. Condição de saída — **CUMPRIDA**
+
+A dívida encerrava quando **nenhum** `next build` deste repositório precisasse da rede para
+construir. O caminho previsto era servir a fonte do próprio projeto com `next/font/local` e o
+arquivo versionado, removendo a busca sem mudar uma linha de tipografia — mesma família, mesmos
+pesos, mesmo `display`. Foi o caminho seguido, e o §6 mostra a medição.
+
+A ordem exigida era: consertar, e **então** esvaziar a tabela do §2. Foi nessa ordem — o conserto
+está em `layout.tsx` e o gate prova zero por varredura, não pela ausência de uma linha num
+documento.
+
+O gate continua rodando em toda execução de `pnpm lint`. Ele não é monumento ao incidente: é o que
+impede a busca remota de voltar num `import` distraído, e a linha verde dele declara a contagem
+(`REMOTE_FONT_BUILD_DEPENDENCIES = 0`) em vez de apenas não reclamar.
