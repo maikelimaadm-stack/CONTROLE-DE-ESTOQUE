@@ -1,7 +1,4 @@
 import { describe, it, expect, afterAll } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../../src/server.js";
 import { loadConfig, type Config } from "../../src/config.js";
@@ -119,17 +116,26 @@ describe("CORS na app real · C · configuração genérica derruba o startup", 
     await expect(buildApp({ config: maquiado, logger: false })).rejects.toThrow(/-minhaconta\.vercel\.app/);
   });
 
-  it("a recusa acontece ANTES de existir servidor e ANTES de existir pool — verificável na ordem do código", () => {
-    // "Falha cedo" é uma afirmação sobre ORDEM, e ordem se confere lendo o arquivo. Sem isto, a
-    // recusa poderia migrar para depois do `listen` numa refatoração e nenhum teste notaria.
-    const here = path.dirname(fileURLToPath(import.meta.url));
-    const src = fs.readFileSync(path.join(here, "../../src/server.ts"), "utf8");
-    const corpo = src.slice(src.indexOf("export async function buildApp"));
-    const politica = corpo.indexOf("politicaDeOrigem(");
-    const fastify = corpo.indexOf("Fastify({");
-    const pool = corpo.indexOf("createPool(");
-    expect(politica, "a política tem de ser montada dentro de buildApp").toBeGreaterThan(-1);
-    expect(politica, "a validação vem antes de instanciar o servidor").toBeLessThan(fastify);
-    expect(politica, "a validação vem antes de abrir o pool").toBeLessThan(pool);
+  it("a recusa acontece ANTES de abrir o pool — medido por EFEITO, não pela posição de um substring", async () => {
+    // A PRIMEIRA VERSÃO DESTE TESTE ERA DECORATIVA, e a revisão adversarial provou nos dois sentidos:
+    // ela comparava `indexOf` de trechos de `server.ts`. Passava com a garantia QUEBRADA (bastava mover
+    // a chamada real para depois do `createPool` e deixar no lugar um comentário citando
+    // `politicaDeOrigem(` — o `indexOf` casa dentro do comentário) e REPROVAVA sem nada ter mudado
+    // (extrair as opções do Fastify para uma variável faz `indexOf("Fastify({")` devolver -1, e
+    // `toBeLessThan(-1)` reprova). Aceitava o culpado e acusava o inocente.
+    //
+    // Agora a ordem é medida onde ela importa: quantos pools nasceram antes da recusa.
+    const contar = () => { let n = 0; return { n: () => n, criar: (() => { n++; return {} as never; }) as (dsn: string) => never }; };
+
+    const mau = contar();
+    const maquiado: Config = { ...configuracao(SUFIXO), WEB_ORIGIN_PREVIEW_SUFFIX: ".vercel.app" };
+    await expect(buildApp({ config: maquiado, logger: false, criarPool: mau.criar })).rejects.toThrow(/WEB_ORIGIN_PREVIEW_SUFFIX inválido/);
+    expect(mau.n(), "configuração inválida não pode alocar recurso nenhum antes de recusar").toBe(0);
+
+    // A PREMISSA, provada junto com a conclusão: se a costura não estivesse ligada, o contador daria
+    // ZERO também no caminho bom, e o `toBe(0)` acima passaria sem medir coisa alguma.
+    const bom = contar();
+    abertas.push(await buildApp({ config: configuracao(SUFIXO), logger: false, criarPool: bom.criar }));
+    expect(bom.n(), "no caminho bom o pool nasce — é isso que torna o zero acima uma medição").toBe(1);
   });
 });
