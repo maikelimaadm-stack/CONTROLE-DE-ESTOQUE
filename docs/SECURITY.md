@@ -32,8 +32,12 @@
 - **Transporte**: helmet, CORS restrito a `WEB_ORIGIN` (origens exatas) e, opcionalmente, aos previews do
   próprio projeto por `WEB_ORIGIN_PREVIEW_SUFFIX` — sufixo ANCORADO na conta, nunca curinga de provedor.
   A API responde com `credentials`, então um `*.vercel.app` genérico entregaria a API autenticada a
-  qualquer conta daquele provedor. Variável ausente = nenhum preview aceito (`lib/cors-origem.ts`).
-  Rate limit global (`RATE_LIMIT_MAX`/min).
+  qualquer conta daquele provedor. **O formato é VERIFICADO no startup**: cada item tem de ser
+  `-<conta>.vercel.app`, e um valor genérico ou malformado (`.vercel.app`, `vercel.app`, `*.vercel.app`,
+  esquema colado, porta, caminho, credencial embutida, conta com ponto) **derruba o processo** em
+  `loadConfig` e em `buildApp` — nunca é corrigido em silêncio, porque remover o `https://` de um valor
+  errado produz um valor plausível e quem digitou não descobre. Variável ausente = nenhum preview aceito.
+  Dono do contrato: `apps/api/src/lib/cors-origem.ts`. Rate limit global (`RATE_LIMIT_MAX`/min).
 - **Entrada**: validação zod em todo corpo/query; SQL sempre parametrizado (`SqlBuilder`); identificadores de tabela/coluna vêm do registro declarativo, nunca do cliente.
 - **Auditoria**: trigger de linha + eventos de aplicação (`audit()`), consultável em `/admin/auditoria`.
 - **Idempotência/concorrência**: ver `docs/ARCHITECTURE.md`.

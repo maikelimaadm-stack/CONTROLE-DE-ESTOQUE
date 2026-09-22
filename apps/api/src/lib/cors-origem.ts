@@ -23,6 +23,15 @@
  * │ internet".                                                                                        │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
+ * ┌─ E POR QUE UM COMENTÁRIO NÃO BASTAVA (CORS-PREVIEW-01 R1) ───────────────────────────────────────┐
+ * │ A primeira versão desta fatia dizia tudo isso em prosa — e ACEITAVA `.vercel.app` como valor de   │
+ * │ configuração. Aviso em comentário não é fronteira: quem escreve a variável na plataforma de       │
+ * │ implantação não lê este arquivo, e um curinga digitado ali subia em silêncio e valia em produção. │
+ * │ Pior, a normalização de então APAGAVA o `https://` colado por engano, transformando um valor      │
+ * │ errado num valor plausível. Agora o formato é VERIFICADO, e configuração inválida DERRUBA O       │
+ * │ STARTUP — antes de existir processo servindo requisição.                                          │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
  * FAIL-CLOSED: sufixo não declarado = NENHUM preview aceito. A ausência de configuração nunca vira
  * permissão — o comportamento sem a variável é idêntico ao de antes desta mudança.
  */
@@ -31,23 +40,78 @@
 const ROTULO = /^[a-z0-9-]+$/;
 
 /**
- * O sufixo declarado é aceito com ou sem o ponto inicial do próprio `.vercel.app`; o que ele precisa
- * ter é a parte que identifica a conta. Normalizar aqui evita que um espaço ou um `https://` colado
- * por engano na variável de ambiente vire um sufixo que nunca casa — silencioso, e portanto pior.
+ * O FORMATO CANÔNICO DE UM SUFIXO DE PREVIEW — a autoridade única deste contrato.
+ *
+ *     -<rótulo-da-conta>.vercel.app
+ *
+ * Três exigências, e cada uma existe por um valor concreto que já apareceu ou apareceria:
+ *
+ *  1. **Começa com hífen.** É o hífen que separa o nome do deploy do identificador da conta no
+ *     hostname que a Vercel gera (`<projeto>-<hash>-<conta>.vercel.app`). Sem ele, `vercel.app` e
+ *     `.vercel.app` passariam — e qualquer host de rótulo único daquele provedor viraria origem
+ *     confiável, que é exatamente o curinga que esta fatia existe para proibir.
+ *  2. **Um rótulo DNS de verdade entre o hífen e o domínio**: 1 a 63 caracteres, começando e
+ *     terminando em alfanumérico. Sem isso `-vercel.app` (rótulo vazio) e `-minha.conta.vercel.app`
+ *     (dois rótulos) passariam; o segundo é o perigoso, porque alargaria a âncora para um nível
+ *     inteiro de subdomínio.
+ *  3. **Termina no domínio registrável do provedor**, literal. Isso é o que impede que o sufixo seja
+ *     um domínio de terceiro qualquer, e é o que torna a conta a única variável do contrato.
+ *
+ * Trocar de provedor de preview é mudar ESTA linha, com a decisão registrada — e não configurar um
+ * valor novo numa variável de ambiente. Uma fronteira de segurança que se remaneja por variável não é
+ * fronteira; é sugestão.
  */
-export function normalizarSufixos(bruto: string | undefined): string[] {
-  if (!bruto) return [];
-  return bruto
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .map((s) => s.replace(/^https?:\/\//, ""))
-    .filter((s) => s.length > 0);
+export const FORMATO_SUFIXO_DE_PREVIEW = /^-[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.vercel\.app$/;
+
+/** O que o erro de startup mostra a quem digitou o valor errado. Um exemplo vale mais que a regex. */
+export const EXEMPLO_DE_SUFIXO = "-minhaconta.vercel.app";
+
+/** Configuração de segurança malformada. Existe para derrubar o processo, nunca para ser capturada. */
+export class SufixoDePreviewInvalido extends Error {
+  constructor(readonly invalidos: readonly string[]) {
+    super(
+      `WEB_ORIGIN_PREVIEW_SUFFIX inválido: ${invalidos.map((s) => JSON.stringify(s)).join(", ")}. ` +
+      `Cada sufixo tem de ser "-<conta>.vercel.app" (ex.: "${EXEMPLO_DE_SUFIXO}") — ` +
+      `sufixo genérico de provedor, esquema, porta, caminho, credencial embutida e curinga são RECUSADOS. ` +
+      `Para não aceitar nenhum preview, deixe a variável vazia ou ausente.`
+    );
+    this.name = "SufixoDePreviewInvalido";
+  }
+}
+
+/**
+ * A LISTA DE SUFIXOS, VALIDADA — ou uma exceção que impede o processo de subir.
+ *
+ * NORMALIZAÇÃO, e o limite dela. Duas coisas são ajustadas, e as duas são identidade, não conteúdo:
+ *
+ *  - **espaço em volta**, porque `A, B` numa variável de ambiente é a grafia natural de uma lista;
+ *  - **caixa**, porque nome de host é case-insensitive por definição de DNS — `-Conta.Vercel.App` e
+ *    `-conta.vercel.app` são o MESMO host, e a comparação do lado da origem também minúscula.
+ *
+ * Nada além disso é "consertado". Esquema, porta, caminho, `@` e `*` REPROVAM em vez de serem
+ * removidos, e a diferença entre as duas atitudes é a razão desta função existir: remover o `https://`
+ * de `https://-conta.vercel.app` produz um valor VÁLIDO a partir de um valor ERRADO, e quem digitou
+ * nunca descobre que digitou errado. Silêncio sobre configuração de segurança é o modo de falha mais
+ * caro que existe, porque ele se parece com sucesso.
+ *
+ * Item VAZIO (vírgula sobrando, variável em branco) é descartado, e só ele. Descartar vazio é seguro
+ * porque o conjunto aceito só pode DIMINUIR — nenhuma origem passa a ser aceita por causa disso. É o
+ * oposto de descartar um pedaço de um valor: ali o conjunto aceito AUMENTA.
+ *
+ * @throws {SufixoDePreviewInvalido} em qualquer item fora do formato canônico.
+ */
+export function sufixosDePreview(bruto: string | undefined | null): string[] {
+  if (bruto === undefined || bruto === null) return [];
+  const itens = bruto.split(",").map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0);
+  const invalidos = itens.filter((s) => !FORMATO_SUFIXO_DE_PREVIEW.test(s));
+  if (invalidos.length > 0) throw new SufixoDePreviewInvalido(invalidos);
+  return itens;
 }
 
 /**
  * A ORIGEM É DE UM PREVIEW DESTE PROJETO?
  *
- * Exige, em conjunto — e a conjunção é o ponto:
+ * Recebe a lista JÁ VALIDADA por `sufixosDePreview`. Exige, em conjunto — e a conjunção é o ponto:
  *  1. esquema `https` literal. `http://` cai fora: preview da Vercel é sempre TLS, e aceitar texto
  *     claro abriria a porta para quem controla a rede.
  *  2. host terminando EXATAMENTE no sufixo declarado. Sufixo é fim de cadeia, não "contém" — senão
@@ -74,16 +138,23 @@ export function ehPreviewDoProjeto(origem: string, sufixos: readonly string[]): 
 /**
  * A FUNÇÃO QUE O CORS CONSULTA.
  *
+ * Recebe o sufixo **BRUTO** da configuração e o valida aqui dentro, de propósito: assim não existe
+ * caminho por onde uma lista não verificada chegue à decisão. Quem chamar isto com `.vercel.app`
+ * recebe uma exceção antes de existir servidor — não uma política permissiva.
+ *
  * Devolve o predicado no formato que o `@fastify/cors` espera. Origem ausente (requisição que não
  * veio de navegador: `curl`, health check, servidor a servidor) é liberada porque CORS não se aplica
  * a ela — o que protege aquela porta é a autenticação, não a política de origem.
+ *
+ * @throws {SufixoDePreviewInvalido} se o sufixo configurado não estiver no formato canônico.
  */
-export function politicaDeOrigem(exatas: readonly string[], sufixosDePreview: readonly string[]) {
+export function politicaDeOrigem(exatas: readonly string[], sufixoBruto: string | undefined | null) {
   const permitidas = new Set(exatas.map((s) => s.trim()).filter((s) => s.length > 0));
+  const sufixos = sufixosDePreview(sufixoBruto);
   return (origem: string | undefined, cb: (erro: Error | null, permitido: boolean) => void): void => {
     if (!origem) return cb(null, true);
     if (permitidas.has(origem)) return cb(null, true);
-    if (ehPreviewDoProjeto(origem, sufixosDePreview)) return cb(null, true);
+    if (ehPreviewDoProjeto(origem, sufixos)) return cb(null, true);
     cb(null, false);
   };
 }
