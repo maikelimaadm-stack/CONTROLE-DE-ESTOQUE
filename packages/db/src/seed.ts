@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { permissionRows, PURCHASE_STATUS_LABELS } from "@agro/domain";
 import type { Db, Queryable } from "./pool.js";
 import { withTx } from "./pool.js";
+import { CHAVE_ORIGEM_SEED, DEMO_LEGADO_DOCUMENTO, DEMO_LEGADO_RAZAO_SOCIAL, SQL_ORGANIZACAO_DEMO, ehOrganizacaoDemo } from "./origem-organizacao.js";
 
 const STATES: [string, string, number][] = [["AC","Acre",12],["AL","Alagoas",27],["AP","Amapá",16],["AM","Amazonas",13],["BA","Bahia",29],["CE","Ceará",23],["DF","Distrito Federal",53],["ES","Espírito Santo",32],["GO","Goiás",52],["MA","Maranhão",21],["MT","Mato Grosso",51],["MS","Mato Grosso do Sul",50],["MG","Minas Gerais",31],["PA","Pará",15],["PB","Paraíba",25],["PR","Paraná",41],["PE","Pernambuco",26],["PI","Piauí",22],["RJ","Rio de Janeiro",33],["RN","Rio Grande do Norte",24],["RS","Rio Grande do Sul",43],["RO","Rondônia",11],["RR","Roraima",14],["SC","Santa Catarina",42],["SP","São Paulo",35],["SE","Sergipe",28],["TO","Tocantins",17]];
 const CITIES: [number, string, string][] = [[5208707,"Goiânia","GO"],[5300108,"Brasília","DF"],[3550308,"São Paulo","SP"],[3106200,"Belo Horizonte","MG"],[5103403,"Cuiabá","MT"],[5002704,"Campo Grande","MS"],[1721000,"Palmas","TO"],[1709500,"Gurupi","TO"],[2927408,"Salvador","BA"],[4106902,"Curitiba","PR"],[5218805,"Rio Verde","GO"],[5107925,"Sorriso","MT"],[3170206,"Uberlândia","MG"],[5006606,"Ponta Porã","MS"]];
@@ -23,23 +24,32 @@ export async function seedPermissions(db: Db, log: (m: string) => void = console
 }
 
 export async function seedReference(db: Db, log: (m: string) => void = console.log) {
-  await withTx(db, { orgId: null, userId: null }, async (tx) => {
-    for (const [code, name, ibge] of STATES) await tx.query("insert into erp.states(code,name,ibge_code) values ($1,$2,$3) on conflict (code) do nothing", [code, name, ibge]);
-    for (const [id, name, st] of CITIES) await tx.query("insert into erp.cities(id,name,state_code) values ($1,$2,$3) on conflict (id) do nothing", [id, name, st]);
-    for (const [code, name] of BANKS) await tx.query("insert into erp.banks(code,name) values ($1,$2) on conflict (code) do nothing", [code, name]);
-    for (const [symbol, name, decimals] of UNITS) await tx.query("insert into erp.measurement_units(organization_id,symbol,name,decimals) values (null,$1,$2,$3) on conflict do nothing", [symbol, name, decimals]);
-    for (const name of TITLE_TYPES) await tx.query("insert into erp.title_types(organization_id,name,is_advance) values (null,$1,$2) on conflict do nothing", [name, name.startsWith("Ad")]);
-    for (const name of PAYMENT_METHODS) await tx.query("insert into erp.payment_methods(organization_id,name) values (null,$1) on conflict do nothing", [name]);
-    for (const [name, life, pct] of EQUIPMENT_FAMILIES) await tx.query("insert into erp.equipment_families(organization_id,name,default_life_years,default_depreciation_percent) select null,$1,$2,$3 where not exists (select 1 from erp.equipment_families where organization_id is null and name=$1)", [name, life, pct]);
-    for (const name of ID_TYPES) await tx.query("insert into erp.identification_types(organization_id,name) values (null,$1) on conflict do nothing", [name]);
-    const sp = await tx.query<{ id: string }>("insert into erp.animal_species(organization_id,name) values (null,'Bovinos de Corte') on conflict (organization_id,name) do update set name=excluded.name returning id");
-    const speciesId = sp.rows[0]!.id;
-    for (const [name, sex, min, max, ua] of BEEF_CATEGORIES) await tx.query("insert into erp.animal_categories(organization_id,species_id,name,sex,min_age_months,max_age_months,ua_factor) values (null,$1,$2,$3,$4,$5,$6) on conflict (species_id,name) do nothing", [speciesId, name, sex, min, max, ua]);
-    for (const b of ["Nelore","Angus","Brangus","Girolando","Senepol","Tabapuã","Guzerá","Brahman","Cruzado"]) await tx.query("insert into erp.breeds(organization_id,species_id,name) values (null,$1,$2) on conflict do nothing", [speciesId, b]);
-    for (const p of permissionRows()) await tx.query("insert into erp.permissions(key,module,resource,action,label) values ($1,$2,$3,$4,$5) on conflict (key) do update set module=excluded.module,resource=excluded.resource,label=excluded.label", [p.key, p.module, p.resource, p.action, p.label]);
-  });
+  await withTx(db, { orgId: null, userId: null }, (tx) => seedReferenceTx(tx));
   log("reference data seeded");
 }
+
+/**
+ * Os mesmos dados de referência, dentro de uma transação que o chamador já abriu. Existe para a criação da
+ * organização limpa (GO-LIVE-01) ser UMA transação só: referência, organização, dono e escopo entram juntos
+ * ou não entra nada.
+ */
+export async function seedReferenceTx(tx: Queryable) {
+  for (const [code, name, ibge] of STATES) await tx.query("insert into erp.states(code,name,ibge_code) values ($1,$2,$3) on conflict (code) do nothing", [code, name, ibge]);
+  for (const [id, name, st] of CITIES) await tx.query("insert into erp.cities(id,name,state_code) values ($1,$2,$3) on conflict (id) do nothing", [id, name, st]);
+  for (const [code, name] of BANKS) await tx.query("insert into erp.banks(code,name) values ($1,$2) on conflict (code) do nothing", [code, name]);
+  for (const [symbol, name, decimals] of UNITS) await tx.query("insert into erp.measurement_units(organization_id,symbol,name,decimals) values (null,$1,$2,$3) on conflict do nothing", [symbol, name, decimals]);
+  for (const name of TITLE_TYPES) await tx.query("insert into erp.title_types(organization_id,name,is_advance) values (null,$1,$2) on conflict do nothing", [name, name.startsWith("Ad")]);
+  for (const name of PAYMENT_METHODS) await tx.query("insert into erp.payment_methods(organization_id,name) values (null,$1) on conflict do nothing", [name]);
+  for (const [name, life, pct] of EQUIPMENT_FAMILIES) await tx.query("insert into erp.equipment_families(organization_id,name,default_life_years,default_depreciation_percent) select null,$1,$2,$3 where not exists (select 1 from erp.equipment_families where organization_id is null and name=$1)", [name, life, pct]);
+  for (const name of ID_TYPES) await tx.query("insert into erp.identification_types(organization_id,name) values (null,$1) on conflict do nothing", [name]);
+  const sp = await tx.query<{ id: string }>("insert into erp.animal_species(organization_id,name) values (null,'Bovinos de Corte') on conflict (organization_id,name) do update set name=excluded.name returning id");
+  const speciesId = sp.rows[0]!.id;
+  for (const [name, sex, min, max, ua] of BEEF_CATEGORIES) await tx.query("insert into erp.animal_categories(organization_id,species_id,name,sex,min_age_months,max_age_months,ua_factor) values (null,$1,$2,$3,$4,$5,$6) on conflict (species_id,name) do nothing", [speciesId, name, sex, min, max, ua]);
+  for (const b of ["Nelore","Angus","Brangus","Girolando","Senepol","Tabapuã","Guzerá","Brahman","Cruzado"]) await tx.query("insert into erp.breeds(organization_id,species_id,name) values (null,$1,$2) on conflict do nothing", [speciesId, b]);
+  for (const p of permissionRows()) await tx.query("insert into erp.permissions(key,module,resource,action,label) values ($1,$2,$3,$4,$5) on conflict (key) do update set module=excluded.module,resource=excluded.resource,label=excluded.label", [p.key, p.module, p.resource, p.action, p.label]);
+}
+
+const OPERADOR_DEMO_EMAIL = "operador@demo.local";
 
 export interface DemoOrg { orgId: string; adminUserId: string; empresaIds: string[]; adminEmail: string; adminPassword: string }
 
@@ -50,7 +60,21 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
   const slug = opts.slug ?? "demo";
   const hash = await bcrypt.hash(adminPassword, 10);
   return withTx(db, { orgId: null, userId: null }, async (tx) => {
-    const org = await tx.query<{ id: string }>("insert into erp.organizations(name,legal_name,document,slug,parameters) values ($1,$2,$3,$4,$5) on conflict (slug) do update set name=excluded.name returning id", [opts.orgName ?? "[DEMO] Fazendas Modelo", "[DEMO] Fazendas Modelo Ltda", "00000000000191", slug, JSON.stringify({ calc_icms_desonerado: true, financial_freeze_scope: "organization" })]);
+    // Blindagem (GO-LIVE-01): com produção operacional, o seed demo só escreve em organização DEMO e só mexe
+    // em usuário que pertence exclusivamente a organizações DEMO. As duas conferências vêm ANTES de qualquer
+    // escrita; recusar depois de gravar dependeria do rollback para não deixar rastro.
+    const alvo = await tx.query<{ id: string; parameters: unknown; legal_name: string | null; document: string | null }>("select id, parameters, legal_name, document from erp.organizations where slug=$1 for update", [slug]);
+    if (alvo.rows[0] && !ehOrganizacaoDemo(alvo.rows[0])) throw new Error(`seed demo recusado: o slug "${slug}" pertence a uma organização que não é demo. Nada foi gravado. Use outro ORG_SLUG ou desligue SEED_ON_DEPLOY.`);
+    for (const email of [adminEmail, OPERADOR_DEMO_EMAIL]) {
+      const u = await tx.query<{ vinculos: number; vinculos_demo: number }>(`select count(m.id)::int as vinculos, count(m.id) filter (where ${SQL_ORGANIZACAO_DEMO})::int as vinculos_demo
+        from erp.users u left join erp.organization_members m on m.user_id=u.id left join erp.organizations o on o.id=m.organization_id where u.email=$1 group by u.id`, [email]);
+      const linha = u.rows[0];
+      // Usuário existente sem vínculo nenhum também é recusado: não há como provar que ele é demo.
+      if (linha && (linha.vinculos === 0 || linha.vinculos !== linha.vinculos_demo)) {
+        throw new Error(`seed demo recusado: o e-mail ${email} já pertence a um usuário que não é exclusivamente demo. Senha, nome e vínculos dele não foram alterados. Use outro ADMIN_EMAIL ou desligue SEED_ON_DEPLOY.`);
+      }
+    }
+    const org = await tx.query<{ id: string }>("insert into erp.organizations(name,legal_name,document,slug,parameters) values ($1,$2,$3,$4,$5) on conflict (slug) do update set name=excluded.name returning id", [opts.orgName ?? "[DEMO] Fazendas Modelo", DEMO_LEGADO_RAZAO_SOCIAL, DEMO_LEGADO_DOCUMENTO, slug, JSON.stringify({ calc_icms_desonerado: true, financial_freeze_scope: "organization", [CHAVE_ORIGEM_SEED]: "demo" })]);
     const orgId = org.rows[0]!.id;
     await tx.query("select set_config('app.org_id',$1,true)", [orgId]);
     const u = await tx.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ($1,$2,$3) on conflict (email) do update set password_hash=excluded.password_hash returning id", [adminEmail, "Administrador DEMO", hash]);
@@ -62,7 +86,7 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
     await tx.query("insert into erp.role_permissions(role_id,permission_key) select $1,key from erp.permissions where key in ('products.view','products.create','products.edit','products.export') or key like 'stocks.%' or key like 'requisitions.%' or key like 'input_entries.%' or key like 'purchase_requests.view' or key like 'purchase_requests.create' or key like 'dashboard.home.%' or key like 'warehouses.view' or key in ('attachments.view','attachments.create') on conflict do nothing", [opRole.rows[0]!.id]);
     await tx.query("insert into erp.organization_members(organization_id,user_id,role_id,is_owner) values ($1,$2,$3,true) on conflict (organization_id,user_id) do update set is_owner=true", [orgId, adminUserId, role.rows[0]!.id]);
     const opHash = await bcrypt.hash("Demo@12345", 10);
-    const op = await tx.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ('operador@demo.local','Operador DEMO',$1) on conflict (email) do update set name=excluded.name returning id", [opHash]);
+    const op = await tx.query<{ id: string }>("insert into erp.users(email,name,password_hash) values ($2,'Operador DEMO',$1) on conflict (email) do update set name=excluded.name returning id", [opHash, OPERADOR_DEMO_EMAIL]);
     await tx.query("insert into erp.organization_members(organization_id,user_id,role_id,is_owner) values ($1,$2,$3,false) on conflict do nothing", [orgId, op.rows[0]!.id, opRole.rows[0]!.id]);
     // Acesso por empresa (PRE-BASE2-02): membro sem escopo configurado não enxerga empresa nenhuma
     // (fail-closed). O seed nasce com o equivalente ao estado legado "sem restrição": todas as empresas em

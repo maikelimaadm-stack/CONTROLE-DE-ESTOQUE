@@ -9,10 +9,12 @@
 
 ## Railway (API)
 - Serviço a partir do repositório; configuração definida no próprio serviço (sem `railway.json` na raiz, pois ele valeria para todos os serviços do repositório): Dockerfile `apps/api/Dockerfile`, start `node dist/main.js`, health `/health`, pre-deploy `node dist/migrate.js` (aplica migrations pendentes).
-- **Pre-deploy sem teto de tempo.** O campo *Pre-Deploy Timeout* do serviço está **vazio** (`preDeployTimeoutSeconds = null`, lido em 15/09/2026 pela API do Railway, no `serviceInstance` do serviço `api` em `production`). Pela documentação do Railway, vazio significa **sem limite**: um pre-deploy que trave não falha o deploy — ele o segura. O `healthcheckTimeout` de 120 s não cobre essa janela, porque só começa a contar depois que o pre-deploy termina. O único teto que existe hoje é do lado do banco (`statement_timeout` de 120 s; `lock_timeout` = 0), e ele só alcança o que está DENTRO de um enunciado SQL — DNS, handshake, aquisição de conexão do pool, `seedPermissions` e travamento de código ficam sem teto algum. Relevante para toda migration longa, e especialmente para a 05C-1, onde deixou de ser observação: como o merge em `main` dispara deploy automático, **enquanto este campo estiver vazio a 05C-1 não é liberada para merge** (`OPERATIONAL MERGE BLOCKER`; enunciado, saída e onde o valor medido será registrado em `docs/PRE-BASE2-05C-1-PREFLIGHT.md`, U4).
+- **Pre-deploy: teto de 300 s lido em 23/09/2026** (`preDeployTimeoutSeconds = 300` no serviço `api`, leitura da sessão de revisão do GO-LIVE-01 pela API do Railway). O registro abaixo é de 15/09, quando o campo estava vazio, e continua sendo o critério se ele voltar a ficar vazio. **Histórico — pre-deploy sem teto de tempo.** O campo *Pre-Deploy Timeout* do serviço está **vazio** (`preDeployTimeoutSeconds = null`, lido em 15/09/2026 pela API do Railway, no `serviceInstance` do serviço `api` em `production`). Pela documentação do Railway, vazio significa **sem limite**: um pre-deploy que trave não falha o deploy — ele o segura. O `healthcheckTimeout` de 120 s não cobre essa janela, porque só começa a contar depois que o pre-deploy termina. O único teto que existe hoje é do lado do banco (`statement_timeout` de 120 s; `lock_timeout` = 0), e ele só alcança o que está DENTRO de um enunciado SQL — DNS, handshake, aquisição de conexão do pool, `seedPermissions` e travamento de código ficam sem teto algum. Relevante para toda migration longa, e especialmente para a 05C-1, onde deixou de ser observação: como o merge em `main` dispara deploy automático, **enquanto este campo estiver vazio a 05C-1 não é liberada para merge** (`OPERATIONAL MERGE BLOCKER`; enunciado, saída e onde o valor medido será registrado em `docs/PRE-BASE2-05C-1-PREFLIGHT.md`, U4).
 - Região: `iad` (US East, Virgínia), a mais próxima disponível de São Paulo (o banco Supabase fica em sa-east-1); em `sfo` cada listagem levava ~3,5 s.
 - Variáveis: `DATABASE_URL` (pooler, usuário `erp_app`), `MIGRATE_DATABASE_URL` (pooler, usuário `erp_migrator`), `MIGRATIONS_DIR=/app/supabase/migrations`, `AUTH_MODE=local` + `LOCAL_AUTH_SECRET` (login por e-mail/senha na tabela `erp.users`; `AUTH_MODE=supabase` + `SUPABASE_JWT_SECRET` fica como evolução, pois o web ainda não usa Supabase Auth), `SUPABASE_URL`, `WEB_ORIGIN=https://<app>.vercel.app`, `PORT=3333`, `API_LOG_LEVEL=info`, `RATE_LIMIT_MAX`, `TOP_EFFECTS_RUNTIME_V1_ENABLED` (gate da execução configurada da TOP: ausente ou `0` = desligado, `1` = ligado; qualquer outro valor derruba o startup. Ligá-lo é a fase 2 da seção TOP-CONFIG-04A abaixo, e só no serviço da API — o web não tem par).
-- Seed inicial: definir uma única vez `SEED_ON_DEPLOY=1`, `ORG_NAME`, `ORG_SLUG`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`; o pre-deploy cria dados de referência + organização + usuário owner; depois voltar `SEED_ON_DEPLOY=0`.
+- Semeadura no pre-deploy — **no máximo UMA flag por deploy; as duas juntas são recusadas antes das migrations** (`packages/db/src/organizacao-limpa.ts`, `resolverSeedDoDeploy`):
+  - `SEED_ON_DEPLOY=1` → dados de referência + organização **DEMO** (`ORG_NAME`, `ORG_SLUG`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`). Desde o GO-LIVE-01 é **blindado**: recusa, sem escrever nada, se o slug pertencer a organização que não é demo, ou se `ADMIN_EMAIL`/`operador@demo.local` já pertencer a usuário que não seja exclusivamente demo. Demo = marca `parameters.origem_seed = 'demo'` (gravada nas organizações novas) ou, sem marca, a razão social e o documento que o seed antigo gravava fixos (`packages/db/src/origem-organizacao.ts`; na dúvida, recusa). Em produção operacional fica em `0`.
+  - `ORGANIZACAO_LIMPA_ON_DEPLOY=1` → **organização limpa para uso real** (`ORG_NAME`, `ORG_SLUG`, `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`). Os nomes `ORG_*`/`ADMIN_*` são os mesmos do seed demo de propósito (uma variável a menos para esquecer no painel), e por isso **os valores atuais, que são os da demo, têm de ser trocados antes do deploy de criação** — se não forem, a criação é recusada (slug e e-mail já existem) sem gravar nada. Procedimento completo: § "Go-live — checklist de entrada em uso real", G7.
 - O serviço `web` usa `apps/web/Dockerfile`, start `node apps/web/server.js` e health `/login`, também configurados no serviço.
 
 ## Superfície web
@@ -67,7 +69,7 @@ diferença de HTML, de tamanho ou de caminho de asset **não prova** commit dife
 2. **`controle-de-estoque-api-eight.vercel.app` serve o app WEB sob um nome que promete uma API**, e
    está autorizado no `WEB_ORIGIN`. Medido: responde byte a byte igual ao domínio `-erp`. Remover
    este domínio é a menor redução de superfície disponível.
-3. **A Railway implanta de `main` sem exigir CI verde** (`checkSuites: false` nos dois serviços):
+3. **A Railway implanta de `main` sem exigir CI verde** (`checkSuites: false` nos dois serviços — **relido em 23/09/2026: continua `false` em `api` e em `web`**; é o item G2 do checklist de go-live):
    `main` vermelha vai a produção. Corrigir é configuração do painel, não do repositório.
 
 ## Vercel (web)
@@ -138,7 +140,7 @@ gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com pre
 
 **Antes de liberar para MERGE — porque o merge em `main` dispara o deploy sozinho:**
 
-1. **U4 — o pre-deploy precisa ter teto de tempo.** `preDeployTimeoutSeconds` está vazio no serviço `api`
+1. **U4 — o pre-deploy precisa ter teto de tempo.** **Lido em 23/09/2026: `preDeployTimeoutSeconds = 300` — há teto; reler na janela.** Histórico: estava vazio no serviço `api`
    (medido em 15/09/2026): um pre-deploy travado não falha o deploy, ele o segura, e nenhum teto de banco
    alcança DNS, handshake, pool ou `seedPermissions`. Como não existe "mesclar agora e decidir o deploy
    depois", este é um **`OPERATIONAL MERGE BLOCKER`**: a PR da 05C-1 fica em DRAFT até haver valor medido no
@@ -148,7 +150,7 @@ gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com pre
 
 **Antes de aplicar (todos obrigatórios; qualquer `PENDING` interrompe):**
 
-1. **P1 — `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`.** O proprietário declarou que o sistema ainda
+1. **P1 — `BLOCKED` desde 23/09/2026 (GO-LIVE-01: a condição de retorno disparou).** Fecha só com P1.1–P1.4 executados e registrados (G4 abaixo). O texto a seguir é o histórico da dispensa, que deixou de valer: o proprietário declarou que o sistema ainda
    não está em produção operacional, que os dados atuais não precisam ser preservados e que, em falha, é
    aceitável resetar o banco, reaplicar as migrations e recriar os dados de teste — logo **`RECOVERY =
    REBUILD FROM ZERO`** (procedimento na seção "Recuperação", abaixo). Isto **não é `PASS`**: o drill de
@@ -188,7 +190,13 @@ gates, não uma impressão de prontidão. Nenhum item abaixo se satisfaz com pre
 3. cadastro real de uma Empresa em produção, conferindo que o código alocado é novo e não repete;
 4. as categorias `TOMBSTONE` e `PROVA_HISTORICA` da superfície de compatibilidade **ainda declaradas**.
 
-#### Recuperação — `RECOVERY = REBUILD FROM ZERO`
+#### Recuperação — produção: `RECOVERY = RESTORE` desde o go-live · `RECOVERY = REBUILD FROM ZERO` só para banco descartável (PROIBIDO em produção)
+
+> **23/09/2026 (GO-LIVE-01):** a partir da primeira transação real na organização limpa, a recuperação do banco
+> de produção é **RESTORE** de backup (o drill P1 é o que prova que ele funciona — G4). **`REBUILD FROM ZERO` é
+> PROIBIDO para o banco de produção**: recriar o banco apagaria dado real. O procedimento abaixo continua
+> válido só para bancos descartáveis (local, CI, homologação) e fica aqui como histórico.
+
 
 Enquanto valer a declaração de pré-produção (item 1 dos pré-requisitos), o caminho autorizado de
 recuperação **não é restaurar backup**: é **recriar o ambiente**. Está escrito aqui porque é o dono do
@@ -600,7 +608,8 @@ conferir.
 1. **A 0023 aplicada em produção** — `0023_venda_execucao_configurada_guarda.sql` no ledger
    (`public.erp_migrations`) do banco de produção, uma única vez, E o gatilho com a definição da versão
    mesclada: `pg_get_triggerdef` de `trg_sales_documents_execucao_configurada` contém
-   `OLD.status IS DISTINCT FROM 'confirmed'` (a 0023 foi corrigida na revisão R1, antes de qualquer
+   `old.status IS DISTINCT FROM 'confirmed'::text` — é assim, em minúsculas e com o cast, que o Postgres devolve a
+   definição (medido; a consulta pronta é o bloco 6a de `docs/sql/inventario-go-live.sql`) — (a 0023 foi corrigida na revisão R1, antes de qualquer
    aplicação compartilhada — o ledger registra só o NOME, e um banco com a versão anterior passaria na
    checagem por nome). Sem a guarda, uma instância anterior
    confirmaria pelo legado, em silêncio, a venda que o administrador configurou — e o gate não alcança
@@ -647,14 +656,100 @@ conferir.
   de não mentir, mas deixa essas vendas sem confirmação até o binário voltar; por isso a reversão do
   binário depois da fase 2 exige, antes, a mesma contagem acima e uma decisão explícita do Maike.
 
+## Go-live — checklist de entrada em uso real
+
+O Maike começa transações reais numa **organização nova e limpa**, dentro do banco de produção atual. A
+organização existente (`principal`, criada pelo seed demo antigo) **não é apagada nem alterada**: vira a
+sandbox para testar fatias novas. A política de desenvolvimento a partir daqui é a decisão "Desenvolvimento
+com produção operacional" (`docs/DECISIONS.md`).
+
+Estados: `PENDING` = não feito ou não comprovado. `OK` = feito, com evidência datada. Nenhum item vira `OK`
+por declaração, preview, `localhost`, CI ou "deploy verde". **Bloqueia** = sem ele, a primeira transação real
+não acontece.
+
+**Leitura de produção em 23/09/2026** (inventário `docs/sql/inventario-go-live.sql`, rodado pela sessão do
+GO-LIVE-01 numa transação `READ ONLY`, com `transaction_read_only = on` conferido na mesma transação):
+
+| Bloco | Resultado |
+|---|---|
+| 1. Organizações | 1: `principal` ("Controle de Estoque"), criada em 10/09/2026, sem marca de origem, **reconhecida como demo** pelo critério do seed antigo |
+| 2. Usuários | 5, nenhum `admin@demo.local`. `operador@demo.local` **ativo** (criado pelo seed com a senha pública do repositório; se nunca foi trocada, qualquer um entra). O e-mail do Maike é **dono** da `principal`. Três usuários `ckpt-v2-*@teste.local` de checkpoints anteriores (dois com vínculo inativo, um ativo) |
+| 3. Vínculos | todos os 5 na `principal`; dono = o e-mail do Maike, perfil Administrador |
+| 4. Volume da `principal` | 2 empresas · 5 pessoas · 8 produtos · 6 armazéns · 2 contas · 7 documentos de venda · 6 movimentos de estoque · 4 títulos · 1 movimento bancário · 4 solicitações de compra · 20 animais |
+| 5. Ledger | 23 migrations, última `0023_venda_execucao_configurada_guarda.sql` |
+| 6. 0023 e TOP | gatilho com a cláusula da R1 = `true`; versões de TOP com execução configurada = `0` |
+
+| # | O quê | Quem | Onde | Como verificar | Estado | Bloqueia? |
+|---|---|---|---|---|---|---|
+| **G1** | PR #56 implantada; `0023` no ledger com o gatilho da R1; `TOP_EFFECTS_RUNTIME_V1_ENABLED` ausente ou `0` | Maike (gate); sessão (leitura) | Supabase (leitura); Railway, serviço `api` → Variables | blocos 5 e 6 do inventário; nome da variável no painel (o valor não precisa ser lido por sessão) | ledger e gatilho **OK em 23/09/2026** (inventário acima); gate da TOP: **leitura datada da sessão revisora em 23/09/2026 (~18h30 UTC)** — a lista de NOMES de variáveis do serviço `api` no Railway não continha `TOP_EFFECTS_RUNTIME_V1_ENABLED` → gate desligado (valores não foram lidos); reconferir na janela do go-live | sim |
+| **G2** | Railway exigir CI verde antes de implantar (`checkSuites`) em `api` **e** `web` | Maike | Railway → cada serviço → Settings → "Wait for CI" | ler de novo o campo nos dois serviços | **PENDING** — lido `false` nos dois em 23/09/2026 | sim |
+| **G3** | teto do pre-deploy no `api` | Maike | Railway → `api` → Settings → Pre-Deploy Timeout | ler o campo | **OK em 23/09/2026**: `preDeployTimeoutSeconds = 300` (reler na janela de deploy destrutivo) | sim |
+| **G4** | P1: backup diário existe; restore num projeto NOVO; consultas P1.3 no restaurado; registro P1.4 | Maike (P1.1/P1.2); sessão (P1.3, leitura) | Supabase → Database → Backups → Restore to a New Project | `docs/PRE-BASE2-05C-1-PREFLIGHT.md` P1.1–P1.4; P1.4 anotado AQUI com data, projeto restaurado e respostas | **PENDING** (`BLOCKED` desde 23/09/2026) | sim |
+| **G5** | inventário rodado e registrado | sessão | Supabase, transação `READ ONLY` | tabela "Leitura de produção" acima | **OK em 23/09/2026** — reler imediatamente antes da primeira transação real | sim |
+| **G6** | credenciais conhecidas e variáveis de seed neutralizadas: (a) **OBRIGATÓRIO antes do primeiro lançamento real: desativar TODOS os usuários `@demo.local` e `@teste.local` da sandbox** (hoje: `operador@demo.local` ativo e 3 `ckpt-v2-*@teste.local`), pela tela Configurações → Usuários da sandbox; (b) `LOCAL_AUTH_SECRET` forte (≥ 32 caracteres aleatórios, nunca o padrão de desenvolvimento); (c) `NEXT_PUBLIC_DEMO_MODE` ausente em cada serviço web listado em "## Superfície web"; (d) `SEED_ON_DEPLOY=0` ou ausente | Maike | (a) Configurações → Usuários, na organização sandbox; (b)(d) Railway `api` → Variables; (c) Railway `web` e Vercel → Environment Variables | (a) bloco 2 do inventário: nenhum `@demo.local`/`@teste.local` com `is_active = true` e nenhum com vínculo ativo; (b) só o Maike confere o valor — nenhuma sessão lê segredo; (c)(d) presença/ausência do NOME da variável | (a) **PENDING** — `operador@demo.local` ativo em 23/09/2026; (b) **PENDING**; (c) Railway `web`: ausente em 23/09/2026 (**OK**), Vercel **PENDING** — a sessão revisora não teve acesso às variáveis do projeto na Vercel (403) em 23/09/2026; o Maike confere em Vercel → projeto → Settings → Environment Variables → Production; (d) **PENDING** — `SEED_ON_DEPLOY` ainda definida no `api` em 23/09/2026 | sim |
+| **G7** | criar a organização limpa (roteiro abaixo) | Maike | Railway `api` → Variables + um deploy | log do pre-deploy `organização limpa criada: id=… slug=… admin=…`; login; bloco 1 e 3 do inventário | **PENDING** | sim |
+| **G8** | cadastros mínimos, NESTA ordem: empresas → armazéns → centros de custo → categorias financeiras → contas bancárias → pessoas → produtos → TOPs de Venda, Pedido e Orçamento (uma padrão por família) | Maike | telas do sistema, logado na organização nova | cada tela lista o que foi criado; a primeira empresa tem código 1 | **PENDING** | sim |
+| **G9** | data de corte e saldos iniciais ANTES dela: estoque, contas bancárias, títulos em aberto | Maike | telas de estoque (entrada/ajuste), Caixa e Bancos, Contas a Pagar/Receber | relatório de saldo por armazém e por conta na data de corte bate com o controle anterior | **PENDING** | sim |
+| **R1** | ambiente de homologação separado da produção | Maike | Railway/Supabase | projeto próprio com banco próprio | **PENDING** | não (recomendado) |
+| **R2** | PITR (recuperação para um instante) | Maike | Supabase → add-on PITR | painel mostra PITR ativo | **PENDING** | não (recomendado) |
+| **R3** | uma única URL web para uso real | Maike | Railway `web` / Vercel / `WEB_ORIGIN` | uma URL divulgada; as outras fora do `WEB_ORIGIN` | **PENDING** | não (recomendado) |
+
+**Aviso de G8 — receita da venda.** A confirmação de venda (`apps/api/src/routes/sales.ts`) lança TODA a
+receita na PRIMEIRA categoria financeira de receita **analítica** e no PRIMEIRO centro de custo **analítico**,
+pela ordem de código. Sem nenhum dos dois a confirmação é recusada. Então: crie a categoria de receita
+analítica que deve receber as vendas com o MENOR código entre as de receita, e o centro de custo analítico
+das vendas com o menor código entre os analíticos — ou a receita cai onde a ordem mandar, não onde você quer.
+
+**Por que G7 exige cuidado com o e-mail.** O login escolhe a primeira organização do usuário **por nome**
+e não existe seletor de organização. Hoje o e-mail do Maike é dono da `principal` (inventário, 23/09/2026).
+Se o mesmo usuário ficasse nas duas, o login poderia abrir a sandbox e a transação real iria para o lugar
+errado. Por isso a criação **recusa e-mail já cadastrado** (nunca altera o usuário existente) e o e-mail do
+dono novo tem de pertencer **só** à organização nova.
+
+### G7 — passo a passo
+
+1. **Escolher o e-mail do dono novo: um e-mail que AINDA NÃO EXISTE no sistema** — é a única opção.
+   O sistema não troca e-mail de usuário (a edição recusa: "O e-mail do usuário não pode ser alterado."), e a
+   criação recusa e-mail já cadastrado. Sugestão prática: um apelido com "+" do mesmo endereço (ex.:
+   `nome+fazenda@gmail.com`) — para o sistema é outro e-mail, e a mensagem chega na mesma caixa. O usuário
+   atual da sandbox fica onde está, como usuário da sandbox.
+2. **Conferir G1–G6** acima. Em especial `SEED_ON_DEPLOY` fora (ou `0`): as duas flags juntas são recusadas.
+3. **Railway → `api` → Variables**, trocar os VALORES (os nomes são os mesmos do seed demo):
+   `ORG_NAME` = nome real · `ORG_SLUG` = slug novo (minúsculas, dígitos e hífen; **não** `principal`) ·
+   `ADMIN_NAME` = nome do dono · `ADMIN_EMAIL` = e-mail do passo 1 · `ADMIN_PASSWORD` = senha temporária com
+   **12+ caracteres**, que não seja nenhuma senha do repositório · `ORGANIZACAO_LIMPA_ON_DEPLOY=1`.
+4. **UM deploy** do `api` (redeploy da versão atual; o pre-deploy roda sozinho).
+5. **Ler o log do pre-deploy.** Esperado: `organização limpa criada: id=<uuid> slug=<slug> admin=<e-mail>`.
+   Qualquer `organização limpa recusada: …` diz o motivo e garante que **nada** foi gravado — corrija a
+   variável indicada e repita o passo 4. O log nunca mostra senha nem hash.
+6. **Remover** do `api`: `ORGANIZACAO_LIMPA_ON_DEPLOY`, `ADMIN_PASSWORD` e as variáveis de seed que não serão
+   mais usadas (`ORG_NAME`, `ORG_SLUG`, `ADMIN_NAME`, `ADMIN_EMAIL`, `SEED_ON_DEPLOY`). Se um deploy rodar com a
+   flag ainda ligada, ele é um no-op que avisa `organização já criada; remova a flag e ADMIN_PASSWORD` — mas a
+   senha temporária continua no painel até você removê-la.
+7. **Primeiro login** com o e-mail e a senha temporária; conferir que o cabeçalho mostra a organização nova.
+8. **Trocar a senha pela interface.** A senha temporária esteve no painel; depois deste passo ela não vale mais.
+9. **Registrar aqui** a data, o slug e o id da organização (nunca a senha), e rodar de novo os blocos 1 e 3
+   do inventário: a organização nova aparece com `origem_seed = organizacao_limpa`, `e_demo = false`, um único
+   vínculo (o dono).
+10. Seguir para **G8**.
+
+O que a criação faz e não faz: cria dados de referência (globais), a organização, o dono, o perfil
+"Administrador" de sistema com todas as permissões, o vínculo e o escopo do dono (todas as empresas, todos os
+módulos). **Não** cria empresa, pessoa, produto, armazém, conta, centro de custo, categoria, plano de contas,
+safra, bem, animal, lote, TOP, nada `[DEMO]`, nem outro usuário. Mínimo estrutural sem tela: nenhum além do
+perfil, do vínculo e do escopo do dono — contadores de código e de ID Global nascem sob demanda (a primeira
+empresa recebe código 1, o primeiro registro numerado recebe ID Global 1); SLA de compras tem tela e padrão
+0; autorizadores têm tela. Tudo isso está coberto em `packages/db/test/organizacao-limpa.test.ts` e
+`apps/api/test/integration/organizacao-limpa.test.ts`.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)
 - [x] CORS (`WEB_ORIGIN`) apontando para os domínios declarados em "## Superfície web"
 - [ ] Backups automáticos do Supabase ativos (plano do projeto) — **e restaurados pelo menos uma vez**.
-  Hoje `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`: a recuperação autorizada é
-  `RECOVERY = REBUILD FROM ZERO` (seção "Recuperação"). Esta caixa **não** se marca por declaração de
-  pré-produção — ela continua aberta, e volta a ser obrigatória antes do primeiro uso real.
+  **`BLOCKED` desde 23/09/2026**: o primeiro uso real foi decidido (GO-LIVE-01), a condição de retorno de P1
+  disparou e esta caixa é o item **G4** de "Go-live — checklist de entrada em uso real". Recuperação:
+  RESTORE; `REBUILD FROM ZERO` proibido em produção.
 - [x] Usuário owner criado e vinculado (`organization_members.is_owner`)
 
 ## Estado real desta entrega (10/09/2026)
