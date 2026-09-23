@@ -61,6 +61,10 @@ export interface Base1ListProps {
   /** exportação CSV local a partir das linhas carregadas quando não há exportação no servidor */
   csvName?: string;
   className?: string;
+  /** esconde linhas carregadas sem mudar a paginação (ex.: ramos recolhidos da árvore) */
+  rowVisible?: (row: Row) => boolean;
+  /** o terceiro clique no cabeçalho remove a ordenação (volta à ordem do servidor, ex.: árvore) */
+  sortClearable?: boolean;
 }
 
 /**
@@ -98,13 +102,13 @@ export function Base1List(props: Base1ListProps) {
   const toggleFavorite = (id: string, on: boolean) => setFavorites((f) => { const n = new Set(f); if (on) n.add(id); else n.delete(id); try { localStorage.setItem(favKey, JSON.stringify([...n])); } catch { /* sem storage */ } return n; });
   const [openChip, setOpenChip] = React.useState<string | null>(null);
   const [colsDlg, setColsDlg] = React.useState(false); const [histDlg, setHistDlg] = React.useState(false); const [attachDlg, setAttachDlg] = React.useState(false); const [scrollToId, setScrollToId] = React.useState<string | null>(null); const lastPick = React.useRef<string | null>(null); const [delRow, setDelRow] = React.useState<Row | null>(null);
-  const [sortLocal, setSortLocal] = React.useState<{ key: string; dir: "asc" | "desc" } | undefined>();
+  const [sortLocal, setSortLocal] = React.useState<{ key: string; dir: "asc" | "desc" } | null | undefined>();
   const [pageSizeLocal, setPageSizeLocal] = React.useState<number | undefined>();
   const [recIndex, setRecIndex] = React.useState(0); const [recMode, setRecMode] = React.useState<"view" | "edit" | "new">("view"); const [copyFrom, setCopyFrom] = React.useState<Row | null>(null);
   const stripRef = React.useRef<HTMLDivElement>(null);
   // parâmetros da URL (menus como "Fornecedores") entram como filtros aplicados
   React.useEffect(() => { if (initialParams && Object.keys(initialParams).length) { const v = fromParams(filters, initialParams, prefs.filters.operators); setValues((o) => ({ ...o, ...v })); setApplied((a) => ({ ...a, params: { ...a.params, ...initialParams } })); } }, [JSON.stringify(initialParams)]);
-  const sort = sortLocal ?? prefs.sort;
+  const sort = sortLocal === null ? undefined : sortLocal ?? prefs.sort;
   const pageSize = pageSizeLocal ?? prefs.pageSize ?? BASE1_DEFAULT_PAGE_SIZE;
   const visibleKeys = prefs.columns.visible?.length ? prefs.columns.visible : columns.map((c) => c.key);
   const orderRank = new Map((prefs.columns.order ?? []).map((k, i) => [k, i]));
@@ -117,7 +121,7 @@ export function Base1List(props: Base1ListProps) {
   });
   const allRows = React.useMemo(() => q.data?.pages.flatMap((pg) => pg.items) ?? [], [q.data]);
   // "Buscar favoritos": mostra só os registros marcados (selecionados) entre os carregados
-  const rows = React.useMemo(() => (favOnly ? allRows.filter((r) => favorites.has(String(r["id"]))) : allRows), [allRows, favOnly, favorites]);
+  const rows = React.useMemo(() => (favOnly ? allRows.filter((r) => favorites.has(String(r["id"]))) : allRows).filter((r) => !props.rowVisible || props.rowVisible(r)), [allRows, favOnly, favorites, props.rowVisible]);
   const total = q.data?.pages[0]?.total ?? 0; const totals = q.data?.pages[0]?.totals;
   /**
    * ID GLOBAL: COLUNA DE IDENTIDADE, FORA DA CONFIGURAÇÃO DE COLUNAS (PRE-BASE2-05B.1).
@@ -160,7 +164,7 @@ export function Base1List(props: Base1ListProps) {
   const grand = useQuery({ queryKey: ["b1-total", moduleId, queryKeyExtra, chipScope], queryFn: async () => (await fetchPage({ page: 1, pageSize: 1, filters: {} })).total, staleTime: 120_000, enabled: filtersActive });
   const apply = (v: FilterValues = values, s: string = search) => { setApplied({ search: s, params: toParams(filters, v) }); setSelected(new Set()); setFavOnly(false); };
   const clearAll = () => { const v = defaultValues ?? {}; setValues(v); setSearch(""); setApplied({ search: "", params: toParams(filters, v) }); setSelected(new Set()); setFavOnly(false); };
-  const onSort = (k: string) => { const next = { key: k, dir: (sort?.key === k && sort.dir === "asc" ? "desc" : "asc") as "asc" | "desc" }; setSortLocal(next); p.update((x) => ({ ...x, sort: next })); };
+  const onSort = (k: string) => { if (props.sortClearable && sort?.key === k && sort.dir === "desc") { setSortLocal(null); p.update((x) => ({ ...x, sort: undefined })); return; } const next = { key: k, dir: (sort?.key === k && sort.dir === "asc" ? "desc" : "asc") as "asc" | "desc" }; setSortLocal(next); p.update((x) => ({ ...x, sort: next })); };
   const setPageSize = (n: number) => { setPageSizeLocal(n); p.update((x) => ({ ...x, pageSize: n })); };
   const updCols = (fn: (c: ListPreferences["columns"]) => ListPreferences["columns"]) => p.update((x) => ({ ...x, columns: fn(x.columns) }));
   const chips = filters.filter((f) => (prefs.filters.visible ?? filters.map((x) => x.key)).includes(f.key));

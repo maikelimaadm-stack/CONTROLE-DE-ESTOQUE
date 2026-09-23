@@ -8,6 +8,7 @@ import { runService, nextCode, requirePermission, comPermissaoResolvida } from "
 import { SEQUENCIA_EMPRESA } from "../lib/sequencia-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
 import { atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
+import { conferirRegrasDaArvore, conferirExclusaoNaArvore, sugerirCodigo } from "../lib/arvore-cadastro.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
@@ -148,7 +149,22 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   const wsql = where.length ? "where " + where.join(" and ") : "";
   const offset = (q.page - 1) * q.pageSize;
   // linhas + total na mesma consulta (contagem em janela): uma ida ao banco em vez de duas
-  const rows = await ctx.tx.query(`select ${cols.map(ident).join(",")}, count(*) over()::text as __total from erp.${ident(def.table)} ${wsql} order by ${ident(sortCol)} ${dir} nulls last, id limit ${q.pageSize} offset ${offset}`, b.params);
+  // ÁRVORE: sem ordenação escolhida pelo usuário, o cadastro hierárquico sai na ordem da árvore (pai antes
+  // dos filhos) com `nivel`, `ancestrais` e `tem_filhos` — é o que a tela usa para recuar e recolher. A
+  // chave do caminho é o código (ou o rótulo, onde não há código). Ordenar por uma coluna volta à lista plana.
+  const arvore = Boolean(def.tree) && !q.sort && existing.has("parent_id") && existing.has("organization_id");
+  const t = ident(def.table);
+  const chave = ident(existing.has("code") ? "code" : def.labelField);
+  const vivo = (a: string) => (def.softDelete ? `and ${a}.deleted_at is null` : "");
+  const rows = arvore
+    ? await ctx.tx.query(`with recursive arv as (
+          select r.id, array[coalesce(r.${chave}::text, '')] as caminho, array[]::uuid[] as ancestrais, 0 as nivel from erp.${t} r
+           where r.organization_id = ${b.add(ctx.orgId)} and (r.parent_id is null or not exists (select 1 from erp.${t} p where p.id = r.parent_id ${vivo("p")}))
+          union all
+          select c.id, a.caminho || coalesce(c.${chave}::text, ''), a.ancestrais || a.id, a.nivel + 1 from erp.${t} c join arv a on c.parent_id = a.id where a.nivel < 20)
+        select ${cols.map(ident).join(",")}, arv.nivel, arv.ancestrais, exists (select 1 from erp.${t} f where f.parent_id = ${t}.id ${vivo("f")}) as tem_filhos, count(*) over()::text as __total
+          from erp.${t} join arv using (id) ${wsql} order by arv.caminho, id limit ${q.pageSize} offset ${offset}`, b.params)
+    : await ctx.tx.query(`select ${cols.map(ident).join(",")}, count(*) over()::text as __total from erp.${ident(def.table)} ${wsql} order by ${ident(sortCol)} ${dir} nulls last, id limit ${q.pageSize} offset ${offset}`, b.params);
   let total = Number((rows.rows[0] as { __total?: string } | undefined)?.__total ?? 0);
   if (!rows.rows.length && q.page > 1) { const c = await ctx.tx.query<{ n: string }>(`select count(*) as n from erp.${ident(def.table)} ${wsql}`, b.params); total = Number(c.rows[0]!.n); }
   const labelRows = await refLabels(ctx, def, rows.rows as Record<string, unknown>[]);
@@ -213,6 +229,7 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   // A EMPRESA é o único cadastro cuja RLS de leitura depende do escopo do próprio membro: a linha nasce
   // fora do escopo de todo mundo. Ver `exigirEscopoTotalDaOrganizacao`.
   if (def.table === "empresas") exigirEscopoTotalDaOrganizacao(ctx, def.label);
+  await conferirRegrasDaArvore(ctx, def, null, data, null);
   const existing = await checkColumns(ctx, def);
   const cols: string[] = []; const vals: unknown[] = [];
   if (existing.has("organization_id")) { cols.push("organization_id"); vals.push(ctx.orgId); }
@@ -243,8 +260,9 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
 }
 
 export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, body: unknown) {
-  await getOne(ctx, def, id);
+  const atual = await getOne(ctx, def, id);
   const data = buildSchema(def, true).parse(body) as Record<string, unknown>;
+  await conferirRegrasDaArvore(ctx, def, id, data, atual);
   const existing = await checkColumns(ctx, def);
   const sets: string[] = []; const vals: unknown[] = [];
   for (const f of def.fields) {
@@ -261,6 +279,7 @@ export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, b
 
 export async function deleteOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   await getOne(ctx, def, id);
+  await conferirExclusaoNaArvore(ctx, def, id);
   const existing = await checkColumns(ctx, def);
   const orgCond = existing.has("organization_id") && !def.reference ? "and organization_id=$2" : "";
   const params = orgCond ? [id, ctx.orgId] : [id];
@@ -325,6 +344,7 @@ export default async function resourceRoutes(app: FastifyInstance) {
   app.get("/resources/:key", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => listResource(ctx, def, req.query as Record<string, unknown>)); });
   app.get("/resources/:key/options", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const { search, ...extra } = req.query as Record<string, string>; // seletor de um cadastro referenciado: sem permissão própria, mas o ESCOPO é o do recurso apontado
     return runService(app, req, null, async (ctx) => options(await comPermissaoResolvida(ctx, `${def.permission}.view`), def, search, extra)); });
+  app.get("/resources/:key/proximo-codigo", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ parent_id: z.string().uuid().optional() }).strict().parse(req.query); return runService(app, req, `${def.permission}.create`, (ctx) => sugerirCodigo(ctx, def, q.parent_id ?? null)); });
   app.get("/resources/:key/distinct", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ field: z.string().regex(/^[a-z_][a-z0-9_]*$/), search: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query); return runService(app, req, `${def.permission}.view`, (ctx) => distinctValues(ctx, def, q.field, q.search, q.limit)); });
   app.get("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => getOne(ctx, def, id)); });
   app.post("/resources/:key", async (req, reply) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const r = await runService(app, req, `${def.permission}.create`, (ctx) => createOne(ctx, def, req.body)); return reply.status(201).send(r); });

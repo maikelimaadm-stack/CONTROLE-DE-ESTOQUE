@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import bcrypt from "bcryptjs";
-import { PERMISSION_RESOURCES, ACTION_LABELS, MODULOS_ESCOPO_EMPRESA, allPermissionKeys, modulosDasPermissoes } from "@agro/domain";
+import { CADASTROS_CODIGO_HIERARQUICO, MASCARA_CODIGO_PADRAO, PARAMETRO_MASCARAS_CODIGO, mascaraValida, PERMISSION_RESOURCES, ACTION_LABELS, MODULOS_ESCOPO_EMPRESA, allPermissionKeys, modulosDasPermissoes } from "@agro/domain";
 import { runService, audit } from "../lib/service.js";
 import { notFound, validation, denied } from "../lib/errors.js";
 import { hasPermission } from "../lib/context.js";
@@ -170,7 +170,10 @@ export default async function adminRoutes(app: FastifyInstance) {
   // ---------- Parametrizações do tenant ----------
   app.get("/admin/parameters", async (req) => runService(app, req, null, async (ctx) => (await ctx.tx.query("select parameters from erp.organizations where id=$1", [ctx.orgId])).rows[0]));
   app.put("/admin/parameters", async (req) => runService(app, req, "tenant_parameters.edit", async (ctx) => {
-    const d = z.object({ calc_icms_desonerado: z.boolean().optional(), financial_freeze_scope: z.enum(["organization", "farm"]).optional() }).passthrough().parse(req.body);
+    // Máscara de código por cadastro hierárquico: só cadastros conhecidos e só máscara válida (422), nunca
+    // descartada em silêncio — uma máscara ignorada faria o servidor recusar códigos que a tela sugeriu.
+    const mascaras = z.object(Object.fromEntries(CADASTROS_CODIGO_HIERARQUICO.map((c) => [c, z.string().refine(mascaraValida, `Máscara inválida. Use 9 para cada dígito e ponto entre níveis (ex.: ${MASCARA_CODIGO_PADRAO}).`).optional()]))).strict();
+    const d = z.object({ calc_icms_desonerado: z.boolean().optional(), financial_freeze_scope: z.enum(["organization", "farm"]).optional(), [PARAMETRO_MASCARAS_CODIGO]: mascaras.optional() }).passthrough().parse(req.body);
     // A marca de origem (GO-LIVE-01) é quem diz ao seed demo onde ele pode escrever. Pela tela, ela só pode
     // voltar como veio (a tela reenvia o objeto inteiro); qualquer mudança é recusada, nunca ignorada.
     if (CHAVE_ORIGEM_SEED in d) {

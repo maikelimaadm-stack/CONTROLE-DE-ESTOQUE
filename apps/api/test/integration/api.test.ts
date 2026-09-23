@@ -26,11 +26,11 @@ describe("cadastros genéricos (recursos declarativos)", () => {
     expect(r.statusCode).toBe(200); const b = j(r); expect(b.total).toBe(1); expect(b.items![0]!.description).toContain("Sal Mineral"); expect(b.items![0]!.group_id_label).toBeTruthy();
   });
   it("cria, edita, valida e exclui (soft) um centro de custo", async () => {
-    const c = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: "9.99", name: "Teste CC", kind: "analytic" } });
+    const c = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: "9", name: "Teste CC", kind: "analytic" } });
     expect(c.statusCode).toBe(201); const id = j(c).id as string;
-    const bad = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: "9.98" } });
+    const bad = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: "8" } });
     expect(bad.statusCode).toBe(422); expect(j(bad).error!.code).toBe("VALIDATION_ERROR");
-    const dup = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: "9.99", name: "Dup" } });
+    const dup = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: "9", name: "Dup" } });
     expect(dup.statusCode).toBe(409);
     const u = await h.app.inject({ method: "PUT", url: `/api/resources/cost_centers/${id}`, headers: h.headers(), payload: { name: "Teste CC 2" } });
     expect(j(u).name).toBe("Teste CC 2");
