@@ -12,6 +12,8 @@ test("M1 — o cadastro oferece baixar o modelo e importar planilha", async ({ p
   await page.getByRole("button", { name: "Mais opções" }).first().click();
   const [arquivo] = await Promise.all([page.waitForEvent("download"), page.getByText("Baixar modelo de importação").click()]);
   expect(arquivo.suggestedFilename()).toBe("modelo-financial_categories.xlsx");
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("Importar planilha")).toBeHidden();
   await page.getByRole("button", { name: "Mais opções" }).first().click();
   await page.getByText("Importar planilha").click();
   await expect(page.getByTestId("importar-dialogo")).toBeVisible();
