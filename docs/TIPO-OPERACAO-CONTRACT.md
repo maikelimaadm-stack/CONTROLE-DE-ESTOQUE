@@ -1,12 +1,15 @@
 # Contrato do Tipo de Operação (TOP)
 
-> Contrato de produto (BASE2-02, estendido pela TOP-CONFIG-01).
+> Contrato de produto (BASE2-02, estendido pela TOP-CONFIG-01, 02, 03 e 04A).
 > Registry das FAMÍLIAS CANÔNICAS: `packages/domain/src/tipo-operacao.ts`.
 > Camada CONFIGURÁVEL: `erp.tipos_operacao` + `packages/domain/src/tipo-operacao-configurado.ts`.
 > Rótulos: `packages/plataforma/src/idiomas/pt-BR.ts` (`top.*`).
 > Referências: `packages/domain/dicionario-dados.mjs` (campos `top` / `tops` / `discriminadorTop`).
 > Gates: `packages/domain/test/tipo-operacao.test.ts`, `node scripts/data-dictionary.mjs --check` e
 > `node scripts/familia-operacional-ssot-audit.mjs` (proíbe segunda lista das famílias).
+> Execução configurada (TOP-CONFIG-04A, §12): `packages/domain/src/tipo-operacao-execucao.ts` (matriz de
+> suporte e política efetiva da venda), `supabase/migrations/0023_venda_execucao_configurada_guarda.sql`,
+> `packages/domain/test/tipo-operacao-execucao.test.ts`, `apps/api/test/integration/sales-top-execucao.test.ts`.
 
 ## 0. Duas camadas, desde a TOP-CONFIG-01
 
@@ -20,7 +23,7 @@ que este capítulo existe para impedir.
 | Onde mora | `packages/domain/src/tipo-operacao.ts`, em Git | `erp.tipos_operacao`, no banco, por organização |
 | Quem muda | uma fatia, com revisão e migration | o administrador, pela tela |
 | Quantidade | uma por espécie | zero, uma ou MUITAS por família |
-| Executa efeito? | **não** | **não** |
+| Executa efeito? | **não** | **não por si.** Desde a TOP-CONFIG-04A, a VERSÃO congelada de um documento pode declarar que o estoque e/ou o financeiro da confirmação de `vendas.venda` seguem a configuração dela (§12); quem executa continua sendo o serviço de vendas |
 
 A TOP configurada **aponta** para uma família (`codigo_base`) e **não pode** apontar para nada que o
 registry não declare — a validação é contra `CODIGOS_TIPO_OPERACAO`, nunca contra uma cópia da lista.
@@ -127,7 +130,8 @@ enquanto não houver operação definida:
 | `…?tipo_operacao_id=<uuid>` que a lista recusa | o LANÇADOR + "não está disponível". ZERO POST. |
 
 **Por quê.** A TOP não é um atributo do lançamento: é a identidade operacional que contextualiza o
-documento inteiro e que, a partir da TOP-CONFIG-03, vai decidir efeitos de estoque, financeiro e fiscal.
+documento inteiro e que, a partir da TOP-CONFIG-04A, pode decidir os efeitos de estoque e financeiro da
+venda (§12) — fiscal continua só declarado.
 Um dado que muda o significado de todos os outros não pode ser preenchido no meio deles.
 
 **`tipo_operacao_id` na URL é PEDIDO, nunca autoridade.** Ele existe para que refresh, Voltar/Avançar e um
@@ -208,7 +212,8 @@ segundo campo a renomeação não teria nem motivo visível ao usuário.
 
 **CLASSIFICAR ≠ EXECUTAR permanece.** Escolher a TOP não mudou efeito de estoque, financeiro, fiscal,
 status ou permissão: confirmar uma venda faz exatamente o que fazia. A TOP é a identidade configurada do
-lançamento; efeitos configuráveis são a TOP-CONFIG-03, e nada nesta fatia os antecipa.
+lançamento; efeitos configuráveis vieram depois, com contrato de cutover próprio (TOP-CONFIG-04A, §12), e
+nada nesta fatia os antecipou.
 
 ## 1. O que a TOP é
 
@@ -226,7 +231,12 @@ reprova quando diverge.
 
 ## 2. O que a TOP não é
 
-**CLASSIFICAR ≠ EXECUTAR.** Esta é a regra central, e ela não tem exceção nesta fase.
+**CLASSIFICAR ≠ EXECUTAR.** Esta é a regra central. Ela tem UMA exceção, explícita e estreita, desde a
+TOP-CONFIG-04A (§12): a versão congelada de uma venda pode entregar o estoque e/ou o financeiro da
+confirmação à configuração dela — e mesmo aí a TOP diz a POLÍTICA; quem executa é `confirmSale`
+(`apps/api/src/routes/sales.ts`), com as mesmas primitivas de sempre (`postStock` em
+`apps/api/src/services/stock-core.ts`, `createTitles` em `apps/api/src/services/financial-core.ts`). Fora
+dessa exceção, a tabela abaixo vale sem ressalva.
 
 | A TOP **não** decide | Quem decide, hoje e nesta fatia |
 | --- | --- |
@@ -492,6 +502,12 @@ ter feito isso que a correção chegou como um teste que **passou a poder ser es
 | Decidir política de próximas operações pela CARDINALIDADE (`destinos.length`, `items.length`) | zero arestas tem duas origens opostas — nunca declarada e declarada vazia — e a contagem responde as duas com o mesmo número (§11.7) |
 | Cobrar a capacidade de um destino FIXO antes de saber qual destino o grafo escolheu | soma uma exigência irrelevante à do destino real e recusa quem pode; a permissão acompanha o destino efetivo (§11.7) |
 | Marcar `destinos_configurados = true` por automação, backfill ou job | é inventar uma decisão que ninguém tomou, e a decisão inventada recusa conversões (§11.7) |
+| Ler as seções de uma versão do FORMATO 1 como decisão de execução | o formato 1 foi gravado quando nada executava; é legado para sempre (§12.1) |
+| Deduzir execução da família, do tipo de documento ou de `atualizacao != nenhuma` | só o bloco `execucao` do formato 2 decide, efeito a efeito (§12.1) |
+| Confirmar pelo legado quando a versão declara execução configurada e ela não pode ser executada | é o fallback silencioso que o gate e a guarda da 0023 existem para impedir: a resposta é recusa (§12.4) |
+| Ler `tipos_operacao.versao_atual` na confirmação | a autoridade é a versão CONGELADA do documento (§12.2) |
+| Ativar uma combinação que o runtime não executa, e ignorar parte dela | a matriz recusa na ativação, com caminho e motivo (§12.3) |
+| Matriz de suporte no cliente, ou `if (codigo === ...)` decidindo execução | a matriz tem um dono no domínio e o servidor a publica (§12.3, §12.6) |
 
 ## 11. Configuração operacional versionada (TOP-CONFIG-03)
 
@@ -547,6 +563,12 @@ A leitura **confere o schema ANTES de qualquer campo**. Payload de outra versão
 (`schema_nao_suportado` na escrita; `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO` na API), nunca
 reinterpretado. Ler um payload com o dicionário errado é como decodificar bytes na codificação errada:
 não dá erro, dá significado trocado.
+
+**Desde a TOP-CONFIG-04A existem DOIS formatos legíveis** (`VERSOES_SCHEMA_CONFIGURACAO_TOP = [1, 2]`). O
+formato 2 são as mesmas cinco seções mais o bloco `execucao` (§12.1), e ele o EXIGE — um "2" sem
+`execucao` é recusado, não lido como formato 1. Qualquer outro número continua recusado com uma recusa
+só. `VERSAO_SCHEMA_CONFIGURACAO_TOP` continua valendo 1: é o formato do neutro e do `DEFAULT` da 0022, e é
+o número que o cliente anterior compara nas capacidades.
 
 Os dois lados dessa regra têm comportamentos diferentes, de propósito:
 
@@ -685,7 +707,12 @@ a API sabe fazer não é configurar) devolve:
 - `contractVersion`;
 - `configuracao`: `{ versaoSchema, secoes }`;
 - `destinos`: `{ suportado, limite }` — bloco próprio, e não uma seção da configuração, porque o grafo
-  não mora no payload: mora em tabela.
+  não mora no payload: mora em tabela;
+- `execucao` (TOP-CONFIG-04A): `{ suportado, versaoSchema: 2, runtimeHabilitado, matriz }` — bloco
+  OPCIONAL, pelo mesmo precedente de `destinos`. `contractVersion` e `configuracao.versaoSchema` NÃO
+  mudaram: o cliente anterior compara os dois e, se mudassem, travaria a edição de toda TOP durante a
+  implantação. Ausente = servidor sem execução configurada (o cliente novo grava no formato 1);
+  presente e malformado = contrato desconhecido, e o corpo inteiro é recusado pelo cliente.
 
 Existe um endpoint em vez de um `try/catch` porque **deduzir capacidade pela falha é adivinhação**: 422
 também é o que se recebe por payload inválido, e 404 é o que se recebe de rota protegida. Os dois
@@ -944,7 +971,13 @@ destinos que nenhum administrador escolheu. O marcador só passa a `true` pela e
 as letras, que a operação ainda não declarou política — e um botão explícito para declarar que não há
 próxima operação.
 
-### 11.8 O que esta fatia AINDA NÃO EXECUTA
+### 11.8 O que esta fatia AINDA NÃO EXECUTAVA
+
+> **HISTÓRICO da TOP-CONFIG-03, SUPERADO EM PARTE PELA TOP-CONFIG-04A (§12).** Os dois primeiros itens
+> abaixo deixaram de valer para o estoque e o financeiro de `vendas.venda` quando a versão congelada
+> declara execução configurada — e só nesse caso. Todo o resto continua valendo como está: fiscal,
+> aprovação, confirmação automática, alteração após confirmar e as exigências da seção `geral` seguem
+> declarados e não executados, e nenhuma outra família executa configuração.
 
 **CONFIGURAR ≠ EXECUTAR.** Nada nesta fatia mudou o que acontece quando um documento é confirmado.
 Declarado sem rodeio, e verificável no código:
@@ -966,3 +999,115 @@ Declarado sem rodeio, e verificável no código:
 
 Ligar os efeitos é fatia posterior, **com contrato de cutover próprio** — o cutover entre "o código
 decide" e "a configuração decide" é a parte difícil, e não se resolve de passagem.
+
+## 12. Execução configurada da venda (TOP-CONFIG-04A)
+
+> Contrato: `packages/domain/src/tipo-operacao-configuracao.ts` (formato 2) e
+> `packages/domain/src/tipo-operacao-execucao.ts` (matriz de suporte e política efetiva da venda).
+> Executor: `confirmSale` em `apps/api/src/routes/sales.ts`. Ativação: `apps/api/src/routes/tipos-operacao.ts`.
+> Guarda de banco: `supabase/migrations/0023_venda_execucao_configurada_guarda.sql`.
+> Implantação em duas fases: `docs/DEPLOYMENT.md`.
+
+A TOP-CONFIG-04A é a primeira fatia autorizada a mudar a fronteira do §11.8. Ela faz a configuração da
+TOP decidir o **estoque** e o **financeiro** da **confirmação de venda** (`vendas.venda`) — e nada além
+disso. O desenho nasce para ser reutilizado pelas próximas famílias sem motor paralelo: a próxima que ganhar
+execução ganha UMA entrada na matriz e UM resolvedor tipado para o SEU serviço.
+
+### 12.1 O marcador de cutover: o bloco `execucao` do formato 2
+
+```
+execucao: { estoque: "legado" | "configurada", financeiro: "legado" | "configurada" }
+```
+
+- **Um modo por efeito**, e não um booleano "ativo": o booleano não diria QUAL efeito foi entregue à
+  configuração, e impediria o cutover separado. Estoque configurado com financeiro legado (e o inverso) é
+  combinação válida.
+- **A existência de configuração não autoriza execução.** As versões do formato 1 foram gravadas quando os
+  campos eram só declaração; `estoque.atualizacao = "nenhuma"` numa versão v1 quer dizer "ninguém decidiu",
+  não "esta venda não movimenta". Por isso: **formato 1 = legado, para sempre, seja qual for o conteúdo.**
+- **Uma função interpreta** (`execucaoDeclaradaTop`). Nenhum consumidor compara `versaoSchema`, deduz
+  execução da família ou de `atualizacao != nenhuma`. Formato 1 → `{legado, legado}`; formato 2 → o bloco.
+- **Nada é reescrito.** Não há UPDATE nem backfill de versões para o formato 2 — a versão é imutável, e
+  inventar "configurada" no acervo seria atribuir uma decisão que ninguém tomou.
+- **TOP nova nasce no formato 2 com `{legado, legado}`**: nenhuma começa executando configuração sem decisão
+  explícita. O cliente anterior, que grava no formato 1, continua gravando formato 1 (sem tradução).
+- **Salvar sem alterar continua não sendo escrita.** Um v1 e o mesmo conteúdo em v2 `{legado, legado}` são
+  semanticamente iguais (`configuracoesTopIguais`), então abrir e salvar uma TOP v1 no editor novo não cria
+  versão. Uma mudança real (nome, descrição, configuração ou execução) cria a N+1 — no formato que o
+  cliente enviou.
+- **O formato não retrocede.** Um corpo no formato 1 sobre versão vigente no formato 2 é recusado
+  (`TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`): aceitá-lo desligaria a execução em silêncio. Voltar ao
+  legado é explícito — formato 2 com o efeito em `legado`.
+
+### 12.2 A autoridade é a versão congelada
+
+A confirmação lê `sales_documents.tipo_operacao_versao_id` → a linha EXATA de `erp.tipos_operacao_versoes`
+(uma consulta por confirmação, sem lock: a versão é imutável). Nunca `tipos_operacao.versao_atual`. A TOP
+editada depois do lançamento não muda o que o documento executa; desativada ou excluída também não — o
+documento confirma pela regra que capturou (o mesmo contrato da conversão). Provado em
+`sales-top-execucao.test.ts` (04A-I15, 04A-I15b, 04A-I16).
+
+### 12.3 A matriz de suporte — o que é executável
+
+A matriz NÃO executa, não é handler e não substitui o registry: responde só "esta combinação configurada é
+executável nesta versão do produto?". Ela mora em `tipo-operacao-execucao.ts`, com a família derivada do
+registry (`familiaOperacionalDeDocumentoVenda("sale")`), e o servidor a publica nas capacidades.
+
+| `vendas.venda` | executável | recusado, e por quê (confirmado contra o código real) |
+| --- | --- | --- |
+| estoque | `nenhuma` (sem movimento) · `saida` (a mesma `postStock`, mesma origem, mesma data) · `exigeArmazem` sim/não | `entrada`/`transferencia` (a confirmação só dá saída) · `saldoNegativo = permitir` (o gatilho do estoque recusa toda saída sem saldo; não se contorna) |
+| financeiro | `nenhuma` (sem título) · `receber` (a mesma `createTitles`, mesma categoria, centro, parcelamento, parceiro, vencimento e origem) · `exigeFormaPagamento` e `exigeVencimento` sim/não | `pagar` (sentido errado) · `modo = provisionar` (título não tem estado de previsão) · `exigeCentroResultado` (a venda não tem campo de centro; nenhum centro padrão é inventado) |
+
+Toda outra família: **"Execução configurada ainda não disponível para esta família."** — inclusive
+`vendas.orcamento` e `vendas.pedido`, que continuam no comportamento vigente.
+
+A validação acontece **na ativação, antes de gravar**, só para os efeitos em `configurada` (a seção de um
+efeito em `legado` continua declaração), e devolve TODAS as recusas com `caminho` e mensagem em português
+(`TIPO_OPERACAO_CONFIGURACAO_INVALIDA`, 422). A confirmação reconfere (defesa em profundidade).
+
+### 12.4 O gate operacional e o fail-closed
+
+`TOP_EFFECTS_RUNTIME_V1_ENABLED` (`0`/ausente = desligado; `1` = ligado; qualquer outro valor derruba o
+startup):
+
+| | gate DESLIGADO (padrão) | gate LIGADO |
+| --- | --- | --- |
+| ativar execução configurada (passar a `configurada`, ou mudar a seção de um efeito configurado) | recusado, `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (409), antes de gravar | permitido, se a matriz aceitar |
+| voltar ao legado, renomear, mexer no que nenhum efeito configurado executa | permitido | permitido |
+| confirmar venda de versão configurada | **recusado** (409), zero efeito, idempotência não consumida — **nunca legado** | executa a política congelada |
+| confirmar venda sem TOP, v1 ou v2 `{legado, legado}` | legado | legado |
+
+Desligar o gate depois de ligado **não é voltar ao legado**: vendas de versões configuradas passam a ser
+recusadas na confirmação. **Binário anterior à fatia**: ele não conhece o gate nem o formato 2; a guarda da
+0023 (gatilho em `erp.sales_documents`) recusa a transição para `confirmed` de uma venda cuja versão
+declara execução configurada, a menos que a própria transação tenha gravado a marca
+`app.venda_execucao_configurada = <id da venda>` — o que só o binário desta fatia faz. O código levantado
+(`TIPO_OPERACAO_INDISPONIVEL`) é um que o binário anterior já conhece: 422 com mensagem, nunca 500.
+
+### 12.5 Runtime da venda, exigências, transação e cancelamento
+
+- `resolverPoliticaEfetivaDaVenda` resolve UMA vez, antes do primeiro efeito, uma decisão tipada por
+  efeito: `legado` | `configurada:nenhum` | `configurada:saida` (estoque) e `legado` | `configurada:nenhum`
+  | `configurada:receber` (financeiro). O caminho legado é o código de antes, sem mudança de ordem.
+- Exigências da versão (armazém em todos os itens; forma de pagamento; vencimento, sem recuo para a data do
+  documento) são conferidas TODAS antes de qualquer efeito: `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA` (422),
+  com `details.exigencias[{caminho, mensagem}]`.
+- Uma transação só: falha do financeiro desfaz o estoque e vice-versa (04A-I19, 04A-I20).
+- Evidência: a auditoria `confirm` registra a versão usada, a origem da decisão e o que foi materializado
+  (`movimentos`, `titles`, `execucao`).
+- **Cancelamento estorna só o que existe.** Ele não consulta configuração nem gate: `reverseStock` estorna os
+  movimentos de origem da venda (zero → nada) e os títulos da mesma origem são cancelados; a auditoria
+  `cancel` registra `estornos` e `titulosCancelados`. As quatro combinações estão provadas (04A-C2…C5).
+
+### 12.6 Administração e o que continua só declarado
+
+A aba **Execução** do editor mostra, por efeito, "Comportamento legado" / "Usar configuração da TOP",
+avaliados contra a matriz e o gate QUE O SERVIDOR DECLAROU (nunca uma cópia no cliente). Cada bloqueio tem
+a sua frase: servidor sem o recurso, família sem consumidor, gate desligado, combinação sem executor e
+versão configurada num ambiente que não a executa. A troca de autoridade aparece no histórico e na
+auditoria como a seção `execucao` alterada (com o antes e o depois).
+
+**Continua preparado, não executado:** fiscal, aprovação, confirmação automática, alteração após
+confirmar e as exigências da seção `geral`. Orçamento, pedido e a conversão não mudaram. Próximas fatias
+(Compras, Movimentações de Estoque, Financeiro) reutilizam o formato 2, a matriz e a recusa — não este
+resolvedor, que é da venda.
