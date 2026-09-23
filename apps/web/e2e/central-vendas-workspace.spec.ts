@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { login, api, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha } from "./helpers";
+import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha } from "./helpers";
 
 /**
  * CENTRAL DE VENDAS — WORKSPACE FOUNDATION (VISUAL-UX-01).
@@ -665,31 +665,48 @@ async function capturarPost(page: Page) {
   return capturado;
 }
 
-/** Uma venda SALVA de verdade: a primeira da listagem oficial, com o detalhe lido pela porta que a tela de detalhe usa. */
+/**
+ * Uma venda SALVA de verdade, criada pela API oficial (o seed de demonstração não traz venda: depender de
+ * outro spec tê-la criado antes faria este arquivo passar ou falhar pela ordem de execução). O detalhe é
+ * lido pela porta que a tela de detalhe usa. Criada ANTES de qualquer `page.route`, o POST é o real.
+ */
 async function documentoSalvo(page: Page) {
-  const lista = await api<{ items: { id: string }[] }>(page, "GET", "/api/sales/sales?pageSize=1");
-  const id = lista.items?.[0]?.id;
-  expect(id, "o seed tem venda salva para abrir como aba de registro").toBeTruthy();
+  const empresa = await empresaAtiva(page);
+  const cliente = await primeiroId(page, "/api/resources/people?is_client=true&pageSize=1");
+  const produto = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const armazem = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  const { id } = await api<{ id: string }>(page, "POST", "/api/sales/sales", {
+    empresa_id: empresa, document_date: "2026-09-01", client_id: cliente,
+    items: [{ product_id: produto, warehouse_id: armazem, quantity: "1", unit_price: "10.00" }]
+  });
   const d = await api<{ code: string; client_name: string | null; status: string }>(page, "GET", `/api/sales/sales/${id}`);
   expect(d.code && d.client_name && d.status, "a premissa: a venda salva tem código, cliente e situação").toBeTruthy();
-  return { id: id!, code: d.code, cliente: d.client_name!, status: d.status };
+  return { id, code: d.code, cliente: d.client_name!, status: d.status };
 }
 
 /**
- * Abre, nesta ordem, uma venda SALVA (aba de registro), uma tela de OUTRO módulo (Estoque) e, opcionalmente,
- * o lançador de pedido (aba de criação limpa) — e só então a Central. Cada `goto` recarrega a página: as
- * abas sobrevivem pela própria infraestrutura (sessionStorage de metadados), como para o usuário.
+ * Abre, nesta ordem, uma venda SALVA (aba de registro), um REGISTRO de outro módulo (o produto, aba de
+ * detalhe fora de vendas — o controle negativo do filtro), uma tela de OUTRO módulo (Estoque) e,
+ * opcionalmente, o lançador de pedido (aba de criação limpa) — e só então a Central. Cada `goto` recarrega
+ * a página: as abas sobrevivem pela própria infraestrutura (sessionStorage de metadados), como para o
+ * usuário. `antesDaCentral` roda depois da última leitura legítima das outras telas e antes de a Central montar.
  */
-async function abrirComVizinhos(page: Page, opcoes: { lancadorDePedido?: boolean } = {}) {
+async function abrirComVizinhos(page: Page, opcoes: { lancadorDePedido?: boolean; antesDaCentral?: () => void } = {}) {
   const salvo = await documentoSalvo(page);
   await page.goto(`/vendas/sales/${salvo.id}`);
   await expect(aba(page, `/vendas/sales/${salvo.id}`)).toHaveCount(1);
+  const produtoId = await primeiroId(page, "/api/resources/products?pageSize=1");
+  await page.goto(`/cadastros/products/${produtoId}?view=1`);
+  const outroRegistro = page.locator('[data-testid="workspace-tab"][data-kind="detail"]:not([data-tab-key^="/vendas/"])');
+  await expect(outroRegistro, "um registro de outro módulo aberto como aba de detalhe").toHaveCount(1);
+  const chaveOutroRegistro = (await outroRegistro.getAttribute("data-tab-key"))!;
   await page.goto("/estoque");
   await expect(aba(page, "/estoque")).toHaveCount(1);
   if (opcoes.lancadorDePedido) { await abrirLancamentoDeVendas(page, "orders"); await expect(aba(page, "/vendas/orders/new")).toHaveCount(1); }
+  opcoes.antesDaCentral?.();
   const top = await abrirWorkspace(page);
   await expect(aba(page, "/vendas/sales/new")).toHaveCount(1);
-  return { salvo, top };
+  return { salvo, top, produtoId, chaveOutroRegistro };
 }
 const linhasVisiveis = (page: Page) => page.getByTestId("central-vendas-documentos-lista").locator('[data-testid="central-vendas-documento"]:not([hidden])');
 
@@ -820,13 +837,14 @@ test("W21 — painel inferior recolhível: só a faixa fica, nada focável atrá
 
 test("W22 — Documentos abertos: só documentos de vendas, contador coerente, pesquisa que filtra e estado vazio", async ({ page }) => {
   await login(page);
-  const { salvo } = await abrirComVizinhos(page);
-  await expect(page.getByTestId("central-vendas-documentos-contador"), "venda salva + esta criação; Estoque e Início não contam").toHaveText("2");
+  const { salvo, chaveOutroRegistro } = await abrirComVizinhos(page);
+  await expect(page.getByTestId("central-vendas-documentos-contador"), "venda salva + esta criação; o produto, Estoque e Início não contam").toHaveText("2");
   await page.getByTestId("central-vendas-documentos").click();
   const lista = page.getByTestId("central-vendas-documentos-lista");
   await expect(lista).toBeVisible();
   const chaves = await lista.getByTestId("central-vendas-documento").evaluateAll((els) => els.map((e) => e.getAttribute("data-chave")));
   expect(chaves, "exatamente as abas de vendas, na ordem da barra de abas").toEqual([`/vendas/sales/${salvo.id}`, "/vendas/sales/new"]);
+  expect(chaves, "registro de outro módulo (aba de detalhe) não é documento de vendas").not.toContain(chaveOutroRegistro);
   const busca = lista.getByRole("textbox", { name: "Pesquisar documento aberto" });
   await expect(busca, "abre com o foco na pesquisa").toBeFocused();
   await expect(lista.locator(`[data-chave="/vendas/sales/${salvo.id}"]`).getByTestId("central-vendas-documento-titulo")).toHaveText(salvo.code);
@@ -857,6 +875,7 @@ test("W23 — fechar um documento salvo pela lista é o closeTab REAL: a aba glo
   await linha.hover();
   await linha.getByRole("button", { name: `Fechar ${salvo.code}` }).click();
   await expect(linha).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Pesquisar documento aberto" }), "o × sumiu com a linha: o foco vai para a pesquisa, não para o <body>").toBeFocused();
   await expect(aba(page, `/vendas/sales/${salvo.id}`), "a aba global fechou").toHaveCount(0);
   await expect(page.getByTestId("confirm-dialog"), "documento limpo fecha sem perguntar").toHaveCount(0);
   await expect(aba(page, "/estoque"), "outro módulo não é afetado").toHaveCount(1);
@@ -866,35 +885,45 @@ test("W23 — fechar um documento salvo pela lista é o closeTab REAL: a aba glo
   await expect(page.getByTestId("central-vendas-documentos-contador")).toHaveText("1");
 });
 
-test("W24 — fechar pela lista uma aba COM alteração pergunta como a barra de abas: cancelar mantém, confirmar fecha só ela", async ({ page }) => {
+test("W24 — fechar pela lista uma aba COM alteração pergunta como a barra de abas: cancelar mantém lista, aba e foco; confirmar fecha só ela", async ({ page }) => {
   await login(page);
-  const { salvo } = await abrirComVizinhos(page);
+  const { salvo, chaveOutroRegistro } = await abrirComVizinhos(page);
   await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill("rascunho que não pode sumir");
   await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
 
-  const fecharPelaLista = async () => {
-    await page.getByTestId("central-vendas-documentos").click();
-    const linha = page.locator('[data-testid="central-vendas-documento"][data-chave="/vendas/sales/new"]');
-    await linha.hover();
-    await linha.getByRole("button", { name: "Fechar Nova Venda" }).click();
-  };
-  await fecharPelaLista();
+  await page.getByTestId("central-vendas-documentos").click();
+  const lista = page.getByTestId("central-vendas-documentos-lista");
+  const linha = lista.locator('[data-testid="central-vendas-documento"][data-chave="/vendas/sales/new"]');
+  const xis = linha.getByRole("button", { name: "Fechar Nova Venda" });
   const dlg = page.getByTestId("confirm-dialog");
+
+  await linha.hover(); await xis.click();
   await expect(dlg, "closeTab recusou a aba suja: a lista pergunta, não descarta").toBeVisible();
   await expect(dlg.getByRole("heading", { name: "Fechar aba com alterações não salvas?" })).toBeVisible();
   await expect(dlg).toContainText('"Nova Venda"');
-  // o botão de TEXTO "Fechar" do rodapé; o × do cabeçalho também se chama Fechar, mas não tem texto
+  // cancelar pelo botão de TEXTO "Fechar" do rodapé; o × do cabeçalho também se chama Fechar, mas não tem texto
   await dlg.getByRole("button", { name: "Fechar", exact: true }).filter({ hasText: /^Fechar$/ }).click();
   await expect(dlg).toBeHidden();
+  await expect(lista, "o diálogo é dono do clique: a lista continua aberta por baixo").toBeVisible();
+  await expect(xis, "e o foco volta ao × da linha").toBeFocused();
   await expect(aba(page, "/vendas/sales/new"), "cancelar mantém a aba").toHaveCount(1);
   await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
-  await expect(page.getByLabel("Observação"), "e o rascunho").toHaveValue("rascunho que não pode sumir");
 
-  await fecharPelaLista();
+  // cancelar por Esc também é do diálogo: a lista não fecha junto
+  await xis.click();
+  await expect(dlg).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(dlg).toBeHidden();
+  await expect(lista, "Esc fecha o diálogo, não a lista").toBeVisible();
+  await expect(xis).toBeFocused();
+  await expect(page.getByLabel("Observação"), "e o rascunho continua").toHaveValue("rascunho que não pode sumir");
+
+  await xis.click();
   await page.getByTestId("confirm-dialog-confirm").click();
   await expect(aba(page, "/vendas/sales/new"), "confirmar fecha a aba suja").toHaveCount(0);
   await expect(aba(page, `/vendas/sales/${salvo.id}`), "e SÓ ela").toHaveCount(1);
+  await expect(aba(page, chaveOutroRegistro)).toHaveCount(1);
   await expect(aba(page, "/estoque")).toHaveCount(1);
   await expect(aba(page, "/")).toHaveCount(1);
   await expect(page, "fechar a aba ativa foca a vizinha, como na barra de abas").toHaveURL(/\/estoque/);
@@ -902,7 +931,7 @@ test("W24 — fechar pela lista uma aba COM alteração pergunta como a barra de
 
 test("W25 — Fechar os já salvos: fecha os documentos de vendas limpos e mantém o sujo, Início e outros módulos", async ({ page }) => {
   await login(page);
-  const { salvo } = await abrirComVizinhos(page, { lancadorDePedido: true });
+  const { salvo, chaveOutroRegistro } = await abrirComVizinhos(page, { lancadorDePedido: true });
   await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill("rascunho da central");
   await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
@@ -916,7 +945,9 @@ test("W25 — Fechar os já salvos: fecha os documentos de vendas limpos e mant�
   await expect(aba(page, "/vendas/sales/new"), "a aba suja (e ativa) fica").toHaveCount(1);
   await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
   await expect(aba(page, "/estoque"), "outro módulo fica").toHaveCount(1);
+  await expect(aba(page, chaveOutroRegistro), "registro de outro módulo, mesmo limpo, fica").toHaveCount(1);
   await expect(aba(page, "/"), "Início fica").toHaveCount(1);
+  await expect(page.getByTestId("central-vendas-documentos"), "a lista fechou: o foco volta ao botão dela").toBeFocused();
   await expect(page.getByLabel("Observação")).toHaveValue("rascunho da central");
   await expect(page.getByTestId("confirm-dialog"), "nada sujo foi tocado, então nada foi perguntado").toHaveCount(0);
   await expect(page.getByTestId("central-vendas-documentos-contador")).toHaveText("1");
@@ -924,11 +955,12 @@ test("W25 — Fechar os já salvos: fecha os documentos de vendas limpos e mant�
 
 test("W26 — metadados do documento salvo vêm da leitura REAL e só com a lista aberta: código, cliente, situação, nenhum UUID", async ({ page }) => {
   await login(page);
-  const { salvo } = await abrirComVizinhos(page);
   const leituras: string[] = [];
-  page.on("request", (r) => { const u = new URL(r.url()); if (r.method() === "GET" && u.pathname.startsWith("/api/")) leituras.push(u.pathname); });
+  // o ouvinte nasce ANTES de a Central montar: o que ela pedisse na montagem apareceria aqui
+  const registrar = () => page.on("request", (r) => { const u = new URL(r.url()); if (r.method() === "GET" && u.pathname.startsWith("/api/")) leituras.push(u.pathname); });
+  const { salvo, produtoId } = await abrirComVizinhos(page, { antesDaCentral: registrar });
   await page.waitForTimeout(300);
-  expect(leituras.filter((p) => p === `/api/sales/sales/${salvo.id}`), "com a lista fechada, nada é perguntado").toEqual([]);
+  expect(leituras.filter((p) => p === `/api/sales/sales/${salvo.id}`), "da montagem da Central até aqui, com a lista fechada, nada é perguntado").toEqual([]);
 
   await page.getByTestId("central-vendas-documentos").click();
   const lista = page.getByTestId("central-vendas-documentos-lista");
@@ -941,7 +973,7 @@ test("W26 — metadados do documento salvo vêm da leitura REAL e só com a list
   expect(rotulo.length, "a situação aparece").toBeGreaterThan(0);
   expect(rotulo, "rótulo PT-BR, nunca o valor técnico").not.toBe(salvo.status);
   expect(leituras.filter((p) => p === `/api/sales/sales/${salvo.id}`), "a leitura é a porta de detalhe que já existe").toHaveLength(1);
-  expect(leituras.filter((p) => /^\/api\/(stock|estoque)/.test(p)), "nenhuma pergunta para a aba de outro módulo").toEqual([]);
+  expect(leituras.filter((p) => p === `/api/resources/products/${produtoId}`), "a aba de registro de outro módulo não é consultada pela lista").toEqual([]);
 
   const nova = lista.locator('[data-chave="/vendas/sales/new"]');
   await expect(nova.getByTestId("central-vendas-documento-titulo")).toHaveText("Nova Venda");
@@ -1002,4 +1034,51 @@ test("W28 — unidade do produto: sufixo da quantidade e campo travado, pela lei
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(() => post.corpo).not.toBeNull();
   for (const item of post.corpo!["items"] as Record<string, unknown>[]) expect(Object.keys(item).sort(), "a unidade é só exibição").toEqual(CHAVES_DO_ITEM);
+});
+
+test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o custo médio: o unitário zerado de propósito chega zerado no POST", async ({ page }) => {
+  await login(page);
+  const empresa = await empresaAtiva(page);
+  const produtoId = await primeiroId(page, "/api/resources/products?pageSize=1");
+  const armazemId = await primeiroId(page, `/api/resources/warehouses?empresa_id=${empresa}&pageSize=1`);
+  // a premissa: o par produto × armazém tem saldo com custo médio — é ele que preenche o unitário vazio
+  await api(page, "POST", "/api/stock/input-entries", { empresa_id: empresa, entry_date: "2026-09-10", note: "W29", items: [{ product_id: produtoId, quantity: "100", unit_value: "2", generate_stock: true, warehouse_id: armazemId }] });
+  const saldo = await api<{ averageCost: string }>(page, "GET", `/api/stock/balances/${armazemId}/${produtoId}`);
+  expect(Number(saldo.averageCost), "premissa: o par tem custo médio positivo").toBeGreaterThan(0);
+  const nomeDoProduto = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${produtoId}`))["description"]);
+  const nomeDoArmazem = String((await api<Record<string, unknown>>(page, "GET", `/api/resources/warehouses/${armazemId}`))["description"]);
+
+  await abrirWorkspace(page);
+  await pickRef(page, "Cliente", "DEMO");
+  await page.getByRole("button", { name: "Adicionar item" }).click();
+  const linha = linhaDaGrade(page, 0);
+  const escolher = async (celula: string, nome: string) => {
+    await linha.getByTestId(celula).click();
+    await painelDePesquisa(page).getByRole("combobox").fill(nome);
+    await painelDePesquisa(page).getByRole("option").filter({ hasText: nome }).first().click();
+    await expect(painelDePesquisa(page)).toHaveCount(0);
+  };
+  await escolher("central-vendas-produto", nomeDoProduto);
+  await escolher("central-vendas-armazem", nomeDoArmazem);
+  const unitario = linha.getByLabel("Valor unitário");
+  await expect(unitario, "o saldo chegou e preencheu o unitário vazio com o custo médio (comportamento do editor)").not.toHaveValue("0");
+
+  // o usuário zera o unitário DE PROPÓSITO (item sem custo)
+  await unitario.fill("0");
+  // ações só de apresentação: esconder e mostrar Estoque, trocar de visão
+  const configurar = page.getByRole("button", { name: "Configurar colunas" });
+  const estoque = page.getByTestId("central-vendas-configuracao").getByRole("checkbox", { name: "Mostrar Estoque" });
+  await configurar.click(); await estoque.click(); await estoque.click(); await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Formulário", exact: true }).click();
+  await page.getByRole("button", { name: "Grade e formulário" }).click();
+  await page.getByRole("button", { name: "Grade", exact: true }).click();
+  await page.waitForTimeout(500);
+  await expect(linhaDaGrade(page, 0).getByLabel("Valor unitário"), "apresentação não reescreve o unitário").toHaveValue("0");
+
+  const post = await capturarPost(page);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(() => post.corpo).not.toBeNull();
+  const item = (post.corpo!["items"] as Record<string, unknown>[])[0]!;
+  expect(item["unit_price"], "o POST leva o zero que o usuário digitou").toBe("0");
+  expect(item["warehouse_id"]).toBe(armazemId);
 });

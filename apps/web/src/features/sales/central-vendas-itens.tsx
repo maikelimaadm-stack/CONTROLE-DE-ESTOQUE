@@ -35,7 +35,7 @@ import estilos from "./central-vendas-workspace.module.css";
  * │ `useState`, sem `localStorage`, `sessionStorage`, perfil ou API (COLUMN_CONFIG_PERSISTENCE =     │
  * │ NONE); remontar a Central devolve o padrão. Esconder uma coluna não toca o item: `ItemRow` e o   │
  * │ payload continuam com todas as chaves. E o que a célula de estoque FAZ (preencher o unitário    │
- * │ vazio com o custo médio) não depende de a coluna estar à vista — ver `efeitosForaDaVista`.       │
+ * │ vazio com o custo médio) não depende de a coluna estar à vista — ver `efeitosDoEstoque`.         │
  * │ Largura e "span" por campo não entram: o handoff exclui de propósito ("sem larguras/spans").    │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
@@ -196,7 +196,7 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
       case "armazem": return <td key={k}><CelulaDeReferencia recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} vazio="—" rotuloAcao="Armazém"
         aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId="central-vendas-armazem"
         onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} /></td>;
-      case "estoque": return <td key={k} className={cn(estilos.numero, estilos.estoque)}><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={(c) => { if (!it.unit_value || it.unit_value === "0") atualizar(i, "unit_value", c); }} /></td>;
+      case "estoque": return <td key={k} className={cn(estilos.numero, estilos.estoque)}><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* só exibe: quem preenche o custo médio é `efeitosDoEstoque`, montado sempre */ }} /></td>;
       case "quantidade": return <td key={k} className={estilos.numero}><span className={estilos.quantidade}>
         {ativa ? <input className={estilos.entrada} aria-label="Quantidade" type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} onClick={(e) => e.stopPropagation()} />
           : <span data-testid="central-vendas-quantidade">{num(it.quantity || "0", 2)}</span>}
@@ -251,7 +251,7 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
     switch (k) {
       case "produto": return [campoDeReferencia("product_id", "Produto", "products"), pesquisaEmFluxo("product_id")];
       case "armazem": return [campoDeReferencia("warehouse_id", "Armazém", "warehouses"), pesquisaEmFluxo("warehouse_id")];
-      case "estoque": return <Travado key={k} rotulo="Estoque"><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* o custo médio é aplicado pelas células de estoque da linha, montadas sempre */ }} /></Travado>;
+      case "estoque": return <Travado key={k} rotulo="Estoque"><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* só exibe: quem preenche o custo médio é `efeitosDoEstoque`, montado sempre */ }} /></Travado>;
       case "unidade": return <Travado key={k} rotulo="Unidade" testId="central-vendas-item-unidade"><UnidadeTravada produto={it.product_id} /></Travado>;
       case "quantidade": return <div key={k} className={estilos.campo}><Field label="Quantidade" span={12}><Input type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(sel, "quantity", e.target.value)} /></Field></div>;
       case "unitario": return <div key={k} className={estilos.campo}><Field label="Valor unitário" span={12}><Input type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(sel, "unit_value", e.target.value)} /></Field></div>;
@@ -274,12 +274,14 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
 
   /*
     A célula de estoque é quem, ao chegar o saldo, preenche o unitário VAZIO com o custo médio — é o
-    comportamento do editor antigo. Quando a grade não está na tela (visão Formulário) ou a coluna
-    Estoque foi escondida pela configuração, as células ficam montadas fora da vista: o comportamento
-    não pode depender de qual visão ou quais colunas o usuário escolheu.
+    comportamento do editor antigo, em que cada linha tinha UMA célula, montada a vida inteira da linha.
+    Aqui essa célula é `efeitosDoEstoque`: uma por linha, fora da vista e SEMPRE montada. As células
+    visíveis (grade e formulário) só exibem o saldo. Se o preenchimento morasse na célula visível,
+    esconder a coluna Estoque ou trocar de visão a remontaria, o saldo em cache chegaria de novo no
+    primeiro render e o unitário que o usuário zerou de propósito voltaria a ser o custo médio — uma
+    ação só de apresentação mudando o POST.
   */
-  const estoqueNaGrade = visao !== "formulario" && colunasVisiveis.includes("estoque");
-  const efeitosForaDaVista = !estoqueNaGrade && <div hidden>{items.map((it, i) => <StockCell key={i} warehouseId={it.warehouse_id} productId={it.product_id} onCost={(c) => { if (!it.unit_value || it.unit_value === "0") atualizar(i, "unit_value", c); }} />)}</div>;
+  const efeitosDoEstoque = <div hidden>{items.map((it, i) => <StockCell key={i} warehouseId={it.warehouse_id} productId={it.product_id} onCost={(c) => { if (!it.unit_value || it.unit_value === "0") atualizar(i, "unit_value", c); }} />)}</div>;
 
   // a configuração é a da visão na tela: o formulário quando ele aparece (sozinho ou ao lado da grade), senão a grade
   const configDoFormulario = visao !== "grade";
@@ -301,7 +303,7 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
     <div className={estilos.itensCorpo} data-visao={visao} data-testid="central-vendas-itens-corpo">
       {visao !== "formulario" && grade}
       {visao !== "grade" && formulario}
-      {efeitosForaDaVista}
+      {efeitosDoEstoque}
     </div>
     <div className={estilos.itensRodape}>Subtotal dos itens <b data-testid="central-vendas-subtotal">{brl(subtotal)}</b></div>
     {pesquisa?.modo === "flutuante" && <PainelDePesquisa recurso={pesquisa.campo === "product_id" ? "products" : "warehouses"}
@@ -346,7 +348,7 @@ function ConfiguracaoDeVisao<K extends string>({ titulo, subtitulo, rotulos, lis
           <button type="button" className={estilos.mover} aria-label={`Descer ${rotulos[c.chave]}`} title="Descer" disabled={i === lista.length - 1} onClick={() => mover(i, 1)}><ChevronDown aria-hidden /></button>
         </li>)}
       </ul>
-      <div className={estilos.popoverRodape}><span>Campos disponíveis para esta operação</span><button type="button" className={estilos.link} onClick={onRestaurar}>Restaurar padrão</button></div>
+      <div className={estilos.popoverRodape}><span>Vale só nesta tela</span><button type="button" className={estilos.link} onClick={onRestaurar}>Restaurar padrão</button></div>
     </div>}
   </span>;
 }

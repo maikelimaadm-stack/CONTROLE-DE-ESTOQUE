@@ -61,17 +61,20 @@ export function DocumentosAbertos() {
   const [confirmar, setConfirmar] = React.useState<WsTab | null>(null);
   const ancora = React.useRef<HTMLSpanElement>(null);
   const botao = React.useRef<HTMLButtonElement>(null);
+  const pesquisa = React.useRef<HTMLInputElement>(null);
   /** O texto de cada linha, para a pesquisa — preenchido pelas linhas conforme os dados chegam. */
   const [textos, setTextos] = React.useState<Record<string, string>>({});
   const registrarTexto = React.useCallback((chave: string, texto: string) => setTextos((t) => (t[chave] === texto ? t : { ...t, [chave]: texto })), []);
 
+  // Com a confirmação de fechamento aberta, clique e Esc são do DIÁLOGO: a lista não fecha por baixo dele,
+  // e cancelar devolve o foco ao × da linha, que continua na tela.
   React.useEffect(() => {
-    if (!aberto) return;
+    if (!aberto || confirmar) return;
     const fora = (e: MouseEvent) => { if (!ancora.current?.contains(e.target as Node)) setAberto(false); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { setAberto(false); botao.current?.focus(); } };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { setAberto(false); botao.current?.focus(); } };
     document.addEventListener("mousedown", fora); document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", fora); document.removeEventListener("keydown", esc); };
-  }, [aberto]);
+  }, [aberto, confirmar]);
 
   if (!ws) return null;
   const segmentos = segmentosDeVenda();
@@ -79,10 +82,11 @@ export function DocumentosAbertos() {
   const termos = normalizar(busca).split(/\s+/).filter(Boolean);
   const visiveis = docs.filter((d) => { const alvo = normalizar(textos[d.aba.key] ?? d.aba.label); return termos.every((t) => alvo.includes(t)); });
 
-  const fechar = (aba: WsTab) => { if (!ws.closeTab(aba.key)) setConfirmar(aba); };
+  // o × some com a linha: o foco vai para a pesquisa da lista, e não cai no <body>
+  const fechar = (aba: WsTab) => { if (ws.closeTab(aba.key)) pesquisa.current?.focus(); else setConfirmar(aba); };
   const fecharOsJaSalvos = () => {
     for (const d of docs) if (d.aba.key !== ws.active && !ws.dirty.has(d.aba.key)) ws.closeTab(d.aba.key);
-    setBusca(""); setAberto(false);
+    setBusca(""); setAberto(false); botao.current?.focus();
   };
 
   return <span className={estilos.docsAncora} ref={ancora}>
@@ -93,7 +97,7 @@ export function DocumentosAbertos() {
       <div className={estilos.docsBusca}>
         <label className={estilos.pesquisaPilula}>
           <Search aria-hidden />
-          <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Pesquisar documento" aria-label="Pesquisar documento aberto" />
+          <input ref={pesquisa} autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Pesquisar documento" aria-label="Pesquisar documento aberto" />
         </label>
       </div>
       <ul className={estilos.docsLista} aria-label="Documentos">
@@ -106,7 +110,12 @@ export function DocumentosAbertos() {
         <button type="button" className={estilos.link} onClick={fecharOsJaSalvos} data-testid="central-vendas-documentos-fechar-salvos">Fechar os já salvos</button>
       </div>
     </div>}
-    <ConfirmarFechamentoDeAba aba={confirmar} onCancelar={() => setConfirmar(null)} onConfirmar={(aba) => { ws.closeTab(aba.key, true); setConfirmar(null); }} />
+    <ConfirmarFechamentoDeAba aba={confirmar} onCancelar={() => setConfirmar(null)}
+      onConfirmar={(aba) => {
+        ws.closeTab(aba.key, true); setConfirmar(null);
+        // depois da restauração de foco do diálogo, que mira o × que acabou de sumir
+        requestAnimationFrame(() => (pesquisa.current ?? botao.current)?.focus());
+      }} />
   </span>;
 }
 
