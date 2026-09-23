@@ -124,48 +124,92 @@
 .dicaFim[data-dica]:focus-visible::after { left: auto; right: 0; transform: none; animation-name: dicaEntraFixa; }
 .workspace [aria-expanded="true"][data-dica]:hover::after { display: none; }
 
-/* documentos abertos — representação da barra de abas que já existe */
-.docsAncora { position: relative; display: inline-flex; }
-.docs {
+/* vidro dos popovers da Central (documentos abertos, configuração de colunas) — o `.pop` do protótipo */
+.popover {
   position: absolute;
-  right: 0;
-  top: 40px;
   z-index: 60;
-  width: 300px;
-  padding: 4px 0;
+  box-sizing: border-box;
+  overflow: hidden;
   border-radius: 14px;
-  background: rgba(255, 255, 255, .88);
+  background: rgba(255, 255, 255, .72);
   -webkit-backdrop-filter: blur(22px) saturate(180%);
   backdrop-filter: blur(22px) saturate(180%);
   border: 1px solid rgba(255, 255, 255, .65);
   box-shadow: 0 18px 40px rgba(15, 23, 42, .18), 0 2px 8px rgba(15, 23, 42, .08), inset 0 1px 0 rgba(255, 255, 255, .85);
   animation: sobe var(--mo) var(--ez) backwards;
 }
-.docsTitulo { padding: 8px 12px 6px; font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: #a3adb9; }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .popover { background: rgba(255, 255, 255, .97); }
+}
+.popoverRodape { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px 8px 12px; border-top: 1px solid #eef1f4; background: #fbfcfd; font-size: 11px; color: #94a3b8; }
+.link { flex-shrink: 0; white-space: nowrap; border: 0; background: transparent; color: #15803d; font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.link:hover { background: #ecfdf3; }
+.link:focus-visible { outline: 2px solid #22a85c; outline-offset: 1px; }
+
+/* documentos abertos — a barra de abas que já existe, vista como lista de documentos */
+.docsAncora { position: relative; display: inline-flex; }
+.docs { right: 0; top: 38px; width: 430px; }
+.docsBusca { padding: 10px 12px 8px; border-bottom: 1px solid #eef1f4; }
+.pesquisaPilula { display: flex; align-items: center; gap: 7px; height: 30px; box-sizing: border-box; padding: 0 4px 0 10px; border: 1px solid #e1e6eb; border-radius: 999px; background: #fff; color: #94a3b8; transition: border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io); }
+.pesquisaPilula:focus-within { border-color: #40de63; box-shadow: 0 0 0 3px rgba(64, 222, 99, .15); }
+.pesquisaPilula svg { width: 14px; height: 14px; flex-shrink: 0; }
+.pesquisaPilula input { flex: 1 1 auto; min-width: 0; border: 0; outline: none; background: transparent; font-size: 12.5px; color: #111827; }
+.pesquisaPilula input::placeholder { color: #a9b2bd; }
+.docsLista { max-height: 300px; overflow: auto; padding: 4px 0; margin: 0; list-style: none; }
 .docsLinha {
-  display: flex;
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px 86px minmax(0, 1fr) 92px 10px 22px;
   align-items: center;
   gap: 8px;
-  width: 100%;
-  height: 32px;
-  box-sizing: border-box;
-  padding: 0 12px;
-  border: 0;
-  background: transparent;
-  text-align: left;
-  font-size: 12.5px;
-  color: #1e293b;
-  cursor: pointer;
+  height: 34px;
+  padding: 0 10px 0 12px;
   transition: background-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io);
 }
-.docsLinha:hover,
-.docsLinha:focus-visible { background: rgba(64, 222, 99, .14); outline: none; box-shadow: inset 3px 0 0 #22a85c; }
-.docsLinha[aria-current="page"] { font-weight: 600; color: #15803d; }
-.docsNome { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.docsLinha[hidden] { display: none; }
+.docsLinha:hover { background: rgba(15, 23, 42, .05); }
+.docsLinha[data-atual="true"] { background: rgba(64, 222, 99, .16); box-shadow: inset 3px 0 0 #22a85c; }
+/* a linha inteira escolhe o documento: o botão principal estica por cima dela, o × fica acima dele */
+.docsEscolher { position: absolute; inset: 0; z-index: 0; border: 0; background: transparent; cursor: pointer; padding: 0; }
+.docsEscolher:focus-visible { outline: 2px solid #22a85c; outline-offset: -2px; }
+.docsIcone { display: inline-flex; color: #94a3b8; pointer-events: none; }
+.docsIcone svg { width: 14px; height: 14px; }
+.docsIcone[data-tom="warning"] { color: #92400e; }
+.docsIcone[data-tom="positive"] { color: #166534; }
+.docsIcone[data-tom="negative"] { color: #991b1b; }
+.docsTitulo { font-size: 12.5px; font-weight: 600; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.docsTitulo.codigo { font-size: 11.5px; }
+.docsCliente { font-size: 12px; color: #64748b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
+.docsSituacao { display: inline-flex; min-width: 0; pointer-events: none; }
+.docsFechar { position: relative; z-index: 1; width: 22px; height: 22px; border: 0; border-radius: 999px; background: transparent; color: #a7b0bb; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; opacity: 0; transition: opacity var(--mf) var(--ez-io), background-color var(--mf) var(--ez-io), color var(--mf) var(--ez-io); }
+.docsFechar svg { width: 13px; height: 13px; }
+.docsLinha:hover .docsFechar,
+.docsLinha:focus-within .docsFechar,
+.docsFechar:focus-visible { opacity: 1; }
+.docsFechar:hover { background: #eef1f4; color: #334155; }
+.docsFechar:focus-visible { outline: 2px solid #22a85c; outline-offset: 1px; }
+.docsVazio { padding: 24px 12px; text-align: center; font-size: 12.5px; color: #64748b; }
 
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .docs { background: rgba(255, 255, 255, .97); }
-}
+/* configuração de colunas da grade / campos do formulário do item */
+.configAncora { position: relative; display: inline-flex; }
+.acaoPequena { width: 30px; height: 30px; }
+.config { right: 0; top: 36px; width: 340px; }
+.configCabecalho { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px 8px; border-bottom: 1px solid rgba(15, 23, 42, .08); }
+.configTitulo { font-size: 12.5px; font-weight: 600; color: #1e293b; }
+.configSub { font-size: 11px; color: #94a3b8; }
+.configLista { max-height: 320px; overflow: auto; padding: 4px 0; margin: 0; list-style: none; }
+.configLinha { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 12px; }
+.configLinha:hover { background: rgba(15, 23, 42, .05); }
+.caixa { width: 16px; height: 16px; flex-shrink: 0; box-sizing: border-box; border-radius: 4px; border: 1.5px solid #cbd5e1; background: #fff; color: #fff; display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; transition: background-color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io); }
+.caixa[aria-checked="true"] { background: #22a85c; border-color: #22a85c; }
+.caixa svg { width: 12px; height: 12px; }
+.caixa:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.configRotulo { flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: #1e293b; }
+.mover { width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: #64748b; display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.mover:hover:not(:disabled) { background: #eef1f4; }
+.mover:disabled { opacity: .35; cursor: default; }
+.mover:focus-visible { outline: 2px solid #22a85c; outline-offset: -1px; }
+.mover svg { width: 14px; height: 14px; }
 
 /* ═════════════ documento — cartão com as regiões ═════════════ */
 .doc {
@@ -204,7 +248,7 @@
 .identidade { display: inline-flex; align-items: center; gap: 8px; min-width: 0; padding-right: 2px; }
 .identidadeIcone { display: inline-flex; flex-shrink: 0; color: #64748b; }
 .identidadeNome { font-size: 13.5px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pontoAlterado { width: 7px; height: 7px; border-radius: 999px; background: #40de63; flex-shrink: 0; }
+.pontoAlterado { display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: #40de63; flex-shrink: 0; }
 
 /* ═════════════ Dados principais ═════════════ */
 .dadosCorpo {
@@ -426,6 +470,10 @@
   transition: border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io);
 }
 .entrada:focus { outline: none; border-color: #22a85c; box-shadow: 0 0 0 2px rgba(64, 222, 99, .25); }
+/* quantidade com o sufixo de unidade do produto (só exibição; a unidade não entra no item) */
+.quantidade { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; }
+.quantidade .entrada { flex: 1 1 auto; min-width: 0; }
+.unidade { flex-shrink: 0; font-size: 10.5px; font-weight: 500; color: #94a3b8; letter-spacing: .02em; }
 
 .itensRodape { height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 14px; border-top: 1px solid #eef1f4; background: #fbfcfd; font-size: 12px; color: #64748b; }
 .itensRodape b { color: #111827; font-variant-numeric: tabular-nums; }
@@ -482,6 +530,7 @@
 
 /* ═════════════ painel inferior ═════════════ */
 .painel {
+  position: relative;
   height: var(--altura-painel);
   flex-shrink: 0;
   box-sizing: border-box;
@@ -491,6 +540,30 @@
   border-top: 1px solid #e7eaee;
   background: #fff;
 }
+/* recolhido: só a faixa das abas (39px, como o protótipo); o conteúdo sai do layout e do foco */
+.painel[data-recolhido="true"] { height: 39px; }
+.painel[data-recolhido="true"] [role="tabpanel"] { display: none; }
+.painelAcoes { position: absolute; top: 0; right: 10px; height: 38px; display: flex; align-items: center; gap: 6px; }
+.recolher {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #5b6b80;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: background-color var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+}
+.recolher:hover { background: #e5e7eb; transform: translateY(-1px); }
+.recolher:active { transform: scale(.9); }
+.recolher:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.recolher svg { width: 14px; height: 14px; transition: transform var(--mi) var(--ez); }
+.recolher[aria-expanded="false"] svg { transform: rotate(180deg); }
 .abas { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .painel [role="tablist"] {
   height: 38px;

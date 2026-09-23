@@ -1,8 +1,9 @@
 "use client";
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { FilePlus2, Loader2 } from "lucide-react";
+import { ChevronDown, FilePlus2, Loader2 } from "lucide-react";
 import { Tabs } from "@/components/ui";
+import { useWorkspaceImersivo } from "@/components/layout/workspace-imersivo";
 import estilos from "./central-vendas-workspace.module.css";
 
 /**
@@ -33,6 +34,18 @@ import estilos from "./central-vendas-workspace.module.css";
  * │ foco certo. Aqui só se veste: a folha local estiliza pelos papéis ARIA, e não cria um segundo   │
  * │ sistema de abas. As abas internas do lançamento não são as abas globais do workspace (`lib/    │
  * │ workspace-tabs`): estas organizam CAMPOS de um documento, aquelas organizam TELAS.               │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ PAINEL RECOLHÍVEL E WORKSPACE IMERSIVO (R2) ──────────────────────────────────────────────────┐
+ * │ "Recolher painel" deixa só a faixa das abas (39px, a medida do protótipo) e some com o divisor   │
+ * │ horizontal — recolhido não se redimensiona. O conteúdo da aba sai do layout (`display: none`),  │
+ * │ então nada fica focável atrás da faixa. Expandir (pelo botão ou escolhendo uma aba) devolve a    │
+ * │ ÚLTIMA altura: ela nunca foi apagada, só deixou de ser aplicada. Como os divisores, é estado de  │
+ * │ tela e morre com ela (PANEL_COLLAPSE_PERSISTENCE = NONE).                                        │
+ * │                                                                                                  │
+ * │ Montada, a Central declara-se workspace imersivo (`useWorkspaceImersivo`): o shell deixa de      │
+ * │ desenhar a trilha acima dela, e a moldura começa onde o design a põe. A decisão é do shell — rota │
+ * │ que admite imersão AND workspace real montado —, nunca um CSS desta folha escondendo o vizinho.  │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 
@@ -111,6 +124,8 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
   const [largura, setLargura] = React.useState<number>(LARGURA_DADOS.padrao);
   const [altura, setAltura] = React.useState<number>(ALTURA_PAINEL.padrao);
   const [arrastando, setArrastando] = React.useState<"vertical" | "horizontal" | null>(null);
+  const [recolhido, setRecolhido] = React.useState(false);
+  useWorkspaceImersivo();
   /** Valor no INÍCIO do arrasto: o delta do ponteiro é aplicado sobre ele, não sobre o último render. */
   const base = React.useRef<{ largura: number; altura: number }>({ largura: LARGURA_DADOS.padrao, altura: ALTURA_PAINEL.padrao });
 
@@ -144,6 +159,15 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
   };
 
   const estilo = { "--largura-dados": `${largura}%`, "--altura-painel": `${altura}px` } as React.CSSProperties;
+
+  /**
+   * Recolhido, escolher uma aba EXPANDE — pelo clique ou pelas teclas que ativam aba (setas, Home, End,
+   * Enter, Espaço), como no protótipo. A captura olha o papel ARIA do alvo: o primitive `Tabs` continua
+   * dono da ativação; aqui só se decide se o painel volta a ter altura.
+   */
+  const ehAba = (alvo: EventTarget) => alvo instanceof Element && Boolean(alvo.closest('[role="tab"]'));
+  const expandirPelaAba = (alvo: EventTarget) => { if (recolhido && ehAba(alvo)) setRecolhido(false); };
+  const rotuloRecolher = recolhido ? "Expandir painel" : "Recolher painel";
 
   return <div role="region" aria-label={titulo} data-testid="central-vendas" data-arrastando={arrastando ?? undefined}
     className={cn(estilos.workspace, className)} style={estilo}>
@@ -181,12 +205,18 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
         </section>
       </div>
 
-      <Divisor eixo="horizontal" valor={altura} min={ALTURA_PAINEL.min} max={ALTURA_PAINEL.max}
+      {!recolhido && <Divisor eixo="horizontal" valor={altura} min={ALTURA_PAINEL.min} max={ALTURA_PAINEL.max}
         rotulo="Altura de Itens e do painel inferior" onInicio={() => iniciar("horizontal")} onMover={moverHorizontal} onFim={terminar} onTeclado={tecladoHorizontal}
-        arrastando={arrastando === "horizontal"} testId="central-vendas-divisor-horizontal" />
+        arrastando={arrastando === "horizontal"} testId="central-vendas-divisor-horizontal" />}
 
-      <div className={estilos.painel} data-testid="central-vendas-painel">
+      <div className={estilos.painel} data-testid="central-vendas-painel" data-recolhido={recolhido ? "true" : "false"}
+        onClickCapture={(e) => expandirPelaAba(e.target)}
+        onKeyDownCapture={(e) => { if (["ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(e.key)) expandirPelaAba(e.target); }}>
         <Tabs className={estilos.abas} tabs={abas} />
+        <span className={estilos.painelAcoes}>
+          <button type="button" className={cn(estilos.recolher, estilos.dicaFim)} aria-label={rotuloRecolher} data-dica={rotuloRecolher}
+            aria-expanded={!recolhido} data-testid="central-vendas-recolher" onClick={() => setRecolhido((r) => !r)}><ChevronDown aria-hidden /></button>
+        </span>
       </div>
     </section>
   </div>;

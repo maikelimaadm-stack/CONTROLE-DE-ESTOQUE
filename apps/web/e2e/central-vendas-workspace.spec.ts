@@ -417,7 +417,8 @@ test("W13 — três visões do MESMO items: Grade, Formulário e Grade e formul�
   // de volta à grade: a quantidade digitada no formulário está na linha 2; nada foi perdido
   await page.getByRole("button", { name: "Grade", exact: true }).click();
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
-  await expect(linhaDaGrade(page, 1).locator("td").nth(5)).toHaveText("7,00");
+  // a coluna 6 (índice 5) é Quantidade: o NÚMERO é o que foi digitado; a unidade do produto vem ao lado, à parte
+  await expect(linhaDaGrade(page, 1).locator("td").nth(5).getByTestId("central-vendas-quantidade")).toHaveText("7,00");
 
   // Grade e formulário: as duas ao mesmo tempo, sobre o mesmo item selecionado
   await linhaDaGrade(page, 1).click();
@@ -559,17 +560,21 @@ test("W18 — Documentos abertos é VISÃO da barra de abas: lista a aba desta c
   await page.getByTestId("central-vendas-documentos").click();
   const lista = page.getByTestId("central-vendas-documentos-lista");
   await expect(lista).toBeVisible();
-  const atual = lista.locator('[aria-current="page"]');
+  const atual = lista.locator('[data-testid="central-vendas-documento"][data-atual="true"]');
   await expect(atual).toHaveCount(1);
-  await expect(atual).toContainText("Nova Venda");
+  await expect(atual.getByTestId("central-vendas-documento-titulo")).toHaveText("Nova Venda");
+  await expect(atual.getByRole("button", { name: /^Trabalhar em Nova Venda/ })).toHaveAttribute("aria-current", "page");
   await expect(atual.getByRole("img", { name: "Alterações não salvas" })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(lista).toHaveCount(0);
 });
 
-test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visões de itens e painel inferior", async ({ page }) => {
+test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visões, configuração, painel, documentos abertos e unidade", async ({ page }) => {
   await login(page);
-  const top = await abrirWorkspace(page);
+  const salvo = await documentoSalvo(page);
+  await page.goto(`/vendas/sales/${salvo.id}`);
+  await expect(aba(page, `/vendas/sales/${salvo.id}`)).toHaveCount(1);
+  const top = await cadastrarTopDeVenda(page);
   const pasta = process.env.EVIDENCIA_DIR ?? path.resolve("test-results", "evidencia-visual-ux-01");
   fs.mkdirSync(pasta, { recursive: true });
   // espera a animação de entrada (230ms) terminar: a foto é do estado assentado, não da transição
@@ -579,19 +584,28 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await page.setViewportSize({ width: w, height: h });
     await page.goto(`/vendas/sales/new?tipo_operacao_id=${top.id}`);
     await expect(page.getByTestId(WORKSPACE)).toBeVisible();
+    await expect(page.locator('nav[aria-label="Navegação"]'), "workspace imersivo: sem trilha acima da moldura").toHaveCount(0);
     await pickRef(page, "Cliente", "DEMO");
     await adicionarItemComProduto(page, 0);
     await adicionarItemComProduto(page, 1);
     await linhaDaGrade(page, 0).click();
+    await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-unidade"), "a unidade chegou antes da foto").toBeVisible();
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(overflow, `rolagem horizontal em ${w}×${h}`).toBeLessThanOrEqual(0);
     for (const id of ["central-vendas-acoes", "central-vendas-dados", "central-vendas-itens", "central-vendas-painel"]) {
       const b = (await page.getByTestId(id).boundingBox())!;
       expect(b.y + b.height, `${id} cabe em ${w}×${h}`).toBeLessThanOrEqual(h + 1);
     }
-    await foto(`implementation-${w}x${h}`);
+    await page.mouse.move(5, h - 5);
+    await foto(`implementation-r2-${w}x${h}`);
     if (w !== 1440) continue;
     await foto("items-grid");
+    await foto("item-unit");
+    await foto("bottom-panel-expanded");
+    await page.getByRole("button", { name: "Configurar colunas" }).click();
+    await expect(page.getByTestId("central-vendas-configuracao")).toBeVisible();
+    await foto("column-config");
+    await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Adicionar item" }).click();
     await linhaDaGrade(page, 2).getByTestId("central-vendas-produto").click();
     await expect(painelDePesquisa(page).getByRole("option").first()).toBeVisible();
@@ -604,10 +618,379 @@ test("W19 — evidência visual desktop: 1440×900 e 1280×800, pesquisa, visõe
     await page.getByRole("button", { name: "Grade e formulário" }).click();
     await foto("items-split");
     await page.getByRole("button", { name: "Grade", exact: true }).click();
+    await page.getByTestId("central-vendas-recolher").click();
+    await page.mouse.move(5, h - 5);
+    await foto("bottom-panel-collapsed");
+    await page.getByTestId("central-vendas-recolher").click();
     await abrirAbaDoLancamento(page, "Frete e transporte");
     await page.getByTestId(DIVISOR_H).focus(); for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowUp");
     await page.getByTestId(DIVISOR_V).focus(); for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
-    await page.mouse.move(5, 5);
+    await page.mouse.move(5, h - 5);
     await foto("bottom-panel");
+    await page.getByTestId("central-vendas-documentos").click();
+    await expect(page.getByTestId("central-vendas-documento-titulo").first()).toHaveText(salvo.code);
+    await foto("open-documents");
+    await page.getByRole("textbox", { name: "Pesquisar documento aberto" }).fill(salvo.code);
+    await foto("open-documents-search");
   }
+});
+
+/* ════════════════════════════════ R2 — fechamento de fidelidade ════════════════════════════════ */
+
+const ROTULOS_DA_GRADE = ["Código", "Produto", "Armazém", "Estoque", "Quantidade", "Valor unitário", "Desconto", "Desconto %", "Total"];
+/** Os títulos das colunas da grade, sem a coluna da lixeira (que não tem texto). */
+const cabecalhos = async (page: Page) => (await page.getByTestId("central-vendas-grade").locator("thead th").allInnerTexts()).map((t) => t.trim()).filter(Boolean);
+const aba = (page: Page, chave: string) => page.locator(`[data-testid="workspace-tab"][data-tab-key="${chave}"]`);
+const alturaDoPainel = async (page: Page) => Math.round((await page.getByTestId("central-vendas-painel").boundingBox())!.height);
+const CHAVES_DO_ITEM = ["discount", "discount_percent", "note", "product_id", "quantity", "unit_price", "warehouse_id"];
+
+/** Intercepta o POST de criação e devolve o corpo enviado (sem gravar nada no banco). */
+async function capturarPost(page: Page) {
+  const capturado: { corpo: Record<string, unknown> | null } = { corpo: null };
+  await page.route("**/api/sales/sales", async (rota) => {
+    if (rota.request().method() !== "POST") return rota.continue();
+    capturado.corpo = rota.request().postDataJSON() as Record<string, unknown>;
+    await rota.fulfill({ status: 201, contentType: "application/json", body: JSON.stringify({ id: "00000000-0000-4000-8000-000000000000" }) });
+  });
+  return capturado;
+}
+
+/** Uma venda SALVA de verdade: a primeira da listagem oficial, com o detalhe lido pela porta que a tela de detalhe usa. */
+async function documentoSalvo(page: Page) {
+  const lista = await api<{ items: { id: string }[] }>(page, "GET", "/api/sales/sales?pageSize=1");
+  const id = lista.items?.[0]?.id;
+  expect(id, "o seed tem venda salva para abrir como aba de registro").toBeTruthy();
+  const d = await api<{ code: string; client_name: string | null; status: string }>(page, "GET", `/api/sales/sales/${id}`);
+  expect(d.code && d.client_name && d.status, "a premissa: a venda salva tem código, cliente e situação").toBeTruthy();
+  return { id: id!, code: d.code, cliente: d.client_name!, status: d.status };
+}
+
+/**
+ * Abre, nesta ordem, uma venda SALVA (aba de registro), uma tela de OUTRO módulo (Estoque) e, opcionalmente,
+ * o lançador de pedido (aba de criação limpa) — e só então a Central. Cada `goto` recarrega a página: as
+ * abas sobrevivem pela própria infraestrutura (sessionStorage de metadados), como para o usuário.
+ */
+async function abrirComVizinhos(page: Page, opcoes: { lancadorDePedido?: boolean } = {}) {
+  const salvo = await documentoSalvo(page);
+  await page.goto(`/vendas/sales/${salvo.id}`);
+  await expect(aba(page, `/vendas/sales/${salvo.id}`)).toHaveCount(1);
+  await page.goto("/estoque");
+  await expect(aba(page, "/estoque")).toHaveCount(1);
+  if (opcoes.lancadorDePedido) { await abrirLancamentoDeVendas(page, "orders"); await expect(aba(page, "/vendas/orders/new")).toHaveCount(1); }
+  const top = await abrirWorkspace(page);
+  await expect(aba(page, "/vendas/sales/new")).toHaveCount(1);
+  return { salvo, top };
+}
+const linhasVisiveis = (page: Page) => page.getByTestId("central-vendas-documentos-lista").locator('[data-testid="central-vendas-documento"]:not([hidden])');
+
+test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos SEM tocar no item, no payload ou no armazenamento", async ({ page }) => {
+  await login(page);
+  const top = await abrirWorkspace(page);
+  const chavesAntes = await chavesDoNavegador(page);
+  await pickRef(page, "Cliente", "DEMO");
+  await adicionarItemComProduto(page, 0);
+  await linhaDaGrade(page, 0).getByLabel("Quantidade").fill("4");
+
+  const configurar = page.getByRole("button", { name: "Configurar colunas" });
+  await expect(configurar).toHaveAttribute("data-dica", "Configurar colunas");
+  await expect(configurar).toHaveAttribute("aria-expanded", "false");
+  expect(await cabecalhos(page), "padrão do design: nove colunas, nesta ordem").toEqual(ROTULOS_DA_GRADE);
+  await configurar.click();
+  await expect(configurar).toHaveAttribute("aria-expanded", "true");
+  const cfg = page.getByTestId("central-vendas-configuracao");
+  await expect(cfg).toBeVisible();
+  await expect(cfg).toContainText("Colunas da grade");
+  await expect(cfg.getByRole("checkbox")).toHaveCount(ROTULOS_DA_GRADE.length);
+
+  // esconder Quantidade: a coluna some da grade (cabeçalho e células), a quantidade continua no item
+  const quantidade = cfg.getByRole("checkbox", { name: "Mostrar Quantidade" });
+  await quantidade.click();
+  await expect(quantidade).toHaveAttribute("aria-checked", "false");
+  await expect.poll(() => cabecalhos(page)).toEqual(ROTULOS_DA_GRADE.filter((r) => r !== "Quantidade"));
+  await expect(linhaDaGrade(page, 0).locator("td"), "lixeira + 8 colunas").toHaveCount(ROTULOS_DA_GRADE.length);
+  await expect(linhaDaGrade(page, 0).getByLabel("Quantidade")).toHaveCount(0);
+  // reordenar: Total sobe uma posição
+  await cfg.getByRole("button", { name: "Subir Total" }).click();
+  await expect.poll(async () => (await cabecalhos(page)).slice(-2)).toEqual(["Total", "Desconto %"]);
+  await expect(cfg.getByRole("button", { name: "Subir Código" }), "a primeira não sobe").toBeDisabled();
+  // restaurar padrão devolve as nove, na ordem do design — e a quantidade é a MESMA de antes
+  await cfg.getByRole("button", { name: "Restaurar padrão" }).click();
+  await expect.poll(() => cabecalhos(page)).toEqual(ROTULOS_DA_GRADE);
+  await expect(linhaDaGrade(page, 0).getByLabel("Quantidade"), "esconder não apagou o valor").toHaveValue("4");
+  await page.keyboard.press("Escape");
+  await expect(cfg).toHaveCount(0);
+  await expect(configurar, "Esc devolve o foco ao botão").toBeFocused();
+
+  // no formulário, a configuração é a dos CAMPOS do item
+  await page.getByRole("button", { name: "Formulário", exact: true }).click();
+  await configurar.click();
+  await expect(cfg).toContainText("Visualização do formulário");
+  const form = page.getByTestId("central-vendas-item-form");
+  const desconto = form.getByLabel("Desconto", { exact: true });
+  await expect(desconto).toBeVisible();
+  await cfg.getByRole("checkbox", { name: "Mostrar Desconto", exact: true }).click();
+  await expect(desconto).toHaveCount(0);
+  await cfg.getByRole("checkbox", { name: "Mostrar Desconto", exact: true }).click();
+  await expect(desconto).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // grade de novo, com Quantidade escondida: o POST leva a quantidade digitada e as MESMAS chaves de item
+  await page.getByRole("button", { name: "Grade", exact: true }).click();
+  await configurar.click();
+  await cfg.getByRole("checkbox", { name: "Mostrar Quantidade" }).click();
+  await page.keyboard.press("Escape");
+  expect(await chavesDoNavegador(page), "nenhuma chave nova no navegador: a configuração é estado da tela").toEqual(chavesAntes);
+  const post = await capturarPost(page);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(() => post.corpo).not.toBeNull();
+  const item = (post.corpo!["items"] as Record<string, unknown>[])[0]!;
+  expect(item["quantity"], "coluna escondida não é coluna apagada").toBe("4");
+  expect(Object.keys(item).sort()).toEqual(CHAVES_DO_ITEM);
+
+  // remontar a Central devolve o padrão (COLUMN_CONFIG_PERSISTENCE = NONE)
+  await page.unroute("**/api/sales/sales");
+  await page.goto(`/vendas/sales/new?tipo_operacao_id=${top.id}`);
+  await expect(page.getByTestId(WORKSPACE)).toBeVisible();
+  await page.getByRole("button", { name: "Adicionar item" }).click();
+  expect(await cabecalhos(page)).toEqual(ROTULOS_DA_GRADE);
+});
+
+test("W21 — painel inferior recolhível: só a faixa fica, nada focável atrás, expandir devolve a última altura, nada persiste", async ({ page }) => {
+  await login(page);
+  await abrirWorkspace(page);
+  const chavesAntes = await chavesDoNavegador(page);
+  const painel = page.getByTestId("central-vendas-painel");
+  const recolher = page.getByTestId("central-vendas-recolher");
+  await expect(recolher, "começa expandido").toHaveAttribute("aria-expanded", "true");
+  await expect(recolher).toHaveAccessibleName("Recolher painel");
+  await expect(recolher).toHaveAttribute("data-dica", "Recolher painel");
+  expect(await alturaDoPainel(page)).toBe(ALTURA.padrao);
+
+  // uma altura diferente da padrão: é ELA que tem de voltar
+  await page.getByTestId(DIVISOR_H).focus();
+  await page.keyboard.press("ArrowUp"); await page.keyboard.press("ArrowUp");
+  const escolhida = ALTURA.padrao + 16;
+  await expect.poll(() => alturaDoPainel(page)).toBe(escolhida);
+
+  await recolher.click();
+  await expect(recolher).toHaveAttribute("aria-expanded", "false");
+  await expect(recolher).toHaveAccessibleName("Expandir painel");
+  await expect(recolher, "o foco fica no botão").toBeFocused();
+  await expect.poll(() => alturaDoPainel(page), "só a faixa das abas: 39px").toBe(39);
+  await expect(painel.getByRole("tab")).toHaveText(["Totais", "Financeiro", "Frete e transporte", "Fiscal", "Observações"]);
+  await expect(page.getByTestId(DIVISOR_H), "recolhido não se redimensiona").toHaveCount(0);
+  // o conteúdo da aba não fica atrás da faixa: invisível E fora do foco
+  await expect(painel.locator('[role="tabpanel"][data-state="active"]'), "nem a aba ativa aparece").toBeHidden();
+  const desconto = page.getByLabel("Desconto", { exact: true });
+  await expect(desconto).toBeHidden();
+  expect(await desconto.evaluate((el) => { (el as HTMLElement).focus(); return document.activeElement === el; }), "campo de aba recolhida não recebe foco").toBe(false);
+
+  // expandir pelo botão: a ÚLTIMA altura, o divisor e o conteúdo voltam
+  await recolher.click();
+  await expect.poll(() => alturaDoPainel(page)).toBe(escolhida);
+  await expect(page.getByTestId(DIVISOR_H)).toBeVisible();
+  await expect(painel.getByRole("tabpanel")).toBeVisible();
+
+  // recolhido, escolher uma aba expande já nela
+  await recolher.click();
+  await expect.poll(() => alturaDoPainel(page)).toBe(39);
+  await painel.getByRole("tab", { name: "Financeiro" }).click();
+  await expect(recolher).toHaveAttribute("aria-expanded", "true");
+  await expect(painel.getByRole("tab", { name: "Financeiro" })).toHaveAttribute("aria-selected", "true");
+  await expect.poll(() => alturaDoPainel(page)).toBe(escolhida);
+  // e o divisor volta a redimensionar
+  await page.getByTestId(DIVISOR_H).focus(); await page.keyboard.press("ArrowUp");
+  await expect.poll(() => alturaDoPainel(page)).toBe(escolhida + 8);
+
+  expect(await chavesDoNavegador(page), "recolher não deixa rastro no navegador").toEqual(chavesAntes);
+  await recolher.click();
+  await page.goto(page.url());
+  await expect(page.getByTestId(WORKSPACE)).toBeVisible();
+  await expect(page.getByTestId("central-vendas-recolher"), "remontar devolve expandido").toHaveAttribute("aria-expanded", "true");
+  expect(await alturaDoPainel(page), "e a altura padrão").toBe(ALTURA.padrao);
+});
+
+test("W22 — Documentos abertos: só documentos de vendas, contador coerente, pesquisa que filtra e estado vazio", async ({ page }) => {
+  await login(page);
+  const { salvo } = await abrirComVizinhos(page);
+  await expect(page.getByTestId("central-vendas-documentos-contador"), "venda salva + esta criação; Estoque e Início não contam").toHaveText("2");
+  await page.getByTestId("central-vendas-documentos").click();
+  const lista = page.getByTestId("central-vendas-documentos-lista");
+  await expect(lista).toBeVisible();
+  const chaves = await lista.getByTestId("central-vendas-documento").evaluateAll((els) => els.map((e) => e.getAttribute("data-chave")));
+  expect(chaves, "exatamente as abas de vendas, na ordem da barra de abas").toEqual([`/vendas/sales/${salvo.id}`, "/vendas/sales/new"]);
+  const busca = lista.getByRole("textbox", { name: "Pesquisar documento aberto" });
+  await expect(busca, "abre com o foco na pesquisa").toBeFocused();
+  await expect(lista.locator(`[data-chave="/vendas/sales/${salvo.id}"]`).getByTestId("central-vendas-documento-titulo")).toHaveText(salvo.code);
+
+  await busca.fill(salvo.code);
+  await expect(linhasVisiveis(page)).toHaveCount(1);
+  await expect(linhasVisiveis(page)).toHaveAttribute("data-chave", `/vendas/sales/${salvo.id}`);
+  // sem acento e sem caixa, pelo cliente
+  await busca.fill(salvo.cliente.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase());
+  await expect(linhasVisiveis(page)).toHaveCount(1);
+  await busca.fill("nova venda");
+  await expect(linhasVisiveis(page)).toHaveCount(1);
+  await expect(linhasVisiveis(page)).toHaveAttribute("data-chave", "/vendas/sales/new");
+  await busca.fill("zzzz documento que nao existe");
+  await expect(linhasVisiveis(page)).toHaveCount(0);
+  await expect(page.getByTestId("central-vendas-documentos-vazio")).toHaveText("Nenhum documento encontrado.");
+  await expect(page.getByTestId("central-vendas-documentos-contador"), "pesquisar não fecha nada").toHaveText("2");
+  await busca.fill("");
+  await expect(linhasVisiveis(page)).toHaveCount(2);
+});
+
+test("W23 — fechar um documento salvo pela lista é o closeTab REAL: a aba global some, as outras ficam", async ({ page }) => {
+  await login(page);
+  const { salvo } = await abrirComVizinhos(page);
+  await page.getByTestId("central-vendas-documentos").click();
+  const linha = page.locator(`[data-testid="central-vendas-documento"][data-chave="/vendas/sales/${salvo.id}"]`);
+  await expect(linha.getByTestId("central-vendas-documento-titulo")).toHaveText(salvo.code);
+  await linha.hover();
+  await linha.getByRole("button", { name: `Fechar ${salvo.code}` }).click();
+  await expect(linha).toHaveCount(0);
+  await expect(aba(page, `/vendas/sales/${salvo.id}`), "a aba global fechou").toHaveCount(0);
+  await expect(page.getByTestId("confirm-dialog"), "documento limpo fecha sem perguntar").toHaveCount(0);
+  await expect(aba(page, "/estoque"), "outro módulo não é afetado").toHaveCount(1);
+  await expect(aba(page, "/")).toHaveCount(1);
+  await expect(aba(page, "/vendas/sales/new")).toHaveCount(1);
+  await expect(page.getByTestId(WORKSPACE), "a Central continua na tela").toBeVisible();
+  await expect(page.getByTestId("central-vendas-documentos-contador")).toHaveText("1");
+});
+
+test("W24 — fechar pela lista uma aba COM alteração pergunta como a barra de abas: cancelar mantém, confirmar fecha só ela", async ({ page }) => {
+  await login(page);
+  const { salvo } = await abrirComVizinhos(page);
+  await abrirAbaDoLancamento(page, "Observações");
+  await page.getByLabel("Observação").fill("rascunho que não pode sumir");
+  await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
+
+  const fecharPelaLista = async () => {
+    await page.getByTestId("central-vendas-documentos").click();
+    const linha = page.locator('[data-testid="central-vendas-documento"][data-chave="/vendas/sales/new"]');
+    await linha.hover();
+    await linha.getByRole("button", { name: "Fechar Nova Venda" }).click();
+  };
+  await fecharPelaLista();
+  const dlg = page.getByTestId("confirm-dialog");
+  await expect(dlg, "closeTab recusou a aba suja: a lista pergunta, não descarta").toBeVisible();
+  await expect(dlg.getByRole("heading", { name: "Fechar aba com alterações não salvas?" })).toBeVisible();
+  await expect(dlg).toContainText('"Nova Venda"');
+  await dlg.locator(".mg-dialog__footer").getByRole("button", { name: "Fechar", exact: true }).click();
+  await expect(dlg).toBeHidden();
+  await expect(aba(page, "/vendas/sales/new"), "cancelar mantém a aba").toHaveCount(1);
+  await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
+  await expect(page.getByLabel("Observação"), "e o rascunho").toHaveValue("rascunho que não pode sumir");
+
+  await fecharPelaLista();
+  await page.getByTestId("confirm-dialog-confirm").click();
+  await expect(aba(page, "/vendas/sales/new"), "confirmar fecha a aba suja").toHaveCount(0);
+  await expect(aba(page, `/vendas/sales/${salvo.id}`), "e SÓ ela").toHaveCount(1);
+  await expect(aba(page, "/estoque")).toHaveCount(1);
+  await expect(aba(page, "/")).toHaveCount(1);
+  await expect(page, "fechar a aba ativa foca a vizinha, como na barra de abas").toHaveURL(/\/estoque/);
+});
+
+test("W25 — Fechar os já salvos: fecha os documentos de vendas limpos e mantém o sujo, Início e outros módulos", async ({ page }) => {
+  await login(page);
+  const { salvo } = await abrirComVizinhos(page, { lancadorDePedido: true });
+  await abrirAbaDoLancamento(page, "Observações");
+  await page.getByLabel("Observação").fill("rascunho da central");
+  await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
+  await expect(page.getByTestId("central-vendas-documentos-contador")).toHaveText("3");
+
+  await page.getByTestId("central-vendas-documentos").click();
+  await page.getByTestId("central-vendas-documentos-fechar-salvos").click();
+  await expect(page.getByTestId("central-vendas-documentos-lista"), "a lista fecha depois da ação").toHaveCount(0);
+  await expect(aba(page, `/vendas/sales/${salvo.id}`), "venda salva e limpa: fecha").toHaveCount(0);
+  await expect(aba(page, "/vendas/orders/new"), "criação limpa, sem nada a salvar: fecha").toHaveCount(0);
+  await expect(aba(page, "/vendas/sales/new"), "a aba suja (e ativa) fica").toHaveCount(1);
+  await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
+  await expect(aba(page, "/estoque"), "outro módulo fica").toHaveCount(1);
+  await expect(aba(page, "/"), "Início fica").toHaveCount(1);
+  await expect(page.getByLabel("Observação")).toHaveValue("rascunho da central");
+  await expect(page.getByTestId("confirm-dialog"), "nada sujo foi tocado, então nada foi perguntado").toHaveCount(0);
+  await expect(page.getByTestId("central-vendas-documentos-contador")).toHaveText("1");
+});
+
+test("W26 — metadados do documento salvo vêm da leitura REAL e só com a lista aberta: código, cliente, situação, nenhum UUID", async ({ page }) => {
+  await login(page);
+  const { salvo } = await abrirComVizinhos(page);
+  const leituras: string[] = [];
+  page.on("request", (r) => { const u = new URL(r.url()); if (r.method() === "GET" && u.pathname.startsWith("/api/")) leituras.push(u.pathname); });
+  await page.waitForTimeout(300);
+  expect(leituras.filter((p) => p === `/api/sales/sales/${salvo.id}`), "com a lista fechada, nada é perguntado").toEqual([]);
+
+  await page.getByTestId("central-vendas-documentos").click();
+  const lista = page.getByTestId("central-vendas-documentos-lista");
+  const linha = lista.locator(`[data-chave="/vendas/sales/${salvo.id}"]`);
+  await expect(linha.getByTestId("central-vendas-documento-titulo")).toHaveText(salvo.code);
+  await expect(linha.getByTestId("central-vendas-documento-cliente")).toHaveText(salvo.cliente);
+  const badge = linha.getByTestId("central-vendas-documento-situacao").locator("[data-status]");
+  await expect(badge).toHaveAttribute("data-status", salvo.status);
+  const rotulo = (await badge.innerText()).trim();
+  expect(rotulo.length, "a situação aparece").toBeGreaterThan(0);
+  expect(rotulo, "rótulo PT-BR, nunca o valor técnico").not.toBe(salvo.status);
+  expect(leituras.filter((p) => p === `/api/sales/sales/${salvo.id}`), "a leitura é a porta de detalhe que já existe").toHaveLength(1);
+  expect(leituras.filter((p) => /^\/api\/(stock|estoque)/.test(p)), "nenhuma pergunta para a aba de outro módulo").toEqual([]);
+
+  const nova = lista.locator('[data-chave="/vendas/sales/new"]');
+  await expect(nova.getByTestId("central-vendas-documento-titulo")).toHaveText("Nova Venda");
+  await expect(nova.getByTestId("central-vendas-documento-cliente"), "criação: nada inventado").toHaveText("—");
+  await expect(nova.getByTestId("central-vendas-documento-situacao")).toHaveText("");
+  expect(await lista.innerText(), "nenhum UUID como texto").not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+});
+
+test("W27 — workspace imersivo: a trilha some SÓ com a Central montada; lançador, módulos e detalhe mantêm a trilha", async ({ page }) => {
+  await login(page);
+  const trilha = page.locator('nav[aria-label="Navegação"]');
+  await page.goto("/estoque");
+  await expect(trilha, "módulo normal: trilha").toBeVisible();
+  const top = await cadastrarTopDeVenda(page);
+  await abrirLancamentoDeVendas(page, "sales");
+  await expect(trilha, "lançador sem TOP é tela normal: trilha").toBeVisible();
+  await expect(trilha).toContainText("Vendas");
+
+  await escolherTopEContinuar(page, top.id);
+  await expect(page.getByTestId(WORKSPACE)).toBeVisible();
+  await expect(trilha, "Central com TOP: a trilha cede o lugar à moldura").toHaveCount(0);
+  const area = (await page.getByTestId("active-workspace").boundingBox())!;
+  const barra = (await page.getByTestId("central-vendas-acoes").boundingBox())!;
+  expect(barra.y - area.y, "a barra da Central abre a área de trabalho (só o respiro de 12px)").toBeLessThanOrEqual(13);
+
+  // desmontar a Central (Alterar operação, sem rascunho) devolve a trilha na MESMA rota
+  await page.getByTestId("top-alterar").click();
+  await expect(page.getByTestId("top-lancador")).toBeVisible();
+  await expect(trilha, "a declaração sai com a Central").toBeVisible();
+
+  const salvo = await documentoSalvo(page);
+  await page.goto(`/vendas/sales/${salvo.id}`);
+  await expect(trilha, "detalhe salvo: trilha como antes").toBeVisible();
+  await expect(trilha).toContainText("Documento de venda");
+});
+
+test("W28 — unidade do produto: sufixo da quantidade e campo travado, pela leitura do produto que já existe; nada vai ao payload", async ({ page }) => {
+  await login(page);
+  await abrirWorkspace(page);
+  await pickRef(page, "Cliente", "DEMO");
+  const rotulo = await adicionarItemComProduto(page, 0);
+  const opcoes = await api<{ id: string; label: string }[]>(page, "GET", `/api/resources/products/options?search=${encodeURIComponent(rotulo)}`);
+  const produto = opcoes.find((o) => o.label === rotulo);
+  expect(produto, "o produto escolhido, pela mesma rota de opções").toBeTruthy();
+  const detalhe = await api<Record<string, unknown>>(page, "GET", `/api/resources/products/${produto!.id}`);
+  const unidade = String(detalhe["measurement_id_label"] ?? "");
+  expect(unidade, "a premissa: o produto do seed tem 1ª unidade de medida").not.toBe("");
+
+  await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-unidade"), "linha selecionada: ao lado do campo").toHaveText(unidade);
+  await adicionarItemComProduto(page, 1);
+  await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-quantidade"), "linha não selecionada: número").toHaveText("1,00");
+  await expect(linhaDaGrade(page, 0).getByTestId("central-vendas-unidade"), "e unidade").toHaveText(unidade);
+  await linhaDaGrade(page, 0).click();
+  await page.getByRole("button", { name: "Formulário", exact: true }).click();
+  await expect(page.getByTestId("central-vendas-item-unidade"), "campo travado Unidade no formulário do item").toContainText(unidade);
+
+  const post = await capturarPost(page);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(() => post.corpo).not.toBeNull();
+  for (const item of post.corpo!["items"] as Record<string, unknown>[]) expect(Object.keys(item).sort(), "a unidade é só exibição").toEqual(CHAVES_DO_ITEM);
 });
