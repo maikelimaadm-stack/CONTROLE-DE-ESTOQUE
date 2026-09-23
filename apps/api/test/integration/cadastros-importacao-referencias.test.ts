@@ -294,12 +294,12 @@ describe("escopo: membro com estoque só na empresa A", () => {
     const email = "importacao-referencias@demo.local";
     // FINANCEIRO na empresa B: a união dos módulos inclui B — só o recorte pelo módulo do ARMAZÉM (estoque) a exclui
     const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: {
-      name: "Importador Estoque A", email, password: "Importa@12345", role_id: (JSON.parse(papel.body) as { id: string }).id,
+      name: "Importador Estoque A", email, password: "Escopo@12345", role_id: (JSON.parse(papel.body) as { id: string }).id,
       escopos_empresas: [{ modulo: "estoque", modo: "selecionadas", empresas: [A] }, { modulo: "financeiro", modo: "selecionadas", empresas: [B] }],
     } });
     expect(vinculo.statusCode, vinculo.body).toBe(201);
     membroId = (JSON.parse(vinculo.body) as { member_id: string }).member_id;
-    const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Importa@12345" } });
+    const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Escopo@12345" } });
     expect(login.statusCode, login.body).toBe(200);
     M = { authorization: `Bearer ${(JSON.parse(login.body) as { token: string }).token}`, "x-org-id": h.demo.orgId };
   });
