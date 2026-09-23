@@ -3,7 +3,7 @@ import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Columns2, FileText, LayoutGrid, Lock, Plus, Search, Trash2 } from "lucide-react";
 import { getResource } from "@agro/domain";
-import { cn, brl } from "@/lib/utils";
+import { cn, brl, num } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Field, Input } from "@/components/ui";
 import { StockCell, totalDaLinhaExibido, type ItemRow } from "@/features/docs/shared";
@@ -60,7 +60,7 @@ function CelulaDeReferencia({ recurso, id, conhecido, vazio, aberto, onAbrir, ro
   rotuloAcao: string; testId: string; children?: (o: OpcaoReal | null) => React.ReactNode;
 }) {
   const o = useRotulo(recurso, id || undefined, conhecido);
-  return <button type="button" className={estilos.celulaBotao} aria-haspopup="dialog" aria-expanded={aberto} aria-label={o ? `${rotuloAcao}: ${o.label}` : rotuloAcao}
+  return <button type="button" className={estilos.celulaBotao} aria-haspopup="listbox" aria-expanded={aberto} aria-label={o ? `${rotuloAcao}: ${o.label}` : rotuloAcao}
     data-testid={testId} onClick={(e) => { e.stopPropagation(); onAbrir(e.currentTarget.closest("td") ?? e.currentTarget); }}>
     <span className={o ? undefined : estilos.celulaVazia}>{children ? children(o) : (o?.label ?? vazio)}</span>
     <span className={estilos.celulaIcone} aria-hidden><Search /></span>
@@ -134,10 +134,10 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
               aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId="central-vendas-armazem"
               onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} /></td>
             <td className={cn(estilos.numero, estilos.estoque)}><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={(c) => { if (!it.unit_value || it.unit_value === "0") atualizar(i, "unit_value", c); }} /></td>
-            <td className={estilos.numero}>{ativa ? <input className={estilos.entrada} aria-label="Quantidade" type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} onClick={(e) => e.stopPropagation()} /> : it.quantity}</td>
+            <td className={estilos.numero}>{ativa ? <input className={estilos.entrada} aria-label="Quantidade" type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} onClick={(e) => e.stopPropagation()} /> : num(it.quantity || "0", 2)}</td>
             <td className={estilos.numero}>{ativa ? <input className={estilos.entrada} aria-label="Valor unitário" type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(i, "unit_value", e.target.value)} onClick={(e) => e.stopPropagation()} /> : brl(it.unit_value ?? "0")}</td>
-            <td className={estilos.numero}>{ativa ? <input className={estilos.entrada} aria-label="Desconto" type="number" step="0.01" min="0" value={it.discount ?? ""} onChange={(e) => atualizar(i, "discount", e.target.value)} onClick={(e) => e.stopPropagation()} /> : (Number(it.discount || 0) ? brl(it.discount!) : "—")}</td>
-            <td className={estilos.numero}>{ativa ? <input className={estilos.entrada} aria-label="Desconto %" type="number" step="0.01" min="0" max="100" value={it.discount_percent ?? ""} onChange={(e) => atualizar(i, "discount_percent", e.target.value)} onClick={(e) => e.stopPropagation()} /> : (Number(it.discount_percent || 0) ? it.discount_percent : "—")}</td>
+            <td className={estilos.numero}>{Number(it.discount || 0) ? brl(it.discount!) : "—"}</td>
+            <td className={estilos.numero}>{Number(it.discount_percent || 0) ? `${num(it.discount_percent!, 2)}%` : "—"}</td>
             <td className={cn(estilos.numero, estilos.forte)}>{brl(totalDaLinhaExibido(it))}</td>
           </tr>;
         })}
@@ -215,7 +215,7 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
 /** `idDoCampo` chega pelo `Field` (que injeta `id` no filho) e liga o rótulo ao botão — sem ele o leitor de tela não o nomeia. */
 function CampoReferenciaBotao({ recurso, valor, conhecido, aberto, onAbrir, id: idDoCampo }: { recurso: string; valor?: string; conhecido?: OpcaoReal; aberto: boolean; onAbrir: (el: HTMLElement) => void; id?: string }) {
   const o = useRotulo(recurso, valor, conhecido);
-  return <button type="button" id={idDoCampo} className={cn("cmd-display", !o && "is-empty")} aria-haspopup="dialog" aria-expanded={aberto} onClick={(e) => onAbrir(e.currentTarget)}>
+  return <button type="button" id={idDoCampo} className={cn("cmd-display", !o && "is-empty")} aria-haspopup="listbox" aria-expanded={aberto} onClick={(e) => onAbrir(e.currentTarget)}>
     {o ? <span>{o.code ? `${o.code} · ` : ""}{o.label}</span> : <span className="cmd-display-placeholder">Pesquisar</span>}
   </button>;
 }

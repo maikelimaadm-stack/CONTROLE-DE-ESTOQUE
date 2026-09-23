@@ -96,7 +96,6 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
   if (modo === "flutuante" && !pos) return null;
   return <div
     ref={painel}
-    role="dialog"
     aria-label={rotulo}
     data-testid={testId}
     data-modo={modo}

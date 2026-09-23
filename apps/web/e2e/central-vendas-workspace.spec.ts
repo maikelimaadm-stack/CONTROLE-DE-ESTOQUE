@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { login, api, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento } from "./helpers";
+import { login, api, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha } from "./helpers";
 
 /**
  * CENTRAL DE VENDAS — WORKSPACE FOUNDATION (VISUAL-UX-01).
@@ -129,9 +129,7 @@ test("W4 — Salvar continua sujeito às condições funcionais: cliente, item c
   await expect(salvar, "cliente sem item, não salva").toBeDisabled();
   await page.getByRole("button", { name: /Adicionar item/ }).click();
   await expect(salvar, "item sem produto, não salva").toBeDisabled();
-  const linha = page.locator("tbody tr").first();
-  await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
-  await page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last().getByRole("option").first().click();
+  await escolherPrimeiroProdutoDaLinha(page);
   await expect(salvar).toBeEnabled();
 
   // o que vai no corpo: os campos das abas, com o nome de antes, e o UUID da TOP validada
@@ -173,9 +171,7 @@ test("W5 — nenhuma escrita sem TOP confirmada AGORA: a lista muda, o rascunho 
   await abrirWorkspace(page);
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();
-  const linha = page.locator("tbody tr").first();
-  await linha.locator("button").nth(1).click();
-  await page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last().getByRole("option").first().click();
+  await escolherPrimeiroProdutoDaLinha(page);
   await expect(page.getByRole("button", { name: "Salvar" }), "a PREMISSA: sem o bloqueio, salvaria").toBeEnabled();
 
   // o servidor continua compatível, mas a operação desta sessão saiu da lista
@@ -421,7 +417,7 @@ test("W13 — três visões do MESMO items: Grade, Formulário e Grade e formul�
   // de volta à grade: a quantidade digitada no formulário está na linha 2; nada foi perdido
   await page.getByRole("button", { name: "Grade", exact: true }).click();
   await expect(page.getByTestId("central-vendas-linha")).toHaveCount(2);
-  await expect(linhaDaGrade(page, 1).locator("td").nth(5)).toHaveText("7");
+  await expect(linhaDaGrade(page, 1).locator("td").nth(5)).toHaveText("7,00");
 
   // Grade e formulário: as duas ao mesmo tempo, sobre o mesmo item selecionado
   await linhaDaGrade(page, 1).click();

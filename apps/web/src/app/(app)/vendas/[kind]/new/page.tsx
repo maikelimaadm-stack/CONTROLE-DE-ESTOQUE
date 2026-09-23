@@ -230,7 +230,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   return <>
     <CentralVendasWorkspace
       titulo={T[kind] ?? "Novo"}
-      identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo }}
+      identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo, dica: kind === "sales" ? "A confirmação da venda baixa o estoque dos itens com armazém e gera as contas a receber." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada." }}
       acoes={<>
         <AcaoDaBarra rotulo="Voltar" dica="inicio" onClick={() => router.back()}><ArrowLeft aria-hidden /></AcaoDaBarra>
         <AcaoDaBarra rotulo="Salvar" destaque="salvar" ocupado={create.isPending} disabled={!escritaTopConfirmada || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
@@ -240,7 +240,6 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       acoesDireita={<DocumentosAbertos />}
       aviso={avisoDeEscrita}
       dados={<>
-        <p className={estilosCv.descricao}>{kind === "sales" ? "A confirmação da venda baixa o estoque dos itens com armazém e gera as contas a receber." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada."}</p>
         {pesquisa(<Field label="Cliente" required span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} /></Field>)}
         {pesquisa(<Field label="Empresa" required span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>)}
         {contextoOperacional}

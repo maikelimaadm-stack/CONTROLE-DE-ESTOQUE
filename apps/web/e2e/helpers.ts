@@ -85,3 +85,13 @@ export async function abrirAbaDoLancamento(page: Page, nome: "Totais" | "Finance
   await expect(aba).toHaveAttribute("aria-selected", "true");
   await expect(page.getByTestId("central-vendas-painel").getByRole("tabpanel")).toBeVisible();
 }
+
+/**
+ * Escolhe o primeiro produto REAL na primeira linha de itens da Central de Vendas (VISUAL-UX-01 R1):
+ * abre a pesquisa ancorada à célula de produto e clica na primeira opção que o servidor devolveu.
+ */
+export async function escolherPrimeiroProdutoDaLinha(page: Page) {
+  await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
+  await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
+  await expect(page.getByTestId("central-vendas-pesquisa")).toHaveCount(0);
+}

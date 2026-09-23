@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha } from "./helpers";
 
 /**
  * PORTAL DE VENDAS COM TOP CADASTRADA — o caminho que o usuário faz de verdade (TOP-CONFIG-02).
@@ -428,18 +428,11 @@ test("E1 VENDA — do Portal ao snapshot: lançador, formulário contextualizado
 
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();
-  const linha = page.locator("tbody tr").first();
-  await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
-  /**
-   * A LISTA DE OPÇÕES TEM DE SER PROCURADA DENTRO DO POPUP, e não na página.
-   *
-   * `page.getByRole("option")` casa TAMBÉM o `<select>` de empresa da barra superior, cujo
-   * `<option>Todas as empresas</option>` nunca fica visível — o clique então espera para sempre por um
-   * elemento que não vai aparecer, e o teste morre por timeout culpando o produto. É o mesmo recorte que
-   * `pickRef` já faz; aqui ele precisa ser explícito porque o campo mora numa linha de tabela, sem label.
-   */
-  const opcoes = page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last();
-  await opcoes.getByRole("option").first().click();
+  /*
+    A lista de opções é procurada DENTRO do painel de pesquisa, e não na página: `page.getByRole("option")`
+    casaria também o `<select>` de empresa da barra superior, cuja opção nunca fica visível.
+  */
+  await escolherPrimeiroProdutoDaLinha(page);
 
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(() => corpo, { message: "o formulário precisa ter emitido o POST" }).not.toBeNull();
@@ -683,9 +676,7 @@ test("C2 — O SERVIDOR AINDA MANDA: salvar com a TOP já desativada recusa, e n
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();
-  const linha = page.locator("tbody tr").first();
-  await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
-  await page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last().getByRole("option").first().click();
+  await escolherPrimeiroProdutoDaLinha(page);
 
   // A TOP é desativada DEPOIS de o formulário estar pronto para salvar.
   const atual = await api<{ revisao: number }>(page, "GET", `/api/admin/tipos-operacao/${top.id}`);
@@ -771,9 +762,7 @@ async function formularioComRascunho(page: Page, rascunho: string) {
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();
-  const linha = page.locator("tbody tr").first();
-  await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
-  await page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last().getByRole("option").first().click();
+  await escolherPrimeiroProdutoDaLinha(page);
   await expect(page.getByRole("button", { name: "Salvar" }), "a PREMISSA: sem o bloqueio, este formulário salvaria").toBeEnabled();
   return top;
 }

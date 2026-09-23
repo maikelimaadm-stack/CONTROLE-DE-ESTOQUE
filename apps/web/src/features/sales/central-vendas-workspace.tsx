@@ -52,7 +52,7 @@ export interface CentralVendasWorkspaceProps {
   /** Ações da direita da barra (ex.: documentos abertos). */
   acoesDireita?: React.ReactNode;
   /** Identidade do documento no cabeçalho de Dados principais. Em criação ainda NÃO há número. */
-  identidade: { nome: string; alterado: boolean };
+  identidade: { nome: string; alterado: boolean; /** o que este tipo de documento faz — dica do ícone, fora do corpo, como no design */ dica?: string };
   /** Aviso funcional (ex.: escrita bloqueada). Fica dentro de Dados principais, acima dos campos. */
   aviso?: React.ReactNode;
   dados: React.ReactNode;
@@ -161,7 +161,7 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
             <span>Dados principais</span>
             <span className={estilos.cabecalhoEspaco} />
             <span className={estilos.identidade} data-testid="central-vendas-identidade">
-              <span className={estilos.identidadeIcone} aria-hidden><FilePlus2 size={15} /></span>
+              <span className={cn(estilos.identidadeIcone, estilos.dicaFim)} data-dica={identidade.dica} tabIndex={identidade.dica ? 0 : undefined} role={identidade.dica ? "img" : undefined} aria-label={identidade.dica} aria-hidden={identidade.dica ? undefined : true}><FilePlus2 size={15} /></span>
               <span className={estilos.identidadeNome}>{identidade.nome}</span>
               {identidade.alterado && <span className={estilos.pontoAlterado} role="img" aria-label="Alterações não salvas" data-testid="central-vendas-alterado" />}
             </span>
