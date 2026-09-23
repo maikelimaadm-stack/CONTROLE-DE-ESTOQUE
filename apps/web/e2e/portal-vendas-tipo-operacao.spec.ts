@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento } from "./helpers";
 
 /**
  * PORTAL DE VENDAS COM TOP CADASTRADA — o caminho que o usuário faz de verdade (TOP-CONFIG-02).
@@ -555,6 +555,7 @@ test("ALTERAR OPERAÇÃO — volta ao lançador, e avisa antes de descartar o qu
 
   // (b) COM dado digitado, pergunta antes — e só descarta depois do "sim".
   await escolherTopEContinuar(page, top.id);
+  await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill("rascunho que não pode sumir calado");
   await page.getByTestId("top-alterar").click();
   await expect(page.getByRole("dialog")).toContainText("Alterar o Tipo de Operação?");
@@ -636,6 +637,7 @@ test("C1 — REVALIDAÇÃO NÃO APAGA O FORMULÁRIO: a TOP sai da lista e o que 
   await escolherTopEContinuar(page, top.id);
 
   const rascunho = "rascunho que não pode sumir sozinho";
+  await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill(rascunho);
 
   // A lista é CONTADA, para que o teste prove que a revalidação aconteceu de fato — sem isso ele
@@ -677,6 +679,7 @@ test("C2 — O SERVIDOR AINDA MANDA: salvar com a TOP já desativada recusa, e n
   await escolherTopEContinuar(page, top.id);
 
   const rascunho = "precisa sobreviver à recusa";
+  await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();
@@ -764,6 +767,7 @@ async function formularioComRascunho(page: Page, rascunho: string) {
   const top = await cadastrarTop(page, "vendas.venda", uniq("Venda R2"));
   await abrirLancamentoDeVendas(page, "sales");
   await escolherTopEContinuar(page, top.id);
+  await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();

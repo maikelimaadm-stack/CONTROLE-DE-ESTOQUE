@@ -4,11 +4,12 @@ import { Suspense, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { todayISO } from "@/lib/utils";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
-import { Button, Card, CardHeader, CardBody, Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
+import { Button, Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { ItemsEditor, PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { MensagemTop, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
+import { CentralVendasWorkspace, ContextoOperacional } from "@/features/sales/central-vendas-workspace";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
 
@@ -160,76 +161,112 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const voltarAoLancador = () => router.replace(`/vendas/${kind}/new`);
   const alterarOperacao = () => { if (sujo) setConfirmarTroca(true); else voltarAoLancador(); };
 
-  return <Card><CardHeader title={T[kind] ?? "Novo"} subtitle={kind === "sales" ? "A confirmação da venda baixa o estoque dos itens com armazém e gera as contas a receber." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada."} actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!escritaTopConfirmada || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}>Salvar</Button></>} /><CardBody className="space-y-4">
-    {/*
-      O CONTEXTO OPERACIONAL, no topo e fora do grid de campos.
-      A VERSÃO não aparece aqui de propósito: o que esta tela conhece é a versão CORRENTE no momento da
-      escolha, e quem congela a versão do documento é o servidor, no POST. Exibi-la antes de salvar
-      prometeria um snapshot que ainda não existe e que pode mudar entre a escolha e a gravação — a
-      versão congelada é mostrada na tela de DETALHE, onde ela já é fato.
-    */}
-    <div data-testid="top-contexto" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-brand-200 bg-brand-50 p-3">
-      <div className="min-w-0">
-        <span className="block text-xs font-semibold uppercase tracking-wide text-brand-700">Operação</span>
-        <span className="flex flex-wrap items-baseline gap-2">
-          <span className="font-mono text-sm font-semibold text-slate-900">{top.code}</span>
-          <span className="text-sm text-slate-800">{top.name}</span>
-        </span>
-        {familia && <span className="mt-0.5 block text-xs text-slate-500">Família: {familia}</span>}
-      </div>
-      <Button data-testid="top-alterar" variant="outline" size="sm" onClick={alterarOperacao}>Alterar operação</Button>
-    </div>
+  /**
+   * A MOLDURA É VISUAL; O CONTRATO CONTINUA AQUI (VISUAL-UX-01).
+   *
+   * `CentralVendasWorkspace` recebe cada região como nó pronto e só a organiza: barra de ações, Dados
+   * principais, Itens e o painel inferior. Nada de regra saiu desta função — `escritaTopConfirmada`,
+   * o guard dentro de `submit`, `podeLancar`, a trava da sessão, o rascunho (`sujo`/`useDirtyTab`) e o
+   * payload são os mesmos, linha a linha. O que mudou é ONDE cada campo aparece:
+   *
+   *   Dados principais → Empresa, Cliente, Proprietário, Data, Vencimento, Data de saída
+   *   Totais           → Desconto, Outros valores
+   *   Financeiro       → Forma de pagamento, Parcelamento, plano de parcelas
+   *   Frete            → Transportadora, Motorista, Frete, ICMS do frete
+   *   Fiscal           → Dedutível
+   *   Observações      → Observação
+   *
+   * Cada campo continua ligado EXATAMENTE ao mesmo `h.<chave>` de antes. Nenhum campo novo, nenhum
+   * removido, nenhum renomeado.
+   *
+   * A BARRA SÓ TEM AÇÕES QUE EXISTEM: Voltar, Salvar e Alterar operação. O design aprovado prevê
+   * "Confirmar venda", "Descartar", "Editar" e "Anexos" — nenhuma delas tem contrato nesta etapa
+   * (`docs/DECISIONS.md` 224), então nenhuma aparece, nem desabilitada: botão que não faz nada ensina
+   * o usuário a ignorar botão.
+   */
+  const contextoOperacional = <ContextoOperacional
+    rotulo={familia ? `Operação · ${familia}` : "Operação"}
+    codigo={top.code}
+    nome={top.name}
+    testId="top-contexto"
+  />;
 
-    {/*
-      POR QUE A ESCRITA ESTÁ BLOQUEADA — dentro do formulário, que continua inteiro.
+  /*
+    POR QUE A ESCRITA ESTÁ BLOQUEADA — dentro do formulário, que continua inteiro.
 
-      A operação da SESSÃO segue no bloco acima: ela não é trocada, não é apagada e não vira outra.
-      O que some é o direito de gravar, e a razão aparece aqui.
+    A operação da SESSÃO segue no cabeçalho de Dados principais: ela não é trocada, não é apagada e
+    não vira outra. O que some é o direito de gravar, e a razão aparece aqui.
 
-      `MensagemTop` cobre os estados que ela já explica (servidor não confirmado, erro, nenhuma TOP
-      cadastrada) — a mesma frase da etapa de escolha, sem segunda redação do mesmo diagnóstico.
-      Sobra UM caso que ela não cobre, e que é novo aqui: o servidor está COMPATÍVEL (contrato 1,
-      lista válida) e ainda assim a TOP desta sessão não está mais em `items`. Não é falha de
-      servidor nem configuração ausente; é a operação escolhida que saiu de circulação. A frase é a
-      mesma da recusa do lançador, e continua sem revelar a causa.
-    */}
-    {!escritaTopConfirmada && <div className="space-y-1 rounded-md bg-amber-50 p-3">
-      <MensagemTop estado={estadoTop} />
-      {estadoTop.situacao === "pronto" && <p data-testid="top-indisponivel" className="text-sm text-amber-800">
-        O Tipo de Operação selecionado não está disponível para este lançamento.
-      </p>}
-      <p className="text-xs text-amber-700">
-        O que já foi preenchido continua aqui. Use “Alterar operação” para escolher outra.
-      </p>
-    </div>}
+    `MensagemTop` cobre os estados que ela já explica (servidor não confirmado, erro, nenhuma TOP
+    cadastrada) — a mesma frase da etapa de escolha, sem segunda redação do mesmo diagnóstico.
+    Sobra UM caso que ela não cobre, e que é novo aqui: o servidor está COMPATÍVEL (contrato 1,
+    lista válida) e ainda assim a TOP desta sessão não está mais em `items`. Não é falha de
+    servidor nem configuração ausente; é a operação escolhida que saiu de circulação. A frase é a
+    mesma da recusa do lançador, e continua sem revelar a causa.
+  */
+  const avisoDeEscrita = !escritaTopConfirmada && <div className="space-y-1 rounded-md bg-amber-50 p-3">
+    <MensagemTop estado={estadoTop} />
+    {estadoTop.situacao === "pronto" && <p data-testid="top-indisponivel" className="text-sm text-amber-800">
+      O Tipo de Operação selecionado não está disponível para este lançamento.
+    </p>}
+    <p className="text-xs text-amber-700">
+      O que já foi preenchido continua aqui. Use “Alterar operação” para escolher outra.
+    </p>
+  </div>;
 
-    <div className="grid grid-cols-12 gap-3">
-      <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
-      <Field label="Data" required span={2}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>
-      <Field label="Data de saída" span={2}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>
-      <Field label="Vencimento" span={2}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>
-      <Field label="Forma de pagamento" span={3}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} /></Field>
-      <Field label="Cliente" required span={5}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} /></Field>
-      <Field label="Transportadora" span={4}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>
-      <Field label="Motorista" span={3}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>
-      <Field label="Proprietário" span={3}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} /></Field>
-      <Field label="Frete" span={2}><Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} /></Field>
-      <Field label="ICMS frete" span={2}><Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} /></Field>
-      <Field label="Outros valores" span={2}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>
-      <Field label="Desconto" span={2}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>
-      <Field label="Dedutível" span={1}><NativeSelect value={h.is_deductible ? "1" : "0"} onChange={(e) => setH({ ...h, is_deductible: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim</option></NativeSelect></Field>
-      <Field label="Observação" span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>
-    </div>
-    <h3 className="text-xs font-semibold uppercase text-brand-700">Itens</h3>
-    <ItemsEditor items={items} onChange={setItems} fields={["warehouse", "product", "stock", "quantity", "unit_value", "discount", "discount_percent"]} />
-    <div className="grid grid-cols-12 gap-3"><Field label="Parcelamento" span={3}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field></div>
-    {h.installments && <PlanEditor plan={plan} onChange={setPlan} />}
+  return <>
+    <CentralVendasWorkspace
+      titulo={T[kind] ?? "Novo"}
+      descricao={kind === "sales" ? "A confirmação da venda baixa o estoque dos itens com armazém e gera as contas a receber." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada."}
+      acoes={<>
+        <Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button>
+        <Button size="sm" loading={create.isPending} disabled={!escritaTopConfirmada || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}>Salvar</Button>
+        <span className="flex-1" />
+        <Button data-testid="top-alterar" variant="outline" size="sm" onClick={alterarOperacao}>Alterar operação</Button>
+      </>}
+      contexto={contextoOperacional}
+      aviso={avisoDeEscrita}
+      dados={<div className="grid grid-cols-12 gap-3">
+        <Field label="Empresa" required span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
+        <Field label="Cliente" required span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} /></Field>
+        <Field label="Proprietário" span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} /></Field>
+        <Field label="Data" required span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>
+        <Field label="Vencimento" span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>
+        <Field label="Data de saída" span={12}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>
+      </div>}
+      itens={<ItemsEditor items={items} onChange={setItems} fields={["warehouse", "product", "stock", "quantity", "unit_value", "discount", "discount_percent"]} />}
+      abas={[
+        { value: "totais", label: "Totais", content: <div className="grid grid-cols-12 gap-3">
+          <Field label="Desconto" span={3}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>
+          <Field label="Outros valores" span={3}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>
+        </div> },
+        { value: "financeiro", label: "Financeiro", content: <div className="space-y-3">
+          <div className="grid grid-cols-12 gap-3">
+            <Field label="Forma de pagamento" span={4}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} /></Field>
+            <Field label="Parcelamento" span={3}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>
+          </div>
+          {h.installments && <PlanEditor plan={plan} onChange={setPlan} />}
+        </div> },
+        { value: "frete", label: "Frete", content: <div className="grid grid-cols-12 gap-3">
+          <Field label="Transportadora" span={5}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>
+          <Field label="Motorista" span={3}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>
+          <Field label="Frete" span={2}><Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} /></Field>
+          <Field label="ICMS frete" span={2}><Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} /></Field>
+        </div> },
+        { value: "fiscal", label: "Fiscal", content: <div className="grid grid-cols-12 gap-3">
+          <Field label="Dedutível" span={2}><NativeSelect value={h.is_deductible ? "1" : "0"} onChange={(e) => setH({ ...h, is_deductible: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim</option></NativeSelect></Field>
+        </div> },
+        { value: "observacoes", label: "Observações", content: <div className="grid grid-cols-12 gap-3">
+          <Field label="Observação" span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>
+        </div> }
+      ]}
+    />
 
     {/* Trocar a operação descarta o que foi digitado — então pergunta antes, em vez de descobrir depois. */}
     <Confirm open={confirmarTroca} onOpenChange={setConfirmarTroca} title="Alterar o Tipo de Operação?"
       text="Os dados já preenchidos neste lançamento serão descartados." danger
       onConfirm={() => { setConfirmarTroca(false); voltarAoLancador(); }} />
-  </CardBody></Card>;
+  </>;
 }
 
 export default function Page({ params }: { params: Promise<{ kind: string }> }) {
