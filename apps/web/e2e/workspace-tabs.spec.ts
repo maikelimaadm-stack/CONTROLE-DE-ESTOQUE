@@ -20,8 +20,14 @@ const tabs = (page: Page) => page.getByTestId("workspace-tab");
 const activeTab = (page: Page) => page.getByTestId("workspace-tabs").locator('[role="tab"][aria-selected="true"]');
 const openVia = async (page: Page, module: string, item: RegExp | string) => {
   let btn = page.getByTestId("nav-module").filter({ hasText: module }).first();
-  if (!(await btn.isVisible())) { await page.getByTestId("nav-more").click(); btn = page.getByTestId("nav-module").filter({ hasText: module }).first(); } // módulo dentro de "Mais"
-  await btn.hover(); await page.getByTestId("mega-menu").getByTestId("mega-item").filter({ hasText: item }).first().click();
+  let dentroDoMais = false;
+  if (!(await btn.isVisible())) { await page.getByTestId("nav-more").click(); btn = page.getByTestId("nav-module").filter({ hasText: module }).first(); dentroDoMais = true; }
+  // Módulo VISÍVEL abre por hover. Módulo dentro de "Mais" abre por CLIQUE: passar o ponteiro por cima
+  // dele não abre mais nada, justamente para o item não desmontar debaixo do cursor (ver o comentário
+  // do overflow em `top-navigation.tsx`). Antes daquela correção, este hover morria em
+  // "element was detached from the DOM" em cerca de metade das execuções.
+  if (dentroDoMais) await btn.click(); else await btn.hover();
+  await page.getByTestId("mega-menu").getByTestId("mega-item").filter({ hasText: item }).first().click();
 };
 async function fuelSupply(page: Page, note: string) {
   const eq = await apiCall<{ items: { id: string; empresa_id: string }[] }>(page, "GET", "/api/resources/equipments?pageSize=1"); const e = eq.items[0]!;

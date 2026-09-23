@@ -37,6 +37,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { semComentarios } from "./lib/sem-comentarios.mjs";
 
 const raiz = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MATRIZ = "docs/UI-SUPPORT-MATRIX.md";
@@ -54,16 +55,6 @@ const AFROUXAMENTOS = [
   { re: /\btest\.setTimeout\s*\(\s*\d{6,}/, nome: "`test.setTimeout` inflado (≥ 100000ms)" },
   { re: /\btest\.slow\s*\(/, nome: "`test.slow`" }
 ];
-
-/**
- * Comentário não é código. Um bloco que EXPLICA "aqui não há `.skip` nem `force: true`" seria acusado
- * pela própria explicação — e o conserto seria apagar a explicação, que é o oposto do que se quer.
- * Não é um parser: o erro possível é para o lado seguro (deixar de ver), e a forma que importa
- * (uma chamada real) não mora dentro de comentário.
- */
-export function semComentarios(texto) {
-  return texto.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1 ");
-}
 
 /** Lê a tabela entre os marcadores. Fora deles o documento é prosa, e prosa não é contrato. */
 export function debitosDeclarados(markdown) {

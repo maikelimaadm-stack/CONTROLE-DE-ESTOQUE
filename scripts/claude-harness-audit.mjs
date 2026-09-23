@@ -124,6 +124,79 @@ for (const r of REGRAS) {
 }
 
 // -------------------------------------------------------------------------------------------------
+// 3b. A LEI DE UMA PR ABERTA POR VEZ (PRE-PR-01) CONTINUA ESCRITA NOS DOIS DONOS
+//
+// POR QUE ISTO É UM GATE. A lei que mais custa quando falha é a que ninguém percebe ter sumido.
+// Uma linha apagada de `CLAUDE.md` não quebra build, tipo nem teste: a sessão seguinte simplesmente
+// não a carrega, abre a segunda PR e o defeito só aparece na revisão, quando a resposta a um
+// comentário está numa PR e o código correspondente está na outra.
+//
+// O QUE ELE PROVA, e é uma coisa só: que as CLÁUSULAS da lei continuam presentes nos dois donos.
+// Não prova que a lei foi obedecida — isso é comportamento da sessão, não estado do repositório.
+// Dizer o contrário seria gate que promete o que não entrega.
+//
+// POR QUE ESTÁTICO. Contar PR aberta exigiria falar com a API do GitHub, e este gate roda dentro de
+// `pnpm lint`. Um lint que precisa de token fica vermelho offline, vermelho no fork e vermelho
+// quando o GitHub oscila — e o que ele passaria a medir seria a rede, não o contrato. Quem conta PR
+// aberta é a sessão, na hora de abrir, com uma listagem de leitura.
+//
+// COMENTÁRIO DE HTML NÃO CONTA. `<!-- … -->` não é lido pelo modelo como instrução ativa: comentar
+// a lei é apagá-la com o texto ainda no arquivo, e seria a forma mais barata de passar por aqui.
+// -------------------------------------------------------------------------------------------------
+/** Texto sem comentário de HTML e com espaço normalizado — a lei quebra linha, o casamento não pode depender disso. */
+const textoDaLei = (t) => t.replace(/<!--[\s\S]*?-->/g, " ").replace(/\s+/g, " ");
+
+const LEI_PRE_PR_01 = [
+  { arquivo: "CLAUDE.md", garante: "o identificador da lei", re: /PRE-PR-01/ },
+  { arquivo: "CLAUDE.md", garante: "a fórmula da proibição", re: /PRs abertas\s*>\s*0\s*⇒\s*PR nova\s*=\s*PROIBIDA/i },
+  { arquivo: "CLAUDE.md", garante: "que corrigir é atualizar a MESMA PR", re: /a mesma branch e a mesma PR/i },
+  { arquivo: "CLAUDE.md", garante: "que fechar a PR aberta não libera caminho", re: /fechar, mesclar, marcar \*ready\*, criar branch concorrente ou abrir PR "temporária"/i },
+  { arquivo: "CLAUDE.md", garante: "que a lei vence a instrução de sessão", re: /PRE-PR-01 vence o pedido/i },
+
+  { arquivo: ".claude/rules/workflow.md", garante: "o identificador da lei", re: /PRE-PR-01/ },
+  { arquivo: ".claude/rules/workflow.md", garante: "a fórmula da proibição", re: /PRs abertas\s*>\s*0\s*⇒\s*PR nova\s*=\s*PROIBIDA/i },
+  { arquivo: ".claude/rules/workflow.md", garante: "a checagem por listagem antes de abrir", re: /LISTE as abertas/i },
+  { arquivo: ".claude/rules/workflow.md", garante: "que fechar a PR aberta não libera caminho", re: /fechar a PR aberta para liberar o caminho/i },
+  { arquivo: ".claude/rules/workflow.md", garante: "que mesclar não libera caminho", re: /mesclar a PR aberta/i },
+  { arquivo: ".claude/rules/workflow.md", garante: "que branch concorrente é a mesma violação", re: /branch concorrente/i },
+  { arquivo: ".claude/rules/workflow.md", garante: 'que PR "temporária" é a mesma violação', re: /PR "tempor[áa]ria"/i },
+  { arquivo: ".claude/rules/workflow.md", garante: "que a lei vence a instrução de sessão", re: /a lei vence o pedido/i },
+  { arquivo: ".claude/rules/workflow.md", garante: "que o gate é estático e o lint não fala com a rede", re: /`pnpm lint` não fala com a rede/i }
+];
+
+/** As cláusulas ausentes de um texto. Função pura, para o autoteste poder exercê-la sem tocar a árvore. */
+const clausulasAusentes = (texto, clausulas) => clausulas.filter((c) => !c.re.test(textoDaLei(texto)));
+
+// AUTOTESTE — nas duas direções, porque um verificador que nunca acusa é indistinguível de um
+// verificador correto: a tela verde é a mesma. Inclui o caso do comentário, que é a burla barata.
+{
+  const doArquivo = (f) => LEI_PRE_PR_01.filter((c) => c.arquivo === f);
+  const CLAUDE = doArquivo("CLAUDE.md");
+  const COMPLETO = 'PRE-PR-01: PRs abertas > 0 ⇒ PR nova = PROIBIDA. Corrigir é atualizar a mesma branch e a mesma PR. '
+    + 'Nunca fechar, mesclar, marcar *ready*, criar branch concorrente ou abrir PR "temporária" para liberar caminho. '
+    + 'Havendo uma aberta, PRE-PR-01 vence o pedido.';
+  const AMOSTRAS = [
+    { nome: "lei inteira", texto: COMPLETO, ausentes: 0 },
+    { nome: "lei quebrada em linhas", texto: COMPLETO.replace(/ /g, "\n"), ausentes: 0 },
+    { nome: "fórmula apagada", texto: COMPLETO.replace("PRs abertas > 0 ⇒ PR nova = PROIBIDA", "evite abrir duas PRs"), ausentes: 1 },
+    { nome: "precedência apagada", texto: COMPLETO.replace("PRE-PR-01 vence o pedido", "use o bom senso"), ausentes: 1 },
+    { nome: "lei inteira comentada em HTML", texto: `<!-- ${COMPLETO} -->`, ausentes: CLAUDE.length },
+    { nome: "arquivo sem a lei", texto: "# Fluxo\n\nBranch, commit, push.", ausentes: CLAUDE.length }
+  ];
+  for (const a of AMOSTRAS) {
+    const obtido = clausulasAusentes(a.texto, CLAUDE).length;
+    if (obtido !== a.ausentes) erro(`autoteste de PRE-PR-01: amostra "${a.nome}" devia acusar ${a.ausentes} cláusula(s) ausente(s) e acusou ${obtido}`);
+  }
+}
+
+for (const f of [...new Set(LEI_PRE_PR_01.map((c) => c.arquivo))]) {
+  if (!existe(f)) continue;                                  // a ausência do arquivo já é acusada acima
+  for (const c of clausulasAusentes(ler(f), LEI_PRE_PR_01.filter((x) => x.arquivo === f))) {
+    erro(`${f}: a lei PRE-PR-01 perdeu ${c.garante} — uma PR aberta deixaria de impedir a segunda, e nada quebraria`);
+  }
+}
+
+// -------------------------------------------------------------------------------------------------
 // 4. SKILLS
 // -------------------------------------------------------------------------------------------------
 for (const s of SKILLS) {
@@ -460,4 +533,4 @@ if (problemas.length) {
 // A contagem de E2E vai na linha verde de propósito: um escaneamento que achasse ZERO scripts
 // também passaria calado, e "0 script de E2E auditado" é visivelmente errado num repositório que
 // tem quatro. Verde que não prova nada é reprovação — então o verde diz o que contou.
-console.log(`claude-harness-audit: OK (${REGRAS.length} regras, ${SKILLS.length} skills, ${AGENTES.length} subagentes com limite de leitura mecânico, ${HOOKS.length} hooks com autoteste, ${(settings?.permissions?.deny ?? []).length} negações de leitura, ${CONTAGEM_E2E.total} script(s) de E2E com alvo de banco declarado (${CONTAGEM_E2E.semBanco} declarado(s) sem banco), conectores só por modelo)`);
+console.log(`claude-harness-audit: OK (${REGRAS.length} regras, ${SKILLS.length} skills, ${AGENTES.length} subagentes com limite de leitura mecânico, ${HOOKS.length} hooks com autoteste, ${LEI_PRE_PR_01.length} cláusulas de PRE-PR-01 presentes nos 2 donos, ${(settings?.permissions?.deny ?? []).length} negações de leitura, ${CONTAGEM_E2E.total} script(s) de E2E com alvo de banco declarado (${CONTAGEM_E2E.semBanco} declarado(s) sem banco), conectores só por modelo)`);

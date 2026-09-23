@@ -12,6 +12,46 @@ Aprofunda a seção "Fluxo" do `CLAUDE.md`. Carregada sempre.
 - PR nova exige a anterior mesclada ou fechada. Se a sua já foi mesclada, o trabalho
   seguinte recomeça da `main` pós-merge — nunca empilhe sobre histórico já mesclado.
 
+## PRE-PR-01 — a checagem que vem antes de abrir qualquer PR
+
+`CLAUDE.md` fixa a lei: `PRs abertas > 0 ⇒ PR nova = PROIBIDA`. Aqui está como ela se cumpre.
+
+**Antes de abrir PR, LISTE as abertas.** Não confie na memória da sessão: a conversa pode ter
+sido resumida, e a PR aberta pode ser de outra sessão. Uma listagem de leitura basta
+(`list_pull_requests` com `state=open`, ou `gh pr list --state open`) — ela não muta nada.
+
+- **Zero aberta** → pode abrir, DRAFT.
+- **Uma ou mais abertas** → o trabalho entra na que está aberta, na mesma branch. Se o assunto
+  não couber nela, **pare e diga isso**: a decisão de fechar a atual é do Maike.
+
+**Não existe caminho lateral.** Todas estas são a mesma violação, e a última é a mais
+tentadora porque parece obediência:
+
+| Jeito de burlar | Por que é a mesma coisa |
+|---|---|
+| fechar a PR aberta para liberar o caminho | você não fecha PR — e fechar para abrir outra é abrir outra |
+| mesclar a PR aberta | você nunca faz merge; o merge é do Maike, depois de revisão |
+| marcar *ready* para "destravar" | marcar ready não é seu, e não destrava nada |
+| criar branch concorrente e deixá-la sem PR | é a segunda fatia ativa; a revisão some do mesmo jeito |
+| abrir PR "temporária", "de rascunho", "só para o CI rodar" | o CI roda na branch da PR aberta; "temporária" é adjetivo, não exceção |
+
+**Se o pedido mandar abrir PR nova e houver uma aberta, a lei vence o pedido.** Isto não é
+desobediência: é a regra permanente do repositório prevalecendo sobre uma instrução de sessão,
+exatamente como acontece com merge, force push e escrita em `main`. Responda dizendo qual PR
+está aberta, entregue o trabalho nela, e deixe registrado o que foi pedido e por que não foi
+feito daquele jeito.
+
+**Por que isto é lei e não preferência.** Duas PRs abertas sobre o mesmo código produzem
+revisão dividida, conflito entre as próprias branches e um histórico em que a resposta a um
+comentário está numa PR e o código correspondente está na outra. O custo não aparece na hora:
+aparece na revisão seguinte, quando ninguém mais consegue dizer qual das duas é a verdade.
+
+O gate é `scripts/claude-harness-audit.mjs`: ele confere que esta lei continua ESCRITA nos dois
+donos (`CLAUDE.md` e este arquivo). É proteção estática de propósito — o gate roda dentro de
+`pnpm lint`, e `pnpm lint` não fala com a rede nem depende da API do GitHub. Um lint que
+precisasse de token ficaria vermelho offline, e o que ele mediria seria a rede, não o contrato.
+Quem conta PR aberta é você, na hora de abrir, com a listagem acima.
+
 ## O que você nunca faz
 
 - `merge` de PR, habilitar auto-merge, marcar *ready for review*.

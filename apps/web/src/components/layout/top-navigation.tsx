@@ -26,11 +26,32 @@ const initialsOf = (name: string) => { const p = name.trim().split(/\s+/).filter
 const TYPE_ICON: Record<string, React.ComponentType<{ className?: string }>> = { action: Zap, config: Settings2 };
 const MORE_W = 76;
 
+/**
+ * Quantos módulos cabem na barra — recalculado sempre que a MEDIDA pode ter mudado.
+ *
+ * A TROCA DE FONTE NÃO É UM RESIZE, e era esse o buraco. Com `font-display: swap` a primeira pintura
+ * sai na fonte de reserva; quando a fonte do projeto entra, a largura dos rótulos muda — mas o
+ * CONTÊINER continua do mesmo tamanho, o `ResizeObserver` não é obrigado a disparar, e a barra fica
+ * exibindo uma quantidade calculada com métricas que não são mais as da tela. Medido neste projeto:
+ * em algumas larguras de janela a diferença vale um módulo inteiro, que fica preso no menu "Mais"
+ * sem motivo — e o resultado passa a depender do instante em que o `.woff2` chegou.
+ *
+ * Por isso são TRÊS gatilhos, e cada um cobre o que os outros não veem:
+ *   - a medição inicial, no layout;
+ *   - `ResizeObserver`, para a janela e o rearranjo do cabeçalho;
+ *   - `document.fonts`, para a troca de fonte — `ready` para a primeira, que é o caso real de toda
+ *     carga de página, e `loadingdone` para qualquer família que entre depois dela.
+ *
+ * `vivo` existe porque `ready` é uma promessa: sem ele, uma navegação rápida resolveria a promessa
+ * depois do unmount e tentaria atualizar estado de um componente que já não existe.
+ */
 function useFitCount(containerRef: React.RefObject<HTMLElement | null>, measureRef: React.RefObject<HTMLElement | null>, total: number) {
   const [fit, setFit] = React.useState(total);
   React.useLayoutEffect(() => {
     const el = containerRef.current; const m = measureRef.current; if (!el || !m) return;
+    let vivo = true;
     const calc = () => {
+      if (!vivo) return;
       const avail = el.clientWidth; const ws = Array.from(m.children).map((c) => (c as HTMLElement).offsetWidth + 2);
       let sum = 0; let n = 0;
       for (let i = 0; i < ws.length; i++) { const needMore = i < ws.length - 1 ? MORE_W : 0; if (sum + ws[i]! + needMore <= avail) { sum += ws[i]!; n = i + 1; } else break; }
@@ -38,7 +59,12 @@ function useFitCount(containerRef: React.RefObject<HTMLElement | null>, measureR
       if (n < ws.length) { while (n > 0 && sum + MORE_W > avail) { n--; sum -= ws[n]!; } }
       setFit(n);
     };
-    calc(); const ro = new ResizeObserver(calc); ro.observe(el); return () => ro.disconnect();
+    calc();
+    const ro = new ResizeObserver(calc); ro.observe(el);
+    const fontes = typeof document !== "undefined" ? document.fonts : undefined;
+    void fontes?.ready.then(calc).catch(() => { /* fonte que não carrega mantém a medida da reserva, que é a que está na tela */ });
+    fontes?.addEventListener("loadingdone", calc);
+    return () => { vivo = false; ro.disconnect(); fontes?.removeEventListener("loadingdone", calc); };
   }, [containerRef, measureRef, total]);
   return fit;
 }
@@ -110,13 +136,24 @@ export function TopNavigation({ onFocusSearch }: { onFocusSearch?: React.Mutable
   return <>
     <header ref={headerRef} className="mg-topnav no-print" onMouseLeave={scheduleClose} onMouseEnter={cancelClose}>
       <Link href="/" className="mg-topnav__brand" onClick={(e) => { e.preventDefault(); go("/"); }} aria-label="Início"><span className="mg-topnav__logo"><Hexagon className="h-3.5 w-3.5" strokeWidth={2.4} /></span><span className="mg-topnav__brand-name">Agro ERP</span></Link>
-      <nav ref={navRef} className="mg-topnav__modules" aria-label="Menu principal">
+      <nav ref={navRef} className="mg-topnav__modules" aria-label="Menu principal" data-testid="nav-barra">
         {shown.map(moduleButton)}
         {overflow.length > 0 && <div className="relative flex">
           <button type="button" className={cn("mg-topnav__module", (moreOpen || overflow.some((m) => m.id === open)) && "is-open")} aria-haspopup="true" aria-expanded={moreOpen} aria-label={`Mais módulos (${overflow.length})`} data-testid="nav-more" onClick={() => { setMoreOpen((o) => !o); setOpen(null); }}><MoreHorizontal className="h-3.5 w-3.5" /><span>Mais</span></button>
-          {moreOpen && <div className="mg-topnav__more" role="menu" aria-label="Mais módulos">{overflow.map((m) => <button key={m.id} type="button" role="menuitem" data-testid="nav-module" data-module-btn={m.id} className={cn("mg-topnav__more-item", currentModule === m.id && "is-current")} onClick={(e) => openFor(m.id, e.currentTarget)} onMouseEnter={(e) => openFor(m.id, e.currentTarget)}>{m.label}<ChevronDown className="h-3 w-3 opacity-60" aria-hidden /></button>)}</div>}
+          {/*
+            O ITEM DO OVERFLOW ABRE POR CLIQUE E POR TECLADO — NÃO POR HOVER, e isso é deliberado.
+            Ele tinha `onMouseEnter={openFor}`, e `openFor` faz `setMoreOpen(false)`: passar o ponteiro
+            por cima DESMONTAVA o próprio item que estava sob o ponteiro. Para quem usa, o que se
+            estava apontando some; para quem automatiza, a ação morre em "element was detached from
+            the DOM". Medido: com hover, 3 de 5 execuções reprovavam nesse exato ponto.
+            Os módulos VISÍVEIS continuam abrindo por hover, sem mudança nenhuma — lá o botão não
+            desmonta, porque não é ele que o `openFor` fecha. E um menu aberto por clique responder a
+            clique é o que a própria lista já pedia: quem abriu o "Mais" clicando não espera que
+            passar o mouse por cima troque a tela debaixo dele.
+          */}
+          {moreOpen && <div className="mg-topnav__more" role="menu" aria-label="Mais módulos" data-testid="nav-mais-menu">{overflow.map((m) => <button key={m.id} type="button" role="menuitem" data-testid="nav-module" data-module-btn={m.id} className={cn("mg-topnav__more-item", currentModule === m.id && "is-current")} onClick={(e) => openFor(m.id, e.currentTarget)}>{m.label}<ChevronDown className="h-3 w-3 opacity-60" aria-hidden /></button>)}</div>}
         </div>}
-        <div ref={measureRef} className="mg-topnav__measure" aria-hidden="true">{modules.map((m) => <span key={m.id} className="mg-topnav__module"><span>{m.label}</span><ChevronDown className="mg-topnav__caret" /></span>)}</div>
+        <div ref={measureRef} className="mg-topnav__measure" aria-hidden="true" data-testid="nav-medida">{modules.map((m) => <span key={m.id} className="mg-topnav__module"><span>{m.label}</span><ChevronDown className="mg-topnav__caret" /></span>)}</div>
       </nav>
       <div className="mg-topnav__spacer" />
       <div className="mg-topnav__tools">
