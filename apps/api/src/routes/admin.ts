@@ -10,13 +10,24 @@ import { pageQuerySchema } from "../lib/pagination.js";
 import { escopoEmpresaSchema, gravarEscoposAuditado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 import { recusarEscopoAchatado } from "../lib/contrato-legado.js";
-import { CHAVE_ORIGEM_SEED } from "@agro/db";
+import { CHAVE_ORIGEM_SEED, withTx } from "@agro/db";
+import { DomainError } from "@agro/shared";
 
 /**
  * Acesso por empresa pedido na requisição — contrato ÚNICO desde PRE-BASE2-05B: `escopos_empresas`.
  * `null` = não mexer no que já existe.
  */
 const escoposPedidos = (d: { escopos_empresas?: EscopoEmpresaEntrada[] }): EscopoEmpresaEntrada[] | null => d.escopos_empresas ?? null;
+
+/**
+ * Quantos vínculos (ativos ou não) o usuário tem em OUTRAS organizações. A RLS de `organization_members`
+ * só mostra, dentro do contexto de uma organização, os vínculos DELA; a leitura é feita numa transação
+ * própria sob a identidade do usuário alvo (`app.user_id`), o mesmo caminho de `/auth/me`, sem migration.
+ */
+async function vinculosForaDaOrganizacao(app: FastifyInstance, userId: string, orgId: string): Promise<number> {
+  const r = await withTx(app.db, { orgId: null, userId }, (tx) => tx.query<{ n: number }>("select count(*)::int n from erp.organization_members where user_id=$1 and organization_id<>$2", [userId, orgId]));
+  return r.rows[0]?.n ?? 0;
+}
 
 export default async function adminRoutes(app: FastifyInstance) {
   // ---------- Catálogo de permissões (árvore para a tela de perfis) ----------
@@ -101,8 +112,19 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.post("/admin/members", async (req, reply) => reply.status(201).send(await runService(app, req, "users.create", async (ctx) => {
     recusarEscopoAchatado(req.body);
     const d = memberSchema.parse(req.body);
+    // `erp.users` é GLOBAL (um usuário, várias organizações). Cadastrar NUNCA altera usuário que já existe:
+    // o antigo "on conflict do update" deixava o admin de QUALQUER organização trocar nome e senha de um
+    // usuário de outra e entrar como ele (GO-LIVE-01 R1). Sem convite nem seletor de organização, vincular
+    // usuário existente não é suportado — e a recusa não diz a qual organização o e-mail pertence.
+    const email = d.email.toLowerCase();
+    const existente = await ctx.tx.query<{ id: string }>("select id from erp.users where email=$1", [email]);
+    if (existente.rows[0]) {
+      const membro = await ctx.tx.query("select 1 from erp.organization_members where organization_id=$1 and user_id=$2", [ctx.orgId, existente.rows[0].id]);
+      if (membro.rowCount) throw new DomainError("CONFLICT", "Este usuário já é membro desta organização. Use a edição do usuário.");
+      throw new DomainError("CONFLICT", "Já existe um usuário com este e-mail. Vincular um usuário existente não é suportado; use outro e-mail.");
+    }
     const hash = d.password ? await bcrypt.hash(d.password, 10) : null;
-    const u = await ctx.tx.query<{ id: string }>("insert into erp.users(email,name,phone,password_hash) values ($1,$2,$3,$4) on conflict (email) do update set name=excluded.name, phone=coalesce(excluded.phone, erp.users.phone), password_hash=coalesce(excluded.password_hash, erp.users.password_hash) returning id", [d.email.toLowerCase(), d.name, d.phone ?? null, hash]);
+    const u = await ctx.tx.query<{ id: string }>("insert into erp.users(email,name,phone,password_hash) values ($1,$2,$3,$4) returning id", [email, d.name, d.phone ?? null, hash]);
     const m = await ctx.tx.query<{ id: string }>("insert into erp.organization_members(organization_id,user_id,role_id,is_active) values ($1,$2,$3,$4) on conflict (organization_id,user_id) do update set role_id=excluded.role_id, is_active=excluded.is_active returning id", [ctx.orgId, u.rows[0]!.id, d.role_id ?? null, d.is_active]);
     // Corpo SEM `escopos_empresas` = nenhum módulo configurado = NENHUMA empresa (fail-closed). Um fallback
     // anterior traduzia a ausência em modo `todas` nos onze módulos — criava o membro enxergando a
@@ -119,6 +141,18 @@ export default async function adminRoutes(app: FastifyInstance) {
     const { userId } = req.params as { userId: string }; const d = memberSchema.partial().parse(req.body);
     const m = await ctx.tx.query<{ id: string; is_owner: boolean }>("select id, is_owner from erp.organization_members where organization_id=$1 and user_id=$2", [ctx.orgId, userId]);
     if (!m.rows[0]) throw notFound("Usuário");
+    // O e-mail é a identidade de login e não é editável: aceitar e ignorar seria configuração que parece
+    // funcionar (GO-LIVE-01 R1-2). Igual ao atual passa, porque a tela reenvia o objeto inteiro.
+    if (d.email !== undefined) {
+      const atual = (await ctx.tx.query<{ email: string }>("select email from erp.users where id=$1", [userId])).rows[0]?.email;
+      if (d.email.toLowerCase() !== atual?.toLowerCase()) throw validation("O e-mail do usuário não pode ser alterado.");
+    }
+    // Nome, telefone e senha são do USUÁRIO global. Só a organização que é a única do usuário pode alterá-los;
+    // senão o admin de uma troca a senha que vale nas outras (GO-LIVE-01 R1-1). O vínculo desta organização
+    // (perfil, ativo, escopos, chefes) continua editável abaixo.
+    if ((d.name || d.phone !== undefined || d.password) && await vinculosForaDaOrganizacao(app, userId, ctx.orgId) > 0) {
+      throw new DomainError("CONFLICT", "Nome, telefone e senha deste usuário não podem ser alterados por esta organização, porque ele também pertence a outra.");
+    }
     if (d.name || d.phone !== undefined || d.password) await ctx.tx.query("update erp.users set name=coalesce($2,name), phone=coalesce($3,phone), password_hash=coalesce($4,password_hash) where id=$1", [userId, d.name ?? null, d.phone ?? null, d.password ? await bcrypt.hash(d.password, 10) : null]);
     if (d.role_id !== undefined || d.is_active !== undefined) {
       if (m.rows[0].is_owner && d.is_active === false) throw validation("Proprietário não pode ser desativado");
