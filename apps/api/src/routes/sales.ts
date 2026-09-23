@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, type SalesKind } from "@agro/domain";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err, denied } from "../lib/errors.js";
@@ -308,6 +308,53 @@ async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docS
   return { id, ...totals };
 }
 /**
+ * A POLÍTICA DE ESTOQUE E FINANCEIRO DESTA VENDA — lida da VERSÃO CONGELADA, e só dela (TOP-CONFIG-04A).
+ *
+ * A autoridade é `sales_documents.tipo_operacao_versao_id` → a linha EXATA de `erp.tipos_operacao_versoes`.
+ * Nunca `tipos_operacao.versao_atual`: a TOP pode ter sido editada depois do lançamento, e a venda antiga
+ * executaria a regra de hoje sobre um documento emitido sob a de ontem. Por isso a consulta não toca o
+ * ponteiro corrente do pai — ela lê do pai só a FAMÍLIA, que é imutável.
+ *
+ * SEM FILTRO DE ESTADO NO PAI (ativo, excluído): desativar ou excluir a TOP depois do lançamento não troca
+ * a versão que o documento cita, e o documento continua sendo confirmado pela regra que ele capturou —
+ * o mesmo contrato que `politicaDeDestinos` segue para a conversão. SEM LOCK na versão: ela é imutável
+ * (a 0020 revogou `update`/`delete` dela do papel da aplicação), e `for share` exigiria justamente o
+ * privilégio revogado.
+ *
+ * UMA consulta por confirmação, nunca por item: a política é resolvida uma vez e vale para o documento.
+ *
+ * O GATE (`execucaoConfiguradaHabilitada`) CHEGA COMO PARÂMETRO OBRIGATÓRIO de quem monta a rota, lido de
+ * `app.config`. Um valor padrão aqui deixaria um chamador esquecido executar em silêncio o caminho errado.
+ */
+async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execucaoConfiguradaHabilitada: boolean): Promise<PoliticaEfetivaDaVenda> {
+  let versaoCongelada: { codigoBase: string; configuracao: unknown } | null = null;
+  if (versaoId) {
+    const r = await ctx.tx.query<{ configuracao: unknown; codigo_base: string }>(
+      `select v.configuracao, t.codigo_base
+         from erp.tipos_operacao_versoes v
+         join erp.tipos_operacao t on t.id = v.tipo_operacao_id and t.organization_id = v.organization_id
+        where v.id = $1 and v.organization_id = $2`,
+      [versaoId, ctx.orgId]);
+    const linha = r.rows[0];
+    // A FK composta da 0021 e a RLS do mesmo tenant tornam este caminho inalcançável enquanto o documento
+    // for visível. Alcançado, é corrupção — e decidir "então é legado" seria exatamente o fallback proibido.
+    if (!linha) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este documento");
+    versaoCongelada = { codigoBase: linha.codigo_base, configuracao: linha.configuracao };
+  }
+  const r = resolverPoliticaEfetivaDaVenda({ versaoCongelada, execucaoConfiguradaHabilitada });
+  if (r.ok) return r.politica;
+  // FAIL-CLOSED, SEM EFEITO: esta recusa acontece antes do período, do estoque e do financeiro. A mensagem
+  // não carrega identificador de TOP nem de versão — só o que o usuário pode fazer a respeito.
+  const mensagem = r.motivo === "execucao_desligada"
+    ? "A operação desta venda usa execução configurada, que ainda não está habilitada neste ambiente. A venda não foi confirmada."
+    : r.motivo === "configuracao_ilegivel"
+      ? "A configuração da operação desta venda está num formato que este servidor não executa. A venda não foi confirmada."
+      : "A configuração da operação desta venda pede um efeito que esta versão do produto não executa. A venda não foi confirmada.";
+  throw new DomainError("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL", mensagem,
+    { motivo: r.motivo, recusas: r.recusas.map(({ motivo, caminho, mensagem: m }) => ({ motivo, caminho, mensagem: m })) });
+}
+
+/**
  * CONFIRMAÇÃO DE VENDA — a linha da venda é o COORDENADOR da operação, e por isso é travada primeiro.
  *
  * Confirmar não é gravar um campo: é postar saída de estoque de cada item, gerar as contas a receber e
@@ -323,25 +370,92 @@ async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docS
  *
  * A trava vale para a corrida com o CANCELAMENTO pelo mesmo motivo e na mesma linha: quem chegar
  * segundo decide sobre o estado que o primeiro deixou, nunca sobre o que leu antes dele.
+ *
+ * ┌─ QUEM DECIDE O EFEITO (TOP-CONFIG-04A) ────────────────────────────────────────────────────────────┐
+ * │ A política é resolvida UMA vez, da versão congelada, ANTES de qualquer efeito. Cada efeito tem dois │
+ * │ caminhos e só dois: LEGADO executa exatamente o código de antes (mesmas consultas, mesma ordem,    │
+ * │ mesmo fallback de vencimento); CONFIGURADA executa a MESMA primitiva (`postStock`, `createTitles`) │
+ * │ com os mesmos identificadores de origem — é isso que mantém cancelamento, relatórios e conciliação │
+ * │ funcionando sem saber de onde veio a decisão — ou não executa nada, quando a versão diz "nenhum".  │
+ * │ As exigências da versão (armazém, forma de pagamento, vencimento) são conferidas TODAS antes do    │
+ * │ primeiro movimento: recusar no meio deixaria a decisão de rollback nas mãos da transação, e a regra │
+ * │ desta fatia é que configuração não cumprida não produz efeito nenhum.                              │
+ * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
-async function confirmSale(ctx: ServiceCtx, id: string) {
-  const d = await getDoc(ctx, id, "sale", { lock: true }) as Record<string, unknown> & { kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; total: string; code: string; installment_plan: Record<string, unknown>; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
+async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
+  const d = await getDoc(ctx, id, "sale", { lock: true }) as Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
   // A variante já foi amarrada no carregamento (`getDoc(..., "sale")`): orçamento e pedido passados aqui
   // respondem 404, como qualquer UUID que a rota de vendas não serve. A conferência antiga
   // (`d.kind !== "sale"` → 422) distinguia "existe na variante vizinha" de "não existe" — diferença que a
   // superfície de recusa não pode expor.
   if (d.status === "confirmed" || d.status === "invoiced") throw err("ALREADY_CONFIRMED", "Venda já confirmada"); if (d.status === "cancelled") throw err("ALREADY_CANCELLED", "Venda cancelada");
+  const politica = await politicaDaVenda(ctx, d.tipo_operacao_versao_id, execucaoConfiguradaHabilitada);
+  const lerPlano = () => d.installment_plan && (d.installment_plan as { installments?: number }).installments ? installmentPlanSchema.parse(d.installment_plan) : null;
+
+  // AS EXIGÊNCIAS DA VERSÃO CONGELADA — todas conferidas, todas juntas, antes de qualquer efeito.
+  const exigencias: { caminho: string; mensagem: string }[] = [];
+  if (politica.estoque.autoridade === "configurada" && politica.estoque.efeito === "saida" && politica.estoque.exigeArmazem && d.items.some((it) => !it.warehouse_id)) {
+    exigencias.push({ caminho: "estoque.exigeArmazem", mensagem: "Informe o armazém de todos os itens" });
+  }
+  if (politica.financeiro.autoridade === "configurada" && politica.financeiro.efeito === "receber") {
+    if (politica.financeiro.exigeFormaPagamento && !d.payment_method_id) exigencias.push({ caminho: "financeiro.exigeFormaPagamento", mensagem: "Informe a forma de pagamento" });
+    if (politica.financeiro.exigeVencimento && !(lerPlano()?.first_due_date ?? d.due_date)) exigencias.push({ caminho: "financeiro.exigeVencimento", mensagem: "Informe o vencimento" });
+  }
+  if (exigencias.length) {
+    throw new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA",
+      `A operação desta venda exige dados que o documento não tem: ${exigencias.map((e) => e.mensagem.toLowerCase()).join("; ")}.`,
+      { exigencias });
+  }
+
   await assertPeriodOpen(ctx.tx, ctx.orgId, d.empresa_id, d.document_date);
-  for (const it of d.items) if (it.warehouse_id) await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "sale", direction: -1, quantity: it.quantity, sourceType: "sales_documents", sourceId: id, date: d.shipping_date ?? d.document_date, note: `Venda ${d.code}` });
-  // Receita: categoria padrão de venda de produtos (1ª analítica de receita) e centro de custo padrão da fazenda
-  const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='income' and kind='analytic' and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-  const cc = (await ctx.tx.query<{ id: string }>("select cc.id from erp.cost_centers cc where cc.organization_id=$1 and cc.kind='analytic' and cc.deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-  if (!cat || !cc) throw validation("Cadastre uma categoria financeira de receita e um centro de custo analítico");
-  const plan = d.installment_plan && (d.installment_plan as { installments?: number }).installments ? installmentPlanSchema.parse(d.installment_plan) : null;
-  const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "receivable", number: `VND-${d.code}`, personId: d.client_id, amount: d.total, emissionDate: d.document_date, dueDate: plan?.first_due_date ?? d.due_date ?? d.document_date, note: `Venda ${d.code}`, isDeductible: Boolean((d.installment_plan as { is_deductible?: boolean }).is_deductible), apportionment: [{ financialCategoryId: cat.id, costCenterId: cc.id, percentage: "100" }], sourceType: "sales_documents", sourceId: id, plan });
-  await ctx.tx.query("update erp.sales_documents set status='confirmed', updated_at=now() where id=$1", [id]);
-  await audit(ctx.tx, ctx, "sales_documents", id, "confirm", { titles: t.ids });
-  return { id, status: "confirmed", title_ids: t.ids };
+
+  // ESTOQUE. Legado e "saída" configurada chamam a MESMA primitiva com os MESMOS identificadores; "nenhum"
+  // não chama nada. O item sem armazém continua fora da baixa nos dois caminhos que baixam — com
+  // `exigeArmazem` ele já foi recusado acima.
+  const movimentos: string[] = [];
+  const baixaEstoque = politica.estoque.autoridade === "legado" || politica.estoque.efeito === "saida";
+  if (baixaEstoque) {
+    for (const it of d.items) if (it.warehouse_id) movimentos.push((await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "sale", direction: -1, quantity: it.quantity, sourceType: "sales_documents", sourceId: id, date: d.shipping_date ?? d.document_date, note: `Venda ${d.code}` })).id);
+  }
+
+  // FINANCEIRO. O mesmo desenho: legado e "a receber" configurado geram os títulos pela MESMA porta
+  // (`createTitles`), com a mesma categoria, centro, parcelamento, parceiro e origem; "nenhum" não gera
+  // título e também não exige categoria nem centro — exigir cadastro para um efeito que não acontece seria
+  // recusar a venda por um motivo que não existe.
+  let titleIds: string[] = [];
+  const geraTitulos = politica.financeiro.autoridade === "legado" || politica.financeiro.efeito === "receber";
+  if (geraTitulos) {
+    // Receita: categoria padrão de venda de produtos (1ª analítica de receita) e centro de custo padrão da fazenda
+    const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='income' and kind='analytic' and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
+    const cc = (await ctx.tx.query<{ id: string }>("select cc.id from erp.cost_centers cc where cc.organization_id=$1 and cc.kind='analytic' and cc.deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
+    if (!cat || !cc) throw validation("Cadastre uma categoria financeira de receita e um centro de custo analítico");
+    const plan = lerPlano();
+    // O vencimento do legado cai na data do documento quando não há outro; sob `exigeVencimento` configurado
+    // esse recuo não existe — a falta já foi recusada acima, antes do primeiro efeito.
+    const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "receivable", number: `VND-${d.code}`, personId: d.client_id, amount: d.total, emissionDate: d.document_date, dueDate: plan?.first_due_date ?? d.due_date ?? d.document_date, note: `Venda ${d.code}`, isDeductible: Boolean((d.installment_plan as { is_deductible?: boolean }).is_deductible), apportionment: [{ financialCategoryId: cat.id, costCenterId: cc.id, percentage: "100" }], sourceType: "sales_documents", sourceId: id, plan });
+    titleIds = t.ids;
+  }
+
+  // A MARCA DE QUE ESTA TRANSAÇÃO EXECUTOU A POLÍTICA CONFIGURADA. O gatilho da migration 0023 recusa a
+  // confirmação de uma venda cuja versão congelada declara execução configurada sem esta marca — que é
+  // como um binário anterior a esta fatia (rollback, instância antiga no pool) deixa de confirmá-la pelo
+  // legado. `true` no terceiro argumento: vale só até o fim desta transação. O valor é o id CANÔNICO da
+  // linha travada (`d.id`), nunca o texto da URL: o Postgres aceita o UUID em maiúsculas e acha a venda, mas
+  // o gatilho compara a marca com `NEW.id::text`, e a guarda recusaria a própria confirmação legítima.
+  if (politica.estoque.autoridade === "configurada" || politica.financeiro.autoridade === "configurada") {
+    await ctx.tx.query("select set_config('app.venda_execucao_configurada', $1, true)", [d.id]);
+  }
+  // ROW COUNT SOB RLS, e a transição conferida no próprio `where`: sob a trava acima só `open`/`approved`
+  // chegam aqui, e zero linha sem conferência seria sucesso sem efeito.
+  const u = await ctx.tx.query("update erp.sales_documents set status='confirmed', updated_at=now() where id=$1 and organization_id=$2 and status not in ('confirmed','invoiced','cancelled')", [id, ctx.orgId]);
+  if (u.rowCount !== 1) throw notFound("Documento");
+  // A EVIDÊNCIA DO DOCUMENTO: qual versão valeu, qual autoridade decidiu cada efeito, e o que foi de fato
+  // materializado. `titles` continua com o nome de sempre — é o que leitores anteriores da trilha conhecem.
+  await audit(ctx.tx, ctx, "sales_documents", id, "confirm", {
+    titles: titleIds, movimentos, tipoOperacaoVersaoId: d.tipo_operacao_versao_id,
+    execucao: { origem: politica.origem, ...resumoDaPoliticaDaVenda(politica) }
+  });
+  return { id, status: "confirmed", title_ids: titleIds };
 }
 
 export default async function salesRoutes(app: FastifyInstance) {
@@ -569,16 +683,30 @@ export default async function salesRoutes(app: FastifyInstance) {
         async () => {
       const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string };
       if (cur.status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
+      /**
+       * ESTORNA SÓ O QUE FOI MATERIALIZADO (TOP-CONFIG-04A). Uma venda confirmada pode ter estoque e títulos,
+       * só um dos dois, ou nenhum — conforme a política da versão congelada. O cancelamento NÃO pergunta à
+       * configuração (nem à atual, nem à congelada) o que deveria ter acontecido: ele lê o que EXISTE ligado
+       * a esta venda. `reverseStock` estorna exatamente os movimentos de origem deste documento (zero → nada),
+       * e os títulos são os da mesma origem. Nenhuma compensação de algo que nunca existiu; nenhuma
+       * dependência do gate — cancelar uma venda configurada continua possível com ele desligado.
+       */
+      let evidencia: { estornos: number; titulosCancelados: number } | null = null;
       if (cur.kind === "sale" && cur.status === "confirmed") {
         const titulos = await ctx.tx.query<{ paid_amount: string }>("select paid_amount from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by id for update", [ctx.orgId, id]);
         if (titulos.rows.some((t) => D(t.paid_amount).gt(0))) throw err("CONFLICT", "Títulos com baixa: cancele as baixas antes");
-        await reverseStock(ctx, "sales_documents", id, new Date().toISOString().slice(0, 10));
-        await ctx.tx.query("update erp.financial_titles set status='cancelled' where organization_id=$1 and source_type='sales_documents' and source_id=$2", [ctx.orgId, id]);
+        const estornos = await reverseStock(ctx, "sales_documents", id, new Date().toISOString().slice(0, 10));
+        const tc = await ctx.tx.query("update erp.financial_titles set status='cancelled' where organization_id=$1 and source_type='sales_documents' and source_id=$2 and status <> 'cancelled'", [ctx.orgId, id]);
+        evidencia = { estornos, titulosCancelados: tc.rowCount ?? 0 };
       }
-      await ctx.tx.query("update erp.sales_documents set status='cancelled', updated_at=now() where id=$1", [id]);
+      const u = await ctx.tx.query("update erp.sales_documents set status='cancelled', updated_at=now() where id=$1 and organization_id=$2 and status <> 'cancelled'", [id, ctx.orgId]);
+      // ROW COUNT SOB RLS: zero linha sem conferência seria "cancelado" sem efeito.
+      if (u.rowCount !== 1) throw notFound("Documento");
       // O motivo vai para a auditoria — é o que faz dele um campo do contrato, e não um enfeite do hash.
-      // Ausente, `undefined` mantém `metadata` nulo, exatamente como antes deste hotfix.
-      await audit(ctx.tx, ctx, "sales_documents", id, "cancel", motivo ? { reason: motivo } : undefined);
+      // Ausente, `undefined` mantém `metadata` nulo, exatamente como antes deste hotfix. Na venda confirmada
+      // vai também o que foi estornado: é a evidência de que o cancelamento reverteu o que existia, e só.
+      const metadados = { ...(motivo ? { reason: motivo } : {}), ...(evidencia ?? {}) };
+      await audit(ctx.tx, ctx, "sales_documents", id, "cancel", Object.keys(metadados).length ? metadados : undefined);
       return { id, status: "cancelled" };
         })).result;
     }));
@@ -755,7 +883,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      * recusa explícita, nenhuma execução, nada duplicado — e a web gera chave nova a cada envio, de modo
      * que quem atravessaria a janela é um cliente programático que guarde a própria chave.
      */
-    if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => { const { id } = req.params as { id: string }; await exigirDocumentoVisivel(ctx, id, "sale"); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { action: "confirm_sales_document", sourceId: id, actorId: ctx.user.id }, () => confirmSale(ctx, id))).result; }));
+    if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => { const { id } = req.params as { id: string }; await exigirDocumentoVisivel(ctx, id, "sale"); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { action: "confirm_sales_document", sourceId: id, actorId: ctx.user.id }, () => confirmSale(ctx, id, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED))).result; }));
   }
   // Curva ABC e relatórios de vendas simples
   /**

@@ -16,10 +16,15 @@ export default defineConfig({
   reporter: process.env.CI ? [["list"], ["html", { open: "never" }]] : "list",
   use: { baseURL: `http://127.0.0.1:${WEB_PORT}`, trace: "retain-on-failure", screenshot: "only-on-failure", locale: "pt-BR" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"], launchOptions: process.env.PLAYWRIGHT_CHROMIUM ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM } : {} } }],
+  // TOP_EFFECTS_RUNTIME_V1_ENABLED FIXADO EM "1" (TOP-CONFIG-04A): o editor precisa ATIVAR execução configurada
+  // para os casos W8–W10, e a ativação exige o gate ligado. Fixado aqui, e não herdado do ambiente, para a
+  // suíte medir sempre o mesmo produto. O estado desligado (o padrão de produção) é provado na integração,
+  // e a tela dele por capacidade fabricada (W4). TOPs sem execução configurada — todas as das demais specs —
+  // confirmam pelo legado com o gate ligado ou desligado.
   // Harness e2e: todos os specs batem na mesma API a partir de um único IP; o limite global de produção (300 req/min)
   // estoura em sequências de navegação e derruba o carregamento do contexto ("Não foi possível carregar sua organização").
   webServer: [
-    { command: `npx tsx src/main.ts`, cwd: "../api", port: API_PORT, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { DATABASE_URL: DB, PORT: String(API_PORT), WEB_ORIGIN: `http://127.0.0.1:${WEB_PORT}`, API_LOG_LEVEL: "warn", AUTH_MODE: "local", LOCAL_AUTH_SECRET: "e2e-secret-not-for-prod", NODE_ENV: "test", LOGIN_RATE_LIMIT_MAX: "1000", RATE_LIMIT_MAX: "100000" } },
+    { command: `npx tsx src/main.ts`, cwd: "../api", port: API_PORT, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { DATABASE_URL: DB, PORT: String(API_PORT), WEB_ORIGIN: `http://127.0.0.1:${WEB_PORT}`, API_LOG_LEVEL: "warn", AUTH_MODE: "local", LOCAL_AUTH_SECRET: "e2e-secret-not-for-prod", NODE_ENV: "test", LOGIN_RATE_LIMIT_MAX: "1000", RATE_LIMIT_MAX: "100000", TOP_EFFECTS_RUNTIME_V1_ENABLED: "1" } },
     { command: `npx next start -p ${WEB_PORT}`, port: WEB_PORT, reuseExistingServer: !process.env.CI, timeout: 120_000, env: { NEXT_PUBLIC_API_URL: `http://127.0.0.1:${API_PORT}` } }
   ]
 });

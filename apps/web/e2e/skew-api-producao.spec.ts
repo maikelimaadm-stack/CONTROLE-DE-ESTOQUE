@@ -479,3 +479,107 @@ test("TOP-CONFIG-02 · sobre a API da base, a tela de lançamento não perde a T
   expect(posts, "a tela não dispara POST sozinha, em nenhum dos dois mundos").toEqual([]);
   v.semBloqueio();
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * TOP-CONFIG-04A — A EXECUÇÃO CONFIGURADA, COM O WEB DESTE HEAD SOBRE A API DA BASE
+ *
+ * O web desta PR sabe gravar o formato 2 da configuração (o bloco `execucao`). Contra uma API que não
+ * declara o bloco, ele tem de se comportar como cliente do formato 1: esconder a área de execução, gravar
+ * no formato 1 — e nunca depender de a API "aceitar e ignorar" o formato novo. A prova de que isso importa
+ * é medida no binário real: a API da base RECUSA o formato 2, explicitamente.
+ *
+ * O mundo é MEDIDO na árvore da base (`scripts/lib/execucao-top.mjs`) e cada um cobra a sua prova; nenhum
+ * dos dois ramos só passa.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+function baseDeclaraExecucaoTop(): boolean {
+  const arq = path.resolve(__dirname, "../../..", ".skew-execucao-top.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão da execução configurada ausente (${arq}): rode scripts/skew-execucao-top.mjs antes do skew. `
+      + "Sem ela não há como saber qual ramo provar, e escolher o mais fácil seria certificar o que não se mediu.");
+  }
+  const d = JSON.parse(fs.readFileSync(arq, "utf8")) as { baseSha: string; ocorrencias: number; declara: boolean };
+  expect(d.ocorrencias, "contagem ambígua não decide ramo nenhum — o produtor deveria ter reprovado antes").toBeLessThanOrEqual(1);
+  const declara = d.ocorrencias === 1;
+  expect(declara, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(d.declara);
+  expect(process.env.SKEW_BASE_TEM_EXECUCAO_TOP ?? (declara ? "1" : "0"),
+    "SKEW_BASE_TEM_EXECUCAO_TOP não bate com a decisão recalculada — alguém fixou a variável por fora").toBe(declara ? "1" : "0");
+  console.log(`[skew] TOP-CONFIG-04A · base ${d.baseSha} ${declara ? "DECLARA" : "NÃO declara"} a execução configurada (ocorrências=${d.ocorrencias})`);
+  return declara;
+}
+
+test("TOP-CONFIG-04A · a execução configurada, medida contra o binário real da base", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const declara = baseDeclaraExecucaoTop();
+
+  const cap = await page.request.get(`${API}/api/admin/tipos-operacao/capabilities`, { headers: cabecalhos });
+  expect(cap.status(), "premissa: a base serve as capacidades da administração de TOP").toBe(200);
+  const capacidades = await cap.json() as { contractVersion?: number; execucao?: { suportado?: boolean; versaoSchema?: number } };
+  expect(capacidades.contractVersion, "o contrato que o web lê continua o 1, nos dois mundos").toBe(1);
+
+  // Uma TOP criada PELA API DA BASE — o que ela grava é a verdade daquele binário.
+  const codigo = `SK${Date.now().toString(36).toUpperCase()}`;
+  const criada = await page.request.post(`${API}/api/admin/tipos-operacao`, { headers: cabecalhos,
+    data: { codigo, codigoBase: "vendas.venda", nome: `Skew execução ${codigo}` } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const id = (await criada.json() as { id: string }).id;
+  const detalhe = async () => (await (await page.request.get(`${API}/api/admin/tipos-operacao/${id}`, { headers: cabecalhos })).json()) as
+    { versao: number; revisao: number; configuracaoSchema: number; configuracao: { valor: Record<string, unknown> } };
+
+  // A MESMA TELA, nos dois mundos: o editor da TOP, aberto pela busca.
+  const abrirEditor = async () => {
+    await page.goto("/configuracoes?tab=operacoes&sub=tipos-operacao");
+    await page.getByLabel("Buscar tipo de operação").fill(codigo);
+    const linha = page.getByRole("row").filter({ hasText: codigo });
+    await expect(linha).toHaveCount(1);
+    await linha.getByRole("button", { name: "Mais opções" }).click();
+    await page.getByRole("menuitem", { name: "Editar" }).click();
+    const forma = page.getByTestId("form-tipo-operacao");
+    await expect(forma).toBeVisible();
+    await forma.getByTestId("top-aba-execucao").click();
+    return forma;
+  };
+
+  if (!declara) {
+    // MUNDO LEGADO. A base não conhece o formato 2: não o declara, grava o 1 e RECUSA o 2 com o código de
+    // skew — o que prova que o web não pode depender de "aceitar e ignorar".
+    expect(capacidades.execucao, "a base não declara o bloco `execucao`").toBeUndefined();
+    const d = await detalhe();
+    expect(d.configuracaoSchema, "a base grava o formato 1").toBe(1);
+    const formato2 = { ...d.configuracao.valor, versaoSchema: 2, execucao: { estoque: "legado", financeiro: "legado" } };
+    const recusa = await page.request.put(`${API}/api/admin/tipos-operacao/${id}`, { headers: cabecalhos, data: { configuracao: formato2, revisao: d.revisao } });
+    expect(recusa.status(), "a base RECUSA o formato 2 — explicitamente").toBe(422);
+    expect(((await recusa.json()) as { error: { code: string } }).error.code).toBe("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO");
+
+    // O web deste HEAD, sobre essa base: a área diz que o servidor não oferece execução, e a gravação sai
+    // no formato 1 — sem `execucao` no corpo.
+    const forma = await abrirEditor();
+    await expect(forma.getByTestId("top-execucao-nao-suportado"), "a tela diz que este servidor não oferece execução").toBeVisible();
+    await expect(forma.getByTestId("top-campo-execucao-estoque"), "e nenhum seletor de execução é oferecido").toHaveCount(0);
+    const corpos: unknown[] = [];
+    page.on("request", (r) => { if (r.method() === "PUT" && r.url().includes(`/api/admin/tipos-operacao/${id}`)) corpos.push(r.postDataJSON()); });
+    await forma.getByTestId("top-aba-geral").click();
+    await forma.getByTestId("top-campo-geral-observacao").selectOption("true");
+    const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes(`/api/admin/tipos-operacao/${id}`));
+    await forma.getByTestId("top-salvar").click();
+    expect((await resposta).status(), "a base aceita o que o web enviou").toBe(200);
+    expect(corpos, "uma gravação").toHaveLength(1);
+    const enviada = (corpos[0] as { configuracao: Record<string, unknown> }).configuracao;
+    expect(enviada.versaoSchema, "o web gravou no formato que a base conhece").toBe(1);
+    expect("execucao" in enviada, "e sem o bloco que ela recusaria").toBe(false);
+    const depois = await detalhe();
+    expect([depois.versao, depois.configuracaoSchema], "a base criou a versão 2, no formato 1").toEqual([d.versao + 1, 1]);
+    v.semBloqueio();
+    return;
+  }
+
+  // MUNDO ATUAL. A base declara o bloco; o web o reconhece e mostra a área — não a trata como servidor antigo.
+  expect(capacidades.execucao, "a árvore da base declara o bloco, então o binário tem de servi-lo").toMatchObject({ suportado: true, versaoSchema: 2 });
+  const forma = await abrirEditor();
+  await expect(forma.getByTestId("top-execucao"), "a área de execução monta contra a base").toBeVisible();
+  await expect(forma.getByTestId("top-execucao-nao-suportado"), "e a base não é tratada como servidor antigo").toHaveCount(0);
+  v.semBloqueio();
+});

@@ -57,7 +57,22 @@ export const ErrorCodes = {
    * única de recusa de TOP. Criar um código próprio para cada uma dessas cinco razões transformaria a
    * resposta num oráculo de quais identificadores existem na organização vizinha.
    */
-  TIPO_OPERACAO_DESTINO_INVALIDO: "TIPO_OPERACAO_DESTINO_INVALIDO"
+  TIPO_OPERACAO_DESTINO_INVALIDO: "TIPO_OPERACAO_DESTINO_INVALIDO",
+  /**
+   * Execução configurada da TOP (TOP-CONFIG-04A): a versão declara que um efeito obedece à configuração, e
+   * ESTA instância não pode executá-lo agora — o gate operacional está desligado, ou a versão congelada
+   * está fora do que este binário sabe executar. É estado do SERVIDOR (implantação), não erro de
+   * digitação: por isso tem código próprio, e não `..._CONFIGURACAO_INVALIDA`. A resposta é sempre recusa
+   * sem efeito nenhum — nunca o comportamento legado no lugar do configurado.
+   */
+  TIPO_OPERACAO_EXECUCAO_INDISPONIVEL: "TIPO_OPERACAO_EXECUCAO_INDISPONIVEL",
+  /**
+   * A versão congelada da venda EXIGE um dado (armazém em todos os itens, forma de pagamento, vencimento)
+   * e o documento não o tem. Código próprio, e não `VALIDATION_ERROR`, porque a correção é outra: o
+   * usuário completa o DOCUMENTO para cumprir a regra da operação, e a tela precisa saber qual exigência
+   * faltou (`details.exigencias`) sem interpretar texto.
+   */
+  TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA: "TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -98,7 +113,11 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   // 422 nos dois: contrato de entrada não canônico é RECUSADO, nunca traduzido nem ignorado.
   TIPO_OPERACAO_CONFIGURACAO_INVALIDA: 422,
   TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO: 422,
-  TIPO_OPERACAO_DESTINO_INVALIDO: 422
+  TIPO_OPERACAO_DESTINO_INVALIDO: 422,
+  // 409: o pedido é válido; é o estado do servidor que não permite executá-lo agora.
+  TIPO_OPERACAO_EXECUCAO_INDISPONIVEL: 409,
+  // 422: falta um dado no documento que a regra congelada da operação exige.
+  TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA: 422
 };
 
 export class DomainError extends Error {

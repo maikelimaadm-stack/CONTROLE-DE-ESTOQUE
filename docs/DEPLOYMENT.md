@@ -11,7 +11,7 @@
 - Serviço a partir do repositório; configuração definida no próprio serviço (sem `railway.json` na raiz, pois ele valeria para todos os serviços do repositório): Dockerfile `apps/api/Dockerfile`, start `node dist/main.js`, health `/health`, pre-deploy `node dist/migrate.js` (aplica migrations pendentes).
 - **Pre-deploy sem teto de tempo.** O campo *Pre-Deploy Timeout* do serviço está **vazio** (`preDeployTimeoutSeconds = null`, lido em 15/09/2026 pela API do Railway, no `serviceInstance` do serviço `api` em `production`). Pela documentação do Railway, vazio significa **sem limite**: um pre-deploy que trave não falha o deploy — ele o segura. O `healthcheckTimeout` de 120 s não cobre essa janela, porque só começa a contar depois que o pre-deploy termina. O único teto que existe hoje é do lado do banco (`statement_timeout` de 120 s; `lock_timeout` = 0), e ele só alcança o que está DENTRO de um enunciado SQL — DNS, handshake, aquisição de conexão do pool, `seedPermissions` e travamento de código ficam sem teto algum. Relevante para toda migration longa, e especialmente para a 05C-1, onde deixou de ser observação: como o merge em `main` dispara deploy automático, **enquanto este campo estiver vazio a 05C-1 não é liberada para merge** (`OPERATIONAL MERGE BLOCKER`; enunciado, saída e onde o valor medido será registrado em `docs/PRE-BASE2-05C-1-PREFLIGHT.md`, U4).
 - Região: `iad` (US East, Virgínia), a mais próxima disponível de São Paulo (o banco Supabase fica em sa-east-1); em `sfo` cada listagem levava ~3,5 s.
-- Variáveis: `DATABASE_URL` (pooler, usuário `erp_app`), `MIGRATE_DATABASE_URL` (pooler, usuário `erp_migrator`), `MIGRATIONS_DIR=/app/supabase/migrations`, `AUTH_MODE=local` + `LOCAL_AUTH_SECRET` (login por e-mail/senha na tabela `erp.users`; `AUTH_MODE=supabase` + `SUPABASE_JWT_SECRET` fica como evolução, pois o web ainda não usa Supabase Auth), `SUPABASE_URL`, `WEB_ORIGIN=https://<app>.vercel.app`, `PORT=3333`, `API_LOG_LEVEL=info`, `RATE_LIMIT_MAX`.
+- Variáveis: `DATABASE_URL` (pooler, usuário `erp_app`), `MIGRATE_DATABASE_URL` (pooler, usuário `erp_migrator`), `MIGRATIONS_DIR=/app/supabase/migrations`, `AUTH_MODE=local` + `LOCAL_AUTH_SECRET` (login por e-mail/senha na tabela `erp.users`; `AUTH_MODE=supabase` + `SUPABASE_JWT_SECRET` fica como evolução, pois o web ainda não usa Supabase Auth), `SUPABASE_URL`, `WEB_ORIGIN=https://<app>.vercel.app`, `PORT=3333`, `API_LOG_LEVEL=info`, `RATE_LIMIT_MAX`, `TOP_EFFECTS_RUNTIME_V1_ENABLED` (gate da execução configurada da TOP: ausente ou `0` = desligado, `1` = ligado; qualquer outro valor derruba o startup. Ligá-lo é a fase 2 da seção TOP-CONFIG-04A abaixo, e só no serviço da API — o web não tem par).
 - Seed inicial: definir uma única vez `SEED_ON_DEPLOY=1`, `ORG_NAME`, `ORG_SLUG`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`; o pre-deploy cria dados de referência + organização + usuário owner; depois voltar `SEED_ON_DEPLOY=0`.
 - O serviço `web` usa `apps/web/Dockerfile`, start `node apps/web/server.js` e health `/login`, também configurados no serviço.
 
@@ -548,6 +548,104 @@ Por que a consulta tem esta forma, e não a óbvia:
 Esta prova é **gate operacional**, não gate de CI: ela mede o banco de produção e por isso NÃO entra em
 `pnpm lint` nem no CI contra banco de teste — um gate que se autoaprova não é gate. Enquanto não for
 executada com a credencial real, a prontidão é `PENDING`.
+
+## TOP-CONFIG-04A — execução configurada da venda, em duas fases
+
+A fatia faz a configuração da TOP (formato 2, bloco `execucao`) decidir o estoque e o financeiro da
+confirmação de VENDA (`docs/TIPO-OPERACAO-CONTRACT.md` §12). O risco que esta seção fecha é um só: **uma
+venda cuja versão declara execução configurada ser confirmada por um binário que não a executa** — ele
+aplicaria o comportamento legado em silêncio. Três travas, em camadas:
+
+- o gate `TOP_EFFECTS_RUNTIME_V1_ENABLED` nasce DESLIGADO: sem ele, nenhuma execução configurada pode ser
+  ativada, e uma venda de versão configurada é RECUSADA na confirmação (nunca confirmada pelo legado);
+- a migration `0023_venda_execucao_configurada_guarda.sql` põe um gatilho em `erp.sales_documents` que
+  recusa, no banco, a confirmação de venda de versão configurada feita por um binário anterior à fatia (a
+  ENTRADA em confirmada ou faturada; faturar uma venda já confirmada não passa pela guarda);
+- a ativação só acontece na fase 2, e só com as **pré-condições da fase 2** cumpridas (lista abaixo,
+  depois da prova entre as fases).
+
+**Janela de indisponibilidade: NÃO precisa.** A 0023 não altera dado nem coluna; enquanto nenhuma versão
+declara execução configurada, o gatilho deixa passar toda confirmação — então a ordem entre banco, API e
+web na fase 1 é livre, e o pre-deploy a aplica como qualquer migration.
+
+| Fase | O que sobe | Estado do sistema | Pode voltar? |
+| --- | --- | --- | --- |
+| **1** | merge → deploy automático, com o gate AUSENTE (desligado) | o formato 2 é lido e gravado com os dois efeitos em `legado`; ativar é recusado; toda venda confirma pelo legado; a área Execução do editor diz que a execução está desligada | sim, para vendas: o binário anterior convive (a 0023 não barra nada enquanto não há versão configurada). As TOPs gravadas no formato 2 ficam só leitura para ele (ver "Reversão por fase") |
+| entre fases | nada sobe | cumprir e registrar, com evidência, as **pré-condições da fase 2** (lista abaixo, depois da prova entre as fases) | — |
+| **2** | o gate `TOP_EFFECTS_RUNTIME_V1_ENABLED=1` no serviço da API, só com TODAS as pré-condições da fase 2 cumpridas — a última é a autorização explícita do Maike (é alteração de configuração de produção) | o administrador pode ativar, por efeito, dentro da matriz; vendas criadas sob versões ativadas executam a política congelada | ver "Reversão por fase" |
+
+**Prova entre as fases (LEITURA, pela conexão operacional; `PENDING` até ser executada com a credencial
+real).** A contagem abaixo não altera nada e publica o denominador junto do numerador — zero versões num
+banco sem TOP nenhuma não provaria coisa alguma:
+
+```sql
+select count(*) as versoes,
+       count(*) filter (where configuracao_schema_version >= 2) as formato_2,
+       count(*) filter (where configuracao_schema_version >= 2
+                         and (configuracao->'execucao'->>'estoque' is distinct from 'legado'
+                           or configuracao->'execucao'->>'financeiro' is distinct from 'legado')) as declaram_execucao_configurada
+  from erp.tipos_operacao_versoes;
+```
+
+Antes da fase 2 o esperado em `declaram_execucao_configurada` é **zero** (o gate desligado recusa a
+ativação). Um número diferente significa escrita por fora da API e PARA a fase 2 até ser explicado.
+`formato_2` não tem valor esperado: ele mede quantas versões um binário anterior deixaria de editar se
+a API fosse revertida (ver "Reversão por fase").
+
+**Pré-condições da fase 2 (todas obrigatórias; qualquer uma `PENDING` mantém o gate DESLIGADO).** Ligar o
+gate é alteração de configuração de produção, e nenhum item abaixo se satisfaz com preview, `localhost`,
+CI ou "deploy verde": cada um é respondido contra a produção real, com evidência que um terceiro possa
+conferir.
+
+1. **A 0023 aplicada em produção** — `0023_venda_execucao_configurada_guarda.sql` no ledger
+   (`public.erp_migrations`) do banco de produção, uma única vez, E o gatilho com a definição da versão
+   mesclada: `pg_get_triggerdef` de `trg_sales_documents_execucao_configurada` contém
+   `OLD.status IS DISTINCT FROM 'confirmed'` (a 0023 foi corrigida na revisão R1, antes de qualquer
+   aplicação compartilhada — o ledger registra só o NOME, e um banco com a versão anterior passaria na
+   checagem por nome). Sem a guarda, uma instância anterior
+   confirmaria pelo legado, em silêncio, a venda que o administrador configurou — e o gate não alcança
+   essa instância.
+2. **Nenhuma instância anterior à fatia atendendo tráfego** — TODA réplica da API responde em `/health` um
+   `build.sha` que contém o merge da fatia, e o web responde o mesmo em `/api/build`. Uma réplica antiga no
+   pool não conhece o gate nem o formato 2.
+3. **A contagem de produção feita em modo LEITURA** — a consulta da "Prova entre as fases", acima, pela
+   conexão operacional e com a credencial real, publicada com o denominador, e
+   `declaram_execucao_configurada` igual a zero.
+4. **O diálogo de confirmação da venda corrigido, em fatia própria, mesclada e implantada** — com o web
+   servindo, em `/api/build`, um commit que contém a correção. O diálogo "Confirmar venda"
+   (`apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx`) afirma hoje "Baixa o estoque dos itens com
+   armazém e gera as contas a receber." Na fase 1 isso é verdade: com o gate desligado nenhuma versão
+   executa configuração, e toda venda que confirma, confirma pelo legado. Na fase 2 deixa de ser: uma venda
+   de versão configurada pode não movimentar estoque, não gerar título ou ser recusada por exigência não
+   atendida (`docs/TIPO-OPERACAO-CONTRACT.md` §12.5), e o diálogo prometeria um efeito que não vai
+   acontecer. A correção é de APRESENTAÇÃO — o servidor continua sendo a autoridade do efeito — e não cabe
+   na TOP-CONFIG-04A, que não muda a tela de venda (W12 de `top-configuracao-editor.spec.ts`). A mesma
+   premissa está na dica da criação da venda (`vendas/[kind]/new/page.tsx`) e no diálogo de cancelamento
+   ("Vendas confirmadas têm estoque e títulos estornados."): a fatia do diálogo os revisa junto, ou declara
+   por que não.
+5. **Autorização explícita do Maike, pedida na hora, para ESTA ação** — autorização dada ao merge ou à
+   fase 1 não vale para a fase 2 (`.claude/rules/security.md` § Produção).
+
+**Reversão por fase.**
+
+- **Fase 1:** reverter o binário não põe venda nenhuma em risco (nenhuma versão declara execução
+  configurada, e o binário anterior não lê a configuração da TOP ao lançar ou confirmar venda). O custo é
+  outro, e é declarado: toda TOP cuja versão atual foi gravada no formato 2 — as criadas na fase 1 e as
+  editadas pelo web novo — fica SÓ LEITURA para o binário anterior. Detalhe e histórico abrem declarando
+  um formato que ele não interpreta; a edição é recusada com 422
+  `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO` ("atualize o servidor antes de editar"). É a recusa
+  que o próprio binário anterior foi escrito para dar (nunca regrava por cima do que não sabe ler), e ela
+  some quando a API volta. A contagem `formato_2` acima diz, antes de reverter, quantas versões ficariam
+  assim. A 0023 fica: ela é inerte sem versão configurada, e migration aplicada é histórico.
+- **Fase 2 — desligar o gate NÃO é voltar ao legado.** Com ele desligado, vendas de versões configuradas
+  passam a ser RECUSADAS na confirmação (`TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`), e a tela da TOP avisa
+  isso. Para uma operação voltar ao comportamento anterior, o caminho é a TOP: editar e pôr o efeito em
+  "Comportamento legado" — isso cria a versão N+1, que vale para documentos NOVOS; documentos já lançados
+  continuam citando a versão que capturaram.
+- **Fase 2 — reverter o binário da API para antes da fatia:** a 0023 faz o binário anterior RECUSAR (422)
+  a confirmação de vendas de versões configuradas, em vez de confirmá-las pelo legado. É seguro no sentido
+  de não mentir, mas deixa essas vendas sem confirmação até o binário voltar; por isso a reversão do
+  binário depois da fase 2 exige, antes, a mesma contagem acima e uma decisão explícita do Maike.
 
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)

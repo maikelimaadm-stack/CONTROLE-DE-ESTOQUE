@@ -17,10 +17,13 @@ PORTAL
   → NOVO LANÇAMENTO
     → ESCOLHER UMA TOP JÁ CADASTRADA
       → DOCUMENTO
-        → O SERVIÇO DE DOMÍNIO EXECUTA, COM AS MESMAS REGRAS DE HOJE
+        → O SERVIÇO DE DOMÍNIO EXECUTA
 ```
 
-A quarta seta é a que não muda. O portal muda por onde se entra; não muda quem decide.
+A quarta seta é a que não muda de DONO: quem executa é sempre o serviço de domínio. O portal muda por onde
+se entra; não muda quem decide. Desde a TOP-CONFIG-04A, na confirmação de `vendas.venda`, o serviço de
+vendas segue a POLÍTICA que a versão congelada do documento declara para estoque e financeiro, quando ela a
+declara (`docs/TIPO-OPERACAO-CONTRACT.md` §12); sem essa declaração, as regras de sempre.
 
 ## 2. Quatro papéis que NÃO se misturam
 
@@ -79,7 +82,9 @@ organização distinga `2101 — Venda à Vista` de `2102 — Venda a Prazo` sem
 famílias.
 
 **Não faz:** não decide o efeito contábil, não decide o efeito de estoque, não decide campo obrigatório, não
-decide layout e não decide permissão. Um motor genérico criado cedo demais vira acoplamento irreversível
+decide layout e não decide permissão. A única exceção é a da TOP-CONFIG-04A: a versão congelada de uma
+VENDA pode entregar o estoque e/ou o financeiro da confirmação à configuração dela, dentro da matriz de
+suporte, com o serviço de vendas executando (`docs/TIPO-OPERACAO-CONTRACT.md` §12). Um motor genérico criado cedo demais vira acoplamento irreversível
 (`docs/PRE-BASE2-FOUNDATION.md` §4), e este programa é explicitamente incremental.
 
 Isso vale inteiro para o **grafo de próximas operações** da TOP-CONFIG-03: ele diz para onde um documento
@@ -92,12 +97,15 @@ das duas — autorização continua sendo CAPACIDADE ∧ ESCOPO, verificada no s
 | --- | --- | --- |
 | **TOP-CONFIG-01** | cadastro versionado de Tipos de Operação (tabela, API administrativa, tela, permissões, RLS, auditoria) | mesclada e implantada |
 | **TOP-CONFIG-02** | primeiro lançamento real escolhendo uma TOP cadastrada; `tipo_operacao_id` e `tipo_operacao_versao_id` no documento (nomes em português, §1.6 do padrão — os nomes em inglês desta linha eram provisórios). Piloto: Portal de Vendas / `erp.sales_documents` | mesclada e implantada |
-| **TOP-CONFIG-03** | configuração operacional versionada, grafo de próximas operações e Portal de Vendas unificado | EM PR |
-| **TOP-CONFIG-04+** | ativação controlada dos efeitos da TOP; Portal de Compras documental | não iniciada |
+| **TOP-CONFIG-03** | configuração operacional versionada, grafo de próximas operações e Portal de Vendas unificado | mesclada |
+| **TOP-CONFIG-04A** | ativação controlada dos efeitos da TOP, primeiro consumidor real: estoque e financeiro da confirmação de VENDA (formato 2, matriz de suporte, gate operacional, guarda de banco) | EM PR |
+| **TOP-CONFIG-04B+** | Compras documental (04B), Movimentações de Estoque (04C), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
 
-Efeito configurável (estoque, financeiro, fiscal, contábil), workflow genérico, campos obrigatórios
-dinâmicos, layout dinâmico, expressões, SQL configurável e webhook **não pertencem a este programa** até que
-haja uma fatia que os autorize com contrato próprio. Cada um deles é um motor, e motor nasce depois do
+A TOP-CONFIG-04A é a fatia que autoriza efeito configurável — e SÓ estoque e financeiro, SÓ na confirmação
+de `vendas.venda`, SÓ pelas combinações da matriz. Efeito fiscal e contábil, workflow genérico, aprovação
+executada, confirmação automática, campos obrigatórios dinâmicos, layout dinâmico, expressões, SQL
+configurável e webhook **não pertencem a este programa** até que haja uma fatia que os autorize com contrato
+próprio. Cada um deles é um motor, e motor nasce depois do
 terceiro caso real, não antes do primeiro.
 
 ## 6. O que já está preparado, e o que deliberadamente não está

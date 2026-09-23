@@ -177,6 +177,12 @@ jobs:
       # ao mundo legado se a #47 for revertida. Falha fechado se não conseguir ler a base.
       - name: A API da base já tem a descoberta de capacidade da TOP? (TOP-CONFIG-02)
         run: node scripts/skew-capacidade-top.mjs --github-env
+      # A API DA BASE JÁ DECLARA A EXECUÇÃO CONFIGURADA DA TOP? (TOP-CONFIG-04A)
+      # Mesmo desenho do passo acima: sem o bloco `execucao` nas capacidades da base, o sentido 1 cobra que o
+      # web esconde a execução, grava no formato 1 e que a base RECUSA o formato 2; com o bloco, cobra que o
+      # web o reconhece. A decisão é MEDIDA na árvore da base e expira sozinha. Falha fechado.
+      - name: A API da base já declara a execução configurada da TOP? (TOP-CONFIG-04A)
+        run: node scripts/skew-execucao-top.mjs --github-env
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
       # SENTIDO 1 — o web desta PR contra a API que está no ar (o Vercel sobe antes do Railway).
       - name: E2E de version skew (web deste HEAD × API da base)

@@ -41,7 +41,10 @@ export default defineConfig({
        * errado, que é a única forma de falha que este arquivo não pode ter.
        */
       reuseExistingServer: false,
-      env: { DATABASE_URL: DB, PORT: String(API_PORT), WEB_ORIGIN: `http://127.0.0.1:${WEB_PORT}`, API_LOG_LEVEL: "warn", AUTH_MODE: "local", LOCAL_AUTH_SECRET: "e2e-secret-not-for-prod", NODE_ENV: "test", LOGIN_RATE_LIMIT_MAX: "1000", RATE_LIMIT_MAX: "100000" }
+      env: { DATABASE_URL: DB, PORT: String(API_PORT), WEB_ORIGIN: `http://127.0.0.1:${WEB_PORT}`, API_LOG_LEVEL: "warn", AUTH_MODE: "local", LOCAL_AUTH_SECRET: "e2e-secret-not-for-prod", NODE_ENV: "test", LOGIN_RATE_LIMIT_MAX: "1000", RATE_LIMIT_MAX: "100000",
+        // O estado REAL da janela de implantação: a API nova no ar com o gate ainda DESLIGADO (fase 1 da
+        // TOP-CONFIG-04A). Fixado, e não herdado, para o sentido 2 nunca medir a fase errada.
+        TOP_EFFECTS_RUNTIME_V1_ENABLED: "0" }
     },
     {
       // O navegador é o web da BASE (PRE-BASE2-05A), servido do worktree.

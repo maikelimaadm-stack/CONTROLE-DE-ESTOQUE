@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
+  VERSOES_SCHEMA_CONFIGURACAO_TOP,
   SECOES_CONFIGURACAO_TOP,
   configuracaoNeutraTop,
   configuracaoTopEhNeutra,
@@ -86,7 +87,10 @@ describe("configuração da TOP — parse estrito", () => {
   });
 
   it("SCHEMA DESCONHECIDO É RECUSA, e a recusa vem antes de qualquer leitura de campo", () => {
-    const futuro = { ...clonar(configuracaoNeutraTop()), versaoSchema: 2 };
+    // O sentinela é "o maior formato conhecido + 1" — e não um número fixo. Até a TOP-CONFIG-04A o
+    // sentinela era 2; o formato 2 passou a existir, e manter o 2 aqui testaria outra coisa (a recusa de
+    // um v2 sem `execucao`, coberta em `tipo-operacao-execucao.test.ts`).
+    const futuro = { ...clonar(configuracaoNeutraTop()), versaoSchema: Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1 };
     const r = lerConfiguracaoTop(futuro);
     expect(r.ok).toBe(false);
     if (!r.ok) {
