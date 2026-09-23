@@ -186,16 +186,20 @@ test("W5 — nenhuma escrita sem TOP confirmada AGORA: a lista muda, o rascunho 
   await expect(page.getByRole("button", { name: "Salvar" })).toBeDisabled();
   /**
    * O GUARD ESTÁ NO HANDLER, não só no `disabled`. Um `dispatchEvent("click")` num botão desabilitado
-   * NÃO chega ao handler (o React ignora clique em controle desabilitado), então ele não provaria nada —
-   * a primeira versão deste caso fazia isso e ficou verde com o guard removido. O cenário que o guard
-   * existe para cobrir é "o disabled sumiu por engano": então o teste REMOVE o atributo e clica.
+   * NÃO chega ao handler (o React ignora clique em controle desabilitado), e tirar o atributo pelo DOM
+   * também não prova nada — a primeira versão deste caso fazia as duas coisas e ficou VERDE com o guard
+   * removido. O que o guard cobre é "qualquer caminho que chame submit sem passar pelo botão": então o
+   * teste invoca o handler React do botão DIRETAMENTE, como faria um clique programático de verdade.
    */
   const salvar = page.getByRole("button", { name: "Salvar" });
-  await salvar.evaluate((b) => b.removeAttribute("disabled"));
-  await expect(salvar).toBeEnabled();
-  await salvar.click();
+  await salvar.evaluate((b) => {
+    const chave = Object.keys(b).find((k) => k.startsWith("__reactProps"));
+    const props = chave ? (b as unknown as Record<string, { onClick?: () => void }>)[chave] : undefined;
+    if (!props?.onClick) throw new Error("o botão Salvar não expõe onClick — o teste não conseguiu chamar o handler");
+    props.onClick();
+  });
   await page.waitForTimeout(500);
-  expect(posts, "ZERO POST — sem o disabled, é o guard do handler que segura").toEqual([]);
+  expect(posts, "ZERO POST — o handler foi chamado e o guard segurou").toEqual([]);
 });
 
 test("W6 — Alterar operação com rascunho pergunta antes; Fechar mantém o workspace inteiro", async ({ page }) => {

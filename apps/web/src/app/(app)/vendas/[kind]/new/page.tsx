@@ -184,6 +184,13 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    * (`docs/DECISIONS.md` 224), então nenhuma aparece, nem desabilitada: botão que não faz nada ensina
    * o usuário a ignorar botão.
    */
+  /*
+    O CONTEXTO OPERACIONAL vai para o cabeçalho de Dados principais, fora do grid de campos.
+    A VERSÃO não aparece aqui de propósito: o que esta tela conhece é a versão CORRENTE no momento da
+    escolha, e quem congela a versão do documento é o servidor, no POST. Exibi-la antes de salvar
+    prometeria um snapshot que ainda não existe e que pode mudar entre a escolha e a gravação — a
+    versão congelada é mostrada na tela de DETALHE, onde ela já é fato.
+  */
   const contextoOperacional = <ContextoOperacional
     rotulo={familia ? `Operação · ${familia}` : "Operação"}
     codigo={top.code}
