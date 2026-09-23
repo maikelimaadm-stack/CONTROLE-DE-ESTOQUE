@@ -19,8 +19,8 @@
 --
 -- COMO. A confirmação de venda sob política configurada, no binário da TOP-CONFIG-04A, grava na PRÓPRIA
 -- transação a marca `app.venda_execucao_configurada = <id da venda>` (`set_config(..., true)`, válida só
--- até o fim da transação) antes de mover o status. Este gatilho, na transição do status PARA confirmada,
--- lê a versão congelada da venda e:
+-- até o fim da transação) antes de mover o status. Este gatilho, quando a venda ENTRA num estado
+-- pós-confirmação (`confirmed` ou `invoiced`) vinda de qualquer outro estado, lê a versão congelada e:
 --   · sem versão congelada (acervo, cliente anterior à TOP)            → deixa passar;
 --   · formato 1                                                        → deixa passar (legado por definição);
 --   · formato 2 com os DOIS efeitos em `legado`                        → deixa passar;
@@ -118,13 +118,23 @@ end $$;
 revoke all on function erp.venda_execucao_configurada_guarda() from public;
 
 drop trigger if exists trg_sales_documents_execucao_configurada on erp.sales_documents;
--- SÓ a transição PARA confirmada (ou faturada, que a confirmação trata como confirmada), e só quando há
--- versão congelada: o acervo sem TOP nem chega a executar a função.
+-- SÓ a ENTRADA no estado pós-confirmação, e só quando há versão congelada (o acervo sem TOP nem chega a
+-- executar a função):
+--   · qualquer estado → `confirmed` ou `invoiced`  → dispara. É onde os efeitos acontecem, e cobre também
+--     o salto direto para `invoiced`, para um binário anterior não contornar a guarda por ele;
+--   · `confirmed` → `invoiced`                     → NÃO dispara. O faturamento de uma venda já confirmada
+--     não executa estoque nem financeiro de novo; exigir a marca ali quebraria a primeira fatia fiscal,
+--     que não é a dona da execução configurada e não tem por que conhecer a marca;
+--   · `invoiced` → `confirmed`, e qualquer saída   → NÃO dispara (nenhum efeito de confirmação acontece).
+-- Os estados de SAÍDA são listados por exclusão (`is distinct from`), não os de entrada por inclusão: um
+-- estado novo que alguém acrescente continua guardado, e `is distinct from` não deixa um NULL pular a
+-- guarda como `not in` deixaria.
 create trigger trg_sales_documents_execucao_configurada
   before update of status on erp.sales_documents
   for each row
   when (NEW.status in ('confirmed', 'invoiced')
-        and OLD.status is distinct from NEW.status
+        and OLD.status is distinct from 'confirmed'
+        and OLD.status is distinct from 'invoiced'
         and NEW.tipo_operacao_versao_id is not null)
   execute function erp.venda_execucao_configurada_guarda();
 

@@ -1079,10 +1079,15 @@ startup):
 
 Desligar o gate depois de ligado **não é voltar ao legado**: vendas de versões configuradas passam a ser
 recusadas na confirmação. **Binário anterior à fatia**: ele não conhece o gate nem o formato 2; a guarda da
-0023 (gatilho em `erp.sales_documents`) recusa a transição para `confirmed` de uma venda cuja versão
-declara execução configurada, a menos que a própria transação tenha gravado a marca
-`app.venda_execucao_configurada = <id da venda>` — o que só o binário desta fatia faz. O código levantado
-(`TIPO_OPERACAO_INDISPONIVEL`) é um que o binário anterior já conhece: 422 com mensagem, nunca 500.
+0023 (gatilho em `erp.sales_documents`) recusa a ENTRADA em `confirmed` ou `invoiced`, vinda de qualquer
+outro estado, de uma venda cuja versão declara execução configurada, a menos que a própria transação tenha
+gravado a marca `app.venda_execucao_configurada = <id da venda>` — o que só o binário desta fatia faz. O
+código levantado (`TIPO_OPERACAO_INDISPONIVEL`) é um que o binário anterior já conhece: 422 com mensagem,
+nunca 500. `confirmed` → `invoiced` NÃO passa pela guarda: faturar uma venda já confirmada não executa
+estoque nem financeiro de novo, e a fatia fiscal não precisa conhecer a marca (G9–G13).
+
+Ligar o gate é a **fase 2** da implantação, e ela tem pré-condições próprias: o dono da lista é
+`docs/DEPLOYMENT.md` § TOP-CONFIG-04A ("Pré-condições da fase 2"), e este contrato não a repete.
 
 ### 12.5 Runtime da venda, exigências, transação e cancelamento
 
@@ -1098,6 +1103,14 @@ declara execução configurada, a menos que a própria transação tenha gravado
 - **Cancelamento estorna só o que existe.** Ele não consulta configuração nem gate: `reverseStock` estorna os
   movimentos de origem da venda (zero → nada) e os títulos da mesma origem são cancelados; a auditoria
   `cancel` registra `estornos` e `titulosCancelados`. As quatro combinações estão provadas (04A-C2…C5).
+- **Título com baixa recusa o cancelamento, igual ao legado.** Qualquer título da venda com valor baixado
+  (parcial ou total) faz o cancelamento inteiro ser recusado com o MESMO `CONFLICT` (409) do legado, antes de
+  qualquer estorno, sem consumir a chave de idempotência — o cancelamento não sabe de onde veio a decisão
+  (04A-C8…C8d).
+- **Paridade com o legado, campo a campo.** A saída e o título a receber configurados gravam as MESMAS
+  linhas que o legado — movimento, título, parcelas, rateio, ID Global e trilha —, salvo relógio, identidade
+  técnica e a própria TOP citada (04A-P1…P3, comparação de linha inteira contra venda sem TOP, formato 1 e
+  formato 2 em legado).
 
 ### 12.6 Administração e o que continua só declarado
 

@@ -559,8 +559,10 @@ aplicaria o comportamento legado em silêncio. Três travas, em camadas:
 - o gate `TOP_EFFECTS_RUNTIME_V1_ENABLED` nasce DESLIGADO: sem ele, nenhuma execução configurada pode ser
   ativada, e uma venda de versão configurada é RECUSADA na confirmação (nunca confirmada pelo legado);
 - a migration `0023_venda_execucao_configurada_guarda.sql` põe um gatilho em `erp.sales_documents` que
-  recusa, no banco, a confirmação de venda de versão configurada feita por um binário anterior à fatia;
-- a ativação só acontece na fase 2, depois de comprovado que nenhum binário anterior atende tráfego.
+  recusa, no banco, a confirmação de venda de versão configurada feita por um binário anterior à fatia (a
+  ENTRADA em confirmada ou faturada; faturar uma venda já confirmada não passa pela guarda);
+- a ativação só acontece na fase 2, e só com as **pré-condições da fase 2** cumpridas (lista abaixo,
+  depois da prova entre as fases).
 
 **Janela de indisponibilidade: NÃO precisa.** A 0023 não altera dado nem coluna; enquanto nenhuma versão
 declara execução configurada, o gatilho deixa passar toda confirmação — então a ordem entre banco, API e
@@ -569,8 +571,8 @@ web na fase 1 é livre, e o pre-deploy a aplica como qualquer migration.
 | Fase | O que sobe | Estado do sistema | Pode voltar? |
 | --- | --- | --- | --- |
 | **1** | merge → deploy automático, com o gate AUSENTE (desligado) | o formato 2 é lido e gravado com os dois efeitos em `legado`; ativar é recusado; toda venda confirma pelo legado; a área Execução do editor diz que a execução está desligada | sim, para vendas: o binário anterior convive (a 0023 não barra nada enquanto não há versão configurada). As TOPs gravadas no formato 2 ficam só leitura para ele (ver "Reversão por fase") |
-| entre fases | nada sobe | provar que TODA réplica da API e do web serve o commit da fatia (`/health` → `build.sha`; web `/api/build`), que a 0023 está no ledger, e contar em modo LEITURA as versões que declaram execução configurada (esperado: zero) | — |
-| **2** | o gate `TOP_EFFECTS_RUNTIME_V1_ENABLED=1` no serviço da API, com autorização explícita do Maike (é alteração de configuração de produção) | o administrador pode ativar, por efeito, dentro da matriz; vendas criadas sob versões ativadas executam a política congelada | ver "Reversão por fase" |
+| entre fases | nada sobe | cumprir e registrar, com evidência, as **pré-condições da fase 2** (lista abaixo, depois da prova entre as fases) | — |
+| **2** | o gate `TOP_EFFECTS_RUNTIME_V1_ENABLED=1` no serviço da API, só com TODAS as pré-condições da fase 2 cumpridas — a última é a autorização explícita do Maike (é alteração de configuração de produção) | o administrador pode ativar, por efeito, dentro da matriz; vendas criadas sob versões ativadas executam a política congelada | ver "Reversão por fase" |
 
 **Prova entre as fases (LEITURA, pela conexão operacional; `PENDING` até ser executada com a credencial
 real).** A contagem abaixo não altera nada e publica o denominador junto do numerador — zero versões num
@@ -589,6 +591,36 @@ Antes da fase 2 o esperado em `declaram_execucao_configurada` é **zero** (o gat
 ativação). Um número diferente significa escrita por fora da API e PARA a fase 2 até ser explicado.
 `formato_2` não tem valor esperado: ele mede quantas versões um binário anterior deixaria de editar se
 a API fosse revertida (ver "Reversão por fase").
+
+**Pré-condições da fase 2 (todas obrigatórias; qualquer uma `PENDING` mantém o gate DESLIGADO).** Ligar o
+gate é alteração de configuração de produção, e nenhum item abaixo se satisfaz com preview, `localhost`,
+CI ou "deploy verde": cada um é respondido contra a produção real, com evidência que um terceiro possa
+conferir.
+
+1. **A 0023 aplicada em produção** — `0023_venda_execucao_configurada_guarda.sql` no ledger
+   (`public.erp_migrations`) do banco de produção, uma única vez. Sem a guarda, uma instância anterior
+   confirmaria pelo legado, em silêncio, a venda que o administrador configurou — e o gate não alcança
+   essa instância.
+2. **Nenhuma instância anterior à fatia atendendo tráfego** — TODA réplica da API responde em `/health` um
+   `build.sha` que contém o merge da fatia, e o web responde o mesmo em `/api/build`. Uma réplica antiga no
+   pool não conhece o gate nem o formato 2.
+3. **A contagem de produção feita em modo LEITURA** — a consulta da "Prova entre as fases", acima, pela
+   conexão operacional e com a credencial real, publicada com o denominador, e
+   `declaram_execucao_configurada` igual a zero.
+4. **O diálogo de confirmação da venda corrigido, em fatia própria, mesclada e implantada** — com o web
+   servindo, em `/api/build`, um commit que contém a correção. O diálogo "Confirmar venda"
+   (`apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx`) afirma hoje "Baixa o estoque dos itens com
+   armazém e gera as contas a receber." Na fase 1 isso é verdade: com o gate desligado nenhuma versão
+   executa configuração, e toda venda que confirma, confirma pelo legado. Na fase 2 deixa de ser: uma venda
+   de versão configurada pode não movimentar estoque, não gerar título ou ser recusada por exigência não
+   atendida (`docs/TIPO-OPERACAO-CONTRACT.md` §12.5), e o diálogo prometeria um efeito que não vai
+   acontecer. A correção é de APRESENTAÇÃO — o servidor continua sendo a autoridade do efeito — e não cabe
+   na TOP-CONFIG-04A, que não muda a tela de venda (W12 de `top-configuracao-editor.spec.ts`). A mesma
+   premissa está na dica da criação da venda (`vendas/[kind]/new/page.tsx`) e no diálogo de cancelamento
+   ("Vendas confirmadas têm estoque e títulos estornados."): a fatia do diálogo os revisa junto, ou declara
+   por que não.
+5. **Autorização explícita do Maike, pedida na hora, para ESTA ação** — autorização dada ao merge ou à
+   fase 1 não vale para a fase 2 (`.claude/rules/security.md` § Produção).
 
 **Reversão por fase.**
 

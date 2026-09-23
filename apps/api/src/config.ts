@@ -36,8 +36,9 @@ const schema = z.object({
    *
    * DESLIGADO é o padrão, e não é "voltar ao legado": com ele desligado o administrador não consegue
    * ativar execução configurada, e uma venda cuja versão congelada JÁ declara execução configurada é
-   * RECUSADA na confirmação — nunca confirmada pelo comportamento antigo. Ligar é a FASE 2 da implantação
-   * (`docs/DEPLOYMENT.md`), depois que nenhuma instância anterior a esta fatia atende mais tráfego.
+   * RECUSADA na confirmação — nunca confirmada pelo comportamento antigo. Ligar é a FASE 2 da implantação,
+   * e só com as pré-condições da fase 2 cumpridas (`docs/DEPLOYMENT.md` § TOP-CONFIG-04A): nenhuma instância
+   * anterior atendendo tráfego é uma delas, não a única.
    *
    * O VALOR É FECHADO E VERIFICADO AQUI: qualquer coisa fora de `0`/`1` DERRUBA O STARTUP. Uma coerção
    * booleana ("false" é string não vazia, logo verdadeira) ligaria o gate por um erro de digitação — e um

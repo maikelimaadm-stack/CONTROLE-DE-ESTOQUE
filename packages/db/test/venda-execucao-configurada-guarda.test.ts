@@ -61,15 +61,17 @@ async function venda(top: { topId: string; versaoId: string } | null): Promise<s
   return r.rows[0]!.id;
 }
 
-/** Confirma como o PAPEL DA APLICAÇÃO confirma, com ou sem a marca da execução configurada. */
-async function confirmarComoApp(id: string, marca: string | null): Promise<void> {
+/** Move o status como o PAPEL DA APLICAÇÃO move, com ou sem a marca da execução configurada. */
+async function moverComoApp(id: string, status: string, marca: string | null): Promise<void> {
   await withTx(app, { orgId: demo.orgId, userId: demo.adminUserId, modulo: "vendas" }, async (tx) => {
     if (marca !== null) await tx.query("select set_config('app.venda_execucao_configurada', $1, true)", [marca]);
-    const u = await tx.query("update erp.sales_documents set status='confirmed' where id=$1 and organization_id=$2", [id, demo.orgId]);
+    const u = await tx.query("update erp.sales_documents set status=$3 where id=$1 and organization_id=$2", [id, demo.orgId, status]);
     // A premissa: a linha é visível e atualizável para o papel. Sem isto, "passou" poderia ser zero linha.
     expect(u.rowCount, "a venda precisa ser visível para o papel da aplicação").toBe(1);
   });
 }
+/** Confirma como o PAPEL DA APLICAÇÃO confirma, com ou sem a marca da execução configurada. */
+const confirmarComoApp = (id: string, marca: string | null) => moverComoApp(id, "confirmed", marca);
 
 const statusDe = async (id: string) => (await db.query<{ status: string }>("select status from erp.sales_documents where id=$1", [id])).rows[0]!.status;
 
@@ -135,12 +137,60 @@ describe("0023 — o legado confirma como sempre, sem marca nenhuma (contraprova
     }
   });
 
-  it("G8 o gatilho só olha a transição PARA confirmada: cancelar e editar outra coluna de uma venda configurada passam", async () => {
+  it("G8 o gatilho só olha a ENTRADA no estado pós-confirmação: cancelar e editar outra coluna de uma venda configurada passam", async () => {
     const id = await venda(await versaoCom(formato2("configurada", "configurada")));
     await withTx(app, { orgId: demo.orgId, userId: demo.adminUserId, modulo: "vendas" }, async (tx) => {
       expect((await tx.query("update erp.sales_documents set note='x' where id=$1", [id])).rowCount).toBe(1);
       expect((await tx.query("update erp.sales_documents set status='cancelled' where id=$1", [id])).rowCount).toBe(1);
     });
+    expect(await statusDe(id)).toBe("cancelled");
+  });
+});
+
+/**
+ * SÓ A ENTRADA NO ESTADO PÓS-CONFIRMAÇÃO É GUARDADA (revisão R1). É na entrada que os efeitos acontecem;
+ * faturar uma venda JÁ confirmada não executa estoque nem financeiro de novo, e exigir a marca ali quebraria
+ * a primeira fatia fiscal — que não tem por que conhecer a marca da execução configurada.
+ */
+describe("0023 — só a ENTRADA em confirmada/faturada é guardada; o faturamento de uma venda já confirmada passa", () => {
+  it("G9 confirmada → faturada, SEM a marca, passa para a venda configurada", async () => {
+    const id = await venda(await versaoCom(formato2("configurada", "configurada")));
+    await confirmarComoApp(id, id);
+    expect(await statusDe(id), "premissa: confirmada pelo caminho da TOP-CONFIG-04A").toBe("confirmed");
+    await moverComoApp(id, "invoiced", null);
+    expect(await statusDe(id)).toBe("invoiced");
+  });
+
+  it("G10 aberta → faturada DIRETO, sem a marca, é recusada: o salto não contorna a guarda", async () => {
+    const id = await venda(await versaoCom(formato2("configurada", "legado")));
+    await expect(moverComoApp(id, "invoiced", null)).rejects.toThrow(/^TIPO_OPERACAO_INDISPONIVEL: /);
+    expect(await statusDe(id)).toBe("open");
+    // A contraprova: com a marca DESTA venda, o mesmo salto passa — a recusa era a falta da marca.
+    await moverComoApp(id, "invoiced", id);
+    expect(await statusDe(id)).toBe("invoiced");
+  });
+
+  it("G11 aprovada → confirmada, sem a marca, é recusada: aprovada é estado ANTERIOR à confirmação", async () => {
+    const id = await venda(await versaoCom(formato2("legado", "configurada")));
+    await moverComoApp(id, "approved", null);
+    expect(await statusDe(id), "premissa: sair de aberta para aprovada não dispara").toBe("approved");
+    await expect(confirmarComoApp(id, null)).rejects.toThrow(/TIPO_OPERACAO_INDISPONIVEL/);
+    expect(await statusDe(id)).toBe("approved");
+  });
+
+  it("G12 cancelada → confirmada, sem a marca, é recusada: ressuscitar a venda não contorna a guarda", async () => {
+    const id = await venda(await versaoCom(formato2("configurada", "configurada")));
+    await moverComoApp(id, "cancelled", null);
+    await expect(confirmarComoApp(id, null)).rejects.toThrow(/TIPO_OPERACAO_INDISPONIVEL/);
+    expect(await statusDe(id)).toBe("cancelled");
+  });
+
+  it("G13 sair do estado pós-confirmação não dispara: faturada → confirmada e confirmada → cancelada passam sem a marca", async () => {
+    const id = await venda(await versaoCom(formato2("configurada", "configurada")));
+    await moverComoApp(id, "invoiced", id);
+    await moverComoApp(id, "confirmed", null);
+    expect(await statusDe(id)).toBe("confirmed");
+    await moverComoApp(id, "cancelled", null);
     expect(await statusDe(id)).toBe("cancelled");
   });
 });
