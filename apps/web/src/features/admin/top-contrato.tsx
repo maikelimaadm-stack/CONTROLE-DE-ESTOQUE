@@ -4,12 +4,18 @@ import { useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import {
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
-  configuracaoNeutraTop,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
+  configuracaoNeutraTopV2,
+  configuracaoTopParaEdicao,
+  execucaoDeclaradaTop,
   lerConfiguracaoTop,
+  lerMatrizExecucaoTop,
   type AtualizacaoEstoque,
   type AtualizacaoFinanceiro,
   type CalculoTributario,
+  type ConfiguracaoTipoOperacao,
   type ConfiguracaoTipoOperacaoV1,
+  type ConfiguracaoTipoOperacaoV2,
   type ModoConfirmacao,
   type ModoFinanceiro,
   type MomentoAprovacao,
@@ -18,7 +24,8 @@ import {
   type PoliticaAprovacao,
   type PoliticaDocumentoSemItens,
   type PoliticaSaldoNegativo,
-  type SecaoConfiguracaoTop
+  type SecaoConfiguracaoTopV2,
+  type SuporteExecucaoFamiliaTop
 } from "@agro/domain";
 
 /**
@@ -68,11 +75,28 @@ export interface CapacidadesDestinosTop {
   limite: number;
 }
 
+/**
+ * O que o servidor declara sobre a EXECUÇÃO CONFIGURADA (TOP-CONFIG-04A).
+ *
+ * `suportado` diz se ELE grava o formato 2 (o bloco `execucao`); `runtimeHabilitado`, se ESTA instância
+ * executa a configuração agora (o gate operacional); `matriz`, o que é executável por família. A tela
+ * avalia a matriz que o SERVIDOR declarou — nunca uma cópia própria —, e a decisão final é sempre dele.
+ */
+export interface CapacidadesExecucaoTop {
+  suportado: boolean;
+  runtimeHabilitado: boolean;
+  matriz: SuporteExecucaoFamiliaTop[];
+}
+
 export interface CapacidadesTop {
   contractVersion: typeof CONTRATO_CAPACIDADES_TOP;
   configuracao: { versaoSchema: number; secoes: string[] };
   destinos: CapacidadesDestinosTop;
+  execucao: CapacidadesExecucaoTop;
 }
+
+/** Servidor sem execução configurada: nada é executável e nada do bloco é enviado. */
+const SEM_EXECUCAO: CapacidadesExecucaoTop = { suportado: false, runtimeHabilitado: false, matriz: [] };
 
 /**
  * Lê o corpo de `/capabilities`, ou devolve `null` — que é o mesmo que "não confirmado".
@@ -99,10 +123,28 @@ export function lerCapacidadesTop(bruto: unknown): CapacidadesTop | null {
     destinos = { suportado: d.suportado, limite: ehInteiroPositivo(d.limite) ? d.limite : 0 };
   }
 
+  /**
+   * O BLOCO `execucao` SEGUE A MESMA RÉGUA DE `destinos`: ausente = servidor anterior à TOP-CONFIG-04A
+   * (a execução fica fora do editor, e a gravação sai no formato 1); presente e malformado = contrato
+   * desconhecido, e o corpo inteiro NEGA. Um formato de execução que esta tela não escreve (um 3 futuro)
+   * não é malformação: degrada só a parte da execução.
+   */
+  let execucao = SEM_EXECUCAO;
+  if (bruto.execucao !== undefined) {
+    const x = bruto.execucao;
+    if (!ehObjeto(x) || typeof x.suportado !== "boolean" || typeof x.runtimeHabilitado !== "boolean" || !ehInteiroPositivo(x.versaoSchema)) return null;
+    const matriz = lerMatrizExecucaoTop(x.matriz);
+    if (matriz === null) return null;
+    if (x.suportado && x.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2) {
+      execucao = { suportado: true, runtimeHabilitado: x.runtimeHabilitado, matriz };
+    }
+  }
+
   return {
     contractVersion: CONTRATO_CAPACIDADES_TOP,
     configuracao: { versaoSchema: c.versaoSchema, secoes: c.secoes as string[] },
-    destinos
+    destinos,
+    execucao
   };
 }
 
@@ -166,6 +208,10 @@ export const podeConfigurarDestinos = (e: EstadoCapacidadesTop): boolean =>
 export const limiteDeDestinos = (e: EstadoCapacidadesTop): number =>
   podeConfigurar(e) ? e.capacidades.destinos.limite : 0;
 
+/** O que o servidor declara sobre execução. Fora de `pronto`, nada é executável — fail-closed. */
+export const capacidadesDeExecucao = (e: EstadoCapacidadesTop): CapacidadesExecucaoTop =>
+  podeConfigurar(e) ? e.capacidades.execucao : SEM_EXECUCAO;
+
 /**
  * Mensagem única por estado. Quem lê precisa saber se o problema é o servidor, o contrato ou a permissão —
  * e, acima de tudo, precisa saber que a configuração NÃO foi salva.
@@ -203,7 +249,7 @@ export function MensagemCapacidadesTop({ estado }: { estado: EstadoCapacidadesTo
  * inventados a partir do neutro, que seriam indistinguíveis de uma configuração real.
  */
 export type ConfiguracaoDoServidor =
-  | { suportada: true; versaoSchema: number; valor: ConfiguracaoTipoOperacaoV1 }
+  | { suportada: true; versaoSchema: number; valor: ConfiguracaoTipoOperacao }
   | { suportada: false; versaoSchema: number };
 
 export function lerConfiguracaoDoServidor(bruto: unknown): ConfiguracaoDoServidor | null {
@@ -214,7 +260,8 @@ export function lerConfiguracaoDoServidor(bruto: unknown): ConfiguracaoDoServido
   // O `valor` passa pelo LEITOR DO DOMÍNIO, não por asserção: é o mesmo código que a API usa, então a tela
   // nunca aceita uma forma que o servidor recusaria — e nunca mostra campo que não existe no contrato.
   const r = lerConfiguracaoTop(bruto.valor);
-  if (!r.ok) return { suportada: false, versaoSchema: bruto.versaoSchema };
+  // O formato que o valor DIZ ter e o que o servidor declarou ao lado dele têm de ser o mesmo.
+  if (!r.ok || r.valor.versaoSchema !== bruto.versaoSchema) return { suportada: false, versaoSchema: bruto.versaoSchema };
   return { suportada: true, versaoSchema: bruto.versaoSchema, valor: r.valor };
 }
 
@@ -382,12 +429,13 @@ export const ROTULOS_TOP = {
 } as const;
 
 /** Rótulo de seção para o resumo do histórico. Mesma dívida, mesmo destino. */
-export const ROTULOS_SECAO_TOP: Record<SecaoConfiguracaoTop, string> = {
+export const ROTULOS_SECAO_TOP: Record<SecaoConfiguracaoTopV2, string> = {
   geral: "Geral",
   estoque: "Estoque",
   financeiro: "Financeiro",
   fiscal: "Fiscal",
-  aprovacao: "Aprovação"
+  aprovacao: "Aprovação",
+  execucao: "Execução"
 };
 
 // ---------------------------------------------------------------------------------------------------
@@ -412,7 +460,12 @@ export interface RascunhoTop {
   padrao: boolean;
   codigo: string;
   codigoBase: string;
-  configuracao: ConfiguracaoTipoOperacaoV1;
+  /**
+   * SEMPRE NO FORMATO 2 NO EDITOR. Uma versão gravada no formato 1 é LIDA como formato 2 com os dois
+   * efeitos em `legado` — que é exatamente o que ela significa — e por isso abrir e salvar sem mexer não
+   * cria versão (o servidor compara os dois formatos pelo significado). Ler não regrava nada.
+   */
+  configuracao: ConfiguracaoTipoOperacaoV2;
   destinos: DestinoEmEdicao[];
   /**
    * ESTA EDIÇÃO DECLARA A POLÍTICA DE PRÓXIMAS OPERAÇÕES?
@@ -436,8 +489,27 @@ export interface RascunhoTop {
  * um registro novo. O que jamais acontece é mostrar o neutro dizendo que ele é a configuração salva de uma
  * versão que não sabemos ler; essa distinção é feita por quem chama, pelo estado `suportada: false`.
  */
-export function configuracaoInicial(c: ConfiguracaoDoServidor | null): ConfiguracaoTipoOperacaoV1 {
-  return c && c.suportada ? c.valor : configuracaoNeutraTop();
+export function configuracaoInicial(c: ConfiguracaoDoServidor | null): ConfiguracaoTipoOperacaoV2 {
+  return c && c.suportada ? configuracaoTopParaEdicao(c.valor) : configuracaoNeutraTopV2();
+}
+
+/**
+ * A configuração no formato que ESTE servidor grava — ou `null` quando não há como enviá-la sem mudar o
+ * que ela significa.
+ *
+ * Servidor com execução configurada: vai o formato 2, como está. Servidor anterior (sem o bloco de
+ * execução nas capacidades): ele só conhece o formato 1, e o formato 1 SIGNIFICA "os dois efeitos no
+ * legado" — então o rascunho vai no formato 1 apenas se é isso que ele diz. Um rascunho com efeito
+ * configurado não tem tradução honesta para esse servidor, e a gravação é bloqueada em vez de perder a
+ * decisão em silêncio.
+ */
+export function configuracaoParaEnvio(c: ConfiguracaoTipoOperacaoV2, execucaoSuportada: boolean): ConfiguracaoTipoOperacao | null {
+  if (execucaoSuportada) return c;
+  const e = execucaoDeclaradaTop(c);
+  if (e.estoque !== "legado" || e.financeiro !== "legado") return null;
+  const { execucao: _execucao, versaoSchema: _versao, ...secoes } = c;
+  const v1: ConfiguracaoTipoOperacaoV1 = { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP, ...secoes };
+  return v1;
 }
 
 /**

@@ -199,3 +199,68 @@ test("IDENTIDADE · o bundle do navegador é exatamente o base SHA desta execuç
   expect(arvore, "a árvore precisa estar na base EXATA, não num commit qualquer").toBe(esperada);
   expect(arvore, "e a base não pode ser o commit do checkout — seria comparar o commit com ele mesmo").not.toBe(rev(raiz));
 });
+/**
+ * TOP-CONFIG-04A · O WEB DA BASE CONVIVE COM A TOP DO FORMATO 2 SEM APAGAR A EXECUÇÃO.
+ *
+ * A fase 1 da implantação põe a API nova no ar com o gate DESLIGADO, e todo navegador aberto continua com o
+ * bundle anterior. Dois riscos: (a) o cliente anterior deixar de editar TOPs — as capacidades que ele lê não
+ * podem mudar; (b) o cliente anterior, ao renomear uma TOP do formato 2, apagar o bloco `execucao` em
+ * silêncio. O teste usa o cliente de verdade para renomear, e o SERVIDOR é o árbitro do que ficou gravado.
+ * Vale nos dois mundos: um web da base anterior à fatia omite a configuração (não sabe lê-la) e o HEAD
+ * preserva; um web da base posterior a reenvia igual.
+ */
+test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configuração inteira sobrevive", async ({ page, request }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId) };
+
+  const cap = await (await request.get(`${API}/api/admin/tipos-operacao/capabilities`, { headers: auth })).json() as
+    { contractVersion: number; configuracao: { versaoSchema: number }; execucao?: { runtimeHabilitado: boolean } };
+  expect(cap.contractVersion, "o contrato que o web da base compara não mudou").toBe(1);
+  expect(cap.configuracao.versaoSchema, "nem o formato que ele compara — mudar travaria a edição de toda TOP").toBe(1);
+  expect(cap.execucao?.runtimeHabilitado, "a fase 1: a API nova no ar com o gate desligado").toBe(false);
+
+  // A TOP do formato 2, criada pelo HEAD — com a seção de estoque declarando saída, e a execução no legado.
+  const codigo = `S2${Date.now().toString(36).toUpperCase()}`;
+  const configuracao = {
+    versaoSchema: 2,
+    geral: { confirmacao: "manual", exigeParceiro: false, exigeCentroResultado: false, exigeObservacao: false, alteracaoAposConfirmacao: "bloqueada", documentoSemItens: "proibido" },
+    estoque: { atualizacao: "saida", momento: "confirmacao", exigeArmazem: false, saldoNegativo: "bloquear" },
+    financeiro: { atualizacao: "nenhuma", modo: "incluir", momento: "confirmacao", exigeFormaPagamento: false, exigeVencimento: false, exigeCentroResultado: false },
+    fiscal: { habilitado: false, exigeDocumentoFiscal: false, exigeNaturezaOperacao: false, exigeRegraTributaria: false, calculoTributario: "nao_aplicar" },
+    aprovacao: { politica: "nenhuma", valorMinimo: null, momento: "antes_da_confirmacao" },
+    execucao: { estoque: "legado", financeiro: "legado" }
+  };
+  const criada = await request.post(`${API}/api/admin/tipos-operacao`, { headers: auth, data: { codigo, codigoBase: "vendas.venda", nome: `Formato 2 ${codigo}`, configuracao } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const id = (await criada.json() as { id: string }).id;
+
+  // Com o gate desligado, ATIVAR é recusado: a fase 1 não põe execução configurada em circulação.
+  const ativar = await request.put(`${API}/api/admin/tipos-operacao/${id}`, { headers: auth,
+    data: { configuracao: { ...configuracao, execucao: { estoque: "configurada", financeiro: "legado" } }, revisao: 1 } });
+  expect(ativar.status(), "o HEAD com o gate desligado recusa a ativação").toBe(409);
+
+  // O CLIENTE DA BASE renomeia pela tela.
+  const nome = uniq("Renomeada pelo web da base");
+  await page.goto("/configuracoes?tab=operacoes&sub=tipos-operacao");
+  await page.getByLabel("Buscar tipo de operação").fill(codigo);
+  const linha = page.getByRole("row").filter({ hasText: codigo });
+  await expect(linha).toHaveCount(1);
+  await linha.getByRole("button", { name: "Mais opções" }).click();
+  await page.getByRole("menuitem", { name: "Editar" }).click();
+  const forma = page.getByTestId("form-tipo-operacao");
+  await expect(forma).toBeVisible();
+  await forma.getByTestId("top-campo-nome").fill(nome);
+  const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes(`/api/admin/tipos-operacao/${id}`));
+  await forma.getByTestId("top-salvar").click();
+  expect((await resposta).status(), "o HEAD aceita a gravação do cliente da base").toBe(200);
+
+  // O SERVIDOR é o árbitro: nome novo, versão nova, e a configuração do formato 2 INTEIRA preservada.
+  const d = await (await request.get(`${API}/api/admin/tipos-operacao/${id}`, { headers: auth })).json() as
+    { nome: string; versao: number; configuracaoSchema: number; configuracao: { valor: typeof configuracao } };
+  expect([d.nome, d.versao, d.configuracaoSchema]).toEqual([nome, 2, 2]);
+  expect(d.configuracao.valor.execucao, "o bloco de execução não foi apagado").toEqual({ estoque: "legado", financeiro: "legado" });
+  expect(d.configuracao.valor.estoque.atualizacao, "nem a seção que ele não sabia ler").toBe("saida");
+  v.semBloqueio();
+});

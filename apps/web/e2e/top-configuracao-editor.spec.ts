@@ -2,7 +2,8 @@ import { test, expect, type Page, type Locator } from "@playwright/test";
 import { login, logout, api, uniq, empresaAtiva, primeiroId } from "./helpers";
 
 /**
- * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO — O EDITOR DE SETE SEÇÕES (TOP-CONFIG-03), E1 a E9 e E20.
+ * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO — O EDITOR (TOP-CONFIG-03), E1 a E9 e E20; e a área de
+ * EXECUÇÃO da TOP-CONFIG-04A, W1 a W12 (no fim do arquivo).
  *
  * ┌─ O QUE SÓ ESTE ARQUIVO PODE PROVAR ────────────────────────────────────────────────────────────┐
  * │ A integração já prova, no servidor, o que versiona e o que não versiona. O que nenhum teste de  │
@@ -297,7 +298,7 @@ test("E7 — servidor que não confirma as capacidades BLOQUEIA as seções de o
 
   // AS SEÇÕES DE OPERAÇÃO, NÃO. Em todas elas a mesma mensagem única, e NENHUM campo na árvore: campo
   // desabilitado ainda sugere que existe algo a configurar ali.
-  for (const aba of ["geral", "estoque", "financeiro", "fiscal", "aprovacao", "destinos"]) {
+  for (const aba of ["geral", "estoque", "financeiro", "fiscal", "aprovacao", "destinos", "execucao"]) {
     await forma.getByTestId(`top-aba-${aba}`).click();
     await expect(forma.getByTestId("top-config-nao-confirmada"), `${aba}: a tela diz que o servidor não confirmou`).toBeVisible();
   }
@@ -639,4 +640,246 @@ test("E20 — declarar pela tela que NÃO há próxima operação cria versão, 
    */
   await expect(page.getByRole("button", { name: "Imprimir" }),
     "a tela montou: as demais ações do documento seguem lá").toBeVisible();
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * TOP-CONFIG-04A — A ÁREA DE EXECUÇÃO, W1 a W12
+ *
+ * A API do e2e roda com o gate LIGADO (`playwright.config.ts`), porque W8–W10 precisam ATIVAR. O estado
+ * desligado — o padrão de produção — é mostrado por capacidade FABRICADA (W4, o precedente do E7): a
+ * pergunta ali é o que a TELA faz, e a recusa do SERVIDOR com o gate desligado já é provada na integração.
+ * A versão é sempre conferida no SERVIDOR, nunca pelo texto da tela.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+type ConfiguracaoNoServidor = { versaoSchema: number; execucao?: { estoque: string; financeiro: string }; estoque: { atualizacao: string }; financeiro: { atualizacao: string } };
+const detalheNoServidor = (page: Page, id: string) =>
+  api<{ versao: number; configuracaoSchema: number; configuracao: { valor: ConfiguracaoNoServidor } }>(page, "GET", `/api/admin/tipos-operacao/${id}`);
+
+/** O neutro do formato 1 — o que o cliente anterior grava. Literal de propósito: é o fio que ele manda. */
+const NEUTRO_V1 = {
+  versaoSchema: 1,
+  geral: { confirmacao: "manual", exigeParceiro: false, exigeCentroResultado: false, exigeObservacao: false, alteracaoAposConfirmacao: "bloqueada", documentoSemItens: "proibido" },
+  estoque: { atualizacao: "nenhuma", momento: "confirmacao", exigeArmazem: false, saldoNegativo: "bloquear" },
+  financeiro: { atualizacao: "nenhuma", modo: "incluir", momento: "confirmacao", exigeFormaPagamento: false, exigeVencimento: false, exigeCentroResultado: false },
+  fiscal: { habilitado: false, exigeDocumentoFiscal: false, exigeNaturezaOperacao: false, exigeRegraTributaria: false, calculoTributario: "nao_aplicar" },
+  aprovacao: { politica: "nenhuma", valorMinimo: null, momento: "antes_da_confirmacao" }
+};
+
+/** Uma TOP no FORMATO 1 declarando saída e contas a receber — o acervo que a TOP-CONFIG-04A não pode reinterpretar. */
+async function topFormato1(page: Page) {
+  const codigo = codigoNovo();
+  const configuracao = { ...NEUTRO_V1, estoque: { ...NEUTRO_V1.estoque, atualizacao: "saida" }, financeiro: { ...NEUTRO_V1.financeiro, atualizacao: "receber" } };
+  const criado = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo, codigoBase: "vendas.venda", nome: uniq("TOP formato 1"), configuracao });
+  return { id: criado.id, codigo };
+}
+
+const abrirExecucao = async (page: Page, codigo: string) => {
+  const forma = await abrirEdicao(page, codigo);
+  await forma.getByTestId("top-aba-execucao").click();
+  await expect(forma.getByTestId("top-execucao")).toBeVisible();
+  return forma;
+};
+
+test("W1 — uma TOP do FORMATO 1 aparece como Legado/Legado, e o histórico diz por quê", async ({ page }) => {
+  await login(page);
+  const top = await topFormato1(page);
+  // Premissa: ela está MESMO no formato 1, declarando efeitos.
+  const d = await detalheNoServidor(page, top.id);
+  expect([d.configuracaoSchema, d.configuracao.valor.estoque.atualizacao]).toEqual([1, "saida"]);
+  await abrirTela(page);
+  const forma = await abrirExecucao(page, top.codigo);
+  await expect(forma.getByTestId("top-campo-execucao-estoque")).toHaveValue("legado");
+  await expect(forma.getByTestId("top-campo-execucao-financeiro")).toHaveValue("legado");
+  await expect(forma.getByTestId("top-execucao-declara-estoque"), "a seção declara saída — e mesmo assim é legado").toContainText("Saída");
+  await forma.getByTestId("top-cancelar").click();
+
+  await abrirMenuDaLinha(page, top.codigo);
+  await page.getByRole("menuitem", { name: "Ver versões" }).click();
+  const versoes = page.getByTestId("versoes-tipo-operacao");
+  await versoes.getByTestId("top-versao-detalhe").first().click();
+  await expect(versoes.getByTestId("top-versao-secao-execucao")).toContainText("Comportamento legado");
+  await expect(versoes.getByTestId("top-versao-nota-execucao"), "o formato 1 é legado, e a tela diz isso").toBeVisible();
+});
+
+test("W2 — uma TOP NOVA nasce no formato 2 com Legado/Legado", async ({ page }) => {
+  await login(page);
+  await abrirTela(page);
+  const codigo = codigoNovo();
+  await page.getByRole("button", { name: "Novo tipo de operação" }).click();
+  const forma = page.getByTestId("form-tipo-operacao");
+  await forma.getByTestId("top-campo-codigo").fill(codigo);
+  await forma.getByTestId("top-campo-nome").fill(uniq("Nova W2"));
+  await forma.getByTestId("top-campo-familia").selectOption("vendas.venda");
+  await forma.getByTestId("top-aba-execucao").click();
+  await expect(forma.getByTestId("top-campo-execucao-estoque")).toHaveValue("legado");
+  await expect(forma.getByTestId("top-campo-execucao-financeiro")).toHaveValue("legado");
+  await forma.getByTestId("top-salvar").click();
+  await expect(forma).toBeHidden();
+  const d = await detalheNoServidor(page, await idDoCodigo(page, codigo));
+  expect(d.configuracaoSchema, "a TOP nova grava o formato 2").toBe(2);
+  expect(d.configuracao.valor.execucao, "e nenhum efeito começa configurado").toEqual({ estoque: "legado", financeiro: "legado" });
+});
+
+test("W3 — abrir e salvar uma TOP do formato 1 sem mudar nada NÃO cria versão nem troca o formato", async ({ page }) => {
+  await login(page);
+  const top = await topFormato1(page);
+  expect(await versaoNoServidor(page, top.id)).toBe(1);
+  await abrirTela(page);
+  const forma = await abrirEdicao(page, top.codigo);
+  const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes(`/api/admin/tipos-operacao/${top.id}`));
+  await forma.getByTestId("top-salvar").click();
+  expect((await resposta).status()).toBe(200);
+  const d = await detalheNoServidor(page, top.id);
+  expect([d.versao, d.configuracaoSchema], "nenhuma versão só para trocar o formato").toEqual([1, 1]);
+});
+
+/** Capacidades REAIS do servidor com o gate trocado — só o estado do gate é fabricado. */
+async function gateFabricado(page: Page, runtimeHabilitado: boolean) {
+  await page.route("**/api/admin/tipos-operacao/capabilities", async (rota) => {
+    const real = await rota.fetch();
+    const corpo = await real.json() as { execucao: Record<string, unknown> };
+    await rota.fulfill({ response: real, json: { ...corpo, execucao: { ...corpo.execucao, runtimeHabilitado } } });
+  });
+}
+
+test("W4 — com o gate desligado, 'Usar configuração da TOP' não pode ser escolhido, e a tela diz por quê", async ({ page }) => {
+  await login(page);
+  const top = await topSimples(page);
+  await gateFabricado(page, false);
+  await abrirTela(page);
+  const forma = await abrirExecucao(page, top.codigo);
+  await expect(forma.getByTestId("top-execucao-runtime-desligado")).toBeVisible();
+  for (const efeito of ["estoque", "financeiro"]) {
+    await expect(forma.getByTestId(`top-campo-execucao-${efeito}`).locator('option[value="configurada"]'), `${efeito}: a opção existe, mas está indisponível agora`).toBeDisabled();
+  }
+  // A premissa: o mesmo editor, com o gate ligado, OFERECE a opção.
+  await page.unroute("**/api/admin/tipos-operacao/capabilities");
+  await forma.getByTestId("top-cancelar").click();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Tipos de Operação" })).toBeVisible();
+  const ligada = await abrirExecucao(page, top.codigo);
+  await expect(ligada.getByTestId("top-campo-execucao-estoque").locator('option[value="configurada"]')).toBeEnabled();
+});
+
+test("W4b — versão já configurada com o gate desligado: a tela avisa que as vendas serão recusadas, e voltar ao legado continua possível", async ({ page }) => {
+  await login(page);
+  const top = await topSimples(page);
+  const d0 = await api<{ revisao: number; configuracao: { valor: Record<string, unknown> } }>(page, "GET", `/api/admin/tipos-operacao/${top.id}`);
+  await api(page, "PUT", `/api/admin/tipos-operacao/${top.id}`, { revisao: d0.revisao,
+    configuracao: { ...d0.configuracao.valor, estoque: { atualizacao: "saida", momento: "confirmacao", exigeArmazem: false, saldoNegativo: "bloquear" }, execucao: { estoque: "configurada", financeiro: "legado" } } });
+  await gateFabricado(page, false);
+  await abrirTela(page);
+  const forma = await abrirExecucao(page, top.codigo);
+  await expect(forma.getByTestId("top-execucao-configurada-sem-execucao")).toBeVisible();
+  await expect(forma.getByTestId("top-campo-execucao-estoque"), "o valor salvo continua visível como selecionado").toHaveValue("configurada");
+  await forma.getByTestId("top-campo-execucao-estoque").selectOption("legado");
+  await expect(forma.getByTestId("top-execucao-ativacao-bloqueada"), "voltar ao legado não é ativação").toHaveCount(0);
+  await expect(forma.getByTestId("top-salvar")).toBeEnabled();
+});
+
+test("W5 — família sem consumidor: a execução configurada não está disponível, com a mensagem objetiva", async ({ page }) => {
+  await login(page);
+  const top = await topSimples(page, "vendas.pedido");
+  await abrirTela(page);
+  const forma = await abrirExecucao(page, top.codigo);
+  await expect(forma.getByTestId("top-execucao-familia-nao-suportada")).toContainText("Execução configurada ainda não disponível para esta família.");
+  for (const efeito of ["estoque", "financeiro"]) {
+    await expect(forma.getByTestId(`top-campo-execucao-${efeito}`), `${efeito}: fica no legado`).toHaveValue("legado");
+    await expect(forma.getByTestId(`top-campo-execucao-${efeito}`)).toBeDisabled();
+  }
+});
+
+test("W6/W7 — na venda, só a combinação executável salva; a incompatível explica o motivo, em português", async ({ page }) => {
+  await login(page);
+  const top = await topSimples(page);
+  await abrirTela(page);
+  const forma = await abrirEdicao(page, top.codigo);
+  await forma.getByTestId("top-aba-estoque").click();
+  await forma.getByTestId("top-campo-estoque-atualizacao").selectOption("entrada");
+  await forma.getByTestId("top-aba-execucao").click();
+  await forma.getByTestId("top-campo-execucao-estoque").selectOption("configurada");
+  const recusa = forma.getByTestId("top-execucao-recusa");
+  await expect(recusa).toHaveCount(1);
+  await expect(recusa).toHaveAttribute("data-caminho", "estoque.atualizacao");
+  await expect(recusa, "W7: o motivo, com o rótulo — nunca o valor técnico").toContainText("Saída");
+  await expect(recusa).not.toContainText("atualizacao");
+  await expect(forma.getByTestId("top-salvar"), "combinação sem executor não salva").toBeDisabled();
+
+  // Saldo negativo "Permitir": a outra combinação sem executor real.
+  await forma.getByTestId("top-aba-estoque").click();
+  await forma.getByTestId("top-campo-estoque-atualizacao").selectOption("saida");
+  await forma.getByTestId("top-campo-estoque-saldo").selectOption("permitir");
+  await forma.getByTestId("top-aba-execucao").click();
+  await expect(recusa).toHaveAttribute("data-caminho", "estoque.saldoNegativo");
+  await expect(recusa).toContainText("não tem execução real");
+  await expect(forma.getByTestId("top-salvar")).toBeDisabled();
+
+  // W6: a combinação suportada libera o Salvar.
+  await forma.getByTestId("top-aba-estoque").click();
+  await forma.getByTestId("top-campo-estoque-saldo").selectOption("bloquear");
+  await forma.getByTestId("top-aba-execucao").click();
+  await expect(recusa).toHaveCount(0);
+  await expect(forma.getByTestId("top-salvar")).toBeEnabled();
+});
+
+for (const efeito of ["estoque", "financeiro"] as const) {
+  const caso = efeito === "estoque" ? "W8" : "W9";
+  test(`${caso}/W10 — ativar ${efeito} cria a versão N+1, a N continua imutável, e reabrir mostra o estado salvo`, async ({ page }) => {
+    await login(page);
+    const top = await topSimples(page);
+    expect(await versaoNoServidor(page, top.id)).toBe(1);
+    await abrirTela(page);
+    const forma = await abrirEdicao(page, top.codigo);
+    await forma.getByTestId(`top-aba-${efeito}`).click();
+    await forma.getByTestId(`top-campo-${efeito}-atualizacao`).selectOption(efeito === "estoque" ? "saida" : "receber");
+    await forma.getByTestId("top-aba-execucao").click();
+    await forma.getByTestId(`top-campo-execucao-${efeito}`).selectOption("configurada");
+    await forma.getByTestId("top-salvar").click();
+    await expect(forma).toBeHidden();
+
+    const d = await detalheNoServidor(page, top.id);
+    expect(d.versao, "ativar é conteúdo: nasce a N+1").toBe(2);
+    expect(d.configuracao.valor.execucao![efeito]).toBe("configurada");
+    const historico = await api<{ items: { versao: number; configuracao: { valor: ConfiguracaoNoServidor }; secoesAlteradas: string[] | null }[] }>(page, "GET", `/api/admin/tipos-operacao/${top.id}/versoes`);
+    expect(historico.items.map((v) => v.versao)).toEqual([2, 1]);
+    expect(historico.items[1]!.configuracao.valor.execucao, "a versão N continua exatamente como era").toEqual({ estoque: "legado", financeiro: "legado" });
+    expect(historico.items[0]!.secoesAlteradas, "o cutover aparece no histórico").toContain("execucao");
+
+    // W10 — reabrir (depois de recarregar a página inteira) mostra o que o SERVIDOR guardou.
+    await page.reload();
+    await expect(page.getByRole("heading", { name: "Tipos de Operação" })).toBeVisible();
+    const reaberta = await abrirExecucao(page, top.codigo);
+    await expect(reaberta.getByTestId(`top-campo-execucao-${efeito}`)).toHaveValue("configurada");
+    await expect(reaberta.getByTestId(`top-campo-execucao-${efeito === "estoque" ? "financeiro" : "estoque"}`)).toHaveValue("legado");
+  });
+}
+
+test("W11 — nenhum valor técnico cru: as opções e o histórico falam pelos rótulos", async ({ page }) => {
+  await login(page);
+  const top = await topSimples(page);
+  await abrirTela(page);
+  const forma = await abrirExecucao(page, top.codigo);
+  for (const efeito of ["estoque", "financeiro"]) {
+    await expect(forma.getByTestId(`top-campo-execucao-${efeito}`).locator("option")).toHaveText(["Comportamento legado", "Usar configuração da TOP"]);
+  }
+  await expect(forma.getByTestId("top-execucao"), "nem o caminho técnico de um campo").not.toContainText(/execucao\.|legado"|configurada"/);
+  await forma.getByTestId("top-cancelar").click();
+  await abrirMenuDaLinha(page, top.codigo);
+  await page.getByRole("menuitem", { name: "Ver versões" }).click();
+  const versoes = page.getByTestId("versoes-tipo-operacao");
+  await versoes.getByTestId("top-versao-detalhe").first().click();
+  const bloco = versoes.getByTestId("top-versao-secao-execucao");
+  await expect(bloco.locator("dd")).toHaveText(["Comportamento legado", "Comportamento legado"]);
+});
+
+test("W12 — fora da tela administrativa nada muda: a venda não ganha área de execução", async ({ page }) => {
+  await login(page);
+  // O portal e o lançamento de venda são as telas vizinhas desta fatia. A execução é decidida no servidor
+  // e mostrada SÓ na administração da TOP; nenhuma superfície dela vaza para a operação.
+  for (const [rota, premissa] of [["/vendas", "vendas-tipo"], ["/vendas/sales/new", "top-lancador"]] as const) {
+    await page.goto(rota);
+    await expect(page.getByTestId(premissa), `${rota}: a tela montou — sem isto, "nada aparece" não provaria nada`).toBeVisible();
+    await expect(page.locator('[data-testid^="top-execucao"]'), `${rota}: nenhuma peça da área de execução`).toHaveCount(0);
+    await expect(page.getByText("Usar configuração da TOP"), `${rota}: nem o rótulo dela`).toHaveCount(0);
+  }
 });

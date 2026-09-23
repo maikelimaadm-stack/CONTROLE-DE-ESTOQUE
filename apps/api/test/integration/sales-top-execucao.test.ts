@@ -110,7 +110,7 @@ const ITEM = { product_id: "", warehouse_id: "" as string | null, quantity: "1",
 async function venda(topId: string | null, extra: Record<string, unknown> = {}, itens?: typeof ITEM[]): Promise<string> {
   const r = await h.app.inject({ method: "POST", url: "/api/sales/sales", headers: h.headers(),
     payload: { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client,
-      items: itens ?? [{ ...ITEM, product_id: I.product2, warehouse_id: I.warehouse }],
+      items: itens ?? [{ ...ITEM, product_id: I.product2!, warehouse_id: I.warehouse! }],
       ...(topId ? { tipo_operacao_id: topId } : {}), ...extra } });
   expect(r.statusCode, r.body).toBe(201);
   return j(r).id as string;
@@ -223,8 +223,8 @@ describe("exigências da versão congelada — conferidas TODAS antes do primeir
     const topId = await top(configuracaoDe("efeito", "efeito", (c) => { c.estoque.exigeArmazem = true; }));
     // Primeiro item COM armazém: sem a conferência antecipada, ele baixaria antes de a falta ser notada.
     const id = await venda(topId, {}, [
-      { ...ITEM, product_id: I.product2, warehouse_id: I.warehouse },
-      { ...ITEM, product_id: I.product2, warehouse_id: null },
+      { ...ITEM, product_id: I.product2!, warehouse_id: I.warehouse! },
+      { ...ITEM, product_id: I.product2!, warehouse_id: null },
     ]);
     const r = await confirmar(ligada, id);
     expect(r.statusCode, r.body).toBe(422);
@@ -233,7 +233,7 @@ describe("exigências da versão congelada — conferidas TODAS antes do primeir
     expect(await efeitos(id)).toMatchObject({ status: "open", saidas: 0, titulos: 0, auditorias: 0 });
     // A premissa: a mesma TOP, com todos os itens no armazém, confirma e baixa os dois.
     const certa = await venda(topId, {}, [
-      { ...ITEM, product_id: I.product2, warehouse_id: I.warehouse }, { ...ITEM, product_id: I.product2, warehouse_id: I.warehouse },
+      { ...ITEM, product_id: I.product2!, warehouse_id: I.warehouse! }, { ...ITEM, product_id: I.product2!, warehouse_id: I.warehouse! },
     ]);
     await confirmada(ligada, certa);
     expect((await efeitos(certa)).saidas).toBe(2);
@@ -337,7 +337,7 @@ describe("04A-I16 — TOP desativada ou excluída depois do lançamento", () => 
     }
     // A premissa: a TOP desativada NÃO aceita lançamento novo — só o documento antigo segue pela regra dele.
     const nova = await h.app.inject({ method: "POST", url: "/api/sales/sales", headers: h.headers(),
-      payload: { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, items: [{ ...ITEM, product_id: I.product2, warehouse_id: I.warehouse }], tipo_operacao_id: desativada } });
+      payload: { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, items: [{ ...ITEM, product_id: I.product2!, warehouse_id: I.warehouse! }], tipo_operacao_id: desativada } });
     expect(nova.statusCode).toBe(422);
   });
 });
@@ -378,7 +378,7 @@ describe("idempotência, concorrência e atomicidade sob execução configurada"
 
   it("04A-I20 estoque insuficiente numa saída configurada desfaz tudo: nenhum título nasce", async () => {
     const topId = await top(configuracaoDe("efeito", "efeito"));
-    const id = await venda(topId, {}, [{ ...ITEM, product_id: I.product2, warehouse_id: I.warehouse, quantity: "999999" }]);
+    const id = await venda(topId, {}, [{ ...ITEM, product_id: I.product2!, warehouse_id: I.warehouse!, quantity: "999999" }]);
     const r = await confirmar(ligada, id);
     expect(r.statusCode, r.body).toBe(409);
     expect(j(r).error!.code).toBe("INSUFFICIENT_STOCK");

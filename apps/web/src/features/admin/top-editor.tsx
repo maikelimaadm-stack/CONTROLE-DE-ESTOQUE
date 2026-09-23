@@ -8,20 +8,21 @@ import {
   Badge, Button, ConfirmDialog, Dialog, ErrorState, Field, Input, LoadingState, NativeSelect, Textarea
 } from "@/components/ui";
 import {
-  ATUALIZACOES_ESTOQUE, ATUALIZACOES_FINANCEIRO, CALCULOS_TRIBUTARIOS, MODOS_CONFIRMACAO,
-  MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO, POLITICAS_ALTERACAO, POLITICAS_APROVACAO,
-  POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
-  normalizarConfiguracaoTop, type ConfiguracaoTipoOperacaoV1
+  ATUALIZACOES_ESTOQUE, ATUALIZACOES_FINANCEIRO, CALCULOS_TRIBUTARIOS, ENUM_LABELS, MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP,
+  MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO, POLITICAS_ALTERACAO,
+  POLITICAS_APROVACAO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
+  efeitosAtivadosTop, familiaAceitaExecucaoConfiguradaTop, normalizarConfiguracaoTop, validarExecucaoTop,
+  type ConfiguracaoTipoOperacaoV2, type EfeitoExecucaoTop, type ModoExecucaoTop, type RecusaExecucaoTop
 } from "@agro/domain";
 import {
-  MensagemCapacidadesTop, ROTULOS_TOP, assinaturaRascunho, configuracaoInicial,
-  ehConflitoDeConcorrencia, lerDetalheTop, limiteDeDestinos, podeConfigurar, podeConfigurarDestinos,
-  useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
-  type DestinoEmEdicao, type EstadoCapacidadesTop, type RascunhoTop
+  MensagemCapacidadesTop, ROTULOS_TOP, assinaturaRascunho, capacidadesDeExecucao, configuracaoInicial,
+  configuracaoParaEnvio, ehConflitoDeConcorrencia, lerDetalheTop, limiteDeDestinos, podeConfigurar,
+  podeConfigurarDestinos, useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
+  type CapacidadesExecucaoTop, type DestinoEmEdicao, type EstadoCapacidadesTop, type RascunhoTop
 } from "./top-contrato";
 
 /**
- * O EDITOR DE TIPO DE OPERAÇÃO — SETE SEÇÕES, UMA GRAVAÇÃO (TOP-CONFIG-03).
+ * O EDITOR DE TIPO DE OPERAÇÃO — OITO SEÇÕES, UMA GRAVAÇÃO (TOP-CONFIG-03; Execução na TOP-CONFIG-04A).
  *
  * ┌─ O QUE ESTA TELA DECIDE, E O QUE ELA DELIBERADAMENTE NÃO DECIDE ───────────────────────────────────┐
  * │ Ela COLETA a intenção declarada de uma operação e a envia inteira, uma vez, quando o usuário manda  │
@@ -29,6 +30,10 @@ import {
  * │ As dependências entre campos (estoque desligado zera o resto, aprovação sem política zera o valor)  │
  * │ são aplicadas aqui apenas para o administrador não digitar o que será ignorado — a normalização de  │
  * │ verdade mora no domínio e acontece de novo no servidor, para qualquer cliente, inclusive `curl`.    │
+ * │                                                                                                      │
+ * │ A aba Execução (TOP-CONFIG-04A) segue a mesma régua: ela MOSTRA o que o servidor declarou executável │
+ * │ (a matriz e o gate vêm das capacidades) e bloqueia o que ele recusaria, para o administrador saber   │
+ * │ por quê antes de salvar. Quem decide continua sendo o servidor, na gravação e na confirmação.        │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ SEM SALVAMENTO AUTOMÁTICO, E O PORQUÊ ────────────────────────────────────────────────────────────┐
@@ -46,7 +51,7 @@ import {
 
 export interface FamiliaTop { codigo: string; rotulo: string; modulo: string | null }
 
-/** As sete seções, na ordem em que a tela as mostra. */
+/** As oito seções, na ordem em que a tela as mostra. */
 const ABAS = [
   { chave: "identificacao", rotulo: "Identificação" },
   { chave: "geral", rotulo: "Geral" },
@@ -54,7 +59,8 @@ const ABAS = [
   { chave: "estoque", rotulo: "Estoque" },
   { chave: "financeiro", rotulo: "Financeiro" },
   { chave: "fiscal", rotulo: "Fiscal" },
-  { chave: "aprovacao", rotulo: "Aprovação" }
+  { chave: "aprovacao", rotulo: "Aprovação" },
+  { chave: "execucao", rotulo: "Execução" }
 ] as const;
 type ChaveAba = (typeof ABAS)[number]["chave"];
 
@@ -63,30 +69,38 @@ const AJUDA: Record<ChaveAba, string> = {
   identificacao:
     "Como esta operação é reconhecida: o código que o operador digita, o nome que ele lê e a família do produto que define de que operação se trata. O código e a família são escolhidos na criação e não mudam depois.",
   geral:
-    "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação.",
+    "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação. Estas regras ficam registradas nesta versão, mas ainda não são executadas: a confirmação automática, por exemplo, não confirma documento nenhum.",
   destinos:
     "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Enquanto esta operação não declarar a política, a conversão continua seguindo o caminho anterior do produto.",
   estoque:
-    "Se esta operação declara movimentação de estoque e em que sentido, além do que ela exige do operador e do que fazer quando o saldo ficaria negativo.",
+    "Se esta operação declara movimentação de estoque e em que sentido, além do que ela exige do operador e do que fazer quando o saldo ficaria negativo. Esta seção só é executada quando a aba Execução entrega o estoque à configuração da TOP.",
   financeiro:
-    "Se esta operação declara efeito financeiro, se ele nasce como título firme ou como previsão, e quais dados de cobrança passam a ser obrigatórios.",
+    "Se esta operação declara efeito financeiro, se ele nasce como título firme ou como previsão, e quais dados de cobrança passam a ser obrigatórios. Esta seção só é executada quando a aba Execução entrega o financeiro à configuração da TOP.",
   fiscal:
-    "Se esta operação é relevante para o fiscal e quais informações fiscais o documento passa a exigir. Nenhum imposto é calculado por esta configuração.",
+    "Se esta operação é relevante para o fiscal e quais informações fiscais o documento passa a exigir. Configuração preparada, ainda não executada: nenhum imposto é calculado e nenhum documento fiscal é gerado por ela.",
   aprovacao:
-    "Se o documento precisa passar por aprovação antes de ser confirmado e, quando o critério for por valor, a partir de que valor a exigência começa."
+    "Se o documento precisa passar por aprovação antes de ser confirmado e, quando o critério for por valor, a partir de que valor a exigência começa. Configuração preparada, ainda não executada: nenhum documento é retido por aprovação.",
+  execucao:
+    "Quem decide o estoque e o financeiro de um documento desta operação: o comportamento legado do produto ou a configuração desta TOP. Cada efeito é decidido separadamente, e só o que o servidor declara executável pode ser ativado."
 };
 
 // ---------------------------------------------------------------------------------------------------
 // Campos
 // ---------------------------------------------------------------------------------------------------
 
-function CampoEnum<T extends string>({ rotulo, ajuda, valor, opcoes, rotulos, onChange, desabilitado, testId, span = 4 }: {
+function CampoEnum<T extends string>({ rotulo, ajuda, valor, opcoes, rotulos, onChange, desabilitado, opcoesDesabilitadas, testId, span = 4 }: {
   rotulo: string; ajuda?: string; valor: T; opcoes: readonly T[]; rotulos: Record<T, string>;
-  onChange: (v: T) => void; desabilitado?: boolean; testId: string; span?: number;
+  onChange: (v: T) => void; desabilitado?: boolean;
+  /**
+   * Opções que aparecem mas não podem ser escolhidas AGORA ("aplicável, porém indisponível"). A opção que
+   * já é o valor atual nunca é desabilitada: ela precisa continuar sendo exibida como selecionada.
+   */
+  opcoesDesabilitadas?: readonly T[];
+  testId: string; span?: number;
 }) {
   return <Field label={rotulo} help={ajuda} span={span}>
     <NativeSelect data-testid={testId} value={valor} disabled={desabilitado} onChange={(e) => onChange(e.target.value as T)}>
-      {opcoes.map((o) => <option key={o} value={o}>{rotulos[o]}</option>)}
+      {opcoes.map((o) => <option key={o} value={o} disabled={o !== valor && !!opcoesDesabilitadas?.includes(o)}>{rotulos[o]}</option>)}
     </NativeSelect>
   </Field>;
 }
@@ -110,12 +124,12 @@ const Secao = ({ chave, children }: { chave: ChaveAba; children: React.ReactNode
   <div className="grid grid-cols-12 gap-3">{children}</div>
 </div>;
 
-/** Dito uma vez, em toda abertura do editor: configurar não é ligar o efeito. */
+/** Dito uma vez, em toda abertura do editor: configurar não é, por si, ligar o efeito. */
 const AvisoDeVersionamento = () => <p data-testid="top-aviso-versionamento" className="mt-3 rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[11.5px] leading-relaxed text-slate-600">
   O que você definir aqui é guardado e versionado: cada gravação cria uma versão nova e as anteriores
-  continuam legíveis no histórico. Os efeitos operacionais de estoque, financeiro e fiscal ainda não são
-  executados a partir desta configuração — eles serão ligados em uma etapa posterior do produto. Até lá,
-  estas escolhas registram a intenção da operação e não alteram o comportamento dos lançamentos.
+  continuam legíveis no histórico. Estoque e financeiro só seguem esta configuração quando a aba Execução
+  diz &quot;Usar configuração da TOP&quot;, e isso vale para os documentos criados a partir da versão salva.
+  Fiscal, aprovação e as regras da aba Geral continuam registrando a intenção da operação, sem executá-la.
 </p>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -182,6 +196,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const configuravel = podeConfigurar(capacidades);
   const destinosConfiguraveis = podeConfigurarDestinos(capacidades);
   const limite = limiteDeDestinos(capacidades);
+  const execucao = capacidadesDeExecucao(capacidades);
 
   /**
    * A configuração de partida.
@@ -237,10 +252,20 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
 
   const mudar = React.useCallback((p: Partial<RascunhoTop>) => setRascunho((r) => ({ ...r, ...p })), []);
   /** Toda mudança de configuração passa pela normalização do domínio: o rascunho nunca guarda campo pendurado. */
-  const mudarConfig = React.useCallback((f: (c: ConfiguracaoTipoOperacaoV1) => ConfiguracaoTipoOperacaoV1) => {
+  const mudarConfig = React.useCallback((f: (c: ConfiguracaoTipoOperacaoV2) => ConfiguracaoTipoOperacaoV2) => {
     setRascunho((r) => ({ ...r, configuracao: normalizarConfiguracaoTop(f(r.configuracao)) }));
   }, []);
 
+  /**
+   * A EXECUÇÃO PEDIDA PODE SER GRAVADA? A mesma pergunta que o servidor faz, contra a matriz QUE ELE
+   * declarou — só para o administrador saber antes. Duas razões de bloqueio, cada uma com a sua frase:
+   * a combinação não é executável para esta família, ou ela ATIVA execução com o gate desligado.
+   */
+  const recusasExecucao = liberado && execucao.suportado && rascunho.codigoBase
+    ? validarExecucaoTop(rascunho.codigoBase, rascunho.configuracao, execucao.matriz) : [];
+  const ativacaoSemRuntime = liberado && execucao.suportado && !execucao.runtimeHabilitado
+    ? efeitosAtivadosTop(edicao ? inicial.configuracao : null, rascunho.configuracao) : [];
+  const envio = configuracaoParaEnvio(rascunho.configuracao, execucao.suportado);
   const salvar = useMutation({
     mutationFn: () => {
       const base: Record<string, unknown> = {
@@ -250,8 +275,10 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         padrao: rascunho.padrao
       };
       // NUNCA ÀS CEGAS: sem contrato confirmado, `configuracao` e `destinos` simplesmente não vão no corpo —
-      // e a tela já avisou que essas seções estão bloqueadas, então ninguém lê "salvo" sobre elas.
-      if (liberado) base.configuracao = rascunho.configuracao;
+      // e a tela já avisou que essas seções estão bloqueadas, então ninguém lê "salvo" sobre elas. E vai no
+      // FORMATO que este servidor grava: o 2 quando ele declara execução, o 1 quando não (ver
+      // `configuracaoParaEnvio`; o botão já fica bloqueado quando não há envio honesto).
+      if (liberado && envio) base.configuracao = envio;
       /**
        * A PRESENÇA DA CHAVE `destinos` É A DECLARAÇÃO — no servidor e, portanto, aqui.
        *
@@ -284,9 +311,10 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const porValor = rascunho.configuracao.aprovacao.politica === "por_valor";
   const valorMinimo = rascunho.configuracao.aprovacao.valorMinimo ?? "";
   const valorMinimoOk = !porValor || valorMinimoAceitavel(valorMinimo);
+  const execucaoOk = !liberado || (envio !== null && recusasExecucao.length === 0 && ativacaoSemRuntime.length === 0);
   const valido = rascunho.nome.trim().length > 0
     && (edicao || (rascunho.codigo.trim().length > 0 && rascunho.codigoBase.length > 0))
-    && valorMinimoOk;
+    && valorMinimoOk && execucaoOk;
 
   const fechar = () => { if (alterado) setConfirmandoDescarte(true); else onFechar(); };
 
@@ -406,6 +434,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           ajuda="O que fazer quando a operação levaria o saldo abaixo de zero."
           onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, saldoNegativo: v } }))} />
         {rascunho.configuracao.estoque.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem movimentação declarada, os demais campos de estoque ficam no estado neutro e não são gravados como exigência." />}
+        <AvisoDeAutoridade efeito="estoque" modo={rascunho.configuracao.execucao.estoque} />
       </Secao>}
 
       {aba === "financeiro" && liberado && <Secao chave="financeiro">
@@ -432,6 +461,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
           onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeCentroResultado: v } }))} />
         {rascunho.configuracao.financeiro.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem efeito financeiro declarado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
+        <AvisoDeAutoridade efeito="financeiro" modo={rascunho.configuracao.execucao.financeiro} />
       </Secao>}
 
       {aba === "fiscal" && liberado && <Secao chave="fiscal">
@@ -479,6 +509,20 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         {rascunho.configuracao.aprovacao.politica === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem critério de aprovação, o valor mínimo fica zerado e não é gravado." />}
       </Secao>}
 
+      {aba === "execucao" && liberado && <Secao chave="execucao">
+        <div className="col-span-12">
+          <AbaExecucao
+            execucao={execucao}
+            codigoBase={rascunho.codigoBase}
+            configuracao={rascunho.configuracao}
+            salva={edicao ? inicial.configuracao : null}
+            recusas={recusasExecucao}
+            ativacaoSemRuntime={ativacaoSemRuntime}
+            onChange={(efeito, modo) => mudarConfig((c) => ({ ...c, execucao: { ...c.execucao, [efeito]: modo } }))}
+          />
+        </div>
+      </Secao>}
+
       {conflito && <p data-testid="top-conflito" className="mt-3 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
         Este tipo de operação foi alterado por outra pessoa enquanto você editava. Nada foi gravado, para
         não apagar o trabalho de ninguém. Feche esta janela, abra o registro de novo e refaça as alterações
@@ -506,6 +550,110 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
 }
 
 const AvisoDeSecaoDesligada = ({ texto }: { texto: string }) => <p className="col-span-12 text-[11.5px] text-slate-500">{texto}</p>;
+
+/** Quem decide ESTA seção no rascunho: a frase muda com a aba Execução, para ninguém ler uma pela outra. */
+const AvisoDeAutoridade = ({ efeito, modo }: { efeito: EfeitoExecucaoTop; modo: ModoExecucaoTop }) =>
+  <p data-testid={`top-secao-autoridade-${efeito}`} data-modo={modo} className="col-span-12 text-[11.5px] text-slate-500">
+    {modo === "configurada"
+      ? "A aba Execução entrega este efeito à configuração da TOP: o que está nesta seção é executado na confirmação da venda."
+      : "Este efeito segue o comportamento legado do produto: o que está nesta seção fica registrado, mas não é executado."}
+  </p>;
+
+// ---------------------------------------------------------------------------------------------------
+// Execução (TOP-CONFIG-04A)
+// ---------------------------------------------------------------------------------------------------
+
+const ROTULO_EFEITO: Record<EfeitoExecucaoTop, string> = { estoque: "Estoque", financeiro: "Financeiro" };
+
+/**
+ * A ÁREA DE EXECUÇÃO — o que é executável, e por que o resto não é.
+ *
+ * Cada causa de bloqueio tem a SUA frase e o seu identificador, porque cada uma pede uma ação diferente de
+ * quem lê: servidor sem o recurso (esperar a atualização), família sem consumidor (nada a fazer nesta
+ * família), gate desligado (esperar a segunda fase da implantação), combinação sem executor (mudar a seção)
+ * e versão já configurada num ambiente que não a executa (as vendas dela serão recusadas até ligar, ou
+ * voltar ao legado). Uma mensagem genérica esconderia qual delas é.
+ */
+function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativacaoSemRuntime, onChange }: {
+  execucao: CapacidadesExecucaoTop;
+  codigoBase: string;
+  configuracao: ConfiguracaoTipoOperacaoV2;
+  /** A configuração da versão GRAVADA (formato 2 para edição), ou `null` na criação. */
+  salva: ConfiguracaoTipoOperacaoV2 | null;
+  recusas: RecusaExecucaoTop[];
+  ativacaoSemRuntime: EfeitoExecucaoTop[];
+  onChange: (efeito: EfeitoExecucaoTop, modo: ModoExecucaoTop) => void;
+}) {
+  if (!execucao.suportado) {
+    return <p data-testid="top-execucao-nao-suportado" className="text-[12px] text-amber-700">
+      Este servidor ainda não oferece execução configurada. Estoque e financeiro seguem o comportamento
+      legado, e nada desta seção é enviado ao salvar; as demais seções continuam funcionando.
+    </p>;
+  }
+  if (!codigoBase) {
+    return <p className="text-[12px] text-slate-500">Escolha a família operacional na aba de identificação para ver o que ela pode executar.</p>;
+  }
+
+  const familiaAceita = familiaAceitaExecucaoConfiguradaTop(codigoBase, execucao.matriz);
+  const salvaConfigurada = !!salva && (salva.execucao.estoque === "configurada" || salva.execucao.financeiro === "configurada");
+  const declarado: Record<EfeitoExecucaoTop, string> = {
+    estoque: ROTULOS_TOP.estoqueAtualizacao[configuracao.estoque.atualizacao],
+    financeiro: ROTULOS_TOP.financeiroAtualizacao[configuracao.financeiro.atualizacao]
+  };
+
+  return <div data-testid="top-execucao" className="space-y-3">
+    {!familiaAceita && <p data-testid="top-execucao-familia-nao-suportada" className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-700">
+      {MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP} Estoque e financeiro desta operação seguem o comportamento legado do produto.
+    </p>}
+    {familiaAceita && !execucao.runtimeHabilitado && <p data-testid="top-execucao-runtime-desligado" className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
+      A execução configurada ainda não está habilitada neste ambiente. Você pode manter ou voltar ao
+      comportamento legado; ativar a configuração da TOP fica disponível quando a implantação for concluída.
+    </p>}
+    {salvaConfigurada && !execucao.runtimeHabilitado && <p data-testid="top-execucao-configurada-sem-execucao" className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
+      A versão salva desta operação usa a configuração da TOP, mas este ambiente ainda não a executa: a
+      confirmação de vendas criadas sob essa versão é recusada até a execução ser habilitada. Voltar ao
+      comportamento legado continua possível.
+    </p>}
+
+    <div className="grid grid-cols-12 gap-3">
+      {(["estoque", "financeiro"] as const).map((efeito) => {
+        const atual = configuracao.execucao[efeito];
+        const configuradaIndisponivel = !familiaAceita || !execucao.runtimeHabilitado;
+        return <React.Fragment key={efeito}>
+          <CampoEnum rotulo={ROTULO_EFEITO[efeito]} testId={`top-campo-execucao-${efeito}`} span={6}
+            valor={atual} opcoes={MODOS_EXECUCAO_TOP} rotulos={ENUM_LABELS.top_execucao}
+            desabilitado={!familiaAceita && atual === "legado"}
+            opcoesDesabilitadas={configuradaIndisponivel ? ["configurada"] : []}
+            onChange={(v) => onChange(efeito, v)} />
+          <p data-testid={`top-execucao-declara-${efeito}`} className="col-span-6 self-end pb-2 text-[12px] text-slate-600">
+            <span className="text-slate-400">A seção {ROTULO_EFEITO[efeito]} declara: </span>{declarado[efeito]}
+          </p>
+        </React.Fragment>;
+      })}
+    </div>
+
+    {recusas.length > 0 && <div data-testid="top-execucao-recusas" className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
+      <p className="font-medium">Esta combinação ainda não pode ser executada, e por isso não pode ser salva:</p>
+      <ul className="mt-1 list-disc pl-5">
+        {recusas.map((r) => <li key={r.caminho} data-testid="top-execucao-recusa" data-caminho={r.caminho}>{r.mensagem}</li>)}
+      </ul>
+    </div>}
+    {recusas.length === 0 && ativacaoSemRuntime.length > 0 && <p data-testid="top-execucao-ativacao-bloqueada" className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
+      Com a execução configurada desligada neste ambiente, esta alteração não pode ser salva:
+      {" "}{ativacaoSemRuntime.map((e) => ROTULO_EFEITO[e]).join(" e ")} passaria a seguir a configuração da TOP.
+    </p>}
+
+    <p data-testid="top-execucao-versao-congelada" className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-600">
+      A escolha vale para os documentos criados a partir da versão que esta gravação cria. Documentos já
+      lançados continuam seguindo a versão que registraram, e o cancelamento estorna apenas o que de fato
+      aconteceu na confirmação.
+    </p>
+    <p data-testid="top-execucao-declarativo" className="text-[11.5px] leading-relaxed text-slate-500">
+      Preparadas, ainda não executadas: fiscal, aprovação, confirmação automática, alteração após confirmar e
+      as exigências da aba Geral. Elas ficam registradas nesta versão, mas nada as executa nesta etapa do produto.
+    </p>
+  </div>;
+}
 
 /** Por que as seções de operação estão bloqueadas. Cada causa tem a sua frase — nunca uma genérica. */
 function BloqueioDeConfiguracao({ estado, ilegivel }: { estado: EstadoCapacidadesTop; ilegivel: boolean }) {

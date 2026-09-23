@@ -72,7 +72,12 @@ export const ENUM_LABELS = {
   notification_kind: { purchase_pending: "Compras pendentes", stock_min: "Estoque mínimo", title_due: "Títulos a vencer", birthday: "Aniversário", document_expiring: "Documento vencendo" },
   /** Ações registradas na auditoria: as ações de permissão (Visualizar, Criar, …) mais as operações internas. */
   audit_action: { ...ACTION_LABELS, create: "Criação", update: "Alteração", delete: "Exclusão", login: "Acesso", logout: "Saída", reject: "Reprovação", reverse: "Estorno", sign: "Assinatura", read: "Leitura", restore: "Restauração", cancel: "Cancelamento", approve: "Aprovação", transfer: "Transferência", settle: "Baixa", process: "Processamento", manifest: "Manifestação", launch: "Lançamento", ignore: "Ignorado", duplicate: "Duplicação", import: "Importação", export: "Exportação" },
-  yes_no: { true: "Sim", false: "Não" }
+  yes_no: { true: "Sim", false: "Não" },
+  /**
+   * Quem decide um efeito da venda na TOP (TOP-CONFIG-04A, bloco `execucao` do formato 2). Os valores são os
+   * de `MODOS_EXECUCAO_TOP`; o rótulo diz a consequência, não o nome técnico.
+   */
+  top_execucao: { legado: "Comportamento legado", configurada: "Usar configuração da TOP" }
 } as const satisfies Record<string, Record<string, string>>;
 
 export type EnumDomain = keyof typeof ENUM_LABELS;
