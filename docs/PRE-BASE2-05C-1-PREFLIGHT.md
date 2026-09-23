@@ -10,6 +10,18 @@ próprio (`NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`) justamente para n�
 
 Quem executa: o Maike. Não é preciso saber SQL: tudo que precisa ser rodado está escrito pronto para colar.
 
+> **Estado em 2026-09-23 (GO-LIVE-01) — a CONDIÇÃO DE RETORNO DE P1 DISPAROU.** O Maike vai iniciar
+> transações reais numa organização nova e limpa, no banco de produção atual (a organização demo continua lá,
+> intocada, como sandbox). Por isso:
+> **P1 = `BLOCKED`** — volta com o enunciado original e só fecha com P1.1–P1.4 executados e registrados
+> (checklist de go-live em `docs/DEPLOYMENT.md`, item G4) ·
+> **`RECOVERY = RESTORE`** a partir da primeira transação real · **`REBUILD FROM ZERO` é PROIBIDO para o banco
+> de produção** — recriar o banco apagaria dado real, e deixa de ser recuperação para ser destruição ·
+> **U4: `preDeployTimeoutSeconds = 300` no serviço `api`, lido em 23/09/2026** (leitura da sessão de revisão,
+> pela API do Railway). Existe contenção: o `OPERATIONAL MERGE BLOCKER` de 15/09 deixa de valer enquanto o
+> campo tiver valor — reler na janela de cada deploy destrutivo, porque o valor é mutável no painel.
+> O bloco de 15/09 abaixo fica como histórico do que valia antes.
+
 > **Estado em 2026-09-15, após o fechamento operacional (05C-G2), a correção externa da PR #35 e a
 > DECLARAÇÃO DE PRÉ-PRODUÇÃO do proprietário:**
 > **P1 = `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`** · **`RECOVERY = REBUILD FROM ZERO`** — o
@@ -33,16 +45,23 @@ Quem executa: o Maike. Não é preciso saber SQL: tudo que precisa ser rodado es
 
 | Gate | Evidência exigida | `PASS` quando | `BLOCKED` enquanto | Quem confirma | Momento |
 | --- | --- | --- | --- | --- | --- |
-| **P1** Restore | **SUSPENSO** — `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`. Enquanto vale, a prova exigida não é de RECUPERAÇÃO e sim de RECONSTRUÇÃO: banco recriado do zero, `0001..0017` aplicadas, dados de teste recriados (`RECOVERY = REBUILD FROM ZERO`) | **nunca por este caminho.** A suspensão não produz `PASS`: ela dispensa o gate para esta janela e o devolve inteiro na condição de retorno | existir o primeiro dado não descartável sem que o drill de backup + restore tenha sido feito — aí volta a `BLOCKED`, com o enunciado original | a SUSPENSÃO é do Maike, por escrito; o RETORNO é automático no evento, e só a execução do drill o fecha | reavaliar ANTES do primeiro uso real e ANTES do primeiro dado não descartável |
+| **P1** Restore | **`BLOCKED` desde 23/09/2026** — a condição de retorno disparou (GO-LIVE-01: primeiro uso real). Vale o enunciado original P1.1–P1.4. Recuperação a partir da primeira transação real: **RESTORE**; `REBUILD FROM ZERO` proibido para produção | P1.3 respondido no projeto RESTAURADO e P1.4 registrado em `docs/DEPLOYMENT.md` (G4) — nunca por declaração nem por "o backup existe" | continua `BLOCKED` até o drill | o Maike executa P1.1/P1.2 no painel; P1.3 é leitura | antes da primeira transação real (G4 bloqueia) |
 | **P5** Seed e papéis | o VALOR de `SEED_ON_DEPLOY` lido com credencial autenticada | o valor foi lido NESTA janela e é diferente de `1` | o valor não tiver sido lido nesta janela — **é o estado de hoje**: a leitura é de 15/09 | leitura automatizada (Railway CLI) ou Maike | reconfirmar imediatamente antes do deploy |
 | **P6** Rollout | as cinco perguntas respondidas: **U4 e U5 por evidência direta**, U1/U2/U3 **dispensados por derivação** | `PASS CONDICIONAL` hoje: vira `PASS` quando **G-U5** rodar, porque é ele que transforma a derivação de U1/U2/U3 em fato | G-U5 não tiver rodado, ou alguma voltar a `UNKNOWN` (ex.: o serviço ser recriado) | leitura automatizada (API do Railway) para U4; painel para o resto | reconfirmar se o serviço mudar |
 | **G-U5** Compatibilidade do binário anterior ✅ | o commit da API em produção subindo e servindo contra um banco com a `0017` aplicada | boot, login, leitura escopada e gravação com ROW COUNT, todos verdes — **EXECUTADO na 05C-1**: 748 chamadas HTTP reais, 726 `2xx`, zero `5xx`, zero menção a objeto purgado nas respostas e no log, `seedPermissions` 782/782 em duas execuções do pre-deploy | a execução deixar de ser reproduzível — reproduzir é **`pnpm gate:g-u5`**, um comando nomeado no `package.json`, não um caminho de arquivo que só quem escreveu conhece. Dos 748, **726 são `2xx` e 22 são `4xx` de contrato** (rota que exige parâmetro, entidade fora do perfil do laboratório), dos quais três são os `422` PRÉ-EXISTENTES declarados no próprio gate (`PRE_EXISTENTES_EC5E771`); `5xx` são zero, e o gate reprova se aparecer um | o próprio gate, em banco descartável | reexecutar antes do deploy, e a cada mudança na API |
-| **U4** Teto do pre-deploy | uma contenção real para o pre-deploy sem teto (`preDeployTimeoutSeconds = null` no serviço `api`, medido em 15/09) | o campo tiver valor, medido e registrado, **ou** existir contenção equivalente aceita por escrito | o campo estiver vazio: **`OPERATIONAL MERGE BLOCKER`** — merge em `main` dispara deploy automático, então liberar a PR para merge é ligar o risco | Maike, no painel do Railway (ação humana, fora desta fatia) | antes de liberar a 05C-1 para merge |
+| **U4** Teto do pre-deploy | contenção real para o pre-deploy | **lido em 23/09/2026: `preDeployTimeoutSeconds = 300`** no serviço `api` (em 15/09 era `null`) — há teto | o campo voltar a ficar vazio: volta a ser `OPERATIONAL MERGE BLOCKER` de migration destrutiva | leitura automatizada (API do Railway) | reler na janela de cada deploy destrutivo |
 | **P7** Locks | a consulta de porteiro, sem linha `BLOQUEIA` | nenhum DDL concorrente **sobre objeto de `erp`** no instante do deploy | houver DDL concorrente sobre objeto de `erp` (ou objeto que não resolve) | Maike, no SQL Editor | minutos antes do deploy |
 
 ---
 
-## P1 — restore real — `NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`
+## P1 — restore real — `BLOCKED` desde 23/09/2026 (condição de retorno disparada)
+
+> **GO-LIVE-01, 23/09/2026:** a condição de retorno abaixo DISPAROU — o primeiro uso real (organização limpa
+> em produção) foi decidido pelo Maike. P1 está `BLOCKED` com o enunciado original (P1.1–P1.4) e só fecha
+> com o drill executado e registrado. A partir da primeira transação real a recuperação é **RESTORE**, e
+> **`REBUILD FROM ZERO` é proibido para o banco de produção**. A declaração de pré-produção abaixo é
+> HISTÓRICO: ela valeu até 23/09 e não vale mais.
+
 
 ### A declaração que suspende este gate
 
@@ -411,7 +430,12 @@ e nome de variável — nada que a purga alcance.
 situação — uma instância do binário anterior servindo contra o schema pós-purga — e é justamente ela que a
 evidência acima não incrimina. O que continua valendo é o teto, e ele agora tem nome: ver **U4** abaixo.
 
-### U4 — `KNOWN: unbounded`
+### U4 — `KNOWN: unbounded` em 15/09 · `300 s` em 23/09/2026
+
+> **Leitura de 23/09/2026 (GO-LIVE-01, sessão de revisão, API do Railway):** `preDeployTimeoutSeconds = 300`
+> no serviço `api`. O texto abaixo é o registro de 15/09, quando o campo estava vazio; ele explica por que o
+> teto importa e continua valendo como critério se o campo voltar a ficar vazio.
+
 
 Era a última pergunta que se acreditava depender de leitura humana no painel. Não dependia: o campo existe
 no schema público da API do Railway e foi lido direto.

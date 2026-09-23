@@ -10,6 +10,7 @@ import { pageQuerySchema } from "../lib/pagination.js";
 import { escopoEmpresaSchema, gravarEscoposAuditado, type EscopoEmpresaEntrada } from "../lib/escopo-admin.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 import { recusarEscopoAchatado } from "../lib/contrato-legado.js";
+import { CHAVE_ORIGEM_SEED } from "@agro/db";
 
 /**
  * Acesso por empresa pedido na requisição — contrato ÚNICO desde PRE-BASE2-05B: `escopos_empresas`.
@@ -136,6 +137,12 @@ export default async function adminRoutes(app: FastifyInstance) {
   app.get("/admin/parameters", async (req) => runService(app, req, null, async (ctx) => (await ctx.tx.query("select parameters from erp.organizations where id=$1", [ctx.orgId])).rows[0]));
   app.put("/admin/parameters", async (req) => runService(app, req, "tenant_parameters.edit", async (ctx) => {
     const d = z.object({ calc_icms_desonerado: z.boolean().optional(), financial_freeze_scope: z.enum(["organization", "farm"]).optional() }).passthrough().parse(req.body);
+    // A marca de origem (GO-LIVE-01) é quem diz ao seed demo onde ele pode escrever. Pela tela, ela só pode
+    // voltar como veio (a tela reenvia o objeto inteiro); qualquer mudança é recusada, nunca ignorada.
+    if (CHAVE_ORIGEM_SEED in d) {
+      const atual = (await ctx.tx.query<{ v: unknown }>("select parameters->$2 as v from erp.organizations where id=$1", [ctx.orgId, CHAVE_ORIGEM_SEED])).rows[0]?.v ?? null;
+      if (JSON.stringify(d[CHAVE_ORIGEM_SEED] ?? null) !== JSON.stringify(atual)) throw validation(`O parâmetro "${CHAVE_ORIGEM_SEED}" não pode ser alterado.`);
+    }
     await ctx.tx.query("update erp.organizations set parameters = parameters || $2::jsonb where id=$1", [ctx.orgId, JSON.stringify(d)]);
     await audit(ctx.tx, ctx, "organizations", ctx.orgId, "update", d);
     return d;
