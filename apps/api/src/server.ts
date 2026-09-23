@@ -10,6 +10,7 @@ import errorsPlugin from "./plugins/errors.js";
 import healthRoutes from "./routes/health.js";
 import authRoutes from "./routes/auth.js";
 import resourceRoutes from "./routes/resources.js";
+import importRoutes from "./routes/imports.js";
 import preferenceRoutes from "./routes/preferences.js";
 import savedReportRoutes from "./routes/saved-reports.js";
 import adminRoutes from "./routes/admin.js";
@@ -55,6 +56,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(healthRoutes);
   await app.register(authRoutes, { prefix: "/api" });
   await app.register(resourceRoutes, { prefix: "/api" });
+  await app.register(importRoutes, { prefix: "/api" });
   await app.register(preferenceRoutes, { prefix: "/api" });
   await app.register(savedReportRoutes, { prefix: "/api" });
   await app.register(adminRoutes, { prefix: "/api" });

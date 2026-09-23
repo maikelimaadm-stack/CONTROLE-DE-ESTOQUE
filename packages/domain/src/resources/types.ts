@@ -64,6 +64,8 @@ export interface ResourceDef {
   printable?: boolean;
   /** importação/exportação XLSX/CSV */
   importExport?: boolean;
+  /** importação por modelo XLSX (baixar modelo + importar), com o servidor conferindo cada linha pelas regras do cadastro */
+  importacao?: boolean;
   /** rota no menu (para links) */
   route: string;
   /** hierarquia (parent_id) */
