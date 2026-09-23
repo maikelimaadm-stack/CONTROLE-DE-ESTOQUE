@@ -726,9 +726,18 @@ test("W3 — abrir e salvar uma TOP do formato 1 sem mudar nada NÃO cria versã
   expect(await versaoNoServidor(page, top.id)).toBe(1);
   await abrirTela(page);
   const forma = await abrirEdicao(page, top.codigo);
+  // A PREMISSA antes do clique: o editor já leu as capacidades e está LIBERADO (a área Execução existe).
+  // Sem esperar, o Salvar pode sair antes das capacidades — sem configuração nenhuma no corpo — e o teste
+  // passaria sem nunca exercitar o que afirma: o editor novo lê o formato 1 como formato 2 em legado.
+  await forma.getByTestId("top-aba-execucao").click();
+  await expect(forma.getByTestId("top-execucao")).toBeVisible();
   const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().includes(`/api/admin/tipos-operacao/${top.id}`));
   await forma.getByTestId("top-salvar").click();
-  expect((await resposta).status()).toBe(200);
+  const r = await resposta;
+  expect(r.status()).toBe(200);
+  const corpo = r.request().postDataJSON() as { configuracao?: { versaoSchema: number; execucao?: unknown } };
+  expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 2").toBe(2);
+  expect(corpo.configuracao?.execucao).toEqual({ estoque: "legado", financeiro: "legado" });
   const d = await detalheNoServidor(page, top.id);
   expect([d.versao, d.configuracaoSchema], "nenhuma versão só para trocar o formato").toEqual([1, 1]);
 });
@@ -775,6 +784,62 @@ test("W4b — versão já configurada com o gate desligado: a tela avisa que as 
   await forma.getByTestId("top-campo-execucao-estoque").selectOption("legado");
   await expect(forma.getByTestId("top-execucao-ativacao-bloqueada"), "voltar ao legado não é ativação").toHaveCount(0);
   await expect(forma.getByTestId("top-salvar")).toBeEnabled();
+  // Desfazer a volta: o valor SALVO continua escolhível — o servidor aceita, porque não é ativação.
+  await expect(forma.getByTestId("top-campo-execucao-estoque").locator('option[value="configurada"]')).toBeEnabled();
+  await forma.getByTestId("top-campo-execucao-estoque").selectOption("configurada");
+  await expect(forma.getByTestId("top-execucao-ativacao-bloqueada")).toHaveCount(0);
+  await expect(forma.getByTestId("top-salvar")).toBeEnabled();
+  // A seção Estoque não afirma "é executado" num ambiente que não executa.
+  await forma.getByTestId("top-aba-estoque").click();
+  await expect(forma.getByTestId("top-secao-autoridade-estoque")).toHaveAttribute("data-bloqueio", "execucao_desligada");
+  await expect(forma.getByTestId("top-secao-autoridade-estoque")).toContainText("ainda não a executa");
+  // Mudar a seção de um efeito JÁ configurado é bloqueado com a causa real — não "passaria a seguir".
+  await forma.getByTestId("top-campo-estoque-armazem").selectOption("true");
+  await forma.getByTestId("top-aba-execucao").click();
+  const motivo = forma.getByTestId("top-execucao-ativacao-motivo");
+  await expect(motivo).toHaveCount(1);
+  await expect(motivo).toHaveAttribute("data-causa", "secao_alterada");
+  await expect(motivo).toContainText("já segue a configuração da TOP");
+  await expect(motivo).not.toContainText("passaria a seguir");
+  await expect(forma.getByTestId("top-salvar")).toBeDisabled();
+});
+
+test("W4c — a 409 do gate desligado mostra o motivo do servidor, e não o aviso de edição concorrente", async ({ page }) => {
+  // O cenário: o editor leu capacidades de uma instância com o gate ligado, e o PUT caiu numa com o gate
+  // desligado (troca da variável reimplanta a API, com sobreposição de instâncias). O servidor deste E2E tem
+  // o gate LIGADO, então a resposta da instância desligada é a única coisa fabricada aqui; a recusa em si
+  // é provada contra o servidor real em `tipos-operacao-execucao.test.ts`.
+  await login(page);
+  const top = await topSimples(page);
+  const mensagem = "A execução configurada está desligada neste servidor; nada foi gravado";
+  await page.route(`**/api/admin/tipos-operacao/${top.id}`, async (rota) => {
+    if (rota.request().method() !== "PUT") return rota.fallback();
+    await rota.fulfill({ status: 409, json: { error: { code: "TIPO_OPERACAO_EXECUCAO_INDISPONIVEL", message: mensagem, details: { efeitos: ["estoque"] } } } });
+  });
+  await abrirTela(page);
+  const forma = await abrirEdicao(page, top.codigo);
+  await forma.getByTestId("top-aba-estoque").click();
+  await forma.getByTestId("top-campo-estoque-atualizacao").selectOption("saida");
+  await forma.getByTestId("top-aba-execucao").click();
+  await forma.getByTestId("top-campo-execucao-estoque").selectOption("configurada");
+  await forma.getByTestId("top-salvar").click();
+  await expect(forma, "a mensagem do servidor, com o motivo real").toContainText(mensagem);
+  await expect(forma.getByTestId("top-conflito"), "não é edição concorrente").toHaveCount(0);
+  expect(await versaoNoServidor(page, top.id), "nada gravado").toBe(1);
+
+  // A PREMISSA: uma edição concorrente DE VERDADE (revisão desatualizada, servidor real) continua sendo
+  // apresentada como conflito — o classificador mudou de critério, não de propósito.
+  await page.unroute(`**/api/admin/tipos-operacao/${top.id}`);
+  await forma.getByTestId("top-cancelar").click();
+  await page.getByRole("button", { name: "Descartar" }).click();
+  await expect(forma).toBeHidden();
+  const outra = await abrirEdicao(page, top.codigo);
+  const d = await api<{ revisao: number }>(page, "GET", `/api/admin/tipos-operacao/${top.id}`);
+  await api(page, "PUT", `/api/admin/tipos-operacao/${top.id}`, { revisao: d.revisao, nome: `${top.codigo} renomeada por outra pessoa` });
+  await outra.getByTestId("top-aba-estoque").click();
+  await outra.getByTestId("top-campo-estoque-atualizacao").selectOption("saida");
+  await outra.getByTestId("top-salvar").click();
+  await expect(outra.getByTestId("top-conflito")).toBeVisible();
 });
 
 test("W5 — família sem consumidor: a execução configurada não está disponível, com a mensagem objetiva", async ({ page }) => {
@@ -804,6 +869,11 @@ test("W6/W7 — na venda, só a combinação executável salva; a incompatível 
   await expect(recusa, "W7: o motivo, com o rótulo — nunca o valor técnico").toContainText("Saída");
   await expect(recusa).not.toContainText("atualizacao");
   await expect(forma.getByTestId("top-salvar"), "combinação sem executor não salva").toBeDisabled();
+  // Na aba da própria seção, a frase de autoridade não diz "é executado" para o que a matriz recusa.
+  await forma.getByTestId("top-aba-estoque").click();
+  await expect(forma.getByTestId("top-secao-autoridade-estoque")).toHaveAttribute("data-bloqueio", "combinacao_recusada");
+  await expect(forma.getByTestId("top-secao-autoridade-estoque")).not.toContainText("é executado");
+  await forma.getByTestId("top-aba-execucao").click();
 
   // Saldo negativo "Permitir": a outra combinação sem executor real.
   await forma.getByTestId("top-aba-estoque").click();
@@ -862,7 +932,10 @@ test("W11 — nenhum valor técnico cru: as opções e o histórico falam pelos 
   for (const efeito of ["estoque", "financeiro"]) {
     await expect(forma.getByTestId(`top-campo-execucao-${efeito}`).locator("option")).toHaveText(["Comportamento legado", "Usar configuração da TOP"]);
   }
-  await expect(forma.getByTestId("top-execucao"), "nem o caminho técnico de um campo").not.toContainText(/execucao\.|legado"|configurada"/);
+  // Palavra inteira e minúscula, para não casar com os rótulos ("Comportamento legado", "Usar configuração
+  // da TOP", "Entrada", "A receber"): nenhum valor técnico de modo, de efeito ou de caminho aparece na área.
+  // `receber` e `pagar` ficam de fora de propósito — são parte dos rótulos "A receber" e "A pagar".
+  await expect(forma.getByTestId("top-execucao"), "nenhum valor técnico cru").not.toContainText(/\bconfigurada\b|execucao\.|\b(saida|nenhuma|entrada|transferencia)\b/);
   await forma.getByTestId("top-cancelar").click();
   await abrirMenuDaLinha(page, top.codigo);
   await page.getByRole("menuitem", { name: "Ver versões" }).click();

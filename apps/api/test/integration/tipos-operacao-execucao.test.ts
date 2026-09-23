@@ -93,7 +93,7 @@ describe("I13 — gate DESLIGADO: ativar é impossível, e a recusa não deixa r
     expect(r.statusCode, r.body).toBe(409);
     expect(j(r).error!.code).toBe("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL");
     expect(j(r).error!.details).toEqual({ efeitos: ["estoque", "financeiro"] });
-    expect(await contarTops(), "a recusa vem ANTES do insert do pai").toBe(antes);
+    expect(await contarTops(), "a recusa não deixa TOP nenhuma: a transação inteira é desfeita").toBe(antes);
     // A premissa: o MESMO corpo é aceito pela instância com o gate ligado.
     expect((await criar(ligada, { configuracao: configurada() })).statusCode).toBe(201);
   });

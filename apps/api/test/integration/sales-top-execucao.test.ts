@@ -384,6 +384,16 @@ describe("idempotência, concorrência e atomicidade sob execução configurada"
     expect(j(r).error!.code).toBe("INSUFFICIENT_STOCK");
     expect(await efeitos(id)).toMatchObject({ status: "open", saidas: 0, titulos: 0 });
   });
+
+  it("04A-I21 o id na URL em MAIÚSCULAS confirma a venda configurada: a marca da 0023 usa o id canônico da linha", async () => {
+    // O Postgres aceita o UUID em maiúsculas e acha a linha; o gatilho compara a marca com `NEW.id::text`,
+    // que é minúsculo. Gravar a marca com o texto cru da URL faria a própria guarda recusar uma confirmação
+    // legítima, com um diagnóstico de "binário anterior".
+    const id = await venda(await top(configuracaoDe("efeito", "efeito")));
+    const r = await confirmar(ligada, id.toUpperCase());
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await efeitos(id)).toMatchObject({ status: "confirmed", saidas: 1, titulos: 1 });
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------

@@ -637,8 +637,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // (o cliente anterior, durante a implantação) é gravado COMO VEIO — formato 1, legado por definição;
       // traduzi-lo seria reescrever o que o cliente disse.
       //
-      // LIDA E CONFERIDA ANTES DE QUALQUER ESCRITA: a recusa de ativação não pode chegar depois de o posto
-      // de padrão já ter sido trocado dentro da transação.
+      // LIDA E CONFERIDA ANTES DE QUALQUER ESCRITA. A correção não depende da ordem — a rota é uma transação
+      // só, e a recusa desfaz tudo —, mas conferir primeiro evita trabalho e deixa a leitura óbvia: nada do
+      // que vem abaixo (posto de padrão, pai, versão) roda para um corpo que seria recusado.
       const configuracao = d.configuracao === undefined ? configuracaoNeutraTopV2() : configuracaoPedida(d.configuracao);
       conferirExecucaoPedida(d.codigoBase, null, configuracao, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED);
 

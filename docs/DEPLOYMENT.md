@@ -568,7 +568,7 @@ web na fase 1 é livre, e o pre-deploy a aplica como qualquer migration.
 
 | Fase | O que sobe | Estado do sistema | Pode voltar? |
 | --- | --- | --- | --- |
-| **1** | merge → deploy automático, com o gate AUSENTE (desligado) | o formato 2 é lido e gravado com os dois efeitos em `legado`; ativar é recusado; toda venda confirma pelo legado; a área Execução do editor diz que a execução está desligada | sim: o binário anterior convive (a 0023 não barra nada enquanto não há versão configurada) |
+| **1** | merge → deploy automático, com o gate AUSENTE (desligado) | o formato 2 é lido e gravado com os dois efeitos em `legado`; ativar é recusado; toda venda confirma pelo legado; a área Execução do editor diz que a execução está desligada | sim, para vendas: o binário anterior convive (a 0023 não barra nada enquanto não há versão configurada). As TOPs gravadas no formato 2 ficam só leitura para ele (ver "Reversão por fase") |
 | entre fases | nada sobe | provar que TODA réplica da API e do web serve o commit da fatia (`/health` → `build.sha`; web `/api/build`), que a 0023 está no ledger, e contar em modo LEITURA as versões que declaram execução configurada (esperado: zero) | — |
 | **2** | o gate `TOP_EFFECTS_RUNTIME_V1_ENABLED=1` no serviço da API, com autorização explícita do Maike (é alteração de configuração de produção) | o administrador pode ativar, por efeito, dentro da matriz; vendas criadas sob versões ativadas executam a política congelada | ver "Reversão por fase" |
 
@@ -578,6 +578,7 @@ banco sem TOP nenhuma não provaria coisa alguma:
 
 ```sql
 select count(*) as versoes,
+       count(*) filter (where configuracao_schema_version >= 2) as formato_2,
        count(*) filter (where configuracao_schema_version >= 2
                          and (configuracao->'execucao'->>'estoque' is distinct from 'legado'
                            or configuracao->'execucao'->>'financeiro' is distinct from 'legado')) as declaram_execucao_configurada
@@ -586,11 +587,20 @@ select count(*) as versoes,
 
 Antes da fase 2 o esperado em `declaram_execucao_configurada` é **zero** (o gate desligado recusa a
 ativação). Um número diferente significa escrita por fora da API e PARA a fase 2 até ser explicado.
+`formato_2` não tem valor esperado: ele mede quantas versões um binário anterior deixaria de editar se
+a API fosse revertida (ver "Reversão por fase").
 
 **Reversão por fase.**
 
-- **Fase 1:** reverter o binário é seguro (nenhuma versão declara execução configurada). A 0023 fica: ela
-  é inerte sem versão configurada, e migration aplicada é histórico.
+- **Fase 1:** reverter o binário não põe venda nenhuma em risco (nenhuma versão declara execução
+  configurada, e o binário anterior não lê a configuração da TOP ao lançar ou confirmar venda). O custo é
+  outro, e é declarado: toda TOP cuja versão atual foi gravada no formato 2 — as criadas na fase 1 e as
+  editadas pelo web novo — fica SÓ LEITURA para o binário anterior. Detalhe e histórico abrem declarando
+  um formato que ele não interpreta; a edição é recusada com 422
+  `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO` ("atualize o servidor antes de editar"). É a recusa
+  que o próprio binário anterior foi escrito para dar (nunca regrava por cima do que não sabe ler), e ela
+  some quando a API volta. A contagem `formato_2` acima diz, antes de reverter, quantas versões ficariam
+  assim. A 0023 fica: ela é inerte sem versão configurada, e migration aplicada é histórico.
 - **Fase 2 — desligar o gate NÃO é voltar ao legado.** Com ele desligado, vendas de versões configuradas
   passam a ser RECUSADAS na confirmação (`TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`), e a tela da TOP avisa
   isso. Para uma operação voltar ao comportamento anterior, o caminho é a TOP: editar e pôr o efeito em

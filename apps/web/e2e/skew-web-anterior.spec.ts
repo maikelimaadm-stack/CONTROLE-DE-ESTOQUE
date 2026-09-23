@@ -236,10 +236,16 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
   expect(criada.status(), await criada.text()).toBe(201);
   const id = (await criada.json() as { id: string }).id;
 
-  // Com o gate desligado, ATIVAR é recusado: a fase 1 não põe execução configurada em circulação.
+  // Com o gate desligado, ATIVAR é recusado: a fase 1 não põe execução configurada em circulação. A revisão
+  // vem do servidor e o CÓDIGO é conferido: um 409 de concorrência (revisão velha) também seria 409, e o
+  // teste passaria sem nunca provar o gate.
+  const lida = await (await request.get(`${API}/api/admin/tipos-operacao/${id}`, { headers: auth })).json() as { revisao: number };
   const ativar = await request.put(`${API}/api/admin/tipos-operacao/${id}`, { headers: auth,
-    data: { configuracao: { ...configuracao, execucao: { estoque: "configurada", financeiro: "legado" } }, revisao: 1 } });
+    data: { configuracao: { ...configuracao, execucao: { estoque: "configurada", financeiro: "legado" } }, revisao: lida.revisao } });
   expect(ativar.status(), "o HEAD com o gate desligado recusa a ativação").toBe(409);
+  const recusa = (await ativar.json() as { error: { code: string; details?: { efeitos?: string[] } } }).error;
+  expect(recusa.code, "a recusa é a do gate, não a de concorrência").toBe("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL");
+  expect(recusa.details?.efeitos).toEqual(["estoque"]);
 
   // O CLIENTE DA BASE renomeia pela tela.
   const nome = uniq("Renomeada pelo web da base");

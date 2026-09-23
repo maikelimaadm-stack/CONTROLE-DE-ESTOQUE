@@ -452,7 +452,12 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
   const politica = enumerado(a, "aprovacao", "politica", POLITICAS_APROVACAO, recusas);
   const valorBruto = a?.valorMinimo;
   let valorMinimo: string | null = null;
-  if (valorBruto !== null && valorBruto !== undefined) {
+  // No formato 2 a chave é OBRIGATÓRIA: só `null` explícito ou um valor passam — ausência traduzida para
+  // `null` seria aceitar um corpo que o contrato não descreve. O formato 1 mantém a leitura de sempre: é
+  // legado para sempre, e versões antigas gravadas sem a chave continuam legíveis.
+  if (versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 && a && !("valorMinimo" in a)) {
+    recusas.push({ motivo: "tipo_invalido", caminho: "aprovacao.valorMinimo" });
+  } else if (valorBruto !== null && valorBruto !== undefined) {
     if (typeof valorBruto !== "string") recusas.push({ motivo: "tipo_invalido", caminho: "aprovacao.valorMinimo" });
     else if (!valorMinimoValido(valorBruto)) recusas.push({ motivo: "valor_invalido", caminho: "aprovacao.valorMinimo" });
     else valorMinimo = valorBruto;

@@ -383,7 +383,7 @@ async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execuca
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
-  const d = await getDoc(ctx, id, "sale", { lock: true }) as Record<string, unknown> & { kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
+  const d = await getDoc(ctx, id, "sale", { lock: true }) as Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
   // A variante já foi amarrada no carregamento (`getDoc(..., "sale")`): orçamento e pedido passados aqui
   // respondem 404, como qualquer UUID que a rota de vendas não serve. A conferência antiga
   // (`d.kind !== "sale"` → 422) distinguia "existe na variante vizinha" de "não existe" — diferença que a
@@ -439,9 +439,11 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   // A MARCA DE QUE ESTA TRANSAÇÃO EXECUTOU A POLÍTICA CONFIGURADA. O gatilho da migration 0023 recusa a
   // confirmação de uma venda cuja versão congelada declara execução configurada sem esta marca — que é
   // como um binário anterior a esta fatia (rollback, instância antiga no pool) deixa de confirmá-la pelo
-  // legado. `true` no terceiro argumento: vale só até o fim desta transação.
+  // legado. `true` no terceiro argumento: vale só até o fim desta transação. O valor é o id CANÔNICO da
+  // linha travada (`d.id`), nunca o texto da URL: o Postgres aceita o UUID em maiúsculas e acha a venda, mas
+  // o gatilho compara a marca com `NEW.id::text`, e a guarda recusaria a própria confirmação legítima.
   if (politica.estoque.autoridade === "configurada" || politica.financeiro.autoridade === "configurada") {
-    await ctx.tx.query("select set_config('app.venda_execucao_configurada', $1, true)", [id]);
+    await ctx.tx.query("select set_config('app.venda_execucao_configurada', $1, true)", [d.id]);
   }
   // ROW COUNT SOB RLS, e a transição conferida no próprio `where`: sob a trava acima só `open`/`approved`
   // chegam aqui, e zero linha sem conferência seria sucesso sem efeito.

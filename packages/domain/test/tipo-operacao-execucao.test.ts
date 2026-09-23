@@ -163,6 +163,21 @@ describe("D3 — o formato 2 é estrito", () => {
     expect(r.ok && r.valor).not.toBe(entrada);
     expect(r.ok && (r.valor as ConfiguracaoTipoOperacaoV2).execucao).not.toBe(entrada.execucao);
   });
+
+  it("D3f no formato 2, `aprovacao.valorMinimo` AUSENTE é recusado — só `null` explícito ou um valor passam", () => {
+    // Ausência traduzida para `null` seria gravar como válido um corpo que o contrato não descreve.
+    const sem = clonar(configuracaoNeutraTopV2()) as unknown as { aprovacao: Record<string, unknown> };
+    delete sem.aprovacao.valorMinimo;
+    const r = lerConfiguracaoTop(sem);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.recusas).toEqual([{ motivo: "tipo_invalido", caminho: "aprovacao.valorMinimo" }]);
+    // A premissa: com a chave presente em `null`, o mesmo corpo é válido.
+    expect(lerConfiguracaoTop(configuracaoNeutraTopV2()).ok).toBe(true);
+    // O formato 1 NÃO muda: é legado para sempre, e versões antigas gravadas sem a chave continuam legíveis.
+    const v1Sem = clonar(configuracaoNeutraTop()) as unknown as { aprovacao: Record<string, unknown> };
+    delete v1Sem.aprovacao.valorMinimo;
+    expect(lerConfiguracaoTop(v1Sem).ok).toBe(true);
+  });
 });
 
 describe("D4 — formato futuro é recusado", () => {

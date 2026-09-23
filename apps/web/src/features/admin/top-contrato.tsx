@@ -556,6 +556,12 @@ export function assinaturaRascunho(r: RascunhoTop): string {
 const FORMA_VALOR_MINIMO = /^\d{1,13}(\.\d{1,2})?$/;
 export const valorMinimoAceitavel = (v: string): boolean => FORMA_VALOR_MINIMO.test(v) && Number(v) > 0;
 
-/** A mensagem de conflito otimista. O 409 do servidor NUNCA é sobrescrito com um novo envio automático. */
+/**
+ * A mensagem de conflito otimista. O 409 do servidor NUNCA é sobrescrito com um novo envio automático.
+ *
+ * Classificado pelo CÓDIGO, não pelo status: esta mesma porta devolve outros 409 que não são concorrência
+ * (`TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`, quando o gate da execução configurada está desligado no servidor
+ * que atendeu), e dizer "alterado por outra pessoa" no lugar da mensagem do servidor esconderia o motivo real.
+ */
 export const ehConflitoDeConcorrencia = (e: unknown): boolean =>
-  e instanceof ApiError && (e.status === 409 || e.code === "CONCURRENCY_CONFLICT");
+  e instanceof ApiError && e.code === "CONCURRENCY_CONFLICT";

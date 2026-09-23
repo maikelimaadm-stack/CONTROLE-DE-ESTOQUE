@@ -266,6 +266,9 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const ativacaoSemRuntime = liberado && execucao.suportado && !execucao.runtimeHabilitado
     ? efeitosAtivadosTop(edicao ? inicial.configuracao : null, rascunho.configuracao) : [];
   const envio = configuracaoParaEnvio(rascunho.configuracao, execucao.suportado);
+  const bloqueioDaSecao = (efeito: EfeitoExecucaoTop): BloqueioDaSecao =>
+    recusasExecucao.some((r) => r.caminho === `execucao.${efeito}` || r.caminho.startsWith(`${efeito}.`)) ? "combinacao_recusada"
+      : execucao.suportado && !execucao.runtimeHabilitado ? "execucao_desligada" : null;
   const salvar = useMutation({
     mutationFn: () => {
       const base: Record<string, unknown> = {
@@ -434,7 +437,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           ajuda="O que fazer quando a operação levaria o saldo abaixo de zero."
           onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, saldoNegativo: v } }))} />
         {rascunho.configuracao.estoque.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem movimentação declarada, os demais campos de estoque ficam no estado neutro e não são gravados como exigência." />}
-        <AvisoDeAutoridade efeito="estoque" modo={rascunho.configuracao.execucao.estoque} />
+        <AvisoDeAutoridade efeito="estoque" modo={rascunho.configuracao.execucao.estoque} bloqueio={bloqueioDaSecao("estoque")} />
       </Secao>}
 
       {aba === "financeiro" && liberado && <Secao chave="financeiro">
@@ -461,7 +464,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
           onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeCentroResultado: v } }))} />
         {rascunho.configuracao.financeiro.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem efeito financeiro declarado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
-        <AvisoDeAutoridade efeito="financeiro" modo={rascunho.configuracao.execucao.financeiro} />
+        <AvisoDeAutoridade efeito="financeiro" modo={rascunho.configuracao.execucao.financeiro} bloqueio={bloqueioDaSecao("financeiro")} />
       </Secao>}
 
       {aba === "fiscal" && liberado && <Secao chave="fiscal">
@@ -551,12 +554,24 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
 
 const AvisoDeSecaoDesligada = ({ texto }: { texto: string }) => <p className="col-span-12 text-[11.5px] text-slate-500">{texto}</p>;
 
-/** Quem decide ESTA seção no rascunho: a frase muda com a aba Execução, para ninguém ler uma pela outra. */
-const AvisoDeAutoridade = ({ efeito, modo }: { efeito: EfeitoExecucaoTop; modo: ModoExecucaoTop }) =>
-  <p data-testid={`top-secao-autoridade-${efeito}`} data-modo={modo} className="col-span-12 text-[11.5px] text-slate-500">
-    {modo === "configurada"
-      ? "A aba Execução entrega este efeito à configuração da TOP: o que está nesta seção é executado na confirmação da venda."
-      : "Este efeito segue o comportamento legado do produto: o que está nesta seção fica registrado, mas não é executado."}
+/**
+ * Quem decide ESTA seção no rascunho: a frase muda com a aba Execução, para ninguém ler uma pela outra.
+ *
+ * "É executado" só é dito quando é verdade. Uma combinação sem executor (a matriz a recusa) e um ambiente
+ * com a execução desligada têm cada um a sua frase AQUI, na aba em que o administrador está mexendo — o
+ * motivo detalhado continua na aba Execução, mas esta aba nunca afirma o contrário dele.
+ */
+type BloqueioDaSecao = "combinacao_recusada" | "execucao_desligada" | null;
+const AvisoDeAutoridade = ({ efeito, modo, bloqueio }: { efeito: EfeitoExecucaoTop; modo: ModoExecucaoTop; bloqueio: BloqueioDaSecao }) =>
+  <p data-testid={`top-secao-autoridade-${efeito}`} data-modo={modo} data-bloqueio={modo === "configurada" ? bloqueio ?? "" : ""}
+    className={`col-span-12 text-[11.5px] ${modo === "configurada" && bloqueio ? "text-amber-800" : "text-slate-500"}`}>
+    {modo !== "configurada"
+      ? "Este efeito segue o comportamento legado do produto: o que está nesta seção fica registrado, mas não é executado."
+      : bloqueio === "combinacao_recusada"
+        ? "A aba Execução entrega este efeito à configuração da TOP, mas esta combinação não tem execução e não pode ser salva; o motivo está na aba Execução."
+        : bloqueio === "execucao_desligada"
+          ? "A aba Execução entrega este efeito à configuração da TOP, mas este ambiente ainda não a executa: a confirmação de vendas desta versão é recusada até a execução ser habilitada."
+          : "A aba Execução entrega este efeito à configuração da TOP: o que está nesta seção é executado na confirmação da venda."}
   </p>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -618,7 +633,10 @@ function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativa
     <div className="grid grid-cols-12 gap-3">
       {(["estoque", "financeiro"] as const).map((efeito) => {
         const atual = configuracao.execucao[efeito];
-        const configuradaIndisponivel = !familiaAceita || !execucao.runtimeHabilitado;
+        // Voltar ao valor SALVO não é ativação (o servidor aceita: `efeitosAtivadosTop` só conta o que passa a
+        // ser configurado, ou o configurado cuja seção mudou — e esse caso tem a sua frase logo abaixo).
+        const salvaNesteEfeito = salva?.execucao[efeito] === "configurada";
+        const configuradaIndisponivel = (!familiaAceita || !execucao.runtimeHabilitado) && !salvaNesteEfeito;
         return <React.Fragment key={efeito}>
           <CampoEnum rotulo={ROTULO_EFEITO[efeito]} testId={`top-campo-execucao-${efeito}`} span={6}
             valor={atual} opcoes={MODOS_EXECUCAO_TOP} rotulos={ENUM_LABELS.top_execucao}
@@ -638,10 +656,17 @@ function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativa
         {recusas.map((r) => <li key={r.caminho} data-testid="top-execucao-recusa" data-caminho={r.caminho}>{r.mensagem}</li>)}
       </ul>
     </div>}
-    {recusas.length === 0 && ativacaoSemRuntime.length > 0 && <p data-testid="top-execucao-ativacao-bloqueada" className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
-      Com a execução configurada desligada neste ambiente, esta alteração não pode ser salva:
-      {" "}{ativacaoSemRuntime.map((e) => ROTULO_EFEITO[e]).join(" e ")} passaria a seguir a configuração da TOP.
-    </p>}
+    {recusas.length === 0 && ativacaoSemRuntime.length > 0 && <div data-testid="top-execucao-ativacao-bloqueada" className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
+      <p>Com a execução configurada desligada neste ambiente, esta alteração não pode ser salva:</p>
+      <ul className="mt-1 list-disc pl-5">
+        {ativacaoSemRuntime.map((e) => <li key={e} data-testid="top-execucao-ativacao-motivo" data-efeito={e}
+          data-causa={salva?.execucao[e] === "configurada" ? "secao_alterada" : "ativacao"}>
+          {salva?.execucao[e] === "configurada"
+            ? `${ROTULO_EFEITO[e]} já segue a configuração da TOP, e mudar a seção ${ROTULO_EFEITO[e]} mudaria o que é executado. Desfaça a mudança nessa seção, ou volte ${ROTULO_EFEITO[e]} ao comportamento legado.`
+            : `${ROTULO_EFEITO[e]} passaria a seguir a configuração da TOP. Mantenha ${ROTULO_EFEITO[e]} no comportamento legado.`}
+        </li>)}
+      </ul>
+    </div>}
 
     <p data-testid="top-execucao-versao-congelada" className="rounded border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] leading-relaxed text-slate-600">
       A escolha vale para os documentos criados a partir da versão que esta gravação cria. Documentos já
