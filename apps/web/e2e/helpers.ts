@@ -79,7 +79,7 @@ export async function escolherTopEContinuar(page: Page, topId: string) {
  * posição na tela mudou —, então quem precisa digitar neles abre a aba primeiro, como o usuário faz.
  * Só retorna quando o painel da aba está visível: preencher durante a troca mediria a aba errada.
  */
-export async function abrirAbaDoLancamento(page: Page, nome: "Totais" | "Financeiro" | "Frete" | "Fiscal" | "Observações") {
+export async function abrirAbaDoLancamento(page: Page, nome: "Totais" | "Financeiro" | "Frete e transporte" | "Fiscal" | "Observações") {
   const aba = page.getByTestId("central-vendas-painel").getByRole("tab", { name: nome });
   await aba.click();
   await expect(aba).toHaveAttribute("aria-selected", "true");

@@ -4,12 +4,17 @@ import { Suspense, use } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { todayISO } from "@/lib/utils";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
-import { Button, Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
+import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
-import { ItemsEditor, PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
+import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { MensagemTop, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
-import { CentralVendasWorkspace, ContextoOperacional } from "@/features/sales/central-vendas-workspace";
+import { ArrowLeft, ChevronRight, Repeat2, Save, Search } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
+import { ItensDaCentral, Travado } from "@/features/sales/central-vendas-itens";
+import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
 
@@ -162,46 +167,44 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const alterarOperacao = () => { if (sujo) setConfirmarTroca(true); else voltarAoLancador(); };
 
   /**
-   * A MOLDURA É VISUAL; O CONTRATO CONTINUA AQUI (VISUAL-UX-01).
+   * A MOLDURA É VISUAL; O CONTRATO CONTINUA AQUI (VISUAL-UX-01, fidelidade na R1).
    *
-   * `CentralVendasWorkspace` recebe cada região como nó pronto e só a organiza: barra de ações, Dados
-   * principais, Itens e o painel inferior. Nada de regra saiu desta função — `escritaTopConfirmada`,
-   * o guard dentro de `submit`, `podeLancar`, a trava da sessão, o rascunho (`sujo`/`useDirtyTab`) e o
-   * payload são os mesmos, linha a linha. O que mudou é ONDE cada campo aparece:
+   * `CentralVendasWorkspace` e `ItensDaCentral` recebem o estado desta função e só o apresentam. Nada de
+   * regra saiu daqui — `escritaTopConfirmada`, o guard dentro de `submit`, `podeLancar`, a trava da
+   * sessão, o rascunho (`sujo`/`useDirtyTab`) e o payload são os mesmos, linha a linha. O que mudou é
+   * ONDE e COMO cada campo aparece:
    *
-   *   Dados principais → Empresa, Cliente, Proprietário, Data, Vencimento, Data de saída
+   *   Dados principais → Cliente, Empresa, Tipo de Operação (travado), Data, Vencimento, Forma de
+   *                      pagamento, Data de saída; Proprietário em "Dados adicionais"
+   *   Itens            → grade, formulário ou os dois, sobre o MESMO `items`
    *   Totais           → Desconto, Outros valores
-   *   Financeiro       → Forma de pagamento, Parcelamento, plano de parcelas
-   *   Frete            → Transportadora, Motorista, Frete, ICMS do frete
+   *   Financeiro       → Parcelamento e plano de parcelas
+   *   Frete e transporte → Transportadora, Motorista, Frete, ICMS do frete
    *   Fiscal           → Dedutível
    *   Observações      → Observação
    *
-   * Cada campo continua ligado EXATAMENTE ao mesmo `h.<chave>` de antes. Nenhum campo novo, nenhum
-   * removido, nenhum renomeado.
-   *
-   * A BARRA SÓ TEM AÇÕES QUE EXISTEM: Voltar, Salvar e Alterar operação. O design aprovado prevê
-   * "Confirmar venda", "Descartar", "Editar" e "Anexos" — nenhuma delas tem contrato nesta etapa
-   * (`docs/DECISIONS.md` 224), então nenhuma aparece, nem desabilitada: botão que não faz nada ensina
-   * o usuário a ignorar botão.
+   * A BARRA SÓ TEM AÇÕES QUE EXISTEM: Voltar, Salvar e Alterar operação (e Documentos abertos, que é
+   * visão da barra de abas). "Confirmar venda", "Descartar", "Editar" e "Anexos" do design não têm
+   * contrato nesta etapa (`docs/DECISIONS.md` 224) — não aparecem, nem desabilitadas.
    */
+  const [maisDados, setMaisDados] = React.useState(false);
+
   /*
-    O CONTEXTO OPERACIONAL vai para o cabeçalho de Dados principais, fora do grid de campos.
-    A VERSÃO não aparece aqui de propósito: o que esta tela conhece é a versão CORRENTE no momento da
+    A OPERAÇÃO É CONTEXTO, NÃO IDENTIDADE. Ela aparece como campo travado em Dados principais — o design
+    mostra o Tipo de Operação assim —, e nunca no lugar do número do documento: em criação o documento
+    ainda NÃO tem número, e exibir o código da TOP ali faria parecer que tem.
+    A VERSÃO não aparece de propósito: o que esta tela conhece é a versão CORRENTE no momento da
     escolha, e quem congela a versão do documento é o servidor, no POST. Exibi-la antes de salvar
-    prometeria um snapshot que ainda não existe e que pode mudar entre a escolha e a gravação — a
-    versão congelada é mostrada na tela de DETALHE, onde ela já é fato.
+    prometeria um snapshot que ainda não existe — a versão congelada é mostrada no DETALHE.
   */
-  const contextoOperacional = <ContextoOperacional
-    rotulo={familia ? `Operação · ${familia}` : "Operação"}
-    codigo={top.code}
-    nome={top.name}
-    testId="top-contexto"
-  />;
+  const contextoOperacional = <Travado rotulo={familia ? `Tipo de Operação · ${familia}` : "Tipo de Operação"} testId="top-contexto">
+    <span className={estilosCv.codigo}>{top.code}</span><span className={estilosCv.separador}>·</span><span>{top.name}</span>
+  </Travado>;
 
   /*
     POR QUE A ESCRITA ESTÁ BLOQUEADA — dentro do formulário, que continua inteiro.
 
-    A operação da SESSÃO segue no cabeçalho de Dados principais: ela não é trocada, não é apagada e
+    A operação da SESSÃO segue no campo travado de Dados principais: ela não é trocada, não é apagada e
     não vira outra. O que some é o direito de gravar, e a razão aparece aqui.
 
     `MensagemTop` cobre os estados que ela já explica (servidor não confirmado, erro, nenhuma TOP
@@ -221,50 +224,62 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     </p>
   </div>;
 
+  const pesquisa = (conteudo: React.ReactNode) => <div className={cn(estilosCv.campo, estilosCv.campoPesquisa)}>{conteudo}<span className={estilosCv.adorno} aria-hidden><Search /></span></div>;
+  const campo = (conteudo: React.ReactNode) => <div className={estilosCv.campo}>{conteudo}</div>;
+
   return <>
     <CentralVendasWorkspace
       titulo={T[kind] ?? "Novo"}
-      descricao={kind === "sales" ? "A confirmação da venda baixa o estoque dos itens com armazém e gera as contas a receber." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada."}
+      identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo }}
       acoes={<>
-        <Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button>
-        <Button size="sm" loading={create.isPending} disabled={!escritaTopConfirmada || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}>Salvar</Button>
-        <span className="flex-1" />
-        <Button data-testid="top-alterar" variant="outline" size="sm" onClick={alterarOperacao}>Alterar operação</Button>
+        <AcaoDaBarra rotulo="Voltar" dica="inicio" onClick={() => router.back()}><ArrowLeft aria-hidden /></AcaoDaBarra>
+        <AcaoDaBarra rotulo="Salvar" destaque="salvar" ocupado={create.isPending} disabled={!escritaTopConfirmada || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
+        <DivisorDaBarra />
+        <AcaoDaBarra rotulo="Alterar operação" data-testid="top-alterar" onClick={alterarOperacao}><Repeat2 aria-hidden /></AcaoDaBarra>
       </>}
-      contexto={contextoOperacional}
+      acoesDireita={<DocumentosAbertos />}
       aviso={avisoDeEscrita}
-      dados={<div className="grid grid-cols-12 gap-3">
-        <Field label="Empresa" required span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
-        <Field label="Cliente" required span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} /></Field>
-        <Field label="Proprietário" span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} /></Field>
-        <Field label="Data" required span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>
-        <Field label="Vencimento" span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>
-        <Field label="Data de saída" span={12}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>
-      </div>}
-      itens={<ItemsEditor items={items} onChange={setItems} fields={["warehouse", "product", "stock", "quantity", "unit_value", "discount", "discount_percent"]} />}
+      dados={<>
+        <p className={estilosCv.descricao}>{kind === "sales" ? "A confirmação da venda baixa o estoque dos itens com armazém e gera as contas a receber." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada."}</p>
+        {pesquisa(<Field label="Cliente" required span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} /></Field>)}
+        {pesquisa(<Field label="Empresa" required span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>)}
+        {contextoOperacional}
+        {campo(<Field label="Data" required span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>)}
+        {campo(<Field label="Vencimento" span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>)}
+        {pesquisa(<Field label="Forma de pagamento" span={12}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} /></Field>)}
+        {campo(<Field label="Data de saída" span={12}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>)}
+        <button type="button" className={estilosCv.maisDados} aria-expanded={maisDados} aria-controls="dados-adicionais" onClick={() => setMaisDados((m) => !m)}>
+          <ChevronRight aria-hidden /> Dados adicionais <span className={estilosCv.mudo}>· 1 campo</span>
+        </button>
+        {maisDados && <div id="dados-adicionais">
+          {pesquisa(<Field label="Proprietário" span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} /></Field>)}
+        </div>}
+      </>}
+      itens={<ItensDaCentral items={items} onChange={setItems} />}
       abas={[
-        { value: "totais", label: "Totais", content: <div className="grid grid-cols-12 gap-3">
-          <Field label="Desconto" span={3}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>
-          <Field label="Outros valores" span={3}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>
+        { value: "totais", label: "Totais", content: <div className={estilosCv.painelColuna} style={{ maxWidth: 330 }}>
+          {campo(<Field label="Desconto" span={12}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>)}
+          {campo(<Field label="Outros valores" span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>)}
         </div> },
-        { value: "financeiro", label: "Financeiro", content: <div className="space-y-3">
-          <div className="grid grid-cols-12 gap-3">
-            <Field label="Forma de pagamento" span={4}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} /></Field>
-            <Field label="Parcelamento" span={3}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>
+        { value: "financeiro", label: "Financeiro", content: <div className={estilosCv.painelColuna}>
+          <div style={{ maxWidth: 330 }}>{campo(<Field label="Parcelamento" span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>)}</div>
+          {h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
+        </div> },
+        { value: "frete", label: "Frete e transporte", content: <div className={estilosCv.painelGrade}>
+          <div className={estilosCv.painelColuna}>
+            {pesquisa(<Field label="Transportadora" span={12}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>)}
+            {campo(<Field label="Motorista" span={12}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>)}
           </div>
-          {h.installments && <PlanEditor plan={plan} onChange={setPlan} />}
+          <div className={estilosCv.painelColuna}>
+            {campo(<Field label="Frete" span={12}><Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} /></Field>)}
+            {campo(<Field label="ICMS frete" span={12}><Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} /></Field>)}
+          </div>
         </div> },
-        { value: "frete", label: "Frete", content: <div className="grid grid-cols-12 gap-3">
-          <Field label="Transportadora" span={5}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>
-          <Field label="Motorista" span={3}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>
-          <Field label="Frete" span={2}><Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} /></Field>
-          <Field label="ICMS frete" span={2}><Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} /></Field>
+        { value: "fiscal", label: "Fiscal", content: <div className={estilosCv.painelColuna} style={{ maxWidth: 330 }}>
+          {campo(<Field label="Dedutível" span={12}><NativeSelect value={h.is_deductible ? "1" : "0"} onChange={(e) => setH({ ...h, is_deductible: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim</option></NativeSelect></Field>)}
         </div> },
-        { value: "fiscal", label: "Fiscal", content: <div className="grid grid-cols-12 gap-3">
-          <Field label="Dedutível" span={2}><NativeSelect value={h.is_deductible ? "1" : "0"} onChange={(e) => setH({ ...h, is_deductible: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim</option></NativeSelect></Field>
-        </div> },
-        { value: "observacoes", label: "Observações", content: <div className="grid grid-cols-12 gap-3">
-          <Field label="Observação" span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>
+        { value: "observacoes", label: "Observações", content: <div className={estilosCv.painelLargo}>
+          {campo(<Field label="Observação" span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>)}
         </div> }
       ]}
     />

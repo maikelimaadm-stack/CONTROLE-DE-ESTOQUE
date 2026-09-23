@@ -1,11 +1,12 @@
 "use client";
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { Card, Tabs } from "@/components/ui";
+import { FilePlus2, Loader2 } from "lucide-react";
+import { Tabs } from "@/components/ui";
 import estilos from "./central-vendas-workspace.module.css";
 
 /**
- * CENTRAL DE VENDAS — WORKSPACE FOUNDATION (VISUAL-UX-01).
+ * CENTRAL DE VENDAS — WORKSPACE FOUNDATION (VISUAL-UX-01, fidelidade na R1).
  *
  * ┌─ O QUE ESTE COMPONENTE É, E O QUE ELE NUNCA DECIDE ────────────────────────────────────────────┐
  * │ É COMPOSIÇÃO VISUAL: barra de ações de altura fixa, coluna de Dados principais, área de Itens,  │
@@ -44,14 +45,14 @@ const limitar = (v: number, min: number, max: number) => Math.min(max, Math.max(
 export interface AbaDoPainel { value: string; label: string; content: React.ReactNode }
 
 export interface CentralVendasWorkspaceProps {
-  /** Título da tela (ex.: "Nova Venda"). Vai para a barra de ações e nomeia a região. */
+  /** Nome da região, para leitores de tela (ex.: "Nova Venda"). */
   titulo: string;
-  /** Frase de apoio do lançamento; aparece no topo de Dados principais, fora da barra. */
-  descricao?: React.ReactNode;
-  /** As AÇÕES REAIS da etapa — a barra só organiza o que a página já tinha. */
+  /** Ações REAIS da etapa, já na linguagem da barra (botões redondos com dica). */
   acoes: React.ReactNode;
-  /** Identificação do contexto operacional, no cabeçalho de Dados principais (à direita). */
-  contexto?: React.ReactNode;
+  /** Ações da direita da barra (ex.: documentos abertos). */
+  acoesDireita?: React.ReactNode;
+  /** Identidade do documento no cabeçalho de Dados principais. Em criação ainda NÃO há número. */
+  identidade: { nome: string; alterado: boolean };
   /** Aviso funcional (ex.: escrita bloqueada). Fica dentro de Dados principais, acima dos campos. */
   aviso?: React.ReactNode;
   dados: React.ReactNode;
@@ -105,7 +106,7 @@ function Divisor({ eixo, valor, min, max, rotulo, onInicio, onMover, onFim, onTe
   </div>;
 }
 
-export function CentralVendasWorkspace({ titulo, descricao, acoes, contexto, aviso, dados, itens, abas, className }: CentralVendasWorkspaceProps) {
+export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade, aviso, dados, itens, abas, className }: CentralVendasWorkspaceProps) {
   const corpoRef = React.useRef<HTMLDivElement>(null);
   const [largura, setLargura] = React.useState<number>(LARGURA_DADOS.padrao);
   const [altura, setAltura] = React.useState<number>(ALTURA_PAINEL.padrao);
@@ -142,62 +143,63 @@ export function CentralVendasWorkspace({ titulo, descricao, acoes, contexto, avi
     return false;
   };
 
-  const tituloId = React.useId();
   const estilo = { "--largura-dados": `${largura}%`, "--altura-painel": `${altura}px` } as React.CSSProperties;
 
-  return <Card
-    role="region"
-    aria-labelledby={tituloId}
-    data-testid="central-vendas"
-    data-arrastando={arrastando ?? undefined}
-    className={cn(estilos.workspace, className)}
-    style={estilo}
-  >
+  return <div role="region" aria-label={titulo} data-testid="central-vendas" data-arrastando={arrastando ?? undefined}
+    className={cn(estilos.workspace, className)} style={estilo}>
+    {/* A barra é AÇÃO, não cabeçalho: o contexto do documento mora no cabeçalho de Dados principais. */}
     <div className={estilos.barra} data-testid="central-vendas-acoes" role="toolbar" aria-label={`Ações · ${titulo}`}>
-      <h2 id={tituloId} className={estilos.barraTitulo}>{titulo}</h2>
-      <span className={estilos.barraDivisor} aria-hidden />
       {acoes}
+      <span className={estilos.barraEspaco} />
+      {acoesDireita}
     </div>
 
-    <div ref={corpoRef} className={estilos.corpo}>
-      <section className={estilos.coluna} data-testid="central-vendas-dados" aria-label="Dados principais">
-        <div className={estilos.cabecalho}>
-          <span className={estilos.cabecalhoTitulo}>Dados principais</span>
-          {contexto && <div className={estilos.cabecalhoContexto}>{contexto}</div>}
-        </div>
-        <div className={estilos.conteudo}>
-          {descricao && <p className={estilos.descricao}>{descricao}</p>}
-          {aviso && <div className={estilos.aviso}>{aviso}</div>}
-          {dados}
-        </div>
-      </section>
-
-      <Divisor eixo="vertical" valor={largura} min={LARGURA_DADOS.min} max={LARGURA_DADOS.max}
-        rotulo="Largura de Dados principais e Itens" onInicio={() => iniciar("vertical")} onMover={moverVertical} onFim={terminar} onTeclado={tecladoVertical}
-        arrastando={arrastando === "vertical"} testId="central-vendas-divisor-vertical" />
-
-      <div className={estilos.coluna}>
-        <section className={estilos.coluna} data-testid="central-vendas-itens" aria-label="Itens">
-          <div className={estilos.cabecalho}><span className={estilos.cabecalhoTitulo}>Itens</span></div>
-          <div className={cn(estilos.conteudo, estilos.itens)}>{itens}</div>
+    <section className={estilos.doc} aria-label="Documento em edição">
+      <div ref={corpoRef} className={estilos.corpo}>
+        <section className={estilos.coluna} data-testid="central-vendas-dados" aria-label="Dados principais">
+          <div className={estilos.cabecalho}>
+            <span>Dados principais</span>
+            <span className={estilos.cabecalhoEspaco} />
+            <span className={estilos.identidade} data-testid="central-vendas-identidade">
+              <span className={estilos.identidadeIcone} aria-hidden><FilePlus2 size={15} /></span>
+              <span className={estilos.identidadeNome}>{identidade.nome}</span>
+              {identidade.alterado && <span className={estilos.pontoAlterado} role="img" aria-label="Alterações não salvas" data-testid="central-vendas-alterado" />}
+            </span>
+          </div>
+          <div className={estilos.dadosCorpo}>
+            {aviso && <div className={estilos.aviso}>{aviso}</div>}
+            {dados}
+          </div>
         </section>
 
-        <Divisor eixo="horizontal" valor={altura} min={ALTURA_PAINEL.min} max={ALTURA_PAINEL.max}
-          rotulo="Altura de Itens e do painel inferior" onInicio={() => iniciar("horizontal")} onMover={moverHorizontal} onFim={terminar} onTeclado={tecladoHorizontal}
-          arrastando={arrastando === "horizontal"} testId="central-vendas-divisor-horizontal" />
+        <Divisor eixo="vertical" valor={largura} min={LARGURA_DADOS.min} max={LARGURA_DADOS.max}
+          rotulo="Largura de Dados principais e Itens" onInicio={() => iniciar("vertical")} onMover={moverVertical} onFim={terminar} onTeclado={tecladoVertical}
+          arrastando={arrastando === "vertical"} testId="central-vendas-divisor-vertical" />
 
-        <div className={estilos.painel} data-testid="central-vendas-painel">
-          <Tabs className={estilos.abas} tabs={abas} />
-        </div>
+        <section className={estilos.coluna} data-testid="central-vendas-itens" aria-label="Itens">
+          {itens}
+        </section>
       </div>
-    </div>
-  </Card>;
+
+      <Divisor eixo="horizontal" valor={altura} min={ALTURA_PAINEL.min} max={ALTURA_PAINEL.max}
+        rotulo="Altura de Itens e do painel inferior" onInicio={() => iniciar("horizontal")} onMover={moverHorizontal} onFim={terminar} onTeclado={tecladoHorizontal}
+        arrastando={arrastando === "horizontal"} testId="central-vendas-divisor-horizontal" />
+
+      <div className={estilos.painel} data-testid="central-vendas-painel">
+        <Tabs className={estilos.abas} tabs={abas} />
+      </div>
+    </section>
+  </div>;
 }
 
-/** Contexto operacional para o cabeçalho de Dados principais: rótulo pequeno, código em destaque, nome. */
-export function ContextoOperacional({ rotulo, codigo, nome, testId }: { rotulo: string; codigo: string; nome: string; testId?: string }) {
-  return <>
-    <span className={estilos.contextoRotulo}>{rotulo}</span>
-    <span className={estilos.contextoValor} data-testid={testId}><span className={estilos.contextoCodigo}>{codigo}</span>{nome}</span>
-  </>;
-}
+/** Botão só de ícone da barra: redondo, com nome acessível e dica — nunca ícone mudo. */
+export const AcaoDaBarra = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { rotulo: string; destaque?: "salvar"; ocupado?: boolean; aberta?: boolean; dica?: "inicio" | "fim" }>(
+  ({ rotulo, destaque, ocupado, aberta, dica, className, children, disabled, ...p }, ref) => <button ref={ref} type="button" aria-label={rotulo} data-dica={rotulo}
+    aria-busy={ocupado || undefined} disabled={disabled || ocupado}
+    className={cn(estilos.acao, destaque === "salvar" && estilos.acaoSalvar, aberta && estilos.acaoAberta, dica === "inicio" && estilos.dicaInicio, dica === "fim" && estilos.dicaFim, className)} {...p}>
+    {ocupado ? <Loader2 className={estilos.girar} aria-hidden /> : children}
+  </button>
+);
+AcaoDaBarra.displayName = "AcaoDaBarra";
+
+export const DivisorDaBarra = () => <span className={estilos.barraDivisor} aria-hidden />;
