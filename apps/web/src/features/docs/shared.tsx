@@ -84,12 +84,19 @@ export const colText = (key: string, label: string): Column<Row> => ({ key, labe
 export const dateFilters: Filter[] = [{ name: "start_date", label: "Data inicial", type: "date" }, { name: "end_date", label: "Data final", type: "date" }];
 export const monthRange = () => ({ start_date: monthStartISO(), end_date: todayISO() });
 
+/**
+ * O valor da linha que os editores de itens EXIBEM (quantidade × unitário − descontos). É apresentação: o total que
+ * vale é o do servidor. Exportado para que outra apresentação do mesmo `ItemRow` (a Central de Vendas) mostre o MESMO
+ * número que este editor sempre mostrou, em vez de uma segunda fórmula.
+ */
+export const totalDaLinhaExibido = (it: ItemRow) => { const g = Number(it.quantity || 0) * Number(it.unit_value || 0); return g - Number(it.discount || 0) - g * Number(it.discount_percent || 0) / 100; };
+
 /** Editor de itens (produto, qtd, valor) usado nos documentos de estoque/vendas. */
 export interface ItemRow { product_id: string; warehouse_id?: string; quantity: string; unit_value?: string; cost_center_id?: string; provider_lot?: string; expiration_date?: string; financial_category_id?: string; cost_center?: string; generate_stock?: boolean; discount?: string; discount_percent?: string; description?: string; [k: string]: unknown }
 export function ItemsEditor({ items, onChange, fields, defaults }: { items: ItemRow[]; onChange: (i: ItemRow[]) => void; fields: ("warehouse" | "product" | "quantity" | "unit_value" | "cost_center" | "lot" | "expiration" | "financial_category" | "generate_stock" | "discount" | "discount_percent" | "stock")[]; defaults?: Partial<ItemRow> }) {
   const upd = (i: number, k: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [k]: v } : it)));
   const add = () => onChange([...items, { product_id: "", quantity: "1", unit_value: "0", generate_stock: true, ...(defaults ?? {}) }]);
-  const totalOf = (it: ItemRow) => { const g = Number(it.quantity || 0) * Number(it.unit_value || 0); return g - Number(it.discount || 0) - g * Number(it.discount_percent || 0) / 100; };
+  const totalOf = totalDaLinhaExibido;
   const has = (k: (typeof fields)[number]) => fields.includes(k);
   return <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>
     {has("warehouse") && <th className="min-w-[160px]">Armazém</th>}<th className="min-w-[240px]">Produto</th>{has("stock") && <th className="text-right">Estoque</th>}<th className="w-24">Quantidade</th>{has("unit_value") && <th className="w-28">Valor unitário</th>}{has("discount") && <th className="w-24">Desconto</th>}{has("discount_percent") && <th className="w-20">Desconto %</th>}<th className="w-28 text-right">Valor total</th>{has("generate_stock") && <th className="w-24">Gera estoque</th>}{has("lot") && <th className="w-28">Lote</th>}{has("expiration") && <th className="w-32">Validade</th>}{has("financial_category") && <th className="min-w-[180px]">Categoria financeira</th>}{has("cost_center") && <th className="min-w-[160px]">Centro de custo</th>}<th className="w-8" />
@@ -112,7 +119,8 @@ export function ItemsEditor({ items, onChange, fields, defaults }: { items: Item
     </tr>)}
   </tbody><tfoot><tr><td colSpan={20} className="p-2"><Button type="button" size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5" /> Adicionar item</Button><span className="ml-4 font-semibold">Total: {brl(items.reduce((a, it) => a + totalOf(it), 0))}</span></td></tr></tfoot></table></div>;
 }
-function StockCell({ warehouseId, productId, onCost }: { warehouseId?: string; productId?: string; onCost: (c: string) => void }) {
+/** Saldo do produto no armazém (e, ao chegar, preenche o unitário vazio com o custo médio — comportamento do editor). */
+export function StockCell({ warehouseId, productId, onCost }: { warehouseId?: string; productId?: string; onCost: (c: string) => void }) {
   const q = useQuery({ queryKey: ["bal", warehouseId, productId], queryFn: () => api<{ quantity: string; averageCost: string }>(`/api/stock/balances/${warehouseId}/${productId}`), enabled: Boolean(warehouseId && productId) });
   React.useEffect(() => { if (q.data && Number(q.data.averageCost) > 0) onCost(q.data.averageCost); }, [q.data]);
   return <span title={q.data ? `custo médio ${brl(q.data.averageCost)}` : ""}>{q.data ? num(q.data.quantity, 4) : "—"}</span>;

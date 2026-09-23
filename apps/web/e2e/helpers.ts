@@ -72,3 +72,26 @@ export async function escolherTopEContinuar(page: Page, topId: string) {
   await expect(page.getByTestId("top-contexto"), "depois de Continuar, o formulário abre contextualizado").toBeVisible();
   await expect(page, "a escolha fica na URL, para sobreviver a refresh e a Voltar/Avançar").toHaveURL(new RegExp(`tipo_operacao_id=${topId}`));
 }
+
+/**
+ * Abre uma aba do painel inferior da Central de Vendas (VISUAL-UX-01): Totais · Financeiro · Frete ·
+ * Fiscal · Observações. Os campos dessas abas continuam ligados ao MESMO estado de antes — só a
+ * posição na tela mudou —, então quem precisa digitar neles abre a aba primeiro, como o usuário faz.
+ * Só retorna quando o painel da aba está visível: preencher durante a troca mediria a aba errada.
+ */
+export async function abrirAbaDoLancamento(page: Page, nome: "Totais" | "Financeiro" | "Frete e transporte" | "Fiscal" | "Observações") {
+  const aba = page.getByTestId("central-vendas-painel").getByRole("tab", { name: nome });
+  await aba.click();
+  await expect(aba).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByTestId("central-vendas-painel").getByRole("tabpanel")).toBeVisible();
+}
+
+/**
+ * Escolhe o primeiro produto REAL na primeira linha de itens da Central de Vendas (VISUAL-UX-01 R1):
+ * abre a pesquisa ancorada à célula de produto e clica na primeira opção que o servidor devolveu.
+ */
+export async function escolherPrimeiroProdutoDaLinha(page: Page) {
+  await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
+  await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
+  await expect(page.getByTestId("central-vendas-pesquisa")).toHaveCount(0);
+}

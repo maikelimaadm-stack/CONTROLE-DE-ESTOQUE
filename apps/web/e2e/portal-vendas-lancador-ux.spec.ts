@@ -1,7 +1,9 @@
+import path from "node:path";
+import fs from "node:fs";
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { ptBR } from "@erp/plataforma";
 import { login, logout, api, uniq } from "./helpers";
-import { textoDeContagem } from "../src/features/sales/launcher-operacoes";
+import { textoDeContagem, LIMITE_DO_MENU_RAPIDO } from "../src/features/sales/launcher-operacoes";
 
 /**
  * A JANELA DE LANÇAMENTO DO PORTAL DE VENDAS — UX1 a UX15 (PORTAL-VENDAS-UX-01).
@@ -249,11 +251,12 @@ test("UX2 — duas operações de cada família aparecem com código, nome e tip
     // A LINHA MORA NO GRUPO DA FAMÍLIA DELA (contrato de ancestralidade do E15, preservado).
     const linha = grupoDaFamilia(lancador, top.familia).locator(`[data-testid="lancador-top"][data-top-id="${top.id}"]`);
     await expect(linha, `a operação ${top.codigo} está no grupo de ${top.familia}`).toHaveCount(1);
-    // AS TRÊS COLUNAS QUE DECIDEM A ESCOLHA, na MESMA linha — e não num cabeçalho que rola para fora.
+    // CÓDIGO E NOME NA LINHA; O TIPO DE DOCUMENTO NO CABEÇALHO DO GRUPO dela (VISUAL-UX-01 R3, como no
+    // design) — com o rótulo HUMANO, e dentro do MESMO grupo que contém a linha.
     await expect(linha, "a linha traz o código").toContainText(top.codigo);
     await expect(linha, "a linha traz o nome da operação").toContainText(top.nome);
-    await expect(linha, "e o tipo de documento em que ela cai, com o rótulo HUMANO")
-      .toContainText(rotuloDaFamilia(top.familia));
+    await expect(grupoDaFamilia(lancador, top.familia).getByTestId("lancador-grupo-rotulo"),
+      "e o grupo dela diz o tipo de documento em que ela cai").toContainText(rotuloDaFamilia(top.familia));
   }
 
   // O CABEÇALHO DE COLUNAS existe em tela larga — é o par do teste de tela estreita (UX15).
@@ -346,7 +349,8 @@ for (const caso of [
 
     const lancador = await abrirLancador(page);
     await expect(linhaDaTop(lancador, primeira.id), "premissa: as duas da família estão na janela").toHaveCount(1);
-    await linhaDaTop(lancador, escolhida.id).click();
+    // O DUPLO CLIQUE é o gesto de lançar do design (VISUAL-UX-01 R3): o clique simples só escolhe.
+    await linhaDaTop(lancador, escolhida.id).dblclick();
 
     // A URL É O PEDIDO: porta da família da operação, parâmetro `tipo_operacao_id`, UUID da escolhida.
     await expect(page, "a porta é a da família da operação escolhida")
@@ -430,7 +434,7 @@ test("UX9 — sem padrão declarado NENHUMA linha nasce ativa, `Lançar` fica de
   await semFormularioDeDocumento(page);
 });
 
-test("UX10 — operação ÚNICA e sem padrão: não se auto-seleciona, não se auto-lança, e só o clique lança", async ({ page }) => {
+test("UX10 — operação ÚNICA e sem padrão: não se auto-seleciona, não se auto-lança; o clique escolhe e só o Lançar lança", async ({ page }) => {
   await login(page);
   /**
    * UMA operação na janela inteira — o cenário exato do bloqueador de PR anterior: `items.length === 1`
@@ -454,8 +458,18 @@ test("UX10 — operação ÚNICA e sem padrão: não se auto-seleciona, não se 
   await expect(page, "e nada foi lançado sozinho").toHaveURL(/\/vendas(\?|$)/);
   await semFormularioDeDocumento(page);
 
-  // O CLIQUE — ato explícito — é o que lança.
+  /**
+   * O CLIQUE — ato explícito — ESCOLHE, e só escolhe (VISUAL-UX-01 R3, como no design): a linha fica
+   * ativa, o rodapé diz o que vai acontecer, nada navega, e o foco continua no campo (as setas seguem
+   * valendo). Quem lança é o `Lançar`.
+   */
   await linhaDaTop(lancador, ORC1.id).click();
+  await expect(linhaDaTop(lancador, ORC1.id), "o clique ativa a linha").toHaveAttribute("data-ativa", "true");
+  await expect(page.getByTestId("lancador-resumo"), "o rodapé nomeia o que será lançado").toContainText(`${ORC1.code} · ${ORC1.name}`);
+  await expect(page.getByTestId("lancador-lancar"), "e o Lançar se habilita").toBeEnabled();
+  await expect(page, "escolher NÃO lança").toHaveURL(/\/vendas(\?|$)/);
+  await expect(page.getByTestId("lancador-busca"), "o foco não saiu do campo de pesquisa").toBeFocused();
+  await page.getByTestId("lancador-lancar").click();
   await expect(page).toHaveURL(new RegExp(`/vendas/budgets/new\\?tipo_operacao_id=${ORC1.id}`));
   await expect(page.getByTestId("top-contexto")).toContainText(ORC1.name);
 });
@@ -561,11 +575,14 @@ test("UX12 — sem `orders.create`, nenhuma operação de PEDIDO aparece, e a fa
     "premissa: a tela perguntou pelas famílias que ele pode criar — senão 'não perguntou por pedidos' seria vazio").toBe(true);
   expect(perguntas.filter((u) => u.includes("/api/sales/orders/operation-types")),
     "sem a capacidade, a porta operacional nem é chamada").toEqual([]);
-  // E A SEPARAÇÃO ENTRE LER E CRIAR, MEDIDA NA MESMA TELA: ele VÊ pedidos (o chip do filtro está
+  // E A SEPARAÇÃO ENTRE LER E CRIAR, MEDIDA NA MESMA TELA: ele VÊ pedidos (a opção do Tipo está
   // lá, porque depende de `orders.view`) e NÃO os lança (o grupo do lançador não está, porque
   // depende de `orders.create`). Uma única tela provando que as duas capacidades são distintas.
-  await expect(page.getByTestId("vendas-tipo"), "premissa viva: ele PODE LER pedidos — o chip do filtro existe")
-    .toContainText("Pedido");
+  await page.keyboard.press("Escape");
+  await expect(lancador, "premissa: a janela fechou para liberar a barra").toHaveCount(0);
+  await page.getByTestId("vendas-tipo").click();
+  await expect(page.getByRole("menuitemradio", { name: "Pedido de venda" }), "premissa viva: ele PODE LER pedidos — o Tipo oferece a opção")
+    .toBeVisible();
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -709,9 +726,183 @@ test.describe("UX15 — celular", { tag: "@mobile" }, () => {
     expect(caixa!.x, "a janela não começa fora da tela").toBeGreaterThanOrEqual(0);
     expect(caixa!.x + caixa!.width, "e não termina fora dela").toBeLessThanOrEqual(391);
 
-    // E O FLUXO FECHA: no celular também se lança.
+    // E O FLUXO FECHA: no celular também se lança — tocar escolhe, `Lançar` lança (VISUAL-UX-01 R3).
     await linhaDaTop(lancador, top.id).click();
+    await expect(linhaDaTop(lancador, top.id), "tocar escolhe a linha").toHaveAttribute("data-ativa", "true");
+    await page.getByTestId("lancador-lancar").click();
     await expect(page).toHaveURL(new RegExp(`/vendas/sales/new\\?tipo_operacao_id=${top.id}`));
     await expect(page.getByTestId("top-contexto")).toContainText(top.nome);
   });
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * UX16 a UX20 — O PORTAL DO DESIGN (VISUAL-UX-01 R3): Tipo como contexto, `Novo` dividido, menu rápido
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/** Escolhe o Tipo pela pílula da barra, como o usuário faz, e espera a lista assumir o recorte. */
+async function escolherTipo(page: Page, rotulo: string, variante: string) {
+  await page.getByTestId("vendas-tipo").click();
+  await page.getByRole("menuitemradio", { name: rotulo, exact: true }).click();
+  await expect(page.getByTestId("vendas-documentos"), `a lista assumiu o tipo ${variante}`).toHaveAttribute("data-kind", variante === "all" ? "" : variante);
+  await expect(page.getByTestId("vendas-tipo")).toHaveAttribute("data-valor", variante);
+}
+
+const menuRapido = (page: Page) => page.getByTestId("vendas-novo-operacoes");
+const itensDoMenu = (page: Page) => menuRapido(page).getByTestId("menu-rapido-top");
+
+test("UX16 — o Tipo é o CONTEXTO: recorta a lista, a janela e o menu, e o foco volta à pílula depois da troca", async ({ page }) => {
+  await login(page);
+  await servirTops(page, SEIS_SEM_PADRAO);
+  await page.goto(PORTAL);
+  await expect(page.getByTestId("vendas-tipo"), "premissa: o portal abre em Todos os tipos").toHaveAttribute("data-valor", "all");
+  await expect(page.getByTestId("vendas-tipo")).toContainText("Todos os tipos");
+
+  // A ORDEM DO DESIGN: Todos, depois do documento final para o inicial.
+  await page.getByTestId("vendas-tipo").click();
+  await expect(page.getByTestId("vendas-tipo-opcao"), "as opções do Tipo, na ordem do design")
+    .toHaveText(["Todos os tipos", rotuloDaFamilia("vendas.venda"), rotuloDaFamilia("vendas.pedido"), rotuloDaFamilia("vendas.orcamento")]);
+  await page.keyboard.press("Escape");
+
+  await escolherTipo(page, rotuloDaFamilia("vendas.venda"), "sale");
+  // Trocar o tipo REMONTA a listagem; o foco não pode cair no <body>.
+  await expect(page.getByTestId("vendas-tipo"), "o foco voltou à pílula do Tipo").toBeFocused();
+  await expect(page.getByTestId("vendas-tipo")).toContainText(rotuloDaFamilia("vendas.venda"));
+
+  // A JANELA OFERECE SÓ O TIPO DO CONTEXTO — e diz qual é.
+  await page.getByTestId("vendas-novo").click();
+  const lancador = page.getByTestId("lancador-unificado");
+  await expect(lancador.getByTestId("lancador-contexto"), "a janela diz o tipo do contexto").toContainText(rotuloDaFamilia("vendas.venda"));
+  await expect(linhas(lancador), "só as duas operações de venda").toHaveCount(2);
+  await expect(linhaDaTop(lancador, VEN1.id)).toHaveCount(1);
+  await expect(linhaDaTop(lancador, VEN2.id)).toHaveCount(1);
+  await expect(linhaDaTop(lancador, ORC1.id), "a de orçamento não é oferecida").toHaveCount(0);
+  await expect(linhaDaTop(lancador, PED1.id), "nem a de pedido").toHaveCount(0);
+  await esperarContagem(page, 2);
+  await page.keyboard.press("Escape");
+
+  // O MENU RÁPIDO TAMBÉM — e sem repetir a família em cada linha, porque ela é o título.
+  await page.getByTestId("vendas-novo-menu").click();
+  await expect(menuRapido(page)).toContainText(`Nova operação · ${rotuloDaFamilia("vendas.venda")}`);
+  await expect(itensDoMenu(page), "só as operações de venda").toHaveCount(2);
+  await expect(menuRapido(page).locator(`[data-top-id="${ORC1.id}"]`)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+
+  // DE VOLTA A TODOS: as três famílias voltam, agrupadas.
+  await escolherTipo(page, "Todos os tipos", "all");
+  await page.getByTestId("vendas-novo").click();
+  await expect(linhas(lancador), "as seis voltam").toHaveCount(6);
+  for (const familia of ["vendas.orcamento", "vendas.pedido", "vendas.venda"]) {
+    const cabecalho = grupoDaFamilia(lancador, familia).getByTestId("lancador-grupo-rotulo");
+    await expect(cabecalho, `o grupo de ${familia} tem cabeçalho com o rótulo humano`).toContainText(rotuloDaFamilia(familia));
+    await expect(cabecalho, "e a contagem do recorte").toContainText("2 operações");
+  }
+});
+
+test("UX17 — o menu rápido da seta lista as operações do contexto, com a família quando os tipos se misturam, e lança direto", async ({ page }) => {
+  await login(page);
+  await servirTops(page, SEIS_SEM_PADRAO);
+  await page.goto(PORTAL);
+  await page.getByTestId("vendas-novo-menu").click();
+  await expect(menuRapido(page), "o menu diz o contexto").toContainText("Nova operação · Todos os tipos");
+  await expect(itensDoMenu(page), `até ${LIMITE_DO_MENU_RAPIDO} operações, o menu mostra todas`).toHaveCount(6);
+  // Com os tipos misturados, cada linha diz a família dela — com o rótulo humano.
+  await expect(menuRapido(page).locator(`[data-top-id="${PED2.id}"]`)).toContainText(rotuloDaFamilia("vendas.pedido"));
+  await expect(menuRapido(page), "o pé do menu leva à janela completa").toContainText("Escolher operação…");
+  await expect(menuRapido(page)).toContainText("6 TOPs");
+
+  // ESCOLHER NO MENU LANÇA DIRETO: é um atalho, e a rota de destino continua reconferindo a escolha.
+  await menuRapido(page).locator(`[data-top-id="${PED2.id}"]`).click();
+  await expect(page).toHaveURL(new RegExp(`/vendas/orders/new\\?tipo_operacao_id=${PED2.id}`));
+  await expect(page.getByTestId("top-contexto"), "o destino confirmou a operação do menu").toContainText(PED2.name);
+});
+
+test("UX18 — acima do limite, o menu rápido mostra SÓ as operações padrão; `Escolher operação…` abre a janela e o ESC devolve o foco ao `Novo`", async ({ page }) => {
+  await login(page);
+  // NOVE operações de venda, UMA padrão: passa do limite, e o corte tem de ser pelo cadastro, não pela posição.
+  const nove = Array.from({ length: LIMITE_DO_MENU_RAPIDO + 1 }, (_, i) =>
+    item(`33333333-3333-4333-8333-0000000001${String(i).padStart(2, "0")}`, `609${String(i).padStart(2, "0")}`, `Faturamento Lote ${i + 1}`));
+  const padrao = { ...nove[5]!, isDefault: true };
+  nove[5] = padrao;
+  await servirTops(page, {
+    budgets: corpoDeTops(FAMILIA_DO_SEGMENTO.budgets!, []),
+    orders: corpoDeTops(FAMILIA_DO_SEGMENTO.orders!, []),
+    sales: corpoDeTops(FAMILIA_DO_SEGMENTO.sales!, nove, padrao.id)
+  });
+  await page.goto(`${PORTAL}?tab=documentos&kind=sale`);
+  await expect(page.getByTestId("vendas-tipo")).toHaveAttribute("data-valor", "sale");
+
+  await page.getByTestId("vendas-novo-menu").click();
+  await expect(menuRapido(page), "o pé conta TODAS as operações do contexto").toContainText(`${nove.length} TOPs`);
+  await expect(itensDoMenu(page), "acima do limite, só a operação padrão").toHaveCount(1);
+  await expect(itensDoMenu(page).first(), "e é a que o SERVIDOR marcou, não a primeira da lista").toHaveAttribute("data-top-id", padrao.id);
+  await expect(itensDoMenu(page).first()).toContainText("Padrão");
+
+  await menuRapido(page).getByTestId("menu-rapido-escolher").click();
+  const lancador = page.getByTestId("lancador-unificado");
+  await expect(lancador, "`Escolher operação…` abre a janela completa").toBeVisible();
+  await expect(linhas(lancador), "com as nove").toHaveCount(nove.length);
+  await expect(page.getByTestId("lancador-busca"), "o foco está na pesquisa").toBeFocused();
+  // UM padrão no contexto → ele nasce ativo, e o rodapé diz o que vai acontecer.
+  await expect(linhaDaTop(lancador, padrao.id)).toHaveAttribute("data-ativa", "true");
+  await expect(page.getByTestId("lancador-resumo")).toContainText(`Lançar ${rotuloDaFamilia("vendas.venda")} com ${padrao.code} · ${padrao.name}`);
+
+  await page.keyboard.press("Escape");
+  await expect(lancador).toHaveCount(0);
+  await expect(page.getByTestId("vendas-novo"), "o foco volta ao `Novo`, não ao <body>").toBeFocused();
+});
+
+test("UX19 — o portal abre direto na ferramenta: sem cartão de título e sem trilha; o h1 continua na árvore", async ({ page }) => {
+  await login(page);
+  const trilha = page.locator('nav[aria-label="Navegação"]');
+  // CONTROLE NEGATIVO: um módulo comum mantém a trilha — é o que dá sentido à ausência abaixo.
+  await page.goto("/estoque");
+  await expect(trilha, "controle: módulo comum tem trilha").toBeVisible();
+
+  await page.goto(PORTAL);
+  await expect(page.getByTestId("vendas-tipo"), "premissa: o portal montou").toBeVisible();
+  await expect(trilha, "o portal do design não tem trilha acima da barra").toHaveCount(0);
+  const titulo = page.getByRole("heading", { level: 1, name: "Vendas" });
+  await expect(titulo, "o h1 continua na árvore (leitor de tela, título da aba)").toHaveCount(1);
+  expect(await titulo.evaluate((el) => el.getBoundingClientRect().width), "mas não é desenhado").toBeLessThanOrEqual(1);
+
+  // A PRIMEIRA BARRA É A FERRAMENTA: Tipo e Novo dentro da barra do motor da listagem, antes dos anexos.
+  const barra = page.getByTestId("b1-list").locator(".no-print").first();
+  await expect(barra.getByTestId("vendas-tipo")).toBeVisible();
+  await expect(barra.getByTestId("vendas-novo")).toBeVisible();
+  await expect(barra.getByTestId("b1-attach"), "anexos, modos e mais opções continuam os do motor").toBeVisible();
+  const area = (await page.getByTestId("active-workspace").boundingBox())!;
+  const caixa = (await barra.boundingBox())!;
+  expect(caixa.y - area.y, "a barra abre a área de trabalho (só o respiro de 12px)").toBeLessThanOrEqual(13);
+});
+
+test("UX20 — evidência visual do portal do design em 1440×900: barra, Tipo, menu rápido e janela", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await login(page);
+  await servirTops(page, {
+    budgets: corpoDeTops(FAMILIA_DO_SEGMENTO.budgets!, [ORC1, item(ORC2.id, ORC2.code, ORC2.name, true)], ORC2.id),
+    orders: corpoDeTops(FAMILIA_DO_SEGMENTO.orders!, [PED1, PED2]),
+    sales: corpoDeTops(FAMILIA_DO_SEGMENTO.sales!, [item(VEN1.id, VEN1.code, VEN1.name, true), VEN2], VEN1.id)
+  });
+  const pasta = process.env.EVIDENCIA_DIR ?? path.resolve("test-results", "evidencia-visual-ux-01");
+  fs.mkdirSync(pasta, { recursive: true });
+  const foto = async (nome: string) => { await page.waitForTimeout(250); await page.screenshot({ path: path.join(pasta, nome) }); expect(fs.statSync(path.join(pasta, nome)).size, `${nome} foi gravada`).toBeGreaterThan(10_000); };
+
+  await page.goto(`${PORTAL}?tab=documentos&kind=sale`);
+  await expect(page.getByTestId("vendas-tipo")).toContainText(rotuloDaFamilia("vendas.venda"));
+  await expect(page.getByTestId("b1-list")).toBeVisible();
+  await foto("portal-1440x900.png");
+  await page.getByTestId("vendas-tipo").click();
+  await expect(page.getByTestId("vendas-tipo-opcoes")).toBeVisible();
+  await foto("portal-tipo-1440x900.png");
+  await page.keyboard.press("Escape");
+  await page.getByTestId("vendas-novo-menu").click();
+  await expect(itensDoMenu(page)).toHaveCount(2);
+  await foto("portal-menu-rapido-1440x900.png");
+  await menuRapido(page).getByTestId("menu-rapido-escolher").click();
+  const lancador = page.getByTestId("lancador-unificado");
+  await expect(linhaDaTop(lancador, VEN1.id)).toHaveAttribute("data-ativa", "true");
+  await foto("portal-janela-1440x900.png");
+  await page.getByTestId("lancador-busca").fill("safra");
+  await expect(linhas(lancador)).toHaveCount(1);
+  await foto("portal-janela-pesquisa-1440x900.png");
 });

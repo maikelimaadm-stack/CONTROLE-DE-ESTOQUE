@@ -108,14 +108,31 @@ const TELAS = {
   // rota e registro coincidentes nas portas existentes — e portanto a regressão volta a ser
   // indistinguível por comportamento (decisão 171). Por isso o gate é ESTÁTICO: o E2E cobre o efeito, e
   // isto cobre a causa.
+  //
+  // VISUAL-UX-01 R3 (docs/DECISIONS.md 227): o documento de venda SALVO passou a abrir na Central de
+  // Vendas, em consulta — decisão de produto. A tela CONTINUA sendo o detalhe de um lançamento, então
+  // continua declarada aqui: muda a MOLDURA exigida (a Central, não a Base 2), e as regras de
+  // classificação pelo REGISTRO continuam cobradas, intactas. Tirar a linha "porque a moldura mudou"
+  // deixaria a causa do defeito da BASE2-03C sem gate nenhum.
   "apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx": {
-    fatia: "BASE2-03C — vendas / sales_documents",
-    regras: REGRAS_VENDAS
+    fatia: "BASE2-03C — vendas / sales_documents (na Central de Vendas desde a VISUAL-UX-01 R3)",
+    regras: REGRAS_VENDAS,
+    composicao: "central"
   }
 };
 
 /** O que a composição principal PRECISA ter. */
 const EXIGIDOS = ["Base2Shell", "Base2Fields", "Base2Items"];
+
+/**
+ * AS MOLDURAS ACEITAS, por nome. A padrão é a Base 2. A `central` é a Central de Vendas — só a tela que a
+ * DECLARA em `TELAS` pode usá-la; qualquer outra continua cobrada pela Base 2. Cada moldura diz o que
+ * precisa ser IMPORTADO e o que precisa ser RENDERIZADO: não basta o import, a composição é o que a tela desenha.
+ */
+const COMPOSICOES = {
+  base2: { importa: /from\s+["']@\/features\/base2["']/, origem: "a moldura de `@/features/base2`", exigidos: EXIGIDOS },
+  central: { importa: /from\s+["']@\/features\/sales\/central-vendas-workspace["']/, origem: "a Central de Vendas de `@/features/sales/central-vendas-workspace`", exigidos: ["CentralVendasWorkspace"] }
+};
 
 /**
  * O que a composição principal NÃO pode ter de volta.
@@ -162,17 +179,20 @@ export function recorteDaFuncao(texto, nome) {
  * `escopo` recorta a auditoria de COMPOSIÇÃO a uma função. O import da moldura continua sendo
  * verificado no ARQUIVO, porque import é de arquivo — não existe import dentro de função.
  */
-export function problemasDaTela(texto, escopo, regras = []) {
+export function problemasDaTela(texto, escopo, regras = [], composicao = "base2") {
   const p = [];
-  if (!/from\s+["']@\/features\/base2["']/.test(texto)) {
-    p.push("não importa a moldura de `@/features/base2`");
+  const moldura = COMPOSICOES[composicao];
+  // composição desconhecida NEGA: um nome errado na declaração não pode virar "nada exigido"
+  if (!moldura) return [`composição declarada desconhecida: \`${composicao}\``];
+  if (!moldura.importa.test(texto)) {
+    p.push(`não importa ${moldura.origem}`);
   }
   let alvo = texto;
   if (escopo) {
     alvo = recorteDaFuncao(texto, escopo);
     if (alvo === null) return [...p, `a função declarada \`${escopo}\` não existe no arquivo — renomeou sem atualizar a declaração?`];
   }
-  for (const nome of EXIGIDOS) if (!renderiza(alvo, nome)) p.push(`não renderiza <${nome}>${escopo ? ` em \`${escopo}\`` : ""}`);
+  for (const nome of moldura.exigidos) if (!renderiza(alvo, nome)) p.push(`não renderiza <${nome}>${escopo ? ` em \`${escopo}\`` : ""}`);
   for (const { nome, por, motivo } of PROIBIDOS) if (renderiza(alvo, nome)) p.push(`voltou a renderizar <${nome}>${escopo ? ` em \`${escopo}\`` : ""} (${motivo}) — o lugar dele é ${por}`);
   // Regras declaradas por tela: o que ESTA tela precisa (ou não pode) conter no corpo auditado.
   for (const { procura, deve, motivo } of regras) {
@@ -233,6 +253,15 @@ export default function Page({ params }) {
 }
 `;
 
+/**
+ * A MESMA tela de vendas, na moldura da Central (VISUAL-UX-01 R3). É contra ela que as regras de vendas
+ * são exercitadas agora — a forma real da tela. `VENDAS_BOA` (Base 2) continua como a prova de que a
+ * moldura padrão NÃO aceita a Central por engano, e vice-versa.
+ */
+const VENDAS_CENTRAL_BOA = VENDAS_BOA
+  .replace('import { Base2Shell, Base2Section, Base2Fields, Base2Items } from "@/features/base2";', 'import { CentralVendasWorkspace } from "@/features/sales/central-vendas-workspace";')
+  .replace(/return <Base2Shell[\s\S]*?<\/Base2Shell>;/, "return <CentralVendasWorkspace titulo={titulo} acoes={null} identidade={{ nome: titulo, alterado: false }} dados={null} itens={null} abas={[]} />;");
+
 const AMOSTRAS = [
   ["tela migrada, com SimpleTable legítimo ao lado, PASSA", 0, BOA, undefined],
   ["shell anterior de volta REPROVA", 1, BOA.replace("<Base2Shell titulo=\"x\">", "<DetailShell title=\"x\">"), undefined],
@@ -254,6 +283,22 @@ const AMOSTRAS = [
   // Cada caso ruim é a regressão que a regra correspondente existe para bloquear, escrita como alguém a
   // escreveria de verdade — não uma string sintética que só casa com a regex.
   ["vendas: a forma correta PASSA", 0, VENDAS_BOA, undefined, REGRAS_VENDAS],
+  // ---- VISUAL-UX-01 R3 · a moldura declarada por tela, nas DUAS direções ----
+  ["vendas na Central, declarada como central, PASSA", 0, VENDAS_CENTRAL_BOA, undefined, REGRAS_VENDAS, undefined, "central"],
+  ["vendas na Central SEM declarar a moldura REPROVA (a padrão continua sendo a Base 2)", 1, VENDAS_CENTRAL_BOA, undefined, REGRAS_VENDAS, "Base2Shell"],
+  ["declarada central, mas sem RENDERIZAR a Central REPROVA", 1,
+    VENDAS_CENTRAL_BOA.replace("return <CentralVendasWorkspace", "return <div data-x"), undefined, REGRAS_VENDAS, "CentralVendasWorkspace", "central"],
+  ["declarada central, mas sem IMPORTAR a Central REPROVA", 1,
+    VENDAS_CENTRAL_BOA.replace('from "@/features/sales/central-vendas-workspace"', 'from "@/features/sales/copia"'), undefined, REGRAS_VENDAS, "não importa a Central", "central"],
+  ["declarada central, o shell anterior de volta REPROVA", 1,
+    VENDAS_CENTRAL_BOA.replace("dados={null}", "dados={<DetailShell title=\"x\" />}"), undefined, REGRAS_VENDAS, "DetailShell", "central"],
+  ["declarada central, a Base 2 NÃO é aceita no lugar", 1, VENDAS_BOA, undefined, REGRAS_VENDAS, "CentralVendasWorkspace", "central"],
+  ["composição desconhecida NEGA", 1, VENDAS_CENTRAL_BOA, undefined, REGRAS_VENDAS, "desconhecida", "centrall"],
+  ["vendas na Central: TOP resolvida fora do REGISTRO REPROVA", 1,
+    VENDAS_CENTRAL_BOA.replace("tipoOperacaoDoRegistro(`erp.sales_documents`, d)", "tipoOperacaoDoRegistro(`erp.sales_documents`, registroDaRota)"),
+    undefined, REGRAS_VENDAS, "nunca da rota", "central"],
+  ["vendas na Central: fallback para VENDA REPROVA", 1,
+    VENDAS_CENTRAL_BOA.replace("const k = DO_REGISTRO[variante];", 'const k = DO_REGISTRO[variante] ?? DO_REGISTRO["sale"];'), undefined, REGRAS_VENDAS, "semântica de venda", "central"],
   // `aponta` é um trecho do MOTIVO da regra visada, não do código: é o que distingue "reprovou" de
   // "reprovou pelo motivo certo". A primeira versão apontava para o nome da função e o caso B passava
   // satisfeito pela regra VIZINHA — medido, não suposto (reversa G1).
@@ -291,8 +336,8 @@ const AMOSTRAS = [
   ["vendas F: perda do rótulo NEUTRO REPROVA", 1,
     VENDAS_BOA.replace('?? "Documento de venda"', '?? "Venda"'), undefined, REGRAS_VENDAS, "rótulo NEUTRO"]
 ];
-for (const [nome, esperado, amostra, escopo, regras, aponta] of AMOSTRAS) {
-  const problemas = problemasDaTela(amostra, escopo, regras);
+for (const [nome, esperado, amostra, escopo, regras, aponta, composicao] of AMOSTRAS) {
+  const problemas = problemasDaTela(amostra, escopo, regras, composicao);
   const n = problemas.length;
   // o caso bom exige ZERO; os ruins exigem AO MENOS um (trocar o shell também tira `Base2Shell` do texto)
   let ok = esperado === 0 ? n === 0 : n >= 1;
@@ -312,19 +357,20 @@ for (const [nome, esperado, amostra, escopo, regras, aponta] of AMOSTRAS) {
 
 // ---------- auditoria do repositório ----------
 const erros = [];
-for (const [rel, { fatia, escopo, regras = [] }] of Object.entries(TELAS)) {
+for (const [rel, { fatia, escopo, regras = [], composicao }] of Object.entries(TELAS)) {
   const abs = path.join(RAIZ, rel);
   if (!fs.existsSync(abs)) { erros.push(`${rel}: declarada como Base 2 e não existe (${fatia})`); continue; }
   const texto = fs.readFileSync(abs, "utf8");
   // NÃO-VACUIDADE: arquivo vazio ou truncado passaria em qualquer "não contém X".
   if (texto.length < 500) { erros.push(`${rel}: ${texto.length} bytes — leitura suspeita, não aprovo por ausência`); continue; }
-  for (const p of problemasDaTela(texto, escopo, regras)) erros.push(`${rel} (${fatia}): ${p}`);
+  for (const p of problemasDaTela(texto, escopo, regras, composicao)) erros.push(`${rel} (${fatia}): ${p}`);
 }
 
 if (erros.length) {
   console.error("base2-consumidor-audit: tela declarada no Modelo Base 2 saiu da moldura\n");
   for (const e of erros) console.error("  - " + e);
-  console.error("\nA composição principal do detalhe é Base2Shell + Base2Fields + Base2Items");
+  console.error("\nA composição principal do detalhe é Base2Shell + Base2Fields + Base2Items — ou a moldura");
+  console.error("que a própria tela declara em TELAS (hoje: a Central de Vendas no documento de venda salvo).");
   console.error("(docs/MODELO-BASE2-CONTRACT.md). Componente do módulo continua livre nas superfícies de");
   console.error("PROCESSO — o que não volta é o cabeçalho, os dados principais e a tabela de itens.");
   console.error("Se a tela deixou de ser um detalhe de lançamento, remova a linha de TELAS com o motivo.");

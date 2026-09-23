@@ -37,6 +37,18 @@ export function WorkspaceTabsBar({ onNewTab }: { onNewTab: () => void }) {
     {(overflow || ws.tabs.length > 6) && <Menu trigger={<button type="button" className="mg-tabbar__btn" aria-label="Lista de abas abertas" data-testid="workspace-tabs-menu"><ChevronDown /></button>} items={[...ws.tabs.map((t) => ({ label: `${t.key === ws.active ? "● " : ""}${t.label}`, onClick: () => ws.focusTab(t.key) })), { label: "Fechar as outras abas", onClick: () => ws.closeOthers(ws.active), danger: true }]} />}
     <button type="button" className="mg-tabbar__btn" aria-label="Nova aba (buscar tela)" title="Nova aba: buscar tela (Ctrl K)" data-testid="workspace-tabs-new" onClick={onNewTab}><Plus /></button>
     <span className="mg-tabbar__count" aria-live="polite">{ws.tabs.length} {ws.tabs.length === 1 ? "aba" : "abas"}</span>
-    <ConfirmDialog open={Boolean(confirm)} onOpenChange={(o) => { if (!o) setConfirm(null); }} title="Fechar aba com alterações não salvas?" description={confirm ? `"${confirm.label}" tem ${COPY.alteracoesNaoSalvas.toLowerCase()}. Ao fechar, elas serão descartadas.` : undefined} confirmLabel="Fechar mesmo assim" danger onConfirm={() => { if (confirm) ws.closeTab(confirm.key, true); setConfirm(null); }} />
+    <ConfirmarFechamentoDeAba aba={confirm} onCancelar={() => setConfirm(null)} onConfirmar={(t) => { ws.closeTab(t.key, true); setConfirm(null); }} />
   </div>;
+}
+
+/**
+ * A pergunta de fechar uma aba com alterações não salvas — UMA, para quem fecha aba. Quem pergunta é quem
+ * recebeu `false` de `closeTab`; quem força é quem ouviu "Fechar mesmo assim". A regra de sujeira continua
+ * sendo a de `lib/workspace-tabs` (`closeTab` recusa aba suja sem `force`); aqui mora só o texto e o diálogo,
+ * para que a barra de abas e a lista de Documentos abertos da Central de Vendas digam a MESMA coisa.
+ */
+export function ConfirmarFechamentoDeAba({ aba, onCancelar, onConfirmar }: { aba: WsTab | null; onCancelar: () => void; onConfirmar: (aba: WsTab) => void }) {
+  return <ConfirmDialog open={Boolean(aba)} onOpenChange={(o) => { if (!o) onCancelar(); }} title="Fechar aba com alterações não salvas?"
+    description={aba ? `"${aba.label}" tem ${COPY.alteracoesNaoSalvas.toLowerCase()}. Ao fechar, elas serão descartadas.` : undefined}
+    confirmLabel="Fechar mesmo assim" danger onConfirm={() => { if (aba) onConfirmar(aba); }} />;
 }

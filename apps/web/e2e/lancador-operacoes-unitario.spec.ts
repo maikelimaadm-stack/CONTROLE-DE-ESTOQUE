@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 import {
-  filtrarLinhas, linhaAtivaDoRecorte, linhasDeLancamento, linhasDoGrupo, moverAtivo,
-  normalizarTexto, padraoDeLancamento, rotaDeLancamento, textoDeContagem,
+  filtrarLinhas, linhaAtivaDoRecorte, linhasDeLancamento, linhasDoGrupo, linhasDoMenuRapido, moverAtivo,
+  normalizarTexto, padraoDeLancamento, rotaDeLancamento, textoDeContagem, LIMITE_DO_MENU_RAPIDO,
   type LinhaDeLancamento
 } from "../src/features/sales/launcher-operacoes";
 import { CONTRATO_TOPS, type TopOperacional } from "../src/features/sales/tipo-operacao-select";
@@ -250,4 +250,25 @@ test("U12 — a rota sai do segmento da própria linha, e a contagem anuncia o r
   expect(textoDeContagem(0), "o vazio é dito, não silenciado").toBe("Nenhuma operação encontrada");
   expect(textoDeContagem(1), "singular").toBe("1 operação encontrada");
   expect(textoDeContagem(7), "plural com o número").toBe("7 operações encontradas");
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * U13 — O MENU RÁPIDO DA SETA DO `Novo` (VISUAL-UX-01 R3)
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+test("U13 — o menu rápido mostra tudo até o limite; acima dele, SÓ o que o servidor marcou como padrão", () => {
+  const poucas = linhasDeLancamento([ORCAMENTOS, PEDIDOS, VENDAS]);
+  expect(poucas.length, "premissa: abaixo do limite").toBeLessThanOrEqual(LIMITE_DO_MENU_RAPIDO);
+  expect(linhasDoMenuRapido(poucas).map((l) => l.id), "até o limite, todas, na ordem de apresentação").toEqual(poucas.map((l) => l.id));
+  expect(linhasDoMenuRapido(poucas), "e devolve array NOVO: a lista vem de cache compartilhado").not.toBe(poucas);
+
+  // NOVE operações de uma família, UMA padrão — no MEIO, para que "as primeiras" não passe por acaso.
+  const nove = Array.from({ length: LIMITE_DO_MENU_RAPIDO + 1 }, (_, i) => top(`id-lote-${i}`, `609${i}`, `Faturamento Lote ${i}`, i === 5));
+  const muitas = linhasDeLancamento([grupoPronto("vendas.venda", "sale", "Venda", nove, "id-lote-5")]);
+  expect(muitas.length, "premissa: acima do limite").toBeGreaterThan(LIMITE_DO_MENU_RAPIDO);
+  expect(linhasDoMenuRapido(muitas).map((l) => l.id), "acima do limite, só a padrão — nunca 'as primeiras'").toEqual(["id-lote-5"]);
+
+  // Sem padrão declarado, acima do limite o menu fica VAZIO (e o pé "Escolher operação…" é o caminho).
+  const semPadrao = linhasDeLancamento([grupoPronto("vendas.venda", "sale", "Venda", nove.map((t) => ({ ...t, isDefault: false })))]);
+  expect(linhasDoMenuRapido(semPadrao), "cardinalidade não inventa padrão").toEqual([]);
 });

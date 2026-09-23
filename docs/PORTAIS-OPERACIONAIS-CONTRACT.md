@@ -138,6 +138,14 @@ seus, e cada grupo do lançador só existe para quem tem a capacidade de criar a
 (`budgets.create`, `orders.create`, `sales.create`). Sem nenhuma, o botão não aparece: oferecer "Novo" a
 quem não pode criar nada é oferecer uma porta fechada.
 
+**A apresentação vigente (VISUAL-UX-01 R3, `docs/DECISIONS.md` 228).** A barra do portal traz a pílula
+**Tipo** (o filtro de tipo de documento, agora também CONTEXTO do lançamento) e o `Novo` **dividido**: o
+corpo abre a janela de operações; a seta abre um menu rápido com as operações do tipo escolhido (todas até
+oito; acima disso, só as padrão declaradas pelo servidor) e "Escolher operação…". Com um tipo escolhido,
+menu e janela oferecem só as operações dele; com "Todos os tipos", as de todos, agrupadas por família. Na
+janela o clique **escolhe**; lançam o botão `Lançar`, o Enter e o duplo clique. Nada disso muda as camadas
+acima: a TOP escolhida continua sendo um pedido que a rota de lançamento reconfere contra o servidor.
+
 **Escolher no lançador não autoriza nada.** A escolha vira `?tipo_operacao_id=<uuid>` na rota de
 lançamento, e lá o id é reconferido contra a lista que o **servidor** devolve para aquela variante.
 Pedido de URL é pedido, nunca autoridade — inclusive quando quem montou a URL foi a própria tela.

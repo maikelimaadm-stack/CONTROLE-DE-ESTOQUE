@@ -42,7 +42,13 @@ function useCanonicalRoute() {
   return Boolean(next);
 }
 
-export function Workspace({ title, tabs, param = "tab", actions, layout = "tabs", className, header, defaultTab }: { title?: React.ReactNode; tabs: WsTab[]; param?: string; actions?: React.ReactNode; layout?: "tabs" | "sidebar" | "sub"; className?: string; header?: React.ReactNode; defaultTab?: string }) {
+export function Workspace({ title, tabs, param = "tab", actions, layout = "tabs", className, header, defaultTab, cabecalho = "cartao" }: { title?: React.ReactNode; tabs: WsTab[]; param?: string; actions?: React.ReactNode; layout?: "tabs" | "sidebar" | "sub"; className?: string; header?: React.ReactNode; defaultTab?: string;
+  /**
+   * `"oculto"` (opt-in, só com UMA aba no layout de abas): a área não desenha o cartão de título — o h1 continua
+   * na árvore para leitor de tela e atalho de título, visualmente escondido. É para a tela cuja PRIMEIRA barra é
+   * a própria ferramenta (o Portal de Vendas do design, VISUAL-UX-01 R3). O padrão não muda nenhuma outra tela.
+   */
+  cabecalho?: "cartao" | "oculto" }) {
   const redirecting = useCanonicalRoute();
   const { visible, active, set } = useTabParam(param, tabs, defaultTab);
   if (redirecting) return null;
@@ -57,6 +63,11 @@ export function Workspace({ title, tabs, param = "tab", actions, layout = "tabs"
     <div className="mg-panel-sidebar-layout min-h-0 flex-1"><aside className="mg-panel-sidebar-layout__tabs overflow-auto">{rail}</aside><div className="mg-panel-sidebar-layout__content flex min-h-0 flex-col">{content}</div></div>
   </div>;
   if (layout === "sub") return <div className={cn("flex min-h-0 flex-1 flex-col gap-2", className)}>{(rail || actions) && <div className="flex flex-wrap items-center gap-2">{rail}{actions && <div className="ml-auto flex items-center gap-1.5">{actions}</div>}</div>}{content}</div>;
+  if (cabecalho === "oculto" && single && layout === "tabs") return <div className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", className)}>
+    {title && <h1 className="sr-only">{title}</h1>}
+    {header}
+    {content}
+  </div>;
   return <div className={cn("b1 flex min-h-0 flex-1 flex-col gap-2", className)}>
     <div className="mg-toolbar mg-card flex flex-wrap items-center gap-2 px-2">{title && <h1 className="truncate px-1 text-[13px] font-semibold text-slate-800">{title}</h1>}{rail}{single && active?.hint && <span className="px-1 text-[11.5px] text-slate-500">{active.hint}</span>}{actions && <div className="ml-auto flex items-center gap-1.5">{actions}</div>}</div>
     {header}

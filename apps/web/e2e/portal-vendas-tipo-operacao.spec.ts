@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha } from "./helpers";
 
 /**
  * PORTAL DE VENDAS COM TOP CADASTRADA — o caminho que o usuário faz de verdade (TOP-CONFIG-02).
@@ -71,7 +71,7 @@ test("cadastra TOPs, lança pelo Portal de Vendas e o detalhe mostra o snapshot"
   });
 
   await page.goto(`/vendas/sales/${venda.id}`);
-  await expect(page.getByTestId("base2-shell")).toBeVisible();
+  await expect(page.getByTestId("central-vendas")).toBeVisible();
   // TOP configurada E família canônica aparecem como coisas DIFERENTES.
   await expect(page.getByText(nomeTop)).toBeVisible();
   await expect(page.getByText("Família operacional")).toBeVisible();
@@ -94,7 +94,7 @@ test("editar a TOP cria a versão 2 e o documento ANTIGO continua exibindo a ver
   await api(page, "PUT", `/api/admin/tipos-operacao/${top.id}`, { nome: nomeV2, revisao: atual.revisao });
 
   await page.goto(`/vendas/sales/${venda.id}`);
-  await expect(page.getByTestId("base2-shell")).toBeVisible();
+  await expect(page.getByTestId("central-vendas")).toBeVisible();
   // A PROVA QUE IMPORTA: a tela mostra o nome de ONTEM, porque lê a versão congelada.
   await expect(page.getByText(nomeV1)).toBeVisible();
   await expect(page.getByText(nomeV2), "o nome novo NÃO pode aparecer no documento antigo").toHaveCount(0);
@@ -131,7 +131,7 @@ test("conversão exige a TOP do DESTINO, e a fonte mantém a dela", async ({ pag
   });
 
   await page.goto(`/vendas/budgets/${orcamento.id}`);
-  await expect(page.getByTestId("base2-shell"), "a premissa: o documento abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "a premissa: o documento abriu").toBeVisible();
   // O RÓTULO NOMEIA A OPERAÇÃO DE DESTINO. Um destino só não vira "Converter" genérico: o operador
   // precisa saber, ANTES do clique, em que operação o documento novo nasce.
   const acao = page.getByTestId("acao-conversao");
@@ -346,7 +346,7 @@ test("LEGADO — documento sem TOP abre, diz que não está configurado e manté
   });
 
   await page.goto(`/vendas/sales/${venda.id}`);
-  await expect(page.getByTestId("base2-shell"), "legado continua abrindo").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "legado continua abrindo").toBeVisible();
   await expect(page.getByText("Não configurada (registro legado)")).toBeVisible();
   // A família canônica CONTINUA correta — ela vem do registro, não da configuração.
   await expect(page.getByText("Família operacional")).toBeVisible();
@@ -393,13 +393,17 @@ test("E1 VENDA — do Portal ao snapshot: lançador, formulário contextualizado
    *
    * ATUALIZADO NA TOP-CONFIG-03: o `+ Novo` deixou de perguntar a VARIANTE ("Nova venda") e passou a
    * oferecer as OPERAÇÕES agrupadas por família. Escolher a operação já decide a porta, então não há
-   * mais menu de documento — e o caminho do usuário passa a ser um clique, não dois.
+   * mais menu de documento.
+   *
+   * ATUALIZADO NA VISUAL-UX-01 R3: como no design, o clique ESCOLHE a operação e o `Lançar` (ou o
+   * Enter, ou o duplo clique) lança. O caminho aqui é o explícito: escolher e lançar.
    */
   await page.goto(PORTAL);
   await page.getByTestId("vendas-novo").click();
   const lancador = page.getByTestId("lancador-unificado");
-  await expect(lancador, "o `+ Novo` do portal abre o lançador unificado").toBeVisible();
+  await expect(lancador, "o `Novo` do portal abre o lançador unificado").toBeVisible();
   await lancador.locator(`[data-testid="lancador-top"][data-top-id="${top.id}"]`).click();
+  await page.getByTestId("lancador-lancar").click();
 
   /**
    * A OPERAÇÃO ESCOLHIDA NO PORTAL É PEDIDO, NÃO AUTORIZAÇÃO: ela vira `?tipo_operacao_id=<uuid>` na
@@ -428,18 +432,11 @@ test("E1 VENDA — do Portal ao snapshot: lançador, formulário contextualizado
 
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();
-  const linha = page.locator("tbody tr").first();
-  await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
-  /**
-   * A LISTA DE OPÇÕES TEM DE SER PROCURADA DENTRO DO POPUP, e não na página.
-   *
-   * `page.getByRole("option")` casa TAMBÉM o `<select>` de empresa da barra superior, cujo
-   * `<option>Todas as empresas</option>` nunca fica visível — o clique então espera para sempre por um
-   * elemento que não vai aparecer, e o teste morre por timeout culpando o produto. É o mesmo recorte que
-   * `pickRef` já faz; aqui ele precisa ser explícito porque o campo mora numa linha de tabela, sem label.
-   */
-  const opcoes = page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last();
-  await opcoes.getByRole("option").first().click();
+  /*
+    A lista de opções é procurada DENTRO do painel de pesquisa, e não na página: `page.getByRole("option")`
+    casaria também o `<select>` de empresa da barra superior, cuja opção nunca fica visível.
+  */
+  await escolherPrimeiroProdutoDaLinha(page);
 
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(() => corpo, { message: "o formulário precisa ter emitido o POST" }).not.toBeNull();
@@ -555,6 +552,7 @@ test("ALTERAR OPERAÇÃO — volta ao lançador, e avisa antes de descartar o qu
 
   // (b) COM dado digitado, pergunta antes — e só descarta depois do "sim".
   await escolherTopEContinuar(page, top.id);
+  await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill("rascunho que não pode sumir calado");
   await page.getByTestId("top-alterar").click();
   await expect(page.getByRole("dialog")).toContainText("Alterar o Tipo de Operação?");
@@ -636,6 +634,7 @@ test("C1 — REVALIDAÇÃO NÃO APAGA O FORMULÁRIO: a TOP sai da lista e o que 
   await escolherTopEContinuar(page, top.id);
 
   const rascunho = "rascunho que não pode sumir sozinho";
+  await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill(rascunho);
 
   // A lista é CONTADA, para que o teste prove que a revalidação aconteceu de fato — sem isso ele
@@ -677,12 +676,11 @@ test("C2 — O SERVIDOR AINDA MANDA: salvar com a TOP já desativada recusa, e n
   await escolherTopEContinuar(page, top.id);
 
   const rascunho = "precisa sobreviver à recusa";
+  await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();
-  const linha = page.locator("tbody tr").first();
-  await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
-  await page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last().getByRole("option").first().click();
+  await escolherPrimeiroProdutoDaLinha(page);
 
   // A TOP é desativada DEPOIS de o formulário estar pronto para salvar.
   const atual = await api<{ revisao: number }>(page, "GET", `/api/admin/tipos-operacao/${top.id}`);
@@ -764,12 +762,11 @@ async function formularioComRascunho(page: Page, rascunho: string) {
   const top = await cadastrarTop(page, "vendas.venda", uniq("Venda R2"));
   await abrirLancamentoDeVendas(page, "sales");
   await escolherTopEContinuar(page, top.id);
+  await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();
-  const linha = page.locator("tbody tr").first();
-  await linha.locator("button").nth(1).click();                       // 0 = Armazém, 1 = Produto
-  await page.locator("[data-radix-popper-content-wrapper], div[role='dialog']").last().getByRole("option").first().click();
+  await escolherPrimeiroProdutoDaLinha(page);
   await expect(page.getByRole("button", { name: "Salvar" }), "a PREMISSA: sem o bloqueio, este formulário salvaria").toBeEnabled();
   return top;
 }
@@ -928,7 +925,7 @@ test("CV1 — CONVERSÃO SEM PADRÃO: nada vem escolhido, e Converter só libera
   await derrubarProximosPassos(page, "budgets");
 
   await page.goto(`/vendas/budgets/${orcamento.id}`);
-  await expect(page.getByTestId("base2-shell"), "a premissa: o orçamento abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "a premissa: o orçamento abriu").toBeVisible();
   const acao = page.getByTestId("acao-conversao");
   // NA COMPATIBILIDADE O RÓTULO NOMEIA A FAMÍLIA do destino — é tudo o que se sabe antes de perguntar
   // as TOPs. Afirmar o rótulo aqui é o que distingue "caiu na cadeia anterior" de "leu o grafo".
@@ -967,7 +964,7 @@ test("CV2 — CONVERSÃO COM PADRÃO REAL: vem pré-selecionado e visível, e po
   await derrubarProximosPassos(page, "budgets");
 
   await page.goto(`/vendas/budgets/${orcamento.id}`);
-  await expect(page.getByTestId("base2-shell"), "a premissa: o orçamento abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "a premissa: o orçamento abriu").toBeVisible();
   await page.getByTestId("acao-conversao").click();
   const dialogo = page.getByTestId("dialog-conversao");
   await expect(dialogo).toBeVisible();

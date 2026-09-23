@@ -105,7 +105,7 @@ async function criarDocumento(page: Page, variante: string, top: Top): Promise<{
 /** Abre o detalhe e só devolve quando a moldura montou — e quando é o documento CERTO que está nela. */
 async function abrirDocumento(page: Page, variante: string, doc: { id: string; code: string }) {
   await page.goto(`/vendas/${SEGMENTO[variante]}/${doc.id}`);
-  await expect(page.getByTestId("base2-shell"), "a premissa: o documento abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "a premissa: o documento abriu").toBeVisible();
   await expect(page.getByRole("heading", { name: new RegExp(doc.code) }),
     "e é o documento da fixture, não outro que por acaso estava na tela").toBeVisible();
 }
@@ -292,7 +292,8 @@ test("E15 — `+ Novo` lista as TOPs de todas as famílias de Vendas, e a escolh
    * traduz para a tabela é o produto. Abrir a porta errada com a TOP certa seria o defeito silencioso:
    * a rota recusaria a TOP de outra família e o operador veria "operação indisponível" sem entender.
    */
-  await lancador.locator(`[data-testid="lancador-top"][data-top-id="${tops["vendas.orcamento"].id}"]`).click();
+  // O DUPLO CLIQUE é o gesto de lançar do design (VISUAL-UX-01 R3): o clique simples só escolhe.
+  await lancador.locator(`[data-testid="lancador-top"][data-top-id="${tops["vendas.orcamento"].id}"]`).dblclick();
   await expect(page).toHaveURL(new RegExp(`/vendas/budgets/new\\?tipo_operacao_id=${tops["vendas.orcamento"].id}`));
   await expect(page.getByTestId("top-contexto"), "e o formulário abre já contextualizado na operação escolhida")
     .toContainText(tops["vendas.orcamento"].nome);
@@ -380,7 +381,7 @@ test("E17 — orçamento com transição para pedido converte usando EXATAMENTE 
 
   // E a ORIGEM ficou convertida — a conversão é uma transição, não uma cópia.
   await abrirDocumento(page, "budget", doc);
-  await expect(page.getByTestId("base2-shell").locator("[data-status]").first()).toHaveText(/Convertid/i);
+  await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]").first()).toHaveText(/Convertid/i);
 });
 
 test("E18 — pedido com DUAS TOPs de venda converte na que o usuário escolheu, não na primeira", async ({ page }) => {
@@ -414,7 +415,7 @@ test("E18 — pedido com DUAS TOPs de venda converte na que o usuário escolheu,
  * E19 — URL ANTIGA E ABA ANTIGA continuam abrindo o MESMO recorte, agora na lista única
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
-test("E19 — a URL e a aba antigas entram na lista única JÁ FILTRADA, com o chip aceso e removível", async ({ page }) => {
+test("E19 — a URL e a aba antigas entram na lista única JÁ FILTRADA, com o Tipo escolhido e removível", async ({ page }) => {
   await login(page);
   // Um documento de CADA tipo, para que "o filtro recortou" seja verificável: com um tipo só na base,
   // uma lista sem filtro nenhum pareceria filtrada.
@@ -435,10 +436,11 @@ test("E19 — a URL e a aba antigas entram na lista única JÁ FILTRADA, com o c
     await expect(lista, `${caso}: nenhum favorito antigo vira 404`).toBeVisible();
     await expect(lista, `${caso}: o recorte não se perdeu no caminho`).toHaveAttribute("data-kind", "budget");
 
-    // O CHIP DO TIPO ACESO — é ele que torna o recorte visível e removível, em vez de um filtro
-    // invisível que o usuário não sabe que está ligado.
-    const chip = page.getByTestId("vendas-tipo").getByRole("radio", { name: "Orçamento de venda" });
-    await expect(chip, `${caso}: o chip do tipo está aceso`).toHaveAttribute("aria-checked", "true");
+    // O TIPO ESCOLHIDO NA BARRA — é ele que torna o recorte visível e removível, em vez de um filtro
+    // invisível que o usuário não sabe que está ligado (VISUAL-UX-01 R3: a pílula "Tipo" do design).
+    const tipo = page.getByTestId("vendas-tipo");
+    await expect(tipo, `${caso}: a barra diz qual tipo está escolhido`).toHaveAttribute("data-valor", "budget");
+    await expect(tipo, `${caso}: com o rótulo humano`).toContainText("Orçamento de venda");
 
     // E O RECORTE É REAL: o orçamento está, a venda não.
     const tabela = lista.locator("table").first();
@@ -448,7 +450,10 @@ test("E19 — a URL e a aba antigas entram na lista única JÁ FILTRADA, com o c
   }
 
   // REMOVÍVEL: o tipo é FILTRO, e filtro se tira na mesma tela. Era isso que as três abas não permitiam.
-  await page.getByTestId("vendas-tipo").getByRole("radio", { name: "Todos" }).click();
+  await page.getByTestId("vendas-tipo").click();
+  const todos = page.getByRole("menuitemradio", { name: "Todos os tipos" });
+  await expect(page.getByRole("menuitemradio", { name: "Orçamento de venda" }), "o tipo aceso é o do recorte").toHaveAttribute("aria-checked", "true");
+  await todos.click();
   const lista = page.getByTestId("vendas-documentos");
   await expect(lista).toHaveAttribute("data-kind", "");
   const tabela = lista.locator("table").first();
@@ -596,6 +601,6 @@ test("E21 — orçamento cuja política vai DIRETO à venda pula o pedido: rótu
 
   // E a tela da fonte diz a mesma coisa que o servidor: o estado do banco chega ao operador.
   await abrirDocumento(page, "budget", doc);
-  await expect(page.getByTestId("base2-shell").locator("[data-status]").first(),
+  await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]").first(),
     "a fonte aparece convertida também na tela").toHaveText(/Convertid/i);
 });

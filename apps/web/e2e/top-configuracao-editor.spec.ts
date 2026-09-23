@@ -453,7 +453,7 @@ async function criarOrcamento(page: Page, topId: string) {
 /** Abre o detalhe e só devolve quando a moldura montou — e quando é o documento CERTO que está nela. */
 async function abrirOrcamento(page: Page, doc: { id: string; code: string }) {
   await page.goto(`/vendas/budgets/${doc.id}`);
-  await expect(page.getByTestId("base2-shell"), "a premissa: o documento abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "a premissa: o documento abriu").toBeVisible();
   await expect(page.getByRole("heading", { name: new RegExp(doc.code) }),
     "e é o documento da fixture, não outro que por acaso estava na tela").toBeVisible();
 }

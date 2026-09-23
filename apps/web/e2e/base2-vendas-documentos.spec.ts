@@ -16,6 +16,11 @@ import { ptBR } from "@erp/plataforma";
  * A outra metade protege o que a migração NÃO podia perder: os campos do documento, os itens, o TOTAL do
  * servidor (que inclui frete e outros valores e por isso não é a soma da coluna de itens), os
  * relacionamentos com link e o histórico oficial.
+ *
+ * VISUAL-UX-01 R3 (docs/DECISIONS.md 227): o documento salvo passou a abrir na CENTRAL DE VENDAS, em
+ * consulta, em vez da moldura Base 2. As asserções de CONTRATO acima continuam todas aqui, com os mesmos
+ * dados; mudou só ONDE a tela os desenha — campos da Central, grade da Central, abas do painel inferior,
+ * ações como ícones (Mais ações → Histórico / Cancelar) e nenhum "Voltar".
  */
 
 /** Rótulo da TOP lido do CATÁLOGO, nunca copiado: renomear a copy move tela e teste juntos. */
@@ -67,10 +72,22 @@ async function criar(page: Page, variante: Variante): Promise<Doc> {
 
 async function abrir(page: Page, d: Doc): Promise<void> {
   await page.goto(`/vendas/${d.rota}/${d.id}`);
-  await expect(page.getByTestId("base2-shell")).toBeVisible();
+  await expect(page.getByTestId("central-vendas")).toBeVisible();
 }
 
-const campo = (page: Page, rotulo: string) => page.locator(`[data-testid="base2-field"][data-campo="${rotulo}"]`);
+const campo = (page: Page, rotulo: string) => page.getByTestId("central-vendas").locator(`[data-campo="${rotulo}"]`);
+/** Abre uma aba do painel inferior da Central e devolve o painel dela. */
+async function aba(page: Page, nome: string) {
+  const t = page.getByTestId("central-vendas-painel").getByRole("tab", { name: nome });
+  await t.click();
+  await expect(t).toHaveAttribute("aria-selected", "true");
+  return page.getByTestId("central-vendas-painel").getByRole("tabpanel");
+}
+/** Abre "Mais ações" (⋮) e escolhe o item. */
+async function maisAcoes(page: Page, item: string | RegExp) {
+  await page.getByTestId("central-vendas-mais-acoes").click();
+  await page.getByTestId("central-vendas-mais-acoes-menu").getByRole("menuitem", { name: item }).click();
+}
 
 /** Status CRU de uma porta da API — o helper `api` lança em erro, e aqui o erro é o que se mede. */
 async function statusDaApi(page: Page, path: string): Promise<number> {
@@ -87,19 +104,21 @@ async function statusDaApi(page: Page, path: string): Promise<number> {
  * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
 
 for (const variante of ["budget", "order", "sale"] as Variante[]) {
-  test(`BASE2-03C: ${variante} abre no Modelo Base 2 com identidade, TOP, itens e total do servidor`, async ({ page }) => {
+  test(`BASE2-03C: ${variante} abre na Central (consulta) com identidade, TOP, itens e total do servidor`, async ({ page }) => {
     await login(page);
     const d = await criar(page, variante);
     await abrir(page, d);
 
-    // IDENTIDADE — o título funcional do REGISTRO + o código do registro
-    await expect(page.getByRole("heading", { name: new RegExp(`${V[variante].titulo}\\s+${d.code}`) })).toBeVisible();
-    await expect(campo(page, "Código")).toContainText(d.code);
+    // IDENTIDADE — o título funcional do REGISTRO + o código do registro (região nomeada e aba de trabalho)
+    await expect(page.getByRole("region", { name: `${V[variante].titulo} ${d.code}` })).toBeVisible();
+    await expect(page.getByTestId("central-vendas-identidade-nome")).toHaveText(d.code);
+    await expect(page.locator('[data-testid="workspace-tab"][data-tab-key="' + `/vendas/${V[variante].rota}/${d.id}` + '"]')).toContainText(`${V[variante].titulo} ${d.code}`);
+    await expect(campo(page, "Número")).toContainText(d.code);
 
-    // empresa e situação no cabeçalho
-    await expect(page.getByTestId("base2-empresa")).toBeVisible();
-    await expect(page.getByTestId("base2-empresa")).not.toHaveText(/Empresa:\s*$/);
-    await expect(page.getByTestId("base2-shell").locator("[data-status]").first()).toBeVisible();
+    // empresa e situação
+    await expect(campo(page, "Empresa")).toBeVisible();
+    await expect(campo(page, "Empresa")).not.toContainText("—");
+    await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]")).toBeVisible();
 
     // FAMÍLIA OPERACIONAL da variante — e NUNCA a de nenhuma das vizinhas.
     // A TOP-CONFIG-02 separou dois conceitos que antes dividiam o mesmo campo: a FAMÍLIA canônica
@@ -118,29 +137,29 @@ for (const variante of ["budget", "order", "sale"] as Variante[]) {
     await expect(campo(page, ptBR.mensagens["termos.tipo_operacao"]!)).toContainText("Não configurada");
 
     // DADOS PRINCIPAIS — os campos do documento continuam existindo depois da migração
-    await expect(page.getByTestId("base2-fields")).toBeVisible();
-    for (const rotulo of ["Data", "Cliente", "Subtotal", "Frete", "Total", "Origem"]) {
+    for (const rotulo of ["Data", "Cliente", "Origem"]) {
       await expect(campo(page, rotulo), `campo "${rotulo}" sumiu dos dados principais`).toBeVisible();
     }
 
-    // ITENS — na moldura, com a contagem do servidor e SEM rodapé de total
-    const secao = page.locator('[data-testid="base2-section"][data-secao="Itens"]');
-    await expect(secao).toBeVisible();
+    // ITENS — na grade da Central, com a contagem do servidor, sem lixeira nem edição
     expect(d.itens, "a fixture precisa ter item, senão a tabela passaria vazia").toBeGreaterThan(0);
-    await expect(secao.getByTestId("base2-section-contagem")).toHaveText(String(d.itens));
-    await expect(secao.getByTestId("base2-items-linha")).toHaveCount(d.itens);
+    await expect(page.getByTestId("central-vendas-itens-contagem")).toHaveText(`(${d.itens})`);
+    await expect(page.getByTestId("central-vendas-linha")).toHaveCount(d.itens);
+    const grade = page.getByTestId("central-vendas-grade");
     for (const coluna of ["Código", "Produto", "Armazém", "Quantidade", "Valor unitário", "Desconto", "Total"]) {
-      await expect(secao.locator("thead th", { hasText: coluna }).first()).toBeVisible();
+      await expect(grade.locator("thead th", { hasText: coluna }).first()).toBeVisible();
     }
-    await expect(secao.locator("tfoot"), "o Base2Items não totaliza — total de documento é campo do cabeçalho").toHaveCount(0);
+    await expect(grade.locator("input"), "consulta: nada editável na grade").toHaveCount(0);
 
-    // TOTAL — o número do SERVIDOR, que com frete difere da soma dos itens
+    // TOTAL — o número do SERVIDOR, que com frete difere da soma dos itens (subtotal)
     const formatado = new Intl.NumberFormat("pt-BR", { minimumFractionDigits: 2 }).format(Number(d.total));
-    await expect(campo(page, "Total"), "o total exibido é o do servidor").toContainText(formatado);
+    await expect(page.getByTestId("central-vendas-total"), "o total exibido é o do servidor").toContainText(formatado);
+    const totais = await aba(page, "Totais");
+    for (const rotulo of ["Subtotal dos itens", "Frete", "Total do documento"]) await expect(totais.locator(`[data-campo="${rotulo}"]`)).toBeVisible();
+    await expect(totais.locator('[data-campo="Total do documento"]')).toContainText(formatado);
 
-    // ROTA CANÔNICA da variante DO REGISTRO
-    await page.getByRole("button", { name: "Voltar" }).click();
-    await expect(page).toHaveURL(new RegExp(`(/vendas/${V[variante].rota}(\\?|$)|/vendas\\?)`));
+    // sem "Voltar" (VISUAL-UX-01 R3): quem navega é a barra de abas, onde este documento é uma aba
+    await expect(page.getByRole("button", { name: "Voltar", exact: true })).toHaveCount(0);
   });
 }
 
@@ -162,9 +181,10 @@ test("BASE2-03C: a rota de outra variante NÃO serve o registro — 404 e a tela
 
   // e a tela pela rota errada não monta o registro: nada do documento sai antes da autorização completa
   await page.goto(`/vendas/orders/${orcamento.id}`);
-  await expect(page.getByTestId("base2-shell")).toHaveCount(0);
+  await expect(page.getByTestId("error-state").or(page.getByText(/não encontrad/i)).first(), "premissa: a tela terminou de responder").toBeVisible();
+  await expect(page.getByTestId("central-vendas")).toHaveCount(0);
   await expect(page.getByText(orcamento.code, { exact: false })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: /Venda/ }), "variante errada não pode cair no rótulo de venda").toHaveCount(0);
+  await expect(page.getByRole("region", { name: /Venda/ }), "variante errada não pode cair no rótulo de venda").toHaveCount(0);
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -178,20 +198,18 @@ test("BASE2-03C: a conversão liga origem e derivado, e cada lado abre na SUA ro
   const convertido = await api<{ id: string; kind: string }>(page, "POST", `/api/sales/${orcamento.rota}/${orcamento.id}/convert`, {});
   expect(convertido.kind, "budget converte em order").toBe("order");
 
-  // ORIGEM: a seção de derivados existe, com link para o pedido
+  // ORIGEM: a aba de derivados existe, com link para o pedido
   await abrir(page, orcamento);
-  const derivados = page.locator('[data-testid="base2-section"][data-secao="Documentos derivados"]');
-  await expect(derivados).toBeVisible();
-  await expect(derivados.getByTestId("base2-section-contagem")).toHaveText("1");
+  const derivados = await aba(page, "Documentos derivados");
   await expect(derivados.getByTestId("base2-items-linha")).toHaveCount(1);
   await expect(derivados.locator(`a[href="/vendas/orders/${convertido.id}"]`), "o link do derivado aponta para a rota da variante DELE").toBeVisible();
-  await expect(page.getByTestId("base2-shell").locator("[data-status]").first(), "a origem fica convertida").toHaveText(/Convertid/i);
+  await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]"), "a origem fica convertida").toHaveText(/Convertid/i);
 
   // DERIVADO: abre como PEDIDO — identidade e TOP do registro derivado, não da origem
   const pedido = await api<{ code: string }>(page, "GET", `/api/sales/orders/${convertido.id}`);
   await page.goto(`/vendas/orders/${convertido.id}`);
-  await expect(page.getByTestId("base2-shell")).toBeVisible();
-  await expect(page.getByRole("heading", { name: new RegExp(`Pedido de venda\\s+${pedido.code}`) })).toBeVisible();
+  await expect(page.getByTestId("central-vendas")).toBeVisible();
+  await expect(page.getByRole("region", { name: `Pedido de venda ${pedido.code}` })).toBeVisible();
   await expect(campo(page, "Família operacional"), "a família sai do registro DERIVADO").toContainText(V.order.top);
   await expect(campo(page, "Origem"), "o pedido nasceu de uma conversão").toContainText("Convertido");
 });
@@ -204,8 +222,7 @@ test("BASE2-03C: venda confirmada mostra as contas a receber geradas, com link p
   expect(confirmada.title_ids.length, "a confirmação precisa gerar título, senão a seção passaria vazia").toBeGreaterThan(0);
 
   await abrir(page, venda);
-  const contas = page.locator('[data-testid="base2-section"][data-secao="Contas a receber geradas"]');
-  await expect(contas).toBeVisible();
+  const contas = await aba(page, "Financeiro");
   await expect(contas.getByTestId("base2-items-linha")).toHaveCount(confirmada.title_ids.length);
   await expect(contas.locator(`a[href="/financeiro/contas-a-receber/${confirmada.title_ids[0]}"]`), "o link precisa levar ao título real").toBeVisible();
 
@@ -222,7 +239,7 @@ test("BASE2-03C: o histórico oficial abre com conteúdo real; anexos NÃO são 
   const d = await criar(page, "order");
   await abrir(page, d);
 
-  await page.getByTestId("base2-historico").click();
+  await maisAcoes(page, "Histórico de alterações");
   const dialogo = page.getByRole("dialog");
   await expect(dialogo).toBeVisible();
   await expect(dialogo).toContainText("Histórico");
@@ -234,7 +251,8 @@ test("BASE2-03C: o histórico oficial abre com conteúdo real; anexos NÃO são 
 
   // ANEXOS: `sales_documents` não está em ATTACHMENT_PARENTS. O botão responderia 422 — então ele não
   // existe. Abrir a superfície é outra fatia, com backend.
-  await expect(page.getByTestId("base2-anexos"), "não abrir anexos sem suporte do servidor").toHaveCount(0);
+  await expect(page.getByRole("button", { name: /anexo/i }), "não abrir anexos sem suporte do servidor").toHaveCount(0);
+  await expect(page.getByText(/anexos/i), "nem como texto").toHaveCount(0);
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -256,7 +274,7 @@ test("HOTFIX: o cancelamento sai da tela COM Idempotency-Key, como a confirmaç�
   // conferência logo abaixo correria na frente da mutação — um teste que falharia (ou passaria) pelo
   // relógio, não pelo comportamento.
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && r.url().includes(`/api/sales/${d.rota}/${d.id}/cancel`));
-  await page.getByRole("button", { name: /^Cancelar / }).click();
+  await maisAcoes(page, /^Cancelar /);
   await page.getByTestId("confirm-dialog-confirm").click();
   const res = await resposta;
   const req = res.request();

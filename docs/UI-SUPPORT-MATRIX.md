@@ -78,6 +78,14 @@ por ordem de pintura e intercepta o ponteiro sobre 16px (57%) da altura do botã
 `cadastros.spec.ts` (`.cmd-panel [role=option]` sai da área visível). `.mg-toolbar` é o cabeçalho de
 16 telas, então o conserto precisa da prova de não-regressão dessas telas — é o conteúdo de `MOBILE-01`.
 
+**Observação registrada na VISUAL-UX-01 R3 (`docs/DECISIONS.md` 228), sem encerrar o débito.** O Portal de
+Vendas deixou de ter o cabeçalho do `Workspace` e o `.ws-filters`: o `Novo` passou para a barra do motor da
+listagem. Com isso, o `UX15` rodou VERDE localmente em `pnpm e2e:mobile` (viewport 390 × 844) no HEAD da R3.
+O defeito medido acima — `.mg-toolbar` com `height` fixa e `flex-wrap` — continua no `globals.css` e nas
+outras telas que usam esse cabeçalho; ele só deixou de ser reproduzido POR ESTE teste. Mobile continua
+DEFERRED, a linha da tabela continua, e decidir se o `UX15` ainda serve de evidência (ou se o débito precisa
+de outro teste que reproduza o defeito) é do `MOBILE-01`, não desta fatia.
+
 ## Como as suítes se separam
 
 Etiqueta, não arquivo separado nem `.skip`: o teste mora ao lado dos irmãos, e a suíte obrigatória o

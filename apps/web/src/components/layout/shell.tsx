@@ -12,12 +12,14 @@ import { TopNavigation } from "./top-navigation";
 import { WorkspaceTabsBar } from "./workspace-tabs";
 import { IdGlobalDaRotaAtual } from "./id-global-registro";
 import { lerPedidoEmpresa, type PedidoEmpresa } from "@/lib/empresa-ativa";
+import { WorkspaceImersivoProvider, useTrilhaCedida } from "./workspace-imersivo";
 
 /**
  * AppShell (docs/UI-STANDARD.md › App Shell & Workspace):
  *   TopNavigation (marca · módulos · busca · empresa · notificações · favoritos · usuário)
  *   WorkspaceTabs (abas globais sincronizadas com a URL real)
- *   ActiveWorkspace (trilha + tela ativa; só a tela ativa é montada)
+ *   ActiveWorkspace (trilha + tela ativa; só a tela ativa é montada; a trilha cede o lugar a um workspace
+ *   de documento imersivo montado — `workspace-imersivo.tsx`)
  * Identidade visual MODELO BASE1 (barra verde, pílulas, cartões). O menu deriva de nav.registry (SSOT).
  */
 function Crumbs() {
@@ -29,6 +31,16 @@ function Crumbs() {
     <nav className="mg-crumbs" aria-label="Navegação">{(crumbs.length ? crumbs : ["Início"]).map((c, i, arr) => <React.Fragment key={i}>{i > 0 && <ChevronRight className="mg-crumb-sep" aria-hidden />}<span className={cn("mg-crumb", i === arr.length - 1 && "mg-crumb--current")}>{c}</span></React.Fragment>)}</nav>
     <IdGlobalDaRotaAtual />
   </div>;
+}
+
+/**
+ * A trilha da rota, salvo quando um workspace de documento imersivo está MONTADO nela
+ * (`workspace-imersivo.tsx`: rota que admite imersão AND workspace real declarado). A trilha não é
+ * recalculada nem alterada — só deixa de ser desenhada enquanto a moldura do documento ocupa o topo.
+ */
+function TrilhaDaRota() {
+  const pathname = usePathname();
+  return useTrilhaCedida(pathname) ? null : <Crumbs />;
 }
 
 /**
@@ -81,16 +93,18 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   if (!session?.token) return null;
   if (!ctx) return <div className="flex h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600"><div>Não foi possível carregar sua organização.</div><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => void refresh()}>Tentar novamente</Button><Button variant="outline" size="sm" onClick={logout}>Sair</Button></div></div>;
   return <WorkspaceTabsProvider orgId={ctx.organization.id} userId={ctx.user.id} can={can}>
-    <ContextGuard>
-      <div className="mg-app-shell flex h-dvh flex-col overflow-hidden">
-        <TopNavigation onFocusSearch={focusSearch} />
-        <WorkspaceTabsBar onNewTab={() => focusSearch.current?.()} />
-        <main key={pathname} className="mg-page-enter flex min-h-0 flex-1 flex-col overflow-auto p-3" data-testid="active-workspace">
-          <Crumbs />
-          {children}
-        </main>
-      </div>
-    </ContextGuard>
+    <WorkspaceImersivoProvider>
+      <ContextGuard>
+        <div className="mg-app-shell flex h-dvh flex-col overflow-hidden">
+          <TopNavigation onFocusSearch={focusSearch} />
+          <WorkspaceTabsBar onNewTab={() => focusSearch.current?.()} />
+          <main key={pathname} className="mg-page-enter flex min-h-0 flex-1 flex-col overflow-auto p-3" data-testid="active-workspace">
+            <TrilhaDaRota />
+            {children}
+          </main>
+        </div>
+      </ContextGuard>
+    </WorkspaceImersivoProvider>
   </WorkspaceTabsProvider>;
 }
 

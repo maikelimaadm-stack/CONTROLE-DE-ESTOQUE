@@ -1,20 +1,22 @@
 "use client";
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Check, Plus } from "lucide-react";
-import { Badge, Button, Dialog, EmptyState, Input, LoadingState } from "@/components/ui";
+import * as MenuP from "@radix-ui/react-dropdown-menu";
+import { Check, ChevronDown, Plus, Search } from "lucide-react";
+import { Button, Dialog, LoadingState } from "@/components/ui";
 import { COPY } from "@/lib/copy";
 import { cn } from "@/lib/utils";
 import { MensagemTop, podeLancar } from "./tipo-operacao-select";
 import { useTopsDeVendas, type GrupoDeTops } from "./variantes";
 import {
-  filtrarLinhas, linhaAtivaDoRecorte, linhasDeLancamento, linhasDoGrupo, moverAtivo,
-  padraoDeLancamento, rotaDeLancamento, textoDeContagem,
+  filtrarLinhas, linhaAtivaDoRecorte, linhasDeLancamento, linhasDoGrupo, linhasDoMenuRapido, moverAtivo,
+  padraoDeLancamento, rotaDeLancamento, textoDeContagem, LIMITE_DO_MENU_RAPIDO,
   type LinhaDeLancamento, type MovimentoDeCursor
 } from "./launcher-operacoes";
+import estilos from "./portal-vendas.module.css";
 
 /**
- * O `+ NOVO` DO PORTAL DE VENDAS — A OPERAÇÃO PRIMEIRO, O DOCUMENTO DEPOIS.
+ * O `NOVO` DO PORTAL DE VENDAS — A OPERAÇÃO PRIMEIRO, O DOCUMENTO DEPOIS.
  *
  * ┌─ POR QUE NÃO PERGUNTAR "ORÇAMENTO / PEDIDO / VENDA" ───────────────────────────────────────────┐
  * │ Perguntar a VARIANTE primeiro obriga o usuário a traduzir a operação que ele quer fazer ("venda │
@@ -23,33 +25,20 @@ import {
  * │                                                                                                  │
  * │ Então o lançador oferece o que a organização configurou — as TOPs que o usuário pode lançar —    │
  * │ e a escolha decide sozinha a porta (`/vendas/<segmento>/new`). Nenhum mapa de família mora aqui: │
- * │ a variante vem do registry (`variantesDeVenda`) e o rótulo, do catálogo de idioma. Uma família   │
- * │ nova aparece sem que esta tela seja tocada.                                                      │
+ * │ a variante vem do registry (`variantesDeVenda`) e o rótulo, do catálogo de idioma.               │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
- * ┌─ POR QUE UMA JANELA, E NÃO UM MENU MAIOR ──────────────────────────────────────────────────────┐
- * │ A versão anterior era uma caixa estreita com uma pilha de botões por família: cada linha trazia  │
- * │ código e nome, e nada mais. Escolher exigia saber de cor o que cada TOP faz nascer, porque a     │
- * │ consequência da escolha — em QUE documento a operação cai — estava no cabeçalho do grupo, não na │
- * │ linha; e com a lista rolando, o cabeçalho saía da tela justamente quando era preciso.            │
- * │                                                                                                  │
- * │ Uma janela só se paga em COLUNA e CABEÇALHO, nunca em pixels. Então: `size="lg"` (o perfil       │
- * │ `large` já vem por padrão — moldura de altura fixa, cabeçalho e rodapé parados, só o corpo        │
- * │ rolando), pesquisa no topo, e cada linha carregando o que decide: Código · Operação · Tipo de     │
- * │ documento. A moldura não muda de altura entre carregando, erro, vazio e doze linhas — o rodapé   │
- * │ não pula a cada tecla digitada. A largura é a OFICIAL do sistema de design; nenhuma tela define   │
- * │ largura própria (`docs/UI-STANDARD.md`, auditado por `scripts/ui-audit.mjs`).                     │
- * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
- *
- * ┌─ A FAMÍLIA É COLUNA, NÃO CABEÇALHO DE GRUPO ───────────────────────────────────────────────────┐
- * │ Lista ÚNICA e PLANA, sempre — um só modo, um só índice de teclado, nenhum grupo vazio quando a   │
- * │ pesquisa recorta. A família aparece em TODA linha, com o rótulo humano ("Tipo de documento"),    │
- * │ e sobrevive ao filtro; cabeçalho de grupo não sobrevive. O agrupamento visual vem da ORDEM       │
- * │ (linhas da mesma família saem contíguas de `linhasDeLancamento`), não de moldura.                │
- * │                                                                                                  │
- * │ A `<div>` por família continua existindo no DOM — é ela que declara `data-familia` e contém as   │
- * │ linhas daquela família, além de ser onde o BLOQUEIO daquela família é publicado. Ela é estrutura  │
- * │ e contrato de teste; visualmente não desenha nada.                                               │
+ * ┌─ O DESENHO DO DESIGN (VISUAL-UX-01 R3, docs/DECISIONS.md 228) ─────────────────────────────────┐
+ * │ · `Novo` é um botão DIVIDIDO: o corpo abre a janela completa; a seta abre o menu rápido          │
+ * │   "Nova operação", com as operações do tipo (todas até 8; acima disso, só as padrão) e, no pé,  │
+ * │   "Escolher operação…", que abre a mesma janela.                                                 │
+ * │ · O TIPO da barra é o contexto: com um tipo escolhido, menu e janela oferecem só as operações   │
+ * │   dele; com "Todos os tipos", as de todos, agrupadas.                                            │
+ * │ · Na janela, a família é o CABEÇALHO do grupo (rótulo + contagem); cada linha traz código, nome │
+ * │   e o selo "Padrão". O rodapé resume o que vai acontecer ("Lançar Venda com 2303 · …").         │
+ * │ · CLIQUE ESCOLHE, não lança. Lançam: o botão "Lançar", o Enter e o DUPLO clique. Com o clique   │
+ * │   só escolhendo, o duplo clique deixa de ter a corrida de antes (o primeiro clique navegava e o │
+ * │   segundo caía na página nova): o primeiro clique não sai do lugar.                             │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ ESCOLHER AQUI NÃO AUTORIZA NADA ──────────────────────────────────────────────────────────────┐
@@ -61,117 +50,73 @@ import {
  * ┌─ O BLOQUEIO CONTINUA SENDO O MESMO ────────────────────────────────────────────────────────────┐
  * │ Grupo cuja lista o servidor não confirmou (API anterior a esta fatia, ou com defeito) NÃO vira   │
  * │ atalho para o formulário: ele mostra a mesma mensagem única de `MensagemTop`, e não contribui    │
- * │ com nenhuma linha (quem decide isso é `podeLancar`, dentro de `linhasDoGrupo`). Abrir o          │
- * │ lançamento assim mesmo devolveria o documento sem TOP que a capability existe para impedir.      │
- * │                                                                                                  │
- * │ A mensagem de bloqueio NÃO é escondida pela pesquisa. Um aviso de fail-closed que some porque o  │
- * │ usuário digitou três letras vira "sumiu a família", e não "a família está bloqueada".            │
+ * │ com nenhuma linha (quem decide isso é `podeLancar`, dentro de `linhasDoGrupo`) — nem na janela,  │
+ * │ nem no menu rápido. A mensagem de bloqueio NÃO é escondida pela pesquisa: um aviso de            │
+ * │ fail-closed que some porque o usuário digitou três letras vira "sumiu a família".                │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 
-/**
- * A GRADE DE COLUNAS, declarada UMA vez, usada no cabeçalho e em cada linha. Duas listas de colunas
- * desalinham no primeiro ajuste — e desalinham em silêncio, que é o pior jeito de desalinhar.
- *
- * Em tela estreita a grade cai para três colunas (marcador · conteúdo empilhado · selo): o bloco do
- * meio deixa de ser `display: contents` e vira uma pilha, em vez de virar uma tabela horizontal
- * impossível de ler no celular. Nenhuma largura fixa em pixel de viewport para a MOLDURA: só as
- * duas pistas de serviço (marcador e selo) têm medida fixa, e é isso que mantém o alinhamento.
- *
- * A PISTA DO SELO É FIXA, E NÃO `auto`, PORQUE `auto` NÃO ALINHA. Cada linha é uma grade PRÓPRIA —
- * não há `subgrid` —, então os tracks NÃO são compartilhados entre linhas: com `auto`, a pista vale
- * 0px na linha sem selo e ~50px na linha com selo, e "Tipo de documento" começa em posições
- * diferentes em cada uma, sem ficar sob o próprio cabeçalho. Numa janela cuja razão de existir é
- * "coluna e cabeçalho", era o defeito mais visível dela.
- */
-const COLUNAS = "grid-cols-[18px_minmax(0,1fr)_64px] sm:grid-cols-[18px_minmax(72px,104px)_minmax(0,1fr)_minmax(112px,176px)_64px]";
+const contagem = (n: number) => (n === 1 ? "1 operação" : `${n} operações`);
 
 /** Uma linha da janela — `<button role="option">`, porque a lista é um listbox com cursor virtual. */
-function Linha({ linha, ativa, idOpcao, aoConfirmar }: {
-  linha: LinhaDeLancamento; ativa: boolean; idOpcao: string; aoConfirmar: (l: LinhaDeLancamento) => void;
+function Linha({ linha, ativa, idOpcao, aoEscolher, aoLancar }: {
+  linha: LinhaDeLancamento; ativa: boolean; idOpcao: string;
+  aoEscolher: (l: LinhaDeLancamento) => void; aoLancar: (l: LinhaDeLancamento) => void;
 }) {
   return <button
     type="button"
     role="option"
     id={idOpcao}
     aria-selected={ativa}
-    // A LISTA É **UM** TABSTOP, não um por linha: quem navega é o cursor virtual
-    // (`aria-activedescendant` no campo de pesquisa), e o foco do DOM nunca sai dele. Com uma dúzia
-    // de operações, Tab linha a linha transformaria "escolher uma operação" numa maratona.
+    // A LISTA É **UM** TABSTOP: quem navega é o cursor virtual (`aria-activedescendant` no campo de
+    // pesquisa). O `mousedown` sem padrão mantém o foco no campo também no clique — as setas continuam
+    // valendo depois de escolher com o mouse, sem Tab de volta.
     tabIndex={-1}
+    onMouseDown={(e) => e.preventDefault()}
     data-testid="lancador-top"
     data-top-id={linha.id}
     data-familia={linha.familia}
     data-ativa={ativa ? "true" : "false"}
     data-padrao={linha.ehPadrao ? "true" : "false"}
-    className={cn(
-      "grid w-full items-center gap-x-3 gap-y-0.5 border-l-[3px] px-2 py-1.5 text-left text-[12.5px] transition-colors",
-      COLUNAS,
-      // O DESTAQUE DA LINHA ATIVA NÃO PODE DEPENDER DE COR, e nenhum destes sinais sozinho basta:
-      //  · o marcador da primeira coluna (FORMA) — a coluna tem largura fixa e existe em todas as
-      //    linhas, então virar ativa não empurra o texto para o lado;
-      //  · a barra sólida de 3px na borda esquerda (FORMA) — a borda também existe em todas as
-      //    linhas, transparente quando inativa, pelo mesmo motivo;
-      //  · o contorno de 2px — `outline`, e não `box-shadow`, porque box-shadow SOME no modo de
-      //    alto contraste do sistema operacional e o contorno sobrevive;
-      //  · o peso tipográfico do nome da operação (ver abaixo).
-      // O fundo é REFORÇO, nunca o sinal: em escala de cinza a diferença tem de continuar visível.
-      ativa
-        ? "border-l-brand-600 bg-brand-50 outline-2 -outline-offset-2 outline-brand-600"
-        : "border-l-transparent hover:bg-slate-50"
-    )}
-    // CLIQUE ÚNICO CONFIRMA — e por isso NÃO existe duplo clique aqui. Se o clique já lança,
-    // acrescentar o duplo criaria a corrida clássica: o primeiro `click` navega, o segundo cai na
-    // página de destino (clique fantasma no mesmo pixel) ou dispara uma segunda navegação. Quem
-    // precisa de um caminho de confirmação explícito tem o botão primário do rodapé e o Enter.
-    onClick={() => aoConfirmar(linha)}
+    className={cn(estilos.opcao, estilos.colunas)}
+    onClick={() => aoEscolher(linha)}
+    onDoubleClick={() => aoLancar(linha)}
   >
     {/* Marcador: `aria-hidden` porque quem informa a seleção ao leitor de tela é `aria-selected`. */}
-    <span className="flex items-center justify-center text-brand-700" aria-hidden>
-      {ativa ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : null}
-    </span>
-    {/* Em tela larga estes três viram células da grade; em tela estreita, uma pilha na coluna do meio. */}
-    <span className="flex min-w-0 flex-col gap-0.5 sm:contents">
-      <span className="truncate font-mono text-[12px] font-semibold text-slate-900">{linha.code}</span>
-      <span className={cn("truncate text-slate-800", ativa && "font-semibold")}>{linha.name}</span>
-      <span className="truncate text-[11.5px] text-slate-500">{linha.rotuloDoTipo}</span>
-    </span>
-    {/*
-      O SELO "PADRÃO" DESCREVE O CADASTRO, NÃO O CURSOR. Ele é TEXTO (lido por leitor de tela e por
-      quem não distingue cor), fica na linha que o servidor marcou e NÃO migra para a linha ativa.
-      Quando não há padrão, o espaço continua reservado: o selo aparecendo não empurra as colunas.
-    */}
-    <span className="flex justify-end">{linha.ehPadrao ? <Badge>Padrão</Badge> : null}</span>
+    <span className={estilos.opcaoMarca} aria-hidden>{ativa ? <Check strokeWidth={3} /> : null}</span>
+    <span className={estilos.codigo}>{linha.code}</span>
+    <span className={estilos.nome}>{linha.name}</span>
+    {/* O selo "Padrão" descreve o CADASTRO, não o cursor: fica na linha que o servidor marcou. */}
+    <span className={estilos.vagaDoSelo}>{linha.ehPadrao ? <span className={estilos.selo}>Padrão</span> : null}</span>
   </button>;
 }
 
-/** O bloco de uma família: o bloqueio dela (quando houver) e as linhas dela. */
-function Grupo({ grupo, linhas, ativo, idOpcao, aoConfirmar }: {
-  grupo: GrupoDeTops; linhas: LinhaDeLancamento[]; ativo: string | null;
-  idOpcao: (id: string) => string; aoConfirmar: (l: LinhaDeLancamento) => void;
+/**
+ * Uma família da janela: cabeçalho (rótulo + contagem do recorte), o bloqueio dela quando houver, e as
+ * linhas. `role="group"` com o rótulo da família: listbox → grupo → opção é a árvore que o leitor de
+ * tela entende. Grupo que a pesquisa esvaziou e que não está bloqueado não desenha nada.
+ */
+function Grupo({ grupo, linhas, ativo, idOpcao, aoEscolher, aoLancar }: {
+  grupo: GrupoDeTops; linhas: LinhaDeLancamento[]; ativo: string | null; idOpcao: (id: string) => string;
+  aoEscolher: (l: LinhaDeLancamento) => void; aoLancar: (l: LinhaDeLancamento) => void;
 }) {
-  const estado = grupo.estado;
-  return <div
-    // `role="presentation"` de propósito: a família é COLUNA, não grupo anunciado. Sem isto o leitor
-    // de tela leria "grupo" entre as linhas de uma lista que na tela é plana — som e imagem divergindo.
-    role="presentation"
-    data-testid="lancador-grupo"
-    data-familia={grupo.variante.familia}
-  >
-    {/* `empty:hidden`: quando não há bloqueio nem carregamento, `MensagemTop` devolve `null` e o
-        contêiner some — nenhum espaçamento sobra entre as famílias, e a lista continua plana. */}
-    {/* O CARREGAMENTO NÃO É PUBLICADO AQUI. São três consultas independentes (uma por família) e
-        três avisos idênticos e centralizados, empilhados numa lista alinhada à esquerda, diziam
-        menos do que um só. Quem anuncia "carregando" é a lista inteira, uma vez; aqui fica só o
-        BLOQUEIO, que é por família e precisa dizer QUAL família está bloqueada. */}
-    <div className="px-2 py-1 empty:hidden">
-      {estado.situacao === "carregando" ? null : <MensagemTop estado={estado} />}
-    </div>
-    {linhas.map((l) => <Linha key={l.id} linha={l} ativa={l.id === ativo} idOpcao={idOpcao(l.id)} aoConfirmar={aoConfirmar} />)}
+  const idRotulo = React.useId();
+  // O CARREGAMENTO NÃO É PUBLICADO AQUI: quem anuncia "carregando" é a janela inteira, uma vez.
+  const bloqueado = grupo.estado.situacao !== "carregando" && !podeLancar(grupo.estado);
+  const vazio = !linhas.length && !bloqueado;
+  return <div role="group" aria-labelledby={vazio ? undefined : idRotulo} hidden={vazio} data-testid="lancador-grupo" data-familia={grupo.variante.familia}>
+    {!vazio && <div className={estilos.grupo} id={idRotulo} data-testid="lancador-grupo-rotulo"><span>{grupo.rotulo}</span><span aria-hidden>{contagem(linhas.length)}</span></div>}
+    {bloqueado && <div className={estilos.bloqueio}><MensagemTop estado={grupo.estado} /></div>}
+    {linhas.map((l) => <Linha key={l.id} linha={l} ativa={l.id === ativo} idOpcao={idOpcao(l.id)} aoEscolher={aoEscolher} aoLancar={aoLancar} />)}
   </div>;
 }
 
-export function LancadorUnificadoDeVendas() {
+export function NovoDocumentoDeVenda({ variante, rotuloDoTipo }: {
+  /** A variante do contexto da barra (`?kind=`), ou "" para todos os tipos. */
+  variante: string;
+  /** O rótulo humano do contexto ("Venda", "Todos os tipos") — o mesmo que a pílula Tipo mostra. */
+  rotuloDoTipo: string;
+}) {
   const router = useRouter();
   const [aberto, setAberto] = React.useState(false);
   const [busca, setBusca] = React.useState("");
@@ -183,43 +128,37 @@ export function LancadorUnificadoDeVendas() {
   const [escolhido, setEscolhido] = React.useState<string | null>(null);
   const [anuncio, setAnuncio] = React.useState("");
   /**
-   * GUARDA DE REENTRÂNCIA. `router.push` é assíncrono e o diálogo continua montado até desmontar:
-   * sem isto, um segundo Enter (ou um clique enquanto a rota carrega) dispararia uma segunda
-   * navegação. `useRef` porque a decisão precisa valer JÁ, no mesmo evento — estado só valeria no
-   * próximo render, que é tarde demais.
+   * GUARDA DE REENTRÂNCIA. `router.push` é assíncrono: sem isto, um segundo Enter (ou um clique
+   * enquanto a rota carrega) dispararia uma segunda navegação. `useRef` porque a decisão precisa valer
+   * JÁ, no mesmo evento.
    */
   const lancando = React.useRef(false);
   const [ocupado, setOcupado] = React.useState(false);
   const campoBusca = React.useRef<HTMLInputElement>(null);
+  const botaoNovo = React.useRef<HTMLButtonElement>(null);
+  /** "Escolher operação…" pede a janela; ela abre DEPOIS que o menu devolve o foco (ver `onCloseAutoFocus`). */
+  const janelaPedidaPeloMenu = React.useRef(false);
   const idLista = React.useId();
   const idOpcao = React.useCallback((id: string) => `${idLista}-${id}`, [idLista]);
 
-  // Só os grupos que o usuário pode LANÇAR. Sem nenhum, o botão não existe: oferecer "Novo" a quem não
-  // pode criar nada é oferecer uma porta fechada.
-  const grupos = useTopsDeVendas().filter((g) => g.habilitado);
+  // Só os grupos que o usuário pode LANÇAR, e só os do tipo da barra. Sem nenhum, o `Novo` não existe:
+  // oferecer "Novo" a quem não pode criar nada NESTE contexto é oferecer uma porta fechada.
+  const grupos = useTopsDeVendas().filter((g) => g.habilitado && (!variante || g.variante.variante === variante));
   const todas = linhasDeLancamento(grupos);
   const visiveis = filtrarLinhas(todas, busca);
   const padrao = padraoDeLancamento(todas);
   const ativo = linhaAtivaDoRecorte({ visiveis, escolhido, padrao });
   const linhaAtiva = visiveis.find((l) => l.id === ativo) ?? null;
+  const doMenu = linhasDoMenuRapido(todas);
 
   const algumCarregando = grupos.some((g) => g.estado.situacao === "carregando");
-  // `!podeLancar(...)` e não uma terceira leitura do discriminador: quem responde "esta família
-  // pode lançar?" é o dono da pergunta. Ler o enum cru aqui funcionaria hoje e divergiria em
-  // silêncio no dia em que `podeLancar` aceitasse um estado novo.
   const algumBloqueio = grupos.some((g) => g.estado.situacao !== "carregando" && !podeLancar(g.estado));
   const buscando = busca.trim().length > 0;
-  /**
-   * O VAZIO SÓ FALA QUANDO NINGUÉM MAIS ESTÁ FALANDO. Enquanto alguma família carrega, o silêncio é
-   * honesto (ainda não se sabe). Se alguma família já publicou bloqueio e o usuário não pesquisou
-   * nada, a mensagem dela já explica a ausência — repetir "nenhuma operação disponível" ao lado
-   * seria ruído contraditório.
-   */
+  /** O vazio só fala quando ninguém mais está falando (carregando, ou um bloqueio já explicando). */
   const mostrarVazio = !algumCarregando && visiveis.length === 0 && (buscando || !algumBloqueio);
 
   const abrir = () => {
-    // Cada abertura começa limpa: pesquisa vazia, sem escolha herdada da vez anterior e com a guarda
-    // de reentrância rearmada.
+    // Cada abertura começa limpa: pesquisa vazia, sem escolha herdada e com a guarda rearmada.
     setBusca(""); setEscolhido(null); setOcupado(false); lancando.current = false;
     setAberto(true);
   };
@@ -228,18 +167,14 @@ export function LancadorUnificadoDeVendas() {
     if (lancando.current) return;
     lancando.current = true;
     setOcupado(true);
-    // FECHA ANTES DE NAVEGAR: com o overlay ainda montado sobre a rota nova, ele capturaria o clique
-    // seguinte e o usuário voltaria à pergunta que acabou de responder.
+    // FECHA ANTES DE NAVEGAR: com o overlay montado sobre a rota nova, ele capturaria o clique seguinte.
     setAberto(false);
     router.push(rotaDeLancamento(linha));
   }, [router]);
 
-  /**
-   * FOCO INICIAL NO CAMPO DE PESQUISA, sempre — nunca na linha padrão. Digitar é a ação mais
-   * provável, e recuperar o padrão custa UMA tecla (ele já nasce como linha ativa); o inverso
-   * custaria Shift+Tab e procurar o campo. O `setTimeout(0)` roda DEPOIS do foco automático do
-   * próprio overlay, que sem isto ficaria por último.
-   */
+  const escolher = (linha: LinhaDeLancamento) => { setEscolhido(linha.id); campoBusca.current?.focus(); };
+
+  /** Foco inicial no campo de pesquisa — digitar é a ação mais provável; o padrão já nasce ativo. */
   React.useEffect(() => {
     if (!aberto) return;
     const t = window.setTimeout(() => campoBusca.current?.focus(), 0);
@@ -252,10 +187,7 @@ export function LancadorUnificadoDeVendas() {
     document.getElementById(idOpcao(ativo))?.scrollIntoView({ block: "nearest" });
   }, [aberto, ativo, idOpcao]);
 
-  /**
-   * REGIÃO VIVA. O foco do DOM não se move com as setas e o recorte muda a cada tecla: sem anunciar
-   * a contagem, quem usa leitor de tela digita no vazio. O atraso evita anunciar cada caractere.
-   */
+  /** REGIÃO VIVA: o foco não se move com as setas; sem anunciar a contagem, o leitor de tela digita no vazio. */
   React.useEffect(() => {
     if (!aberto) { setAnuncio(""); return; }
     const t = window.setTimeout(() => setAnuncio(textoDeContagem(visiveis.length)), 250);
@@ -263,128 +195,141 @@ export function LancadorUnificadoDeVendas() {
   }, [aberto, visiveis.length]);
 
   /**
-   * A ESCADA DO TECLADO — toda capturada pelo CAMPO, com `preventDefault`, para que o foco do DOM
-   * nunca saia dele.
-   *
-   * ESC não aparece aqui de propósito: quem fecha é o overlay oficial, SEMPRE, inclusive com texto
-   * na pesquisa. "Primeiro ESC limpa, segundo fecha" seria uma exceção local numa convenção que vale
-   * em todo o resto do produto — e o campo já tem um botão Limpar para isso.
+   * A ESCADA DO TECLADO — toda capturada pelo CAMPO. ESC não aparece aqui: quem fecha é o overlay
+   * oficial, SEMPRE, inclusive com texto na pesquisa (o campo já tem "Limpar").
    */
   const aoTeclar = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    // `moverAtivo` só devolve `null` quando o recorte está VAZIO. Nesse caso a seta não apaga a escolha
-    // que o usuário já tinha feito: ela está apenas escondida pela pesquisa, e volta quando o texto sair.
     const mover = (movimento: MovimentoDeCursor) => { const alvo = moverAtivo(visiveis, ativo, movimento); if (alvo) setEscolhido(alvo); };
     if (e.key === "ArrowDown") { e.preventDefault(); mover("proximo"); return; }
     if (e.key === "ArrowUp") { e.preventDefault(); mover("anterior"); return; }
-    // Home/End só viram navegação da LISTA quando não há texto: com texto digitado eles são as teclas
-    // de edição do campo, e sequestrá-las seria quebrar o que o usuário espera de uma caixa de texto.
+    // Home/End só navegam a LISTA sem texto: com texto, são as teclas de edição do campo.
     if ((e.key === "Home" || e.key === "End") && busca === "") {
       e.preventDefault(); mover(e.key === "Home" ? "primeiro" : "ultimo"); return;
     }
     if (e.key === "Enter") {
       // Enter SEM linha ativa é NO-OP declarado: não fecha, não lança e não "tenta a primeira".
-      // Enter que não faz nada é previsível; Enter que lança o item errado é incidente.
       e.preventDefault();
       if (linhaAtiva) confirmar(linhaAtiva);
     }
   };
 
+  const limparBusca = () => { setBusca(""); campoBusca.current?.focus(); };
+
   if (!grupos.length) return null;
   return <>
-    <button type="button" className="tb-btn is-primary" data-testid="vendas-novo" aria-haspopup="dialog" aria-expanded={aberto} onClick={abrir}>
-      <Plus className="h-3.5 w-3.5" /> Novo
-    </button>
+    <span className={estilos.dividido}>
+      <button ref={botaoNovo} type="button" className={estilos.novo} data-testid="vendas-novo" aria-haspopup="dialog" aria-expanded={aberto}
+        title={`Novo documento · ${rotuloDoTipo}: escolher a operação`} onClick={abrir}>
+        <Plus strokeWidth={2.4} aria-hidden /><span>Novo</span>
+      </button>
+      <MenuP.Root modal={false}>
+        <MenuP.Trigger asChild>
+          <button type="button" className={estilos.abrirMenu} aria-label="Escolher a operação do novo documento" data-testid="vendas-novo-menu">
+            <ChevronDown strokeWidth={2.4} aria-hidden />
+          </button>
+        </MenuP.Trigger>
+        <MenuP.Portal>
+          <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuOperacoes)} aria-label="Nova operação" data-testid="vendas-novo-operacoes"
+            // "Escolher operação…": o menu devolve o foco ao `Novo` e SÓ ENTÃO a janela abre — assim a
+            // janela guarda o `Novo` como quem a abriu, e o ESC devolve o foco a ele, não ao `<body>`.
+            onCloseAutoFocus={(e) => { if (!janelaPedidaPeloMenu.current) return; janelaPedidaPeloMenu.current = false; e.preventDefault(); botaoNovo.current?.focus(); abrir(); }}>
+            <div className={estilos.menuCabecalho}>
+              <span className={estilos.menuTitulo}>Nova operação · {rotuloDoTipo}</span>
+              <span className={estilos.menuSubtitulo}>{todas.length <= LIMITE_DO_MENU_RAPIDO ? contagem(todas.length) : "Só as operações padrão"}</span>
+            </div>
+            <div className={estilos.menuLista}>
+              {algumCarregando && <div className={estilos.menuAviso} data-testid="menu-rapido-carregando">Carregando os tipos de operação…</div>}
+              {!algumCarregando && doMenu.length === 0 && <div className={estilos.menuAviso} data-testid="menu-rapido-vazio">
+                {todas.length ? "Nenhuma operação padrão: use Escolher operação." : "Nenhuma operação disponível para lançamento."}
+              </div>}
+              {doMenu.map((l) => <MenuP.Item key={l.id} className={estilos.operacao} data-testid="menu-rapido-top" data-top-id={l.id} data-familia={l.familia} onSelect={() => confirmar(l)}>
+                <span className={estilos.codigo}>{l.code}</span>
+                <span className={estilos.nome}>{l.name}</span>
+                {/* a família só se escreve quando o contexto mistura tipos — com um tipo escolhido, ela é o título */}
+                <span className={estilos.familia}>{variante ? "" : l.rotuloDoTipo}</span>
+                <span className={estilos.vagaDoSelo}>{l.ehPadrao ? <span className={estilos.selo}>Padrão</span> : null}</span>
+              </MenuP.Item>)}
+            </div>
+            <div className={estilos.menuRodape}>
+              <MenuP.Item className={cn(estilos.operacao, estilos.escolherOperacao)} data-testid="menu-rapido-escolher" onSelect={() => { janelaPedidaPeloMenu.current = true; }}>
+                <span className={estilos.iconePesquisa}><Search aria-hidden /></span>
+                <span className={estilos.rotuloForte}>Escolher operação…</span>
+                <span className={estilos.familia}>{todas.length === 1 ? "1 TOP" : `${todas.length} TOPs`}</span>
+              </MenuP.Item>
+            </div>
+          </MenuP.Content>
+        </MenuP.Portal>
+      </MenuP.Root>
+    </span>
+
     <Dialog
       open={aberto} onOpenChange={setAberto} size="lg" testId="lancador-unificado"
-      title="Novo documento" description="Escolha a operação que deseja lançar."
-      bodyClassName="flex flex-col gap-2"
+      title="Novo documento"
+      description={<>Escolha a TOP para iniciar o documento.<span className={estilos.contextoDaJanela} data-testid="lancador-contexto">
+        <span className={estilos.contextoRotulo}>Tipo</span><span className={estilos.contextoValor}>{rotuloDoTipo}</span>
+      </span></>}
+      bodyClassName={estilos.corpo}
       footer={<>
+        <div className={estilos.rodapeResumo}>
+          <span className={estilos.resumo} data-testid="lancador-resumo">
+            {linhaAtiva ? `Lançar ${linhaAtiva.rotuloDoTipo} com ${linhaAtiva.code} · ${linhaAtiva.name}` : "Nenhuma operação selecionada"}
+          </span>
+          <span className={estilos.atalhos} aria-hidden>
+            <kbd className={estilos.tecla}>↑</kbd> <kbd className={estilos.tecla}>↓</kbd> navegar · <kbd className={estilos.tecla}>Enter</kbd> lançar · <kbd className={estilos.tecla}>Esc</kbd> fechar · {contagem(visiveis.length)}
+          </span>
+        </div>
         <Button variant="outline" data-testid="lancador-cancelar" onClick={() => setAberto(false)}>{COPY.fechar}</Button>
-        {/*
-          A AÇÃO PRIMÁRIA É NOMEADA E FICA SEMPRE VISÍVEL (o rodapé do perfil `large` é fixo). Ela é o
-          CONTRATO da janela; o clique na linha é só um atalho. Desabilitada sem linha ativa: com o
-          recorte vazio, com o padrão fora do recorte, e — deliberadamente — quando há uma única
-          operação sem padrão declarado. Cardinalidade não escolhe pelo usuário.
-        */}
+        {/* A AÇÃO PRIMÁRIA fica sempre visível (rodapé fixo) e desabilitada sem linha ativa: com o recorte
+            vazio, com o padrão fora do recorte e com uma operação única sem padrão declarado. */}
         <Button data-testid="lancador-lancar" disabled={!linhaAtiva || ocupado} onClick={() => { if (linhaAtiva) confirmar(linhaAtiva); }}>Lançar</Button>
       </>}
     >
-      <div className="flex items-center gap-2">
-        <Input
-          ref={campoBusca}
-          data-testid="lancador-busca"
-          value={busca}
-          onChange={(e) => setBusca(e.target.value)}
-          onKeyDown={aoTeclar}
-          placeholder="Pesquisar por código ou descrição da operação"
-          aria-label="Pesquisar operação"
-          // O par combobox + listbox é o que faz o leitor de tela ACOMPANHAR as setas: o foco do DOM
-          // fica no campo, e `aria-activedescendant` aponta a linha ativa. `role="grid"` seria errado
-          // aqui — grid obriga navegação por célula (← →), que ninguém quer para escolher uma operação.
-          role="combobox"
-          aria-expanded="true"
-          aria-controls={idLista}
-          aria-autocomplete="list"
-          aria-activedescendant={ativo ? idOpcao(ativo) : undefined}
-          className="flex-1"
-        />
-        {buscando && <Button variant="outline" data-testid="lancador-limpar-busca" onClick={() => { setBusca(""); campoBusca.current?.focus(); }}>Limpar</Button>}
+      <div className={estilos.linhaDePesquisa}>
+        <div className={estilos.pesquisa}>
+          <Search aria-hidden />
+          <input
+            ref={campoBusca}
+            data-testid="lancador-busca"
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            onKeyDown={aoTeclar}
+            placeholder="Pesquisar por código ou descrição da operação"
+            aria-label="Pesquisar operação"
+            // combobox + listbox: o foco do DOM fica no campo e `aria-activedescendant` aponta a linha ativa.
+            role="combobox"
+            aria-expanded="true"
+            aria-controls={idLista}
+            aria-autocomplete="list"
+            aria-activedescendant={ativo ? idOpcao(ativo) : undefined}
+          />
+          {buscando && <button type="button" className={estilos.limpar} data-testid="lancador-limpar-busca" onClick={limparBusca}>Limpar</button>}
+        </div>
       </div>
 
-      {/* SÓ O CORPO ROLA. A moldura e o rodapé ficam parados entre carregando, bloqueio, vazio e lista
-          cheia — é isso que impede o diálogo de pular de tamanho a cada tecla. */}
-      <div className="min-h-0 flex-1 overflow-auto">
-        {/*
-          O CABEÇALHO MORA DENTRO DO ROLADOR, e é `sticky` em vez de ficar acima dele.
-          Fora do rolador, ele não sofre o recuo da barra de rolagem: quando a lista transborda e a
-          barra CLÁSSICA aparece (~15px no Windows e no Linux), a largura útil das LINHAS encolhe e a
-          do cabeçalho não — as colunas saem do lugar. Pior: o recuo APARECE e SOME conforme a
-          pesquisa recorta a lista, então as colunas pulariam a cada tecla, que é exatamente o que
-          esta janela existe para não fazer. Dentro, os dois encolhem juntos.
-
-          `aria-hidden` porque cada linha já se anuncia inteira; para o leitor de tela ele seria texto
-          solto dentro de um listbox. Some em tela estreita, onde não há colunas.
-
-          A borda esquerda transparente de 3px espelha a das linhas: sem ela, o conteúdo do cabeçalho
-          ficaria permanentemente 3px à esquerda do conteúdo das linhas.
-
-          `bg-white` e não o token do cartão: a catraca de nomenclatura (`scripts/naming-audit.mjs`)
-          conta o prefixo herdado do sistema de referência e só aceita que ele DIMINUA — código novo
-          nasce neutro. O valor é o mesmo (`#ffffff`, e o produto não tem tema escuro), então a
-          equivalência é exata e não se paga dívida nova por ela.
-        */}
-        <div className={cn("sticky top-0 z-10 hidden border-b border-l-[3px] border-slate-200 border-l-transparent bg-white px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500 sm:grid", COLUNAS, "items-center gap-x-3")} aria-hidden="true">
-          <span />
-          <span>Código</span>
-          <span>Tipo de Operação</span>
-          <span>Tipo de documento</span>
-          <span />
+      {/* SÓ A LISTA ROLA, com o cabeçalho de colunas `sticky` DENTRO dela: fora, ele não sofreria o recuo
+          da barra de rolagem e as colunas sairiam do lugar quando a lista transborda. */}
+      <div className={estilos.rolagem}>
+        <div className={cn(estilos.colunas, estilos.cabecalhoColunas)} aria-hidden="true">
+          <span /><span>Código</span><span>Tipo de Operação</span><span />
         </div>
-        {/* UM aviso de carregamento para a janela inteira, ocupando a altura do rolador — e não um
-            por família. A moldura já é de altura fixa, então nada pula quando ele sai. */}
-        {algumCarregando && <div className="h-full" data-testid="lancador-carregando">
-          <LoadingState label="Carregando os tipos de operação…" />
-        </div>}
-        <div role="listbox" id={idLista} aria-label="Operações disponíveis para lançamento">
+        {/* UM aviso de carregamento para a janela inteira, e não um por família. */}
+        {algumCarregando && <div data-testid="lancador-carregando"><LoadingState label="Carregando os tipos de operação…" /></div>}
+        <div role="listbox" id={idLista} aria-label="Operações disponíveis para lançamento" className={estilos.lista}>
           {grupos.map((g) => <Grupo
             key={g.variante.variante}
             grupo={g}
             linhas={filtrarLinhas(linhasDoGrupo(g), busca)}
             ativo={ativo}
             idOpcao={idOpcao}
-            aoConfirmar={confirmar}
+            aoEscolher={escolher}
+            aoLancar={confirmar}
           />)}
         </div>
-        {/* O testid mora no invólucro: `EmptyState` não repassa props desconhecidas, e um
-            `data-testid` entregue a ele sumiria no caminho sem ninguém perceber. */}
-        {/* `h-full`: a regra de centragem do `globals.css` exige filho DIRETO do corpo do diálogo, e
-            aqui o EmptyState está dois níveis abaixo. Sem isto ele fica colado no topo, com meia
-            janela vazia embaixo. O próprio EmptyState já se centra dentro da altura que receber. */}
-        {mostrarVazio && <div className="h-full" data-testid="lancador-vazio">
-          <EmptyState
-            title={buscando ? "Nenhuma operação encontrada para esta busca." : "Nenhuma operação disponível para lançamento."}
-            action={buscando ? <Button variant="outline" data-testid="lancador-vazio-limpar" onClick={() => { setBusca(""); campoBusca.current?.focus(); }}>Limpar pesquisa</Button> : undefined}
-          />
+        {mostrarVazio && <div className={estilos.vazio} data-testid="lancador-vazio">
+          <Search aria-hidden />
+          <div className={estilos.vazioTitulo}>{buscando ? "Nenhuma operação encontrada para esta busca." : "Nenhuma operação disponível para lançamento."}</div>
+          {buscando && <div className={estilos.vazioTexto}>Confira o código ou tente parte da descrição.</div>}
+          {buscando && <Button variant="outline" data-testid="lancador-vazio-limpar" onClick={limparBusca}>Limpar pesquisa</Button>}
         </div>}
       </div>
 
