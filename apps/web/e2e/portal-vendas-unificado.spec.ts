@@ -105,7 +105,7 @@ async function criarDocumento(page: Page, variante: string, top: Top): Promise<{
 /** Abre o detalhe e só devolve quando a moldura montou — e quando é o documento CERTO que está nela. */
 async function abrirDocumento(page: Page, variante: string, doc: { id: string; code: string }) {
   await page.goto(`/vendas/${SEGMENTO[variante]}/${doc.id}`);
-  await expect(page.getByTestId("base2-shell"), "a premissa: o documento abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "a premissa: o documento abriu").toBeVisible();
   await expect(page.getByRole("heading", { name: new RegExp(doc.code) }),
     "e é o documento da fixture, não outro que por acaso estava na tela").toBeVisible();
 }
@@ -380,7 +380,7 @@ test("E17 — orçamento com transição para pedido converte usando EXATAMENTE 
 
   // E a ORIGEM ficou convertida — a conversão é uma transição, não uma cópia.
   await abrirDocumento(page, "budget", doc);
-  await expect(page.getByTestId("base2-shell").locator("[data-status]").first()).toHaveText(/Convertid/i);
+  await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]").first()).toHaveText(/Convertid/i);
 });
 
 test("E18 — pedido com DUAS TOPs de venda converte na que o usuário escolheu, não na primeira", async ({ page }) => {
@@ -596,6 +596,6 @@ test("E21 — orçamento cuja política vai DIRETO à venda pula o pedido: rótu
 
   // E a tela da fonte diz a mesma coisa que o servidor: o estado do banco chega ao operador.
   await abrirDocumento(page, "budget", doc);
-  await expect(page.getByTestId("base2-shell").locator("[data-status]").first(),
+  await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]").first(),
     "a fonte aparece convertida também na tela").toHaveText(/Convertid/i);
 });

@@ -64,8 +64,22 @@ export interface CentralVendasWorkspaceProps {
   acoes: React.ReactNode;
   /** Ações da direita da barra (ex.: documentos abertos). */
   acoesDireita?: React.ReactNode;
-  /** Identidade do documento no cabeçalho de Dados principais. Em criação ainda NÃO há número. */
-  identidade: { nome: string; alterado: boolean; /** o que este tipo de documento faz — dica do ícone, fora do corpo, como no design */ dica?: string };
+  /**
+   * Identidade do documento no cabeçalho de Dados principais. Em criação ainda NÃO há número (nome =
+   * "Nova Venda", ícone de documento novo); em consulta, o código do servidor, o ícone da situação e a
+   * situação por `StatusBadge`.
+   */
+  identidade: {
+    nome: string; alterado: boolean;
+    /** o que este tipo de documento faz — dica do ícone, fora do corpo, como no design */
+    dica?: string;
+    icone?: React.ReactNode;
+    /** família de tonalidade do ícone (a mesma de `statusTone`) */
+    tom?: "positive" | "negative" | "warning" | "info" | "neutral";
+    situacao?: React.ReactNode;
+  };
+  /** Total do documento à direita das abas — só quando o SERVIDOR o calculou (consulta). */
+  totalDoDocumento?: React.ReactNode;
   /** Aviso funcional (ex.: escrita bloqueada). Fica dentro de Dados principais, acima dos campos. */
   aviso?: React.ReactNode;
   dados: React.ReactNode;
@@ -119,7 +133,7 @@ function Divisor({ eixo, valor, min, max, rotulo, onInicio, onMover, onFim, onTe
   </div>;
 }
 
-export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade, aviso, dados, itens, abas, className }: CentralVendasWorkspaceProps) {
+export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade, aviso, dados, itens, abas, totalDoDocumento, className }: CentralVendasWorkspaceProps) {
   const corpoRef = React.useRef<HTMLDivElement>(null);
   const [largura, setLargura] = React.useState<number>(LARGURA_DADOS.padrao);
   const [altura, setAltura] = React.useState<number>(ALTURA_PAINEL.padrao);
@@ -185,8 +199,10 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
             <span>Dados principais</span>
             <span className={estilos.cabecalhoEspaco} />
             <span className={estilos.identidade} data-testid="central-vendas-identidade">
-              <span className={cn(estilos.identidadeIcone, estilos.dicaFim)} data-dica={identidade.dica} tabIndex={identidade.dica ? 0 : undefined} role={identidade.dica ? "img" : undefined} aria-label={identidade.dica} aria-hidden={identidade.dica ? undefined : true}><FilePlus2 size={15} /></span>
-              <span className={estilos.identidadeNome}>{identidade.nome}</span>
+              <span className={cn(estilos.identidadeIcone, estilos.dicaFim)} data-tom={identidade.tom} data-dica={identidade.dica} tabIndex={identidade.dica ? 0 : undefined} role={identidade.dica ? "img" : undefined} aria-label={identidade.dica} aria-hidden={identidade.dica ? undefined : true}>{identidade.icone ?? <FilePlus2 size={15} />}</span>
+              {/* o nome do documento é o TÍTULO da tela (h1): leitor de tela e atalho de título chegam nele */}
+              <h1 className={estilos.identidadeNome} data-testid="central-vendas-identidade-nome">{identidade.nome}</h1>
+              {identidade.situacao && <span className={estilos.identidadeSituacao} data-testid="central-vendas-situacao">{identidade.situacao}</span>}
               {identidade.alterado && <span className={estilos.pontoAlterado} role="img" aria-label="Alterações não salvas" data-testid="central-vendas-alterado" />}
             </span>
           </div>
@@ -214,6 +230,7 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
         onKeyDownCapture={(e) => { if (["ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(e.key)) expandirPelaAba(e.target); }}>
         <Tabs className={estilos.abas} tabs={abas} />
         <span className={estilos.painelAcoes}>
+          {totalDoDocumento !== undefined && <span className={estilos.totalDoDocumento} data-testid="central-vendas-total">{totalDoDocumento}</span>}
           <button type="button" className={cn(estilos.recolher, estilos.dicaFim)} aria-label={rotuloRecolher} data-dica={rotuloRecolher}
             aria-expanded={!recolhido} data-testid="central-vendas-recolher" onClick={() => setRecolhido((r) => !r)}><ChevronDown aria-hidden /></button>
         </span>
@@ -223,13 +240,25 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
 }
 
 /** Botão só de ícone da barra: redondo, com nome acessível e dica — nunca ícone mudo. */
-export const AcaoDaBarra = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { rotulo: string; destaque?: "salvar"; ocupado?: boolean; aberta?: boolean; dica?: "inicio" | "fim" }>(
+export const AcaoDaBarra = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { rotulo: string; destaque?: "salvar" | "novo"; ocupado?: boolean; aberta?: boolean; dica?: "inicio" | "fim" }>(
   ({ rotulo, destaque, ocupado, aberta, dica, className, children, disabled, ...p }, ref) => <button ref={ref} type="button" aria-label={rotulo} data-dica={rotulo}
     aria-busy={ocupado || undefined} disabled={disabled || ocupado}
-    className={cn(estilos.acao, destaque === "salvar" && estilos.acaoSalvar, aberta && estilos.acaoAberta, dica === "inicio" && estilos.dicaInicio, dica === "fim" && estilos.dicaFim, className)} {...p}>
+    className={cn(estilos.acao, destaque === "salvar" && estilos.acaoSalvar, destaque === "novo" && estilos.acaoNovo, aberta && estilos.acaoAberta, dica === "inicio" && estilos.dicaInicio, dica === "fim" && estilos.dicaFim, className)} {...p}>
     {ocupado ? <Loader2 className={estilos.girar} aria-hidden /> : children}
   </button>
 );
 AcaoDaBarra.displayName = "AcaoDaBarra";
+
+/**
+ * A ação de MAIOR hierarquia da etapa (Confirmar venda, Converter): pílula verde sólida com ícone E
+ * texto, como no design. É a única ação da barra que não é só ícone — o texto nomeia o efeito.
+ */
+export const AcaoPrincipal = React.forwardRef<HTMLButtonElement, React.ButtonHTMLAttributes<HTMLButtonElement> & { icone: React.ReactNode; ocupado?: boolean }>(
+  ({ icone, ocupado, className, children, disabled, ...p }, ref) => <button ref={ref} type="button" aria-busy={ocupado || undefined} disabled={disabled || ocupado}
+    className={cn(estilos.acaoPrincipal, className)} {...p}>
+    {ocupado ? <Loader2 className={estilos.girar} aria-hidden /> : icone}{children}
+  </button>
+);
+AcaoPrincipal.displayName = "AcaoPrincipal";
 
 export const DivisorDaBarra = () => <span className={estilos.barraDivisor} aria-hidden />;

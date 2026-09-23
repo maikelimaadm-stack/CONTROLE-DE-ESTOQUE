@@ -74,6 +74,35 @@
 .acaoSalvar[aria-busy="true"],
 .acaoSalvar[aria-busy="true"]:disabled { opacity: 1; background: #ecfdf3; color: #15803d; box-shadow: inset 0 0 0 1px rgba(64, 222, 99, .45); cursor: default; }
 .acaoAberta { background: #e2e8f0; color: #0f172a; box-shadow: inset 0 0 0 1px #cbd5e1; }
+/* Novo: círculo verde preenchido, ícone branco */
+.acaoNovo { background: #40de63; color: #fff; }
+.acaoNovo:hover:not(:disabled) { background: #36c956; color: #fff; }
+.acaoNovo:active:not(:disabled) { background: #22a85c; }
+.acaoNovo svg { width: 17px; height: 17px; stroke-width: 2.4; }
+/* Confirmar / Converter: pílula verde sólida com ícone e texto — a ação de maior hierarquia */
+.acaoPrincipal {
+  height: 32px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 15px 0 13px;
+  border: 0;
+  border-radius: 999px;
+  background: #40de63;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+}
+.acaoPrincipal:hover:not(:disabled) { background: #36c956; }
+.acaoPrincipal:active:not(:disabled) { background: #22a85c; transform: scale(.975); }
+.acaoPrincipal:disabled { opacity: .5; cursor: not-allowed; }
+.acaoPrincipal:focus-visible { outline: 2px solid #15803d; outline-offset: 2px; }
+.acaoPrincipal svg { width: 15px; height: 15px; stroke-width: 2.3; flex-shrink: 0; }
 .selo {
   position: absolute;
   top: -3px;
@@ -145,6 +174,29 @@
 .link { flex-shrink: 0; white-space: nowrap; border: 0; background: transparent; color: #15803d; font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
 .link:hover { background: #ecfdf3; }
 .link:focus-visible { outline: 2px solid #22a85c; outline-offset: 1px; }
+
+/* popover PORTALADO (menu Mais ações): fora de `.workspace`, então sem as variáveis de movimento dele */
+.popoverFlutuante {
+  z-index: 80;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .72);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  backdrop-filter: blur(22px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, .65);
+  box-shadow: 0 18px 40px rgba(15, 23, 42, .18), 0 2px 8px rgba(15, 23, 42, .08), inset 0 1px 0 rgba(255, 255, 255, .85);
+  animation: sobe 230ms cubic-bezier(.16, 1, .3, 1) backwards;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .popoverFlutuante { background: rgba(255, 255, 255, .97); }
+}
+.menu { width: 244px; padding: 4px 0; }
+.menuItem { display: block; height: 32px; line-height: 32px; padding: 0 12px; font-size: 12.5px; color: #1e293b; cursor: pointer; outline: none; user-select: none; }
+.menuItem[data-highlighted] { background: rgba(64, 222, 99, .14); box-shadow: inset 3px 0 0 #22a85c; }
+.menuItemPerigo { color: #b91c1c; }
+.menuSeparador { height: 1px; background: rgba(15, 23, 42, .08); margin: 4px 0; }
+@media (prefers-reduced-motion: reduce) { .popoverFlutuante { animation: none; } }
 
 /* documentos abertos — a barra de abas que já existe, vista como lista de documentos */
 .docsAncora { position: relative; display: inline-flex; }
@@ -247,7 +299,12 @@
 .cabecalhoEspaco { flex: 1 1 auto; }
 .identidade { display: inline-flex; align-items: center; gap: 8px; min-width: 0; padding-right: 2px; }
 .identidadeIcone { display: inline-flex; flex-shrink: 0; color: #64748b; }
-.identidadeNome { font-size: 13.5px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.identidadeIcone svg { width: 15px; height: 15px; }
+.identidadeIcone[data-tom="warning"] { color: #92400e; }
+.identidadeIcone[data-tom="positive"] { color: #166534; }
+.identidadeIcone[data-tom="negative"] { color: #991b1b; }
+.identidadeSituacao { display: inline-flex; flex-shrink: 0; }
+.identidadeNome { margin: 0; font-size: 13.5px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pontoAlterado { display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: #40de63; flex-shrink: 0; }
 
 /* ═════════════ Dados principais ═════════════ */
@@ -292,6 +349,23 @@
 .travadoValor { display: flex; align-items: baseline; gap: 6px; min-width: 0; font-size: 13px; font-weight: 500; color: #8b939e; white-space: nowrap; overflow: hidden; }
 .travadoValor > :last-child { overflow: hidden; text-overflow: ellipsis; }
 .travado .adorno { color: #b6bdc6; top: auto; bottom: 11px; }
+/* campo preenchido, só leitura (consulta): o mesmo desenho do campo da criação, sem entrada */
+.leitura {
+  position: relative;
+  height: 38px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e7eaee;
+  padding: 17px 32px 5px 10px;
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+}
+.leituraVazia { background: #f1f3f4; border-color: transparent; }
+.leituraRotulo { position: absolute; top: 4px; left: 10px; font-size: 9px; font-weight: 500; line-height: 1; color: #9ca3af; }
+.leituraValor { min-width: 0; font-size: 13px; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.leituraVazia .leituraValor { color: #9ca3af; }
 .codigo { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 11.5px; font-weight: 600; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
 .separador { color: #cbd5e1; }
 
@@ -437,6 +511,8 @@
 .linha[aria-selected="true"] td:first-child { box-shadow: inset 2px 0 0 #22a85c; }
 .linha:focus-visible td { background: rgba(64, 222, 99, .1); }
 .linhaSemProduto td { background: #fff7f7; }
+.linhaLeitura:nth-child(even) td { background: #fafbfc; }
+.linhaLeitura:hover td { background: rgba(15, 23, 42, .028); }
 .vazio { padding: 28px 16px !important; text-align: center; color: #94a3b8; white-space: normal !important; height: auto !important; }
 
 .remover { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io); }
@@ -543,7 +619,8 @@
 /* recolhido: só a faixa das abas (39px, como o protótipo); o conteúdo sai do layout e do foco */
 .painel[data-recolhido="true"] { height: 39px; }
 .painel[data-recolhido="true"] [role="tabpanel"] { display: none; }
-.painelAcoes { position: absolute; top: 0; right: 10px; height: 38px; display: flex; align-items: center; gap: 6px; }
+.painelAcoes { position: absolute; top: 0; right: 10px; height: 38px; display: flex; align-items: center; gap: 12px; }
+.totalDoDocumento { font-size: 17px; font-weight: 500; color: #1e293b; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .recolher {
   width: 24px;
   height: 24px;

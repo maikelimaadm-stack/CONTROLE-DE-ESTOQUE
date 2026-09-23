@@ -71,7 +71,7 @@ test("cadastra TOPs, lança pelo Portal de Vendas e o detalhe mostra o snapshot"
   });
 
   await page.goto(`/vendas/sales/${venda.id}`);
-  await expect(page.getByTestId("base2-shell")).toBeVisible();
+  await expect(page.getByTestId("central-vendas")).toBeVisible();
   // TOP configurada E família canônica aparecem como coisas DIFERENTES.
   await expect(page.getByText(nomeTop)).toBeVisible();
   await expect(page.getByText("Família operacional")).toBeVisible();
@@ -94,7 +94,7 @@ test("editar a TOP cria a versão 2 e o documento ANTIGO continua exibindo a ver
   await api(page, "PUT", `/api/admin/tipos-operacao/${top.id}`, { nome: nomeV2, revisao: atual.revisao });
 
   await page.goto(`/vendas/sales/${venda.id}`);
-  await expect(page.getByTestId("base2-shell")).toBeVisible();
+  await expect(page.getByTestId("central-vendas")).toBeVisible();
   // A PROVA QUE IMPORTA: a tela mostra o nome de ONTEM, porque lê a versão congelada.
   await expect(page.getByText(nomeV1)).toBeVisible();
   await expect(page.getByText(nomeV2), "o nome novo NÃO pode aparecer no documento antigo").toHaveCount(0);
@@ -131,7 +131,7 @@ test("conversão exige a TOP do DESTINO, e a fonte mantém a dela", async ({ pag
   });
 
   await page.goto(`/vendas/budgets/${orcamento.id}`);
-  await expect(page.getByTestId("base2-shell"), "a premissa: o documento abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "a premissa: o documento abriu").toBeVisible();
   // O RÓTULO NOMEIA A OPERAÇÃO DE DESTINO. Um destino só não vira "Converter" genérico: o operador
   // precisa saber, ANTES do clique, em que operação o documento novo nasce.
   const acao = page.getByTestId("acao-conversao");
@@ -346,7 +346,7 @@ test("LEGADO — documento sem TOP abre, diz que não está configurado e manté
   });
 
   await page.goto(`/vendas/sales/${venda.id}`);
-  await expect(page.getByTestId("base2-shell"), "legado continua abrindo").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "legado continua abrindo").toBeVisible();
   await expect(page.getByText("Não configurada (registro legado)")).toBeVisible();
   // A família canônica CONTINUA correta — ela vem do registro, não da configuração.
   await expect(page.getByText("Família operacional")).toBeVisible();
@@ -921,7 +921,7 @@ test("CV1 — CONVERSÃO SEM PADRÃO: nada vem escolhido, e Converter só libera
   await derrubarProximosPassos(page, "budgets");
 
   await page.goto(`/vendas/budgets/${orcamento.id}`);
-  await expect(page.getByTestId("base2-shell"), "a premissa: o orçamento abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "a premissa: o orçamento abriu").toBeVisible();
   const acao = page.getByTestId("acao-conversao");
   // NA COMPATIBILIDADE O RÓTULO NOMEIA A FAMÍLIA do destino — é tudo o que se sabe antes de perguntar
   // as TOPs. Afirmar o rótulo aqui é o que distingue "caiu na cadeia anterior" de "leu o grafo".
@@ -960,7 +960,7 @@ test("CV2 — CONVERSÃO COM PADRÃO REAL: vem pré-selecionado e visível, e po
   await derrubarProximosPassos(page, "budgets");
 
   await page.goto(`/vendas/budgets/${orcamento.id}`);
-  await expect(page.getByTestId("base2-shell"), "a premissa: o orçamento abriu").toBeVisible();
+  await expect(page.getByTestId("central-vendas"), "a premissa: o orçamento abriu").toBeVisible();
   await page.getByTestId("acao-conversao").click();
   const dialogo = page.getByTestId("dialog-conversao");
   await expect(dialogo).toBeVisible();

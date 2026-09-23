@@ -3,12 +3,19 @@ import * as React from "react";
 import { use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { ArrowRightLeft, Check, FileCheck2, FileText, FileX2, Plus, Printer } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { brl, num, dateBR, pct } from "@/lib/utils";
-import { Button, Confirm, Dialog } from "@/components/ui";
+import { brl, dateBR } from "@/lib/utils";
+import { Button, Confirm, Dialog, StatusBadge, statusTone } from "@/components/ui";
+import { useTabTitle } from "@/lib/workspace-tabs";
 import { useDoc, LoadingOr, type Row } from "@/features/docs/shared";
 import { useAction } from "@/features/docs/actions";
-import { Base2Shell, Base2Section, Base2Fields, Base2Items, type Base2Field, type Base2ItemColumn } from "@/features/base2";
+import { Base2Items, type Base2ItemColumn } from "@/features/base2";
+import { HistoryDialog } from "@/features/base1/history-dialog";
+import { AcaoDaBarra, AcaoPrincipal, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
+import { CampoLeitura, ItensSalvos, MaisAcoes, type ItemDoMenu } from "@/features/sales/central-vendas-consulta";
+import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+import estilosCentral from "@/features/sales/central-vendas-workspace.module.css";
 import { tipoOperacaoDoRegistro } from "@agro/domain";
 import { useTradutor } from "@/lib/i18n";
 import { COPY, enumLabel, statusLabel } from "@/lib/copy";
@@ -37,21 +44,11 @@ const ENTIDADE = "sales_documents";
  * política vem da VERSÃO da TOP que o documento cita (`/proximos-passos`). O que sobra neste mapa é o
  * que continua sendo da ROTA e da VARIANTE: título, família de capacidade e segmento da porta.
  */
-const DO_REGISTRO: Record<string, { titulo: string; perm: string; segmento: string }> = {
-  budget: { titulo: "Orçamento", perm: "budgets", segmento: "budgets" },
-  order: { titulo: "Pedido de venda", perm: "orders", segmento: "orders" },
-  sale: { titulo: "Venda", perm: "sales", segmento: "sales" }
+const DO_REGISTRO: Record<string, { titulo: string; novo: string; perm: string; segmento: string }> = {
+  budget: { titulo: "Orçamento", novo: "Novo orçamento", perm: "budgets", segmento: "budgets" },
+  order: { titulo: "Pedido de venda", novo: "Novo pedido de venda", perm: "orders", segmento: "orders" },
+  sale: { titulo: "Venda", novo: "Nova venda", perm: "sales", segmento: "sales" }
 };
-
-const COLUNAS_ITENS: Base2ItemColumn<Row>[] = [
-  { key: "product_code", label: "Código" },
-  { key: "product_name", label: "Produto" },
-  { key: "warehouse_name", label: "Armazém" },
-  { key: "quantity", label: "Quantidade", align: "right", render: (r) => `${num(r["quantity"] as string, 4)} ${r["unit"] ?? ""}` },
-  { key: "unit_price", label: "Valor unitário", align: "right", render: (r) => brl(r["unit_price"] as string) },
-  { key: "discount", label: "Desconto", align: "right", render: (r) => `${brl(r["discount"] as string)} / ${pct(r["discount_percent"] as string)}` },
-  { key: "total", label: "Total", align: "right", render: (r) => brl(r["total"] as string) }
-];
 
 const COLUNAS_TITULOS: Base2ItemColumn<Row>[] = [
   { key: "number", label: "Título", render: (r) => <Link className="text-brand-700 underline" href={`/financeiro/contas-a-receber/${r["id"]}`}>{String(r["number"])}</Link> },
@@ -68,12 +65,17 @@ const COLUNAS_DERIVADOS: Base2ItemColumn<Row>[] = [
 ];
 
 /**
- * DETALHE DO DOCUMENTO DE VENDA NO MODELO BASE 2 (BASE2-03C, docs/MODELO-BASE2-CONTRACT.md).
+ * DOCUMENTO DE VENDA SALVO — NA CENTRAL DE VENDAS, EM CONSULTA (VISUAL-UX-01 R3; antes Modelo Base 2,
+ * BASE2-03C — docs/DECISIONS.md 227).
  *
- * A moldura passou a desenhar identidade (título + código), empresa, situação, ações, dados principais,
- * itens e histórico. O que ela NÃO passou a decidir: conversão, confirmação, cancelamento, estoque,
- * geração de títulos, idempotência, permissão, escopo de empresa, transação e cálculo. Tela unificada ≠
- * regra de negócio unificada — quem nega é a API.
+ * Abrir um registro abre a MESMA Central da criação, no conjunto de CONSULTA do design: as ações como
+ * ícones (Novo, Confirmar venda / Converter, Imprimir, Documentos abertos, Mais ações → Histórico e
+ * Cancelar), os dados principais como campos preenchidos, os itens na grade, e totais, financeiro,
+ * frete, derivados e observações no painel inferior. Não há "Voltar": a navegação entre documentos é
+ * a barra de abas e Documentos abertos. O que a apresentação NÃO passou a decidir: conversão,
+ * confirmação, cancelamento, estoque, geração de títulos, idempotência, permissão, escopo de empresa,
+ * transação e cálculo — os handlers, diálogos e condições abaixo são os de antes, linha a linha.
+ * Tela unificada ≠ regra de negócio unificada — quem nega é a API.
  *
  * DINHEIRO NÃO É RECALCULADO AQUI. `total` é o número do servidor e inclui frete, ICMS de frete e outros
  * valores, que não estão em linha de item nenhuma: somar a coluna de itens daria outro número, e a
@@ -81,7 +83,8 @@ const COLUNAS_DERIVADOS: Base2ItemColumn<Row>[] = [
  *
  * ANEXOS NÃO SÃO LIGADOS. `sales_documents` não está em `ATTACHMENT_PARENTS`
  * (apps/api/src/lib/attachment-parent.ts): o botão apareceria e responderia 422. Botão que aparece e
- * não funciona é pior que botão nenhum — abrir a superfície é outra fatia, com backend.
+ * não funciona é pior que botão nenhum — abrir a superfície é outra fatia, com backend. Pelo mesmo
+ * motivo não há "Editar": documento salvo não tem contrato de edição.
  */
 export default function Page({ params }: { params: Promise<{ kind: string; id: string }> }) {
   const { kind: segmentoDaRota, id } = use(params);
@@ -145,6 +148,9 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
 
   /** Escolha entre 2+ próximos passos. Com UM item não há escolha a fazer — e com zero não há diálogo. */
   const [passoEscolhido, setPassoEscolhido] = React.useState("");
+  const [historicoAberto, setHistoricoAberto] = React.useState(false);
+  // o rótulo da aba de trabalho é o de antes da Central: título da variante + código do servidor
+  useTabTitle(d ? `${k?.titulo ?? "Documento de venda"} ${String(d["code"] ?? "")}`.trim() : null);
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
 
   const passoSelecionado = itens.length === 1 ? itens[0]! : itens.find((x) => x.tipoOperacaoId === passoEscolhido) ?? null;
@@ -181,61 +187,82 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   // O endereço das ações é o da variante DO REGISTRO — a mesma que a API serve nesta porta.
   const rota = k?.segmento ?? segmentoDaRota;
 
-  const campos: Base2Field[] = [
-    { label: "Código", valor: String(d["code"]) },
-    { label: tr("termos.tipo_operacao"), valor: topConfigurada ? `${topConfigurada.codigo} — ${topConfigurada.nome}` : "Não configurada (registro legado)", span: 4 },
-    { label: "Família operacional", valor: top ? tr(top.chaveI18n) : "—", span: 2 },
-    // A versão só faz sentido quando há TOP: num legado ela seria um número sem referente.
-    { label: "Versão", valor: topConfigurada ? String(topConfigurada.versao) : "", ocultarSeVazio: true, span: 2 },
-    { label: "Data", valor: dateBR(d["document_date"] as string), span: 2 },
-    { label: "Saída", valor: d["shipping_date"] ? dateBR(d["shipping_date"] as string) : "—", span: 2 },
-    { label: "Vencimento", valor: d["due_date"] ? dateBR(d["due_date"] as string) : "—", span: 2 },
-    { label: "Cliente", valor: `${d["client_name"]} ${d["client_document"] ?? ""}`.trim(), span: 4 },
-    { label: "Transportadora", valor: String(d["transporter_name"] ?? "—") },
-    { label: "Motorista", valor: String(d["driver_name"] ?? "—"), ocultarSeVazio: true },
-    { label: "Forma de pagamento", valor: String(d["payment_method_name"] ?? "—") },
-    { label: "Responsável", valor: String(d["responsible_name"] ?? "") },
-    { label: "Subtotal", valor: brl(d["subtotal"] as string), span: 2 },
-    { label: "Frete", valor: brl(d["freight"] as string), span: 2 },
-    { label: "ICMS frete", valor: brl(d["freight_icms"] as string), span: 2 },
-    { label: "Outros", valor: brl(d["other_values"] as string), span: 2 },
-    { label: "Desconto", valor: brl(d["discount"] as string), span: 2 },
-    { label: "Total", valor: <b>{brl(d["total"] as string)}</b>, span: 2 },
-    { label: "Origem", valor: d["origin_document_id"] ? "Convertido" : "Manual" },
-    { label: "Observação", valor: String(d["note"] ?? ""), span: 12, ocultarSeVazio: true }
+  const codigo = String(d["code"] ?? "");
+  const tom = statusTone(situacao);
+  const IconeDaSituacao = tom === "positive" ? FileCheck2 : tom === "negative" ? FileX2 : FileText;
+  const podeCancelar = Boolean(k) && !["cancelled", "confirmed", "invoiced"].includes(situacao) && can(`${k!.perm}.delete`);
+  const menu: ItemDoMenu[] = [
+    ...(can("audit_logs.view") ? [{ rotulo: "Histórico de alterações", onSelect: () => setHistoricoAberto(true), testId: "central-vendas-historico" }] : []),
+    ...(podeCancelar ? [{ rotulo: `Cancelar ${k!.titulo.toLowerCase()}…`, onSelect: () => setConfirmar("cancel"), perigo: true, separar: true, testId: "central-vendas-cancelar" }] : [])
   ];
+  const tabela = <T extends Row>(legenda: string, colunas: Base2ItemColumn<T>[], linhas: T[], vazio: string) =>
+    <Base2Items legenda={legenda} colunas={colunas} linhas={linhas} vazioTexto={vazio} />;
 
-  return <Base2Shell
-    titulo={titulo}
-    codigo={String(d["code"])}
-    situacao={situacao}
-    empresa={String(d["empresa_name"])}
-    voltarHref={`/vendas/${rota}`}
-    historico={{ entidade: ENTIDADE, id }}
-    acoes={<>
-      {variante === "sale" && editavel && can("sales.edit") && <Button size="sm" onClick={() => setConfirmar("confirm")}>Confirmar venda</Button>}
-      {/* CONVERTER exige AS DUAS capacidades, como a API passou a exigir: editar a FONTE e criar o
-          DESTINO. Mostrar o botão só com a do destino ofereceria uma ação que a API recusa com 403. */}
-      {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <Button size="sm" data-testid="acao-conversao" onClick={() => setConfirmar("convert")}>{rotuloDaConversao}</Button>}
-      {k && !["cancelled", "confirmed", "invoiced"].includes(situacao) && can(`${k.perm}.delete`) && <Button size="sm" variant="danger" onClick={() => setConfirmar("cancel")}>Cancelar {k.titulo.toLowerCase()}</Button>}
-      <Button size="sm" variant="outline" onClick={() => window.print()}>Imprimir</Button>
-    </>}
-  >
-    <Base2Fields campos={campos} />
-
-    <Base2Section titulo="Itens" contagem={d.items.length}>
-      <Base2Items legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${String(d["code"] ?? "")}`} colunas={COLUNAS_ITENS} linhas={d.items} />
-    </Base2Section>
-
-    {/* RELACIONAMENTO, não processo: as duas seções abaixo são leitura com link, sem ação destrutiva
-        embutida — por isso cabem na moldura sem custo de comportamento. Nenhuma soma é introduzida. */}
-    {d.titles.length > 0 && <Base2Section titulo="Contas a receber geradas" contagem={d.titles.length}>
-      <Base2Items legenda={`Contas a receber geradas pelo documento ${String(d["code"] ?? "")}`} colunas={COLUNAS_TITULOS} linhas={d.titles} />
-    </Base2Section>}
-
-    {d.derived.length > 0 && <Base2Section titulo="Documentos derivados" contagem={d.derived.length}>
-      <Base2Items legenda={`Documentos derivados do documento ${String(d["code"] ?? "")}`} colunas={COLUNAS_DERIVADOS} linhas={d.derived} />
-    </Base2Section>}
+  return <>
+    <CentralVendasWorkspace
+      titulo={`${titulo} ${codigo}`.trim()}
+      identidade={{ nome: codigo || titulo, alterado: false, icone: <IconeDaSituacao />, tom, dica: titulo, situacao: <StatusBadge value={situacao} /> }}
+      acoes={<>
+        {/* NOVO abre o lançador da MESMA variante (TOP-first): a criação continua sendo a de sempre */}
+        {k && can(`${k.perm}.create`) && <><AcaoDaBarra rotulo={k.novo} destaque="novo" dica="inicio" data-testid="central-vendas-novo" onClick={() => router.push(`/vendas/${k.segmento}/new`)}><Plus aria-hidden /></AcaoDaBarra><DivisorDaBarra /></>}
+        {variante === "sale" && editavel && can("sales.edit") && <AcaoPrincipal icone={<Check aria-hidden />} onClick={() => setConfirmar("confirm")}>Confirmar venda</AcaoPrincipal>}
+        {/* CONVERTER exige AS DUAS capacidades, como a API passou a exigir: editar a FONTE e criar o
+            DESTINO. Mostrar o botão só com a do destino ofereceria uma ação que a API recusa com 403. */}
+        {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <AcaoPrincipal icone={<ArrowRightLeft aria-hidden />} data-testid="acao-conversao" onClick={() => setConfirmar("convert")}>{rotuloDaConversao}</AcaoPrincipal>}
+      </>}
+      acoesDireita={<>
+        <AcaoDaBarra rotulo="Imprimir" onClick={() => window.print()}><Printer aria-hidden /></AcaoDaBarra>
+        <DocumentosAbertos />
+        {menu.length > 0 && <><DivisorDaBarra /><MaisAcoes itens={menu} /></>}
+      </>}
+      dados={<>
+        <CampoLeitura rotulo="Cliente" adorno="pesquisa" testId="central-vendas-campo" valor={`${d["client_name"] ?? ""} ${d["client_document"] ?? ""}`.trim()} />
+        <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["empresa_name"] ?? "")} />
+        <CampoLeitura rotulo={tr("termos.tipo_operacao")} adorno="travado" testId="top-contexto"
+          valor={topConfigurada ? <><span className={estilosCentral.codigo}>{topConfigurada.codigo}</span><span className={estilosCentral.separador}>·</span><span>{topConfigurada.nome}</span></> : "Não configurada (registro legado)"} />
+        {/* A FAMÍLIA CANÔNICA sai do REGISTRO (`kind`), em memória — campo próprio, ao lado da TOP configurada */}
+        <CampoLeitura rotulo="Família operacional" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />
+        <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
+        <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
+        <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
+        <CampoLeitura rotulo="Responsável" adorno="travado" testId="central-vendas-campo" valor={String(d["responsible_name"] ?? "")} />
+        <CampoLeitura rotulo="Data de saída" adorno="data" testId="central-vendas-campo" valor={d["shipping_date"] ? dateBR(d["shipping_date"] as string) : ""} />
+        <CampoLeitura rotulo="Número" adorno="travado" testId="central-vendas-campo" valor={codigo} />
+        {/* A versão só faz sentido quando há TOP: num legado ela seria um número sem referente. */}
+        {topConfigurada && <CampoLeitura rotulo="Versão da operação" adorno="travado" testId="central-vendas-campo" valor={String(topConfigurada.versao)} />}
+        <CampoLeitura rotulo="Origem" adorno="travado" testId="central-vendas-campo" valor={d["origin_document_id"] ? "Convertido" : "Manual"} />
+      </>}
+      itens={<ItensSalvos itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`} />}
+      totalDoDocumento={brl(d["total"] as string)}
+      abas={[
+        { value: "totais", label: "Totais", content: <div className={estilosCentral.painelGrade}>
+          <div className={estilosCentral.painelColuna}>
+            <CampoLeitura rotulo="Subtotal dos itens" valor={brl(d["subtotal"] as string)} />
+            <CampoLeitura rotulo="Desconto" valor={brl(d["discount"] as string)} />
+            <CampoLeitura rotulo="Outros valores" valor={brl(d["other_values"] as string)} />
+          </div>
+          <div className={estilosCentral.painelColuna}>
+            <CampoLeitura rotulo="Frete" valor={brl(d["freight"] as string)} />
+            <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
+            <CampoLeitura rotulo="Total do documento" adorno="travado" testId="central-vendas-total-campo" valor={<b>{brl(d["total"] as string)}</b>} />
+          </div>
+        </div> },
+        { value: "financeiro", label: "Financeiro", content: tabela(`Contas a receber geradas pelo documento ${codigo}`, COLUNAS_TITULOS, d.titles, "Nenhuma conta a receber gerada.") },
+        { value: "frete", label: "Frete e transporte", content: <div className={estilosCentral.painelGrade}>
+          <div className={estilosCentral.painelColuna}>
+            <CampoLeitura rotulo="Transportadora" adorno="pesquisa" valor={String(d["transporter_name"] ?? "")} />
+            <CampoLeitura rotulo="Motorista" valor={String(d["driver_name"] ?? "")} />
+          </div>
+          <div className={estilosCentral.painelColuna}>
+            <CampoLeitura rotulo="Frete" valor={brl(d["freight"] as string)} />
+            <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
+          </div>
+        </div> },
+        { value: "derivados", label: "Documentos derivados", content: tabela(`Documentos derivados do documento ${codigo}`, COLUNAS_DERIVADOS, d.derived, "Nenhum documento derivado.") },
+        { value: "observacoes", label: "Observações", content: <div className={estilosCentral.painelLargo}><CampoLeitura rotulo="Observação" valor={String(d["note"] ?? "")} /></div> }
+      ]}
+    />
+    <HistoryDialog open={historicoAberto} onOpenChange={setHistoricoAberto} entity={ENTIDADE} entityId={id} title={`${titulo} ${codigo}`.trim()} />
 
     <Confirm open={confirmar === "confirm"} onOpenChange={() => setConfirmar(null)} title="Confirmar venda" text="Baixa o estoque dos itens com armazém e gera as contas a receber. Operação atômica e idempotente." loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })} />
     {/* CONVERSÃO NÃO É MAIS UM "TEM CERTEZA?". O documento de destino é de OUTRA família, então precisa
@@ -280,5 +307,5 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         cancela títulos, e um reenvio do MESMO pedido não pode virar um segundo estorno. Era a única das
         três ações desta tela que mandava o pedido sem chave. */}
     <Confirm open={confirmar === "cancel"} onOpenChange={() => setConfirmar(null)} title="Cancelar documento" text="Vendas confirmadas têm estoque e títulos estornados." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, idem: true, body: { reason: "Cancelado pelo usuário" } })} />
-  </Base2Shell>;
+  </>;
 }

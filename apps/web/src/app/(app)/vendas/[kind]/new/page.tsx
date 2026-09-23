@@ -9,7 +9,7 @@ import { RefSelect } from "@/components/ui/ref-select";
 import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { MensagemTop, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
-import { ArrowLeft, ChevronRight, Repeat2, Save, Search } from "lucide-react";
+import { ChevronRight, Repeat2, Save, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
 import { ItensDaCentral, Travado } from "@/features/sales/central-vendas-itens";
@@ -232,8 +232,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       titulo={T[kind] ?? "Novo"}
       identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo, dica: kind === "sales" ? "A confirmação da venda baixa o estoque dos itens com armazém e gera as contas a receber." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada." }}
       acoes={<>
-        <AcaoDaBarra rotulo="Voltar" dica="inicio" onClick={() => router.back()}><ArrowLeft aria-hidden /></AcaoDaBarra>
-        <AcaoDaBarra rotulo="Salvar" destaque="salvar" ocupado={create.isPending} disabled={!escritaTopConfirmada || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
+        {/* sem "Voltar": como no design, a barra só tem ações do documento; navegar é a barra de abas */}
+        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
         <DivisorDaBarra />
         <AcaoDaBarra rotulo="Alterar operação" data-testid="top-alterar" onClick={alterarOperacao}><Repeat2 aria-hidden /></AcaoDaBarra>
       </>}

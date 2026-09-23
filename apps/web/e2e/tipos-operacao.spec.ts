@@ -150,7 +150,7 @@ test("REGRESSÃO: o detalhe do Modelo Base 2 não passou a depender da API admin
   });
 
   await page.goto(`/vendas/sales/${criado.id}`);
-  await expect(page.getByTestId("base2-shell")).toBeVisible();
+  await expect(page.getByTestId("central-vendas")).toBeVisible();
   expect(chamadas, "nenhuma chamada à API administrativa a partir do detalhe de venda").toEqual([]);
 });
 

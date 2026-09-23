@@ -351,7 +351,9 @@ test("W11 — a barra só tem ações que existem (e Documentos abertos, visão 
   const botoes = ws.getByTestId("central-vendas-acoes").getByRole("button");
   // os botões são só de ícone (linguagem da barra do design): o que se confere é o NOME acessível
   const nomes = await botoes.evaluateAll((els) => els.map((b) => b.getAttribute("aria-label") ?? (b.textContent ?? "").trim()));
-  expect(nomes).toEqual(["Voltar", "Salvar", "Alterar operação", "Documentos abertos"]);
+  // sem "Voltar" (R3): como no design, a barra só tem ações do documento — navegar é a barra de abas
+  expect(nomes).toEqual(["Salvar", "Alterar operação", "Documentos abertos"]);
+  await expect(ws.getByRole("button", { name: "Voltar", exact: true })).toHaveCount(0);
   // e todo botão só de ícone da barra tem dica textual
   const semDica = await botoes.evaluateAll((els) => els.filter((b) => !(b.textContent ?? "").trim() && !b.getAttribute("data-dica")).length);
   expect(semDica, "ação só de ícone sem dica").toBe(0);
@@ -982,7 +984,7 @@ test("W26 — metadados do documento salvo vêm da leitura REAL e só com a list
   expect(await lista.innerText(), "nenhum UUID como texto").not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
 });
 
-test("W27 — workspace imersivo: a trilha some SÓ com a Central montada; lançador, módulos e detalhe mantêm a trilha", async ({ page }) => {
+test("W27 — workspace imersivo: a trilha some SÓ com a Central montada (criação e documento salvo); lançador, módulos e outros registros mantêm a trilha", async ({ page }) => {
   await login(page);
   const trilha = page.locator('nav[aria-label="Navegação"]');
   await page.goto("/estoque");
@@ -1004,10 +1006,19 @@ test("W27 — workspace imersivo: a trilha some SÓ com a Central montada; lanç
   await expect(page.getByTestId("top-lancador")).toBeVisible();
   await expect(trilha, "a declaração sai com a Central").toBeVisible();
 
+  // R3: o documento SALVO também abre na Central (consulta) — e a trilha cede o lugar a ela
   const salvo = await documentoSalvo(page);
   await page.goto(`/vendas/sales/${salvo.id}`);
-  await expect(trilha, "detalhe salvo: trilha como antes").toBeVisible();
-  await expect(trilha).toContainText("Documento de venda");
+  await expect(page.getByTestId(WORKSPACE), "o documento salvo abre na Central").toBeVisible();
+  await expect(trilha, "documento salvo na Central: sem trilha").toHaveCount(0);
+  // a ROTA sozinha não basta: registro inexistente não monta a Central, e a trilha fica
+  await page.goto("/vendas/sales/00000000-0000-4000-8000-000000000000");
+  await expect(page.getByTestId(WORKSPACE)).toHaveCount(0);
+  await expect(trilha, "sem Central montada, a trilha é a de sempre").toBeVisible();
+  // registro de OUTRO módulo (rota de três segmentos também) mantém a trilha
+  const produtoId = await primeiroId(page, "/api/resources/products?pageSize=1");
+  await page.goto(`/cadastros/products/${produtoId}?view=1`);
+  await expect(trilha, "registro de outro módulo: trilha").toBeVisible();
 });
 
 test("W28 — unidade do produto: sufixo da quantidade e campo travado, pela leitura do produto que já existe; nada vai ao payload", async ({ page }) => {
@@ -1081,4 +1092,66 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
   const item = (post.corpo!["items"] as Record<string, unknown>[])[0]!;
   expect(item["unit_price"], "o POST leva o zero que o usuário digitou").toBe("0");
   expect(item["warehouse_id"]).toBe(armazemId);
+});
+
+test("W30 — documento SALVO abre na Central em consulta: ações como ícones, sem Voltar, dados e itens do servidor", async ({ page }) => {
+  await login(page);
+  const salvo = await documentoSalvo(page);
+  const lido = await api<{ total: string; subtotal: string; items: unknown[] }>(page, "GET", `/api/sales/sales/${salvo.id}`);
+  await page.goto(`/vendas/sales/${salvo.id}`);
+  const ws = page.getByTestId(WORKSPACE);
+  await expect(ws).toBeVisible();
+  await expect(page.getByTestId("base2-shell"), "a tela resumida não é mais desenhada").toHaveCount(0);
+
+  // identidade: código do servidor e situação por StatusBadge (rótulo PT-BR, valor técnico no data-status)
+  await expect(page.getByTestId("central-vendas-identidade-nome")).toHaveText(salvo.code);
+  await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]")).toHaveAttribute("data-status", salvo.status);
+  await expect(page.getByTestId("central-vendas-alterado"), "consulta não tem alteração").toHaveCount(0);
+
+  // a barra: ícones com nome e dica; a ação principal é pílula com texto; nada de Voltar, Anexos ou Editar
+  const barra = ws.getByTestId("central-vendas-acoes");
+  const nomes = await barra.getByRole("button").evaluateAll((els) => els.map((b) => b.getAttribute("aria-label") ?? (b.textContent ?? "").trim()));
+  expect(nomes).toEqual(["Nova venda", "Confirmar venda", "Imprimir", "Documentos abertos", "Mais ações"]);
+  const semDica = await barra.getByRole("button").evaluateAll((els) => els.filter((b) => !(b.textContent ?? "").trim() && !b.getAttribute("data-dica")).length);
+  expect(semDica, "ação só de ícone sem dica").toBe(0);
+  for (const proibida of [/^voltar$/i, /anexo/i, /^editar$/i, /descartar/i]) await expect(ws.getByRole("button", { name: proibida }), `${proibida}`).toHaveCount(0);
+
+  // Mais ações: histórico e cancelar, as ações reais que a tela resumida tinha
+  await barra.getByRole("button", { name: "Mais ações" }).click();
+  const menu = page.getByTestId("central-vendas-mais-acoes-menu");
+  await expect(menu.getByRole("menuitem")).toHaveText(["Histórico de alterações", "Cancelar venda…"]);
+  await menu.getByRole("menuitem", { name: "Cancelar venda…" }).click();
+  const dlg = page.getByTestId("confirm-dialog");
+  await expect(dlg.getByRole("heading", { name: "Cancelar documento" }), "o MESMO diálogo de antes").toBeVisible();
+  await dlg.getByRole("button", { name: "Fechar", exact: true }).filter({ hasText: /^Fechar$/ }).click();
+  await expect(dlg).toBeHidden();
+  await barra.getByRole("button", { name: "Mais ações" }).click();
+  await page.getByTestId("central-vendas-mais-acoes-menu").getByRole("menuitem", { name: "Histórico de alterações" }).click();
+  await expect(page.getByRole("dialog").filter({ hasText: "Histórico" })).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // Confirmar venda abre a MESMA confirmação de antes (a execução é coberta pelos specs de venda)
+  await barra.getByRole("button", { name: "Confirmar venda" }).click();
+  await expect(dlg.getByRole("heading", { name: "Confirmar venda" })).toBeVisible();
+  await dlg.getByRole("button", { name: "Fechar", exact: true }).filter({ hasText: /^Fechar$/ }).click();
+
+  // dados e itens do SERVIDOR; em consulta não há lixeira nem campo editável na grade
+  await expect(ws.locator('[data-campo="Cliente"]')).toContainText(salvo.cliente);
+  await expect(ws.locator('[data-campo="Número"]')).toContainText(salvo.code);
+  await expect(page.getByTestId("central-vendas-linha")).toHaveCount(lido.items.length);
+  await expect(ws.getByRole("button", { name: /^Excluir item/ })).toHaveCount(0);
+  await expect(page.getByTestId("central-vendas-grade").locator("input")).toHaveCount(0);
+  const reais = (v: string) => Number(v).toFixed(2).replace(".", ",");
+  await expect(page.getByTestId("central-vendas-subtotal")).toContainText(reais(lido.subtotal));
+  await expect(page.getByTestId("central-vendas-total"), "o total do documento é o do servidor").toContainText(reais(lido.total));
+
+  // Nova venda abre o lançador da MESMA variante (TOP-first)
+  const pasta = process.env.EVIDENCIA_DIR ?? path.resolve("test-results", "evidencia-visual-ux-01");
+  fs.mkdirSync(pasta, { recursive: true });
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.mouse.move(5, 895); await page.waitForTimeout(450);
+  await page.screenshot({ path: path.join(pasta, "consulta-1440x900.png") });
+  await barra.getByRole("button", { name: "Nova venda" }).click();
+  await expect(page.getByTestId("top-lancador")).toBeVisible();
+  await expect(page).toHaveURL(/\/vendas\/sales\/new$/);
 });
