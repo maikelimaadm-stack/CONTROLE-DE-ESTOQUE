@@ -7,6 +7,29 @@ import type { FastifyInstance } from "fastify";
 export const TEST_URL = process.env.TEST_DATABASE_URL ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_test";
 export interface Harness { app: FastifyInstance; db: Db; demo: DemoOrg; token: string; opToken: string; headers: (extra?: Record<string, string>) => Record<string, string>; opHeaders: () => Record<string, string> }
 
+/**
+ * A configuração do harness. O gate da execução configurada (TOP-CONFIG-04A) é FIXADO em `0` DEPOIS do
+ * `...process.env`: um `TOP_EFFECTS_RUNTIME_V1_ENABLED=1` esquecido no terminal ou no CI ligaria o gate nas
+ * 40+ suítes em silêncio, e elas passariam a medir outro produto. Quem precisa do gate ligado pede, caso a
+ * caso, por `appCom`.
+ */
+export function configDeTeste(extra: Record<string, string> = {}) {
+  return loadConfig({ ...process.env, DATABASE_URL: TEST_URL, AUTH_MODE: "local", LOCAL_AUTH_SECRET: "test-secret-please", NODE_ENV: "test", RATE_LIMIT_MAX: "10000", LOGIN_RATE_LIMIT_MAX: "1000", TOP_EFFECTS_RUNTIME_V1_ENABLED: "0", ...extra });
+}
+
+/**
+ * UMA SEGUNDA INSTÂNCIA DA API sobre o MESMO banco e o MESMO pool do harness, com o ambiente pedido.
+ *
+ * Não é um segundo `harness()`: aquele recria o banco, e apagaria o cenário do primeiro. Aqui só a
+ * CONFIGURAÇÃO muda — o segredo de autenticação é o mesmo, então os tokens do harness valem nas duas. É
+ * como se mede, na mesma suíte, o que uma instância com o gate ligado e outra com ele desligado fazem
+ * sobre os mesmos dados (a coexistência real durante a implantação). `buildApp` com `db` injetado não
+ * fecha o pool ao fechar a instância.
+ */
+export async function appCom(h: Pick<Harness, "db">, env: Record<string, string>): Promise<FastifyInstance> {
+  return buildApp({ config: configDeTeste(env), db: h.db, logger: process.env.TEST_LOG ? true : false });
+}
+
 export async function harness(): Promise<Harness> {
   const admin = createPool(TEST_URL, { max: 3 });
   await resetSchema(admin); await migrate(admin, () => {}); await seedReference(admin, () => {});
@@ -16,8 +39,7 @@ export async function harness(): Promise<Harness> {
   // A API conecta como erp_app (sem bypass de RLS), como em produção. Os limites de requisição/login são
   // afrouxados só no harness (a suíte cria vários usuários e faz login com cada um), como no harness e2e.
   const db = createPool(process.env.TEST_DATABASE_URL_APP ?? "postgresql://erp_app_test:erp_app_test@127.0.0.1:5433/agro_erp_test", { max: 8 });
-  const config = loadConfig({ ...process.env, DATABASE_URL: TEST_URL, AUTH_MODE: "local", LOCAL_AUTH_SECRET: "test-secret-please", NODE_ENV: "test", RATE_LIMIT_MAX: "10000", LOGIN_RATE_LIMIT_MAX: "1000" });
-  const app = await buildApp({ config, db, logger: process.env.TEST_LOG ? true : false });
+  const app = await buildApp({ config: configDeTeste(), db, logger: process.env.TEST_LOG ? true : false });
   const login = async (email: string, password: string) => { const r = await app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password } }); if (r.statusCode !== 200) throw new Error("login failed: " + r.body); return (r.json() as { token: string }).token; };
   const token = await login(demo.adminEmail, demo.adminPassword);
   const opToken = await login("operador@demo.local", "Demo@12345");

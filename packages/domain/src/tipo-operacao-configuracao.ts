@@ -13,12 +13,19 @@
  * │            booleano são a fronteira que mantém isto configurável por gente de negócio.             │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
- * ┌─ CONFIGURAR ≠ EXECUTAR (a fronteira desta fatia) ───────────────────────────────────────────────────┐
- * │ Nada aqui move estoque, gera título, calcula imposto ou aprova documento. A TOP-CONFIG-03 ensina o │
- * │ sistema a GUARDAR e VERSIONAR a intenção; ligar os efeitos é a TOP-CONFIG-04, e ela terá contrato  │
- * │ de cutover próprio. Por isso `estoque.atualizacao = "saida"` hoje não baixa nada: é uma declaração │
- * │ sem consumidor, e está escrito assim em `docs/TIPO-OPERACAO-CONTRACT.md` para que ninguém leia a    │
- * │ presença do campo como promessa de comportamento.                                                   │
+ * ┌─ CONFIGURAR ≠ EXECUTAR — E A ÚNICA PORTA ENTRE OS DOIS (TOP-CONFIG-04A) ────────────────────────────┐
+ * │ Nada aqui move estoque, gera título, calcula imposto ou aprova documento. A TOP-CONFIG-03 ensinou  │
+ * │ o sistema a GUARDAR e VERSIONAR a intenção; a TOP-CONFIG-04A abriu UMA porta de execução, e ela é  │
+ * │ EXPLÍCITA: o bloco `execucao` do formato 2 (`estoque`/`financeiro`: `legado` | `configurada`).     │
+ * │                                                                                                     │
+ * │ A PRESENÇA DE CONFIGURAÇÃO NÃO AUTORIZA EXECUÇÃO. As versões do formato 1 foram gravadas quando os │
+ * │ campos eram só declaração: `estoque.atualizacao = "nenhuma"` numa versão v1 NÃO quer dizer "esta   │
+ * │ venda não baixa estoque" — quer dizer "ninguém decidiu nada, porque nada executava". Por isso o    │
+ * │ formato 1 é LEGADO PARA SEMPRE, e a leitura da execução mora numa função só (`execucaoDeclaradaTop`)│
+ * │ para que nenhum consumidor deduza execução da família, do sentido declarado ou do tipo de documento.│
+ * │                                                                                                     │
+ * │ Quem decide se uma combinação configurada É executável é `tipo-operacao-execucao.ts` (a matriz de  │
+ * │ suporte); quem executa é o serviço dono do documento. Este arquivo continua sendo só o contrato.    │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ POR QUE VERSIONADA, E POR QUE IMUTÁVEL ───────────────────────────────────────────────────────────┐
@@ -40,8 +47,25 @@
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 
-/** A ÚNICA versão de schema que este código sabe ler e escrever. */
+/**
+ * O FORMATO 1 — o da TOP-CONFIG-03, o do neutro e o do `DEFAULT` da migration 0022.
+ *
+ * Continua sendo o valor desta constante, e não o formato mais novo, por três motivos que não mudam com a
+ * TOP-CONFIG-04A: o `DEFAULT` da 0022 (que serve binário anterior e é histórico aplicado, nunca editado) é
+ * o formato 1; o cliente anterior compara a capacidade do servidor com ESTE número para decidir se edita a
+ * configuração; e o formato 1 é, por definição, legado — o neutro que uma TOP recebe sem decisão nenhuma.
+ */
 export const VERSAO_SCHEMA_CONFIGURACAO_TOP = 1 as const;
+
+/**
+ * O FORMATO 2 (TOP-CONFIG-04A): as mesmas cinco seções mais o bloco `execucao`, que diz, POR EFEITO, se a
+ * venda segue o comportamento legado ou a configuração desta versão.
+ */
+export const VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 = 2 as const;
+
+/** Os formatos que este código sabe LER. Qualquer outro é recusado — nunca lido "parecido". */
+export const VERSOES_SCHEMA_CONFIGURACAO_TOP = [VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V2] as const;
+export type VersaoSchemaConfiguracaoTop = (typeof VERSOES_SCHEMA_CONFIGURACAO_TOP)[number];
 
 // ---------------------------------------------------------------------------------------------------
 // 1. OS ENUMS — fechados, em português, sem valor "outro"
@@ -97,6 +121,18 @@ export type PoliticaAprovacao = (typeof POLITICAS_APROVACAO)[number];
 /** Em que ponto a aprovação trava o documento. Um valor só, pelo mesmo motivo de `MOMENTOS_EFEITO`. */
 export const MOMENTOS_APROVACAO = ["antes_da_confirmacao"] as const;
 export type MomentoAprovacao = (typeof MOMENTOS_APROVACAO)[number];
+
+/**
+ * QUEM TEM AUTORIDADE SOBRE UM EFEITO (formato 2).
+ *
+ * `legado`      o serviço faz exatamente o que fazia antes desta configuração existir.
+ * `configurada` o serviço obedece à seção correspondente DESTA versão.
+ *
+ * Enum POR EFEITO, e não um booleano "ativo": um booleano não diria QUAL efeito foi entregue à
+ * configuração, e amarraria estoque e financeiro num corte único — o contrário do cutover separado.
+ */
+export const MODOS_EXECUCAO_TOP = ["legado", "configurada"] as const;
+export type ModoExecucaoTop = (typeof MODOS_EXECUCAO_TOP)[number];
 
 // ---------------------------------------------------------------------------------------------------
 // 2. O ENVELOPE
@@ -159,6 +195,28 @@ export interface ConfiguracaoTipoOperacaoV1 {
 export const SECOES_CONFIGURACAO_TOP = ["geral", "estoque", "financeiro", "fiscal", "aprovacao"] as const;
 export type SecaoConfiguracaoTop = (typeof SECOES_CONFIGURACAO_TOP)[number];
 
+/** O bloco de execução do formato 2: um modo por efeito, e só os dois efeitos que a TOP-CONFIG-04A liga. */
+export interface ConfiguracaoExecucaoTop {
+  estoque: ModoExecucaoTop;
+  financeiro: ModoExecucaoTop;
+}
+
+/** O formato 2: as mesmas seções do formato 1 — nenhuma muda de significado — mais `execucao`. */
+export interface ConfiguracaoTipoOperacaoV2 extends Omit<ConfiguracaoTipoOperacaoV1, "versaoSchema"> {
+  versaoSchema: typeof VERSAO_SCHEMA_CONFIGURACAO_TOP_V2;
+  execucao: ConfiguracaoExecucaoTop;
+}
+
+/** Qualquer configuração que este código sabe ler. Quem precisa distinguir pergunta às funções abaixo. */
+export type ConfiguracaoTipoOperacao = ConfiguracaoTipoOperacaoV1 | ConfiguracaoTipoOperacaoV2;
+
+/**
+ * As seções que a auditoria e o histórico comparam no formato 2. É a lista do formato 1 mais `execucao`,
+ * DERIVADA dela — e a do formato 1 não muda, porque o cliente anterior a lê pela capacidade do servidor.
+ */
+export const SECOES_CONFIGURACAO_TOP_V2 = [...SECOES_CONFIGURACAO_TOP, "execucao"] as const;
+export type SecaoConfiguracaoTopV2 = (typeof SECOES_CONFIGURACAO_TOP_V2)[number];
+
 // ---------------------------------------------------------------------------------------------------
 // 3. O NEUTRO — UM DONO SÓ
 // ---------------------------------------------------------------------------------------------------
@@ -208,6 +266,19 @@ export function configuracaoNeutraTop(): ConfiguracaoTipoOperacaoV1 {
   };
 }
 
+/** A execução de quem não decidiu nada: os dois efeitos no comportamento legado. */
+const execucaoLegada = (): ConfiguracaoExecucaoTop => ({ estoque: "legado", financeiro: "legado" });
+
+/**
+ * O NEUTRO DO FORMATO 2 — o que uma TOP nasce tendo quando ninguém configurou nada (TOP-CONFIG-04A).
+ *
+ * Derivado do neutro do formato 1, e não um segundo literal: o neutro continua tendo um dono só. Os dois
+ * efeitos nascem `legado` — nenhuma TOP começa executando configuração sem uma decisão explícita.
+ */
+export function configuracaoNeutraTopV2(): ConfiguracaoTipoOperacaoV2 {
+  return { ...configuracaoNeutraTop(), versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, execucao: execucaoLegada() };
+}
+
 // ---------------------------------------------------------------------------------------------------
 // 4. A RECUSA
 // ---------------------------------------------------------------------------------------------------
@@ -243,13 +314,13 @@ const valorMinimoValido = (v: string): boolean => FORMA_VALOR_MINIMO.test(v) && 
 // ---------------------------------------------------------------------------------------------------
 
 export type ResultadoConfiguracaoTop =
-  | { ok: true; valor: ConfiguracaoTipoOperacaoV1 }
+  | { ok: true; valor: ConfiguracaoTipoOperacao }
   | { ok: false; recusas: RecusaConfiguracaoTop[] };
 
 /** Lê uma seção objeto, acumulando recusa se ela faltar ou não for objeto. */
 function secao(
   raiz: Record<string, unknown>,
-  nome: SecaoConfiguracaoTop,
+  nome: SecaoConfiguracaoTopV2,
   recusas: RecusaConfiguracaoTop[],
 ): Record<string, unknown> | null {
   const v = raiz[nome];
@@ -313,7 +384,11 @@ function conferirChaves(
   }
 }
 
+// Uma lista de chaves de raiz POR FORMATO. Uma lista só aceitaria `execucao` num payload do formato 1 —
+// e um v1 com `execucao` é exatamente o payload ambíguo que o formato 1 nunca pôde carregar.
 const CHAVES_RAIZ = ["versaoSchema", ...SECOES_CONFIGURACAO_TOP] as const;
+const CHAVES_RAIZ_V2 = ["versaoSchema", ...SECOES_CONFIGURACAO_TOP_V2] as const;
+const CHAVES_EXECUCAO = ["estoque", "financeiro"] as const;
 const CHAVES_GERAL = ["confirmacao", "exigeParceiro", "exigeCentroResultado", "exigeObservacao", "alteracaoAposConfirmacao", "documentoSemItens"] as const;
 const CHAVES_ESTOQUE = ["atualizacao", "momento", "exigeArmazem", "saldoNegativo"] as const;
 const CHAVES_FINANCEIRO = ["atualizacao", "modo", "momento", "exigeFormaPagamento", "exigeVencimento", "exigeCentroResultado"] as const;
@@ -321,11 +396,27 @@ const CHAVES_FISCAL = ["habilitado", "exigeDocumentoFiscal", "exigeNaturezaOpera
 const CHAVES_APROVACAO = ["politica", "valorMinimo", "momento"] as const;
 
 /**
- * Transforma `unknown` em configuração v1 PROVADA, ou devolve as recusas.
+ * O formato que o candidato DECLARA, se for um que este código conhece — e nada além disso.
+ *
+ * É a fronteira que identifica a versão. Nenhum outro lugar compara `versaoSchema` com número: quem
+ * precisa saber o que o formato significa pergunta a `execucaoDeclaradaTop`, e não ao número.
+ */
+export function versaoSchemaDaConfiguracaoTop(bruto: unknown): VersaoSchemaConfiguracaoTop | null {
+  if (!ehObjeto(bruto)) return null;
+  const v = bruto.versaoSchema;
+  return (VERSOES_SCHEMA_CONFIGURACAO_TOP as readonly unknown[]).includes(v) ? (v as VersaoSchemaConfiguracaoTop) : null;
+}
+
+/**
+ * Transforma `unknown` em configuração PROVADA (formato 1 ou 2), ou devolve as recusas.
  *
  * O corpo que chega do cliente — e o que volta do banco — é `unknown` até aqui. Uma asserção de tipo
  * (`as ConfiguracaoTipoOperacaoV1`) seria uma promessa do TypeScript que o runtime não cumpre: o
  * compilador já terminou o trabalho dele quando o JSON chega.
+ *
+ * OS DOIS FORMATOS SÃO ESTRITOS DO MESMO JEITO: chave desconhecida é recusa, formato futuro é recusa, e o
+ * formato 2 EXIGE `execucao` — ele não é "o formato 1 com um campo opcional". Um v2 sem `execucao` seria
+ * um payload cuja decisão de execução ninguém tomou, e tratá-lo como legado seria adivinhar.
  *
  * NÃO MUTA a entrada e NÃO devolve referência a ela: o resultado é construído campo a campo, então quem
  * chamou pode continuar usando o objeto original sem descobrir que ele mudou de forma.
@@ -336,12 +427,13 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
   if (!ehObjeto(bruto)) return { ok: false, recusas: [{ motivo: "tipo_invalido", caminho: "" }] };
 
   // O SCHEMA PRIMEIRO. Ler os campos de um payload cuja versão não se conhece seria interpretar bytes com
-  // o dicionário errado — e é assim que um "2" vira "1" em silêncio.
-  if (bruto.versaoSchema !== VERSAO_SCHEMA_CONFIGURACAO_TOP) {
+  // o dicionário errado — e é assim que um "3" vira "2" em silêncio.
+  const versao = versaoSchemaDaConfiguracaoTop(bruto);
+  if (versao === null) {
     return { ok: false, recusas: [{ motivo: "schema_nao_suportado", caminho: "versaoSchema" }] };
   }
 
-  for (const k of chavesDesconhecidas(bruto, CHAVES_RAIZ)) {
+  for (const k of chavesDesconhecidas(bruto, versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 ? CHAVES_RAIZ_V2 : CHAVES_RAIZ)) {
     recusas.push({ motivo: "campo_desconhecido", caminho: k });
   }
 
@@ -371,8 +463,7 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
     recusas.push({ motivo: "valor_invalido", caminho: "aprovacao.valorMinimo" });
   }
 
-  const candidato: ConfiguracaoTipoOperacaoV1 = {
-    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP,
+  const secoes: Omit<ConfiguracaoTipoOperacaoV1, "versaoSchema"> = {
     geral: {
       confirmacao: enumerado(g, "geral", "confirmacao", MODOS_CONFIRMACAO, recusas),
       exigeParceiro: booleano(g, "geral", "exigeParceiro", recusas),
@@ -405,8 +496,21 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
     aprovacao: { politica, valorMinimo, momento: enumerado(a, "aprovacao", "momento", MOMENTOS_APROVACAO, recusas) },
   };
 
+  if (versao === VERSAO_SCHEMA_CONFIGURACAO_TOP) {
+    if (recusas.length) return { ok: false, recusas };
+    return { ok: true, valor: normalizarConfiguracaoTop({ versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP, ...secoes }) };
+  }
+
+  const x = secao(bruto, "execucao", recusas);
+  conferirChaves(x, "execucao", CHAVES_EXECUCAO, recusas);
+  const execucao: ConfiguracaoExecucaoTop = {
+    estoque: enumerado(x, "execucao", "estoque", MODOS_EXECUCAO_TOP, recusas),
+    financeiro: enumerado(x, "execucao", "financeiro", MODOS_EXECUCAO_TOP, recusas),
+  };
+  // Só depois de TODAS as recusas: `enumerado` devolve um valor de preenchimento quando recusa, e esse
+  // valor não pode escapar daqui como se fosse a decisão do administrador.
   if (recusas.length) return { ok: false, recusas };
-  return { ok: true, valor: normalizarConfiguracaoTop(candidato) };
+  return { ok: true, valor: normalizarConfiguracaoTop({ versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, ...secoes, execucao }) };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -421,17 +525,24 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
  * versões semanticamente idênticas teriam bytes diferentes, o "no-op" pararia de ser detectado e o
  * histórico ganharia versões que não mudaram nada. Normalizar aqui é o que torna a comparação confiável.
  *
+ * PRESERVA O FORMATO. Um v2 sai v2, com o `execucao` intocado; um v1 sai v1. Normalizar nunca rebaixa nem
+ * promove formato — rebaixar um v2 para v1 apagaria a decisão de execução em silêncio, e promover um v1
+ * reescreveria o histórico. `execucao` também não é "normalizada" pela seção: `configurada` com
+ * `atualizacao = "nenhuma"` é uma decisão legítima (a venda não movimenta), não um campo pendurado.
+ *
  * IDEMPOTENTE: normalizar duas vezes dá o mesmo resultado. Não muta a entrada.
  */
-export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV1): ConfiguracaoTipoOperacaoV1 {
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV1): ConfiguracaoTipoOperacaoV1;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV2): ConfiguracaoTipoOperacaoV2;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacao;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacao {
   const neutro = configuracaoNeutraTop();
   const estoqueLigado = c.estoque.atualizacao !== "nenhuma";
   const financeiroLigado = c.financeiro.atualizacao !== "nenhuma";
   const fiscalLigado = c.fiscal.habilitado;
   const porValor = c.aprovacao.politica === "por_valor";
 
-  return {
-    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP,
+  const secoes: Omit<ConfiguracaoTipoOperacaoV1, "versaoSchema"> = {
     geral: { ...c.geral },
     estoque: estoqueLigado
       ? { ...c.estoque }
@@ -448,6 +559,53 @@ export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV1): Config
       momento: c.aprovacao.momento,
     },
   };
+  return c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2
+    ? { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, ...secoes, execucao: { estoque: c.execucao.estoque, financeiro: c.execucao.financeiro } }
+    : { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP, ...secoes };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 6b. A EXECUÇÃO — A ÚNICA LEITURA DE "QUEM TEM AUTORIDADE SOBRE O EFEITO"
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * O que a configuração decide sobre a execução de cada efeito.
+ *
+ * FORMATO 1 = LEGADO, SEMPRE, SEJA QUAL FOR O CONTEÚDO. É a regra histórica da TOP-CONFIG-04A: as
+ * versões do formato 1 foram gravadas quando os campos eram só declaração, e ler `estoque.atualizacao`
+ * delas como decisão atribuiria a documentos antigos uma intenção que ninguém tomou. Esta função NÃO olha
+ * as seções do formato 1 — e é por isso que ela é a única que qualquer consumidor pode chamar.
+ */
+export function execucaoDeclaradaTop(c: ConfiguracaoTipoOperacao): ConfiguracaoExecucaoTop {
+  return c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2
+    ? { estoque: c.execucao.estoque, financeiro: c.execucao.financeiro }
+    : execucaoLegada();
+}
+
+/** O efeito de ESTOQUE está sob a autoridade desta configuração? */
+export const estoqueSobConfiguracaoTop = (c: ConfiguracaoTipoOperacao): boolean =>
+  execucaoDeclaradaTop(c).estoque === "configurada";
+
+/** O efeito FINANCEIRO está sob a autoridade desta configuração? */
+export const financeiroSobConfiguracaoTop = (c: ConfiguracaoTipoOperacao): boolean =>
+  execucaoDeclaradaTop(c).financeiro === "configurada";
+
+/** Algum efeito está sob a autoridade desta configuração? */
+export const declaraExecucaoConfiguradaTop = (c: ConfiguracaoTipoOperacao): boolean =>
+  estoqueSobConfiguracaoTop(c) || financeiroSobConfiguracaoTop(c);
+
+/**
+ * A configuração no formato 2, PARA EXIBIR E EDITAR — nunca para gravar por conta própria.
+ *
+ * O formato 1 vira o formato 2 com os dois efeitos em `legado`, que é exatamente o que ele significa. Esta
+ * leitura não regrava nada: a versão v1 continua v1 no banco, e só uma edição DE VERDADE (nome, descrição,
+ * configuração ou execução) cria a versão seguinte, já no formato 2. Não muta a entrada.
+ */
+export function configuracaoTopParaEdicao(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacaoV2 {
+  const n = normalizarConfiguracaoTop(c);
+  return n.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2
+    ? n
+    : { ...n, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, execucao: execucaoLegada() };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -470,9 +628,15 @@ function canonico(v: unknown): string {
   return JSON.stringify(v) ?? "null";
 }
 
-/** Duas configurações significam a mesma coisa? Compara DEPOIS de normalizar as duas. */
-export const configuracoesTopIguais = (a: ConfiguracaoTipoOperacaoV1, b: ConfiguracaoTipoOperacaoV1): boolean =>
-  canonico(normalizarConfiguracaoTop(a)) === canonico(normalizarConfiguracaoTop(b));
+/**
+ * Duas configurações significam a mesma coisa? Compara DEPOIS de normalizar as duas, e no formato 2.
+ *
+ * NO FORMATO 2 DE PROPÓSITO: um v1 e um v2 com os dois efeitos em `legado` e as mesmas seções SIGNIFICAM a
+ * mesma coisa. Compará-los como diferentes faria o editor novo, ao salvar sem mexer numa TOP v1, criar a
+ * versão N+1 só para trocar o formato — e "salvar sem alterar não é escrita" deixaria de valer.
+ */
+export const configuracoesTopIguais = (a: ConfiguracaoTipoOperacao, b: ConfiguracaoTipoOperacao): boolean =>
+  canonico(configuracaoTopParaEdicao(a)) === canonico(configuracaoTopParaEdicao(b));
 
 /**
  * Quais seções mudaram, para a auditoria.
@@ -480,17 +644,18 @@ export const configuracoesTopIguais = (a: ConfiguracaoTipoOperacaoV1, b: Configu
  * Diferença de ALTO NÍVEL de propósito: registrar o payload inteiro a cada edição encheria a auditoria de
  * ruído e transformaria o log numa segunda cópia da configuração — que envelhece em silêncio e diverge da
  * versão, que é a verdade. `["estoque","fiscal"]` responde a pergunta que se faz numa investigação ("o que
- * mexeram?") e manda o leitor à versão para o detalhe exato.
+ * mexeram?") e manda o leitor à versão para o detalhe exato. `execucao` aparece quando um efeito trocou de
+ * autoridade (legado ↔ configurada) — é a linha que identifica o cutover no histórico.
  */
 export function secoesAlteradasTop(
-  antes: ConfiguracaoTipoOperacaoV1,
-  depois: ConfiguracaoTipoOperacaoV1,
-): SecaoConfiguracaoTop[] {
-  const a = normalizarConfiguracaoTop(antes);
-  const b = normalizarConfiguracaoTop(depois);
-  return SECOES_CONFIGURACAO_TOP.filter((s) => canonico(a[s]) !== canonico(b[s]));
+  antes: ConfiguracaoTipoOperacao,
+  depois: ConfiguracaoTipoOperacao,
+): SecaoConfiguracaoTopV2[] {
+  const a = configuracaoTopParaEdicao(antes);
+  const b = configuracaoTopParaEdicao(depois);
+  return SECOES_CONFIGURACAO_TOP_V2.filter((s) => canonico(a[s]) !== canonico(b[s]));
 }
 
 /** A configuração está no neutro? Usado pela tela para dizer "nada configurado" sem repetir o literal. */
-export const configuracaoTopEhNeutra = (c: ConfiguracaoTipoOperacaoV1): boolean =>
+export const configuracaoTopEhNeutra = (c: ConfiguracaoTipoOperacao): boolean =>
   configuracoesTopIguais(c, configuracaoNeutraTop());

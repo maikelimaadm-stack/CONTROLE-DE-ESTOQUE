@@ -9,18 +9,24 @@ import {
   familiasOperacionaisDisponiveis,
   moduloDaFamiliaOperacional,
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
+  VERSOES_SCHEMA_CONFIGURACAO_TOP,
   SECOES_CONFIGURACAO_TOP,
-  configuracaoNeutraTop,
+  MATRIZ_EXECUCAO_TOP,
+  configuracaoNeutraTopV2,
   configuracoesTopIguais,
+  efeitosAtivadosTop,
+  execucaoDeclaradaTop,
   lerConfiguracaoTop,
   secoesAlteradasTop,
+  validarExecucaoTop,
   lerDestinosOperacao,
   destinosOperacaoIguais,
   validarDestinoOperacao,
   varianteDeDocumentoVendaDaFamilia,
   LIMITE_DESTINOS_POR_VERSAO,
   type DestinoOperacaoV1,
-  type ConfiguracaoTipoOperacaoV1
+  type ConfiguracaoTipoOperacao
 } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { criarTradutor, ptBR } from "@erp/plataforma";
@@ -163,17 +169,53 @@ interface LinhaTipoOperacao {
  * O `caminho` de cada recusa nomeia a FORMA do payload, nunca dado de outra organização — não há
  * superfície de vazamento: quem manda o corpo já sabe o que mandou.
  */
-function configuracaoPedida(bruta: unknown): ConfiguracaoTipoOperacaoV1 {
+function configuracaoPedida(bruta: unknown): ConfiguracaoTipoOperacao {
   const r = lerConfiguracaoTop(bruta);
   if (r.ok) return r.valor;
   const schema = r.recusas.find((x) => x.motivo === "schema_nao_suportado");
   if (schema) {
     throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
       "A configuração enviada usa uma versão de formato que este servidor não conhece",
-      { versaoSuportada: VERSAO_SCHEMA_CONFIGURACAO_TOP });
+      { versaoSuportada: VERSAO_SCHEMA_CONFIGURACAO_TOP, versoesSuportadas: [...VERSOES_SCHEMA_CONFIGURACAO_TOP] });
   }
   throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
     "A configuração operacional enviada é inválida", { recusas: r.recusas });
+}
+
+/**
+ * A EXECUÇÃO PEDIDA PODE SER GRAVADA? — a porta de ativação da TOP-CONFIG-04A, ANTES de qualquer escrita.
+ *
+ * Duas perguntas, nesta ordem, e cada uma com o seu código:
+ *
+ *   1. A COMBINAÇÃO É EXECUTÁVEL para esta família? (matriz de suporte, `validarExecucaoTop`)
+ *      Não → `TIPO_OPERACAO_CONFIGURACAO_INVALIDA` (422), com as recusas por caminho e a mensagem em
+ *      português. É uma resposta sobre o PEDIDO, e vale com o gate ligado ou desligado: família sem
+ *      consumidor não ganha execução nem quando o gate ligar.
+ *   2. ESTA INSTÂNCIA pode pôr execução configurada em circulação agora? (gate operacional)
+ *      Não → `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL` (409). É estado do servidor, não erro do formulário.
+ *
+ * O que conta como ATIVAÇÃO é decisão do domínio (`efeitosAtivadosTop`): passar um efeito para
+ * `configurada`, ou mudar o que um efeito configurado executa. Voltar para `legado` e renomear não são
+ * ativação — com o gate desligado, reduzir o risco tem de continuar possível.
+ */
+function conferirExecucaoPedida(
+  codigoBase: string,
+  vigente: ConfiguracaoTipoOperacao | null,
+  pedida: ConfiguracaoTipoOperacao,
+  execucaoHabilitada: boolean,
+): void {
+  const recusas = validarExecucaoTop(codigoBase, pedida);
+  if (recusas.length) {
+    const mensagens = [...new Set(recusas.map((r) => r.mensagem))];
+    throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA", mensagens.join(" "), { recusas });
+  }
+  if (execucaoHabilitada) return;
+  const ativados = efeitosAtivadosTop(vigente, pedida);
+  if (ativados.length) {
+    throw new DomainError("TIPO_OPERACAO_EXECUCAO_INDISPONIVEL",
+      "A execução configurada ainda não está habilitada neste ambiente. Mantenha o comportamento legado; a ativação fica disponível quando a implantação for concluída.",
+      { efeitos: ativados });
+  }
 }
 
 /**
@@ -190,13 +232,15 @@ function configuracaoPedida(bruta: unknown): ConfiguracaoTipoOperacaoV1 {
  * dicionário v1 não dá erro, dá significado trocado.
  */
 type ConfiguracaoParaTela =
-  | { suportada: true; versaoSchema: number; valor: ConfiguracaoTipoOperacaoV1 }
+  | { suportada: true; versaoSchema: number; valor: ConfiguracaoTipoOperacao }
   | { suportada: false; versaoSchema: number };
 
 function configuracaoParaTela(bruta: unknown, versaoSchema: number): ConfiguracaoParaTela {
-  if (versaoSchema !== VERSAO_SCHEMA_CONFIGURACAO_TOP) return { suportada: false, versaoSchema };
+  // A COLUNA E O PAYLOAD TÊM DE CONCORDAR. A 0022 já garante isso no banco; conferir aqui de novo é o que
+  // impede um formato de ser lido pelo número do outro se a garantia algum dia mudar.
+  if (!(VERSOES_SCHEMA_CONFIGURACAO_TOP as readonly number[]).includes(versaoSchema)) return { suportada: false, versaoSchema };
   const r = lerConfiguracaoTop(bruta);
-  return r.ok ? { suportada: true, versaoSchema, valor: r.valor } : { suportada: false, versaoSchema };
+  return r.ok && r.valor.versaoSchema === versaoSchema ? { suportada: true, versaoSchema, valor: r.valor } : { suportada: false, versaoSchema };
 }
 
 /**
@@ -401,7 +445,23 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * Declará-lo aqui permite que um cliente mais novo ligue a aba de próximas operações só quando o
      * servidor de fato a sustenta, sem deduzir capacidade pela falha de uma escrita.
      */
-    destinos: { suportado: true, limite: LIMITE_DESTINOS_POR_VERSAO }
+    destinos: { suportado: true, limite: LIMITE_DESTINOS_POR_VERSAO },
+    /**
+     * EXECUÇÃO CONFIGURADA (TOP-CONFIG-04A) — outro bloco OPCIONAL, pelo mesmo precedente de `destinos`.
+     *
+     * `contractVersion` e `configuracao.versaoSchema` NÃO mudam, e é de propósito: o cliente anterior
+     * compara os dois com o que conhece e, se mudassem, travaria a edição de TODA TOP durante a
+     * implantação — inclusive as do formato 1, que ele sabe editar. Quem sabe o formato 2 descobre por
+     * AQUI: ausente = servidor sem execução configurada; presente = o formato que ele grava, se ESTA
+     * instância executa (`runtimeHabilitado`) e a MATRIZ que decide o que é executável. A tela avalia a
+     * matriz declarada pelo servidor, nunca uma cópia própria.
+     */
+    execucao: {
+      suportado: true,
+      versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
+      runtimeHabilitado: app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED,
+      matriz: MATRIZ_EXECUCAO_TOP
+    }
   })));
 
   /**
@@ -571,6 +631,17 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           `Família operacional desconhecida: ${d.codigoBase}`, { codigoBase: d.codigoBase });
       }
 
+      // AUSENTE = NEUTRO. Não é o mesmo que "configurado com tudo desligado por decisão": é "ninguém
+      // declarou". Desde a TOP-CONFIG-04A o neutro de uma TOP NOVA é o formato 2 com os dois efeitos em
+      // `legado`: nenhuma TOP começa executando configuração sem decisão explícita. Um corpo no formato 1
+      // (o cliente anterior, durante a implantação) é gravado COMO VEIO — formato 1, legado por definição;
+      // traduzi-lo seria reescrever o que o cliente disse.
+      //
+      // LIDA E CONFERIDA ANTES DE QUALQUER ESCRITA: a recusa de ativação não pode chegar depois de o posto
+      // de padrão já ter sido trocado dentro da transação.
+      const configuracao = d.configuracao === undefined ? configuracaoNeutraTopV2() : configuracaoPedida(d.configuracao);
+      conferirExecucaoPedida(d.codigoBase, null, configuracao, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED);
+
       const nasceuPadrao = d.padrao && d.ativo;
       // Se nasce como padrão, o posto tem de estar livre — e a troca é atômica (mesma transação).
       const liberados = nasceuPadrao ? await liberarPadrao(ctx, d.codigoBase, null) : [];
@@ -580,10 +651,6 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
          values ($1,$2,$3,$4,$5,1,1,$6) returning id`,
         [ctx.orgId, d.codigo, d.codigoBase, d.ativo, nasceuPadrao, ctx.user.id]);
       const id = pai.rows[0]!.id;
-
-      // AUSENTE = NEUTRO. Não é o mesmo que "configurado com tudo desligado por decisão": é "ninguém
-      // declarou". O efeito guardado é idêntico, e é o único que não inventa intenção alheia.
-      const configuracao = d.configuracao === undefined ? configuracaoNeutraTop() : configuracaoPedida(d.configuracao);
 
       /**
        * DECLAROU A POLÍTICA DE PRÓXIMAS OPERAÇÕES? — PRESENÇA DA CHAVE, NUNCA TAMANHO DA LISTA.
@@ -602,7 +669,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       const versaoNova = await ctx.tx.query<{ id: string }>(
         `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version, destinos_configurados)
          values ($1,$2,1,$3,$4,$5,$6::jsonb,$7,$8) returning id`,
-        [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP, declarouDestinos]);
+        [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id, JSON.stringify(configuracao), configuracao.versaoSchema, declarouDestinos]);
 
       // AS PRÓXIMAS OPERAÇÕES DA VERSÃO 1. Conferidas contra banco e registry ANTES de gravar: uma aresta
       // para TOP indisponível nasceria como um botão que não tem serviço atrás.
@@ -611,7 +678,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
 
       await audit(ctx.tx, ctx, "tipos_operacao", id, "create",
         { codigo: d.codigo, codigoBase: d.codigoBase, ativo: d.ativo, padrao: nasceuPadrao, versao: 1,
-          configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP,
+          configuracaoSchema: configuracao.versaoSchema, execucao: execucaoDeclaradaTop(configuracao),
           // O NÚMERO E O ESTADO, porque um não responde pelo outro: `destinos: 0` com
           // `destinosConfigurados: true` é "não gera nada, por decisão", e com `false` é "ninguém decidiu".
           // Sem o booleano, a trilha registra o mesmo zero para as duas e a investigação fica sem resposta.
@@ -682,6 +749,18 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     // AUSENTE = PRESERVAR. É o que a web ANTIGA manda durante o rolling deploy, e interpretar a ausência
     // como "zerar" apagaria configuração que ninguém pediu para apagar.
     const configuracao = d.configuracao === undefined ? atualConfig.valor : configuracaoPedida(d.configuracao);
+    /**
+     * O FORMATO NÃO RETROCEDE. Um corpo no formato 1 sobre uma versão vigente no formato 2 só pode vir de
+     * um cliente desatualizado (o editor anterior trava ao ler o formato 2) ou de uma chamada direta — e
+     * aceitá-lo desligaria a execução configurada EM SILÊNCIO, porque o formato 1 é legado por definição.
+     * Voltar ao legado continua possível, e explícito: formato 2 com o efeito em `legado`.
+     */
+    if (configuracao.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP && atualConfig.valor.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2) {
+      throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
+        "Este tipo de operação já usa o formato atual de configuração; recarregue a tela antes de editar",
+        { versaoEnviada: VERSAO_SCHEMA_CONFIGURACAO_TOP, versaoVigente: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 });
+    }
+    conferirExecucaoPedida(antes.codigo_base, atualConfig.valor, configuracao, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED);
     const mudouConfiguracao = !configuracoesTopIguais(atualConfig.valor, configuracao);
 
     /**
@@ -758,7 +837,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       const versaoNova = await ctx.tx.query<{ id: string }>(
         `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version, destinos_configurados)
          values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) returning id`,
-        [ctx.orgId, id, versao, nome, descricao ?? null, ctx.user.id, JSON.stringify(configuracao), VERSAO_SCHEMA_CONFIGURACAO_TOP, destinosConfigurados]);
+        [ctx.orgId, id, versao, nome, descricao ?? null, ctx.user.id, JSON.stringify(configuracao), configuracao.versaoSchema, destinosConfigurados]);
       // As arestas são COPIADAS para a versão nova mesmo quando não mudaram: a versão N+1 precisa declarar
       // a política INTEIRA dela. Herdar por referência faria a versão nova depender da anterior para ser
       // lida, e o histórico deixaria de ser autossuficiente — que é a única coisa que ele promete ser.
@@ -783,13 +862,19 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
        * pergunta que se faz numa investigação ("o que mexeram?") e manda o leitor à versão para o detalhe
        * exato, que está lá, imutável, por construção.
        */
+      const secoesAlteradas = mudouConfiguracao ? secoesAlteradasTop(atualConfig.valor, configuracao) : [];
       await audit(ctx.tx, ctx, "tipos_operacao", id, "update",
         { versaoAnterior: antes.versao_atual, versao,
-          secoesAlteradas: mudouConfiguracao ? secoesAlteradasTop(atualConfig.valor, configuracao) : [],
+          secoesAlteradas,
+          // O CUTOVER NA TRILHA: quando um efeito troca de autoridade (legado ↔ configurada), o evento de
+          // edição que criou a versão diz de onde saiu e para onde foi, sem precisar reabrir as duas.
+          ...(secoesAlteradas.includes("execucao")
+            ? { execucao: { antes: execucaoDeclaradaTop(atualConfig.valor), depois: execucaoDeclaradaTop(configuracao) } }
+            : {}),
           // `destinos: 0` sozinho não responde o que aconteceu. Com `destinosConfigurados`, a trilha separa
           // a edição que DECLAROU "não gera nada" da que apenas não falou do assunto.
           destinosAlterados: mudouDestinos, destinos: destinos.length, destinosConfigurados,
-          configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP },
+          configuracaoSchema: configuracao.versaoSchema },
         { before: { nome: antes.nome, descricao: antes.descricao }, after: { nome, descricao } });
     }
     if (ativo !== antes.ativo) {

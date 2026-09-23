@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createPool, seedDemo } from "@agro/db";
-import { configuracaoNeutraTop, SECOES_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP } from "@agro/domain";
+import {
+  configuracaoNeutraTop, configuracaoNeutraTopV2, configuracaoTopParaEdicao, SECOES_CONFIGURACAO_TOP,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, VERSOES_SCHEMA_CONFIGURACAO_TOP
+} from "@agro/domain";
 import { harness, TEST_URL, type Harness } from "./setup.js";
 
 /**
@@ -16,8 +19,15 @@ import { harness, TEST_URL, type Harness } from "./setup.js";
  *   3. RECUSA: payload inválido e schema desconhecido são 422 com códigos DIFERENTES, porque o cliente
  *      resolve as duas coisas de formas diferentes — e a recusa não deixa rastro.
  *
- * Nada aqui prova EFEITO de estoque, financeiro ou fiscal: configurar não é executar, e esta fatia não
- * liga efeito nenhum. Prometer o contrário num teste seria pior do que não ter o teste.
+ * Nada aqui prova EFEITO de estoque, financeiro ou fiscal. Desde a TOP-CONFIG-04A a configuração PODE
+ * executar — mas só com o bloco `execucao` do formato 2 em `configurada`, e isso é provado nos arquivos da
+ * própria fatia (`tipos-operacao-execucao.test.ts`, `sales-top-execucao.test.ts`). Aqui, toda
+ * configuração leva os dois efeitos em `legado`: este arquivo continua medindo o DOCUMENTO.
+ *
+ * O FORMATO QUE ESTE ARQUIVO USA MUDOU COM A TOP-CONFIG-04A, E ISSO É CONTRATO, NÃO AFROUXAMENTO: TOP
+ * criada sem configuração nasce no formato 2 (legado/legado), e o formato não retrocede — um corpo no
+ * formato 1 sobre uma versão no formato 2 é recusado. Por isso a configuração "rica" daqui é a mesma de
+ * antes, no formato 2; o caminho do formato 1 (o cliente anterior) tem casos próprios abaixo.
  */
 let h: Harness;
 beforeAll(async () => { h = await harness(); });
@@ -55,7 +65,7 @@ let sequencia = 0;
 const codigo = () => `23${String(++sequencia).padStart(2, "0")}`;
 
 /** Uma configuração DIFERENTE da neutra em TODAS as cinco seções — para `secoesAlteradas` ter o que dizer. */
-function configuracaoRica() {
+function configuracaoRicaV1() {
   const c = configuracaoNeutraTop();
   c.geral.exigeParceiro = true;
   c.estoque.atualizacao = "saida";
@@ -68,6 +78,8 @@ function configuracaoRica() {
   c.aprovacao.valorMinimo = "10000.00";
   return c;
 }
+/** A mesma configuração rica, no formato 2 e com os dois efeitos em `legado` — o que o editor atual envia. */
+const configuracaoRica = () => configuracaoTopParaEdicao(configuracaoRicaV1());
 
 /** Cria uma TOP e devolve o id — o caminho que toda seção abaixo usa como premissa. */
 async function nova(corpo: Record<string, unknown> = {}) {
@@ -98,13 +110,28 @@ describe("configuração da TOP — descoberta de capacidade", () => {
 });
 
 describe("configuração da TOP — o cliente ANTIGO continua funcionando", () => {
-  it("criar SEM citar `configuracao` nasce NEUTRO — nem ausente, nem herdado", async () => {
+  it("criar SEM citar `configuracao` nasce NEUTRO — nem ausente, nem herdado — no formato 2, com os dois efeitos em legado", async () => {
+    // TOP-CONFIG-04A: o neutro de uma TOP NOVA é o formato 2. Nenhuma TOP nasce executando configuração.
     const id = await nova();
     const d = j(await detalhe(id));
-    expect(d.configuracaoSchema).toBe(VERSAO_SCHEMA_CONFIGURACAO_TOP);
+    expect(d.configuracaoSchema).toBe(VERSAO_SCHEMA_CONFIGURACAO_TOP_V2);
     expect(d.configuracao).toEqual({
-      suportada: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP, valor: configuracaoNeutraTop()
+      suportada: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, valor: configuracaoNeutraTopV2()
     });
+  });
+
+  it("o cliente anterior cria e edita no FORMATO 1, e o que ele grava continua formato 1 — sem tradução", async () => {
+    const v1 = configuracaoRicaV1();
+    const id = await nova({ configuracao: v1 });
+    const d = j(await detalhe(id));
+    expect(d.configuracaoSchema).toBe(VERSAO_SCHEMA_CONFIGURACAO_TOP);
+    expect((d.configuracao as { valor: unknown }).valor).toEqual(v1);
+    const mudada = configuracaoRicaV1();
+    mudada.geral.exigeObservacao = true;
+    expect((await editar(id, { configuracao: mudada, revisao: d.revisao })).statusCode).toBe(200);
+    const depois = j(await detalhe(id));
+    expect([depois.versao, depois.configuracaoSchema]).toEqual([2, VERSAO_SCHEMA_CONFIGURACAO_TOP]);
+    expect((depois.configuracao as { valor: unknown }).valor).toEqual(mudada);
   });
 
   it("editar SEM citar `configuracao` PRESERVA a que existe — ausente não é 'apague'", async () => {
@@ -190,7 +217,7 @@ describe("configuração da TOP — auditoria diz O QUE mudou", () => {
     const t = await trilha(id);
     const update = t.filter((x) => x.action === "update").at(-1);
     expect(update, "a edição precisa ter deixado um evento").toBeTruthy();
-    expect(update!.metadata).toMatchObject({ configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP });
+    expect(update!.metadata).toMatchObject({ configuracaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 });
     // As cinco seções mudaram — e a trilha diz quais, não apenas "mudou alguma coisa".
     expect([...(update!.metadata!.secoesAlteradas as string[])].sort()).toEqual([...SECOES_CONFIGURACAO_TOP].sort());
   });
@@ -215,7 +242,7 @@ describe("configuração da TOP — o histórico mostra a configuração DE CADA
     expect(items[0]!.configuracao.valor).toEqual(rica);
     // Esta é a asserção pela qual a configuração mora na VERSÃO: se ela morasse na TOP, a linha de baixo
     // já leria a configuração rica — e o histórico estaria mentindo com cara de registro.
-    expect(items[1]!.configuracao.valor).toEqual(configuracaoNeutraTop());
+    expect(items[1]!.configuracao.valor).toEqual(configuracaoNeutraTopV2());
   });
 
   it("`secoesAlteradas` é derivada por comparação, e a versão mais antiga não tem com o que comparar", async () => {
@@ -261,7 +288,8 @@ describe("configuração da TOP — a recusa", () => {
 
   it("versão de schema desconhecida é 422 com código DIFERENTE do de payload inválido", async () => {
     // Não é a mesma situação: aqui o cliente não tem o que corrigir no formulário — ele precisa recarregar.
-    const futura = { ...configuracaoRica(), versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP + 1 };
+    // O sentinela é o maior formato conhecido + 1: o 2 passou a existir com a TOP-CONFIG-04A.
+    const futura = { ...configuracaoRica(), versaoSchema: Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1 };
     const r = await criar({ codigo: codigo(), codigoBase: FAMILIA, nome: "Do futuro", configuracao: futura });
     expect(r.statusCode, r.body).toBe(422);
     expect((j(r).error as { code: string }).code).toBe("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO");
@@ -293,7 +321,7 @@ describe("configuração da TOP — a recusa", () => {
     expect(r.statusCode).toBe(409);
     expect((j(r).error as { code: string }).code).toBe("CONCURRENCY_CONFLICT");
     expect((j(await detalhe(id)).configuracao as { valor: unknown }).valor,
-      "a escrita perdida não pode ter deixado metade").toEqual(configuracaoNeutraTop());
+      "a escrita perdida não pode ter deixado metade").toEqual(configuracaoNeutraTopV2());
   });
 });
 

@@ -31,6 +31,23 @@ const schema = z.object({
   SUPABASE_JWT_SECRET: z.string().optional(),
   SUPABASE_URL: z.string().optional(),
   RATE_LIMIT_MAX: z.coerce.number().default(300),
+  /**
+   * GATE OPERACIONAL DA EXECUÇÃO CONFIGURADA DA TOP (TOP-CONFIG-04A). `1` liga; `0` ou AUSENTE desliga.
+   *
+   * DESLIGADO é o padrão, e não é "voltar ao legado": com ele desligado o administrador não consegue
+   * ativar execução configurada, e uma venda cuja versão congelada JÁ declara execução configurada é
+   * RECUSADA na confirmação — nunca confirmada pelo comportamento antigo. Ligar é a FASE 2 da implantação
+   * (`docs/DEPLOYMENT.md`), depois que nenhuma instância anterior a esta fatia atende mais tráfego.
+   *
+   * O VALOR É FECHADO E VERIFICADO AQUI: qualquer coisa fora de `0`/`1` DERRUBA O STARTUP. Uma coerção
+   * booleana ("false" é string não vazia, logo verdadeira) ligaria o gate por um erro de digitação — e um
+   * gate que liga por engano é pior do que nenhum. A mensagem não repete o valor recebido.
+   */
+  TOP_EFFECTS_RUNTIME_V1_ENABLED: z.string().optional().superRefine((valor, ctx) => {
+    if (valor !== undefined && valor !== "0" && valor !== "1") {
+      ctx.addIssue({ code: "custom", message: "use 1 para ligar ou 0 (ou ausente) para desligar" });
+    }
+  }).transform((valor) => valor === "1"),
   /** tentativas de login por IP por minuto (proteção contra força bruta) */
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10)
 });
