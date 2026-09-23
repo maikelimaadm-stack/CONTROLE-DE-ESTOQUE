@@ -31,9 +31,13 @@ const DIVISOR_H = "central-vendas-divisor-horizontal";
 const LARGURA = { min: 17, max: 52, padrao: 30 };
 const ALTURA = { min: 92, max: 430, padrao: 206 };
 
-/** Cadastra uma TOP de venda pela API administrativa; prefixo 5 para não colidir com os specs vizinhos. */
+/**
+ * Cadastra uma TOP de venda pela API administrativa; prefixo 5 para não colidir com os specs vizinhos.
+ * O resto do código é tempo + acaso em base 36 (cabe nos 20 caracteres da forma): cinco dígitos
+ * aleatórios colidiam num banco de E2E que acumula TOPs de rodadas anteriores (409 no cadastro).
+ */
 async function cadastrarTopDeVenda(page: Page) {
-  const codigo = `5${Math.floor(Math.random() * 90000 + 10000)}`;
+  const codigo = `5${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const criado = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo, codigoBase: "vendas.venda", nome: uniq("Venda Central") });
   return { id: criado.id, codigo };
 }
@@ -45,6 +49,13 @@ async function abrirWorkspace(page: Page) {
   await escolherTopEContinuar(page, top.id);
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
   return top;
+}
+
+/** Abre o workspace medindo o armazenamento ANTES de ele montar — o que a Central escrevesse ao montar entraria no "antes" e sumiria da comparação. */
+async function abrirWorkspaceMedindo(page: Page) {
+  const antes = await chavesDoNavegador(page);
+  const top = await abrirWorkspace(page);
+  return { top, antes };
 }
 
 const valorDo = async (page: Page, testId: string) => Number(await page.getByTestId(testId).getAttribute("aria-valuenow"));
@@ -315,8 +326,7 @@ test("W9 — divisores por teclado: setas no eixo, Home e End; semântica de sep
 
 test("W10 — os divisores NÃO persistem: nada no armazenamento do navegador, e remontar devolve o padrão", async ({ page }) => {
   await login(page);
-  const top = await abrirWorkspace(page);
-  const antes = await chavesDoNavegador(page);
+  const { top, antes } = await abrirWorkspaceMedindo(page);
 
   await page.getByTestId(DIVISOR_V).focus(); await page.keyboard.press("End");
   await page.getByTestId(DIVISOR_H).focus(); await page.keyboard.press("End");
@@ -685,8 +695,7 @@ const linhasVisiveis = (page: Page) => page.getByTestId("central-vendas-document
 
 test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos SEM tocar no item, no payload ou no armazenamento", async ({ page }) => {
   await login(page);
-  const top = await abrirWorkspace(page);
-  const chavesAntes = await chavesDoNavegador(page);
+  const { top, antes: chavesAntes } = await abrirWorkspaceMedindo(page);
   await pickRef(page, "Cliente", "DEMO");
   await adicionarItemComProduto(page, 0);
   await linhaDaGrade(page, 0).getByLabel("Quantidade").fill("4");
@@ -757,8 +766,7 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
 
 test("W21 — painel inferior recolhível: só a faixa fica, nada focável atrás, expandir devolve a última altura, nada persiste", async ({ page }) => {
   await login(page);
-  await abrirWorkspace(page);
-  const chavesAntes = await chavesDoNavegador(page);
+  const { antes: chavesAntes } = await abrirWorkspaceMedindo(page);
   const painel = page.getByTestId("central-vendas-painel");
   const recolher = page.getByTestId("central-vendas-recolher");
   await expect(recolher, "começa expandido").toHaveAttribute("aria-expanded", "true");
