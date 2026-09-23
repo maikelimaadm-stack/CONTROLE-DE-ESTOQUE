@@ -16,4 +16,5 @@ export * from "./tipo-operacao-configuracao.js";
 export * from "./tipo-operacao-destinos.js";
 export * from "./tipo-operacao-execucao.js";
 export * from "./sales.js";
+export * from "./codigo-hierarquico.js";
 export * from "./resources/index.js";

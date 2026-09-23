@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller, type UseFormReturn } from "react-hook-form";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { toast } from "@/lib/toast";
-import { getResource, type FieldDef } from "@agro/domain";
+import { getResource, ehCadastroCodigoHierarquico, type FieldDef } from "@agro/domain";
 import { cardFieldIds, type FormLayout } from "@agro/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -88,6 +88,19 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   // duplicar: novo registro pré-preenchido com os valores do registro de origem (exceto código/identificadores)
   const copySrc = embedded?.copyFrom ?? copyQ.data ?? null;
   React.useEffect(() => { if (isNew && def) { if (copySrc) { const v = fromRecord(def.fields, copySrc); for (const f of def.fields) if (f.name === "code" || f.readOnly) v[f.name] = f.type === "boolean" ? false : f.type === "tags" ? [] : ""; form.reset(v); } else form.reset(defaults(fields, preset, l.fieldDefaultValues)); } }, [isNew, copySrc, def]);
+  // Código hierárquico (Plano de Contas, Categorias, Centros de Custo): o SERVIDOR sugere o próximo código
+  // abaixo do antecessor escolhido, enquanto o usuário não digitou um código. A sugestão é editável; quem
+  // confere máscara, prefixo e duplicidade é o servidor ao salvar.
+  const sugereCodigo = ehCadastroCodigoHierarquico(resourceKey) && isNew && !readOnly;
+  const antecessor = form.watch("parent_id") as string | null | undefined;
+  React.useEffect(() => {
+    if (!sugereCodigo || form.getFieldState("code").isDirty) return;
+    let vivo = true;
+    api<{ codigo: string }>(`/api/resources/${resourceKey}/proximo-codigo${antecessor ? `?parent_id=${encodeURIComponent(antecessor)}` : ""}`)
+      .then((r) => { if (vivo && !form.getFieldState("code").isDirty) form.setValue("code", r.codigo, { shouldDirty: false }); })
+      .catch(() => { /* sem sugestão (ex.: último nível da máscara): o usuário digita e o servidor confere */ });
+    return () => { vivo = false; };
+  }, [sugereCodigo, antecessor, resourceKey, form]);
   const [confirmDel, setConfirmDel] = React.useState(false);
   const [openField, setOpenField] = React.useState<string | null>(null);
   // painéis em abas horizontais ("tabs") ou lista lateral ("sidebar"), como o modelo base do MG; lembrado por cadastro
