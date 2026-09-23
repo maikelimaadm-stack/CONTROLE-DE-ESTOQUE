@@ -1108,9 +1108,9 @@ Ligar o gate é a **fase 2** da implantação, e ela tem pré-condições própr
   qualquer estorno, sem consumir a chave de idempotência — o cancelamento não sabe de onde veio a decisão
   (04A-C8…C8d).
 - **Paridade com o legado, campo a campo.** A saída e o título a receber configurados gravam as MESMAS
-  linhas que o legado — movimento, título, parcelas, rateio, ID Global e trilha —, salvo relógio, identidade
-  técnica e a própria TOP citada (04A-P1…P3, comparação de linha inteira contra venda sem TOP, formato 1 e
-  formato 2 em legado).
+  linhas que o legado — movimento, título, parcelas, rateio, ID Global e trilha — contra venda sem TOP,
+  formato 1 e formato 2 em legado (04A-P1…P3). O que pode diferir é uma lista fechada, cujo dono é o
+  comentário de `normalizar` no teste e a linha do teste em `docs/TESTING.md`; este contrato não a repete.
 
 ### 12.6 Administração e o que continua só declarado
 

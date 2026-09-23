@@ -598,7 +598,11 @@ CI ou "deploy verde": cada um é respondido contra a produção real, com evidê
 conferir.
 
 1. **A 0023 aplicada em produção** — `0023_venda_execucao_configurada_guarda.sql` no ledger
-   (`public.erp_migrations`) do banco de produção, uma única vez. Sem a guarda, uma instância anterior
+   (`public.erp_migrations`) do banco de produção, uma única vez, E o gatilho com a definição da versão
+   mesclada: `pg_get_triggerdef` de `trg_sales_documents_execucao_configurada` contém
+   `OLD.status IS DISTINCT FROM 'confirmed'` (a 0023 foi corrigida na revisão R1, antes de qualquer
+   aplicação compartilhada — o ledger registra só o NOME, e um banco com a versão anterior passaria na
+   checagem por nome). Sem a guarda, uma instância anterior
    confirmaria pelo legado, em silêncio, a venda que o administrador configurou — e o gate não alcança
    essa instância.
 2. **Nenhuma instância anterior à fatia atendendo tráfego** — TODA réplica da API responde em `/health` um

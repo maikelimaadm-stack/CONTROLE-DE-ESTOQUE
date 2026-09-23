@@ -617,7 +617,10 @@ type Cancelamento = Awaited<ReturnType<typeof capturarCancelamento>>;
  *   identidade do doc   source_id; number `VND-<código>`; note `Venda <código>` / `estorno de <movimento>`
  *   contador da org.    financial_titles.code, registros_globais.id_global → DESLOCAMENTO dentro do documento
  *   aleatório do doc    group_id → "<GRUPO>", o MESMO em todas as parcelas
- * Toda outra coluna — saldo após, custo unitário, custo total e custo médio após inclusive — é comparada CRUA:
+ * TRILHA (`audit_logs`): comparada por PROJEÇÃO, não linha inteira — organização, entidade, ação, id (apelido),
+ * usuário, ip; em `update`, os nomes das colunas alteradas; em `confirm`, a metadata inteira salvo as duas chaves
+ * que diferem por desenho. Produto: só `average_cost` (o estado do estoque que a venda toca).
+ * Toda outra coluna das tabelas de efeito — saldo após, custo unitário, custo total e custo médio após inclusive — é comparada CRUA:
  * o cancelamento entre referências devolve o estoque ao MESMO ponto de partida (premissa conferida no teste).
  */
 function normalizar(cf: Confirmacao, cc: Cancelamento) {
@@ -638,12 +641,15 @@ function normalizar(cf: Confirmacao, cc: Cancelamento) {
     number: numero(t.number), note: nota(t.note), source_id: ap(t.source_id),
     group_id: t.group_id === null ? null : t.group_id === grupo ? "<GRUPO>" : t.group_id });
   const trilha = (a: Linha) => {
-    const base = { entity: a.entity, action: a.action, entity_id: ap(a.entity_id), user_id: a.user_id, ip: a.ip };
+    // PROJEÇÃO declarada (não a linha inteira): `before`/`after` carregam relógio e ids de cada documento, então
+    // `update` compara só os NOMES das colunas alteradas e `create` compara a linha na própria tabela.
+    const base = { organization_id: a.organization_id, entity: a.entity, action: a.action, entity_id: ap(a.entity_id), user_id: a.user_id, ip: a.ip };
     if (a.action === "update") return { ...base, alteradas: alteradas(a.before, a.after) };
     if (a.action === "confirm") {
-      // `tipoOperacaoVersaoId` e `execucao` diferem POR DESENHO — conferidos à parte, referência a referência.
-      const m = a.metadata as { titles: string[]; movimentos: string[] };
-      return { ...base, titles: m.titles.map(ap), movimentos: m.movimentos.map(ap) };
+      // A metadata INTEIRA, menos `tipoOperacaoVersaoId` e `execucao` — que diferem POR DESENHO e são conferidos
+      // à parte, referência a referência. Uma chave nova só num dos caminhos reprova aqui.
+      const { tipoOperacaoVersaoId: _v, execucao: _e, titles, movimentos, ...resto } = a.metadata as { titles: string[]; movimentos: string[] } & Record<string, unknown>;
+      return { ...base, metadata: { ...resto, titles: titles.map(ap), movimentos: movimentos.map(ap) } };
     }
     if (a.action === "cancel") return { ...base, metadata: a.metadata };
     return base; // `create` de título: a linha inteira já é comparada na própria tabela

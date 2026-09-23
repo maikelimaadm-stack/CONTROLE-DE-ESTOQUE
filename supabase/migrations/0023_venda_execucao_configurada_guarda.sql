@@ -43,6 +43,10 @@
 -- configurada (o gate nasce desligado e a ativação exige o gate), o gatilho deixa passar tudo. O que ela
 -- EXIGE é estar aplicada ANTES da fase 2 (ligar o gate) — ver `docs/DEPLOYMENT.md`.
 --
+-- HISTÓRICO. A cláusula WHEN do gatilho foi corrigida na revisão R1 da PR #56, ANTES do merge e de qualquer
+-- aplicação em ambiente compartilhado (produção sem 0023 no ledger em 23/09/2026; DECISIONS 238). Banco local
+-- que tenha aplicado a versão anterior precisa ser recriado: o ledger registra só o nome.
+--
 -- O runner (`packages/db/src/migrate.ts`) executa este arquivo inteiro dentro de UMA transação e registra
 -- o nome no ledger. Por isso não há `begin`/`commit` explícito aqui.
 -- =====================================================================
