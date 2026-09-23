@@ -884,7 +884,8 @@ test("W24 — fechar pela lista uma aba COM alteração pergunta como a barra de
   await expect(dlg, "closeTab recusou a aba suja: a lista pergunta, não descarta").toBeVisible();
   await expect(dlg.getByRole("heading", { name: "Fechar aba com alterações não salvas?" })).toBeVisible();
   await expect(dlg).toContainText('"Nova Venda"');
-  await dlg.locator(".mg-dialog__footer").getByRole("button", { name: "Fechar", exact: true }).click();
+  // o botão de TEXTO "Fechar" do rodapé; o × do cabeçalho também se chama Fechar, mas não tem texto
+  await dlg.getByRole("button", { name: "Fechar", exact: true }).filter({ hasText: /^Fechar$/ }).click();
   await expect(dlg).toBeHidden();
   await expect(aba(page, "/vendas/sales/new"), "cancelar mantém a aba").toHaveCount(1);
   await expect(aba(page, "/vendas/sales/new")).toHaveAttribute("data-dirty", "true");
