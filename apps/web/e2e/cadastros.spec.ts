@@ -1,13 +1,16 @@
 import { test, expect } from "@playwright/test";
 import { login, uniq } from "./helpers";
-/** Preenche todos os RefSelect obrigatórios do formulário com a primeira opção disponível. */
+/**
+ * Preenche os RefSelect obrigatórios VISÍVEIS com a primeira opção disponível. Campo de outra aba (ex.: a Categoria
+ * financeira, obrigatória enquanto "Controla estoque" = Sim, fica na aba Estoque) é preenchido pelo próprio teste.
+ */
 async function fillRequiredRefs(page: import("@playwright/test").Page) {
   const labels = page.locator("label:has(span.text-red-500)");
   const n = await labels.count();
   for (let i = 0; i < n; i++) {
     const field = labels.nth(i).locator("..");
     const btn = field.locator("button[type=button]").first();
-    if (await btn.count() && (await btn.textContent())?.includes("Selecione")) { await btn.click(); await page.locator(".cmd-panel [role=option]").first().click(); }
+    if (await btn.count() && await btn.isVisible() && (await btn.textContent())?.includes("Selecione")) { await btn.click(); await page.locator(".cmd-panel [role=option]").first().click(); }
   }
 }
 test("cria e localiza um produto no cadastro genérico", async ({ page }) => {

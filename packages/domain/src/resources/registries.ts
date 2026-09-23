@@ -97,7 +97,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       { name: "min_stock", label: "Estoque mínimo", type: "quantity", section: "Estoque", list: true, help: "Alerta quando o estoque atingir ou ficar abaixo", span: 3 },
       M("reference_price", "Valor de referência", { section: "Estoque", help: "Valor de mercado do produto", span: 3 }),
       { name: "average_cost", label: "Custo médio (calculado)", type: "money", readOnly: true, section: "Estoque", span: 3 }, D("last_purchase_date", "Última compra", { readOnly: true, section: "Estoque", span: 3 }),
-      REF("financial_category_id", "Categoria financeira (custo)", "financial_categories", { section: "Estoque", help: "Obrigatória quando o produto controla estoque", span: 6 }),
+      REF("financial_category_id", "Categoria financeira (custo)", "financial_categories", { section: "Estoque", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
       REF("default_cost_center_id", "Centro de custo padrão", "cost_centers", { section: "Estoque", span: 4 }), REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
       { name: "withdrawal_period_days", label: "Período de Carência (dias)", type: "integer", section: "Estoque", help: "Dias de espera após aplicação antes de vender/abater o animal", span: 3 },
       B("allow_pointing", "Apontamento", { section: "Estoque", help: "Permite uso na aba de apontamentos", span: 3 }),

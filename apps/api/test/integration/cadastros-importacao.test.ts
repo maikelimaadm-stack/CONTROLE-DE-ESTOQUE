@@ -83,7 +83,7 @@ describe("importação", () => {
     expect(r.statusCode).toBe(422);
     const erros = j(r).erros as { linha: number; coluna: string; mensagem: string }[];
     expect(erros).toEqual(expect.arrayContaining([
-      { linha: 3, coluna: "Grupo", mensagem: '"Grupo Que Não Existe" não existe no cadastro. Use um valor da lista.' },
+      { linha: 3, coluna: "Grupo", mensagem: '"Grupo Que Não Existe" não encontrado em Grupos de Produto. Use um valor da aba Listas.' },
       { linha: 3, coluna: "Controla estoque", mensagem: "Use Sim ou Não." },
       { linha: 4, coluna: "Descrição", mensagem: "Obrigatório." },
     ]));

@@ -33,6 +33,11 @@ export interface FieldDef {
   span?: number;
   /** campo dependente: só visível quando outro campo tem valor */
   visibleWhen?: { field: string; equals: unknown };
+  /**
+   * obrigatório CONDICIONAL: só quando outro campo tem esse valor (vazio = `default` dele).
+   * O banco continua sendo a autoridade; isto serve para a tela e o modelo de importação avisarem antes.
+   */
+  requiredWhen?: { field: string; equals: unknown };
 }
 
 export interface ResourceDef {

@@ -216,7 +216,11 @@ function coerceValue(f: FieldDef, v: unknown): unknown {
   return v;
 }
 
-export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown) {
+/**
+ * `adiarIdGlobal` é interno da importação em lote, que reserva o ID Global de todas as linhas no fim do lote
+ * (mesma transação): reservar linha a linha prenderia o contador da organização a importação inteira.
+ */
+export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal?: boolean } = {}) {
   const data = buildSchema(def).parse(body) as Record<string, unknown>;
   const escC = escopoDoRecurso(def);
   if (escC.ativo) {
@@ -255,7 +259,7 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   // pessoa, equipamento, perfil de acesso) são elegíveis a ID Global. A elegibilidade NÃO é decidida aqui
   // com um `if` por tabela — quem decide é o catálogo (`ENTIDADES_ID_GLOBAL`). Tabela fora do catálogo
   // devolve null sem erro; tabela dentro dele recebe o número na MESMA transação do cadastro.
-  await atribuirIdGlobalSeAplicavel(ctx, def.table, id);
+  if (!opcoes.adiarIdGlobal) await atribuirIdGlobalSeAplicavel(ctx, def.table, id);
   return getOne(ctx, def, id);
 }
 

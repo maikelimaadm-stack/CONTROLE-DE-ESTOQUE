@@ -58,6 +58,21 @@ function CelulaArvore({ row, recolhido, alternar, children }: { row: Row; recolh
 }
 
 /**
+ * Aviso da importação numa lista com filtro fixo (Pessoas › Funcionários): o registro importado só aparece aqui se
+ * a planilha preencher a coluna do filtro. Só entra o filtro que se diz em palavras (sim/não, opção de lista);
+ * referência e outros tipos ficam de fora. Sem nenhum dizível, não há aviso.
+ */
+function avisoDeFiltroFixo(fields: FieldDef[], fixed: Record<string, string>): string | undefined {
+  const condicoes = Object.entries(fixed).flatMap(([nome, valor]) => {
+    const f = fields.find((x) => x.name === nome);
+    const rotulo = f?.type === "boolean" ? (valor === "true" ? "Sim" : valor === "false" ? "Não" : undefined) : f?.type === "select" ? f.options?.find((o) => o.value === valor)?.label : undefined;
+    return f && rotulo ? [`${f.label} = ${rotulo}`] : [];
+  });
+  if (!condicoes.length) return undefined;
+  return `Esta lista mostra só registros com ${condicoes.join(" e ")}. Para o registro importado aparecer aqui, preencha ${condicoes.length > 1 ? "essas colunas" : "essa coluna"} na planilha.`;
+}
+
+/**
  * Listagem genérica de cadastros no MODELO BASE1: chips de filtro por coluna com valores distintos, grade
  * configurável (colunas, congelar, larguras), cards, modo Registro com o formulário embutido, rodapé com contadores.
  */
@@ -86,7 +101,7 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath, extra
     { key: "baixar-modelo", label: "Baixar modelo de importação", onClick: () => { void download(`/api/imports/${resourceKey}/modelo`, `modelo-${resourceKey}.xlsx`).catch(() => toast.error("Falha ao baixar o modelo")); } },
     { key: "importar", label: "Importar planilha", onClick: () => setImportando(true) },
   ] : [];
-  return <>{podeImportar && <ImportDialog resourceKey={resourceKey} labelPlural={def.labelPlural} open={importando} onOpenChange={setImportando} />}<Base1List
+  return <>{podeImportar && <ImportDialog resourceKey={resourceKey} labelPlural={def.labelPlural} open={importando} onOpenChange={setImportando} avisoFiltro={avisoDeFiltroFixo(fields, fixed)} />}<Base1List
     moduleId={resourceKey} title={title ?? def.labelPlural} columns={columns} filters={filters} entity={def.table} csvName={resourceKey}
     fetchPage={(p) => api<{ items: Row[]; total: number }>(`/api/resources/${resourceKey}${qs({ page: p.page, pageSize: p.pageSize, sort: p.sort, dir: p.dir, search: p.search, ...p.filters, ...fixed })}`)}
     distinct={(key, search) => api<{ value: string; label: string; count: number }[]>(`/api/resources/${resourceKey}/distinct${qs({ field: key, search, limit: 100 })}`)}

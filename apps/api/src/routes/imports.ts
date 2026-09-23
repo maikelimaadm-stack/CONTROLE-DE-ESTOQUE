@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getResource } from "@agro/domain";
-import { runService } from "../lib/service.js";
+import { runService, requirePermission } from "../lib/service.js";
 import { notFound, validation } from "../lib/errors.js";
-import { gerarModelo, importarPlanilha, type ResultadoImportacao } from "../lib/importacao.js";
+import { gerarModelo, importarPlanilha, lerPlanilha, type ResultadoImportacao } from "../lib/importacao.js";
 import { createOne } from "./resources.js";
 
 /** Desfaz a transação da importação (prévia, ou arquivo com erro) sem transformar o resultado em erro HTTP. */
@@ -26,14 +26,20 @@ export default async function importRoutes(app: FastifyInstance) {
 
   app.post("/imports/:key", { bodyLimit: Math.ceil(ARQUIVO_MAXIMO * 1.4) + 4096 }, async (req, reply) => {
     const def = cadastro((req.params as { key: string }).key);
+    const permissao = `${def.permission}.create`;
+    // a capacidade vem ANTES de abrir o arquivo: quem não pode criar não faz o servidor descompactar nada
+    requirePermission(app.requireCtx(req), permissao);
     const q = z.object({ simular: z.enum(["0", "1"]).default("0") }).strict().parse(req.query);
     const d = z.object({ arquivo_base64: z.string().min(1) }).strict().parse(req.body);
     const arquivo = Buffer.from(d.arquivo_base64, "base64");
     if (arquivo.byteLength > ARQUIVO_MAXIMO) throw validation("Arquivo maior que 8 MB.");
     const simulacao = q.simular === "1";
+    // leitura FORA da transação: nenhuma conexão do pool fica presa enquanto o XLSX é descompactado e percorrido
+    const planilha = await lerPlanilha(def, arquivo);
+    if (planilha.erros.length) return reply.status(422).send({ linhas: 0, gravadas: 0, erros: planilha.erros, simulacao });
     try {
-      const r = await runService(app, req, `${def.permission}.create`, async (ctx) => {
-        const res = await importarPlanilha(ctx, def, arquivo, createOne, simulacao);
+      const r = await runService(app, req, permissao, async (ctx) => {
+        const res = await importarPlanilha(ctx, def, planilha, createOne, simulacao);
         if (simulacao || res.erros.length) throw new DesfazerImportacao(res);
         return res;
       });
