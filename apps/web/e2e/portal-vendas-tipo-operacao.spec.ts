@@ -393,13 +393,17 @@ test("E1 VENDA — do Portal ao snapshot: lançador, formulário contextualizado
    *
    * ATUALIZADO NA TOP-CONFIG-03: o `+ Novo` deixou de perguntar a VARIANTE ("Nova venda") e passou a
    * oferecer as OPERAÇÕES agrupadas por família. Escolher a operação já decide a porta, então não há
-   * mais menu de documento — e o caminho do usuário passa a ser um clique, não dois.
+   * mais menu de documento.
+   *
+   * ATUALIZADO NA VISUAL-UX-01 R3: como no design, o clique ESCOLHE a operação e o `Lançar` (ou o
+   * Enter, ou o duplo clique) lança. O caminho aqui é o explícito: escolher e lançar.
    */
   await page.goto(PORTAL);
   await page.getByTestId("vendas-novo").click();
   const lancador = page.getByTestId("lancador-unificado");
-  await expect(lancador, "o `+ Novo` do portal abre o lançador unificado").toBeVisible();
+  await expect(lancador, "o `Novo` do portal abre o lançador unificado").toBeVisible();
   await lancador.locator(`[data-testid="lancador-top"][data-top-id="${top.id}"]`).click();
+  await page.getByTestId("lancador-lancar").click();
 
   /**
    * A OPERAÇÃO ESCOLHIDA NO PORTAL É PEDIDO, NÃO AUTORIZAÇÃO: ela vira `?tipo_operacao_id=<uuid>` na

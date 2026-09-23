@@ -17,7 +17,7 @@ import type { GrupoDeTops } from "./variantes";
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ NENHUM MAPA DE FAMÍLIA MORA AQUI ─────────────────────────────────────────────────────────────┐
- * │ `segmento` (a porta da rota) e `rotuloDoTipo` (o texto humano da coluna "Tipo de documento") são │
+ * │ `segmento` (a porta da rota) e `rotuloDoTipo` (o rótulo humano da família) são                   │
  * │ COPIADOS do grupo, que os recebeu do registry (`variantesDeVenda`) e do catálogo de idioma.      │
  * │ Escrever aqui um `{ "…": "…" }` de família → variante criaria a segunda lista que o gate         │
  * │ `scripts/familia-operacional-ssot-audit.mjs` existe para tornar barulhenta: uma família nova     │
@@ -37,7 +37,7 @@ export interface LinhaDeLancamento {
   readonly segmento: string;
   /** Código canônico da família. ATRIBUTO DE TESTE (`data-familia`), nunca texto de tela. */
   readonly familia: string;
-  /** Rótulo HUMANO da família (coluna "Tipo de documento"). Nunca o código canônico, nunca UUID. */
+  /** Rótulo HUMANO da família (cabeçalho do grupo e resumo do lançamento). Nunca o código canônico, nunca UUID. */
   readonly rotuloDoTipo: string;
   /** O servidor apontou esta TOP como padrão da família dela (`defaultId`). */
   readonly ehPadrao: boolean;
@@ -75,11 +75,10 @@ export function linhasDoGrupo(grupo: GrupoDeTops): LinhaDeLancamento[] {
  * Todas as linhas lançáveis, achatadas em UMA lista — e já na ordem de apresentação.
  *
  * ┌─ A ORDEM É O AGRUPAMENTO ──────────────────────────────────────────────────────────────────────┐
- * │ A janela não desenha cabeçalho de grupo: a família vira COLUNA ("Tipo de documento"), presente   │
- * │ em toda linha. O agrupamento visual sai daqui — a ordem dos grupos é a do registry, e as linhas  │
- * │ de uma mesma família saem contíguas. Coluna sobrevive à pesquisa; cabeçalho de grupo não         │
- * │ (com o recorte em duas linhas ele viraria moldura vazia), e cabeçalho ainda obrigaria a manter   │
- * │ DOIS modos de lista — um em repouso, outro com pesquisa ativa — e dois índices de teclado.        │
+ * │ A ordem dos grupos é a do registry, e as linhas de uma mesma família saem contíguas. A janela    │
+ * │ desenha o rótulo da família como CABEÇALHO do grupo (VISUAL-UX-01 R3, como no design), mas o    │
+ * │ índice do teclado continua sendo ESTA lista plana: um só modo, um só cursor, com ou sem          │
+ * │ pesquisa. Grupo que a pesquisa esvaziou não desenha cabeçalho — não sobra moldura vazia.         │
  * │                                                                                                  │
  * │ Dentro da família, a ordem é a que o SERVIDOR devolveu. Reordenar aqui (por código, por nome,     │
  * │ "padrão primeiro") inventaria uma hierarquia que o cadastro não declarou.                        │
@@ -205,6 +204,22 @@ export function moverAtivo(
   const j = movimento === "proximo" ? i + 1 : i - 1;
   if (j < 0 || j >= visiveis.length) return visiveis[i]!.id;
   return visiveis[j]!.id;
+}
+
+/**
+ * O MENU RÁPIDO DA SETA DO `Novo` — atalho, nunca a lista inteira (VISUAL-UX-01 R3).
+ *
+ * Até `LIMITE_DO_MENU_RAPIDO` operações no contexto, o menu mostra todas; acima disso, só as que o
+ * SERVIDOR marcou como padrão (`ehPadrao`, vindo de `defaultId`). Nenhuma outra régua: nem "as
+ * primeiras", nem "as mais usadas" — isso seria inventar uma preferência que ninguém cadastrou. Quem
+ * precisa de outra operação tem "Escolher operação…", que abre a janela completa com pesquisa.
+ *
+ * O corte existe porque um menu de trinta linhas deixa de ser atalho: vira uma lista sem pesquisa.
+ */
+export const LIMITE_DO_MENU_RAPIDO = 8;
+
+export function linhasDoMenuRapido(linhas: readonly LinhaDeLancamento[], limite = LIMITE_DO_MENU_RAPIDO): LinhaDeLancamento[] {
+  return linhas.length <= limite ? linhas.slice() : linhas.filter((l) => l.ehPadrao);
 }
 
 /**

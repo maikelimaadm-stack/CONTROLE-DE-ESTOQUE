@@ -1,4 +1,5 @@
 "use client";
+import type * as React from "react";
 import { brl } from "@/lib/utils";
 import { DocList, colDate, colMoney, colStatus, type Row } from "@/features/docs/shared";
 import { type Column } from "@/components/ui/data-table";
@@ -27,14 +28,14 @@ import { useOpcoesDeTopDeVendas } from "@/features/sales/variantes";
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
  * ┌─ O QUE ESTA LISTA NÃO FAZ ─────────────────────────────────────────────────────────────────────┐
- * │ NÃO CRIA. O lançamento nasce da TOP (`LancadorUnificadoDeVendas` no `+ Novo` do portal), nunca  │
+ * │ NÃO CRIA. O lançamento nasce da TOP (`NovoDocumentoDeVenda` no `Novo` do portal), nunca         │
  * │ de "novo documento genérico": a porta e a família de capacidade dependem da operação escolhida.  │
  * │ NÃO CANCELA em massa. O cancelamento de `DocList` monta `${endpoint}/<id>/cancel`, e não existe  │
  * │ porta `/api/sales/documentos/<id>/cancel` — cada variante tem a sua. Botão que aparece e         │
  * │ responde 404 é pior que botão nenhum; cancelar continua no detalhe, que sabe a variante.         │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
-export function DocumentosDeVendaList({ kind }: { kind: string }) {
+export function DocumentosDeVendaList({ kind, barra }: { kind: string; /** a barra de contexto do portal (Tipo + Novo), na barra do motor */ barra?: React.ReactNode }) {
   const opcoesTop = useOpcoesDeTopDeVendas();
 
   /**
@@ -76,7 +77,7 @@ export function DocumentosDeVendaList({ kind }: { kind: string }) {
     // A rota do detalhe sai da VARIANTE DA LINHA (o que o servidor classificou), nunca do filtro ativo:
     // numa lista de tipos mistos, derivar do filtro mandaria o pedido para a porta do orçamento.
     rowHref={(r) => `/vendas/${String(r["kind"])}s/${String(r["id"])}`}
-    canCreate={false} canCancel={false}
+    canCreate={false} canCancel={false} extraActions={barra}
     defaultFilters={kind ? { kind } : undefined}
     filters={[
       { name: "start_date", label: "Data inicial", type: "date" },

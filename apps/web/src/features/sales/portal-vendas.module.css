@@ -1,0 +1,341 @@
+/*
+ * PORTAL DE VENDAS — a barra de contexto do design (VISUAL-UX-01 R3, docs/DECISIONS.md 228).
+ *
+ * Só o que o motor da listagem (`Base1List`) não desenha: o seletor de Tipo, o `Novo` dividido, o menu
+ * rápido de operações e a janela de lançamento. Filtros, grade, rodapé, anexos e modos de visão são os
+ * do motor, intactos — este arquivo não os toca.
+ *
+ * Os menus e a janela são renderizados em PORTAL (fora da barra), então nada aqui depende de variável
+ * CSS herdada da tela: as cores são literais, as mesmas do design.
+ */
+
+/* ═════════════ Barra: Tipo + Novo dividido ═════════════ */
+.contexto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.tipo {
+  height: 28px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 9px 0 11px;
+  border: 1px solid #dfe2e7;
+  border-radius: 999px;
+  background: #fff;
+  color: #1e293b;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tipo:hover { background: #f8fafc; }
+.tipo[data-state="open"] {
+  border-color: rgba(64, 222, 99, 0.6);
+  box-shadow: 0 0 0 3px rgba(64, 222, 99, 0.14);
+}
+.tipo:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.tipoPrefixo { font-weight: 500; color: #94a3b8; }
+.tipoValor { font-weight: 600; color: #111827; }
+.seta11 { width: 11px; height: 11px; color: #94a3b8; flex-shrink: 0; }
+
+.dividido {
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  box-sizing: border-box;
+  margin-left: 2px;
+  border-radius: 999px;
+  background: #40de63;
+}
+.novo {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 0 10px;
+  border: 0;
+  border-radius: 999px 0 0 999px;
+  background: transparent;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.novo svg { width: 14px; height: 14px; }
+.abrirMenu {
+  width: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 0 999px 999px 0;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+}
+.abrirMenu svg { width: 12px; height: 12px; }
+.novo:hover, .abrirMenu:hover, .novo[aria-expanded="true"], .abrirMenu[data-state="open"] { background: #36c956; }
+.novo:active, .abrirMenu:active { background: #2ec46e; }
+.novo:focus-visible, .abrirMenu:focus-visible { position: relative; z-index: 1; outline: 2px solid #22a85c; outline-offset: 2px; }
+
+/* ═════════════ Menus (Tipo e Nova operação) ═════════════ */
+.menu {
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.16), 0 2px 6px rgba(15, 23, 42, 0.06);
+  font-family: inherit;
+}
+.menuTipo { width: 220px; padding: 4px 0; }
+.menuOperacoes { width: 400px; max-width: calc(100vw - 32px); }
+
+.opcaoTipo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 10px 0 8px;
+  border-left: 3px solid transparent;
+  color: #1e293b;
+  font-size: 12.5px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.opcaoTipo[data-highlighted] { background: #ecfdf3; border-left-color: #22a85c; }
+.opcaoTipo[data-state="checked"] { background: rgba(64, 222, 99, 0.12); font-weight: 600; }
+.marca { width: 14px; display: flex; color: #15803d; }
+.marca svg { width: 14px; height: 14px; }
+.separador { height: 1px; margin: 4px 0; background: #eef1f4; }
+
+.menuCabecalho {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid #eef1f4;
+}
+.menuTitulo { font-size: 12.5px; font-weight: 600; color: #1e293b; }
+.menuSubtitulo { font-size: 11px; color: #94a3b8; white-space: nowrap; }
+.menuLista { padding: 4px 0; }
+.menuRodape { padding: 4px 0; border-top: 1px solid #eef1f4; }
+.menuAviso { padding: 7px 12px; font-size: 12px; color: #94a3b8; }
+
+.operacao {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto 52px;
+  align-items: center;
+  column-gap: 10px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  color: #1e293b;
+  font-size: 12.5px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.operacao[data-highlighted] { background: #ecfdf3; box-shadow: inset 3px 0 0 #22a85c; }
+.escolherOperacao { grid-template-columns: 52px minmax(0, 1fr) auto; }
+.escolherOperacao .rotuloForte { font-weight: 600; }
+.iconePesquisa { display: flex; color: #5b6b80; }
+.iconePesquisa svg { width: 14px; height: 14px; }
+
+.codigo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.nome { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.familia { font-size: 11px; color: #94a3b8; white-space: nowrap; }
+.vagaDoSelo { display: flex; justify-content: flex-end; }
+.selo {
+  justify-self: end;
+  padding: 0 5px;
+  border: 1px solid #e2e8f0;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+/* ═════════════ Janela "Novo documento" ═════════════ */
+/* o corpo da janela não rola: só a lista rola, com o cabeçalho de colunas parado (dobro de classe para
+   vencer o padding do corpo oficial sem mexer no primitive — largura e altura continuam as oficiais) */
+.corpo.corpo { display: flex; flex-direction: column; gap: 10px; padding: 10px 0 0; overflow: hidden; }
+.linhaDePesquisa { display: flex; gap: 8px; padding: 0 16px; }
+.contextoDaJanela { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+.contextoRotulo { color: #94a3b8; }
+.contextoValor { font-weight: 600; color: #111827; }
+
+.pesquisa {
+  flex: 1 1 auto;
+  height: 34px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+.pesquisa:focus-within { border-color: rgba(64, 222, 99, 0.6); box-shadow: 0 0 0 3px rgba(64, 222, 99, 0.12); }
+.pesquisa > svg { width: 15px; height: 15px; color: #94a3b8; flex-shrink: 0; }
+.pesquisa input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #111827;
+  font: inherit;
+  font-size: 13px;
+}
+.pesquisa input::placeholder { color: #94a3b8; }
+.limpar {
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #15803d;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.limpar:hover { background: #ecfdf3; }
+
+.rolagem {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  border-top: 1px solid #eef1f4;
+}
+/* a MESMA grade no cabeçalho e em cada linha — uma lista de colunas, declarada uma vez */
+.colunas {
+  display: grid;
+  grid-template-columns: 16px minmax(52px, 72px) minmax(0, 1fr) 58px;
+  align-items: center;
+  column-gap: 10px;
+}
+.cabecalhoColunas {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  /* alinhado às linhas: 12 (lista) + 3 (barra) + 7 (recuo) = 22 à esquerda; 12 + 10 = 22 à direita */
+  padding: 6px 22px 5px 19px;
+  border-bottom: 1px solid #e2e8f0;
+  border-left: 3px solid transparent;
+  background: #fff;
+  color: #64748b;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.lista { padding: 0 12px 8px; }
+.grupo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 10px 3px 13px;
+  color: #94a3b8;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.bloqueio { padding: 4px 13px 6px; }
+.bloqueio:empty { display: none; }
+
+.opcao {
+  width: 100%;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 10px 0 7px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #1e293b;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+.opcao:hover { background: #f8fafc; }
+/* a linha ativa não depende de cor: marca (forma), barra de 3px (forma), contorno e peso do nome */
+.opcao[data-ativa="true"] {
+  background: #ecfdf3;
+  border-left-color: #22a85c;
+  outline: 2px solid #22a85c;
+  outline-offset: -2px;
+}
+.opcao[data-ativa="true"] .nome { font-weight: 600; }
+.opcaoMarca { display: flex; color: #15803d; }
+.opcaoMarca svg { width: 14px; height: 14px; }
+
+.vazio {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 56px 24px;
+  text-align: center;
+}
+.vazio > svg { width: 28px; height: 28px; color: #cbd5e1; }
+.vazioTitulo { font-size: 13px; font-weight: 600; color: #334155; }
+.vazioTexto { font-size: 12px; color: #64748b; }
+
+.rodapeResumo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin-right: auto;
+}
+.resumo { overflow: hidden; color: #334155; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.atalhos { color: #94a3b8; font-size: 11px; }
+.tecla {
+  padding: 0 4px;
+  border: 1px solid #e2e8f0;
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+}
+
+/*
+ * TELA ESTREITA (mobile é DEFERRED em docs/UI-SUPPORT-MATRIX.md, mas o que já funcionava não regride):
+ * o cabeçalho de colunas some — não há colunas para nomear quando o nome da operação é a linha inteira —
+ * e o selo cabe numa pista menor. É o mesmo corte de antes (640px).
+ */
+@media (max-width: 639px) {
+  .cabecalhoColunas { display: none; }
+  .colunas { grid-template-columns: 16px minmax(44px, 56px) minmax(0, 1fr) 52px; column-gap: 8px; }
+}

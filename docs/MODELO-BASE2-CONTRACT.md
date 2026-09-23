@@ -237,6 +237,12 @@ composição anterior, e isso não é dívida: a moldura só cobra quem já foi 
 declaradas é do gate `scripts/base2-consumidor-audit.mjs` e não se repete aqui — uma segunda lista
 envelheceria na primeira migração seguinte, em silêncio.
 
+**Composição declarada (VISUAL-UX-01 R3, `docs/DECISIONS.md` 227).** Uma tela declarada no gate diz também
+QUEM a compõe: o `Base2Shell` (padrão) ou outro workspace de documento. O detalhe de venda passou a ser
+composto pela Central de Vendas — o mesmo workspace da criação, no conjunto de consulta —, e o gate exige
+dele `CentralVendasWorkspace` em vez das peças do shell. Composição não declarada, ou desconhecida, reprova:
+trocar a moldura continua sendo decisão escrita, nunca efeito colateral de uma edição de tela.
+
 Migrar uma entidade é migrar a APRESENTAÇÃO dela. Cada módulo continua dono do próprio workflow, serviço,
 autorização e efeito contábil, e nada disso passa para a moldura ao entrar nela: **tela unificada ≠ regra de
 negócio unificada**. O que muda é quem desenha o cabeçalho, os dados principais, os itens, as ações, o

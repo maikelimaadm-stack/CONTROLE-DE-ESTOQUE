@@ -12,8 +12,9 @@ import { usePathname } from "next/navigation";
  * │ perdendo a trilha sem saber, e a próxima tela que reaproveitasse o seletor a perderia junto.     │
  * │ Aqui o shell DECIDE, e a decisão tem duas metades que valem juntas (AND):                         │
  * │                                                                                                  │
- * │   1. a ROTA admite workspace imersivo (`ROTAS_IMERSIVAS`, lista estática: criação e registro de  │
- * │      documento de venda — `/vendas/<tipo>/new` e `/vendas/<tipo>/<id>`);                        │
+ * │   1. a ROTA admite workspace imersivo (`ROTAS_IMERSIVAS`, lista estática: o Portal de Vendas e a  │
+ * │      criação e o registro de documento de venda — `/vendas`, `/vendas/<tipo>/new` e              │
+ * │      `/vendas/<tipo>/<id>`; no design, a primeira barra dessas telas é a própria ferramenta);     │
  * │   2. o workspace REAL está MONTADO nessa rota e declarou isso (`useWorkspaceImersivo`).            │
  * │                                                                                                  │
  * │ Só a rota não basta: `/vendas/<tipo>/new` sem TOP mostra o LANÇADOR, que é uma tela normal e     │
@@ -23,7 +24,7 @@ import { usePathname } from "next/navigation";
  * │ shell só deixa de desenhá-la enquanto a moldura do documento ocupa o topo da área de trabalho.   │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
-const ROTAS_IMERSIVAS: readonly RegExp[] = [/^\/vendas\/[^/]+\/[^/]+$/];
+const ROTAS_IMERSIVAS: readonly RegExp[] = [/^\/vendas$/, /^\/vendas\/[^/]+\/[^/]+$/];
 
 export const rotaAdmiteImersao = (pathname: string) => ROTAS_IMERSIVAS.some((re) => re.test(pathname));
 
