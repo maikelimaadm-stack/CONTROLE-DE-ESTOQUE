@@ -293,4 +293,52 @@ describe("LT-10 — lote aparado na borda da API (R1-1 f)", () => {
     expect(await daOrigem("stock_corrections", c)).toMatchObject([{ movement_type: "correction_in", provider_lot: "C-9", quantity: "2.0000" }]);
     expect(await saldos(p)).toEqual({ "C-9": { q: "12.0000", v: null } });
   });
+
+  /**
+   * O SALDO gravado ANTES do R1-1 pode ter espaços no lote: a API anterior não aparava. O lote informado (aparado)
+   * é resolvido pela CHAVE GRAVADA (`btrim(provider_lot)`): a correção lê o saldo certo, a saída com o lote informado
+   * sai dele e a entrada soma nele — nenhum lote novo "sem espaços" nasce ao lado do antigo.
+   */
+  const legado = (product_id: string, provider_lot: string, quantity: string, expiration_date: string | null) => admin.query(
+    `insert into erp.stock_movements (organization_id, empresa_id, warehouse_id, product_id, movement_type, direction, quantity, unit_cost, provider_lot, expiration_date, source_type, source_id, movement_date)
+     values ($1,$2,$3,$4,'entry',1,$5,5,$6,$7,'teste_legado',gen_random_uuid(),'2026-09-01')`, [h.demo.orgId, I.empresa, I.warehouse, product_id, quantity, provider_lot, expiration_date]);
+  const correcao = (product_id: string, provider_lot: string, new_quantity: string) => post("/api/stock/corrections", { empresa_id: I.empresa, correction_date: DIA, warehouse_id: I.warehouse, product_id, provider_lot, new_quantity, justification: "teste lote legado" });
+
+  it("lote LEGADO com espaços já no saldo: a correção lê o saldo gravado e baixa dele; a entrada soma nele; a correção a zero zera", async () => {
+    const p = await produto("lote_validade", "trim legado");
+    await legado(p, "  T-9 ", "10", "2099-01-01");
+    // o botão "Ajustar estoque" manda o lote CRU da linha de saldo; a API apara e resolve pela chave gravada
+    const r = await correcao(p, "  T-9 ", "8");
+    const c = criado(r);
+    expect(j(r)).toMatchObject({ difference: "-2.0000" });
+    expect(await um("select previous_quantity::text, new_quantity::text from erp.stock_corrections where id=$1", [c])).toEqual({ previous_quantity: "10.0000", new_quantity: "8.0000" });
+    expect(await daOrigem("stock_corrections", c)).toMatchObject([{ movement_type: "correction_out", direction: -1, provider_lot: "  T-9 ", quantity: "2.0000" }]);
+    // entrada do mesmo lote, digitado sem espaços: soma no saldo gravado
+    const e = criado(await post("/api/stock/input-entries", { empresa_id: I.empresa, entry_date: DIA, items: [{ product_id: p, quantity: "1", unit_value: "5", warehouse_id: I.warehouse, provider_lot: "T-9", expiration_date: "2099-01-01" }] }));
+    expect(await daOrigem("input_entries", e)).toMatchObject([{ provider_lot: "  T-9 ", quantity: "1.0000" }]);
+    // correção a ZERO (antes: 422 "Nova quantidade igual ao saldo atual" — o saldo lido era 0 e o lote nunca zerava)
+    const z = criado(await correcao(p, "T-9", "0"));
+    expect(await daOrigem("stock_corrections", z)).toMatchObject([{ movement_type: "correction_out", provider_lot: "  T-9 ", quantity: "9.0000" }]);
+    expect(await saldos(p)).toEqual({ "  T-9 ": { q: "0.0000", v: "2099-01-01" } });
+  });
+
+  it("lote LEGADO com espaços e VENCIDO: fora da escolha automática, mas o lote informado (aparado) sai dele", async () => {
+    const p = await produto("lote_validade", "trim vencido");
+    await legado(p, " V-1", "3", "2026-01-31");
+    const b = criado(await post("/api/stock/writeoffs", { empresa_id: I.empresa, warehouse_id: I.warehouse, writeoff_date: DIA, reason: "expiration", justification: "teste lote legado", items: [{ product_id: p, quantity: "3", provider_lot: "V-1" }] }));
+    expect(await daOrigem("stock_writeoffs", b)).toMatchObject([{ movement_type: "writeoff", provider_lot: " V-1", validade: "2026-01-31", quantity: "3.0000" }]);
+    expect(await saldos(p)).toEqual({ " V-1": { q: "0.0000", v: "2026-01-31" } });
+  });
+
+  it("dois saldos legados do MESMO lote que só diferem por espaços, ambos com saldo: o lote informado → 422 nomeando o lote, nada gravado", async () => {
+    const p = await produto("lote", "trim ambiguo");
+    await legado(p, " A-1", "2", null);
+    await legado(p, "A-1 ", "3", null);
+    const movAntes = await movimentosDo(p);
+    const r = await post("/api/stock/writeoffs", { empresa_id: I.empresa, warehouse_id: I.warehouse, writeoff_date: DIA, reason: "loss", justification: "teste lote ambiguo", items: [{ product_id: p, quantity: "1", provider_lot: "A-1" }] });
+    recusado(r, "provider_lot");
+    expect(j(r).error.message).toMatch(/"A-1"/);
+    expect(await movimentosDo(p)).toBe(movAntes);
+    expect(await saldos(p)).toEqual({ " A-1": { q: "2.0000", v: null }, "A-1 ": { q: "3.0000", v: null } });
+  });
 });

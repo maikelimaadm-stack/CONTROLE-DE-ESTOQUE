@@ -48,9 +48,10 @@ export default async function fleetHrRoutes(app: FastifyInstance) {
         services = services.plus(m.service_total);
         if (m.hour_meter) await ctx.tx.query("update erp.equipments set hour_meter=greatest(coalesce(hour_meter,0),$2) where id=$1", [m.equipment_id, m.hour_meter]);
         for (const it of m.items) {
-          let cost = it.unit_value ?? "0";
-          if (it.warehouse_id) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "maintenance", direction: -1, quantity: it.quantity, sourceType: "maintenances", sourceId: id, date: d.maintenance_date, note: `Manutenção ${code}` }); cost = s.unitCost; }
-          const t = money(D(it.quantity).mul(cost)); parts = parts.plus(t);
+          let cost = it.unit_value ?? "0"; let doRazao: string | null = null;
+          // com armazém, o valor da peça é a soma do razão (Σ das partes, revisão do R1), não quantidade × custo médio
+          if (it.warehouse_id) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "maintenance", direction: -1, quantity: it.quantity, sourceType: "maintenances", sourceId: id, date: d.maintenance_date, note: `Manutenção ${code}` }); cost = s.unitCost; doRazao = s.total; }
+          const t = doRazao ?? money(D(it.quantity).mul(cost)); parts = parts.plus(t);
           await ctx.tx.query("insert into erp.maintenance_items(machine_id,warehouse_id,product_id,quantity,unit_value,total,note) values ($1,$2,$3,$4,$5,$6,$7)", [mm.rows[0]!.id, it.warehouse_id ?? null, it.product_id, it.quantity, cost, t, it.note ?? null]);
         }
         // preventivas: atualiza última execução
@@ -79,9 +80,10 @@ export default async function fleetHrRoutes(app: FastifyInstance) {
       const code = await nextCode(ctx.tx, ctx.orgId, "fuel_supply", 5);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.fuel_supplies(organization_id,empresa_id,code,supply_date,equipment_id,operator_person_id,warehouse_id,product_id,quantity,hour_meter,mileage,cost_center_id,harvest_id,origin,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) returning id", [ctx.orgId, d.empresa_id, code, d.supply_date, d.equipment_id, d.operator_person_id ?? null, d.warehouse_id ?? null, d.product_id, d.quantity, d.hour_meter ?? null, d.mileage ?? null, d.cost_center_id ?? null, d.harvest_id ?? null, d.origin, d.note ?? null, ctx.user.id]);
       await atribuirIdGlobal(ctx, "fuel_supplies", r.rows[0]!.id);
-      let cost = d.unit_value ?? "0";
-      if (d.warehouse_id) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: "fuel_supply", direction: -1, quantity: d.quantity, costCenterId: d.cost_center_id, harvestId: d.harvest_id, sourceType: "fuel_supplies", sourceId: r.rows[0]!.id, date: d.supply_date, note: `Abastecimento ${code}` }); cost = s.unitCost; }
-      const total = money(D(d.quantity).mul(cost));
+      let cost = d.unit_value ?? "0"; let doRazao: string | null = null;
+      // com armazém, o total é a soma do razão (Σ das partes, revisão do R1), não quantidade × custo médio
+      if (d.warehouse_id) { const s = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: "fuel_supply", direction: -1, quantity: d.quantity, costCenterId: d.cost_center_id, harvestId: d.harvest_id, sourceType: "fuel_supplies", sourceId: r.rows[0]!.id, date: d.supply_date, note: `Abastecimento ${code}` }); cost = s.unitCost; doRazao = s.total; }
+      const total = doRazao ?? money(D(d.quantity).mul(cost));
       await ctx.tx.query("update erp.fuel_supplies set unit_value=$2, total=$3 where id=$1", [r.rows[0]!.id, cost, total]);
       if (d.hour_meter) await ctx.tx.query("update erp.equipments set hour_meter=greatest(coalesce(hour_meter,0),$2) where id=$1", [d.equipment_id, d.hour_meter]);
       await audit(ctx.tx, ctx, "fuel_supplies", r.rows[0]!.id, "create", { code });

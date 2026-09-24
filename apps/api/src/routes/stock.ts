@@ -8,7 +8,7 @@ import { consultaEscopada, empresaScope, empresaScopePar, exigirEmpresaDeLancame
 import { empresasDisponiveis } from "../lib/empresa.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
-import { postStock, reverseStock, currentBalance, lineTotal } from "../services/stock-core.js";
+import { postStock, reverseStock, currentBalance, lineTotal, chaveDoLote } from "../services/stock-core.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfer.js";
@@ -60,7 +60,10 @@ async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: st
   if (!d.rows[0]) throw notFound("Documento");
   const itemJoins = opts.headerWarehouse ? `left join erp.${table} h on h.id=i.${fk} left join erp.warehouses w on w.id=h.warehouse_id left join erp.cost_centers cc on cc.id=h.cost_center_id` : "left join erp.warehouses w on w.id=i.warehouse_id left join erp.cost_centers cc on cc.id=i.cost_center_id";
   const items = await ctx.tx.query(`select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name from erp.${itemsTable} i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id ${itemJoins} where i.${fk}=$1 order by i.id`, [id]);
-  const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, table, id]);
+  // Cada movimento diz DE QUAL lote saiu (ou em qual entrou), com a validade, o armazém, o produto e o centro: numa
+  // saída sem lote a escolha automática grava o lote só no MOVIMENTO (o item fica sem lote), e a devolução a partir
+  // da requisição parte daqui (revisão do R1, R1-1 c). Campos só acrescentados — a tela anterior os ignora.
+  const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date, warehouse_id, product_id, provider_lot, expiration_date, cost_center_id from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, table, id]);
   return { ...(d.rows[0] as Record<string, unknown>), items: items.rows, movements: movements.rows };
 }
 
@@ -274,7 +277,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       await atribuirIdGlobal(ctx, "stock_writeoffs", id);
       for (const it of d.items) {
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: it.product_id, movementType: "writeoff", direction: -1, quantity: it.quantity, providerLot: it.provider_lot, costCenterId: d.cost_center_id, sourceType: "stock_writeoffs", sourceId: id, date: d.writeoff_date, note: d.reason });
-        const t = lineTotal(it.quantity, m.unitCost); total = total.plus(t);
+        const t = m.total; total = total.plus(t); // a soma do razão (Σ das partes), nunca quantidade × custo médio
         await ctx.tx.query("insert into erp.stock_writeoff_items(writeoff_id,product_id,provider_lot,quantity,unit_value,total_value) values ($1,$2,$3,$4,$5,$6)", [id, it.product_id, it.provider_lot ?? null, it.quantity, m.unitCost, t]);
       }
       await ctx.tx.query("update erp.stock_writeoffs set total_amount=$2 where id=$1", [id, money(total)]);
@@ -302,7 +305,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       await atribuirIdGlobal(ctx, "requisitions", id);
       for (const it of d.items) {
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "requisition", direction: -1, quantity: it.quantity, providerLot: it.provider_lot, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "requisitions", sourceId: id, date: d.requisition_date });
-        const t = lineTotal(it.quantity, m.unitCost); total = total.plus(t);
+        const t = m.total; total = total.plus(t); // a soma do razão (Σ das partes)
         await ctx.tx.query("insert into erp.requisition_items(requisition_id,warehouse_id,product_id,provider_lot,quantity,unit_value,total_value,cost_center_id,addressing) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [id, it.warehouse_id, it.product_id, it.provider_lot ?? null, it.quantity, m.unitCost, t, it.cost_center_id ?? null, it.addressing ?? null]);
       }
       await ctx.tx.query("update erp.requisitions set total_amount=$2 where id=$1", [id, money(total)]);
@@ -342,19 +345,27 @@ export default async function stockRoutes(app: FastifyInstance) {
   // ---------- Correção de estoque ----------
   // `expiration_date`: validade do lote que ENTRA num ajuste para cima (exigida no "lote + validade"); num ajuste
   // para baixo o lote sai com a validade que já tem, e a validade informada é recusada (422), nunca ignorada.
+  // O lote informado é resolvido pela CHAVE GRAVADA (`chaveDoLote`): o saldo gravado antes do R1-1 pode ter espaços
+  // nas pontas, e a conta do saldo atual tem de ler ESSE saldo (revisão do R1).
   const corrSchema = z.object({ empresa_id: uuid, correction_date: date, warehouse_id: uuid, product_id: uuid, provider_lot: lote, expiration_date: date.optional().nullable(), new_quantity: dec, unit_value: dec.optional().nullable(), justification: z.string().min(3) });
   app.get("/stock/corrections", async (req) => runService(app, req, "stock_corrections.view", (ctx) => listDocs(ctx, "stock_corrections", "correction_date", { ...(req.query as Record<string, unknown>) }, ", p.description as product_name, w.description as warehouse_name", "left join erp.products p on p.id=d.product_id left join erp.warehouses w on w.id=d.warehouse_id").then((r) => r)));
   app.post("/stock/corrections", async (req, reply) => reply.status(201).send(await runService(app, req, "stock_corrections.create", async (ctx) => {
     const d = corrSchema.parse(req.body); await exigirEmpresa(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
-      const b = await currentBalance(ctx, d.warehouse_id, d.product_id, d.provider_lot);
+      const loteGravado = d.provider_lot ? await chaveDoLote(ctx, d.warehouse_id, d.product_id, d.provider_lot) : null;
+      const b = await currentBalance(ctx, d.warehouse_id, d.product_id, loteGravado);
       const diff = D(d.new_quantity).minus(b.quantity);
       if (diff.isZero()) throw validation("Nova quantidade igual ao saldo atual");
       if (diff.lt(0) && d.expiration_date) throw validation("A validade só é informada quando o ajuste aumenta o saldo.", [{ path: "expiration_date", message: "Validade só no ajuste para cima" }]);
       const code = await nextCode(ctx.tx, ctx.orgId, "stock_correction");
       const cost = d.unit_value ?? b.averageCost;
       const r = await ctx.tx.query<{ id: string }>("insert into erp.stock_corrections(organization_id,empresa_id,code,correction_date,warehouse_id,product_id,provider_lot,previous_quantity,new_quantity,unit_value,justification,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id", [ctx.orgId, d.empresa_id, code, d.correction_date, d.warehouse_id, d.product_id, d.provider_lot, b.quantity, d.new_quantity, cost, d.justification, ctx.user.id]);
-      await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: diff.gt(0) ? "correction_in" : "correction_out", direction: diff.gt(0) ? 1 : -1, quantity: diff.abs().toFixed(4), unitCost: cost, providerLot: d.provider_lot, expirationDate: d.expiration_date, sourceType: "stock_corrections", sourceId: r.rows[0]!.id, date: d.correction_date, note: d.justification });
+      // Ajuste para BAIXO sem valor informado: o custo é o de CADA lote que sai (o gatilho usa a média do saldo do
+      // lote). Passar a média de todos os lotes (`b.averageCost` sem lote) gravava no razão um valor diferente do que
+      // o saldo de cada lote perdeu — e a escolha automática divide a saída entre lotes (revisão do R1). O valor
+      // informado pelo usuário continua valendo como antes.
+      const custoDoMovimento = diff.gt(0) ? cost : (d.unit_value ?? null);
+      await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: diff.gt(0) ? "correction_in" : "correction_out", direction: diff.gt(0) ? 1 : -1, quantity: diff.abs().toFixed(4), unitCost: custoDoMovimento, providerLot: loteGravado, expirationDate: d.expiration_date, sourceType: "stock_corrections", sourceId: r.rows[0]!.id, date: d.correction_date, note: d.justification });
       await audit(ctx.tx, ctx, "stock_corrections", r.rows[0]!.id, "create", { code, diff: diff.toFixed(4) });
       return { id: r.rows[0]!.id, code, difference: diff.toFixed(4) };
     })).result;
@@ -401,7 +412,7 @@ export default async function stockRoutes(app: FastifyInstance) {
         for (const parte of out.partes) {
           await postStock(ctx, { empresaId: destFarm, warehouseId: d.destination_warehouse_id, productId: it.product_id, movementType: d.kind === "farm" ? "farm_transfer_in" : "transfer_in", direction: 1, quantity: parte.quantidade, unitCost: parte.unitCost, providerLot: parte.lote, expirationDate: parte.validade, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "warehouse_transfers", sourceId: id, date: d.transfer_date });
         }
-        const t = lineTotal(it.quantity, out.unitCost); total = total.plus(t);
+        const t = out.total; total = total.plus(t); // o que a origem perdeu = o que o destino ganhou = o valor do documento
         await ctx.tx.query("insert into erp.warehouse_transfer_items(transfer_id,product_id,provider_lot,quantity,unit_value,total_value,cost_center_id) values ($1,$2,$3,$4,$5,$6,$7)", [id, it.product_id, it.provider_lot ?? null, it.quantity, out.unitCost, t, it.cost_center_id ?? null]);
       }
       await ctx.tx.query("update erp.warehouse_transfers set total_value=$2 where id=$1", [id, money(total)]);
@@ -486,8 +497,9 @@ export default async function stockRoutes(app: FastifyInstance) {
       for (const it of items.rows) {
         const q = D(it.quantity).mul(d.multiplier).toFixed(4);
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.origin_warehouse_id, productId: it.product_id, movementType: "production_out", direction: -1, quantity: q, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code}` });
-        consumed.push({ quantity: q, unitCost: m.unitCost });
-        await ctx.tx.query("insert into erp.feed_batch_items(batch_id,product_id,quantity,unit_cost,total_cost) values ($1,$2,$3,$4,$5)", [id, it.product_id, q, m.unitCost, lineTotal(q, m.unitCost)]);
+        // uma parte por lote consumido: a média ponderada arredondada não entra no custo da produção
+        for (const x of m.partes) consumed.push({ quantity: x.quantidade, unitCost: x.unitCost });
+        await ctx.tx.query("insert into erp.feed_batch_items(batch_id,product_id,quantity,unit_cost,total_cost) values ($1,$2,$3,$4,$5)", [id, it.product_id, q, m.unitCost, m.total]);
       }
       const cost = batchCost(consumed, d.quantity_produced);
       await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.destination_warehouse_id, productId: f.rows[0].product_id, movementType: "production_in", direction: 1, quantity: d.quantity_produced, unitCost: cost.unit, providerLot: controleDoAcabado === "nenhum" ? null : code, expirationDate: d.validade ?? null, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code} (${f.rows[0].name})` });

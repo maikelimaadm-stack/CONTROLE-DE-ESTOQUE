@@ -308,4 +308,156 @@ describe("LT-9 — saídas SIMULTÂNEAS do mesmo lote", () => {
     }
     expect(await saldos(p)).toEqual({ "A-1": "0.0000", "B-2": "5.0000" });
   }, 60_000);
+
+  /**
+   * LT-9c — a escolha trava SÓ os lotes que vai consumir (revisão do R1). O gatilho de saldo trava a linha do saldo
+   * e DEPOIS a do produto (`update erp.products`). B faz o papel de uma transferência W2 → W do lote B-LONGE: a perna
+   * de saída já segurou a linha do PRODUTO, e a perna de entrada ainda vai pedir o saldo B-LONGE do armazém W. A
+   * venda sem lote em W precisa só do A-PERTO. Travando também o B-LONGE (que não usa) antes de gravar, a venda
+   * fechava um ciclo com B — venda espera o produto, B espera o B-LONGE — e o PostgreSQL abortava uma das duas
+   * (40P01, que a API devolve como 409 CONCURRENCY_CONFLICT). Travando só o que consome, não há ciclo.
+   */
+  it("LT-9c: venda sem lote que só precisa do lote mais próximo não trava o outro — a transferência concorrente para o armazém pega o outro lote e a venda confirma (sem 40P01)", async () => {
+    const p = await produto("lote", "trava so o usado");
+    await lote(p, "A-PERTO", "2099-01-01", "10");
+    await lote(p, "B-LONGE", "2099-06-01", "10");
+    const v = criado(await post("/api/sales/sales", { empresa_id: I.empresa, document_date: "2026-09-20", client_id: I.client, items: [{ product_id: p, warehouse_id: I.warehouse, quantity: "1", unit_price: "20.00" }] }));
+    const b = await admin.connect();
+    let aberta = false; let conf: Promise<Resp> | null = null;
+    try {
+      await b.query("begin"); aberta = true;
+      await b.query("set local lock_timeout = '10s'");
+      await b.query("select 1 from erp.products where id=$1 for update", [p]); // a perna de saída da transferência já travou o produto
+      conf = post(`/api/sales/sales/${v}/confirm`);
+      await ateEsperarem(1); // a venda gravou o seu lote e espera a linha do produto
+      const t = await b.query("select 1 from erp.stock_balances where product_id=$1 and warehouse_id=$2 and provider_lot='B-LONGE' for update", [p, I.warehouse]);
+      expect(t.rowCount, "a perna de entrada da transferência travou o B-LONGE").toBe(1);
+      await b.query("rollback"); aberta = false;
+      const r = await conf;
+      expect(r.statusCode, r.body).toBe(200);
+    } finally {
+      if (aberta) await b.query("rollback").catch(() => undefined);
+      await conf?.catch(() => undefined);
+      b.release();
+    }
+    expect(await porLote("sales_documents", v, "sale")).toEqual({ "A-PERTO": "1.0000" });
+    expect(await saldos(p)).toEqual({ "A-PERTO": "9.0000", "B-LONGE": "10.0000" });
+  }, 60_000);
+});
+
+describe("LT-11 — quantidade que arredonda a zero na escala do estoque (4 casas)", () => {
+  it("baixa sem lote de 0,00004 → 422 'Quantidade deve ser positiva', nada gravado (a divisão por lotes recebia zero e respondia 500)", async () => {
+    const p = await produto("lote", "quase zero");
+    await lote(p, "Q-1", "2099-01-01", "10");
+    const movAntes = await movimentosDo(p);
+    const r = await baixa(p, "0.00004");
+    expect(r.statusCode, r.body).toBe(422);
+    expect(j(r).error!.code).toBe("VALIDATION_ERROR");
+    expect(j(r).error!.message).toMatch(/Quantidade deve ser positiva/);
+    expect(await movimentosDo(p)).toBe(movAntes); expect(await baixasDo(p)).toBe(0);
+    expect(await saldos(p)).toEqual({ "Q-1": "10.0000" });
+  });
+});
+
+describe("LT-12 — soma exata: o valor do documento é a soma do razão, também quando a saída é dividida", () => {
+  /** Soma de `total_cost` (round(q × custo, 2) por movimento) de uma origem, lida do banco. */
+  const razao = async (source_type: string, source_id: string, tipo?: string) => (await um<{ t: string }>(
+    "select coalesce(sum(total_cost),0)::text t from erp.stock_movements where source_type=$1 and source_id=$2 and ($3::text is null or movement_type=$3)", [source_type, source_id, tipo ?? null]))!.t;
+  /** Custos médios que NÃO dão conta exata: 3 a 5,333333 → saldo 16,00; 3 a 7,333333 → 22,00. */
+  async function doisLotesDeCustoQuebrado(rotulo: string) {
+    const p = await produto("lote_validade", rotulo);
+    await lote(p, "A-CEDO", "2099-01-01", "3", "5.333333");
+    await lote(p, "B-TARDE", "2099-06-01", "3", "7.333333");
+    criado(await baixa(p, "2", { provider_lot: "A-CEDO" })); // o A fica com 1 (média 5,333333)
+    return p;
+  }
+
+  it("baixa e transferência de 2 que saem 1 de cada lote: total 12,66 = Σ razão (5,33 + 7,33), nunca 2 × a média ponderada (12,67)", async () => {
+    const p = await doisLotesDeCustoQuebrado("soma baixa");
+    const r = await baixa(p, "2");
+    const bx = criado(r);
+    expect(await porLote("stock_writeoffs", bx)).toEqual({ "A-CEDO": "1.0000", "B-TARDE": "1.0000" });
+    expect(await razao("stock_writeoffs", bx)).toBe("12.66");
+    expect(j(r).total_amount).toBe("12.66");
+    expect(await um("select sum(total_value)::text t from erp.stock_writeoff_items where writeoff_id=$1", [bx])).toEqual({ t: "12.66" });
+
+    const q = await doisLotesDeCustoQuebrado("soma transf");
+    const t = await post("/api/stock/transfers", { kind: "warehouse", transfer_date: "2026-09-20", empresa_origem_id: I.empresa, origin_warehouse_id: I.warehouse, destination_warehouse_id: I.warehouse2, items: [{ product_id: q, quantity: "2" }] });
+    const tr = criado(t);
+    // o que sai da origem, o que entra no destino e o valor do documento são o MESMO número
+    expect(await razao("warehouse_transfers", tr, "transfer_out")).toBe("12.66");
+    expect(await razao("warehouse_transfers", tr, "transfer_in")).toBe("12.66");
+    expect(j(t).total_value).toBe("12.66");
+    expect(await um("select total_value::text t from erp.warehouse_transfer_items where transfer_id=$1", [tr])).toEqual({ t: "12.66" });
+  });
+
+  it("correção para BAIXO sem lote: cada parte sai pela média do PRÓPRIO lote — o razão bate com o valor que o saldo perdeu", async () => {
+    const p = await produto("lote", "correcao media");
+    await lote(p, "A-CEDO", "2099-01-01", "10", "5");
+    await lote(p, "B-TARDE", "2099-06-01", "10", "7");
+    const valor = async () => (await um<{ v: string }>("select sum(total_value)::text v from erp.stock_balances where product_id=$1", [p]))!.v;
+    expect(await valor()).toBe("120.00");
+    const r = await post("/api/stock/corrections", { empresa_id: I.empresa, correction_date: "2026-09-20", warehouse_id: I.warehouse, product_id: p, new_quantity: "6", justification: "teste soma exata" });
+    const c = criado(r);
+    // −14: esgota o A (10 a 5) e tira 4 do B (a 7) — e não 14 a 6 (a média dos DOIS lotes)
+    expect((await admin.query("select provider_lot, quantity::text, unit_cost::text, total_cost::text from erp.stock_movements where source_id=$1 order by provider_lot", [c])).rows)
+      .toEqual([{ provider_lot: "A-CEDO", quantity: "10.0000", unit_cost: "5.000000", total_cost: "50.00" }, { provider_lot: "B-TARDE", quantity: "4.0000", unit_cost: "7.000000", total_cost: "28.00" }]);
+    expect(await valor()).toBe("42.00");
+    expect(await razao("stock_corrections", c)).toBe("78.00"); // 120 − 42
+  });
+});
+
+describe("LT-13 — estorno que devolveria saldo ao balde SEM lote de produto com controle (R1-1 h)", () => {
+  it("produto sem controle movimentado sem lote, controle ligado com saldo zero: cancelar a baixa e o saldo inicial → 422, nada gravado (o saldo ficaria preso)", async () => {
+    const p = criado(await post("/api/resources/products", { ...base, description: nome("balde"), controle_lote: "nenhum" }));
+    const ob = criado(await post("/api/stock/opening-balances", { empresa_id: I.empresa, warehouse_id: I.warehouse, product_id: p, quantity: "4", unit_value: "5" }));
+    const bx = criado(await baixa(p, "4"));
+    expect(await saldos(p)).toEqual({ "": "0.0000" });
+    // saldo zero na organização: o controle pode mudar
+    const put = await h.app.inject({ method: "PUT", url: `/api/resources/products/${p}`, headers: hdr(), payload: { controle_lote: "lote" } });
+    expect(put.statusCode, put.body).toBe(200);
+    const movAntes = await movimentosDo(p);
+
+    const c = await post(`/api/stock/writeoffs/${bx}/cancel`);
+    expect(c.statusCode, c.body).toBe(422);
+    expect(j(c).error!.code).toBe("VALIDATION_ERROR");
+    expect(j(c).error!.message).toMatch(/sem lote/);
+    expect(await um("select status from erp.stock_writeoffs where id=$1", [bx])).toEqual({ status: "confirmed" });
+
+    const o = await h.app.inject({ method: "DELETE", url: `/api/stock/opening-balances/${ob}`, headers: h.headers() });
+    expect(o.statusCode, o.body).toBe(422);
+    expect(await um("select status from erp.opening_balances where id=$1", [ob])).toEqual({ status: "confirmed" });
+
+    expect(await movimentosDo(p)).toBe(movAntes);
+    expect(await saldos(p)).toEqual({ "": "0.0000" });
+  });
+
+  it("o estorno de movimento COM lote continua normal depois de o controle mudar", async () => {
+    const p = await produto("lote", "estorno com lote");
+    await lote(p, "L-1", null, "5");
+    const bx = criado(await baixa(p, "2"));
+    const c = await post(`/api/stock/writeoffs/${bx}/cancel`);
+    expect(c.statusCode, c.body).toBe(200);
+    expect(await saldos(p)).toEqual({ "L-1": "5.0000" });
+  });
+});
+
+describe("LT-14 — o detalhe do documento diz de qual lote saiu cada movimento (R1-1 c: devolução a partir da requisição)", () => {
+  it("requisição sem lote dividida em 2 lotes: os movimentos do detalhe trazem armazém, produto, lote, validade e centro de cada parte", async () => {
+    const p = await produto("lote_validade", "detalhe");
+    await lote(p, "A-CEDO", "2099-01-01", "3");
+    await lote(p, "B-TARDE", "2099-06-01", "10");
+    const req = criado(await post("/api/stock/requisitions", { empresa_id: I.empresa, requisition_date: "2026-09-20", items: [{ warehouse_id: I.warehouse, product_id: p, quantity: "5" }] }));
+    const d = await h.app.inject({ method: "GET", url: `/api/stock/requisitions/${req}`, headers: h.headers() });
+    expect(d.statusCode, d.body).toBe(200);
+    const doc = JSON.parse(d.body) as { items: Record<string, unknown>[]; movements: Record<string, unknown>[] };
+    // o item da requisição não tem lote (a escolha foi automática) — o lote está no MOVIMENTO
+    expect(doc.items.map((i) => i["provider_lot"])).toEqual([null]);
+    const partes = doc.movements.map((m) => ({ lote: m["provider_lot"], validade: m["expiration_date"], quantidade: m["quantity"], armazem: m["warehouse_id"], produto: m["product_id"], centro: m["cost_center_id"] }))
+      .sort((a, b) => String(a.lote).localeCompare(String(b.lote)));
+    expect(partes).toEqual([
+      { lote: "A-CEDO", validade: "2099-01-01", quantidade: "3.0000", armazem: I.warehouse, produto: p, centro: null },
+      { lote: "B-TARDE", validade: "2099-06-01", quantidade: "2.0000", armazem: I.warehouse, produto: p, centro: null }
+    ]);
+  });
 });

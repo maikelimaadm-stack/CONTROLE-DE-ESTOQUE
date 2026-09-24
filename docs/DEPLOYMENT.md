@@ -1041,16 +1041,29 @@ embalagens intactos; controle = has_lot de antes; uma linha de unidade por 2ª u
 - **Saída SEM lote informado** — venda, abastecimento, manutenção, OS, manejo/nutrição, dieta, ração (insumo),
   requisição, baixa, correção para baixo e perna de saída da transferência: a API ESCOLHE o lote pela validade (a mais
   próxima primeiro; sem validade por último; empate pelo lote em ordem alfabética), divide a quantidade entre lotes (um
-  movimento por lote, com a validade do lote) e trava os saldos antes de escolher. **Lote vencido** na data do movimento
-  fica fora: só sai com o lote informado. Faltou saldo em lotes válidos → **409 `INSUFFICIENT_STOCK`** dizendo quanto há
-  em lotes válidos e em vencidos; nada é gravado.
+  movimento por lote, com a validade do lote) e trava, na ordem da escolha, SÓ os saldos que vai consumir, antes de
+  gravar (revisão do R1: travar também os que não usa fechava deadlock com a trava do produto que o gatilho pega).
+  **Lote vencido** na data do movimento fica fora: só sai com o lote informado. Faltou saldo em lotes válidos → **409
+  `INSUFFICIENT_STOCK`** dizendo quanto há em lotes válidos e em vencidos; nada é gravado. Quantidade que arredonda a
+  zero na escala do estoque (4 casas) → 422.
+- **Valor do documento = soma do razão:** o total do item e do documento de saída (baixa, requisição, transferência,
+  manutenção, abastecimento, manejo, dieta, ração) é a soma do que o ledger gravou em cada parte (Σ round(qᵢ × cᵢ, 2)),
+  nunca quantidade × custo médio ponderado — numa saída dividida os dois diferem em centavos. Correção para baixo sem
+  valor informado sai pela média de CADA lote (a do saldo do lote).
 - **Saída COM lote informado:** sai do lote informado, inclusive vencido; o movimento grava a validade do lote.
 - **Entradas:** NF-e, entrada de insumo e saldo inicial exigem o lote (e a validade no "lote + validade"). Devolução:
   lote e validade no item, exigidos só para produto com controle. Correção para cima: lote e validade (esta no "lote +
   validade"; num ajuste para baixo a validade é recusada). Transferência: o destino recebe o lote e a validade de cada
   parte da saída. Produção de ração: o produzido com controle recebe o código da produção como lote e a validade
   informada na produção (exigida no "lote + validade").
-- **Lote aparado** na borda da API; lote só de espaços é "sem lote".
+- **Lote aparado** na borda da API; lote só de espaços é "sem lote". O lote informado é resolvido pela CHAVE GRAVADA
+  (`btrim(provider_lot)`): o saldo gravado pela API anterior com espaços nas pontas é achado pela correção (conta do
+  saldo atual), pela saída com o lote informado e pela entrada — nenhum lote "sem espaços" nasce ao lado dele. Dois
+  saldos do mesmo produto e armazém que só diferem por espaços, ambos com quantidade → 422 nomeando o lote.
+- **Estorno sem lote de produto que controla lote → 422:** cancelar documento cujo movimento foi gravado SEM lote
+  quando o produto ainda não controlava lote (API anterior, ou controle ligado depois com saldo zerado) é recusado,
+  nada gravado — o estorno devolveria saldo ao balde sem lote, onde ficaria preso. O acerto é devolução ou correção
+  informando o lote.
 - **Controle com saldo:** mudar o controle com saldo ≠ 0 na organização → 422 "zere o saldo em todos os armazéns".
 
 **Impacto em dados reais — medir ANTES, em leitura:** nenhum fluxo fica recusado por falta de campo de lote; o que
@@ -1059,6 +1072,26 @@ muda para o usuário é a escolha automática por validade (e o 409 quando só h
 (o texto da revisão R1 registra 0 produtos em produção; reconferir na hora):
 `select p.code, p.description, b.warehouse_id, b.quantity from erp.products p join erp.stock_balances b on b.organization_id = p.organization_id and b.product_id = p.id where p.has_lot and btrim(b.provider_lot) = '' and b.quantity <> 0;`.
 Havendo linha, a 0029 PARA nomeando o produto: zerar esse saldo é decisão humana ANTES do deploy.
+Medir também (leitura; nenhuma delas para a migration):
+- saldos com lote gravado com espaços nas pontas — a API nova os acha pela chave gravada; havendo DOIS do mesmo lote
+  com quantidade no mesmo armazém, a saída com o lote informado responde 422 até o acerto (decisão humana):
+  `select organization_id, warehouse_id, product_id, btrim(provider_lot) as lote, count(*) filter (where quantity <> 0) as com_saldo, array_agg(provider_lot) as gravados from erp.stock_balances where btrim(provider_lot) <> '' group by 1,2,3,4 having bool_or(provider_lot <> btrim(provider_lot)) and bool_or(quantity <> 0);`
+  (`com_saldo` > 1 = o caso do 422);
+- movimentos SEM lote, não estornados, de produto com `has_lot` — depois do deploy o cancelamento do documento deles
+  responde 422 (o estorno cairia no balde sem lote); o que tiver de ser cancelado, cancelar ANTES do deploy:
+  `select p.code, p.description, m.source_type, m.source_id, m.direction, m.quantity from erp.stock_movements m join erp.products p on p.id = m.product_id and p.organization_id = m.organization_id where p.has_lot and coalesce(btrim(m.provider_lot), '') = '' and m.movement_type <> 'reversal' and not exists (select 1 from erp.stock_movements r where r.organization_id = m.organization_id and r.movement_type = 'reversal' and r.note = 'estorno de ' || m.id);`.
+
+**Riscos remanescentes declarados (revisão do R1):**
+- **Deadlock residual:** uma saída sem lote que PRECISA de dois ou mais lotes trava todos eles antes de gravar; uma
+  transferência concorrente PARA o mesmo armazém, de um desses lotes, que já segure a linha do produto, fecha ciclo. O
+  PostgreSQL aborta uma das duas (40P01 → 409 `CONCURRENCY_CONFLICT`, nada gravado; repetir resolve). A saída que
+  cabe num lote só não trava os outros (LT-9c).
+- **Data da OS em UTC:** a finalização da OS grava o movimento com a data UTC do servidor (`todayISO()`, anterior a
+  esta fatia; a API não tem fuso de negócio). Entre 21h e 24h no horário de Brasília, lote com validade de HOJE conta
+  como vencido na escolha automática da OS: ela consome o lote seguinte ou responde 409. Corrigir exige a política de
+  fuso da operação — fora do R1.
+- **Correção lê o saldo atual sem trava** (anterior a esta fatia): uma saída concorrente confirmada entre a leitura e
+  o movimento faz o ajuste aplicar uma diferença velha. Fora do R1.
 
 **Implantação — ordem: banco (0029) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
 
