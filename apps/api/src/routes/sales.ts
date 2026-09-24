@@ -127,7 +127,7 @@ export const CAPACIDADE_CLASSIFICACAO_FINANCEIRA = 1;
 const MSG_CATEGORIA_INVALIDA = "Categoria financeira inválida para venda: escolha uma categoria analítica de receita, ativa";
 const MSG_CENTRO_INVALIDO = "Centro de custo inválido para venda: escolha um centro de custo analítico, ativo";
 const MSG_PAR_INCOMPLETO = "Informe a categoria financeira e o centro de custo juntos";
-const recusaDeCampo = (campo: "categoria_financeira_id" | "centro_custo_id", mensagem: string) => err("VALIDATION_ERROR", mensagem, [{ path: [campo], message: mensagem }]);
+const recusaDeCampo = (campo: "categoria_financeira_id" | "centro_custo_id", mensagem: string) => err("VALIDATION_ERROR", mensagem, [{ path: campo, message: mensagem }]);
 
 /**
  * A PORTA ÚNICA DE VALIDAÇÃO da classificação — usada na criação, na edição, na conversão e na confirmação.
