@@ -1004,7 +1004,8 @@ decide" e "a configuração decide" é a parte difícil, e não se resolve de pa
 
 > Contrato: `packages/domain/src/tipo-operacao-configuracao.ts` (formato 2) e
 > `packages/domain/src/tipo-operacao-execucao.ts` (matriz de suporte e política efetiva da venda).
-> Executor: `confirmSale` em `apps/api/src/routes/sales.ts`. Ativação: `apps/api/src/routes/tipos-operacao.ts`.
+> Executor: `confirmSale` em `apps/api/src/routes/sales.ts`, com o planejamento em `planejarConfirmacao` — a
+> mesma função da prévia da confirmação (§12.5). Ativação: `apps/api/src/routes/tipos-operacao.ts`.
 > Guarda de banco: `supabase/migrations/0023_venda_execucao_configurada_guarda.sql`.
 > Implantação em duas fases: `docs/DEPLOYMENT.md`.
 
@@ -1111,6 +1112,68 @@ Ligar o gate é a **fase 2** da implantação, e ela tem pré-condições própr
   linhas que o legado — movimento, título, parcelas, rateio, ID Global e trilha — contra venda sem TOP,
   formato 1 e formato 2 em legado (04A-P1…P3). O que pode diferir é uma lista fechada, cujo dono é o
   comentário de `normalizar` no teste e a linha do teste em `docs/TESTING.md`; este contrato não a repete.
+
+#### A prévia da confirmação (VENDAS-A5-1, decisão 249)
+
+A tela não adivinha efeito: o texto do diálogo "Confirmar venda" vem do servidor, calculado pela MESMA
+regra que executa a confirmação.
+
+- **Rota:** `GET /api/sales/sales/:id/previa-confirmacao`. Só a variante venda tem a rota. Capacidade
+  `sales.view` — quem pode abrir o documento pode ver o que a confirmação faria; confirmar continua
+  exigindo `sales.edit`. A autorização vem ANTES dos dados, pela MESMA `getDoc` do GET do documento, sem
+  lock, e a prévia responde o que o GET responde: outro tenant, fora do escopo, inexistente, excluído e id
+  de orçamento ou pedido dão a MESMA 404. O id malformado dá hoje 500 nas duas portas (22P02 não mapeado
+  na `getDoc` — dívida anterior, da `getDoc`, fixada no teste A5-C9; decisão 249).
+- **Uma regra só.** A prévia e a confirmação chamam a MESMA `planejarConfirmacao`
+  (`apps/api/src/routes/sales.ts`); nenhum consumidor reescreve a regra, nem "equivalente". O que difere
+  está inteiro no modo que cada uma passa: a confirmação trava (a venda com lock, a classificação
+  `for share`), LANÇA a primeira recusa e confere o período direto; a prévia não trava linha, não grava
+  nada (nem auditoria, nem chave de idempotência), confere o período sob
+  `savepoint previa_confirmacao_periodo` — a conferência levanta exceção, e sem o savepoint a transação
+  ficaria abortada para a etapa seguinte — e ANOTA as recusas, traduzidas como a confirmação as recebe.
+- **Ordem das recusas** — a do planejamento, que é a da confirmação:
+  situação (`ALREADY_CONFIRMED` para confirmada ou faturada, `ALREADY_CANCELLED`) → política da versão
+  congelada e gate (`TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`, §12.4) → exigências da versão
+  (`TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA`, com `details.exigencias`) → período (`PERIOD_FROZEN`) →
+  classificação financeira, só quando haverá título (a do documento revalidada — recusa no campo —, ou,
+  sem classificação, o recuo "padrão legado", recusado com "Cadastre uma categoria financeira de receita e
+  um centro de custo analítico" quando falta cadastro). A **primeira** recusa é exatamente a que a
+  confirmação daria agora: mesmo código, mensagem e detalhes. Situação e política recusadas PARAM a lista
+  (sem política não há efeito a prever); exigências, período e classificação recusados SEGUEM. Por
+  último, quando haverá título, a conta de parcelas (`parcelasDoTitulo`): se ela recusa (entrada maior ou
+  igual ao total, número de parcelas inválido), a recusa entra na lista como a confirmação a daria ao
+  gerar os títulos.
+- **Resposta** (`contractVersion: 1`; o cliente confere forma, versão e coerência antes de ler, no molde
+  de `/proximos-passos` — `valor` decimal em texto exatamente quando `financeiro.efeito` é "receber", e
+  `podeConfirmar` só com os dois efeitos não nulos):
+
+```
+{ contractVersion: 1,
+  podeConfirmar: boolean,                          // verdadeiro ⇔ recusas vazia
+  recusas: [{ code, message, details }],           // a primeira = a da confirmação agora
+  estoque: { efeito: "baixa" | "nenhum" | null,    // null = a recusa veio antes da política
+             itensQueBaixam, itensSemArmazem },    // 0 e 0 quando não baixa
+  financeiro: { efeito: "receber" | "nenhum" | null,
+                valor,                             // total do documento; null sem título
+                primeiroVencimento,                // parcelasDoTitulo(tituloDaVenda(...)); null sem título ou com a conta recusada
+                classificacao: { origem: "documento" | "padrão legado",
+                                 categoria: { id, codigo, nome },
+                                 centro: { id, codigo, nome } } | null },  // null sem título ou recusada
+  politica: { origem, estoque, financeiro } | null }  // resumoDaPoliticaDaVenda, como na auditoria
+```
+
+- **Apresentação, não autoridade.** Entre abrir o diálogo e confirmar o cadastro pode mudar; a
+  confirmação decide com a trava. Recusa que nasce DENTRO das primitivas de efeito, depois do
+  planejamento — saldo insuficiente (gatilho de `erp.stock_movements`), produto ou armazém recusados por
+  `postStock`, valor de título não positivo em `createTitles` — não é prevista; a confirmação a dá com
+  zero efeito (uma transação só).
+- **Consumidor e rolling deploy.** A web (`apps/web/src/features/sales/previa-confirmacao.ts`) pergunta a
+  cada abertura do diálogo e desabilita o Confirmar enquanto a prévia carrega e quando ela prevê recusa.
+  Sem a prévia — API anterior, 404/500, corpo fora do contrato 1 —, o diálogo mostra um texto NEUTRO e o
+  botão fica habilitado: quem recusa é o servidor. O aviso do padrão automático no detalhe lê a MESMA
+  resposta do diálogo (só quando ela diz que a confirmação pode acontecer e vai gerar contas a receber
+  pelo recuo) e, sem ela, a regra da VENDAS-A1.
+- **Fora:** prévia de conversão e de cancelamento, e número de parcelas.
 
 ### 12.6 Administração e o que continua só declarado
 
