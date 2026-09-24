@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, uniq } from "./helpers";
+import { login, uniq, pickRef, preencherClassificacaoFinanceira } from "./helpers";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -269,4 +269,78 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
   expect(d.configuracao.valor.execucao, "o bloco de execução não foi apagado").toEqual({ estoque: "legado", financeiro: "legado" });
   expect(d.configuracao.valor.estoque.atualizacao, "nem a seção que ele não sabia ler").toBe("saida");
   v.semBloqueio();
+});
+
+/**
+ * VENDAS-A1 · A1-K2 — O WEB DA BASE LANÇA UMA VENDA CONTRA A API DESTE HEAD.
+ *
+ * O cliente anterior não conhece `categoria_financeira_id`/`centro_custo_id`: o corpo dele não os leva. A
+ * API deste HEAD tem de aceitar esse corpo (201, a mesma compatibilidade do `tipo_operacao_id`), gravar o
+ * documento SEM classificação — nulos, nunca um par inventado — e, na confirmação, recuar EXATAMENTE como
+ * antes: a "primeira por código", registrada na auditoria como `padrão legado`. Sem este caso, a janela
+ * em que a API sobe antes do web poderia recusar lançamentos de todo navegador aberto.
+ *
+ * Vale nos dois mundos: um web da base anterior à fatia não envia os campos; um web da base posterior só
+ * os envia com a capacidade declarada — e aí o caso seria o do W1, não este. Por isso o POST é observado
+ * no fio e o ramo é escolhido pelo que o cliente da base DE FATO enviou.
+ */
+test("VENDAS-A1 · A1-K2 — o web da base cria venda sem classificação: 201 com nulos, e a confirmação usa o padrão legado", async ({ page, request }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId), "content-type": "application/json" };
+
+  // Uma TOP de venda criada pelo HEAD, para o lançador da base ter o que escolher.
+  const codigo = `SK2${Date.now().toString(36).toUpperCase()}`;
+  const criada = await request.post(`${API}/api/admin/tipos-operacao`, { headers: auth, data: { codigo, codigoBase: "vendas.venda", nome: `Skew A1 ${codigo}` } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const topId = (await criada.json() as { id: string }).id;
+
+  // O CLIENTE DA BASE lança pela própria tela: lançador → TOP → cliente → item → Salvar.
+  await page.goto("/vendas/sales/new");
+  await expect(page.getByTestId("top-lancador")).toBeVisible();
+  await page.locator(`[data-testid="top-opcao"][data-top-id="${topId}"]`).click();
+  await page.getByTestId("top-continuar").click();
+  await expect(page.getByTestId("top-contexto")).toBeVisible();
+  await pickRef(page, "Cliente", "DEMO");
+  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
+  await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
+
+  const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));
+  const salvar = page.getByRole("button", { name: "Salvar" });
+  const baseMostraCampos = await page.getByTestId("central-vendas").locator("label", { hasText: "Categoria financeira" }).count() > 0;
+  if (baseMostraCampos) {
+    // Mundo em que a base já é posterior à A1: o web dela preenche como o deste HEAD (W1). O caso do cliente
+    // ANTERIOR à fatia deixou de existir em produção, e fingi-lo aqui certificaria o que não roda.
+    await preencherClassificacaoFinanceira(page);
+  }
+  await salvar.click();
+  const r = await resposta;
+  expect(r.status(), "a API deste HEAD aceita o corpo do cliente da base").toBe(201);
+  const enviado = r.request().postDataJSON() as Record<string, unknown>;
+  const { id } = await r.json() as { id: string };
+  const lido = await (await request.get(`${API}/api/sales/sales/${id}`, { headers: auth })).json() as Record<string, unknown>;
+  if (baseMostraCampos) {
+    expect(lido["categoria_financeira_id"], "o web da base (pós-A1) gravou a classificação que enviou").toBe(enviado["categoria_financeira_id"]);
+    v.semBloqueio(); v.semErroDeContrato();
+    return;
+  }
+
+  // MUNDO LEGADO: o corpo NÃO tinha o par — e o documento nasceu sem ele, nulos, nunca um par inventado.
+  expect(Object.keys(enviado).filter((k) => k === "categoria_financeira_id" || k === "centro_custo_id"), "premissa: o cliente da base não conhece o par").toEqual([]);
+  expect([lido["categoria_financeira_id"], lido["centro_custo_id"]], "sem classificação: nulos").toEqual([null, null]);
+
+  // A CONFIRMAÇÃO recua como antes, e a auditoria diz de onde veio a classificação usada no título.
+  const conf = await request.post(`${API}/api/sales/sales/${id}/confirm`, { headers: auth, data: {} });
+  expect(conf.status(), await conf.text()).toBe(200);
+  const titulos = (await conf.json() as { title_ids: string[] }).title_ids;
+  expect(titulos.length, "premissa: o recuo só se aplica quando HÁ título — e esta venda gerou").toBeGreaterThan(0);
+  const trilha = await (await request.get(`${API}/api/admin/audit?entity=sales_documents&entity_id=${id}`, { headers: auth })).json() as
+    { items: { action: string; metadata: { classificacaoFinanceira?: { origem?: string; categoriaFinanceiraId?: string; centroCustoId?: string } } | null }[] };
+  const confirmacao = trilha.items.filter((i) => i.action === "confirm");
+  expect(confirmacao, "uma confirmação na trilha").toHaveLength(1);
+  expect(confirmacao[0]!.metadata?.classificacaoFinanceira?.origem, "o título usou o padrão legado, e a trilha diz isso").toBe("padrão legado");
+  expect(confirmacao[0]!.metadata?.classificacaoFinanceira?.categoriaFinanceiraId, "com a categoria efetivamente usada").toMatch(/^[0-9a-f-]{36}$/);
+  v.semBloqueio(); v.semErroDeContrato();
 });

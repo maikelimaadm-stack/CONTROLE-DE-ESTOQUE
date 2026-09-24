@@ -183,6 +183,12 @@ jobs:
       # web o reconhece. A decisão é MEDIDA na árvore da base e expira sozinha. Falha fechado.
       - name: A API da base já declara a execução configurada da TOP? (TOP-CONFIG-04A)
         run: node scripts/skew-execucao-top.mjs --github-env
+      # A API DA BASE JÁ DECLARA A CLASSIFICAÇÃO FINANCEIRA DO DOCUMENTO DE VENDA? (VENDAS-A1)
+      # Mesmo desenho: sem `capacidades.classificacaoFinanceira` na descoberta da base, o sentido 1 cobra que o
+      # web NÃO mostra os dois campos e NÃO os envia no POST (a base os descartaria em silêncio); com ela,
+      # cobra que o web os mostra. A decisão é MEDIDA na árvore da base e expira sozinha. Falha fechado.
+      - name: A API da base já declara a classificação financeira da venda? (VENDAS-A1)
+        run: node scripts/skew-classificacao-financeira.mjs --github-env
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
       # SENTIDO 1 — o web desta PR contra a API que está no ar (o Vercel sobe antes do Railway).
       - name: E2E de version skew (web deste HEAD × API da base)

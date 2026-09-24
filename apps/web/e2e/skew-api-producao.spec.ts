@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, uniq } from "./helpers";
+import { login, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 import { criarEmpresaEConferirContador, provarContadorIncompativel } from "./skew-contador-empresa";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -582,4 +582,166 @@ test("TOP-CONFIG-04A · a execução configurada, medida contra o binário real 
   await expect(forma.getByTestId("top-execucao"), "a área de execução monta contra a base").toBeVisible();
   await expect(forma.getByTestId("top-execucao-nao-suportado"), "e a base não é tratada como servidor antigo").toHaveCount(0);
   v.semBloqueio();
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * VENDAS-A1 — A CLASSIFICAÇÃO FINANCEIRA, COM O WEB DESTE HEAD SOBRE A API DA BASE
+ *
+ * O web desta PR sabe mostrar e enviar `categoria_financeira_id`/`centro_custo_id`. Contra uma API que
+ * não DECLARA que os entende, ele não pode fazer nenhuma das duas coisas: o `docSchema` da base é
+ * `z.object` sem `.strict()` e DESCARTA os dois em silêncio — o usuário escolheria a classificação, leria
+ * "salvo" e o documento nasceria sem ela. Por isso a prova do mundo legado é NO FIO: o corpo do POST que
+ * saiu do navegador, não o estado da tela.
+ *
+ * O mundo é MEDIDO na árvore da base (`scripts/lib/classificacao-financeira.mjs`) e cada um cobra a sua
+ * prova; nenhum dos dois ramos só passa.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+function baseDeclaraClassificacao(): boolean {
+  const arq = path.resolve(__dirname, "../../..", ".skew-classificacao-financeira.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão da classificação financeira ausente (${arq}): rode scripts/skew-classificacao-financeira.mjs antes do skew. `
+      + "Sem ela não há como saber qual ramo provar, e escolher o mais fácil seria certificar o que não se mediu.");
+  }
+  const d = JSON.parse(fs.readFileSync(arq, "utf8")) as { baseSha: string; ocorrencias: number; declara: boolean };
+  expect(d.ocorrencias, "contagem ambígua não decide ramo nenhum — o produtor deveria ter reprovado antes").toBeLessThanOrEqual(1);
+  const declara = d.ocorrencias === 1;
+  expect(declara, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(d.declara);
+  expect(process.env.SKEW_BASE_TEM_CLASSIFICACAO ?? (declara ? "1" : "0"),
+    "SKEW_BASE_TEM_CLASSIFICACAO não bate com a decisão recalculada — alguém fixou a variável por fora").toBe(declara ? "1" : "0");
+  console.log(`[skew] VENDAS-A1 · base ${d.baseSha} ${declara ? "DECLARA" : "NÃO declara"} a classificação financeira (ocorrências=${d.ocorrencias})`);
+  return declara;
+}
+
+test("VENDAS-A1 · A1-K1 — sem a capacidade declarada pela base, os campos não aparecem e NÃO viajam no POST", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const declara = baseDeclaraClassificacao();
+
+  // A descoberta, lida do binário real: é ela que o web consulta para decidir.
+  const desc = await page.request.get(`${API}/api/sales/sales/operation-types`, { headers: cabecalhos });
+  expect(desc.status(), "premissa: a base serve a descoberta da TOP de venda").toBe(200);
+  const corpoDesc = await desc.json() as { contractVersion?: number; capacidades?: { classificacaoFinanceira?: unknown } };
+  expect(corpoDesc.contractVersion, "a declaração é ADITIVA: o contrato que o web da base compara continua o 1").toBe(1);
+
+  // Uma TOP criada PELA API DA BASE, para o lançamento ter o que escolher nos dois mundos.
+  const codigo = `SC${Date.now().toString(36).toUpperCase()}`;
+  const criada = await page.request.post(`${API}/api/admin/tipos-operacao`, { headers: cabecalhos, data: { codigo, codigoBase: "vendas.venda", nome: `Skew classificação ${codigo}` } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const topId = (await criada.json() as { id: string }).id;
+
+  await abrirLancamentoDeVendas(page, "sales");
+  await escolherTopEContinuar(page, topId);
+  const dados = page.getByTestId("central-vendas").getByRole("region", { name: "Dados principais" });
+  await expect(dados.locator("label", { hasText: "Forma de pagamento" }), "premissa: o formulário montou").toBeVisible();
+  await pickRef(page, "Cliente", "DEMO");
+  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await escolherPrimeiroProdutoDaLinha(page);
+  const salvar = page.getByRole("button", { name: "Salvar" });
+
+  if (!declara) {
+    // MUNDO LEGADO. A base não declara; o web não oferece o que ela jogaria fora.
+    expect(corpoDesc.capacidades?.classificacaoFinanceira, "a base não declara a capacidade").toBeUndefined();
+    await expect(dados.locator("label", { hasText: "Categoria financeira" }), "o campo não aparece").toHaveCount(0);
+    await expect(dados.locator("label", { hasText: "Centro de custo" }), "o campo não aparece").toHaveCount(0);
+    await expect(salvar, "o Salvar segue a regra de antes: cliente e item bastam").toBeEnabled();
+
+    // NO FIO: o POST vai de verdade para a base, e o corpo que saiu do navegador não carrega o par.
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));
+    await salvar.click();
+    const r = await resposta;
+    expect(r.status(), "a base aceita o que o web enviou").toBe(201);
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(enviado["tipo_operacao_id"], "premissa: o corpo capturado é o deste lançamento").toBe(topId);
+    expect(Object.keys(enviado).filter((k) => k === "categoria_financeira_id" || k === "centro_custo_id"),
+      "o par NÃO viaja para uma API que o descartaria em silêncio").toEqual([]);
+    v.semBloqueio();
+    return;
+  }
+
+  // MUNDO ATUAL. A base declara a versão que o web conhece; os campos aparecem e voltam a ser exigidos.
+  expect(corpoDesc.capacidades?.classificacaoFinanceira, "a árvore da base declara, então o binário tem de servir").toBe(1);
+  await expect(dados.locator("label", { hasText: "Categoria financeira" })).toBeVisible();
+  await expect(dados.locator("label", { hasText: "Centro de custo" })).toBeVisible();
+  await expect(salvar, "declarada, a classificação é exigida").toBeDisabled();
+  await preencherClassificacaoFinanceira(page);
+  await expect(salvar).toBeEnabled();
+  v.semBloqueio();
+});
+
+/**
+ * A1-K3 — A GUARDA NO BANCO CONTRA O BINÁRIO DA BASE.
+ *
+ * O harness comporta este caso: o banco do skew é migrado e semeado pelo HEAD (0024 e a guarda incluídas) e
+ * o servidor é o binário da base — exatamente o estado de uma REVERSÃO da API depois de a 0024 subir, ou de
+ * uma instância anterior ainda no pool. A venda classificada é PREPARADA NO BANCO, porque a API da base não
+ * sabe gravar a classificação (descartaria os campos); é o único jeito honesto de ela existir aqui.
+ */
+const DB_SKEW = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function sql(comando: string): string {
+  return execFileSync("psql", [DB_SKEW, "-v", "ON_ERROR_STOP=1", "-Atc", comando], { encoding: "utf8" }).trim();
+}
+
+test("VENDAS-A1 · A1-K3 — a API da base não confirma venda classificada; a sem classificação confirma", async ({ page }) => {
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const declara = baseDeclaraClassificacao();
+
+  const um = async (p: string) => {
+    const r = await page.request.get(`${API}${p}`, { headers: cabecalhos });
+    expect(r.status(), p).toBe(200);
+    const id = (await r.json() as { items: { id: string }[] }).items?.[0]?.id;
+    expect(id, `o seed precisa ter registro em ${p}`).toBeTruthy();
+    return id!;
+  };
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cabecalhos })).json() as { empresas: { id: string }[] };
+  const empresa = s.empresaId ?? ctx.empresas[0]!.id;
+  const cliente = await um("/api/resources/people?is_client=true&pageSize=1");
+  const produto = await um("/api/resources/products?pageSize=1");
+  // Duas vendas pela API DA BASE, com o corpo que ela conhece (sem classificação, sem armazém — o efeito
+  // que interessa aqui é o título, e é por ele que a classificação importa).
+  const criarVenda = async () => {
+    const r = await page.request.post(`${API}/api/sales/sales`, { headers: cabecalhos, data: {
+      empresa_id: empresa, document_date: "2026-09-01", client_id: cliente,
+      items: [{ product_id: produto, warehouse_id: null, quantity: "1", unit_price: "10.00" }] } });
+    expect(r.status(), await r.text()).toBe(201);
+    const id = (await r.json() as { id: string }).id;
+    expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+    return id;
+  };
+  const classificada = await criarVenda();
+  const semClassificacao = await criarVenda();
+
+  // A classificação PREPARADA NO BANCO: a analítica de receita e o centro analítico da própria organização.
+  const preparada = sql(`update erp.sales_documents d set
+      categoria_financeira_id = (select c.id from erp.financial_categories c where c.organization_id = d.organization_id and c.kind = 'analytic' and c.nature = 'income' and c.is_active and c.deleted_at is null order by c.code limit 1),
+      centro_custo_id = (select cc.id from erp.cost_centers cc where cc.organization_id = d.organization_id and cc.kind = 'analytic' and cc.is_active and cc.deleted_at is null order by cc.code limit 1)
+    where d.id = '${classificada}' returning (categoria_financeira_id is not null and centro_custo_id is not null)`);
+  expect(preparada.split("\n")[0], "premissa: a venda ficou classificada no banco").toBe("t");
+  expect(sql(`select count(*) from pg_trigger where tgrelid = 'erp.sales_documents'::regclass and not tgisinternal and tgenabled <> 'D' and tgfoid = 'erp.venda_classificacao_financeira_guarda'::regproc`),
+    "premissa: a guarda da 0024 está no banco e habilitada").toBe("1");
+
+  const confirmar = (id: string) => page.request.post(`${API}/api/sales/sales/${id}/confirm`, { headers: cabecalhos, data: {} });
+  const situacao = (id: string) => sql(`select status from erp.sales_documents where id = '${id}'`);
+
+  const recusa = await confirmar(classificada);
+  if (!declara) {
+    // MUNDO LEGADO: o binário da base não grava a marca, então a guarda RECUSA — com o código que ele mapeia.
+    expect(recusa.status(), "a base NÃO confirma a venda classificada pela 'primeira por código'").toBe(422);
+    expect(((await recusa.json()) as { error: { code: string } }).error.code).toBe("VALIDATION_ERROR");
+    expect(situacao(classificada), "e nada mudou: a venda continua aberta").toBe("open");
+  } else {
+    // MUNDO ATUAL: a base já aplica a classificação e grava a marca; a mesma venda confirma.
+    expect(recusa.status(), await recusa.text()).toBe(200);
+    expect(situacao(classificada)).toBe("confirmed");
+  }
+
+  // A venda SEM classificação confirma nos dois mundos — a guarda só recusa quem ignoraria a classificação.
+  const ok = await confirmar(semClassificacao);
+  expect(ok.status(), await ok.text()).toBe(200);
+  expect(situacao(semClassificacao)).toBe("confirmed");
 });

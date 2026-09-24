@@ -95,3 +95,22 @@ export async function escolherPrimeiroProdutoDaLinha(page: Page) {
   await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
   await expect(page.getByTestId("central-vendas-pesquisa")).toHaveCount(0);
 }
+
+/**
+ * A CLASSIFICAÇÃO FINANCEIRA DO SEED QUE A CENTRAL DE VENDAS EXIGE (VENDAS-A1).
+ *
+ * Com a API declarando `capacidades.classificacaoFinanceira`, o Salvar da Central só libera com
+ * "Categoria financeira" e "Centro de custo" escolhidos — nas três variantes. Os specs que salvam pela
+ * Central escolhem os DOIS pela MESMA porta, e escolhem registros analíticos do seed (a categoria de
+ * receita e o centro que o lookup oferece), para que nenhum deles dependa do que outro spec cadastrou.
+ * Mora aqui pelo mesmo motivo do lançador: duplicado, cada spec envelheceria por conta própria.
+ */
+export const CLASSIFICACAO_DO_SEED = {
+  categoria: { codigo: "1.01.001", nome: "Venda de Boi Gordo" },
+  centro: { codigo: "1.01.001", nome: "Adm Geral" }
+} as const;
+
+export async function preencherClassificacaoFinanceira(page: Page) {
+  await pickRef(page, "Categoria financeira", CLASSIFICACAO_DO_SEED.categoria.nome);
+  await pickRef(page, "Centro de custo", CLASSIFICACAO_DO_SEED.centro.nome);
+}

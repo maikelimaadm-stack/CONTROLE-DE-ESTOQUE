@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha } from "./helpers";
+import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 
 /**
  * CENTRAL DE VENDAS — WORKSPACE FOUNDATION (VISUAL-UX-01).
@@ -141,6 +141,9 @@ test("W4 — Salvar continua sujeito às condições funcionais: cliente, item c
   await page.getByRole("button", { name: /Adicionar item/ }).click();
   await expect(salvar, "item sem produto, não salva").toBeDisabled();
   await escolherPrimeiroProdutoDaLinha(page);
+  // VENDAS-A1: com a capacidade declarada pela API, a classificação financeira é a terceira condição.
+  await expect(salvar, "cliente e item sem classificação financeira, não salva").toBeDisabled();
+  await preencherClassificacaoFinanceira(page);
   await expect(salvar).toBeEnabled();
 
   // o que vai no corpo: os campos das abas, com o nome de antes, e o UUID da TOP validada
@@ -159,11 +162,19 @@ test("W4 — Salvar continua sujeito às condições funcionais: cliente, item c
   expect(corpo!["tipo_operacao_id"], "a TOP validada vai no corpo").toBe(top.id);
   expect(corpo!["note"]).toBe("observação do payload");
   expect(corpo!["driver_name"]).toBe("motorista do payload");
-  expect(Object.keys(corpo!).sort(), "o contrato do payload é o MESMO de antes da fatia").toEqual([
+  /**
+   * O contrato do payload é o de antes da fatia MAIS as duas chaves da VENDAS-A1 — e SÓ elas. Continua
+   * igualdade exata: um "contém" deixaria passar qualquer chave nova que ninguém revisou. As duas só viajam
+   * porque a API declarou a capacidade; contra uma API que não a declara, o skew (A1-K1) prova que não saem.
+   */
+  expect(Object.keys(corpo!).sort(), "o contrato do payload é o de antes da fatia mais o par da VENDAS-A1").toEqual([
+    "categoria_financeira_id", "centro_custo_id",
     "client_id", "discount", "document_date", "driver_name", "due_date", "empresa_id", "freight", "freight_icms",
     "installment_plan", "is_deductible", "items", "note", "other_values", "payment_method_id", "proprietary_id",
     "shipping_date", "tipo_operacao_id", "transporter_id"
   ]);
+  expect(corpo!["categoria_financeira_id"], "a categoria escolhida viaja como UUID").toMatch(/^[0-9a-f-]{36}$/);
+  expect(corpo!["centro_custo_id"], "o centro escolhido viaja como UUID").toMatch(/^[0-9a-f-]{36}$/);
   const item = (corpo!["items"] as Record<string, unknown>[])[0]!;
   expect(Object.keys(item).sort()).toEqual(["discount", "discount_percent", "note", "product_id", "quantity", "unit_price", "warehouse_id"]);
 });
@@ -181,6 +192,7 @@ test("W5 — nenhuma escrita sem TOP confirmada AGORA: a lista muda, o rascunho 
 
   await abrirWorkspace(page);
   await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
   await page.getByRole("button", { name: /Adicionar item/ }).click();
   await escolherPrimeiroProdutoDaLinha(page);
   await expect(page.getByRole("button", { name: "Salvar" }), "a PREMISSA: sem o bloqueio, salvaria").toBeEnabled();
@@ -542,6 +554,7 @@ test("W17 — as visões não mudam o payload: quantidade do formulário e produ
   await login(page);
   const top = await abrirWorkspace(page);
   await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
   await adicionarItemComProduto(page, 0);
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
   await page.getByTestId("central-vendas-item-form").getByLabel("Quantidade").fill("3");
@@ -716,6 +729,7 @@ test("W20 — Configurar colunas: esconde, reordena e restaura colunas e campos 
   await login(page);
   const { top, antes: chavesAntes } = await abrirWorkspaceMedindo(page);
   await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
   await adicionarItemComProduto(page, 0);
   await linhaDaGrade(page, 0).getByLabel("Quantidade").fill("4");
 
@@ -1025,6 +1039,7 @@ test("W28 — unidade do produto: sufixo da quantidade e campo travado, pela lei
   await login(page);
   await abrirWorkspace(page);
   await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
   const rotulo = await adicionarItemComProduto(page, 0);
   const opcoes = await api<{ id: string; label: string }[]>(page, "GET", `/api/resources/products/options?search=${encodeURIComponent(rotulo)}`);
   const produto = opcoes.find((o) => o.label === rotulo);
@@ -1061,6 +1076,7 @@ test("W29 — esconder a coluna Estoque ou trocar de visão NÃO reaplica o cust
 
   await abrirWorkspace(page);
   await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
   await page.getByRole("button", { name: "Adicionar item" }).click();
   const linha = linhaDaGrade(page, 0);
   const escolher = async (celula: string, nome: string) => {
