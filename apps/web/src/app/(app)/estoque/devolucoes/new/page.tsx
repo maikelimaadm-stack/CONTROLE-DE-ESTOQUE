@@ -15,17 +15,17 @@ function Inner() {
   const [h, setH] = React.useState({ empresa_id: "", devolution_date: todayISO(), responsible_person_id: "", harvest_id: "" });
   const [items, setItems] = React.useState<ItemRow[]>([]);
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
-  React.useEffect(() => { const d = req.data; if (!d) return; setH((o) => ({ ...o, empresa_id: String(d["empresa_id"] ?? o.empresa_id) })); setItems(d.items.map((i) => ({ warehouse_id: String(i["warehouse_id"] ?? ""), product_id: String(i["product_id"] ?? ""), quantity: String(i["quantity"] ?? "0"), unit_value: "0", cost_center_id: String(i["cost_center_id"] ?? "") }))); }, [req.data]);
+  React.useEffect(() => { const d = req.data; if (!d) return; setH((o) => ({ ...o, empresa_id: String(d["empresa_id"] ?? o.empresa_id) })); setItems(d.items.map((i) => ({ warehouse_id: String(i["warehouse_id"] ?? ""), product_id: String(i["product_id"] ?? ""), quantity: String(i["quantity"] ?? "0"), unit_value: "0", cost_center_id: String(i["cost_center_id"] ?? ""), provider_lot: String(i["provider_lot"] ?? "") }))); }, [req.data]);
   const create = useCreate("/api/stock/devolutions", () => router.push("/estoque?tab=operacoes&sub=devolucoes"));
-  return <Card><CardHeader title={reqId ? `Devolução de itens da requisição ${String(req.data?.["code"] ?? "")}` : "Devolução do Estoque (entrada)"} actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!items.length} onClick={() => create.mutate({ ...h, responsible_person_id: h.responsible_person_id || null, harvest_id: h.harvest_id || null, items: items.map((i) => ({ warehouse_id: i.warehouse_id, product_id: i.product_id, quantity: i.quantity, unit_value: i.unit_value && Number(i.unit_value) > 0 ? i.unit_value : null, cost_center_id: i.cost_center_id || null })) })}>Salvar</Button></>} /><CardBody className="space-y-4">
+  return <Card><CardHeader title={reqId ? `Devolução de itens da requisição ${String(req.data?.["code"] ?? "")}` : "Devolução do Estoque (entrada)"} actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!items.length} onClick={() => create.mutate({ ...h, responsible_person_id: h.responsible_person_id || null, harvest_id: h.harvest_id || null, items: items.map((i) => ({ warehouse_id: i.warehouse_id, product_id: i.product_id, quantity: i.quantity, unit_value: i.unit_value && Number(i.unit_value) > 0 ? i.unit_value : null, cost_center_id: i.cost_center_id || null, provider_lot: i.provider_lot?.trim() || null, expiration_date: i.expiration_date || null })) })}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
       <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.devolution_date} onChange={(e) => setH({ ...h, devolution_date: e.target.value })} /></Field>
       <Field label="Responsável pela devolução" span={4}><RefSelect resource="people" value={h.responsible_person_id} onChange={(v) => setH({ ...h, responsible_person_id: v ?? "" })} /></Field>
       <Field label="Safra" span={3}><RefSelect resource="harvests" value={h.harvest_id} onChange={(v) => setH({ ...h, harvest_id: v ?? "" })} /></Field>
     </div>
-    <ItemsEditor items={items} onChange={setItems} fields={["warehouse", "product", "quantity", "unit_value", "cost_center"]} />
-    <p className="text-xs text-slate-500">Valor unitário em branco/zero usa o custo médio do produto.</p>
+    <ItemsEditor items={items} onChange={setItems} fields={["warehouse", "product", "quantity", "unit_value", "lot", "expiration", "cost_center"]} />
+    <p className="text-xs text-slate-500">Valor unitário em branco/zero usa o custo médio do produto. Lote e validade são exigidos só para produto com controle de lote (a validade, no controle por lote e validade).</p>
   </CardBody></Card>;
 }
 export default function Page() { return <Suspense><Inner /></Suspense>; }

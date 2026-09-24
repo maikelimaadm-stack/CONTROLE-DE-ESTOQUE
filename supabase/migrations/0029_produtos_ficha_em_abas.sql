@@ -13,9 +13,15 @@
 --     fica como legado);
 --   · regras no banco (a API também confere, com a aba e a linha):
 --       - movimento de estoque de produto com controle de lote exige lote (entrada e saída); lote + validade
---         exige validade na entrada. Só INSERT: movimentos existentes não mudam;
---       - mudar o controle com saldo ≠ 0 é recusado ("zere o saldo ou transfira antes");
---       - unidade alternativa não repete a padrão; fornecedor do produto só parceiro tipo Fornecedor.
+--         exige validade na entrada. Só INSERT: movimentos existentes não mudam. Na SAÍDA sem lote informado a
+--         API ESCOLHE os lotes pela validade ANTES do INSERT (R1-1) — o gatilho vê sempre o lote escolhido;
+--       - mudar o controle com saldo ≠ 0 na organização é recusado ("zere o saldo em todos os armazéns");
+--       - unidade alternativa não repete a padrão; fornecedor do produto só parceiro tipo Fornecedor;
+--   · erp.feed_batches.validade (R1-1 c): validade do produto PRODUZIDO; o lote dele (quando tem controle) é o
+--     código da produção.
+--
+-- PRÉ-CONDIÇÃO DE ACERVO (R1-1 h): produto com has_lot e saldo ≠ 0 no balde SEM lote ('') PARA a migration
+-- nomeando os produtos — depois dela todo movimento do produto exige lote e esse saldo ficaria preso.
 --
 -- BACKFILL (UPDATE, nada apagado): controle_lote = 'lote' onde has_lot; cest/origem copiados de taxes quando
 -- o valor antigo já tem o formato novo (a chave em taxes FICA).
@@ -48,6 +54,26 @@ begin
   if exists (select 1 from information_schema.columns where table_schema = 'erp' and table_name = 'products' and column_name = 'controle_lote') then
     raise exception 'CADASTROS-F6: erp.products.controle_lote ja existe; a 0029 ja foi aplicada ou ha schema divergente.';
   end if;
+  if to_regclass('erp.feed_batches') is null then
+    raise exception 'CADASTROS-F6: erp.feed_batches nao existe; a cadeia de migrations esta fora de ordem.';
+  end if;
+end $$;
+
+-- 2.1 (R1-1 h) saldo SEM lote de produto com lote: depois desta migration todo movimento do produto exige lote
+-- (gatilho 8.2) e nenhuma saída alcança o balde '' — o saldo ficaria preso. Lote só de espaços é "sem lote" para a
+-- API (que apara) e para o gatilho (btrim), e prende do mesmo jeito. PARA nomeando os produtos; nada muda.
+do $$
+declare v_presos text;
+begin
+  select string_agg(format('%s - %s (%s)', p.code, p.description, p.id), '; ' order by p.code, p.id)
+    into v_presos
+    from erp.products p
+   where p.has_lot
+     and exists (select 1 from erp.stock_balances b
+                  where b.organization_id = p.organization_id and b.product_id = p.id and btrim(b.provider_lot) = '' and b.quantity <> 0);
+  if v_presos is not null then
+    raise exception 'CADASTROS-F6: produto com lote e saldo SEM lote (balde vazio): %. Zere esse saldo antes de aplicar a 0029; nada foi aplicado.', v_presos;
+  end if;
 end $$;
 
 create temporary table _f6_antes on commit drop as
@@ -72,6 +98,10 @@ alter table erp.products
   add column cest text check (cest ~ '^[0-9]{7}$'),
   add column registro_mapa text;
 
+-- R1-1 c: validade do produto PRODUZIDO no lote de produção (opcional; a API a exige quando o produto controla
+-- "lote + validade"). Anulável: as produções existentes não mudam.
+alter table erp.feed_batches add column validade date;
+
 comment on column erp.products.marca is 'Marca do produto.';
 comment on column erp.products.fabricante is 'Fabricante do produto.';
 comment on column erp.products.tipo_item is 'Tipo do item (SPED 0200): 00 revenda, 01 matéria-prima, 02 embalagem, 03 em processo, 04 acabado, 05 subproduto, 06 intermediário, 07 uso e consumo, 08 ativo imobilizado, 09 serviços, 10 outros insumos, 99 outras.';
@@ -80,6 +110,7 @@ comment on column erp.products.controle_lote is 'Controle de lote: nenhum, lote 
 comment on column erp.products.origem is 'Origem da mercadoria (0 a 8, tabela A da NF-e).';
 comment on column erp.products.cest is 'CEST (7 dígitos).';
 comment on column erp.products.registro_mapa is 'Registro no MAPA (insumo agropecuário).';
+comment on column erp.feed_batches.validade is 'Validade do produto produzido (entra no movimento de produção). Exigida quando o produto controla lote e validade; o lote do produzido com controle é o código da produção.';
 comment on column erp.products.has_lot is 'LEGADO derivado de controle_lote (controle ≠ nenhum). Gravar has_lot=true (web anterior) grava controle "lote"; false grava "nenhum".';
 comment on column erp.products.taxes is 'Parâmetros fiscais: as MESMAS chaves dos tributos da regra fiscal (cfop_out_internal, cst_csosn, perc_icms, reform…). Chave desconhecida é PRESERVADA na gravação (a API funde; só null remove).';
 
@@ -170,7 +201,7 @@ begin
        select 1 from erp.stock_balances b
         where b.organization_id = new.organization_id and b.product_id = new.id
         group by b.product_id having sum(b.quantity) <> 0) then
-    raise exception 'VALIDATION_ERROR: O produto tem saldo em estoque: zere o saldo ou transfira antes de mudar o controle de lote.';
+    raise exception 'VALIDATION_ERROR: O produto tem saldo em estoque: zere o saldo em todos os armazéns antes de mudar o controle de lote.';
   end if;
   return new;
 end $$;

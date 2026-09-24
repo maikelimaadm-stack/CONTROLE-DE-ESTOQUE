@@ -66,8 +66,8 @@ const quantidadeLegivel = (v: string) => D(v).toFixed().replace(".", ",");
 /**
  * SAÍDA SEM LOTE de produto com controle de lote: escolhe os lotes pela validade (R1-1 a).
  *
- * TRAVA ANTES DE ESCOLHER. As linhas de saldo candidatas (lote preenchido, quantidade > 0, não vencidas na data
- * do movimento) são travadas `for update` na ordem da CHAVE (`provider_lot`) — a mesma ordem em qualquer
+ * TRAVA ANTES DE ESCOLHER. As linhas de saldo candidatas (lote preenchido — só espaços é "sem lote", como na borda
+ * da API e no gatilho da 0029 —, quantidade > 0, não vencidas na data do movimento) são travadas `for update` na ordem da CHAVE (`provider_lot`) — a mesma ordem em qualquer
  * transação, e por isso duas saídas simultâneas do mesmo produto e armazém fazem fila em vez de travar uma à
  * outra (deadlock). Sob READ COMMITTED, a linha que outra transação alterou é relida depois da espera, com o
  * saldo NOVO: a escolha é feita sobre o que está de fato no armazém, não sobre a foto de antes da fila.
@@ -79,7 +79,7 @@ const quantidadeLegivel = (v: string) => D(v).toFixed().replace(".", ",");
 async function escolherLotesPorValidade(ctx: ServiceCtx, p: StockPost): Promise<LoteCandidato[]> {
   const validos = await ctx.tx.query<{ provider_lot: string; quantity: string; expiration_date: string | null }>(
     `select provider_lot, quantity, expiration_date from erp.stock_balances
-      where organization_id=$1 and warehouse_id=$2 and product_id=$3 and provider_lot <> '' and quantity > 0
+      where organization_id=$1 and warehouse_id=$2 and product_id=$3 and btrim(provider_lot) <> '' and quantity > 0
         and (expiration_date is null or expiration_date >= $4::date)
       order by provider_lot
       for update`,
@@ -89,7 +89,7 @@ async function escolherLotesPorValidade(ctx: ServiceCtx, p: StockPost): Promise<
   if (D(falta).gt(0)) {
     const vencidos = await ctx.tx.query<{ q: string }>(
       `select coalesce(sum(quantity),0) as q from erp.stock_balances
-        where organization_id=$1 and warehouse_id=$2 and product_id=$3 and provider_lot <> '' and quantity > 0 and expiration_date < $4::date`,
+        where organization_id=$1 and warehouse_id=$2 and product_id=$3 and btrim(provider_lot) <> '' and quantity > 0 and expiration_date < $4::date`,
       [ctx.orgId, p.warehouseId, p.productId, p.date]);
     const emValidos = fqty(candidatos.reduce((a, c) => a.plus(c.quantidade), D(0)));
     const emVencidos = fqty(vencidos.rows[0]!.q);
@@ -139,8 +139,21 @@ export async function postStock(ctx: ServiceCtx, p: StockPost): Promise<Resultad
     throw validation("O produto controla lote: informe o lote no movimento.", [{ path: "provider_lot", message: "Informe o lote" }]);
   }
   if (controle === "lote_validade" && p.direction === 1 && !p.expirationDate && p.movementType !== "transfer_in" && p.movementType !== "farm_transfer_in") throw validation("O produto controla lote e validade: informe a validade na entrada.", [{ path: "expiration_date", message: "Informe a validade" }]);
-  const parte = await gravarMovimento(ctx, p, lot, p.expirationDate ?? null, p.quantity);
+  // SAÍDA com lote informado: o movimento grava a validade DO LOTE que saiu (a do saldo), como a escolha
+  // automática já faz — nunca uma validade vinda de quem chama: o gatilho de saldo faz `coalesce(validade do
+  // movimento, a do saldo)`, e uma validade na saída reescreveria a do lote que fica. É esta validade que a
+  // perna de entrada da transferência leva ao destino (R1-1 c).
+  const validade = p.direction === -1 ? (lot ? await validadeDoLote(ctx, p, lot) : null) : (p.expirationDate ?? null);
+  const parte = await gravarMovimento(ctx, p, lot, validade, p.quantity);
   return { id: parte.id, ids: [parte.id], unitCost: parte.unitCost, partes: [parte] };
+}
+
+/** A validade gravada no saldo do lote naquele armazém (null quando o lote não tem validade ou não tem saldo). */
+async function validadeDoLote(ctx: ServiceCtx, p: StockPost, lote: string): Promise<string | null> {
+  const r = await ctx.tx.query<{ expiration_date: string | null }>(
+    "select expiration_date from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and provider_lot=$4",
+    [ctx.orgId, p.warehouseId, p.productId, lote]);
+  return r.rows[0]?.expiration_date ?? null;
 }
 
 /**

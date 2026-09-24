@@ -124,7 +124,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       { name: "min_stock", label: "Estoque mínimo", type: "quantity", section: "Estoque", list: true, help: "Alerta quando o estoque atingir ou ficar abaixo", span: 3 },
       { name: "estoque_maximo", label: "Estoque máximo", type: "quantity", section: "Estoque", span: 3 },
       REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
-      S("controle_lote", "Controle de lote", [["nenhum", "Nenhum"], ["lote", "Lote"], ["lote_validade", "Lote + validade"]], { default: "nenhum", filter: true, section: "Estoque", help: "Lote: exige o lote na entrada e na saída. Lote + validade: também exige a validade na entrada. Mudar com saldo exige zerar ou transferir antes.", span: 4 }),
+      S("controle_lote", "Controle de lote", [["nenhum", "Nenhum"], ["lote", "Lote"], ["lote_validade", "Lote + validade"]], { default: "nenhum", filter: true, section: "Estoque", help: "Lote: exige o lote na entrada; na saída sem lote informado, o sistema escolhe pela validade mais próxima (lote vencido só sai informado). Lote + validade: também exige a validade na entrada. Mudar com saldo exige zerar o saldo em todos os armazéns.", span: 4 }),
       { name: "withdrawal_period_days", label: "Período de Carência (dias)", type: "integer", section: "Estoque", help: "Dias de espera após aplicação antes de vender/abater o animal", span: 3 },
       // legado derivado do controle: continua na leitura (relatórios, web anterior); gravado pela API a partir do controle
       B("has_lot", "Controla lote (derivado)", { readOnly: true, section: "Estoque", help: "Derivado do Controle de lote", span: 3 }),

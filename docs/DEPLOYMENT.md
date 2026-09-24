@@ -1026,18 +1026,39 @@ novas em `erp.products` (`marca`, `fabricante`, `tipo_item`, `estoque_maximo`, `
 forçada, política única de tenant, `erp_app` sem DELETE, FKs compostas, auditoria); gatilhos
 `trg_products_controle_lote` (has_lot ⇄ controle; controle não muda com saldo ≠ 0), `trg_stock_movements_exige_lote`
 (só INSERT: lote obrigatório para produto com controle; validade na entrada para lote + validade) e
-`trg_produto_{unidades,fornecedores}_conferir`. **UPDATEs (nada apagado):** `controle_lote = 'lote'` onde `has_lot`;
+`trg_produto_{unidades,fornecedores}_conferir`; coluna anulável nova `erp.feed_batches.validade` (validade do produto
+produzido, R1-1). **Pré-condição nomeada nova (R1-1 h):** produto com `has_lot` e saldo ≠ 0 no balde SEM lote
+(`provider_lot` vazio ou só espaços) PARA a migration nomeando os produtos (código, descrição, id) — depois dela esse
+saldo ficaria preso, porque todo movimento do produto exige lote e a escolha automática só olha lotes preenchidos.
+**UPDATEs (nada apagado):** `controle_lote = 'lote'` onde `has_lot`;
 `cest`/`origem` copiados de `taxes` quando o valor antigo já tem o formato novo (a chave em `taxes` fica); INSERT da
 2ª unidade de hoje como primeira linha de `produto_unidades`. Pós-condição confere contagens (produtos, movimentos,
 embalagens intactos; controle = has_lot de antes; uma linha de unidade por 2ª unidade válida). Nenhuma variável nova.
 
-**Impacto em dados reais — medir ANTES, em leitura:** a escolha automática de lote na saída deixa de existir e
-venda, manutenção, abastecimento, manejo/nutrição e OS ainda não têm campo de lote. Todo produto com `has_lot = true`
-vira controle "lote" e passa a ser RECUSADO (422 "informe o lote") nesses lançamentos. Contar:
-`select count(*) from erp.products where has_lot and deleted_at is null;` e, para os que existirem,
-`select product_id, movement_type, count(*) from erp.stock_movements where direction = -1 and movement_date >= current_date - 90 and product_id in (select id from erp.products where has_lot) group by 1, 2;`.
-Havendo uso nesses fluxos, decidir ANTES do deploy (humano): passar o produto para "nenhum" (sem saldo) ou aguardar
-os campos de lote nessas telas.
+**Regra do lote depois desta fatia (revisão R1-1, decisão 254):** todo produto com `has_lot = true` vira controle
+"lote", e todo movimento gravado dele leva o lote (API e gatilho).
+
+- **Saída SEM lote informado** — venda, abastecimento, manutenção, OS, manejo/nutrição, dieta, ração (insumo),
+  requisição, baixa, correção para baixo e perna de saída da transferência: a API ESCOLHE o lote pela validade (a mais
+  próxima primeiro; sem validade por último; empate pelo lote em ordem alfabética), divide a quantidade entre lotes (um
+  movimento por lote, com a validade do lote) e trava os saldos antes de escolher. **Lote vencido** na data do movimento
+  fica fora: só sai com o lote informado. Faltou saldo em lotes válidos → **409 `INSUFFICIENT_STOCK`** dizendo quanto há
+  em lotes válidos e em vencidos; nada é gravado.
+- **Saída COM lote informado:** sai do lote informado, inclusive vencido; o movimento grava a validade do lote.
+- **Entradas:** NF-e, entrada de insumo e saldo inicial exigem o lote (e a validade no "lote + validade"). Devolução:
+  lote e validade no item, exigidos só para produto com controle. Correção para cima: lote e validade (esta no "lote +
+  validade"; num ajuste para baixo a validade é recusada). Transferência: o destino recebe o lote e a validade de cada
+  parte da saída. Produção de ração: o produzido com controle recebe o código da produção como lote e a validade
+  informada na produção (exigida no "lote + validade").
+- **Lote aparado** na borda da API; lote só de espaços é "sem lote".
+- **Controle com saldo:** mudar o controle com saldo ≠ 0 na organização → 422 "zere o saldo em todos os armazéns".
+
+**Impacto em dados reais — medir ANTES, em leitura:** nenhum fluxo fica recusado por falta de campo de lote; o que
+muda para o usuário é a escolha automática por validade (e o 409 quando só há saldo vencido ou insuficiente). Contar:
+`select count(*) from erp.products where has_lot and deleted_at is null;`. A pré-condição nova tem de voltar VAZIA
+(o texto da revisão R1 registra 0 produtos em produção; reconferir na hora):
+`select p.code, p.description, b.warehouse_id, b.quantity from erp.products p join erp.stock_balances b on b.organization_id = p.organization_id and b.product_id = p.id where p.has_lot and btrim(b.provider_lot) = '' and b.quantity <> 0;`.
+Havendo linha, a 0029 PARA nomeando o produto: zerar esse saldo é decisão humana ANTES do deploy.
 
 **Implantação — ordem: banco (0029) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
 
@@ -1048,6 +1069,9 @@ os campos de lote nessas telas.
    unidade, tipo e fator aceitos como legado); PUT sem as grades não mexe nelas; mudar `has_lot` com saldo → 422.
 3. **web NOVA × API anterior:** a ficha manda `controle_lote`, colunas e grades novas; o schema estrito da API
    anterior RECUSA (422 "Campo não reconhecido") e nada é gravado. Provado em `skew-api-producao.spec.ts` (PR-K1).
+   **Exceção (R1-1):** as telas de estoque novas mandam lote e validade na devolução, validade na correção e na
+   produção de ração; esses schemas da API anterior NÃO são estritos e DESCARTAM o campo (a devolução entraria sem
+   lote). Por isso a ordem API → web é obrigatória: web nova só depois da API nova no ar.
 
 **Reversão.** Web: livre. API: a anterior ignora colunas e tabelas novas (volta a escolher lote na saída; o gatilho
 ainda exige lote na entrada). Banco: a 0029 fica (migration aplicada é histórico); nada a desfazer.

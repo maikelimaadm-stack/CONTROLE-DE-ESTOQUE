@@ -354,7 +354,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-378 | Devolução do Estoque | `/estoque/devolucoes/new` | 12 | 0 | 0 | 4 | TESTADO |
 | SCR-379 | Transferência de Armazém | `/estoque/transferencias/new?kind=warehouse` | 14 | 0 | 8 | 10 | TESTADO |
 | SCR-380 | Transferência de Armazém entre Fazendas | `/estoque/transferencias/new?kind=farm` | 30 | 0 | 18 | 10 | TESTADO |
-| SCR-382 | Batida | `/estoque/batidas/new` | 14 | 0 | 0 | 7 | IMPLEMENTADO |
+| SCR-382 | Batida | `/estoque/batidas/new` | 14 | 0 | 0 | 8 | IMPLEMENTADO |
 | SCR-383 | Eventos | `/cadastros/hr_events/new` | 7 | 0 | 0 | 7 | IMPLEMENTADO |
 | SCR-385 | Eventos | `/cadastros/hr_events/[id]` | 7 | 0 | 0 | 7 | IMPLEMENTADO |
 | SCR-386 | Funções | `/cadastros/job_functions/new` | 7 | 0 | 0 | 7 | IMPLEMENTADO |

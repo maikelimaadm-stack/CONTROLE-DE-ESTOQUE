@@ -4,7 +4,8 @@
  * (0029) repete o que é invariante (gatilhos): aqui o erro sai antes, apontando a ABA e a LINHA.
  *
  *  · `has_lot` (web anterior) vira o CONTROLE: true → "lote" (ou mantém "lote_validade"), false → "nenhum";
- *  · mudar o controle com saldo ≠ 0 → 422 "zere o saldo ou transfira antes";
+ *  · mudar o controle com saldo ≠ 0 (na ORGANIZAÇÃO inteira) → 422 "zere o saldo em todos os armazéns" — transferir
+ *    não resolve: o saldo continua na organização;
  *  · CEST com 7 dígitos (gravado só dígitos);
  *  · Unidades e embalagens: não repete a unidade padrão, sem unidade repetida, fator > 0, compra e/ou venda;
  *  · Compras: fornecedor só parceiro VIVO desta organização com tipo Fornecedor; no máximo um preferencial.
@@ -16,7 +17,7 @@ import { detalheDoErro } from "./ficha-em-abas.js";
 import type { ServiceCtx } from "./context.js";
 
 type Linha = Record<string, unknown>;
-export const MSG_CONTROLE_COM_SALDO = "O produto tem saldo em estoque: zere o saldo ou transfira antes de mudar o controle de lote.";
+export const MSG_CONTROLE_COM_SALDO = "O produto tem saldo em estoque: zere o saldo em todos os armazéns antes de mudar o controle de lote.";
 export const MSG_CEST = "CEST tem 7 dígitos.";
 export const MSG_UNIDADE_PADRAO = "A unidade alternativa não pode repetir a unidade padrão do produto.";
 export const MSG_FORNECEDOR = "O fornecedor do produto precisa ser um parceiro do tipo Fornecedor.";

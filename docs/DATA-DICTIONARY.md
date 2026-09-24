@@ -1017,6 +1017,7 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `validade` |  | date | não |  |  |  |  |
 
 ### ERP-ESTOQUE-MOVIMENTO — Movimento de Estoque
 

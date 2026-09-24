@@ -93,16 +93,18 @@ describe("PR-2 — controle de lote exige lote na entrada e na saída", () => {
 });
 
 describe("PR-3 — mudar o controle com saldo → 422; sem saldo pode; movimentos existentes não mudam", () => {
-  it("com saldo 422 'zere o saldo ou transfira antes' (API e banco); saldo zerado → muda; o movimento antigo fica igual", async () => {
+  // R1-1 g: a mensagem EXATA — o saldo conferido é o da organização inteira, e "transfira" não resolve
+  const MSG = "O produto tem saldo em estoque: zere o saldo em todos os armazéns antes de mudar o controle de lote.";
+  it("com saldo 422 'zere o saldo em todos os armazéns' (API e banco); saldo zerado → muda; o movimento antigo fica igual", async () => {
     const p = criado(await post({ ...base, description: nome("muda") }));
     expect((await saldoInicial(p)).statusCode).toBe(201);
     const antes = (await admin.query("select * from erp.stock_movements where product_id=$1 order by created_at", [p])).rows;
     const r = await put(p, { controle_lote: "lote" });
-    expect(r.statusCode, r.body).toBe(422); expect(j(r).error.message).toMatch(/zere o saldo ou transfira antes/);
+    expect(r.statusCode, r.body).toBe(422); expect(j(r).error.message).toBe(MSG);
     expect(detalhes(r)[0]).toMatchObject({ path: "controle_lote", aba: "estoque" });
     expect(await um("select controle_lote from erp.products where id=$1", [p])).toEqual({ controle_lote: "nenhum" });
     const db = await admin.query("update erp.products set controle_lote='lote' where id=$1", [p]).then(() => null, (x: Error) => x.message);
-    expect(db).toMatch(/zere o saldo ou transfira antes/);
+    expect(db).toBe(`VALIDATION_ERROR: ${MSG}`);
     // web anterior (has_lot) também não escapa
     expect((await put(p, { has_lot: true })).statusCode).toBe(422);
     expect((await baixa(p)).statusCode).toBe(201);
