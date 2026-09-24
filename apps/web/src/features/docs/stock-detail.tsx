@@ -145,6 +145,8 @@ export function StockDocDetail({ id, endpoint, base, title, perm, entidade, acei
         { key: "movement_date", label: "Data", render: (r) => dateBR(r["movement_date"] as string) },
         { key: "movement_type", label: "Tipo", render: (r) => enumLabel("stock_movement_type", r["movement_type"]) },
         { key: "direction", label: "Entrada ou saída", render: (r) => (r["direction"] === 1 ? "Entrada" : "Saída") },
+        // o lote de CADA movimento: numa saída sem lote a escolha automática grava o lote só aqui (R1-1)
+        { key: "provider_lot", label: "Lote" },
         { key: "quantity", label: "Quantidade", align: "right", render: (r) => num(r["quantity"] as string, 4) },
         { key: "unit_cost", label: "Custo unitário", align: "right", render: (r) => brl(r["unit_cost"] as string) },
         { key: "total_cost", label: "Total", align: "right", render: (r) => brl(r["total_cost"] as string) },
