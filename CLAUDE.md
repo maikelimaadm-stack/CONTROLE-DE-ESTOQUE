@@ -24,7 +24,7 @@ a rule não a recopia — ela aprofunda.
 - Toda fatia termina com testes executados, evidências e riscos declarados.
 - Relatório próprio não aprova nada: evidência tem de ser verificável por terceiro.
 - Produção é operacional desde o GO-LIVE-01: toda PR declara "Impacto em dados reais" e segue a
-  decisão 240 de `docs/DECISIONS.md` (P1 recente, efeito novo desligado, teste manual na sandbox).
+  decisão 240 de `docs/DECISIONS.md` (P1 recente, efeito novo desligado, sem sandbox; dado de produção nunca é apagado — decisão 247).
 - Gate externo pendente (acesso autenticado a produção, credencial que você não tem)
   se registra como PENDING. Nunca se contorna com mock, preview, local ou CI.
 

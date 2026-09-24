@@ -1036,6 +1036,8 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | `empresa_id` |  | uuid | sim |  |  |  |  |
 | `tipo_operacao_id` |  | uuid | não |  |  |  |  |
 | `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
+| `categoria_financeira_id` | Categoria financeira | uuid | não |  |  |  | Categoria de RECEITA analítica e ativa dos títulos a receber gerados pela confirmação. Anda em PAR com o centro de custo (os dois ou nenhum); FK composta com o tenant. Documento sem classificação confirma pelo padrão legado (decisão 248). |
+| `centro_custo_id` | Centro de custo | uuid | não |  |  |  | Centro de custo analítico e ativo dos títulos a receber gerados pela confirmação. Anda em PAR com a categoria financeira (os dois ou nenhum); FK composta com o tenant (decisão 248). |
 
 ## Pecuária
 

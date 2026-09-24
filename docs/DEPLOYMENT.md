@@ -659,15 +659,30 @@ conferir.
 ## Go-live — checklist de entrada em uso real
 
 O Maike começa transações reais numa **organização nova e limpa**, dentro do banco de produção atual. A
-organização existente (`principal`, criada pelo seed demo antigo) **não é apagada nem alterada**: vira a
-sandbox para testar fatias novas. A política de desenvolvimento a partir daqui é a decisão "Desenvolvimento
-com produção operacional" (`docs/DECISIONS.md`).
+premissa original deste checklist — a organização existente (`principal`, do seed demo antigo) ficaria
+intacta como sandbox — **deixou de existir**: em 23/09/2026, por decisão ESCRITA do Maike ("autorizo apagar
+todos os dados da produção e criar minha conta"), a sessão revisora limpou a produção inteira e a
+organização real foi criada pelo mecanismo da decisão 241. Não existe mais organização sandbox em produção,
+e **dado de produção não se apaga mais** (decisão 247, que substitui o item (5) da 240). A política de
+desenvolvimento a partir daqui é a decisão 240 com a 247.
+
+**Linha do tempo da limpeza (23/09/2026, UTC — registrada pela sessão revisora):**
+
+| Hora | O quê |
+|---|---|
+| 20:03:17 | Railway `api`: `SEED_ON_DEPLOY=0` (sem deploy) |
+| 20:03:21 | Supabase (projeto de produção): `set lock_timeout = '5s'; truncate table erp.organizations, erp.users, erp.audit_logs cascade;` — a cascata alcançou 177 tabelas; sobraram só as tabelas globais de referência sem dono (`banks`, `cities`, `modulos_escopo_empresa`, `ncm`, `permissions`, `states`, `tipos_notificacao`) |
+| 20:04:33 | Railway `api`: `ORG_NAME`, `ORG_SLUG`, `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD` e `ORGANIZACAO_LIMPA_ON_DEPLOY=1` |
+| 20:04:35 | deployment `5fa0cdfd-ea94-49fb-a14b-61d40175a811` — o pre-deploy criou a organização pelo mecanismo da decisão 241 |
+| 20:07:25 | `created_at` da organização nova |
+| 20:12:27 | Railway `api`: `ORGANIZACAO_LIMPA_ON_DEPLOY=0` e `ADMIN_PASSWORD` substituída por um texto não secreto (sem deploy) |
+| depois | o Maike entrou pela interface com sucesso |
 
 Estados: `PENDING` = não feito ou não comprovado. `OK` = feito, com evidência datada. Nenhum item vira `OK`
 por declaração, preview, `localhost`, CI ou "deploy verde". **Bloqueia** = sem ele, a primeira transação real
 não acontece.
 
-**Leitura de produção em 23/09/2026** (inventário `docs/sql/inventario-go-live.sql`, rodado pela sessão do
+**Leitura de produção em 23/09/2026 — ANTES da limpeza (histórico)** (inventário `docs/sql/inventario-go-live.sql`, rodado pela sessão do
 GO-LIVE-01 numa transação `READ ONLY`, com `transaction_read_only = on` conferido na mesma transação):
 
 | Bloco | Resultado |
@@ -679,28 +694,55 @@ GO-LIVE-01 numa transação `READ ONLY`, com `transaction_read_only = on` confer
 | 5. Ledger | 23 migrations, última `0023_venda_execucao_configurada_guarda.sql` |
 | 6. 0023 e TOP | gatilho com a cláusula da R1 = `true`; versões de TOP com execução configurada = `0` |
 
+**Leitura depois da limpeza — própria, 24/09/2026 00:35:55 UTC, READ ONLY** (inventário
+`docs/sql/inventario-go-live.sql`, rodado pela sessão da VENDAS-A1 numa transação `READ ONLY`, com
+`transaction_read_only = on` conferido na mesma transação; blocos agregados num único `select` seguido de
+`rollback`):
+
+| Bloco | Resultado |
+|---|---|
+| 1. Organizações | 1: "Fazenda Kaiman I", slug `fazenda-kaiman-i`, id `f5ab2eae-73e9-48fe-9259-01677fded263`, criada em 23/09/2026 20:07:25 UTC, não excluída, `origem_seed = organizacao_limpa` |
+| 2. Usuários | 1: o e-mail do Maike, ativo, em 1 organização. É o MESMO e-mail de antes: a limpeza o liberou, e a recusa de e-mail existente da decisão 241 não entrou em jogo. Nenhum `@demo.local` nem `@teste.local` |
+| 3. Vínculos | 1: `fazenda-kaiman-i` / o e-mail do Maike, dono, perfil Administrador, ativo |
+| 4. Volume | 1 empresa · 1 pessoa · 0 produtos · 0 armazéns · 0 contas bancárias · 0 centros de custo · 2 categorias financeiras · 0 documentos de venda · 0 movimentos de estoque · 0 títulos · 0 movimentos bancários · 0 solicitações de compra · 0 animais · 0 TOPs |
+| 5. Ledger | 23 migrations, última `0023_venda_execucao_configurada_guarda.sql` (aplicada em 23/09/2026 18:28:20 UTC) |
+| 6. 0023 e TOP | gatilho com a cláusula da R1 = `true`; versões de TOP com execução configurada = `0` |
+
+**Leitura da sessão revisora, 23/09/2026 às 20:38:20 UTC** (somente leitura, logo depois da limpeza; citada
+como dela, não desta sessão): 1 organização (`fazenda-kaiman-i`, `origem_seed = organizacao_limpa`) · 1
+usuário (o e-mail do Maike, ativo) · empresas 0 · pessoas 0 · produtos 0 · armazéns 0 · centros de custo 0 ·
+categorias financeiras 1 (código "1", receita, analítica, criada pelo Maike às 20:38) · documentos de venda 0
+· títulos 0 · movimentos de estoque 0 · TOPs 0 · versões com execução configurada 0 · ledger com 23
+migrations, última a 0023. A diferença para a leitura própria (1 empresa, 1 pessoa, 2 categorias) é cadastro
+do Maike entre as duas leituras.
+
 | # | O quê | Quem | Onde | Como verificar | Estado | Bloqueia? |
 |---|---|---|---|---|---|---|
 | **G1** | PR #56 implantada; `0023` no ledger com o gatilho da R1; `TOP_EFFECTS_RUNTIME_V1_ENABLED` ausente ou `0` | Maike (gate); sessão (leitura) | Supabase (leitura); Railway, serviço `api` → Variables | blocos 5 e 6 do inventário; nome da variável no painel (o valor não precisa ser lido por sessão) | ledger e gatilho **OK em 23/09/2026** (inventário acima); gate da TOP: **leitura datada da sessão revisora em 23/09/2026 (~18h30 UTC)** — a lista de NOMES de variáveis do serviço `api` no Railway não continha `TOP_EFFECTS_RUNTIME_V1_ENABLED` → gate desligado (valores não foram lidos); reconferir na janela do go-live | sim |
 | **G2** | Railway exigir CI verde antes de implantar (`checkSuites`) em `api` **e** `web` | Maike | Railway → cada serviço → Settings → "Wait for CI" | ler de novo o campo nos dois serviços | **PENDING** — lido `false` nos dois em 23/09/2026 | sim |
 | **G3** | teto do pre-deploy no `api` | Maike | Railway → `api` → Settings → Pre-Deploy Timeout | ler o campo | **OK em 23/09/2026**: `preDeployTimeoutSeconds = 300` (reler na janela de deploy destrutivo) | sim |
 | **G4** | P1: backup diário existe; restore num projeto NOVO; consultas P1.3 no restaurado; registro P1.4 | Maike (P1.1/P1.2); sessão (P1.3, leitura) | Supabase → Database → Backups → Restore to a New Project | `docs/PRE-BASE2-05C-1-PREFLIGHT.md` P1.1–P1.4; P1.4 anotado AQUI com data, projeto restaurado e respostas | **PENDING** (`BLOCKED` desde 23/09/2026) | sim |
-| **G5** | inventário rodado e registrado | sessão | Supabase, transação `READ ONLY` | tabela "Leitura de produção" acima | **OK em 23/09/2026** — reler imediatamente antes da primeira transação real | sim |
-| **G6** | credenciais conhecidas e variáveis de seed neutralizadas: (a) **OBRIGATÓRIO antes do primeiro lançamento real: desativar TODOS os usuários `@demo.local` e `@teste.local` da sandbox** (hoje: `operador@demo.local` ativo e 3 `ckpt-v2-*@teste.local`), pela tela Configurações → Usuários da sandbox; (b) `LOCAL_AUTH_SECRET` forte (≥ 32 caracteres aleatórios, nunca o padrão de desenvolvimento); (c) `NEXT_PUBLIC_DEMO_MODE` ausente em cada serviço web listado em "## Superfície web"; (d) `SEED_ON_DEPLOY=0` ou ausente | Maike | (a) Configurações → Usuários, na organização sandbox; (b)(d) Railway `api` → Variables; (c) Railway `web` e Vercel → Environment Variables | (a) bloco 2 do inventário: nenhum `@demo.local`/`@teste.local` com `is_active = true` e nenhum com vínculo ativo; (b) só o Maike confere o valor — nenhuma sessão lê segredo; (c)(d) presença/ausência do NOME da variável | (a) **PENDING** — `operador@demo.local` ativo em 23/09/2026; (b) **PENDING**; (c) Railway `web`: ausente em 23/09/2026 (**OK**), Vercel **PENDING** — a sessão revisora não teve acesso às variáveis do projeto na Vercel (403) em 23/09/2026; o Maike confere em Vercel → projeto → Settings → Environment Variables → Production; (d) **PENDING** — `SEED_ON_DEPLOY` ainda definida no `api` em 23/09/2026 | sim |
-| **G7** | criar a organização limpa (roteiro abaixo) | Maike | Railway `api` → Variables + um deploy | log do pre-deploy `organização limpa criada: id=… slug=… admin=…`; login; bloco 1 e 3 do inventário | **PENDING** | sim |
-| **G8** | cadastros mínimos, NESTA ordem: empresas → armazéns → centros de custo → categorias financeiras → contas bancárias → pessoas → produtos → TOPs de Venda, Pedido e Orçamento (uma padrão por família) | Maike | telas do sistema, logado na organização nova | cada tela lista o que foi criado; a primeira empresa tem código 1 | **PENDING** | sim |
+| **G5** | inventário rodado e registrado | sessão | Supabase, transação `READ ONLY` | tabela "Leitura depois da limpeza" acima | **OK em 24/09/2026 (00:35:55 UTC)** — leitura própria da VENDAS-A1, `READ ONLY` (a da sessão revisora, de 23/09 20:38:20 UTC, fica registrada ao lado); reler imediatamente antes da primeira transação real | sim |
+| **G6** | credenciais conhecidas e variáveis de seed neutralizadas: (a) **OBRIGATÓRIO antes do primeiro lançamento real: desativar TODOS os usuários `@demo.local` e `@teste.local` da sandbox** (hoje: `operador@demo.local` ativo e 3 `ckpt-v2-*@teste.local`), pela tela Configurações → Usuários da sandbox; (b) `LOCAL_AUTH_SECRET` forte (≥ 32 caracteres aleatórios, nunca o padrão de desenvolvimento); (c) `NEXT_PUBLIC_DEMO_MODE` ausente em cada serviço web listado em "## Superfície web"; (d) `SEED_ON_DEPLOY=0` ou ausente | Maike | (a) Configurações → Usuários, na organização sandbox; (b)(d) Railway `api` → Variables; (c) Railway `web` e Vercel → Environment Variables | (a) bloco 2 do inventário: nenhum `@demo.local`/`@teste.local` com `is_active = true` e nenhum com vínculo ativo; (b) só o Maike confere o valor — nenhuma sessão lê segredo; (c)(d) presença/ausência do NOME da variável | (a) **NOT_APPLICABLE** desde a limpeza de 23/09/2026 — não existe usuário `@demo.local` nem `@teste.local` (bloco 2 da leitura depois da limpeza); antes dela: `operador@demo.local` ativo; (b) **PENDING**; (c) Railway `web`: ausente em 23/09/2026 (**OK**), Vercel **PENDING** — a sessão revisora não teve acesso às variáveis do projeto na Vercel (403) em 23/09/2026; o Maike confere em Vercel → projeto → Settings → Environment Variables → Production; (d) **OK** — `SEED_ON_DEPLOY=0` gravada pela sessão revisora às 20:03:17 UTC de 23/09/2026 (o valor é conhecido porque a própria sessão o gravou; não é segredo) | sim |
+| **G7** | criar a organização limpa (roteiro abaixo) | Maike | Railway `api` → Variables + um deploy | log do pre-deploy `organização limpa criada: id=… slug=… admin=…`; login; bloco 1 e 3 do inventário | **OK em 23/09/2026, na VARIANTE executada**: limpeza total + organização limpa com o MESMO e-mail do Maike; deployment `5fa0cdfd-ea94-49fb-a14b-61d40175a811`; slug `fazenda-kaiman-i`; id da organização `f5ab2eae-73e9-48fe-9259-01677fded263` (leitura própria de 24/09/2026). Passo 6 **PARCIAL**: `ORGANIZACAO_LIMPA_ON_DEPLOY=0` e `ADMIN_PASSWORD` neutralizada às 20:12:27 UTC; os NOMES `ORG_NAME`, `ORG_SLUG`, `ADMIN_NAME`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ORGANIZACAO_LIMPA_ON_DEPLOY` e `SEED_ON_DEPLOY` continuam definidos, inertes → remoção **PENDING** (Maike). Passo 8 (trocar a senha pela interface) **PENDING** até o Maike confirmar | sim |
+| **G8** | cadastros mínimos, NESTA ordem: empresas → armazéns → centros de custo → categorias financeiras → contas bancárias → pessoas → produtos → TOPs de Venda, Pedido e Orçamento (uma padrão por família) | Maike | telas do sistema, logado na organização nova | cada tela lista o que foi criado; a primeira empresa tem código 1 | **EM ANDAMENTO** — leitura própria de 24/09/2026 (00:35:55 UTC): empresas 1 · armazéns 0 · centros de custo 0 · categorias financeiras 2 · contas bancárias 0 · pessoas 1 · produtos 0 · TOPs 0. Sem TOP ativa da família, a Central não lança (a tela mostra "Nenhum Tipo de Operação ativo está cadastrado…") | sim |
 | **G9** | data de corte e saldos iniciais ANTES dela: estoque, contas bancárias, títulos em aberto | Maike | telas de estoque (entrada/ajuste), Caixa e Bancos, Contas a Pagar/Receber | relatório de saldo por armazém e por conta na data de corte bate com o controle anterior | **PENDING** | sim |
 | **R1** | ambiente de homologação separado da produção | Maike | Railway/Supabase | projeto próprio com banco próprio | **PENDING** | não (recomendado) |
 | **R2** | PITR (recuperação para um instante) | Maike | Supabase → add-on PITR | painel mostra PITR ativo | **PENDING** | não (recomendado) |
 | **R3** | uma única URL web para uso real | Maike | Railway `web` / Vercel / `WEB_ORIGIN` | uma URL divulgada; as outras fora do `WEB_ORIGIN` | **PENDING** | não (recomendado) |
 
-**Aviso de G8 — receita da venda.** A confirmação de venda (`apps/api/src/routes/sales.ts`) lança TODA a
-receita na PRIMEIRA categoria financeira de receita **analítica** e no PRIMEIRO centro de custo **analítico**,
-pela ordem de código. Sem nenhum dos dois a confirmação é recusada. Então: crie a categoria de receita
-analítica que deve receber as vendas com o MENOR código entre as de receita, e o centro de custo analítico
-das vendas com o menor código entre os analíticos — ou a receita cai onde a ordem mandar, não onde você quer.
+**Aviso de G8 — receita da venda (reescrito pela VENDAS-A1).** Orçamento, pedido e venda criados pela
+Central nova levam a PRÓPRIA "Categoria financeira" e o PRÓPRIO "Centro de custo" (obrigatórios na tela nas
+três variantes; a conversão os copia), e a confirmação gera as contas a receber com a classificação DO
+DOCUMENTO — nos dois caminhos, legado e configurado. O recuo antigo — a PRIMEIRA categoria de receita
+**analítica** e o PRIMEIRO centro de custo **analítico**, pela ordem do código — só vale para documento SEM
+classificação (cliente anterior à VENDAS-A1 ou chamada de API sem os campos), e o detalhe e a auditoria
+mostram isso ("padrão legado"). Documento classificado cuja categoria ou centro deixou de valer é RECUSADO
+na confirmação, nunca recua. Confirmar continua exigindo categoria de receita analítica e centro de custo
+analítico cadastrados e ativos: sem centro de custo nenhum (a produção hoje tem 0), a venda não confirma.
 
-**Por que G7 exige cuidado com o e-mail.** O login escolhe a primeira organização do usuário **por nome**
+**Por que G7 exige cuidado com o e-mail — HISTÓRICO** (valia enquanto existia a sandbox; depois da limpeza de
+23/09/2026 o e-mail do Maike pertence só à organização real). O login escolhe a primeira organização do usuário **por nome**
 e não existe seletor de organização. Hoje o e-mail do Maike é dono da `principal` (inventário, 23/09/2026).
 Se o mesmo usuário ficasse nas duas, o login poderia abrir a sandbox e a transação real iria para o lugar
 errado. Por isso a criação **recusa e-mail já cadastrado** (nunca altera o usuário existente) e o e-mail do
@@ -741,6 +783,45 @@ perfil, do vínculo e do escopo do dono — contadores de código e de ID Global
 empresa recebe código 1, o primeiro registro numerado recebe ID Global 1); SLA de compras tem tela e padrão
 0; autorizadores têm tela. Tudo isso está coberto em `packages/db/test/organizacao-limpa.test.ts` e
 `apps/api/test/integration/organizacao-limpa.test.ts`.
+
+## VENDAS-A1 — classificação financeira no documento de venda
+
+A fatia acrescenta `categoria_financeira_id` e `centro_custo_id` (em PAR) a `erp.sales_documents` e faz a
+confirmação gerar as contas a receber com a classificação do documento (decisão 248). A migration
+`0024_venda_classificacao_financeira.sql` é **aditiva**: duas colunas anuláveis, o CHECK do par, chaves
+candidatas `unique (id, organization_id)` em `erp.financial_categories` e `erp.cost_centers`, FKs compostas
+com o tenant e o gatilho `trg_sales_documents_classificacao_financeira`. Sem backfill, sem default, sem NOT
+NULL, sem corrigir dado — o item (2) da decisão 240 (P1 recente para migration destrutiva) **não se aplica**.
+
+**Implantação — ordem: banco (0024) → API → web.** O pre-deploy da API aplica a 0024 como qualquer
+migration; enquanto nenhum documento é classificado, o gatilho deixa passar toda confirmação, então uma
+instância anterior no pool durante o deploy não é barrada por documento antigo. A web nova só mostra e envia
+os campos quando `GET /api/sales/<variante>/operation-types` declara `capacidades.classificacaoFinanceira = 1`
+(o `contractVersion` continua 1); contra uma API anterior os campos não aparecem e o Salvar segue a regra de
+antes. **Janela de indisponibilidade: NÃO precisa.**
+
+**Reversão.**
+
+- **Web:** livre — a web anterior não conhece os campos e a API nova preserva o gravado quando o campo vem
+  ausente no PUT.
+- **API (binário):** o binário anterior ignora a classificação e confirmaria pela "primeira por código"; o
+  gatilho da 0024 o faz RECUSAR a confirmação de venda classificada. É seguro no sentido de não mentir, mas
+  deixa essas vendas sem confirmação até o binário voltar. Por isso, **ANTES de reverter o binário da API,
+  CONTAR as vendas classificadas não confirmadas** (LEITURA, pela conexão operacional; `PENDING` até ser
+  executada com a credencial real), publicando o denominador junto:
+
+```sql
+select count(*) filter (where kind = 'sale' and deleted_at is null) as vendas,
+       count(*) filter (where kind = 'sale' and deleted_at is null
+                         and categoria_financeira_id is not null
+                         and status not in ('confirmed','invoiced','cancelled')) as classificadas_nao_confirmadas
+  from erp.sales_documents;
+```
+
+  `classificadas_nao_confirmadas` diz quantas vendas ficariam sem poder confirmar com o binário anterior. Um
+  número diferente de zero exige decisão explícita do Maike antes da reversão.
+- **Banco:** a 0024 fica — migration aplicada é histórico, e as colunas anuláveis são inertes para o
+  binário anterior.
 
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
