@@ -234,7 +234,9 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   },
   {
     key: "job_functions", label: "Função", labelPlural: "Funções", table: "job_functions", permission: "job_functions", labelField: "name", route: "/gestao-pessoal/funcoes", softDelete: true,
-    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 4 }), T("cbo_code", "CBO", { list: true, span: 3, busca: "cbo", help: "Ocupação da CBO oficial (MTE)." }), M("base_salary", "Salário base", { required: true, list: true, span: 2 }), { name: "monthly_hours", label: "Horas mensais", type: "integer", required: true, default: 220, span: 2 }, M("hour_value", "Valor da hora", { required: true, span: 2 }), active(), { name: "description", label: "Descrição", type: "textarea", required: true, span: 12 }]
+    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 4 }), T("cbo_code", "CBO", { list: true, span: 3, busca: "cbo", help: "Ocupação da CBO oficial (MTE)." }), M("base_salary", "Salário base", { required: true, list: true, span: 2, sigilo: "employees.edit" }), { name: "monthly_hours", label: "Horas mensais", type: "integer", required: true, default: 220, span: 2 }, M("hour_value", "Valor da hora", { required: true, span: 2, sigilo: "employees.edit" }), active(), { name: "description", label: "Descrição", type: "textarea", required: true, span: 12 }]
+    // R1-2: salário e valor hora da FUNÇÃO são o salário real de quem não tem salário próprio (a folha usa
+    // coalesce(ficha, função)) — o mesmo sigilo da ficha de RH (decisão 255).
   },
   {
     key: "teams", label: "Equipe", labelPlural: "Equipes", table: "teams", permission: "teams", labelField: "name", route: "/gestao-pessoal/equipes", softDelete: true,
@@ -522,7 +524,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
     // FUNCIONÁRIO (CADASTROS Fase 5): o PARCEIRO do tipo Funcionário (erp.people, recorte fixo is_employee) com a
     // FICHA DE RH (erp.employee_profiles, 1:1) sobre o mecanismo genérico de abas da Fase 4. Nasce pelo CPF
-    // (`POST /api/hr/funcionarios/por-cpf`), nunca pela porta genérica. Salário e valor hora são SIGILOSOS.
+    // (`POST /api/hr/funcionarios/por-cpf`), nunca pela porta genérica. Salário, valor hora, meta e comissão são SIGILOSOS (R1-2).
     key: "funcionarios", label: "Funcionário", labelPlural: "Funcionários", table: "people", permission: "employees", labelField: "name", route: "/pessoas", softDelete: true, defaultSort: "name",
     filtroFixo: { is_employee: true },
     criacao: { rota: "/api/hr/funcionarios/por-cpf", mensagem: "Novo funcionário começa pelo CPF: CPF de parceiro existente abre a ficha dele e marca o tipo Funcionário; CPF novo cria o parceiro.", campos: ["document", "name"] },
@@ -545,11 +547,15 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       { key: "eventos", label: "Eventos fixos", detalhes: ["eventos"] },
       { key: "usuario", label: "Usuário do sistema", perfis: ["rh_usuario"] }
     ],
+    // R1-2: as duas grades gravam linhas de OUTRO cadastro e obedecem às permissões DELE. Equipes: a composição é
+    // parte da equipe (Configurações › RH › Equipes), então incluir, mudar ou tirar o funcionário é EDITAR a equipe.
     detalhes: [
-      { key: "equipes", label: "Equipes", table: "team_members", chavePai: "person_id", chaveNatural: "team_id", maxLinhas: 50, fields: [
+      { key: "equipes", label: "Equipes", table: "team_members", chavePai: "person_id", chaveNatural: "team_id", maxLinhas: 50,
+        permissoes: { ler: "teams.view", criar: "teams.edit", editar: "teams.edit", excluir: "teams.edit" }, fields: [
         REF("team_id", "Equipe", "teams", { required: true }), S("member_type", "Tipo", [["employee", "Funcionário"], ["outsourced", "Terceirizado"]], { required: true, default: "employee" }), active("is_active")
       ] },
-      { key: "eventos", label: "Eventos fixos", table: "employee_events", chavePai: "person_id", organizacao: true, maxLinhas: 100, fields: [
+      { key: "eventos", label: "Eventos fixos", table: "employee_events", chavePai: "person_id", organizacao: true, maxLinhas: 100,
+        permissoes: { ler: "employee_events.view", criar: "employee_events.create", editar: "employee_events.edit", excluir: "employee_events.delete" }, fields: [
         REF("event_id", "Evento", "hr_events", { required: true }), M("amount", "Valor", { required: true }), active("is_active")
       ] }
     ],
@@ -562,8 +568,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
         B("trabalhador_rural", "Trabalhador rural"), T("office", "Cargo (texto livre)")
       ] },
       { key: "rh_remuneracao", label: "Remuneração", table: "employee_profiles", chavePai: "person_id", fields: [
-        M("base_salary", "Salário base", { sigilo: "employees.edit" }), M("hour_value", "Valor da hora", { sigilo: "employees.edit" }), M("goal_salary", "Meta"),
-        { name: "commission_percent", label: "Comissão (%)", type: "percent", min: 0, max: 100 }, { name: "jornada_semanal", label: "Jornada semanal (h)", type: "number", min: 0, max: 168 }
+        M("base_salary", "Salário base", { sigilo: "employees.edit" }), M("hour_value", "Valor da hora", { sigilo: "employees.edit" }), M("goal_salary", "Meta", { sigilo: "employees.edit" }),
+        { name: "commission_percent", label: "Comissão (%)", type: "percent", min: 0, max: 100, sigilo: "employees.edit" }, { name: "jornada_semanal", label: "Jornada semanal (h)", type: "number", min: 0, max: 168 }
       ] },
       { key: "rh_documentos", label: "Documentos", table: "employee_profiles", chavePai: "person_id", fields: [
         T("pis_nis", "PIS/NIS", { maxLength: 11, help: "11 dígitos" }), T("ctps_numero", "CTPS número"), T("ctps_serie", "CTPS série"), T("rg_numero", "RG"), T("rg_orgao", "RG órgão emissor"),

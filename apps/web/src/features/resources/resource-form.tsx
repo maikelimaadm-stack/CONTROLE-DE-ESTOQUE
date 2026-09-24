@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller, type UseFormReturn } from "react-hook-form";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { toast } from "@/lib/toast";
-import { chavesBarradas, getResource, ehCadastroCodigoHierarquico, type FieldDef } from "@agro/domain";
+import { campoVisivel, chavesBarradas, getResource, ehCadastroCodigoHierarquico, type FieldDef } from "@agro/domain";
 import { cardFieldIds, type FormLayout } from "@agro/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -84,7 +84,10 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const canEdit = can(`${def?.permission}.edit`); const canDelete = can(`${def?.permission}.delete`); const canCreate = can(`${def?.permission}.create`);
   const readOnly = embedded ? embedded.mode === "view" : sp.get("view") === "1" || (!isNew && !canEdit);
   // aba com `permissaoDeEdicao` que o usuário não tem (ex.: Pessoal do RH sem people.edit): campos travados e fora do corpo
-  const travados = [...l.lockedFieldIds, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
+  // campo SIGILOSO sem a permissão (R1-2, ex.: salário da Função sem employees.edit): não aparece e não vai no corpo —
+  // a API não o devolve e recusaria (403) o corpo que o trouxesse. Só apresentação: quem recusa é o servidor.
+  const sigilosos = fields.filter((f) => !campoVisivel(f, can)).map((f) => f.name);
+  const travados = [...l.lockedFieldIds, ...sigilosos, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
   // grade/perfil de aba sem a permissão de gravar ou de ler (R1-4, ex.: aba Cliente sem clients.edit) não vai no corpo —
   // a API recusaria o corpo inteiro com 403. Só apresentação: quem recusa é o servidor.
   const fichaBarrada = def ? new Set([...chavesBarradas(def, "permissaoDeEdicao", can), ...chavesBarradas(def, "permissaoDeLeitura", can)]) : new Set<string>();
@@ -134,7 +137,9 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   React.useEffect(() => { try { const v = localStorage.getItem(panelStyleKey); if (v === "sidebar") setPanelStyle("sidebar"); } catch { /* sem storage */ } }, [panelStyleKey]);
   const togglePanelStyle = () => setPanelStyle((p) => { const n = p === "tabs" ? "sidebar" : "tabs"; try { localStorage.setItem(panelStyleKey, n); } catch { /* sem storage */ } return n; });
   const save = useMutation({
-    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, travados), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => !fichaBarrada.has(k) && (isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k]))) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
+    // `original`: o registro como veio da API — campo de perfil ESVAZIADO pelo usuário vai como null (R1-2: limpar a data
+    // de desligamento, o salário, a conta de pagamento); vazio que já era vazio não vai
+    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, travados), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => !fichaBarrada.has(k) && (isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k])), { original: form.formState.defaultValues as Values | undefined, pode: can }) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
     onSuccess: (row) => { setErrosFicha([]); toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
     onError: (e) => { const err = e as Error & { details?: ErroDaFicha[] }; const det = err.details?.filter((d) => d.path) ?? []; if (ficha) setErrosFicha(det); errosDoServidor.current = det.map((d) => d.path); det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
   });
@@ -148,7 +153,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   if (!isNew && q.isLoading && !q.data) return <div className="p-6"><Spinner /></div>;
   if (q.error) return <ErrorBox error={q.error} />;
   const values = form.watch();
-  const visible = (f: FieldDef) => (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
+  const visible = (f: FieldDef) => campoVisivel(f, can) && (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
   const back = basePath ?? `/cadastros/${resourceKey}`;
   const byId = new Map(fields.map((f) => [f.name, f]));
   // obrigatório do registry, do layout ou CONDICIONAL (`requiredWhen`): campo de condição vazio vale o `default` dele (ex.: Controla estoque = Sim)
@@ -172,7 +177,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   // corrigido. Limpa-se antes de reenviar; quem julga de novo é o servidor.
   const enviar = form.handleSubmit((v) => save.mutate(v), (errs) => { const names = Object.keys(errs); toast.warning("Campos obrigatórios pendentes", { description: names.map(labelOf).join(", "), duration: 6000 }); const el = document.querySelector<HTMLElement>(`[name="${names[0]}"]`); el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus?.(); });
   const submit = (e?: React.BaseSyntheticEvent) => { if (errosDoServidor.current.length) { form.clearErrors(errosDoServidor.current); errosDoServidor.current = []; } return enviar(e); };
-  const cancel = () => { if (onCancel) { onCancel(); return; } if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset(fromRecord(def.fields, q.data)); embedded.setMode("view"); } } else router.push(back); };
+  const cancel = () => { if (onCancel) { onCancel(); return; } if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset({ ...fromRecord(def.fields, q.data), ...(ficha ? fichaDoRegistro(def, q.data) : {}) }); embedded.setMode("view"); } } else router.push(back); };
   return (
     <form onSubmit={submit} className="b1 flex min-h-0 flex-1 flex-col gap-2" data-testid="b1-form">
       {/* barra de ações */}

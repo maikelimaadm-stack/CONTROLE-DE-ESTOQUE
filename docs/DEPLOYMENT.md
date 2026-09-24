@@ -1005,15 +1005,28 @@ composta `(person_id, organization_id)` → `people`), `matricula`, `empresa_id`
 `tipo_vinculo`, `trabalhador_rural`, `jornada_semanal`, PIS/NIS, CTPS, RG, CNH, `conta_pagamento_id` (FK composta
 `(conta_pagamento_id, person_id)` → `parceiro_contas`, que ganha `unique (id, person_id)`) e `motivo_desligamento`;
 trigger `trg_employee_profiles_matricula` (matrícula única entre funcionários VIVOS, 23505); `erp.job_functions.cbo_code`
-ganha FK `NOT VALID` para `erp.cbo_ocupacoes` (acervo com CBO livre não é reconferido; só gravação nova do código).
+ganha FK `NOT VALID` para `erp.cbo_ocupacoes` (acervo com CBO livre não é reconferido; só gravação nova do código);
+**auditoria com sigilo (R1-2):** função `erp.audit_row_sigilo()` (SECURITY INVOKER, `search_path` fixo) e os gatilhos
+`trg_employee_profiles_audit` e `trg_job_functions_audit` — a ficha de RH e a Função passam a ser auditadas, e o valor
+de salário, valor hora, meta e comissão NUNCA entra na trilha (só o nome do campo, em `metadata.sigilo`); a
+pós-condição confere os dois gatilhos.
 **Pré-condição:** nenhuma ficha de RH órfã (sem parceiro) — havendo, PARA. Nenhum DELETE. Nenhuma variável nova.
 
 **Implantação — ordem: banco (0028) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
 
 1. **API anterior × banco novo:** colunas novas inertes; a folha e o relatório de funcionários leem
-   `employee_profiles` como antes; o trigger preenche `organization_id` de qualquer insert antigo.
-2. **web ANTERIOR × API nova:** nada muda — "Novo funcionário" antigo (Pessoas com `is_employee`) grava; Funções
-   sem CBO gravam; CBO digitado fora da CBO oficial → 422. Provado em `skew-web-anterior.spec.ts` (RH-K2).
+   `employee_profiles` como antes; o trigger preenche `organization_id` de qualquer insert antigo. Toda gravação
+   da API anterior em `employee_profiles`/`job_functions` passa a deixar trilha (sem o valor de salário): o insert
+   na trilha passa pela RLS de `erp.audit_logs` com a organização da própria linha — a API sempre grava com a
+   organização da sessão (`runService`), então nada muda para ela.
+2. **web ANTERIOR × API nova:** para quem tem `employees.edit` (e o proprietário) nada muda — "Novo funcionário"
+   antigo (Pessoas com `is_employee`) grava; Funções sem CBO gravam; CBO digitado fora da CBO oficial → 422.
+   Provado em `skew-web-anterior.spec.ts` (RH-K2, com o proprietário). **Mudança declarada (R1-2):** para perfil
+   SEM `employees.edit`, o formulário ANTERIOR de Funções mostra salário e valor hora como obrigatórios e vazios (a
+   API não os devolve): a própria tela anterior não deixa salvar sem preenchê-los, e preenchidos a API recusa (403
+   "campo sigiloso …"), nada gravado; a lista anterior de Funções deixa de mostrar o salário, e ordenar/filtrar por
+   ele → 403. É o sigilo valendo, não regressão: o web novo esconde os campos, não os manda e edita a Função; criar
+   Função (salário obrigatório) exige `employees.edit` nos dois.
 3. **web NOVA × API anterior:** a ficha de RH (`/api/resources/funcionarios`) e o novo pelo CPF
    (`/api/hr/funcionarios/por-cpf`) não existem na API anterior → 404, nada gravado. Provado em
    `skew-api-producao.spec.ts` (RH-K1).

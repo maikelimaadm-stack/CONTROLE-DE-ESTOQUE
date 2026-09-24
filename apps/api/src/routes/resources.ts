@@ -14,7 +14,7 @@ import { conferirTipoDaNatureza } from "../lib/natureza-financeira.js";
 import { conferirNcmDoProduto } from "../lib/ncm-do-produto.js";
 import { conferirParceiro, atualizarSituacaoReceita } from "../lib/parceiro.js";
 import { conferirProduto, fundirCamposJson, historicoDoRegistro } from "../lib/produto.js";
-import { shapeDaFicha, validarCorpo, gravarFicha, lerFicha, temFicha, semSigilo, conferirPermissoesDaFicha } from "../lib/ficha-em-abas.js";
+import { shapeDaFicha, validarCorpo, gravarFicha, lerFicha, temFicha, semSigilo, conferirPermissoesDaFicha, conferirSigiloNaCriacao, exigirCampoVisivel, podeVerCampo } from "../lib/ficha-em-abas.js";
 import { conferirFuncionario, conferirCboDaFuncao } from "../lib/funcionario.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
@@ -166,12 +166,16 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   if (escL.ativo && ctx.empresaId && existing.has("empresa_id") && !filters["empresa_id"]) where.push(escL.nullable ? `(empresa_id is null or empresa_id = ${b.add(ctx.empresaId)})` : `empresa_id = ${b.add(ctx.empresaId)}`);
   if (escL.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, "empresa_id", b, { nullable: escL.nullable }));
   if (q.search) {
-    const sf = def.fields.filter((f) => f.search).map((f) => f.name);
+    // campo sigiloso não entra na busca textual de quem não o vê (R1-2): a busca é uma pergunta sobre o valor
+    const sf = def.fields.filter((f) => f.search && podeVerCampo(ctx, f)).map((f) => f.name);
     if (sf.length) { const p = b.add(`%${q.search}%`); where.push("(" + sf.map((c) => `${ident(c)}::text ilike ${p}`).join(" or ") + ")"); }
   }
   for (const [k, v] of Object.entries(filters)) {
     const adv = parseFilterKey(k);
-    if (adv) { const f = def.fields.find((x) => x.name === adv.field); if (f && existing.has(adv.field) && !Array.isArray(v)) { const clause = advancedClause(f, adv.op, v, b); if (clause) where.push(clause); } continue; }
+    // SIGILO COMO PERGUNTA (R1-2): filtro por campo sigiloso sem a permissão → 403 com o nome do campo, antes de
+    // qualquer consulta — `campo__op`, `campo=valor` e `campo_from`/`campo_to`
+    if (adv) { exigirCampoVisivel(ctx, def, adv.field, "no filtro"); const f = def.fields.find((x) => x.name === adv.field); if (f && existing.has(adv.field) && !Array.isArray(v)) { const clause = advancedClause(f, adv.op, v, b); if (clause) where.push(clause); } continue; }
+    exigirCampoVisivel(ctx, def, k, "no filtro");
     const f = def.fields.find((x) => x.name === k);
     if (f && existing.has(k)) {
       if (Array.isArray(v)) where.push(`${ident(k)} = any(${b.add(v)})`);
@@ -180,9 +184,11 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
       else where.push(`${ident(k)} = ${b.add(v)}`);
     } else if (/^(.+)_(from|to)$/.test(k)) {
       const m = /^(.+)_(from|to)$/.exec(k)!; const col = m[1]!;
+      exigirCampoVisivel(ctx, def, col, "no filtro");
       if (existing.has(col)) where.push(`${ident(col)} ${m[2] === "from" ? ">=" : "<="} ${b.add(v)}`);
     }
   }
+  if (q.sort) exigirCampoVisivel(ctx, def, q.sort, "na ordenação");
   const sortCol = q.sort && existing.has(q.sort) ? q.sort : (def.defaultSort && existing.has(def.defaultSort) ? def.defaultSort : (existing.has("created_at") ? "created_at" : "id"));
   const dir = q.dir ?? (sortCol === "created_at" ? "desc" : "asc");
   const wsql = where.length ? "where " + where.join(" and ") : "";
@@ -267,6 +273,7 @@ function coerceValue(f: FieldDef, v: unknown): unknown {
 export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal?: boolean } = {}) {
   // cadastro que nasce por OUTRA porta (ex.: funcionário pelo CPF) não nasce pela genérica
   if (def.criacao) throw validation(def.criacao.mensagem);
+  conferirSigiloNaCriacao(ctx, def);
   const data = validarCorpo(def, buildSchema(def), body);
   conferirPermissoesDaFicha(ctx, def, data);
   const escC = escopoDoRecurso(def);
@@ -373,6 +380,8 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
   // árvore com código: a busca acha também pelo código ("1.01"), e a ordem é a da árvore (o código).
   const arvore = Boolean(def.tree) && existing.has("parent_id") && existing.has("code") && !refDef;
   if (search) where.push(arvore ? `(${labelExpr} ilike ${b.add(`%${search}%`)} or t.code ilike ${b.add(`${escapeLike(search)}%`)})` : `${labelExpr} ilike ${b.add(`%${search}%`)}`);
+  // filtro do seletor (`?campo=valor`) por campo sigiloso também é pergunta sobre o valor (R1-2)
+  for (const k of Object.keys(extra)) exigirCampoVisivel(ctx, def, k, "no filtro do seletor");
   for (const [k, v] of Object.entries(extra)) if (existing.has(k) && k !== "include_inactive") where.push(`t.${ident(k)} = ${b.add(v)}`);
   const codeSel = existing.has("code") ? ", t.code::text as code" : ", null as code";
   const kindSel = arvore && existing.has("kind") ? ", t.kind::text as kind" : "";
@@ -405,6 +414,8 @@ export async function caminhosNaArvore(ctx: ServiceCtx, def: ResourceDef, ids: s
 export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, campoPedido: string, search: string | undefined, limit: number) {
   const field = campoPedido;
   const f = def.fields.find((x) => x.name === field && (x.filter || x.list)); if (!f) throw validation("Campo não filtrável");
+  // os valores distintos de um campo sigiloso SÃO os valores (R1-2)
+  exigirCampoVisivel(ctx, def, f.name, "nos valores distintos");
   const existing = await checkColumns(ctx, def); if (!existing.has(f.name)) return [];
   const b = new SqlBuilder(); const where: string[] = [];
   if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(t.organization_id is null or t.organization_id = ${b.add(ctx.orgId)})` : `t.organization_id = ${b.add(ctx.orgId)}`);

@@ -14,7 +14,7 @@ import * as React from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { AlertTriangle, Plus, Search, Trash2 } from "lucide-react";
 import type { DetalheDef, FieldDef, PerfilDef, ResourceDef } from "@agro/domain";
-import { normalizarDocumento, validarCnpj } from "@agro/domain";
+import { campoVisivel, chavesBarradas, normalizarDocumento, validarCnpj } from "@agro/domain";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
@@ -31,10 +31,13 @@ const TITULO = "text-[13px] font-semibold text-slate-800";
 const iguala = (x: unknown, esperado: unknown) => x === esperado || String(x) === String(esperado);
 const vazio = (v: unknown) => v === "" || v === null || v === undefined;
 
+/** Marca da linha que veio GRAVADA (R1-2: com as permissões do cadastro dono, a linha gravada edita com `editar` e sai com `excluir`; a nova, com `criar`). Nunca vai no corpo. */
+const GRAVADA = "__gravada";
+
 /** Registro da API → valores do formulário (grades como listas, perfis como objetos). */
 export function fichaDoRegistro(def: ResourceDef, data: Values | null | undefined): Values {
   const v: Values = {};
-  for (const d of def.detalhes ?? []) v[d.key] = ((data?.[d.key] as Values[] | undefined) ?? []).map((l) => ({ ...l }));
+  for (const d of def.detalhes ?? []) v[d.key] = ((data?.[d.key] as Values[] | undefined) ?? []).map((l) => ({ ...l, [GRAVADA]: true }));
   for (const p of def.perfis ?? []) { const o = (data?.[p.key] as Values | null | undefined) ?? {}; v[p.key] = Object.fromEntries(p.fields.map((f) => [f.name, o[f.name] ?? (f.type === "boolean" ? false : "")])); }
   return v;
 }
@@ -49,19 +52,32 @@ function campoParaApi(f: FieldDef, x: unknown): unknown {
 /**
  * Valores do formulário → chaves da ficha no corpo. Só vai o que o usuário MEXEU (`alterado`): grade ausente
  * não é tocada pela API, então uma edição do telefone não regrava (nem reconfere) as grades. Grade que vai, vai
- * COMPLETA. Perfil vai só com valor preenchido (vazio não apaga o que o perfil tem).
+ * COMPLETA. Perfil vai com o que tem valor e com o que o usuário ESVAZIOU (R1-2): o campo que tinha valor no
+ * `original` (o registro como veio da API) e ficou vazio vai `null` — é assim que se limpa a data de desligamento,
+ * o salário ou a conta de pagamento. Vazio que já era vazio continua não indo (não apaga o que a tela não mostrou).
+ * O mesmo vale para o número esvaziado numa linha GRAVADA da grade (na linha nova, número vazio deixa o default do
+ * banco valer, como antes). Campo SIGILOSO que o usuário não vê (`pode`) nunca vai: a API o recusaria (403).
  */
-export function fichaParaApi(def: ResourceDef, v: Values, alterado: (chave: string) => boolean = () => true): Values {
+export function fichaParaApi(def: ResourceDef, v: Values, alterado: (chave: string) => boolean = () => true, opcoes: { original?: Values | null; pode?: (permissao: string) => boolean } = {}): Values {
   const o: Values = {};
+  const pode = opcoes.pode ?? (() => true);
   for (const d of def.detalhes ?? []) {
     if (!alterado(d.key)) continue;
     const linhas = (v[d.key] as Values[] | undefined) ?? [];
-    o[d.key] = linhas.map((l) => { const r: Values = {}; if (!d.chaveNatural && l["id"]) r["id"] = l["id"]; for (const f of d.fields) { if (f.readOnly) continue; const x = campoParaApi(f, l[f.name]); if (x === null && numerico.includes(f.type)) continue; r[f.name] = x; } return r; });
+    const chave = d.chaveNatural ?? "id";
+    const originais = (opcoes.original?.[d.key] as Values[] | undefined) ?? [];
+    const originalDe = (l: Values) => (vazio(l[chave]) ? undefined : originais.find((x) => String(x[chave]) === String(l[chave])));
+    o[d.key] = linhas.map((l) => {
+      const r: Values = {}; if (!d.chaveNatural && l["id"]) r["id"] = l["id"];
+      const antes = originalDe(l);
+      for (const f of d.fields) { if (f.readOnly || !campoVisivel(f, pode)) continue; const x = campoParaApi(f, l[f.name]); if (x === null && numerico.includes(f.type) && (!antes || vazio(antes[f.name]))) continue; r[f.name] = x; }
+      return r;
+    });
   }
   for (const p of def.perfis ?? []) {
     if (!p.fields.length || !alterado(p.key)) continue;
-    const src = (v[p.key] as Values | undefined) ?? {}; const r: Values = {};
-    for (const f of p.fields) { if (f.readOnly) continue; const x = campoParaApi(f, src[f.name]); if (x === null) continue; r[f.name] = x; }
+    const src = (v[p.key] as Values | undefined) ?? {}; const antes = (opcoes.original?.[p.key] as Values | null | undefined) ?? {}; const r: Values = {};
+    for (const f of p.fields) { if (f.readOnly || !campoVisivel(f, pode)) continue; const x = campoParaApi(f, src[f.name]); if (x === null && vazio(antes[f.name])) continue; r[f.name] = x; }
     if (Object.keys(r).length) o[p.key] = r;
   }
   return o;
@@ -84,28 +100,37 @@ function CelulaDaGrade({ f, valor, onChange, dis }: { f: FieldDef; valor: unknow
 
 /** Grade de um detalhe 1:N dentro da aba. Linha com erro do servidor fica marcada. */
 function GradeDeDetalhe({ d, form, dis, erros }: { d: DetalheDef; form: UseFormReturn<Values>; dis: boolean; erros: ErroDaFicha[] }) {
+  const { can } = useAuth();
   const linhas = (form.watch(d.key) as Values[] | undefined) ?? [];
   const set = (nova: Values[]) => form.setValue(d.key, nova, { shouldDirty: true });
-  const campos = d.fields.filter((f) => !f.readOnly);
+  const campos = d.fields.filter((f) => !f.readOnly && campoVisivel(f, can));
+  // grade de OUTRO cadastro (R1-2): cada operação com a permissão dele — incluir (criar), mudar a linha gravada
+  // (editar), tirar a linha gravada (excluir). Só apresentação: o servidor confere cada uma.
+  const ps = d.permissoes;
+  const podeCriar = !ps || can(ps.criar); const podeEditar = !ps || can(ps.editar); const podeExcluir = !ps || can(ps.excluir);
+  const travada = (l: Values, f: FieldDef) => dis || (l[GRAVADA] ? (f.name === d.chaveNatural ? !(podeCriar && podeExcluir) : !podeEditar) : !podeCriar);
   const erroDaLinha = (i: number) => erros.filter((e) => e.detalhe === d.key && e.linha === i + 1);
   return <Card className="col-span-12 p-3" data-testid={`grade-${d.key}`}>
     <div className="mb-2 flex items-center justify-between"><h3 className={TITULO}>{d.label}</h3>
-      {!dis && <PillBtn tone="gray" onClick={() => set([...linhas, Object.fromEntries(campos.map((f) => [f.name, f.default ?? (f.type === "boolean" ? false : "")]))])}><Plus className="h-3.5 w-3.5" /> Incluir linha</PillBtn>}</div>
+      {!dis && podeCriar && <PillBtn tone="gray" onClick={() => set([...linhas, Object.fromEntries(campos.map((f) => [f.name, f.default ?? (f.type === "boolean" ? false : "")]))])}><Plus className="h-3.5 w-3.5" /> Incluir linha</PillBtn>}</div>
     {linhas.length === 0 ? <p className="text-[12px] text-slate-400">Nenhuma linha.</p> :
       <div className="overflow-x-auto"><table className="w-full text-[12.5px]"><thead><tr>{campos.map((f) => <th key={f.name} className="px-1 text-left font-semibold text-slate-600">{f.label}{f.required && <span className="text-red-500"> *</span>}</th>)}<th /></tr></thead>
         <tbody>{linhas.map((l, i) => { const es = erroDaLinha(i); return <React.Fragment key={String(l["id"] ?? `n${i}`)}>
-          <tr className={cn(es.length > 0 && "bg-red-50")} data-testid={`linha-${d.key}-${i + 1}`}>{campos.map((f) => <td key={f.name} className="px-1 py-0.5"><CelulaDaGrade f={f} valor={l[f.name]} dis={dis} onChange={(x) => set(linhas.map((y, k) => (k === i ? { ...y, [f.name]: x } : y)))} /></td>)}
-            <td>{!dis && <button type="button" aria-label={`Remover linha ${i + 1}`} className="rounded p-1 text-red-600 hover:bg-red-50" onClick={() => set(linhas.filter((_, k) => k !== i))}><Trash2 className="h-3.5 w-3.5" /></button>}</td></tr>
+          <tr className={cn(es.length > 0 && "bg-red-50")} data-testid={`linha-${d.key}-${i + 1}`}>{campos.map((f) => <td key={f.name} className="px-1 py-0.5"><CelulaDaGrade f={f} valor={l[f.name]} dis={travada(l, f)} onChange={(x) => set(linhas.map((y, k) => (k === i ? { ...y, [f.name]: x } : y)))} /></td>)}
+            <td>{!dis && (!l[GRAVADA] || podeExcluir) && <button type="button" aria-label={`Remover linha ${i + 1}`} className="rounded p-1 text-red-600 hover:bg-red-50" onClick={() => set(linhas.filter((_, k) => k !== i))}><Trash2 className="h-3.5 w-3.5" /></button>}</td></tr>
           {es.length > 0 && <tr><td colSpan={campos.length + 1} className="px-1 pb-1 text-[11px] text-red-600">Linha {i + 1}: {es.map((e) => e.message).join(" · ")}</td></tr>}
         </React.Fragment>; })}</tbody></table></div>}
   </Card>;
 }
 
 function CamposDoPerfil({ p, form, dis }: { p: PerfilDef; form: UseFormReturn<Values>; dis: boolean }) {
-  if (!p.fields.length) return null;
+  const { can } = useAuth();
+  // campo SIGILOSO sem a permissão (R1-2, ex.: salário, meta e comissão sem employees.edit) não aparece — a API não o devolve
+  const campos = p.fields.filter((f) => campoVisivel(f, can));
   const v = (form.watch(p.key) as Values | undefined) ?? {};
+  if (!campos.length) return null;
   return <Card className="col-span-12 p-3"><h3 className={cn(TITULO, "mb-2")}>{p.label}</h3><div className="flex flex-wrap gap-3">
-    {p.fields.map((f) => <label key={f.name} className="min-w-[200px] flex-1 text-[12px]"><span className="block text-[11px] text-slate-500">{f.label}</span><CelulaDaGrade f={f} valor={v[f.name]} dis={dis} onChange={(x) => form.setValue(p.key, { ...v, [f.name]: x }, { shouldDirty: true })} /></label>)}
+    {campos.map((f) => <label key={f.name} className="min-w-[200px] flex-1 text-[12px]"><span className="block text-[11px] text-slate-500">{f.label}</span><CelulaDaGrade f={f} valor={v[f.name]} dis={dis} onChange={(x) => form.setValue(p.key, { ...v, [f.name]: x }, { shouldDirty: true })} /></label>)}
   </div></Card>;
 }
 
@@ -225,8 +250,12 @@ export function CriacaoPorOutraPorta({ def, base }: { def: ResourceDef; base: st
 export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderField, visivel }: { def: ResourceDef; form: UseFormReturn<Values>; readOnly: boolean; isNew: boolean; record: Values | null; erros: ErroDaFicha[]; renderField: (fid: string) => React.ReactNode; visivel: (f: FieldDef) => boolean }) {
   const { can } = useAuth();
   const values = form.watch();
-  // aba sem a permissão de LEITURA (R1-4, ex.: Cliente sem clients.view) não aparece — a API também não manda os dados dela
-  const abas = (def.abas ?? []).filter((a) => (!a.permissaoDeLeitura || can(a.permissaoDeLeitura)) && (!a.visivelQuando || iguala(values[a.visivelQuando.field], a.visivelQuando.equals)));
+  // aba sem a permissão de LEITURA (R1-4, ex.: Cliente sem clients.view) não aparece — a API também não manda os dados dela.
+  // Grade de OUTRO cadastro sem a leitura dele (R1-2) some; a aba que só tinha essas grades (Eventos fixos sem
+  // employee_events.view) não aparece.
+  const barradas = chavesBarradas(def, "permissaoDeLeitura", can);
+  const soGradesBarradas = (a: { secoes?: string[]; perfis?: string[]; detalhes?: string[]; painel?: string }) => !a.secoes?.length && !a.perfis?.length && !a.painel && Boolean(a.detalhes?.length) && a.detalhes!.every((k) => barradas.has(k));
+  const abas = (def.abas ?? []).filter((a) => (!a.permissaoDeLeitura || can(a.permissaoDeLeitura)) && !soGradesBarradas(a) && (!a.visivelQuando || iguala(values[a.visivelQuando.field], a.visivelQuando.equals)));
   const semEdicao = (a: { permissaoDeEdicao?: string }) => Boolean(a.permissaoDeEdicao && !can(a.permissaoDeEdicao));
   const [ativa, setAtiva] = React.useState(abas[0]?.key ?? "");
   const cur = abas.some((a) => a.key === ativa) ? ativa : abas[0]?.key ?? "";
@@ -260,7 +289,7 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
         {(a.secoes ?? []).map(secao)}
         {a.key === "identificacao" && def.fields.some((f) => f.name === "document") && <ConsultaCnpj form={form} dis={readOnly} />}
         {(a.perfis ?? []).map((k) => { const p = def.perfis?.find((x) => x.key === k); return p ? <CamposDoPerfil key={k} p={p} form={form} dis={readOnly || semEdicao(a)} /> : null; })}
-        {(a.detalhes ?? []).map((k) => { const d = def.detalhes?.find((x) => x.key === k); return d ? <GradeDeDetalhe key={k} d={d} form={form} dis={readOnly || semEdicao(a)} erros={erros} /> : null; })}
+        {(a.detalhes ?? []).filter((k) => !barradas.has(k)).map((k) => { const d = def.detalhes?.find((x) => x.key === k); return d ? <GradeDeDetalhe key={k} d={d} form={form} dis={readOnly || semEdicao(a)} erros={erros} /> : null; })}
         {a.key === "funcionario" && <Card className="col-span-12 p-3 text-[12.5px]">Funcionário: os eventos fixos, as ocorrências e a folha ficam no RH. {!isNew && record?.["id"] ? <a className="text-brand-700 underline" href={`/cadastros/funcionarios/${String(record["id"])}`}>Abrir no RH</a> : "Salve o parceiro para abrir no RH."}</Card>}
         {a.painel === "saldo_por_lote" && <SaldoPorLote id={isNew ? null : (record?.["id"] as string | undefined) ?? null} />}
         {a.painel === "historico" && <HistoricoDaFicha def={def} id={isNew ? null : (record?.["id"] as string | undefined) ?? null} />}

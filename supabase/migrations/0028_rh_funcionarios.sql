@@ -11,7 +11,10 @@
 --     conta principal) e motivo do desligamento;
 --   · matrícula ÚNICA entre funcionários VIVOS da organização (parceiro não excluído) — trigger no banco;
 --   · erp.job_functions.cbo_code passa a apontar para a CBO oficial (erp.cbo_ocupacoes, 0026) — FK
---     NOT VALID: o acervo com CBO livre continua como está e só a gravação NOVA do código é conferida.
+--     NOT VALID: o acervo com CBO livre continua como está e só a gravação NOVA do código é conferida;
+--   · AUDITORIA COM SIGILO (R1-2): a ficha de RH e a Função passam a ser auditadas (erp.audit_logs). Campo de
+--     SALÁRIO (salário base, valor hora, meta, comissão; na Função, salário base e valor hora) fica registrado —
+--     quem, quando, QUAL campo — SEM o valor: sai de before/after e o nome vai em metadata.sigilo.
 --
 -- JANELA DE DEPLOY: tudo é aditivo e anulável (ou com default). organization_id é preenchido por trigger
 -- quando quem insere não o informa (a API anterior e o seed não o conhecem). A folha continua lendo
@@ -109,8 +112,12 @@ comment on column erp.employee_profiles.pis_nis is 'PIS/PASEP/NIS (11 dígitos).
 comment on column erp.employee_profiles.cnh_numero is 'Número de registro da CNH (11 dígitos).';
 comment on column erp.employee_profiles.conta_pagamento_id is 'Conta de pagamento: conta ADICIONAL do próprio parceiro (erp.parceiro_contas). Vazio = conta principal do parceiro.';
 comment on column erp.employee_profiles.motivo_desligamento is 'Motivo do desligamento: pedido de demissão, sem justa causa, com justa causa, término de contrato, acordo, outro.';
-comment on column erp.employee_profiles.base_salary is 'Salário base. SIGILOSO: a API só o devolve a quem tem employees.edit.';
-comment on column erp.employee_profiles.hour_value is 'Valor da hora. SIGILOSO: a API só o devolve a quem tem employees.edit.';
+comment on column erp.employee_profiles.base_salary is 'Salário base. SIGILOSO: a API só o devolve a quem tem employees.edit; a auditoria registra que mudou, sem o valor.';
+comment on column erp.employee_profiles.hour_value is 'Valor da hora. SIGILOSO: a API só o devolve a quem tem employees.edit; a auditoria registra que mudou, sem o valor.';
+comment on column erp.employee_profiles.goal_salary is 'Meta. SIGILOSA (dado de salário): a API só a devolve a quem tem employees.edit; a auditoria registra que mudou, sem o valor.';
+comment on column erp.employee_profiles.commission_percent is 'Comissão (%). SIGILOSA (dado de salário): a API só a devolve a quem tem employees.edit; a auditoria registra que mudou, sem o valor.';
+comment on column erp.job_functions.base_salary is 'Salário base da função (vale para quem não tem salário próprio). SIGILOSO: a API só o devolve a quem tem employees.edit; a auditoria registra que mudou, sem o valor.';
+comment on column erp.job_functions.hour_value is 'Valor da hora da função. SIGILOSO: a API só o devolve a quem tem employees.edit; a auditoria registra que mudou, sem o valor.';
 
 create index ix_employee_profiles_matricula on erp.employee_profiles (organization_id, matricula) where matricula is not null;
 
@@ -138,7 +145,45 @@ alter table erp.job_functions add constraint fk_job_functions_cbo
   foreign key (cbo_code) references erp.cbo_ocupacoes (codigo) not valid;
 comment on column erp.job_functions.cbo_code is 'CBO da função (erp.cbo_ocupacoes). FK NOT VALID: o acervo anterior não é reconferido; gravação nova do código é.';
 
--- ---------- 7) pós-condições ----------
+-- ---------- 7) auditoria com SIGILO (R1-2) ----------
+-- Gatilho de auditoria para tabela com dado de salário. Argumentos: 1º = coluna que identifica a linha
+-- (entity_id: `id` na Função, `person_id` na ficha de RH, que não tem id próprio); os demais = colunas SIGILOSAS.
+-- A coluna sigilosa SAI de before/after (o valor nunca chega à trilha, nem para quem tem audit_logs.view) e o
+-- NOME de cada uma que mudou vai em metadata.sigilo — quem, quando e qual campo continuam registrados.
+-- SECURITY INVOKER (padrão): o insert na trilha passa pela RLS de erp.audit_logs como qualquer gravação da API.
+create or replace function erp.audit_row_sigilo() returns trigger
+language plpgsql set search_path = erp, pg_temp as $$
+declare
+  v_antes jsonb := case when tg_op in ('UPDATE', 'DELETE') then to_jsonb(old) end;
+  v_depois jsonb := case when tg_op in ('INSERT', 'UPDATE') then to_jsonb(new) end;
+  v_linha jsonb := coalesce(to_jsonb(new), to_jsonb(old));
+  v_sigilo text[] := case when tg_nargs > 1 then tg_argv[1:tg_nargs - 1] else '{}'::text[] end;
+  v_mudou text[] := '{}'::text[];
+  c text;
+begin
+  foreach c in array v_sigilo loop
+    if coalesce(v_antes -> c, 'null'::jsonb) is distinct from coalesce(v_depois -> c, 'null'::jsonb) then
+      v_mudou := v_mudou || c;
+    end if;
+  end loop;
+  insert into erp.audit_logs (organization_id, user_id, entity, entity_id, action, before, after, metadata)
+  values (coalesce((v_linha ->> 'organization_id')::uuid, erp.current_org_id()), erp.current_user_id(), tg_table_name,
+          v_linha ->> tg_argv[0],
+          case tg_op when 'INSERT' then 'create' when 'UPDATE' then 'update' else 'delete' end,
+          v_antes - v_sigilo, v_depois - v_sigilo,
+          case when cardinality(v_mudou) > 0 then jsonb_build_object('sigilo', to_jsonb(v_mudou)) end);
+  return null;
+end $$;
+revoke all on function erp.audit_row_sigilo() from public;
+grant execute on function erp.audit_row_sigilo() to erp_app;
+comment on function erp.audit_row_sigilo() is 'Auditoria de tabela com dado de salário (R1-2): colunas sigilosas (argumentos 2..n) ficam fora de before/after; o nome das que mudaram vai em metadata.sigilo. 1º argumento = coluna do entity_id.';
+
+create trigger trg_employee_profiles_audit after insert or update or delete on erp.employee_profiles
+  for each row execute function erp.audit_row_sigilo('person_id', 'base_salary', 'hour_value', 'goal_salary', 'commission_percent');
+create trigger trg_job_functions_audit after insert or update or delete on erp.job_functions
+  for each row execute function erp.audit_row_sigilo('id', 'base_salary', 'hour_value');
+
+-- ---------- 8) pós-condições ----------
 do $$
 declare a record;
 begin
@@ -152,5 +197,8 @@ begin
   end if;
   if not exists (select 1 from pg_trigger where tgname = 'trg_employee_profiles_matricula') then
     raise exception 'CADASTROS-F5: trigger de matricula ausente.';
+  end if;
+  if (select count(*) from pg_trigger where tgname in ('trg_employee_profiles_audit', 'trg_job_functions_audit') and not tgisinternal) <> 2 then
+    raise exception 'CADASTROS-F5: auditoria com sigilo (ficha de RH e Funcao) ausente.';
   end if;
 end $$;

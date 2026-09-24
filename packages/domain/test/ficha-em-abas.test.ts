@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { RESOURCES, getResource } from "../src/index.js";
+import { RESOURCES, allPermissionKeys, getResource } from "../src/index.js";
 
 /**
  * FICHA EM ABAS (decisão 253): a declaração de todo cadastro com `abas` é COERENTE — nenhuma aba aponta para
@@ -28,10 +28,25 @@ describe("ficha em abas — declaração coerente", () => {
       for (const s of secoes) expect(nasAbas.has(s!), `seção ${s} fora de todas as abas`).toBe(true);
       for (const n of [...(def.cabecalho ?? []), ...(def.camposRapidos ?? [])]) expect(nomes.has(n), n).toBe(true);
       for (const p of def.perfis ?? []) if (p.ativoPor) expect(def.fields.find((f) => f.name === p.ativoPor)?.type).toBe("boolean");
+      // toda permissão declarada (aba, grade de outro cadastro, sigilo) EXISTE no catálogo: uma chave com erro de
+      // digitação nunca é concedida e barraria a todos em silêncio (R1-2)
+      const catalogo = new Set(allPermissionKeys());
+      const declaradas = [
+        ...def.abas!.flatMap((a) => [a.permissaoDeLeitura, a.permissaoDeEdicao]),
+        ...(def.detalhes ?? []).flatMap((d) => (d.permissoes ? Object.values(d.permissoes) : [])),
+        ...[...def.fields, ...(def.perfis ?? []).flatMap((p) => p.fields), ...(def.detalhes ?? []).flatMap((d) => d.fields)].map((f) => f.sigilo)
+      ].filter((x): x is string => Boolean(x));
+      for (const p of declaradas) expect(catalogo.has(p), p).toBe(true);
       // a chave do corpo não colide com campo do principal
       for (const k of [...(def.detalhes ?? []).map((d) => d.key), ...(def.perfis ?? []).map((p) => p.key)]) expect(nomes.has(k), k).toBe(false);
     });
   }
+  it("SIGILO de qualquer cadastro (com ou sem ficha) é uma permissão do catálogo (R1-2)", () => {
+    const catalogo = new Set(allPermissionKeys());
+    const todos = RESOURCES.flatMap((r) => [...r.fields, ...(r.perfis ?? []).flatMap((p) => p.fields), ...(r.detalhes ?? []).flatMap((d) => d.fields)].filter((f) => f.sigilo).map((f) => `${r.key}.${f.name}:${f.sigilo}`));
+    expect(todos.length).toBeGreaterThanOrEqual(6);
+    for (const x of todos) expect(catalogo.has(x.split(":")[1]!), x).toBe(true);
+  });
   it("Parceiro: tipos no cabeçalho e no cadastro rápido; situação na Receita só leitura", () => {
     const p = getResource("people")!;
     for (const t of ["is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary"]) { expect(p.cabecalho).toContain(t); expect(p.camposRapidos).toContain(t); }

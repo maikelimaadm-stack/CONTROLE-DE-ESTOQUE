@@ -12,11 +12,11 @@
  * Nomes de tabela e coluna saem SEMPRE da definição estática do registry, nunca do corpo.
  */
 import { z, ZodError } from "zod";
-import { chavesBarradas, getResource, type DetalheDef, type FieldDef, type PerfilDef, type ResourceDef } from "@agro/domain";
-import { DomainError } from "@agro/shared";
+import { campoVisivel, chavesBarradas, getResource, type DetalheDef, type FieldDef, type PerfilDef, type ResourceDef } from "@agro/domain";
+import { D, DomainError } from "@agro/shared";
 import { ident } from "./sql.js";
 import { denied, fromPgError, validation } from "./errors.js";
-import { hasPermission, moduloAtivo, type ServiceCtx } from "./context.js";
+import { hasPermission, moduloAtivo, type RequestContext, type ServiceCtx } from "./context.js";
 import { translateIssue } from "../plugins/errors.js";
 
 type Linha = Record<string, unknown>;
@@ -24,8 +24,36 @@ type SchemaDeCampo = (f: FieldDef) => z.ZodTypeAny;
 
 export const temFicha = (def: ResourceDef) => Boolean(def.detalhes?.length || def.perfis?.length);
 
-/** SIGILO (Fase 5): o campo só sai da API (e só é gravado) para quem tem a permissão declarada em `sigilo`. */
-export const podeVerCampo = (ctx: ServiceCtx, f: FieldDef) => !f.sigilo || hasPermission(ctx, f.sigilo);
+/** SIGILO (Fase 5; R1-2): o campo só sai da API (e só é gravado) para quem tem a permissão declarada em `sigilo`. */
+export const podeVerCampo = (ctx: RequestContext, f: Pick<FieldDef, "sigilo">) => campoVisivel(f, (p) => hasPermission(ctx, p));
+
+/**
+ * 403 do SIGILO com o NOME do campo (R1-2). `uso` diz onde o campo apareceu ("na ordenação", "no filtro"…): o
+ * usuário vê que a recusa é do campo, não da tela inteira. A mensagem nunca traz valor.
+ */
+export function recusaDeSigilo(f: FieldDef, uso: string): DomainError {
+  return new DomainError("PERMISSION_DENIED", `Sem permissão: ${f.sigilo} — campo sigiloso "${f.label}" (${f.name}) ${uso}`, [{ path: f.name, message: `Campo sigiloso: exige ${f.sigilo}` }]);
+}
+
+/**
+ * SIGILO COMO PERGUNTA (R1-2): tirar o campo da resposta não basta — filtro, ordenação, valores distintos, busca,
+ * filtro do seletor, exportação e relatório salvo que usem o campo deixariam descobrir o valor por tentativa
+ * ("salário > 5000?"). Toda porta que recebe NOME de campo do cliente passa por aqui: campo com sigilo sem a
+ * permissão → 403 com o nome do campo. Nome que não é campo da definição não é sigiloso (a porta já o trata).
+ */
+export function exigirCampoVisivel(ctx: RequestContext, def: ResourceDef, nome: string, uso: string) {
+  const f = def.fields.find((x) => x.name === nome);
+  if (f && !podeVerCampo(ctx, f)) throw recusaDeSigilo(f, uso);
+}
+
+/**
+ * Cadastro cujo campo OBRIGATÓRIO é sigiloso (Funções: salário e valor hora): criar exige a permissão do sigilo —
+ * sem ela o campo não pode ir no corpo (403) e sem ele o registro não nasce. A recusa é da CAPACIDADE (403 com o
+ * nome do campo), não um 422 de "campo obrigatório" que a tela nem mostra a quem não tem o sigilo.
+ */
+export function conferirSigiloNaCriacao(ctx: RequestContext, def: ResourceDef) {
+  for (const f of def.fields) if (f.required && !f.readOnly && !podeVerCampo(ctx, f)) throw recusaDeSigilo(f, "é obrigatório para criar");
+}
 
 /** Tira da linha do PRINCIPAL os campos sigilosos que o usuário não pode ver (lista e ficha). */
 export function semSigilo<T extends Linha>(ctx: ServiceCtx, def: ResourceDef, row: T): T {
@@ -44,9 +72,11 @@ export function semSigilo<T extends Linha>(ctx: ServiceCtx, def: ResourceDef, ro
  *    lê a aba não grava a lista completa dela às cegas.
  */
 export function conferirPermissoesDaFicha(ctx: ServiceCtx, def: ResourceDef, data: Linha) {
-  for (const f of def.fields) if (f.name in data && !podeVerCampo(ctx, f)) throw denied(f.sigilo);
-  for (const d of def.detalhes ?? []) { const ls = data[d.key]; if (Array.isArray(ls)) for (const f of d.fields) if (!podeVerCampo(ctx, f) && (ls as Linha[]).some((l) => f.name in l)) throw denied(f.sigilo); }
-  for (const p of def.perfis ?? []) { const c = data[p.key] as Linha | undefined; if (c) for (const f of p.fields) if (f.name in c && !podeVerCampo(ctx, f)) throw denied(f.sigilo); }
+  for (const f of def.fields) if (f.name in data && !podeVerCampo(ctx, f)) throw recusaDeSigilo(f, "na gravação");
+  for (const d of def.detalhes ?? []) { const ls = data[d.key]; if (Array.isArray(ls)) for (const f of d.fields) if (!podeVerCampo(ctx, f) && (ls as Linha[]).some((l) => f.name in l)) throw recusaDeSigilo(f, "na gravação"); }
+  for (const p of def.perfis ?? []) { const c = data[p.key] as Linha | undefined; if (c) for (const f of p.fields) if (f.name in c && !podeVerCampo(ctx, f)) throw recusaDeSigilo(f, "na gravação"); }
+  // grade de OUTRO cadastro (R1-2) sem a leitura dele: não grava às cegas (cada operação é conferida em `gravarDetalhe`)
+  for (const d of def.detalhes ?? []) if (d.permissoes && d.key in data && !hasPermission(ctx, d.permissoes.ler)) throw denied(d.permissoes.ler);
   for (const a of def.abas ?? []) {
     const chaves = [...(a.detalhes ?? []), ...(a.perfis ?? [])];
     if (a.permissaoDeEdicao && !hasPermission(ctx, a.permissaoDeEdicao)) {
@@ -59,7 +89,7 @@ export function conferirPermissoesDaFicha(ctx: ServiceCtx, def: ResourceDef, dat
   }
 }
 
-/** Grades e perfis de abas que o usuário não pode LER (R1-4): não saem na ficha nem no histórico. */
+/** Grades e perfis de abas que o usuário não pode LER (R1-4) e grades de outro cadastro sem a leitura dele (R1-2): não saem na ficha nem no histórico. */
 export const chavesOcultas = (ctx: ServiceCtx, def: ResourceDef) => chavesBarradas(def, "permissaoDeLeitura", (p) => hasPermission(ctx, p));
 
 /**
@@ -150,6 +180,23 @@ function valorDaColuna(f: FieldDef, v: unknown): unknown {
   return v;
 }
 
+const NUMERICOS = new Set<FieldDef["type"]>(["number", "integer", "money", "quantity", "percent"]);
+/**
+ * A linha reenviada MUDA este campo? (R1-2: só a linha que muda exige `editar`.) `gravado` é o valor da coluna como
+ * texto (`::text`, lido na mesma transação); número compara pelo valor ("250" = "250.00"), data pelo dia. Na dúvida
+ * (ex.: json com outra formatação) conta como mudança — a conferência exige a permissão, nunca a dispensa.
+ */
+function mesmoValor(f: FieldDef, gravado: string | null | undefined, enviado: unknown): boolean {
+  const v = valorDaColuna(f, enviado);
+  const g = gravado ?? null;
+  if (v === null || v === undefined) return g === null;
+  if (g === null) return false;
+  if (NUMERICOS.has(f.type)) { try { return D(g).eq(D(String(v))); } catch { return false; } }
+  if (f.type === "boolean") return g === String(Boolean(v));
+  if (f.type === "date") return g.slice(0, 10) === String(v).slice(0, 10);
+  return g === String(v);
+}
+
 /** Referência (uuid) de detalhe/perfil: a linha apontada existe e é DESTA organização — uma consulta por campo. */
 async function conferirReferencias(ctx: ServiceCtx, def: ResourceDef, fields: FieldDef[], linhas: Linha[], onde: (i: number, f: FieldDef) => (string | number)[]) {
   for (const f of fields) {
@@ -206,7 +253,11 @@ async function gravarDetalhe(ctx: ServiceCtx, def: ResourceDef, d: DetalheDef, p
     return partes.join(" and ");
   };
   const filtroPai = filtro(1);
-  const atuais = new Set((await ctx.tx.query<{ k: string }>(`select ${ident(chave)}::text as k from erp.${ident(d.table)} where ${filtroPai}`, pp)).rows.map((r) => r.k));
+  // grade de OUTRO cadastro (R1-2): lê também os valores gravados (como texto) para saber que linha MUDA
+  const ps = d.permissoes;
+  const comparaveis = ps ? campos.filter((f) => f.name !== chave) : [];
+  const lidas = (await ctx.tx.query<Linha & { __k: string }>(`select ${[`${ident(chave)}::text as __k`, ...comparaveis.map((f) => `${ident(f.name)}::text as ${ident(f.name)}`)].join(", ")} from erp.${ident(d.table)} where ${filtroPai}`, pp)).rows;
+  const atuais = new Set(lidas.map((r) => r.__k));
   const enviados = new Set<string>();
   for (const [i, l] of linhas.entries()) {
     const k = l[chave] === undefined || l[chave] === null ? null : String(l[chave]);
@@ -216,6 +267,18 @@ async function gravarDetalhe(ctx: ServiceCtx, def: ResourceDef, d: DetalheDef, p
       // `id` que não é desta ficha nunca é aceito (nem de outro parceiro, nem de outra organização)
       if (!d.chaveNatural && !atuais.has(k)) erroNaLinha(def, d, i, validation("linha não pertence a este registro"));
     }
+  }
+  if (ps) {
+    // cada OPERAÇÃO com a permissão do cadastro dono da linha, ANTES de qualquer escrita nesta grade (o que já foi
+    // gravado antes — principal, outra grade — é desfeito junto: é a mesma transação do runService)
+    const gravados = new Map(lidas.map((r) => [r.__k, r]));
+    const chaveDe = (l: Linha) => (l[chave] === undefined || l[chave] === null ? null : String(l[chave]));
+    const sai = [...atuais].some((k) => !enviados.has(k));
+    const entra = linhas.some((l) => { const k = chaveDe(l); return k === null || !atuais.has(k); });
+    const muda = linhas.some((l) => { const k = chaveDe(l); const g = k === null ? undefined : gravados.get(k); return g !== undefined && comparaveis.some((f) => f.name in l && !mesmoValor(f, g[f.name] as string | null, l[f.name])); });
+    if (sai && !hasPermission(ctx, ps.excluir)) throw denied(ps.excluir);
+    if (entra && !hasPermission(ctx, ps.criar)) throw denied(ps.criar);
+    if (muda && !hasPermission(ctx, ps.editar)) throw denied(ps.editar);
   }
   // removidas primeiro: a chave natural pode ser reaproveitada por uma linha nova
   for (const k of atuais) {
@@ -265,7 +328,10 @@ async function gravarPerfil(ctx: ServiceCtx, def: ResourceDef, p: PerfilDef, pai
     return;
   }
   const cs: string[] = [p.chavePai]; const vs: unknown[] = [paiId];
-  if (temAtivo) { cs.push("is_active"); vs.push(ativo); }
+  // `is_active` do perfil só acompanha o `ativoPor` (o tipo do parceiro). Perfil SEM `ativoPor` (ficha de RH) nunca
+  // mexe nele (R1-2): editar uma aba de RH de um perfil INATIVO devolvia o funcionário à folha. Na criação vale o
+  // default da coluna; na edição fica o gravado.
+  if (temAtivo && flag) { cs.push("is_active"); vs.push(ativo); }
   for (const f of p.fields) { if (f.readOnly || !corpo || !(f.name in corpo) || !cols.has(f.name)) continue; const v = valorDaColuna(f, corpo[f.name]); if (v === undefined) continue; cs.push(f.name); vs.push(v); }
   const sets = cs.slice(1).map((c) => `${ident(c)} = excluded.${ident(c)}`);
   const r = await ctx.tx.query(`insert into erp.${ident(p.table)} (${cs.map(ident).join(",")}) values (${vs.map((_, j) => `$${j + 1}`).join(",")}) on conflict (${ident(p.chavePai)}) do ${sets.length ? `update set ${sets.join(", ")}` : "nothing"}`, vs)

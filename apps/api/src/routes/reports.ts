@@ -2,10 +2,14 @@ import type { FastifyInstance } from "fastify";
 import ExcelJS from "exceljs";
 import { runService, requirePermission } from "../lib/service.js";
 import { notFound } from "../lib/errors.js";
-import { empresaScopeBuilder, type ServiceCtx } from "../lib/context.js";
+import { empresaScopeBuilder, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { formatarIdGlobal } from "@erp/plataforma";
 
-type Col = { key: string; label: string; type?: "money" | "qty" | "date" | "text" | "int" | "percent" };
+/**
+ * `sigilo` (R1-2): a coluna só sai para quem tem a permissão — sem ela o relatório sai SEM a coluna e SEM o total
+ * dela, na tela e no arquivo (CSV/XLSX). Ex.: salário no quadro de pessoal ativo exige `employees.edit`.
+ */
+type Col = { key: string; label: string; type?: "money" | "qty" | "date" | "text" | "int" | "percent"; sigilo?: string };
 interface ReportDef { key: string; label: string; module: string; permission: string; exigeTambem?: string[]; escopo?: { derivado?: Record<string, string>; organizacao?: string }; filters: { name: string; label: string; type: "date" | "ref" | "select" | "text"; resource?: string; options?: string[]; required?: boolean }[]; columns: Col[]; totals?: string[]; sql: (ctx: ServiceCtx, f: Record<string, string>) => { text: string; params: unknown[] } }
 
 const DT = [{ name: "start_date", label: "Dt. Início", type: "date" as const }, { name: "end_date", label: "Dt. Fim", type: "date" as const }];
@@ -217,7 +221,7 @@ export const REPORTS: ReportDef[] = [
     sql: (ctx, f) => { const p = P(); let w = `e.organization_id=${p.add(ctx.orgId)}` + clausulaEmpresa(ctx, f, "e.empresa_id", p); if (f.reference_month) w += ` and e.reference_month=${p.add(f.reference_month.slice(0, 7) + "-01")}`; return { text: `select e.reference_month, pe.name as person, l.description, case l.condition when 'add' then '+' else '-' end as condition, l.amount from erp.earning_lines l join erp.earnings e on e.id=l.earning_id join erp.people pe on pe.id=l.person_id where ${w} order by e.reference_month desc, pe.name`, params: p.params }; } },
   { key: "birthdays", label: "Aniversariantes", module: "Gestão Pessoal", permission: "report.birthdays", escopo: { organizacao: "Quadro de pessoal é cadastro da ORGANIZAÇÃO; a empresa da ficha de RH (0028) é lotação informativa e anulável — ver EXCECOES_ESCOPO['report.birthdays']." }, filters: [{ name: "month", label: "Mês (1-12)", type: "text" }], columns: [{ key: "person", label: "Funcionário" }, { key: "birthday", label: "Nascimento", type: "date" }, { key: "day", label: "Dia", type: "int" }, { key: "office", label: "Cargo" }],
     sql: (ctx, f) => { const p = P(); let w = `pe.organization_id=${p.add(ctx.orgId)} and ep.is_active and ep.birthday is not null and pe.deleted_at is null`; if (f.month) w += ` and extract(month from ep.birthday)=${p.add(Number(f.month))}`; return { text: `select pe.name as person, ep.birthday, extract(day from ep.birthday)::int as day, coalesce(ep.office, jf.name) as office from erp.employee_profiles ep join erp.people pe on pe.id=ep.person_id left join erp.job_functions jf on jf.id=ep.function_id where ${w} order by extract(month from ep.birthday), extract(day from ep.birthday)`, params: p.params }; } },
-  { key: "active_employees", label: "Funcionários Ativos", module: "Gestão Pessoal", permission: "report.active_employees", escopo: { organizacao: "Quadro de pessoal ativo é cadastro da ORGANIZAÇÃO; a empresa da ficha de RH (0028) é lotação informativa e anulável — ver EXCECOES_ESCOPO['report.active_employees']." }, filters: [], columns: [{ key: "person", label: "Funcionário" }, { key: "document", label: "CPF" }, { key: "function", label: "Função" }, { key: "admission_date", label: "Admissão", type: "date" }, { key: "base_salary", label: "Salário base", type: "money" }, { key: "cost_center", label: "Centro de resultado" }], totals: ["base_salary"],
+  { key: "active_employees", label: "Funcionários Ativos", module: "Gestão Pessoal", permission: "report.active_employees", escopo: { organizacao: "Quadro de pessoal ativo é cadastro da ORGANIZAÇÃO; a empresa da ficha de RH (0028) é lotação informativa e anulável — ver EXCECOES_ESCOPO['report.active_employees']." }, filters: [], columns: [{ key: "person", label: "Funcionário" }, { key: "document", label: "CPF" }, { key: "function", label: "Função" }, { key: "admission_date", label: "Admissão", type: "date" }, { key: "base_salary", label: "Salário base", type: "money", sigilo: "employees.edit" }, { key: "cost_center", label: "Centro de resultado" }], totals: ["base_salary"],
     sql: (ctx) => { const p = P(); return { text: `select pe.name as person, pe.document, jf.name as function, ep.admission_date, coalesce(ep.base_salary, jf.base_salary) base_salary, cc.name as cost_center from erp.employee_profiles ep join erp.people pe on pe.id=ep.person_id left join erp.job_functions jf on jf.id=ep.function_id left join erp.cost_centers cc on cc.id=ep.cost_center_id where pe.organization_id=${p.add(ctx.orgId)} and ep.is_active and pe.deleted_at is null order by pe.name`, params: p.params }; } },
   { key: "advances", label: "Adiantamentos Salariais", module: "Gestão Pessoal", permission: "report.advances", filters: [FARM, ...DT], columns: [{ key: "advance_date", label: "Data", type: "date" }, { key: "code", label: "Código" }, { key: "person", label: "Funcionário" }, { key: "amount", label: "Valor", type: "money" }, { key: "installments", label: "Parcelas", type: "int" }, { key: "status", label: "Status" }, { key: "title_balance", label: "Saldo título", type: "money" }], totals: ["amount", "title_balance"],
     sql: (ctx, f) => { const p = P(); const w = `a.organization_id=${p.add(ctx.orgId)} and a.deleted_at is null` + clausulaEmpresa(ctx, f, "a.empresa_id", p) + dateClause(f, "a.advance_date", p); return { text: `select a.advance_date, a.code, pe.name as person, a.amount, a.installments, a.status, t.balance as title_balance from erp.salary_advances a join erp.people pe on pe.id=a.person_id left join erp.financial_titles t on t.id=a.title_id${clausulaEmpresa(ctx, f, "t.empresa_id", p)} where ${w} order by a.advance_date desc`, params: p.params }; } },
@@ -249,13 +253,18 @@ export async function runReport(ctx: ServiceCtx, key: string, filters: Record<st
   const q = def.sql(ctx, filters);
   const r = await ctx.tx.query(`${q.text}`, q.params);
   const rows = r.rows.map((row) => { const o = { ...(row as Record<string, unknown>) }; if ("total" in o && def.columns.some((c) => c.key === "total") && (o["total"] === 0 || o["total"] === "0")) { const inc = Number(o["income"] ?? 0), exp = Number(o["expense"] ?? 0), st = Number(o["stock_cost"] ?? o["stock"] ?? 0), ti = Number(o["titles"] ?? 0); if ("income" in o) o["total"] = (inc - exp - st).toFixed(2); else if ("titles" in o) o["total"] = (ti + st).toFixed(2); else if ("handling_cost" in o) o["total"] = (Number(o["handling_cost"]) + Number(o["feed_cost"] ?? 0) + Number(o["retroactive"] ?? 0)).toFixed(2); } if ("result" in o && (o["result"] === 0 || o["result"] === "0") && "income" in o) o["result"] = (Number(o["income"]) - Number(o["expense"] ?? 0) - Number(o["stock_cost"] ?? 0)).toFixed(2); if ("cost_per_head" in o && "animals" in o) o["cost_per_head"] = Number(o["animals"]) ? (Number(o["total"]) / Number(o["animals"])).toFixed(2) : "0.00"; if ("pct" in o && "planned" in o) o["pct"] = Number(o["planned"]) ? (Number(o["actual"]) * 100 / Number(o["planned"])).toFixed(2) : null; if ("identified" in o && "unidentified" in o && def.columns.some((c) => c.key === "total")) o["total"] = Number(o["identified"]) + Number(o["unidentified"]); return o; });
+  // SIGILO (R1-2): coluna sigilosa sem a permissão sai da resposta inteira — coluna, valor de cada linha e total.
+  // A FOLHA (Apuração mensal, adiantamentos) não declara sigilo: é tela de salário por natureza (decisão 255).
+  const ocultas = new Set(def.columns.filter((c) => c.sigilo && !hasPermission(ctx, c.sigilo)).map((c) => c.key));
+  const columns = def.columns.filter((c) => !ocultas.has(c.key));
+  for (const row of rows) for (const k of ocultas) delete row[k];
   const totals: Record<string, string> = {};
-  for (const t of def.totals ?? []) totals[t] = rows.reduce((a, row) => a + Number(row[t] ?? 0), 0).toFixed(2);
-  return { key, label: def.label, module: def.module, columns: def.columns, filters: def.filters, rows, totals, count: rows.length };
+  for (const t of def.totals ?? []) if (!ocultas.has(t)) totals[t] = rows.reduce((a, row) => a + Number(row[t] ?? 0), 0).toFixed(2);
+  return { key, label: def.label, module: def.module, columns, filters: def.filters, rows, totals, count: rows.length };
 }
 
 export default async function reportRoutes(app: FastifyInstance) {
-  app.get("/reports", async (req) => { const ctx = app.requireCtx(req); const { hasPermission } = await import("../lib/context.js"); return REPORTS.filter((r) => hasPermission(ctx, `${r.permission}.view`)).map(({ key, label, module, filters, permission }) => ({ key, label, module, filters, permission })); });
+  app.get("/reports", async (req) => { const ctx = app.requireCtx(req); return REPORTS.filter((r) => hasPermission(ctx, `${r.permission}.view`)).map(({ key, label, module, filters, permission }) => ({ key, label, module, filters, permission })); });
   app.get("/reports/:key", async (req, reply) => {
     const { key } = req.params as { key: string }; const def = byKey.get(key); if (!def) throw notFound("Relatório");
     const { format, ...filters } = req.query as Record<string, string>;
@@ -264,8 +273,9 @@ export default async function reportRoutes(app: FastifyInstance) {
       for (const extra of def.exigeTambem ?? []) requirePermission(ctx, extra);
       return runReport(ctx, key, filters);
     });
-    if (format === "csv") { const sep = ";"; const lines = [def.columns.map((c) => c.label).join(sep), ...result.rows.map((r) => def.columns.map((c) => String(r[c.key] ?? "").replace(/;/g, ",")).join(sep))]; return reply.header("Content-Type", "text/csv; charset=utf-8").header("Content-Disposition", `attachment; filename="${key}.csv"`).send("﻿" + lines.join("\n")); }
-    if (format === "xlsx") { const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet(def.label.slice(0, 30)); ws.columns = def.columns.map((c) => ({ header: c.label, key: c.key, width: 18 })); for (const r of result.rows) ws.addRow(Object.fromEntries(def.columns.map((c) => [c.key, c.type === "money" || c.type === "qty" || c.type === "percent" ? Number(r[c.key] ?? 0) : r[c.key] ?? ""]))); if (def.totals?.length) ws.addRow(Object.fromEntries(def.totals.map((t) => [t, Number(result.totals[t])]))); const buf = await wb.xlsx.writeBuffer(); return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${key}.xlsx"`).send(Buffer.from(buf as ArrayBuffer)); }
+    // o ARQUIVO sai com as colunas e os totais da RESPOSTA (já sem as colunas sigilosas que o usuário não vê, R1-2)
+    if (format === "csv") { const sep = ";"; const lines = [result.columns.map((c) => c.label).join(sep), ...result.rows.map((r) => result.columns.map((c) => String(r[c.key] ?? "").replace(/;/g, ",")).join(sep))]; return reply.header("Content-Type", "text/csv; charset=utf-8").header("Content-Disposition", `attachment; filename="${key}.csv"`).send("﻿" + lines.join("\n")); }
+    if (format === "xlsx") { const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet(def.label.slice(0, 30)); ws.columns = result.columns.map((c) => ({ header: c.label, key: c.key, width: 18 })); for (const r of result.rows) ws.addRow(Object.fromEntries(result.columns.map((c) => [c.key, c.type === "money" || c.type === "qty" || c.type === "percent" ? Number(r[c.key] ?? 0) : r[c.key] ?? ""]))); const totais = Object.keys(result.totals); if (totais.length) ws.addRow(Object.fromEntries(totais.map((t) => [t, Number(result.totals[t])]))); const buf = await wb.xlsx.writeBuffer(); return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${key}.xlsx"`).send(Buffer.from(buf as ArrayBuffer)); }
     return result;
   });
   /**
@@ -286,13 +296,16 @@ export default async function reportRoutes(app: FastifyInstance) {
     const { resource } = req.params as { resource: string }; const { format = "csv", ...filters } = req.query as Record<string, string>;
     const { getResource } = await import("@agro/domain"); const def = getResource(resource); if (!def) throw notFound("Recurso");
     const { listResource } = await import("./resources.js");
-    const data = await runService(app, req, `${def.permission}.export`, (ctx) => listResource(ctx, def, { ...filters, pageSize: "200", page: "1" }));
+    const { podeVerCampo } = await import("../lib/ficha-em-abas.js");
+    // filtro/ordenação por campo sigiloso → 403 no `listResource`; a coluna sigilosa que o usuário não vê não entra
+    // no arquivo (R1-2) — nem o cabeçalho, nem a célula
+    const { data, visiveis } = await runService(app, req, `${def.permission}.export`, async (ctx) => ({ data: await listResource(ctx, def, { ...filters, pageSize: "200", page: "1" }), visiveis: def.fields.filter((f) => f.list && podeVerCampo(ctx, f)) }));
     // O ID Global entra como PRIMEIRA coluna da exportação, como na tela: uma planilha que mostrasse colunas
     // diferentes da listagem faria o usuário procurar por um número que ele acabou de ver e não encontrar.
     const marcaIdGlobal = (data as { idGlobal?: { rotulo: string } }).idGlobal;
     const cols = [
       ...(marcaIdGlobal ? [{ key: "id_global", label: "ID Global" }] : []),
-      ...def.fields.filter((f) => f.list).map((f) => ({ key: f.type === "ref" ? `${f.name}_label` : f.name, label: f.label }))
+      ...visiveis.map((f) => ({ key: f.type === "ref" ? `${f.name}_label` : f.name, label: f.label }))
     ];
     if (format === "xlsx") { const wb = new ExcelJS.Workbook(); const ws = wb.addWorksheet(def.labelPlural.slice(0, 30)); ws.columns = cols.map((c) => ({ header: c.label, key: c.key, width: 20 })); for (const r of data.items) ws.addRow(Object.fromEntries(cols.map((c) => [c.key, celulaExportada(c.key, (r as Record<string, unknown>)[c.key])]))); const buf = await wb.xlsx.writeBuffer(); return reply.header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet").header("Content-Disposition", `attachment; filename="${resource}.xlsx"`).send(Buffer.from(buf as ArrayBuffer)); }
     const lines = [cols.map((c) => c.label).join(";"), ...data.items.map((r) => cols.map((c) => String(celulaExportada(c.key, (r as Record<string, unknown>)[c.key])).replace(/;/g, ",")).join(";"))];

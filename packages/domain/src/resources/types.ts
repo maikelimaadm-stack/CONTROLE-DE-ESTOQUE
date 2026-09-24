@@ -69,8 +69,11 @@ export interface FieldDef {
    */
   camposJson?: FieldDef[];
   /**
-   * SIGILO (CADASTROS Fase 5): permissão exigida para o campo SAIR da API (leitura) e ser gravado (escrita).
-   * Sem ela o campo some da resposta (lista e ficha) e a gravação dele é recusada (403). Ex.: salário.
+   * SIGILO (CADASTROS Fase 5; R1-2): permissão exigida para o campo SAIR da API (leitura) e ser gravado (escrita).
+   * Sem ela o campo some da resposta (lista, ficha, exportação, relatório salvo) e a gravação dele é recusada
+   * (403). Também não serve de PERGUNTA: filtro, ordenação, valores distintos, busca, coluna de relatório salvo e
+   * filtro do seletor com o campo → 403 com o nome do campo (senão o valor se descobriria por busca). Ex.: salário.
+   * A pergunta é `campoVisivel` (a mesma na API e na tela).
    */
   sigilo?: string;
 }
@@ -227,6 +230,14 @@ export interface DetalheDef {
   campoEmpresa?: string;
   /** máximo de linhas por gravação */
   maxLinhas?: number;
+  /**
+   * A grade grava linhas de OUTRO cadastro (R1-2): obedece às permissões DELE, por operação, conferidas no servidor.
+   * Sem `ler` a grade não sai da API (nem a chave, nem os dados), não aparece na tela e o corpo que a traga é
+   * recusado (403 — gravar às cegas apagaria o que não se vê). Com `ler`, a linha NOVA exige `criar`, a linha que
+   * MUDA exige `editar` e a linha que SAI exige `excluir` (403 com a permissão; nada gravado). Linha reenviada sem
+   * mudança não exige nada. Ex.: Eventos fixos da ficha de RH = `employee_events.*`; Equipes = `teams.*`.
+   */
+  permissoes?: { ler: string; criar: string; editar: string; excluir: string };
 }
 
 export interface PerfilDef {
@@ -244,6 +255,8 @@ export interface PerfilDef {
  * Chaves de GRADE e de PERFIL (as do corpo e da resposta) que pertencem a abas BARRADAS por uma permissão que o
  * usuário não tem (R1-4). A MESMA pergunta na API (`hasPermission`) e na tela (`can`, só apresentação):
  * `permissaoDeLeitura` → a chave não sai da API; `permissaoDeEdicao` → a chave no corpo é recusada (403).
+ * Grade com `permissoes` (R1-2) entra por ELAS: sem `ler` ela é barrada na leitura; sem nenhuma de criar, editar e
+ * excluir, barrada na edição (a tela não a manda; o servidor confere cada operação, ver `DetalheDef.permissoes`).
  */
 export function chavesBarradas(def: ResourceDef, qual: "permissaoDeLeitura" | "permissaoDeEdicao", pode: (permissao: string) => boolean): Set<string> {
   const out = new Set<string>();
@@ -252,7 +265,19 @@ export function chavesBarradas(def: ResourceDef, qual: "permissaoDeLeitura" | "p
     if (!p || pode(p)) continue;
     for (const k of [...(a.detalhes ?? []), ...(a.perfis ?? [])]) out.add(k);
   }
+  for (const d of def.detalhes ?? []) {
+    const ps = d.permissoes;
+    if (!ps) continue;
+    if (qual === "permissaoDeLeitura" ? !pode(ps.ler) : !pode(ps.criar) && !pode(ps.editar) && !pode(ps.excluir)) out.add(d.key);
+  }
   return out;
 }
+
+/**
+ * SIGILO (R1-2): o campo pode SAIR para este usuário e ser usado como pergunta (filtro, ordenação, valores
+ * distintos, busca, relatório)? A MESMA pergunta na API (`hasPermission`, a autoridade) e na tela (`can`, só
+ * apresentação: esconde a coluna, o filtro e o campo).
+ */
+export const campoVisivel = (f: Pick<FieldDef, "sigilo">, pode: (permissao: string) => boolean): boolean => !f.sigilo || pode(f.sigilo);
 
 export const yesNo: FieldOption[] = [{ value: "true", label: "Sim" }, { value: "false", label: "Não" }];

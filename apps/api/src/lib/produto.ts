@@ -102,14 +102,26 @@ export function fundirCamposJson(def: ResourceDef, data: Linha, atual: Linha | n
 
 const RUIDO = new Set(["updated_at", "created_at", "version"]);
 /**
- * HISTÓRICO da ficha (aba Histórico): eventos da auditoria (`erp.audit_logs`, gatilho `audit_row`) do registro e
- * das linhas das suas grades — quem, quando, o quê (nomes dos campos alterados; os valores não saem daqui).
+ * HISTÓRICO da ficha (aba Histórico): eventos da auditoria (`erp.audit_logs`, gatilho `audit_row`) do registro, das
+ * linhas das suas grades e dos seus PERFIS 1:1 (R1-2: a ficha de RH, gatilho `audit_row_sigilo` da 0028, com a chave
+ * do perfil = id do registro) — quem, quando, o quê (nomes dos campos alterados; os valores não saem daqui).
+ * Campo SIGILOSO alterado vem só pelo NOME (`metadata.sigilo`): o gatilho nem grava o valor.
  * Quem chama já provou que o registro é visível (mesma 404 da ficha). Consulta pelo índice (org, entity, entity_id).
  */
 export async function historicoDoRegistro(ctx: ServiceCtx, def: ResourceDef, id: string, page: number, pageSize: number) {
   const tabelas: string[] = []; const ids: string[] = [];
-  const rotulo = new Map<string, { label: string; campos: Map<string, string> }>([[def.table, { label: def.label, campos: new Map(def.fields.map((f) => [f.name, f.label])) }]]);
+  // `donos`: numa tabela com VÁRIOS perfis (ficha de RH: um por aba sobre a mesma linha), o "onde" do evento é o
+  // perfil (a aba) dos campos que mudaram
+  const rotulo = new Map<string, { label: string; campos: Map<string, string>; donos?: Map<string, string> }>([[def.table, { label: def.label, campos: new Map(def.fields.map((f) => [f.name, f.label])) }]]);
   const ocultas = chavesOcultas(ctx, def);
+  // perfis visíveis: a linha do perfil é auditada com entity_id = id do registro (a chave do perfil é o pai)
+  const perfisTabelas: string[] = [];
+  for (const pf of def.perfis ?? []) {
+    if (ocultas.has(pf.key)) continue;
+    const r = rotulo.get(pf.table) ?? { label: pf.label, campos: new Map<string, string>(), donos: new Map<string, string>() };
+    for (const f of pf.fields) { r.campos.set(f.name, f.label); r.donos?.set(f.name, pf.label); }
+    if (!rotulo.has(pf.table)) { rotulo.set(pf.table, r); perfisTabelas.push(pf.table); }
+  }
   for (const d of def.detalhes ?? []) {
     // grade de aba que o usuário não pode LER (R1-4) também não aparece no histórico
     if (d.chaveNatural || ocultas.has(d.key)) continue;
@@ -118,20 +130,24 @@ export async function historicoDoRegistro(ctx: ServiceCtx, def: ResourceDef, id:
     tabelas.push(d.table); ids.push(...r.rows.map((x) => x.id));
     rotulo.set(d.table, { label: d.label, campos: new Map(d.fields.map((f) => [f.name, f.label])) });
   }
-  const where = "a.organization_id = $1 and ((a.entity = $2 and a.entity_id = $3) or (a.entity = any($4::text[]) and a.entity_id = any($5::text[])))";
-  const params = [ctx.orgId, def.table, id, tabelas, ids];
+  const where = "a.organization_id = $1 and ((a.entity = $2 and a.entity_id = $3) or (a.entity = any($4::text[]) and a.entity_id = any($5::text[])) or (a.entity = any($6::text[]) and a.entity_id = $3))";
+  const params = [ctx.orgId, def.table, id, tabelas, ids, perfisTabelas];
   const total = await ctx.tx.query<{ n: string }>(`select count(*)::text n from erp.audit_logs a where ${where}`, params);
-  const r = await ctx.tx.query<{ id: string; entity: string; action: string; before: Linha | null; after: Linha | null; created_at: string; user_name: string | null }>(
-    `select a.id::text, a.entity, a.action, a.before, a.after, a.created_at, u.name as user_name
+  const r = await ctx.tx.query<{ id: string; entity: string; action: string; before: Linha | null; after: Linha | null; metadata: Linha | null; created_at: string; user_name: string | null }>(
+    `select a.id::text, a.entity, a.action, a.before, a.after, a.metadata, a.created_at, u.name as user_name
        from erp.audit_logs a left join erp.users u on u.id = a.user_id
       where ${where} order by a.id desc limit ${Math.min(pageSize, 200)} offset ${(Math.max(page, 1) - 1) * Math.min(pageSize, 200)}`, params);
   const items = r.rows.map((x) => {
     const meta = rotulo.get(x.entity);
     const antes = x.before ?? {}; const depois = x.after ?? {};
-    const campos = x.action === "update"
-      ? [...new Set([...Object.keys(antes), ...Object.keys(depois)])].filter((k) => !RUIDO.has(k) && JSON.stringify(antes[k]) !== JSON.stringify(depois[k])).map((k) => meta?.campos.get(k) ?? k)
+    const sigilosos = Array.isArray(x.metadata?.["sigilo"]) ? (x.metadata["sigilo"] as unknown[]).map(String) : [];
+    const nomes = x.action === "update"
+      ? [...new Set([...Object.keys(antes), ...Object.keys(depois)])].filter((k) => !RUIDO.has(k) && JSON.stringify(antes[k]) !== JSON.stringify(depois[k]))
       : [];
-    return { quando: x.created_at, quem: x.user_name, acao: x.action, onde: meta?.label ?? x.entity, campos };
+    const alterados = [...new Set([...nomes, ...(x.action === "update" ? sigilosos : [])])];
+    const campos = alterados.map((k) => meta?.campos.get(k) ?? k);
+    const abas = [...new Set(alterados.map((k) => meta?.donos?.get(k)).filter((v): v is string => Boolean(v)))];
+    return { quando: x.created_at, quem: x.user_name, acao: x.action, onde: abas.length ? abas.join(" · ") : meta?.label ?? x.entity, campos };
   });
   return { items, total: Number(total.rows[0]!.n), page, pageSize };
 }
