@@ -255,9 +255,10 @@ test("M3 — falha de rede na prévia: aviso em português e nenhum botão de im
   await expect(confirmar, "o botão de importar não fica disponível com estado velho").toHaveCount(0);
 });
 
-test("M4 — Pessoas › Funcionários: o diálogo avisa do filtro fixo da lista; em Todos, não há aviso", async ({ page }) => {
+test("M4 — Configurações › Parceiros › Funcionários: o diálogo avisa do filtro fixo da lista; em Todos, não há aviso", async ({ page }) => {
   await login(page);
-  await page.goto("/pessoas");
+  // CADASTROS Fase 4: a lista com o filtro por tipo mora em Configurações › Parceiros (decisão 253)
+  await page.goto("/configuracoes?tab=parceiros");
   const papel = page.getByTestId("people-role");
   const funcionarios = papel.getByRole("radio", { name: "Funcionários", exact: true });
   const todos = papel.getByRole("radio", { name: "Todos", exact: true });

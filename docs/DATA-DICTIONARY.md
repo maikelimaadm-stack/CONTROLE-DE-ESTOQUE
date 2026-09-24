@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 187 |
-| Tabelas com `organization_id` (escopo de organização) | 129 |
+| Tabelas no schema `erp` | 190 |
+| Tabelas com `organization_id` (escopo de organização) | 132 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 53 |
-| Entidades curadas neste dicionário | 44 |
+| Entidades curadas neste dicionário | 47 |
 | Entidades com ID Global | 23 |
 | Entidades com Tipo de Operação | 13 |
 | Tipos de Operação referenciados | 17 |
-| Cobertura curada | 23.5% |
+| Cobertura curada | 24.7% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -403,6 +403,15 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
+| `complemento` |  | text | não |  |  |  |  |
+| `nascimento_abertura` |  | date | não |  |  |  |  |
+| `indicador_ie` |  | text | não |  |  | `contribuinte` · `isento` · `nao_contribuinte` |  |
+| `consumidor_final` |  | boolean | sim |  |  |  |  |
+| `produtor_rural` |  | boolean | sim |  |  |  |  |
+| `regime_tributario` |  | text | não |  |  | `simples` · `mei` · `normal` |  |
+| `cnae_principal` |  | text | não |  |  |  |  |
+| `situacao_receita` |  | text | não |  |  |  |  |
+| `situacao_receita_consultada_em` |  | timestamptz | não |  |  |  |  |
 
 ### ERP-CADASTROS-REF-MUNICIPIO — Município (IBGE)
 
@@ -540,6 +549,95 @@ Cache global (7 dias) da consulta de CNPJ nas fontes gratuitas (BrasilAPI, CNPJ�
 | `dados` |  | jsonb | sim |  |  |  |  |
 | `fonte` |  | text | sim |  |  |  |  |
 | `consultado_em` |  | timestamptz | sim |  |  |  |  |
+
+### ERP-CADASTROS-PARCEIRO-ENDERECO — Endereço adicional do parceiro
+
+Endereços ADICIONAIS do parceiro (entrega, cobrança, propriedade, outro), gravados junto com a ficha (CADASTROS Fase 4, decisão 253). O principal continua nas colunas de erp.people. Linha removida da grade é excluída logicamente.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.parceiro_enderecos` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `person_id` |  | uuid | sim |  |  |  |  |
+| `tipo` |  | text | sim |  |  | `entrega` · `cobranca` · `propriedade` · `outro` |  |
+| `descricao` |  | text | não |  |  |  |  |
+| `cep` |  | text | não |  |  |  |  |
+| `logradouro` |  | text | não |  |  |  |  |
+| `numero` |  | text | não |  |  |  |  |
+| `complemento` |  | text | não |  |  |  |  |
+| `bairro` |  | text | não |  |  |  |  |
+| `city_id` |  | int | não | FK | `erp.cities` |  |  |
+| `inscricao_estadual` | IE | text | não |  |  |  | IE própria do endereço (produtor rural: uma por propriedade). Só formato: dígitos ou ISENTO. |
+| `is_active` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-PARCEIRO-CONTATO — Contato adicional do parceiro
+
+Contatos ADICIONAIS do parceiro (nome, função, telefones, e-mail, recebe NF-e por e-mail). O contato principal continua em erp.people.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.parceiro_contatos` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `person_id` |  | uuid | sim |  |  |  |  |
+| `nome` |  | text | sim |  |  |  |  |
+| `funcao` |  | text | não |  |  |  |  |
+| `telefone` |  | text | não |  |  |  |  |
+| `celular` |  | text | não |  |  |  |  |
+| `email` |  | citext | não |  |  |  |  |
+| `recebe_nfe_email` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-PARCEIRO-CONTA — Conta bancária adicional do parceiro
+
+Contas bancárias ADICIONAIS do parceiro (banco pela busca, agência, conta, tipo, titular, Pix). A principal continua nas colunas de erp.people.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.parceiro_contas` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `person_id` |  | uuid | sim |  |  |  |  |
+| `bank_code` |  | text | não | FK | `erp.banks` |  |  |
+| `agencia` |  | text | não |  |  |  |  |
+| `conta` |  | text | não |  |  |  |  |
+| `tipo` |  | text | não |  |  | `checking` · `savings` |  |
+| `titular` |  | text | não |  |  |  |  |
+| `pix_tipo` |  | text | não |  |  | `document` · `phone` · `email` · `random` |  |
+| `pix_chave` |  | text | não |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
 
 ### ERP-CADASTROS-ARMAZEM — Armazém
 
@@ -1557,7 +1655,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.budget_planning_values` | 4 | não | — | não |
 | `erp.budget_plannings` | 10 | sim | `empresa_id` | sim |
 | `erp.chart_accounts` | 12 | sim | — | sim |
-| `erp.client_profiles` | 8 | não | — | não |
+| `erp.client_profiles` | 9 | não | — | não |
 | `erp.contract_items` | 6 | não | — | não |
 | `erp.contracts` | 18 | sim | `empresa_id` | sim |
 | `erp.cost_centers` | 11 | sim | — | sim |

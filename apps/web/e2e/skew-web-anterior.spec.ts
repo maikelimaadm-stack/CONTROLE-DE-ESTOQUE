@@ -467,3 +467,27 @@ test("CADASTROS-ESTRUTURA · CE-K2 — grupo pelo corpo ANTIGO (sem código): 42
   const lista = await (await page.request.get(`${API}/api/resources/product_groups?search=${encodeURIComponent(nome)}`, { headers: cab })).json() as { items: unknown[] };
   expect(lista.items, "nada gravado").toHaveLength(0);
 });
+
+test("CADASTROS FASE 4 · PA-K2 — formulário ANTERIOR de Pessoas contra a API nova: grava; PUT sem grades não mexe nelas; sem tipo → 422; documento inválido 422 e duplicado 409", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+  const sql = (c: string) => execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
+  // corpo do formulário anterior: só colunas de people, nenhuma chave da ficha
+  const semTipo = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 sem tipo"), person_type: "legal", is_provider: false, is_client: false, is_employee: false, is_proprietary: false, is_transporter: false } });
+  expect(semTipo.status(), await semTipo.text()).toBe(422);
+  expect((await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 doc"), document: "529.982.247-00", person_type: "natural", is_client: true } })).status(), "CPF com DV errado").toBe(422);
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 web anterior"), document: "12.ABC.345/01DE-35", person_type: "legal", is_client: true, is_provider: false, is_employee: false, is_proprietary: false, is_transporter: false, is_active: true } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  const org = sql(`select organization_id from erp.people where id = '${id}'`);
+  sql(`insert into erp.parceiro_enderecos (organization_id, person_id, tipo, logradouro) values ('${org}', '${id}', 'entrega', 'PA-K2 rua')`);
+  const put = await page.request.put(`${API}/api/resources/people/${id}`, { headers: cab, data: { phone: "63 99999-0000", is_client: true } });
+  expect(put.status(), await put.text()).toBe(200);
+  expect(sql(`select count(*) from erp.parceiro_enderecos where person_id = '${id}' and deleted_at is null`), "grade intacta").toBe("1");
+  const dup = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 dup"), document: "12ABC34501DE35", person_type: "legal", is_client: true } });
+  expect(dup.status(), await dup.text()).toBe(409);
+  // o dado de teste fica excluído logicamente (nunca apagado)
+  sql(`update erp.people set deleted_at = now() where id = '${id}'`);
+});

@@ -273,6 +273,7 @@ export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Bu
     if (f.type === "ref" && f.ref) { const alvo = getResource(f.ref.resource); if (alvo) { valores = (await carregarReferencia(ctx, alvo, f.ref.filtro)).exibicao; mais(autoRef ? `Escolha da lista ou use uma linha ANTERIOR deste arquivo (${alvo.labelPlural}).` : `Escolha da lista (cadastros de ${alvo.labelPlural} existentes).`); } }
     else if (f.type === "select" && f.options) { valores = f.options.map((o) => o.label); mais("Escolha da lista."); }
     else if (f.type === "boolean") { valores = [SIM, NAO]; mais("Sim ou Não."); }
+    else if (f.busca === "municipios") mais('Código IBGE (7 dígitos) ou "Nome - UF", ex.: "Gurupi - TO".');
     else if (f.type === "date") mais("Data no formato DD/MM/AAAA.");
     else if (TIPOS_NUMERICOS.includes(f.type)) mais(f.type === "integer" ? "Número inteiro." : "Número com vírgula decimal (1234,56 ou 1.234,56).");
     else if (f.type === "tags" && f.options) mais(`Separe por ";": ${f.options.map((o) => o.label).join("; ")}.`);
@@ -528,7 +529,7 @@ async function errosDaGravacao(ctx: ServiceCtx, e: unknown, def: ResourceDef, ro
   const d = e instanceof DomainError ? e : fromPgError(e);
   if (d) {
     const det = Array.isArray(d.details) ? (d.details as { path?: unknown; message?: string }[]) : [];
-    if (det.length) return det.map((x) => ({ coluna: Array.isArray(x.path) && x.path[0] ? rotulo(String(x.path[0])) : null, mensagem: x.message ?? d.message }));
+    if (det.length) return det.map((x) => ({ coluna: Array.isArray(x.path) && x.path[0] ? rotulo(String(x.path[0])) : typeof x.path === "string" && x.path ? rotulo(x.path.split(".")[0]!) : null, mensagem: x.message ?? d.message }));
     return [{ coluna: null, mensagem: d.message }];
   }
   throw e;
@@ -569,6 +570,14 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
     for (const t of textos) if (t && !falhas.has(semAcento(t))) falhas.set(semAcento(t), n);
   };
 
+  // Municípios (referência global da Fase 3), carregados UMA vez por importação e só se alguma coluna usa.
+  let cacheMunicipios: { ids: Set<number>; porNome: Map<string, number> } | null = null;
+  const municipios = async () => {
+    if (cacheMunicipios) return cacheMunicipios;
+    const r = await ctx.tx.query<{ id: number; name: string; state_code: string | null }>("select id, name, state_code from erp.cities");
+    cacheMunicipios = { ids: new Set(r.rows.map((x) => x.id)), porNome: new Map(r.rows.filter((x) => x.state_code).map((x) => [semAcento(`${x.name} - ${x.state_code}`), x.id])) };
+    return cacheMunicipios;
+  };
   const criados: { linha: number; id: string }[] = [];
   for (const { n, celulas, erros: errosDaLeitura } of planilha.linhas) {
     const corpo: Record<string, unknown> = {};
@@ -580,6 +589,13 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
       if (erroCel) { recusa(erroCel); continue; }
       const t = texto(v);
       if (t === "") { if (f.required) recusa("Obrigatório."); continue; }
+      // MUNICÍPIO (CADASTROS Fase 4): código IBGE de 7 dígitos OU "Nome - UF" (sem diferenciar acento/maiúscula)
+      if (f.busca === "municipios") {
+        const m = await municipios();
+        const id = /^\d{7}$/.test(t) ? (m.ids.has(Number(t)) ? Number(t) : null) : m.porNome.get(semAcento(t).replace(/\s*[-/]\s*/g, " - ")) ?? null;
+        if (id !== null) corpo[f.name] = id; else recusa(`Município "${t}" não encontrado. Use o código IBGE (7 dígitos) ou "Nome - UF", ex.: "Gurupi - TO".`);
+        continue;
+      }
       switch (f.type) {
         case "ref": {
           const ref = f.ref ? refs.get(f.ref.resource) : undefined;

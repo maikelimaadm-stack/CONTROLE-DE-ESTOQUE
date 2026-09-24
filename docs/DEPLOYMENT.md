@@ -957,6 +957,37 @@ egress, liberar só eles.
 fica (migration aplicada é histórico); as referências carregadas são dado público oficial, e os caches podem
 simplesmente envelhecer.
 
+## CADASTROS FASE 4 — Parceiros: ficha em abas (`0027`)
+
+Decisão 253.
+
+**A migration `0027_parceiros_ficha_em_abas.sql` é aditiva** (trava (2026,61), `lock_timeout` 2 s, pré/pós-condições
+nomeadas, não reaplicável): `unique (id, organization_id)` em `erp.people` (alvo das FKs compostas); colunas novas
+em `erp.people` (`complemento`, `nascimento_abertura`, `indicador_ie`, `consumidor_final`, `produtor_rural`,
+`regime_tributario`, `cnae_principal`, `situacao_receita`, `situacao_receita_consultada_em` — todas anuláveis ou com
+default); `erp.client_profiles.limite_credito`; tabelas novas `erp.parceiro_enderecos`, `erp.parceiro_contatos` e
+`erp.parceiro_contas` (RLS forçada, política única de tenant, `erp_app` sem DELETE); índice único
+`ux_people_documento_normalizado` (organização + documento normalizado, entre vivos). **Pré-condição:** nenhum
+documento duplicado entre parceiros vivos depois de normalizar — havendo, a migration PARA e nomeia os códigos
+(nada é aplicado; a decisão de qual corrigir é humana). Rodar antes, em leitura, para saber:
+`select organization_id, upper(regexp_replace(document,'[^0-9A-Za-z]','','g')), string_agg(code, ',') from erp.people
+where document is not null and deleted_at is null group by 1, 2 having count(*) > 1;`. Nenhum UPDATE, nenhum DELETE.
+Nenhuma variável nova.
+
+**Implantação — ordem: banco (0027) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
+
+1. **API anterior × banco novo:** colunas e tabelas novas são inertes; o índice novo passa a recusar documento
+   duplicado com pontuação diferente (antes só o igual byte a byte) — 409 genérico na API anterior.
+2. **web ANTERIOR × API nova:** o formulário anterior grava (campos de sempre); PUT sem as grades não mexe
+   nelas; sem nenhum tipo marcado → 422 declarado ("Marque pelo menos um tipo…"); documento inválido → 422;
+   duplicado → 409 com o código e o nome do existente. Provado em `skew-web-anterior.spec.ts` (PA-K2).
+3. **web NOVA × API anterior:** a ficha manda grades e perfis; o schema estrito da API anterior RECUSA (422
+   "Campo não reconhecido") e nada é gravado — o usuário vê o erro e salva depois do deploy da API. Provado em
+   `skew-api-producao.spec.ts` (PA-K1). O cadastro rápido manda só o principal e funciona.
+
+**Reversão.** Web: livre. API: a anterior ignora colunas e tabelas novas (grades gravadas ficam guardadas e
+voltam a aparecer quando a API nova voltar). Banco: a 0027 fica (migration aplicada é histórico); nada a desfazer.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)

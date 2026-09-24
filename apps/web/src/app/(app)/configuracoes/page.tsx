@@ -18,6 +18,7 @@ import { TiposOperacaoPanel } from "@/features/admin/tipos-operacao";
 import { OpeningBalancesPanel } from "@/features/stock/opening-balances";
 import { OpeningMovementsPanel } from "@/features/financial/opening-movements";
 import { FiscalStatusPanel } from "@/features/fiscal/status";
+import { ListaDeParceiros } from "@/features/resources/parceiros-lista";
 
 /**
  * Configurações (área administrativa — pode ter 3 níveis): cadastros técnicos, parâmetros, usuários, integrações,
@@ -62,6 +63,7 @@ function Inner() {
       res("configuracoes.pecuaria.breeding-sires", "breeding_sires"), res("configuracoes.pecuaria.breeding-protocols", "breeding_protocols")
     ]} />),
     tab("configuracoes.frota", <ViewSegment tabs={[res("configuracoes.frota.equipment-families", "equipment_families")]} />),
+    tab("configuracoes.parceiros", <ListaDeParceiros />),
     tab("configuracoes.rh", <ViewSegment tabs={[res("configuracoes.rh.hr-events", "hr_events"), res("configuracoes.rh.job-functions", "job_functions"), res("configuracoes.rh.teams", "teams")]} />),
     tab("configuracoes.fiscal", <ViewSegment tabs={[
       tab("configuracoes.fiscal.capacidades", scroll(<FiscalStatusPanel />)),

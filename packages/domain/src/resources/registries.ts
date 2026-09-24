@@ -388,17 +388,68 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "email", label: "E-mail", type: "email", required: true, list: true, search: true, span: 5 }, T("phone", "Telefone", { span: 3 }), active()]
   },
   {
-    key: "people", importacao: true, label: "Pessoa", labelPlural: "Pessoas", table: "people", permission: "people", labelField: "name", route: "/cadastros/pessoas", softDelete: true, codeEntity: "person", importExport: true, defaultSort: "name",
+    // PARCEIRO (CADASTROS Fase 4, decisão 253): a tabela, a chave, a permissão e a rota continuam `people`;
+    // a tela é a FICHA EM ABAS declarada em `abas`/`detalhes`/`perfis` abaixo.
+    key: "people", importacao: true, label: "Parceiro", labelPlural: "Parceiros", table: "people", permission: "people", labelField: "name", route: "/cadastros/pessoas", softDelete: true, codeEntity: "person", importExport: true, defaultSort: "name",
     fields: [
-      T("code", "Código", { readOnly: true, list: true, span: 2 }), T("document", "CPF/CNPJ", { list: true, search: true, span: 3 }),
-      S("person_type", "Tipo de pessoa", [["natural", "Física"], ["legal", "Jurídica"], ["foreign", "Estrangeira"]], { default: "legal", span: 2 }),
-      T("name", "Nome Social/Fantasia", { required: true, list: true, search: true, span: 5 }), T("legal_name", "Nome Completo/Razão Social", { search: true, span: 6 }),
-      { name: "email", label: "E-mail", type: "email", span: 3 }, T("phone", "Telefone", { list: true, span: 3 }), T("cellphone", "Celular", { span: 3 }),
-      T("zip_code", "CEP", { section: "Endereço", span: 2 }), T("address", "Endereço", { section: "Endereço", span: 5 }), T("address_number", "Número", { section: "Endereço", span: 2 }), T("district", "Bairro", { section: "Endereço", span: 3 }), { name: "city_id", label: "Cidade (IBGE)", type: "integer", section: "Endereço", span: 3, busca: "municipios" },
-      T("state_registration", "Inscrição estadual", { section: "Fiscal", span: 3 }), T("city_registration", "Inscrição municipal", { section: "Fiscal", span: 3 }), T("contact_name", "Contato", { section: "Fiscal", span: 3 }), T("contact_phone", "Telefone do contato", { section: "Fiscal", span: 3 }),
-      T("bank_code", "Banco", { section: "Conta", span: 2, busca: "bancos" }), S("bank_account_type", "Tipo", [["checking", "Corrente"], ["savings", "Poupança"]], { section: "Conta", span: 2 }), T("bank_agency", "Agência", { section: "Conta", span: 2 }), T("bank_account", "Conta", { section: "Conta", span: 2 }), S("pix_type", "Tipo chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]], { section: "Conta", span: 2 }), T("pix_key", "Pix", { section: "Conta", span: 2 }),
-      B("is_provider", "Fornecedor", { list: true, filter: true, section: "Papéis", span: 2 }), B("is_client", "Cliente", { list: true, filter: true, section: "Papéis", span: 2 }), B("is_employee", "Funcionário", { list: true, filter: true, section: "Papéis", span: 2 }), B("is_proprietary", "Proprietário", { list: true, filter: true, section: "Papéis", span: 2 }), B("is_transporter", "Transportador", { section: "Papéis", span: 2 }),
-      active()
+      T("code", "Código", { readOnly: true, list: true, section: "Identificação", span: 2 }),
+      S("person_type", "Tipo de pessoa", [["natural", "Física"], ["legal", "Jurídica"], ["foreign", "Estrangeira"]], { default: "legal", section: "Identificação", span: 2 }),
+      T("document", "CPF/CNPJ", { list: true, search: true, section: "Identificação", span: 3, help: "CPF ou CNPJ (também o alfanumérico). Estrangeiro: livre." }),
+      T("name", "Nome Social/Fantasia", { required: true, list: true, search: true, section: "Identificação", span: 5 }), T("legal_name", "Nome Completo/Razão Social", { search: true, section: "Identificação", span: 6 }),
+      D("nascimento_abertura", "Nascimento/Abertura", { section: "Identificação", span: 3 }),
+      B("is_client", "Cliente", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_provider", "Fornecedor", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_transporter", "Transportadora", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_employee", "Funcionário", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_proprietary", "Proprietário", { list: true, filter: true, section: "Tipos", span: 2 }),
+      active("is_active"),
+      T("zip_code", "CEP", { section: "Endereço", span: 2 }), T("address", "Endereço", { section: "Endereço", span: 5 }), T("address_number", "Número", { section: "Endereço", span: 2 }), T("complemento", "Complemento", { section: "Endereço", span: 3 }), T("district", "Bairro", { section: "Endereço", span: 3 }), { name: "city_id", label: "Município", type: "integer", list: true, section: "Endereço", span: 4, busca: "municipios" },
+      { name: "email", label: "E-mail", type: "email", section: "Contato", span: 4 }, T("phone", "Telefone", { list: true, section: "Contato", span: 3 }), T("cellphone", "Celular", { section: "Contato", span: 3 }), T("contact_name", "Contato principal", { section: "Contato", span: 4 }), T("contact_phone", "Telefone do contato", { section: "Contato", span: 3 }),
+      S("indicador_ie", "Indicador de IE", [["contribuinte", "Contribuinte"], ["isento", "Isento"], ["nao_contribuinte", "Não contribuinte"]], { section: "Fiscal", span: 3 }),
+      T("state_registration", "Inscrição estadual", { section: "Fiscal", span: 3 }), T("city_registration", "Inscrição municipal", { section: "Fiscal", span: 3 }),
+      B("consumidor_final", "Consumidor final", { section: "Fiscal", span: 2 }), B("produtor_rural", "Produtor rural", { section: "Fiscal", span: 2, help: "Um parceiro por CPF; cada propriedade tem a sua IE nos Endereços adicionais." }),
+      S("regime_tributario", "Regime tributário", [["simples", "Simples Nacional"], ["mei", "MEI"], ["normal", "Normal"]], { section: "Fiscal", span: 3 }),
+      T("cnae_principal", "CNAE principal", { section: "Fiscal", span: 3, maxLength: 7, help: "7 dígitos" }),
+      T("situacao_receita", "Situação na Receita", { readOnly: true, list: true, section: "Fiscal", span: 3, help: "Vem da consulta de CNPJ." }), T("situacao_receita_consultada_em", "Consultado em", { readOnly: true, section: "Fiscal", span: 3 }),
+      T("bank_code", "Banco", { section: "Conta", span: 3, busca: "bancos" }), S("bank_account_type", "Tipo", [["checking", "Corrente"], ["savings", "Poupança"]], { section: "Conta", span: 2 }), T("bank_agency", "Agência", { section: "Conta", span: 2 }), T("bank_account", "Conta", { section: "Conta", span: 2 }), S("pix_type", "Tipo chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]], { section: "Conta", span: 2 }), T("pix_key", "Pix", { section: "Conta", span: 3 })
+    ],
+    cabecalho: ["code", "name", "document", "is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary", "is_active"],
+    camposRapidos: ["is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary", "person_type", "document", "name", "city_id", "phone", "email"],
+    abas: [
+      { key: "identificacao", label: "Identificação", secoes: ["Identificação", "Tipos"] },
+      { key: "enderecos", label: "Endereços", secoes: ["Endereço"], detalhes: ["enderecos"] },
+      { key: "contatos", label: "Contatos", secoes: ["Contato"], detalhes: ["contatos"] },
+      { key: "fiscal", label: "Fiscal", secoes: ["Fiscal"] },
+      { key: "financeiro", label: "Financeiro", secoes: ["Conta"], detalhes: ["contas"] },
+      { key: "cliente", label: "Cliente", perfis: ["perfil_cliente"], visivelQuando: { field: "is_client", equals: true } },
+      { key: "fornecedor", label: "Fornecedor", perfis: ["perfil_fornecedor"], detalhes: ["filiais", "vendedores"], visivelQuando: { field: "is_provider", equals: true } },
+      { key: "proprietario", label: "Proprietário", perfis: ["perfil_proprietario"], detalhes: ["participacoes"], visivelQuando: { field: "is_proprietary", equals: true } },
+      { key: "funcionario", label: "Funcionário", visivelQuando: { field: "is_employee", equals: true } },
+      { key: "anexos", label: "Anexos" }
+    ],
+    detalhes: [
+      { key: "enderecos", label: "Endereços adicionais", table: "parceiro_enderecos", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
+        S("tipo", "Tipo", [["entrega", "Entrega"], ["cobranca", "Cobrança"], ["propriedade", "Propriedade"], ["outro", "Outro"]], { required: true }), T("descricao", "Descrição"),
+        T("cep", "CEP", { maxLength: 8 }), T("logradouro", "Endereço"), T("numero", "Número"), T("complemento", "Complemento"), T("bairro", "Bairro"), { name: "city_id", label: "Município", type: "integer", busca: "municipios" },
+        T("inscricao_estadual", "IE", { help: "Dígitos ou ISENTO" }), active("is_active")
+      ] },
+      { key: "contatos", label: "Contatos adicionais", table: "parceiro_contatos", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
+        T("nome", "Nome", { required: true }), T("funcao", "Função"), T("telefone", "Telefone"), T("celular", "Celular"), { name: "email", label: "E-mail", type: "email" }, B("recebe_nfe_email", "Recebe NF-e por e-mail")
+      ] },
+      { key: "contas", label: "Contas adicionais", table: "parceiro_contas", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 50, fields: [
+        T("bank_code", "Banco", { busca: "bancos" }), T("agencia", "Agência"), T("conta", "Conta"), S("tipo", "Tipo", [["checking", "Corrente"], ["savings", "Poupança"]]), T("titular", "Titular"),
+        S("pix_tipo", "Tipo chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]]), T("pix_chave", "Chave Pix")
+      ] },
+      { key: "filiais", label: "Filiais do fornecedor", table: "provider_branches", chavePai: "person_id", maxLinhas: 100, fields: [
+        T("name", "Nome"), T("document", "CPF/CNPJ"), T("state_registration", "IE"), T("zip_code", "CEP"), T("address", "Endereço"), { name: "city_id", label: "Município", type: "integer", busca: "municipios" }
+      ] },
+      { key: "vendedores", label: "Vendedores do fornecedor", table: "provider_sellers", chavePai: "person_id", maxLinhas: 100, fields: [
+        T("name", "Nome", { required: true }), { name: "email", label: "E-mail", type: "email" }, T("phone", "Telefone")
+      ] },
+      { key: "participacoes", label: "Participação por empresa", table: "proprietary_empresas", chavePai: "person_id", chaveNatural: "empresa_id", campoEmpresa: "empresa_id", maxLinhas: 100, fields: [
+        REF("empresa_id", "Empresa", "empresas", { required: true }), { name: "percentage", label: "Participação (%)", type: "percent", required: true, min: 0, max: 100 }, T("registration_number", "Matrícula/Registro")
+      ] }
+    ],
+    perfis: [
+      { key: "perfil_cliente", label: "Perfil de cliente", table: "client_profiles", chavePai: "person_id", ativoPor: "is_client", fields: [M("limite_credito", "Limite de crédito (informativo)")] },
+      { key: "perfil_fornecedor", label: "Perfil de fornecedor", table: "provider_profiles", chavePai: "person_id", ativoPor: "is_provider", fields: [S("provider_type", "Tipo de fornecedor", [["provider", "Fornecedor"], ["outsourced", "Terceirizado"], ["transporter", "Transportador"], ["employee", "Funcionário"]]), M("hour_value", "Valor da hora"), REF("default_cost_center_id", "Centro de resultado padrão", "cost_centers")] },
+      { key: "perfil_proprietario", label: "Perfil de proprietário", table: "proprietary_profiles", chavePai: "person_id", ativoPor: "is_proprietary", fields: [] }
     ]
   }
 ];

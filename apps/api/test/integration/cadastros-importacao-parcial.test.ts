@@ -42,14 +42,20 @@ const pessoas = async (prefixo: string) => (await admin.query<{ id: string; name
 const contador = async () => Number((await admin.query<{ v: string }>("select ultimo_valor::text v from erp.sequencias_id_global where organization_id=$1", [h.demo.orgId])).rows[0]?.v ?? 0);
 const idGlobal = async (id: string) => (await admin.query<{ v: string }>("select id_global::text v from erp.registros_globais where organization_id=$1 and id_entidade=$2", [h.demo.orgId, id])).rows[0]?.v ?? null;
 
-/** Cinco pessoas: 2, 4 e 6 certas; 3 (e-mail inválido) e 5 (tipo de pessoa fora da lista) erradas. */
+/**
+ * CPF VÁLIDO com zero à esquerda a partir de 9 dígitos (desde a Fase 4 o documento é conferido pela regra única
+ * de `@agro/domain`; o zero à esquerda continua sendo o que a planilha precisa preservar).
+ */
+const cpf = (base9: string) => { const d = base9.split("").map(Number); const dv = (n: number) => { let s = 0; for (let i = 0; i < n; i++) s += d[i]! * (n + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; }; d.push(dv(9)); d.push(dv(10)); return d.join(""); };
+const docMisto = (d: string, n: number) => cpf(`00${d}0000${n}`);
+/** Cinco pessoas (tipo Cliente — pelo menos um tipo, Fase 4): 2, 4 e 6 certas; 3 (e-mail inválido) e 5 (tipo de pessoa fora da lista) erradas. */
 const arquivoMisto = async (p: string, d: string) => {
   const wb = await modelo("people");
-  preencher(wb, "people", 2, { name: `${p} A`, document: `00${d}1` });
-  preencher(wb, "people", 3, { name: `${p} B`, document: `00${d}2`, email: "nao-e-email", zip_code: "01234-000" });
-  preencher(wb, "people", 4, { name: `${p} C` });
-  preencher(wb, "people", 5, { name: `${p} D`, document: `00${d}3`, person_type: "Marciano" });
-  preencher(wb, "people", 6, { name: `${p} E` });
+  preencher(wb, "people", 2, { name: `${p} A`, document: docMisto(d, 1), is_client: "Sim" });
+  preencher(wb, "people", 3, { name: `${p} B`, document: docMisto(d, 2), email: "nao-e-email", zip_code: "01234-000", is_client: "Sim" });
+  preencher(wb, "people", 4, { name: `${p} C`, is_client: "Sim" });
+  preencher(wb, "people", 5, { name: `${p} D`, document: docMisto(d, 3), person_type: "Marciano", is_client: "Sim" });
+  preencher(wb, "people", 6, { name: `${p} E`, is_client: "Sim" });
   return wb;
 };
 
@@ -150,13 +156,13 @@ describe("planilha de erros", () => {
     const col = (campo: string) => cab.indexOf(titulo("people", campo)) + 1;
     const l2 = ws.getRow(2); const l3 = ws.getRow(3);
     expect(l2.getCell(col("name")).value).toBe("IM4 Pessoa B");
-    expect(l2.getCell(col("document")).value, "zero à esquerda").toBe("00442");
+    expect(l2.getCell(col("document")).value, "zero à esquerda").toBe(docMisto("44", 2));
     expect(l2.getCell(col("document")).numFmt).toBe("@");
     expect(l2.getCell(col("zip_code")).value).toBe("01234-000");
     expect(l2.getCell(col("email")).value, "o valor errado, como o usuário mandou").toBe("nao-e-email");
     expect(String(l2.getCell(cab.length).value)).toContain(`${chave("people", "email")}: `);
     expect(l3.getCell(col("name")).value).toBe("IM4 Pessoa D");
-    expect(l3.getCell(col("document")).value).toBe("00443");
+    expect(l3.getCell(col("document")).value).toBe(docMisto("44", 3));
     expect(l3.getCell(col("person_type")).value).toBe("Marciano");
     expect(String(l3.getCell(cab.length).value)).toContain("não é uma opção válida");
   });
@@ -173,7 +179,7 @@ describe("planilha de erros", () => {
     expect(j(again)).toMatchObject({ linhas: 2, gravadas: 2, erros: [], modo: "tudo" });
     const todas = await pessoas(p);
     expect(todas.map((x) => x.name)).toEqual([`${p} A`, `${p} B`, `${p} C`, `${p} D`, `${p} E`]);
-    expect(todas.find((x) => x.name === `${p} B`)).toMatchObject({ document: "00552", email: "ok@exemplo.com.br" });
+    expect(todas.find((x) => x.name === `${p} B`)).toMatchObject({ document: docMisto("55", 2), email: "ok@exemplo.com.br" });
   });
 });
 
@@ -195,7 +201,7 @@ describe("modo tudo (o de antes) e porta", () => {
     expect(invalido.statusCode, invalido.body).toBe(422);
     // sem erro, sem modo: grava tudo, como antes
     const ok = await modelo("people");
-    preencher(ok, "people", 2, { name: `${p} Só` });
+    preencher(ok, "people", 2, { name: `${p} Só`, is_client: "Sim" });
     const g = await enviar(ok, "people", "");
     expect(g.statusCode, g.body).toBe(201);
     expect(j(g)).toMatchObject({ linhas: 1, gravadas: 1, erros: [], planilha_erros_base64: null });

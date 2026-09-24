@@ -1,0 +1,207 @@
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import type { FastifyInstance } from "fastify";
+import { createPool, seedDemo, type Db } from "@agro/db";
+import { buildApp } from "../../src/server.js";
+import type { BuscarFn } from "../../src/lib/consultas/http.js";
+import { harness, configDeTeste, TEST_URL, type Harness } from "./setup.js";
+
+/**
+ * CADASTROS Fase 4 — PARCEIROS: ficha em abas (decisão 253, migration 0027). PA-1..PA-10.
+ * Toda recusa confere o BANCO (nada gravado); todo aceite confere a linha gravada.
+ */
+let h: Harness; let admin: Db;
+type Resp = { statusCode: number; body: string };
+type Det = { path: string; message: string; aba?: string; detalhe?: string; linha?: number };
+const j = (r: Resp) => JSON.parse(r.body);
+const hdr = () => h.headers({ "content-type": "application/json" });
+const get = (url: string, headers = h.headers()) => h.app.inject({ method: "GET", url, headers });
+const post = (payload: Record<string, unknown>, headers = hdr()) => h.app.inject({ method: "POST", url: "/api/resources/people", headers, payload });
+const put = (id: string, payload: Record<string, unknown>, headers = hdr()) => h.app.inject({ method: "PUT", url: `/api/resources/people/${id}`, headers, payload });
+const criado = (r: Resp) => { expect(r.statusCode, r.body).toBe(201); return j(r).id as string; };
+const um = async <T extends Record<string, unknown>>(sql: string, p: unknown[] = []) => (await admin.query<T>(sql, p)).rows[0];
+const n = async (sql: string, p: unknown[] = []) => Number((await um<{ n: string }>(sql, p))!.n);
+const porNome = (nome: string) => n("select count(*)::text n from erp.people where organization_id=$1 and name=$2", [h.demo.orgId, nome]);
+const nome = (s: string) => `PA ${s} ${Math.random().toString(36).slice(2, 8)}`;
+const detalhes = (r: Resp) => j(r).error.details as Det[];
+
+const CPF = "52998224725"; const CPF2 = "11144477735";
+const CNPJ_BB = "00000000000191"; const CNPJ_ALFA = "12ABC34501DE35";
+
+beforeAll(async () => { h = await harness(); admin = createPool(TEST_URL, { max: 2 }); }, 240_000);
+afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end(); });
+
+describe("PA-1 — pelo menos um tipo", () => {
+  it("sem tipo → 422 com a mensagem declarada, nada gravado; com um tipo → 201", async () => {
+    const x = nome("sem tipo");
+    const r = await post({ name: x, person_type: "legal" });
+    expect(r.statusCode, r.body).toBe(422);
+    expect(j(r).error.message).toMatch(/pelo menos um tipo/);
+    expect(await porNome(x)).toBe(0);
+    const id = criado(await post({ name: x, person_type: "legal", is_transporter: true }));
+    // desmarcar o último tipo numa edição → 422, nada muda
+    const u = await put(id, { is_transporter: false });
+    expect(u.statusCode, u.body).toBe(422);
+    expect(await um("select is_transporter from erp.people where id=$1", [id])).toEqual({ is_transporter: true });
+  });
+});
+
+describe("PA-2 — documento", () => {
+  it("CPF formatado grava normalizado; CNPJ alfanumérico aceito; DV errado 422; duplicado 409 com código e nome; excluído libera", async () => {
+    const a = criado(await post({ name: nome("cpf"), document: "529.982.247-25", person_type: "natural", is_client: true }));
+    expect(await um("select document from erp.people where id=$1", [a])).toEqual({ document: CPF });
+    const alfa = criado(await post({ name: nome("alfa"), document: "12.abc.345/01de-35", person_type: "legal", is_client: true }));
+    expect(await um("select document from erp.people where id=$1", [alfa])).toEqual({ document: CNPJ_ALFA });
+    const x = nome("dv");
+    const dv = await post({ name: x, document: "529.982.247-24", person_type: "natural", is_client: true });
+    expect(dv.statusCode, dv.body).toBe(422); expect(detalhes(dv)[0]!.path).toBe("document"); expect(await porNome(x)).toBe(0);
+    const rep = await post({ name: nome("repetido"), document: "11111111111", person_type: "natural", is_client: true });
+    expect(rep.statusCode).toBe(422);
+    const codigo = (await um<{ code: string; name: string }>("select code, name from erp.people where id=$1", [a]))!;
+    const d = await post({ name: nome("dup"), document: CPF, person_type: "natural", is_provider: true });
+    expect(d.statusCode, d.body).toBe(409);
+    expect(j(d).error.message).toContain(`${codigo.code} - ${codigo.name}`);
+    // estrangeiro: livre
+    criado(await post({ name: nome("estrangeiro"), document: "AR-20-12345678-9", person_type: "foreign", is_client: true }));
+    // excluído não conta
+    expect((await h.app.inject({ method: "DELETE", url: `/api/resources/people/${a}`, headers: h.headers() })).statusCode).toBe(200);
+    criado(await post({ name: nome("depois de excluir"), document: "529.982.247-25", person_type: "natural", is_client: true }));
+  });
+
+  it("o ÍNDICE é a autoridade: gravação direta com o mesmo documento normalizado é recusada pelo banco", async () => {
+    const org = h.demo.orgId;
+    await admin.query("insert into erp.people (organization_id, code, name, document, is_client) values ($1, 'PA2X1', 'PA idx 1', '44.444.444/0001-00', true)", [org]).catch(() => undefined);
+    const e = await admin.query("insert into erp.people (organization_id, code, name, document, is_client) values ($1, 'PA2X2', 'PA idx 2', '44444444000100', true)", [org]).then(() => null, (x: { code?: string; constraint?: string }) => x);
+    expect(e?.code).toBe("23505"); expect(e?.constraint).toBe("ux_people_documento_normalizado");
+  });
+});
+
+describe("PA-3 — gravação atômica", () => {
+  it("erro na 2ª linha de endereço → 422 apontando aba e linha; NEM o principal nem a 1ª linha gravados", async () => {
+    const x = nome("atomico");
+    const r = await post({ name: x, person_type: "legal", is_client: true, enderecos: [{ tipo: "entrega", logradouro: "Rua 1", inscricao_estadual: "123456" }, { tipo: "propriedade", logradouro: "Rua 2", inscricao_estadual: "12AB" }] });
+    expect(r.statusCode, r.body).toBe(422);
+    expect(detalhes(r)[0]).toMatchObject({ aba: "enderecos", detalhe: "enderecos", linha: 2 });
+    expect(await porNome(x)).toBe(0);
+    expect(await n("select count(*)::text n from erp.parceiro_enderecos where logradouro = any($1)", [["Rua 1", "Rua 2"]])).toBe(0);
+  });
+  it("erro de schema na linha também aponta a aba; na edição o principal não muda", async () => {
+    const id = criado(await post({ name: nome("atomico put"), person_type: "legal", is_client: true, phone: "1" }));
+    const r = await put(id, { phone: "2", contatos: [{ nome: "ok" }, { funcao: "sem nome" }] });
+    expect(r.statusCode, r.body).toBe(422);
+    expect(detalhes(r)[0]).toMatchObject({ aba: "contatos", linha: 2 });
+    expect(await um("select phone from erp.people where id=$1", [id])).toEqual({ phone: "1" });
+    expect(await n("select count(*)::text n from erp.parceiro_contatos where person_id=$1", [id])).toBe(0);
+  });
+});
+
+describe("PA-4 — PUT: ausente não mexe, lista é completa; outra organização", () => {
+  let id: string; let e1: string; let e2: string;
+  it("cria com duas linhas; PUT sem detalhes mantém; lista sem uma linha a EXCLUI logicamente", async () => {
+    id = criado(await post({ name: nome("put"), person_type: "legal", is_client: true, enderecos: [{ tipo: "entrega", logradouro: "A" }, { tipo: "cobranca", logradouro: "B" }], contas: [{ bank_code: "001", agencia: "1", conta: "2" }] }));
+    const g = j(await get(`/api/resources/people/${id}`));
+    expect(g.enderecos).toHaveLength(2); expect(g.contas).toHaveLength(1);
+    [e1, e2] = (g.enderecos as { id: string }[]).map((x) => x.id) as [string, string];
+    expect((await put(id, { phone: "3" })).statusCode).toBe(200);
+    expect(await n("select count(*)::text n from erp.parceiro_enderecos where person_id=$1 and deleted_at is null", [id])).toBe(2);
+    const r = await put(id, { enderecos: [{ id: e1, tipo: "entrega", logradouro: "A2" }] });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(j(r).enderecos).toEqual([expect.objectContaining({ id: e1, logradouro: "A2" })]);
+    expect(await um("select deleted_at is not null as removida from erp.parceiro_enderecos where id=$1", [e2])).toEqual({ removida: true });
+    expect(await n("select count(*)::text n from erp.parceiro_contas where person_id=$1 and deleted_at is null", [id])).toBe(1);
+  });
+  it("outra organização não lê nem grava (404) e não sequestra linha pelo id", async () => {
+    const adm = createPool(TEST_URL, { max: 1 });
+    const b = await seedDemo(adm, { orgName: "[TEST] Org PA", adminEmail: "adminpa@demo.local", adminPassword: "Demo@12345", slug: "orgpa" }, () => {}); await adm.end();
+    const tok = j(await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "adminpa@demo.local", password: "Demo@12345" } })).token as string;
+    const hb = { authorization: `Bearer ${tok}`, "x-org-id": b.orgId, "content-type": "application/json" };
+    expect((await get(`/api/resources/people/${id}`, hb)).statusCode).toBe(404);
+    expect((await put(id, { phone: "9", enderecos: [] }, hb)).statusCode).toBe(404);
+    expect(await n("select count(*)::text n from erp.parceiro_enderecos where person_id=$1 and deleted_at is null", [id])).toBe(1);
+    const meu = criado(await post({ name: nome("org b"), person_type: "legal", is_client: true }, hb));
+    const r = await put(meu, { enderecos: [{ id: e1, tipo: "entrega", logradouro: "roubado" }] }, hb);
+    expect(r.statusCode, r.body).toBe(422);
+    expect(await um("select logradouro, person_id from erp.parceiro_enderecos where id=$1", [e1])).toEqual({ logradouro: "A2", person_id: id });
+  });
+});
+
+describe("PA-5 — perfis: marcar, desmarcar, remarcar; proprietário com %", () => {
+  it("desmarcar Cliente inativa o perfil sem apagar; remarcar reativa com o limite de antes", async () => {
+    const id = criado(await post({ name: nome("perfil"), person_type: "legal", is_client: true, perfil_cliente: { limite_credito: "1500.50" } }));
+    expect(await um("select is_active, limite_credito::text l from erp.client_profiles where person_id=$1", [id])).toEqual({ is_active: true, l: "1500.50" });
+    expect((await put(id, { is_client: false, is_provider: true })).statusCode).toBe(200);
+    expect(await um("select is_active, limite_credito::text l from erp.client_profiles where person_id=$1", [id])).toEqual({ is_active: false, l: "1500.50" });
+    expect(await um("select is_active from erp.provider_profiles where person_id=$1", [id])).toEqual({ is_active: true });
+    expect((await put(id, { is_client: true })).statusCode).toBe(200);
+    expect(await um("select is_active, limite_credito::text l from erp.client_profiles where person_id=$1", [id])).toEqual({ is_active: true, l: "1500.50" });
+  });
+  it("proprietário com participação por empresa; % fora da faixa → 422 na linha, nada gravado", async () => {
+    const empresa = h.demo.empresaIds[0]!;
+    const id = criado(await post({ name: nome("proprietario"), person_type: "natural", is_proprietary: true, participacoes: [{ empresa_id: empresa, percentage: "40" }] }));
+    expect(await um("select percentage::text p from erp.proprietary_empresas where person_id=$1 and empresa_id=$2", [id, empresa])).toEqual({ p: "40.0000" });
+    expect(await um("select is_active from erp.proprietary_profiles where person_id=$1", [id])).toEqual({ is_active: true });
+    const r = await put(id, { participacoes: [{ empresa_id: empresa, percentage: "150" }] });
+    expect(r.statusCode, r.body).toBe(422);
+    expect(detalhes(r)[0]).toMatchObject({ aba: "proprietario", linha: 1 });
+    expect(await um("select percentage::text p from erp.proprietary_empresas where person_id=$1", [id])).toEqual({ p: "40.0000" });
+  });
+});
+
+describe("PA-6 — produtor rural", () => {
+  it("UM parceiro por CPF com duas propriedades, cada uma com a sua IE; segundo parceiro com o mesmo CPF → 409", async () => {
+    const id = criado(await post({ name: nome("produtor"), document: CPF2, person_type: "natural", is_provider: true, produtor_rural: true, enderecos: [{ tipo: "propriedade", descricao: "Faz. A", inscricao_estadual: "290000001" }, { tipo: "propriedade", descricao: "Faz. B", inscricao_estadual: "ISENTO" }] }));
+    expect((await admin.query("select inscricao_estadual from erp.parceiro_enderecos where person_id=$1 order by descricao", [id])).rows).toEqual([{ inscricao_estadual: "290000001" }, { inscricao_estadual: "ISENTO" }]);
+    expect((await post({ name: nome("produtor 2"), document: "111.444.777-35", person_type: "natural", is_provider: true, produtor_rural: true })).statusCode).toBe(409);
+  });
+});
+
+describe("PA-7/PA-8 — consultas (mock) e situação na Receita", () => {
+  async function apiComFontes(rotas: Record<string, { status: number; body?: unknown }>): Promise<{ app: FastifyInstance; chamadas: string[] }> {
+    const chamadas: string[] = [];
+    const buscarExterno: BuscarFn = async (url) => { chamadas.push(url); const r = rotas[new URL(url).host]; if (!r) throw new TypeError("fetch failed"); return { status: r.status, headers: { get: () => null }, json: async () => r.body }; };
+    return { app: await buildApp({ config: configDeTeste(), db: h.db, logger: false, buscarExterno }), chamadas };
+  }
+  it("PA-7 consulta CNPJ (mock) → o parceiro gravado com esse CNPJ recebe a situação e a data da consulta; o cliente não a envia", async () => {
+    await admin.query("delete from erp.consulta_cnpj_cache where cnpj=$1", [CNPJ_BB]);
+    const f = await apiComFontes({ "brasilapi.com.br": { status: 200, body: { razao_social: "BANCO DO BRASIL SA", descricao_situacao_cadastral: "BAIXADA", codigo_municipio_ibge: 5300108, municipio: "BRASILIA", uf: "DF" } } });
+    try {
+      const c = await f.app.inject({ method: "GET", url: `/api/consultas/cnpj/${CNPJ_BB}`, headers: h.headers() });
+      expect(c.statusCode, c.body).toBe(200);
+      expect(f.chamadas).toHaveLength(1);
+    } finally { await f.app.close(); }
+    const recusa = await post({ name: nome("situacao cliente"), person_type: "legal", is_client: true, situacao_receita: "ATIVA" });
+    expect(recusa.statusCode).toBe(422);
+    const id = criado(await post({ name: nome("situacao"), document: "00.000.000/0001-91", person_type: "legal", is_client: true }));
+    const g = await um<{ situacao_receita: string; tem_data: boolean }>("select situacao_receita, situacao_receita_consultada_em is not null as tem_data from erp.people where id=$1", [id]);
+    expect(g).toEqual({ situacao_receita: "BAIXADA", tem_data: true });
+  });
+  it("PA-8 consulta CEP (mock) devolve o município IBGE que a ficha grava", async () => {
+    await admin.query("delete from erp.consulta_cep_cache where cep='77405070'");
+    const f = await apiComFontes({ "viacep.com.br": { status: 200, body: { cep: "77405-070", logradouro: "Rua X", complemento: "", bairro: "Centro", localidade: "Gurupi", uf: "TO", ibge: "1709500" } } });
+    try {
+      const c = await f.app.inject({ method: "GET", url: "/api/consultas/cep/77405070", headers: h.headers() });
+      expect(c.statusCode, c.body).toBe(200);
+      const cep = j(c) as { logradouro: string; bairro: string; municipio: { codigoIbge: number } };
+      const id = criado(await post({ name: nome("cep"), person_type: "legal", is_client: true, zip_code: "77405070", address: cep.logradouro, district: cep.bairro, city_id: cep.municipio.codigoIbge, complemento: "Sala 2" }));
+      expect(await um("select city_id, complemento from erp.people where id=$1", [id])).toEqual({ city_id: 1709500, complemento: "Sala 2" });
+    } finally { await f.app.close(); }
+  });
+});
+
+describe("PA-9 — cadastro rápido (dentro da venda)", () => {
+  it("só os campos rápidos com o tipo pré-marcado grava pela MESMA API e aparece no seletor de clientes", async () => {
+    const x = nome("rapido");
+    criado(await post({ is_client: true, person_type: "natural", document: "390.533.447-05", name: x, city_id: 1709500, phone: "63 3333-0000", email: "rapido@exemplo.com" }));
+    const op = j(await get(`/api/resources/people/options?is_client=true&search=${encodeURIComponent(x)}`)) as { label: string }[];
+    expect(op.map((o) => o.label)).toEqual([x]);
+  });
+});
+
+describe("PA-10 — contrato da definição (navegação e ficha)", () => {
+  it("a definição publicada tem abas, detalhes, perfis, cabeçalho e campos rápidos; rótulo Parceiro", async () => {
+    const d = j(await get("/api/resources/people/definition"));
+    expect(d.label).toBe("Parceiro");
+    expect((d.abas as { key: string }[]).map((a) => a.key)).toEqual(["identificacao", "enderecos", "contatos", "fiscal", "financeiro", "cliente", "fornecedor", "proprietario", "funcionario", "anexos"]);
+    expect((d.detalhes as { key: string }[]).map((x) => x.key)).toEqual(["enderecos", "contatos", "contas", "filiais", "vendedores", "participacoes"]);
+    expect(d.cabecalho).toContain("document");
+  });
+});

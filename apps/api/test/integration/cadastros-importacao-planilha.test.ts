@@ -378,14 +378,22 @@ describe("leitura — células de erro, datas e rich text", () => {
     expect(j(r).erros).toEqual([{ linha: 2, coluna: "Nome", mensagem: MSG.dataCelula }]);
   });
 
-  it("X13: nenhum dos 10 cadastros importáveis tem campo DATA editável — `31/02/2024 → Data inválida (use DD/MM/AAAA).` não é alcançável pela API hoje", () => {
-    // Quando um cadastro importável ganhar data editável, este teste falha de propósito: cubra ali o caso
-    // 31/02/2024 (texto) e AAAA-MM-DD inexistente. Hoje a única data dos importáveis é "Última compra" do
-    // produto, que é readOnly (calculada) e não vai no modelo.
+  it("X13: a única data editável dos importáveis é Nascimento/Abertura do parceiro (Fase 4) — `31/02/2024` → Data inválida (use DD/MM/AAAA)., nada gravado", async () => {
+    // Este teste falhou de propósito quando o Parceiro ganhou data editável (CADASTROS Fase 4), como pedia:
+    // o caso 31/02/2024 (texto) passa a ser coberto aqui. "Última compra" do produto continua readOnly.
     const importaveis = RESOURCES.filter((r) => r.importacao);
     expect(importaveis.map((r) => r.key).sort()).toEqual(["addressings", "chart_accounts", "cost_centers", "cultivations", "financial_categories", "measurement_units", "people", "product_groups", "products", "warehouses"]);
     const datas = importaveis.flatMap((r) => r.fields.filter((f) => f.type === "date" && !f.readOnly).map((f) => `${r.key}.${f.name}`));
-    expect(datas).toEqual([]);
+    expect(datas).toEqual(["people.nascimento_abertura"]);
+    const wb = await modelo("people"); const row = wb.getWorksheet("Dados")!.getRow(2);
+    row.getCell(col(wb, "Nome Social/Fantasia *")).value = "XLSX Data Inexistente";
+    row.getCell(col(wb, "Cliente")).value = "Sim";
+    row.getCell(col(wb, "Nascimento/Abertura")).value = "31/02/2024";
+    const antes = await contar("people");
+    const r = await enviar(await bufferDe(wb), "people");
+    expect(r.statusCode, r.body.slice(0, 300)).toBe(422);
+    expect(j(r).erros).toEqual([{ linha: 2, coluna: "Nascimento/Abertura", mensagem: "Data inválida (use DD/MM/AAAA)." }]);
+    expect(await contar("people")).toBe(antes);
     const defProduto = RESOURCES.find((r) => r.key === "products")!;
     expect(defProduto.fields.find((f) => f.name === "last_purchase_date")).toMatchObject({ type: "date", readOnly: true });
   });
@@ -489,7 +497,7 @@ describe("leitura — colunas de texto e zeros à esquerda", () => {
       if (TIPOS_TEXTO.includes(f.type)) { expect(fmt, rotulo).toBe("@"); comTexto += 1; } else { expect(fmt, rotulo).not.toBe("@"); semTexto += 1; }
     }
     for (const t of ["CPF/CNPJ", "CEP", "Agência", "Conta", "Telefone", "Número", "Nome Social/Fantasia *"]) expect(ws.getColumn(col(wb, t)).numFmt, t).toBe("@");
-    for (const t of ["Fornecedor", "Ativo", "Tipo de pessoa", "Tipo chave Pix", "Cidade (IBGE)"]) expect(ws.getColumn(col(wb, t)).numFmt, t).not.toBe("@");
+    for (const t of ["Fornecedor", "Ativo", "Tipo de pessoa", "Tipo chave Pix", "Município"]) expect(ws.getColumn(col(wb, t)).numFmt, t).not.toBe("@");
     expect(comTexto).toBeGreaterThanOrEqual(10); expect(semTexto).toBeGreaterThanOrEqual(8);
     // produto: referência é texto; quantidade e dinheiro não
     const wp = await modelo("products"); const dp = wp.getWorksheet("Dados")!;
@@ -503,6 +511,7 @@ describe("leitura — colunas de texto e zeros à esquerda", () => {
     row.getCell(col(wb, "Nome Social/Fantasia *")).value = "XLSX Pessoa Zeros";
     row.getCell(col(wb, "CPF/CNPJ")).value = "01234567890";
     row.getCell(col(wb, "CEP")).value = "01310100";
+    row.getCell(col(wb, "Cliente")).value = "Sim"; // pelo menos um tipo (CADASTROS Fase 4)
     const numero = row.getCell(col(wb, "Número")); numero.value = 123; numero.numFmt = "General";
     const buf = await bufferDe(wb);
     const lida = (await releitura(buf)).getRow(2);

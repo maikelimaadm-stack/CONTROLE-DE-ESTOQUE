@@ -1135,3 +1135,17 @@ test("CADASTROS FASE 2 · IM-K1 — `modo=parcial` contra a API da base: recusa 
   expect(((await semModo.json()) as { erros?: { mensagem: string }[] }).erros?.[0]?.mensagem).toBe("Nenhuma linha preenchida.");
   expect(sql("select count(*) from erp.financial_categories"), "nada gravado").toBe(antes);
 });
+
+test("CADASTROS FASE 4 · PA-K1 — ficha de Parceiro da web NOVA contra a API da base: grades e perfis RECUSADOS (422, schema estrito) e nada gravado; o corpo só do principal grava", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const nome = uniq("PA-K1 parceiro web nova");
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: {
+    name: nome, person_type: "legal", is_client: true, enderecos: [{ tipo: "entrega", logradouro: "Rua A" }], perfil_cliente: { limite_credito: "100" } } });
+  expect(r.status(), await r.text()).toBe(422);
+  const erro = ((await r.json()) as { error: { details?: { message?: string }[] } }).error;
+  expect(erro.details?.map((d) => d.message), "a base não conhece as chaves da ficha").toContain("Campo não reconhecido");
+  expect(sql(`select count(*) from erp.people where name = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+  const ok = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: nome, person_type: "legal", is_client: true } });
+  expect(ok.status(), await ok.text()).toBe(201);
+});

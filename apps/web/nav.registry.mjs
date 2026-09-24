@@ -58,7 +58,7 @@ export const MODULES = [
   m("pecuaria", "Pecuária", "/pecuaria", { keywords: ["rebanho", "gado", "animais", "lote", "manejo"], description: "Rebanho, movimentações, manejos e reprodução" }),
   m("confinamento", "Confinamento", "/confinamento", { keywords: ["curral", "dieta", "trato", "cocho"], description: "Operação diária, currais, dietas e desempenho" }),
   m("frota", "Frota e Ativos", "/frota", { keywords: ["máquinas", "equipamentos", "veículos", "abastecimento", "manutenção", "patrimônio"], description: "Equipamentos, abastecimentos e manutenções" }),
-  m("pessoas", "Pessoas e RH", "/pessoas", { keywords: ["funcionários", "clientes", "fornecedores", "folha", "rh"], description: "Pessoas, ocorrências e folha" }),
+  m("pessoas", "RH", "/pessoas", { keywords: ["funcionários", "folha", "rh", "pessoas e rh"], description: "Funcionários, ocorrências e folha" }),
   m("os", "Ordens de Serviço", "/os", { perm: "service_orders.view", keywords: ["os", "serviço", "atividade", "operação"], description: "Ordens de serviço (todas / minhas, por status, atrasadas)" }),
   m("fiscal", "Fiscal", "/fiscal", { keywords: ["nota fiscal", "nf-e", "contábil", "lcdpr"], description: "Documentos de entrada, partida dobrada e livro caixa" }),
   m("relatorios", "Relatórios", "/relatorios", { perm: ["report.stock_movement.view", "saved_reports.view"], keywords: ["relatório", "exportar", "impressão"], description: "Catálogo de relatórios, favoritos e personalizados" }),
@@ -180,15 +180,15 @@ export const AREAS = [
   act("frota", "manutencao", "Nova manutenção", "/frota/manutencoes/new", "maintenances.create", { keywords: ["abrir manutenção", "conserto"] }),
   act("frota", "plano-preventivo", "Novo plano preventivo", "/cadastros/preventive_maintenances/new", "preventive_maintenances.create"),
   act("frota", "revisao", "Agendar revisão", "/cadastros/scheduled_reviews/new", "scheduled_reviews.create"),
-  // ---------------- Pessoas e RH ----------------
-  a("pessoas", "pessoas", "Pessoas", P.PEOPLE, { keywords: ["funcionário", "cliente", "fornecedor", "proprietário", "cpf", "cnpj"], description: "Uma lista; papel como filtro" }),
+  // ---------------- RH (CADASTROS Fase 4: parceiros moram em Configurações › Parceiros) ----------------
+  a("pessoas", "pessoas", "Funcionários", P.PEOPLE, { keywords: ["funcionário", "colaborador", "empregado"], description: "Parceiros do tipo Funcionário, com eventos fixos" }),
   a("pessoas", "ocorrencias", "Ocorrências", P.HR_EVENTS, { keywords: ["falta", "bonificação", "evento de funcionário", "atestado"] }),
   s("pessoas", "ocorrencias", "faltas", "Faltas", "absences.view"),
   s("pessoas", "ocorrencias", "eventos", "Bonificações / eventos", "bonuses.view"),
   a("pessoas", "folha", "Folha", ["salary_advances.view", "earnings.view"], { keywords: ["salário", "adiantamento", "apuração mensal", "holerite"] }),
   s("pessoas", "folha", "adiantamentos", "Adiantamentos", "salary_advances.view", { aliases: ["/gestao-pessoal/adiantamentos"], keywords: ["vale", "adiantar salário"] }),
   s("pessoas", "folha", "apuracao", "Apuração Mensal", "earnings.view", { aliases: ["/gestao-pessoal/apuracao"], keywords: ["fechamento", "proventos", "descontos"] }),
-  act("pessoas", "pessoa", "Nova pessoa", "/cadastros/people/new", "people.create"),
+  act("pessoas", "pessoa", "Novo parceiro", "/cadastros/people/new", "people.create", { keywords: ["nova pessoa", "novo cliente", "novo fornecedor"] }),
   act("pessoas", "funcionario", "Novo funcionário", "/cadastros/people/new?is_employee=true", ["employees.create", "people.create"], { keywords: ["contratar", "admitir"] }),
   act("pessoas", "falta", "Registrar falta", "/cadastros/absences/new", "absences.create", { keywords: ["ausência", "ocorrência de funcionário"] }),
   act("pessoas", "bonificacao", "Registrar bonificação / evento", "/cadastros/bonuses/new", "bonuses.create"),
@@ -249,6 +249,7 @@ export const AREAS = [
   cfg("pecuaria", "breeding-protocols", "Protocolos reprodutivos", "breeding_protocols.view", { keywords: ["protocolo", "iatf"] }),
   cfg("frota", null, "Frota", "equipments.view"),
   cfg("frota", "equipment-families", "Famílias de Bens", "equipments.view", { keywords: ["família de equipamento", "classe de bem"] }),
+  cfg("parceiros", null, "Parceiros", P.PEOPLE, { keywords: ["pessoa", "pessoas", "cliente", "fornecedor", "parceiro", "transportadora", "proprietário", "cpf", "cnpj"], description: "Clientes, fornecedores, transportadoras, funcionários e proprietários" }),
   cfg("rh", null, "RH", P.HR_CFG),
   cfg("rh", "hr-events", "Tipos de Evento", "hr_events.view"),
   cfg("rh", "job-functions", "Funções", "job_functions.view", { keywords: ["cargo"] }),
@@ -310,7 +311,7 @@ export const LEGACY_TABS = {
     "manutencoes/corretivas": { tab: "manutencoes", sub: "corretivas" }, "manutencoes/preventivas": { tab: "manutencoes", sub: "preventivas" }, "manutencoes/agenda": { tab: "manutencoes", sub: "agenda" }, "manutencoes/alertas": { tab: "manutencoes", sub: "alertas" }
   },
   pessoas: {
-    "pessoas/todas": { tab: "pessoas" }, "pessoas/clientes": { tab: "pessoas", query: { role: "client" } }, "pessoas/fornecedores": { tab: "pessoas", query: { role: "provider" } }, "pessoas/proprietarios": { tab: "pessoas", query: { role: "proprietary" } },
+    "pessoas/todas": { path: "/configuracoes", tab: "parceiros" }, "pessoas/clientes": { path: "/configuracoes", tab: "parceiros", query: { role: "client" } }, "pessoas/fornecedores": { path: "/configuracoes", tab: "parceiros", query: { role: "provider" } }, "pessoas/proprietarios": { path: "/configuracoes", tab: "parceiros", query: { role: "proprietary" } },
     funcionarios: { tab: "pessoas", query: { role: "employee" } }, "ocorrencias/faltas": { tab: "ocorrencias", sub: "faltas" }, "ocorrencias/eventos": { tab: "ocorrencias", sub: "eventos" }, "ocorrencias/fixos": { tab: "pessoas", query: { role: "employee" } },
     adiantamentos: { tab: "folha", sub: "adiantamentos" }, apuracao: { tab: "folha", sub: "apuracao" }
   },

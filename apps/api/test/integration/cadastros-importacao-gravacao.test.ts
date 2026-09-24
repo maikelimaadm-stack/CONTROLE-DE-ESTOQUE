@@ -54,7 +54,7 @@ const contar = async (tabela: "people" | "products" | "chart_accounts" | "regist
 /** Contador de ID Global da organização (null = a linha ainda não existe). */
 const contador = async () => (await admin.query<{ v: string }>("select ultimo_valor::text v from erp.sequencias_id_global where organization_id=$1", [h.demo.orgId])).rows[0]?.v ?? null;
 const idGlobalDe = async (idEntidade: string) => (await admin.query<{ v: string; tipo: string }>("select id_global::text v, tipo_entidade tipo from erp.registros_globais where organization_id=$1 and id_entidade=$2", [h.demo.orgId, idEntidade])).rows[0] ?? null;
-const criarPessoa = (nome: string) => h.app.inject({ method: "POST", url: "/api/resources/people", headers: h.headers({ "content-type": "application/json" }), payload: { name: nome } });
+const criarPessoa = (nome: string) => h.app.inject({ method: "POST", url: "/api/resources/people", headers: h.headers({ "content-type": "application/json" }), payload: { name: nome, is_client: true } });
 
 beforeAll(async () => { h = await harness(); admin = createPool(TEST_URL, { max: 2 }); }, 180_000);
 afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end(); });
@@ -66,7 +66,7 @@ describe("erros de gravação: coluna e português", () => {
     expect(bancos).not.toContain("999");
     expect(bancos.length).toBeGreaterThan(0);
     const wb = await modelo("people");
-    preencher(wb, 2, { "Nome Social/Fantasia *": "Pessoa Banco Inexistente", "Banco": "999" });
+    preencher(wb, 2, { "Nome Social/Fantasia *": "Pessoa Banco Inexistente", "Banco": "999", "Cliente": "Sim" });
     const antes = await contar("people");
     const r = await enviar(wb, "people");
     expect(r.statusCode, r.body).toBe(422);

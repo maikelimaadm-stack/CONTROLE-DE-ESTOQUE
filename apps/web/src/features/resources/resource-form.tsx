@@ -11,12 +11,13 @@ import { cardFieldIds, type FormLayout } from "@agro/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { dateTimeBR, cn } from "@/lib/utils";
-import { Input, Textarea, Spinner, ErrorBox, Confirm } from "@/components/ui";
+import { Card, Input, Textarea, Spinner, ErrorBox, Confirm } from "@/components/ui";
 import { MgSelect, MgDatePicker, RequiredPill, REQUIRED_FIELDS_MESSAGE } from "@/components/ui/mg-controls";
 import { RefSelect, ReferenciaSelect } from "@/components/ui/ref-select";
 import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Pencil, Plus, Trash2, LayoutGrid, PanelLeft } from "lucide-react";
 import { IconBtn, PillBtn } from "@/features/base1/ui";
 import { useFormLayout } from "./form-layout";
+import { FichaEmAbas, ConsultaCnpj, fichaDoRegistro, fichaParaApi, type ErroDaFicha } from "./ficha-em-abas";
 
 type Values = Record<string, unknown>;
 export interface EmbeddedForm { mode: "view" | "edit" | "new"; /** linha já carregada na listagem: evita tela de carregamento ao navegar entre registros */ row?: Values | null; setMode: (m: "view" | "edit" | "new") => void; onExit: () => void; refresh: () => void; copyFrom?: Values | null; rightSlot?: React.ReactNode; nav?: { index: number; total: number; go: (i: number) => void } }
@@ -70,25 +71,28 @@ function LayoutCardView({ label, collapsible, colSpan, children }: { label: stri
  * Renderiza o layout configurável (painéis → cards → linhas → campos) com campos ocultos/travados/obrigatórios,
  * rótulos e valores padrão definidos pelo usuário ou pela organização.
  */
-export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, onCancel }: { resourceKey: string; id: string; basePath?: string; afterSave?: (row: Values) => void; embedded?: EmbeddedForm; /** modo diálogo: cancelar fecha o diálogo em vez de navegar */ onCancel?: () => void }) {
+export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, onCancel, rapido, presetExtra }: { resourceKey: string; id: string; basePath?: string; afterSave?: (row: Values) => void; embedded?: EmbeddedForm; /** modo diálogo: cancelar fecha o diálogo em vez de navegar */ onCancel?: () => void; /** CADASTRO RÁPIDO: só `camposRapidos` do registry, mesma API */ rapido?: boolean; /** valores iniciais vindos de quem abriu (ex.: tipo pré-marcado no cadastro rápido) */ presetExtra?: Record<string, string> }) {
   const def = getResource(resourceKey); const router = useRouter(); const sp = useSearchParams(); const qc = useQueryClient(); const { can } = useAuth();
   const fields = React.useMemo(() => def?.fields ?? [], [def]);
+  // FICHA EM ABAS (decisão 253): cadastro com `abas` no registry usa a ficha; os demais, o layout de painéis
+  const ficha = Boolean(def?.abas?.length);
+  const [errosFicha, setErrosFicha] = React.useState<ErroDaFicha[]>([]);
   const layout = useFormLayout(resourceKey, fields);
   const l: FormLayout = layout.prefs;
   const isNew = embedded ? embedded.mode === "new" : id === "new";
   const canEdit = can(`${def?.permission}.edit`); const canDelete = can(`${def?.permission}.delete`); const canCreate = can(`${def?.permission}.create`);
   const readOnly = embedded ? embedded.mode === "view" : sp.get("view") === "1" || (!isNew && !canEdit);
-  const preset = React.useMemo(() => { const p: Record<string, string> = {}; if (!embedded) sp.forEach((v, k) => { if (k !== "view" && k !== "copy") p[k] = v; }); return p; }, [sp, embedded]);
+  const preset = React.useMemo(() => { const p: Record<string, string> = { ...(presetExtra ?? {}) }; if (!embedded && !presetExtra) sp.forEach((v, k) => { if (k !== "view" && k !== "copy") p[k] = v; }); return p; }, [sp, embedded, presetExtra]);
   const copyId = embedded ? null : sp.get("copy");
   const q = useQuery({ queryKey: ["res", resourceKey, id], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${id}`), enabled: !isNew && id !== "new", placeholderData: embedded?.row && String(embedded.row["id"]) === id ? embedded.row : undefined, staleTime: 30_000 });
   const copyQ = useQuery({ queryKey: ["res", resourceKey, copyId], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${copyId}`), enabled: Boolean(copyId) });
-  const form = useForm<Values>({ defaultValues: defaults(fields, preset, l.fieldDefaultValues) });
+  const form = useForm<Values>({ defaultValues: { ...defaults(fields, preset, l.fieldDefaultValues), ...(def?.abas?.length ? fichaDoRegistro(def, null) : {}) } });
   // contrato de estado não salvo do shell: a aba mostra indicador e fechar/trocar empresa/sair pedem confirmação
   useDirtyTab(!readOnly && form.formState.isDirty);
   const appliedDefaults = React.useRef(false);
   // valores padrão do layout entram só em campos ainda não editados pelo usuário (não descarta o que já foi digitado)
   React.useEffect(() => { if (isNew && layout.loaded && !appliedDefaults.current && Object.keys(l.fieldDefaultValues).length) { appliedDefaults.current = true; const d = defaults(fields, preset, l.fieldDefaultValues); for (const f of fields) { if (!(f.name in l.fieldDefaultValues) || preset[f.name] !== undefined) continue; if (form.getFieldState(f.name).isDirty) continue; form.setValue(f.name, d[f.name]); } } }, [isNew, layout.loaded, l.fieldDefaultValues, fields, preset, form]);
-  React.useEffect(() => { if (q.data && def && !isNew) form.reset(fromRecord(def.fields, q.data)); }, [q.data, def, form, isNew]);
+  React.useEffect(() => { if (q.data && def && !isNew) form.reset({ ...fromRecord(def.fields, q.data), ...(ficha ? fichaDoRegistro(def, q.data) : {}) }); }, [q.data, def, form, isNew]);
   // duplicar: novo registro pré-preenchido com os valores do registro de origem (exceto código/identificadores)
   const copySrc = embedded?.copyFrom ?? copyQ.data ?? null;
   React.useEffect(() => { if (isNew && def) { if (copySrc) { const v = fromRecord(def.fields, copySrc); for (const f of def.fields) if (f.name === "code" || f.readOnly) v[f.name] = f.type === "boolean" ? false : f.type === "tags" ? [] : ""; form.reset(v); } else form.reset(defaults(fields, preset, l.fieldDefaultValues)); } }, [isNew, copySrc, def]);
@@ -124,9 +128,9 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   React.useEffect(() => { try { const v = localStorage.getItem(panelStyleKey); if (v === "sidebar") setPanelStyle("sidebar"); } catch { /* sem storage */ } }, [panelStyleKey]);
   const togglePanelStyle = () => setPanelStyle((p) => { const n = p === "tabs" ? "sidebar" : "tabs"; try { localStorage.setItem(panelStyleKey, n); } catch { /* sem storage */ } return n; });
   const save = useMutation({
-    mutationFn: (v: Values) => isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body: toApi(def!.fields, v, l.lockedFieldIds) }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body: toApi(def!.fields, v, l.lockedFieldIds) }),
-    onSuccess: (row) => { toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
-    onError: (e) => { const err = e as Error & { details?: { path: string; message: string }[] }; const det = err.details?.filter((d) => d.path) ?? []; det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
+    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, l.lockedFieldIds), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k])) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
+    onSuccess: (row) => { setErrosFicha([]); toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
+    onError: (e) => { const err = e as Error & { details?: ErroDaFicha[] }; const det = err.details?.filter((d) => d.path) ?? []; if (ficha) setErrosFicha(det); det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
   });
   const remove = useMutation({ mutationFn: () => api(`/api/resources/${resourceKey}/${id}`, { method: "DELETE" }), onSuccess: () => { toast.success("Registro excluído"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); setConfirmDel(false); if (embedded) { embedded.refresh(); embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); }, onError: (e) => toast.error((e as Error).message) });
   // título da aba global ("Novo produto" / nome do registro) — hook antes de qualquer retorno antecipado; não se aplica ao formulário embutido na listagem
@@ -136,7 +140,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   if (!isNew && q.isLoading && !q.data) return <div className="p-6"><Spinner /></div>;
   if (q.error) return <ErrorBox error={q.error} />;
   const values = form.watch();
-  const visible = (f: FieldDef) => !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
+  const visible = (f: FieldDef) => (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
   const back = basePath ?? `/cadastros/${resourceKey}`;
   const byId = new Map(fields.map((f) => [f.name, f]));
   // obrigatório do registry, do layout ou CONDICIONAL (`requiredWhen`): campo de condição vazio vale o `default` dele (ex.: Controla estoque = Sim)
@@ -185,7 +189,9 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
       </div>
       {/* painéis (área rolável; barra e cabeçalho ficam fixos) */}
       <div className="mg-form-scroll min-h-0 flex-1 overflow-auto">
-      {panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} style={panelStyle} onToggleStyle={togglePanelStyle} animate={!readOnly} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
+      {ficha && !rapido ? <FichaEmAbas def={def} form={form} readOnly={readOnly} isNew={isNew} record={q.data ?? null} erros={errosFicha} renderField={renderField} visivel={visible} />
+        : rapido && def.camposRapidos ? <Card className="grid grid-cols-12 gap-3 p-3" data-testid="cadastro-rapido"><div className="col-span-12 flex flex-wrap gap-2">{def.camposRapidos.map(renderField)}</div>{def.camposRapidos.includes("document") && <ConsultaCnpj form={form} dis={readOnly} />}</Card>
+        : panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} style={panelStyle} onToggleStyle={togglePanelStyle} animate={!readOnly} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
       {!isNew && q.data && <div className="px-2 pt-2 text-[11px] text-slate-400">Criado em {dateTimeBR(q.data["created_at"] as string)} · atualizado em {dateTimeBR(q.data["updated_at"] as string)}</div>}
       </div>
       <Confirm open={confirmDel} onOpenChange={setConfirmDel} title="Confirme a exclusão" text={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`} danger loading={remove.isPending} onConfirm={() => remove.mutate()} />

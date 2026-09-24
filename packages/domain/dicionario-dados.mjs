@@ -175,6 +175,19 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     descricao: "Cache global (7 dias) da consulta de CNPJ nas fontes gratuitas (BrasilAPI, CNPJá aberta, CNPJ.ws pública). Nunca guarda o quadro societário. Só a API lê e grava."
   },
   {
+    codigo: "ERP-CADASTROS-PARCEIRO-ENDERECO", tabela: "erp.parceiro_enderecos", nome: "Endereço adicional do parceiro", modulo: "CADASTROS", natureza: "linha", idGlobal: false,
+    descricao: "Endereços ADICIONAIS do parceiro (entrega, cobrança, propriedade, outro), gravados junto com a ficha (CADASTROS Fase 4, decisão 253). O principal continua nas colunas de erp.people. Linha removida da grade é excluída logicamente.",
+    campos: { inscricao_estadual: { nome: "IE", descricao: "IE própria do endereço (produtor rural: uma por propriedade). Só formato: dígitos ou ISENTO." } }
+  },
+  {
+    codigo: "ERP-CADASTROS-PARCEIRO-CONTATO", tabela: "erp.parceiro_contatos", nome: "Contato adicional do parceiro", modulo: "CADASTROS", natureza: "linha", idGlobal: false,
+    descricao: "Contatos ADICIONAIS do parceiro (nome, função, telefones, e-mail, recebe NF-e por e-mail). O contato principal continua em erp.people."
+  },
+  {
+    codigo: "ERP-CADASTROS-PARCEIRO-CONTA", tabela: "erp.parceiro_contas", nome: "Conta bancária adicional do parceiro", modulo: "CADASTROS", natureza: "linha", idGlobal: false,
+    descricao: "Contas bancárias ADICIONAIS do parceiro (banco pela busca, agência, conta, tipo, titular, Pix). A principal continua nas colunas de erp.people."
+  },
+  {
     codigo: "ERP-CADASTROS-ARMAZEM", tabela: "erp.warehouses", nome: "Armazém", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
     descricao: "Local de guarda de estoque, pertencente a uma empresa."
   },

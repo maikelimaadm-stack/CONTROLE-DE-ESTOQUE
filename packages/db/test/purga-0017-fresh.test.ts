@@ -159,7 +159,7 @@ beforeAll(async () => {
 afterAll(async () => { await db?.end(); });
 
 describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na purga", () => {
-  it("o diretório tem 26 migrations e a purga é a 17ª", () => {
+  it("o diretório tem 27 migrations e a purga é a 17ª", () => {
     const noDisco = listMigrations().map((m) => m.name);
     // Números explícitos de propósito: este é o gate da fatia destrutiva, e uma migration nova precisa
     // passar por aqui conscientemente — não entrar de carona num `>= 16`. A 05C-2 passou: acrescentou a
@@ -180,8 +180,11 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // a 0025 acrescenta colunas de árvore a `erp.product_groups` e solta o NOT NULL de categoria/classe do
     // produto — cadastros de organização, fora do recorte que a purga lê; a posição 17 segue intacta. A CADASTROS
     // FASE 3 é a décima: a 0026 carrega referências GLOBAIS (municípios, bancos, NCM, CBO) e cria caches
-    // globais das consultas — nada no recorte que a purga lê; a posição 17 segue intacta.
-    expect(noDisco.length, "26 migrations no repositório").toBe(26);
+    // globais das consultas — nada no recorte que a purga lê; a posição 17 segue intacta. A CADASTROS FASE 4 é
+    // a décima primeira: a 0027 acrescenta colunas a `erp.people`, o limite a `erp.client_profiles`, três
+    // tabelas de detalhe do parceiro e um índice único de documento — cadastros de organização, fora do
+    // recorte que a purga lê; a posição 17 segue intacta.
+    expect(noDisco.length, "27 migrations no repositório").toBe(27);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -192,6 +195,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[23], "e a 24ª é a classificação financeira do documento de venda (VENDAS-A1)").toBe("0024_venda_classificacao_financeira.sql");
     expect(noDisco[24], "e a 25ª é o Grupo de Produtos em árvore (CADASTROS-ESTRUTURA)").toBe("0025_grupo_de_produtos_arvore.sql");
     expect(noDisco[25], "e a 26ª são as referências oficiais (CADASTROS Fase 3)").toBe("0026_referencias_oficiais.sql");
+    expect(noDisco[26], "e a 27ª é a ficha de Parceiros (CADASTROS Fase 4)").toBe("0027_parceiros_ficha_em_abas.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {

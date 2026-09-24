@@ -12,6 +12,8 @@ import { conferirRegrasDaArvore, conferirExclusaoNaArvore, sugerirCodigo } from 
 import { conferirGrupoDeProdutos, conferirGrupoDoProduto } from "../lib/grupo-de-produtos.js";
 import { conferirTipoDaNatureza } from "../lib/natureza-financeira.js";
 import { conferirNcmDoProduto } from "../lib/ncm-do-produto.js";
+import { conferirParceiro, atualizarSituacaoReceita } from "../lib/parceiro.js";
+import { shapeDaFicha, validarCorpo, gravarFicha, lerFicha, temFicha } from "../lib/ficha-em-abas.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
@@ -19,25 +21,33 @@ export function buildSchema(def: ResourceDef, partial = false) {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const f of camposDeEscrita(def)) {
     if (f.readOnly) continue;
-    let t: z.ZodTypeAny;
-    switch (f.type) {
-      case "text": case "textarea": t = z.string().max(f.maxLength ?? 4000); break;
-      case "email": t = z.string().email().max(200); break;
-      case "number": case "money": case "quantity": case "percent": t = z.union([z.number(), z.string().regex(/^-?\d+(\.\d+)?$/)]).transform(String); break;
-      case "integer": t = z.coerce.number().int(); if (f.min !== undefined) t = (t as z.ZodNumber).min(f.min); if (f.max !== undefined) t = (t as z.ZodNumber).max(f.max); break;
-      case "date": t = z.string().refine(isISODate, "Data inválida (use AAAA-MM-DD)"); break;
-      case "boolean": t = z.coerce.boolean(); break;
-      case "select": t = z.enum(f.options!.map((o) => o.value) as [string, ...string[]]); break;
-      case "ref": t = z.string().uuid(); break;
-      case "json": t = z.union([z.record(z.string(), z.unknown()), z.array(z.unknown())]); break;
-      case "tags": t = z.array(z.string()); break;
-      default: t = z.unknown();
-    }
-    if (f.name === "city_id") t = z.coerce.number().int();
+    const t = schemaDoCampo(f);
     if (f.type === "boolean") { shape[f.name] = partial ? t.optional() : t.optional().default(Boolean(f.default ?? false)); continue; }
     shape[f.name] = f.required && !partial ? t : t.nullable().optional();
   }
+  // FICHA EM ABAS: grades e perfis entram no MESMO objeto estrito (ausente = não mexe)
+  Object.assign(shape, shapeDaFicha(def, schemaDoCampo));
   return z.object(shape).strict();
+}
+
+/** Schema zod de UM campo declarativo (principal, linha de detalhe ou perfil). */
+export function schemaDoCampo(f: FieldDef): z.ZodTypeAny {
+  let t: z.ZodTypeAny;
+  switch (f.type) {
+    case "text": case "textarea": t = z.string().max(f.maxLength ?? 4000); break;
+    case "email": t = z.string().email().max(200); break;
+    case "number": case "money": case "quantity": case "percent": t = z.union([z.number(), z.string().regex(/^-?\d+(\.\d+)?$/)]).transform(String); break;
+    case "integer": t = z.coerce.number().int(); if (f.min !== undefined) t = (t as z.ZodNumber).min(f.min); if (f.max !== undefined) t = (t as z.ZodNumber).max(f.max); break;
+    case "date": t = z.string().refine(isISODate, "Data inválida (use AAAA-MM-DD)"); break;
+    case "boolean": t = z.coerce.boolean(); break;
+    case "select": t = z.enum(f.options!.map((o) => o.value) as [string, ...string[]]); break;
+    case "ref": t = z.string().uuid(); break;
+    case "json": t = z.union([z.record(z.string(), z.unknown()), z.array(z.unknown())]); break;
+    case "tags": t = z.array(z.string()); break;
+    default: t = z.unknown();
+  }
+  if (f.name === "city_id") t = z.coerce.number().int();
+  return t;
 }
 
 /**
@@ -54,6 +64,7 @@ async function conferirRegrasDoCadastro(ctx: ServiceCtx, def: ResourceDef, id: s
   if (def.key === "product_groups") await conferirGrupoDeProdutos(ctx, id, data, atual);
   else if (def.key === "products") { await conferirGrupoDoProduto(ctx, data, atual); await conferirNcmDoProduto(ctx, data, atual); }
   else if (def.key === "financial_categories") await conferirTipoDaNatureza(ctx, id, data, atual);
+  else if (def.key === "people") await conferirParceiro(ctx, id, data, atual);
 }
 
 function listColumns(def: ResourceDef): string[] {
@@ -227,7 +238,7 @@ export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 ${orgCond} ${def.softDelete ? "and deleted_at is null" : ""}${farmCond}`, gp);
   if (!r.rows[0]) throw notFound(def.label);
   const row = r.rows[0] as Record<string, unknown>;
-  return { ...row, ...(await refLabels(ctx, def, [row]))[0] };
+  return { ...row, ...(await refLabels(ctx, def, [row]))[0], ...(temFicha(def) ? await lerFicha(ctx, def, id) : {}) };
 }
 
 function coerceValue(f: FieldDef, v: unknown): unknown {
@@ -243,7 +254,7 @@ function coerceValue(f: FieldDef, v: unknown): unknown {
  * (mesma transação): reservar linha a linha prenderia o contador da organização a importação inteira.
  */
 export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal?: boolean } = {}) {
-  const data = buildSchema(def).parse(body) as Record<string, unknown>;
+  const data = validarCorpo(def, buildSchema(def), body);
   const escC = escopoDoRecurso(def);
   if (escC.ativo) {
     const pedida = (data["empresa_id"] as string | null | undefined) ?? null;
@@ -283,12 +294,15 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   // com um `if` por tabela — quem decide é o catálogo (`ENTIDADES_ID_GLOBAL`). Tabela fora do catálogo
   // devolve null sem erro; tabela dentro dele recebe o número na MESMA transação do cadastro.
   if (!opcoes.adiarIdGlobal) await atribuirIdGlobalSeAplicavel(ctx, def.table, id);
+  // FICHA EM ABAS: grades e perfis na MESMA transação — erro aqui desfaz também o principal
+  if (temFicha(def)) await gravarFicha(ctx, def, id, data, null);
+  if (def.key === "people") await atualizarSituacaoReceita(ctx, id);
   return getOne(ctx, def, id);
 }
 
 export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, body: unknown) {
   const atual = await getOne(ctx, def, id);
-  const data = buildSchema(def, true).parse(body) as Record<string, unknown>;
+  const data = validarCorpo(def, buildSchema(def, true), body);
   await conferirRegrasDaArvore(ctx, def, id, data, atual);
   await conferirRegrasDoCadastro(ctx, def, id, data, atual);
   const existing = await checkColumns(ctx, def);
@@ -298,10 +312,14 @@ export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, b
     const v = coerceValue(f, data[f.name]); if (v === undefined) continue;
     vals.push(v); sets.push(`${ident(f.name)} = $${vals.length}`);
   }
-  if (!sets.length) return getOne(ctx, def, id);
-  vals.push(id);
-  const orgCond = existing.has("organization_id") && !def.reference ? `and organization_id = $${vals.push(ctx.orgId)}` : "";
-  await ctx.tx.query(`update erp.${ident(def.table)} set ${sets.join(", ")} where id = $${vals.indexOf(id) + 1} ${orgCond}`, vals);
+  if (sets.length) {
+    vals.push(id);
+    const orgCond = existing.has("organization_id") && !def.reference ? `and organization_id = $${vals.push(ctx.orgId)}` : "";
+    await ctx.tx.query(`update erp.${ident(def.table)} set ${sets.join(", ")} where id = $${vals.indexOf(id) + 1} ${orgCond}`, vals);
+  }
+  // FICHA EM ABAS: detalhe AUSENTE não é tocado; PRESENTE é a lista completa (mesma transação)
+  if (temFicha(def)) await gravarFicha(ctx, def, id, data, atual);
+  if (def.key === "people" && "document" in data) await atualizarSituacaoReceita(ctx, id);
   return getOne(ctx, def, id);
 }
 
