@@ -49,6 +49,12 @@ export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | 
  * alteração até o fim da transação — uma inativação ou uma troca para sintético concorrente espera o lançamento
  * terminar, em vez de commitar entre a conferência e a gravação. Uma consulta por cadastro para o rateio
  * inteiro (sem N+1; `for share` não combina com `union`).
+ *
+ * Vale para rateio NOVO (título, movimento, NF, entrada, venda — criação e edição). A BAIXA não passa por aqui:
+ * ela copia o rateio JÁ GRAVADO no título para o movimento (`BankMovementInput.rateioJaGravado`), e valor que
+ * não muda não é reconferido (decisão 256). Reconferir travaria o título em aberto cuja natureza ou centro foi
+ * inativado, excluído (sem volta pela API) ou é sintético do acervo — com o período da emissão fechado, nem o
+ * rateio nem o cancelamento do título teriam conserto.
  */
 export const MENSAGEM_RATEIO_NATUREZA = "Natureza sintética ou inativa não recebe lançamento. Escolha uma natureza analítica e ativa.";
 export const MENSAGEM_RATEIO_CENTRO = "Centro de resultado sintético ou inativo não recebe lançamento. Escolha um centro de resultado analítico e ativo.";
@@ -104,6 +110,11 @@ export interface BankMovementInput {
   empresaId: string | null; bankAccountId: string; date: string; type: "in" | "out"; categoryType?: string; amount: string; interest?: string; document?: string | null; note?: string | null;
   proprietaryId?: string | null; personId?: string | null; harvestId?: string | null; isDeductible?: boolean; generatesObligation?: boolean; sourceType?: string; sourceId?: string; destinationAccountId?: string | null;
   apportionment?: ApportionmentLine[];
+  /**
+   * O rateio é a CÓPIA do rateio já gravado num título (baixa): não passa por `exigirRateioAnalitico`, que é a
+   * regra da classificação NOVA. Só a baixa liga isto; rateio vindo do cliente nunca.
+   */
+  rateioJaGravado?: boolean;
 }
 export async function createBankMovement(ctx: ServiceCtx, i: BankMovementInput): Promise<string> {
   await assertPeriodOpen(ctx.tx, ctx.orgId, i.empresaId, i.date);
@@ -115,7 +126,7 @@ export async function createBankMovement(ctx: ServiceCtx, i: BankMovementInput):
     [ctx.orgId, i.empresaId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id]);
   const id = r.rows[0]!.id;
   await atribuirIdGlobal(ctx, "bank_movements", id);
-  if (i.apportionment?.length) await exigirRateioAnalitico(ctx, i.apportionment);
+  if (i.apportionment?.length && !i.rateioJaGravado) await exigirRateioAnalitico(ctx, i.apportionment);
   if (i.apportionment?.length) for (const l of normalizeApportionment(money(i.amount), i.apportionment)) await ctx.tx.query("insert into erp.bank_movement_apportionments(movement_id,financial_category_id,chart_account_id,cost_center_id,harvest_id,percentage,amount) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.financialCategoryId, l.chartAccountId, l.costCenterId, l.harvestId, l.percentage, l.amount]);
   // transferência interna: cria o par na conta destino
   if (i.categoryType === "internal_transfer" && i.destinationAccountId) {

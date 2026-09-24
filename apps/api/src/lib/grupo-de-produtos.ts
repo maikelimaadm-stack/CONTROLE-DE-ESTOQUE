@@ -38,6 +38,10 @@ export async function conferirGrupoDeProdutos(ctx: ServiceCtx, id: string | null
   }
 
   if (id && data["kind"] === "synthetic" && atual?.["kind"] !== "synthetic") {
+    // trava o grupo ANTES de procurar produto (R1-5): conflita com o `for key share` da FK de um produto gravado
+    // ao mesmo tempo e com o `for share` de `precisaRecusar` (`arvore-cadastro.ts`) — quem chega depois espera e
+    // relê: a troca vê o produto novo, ou o produto vê o grupo já sintético
+    await ctx.tx.query("select 1 from erp.product_groups where id=$1 and organization_id=$2 for update", [id, ctx.orgId]);
     const r = await ctx.tx.query("select 1 from erp.products where organization_id=$1 and group_id=$2 and deleted_at is null limit 1", [ctx.orgId, id]);
     if (r.rowCount) throw campo("kind", MENSAGEM_GRUPO_COM_PRODUTOS);
   }

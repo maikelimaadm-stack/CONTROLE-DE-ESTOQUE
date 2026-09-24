@@ -9,8 +9,10 @@
  * "EM USO" = uma linha, viva, em alguma tabela cuja chave estrangeira aponta para o cadastro. A lista abaixo é
  * o CATÁLOGO de FKs do banco migrado (`pg_constraint`, contype 'f', confrelid = o cadastro), fixado aqui como
  * WHITELIST ESTÁTICA: nenhum identificador vem da requisição, o SQL é montado só daqui e o id vai como
- * parâmetro. O teste `cadastros-analitico-em-uso` compara esta lista com o catálogo real e REPROVA se surgir
- * FK nova não coberta (ou se uma daqui sumir) — a lista não envelhece em silêncio.
+ * parâmetro. O teste CAT-2 de `apps/api/test/integration/cadastros-arvore-analitico.test.ts` compara esta lista
+ * com o catálogo real e REPROVA se surgir FK nova não coberta (ou se uma daqui sumir) — a lista não envelhece em
+ * silêncio. CAT-1, no mesmo arquivo, exige que todo cadastro em árvore com Analítica esteja aqui ou tenha regra
+ * própria.
  *
  *   · "viva" = `deleted_at is null` quando a tabela referenciadora tem exclusão lógica (`exclusaoLogica`);
  *     sem exclusão lógica própria, toda linha conta (inclusive a de um documento cancelado: o histórico
@@ -89,7 +91,15 @@ export const CADASTROS_COM_REGRA_PROPRIA_DE_USO: readonly string[] = ["product_g
 export const MENSAGEM_ANALITICO_EM_USO = "Em uso em lançamentos: crie outra analítica e mova os lançamentos antes.";
 export const MENSAGEM_ANALITICO_SEM_VISAO_TOTAL = "Mudar para sintético vale para a organização inteira: é preciso ter acesso a todas as empresas em todos os módulos.";
 
-/** Uma consulta por cadastro (UNION ALL de EXISTS, para no primeiro achado). Montada uma vez, só da whitelist. */
+/**
+ * Uma consulta por cadastro (UNION ALL com LIMIT 1, sem N+1). Montada uma vez, só da whitelist.
+ *
+ * CUSTO (risco declarado na decisão 256): nenhuma das colunas referenciadoras tem índice próprio. Quando HÁ uso,
+ * a consulta para no primeiro achado; quando NÃO há — o caminho que termina em sucesso —, cada ramo varre a
+ * tabela inteira (movimentos de estoque, rateios, itens de NF…), com a linha do cadastro travada `for update`:
+ * lançamentos concorrentes naquela natureza/centro/conta esperam a varredura. A troca analítico → sintético é
+ * rara e administrativa; índices nas FKs pedem fatia com migration autorizada (o R1 proíbe migration nova).
+ */
 const CONSULTA_DE_USO: ReadonlyMap<string, string> = new Map(Object.entries(REFERENCIAS_DE_USO).map(([tabela, refs]) => [tabela,
   `${refs.map((x) => `select 1 from erp.${ident(x.tabela)} where ${ident(x.coluna)} = $1${x.exclusaoLogica ? " and deleted_at is null" : ""}`).join(" union all ")} limit 1`]));
 

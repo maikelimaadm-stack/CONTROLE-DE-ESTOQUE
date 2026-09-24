@@ -5,17 +5,21 @@ import { RESOURCES } from "@agro/domain";
 import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from "./setup.js";
 import { CADASTROS_COM_REGRA_PROPRIA_DE_USO, MENSAGEM_ANALITICO_EM_USO, MENSAGEM_ANALITICO_SEM_VISAO_TOTAL, REFERENCIAS_DE_USO } from "../../src/lib/analitico-em-uso.js";
 import { MENSAGEM_REGISTRO_COM_FILHOS } from "../../src/lib/arvore-cadastro.js";
+import { MENSAGEM_GRUPO_COM_PRODUTOS } from "../../src/lib/grupo-de-produtos.js";
 import { MENSAGEM_RATEIO_CENTRO, MENSAGEM_RATEIO_NATUREZA } from "../../src/services/financial-core.js";
 
 /**
  * CADASTROS R1-5 — ÁRVORE E ANALÍTICO (decisão 256).
  *
  * AR-5  registro com filho VIVO não muda de superior nem de código (422 no campo); a folha muda; filho
- *       excluído não conta; vale também para árvore sem código (Endereçamentos).
+ *       excluído não conta; vale também para árvore sem código (Endereçamentos). Concorrência (e/f): a
+ *       renumeração do superior e a criação do filho travam a MESMA linha — um espera o outro e relê.
  * AN-1  analítico EM USO (qualquer referência viva pelas FKs do catálogo) não vira sintético; sem uso, vira.
  *       A conferência roda sob a RLS de quem grava: sem visão da organização inteira, a troca é recusada.
+ *       Concorrência (e/f): o rateio E a referência `exigeAnalitico` de produto/perfil esperam a troca e relêem.
  * AN-2  rateio: id de outra organização, inexistente, excluído, inativo ou sintético → a MESMA recusa; e a
- *       leitura é `for share` (uma inativação concorrente é vista, não atropelada).
+ *       leitura é `for share` (uma inativação concorrente é vista, não atropelada). A BAIXA reaproveita o
+ *       rateio já gravado e não o reconfere (d): cadastro excluído/inativado depois não trava título aberto.
  * AN-3  perfil de RH: centro de resultado sintético → 422; o recuo do adiantamento só escolhe analítico ativo.
  * CAT   a whitelist de "em uso" é o catálogo de FKs do banco migrado — FK nova não coberta reprova aqui.
  *
@@ -36,6 +40,29 @@ const cadastrar = async (key: string, payload: Record<string, unknown>) => criad
 const erroDoCampo = (r: Resp) => { const d = (j(r).error.details as { path: string[] | string; message: string }[])[0]!; return { path: ([] as string[]).concat(d.path), message: d.message }; };
 const linha = async <T extends Record<string, unknown>>(sql: string, p: unknown[]) => (await admin.query<T>(sql, p)).rows[0]!;
 const contarTitulos = async (nota: string) => Number((await linha<{ n: string }>("select count(*)::text n from erp.financial_titles where organization_id=$1 and note=$2", [h.demo.orgId, nota])).n);
+/**
+ * CONCORRÊNCIA: `outro` (conexão privilegiada) abre uma transação e segura uma trava (`preparar`); `acao`
+ * dispara a gravação pela API, SEM await. Espera a gravação ficar bloqueada numa consulta cujo texto casa
+ * `travada` (a trava que a correção toma), confirma `outro` e devolve a resposta. Sem aquela trava a API não
+ * espera por ela — `esperou` sai falso e a gravação passa por cima do que `outro` confirmou.
+ */
+async function comTransacaoConcorrente(preparar: (outro: pg.Client) => Promise<unknown>, acao: () => Promise<Resp>, travada: string): Promise<{ r: Resp; esperou: boolean }> {
+  const outro = new pg.Client({ connectionString: TEST_URL });
+  await outro.connect();
+  try {
+    await outro.query("begin");
+    await preparar(outro);
+    const pendente = acao();
+    let esperou = false;
+    for (let i = 0; i < 50 && !esperou; i++) {
+      const w = await admin.query("select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query ilike $1", [travada]);
+      esperou = Boolean(w.rowCount);
+      if (!esperou) await new Promise((ok) => setTimeout(ok, 100));
+    }
+    await outro.query("commit");
+    return { r: await pendente, esperou };
+  } finally { await outro.query("rollback").catch(() => undefined); await outro.end(); }
+}
 const titulo = (nota: string, cat: string | undefined, cc: string | undefined, extra: Record<string, unknown> = {}, empresa?: string) => ({
   empresa_id: empresa ?? I.empresa, number: `${nota}-${Math.random().toString(36).slice(2, 8)}`, person_id: I.provider, amount: "100.00",
   emission_date: "2026-09-01", due_date: "2026-09-30", note: nota, apportionment: [{ financial_category_id: cat, cost_center_id: cc, percentage: "100", ...extra }]
@@ -111,6 +138,36 @@ describe("AR-5 — registro com filhos não muda de superior nem de código", ()
     const ok = await put("addressings", prateleira, { parent_id: outro });
     expect(ok.statusCode, ok.body).toBe(200);
     expect(await linha("select parent_id from erp.addressings where id=$1", [prateleira])).toEqual({ parent_id: outro });
+  });
+
+  const filhosDe = async (id: string) => (await admin.query<{ code: string }>("select code from erp.financial_categories where parent_id=$1 and deleted_at is null order by code", [id])).rows.map((x) => x.code);
+
+  it("AR-5e: CONCORRÊNCIA — renumeração do superior ainda não confirmada: a criação do filho ESPERA e relê o código novo", async () => {
+    const pai = await cadastrar("financial_categories", { code: "5.03", name: "AR5 Renumerado", nature: "income", kind: "synthetic", parent_id: raiz });
+    // `outro` = a renumeração de outra sessão que já passou pela conferência (sem filho naquela hora)
+    const { r, esperou } = await comTransacaoConcorrente(
+      (outro) => outro.query("update erp.financial_categories set code='5.04' where id=$1", [pai]),
+      () => post("/api/resources/financial_categories", { code: "5.03.001", name: "AR5 Filho atrasado", nature: "income", kind: "analytic", parent_id: pai }),
+      "%financial_categories%for key share%");
+    expect(r.statusCode, r.body).toBe(422);
+    expect(esperou, "a criação esperou a trava do superior").toBe(true);
+    expect(erroDoCampo(r).path).toEqual(["code"]);
+    expect(await filhosDe(pai), "nenhum filho com o prefixo antigo").toEqual([]);
+    expect(await estado(pai)).toEqual({ code: "5.04", parent_id: raiz });
+  });
+
+  it("AR-5f: CONCORRÊNCIA — filho ainda não confirmado: a renumeração do superior ESPERA e vê o filho", async () => {
+    const pai = await cadastrar("financial_categories", { code: "5.05", name: "AR5 Com filho a caminho", nature: "income", kind: "synthetic", parent_id: raiz });
+    // `outro` = a criação do filho por outra sessão que já conferiu o prefixo "5.05"
+    const { r, esperou } = await comTransacaoConcorrente(
+      (outro) => outro.query("insert into erp.financial_categories(organization_id,code,name,nature,kind,parent_id) values ($1,'5.05.001','AR5 Filho a caminho','income','analytic',$2)", [h.demo.orgId, pai]),
+      () => put("financial_categories", pai, { code: "5.06" }),
+      "%financial_categories%for update%");
+    expect(r.statusCode, r.body).toBe(422);
+    expect(esperou, "a renumeração esperou a trava do registro").toBe(true);
+    expect(erroDoCampo(r)).toEqual({ path: ["code"], message: MENSAGEM_REGISTRO_COM_FILHOS });
+    expect(await estado(pai)).toEqual({ code: "5.05", parent_id: raiz });
+    expect(await filhosDe(pai)).toEqual(["5.05.001"]);
   });
 });
 
@@ -210,6 +267,40 @@ describe("AN-1 — analítico em uso não vira sintético", () => {
     } finally { await outro.query("rollback").catch(() => undefined); await outro.end(); }
     expect(await kindDe("financial_categories", nat)).toBe("analytic");
   });
+
+  it("AN-1f: CONCORRÊNCIA — troca para sintético ainda não confirmada: a referência `exigeAnalitico` do produto ESPERA e relê o cadastro já sintético", async () => {
+    const cc = await cadastrar("cost_centers", { code: "8.03", name: "AN1 CC Concorrente", kind: "analytic", parent_id: ccRaiz });
+    const grupo = (await linha<{ id: string }>("select id from erp.product_groups where organization_id=$1 and kind='analytic' and is_active and deleted_at is null order by code limit 1", [h.demo.orgId])).id;
+    const unidade = (await linha<{ id: string }>("select id from erp.measurement_units where organization_id=$1 or organization_id is null order by symbol limit 1", [h.demo.orgId])).id;
+    const produto = await cadastrar("products", { description: `AN1f produto ${Date.now()}`, measurement_id: unidade, group_id: grupo, control_stock: false });
+    // `outro` = a troca analítico → sintético de outra sessão que já passou pela busca de uso (sem uso naquela hora)
+    const { r, esperou } = await comTransacaoConcorrente(
+      (outro) => outro.query("update erp.cost_centers set kind='synthetic' where id=$1", [cc]),
+      () => put("products", produto, { default_cost_center_id: cc }),
+      "%cost_centers%for share%");
+    expect(r.statusCode, r.body).toBe(422);
+    expect(esperou, "o produto esperou a trava do centro").toBe(true);
+    expect(erroDoCampo(r).path).toEqual(["default_cost_center_id"]);
+    expect((await linha<{ default_cost_center_id: string | null }>("select default_cost_center_id from erp.products where id=$1", [produto])).default_cost_center_id).toBeNull();
+    expect(await kindDe("cost_centers", cc)).toBe("synthetic");
+  });
+
+  it("AN-1g: CONCORRÊNCIA — Grupo de Produtos: produto ainda não confirmado no grupo; a troca do grupo para sintético ESPERA e vê o produto", async () => {
+    const raizGrupo = (await linha<{ id: string }>("select id from erp.product_groups where organization_id=$1 and code='1' and deleted_at is null", [h.demo.orgId])).id;
+    const grupo = await cadastrar("product_groups", { code: "1.91", name: `AN1g Grupo ${Date.now()}`, kind: "analytic", parent_id: raizGrupo });
+    const outroGrupo = (await linha<{ id: string }>("select id from erp.product_groups where organization_id=$1 and code='1.01' and deleted_at is null", [h.demo.orgId])).id;
+    const unidade = (await linha<{ id: string }>("select id from erp.measurement_units where organization_id=$1 or organization_id is null order by symbol limit 1", [h.demo.orgId])).id;
+    const produto = await cadastrar("products", { description: `AN1g produto ${Date.now()}`, measurement_id: unidade, group_id: outroGrupo, control_stock: false });
+    // `outro` = a gravação do produto no grupo por outra sessão que já conferiu o grupo analítico
+    const { r, esperou } = await comTransacaoConcorrente(
+      (outro) => outro.query("update erp.products set group_id=$2 where id=$1", [produto, grupo]),
+      () => put("product_groups", grupo, { kind: "synthetic" }),
+      "%product_groups%for update%");
+    expect(r.statusCode, r.body).toBe(422);
+    expect(esperou, "a troca esperou a trava do grupo").toBe(true);
+    expect(erroDoCampo(r)).toEqual({ path: ["kind"], message: MENSAGEM_GRUPO_COM_PRODUTOS });
+    expect((await linha<{ kind: string }>("select kind from erp.product_groups where id=$1", [grupo])).kind).toBe("analytic");
+  });
 });
 
 describe("AN-2 — rateio: todo id existe NA organização, vivo, ativo e analítico", () => {
@@ -281,6 +372,41 @@ describe("AN-2 — rateio: todo id existe NA organização, vivo, ativo e analí
       expect(j(r).error.message).toBe(MENSAGEM_RATEIO_NATUREZA);
     } finally { await outro.query("rollback").catch(() => undefined); await outro.end(); }
     expect(await contarTitulos("AN2c")).toBe(0);
+  });
+
+  it("AN-2d: a BAIXA reaproveita o rateio GRAVADO e não o reconfere — natureza excluída, centro inativado e natureza sintética do acervo não travam a baixa (individual e em lote)", async () => {
+    const paiNat = (await linha<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and code='2.01'", [h.demo.orgId])).id;
+    const paiCc = (await linha<{ id: string }>("select id from erp.cost_centers where organization_id=$1 and code='1.01'", [h.demo.orgId])).id;
+    const nat = await cadastrar("financial_categories", { code: "2.01.904", name: "AN2 Baixa Excluída", nature: "expense", kind: "analytic", parent_id: paiNat });
+    const cc = await cadastrar("cost_centers", { code: "1.01.904", name: "AN2 CC Baixa Inativado", kind: "analytic", parent_id: paiCc });
+    const individual = criado(await post("/api/financial/payables", titulo("AN2d", nat, cc)));
+    const emLote = criado(await post("/api/financial/payables", titulo("AN2d", nat, cc)));
+    const acervo = criado(await post("/api/financial/payables", titulo("AN2d", I.category, I.costCenter)));
+    // DEPOIS dos títulos: a natureza é EXCLUÍDA (nenhuma rota a restaura) e o centro, INATIVADO; o título do
+    // acervo aponta uma natureza SINTÉTICA (gravado antes da regra de analítico, sem passar pela API de hoje)
+    expect((await del("financial_categories", nat)).statusCode).toBe(200);
+    const inativar = await put("cost_centers", cc, { is_active: false });
+    expect(inativar.statusCode, inativar.body).toBe(200);
+    await admin.query("update erp.title_apportionments set financial_category_id=$2 where title_id=$1", [acervo, paiNat]);
+    // premissa: lançamento NOVO com eles continua recusado — a regra do rateio não afrouxou
+    const novo = await post("/api/financial/payables", titulo("AN2d-novo", nat, cc));
+    expect(novo.statusCode, novo.body).toBe(422);
+    const baixar = (id: string) => h.app.inject({ method: "POST", url: `/api/financial/payables/${id}/settle`, headers: hdr(), payload: { settlement_date: "2026-09-10", bank_account_id: I.bankAccount, amount: "100.00" } });
+    for (const id of [individual, acervo]) {
+      const b = await baixar(id);
+      expect(b.statusCode, b.body).toBe(201);
+    }
+    const lote = await h.app.inject({ method: "POST", url: "/api/financial/payables/settle-batch", headers: hdr(), payload: { ids: [emLote], settlement_date: "2026-09-10", bank_account_id: I.bankAccount } });
+    expect(lote.statusCode, lote.body).toBe(201);
+    expect(j(lote).settled).toBe(1);
+    const situacao = await admin.query<{ id: string; status: string }>("select id, status from erp.financial_titles where id = any($1::uuid[])", [[individual, emLote, acervo]]);
+    expect(situacao.rows.every((x) => x.status === "paid"), JSON.stringify(situacao.rows)).toBe(true);
+    // o movimento da baixa leva o MESMO rateio do título (a classificação do caixa bate com a do título)
+    const rateioDaBaixa = async (id: string) => (await admin.query<{ financial_category_id: string; cost_center_id: string }>(
+      "select a.financial_category_id, a.cost_center_id from erp.bank_movement_apportionments a join erp.bank_movements m on m.id = a.movement_id where m.source_type = 'title_settlements' and m.source_id = $1", [id])).rows;
+    expect(await rateioDaBaixa(individual)).toEqual([{ financial_category_id: nat, cost_center_id: cc }]);
+    expect(await rateioDaBaixa(emLote)).toEqual([{ financial_category_id: nat, cost_center_id: cc }]);
+    expect(await rateioDaBaixa(acervo)).toEqual([{ financial_category_id: paiNat, cost_center_id: I.costCenter }]);
   });
 });
 

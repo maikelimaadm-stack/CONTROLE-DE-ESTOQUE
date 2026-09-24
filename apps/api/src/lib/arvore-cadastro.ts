@@ -10,6 +10,19 @@
  *   filhos carregam o prefixo do pai, e reescrever uma subárvore é migração de dado, não edição;
  * - analítico EM USO não vira sintético (`analitico-em-uso.ts`).
  *
+ * CONCORRÊNCIA: as regras acima leem o superior e os filhos; sem trava, duas gravações que se cruzam (renumerar
+ * ou mover o superior × incluir um filho nele; excluir × incluir filho; marcar analítico × incluir filho)
+ * passam cada uma pela sua conferência e as duas commitam — o filho fica com o prefixo antigo, pendurado num
+ * excluído ou sob um analítico. Por isso as duas pontas travam a MESMA linha, a do superior:
+ *   · quem muda o registro (superior, código, analítico) ou o exclui trava ELE `for update` ANTES de procurar
+ *     filhos (`travarRegistro`);
+ *   · quem inclui filho, ou move/renumera para baixo de um superior, lê o superior `for key share`
+ *     (`registroVivo(..., true)`), que conflita com o `for update` acima e com nada mais: renomear o superior
+ *     ou lançar nele não espera.
+ * Quem chega depois espera o commit do outro e RELÊ (READ COMMITTED): vê o filho novo, ou o código/situação
+ * novos do superior, e recusa. Dois movimentos cruzados (A para baixo de B e B para baixo de A ao mesmo tempo)
+ * se travam em ordem inversa: o banco derruba um deles (40P01 → 409 CONCURRENCY_CONFLICT) e o ciclo não nasce.
+ *
  * As regras valem para gravações NOVAS. Um registro antigo fora da máscara continua legível e editável em
  * outros campos; só código ou superior alterados passam de novo pela conferência.
  */
@@ -35,10 +48,16 @@ async function mascara(ctx: ServiceCtx, def: ResourceDef): Promise<string> {
   return ehCadastroCodigoHierarquico(def.key) ? mascaraDoCadastro(r.rows[0]?.parameters, def.key) : "";
 }
 
-async function registroVivo(ctx: ServiceCtx, def: ResourceDef, id: string): Promise<Linha | null> {
+/** `travar`: o superior vai ser conferido para receber (ou manter sob novo código) um filho — `for key share`. */
+async function registroVivo(ctx: ServiceCtx, def: ResourceDef, id: string, travar = false): Promise<Linha | null> {
   const cols = ["id", ...(temCampo(def, "code") ? ["code"] : []), ...(temCampo(def, "kind") ? ["kind"] : [])];
-  const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 and organization_id=$2 ${def.softDelete ? "and deleted_at is null" : ""}`, [id, ctx.orgId]);
+  const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 and organization_id=$2 ${def.softDelete ? "and deleted_at is null" : ""}${travar ? " for key share" : ""}`, [id, ctx.orgId]);
   return (r.rows[0] as Linha | undefined) ?? null;
+}
+
+/** O registro vai mudar de superior, de código, virar analítico ou ser excluído: trava antes de procurar filhos. */
+async function travarRegistro(ctx: ServiceCtx, def: ResourceDef, id: string): Promise<void> {
+  await ctx.tx.query(`select 1 from erp.${ident(def.table)} where id=$1 and organization_id=$2 for update`, [id, ctx.orgId]);
 }
 
 async function temFilhosVivos(ctx: ServiceCtx, def: ResourceDef, id: string): Promise<boolean> {
@@ -50,10 +69,14 @@ async function temFilhosVivos(ctx: ServiceCtx, def: ResourceDef, id: string): Pr
 export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Linha, atual: Linha | null): Promise<void> {
   if (!def.tree) return;
   const mudouPai = "parent_id" in data && (data["parent_id"] ?? null) !== (atual?.["parent_id"] ?? null);
+  const mudouCodigo = "code" in data && data["code"] !== atual?.["code"];
+  const viraAnalitico = temCampo(def, "kind") && data["kind"] === "analytic" && atual?.["kind"] !== "analytic";
+  // CONCORRÊNCIA (cabeçalho): primeiro o próprio registro, depois o superior
+  if (id && (mudouPai || mudouCodigo || viraAnalitico)) await travarRegistro(ctx, def, id);
   const parentId = ("parent_id" in data ? data["parent_id"] : atual?.["parent_id"]) as string | null | undefined ?? null;
   let pai: Linha | null = null;
   if (parentId) {
-    pai = await registroVivo(ctx, def, parentId);
+    pai = await registroVivo(ctx, def, parentId, atual === null || mudouPai || mudouCodigo);
     if (!pai) throw campo("parent_id", "Superior não encontrado.");
     if (id && mudouPai) {
       if (parentId === id) throw campo("parent_id", "O superior não pode ser o próprio registro nem um descendente dele.");
@@ -65,11 +88,10 @@ export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, 
     }
     if (temCampo(def, "kind") && (atual === null || mudouPai) && pai["kind"] !== "synthetic") throw campo("parent_id", `O superior precisa ser sintético. Marque ${rotuloDoCampo(def, "kind")}: Não nele antes de incluir filhos.`);
   }
-  const mudouCodigo = "code" in data && data["code"] !== atual?.["code"];
   // SUBÁRVORE: com filho vivo, nem superior nem código mudam — vale para TODO cadastro em árvore (o ciclo acima
   // fala primeiro, com a mensagem própria). Mover um galho é mover (ou renumerar) as folhas antes.
   if (id && (mudouPai || mudouCodigo) && await temFilhosVivos(ctx, def, id)) throw campo(mudouPai ? "parent_id" : "code", MENSAGEM_REGISTRO_COM_FILHOS);
-  if (id && temCampo(def, "kind") && data["kind"] === "analytic" && atual?.["kind"] !== "analytic" && await temFilhosVivos(ctx, def, id)) {
+  if (id && viraAnalitico && await temFilhosVivos(ctx, def, id)) {
     throw campo("kind", `Registro com filhos não pode ser analítico (${rotuloDoCampo(def, "kind")}: Sim). Mova ou exclua os filhos antes.`);
   }
   if (id && atual && temCampo(def, "kind")) await conferirAnaliticoEmUso(ctx, def, id, data, atual);
@@ -86,7 +108,9 @@ export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, 
 
 /** Exclusão lógica deixaria filhos pendurados num superior invisível. */
 export async function conferirExclusaoNaArvore(ctx: ServiceCtx, def: ResourceDef, id: string): Promise<void> {
-  if (def.tree && await temFilhosVivos(ctx, def, id)) throw validation("Este registro tem filhos. Exclua ou mova os filhos antes.");
+  if (!def.tree) return;
+  await travarRegistro(ctx, def, id);
+  if (await temFilhosVivos(ctx, def, id)) throw validation("Este registro tem filhos. Exclua ou mova os filhos antes.");
 }
 
 /**
@@ -116,6 +140,12 @@ export async function sugerirCodigo(ctx: ServiceCtx, def: ResourceDef, parentId:
  * e dos PERFIS da ficha em abas (detalhe em grade não declara `exigeAnalitico` — o teste da whitelist confere).
  * Valor que não mudou não é reconferido (dado antigo continua editável). Inexistente/outra organização/excluído:
  * a mesma recusa — não se revela a diferença.
+ *
+ * A leitura é `for share`, como a do rateio: a troca analítico → sintético trava a linha `for update` ANTES de
+ * procurar uso (`analitico-em-uso.ts` para natureza/centro/conta; `grupo-de-produtos.ts` para o grupo), e as
+ * duas gravações se esperam. Quem chega depois relê — a referência nova vê o cadastro já sintético e é
+ * recusada; a troca vê a referência já gravada e é recusada. Sem esta trava, a FK só segura `for key share`,
+ * que não conflita com a atualização de `kind`, e a referência a um sintético commitava.
  */
 export async function conferirReferenciasAnaliticas(ctx: ServiceCtx, def: ResourceDef, data: Linha, atual: Linha | null): Promise<void> {
   const recusa = (f: FieldDef) => `${f.label}: escolha um registro analítico. Sintético agrupa e não recebe lançamento.`;
@@ -138,6 +168,6 @@ async function precisaRecusar(ctx: ServiceCtx, f: FieldDef, v: unknown, anterior
   if (v === null || v === undefined || v === "" || (temAnterior && v === anterior)) return false;
   const alvo = getResource(f.ref.resource);
   if (!alvo?.tree) return false;
-  const r = await ctx.tx.query(`select 1 from erp.${ident(alvo.table)} where id=$1 and organization_id=$2 and kind='analytic'${alvo.softDelete ? " and deleted_at is null" : ""}`, [String(v), ctx.orgId]);
+  const r = await ctx.tx.query(`select 1 from erp.${ident(alvo.table)} where id=$1 and organization_id=$2 and kind='analytic'${alvo.softDelete ? " and deleted_at is null" : ""} for share`, [String(v), ctx.orgId]);
   return !r.rowCount;
 }
