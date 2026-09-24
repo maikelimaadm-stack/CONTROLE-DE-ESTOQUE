@@ -41,14 +41,17 @@ export interface PreviaDaConfirmacao {
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const ehTexto = (v: unknown): v is string => typeof v === "string";
-const ehTextoOuNulo = (v: unknown): v is string | null => v === null || ehTexto(v);
 const ehContagem = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
+/** Dinheiro vem da API como texto decimal (`numeric` do banco), nunca número: "97.35", "-1.00". */
+const ehDecimal = (v: unknown): v is string => ehTexto(v) && /^-?\d+(\.\d+)?$/.test(v);
+const ehDataIso = (v: unknown): v is string => ehTexto(v) && /^\d{4}-\d{2}-\d{2}$/.test(v);
 const ehItem = (v: unknown): v is ItemDaClassificacao => ehObjeto(v) && ehTexto(v.id) && ehTexto(v.codigo) && ehTexto(v.nome);
 const ehRecusa = (v: unknown): v is RecusaPrevista => ehObjeto(v) && ehTexto(v.code) && ehTexto(v.message);
 
 /**
  * O corpo só vira contrato INTEIRO. Campo pela metade viraria frase com buraco ("Gera contas a receber de
- * R$ undefined") — e frase com buraco sobre dinheiro é pior do que o texto neutro.
+ * R$ undefined") — e frase com buraco sobre dinheiro é pior do que o texto neutro. Por isso, além da forma,
+ * as COERÊNCIAS que o servidor garante são conferidas: corpo que as quebra não é deste contrato.
  */
 export const ehPreviaDaConfirmacao = (v: unknown): v is PreviaDaConfirmacao => {
   if (!ehObjeto(v) || v.contractVersion !== CONTRATO_PREVIA_CONFIRMACAO || typeof v.podeConfirmar !== "boolean") return false;
@@ -57,7 +60,11 @@ export const ehPreviaDaConfirmacao = (v: unknown): v is PreviaDaConfirmacao => {
   if (v.podeConfirmar !== (v.recusas.length === 0)) return false;
   const e = v.estoque; const f = v.financeiro;
   if (!ehObjeto(e) || !(e.efeito === "baixa" || e.efeito === "nenhum" || e.efeito === null) || !ehContagem(e.itensQueBaixam) || !ehContagem(e.itensSemArmazem)) return false;
-  if (!ehObjeto(f) || !(f.efeito === "receber" || f.efeito === "nenhum" || f.efeito === null) || !ehTextoOuNulo(f.valor) || !ehTextoOuNulo(f.primeiroVencimento)) return false;
+  if (!ehObjeto(f) || !(f.efeito === "receber" || f.efeito === "nenhum" || f.efeito === null) || !(f.primeiroVencimento === null || ehDataIso(f.primeiroVencimento))) return false;
+  // Valor existe EXATAMENTE quando há conta a receber, e é decimal em texto.
+  if (f.efeito === "receber" ? !ehDecimal(f.valor) : f.valor !== null) return false;
+  // "Pode confirmar" sem política (efeitos nulos) é contradição: a política é a primeira coisa decidida.
+  if (v.podeConfirmar && (e.efeito === null || f.efeito === null)) return false;
   const c = f.classificacao;
   return c === null || (ehObjeto(c) && (c.origem === "documento" || c.origem === "padrão legado") && ehItem(c.categoria) && ehItem(c.centro));
 };
@@ -70,10 +77,9 @@ export type EstadoDaPrevia =
   | { situacao: "pronto"; previa: PreviaDaConfirmacao };
 
 /**
- * Busca a prévia. `chave` distingue quem pergunta: o diálogo passa um contador de ABERTURAS, para que cada
- * vez que ele abre a pergunta seja feita de novo — uma resposta de minutos atrás (antes de alguém inativar a
- * categoria, por exemplo) não pode decidir o botão. `retry: false`: 404/500 aqui são resposta (API anterior),
- * não falha transitória.
+ * Busca a prévia. `chave` é o contador de ABERTURAS do diálogo: cada vez que ele abre, a pergunta é feita de
+ * novo — uma resposta de minutos atrás (antes de alguém inativar a categoria, por exemplo) não pode decidir o
+ * botão. `retry: false`: 404/500 aqui são resposta (API anterior), não falha transitória.
  */
 export function usePreviaDaConfirmacao(id: string, habilitado: boolean, chave: string | number): EstadoDaPrevia {
   const q = useQuery<unknown, ApiError>({
@@ -97,26 +103,34 @@ const rotulo = (x: ItemDaClassificacao) => `${x.codigo} · ${x.nome}`;
 
 /** A linha de estoque da prévia. `null` quando a recusa veio antes da política (não há o que dizer). */
 export function linhaDeEstoque(p: PreviaDaConfirmacao): string | null {
-  if (p.estoque.efeito === "nenhum") return "Não movimenta estoque.";
-  if (p.estoque.efeito !== "baixa") return null;
-  const fora = p.estoque.itensSemArmazem > 0 ? ` ${itens(p.estoque.itensSemArmazem)} sem armazém ${p.estoque.itensSemArmazem === 1 ? "fica" : "ficam"} de fora.` : "";
-  return `Baixa o estoque de ${itens(p.estoque.itensQueBaixam)}.${fora}`;
+  const { efeito, itensQueBaixam, itensSemArmazem } = p.estoque;
+  if (efeito === "nenhum") return "Não movimenta estoque.";
+  if (efeito !== "baixa") return null;
+  // A operação baixa, mas NENHUM item tem armazém: a confirmação não gera movimento — "baixa o estoque de 0
+  // itens" seria anunciar um efeito que não acontece.
+  if (itensQueBaixam === 0) return itensSemArmazem > 0 ? `Não movimenta estoque: ${itensSemArmazem === 1 ? "o item não tem" : `os ${itensSemArmazem} itens não têm`} armazém.` : "Não movimenta estoque.";
+  const fora = itensSemArmazem > 0 ? ` ${itens(itensSemArmazem)} sem armazém ${itensSemArmazem === 1 ? "fica" : "ficam"} de fora.` : "";
+  return `Baixa o estoque de ${itens(itensQueBaixam)}.${fora}`;
 }
 
 /** A linha financeira da prévia, com valor e datas já formatados por quem chama (a tela tem os formatadores). */
 export function linhaFinanceira(p: PreviaDaConfirmacao, fmt: { dinheiro: (v: string) => string; data: (v: string) => string }): string | null {
   const f = p.financeiro;
   if (f.efeito === "nenhum") return "Não gera conta a receber.";
-  if (f.efeito !== "receber") return null;
-  const partes = [`Gera contas a receber de ${fmt.dinheiro(f.valor ?? "0")}`];
+  if (f.efeito !== "receber" || f.valor === null) return null;
+  const partes = [`Gera contas a receber de ${fmt.dinheiro(f.valor)}`];
   if (f.primeiroVencimento) partes.push(`primeiro vencimento ${fmt.data(f.primeiroVencimento)}`);
   if (f.classificacao) partes.push(`categoria ${rotulo(f.classificacao.categoria)} · centro ${rotulo(f.classificacao.centro)}${f.classificacao.origem === "padrão legado" ? " (padrão automático)" : ""}`);
   return `${partes.join(", ")}.`;
 }
 
-/** O par do padrão automático que a confirmação VAI usar — só quando ela vai gerar título pelo recuo. */
+/**
+ * O par do padrão automático que a confirmação VAI usar — só quando ela vai gerar título pelo recuo E pode
+ * acontecer. Com recusa prevista (período congelado, exigência da versão) "ao confirmar, usará" seria dizer
+ * o que uma confirmação que o servidor recusa faria.
+ */
 export function padraoAutomaticoPrevisto(p: PreviaDaConfirmacao): string | null {
   const c = p.financeiro.classificacao;
-  if (p.financeiro.efeito !== "receber" || !c || c.origem !== "padrão legado") return null;
+  if (!p.podeConfirmar || p.financeiro.efeito !== "receber" || !c || c.origem !== "padrão legado") return null;
   return `categoria ${rotulo(c.categoria)} · centro ${rotulo(c.centro)}`;
 }

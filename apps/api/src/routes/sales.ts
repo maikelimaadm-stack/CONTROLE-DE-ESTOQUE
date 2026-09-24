@@ -638,11 +638,14 @@ export const CONTRATO_PREVIA_CONFIRMACAO = 1;
  * auditoria, nem chave de idempotência) e não aborta a transação: o período roda sob savepoint.
  *
  * A PRÉVIA É APRESENTAÇÃO; A CONFIRMAÇÃO É A AUTORIDADE. Entre abrir o diálogo e confirmar o cadastro pode
- * mudar, e é a confirmação que decide com a trava. Efeito recusado DENTRO das primitivas (saldo de estoque,
- * período da data de saída, valor do título) não está no planejamento e, por isso, não aparece aqui.
+ * mudar, e é a confirmação que decide com a trava. Recusa que nasce DENTRO das primitivas de efeito — saldo
+ * de estoque insuficiente e as demais conferências de `postStock`, valor do título não positivo em
+ * `createTitles` — não está no planejamento e, por isso, não aparece aqui. A exceção é o parcelamento: a
+ * prévia faz a MESMA conta de parcelas (`parcelasDoTitulo`) e, se ela recusar, a recusa entra na lista.
  *
- * Autorização pela MESMA `getDoc` do GET do documento: outro tenant, fora do escopo, inexistente, excluído e
- * id de outra variante respondem a MESMA 404.
+ * Autorização pela MESMA `getDoc` do GET do documento: a prévia responde o que o GET responde para o mesmo
+ * id — outro tenant, fora do escopo, inexistente, excluído e id de outra variante dão a MESMA 404 (o id
+ * malformado, hoje, é 500 nos dois: dívida de `getDoc`, não desta rota).
  */
 async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
   const d = await getDoc(ctx, id, "sale") as VendaParaConfirmar;
@@ -680,12 +683,19 @@ async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfigur
   }
 
   // O primeiro vencimento sai da MESMA conta de parcelas que `createTitles` grava (entrada, intervalo, dia fixo).
+  // Se a conta recusa (entrada maior que o total, número de parcelas inválido), a confirmação recusaria com a
+  // MESMA mensagem ao gerar os títulos — então é recusa prevista, não data omitida em silêncio. Valor não
+  // positivo fica de fora: `createTitles` o recusa ANTES da conta, com outra mensagem, e a prévia não copia
+  // essa conferência (risco declarado acima). Erro que não é de domínio não é recusa: sobe.
   let primeiroVencimento: string | null = null;
-  if (plano.politica && plano.geraTitulos) {
+  if (plano.politica && plano.geraTitulos && D(d.total).gt(0)) {
     try {
       const parcelas = parcelasDoTitulo(tituloDaVenda(d, plano.lerPlano()));
       primeiroVencimento = parcelas.map((p) => p.dueDate).sort()[0] ?? null;
-    } catch { primeiroVencimento = null; /* parcelamento ilegível: a confirmação recusaria ao ler; a prévia só não mostra a data */ }
+    } catch (e) {
+      if (!(e instanceof DomainError)) throw e;
+      recusas.push(e);
+    }
   }
 
   const comArmazem = d.items.filter((it) => it.warehouse_id).length;
