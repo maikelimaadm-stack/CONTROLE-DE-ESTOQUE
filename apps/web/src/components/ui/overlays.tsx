@@ -61,12 +61,16 @@ export function Dialog({ open, onOpenChange, title, description, children, foote
   </DialogP.Portal></DialogP.Root>;
 }
 
-export interface ConfirmDialogProps { open: boolean; onOpenChange: (open: boolean) => void; title: string; /** texto explicativo (alias: text) */ description?: React.ReactNode; text?: React.ReactNode; confirmLabel?: string; dismissLabel?: string; danger?: boolean; loading?: boolean; children?: React.ReactNode; onConfirm: () => void; size?: OverlaySize }
-/** Confirmação curta: [Fechar] [Confirmar] por padrão; a ação recebe o objeto quando é negócio ("Excluir", "Estornar", "Cancelar documento"). Enquanto `loading`, não fecha. */
-export function ConfirmDialog({ open, onOpenChange, title, description, text, confirmLabel = COPY.confirmar, dismissLabel = COPY.fechar, danger, loading, children, onConfirm, size = "sm" }: ConfirmDialogProps) {
+export interface ConfirmDialogProps { open: boolean; onOpenChange: (open: boolean) => void; title: string; /** texto explicativo (alias: text) */ description?: React.ReactNode; text?: React.ReactNode; confirmLabel?: string; dismissLabel?: string; danger?: boolean; loading?: boolean; /** Desabilita SÓ o botão de confirmar (ex.: prévia carregando ou recusa prevista). Ausente = como sempre. */ confirmDisabled?: boolean; children?: React.ReactNode; onConfirm: () => void; size?: OverlaySize }
+/**
+ * Confirmação curta: [Fechar] [Confirmar] por padrão; a ação recebe o objeto quando é negócio ("Excluir", "Estornar", "Cancelar documento"). Enquanto `loading`, não fecha.
+ * `confirmDisabled` só entra no botão quando é `true`: o `Button` espalha as props DEPOIS de calcular `disabled` a partir de `loading`, e
+ * uma chave `disabled: undefined` desfaria o bloqueio do carregamento em todos os outros usos deste diálogo.
+ */
+export function ConfirmDialog({ open, onOpenChange, title, description, text, confirmLabel = COPY.confirmar, dismissLabel = COPY.fechar, danger, loading, confirmDisabled, children, onConfirm, size = "sm" }: ConfirmDialogProps) {
   const desc = description ?? text;
   return <Dialog open={open} onOpenChange={onOpenChange} title={title} size={size} preventClose={loading} testId="confirm-dialog"
-    footer={<><Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>{dismissLabel}</Button><Button variant={danger ? "danger" : "default"} loading={loading} onClick={onConfirm} data-testid="confirm-dialog-confirm">{confirmLabel}</Button></>}>
+    footer={<><Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>{dismissLabel}</Button><Button variant={danger ? "danger" : "default"} loading={loading} {...(confirmDisabled ? { disabled: true } : {})} onClick={onConfirm} data-testid="confirm-dialog-confirm">{confirmLabel}</Button></>}>
     {desc && <p className="text-sm text-slate-600">{desc}</p>}{children}
   </Dialog>;
 }
