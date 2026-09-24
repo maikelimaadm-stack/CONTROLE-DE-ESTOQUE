@@ -16,6 +16,7 @@ import { AlertTriangle, Plus, Search, Trash2 } from "lucide-react";
 import type { DetalheDef, FieldDef, PerfilDef, ResourceDef } from "@agro/domain";
 import { normalizarDocumento, validarCnpj } from "@agro/domain";
 import { api } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { Card, Input, NativeSelect } from "@/components/ui";
@@ -75,7 +76,7 @@ export function abaDoCampo(def: ResourceDef, campo: string): string | undefined 
 function CelulaDaGrade({ f, valor, onChange, dis }: { f: FieldDef; valor: unknown; onChange: (v: unknown) => void; dis: boolean }) {
   const cls = "h-7 w-full min-w-[90px] text-[12.5px]";
   if (f.busca) return <ReferenciaSelect referencia={f.busca} value={valor as string | number | null} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
-  if (f.type === "ref") return <RefSelect resource={f.ref!.resource} value={valor as string} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
+  if (f.type === "ref") return <RefSelect resource={f.ref!.resource} filter={f.ref!.filtro} value={valor as string} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
   if (f.type === "boolean") return <input type="checkbox" aria-label={f.label} disabled={dis} className="accent-brand-500" checked={valor === true || valor === "true"} onChange={(e) => onChange(e.target.checked)} />;
   if (f.type === "select") return <NativeSelect aria-label={f.label} disabled={dis} className={cls} value={String(valor ?? "")} onChange={(e) => onChange(e.target.value)}><option value="" />{f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>;
   return <Input aria-label={f.label} readOnly={dis} className={cls} type={f.type === "email" ? "email" : numerico.includes(f.type) ? "number" : "text"} value={String(valor ?? "")} onChange={(e) => onChange(e.target.value)} />;
@@ -159,7 +160,70 @@ export function useCepDaFicha(form: UseFormReturn<Values>, ativo: boolean) {
   }, [ativo, cep, form]);
 }
 
+/**
+ * Campo `json` com `camposJson` (Fase 6, ex.: products.taxes): as chaves conhecidas viram entradas; o valor do
+ * formulário continua o JSON inteiro (texto), então chave desconhecida volta como veio — e a API ainda funde.
+ */
+function JsonComoCampos({ f, form, dis }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean }) {
+  const bruto = form.watch(f.name);
+  let obj: Values = {};
+  try { const x = typeof bruto === "string" ? (bruto.trim() ? JSON.parse(bruto) : {}) : bruto ?? {}; if (x && typeof x === "object" && !Array.isArray(x)) obj = x as Values; } catch { /* JSON inválido: a validação do envio avisa */ }
+  const set = (k: string, v: unknown) => { const n: Values = { ...obj }; if (v === "" || v === null || v === undefined) delete n[k]; else n[k] = v; form.setValue(f.name, JSON.stringify(n, null, 2), { shouldDirty: true }); };
+  const extras = Object.keys(obj).filter((k) => !f.camposJson!.some((c) => c.name === k));
+  return <div className="w-full" data-testid={`campos-json-${f.name}`}><div className="mb-1 text-[11px] text-slate-500">{f.label}</div><div className="flex flex-wrap gap-3">
+    {f.camposJson!.map((c) => <label key={c.name} className="min-w-[150px] flex-1 text-[12px]"><span className="block text-[11px] text-slate-500">{c.label}</span><CelulaDaGrade f={c} valor={obj[c.name]} dis={dis} onChange={(x) => set(c.name, x)} /></label>)}
+  </div>{extras.length > 0 && <p className="mt-1 text-[11px] text-slate-500">Outros parâmetros preservados: {extras.join(", ")}</p>}</div>;
+}
+
+/** Saldo do produto por armazém e lote — leitura, no escopo de empresa do usuário (a API recorta). */
+function SaldoPorLote({ id }: { id: string | null }) {
+  type Linha = { warehouse_name: string; empresa_name: string; provider_lot: string; expiration_date: string | null; quantity: string; unit: string | null };
+  const [r, setR] = React.useState<{ items: Linha[] } | null>(null); const [erro, setErro] = React.useState<string | null>(null);
+  React.useEffect(() => { if (!id) return; let vivo = true; api<{ items: Linha[] }>(`/api/stock/balances?product_id=${encodeURIComponent(id)}&pageSize=100&sort=warehouse_name`).then((x) => { if (vivo) setR(x); }).catch((e: Error) => { if (vivo) setErro(e.message); }); return () => { vivo = false; }; }, [id]);
+  return <Card className="col-span-12 p-3 text-[12.5px]" data-testid="saldo-por-lote"><h3 className={cn(TITULO, "mb-2")}>Saldo por lote</h3>
+    {!id ? "Salve o produto para ver o saldo." : erro ? `Saldo indisponível: ${erro}` : !r ? "Carregando…" : r.items.length === 0 ? "Sem saldo nas empresas que você enxerga." :
+      <table className="w-full"><thead><tr className="text-left text-slate-600"><th>Empresa</th><th>Armazém</th><th>Lote</th><th>Validade</th><th className="text-right">Quantidade</th></tr></thead>
+        <tbody>{r.items.map((l, i) => <tr key={i}><td>{l.empresa_name}</td><td>{l.warehouse_name}</td><td>{l.provider_lot || "—"}</td><td>{l.expiration_date ? String(l.expiration_date).slice(0, 10) : "—"}</td><td className="text-right">{l.quantity} {l.unit ?? ""}</td></tr>)}</tbody></table>}
+  </Card>;
+}
+
+/** Histórico da ficha (auditoria): quem, quando, o quê. */
+function HistoricoDaFicha({ def, id }: { def: ResourceDef; id: string | null }) {
+  type Ev = { quando: string; quem: string | null; acao: string; onde: string; campos: string[] };
+  const [r, setR] = React.useState<{ items: Ev[] } | null>(null); const [erro, setErro] = React.useState<string | null>(null);
+  React.useEffect(() => { if (!id) return; let vivo = true; api<{ items: Ev[] }>(`/api/resources/${def.key}/${id}/historico?pageSize=100`).then((x) => { if (vivo) setR(x); }).catch((e: Error) => { if (vivo) setErro(e.message); }); return () => { vivo = false; }; }, [def.key, id]);
+  const acao: Record<string, string> = { create: "incluiu", update: "alterou", delete: "excluiu" };
+  return <Card className="col-span-12 p-3 text-[12.5px]" data-testid="historico-da-ficha"><h3 className={cn(TITULO, "mb-2")}>Histórico</h3>
+    {!id ? "Salve para ver o histórico." : erro ? `Histórico indisponível: ${erro}` : !r ? "Carregando…" : r.items.length === 0 ? "Nenhum evento." :
+      <ul className="flex flex-col gap-1">{r.items.map((e, i) => <li key={i}><b>{new Date(e.quando).toLocaleString("pt-BR")}</b> · {e.quem ?? "sistema"} {acao[e.acao] ?? e.acao} {e.onde}{e.campos.length ? `: ${e.campos.join(", ")}` : ""}</li>)}</ul>}
+  </Card>;
+}
+
+/**
+ * NOVO por OUTRA porta (`ResourceDef.criacao`, Fase 5): ex.: novo funcionário começa pelo CPF. Pergunta só
+ * `criacao.campos`, chama `criacao.rota` e abre a ficha do registro devolvido (existente ou criado agora).
+ */
+export function CriacaoPorOutraPorta({ def, base }: { def: ResourceDef; base: string }) {
+  const c = def.criacao!;
+  const [v, setV] = React.useState<Values>({}); const [enviando, setEnviando] = React.useState(false);
+  const enviar = async () => {
+    setEnviando(true);
+    try {
+      const r = await api<{ id: string; criado: boolean }>(c.rota, { method: "POST", body: Object.fromEntries(c.campos.map((k) => [k, vazio(v[k]) ? null : v[k]])) });
+      toast.success(r.criado ? `${def.label} cadastrado.` : `Cadastro existente aberto e marcado como ${def.label.toLowerCase()}.`);
+      window.location.assign(`${base}/${r.id}`);
+    } catch (e) { toast.warning((e as Error).message); } finally { setEnviando(false); }
+  };
+  return <Card className="m-2 flex max-w-xl flex-col gap-3 p-4" data-testid="criacao-por-outra-porta">
+    <h2 className="text-[15px] font-semibold">Novo {def.label.toLowerCase()}</h2>
+    <p className="text-[12.5px] text-slate-600">{c.mensagem}</p>
+    {c.campos.map((k) => { const f = def.fields.find((x) => x.name === k); return <label key={k} className="text-[12px]"><span className="block text-[11px] text-slate-500">{f?.label ?? k}</span><Input aria-label={f?.label ?? k} value={String(v[k] ?? "")} onChange={(e) => setV({ ...v, [k]: e.target.value })} /></label>; })}
+    <div><PillBtn disabled={enviando || vazio(v[c.campos[0]!])} onClick={() => void enviar()}>{enviando ? "Enviando…" : "Continuar"}</PillBtn></div>
+  </Card>;
+}
+
 export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderField, visivel }: { def: ResourceDef; form: UseFormReturn<Values>; readOnly: boolean; isNew: boolean; record: Values | null; erros: ErroDaFicha[]; renderField: (fid: string) => React.ReactNode; visivel: (f: FieldDef) => boolean }) {
+  const { can } = useAuth();
   const values = form.watch();
   const abas = (def.abas ?? []).filter((a) => !a.visivelQuando || iguala(values[a.visivelQuando.field], a.visivelQuando.equals));
   const [ativa, setAtiva] = React.useState(abas[0]?.key ?? "");
@@ -173,13 +237,13 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   const situacao = String(values["situacao_receita"] ?? record?.["situacao_receita"] ?? "");
   const cab = (def.cabecalho ?? []).map((n) => def.fields.find((f) => f.name === n)).filter((f): f is FieldDef => Boolean(f));
   const tipos = cab.filter((f) => f.type === "boolean" && f.name !== "is_active" && values[f.name] === true).map((f) => f.label);
-  const secao = (s: string) => { const ids = def.fields.filter((f) => f.section === s && visivel(f)).map((f) => f.name); if (!ids.length) return null; return <Card key={s} className="col-span-12 p-3"><h3 className={cn(TITULO, "mb-2.5")}>{s}</h3><div className="flex flex-wrap gap-2" onBlur={s === "Endereço" ? () => void buscarCep() : undefined}>{ids.map(renderField)}</div></Card>; };
+  const secao = (s: string) => { const fs = def.fields.filter((f) => f.section === s && visivel(f)); if (!fs.length) return null; return <Card key={s} className="col-span-12 p-3"><h3 className={cn(TITULO, "mb-2.5")}>{s}</h3><div className="flex flex-wrap gap-2" onBlur={s === "Endereço" ? () => void buscarCep() : undefined}>{fs.map((f) => (f.camposJson ? <JsonComoCampos key={f.name} f={f} form={form} dis={readOnly} /> : renderField(f.name)))}</div></Card>; };
   const semSecao = def.fields.filter((f) => !f.section && visivel(f)).map((f) => f.name);
   return <div className="flex min-h-0 flex-1 flex-col gap-2" data-testid="ficha-em-abas">
     {/* cabeçalho FIXO */}
     <Card className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[12.5px]" data-testid="ficha-cabecalho">
       {cab.filter((f) => f.type !== "boolean").map((f) => <span key={f.name}><span className="text-slate-500">{f.label}: </span><b>{vazio(values[f.name]) ? (f.name === "code" && isNew ? "novo" : "—") : String(values[f.name])}</b></span>)}
-      <span><span className="text-slate-500">Tipos: </span><b>{tipos.length ? tipos.join(", ") : "nenhum"}</b></span>
+      {cab.some((f) => f.type === "boolean" && f.name !== "is_active") && <span><span className="text-slate-500">Tipos: </span><b>{tipos.length ? tipos.join(", ") : "nenhum"}</b></span>}
       {cab.some((f) => f.name === "is_active") && <span className={cn("rounded px-1", values["is_active"] === false ? "bg-slate-200 text-slate-600" : "bg-green-100 text-green-800")}>{values["is_active"] === false ? "Inativo" : "Ativo"}</span>}
       {situacao && situacao !== "ATIVA" && <span className="flex items-center gap-1 rounded bg-amber-100 px-1 text-amber-800" data-testid="aviso-situacao"><AlertTriangle className="h-3.5 w-3.5" /> Situação na Receita: {situacao}</span>}
     </Card>
@@ -187,12 +251,18 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
     <div className="min-h-0 flex-1 overflow-auto">
       {abas.map((a, i) => <div key={a.key} className={cn("grid grid-cols-12 gap-3", cur !== a.key && "hidden")} role="tabpanel" aria-label={a.label}>
         {i === 0 && semSecao.length > 0 && <Card className="col-span-12 p-3"><div className="flex flex-wrap gap-2">{semSecao.map(renderField)}</div></Card>}
+        {(a.permissaoDeEdicao && !can(a.permissaoDeEdicao)) || (a.link && !isNew && record?.["id"]) ? <Card className="col-span-12 p-3 text-[12.5px]" data-testid={`aba-aviso-${a.key}`}>
+          {a.permissaoDeEdicao && !can(a.permissaoDeEdicao) && <span className="mr-2 text-slate-600">Somente leitura: editar estes dados exige a permissão de edição do cadastro de origem.</span>}
+          {a.link && !isNew && record?.["id"] ? <a className="text-brand-700 underline" href={a.link.href.replace(":id", String(record["id"]))}>{a.link.label}</a> : null}
+        </Card> : null}
         {(a.secoes ?? []).map(secao)}
         {a.key === "identificacao" && def.fields.some((f) => f.name === "document") && <ConsultaCnpj form={form} dis={readOnly} />}
         {(a.perfis ?? []).map((k) => { const p = def.perfis?.find((x) => x.key === k); return p ? <CamposDoPerfil key={k} p={p} form={form} dis={readOnly} /> : null; })}
         {(a.detalhes ?? []).map((k) => { const d = def.detalhes?.find((x) => x.key === k); return d ? <GradeDeDetalhe key={k} d={d} form={form} dis={readOnly} erros={erros} /> : null; })}
-        {a.key === "funcionario" && <Card className="col-span-12 p-3 text-[12.5px]">Funcionário: os eventos fixos, as ocorrências e a folha ficam no RH. {!isNew && record?.["id"] ? <a className="text-brand-700 underline" href={`/pessoas?tab=pessoas&events_of=${String(record["id"])}`}>Abrir no RH</a> : "Salve o parceiro para abrir no RH."}</Card>}
-        {a.key === "anexos" && <Card className="col-span-12 p-3 text-[12.5px]">{isNew || !record?.["id"] ? "Salve o parceiro para anexar arquivos." : <><PillBtn tone="gray" onClick={() => setAnexos(true)}>Abrir anexos</PillBtn><AttachmentsDialog open={anexos} onOpenChange={setAnexos} entity={def.key} entityId={String(record["id"])} title={`Anexos · ${String(record[def.labelField] ?? "")}`} /></>}</Card>}
+        {a.key === "funcionario" && <Card className="col-span-12 p-3 text-[12.5px]">Funcionário: os eventos fixos, as ocorrências e a folha ficam no RH. {!isNew && record?.["id"] ? <a className="text-brand-700 underline" href={`/cadastros/funcionarios/${String(record["id"])}`}>Abrir no RH</a> : "Salve o parceiro para abrir no RH."}</Card>}
+        {a.painel === "saldo_por_lote" && <SaldoPorLote id={isNew ? null : (record?.["id"] as string | undefined) ?? null} />}
+        {a.painel === "historico" && <HistoricoDaFicha def={def} id={isNew ? null : (record?.["id"] as string | undefined) ?? null} />}
+        {a.key === "anexos" && <Card className="col-span-12 p-3 text-[12.5px]">{isNew || !record?.["id"] ? `Salve o ${def.label.toLowerCase()} para anexar arquivos.` : <><PillBtn tone="gray" onClick={() => setAnexos(true)}>Abrir anexos</PillBtn><AttachmentsDialog open={anexos} onOpenChange={setAnexos} entity={def.key} entityId={String(record["id"])} title={`Anexos · ${String(record[def.labelField] ?? "")}`} /></>}</Card>}
       </div>)}
     </div>
   </div>;

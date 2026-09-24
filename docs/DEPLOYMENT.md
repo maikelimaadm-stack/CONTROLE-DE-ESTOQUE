@@ -988,6 +988,70 @@ Nenhuma variável nova.
 **Reversão.** Web: livre. API: a anterior ignora colunas e tabelas novas (grades gravadas ficam guardadas e
 voltam a aparecer quando a API nova voltar). Banco: a 0027 fica (migration aplicada é histórico); nada a desfazer.
 
+## CADASTROS FASE 5 — RH: Funcionários (`0028`)
+
+Decisão 255.
+
+**A migration `0028_rh_funcionarios.sql` é aditiva** (trava (2026,62), `lock_timeout` 2 s, pré/pós-condições
+nomeadas, não reaplicável): `erp.employee_profiles` ganha `organization_id` (preenchido a partir do parceiro — o
+ÚNICO `UPDATE` da migration — e depois NOT NULL, com trigger que o preenche quando quem insere não o informa; FK
+composta `(person_id, organization_id)` → `people`), `matricula`, `empresa_id` (FK composta com a organização),
+`tipo_vinculo`, `trabalhador_rural`, `jornada_semanal`, PIS/NIS, CTPS, RG, CNH, `conta_pagamento_id` (FK composta
+`(conta_pagamento_id, person_id)` → `parceiro_contas`, que ganha `unique (id, person_id)`) e `motivo_desligamento`;
+trigger `trg_employee_profiles_matricula` (matrícula única entre funcionários VIVOS, 23505); `erp.job_functions.cbo_code`
+ganha FK `NOT VALID` para `erp.cbo_ocupacoes` (acervo com CBO livre não é reconferido; só gravação nova do código).
+**Pré-condição:** nenhuma ficha de RH órfã (sem parceiro) — havendo, PARA. Nenhum DELETE. Nenhuma variável nova.
+
+**Implantação — ordem: banco (0028) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
+
+1. **API anterior × banco novo:** colunas novas inertes; a folha e o relatório de funcionários leem
+   `employee_profiles` como antes; o trigger preenche `organization_id` de qualquer insert antigo.
+2. **web ANTERIOR × API nova:** nada muda — "Novo funcionário" antigo (Pessoas com `is_employee`) grava; Funções
+   sem CBO gravam; CBO digitado fora da CBO oficial → 422. Provado em `skew-web-anterior.spec.ts` (RH-K2).
+3. **web NOVA × API anterior:** a ficha de RH (`/api/resources/funcionarios`) e o novo pelo CPF
+   (`/api/hr/funcionarios/por-cpf`) não existem na API anterior → 404, nada gravado. Provado em
+   `skew-api-producao.spec.ts` (RH-K1).
+
+**Reversão.** Web: livre. API: a anterior ignora as colunas novas (dados da ficha ficam guardados). Banco: a 0028
+fica (migration aplicada é histórico); nada a desfazer.
+
+## CADASTROS FASE 6 — Produtos: ficha em abas (`0029`)
+
+Decisão 254.
+
+**A migration `0029_produtos_ficha_em_abas.sql` é aditiva** (trava (2026,63), `lock_timeout` 2 s, pré/pós-condições
+nomeadas, não reaplicável; depende da 0027, NÃO da 0028): `unique (id, organization_id)` em `erp.products`; colunas
+novas em `erp.products` (`marca`, `fabricante`, `tipo_item`, `estoque_maximo`, `controle_lote` NOT NULL default
+`nenhum`, `origem`, `cest`, `registro_mapa`); tabelas novas `erp.produto_unidades` e `erp.produto_fornecedores` (RLS
+forçada, política única de tenant, `erp_app` sem DELETE, FKs compostas, auditoria); gatilhos
+`trg_products_controle_lote` (has_lot ⇄ controle; controle não muda com saldo ≠ 0), `trg_stock_movements_exige_lote`
+(só INSERT: lote obrigatório para produto com controle; validade na entrada para lote + validade) e
+`trg_produto_{unidades,fornecedores}_conferir`. **UPDATEs (nada apagado):** `controle_lote = 'lote'` onde `has_lot`;
+`cest`/`origem` copiados de `taxes` quando o valor antigo já tem o formato novo (a chave em `taxes` fica); INSERT da
+2ª unidade de hoje como primeira linha de `produto_unidades`. Pós-condição confere contagens (produtos, movimentos,
+embalagens intactos; controle = has_lot de antes; uma linha de unidade por 2ª unidade válida). Nenhuma variável nova.
+
+**Impacto em dados reais — medir ANTES, em leitura:** a escolha automática de lote na saída deixa de existir e
+venda, manutenção, abastecimento, manejo/nutrição e OS ainda não têm campo de lote. Todo produto com `has_lot = true`
+vira controle "lote" e passa a ser RECUSADO (422 "informe o lote") nesses lançamentos. Contar:
+`select count(*) from erp.products where has_lot and deleted_at is null;` e, para os que existirem,
+`select product_id, movement_type, count(*) from erp.stock_movements where direction = -1 and movement_date >= current_date - 90 and product_id in (select id from erp.products where has_lot) group by 1, 2;`.
+Havendo uso nesses fluxos, decidir ANTES do deploy (humano): passar o produto para "nenhum" (sem saldo) ou aguardar
+os campos de lote nessas telas.
+
+**Implantação — ordem: banco (0029) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
+
+1. **API anterior × banco novo:** colunas e tabelas novas inertes; `has_lot` gravado pela API anterior vira o
+   controle pelo gatilho; o gatilho de lote no movimento JÁ VALE (a API anterior escolhia o lote na saída — continua
+   escolhendo; entrada sem lote de produto com lote → erro de banco, 500/422 genérico).
+2. **web ANTERIOR × API nova:** o formulário anterior grava (`has_lot` true → "lote", false → "nenhum"; 2ª
+   unidade, tipo e fator aceitos como legado); PUT sem as grades não mexe nelas; mudar `has_lot` com saldo → 422.
+3. **web NOVA × API anterior:** a ficha manda `controle_lote`, colunas e grades novas; o schema estrito da API
+   anterior RECUSA (422 "Campo não reconhecido") e nada é gravado. Provado em `skew-api-producao.spec.ts` (PR-K1).
+
+**Reversão.** Web: livre. API: a anterior ignora colunas e tabelas novas (volta a escolher lote na saída; o gatilho
+ainda exige lote na entrada). Banco: a 0029 fica (migration aplicada é histórico); nada a desfazer.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)

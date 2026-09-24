@@ -57,6 +57,17 @@ export interface FieldDef {
    * editável, enquanto o usuário não o alterou). Só a tela usa; a regra que recusa divergência mora na API.
    */
   herdaDoSuperior?: boolean;
+  /**
+   * Campo `json` desenhado como CAMPOS (CADASTROS Fase 6): as chaves conhecidas viram entradas tipadas; o valor
+   * continua UM objeto JSON. Chave desconhecida é PRESERVADA: na edição a API funde o objeto enviado sobre o
+   * gravado (só `null` remove uma chave).
+   */
+  camposJson?: FieldDef[];
+  /**
+   * SIGILO (CADASTROS Fase 5): permissão exigida para o campo SAIR da API (leitura) e ser gravado (escrita).
+   * Sem ela o campo some da resposta (lista e ficha) e a gravação dele é recusada (403). Ex.: salário.
+   */
+  sigilo?: string;
 }
 
 export interface ResourceDef {
@@ -117,6 +128,16 @@ export interface ResourceDef {
   cabecalho?: string[];
   /** campos do CADASTRO RÁPIDO (diálogo aberto de dentro de outra tela: venda, compra…) — mesma API */
   camposRapidos?: string[];
+  /**
+   * Recorte FIXO do cadastro (CADASTROS Fase 5): a lista, a ficha e a edição só alcançam linhas com estes
+   * valores (ex.: Funcionários = parceiros com `is_employee = true`). Linha fora do recorte = a mesma 404.
+   */
+  filtroFixo?: Record<string, string | boolean>;
+  /**
+   * O registro NÃO nasce nem é excluído pela porta genérica (`POST`/`DELETE /resources/:key`): nasce por
+   * `rota` (ex.: novo funcionário pelo CPF). A tela de "novo" pergunta `campos` e chama a rota.
+   */
+  criacao?: { rota: string; mensagem: string; campos: string[] };
 }
 
 /**
@@ -149,6 +170,20 @@ export interface AbaDef {
   perfis?: string[];
   /** aba só aparece quando o campo do principal tem esse valor */
   visivelQuando?: { field: string; equals: unknown };
+  /**
+   * Painel SOMENTE LEITURA da aba (CADASTROS Fase 6): `historico` = auditoria do registro e das suas grades
+   * (`GET /resources/:key/:id/historico`); `saldo_por_lote` = saldo do produto por armazém e lote no escopo de
+   * empresa do usuário (`GET /stock/balances?product_id=`).
+   */
+  painel?: "historico" | "saldo_por_lote";
+  /**
+   * Os campos das SEÇÕES desta aba só são gravados por quem tem esta permissão (além da do cadastro); sem
+   * ela a aba é somente leitura na tela e a API recusa (403) o corpo que os traga (CADASTROS Fase 5). Ex.: aba
+   * Pessoal da ficha de RH exige `people.edit`.
+   */
+  permissaoDeEdicao?: string;
+  /** link da aba para outro cadastro (ex.: "Editar no cadastro de parceiros"); `:id` = id do registro */
+  link?: { label: string; href: string };
 }
 
 export interface DetalheDef {

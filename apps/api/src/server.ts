@@ -21,6 +21,7 @@ import supplyRoutes from "./routes/supply.js";
 import financialRoutes from "./routes/financial.js";
 import salesRoutes from "./routes/sales.js";
 import fleetHrRoutes from "./routes/fleet-hr.js";
+import rhFuncionariosRoutes from "./routes/rh-funcionarios.js";
 import livestockRoutes from "./routes/livestock.js";
 import reportRoutes from "./routes/reports.js";
 import dashboardRoutes from "./routes/dashboards.js";
@@ -71,6 +72,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(financialRoutes, { prefix: "/api" });
   await app.register(salesRoutes, { prefix: "/api" });
   await app.register(fleetHrRoutes, { prefix: "/api" });
+  await app.register(rhFuncionariosRoutes, { prefix: "/api" });
   await app.register(livestockRoutes, { prefix: "/api" });
   await app.register(reportRoutes, { prefix: "/api" });
   await app.register(dashboardRoutes, { prefix: "/api" });

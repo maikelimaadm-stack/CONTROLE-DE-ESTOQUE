@@ -15,14 +15,39 @@ import { z, ZodError } from "zod";
 import { getResource, type DetalheDef, type FieldDef, type PerfilDef, type ResourceDef } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { ident } from "./sql.js";
-import { fromPgError, validation } from "./errors.js";
-import { exigirEmpresaDeLancamento, type ServiceCtx } from "./context.js";
+import { denied, fromPgError, validation } from "./errors.js";
+import { exigirEmpresaDeLancamento, hasPermission, type ServiceCtx } from "./context.js";
 import { translateIssue } from "../plugins/errors.js";
 
 type Linha = Record<string, unknown>;
 type SchemaDeCampo = (f: FieldDef) => z.ZodTypeAny;
 
 export const temFicha = (def: ResourceDef) => Boolean(def.detalhes?.length || def.perfis?.length);
+
+/** SIGILO (Fase 5): o campo só sai da API (e só é gravado) para quem tem a permissão declarada em `sigilo`. */
+export const podeVerCampo = (ctx: ServiceCtx, f: FieldDef) => !f.sigilo || hasPermission(ctx, f.sigilo);
+
+/** Tira da linha do PRINCIPAL os campos sigilosos que o usuário não pode ver (lista e ficha). */
+export function semSigilo<T extends Linha>(ctx: ServiceCtx, def: ResourceDef, row: T): T {
+  for (const f of def.fields) if (!podeVerCampo(ctx, f)) delete row[f.name];
+  return row;
+}
+
+/**
+ * Permissões da ESCRITA além da do cadastro (Fase 5), conferidas ANTES de qualquer gravação:
+ *  · campo sigiloso no corpo (principal, linha de detalhe ou perfil) sem a permissão do `sigilo` → 403;
+ *  · campo de SEÇÃO de uma aba com `permissaoDeEdicao` sem essa permissão → 403 (ex.: aba Pessoal do RH).
+ */
+export function conferirPermissoesDaFicha(ctx: ServiceCtx, def: ResourceDef, data: Linha) {
+  for (const f of def.fields) if (f.name in data && !podeVerCampo(ctx, f)) throw denied(f.sigilo);
+  for (const d of def.detalhes ?? []) { const ls = data[d.key]; if (Array.isArray(ls)) for (const f of d.fields) if (!podeVerCampo(ctx, f) && (ls as Linha[]).some((l) => f.name in l)) throw denied(f.sigilo); }
+  for (const p of def.perfis ?? []) { const c = data[p.key] as Linha | undefined; if (c) for (const f of p.fields) if (f.name in c && !podeVerCampo(ctx, f)) throw denied(f.sigilo); }
+  for (const a of def.abas ?? []) {
+    if (!a.permissaoDeEdicao || hasPermission(ctx, a.permissaoDeEdicao)) continue;
+    const campos = def.fields.filter((f) => f.section && a.secoes?.includes(f.section) && !f.readOnly);
+    if (campos.some((f) => f.name in data)) throw denied(a.permissaoDeEdicao);
+  }
+}
 
 /** Aba em que a grade/perfil (ou o campo, pela seção) aparece — para o erro apontar a aba certa. */
 export function abaDe(def: ResourceDef, alvo: { detalhe?: string; perfil?: string; campo?: string }): string | null {
@@ -221,7 +246,7 @@ export async function lerFicha(ctx: ServiceCtx, def: ResourceDef, id: string): P
     if (!cols.size) { out[d.key] = []; continue; }
     const org = Boolean(d.organizacao) && cols.has("organization_id");
     const soft = Boolean(d.softDelete) && cols.has("deleted_at");
-    const sel = [...(d.chaveNatural ? [] : ["id"]), ...d.fields.map((f) => f.name).filter((c) => cols.has(c))];
+    const sel = [...(d.chaveNatural ? [] : ["id"]), ...d.fields.filter((f) => podeVerCampo(ctx, f)).map((f) => f.name).filter((c) => cols.has(c))];
     const ordem = cols.has("created_at") ? "created_at, " : "";
     const r = await ctx.tx.query(`select ${[...new Set(sel)].map(ident).join(",")} from erp.${ident(d.table)} where ${ident(d.chavePai)} = $1${org ? " and organization_id = $2" : ""}${soft ? " and deleted_at is null" : ""} order by ${ordem}${ident(d.chaveNatural ?? "id")}`, org ? [id, ctx.orgId] : [id]);
     out[d.key] = r.rows;
@@ -229,7 +254,7 @@ export async function lerFicha(ctx: ServiceCtx, def: ResourceDef, id: string): P
   for (const p of def.perfis ?? []) {
     const cols = await colunas(ctx, p.table);
     if (!cols.size) { out[p.key] = null; continue; }
-    const sel = [...(cols.has("is_active") ? ["is_active"] : []), ...p.fields.map((f) => f.name).filter((c) => cols.has(c))];
+    const sel = [...(cols.has("is_active") ? ["is_active"] : []), ...p.fields.filter((f) => podeVerCampo(ctx, f)).map((f) => f.name).filter((c) => cols.has(c))];
     const r = await ctx.tx.query(`select ${sel.length ? sel.map(ident).join(",") : "1 as existe"} from erp.${ident(p.table)} where ${ident(p.chavePai)} = $1`, [id]);
     out[p.key] = r.rows[0] ?? null;
   }

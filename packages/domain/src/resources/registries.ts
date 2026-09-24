@@ -7,6 +7,31 @@ const M = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef
 const S = (name: string, label: string, options: [string, string][], extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "select", options: options.map(([value, label]) => ({ value, label })), ...extra });
 const REF = (name: string, label: string, resource: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "ref", ref: { resource }, ...extra });
 const D = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "date", ...extra });
+const P = (name: string, label: string): FieldDef => ({ name, label, type: "percent" });
+
+/** Tipo do item do SPED (registro 0200, campo TIPO_ITEM) — CADASTROS Fase 6. */
+const TIPOS_DE_ITEM: [string, string][] = [
+  ["00", "00 - Mercadoria para revenda"], ["01", "01 - Matéria-prima"], ["02", "02 - Embalagem"], ["03", "03 - Produto em processo"],
+  ["04", "04 - Produto acabado"], ["05", "05 - Subproduto"], ["06", "06 - Produto intermediário"], ["07", "07 - Material de uso e consumo"],
+  ["08", "08 - Ativo imobilizado"], ["09", "09 - Serviços"], ["10", "10 - Outros insumos"], ["99", "99 - Outras"]
+];
+/** Origem da mercadoria (tabela A da NF-e, 0 a 8). */
+const ORIGENS_DA_MERCADORIA: [string, string][] = [
+  ["0", "0 - Nacional"], ["1", "1 - Estrangeira (importação direta)"], ["2", "2 - Estrangeira (mercado interno)"], ["3", "3 - Nacional, importado > 40% e ≤ 70%"],
+  ["4", "4 - Nacional, processos produtivos básicos"], ["5", "5 - Nacional, importado ≤ 40%"], ["6", "6 - Estrangeira (importação direta) sem similar nacional (CAMEX)"],
+  ["7", "7 - Estrangeira (mercado interno) sem similar nacional (CAMEX)"], ["8", "8 - Nacional, importado > 70%"]
+];
+/**
+ * `products.taxes` desenhado como CAMPOS (CADASTROS Fase 6): as MESMAS chaves dos tributos da Regra Fiscal
+ * (`tax_rules`; um teste confere que cada chave existe lá). CEST e origem viraram colunas do produto; `reform` e
+ * qualquer outra chave continuam no JSON e são PRESERVADAS.
+ */
+export const TRIBUTOS_DO_PRODUTO: FieldDef[] = [
+  T("cfop_out_internal", "CFOP Saída Interno"), T("cfop_out_external", "CFOP Saída Externo"), T("cbenef", "Código de benefício fiscal"),
+  T("cst_csosn", "CST/CSOSN"), T("cst_csosn_export", "CST/CSOSN Exportação"), T("cst_pis", "CST PIS"), T("cst_cofins", "CST COFINS"), T("cst_ipi", "CST IPI"), T("cenq_ipi", "Enquadramento IPI"),
+  P("perc_icms", "% ICMS"), P("perc_pis", "% PIS"), P("perc_cofins", "% COFINS"), P("perc_ipi", "% IPI"), P("percent_reduction", "% Redução BC"),
+  S("modality_bc", "Modalidade BC ICMS", [["0", "0 - Margem Valor Agregado"], ["1", "1 - Pauta"], ["2", "2 - Preço Tabelado Máx."], ["3", "3 - Valor da operação"]])
+];
 
 export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
@@ -87,33 +112,74 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
     key: "products", importacao: true, label: "Produto", labelPlural: "Produtos", table: "products", permission: "products", labelField: "description", route: "/cadastros/produtos", softDelete: true, codeEntity: "product", printable: true, importExport: true, defaultSort: "description",
     fields: [
-      T("code", "Código", { readOnly: true, list: true, search: true, span: 2 }),
-      T("description", "Descrição", { required: true, list: true, search: true, maxLength: 120, help: "Nome do produto que está sendo cadastrado", span: 6 }),
-      T("reference", "Cod. Produto (fornecedor)", { search: true, span: 2 }), T("barcode", "Código de barras", { span: 2 }),
-      T("ncm_code", "NCM", { list: true, help: "Nomenclatura Comum do Mercosul (8 dígitos)", maxLength: 8, span: 3, busca: "ncm" }),
-      REF("measurement_id", "1ª Un. Medida", "measurement_units", { required: true, span: 3 }), REF("second_measurement_id", "2ª Un. Medida", "measurement_units", { span: 2 }),
-      S("factor_type", "Tipo de conversão", [["multiply", "Multiplica"], ["divide", "Divide"]], { help: "Quando converte de uma unidade maior para menor, multiplica; caso contrário divide.", span: 2 }),
-      { name: "factor", label: "Fator conversão", type: "quantity", span: 2 },
-      REF("group_id", "Grupo", "product_groups", { ref: { resource: "product_groups", filtro: { kind: "analytic" } }, required: true, list: true, filter: true, section: "Classificação", span: 4 }),
-      REF("cultivation_id", "Variedade", "cultivations", { section: "Classificação", span: 4 }), T("quality", "Qualidade", { section: "Classificação", span: 2 }), T("active_principle", "Princípio ativo", { search: true, section: "Classificação", span: 6 }),
-      B("has_lot", "Controla Lote/Validade", { section: "Estoque", help: "Ao ativar, o sistema controla lotes e alerta sobre validade", filter: true, span: 3 }),
+      T("code", "Código", { readOnly: true, list: true, search: true, section: "Geral", span: 2 }),
+      T("description", "Descrição", { required: true, list: true, search: true, maxLength: 120, help: "Nome do produto que está sendo cadastrado", section: "Geral", span: 6 }),
+      REF("group_id", "Grupo", "product_groups", { ref: { resource: "product_groups", filtro: { kind: "analytic" } }, required: true, list: true, filter: true, help: "Só grupo analítico recebe produto", section: "Geral", span: 4 }),
+      REF("measurement_id", "Unidade padrão", "measurement_units", { required: true, section: "Geral", span: 3 }),
+      T("marca", "Marca", { search: true, maxLength: 120, section: "Geral", span: 3 }), T("fabricante", "Fabricante", { maxLength: 120, section: "Geral", span: 3 }),
+      T("reference", "Referência", { search: true, section: "Geral", span: 3 }), T("barcode", "Código de barras", { section: "Geral", span: 3 }),
+      S("tipo_item", "Tipo do item", TIPOS_DE_ITEM, { filter: true, help: "Tipo do item do SPED (registro 0200)", section: "Geral", span: 4 }),
+      // ESTOQUE E LOTES
       B("control_stock", "Controla estoque", { default: true, section: "Estoque", help: "Gerencia o produto no estoque e calcula custo médio automaticamente", span: 3 }),
       { name: "min_stock", label: "Estoque mínimo", type: "quantity", section: "Estoque", list: true, help: "Alerta quando o estoque atingir ou ficar abaixo", span: 3 },
-      M("reference_price", "Valor de referência", { section: "Estoque", help: "Valor de mercado do produto", span: 3 }),
-      { name: "average_cost", label: "Custo médio (calculado)", type: "money", readOnly: true, section: "Estoque", span: 3 }, D("last_purchase_date", "Última compra", { readOnly: true, section: "Estoque", span: 3 }),
-      REF("financial_category_id", "Natureza de custo", "financial_categories", { section: "Estoque", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
-      REF("default_cost_center_id", "Centro de resultado padrão", "cost_centers", { section: "Estoque", span: 4 }), REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
+      { name: "estoque_maximo", label: "Estoque máximo", type: "quantity", section: "Estoque", span: 3 },
+      REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
+      S("controle_lote", "Controle de lote", [["nenhum", "Nenhum"], ["lote", "Lote"], ["lote_validade", "Lote + validade"]], { default: "nenhum", filter: true, section: "Estoque", help: "Lote: exige o lote na entrada e na saída. Lote + validade: também exige a validade na entrada. Mudar com saldo exige zerar ou transferir antes.", span: 4 }),
       { name: "withdrawal_period_days", label: "Período de Carência (dias)", type: "integer", section: "Estoque", help: "Dias de espera após aplicação antes de vender/abater o animal", span: 3 },
-      B("allow_pointing", "Apontamento", { section: "Estoque", help: "Permite uso na aba de apontamentos", span: 3 }),
-      B("is_equipment", "Adiciona ao Inventário", { section: "Estoque", help: "Cadastra automaticamente no inventário de bens", filter: true, span: 3 }),
-      B("is_fiscal", "Emitir NFe", { section: "Fiscal", span: 3 }), REF("tax_rule_id", "Regra fiscal", "tax_rules", { section: "Fiscal", span: 5 }),
-      { name: "taxes", label: "Parâmetros fiscais (CFOP, CST, alíquotas, IBS/CBS)", type: "json", section: "Fiscal", span: 12 },
-      active()
+      // legado derivado do controle: continua na leitura (relatórios, web anterior); gravado pela API a partir do controle
+      B("has_lot", "Controla lote (derivado)", { readOnly: true, section: "Estoque", help: "Derivado do Controle de lote", span: 3 }),
+      // FISCAL
+      T("ncm_code", "NCM", { list: true, help: "Nomenclatura Comum do Mercosul (8 dígitos)", maxLength: 8, section: "Fiscal", span: 3, busca: "ncm" }),
+      T("cest", "CEST", { maxLength: 9, help: "7 dígitos (ex.: 28.038.00)", section: "Fiscal", span: 2 }),
+      S("origem", "Origem", ORIGENS_DA_MERCADORIA, { section: "Fiscal", span: 5 }),
+      B("is_fiscal", "Emite NF-e", { section: "Fiscal", span: 2 }), REF("tax_rule_id", "Regra fiscal", "tax_rules", { section: "Fiscal", span: 5 }),
+      { name: "taxes", label: "Parâmetros fiscais (CFOP, CST, alíquotas, IBS/CBS)", type: "json", section: "Fiscal", span: 12, camposJson: TRIBUTOS_DO_PRODUTO },
+      // CUSTOS E VENDA
+      REF("financial_category_id", "Natureza de custo", "financial_categories", { section: "Custos e venda", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
+      REF("default_cost_center_id", "Centro de resultado padrão", "cost_centers", { section: "Custos e venda", span: 4 }),
+      M("reference_price", "Valor de referência", { section: "Custos e venda", help: "Valor de mercado do produto", span: 3 }),
+      { name: "average_cost", label: "Custo médio (calculado)", type: "money", readOnly: true, section: "Custos e venda", span: 3 }, D("last_purchase_date", "Última compra", { readOnly: true, section: "Custos e venda", span: 3 }),
+      // AGRO
+      REF("cultivation_id", "Variedade/Cultura", "cultivations", { section: "Agro", span: 4 }), T("quality", "Qualidade", { section: "Agro", span: 2 }), T("active_principle", "Princípio ativo", { search: true, section: "Agro", span: 6 }),
+      T("registro_mapa", "Registro no MAPA", { maxLength: 60, section: "Agro", span: 3 }),
+      B("allow_pointing", "Apontamento", { section: "Agro", help: "Permite uso na aba de apontamentos", span: 3 }),
+      B("is_equipment", "Adiciona ao Inventário", { section: "Agro", help: "Cadastra automaticamente no inventário de bens", filter: true, span: 3 }),
+      active("is_active")
+    ],
+    // FICHA EM ABAS (CADASTROS Fase 6) — mecanismo genérico da decisão 253
+    cabecalho: ["code", "description", "ncm_code", "is_active"],
+    abas: [
+      { key: "geral", label: "Geral", secoes: ["Geral"] },
+      { key: "estoque", label: "Estoque e lotes", secoes: ["Estoque"], painel: "saldo_por_lote" },
+      { key: "unidades", label: "Unidades e embalagens", detalhes: ["unidades"] },
+      { key: "fiscal", label: "Fiscal", secoes: ["Fiscal"] },
+      { key: "compras", label: "Compras", detalhes: ["fornecedores"] },
+      { key: "custos", label: "Custos e venda", secoes: ["Custos e venda"] },
+      { key: "agro", label: "Agro", secoes: ["Agro"] },
+      { key: "historico", label: "Histórico", painel: "historico" },
+      { key: "anexos", label: "Anexos" }
+    ],
+    detalhes: [
+      { key: "unidades", label: "Unidades alternativas e embalagens", table: "produto_unidades", chavePai: "product_id", organizacao: true, softDelete: true, maxLinhas: 50, fields: [
+        REF("measurement_id", "Unidade", "measurement_units", { required: true }),
+        S("tipo_fator", "Conversão", [["multiply", "Multiplica"], ["divide", "Divide"]], { required: true, default: "multiply" }),
+        { name: "fator", label: "Fator", type: "quantity", required: true },
+        T("codigo_barras", "Código de barras", { maxLength: 60 }),
+        B("uso_compra", "Compra", { default: true }), B("uso_venda", "Venda", { default: true })] },
+      { key: "fornecedores", label: "Fornecedores do produto", table: "produto_fornecedores", chavePai: "product_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
+        REF("person_id", "Fornecedor", "people", { required: true, ref: { resource: "people", filtro: { is_provider: "true" } } }),
+        T("codigo_no_fornecedor", "Código no fornecedor", { maxLength: 60 }),
+        REF("measurement_id", "Unidade de compra", "measurement_units"),
+        B("preferencial", "Preferencial")] }
     ],
     // CADASTROS-ESTRUTURA: Categoria e Classe saíram do produto (o Grupo de Produtos virou árvore), mas a web
     // ANTERIOR ainda manda os dois na janela de deploy. Sem esta aceitação o `.strict()` recusaria o corpo
     // inteiro e o cadastro de produto pararia no meio do deploy. Opcionais; a API grava o que vier.
-    camposLegadosDeEscrita: [REF("category_id", "Categoria (legado)", "product_categories"), REF("kind_id", "Classe (legado)", "product_kinds")]
+    // CADASTROS Fase 6: `has_lot` (vira o controle: true → lote, false → nenhum) e a 2ª unidade (agora a grade de
+    // Unidades e embalagens) saíram da tela; a web ANTERIOR continua mandando e a API continua aceitando.
+    camposLegadosDeEscrita: [REF("category_id", "Categoria (legado)", "product_categories"), REF("kind_id", "Classe (legado)", "product_kinds"),
+      B("has_lot", "Controla Lote/Validade (legado)"), REF("second_measurement_id", "2ª Un. Medida (legado)", "measurement_units"),
+      S("factor_type", "Tipo de conversão (legado)", [["multiply", "Multiplica"], ["divide", "Divide"]]), { name: "factor", label: "Fator conversão (legado)", type: "quantity" }]
   },
   {
     key: "apportionment_categories", label: "Categoria de Rateio", labelPlural: "Categorias de Rateio", table: "apportionment_categories", permission: "apportionments", labelField: "name", route: "/cadastros/rateios", softDelete: true,
@@ -168,7 +234,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   },
   {
     key: "job_functions", label: "Função", labelPlural: "Funções", table: "job_functions", permission: "job_functions", labelField: "name", route: "/gestao-pessoal/funcoes", softDelete: true,
-    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 4 }), T("cbo_code", "CBO", { list: true, span: 2 }), M("base_salary", "Salário base", { required: true, list: true, span: 2 }), { name: "monthly_hours", label: "Horas mensais", type: "integer", required: true, default: 220, span: 2 }, M("hour_value", "Valor da hora", { required: true, span: 2 }), active(), { name: "description", label: "Descrição", type: "textarea", required: true, span: 12 }]
+    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 4 }), T("cbo_code", "CBO", { list: true, span: 3, busca: "cbo", help: "Ocupação da CBO oficial (MTE)." }), M("base_salary", "Salário base", { required: true, list: true, span: 2 }), { name: "monthly_hours", label: "Horas mensais", type: "integer", required: true, default: 220, span: 2 }, M("hour_value", "Valor da hora", { required: true, span: 2 }), active(), { name: "description", label: "Descrição", type: "textarea", required: true, span: 12 }]
   },
   {
     key: "teams", label: "Equipe", labelPlural: "Equipes", table: "teams", permission: "teams", labelField: "name", route: "/gestao-pessoal/equipes", softDelete: true,
@@ -450,6 +516,66 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       { key: "perfil_cliente", label: "Perfil de cliente", table: "client_profiles", chavePai: "person_id", ativoPor: "is_client", fields: [M("limite_credito", "Limite de crédito (informativo)")] },
       { key: "perfil_fornecedor", label: "Perfil de fornecedor", table: "provider_profiles", chavePai: "person_id", ativoPor: "is_provider", fields: [S("provider_type", "Tipo de fornecedor", [["provider", "Fornecedor"], ["outsourced", "Terceirizado"], ["transporter", "Transportador"], ["employee", "Funcionário"]]), M("hour_value", "Valor da hora"), REF("default_cost_center_id", "Centro de resultado padrão", "cost_centers")] },
       { key: "perfil_proprietario", label: "Perfil de proprietário", table: "proprietary_profiles", chavePai: "person_id", ativoPor: "is_proprietary", fields: [] }
+    ]
+  },
+  {
+    // FUNCIONÁRIO (CADASTROS Fase 5): o PARCEIRO do tipo Funcionário (erp.people, recorte fixo is_employee) com a
+    // FICHA DE RH (erp.employee_profiles, 1:1) sobre o mecanismo genérico de abas da Fase 4. Nasce pelo CPF
+    // (`POST /api/hr/funcionarios/por-cpf`), nunca pela porta genérica. Salário e valor hora são SIGILOSOS.
+    key: "funcionarios", label: "Funcionário", labelPlural: "Funcionários", table: "people", permission: "employees", labelField: "name", route: "/pessoas", softDelete: true, defaultSort: "name",
+    filtroFixo: { is_employee: true },
+    criacao: { rota: "/api/hr/funcionarios/por-cpf", mensagem: "Novo funcionário começa pelo CPF: CPF de parceiro existente abre a ficha dele e marca o tipo Funcionário; CPF novo cria o parceiro.", campos: ["document", "name"] },
+    fields: [
+      T("code", "Código", { readOnly: true, list: true, section: "Pessoal", span: 2 }),
+      T("document", "CPF", { list: true, search: true, section: "Pessoal", span: 3 }),
+      T("name", "Nome", { required: true, list: true, search: true, section: "Pessoal", span: 5 }), T("legal_name", "Nome completo", { search: true, section: "Pessoal", span: 6 }),
+      D("nascimento_abertura", "Nascimento", { section: "Pessoal", span: 3 }),
+      { name: "email", label: "E-mail", type: "email", section: "Pessoal", span: 4 }, T("phone", "Telefone", { list: true, section: "Pessoal", span: 3 }), T("cellphone", "Celular", { section: "Pessoal", span: 3 }),
+      { ...active("is_active"), section: "Pessoal" }
+    ],
+    cabecalho: ["code", "name", "document", "is_active"],
+    abas: [
+      { key: "pessoal", label: "Pessoal", secoes: ["Pessoal"], permissaoDeEdicao: "people.edit", link: { label: "Abrir no cadastro de parceiros", href: "/cadastros/people/:id" } },
+      { key: "admissao", label: "Admissão e lotação", perfis: ["rh_admissao"], detalhes: ["equipes"] },
+      { key: "remuneracao", label: "Remuneração", perfis: ["rh_remuneracao"] },
+      { key: "documentos", label: "Documentos", perfis: ["rh_documentos"] },
+      { key: "pagamento", label: "Pagamento", perfis: ["rh_pagamento"] },
+      { key: "desligamento", label: "Desligamento", perfis: ["rh_desligamento"] },
+      { key: "eventos", label: "Eventos fixos", detalhes: ["eventos"] },
+      { key: "usuario", label: "Usuário do sistema", perfis: ["rh_usuario"] }
+    ],
+    detalhes: [
+      { key: "equipes", label: "Equipes", table: "team_members", chavePai: "person_id", chaveNatural: "team_id", maxLinhas: 50, fields: [
+        REF("team_id", "Equipe", "teams", { required: true }), S("member_type", "Tipo", [["employee", "Funcionário"], ["outsourced", "Terceirizado"]], { required: true, default: "employee" }), active("is_active")
+      ] },
+      { key: "eventos", label: "Eventos fixos", table: "employee_events", chavePai: "person_id", organizacao: true, maxLinhas: 100, fields: [
+        REF("event_id", "Evento", "hr_events", { required: true }), M("amount", "Valor", { required: true }), active("is_active")
+      ] }
+    ],
+    // Vários perfis sobre a MESMA linha 1:1 (erp.employee_profiles): um por aba. Cada um grava só os seus campos.
+    perfis: [
+      { key: "rh_admissao", label: "Admissão e lotação", table: "employee_profiles", chavePai: "person_id", fields: [
+        T("matricula", "Matrícula", { maxLength: 30 }), D("admission_date", "Admissão"), REF("empresa_id", "Empresa", "empresas"), REF("function_id", "Função", "job_functions"),
+        REF("cost_center_id", "Centro de resultado", "cost_centers"),
+        S("tipo_vinculo", "Tipo de vínculo", [["clt_indeterminado", "CLT prazo indeterminado"], ["clt_determinado", "CLT prazo determinado/safra"], ["temporario", "Temporário"], ["aprendiz", "Aprendiz"], ["estagio", "Estágio"], ["autonomo", "Autônomo/diarista"]]),
+        B("trabalhador_rural", "Trabalhador rural"), T("office", "Cargo (texto livre)")
+      ] },
+      { key: "rh_remuneracao", label: "Remuneração", table: "employee_profiles", chavePai: "person_id", fields: [
+        M("base_salary", "Salário base", { sigilo: "employees.edit" }), M("hour_value", "Valor da hora", { sigilo: "employees.edit" }), M("goal_salary", "Meta"),
+        { name: "commission_percent", label: "Comissão (%)", type: "percent", min: 0, max: 100 }, { name: "jornada_semanal", label: "Jornada semanal (h)", type: "number", min: 0, max: 168 }
+      ] },
+      { key: "rh_documentos", label: "Documentos", table: "employee_profiles", chavePai: "person_id", fields: [
+        T("pis_nis", "PIS/NIS", { maxLength: 11, help: "11 dígitos" }), T("ctps_numero", "CTPS número"), T("ctps_serie", "CTPS série"), T("rg_numero", "RG"), T("rg_orgao", "RG órgão emissor"),
+        T("cnh_numero", "CNH número", { maxLength: 11 }), S("cnh_categoria", "CNH categoria", [["A", "A"], ["B", "B"], ["C", "C"], ["D", "D"], ["E", "E"], ["AB", "AB"], ["AC", "AC"], ["AD", "AD"], ["AE", "AE"]]), D("cnh_validade", "CNH validade")
+      ] },
+      { key: "rh_pagamento", label: "Pagamento", table: "employee_profiles", chavePai: "person_id", fields: [
+        T("conta_pagamento_id", "Conta de pagamento", { help: "Vazio = conta principal do parceiro; ou uma conta adicional dele (aba Financeiro do parceiro)." })
+      ] },
+      { key: "rh_desligamento", label: "Desligamento", table: "employee_profiles", chavePai: "person_id", fields: [
+        D("dismissal_date", "Data do desligamento"),
+        S("motivo_desligamento", "Motivo", [["pedido_demissao", "Pedido de demissão"], ["sem_justa_causa", "Sem justa causa"], ["com_justa_causa", "Com justa causa"], ["termino_contrato", "Término de contrato"], ["acordo", "Acordo"], ["outro", "Outro"]])
+      ] },
+      { key: "rh_usuario", label: "Usuário do sistema", table: "employee_profiles", chavePai: "person_id", fields: [REF("user_id", "Usuário", "users")] }
     ]
   }
 ];

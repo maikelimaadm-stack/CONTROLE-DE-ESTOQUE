@@ -1149,3 +1149,32 @@ test("CADASTROS FASE 4 · PA-K1 — ficha de Parceiro da web NOVA contra a API d
   const ok = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: nome, person_type: "legal", is_client: true } });
   expect(ok.status(), await ok.text()).toBe(201);
 });
+
+test("CADASTROS FASE 5 · RH-K1 — ficha de RH da web NOVA contra a API da base: RECUSADA (a base não conhece `funcionarios` nem o novo pelo CPF) e nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const antes = sql("select count(*) from erp.people");
+  const novo = await page.request.post(`${API}/api/hr/funcionarios/por-cpf`, { headers: cab, data: { document: "390.533.447-05", name: uniq("RH-K1") } });
+  expect(novo.status(), await novo.text()).toBe(404);
+  const id = sql("select id from erp.people where is_employee and deleted_at is null order by code limit 1");
+  expect((await page.request.get(`${API}/api/resources/funcionarios/${id}`, { headers: cab })).status()).toBe(404);
+  const put = await page.request.put(`${API}/api/resources/funcionarios/${id}`, { headers: cab, data: { rh_admissao: { matricula: "RH-K1" } } });
+  expect(put.status(), await put.text()).toBe(404);
+  expect(sql("select count(*) from erp.people"), "nada gravado").toBe(antes);
+});
+
+test("CADASTROS FASE 6 · PR-K1 — ficha de Produto da web NOVA contra a API da base: controle de lote, colunas e grades novas RECUSADOS (422, schema estrito) e nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const grupo = sql("select id from erp.product_groups where deleted_at is null and kind = 'analytic' order by code limit 1");
+  const unidade = sql("select id from erp.measurement_units where upper(symbol) = 'UN' order by organization_id nulls last limit 1");
+  const natureza = sql("select id from erp.financial_categories where deleted_at is null and kind = 'analytic' and nature = 'expense' order by code limit 1");
+  const nome = uniq("PR-K1 produto web nova");
+  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: {
+    description: nome, group_id: grupo, measurement_id: unidade, financial_category_id: natureza, controle_lote: "lote", marca: "X",
+    unidades: [{ measurement_id: unidade, tipo_fator: "multiply", fator: "2" }] } });
+  expect(r.status(), await r.text()).toBe(422);
+  const erro = ((await r.json()) as { error: { details?: { message?: string }[] } }).error;
+  expect(erro.details?.map((d) => d.message), "a base não conhece os campos da ficha").toContain("Campo não reconhecido");
+  expect(sql(`select count(*) from erp.products where description = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+});

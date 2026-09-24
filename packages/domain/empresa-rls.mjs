@@ -103,7 +103,9 @@ export const EXCECOES_RLS_EMPRESA = {
   // A ÚNICA cujo vínculo é uma coluna LEGADA: a 05C-1 troca `farm_id` por `empresa_id` aqui e nesta linha,
   // no mesmo commit. Mudar só um dos dois reprova — é esse o ponto de declarar a coluna.
   empresa_cost_centers: { categoria: "E", protecao: filhoDe("erp.empresas", "empresa_id"), motivo: "Mesmo caso: diz em quais empresas o centro de custo se aplica.", protegidaPor: "política api_child + cost_centers.edit" },
-  proprietary_empresas: { categoria: "E", protecao: filhoDe("erp.people", "person_id"), motivo: "Mesmo caso: abrangência do proprietário.", protegidaPor: "política api_child + proprietaries.edit" }
+  proprietary_empresas: { categoria: "E", protecao: filhoDe("erp.people", "person_id"), motivo: "Mesmo caso: abrangência do proprietário.", protegidaPor: "política api_child + proprietaries.edit" },
+  // CADASTROS Fase 5 (0028): a ficha de RH ganhou `empresa_id` = LOTAÇÃO informativa, anulável.
+  employee_profiles: { categoria: "E", protecao: filhoDe("erp.people", "person_id"), motivo: "Ficha de RH 1:1 do PARCEIRO, que é cadastro da ORGANIZAÇÃO. `empresa_id` é a LOTAÇÃO informativa (anulável); recortar a ficha por ela esconderia o funcionário sem lotação e o da empresa vizinha a quem administra o RH da organização. A empresa gravada é conferida contra o escopo de lançamento de quem grava e pela FK composta com a organização.", protegidaPor: "política api_child (junção com erp.people) + employees.view/edit + FK composta (organization_id, empresa_id)" }
 };
 
 /** Tabelas com DUAS pontas de empresa (transferência). Derivado do schema, listado aqui só para leitura. */

@@ -65,10 +65,10 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 - **B** — EMPRESA ÚNICA ANULÁVEL (6 tabelas)
 - **C** — ORIGEM + DESTINO (três contratos por domínio) (3 tabelas)
 - **D** — TABELA EMPRESAS (1 tabela)
-- **E** — PORTA DINÂMICA / ESPECIAL (7 tabelas)
+- **E** — PORTA DINÂMICA / ESPECIAL (8 tabelas)
 - **F** — ORGANIZAÇÃO — SEM RLS EMPRESARIAL (1 tabela)
 
-## Tabelas (54)
+## Tabelas (55)
 
 | Tabela | Coluna(s) canônica(s) | Módulo | Cat. | Nulo? | Leitura | Escrita | Semântica POR COMANDO |
 | --- | --- | --- | :---: | :---: | --- | --- | --- |
@@ -89,6 +89,7 @@ títulos, 10 empresas no seletor) — muda o PLANO, não a autorização. Só a 
 | `erp.diet_batches` | `empresa_id` | confinamento | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
 | `erp.documents` | `empresa_id` | documentos | B | sim | empresa no escopo do módulo; registro SEM empresa continua visível | empresa no escopo; SEM empresa exige escopo total do módulo | SELECT: using=leitura<br>INSERT: check=**escrita (origem)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
 | `erp.earnings` | `empresa_id` | pessoas_rh | A | não | empresa no escopo do módulo | empresa no escopo do módulo | ALL: using=leitura · check=**escrita (origem)** |
+| `erp.employee_profiles` | `empresa_id` | — | E | sim | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
 | `erp.empresa_cost_centers` | `empresa_id` | — | E | não | regra própria (ver justificativa) | regra própria (ver justificativa) | — (a proteção é outra; ver justificativa) |
 | `erp.empresas` | `id` | (seletor: união dos módulos) | D | não | empresa visível em ALGUM módulo (união) | tenant (criar empresa é ato de organização) | SELECT: using=leitura<br>INSERT: check=tenant<br>UPDATE: using=leitura · check=tenant<br>DELETE: using=leitura |
 | `erp.equipment_transfers` | `empresa_origem_id` + `empresa_destino_id` | frota_ativos | C | não | qualquer ponta no escopo | criar exige AS DUAS pontas; alterar e apagar respondem pela ORIGEM; mudar as PONTAS exige a origem — gatilho `trg_travar_pontas` | SELECT: using=envelope (qualquer ponta)<br>INSERT: check=**escrita (AS DUAS pontas)**<br>UPDATE: using=**escrita (origem)** · check=**escrita (origem)**<br>DELETE: using=**escrita (origem)** |
@@ -135,6 +136,7 @@ Nenhuma linha aqui significa "sem proteção": significa "protegida por outra re
 | --- | :---: | --- |
 | `erp.authorizer_empresas` | E | Vínculo de CONFIGURAÇÃO (cadastro × empresas de abrangência), sem organization_id próprio. Recortá-lo pelo módulo ativo esconderia do administrador empresas já vinculadas — e salvar a tela devolveria uma lista incompleta, apagando vínculos que ele nunca viu. Protegida por: política api_child (junção com o cadastro pai, que é da organização) + capacidade do cadastro |
 | `erp.bank_account_empresas` | E | Mesmo caso de authorizer_empresas: vínculo de abrangência de um cadastro de organização. Protegida por: política api_child + bank_accounts.edit |
+| `erp.employee_profiles` | E | Ficha de RH 1:1 do PARCEIRO, que é cadastro da ORGANIZAÇÃO. `empresa_id` é a LOTAÇÃO informativa (anulável); recortar a ficha por ela esconderia o funcionário sem lotação e o da empresa vizinha a quem administra o RH da organização. A empresa gravada é conferida contra o escopo de lançamento de quem grava e pela FK composta com a organização. Protegida por: política api_child (junção com erp.people) + employees.view/edit + FK composta (organization_id, empresa_id) |
 | `erp.empresa_cost_centers` | E | Mesmo caso: diz em quais empresas o centro de custo se aplica. Protegida por: política api_child + cost_centers.edit |
 | `erp.legado_escopo_empresa_v0` | F | Arquivo morto de erp.member_farms (PRE-BASE2-03). Não é autoridade de nada, não tem tela e não é lido por runtime algum; existe para que a migração seja reversível sem backup externo. Protegida por: tenant_isolation, sem grant de escrita |
 | `erp.membro_empresas` | E | É a própria CONFIGURAÇÃO de autorização por empresa. Recortá-la pelo escopo que ela define seria circular: o administrador deixaria de enxergar as empresas que acabou de conceder. Protegida por: tenant_isolation + capacidade users.edit na borda de administração |

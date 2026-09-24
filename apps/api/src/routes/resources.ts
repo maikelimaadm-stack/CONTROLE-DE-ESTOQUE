@@ -13,7 +13,9 @@ import { conferirGrupoDeProdutos, conferirGrupoDoProduto } from "../lib/grupo-de
 import { conferirTipoDaNatureza } from "../lib/natureza-financeira.js";
 import { conferirNcmDoProduto } from "../lib/ncm-do-produto.js";
 import { conferirParceiro, atualizarSituacaoReceita } from "../lib/parceiro.js";
-import { shapeDaFicha, validarCorpo, gravarFicha, lerFicha, temFicha } from "../lib/ficha-em-abas.js";
+import { conferirProduto, fundirCamposJson, historicoDoRegistro } from "../lib/produto.js";
+import { shapeDaFicha, validarCorpo, gravarFicha, lerFicha, temFicha, semSigilo, conferirPermissoesDaFicha } from "../lib/ficha-em-abas.js";
+import { conferirFuncionario, conferirCboDaFuncao } from "../lib/funcionario.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
@@ -42,7 +44,8 @@ export function schemaDoCampo(f: FieldDef): z.ZodTypeAny {
     case "boolean": t = z.coerce.boolean(); break;
     case "select": t = z.enum(f.options!.map((o) => o.value) as [string, ...string[]]); break;
     case "ref": t = z.string().uuid(); break;
-    case "json": t = z.union([z.record(z.string(), z.unknown()), z.array(z.unknown())]); break;
+    // json com `camposJson` (Fase 6): chaves conhecidas tipadas; desconhecida passa (é preservada)
+    case "json": t = f.camposJson ? z.object(Object.fromEntries(f.camposJson.map((c) => [c.name, schemaDoCampo(c).nullable().optional()]))).passthrough() : z.union([z.record(z.string(), z.unknown()), z.array(z.unknown())]); break;
     case "tags": t = z.array(z.string()); break;
     default: t = z.unknown();
   }
@@ -62,9 +65,11 @@ export function camposDeEscrita(def: ResourceDef): FieldDef[] {
 /** Regras próprias de um cadastro, além das comuns da árvore. Chave estática; nenhuma vem do cliente. */
 async function conferirRegrasDoCadastro(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Record<string, unknown>, atual: Record<string, unknown> | null) {
   if (def.key === "product_groups") await conferirGrupoDeProdutos(ctx, id, data, atual);
-  else if (def.key === "products") { await conferirGrupoDoProduto(ctx, data, atual); await conferirNcmDoProduto(ctx, data, atual); }
+  else if (def.key === "products") { await conferirGrupoDoProduto(ctx, data, atual); await conferirNcmDoProduto(ctx, data, atual); await conferirProduto(ctx, id, data, atual); }
   else if (def.key === "financial_categories") await conferirTipoDaNatureza(ctx, id, data, atual);
   else if (def.key === "people") await conferirParceiro(ctx, id, data, atual);
+  else if (def.key === "funcionarios") await conferirFuncionario(ctx, id, data, atual);
+  else if (def.key === "job_functions") await conferirCboDaFuncao(ctx, data);
 }
 
 function listColumns(def: ResourceDef): string[] {
@@ -153,6 +158,8 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   const where: string[] = [];
   if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(organization_id is null or organization_id = ${b.add(ctx.orgId)})` : `organization_id = ${b.add(ctx.orgId)}`);
   if (def.softDelete) where.push("deleted_at is null");
+  // recorte FIXO do cadastro (ex.: Funcionários = is_employee): coluna da definição estática, valor parametrizado
+  for (const [k, v] of Object.entries(def.filtroFixo ?? {})) where.push(`${ident(k)} = ${b.add(v)}`);
   const escL = escopoDoRecurso(def);
   if (escL.ativo && ctx.empresaId && existing.has("empresa_id") && !filters["empresa_id"]) where.push(escL.nullable ? `(empresa_id is null or empresa_id = ${b.add(ctx.empresaId)})` : `empresa_id = ${b.add(ctx.empresaId)}`);
   if (escL.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, "empresa_id", b, { nullable: escL.nullable }));
@@ -201,7 +208,7 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   let total = Number((rows.rows[0] as { __total?: string } | undefined)?.__total ?? 0);
   if (!rows.rows.length && q.page > 1) { const c = await ctx.tx.query<{ n: string }>(`select count(*) as n from erp.${ident(def.table)} ${wsql}`, b.params); total = Number(c.rows[0]!.n); }
   const labelRows = await refLabels(ctx, def, rows.rows as Record<string, unknown>[]);
-  const items = rows.rows.map((r, i) => { const o = { ...(r as Record<string, unknown>), ...labelRows[i] } as Record<string, unknown>; delete o["__total"]; return o; });
+  const items = rows.rows.map((r, i) => { const o = { ...(r as Record<string, unknown>), ...labelRows[i] } as Record<string, unknown>; delete o["__total"]; return semSigilo(ctx, def, o); });
   const pagina = { items, page: q.page, pageSize: q.pageSize, total };
   /**
    * ID Global na listagem genérica: o tipo vem da TABELA do recurso, pelo índice do catálogo — o Resource
@@ -235,10 +242,12 @@ export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   // fazenda: registro fora do escopo do membro não é visível (mesma regra da listagem)
   const escG = escopoDoRecurso(def);
   const farmCond = escG.ativo && existing.has("empresa_id") ? empresaScopeSql(ctx, "empresa_id", gp, { ignoreSelected: true, nullable: escG.nullable }) : "";
-  const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 ${orgCond} ${def.softDelete ? "and deleted_at is null" : ""}${farmCond}`, gp);
+  // recorte FIXO: linha fora dele é a MESMA 404 de inexistente
+  const fixoCond = Object.entries(def.filtroFixo ?? {}).map(([k, v]) => ` and ${ident(k)} = $${gp.push(v)}`).join("");
+  const r = await ctx.tx.query(`select ${cols.map(ident).join(",")} from erp.${ident(def.table)} where id=$1 ${orgCond} ${def.softDelete ? "and deleted_at is null" : ""}${farmCond}${fixoCond}`, gp);
   if (!r.rows[0]) throw notFound(def.label);
   const row = r.rows[0] as Record<string, unknown>;
-  return { ...row, ...(await refLabels(ctx, def, [row]))[0], ...(temFicha(def) ? await lerFicha(ctx, def, id) : {}) };
+  return { ...semSigilo(ctx, def, row), ...(await refLabels(ctx, def, [row]))[0], ...(temFicha(def) ? await lerFicha(ctx, def, id) : {}) };
 }
 
 function coerceValue(f: FieldDef, v: unknown): unknown {
@@ -254,7 +263,10 @@ function coerceValue(f: FieldDef, v: unknown): unknown {
  * (mesma transação): reservar linha a linha prenderia o contador da organização a importação inteira.
  */
 export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal?: boolean } = {}) {
+  // cadastro que nasce por OUTRA porta (ex.: funcionário pelo CPF) não nasce pela genérica
+  if (def.criacao) throw validation(def.criacao.mensagem);
   const data = validarCorpo(def, buildSchema(def), body);
+  conferirPermissoesDaFicha(ctx, def, data);
   const escC = escopoDoRecurso(def);
   if (escC.ativo) {
     const pedida = (data["empresa_id"] as string | null | undefined) ?? null;
@@ -303,6 +315,8 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
 export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, body: unknown) {
   const atual = await getOne(ctx, def, id);
   const data = validarCorpo(def, buildSchema(def, true), body);
+  conferirPermissoesDaFicha(ctx, def, data);
+  fundirCamposJson(def, data, atual);
   await conferirRegrasDaArvore(ctx, def, id, data, atual);
   await conferirRegrasDoCadastro(ctx, def, id, data, atual);
   const existing = await checkColumns(ctx, def);
@@ -325,6 +339,8 @@ export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, b
 
 export async function deleteOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   await getOne(ctx, def, id);
+  // o registro de um cadastro com porta própria de criação é a linha de OUTRO cadastro (funcionário = parceiro)
+  if (def.criacao) throw validation(`${def.label}: exclua pelo cadastro de origem`);
   await conferirExclusaoNaArvore(ctx, def, id);
   const existing = await checkColumns(ctx, def);
   const orgCond = existing.has("organization_id") && !def.reference ? "and organization_id=$2" : "";
@@ -392,6 +408,8 @@ export default async function resourceRoutes(app: FastifyInstance) {
     return runService(app, req, null, async (ctx) => options(await comPermissaoResolvida(ctx, `${def.permission}.view`), def, search, extra)); });
   app.get("/resources/:key/proximo-codigo", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ parent_id: z.string().uuid().optional() }).strict().parse(req.query); return runService(app, req, `${def.permission}.create`, (ctx) => sugerirCodigo(ctx, def, q.parent_id ?? null)); });
   app.get("/resources/:key/distinct", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ field: z.string().regex(/^[a-z_][a-z0-9_]*$/), search: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query); return runService(app, req, `${def.permission}.view`, (ctx) => distinctValues(ctx, def, q.field, q.search, q.limit)); });
+  // HISTÓRICO (Fase 6): auditoria do registro e das suas grades — quem, quando, o quê. Mesma permissão e mesma 404 da ficha.
+  app.get("/resources/:key/:id/historico", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); const q = pageQuerySchema.parse(req.query); return runService(app, req, `${def.permission}.view`, async (ctx) => { await getOne(ctx, def, id); return historicoDoRegistro(ctx, def, id, q.page, q.pageSize); }); });
   app.get("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => getOne(ctx, def, id)); });
   app.post("/resources/:key", async (req, reply) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const r = await runService(app, req, `${def.permission}.create`, (ctx) => createOne(ctx, def, req.body)); return reply.status(201).send(r); });
   app.put("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.edit`, (ctx) => updateOne(ctx, def, id, req.body)); });

@@ -15,12 +15,15 @@ import { EarningsPanel } from "@/features/hr/earnings";
 const scroll = (c: React.ReactNode) => <div className="ws-scroll">{c}</div>;
 function People() {
   const [role] = useUrlParam("role", "employee");
-  return <ListaDeParceiros padrao="employee" tipos={role === "employee" ? ["employee"] : ["all", "client", "provider", "transporter", "employee", "proprietary"]} />;
+  // RH › Funcionários (Fase 5): a lista e a FICHA DE RH (abas, salário sob sigilo). Link antigo com outro `role`
+  // continua abrindo a lista de parceiros com o filtro que ele guardava.
+  if (role === "employee") return <ResourceList resourceKey="funcionarios" title="Funcionários" />;
+  return <ListaDeParceiros padrao="employee" tipos={["all", "client", "provider", "transporter", "employee", "proprietary"]} />;
 }
 function Inner() {
   return <Workspace title="RH" defaultTab="pessoas" actions={<NewChooser items={[
     { label: "Novo parceiro", href: "/cadastros/people/new", perm: "people.create" },
-    { label: "Novo funcionário", href: "/cadastros/people/new?is_employee=true", perm: ["employees.create", "people.create"] },
+    { label: "Novo funcionário", href: "/cadastros/funcionarios/new", perm: "employees.create" },
     { label: "Ocorrência", children: [{ label: "Registrar falta", href: "/cadastros/absences/new", perm: "absences.create" }, { label: "Registrar bonificação / evento", href: "/cadastros/bonuses/new", perm: "bonuses.create" }] }
   ]} />} tabs={[
     tab("pessoas.pessoas", <People />),

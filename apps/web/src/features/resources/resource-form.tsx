@@ -17,7 +17,7 @@ import { RefSelect, ReferenciaSelect } from "@/components/ui/ref-select";
 import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Pencil, Plus, Trash2, LayoutGrid, PanelLeft } from "lucide-react";
 import { IconBtn, PillBtn } from "@/features/base1/ui";
 import { useFormLayout } from "./form-layout";
-import { FichaEmAbas, ConsultaCnpj, fichaDoRegistro, fichaParaApi, type ErroDaFicha } from "./ficha-em-abas";
+import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, fichaDoRegistro, fichaParaApi, type ErroDaFicha } from "./ficha-em-abas";
 
 type Values = Record<string, unknown>;
 export interface EmbeddedForm { mode: "view" | "edit" | "new"; /** linha já carregada na listagem: evita tela de carregamento ao navegar entre registros */ row?: Values | null; setMode: (m: "view" | "edit" | "new") => void; onExit: () => void; refresh: () => void; copyFrom?: Values | null; rightSlot?: React.ReactNode; nav?: { index: number; total: number; go: (i: number) => void } }
@@ -82,6 +82,8 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const isNew = embedded ? embedded.mode === "new" : id === "new";
   const canEdit = can(`${def?.permission}.edit`); const canDelete = can(`${def?.permission}.delete`); const canCreate = can(`${def?.permission}.create`);
   const readOnly = embedded ? embedded.mode === "view" : sp.get("view") === "1" || (!isNew && !canEdit);
+  // aba com `permissaoDeEdicao` que o usuário não tem (ex.: Pessoal do RH sem people.edit): campos travados e fora do corpo
+  const travados = [...l.lockedFieldIds, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
   const preset = React.useMemo(() => { const p: Record<string, string> = { ...(presetExtra ?? {}) }; if (!embedded && !presetExtra) sp.forEach((v, k) => { if (k !== "view" && k !== "copy") p[k] = v; }); return p; }, [sp, embedded, presetExtra]);
   const copyId = embedded ? null : sp.get("copy");
   const q = useQuery({ queryKey: ["res", resourceKey, id], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${id}`), enabled: !isNew && id !== "new", placeholderData: embedded?.row && String(embedded.row["id"]) === id ? embedded.row : undefined, staleTime: 30_000 });
@@ -128,7 +130,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   React.useEffect(() => { try { const v = localStorage.getItem(panelStyleKey); if (v === "sidebar") setPanelStyle("sidebar"); } catch { /* sem storage */ } }, [panelStyleKey]);
   const togglePanelStyle = () => setPanelStyle((p) => { const n = p === "tabs" ? "sidebar" : "tabs"; try { localStorage.setItem(panelStyleKey, n); } catch { /* sem storage */ } return n; });
   const save = useMutation({
-    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, l.lockedFieldIds), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k])) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
+    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, travados), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k])) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
     onSuccess: (row) => { setErrosFicha([]); toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
     onError: (e) => { const err = e as Error & { details?: ErroDaFicha[] }; const det = err.details?.filter((d) => d.path) ?? []; if (ficha) setErrosFicha(det); det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
   });
@@ -137,6 +139,8 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const tabTitle = !def ? undefined : isNew ? `Novo ${def.label.toLowerCase()}` : String(q.data?.[def.labelField] ?? q.data?.["name"] ?? q.data?.["description"] ?? "");
   useTabTitle(embedded ? undefined : tabTitle || undefined);
   if (!def) return <div>Recurso desconhecido</div>;
+  // cadastro que nasce por OUTRA porta (ex.: funcionário pelo CPF): o "novo" pergunta só o necessário
+  if (isNew && def.criacao) return <CriacaoPorOutraPorta def={def} base={basePath ?? `/cadastros/${resourceKey}`} />;
   if (!isNew && q.isLoading && !q.data) return <div className="p-6"><Spinner /></div>;
   if (q.error) return <ErrorBox error={q.error} />;
   const values = form.watch();
@@ -147,7 +151,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const obrigatorio = (f: FieldDef) => Boolean(f.required) || l.requiredFieldIds.includes(f.name) || (f.requiredWhen !== undefined && iguala(values[f.requiredWhen.field] ?? byId.get(f.requiredWhen.field)?.default, f.requiredWhen.equals));
   const renderField = (fid: string) => {
     const f = byId.get(fid); if (!f || !visible(f)) return null;
-    const err = form.formState.errors[f.name]?.message as string | undefined; const locked = Boolean(f.readOnly) || l.lockedFieldIds.includes(f.name); const dis = readOnly || locked;
+    const err = form.formState.errors[f.name]?.message as string | undefined; const locked = Boolean(f.readOnly) || travados.includes(f.name); const dis = readOnly || locked;
     const required = obrigatorio(f);
     const v = values[f.name]; const hasValue = f.type === "boolean" ? true : Array.isArray(v) ? v.length > 0 : v !== "" && v !== null && v !== undefined;
     return <B1Field key={f.name} flex label={l.fieldLabels[f.name] ?? f.label} required={required} error={err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}><FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={(o) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur))} /></B1Field>;

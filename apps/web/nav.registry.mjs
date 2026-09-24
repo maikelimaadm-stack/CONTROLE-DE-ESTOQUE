@@ -189,7 +189,7 @@ export const AREAS = [
   s("pessoas", "folha", "adiantamentos", "Adiantamentos", "salary_advances.view", { aliases: ["/gestao-pessoal/adiantamentos"], keywords: ["vale", "adiantar salário"] }),
   s("pessoas", "folha", "apuracao", "Apuração Mensal", "earnings.view", { aliases: ["/gestao-pessoal/apuracao"], keywords: ["fechamento", "proventos", "descontos"] }),
   act("pessoas", "pessoa", "Novo parceiro", "/cadastros/people/new", "people.create", { keywords: ["nova pessoa", "novo cliente", "novo fornecedor"] }),
-  act("pessoas", "funcionario", "Novo funcionário", "/cadastros/people/new?is_employee=true", ["employees.create", "people.create"], { keywords: ["contratar", "admitir"] }),
+  act("pessoas", "funcionario", "Novo funcionário", "/cadastros/funcionarios/new", "employees.create", { keywords: ["contratar", "admitir", "cpf"] }),
   act("pessoas", "falta", "Registrar falta", "/cadastros/absences/new", "absences.create", { keywords: ["ausência", "ocorrência de funcionário"] }),
   act("pessoas", "bonificacao", "Registrar bonificação / evento", "/cadastros/bonuses/new", "bonuses.create"),
   // ---------------- Ordens de serviço ----------------

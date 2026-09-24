@@ -491,3 +491,38 @@ test("CADASTROS FASE 4 · PA-K2 — formulário ANTERIOR de Pessoas contra a API
   // o dado de teste fica excluído logicamente (nunca apagado)
   sql(`update erp.people set deleted_at = now() where id = '${id}'`);
 });
+
+test("CADASTROS FASE 5 · RH-K2 — web ANTERIOR contra a API nova: nada muda (funcionário pelo cadastro de Pessoas grava; folha e Funções como antes)", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  // "Novo funcionário" da web anterior: formulário de Pessoas com is_employee
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("RH-K2 funcionario"), person_type: "natural", is_employee: true, is_client: false, is_provider: false, is_proprietary: false, is_transporter: false } });
+  expect(r.status(), await r.text()).toBe(201);
+  // Funções: o corpo anterior (sem CBO) grava
+  const f = await page.request.post(`${API}/api/resources/job_functions`, { headers: cab, data: { name: uniq("RH-K2 funcao"), base_salary: "1000", monthly_hours: 220, hour_value: "5", description: "RH-K2", is_active: true } });
+  expect(f.status(), await f.text()).toBe(201);
+  // o dado de teste fica excluído logicamente (nunca apagado)
+  const id = (await r.json() as { id: string }).id;
+  const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+  execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `update erp.people set deleted_at = now() where id = '${id}'`], { encoding: "utf8" });
+});
+
+test("CADASTROS FASE 6 · PR-K2 — formulário ANTERIOR de Produto contra a API nova: has_lot=true grava 'lote', false grava 'nenhum'; 2ª unidade aceita como legado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+  const sql = (c: string) => execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
+  const grupo = sql("select id from erp.product_groups where deleted_at is null and kind = 'analytic' order by code limit 1");
+  const un = sql("select id from erp.measurement_units where upper(symbol) = 'UN' order by organization_id nulls last limit 1");
+  const kg = sql("select id from erp.measurement_units where upper(symbol) = 'KG' order by organization_id nulls last limit 1");
+  const natureza = sql("select id from erp.financial_categories where deleted_at is null and kind = 'analytic' and nature = 'expense' order by code limit 1");
+  // corpo do formulário anterior: has_lot e a 2ª unidade, nenhuma chave da ficha
+  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: uniq("PR-K2 web anterior"), group_id: grupo, measurement_id: un, financial_category_id: natureza, has_lot: true, second_measurement_id: kg, factor_type: "multiply", factor: "25", control_stock: true, is_active: true } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string; has_lot: boolean }).id;
+  expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`)).toBe("lote/true");
+  const put = await page.request.put(`${API}/api/resources/products/${id}`, { headers: cab, data: { has_lot: false } });
+  expect(put.status(), await put.text()).toBe(200);
+  expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`)).toBe("nenhum/false");
+  sql(`update erp.products set deleted_at = now() where id = '${id}'`);
+});

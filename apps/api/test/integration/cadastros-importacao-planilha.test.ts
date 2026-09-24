@@ -451,7 +451,7 @@ describe("leitura — números em pt-BR", () => {
     expect(await contar("products")).toBe(antes);
   });
 
-  it("X16: `1234,56`, `1.234,56`, `1,5`, `12` e o número nativo 2.5 aceitos — valor conferido no banco (quantidade, dinheiro, fator, inteiro)", async () => {
+  it("X16: `1234,56`, `1.234,56`, `1,5`, `12` e o número nativo 2.5 aceitos — valor conferido no banco (quantidade, dinheiro, estoque máximo, inteiro)", async () => {
     const wb = await modelo("products");
     const casos: [string, ExcelJS.CellValue, string][] = [
       ["XLSX Num A", "1234,56", "1234.56"],
@@ -463,7 +463,7 @@ describe("leitura — números em pt-BR", () => {
     casos.forEach(([d, v], k) => produto(wb, k + 2, d, { "Estoque mínimo": v }));
     const ws = wb.getWorksheet("Dados")!;
     ws.getRow(2).getCell(col(wb, "Valor de referência")).value = "1.234,56";
-    ws.getRow(2).getCell(col(wb, "Fator conversão")).value = "1,5";
+    ws.getRow(2).getCell(col(wb, "Estoque máximo")).value = "1,5"; // Fase 6: o fator foi para a grade de unidades
     ws.getRow(3).getCell(col(wb, "Período de Carência (dias)")).value = "30";
     const buf = await bufferDe(wb);
     const lida = await releitura(buf);
@@ -471,11 +471,11 @@ describe("leitura — números em pt-BR", () => {
     const r = await enviar(buf, "products");
     expect(r.statusCode, r.body.slice(0, 500)).toBe(201);
     expect(j(r)).toMatchObject({ linhas: 5, gravadas: 5, erros: [] });
-    const gravados = (await admin.query<{ description: string; min_stock: string | null; reference_price: string; factor: string | null; withdrawal_period_days: number | null }>(
-      "select description, min_stock::text, reference_price::text, factor::text, withdrawal_period_days from erp.products where organization_id=$1 and description like 'XLSX Num _' and deleted_at is null order by description", [h.demo.orgId])).rows;
+    const gravados = (await admin.query<{ description: string; min_stock: string | null; reference_price: string; estoque_maximo: string | null; withdrawal_period_days: number | null }>(
+      "select description, min_stock::text, reference_price::text, estoque_maximo::text, withdrawal_period_days from erp.products where organization_id=$1 and description like 'XLSX Num _' and deleted_at is null order by description", [h.demo.orgId])).rows;
     expect(gravados.map((x) => [x.description, dec(x.min_stock)])).toEqual(casos.map(([d, , esperado]) => [d, esperado]));
     const a = gravados.find((x) => x.description === "XLSX Num A")!;
-    expect(dec(a.reference_price)).toBe("1234.56"); expect(dec(a.factor)).toBe("1.5");
+    expect(dec(a.reference_price)).toBe("1234.56"); expect(dec(a.estoque_maximo)).toBe("1.5");
     expect(gravados.find((x) => x.description === "XLSX Num B")!.withdrawal_period_days).toBe(30);
   });
 });

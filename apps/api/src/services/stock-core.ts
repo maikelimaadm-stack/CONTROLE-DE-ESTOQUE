@@ -10,19 +10,19 @@ export interface StockPost {
 
 /** Valida produto/armazém e lança no ledger. Retorna saldo e custo após o lançamento. */
 export async function postStock(ctx: ServiceCtx, p: StockPost): Promise<{ id: string; balanceAfter: string; avgCostAfter: string; unitCost: string }> {
-  const prod = await ctx.tx.query<{ control_stock: boolean; has_lot: boolean; is_active: boolean }>("select control_stock, has_lot, is_active from erp.products where id=$1 and organization_id=$2 and deleted_at is null", [p.productId, ctx.orgId]);
+  const prod = await ctx.tx.query<{ control_stock: boolean; has_lot: boolean; is_active: boolean; controle_lote: string | null }>("select control_stock, has_lot, is_active, to_jsonb(p)->>'controle_lote' as controle_lote from erp.products p where id=$1 and organization_id=$2 and deleted_at is null", [p.productId, ctx.orgId]);
   if (!prod.rows[0]) throw validation("Produto inválido");
   if (!prod.rows[0].control_stock) throw err("PRODUCT_NOT_STOCK_CONTROLLED", "Produto não controla estoque");
   const wh = await ctx.tx.query<{ empresa_id: string; is_active: boolean }>("select empresa_id, is_active from erp.warehouses where id=$1 and organization_id=$2 and deleted_at is null", [p.warehouseId, ctx.orgId]);
   if (!wh.rows[0]) throw validation("Armazém inválido");
   if (wh.rows[0].empresa_id !== p.empresaId) throw err("WAREHOUSE_FARM_MISMATCH", "Armazém não pertence à fazenda informada");
   if (D(p.quantity).lte(0)) throw validation("Quantidade deve ser positiva");
-  let lot = p.providerLot ?? null;
-  if (p.direction === -1 && prod.rows[0].has_lot && !lot) {
-    // saída FIFO por validade quando o produto controla lote e o lote não foi informado
-    const l = await ctx.tx.query<{ provider_lot: string }>("select provider_lot from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and quantity >= $4 order by expiration_date nulls last limit 1", [ctx.orgId, p.warehouseId, p.productId, p.quantity]);
-    lot = l.rows[0]?.provider_lot ?? null;
-  }
+  const lot = p.providerLot?.trim() ? p.providerLot.trim() : null;
+  // CADASTROS Fase 6 (0029): o CONTROLE de lote do produto exige o lote na entrada E na saída (nada de escolher
+  // um lote pelo usuário), e "lote + validade" exige a validade na entrada. O gatilho da 0029 repete a regra.
+  const controle = prod.rows[0].controle_lote ?? (prod.rows[0].has_lot ? "lote" : "nenhum");
+  if (controle !== "nenhum" && !lot) throw validation("O produto controla lote: informe o lote no movimento.", [{ path: "provider_lot", message: "Informe o lote" }]);
+  if (controle === "lote_validade" && p.direction === 1 && !p.expirationDate && p.movementType !== "transfer_in" && p.movementType !== "farm_transfer_in") throw validation("O produto controla lote e validade: informe a validade na entrada.", [{ path: "expiration_date", message: "Informe a validade" }]);
   const r = await ctx.tx.query<{ id: string; balance_after: string; avg_cost_after: string; unit_cost: string }>(
     "insert into erp.stock_movements(organization_id,empresa_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,provider_lot,expiration_date,cost_center_id,harvest_id,cultivation_id,source_type,source_id,movement_date,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id, balance_after, avg_cost_after, unit_cost",
     [ctx.orgId, p.empresaId, p.warehouseId, p.productId, p.movementType, p.direction, fqty(p.quantity), p.unitCost ? D(p.unitCost).toFixed(6) : "0", lot, p.expirationDate ?? null, p.costCenterId ?? null, p.harvestId ?? null, p.cultivationId ?? null, p.sourceType, p.sourceId, p.date, p.note ?? null, ctx.user.id]);

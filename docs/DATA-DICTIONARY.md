@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 190 |
-| Tabelas com `organization_id` (escopo de organização) | 132 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 53 |
-| Entidades curadas neste dicionário | 47 |
+| Tabelas no schema `erp` | 192 |
+| Tabelas com `organization_id` (escopo de organização) | 135 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 54 |
+| Entidades curadas neste dicionário | 49 |
 | Entidades com ID Global | 23 |
 | Entidades com Tipo de Operação | 13 |
 | Tipos de Operação referenciados | 17 |
-| Cobertura curada | 24.7% |
+| Cobertura curada | 25.5% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -300,7 +300,7 @@ Contador ÚNICO por organização que gera o ID Global. Compartilhado por todas 
 
 ### ERP-CADASTROS-PRODUTO — Produto
 
-Item de estoque, insumo ou serviço. Compartilhado pela organização (não pertence a uma empresa).
+Item de estoque, insumo ou serviço. Compartilhado pela organização (não pertence a uma empresa). Ficha em abas (CADASTROS Fase 6, decisão 254).
 
 | Propriedade | Valor |
 | --- | --- |
@@ -329,7 +329,7 @@ Item de estoque, insumo ou serviço. Compartilhado pela organização (não pert
 | `kind_id` |  | uuid | não | FK | `erp.product_kinds` |  |  |
 | `cultivation_id` |  | uuid | não |  |  |  |  |
 | `quality` |  | text | não |  |  |  |  |
-| `has_lot` |  | boolean | sim |  |  |  |  |
+| `has_lot` | Controla lote (legado) | boolean | sim |  |  |  | Derivado de controle_lote (controle ≠ nenhum). Gravar has_lot=true grava o controle 'lote'; false, 'nenhum'. |
 | `control_stock` |  | boolean | sim |  |  |  |  |
 | `min_stock` |  | numeric(18,4) | não |  |  |  |  |
 | `last_purchase_date` |  | date | não |  |  |  |  |
@@ -347,11 +347,19 @@ Item de estoque, insumo ou serviço. Compartilhado pela organização (não pert
 | `is_fiscal` |  | boolean | sim |  |  |  |  |
 | `tax_rule_id` |  | uuid | não | FK | `erp.tax_rules` |  |  |
 | `barcode` |  | text | não |  |  |  |  |
-| `taxes` |  | jsonb | sim |  |  |  |  |
+| `taxes` | Parâmetros fiscais | jsonb | sim |  |  |  | Mesmas chaves dos tributos da Regra Fiscal. Chave desconhecida é preservada na edição (a API funde; só null remove). |
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
+| `marca` |  | text | não |  |  |  |  |
+| `fabricante` |  | text | não |  |  |  |  |
+| `tipo_item` |  | text | não |  |  | `00` · `01` · `02` · `03` · `04` · `05` · `06` · `07` · `08` · `09` · `10` · `99` |  |
+| `estoque_maximo` |  | numeric(18,4) | não |  |  |  |  |
+| `controle_lote` | Controle de lote | text | sim |  |  | `nenhum` · `lote` · `lote_validade` | nenhum, lote (lote obrigatório na entrada e na saída) ou lote_validade (também exige validade na entrada). Mudar com saldo ≠ 0 é recusado. |
+| `origem` |  | smallint | não |  |  |  |  |
+| `cest` |  | text | não |  |  |  |  |
+| `registro_mapa` |  | text | não |  |  |  |  |
 
 ### ERP-CADASTROS-PESSOA — Pessoa
 
@@ -635,6 +643,60 @@ Contas bancárias ADICIONAIS do parceiro (banco pela busca, agência, conta, tip
 | `titular` |  | text | não |  |  |  |  |
 | `pix_tipo` |  | text | não |  |  | `document` · `phone` · `email` · `random` |  |
 | `pix_chave` |  | text | não |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-PRODUTO-UNIDADE — Unidade alternativa do produto
+
+Unidades ALTERNATIVAS e embalagens do produto (unidade, multiplica/divide, fator > 0, código de barras, uso compra e/ou venda), gravadas junto com a ficha (CADASTROS Fase 6, decisão 254). Não repete a unidade padrão. A 2ª unidade antiga virou a primeira linha; erp.product_packages fica como legado.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.produto_unidades` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `product_id` |  | uuid | sim |  |  |  |  |
+| `measurement_id` |  | uuid | sim | FK | `erp.measurement_units` |  |  |
+| `tipo_fator` |  | text | sim |  |  | `multiply` · `divide` |  |
+| `fator` |  | numeric(18,6) | sim |  |  |  |  |
+| `codigo_barras` |  | text | não |  |  |  |  |
+| `uso_compra` |  | boolean | sim |  |  |  |  |
+| `uso_venda` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-PRODUTO-FORNECEDOR — Fornecedor do produto
+
+Fornecedores do produto (CADASTROS Fase 6): só parceiro com tipo Fornecedor, código do produto no fornecedor, unidade de compra e no máximo um preferencial.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.produto_fornecedores` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `product_id` |  | uuid | sim |  |  |  |  |
+| `person_id` |  | uuid | sim |  |  |  |  |
+| `codigo_no_fornecedor` |  | text | não |  |  |  |  |
+| `measurement_id` |  | uuid | não | FK | `erp.measurement_units` |  |  |
+| `preferencial` |  | boolean | sim |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
@@ -1673,7 +1735,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.earning_lines` | 7 | não | — | não |
 | `erp.earnings` | 12 | sim | `empresa_id` | não |
 | `erp.employee_events` | 6 | sim | — | não |
-| `erp.employee_profiles` | 13 | não | — | não |
+| `erp.employee_profiles` | 29 | sim | `empresa_id` | não |
 | `erp.empresa_cost_centers` | 2 | não | `empresa_id` | não |
 | `erp.equipment_cost_centers` | 3 | não | — | não |
 | `erp.equipment_families` | 5 | sim | — | não |

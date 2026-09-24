@@ -132,7 +132,12 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   // ---------- Cadastros ----------
   {
     codigo: "ERP-CADASTROS-PRODUTO", tabela: "erp.products", nome: "Produto", modulo: "CADASTROS", natureza: "entidade", idGlobal: true, rota: "/cadastros/products/:id?view=1",
-    descricao: "Item de estoque, insumo ou serviço. Compartilhado pela organização (não pertence a uma empresa)."
+    descricao: "Item de estoque, insumo ou serviço. Compartilhado pela organização (não pertence a uma empresa). Ficha em abas (CADASTROS Fase 6, decisão 254).",
+    campos: {
+      controle_lote: { nome: "Controle de lote", descricao: "nenhum, lote (lote obrigatório na entrada e na saída) ou lote_validade (também exige validade na entrada). Mudar com saldo ≠ 0 é recusado." },
+      has_lot: { nome: "Controla lote (legado)", descricao: "Derivado de controle_lote (controle ≠ nenhum). Gravar has_lot=true grava o controle 'lote'; false, 'nenhum'." },
+      taxes: { nome: "Parâmetros fiscais", descricao: "Mesmas chaves dos tributos da Regra Fiscal. Chave desconhecida é preservada na edição (a API funde; só null remove)." }
+    }
   },
   {
     codigo: "ERP-CADASTROS-PESSOA", tabela: "erp.people", nome: "Pessoa", modulo: "CADASTROS", natureza: "entidade", idGlobal: true, rota: "/cadastros/people/:id?view=1",
@@ -186,6 +191,14 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
   {
     codigo: "ERP-CADASTROS-PARCEIRO-CONTA", tabela: "erp.parceiro_contas", nome: "Conta bancária adicional do parceiro", modulo: "CADASTROS", natureza: "linha", idGlobal: false,
     descricao: "Contas bancárias ADICIONAIS do parceiro (banco pela busca, agência, conta, tipo, titular, Pix). A principal continua nas colunas de erp.people."
+  },
+  {
+    codigo: "ERP-CADASTROS-PRODUTO-UNIDADE", tabela: "erp.produto_unidades", nome: "Unidade alternativa do produto", modulo: "CADASTROS", natureza: "linha", idGlobal: false,
+    descricao: "Unidades ALTERNATIVAS e embalagens do produto (unidade, multiplica/divide, fator > 0, código de barras, uso compra e/ou venda), gravadas junto com a ficha (CADASTROS Fase 6, decisão 254). Não repete a unidade padrão. A 2ª unidade antiga virou a primeira linha; erp.product_packages fica como legado."
+  },
+  {
+    codigo: "ERP-CADASTROS-PRODUTO-FORNECEDOR", tabela: "erp.produto_fornecedores", nome: "Fornecedor do produto", modulo: "CADASTROS", natureza: "linha", idGlobal: false,
+    descricao: "Fornecedores do produto (CADASTROS Fase 6): só parceiro com tipo Fornecedor, código do produto no fornecedor, unidade de compra e no máximo um preferencial."
   },
   {
     codigo: "ERP-CADASTROS-ARMAZEM", tabela: "erp.warehouses", nome: "Armazém", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
