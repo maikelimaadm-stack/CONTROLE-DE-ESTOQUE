@@ -5,14 +5,27 @@ import * as Popover from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
 import { CmdDisplay, CmdPanel } from "./mg-controls";
 import { api, ApiError, qs } from "@/lib/api";
-import { getResource, getReferencia, type ChaveReferencia } from "@agro/domain";
+import { getResource, getReferencia, type ChaveReferencia, type FieldDef } from "@agro/domain";
 import { Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Dialog } from "./overlays";
 // carregado sob demanda: evita ciclo de módulos (o formulário declarativo usa RefSelect)
 const ResourceQuickCreate = React.lazy(() => import("@/features/resources/quick-create").then((m) => ({ default: m.ResourceQuickCreate })));
 
-export interface Option { id: string; label: string; code?: string | null }
+/** `caminho` e `kind` vêm só dos cadastros em árvore ("1 Insumos › 1.01 Fertilizantes"); API anterior não os manda. */
+export interface Option { id: string; label: string; code?: string | null; caminho?: string | null; kind?: string | null }
+
+/**
+ * Recorte da lista de opções de um campo de referência do registry: `filtro` fixo e, quando o lançamento
+ * exige analítico (`exigeAnalitico`), só analíticos. Apresentação — quem recusa é o servidor.
+ */
+export function filtroDaReferencia(f: FieldDef): Record<string, string> | undefined {
+  if (!f.ref) return undefined;
+  if (!f.ref.exigeAnalitico) return f.ref.filtro;
+  return { ...(f.ref.filtro ?? {}), kind: "analytic" };
+}
+/** Texto mostrado de uma opção: o caminho na árvore quando houver; senão o rótulo. */
+const textoDaOpcao = (o: Option) => o.caminho || o.label;
 /** Select com busca server-side (equivalente ao select2 do sistema de referência), para campos de referência. */
 export function RefSelect({ resource, value, onChange, placeholder = "Selecione", filter, disabled, className, allowEmpty = true, includeInactive, labelHint, onOpenChange }: { resource: string; value: string | null | undefined; onChange: (v: string | null, opt?: Option) => void; placeholder?: string; filter?: Record<string, string | undefined>; disabled?: boolean; className?: string; allowEmpty?: boolean; includeInactive?: boolean; /** rótulo já conhecido do valor atual (evita consulta ao abrir o registro) */ labelHint?: string | null; onOpenChange?: (o: boolean) => void }) {
   const [open, setOpen] = React.useState(false); const [search, setSearch] = React.useState(""); const [creating, setCreating] = React.useState(false); const { can } = useAuth();
@@ -20,10 +33,13 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
   const { data, isLoading } = useQuery({ queryKey: ["options", resource, search, f, includeInactive], queryFn: () => api<Option[]>(`/api/resources/${resource}/options${qs({ search, ...f, include_inactive: includeInactive ? "1" : undefined })}`), enabled: open, staleTime: 60_000 });
   const [picked, setPicked] = React.useState<Option | null>(null);
   const current = data?.find((o) => o.id === value) ?? (picked && picked.id === value ? picked : null);
-  const { data: one } = useQuery({ queryKey: ["option-one", resource, value], queryFn: async () => { const r = await api<Record<string, unknown>>(`/api/resources/${resource}/${value}`); return r; }, enabled: Boolean(value) && !current && !labelHint, staleTime: 60_000 });
   const def = React.useMemo(() => getResource(resource), [resource]);
-  const label = current?.label ?? labelHint ?? (one ? String(one[def?.labelField ?? "name"] ?? one["description"] ?? one["name"] ?? "") : "");
-  const seen = new Set<string>(); const opts = (data ?? []).filter((o) => { const k = `${o.code ?? ""}|${o.label}`; if (seen.has(k) && o.id !== value) return false; seen.add(k); return true; }).map((o) => ({ value: o.id, label: o.label, code: o.code }));
+  const { data: one } = useQuery({ queryKey: ["option-one", resource, value], queryFn: async () => { const r = await api<Record<string, unknown>>(`/api/resources/${resource}/${value}`); return r; }, enabled: Boolean(value) && !current && !labelHint && !def?.tree, staleTime: 60_000 });
+  // árvore: o valor já gravado também aparece pelo caminho — a MESMA rota de opções, recortada pelo id (sem o recorte de analítico, para um valor antigo continuar legível)
+  const { data: umNaArvore } = useQuery({ queryKey: ["option-one-caminho", resource, value], queryFn: () => api<Option[]>(`/api/resources/${resource}/options${qs({ id: value ?? undefined, include_inactive: "1" })}`), enabled: Boolean(value) && !current && Boolean(def?.tree), staleTime: 60_000 });
+  const doValor = umNaArvore?.find((o) => o.id === value);
+  const label = (current ? textoDaOpcao(current) : undefined) ?? (doValor ? textoDaOpcao(doValor) : undefined) ?? labelHint ?? (one ? String(one[def?.labelField ?? "name"] ?? one["description"] ?? one["name"] ?? "") : "");
+  const seen = new Set<string>(); const opts = (data ?? []).filter((o) => { const k = `${o.code ?? ""}|${o.label}`; if (seen.has(k) && o.id !== value) return false; seen.add(k); return true; }).map((o) => ({ value: o.id, label: textoDaOpcao(o), code: o.caminho ? undefined : o.code }));
   return (<>
     <Popover.Root open={open} onOpenChange={(o) => { if (disabled) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); }}>
       <Popover.Trigger asChild>

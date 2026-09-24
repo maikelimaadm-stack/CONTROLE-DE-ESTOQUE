@@ -12,6 +12,7 @@
  * outros campos; só código ou superior alterados passam de novo pela conferência.
  */
 import type { ResourceDef } from "@agro/domain";
+import { getResource } from "@agro/domain";
 import { ehCadastroCodigoHierarquico, mascaraDoCadastro, proximoCodigoHierarquico, validarCodigoHierarquico } from "@agro/domain";
 import { ident } from "./sql.js";
 import { validation } from "./errors.js";
@@ -97,4 +98,21 @@ export async function sugerirCodigo(ctx: ServiceCtx, def: ResourceDef, parentId:
   const p = proximoCodigoHierarquico(codigoPai, r.rows.map((x) => x.code), m);
   if ("erro" in p) throw campo("code", p.erro);
   return { codigo: p.codigo, mascara: m };
+}
+
+/**
+ * Referência marcada `exigeAnalitico` no registry (produto → grupo, natureza de custo, centro padrão): o valor
+ * GRAVADO ou TROCADO precisa ser analítico. Valor que não mudou não é reconferido (dado antigo continua
+ * editável). Inexistente/outra organização: a mesma recusa — não se revela a diferença.
+ */
+export async function conferirReferenciasAnaliticas(ctx: ServiceCtx, def: ResourceDef, data: Linha, atual: Linha | null): Promise<void> {
+  for (const f of def.fields) {
+    if (f.type !== "ref" || !f.ref?.exigeAnalitico || !(f.name in data)) continue;
+    const v = data[f.name];
+    if (v === null || v === undefined || v === "" || (atual !== null && v === atual[f.name])) continue;
+    const alvo = getResource(f.ref.resource);
+    if (!alvo?.tree) continue;
+    const r = await ctx.tx.query(`select 1 from erp.${ident(alvo.table)} where id=$1 and organization_id=$2 and kind='analytic'${alvo.softDelete ? " and deleted_at is null" : ""}`, [String(v), ctx.orgId]);
+    if (!r.rowCount) throw campo(f.name, `${f.label}: escolha um registro analítico. Sintético agrupa e não recebe lançamento.`);
+  }
 }

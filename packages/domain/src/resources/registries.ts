@@ -114,7 +114,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [
       T("code", "Código", { readOnly: true, list: true, search: true, section: "Geral", span: 2 }),
       T("description", "Descrição", { required: true, list: true, search: true, maxLength: 120, help: "Nome do produto que está sendo cadastrado", section: "Geral", span: 6 }),
-      REF("group_id", "Grupo", "product_groups", { ref: { resource: "product_groups", filtro: { kind: "analytic" } }, required: true, list: true, filter: true, help: "Só grupo analítico recebe produto", section: "Geral", span: 4 }),
+      REF("group_id", "Grupo", "product_groups", { ref: { resource: "product_groups", filtro: { kind: "analytic" }, exigeAnalitico: true }, required: true, list: true, filter: true, help: "Só grupo analítico recebe produto", section: "Geral", span: 4 }),
       REF("measurement_id", "1ª Un. Medida", "measurement_units", { required: true, help: "Unidade padrão (o rótulo é também o cabeçalho da planilha de importação)", section: "Geral", span: 3 }),
       T("marca", "Marca", { search: true, maxLength: 120, section: "Geral", span: 3 }), T("fabricante", "Fabricante", { maxLength: 120, section: "Geral", span: 3 }),
       T("reference", "Cod. Produto (fornecedor)", { search: true, help: "Referência", section: "Geral", span: 3 }), T("barcode", "Código de barras", { section: "Geral", span: 3 }),
@@ -135,8 +135,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       B("is_fiscal", "Emitir NFe", { section: "Fiscal", span: 2 }), REF("tax_rule_id", "Regra fiscal", "tax_rules", { section: "Fiscal", span: 5 }),
       { name: "taxes", label: "Parâmetros fiscais (CFOP, CST, alíquotas, IBS/CBS)", type: "json", section: "Fiscal", span: 12, camposJson: TRIBUTOS_DO_PRODUTO },
       // CUSTOS E VENDA
-      REF("financial_category_id", "Natureza de custo", "financial_categories", { section: "Custos e venda", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
-      REF("default_cost_center_id", "Centro de resultado padrão", "cost_centers", { section: "Custos e venda", span: 4 }),
+      REF("financial_category_id", "Natureza de custo", "financial_categories", { ref: { resource: "financial_categories", filtro: { kind: "analytic" }, exigeAnalitico: true }, section: "Custos e venda", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
+      REF("default_cost_center_id", "Centro de resultado padrão", "cost_centers", { ref: { resource: "cost_centers", filtro: { kind: "analytic" }, exigeAnalitico: true }, section: "Custos e venda", span: 4 }),
       M("reference_price", "Valor de referência", { section: "Custos e venda", help: "Valor de mercado do produto", span: 3 }),
       { name: "average_cost", label: "Custo médio (calculado)", type: "money", readOnly: true, section: "Custos e venda", span: 3 }, D("last_purchase_date", "Última compra", { readOnly: true, section: "Custos e venda", span: 3 }),
       // AGRO

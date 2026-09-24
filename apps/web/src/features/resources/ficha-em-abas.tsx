@@ -20,7 +20,7 @@ import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { Card, Input, NativeSelect } from "@/components/ui";
-import { RefSelect, ReferenciaSelect } from "@/components/ui/ref-select";
+import { filtroDaReferencia, RefSelect, ReferenciaSelect } from "@/components/ui/ref-select";
 import { PillBtn } from "@/features/base1/ui";
 import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
 
@@ -76,7 +76,7 @@ export function abaDoCampo(def: ResourceDef, campo: string): string | undefined 
 function CelulaDaGrade({ f, valor, onChange, dis }: { f: FieldDef; valor: unknown; onChange: (v: unknown) => void; dis: boolean }) {
   const cls = "h-7 w-full min-w-[90px] text-[12.5px]";
   if (f.busca) return <ReferenciaSelect referencia={f.busca} value={valor as string | number | null} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
-  if (f.type === "ref") return <RefSelect resource={f.ref!.resource} filter={f.ref!.filtro} value={valor as string} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
+  if (f.type === "ref") return <RefSelect resource={f.ref!.resource} filter={filtroDaReferencia(f)} value={valor as string} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
   if (f.type === "boolean") return <input type="checkbox" aria-label={f.label} disabled={dis} className="accent-brand-500" checked={valor === true || valor === "true"} onChange={(e) => onChange(e.target.checked)} />;
   if (f.type === "select") return <NativeSelect aria-label={f.label} disabled={dis} className={cls} value={String(valor ?? "")} onChange={(e) => onChange(e.target.value)}><option value="" />{f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>;
   return <Input aria-label={f.label} readOnly={dis} className={cls} type={f.type === "email" ? "email" : numerico.includes(f.type) ? "number" : "text"} value={String(valor ?? "")} onChange={(e) => onChange(e.target.value)} />;

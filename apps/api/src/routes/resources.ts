@@ -8,7 +8,7 @@ import { runService, nextCode, requirePermission, comPermissaoResolvida } from "
 import { SEQUENCIA_EMPRESA } from "../lib/sequencia-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
 import { atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
-import { conferirRegrasDaArvore, conferirExclusaoNaArvore, sugerirCodigo } from "../lib/arvore-cadastro.js";
+import { conferirRegrasDaArvore, conferirExclusaoNaArvore, conferirReferenciasAnaliticas, sugerirCodigo } from "../lib/arvore-cadastro.js";
 import { conferirGrupoDeProdutos, conferirGrupoDoProduto } from "../lib/grupo-de-produtos.js";
 import { conferirTipoDaNatureza } from "../lib/natureza-financeira.js";
 import { conferirNcmDoProduto } from "../lib/ncm-do-produto.js";
@@ -70,6 +70,8 @@ async function conferirRegrasDoCadastro(ctx: ServiceCtx, def: ResourceDef, id: s
   else if (def.key === "people") await conferirParceiro(ctx, id, data, atual);
   else if (def.key === "funcionarios") await conferirFuncionario(ctx, id, data, atual);
   else if (def.key === "job_functions") await conferirCboDaFuncao(ctx, data);
+  // depois das regras próprias: a recusa específica (ex.: grupo do produto) fala primeiro
+  await conferirReferenciasAnaliticas(ctx, def, data, atual);
 }
 
 function listColumns(def: ResourceDef): string[] {
@@ -368,11 +370,32 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
   // autocomplete de recurso por fazenda: só fazendas autorizadas (a fazenda selecionada é filtro do chamador via `extra.empresa_id`)
   const escO = escopoDoRecurso(def);
   if (escO.ativo && existing.has("empresa_id")) where.push(...empresaScopeBuilder(ctx, "t.empresa_id", b, { nullable: escO.nullable }));
-  if (search) where.push(`${labelExpr} ilike ${b.add(`%${search}%`)}`);
+  // árvore com código: a busca acha também pelo código ("1.01"), e a ordem é a da árvore (o código).
+  const arvore = Boolean(def.tree) && existing.has("parent_id") && existing.has("code") && !refDef;
+  if (search) where.push(arvore ? `(${labelExpr} ilike ${b.add(`%${search}%`)} or t.code ilike ${b.add(`${escapeLike(search)}%`)})` : `${labelExpr} ilike ${b.add(`%${search}%`)}`);
   for (const [k, v] of Object.entries(extra)) if (existing.has(k) && k !== "include_inactive") where.push(`t.${ident(k)} = ${b.add(v)}`);
   const codeSel = existing.has("code") ? ", t.code::text as code" : ", null as code";
-  const r = await ctx.tx.query(`select t.id, ${labelExpr} as label ${codeSel} from erp.${ident(def.table)} t ${join} ${where.length ? "where " + where.join(" and ") : ""} order by 2 limit 200`, b.params);
-  return r.rows;
+  const kindSel = arvore && existing.has("kind") ? ", t.kind::text as kind" : "";
+  const r = await ctx.tx.query(`select t.id, ${labelExpr} as label ${codeSel}${kindSel} from erp.${ident(def.table)} t ${join} ${where.length ? "where " + where.join(" and ") : ""} order by ${arvore ? "t.code, 2" : "2"} limit 200`, b.params);
+  if (!arvore || !r.rows.length) return r.rows;
+  const caminhos = await caminhosNaArvore(ctx, def, r.rows.map((x) => String((x as { id: string }).id)));
+  return r.rows.map((x) => ({ ...x, caminho: caminhos.get(String((x as { id: string }).id)) ?? null }));
+}
+
+/**
+ * CAMINHO de cada registro de uma árvore com código — "1 Insumos › 1.01 Fertilizantes" (CADASTROS Fase 7,
+ * decisão 256). UMA consulta recursiva para o lote inteiro (sem N+1), presa à organização do contexto em
+ * cada passo; profundidade limitada (a máscara tem no máximo 8 níveis) para um ciclo antigo não girar.
+ */
+export async function caminhosNaArvore(ctx: ServiceCtx, def: ResourceDef, ids: string[]): Promise<Map<string, string>> {
+  const tbl = `erp.${ident(def.table)}`; const nome = ident(def.labelField);
+  const r = await ctx.tx.query<{ origem: string; caminho: string }>(
+    `with recursive c as (
+       select t.id as origem, t.parent_id, concat_ws(' ', t.code, t.${nome}::text) as caminho, 0 as d from ${tbl} t where t.id = any($1::uuid[]) and t.organization_id=$2
+       union all
+       select c.origem, p.parent_id, concat_ws(' ', p.code, p.${nome}::text) || ' › ' || c.caminho, c.d + 1 from c join ${tbl} p on p.id=c.parent_id and p.organization_id=$2 where c.d < 16)
+     select distinct on (origem) origem, caminho from c order by origem, d desc`, [ids, ctx.orgId]);
+  return new Map(r.rows.map((x) => [x.origem, x.caminho]));
 }
 
 /**

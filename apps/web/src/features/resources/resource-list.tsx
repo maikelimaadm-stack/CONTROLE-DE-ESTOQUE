@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "@/lib/toast";
-import { getResource, type FieldDef } from "@agro/domain";
+import { getResource, ehCadastroCodigoHierarquico, type FieldDef } from "@agro/domain";
 import { filterKindOf } from "@agro/shared";
 import { api, qs, download } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -13,6 +13,9 @@ import { Base1List, type RecordProps } from "@/features/base1/list";
 import type { Base1Column, Base1FilterDef, Row } from "@/features/base1/types";
 import { ResourceForm } from "./resource-form";
 import { ImportDialog } from "./import-dialog";
+import { ArvoreTela } from "./arvore-tela";
+import { PillBtn } from "@/features/base1/ui";
+import { FolderTree, List } from "lucide-react";
 
 export function formatCell(f: FieldDef, row: Record<string, unknown>) {
   const v = row[f.name];
@@ -88,7 +91,12 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath, extra
   const [importando, setImportando] = React.useState(false);
   const rowVisible = React.useCallback((r: Row) => !Array.isArray(r["ancestrais"]) || !(r["ancestrais"] as string[]).some((a) => recolhidos.has(a)), [recolhidos]);
   const filters = React.useMemo<Base1FilterDef[]>(() => fields.filter((f) => (f.filter || f.list) && f.type !== "json" && f.type !== "textarea" && !(fixedFilters && f.name in fixedFilters)).map((f) => ({ key: f.name, label: f.label, kind: filterKindOf(f.type), mode: "advanced" as const, resource: f.ref?.resource, options: f.options })), [fields, fixedFilters]);
-  const urlParams = React.useMemo(() => { const o: Record<string, string> = {}; sp.forEach((v, k) => { if (k !== "view" && k !== "tab" && k !== "sub") o[k] = v; }); return o; }, [sp]);
+  const urlParams = React.useMemo(() => { const o: Record<string, string> = {}; sp.forEach((v, k) => { if (k !== "view" && k !== "tab" && k !== "sub" && k !== "visao") o[k] = v; }); return o; }, [sp]);
+  // TELA DE ÁRVORE (Fase 7): os cadastros com código hierárquico alternam entre a lista em árvore (padrão, a de
+  // sempre) e a árvore com ficha ao lado. A visão fica no endereço (`?visao=arvore`) e não vira filtro da lista.
+  const comArvore = Boolean(def?.tree) && ehCadastroCodigoHierarquico(resourceKey) && !fixedFilters;
+  const visaoArvore = comArvore && sp.get("visao") === "arvore";
+  const trocarVisao = (arv: boolean) => { const p = new URLSearchParams(sp.toString()); if (arv) p.set("visao", "arvore"); else p.delete("visao"); const q = p.toString(); router.replace(`${basePath ?? `/cadastros/${resourceKey}`}${q ? `?${q}` : ""}`); };
   if (!def) return <div>Recurso desconhecido</div>;
   const base = basePath ?? `/cadastros/${resourceKey}`;
   const perm = def.permission;
@@ -101,7 +109,8 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath, extra
     { key: "baixar-modelo", label: "Baixar modelo de importação", onClick: () => { void download(`/api/imports/${resourceKey}/modelo`, `modelo-${resourceKey}.xlsx`).catch(() => toast.error("Falha ao baixar o modelo")); } },
     { key: "importar", label: "Importar planilha", onClick: () => setImportando(true) },
   ] : [];
-  return <>{podeImportar && <ImportDialog resourceKey={resourceKey} labelPlural={def.labelPlural} open={importando} onOpenChange={setImportando} avisoFiltro={avisoDeFiltroFixo(fields, fixed)} />}<Base1List
+  if (visaoArvore) return <ArvoreTela resourceKey={resourceKey} alternar={<PillBtn tone="outline" data-testid="visao-lista" onClick={() => trocarVisao(false)}><List className="h-3.5 w-3.5" /> Ver lista</PillBtn>} />;
+  return <>{comArvore && <div className="mb-2 flex"><PillBtn tone="outline" data-testid="visao-arvore" onClick={() => trocarVisao(true)}><FolderTree className="h-3.5 w-3.5" /> Ver em árvore</PillBtn></div>}{podeImportar && <ImportDialog resourceKey={resourceKey} labelPlural={def.labelPlural} open={importando} onOpenChange={setImportando} avisoFiltro={avisoDeFiltroFixo(fields, fixed)} />}<Base1List
     moduleId={resourceKey} title={title ?? def.labelPlural} columns={columns} filters={filters} entity={def.table} csvName={resourceKey}
     fetchPage={(p) => api<{ items: Row[]; total: number }>(`/api/resources/${resourceKey}${qs({ page: p.page, pageSize: p.pageSize, sort: p.sort, dir: p.dir, search: p.search, ...p.filters, ...fixed })}`)}
     distinct={(key, search) => api<{ value: string; label: string; count: number }[]>(`/api/resources/${resourceKey}/distinct${qs({ field: key, search, limit: 100 })}`)}

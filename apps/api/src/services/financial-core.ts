@@ -39,11 +39,27 @@ export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | 
     : [{ number: 1, dueDate: input.dueDate, amount: total, isDownPayment: false }];
 }
 
+/**
+ * RATEIO SÓ EM ANALÍTICO (CADASTROS Fase 7, decisão 256): natureza e centro de resultado sintéticos agrupam,
+ * não recebem lançamento. Uma consulta por cadastro para o rateio inteiro (sem N+1). Id de outra organização
+ * ou inexistente não é assunto daqui — a FK e a leitura posterior já tratam; aqui só se recusa o SINTÉTICO.
+ */
+export async function exigirRateioAnalitico(ctx: ServiceCtx, lines: readonly Pick<ApportionmentLine, "financialCategoryId" | "costCenterId">[]): Promise<void> {
+  const cats = [...new Set(lines.map((l) => l.financialCategoryId))]; const ccs = [...new Set(lines.map((l) => l.costCenterId))];
+  const r = await ctx.tx.query<{ t: string }>(
+    "select 'financial_category_id' t from erp.financial_categories where organization_id=$1 and id = any($2::uuid[]) and kind<>'analytic' union all select 'cost_center_id' from erp.cost_centers where organization_id=$1 and id = any($3::uuid[]) and kind<>'analytic' limit 1",
+    [ctx.orgId, cats, ccs]);
+  const t = r.rows[0]?.t; if (!t) return;
+  const message = t === "financial_category_id" ? "Natureza sintética não recebe lançamento. Escolha uma natureza analítica." : "Centro de resultado sintético não recebe lançamento. Escolha um centro de resultado analítico.";
+  throw validation(message, [{ path: ["apportionment", t], message }]);
+}
+
 /** Cria título(s) financeiro(s) com rateio; se houver plano de parcelamento, cria uma linha por parcela (group_id comum). */
 export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<{ ids: string[]; groupId: string | null }> {
   await assertPeriodOpen(ctx.tx, ctx.orgId, input.empresaId, input.emissionDate);
   const total = money(input.amount);
   if (D(total).lte(0)) throw validation("Valor do título deve ser positivo");
+  await exigirRateioAnalitico(ctx, input.apportionment);
   const lines = normalizeApportionment(money(D(total).minus(input.discount ?? 0)), input.apportionment);
   const parts = parcelasDoTitulo(input);
   const groupId = parts.length > 1 ? (await ctx.tx.query<{ id: string }>("select gen_random_uuid() id")).rows[0]!.id : null;
@@ -88,6 +104,7 @@ export async function createBankMovement(ctx: ServiceCtx, i: BankMovementInput):
     [ctx.orgId, i.empresaId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id]);
   const id = r.rows[0]!.id;
   await atribuirIdGlobal(ctx, "bank_movements", id);
+  if (i.apportionment?.length) await exigirRateioAnalitico(ctx, i.apportionment);
   if (i.apportionment?.length) for (const l of normalizeApportionment(money(i.amount), i.apportionment)) await ctx.tx.query("insert into erp.bank_movement_apportionments(movement_id,financial_category_id,chart_account_id,cost_center_id,harvest_id,percentage,amount) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.financialCategoryId, l.chartAccountId, l.costCenterId, l.harvestId, l.percentage, l.amount]);
   // transferência interna: cria o par na conta destino
   if (i.categoryType === "internal_transfer" && i.destinationAccountId) {

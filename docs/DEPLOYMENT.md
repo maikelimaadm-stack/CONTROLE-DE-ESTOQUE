@@ -1093,6 +1093,26 @@ estreita e não vira precedente: migration mesclada e JÁ APLICADA continua send
 Estado de produção no momento deste registro: `public.erp_migrations` em **0013**; API ativa ainda é a de
 PRE-BASE2-01 (`449730e`); 0014, 0015 e 0016 pendentes; backfill e verify NÃO executados.
 
+## CADASTROS FASE 7 — Tela de árvore e caminho nos campos de busca (sem migration)
+
+Decisão 256. **Sem migration, sem variável nova.** API e web podem subir em qualquer ordem:
+
+- **Web nova × API anterior:** as opções vêm sem `caminho`/`kind` e o campo mostra o rótulo de sempre; a tela de
+  árvore usa só rotas que já existem (`GET /resources/:key`, `proximo-codigo`, `PUT`). O recorte de analítico da
+  tela usa o filtro por coluna que a API anterior já aceitava.
+- **Web anterior × API nova:** as opções trazem dois campos a mais, ignorados; a busca passa a achar também pelo
+  código. A API nova passa a RECUSAR (422) rateio com natureza ou centro sintético e produto com grupo, natureza de
+  custo ou centro padrão sintético — a web anterior já não oferecia sintético nesses campos, então o 422 só aparece
+  para quem chama a API direto ou reenvia um rateio antigo.
+- **Reverter:** voltar o binário; nada no banco muda.
+
+**Impacto em dados reais — medir ANTES, em leitura:** título ou movimento com rateio sintético já gravado continua
+legível, mas a EDIÇÃO do rateio passa a exigir analítico:
+`select count(*) from erp.title_apportionments a join erp.financial_categories c on c.id=a.financial_category_id where c.kind<>'analytic';`
+(idem com `cost_centers` e com `bank_movement_apportionments`), e
+`select count(*) from erp.products where deleted_at is null and (financial_category_id in (select id from erp.financial_categories where kind<>'analytic') or default_cost_center_id in (select id from erp.cost_centers where kind<>'analytic'));`
+— produto nessa situação continua editável em outros campos; só a troca do valor é conferida.
+
 ## PRE-BASE2-04 — ativação do ID Global
 
 A ordem importa, e o motivo de cada fase é o estado intermediário que ela evita.

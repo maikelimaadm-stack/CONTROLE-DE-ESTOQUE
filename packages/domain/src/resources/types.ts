@@ -23,6 +23,11 @@ export interface FieldDef {
      * recusa o valor fora do recorte é o servidor ao gravar.
      */
     filtro?: Record<string, string>;
+    /**
+     * O lançamento exige registro ANALÍTICO do cadastro em árvore apontado (CADASTROS Fase 7, decisão 256):
+     * a tela só oferece analíticos e o SERVIDOR recusa sintético (422) quando o valor é gravado ou trocado.
+     */
+    exigeAnalitico?: boolean;
   };
   /**
    * Campo preenchido por BUSCA numa referência oficial (município, banco, NCM, CBO — `referencias.ts`). O
