@@ -47,8 +47,14 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "product_groups", importacao: true, label: "Grupo de Produto", labelPlural: "Grupos de Produto", table: "product_groups", permission: "products", labelField: "name", route: "/cadastros/grupos-de-produto",
-    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 8 }), active()]
+    key: "product_groups", importacao: true, label: "Grupo de Produtos", labelPlural: "Grupos de Produtos", table: "product_groups", permission: "products", labelField: "name", route: "/cadastros/grupos-de-produto", tree: true, softDelete: true, defaultSort: "code",
+    fields: [
+      T("code", "Código", { required: true, list: true, search: true, help: "Código hierárquico, ex.: 1.01", span: 3 }),
+      T("name", "Nome", { required: true, list: true, search: true, span: 5 }),
+      S("kind", "Analítico", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe produtos. Não: só agrupa outros grupos.", span: 2 }),
+      REF("parent_id", "Grupo superior", "product_groups", { span: 6 }),
+      active()
+    ]
   },
   {
     key: "product_categories", label: "Categoria de Produto", labelPlural: "Categorias de Produto", table: "product_categories", permission: "products", labelField: "name", route: "/cadastros/categorias-de-produto",
@@ -88,9 +94,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       REF("measurement_id", "1ª Un. Medida", "measurement_units", { required: true, span: 3 }), REF("second_measurement_id", "2ª Un. Medida", "measurement_units", { span: 2 }),
       S("factor_type", "Tipo de conversão", [["multiply", "Multiplica"], ["divide", "Divide"]], { help: "Quando converte de uma unidade maior para menor, multiplica; caso contrário divide.", span: 2 }),
       { name: "factor", label: "Fator conversão", type: "quantity", span: 2 },
-      REF("group_id", "Grupo", "product_groups", { required: true, list: true, filter: true, section: "Classificação", span: 4 }),
-      REF("category_id", "Categoria", "product_categories", { required: true, list: true, filter: true, section: "Classificação", span: 4 }),
-      REF("kind_id", "Classe", "product_kinds", { required: true, list: true, filter: true, section: "Classificação", span: 4 }),
+      REF("group_id", "Grupo", "product_groups", { ref: { resource: "product_groups", filtro: { kind: "analytic" } }, required: true, list: true, filter: true, section: "Classificação", span: 4 }),
       REF("cultivation_id", "Variedade", "cultivations", { section: "Classificação", span: 4 }), T("quality", "Qualidade", { section: "Classificação", span: 2 }), T("active_principle", "Princípio ativo", { search: true, section: "Classificação", span: 6 }),
       B("has_lot", "Controla Lote/Validade", { section: "Estoque", help: "Ao ativar, o sistema controla lotes e alerta sobre validade", filter: true, span: 3 }),
       B("control_stock", "Controla estoque", { default: true, section: "Estoque", help: "Gerencia o produto no estoque e calcula custo médio automaticamente", span: 3 }),
@@ -105,7 +109,11 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       B("is_fiscal", "Emitir NFe", { section: "Fiscal", span: 3 }), REF("tax_rule_id", "Regra fiscal", "tax_rules", { section: "Fiscal", span: 5 }),
       { name: "taxes", label: "Parâmetros fiscais (CFOP, CST, alíquotas, IBS/CBS)", type: "json", section: "Fiscal", span: 12 },
       active()
-    ]
+    ],
+    // CADASTROS-ESTRUTURA: Categoria e Classe saíram do produto (o Grupo de Produtos virou árvore), mas a web
+    // ANTERIOR ainda manda os dois na janela de deploy. Sem esta aceitação o `.strict()` recusaria o corpo
+    // inteiro e o cadastro de produto pararia no meio do deploy. Opcionais; a API grava o que vier.
+    camposLegadosDeEscrita: [REF("category_id", "Categoria (legado)", "product_categories"), REF("kind_id", "Classe (legado)", "product_kinds")]
   },
   {
     key: "apportionment_categories", label: "Categoria de Rateio", labelPlural: "Categorias de Rateio", table: "apportionment_categories", permission: "apportionments", labelField: "name", route: "/cadastros/rateios", softDelete: true,

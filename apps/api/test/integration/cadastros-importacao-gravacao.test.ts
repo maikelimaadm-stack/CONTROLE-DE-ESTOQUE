@@ -44,7 +44,7 @@ const preencher = (wb: ExcelJS.Workbook, linha: number, valores: Record<string, 
 /** Só as colunas VERMELHAS do produto, com o primeiro item de cada lista do próprio modelo. */
 const obrigatoriosDoProduto = (wb: ExcelJS.Workbook, descricao: string): Record<string, string> => {
   const primeiro = (lista: string) => { const v = listaDe(wb, lista)[0]; expect(v, `lista ${lista} vazia no modelo`).toBeTruthy(); return v!; };
-  return { "Descrição *": descricao, "1ª Un. Medida *": primeiro("1ª Un. Medida"), "Grupo *": primeiro("Grupo"), "Categoria *": primeiro("Categoria"), "Classe *": primeiro("Classe") };
+  return { "Descrição *": descricao, "1ª Un. Medida *": primeiro("1ª Un. Medida"), "Grupo *": primeiro("Grupo") };
 };
 const textoDaNota = (n: string | ExcelJS.Comment | undefined): string => (typeof n === "string" ? n : (n?.texts ?? []).map((t) => t.text).join(""));
 const corDoCabecalho = (wb: ExcelJS.Workbook, titulo: string) => (dados(wb).getRow(1).getCell(col(wb, titulo)).fill as ExcelJS.FillPattern | undefined)?.fgColor?.argb;
@@ -175,9 +175,10 @@ describe("obrigatório condicional (requiredWhen)", () => {
     expect(textoDaNota(dados(wb).getRow(1).getCell(col(wb, TITULO)).note)).toMatch(/^OBRIGATÓRIO quando/);
     // a cor laranja é só da coluna condicional: exatamente uma no modelo de produtos
     expect(cab.filter((t) => corDoCabecalho(wb, t) === "FFEF6C00")).toEqual([TITULO]);
-    // as obrigatórias continuam vermelhas e com *, e são exatamente as cinco do registry
+    // as obrigatórias continuam vermelhas e com *, e são exatamente as três do registry (CADASTROS-ESTRUTURA:
+    // Categoria e Classe saíram do produto)
     const obrigatorias = cab.filter((t) => t.endsWith(" *"));
-    expect(obrigatorias.sort()).toEqual(["1ª Un. Medida *", "Categoria *", "Classe *", "Descrição *", "Grupo *"]);
+    expect(obrigatorias.sort()).toEqual(["1ª Un. Medida *", "Descrição *", "Grupo *"]);
     for (const t of obrigatorias) {
       expect(corDoCabecalho(wb, t), t).toBe("FFC62828");
       expect(textoDaNota(dados(wb).getRow(1).getCell(col(wb, t)).note), t).toMatch(/^OBRIGATÓRIO/);
@@ -219,12 +220,13 @@ describe("obrigatório condicional (requiredWhen)", () => {
 });
 
 describe("árvore: antecessor da mesma planilha", () => {
-  it("G8: no modelo dos 4 cadastros em árvore, a lista da coluna do auto-relacionamento é 'warning' e as demais listas são 'stop'", async () => {
+  it("G8: no modelo dos 5 cadastros em árvore, a lista da coluna do auto-relacionamento é 'warning' e as demais listas são 'stop'", async () => {
     // Lido do arquivo GERADO (validações carregadas pelo ExcelJS a partir do XML), na primeira linha de dados.
     const casos: { key: string; propria: string; demais: string[] }[] = [
       { key: "chart_accounts", propria: "Antecessor", demais: ["Condição *", "Classe *", "Tipo", "Ativo"] },
       { key: "financial_categories", propria: "Antecessor", demais: ["Natureza *", "Classe", "Classificação", "É tributo?", "Ativo"] },
       { key: "cost_centers", propria: "Antecessor", demais: ["Classe", "Tipo", "Ativo"] },
+      { key: "product_groups", propria: "Grupo superior", demais: ["Analítico", "Ativo"] },
       // endereçamento só tem a lista do pai: nenhuma "demais" a conferir aqui (as três acima cobrem o "stop")
       { key: "addressings", propria: "Endereçamento pai", demais: [] },
     ];

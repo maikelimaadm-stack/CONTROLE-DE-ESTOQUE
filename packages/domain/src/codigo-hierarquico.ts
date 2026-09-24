@@ -1,5 +1,6 @@
 /**
- * Código hierárquico dos cadastros em árvore (Plano de Contas, Categorias Financeiras, Centros de Custo).
+ * Código hierárquico dos cadastros em árvore (Plano de Contas, Categorias Financeiras, Centros de Custo e
+ * Grupos de Produtos).
  *
  * O código de um filho é SEMPRE o código do antecessor + um nível: `1.01` → `1.01.001`. A máscara diz
  * quantos níveis existem e quantos dígitos cada um tem (`9.99.999.9999`), e é configurada POR CADASTRO
@@ -11,7 +12,7 @@
  */
 
 /** Cadastros com código hierárquico. Endereçamento é árvore, mas não tem código. */
-export const CADASTROS_CODIGO_HIERARQUICO = ["chart_accounts", "financial_categories", "cost_centers"] as const;
+export const CADASTROS_CODIGO_HIERARQUICO = ["chart_accounts", "financial_categories", "cost_centers", "product_groups"] as const;
 export type CadastroCodigoHierarquico = (typeof CADASTROS_CODIGO_HIERARQUICO)[number];
 
 export const PARAMETRO_MASCARAS_CODIGO = "mascaras_codigo";

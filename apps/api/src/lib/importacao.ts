@@ -80,14 +80,12 @@ const acrescentar = (mapa: Map<string, string[]>, chave: string, id: string) => 
 // ------------------------------------------------------------------ referências
 
 /**
- * Cadastro alvo SEM código: o rótulo sozinho repete (armazém entre empresas, categoria entre grupos, a unidade
+ * Cadastro alvo SEM código: o rótulo sozinho repete (armazém entre empresas, a unidade
  * da organização ao lado da padrão do sistema). O texto da lista leva o que distingue o registro na tela.
  * Whitelist ESTÁTICA por chave de cadastro: nenhum identificador de tabela ou coluna vem de entrada.
  */
 const QUALIFICACAO: Record<string, { colunas: string[]; join: string; exibir: (rotulo: string, q: (string | null)[]) => string }> = {
   warehouses: { colunas: ["t.initials", "e.name"], join: "left join erp.empresas e on e.id = t.empresa_id and e.organization_id = t.organization_id", exibir: (r, [sigla, empresa]) => `${sigla ? `${sigla} - ` : ""}${r}${empresa ? ` (${empresa})` : ""}` },
-  product_categories: { colunas: ["g.name"], join: "left join erp.product_groups g on g.id = t.group_id", exibir: (r, [grupo]) => (grupo ? `${r} (${grupo})` : r) },
-  product_kinds: { colunas: ["g.name", "c.name"], join: "left join erp.product_categories c on c.id = t.category_id left join erp.product_groups g on g.id = c.group_id", exibir: (r, [grupo, categoria]) => { const q = [grupo, categoria].filter(Boolean).join(" > "); return q ? `${r} (${q})` : r; } },
   cultivations: { colunas: ["t.crop"], join: "", exibir: (r, [cultura]) => (cultura ? `${r} (${cultura})` : r) },
   measurement_units: { colunas: ["t.name"], join: "", exibir: (r, [nome]) => (nome ? `${r} - ${nome}` : r) },
 };
@@ -121,7 +119,7 @@ type LinhaReferencia = { id: string; rotulo: string | null; codigo: string | nul
  * MÓDULO DO CADASTRO APONTADO (armazém → estoque). A importação roda com a permissão de criar do cadastro de
  * origem, cujo módulo pode ser nulo (produto é de organização), e nulo na RLS é a UNIÃO dos módulos.
  */
-async function carregarReferencia(ctx: ServiceCtx, alvo: ResourceDef): Promise<Referencia> {
+async function carregarReferencia(ctx: ServiceCtx, alvo: ResourceDef, filtro?: Record<string, string>): Promise<Referencia> {
   const cols = await ctx.tx.query<{ column_name: string }>("select column_name from information_schema.columns where table_schema='erp' and table_name=$1", [alvo.table]);
   const existe = new Set(cols.rows.map((c) => c.column_name));
   const where: string[] = [];
@@ -139,6 +137,10 @@ async function carregarReferencia(ctx: ServiceCtx, alvo: ResourceDef): Promise<R
     "t.id::text as id", `t.${ident(alvo.labelField)}::text as rotulo`, temCodigo ? "t.code::text as codigo" : "null::text as codigo",
     existe.has("organization_id") ? "(t.organization_id is null) as padrao" : "false as padrao",
     caminho ? "t.parent_id::text as pai" : "null::text as pai",
+    // recorte da LISTA (registry `ref.filtro`, ex.: grupo do produto só analítico). Nome de coluna vem do
+    // registry (estático), valor parametrizado. Fora do recorte o registro continua RECONHECIDO: quem digita
+    // um grupo sintético recebe a recusa clara da regra do cadastro, não um "não encontrado".
+    ...Object.keys(filtro ?? {}).filter((c) => existe.has(c)).map((c, i) => { params.push(filtro![c]); return `(t.${ident(c)}::text = $${params.length}) as f${i}`; }),
     ...(q?.colunas ?? []).map((c, i) => `${c}::text as q${i}`),
   ];
   const r = await ctx.tx.query<LinhaReferencia>(
@@ -154,11 +156,13 @@ async function carregarReferencia(ctx: ServiceCtx, alvo: ResourceDef): Promise<R
     return partes.join(" > ");
   };
   const qualificadores = (x: LinhaReferencia) => (q?.colunas ?? []).map((_, i) => { const v = x[`q${i}`]; return typeof v === "string" && limpar(v) ? limpar(v) : null; });
+  const nosFiltros = Object.keys(filtro ?? {}).filter((c) => existe.has(c)).length;
   const itens = r.rows.map((x) => {
     const rotulo = rotuloDe(x); const codigo = limpar(x.codigo ?? "");
+    const naLista = Array.from({ length: nosFiltros }, (_, i) => x[`f${i}`]).every((v) => v === true);
     let base = codigo ? `${codigo} - ${rotulo}` : caminho ? caminhoDe(x) : q ? q.exibir(rotulo, qualificadores(x)) : rotulo;
     if (alvo.sharedDefaults && x.padrao) base = `${base} (padrão)`;
-    return { id: x.id, rotulo, codigo, base };
+    return { id: x.id, rotulo, codigo, base, naLista };
   }).filter((x) => x.base);
   if (caminho) itens.sort((a, b) => a.base.localeCompare(b.base, "pt-BR"));
   // o que continua repetido depois da qualificação ganha um desempate estável (o começo do UUID): o valor da
@@ -168,7 +172,7 @@ async function carregarReferencia(ctx: ServiceCtx, alvo: ResourceDef): Promise<R
   const ref: Referencia = { alvo, exibicao: [], porExibicao: new Map(), porTextoExato: new Map(), porTextoSolto: new Map(), basePorId: new Map() };
   for (const x of itens) {
     const exibicao = (repeticoes.get(normal(x.base)) ?? 0) > 1 ? `${x.base} [${x.id.slice(0, 8)}]` : x.base;
-    ref.exibicao.push(exibicao);
+    if (x.naLista) ref.exibicao.push(exibicao);
     ref.basePorId.set(x.id, x.base);
     indexar(ref, x.id, exibicao, x.rotulo, x.codigo, x.base);
   }
@@ -237,7 +241,7 @@ export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Bu
     const autoRef = f.type === "ref" && f.ref?.resource === def.key;
     let valores: string[] | null = null; let dica = f.help ?? "";
     const mais = (t: string) => { dica = `${dica ? dica + " " : ""}${t}`; };
-    if (f.type === "ref" && f.ref) { const alvo = getResource(f.ref.resource); if (alvo) { valores = (await carregarReferencia(ctx, alvo)).exibicao; mais(autoRef ? `Escolha da lista ou use uma linha ANTERIOR deste arquivo (${alvo.labelPlural}).` : `Escolha da lista (cadastros de ${alvo.labelPlural} existentes).`); } }
+    if (f.type === "ref" && f.ref) { const alvo = getResource(f.ref.resource); if (alvo) { valores = (await carregarReferencia(ctx, alvo, f.ref.filtro)).exibicao; mais(autoRef ? `Escolha da lista ou use uma linha ANTERIOR deste arquivo (${alvo.labelPlural}).` : `Escolha da lista (cadastros de ${alvo.labelPlural} existentes).`); } }
     else if (f.type === "select" && f.options) { valores = f.options.map((o) => o.label); mais("Escolha da lista."); }
     else if (f.type === "boolean") { valores = [SIM, NAO]; mais("Sim ou Não."); }
     else if (f.type === "date") mais("Data no formato DD/MM/AAAA.");

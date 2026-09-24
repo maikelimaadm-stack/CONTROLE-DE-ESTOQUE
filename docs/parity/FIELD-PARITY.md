@@ -34,7 +34,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-028 | Fazendas | `/cadastros/farms` | 0 | 7 | 6 | — | UNIFICADO |
 | SCR-029 | Safras | `/cadastros/harvests` | 0 | 0 | 5 | 1 | IMPLEMENTADO |
 | SCR-030 | Endereçamentos | `/cadastros/addressings` | 0 | 0 | 3 | 0 | IMPLEMENTADO |
-| SCR-031 | Produtos | `/cadastros/products` | 1 | 7 | 10 | 6 | TESTADO |
+| SCR-031 | Produtos | `/cadastros/products` | 1 | 7 | 10 | 4 | TESTADO |
 | SCR-032 | Armazém | `/cadastros/warehouses` | 0 | 0 | 5 | 3 | IMPLEMENTADO |
 | SCR-033 | Saldo Inicial | `/estoque/estoque-inicial` | 1 | 3 | 8 | — | TESTADO |
 | SCR-034 | Rateio - Categoria Financeira | `/cadastros/apportionment_categories` | 0 | 0 | 2 | 1 | IMPLEMENTADO |
@@ -295,8 +295,8 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-297 | Safras | `/cadastros/harvests/[id]` | 8 | 0 | 0 | 9 | IMPLEMENTADO |
 | SCR-298 | Endereçamento - Setor | `/cadastros/addressings/new` | 2 | 0 | 0 | 2 | IMPLEMENTADO |
 | SCR-300 | Endereçamento - Setor | `/cadastros/addressings/[id]` | 2 | 0 | 0 | 2 | IMPLEMENTADO |
-| SCR-302 | Produtos | `/cadastros/products/new` | 66 | 0 | 0 | 32 | TESTADO |
-| SCR-304 | Produtos | `/cadastros/products/[id]` | 66 | 0 | 0 | 32 | TESTADO |
+| SCR-302 | Produtos | `/cadastros/products/new` | 66 | 0 | 0 | 30 | TESTADO |
+| SCR-304 | Produtos | `/cadastros/products/[id]` | 66 | 0 | 0 | 30 | TESTADO |
 | SCR-305 | Armazém | `/cadastros/warehouses/new` | 4 | 0 | 0 | 5 | IMPLEMENTADO |
 | SCR-307 | Armazém | `/cadastros/warehouses/[id]` | 4 | 0 | 0 | 5 | IMPLEMENTADO |
 | SCR-308 | Saldo Inicial | `/estoque/estoque-inicial/new` | 31 | 0 | 0 | — | TESTADO |

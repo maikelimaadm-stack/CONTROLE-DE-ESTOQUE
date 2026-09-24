@@ -325,8 +325,8 @@ Item de estoque, insumo ou serviço. Compartilhado pela organização (não pert
 | `factor_type` |  | text | não |  |  | `multiply` · `divide` |  |
 | `factor` |  | numeric(18,6) | não |  |  |  |  |
 | `group_id` |  | uuid | sim | FK | `erp.product_groups` |  |  |
-| `category_id` |  | uuid | sim | FK | `erp.product_categories` |  |  |
-| `kind_id` |  | uuid | sim | FK | `erp.product_kinds` |  |  |
+| `category_id` |  | uuid | não | FK | `erp.product_categories` |  |  |
+| `kind_id` |  | uuid | não | FK | `erp.product_kinds` |  |  |
 | `cultivation_id` |  | uuid | não |  |  |  |  |
 | `quality` |  | text | não |  |  |  |  |
 | `has_lot` |  | boolean | sim |  |  |  |  |
@@ -1488,7 +1488,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.preventive_maintenances` | 12 | sim | — | sim |
 | `erp.processings` | 13 | sim | `empresa_id` | não |
 | `erp.product_categories` | 5 | sim | — | não |
-| `erp.product_groups` | 4 | sim | — | não |
+| `erp.product_groups` | 8 | sim | — | sim |
 | `erp.product_kinds` | 5 | sim | — | não |
 | `erp.product_merges` | 6 | sim | — | não |
 | `erp.product_packages` | 6 | sim | — | não |

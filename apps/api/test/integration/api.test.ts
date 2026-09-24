@@ -38,8 +38,10 @@ describe("cadastros genéricos (recursos declarativos)", () => {
     expect((await h.app.inject({ method: "GET", url: `/api/resources/cost_centers/${id}`, headers: h.headers() })).statusCode).toBe(404);
   });
   it("produto que controla estoque exige categoria financeira (CHECK do banco)", async () => {
-    const r = await h.app.inject({ method: "POST", url: "/api/resources/products", headers: h.headers(), payload: { description: "X", measurement_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/measurement_units/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, group_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/product_groups/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, category_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/product_categories/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, kind_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/product_kinds/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, control_stock: true } });
+    const r = await h.app.inject({ method: "POST", url: "/api/resources/products", headers: h.headers(), payload: { description: "X", measurement_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/measurement_units/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, group_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/product_groups/options?kind=analytic", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, control_stock: true } });
     expect(r.statusCode).toBe(422);
+    // premissa (CADASTROS-ESTRUTURA): o 422 é do CHECK da categoria financeira, não da regra do grupo analítico
+    expect(r.body).not.toContain("grupo de produtos");
   });
 });
 

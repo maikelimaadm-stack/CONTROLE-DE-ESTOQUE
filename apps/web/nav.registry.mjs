@@ -212,7 +212,7 @@ export const AREAS = [
   cfg("empresa", "parametros", "Parâmetros", "tenant_parameters.edit", { aliases: ["/admin/parametros"], keywords: ["parâmetros da organização", "configurações gerais"] }),
   cfg("produtos", null, "Produtos e Classificações", P.PRODUCT_CFG),
   cfg("produtos", "products", "Produtos", "products.view", { keywords: ["insumo", "item", "cadastrar produto"] }),
-  cfg("produtos", "product-groups", "Grupos / Categorias / Classes", "products.view"),
+  cfg("produtos", "product-groups", "Grupos de Produtos", "products.view", { keywords: ["grupo de produto", "categoria de produto", "classe de produto", "grupos / categorias / classes"] }),
   cfg("produtos", "measurement-units", "Unidades de Medida", "products.view"),
   cfg("produtos", "cultivations", "Variedades / Culturas", "products.view"),
   cfg("produtos", "warehouses", "Armazéns", "warehouses.view", { keywords: ["depósito", "almoxarifado"] }),

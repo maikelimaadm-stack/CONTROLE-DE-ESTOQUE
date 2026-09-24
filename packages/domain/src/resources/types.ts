@@ -14,7 +14,14 @@ export interface FieldDef {
   required?: boolean;
   options?: FieldOption[];
   /** referência a outro recurso (select com busca) */
-  ref?: { resource: string; labelField?: string };
+  ref?: {
+    resource: string; labelField?: string;
+    /**
+     * Recorte fixo da LISTA de opções (`GET /resources/:key/options?campo=valor`). Só apresentação: quem
+     * recusa o valor fora do recorte é o servidor ao gravar.
+     */
+    filtro?: Record<string, string>;
+  };
   /** exibir na listagem */
   list?: boolean;
   /** filtrar na listagem */
@@ -59,6 +66,12 @@ export interface ResourceDef {
   /** entidade de sequência para código automático (coluna code) */
   codeEntity?: string;
   fields: FieldDef[];
+  /**
+   * Campos que a API ainda ACEITA na escrita, mas que saíram da tela, da listagem, dos filtros e da
+   * importação (legado). Existem para a janela de deploy: a web ANTERIOR continua mandando o campo e a API
+   * nova grava o que vier, em vez de recusar o corpo inteiro pelo `.strict()`. Nunca obrigatórios.
+   */
+  camposLegadosDeEscrita?: FieldDef[];
   /** coluna padrão de ordenação */
   defaultSort?: string;
   /** soft delete (deleted_at) */

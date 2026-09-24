@@ -9,12 +9,14 @@ import { SEQUENCIA_EMPRESA } from "../lib/sequencia-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
 import { atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
 import { conferirRegrasDaArvore, conferirExclusaoNaArvore, sugerirCodigo } from "../lib/arvore-cadastro.js";
+import { conferirGrupoDeProdutos, conferirGrupoDoProduto } from "../lib/grupo-de-produtos.js";
+import { conferirTipoDaNatureza } from "../lib/natureza-financeira.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
 export function buildSchema(def: ResourceDef, partial = false) {
   const shape: Record<string, z.ZodTypeAny> = {};
-  for (const f of def.fields) {
+  for (const f of camposDeEscrita(def)) {
     if (f.readOnly) continue;
     let t: z.ZodTypeAny;
     switch (f.type) {
@@ -35,6 +37,22 @@ export function buildSchema(def: ResourceDef, partial = false) {
     shape[f.name] = f.required && !partial ? t : t.nullable().optional();
   }
   return z.object(shape).strict();
+}
+
+/**
+ * Campos que a escrita aceita e grava: os do formulário MAIS a aceitação legada declarada no registry
+ * (`camposLegadosDeEscrita`, nunca obrigatória). É por aqui que a web ANTERIOR continua gravando produto com
+ * `category_id`/`kind_id` na janela de deploy da CADASTROS-ESTRUTURA sem o `.strict()` recusar o corpo.
+ */
+export function camposDeEscrita(def: ResourceDef): FieldDef[] {
+  return [...def.fields, ...(def.camposLegadosDeEscrita ?? []).map((f) => ({ ...f, required: false }))];
+}
+
+/** Regras próprias de um cadastro, além das comuns da árvore. Chave estática; nenhuma vem do cliente. */
+async function conferirRegrasDoCadastro(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Record<string, unknown>, atual: Record<string, unknown> | null) {
+  if (def.key === "product_groups") await conferirGrupoDeProdutos(ctx, id, data, atual);
+  else if (def.key === "products") await conferirGrupoDoProduto(ctx, data, atual);
+  else if (def.key === "financial_categories") await conferirTipoDaNatureza(ctx, id, data, atual);
 }
 
 function listColumns(def: ResourceDef): string[] {
@@ -156,14 +174,17 @@ export async function listResource(ctx: ServiceCtx, def: ResourceDef, query: Rec
   const t = ident(def.table);
   const chave = ident(existing.has("code") ? "code" : def.labelField);
   const vivo = (a: string) => (def.softDelete ? `and ${a}.deleted_at is null` : "");
+  // Raiz SEM código (acervo anterior ao código hierárquico, ex.: Grupos de Produtos da 0025) vai para o FIM,
+  // com a subárvore dela; nos cadastros sem coluna de código a ordem é a de sempre.
+  const semCodigo = (a: string) => (existing.has("code") ? `(${a}.code is null)` : "false");
   const rows = arvore
     ? await ctx.tx.query(`with recursive arv as (
-          select r.id, array[coalesce(r.${chave}::text, '')] as caminho, array[]::uuid[] as ancestrais, 0 as nivel from erp.${t} r
+          select r.id, ${semCodigo("r")} as sem_codigo, array[coalesce(r.${chave}::text, '')] as caminho, array[]::uuid[] as ancestrais, 0 as nivel from erp.${t} r
            where r.organization_id = ${b.add(ctx.orgId)} and (r.parent_id is null or not exists (select 1 from erp.${t} p where p.id = r.parent_id ${vivo("p")}))
           union all
-          select c.id, a.caminho || coalesce(c.${chave}::text, ''), a.ancestrais || a.id, a.nivel + 1 from erp.${t} c join arv a on c.parent_id = a.id where a.nivel < 20)
+          select c.id, a.sem_codigo, a.caminho || coalesce(c.${chave}::text, ''), a.ancestrais || a.id, a.nivel + 1 from erp.${t} c join arv a on c.parent_id = a.id where a.nivel < 20)
         select ${cols.map(ident).join(",")}, arv.nivel, arv.ancestrais, exists (select 1 from erp.${t} f where f.parent_id = ${t}.id ${vivo("f")}) as tem_filhos, count(*) over()::text as __total
-          from erp.${t} join arv using (id) ${wsql} order by arv.caminho, id limit ${q.pageSize} offset ${offset}`, b.params)
+          from erp.${t} join arv using (id) ${wsql} order by arv.sem_codigo, arv.caminho, id limit ${q.pageSize} offset ${offset}`, b.params)
     : await ctx.tx.query(`select ${cols.map(ident).join(",")}, count(*) over()::text as __total from erp.${ident(def.table)} ${wsql} order by ${ident(sortCol)} ${dir} nulls last, id limit ${q.pageSize} offset ${offset}`, b.params);
   let total = Number((rows.rows[0] as { __total?: string } | undefined)?.__total ?? 0);
   if (!rows.rows.length && q.page > 1) { const c = await ctx.tx.query<{ n: string }>(`select count(*) as n from erp.${ident(def.table)} ${wsql}`, b.params); total = Number(c.rows[0]!.n); }
@@ -234,13 +255,14 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   // fora do escopo de todo mundo. Ver `exigirEscopoTotalDaOrganizacao`.
   if (def.table === "empresas") exigirEscopoTotalDaOrganizacao(ctx, def.label);
   await conferirRegrasDaArvore(ctx, def, null, data, null);
+  await conferirRegrasDoCadastro(ctx, def, null, data, null);
   const existing = await checkColumns(ctx, def);
   const cols: string[] = []; const vals: unknown[] = [];
   if (existing.has("organization_id")) { cols.push("organization_id"); vals.push(ctx.orgId); }
   if (def.codeEntity && existing.has("code") && !data["code"]) { cols.push("code"); vals.push(await nextCode(ctx.tx, ctx.orgId, def.codeEntity, def.key === "products" ? 5 : 4)); }
   if (existing.has("created_by")) { cols.push("created_by"); vals.push(ctx.user.id); }
   if (escC.ativo && existing.has("empresa_id") && !data["empresa_id"] && ctx.empresaId) { cols.push("empresa_id"); vals.push(ctx.empresaId); }
-  for (const f of def.fields) {
+  for (const f of camposDeEscrita(def)) {
     if (f.readOnly || !(f.name in data) || !existing.has(f.name)) continue;
     const v = coerceValue(f, data[f.name]); if (v === undefined) continue;
     cols.push(f.name); vals.push(v);
@@ -267,9 +289,10 @@ export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, b
   const atual = await getOne(ctx, def, id);
   const data = buildSchema(def, true).parse(body) as Record<string, unknown>;
   await conferirRegrasDaArvore(ctx, def, id, data, atual);
+  await conferirRegrasDoCadastro(ctx, def, id, data, atual);
   const existing = await checkColumns(ctx, def);
   const sets: string[] = []; const vals: unknown[] = [];
-  for (const f of def.fields) {
+  for (const f of camposDeEscrita(def)) {
     if (f.readOnly || !(f.name in data) || !existing.has(f.name)) continue;
     const v = coerceValue(f, data[f.name]); if (v === undefined) continue;
     vals.push(v); sets.push(`${ident(f.name)} = $${vals.length}`);

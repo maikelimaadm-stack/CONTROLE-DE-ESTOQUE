@@ -98,11 +98,12 @@ test.describe("ID Global — busca e identidade", () => {
     const produto = await page.evaluate(async (base: string) => {
       const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string };
       const cab = { "content-type": "application/json", authorization: `Bearer ${s.token}`, "x-org-id": s.orgId };
-      const um = async (r: string) => (await (await fetch(`${base}/api/resources/${r}/options`, { headers: cab })).json())[0].id;
+      // `recurso?filtro`: o grupo do produto precisa ser ANALÍTICO (CADASTROS-ESTRUTURA)
+      const um = async (r: string) => { const [recurso, filtro] = r.split("?"); return (await (await fetch(`${base}/api/resources/${recurso}/options${filtro ? `?${filtro}` : ""}`, { headers: cab })).json())[0].id; };
       const cat = await (await fetch(`${base}/api/resources/financial_categories?pageSize=1&kind=analytic`, { headers: cab })).json();
       const novo = await (await fetch(`${base}/api/resources/products`, { method: "POST", headers: cab, body: JSON.stringify({
-        description: `Produto ID Global ${Date.now()}`, measurement_id: await um("measurement_units"), group_id: await um("product_groups"),
-        category_id: await um("product_categories"), kind_id: await um("product_kinds"), control_stock: true,
+        description: `Produto ID Global ${Date.now()}`, measurement_id: await um("measurement_units"), group_id: await um("product_groups?kind=analytic"),
+        control_stock: true,
         financial_category_id: cat.items[0].id }) })).json();
       return novo.id as string;
     }, API);

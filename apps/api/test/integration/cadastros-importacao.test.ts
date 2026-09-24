@@ -33,7 +33,8 @@ describe("modelo", () => {
     const obrig = wb.getWorksheet("Dados")!.getRow(1).getCell(col(wb, "Grupo *"));
     expect((obrig.fill as ExcelJS.FillPattern).fgColor?.argb).toBe("FFC62828");
     expect(String(obrig.note)).toMatch(/^OBRIGATÓRIO/);
-    const grupos = (await admin.query<{ name: string }>("select name from erp.product_groups where organization_id=$1 and is_active", [h.demo.orgId])).rows.map((r) => r.name).sort();
+    // CADASTROS-ESTRUTURA: o grupo é árvore com código; a lista do produto traz só os ANALÍTICOS, como "código - nome"
+    const grupos = (await admin.query<{ name: string }>("select code || ' - ' || name as name from erp.product_groups where organization_id=$1 and is_active and deleted_at is null and kind='analytic'", [h.demo.orgId])).rows.map((r) => r.name).sort();
     expect(grupos.length).toBeGreaterThan(2);
     expect(listaDe(wb, "Grupo").sort()).toEqual(grupos);
     expect(listaDe(wb, "Controla estoque")).toEqual(["Sim", "Não"]);
@@ -52,7 +53,7 @@ describe("importação", () => {
     const ws = wb.getWorksheet("Dados")!; const row = ws.getRow(linha);
     const pega = (chave: string) => listaDe(wb, chave)[0]!;
     row.getCell(col(wb, "Descrição *")).value = desc;
-    for (const t of ["1ª Un. Medida *", "Grupo *", "Categoria *", "Classe *"]) row.getCell(col(wb, t)).value = pega(t.replace(" *", ""));
+    for (const t of ["1ª Un. Medida *", "Grupo *"]) row.getCell(col(wb, t)).value = pega(t.replace(" *", ""));
     row.getCell(col(wb, "Controla estoque")).value = "Não";
     row.getCell(col(wb, "Estoque mínimo")).value = "1.234,5";
     row.commit();
@@ -83,7 +84,7 @@ describe("importação", () => {
     expect(r.statusCode).toBe(422);
     const erros = j(r).erros as { linha: number; coluna: string; mensagem: string }[];
     expect(erros).toEqual(expect.arrayContaining([
-      { linha: 3, coluna: "Grupo", mensagem: '"Grupo Que Não Existe" não encontrado em Grupos de Produto. Use um valor da aba Listas.' },
+      { linha: 3, coluna: "Grupo", mensagem: '"Grupo Que Não Existe" não encontrado em Grupos de Produtos. Use um valor da aba Listas.' },
       { linha: 3, coluna: "Controla estoque", mensagem: "Use Sim ou Não." },
       { linha: 4, coluna: "Descrição", mensagem: "Obrigatório." },
     ]));

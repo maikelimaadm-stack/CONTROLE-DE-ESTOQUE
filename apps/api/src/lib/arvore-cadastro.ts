@@ -1,6 +1,6 @@
 /**
- * Regras dos cadastros em ÁRVORE (`def.tree`): Plano de Contas, Categorias Financeiras, Centros de Custo e
- * Endereçamentos. O servidor é a autoridade — a tela só sugere.
+ * Regras dos cadastros em ÁRVORE (`def.tree`): Plano de Contas, Categorias Financeiras, Centros de Custo,
+ * Grupos de Produtos e Endereçamentos (regras próprias do grupo em `grupo-de-produtos.ts`). O servidor é a autoridade — a tela só sugere.
  *
  * - o antecessor existe, é desta organização e não está excluído;
  * - o antecessor não é o próprio registro nem um descendente dele (sem ciclo);
@@ -63,6 +63,8 @@ export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, 
     const codigo = String(data["code"] ?? atual?.["code"]);
     const mudouCodigo = "code" in data && data["code"] !== atual?.["code"];
     if (atual === null || mudouCodigo || mudouPai) {
+      // superior do acervo sem código (Grupos de Produtos anteriores à 0025): não há prefixo para conferir
+      if (pai && typeof pai["code"] !== "string") throw campo("parent_id", "O superior não tem código. Informe o código dele antes de incluir filhos.");
       const erro = validarCodigoHierarquico(codigo, await mascara(ctx, def), pai ? String(pai["code"]) : null);
       if (erro) throw campo("code", erro);
     }
@@ -85,6 +87,7 @@ export async function sugerirCodigo(ctx: ServiceCtx, def: ResourceDef, parentId:
   if (parentId) {
     const pai = await registroVivo(ctx, def, parentId);
     if (!pai) throw campo("parent_id", "Antecessor não encontrado.");
+    if (typeof pai["code"] !== "string") throw campo("parent_id", "O superior não tem código. Informe o código dele antes de incluir filhos.");
     codigoPai = String(pai["code"]);
   }
   const prefixo = codigoPai === null ? "" : `${codigoPai}.`;
