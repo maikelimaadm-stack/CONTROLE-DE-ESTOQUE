@@ -736,8 +736,10 @@ Central nova levam a PRÓPRIA "Categoria financeira" e o PRÓPRIO "Centro de cus
 três variantes; a conversão os copia), e a confirmação gera as contas a receber com a classificação DO
 DOCUMENTO — nos dois caminhos, legado e configurado. O recuo antigo — a PRIMEIRA categoria de receita
 **analítica** e o PRIMEIRO centro de custo **analítico**, pela ordem do código — só vale para documento SEM
-classificação (cliente anterior à VENDAS-A1 ou chamada de API sem os campos), e o detalhe e a auditoria
-mostram isso ("padrão legado"). Documento classificado cuja categoria ou centro deixou de valer é RECUSADO
+classificação (cliente anterior à VENDAS-A1 ou chamada de API sem os campos). Nesse documento, o detalhe
+mostra "Não informada" na categoria e "Não informado" no centro de custo e, na venda ainda aberta, avisa que a
+confirmação usará o "padrão automático"; depois de confirmada, é a AUDITORIA da confirmação que registra a
+origem "padrão legado" e os ids usados. Documento classificado cuja categoria ou centro deixou de valer é RECUSADO
 na confirmação, nunca recua. Confirmar continua exigindo categoria de receita analítica e centro de custo
 analítico cadastrados e ativos: sem centro de custo nenhum (a produção hoje tem 0), a venda não confirma.
 

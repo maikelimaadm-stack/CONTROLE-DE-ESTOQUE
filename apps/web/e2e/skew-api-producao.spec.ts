@@ -748,3 +748,210 @@ test("VENDAS-A1 · A1-K3 — a API da base não confirma venda classificada; a s
   expect(ok.status(), await ok.text()).toBe(200);
   expect(situacao(semClassificacao)).toBe("confirmed");
 });
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * VENDAS-A1 · R1 — A CONVERSÃO E O DETALHE CONTRA O BINÁRIO DA BASE (A1-K4, A1-K5)
+ *
+ * Mesmo harness de A1-K3: banco migrado e semeado pelo HEAD, servidor = binário da base. Os documentos
+ * nascem PELA API DA BASE, com o corpo que ela conhece; a classificação é PREPARADA NO BANCO, porque a base
+ * descartaria o par no POST e é o único jeito honesto de um documento classificado existir diante dela.
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+type Insumos = { empresa: string; cliente: string; produto: string };
+
+/** Empresa, cliente e produto do seed, lidos pela própria API da base — o que ela aceitar no POST é o que ela vê. */
+async function insumosDoDocumento(page: Page, cabecalhos: Record<string, string>, empresaDaSessao: string | null | undefined): Promise<Insumos> {
+  const um = async (p: string) => {
+    const r = await page.request.get(`${API}${p}`, { headers: cabecalhos });
+    expect(r.status(), p).toBe(200);
+    const id = (await r.json() as { items: { id: string }[] }).items?.[0]?.id;
+    expect(id, `o seed precisa ter registro em ${p}`).toBeTruthy();
+    return id!;
+  };
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cabecalhos })).json() as { empresas: { id: string }[] };
+  return { empresa: empresaDaSessao ?? ctx.empresas[0]!.id, cliente: await um("/api/resources/people?is_client=true&pageSize=1"), produto: await um("/api/resources/products?pageSize=1") };
+}
+
+/**
+ * Um documento criado PELA API DA BASE: sem classificação e sem TOP. Sem TOP a conversão cai na ponte legada
+ * (orçamento → pedido → venda), que é o caminho que TODO binário anterior percorre — não uma política
+ * configurada que só este cenário teria.
+ */
+async function criarPelaBase(page: Page, cabecalhos: Record<string, string>, variante: "budgets" | "orders" | "sales", i: Insumos): Promise<string> {
+  const r = await page.request.post(`${API}/api/sales/${variante}`, { headers: cabecalhos, data: {
+    empresa_id: i.empresa, document_date: "2026-09-01", client_id: i.cliente,
+    items: [{ product_id: i.produto, warehouse_id: null, quantity: "1", unit_price: "10.00" }] } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  return id;
+}
+
+/**
+ * A classificação PREPARADA NO BANCO — a mesma escolha de A1-K3 (a analítica de receita e o centro analítico
+ * da própria organização, pelo código), só que devolvendo o PAR: A1-K4 compara o derivado com ele, e A1-K5
+ * compara o fio da base com ele. `status = 'open'` no filtro porque os dois casos falam de documento ABERTO:
+ * se o documento não estivesse aberto, a preparação falharia aqui em vez de mudar o cenário em silêncio.
+ */
+function classificarNoBanco(id: string): { categoria: string; centro: string } {
+  const linha = sql(`update erp.sales_documents d set
+      categoria_financeira_id = (select c.id from erp.financial_categories c where c.organization_id = d.organization_id and c.kind = 'analytic' and c.nature = 'income' and c.is_active and c.deleted_at is null order by c.code limit 1),
+      centro_custo_id = (select cc.id from erp.cost_centers cc where cc.organization_id = d.organization_id and cc.kind = 'analytic' and cc.is_active and cc.deleted_at is null order by cc.code limit 1)
+    where d.id = '${id}' and d.status = 'open' returning categoria_financeira_id, centro_custo_id`).split("\n")[0] ?? "";
+  const [categoria = "", centro = ""] = linha.split("|");
+  expect(categoria, "premissa: o documento aberto ficou com a categoria no banco").toMatch(UUID);
+  expect(centro, "premissa: o documento aberto ficou com o centro de custo no banco").toMatch(UUID);
+  return { categoria, centro };
+}
+
+/**
+ * A1-K4 — A GUARDA DA CONVERSÃO CONTRA O BINÁRIO DA BASE (R1-1).
+ *
+ * A base converte orçamento e pedido montando o derivado CAMPO A CAMPO (`docSchema.parse` sem o par): ela
+ * não conhece a classificação e não a copia. Sem a guarda, o pedido — e depois a venda — nasceriam SEM
+ * classificação a partir de uma origem classificada, e a venda derivada escaparia da guarda da confirmação
+ * (A1-K3), que só olha a PRÓPRIA venda: a classificação escolhida se perderia no meio da cadeia e a venda
+ * confirmaria pelo padrão automático. Quem fecha a porta é o gatilho `trg_sales_documents_classificacao_conversao`
+ * da 0024: a conversão pela base é recusada INTEIRA — a origem não vira `converted` e nenhum derivado nasce.
+ *
+ * As DUAS variantes que convertem são medidas (orçamento → pedido, pedido → venda): a guarda é do INSERT do
+ * derivado, e uma prova só com orçamento deixaria sem medição o elo pedido → venda — o que produz a venda que,
+ * confirmada, gera o título.
+ *
+ * O NOME VALE NOS DOIS RAMOS, pelo mesmo motivo do caso do contador: o relatório mostra só o título, e um nome
+ * que afirmasse só a recusa passaria verde no mundo em que a base CONVERTE. Qual ramo rodou sai no log da decisão.
+ */
+test("VENDAS-A1 · A1-K4 — conversão pela API da base: origem classificada é recusada sem derivado (ou, se a base já copia o par, converte com ele); a sem classificação converte", async ({ page }) => {
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const declara = baseDeclaraClassificacao();
+
+  expect(sql(`select count(*) from pg_trigger where tgrelid = 'erp.sales_documents'::regclass and not tgisinternal and tgenabled <> 'D' and tgfoid = 'erp.venda_classificacao_financeira_conversao_guarda'::regproc`),
+    "premissa: a guarda da conversão da 0024 está no banco e habilitada").toBe("1");
+  const insumos = await insumosDoDocumento(page, cabecalhos, s.empresaId);
+
+  const DESTINO = { budgets: "order", orders: "sale" } as const;
+  const situacao = (id: string) => sql(`select status from erp.sales_documents where id = '${id}'`);
+  // O derivado é contado pelo PONTEIRO para a origem, no banco: a resposta de erro não diz o que deixou de
+  // gravar, e "nenhum derivado" só é prova se for lido de onde um derivado estaria.
+  const derivados = (id: string) => sql(`select count(*) from erp.sales_documents where origin_document_id = '${id}'`);
+
+  for (const variante of ["budgets", "orders"] as const) {
+    const classificada = await criarPelaBase(page, cabecalhos, variante, insumos);
+    const semClassificacao = await criarPelaBase(page, cabecalhos, variante, insumos);
+    const par = classificarNoBanco(classificada);
+    // O corpo que a base aceita na conversão: `{ tipo_operacao_id? }`. Vazio = ponte legada, sem TOP de destino.
+    const converter = (id: string) => page.request.post(`${API}/api/sales/${variante}/${id}/convert`, { headers: cabecalhos, data: {} });
+
+    const r = await converter(classificada);
+    if (!declara) {
+      // MUNDO LEGADO: a base monta o derivado sem o par, e a guarda RECUSA o INSERT — com o código que a base
+      // já mapeia para 422 (`fromPgError`, P0001), sem nenhuma linha nova nela.
+      expect(r.status(), `a base NÃO converte ${variante} classificado: ${await r.text()}`).toBe(422);
+      const erro = ((await r.json()) as { error: { code: string; message: string } }).error;
+      expect(erro.code).toBe("VALIDATION_ERROR");
+      // A recusa é a da guarda da CONVERSÃO — não a da confirmação (A1-K3), nem outra validação qualquer da base.
+      expect(erro.message, "quem recusou foi a guarda da conversão").toContain("o documento de origem tem classificacao financeira, que este servidor nao copia");
+      expect(situacao(classificada), "a transação voltou inteira: a origem continua aberta").toBe("open");
+      expect(derivados(classificada), "e nenhum derivado nasceu").toBe("0");
+    } else {
+      // MUNDO ATUAL: a base já copia o par; a mesma origem converte e o derivado nasce com ELE — não com outro.
+      expect(r.status(), await r.text()).toBe(201);
+      expect((await r.json() as { kind: string }).kind).toBe(DESTINO[variante]);
+      expect(situacao(classificada)).toBe("converted");
+      expect(derivados(classificada)).toBe("1");
+      expect(sql(`select categoria_financeira_id, centro_custo_id from erp.sales_documents where origin_document_id = '${classificada}'`),
+        "o derivado herdou o MESMO par da origem").toBe(`${par.categoria}|${par.centro}`);
+    }
+
+    // A PREMISSA — o mesmo cenário sem a classificação: mesma variante, mesma rota, mesmo corpo, mesmo binário.
+    // Converte nos dois mundos. Sem isto, o "zero derivado" acima poderia ser uma conversão que a base não faz
+    // por motivo nenhum ligado à classificação (permissão, política, rota) — e a guarda não teria provado nada.
+    const ok = await converter(semClassificacao);
+    expect(ok.status(), await ok.text()).toBe(201);
+    const derivado = await ok.json() as { id: string; kind: string };
+    expect(derivado.kind, "a ponte legada leva ao próximo da cadeia").toBe(DESTINO[variante]);
+    expect(situacao(semClassificacao), "a origem sem classificação virou convertida").toBe("converted");
+    expect(derivados(semClassificacao), "e nasceu exatamente um derivado").toBe("1");
+    expect(sql(`select categoria_financeira_id is null and centro_custo_id is null from erp.sales_documents where id = '${derivado.id}'`),
+      "sem nada a copiar, o derivado nasce sem classificação — a guarda só recusa quem PERDERIA o par").toBe("t");
+  }
+});
+
+/**
+ * A1-K5 — O DETALHE DESTE WEB SOBRE A RESPOSTA DA BASE (R1-2).
+ *
+ * O GET do documento na base é `select d.*`: os IDS da classificação vêm (as colunas existem no banco migrado
+ * pelo HEAD), o código e o nome NÃO (o join com categoria e centro só existe no binário desta fatia em diante).
+ * Uma tela que decidisse "está classificada?" pelo código diria "Não informada" e prometeria o padrão
+ * automático numa venda que a guarda do banco vai RECUSAR confirmar (A1-K3) — o operador leria uma instrução
+ * que o servidor desmente. A medição é contra o FIO REAL da base, capturado da própria tela, e não contra um
+ * corpo fabricado.
+ */
+test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe não diz 'Não informada' nem promete o padrão automático", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const declara = baseDeclaraClassificacao();
+  const insumos = await insumosDoDocumento(page, cabecalhos, s.empresaId);
+  const classificada = await criarPelaBase(page, cabecalhos, "sales", insumos);
+  const semClassificacao = await criarPelaBase(page, cabecalhos, "sales", insumos);
+  const par = classificarNoBanco(classificada);
+
+  const central = page.getByTestId("central-vendas");
+  const campo = (rotulo: string) => central.locator(`[data-campo="${rotulo}"]`);
+  const aviso = page.getByTestId("classificacao-padrao-automatico");
+  /** Abre o detalhe e devolve o corpo que a BASE respondeu à própria tela — o fio, não uma releitura. */
+  const abrirDetalhe = async (id: string) => {
+    const resposta = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname === `/api/sales/sales/${id}`);
+    await page.goto(`/vendas/sales/${id}`);
+    const r = await resposta;
+    expect(r.status(), "premissa: a base serviu o detalhe").toBe(200);
+    const corpo = await r.json() as Record<string, unknown>;
+    await expect(central).toBeVisible();
+    await expect(campo("Número"), "premissa: a tela desenhou ESTE documento").toContainText(String(corpo["code"]));
+    return corpo;
+  };
+
+  // A PREMISSA DO AVISO — o mesmo cenário sem a classificação: venda aberta, mesma base, mesmo web. Aqui o aviso
+  // APARECE; sem isto, a contagem zero do caso classificado seria satisfeita por uma tela que nunca o desenha.
+  const fioSem = await abrirDetalhe(semClassificacao);
+  expect([fioSem["categoria_financeira_id"], fioSem["centro_custo_id"], fioSem["status"]], "premissa: venda aberta e sem classificação").toEqual([null, null, "open"]);
+  await expect(campo("Categoria financeira")).toContainText("Não informada");
+  await expect(campo("Centro de custo")).toContainText("Não informado");
+  await expect(aviso, "sem classificação, a venda aberta avisa o padrão automático — também sobre a base").toBeVisible();
+
+  const fio = await abrirDetalhe(classificada);
+  expect(fio["status"], "premissa: a venda classificada continua aberta — é nela que o aviso seria mostrado").toBe("open");
+  expect([fio["categoria_financeira_id"], fio["centro_custo_id"]], "o fio da base traz os ids preparados no banco").toEqual([par.categoria, par.centro]);
+
+  if (!declara) {
+    // MUNDO LEGADO — NO FIO: a base traz o id e não traz o código nem o nome. É exatamente o corpo que a regra
+    // "decide pelo id" existe para ler certo. Se a base passasse a mandar o código sem declarar a capacidade,
+    // este ramo REPROVA aqui, e a decisão do mundo é revista junto — em vez de seguir verde medindo outro corpo.
+    expect(fio, "a base NÃO traz o código da categoria").not.toHaveProperty("categoria_financeira_codigo");
+    expect(fio, "nem o do centro de custo").not.toHaveProperty("centro_custo_codigo");
+    // A positiva vem primeiro: ela espera a tela desenhar ESTE documento, e só então as ausências significam algo.
+    await expect(campo("Categoria financeira"), "com o id e sem o nome, a tela diz que está informada").toContainText("Informada");
+    await expect(campo("Categoria financeira"), "e não o contrário").not.toContainText("Não informada");
+    await expect(campo("Centro de custo")).toContainText("Informado");
+    await expect(campo("Centro de custo")).not.toContainText("Não informado");
+    await expect(aviso, "classificada, a venda não promete um padrão que a guarda recusaria").toHaveCount(0);
+    v.semBloqueio();
+    return;
+  }
+
+  // MUNDO ATUAL — a base já faz o join: a tela mostra "código · nome" do que está gravado, lidos do banco.
+  const [rotuloCategoria = "", rotuloCentro = ""] = sql(`select c.code || ' · ' || c.name, cc.code || ' · ' || cc.name
+      from erp.financial_categories c, erp.cost_centers cc where c.id = '${par.categoria}' and cc.id = '${par.centro}'`).split("|");
+  // Rótulo vazio faria o `toContainText` abaixo passar em qualquer tela: a leitura tem de ter trazido os dois.
+  expect([rotuloCategoria, rotuloCentro], "premissa: código e nome lidos do banco").toEqual([expect.stringMatching(/^.+ · .+$/), expect.stringMatching(/^.+ · .+$/)]);
+  expect(fio["categoria_financeira_codigo"], "a árvore da base declara a classificação, então o binário traz o código").toBeTruthy();
+  await expect(campo("Categoria financeira")).toContainText(rotuloCategoria);
+  await expect(campo("Centro de custo")).toContainText(rotuloCentro);
+  await expect(campo("Categoria financeira")).not.toContainText("Não informada");
+  await expect(campo("Centro de custo")).not.toContainText("Não informado");
+  await expect(aviso, "classificada, a venda não fala de padrão automático").toHaveCount(0);
+  v.semBloqueio();
+});

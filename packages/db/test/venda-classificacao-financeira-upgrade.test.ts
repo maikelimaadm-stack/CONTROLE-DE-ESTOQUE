@@ -123,7 +123,13 @@ describe("A1-D3 — upgrade da 0023 para a 0024", () => {
       { conname: "uq_cost_centers_tenant", contype: "u", n: 2 },
       { conname: "uq_financial_categories_tenant", contype: "u", n: 2 },
     ]);
-    const g = await db.query<{ tgenabled: string }>("select t.tgenabled from pg_trigger t join pg_class c on c.oid=t.tgrelid where c.relname='sales_documents' and t.tgname='trg_sales_documents_classificacao_financeira'");
-    expect(g.rows).toEqual([{ tgenabled: "O" }]);
+    // As DUAS guardas (seções 7 e 7b), ligadas: a da confirmação e a da conversão. Faltando a segunda, o
+    // binário anterior converteria orçamento/pedido classificado em derivado sem o par, fora da primeira.
+    const g = await db.query<{ tgname: string; tgenabled: string }>(
+      "select t.tgname, t.tgenabled from pg_trigger t join pg_class c on c.oid=t.tgrelid where c.relname='sales_documents' and t.tgname in ('trg_sales_documents_classificacao_financeira','trg_sales_documents_classificacao_conversao') order by t.tgname");
+    expect(g.rows).toEqual([
+      { tgname: "trg_sales_documents_classificacao_conversao", tgenabled: "O" },
+      { tgname: "trg_sales_documents_classificacao_financeira", tgenabled: "O" },
+    ]);
   });
 });
