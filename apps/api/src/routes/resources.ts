@@ -386,6 +386,7 @@ export async function distinctValues(ctx: ServiceCtx, def: ResourceDef, campoPed
   const b = new SqlBuilder(); const where: string[] = [];
   if (existing.has("organization_id")) where.push(def.reference || def.sharedDefaults ? `(t.organization_id is null or t.organization_id = ${b.add(ctx.orgId)})` : `t.organization_id = ${b.add(ctx.orgId)}`);
   if (def.softDelete) where.push("t.deleted_at is null");
+  for (const [k, v] of Object.entries(def.filtroFixo ?? {})) where.push(`t.${ident(k)} = ${b.add(v)}`);
   // mesmo recorte da listagem: fazenda ativa e fazendas do vínculo
   const escD = escopoDoRecurso(def);
   if (escD.ativo && ctx.empresaId && existing.has("empresa_id")) where.push(escD.nullable ? `(t.empresa_id is null or t.empresa_id = ${b.add(ctx.empresaId)})` : `t.empresa_id = ${b.add(ctx.empresaId)}`);

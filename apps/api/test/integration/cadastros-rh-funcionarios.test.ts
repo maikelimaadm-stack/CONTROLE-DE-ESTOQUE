@@ -110,6 +110,12 @@ describe("RH-2 — ficha de RH em abas", () => {
     const cliente = (await um<{ id: string }>("select id from erp.people where organization_id=$1 and is_client and not is_employee limit 1", [h.demo.orgId]))!.id;
     expect(lista.items.some((x) => x.id === id)).toBe(true);
     expect(lista.items.some((x) => x.id === cliente)).toBe(false);
+    // seletor e valores distintos seguem o MESMO recorte fixo
+    const opcoes = (await get(`/api/resources/funcionarios/options?include_inactive=1`)).body;
+    expect(opcoes).toContain(id); expect(opcoes).not.toContain(cliente);
+    const nomeCliente = (await um<{ name: string }>("select name from erp.people where id=$1", [cliente]))!.name;
+    const distintos = await get(`/api/resources/funcionarios/distinct?field=name`);
+    expect(distintos.statusCode, distintos.body).toBe(200); expect(distintos.body).not.toContain(nomeCliente);
     // parceiro que NÃO é funcionário: a mesma 404 de inexistente
     expect((await get(`/api/resources/funcionarios/${cliente}`)).statusCode).toBe(404);
     expect((await put(cliente, { rh_admissao: { matricula: "X" } })).statusCode).toBe(404);
