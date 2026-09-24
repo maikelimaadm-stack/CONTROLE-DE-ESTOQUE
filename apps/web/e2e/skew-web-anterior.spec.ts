@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, uniq, pickRef, preencherClassificacaoFinanceira } from "./helpers";
+import { login, uniq, pickRef, preencherClassificacaoFinanceira, ROTULOS_CLASSIFICACAO_BASE } from "./helpers";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -315,7 +315,7 @@ test("VENDAS-A1 · A1-K2 — o web da base cria venda sem classificação: 201 c
   if (baseMostraCampos) {
     // Mundo em que a base já é posterior à A1: o web dela preenche como o deste HEAD (W1). O caso do cliente
     // ANTERIOR à fatia deixou de existir em produção, e fingi-lo aqui certificaria o que não roda.
-    await preencherClassificacaoFinanceira(page);
+    await preencherClassificacaoFinanceira(page, ROTULOS_CLASSIFICACAO_BASE);
   }
   await salvar.click();
   const r = await resposta;
