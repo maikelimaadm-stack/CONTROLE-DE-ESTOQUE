@@ -359,6 +359,17 @@ export async function deleteOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
   return { id, deleted: true };
 }
 
+/**
+ * Leituras que o registry DECLARA para as linhas de uma tabela quando ela é grade de OUTRO cadastro
+ * (`DetalheDef.permissoes.ler`, R1-2 — Eventos fixos na ficha de RH: `employee_events.view`). O seletor
+ * (`/options`) é a porta SEM permissão própria dos cadastros REFERENCIADOS; sobre essas tabelas ele leria as mesmas
+ * linhas que a ficha esconde de quem não tem a leitura (`?person_id=` lista os eventos fixos do funcionário e
+ * `?amount=` confirma o valor por tentativa), então exige as MESMAS permissões, antes de consultar.
+ */
+function leiturasDeclaradasDaTabela(table: string): string[] {
+  return [...new Set(RESOURCES.flatMap((r) => (r.detalhes ?? []).flatMap((d) => (d.table === table && d.permissoes ? [d.permissoes.ler] : []))))];
+}
+
 /** Opções para selects (busca por rótulo, limitada), respeitando tenant/fazenda. */
 export async function options(ctx: ServiceCtx, def: ResourceDef, search: string | undefined, extra: Record<string, string>) {
   const existing = await checkColumns(ctx, def);
@@ -441,7 +452,11 @@ export default async function resourceRoutes(app: FastifyInstance) {
   app.get("/resources/:key/definition", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); app.requireCtx(req); return def; });
   app.get("/resources/:key", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => listResource(ctx, def, req.query as Record<string, unknown>)); });
   app.get("/resources/:key/options", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const { search, ...extra } = req.query as Record<string, string>; // seletor de um cadastro referenciado: sem permissão própria, mas o ESCOPO é o do recurso apontado
-    return runService(app, req, null, async (ctx) => options(await comPermissaoResolvida(ctx, `${def.permission}.view`), def, search, extra)); });
+    return runService(app, req, null, async (ctx) => {
+      // linhas de grade de OUTRO cadastro com leitura declarada (R1-2): a mesma leitura, antes de qualquer consulta
+      for (const p of leiturasDeclaradasDaTabela(def.table)) requirePermission(ctx, p);
+      return options(await comPermissaoResolvida(ctx, `${def.permission}.view`), def, search, extra);
+    }); });
   app.get("/resources/:key/proximo-codigo", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ parent_id: z.string().uuid().optional() }).strict().parse(req.query); return runService(app, req, `${def.permission}.create`, (ctx) => sugerirCodigo(ctx, def, q.parent_id ?? null)); });
   app.get("/resources/:key/distinct", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ field: z.string().regex(/^[a-z_][a-z0-9_]*$/), search: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query); return runService(app, req, `${def.permission}.view`, (ctx) => distinctValues(ctx, def, q.field, q.search, q.limit)); });
   // HISTÓRICO (Fase 6): auditoria do registro e das suas grades — quem, quando, o quê. Mesma permissão e mesma 404 da ficha.

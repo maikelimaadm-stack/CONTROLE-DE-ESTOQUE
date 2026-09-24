@@ -9,7 +9,8 @@ import { harness, TEST_URL, type Harness } from "./setup.js";
  *
  *  SG-1  só employees.view: ficha, lista, Funções, Eventos fixos e o relatório de ativos (tela, CSV e XLSX) — nenhum valor;
  *  SG-2  filtro, ordenação, /distinct, seletor, exportação e relatório salvo por campo sigiloso sem a permissão → 403
- *        com o nome do campo; gravar/criar Função sem a permissão → 403;
+ *        com o nome do campo; gravar/criar Função sem a permissão → 403; o seletor genérico de employee_events (as
+ *        linhas da grade Eventos fixos) exige employee_events.view;
  *  SG-3  employees.edit vê tudo (e as mesmas perguntas respondem);
  *  SG-4  a FOLHA (exceção declarada): apuração e cálculo mensal com o salário para quem tem a permissão dela;
  *  SG-5  editar aba de RH de perfil INATIVO → continua inativo (fora da folha);
@@ -151,6 +152,27 @@ describe("SG-2 — campo sigiloso não serve de pergunta nem é gravado sem empl
     expect(nome.statusCode, nome.body).toBe(200); expect(j(nome).items.length).toBeGreaterThan(0);
     const distinto = await get(`/api/resources/job_functions/distinct?field=name`, hView);
     expect(distinto.statusCode).toBe(200);
+  });
+
+  it("seletor genérico (/options) de employee_events: sem employee_events.view → 403 antes de consultar — nem a lista dos eventos fixos da pessoa, nem a pergunta pelo valor; com a leitura responde; o seletor dos cadastros referenciados continua sem permissão própria", async () => {
+    // a ficha esconde a grade Eventos fixos de quem não tem employee_events.view (SG-1); o seletor lê as MESMAS linhas
+    for (const [quem, hh] of [["employees.view", hView], ["nenhuma permissão", await membro("sg-opt0@demo.local", [])]] as const) {
+      for (const q of [`person_id=${F1}`, `person_id=${F1}&amount=${EVENTO_VALOR}`, "search=SG"]) {
+        const r = await get(`/api/resources/employee_events/options?${q}`, hh);
+        expect(r.statusCode, `${quem} ${q}: ${r.body}`).toBe(403);
+        expect(j(r).error.message).toContain("employee_events.view");
+        expect(r.body).not.toContain("SG Periculosidade"); semSalario(r.body, `/options ${q}`);
+      }
+    }
+    const hl = await membro("sg-opt1@demo.local", ["employee_events.view"]);
+    const ok = await get(`/api/resources/employee_events/options?person_id=${F1}&amount=${EVENTO_VALOR}`, hl);
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect((j(ok) as { label: string }[]).map((x) => x.label)).toEqual(["SG Periculosidade"]);
+    // o seletor de cadastro REFERENCIADO continua a porta sem permissão própria (o Evento da grade, a Função da ficha)
+    for (const recurso of ["hr_events", "job_functions"]) {
+      const r = await get(`/api/resources/${recurso}/options?search=SG`, hView);
+      expect(r.statusCode, `${recurso}: ${r.body}`).toBe(200); expect((j(r) as unknown[]).length).toBeGreaterThan(0);
+    }
   });
 
   it("exportação: a coluna sigilosa não entra no arquivo; ordenar ou filtrar por ela → 403", async () => {
