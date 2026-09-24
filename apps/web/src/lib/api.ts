@@ -52,6 +52,13 @@ export function cabecalhosDeContexto(s: Session | null): Record<string, string> 
   };
 }
 
+/**
+ * SESSÃO EXPIRADA (401): apaga a sessão e leva ao /login. Exportado porque a chamada crua (`raw: true`) devolve a
+ * resposta sem passar pelo tratamento de `api()` — quem lê a resposta ela mesma (o importador de cadastros) chama
+ * esta função, e a sessão termina do mesmo jeito em toda a aplicação.
+ */
+export function encerrarSessaoExpirada() { setSession(null); if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) location.href = "/login"; }
+
 export async function api<T = unknown>(path: string, opts: { method?: string; body?: unknown; headers?: Record<string, string>; raw?: boolean; idempotencyKey?: string } = {}): Promise<T> {
   const s = getSession();
   const headers: Record<string, string> = { ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}), ...cabecalhosDeContexto(s), ...(opts.idempotencyKey ? { "Idempotency-Key": opts.idempotencyKey } : {}), ...(opts.headers ?? {}) };
@@ -60,7 +67,7 @@ export async function api<T = unknown>(path: string, opts: { method?: string; bo
   if (opts.raw) return res as unknown as T;
   const text = await res.text();
   const data = text ? (JSON.parse(text) as unknown) : null;
-  if (!res.ok) { const e = (data as { error?: { code: string; message: string; details?: unknown } })?.error; if (res.status === 401 && (e?.code ?? "UNAUTHENTICATED") === "UNAUTHENTICATED") { setSession(null); if (typeof window !== "undefined" && !location.pathname.startsWith("/login")) location.href = "/login"; } throw new ApiError(res.status, e?.code ?? "ERROR", e?.message ?? res.statusText, e?.details); }
+  if (!res.ok) { const e = (data as { error?: { code: string; message: string; details?: unknown } })?.error; if (res.status === 401 && (e?.code ?? "UNAUTHENTICATED") === "UNAUTHENTICATED") encerrarSessaoExpirada(); throw new ApiError(res.status, e?.code ?? "ERROR", e?.message ?? res.statusText, e?.details); }
   return data as T;
 }
 export const qs = (o: Record<string, unknown>) => { const p = new URLSearchParams(); for (const [k, v] of Object.entries(o)) { if (v === undefined || v === null || v === "") continue; if (Array.isArray(v)) v.forEach((x) => p.append(k, String(x))); else p.set(k, String(v)); } const s = p.toString(); return s ? `?${s}` : ""; };

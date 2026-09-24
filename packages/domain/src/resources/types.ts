@@ -33,6 +33,11 @@ export interface FieldDef {
   span?: number;
   /** campo dependente: só visível quando outro campo tem valor */
   visibleWhen?: { field: string; equals: unknown };
+  /**
+   * obrigatório CONDICIONAL: só quando outro campo tem esse valor (vazio = `default` dele).
+   * O banco continua sendo a autoridade; isto serve para a tela e o modelo de importação avisarem antes.
+   */
+  requiredWhen?: { field: string; equals: unknown };
 }
 
 export interface ResourceDef {
@@ -64,6 +69,8 @@ export interface ResourceDef {
   printable?: boolean;
   /** importação/exportação XLSX/CSV */
   importExport?: boolean;
+  /** importação por modelo XLSX (baixar modelo + importar), com o servidor conferindo cada linha pelas regras do cadastro */
+  importacao?: boolean;
   /** rota no menu (para links) */
   route: string;
   /** hierarquia (parent_id) */

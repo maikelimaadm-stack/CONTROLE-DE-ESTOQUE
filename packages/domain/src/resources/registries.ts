@@ -10,7 +10,7 @@ const D = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef
 
 export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
-    key: "cost_centers", label: "Centro de Custo", labelPlural: "Centros de Custo", table: "cost_centers", permission: "cost_centers", labelField: "name", route: "/cadastros/centros-de-custo", tree: true, softDelete: true, printable: true, defaultSort: "code",
+    key: "cost_centers", importacao: true, label: "Centro de Custo", labelPlural: "Centros de Custo", table: "cost_centers", permission: "cost_centers", labelField: "name", route: "/cadastros/centros-de-custo", tree: true, softDelete: true, printable: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, help: "Código hierárquico, ex.: 1.01.001.0001", span: 3 }),
       T("name", "Descrição", { required: true, list: true, search: true, span: 5 }),
@@ -47,7 +47,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "product_groups", label: "Grupo de Produto", labelPlural: "Grupos de Produto", table: "product_groups", permission: "products", labelField: "name", route: "/cadastros/grupos-de-produto",
+    key: "product_groups", importacao: true, label: "Grupo de Produto", labelPlural: "Grupos de Produto", table: "product_groups", permission: "products", labelField: "name", route: "/cadastros/grupos-de-produto",
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 8 }), active()]
   },
   {
@@ -59,15 +59,15 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [REF("category_id", "Categoria", "product_categories", { required: true, list: true, filter: true, span: 4 }), T("name", "Nome", { required: true, list: true, search: true, span: 6 }), active()]
   },
   {
-    key: "measurement_units", label: "Unidade de Medida", labelPlural: "Unidades de Medida", table: "measurement_units", permission: "products", labelField: "symbol", route: "/cadastros/unidades", sharedDefaults: true,
+    key: "measurement_units", importacao: true, label: "Unidade de Medida", labelPlural: "Unidades de Medida", table: "measurement_units", permission: "products", labelField: "symbol", route: "/cadastros/unidades", sharedDefaults: true,
     fields: [T("symbol", "Sigla", { required: true, list: true, search: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 6 }), { name: "decimals", label: "Casas decimais", type: "integer", default: 2, min: 0, max: 6, span: 2 }]
   },
   {
-    key: "addressings", label: "Endereçamento", labelPlural: "Endereçamentos", table: "addressings", permission: "addressings", labelField: "description", route: "/cadastros/enderecamentos", tree: true, softDelete: true,
+    key: "addressings", importacao: true, label: "Endereçamento", labelPlural: "Endereçamentos", table: "addressings", permission: "addressings", labelField: "description", route: "/cadastros/enderecamentos", tree: true, softDelete: true,
     fields: [T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("parent_id", "Endereçamento pai", "addressings", { list: true, span: 6 })]
   },
   {
-    key: "warehouses", label: "Armazém", labelPlural: "Armazéns", table: "warehouses", permission: "warehouses", labelField: "description", route: "/cadastros/armazens", softDelete: true, empresaScoped: true,
+    key: "warehouses", importacao: true, label: "Armazém", labelPlural: "Armazéns", table: "warehouses", permission: "warehouses", labelField: "description", route: "/cadastros/armazens", softDelete: true, empresaScoped: true,
     fields: [
       REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }),
       T("initials", "Sigla", { required: true, list: true, search: true, span: 2 }), T("description", "Descrição", { required: true, list: true, search: true, span: 4 }),
@@ -75,11 +75,11 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "cultivations", label: "Variedade/Cultura", labelPlural: "Variedades/Culturas", table: "cultivations", permission: "products", labelField: "variety", route: "/cadastros/variedades",
+    key: "cultivations", importacao: true, label: "Variedade/Cultura", labelPlural: "Variedades/Culturas", table: "cultivations", permission: "products", labelField: "variety", route: "/cadastros/variedades",
     fields: [T("crop", "Cultura", { required: true, list: true, search: true, span: 5 }), T("variety", "Variedade", { required: true, list: true, search: true, span: 5 }), active()]
   },
   {
-    key: "products", label: "Produto", labelPlural: "Produtos", table: "products", permission: "products", labelField: "description", route: "/cadastros/produtos", softDelete: true, codeEntity: "product", printable: true, importExport: true, defaultSort: "description",
+    key: "products", importacao: true, label: "Produto", labelPlural: "Produtos", table: "products", permission: "products", labelField: "description", route: "/cadastros/produtos", softDelete: true, codeEntity: "product", printable: true, importExport: true, defaultSort: "description",
     fields: [
       T("code", "Código", { readOnly: true, list: true, search: true, span: 2 }),
       T("description", "Descrição", { required: true, list: true, search: true, maxLength: 120, help: "Nome do produto que está sendo cadastrado", span: 6 }),
@@ -97,7 +97,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       { name: "min_stock", label: "Estoque mínimo", type: "quantity", section: "Estoque", list: true, help: "Alerta quando o estoque atingir ou ficar abaixo", span: 3 },
       M("reference_price", "Valor de referência", { section: "Estoque", help: "Valor de mercado do produto", span: 3 }),
       { name: "average_cost", label: "Custo médio (calculado)", type: "money", readOnly: true, section: "Estoque", span: 3 }, D("last_purchase_date", "Última compra", { readOnly: true, section: "Estoque", span: 3 }),
-      REF("financial_category_id", "Categoria financeira (custo)", "financial_categories", { section: "Estoque", help: "Obrigatória quando o produto controla estoque", span: 6 }),
+      REF("financial_category_id", "Categoria financeira (custo)", "financial_categories", { section: "Estoque", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
       REF("default_cost_center_id", "Centro de custo padrão", "cost_centers", { section: "Estoque", span: 4 }), REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
       { name: "withdrawal_period_days", label: "Período de Carência (dias)", type: "integer", section: "Estoque", help: "Dias de espera após aplicação antes de vender/abater o animal", span: 3 },
       B("allow_pointing", "Apontamento", { section: "Estoque", help: "Permite uso na aba de apontamentos", span: 3 }),
@@ -112,7 +112,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 8 }), active()]
   },
   {
-    key: "financial_categories", label: "Categoria Financeira", labelPlural: "Categorias Financeiras", table: "financial_categories", permission: "financial_categories", labelField: "name", route: "/cadastros/categorias-financeiras", tree: true, softDelete: true, printable: true, defaultSort: "code",
+    key: "financial_categories", importacao: true, label: "Categoria Financeira", labelPlural: "Categorias Financeiras", table: "financial_categories", permission: "financial_categories", labelField: "name", route: "/cadastros/categorias-financeiras", tree: true, softDelete: true, printable: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, span: 3 }), T("name", "Descrição", { required: true, list: true, search: true, span: 5 }),
       S("nature", "Natureza", [["income", "Receita"], ["expense", "Despesa"], ["both", "Ambas"]], { required: true, list: true, filter: true, span: 2 }),
@@ -122,7 +122,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "chart_accounts", label: "Conta do Plano", labelPlural: "Plano de Contas", table: "chart_accounts", permission: "chart_accounts", labelField: "description", route: "/cadastros/plano-de-contas", tree: true, softDelete: true, defaultSort: "code",
+    key: "chart_accounts", importacao: true, label: "Conta do Plano", labelPlural: "Plano de Contas", table: "chart_accounts", permission: "chart_accounts", labelField: "description", route: "/cadastros/plano-de-contas", tree: true, softDelete: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, span: 3 }), T("description", "Descrição", { required: true, list: true, search: true, span: 5 }),
       S("condition", "Condição", [["debit", "Débito"], ["credit", "Crédito"], ["both", "Ambos"]], { required: true, list: true, span: 2 }),
@@ -380,7 +380,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "email", label: "E-mail", type: "email", required: true, list: true, search: true, span: 5 }, T("phone", "Telefone", { span: 3 }), active()]
   },
   {
-    key: "people", label: "Pessoa", labelPlural: "Pessoas", table: "people", permission: "people", labelField: "name", route: "/cadastros/pessoas", softDelete: true, codeEntity: "person", importExport: true, defaultSort: "name",
+    key: "people", importacao: true, label: "Pessoa", labelPlural: "Pessoas", table: "people", permission: "people", labelField: "name", route: "/cadastros/pessoas", softDelete: true, codeEntity: "person", importExport: true, defaultSort: "name",
     fields: [
       T("code", "Código", { readOnly: true, list: true, span: 2 }), T("document", "CPF/CNPJ", { list: true, search: true, span: 3 }),
       S("person_type", "Tipo de pessoa", [["natural", "Física"], ["legal", "Jurídica"], ["foreign", "Estrangeira"]], { default: "legal", span: 2 }),

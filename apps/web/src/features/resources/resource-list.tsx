@@ -12,6 +12,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { Base1List, type RecordProps } from "@/features/base1/list";
 import type { Base1Column, Base1FilterDef, Row } from "@/features/base1/types";
 import { ResourceForm } from "./resource-form";
+import { ImportDialog } from "./import-dialog";
 
 export function formatCell(f: FieldDef, row: Record<string, unknown>) {
   const v = row[f.name];
@@ -57,6 +58,21 @@ function CelulaArvore({ row, recolhido, alternar, children }: { row: Row; recolh
 }
 
 /**
+ * Aviso da importação numa lista com filtro fixo (Pessoas › Funcionários): o registro importado só aparece aqui se
+ * a planilha preencher a coluna do filtro. Só entra o filtro que se diz em palavras (sim/não, opção de lista);
+ * referência e outros tipos ficam de fora. Sem nenhum dizível, não há aviso.
+ */
+function avisoDeFiltroFixo(fields: FieldDef[], fixed: Record<string, string>): string | undefined {
+  const condicoes = Object.entries(fixed).flatMap(([nome, valor]) => {
+    const f = fields.find((x) => x.name === nome);
+    const rotulo = f?.type === "boolean" ? (valor === "true" ? "Sim" : valor === "false" ? "Não" : undefined) : f?.type === "select" ? f.options?.find((o) => o.value === valor)?.label : undefined;
+    return f && rotulo ? [`${f.label} = ${rotulo}`] : [];
+  });
+  if (!condicoes.length) return undefined;
+  return `Esta lista mostra só registros com ${condicoes.join(" e ")}. Para o registro importado aparecer aqui, preencha ${condicoes.length > 1 ? "essas colunas" : "essa coluna"} na planilha.`;
+}
+
+/**
  * Listagem genérica de cadastros no MODELO BASE1: chips de filtro por coluna com valores distintos, grade
  * configurável (colunas, congelar, larguras), cards, modo Registro com o formulário embutido, rodapé com contadores.
  */
@@ -69,6 +85,7 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath, extra
   const alternar = React.useCallback((id: string) => setRecolhidos((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; }), []);
   const arvore = Boolean(def?.tree);
   const columns = React.useMemo<Base1Column[]>(() => fields.filter((f) => f.list).map((f, i) => ({ key: f.name, label: f.label, kind: filterKindOf(f.type), sortable: f.type !== "ref" && f.type !== "json", align: ["money", "quantity", "number", "percent", "integer"].includes(f.type) ? "right" : "left", render: (r) => arvore && i === 0 && typeof r["nivel"] === "number" ? <CelulaArvore row={r} recolhido={recolhidos.has(String(r["id"]))} alternar={alternar}>{formatCell(f, r)}</CelulaArvore> : arvore && r["kind"] === "synthetic" ? <span className="font-semibold">{formatCell(f, r)}</span> : formatCell(f, r), text: (r) => cellText(f, r) })), [fields, arvore, recolhidos, alternar]);
+  const [importando, setImportando] = React.useState(false);
   const rowVisible = React.useCallback((r: Row) => !Array.isArray(r["ancestrais"]) || !(r["ancestrais"] as string[]).some((a) => recolhidos.has(a)), [recolhidos]);
   const filters = React.useMemo<Base1FilterDef[]>(() => fields.filter((f) => (f.filter || f.list) && f.type !== "json" && f.type !== "textarea" && !(fixedFilters && f.name in fixedFilters)).map((f) => ({ key: f.name, label: f.label, kind: filterKindOf(f.type), mode: "advanced" as const, resource: f.ref?.resource, options: f.options })), [fields, fixedFilters]);
   const urlParams = React.useMemo(() => { const o: Record<string, string> = {}; sp.forEach((v, k) => { if (k !== "view" && k !== "tab" && k !== "sub") o[k] = v; }); return o; }, [sp]);
@@ -79,7 +96,12 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath, extra
   const fixed = fixedFilters ?? {};
   // componente estável (não remonta o formulário a cada renderização da listagem)
   const Record = React.useMemo(() => function ResourceRecord(rp: RecordProps) { return <ResourceForm resourceKey={resourceKey} id={rp.row ? String(rp.row["id"]) : "new"} basePath={base} embedded={{ mode: rp.mode, row: rp.row, setMode: rp.setMode, onExit: rp.onExit, refresh: rp.refresh, copyFrom: rp.copyFrom, rightSlot: rp.rightSlot, nav: { index: rp.index, total: rp.total, go: rp.go } }} />; }, [resourceKey, base]);
-  return <Base1List
+  const podeImportar = Boolean(def.importacao) && can(`${perm}.create`);
+  const importacaoMenu = podeImportar ? [
+    { key: "baixar-modelo", label: "Baixar modelo de importação", onClick: () => { void download(`/api/imports/${resourceKey}/modelo`, `modelo-${resourceKey}.xlsx`).catch(() => toast.error("Falha ao baixar o modelo")); } },
+    { key: "importar", label: "Importar planilha", onClick: () => setImportando(true) },
+  ] : [];
+  return <>{podeImportar && <ImportDialog resourceKey={resourceKey} labelPlural={def.labelPlural} open={importando} onOpenChange={setImportando} avisoFiltro={avisoDeFiltroFixo(fields, fixed)} />}<Base1List
     moduleId={resourceKey} title={title ?? def.labelPlural} columns={columns} filters={filters} entity={def.table} csvName={resourceKey}
     fetchPage={(p) => api<{ items: Row[]; total: number }>(`/api/resources/${resourceKey}${qs({ page: p.page, pageSize: p.pageSize, sort: p.sort, dir: p.dir, search: p.search, ...p.filters, ...fixed })}`)}
     distinct={(key, search) => api<{ value: string; label: string; count: number }[]>(`/api/resources/${resourceKey}/distinct${qs({ field: key, search, limit: 100 })}`)}
@@ -89,8 +111,9 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath, extra
     canDelete={can(`${perm}.delete`)} onDelete={async (r) => { await api(`/api/resources/${resourceKey}/${r["id"]}`, { method: "DELETE" }); toast.success("Registro excluído"); }} deleteText={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`}
     Record={Record}
     rowVisible={arvore ? rowVisible : undefined} sortClearable={arvore}
+    extraMenu={importacaoMenu.length ? importacaoMenu : undefined}
     rowActions={(r) => [{ label: "Visualizar", onClick: () => router.push(`${base}/${r["id"]}?view=1`) }, ...(can(`${perm}.edit`) ? [{ label: "Editar", onClick: () => router.push(`${base}/${r["id"]}`) }] : []), ...(extraRowActions?.(r) ?? [])]}
     exportXlsx={def.importExport && can(`${perm}.export`) ? (p) => download(`/api/exports/${resourceKey}${qs({ ...p.filters, ...fixed, search: p.search, format: "xlsx" })}`, `${resourceKey}.xlsx`) : undefined}
     reportHref={can("saved_reports.create") ? (p) => `/relatorios/personalizados/novo?resource=${resourceKey}&f=${encodeURIComponent(JSON.stringify({ ...p.filters, ...(p.search ? { search: p.search } : {}) }))}` : undefined}
-  />;
+  /></>;
 }

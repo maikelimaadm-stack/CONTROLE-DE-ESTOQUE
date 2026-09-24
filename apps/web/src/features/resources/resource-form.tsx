@@ -23,6 +23,8 @@ export interface EmbeddedForm { mode: "view" | "edit" | "new"; /** linha já car
 
 function defaults(fields: FieldDef[], preset: Record<string, string>, layoutDefaults: Record<string, unknown>): Values { const v: Values = {}; for (const f of fields) { const ld = layoutDefaults[f.name]; v[f.name] = preset[f.name] ?? (ld !== undefined ? (f.type === "boolean" ? ld === true || ld === "true" : ld) : f.default !== undefined ? f.default : f.type === "boolean" ? false : f.type === "tags" ? [] : f.type === "json" ? {} : ""); } return v; }
 function fromRecord(fields: FieldDef[], data: Values): Values { const v: Values = {}; for (const f of fields) { const x = data[f.name]; v[f.name] = f.type === "json" ? JSON.stringify(x ?? {}, null, 2) : x === null || x === undefined ? (f.type === "tags" ? [] : "") : f.type === "date" ? String(x).slice(0, 10) : x; } return v; }
+/** comparação das condições declarativas do registry (`visibleWhen`/`requiredWhen`): valor igual OU String igual */
+const iguala = (x: unknown, esperado: unknown) => x === esperado || String(x) === String(esperado);
 function toApi(fields: FieldDef[], v: Values, locked: string[] = []): Values { const o: Values = {}; for (const f of fields) { if (f.readOnly || locked.includes(f.name)) continue; /* campos travados pelo layout não vão no payload (mantêm o valor atual) */ let x = v[f.name]; if (x === "" || x === undefined) x = null; if (f.type === "json" && typeof x === "string") { try { x = JSON.parse(x); } catch { throw new Error(`JSON inválido em ${f.label}`); } } if (f.type === "integer" && x !== null) x = Number(x); if (f.type === "boolean") x = Boolean(x); if (f.type === "date" && typeof x === "string") x = x.slice(0, 10); if (x === null && !f.required && f.type === "boolean") x = false; if (x === null && ["money", "quantity", "number", "percent", "integer"].includes(f.type)) continue; /* numérico vazio: deixa o default do banco (0) valer */ o[f.name] = x; } return o; }
 
 const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--mg-text-1)] shadow-none focus:ring-0 focus:outline-none read-only:bg-transparent disabled:bg-transparent disabled:text-[var(--mg-text-1)]";
@@ -121,13 +123,15 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   if (!isNew && q.isLoading && !q.data) return <div className="p-6"><Spinner /></div>;
   if (q.error) return <ErrorBox error={q.error} />;
   const values = form.watch();
-  const visible = (f: FieldDef) => !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || values[f.visibleWhen.field] === f.visibleWhen.equals || String(values[f.visibleWhen.field]) === String(f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
+  const visible = (f: FieldDef) => !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
   const back = basePath ?? `/cadastros/${resourceKey}`;
   const byId = new Map(fields.map((f) => [f.name, f]));
+  // obrigatório do registry, do layout ou CONDICIONAL (`requiredWhen`): campo de condição vazio vale o `default` dele (ex.: Controla estoque = Sim)
+  const obrigatorio = (f: FieldDef) => Boolean(f.required) || l.requiredFieldIds.includes(f.name) || (f.requiredWhen !== undefined && iguala(values[f.requiredWhen.field] ?? byId.get(f.requiredWhen.field)?.default, f.requiredWhen.equals));
   const renderField = (fid: string) => {
     const f = byId.get(fid); if (!f || !visible(f)) return null;
     const err = form.formState.errors[f.name]?.message as string | undefined; const locked = Boolean(f.readOnly) || l.lockedFieldIds.includes(f.name); const dis = readOnly || locked;
-    const required = Boolean(f.required) || l.requiredFieldIds.includes(f.name);
+    const required = obrigatorio(f);
     const v = values[f.name]; const hasValue = f.type === "boolean" ? true : Array.isArray(v) ? v.length > 0 : v !== "" && v !== null && v !== undefined;
     return <B1Field key={f.name} flex label={l.fieldLabels[f.name] ?? f.label} required={required} error={err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}><FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={(o) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur))} /></B1Field>;
   };
@@ -159,7 +163,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
       {/* cabeçalho do registro + navegação */}
       <div className="mg-toolbar mg-card flex-wrap">
         <Bookmark className="h-4 w-4 text-[var(--mg-icon)]" /><span className="text-[13px] font-semibold text-slate-800">{code && <>{code} <span className="text-slate-400">•</span> </>}{title || def.label}</span>
-        {!readOnly && (() => { const req = fields.filter((f) => visible(f) && (Boolean(f.required) || l.requiredFieldIds.includes(f.name)) && !(isNew && f.readOnly)); const pend = req.filter((f) => { const v = values[f.name]; return f.type === "boolean" ? false : Array.isArray(v) ? v.length === 0 : v === "" || v === null || v === undefined; }); return <RequiredPill total={req.length} filled={req.length - pend.length} pending={pend.map((f) => l.fieldLabels[f.name] ?? f.label)} />; })()}
+        {!readOnly && (() => { const req = fields.filter((f) => visible(f) && obrigatorio(f) && !(isNew && f.readOnly)); const pend = req.filter((f) => { const v = values[f.name]; return f.type === "boolean" ? false : Array.isArray(v) ? v.length === 0 : v === "" || v === null || v === undefined; }); return <RequiredPill total={req.length} filled={req.length - pend.length} pending={pend.map((f) => l.fieldLabels[f.name] ?? f.label)} />; })()}
         <span className="ml-auto flex items-center gap-1">
           <Link href={`${back}/configuracao-layout`} title="Layout do formulário" aria-label="Layout do formulário"><IconBtn size="sm" className={cn(layout.source !== "default" && "text-brand-700")}><LayoutPanelTop className="h-4 w-4" /></IconBtn></Link>
           {/* navegação entre registros (MG): não existe em "novo"; fica bloqueada durante a edição */}

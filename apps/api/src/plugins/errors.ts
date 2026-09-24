@@ -5,7 +5,7 @@ import { DomainError } from "@agro/shared";
 import { fromPgError } from "../lib/errors.js";
 
 /** Mensagens de validação em português (as do zod são em inglês: "Invalid input: expected string, received null"). */
-function translateIssue(i: ZodIssue): string {
+export function translateIssue(i: ZodIssue): string {
   const anyI = i as ZodIssue & { received?: unknown; expected?: unknown; maximum?: number; minimum?: number; validation?: string; format?: string; origin?: string };
   switch (i.code) {
     case "invalid_type": return anyI.received === "null" || anyI.received === "undefined" || anyI.received === null || anyI.received === undefined || /received (null|undefined)/.test(i.message) ? "Campo obrigatório" : "Valor inválido";
@@ -33,6 +33,8 @@ export default fp(async function errorsPlugin(app: FastifyInstance) {
     const pg = fromPgError(error);
     if (pg) return reply.status(pg.httpStatus).send({ error: pg.toJSON() });
     const fe = error as { statusCode?: number; message?: string; validation?: unknown };
+    // corpo acima do bodyLimit da rota: a mensagem do Fastify é em inglês
+    if (fe.statusCode === 413) return reply.status(413).send({ error: { code: "VALIDATION_ERROR", message: "Arquivo ou requisição grande demais." } });
     if (fe.statusCode === 429) return reply.status(429).send({ error: { code: "RATE_LIMITED", message: "Muitas requisições" } });
     if (fe.statusCode && fe.statusCode < 500) return reply.status(fe.statusCode).send({ error: { code: "VALIDATION_ERROR", message: fe.message, details: fe.validation } });
     req.log.error(error);
