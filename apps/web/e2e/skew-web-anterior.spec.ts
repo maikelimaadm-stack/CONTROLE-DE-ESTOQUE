@@ -346,3 +346,67 @@ test("VENDAS-A1 · A1-K2 — o web da base cria venda sem classificação: 201 c
   expect(confirmacao[0]!.metadata?.classificacaoFinanceira?.categoriaFinanceiraId, "com a categoria efetivamente usada").toMatch(/^[0-9a-f-]{36}$/);
   v.semBloqueio(); v.semErroDeContrato();
 });
+
+/**
+ * VENDAS-A5-1 · A5-K2 — O WEB DA BASE CONFIRMA UMA VENDA CONTRA A API DESTE HEAD.
+ *
+ * A fatia acrescenta UMA rota de leitura (`previa-confirmacao`) e troca textos do web; a confirmação continua
+ * a mesma porta, com o mesmo corpo. Se a API subir antes do web, todo navegador aberto roda o diálogo da base —
+ * que não conhece a prévia — contra este servidor. Duas coisas se provam aqui: (a) a rota nova é SÓ leitura —
+ * perguntar a ela não muda o documento nem a trilha, então a presença dela no servidor não altera nada para quem
+ * não a usa; (b) o cliente da base confirma pela própria tela, com 200 e a venda confirmada, sem erro de contrato.
+ *
+ * Vale nos dois mundos: um web da base anterior à fatia não pergunta à prévia; um posterior pergunta e recebe 200
+ * deste HEAD — em nenhum dos dois há 404/422/5xx no fio (`semErroDeContrato`).
+ */
+test("VENDAS-A5-1 · A5-K2 — o web da base confirma uma venda contra a API deste HEAD: nada quebra, e a rota nova é só leitura", async ({ page, request }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const auth = { authorization: `Bearer ${s.token}`, "x-org-id": String(s.orgId), "content-type": "application/json" };
+  const um = async (p: string) => {
+    const r = await request.get(`${API}${p}`, { headers: auth });
+    expect(r.status(), p).toBe(200);
+    const id = (await r.json() as { items: { id: string }[] }).items?.[0]?.id;
+    expect(id, `o seed precisa ter registro em ${p}`).toBeTruthy();
+    return id!;
+  };
+  const ctx = await (await request.get(`${API}/api/auth/context`, { headers: auth })).json() as { empresas: { id: string }[] };
+  const criada = await request.post(`${API}/api/sales/sales`, { headers: auth, data: {
+    empresa_id: s.empresaId ?? ctx.empresas[0]!.id, document_date: "2026-09-01", client_id: await um("/api/resources/people?is_client=true&pageSize=1"),
+    items: [{ product_id: await um("/api/resources/products?pageSize=1"), warehouse_id: null, quantity: "1", unit_price: "10.00" }] } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const id = (await criada.json() as { id: string }).id;
+
+  // (a) SÓ LEITURA: documento e trilha idênticos antes e depois de perguntar à prévia.
+  const documento = async () => { const d = await (await request.get(`${API}/api/sales/sales/${id}`, { headers: auth })).json() as Record<string, unknown>; return { status: d["status"], updated_at: d["updated_at"], version: d["version"] }; };
+  const trilha = async () => (await (await request.get(`${API}/api/admin/audit?entity=sales_documents&entity_id=${id}`, { headers: auth })).json() as { items: { action: string }[] }).items;
+  const antes = { doc: await documento(), trilha: await trilha() };
+  const previa = await request.get(`${API}/api/sales/sales/${id}/previa-confirmacao`, { headers: auth });
+  expect(previa.status(), "a API deste HEAD serve a prévia").toBe(200);
+  const corpo = await previa.json() as { contractVersion: number; podeConfirmar: boolean };
+  expect([corpo.contractVersion, corpo.podeConfirmar], "premissa: a prévia diz que esta venda confirma").toEqual([1, true]);
+  expect(await documento(), "perguntar à prévia não mexeu no documento").toEqual(antes.doc);
+  expect(await trilha(), "nem na trilha").toEqual(antes.trilha);
+  expect(antes.doc.status, "premissa: a venda está aberta").toBe("open");
+
+  // (b) O CLIENTE DA BASE confirma pela própria tela.
+  await page.goto(`/vendas/sales/${id}`);
+  const central = page.getByTestId("central-vendas");
+  await expect(central).toBeVisible();
+  await central.getByTestId("central-vendas-acoes").getByRole("button", { name: "Confirmar venda" }).click();
+  const dlg = page.getByTestId("confirm-dialog");
+  await expect(dlg.getByRole("heading", { name: "Confirmar venda" })).toBeVisible();
+  await expect(dlg.getByTestId("confirm-dialog-confirm"), "o diálogo da base oferece confirmar").toBeEnabled();
+  const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/sales/sales/${id}/confirm`);
+  await dlg.getByTestId("confirm-dialog-confirm").click();
+  const r = await resposta;
+  expect(r.status(), "a API deste HEAD confirma o pedido do cliente da base").toBe(200);
+  expect(r.request().headers()["idempotency-key"], "com a chave de idempotência de sempre").toBeTruthy();
+  const depois = await (await request.get(`${API}/api/sales/sales/${id}`, { headers: auth })).json() as { status: string; titles: unknown[] };
+  expect(depois.status).toBe("confirmed");
+  expect(depois.titles.length, "e gerou as contas a receber, como antes").toBeGreaterThan(0);
+  // A premissa da trilha: a mesma leitura ENXERGA uma escrita — a confirmação aparece nela.
+  expect((await trilha()).filter((i) => i.action === "confirm"), "a confirmação ficou na trilha").toHaveLength(1);
+  v.semBloqueio(); v.semErroDeContrato();
+});

@@ -30,6 +30,7 @@ supabase/.temp
 .skew-capacidade-top.json
 .skew-execucao-top.json
 .skew-classificacao-financeira.json
+.skew-previa-confirmacao.json
 
 # configuração pessoal do Claude Code: o settings.json do projeto é versionado, este nunca.
 # Sem esta linha, a proteção depende do ignore global de cada máquina (que não viaja com o repo).

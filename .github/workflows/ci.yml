@@ -189,6 +189,13 @@ jobs:
       # cobra que o web os mostra. A decisão é MEDIDA na árvore da base e expira sozinha. Falha fechado.
       - name: A API da base já declara a classificação financeira da venda? (VENDAS-A1)
         run: node scripts/skew-classificacao-financeira.mjs --github-env
+      # A API DA BASE JÁ SERVE A PRÉVIA DA CONFIRMAÇÃO DA VENDA? (VENDAS-A5-1)
+      # Mesmo desenho: sem a rota `previa-confirmacao` declarada na base, o sentido 1 cobra que o diálogo
+      # "Confirmar venda" deste web mostra o texto NEUTRO, com o botão habilitado, e que a confirmação funciona
+      # (quem recusa é o servidor); com a rota, cobra que o diálogo mostra a prévia. A decisão é MEDIDA na
+      # árvore da base e expira sozinha. Falha fechado.
+      - name: A API da base já serve a prévia da confirmação da venda? (VENDAS-A5-1)
+        run: node scripts/skew-previa-confirmacao.mjs --github-env
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
       # SENTIDO 1 — o web desta PR contra a API que está no ar (o Vercel sobe antes do Railway).
       - name: E2E de version skew (web deste HEAD × API da base)
