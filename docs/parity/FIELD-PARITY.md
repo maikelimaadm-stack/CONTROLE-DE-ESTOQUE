@@ -8,7 +8,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 |---|---|---|---|---|---|---|---|
 | SCR-002 | Indicadores Financeiros | `/dashboards/financeiro` | 0 | 5 | 7 | — | UNIFICADO |
 | SCR-003 | Indicadores Pecuária de Corte | `/dashboards/pecuaria` | 0 | 4 | 0 | — | TESTADO |
-| SCR-004 | Funcionários | `/cadastros/people?is_employee=true` | 1 | 4 | 7 | 5 | MELHORADO |
+| SCR-004 | Funcionários | `/cadastros/people?is_employee=true` | 1 | 4 | 7 | 6 | MELHORADO |
 | SCR-005 | Usuários | `/admin/usuarios` | 1 | 4 | 9 | — | TESTADO |
 | SCR-006 | Documento Fiscal | `/estoque/documentos-fiscais` | 0 | 9 | 9 | — | TESTADO |
 | SCR-007 | DFe Recebidas | `/estoque/dfe` | 2 | 9 | 12 | — | EM IMPLEMENTAÇÃO |
@@ -34,15 +34,15 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-028 | Fazendas | `/cadastros/farms` | 0 | 7 | 6 | — | UNIFICADO |
 | SCR-029 | Safras | `/cadastros/harvests` | 0 | 0 | 5 | 1 | IMPLEMENTADO |
 | SCR-030 | Endereçamentos | `/cadastros/addressings` | 0 | 0 | 3 | 0 | IMPLEMENTADO |
-| SCR-031 | Produtos | `/cadastros/products` | 1 | 7 | 10 | 4 | TESTADO |
+| SCR-031 | Produtos | `/cadastros/products` | 1 | 7 | 10 | 5 | TESTADO |
 | SCR-032 | Armazém | `/cadastros/warehouses` | 0 | 0 | 5 | 3 | IMPLEMENTADO |
 | SCR-033 | Saldo Inicial | `/estoque/estoque-inicial` | 1 | 3 | 8 | — | TESTADO |
 | SCR-034 | Rateio - Categoria Financeira | `/cadastros/apportionment_categories` | 0 | 0 | 2 | 1 | IMPLEMENTADO |
 | SCR-035 | Perfil Usuário | `/admin/perfis` | 0 | 0 | 5 | — | TESTADO |
-| SCR-036 | Pessoas | `/cadastros/people` | 0 | 2 | 5 | 5 | IMPLEMENTADO |
-| SCR-037 | Proprietários | `/cadastros/people?is_proprietary=true` | 1 | 0 | 6 | 5 | MELHORADO |
-| SCR-038 | Fornecedores | `/cadastros/people?is_provider=true` | 1 | 6 | 7 | 5 | MELHORADO |
-| SCR-039 | Clientes | `/cadastros/people?is_client=true` | 1 | 3 | 6 | 5 | MELHORADO |
+| SCR-036 | Pessoas | `/cadastros/people` | 0 | 2 | 5 | 6 | IMPLEMENTADO |
+| SCR-037 | Proprietários | `/cadastros/people?is_proprietary=true` | 1 | 0 | 6 | 6 | MELHORADO |
+| SCR-038 | Fornecedores | `/cadastros/people?is_provider=true` | 1 | 6 | 7 | 6 | MELHORADO |
+| SCR-039 | Clientes | `/cadastros/people?is_client=true` | 1 | 3 | 6 | 6 | MELHORADO |
 | SCR-040 | Autorizadores | `/cadastros/authorizers` | 0 | 1 | 6 | 1 | TESTADO |
 | SCR-041 | Contas Bancárias | `/cadastros/bank_accounts` | 0 | 0 | 10 | 2 | TESTADO |
 | SCR-042 | Saldo Inicial | `/financeiro/saldo-inicial` | 0 | 4 | 11 | — | UNIFICADO |
@@ -51,7 +51,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-045 | Sincronização DFe | `/fiscal` | 0 | 0 | 4 | 0 | NÃO INICIADO |
 | SCR-046 | Sincronização NFS-e | `/fiscal` | 0 | 0 | 4 | 0 | NÃO INICIADO |
 | SCR-047 | Regras Fiscais | `/cadastros/tax_rules` | 0 | 0 | 3 | 1 | IMPLEMENTADO |
-| SCR-048 | Contadores | `/cadastros/people` | 0 | 0 | 5 | 5 | MAPEADO |
+| SCR-048 | Contadores | `/cadastros/people` | 0 | 0 | 5 | 6 | MAPEADO |
 | SCR-049 | Natureza de Operaçao | `/cadastros/nature_operations` | 0 | 3 | 7 | 2 | IMPLEMENTADO |
 | SCR-050 | Informações Complementares | `/cadastros/additional_infos` | 0 | 0 | 3 | 1 | IMPLEMENTADO |
 | SCR-051 | Planos de Contas | `/cadastros/chart_accounts` | 1 | 4 | 5 | 1 | IMPLEMENTADO |
@@ -268,8 +268,8 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-263 | Integração CTA Smart | `/frota/abastecimentos` | 3 | 0 | 9 | — | NÃO INICIADO |
 | SCR-264 | CTA Smart - Abastecimentos Importados | `/frota/abastecimentos` | 1 | 3 | 9 | — | NÃO INICIADO |
 | SCR-265 | Exportar CSV - Contas Pagas/Recebidas | `/integracoes/exportacoes` | 0 | 2 | 0 | — | UNIFICADO |
-| SCR-267 | Funcionários | `/cadastros/people/new?is_employee=true` | 23 | 0 | 0 | 29 | MELHORADO |
-| SCR-269 | Funcionários | `/cadastros/people/[id]?is_employee=true` | 21 | 0 | 0 | 29 | MELHORADO |
+| SCR-267 | Funcionários | `/cadastros/people/new?is_employee=true` | 23 | 0 | 0 | 38 | MELHORADO |
+| SCR-269 | Funcionários | `/cadastros/people/[id]?is_employee=true` | 21 | 0 | 0 | 38 | MELHORADO |
 | SCR-272 | Usuários | `/admin/usuarios/[id]` | 11 | 0 | 0 | — | TESTADO |
 | SCR-273 | Documento Fiscal | `/estoque/documentos-fiscais/new` | 142 | 0 | 10 | 18 | TESTADO |
 | SCR-274 | Consulte os documentos | `/estoque/dfe/new` | 0 | 0 | 4 | — | EM IMPLEMENTAÇÃO |
@@ -295,8 +295,8 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-297 | Safras | `/cadastros/harvests/[id]` | 8 | 0 | 0 | 9 | IMPLEMENTADO |
 | SCR-298 | Endereçamento - Setor | `/cadastros/addressings/new` | 2 | 0 | 0 | 2 | IMPLEMENTADO |
 | SCR-300 | Endereçamento - Setor | `/cadastros/addressings/[id]` | 2 | 0 | 0 | 2 | IMPLEMENTADO |
-| SCR-302 | Produtos | `/cadastros/products/new` | 66 | 0 | 0 | 30 | TESTADO |
-| SCR-304 | Produtos | `/cadastros/products/[id]` | 66 | 0 | 0 | 30 | TESTADO |
+| SCR-302 | Produtos | `/cadastros/products/new` | 66 | 0 | 0 | 35 | TESTADO |
+| SCR-304 | Produtos | `/cadastros/products/[id]` | 66 | 0 | 0 | 35 | TESTADO |
 | SCR-305 | Armazém | `/cadastros/warehouses/new` | 4 | 0 | 0 | 5 | IMPLEMENTADO |
 | SCR-307 | Armazém | `/cadastros/warehouses/[id]` | 4 | 0 | 0 | 5 | IMPLEMENTADO |
 | SCR-308 | Saldo Inicial | `/estoque/estoque-inicial/new` | 31 | 0 | 0 | — | TESTADO |
@@ -304,14 +304,14 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-311 | Saldo Inicial | `/cadastros/apportionment_categories/new` | 11 | 0 | 0 | 2 | IMPLEMENTADO |
 | SCR-312 | Perfil Usuário | `/admin/perfis/new` | 668 | 0 | 0 | — | TESTADO |
 | SCR-314 | Perfil Usuário | `/admin/perfis/[id]` | 668 | 0 | 0 | 3 | TESTADO |
-| SCR-315 | Inscrições Estaduais | `/cadastros/people/new` | 69 | 0 | 7 | 29 | IMPLEMENTADO |
-| SCR-317 | Inscrições Estaduais | `/cadastros/people/[id]` | 67 | 0 | 7 | 29 | IMPLEMENTADO |
-| SCR-319 | Inscrições Estaduais | `/cadastros/people/new?is_proprietary=true` | 10 | 0 | 5 | 29 | MELHORADO |
-| SCR-321 | Inscrições Estaduais | `/cadastros/people/[id]?is_proprietary=true` | 12 | 0 | 5 | 29 | MELHORADO |
-| SCR-323 | Fornecedores | `/cadastros/people/new?is_provider=true` | 33 | 0 | 0 | 29 | MELHORADO |
-| SCR-325 | Fornecedores | `/cadastros/people/[id]?is_provider=true` | 33 | 0 | 0 | 29 | MELHORADO |
-| SCR-327 | Inscrições Estaduais | `/cadastros/people/new?is_client=true` | 21 | 0 | 2 | 29 | MELHORADO |
-| SCR-329 | Inscrições Estaduais | `/cadastros/people/[id]?is_client=true` | 21 | 0 | 2 | 29 | MELHORADO |
+| SCR-315 | Inscrições Estaduais | `/cadastros/people/new` | 69 | 0 | 7 | 38 | IMPLEMENTADO |
+| SCR-317 | Inscrições Estaduais | `/cadastros/people/[id]` | 67 | 0 | 7 | 38 | IMPLEMENTADO |
+| SCR-319 | Inscrições Estaduais | `/cadastros/people/new?is_proprietary=true` | 10 | 0 | 5 | 38 | MELHORADO |
+| SCR-321 | Inscrições Estaduais | `/cadastros/people/[id]?is_proprietary=true` | 12 | 0 | 5 | 38 | MELHORADO |
+| SCR-323 | Fornecedores | `/cadastros/people/new?is_provider=true` | 33 | 0 | 0 | 38 | MELHORADO |
+| SCR-325 | Fornecedores | `/cadastros/people/[id]?is_provider=true` | 33 | 0 | 0 | 38 | MELHORADO |
+| SCR-327 | Inscrições Estaduais | `/cadastros/people/new?is_client=true` | 21 | 0 | 2 | 38 | MELHORADO |
+| SCR-329 | Inscrições Estaduais | `/cadastros/people/[id]?is_client=true` | 21 | 0 | 2 | 38 | MELHORADO |
 | SCR-330 | Regras de Autorização | `/cadastros/authorizers/new` | 13 | 0 | 3 | 8 | TESTADO |
 | SCR-332 | Regras de Autorização | `/cadastros/authorizers/[id]` | 13 | 0 | 3 | 8 | TESTADO |
 | SCR-333 | Conta Bancaria | `/cadastros/bank_accounts/new` | 16 | 0 | 0 | 15 | TESTADO |
@@ -322,7 +322,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-341 | Sincronização DFe | `/fiscal/new` | 2 | 0 | 0 | — | NÃO INICIADO |
 | SCR-342 | Sincronização NFS-e | `/fiscal/new` | 2 | 0 | 0 | — | NÃO INICIADO |
 | SCR-343 | Regras Fiscais | `/cadastros/tax_rules/new` | 37 | 0 | 0 | 20 | IMPLEMENTADO |
-| SCR-344 | Novo Contador | `/cadastros/people/new` | 13 | 0 | 0 | 29 | MAPEADO |
+| SCR-344 | Novo Contador | `/cadastros/people/new` | 13 | 0 | 0 | 38 | MAPEADO |
 | SCR-345 | Natureza de Operaçao | `/cadastros/nature_operations/new` | 47 | 0 | 0 | 16 | IMPLEMENTADO |
 | SCR-346 | Natureza de Operação | `/cadastros/nature_operations/[id]` | 47 | 0 | 0 | 16 | IMPLEMENTADO |
 | SCR-347 | Informações Complementares | `/cadastros/additional_infos/new` | 3 | 0 | 0 | 3 | IMPLEMENTADO |
