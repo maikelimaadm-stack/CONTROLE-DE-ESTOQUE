@@ -641,11 +641,13 @@ conferir.
    deixam de prometer efeito, e o aviso do padrão automático da VENDAS-A1 passa a seguir a prévia. A fatia
    não liga o gate e não muda efeito, código, ordem nem mensagem da confirmação.
 
-   **Estado: `PENDING`** até o web servir, em `/api/build`, um commit que contenha a VENDAS-A5-1 — em
-   CADA superfície web listada em § "Superfície web", com o `sha` servido tendo o merge da fatia como
-   ancestral (`git merge-base --is-ancestor <merge da VENDAS-A5-1> <sha servido>`). Quem confere e registra
-   aqui, com data (UTC) e o `sha` de cada superfície, é a sessão revisora, DEPOIS do deploy. Merge, CI
-   verde ou "deploy verde" não satisfazem o item, e a PR da própria fatia não o marca `OK`.
+   **Estado: `OK` em 24/09/2026 13:28 UTC** — leitura da sessão revisora, depois do deploy do merge da
+   VENDAS-A5-1 (`8445801`): a API em `/health`, o web Vercel em `/api/build` e o web Railway em
+   `/api/build` servem `844580160ae2ea5ac0063ffaaee75ed3e5a1523b`, que é o próprio merge da fatia (o
+   critério era o `sha` servido ter esse merge como ancestral — `git merge-base --is-ancestor`). Registrado
+   pela CADASTROS-ESTRUTURA a partir da leitura revisora; a PR da A5-1 não marcou o item. **A fase 2
+   continua DESLIGADA**: o item 5 (autorização do Maike para esta ação) não foi dado, e nenhum item
+   `OK` liga o gate sozinho.
 5. **Autorização explícita do Maike, pedida na hora, para ESTA ação** — autorização dada ao merge ou à
    fase 1 não vale para a fase 2 (`.claude/rules/security.md` § Produção).
 
@@ -852,6 +854,42 @@ select count(*) filter (where kind = 'sale' and deleted_at is null) as vendas,
   explícita do Maike antes da reversão.
 - **Banco:** a 0024 fica — migration aplicada é histórico, e as colunas anuláveis são inertes para o
   binário anterior.
+
+## CADASTROS-ESTRUTURA — Grupo de Produtos em árvore (`0025`) e nomes de mercado
+
+Decisão 250. Os nomes novos (Naturezas, Centros de Resultado, Conta Contábil, Analítica Sim/Não, "superior")
+são só RÓTULO: nenhum dado, chave, permissão ou endereço muda, e a web anterior continua funcionando com os
+nomes antigos. O que tem janela de deploy é o Grupo de Produtos.
+
+**A migration `0025_grupo_de_produtos_arvore.sql` é aditiva**: `erp.product_groups` ganha `code` (anulável —
+o acervo não tem código e a 240(3) proíbe inventar), `parent_id` (FK composta com o tenant, sem cascade),
+`kind` (padrão `analytic`) e `deleted_at`; a unicidade de nome passa da organização inteira para os IRMÃOS
+vivos (relaxamento — nenhuma linha muda); `erp.products.category_id` e `kind_id` deixam de ser NOT NULL.
+`product_categories` e `product_kinds` ficam (legado, fora de uso; remoção é da DATA-GOV). Trava própria,
+`lock_timeout` e pré/pós-condições nomeadas. Produção em 24/09/2026 (leitura revisora 13:29 UTC): 1 grupo
+("teste", sem código), 0 categorias, 0 classes, 0 produtos — o grupo do acervo fica raiz, sem código, no fim
+da lista.
+
+**Implantação — ordem: banco (0025) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela
+de deploy há QUATRO combinações, todas provadas no harness de skew (`skew-web-anterior.spec.ts` e
+`skew-api-producao.spec.ts`, casos CE-K1..CE-K4):
+
+1. **web ANTERIOR × API nova — produto:** o formulário anterior manda `category_id` e `kind_id`; a API nova
+   os aceita como campos LEGADOS opcionais (schema continua `.strict()`) e grava o que vier → **201**.
+2. **web ANTERIOR × API nova — grupo:** o formulário anterior manda só o nome; a API nova exige código →
+   **422 declarado** no campo Código, nada gravado. Cadastrar grupo espera a web nova.
+3. **web NOVA × API anterior — produto e grupo:** a API anterior exige categoria/classe e não conhece
+   `code`/`kind`/`parent_id` do grupo (`.strict()`) → gravação **RECUSADA (422)**, nada gravado
+   (fail-closed; nunca grava pela metade).
+4. **web NOVA × API anterior — parâmetros:** o schema das máscaras (`apps/api/src/routes/admin.ts`) é
+   `.strict()` sobre a lista de cadastros de código hierárquico; salvar máscara de **Grupos** na janela é
+   **recusado (422)**; sem máscara de grupo, os parâmetros salvam normalmente.
+
+**Reversão.** Web: livre (a anterior usa os lookups de Categoria/Classe, que continuam na API). API
+(binário): o anterior volta a exigir categoria/classe no produto e não edita grupo com os campos novos (422,
+caso 3) — seguro, sem gravação parcial; produto criado sem categoria/classe continua legível. Banco: a 0025
+fica — migration aplicada é histórico; as colunas novas são inertes para o binário anterior, e a unicidade
+relaxada não quebra nenhuma escrita dele (o `on conflict (organization_id, name)` só existia no seed).
 
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)

@@ -28,7 +28,7 @@ const ehPrevia = (id: string) => (r: Response) => r.request().method() === "GET"
 /** O texto NEUTRO, escrito aqui por extenso de propósito: é o contrato com o usuário, e mudá-lo tem de ser decisão visível. */
 const TEXTO_NEUTRO = "A confirmação aplica o Tipo de Operação desta venda. Não foi possível carregar a prévia dos efeitos; o servidor recusa o que não puder executar.";
 /** O aviso da A1 quando a tela NÃO tem a prévia — a regra decidida pelo id, que continua valendo contra a API anterior. */
-const AVISO_SEM_PREVIA = "Sem classificação: ao confirmar, a venda usará o padrão automático (primeira categoria de receita e primeiro centro de custo analíticos, pela ordem do código).";
+const AVISO_SEM_PREVIA = "Sem classificação: ao confirmar, a venda usará o padrão automático (primeira natureza de receita e primeiro centro de resultado analíticos, pela ordem do código).";
 
 type ItemDaClassificacao = { id: string; codigo: string; nome: string };
 type Previa = {
@@ -168,7 +168,7 @@ test("A5-W1 — venda classificada: a prévia é pedida AO ABRIR, o botão esper
   const financeiro = dialogo(page).getByTestId("previa-confirmacao-financeiro");
   await expect(financeiro).toContainText(/^Gera contas a receber de R\$\s*100,00/);
   await expect(financeiro).toContainText(`primeiro vencimento ${dataBR(previa.financeiro.primeiroVencimento!)}`);
-  await expect(financeiro).toContainText(`categoria ${rotulo(previa.financeiro.classificacao!.categoria)} · centro ${rotulo(previa.financeiro.classificacao!.centro)}.`);
+  await expect(financeiro).toContainText(`natureza ${rotulo(previa.financeiro.classificacao!.categoria)} · centro de resultado ${rotulo(previa.financeiro.classificacao!.centro)}.`);
   await expect(financeiro, "origem documento: nada de padrão automático").not.toContainText("padrão automático");
   // A promessa antiga saiu do diálogo — inclusive o detalhe técnico que não é do usuário.
   await expect(dialogo(page), "a frase fixa de antes não volta").not.toContainText("Baixa o estoque dos itens com armazém e gera as contas a receber");
@@ -216,7 +216,7 @@ test("A5-W2 — venda sem classificação: o diálogo e o aviso do detalhe nomei
   const ws = await abrirDetalhe(page, id);
   expect((await avisoPedido).status(), "o aviso pergunta à prévia (venda aberta sem classificação)").toBe(200);
   await expect(ws.getByTestId("classificacao-padrao-automatico"))
-    .toHaveText(`Sem classificação: ao confirmar, a venda usará o padrão automático — categoria ${rotulo(c.categoria)} · centro ${rotulo(c.centro)}.`);
+    .toHaveText(`Sem classificação: ao confirmar, a venda usará o padrão automático — natureza ${rotulo(c.categoria)} · centro de resultado ${rotulo(c.centro)}.`);
 
   // O DIÁLOGO pergunta de novo ao abrir e diz a mesma coisa, marcando que é o padrão automático.
   const doDialogo = page.waitForResponse(ehPrevia(id));
@@ -224,7 +224,7 @@ test("A5-W2 — venda sem classificação: o diálogo e o aviso do detalhe nomei
   const corpoDoDialogo = await (await doDialogo).json() as Previa;
   expect(corpoDoDialogo.financeiro.classificacao, "a pergunta do diálogo devolveu o MESMO par").toEqual(c);
   await expect(dialogo(page).getByTestId("previa-confirmacao-financeiro"))
-    .toContainText(`categoria ${rotulo(c.categoria)} · centro ${rotulo(c.centro)} (padrão automático).`);
+    .toContainText(`natureza ${rotulo(c.categoria)} · centro de resultado ${rotulo(c.centro)} (padrão automático).`);
   await expect(botaoDoDialogo(page)).toBeEnabled();
 
   // E A CONFIRMAÇÃO USA ESSE PAR: a trilha da confirmação registra o rateio com a categoria e o centro previstos.
@@ -421,7 +421,7 @@ test("A5-W2b — TOP formato 2 (gate ligado): 'nenhum' + a receber e saída + 'n
       // O AVISO do detalhe existe — com o par que a prévia nomeou.
       const c = corpo.financeiro.classificacao!;
       await expect(ws.getByTestId("classificacao-padrao-automatico"), caso.nome)
-        .toHaveText(`Sem classificação: ao confirmar, a venda usará o padrão automático — categoria ${rotulo(c.categoria)} · centro ${rotulo(c.centro)}.`);
+        .toHaveText(`Sem classificação: ao confirmar, a venda usará o padrão automático — natureza ${rotulo(c.categoria)} · centro de resultado ${rotulo(c.centro)}.`);
     } else {
       await expect(linhaEstoque, caso.nome).toHaveText("Baixa o estoque de 1 item.");
       await expect(linhaFinanceira, caso.nome).toHaveText("Não gera conta a receber.");
@@ -481,7 +481,7 @@ test("A5-W3b — venda sem classificação com recusa prevista (exigência da TO
       await expect(dialogo(page).getByTestId("previa-confirmacao"), caso.nome).toBeVisible();
       await expect(botaoDoDialogo(page), caso.nome).toBeEnabled();
       const c = corpo.financeiro.classificacao!;
-      await expect(aviso, caso.nome).toHaveText(`Sem classificação: ao confirmar, a venda usará o padrão automático — categoria ${rotulo(c.categoria)} · centro ${rotulo(c.centro)}.`);
+      await expect(aviso, caso.nome).toHaveText(`Sem classificação: ao confirmar, a venda usará o padrão automático — natureza ${rotulo(c.categoria)} · centro de resultado ${rotulo(c.centro)}.`);
     }
     await fecharDialogo(page);
   }

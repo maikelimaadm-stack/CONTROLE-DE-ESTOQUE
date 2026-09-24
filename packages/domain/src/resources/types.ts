@@ -22,6 +22,11 @@ export interface FieldDef {
      */
     filtro?: Record<string, string>;
   };
+  /**
+   * Campo preenchido por BUSCA numa referência oficial (município, banco, NCM, CBO — `referencias.ts`). O
+   * valor gravado continua o CÓDIGO oficial (o mesmo de antes da busca existir); só a tela muda.
+   */
+  busca?: import("./referencias.js").ChaveReferencia;
   /** exibir na listagem */
   list?: boolean;
   /** filtrar na listagem */

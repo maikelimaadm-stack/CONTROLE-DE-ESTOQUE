@@ -73,12 +73,12 @@ test("A1-W1 — venda nova: os dois campos, Salvar só com os dois, lookups filt
   const dados = ws.getByRole("region", { name: "Dados principais" });
 
   // Os dois campos moram em Dados principais, logo depois de "Forma de pagamento".
-  await expect(dados.locator("label", { hasText: "Categoria financeira" })).toBeVisible();
-  await expect(dados.locator("label", { hasText: "Centro de custo" })).toBeVisible();
+  await expect(dados.locator("label", { hasText: "Natureza" })).toBeVisible();
+  await expect(dados.locator("label", { hasText: "Centro de resultado" })).toBeVisible();
   const rotulos = await dados.locator("label").allInnerTexts();
   const pos = (r: string) => rotulos.findIndex((t) => t.includes(r));
   expect(pos("Forma de pagamento"), "premissa: a forma de pagamento está na região").toBeGreaterThanOrEqual(0);
-  expect([pos("Categoria financeira"), pos("Centro de custo")], "a ordem do contrato: forma de pagamento → categoria → centro")
+  expect([pos("Natureza"), pos("Centro de resultado")], "a ordem do contrato: forma de pagamento → categoria → centro")
     .toEqual([pos("Forma de pagamento") + 1, pos("Forma de pagamento") + 2]);
 
   // Salvar: com cliente e item, falta SÓ a classificação — e é ela que segura o botão.
@@ -100,37 +100,37 @@ test("A1-W1 — venda nova: os dois campos, Salvar só com os dois, lookups filt
   expect(semFiltroEnergia.map((o) => o.label), "premissa: sem o filtro, 'Energia' devolve a analítica de DESPESA do seed").toContain("Energia Elétrica");
   const proibidas = new Set([...semFiltroReceitas, ...semFiltroEnergia].map((o) => o.id));
 
-  const receitas = await buscarNoLookup(page, "Categoria financeira", "financial_categories", "Receitas");
+  const receitas = await buscarNoLookup(page, "Natureza", "financial_categories", "Receitas");
   expect(receitas.url, "o lookup pede o recorte ao SERVIDOR").toMatch(/kind=analytic/);
   expect(receitas.url).toMatch(/nature=income/);
   expect(receitas.corpo.filter((o) => proibidas.has(o.id)).map((o) => o.label), "nenhuma sintética chega ao lookup").toEqual([]);
   await expect(receitas.painel.getByRole("option"), "a busca 'Receitas' só casa sintéticas — nada é oferecido").toHaveCount(0);
   await expect(receitas.painel.getByText("Nenhum resultado")).toBeVisible();
 
-  const energia = await buscarNoLookup(page, "Categoria financeira", "financial_categories", "Energia");
+  const energia = await buscarNoLookup(page, "Natureza", "financial_categories", "Energia");
   expect(energia.corpo.filter((o) => proibidas.has(o.id)).map((o) => o.label), "a categoria de despesa não chega ao lookup").toEqual([]);
   await expect(energia.painel.getByRole("option"), "a despesa analítica não é oferecida").toHaveCount(0);
 
   // E a presença positiva: a analítica de receita do seed É oferecida — senão as ausências acima seriam vácuo.
-  const boi = await buscarNoLookup(page, "Categoria financeira", "financial_categories", CLASSIFICACAO_DO_SEED.categoria.nome);
+  const boi = await buscarNoLookup(page, "Natureza", "financial_categories", CLASSIFICACAO_DO_SEED.categoria.nome);
   await expect(boi.painel.getByRole("option", { name: new RegExp(CLASSIFICACAO_DO_SEED.categoria.nome) })).toHaveCount(1);
   await fecharLookup(page);
 
   // O LOOKUP DE CENTRO SÓ OFERECE ANALÍTICO — mesma premissa, mesma porta.
   const semFiltroAdm = await opcoes(page, "cost_centers", "Administração");
   expect(semFiltroAdm.map((o) => o.label), "premissa: sem o filtro, o centro SINTÉTICO do seed é devolvido").toContain("Administração");
-  const adm = await buscarNoLookup(page, "Centro de custo", "cost_centers", "Administração");
+  const adm = await buscarNoLookup(page, "Centro de resultado", "cost_centers", "Administração");
   expect(adm.url).toMatch(/kind=analytic/);
   expect(adm.corpo.map((o) => o.id).filter((id) => semFiltroAdm.some((s) => s.id === id)), "o centro sintético não chega ao lookup").toEqual([]);
   await expect(adm.painel.getByRole("option"), "o sintético não é oferecido").toHaveCount(0);
-  const geral = await buscarNoLookup(page, "Centro de custo", "cost_centers", CLASSIFICACAO_DO_SEED.centro.nome);
+  const geral = await buscarNoLookup(page, "Centro de resultado", "cost_centers", CLASSIFICACAO_DO_SEED.centro.nome);
   await expect(geral.painel.getByRole("option", { name: new RegExp(CLASSIFICACAO_DO_SEED.centro.nome) }), "o analítico é oferecido").toHaveCount(1);
   await fecharLookup(page);
 
   // UM SÓ não basta: o par é a regra, na tela como no servidor.
-  await pickRef(page, "Categoria financeira", CLASSIFICACAO_DO_SEED.categoria.nome);
+  await pickRef(page, "Natureza", CLASSIFICACAO_DO_SEED.categoria.nome);
   await expect(salvar, "só a categoria: não salva").toBeDisabled();
-  await pickRef(page, "Centro de custo", CLASSIFICACAO_DO_SEED.centro.nome);
+  await pickRef(page, "Centro de resultado", CLASSIFICACAO_DO_SEED.centro.nome);
   await expect(salvar, "com o par, salva").toBeEnabled();
 
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));
@@ -145,8 +145,8 @@ test("A1-W1 — venda nova: os dois campos, Salvar só com os dois, lookups filt
   expect([lido["categoria_financeira_id"], lido["centro_custo_id"]], "o servidor gravou o par que viajou no corpo")
     .toEqual([enviado["categoria_financeira_id"], enviado["centro_custo_id"]]);
   await expect(page).toHaveURL(new RegExp(`/vendas/sales/${id}`));
-  await expect(campo(page, "Categoria financeira")).toContainText(`${CLASSIFICACAO_DO_SEED.categoria.codigo} · ${CLASSIFICACAO_DO_SEED.categoria.nome}`);
-  await expect(campo(page, "Centro de custo")).toContainText(`${CLASSIFICACAO_DO_SEED.centro.codigo} · ${CLASSIFICACAO_DO_SEED.centro.nome}`);
+  await expect(campo(page, "Natureza")).toContainText(`${CLASSIFICACAO_DO_SEED.categoria.codigo} · ${CLASSIFICACAO_DO_SEED.categoria.nome}`);
+  await expect(campo(page, "Centro de resultado")).toContainText(`${CLASSIFICACAO_DO_SEED.centro.codigo} · ${CLASSIFICACAO_DO_SEED.centro.nome}`);
   await expect(page.getByTestId("classificacao-padrao-automatico"), "classificada, a venda não fala de padrão automático").toHaveCount(0);
 });
 
@@ -190,8 +190,8 @@ test("A1-W2 — orçamento e pedido exigem os campos, e a conversão leva a clas
   await page.goto(`/vendas/sales/${venda.id}`);
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
   await expect(campo(page, "Origem"), "premissa: a venda nasceu da conversão").toContainText("Convertido");
-  await expect(campo(page, "Categoria financeira")).toContainText(`${CLASSIFICACAO_DO_SEED.categoria.codigo} · ${CLASSIFICACAO_DO_SEED.categoria.nome}`);
-  await expect(campo(page, "Centro de custo")).toContainText(`${CLASSIFICACAO_DO_SEED.centro.codigo} · ${CLASSIFICACAO_DO_SEED.centro.nome}`);
+  await expect(campo(page, "Natureza")).toContainText(`${CLASSIFICACAO_DO_SEED.categoria.codigo} · ${CLASSIFICACAO_DO_SEED.categoria.nome}`);
+  await expect(campo(page, "Centro de resultado")).toContainText(`${CLASSIFICACAO_DO_SEED.centro.codigo} · ${CLASSIFICACAO_DO_SEED.centro.nome}`);
   await expect(page.getByTestId("classificacao-padrao-automatico")).toHaveCount(0);
 });
 
@@ -210,9 +210,9 @@ test("A1-W3 — documento sem classificação (cliente anterior, pela API): cate
 
   await page.goto(`/vendas/sales/${criada.id}`);
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
-  await expect(campo(page, "Categoria financeira")).toContainText("Não informada");
+  await expect(campo(page, "Natureza")).toContainText("Não informada");
   // "Centro de custo" é masculino: "Não informado" (R1). `toContainText` não confunde as duas formas — uma não contém a outra.
-  await expect(campo(page, "Centro de custo")).toContainText("Não informado");
+  await expect(campo(page, "Centro de resultado")).toContainText("Não informado");
   const frase = page.getByTestId("classificacao-padrao-automatico");
   await expect(frase, "a venda aberta avisa como a confirmação vai classificar").toBeVisible();
   await expect(frase).toContainText("padrão automático");
@@ -222,7 +222,7 @@ test("A1-W3 — documento sem classificação (cliente anterior, pela API): cate
   await page.reload();
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
   await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]"), "premissa: a venda foi confirmada").toHaveAttribute("data-status", "confirmed");
-  await expect(campo(page, "Categoria financeira")).toContainText("Não informada");
-  await expect(campo(page, "Centro de custo")).toContainText("Não informado");
+  await expect(campo(page, "Natureza")).toContainText("Não informada");
+  await expect(campo(page, "Centro de resultado")).toContainText("Não informado");
   await expect(page.getByTestId("classificacao-padrao-automatico"), "venda confirmada não promete padrão futuro").toHaveCount(0);
 });

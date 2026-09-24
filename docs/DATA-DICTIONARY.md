@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 184 |
+| Tabelas no schema `erp` | 187 |
 | Tabelas com `organization_id` (escopo de organização) | 129 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 53 |
 | Entidades curadas neste dicionário | 37 |
 | Entidades com ID Global | 23 |
 | Entidades com Tipo de Operação | 13 |
 | Tipos de Operação referenciados | 17 |
-| Cobertura curada | 20.1% |
+| Cobertura curada | 19.8% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1409,7 +1409,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.bank_account_proprietaries` | 2 | não | — | não |
 | `erp.bank_accounts` | 20 | sim | — | sim |
 | `erp.bank_movement_apportionments` | 8 | não | — | não |
-| `erp.banks` | 2 | não | — | não |
+| `erp.banks` | 3 | não | — | não |
 | `erp.batch_categories` | 2 | não | — | não |
 | `erp.batches` | 21 | sim | `empresa_id` | sim |
 | `erp.bonuses` | 11 | sim | — | sim |
@@ -1420,9 +1420,12 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.breeds` | 4 | sim | — | não |
 | `erp.budget_planning_values` | 4 | não | — | não |
 | `erp.budget_plannings` | 10 | sim | `empresa_id` | sim |
+| `erp.cbo_ocupacoes` | 2 | não | — | não |
 | `erp.chart_accounts` | 12 | sim | — | sim |
 | `erp.cities` | 3 | não | — | não |
 | `erp.client_profiles` | 8 | não | — | não |
+| `erp.consulta_cep_cache` | 4 | não | — | não |
+| `erp.consulta_cnpj_cache` | 4 | não | — | não |
 | `erp.contract_items` | 6 | não | — | não |
 | `erp.contracts` | 18 | sim | `empresa_id` | sim |
 | `erp.cost_centers` | 11 | sim | — | sim |
@@ -1477,7 +1480,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.membro_escopos_empresa` | 7 | sim | — | não |
 | `erp.modulos_escopo_empresa` | 3 | não | — | não |
 | `erp.nature_operations` | 21 | sim | — | sim |
-| `erp.ncm` | 2 | não | — | não |
+| `erp.ncm` | 6 | não | — | não |
 | `erp.notificacao_leituras` | 4 | sim | — | não |
 | `erp.notifications` | 17 | sim | `empresa_id` | não |
 | `erp.ofx_transactions` | 10 | sim | — | não |

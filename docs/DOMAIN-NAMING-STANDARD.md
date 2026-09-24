@@ -34,6 +34,14 @@
 | Escopo de empresa em SQL | Escopo de empresa | **`empresaScopeSql`, `empresaPermitida`, `exigirEmpresaVisivel`** ✅ | — | PRE-BASE2-03: os apelidos depreciados (`farmScope`, `allowedFarms`, `farmAllowed`, `assertFarmVisible`) foram removidos do runtime. |
 | Rota de cadastro | Empresas | **`/cadastros/empresas`** ✅ | — | PRE-BASE2-03, com redirecionamento de `/cadastros/farms`, `/cadastros/farms/:id` e `/cadastros/fazendas`. |
 | Rótulo na interface | Empresa | texto "Fazenda" | chave `termos.empresa` | Resolvido por i18n, sem tocar em dado. |
+| Classificação financeira (receita/despesa) | **Natureza** / Naturezas (tela) | `erp.financial_categories`, recurso `financial_categories`, `categoria_financeira_id` | mantido | Decisão 250: só o RÓTULO mudou (antes "Categoria Financeira"); endereço, chave, permissão e coluna ficam. |
+| Receita/Despesa de uma natureza | **Tipo** (Receita · Despesa · Receita e despesa) | coluna `nature` (`income`/`expense`/`both`) | mantido | Decisão 250 (antes o campo se chamava "Natureza"). |
+| Unidade de apuração de resultado | **Centro de Resultado** / Centros de Resultado | `erp.cost_centers`, recurso `cost_centers`, `centro_custo_id` | mantido | Decisão 250 (antes "Centro de Custo"); tela em Configurações › Financeiro. |
+| Registro do plano de contas | **Conta Contábil** (lista: Plano de Contas) | `erp.chart_accounts` | mantido | Decisão 250 (antes "Conta do Plano"). |
+| Nível da árvore | **Analítica / Analítico: Sim** (recebe lançamento) · **Não** (sintética, só agrupa) | coluna `kind` (`analytic`/`synthetic`) | mantido | Decisão 250 (antes "Classe" Sintética/Analítica). |
+| Pai na árvore | **Natureza superior · Centro superior · Conta superior · Grupo superior · Tipo superior** | coluna `parent_id` | mantido | Decisão 250 (antes "Antecessor"); mensagens da API dizem "superior". |
+| Classificação do produto | **Grupo de Produtos** (árvore; lista "Grupos de Produtos") | `erp.product_groups` (+ `code`, `parent_id`, `kind`) | mantido | Decisão 250 / 0025. Categoria e Classe de Produto (`product_categories`, `product_kinds`) são legado fora de uso; remoção na DATA-GOV. |
+| Classificação financeira do produto | **Natureza de custo** · **Centro de resultado padrão** | `financial_category_id`, `default_cost_center_id` | mantido | Decisão 250. |
 
 **Estruturas novas já nascem no destino.** A migration 0010 ainda não foi mesclada, então este era o momento
 barato de acertar: `erp.sequencias_id_global`, `erp.proximo_id_global()`, `erp.registros_globais`

@@ -155,7 +155,75 @@ test("M2 — corrigir o arquivo e escolher o MESMO caminho de novo refaz a prév
   await expect(previa).not.toContainText("nada será gravado");
   await expect(previa.locator("tbody tr")).toHaveCount(0);
   await expect(confirmar).toBeVisible();
-  await expect(confirmar).toHaveText("Importar 1 registro(s)");
+  await expect(confirmar).toHaveText("Importar tudo");
+});
+
+/** Linha N de produtos com os obrigatórios do modelo; `descricao` null = linha com erro (Descrição obrigatória vazia). */
+function preencherProdutoNaLinha(wb: Workbook, n: number, descricao: string | null) {
+  const dados = wb.getWorksheet("Dados")!;
+  const linha = dados.getRow(n);
+  dados.getRow(1).eachCell((c, k) => {
+    const titulo = String(c.value);
+    if (titulo.endsWith(" *") && titulo !== `${DESCRICAO} *`) linha.getCell(k).value = primeiroDaLista(wb, titulo.slice(0, -2));
+  });
+  linha.getCell(coluna(dados, "Controla estoque")).value = "Não";
+  linha.getCell(coluna(dados, DESCRICAO)).value = descricao;
+  linha.commit();
+}
+
+test("IM-W1 — prévia com certas e erradas: importa só as certas e baixa a planilha com as linhas de erro", async ({ page }) => {
+  await login(page);
+  await abrirProdutos(page);
+  const wb = await baixarModelo(page, caminhoAscii("modelo-products.xlsx"));
+  const certa = uniq("Produto parcial E2E");
+  preencherProdutoNaLinha(wb, 2, certa);
+  preencherProdutoNaLinha(wb, 3, null);
+  const caminho = caminhoAscii("parcial.xlsx");
+  await wb.xlsx.writeFile(caminho);
+
+  const dialogo = await abrirImportacao(page);
+  const previa = dialogo.getByTestId("importar-previa");
+  await escolherArquivo(page, caminho);
+  await expect(previa.getByTestId("importar-certas")).toHaveText("1 linha(s) certa(s)");
+  await expect(previa.getByTestId("importar-com-erro")).toHaveText("1 com erro");
+  await expect(previa.locator("tbody tr")).toHaveCount(1);
+  await expect(dialogo.getByTestId("importar-confirmar"), "com erro, não há Importar tudo").toHaveCount(0);
+  const parcial = dialogo.getByTestId("importar-parcial");
+  await expect(parcial).toHaveText("Importar só as 1 linhas certas");
+  await parcial.click();
+  const resultado = dialogo.getByTestId("importar-resultado");
+  await expect(resultado).toContainText("1 gravada(s)");
+  await expect(resultado).toContainText("1 com erro");
+  const [baixado] = await Promise.all([page.waitForEvent("download"), dialogo.getByTestId("importar-baixar-erros").click()]);
+  const destino = caminhoAscii("erros.xlsx");
+  await baixado.saveAs(destino);
+  const erros = new ExcelJS.Workbook(); await erros.xlsx.readFile(destino);
+  const aba = erros.getWorksheet("Dados")!;
+  const titulos: string[] = []; aba.getRow(1).eachCell((c) => titulos.push(String(c.value)));
+  expect(titulos.at(-1)).toBe("Erros");
+  expect(aba.actualRowCount, "cabeçalho + só a linha errada").toBe(2);
+  expect(String(aba.getRow(2).getCell(titulos.length).value)).toContain("Obrigatório.");
+  expect(titulos.slice(0, -1).some((t) => t.startsWith(DESCRICAO)), "colunas do modelo").toBe(true);
+  // a gravação no banco é conferida pela integração (IM-1)
+});
+
+test("IM-W2 — API anterior recusa `modo`: a tela diz para usar Importar tudo", async ({ page }) => {
+  await login(page);
+  await abrirProdutos(page);
+  const wb = await baixarModelo(page, caminhoAscii("modelo-products.xlsx"));
+  preencherProdutoNaLinha(wb, 2, uniq("Produto skew E2E"));
+  preencherProdutoNaLinha(wb, 3, null);
+  const caminho = caminhoAscii("skew.xlsx");
+  await wb.xlsx.writeFile(caminho);
+  // simula a API anterior: query estrita, `modo` desconhecido → 422 "Campo não reconhecido"; nada chega ao servidor
+  await page.route((url) => url.pathname.startsWith("/api/imports/") && url.searchParams.has("modo"), (rota) =>
+    rota.fulfill({ status: 422, contentType: "application/json", body: JSON.stringify({ error: { code: "VALIDATION_ERROR", message: "Dados inválidos", details: [{ path: "", message: "Campo não reconhecido" }] } }) }));
+  const dialogo = await abrirImportacao(page);
+  await escolherArquivo(page, caminho);
+  await dialogo.getByTestId("importar-parcial").click();
+  await expect(dialogo.getByTestId("importar-sem-parcial")).toHaveText("O servidor ainda não aceita importação parcial; use Importar tudo.");
+  await expect(dialogo.getByTestId("importar-parcial"), "o botão parcial some").toHaveCount(0);
+  await expect(dialogo.getByTestId("importar-previa"), "a prévia continua").toBeVisible();
 });
 
 test("M3 — falha de rede na prévia: aviso em português e nenhum botão de importar com a prévia antiga", async ({ page }) => {
@@ -209,12 +277,12 @@ test("M4 — Pessoas › Funcionários: o diálogo avisa do filtro fixo da lista
   await expect(dialogo.getByTestId("importar-aviso-filtro"), "lista sem filtro fixo não tem o que avisar").toHaveCount(0);
 });
 
-test("M5 — Novo produto: Categoria financeira (custo) é obrigatória enquanto Controla estoque = Sim", async ({ page }) => {
+test("M5 — Novo produto: Natureza de custo é obrigatória enquanto Controla estoque = Sim", async ({ page }) => {
   await login(page);
   await page.goto("/cadastros/products/new");
   const form = page.getByTestId("b1-form");
   await form.getByRole("tab", { name: "Estoque", exact: true }).click();
-  const categoria = form.locator("label", { hasText: "Categoria financeira (custo)" });
+  const categoria = form.locator("label", { hasText: "Natureza de custo" });
   const obrigatorio = categoria.locator("span.req");
   const controla = form.getByRole("combobox", { name: "Controla estoque", exact: true });
   const escolher = async (opcao: "Sim" | "Não") => {

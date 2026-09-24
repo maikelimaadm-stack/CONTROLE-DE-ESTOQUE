@@ -410,3 +410,57 @@ test("VENDAS-A5-1 · A5-K2 — o web da base confirma uma venda contra a API des
   expect((await trilha()).filter((i) => i.action === "confirm"), "a confirmação ficou na trilha").toHaveLength(1);
   v.semBloqueio(); v.semErroDeContrato();
 });
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * CADASTROS-ESTRUTURA (decisão 250) · WEB ANTERIOR × API NOVA — os casos 1 e 2 da janela de deploy
+ *
+ * (1) o formulário de produto da base manda category_id e kind_id: a API nova os aceita como campos
+ *     LEGADOS opcionais (`camposLegadosDeEscrita`) e grava o que vier → 201;
+ * (2) o formulário de grupo da base manda só nome: a API nova exige código → 422 DECLARADO, nada gravado.
+ * O corpo é o que o web da base envia (a base nunca terá os campos novos — comportamento fixo, sem decisão
+ * medida).
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+async function cabecalhosDaSessao(page: Page) {
+  const s = await sessao(page);
+  return { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+}
+
+test("CADASTROS-ESTRUTURA · CE-K1 — corpo ANTIGO de produto (com category_id e kind_id): 201 na API nova, gravado como veio", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const primeiro = async (p: string) => {
+    const r = await page.request.get(`${API}${p}`, { headers: cab });
+    expect(r.status(), p).toBe(200);
+    return (await r.json() as { items: { id: string }[] }).items?.[0]?.id;
+  };
+  const grupo = await primeiro("/api/resources/product_groups?kind=analytic&pageSize=1");
+  expect(grupo, "premissa: há grupo analítico").toBeTruthy();
+  const unidade = await primeiro("/api/resources/measurement_units?symbol=un&pageSize=1");
+  expect(unidade, "premissa: há unidade").toBeTruthy();
+  // os lookups de Categoria/Classe que a web anterior usa continuam na API nova
+  const cat = await page.request.post(`${API}/api/resources/product_categories`, { headers: cab, data: { group_id: grupo, name: uniq("CE-K1 Categoria"), is_active: true } });
+  expect(cat.status(), await cat.text()).toBe(201);
+  const categoria = (await cat.json() as { id: string }).id;
+  const cls = await page.request.post(`${API}/api/resources/product_kinds`, { headers: cab, data: { category_id: categoria, name: uniq("CE-K1 Classe"), is_active: true } });
+  expect(cls.status(), await cls.text()).toBe(201);
+  const classe = (await cls.json() as { id: string }).id;
+
+  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: {
+    description: uniq("CE-K1 produto web anterior"), measurement_id: unidade, group_id: grupo, category_id: categoria, kind_id: classe, control_stock: false, is_active: true } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  const lido = await (await page.request.get(`${API}/api/resources/products/${id}`, { headers: cab })).json() as Record<string, unknown>;
+  expect([lido["category_id"], lido["kind_id"]], "a API grava o que veio").toEqual([categoria, classe]);
+});
+
+test("CADASTROS-ESTRUTURA · CE-K2 — grupo pelo corpo ANTIGO (sem código): 422 declarado no código, nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const nome = uniq("CE-K2 grupo web anterior");
+  const r = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { name: nome, is_active: true } });
+  expect(r.status(), await r.text()).toBe(422);
+  const erro = ((await r.json()) as { error: { details?: { path: string | string[] }[] } }).error;
+  expect(erro.details?.map((d) => String(d.path)), "a recusa aponta o Código").toContain("code");
+  const lista = await (await page.request.get(`${API}/api/resources/product_groups?search=${encodeURIComponent(nome)}`, { headers: cab })).json() as { items: unknown[] };
+  expect(lista.items, "nada gravado").toHaveLength(0);
+});

@@ -111,6 +111,6 @@ export const CLASSIFICACAO_DO_SEED = {
 } as const;
 
 export async function preencherClassificacaoFinanceira(page: Page) {
-  await pickRef(page, "Categoria financeira", CLASSIFICACAO_DO_SEED.categoria.nome);
-  await pickRef(page, "Centro de custo", CLASSIFICACAO_DO_SEED.centro.nome);
+  await pickRef(page, "Natureza", CLASSIFICACAO_DO_SEED.categoria.nome);
+  await pickRef(page, "Centro de resultado", CLASSIFICACAO_DO_SEED.centro.nome);
 }

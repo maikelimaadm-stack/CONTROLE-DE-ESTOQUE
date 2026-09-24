@@ -644,8 +644,8 @@ test("VENDAS-A1 · A1-K1 — sem a capacidade declarada pela base, os campos nã
   if (!declara) {
     // MUNDO LEGADO. A base não declara; o web não oferece o que ela jogaria fora.
     expect(corpoDesc.capacidades?.classificacaoFinanceira, "a base não declara a capacidade").toBeUndefined();
-    await expect(dados.locator("label", { hasText: "Categoria financeira" }), "o campo não aparece").toHaveCount(0);
-    await expect(dados.locator("label", { hasText: "Centro de custo" }), "o campo não aparece").toHaveCount(0);
+    await expect(dados.locator("label", { hasText: "Natureza" }), "o campo não aparece").toHaveCount(0);
+    await expect(dados.locator("label", { hasText: "Centro de resultado" }), "o campo não aparece").toHaveCount(0);
     await expect(salvar, "o Salvar segue a regra de antes: cliente e item bastam").toBeEnabled();
 
     // NO FIO: o POST vai de verdade para a base, e o corpo que saiu do navegador não carrega o par.
@@ -663,8 +663,8 @@ test("VENDAS-A1 · A1-K1 — sem a capacidade declarada pela base, os campos nã
 
   // MUNDO ATUAL. A base declara a versão que o web conhece; os campos aparecem e voltam a ser exigidos.
   expect(corpoDesc.capacidades?.classificacaoFinanceira, "a árvore da base declara, então o binário tem de servir").toBe(1);
-  await expect(dados.locator("label", { hasText: "Categoria financeira" })).toBeVisible();
-  await expect(dados.locator("label", { hasText: "Centro de custo" })).toBeVisible();
+  await expect(dados.locator("label", { hasText: "Natureza" })).toBeVisible();
+  await expect(dados.locator("label", { hasText: "Centro de resultado" })).toBeVisible();
   await expect(salvar, "declarada, a classificação é exigida").toBeDisabled();
   await preencherClassificacaoFinanceira(page);
   await expect(salvar).toBeEnabled();
@@ -918,8 +918,8 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
   // APARECE; sem isto, a contagem zero do caso classificado seria satisfeita por uma tela que nunca o desenha.
   const fioSem = await abrirDetalhe(semClassificacao);
   expect([fioSem["categoria_financeira_id"], fioSem["centro_custo_id"], fioSem["status"]], "premissa: venda aberta e sem classificação").toEqual([null, null, "open"]);
-  await expect(campo("Categoria financeira")).toContainText("Não informada");
-  await expect(campo("Centro de custo")).toContainText("Não informado");
+  await expect(campo("Natureza")).toContainText("Não informada");
+  await expect(campo("Centro de resultado")).toContainText("Não informado");
   await expect(aviso, "sem classificação, a venda aberta avisa o padrão automático — também sobre a base").toBeVisible();
 
   const fio = await abrirDetalhe(classificada);
@@ -933,10 +933,10 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
     expect(fio, "a base NÃO traz o código da categoria").not.toHaveProperty("categoria_financeira_codigo");
     expect(fio, "nem o do centro de custo").not.toHaveProperty("centro_custo_codigo");
     // A positiva vem primeiro: ela espera a tela desenhar ESTE documento, e só então as ausências significam algo.
-    await expect(campo("Categoria financeira"), "com o id e sem o nome, a tela diz que está informada").toContainText("Informada");
-    await expect(campo("Categoria financeira"), "e não o contrário").not.toContainText("Não informada");
-    await expect(campo("Centro de custo")).toContainText("Informado");
-    await expect(campo("Centro de custo")).not.toContainText("Não informado");
+    await expect(campo("Natureza"), "com o id e sem o nome, a tela diz que está informada").toContainText("Informada");
+    await expect(campo("Natureza"), "e não o contrário").not.toContainText("Não informada");
+    await expect(campo("Centro de resultado")).toContainText("Informado");
+    await expect(campo("Centro de resultado")).not.toContainText("Não informado");
     await expect(aviso, "classificada, a venda não promete um padrão que a guarda recusaria").toHaveCount(0);
     v.semBloqueio();
     return;
@@ -948,10 +948,10 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
   // Rótulo vazio faria o `toContainText` abaixo passar em qualquer tela: a leitura tem de ter trazido os dois.
   expect([rotuloCategoria, rotuloCentro], "premissa: código e nome lidos do banco").toEqual([expect.stringMatching(/^.+ · .+$/), expect.stringMatching(/^.+ · .+$/)]);
   expect(fio["categoria_financeira_codigo"], "a árvore da base declara a classificação, então o binário traz o código").toBeTruthy();
-  await expect(campo("Categoria financeira")).toContainText(rotuloCategoria);
-  await expect(campo("Centro de custo")).toContainText(rotuloCentro);
-  await expect(campo("Categoria financeira")).not.toContainText("Não informada");
-  await expect(campo("Centro de custo")).not.toContainText("Não informado");
+  await expect(campo("Natureza")).toContainText(rotuloCategoria);
+  await expect(campo("Centro de resultado")).toContainText(rotuloCentro);
+  await expect(campo("Natureza")).not.toContainText("Não informada");
+  await expect(campo("Centro de resultado")).not.toContainText("Não informado");
   await expect(aviso, "classificada, a venda não fala de padrão automático").toHaveCount(0);
   v.semBloqueio();
 });
@@ -991,7 +991,7 @@ function baseServePrevia(): boolean {
 /** O texto NEUTRO do diálogo sem prévia — por extenso: é o contrato com o usuário. */
 const TEXTO_SEM_PREVIA = "A confirmação aplica o Tipo de Operação desta venda. Não foi possível carregar a prévia dos efeitos; o servidor recusa o que não puder executar.";
 /** O aviso da A1 quando a tela não tem a prévia — a regra decidida pelo id. */
-const AVISO_A1 = "Sem classificação: ao confirmar, a venda usará o padrão automático (primeira categoria de receita e primeiro centro de custo analíticos, pela ordem do código).";
+const AVISO_A1 = "Sem classificação: ao confirmar, a venda usará o padrão automático (primeira natureza de receita e primeiro centro de resultado analíticos, pela ordem do código).";
 
 test("VENDAS-A5-1 · A5-K1 — contra a API da base, o diálogo de confirmação cai no texto neutro com o botão habilitado e confirma (ou, se a base já serve a prévia, mostra a prévia)", async ({ page }) => {
   const v = vigiar(page);
@@ -1061,4 +1061,51 @@ test("VENDAS-A5-1 · A5-K1 — contra a API da base, o diálogo de confirmação
   await expect(botao).toBeEnabled();
   await confirmar();
   v.semBloqueio();
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * CADASTROS-ESTRUTURA (decisão 250) · WEB NOVA × API ANTERIOR — os casos 3 e 4 da janela de deploy
+ *
+ * A base NUNCA terá os campos novos do Grupo (code/kind/parent_id) nem o produto sem categoria/classe: o
+ * comportamento é FIXO, e por isso não há decisão medida aqui (ao contrário do contador ou da A1). O que
+ * se prova é que a recusa é DECLARADA (422, nada gravado) — a janela fecha para o lado seguro, nunca grava
+ * um produto ou grupo pela metade.
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+async function cabecalhosDaSessao(page: Page) {
+  const s = await sessao(page);
+  return { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+}
+
+test("CADASTROS-ESTRUTURA · CE-K3 — produto e grupo com o corpo da web NOVA: a API da base RECUSA (422) e nada é gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const grupoAnalitico = sql("select id from erp.product_groups where kind = 'analytic' and deleted_at is null and code is not null order by code limit 1");
+  expect(grupoAnalitico, "premissa: o banco (migrado pelo HEAD) tem grupo analítico").toMatch(UUID);
+  const unidade = sql("select id from erp.measurement_units where organization_id is null and symbol = 'un'");
+  expect(unidade, "premissa: a unidade 'un' existe").toMatch(UUID);
+
+  // (3a) PRODUTO: a web nova não manda category_id nem kind_id — a base os exige.
+  const desc = uniq("CE-K3 produto web nova");
+  const p = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: desc, measurement_id: unidade, group_id: grupoAnalitico, control_stock: false, is_active: true } });
+  expect(p.status(), await p.text()).toBe(422);
+  const campos = ((await p.json()) as { error: { details?: { path: string | string[] }[] } }).error.details?.map((d) => String(d.path)) ?? [];
+  expect(campos, "a recusa aponta os campos que a base exige").toEqual(expect.arrayContaining(["category_id", "kind_id"]));
+  expect(sql(`select count(*) from erp.products where description = '${desc.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+
+  // (3b) GRUPO: code/kind/parent_id não existem para a base, cujo schema é .strict() → 422, não descarte.
+  const nome = uniq("CE-K3 grupo web nova");
+  const g = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { code: "9.99", name: nome, kind: "analytic", parent_id: null, is_active: true } });
+  expect(g.status(), await g.text()).toBe(422);
+  expect(sql(`select count(*) from erp.product_groups where name = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+});
+
+test("CADASTROS-ESTRUTURA · CE-K4 — parâmetros: máscara de Grupos é recusada pela base (422); sem ela, salva normal", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const antes = sql("select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations o join erp.organization_members m on m.organization_id = o.id join erp.users u on u.id = m.user_id where u.email = 'admin@demo.local' limit 1");
+  const recusa = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { product_groups: "9.99.999" } } });
+  expect(recusa.status(), await recusa.text()).toBe(422);
+  expect(sql("select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations o join erp.organization_members m on m.organization_id = o.id join erp.users u on u.id = m.user_id where u.email = 'admin@demo.local' limit 1"), "nada mudou").toBe(antes);
+  const ok = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { chart_accounts: "9.99.999.9999" } } });
+  expect(ok.status(), await ok.text()).toBe(200);
 });

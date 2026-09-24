@@ -9,8 +9,10 @@
  * A IMPORTAÇÃO não confia no modelo — o arquivo pode ter sido editado, copiado de outro lugar ou baixado
  * antes de um cadastro mudar. Cada linha é traduzida (texto da lista → id, "Sim" → true, "1.234,56" →
  * "1234.56") e passa pelo MESMO `createOne` da tela, com todas as regras do cadastro. Uma transação para o
- * arquivo inteiro, um savepoint por linha para listar TODOS os erros; havendo qualquer erro, nada é
- * gravado. Nunca atualiza registro existente: importar é criar. Entrada que não dá para ler sem adivinhar
+ * arquivo inteiro, um savepoint por linha para listar TODOS os erros. Modo `tudo` (padrão): havendo qualquer
+ * erro, nada é gravado. Modo `parcial` (CADASTROS FASE 2): a linha com erro tem o savepoint desfeito e as
+ * certas são gravadas na mesma transação; as erradas voltam numa PLANILHA DE ERROS gerada na mesma execução,
+ * a partir do arquivo já lido em memória (nunca relido depois do commit). Nunca atualiza registro existente: importar é criar. Entrada que não dá para ler sem adivinhar
  * (número ambíguo, célula com erro de fórmula, valor em coluna sem título) é RECUSADA, nunca reinterpretada
  * nem descartada em silêncio.
  */
@@ -74,6 +76,10 @@ export function limpar(s: string): string {
   return out.trim();
 }
 const normal = (s: string) => limpar(s).toLocaleLowerCase("pt-BR");
+/** Comparação para SUGESTÃO ("você quis dizer"): ignora maiúsculas e acentos. Nunca resolve sozinha. */
+const semAcento = (s: string) => normal(s).normalize("NFD").replace(/[̀-ͯ]/g, "");
+/** Coluna acrescentada à planilha de erros; na reimportação é IGNORADA (não é campo do cadastro). */
+export const COLUNA_ERROS = "Erros";
 const letra = (n: number) => { let s = ""; for (let x = n; x > 0; x = Math.floor((x - 1) / 26)) s = String.fromCharCode(65 + ((x - 1) % 26)) + s; return s; };
 const acrescentar = (mapa: Map<string, string[]>, chave: string, id: string) => { if (!chave) return; const ids = mapa.get(chave) ?? []; if (!ids.includes(id)) ids.push(id); mapa.set(chave, ids); };
 
@@ -102,6 +108,10 @@ interface Referencia {
   porTextoSolto: Map<string, string[]>;
   /** texto-base de cada registro (sem desempate): o caminho do filho criado no próprio arquivo parte dele */
   basePorId: Map<string, string>;
+  /** só para a sugestão: texto sem acento e sem maiúsculas → ids */
+  porSemAcento: Map<string, string[]>;
+  /** texto a sugerir para cada id (o da lista, ou o caminho do criado no próprio arquivo) */
+  exibicaoPorId: Map<string, string>;
 }
 
 /** `base` = texto sem o desempate: quem o digita sem o sufixo cai em "ambíguo", não em "não encontrado". */
@@ -109,6 +119,8 @@ function indexar(ref: Referencia, id: string, exibicao: string, rotulo: string, 
   acrescentar(ref.porExibicao, exibicao, id);
   for (const t of new Set([base, rotulo, codigo])) if (t !== exibicao) acrescentar(ref.porTextoExato, t, id);
   for (const t of new Set([exibicao, base, rotulo, codigo])) if (t) acrescentar(ref.porTextoSolto, normal(t), id);
+  for (const t of new Set([exibicao, base, rotulo, codigo])) if (t) acrescentar(ref.porSemAcento, semAcento(t), id);
+  if (!ref.exibicaoPorId.has(id)) ref.exibicaoPorId.set(id, exibicao);
 }
 
 type LinhaReferencia = { id: string; rotulo: string | null; codigo: string | null; padrao: boolean; pai: string | null } & Record<string, unknown>;
@@ -169,7 +181,7 @@ async function carregarReferencia(ctx: ServiceCtx, alvo: ResourceDef, filtro?: R
   // lista SEMPRE aponta para um registro só
   const repeticoes = new Map<string, number>();
   for (const x of itens) repeticoes.set(normal(x.base), (repeticoes.get(normal(x.base)) ?? 0) + 1);
-  const ref: Referencia = { alvo, exibicao: [], porExibicao: new Map(), porTextoExato: new Map(), porTextoSolto: new Map(), basePorId: new Map() };
+  const ref: Referencia = { alvo, exibicao: [], porExibicao: new Map(), porTextoExato: new Map(), porTextoSolto: new Map(), basePorId: new Map(), porSemAcento: new Map(), exibicaoPorId: new Map() };
   for (const x of itens) {
     const exibicao = (repeticoes.get(normal(x.base)) ?? 0) > 1 ? `${x.base} [${x.id.slice(0, 8)}]` : x.base;
     if (x.naLista) ref.exibicao.push(exibicao);
@@ -192,14 +204,31 @@ function adicionarCriado(ref: Referencia, def: ResourceDef, criado: Record<strin
   indexar(ref, id, base, rotulo, codigo);
 }
 
-function resolver(ref: Referencia, t: string): { id: string } | { erro: string } {
+/**
+ * `falhas`: textos que linhas ANTERIORES com erro teriam criado (só para o próprio cadastro, em árvore). Quem
+ * cita uma delas não é "não encontrado": depende de uma linha que não foi gravada, e a mensagem diz qual.
+ * `superior`: a coluna é o auto-relacionamento; o que fazer é incluir a linha do superior acima ou cadastrá-lo.
+ */
+function resolver(ref: Referencia, t: string, opcoes: { superior?: boolean; falhas?: Map<string, number> } = {}): { id: string } | { erro: string } {
+  const r = resolverTexto(ref, t);
+  if ("id" in r || !r.naoEncontrado) return r;
+  const dependencia = opcoes.falhas?.get(semAcento(t));
+  if (dependencia !== undefined) return { erro: `"${t}" depende da linha ${dependencia}, que tem erro. Corrija a linha ${dependencia} e importe as duas juntas.` };
+  // "você quis dizer" só com UMA correspondência (ignorando maiúsculas e acentos); duas ou mais não sugerem nada
+  const parecidos = ref.porSemAcento.get(semAcento(t)) ?? [];
+  const sugestao = parecidos.length === 1 ? ref.exibicaoPorId.get(parecidos[0]!) : undefined;
+  const oQueFazer = opcoes.superior ? "Inclua a linha do superior acima desta ou cadastre-o antes." : `Use um valor da aba ${ABA_LISTAS}.`;
+  return { erro: `"${t}" não encontrado em ${ref.alvo.labelPlural}. ${sugestao ? `Você quis dizer "${sugestao}"? ` : ""}${oQueFazer}` };
+}
+
+function resolverTexto(ref: Referencia, t: string): { id: string } | { erro: string; naoEncontrado?: true } {
   const estagios: [Map<string, string[]>, string][] = [[ref.porExibicao, t], [ref.porTextoExato, t], [ref.porTextoSolto, normal(t)]];
   for (const [mapa, chave] of estagios) {
     const ids = mapa.get(chave);
     if (ids?.length === 1) return { id: ids[0]! };
     if (ids && ids.length > 1) return { erro: `"${t}" corresponde a mais de um registro de ${ref.alvo.labelPlural}. Use o valor exatamente como está na aba ${ABA_LISTAS}.` };
   }
-  return { erro: `"${t}" não encontrado em ${ref.alvo.labelPlural}. Use um valor da aba ${ABA_LISTAS}.` };
+  return { erro: `"${t}" não encontrado em ${ref.alvo.labelPlural}. Use um valor da aba ${ABA_LISTAS}.`, naoEncontrado: true };
 }
 
 /**
@@ -277,7 +306,7 @@ export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Bu
     "Colunas de texto estão no formato Texto para manter zeros à esquerda (CPF/CNPJ, CEP, códigos). Ao colar de outra planilha, cole só os valores.",
     "Números com vírgula decimal: 1234,56 ou 1.234,56. Ponto sem vírgula (1.000) é recusado por ser ambíguo.",
     "Sim/Não, opções e datas (DD/MM/AAAA) seguem o texto da tela. Célula com erro de fórmula é recusada.",
-    "Ao importar, o sistema mostra a prévia com os erros linha a linha. Se houver qualquer erro, NADA é gravado.",
+    "Ao importar, o sistema mostra a prévia com os erros linha a linha. \"Importar tudo\" só grava se não houver nenhum erro; \"Importar só as linhas certas\" grava as certas e devolve uma planilha com as linhas de erro (coluna \"Erros\" no fim), que pode ser corrigida e importada de novo.",
     "Importar sempre CRIA registros; não altera cadastros existentes. Código repetido é recusado.",
     ...(def.tree ? ["Cadastro em árvore: o superior pode ser um registro existente ou uma linha ANTERIOR deste mesmo arquivo."] : []),
     ...(foraDoModelo.length ? [`Não vão no modelo (preencha pela tela depois): ${foraDoModelo.join(", ")}.`] : []),
@@ -290,7 +319,17 @@ export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Bu
 // ------------------------------------------------------------------ leitura do arquivo
 
 export interface ErroImportacao { linha: number; coluna: string | null; mensagem: string }
-export interface ResultadoImportacao { linhas: number; gravadas: number; erros: ErroImportacao[]; simulacao: boolean }
+export type ModoImportacao = "tudo" | "parcial";
+export interface ResultadoImportacao {
+  linhas: number; gravadas: number; erros: ErroImportacao[]; simulacao: boolean;
+  modo: ModoImportacao;
+  /** linhas que passam (na prévia: seriam gravadas no modo parcial) */
+  certas: number;
+  /** linhas com ao menos um erro */
+  com_erro: number;
+  /** XLSX com SÓ as linhas com erro (colunas do modelo + "Erros"), em base64; null sem linha com erro ou acima do limite */
+  planilha_erros_base64: string | null;
+}
 interface Celula { v: ExcelJS.CellValue; formato: string }
 /** O arquivo lido e conferido na forma, sem banco: cabeçalho mapeado e só as linhas que existem. */
 export interface PlanilhaLida { cols: Cabecalho[]; linhas: { n: number; celulas: Map<string, Celula>; erros: ErroImportacao[] }[]; erros: ErroImportacao[] }
@@ -402,10 +441,13 @@ export async function lerPlanilha(def: ResourceDef, arquivo: Buffer): Promise<Pl
   const mapa = new Map<number, Cabecalho>();
   const erros: ErroImportacao[] = [];
   const vistas = new Set<string>();
+  // coluna "Erros" da planilha de erros: na reimportação é ignorada (cabeçalho e células), nunca gravada
+  const ignoradas = new Set<number>();
   ws.getRow(1).eachCell((cell, n) => {
     const t = texto(cell.value).replace(/\s*\*$/, "");
     if (!t) return;
     const c = porChave.get(normal(t));
+    if (!c && normal(t) === normal(COLUNA_ERROS) && !ignoradas.size) { ignoradas.add(n); return; }
     if (!c) { erros.push({ linha: 1, coluna: t, mensagem: `Coluna desconhecida para ${def.labelPlural}. Baixe o modelo atualizado.` }); return; }
     if (vistas.has(c.campo.name)) { erros.push({ linha: 1, coluna: t, mensagem: "Coluna repetida no arquivo." }); return; }
     vistas.add(c.campo.name); mapa.set(n, c);
@@ -423,6 +465,7 @@ export async function lerPlanilha(def: ResourceDef, arquivo: Buffer): Promise<Pl
     const errosDaLinha: ErroImportacao[] = [];
     let preenchida = false;
     row.eachCell((cell, col) => {
+      if (ignoradas.has(col)) return;
       const v = cell.value;
       if (texto(v) === "" && erroDaCelula(v) === null) return;
       preenchida = true;
@@ -498,13 +541,33 @@ async function errosDaGravacao(ctx: ServiceCtx, e: unknown, def: ResourceDef, ro
  */
 export type Criar = (ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal: boolean }) => Promise<Record<string, unknown>>;
 
-export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planilha: PlanilhaLida, criar: Criar, simulacao: boolean): Promise<ResultadoImportacao> {
+/** O que fazer quando o código está fora da máscara do cadastro: a regra diz a máscara, a importação diz o formato. */
+const comoCorrigir = (mensagem: string) => {
+  const m = /máscara ([0-9.]+)\)/.exec(mensagem);
+  return m && !mensagem.includes("Use o formato") ? `${mensagem} Use o formato ${m[1]}.` : mensagem;
+};
+
+export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planilha: PlanilhaLida, criar: Criar, simulacao: boolean, modo: ModoImportacao = "tudo"): Promise<ResultadoImportacao> {
   const { cols } = planilha;
   const erros: ErroImportacao[] = [];
   const refs = new Map<string, Referencia>();
   for (const c of cols) if (c.campo.type === "ref" && c.campo.ref && !refs.has(c.campo.ref.resource)) { const alvo = getResource(c.campo.ref.resource); if (alvo) refs.set(c.campo.ref.resource, await carregarReferencia(ctx, alvo)); }
   const rotulo = (campo: string) => cols.find((c) => c.campo.name === campo)?.chave ?? def.fields.find((f) => f.name === campo)?.label ?? campo;
   const condicionais = cols.flatMap((c) => { const cond = condicao(def, c.campo); return cond ? [{ c, cond }] : []; });
+
+  // dependência entre linhas: o que uma linha COM ERRO teria criado (código, nome, caminho) → número da linha
+  const propria = refs.get(def.key);
+  const colunaSuperior = cols.find((c) => c.campo.type === "ref" && c.campo.ref?.resource === def.key);
+  const falhas = new Map<string, number>();
+  const registrarFalha = (n: number, celulas: Map<string, Celula>, corpo: Record<string, unknown>) => {
+    if (!propria) return;
+    const rot = texto(celulas.get(def.labelField)?.v ?? null); const cod = texto(celulas.get("code")?.v ?? null);
+    const paiTexto = colunaSuperior ? texto(celulas.get(colunaSuperior.campo.name)?.v ?? null) : "";
+    const paiId = colunaSuperior ? corpo[colunaSuperior.campo.name] : undefined;
+    const paiBase = typeof paiId === "string" ? propria.basePorId.get(paiId) : undefined;
+    const textos = [cod && rot ? `${cod} - ${rot}` : "", rot, cod, paiTexto && rot ? `${paiTexto} > ${rot}` : "", paiBase && rot ? `${paiBase} > ${rot}` : ""];
+    for (const t of textos) if (t && !falhas.has(semAcento(t))) falhas.set(semAcento(t), n);
+  };
 
   const criados: { linha: number; id: string }[] = [];
   for (const { n, celulas, erros: errosDaLeitura } of planilha.linhas) {
@@ -520,11 +583,12 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
       switch (f.type) {
         case "ref": {
           const ref = f.ref ? refs.get(f.ref.resource) : undefined;
-          const r = ref ? resolver(ref, t) : { erro: `"${t}" não encontrado.` };
+          const superior = f.ref?.resource === def.key;
+          const r = ref ? resolver(ref, t, superior ? { superior, falhas } : {}) : { erro: `"${t}" não encontrado.` };
           if ("id" in r) corpo[f.name] = r.id; else recusa(r.erro);
           break;
         }
-        case "select": { const o = f.options?.find((x) => normal(x.label) === normal(t) || normal(x.value) === normal(t)); if (o) corpo[f.name] = o.value; else recusa(`"${t}" não é uma opção válida.`); break; }
+        case "select": { const o = f.options?.find((x) => normal(x.label) === normal(t) || normal(x.value) === normal(t)); if (o) corpo[f.name] = o.value; else recusa(`"${t}" não é uma opção válida. Opções: ${(f.options ?? []).map((x) => x.label).join("; ")}.`); break; }
         case "boolean": { const b = normal(t); if (["sim", "s", "true", "1"].includes(b)) corpo[f.name] = true; else if (["não", "nao", "n", "false", "0"].includes(b)) corpo[f.name] = false; else recusa("Use Sim ou Não."); break; }
         case "date": { const d = data(v); if (d) corpo[f.name] = d; else recusa("Data inválida (use DD/MM/AAAA)."); break; }
         case "integer": { const x = numero(v); if (x !== null && /^-?\d+$/.test(x)) corpo[f.name] = Number(x); else recusa("Número inteiro inválido."); break; }
@@ -540,32 +604,81 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
       const vazio = corpo[c.campo.name] === undefined || corpo[c.campo.name] === null;
       if (atual === cond.igual && vazio && !errosDaLinha.some((e) => e.coluna === c.chave)) errosDaLinha.push({ linha: n, coluna: c.chave, mensagem: `Obrigatório quando ${cond.texto}.` });
     }
-    if (errosDaLinha.length) { erros.push(...errosDaLinha); continue; }
+    if (errosDaLinha.length) { erros.push(...errosDaLinha); registrarFalha(n, celulas, corpo); continue; }
     await ctx.tx.query("savepoint importacao_linha");
     try {
       const criado = await criar(ctx, def, corpo, { adiarIdGlobal: true });
       await ctx.tx.query("release savepoint importacao_linha");
       criados.push({ linha: n, id: String(criado["id"]) });
-      const propria = refs.get(def.key);
       if (propria) adicionarCriado(propria, def, criado);
     } catch (e) {
-      // rollback E release: sem o release, cada linha com erro deixaria uma subtransação aninhada viva
+      // rollback E release: sem o release, cada linha com erro deixaria uma subtransação aninhada viva. No modo
+      // parcial é ESTE rollback que tira a linha errada do lote que será gravado.
       await ctx.tx.query("rollback to savepoint importacao_linha");
       await ctx.tx.query("release savepoint importacao_linha");
-      for (const x of await errosDaGravacao(ctx, e, def, rotulo)) erros.push({ linha: n, ...x });
+      for (const x of await errosDaGravacao(ctx, e, def, rotulo)) erros.push({ linha: n, ...x, mensagem: comoCorrigir(x.mensagem) });
+      registrarFalha(n, celulas, corpo);
     }
   }
-  // ID Global no fim, na mesma transação e na ordem do arquivo; só quando o lote vai ser gravado
-  if (!simulacao && !erros.length) {
+  // ID Global no fim, na mesma transação e na ordem do arquivo; só para o que vai ser gravado (no parcial,
+  // só as linhas certas: as erradas já tiveram o savepoint desfeito e não estão em `criados`)
+  const vaiGravar = !simulacao && criados.length > 0 && (modo === "parcial" || !erros.length);
+  let idGlobalFalhou = false;
+  if (vaiGravar) {
     for (const { linha, id } of criados) {
       await ctx.tx.query("savepoint importacao_id_global");
       try { await atribuirIdGlobalSeAplicavel(ctx, def.table, id); await ctx.tx.query("release savepoint importacao_id_global"); }
       catch (e) {
         await ctx.tx.query("rollback to savepoint importacao_id_global");
         await ctx.tx.query("release savepoint importacao_id_global");
+        // a linha JÁ foi criada nesta transação: sem o número ela não pode ser gravada, e o lote inteiro é desfeito
+        idGlobalFalhou = true;
         for (const x of await errosDaGravacao(ctx, e, def, rotulo)) erros.push({ linha, ...x });
       }
     }
   }
-  return { linhas: planilha.linhas.length, gravadas: erros.length ? 0 : criados.length, erros, simulacao };
+  const linhasComErro = new Set(erros.map((e) => e.linha));
+  const certas = criados.filter((c) => !linhasComErro.has(c.linha)).length;
+  const gravadas = vaiGravar && !idGlobalFalhou && (modo === "parcial" || !erros.length) ? certas : 0;
+  // planilha de erros na MESMA execução, do arquivo já lido em memória: nunca relido depois do commit
+  const planilha_erros_base64 = linhasComErro.size ? await gerarPlanilhaErros(planilha, erros) : null;
+  return { linhas: planilha.linhas.length, gravadas, erros, simulacao, modo, certas, com_erro: linhasComErro.size, planilha_erros_base64 };
+}
+
+/** Limite da planilha de erros: o mesmo do arquivo enviado (8 MB). Acima disso ela não volta (null), e a lista na tela continua valendo. */
+export const PLANILHA_ERROS_MAXIMO = 8 * 1024 * 1024;
+
+/**
+ * Planilha com SÓ as linhas com erro: as colunas do modelo (mesmos títulos, mesma ordem, colunas de texto no
+ * formato Texto para preservar zeros à esquerda), os valores como o usuário mandou e a coluna "Erros" no fim.
+ * Corrigida, ela volta pela mesma importação: a coluna "Erros" é ignorada na leitura.
+ */
+export async function gerarPlanilhaErros(planilha: PlanilhaLida, erros: ErroImportacao[]): Promise<string | null> {
+  const porLinha = new Map<number, ErroImportacao[]>();
+  for (const e of erros) porLinha.set(e.linha, [...(porLinha.get(e.linha) ?? []), e]);
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet(ABA_DADOS, { views: [{ state: "frozen", ySplit: 1 }] });
+  const { cols } = planilha;
+  ws.columns = [...cols.map((c) => ({ header: c.titulo, width: Math.max(14, Math.min(40, c.titulo.length + 4)) })), { header: COLUNA_ERROS, width: 80 }];
+  cols.forEach((c, i) => { if (TIPOS_TEXTO.includes(c.campo.type)) ws.getColumn(i + 1).numFmt = "@"; });
+  ws.getRow(1).font = { bold: true };
+  let k = 2;
+  for (const { n, celulas } of planilha.linhas) {
+    const lista = porLinha.get(n);
+    if (!lista) continue;
+    const row = ws.getRow(k++);
+    cols.forEach((c, i) => {
+      const cel = celulas.get(c.campo.name);
+      if (!cel) return;
+      const destino = row.getCell(i + 1);
+      // fórmula volta pelo valor calculado (quem corrige edita o valor); o resto, como veio
+      destino.value = ehFormula(cel.v) ? valorBase(cel.v) : cel.v;
+      if (cel.formato) destino.numFmt = cel.formato;
+    });
+    row.getCell(cols.length + 1).value = lista.map((e) => (e.coluna ? `${e.coluna}: ${e.mensagem}` : e.mensagem)).join("\n");
+    row.getCell(cols.length + 1).alignment = { wrapText: true, vertical: "top" };
+    row.commit();
+  }
+  const buf = Buffer.from(await wb.xlsx.writeBuffer() as ArrayBuffer);
+  return buf.byteLength > PLANILHA_ERROS_MAXIMO ? null : buf.toString("base64");
 }
