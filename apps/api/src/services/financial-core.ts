@@ -27,15 +27,25 @@ export interface TitleInput {
   plan?: InstallmentPlan | null;
 }
 
+/**
+ * As parcelas de um título — valor e vencimento de cada uma. É a conta que `createTitles` grava; a prévia da
+ * confirmação de venda (VENDAS-A5-1) lê daqui o PRIMEIRO vencimento em vez de repetir a regra do parcelamento
+ * (entrada, intervalo, dia fixo), que envelheceria em silêncio na primeira mudança dela.
+ */
+export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | "plan">) {
+  const total = money(input.amount);
+  return input.plan && (input.plan.installments > 1 || input.plan.has_down_payment)
+    ? buildInstallments({ totalAmount: total, installments: input.plan.installments, firstDueDate: input.plan.first_due_date, mode: input.plan.mode, intervalDays: input.plan.interval_days, dueDay: input.plan.due_day, hasDownPayment: input.plan.has_down_payment, downPaymentValue: input.plan.down_payment_value !== undefined ? String(input.plan.down_payment_value) : undefined, downPaymentDate: input.plan.down_payment_date })
+    : [{ number: 1, dueDate: input.dueDate, amount: total, isDownPayment: false }];
+}
+
 /** Cria título(s) financeiro(s) com rateio; se houver plano de parcelamento, cria uma linha por parcela (group_id comum). */
 export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<{ ids: string[]; groupId: string | null }> {
   await assertPeriodOpen(ctx.tx, ctx.orgId, input.empresaId, input.emissionDate);
   const total = money(input.amount);
   if (D(total).lte(0)) throw validation("Valor do título deve ser positivo");
   const lines = normalizeApportionment(money(D(total).minus(input.discount ?? 0)), input.apportionment);
-  const parts = input.plan && (input.plan.installments > 1 || input.plan.has_down_payment)
-    ? buildInstallments({ totalAmount: total, installments: input.plan.installments, firstDueDate: input.plan.first_due_date, mode: input.plan.mode, intervalDays: input.plan.interval_days, dueDay: input.plan.due_day, hasDownPayment: input.plan.has_down_payment, downPaymentValue: input.plan.down_payment_value !== undefined ? String(input.plan.down_payment_value) : undefined, downPaymentDate: input.plan.down_payment_date })
-    : [{ number: 1, dueDate: input.dueDate, amount: total, isDownPayment: false }];
+  const parts = parcelasDoTitulo(input);
   const groupId = parts.length > 1 ? (await ctx.tx.query<{ id: string }>("select gen_random_uuid() id")).rows[0]!.id : null;
   const ids: string[] = [];
   const count = parts.length;
