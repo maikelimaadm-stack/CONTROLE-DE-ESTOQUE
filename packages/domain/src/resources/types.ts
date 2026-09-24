@@ -182,11 +182,20 @@ export interface AbaDef {
    */
   painel?: "historico" | "saldo_por_lote";
   /**
-   * Os campos das SEÇÕES desta aba só são gravados por quem tem esta permissão (além da do cadastro); sem
-   * ela a aba é somente leitura na tela e a API recusa (403) o corpo que os traga (CADASTROS Fase 5). Ex.: aba
-   * Pessoal da ficha de RH exige `people.edit`.
+   * Os campos das SEÇÕES, as GRADES e os PERFIS desta aba só são gravados por quem tem esta permissão (além da do
+   * cadastro); sem ela a aba é somente leitura na tela e a API recusa (403) o corpo que traga qualquer um deles
+   * (CADASTROS Fase 5; grades e perfis desde o R1-4). Ex.: aba Pessoal da ficha de RH exige `people.edit`; aba
+   * Cliente do parceiro exige `clients.edit`. O campo booleano que LIGA o perfil (`ativoPor`, ex.: `is_client`)
+   * é do principal: marcar e desmarcar o tipo continua sendo a permissão do cadastro.
    */
   permissaoDeEdicao?: string;
+  /**
+   * Permissão de LEITURA da aba (R1-4): sem ela a aba não aparece na tela e as grades e os perfis dela NÃO saem da
+   * API (nem a chave, nem os dados). Ex.: aba Cliente do parceiro exige `clients.view`. Gravar a grade ou o perfil
+   * da aba também a exige (403), mesmo com a `permissaoDeEdicao`: a grade enviada é a lista COMPLETA, e gravá-la
+   * às cegas apagaria o que o usuário não vê.
+   */
+  permissaoDeLeitura?: string;
   /** link da aba para outro cadastro (ex.: "Editar no cadastro de parceiros"); `:id` = id do registro */
   link?: { label: string; href: string };
 }
@@ -208,7 +217,13 @@ export interface DetalheDef {
   organizacao?: boolean;
   /** a tabela tem `deleted_at`: linha removida da grade é EXCLUÍDA logicamente, nunca apagada */
   softDelete?: boolean;
-  /** coluna de empresa da linha: cada empresa é conferida contra o escopo de lançamento do usuário */
+  /**
+   * Coluna de empresa da linha. ESCOPO (R1-4): a linha de empresa fora do escopo do usuário não sai na leitura,
+   * não é alterada e NÃO é apagada quando fica de fora da lista enviada ("ausente = não mexe" vale para o que o
+   * usuário não vê); a empresa de cada linha enviada tem de estar no escopo (422 na linha). O escopo é o da RLS
+   * empresarial no módulo da rota — em cadastro da organização (módulo indefinido), a UNIÃO das empresas que o
+   * membro enxerga em algum módulo, nunca "todas".
+   */
   campoEmpresa?: string;
   /** máximo de linhas por gravação */
   maxLinhas?: number;
@@ -223,6 +238,21 @@ export interface PerfilDef {
   fields: FieldDef[];
   /** campo booleano do principal que liga o perfil (ex.: is_client) */
   ativoPor?: string;
+}
+
+/**
+ * Chaves de GRADE e de PERFIL (as do corpo e da resposta) que pertencem a abas BARRADAS por uma permissão que o
+ * usuário não tem (R1-4). A MESMA pergunta na API (`hasPermission`) e na tela (`can`, só apresentação):
+ * `permissaoDeLeitura` → a chave não sai da API; `permissaoDeEdicao` → a chave no corpo é recusada (403).
+ */
+export function chavesBarradas(def: ResourceDef, qual: "permissaoDeLeitura" | "permissaoDeEdicao", pode: (permissao: string) => boolean): Set<string> {
+  const out = new Set<string>();
+  for (const a of def.abas ?? []) {
+    const p = a[qual];
+    if (!p || pode(p)) continue;
+    for (const k of [...(a.detalhes ?? []), ...(a.perfis ?? [])]) out.add(k);
+  }
+  return out;
 }
 
 export const yesNo: FieldOption[] = [{ value: "true", label: "Sim" }, { value: "false", label: "Não" }];

@@ -483,9 +483,10 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       { key: "contatos", label: "Contatos", secoes: ["Contato"], detalhes: ["contatos"] },
       { key: "fiscal", label: "Fiscal", secoes: ["Fiscal"] },
       { key: "financeiro", label: "Financeiro", secoes: ["Conta"], detalhes: ["contas"] },
-      { key: "cliente", label: "Cliente", perfis: ["perfil_cliente"], visivelQuando: { field: "is_client", equals: true } },
-      { key: "fornecedor", label: "Fornecedor", perfis: ["perfil_fornecedor"], detalhes: ["filiais", "vendedores"], visivelQuando: { field: "is_provider", equals: true } },
-      { key: "proprietario", label: "Proprietário", perfis: ["perfil_proprietario"], detalhes: ["participacoes"], visivelQuando: { field: "is_proprietary", equals: true } },
+      // ABAS DE TIPO (R1-4): ler exige `<tipo>.view` e gravar exige `<tipo>.edit`; marcar/desmarcar o tipo é do parceiro
+      { key: "cliente", label: "Cliente", perfis: ["perfil_cliente"], visivelQuando: { field: "is_client", equals: true }, permissaoDeLeitura: "clients.view", permissaoDeEdicao: "clients.edit" },
+      { key: "fornecedor", label: "Fornecedor", perfis: ["perfil_fornecedor"], detalhes: ["filiais", "vendedores"], visivelQuando: { field: "is_provider", equals: true }, permissaoDeLeitura: "providers.view", permissaoDeEdicao: "providers.edit" },
+      { key: "proprietario", label: "Proprietário", perfis: ["perfil_proprietario"], detalhes: ["participacoes"], visivelQuando: { field: "is_proprietary", equals: true }, permissaoDeLeitura: "proprietaries.view", permissaoDeEdicao: "proprietaries.edit" },
       { key: "funcionario", label: "Funcionário", visivelQuando: { field: "is_employee", equals: true } },
       { key: "anexos", label: "Anexos" }
     ],

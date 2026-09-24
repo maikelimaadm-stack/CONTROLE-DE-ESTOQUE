@@ -985,7 +985,8 @@ Nenhuma variável nova.
    nelas; sem nenhum tipo marcado → 422 declarado ("Marque pelo menos um tipo…"); documento inválido → 422;
    duplicado → 409 com o código e o nome do existente. Provado em `skew-web-anterior.spec.ts` (PA-K2). Tipo ×
    documento divergente (Física com CNPJ, Jurídica com CPF; o formulário anterior também manda os dois campos) →
-   422 declarado no campo do documento — provado na API em `cadastros-parceiros.test.ts` (DOC-1).
+   422 declarado no campo do documento — provado na API em `cadastros-parceiros.test.ts` (DOC-1). As permissões
+   por tipo (decisão 253, item 8) não mudam nada para o formulário anterior: ele não manda grades nem perfis.
 3. **web NOVA × API anterior:** a ficha manda grades e perfis; o schema estrito da API anterior RECUSA (422
    "Campo não reconhecido") e nada é gravado — o usuário vê o erro e salva depois do deploy da API. Provado em
    `skew-api-producao.spec.ts` (PA-K1). O cadastro rápido manda só o principal e funciona.

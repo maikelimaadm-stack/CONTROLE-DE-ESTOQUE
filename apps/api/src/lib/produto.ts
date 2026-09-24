@@ -13,7 +13,7 @@
 import { getResource, type ResourceDef } from "@agro/domain";
 import { validation } from "./errors.js";
 import { ident } from "./sql.js";
-import { detalheDoErro } from "./ficha-em-abas.js";
+import { chavesOcultas, detalheDoErro } from "./ficha-em-abas.js";
 import type { ServiceCtx } from "./context.js";
 
 type Linha = Record<string, unknown>;
@@ -109,8 +109,10 @@ const RUIDO = new Set(["updated_at", "created_at", "version"]);
 export async function historicoDoRegistro(ctx: ServiceCtx, def: ResourceDef, id: string, page: number, pageSize: number) {
   const tabelas: string[] = []; const ids: string[] = [];
   const rotulo = new Map<string, { label: string; campos: Map<string, string> }>([[def.table, { label: def.label, campos: new Map(def.fields.map((f) => [f.name, f.label])) }]]);
+  const ocultas = chavesOcultas(ctx, def);
   for (const d of def.detalhes ?? []) {
-    if (d.chaveNatural) continue;
+    // grade de aba que o usuário não pode LER (R1-4) também não aparece no histórico
+    if (d.chaveNatural || ocultas.has(d.key)) continue;
     // nomes de tabela e coluna vêm só do registry estático
     const r = await ctx.tx.query<{ id: string }>(`select id::text from erp.${ident(d.table)} where ${ident(d.chavePai)} = $1`, [id]);
     tabelas.push(d.table); ids.push(...r.rows.map((x) => x.id));

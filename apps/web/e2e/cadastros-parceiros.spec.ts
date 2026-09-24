@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { login, api, uniq } from "./helpers";
+import { login, logout, api, uniq } from "./helpers";
 
 /**
  * CADASTROS Fase 4 — Parceiros: ficha em abas (decisão 253) na tela.
@@ -12,6 +12,9 @@ import { login, api, uniq } from "./helpers";
  * PA-W3  Cadastro rápido de cliente de dentro de um seletor: só os campos rápidos, tipo pré-marcado.
  * PA-W4  Tipo de pessoa × documento (R1-6, decisão 253): Jurídica (o padrão) com CPF → a recusa da API aparece NO
  *        CAMPO CPF/CNPJ, com o contador na aba Identificação, e nada é gravado; trocar para Física grava.
+ * PA-W5  Permissões por tipo (R1-4, decisão 253): perfil só com people.* → as abas Cliente, Fornecedor e Proprietário
+ *        não aparecem (e a API não manda os dados delas); o parceiro NOVO pela ficha grava — a tela não manda as
+ *        grades das abas que o perfil não grava, que a API recusaria com 403.
  */
 
 function cpfValido(): string {
@@ -127,4 +130,37 @@ test("PA-W4 — Jurídica com CPF: a mensagem aparece no campo do documento; Fí
   await page.getByRole("option", { name: "Física", exact: true }).click();
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(async () => (await api<{ items: { person_type: string; document: string }[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`)).items.map((x) => [x.person_type, x.document])).toEqual([["natural", cpf]]);
+});
+
+test("PA-W5 — perfil sem clients/providers/proprietaries: as abas de tipo não aparecem; o parceiro novo pela ficha grava", async ({ page }) => {
+  await login(page);
+  const x = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("PA-W5 todos os tipos"), person_type: "legal", is_client: true, is_provider: true, is_proprietary: true, perfil_cliente: { limite_credito: "1000" } });
+  const papel = await api<{ id: string }>(page, "POST", "/api/admin/roles", { name: uniq("Só Parceiros E2E"), permissions: ["people.view", "people.create", "people.edit"] });
+  const usuario = { email: `e2e-so-parceiros-${Date.now()}@demo.local`, password: "Leitor@12345" };
+  await api(page, "POST", "/api/admin/members", { name: "Parceiros E2E", email: usuario.email, password: usuario.password, role_id: papel.id, escopos_empresas: [] });
+  await logout(page);
+  await login(page, usuario);
+
+  // ficha existente: os tipos estão marcados, mas as abas deles não aparecem — e a API não manda os dados
+  await page.goto(`/cadastros/people/${x.id}`);
+  const ficha = page.getByTestId("ficha-em-abas");
+  await expect(ficha).toBeVisible();
+  await expect(ficha.getByRole("tab", { name: "Identificação" })).toBeVisible();
+  await expect(page.getByTestId("ficha-cabecalho")).toContainText("Cliente");
+  const abas = (await ficha.getByRole("tab").allInnerTexts()).map((t) => t.trim());
+  for (const t of ["Cliente", "Fornecedor", "Proprietário"]) expect(abas, `aba ${t} sem a permissão de leitura`).not.toContain(t);
+  const lido = await api<Record<string, unknown>>(page, "GET", `/api/resources/people/${x.id}`);
+  for (const k of ["perfil_cliente", "perfil_fornecedor", "filiais", "vendedores", "perfil_proprietario", "participacoes"]) expect(lido, k).not.toHaveProperty(k);
+
+  // parceiro NOVO: a criação manda todas as grades da ficha — menos as das abas que este perfil não grava
+  const nome = uniq("PA-W5 novo");
+  await page.goto("/cadastros/people/new");
+  await expect(ficha).toBeVisible();
+  await page.getByLabel("Nome Social/Fantasia").fill(nome);
+  await page.getByLabel("Cliente", { exact: true }).click();
+  await page.getByRole("option", { name: "Sim" }).click();
+  await expect(page.getByTestId("ficha-cabecalho")).toContainText("Cliente");
+  await expect(ficha.getByRole("tab", { name: "Cliente", exact: true }), "marcar o tipo não mostra a aba sem clients.view").toHaveCount(0);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(async () => (await api<{ items: { is_client: boolean }[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`)).items.map((i) => i.is_client)).toEqual([true]);
 });

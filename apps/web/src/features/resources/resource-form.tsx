@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller, type UseFormReturn } from "react-hook-form";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { toast } from "@/lib/toast";
-import { getResource, ehCadastroCodigoHierarquico, type FieldDef } from "@agro/domain";
+import { chavesBarradas, getResource, ehCadastroCodigoHierarquico, type FieldDef } from "@agro/domain";
 import { cardFieldIds, type FormLayout } from "@agro/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -85,6 +85,9 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const readOnly = embedded ? embedded.mode === "view" : sp.get("view") === "1" || (!isNew && !canEdit);
   // aba com `permissaoDeEdicao` que o usuário não tem (ex.: Pessoal do RH sem people.edit): campos travados e fora do corpo
   const travados = [...l.lockedFieldIds, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
+  // grade/perfil de aba sem a permissão de gravar ou de ler (R1-4, ex.: aba Cliente sem clients.edit) não vai no corpo —
+  // a API recusaria o corpo inteiro com 403. Só apresentação: quem recusa é o servidor.
+  const fichaBarrada = def ? new Set([...chavesBarradas(def, "permissaoDeEdicao", can), ...chavesBarradas(def, "permissaoDeLeitura", can)]) : new Set<string>();
   const preset = React.useMemo(() => { const p: Record<string, string> = { ...(presetExtra ?? {}) }; if (!embedded && !presetExtra) sp.forEach((v, k) => { if (k !== "view" && k !== "copy") p[k] = v; }); return p; }, [sp, embedded, presetExtra]);
   const copyId = embedded ? null : sp.get("copy");
   const q = useQuery({ queryKey: ["res", resourceKey, id], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${id}`), enabled: !isNew && id !== "new", placeholderData: embedded?.row && String(embedded.row["id"]) === id ? embedded.row : undefined, staleTime: 30_000 });
@@ -131,7 +134,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   React.useEffect(() => { try { const v = localStorage.getItem(panelStyleKey); if (v === "sidebar") setPanelStyle("sidebar"); } catch { /* sem storage */ } }, [panelStyleKey]);
   const togglePanelStyle = () => setPanelStyle((p) => { const n = p === "tabs" ? "sidebar" : "tabs"; try { localStorage.setItem(panelStyleKey, n); } catch { /* sem storage */ } return n; });
   const save = useMutation({
-    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, travados), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k])) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
+    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, travados), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => !fichaBarrada.has(k) && (isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k]))) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
     onSuccess: (row) => { setErrosFicha([]); toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
     onError: (e) => { const err = e as Error & { details?: ErroDaFicha[] }; const det = err.details?.filter((d) => d.path) ?? []; if (ficha) setErrosFicha(det); errosDoServidor.current = det.map((d) => d.path); det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
   });

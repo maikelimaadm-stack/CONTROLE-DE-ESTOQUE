@@ -6,7 +6,7 @@ import type { BuscarFn } from "../../src/lib/consultas/http.js";
 import { harness, configDeTeste, TEST_URL, type Harness } from "./setup.js";
 
 /**
- * CADASTROS Fase 4 — PARCEIROS: ficha em abas (decisão 253, migration 0027). PA-1..PA-10.
+ * CADASTROS Fase 4 — PARCEIROS: ficha em abas (decisão 253, migration 0027). PA-1..PA-10; DOC-1 (R1-6); PT-1, PT-2 (R1-4).
  * Toda recusa confere o BANCO (nada gravado); todo aceite confere a linha gravada.
  */
 let h: Harness; let admin: Db;
@@ -322,5 +322,195 @@ describe("DOC-1 — tipo de pessoa × documento (R1-6, decisão 253)", () => {
     const a = criado(await post({ name: nome("pontuacao 1"), person_type: "foreign", document: "-", is_client: true }));
     const b = criado(await post({ name: nome("pontuacao 2"), person_type: "foreign", document: "--", is_client: true }));
     expect([(await linha(a))!.document, (await linha(b))!.document]).toEqual(["-", "--"]);
+  });
+});
+
+/**
+ * R1-4 — PERMISSÕES POR TIPO DE PARCEIRO. Cada caso monta o membro com as permissões EXATAS (e o escopo de empresa
+ * pedido) e confere o BANCO pelo papel administrativo, que não passa pela RLS.
+ */
+async function membro(email: string, perms: string[], escopos: { modulo: string; modo: "todas" | "selecionadas"; empresas?: string[] }[] = []) {
+  const hash = (await um<{ password_hash: string }>("select password_hash from erp.users where email='operador@demo.local'"))!.password_hash;
+  const papel = (await um<{ id: string }>("insert into erp.roles(organization_id,name) values ($1,$2) returning id", [h.demo.orgId, `[TEST] ${email}`]))!.id;
+  for (const p of perms) await admin.query("insert into erp.role_permissions(role_id,permission_key) values ($1,$2)", [papel, p]);
+  const u = (await um<{ id: string }>("insert into erp.users(email,name,password_hash) values ($1,$2,$3) returning id", [email, email, hash]))!.id;
+  const m = (await um<{ id: string }>("insert into erp.organization_members(organization_id,user_id,role_id,is_owner,is_active) values ($1,$2,$3,false,true) returning id", [h.demo.orgId, u, papel]))!.id;
+  for (const e of escopos) {
+    await admin.query("insert into erp.membro_escopos_empresa(organization_id,membro_id,modulo,modo) values ($1,$2,$3,$4)", [h.demo.orgId, m, e.modulo, e.modo]);
+    for (const emp of e.empresas ?? []) await admin.query("insert into erp.membro_empresas(organization_id,membro_id,modulo,modo,empresa_id) values ($1,$2,$3,'selecionadas',$4)", [h.demo.orgId, m, e.modulo, emp]);
+  }
+  const tok = j(await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Demo@12345" } })).token as string;
+  return { authorization: `Bearer ${tok}`, "x-org-id": h.demo.orgId, "content-type": "application/json" };
+}
+
+/** Retrato, pelo papel administrativo, de TUDO o que as abas de tipo gravam para o parceiro. */
+const retratoDosTipos = async (id: string) => ({
+  cliente: await um("select is_active, limite_credito::text l from erp.client_profiles where person_id=$1", [id]),
+  fornecedor: await um("select is_active, provider_type, hour_value::text hv from erp.provider_profiles where person_id=$1", [id]),
+  filiais: (await admin.query("select name from erp.provider_branches where person_id=$1 order by name", [id])).rows,
+  vendedores: (await admin.query("select name from erp.provider_sellers where person_id=$1 order by name", [id])).rows,
+  proprietario: await um("select is_active from erp.proprietary_profiles where person_id=$1", [id]),
+  participacoes: (await admin.query("select empresa_id::text e, percentage::text p, registration_number r from erp.proprietary_empresas where person_id=$1 order by percentage", [id])).rows
+});
+
+describe("PT-1 — aba de tipo: LER exige <tipo>.view, GRAVAR exige <tipo>.edit; marcar o tipo continua do parceiro (R1-4)", () => {
+  let X = ""; let A = "";
+  let semTipos: Record<string, string>; let leitores: Record<string, string>; let editores: Record<string, string>; let soEdicao: Record<string, string>;
+  const PARCEIRO = ["people.view", "people.create", "people.edit"];
+  const TIPOS = [
+    { perm: "clients", chaves: ["perfil_cliente"], corpos: [{ perfil_cliente: { limite_credito: "1" } }] },
+    { perm: "providers", chaves: ["perfil_fornecedor", "filiais", "vendedores"], corpos: [{ perfil_fornecedor: { hour_value: "1" } }, { filiais: [] }, { vendedores: [{ name: "PT1 intruso" }] }] },
+    { perm: "proprietaries", chaves: ["perfil_proprietario", "participacoes"], corpos: [{ perfil_proprietario: {} }, { participacoes: [] }] }
+  ] as const;
+
+  beforeAll(async () => {
+    A = h.demo.empresaIds[0]!;
+    X = criado(await post({
+      name: nome("PT1 todos os tipos"), person_type: "legal", is_client: true, is_provider: true, is_proprietary: true,
+      perfil_cliente: { limite_credito: "1000" }, perfil_fornecedor: { provider_type: "provider", hour_value: "25" },
+      filiais: [{ name: "PT1 filial" }], vendedores: [{ name: "PT1 vendedor" }], participacoes: [{ empresa_id: A, percentage: "40", registration_number: "PT1-A" }]
+    }));
+    // escopo `todas` em um módulo: a participação (grade com empresa) fica visível para quem pode ler a aba
+    const todas = [{ modulo: "financeiro", modo: "todas" as const }];
+    semTipos = await membro("pt1-sem-tipos@demo.local", PARCEIRO, todas);
+    leitores = await membro("pt1-leitores@demo.local", [...PARCEIRO, "clients.view", "providers.view", "proprietaries.view"], todas);
+    editores = await membro("pt1-editores@demo.local", [...PARCEIRO, "clients.view", "providers.view", "proprietaries.view", "clients.edit", "providers.edit", "proprietaries.edit"], todas);
+    soEdicao = await membro("pt1-so-edicao@demo.local", [...PARCEIRO, "clients.edit", "providers.edit", "proprietaries.edit"], todas);
+  });
+
+  for (const t of TIPOS) {
+    it(`${t.perm}: sem ${t.perm}.view a aba não vem na leitura (nem a chave, nem os dados); com ela vem`, async () => {
+      const sem = await get(`/api/resources/people/${X}`, semTipos);
+      expect(sem.statusCode, sem.body).toBe(200);
+      const corpo = j(sem) as Record<string, unknown>;
+      for (const k of t.chaves) expect(corpo, `${k} não pode sair sem ${t.perm}.view`).not.toHaveProperty(k);
+      expect(corpo, "as abas do parceiro continuam").toHaveProperty("enderecos");
+      expect(corpo, "o tipo marcado é do principal e continua visível").toMatchObject({ is_client: true, is_provider: true, is_proprietary: true });
+
+      const com = j(await get(`/api/resources/people/${X}`, leitores)) as Record<string, unknown>;
+      for (const k of t.chaves) expect(com, `${k} sai com ${t.perm}.view`).toHaveProperty(k);
+    });
+
+    it(`${t.perm}: sem ${t.perm}.edit gravar a aba = 403 (inclusive com só ${t.perm}.view e na criação); com .edit sem .view também; nada gravado`, async () => {
+      for (const c of t.corpos) {
+        const antes = await retratoDosTipos(X);
+        for (const [quem, hs] of [["sem tipos", semTipos], ["só leitura", leitores]] as const) {
+          const r = await put(X, { phone: "63 0000-0001", ...c }, hs);
+          expect(r.statusCode, `${quem} ${JSON.stringify(c)}: ${r.body}`).toBe(403);
+          expect(j(r).error.message).toBe(`Sem permissão: ${t.perm}.edit`);
+        }
+        // com <tipo>.edit e SEM <tipo>.view também não: a lista completa gravada às cegas apagaria o que ele não vê
+        const cego = await put(X, { phone: "63 0000-0001", ...c }, soEdicao);
+        expect(cego.statusCode, `só edição ${JSON.stringify(c)}: ${cego.body}`).toBe(403);
+        expect(j(cego).error.message).toBe(`Sem permissão: ${t.perm}.view`);
+        expect(await retratoDosTipos(X), `nada das abas mudou (${JSON.stringify(c)})`).toEqual(antes);
+        expect((await um<{ phone: string | null }>("select phone from erp.people where id=$1", [X]))!.phone, "o corpo inteiro é recusado").not.toBe("63 0000-0001");
+
+        const x = nome(`PT1 novo ${t.perm}`);
+        const novo = await post({ name: x, person_type: "legal", is_client: true, is_provider: true, is_proprietary: true, ...c }, semTipos);
+        expect(novo.statusCode, novo.body).toBe(403);
+        expect(await porNome(x), "a criação também não grava").toBe(0);
+      }
+    });
+  }
+
+  it("com <tipo>.edit grava; marcar/desmarcar o tipo continua com people.edit (perfil inativado, não apagado)", async () => {
+    const c = await put(X, { perfil_cliente: { limite_credito: "1500" } }, editores);
+    expect(c.statusCode, c.body).toBe(200);
+    const f = await put(X, { perfil_fornecedor: { hour_value: "30" }, vendedores: [{ name: "PT1 vendedor" }, { name: "PT1 segundo" }] }, editores);
+    expect(f.statusCode, f.body).toBe(200);
+    const p = await put(X, { participacoes: [{ empresa_id: A, percentage: "41", registration_number: "PT1-A" }] }, editores);
+    expect(p.statusCode, p.body).toBe(200);
+    expect(await retratoDosTipos(X)).toMatchObject({
+      cliente: { is_active: true, l: "1500.00" }, fornecedor: { hv: "30.00" }, vendedores: [{ name: "PT1 segundo" }, { name: "PT1 vendedor" }],
+      participacoes: [{ e: A, p: "41.0000", r: "PT1-A" }]
+    });
+
+    // desmarcar e remarcar o tipo é do parceiro: quem não tem clients.* consegue, e o perfil só é inativado
+    const des = await put(X, { is_client: false }, semTipos);
+    expect(des.statusCode, des.body).toBe(200);
+    expect((await retratoDosTipos(X)).cliente).toEqual({ is_active: false, l: "1500.00" });
+    const re = await put(X, { is_client: true }, semTipos);
+    expect(re.statusCode, re.body).toBe(200);
+    expect((await retratoDosTipos(X)).cliente).toEqual({ is_active: true, l: "1500.00" });
+  });
+
+  it("histórico: grade de aba sem a permissão de leitura não aparece", async () => {
+    // `provider_sellers` não tem gatilho de auditoria hoje: a linha de auditoria é plantada (como um gatilho futuro a gravaria)
+    const vendedor = (await um<{ id: string }>("select id::text id from erp.provider_sellers where person_id=$1 limit 1", [X]))!.id;
+    await admin.query("insert into erp.audit_logs(organization_id,entity,entity_id,action,before,after) values ($1,'provider_sellers',$2,'update',$3,$4)", [h.demo.orgId, vendedor, { name: "PT1 antes" }, { name: "PT1 depois" }]);
+    const campos = (r: Resp) => (j(r).items as { onde: string }[]).map((x) => x.onde);
+    expect(campos(await get(`/api/resources/people/${X}/historico`, leitores))).toEqual(expect.arrayContaining(["Vendedores do fornecedor"]));
+    expect(campos(await get(`/api/resources/people/${X}/historico`, semTipos))).not.toEqual(expect.arrayContaining(["Vendedores do fornecedor"]));
+  });
+});
+
+describe("PT-2 — participação do proprietário: a empresa fora do escopo não aparece, não é alterada e não é apagada (R1-4)", () => {
+  let P = ""; let A = ""; let B = "";
+  let escopoA: Record<string, string>; let escopoASemEdit: Record<string, string>; let semEscopo: Record<string, string>;
+  const linhas = async () => (await admin.query<{ e: string; p: string; r: string | null }>("select empresa_id::text e, percentage::text p, registration_number r from erp.proprietary_empresas where person_id=$1 order by empresa_id = $2 desc", [P, A])).rows;
+  const PERMS = ["people.view", "people.edit", "proprietaries.view"];
+
+  beforeAll(async () => {
+    A = h.demo.empresaIds[0]!; B = h.demo.empresaIds[1]!;
+    expect(A).not.toBe(B);
+    P = criado(await post({ name: nome("PT2 proprietario"), person_type: "natural", is_proprietary: true, participacoes: [{ empresa_id: A, percentage: "40", registration_number: "A-1" }, { empresa_id: B, percentage: "60", registration_number: "B-1" }] }));
+    const soA = [{ modulo: "financeiro", modo: "selecionadas" as const, empresas: [A] }];
+    escopoA = await membro("pt2-escopo-a@demo.local", [...PERMS, "proprietaries.edit"], soA);
+    escopoASemEdit = await membro("pt2-escopo-a-sem-edit@demo.local", PERMS, soA);
+    semEscopo = await membro("pt2-sem-escopo@demo.local", [...PERMS, "proprietaries.edit"]);
+  });
+
+  it("escopo de 1 empresa: vê só a sua; alterar a sua não toca a outra; lista sem a sua apaga só a sua; mandar a outra → 422", async () => {
+    expect(await linhas(), "o dono gravou as duas").toEqual([{ e: A, p: "40.0000", r: "A-1" }, { e: B, p: "60.0000", r: "B-1" }]);
+    expect((j(await get(`/api/resources/people/${P}`)).participacoes as { empresa_id: string }[]).map((x) => x.empresa_id).sort(), "o dono vê as duas").toEqual([A, B].sort());
+
+    // NÃO VÊ
+    const lida = await get(`/api/resources/people/${P}`, escopoA);
+    expect(lida.statusCode, lida.body).toBe(200);
+    expect(j(lida).participacoes).toEqual([{ empresa_id: A, percentage: "40.0000", registration_number: "A-1" }]);
+
+    // NÃO ALTERA e NÃO APAGA: a lista completa enviada é a do que ele vê
+    const muda = await put(P, { participacoes: [{ empresa_id: A, percentage: "45", registration_number: "A-2" }] }, escopoA);
+    expect(muda.statusCode, muda.body).toBe(200);
+    expect(j(muda).participacoes, "a resposta também não mostra a outra").toEqual([{ empresa_id: A, percentage: "45.0000", registration_number: "A-2" }]);
+    expect(await linhas()).toEqual([{ e: A, p: "45.0000", r: "A-2" }, { e: B, p: "60.0000", r: "B-1" }]);
+
+    const vazia = await put(P, { participacoes: [] }, escopoA);
+    expect(vazia.statusCode, vazia.body).toBe(200);
+    expect(await linhas(), "só a da empresa do escopo saiu").toEqual([{ e: B, p: "60.0000", r: "B-1" }]);
+
+    const outra = await put(P, { participacoes: [{ empresa_id: B, percentage: "10" }] }, escopoA);
+    expect(outra.statusCode, outra.body).toBe(422);
+    expect(detalhes(outra)[0]).toMatchObject({ aba: "proprietario", detalhe: "participacoes", linha: 1 });
+    expect(await linhas(), "recusa: nada gravado").toEqual([{ e: B, p: "60.0000", r: "B-1" }]);
+
+    // devolve a da empresa A para o próximo caso
+    expect((await put(P, { participacoes: [{ empresa_id: A, percentage: "40", registration_number: "A-1" }] }, escopoA)).statusCode).toBe(200);
+    expect(await linhas()).toEqual([{ e: A, p: "40.0000", r: "A-1" }, { e: B, p: "60.0000", r: "B-1" }]);
+  });
+
+  it("sem proprietaries.edit (mesmo escopo, com people.edit) → 403 e nada muda; o principal continua gravando", async () => {
+    for (const c of [{ participacoes: [{ empresa_id: A, percentage: "50" }] }, { participacoes: [] }]) {
+      const r = await put(P, c, escopoASemEdit);
+      expect(r.statusCode, r.body).toBe(403);
+      expect(j(r).error.message).toBe("Sem permissão: proprietaries.edit");
+      expect(await linhas(), JSON.stringify(c)).toEqual([{ e: A, p: "40.0000", r: "A-1" }, { e: B, p: "60.0000", r: "B-1" }]);
+    }
+    const tel = await put(P, { phone: "63 0000-0002" }, escopoASemEdit);
+    expect(tel.statusCode, tel.body).toBe(200);
+    expect(await linhas()).toEqual([{ e: A, p: "40.0000", r: "A-1" }, { e: B, p: "60.0000", r: "B-1" }]);
+  });
+
+  it("sem escopo de empresa nenhum (fail-closed): não vê nenhuma e a lista vazia não apaga nada", async () => {
+    const lida = await get(`/api/resources/people/${P}`, semEscopo);
+    expect(lida.statusCode, lida.body).toBe(200);
+    expect(j(lida).participacoes).toEqual([]);
+    const r = await put(P, { participacoes: [] }, semEscopo);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await linhas()).toEqual([{ e: A, p: "40.0000", r: "A-1" }, { e: B, p: "60.0000", r: "B-1" }]);
+    const a = await put(P, { participacoes: [{ empresa_id: A, percentage: "1" }] }, semEscopo);
+    expect(a.statusCode, a.body).toBe(422);
+    expect(await linhas()).toEqual([{ e: A, p: "40.0000", r: "A-1" }, { e: B, p: "60.0000", r: "B-1" }]);
   });
 });

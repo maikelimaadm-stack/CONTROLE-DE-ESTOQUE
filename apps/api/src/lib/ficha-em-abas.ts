@@ -12,11 +12,11 @@
  * Nomes de tabela e coluna saem SEMPRE da definição estática do registry, nunca do corpo.
  */
 import { z, ZodError } from "zod";
-import { getResource, type DetalheDef, type FieldDef, type PerfilDef, type ResourceDef } from "@agro/domain";
+import { chavesBarradas, getResource, type DetalheDef, type FieldDef, type PerfilDef, type ResourceDef } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { ident } from "./sql.js";
 import { denied, fromPgError, validation } from "./errors.js";
-import { exigirEmpresaDeLancamento, hasPermission, type ServiceCtx } from "./context.js";
+import { hasPermission, moduloAtivo, type ServiceCtx } from "./context.js";
 import { translateIssue } from "../plugins/errors.js";
 
 type Linha = Record<string, unknown>;
@@ -36,18 +36,41 @@ export function semSigilo<T extends Linha>(ctx: ServiceCtx, def: ResourceDef, ro
 /**
  * Permissões da ESCRITA além da do cadastro (Fase 5), conferidas ANTES de qualquer gravação:
  *  · campo sigiloso no corpo (principal, linha de detalhe ou perfil) sem a permissão do `sigilo` → 403;
- *  · campo de SEÇÃO de uma aba com `permissaoDeEdicao` sem essa permissão → 403 (ex.: aba Pessoal do RH).
+ *  · campo de SEÇÃO, GRADE ou PERFIL de uma aba com `permissaoDeEdicao` sem essa permissão → 403 (ex.: aba Pessoal
+ *    do RH; abas Cliente/Fornecedor/Proprietário do parceiro, R1-4). A chave PRESENTE basta, mesmo vazia: na
+ *    edição a grade vazia é "apague todas", e a tela não manda a chave da aba que o usuário não grava.
+ *    O booleano que liga o perfil (`is_client`…) é campo do principal e continua com a permissão do cadastro;
+ *  · GRADE ou PERFIL de uma aba com `permissaoDeLeitura` sem essa permissão → 403, mesmo com a de edição: quem não
+ *    lê a aba não grava a lista completa dela às cegas.
  */
 export function conferirPermissoesDaFicha(ctx: ServiceCtx, def: ResourceDef, data: Linha) {
   for (const f of def.fields) if (f.name in data && !podeVerCampo(ctx, f)) throw denied(f.sigilo);
   for (const d of def.detalhes ?? []) { const ls = data[d.key]; if (Array.isArray(ls)) for (const f of d.fields) if (!podeVerCampo(ctx, f) && (ls as Linha[]).some((l) => f.name in l)) throw denied(f.sigilo); }
   for (const p of def.perfis ?? []) { const c = data[p.key] as Linha | undefined; if (c) for (const f of p.fields) if (f.name in c && !podeVerCampo(ctx, f)) throw denied(f.sigilo); }
   for (const a of def.abas ?? []) {
-    if (!a.permissaoDeEdicao || hasPermission(ctx, a.permissaoDeEdicao)) continue;
-    const campos = def.fields.filter((f) => f.section && a.secoes?.includes(f.section) && !f.readOnly);
-    if (campos.some((f) => f.name in data)) throw denied(a.permissaoDeEdicao);
+    const chaves = [...(a.detalhes ?? []), ...(a.perfis ?? [])];
+    if (a.permissaoDeEdicao && !hasPermission(ctx, a.permissaoDeEdicao)) {
+      const campos = def.fields.filter((f) => f.section && a.secoes?.includes(f.section) && !f.readOnly);
+      if (campos.some((f) => f.name in data)) throw denied(a.permissaoDeEdicao);
+      if (chaves.some((k) => k in data)) throw denied(a.permissaoDeEdicao);
+    }
+    // gravar às cegas também não (R1-4): a grade enviada é a lista COMPLETA, e quem não lê a aba apagaria o que não vê
+    if (a.permissaoDeLeitura && !hasPermission(ctx, a.permissaoDeLeitura) && chaves.some((k) => k in data)) throw denied(a.permissaoDeLeitura);
   }
 }
+
+/** Grades e perfis de abas que o usuário não pode LER (R1-4): não saem na ficha nem no histórico. */
+export const chavesOcultas = (ctx: ServiceCtx, def: ResourceDef) => chavesBarradas(def, "permissaoDeLeitura", (p) => hasPermission(ctx, p));
+
+/**
+ * ESCOPO DE EMPRESA da grade com `campoEmpresa` (R1-4), com o mecanismo que já existe — a função da RLS empresarial
+ * `erp.empresa_no_escopo(empresa, módulo)`, no módulo da ROTA (`moduloAtivo`, derivado da permissão). No cadastro
+ * da ORGANIZAÇÃO (parceiro: `people.*` e `proprietaries.*` não têm módulo) o módulo é indefinido e a resposta é a
+ * UNIÃO das empresas que o membro enxerga em algum módulo — a mesma lista do seletor de empresas (RLS de
+ * `erp.empresas`) —, nunca "todas" (security.md › Fail closed); proprietário e modo `todas` enxergam todas.
+ * `parametro` é a posição do módulo (`moduloAtivo(ctx)`) na lista de parâmetros da consulta.
+ */
+const escopoDaEmpresa = (coluna: string, parametro: number) => `erp.empresa_no_escopo(${coluna}, $${parametro}::text)`;
 
 /** Aba em que a grade/perfil (ou o campo, pela seção) aparece — para o erro apontar a aba certa. */
 export function abaDe(def: ResourceDef, alvo: { detalhe?: string; perfil?: string; campo?: string }): string | null {
@@ -159,12 +182,30 @@ async function gravarDetalhe(ctx: ServiceCtx, def: ResourceDef, d: DetalheDef, p
   const chave = d.chaveNatural ?? "id";
   const campos = d.fields.filter((f) => !f.readOnly && cols.has(f.name));
   await conferirReferencias(ctx, def, d.fields, linhas, (i, f) => [d.key, i, f.name]);
-  if (d.campoEmpresa) for (const [i, l] of linhas.entries()) { try { await exigirEmpresaDeLancamento(ctx, (l[d.campoEmpresa] as string | null) ?? null); } catch (e) { erroNaLinha(def, d, i, e); } }
+  if (d.campoEmpresa) {
+    // a empresa de cada linha ENVIADA: viva, desta organização e no escopo (R1-4) — uma consulta para a grade inteira
+    const r = await ctx.tx.query<{ i: number }>(
+      `select (x.i - 1)::int as i from unnest($1::uuid[]) with ordinality as x(empresa_id, i)
+        where x.empresa_id is not null
+          and not exists (select 1 from erp.empresas f where f.id = x.empresa_id and f.organization_id = $2 and f.deleted_at is null and ${escopoDaEmpresa("f.id", 3)})
+        order by x.i limit 1`,
+      [linhas.map((l) => (l[d.campoEmpresa!] as string | null | undefined) || null), ctx.orgId, moduloAtivo(ctx)]);
+    if (r.rows[0]) erroNaLinha(def, d, r.rows[0].i, validation("Sem acesso à empresa informada"));
+  }
 
-  // o que existe hoje (vivo) desta ficha — a lista enviada é a lista COMPLETA
-  const filtro = (a: number, b: number) => `${ident(d.chavePai)} = $${a}${org ? ` and organization_id = $${b}` : ""}${soft ? " and deleted_at is null" : ""}`;
-  const filtroPai = filtro(1, 2);
-  const pp: unknown[] = org ? [paiId, ctx.orgId] : [paiId];
+  // o que existe hoje (vivo) desta ficha — a lista enviada é a lista COMPLETA. Com `campoEmpresa`, "o que existe" é
+  // só o que o usuário ENXERGA (R1-4): a linha de empresa fora do escopo não é lida, não é alterada e não é apagada
+  // quando fica de fora da lista — o filtro vale também no UPDATE e no DELETE, e o ROW COUNT é conferido.
+  const pp: unknown[] = [paiId, ...(org ? [ctx.orgId] : []), ...(d.campoEmpresa ? [moduloAtivo(ctx)] : [])];
+  const filtro = (inicio: number) => {
+    let n = inicio;
+    const partes = [`${ident(d.chavePai)} = $${n++}`];
+    if (org) partes.push(`organization_id = $${n++}`);
+    if (soft) partes.push("deleted_at is null");
+    if (d.campoEmpresa) partes.push(escopoDaEmpresa(ident(d.campoEmpresa), n++));
+    return partes.join(" and ");
+  };
+  const filtroPai = filtro(1);
   const atuais = new Set((await ctx.tx.query<{ k: string }>(`select ${ident(chave)}::text as k from erp.${ident(d.table)} where ${filtroPai}`, pp)).rows.map((r) => r.k));
   const enviados = new Set<string>();
   for (const [i, l] of linhas.entries()) {
@@ -192,7 +233,7 @@ async function gravarDetalhe(ctx: ServiceCtx, def: ResourceDef, d: DetalheDef, p
         for (const f of campos) { if (f.name === chave || !(f.name in l)) continue; vals.push(valorDaColuna(f, l[f.name])); sets.push(`${ident(f.name)} = $${vals.length}`); }
         if (!sets.length) continue;
         const base = vals.length;
-        const r = await ctx.tx.query(`update erp.${ident(d.table)} set ${sets.join(", ")} where ${ident(chave)}::text = $${base + 1} and ${filtro(base + 2, base + 3)}`, [...vals, k, ...pp]);
+        const r = await ctx.tx.query(`update erp.${ident(d.table)} set ${sets.join(", ")} where ${ident(chave)}::text = $${base + 1} and ${filtro(base + 2)}`, [...vals, k, ...pp]);
         if (r.rowCount !== 1) throw new DomainError("CONCURRENCY_CONFLICT", "a linha mudou durante a gravação; recarregue a ficha");
       } else {
         const cs: string[] = [d.chavePai]; const vs: unknown[] = [paiId];
@@ -242,20 +283,27 @@ export async function gravarFicha(ctx: ServiceCtx, def: ResourceDef, id: string,
   for (const p of def.perfis ?? []) await gravarPerfil(ctx, def, p, id, data, atual);
 }
 
-/** Grades e perfis do registro nas mesmas chaves do corpo. Uma consulta por tabela. */
+/** Grades e perfis do registro nas mesmas chaves do corpo. Uma consulta por tabela. Aba sem a permissão de leitura: a chave não sai (R1-4). */
 export async function lerFicha(ctx: ServiceCtx, def: ResourceDef, id: string): Promise<Linha> {
   const out: Linha = {};
+  // aba que o usuário não pode LER (R1-4): a grade e o perfil dela não saem — nem a chave, nem os dados
+  const ocultas = chavesOcultas(ctx, def);
   for (const d of def.detalhes ?? []) {
+    if (ocultas.has(d.key)) continue;
     const cols = await colunas(ctx, d.table);
     if (!cols.size) { out[d.key] = []; continue; }
     const org = Boolean(d.organizacao) && cols.has("organization_id");
     const soft = Boolean(d.softDelete) && cols.has("deleted_at");
     const sel = [...(d.chaveNatural ? [] : ["id"]), ...d.fields.filter((f) => podeVerCampo(ctx, f)).map((f) => f.name).filter((c) => cols.has(c))];
     const ordem = cols.has("created_at") ? "created_at, " : "";
-    const r = await ctx.tx.query(`select ${[...new Set(sel)].map(ident).join(",")} from erp.${ident(d.table)} where ${ident(d.chavePai)} = $1${org ? " and organization_id = $2" : ""}${soft ? " and deleted_at is null" : ""} order by ${ordem}${ident(d.chaveNatural ?? "id")}`, org ? [id, ctx.orgId] : [id]);
+    const params: unknown[] = [id, ...(org ? [ctx.orgId] : []), ...(d.campoEmpresa ? [moduloAtivo(ctx)] : [])];
+    // linha de empresa fora do escopo do usuário não aparece (R1-4)
+    const escopo = d.campoEmpresa ? ` and ${escopoDaEmpresa(ident(d.campoEmpresa), params.length)}` : "";
+    const r = await ctx.tx.query(`select ${[...new Set(sel)].map(ident).join(",")} from erp.${ident(d.table)} where ${ident(d.chavePai)} = $1${org ? " and organization_id = $2" : ""}${soft ? " and deleted_at is null" : ""}${escopo} order by ${ordem}${ident(d.chaveNatural ?? "id")}`, params);
     out[d.key] = r.rows;
   }
   for (const p of def.perfis ?? []) {
+    if (ocultas.has(p.key)) continue;
     const cols = await colunas(ctx, p.table);
     if (!cols.size) { out[p.key] = null; continue; }
     const sel = [...(cols.has("is_active") ? ["is_active"] : []), ...p.fields.filter((f) => podeVerCampo(ctx, f)).map((f) => f.name).filter((c) => cols.has(c))];

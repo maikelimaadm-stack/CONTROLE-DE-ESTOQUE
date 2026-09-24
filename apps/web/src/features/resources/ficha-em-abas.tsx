@@ -5,7 +5,7 @@
  * fases 5 a 7). A declaração (abas, seções, grades de detalhe, perfis, cabeçalho, campos rápidos) é a do
  * registry; aqui só se desenha:
  *  · cabeçalho FIXO com os campos de `cabecalho`, visível em todas as abas;
- *  · abas na ordem declarada, escondidas por `visivelQuando`; contador de erros por aba;
+ *  · abas na ordem declarada, escondidas por `visivelQuando` e sem a `permissaoDeLeitura` (R1-4); contador de erros por aba;
  *  · grade de detalhe (incluir / editar / remover linha) e campos de perfil (`<perfil>.<campo>` no formulário);
  *  · `fichaDoRegistro` / `fichaParaApi`: a conversão entre o registro da API e o formulário.
  * O servidor é a autoridade (gravação atômica, regras, erro por aba e linha); a tela só mostra.
@@ -225,7 +225,9 @@ export function CriacaoPorOutraPorta({ def, base }: { def: ResourceDef; base: st
 export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderField, visivel }: { def: ResourceDef; form: UseFormReturn<Values>; readOnly: boolean; isNew: boolean; record: Values | null; erros: ErroDaFicha[]; renderField: (fid: string) => React.ReactNode; visivel: (f: FieldDef) => boolean }) {
   const { can } = useAuth();
   const values = form.watch();
-  const abas = (def.abas ?? []).filter((a) => !a.visivelQuando || iguala(values[a.visivelQuando.field], a.visivelQuando.equals));
+  // aba sem a permissão de LEITURA (R1-4, ex.: Cliente sem clients.view) não aparece — a API também não manda os dados dela
+  const abas = (def.abas ?? []).filter((a) => (!a.permissaoDeLeitura || can(a.permissaoDeLeitura)) && (!a.visivelQuando || iguala(values[a.visivelQuando.field], a.visivelQuando.equals)));
+  const semEdicao = (a: { permissaoDeEdicao?: string }) => Boolean(a.permissaoDeEdicao && !can(a.permissaoDeEdicao));
   const [ativa, setAtiva] = React.useState(abas[0]?.key ?? "");
   const cur = abas.some((a) => a.key === ativa) ? ativa : abas[0]?.key ?? "";
   const [anexos, setAnexos] = React.useState(false);
@@ -251,14 +253,14 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
     <div className="min-h-0 flex-1 overflow-auto">
       {abas.map((a, i) => <div key={a.key} className={cn("grid grid-cols-12 gap-3", cur !== a.key && "hidden")} role="tabpanel" aria-label={a.label}>
         {i === 0 && semSecao.length > 0 && <Card className="col-span-12 p-3"><div className="flex flex-wrap gap-2">{semSecao.map(renderField)}</div></Card>}
-        {(a.permissaoDeEdicao && !can(a.permissaoDeEdicao)) || (a.link && !isNew && record?.["id"]) ? <Card className="col-span-12 p-3 text-[12.5px]" data-testid={`aba-aviso-${a.key}`}>
-          {a.permissaoDeEdicao && !can(a.permissaoDeEdicao) && <span className="mr-2 text-slate-600">Somente leitura: editar estes dados exige a permissão de edição do cadastro de origem.</span>}
+        {semEdicao(a) || (a.link && !isNew && record?.["id"]) ? <Card className="col-span-12 p-3 text-[12.5px]" data-testid={`aba-aviso-${a.key}`}>
+          {semEdicao(a) && <span className="mr-2 text-slate-600">Somente leitura: o seu perfil não tem a permissão de edição desta aba.</span>}
           {a.link && !isNew && record?.["id"] ? <a className="text-brand-700 underline" href={a.link.href.replace(":id", String(record["id"]))}>{a.link.label}</a> : null}
         </Card> : null}
         {(a.secoes ?? []).map(secao)}
         {a.key === "identificacao" && def.fields.some((f) => f.name === "document") && <ConsultaCnpj form={form} dis={readOnly} />}
-        {(a.perfis ?? []).map((k) => { const p = def.perfis?.find((x) => x.key === k); return p ? <CamposDoPerfil key={k} p={p} form={form} dis={readOnly} /> : null; })}
-        {(a.detalhes ?? []).map((k) => { const d = def.detalhes?.find((x) => x.key === k); return d ? <GradeDeDetalhe key={k} d={d} form={form} dis={readOnly} erros={erros} /> : null; })}
+        {(a.perfis ?? []).map((k) => { const p = def.perfis?.find((x) => x.key === k); return p ? <CamposDoPerfil key={k} p={p} form={form} dis={readOnly || semEdicao(a)} /> : null; })}
+        {(a.detalhes ?? []).map((k) => { const d = def.detalhes?.find((x) => x.key === k); return d ? <GradeDeDetalhe key={k} d={d} form={form} dis={readOnly || semEdicao(a)} erros={erros} /> : null; })}
         {a.key === "funcionario" && <Card className="col-span-12 p-3 text-[12.5px]">Funcionário: os eventos fixos, as ocorrências e a folha ficam no RH. {!isNew && record?.["id"] ? <a className="text-brand-700 underline" href={`/cadastros/funcionarios/${String(record["id"])}`}>Abrir no RH</a> : "Salve o parceiro para abrir no RH."}</Card>}
         {a.painel === "saldo_por_lote" && <SaldoPorLote id={isNew ? null : (record?.["id"] as string | undefined) ?? null} />}
         {a.painel === "historico" && <HistoricoDaFicha def={def} id={isNew ? null : (record?.["id"] as string | undefined) ?? null} />}
