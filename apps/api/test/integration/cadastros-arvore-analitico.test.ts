@@ -45,9 +45,9 @@ async function membroRestrito(nome: string, perms: string[], empresas: string[])
   const role = await post("/api/admin/roles", { name: `Perfil ${nome}`, permissions: perms });
   expect(role.statusCode, role.body).toBe(201);
   const email = `${nome.toLowerCase().replace(/\W+/g, "-")}@demo.local`;
-  const mem = await post("/api/admin/members", { name: nome, email, password: "Arvore@12345", role_id: j(role).id, escopos_empresas: escoposDeTodosOsModulos(empresas) });
+  const mem = await post("/api/admin/members", { name: nome, email, password: "Restrito@12345", role_id: j(role).id, escopos_empresas: escoposDeTodosOsModulos(empresas) });
   expect(mem.statusCode, mem.body).toBe(201);
-  const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Arvore@12345" } });
+  const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Restrito@12345" } });
   expect(login.statusCode, login.body).toBe(200);
   return { authorization: `Bearer ${j(login).token}`, "x-org-id": h.demo.orgId };
 }
