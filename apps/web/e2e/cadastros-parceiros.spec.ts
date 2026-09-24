@@ -79,7 +79,9 @@ test("PA-W3 — cadastro rápido de fornecedor dentro do seletor: campos rápido
   // A porta do cadastro rápido é o seletor com filtro de tipo — a mesma da venda e da compra. A entrada de
   // animal (Fornecedor de origem, is_provider) não depende de TOP configurada.
   await page.goto("/pecuaria/animais/new");
-  const campo = page.locator("div", { has: page.getByText("Fornecedor de origem", { exact: true }) }).locator("[aria-expanded]").first();
+  // ancorado no rótulo do campo: `div` que CONTÉM o texto casa também o layout inteiro, e o 1º [aria-expanded]
+  // passava a ser o menu "Compras" do cabeçalho
+  const campo = page.locator("label", { hasText: "Fornecedor de origem" }).first().locator("..").locator("[aria-expanded]").first();
   await campo.click();
   await page.getByRole("button", { name: /Cadastrar parceiro/ }).click();
   const rapido = page.getByTestId("cadastro-rapido");

@@ -198,7 +198,11 @@ async function gravarDetalhe(ctx: ServiceCtx, def: ResourceDef, d: DetalheDef, p
         const cs: string[] = [d.chavePai]; const vs: unknown[] = [paiId];
         if (org) { cs.push("organization_id"); vs.push(ctx.orgId); }
         for (const f of campos) { if (!(f.name in l)) continue; const v = valorDaColuna(f, l[f.name]); if (v === undefined) continue; cs.push(f.name); vs.push(v); }
-        const r = await ctx.tx.query(`insert into erp.${ident(d.table)} (${cs.map(ident).join(",")}) values (${vs.map((_, j) => `$${j + 1}`).join(",")})`, vs);
+        // ORDEM DA GRADE: a leitura ordena por `created_at`, e o default `now()` é o instante da TRANSAÇÃO — todas
+        // as linhas novas do mesmo envio empatavam e o desempate pelo UUID embaralhava a ordem digitada.
+        // `clock_timestamp()` avança a cada linha, então a ordem gravada é a ordem enviada.
+        const relogio = cols.has("created_at");
+        const r = await ctx.tx.query(`insert into erp.${ident(d.table)} (${[...cs.map(ident), ...(relogio ? ["created_at"] : [])].join(",")}) values (${[...vs.map((_, j) => `$${j + 1}`), ...(relogio ? ["clock_timestamp()"] : [])].join(",")})`, vs);
         if (r.rowCount !== 1) throw new DomainError("CONFLICT", "linha não gravada");
       }
     } catch (e) { erroNaLinha(def, d, i, e); }

@@ -282,7 +282,9 @@ test("M5 — Novo produto: Natureza de custo é obrigatória enquanto Controla e
   await login(page);
   await page.goto("/cadastros/products/new");
   const form = page.getByTestId("b1-form");
-  await form.getByRole("tab", { name: "Estoque", exact: true }).click();
+  // ficha em abas (Fase 6): "Controla estoque" fica na aba "Estoque e lotes"; a Natureza de custo, em "Custos e venda"
+  const abaEstoque = form.getByRole("tab", { name: "Estoque e lotes", exact: true });
+  const abaCustos = form.getByRole("tab", { name: "Custos e venda", exact: true });
   const categoria = form.locator("label", { hasText: "Natureza de custo" });
   const obrigatorio = categoria.locator("span.req");
   const controla = form.getByRole("combobox", { name: "Controla estoque", exact: true });
@@ -292,12 +294,19 @@ test("M5 — Novo produto: Natureza de custo é obrigatória enquanto Controla e
     await expect(controla).toHaveText(opcao);
   };
 
-  await expect(categoria).toBeVisible();
+  await abaEstoque.click();
   await expect(controla, "produto novo nasce controlando estoque").toHaveText("Sim");
+  await abaCustos.click();
+  await expect(categoria).toBeVisible();
   await expect(obrigatorio, "Controla estoque = Sim: a categoria financeira é obrigatória").toBeVisible();
+  await abaEstoque.click();
   await escolher("Não");
+  await abaCustos.click();
+  await expect(categoria).toBeVisible();
   await expect(obrigatorio, "Controla estoque = Não: deixa de ser obrigatória").toHaveCount(0);
+  await abaEstoque.click();
   await escolher("Sim");
+  await abaCustos.click();
   await expect(obrigatorio, "de volta a Sim: volta a ser obrigatória").toBeVisible();
 });
 

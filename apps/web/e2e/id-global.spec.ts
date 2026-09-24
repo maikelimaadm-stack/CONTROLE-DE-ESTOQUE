@@ -140,7 +140,8 @@ async function cenarioCruzado(page: Page): Promise<Restrito> {
     const A = ctx.empresas[0]; const B = ctx.empresas[1];
     const pessoa = (await get("/api/resources/people/options?is_provider=true"))[0];
     const cats = await get("/api/resources/financial_categories?pageSize=1&kind=analytic&nature=expense");
-    const centros = await get("/api/resources/cost_centers/options");
+    // rateio só em ANALÍTICO (decisão 256): o 1º centro das opções é sintético e o título seria recusado (422)
+    const centros = (await get("/api/resources/cost_centers?pageSize=1&kind=analytic")).items;
     const titulo = await post("/api/financial/payables", { empresa_id: B.id, number: `CRUZ-${Date.now()}`, person_id: pessoa.id, amount: "10",
       emission_date: "2031-06-01", due_date: "2031-07-01", note: "cruzado",
       apportionment: [{ financial_category_id: cats.items[0].id, cost_center_id: centros[0].id, percentage: "100" }] });

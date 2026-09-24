@@ -77,6 +77,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   // FICHA EM ABAS (decisão 253): cadastro com `abas` no registry usa a ficha; os demais, o layout de painéis
   const ficha = Boolean(def?.abas?.length);
   const [errosFicha, setErrosFicha] = React.useState<ErroDaFicha[]>([]);
+  const errosDoServidor = React.useRef<string[]>([]);
   const layout = useFormLayout(resourceKey, fields);
   const l: FormLayout = layout.prefs;
   const isNew = embedded ? embedded.mode === "new" : id === "new";
@@ -132,7 +133,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const save = useMutation({
     mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, travados), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k])) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
     onSuccess: (row) => { setErrosFicha([]); toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
-    onError: (e) => { const err = e as Error & { details?: ErroDaFicha[] }; const det = err.details?.filter((d) => d.path) ?? []; if (ficha) setErrosFicha(det); det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
+    onError: (e) => { const err = e as Error & { details?: ErroDaFicha[] }; const det = err.details?.filter((d) => d.path) ?? []; if (ficha) setErrosFicha(det); errosDoServidor.current = det.map((d) => d.path); det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
   });
   const remove = useMutation({ mutationFn: () => api(`/api/resources/${resourceKey}/${id}`, { method: "DELETE" }), onSuccess: () => { toast.success("Registro excluído"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); setConfirmDel(false); if (embedded) { embedded.refresh(); embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); }, onError: (e) => toast.error((e as Error).message) });
   // título da aba global ("Novo produto" / nome do registro) — hook antes de qualquer retorno antecipado; não se aplica ao formulário embutido na listagem
@@ -163,7 +164,11 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const nav = embedded?.nav;
   const labelOf = (name: string) => l.fieldLabels[name] ?? byId.get(name)?.label ?? name;
   // obrigatórios pendentes: marca cada campo e avisa no canto superior quais faltam (como o modelo base do MG)
-  const submit = form.handleSubmit((v) => save.mutate(v), (errs) => { const names = Object.keys(errs); toast.warning("Campos obrigatórios pendentes", { description: names.map(labelOf).join(", "), duration: 6000 }); const el = document.querySelector<HTMLElement>(`[name="${names[0]}"]`); el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus?.(); });
+  // Erro devolvido pelo SERVIDOR é retrato da tentativa anterior: o react-hook-form mantém `setError` de caminho
+  // não registrado (ex.: `enderecos.1`, linha da grade) e com ele recusaria para sempre o envio seguinte, mesmo
+  // corrigido. Limpa-se antes de reenviar; quem julga de novo é o servidor.
+  const enviar = form.handleSubmit((v) => save.mutate(v), (errs) => { const names = Object.keys(errs); toast.warning("Campos obrigatórios pendentes", { description: names.map(labelOf).join(", "), duration: 6000 }); const el = document.querySelector<HTMLElement>(`[name="${names[0]}"]`); el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus?.(); });
+  const submit = (e?: React.BaseSyntheticEvent) => { if (errosDoServidor.current.length) { form.clearErrors(errosDoServidor.current); errosDoServidor.current = []; } return enviar(e); };
   const cancel = () => { if (onCancel) { onCancel(); return; } if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset(fromRecord(def.fields, q.data)); embedded.setMode("view"); } } else router.push(back); };
   return (
     <form onSubmit={submit} className="b1 flex min-h-0 flex-1 flex-col gap-2" data-testid="b1-form">

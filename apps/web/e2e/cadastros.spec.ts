@@ -1,8 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { login, uniq } from "./helpers";
 /**
- * Preenche os RefSelect obrigatórios VISÍVEIS com a primeira opção disponível. Campo de outra aba (ex.: a Categoria
- * financeira, obrigatória enquanto "Controla estoque" = Sim, fica na aba Estoque) é preenchido pelo próprio teste.
+ * Preenche os RefSelect obrigatórios VISÍVEIS com a primeira opção disponível. Campo de outra aba (ex.: a Natureza
+ * de custo, obrigatória enquanto "Controla estoque" = Sim, fica na aba "Custos e venda") é preenchido pelo próprio teste.
  */
 async function fillRequiredRefs(page: import("@playwright/test").Page) {
   const labels = page.locator("label:has(span.text-red-500)");
@@ -18,8 +18,9 @@ test("cria e localiza um produto no cadastro genérico", async ({ page }) => {
   await page.goto("/cadastros/products/new");
   await page.getByLabel(/^Descrição/).first().fill(name);
   await fillRequiredRefs(page);
-  // categoria financeira é obrigatória quando o produto controla estoque (regra de negócio); o campo fica na aba "Estoque"
-  const estoqueTab = page.getByRole("tab", { name: "Estoque" }); if (await estoqueTab.count()) await estoqueTab.click();
+  // a Natureza de custo é obrigatória quando o produto controla estoque (regra de negócio); na ficha em abas
+  // (Fase 6) o campo fica na aba "Custos e venda"
+  await page.getByRole("tab", { name: "Custos e venda", exact: true }).click();
   await page.locator("label", { hasText: "Natureza de custo" }).first().locator("..").locator("button[type=button]").first().click(); await page.locator(".cmd-panel [role=option]").first().click();
   await page.getByRole("button", { name: /^Salvar/ }).click();
   const toast = page.locator("[data-sonner-toast]").first();

@@ -109,6 +109,13 @@ describe("PA-4 — PUT: ausente não mexe, lista é completa; outra organizaçã
     expect(await um("select deleted_at is not null as removida from erp.parceiro_enderecos where id=$1", [e2])).toEqual({ removida: true });
     expect(await n("select count(*)::text n from erp.parceiro_contas where person_id=$1 and deleted_at is null", [id])).toBe(1);
   });
+  it("a grade volta NA ORDEM enviada: linhas do mesmo envio não empatam no instante da transação", async () => {
+    const ordem = ["L1", "L2", "L3", "L4", "L5", "L6", "L7", "L8"];
+    const pid = criado(await post({ name: nome("ordem"), person_type: "legal", is_client: true, enderecos: ordem.map((x) => ({ tipo: "entrega", logradouro: x })) }));
+    const g = j(await get(`/api/resources/people/${pid}`));
+    expect((g.enderecos as { logradouro: string }[]).map((x) => x.logradouro)).toEqual(ordem);
+  });
+
   it("outra organização não lê nem grava (404) e não sequestra linha pelo id", async () => {
     const adm = createPool(TEST_URL, { max: 1 });
     const b = await seedDemo(adm, { orgName: "[TEST] Org PA", adminEmail: "adminpa@demo.local", adminPassword: "Demo@12345", slug: "orgpa" }, () => {}); await adm.end();

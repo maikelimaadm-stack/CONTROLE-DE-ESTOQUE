@@ -54,7 +54,7 @@ test("AR-2 — Novo filho: superior preenchido, código sugerido pelo servidor, 
   const codigo = page.getByRole("region", { name: "Ficha" }).getByLabel(/^Código/).first();
   await expect(codigo).toHaveValue(sugerido.codigo);
   const nome = uniq("Filho AR2");
-  await page.getByRole("region", { name: "Ficha" }).getByLabel(/^Nome/).first().fill(nome);
+  await page.getByRole("region", { name: "Ficha" }).getByLabel(/^Descrição/).first().fill(nome);
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/resources/financial_categories");
   await page.getByRole("button", { name: "Salvar" }).click();
   const r = await resposta;
@@ -103,7 +103,7 @@ test("AR-4 — Mover: novo superior com código sugerido; a recusa da API aparec
   const esperado = await api<{ codigo: string }>(page, "GET", `/api/resources/financial_categories/proximo-codigo?parent_id=${destino.id}`);
   await page.goto("/cadastros/financial_categories?visao=arvore");
   await no(page, nome).getByRole("button").last().click();
-  await page.getByRole("button", { name: "Mover" }).click();
+  await page.getByRole("region", { name: "Ficha" }).getByRole("button", { name: "Mover", exact: true }).click();
   const dialogo = page.getByRole("dialog");
   await dialogo.locator("label", { hasText: "Novo superior" }).first().locator("..").locator("button").first().click();
   await page.getByPlaceholder("Pesquisar...").fill("Receitas Agrícolas");
@@ -111,10 +111,10 @@ test("AR-4 — Mover: novo superior com código sugerido; a recusa da API aparec
   await expect(dialogo.getByLabel("Código novo")).toHaveValue(esperado.codigo);
   // código fora do prefixo: a API recusa (244) e a tela mostra
   await dialogo.getByLabel("Código novo").fill("1.01.999");
-  await dialogo.getByRole("button", { name: "Mover" }).click();
+  await dialogo.getByRole("button", { name: "Mover", exact: true }).click();
   await expect(dialogo.getByRole("alert")).toContainText(/começar com o código do superior/);
   await dialogo.getByLabel("Código novo").fill(esperado.codigo);
-  await dialogo.getByRole("button", { name: "Mover" }).click();
+  await dialogo.getByRole("button", { name: "Mover", exact: true }).click();
   await expect(dialogo).toBeHidden();
   const depois = (await naturezas(page)).find((x) => x.name === nome)!;
   expect(depois.parent_id).toBe(destino.id); expect(depois.code).toBe(esperado.codigo);
