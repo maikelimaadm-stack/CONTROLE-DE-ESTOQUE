@@ -124,9 +124,9 @@ async function resolverTopParaLancamento(ctx: ServiceCtx, familiaEsperada: strin
 export interface ClassificacaoFinanceira { categoriaFinanceiraId: string; centroCustoId: string }
 /** Versão da capacidade declarada em `operation-types` (a web só mostra e envia os campos com ela). */
 export const CAPACIDADE_CLASSIFICACAO_FINANCEIRA = 1;
-const MSG_CATEGORIA_INVALIDA = "Categoria financeira inválida para venda: escolha uma categoria analítica de receita, ativa";
-const MSG_CENTRO_INVALIDO = "Centro de custo inválido para venda: escolha um centro de custo analítico, ativo";
-const MSG_PAR_INCOMPLETO = "Informe a categoria financeira e o centro de custo juntos";
+const MSG_CATEGORIA_INVALIDA = "Natureza inválida para venda: escolha uma natureza analítica de receita, ativa";
+const MSG_CENTRO_INVALIDO = "Centro de resultado inválido para venda: escolha um centro de resultado analítico, ativo";
+const MSG_PAR_INCOMPLETO = "Informe a natureza e o centro de resultado juntos";
 const recusaDeCampo = (campo: "categoria_financeira_id" | "centro_custo_id", mensagem: string) => err("VALIDATION_ERROR", mensagem, [{ path: campo, message: mensagem }]);
 
 /**
@@ -565,7 +565,7 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
       // Receita: categoria padrão de venda de produtos (1ª analítica de receita) e centro de custo padrão da fazenda
       const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='income' and kind='analytic' and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
       const cc = (await ctx.tx.query<{ id: string }>("select cc.id from erp.cost_centers cc where cc.organization_id=$1 and cc.kind='analytic' and cc.deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-      if (!cat || !cc) modo.recusar(validation("Cadastre uma categoria financeira de receita e um centro de custo analítico"));
+      if (!cat || !cc) modo.recusar(validation("Cadastre uma natureza de receita analítica e um centro de resultado analítico"));
       else plano.classificacao = { categoriaFinanceiraId: cat.id, centroCustoId: cc.id, origem: "padrão legado" };
     }
   }

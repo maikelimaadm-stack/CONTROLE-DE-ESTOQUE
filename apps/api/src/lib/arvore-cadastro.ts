@@ -1,15 +1,15 @@
 /**
- * Regras dos cadastros em ÁRVORE (`def.tree`): Plano de Contas, Categorias Financeiras, Centros de Custo,
+ * Regras dos cadastros em ÁRVORE (`def.tree`): Plano de Contas, Naturezas, Centros de Resultado,
  * Grupos de Produtos e Endereçamentos (regras próprias do grupo em `grupo-de-produtos.ts`). O servidor é a autoridade — a tela só sugere.
  *
- * - o antecessor existe, é desta organização e não está excluído;
- * - o antecessor não é o próprio registro nem um descendente dele (sem ciclo);
- * - onde há `kind`, o antecessor é SINTÉTICO, e conta com filhos não vira analítica;
- * - onde há código hierárquico, o código obedece à máscara do cadastro e começa pelo código do antecessor;
+ * - o superior existe, é desta organização e não está excluído;
+ * - o superior não é o próprio registro nem um descendente dele (sem ciclo);
+ * - onde há `kind`, o superior é SINTÉTICO, e conta com filhos não vira analítica;
+ * - onde há código hierárquico, o código obedece à máscara do cadastro e começa pelo código do superior;
  * - registro com filhos vivos não é excluído.
  *
  * As regras valem para gravações NOVAS. Um registro antigo fora da máscara continua legível e editável em
- * outros campos; só código ou antecessor alterados passam de novo pela conferência.
+ * outros campos; só código ou superior alterados passam de novo pela conferência.
  */
 import type { ResourceDef } from "@agro/domain";
 import { ehCadastroCodigoHierarquico, mascaraDoCadastro, proximoCodigoHierarquico, validarCodigoHierarquico } from "@agro/domain";
@@ -20,6 +20,8 @@ import type { ServiceCtx } from "./context.js";
 type Linha = Record<string, unknown>;
 const campo = (path: string, message: string) => validation(message, [{ path: [path], message }]);
 const temCampo = (def: ResourceDef, nome: string) => def.fields.some((f) => f.name === nome);
+/** Rótulo da tela (o registry é a fonte): "Analítica" nas árvores financeiras, "Analítico" no grupo. */
+const rotuloDoCampo = (def: ResourceDef, nome: string) => def.fields.find((f) => f.name === nome)?.label ?? nome;
 
 async function mascara(ctx: ServiceCtx, def: ResourceDef): Promise<string> {
   const r = await ctx.tx.query<{ parameters: unknown }>("select parameters from erp.organizations where id=$1", [ctx.orgId]);
@@ -45,19 +47,19 @@ export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, 
   let pai: Linha | null = null;
   if (parentId) {
     pai = await registroVivo(ctx, def, parentId);
-    if (!pai) throw campo("parent_id", "Antecessor não encontrado.");
+    if (!pai) throw campo("parent_id", "Superior não encontrado.");
     if (id && mudouPai) {
-      if (parentId === id) throw campo("parent_id", "O antecessor não pode ser o próprio registro nem um descendente dele.");
+      if (parentId === id) throw campo("parent_id", "O superior não pode ser o próprio registro nem um descendente dele.");
       const ciclo = await ctx.tx.query(
         `with recursive desc_ as (select id from erp.${ident(def.table)} where parent_id=$1 and organization_id=$2
            union select t.id from erp.${ident(def.table)} t join desc_ d on t.parent_id=d.id where t.organization_id=$2)
          select 1 from desc_ where id=$3 limit 1`, [id, ctx.orgId, parentId]);
-      if (ciclo.rowCount) throw campo("parent_id", "O antecessor não pode ser o próprio registro nem um descendente dele.");
+      if (ciclo.rowCount) throw campo("parent_id", "O superior não pode ser o próprio registro nem um descendente dele.");
     }
-    if (temCampo(def, "kind") && (atual === null || mudouPai) && pai["kind"] !== "synthetic") throw campo("parent_id", "O antecessor precisa ser sintético. Altere a classe dele para Sintética antes de incluir filhos.");
+    if (temCampo(def, "kind") && (atual === null || mudouPai) && pai["kind"] !== "synthetic") throw campo("parent_id", `O superior precisa ser sintético. Marque ${rotuloDoCampo(def, "kind")}: Não nele antes de incluir filhos.`);
   }
   if (id && temCampo(def, "kind") && data["kind"] === "analytic" && atual?.["kind"] !== "analytic" && await temFilhosVivos(ctx, def, id)) {
-    throw campo("kind", "Registro com filhos não pode ser analítico.");
+    throw campo("kind", `Registro com filhos não pode ser analítico (${rotuloDoCampo(def, "kind")}: Sim). Mova ou exclua os filhos antes.`);
   }
   if (ehCadastroCodigoHierarquico(def.key) && typeof (data["code"] ?? atual?.["code"]) === "string") {
     const codigo = String(data["code"] ?? atual?.["code"]);
@@ -71,13 +73,13 @@ export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, 
   }
 }
 
-/** Exclusão lógica deixaria filhos pendurados num antecessor invisível. */
+/** Exclusão lógica deixaria filhos pendurados num superior invisível. */
 export async function conferirExclusaoNaArvore(ctx: ServiceCtx, def: ResourceDef, id: string): Promise<void> {
   if (def.tree && await temFilhosVivos(ctx, def, id)) throw validation("Este registro tem filhos. Exclua ou mova os filhos antes.");
 }
 
 /**
- * Próximo código sugerido abaixo do antecessor. Conta também os EXCLUÍDOS: a unicidade `(organization_id,
+ * Próximo código sugerido abaixo do superior. Conta também os EXCLUÍDOS: a unicidade `(organization_id,
  * code)` do banco os inclui, e sugerir o código de um excluído seria sugerir um 409.
  */
 export async function sugerirCodigo(ctx: ServiceCtx, def: ResourceDef, parentId: string | null): Promise<{ codigo: string; mascara: string }> {
@@ -86,7 +88,7 @@ export async function sugerirCodigo(ctx: ServiceCtx, def: ResourceDef, parentId:
   let codigoPai: string | null = null;
   if (parentId) {
     const pai = await registroVivo(ctx, def, parentId);
-    if (!pai) throw campo("parent_id", "Antecessor não encontrado.");
+    if (!pai) throw campo("parent_id", "Superior não encontrado.");
     if (typeof pai["code"] !== "string") throw campo("parent_id", "O superior não tem código. Informe o código dele antes de incluir filhos.");
     codigoPai = String(pai["code"]);
   }

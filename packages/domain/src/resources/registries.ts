@@ -10,13 +10,13 @@ const D = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef
 
 export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
-    key: "cost_centers", importacao: true, label: "Centro de Custo", labelPlural: "Centros de Custo", table: "cost_centers", permission: "cost_centers", labelField: "name", route: "/cadastros/centros-de-custo", tree: true, softDelete: true, printable: true, defaultSort: "code",
+    key: "cost_centers", importacao: true, label: "Centro de Resultado", labelPlural: "Centros de Resultado", table: "cost_centers", permission: "cost_centers", labelField: "name", route: "/cadastros/centros-de-custo", tree: true, softDelete: true, printable: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, help: "Código hierárquico, ex.: 1.01.001.0001", span: 3 }),
       T("name", "Descrição", { required: true, list: true, search: true, span: 5 }),
-      S("kind", "Classe", [["synthetic", "Sintética"], ["analytic", "Analítica"]], { default: "analytic", list: true, span: 2 }),
+      S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
       S("activity_type", "Tipo", [["custeio", "Custeio"], ["investimento", "Investimento"], ["a_definir", "A definir"]], { span: 2 }),
-      REF("parent_id", "Antecessor", "cost_centers", { span: 6 }),
+      REF("parent_id", "Centro superior", "cost_centers", { span: 6 }),
       active()
     ]
   },
@@ -101,8 +101,8 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       { name: "min_stock", label: "Estoque mínimo", type: "quantity", section: "Estoque", list: true, help: "Alerta quando o estoque atingir ou ficar abaixo", span: 3 },
       M("reference_price", "Valor de referência", { section: "Estoque", help: "Valor de mercado do produto", span: 3 }),
       { name: "average_cost", label: "Custo médio (calculado)", type: "money", readOnly: true, section: "Estoque", span: 3 }, D("last_purchase_date", "Última compra", { readOnly: true, section: "Estoque", span: 3 }),
-      REF("financial_category_id", "Categoria financeira (custo)", "financial_categories", { section: "Estoque", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
-      REF("default_cost_center_id", "Centro de custo padrão", "cost_centers", { section: "Estoque", span: 4 }), REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
+      REF("financial_category_id", "Natureza de custo", "financial_categories", { section: "Estoque", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
+      REF("default_cost_center_id", "Centro de resultado padrão", "cost_centers", { section: "Estoque", span: 4 }), REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
       { name: "withdrawal_period_days", label: "Período de Carência (dias)", type: "integer", section: "Estoque", help: "Dias de espera após aplicação antes de vender/abater o animal", span: 3 },
       B("allow_pointing", "Apontamento", { section: "Estoque", help: "Permite uso na aba de apontamentos", span: 3 }),
       B("is_equipment", "Adiciona ao Inventário", { section: "Estoque", help: "Cadastra automaticamente no inventário de bens", filter: true, span: 3 }),
@@ -120,22 +120,22 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 8 }), active()]
   },
   {
-    key: "financial_categories", importacao: true, label: "Categoria Financeira", labelPlural: "Categorias Financeiras", table: "financial_categories", permission: "financial_categories", labelField: "name", route: "/cadastros/categorias-financeiras", tree: true, softDelete: true, printable: true, defaultSort: "code",
+    key: "financial_categories", importacao: true, label: "Natureza", labelPlural: "Naturezas", table: "financial_categories", permission: "financial_categories", labelField: "name", route: "/cadastros/categorias-financeiras", tree: true, softDelete: true, printable: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, span: 3 }), T("name", "Descrição", { required: true, list: true, search: true, span: 5 }),
-      S("nature", "Natureza", [["income", "Receita"], ["expense", "Despesa"], ["both", "Ambas"]], { required: true, list: true, filter: true, span: 2 }),
-      S("kind", "Classe", [["synthetic", "Sintética"], ["analytic", "Analítica"]], { default: "analytic", list: true, span: 2 }),
+      S("nature", "Tipo", [["income", "Receita"], ["expense", "Despesa"], ["both", "Receita e despesa"]], { required: true, help: "Natureza filha segue o Tipo da superior (salvo superior Receita e despesa).", list: true, filter: true, span: 2 }),
+      S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
       S("classification", "Classificação", [["unclassified", "Não Classificado"], ["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }),
-      B("is_tax", "É tributo?", { span: 2 }), REF("parent_id", "Antecessor", "financial_categories", { span: 5 }), active()
+      B("is_tax", "É tributo?", { span: 2 }), REF("parent_id", "Natureza superior", "financial_categories", { span: 5 }), active()
     ]
   },
   {
-    key: "chart_accounts", importacao: true, label: "Conta do Plano", labelPlural: "Plano de Contas", table: "chart_accounts", permission: "chart_accounts", labelField: "description", route: "/cadastros/plano-de-contas", tree: true, softDelete: true, defaultSort: "code",
+    key: "chart_accounts", importacao: true, label: "Conta Contábil", labelPlural: "Plano de Contas", table: "chart_accounts", permission: "chart_accounts", labelField: "description", route: "/cadastros/plano-de-contas", tree: true, softDelete: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, span: 3 }), T("description", "Descrição", { required: true, list: true, search: true, span: 5 }),
       S("condition", "Condição", [["debit", "Débito"], ["credit", "Crédito"], ["both", "Ambos"]], { required: true, list: true, span: 2 }),
-      S("kind", "Classe", [["synthetic", "Sintética"], ["analytic", "Analítica"]], { required: true, list: true, span: 2 }),
-      S("type", "Tipo", [["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }), REF("parent_id", "Antecessor", "chart_accounts", { span: 5 }), active()
+      S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { required: true, list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
+      S("type", "Tipo", [["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }), REF("parent_id", "Conta superior", "chart_accounts", { span: 5 }), active()
     ]
   },
   {
@@ -186,7 +186,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   },
   {
     key: "document_types", label: "Tipo de Documento", labelPlural: "Tipos de Documento", table: "document_types", permission: "document_types", labelField: "name", route: "/documentos/tipos", tree: true, softDelete: true,
-    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "position", label: "Ordem", type: "integer", required: true, default: 0, list: true, span: 2 }, active(), REF("parent_id", "Antecessor", "document_types", { span: 5 })]
+    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "position", label: "Ordem", type: "integer", required: true, default: 0, list: true, span: 2 }, active(), REF("parent_id", "Tipo superior", "document_types", { span: 5 })]
   },
   {
     key: "documents", label: "Documento", labelPlural: "Documentos", table: "documents", permission: "documents", labelField: "title", route: "/documentos", softDelete: true, empresaScopedNulo: true,

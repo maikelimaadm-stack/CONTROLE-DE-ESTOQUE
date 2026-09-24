@@ -120,7 +120,7 @@ export function linhaFinanceira(p: PreviaDaConfirmacao, fmt: { dinheiro: (v: str
   if (f.efeito !== "receber" || f.valor === null) return null;
   const partes = [`Gera contas a receber de ${fmt.dinheiro(f.valor)}`];
   if (f.primeiroVencimento) partes.push(`primeiro vencimento ${fmt.data(f.primeiroVencimento)}`);
-  if (f.classificacao) partes.push(`categoria ${rotulo(f.classificacao.categoria)} · centro ${rotulo(f.classificacao.centro)}${f.classificacao.origem === "padrão legado" ? " (padrão automático)" : ""}`);
+  if (f.classificacao) partes.push(`natureza ${rotulo(f.classificacao.categoria)} · centro de resultado ${rotulo(f.classificacao.centro)}${f.classificacao.origem === "padrão legado" ? " (padrão automático)" : ""}`);
   return `${partes.join(", ")}.`;
 }
 
@@ -132,5 +132,5 @@ export function linhaFinanceira(p: PreviaDaConfirmacao, fmt: { dinheiro: (v: str
 export function padraoAutomaticoPrevisto(p: PreviaDaConfirmacao): string | null {
   const c = p.financeiro.classificacao;
   if (!p.podeConfirmar || p.financeiro.efeito !== "receber" || !c || c.origem !== "padrão legado") return null;
-  return `categoria ${rotulo(c.categoria)} · centro ${rotulo(c.centro)}`;
+  return `natureza ${rotulo(c.categoria)} · centro de resultado ${rotulo(c.centro)}`;
 }

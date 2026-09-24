@@ -60,9 +60,9 @@ const VENDA = MATRIZ_EXECUCAO_TOP[0]!.familia;
 const ROTA = { budget: "budgets", order: "orders", sale: "sales" } as const;
 type Variante = keyof typeof ROTA;
 
-const MSG_CATEGORIA = "Categoria financeira inválida para venda: escolha uma categoria analítica de receita, ativa";
-const MSG_CENTRO = "Centro de custo inválido para venda: escolha um centro de custo analítico, ativo";
-const MSG_PAR = "Informe a categoria financeira e o centro de custo juntos";
+const MSG_CATEGORIA = "Natureza inválida para venda: escolha uma natureza analítica de receita, ativa";
+const MSG_CENTRO = "Centro de resultado inválido para venda: escolha um centro de resultado analítico, ativo";
+const MSG_PAR = "Informe a natureza e o centro de resultado juntos";
 const recusa = (campo: string, message: string): Erro => ({ code: "VALIDATION_ERROR", message, details: [{ path: campo, message }] });
 
 async function comPool<T>(fn: (c: Db) => Promise<T>): Promise<T> {

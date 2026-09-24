@@ -179,7 +179,7 @@ async function carregarReferencia(ctx: ServiceCtx, alvo: ResourceDef, filtro?: R
   return ref;
 }
 
-/** Registro criado numa linha anterior do mesmo arquivo passa a valer como antecessor das seguintes. */
+/** Registro criado numa linha anterior do mesmo arquivo passa a valer como superior das seguintes. */
 function adicionarCriado(ref: Referencia, def: ResourceDef, criado: Record<string, unknown>) {
   const id = String(criado["id"]);
   const rotulo = limpar(String(criado[def.labelField] ?? ""));
@@ -260,7 +260,7 @@ export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Bu
       const coluna = letra(i + 1);
       (dados as unknown as ComValidacaoEmFaixa).dataValidations.add(`${coluna}2:${coluna}${IMPORTACAO_LINHAS_MAXIMO + 1}`, {
         type: "list", allowBlank: !f.required, formulae: [`${ABA_LISTAS}!$${col}$2:$${col}$${fim}`],
-        // antecessor da árvore pode ser uma linha anterior do próprio arquivo, que não está na lista: avisa, não barra
+        // superior da árvore pode ser uma linha anterior do próprio arquivo, que não está na lista: avisa, não barra
         showErrorMessage: true, errorStyle: autoRef ? "warning" : "stop", errorTitle: c.chave,
         error: autoRef ? "Fora da lista. Vale se for uma linha ANTERIOR deste arquivo; senão, escolha da lista." : valores.length ? "Escolha um valor da lista." : `Não há ${c.chave.toLowerCase()} cadastrado(a). Cadastre antes de importar.`,
       });
@@ -279,7 +279,7 @@ export async function gerarModelo(ctx: ServiceCtx, def: ResourceDef): Promise<Bu
     "Sim/Não, opções e datas (DD/MM/AAAA) seguem o texto da tela. Célula com erro de fórmula é recusada.",
     "Ao importar, o sistema mostra a prévia com os erros linha a linha. Se houver qualquer erro, NADA é gravado.",
     "Importar sempre CRIA registros; não altera cadastros existentes. Código repetido é recusado.",
-    ...(def.tree ? ["Cadastro em árvore: o antecessor pode ser um registro existente ou uma linha ANTERIOR deste mesmo arquivo."] : []),
+    ...(def.tree ? ["Cadastro em árvore: o superior pode ser um registro existente ou uma linha ANTERIOR deste mesmo arquivo."] : []),
     ...(foraDoModelo.length ? [`Não vão no modelo (preencha pela tela depois): ${foraDoModelo.join(", ")}.`] : []),
   ];
   const linhas = [`Modelo de importação — ${def.labelPlural}`, "", ...itens.map((t, k) => `${k + 1}. ${t}`)];
