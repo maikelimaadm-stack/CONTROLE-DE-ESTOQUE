@@ -363,6 +363,7 @@ export async function options(ctx: ServiceCtx, def: ResourceDef, search: string 
   // Usuários são globais (sem organization_id): restringe aos membros ativos da organização atual (isolamento multi-tenant)
   if (def.table === "users") where.push(`t.id in (select m.user_id from erp.organization_members m where m.organization_id=${b.add(ctx.orgId)} and m.is_active)`);
   if (def.softDelete) where.push("t.deleted_at is null");
+  for (const [k, v] of Object.entries(def.filtroFixo ?? {})) where.push(`t.${ident(k)} = ${b.add(v)}`);
   if (existing.has("is_active") && !extra["include_inactive"]) where.push("t.is_active");
   // autocomplete de recurso por fazenda: só fazendas autorizadas (a fazenda selecionada é filtro do chamador via `extra.empresa_id`)
   const escO = escopoDoRecurso(def);
