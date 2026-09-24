@@ -40,18 +40,29 @@ export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | 
 }
 
 /**
- * RATEIO SÓ EM ANALÍTICO (CADASTROS Fase 7, decisão 256): natureza e centro de resultado sintéticos agrupam,
- * não recebem lançamento. Uma consulta por cadastro para o rateio inteiro (sem N+1). Id de outra organização
- * ou inexistente não é assunto daqui — a FK e a leitura posterior já tratam; aqui só se recusa o SINTÉTICO.
+ * RATEIO SÓ EM ANALÍTICO (CADASTROS Fase 7 e R1-5, decisão 256): natureza e centro de resultado sintéticos
+ * agrupam, não recebem lançamento. TODO id do rateio precisa existir NESTA organização, estar vivo (sem
+ * `deleted_at`), ATIVO e ser analítico. Inexistente, de outra organização, excluído, inativo e sintético caem
+ * na MESMA recusa, com a MESMA mensagem: distinguir seria um oráculo de existência sobre o cadastro vizinho.
+ *
+ * `for share` (como a venda, `validarClassificacaoFinanceira`): as linhas lidas ficam travadas contra
+ * alteração até o fim da transação — uma inativação ou uma troca para sintético concorrente espera o lançamento
+ * terminar, em vez de commitar entre a conferência e a gravação. Uma consulta por cadastro para o rateio
+ * inteiro (sem N+1; `for share` não combina com `union`).
  */
+export const MENSAGEM_RATEIO_NATUREZA = "Natureza sintética ou inativa não recebe lançamento. Escolha uma natureza analítica e ativa.";
+export const MENSAGEM_RATEIO_CENTRO = "Centro de resultado sintético ou inativo não recebe lançamento. Escolha um centro de resultado analítico e ativo.";
 export async function exigirRateioAnalitico(ctx: ServiceCtx, lines: readonly Pick<ApportionmentLine, "financialCategoryId" | "costCenterId">[]): Promise<void> {
-  const cats = [...new Set(lines.map((l) => l.financialCategoryId))]; const ccs = [...new Set(lines.map((l) => l.costCenterId))];
-  const r = await ctx.tx.query<{ t: string }>(
-    "select 'financial_category_id' t from erp.financial_categories where organization_id=$1 and id = any($2::uuid[]) and kind<>'analytic' union all select 'cost_center_id' from erp.cost_centers where organization_id=$1 and id = any($3::uuid[]) and kind<>'analytic' limit 1",
-    [ctx.orgId, cats, ccs]);
-  const t = r.rows[0]?.t; if (!t) return;
-  const message = t === "financial_category_id" ? "Natureza sintética não recebe lançamento. Escolha uma natureza analítica." : "Centro de resultado sintético não recebe lançamento. Escolha um centro de resultado analítico.";
-  throw validation(message, [{ path: ["apportionment", t], message }]);
+  const conferir = async (tabela: "financial_categories" | "cost_centers", ids: string[], campo: string, message: string) => {
+    if (!ids.length) return;
+    const r = await ctx.tx.query<{ id: string }>(
+      `select id::text as id from erp.${tabela} where organization_id=$1 and id = any($2::uuid[]) and deleted_at is null and is_active and kind='analytic' for share`,
+      [ctx.orgId, ids]);
+    const ok = new Set(r.rows.map((x) => x.id));
+    if (ids.some((x) => !ok.has(x))) throw validation(message, [{ path: ["apportionment", campo], message }]);
+  };
+  await conferir("financial_categories", [...new Set(lines.map((l) => l.financialCategoryId))], "financial_category_id", MENSAGEM_RATEIO_NATUREZA);
+  await conferir("cost_centers", [...new Set(lines.map((l) => l.costCenterId))], "cost_center_id", MENSAGEM_RATEIO_CENTRO);
 }
 
 /** Cria título(s) financeiro(s) com rateio; se houver plano de parcelamento, cria uma linha por parcela (group_id comum). */

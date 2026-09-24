@@ -10,6 +10,8 @@ import { login, api, uniq, abrirLancamentoDeVendas, escolherTopEContinuar, CLASS
  * AR-3 o campo de busca da venda mostra o CAMINHO e só oferece analítico (premissa: sem o recorte, a
  *      sintética existe e viria). RV1: tirar o recorte do lookup da venda deixa este teste vermelho.
  * AR-4 "Mover": novo superior + código novo sugerido; a recusa da API (decisão 244) aparece na tela.
+ * AR-5 (R1-5) "Mover" só para registro SEM filhos: com filhos a tela não oferece o botão e diz o porquê, e a
+ *      API recusa o mesmo pedido feito por fora da tela (422 "Registro com filhos: …").
  */
 type No = { id: string; code: string; name: string; kind: string; parent_id: string | null };
 const naturezas = async (page: Page) => (await api<{ items: No[] }>(page, "GET", "/api/resources/financial_categories?pageSize=1000")).items;
@@ -118,4 +120,26 @@ test("AR-4 — Mover: novo superior com código sugerido; a recusa da API aparec
   await expect(dialogo).toBeHidden();
   const depois = (await naturezas(page)).find((x) => x.name === nome)!;
   expect(depois.parent_id).toBe(destino.id); expect(depois.code).toBe(esperado.codigo);
+});
+
+test("AR-5 — Mover só para registro SEM filhos: com filhos a tela não oferece e a API recusa", async ({ page }) => {
+  await login(page);
+  const nos = await naturezas(page);
+  const comFilhos = nos.find((x) => x.code === "1.01")!;
+  const destino = nos.find((x) => x.code === "1.02")!;
+  expect(comFilhos && destino, "premissa: 1.01 e 1.02 do seed").toBeTruthy();
+  expect(nos.some((x) => x.parent_id === comFilhos.id), "premissa: 1.01 tem filho vivo").toBe(true);
+  await page.goto("/cadastros/financial_categories?visao=arvore");
+  const ficha = page.getByRole("region", { name: "Ficha" });
+  await no(page, "Receitas da Pecuária").getByRole("button", { name: /Receitas da Pecuária/ }).click();
+  await expect(ficha.getByTestId("arvore-mover-com-filhos")).toHaveText("Registro com filhos: mova ou renumere os filhos antes.");
+  await expect(ficha.getByRole("button", { name: "Mover", exact: true }), "com filhos, Mover não é oferecido").toHaveCount(0);
+  // a FOLHA continua movível (premissa: o botão existe quando pode)
+  await no(page, "Venda de Boi Gordo").getByRole("button", { name: /Venda de Boi Gordo/ }).click();
+  await expect(ficha.getByRole("button", { name: "Mover", exact: true })).toBeVisible();
+  await expect(ficha.getByTestId("arvore-mover-com-filhos")).toHaveCount(0);
+  // a API é a autoridade: o mesmo pedido, por fora da tela, é recusado e nada muda
+  await expect(api(page, "PUT", `/api/resources/financial_categories/${comFilhos.id}`, { parent_id: destino.id })).rejects.toThrow(/422 .*Registro com filhos: mova ou renumere os filhos antes/);
+  const depois = (await naturezas(page)).find((x) => x.id === comFilhos.id)!;
+  expect([depois.parent_id, depois.code]).toEqual([comFilhos.parent_id, comFilhos.code]);
 });

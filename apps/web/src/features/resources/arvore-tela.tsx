@@ -87,12 +87,15 @@ export function ArvoreTela({ resourceKey, alternar }: { resourceKey: string; alt
       </> : selecionado ? <>
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {podeTerFilho(selecionado) && <PillBtn onClick={() => novoFilho(selecionado.id)}><Plus className="h-3.5 w-3.5" /> Novo filho</PillBtn>}
-          {podeEditar && <PillBtn tone="gray" disabled={selecionado.tem_filhos} title={selecionado.tem_filhos ? "Registro com filhos: mova ou exclua os filhos antes (o código de cada filho começa pelo código do superior)." : undefined} onClick={() => setMovendo(true)}><MoveRight className="h-3.5 w-3.5" /> Mover</PillBtn>}
+          {/* Mover só registro SEM filhos (a API recusa o resto com a mesma frase): com filhos, o botão nem aparece */}
+          {podeEditar && (selecionado.tem_filhos
+            ? <span className="text-[11px] text-slate-500" data-testid="arvore-mover-com-filhos">Registro com filhos: mova ou renumere os filhos antes.</span>
+            : <PillBtn tone="gray" onClick={() => setMovendo(true)}><MoveRight className="h-3.5 w-3.5" /> Mover</PillBtn>)}
         </div>
         <ResourceForm key={`${selecionado.id}-${modo}`} resourceKey={resourceKey} id={selecionado.id}
           embedded={{ mode: modo, row: null, setMode: setModo, onExit: () => { setSel(null); setModo("view"); }, refresh: atualizar }}
           afterSave={() => { atualizar(); setModo("view"); }} />
-        {movendo && <MoverDialogo resourceKey={resourceKey} no={selecionado} rotulo={rotulo(selecionado)} temKind={temKind} onFechar={() => setMovendo(false)} onMovido={() => { setMovendo(false); atualizar(); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); }} />}
+        {movendo && !selecionado.tem_filhos && <MoverDialogo resourceKey={resourceKey} no={selecionado} rotulo={rotulo(selecionado)} temKind={temKind} onFechar={() => setMovendo(false)} onMovido={() => { setMovendo(false); atualizar(); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); }} />}
       </> : <EmptyState title="Escolha um registro na árvore" description={podeCriar ? "Ou use Novo na raiz." : undefined} icon={<FolderTree className="h-6 w-6" />} />}
     </section>
   </div>;

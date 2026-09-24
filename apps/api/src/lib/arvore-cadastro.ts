@@ -6,23 +6,29 @@
  * - o superior não é o próprio registro nem um descendente dele (sem ciclo);
  * - onde há `kind`, o superior é SINTÉTICO, e conta com filhos não vira analítica;
  * - onde há código hierárquico, o código obedece à máscara do cadastro e começa pelo código do superior;
- * - registro com filhos vivos não é excluído.
+ * - registro com filhos vivos não é excluído, não muda de superior e não muda de código (R1-5): os códigos dos
+ *   filhos carregam o prefixo do pai, e reescrever uma subárvore é migração de dado, não edição;
+ * - analítico EM USO não vira sintético (`analitico-em-uso.ts`).
  *
  * As regras valem para gravações NOVAS. Um registro antigo fora da máscara continua legível e editável em
  * outros campos; só código ou superior alterados passam de novo pela conferência.
  */
-import type { ResourceDef } from "@agro/domain";
+import type { FieldDef, ResourceDef } from "@agro/domain";
 import { getResource } from "@agro/domain";
 import { ehCadastroCodigoHierarquico, mascaraDoCadastro, proximoCodigoHierarquico, validarCodigoHierarquico } from "@agro/domain";
 import { ident } from "./sql.js";
 import { validation } from "./errors.js";
 import type { ServiceCtx } from "./context.js";
+import { conferirAnaliticoEmUso } from "./analitico-em-uso.js";
+import { detalheDoErro } from "./ficha-em-abas.js";
 
 type Linha = Record<string, unknown>;
 const campo = (path: string, message: string) => validation(message, [{ path: [path], message }]);
 const temCampo = (def: ResourceDef, nome: string) => def.fields.some((f) => f.name === nome);
 /** Rótulo da tela (o registry é a fonte): "Analítica" nas árvores financeiras, "Analítico" no grupo. */
 const rotuloDoCampo = (def: ResourceDef, nome: string) => def.fields.find((f) => f.name === nome)?.label ?? nome;
+
+export const MENSAGEM_REGISTRO_COM_FILHOS = "Registro com filhos: mova ou renumere os filhos antes.";
 
 async function mascara(ctx: ServiceCtx, def: ResourceDef): Promise<string> {
   const r = await ctx.tx.query<{ parameters: unknown }>("select parameters from erp.organizations where id=$1", [ctx.orgId]);
@@ -59,12 +65,16 @@ export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, 
     }
     if (temCampo(def, "kind") && (atual === null || mudouPai) && pai["kind"] !== "synthetic") throw campo("parent_id", `O superior precisa ser sintético. Marque ${rotuloDoCampo(def, "kind")}: Não nele antes de incluir filhos.`);
   }
+  const mudouCodigo = "code" in data && data["code"] !== atual?.["code"];
+  // SUBÁRVORE: com filho vivo, nem superior nem código mudam — vale para TODO cadastro em árvore (o ciclo acima
+  // fala primeiro, com a mensagem própria). Mover um galho é mover (ou renumerar) as folhas antes.
+  if (id && (mudouPai || mudouCodigo) && await temFilhosVivos(ctx, def, id)) throw campo(mudouPai ? "parent_id" : "code", MENSAGEM_REGISTRO_COM_FILHOS);
   if (id && temCampo(def, "kind") && data["kind"] === "analytic" && atual?.["kind"] !== "analytic" && await temFilhosVivos(ctx, def, id)) {
     throw campo("kind", `Registro com filhos não pode ser analítico (${rotuloDoCampo(def, "kind")}: Sim). Mova ou exclua os filhos antes.`);
   }
+  if (id && atual && temCampo(def, "kind")) await conferirAnaliticoEmUso(ctx, def, id, data, atual);
   if (ehCadastroCodigoHierarquico(def.key) && typeof (data["code"] ?? atual?.["code"]) === "string") {
     const codigo = String(data["code"] ?? atual?.["code"]);
-    const mudouCodigo = "code" in data && data["code"] !== atual?.["code"];
     if (atual === null || mudouCodigo || mudouPai) {
       // superior do acervo sem código (Grupos de Produtos anteriores à 0025): não há prefixo para conferir
       if (pai && typeof pai["code"] !== "string") throw campo("parent_id", "O superior não tem código. Informe o código dele antes de incluir filhos.");
@@ -101,18 +111,33 @@ export async function sugerirCodigo(ctx: ServiceCtx, def: ResourceDef, parentId:
 }
 
 /**
- * Referência marcada `exigeAnalitico` no registry (produto → grupo, natureza de custo, centro padrão): o valor
- * GRAVADO ou TROCADO precisa ser analítico. Valor que não mudou não é reconferido (dado antigo continua
- * editável). Inexistente/outra organização: a mesma recusa — não se revela a diferença.
+ * Referência marcada `exigeAnalitico` no registry (produto → grupo, natureza de custo, centro padrão; perfil de
+ * RH → centro de resultado): o valor GRAVADO ou TROCADO precisa ser analítico. Vale para os campos do principal
+ * e dos PERFIS da ficha em abas (detalhe em grade não declara `exigeAnalitico` — o teste da whitelist confere).
+ * Valor que não mudou não é reconferido (dado antigo continua editável). Inexistente/outra organização/excluído:
+ * a mesma recusa — não se revela a diferença.
  */
 export async function conferirReferenciasAnaliticas(ctx: ServiceCtx, def: ResourceDef, data: Linha, atual: Linha | null): Promise<void> {
+  const recusa = (f: FieldDef) => `${f.label}: escolha um registro analítico. Sintético agrupa e não recebe lançamento.`;
   for (const f of def.fields) {
-    if (f.type !== "ref" || !f.ref?.exigeAnalitico || !(f.name in data)) continue;
-    const v = data[f.name];
-    if (v === null || v === undefined || v === "" || (atual !== null && v === atual[f.name])) continue;
-    const alvo = getResource(f.ref.resource);
-    if (!alvo?.tree) continue;
-    const r = await ctx.tx.query(`select 1 from erp.${ident(alvo.table)} where id=$1 and organization_id=$2 and kind='analytic'${alvo.softDelete ? " and deleted_at is null" : ""}`, [String(v), ctx.orgId]);
-    if (!r.rowCount) throw campo(f.name, `${f.label}: escolha um registro analítico. Sintético agrupa e não recebe lançamento.`);
+    if (!(f.name in data) || !(await precisaRecusar(ctx, f, data[f.name], atual?.[f.name], atual !== null))) continue;
+    throw campo(f.name, recusa(f));
   }
+  for (const p of def.perfis ?? []) {
+    const corpo = data[p.key] as Linha | undefined; if (!corpo) continue;
+    const doPerfil = (atual?.[p.key] as Linha | null | undefined) ?? null;
+    for (const f of p.fields) {
+      if (!(f.name in corpo) || !(await precisaRecusar(ctx, f, corpo[f.name], doPerfil?.[f.name], doPerfil !== null))) continue;
+      throw validation(recusa(f), [detalheDoErro(def, [p.key, f.name], recusa(f))]);
+    }
+  }
+}
+
+async function precisaRecusar(ctx: ServiceCtx, f: FieldDef, v: unknown, anterior: unknown, temAnterior: boolean): Promise<boolean> {
+  if (f.type !== "ref" || !f.ref?.exigeAnalitico) return false;
+  if (v === null || v === undefined || v === "" || (temAnterior && v === anterior)) return false;
+  const alvo = getResource(f.ref.resource);
+  if (!alvo?.tree) return false;
+  const r = await ctx.tx.query(`select 1 from erp.${ident(alvo.table)} where id=$1 and organization_id=$2 and kind='analytic'${alvo.softDelete ? " and deleted_at is null" : ""}`, [String(v), ctx.orgId]);
+  return !r.rowCount;
 }

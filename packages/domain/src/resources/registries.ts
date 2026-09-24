@@ -563,7 +563,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     perfis: [
       { key: "rh_admissao", label: "Admissão e lotação", table: "employee_profiles", chavePai: "person_id", fields: [
         T("matricula", "Matrícula", { maxLength: 30 }), D("admission_date", "Admissão"), REF("empresa_id", "Empresa", "empresas"), REF("function_id", "Função", "job_functions"),
-        REF("cost_center_id", "Centro de resultado", "cost_centers"),
+        REF("cost_center_id", "Centro de resultado", "cost_centers", { ref: { resource: "cost_centers", filtro: { kind: "analytic" }, exigeAnalitico: true } }),
         S("tipo_vinculo", "Tipo de vínculo", [["clt_indeterminado", "CLT prazo indeterminado"], ["clt_determinado", "CLT prazo determinado/safra"], ["temporario", "Temporário"], ["aprendiz", "Aprendiz"], ["estagio", "Estágio"], ["autonomo", "Autônomo/diarista"]]),
         B("trabalhador_rural", "Trabalhador rural"), T("office", "Cargo (texto livre)")
       ] },

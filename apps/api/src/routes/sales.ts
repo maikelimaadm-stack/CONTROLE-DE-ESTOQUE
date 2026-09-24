@@ -563,8 +563,8 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
       }
     } else {
       // Receita: categoria padrão de venda de produtos (1ª analítica de receita) e centro de custo padrão da fazenda
-      const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='income' and kind='analytic' and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-      const cc = (await ctx.tx.query<{ id: string }>("select cc.id from erp.cost_centers cc where cc.organization_id=$1 and cc.kind='analytic' and cc.deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
+      const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='income' and kind='analytic' and is_active and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
+      const cc = (await ctx.tx.query<{ id: string }>("select cc.id from erp.cost_centers cc where cc.organization_id=$1 and cc.kind='analytic' and cc.is_active and cc.deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
       if (!cat || !cc) modo.recusar(validation("Cadastre uma natureza de receita analítica e um centro de resultado analítico"));
       else plano.classificacao = { categoriaFinanceiraId: cat.id, centroCustoId: cc.id, origem: "padrão legado" };
     }
