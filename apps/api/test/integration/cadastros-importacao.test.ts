@@ -42,7 +42,7 @@ describe("modelo", () => {
   });
   it("I2: cadastro com código mostra 'código - nome' na lista; cadastro sem importação → 404; sem permissão de criar → 403", async () => {
     const wb = await modelo("products");
-    expect(listaDe(wb, "Categoria financeira (custo)")).toContain("2.02.001 - Nutrição Animal");
+    expect(listaDe(wb, "Natureza de custo")).toContain("2.02.001 - Nutrição Animal");
     expect((await h.app.inject({ method: "GET", url: "/api/imports/hr_events/modelo", headers: h.headers() })).statusCode).toBe(404);
     expect((await h.app.inject({ method: "GET", url: "/api/imports/financial_categories/modelo", headers: h.opHeaders() })).statusCode).toBe(403);
   });
@@ -96,24 +96,24 @@ describe("importação", () => {
   it("I5: regras do cadastro valem na importação (árvore: antecessor da própria planilha, código conferido)", async () => {
     const wb = await modelo("financial_categories"); const ws = wb.getWorksheet("Dados")!;
     const linha = (n: number, v: Record<string, string>) => { const row = ws.getRow(n); for (const [k, x] of Object.entries(v)) row.getCell(col(wb, k)).value = x; row.commit(); };
-    linha(2, { "Código *": "7", "Descrição *": "Imp Raiz", "Natureza *": "Receita", "Classe": "Sintética" });
-    linha(3, { "Código *": "7.01", "Descrição *": "Imp Filha", "Natureza *": "Receita", "Classe": "Analítica", "Antecessor": "7" });
-    expect(cabecalho(wb)).toEqual(expect.arrayContaining(["Código *", "Descrição *", "Natureza *", "Antecessor"]));
+    linha(2, { "Código *": "7", "Descrição *": "Imp Raiz", "Tipo *": "Receita", "Analítica": "Não" });
+    linha(3, { "Código *": "7.01", "Descrição *": "Imp Filha", "Tipo *": "Receita", "Analítica": "Sim", "Natureza superior": "7" });
+    expect(cabecalho(wb)).toEqual(expect.arrayContaining(["Código *", "Descrição *", "Tipo *", "Natureza superior"]));
     const ok = await importar(wb, "financial_categories");
     expect(ok.statusCode, ok.body).toBe(201); expect(j(ok).gravadas).toBe(2);
     const filha = (await admin.query<{ pai: string }>("select p.code pai from erp.financial_categories c join erp.financial_categories p on p.id=c.parent_id where c.organization_id=$1 and c.code='7.01'", [h.demo.orgId])).rows[0];
     expect(filha).toEqual({ pai: "7" });
     // código fora do prefixo do antecessor → erro da regra da árvore, na coluna Código
     const wb2 = await modelo("financial_categories"); const ws2 = wb2.getWorksheet("Dados")!;
-    const r2 = ws2.getRow(2); for (const [k, x] of Object.entries({ "Código *": "8.01", "Descrição *": "X", "Natureza *": "Receita", "Antecessor": "7 - Imp Raiz" })) r2.getCell(col(wb2, k)).value = x; r2.commit();
+    const r2 = ws2.getRow(2); for (const [k, x] of Object.entries({ "Código *": "8.01", "Descrição *": "X", "Tipo *": "Receita", "Natureza superior": "7 - Imp Raiz" })) r2.getCell(col(wb2, k)).value = x; r2.commit();
     const bad = await importar(wb2, "financial_categories");
     expect(bad.statusCode).toBe(422);
-    expect(j(bad).erros[0]).toMatchObject({ linha: 2, coluna: "Código", mensagem: expect.stringMatching(/antecessor/) });
+    expect(j(bad).erros[0]).toMatchObject({ linha: 2, coluna: "Código", mensagem: expect.stringMatching(/superior/) });
   });
 
   it("I6: código repetido é recusado (importar nunca atualiza); coluna desconhecida é recusada", async () => {
     const wb = await modelo("financial_categories"); const ws = wb.getWorksheet("Dados")!;
-    const r = ws.getRow(2); for (const [k, x] of Object.entries({ "Código *": "1", "Descrição *": "Sobrescreve", "Natureza *": "Receita" })) r.getCell(col(wb, k)).value = x; r.commit();
+    const r = ws.getRow(2); for (const [k, x] of Object.entries({ "Código *": "1", "Descrição *": "Sobrescreve", "Tipo *": "Receita" })) r.getCell(col(wb, k)).value = x; r.commit();
     const dup = await importar(wb, "financial_categories");
     expect(dup.statusCode).toBe(422); expect(j(dup).erros[0]).toMatchObject({ linha: 2 });
     expect((await admin.query("select name from erp.financial_categories where organization_id=$1 and code='1'", [h.demo.orgId])).rows[0]).toEqual({ name: "RECEITAS" });

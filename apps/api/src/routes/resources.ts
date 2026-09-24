@@ -11,6 +11,7 @@ import { atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global
 import { conferirRegrasDaArvore, conferirExclusaoNaArvore, sugerirCodigo } from "../lib/arvore-cadastro.js";
 import { conferirGrupoDeProdutos, conferirGrupoDoProduto } from "../lib/grupo-de-produtos.js";
 import { conferirTipoDaNatureza } from "../lib/natureza-financeira.js";
+import { conferirNcmDoProduto } from "../lib/ncm-do-produto.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
@@ -51,7 +52,7 @@ export function camposDeEscrita(def: ResourceDef): FieldDef[] {
 /** Regras próprias de um cadastro, além das comuns da árvore. Chave estática; nenhuma vem do cliente. */
 async function conferirRegrasDoCadastro(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Record<string, unknown>, atual: Record<string, unknown> | null) {
   if (def.key === "product_groups") await conferirGrupoDeProdutos(ctx, id, data, atual);
-  else if (def.key === "products") await conferirGrupoDoProduto(ctx, data, atual);
+  else if (def.key === "products") { await conferirGrupoDoProduto(ctx, data, atual); await conferirNcmDoProduto(ctx, data, atual); }
   else if (def.key === "financial_categories") await conferirTipoDaNatureza(ctx, id, data, atual);
 }
 

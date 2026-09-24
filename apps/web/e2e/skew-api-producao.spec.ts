@@ -1109,3 +1109,29 @@ test("CADASTROS-ESTRUTURA · CE-K4 — parâmetros: máscara de Grupos é recusa
   const ok = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { chart_accounts: "9.99.999.9999" } } });
   expect(ok.status(), await ok.text()).toBe(200);
 });
+
+test("CADASTROS FASE 2 · IM-K1 — `modo=parcial` contra a API da base: recusa com 'Campo não reconhecido' (o que a tela reconhece) e nada é gravado; sem `modo`, a base importa como sempre", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  // o próprio modelo da base, vazio: arquivo válido que nenhuma versão grava
+  const modelo = await page.request.get(`${API}/api/imports/financial_categories/modelo`, { headers: cab });
+  expect(modelo.status()).toBe(200);
+  const arquivo_base64 = (await modelo.body()).toString("base64");
+  const antes = sql("select count(*) from erp.financial_categories");
+  const r = await page.request.post(`${API}/api/imports/financial_categories?simular=1&modo=parcial`, { headers: cab, data: { arquivo_base64 } });
+  expect(r.status(), await r.text()).toBe(422);
+  const corpo = (await r.json()) as { error?: { code?: string; details?: { message?: string }[] }; modo?: string };
+  if (corpo.error) {
+    // base anterior à Fase 2: é EXATAMENTE este corpo que o diálogo traduz para "use Importar tudo"
+    expect(corpo.error.code).toBe("VALIDATION_ERROR");
+    expect(corpo.error.details?.map((d) => d.message)).toContain("Campo não reconhecido");
+  } else {
+    // base que já tem a Fase 2: aceita o modo e recusa o arquivo vazio pela leitura
+    expect(corpo.modo).toBe("parcial");
+  }
+  // sem `modo` (prévia e "Importar tudo" da web nova): a base responde como sempre — arquivo vazio, 422 pela leitura
+  const semModo = await page.request.post(`${API}/api/imports/financial_categories?simular=1`, { headers: cab, data: { arquivo_base64 } });
+  expect(semModo.status(), await semModo.text()).toBe(422);
+  expect(((await semModo.json()) as { erros?: { mensagem: string }[] }).erros?.[0]?.mensagem).toBe("Nenhuma linha preenchida.");
+  expect(sql("select count(*) from erp.financial_categories"), "nada gravado").toBe(antes);
+});

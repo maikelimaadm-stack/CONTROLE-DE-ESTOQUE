@@ -14,11 +14,11 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 | Tabelas no schema `erp` | 187 |
 | Tabelas com `organization_id` (escopo de organização) | 129 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 53 |
-| Entidades curadas neste dicionário | 37 |
+| Entidades curadas neste dicionário | 44 |
 | Entidades com ID Global | 23 |
 | Entidades com Tipo de Operação | 13 |
 | Tipos de Operação referenciados | 17 |
-| Cobertura curada | 19.8% |
+| Cobertura curada | 23.5% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -372,7 +372,7 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `code` |  | text | sim |  |  |  |  |
-| `document` |  | text | não |  |  |  |  |
+| `document` | Documento | text | não |  |  |  | CPF (11 dígitos) ou CNPJ (14 posições) normalizado: sem pontuação, maiúsculas. Desde a Fase 3 do CADASTROS o CNPJ pode ser ALFANUMÉRICO (IN RFB 2.229/2024: 12 primeiras posições dígitos ou letras, 2 DV dígitos) — o comentário "somente dígitos" da 0002 deixa de valer para CNPJ com letras. Regra única em packages/domain/src/documento.ts. |
 | `person_type` |  | text | sim |  |  | `natural` · `legal` · `foreign` |  |
 | `name` |  | text | sim |  |  |  |  |
 | `legal_name` |  | text | não |  |  |  |  |
@@ -383,12 +383,12 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | `address` |  | text | não |  |  |  |  |
 | `address_number` |  | text | não |  |  |  |  |
 | `district` |  | text | não |  |  |  |  |
-| `city_id` |  | int | não | FK | `erp.cities` |  |  |
+| `city_id` | Município | int | não | FK | `erp.cities` |  | Código IBGE do município (erp.cities), escolhido pela busca de Município. |
 | `state_registration` |  | text | não |  |  |  |  |
 | `city_registration` |  | text | não |  |  |  |  |
 | `contact_name` |  | text | não |  |  |  |  |
 | `contact_phone` |  | text | não |  |  |  |  |
-| `bank_code` |  | text | não | FK | `erp.banks` |  |  |
+| `bank_code` | Banco | text | não | FK | `erp.banks` |  | Código COMPE do banco (erp.banks), escolhido pela busca de Banco. |
 | `bank_account_type` |  | text | não |  |  | `checking` · `savings` |  |
 | `bank_agency` |  | text | não |  |  |  |  |
 | `bank_account` |  | text | não |  |  |  |  |
@@ -403,6 +403,143 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-REF-MUNICIPIO — Município (IBGE)
+
+Referência oficial global, só leitura. Fonte: https://servicodados.ibge.gov.br/api/v1/localidades/municipios — baixado em 2026-09-24, 5.571 linhas, sha256 do bruto 86ecdccdf97d72e7e5e46f0854cfcea8bacc28154cc1bc4ed0e6110e3a6c9c02 (supabase/referencias/municipios.csv). UF pelos 2 primeiros dígitos do código IBGE.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.cities` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` | Código IBGE | int | não | PK |  |  | 7 dígitos; os 2 primeiros são a UF. |
+| `name` |  | text | sim |  |  |  |  |
+| `state_code` |  | char(2) | sim | FK | `erp.states` |  |  |
+
+### ERP-CADASTROS-REF-UF — UF (IBGE)
+
+Referência oficial global. Fonte: https://servicodados.ibge.gov.br/api/v1/localidades/estados — baixado em 2026-09-24, 27 linhas, sha256 do bruto 7ca1368dea3af83cba1af84ae8a7e88f1173c97586831d086cc8b3c1ba9c6596.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.states` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `code` |  | char(2) | não | PK |  |  |  |
+| `name` |  | text | sim |  |  |  |  |
+| `ibge_code` |  | int | não |  |  |  |  |
+
+### ERP-CADASTROS-REF-BANCO — Banco
+
+Referência oficial global. Fonte: BCB, lista de participantes do STR (https://www.bcb.gov.br/content/estabilidadefinanceira/str1/ParticipantesSTR.csv) — baixado em 2026-09-24, 463 participantes com código COMPE, sha256 do bruto 3073c905bcf196c56c78e5cd8244588b7781c6aa02fd8659027d7f5529e3abb9. Os códigos anteriores à carga (ex.: 000 Caixa Interno) continuam.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.banks` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `code` |  | text | não | PK |  |  |  |
+| `name` |  | text | sim |  |  |  |  |
+| `ispb` | ISPB | text | não |  |  |  | Identificador do participante no SPB (8 dígitos); nulo fora da lista do STR. |
+
+### ERP-CADASTROS-REF-NCM — NCM
+
+Referência oficial global. Fonte: Siscomex (https://portalunico.siscomex.gov.br/classif/api/publico/nomenclatura/download/json) — baixado em 2026-09-24, 15.156 linhas (10.515 de 8 dígitos), vigente em 24/09/2026 pela Resolução Gecex nº 926/2026, sha256 do bruto da9f6e28c09d4639322891d354a6441686d2dff4d1c7f4de1987277f0ea1df24. Só a NCM de 8 dígitos vigente é escolhível no produto.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.ncm` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `code` | Código | text | não | PK |  |  | Só dígitos (2, 4, 5, 6, 7 ou 8). |
+| `description` |  | text | sim |  |  |  |  |
+| `nivel` | Nível | smallint | não |  |  |  | Quantidade de dígitos do código. |
+| `descricao_completa` | Descrição completa | text | não |  |  |  | Da posição (4 dígitos) até o código, juntando os níveis de cima. |
+| `vigencia_inicio` |  | date | não |  |  |  |  |
+| `vigencia_fim` |  | date | não |  |  |  |  |
+
+### ERP-CADASTROS-REF-CBO — Ocupação (CBO)
+
+Referência oficial global. Fonte: MTE (https://www.gov.br/trabalho-e-emprego/pt-br/assuntos/cbo/servicos/downloads/cbo2002-ocupacao.csv, ISO-8859-1 convertido para UTF-8) — baixado em 2026-09-24, 2.694 ocupações, sha256 do bruto ad6d51d5d139125b15ea746464b2a39fa832ae295cdb6aa63dc7eddf2d2bed00.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.cbo_ocupacoes` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `codigo` |  | text | não | PK |  |  |  |
+| `titulo` |  | text | sim |  |  |  |  |
+
+### ERP-CADASTROS-CACHE-CEP — Cache da consulta de CEP
+
+Cache global (30 dias) da consulta de CEP (ViaCEP, BrasilAPI). Só a API lê e grava.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.consulta_cep_cache` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `cep` |  | text | não | PK |  |  |  |
+| `dados` |  | jsonb | sim |  |  |  |  |
+| `fonte` |  | text | sim |  |  |  |  |
+| `consultado_em` |  | timestamptz | sim |  |  |  |  |
+
+### ERP-CADASTROS-CACHE-CNPJ — Cache da consulta de CNPJ
+
+Cache global (7 dias) da consulta de CNPJ nas fontes gratuitas (BrasilAPI, CNPJá aberta, CNPJ.ws pública). Nunca guarda o quadro societário. Só a API lê e grava.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.consulta_cnpj_cache` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `cnpj` |  | text | não | PK |  |  |  |
+| `dados` |  | jsonb | sim |  |  |  |  |
+| `fonte` |  | text | sim |  |  |  |  |
+| `consultado_em` |  | timestamptz | sim |  |  |  |  |
 
 ### ERP-CADASTROS-ARMAZEM — Armazém
 
@@ -1409,7 +1546,6 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.bank_account_proprietaries` | 2 | não | — | não |
 | `erp.bank_accounts` | 20 | sim | — | sim |
 | `erp.bank_movement_apportionments` | 8 | não | — | não |
-| `erp.banks` | 3 | não | — | não |
 | `erp.batch_categories` | 2 | não | — | não |
 | `erp.batches` | 21 | sim | `empresa_id` | sim |
 | `erp.bonuses` | 11 | sim | — | sim |
@@ -1420,12 +1556,8 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.breeds` | 4 | sim | — | não |
 | `erp.budget_planning_values` | 4 | não | — | não |
 | `erp.budget_plannings` | 10 | sim | `empresa_id` | sim |
-| `erp.cbo_ocupacoes` | 2 | não | — | não |
 | `erp.chart_accounts` | 12 | sim | — | sim |
-| `erp.cities` | 3 | não | — | não |
 | `erp.client_profiles` | 8 | não | — | não |
-| `erp.consulta_cep_cache` | 4 | não | — | não |
-| `erp.consulta_cnpj_cache` | 4 | não | — | não |
 | `erp.contract_items` | 6 | não | — | não |
 | `erp.contracts` | 18 | sim | `empresa_id` | sim |
 | `erp.cost_centers` | 11 | sim | — | sim |
@@ -1480,7 +1612,6 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.membro_escopos_empresa` | 7 | sim | — | não |
 | `erp.modulos_escopo_empresa` | 3 | não | — | não |
 | `erp.nature_operations` | 21 | sim | — | sim |
-| `erp.ncm` | 6 | não | — | não |
 | `erp.notificacao_leituras` | 4 | sim | — | não |
 | `erp.notifications` | 17 | sim | `empresa_id` | não |
 | `erp.ofx_transactions` | 10 | sim | — | não |
@@ -1514,7 +1645,6 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.saved_reports` | 11 | sim | — | sim |
 | `erp.scheduled_reviews` | 10 | sim | — | sim |
 | `erp.service_order_lines` | 12 | não | — | não |
-| `erp.states` | 3 | não | — | não |
 | `erp.stock_balances` | 10 | sim | — | não |
 | `erp.stock_corrections` | 16 | sim | `empresa_id` | não |
 | `erp.stock_writeoff_items` | 7 | não | — | não |

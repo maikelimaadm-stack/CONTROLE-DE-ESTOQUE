@@ -13,7 +13,7 @@ import { useAuth } from "@/lib/auth";
 import { dateTimeBR, cn } from "@/lib/utils";
 import { Input, Textarea, Spinner, ErrorBox, Confirm } from "@/components/ui";
 import { MgSelect, MgDatePicker, RequiredPill, REQUIRED_FIELDS_MESSAGE } from "@/components/ui/mg-controls";
-import { RefSelect } from "@/components/ui/ref-select";
+import { RefSelect, ReferenciaSelect } from "@/components/ui/ref-select";
 import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Pencil, Plus, Trash2, LayoutGrid, PanelLeft } from "lucide-react";
 import { IconBtn, PillBtn } from "@/features/base1/ui";
 import { useFormLayout } from "./form-layout";
@@ -31,6 +31,8 @@ const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] fo
 /** Controle de um campo declarativo (mesmo componente para todos os tipos), estilo "rótulo flutuante" do modelo base. */
 function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpenChange }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string; record?: Values | null; onOpenChange?: (o: boolean) => void }) {
   const rules = { required: required ? "Obrigatório" : false };
+  // referência oficial (município, banco, NCM): busca no servidor, grava o mesmo código de sempre
+  if (f.busca) return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <ReferenciaSelect id={id} referencia={f.busca!} value={field.value as string | number | null} onChange={(v) => field.onChange(v ?? "")} onOpenChange={onOpenChange} disabled={dis} className={cn(ctl, "h-6 justify-between")} />} />;
   if (f.type === "ref") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <RefSelect resource={f.ref!.resource} filter={f.ref!.filtro} value={field.value as string} onOpenChange={onOpenChange} labelHint={record && record[f.name] === field.value ? (record[`${f.name}_label`] as string | null) : null} onChange={(v) => field.onChange(v ?? "")} disabled={dis} includeInactive={!isNew} className={cn(ctl, "h-6 justify-between")} />} />;
   if (f.type === "select") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgSelect id={id} value={String(field.value ?? "")} onChange={field.onChange} options={f.options ?? []} disabled={dis} allowEmpty={!required} onOpenChange={onOpenChange} />} />;
   if (f.type === "boolean") return <MgSelect id={id} value={values[f.name] === true || values[f.name] === "true" ? "true" : "false"} onChange={(v) => form.setValue(f.name, v === "true", { shouldDirty: true })} options={[{ value: "true", label: "Sim" }, { value: "false", label: "Não" }]} disabled={dis} onOpenChange={onOpenChange} />;

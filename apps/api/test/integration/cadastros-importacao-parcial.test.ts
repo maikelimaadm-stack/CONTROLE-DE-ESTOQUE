@@ -43,12 +43,12 @@ const contador = async () => Number((await admin.query<{ v: string }>("select ul
 const idGlobal = async (id: string) => (await admin.query<{ v: string }>("select id_global::text v from erp.registros_globais where organization_id=$1 and id_entidade=$2", [h.demo.orgId, id])).rows[0]?.v ?? null;
 
 /** Cinco pessoas: 2, 4 e 6 certas; 3 (e-mail inválido) e 5 (tipo de pessoa fora da lista) erradas. */
-const arquivoMisto = async (p: string) => {
+const arquivoMisto = async (p: string, d: string) => {
   const wb = await modelo("people");
-  preencher(wb, "people", 2, { name: `${p} A`, document: "00123" });
-  preencher(wb, "people", 3, { name: `${p} B`, document: "00456", email: "nao-e-email", zip_code: "01234-000" });
+  preencher(wb, "people", 2, { name: `${p} A`, document: `00${d}1` });
+  preencher(wb, "people", 3, { name: `${p} B`, document: `00${d}2`, email: "nao-e-email", zip_code: "01234-000" });
   preencher(wb, "people", 4, { name: `${p} C` });
-  preencher(wb, "people", 5, { name: `${p} D`, document: "00789", person_type: "Marciano" });
+  preencher(wb, "people", 5, { name: `${p} D`, document: `00${d}3`, person_type: "Marciano" });
   preencher(wb, "people", 6, { name: `${p} E` });
   return wb;
 };
@@ -59,7 +59,7 @@ afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end();
 describe("modo parcial", () => {
   it("IM-1: 3 certas + 2 erradas → 201, 3 gravadas na ordem do arquivo, as 2 na lista, ID Global só nas 3; a prévia parcial diz exatamente isso sem gravar", async () => {
     const p = "IM1 Pessoa";
-    const wb = await arquivoMisto(p);
+    const wb = await arquivoMisto(p, "11");
     const antes = await contador();
 
     const previa = await enviar(wb, "people", "?simular=1&modo=parcial");
@@ -90,9 +90,9 @@ describe("modo parcial", () => {
     expect(livres.rowCount, "premissa: códigos 6.* livres").toBe(0);
     const wb = await modelo("financial_categories");
     const k = "financial_categories";
-    preencher(wb, k, 2, { code: "6", name: "IM2 Raiz", nature: "Natureza Inexistente", classification: "Sintética" });
-    preencher(wb, k, 3, { code: "6.01", name: "IM2 Filha", nature: "Receita", classification: "Sintética", parent_id: "6 - IM2 Raiz" });
-    preencher(wb, k, 4, { code: "6.01.001", name: "IM2 Neta", nature: "Receita", classification: "Analítica", parent_id: "6.01 - IM2 Filha" });
+    preencher(wb, k, 2, { code: "6", name: "IM2 Raiz", nature: "Natureza Inexistente", kind: "Não" });
+    preencher(wb, k, 3, { code: "6.01", name: "IM2 Filha", nature: "Receita", kind: "Não", parent_id: "6 - IM2 Raiz" });
+    preencher(wb, k, 4, { code: "6.01.001", name: "IM2 Neta", nature: "Receita", kind: "Sim", parent_id: "6.01 - IM2 Filha" });
     const r = await enviar(wb, k, "?modo=parcial");
     expect(r.statusCode, r.body).toBe(422);
     const erros = j(r).erros;
@@ -136,7 +136,7 @@ describe("planilha de erros", () => {
   const lerPlanilha = async (b64: string) => { const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(b64, "base64") as unknown as ArrayBuffer); return wb; };
 
   it("IM-4: só as linhas erradas, colunas do modelo + 'Erros' no fim, valores como vieram, texto com zero à esquerda preservado; também na prévia", async () => {
-    const wb = await arquivoMisto("IM4 Pessoa");
+    const wb = await arquivoMisto("IM4 Pessoa", "44");
     const modeloCab = cabecalho(wb.getWorksheet("Dados")!);
     const previa = await enviar(wb, "people", "?simular=1&modo=parcial");
     expect(j(previa).planilha_erros_base64, "a prévia também devolve a planilha").toBeTruthy();
@@ -150,20 +150,20 @@ describe("planilha de erros", () => {
     const col = (campo: string) => cab.indexOf(titulo("people", campo)) + 1;
     const l2 = ws.getRow(2); const l3 = ws.getRow(3);
     expect(l2.getCell(col("name")).value).toBe("IM4 Pessoa B");
-    expect(l2.getCell(col("document")).value, "zero à esquerda").toBe("00456");
+    expect(l2.getCell(col("document")).value, "zero à esquerda").toBe("00442");
     expect(l2.getCell(col("document")).numFmt).toBe("@");
     expect(l2.getCell(col("zip_code")).value).toBe("01234-000");
     expect(l2.getCell(col("email")).value, "o valor errado, como o usuário mandou").toBe("nao-e-email");
     expect(String(l2.getCell(cab.length).value)).toContain(`${chave("people", "email")}: `);
     expect(l3.getCell(col("name")).value).toBe("IM4 Pessoa D");
-    expect(l3.getCell(col("document")).value).toBe("00789");
+    expect(l3.getCell(col("document")).value).toBe("00443");
     expect(l3.getCell(col("person_type")).value).toBe("Marciano");
     expect(String(l3.getCell(cab.length).value)).toContain("não é uma opção válida");
   });
 
   it("IM-5: a planilha de erros corrigida volta pela mesma importação: grava, e a coluna 'Erros' é ignorada", async () => {
     const p = "IM5 Pessoa";
-    const r = await enviar(await arquivoMisto(p), "people", "?modo=parcial");
+    const r = await enviar(await arquivoMisto(p, "55"), "people", "?modo=parcial");
     expect(r.statusCode, r.body).toBe(201);
     const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(j(r).planilha_erros_base64!, "base64") as unknown as ArrayBuffer);
     preencher(wb, "people", 2, { email: "ok@exemplo.com.br" });
@@ -173,14 +173,14 @@ describe("planilha de erros", () => {
     expect(j(again)).toMatchObject({ linhas: 2, gravadas: 2, erros: [], modo: "tudo" });
     const todas = await pessoas(p);
     expect(todas.map((x) => x.name)).toEqual([`${p} A`, `${p} B`, `${p} C`, `${p} D`, `${p} E`]);
-    expect(todas.find((x) => x.name === `${p} B`)).toMatchObject({ document: "00456", email: "ok@exemplo.com.br" });
+    expect(todas.find((x) => x.name === `${p} B`)).toMatchObject({ document: "00552", email: "ok@exemplo.com.br" });
   });
 });
 
 describe("modo tudo (o de antes) e porta", () => {
   it("IM-6: sem modo = tudo: qualquer erro → 422 e nada gravado, mesmo corpo com e sem `modo=tudo`; modo desconhecido → 422", async () => {
     const p = "IM6 Pessoa";
-    const wb = await arquivoMisto(p);
+    const wb = await arquivoMisto(p, "66");
     const antes = await contador();
     const semModo = await enviar(wb, "people", "");
     const tudo = await enviar(wb, "people", "?modo=tudo");

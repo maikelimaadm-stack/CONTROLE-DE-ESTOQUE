@@ -85,7 +85,7 @@ describe("erros de gravação: coluna e português", () => {
     const existente = (await admin.query<{ description: string }>("select description from erp.chart_accounts where organization_id=$1 and code='2'", [h.demo.orgId])).rows;
     expect(existente).toEqual([{ description: "PASSIVO" }]);
     const wb = await modelo("chart_accounts");
-    preencher(wb, 2, { "Código *": "2", "Descrição *": "Conta Repetida", "Condição *": "Crédito", "Classe *": "Sintética" });
+    preencher(wb, 2, { "Código *": "2", "Descrição *": "Conta Repetida", "Condição *": "Crédito", "Analítica *": "Não" });
     const antes = await contar("chart_accounts");
     const r = await enviar(wb, "chart_accounts");
     expect(r.statusCode, r.body).toBe(422);
@@ -143,7 +143,7 @@ describe("erros de gravação: coluna e português", () => {
   it("G5: 100 linhas com o mesmo Código já existente → 422 com os 100 erros (nenhum 500) e a conexão segue saudável", async () => {
     expect((await admin.query("select 1 from erp.chart_accounts where organization_id=$1 and code='3'", [h.demo.orgId])).rowCount).toBe(1);
     const wb = await modelo("chart_accounts");
-    for (let i = 0; i < 100; i++) preencher(wb, i + 2, { "Código *": "3", "Descrição *": `Repetida ${i + 1}`, "Condição *": "Ambos", "Classe *": "Sintética" });
+    for (let i = 0; i < 100; i++) preencher(wb, i + 2, { "Código *": "3", "Descrição *": `Repetida ${i + 1}`, "Condição *": "Ambos", "Analítica *": "Não" });
     const antes = await contar("chart_accounts");
     const r = await enviar(wb, "chart_accounts");
     expect(r.statusCode, r.body.slice(0, 300)).toBe(422);
@@ -156,7 +156,7 @@ describe("erros de gravação: coluna e português", () => {
     expect(await contar("chart_accounts")).toBe(antes);
     // a transação foi desfeita inteira e o pool não ficou com conexão quebrada: uma importação válida em seguida funciona
     const wb2 = await modelo("chart_accounts");
-    preencher(wb2, 2, { "Código *": "9", "Descrição *": "Depois das Repetidas", "Condição *": "Ambos", "Classe *": "Sintética" });
+    preencher(wb2, 2, { "Código *": "9", "Descrição *": "Depois das Repetidas", "Condição *": "Ambos", "Analítica *": "Não" });
     const ok = await enviar(wb2, "chart_accounts", true);
     expect(ok.statusCode, ok.body).toBe(200);
     expect(j(ok)).toMatchObject({ linhas: 1, erros: [] });
@@ -164,9 +164,9 @@ describe("erros de gravação: coluna e português", () => {
 });
 
 describe("obrigatório condicional (requiredWhen)", () => {
-  const TITULO = "Categoria financeira (custo)";
+  const TITULO = "Natureza de custo";
 
-  it("G6: modelo de produtos — 'Categoria financeira (custo)' laranja FFEF6C00, sem *, nota 'OBRIGATÓRIO quando'; obrigatórias seguem vermelhas FFC62828 com *", async () => {
+  it("G6: modelo de produtos — 'Natureza de custo' laranja FFEF6C00, sem *, nota 'OBRIGATÓRIO quando'; obrigatórias seguem vermelhas FFC62828 com *", async () => {
     const wb = await modelo("products");
     const cab = cabecalho(wb);
     expect(cab).toContain(TITULO);
@@ -223,9 +223,9 @@ describe("árvore: antecessor da mesma planilha", () => {
   it("G8: no modelo dos 5 cadastros em árvore, a lista da coluna do auto-relacionamento é 'warning' e as demais listas são 'stop'", async () => {
     // Lido do arquivo GERADO (validações carregadas pelo ExcelJS a partir do XML), na primeira linha de dados.
     const casos: { key: string; propria: string; demais: string[] }[] = [
-      { key: "chart_accounts", propria: "Antecessor", demais: ["Condição *", "Classe *", "Tipo", "Ativo"] },
-      { key: "financial_categories", propria: "Antecessor", demais: ["Natureza *", "Classe", "Classificação", "É tributo?", "Ativo"] },
-      { key: "cost_centers", propria: "Antecessor", demais: ["Classe", "Tipo", "Ativo"] },
+      { key: "chart_accounts", propria: "Conta superior", demais: ["Condição *", "Analítica *", "Tipo", "Ativo"] },
+      { key: "financial_categories", propria: "Natureza superior", demais: ["Tipo *", "Analítica", "Classificação", "É tributo?", "Ativo"] },
+      { key: "cost_centers", propria: "Centro superior", demais: ["Analítica", "Tipo", "Ativo"] },
       { key: "product_groups", propria: "Grupo superior", demais: ["Analítico", "Ativo"] },
       // endereçamento só tem a lista do pai: nenhuma "demais" a conferir aqui (as três acima cobrem o "stop")
       { key: "addressings", propria: "Endereçamento pai", demais: [] },

@@ -4,8 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import * as Popover from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
 import { CmdDisplay, CmdPanel } from "./mg-controls";
-import { api, qs } from "@/lib/api";
-import { getResource } from "@agro/domain";
+import { api, ApiError, qs } from "@/lib/api";
+import { getResource, getReferencia, type ChaveReferencia } from "@agro/domain";
 import { Plus } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Dialog } from "./overlays";
@@ -38,4 +38,42 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
       {creating && <React.Suspense fallback={<div className="p-6 text-sm text-slate-400">Carregando…</div>}><ResourceQuickCreate resourceKey={resource} onCancel={() => setCreating(false)} onCreated={(row) => { const id = String(row["id"]); const label = String(row[def.labelField ?? "name"] ?? row["description"] ?? row["name"] ?? ""); setPicked({ id, label, code: (row["code"] as string | null) ?? null }); onChange(id, { id, label, code: (row["code"] as string | null) ?? null }); setCreating(false); }} /></React.Suspense>}
     </Dialog>}
   </>);
+}
+
+interface ItemReferencia { codigo: string | number; rotulo: string; escolhivel: boolean }
+
+/**
+ * Busca numa referência oficial (município, banco, NCM, CBO) — CADASTROS Fase 3. Grava o CÓDIGO oficial,
+ * o mesmo valor que o campo sempre gravou. Se a API não tiver a busca (API anterior, na janela de deploy),
+ * o campo vira digitação do código com um aviso: a tela não trava.
+ */
+export function ReferenciaSelect({ referencia, value, onChange, disabled, className, onOpenChange, id }: { referencia: ChaveReferencia; value: string | number | null | undefined; onChange: (v: string | number | null) => void; disabled?: boolean; className?: string; onOpenChange?: (o: boolean) => void; id?: string }) {
+  const def = getReferencia(referencia);
+  const [open, setOpen] = React.useState(false); const [search, setSearch] = React.useState("");
+  const [picked, setPicked] = React.useState<ItemReferencia | null>(null);
+  const temValor = value !== null && value !== undefined && value !== "";
+  const lista = useQuery({ queryKey: ["referencia", referencia, search], queryFn: () => api<{ items: ItemReferencia[] }>(`/api/referencias/${referencia}${qs({ search, pageSize: "30" })}`), enabled: open, staleTime: 300_000, retry: false });
+  const atual = picked && String(picked.codigo) === String(value) ? picked : null;
+  const um = useQuery({ queryKey: ["referencia-um", referencia, String(value)], queryFn: () => api<ItemReferencia>(`/api/referencias/${referencia}/${encodeURIComponent(String(value))}`), enabled: temValor && !atual, staleTime: 300_000, retry: false });
+  // Busca indisponível = a API não conhece a rota (404 da rota, API anterior) ou falhou na rede.
+  const indisponivel = lista.error instanceof ApiError ? lista.error.status === 404 || lista.error.status >= 500 : Boolean(lista.error);
+  if (indisponivel) {
+    return <span className="flex w-full flex-col">
+      <input id={id} className={cn("w-full", className)} disabled={disabled} defaultValue={temValor ? String(value) : ""} onChange={(e) => { const v = e.target.value.trim(); onChange(v === "" ? null : def?.codigoInteiro && /^\d+$/.test(v) ? Number(v) : v); }} />
+      <span className="text-[11px] text-amber-600">Busca de {def?.labelPlural.toLowerCase() ?? "referência"} indisponível agora; digite o código.</span>
+    </span>;
+  }
+  const rotulo = atual?.rotulo ?? um.data?.rotulo ?? (temValor ? String(value) : "");
+  const opcoes = (lista.data?.items ?? []).map((i) => ({ value: String(i.codigo), label: i.rotulo }));
+  return (
+    <Popover.Root open={open} onOpenChange={(o) => { if (disabled) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); }}>
+      <Popover.Trigger asChild>
+        <CmdDisplay id={id} disabled={disabled} empty={!temValor} placeholder={`Buscar ${def?.label.toLowerCase() ?? ""}`} aria-expanded={open} className={cn("w-full", className)} onClear={() => onChange(null)}>{temValor ? rotulo : null}</CmdDisplay>
+      </Popover.Trigger>
+      <Popover.Portal><Popover.Content align="start" sideOffset={4} className="cmd-panel z-[10000] w-[var(--radix-popover-trigger-width)] min-w-[280px] outline-none">
+        <CmdPanel options={opcoes} value={temValor ? String(value) : null} search={search} onSearch={setSearch} loading={lista.isLoading} emptyText="Nenhum resultado"
+          onPick={(o) => { const it = lista.data?.items.find((x) => String(x.codigo) === o.value) ?? null; setPicked(it); onChange(it ? it.codigo : o.value); setOpen(false); setSearch(""); }} />
+      </Popover.Content></Popover.Portal>
+    </Popover.Root>
+  );
 }

@@ -398,10 +398,10 @@ describe("árvore: antecessor numa linha anterior do mesmo arquivo", () => {
     const existe = await admin.query("select 1 from erp.financial_categories where organization_id=$1 and code like '8%'", [h.demo.orgId]);
     expect(existe.rowCount, "premissa: códigos 8.* ainda não existem").toBe(0);
     const wb = await modelo("financial_categories");
-    expect(listaDe(wb, "Antecessor").some((x) => x.startsWith("8"))).toBe(false);
-    preencher(wb, 2, { "Código": "8", "Descrição": "Ref Raiz Imp", "Natureza": "Receita", "Classe": "Sintética" });
-    preencher(wb, 3, { "Código": "8.01", "Descrição": "Ref Filha Imp", "Natureza": "Receita", "Classe": "Sintética", "Antecessor": "8 - Ref Raiz Imp" });
-    preencher(wb, 4, { "Código": "8.01.001", "Descrição": "Ref Neta Imp", "Natureza": "Receita", "Classe": "Analítica", "Antecessor": "8.01 - Ref Filha Imp" });
+    expect(listaDe(wb, "Natureza superior").some((x) => x.startsWith("8"))).toBe(false);
+    preencher(wb, 2, { "Código": "8", "Descrição": "Ref Raiz Imp", "Tipo": "Receita", "Analítica": "Não" });
+    preencher(wb, 3, { "Código": "8.01", "Descrição": "Ref Filha Imp", "Tipo": "Receita", "Analítica": "Não", "Natureza superior": "8 - Ref Raiz Imp" });
+    preencher(wb, 4, { "Código": "8.01.001", "Descrição": "Ref Neta Imp", "Tipo": "Receita", "Analítica": "Sim", "Natureza superior": "8.01 - Ref Filha Imp" });
     const previa = await importar(wb, "financial_categories", { simular: true });
     expect(previa.statusCode, previa.body).toBe(200);
     expect(j(previa)).toMatchObject({ linhas: 3, gravadas: 0, erros: [], simulacao: true });

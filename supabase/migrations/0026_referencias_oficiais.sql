@@ -15,7 +15,7 @@
 --   · erp.banks ganha ispb; erp.ncm ganha nivel, descricao_completa, vigencia_inicio e vigencia_fim;
 --   · tabela nova erp.cbo_ocupacoes (código de 6 dígitos + título), leitura global como as outras referências;
 --   · caches GLOBAIS das consultas externas: erp.consulta_cep_cache (30 dias) e erp.consulta_cnpj_cache
---     (24 h), acessíveis SÓ à API (erp_app); nenhum papel de cliente lê ou grava. O cache de CNPJ nunca
+--     (7 dias), acessíveis SÓ à API (erp_app); nenhum papel de cliente lê ou grava. O cache de CNPJ nunca
 --     guarda o quadro societário (QSA): a API o descarta antes de gravar;
 --   · carga com UPSERT: linha nova entra, nome/descrição oficial pode mudar, NADA é apagado. Os 14 municípios
 --     e os 10 bancos do seed (inclusive o "000 - Caixa Interno", que não é participante do STR) continuam.
@@ -101,7 +101,7 @@ create table erp.consulta_cnpj_cache (
   fonte text not null,
   consultado_em timestamptz not null default now()
 );
-comment on table erp.consulta_cnpj_cache is 'Cache GLOBAL da consulta de CNPJ (24 h), SEM quadro societário. Só a API lê e grava.';
+comment on table erp.consulta_cnpj_cache is 'Cache GLOBAL da consulta de CNPJ (7 dias; fontes gratuitas), SEM quadro societário. Só a API lê e grava.';
 
 -- ---------- 4) RLS ----------
 alter table erp.cbo_ocupacoes enable row level security;

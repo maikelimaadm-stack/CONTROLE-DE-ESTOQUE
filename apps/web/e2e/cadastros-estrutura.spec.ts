@@ -41,9 +41,10 @@ test("CE-W1 — Configurações › Financeiro: Naturezas, Centros de Resultado,
   await expect(page).toHaveURL(/\/configuracoes\?tab=financeiro&sub=cost-centers/);
   await expect(page.locator("main").getByRole("tab", { name: "Centros de Resultado", exact: true })).toHaveAttribute("aria-selected", "true");
   await expect(page.locator("table").first()).toBeVisible();
-  // a lista do cadastro (mesma chave de sempre) também continua abrindo, com o título novo
+  // a lista do cadastro (mesma chave de sempre) também continua abrindo, com a coluna nova
   await page.goto("/cadastros/cost_centers");
-  await expect(page.getByText("Centros de Resultado").first()).toBeVisible();
+  await expect(page.locator("tbody tr", { hasText: "Adm Geral" }).first()).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /^Analítica/ })).toBeVisible();
   await expect(page.getByText("Centros de Custo", { exact: true })).toHaveCount(0);
 
   // BUSCA pelos nomes antigos acha as telas novas — na busca de Configurações e na busca global
@@ -66,7 +67,7 @@ test("CE-W1 — Configurações › Financeiro: Naturezas, Centros de Resultado,
 test("CE-W1 — perfil só com cost_centers.view vê Configurações › Financeiro com Centros de Resultado (e mais nada do Financeiro)", async ({ page }) => {
   await login(page);
   const papel = await api<{ id: string }>(page, "POST", "/api/admin/roles", { name: uniq("Só Centros E2E"), permissions: ["cost_centers.view"] });
-  const leitor = { email: `e2e-so-centros-${Date.now()}@demo.local`, password: "Centros@12345" };
+  const leitor = { email: `e2e-so-centros-${Date.now()}@demo.local`, password: "Leitor@12345" };
   await api(page, "POST", "/api/admin/members", { name: "Leitor E2E de Centros", email: leitor.email, password: leitor.password, role_id: papel.id, escopos_empresas: [] });
   await logout(page);
   await login(page, leitor);
@@ -75,7 +76,9 @@ test("CE-W1 — perfil só com cost_centers.view vê Configurações › Finance
   await expect(financeiro, "a área Financeiro aparece para quem só tem cost_centers.view").toBeVisible();
   await expect(page.locator("main").getByRole("tab", { name: /^Empresa/ }), "a aba Empresa não é mais a porta dos centros").toHaveCount(0);
   await financeiro.click();
-  await expect(page.locator("main").getByRole("tab", { name: "Centros de Resultado", exact: true })).toBeVisible();
+  // com uma única sub-área visível a tela abre direto nela (sem seletor): a lista dos centros, com a coluna nova
+  await expect(page.locator("tbody tr", { hasText: "Adm Geral" }).first(), "a lista de Centros de Resultado abriu").toBeVisible();
+  await expect(page.getByRole("columnheader", { name: /^Analítica/ })).toBeVisible();
   const abas = await nomesDasAbas(page);
   expect(abas, "sem permissão, Naturezas e Plano de Contas não aparecem").not.toContain("Naturezas");
   expect(abas).not.toContain("Plano de Contas");

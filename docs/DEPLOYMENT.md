@@ -891,6 +891,72 @@ caso 3) — seguro, sem gravação parcial; produto criado sem categoria/classe 
 fica — migration aplicada é histórico; as colunas novas são inertes para o binário anterior, e a unicidade
 relaxada não quebra nenhuma escrita dele (o `on conflict (organization_id, name)` só existia no seed).
 
+## CADASTROS FASE 2 — importação parcial (sem migration)
+
+Decisão 251. Nenhuma migration, nenhuma variável nova. Muda só o contrato de `POST /api/imports/:key`
+(parâmetro `modo`, campos novos e aditivos na resposta) e o diálogo de importação.
+
+**Implantação — ordem: API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela há duas
+combinações:
+
+1. **web ANTERIOR × API nova:** a web anterior não manda `modo` → `tudo`, exatamente o comportamento de
+   antes (qualquer erro → 422, nada gravado). Os campos novos da resposta são ignorados por ela. (IM-6)
+2. **web NOVA × API anterior:** a prévia e "Importar tudo" saem SEM `modo` e funcionam como antes;
+   "Importar só as X linhas certas" manda `modo=parcial`, a query `.strict()` da API anterior o recusa com
+   422 ("Campo não reconhecido") ANTES de abrir o arquivo — nada gravado — e a tela mostra "O servidor ainda
+   não aceita importação parcial; use Importar tudo." O corpo da recusa é medido contra o binário real da
+   base no harness de skew (`skew-api-producao.spec.ts`, IM-K1); a reação da tela a esse corpo, em IM-W2
+   (`cadastros-importacao.spec.ts`). Sem os campos novos, a prévia conta as linhas com erro pela própria lista.
+
+**Reversão.** Web: livre. API: a anterior volta ao tudo-ou-nada; o que já foi gravado no modo parcial é
+cadastro normal (com ID Global), legível e editável pelo binário anterior. Nenhum dado a desfazer.
+
+## CADASTROS FASE 3 — referências oficiais (`0026`) e consultas de CEP e CNPJ
+
+Decisão 252.
+
+**A migration `0026_referencias_oficiais.sql` é aditiva** (trava (2026,60), `lock_timeout`, pré/pós-condições
+nomeadas, não reaplicável): `erp.banks.ispb`; `erp.ncm.nivel`, `descricao_completa`, `vigencia_inicio`,
+`vigencia_fim`; tabelas novas `erp.cbo_ocupacoes`, `erp.consulta_cep_cache` e `erp.consulta_cnpj_cache` (as
+duas últimas GLOBAIS, RLS forçada, só `erp_app`; `authenticated`/`anon` sem acesso). A carga (27 UFs, 5.571
+municípios, 463 bancos, 15.156 linhas de NCM, 2.694 ocupações CBO; procedência no cabeçalho de
+`supabase/referencias/*.csv` e no DATA-DICTIONARY) é UPSERT: nada apagado, nome oficial pode mudar, os 14
+municípios e os 10 bancos anteriores (inclusive `000`) continuam — a pós-condição PARA se algum sumir. O
+arquivo tem ~1,7 MB (dados embutidos); a aplicação leva poucos segundos. Nenhuma tabela de organização é
+tocada. Atualizar uma referência depois = rodar `node scripts/referencias/baixar.mjs` e escrever OUTRA
+migration de carga.
+
+**Variável nova da API — `CONSULTA_CNPJ_FONTES`** (opcional; não é segredo). Ordem das fontes GRATUITAS e
+sem chave da consulta de CNPJ; padrão `brasilapi,cnpja,cnpjws`. `desligado` desliga a consulta (503). Nome
+desconhecido, repetido ou lista vazia derruba o startup. Não existe credencial de consulta, nem fonte paga.
+
+| Fonte | Endereço | Limite da fonte |
+|---|---|---|
+| BrasilAPI | `https://brasilapi.com.br/api/cnpj/v1/{cnpj}` (e `/api/cep/v1/{cep}`, reserva do CEP) | sem limite publicado |
+| CNPJá aberta | `https://open.cnpja.com/office/{cnpj}` | 5 por minuto por IP |
+| CNPJ.ws pública | `https://publica.cnpj.ws/cnpj/{cnpj}` | 3 por minuto por IP |
+| ViaCEP | `https://viacep.com.br/ws/{cep}/json/` (principal do CEP) | sem limite publicado |
+
+Limites da API: CEP 60/min e CNPJ 20/min por organização; "consultar de novo" 1/min por CNPJ; fonte que
+responde 429 fica 60 s em pausa. Cache global: CEP 30 dias, CNPJ 7 dias. Tempo por fonte: ~3 s (CEP),
+~5 s (CNPJ). Esses limites e a pausa vivem na MEMÓRIA de cada instância: com N réplicas o teto efetivo é N×.
+**Saída de rede:** a API passa a fazer HTTPS de saída para os quatro hosts acima — se o ambiente restringir
+egress, liberar só eles.
+
+**Implantação — ordem: banco (0026) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
+
+1. **API anterior × banco novo:** colunas e tabelas novas são inertes para ela; `people.city_id` e
+   `products.ncm_code` continuam FK para as mesmas tabelas, agora completas.
+2. **web ANTERIOR × API nova:** a cidade continua indo como código IBGE inteiro, banco como código e NCM como
+   texto — a API aceita igual. Diferença declarada: NCM nova no produto que não seja de 8 dígitos vigente é
+   recusada (422 no campo) — antes a FK já recusava qualquer código fora de `erp.ncm`, que estava vazia.
+3. **web NOVA × API anterior:** a API anterior não tem `/api/referencias` (404); o campo de busca vira
+   digitação do código com o aviso "Busca de … indisponível agora; digite o código" — a tela não trava.
+
+**Reversão.** Web: livre. API: a anterior ignora as tabelas e colunas novas; nada a desfazer. Banco: a 0026
+fica (migration aplicada é histórico); as referências carregadas são dado público oficial, e os caches podem
+simplesmente envelhecer.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)

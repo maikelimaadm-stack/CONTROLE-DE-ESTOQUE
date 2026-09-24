@@ -2,6 +2,8 @@
  * Definição declarativa de recursos (cadastros) — usada pela API (rotas genéricas, validação, SQL) e pelo
  * frontend (listagem, filtros e formulários). Evita telas vazias: todo recurso definido aqui persiste de verdade.
  */
+import type { ChaveReferencia } from "./referencias.js";
+
 export type FieldType = "text" | "textarea" | "number" | "integer" | "money" | "quantity" | "percent" | "date" | "boolean" | "select" | "ref" | "email" | "json" | "tags";
 
 export interface FieldOption { value: string; label: string }
@@ -26,7 +28,7 @@ export interface FieldDef {
    * Campo preenchido por BUSCA numa referência oficial (município, banco, NCM, CBO — `referencias.ts`). O
    * valor gravado continua o CÓDIGO oficial (o mesmo de antes da busca existir); só a tela muda.
    */
-  busca?: import("./referencias.js").ChaveReferencia;
+  busca?: ChaveReferencia;
   /** exibir na listagem */
   list?: boolean;
   /** filtrar na listagem */
