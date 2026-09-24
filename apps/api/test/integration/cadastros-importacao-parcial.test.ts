@@ -194,7 +194,18 @@ describe("modo tudo (o de antes) e porta", () => {
       expect(r.statusCode, r.body).toBe(422);
       expect(j(r)).toMatchObject({ linhas: 5, gravadas: 0, certas: 3, com_erro: 2, simulacao: false, modo: "tudo" });
     }
-    expect(JSON.parse(semModo.body)).toEqual(JSON.parse(tudo.body));
+    // mesmo corpo; a planilha de erros é comparada pelo CONTEÚDO — o zip carrega a hora da geração
+    const { planilha_erros_base64: xSem, ...restoSem } = j(semModo);
+    const { planilha_erros_base64: xTudo, ...restoTudo } = j(tudo);
+    expect(restoSem).toEqual(restoTudo);
+    const celulas = async (b64: string | null) => {
+      expect(b64).toBeTruthy();
+      const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(b64!, "base64") as unknown as ArrayBuffer);
+      return wb.worksheets.map((ws) => ({ nome: ws.name, linhas: ws.getSheetValues() }));
+    };
+    const [cSem, cTudo] = [await celulas(xSem), await celulas(xTudo)];
+    expect(cSem.flatMap((w) => w.linhas).filter(Boolean).length, "a planilha tem linhas").toBeGreaterThan(1);
+    expect(cSem).toEqual(cTudo);
     expect(await pessoas(p)).toEqual([]);
     expect(await contador()).toBe(antes);
     const invalido = await enviar(wb, "people", "?modo=metade");
