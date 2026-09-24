@@ -56,18 +56,21 @@ describe("PR-1 — ficha em abas: campos novos gravados e lidos", () => {
 });
 
 describe("PR-2 — controle de lote exige lote na entrada e na saída", () => {
-  it("lote: entrada sem lote 422 (nada gravado); com lote 201; saída sem lote 422; saída com lote 201", async () => {
+  it("lote: entrada sem lote 422 (nada gravado); com lote 201; saída sem lote ESCOLHE o lote (R1-1); saída com lote 201", async () => {
     const p = criado(await post({ ...base, description: nome("lote"), controle_lote: "lote" }));
     const e = await saldoInicial(p);
     expect(e.statusCode, e.body).toBe(422); expect(j(e).error.message).toMatch(/informe o lote/);
     expect(await movimentos(p)).toBe(0);
     expect((await saldoInicial(p, { provider_lot: "L-1" })).statusCode).toBe(201);
+    // R1-1 (decisão do Maike, opção b): a saída sem lote não é mais recusada — a API escolhe o lote pela validade
+    // e o movimento gravado leva o lote escolhido (o gatilho da 0029 continua exigindo lote em todo INSERT).
     const s = await baixa(p, {}, "3");
-    expect(s.statusCode, s.body).toBe(422); expect(j(s).error.message).toMatch(/informe o lote/);
-    expect(await movimentos(p)).toBe(1);
+    expect(s.statusCode, s.body).toBe(201);
+    expect(await um("select provider_lot, quantity::text from erp.stock_movements where product_id=$1 and direction=-1", [p])).toEqual({ provider_lot: "L-1", quantity: "3.0000" });
+    expect(await movimentos(p)).toBe(2);
     const ok = await baixa(p, { provider_lot: "L-1" }, "3");
     expect(ok.statusCode, ok.body).toBe(201);
-    expect(await um("select quantity::text from erp.stock_balances where product_id=$1 and provider_lot='L-1'", [p])).toEqual({ quantity: "7.0000" });
+    expect(await um("select quantity::text from erp.stock_balances where product_id=$1 and provider_lot='L-1'", [p])).toEqual({ quantity: "4.0000" });
   });
   it("lote + validade: entrada sem validade 422; com validade 201", async () => {
     const p = criado(await post({ ...base, description: nome("validade"), controle_lote: "lote_validade" }));

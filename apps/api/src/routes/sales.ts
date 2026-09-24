@@ -587,7 +587,7 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   // `exigeArmazem` ele já foi recusado acima.
   const movimentos: string[] = [];
   if (plano.baixaEstoque) {
-    for (const it of d.items) if (it.warehouse_id) movimentos.push((await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "sale", direction: -1, quantity: it.quantity, sourceType: "sales_documents", sourceId: id, date: d.shipping_date ?? d.document_date, note: `Venda ${d.code}` })).id);
+    for (const it of d.items) if (it.warehouse_id) movimentos.push(...(await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "sale", direction: -1, quantity: it.quantity, sourceType: "sales_documents", sourceId: id, date: d.shipping_date ?? d.document_date, note: `Venda ${d.code}` })).ids);
   }
 
   // FINANCEIRO. O mesmo desenho: legado e "a receber" configurado geram os títulos pela MESMA porta
