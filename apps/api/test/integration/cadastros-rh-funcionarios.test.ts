@@ -3,7 +3,7 @@ import { createPool, seedDemo, type Db } from "@agro/db";
 import { harness, TEST_URL, type Harness } from "./setup.js";
 
 /**
- * CADASTROS Fase 5 — RH: FUNCIONÁRIOS (migration 0028). RH-1..RH-5; R1-3 (CPF-1..CPF-4: parceiro existente exige people.edit).
+ * CADASTROS Fase 5 — RH: FUNCIONÁRIOS (migration 0028). RH-1..RH-5; R1-3 (CPF-1..CPF-4: parceiro existente exige people.edit; CPF-5: a porta não reativa nem regrava ficha de RH existente).
  * Toda recusa confere o BANCO (nada gravado); todo aceite confere a linha gravada.
  */
 let h: Harness; let admin: Db;
@@ -256,6 +256,7 @@ describe("RH-5 — Funções com CBO oficial", () => {
 describe("R1-3 — novo funcionário pelo CPF: parceiro existente exige people.edit", () => {
   const MSG_403 = "CPF já cadastrado como parceiro: quem edita parceiros precisa marcar o tipo Funcionário";
   const MSG_INATIVO = "parceiro inativo: reative no cadastro de parceiros";
+  const MSG_FICHA_INATIVA = "ficha de RH inativa: o novo funcionário pelo CPF não reativa a ficha de quem está fora da folha";
   const org = () => h.demo.orgId;
 
   /** CPF válido (dígitos verificadores calculados) que ninguém desta organização usa, vivo ou excluído. */
@@ -278,14 +279,26 @@ describe("R1-3 — novo funcionário pelo CPF: parceiro existente exige people.e
       [org(), code, nome("R13 parceiro"), cpf, Boolean(tipos["is_client"]), Boolean(tipos["is_provider"]), Boolean(tipos["is_transporter"]), Boolean(tipos["is_employee"]), Boolean(tipos["is_proprietary"]), situacao.is_active ?? true, Boolean(situacao.excluido)]))!.id;
     return { id, cpf, code };
   }
-  /** Retrato do que a porta poderia gravar: a linha inteira do parceiro, a auditoria dele, a ficha e o total. */
+  /**
+   * Retrato do que a porta poderia gravar: a linha inteira do parceiro e a auditoria dele, a linha inteira da ficha
+   * de RH e a auditoria DELA (a 0028 audita `employee_profiles`: qualquer UPDATE, mesmo sem mudar valor, deixa trilha)
+   * e o total de parceiros.
+   */
   async function retrato(id: string) {
     return {
       parceiro: (await um<{ r: unknown }>("select to_jsonb(p) r from erp.people p where id=$1", [id]))!.r,
       auditoria: await n("select count(*)::text n from erp.audit_logs where entity='people' and entity_id=$1", [id]),
       fichas: await n("select count(*)::text n from erp.employee_profiles where person_id=$1", [id]),
+      ficha: (await um<{ r: unknown }>("select to_jsonb(e) r from erp.employee_profiles e where person_id=$1", [id]))?.r ?? null,
+      auditoriaDaFicha: await n("select count(*)::text n from erp.audit_logs where entity='employee_profiles' and entity_id=$1", [id]),
       parceiros: await n("select count(*)::text n from erp.people where organization_id=$1", [org()])
     };
+  }
+  /** Parceiro plantado com a ficha de RH JÁ existente (direto no banco), na situação pedida. */
+  async function plantarComFicha(tipos: Record<string, boolean>, fichaAtiva: boolean) {
+    const p = await plantar(tipos);
+    await admin.query("insert into erp.employee_profiles (person_id, organization_id, is_active, matricula) values ($1, $2, $3, $4)", [p.id, org(), fichaAtiva, `R13-${Math.random().toString(36).slice(2, 8)}`]);
+    return p;
   }
 
   it("CPF-1 — CPF de parceiro vivo (cliente), sem people.edit → 403 com a mensagem exata; NADA gravado", async () => {
@@ -405,5 +418,41 @@ describe("R1-3 — novo funcionário pelo CPF: parceiro existente exige people.e
     expect(r.statusCode, r.body).toBe(403);
     expect(j(r).error.message).toBe(MSG_403);
     expect(await retrato(inativo.id)).toEqual(antes);
+  });
+
+  it("CPF-5 — ficha de RH INATIVA: a porta NÃO a reativa — 422 com a mensagem exata e nada gravado (só employees.create, o dono, e o ex-funcionário com people.edit)", async () => {
+    // o cenário da revisão: funcionário ATIVO no cadastro de parceiros com a ficha de RH INATIVA (fora da folha)
+    const func = await plantarComFicha({ is_employee: true }, false);
+    const antes = await retrato(func.id);
+    expect(antes.ficha).toMatchObject({ is_active: false });
+    for (const [quem, headers] of [["só employees.create", await membro("r13-cpf5@demo.local", ["employees.create"])], ["o dono", hdr()]] as const) {
+      const r = await porCpf({ document: func.cpf }, headers);
+      expect(r.statusCode, `${quem}: ${r.body}`).toBe(422);
+      expect(j(r).error).toMatchObject({ code: "VALIDATION_ERROR", message: MSG_FICHA_INATIVA });
+      expect(await retrato(func.id), quem).toEqual(antes);
+    }
+    // ex-funcionário: o tipo foi desmarcado e a ficha ficou inativa. Com people.edit a porta não marca o tipo nem reabre a ficha
+    const ex = await plantarComFicha({ is_client: true }, false);
+    const antesEx = await retrato(ex.id);
+    const r = await porCpf({ document: ex.cpf }, await membro("r13-cpf5b@demo.local", ["employees.create", "people.edit"]));
+    expect(r.statusCode, r.body).toBe(422);
+    expect(j(r).error.message).toBe(MSG_FICHA_INATIVA);
+    expect(await retrato(ex.id)).toEqual(antesEx);
+    expect(antesEx.parceiro).toMatchObject({ is_client: true, is_employee: false });
+    // sem people.edit a capacidade vem antes da situação: o mesmo 403 de sempre, sem revelar a ficha
+    const semEdit = await porCpf({ document: ex.cpf }, await membro("r13-cpf5c@demo.local", ["employees.create"]));
+    expect(semEdit.statusCode, semEdit.body).toBe(403);
+    expect(j(semEdit).error.message).toBe(MSG_403);
+    expect(await retrato(ex.id)).toEqual(antesEx);
+  });
+
+  it("CPF-5b — ficha de RH ATIVA que já existe: 200 com o parceiro e a ficha NÃO é regravada (linha e trilha dela iguais)", async () => {
+    const hc = await membro("r13-cpf5d@demo.local", ["employees.create"]);
+    const p = await plantarComFicha({ is_employee: true }, true);
+    const antes = await retrato(p.id);
+    const r = await porCpf({ document: p.cpf }, hc);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(j(r)).toEqual({ id: p.id, criado: false });
+    expect(await retrato(p.id)).toEqual(antes);
   });
 });

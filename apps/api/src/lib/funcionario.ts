@@ -8,7 +8,8 @@
  *    membro DESTA organização, conta de pagamento = conta adicional viva do PRÓPRIO parceiro;
  *  · `funcionarioPorCpf` — o NOVO funcionário começa pelo CPF: CPF de parceiro vivo existente → marca o tipo
  *    Funcionário nele (não duplica), o que é EDITAR o parceiro e exige também `people.edit` (R1-3); CPF novo →
- *    cria o parceiro (pessoa física, SÓ o tipo Funcionário) e a ficha de RH na MESMA transação.
+ *    cria o parceiro (pessoa física, SÓ o tipo Funcionário) e a ficha de RH na MESMA transação. Ficha de RH que JÁ
+ *    existe nunca é regravada; a INATIVA recusa (a porta não devolve ninguém à folha — R1-3 × R1-2 item 5).
  */
 import { getResource, validarDocumento } from "@agro/domain";
 import { DomainError } from "@agro/shared";
@@ -24,6 +25,12 @@ import { conferirParceiro } from "./parceiro.js";
 export const PERMISSAO_MARCAR_FUNCIONARIO = "people.edit";
 export const MSG_CPF_JA_E_PARCEIRO = "CPF já cadastrado como parceiro: quem edita parceiros precisa marcar o tipo Funcionário";
 export const MSG_PARCEIRO_INATIVO = "parceiro inativo: reative no cadastro de parceiros";
+/**
+ * Ficha de RH INATIVA (fora da folha: apuração, relatório de ativos, aniversariantes). A porta de novo funcionário
+ * tem só `employees.create` e corpo `{document, name}`: reativar a ficha por ela devolveria o funcionário à folha
+ * sem ninguém pedir — o mesmo efeito que o R1-2 (item 5) fechou na edição das abas de RH.
+ */
+export const MSG_FICHA_INATIVA = "ficha de RH inativa: o novo funcionário pelo CPF não reativa a ficha de quem está fora da folha";
 
 type Linha = Record<string, unknown>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -73,9 +80,11 @@ export async function conferirFuncionario(ctx: ServiceCtx, id: string | null, da
  *  1. ainda NÃO é Funcionário e quem chama não tem `people.edit` → 403 `MSG_CPF_JA_E_PARCEIRO`, nada gravado.
  *     A capacidade vem ANTES da situação: quem não edita parceiros não fica sabendo se o parceiro está inativo;
  *  2. inativo → 422 `MSG_PARCEIRO_INATIVO` (a reativação é do cadastro de parceiros, não do RH);
- *  3. marca `is_employee` (se ainda não é) e garante a ficha. Parceiro que JÁ é Funcionário não é tocado: não há
- *     o que marcar, e o RH já o enxerga pela lista de funcionários.
- * A linha fica travada (`for update`) da leitura até a gravação: a situação conferida é a gravada.
+ *  3. ficha de RH que já existe e está INATIVA → 422 `MSG_FICHA_INATIVA`, nada gravado (nem o tipo);
+ *  4. marca `is_employee` (se ainda não é) e cria a ficha SÓ se ela não existe. Parceiro que JÁ é Funcionário não
+ *     é tocado (não há o que marcar; o RH já o enxerga pela lista) e ficha que JÁ existe também não: nenhum UPDATE,
+ *     nenhuma linha na trilha de auditoria da ficha.
+ * O parceiro e a ficha ficam travados (`for update`) da leitura até a gravação: a situação conferida é a gravada.
  */
 export async function funcionarioPorCpf(ctx: ServiceCtx, corpo: { document: string; name?: string | null }, criarParceiro: (dados: Linha) => Promise<{ id: string }>) {
   const r = validarDocumento(corpo.document);
@@ -87,9 +96,14 @@ export async function funcionarioPorCpf(ctx: ServiceCtx, corpo: { document: stri
   const p = existente.rows[0];
   let id = p?.id ?? null;
   const criado = id === null;
+  let temFicha = false;
   if (p) {
     if (!p.is_employee && !hasPermission(ctx, PERMISSAO_MARCAR_FUNCIONARIO)) throw new DomainError("PERMISSION_DENIED", MSG_CPF_JA_E_PARCEIRO);
     if (!p.is_active) throw validation(MSG_PARCEIRO_INATIVO, [{ path: "document", message: MSG_PARCEIRO_INATIVO, aba: "pessoal" }]);
+    const ficha = await ctx.tx.query<{ is_active: boolean }>(
+      "select is_active from erp.employee_profiles where person_id = $1 and organization_id = $2 for update", [p.id, ctx.orgId]);
+    temFicha = ficha.rows.length > 0;
+    if (temFicha && !ficha.rows[0]!.is_active) throw validation(MSG_FICHA_INATIVA, [{ path: "document", message: MSG_FICHA_INATIVA, aba: "pessoal" }]);
     if (!p.is_employee) {
       // parceiro existente: marca o tipo Funcionário (não duplica)
       const u = await ctx.tx.query("update erp.people set is_employee = true where id = $1 and organization_id = $2 and deleted_at is null", [p.id, ctx.orgId]);
@@ -101,10 +115,13 @@ export async function funcionarioPorCpf(ctx: ServiceCtx, corpo: { document: stri
     if (!getResource("people")) throw new DomainError("INTERNAL_ERROR", "cadastro de parceiros ausente");
     id = (await criarParceiro({ person_type: "natural", document: cpf, name: nome, is_employee: true })).id;
   }
-  const f = await ctx.tx.query(
-    "insert into erp.employee_profiles (person_id, organization_id, is_active) values ($1, $2, true) on conflict (person_id) do update set is_active = true",
-    [id, ctx.orgId]);
-  if (f.rowCount !== 1) throw new DomainError("CONFLICT", "Ficha de RH não gravada");
+  if (!temFicha) {
+    // ficha NOVA (a existente não é tocada): `do nothing` + ROW COUNT — 0 linha = outra gravação criou a ficha agora
+    const f = await ctx.tx.query(
+      "insert into erp.employee_profiles (person_id, organization_id, is_active) values ($1, $2, true) on conflict (person_id) do nothing",
+      [id, ctx.orgId]);
+    if (f.rowCount !== 1) throw new DomainError("CONCURRENCY_CONFLICT", "A ficha de RH mudou durante a gravação; tente de novo");
+  }
   return { id, criado };
 }
 
