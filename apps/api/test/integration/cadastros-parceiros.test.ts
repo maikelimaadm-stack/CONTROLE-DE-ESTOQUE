@@ -221,11 +221,11 @@ describe("PA-10 — contrato da definição (navegação e ficha)", () => {
 });
 
 describe("DOC-1 — tipo de pessoa × documento (R1-6, decisão 253)", () => {
-  const recusa = (r: Resp, campo: string, msg: string | RegExp) => {
+  const recusa = (r: Resp, campo: string, msg: string | RegExp, aba = "identificacao") => {
     expect(r.statusCode, r.body).toBe(422);
     const d = detalhes(r);
     expect(d).toHaveLength(1);
-    expect(d[0]).toMatchObject({ path: campo, aba: "identificacao" });
+    expect(d[0]).toMatchObject({ path: campo, aba });
     if (typeof msg === "string") expect(d[0]!.message).toBe(msg); else expect(d[0]!.message).toMatch(msg);
   };
   const linha = (id: string) => um<{ person_type: string; document: string | null; phone: string | null }>("select person_type, document, phone from erp.people where id=$1", [id]);
@@ -304,18 +304,51 @@ describe("DOC-1 — tipo de pessoa × documento (R1-6, decisão 253)", () => {
     expect(await linha(id)).toEqual({ person_type: "natural", document: cpf, phone: "63 3333-1111" });
   });
 
+  // Na ficha de RH o documento fica na aba PESSOAL e a definição não tem o tipo de pessoa: a recusa aponta a aba que
+  // EXISTE nela e diz onde o tipo se acerta (a aba Pessoal tem o link "Abrir no cadastro de parceiros").
+  const MSG_RH_JURIDICA = "Pessoa jurídica usa CNPJ — o parceiro está como Jurídica; acerte o tipo de pessoa no cadastro de parceiros";
+  const putRh = (id: string, payload: Record<string, unknown>) => h.app.inject({ method: "PUT", url: `/api/resources/funcionarios/${id}`, headers: hdr(), payload });
+
   it("ficha de RH (a definição não tem o tipo): o CPF é conferido contra o tipo GRAVADO, não contra o padrão", async () => {
     const r = await h.app.inject({ method: "POST", url: "/api/hr/funcionarios/por-cpf", headers: hdr(), payload: { document: cpfDe("701000008"), name: nome("rh fisica") } });
     expect(r.statusCode, r.body).toBe(201);
     const pf = j(r).id as string;
-    const troca = await h.app.inject({ method: "PUT", url: `/api/resources/funcionarios/${pf}`, headers: hdr(), payload: { document: fmtCpf(cpfDe("701000009")) } });
+    const troca = await putRh(pf, { document: fmtCpf(cpfDe("701000009")) });
     expect(troca.statusCode, troca.body).toBe(200);
     expect(await linha(pf)).toMatchObject({ person_type: "natural", document: cpfDe("701000009") });
 
     const pj = criado(await post({ name: nome("rh juridica"), person_type: "legal", document: cnpjDe("701000000010"), is_employee: true }));
-    const recusada = await h.app.inject({ method: "PUT", url: `/api/resources/funcionarios/${pj}`, headers: hdr(), payload: { document: cpfDe("701000010") } });
-    recusa(recusada, "document", "Pessoa jurídica usa CNPJ");
+    const recusada = await putRh(pj, { document: cpfDe("701000010") });
+    recusa(recusada, "document", MSG_RH_JURIDICA, "pessoal");
     expect(await linha(pj)).toMatchObject({ person_type: "legal", document: cnpjDe("701000000010") });
+  });
+
+  it("ficha de RH de funcionário LEGADO (Jurídica com CPF): gravar uma aba de RH com os campos do principal → 422 na aba Pessoal dizendo onde se acerta; sem o documento as abas de RH gravam; acertado o tipo no parceiro, grava", async () => {
+    const cpf = cpfDe("701000011"); const formatado = fmtCpf(cpf);
+    const id = (await um<{ id: string }>(
+      "insert into erp.people (organization_id, code, name, person_type, document, is_employee) values ($1, 'DOC1-RH', 'DOC1 RH legado', 'legal', $2, true) returning id::text id", [h.demo.orgId, formatado]))!.id;
+    await admin.query("insert into erp.employee_profiles (person_id, organization_id) values ($1, $2)", [id, h.demo.orgId]);
+    const abas = (j(await get("/api/resources/funcionarios/definition")).abas as { key: string }[]).map((a) => a.key);
+    expect(abas).toContain("pessoal"); expect(abas).not.toContain("identificacao");
+    const rg = () => um<{ rg_numero: string | null }>("select rg_numero from erp.employee_profiles where person_id=$1", [id]);
+
+    // o que a tela manda para quem tem people.edit: os campos do principal (inclusive o documento) + a aba de RH editada
+    recusa(await putRh(id, { name: "DOC1 RH legado", document: formatado, rh_documentos: { rg_numero: "RG-1" } }), "document", MSG_RH_JURIDICA, "pessoal");
+    expect(await rg(), "recusa: nada gravado").toEqual({ rg_numero: null });
+    expect(await linha(id)).toMatchObject({ person_type: "legal", document: formatado });
+
+    // sem o documento no corpo (quem não edita parceiros não o manda): a aba de RH grava; o dado antigo não trava o RH
+    const semDoc = await putRh(id, { rh_documentos: { rg_numero: "RG-2" } });
+    expect(semDoc.statusCode, semDoc.body).toBe(200);
+    expect(await rg()).toEqual({ rg_numero: "RG-2" });
+
+    // o acerto que a mensagem pede: o tipo no cadastro de parceiros; depois a ficha de RH grava com o documento
+    const acerto = await put(id, { person_type: "natural" });
+    expect(acerto.statusCode, acerto.body).toBe(200);
+    const ok = await putRh(id, { name: "DOC1 RH legado", document: formatado, rh_documentos: { rg_numero: "RG-3" } });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(await linha(id)).toMatchObject({ person_type: "natural", document: cpf });
+    expect(await rg()).toEqual({ rg_numero: "RG-3" });
   });
 
   it("documento que fica vazio depois de normalizar não é duplicado (mesmo filtro do índice): dois estrangeiros só de pontuação gravam", async () => {

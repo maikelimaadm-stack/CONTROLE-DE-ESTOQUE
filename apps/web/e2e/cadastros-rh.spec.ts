@@ -12,7 +12,18 @@ import { login, logout, api, uniq } from "./helpers";
  * RH-W3  (R1-2) perfil com employees.view/edit e sem o sigilo nem os cadastros de eventos e equipes: a Remuneração
  *        mostra só a jornada (salário, valor hora, meta e comissão não aparecem), a aba Eventos fixos e a grade de
  *        Equipes não aparecem, e salvar outra aba grava.
+ * RH-W4  (R1-6) funcionário gravado como pessoa Jurídica: um CPF no campo do documento da ficha de RH é recusado
+ *        com a mensagem que diz onde o tipo se acerta, NO CAMPO, e o contador de erros aparece na aba Pessoal (a
+ *        ficha de RH não tem a aba Identificação do cadastro de parceiros); nada gravado.
  */
+
+/** CNPJ numérico válido (dígitos verificadores pela regra da Receita). */
+function cnpjValido(): string {
+  const b = Array.from({ length: 12 }, () => Math.floor(Math.random() * 10));
+  const dv = (xs: number[], pesos: number[]) => { const r = xs.reduce((a, x, i) => a + x * pesos[i]!, 0) % 11; return r < 2 ? 0 : 11 - r; };
+  const d1 = dv(b, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]); const d2 = dv([...b, d1], [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]);
+  return [...b, d1, d2].join("");
+}
 
 function cpfValido(): string {
   const b = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
@@ -112,4 +123,25 @@ test("RH-W3 — sem o sigilo e sem eventos/equipes: salário, Eventos fixos e Eq
   await ficha.getByRole("tabpanel", { name: "Documentos" }).getByLabel("RG", { exact: true }).fill("RG-W3");
   await page.getByRole("button", { name: /Salvar/ }).first().click();
   await expect(page.getByText("Salvo com sucesso")).toBeVisible();
+});
+
+test("RH-W4 (R1-6) — CPF num funcionário Jurídica: a recusa aparece no campo e o contador na aba Pessoal, com o caminho do acerto", async ({ page }) => {
+  await login(page);
+  const nome = uniq("RH-W4 juridica");
+  const cnpj = cnpjValido();
+  // funcionário pessoa JURÍDICA (com CNPJ, coerente) criado pelo cadastro de parceiros; a ficha de RH não tem o tipo de pessoa
+  const { id } = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: nome, person_type: "legal", document: cnpj, is_employee: true });
+
+  await page.goto(`/cadastros/funcionarios/${id}`);
+  const ficha = page.getByTestId("ficha-em-abas");
+  await expect(ficha).toBeVisible();
+  await ficha.getByLabel("CPF", { exact: true }).fill(cpfValido());
+  await page.getByRole("button", { name: /Salvar/ }).first().click();
+
+  // a recusa (422) volta com `path: "document"` e a aba DESTA ficha: a mensagem no campo e o contador em Pessoal
+  await expect(ficha.getByText("Pessoa jurídica usa CNPJ — o parceiro está como Jurídica; acerte o tipo de pessoa no cadastro de parceiros", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("erros-aba-pessoal")).toHaveText("1");
+  await expect(page.getByTestId("erros-aba-identificacao")).toHaveCount(0);
+  const gravado = await api<{ document: string }>(page, "GET", `/api/resources/funcionarios/${id}`);
+  expect(gravado.document, "nada gravado").toBe(cnpj);
 });

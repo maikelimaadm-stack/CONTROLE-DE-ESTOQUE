@@ -11,7 +11,7 @@
  *    cria o parceiro (pessoa física, SÓ o tipo Funcionário) e a ficha de RH na MESMA transação. Ficha de RH que JÁ
  *    existe nunca é regravada; a INATIVA recusa (a porta não devolve ninguém à folha — R1-3 × R1-2 item 5).
  */
-import { getResource, validarDocumento } from "@agro/domain";
+import { getResource, validarDocumento, type ResourceDef } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { validation } from "./errors.js";
 import { exigirEmpresaDeLancamento, hasPermission, type ServiceCtx } from "./context.js";
@@ -35,9 +35,9 @@ export const MSG_FICHA_INATIVA = "ficha de RH inativa: o novo funcionário pelo 
 type Linha = Record<string, unknown>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export async function conferirFuncionario(ctx: ServiceCtx, id: string | null, data: Linha, atual: Linha | null) {
-  // Pessoal: CPF validado, normalizado e único pela MESMA regra do parceiro
-  if ("document" in data) await conferirParceiro(ctx, id, data, atual);
+export async function conferirFuncionario(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Linha, atual: Linha | null) {
+  // Pessoal: CPF validado, normalizado e único pela MESMA regra do parceiro (o erro aponta a aba DESTA ficha)
+  if ("document" in data) await conferirParceiro(ctx, def, id, data, atual);
 
   const adm = data["rh_admissao"] as Linha | undefined;
   if (adm && typeof adm["matricula"] === "string") {

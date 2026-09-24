@@ -67,8 +67,8 @@ async function conferirRegrasDoCadastro(ctx: ServiceCtx, def: ResourceDef, id: s
   if (def.key === "product_groups") await conferirGrupoDeProdutos(ctx, id, data, atual);
   else if (def.key === "products") { await conferirGrupoDoProduto(ctx, data, atual); await conferirNcmDoProduto(ctx, data, atual); await conferirProduto(ctx, id, data, atual); }
   else if (def.key === "financial_categories") await conferirTipoDaNatureza(ctx, id, data, atual);
-  else if (def.key === "people") await conferirParceiro(ctx, id, data, atual);
-  else if (def.key === "funcionarios") await conferirFuncionario(ctx, id, data, atual);
+  else if (def.key === "people") await conferirParceiro(ctx, def, id, data, atual);
+  else if (def.key === "funcionarios") await conferirFuncionario(ctx, def, id, data, atual);
   else if (def.key === "job_functions") await conferirCboDaFuncao(ctx, data);
   // depois das regras próprias: a recusa específica (ex.: grupo do produto) fala primeiro
   await conferirReferenciasAnaliticas(ctx, def, data, atual);

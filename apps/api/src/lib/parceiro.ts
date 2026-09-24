@@ -7,14 +7,17 @@
  *    gravado NORMALIZADO; estrangeiro: livre (só aparado);
  *  · TIPO DE PESSOA × DOCUMENTO (R1-6): Física usa CPF, Jurídica usa CNPJ (inclusive alfanumérico), Estrangeira
  *    livre — conferido quando o corpo manda o documento OU o tipo, contra o valor que a linha TERÁ;
+ *  · a recusa aponta a aba da ficha de QUEM CHAMA (`def`): em Parceiros o documento está em Identificação; na ficha
+ *    de RH (`funcionarios`), em Pessoal — e ela não tem o tipo de pessoa, então a mensagem diz onde ele se acerta;
  *  · único entre VIVOS da organização (o índice ux_people_documento_normalizado é a autoridade; aqui o 409
  *    sai antes, com o código e o nome do existente, e com o MESMO filtro do índice: normalizado não vazio);
  *  · situação na Receita: copiada do cache da consulta de CNPJ da própria API (nunca do cliente).
  */
-import { getResource, recusaDoTipoDePessoa, validarDocumento } from "@agro/domain";
+import { getResource, recusaDoTipoDePessoa, validarDocumento, type ResourceDef } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { notFound, validation } from "./errors.js";
 import type { ServiceCtx } from "./context.js";
+import { abaDe } from "./ficha-em-abas.js";
 
 export const TIPOS_DE_PARCEIRO = ["is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary"] as const;
 export const MSG_SEM_TIPO = "Marque pelo menos um tipo: Cliente, Fornecedor, Transportadora, Funcionário ou Proprietário.";
@@ -48,7 +51,7 @@ async function tipoResultante(ctx: ServiceCtx, id: string | null, data: Linha, a
   return { tipo: campoTipoDePessoa().padrao, padrao: true };
 }
 
-export async function conferirParceiro(ctx: ServiceCtx, id: string | null, data: Linha, atual: Linha | null) {
+export async function conferirParceiro(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Linha, atual: Linha | null) {
   // Na edição a regra vale quando a gravação mexe nos tipos (a web manda todos); um PUT que só troca o
   // telefone de um parceiro antigo sem tipo não fica refém de uma regra que ele não tocou.
   const mexeNosTipos = atual === null || TIPOS_DE_PARCEIRO.some((t) => t in data);
@@ -61,6 +64,8 @@ export async function conferirParceiro(ctx: ServiceCtx, id: string | null, data:
   const bruto = valor(data, atual, "document");
   if (bruto === null || bruto === undefined || String(bruto).trim() === "") { if ("document" in data) data["document"] = null; return; }
   const { tipo, padrao } = await tipoResultante(ctx, id, data, atual);
+  // aba do erro = a aba em que o campo aparece NA FICHA DE QUEM CHAMA (nunca uma aba que ela não tem)
+  const abaDoDocumento = abaDe(def, { campo: "document" });
   let doc: string;
   if (tipo === "foreign") doc = String(bruto).trim();
   else {
@@ -69,11 +74,14 @@ export async function conferirParceiro(ctx: ServiceCtx, id: string | null, data:
     if (recusa) {
       // o campo certo: o documento, quando veio; senão o tipo (só o tipo mudou contra o documento gravado)
       const campo = "document" in data ? "document" : "person_type";
-      const msg = padrao ? `${recusa} (tipo de pessoa não informado vale ${rotuloDoTipo(tipo)})` : recusa;
-      throw validation(`${campo === "document" ? "CPF/CNPJ" : "Tipo de pessoa"}: ${msg}`, [{ path: campo, message: msg, aba: "identificacao" }]);
+      // ficha SEM o campo do tipo (RH): o tipo gravado não se acerta nela — a mensagem diz qual é e onde se acerta
+      const semOTipo = !def.fields.some((f) => f.name === "person_type");
+      const msg = padrao ? `${recusa} (tipo de pessoa não informado vale ${rotuloDoTipo(tipo)})`
+        : semOTipo ? `${recusa} — o parceiro está como ${rotuloDoTipo(tipo)}; acerte o tipo de pessoa no cadastro de parceiros` : recusa;
+      throw validation(`${campo === "document" ? "CPF/CNPJ" : "Tipo de pessoa"}: ${msg}`, [{ path: campo, message: msg, aba: abaDe(def, { campo }) }]);
     }
     const r = validarDocumento(String(bruto));
-    if (!r.valido) throw validation(`CPF/CNPJ: ${r.motivo}`, [{ path: "document", message: r.motivo, aba: "identificacao" }]);
+    if (!r.valido) throw validation(`CPF/CNPJ: ${r.motivo}`, [{ path: "document", message: r.motivo, aba: abaDoDocumento }]);
     doc = r.normalizado;
   }
   data["document"] = doc;
@@ -86,7 +94,7 @@ export async function conferirParceiro(ctx: ServiceCtx, id: string | null, data:
         and upper(regexp_replace(document, '[^0-9A-Za-z]', '', 'g')) = upper(regexp_replace($2, '[^0-9A-Za-z]', '', 'g'))
         and ($3::uuid is null or id <> $3::uuid) limit 1`, [ctx.orgId, doc, id]);
   const x = dup.rows[0];
-  if (x) throw new DomainError("CONFLICT", `CPF/CNPJ já cadastrado no parceiro ${x.code} - ${x.name}`, [{ path: "document", message: `Já cadastrado: ${x.code} - ${x.name}`, aba: "identificacao", existente: { id: x.id, code: x.code, name: x.name } }]);
+  if (x) throw new DomainError("CONFLICT", `CPF/CNPJ já cadastrado no parceiro ${x.code} - ${x.name}`, [{ path: "document", message: `Já cadastrado: ${x.code} - ${x.name}`, aba: abaDoDocumento, existente: { id: x.id, code: x.code, name: x.name } }]);
 
 }
 
