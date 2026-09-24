@@ -225,6 +225,15 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
         <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
         <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
+        {/* VENDAS-A1: a classificação financeira escolhida no documento. Venda ainda não confirmada sem classificação
+            confirma pelo padrão automático, e a tela diz isso em vez de deixar o campo vazio. */}
+        {variante === "sale" && <>
+          <CampoLeitura rotulo="Categoria financeira" adorno="travado" testId="central-vendas-campo"
+            valor={d["categoria_financeira_codigo"] ? `${String(d["categoria_financeira_codigo"])} · ${String(d["categoria_financeira_nome"] ?? "")}` : "Não informada"} />
+          <CampoLeitura rotulo="Centro de custo" adorno="travado" testId="central-vendas-campo"
+            valor={d["centro_custo_codigo"] ? `${String(d["centro_custo_codigo"])} · ${String(d["centro_custo_nome"] ?? "")}` : "Não informada"} />
+          {!d["categoria_financeira_codigo"] && editavel && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira categoria de receita e primeiro centro de custo analíticos, pela ordem do código).</p>}
+        </>}
         <CampoLeitura rotulo="Responsável" adorno="travado" testId="central-vendas-campo" valor={String(d["responsible_name"] ?? "")} />
         <CampoLeitura rotulo="Data de saída" adorno="data" testId="central-vendas-campo" valor={d["shipping_date"] ? dateBR(d["shipping_date"] as string) : ""} />
         <CampoLeitura rotulo="Número" adorno="travado" testId="central-vendas-campo" valor={codigo} />
