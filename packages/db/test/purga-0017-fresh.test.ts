@@ -198,6 +198,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[24], "e a 25ª é o Grupo de Produtos em árvore (CADASTROS-ESTRUTURA)").toBe("0025_grupo_de_produtos_arvore.sql");
     expect(noDisco[25], "e a 26ª são as referências oficiais (CADASTROS Fase 3)").toBe("0026_referencias_oficiais.sql");
     expect(noDisco[26], "e a 27ª é a ficha de Parceiros (CADASTROS Fase 4)").toBe("0027_parceiros_ficha_em_abas.sql");
+    expect(noDisco[27], "e a 28ª é a ficha de RH / funcionários (CADASTROS Fase 5)").toBe("0028_rh_funcionarios.sql");
     expect(noDisco[28], "e a 29ª é a ficha de Produtos (CADASTROS Fase 6)").toBe("0029_produtos_ficha_em_abas.sql");
   });
 

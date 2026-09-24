@@ -142,6 +142,7 @@ test("M2 — corrigir o arquivo e escolher o MESMO caminho de novo refaz a prév
   const confirmar = dialogo.getByTestId("importar-confirmar");
   await escolherArquivo(page, caminho);
   await expect(previa, "a linha sem Descrição é recusada na prévia").toContainText("nada será gravado");
+  await expect(previa.getByTestId("importar-certas"), "a única linha é a errada: nenhuma certa").toHaveText("0 linha(s) certa(s)");
   await expect(previa.locator("tbody tr"), "o único erro é a Descrição: a correção abaixo é a única mudança").toHaveCount(1);
   await expect(previa.locator("tbody tr").first()).toContainText(DESCRICAO);
   await expect(previa.locator("tbody tr").first()).toContainText("Obrigatório.");
@@ -152,6 +153,8 @@ test("M2 — corrigir o arquivo e escolher o MESMO caminho de novo refaz a prév
   await wb.xlsx.writeFile(caminho);
   await escolherArquivo(page, caminho);
   await expect(previa, "o mesmo caminho, escolhido de novo, gera prévia NOVA").toContainText("nenhum erro");
+  // a CONTAGEM volta a ser conferida: a prévia nova conta a linha corrigida como certa
+  await expect(previa.getByTestId("importar-certas"), "a linha corrigida passa a contar como certa").toHaveText("1 linha(s) certa(s)");
   await expect(previa).not.toContainText("nada será gravado");
   await expect(previa.locator("tbody tr")).toHaveCount(0);
   await expect(confirmar).toBeVisible();
