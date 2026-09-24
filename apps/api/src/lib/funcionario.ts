@@ -7,14 +7,23 @@
  *    usa; o trigger da 0028 é a autoridade), empresa de lotação no escopo de lançamento, usuário do sistema
  *    membro DESTA organização, conta de pagamento = conta adicional viva do PRÓPRIO parceiro;
  *  · `funcionarioPorCpf` — o NOVO funcionário começa pelo CPF: CPF de parceiro vivo existente → marca o tipo
- *    Funcionário nele (não duplica); CPF novo → cria o parceiro (tipo Funcionário) e a ficha de RH na MESMA
- *    transação.
+ *    Funcionário nele (não duplica), o que é EDITAR o parceiro e exige também `people.edit` (R1-3); CPF novo →
+ *    cria o parceiro (pessoa física, SÓ o tipo Funcionário) e a ficha de RH na MESMA transação.
  */
 import { getResource, validarDocumento } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { validation } from "./errors.js";
-import { exigirEmpresaDeLancamento, type ServiceCtx } from "./context.js";
+import { exigirEmpresaDeLancamento, hasPermission, type ServiceCtx } from "./context.js";
 import { conferirParceiro } from "./parceiro.js";
+
+/**
+ * R1-3 (decisão 255): marcar o tipo Funcionário num parceiro que JÁ existe é editar o parceiro — a capacidade da
+ * rota (`employees.create`) não basta. A mensagem revela que o CPF está cadastrado; aceito e declarado: quem chama
+ * já tem o CPF em mãos, e o 403 não devolve id, código, nome nem tipos do parceiro.
+ */
+export const PERMISSAO_MARCAR_FUNCIONARIO = "people.edit";
+export const MSG_CPF_JA_E_PARCEIRO = "CPF já cadastrado como parceiro: quem edita parceiros precisa marcar o tipo Funcionário";
+export const MSG_PARCEIRO_INATIVO = "parceiro inativo: reative no cadastro de parceiros";
 
 type Linha = Record<string, unknown>;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -57,20 +66,35 @@ export async function conferirFuncionario(ctx: ServiceCtx, id: string | null, da
 /**
  * Novo funcionário pelo CPF. Devolve o id do PARCEIRO (que é o id da ficha de RH) e se ele foi criado agora.
  * Tudo na transação do `runService` de quem chama: erro em qualquer passo desfaz o parceiro e a ficha.
+ *
+ * Parceiro EXISTENTE = vivo (`deleted_at is null`) desta organização com o mesmo CPF normalizado — o MESMO recorte
+ * do índice único `ux_people_documento_normalizado`; o excluído não conta (a porta cria um parceiro novo e não toca
+ * no excluído). Com ele, nesta ordem:
+ *  1. ainda NÃO é Funcionário e quem chama não tem `people.edit` → 403 `MSG_CPF_JA_E_PARCEIRO`, nada gravado.
+ *     A capacidade vem ANTES da situação: quem não edita parceiros não fica sabendo se o parceiro está inativo;
+ *  2. inativo → 422 `MSG_PARCEIRO_INATIVO` (a reativação é do cadastro de parceiros, não do RH);
+ *  3. marca `is_employee` (se ainda não é) e garante a ficha. Parceiro que JÁ é Funcionário não é tocado: não há
+ *     o que marcar, e o RH já o enxerga pela lista de funcionários.
+ * A linha fica travada (`for update`) da leitura até a gravação: a situação conferida é a gravada.
  */
 export async function funcionarioPorCpf(ctx: ServiceCtx, corpo: { document: string; name?: string | null }, criarParceiro: (dados: Linha) => Promise<{ id: string }>) {
   const r = validarDocumento(corpo.document);
   if (!r.valido || r.normalizado.length !== 11) throw validation(`CPF: ${r.valido ? "informe um CPF (11 dígitos)" : r.motivo}`, [{ path: "document", message: r.valido ? "Informe um CPF" : r.motivo, aba: "pessoal" }]);
   const cpf = r.normalizado;
-  const existente = await ctx.tx.query<{ id: string }>(
-    `select id::text from erp.people where organization_id = $1 and deleted_at is null and document is not null
-        and upper(regexp_replace(document, '[^0-9A-Za-z]', '', 'g')) = $2 limit 1`, [ctx.orgId, cpf]);
-  let id = existente.rows[0]?.id ?? null;
+  const existente = await ctx.tx.query<{ id: string; is_active: boolean; is_employee: boolean }>(
+    `select id::text, is_active, is_employee from erp.people where organization_id = $1 and deleted_at is null and document is not null
+        and upper(regexp_replace(document, '[^0-9A-Za-z]', '', 'g')) = $2 limit 1 for update`, [ctx.orgId, cpf]);
+  const p = existente.rows[0];
+  let id = p?.id ?? null;
   const criado = id === null;
-  if (id) {
-    // parceiro existente: marca o tipo Funcionário (não duplica)
-    const u = await ctx.tx.query("update erp.people set is_employee = true where id = $1 and organization_id = $2", [id, ctx.orgId]);
-    if (u.rowCount !== 1) throw new DomainError("CONCURRENCY_CONFLICT", "O parceiro mudou durante a gravação; tente de novo");
+  if (p) {
+    if (!p.is_employee && !hasPermission(ctx, PERMISSAO_MARCAR_FUNCIONARIO)) throw new DomainError("PERMISSION_DENIED", MSG_CPF_JA_E_PARCEIRO);
+    if (!p.is_active) throw validation(MSG_PARCEIRO_INATIVO, [{ path: "document", message: MSG_PARCEIRO_INATIVO, aba: "pessoal" }]);
+    if (!p.is_employee) {
+      // parceiro existente: marca o tipo Funcionário (não duplica)
+      const u = await ctx.tx.query("update erp.people set is_employee = true where id = $1 and organization_id = $2 and deleted_at is null", [p.id, ctx.orgId]);
+      if (u.rowCount !== 1) throw new DomainError("CONCURRENCY_CONFLICT", "O parceiro mudou durante a gravação; tente de novo");
+    }
   } else {
     const nome = (corpo.name ?? "").trim();
     if (!nome) throw validation("Nome: informe o nome do funcionário (CPF ainda não cadastrado)", [{ path: "name", message: "Obrigatório para CPF novo", aba: "pessoal" }]);

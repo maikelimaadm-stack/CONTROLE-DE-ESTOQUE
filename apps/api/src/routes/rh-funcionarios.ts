@@ -8,7 +8,9 @@ import { createOne } from "./resources.js";
 /**
  * RH › NOVO FUNCIONÁRIO PELO CPF (CADASTROS Fase 5). Capacidade: `employees.create`. O parceiro novo nasce pela
  * MESMA porta do cadastro de parceiros (`createOne` de `people`: CPF validado, único, código e ID Global) e a
- * ficha de RH na mesma transação. Corpo estrito: chave desconhecida → 422.
+ * ficha de RH na mesma transação. Corpo estrito: chave desconhecida → 422 — nenhum outro tipo nem campo do
+ * parceiro vem do cliente. CPF de parceiro que JÁ existe e ainda não é Funcionário: marcar o tipo exige também
+ * `people.edit`, conferida DENTRO da transação (`funcionarioPorCpf`, R1-3).
  */
 const corpo = z.object({ document: z.string().min(1).max(30), name: z.string().max(200).nullable().optional() }).strict();
 
