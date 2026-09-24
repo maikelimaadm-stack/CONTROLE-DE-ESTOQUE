@@ -22,6 +22,7 @@ import { COPY, enumLabel, statusLabel } from "@/lib/copy";
 import { CampoTipoOperacao, useTopsDaVariante, usePadraoTop } from "@/features/sales/tipo-operacao-select";
 import { destinoDeCompatibilidade, usaCadeiaDeCompatibilidade, useProximosPassos, type ProximoPasso } from "@/features/sales/proximos-passos";
 import { varianteDeVenda } from "@/features/sales/variantes";
+import { usePreviaDaConfirmacao, linhaDeEstoque, linhaFinanceira, padraoAutomaticoPrevisto, TEXTO_SEM_PREVIA, type EstadoDaPrevia } from "@/features/sales/previa-confirmacao";
 
 /** O snapshot da TOP como o servidor o devolve: nome e versão CONGELADOS no instante do lançamento. */
 interface TopSnapshot { id: string; codigo: string; nome: string; versao: number; codigoBase: string; familiaRotulo: string | null }
@@ -98,6 +99,30 @@ const COLUNAS_DERIVADOS: Base2ItemColumn<Row>[] = [
  * não funciona é pior que botão nenhum — abrir a superfície é outra fatia, com backend. Pelo mesmo
  * motivo não há "Editar": documento salvo não tem contrato de edição.
  */
+/**
+ * O corpo do diálogo "Confirmar venda". Três estados, e nenhum deles promete efeito que o servidor não disse:
+ * carregando (botão desabilitado), sem prévia (texto neutro) e com prévia (as linhas de efeito, ou a recusa).
+ * Com recusa prevista só a recusa aparece — listar efeitos de uma confirmação que não vai acontecer seria
+ * prometer de novo.
+ */
+function PreviaNoDialogo({ estado }: { estado: EstadoDaPrevia }) {
+  if (estado.situacao === "carregando") return <p data-testid="previa-confirmacao-carregando" className="text-sm text-slate-600">Carregando o que a confirmação vai fazer nesta venda…</p>;
+  if (estado.situacao === "nao-confirmado") return <p data-testid="previa-confirmacao-neutra" className="text-sm text-slate-600">{TEXTO_SEM_PREVIA}</p>;
+  const p = estado.previa;
+  if (!p.podeConfirmar) {
+    return <div data-testid="previa-confirmacao-recusa" role="alert" className="space-y-1 text-sm text-slate-700">
+      <p className="font-medium">Esta venda não pode ser confirmada agora:</p>
+      {p.recusas.map((r, i) => <p key={i} data-testid="previa-confirmacao-recusa-mensagem">{r.message}</p>)}
+    </div>;
+  }
+  const estoque = linhaDeEstoque(p);
+  const financeiro = linhaFinanceira(p, { dinheiro: brl, data: dateBR });
+  return <ul data-testid="previa-confirmacao" className="space-y-1 text-sm text-slate-700">
+    {estoque && <li data-testid="previa-confirmacao-estoque">{estoque}</li>}
+    {financeiro && <li data-testid="previa-confirmacao-financeiro">{financeiro}</li>}
+  </ul>;
+}
+
 export default function Page({ params }: { params: Promise<{ kind: string; id: string }> }) {
   const { kind: segmentoDaRota, id } = use(params);
   const { can } = useAuth(); const router = useRouter(); const tr = useTradutor();
@@ -113,6 +138,20 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
    */
   const destinoDaConversao = React.useRef("");
   const act = useAction<{ id?: string }>((r) => { setConfirmar(null); if (confirmar === "convert" && r?.id && destinoDaConversao.current) router.push(`/vendas/${destinoDaConversao.current}/${r.id}`); });
+
+  /**
+   * A PRÉVIA DA CONFIRMAÇÃO (VENDAS-A5-1) — o texto de efeito vem do servidor, não da tela.
+   *
+   * UMA pergunta, lida pelo DIÁLOGO e pelo AVISO do padrão automático. O contador de aberturas entra na chave:
+   * cada vez que o diálogo abre a pergunta é refeita (uma resposta de antes de alguém inativar a categoria não
+   * pode decidir o botão), e o aviso passa a dizer o que essa resposta NOVA diz — duas perguntas separadas
+   * poderiam mostrar, na mesma tela, um aviso de uma resposta velha ao lado do diálogo de uma nova. Sem o
+   * diálogo, só a venda aberta sem classificação pergunta: é a única em que o aviso pode aparecer.
+   */
+  const [aberturasDoConfirmar, setAberturasDoConfirmar] = React.useState(0);
+  const vendaAberta = variante === "sale" && ["open", "approved"].includes(String(d?.["status"] ?? ""));
+  const avisoPossivel = vendaAberta && !d?.["categoria_financeira_id"];
+  const previaDaConfirmacao = usePreviaDaConfirmacao(id, variante === "sale" && (confirmar === "confirm" || avisoPossivel), aberturasDoConfirmar);
 
   /**
    * OS PRÓXIMOS PASSOS — a política do documento, não a cadeia fixa da tela.
@@ -217,7 +256,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
       acoes={<>
         {/* NOVO abre o lançador da MESMA variante (TOP-first): a criação continua sendo a de sempre */}
         {k && can(`${k.perm}.create`) && <><AcaoDaBarra rotulo={k.novo} destaque="novo" dica="inicio" data-testid="central-vendas-novo" onClick={() => router.push(`/vendas/${k.segmento}/new`)}><Plus aria-hidden /></AcaoDaBarra><DivisorDaBarra /></>}
-        {variante === "sale" && editavel && can("sales.edit") && <AcaoPrincipal icone={<Check aria-hidden />} onClick={() => setConfirmar("confirm")}>Confirmar venda</AcaoPrincipal>}
+        {variante === "sale" && editavel && can("sales.edit") && <AcaoPrincipal icone={<Check aria-hidden />} onClick={() => { setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm"); }}>Confirmar venda</AcaoPrincipal>}
         {/* CONVERTER exige AS DUAS capacidades, como a API passou a exigir: editar a FONTE e criar o
             DESTINO. Mostrar o botão só com a do destino ofereceria uma ação que a API recusa com 403. */}
         {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <AcaoPrincipal icone={<ArrowRightLeft aria-hidden />} data-testid="acao-conversao" onClick={() => setConfirmar("convert")}>{rotuloDaConversao}</AcaoPrincipal>}
@@ -243,7 +282,14 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
           valor={rotuloDaClassificacao(d["categoria_financeira_id"], d["categoria_financeira_codigo"], d["categoria_financeira_nome"], "Não informada", "Informada")} />
         <CampoLeitura rotulo="Centro de custo" adorno="travado" testId="central-vendas-campo"
           valor={rotuloDaClassificacao(d["centro_custo_id"], d["centro_custo_codigo"], d["centro_custo_nome"], "Não informado", "Informado")} />
-        {variante === "sale" && !d["categoria_financeira_id"] && editavel && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira categoria de receita e primeiro centro de custo analíticos, pela ordem do código).</p>}
+        {/* O AVISO DO PADRÃO AUTOMÁTICO (A1, refeito na A5-1). Com a prévia, ele só aparece quando ela diz que a
+            confirmação PODE acontecer e VAI gerar contas a receber pelo recuo — e nomeia o par. Sem a prévia (API
+            anterior), vale a regra da A1: venda aberta sem classificação. Enquanto a prévia carrega, nada. */}
+        {variante === "sale" && !d["categoria_financeira_id"] && editavel && (
+          previaDaConfirmacao.situacao === "pronto"
+            ? padraoAutomaticoPrevisto(previaDaConfirmacao.previa) && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático — {padraoAutomaticoPrevisto(previaDaConfirmacao.previa)}.</p>
+            : previaDaConfirmacao.situacao === "nao-confirmado" && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira categoria de receita e primeiro centro de custo analíticos, pela ordem do código).</p>
+        )}
         <CampoLeitura rotulo="Responsável" adorno="travado" testId="central-vendas-campo" valor={String(d["responsible_name"] ?? "")} />
         <CampoLeitura rotulo="Data de saída" adorno="data" testId="central-vendas-campo" valor={d["shipping_date"] ? dateBR(d["shipping_date"] as string) : ""} />
         <CampoLeitura rotulo="Número" adorno="travado" testId="central-vendas-campo" valor={codigo} />
@@ -283,7 +329,14 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     />
     <HistoryDialog open={historicoAberto} onOpenChange={setHistoricoAberto} entity={ENTIDADE} entityId={id} title={`${titulo} ${codigo}`.trim()} />
 
-    <Confirm open={confirmar === "confirm"} onOpenChange={() => setConfirmar(null)} title="Confirmar venda" text="Baixa o estoque dos itens com armazém e gera as contas a receber. Operação atômica e idempotente." loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })} />
+    {/* CONFIRMAR VENDA (A5-1): o texto diz o que a confirmação VAI fazer NESTA venda, segundo a prévia do
+        servidor. Enquanto ela carrega, e quando ela prevê uma recusa, o botão fica desabilitado; sem prévia
+        (API anterior, erro, corpo desconhecido), texto neutro e botão habilitado — quem recusa é o servidor. */}
+    <Confirm open={confirmar === "confirm"} onOpenChange={() => setConfirmar(null)} title="Confirmar venda" loading={act.isPending}
+      confirmDisabled={previaDaConfirmacao.situacao === "carregando" || (previaDaConfirmacao.situacao === "pronto" && !previaDaConfirmacao.previa.podeConfirmar)}
+      onConfirm={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })}>
+      <PreviaNoDialogo estado={previaDaConfirmacao} />
+    </Confirm>
     {/* CONVERSÃO NÃO É MAIS UM "TEM CERTEZA?". O documento de destino é de OUTRA família, então precisa
         da TOP dele — a da fonte não serve e não é herdada. Sem TOP alvo escolhível, o botão não converte. */}
     <Dialog open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={rotuloDaConversao} size="sm" testId="dialog-conversao"
@@ -325,6 +378,6 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     {/* `idem: true` como na confirmação e na conversão: cancelar venda confirmada ESTORNA estoque e
         cancela títulos, e um reenvio do MESMO pedido não pode virar um segundo estorno. Era a única das
         três ações desta tela que mandava o pedido sem chave. */}
-    <Confirm open={confirmar === "cancel"} onOpenChange={() => setConfirmar(null)} title="Cancelar documento" text="Vendas confirmadas têm estoque e títulos estornados." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, idem: true, body: { reason: "Cancelado pelo usuário" } })} />
+    <Confirm open={confirmar === "cancel"} onOpenChange={() => setConfirmar(null)} title="Cancelar documento" text="O documento será cancelado. Ele não movimentou estoque nem gerou conta a receber." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, idem: true, body: { reason: "Cancelado pelo usuário" } })} />
   </>;
 }

@@ -955,3 +955,110 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
   await expect(aviso, "classificada, a venda não fala de padrão automático").toHaveCount(0);
   v.semBloqueio();
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * VENDAS-A5-1 · A5-K1 — O DIÁLOGO "CONFIRMAR VENDA" DESTE WEB CONTRA A API DA BASE.
+ *
+ * O web desta PR pergunta à rota `GET /api/sales/sales/:id/previa-confirmacao` o que a confirmação vai fazer.
+ * Na janela em que o Vercel sobe antes do Railway, quem responde é o binário da base — e, se ele não declara a
+ * rota, a resposta é 404. O que não pode acontecer: o diálogo ficar "carregando" para sempre, tratar a
+ * ausência como recusa (botão desabilitado em toda venda) ou prometer efeito que ninguém previu. O que tem de
+ * acontecer: texto NEUTRO, botão HABILITADO, a confirmação funcionando pela base, e o aviso do detalhe na
+ * regra da A1 (venda aberta sem classificação), porque sem a prévia a tela não sabe mais do que isso.
+ *
+ * O mundo é MEDIDO na árvore da base (`scripts/lib/previa-confirmacao.mjs`) e cada um cobra a sua prova;
+ * nenhum dos dois ramos só passa. A venda classificada diante da base já é o caso A1-K5 (sem aviso).
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+function baseServePrevia(): boolean {
+  const arq = path.resolve(__dirname, "../../..", ".skew-previa-confirmacao.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão da prévia da confirmação ausente (${arq}): rode scripts/skew-previa-confirmacao.mjs antes do skew. `
+      + "Sem ela não há como saber qual ramo provar, e escolher o mais fácil seria certificar o que não se mediu.");
+  }
+  const d = JSON.parse(fs.readFileSync(arq, "utf8")) as { baseSha: string; ocorrencias: number; serve: boolean };
+  expect(d.ocorrencias, "contagem ambígua não decide ramo nenhum — o produtor deveria ter reprovado antes").toBeLessThanOrEqual(1);
+  const serve = d.ocorrencias === 1;
+  expect(serve, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(d.serve);
+  // A decisão tem de ser a DESTA árvore: um arquivo sobrado de outra base decidiria sobre o binário errado.
+  expect(d.baseSha, "a decisão foi medida na base que está servindo").toBe(fs.readFileSync(path.resolve(__dirname, "../../..", ".api-anterior.base"), "utf8").trim());
+  expect(process.env.SKEW_BASE_TEM_PREVIA_CONFIRMACAO ?? (serve ? "1" : "0"),
+    "SKEW_BASE_TEM_PREVIA_CONFIRMACAO não bate com a decisão recalculada — alguém fixou a variável por fora").toBe(serve ? "1" : "0");
+  console.log(`[skew] VENDAS-A5-1 · base ${d.baseSha} ${serve ? "SERVE" : "NÃO serve"} a prévia da confirmação (ocorrências=${d.ocorrencias})`);
+  return serve;
+}
+
+/** O texto NEUTRO do diálogo sem prévia — por extenso: é o contrato com o usuário. */
+const TEXTO_SEM_PREVIA = "A confirmação aplica o Tipo de Operação desta venda. Não foi possível carregar a prévia dos efeitos; o servidor recusa o que não puder executar.";
+/** O aviso da A1 quando a tela não tem a prévia — a regra decidida pelo id. */
+const AVISO_A1 = "Sem classificação: ao confirmar, a venda usará o padrão automático (primeira categoria de receita e primeiro centro de custo analíticos, pela ordem do código).";
+
+test("VENDAS-A5-1 · A5-K1 — contra a API da base, o diálogo de confirmação cai no texto neutro com o botão habilitado e confirma (ou, se a base já serve a prévia, mostra a prévia)", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const serve = baseServePrevia();
+  const insumos = await insumosDoDocumento(page, cabecalhos, s.empresaId);
+  // Uma venda PELA BASE, sem classificação e sem TOP: o caso em que o aviso da A1 aparece e a base confirma.
+  const id = await criarPelaBase(page, cabecalhos, "sales", insumos);
+  const caminho = `/api/sales/sales/${id}/previa-confirmacao`;
+  const ehPrevia = (r: { request(): { method(): string }; url(): string }) => r.request().method() === "GET" && new URL(r.url()).pathname === caminho;
+
+  // O FIO, medido direto no binário da base — é isto que a tela vai receber.
+  const direto = await page.request.get(`${API}${caminho}`, { headers: cabecalhos });
+
+  const central = page.getByTestId("central-vendas");
+  const aviso = page.getByTestId("classificacao-padrao-automatico");
+  const dlg = page.getByTestId("confirm-dialog");
+  const botao = dlg.getByTestId("confirm-dialog-confirm");
+  const avisoPedido = page.waitForResponse(ehPrevia);
+  await page.goto(`/vendas/sales/${id}`);
+  await expect(central).toBeVisible();
+  const lida = await (await page.request.get(`${API}/api/sales/sales/${id}`, { headers: cabecalhos })).json() as { code: string; status: string; categoria_financeira_id: string | null };
+  expect([lida.status, lida.categoria_financeira_id], "premissa: venda aberta e sem classificação na base").toEqual(["open", null]);
+  await expect(central.locator('[data-campo="Número"]'), "premissa: a tela desenhou ESTE documento").toContainText(lida.code);
+  const rAviso = await avisoPedido;
+
+  /** Abre o diálogo e devolve a resposta da pergunta que ELE fez — a espera nasce antes do clique que a dispara. */
+  const abrirDialogo = async () => {
+    const pedido = page.waitForResponse(ehPrevia);
+    await central.getByTestId("central-vendas-acoes").getByRole("button", { name: "Confirmar venda" }).click();
+    await expect(dlg.getByRole("heading", { name: "Confirmar venda" })).toBeVisible();
+    return pedido;
+  };
+  const confirmar = async () => {
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/sales/sales/${id}/confirm`);
+    await botao.click();
+    expect((await resposta).status(), "a base confirmou o pedido deste web").toBe(200);
+    expect(sql(`select status from erp.sales_documents where id = '${id}'`), "no banco: confirmada").toBe("confirmed");
+  };
+
+  if (!serve) {
+    // MUNDO LEGADO — NO FIO: a base não tem a rota, e responde 404 à tela (a pergunta do aviso e a do diálogo).
+    expect(direto.status(), "a base não declara a rota da prévia").toBe(404);
+    expect(rAviso.status(), "o aviso perguntou e a base respondeu 404").toBe(404);
+    await expect(aviso, "sem prévia, o aviso segue a regra da A1").toHaveText(AVISO_A1);
+    expect((await abrirDialogo()).status(), "o diálogo perguntou ao abrir e a base respondeu 404").toBe(404);
+    await expect(dlg.getByTestId("previa-confirmacao-neutra")).toHaveText(TEXTO_SEM_PREVIA);
+    await expect(dlg.getByTestId("previa-confirmacao"), "nenhum efeito prometido").toHaveCount(0);
+    await expect(dlg.getByTestId("previa-confirmacao-carregando"), "e não fica 'carregando' para sempre").toHaveCount(0);
+    await expect(botao, "o botão fica HABILITADO: quem recusa é o servidor").toBeEnabled();
+    await confirmar();
+    v.semBloqueio();
+    return;
+  }
+
+  // MUNDO ATUAL — a base já serve a prévia: o diálogo a mostra, em vez de tratar a base como servidor antigo.
+  expect(direto.status(), "a árvore da base declara a rota, então o binário responde").toBe(200);
+  const corpo = await direto.json() as { contractVersion: number; podeConfirmar: boolean };
+  expect([corpo.contractVersion, corpo.podeConfirmar]).toEqual([1, true]);
+  expect(rAviso.status()).toBe(200);
+  await expect(aviso, "com a prévia, o aviso nomeia o par").toContainText("padrão automático — categoria");
+  expect((await abrirDialogo()).status()).toBe(200);
+  await expect(dlg.getByTestId("previa-confirmacao")).toBeVisible();
+  await expect(dlg.getByTestId("previa-confirmacao-neutra"), "a base não é tratada como servidor antigo").toHaveCount(0);
+  await expect(botao).toBeEnabled();
+  await confirmar();
+  v.semBloqueio();
+});

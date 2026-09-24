@@ -4,12 +4,12 @@ import { D, money, isISODate, DomainError } from "@agro/shared";
 import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
-import { notFound, validation, err, denied } from "../lib/errors.js";
+import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js";
 import { consultaEscopada, exigirEmpresaDeLancamento, empresaScope, scopedById, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock } from "../services/stock-core.js";
-import { createTitles, installmentPlanSchema } from "../services/financial-core.js";
+import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
@@ -143,9 +143,13 @@ const recusaDeCampo = (campo: "categoria_financeira_id" | "centro_custo_id", men
  *
  * `contexto` só troca o TEXTO da recusa (origem da conversão, confirmação); a regra é uma só.
  */
-async function validarClassificacaoFinanceira(ctx: ServiceCtx, par: ClassificacaoFinanceira, contexto: "lancamento" | "origem" | "confirmacao" = "lancamento"): Promise<ClassificacaoFinanceira> {
-  const cat = await ctx.tx.query("select 1 from erp.financial_categories where id=$1 and organization_id=$2 and deleted_at is null and is_active and kind='analytic' and nature='income' for share", [par.categoriaFinanceiraId, ctx.orgId]);
-  const cc = await ctx.tx.query("select 1 from erp.cost_centers where id=$1 and organization_id=$2 and deleted_at is null and is_active and kind='analytic' for share", [par.centroCustoId, ctx.orgId]);
+async function validarClassificacaoFinanceira(ctx: ServiceCtx, par: ClassificacaoFinanceira, contexto: "lancamento" | "origem" | "confirmacao" = "lancamento", opcoes: { trava: boolean } = { trava: true }): Promise<ClassificacaoFinanceira> {
+  // `trava: false` só na PRÉVIA da confirmação (VENDAS-A5-1): ela lê para mostrar, não grava nada, e não pode
+  // fazer a inativação de uma categoria esperar por quem só abriu um diálogo. A REGRA (as duas consultas e as
+  // recusas) é a mesma; muda só o `for share`.
+  const trava = opcoes.trava ? " for share" : "";
+  const cat = await ctx.tx.query(`select 1 from erp.financial_categories where id=$1 and organization_id=$2 and deleted_at is null and is_active and kind='analytic' and nature='income'${trava}`, [par.categoriaFinanceiraId, ctx.orgId]);
+  const cc = await ctx.tx.query(`select 1 from erp.cost_centers where id=$1 and organization_id=$2 and deleted_at is null and is_active and kind='analytic'${trava}`, [par.centroCustoId, ctx.orgId]);
   const texto = (base: string) => contexto === "origem" ? `A classificação do documento de origem deixou de valer. ${base}`
     : contexto === "confirmacao" ? `A classificação financeira desta venda deixou de valer. ${base}. Reative-a no cadastro ou cancele a venda` : base;
   if (!cat.rowCount) throw recusaDeCampo("categoria_financeira_id", texto(MSG_CATEGORIA_INVALIDA));
@@ -450,15 +454,83 @@ async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execuca
  * │ desta fatia é que configuração não cumprida não produz efeito nenhum.                              │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
-async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
-  const d = await getDoc(ctx, id, "sale", { lock: true }) as Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
+/** A venda como a confirmação a lê (`getDoc` da variante `sale`). */
+type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
+/** A classificação que vai para o rateio dos títulos: a do documento, ou o recuo "padrão legado". */
+type ClassificacaoResolvida = ClassificacaoFinanceira & { origem: "documento" | "padrão legado" };
+
+/** O que a confirmação vai fazer com esta venda — decidido ANTES do primeiro efeito. */
+interface PlanoDaConfirmacao {
+  /** `null` só na prévia, quando a recusa veio antes dela (situação, política). */
+  politica: PoliticaEfetivaDaVenda | null;
+  baixaEstoque: boolean;
+  geraTitulos: boolean;
+  /** `null` quando não haverá título ou quando a classificação foi recusada (só na prévia). */
+  classificacao: ClassificacaoResolvida | null;
+  /** O parcelamento gravado no documento, lido na hora em que alguém precisa dele — como sempre foi. */
+  lerPlano: () => InstallmentPlan | null;
+}
+
+/**
+ * COMO O PLANEJAMENTO TRATA CADA ETAPA — a única diferença entre confirmar e prever (VENDAS-A5-1).
+ *
+ *   `trava`            a confirmação lê a classificação `for share`; a prévia não trava nada.
+ *   `recusar`          a confirmação LANÇA a recusa (a primeira encerra, como sempre); a prévia a anota e
+ *                      segue para as etapas que ainda fazem sentido, para mostrar o quadro inteiro.
+ *   `conferirPeriodo`  a confirmação chama direto; a prévia chama sob SAVEPOINT. A conferência é uma função
+ *                      do banco que LEVANTA exceção: sem o savepoint, a transação da prévia ficaria abortada
+ *                      e a etapa seguinte (a classificação) falharia com "current transaction is aborted".
+ */
+interface ModoDoPlanejamento {
+  trava: boolean;
+  recusar(e: DomainError): void;
+  conferirPeriodo(conferir: () => Promise<void>): Promise<void>;
+}
+const MODO_CONFIRMACAO: ModoDoPlanejamento = {
+  trava: true,
+  recusar: (e) => { throw e; },
+  conferirPeriodo: (conferir) => conferir(),
+};
+
+/** Valor, vencimento e parcelamento dos títulos da venda — o que `createTitles` recebe e o que a prévia mostra. */
+function tituloDaVenda(d: VendaParaConfirmar, plan: InstallmentPlan | null) {
+  // O vencimento do legado cai na data do documento quando não há outro; sob `exigeVencimento` configurado
+  // esse recuo não existe — a falta já foi recusada no planejamento, antes do primeiro efeito.
+  return { amount: d.total, dueDate: plan?.first_due_date ?? d.due_date ?? d.document_date, plan };
+}
+
+/**
+ * O PLANEJAMENTO DA CONFIRMAÇÃO — UMA função, usada pela confirmação E pela prévia (VENDAS-A5-1).
+ *
+ * Decide, NESTA ORDEM, o que a confirmação conferia antes de qualquer efeito: situação → política da versão
+ * congelada e gate → exigências da versão → período → classificação financeira. Quem só MOSTRA o efeito
+ * (a prévia) não pode ter uma cópia desta regra: uma cópia "equivalente" divergiria na primeira fatia que
+ * mexesse em uma das duas, e a tela prometeria o que o servidor não faz. O que muda entre as duas está
+ * inteiro em `modo`.
+ */
+async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execucaoConfiguradaHabilitada: boolean, modo: ModoDoPlanejamento): Promise<PlanoDaConfirmacao> {
+  const lerPlano = () => d.installment_plan && (d.installment_plan as { installments?: number }).installments ? installmentPlanSchema.parse(d.installment_plan) : null;
+  const plano: PlanoDaConfirmacao = { politica: null, baixaEstoque: false, geraTitulos: false, classificacao: null, lerPlano };
+
   // A variante já foi amarrada no carregamento (`getDoc(..., "sale")`): orçamento e pedido passados aqui
   // respondem 404, como qualquer UUID que a rota de vendas não serve. A conferência antiga
   // (`d.kind !== "sale"` → 422) distinguia "existe na variante vizinha" de "não existe" — diferença que a
   // superfície de recusa não pode expor.
-  if (d.status === "confirmed" || d.status === "invoiced") throw err("ALREADY_CONFIRMED", "Venda já confirmada"); if (d.status === "cancelled") throw err("ALREADY_CANCELLED", "Venda cancelada");
-  const politica = await politicaDaVenda(ctx, d.tipo_operacao_versao_id, execucaoConfiguradaHabilitada);
-  const lerPlano = () => d.installment_plan && (d.installment_plan as { installments?: number }).installments ? installmentPlanSchema.parse(d.installment_plan) : null;
+  if (d.status === "confirmed" || d.status === "invoiced") { modo.recusar(err("ALREADY_CONFIRMED", "Venda já confirmada")); return plano; }
+  if (d.status === "cancelled") { modo.recusar(err("ALREADY_CANCELLED", "Venda cancelada")); return plano; }
+
+  let politica: PoliticaEfetivaDaVenda;
+  try {
+    politica = await politicaDaVenda(ctx, d.tipo_operacao_versao_id, execucaoConfiguradaHabilitada);
+  } catch (e) {
+    if (!(e instanceof DomainError)) throw e;
+    // Sem política não há o que planejar: a prévia para aqui, como a confirmação.
+    modo.recusar(e); return plano;
+  }
+  plano.politica = politica;
+  // ESTOQUE: legado e "saída" configurada baixam; "nenhum" não. FINANCEIRO: legado e "a receber" geram título.
+  plano.baixaEstoque = politica.estoque.autoridade === "legado" || politica.estoque.efeito === "saida";
+  plano.geraTitulos = politica.financeiro.autoridade === "legado" || politica.financeiro.efeito === "receber";
 
   // AS EXIGÊNCIAS DA VERSÃO CONGELADA — todas conferidas, todas juntas, antes de qualquer efeito.
   const exigencias: { caminho: string; mensagem: string }[] = [];
@@ -470,37 +542,51 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
     if (politica.financeiro.exigeVencimento && !(lerPlano()?.first_due_date ?? d.due_date)) exigencias.push({ caminho: "financeiro.exigeVencimento", mensagem: "Informe o vencimento" });
   }
   if (exigencias.length) {
-    throw new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA",
+    modo.recusar(new DomainError("TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA",
       `A operação desta venda exige dados que o documento não tem: ${exigencias.map((e) => e.mensagem.toLowerCase()).join("; ")}.`,
-      { exigencias });
+      { exigencias }));
   }
 
-  await assertPeriodOpen(ctx.tx, ctx.orgId, d.empresa_id, d.document_date);
+  await modo.conferirPeriodo(() => assertPeriodOpen(ctx.tx, ctx.orgId, d.empresa_id, d.document_date));
 
   // CLASSIFICAÇÃO FINANCEIRA (VENDAS-A1) — resolvida ANTES do primeiro efeito, e só quando HAVERÁ título:
   // com o financeiro configurado "nenhum" nada é exigido nem validado (efeito que não acontece não exige
   // cadastro). Documento classificado → revalidado pela MESMA porta, e NUNCA recua para a "primeira por
   // código" (seria trocar em silêncio a escolha do usuário). Documento sem classificação → o recuo de sempre.
-  const geraTitulos = politica.financeiro.autoridade === "legado" || politica.financeiro.efeito === "receber";
-  let classificacao: (ClassificacaoFinanceira & { origem: "documento" | "padrão legado" }) | null = null;
-  if (geraTitulos) {
+  if (plano.geraTitulos) {
     if (d.categoria_financeira_id && d.centro_custo_id) {
-      classificacao = { ...await validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: d.categoria_financeira_id, centroCustoId: d.centro_custo_id }, "confirmacao"), origem: "documento" };
+      try {
+        plano.classificacao = { ...await validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: d.categoria_financeira_id, centroCustoId: d.centro_custo_id }, "confirmacao", { trava: modo.trava }), origem: "documento" };
+      } catch (e) {
+        if (!(e instanceof DomainError)) throw e;
+        modo.recusar(e);
+      }
     } else {
       // Receita: categoria padrão de venda de produtos (1ª analítica de receita) e centro de custo padrão da fazenda
       const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='income' and kind='analytic' and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
       const cc = (await ctx.tx.query<{ id: string }>("select cc.id from erp.cost_centers cc where cc.organization_id=$1 and cc.kind='analytic' and cc.deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-      if (!cat || !cc) throw validation("Cadastre uma categoria financeira de receita e um centro de custo analítico");
-      classificacao = { categoriaFinanceiraId: cat.id, centroCustoId: cc.id, origem: "padrão legado" };
+      if (!cat || !cc) modo.recusar(validation("Cadastre uma categoria financeira de receita e um centro de custo analítico"));
+      else plano.classificacao = { categoriaFinanceiraId: cat.id, centroCustoId: cc.id, origem: "padrão legado" };
     }
   }
+  return plano;
+}
+
+async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
+  const d = await getDoc(ctx, id, "sale", { lock: true }) as VendaParaConfirmar;
+  // O PLANEJAMENTO é o mesmo da prévia (`planejarConfirmacao`); aqui, no modo que LANÇA a primeira recusa.
+  const plano = await planejarConfirmacao(ctx, d, execucaoConfiguradaHabilitada, MODO_CONFIRMACAO);
+  // No modo da confirmação toda recusa lança: chegar aqui sem política é impossível — e seguir sem ela seria
+  // executar efeito sem decisão.
+  const politica = plano.politica;
+  if (!politica) throw new Error("planejarConfirmacao voltou sem política no modo da confirmação");
+  const { classificacao, lerPlano } = plano;
 
   // ESTOQUE. Legado e "saída" configurada chamam a MESMA primitiva com os MESMOS identificadores; "nenhum"
   // não chama nada. O item sem armazém continua fora da baixa nos dois caminhos que baixam — com
   // `exigeArmazem` ele já foi recusado acima.
   const movimentos: string[] = [];
-  const baixaEstoque = politica.estoque.autoridade === "legado" || politica.estoque.efeito === "saida";
-  if (baixaEstoque) {
+  if (plano.baixaEstoque) {
     for (const it of d.items) if (it.warehouse_id) movimentos.push((await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "sale", direction: -1, quantity: it.quantity, sourceType: "sales_documents", sourceId: id, date: d.shipping_date ?? d.document_date, note: `Venda ${d.code}` })).id);
   }
 
@@ -509,11 +595,8 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   // título e também não exige categoria nem centro — exigir cadastro para um efeito que não acontece seria
   // recusar a venda por um motivo que não existe.
   let titleIds: string[] = [];
-  if (geraTitulos && classificacao) {
-    const plan = lerPlano();
-    // O vencimento do legado cai na data do documento quando não há outro; sob `exigeVencimento` configurado
-    // esse recuo não existe — a falta já foi recusada acima, antes do primeiro efeito.
-    const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "receivable", number: `VND-${d.code}`, personId: d.client_id, amount: d.total, emissionDate: d.document_date, dueDate: plan?.first_due_date ?? d.due_date ?? d.document_date, note: `Venda ${d.code}`, isDeductible: Boolean((d.installment_plan as { is_deductible?: boolean }).is_deductible), apportionment: [{ financialCategoryId: classificacao.categoriaFinanceiraId, costCenterId: classificacao.centroCustoId, percentage: "100" }], sourceType: "sales_documents", sourceId: id, plan });
+  if (plano.geraTitulos && classificacao) {
+    const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "receivable", number: `VND-${d.code}`, personId: d.client_id, ...tituloDaVenda(d, lerPlano()), emissionDate: d.document_date, note: `Venda ${d.code}`, isDeductible: Boolean((d.installment_plan as { is_deductible?: boolean }).is_deductible), apportionment: [{ financialCategoryId: classificacao.categoriaFinanceiraId, costCenterId: classificacao.centroCustoId, percentage: "100" }], sourceType: "sales_documents", sourceId: id });
     titleIds = t.ids;
   }
 
@@ -541,6 +624,99 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
     ...(titleIds.length && classificacao ? { classificacaoFinanceira: { categoriaFinanceiraId: classificacao.categoriaFinanceiraId, centroCustoId: classificacao.centroCustoId, origem: classificacao.origem } } : {})
   });
   return { id, status: "confirmed", title_ids: titleIds };
+}
+
+/** Versão do contrato da prévia da confirmação. A web confere forma E versão antes de usar o corpo. */
+export const CONTRATO_PREVIA_CONFIRMACAO = 1;
+
+/**
+ * PRÉVIA DA CONFIRMAÇÃO (VENDAS-A5-1) — o que a confirmação desta venda faria AGORA, sem fazer nada.
+ *
+ * É o `planejarConfirmacao` da confirmação, no modo que ANOTA as recusas em vez de lançá-las: a primeira
+ * recusa da lista é exatamente a que a confirmação daria (mesmo código, mensagem e detalhes), e as seguintes
+ * mostram o resto do quadro. Não trava linha (nem a venda, nem categoria e centro), não grava nada (nem
+ * auditoria, nem chave de idempotência) e não aborta a transação: o período roda sob savepoint.
+ *
+ * A PRÉVIA É APRESENTAÇÃO; A CONFIRMAÇÃO É A AUTORIDADE. Entre abrir o diálogo e confirmar o cadastro pode
+ * mudar, e é a confirmação que decide com a trava. Recusa que nasce DENTRO das primitivas de efeito — saldo
+ * de estoque insuficiente e as demais conferências de `postStock`, valor do título não positivo em
+ * `createTitles` — não está no planejamento e, por isso, não aparece aqui. A exceção é o parcelamento: a
+ * prévia faz a MESMA conta de parcelas (`parcelasDoTitulo`) e, se ela recusar, a recusa entra na lista.
+ *
+ * Autorização pela MESMA `getDoc` do GET do documento: a prévia responde o que o GET responde para o mesmo
+ * id — outro tenant, fora do escopo, inexistente, excluído e id de outra variante dão a MESMA 404 (o id
+ * malformado, hoje, é 500 nos dois: dívida de `getDoc`, não desta rota).
+ */
+async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
+  const d = await getDoc(ctx, id, "sale") as VendaParaConfirmar;
+  const recusas: DomainError[] = [];
+  const modo: ModoDoPlanejamento = {
+    trava: false,
+    recusar: (e) => { recusas.push(e); },
+    conferirPeriodo: async (conferir) => {
+      await ctx.tx.query("savepoint previa_confirmacao_periodo");
+      try {
+        await conferir();
+        await ctx.tx.query("release savepoint previa_confirmacao_periodo");
+      } catch (e) {
+        await ctx.tx.query("rollback to savepoint previa_confirmacao_periodo");
+        // A MESMA tradução que a confirmação recebe no plugin de erros (`fromPgError`): mesmo código e texto.
+        const recusa = e instanceof DomainError ? e : fromPgError(e);
+        if (!recusa) throw e;
+        recusas.push(recusa);
+      }
+    },
+  };
+  const plano = await planejarConfirmacao(ctx, d, execucaoConfiguradaHabilitada, modo);
+
+  // Código e nome de categoria e centro que IRÃO para o rateio — a do documento ou a do recuo.
+  let classificacao: { origem: ClassificacaoResolvida["origem"]; categoria: { id: string; codigo: string; nome: string }; centro: { id: string; codigo: string; nome: string } } | null = null;
+  if (plano.classificacao) {
+    const r = (await ctx.tx.query<{ cat_codigo: string; cat_nome: string; cc_codigo: string; cc_nome: string }>(
+      `select c.code as cat_codigo, c.name as cat_nome, cc.code as cc_codigo, cc.name as cc_nome
+         from erp.financial_categories c, erp.cost_centers cc
+        where c.id = $1 and c.organization_id = $3 and cc.id = $2 and cc.organization_id = $3`,
+      [plano.classificacao.categoriaFinanceiraId, plano.classificacao.centroCustoId, ctx.orgId])).rows[0];
+    if (r) classificacao = { origem: plano.classificacao.origem,
+      categoria: { id: plano.classificacao.categoriaFinanceiraId, codigo: r.cat_codigo, nome: r.cat_nome },
+      centro: { id: plano.classificacao.centroCustoId, codigo: r.cc_codigo, nome: r.cc_nome } };
+  }
+
+  // O primeiro vencimento sai da MESMA conta de parcelas que `createTitles` grava (entrada, intervalo, dia fixo).
+  // Se a conta recusa (entrada maior que o total, número de parcelas inválido), a confirmação recusaria com a
+  // MESMA mensagem ao gerar os títulos — então é recusa prevista, não data omitida em silêncio. Valor não
+  // positivo fica de fora: `createTitles` o recusa ANTES da conta, com outra mensagem, e a prévia não copia
+  // essa conferência (risco declarado acima). Erro que não é de domínio não é recusa: sobe.
+  let primeiroVencimento: string | null = null;
+  if (plano.politica && plano.geraTitulos && D(d.total).gt(0)) {
+    try {
+      const parcelas = parcelasDoTitulo(tituloDaVenda(d, plano.lerPlano()));
+      primeiroVencimento = parcelas.map((p) => p.dueDate).sort()[0] ?? null;
+    } catch (e) {
+      if (!(e instanceof DomainError)) throw e;
+      recusas.push(e);
+    }
+  }
+
+  const comArmazem = d.items.filter((it) => it.warehouse_id).length;
+  return {
+    contractVersion: CONTRATO_PREVIA_CONFIRMACAO,
+    podeConfirmar: recusas.length === 0,
+    recusas: recusas.map((e) => e.toJSON()),
+    // `efeito: null` = a recusa veio antes da política; não há o que prever.
+    estoque: {
+      efeito: plano.politica ? (plano.baixaEstoque ? "baixa" : "nenhum") : null,
+      itensQueBaixam: plano.baixaEstoque ? comArmazem : 0,
+      itensSemArmazem: plano.baixaEstoque ? d.items.length - comArmazem : 0,
+    },
+    financeiro: {
+      efeito: plano.politica ? (plano.geraTitulos ? "receber" : "nenhum") : null,
+      valor: plano.geraTitulos ? d.total : null,
+      primeiroVencimento,
+      classificacao,
+    },
+    politica: plano.politica ? { origem: plano.politica.origem, ...resumoDaPoliticaDaVenda(plano.politica) } : null,
+  };
 }
 
 export default async function salesRoutes(app: FastifyInstance) {
@@ -978,6 +1154,9 @@ export default async function salesRoutes(app: FastifyInstance) {
      * recusa explícita, nenhuma execução, nada duplicado — e a web gera chave nova a cada envio, de modo
      * que quem atravessaria a janela é um cliente programático que guarde a própria chave.
      */
+    // PRÉVIA DA CONFIRMAÇÃO (VENDAS-A5-1): leitura, com a capacidade de LER a venda — quem pode abrir o
+    // documento pode ver o que a confirmação faria; confirmar continua exigindo `sales.edit`.
+    if (kind === "sale") app.get(`${base}/:id/previa-confirmacao`, async (req) => runService(app, req, "sales.view", (ctx) => previaDaConfirmacao(ctx, (req.params as { id: string }).id, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED)));
     if (kind === "sale") app.post(`${base}/:id/confirm`, async (req) => runService(app, req, "sales.edit", async (ctx) => { const { id } = req.params as { id: string }; await exigirDocumentoVisivel(ctx, id, "sale"); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, { action: "confirm_sales_document", sourceId: id, actorId: ctx.user.id }, () => confirmSale(ctx, id, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED))).result; }));
   }
   // Curva ABC e relatórios de vendas simples

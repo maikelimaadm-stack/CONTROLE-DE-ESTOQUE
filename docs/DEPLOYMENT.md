@@ -621,17 +621,31 @@ conferir.
    conexão operacional e com a credencial real, publicada com o denominador, e
    `declaram_execucao_configurada` igual a zero.
 4. **O diálogo de confirmação da venda corrigido, em fatia própria, mesclada e implantada** — com o web
-   servindo, em `/api/build`, um commit que contém a correção. O diálogo "Confirmar venda"
-   (`apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx`) afirma hoje "Baixa o estoque dos itens com
-   armazém e gera as contas a receber." Na fase 1 isso é verdade: com o gate desligado nenhuma versão
-   executa configuração, e toda venda que confirma, confirma pelo legado. Na fase 2 deixa de ser: uma venda
-   de versão configurada pode não movimentar estoque, não gerar título ou ser recusada por exigência não
-   atendida (`docs/TIPO-OPERACAO-CONTRACT.md` §12.5), e o diálogo prometeria um efeito que não vai
-   acontecer. A correção é de APRESENTAÇÃO — o servidor continua sendo a autoridade do efeito — e não cabe
-   na TOP-CONFIG-04A, que não muda a tela de venda (W12 de `top-configuracao-editor.spec.ts`). A mesma
-   premissa está na dica da criação da venda (`vendas/[kind]/new/page.tsx`) e no diálogo de cancelamento
-   ("Vendas confirmadas têm estoque e títulos estornados."): a fatia do diálogo os revisa junto, ou declara
-   por que não.
+   servindo, em `/api/build`, um commit que contém a correção. Até a VENDAS-A5-1, o diálogo "Confirmar
+   venda" (`apps/web/src/app/(app)/vendas/[kind]/[id]/page.tsx`) afirmava, para toda venda, "Baixa o
+   estoque dos itens com armazém e gera as contas a receber." Na fase 1 isso é verdade: com o gate
+   desligado nenhuma versão executa configuração, e toda venda que confirma, confirma pelo legado. Na fase
+   2 deixa de ser: uma venda de versão configurada pode não movimentar estoque, não gerar título ou ser
+   recusada por exigência não atendida (`docs/TIPO-OPERACAO-CONTRACT.md` §12.5), e o diálogo prometeria um
+   efeito que não vai acontecer. A correção é de APRESENTAÇÃO — o servidor continua sendo a autoridade do
+   efeito — e não cabia na TOP-CONFIG-04A, que não muda a tela de venda (W12 de
+   `top-configuracao-editor.spec.ts`). A mesma premissa estava na dica da criação da venda
+   (`vendas/[kind]/new/page.tsx`) e no diálogo de cancelamento ("Vendas confirmadas têm estoque e títulos
+   estornados."), e a fatia do diálogo os revisa junto.
+
+   **A correção é a VENDAS-A5-1** (decisão 249; contrato em `docs/TIPO-OPERACAO-CONTRACT.md` §12.5, "A
+   prévia da confirmação"). O diálogo diz o que a confirmação vai fazer NESTA venda segundo a prévia do
+   servidor, calculada pela MESMA função que executa a confirmação (`planejarConfirmacao`); com recusa
+   prevista mostra a recusa e desabilita o Confirmar; sem a prévia (API anterior na janela de deploy),
+   mostra um texto neutro, verdadeiro para qualquer servidor. A dica da criação e o diálogo de cancelamento
+   deixam de prometer efeito, e o aviso do padrão automático da VENDAS-A1 passa a seguir a prévia. A fatia
+   não liga o gate e não muda efeito, código, ordem nem mensagem da confirmação.
+
+   **Estado: `PENDING`** até o web servir, em `/api/build`, um commit que contenha a VENDAS-A5-1 — em
+   CADA superfície web listada em § "Superfície web", com o `sha` servido tendo o merge da fatia como
+   ancestral (`git merge-base --is-ancestor <merge da VENDAS-A5-1> <sha servido>`). Quem confere e registra
+   aqui, com data (UTC) e o `sha` de cada superfície, é a sessão revisora, DEPOIS do deploy. Merge, CI
+   verde ou "deploy verde" não satisfazem o item, e a PR da própria fatia não o marca `OK`.
 5. **Autorização explícita do Maike, pedida na hora, para ESTA ação** — autorização dada ao merge ou à
    fase 1 não vale para a fase 2 (`.claude/rules/security.md` § Produção).
 
@@ -738,8 +752,9 @@ DOCUMENTO — nos dois caminhos, legado e configurado. O recuo antigo — a PRIM
 **analítica** e o PRIMEIRO centro de custo **analítico**, pela ordem do código — só vale para documento SEM
 classificação (cliente anterior à VENDAS-A1 ou chamada de API sem os campos). Nesse documento, o detalhe
 mostra "Não informada" na categoria e "Não informado" no centro de custo e, na venda ainda aberta, avisa que a
-confirmação usará o "padrão automático"; depois de confirmada, é a AUDITORIA da confirmação que registra a
-origem "padrão legado" e os ids usados. Documento classificado cuja categoria ou centro deixou de valer é RECUSADO
+confirmação usará o "padrão automático" (desde a VENDAS-A5-1, só quando a prévia da confirmação prevê que ela pode
+acontecer e vai gerar contas a receber pelo recuo, e já nomeando a categoria e o centro — decisão 249); depois de confirmada, é a AUDITORIA
+da confirmação que registra a origem "padrão legado" e os ids usados. Documento classificado cuja categoria ou centro deixou de valer é RECUSADO
 na confirmação, nunca recua. Confirmar continua exigindo categoria de receita analítica e centro de custo
 analítico cadastrados e ativos: sem centro de custo nenhum (a produção hoje tem 0), a venda não confirma.
 
