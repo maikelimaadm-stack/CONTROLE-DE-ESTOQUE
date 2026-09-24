@@ -16,10 +16,14 @@
 -- POR QUE UM PAR. Categoria sem centro (ou o inverso) seria meia escolha: a confirmação teria de completar a
 -- outra metade pela ordem do código, misturando decisão do usuário com padrão automático no mesmo título.
 --
--- A GUARDA (seção 7), no molde da 0023: um binário da API ANTERIOR a esta fatia confirmaria uma venda
--- classificada pela "primeira por código", em silêncio (instância antiga no pool durante o deploy, ou
--- rollback do binário). Invariante crítica mora no banco: venda classificada só entra em confirmed/invoiced
--- com a marca `app.venda_classificacao_financeira = <id da venda>`, que só o binário novo grava.
+-- AS DUAS GUARDAS. Um binário da API ANTERIOR a esta fatia (instância antiga no pool durante o deploy, ou
+-- rollback do binário) ignora a classificação por dois caminhos, e cada um tem a sua guarda no banco:
+--   · seção 7 (no molde da 0023): ele CONFIRMARIA uma venda classificada pela "primeira por código", em
+--     silêncio. Venda classificada só entra em confirmed/invoiced com a marca
+--     `app.venda_classificacao_financeira = <id da venda>`, que só o binário novo grava;
+--   · seção 7b: ele CONVERTERIA um orçamento ou pedido classificado montando o derivado campo a campo, SEM o
+--     par — o derivado nasceria sem classificação e a guarda da seção 7 nem dispararia na confirmação dele.
+--     Documento derivado de origem classificada só nasce classificado.
 --
 -- NATUREZA: aditiva. Nenhum UPDATE, nenhum DELETE, nenhuma linha muda (pós-condição da seção 8 prova).
 --
@@ -123,6 +127,47 @@ create trigger trg_sales_documents_classificacao_financeira
         and NEW.categoria_financeira_id is not null)
   execute function erp.venda_classificacao_financeira_guarda();
 
+-- ---------- 7b) a guarda da conversão ----------
+-- INVARIANTE: documento derivado (origin_document_id preenchido) de origem classificada nasce classificado.
+-- O binário novo já cumpre sozinho: a conversão copia o par da origem e o revalida, ou recusa com 422 antes
+-- de gravar. Quem esbarra aqui é só o binário ANTERIOR, que monta o derivado campo a campo sem conhecer o par.
+--
+-- SÓ O INSERT de derivado sem classificação executa a função (a cláusula `when` filtra antes): documento
+-- novo sem origem, derivado já classificado e todo UPDATE passam sem custo. A conversão é o ÚNICO escritor
+-- de `origin_document_id` na API (`writeDoc` chamado com `origin` só pela rota de conversão).
+--
+-- A LEITURA DA ORIGEM RODA COMO INVOKER, sob a RLS da própria conversão — sem SECURITY DEFINER. A conversão
+-- acabou de ler e travar essa mesma origem, na mesma transação, com a mesma GUC de organização, usuário e
+-- escopo; derivado e origem são da mesma empresa (a conversão copia `empresa_id`). Logo a origem está
+-- visível aqui sempre que a conversão existiu. Um DEFINER só serviria para ler o que a RLS esconde, e isso é
+-- justamente o que esta guarda não precisa: ela nunca ampliaria o que a transação já enxerga.
+--
+-- VALIDATION_ERROR é o código que QUALQUER binário anterior já mapeia para 422 (`fromPgError`, P0001). A
+-- mensagem não carrega identificador: fala do documento que o usuário está convertendo.
+create or replace function erp.venda_classificacao_financeira_conversao_guarda() returns trigger
+language plpgsql
+set search_path = pg_catalog, erp
+as $$
+begin
+  if exists (select 1 from erp.sales_documents o
+              where o.id = NEW.origin_document_id
+                and o.organization_id = NEW.organization_id
+                and o.categoria_financeira_id is not null) then
+    raise exception 'VALIDATION_ERROR: o documento de origem tem classificacao financeira, que este servidor nao copia; a conversao nao foi feita'
+      using errcode = 'P0001';
+  end if;
+  return NEW;
+end $$;
+
+revoke all on function erp.venda_classificacao_financeira_conversao_guarda() from public;
+
+drop trigger if exists trg_sales_documents_classificacao_conversao on erp.sales_documents;
+create trigger trg_sales_documents_classificacao_conversao
+  before insert on erp.sales_documents
+  for each row
+  when (NEW.origin_document_id is not null and NEW.categoria_financeira_id is null)
+  execute function erp.venda_classificacao_financeira_conversao_guarda();
+
 -- ---------- 8) pós-condições ----------
 do $$
 declare
@@ -150,6 +195,13 @@ begin
      and t.tgname = 'trg_sales_documents_classificacao_financeira' and not t.tgisinternal and t.tgenabled = 'O';
   if v_n <> 1 then
     raise exception 'VENDAS-A1: o gatilho de guarda nao foi criado (ou nasceu desabilitado)';
+  end if;
+  select count(*) into v_n from pg_trigger t join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+   where n.nspname = 'erp' and c.relname = 'sales_documents'
+     and t.tgname = 'trg_sales_documents_classificacao_conversao' and not t.tgisinternal and t.tgenabled = 'O';
+  if v_n <> 1 then
+    raise exception 'VENDAS-A1: o gatilho de guarda da conversao nao foi criado (ou nasceu desabilitado)';
   end if;
   -- aditiva de verdade: nenhuma linha nasce classificada
   if exists (select 1 from erp.sales_documents where categoria_financeira_id is not null or centro_custo_id is not null) then

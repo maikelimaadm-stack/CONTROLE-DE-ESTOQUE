@@ -790,12 +790,13 @@ A fatia acrescenta `categoria_financeira_id` e `centro_custo_id` (em PAR) a `erp
 confirmação gerar as contas a receber com a classificação do documento (decisão 248). A migration
 `0024_venda_classificacao_financeira.sql` é **aditiva**: duas colunas anuláveis, o CHECK do par, chaves
 candidatas `unique (id, organization_id)` em `erp.financial_categories` e `erp.cost_centers`, FKs compostas
-com o tenant e o gatilho `trg_sales_documents_classificacao_financeira`. Sem backfill, sem default, sem NOT
+com o tenant e dois gatilhos de guarda: `trg_sales_documents_classificacao_financeira` (confirmação) e
+`trg_sales_documents_classificacao_conversao` (conversão). Sem backfill, sem default, sem NOT
 NULL, sem corrigir dado — o item (2) da decisão 240 (P1 recente para migration destrutiva) **não se aplica**.
 
 **Implantação — ordem: banco (0024) → API → web.** O pre-deploy da API aplica a 0024 como qualquer
-migration; enquanto nenhum documento é classificado, o gatilho deixa passar toda confirmação, então uma
-instância anterior no pool durante o deploy não é barrada por documento antigo. A web nova só mostra e envia
+migration; enquanto nenhum documento é classificado, os dois gatilhos deixam passar toda confirmação e toda
+conversão, então uma instância anterior no pool durante o deploy não é barrada por documento antigo. A web nova só mostra e envia
 os campos quando `GET /api/sales/<variante>/operation-types` declara `capacidades.classificacaoFinanceira = 1`
 (o `contractVersion` continua 1); contra uma API anterior os campos não aparecem e o Salvar segue a regra de
 antes. **Janela de indisponibilidade: NÃO precisa.**
@@ -804,22 +805,34 @@ antes. **Janela de indisponibilidade: NÃO precisa.**
 
 - **Web:** livre — a web anterior não conhece os campos e a API nova preserva o gravado quando o campo vem
   ausente no PUT.
-- **API (binário):** o binário anterior ignora a classificação e confirmaria pela "primeira por código"; o
-  gatilho da 0024 o faz RECUSAR a confirmação de venda classificada. É seguro no sentido de não mentir, mas
-  deixa essas vendas sem confirmação até o binário voltar. Por isso, **ANTES de reverter o binário da API,
-  CONTAR as vendas classificadas não confirmadas** (LEITURA, pela conexão operacional; `PENDING` até ser
-  executada com a credencial real), publicando o denominador junto:
+- **API (binário):** o binário anterior ignora a classificação por DOIS caminhos, e a 0024 barra os dois:
+  - **confirmação:** ele confirmaria venda classificada pela "primeira por código"; o gatilho
+    `trg_sales_documents_classificacao_financeira` o faz RECUSAR;
+  - **conversão:** ele montaria o derivado de um orçamento ou pedido classificado SEM o par (e a venda derivada
+    escaparia da guarda da confirmação); o gatilho `trg_sales_documents_classificacao_conversao` o faz
+    RECUSAR, a origem continua aberta e nenhum derivado nasce.
+
+  É seguro no sentido de não mentir, mas deixa esses documentos parados até o binário voltar. Por isso,
+  **ANTES de reverter o binário da API, CONTAR** (LEITURA, pela conexão operacional; `PENDING` até ser
+  executada com a credencial real), publicando os denominadores junto:
 
 ```sql
 select count(*) filter (where kind = 'sale' and deleted_at is null) as vendas,
        count(*) filter (where kind = 'sale' and deleted_at is null
                          and categoria_financeira_id is not null
-                         and status not in ('confirmed','invoiced','cancelled')) as classificadas_nao_confirmadas
+                         and status not in ('confirmed','invoiced','cancelled')) as vendas_classificadas_nao_confirmadas,
+       count(*) filter (where kind in ('budget','order') and deleted_at is null) as orcamentos_e_pedidos,
+       count(*) filter (where kind in ('budget','order') and deleted_at is null
+                         and categoria_financeira_id is not null
+                         and status not in ('converted','cancelled')) as orcamentos_e_pedidos_classificados_abertos
   from erp.sales_documents;
 ```
 
-  `classificadas_nao_confirmadas` diz quantas vendas ficariam sem poder confirmar com o binário anterior. Um
-  número diferente de zero exige decisão explícita do Maike antes da reversão.
+  `vendas_classificadas_nao_confirmadas` diz quantas vendas o binário anterior não vai confirmar;
+  `orcamentos_e_pedidos_classificados_abertos` diz quantos orçamentos e pedidos ele não vai converter (a
+  conversão recusa só `converted` e `cancelled` — `assertConvertible` —, por isso o filtro é por exclusão e
+  pega `open`, `approved` e qualquer situação nova). Qualquer um dos dois diferente de zero exige decisão
+  explícita do Maike antes da reversão.
 - **Banco:** a 0024 fica — migration aplicada é histórico, e as colunas anuláveis são inertes para o
   binário anterior.
 

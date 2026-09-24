@@ -195,7 +195,7 @@ test("A1-W2 — orçamento e pedido exigem os campos, e a conversão leva a clas
   await expect(page.getByTestId("classificacao-padrao-automatico")).toHaveCount(0);
 });
 
-test("A1-W3 — documento sem classificação (cliente anterior, pela API): 'Não informada' e, na venda aberta, o padrão automático", async ({ page }) => {
+test("A1-W3 — documento sem classificação (cliente anterior, pela API): categoria 'Não informada', centro 'Não informado' e, na venda aberta, o padrão automático", async ({ page }) => {
   await login(page);
   const empresa = await empresaAtiva(page);
   const cliente = await primeiroId(page, "/api/resources/people?is_client=true&pageSize=1");
@@ -211,7 +211,8 @@ test("A1-W3 — documento sem classificação (cliente anterior, pela API): 'Nã
   await page.goto(`/vendas/sales/${criada.id}`);
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
   await expect(campo(page, "Categoria financeira")).toContainText("Não informada");
-  await expect(campo(page, "Centro de custo")).toContainText("Não informada");
+  // "Centro de custo" é masculino: "Não informado" (R1). `toContainText` não confunde as duas formas — uma não contém a outra.
+  await expect(campo(page, "Centro de custo")).toContainText("Não informado");
   const frase = page.getByTestId("classificacao-padrao-automatico");
   await expect(frase, "a venda aberta avisa como a confirmação vai classificar").toBeVisible();
   await expect(frase).toContainText("padrão automático");
@@ -222,5 +223,6 @@ test("A1-W3 — documento sem classificação (cliente anterior, pela API): 'Nã
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
   await expect(page.getByTestId("central-vendas-situacao").locator("[data-status]"), "premissa: a venda foi confirmada").toHaveAttribute("data-status", "confirmed");
   await expect(campo(page, "Categoria financeira")).toContainText("Não informada");
+  await expect(campo(page, "Centro de custo")).toContainText("Não informado");
   await expect(page.getByTestId("classificacao-padrao-automatico"), "venda confirmada não promete padrão futuro").toHaveCount(0);
 });
