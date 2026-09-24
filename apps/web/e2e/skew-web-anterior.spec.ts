@@ -306,6 +306,8 @@ test("VENDAS-A1 · A1-K2 — o web da base cria venda sem classificação: 201 c
   await page.getByRole("button", { name: /Adicionar item/ }).click();
   await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
   await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
+  // Valor POSITIVO de propósito: o recuo só existe quando há título, e título de valor zero é recusado.
+  await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
 
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));
   const salvar = page.getByRole("button", { name: "Salvar" });

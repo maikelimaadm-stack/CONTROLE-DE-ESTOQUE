@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 
 /**
  * PORTAL DE VENDAS COM TOP CADASTRADA — o caminho que o usuário faz de verdade (TOP-CONFIG-02).
@@ -431,6 +431,7 @@ test("E1 VENDA — do Portal ao snapshot: lançador, formulário contextualizado
   });
 
   await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
   await page.getByRole("button", { name: /Adicionar item/ }).click();
   /*
     A lista de opções é procurada DENTRO do painel de pesquisa, e não na página: `page.getByRole("option")`
@@ -679,6 +680,7 @@ test("C2 — O SERVIDOR AINDA MANDA: salvar com a TOP já desativada recusa, e n
   await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
   await page.getByRole("button", { name: /Adicionar item/ }).click();
   await escolherPrimeiroProdutoDaLinha(page);
 
@@ -765,6 +767,7 @@ async function formularioComRascunho(page: Page, rascunho: string) {
   await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill(rascunho);
   await pickRef(page, "Cliente", "DEMO");
+  await preencherClassificacaoFinanceira(page);                     // VENDAS-A1: condição do Salvar desde a A1
   await page.getByRole("button", { name: /Adicionar item/ }).click();
   await escolherPrimeiroProdutoDaLinha(page);
   await expect(page.getByRole("button", { name: "Salvar" }), "a PREMISSA: sem o bloqueio, este formulário salvaria").toBeEnabled();

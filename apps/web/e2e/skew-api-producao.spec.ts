@@ -732,7 +732,10 @@ test("VENDAS-A1 · A1-K3 — a API da base não confirma venda classificada; a s
   if (!declara) {
     // MUNDO LEGADO: o binário da base não grava a marca, então a guarda RECUSA — com o código que ele mapeia.
     expect(recusa.status(), "a base NÃO confirma a venda classificada pela 'primeira por código'").toBe(422);
-    expect(((await recusa.json()) as { error: { code: string } }).error.code).toBe("VALIDATION_ERROR");
+    const erro = ((await recusa.json()) as { error: { code: string; message: string } }).error;
+    expect(erro.code).toBe("VALIDATION_ERROR");
+    // A recusa é a da GUARDA da 0024, e não outra validação qualquer da base: a mensagem é a do gatilho.
+    expect(erro.message, "quem recusou foi a guarda da classificação").toContain("classificacao financeira");
     expect(situacao(classificada), "e nada mudou: a venda continua aberta").toBe("open");
   } else {
     // MUNDO ATUAL: a base já aplica a classificação e grava a marca; a mesma venda confirma.
