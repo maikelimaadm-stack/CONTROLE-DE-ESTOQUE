@@ -1054,7 +1054,7 @@ test("VENDAS-A5-1 · A5-K1 — contra a API da base, o diálogo de confirmação
   const corpo = await direto.json() as { contractVersion: number; podeConfirmar: boolean };
   expect([corpo.contractVersion, corpo.podeConfirmar]).toEqual([1, true]);
   expect(rAviso.status()).toBe(200);
-  await expect(aviso, "com a prévia, o aviso nomeia o par").toContainText("padrão automático — categoria");
+  await expect(aviso, "com a prévia, o aviso nomeia o par").toContainText("padrão automático — natureza");
   expect((await abrirDialogo()).status()).toBe(200);
   await expect(dlg.getByTestId("previa-confirmacao")).toBeVisible();
   await expect(dlg.getByTestId("previa-confirmacao-neutra"), "a base não é tratada como servidor antigo").toHaveCount(0);
