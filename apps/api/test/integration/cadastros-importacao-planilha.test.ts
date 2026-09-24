@@ -512,6 +512,7 @@ describe("leitura — colunas de texto e zeros à esquerda", () => {
     row.getCell(col(wb, "CPF/CNPJ")).value = "01234567890";
     row.getCell(col(wb, "CEP")).value = "01310100";
     row.getCell(col(wb, "Cliente")).value = "Sim"; // pelo menos um tipo (CADASTROS Fase 4)
+    row.getCell(col(wb, "Tipo de pessoa")).value = "Física"; // CPF é de pessoa física (R1-6, decisão 253)
     const numero = row.getCell(col(wb, "Número")); numero.value = 123; numero.numFmt = "General";
     const buf = await bufferDe(wb);
     const lida = (await releitura(buf)).getRow(2);

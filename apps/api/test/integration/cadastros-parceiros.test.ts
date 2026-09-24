@@ -27,6 +27,13 @@ const detalhes = (r: Resp) => j(r).error.details as Det[];
 const CPF = "52998224725"; const CPF2 = "11144477735";
 const CNPJ_BB = "00000000000191"; const CNPJ_ALFA = "12ABC34501DE35";
 
+/** CPF válido a partir de 9 dígitos (DOC-1: cada caso com o seu, para o 409 de duplicado não mascarar a regra). */
+const cpfDe = (base9: string) => { const d = base9.split("").map(Number); const dv = (k: number) => { let s = 0; for (let i = 0; i < k; i++) s += d[i]! * (k + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; }; d.push(dv(9)); d.push(dv(10)); return d.join(""); };
+/** CNPJ válido (numérico ou alfanumérico) a partir das 12 primeiras posições: valor = ASCII − 48, pesos da IN RFB 2.229/2024. */
+const cnpjDe = (base12: string) => { const v = (c: string) => c.charCodeAt(0) - 48; const dv = (s: string, p: number[]) => { const r = p.reduce((a, x, i) => a + v(s[i]!) * x, 0) % 11; return r < 2 ? 0 : 11 - r; }; const d1 = dv(base12, [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]); return `${base12}${d1}${dv(`${base12}${d1}`, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])}`; };
+const fmtCpf = (c: string) => `${c.slice(0, 3)}.${c.slice(3, 6)}.${c.slice(6, 9)}-${c.slice(9)}`;
+const fmtCnpj = (c: string) => `${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}`;
+
 beforeAll(async () => { h = await harness(); admin = createPool(TEST_URL, { max: 2 }); }, 240_000);
 afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end(); });
 
@@ -210,5 +217,110 @@ describe("PA-10 — contrato da definição (navegação e ficha)", () => {
     expect((d.abas as { key: string }[]).map((a) => a.key)).toEqual(["identificacao", "enderecos", "contatos", "fiscal", "financeiro", "cliente", "fornecedor", "proprietario", "funcionario", "anexos"]);
     expect((d.detalhes as { key: string }[]).map((x) => x.key)).toEqual(["enderecos", "contatos", "contas", "filiais", "vendedores", "participacoes"]);
     expect(d.cabecalho).toContain("document");
+  });
+});
+
+describe("DOC-1 — tipo de pessoa × documento (R1-6, decisão 253)", () => {
+  const recusa = (r: Resp, campo: string, msg: string | RegExp) => {
+    expect(r.statusCode, r.body).toBe(422);
+    const d = detalhes(r);
+    expect(d).toHaveLength(1);
+    expect(d[0]).toMatchObject({ path: campo, aba: "identificacao" });
+    if (typeof msg === "string") expect(d[0]!.message).toBe(msg); else expect(d[0]!.message).toMatch(msg);
+  };
+  const linha = (id: string) => um<{ person_type: string; document: string | null; phone: string | null }>("select person_type, document, phone from erp.people where id=$1", [id]);
+
+  it("física com CNPJ (numérico e alfanumérico) → 422 'Pessoa física usa CPF' no campo do documento; nada gravado", async () => {
+    for (const doc of [fmtCnpj(cnpjDe("701000000001")), fmtCnpj(cnpjDe("70ABC0000001"))]) {
+      const x = nome("fisica cnpj");
+      recusa(await post({ name: x, person_type: "natural", document: doc, is_client: true }), "document", "Pessoa física usa CPF");
+      expect(await porNome(x), doc).toBe(0);
+    }
+  });
+
+  it("jurídica com CPF (inclusive o formatado de 14 caracteres) → 422 'Pessoa jurídica usa CNPJ'; sem tipo vale Jurídica e diz isso", async () => {
+    const cpf = cpfDe("701000001");
+    for (const doc of [cpf, fmtCpf(cpf)]) {
+      const x = nome("juridica cpf");
+      recusa(await post({ name: x, person_type: "legal", document: doc, is_client: true }), "document", "Pessoa jurídica usa CNPJ");
+      expect(await porNome(x), doc).toBe(0);
+    }
+    const x = nome("sem tipo cpf");
+    recusa(await post({ name: x, document: fmtCpf(cpf), is_client: true }), "document", "Pessoa jurídica usa CNPJ (tipo de pessoa não informado vale Jurídica)");
+    expect(await porNome(x)).toBe(0);
+  });
+
+  it("estrangeira é livre: CPF, CNPJ e texto livre gravam (só aparados)", async () => {
+    const casos = [fmtCpf(cpfDe("701000002")), cnpjDe("701000000002"), "  PASSAPORTE X-1234  "];
+    for (const doc of casos) {
+      const id = criado(await post({ name: nome("estrangeira"), person_type: "foreign", document: doc, is_client: true }));
+      expect(await linha(id)).toMatchObject({ person_type: "foreign", document: doc.trim() });
+    }
+  });
+
+  it("casos válidos gravam normalizados: física com CPF, jurídica com CNPJ numérico e alfanumérico; sem tipo com CNPJ grava Jurídica (o padrão da coluna)", async () => {
+    const cpf = cpfDe("701000003"); const cnpj = cnpjDe("701000000003"); const alfa = cnpjDe("70ABC0000003");
+    const a = criado(await post({ name: nome("fisica ok"), person_type: "natural", document: fmtCpf(cpf), is_client: true }));
+    expect(await linha(a)).toMatchObject({ person_type: "natural", document: cpf });
+    const b = criado(await post({ name: nome("juridica ok"), person_type: "legal", document: fmtCnpj(cnpj), is_client: true }));
+    expect(await linha(b)).toMatchObject({ person_type: "legal", document: cnpj });
+    const c = criado(await post({ name: nome("juridica alfa"), person_type: "legal", document: fmtCnpj(alfa).toLowerCase(), is_client: true }));
+    expect(await linha(c)).toMatchObject({ person_type: "legal", document: alfa });
+    const d = criado(await post({ name: nome("sem tipo cnpj"), document: cnpjDe("701000000004"), is_client: true }));
+    expect(await linha(d)).toMatchObject({ person_type: "legal", document: cnpjDe("701000000004") });
+  });
+
+  it("edição combina com o GRAVADO: só o tipo contra o documento gravado → 422 no tipo; só o documento contra o tipo gravado → 422 no documento; os dois coerentes gravam", async () => {
+    const cnpj = cnpjDe("701000000005"); const cpf = cpfDe("701000005");
+    const pj = criado(await post({ name: nome("pj"), person_type: "legal", document: cnpj, is_client: true }));
+    recusa(await put(pj, { person_type: "natural" }), "person_type", "Pessoa física usa CPF");
+    expect(await linha(pj)).toMatchObject({ person_type: "legal", document: cnpj });
+
+    const pf = criado(await post({ name: nome("pf"), person_type: "natural", document: cpf, is_client: true }));
+    recusa(await put(pf, { document: cnpjDe("701000000006") }), "document", "Pessoa física usa CPF");
+    expect(await linha(pf)).toMatchObject({ person_type: "natural", document: cpf });
+
+    const ok = await put(pf, { person_type: "legal", document: fmtCnpj(cnpjDe("701000000006")) });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(await linha(pf)).toMatchObject({ person_type: "legal", document: cnpjDe("701000000006") });
+  });
+
+  it("dado antigo (o caso de produção): Jurídica com CPF formatado gravado antes da regra — PUT sem documento e sem tipo passa; a gravação da ficha (que manda os dois) é recusada; trocar para Física corrige", async () => {
+    const cpf = cpfDe("701000007"); const formatado = fmtCpf(cpf);
+    expect(formatado).toHaveLength(14);
+    const id = (await um<{ id: string }>(
+      "insert into erp.people (organization_id, code, name, person_type, document, is_client) values ($1, 'DOC1-LEG', 'DOC1 legado', 'legal', $2, true) returning id::text id", [h.demo.orgId, formatado]))!.id;
+
+    const tel = await put(id, { phone: "63 3333-1111" });
+    expect(tel.statusCode, tel.body).toBe(200);
+    expect(await linha(id), "nada do documento nem do tipo mudou").toEqual({ person_type: "legal", document: formatado, phone: "63 3333-1111" });
+
+    // o que a ficha da web manda em TODA gravação: todos os campos do principal, inclusive documento e tipo
+    recusa(await put(id, { phone: "63 3333-2222", document: formatado, person_type: "legal" }), "document", "Pessoa jurídica usa CNPJ");
+    expect(await linha(id), "recusa: nada gravado").toEqual({ person_type: "legal", document: formatado, phone: "63 3333-1111" });
+
+    const corrige = await put(id, { person_type: "natural" });
+    expect(corrige.statusCode, corrige.body).toBe(200);
+    expect(await linha(id)).toEqual({ person_type: "natural", document: cpf, phone: "63 3333-1111" });
+  });
+
+  it("ficha de RH (a definição não tem o tipo): o CPF é conferido contra o tipo GRAVADO, não contra o padrão", async () => {
+    const r = await h.app.inject({ method: "POST", url: "/api/hr/funcionarios/por-cpf", headers: hdr(), payload: { document: cpfDe("701000008"), name: nome("rh fisica") } });
+    expect(r.statusCode, r.body).toBe(201);
+    const pf = j(r).id as string;
+    const troca = await h.app.inject({ method: "PUT", url: `/api/resources/funcionarios/${pf}`, headers: hdr(), payload: { document: fmtCpf(cpfDe("701000009")) } });
+    expect(troca.statusCode, troca.body).toBe(200);
+    expect(await linha(pf)).toMatchObject({ person_type: "natural", document: cpfDe("701000009") });
+
+    const pj = criado(await post({ name: nome("rh juridica"), person_type: "legal", document: cnpjDe("701000000010"), is_employee: true }));
+    const recusada = await h.app.inject({ method: "PUT", url: `/api/resources/funcionarios/${pj}`, headers: hdr(), payload: { document: cpfDe("701000010") } });
+    recusa(recusada, "document", "Pessoa jurídica usa CNPJ");
+    expect(await linha(pj)).toMatchObject({ person_type: "legal", document: cnpjDe("701000000010") });
+  });
+
+  it("documento que fica vazio depois de normalizar não é duplicado (mesmo filtro do índice): dois estrangeiros só de pontuação gravam", async () => {
+    const a = criado(await post({ name: nome("pontuacao 1"), person_type: "foreign", document: "-", is_client: true }));
+    const b = criado(await post({ name: nome("pontuacao 2"), person_type: "foreign", document: "--", is_client: true }));
+    expect([(await linha(a))!.document, (await linha(b))!.document]).toEqual(["-", "--"]);
   });
 });

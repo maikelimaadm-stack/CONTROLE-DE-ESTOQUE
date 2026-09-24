@@ -8,7 +8,8 @@
 --   · erp.client_profiles.limite_credito (INFORMATIVO: nenhuma trava de venda nesta fase);
 --   · tabelas 1:N novas: erp.parceiro_enderecos, erp.parceiro_contatos, erp.parceiro_contas — com
 --     organization_id, FK COMPOSTA (person_id, organization_id) → people, índice por parceiro e deleted_at;
---   · índice ÚNICO do documento NORMALIZADO entre vivos da organização (expressão). Pré-condição: nenhum
+--   · índice ÚNICO do documento NORMALIZADO entre vivos da organização (expressão), com o MESMO filtro da
+--     pré-condição (normalizado não vazio: documento só de pontuação fica fora). Pré-condição: nenhum
 --     duplicado no acervo; havendo, a migration PARA nomeando os códigos — ninguém escolhe qual apagar.
 --
 -- JANELA DE DEPLOY: tudo é aditivo e anulável (ou com default). A API anterior continua gravando people sem
@@ -163,9 +164,12 @@ grant select, insert, update on erp.parceiro_enderecos, erp.parceiro_contatos, e
 revoke delete on erp.parceiro_enderecos, erp.parceiro_contatos, erp.parceiro_contas from erp_app;
 
 -- ---------- 7) documento único entre vivos (normalizado) ----------
+-- O filtro é o MESMO da pré-condição (seção 2): documento que fica VAZIO depois de normalizar (só pontuação)
+-- não entra no índice. Sem isso, dois parceiros assim no acervo passam pela pré-condição e derrubam o índice.
 create unique index ux_people_documento_normalizado on erp.people
   (organization_id, upper(regexp_replace(document, '[^0-9A-Za-z]', '', 'g')))
-  where document is not null and deleted_at is null;
+  where document is not null and deleted_at is null
+    and upper(regexp_replace(document, '[^0-9A-Za-z]', '', 'g')) <> '';
 
 -- ---------- 8) pós-condições ----------
 do $$

@@ -48,11 +48,14 @@ const idGlobal = async (id: string) => (await admin.query<{ v: string }>("select
  */
 const cpf = (base9: string) => { const d = base9.split("").map(Number); const dv = (n: number) => { let s = 0; for (let i = 0; i < n; i++) s += d[i]! * (n + 1 - i); const r = (s * 10) % 11; return r === 10 ? 0 : r; }; d.push(dv(9)); d.push(dv(10)); return d.join(""); };
 const docMisto = (d: string, n: number) => cpf(`00${d}0000${n}`);
-/** Cinco pessoas (tipo Cliente — pelo menos um tipo, Fase 4): 2, 4 e 6 certas; 3 (e-mail inválido) e 5 (tipo de pessoa fora da lista) erradas. */
+/**
+ * Cinco pessoas (tipo Cliente — pelo menos um tipo, Fase 4): 2, 4 e 6 certas; 3 (e-mail inválido) e 5 (tipo de pessoa fora da lista)
+ * erradas. Linha com CPF declara "Física": desde o R1-6 (decisão 253) Jurídica usa CNPJ, e o tipo vazio vale Jurídica.
+ */
 const arquivoMisto = async (p: string, d: string) => {
   const wb = await modelo("people");
-  preencher(wb, "people", 2, { name: `${p} A`, document: docMisto(d, 1), is_client: "Sim" });
-  preencher(wb, "people", 3, { name: `${p} B`, document: docMisto(d, 2), email: "nao-e-email", zip_code: "01234-000", is_client: "Sim" });
+  preencher(wb, "people", 2, { name: `${p} A`, person_type: "Física", document: docMisto(d, 1), is_client: "Sim" });
+  preencher(wb, "people", 3, { name: `${p} B`, person_type: "Física", document: docMisto(d, 2), email: "nao-e-email", zip_code: "01234-000", is_client: "Sim" });
   preencher(wb, "people", 4, { name: `${p} C`, is_client: "Sim" });
   preencher(wb, "people", 5, { name: `${p} D`, document: docMisto(d, 3), person_type: "Marciano", is_client: "Sim" });
   preencher(wb, "people", 6, { name: `${p} E`, is_client: "Sim" });
@@ -173,7 +176,7 @@ describe("planilha de erros", () => {
     expect(r.statusCode, r.body).toBe(201);
     const wb = new ExcelJS.Workbook(); await wb.xlsx.load(Buffer.from(j(r).planilha_erros_base64!, "base64") as unknown as ArrayBuffer);
     preencher(wb, "people", 2, { email: "ok@exemplo.com.br" });
-    preencher(wb, "people", 3, { person_type: null });
+    preencher(wb, "people", 3, { person_type: "Física" }); // a correção é escolher da lista (CPF → Física, R1-6)
     const again = await enviar(wb, "people", "");
     expect(again.statusCode, again.body).toBe(201);
     expect(j(again)).toMatchObject({ linhas: 2, gravadas: 2, erros: [], modo: "tudo" });

@@ -54,6 +54,25 @@ export function formatarCpf(valor: string): string {
   return d.length === 11 ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}` : d;
 }
 
+/** Mensagens da regra tipo de pessoa × documento (decisão 253, R1-6). */
+export const MSG_FISICA_USA_CPF = "Pessoa física usa CPF";
+export const MSG_JURIDICA_USA_CNPJ = "Pessoa jurídica usa CNPJ";
+
+/**
+ * TIPO DE PESSOA × DOCUMENTO (decisão 253, R1-6), pela largura do documento NORMALIZADO: Física (`natural`) usa
+ * CPF (11 posições); Jurídica (`legal`) usa CNPJ (14 posições, numérico OU alfanumérico); Estrangeira (`foreign`)
+ * é livre. Tipo fora dos três NEGA (discriminador desconhecido não cai em regra vizinha). Devolve a mensagem da
+ * recusa ou `null`. Só diz se o documento é da espécie do tipo — o dígito verificador é de `validarDocumento`.
+ * Chamada com documento INFORMADO: o documento continua opcional, e vazio não chega aqui.
+ */
+export function recusaDoTipoDePessoa(tipo: string, valor: string): string | null {
+  const n = normalizarDocumento(valor);
+  if (tipo === "foreign") return null;
+  if (tipo === "natural") return n.length === 11 ? null : MSG_FISICA_USA_CPF;
+  if (tipo === "legal") return n.length === 14 ? null : MSG_JURIDICA_USA_CNPJ;
+  return "Tipo de pessoa inválido";
+}
+
 /** Classifica e valida: 11 posições → CPF; 14 → CNPJ (numérico ou alfanumérico). */
 export function validarDocumento(valor: string): ResultadoDocumento {
   const n = normalizarDocumento(valor);

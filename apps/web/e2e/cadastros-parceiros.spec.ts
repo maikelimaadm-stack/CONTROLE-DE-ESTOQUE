@@ -10,7 +10,16 @@ import { login, api, uniq } from "./helpers";
  * PA-W2  Ficha: cabeçalho fixo, abas na ordem, aba de perfil aparece ao marcar o tipo, grade de endereços grava;
  *        erro na 2ª linha → contador na aba Endereços e linha marcada, nada gravado.
  * PA-W3  Cadastro rápido de cliente de dentro de um seletor: só os campos rápidos, tipo pré-marcado.
+ * PA-W4  Tipo de pessoa × documento (R1-6, decisão 253): Jurídica (o padrão) com CPF → a recusa da API aparece NO
+ *        CAMPO CPF/CNPJ, com o contador na aba Identificação, e nada é gravado; trocar para Física grava.
  */
+
+function cpfValido(): string {
+  const b = Array.from({ length: 9 }, () => Math.floor(Math.random() * 10));
+  const dv = (xs: number[]) => { const s = xs.reduce((a, x, i) => a + x * (xs.length + 1 - i), 0); const r = (s * 10) % 11; return r === 10 ? 0 : r; };
+  const d1 = dv(b); const d2 = dv([...b, d1]);
+  return [...b, d1, d2].join("");
+}
 
 test("PA-W1 — Configurações › Parceiros, RH › Funcionários, endereço antigo e busca", async ({ page }) => {
   await login(page);
@@ -91,4 +100,31 @@ test("PA-W3 — cadastro rápido de fornecedor dentro do seletor: campos rápido
   await rapido.getByLabel("Nome Social/Fantasia").fill(nome);
   await page.getByRole("dialog").getByRole("button", { name: "Salvar" }).click();
   await expect.poll(async () => (await api<{ items: { is_provider: boolean }[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`)).items.map((x) => x.is_provider)).toEqual([true]);
+});
+
+test("PA-W4 — Jurídica com CPF: a mensagem aparece no campo do documento; Física grava", async ({ page }) => {
+  await login(page);
+  const nome = uniq("PA-W4 parceiro");
+  const cpf = cpfValido();
+  await page.goto("/cadastros/people/new");
+  const ficha = page.getByTestId("ficha-em-abas");
+  await expect(ficha).toBeVisible();
+  await page.getByLabel("Nome Social/Fantasia").fill(nome);
+  await page.getByLabel("Cliente", { exact: true }).click();
+  await page.getByRole("option", { name: "Sim" }).click();
+  // o tipo de pessoa nasce Jurídica (padrão do registry); o documento é um CPF formatado
+  await page.getByLabel("CPF/CNPJ").fill(`${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`);
+  await page.getByRole("button", { name: "Salvar" }).click();
+
+  // a recusa (422) volta com `path: "document"` e a ficha a mostra NO CAMPO, com o contador na aba
+  await expect(ficha.getByText("Pessoa jurídica usa CNPJ", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("erros-aba-identificacao")).toHaveText("1");
+  const nada = await api<{ items: unknown[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`);
+  expect(nada.items, "nada gravado").toHaveLength(0);
+
+  // acertar o tipo resolve
+  await page.getByLabel("Tipo de pessoa").click();
+  await page.getByRole("option", { name: "Física", exact: true }).click();
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(async () => (await api<{ items: { person_type: string; document: string }[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`)).items.map((x) => [x.person_type, x.document])).toEqual([["natural", cpf]]);
 });
