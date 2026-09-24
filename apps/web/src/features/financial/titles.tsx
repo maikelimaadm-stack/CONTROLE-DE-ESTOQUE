@@ -56,7 +56,7 @@ export function TitleList({ dir, initialStatus }: { dir: Dir; initialStatus?: st
     <CardBody>
       <FilterBar f={f} set={set} reset={() => { reset(); setApplied(def); setPage(1); }} onApply={() => { setApplied({ ...f }); setPage(1); }} filters={[
         { name: "status", label: COPY.situacao, type: "select", options: STATUS_OPTS }, { name: "start_date", label: "Vencimento inicial", type: "date" }, { name: "end_date", label: "Vencimento final", type: "date" }, { name: "start_emission_date", label: "Emissão início", type: "date" }, { name: "end_emission_date", label: "Emissão fim", type: "date" }, { name: "start_write_off_date", label: "Baixa início", type: "date" }, { name: "end_write_off_date", label: "Baixa fim", type: "date" },
-        { name: "person_id", label: c.person, type: "ref", resource: "people", extra: c.personFilter }, { name: "number", label: "Nº documento", type: "text" }, { name: "note", label: "Observação", type: "text" }, { name: "amount", label: "Valor", type: "text" }, { name: "category_id", label: "Categoria", type: "ref", resource: "financial_categories" }, { name: "center_id", label: "Centro de custo", type: "ref", resource: "cost_centers" }, { name: "account_id", label: "Conta bancária", type: "ref", resource: "bank_accounts" },
+        { name: "person_id", label: c.person, type: "ref", resource: "people", extra: c.personFilter }, { name: "number", label: "Nº documento", type: "text" }, { name: "note", label: "Observação", type: "text" }, { name: "amount", label: "Valor", type: "text" }, { name: "category_id", label: "Natureza", type: "ref", resource: "financial_categories" }, { name: "center_id", label: "Centro de resultado", type: "ref", resource: "cost_centers" }, { name: "account_id", label: "Conta bancária", type: "ref", resource: "bank_accounts" },
         { name: "title_type_id", label: "Tipo de título", type: "ref", resource: "title_types" }, { name: "payment_type", label: "Forma", type: "select", options: PAY_TYPES.map(([value, label]) => ({ value: value!, label: label! })) }, { name: "classification", label: "Classificação", type: "select", options: [{ value: "capex", label: "CAPEX" }, { value: "opex", label: "OPEX" }, { value: "unclassified", label: "Não classificado" }] }, { name: "harvest_id", label: "Safra", type: "ref", resource: "harvests" }, { name: "proprietary_id", label: "Proprietário", type: "ref", resource: "people", extra: { is_proprietary: "true" } }, { name: "empresa_id", label: "Empresa", type: "ref", resource: "empresas" }, { name: "product", label: "Produto (NF)", type: "text" }
       ]} />
       {q.error && <ErrorBox error={q.error} />}
@@ -111,7 +111,7 @@ export function TitleForm({ dir, id }: { dir: Dir; id?: string }) {
       <Field label="Observação" required span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>
     </div>
     {h.payment_type === "installments" && !id && <><h3 className="text-xs font-semibold uppercase text-brand-700">Parcelamento</h3><PlanEditor plan={plan} onChange={setPlan} /></>}
-    <h3 className="text-xs font-semibold uppercase text-brand-700">Rateio (categoria / centro de custo)</h3>
+    <h3 className="text-xs font-semibold uppercase text-brand-700">Rateio (natureza / centro de resultado)</h3>
     <ApportionmentEditor lines={lines} onChange={setLines} total={Number(h.amount || 0) - Number(h.discount || 0)} />
     {!id && <div className="grid grid-cols-12 gap-3"><Field label="Baixar automaticamente" span={3}><NativeSelect value={h.auto ? "1" : "0"} onChange={(e) => setH({ ...h, auto: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim (gera movimento bancário)</option></NativeSelect></Field>{h.auto && <><Field label="Conta bancária" required span={4}><RefSelect resource="bank_accounts" value={h.auto_account} onChange={(v) => setH({ ...h, auto_account: v ?? "" })} /></Field><Field label="Data da baixa" span={2}><Input type="date" value={h.auto_date} onChange={(e) => setH({ ...h, auto_date: e.target.value })} /></Field></>}</div>}
     </LoadingOr>
@@ -124,8 +124,8 @@ const ENTIDADE_TITULO = "financial_titles";
 /** Colunas do RATEIO. Fora do componente porque não dependem de nada dele — e assim não renascem a cada render. */
 const COLUNAS_RATEIO: Base2ItemColumn<Row>[] = [
   { key: "category_code", label: "Código" },
-  { key: "category_name", label: "Categoria" },
-  { key: "cost_center_name", label: "Centro de Custo" },
+  { key: "category_name", label: "Natureza" },
+  { key: "cost_center_name", label: "Centro de Resultado" },
   { key: "chart_account_name", label: "Conta contábil" },
   { key: "harvest_name", label: "Safra" },
   { key: "percentage", label: "%", align: "right", render: (r) => num(r["percentage"] as string) },

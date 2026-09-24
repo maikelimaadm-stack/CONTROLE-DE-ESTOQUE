@@ -45,6 +45,11 @@ export interface FieldDef {
    * O banco continua sendo a autoridade; isto serve para a tela e o modelo de importação avisarem antes.
    */
   requiredWhen?: { field: string; equals: unknown };
+  /**
+   * Cadastro em árvore: no registro NOVO, o campo nasce com o valor do SUPERIOR escolhido (pré-preenchido e
+   * editável, enquanto o usuário não o alterou). Só a tela usa; a regra que recusa divergência mora na API.
+   */
+  herdaDoSuperior?: boolean;
 }
 
 export interface ResourceDef {

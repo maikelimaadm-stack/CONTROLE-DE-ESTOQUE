@@ -31,9 +31,9 @@ const P = {
   MAINT: ["maintenances.view", "preventive_maintenances.view", "scheduled_reviews.view"],
   HR_EVENTS: ["absences.view", "bonuses.view", "employee_events.view"],
   PEOPLE: ["people.view", "employees.view", "clients.view", "providers.view", "proprietaries.view"],
-  COMPANY_CFG: ["farms.view", "cost_centers.view", "harvests.view", "rainfalls.view", "tenant_parameters.edit", "dashboard.rainfall.view"],
+  COMPANY_CFG: ["farms.view", "harvests.view", "rainfalls.view", "tenant_parameters.edit", "dashboard.rainfall.view"],
   PRODUCT_CFG: ["products.view", "warehouses.view", "addressings.view", "provider_launch_profiles.view", "apportionments.view"],
-  FIN_CFG: ["financial_categories.view", "title_types.view", "payables.view", "sales.view", "financial_freezes.view", "chart_accounts.view"],
+  FIN_CFG: ["financial_categories.view", "cost_centers.view", "title_types.view", "payables.view", "sales.view", "financial_freezes.view", "chart_accounts.view"],
   LIVESTOCK_CFG: ["animals.view", "weight_parameters.view", "fodders.view", "grazing_modules.view", "batch_area.view", "troughs.view", "livestock_plannings.view", "operations.view", "activities.view", "breeding_sires.view", "breeding_protocols.view"],
   FISCAL_CFG: ["tax_rules.view", "nature_operations.view", "additional_infos.view", "document_types.view", "documents.view", "nfe.view"],
   HR_CFG: ["hr_events.view", "job_functions.view", "teams.view"]
@@ -205,7 +205,6 @@ export const AREAS = [
   // ---------------- Configurações (área administrativa; permite 3 níveis) ----------------
   cfg("empresa", null, "Empresa e Empresas", P.COMPANY_CFG),
   cfg("empresa", "empresas", "Empresas", "farms.view", { keywords: ["propriedade", "unidade", "empresa", "fazendas"] }),
-  cfg("empresa", "cost-centers", "Centros de Custo", "cost_centers.view"),
   cfg("empresa", "harvests", "Safras", "harvests.view"),
   cfg("empresa", "rainfalls", "Pluviometria", "rainfalls.view", { keywords: ["chuva"] }),
   cfg("empresa", "pluviometria", "Indicadores de chuva", "dashboard.rainfall.view", { aliases: ["/dashboards/pluviometria"] }),
@@ -227,11 +226,14 @@ export const AREAS = [
   cfg("compras", "sla", "SLA por etapa", "supply_sla.view", { aliases: ["/suprimentos/sla"], keywords: ["prazo", "sla"] }),
   cfg("compras", "authorizers", "Autorizadores", "authorizers.view", { keywords: ["aprovador", "alçada"] }),
   cfg("financeiro", null, "Financeiro", P.FIN_CFG),
-  cfg("financeiro", "financial-categories", "Categorias Financeiras", "financial_categories.view"),
+  // CADASTROS-ESTRUTURA (decisão 250): só o RÓTULO mudou — sub, chave de registry, permissão e URL do cadastro
+  // continuam os mesmos. Os nomes antigos seguem como palavra-chave: quem procura o nome de antes acha a tela nova.
+  cfg("financeiro", "financial-categories", "Naturezas", "financial_categories.view", { keywords: ["categoria financeira", "categorias financeiras", "natureza financeira", "receita", "despesa"] }),
+  cfg("financeiro", "cost-centers", "Centros de Resultado", "cost_centers.view", { keywords: ["centro de custo", "centros de custo", "centro de resultado"] }),
+  cfg("financeiro", "chart-accounts", "Plano de Contas", "chart_accounts.view", { keywords: ["conta contábil", "conta do plano"] }),
   cfg("financeiro", "title-types", "Tipos de Título", "payables.view"),
   cfg("financeiro", "payment-methods", "Formas de Pagamento", "sales.view"),
   cfg("financeiro", "financial-freezes", "Congelamentos", "financial_freezes.view", { keywords: ["fechar período", "bloquear lançamentos"] }),
-  cfg("financeiro", "chart-accounts", "Plano de Contas", "chart_accounts.view", { keywords: ["conta contábil"] }),
   cfg("pecuaria", null, "Pecuária", P.LIVESTOCK_CFG),
   cfg("pecuaria", "animal-categories", "Espécies / Categorias / Raças", "animals.view", { keywords: ["categoria animal", "raça"] }),
   cfg("pecuaria", "identification-types", "Tipos de Identificação", "animals.view", { keywords: ["brinco", "sisbov", "chip"] }),
@@ -319,7 +321,7 @@ export const LEGACY_TABS = {
   os: { todas: { tab: null }, minhas: { tab: null, query: { scope: "mine" } }, andamento: { tab: null, query: { status: "in_progress" } }, atrasadas: { tab: null, query: { late: "1" } }, finalizadas: { tab: null, query: { status: "finished" } } },
   fiscal: { situacao: { path: "/configuracoes", tab: "fiscal", sub: "capacidades" } },
   relatorios: { favoritos: { tab: null, query: { view: "favoritos" } }, todos: { tab: null }, personalizados: { tab: null, query: { view: "personalizados" } } },
-  configuracoes: { "financeiro/budget-plannings": { path: "/financeiro", tab: "planejamento" } }
+  configuracoes: { "financeiro/budget-plannings": { path: "/financeiro", tab: "planejamento" }, "empresa/cost-centers": { tab: "financeiro", sub: "cost-centers" } }
 };
 
 /** Redirecionamentos que não são aliases de uma entrada (parâmetros dinâmicos, rotas com query). */

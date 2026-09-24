@@ -391,7 +391,7 @@ export default async function financialRoutes(app: FastifyInstance) {
   app.post("/financial/bank-movements", async (req, reply) => reply.status(201).send(await runService(app, req, "bank_movements.create", async (ctx) => {
     const d = bmSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
     if (d.category_type === "internal_transfer" && !d.destination_account_id) throw validation("Conta destino obrigatória em transferência interna");
-    if (d.category_type !== "internal_transfer" && !d.apportionment?.length) throw validation("Rateio (categoria/centro de custo) obrigatório");
+    if (d.category_type !== "internal_transfer" && !d.apportionment?.length) throw validation("Rateio (natureza/centro de resultado) obrigatório");
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
       const id = await createBankMovement(ctx, { empresaId: d.empresa_id ?? ctx.empresaId, bankAccountId: d.bank_account_id, date: d.movement_date, type: d.type, categoryType: d.category_type, destinationAccountId: d.destination_account_id ?? null, amount: d.amount, interest: d.interest, document: d.document, note: d.note, proprietaryId: d.proprietary_id, personId: d.person_id, harvestId: d.harvest_id, isDeductible: d.is_deductible, generatesObligation: d.generates_obligation, sourceType: "manual", sourceId: undefined, apportionment: d.apportionment?.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, percentage: a.percentage, amount: a.amount })) });
       // "Gera obrigação": cria título correspondente já baixado por este movimento (ex.: saída sem título prévio)

@@ -40,7 +40,7 @@ function ConfigSearch() {
 function Inner() {
   return <Workspace title="Configurações" layout="sidebar" header={<ConfigSearch />} tabs={[
     tab("configuracoes.empresa", <ViewSegment tabs={[
-      res("configuracoes.empresa.empresas", "empresas"), res("configuracoes.empresa.cost-centers", "cost_centers"), res("configuracoes.empresa.harvests", "harvests"), res("configuracoes.empresa.rainfalls", "rainfalls"),
+      res("configuracoes.empresa.empresas", "empresas"), res("configuracoes.empresa.harvests", "harvests"), res("configuracoes.empresa.rainfalls", "rainfalls"),
       tab("configuracoes.empresa.pluviometria", <Dashboard k="pluviometria" title="Pluviometria" />),
       tab("configuracoes.empresa.parametros", scroll(<ParametersPanel />))
     ]} />),
@@ -51,8 +51,9 @@ function Inner() {
     tab("configuracoes.operacoes", <ViewSegment tabs={[tab("configuracoes.operacoes.tipos-operacao", scroll(<TiposOperacaoPanel />))]} />),
     tab("configuracoes.compras", <ViewSegment tabs={[tab("configuracoes.compras.sla", scroll(<SupplySlaPanel />)), res("configuracoes.compras.authorizers", "authorizers")]} />),
     tab("configuracoes.financeiro", <ViewSegment tabs={[
-      res("configuracoes.financeiro.financial-categories", "financial_categories"), res("configuracoes.financeiro.title-types", "title_types"), res("configuracoes.financeiro.payment-methods", "payment_methods"),
-      res("configuracoes.financeiro.financial-freezes", "financial_freezes"), res("configuracoes.financeiro.chart-accounts", "chart_accounts")
+      // Naturezas · Centros de Resultado · Plano de Contas, nesta ordem (decisão 250)
+      res("configuracoes.financeiro.financial-categories", "financial_categories"), res("configuracoes.financeiro.cost-centers", "cost_centers"), res("configuracoes.financeiro.chart-accounts", "chart_accounts"),
+      res("configuracoes.financeiro.title-types", "title_types"), res("configuracoes.financeiro.payment-methods", "payment_methods"), res("configuracoes.financeiro.financial-freezes", "financial_freezes")
     ]} />),
     tab("configuracoes.pecuaria", <ViewSegment tabs={[
       res("configuracoes.pecuaria.animal-categories", "animal_categories"), res("configuracoes.pecuaria.identification-types", "identification_types"), res("configuracoes.pecuaria.weight-parameters", "weight_parameters"), res("configuracoes.pecuaria.fodders", "fodders"),

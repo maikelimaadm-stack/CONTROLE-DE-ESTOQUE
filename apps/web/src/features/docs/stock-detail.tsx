@@ -94,7 +94,7 @@ export function StockDocDetail({ id, endpoint, base, title, perm, entidade, acei
     { key: "unit_value", label: "Valor unitário", align: "right", render: (r) => brl((r["unit_value"] ?? r["unit_cost"]) as string) },
     { key: "total_value", label: "Total", align: "right", render: (r) => brl((r["total_value"] ?? r["total"] ?? r["total_cost"]) as string) },
     { key: "provider_lot", label: "Lote" },
-    { key: "cost_center_name", label: "Centro de custo" },
+    { key: "cost_center_name", label: "Centro de resultado" },
     { key: "generate_stock", label: "Gera estoque", render: (r) => (r["generate_stock"] === false ? "Não" : "Sim") }
   ];
 
@@ -120,8 +120,8 @@ export function StockDocDetail({ id, endpoint, base, title, perm, entidade, acei
 
     {d.apportionments && d.apportionments.length > 0 && <Base2Section titulo="Rateio financeiro" contagem={d.apportionments.length}>
       <Base2Items legenda={`Rateio financeiro do documento ${String(d["code"] ?? "")}`} colunas={[
-        { key: "category_name", label: "Categoria" },
-        { key: "cost_center_name", label: "Centro de custo" },
+        { key: "category_name", label: "Natureza" },
+        { key: "cost_center_name", label: "Centro de resultado" },
         { key: "percentage", label: "Percentual", align: "right", render: (r) => pct(r["percentage"] as string, 2) },
         { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) }
       ]} linhas={d.apportionments} />

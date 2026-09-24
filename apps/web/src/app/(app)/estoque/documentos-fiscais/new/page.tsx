@@ -41,7 +41,7 @@ export default function Page() {
     <Tabs tabs={[
       { value: "items", label: "Itens", content: <ItemsEditor items={items} onChange={setItems} fields={["warehouse", "product", "quantity", "unit_value", "discount", "generate_stock", "lot", "expiration", "financial_category", "cost_center"]} /> },
       { value: "pay", label: "Parcelamento", content: <PlanEditor plan={plan} onChange={setPlan} /> },
-      { value: "app", label: "Rateio por valor", content: h.apportionment_type === "by_value" ? <ApportionmentEditor lines={lines} onChange={setLines} total={total} /> : <p className="text-xs text-slate-500">Rateio por produto: usa categoria financeira e centro de custo de cada item.</p> }
+      { value: "app", label: "Rateio por valor", content: h.apportionment_type === "by_value" ? <ApportionmentEditor lines={lines} onChange={setLines} total={total} /> : <p className="text-xs text-slate-500">Rateio por produto: usa natureza e centro de resultado de cada item.</p> }
     ]} />
     <div className="text-right text-sm font-semibold">Total do documento: {new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(total)}</div>
   </CardBody></Card>;

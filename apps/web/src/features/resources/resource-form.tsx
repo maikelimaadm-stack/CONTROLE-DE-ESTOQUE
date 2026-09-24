@@ -90,19 +90,30 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   // duplicar: novo registro pré-preenchido com os valores do registro de origem (exceto código/identificadores)
   const copySrc = embedded?.copyFrom ?? copyQ.data ?? null;
   React.useEffect(() => { if (isNew && def) { if (copySrc) { const v = fromRecord(def.fields, copySrc); for (const f of def.fields) if (f.name === "code" || f.readOnly) v[f.name] = f.type === "boolean" ? false : f.type === "tags" ? [] : ""; form.reset(v); } else form.reset(defaults(fields, preset, l.fieldDefaultValues)); } }, [isNew, copySrc, def]);
-  // Código hierárquico (Plano de Contas, Categorias, Centros de Custo): o SERVIDOR sugere o próximo código
-  // abaixo do antecessor escolhido, enquanto o usuário não digitou um código. A sugestão é editável; quem
+  // Código hierárquico (Plano de Contas, Naturezas, Centros de Resultado, Grupos de Produtos): o SERVIDOR sugere o
+  // próximo código abaixo do superior escolhido, enquanto o usuário não digitou um código. A sugestão é editável; quem
   // confere máscara, prefixo e duplicidade é o servidor ao salvar.
   const sugereCodigo = ehCadastroCodigoHierarquico(resourceKey) && isNew && !readOnly;
-  const antecessor = form.watch("parent_id") as string | null | undefined;
+  const superior = form.watch("parent_id") as string | null | undefined;
   React.useEffect(() => {
     if (!sugereCodigo || form.getFieldState("code").isDirty) return;
     let vivo = true;
-    api<{ codigo: string }>(`/api/resources/${resourceKey}/proximo-codigo${antecessor ? `?parent_id=${encodeURIComponent(antecessor)}` : ""}`)
+    api<{ codigo: string }>(`/api/resources/${resourceKey}/proximo-codigo${superior ? `?parent_id=${encodeURIComponent(superior)}` : ""}`)
       .then((r) => { if (vivo && !form.getFieldState("code").isDirty) form.setValue("code", r.codigo, { shouldDirty: false }); })
       .catch(() => { /* sem sugestão (ex.: último nível da máscara): o usuário digita e o servidor confere */ });
     return () => { vivo = false; };
-  }, [sugereCodigo, antecessor, resourceKey, form]);
+  }, [sugereCodigo, superior, resourceKey, form]);
+  // Campos `herdaDoSuperior` (ex.: Tipo da Natureza): o registro novo nasce com o valor do superior escolhido,
+  // enquanto o usuário não mexeu no campo. É só pré-preenchimento; a divergência é recusada pela API.
+  const herdados = React.useMemo(() => (def?.tree ? fields.filter((f) => f.herdaDoSuperior).map((f) => f.name) : []), [def, fields]);
+  React.useEffect(() => {
+    if (!isNew || readOnly || !herdados.length || !superior) return;
+    let vivo = true;
+    api<Values>(`/api/resources/${resourceKey}/${encodeURIComponent(superior)}`)
+      .then((pai) => { if (!vivo) return; for (const n of herdados) { const v = pai[n]; if (v !== undefined && v !== null && !form.getFieldState(n).isDirty) form.setValue(n, v, { shouldDirty: false }); } })
+      .catch(() => { /* superior ilegível: o campo fica como está e o servidor confere ao salvar */ });
+    return () => { vivo = false; };
+  }, [isNew, readOnly, herdados, superior, resourceKey, form]);
   const [confirmDel, setConfirmDel] = React.useState(false);
   const [openField, setOpenField] = React.useState<string | null>(null);
   // painéis em abas horizontais ("tabs") ou lista lateral ("sidebar"), como o modelo base do MG; lembrado por cadastro

@@ -123,7 +123,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     key: "financial_categories", importacao: true, label: "Natureza", labelPlural: "Naturezas", table: "financial_categories", permission: "financial_categories", labelField: "name", route: "/cadastros/categorias-financeiras", tree: true, softDelete: true, printable: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, span: 3 }), T("name", "Descrição", { required: true, list: true, search: true, span: 5 }),
-      S("nature", "Tipo", [["income", "Receita"], ["expense", "Despesa"], ["both", "Receita e despesa"]], { required: true, help: "Natureza filha segue o Tipo da superior (salvo superior Receita e despesa).", list: true, filter: true, span: 2 }),
+      S("nature", "Tipo", [["income", "Receita"], ["expense", "Despesa"], ["both", "Receita e despesa"]], { required: true, herdaDoSuperior: true, help: "Natureza filha segue o Tipo da superior (salvo superior Receita e despesa).", list: true, filter: true, span: 2 }),
       S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
       S("classification", "Classificação", [["unclassified", "Não Classificado"], ["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }),
       B("is_tax", "É tributo?", { span: 2 }), REF("parent_id", "Natureza superior", "financial_categories", { span: 5 }), active()

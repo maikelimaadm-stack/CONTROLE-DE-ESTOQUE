@@ -225,7 +225,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       if (d.generate_financial) {
         let lines: { financialCategoryId: string; costCenterId: string; chartAccountId?: string | null; harvestId?: string | null; percentage?: string | number; amount?: string | number }[] = d.apportionment_type === "by_product" ? prodLines : (d.apportionment ?? []).map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, percentage: a.percentage, amount: a.amount }));
         if (!lines.length) lines = prodLines;
-        if (!lines.length) throw validation("Informe o rateio financeiro (categoria/centro de custo) ou categoria e centro de custo nos itens");
+        if (!lines.length) throw validation("Informe o rateio financeiro (natureza/centro de resultado) ou natureza e centro de resultado nos itens");
         if (d.apportionment_type === "by_product") { // ajusta frete/outros na última linha
           const sumLines = lines.reduce((a, l) => a.plus(l.amount ?? 0), D(0)); const diff = D(total).minus(sumLines); if (!diff.isZero()) { const last = lines[lines.length - 1]!; last.amount = money(D(last.amount ?? 0).plus(diff)); }
         }
