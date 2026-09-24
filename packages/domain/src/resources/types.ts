@@ -104,6 +104,85 @@ export interface ResourceDef {
   reference?: boolean;
   /** tabela com registros padrão do sistema (organization_id null) visíveis a todas as organizações */
   sharedDefaults?: boolean;
+  /**
+   * FICHA EM ABAS (CADASTROS Fase 4, decisão 253) — ver `AbaDef`, `DetalheDef` e `PerfilDef`. Cadastro sem
+   * `abas` continua exatamente como antes (formulário de painéis do layout configurável).
+   */
+  abas?: AbaDef[];
+  /** tabelas 1:N gravadas junto com o principal (grade dentro de uma aba) */
+  detalhes?: DetalheDef[];
+  /** tabelas 1:1 (perfil) gravadas junto com o principal */
+  perfis?: PerfilDef[];
+  /** campos do cabeçalho FIXO da ficha (ficam visíveis em todas as abas) */
+  cabecalho?: string[];
+  /** campos do CADASTRO RÁPIDO (diálogo aberto de dentro de outra tela: venda, compra…) — mesma API */
+  camposRapidos?: string[];
+}
+
+/**
+ * FICHA EM ABAS — mecanismo GENÉRICO do registry (Fases 4 a 7 do programa CADASTROS).
+ *
+ * API do mecanismo (quem declara, o que acontece):
+ *  · `ResourceDef.abas`: ordem = ordem do array. Cada aba junta SEÇÕES de campos do principal (`FieldDef.section`),
+ *    grades de DETALHE (`detalhes`, chaves de `ResourceDef.detalhes`) e PERFIS (`perfis`, chaves de
+ *    `ResourceDef.perfis`). `visivelQuando` esconde a aba inteira enquanto o campo do principal não tem o valor.
+ *    Campo sem seção cai na PRIMEIRA aba.
+ *  · Corpo do POST/PUT `/resources/:key[/:id]`: os campos do principal + `<detalhe.key>: linha[]` +
+ *    `<perfil.key>: {…}`. Schema ESTRITO: uma API anterior ao mecanismo recusa essas chaves (422) em vez de
+ *    ignorá-las.
+ *  · GRAVAÇÃO ATÔMICA: principal, detalhes e perfis na MESMA transação do `runService`. Qualquer erro → nada
+ *    gravado; o 422 traz `details[]` com `path`, `aba`, `detalhe` e `linha` (1-based) para a tela marcar a aba.
+ *  · PUT: detalhe AUSENTE no corpo = a grade não é tocada; PRESENTE = lista COMPLETA (linha com `id` atualiza,
+ *    sem `id` inclui, linha viva que não veio é removida — soft delete quando a tabela tem `deleted_at`).
+ *  · PERFIL com `ativoPor`: o perfil acompanha o campo booleano do principal. Desmarcar NÃO apaga o perfil:
+ *    inativa (`is_active = false`) e a aba some; remarcar reativa com os dados de antes.
+ *  · GET `/resources/:key/:id` devolve as grades e os perfis nas mesmas chaves do corpo.
+ */
+export interface AbaDef {
+  key: string;
+  label: string;
+  /** seções de `fields` exibidas nesta aba, na ordem */
+  secoes?: string[];
+  /** grades de detalhe (chaves de `ResourceDef.detalhes`) */
+  detalhes?: string[];
+  /** perfis 1:1 (chaves de `ResourceDef.perfis`) */
+  perfis?: string[];
+  /** aba só aparece quando o campo do principal tem esse valor */
+  visivelQuando?: { field: string; equals: unknown };
+}
+
+export interface DetalheDef {
+  /** chave no corpo da API e na resposta */
+  key: string;
+  label: string;
+  table: string;
+  /** coluna que aponta para o principal (ex.: person_id) */
+  chavePai: string;
+  fields: FieldDef[];
+  /**
+   * Linha SEM coluna `id`: a identidade é esta coluna (ex.: empresa_id em proprietary_empresas). Sem ela a
+   * tabela tem `id uuid`.
+   */
+  chaveNatural?: string;
+  /** a tabela tem `organization_id` (FK composta com o principal) */
+  organizacao?: boolean;
+  /** a tabela tem `deleted_at`: linha removida da grade é EXCLUÍDA logicamente, nunca apagada */
+  softDelete?: boolean;
+  /** coluna de empresa da linha: cada empresa é conferida contra o escopo de lançamento do usuário */
+  campoEmpresa?: string;
+  /** máximo de linhas por gravação */
+  maxLinhas?: number;
+}
+
+export interface PerfilDef {
+  key: string;
+  label: string;
+  table: string;
+  /** coluna que aponta para o principal (é a chave primária do perfil) */
+  chavePai: string;
+  fields: FieldDef[];
+  /** campo booleano do principal que liga o perfil (ex.: is_client) */
+  ativoPor?: string;
 }
 
 export const yesNo: FieldOption[] = [{ value: "true", label: "Sim" }, { value: "false", label: "Não" }];

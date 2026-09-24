@@ -449,8 +449,11 @@ test("CADASTROS-ESTRUTURA · CE-K1 — corpo ANTIGO de produto (com category_id 
     description: uniq("CE-K1 produto web anterior"), measurement_id: unidade, group_id: grupo, category_id: categoria, kind_id: classe, control_stock: false, is_active: true } });
   expect(r.status(), await r.text()).toBe(201);
   const id = (await r.json() as { id: string }).id;
-  const lido = await (await page.request.get(`${API}/api/resources/products/${id}`, { headers: cab })).json() as Record<string, unknown>;
-  expect([lido["category_id"], lido["kind_id"]], "a API grava o que veio").toEqual([categoria, classe]);
+  expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  // Lido do BANCO: a API nova não devolve os campos legados na leitura (saíram do registry), só os grava.
+  const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+  const gravado = execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `select category_id || '|' || kind_id from erp.products where id = '${id}'`], { encoding: "utf8" }).trim();
+  expect(gravado, "a API grava o que veio").toBe(`${categoria}|${classe}`);
 });
 
 test("CADASTROS-ESTRUTURA · CE-K2 — grupo pelo corpo ANTIGO (sem código): 422 declarado no código, nada gravado", async ({ page }) => {
