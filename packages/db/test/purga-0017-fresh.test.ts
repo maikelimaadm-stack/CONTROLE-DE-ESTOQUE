@@ -159,7 +159,7 @@ beforeAll(async () => {
 afterAll(async () => { await db?.end(); });
 
 describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na purga", () => {
-  it("o diretório tem 23 migrations e a purga é a 17ª", () => {
+  it("o diretório tem 24 migrations e a purga é a 17ª", () => {
     const noDisco = listMigrations().map((m) => m.name);
     // Números explícitos de propósito: este é o gate da fatia destrutiva, e uma migration nova precisa
     // passar por aqui conscientemente — não entrar de carona num `>= 16`. A 05C-2 passou: acrescentou a
@@ -174,8 +174,10 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // Nenhuma das duas coisas existe no recorte que a purga lê (o acervo legado de fazenda), e nenhuma
     // altera tabela que a purga toque — a posição 17 segue intacta. A TOP-CONFIG-04A é a sétima: a 0023 só
     // cria um GATILHO em `erp.sales_documents` (guarda da execução configurada), sem coluna, sem dado e sem
-    // tocar o recorte que a purga lê — a posição 17 segue intacta.
-    expect(noDisco.length, "23 migrations no repositório").toBe(23);
+    // tocar o recorte que a purga lê — a posição 17 segue intacta. A VENDAS-A1 é a oitava: a 0024 acrescenta
+    // duas colunas nulas e um gatilho a `erp.sales_documents` e chaves candidatas de tenant às categorias e
+    // centros — nada no recorte que a purga lê, e a posição 17 segue intacta.
+    expect(noDisco.length, "24 migrations no repositório").toBe(24);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -183,6 +185,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[20], "e a 21ª é o snapshot da TOP no documento de venda (TOP-CONFIG-02)").toBe("0021_sales_document_tipo_operacao.sql");
     expect(noDisco[21], "e a 22ª é a configuração versionada da TOP (TOP-CONFIG-03)").toBe("0022_tipo_operacao_configuracao_versionada.sql");
     expect(noDisco[22], "e a 23ª é a guarda da execução configurada da venda (TOP-CONFIG-04A)").toBe("0023_venda_execucao_configurada_guarda.sql");
+    expect(noDisco[23], "e a 24ª é a classificação financeira do documento de venda (VENDAS-A1)").toBe("0024_venda_classificacao_financeira.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {

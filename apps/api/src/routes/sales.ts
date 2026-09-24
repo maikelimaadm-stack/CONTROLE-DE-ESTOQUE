@@ -18,7 +18,7 @@ const uuid = z.string().uuid();
 /** Forma canônica de UUID, para conferir ENTRADA DE FILTRO antes de ela virar parâmetro de SQL. */
 const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_date: date.optional().nullable(), due_date: date.optional().nullable(), client_id: uuid, transporter_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), driver_name: z.string().optional().nullable(), payment_method_id: uuid.optional().nullable(), freight: dec.default("0"), freight_icms: dec.default("0"), other_values: dec.default("0"), discount: dec.default("0"), note: z.string().optional().nullable(), installment_plan: installmentPlanSchema.optional().nullable(), is_deductible: z.boolean().default(false), items: z.array(z.object({ product_id: uuid, warehouse_id: uuid.optional().nullable(), quantity: dec, unit_price: dec, discount: dec.default("0"), discount_percent: dec.default("0"), note: z.string().optional().nullable() })).min(1), tipo_operacao_id: uuid.optional().nullable() });
+const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_date: date.optional().nullable(), due_date: date.optional().nullable(), client_id: uuid, transporter_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), driver_name: z.string().optional().nullable(), payment_method_id: uuid.optional().nullable(), freight: dec.default("0"), freight_icms: dec.default("0"), other_values: dec.default("0"), discount: dec.default("0"), note: z.string().optional().nullable(), installment_plan: installmentPlanSchema.optional().nullable(), is_deductible: z.boolean().default(false), items: z.array(z.object({ product_id: uuid, warehouse_id: uuid.optional().nullable(), quantity: dec, unit_price: dec, discount: dec.default("0"), discount_percent: dec.default("0"), note: z.string().optional().nullable() })).min(1), tipo_operacao_id: uuid.optional().nullable(), categoria_financeira_id: uuid.optional().nullable(), centro_custo_id: uuid.optional().nullable() });
 const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "orders" : "sales");
 /**
  * O CORPO DO CANCELAMENTO — declarado, e não mais descartado.
@@ -115,6 +115,70 @@ async function resolverTopParaLancamento(ctx: ServiceCtx, familiaEsperada: strin
   const top = r.rows[0];
   if (!top) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este lançamento");
   return { tipoOperacaoId: top.id, tipoOperacaoVersaoId: top.versao_id, codigo: top.codigo, nome: top.nome, versao: top.versao, codigoBase: top.codigo_base };
+}
+
+/**
+ * CLASSIFICAÇÃO FINANCEIRA DO DOCUMENTO (VENDAS-A1): o PAR categoria de receita × centro de custo que vai
+ * para o rateio dos títulos a receber gerados na confirmação.
+ */
+export interface ClassificacaoFinanceira { categoriaFinanceiraId: string; centroCustoId: string }
+/** Versão da capacidade declarada em `operation-types` (a web só mostra e envia os campos com ela). */
+export const CAPACIDADE_CLASSIFICACAO_FINANCEIRA = 1;
+const MSG_CATEGORIA_INVALIDA = "Categoria financeira inválida para venda: escolha uma categoria analítica de receita, ativa";
+const MSG_CENTRO_INVALIDO = "Centro de custo inválido para venda: escolha um centro de custo analítico, ativo";
+const MSG_PAR_INCOMPLETO = "Informe a categoria financeira e o centro de custo juntos";
+const recusaDeCampo = (campo: "categoria_financeira_id" | "centro_custo_id", mensagem: string) => err("VALIDATION_ERROR", mensagem, [{ path: campo, message: mensagem }]);
+
+/**
+ * A PORTA ÚNICA DE VALIDAÇÃO da classificação — usada na criação, na edição, na conversão e na confirmação.
+ *
+ * SUPERFÍCIE ÚNICA DE RECUSA POR CAMPO: inexistente, de outra organização, sintética, de despesa ou "ambas",
+ * inativa e excluída caem no MESMO 422 com a MESMA mensagem. Distinguir seria um oráculo de existência
+ * sobre o cadastro da organização vizinha (`.claude/rules/security.md`).
+ *
+ * `for share`: a linha lida fica travada contra alteração até o fim da transação. Sem isso, uma inativação
+ * concorrente commitaria entre a validação e a gravação, e o documento (ou o título) nasceria apontando para
+ * uma categoria que já não é aceita. O custo é baixo — cadastro de categoria/centro raramente é editado, e a
+ * inativação só espera o lançamento terminar. É o mesmo desenho de `resolverTopParaLancamento`.
+ *
+ * `contexto` só troca o TEXTO da recusa (origem da conversão, confirmação); a regra é uma só.
+ */
+async function validarClassificacaoFinanceira(ctx: ServiceCtx, par: ClassificacaoFinanceira, contexto: "lancamento" | "origem" | "confirmacao" = "lancamento"): Promise<ClassificacaoFinanceira> {
+  const cat = await ctx.tx.query("select 1 from erp.financial_categories where id=$1 and organization_id=$2 and deleted_at is null and is_active and kind='analytic' and nature='income' for share", [par.categoriaFinanceiraId, ctx.orgId]);
+  const cc = await ctx.tx.query("select 1 from erp.cost_centers where id=$1 and organization_id=$2 and deleted_at is null and is_active and kind='analytic' for share", [par.centroCustoId, ctx.orgId]);
+  const texto = (base: string) => contexto === "origem" ? `A classificação do documento de origem deixou de valer. ${base}`
+    : contexto === "confirmacao" ? `A classificação financeira desta venda deixou de valer. ${base}. Reative-a no cadastro ou cancele a venda` : base;
+  if (!cat.rowCount) throw recusaDeCampo("categoria_financeira_id", texto(MSG_CATEGORIA_INVALIDA));
+  if (!cc.rowCount) throw recusaDeCampo("centro_custo_id", texto(MSG_CENTRO_INVALIDO));
+  return par;
+}
+
+/** Par vindo do corpo da CRIAÇÃO: ausente/null nos dois → sem classificação; um só → 422; os dois → validado. */
+async function classificacaoDaCriacao(ctx: ServiceCtx, d: { categoria_financeira_id?: string | null; centro_custo_id?: string | null }): Promise<ClassificacaoFinanceira | null> {
+  const cat = d.categoria_financeira_id ?? null; const cc = d.centro_custo_id ?? null;
+  if (cat === null && cc === null) return null;
+  if (cat === null || cc === null) throw recusaDeCampo(cat === null ? "categoria_financeira_id" : "centro_custo_id", MSG_PAR_INCOMPLETO);
+  return validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: cat, centroCustoId: cc });
+}
+
+/**
+ * Par da EDIÇÃO, com a mesma semântica de `tipo_operacao_id`:
+ *   campo AUSENTE → preserva o gravado · valor presente (mesmo igual) → validado e gravado ·
+ *   null explícito em documento classificado → 422 · null em documento sem classificação → no-op.
+ * O PAR vale sobre o documento RESULTANTE (depois da preservação). `undefined` = não toca nas colunas.
+ */
+async function classificacaoDaEdicao(ctx: ServiceCtx, corpo: unknown, atual: { categoria_financeira_id: string | null; centro_custo_id: string | null }): Promise<ClassificacaoFinanceira | undefined> {
+  const cru = corpo !== null && typeof corpo === "object" ? corpo as Record<string, unknown> : {};
+  const classificado = atual.categoria_financeira_id !== null;
+  for (const campo of ["categoria_financeira_id", "centro_custo_id"] as const) {
+    if (classificado && campo in cru && cru[campo] === null) throw recusaDeCampo(campo, "A classificação não pode ser removida; informe outra ou omita o campo");
+  }
+  const enviou = (campo: string) => campo in cru && cru[campo] !== null && cru[campo] !== undefined;
+  if (!enviou("categoria_financeira_id") && !enviou("centro_custo_id")) return undefined;
+  const cat = enviou("categoria_financeira_id") ? String(cru["categoria_financeira_id"]) : atual.categoria_financeira_id;
+  const cc = enviou("centro_custo_id") ? String(cru["centro_custo_id"]) : atual.centro_custo_id;
+  if (cat === null || cc === null) throw recusaDeCampo(cat === null ? "categoria_financeira_id" : "centro_custo_id", MSG_PAR_INCOMPLETO);
+  return validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: cat, centroCustoId: cc });
 }
 
 /**
@@ -249,7 +313,7 @@ async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts
   // própria porta de detalhe — 404 num registro que está lá. O nome sai de `topv` (a versão CONGELADA),
   // nunca da versão corrente do pai: é isso que faz a renomeação administrativa de amanhã não reescrever
   // o que este documento diz que é.
-  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + (opts.lock ? " for update of d" : ""), sc.params); if (!r.rows[0]) throw notFound("Documento");
+  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao, fcat.code as categoria_financeira_codigo, fcat.name as categoria_financeira_nome, ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id left join erp.financial_categories fcat on fcat.id=d.categoria_financeira_id and fcat.organization_id=d.organization_id left join erp.cost_centers ccus on ccus.id=d.centro_custo_id and ccus.organization_id=d.organization_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + (opts.lock ? " for update of d" : ""), sc.params); if (!r.rows[0]) throw notFound("Documento");
   const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id where i.document_id=$1 order by i.position", [id]);
   const titles = await ctx.tx.query("select id, code, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by due_date", [ctx.orgId, id]);
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
@@ -292,16 +356,20 @@ async function exigirDocumentoVisivel(ctx: ServiceCtx, id: string, expectedKind:
  *   `null`      → grava NULL/NULL. É a criação por cliente legado, que não declarou TOP nenhuma.
  *   objeto      → grava o snapshot resolvido pelo servidor.
  */
-async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docSchema>, existingId?: string, origin?: string | null, top?: TopDoLancamento | null) {
+async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docSchema>, existingId?: string, origin?: string | null, top?: TopDoLancamento | null, classificacao?: ClassificacaoFinanceira | null) {
   const totals = documentTotals(d.items.map((i) => ({ quantity: i.quantity, unitPrice: i.unit_price, discount: i.discount, discountPercent: i.discount_percent })), { freight: d.freight, freightIcms: d.freight_icms, otherValues: d.other_values, discount: d.discount });
   let id = existingId;
   const plan = d.installment_plan ? { ...d.installment_plan, is_deductible: d.is_deductible } : {};
-  if (!id) { const code = await nextCode(ctx.tx, ctx.orgId, `sales_${kind}`); id = (await ctx.tx.query<{ id: string }>("insert into erp.sales_documents(organization_id,empresa_id,kind,code,document_date,shipping_date,due_date,responsible_user_id,client_id,transporter_id,proprietary_id,driver_name,payment_method_id,subtotal,freight,freight_icms,other_values,discount,total,note,installment_plan,origin_document_id,tipo_operacao_id,tipo_operacao_versao_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$8) returning id", [ctx.orgId, d.empresa_id, kind, code, d.document_date, d.shipping_date ?? null, d.due_date ?? null, ctx.user.id, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), origin ?? null, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null])).rows[0]!.id; await atribuirIdGlobal(ctx, "sales_documents", id); }
+  if (!id) { const code = await nextCode(ctx.tx, ctx.orgId, `sales_${kind}`); id = (await ctx.tx.query<{ id: string }>("insert into erp.sales_documents(organization_id,empresa_id,kind,code,document_date,shipping_date,due_date,responsible_user_id,client_id,transporter_id,proprietary_id,driver_name,payment_method_id,subtotal,freight,freight_icms,other_values,discount,total,note,installment_plan,origin_document_id,tipo_operacao_id,tipo_operacao_versao_id,categoria_financeira_id,centro_custo_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$8) returning id", [ctx.orgId, d.empresa_id, kind, code, d.document_date, d.shipping_date ?? null, d.due_date ?? null, ctx.user.id, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), origin ?? null, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null, classificacao?.categoriaFinanceiraId ?? null, classificacao?.centroCustoId ?? null])).rows[0]!.id; await atribuirIdGlobal(ctx, "sales_documents", id); }
   else {
     // As colunas de TOP só entram no SET quando houve decisão explícita. `undefined` preserva o snapshot.
     const topSet = top === undefined ? "" : ", tipo_operacao_id=$19, tipo_operacao_versao_id=$20";
     const topParams = top === undefined ? [] : [top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null];
-    await ctx.tx.query(`update erp.sales_documents set document_date=$3, shipping_date=$4, due_date=$5, client_id=$6, transporter_id=$7, proprietary_id=$8, driver_name=$9, payment_method_id=$10, subtotal=$11, freight=$12, freight_icms=$13, other_values=$14, discount=$15, total=$16, note=$17, installment_plan=$18${topSet}, updated_at=now() where id=$1 and organization_id=$2`, [id, ctx.orgId, d.document_date, d.shipping_date ?? null, d.due_date ?? null, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), ...topParams]);
+    // Mesma regra para a classificação: `undefined` preserva; só a decisão explícita entra no SET.
+    const n0 = 19 + topParams.length;
+    const classSet = classificacao === undefined ? "" : `, categoria_financeira_id=$${n0}, centro_custo_id=$${n0 + 1}`;
+    const classParams = classificacao === undefined ? [] : [classificacao?.categoriaFinanceiraId ?? null, classificacao?.centroCustoId ?? null];
+    await ctx.tx.query(`update erp.sales_documents set document_date=$3, shipping_date=$4, due_date=$5, client_id=$6, transporter_id=$7, proprietary_id=$8, driver_name=$9, payment_method_id=$10, subtotal=$11, freight=$12, freight_icms=$13, other_values=$14, discount=$15, total=$16, note=$17, installment_plan=$18${topSet}${classSet}, updated_at=now() where id=$1 and organization_id=$2`, [id, ctx.orgId, d.document_date, d.shipping_date ?? null, d.due_date ?? null, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), ...topParams, ...classParams]);
     await ctx.tx.query("delete from erp.sales_document_items where document_id=$1", [id]);
   }
   for (const [i, it] of d.items.entries()) await ctx.tx.query("insert into erp.sales_document_items(document_id,product_id,warehouse_id,quantity,unit_price,discount,discount_percent,total,note,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", [id, it.product_id, it.warehouse_id ?? null, it.quantity, it.unit_price, money(it.discount), it.discount_percent, itemTotal({ quantity: it.quantity, unitPrice: it.unit_price, discount: it.discount, discountPercent: it.discount_percent }), it.note ?? null, i]);
@@ -383,7 +451,7 @@ async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execuca
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
-  const d = await getDoc(ctx, id, "sale", { lock: true }) as Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
+  const d = await getDoc(ctx, id, "sale", { lock: true }) as Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
   // A variante já foi amarrada no carregamento (`getDoc(..., "sale")`): orçamento e pedido passados aqui
   // respondem 404, como qualquer UUID que a rota de vendas não serve. A conferência antiga
   // (`d.kind !== "sale"` → 422) distinguia "existe na variante vizinha" de "não existe" — diferença que a
@@ -409,6 +477,24 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
 
   await assertPeriodOpen(ctx.tx, ctx.orgId, d.empresa_id, d.document_date);
 
+  // CLASSIFICAÇÃO FINANCEIRA (VENDAS-A1) — resolvida ANTES do primeiro efeito, e só quando HAVERÁ título:
+  // com o financeiro configurado "nenhum" nada é exigido nem validado (efeito que não acontece não exige
+  // cadastro). Documento classificado → revalidado pela MESMA porta, e NUNCA recua para a "primeira por
+  // código" (seria trocar em silêncio a escolha do usuário). Documento sem classificação → o recuo de sempre.
+  const geraTitulos = politica.financeiro.autoridade === "legado" || politica.financeiro.efeito === "receber";
+  let classificacao: (ClassificacaoFinanceira & { origem: "documento" | "padrão legado" }) | null = null;
+  if (geraTitulos) {
+    if (d.categoria_financeira_id && d.centro_custo_id) {
+      classificacao = { ...await validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: d.categoria_financeira_id, centroCustoId: d.centro_custo_id }, "confirmacao"), origem: "documento" };
+    } else {
+      // Receita: categoria padrão de venda de produtos (1ª analítica de receita) e centro de custo padrão da fazenda
+      const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='income' and kind='analytic' and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
+      const cc = (await ctx.tx.query<{ id: string }>("select cc.id from erp.cost_centers cc where cc.organization_id=$1 and cc.kind='analytic' and cc.deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
+      if (!cat || !cc) throw validation("Cadastre uma categoria financeira de receita e um centro de custo analítico");
+      classificacao = { categoriaFinanceiraId: cat.id, centroCustoId: cc.id, origem: "padrão legado" };
+    }
+  }
+
   // ESTOQUE. Legado e "saída" configurada chamam a MESMA primitiva com os MESMOS identificadores; "nenhum"
   // não chama nada. O item sem armazém continua fora da baixa nos dois caminhos que baixam — com
   // `exigeArmazem` ele já foi recusado acima.
@@ -423,16 +509,11 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   // título e também não exige categoria nem centro — exigir cadastro para um efeito que não acontece seria
   // recusar a venda por um motivo que não existe.
   let titleIds: string[] = [];
-  const geraTitulos = politica.financeiro.autoridade === "legado" || politica.financeiro.efeito === "receber";
-  if (geraTitulos) {
-    // Receita: categoria padrão de venda de produtos (1ª analítica de receita) e centro de custo padrão da fazenda
-    const cat = (await ctx.tx.query<{ id: string }>("select id from erp.financial_categories where organization_id=$1 and nature='income' and kind='analytic' and deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-    const cc = (await ctx.tx.query<{ id: string }>("select cc.id from erp.cost_centers cc where cc.organization_id=$1 and cc.kind='analytic' and cc.deleted_at is null order by code limit 1", [ctx.orgId])).rows[0];
-    if (!cat || !cc) throw validation("Cadastre uma categoria financeira de receita e um centro de custo analítico");
+  if (geraTitulos && classificacao) {
     const plan = lerPlano();
     // O vencimento do legado cai na data do documento quando não há outro; sob `exigeVencimento` configurado
     // esse recuo não existe — a falta já foi recusada acima, antes do primeiro efeito.
-    const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "receivable", number: `VND-${d.code}`, personId: d.client_id, amount: d.total, emissionDate: d.document_date, dueDate: plan?.first_due_date ?? d.due_date ?? d.document_date, note: `Venda ${d.code}`, isDeductible: Boolean((d.installment_plan as { is_deductible?: boolean }).is_deductible), apportionment: [{ financialCategoryId: cat.id, costCenterId: cc.id, percentage: "100" }], sourceType: "sales_documents", sourceId: id, plan });
+    const t = await createTitles(ctx, { empresaId: d.empresa_id, direction: "receivable", number: `VND-${d.code}`, personId: d.client_id, amount: d.total, emissionDate: d.document_date, dueDate: plan?.first_due_date ?? d.due_date ?? d.document_date, note: `Venda ${d.code}`, isDeductible: Boolean((d.installment_plan as { is_deductible?: boolean }).is_deductible), apportionment: [{ financialCategoryId: classificacao.categoriaFinanceiraId, costCenterId: classificacao.centroCustoId, percentage: "100" }], sourceType: "sales_documents", sourceId: id, plan });
     titleIds = t.ids;
   }
 
@@ -445,6 +526,9 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   if (politica.estoque.autoridade === "configurada" || politica.financeiro.autoridade === "configurada") {
     await ctx.tx.query("select set_config('app.venda_execucao_configurada', $1, true)", [d.id]);
   }
+  // A MARCA DA CLASSIFICAÇÃO (0024): venda classificada só entra em confirmed/invoiced com ela — com ou sem
+  // título. Um binário anterior não a grava e, por isso, não confirma pela "primeira por código".
+  if (d.categoria_financeira_id) await ctx.tx.query("select set_config('app.venda_classificacao_financeira', $1, true)", [d.id]);
   // ROW COUNT SOB RLS, e a transição conferida no próprio `where`: sob a trava acima só `open`/`approved`
   // chegam aqui, e zero linha sem conferência seria sucesso sem efeito.
   const u = await ctx.tx.query("update erp.sales_documents set status='confirmed', updated_at=now() where id=$1 and organization_id=$2 and status not in ('confirmed','invoiced','cancelled')", [id, ctx.orgId]);
@@ -453,7 +537,8 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   // materializado. `titles` continua com o nome de sempre — é o que leitores anteriores da trilha conhecem.
   await audit(ctx.tx, ctx, "sales_documents", id, "confirm", {
     titles: titleIds, movimentos, tipoOperacaoVersaoId: d.tipo_operacao_versao_id,
-    execucao: { origem: politica.origem, ...resumoDaPoliticaDaVenda(politica) }
+    execucao: { origem: politica.origem, ...resumoDaPoliticaDaVenda(politica) },
+    ...(titleIds.length && classificacao ? { classificacaoFinanceira: { categoriaFinanceiraId: classificacao.categoriaFinanceiraId, centroCustoId: classificacao.centroCustoId, origem: classificacao.origem } } : {})
   });
   return { id, status: "confirmed", title_ids: titleIds };
 }
@@ -550,6 +635,10 @@ export default async function salesRoutes(app: FastifyInstance) {
         [ctx.orgId, familia]);
       return {
         contractVersion: 1,
+        // ADITIVO, sem mexer em `contractVersion` (a web anterior compara a versão EXATA e bloquearia a
+        // escrita): declara que esta API entende a classificação financeira do documento (VENDAS-A1). A web
+        // nova só mostra e envia os campos com esta declaração — a API anterior os descartaria em silêncio.
+        capacidades: { classificacaoFinanceira: CAPACIDADE_CLASSIFICACAO_FINANCEIRA },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
         items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao }))
@@ -566,7 +655,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      * faria a mesma chamada significar coisas diferentes conforme a configuração do dia. A web NOVA escolhe
      * explicitamente (podendo PRÉ-SELECIONAR o padrão, com o valor visível).
      */
-    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const r = await writeDoc(ctx, kind, d, undefined, null, top); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
+    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
     /**
      * EDIÇÃO. A regra do snapshot está toda nas três linhas de `top` abaixo:
      *
@@ -585,7 +674,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       // — que não reavalia status nenhum. O resultado é um documento `confirmed` cujos itens e total foram
       // TROCADOS depois de o estoque ter sido baixado e os títulos gerados pelo conjunto antigo: a venda
       // diz uma coisa e o ledger diz outra, sem que nenhuma das duas respostas seja erro.
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null };
       if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
       const d = docSchema.parse(req.body);
       /**
@@ -615,7 +704,8 @@ export default async function salesRoutes(app: FastifyInstance) {
       }
       const trocouTop = d.tipo_operacao_id != null && d.tipo_operacao_id !== cur.tipo_operacao_id;
       const top = trocouTop ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id!) : undefined;
-      const r = await writeDoc(ctx, kind, d, id, undefined, top);
+      const classificacao = await classificacaoDaEdicao(ctx, req.body, cur);
+      const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao);
       await audit(ctx.tx, ctx, "sales_documents", id, "update");
       // Mudança de identidade do lançamento é evento PRÓPRIO: quem trocou a TOP de um documento não pode
       // ficar escondido dentro de um `update` genérico sem diff.
@@ -862,7 +952,12 @@ export default async function salesRoutes(app: FastifyInstance) {
         topDestino = alvo.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(destino), alvo.tipo_operacao_id) : null;
       }
       const body = docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments ? cur.installment_plan : null, items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
-      const r = await writeDoc(ctx, destino, body, undefined, id, topDestino);
+      // A classificação da ORIGEM é copiada e passa pela MESMA porta: se deixou de valer, a conversão inteira
+      // é recusada antes de qualquer efeito (a fonte continua aberta; a transação garante).
+      const origemClass = cur as unknown as { categoria_financeira_id: string | null; centro_custo_id: string | null };
+      const classificacao = origemClass.categoria_financeira_id && origemClass.centro_custo_id
+        ? await validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: origemClass.categoria_financeira_id, centroCustoId: origemClass.centro_custo_id }, "origem") : null;
+      const r = await writeDoc(ctx, destino, body, undefined, id, topDestino, classificacao);
       await ctx.tx.query("update erp.sales_documents set status='converted', updated_at=now() where id=$1", [id]);
       await audit(ctx.tx, ctx, "sales_documents", id, "convert", topDestino ? { to: r.id, tipoOperacaoDestinoId: topDestino.tipoOperacaoId, tipoOperacaoDestinoVersaoId: topDestino.tipoOperacaoVersaoId } : { to: r.id });
       if (topDestino) await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", { tipoOperacaoId: topDestino.tipoOperacaoId, tipoOperacaoVersaoId: topDestino.tipoOperacaoVersaoId, tipoOperacaoCodigo: topDestino.codigo, tipoOperacaoVersao: topDestino.versao, from: id });

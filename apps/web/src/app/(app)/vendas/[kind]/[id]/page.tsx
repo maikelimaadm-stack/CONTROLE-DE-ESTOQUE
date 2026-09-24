@@ -50,6 +50,18 @@ const DO_REGISTRO: Record<string, { titulo: string; novo: string; perm: string; 
   sale: { titulo: "Venda", novo: "Nova venda", perm: "sales", segmento: "sales" }
 };
 
+/**
+ * A CLASSIFICAÇÃO FINANCEIRA NA TELA (VENDAS-A1). "Está classificado?" se decide pelo ID, nunca pelo código do
+ * join: a API anterior (reversão do binário) devolve o id em `d.*`, mas não o código nem o nome. Decidir pelo
+ * código faria a tela dizer "Não informada" — e prometer o padrão automático — numa venda que a guarda do
+ * banco vai RECUSAR confirmar. Com o id e sem o nome, a tela diz que está informada e não inventa o nome.
+ */
+function rotuloDaClassificacao(id: unknown, codigo: unknown, nome: unknown, ausente: string, semNome: string): string {
+  if (!id) return ausente;
+  if (!codigo) return semNome;
+  return `${String(codigo)} · ${String(nome ?? "")}`;
+}
+
 const COLUNAS_TITULOS: Base2ItemColumn<Row>[] = [
   { key: "number", label: "Título", render: (r) => <Link className="text-brand-700 underline" href={`/financeiro/contas-a-receber/${r["id"]}`}>{String(r["number"])}</Link> },
   { key: "due_date", label: "Vencimento", render: (r) => dateBR(r["due_date"] as string) },
@@ -225,6 +237,13 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
         <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
         <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
+        {/* VENDAS-A1: a classificação financeira escolhida no documento. Venda ainda não confirmada sem classificação
+            confirma pelo padrão automático, e a tela diz isso em vez de deixar o campo vazio. */}
+        <CampoLeitura rotulo="Categoria financeira" adorno="travado" testId="central-vendas-campo"
+          valor={rotuloDaClassificacao(d["categoria_financeira_id"], d["categoria_financeira_codigo"], d["categoria_financeira_nome"], "Não informada", "Informada")} />
+        <CampoLeitura rotulo="Centro de custo" adorno="travado" testId="central-vendas-campo"
+          valor={rotuloDaClassificacao(d["centro_custo_id"], d["centro_custo_codigo"], d["centro_custo_nome"], "Não informado", "Informado")} />
+        {variante === "sale" && !d["categoria_financeira_id"] && editavel && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira categoria de receita e primeiro centro de custo analíticos, pela ordem do código).</p>}
         <CampoLeitura rotulo="Responsável" adorno="travado" testId="central-vendas-campo" valor={String(d["responsible_name"] ?? "")} />
         <CampoLeitura rotulo="Data de saída" adorno="data" testId="central-vendas-campo" valor={d["shipping_date"] ? dateBR(d["shipping_date"] as string) : ""} />
         <CampoLeitura rotulo="Número" adorno="travado" testId="central-vendas-campo" valor={codigo} />

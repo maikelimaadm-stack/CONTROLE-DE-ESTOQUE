@@ -88,6 +88,24 @@ export const ehTopsDaVariante = (v: unknown): v is TopsDaVariante =>
   // `items`), mas é exatamente a classe de corpo contra a qual o guarda existe.
   && (v.defaultId === null || v.items.some((i) => (i as TopOperacional).id === v.defaultId));
 
+/** Versão da capacidade de classificação financeira do documento (VENDAS-A1) que esta tela sabe usar. */
+export const CAPACIDADE_CLASSIFICACAO_FINANCEIRA = 1 as const;
+
+/**
+ * A API DECLARA QUE ENTENDE A CLASSIFICAÇÃO FINANCEIRA? — declaração ADITIVA em `/operation-types`
+ * (`capacidades.classificacaoFinanceira`), sem mexer em `contractVersion`.
+ *
+ * Sem ela os campos não aparecem e não viajam no corpo: a API anterior descartaria `categoria_financeira_id`
+ * e `centro_custo_id` em silêncio (`z.object` sem `.strict()`), e o usuário leria "salvo" num documento sem
+ * classificação — o mesmo defeito que a descoberta da TOP fechou. Forma e versão EXATAS: um valor
+ * desconhecido é tratado como ausente.
+ */
+export function entendeClassificacaoFinanceira(e: EstadoTop): boolean {
+  if (e.situacao !== "pronto") return false;
+  const c = (e.dados as unknown as { capacidades?: unknown }).capacidades;
+  return ehObjeto(c) && c.classificacaoFinanceira === CAPACIDADE_CLASSIFICACAO_FINANCEIRA;
+}
+
 /** O que a tela precisa decidir. Três situações distintas, três mensagens distintas — nunca uma só. */
 export type EstadoTop =
   /** Ainda perguntando. */

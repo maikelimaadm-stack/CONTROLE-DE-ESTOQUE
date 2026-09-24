@@ -216,7 +216,11 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     discriminador: "kind", rotas: { budget: "/vendas/budgets/:id", order: "/vendas/orders/:id", sale: "/vendas/sales/:id" },
     discriminadorTop: "kind",
     tops: ["vendas.orcamento", "vendas.pedido", "vendas.venda"], descricao: "Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido, venda).",
-    campos: { kind: { nome: "Tipo", descricao: "budget | order | sale. Valor canônico persistido; o rótulo é traduzido na apresentação." } }
+    campos: {
+      kind: { nome: "Tipo", descricao: "budget | order | sale. Valor canônico persistido; o rótulo é traduzido na apresentação." },
+      categoria_financeira_id: { nome: "Categoria financeira", descricao: "Categoria de RECEITA analítica e ativa dos títulos a receber gerados pela confirmação. Anda em PAR com o centro de custo (os dois ou nenhum); FK composta com o tenant. Documento sem classificação confirma pelo padrão legado (decisão 248)." },
+      centro_custo_id: { nome: "Centro de custo", descricao: "Centro de custo analítico e ativo dos títulos a receber gerados pela confirmação. Anda em PAR com a categoria financeira (os dois ou nenhum); FK composta com o tenant (decisão 248)." }
+    }
   },
 
   // ---------- Pecuária (específico do nicho) ----------

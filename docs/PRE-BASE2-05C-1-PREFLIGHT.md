@@ -10,6 +10,15 @@ próprio (`NOT APPLICABLE WHILE PRE-PROD DATA IS DISPOSABLE`) justamente para n�
 
 Quem executa: o Maike. Não é preciso saber SQL: tudo que precisa ser rodado está escrito pronto para colar.
 
+> **Estado em 2026-09-24 (VENDAS-A1, registro da limpeza de 23/09/2026) — a organização demo NÃO EXISTE
+> MAIS.** Em 23/09/2026, por decisão escrita do Maike, a produção foi limpa por inteiro (`truncate` de
+> `erp.organizations`, `erp.users` e `erp.audit_logs` em cascata) e a organização real foi criada pela decisão
+> 241; não há sandbox em produção, e dado de produção não se apaga mais (decisão 247; linha do tempo em
+> `docs/DEPLOYMENT.md` § "Go-live — checklist de entrada em uso real"). Nada disso mexe no restore:
+> **P1 continua `BLOCKED`** (P1.1–P1.4 não executados; G4) · **`RECOVERY = RESTORE`** · **`REBUILD FROM ZERO`
+> é PROIBIDO para o banco de produção**. O bloco de 23/09 abaixo fica como histórico — a frase "a organização
+> demo continua lá, intocada, como sandbox" deixou de ser verdade.
+
 > **Estado em 2026-09-23 (GO-LIVE-01) — a CONDIÇÃO DE RETORNO DE P1 DISPAROU.** O Maike vai iniciar
 > transações reais numa organização nova e limpa, no banco de produção atual (a organização demo continua lá,
 > intocada, como sandbox). Por isso:
