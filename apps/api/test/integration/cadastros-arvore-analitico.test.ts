@@ -114,9 +114,11 @@ describe("AR-5 — registro com filhos não muda de superior nem de código", ()
   // NENHUM registro (com ou sem filhos) — o caminho é o Mover, que renumera o galho. As recusas mudaram de texto;
   // "nada muda" continua cobrado. Endereçamentos (sem código) seguem a regra antiga (AR-5d).
   it("AR-5a: mover registro COM filho → 422 no superior; renumerar → 422 no código; nada muda", async () => {
+    // A-5 (R1): o superior é conferido ANTES do código — a web anterior manda { parent_id, code } juntos e ouve
+    // "Use Mover." no superior (o que o DEPLOYMENT promete), não "O código é gerado" (T-4: campo + mensagem exatos)
     const mover = await put("financial_categories", meio, { parent_id: outraRaiz, code: "6.01" });
     expect(mover.statusCode, mover.body).toBe(422);
-    expect(["O código é gerado pelo sistema.", "Use Mover."]).toContain(erroDoCampo(mover).message);
+    expect(erroDoCampo(mover)).toEqual({ path: ["parent_id"], message: "Use Mover." });
     const soSuperior = await put("financial_categories", meio, { parent_id: outraRaiz });
     expect(soSuperior.statusCode, soSuperior.body).toBe(422);
     expect(erroDoCampo(soSuperior)).toEqual({ path: ["parent_id"], message: "Use Mover." });

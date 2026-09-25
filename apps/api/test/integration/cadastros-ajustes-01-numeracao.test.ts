@@ -22,6 +22,12 @@ const post = (key: string, payload: Record<string, unknown>) => h.app.inject({ m
 const mensagens = (r: Resp) => [j(r).error?.message, ...((j(r).error?.details ?? []) as { message: string }[]).map((d) => d.message)].join(" | ");
 const q = async <T extends Record<string, unknown>>(sql: string, p: unknown[] = []) => (await admin.query<T>(sql, p)).rows;
 const esvaziar = (tabela: string) => admin.query(`update erp.${tabela} set deleted_at = now() where organization_id=$1 and deleted_at is null`, [h.demo.orgId]);
+/**
+ * "PASSA UM MINUTO" para o limite do Zerar (A-2: 1 por cadastro por organização por minuto, conferido na AUDITORIA):
+ * as suítes que zeram o MESMO cadastro várias vezes envelhecem a auditoria do último Zerar em vez de esperar 60 s.
+ * Não afrouxa nada — o limite em si é cobrado no ZN-8, com e sem o minuto passado.
+ */
+const passarUmMinuto = (cadastro: string) => admin.query("update erp.audit_logs set created_at = created_at - interval '61 seconds' where organization_id=$1 and entity='numeracao' and entity_id=$2 and action='zerar' and created_at > now() - interval '61 seconds'", [h.demo.orgId, cadastro]);
 
 beforeAll(async () => { h = await harness(); admin = createPool(TEST_URL, { max: 4 }); }, 240_000);
 afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end(); });
@@ -138,6 +144,7 @@ describe("ZN-5 zerar ao mesmo tempo que um Novo", () => {
     const resultados: string[] = [];
     for (let i = 0; i < 12; i++) {
       await esvaziar(tabela);
+      await passarUmMinuto(key);
       const antes = { audits: await auditsZerar(key), seguram: await seguram(tabela) };
       const [z, n] = await Promise.all([zerar(key), post(key, corpo(i))]);
       resultados.push(await conferirRodada(i, key, tabela, z, n, primeiro, antes));
@@ -176,6 +183,7 @@ describe("ZN-5 zerar ao mesmo tempo que um Novo", () => {
   };
   const corridaForcada = async (key: string, tabela: string, ordem: "zerar-primeiro" | "novo-primeiro", corpo: Record<string, unknown>) => {
     await esvaziar(tabela);
+    await passarUmMinuto(key);
     const antes = { audits: await auditsZerar(key), seguram: await seguram(tabela) };
     const outra = await admin.connect();
     try {
@@ -213,6 +221,7 @@ describe("ZN-5 zerar ao mesmo tempo que um Novo", () => {
 describe("ZN-7 (RV-Z1) inclusão que não passa pela trava advisory: a recontagem sob a trava da tabela recusa", () => {
   it("inclusão por SQL direto, invisível à pré-contagem e confirmada durante a espera da trava da tabela → 422; nada muda (códigos, contador, audit)", async () => {
     await esvaziar("bank_accounts");
+    await passarUmMinuto("bank_accounts");
     // um excluído que segura código (a liberação teria o que fazer) e o contador acima de 0 (zerar teria o que zerar)
     const ex = await post("bank_accounts", { description: "ZN7 excluída", type: "checking" });
     expect(ex.statusCode, ex.body).toBe(201);
@@ -250,6 +259,71 @@ describe("ZN-7 (RV-Z1) inclusão que não passa pela trava advisory: a recontage
     expect(depois.audits, "nenhum audit de zerar").toEqual(antes.audits);
     await admin.query("update erp.bank_accounts set deleted_at=now() where id=$1", [direta]);
   }, 30_000);
+});
+
+// AJUSTES 01 R1 (A-2): o UPDATE para EXC-<id> auditava só a contagem, e 8 das 11 tabelas não têm gatilho de auditoria —
+// o código antigo se perdia. A auditoria do Zerar leva os pares { id, codigo_antigo } de CADA linha liberada.
+describe("ZN-9 (A-2) a auditoria do Zerar leva os pares { id, codigo_antigo } de cada excluído liberado", () => {
+  it("Setores (sequencial, sem gatilho de auditoria): cada liberado com o código de antes; excluídos_liberados = quantidade de pares", async () => {
+    await esvaziar("feedlot_sectors");
+    await passarUmMinuto("feedlot_sectors");
+    const antes = await q<{ id: string; code: string }>("select id::text, code from erp.feedlot_sectors where organization_id=$1 and deleted_at is not null and code is not null and code not like 'EXC-%' order by code, id", [h.demo.orgId]);
+    expect(antes.length, "premissa: há excluídos segurando código").toBeGreaterThan(0);
+    const r = await zerar("feedlot_sectors");
+    expect(r.statusCode, r.body).toBe(200);
+    const [log] = await q<{ metadata: { excluidos_liberados: number; liberados: { id: string; codigo_antigo: string }[] } }>("select metadata from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id='feedlot_sectors' and action='zerar' order by id desc limit 1", [h.demo.orgId]);
+    const pares = [...(log?.metadata.liberados ?? [])].sort((a, b) => a.codigo_antigo.localeCompare(b.codigo_antigo) || a.id.localeCompare(b.id));
+    expect(pares, "um par por linha liberada, com o código de ANTES").toEqual(antes.map((x) => ({ id: x.id, codigo_antigo: x.code })));
+    expect(log?.metadata.excluidos_liberados).toBe(antes.length);
+    for (const x of antes) expect(await q("select code from erp.feedlot_sectors where id=$1", [x.id]), "e a linha ficou como EXC-<id>").toEqual([{ code: `EXC-${x.id}` }]);
+  });
+});
+
+// AJUSTES 01 R1 (A-2): 1 Zerar por cadastro por organização por minuto (429), conferido na AUDITORIA sob a trava — vale
+// entre instâncias e só conta o Zerar que GRAVOU. Com registro vivo a resposta continua o 422 com o motivo.
+describe("ZN-8 (A-2) limite de 1 Zerar por cadastro por organização por minuto", () => {
+  it("dois Zerar seguidos: o 2º → 429 legível e sem efeito; outro cadastro não é afetado; com vivo continua 422; passado o minuto → 200", async () => {
+    await esvaziar("feedlot_yards");
+    await passarUmMinuto("feedlot_yards");
+    const primeiro = await zerar("feedlot_yards");
+    expect(primeiro.statusCode, primeiro.body).toBe(200);
+    const audits = async () => (await q<{ n: number }>("select count(*)::int n from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id='feedlot_yards' and action='zerar'", [h.demo.orgId]))[0]!.n;
+    const n = await audits();
+    // um excluído novo segurando código: o 2º Zerar teria o que liberar — e não libera
+    const p = await post("feedlot_yards", { empresa_id: h.demo.empresaIds[0]!, name: "ZN8 pátio" });
+    expect(p.statusCode, p.body).toBe(201);
+    await admin.query("update erp.feedlot_yards set deleted_at=now() where id=$1", [j(p).id]);
+    const [{ code: codigo }] = await q<{ code: string }>("select code from erp.feedlot_yards where id=$1", [j(p).id]) as [{ code: string }];
+    const segundo = await zerar("feedlot_yards");
+    expect(segundo.statusCode, segundo.body).toBe(429);
+    expect(j(segundo).error).toEqual({ code: "RATE_LIMITED", message: "A numeração de Pátios foi zerada há menos de 1 minuto; aguarde para zerar de novo." });
+    expect(await audits(), "o 429 não audita").toBe(n);
+    expect(await q("select code from erp.feedlot_yards where id=$1", [j(p).id]), "o 429 não liberou nada").toEqual([{ code: codigo }]);
+    // o limite é POR CADASTRO: Currais, no mesmo minuto, zera
+    await esvaziar("feedlot_corrals");
+    await passarUmMinuto("feedlot_corrals");
+    expect((await zerar("feedlot_corrals")).statusCode, "outro cadastro não é afetado").toBe(200);
+    // com registro vivo a resposta é o 422 com o motivo, mesmo dentro do minuto
+    const vivo = await post("feedlot_yards", { empresa_id: h.demo.empresaIds[0]!, name: "ZN8 vivo" });
+    expect(vivo.statusCode, vivo.body).toBe(201);
+    const comVivo = await zerar("feedlot_yards");
+    expect(comVivo.statusCode, comVivo.body).toBe(422);
+    expect(mensagens(comVivo)).toMatch(/Há 1 registro/);
+    await admin.query("update erp.feedlot_yards set deleted_at=now() where id=$1", [j(vivo).id]);
+    // passado o minuto, zera
+    await passarUmMinuto("feedlot_yards");
+    const depois = await zerar("feedlot_yards");
+    expect(depois.statusCode, depois.body).toBe(200);
+    expect(await q("select code from erp.feedlot_yards where id=$1", [j(p).id])).toEqual([{ code: `EXC-${j(p).id}` }]);
+  });
+  it("o Zerar DESFEITO (422 na recontagem) não conta para o limite: o seguinte, no mesmo minuto, zera", async () => {
+    // ZN-7 acabou de ter o Zerar de Contas bancárias desfeito pela recontagem: nenhum audit, nenhum limite
+    await esvaziar("bank_accounts");
+    const recentes = (await q<{ n: number }>("select count(*)::int n from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id='bank_accounts' and action='zerar' and created_at > now() - interval '1 minute'", [h.demo.orgId]))[0]!.n;
+    expect(recentes, "o Zerar do ZN-7, desfeito pela recontagem, não deixou auditoria (e não conta para o limite)").toBe(0);
+    const r = await zerar("bank_accounts");
+    expect(r.statusCode, r.body).toBe(200);
+  });
 });
 
 // revisão adversarial: a trava da TABELA vale para todas as organizações, e o pedido na fila já faz as gravações

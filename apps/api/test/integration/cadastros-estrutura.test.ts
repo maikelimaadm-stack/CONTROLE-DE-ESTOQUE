@@ -108,27 +108,36 @@ describe("CE-1 — Grupo de Produtos em árvore, com as regras da decisão 244",
     await expect(admin.query("insert into erp.product_groups(organization_id,code,name) values ($1,'6','ce raiz')", [h.demo.orgId])).rejects.toMatchObject({ code: "23505", constraint: "uq_product_groups_nome_irmaos" });
   });
 
-  it("grupo SEM código → 422 ao criar e ao editar; o grupo do acervo sem código aparece como raiz, no fim da lista", async () => {
-    // AJUSTES 01 (D-1): o POST sem código deixou de ser recusado — o servidor GERA o código (nunca grava sem)
+  // AJUSTES 01 (D-1) e R1 (A-7): o título antigo ("grupo SEM código → 422 ao criar e ao editar") descrevia o contrato
+  // anterior. Hoje o POST sem código GERA o código; o acervo sem código (anterior à 0025) continua listado como raiz, no
+  // fim, não aceita código DIGITADO e ganha código pelo Mover ou ao SALVAR (sob a trava da numeração).
+  it("grupo SEM código: o POST gera; o acervo sem código aparece como raiz no fim da lista, recusa código digitado e ganha o código gerado pelo Mover ou ao salvar (A-7)", async () => {
     const r = await post("product_groups", { name: "CE Sem Código" });
     expect(r.statusCode, r.body).toBe(201); expect(j(r).code).toMatch(/^\d+$/);
     const acervo = (await umaLinha<{ id: string }>("insert into erp.product_groups(organization_id,name) values ($1,'AAA Acervo CE') returning id", [h.demo.orgId]))!.id;
-    for (const payload of [{ name: "AAA Acervo CE 2" }, { code: null }]) {
-      const e = await put("product_groups", acervo, payload);
-      expect(e.statusCode, e.body).toBe(422); expect(erroDoCampo(e).path).toEqual(["code"]);
-    }
-    expect(await umaLinha("select code, name from erp.product_groups where id=$1", [acervo])).toEqual({ code: null, name: "AAA Acervo CE" });
     const lista = j(await get("/api/resources/product_groups?pageSize=200")).items as { id: string; nivel: number }[];
     // premissa: o nome "AAA…" viria PRIMEIRO numa ordem por nome; ele sai por último por não ter código
     expect(lista.length).toBeGreaterThan(5);
     expect(lista.at(-1)).toMatchObject({ id: acervo, nivel: 0 });
-    // AJUSTES 01 (D-1/D-5): o código não se digita mais, nem no acervo (422); o acervo ganha código pelo MOVER
-    // (para a raiz: o próximo da raiz) e passa a valer como qualquer grupo
+    // o código não se digita, nem no acervo: 422 no campo e nada muda
     const digitado = await put("product_groups", acervo, { code: "7" });
     expect(digitado.statusCode, digitado.body).toBe(422);
+    expect(erroDoCampo(digitado)).toEqual({ path: ["code"], message: "O código é gerado pelo sistema." });
+    expect(await umaLinha("select code, name from erp.product_groups where id=$1", [acervo])).toEqual({ code: null, name: "AAA Acervo CE" });
+    // pelo MOVER (para a raiz: o próximo da raiz) o acervo passa a valer como qualquer grupo
     const ok = await h.app.inject({ method: "POST", url: `/api/resources/product_groups/${acervo}/mover`, headers: hdr(), payload: { superior: null } });
     expect(ok.statusCode, ok.body).toBe(200);
     expect((await umaLinha<{ code: string | null }>("select code from erp.product_groups where id=$1", [acervo]))!.code).toMatch(/^\d+$/);
+    // A-7: SALVAR o acervo sem código (outro campo qualquer) gera o código — o próximo debaixo do superior — em vez de
+    // recusar para sempre. Debaixo do sintético "1" do seed: a raiz só comporta nove códigos (o CE-6 ainda usa um) e
+    // debaixo de "2" o CE-6 põe "2.04" fixo.
+    const superior = await grupoDoSeed("1");
+    const acervo2 = (await umaLinha<{ id: string }>("insert into erp.product_groups(organization_id,name,parent_id) values ($1,'AAA Acervo CE A7',$2) returning id", [h.demo.orgId, superior]))!.id;
+    const previsto = j(await get(`/api/resources/product_groups/proximo-codigo?parent_id=${superior}`)).codigo as string;
+    expect(previsto, "premissa: o próximo código debaixo do superior").toMatch(/^1\.\d{2}$/);
+    const salvo = await put("product_groups", acervo2, { name: "AAA Acervo CE A7 salvo" });
+    expect(salvo.statusCode, salvo.body).toBe(200);
+    expect(await umaLinha("select code, name, parent_id from erp.product_groups where id=$1", [acervo2])).toEqual({ code: previsto, name: "AAA Acervo CE A7 salvo", parent_id: superior });
   });
 
   it("grupo analítico com produto VIVO não vira sintético (422); sem produto vivo, vira", async () => {
