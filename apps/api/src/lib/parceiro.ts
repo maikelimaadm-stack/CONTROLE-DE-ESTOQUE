@@ -11,13 +11,17 @@
  *    de RH (`funcionarios`), em Pessoal — e ela não tem o tipo de pessoa, então a mensagem diz onde ele se acerta;
  *  · único entre VIVOS da organização (o índice ux_people_documento_normalizado é a autoridade; aqui o 409
  *    sai antes, com o código e o nome do existente, e com o MESMO filtro do índice: normalizado não vazio);
- *  · situação na Receita: copiada do cache da consulta de CNPJ da própria API (nunca do cliente).
+ *  · situação na Receita: copiada do cache da consulta de CNPJ da própria API (nunca do cliente);
+ *  · CAMPOS POR TIPO DE PESSOA (AJUSTES 01, C-6, decisão 257): Matriz só em Jurídica, parceiro VIVO desta
+ *    organização e nunca ele mesmo; RG, CAEPF e Sexo só em Física — 422 no campo, conferidos contra o tipo que a
+ *    linha TERÁ quando o corpo mexe no tipo ou no campo; latitude e longitude juntas (ou nenhuma), no principal e
+ *    em cada endereço adicional. O e-mail NF-e é `email` no registry (o schema recusa o inválido).
  */
 import { getResource, recusaDoTipoDePessoa, validarDocumento, type ResourceDef } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { notFound, validation } from "./errors.js";
 import type { ServiceCtx } from "./context.js";
-import { abaDe } from "./ficha-em-abas.js";
+import { abaDe, detalheDoErro } from "./ficha-em-abas.js";
 
 export const TIPOS_DE_PARCEIRO = ["is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary"] as const;
 export const MSG_SEM_TIPO = "Marque pelo menos um tipo: Cliente, Fornecedor, Transportadora, Funcionário ou Proprietário.";
@@ -56,6 +60,9 @@ export async function conferirParceiro(ctx: ServiceCtx, def: ResourceDef, id: st
   // telefone de um parceiro antigo sem tipo não fica refém de uma regra que ele não tocou.
   const mexeNosTipos = atual === null || TIPOS_DE_PARCEIRO.some((t) => t in data);
   if (mexeNosTipos && !TIPOS_DE_PARCEIRO.some((t) => valor(data, atual, t) === true)) throw validation(MSG_SEM_TIPO, [{ path: "is_client", message: MSG_SEM_TIPO, aba: "identificacao" }]);
+
+  await conferirCamposDoTipoDePessoa(ctx, def, id, data, atual);
+  conferirCoordenadas(def, data, atual);
 
   // Documento e tipo só são conferidos quando o corpo manda um dos dois: um PUT que não mexe em nenhum não é
   // recusado por dado antigo (o parceiro gravado antes da regra só é cobrado quando alguém mexer no tipo ou no
@@ -96,6 +103,53 @@ export async function conferirParceiro(ctx: ServiceCtx, def: ResourceDef, id: st
   const x = dup.rows[0];
   if (x) throw new DomainError("CONFLICT", `CPF/CNPJ já cadastrado no parceiro ${x.code} - ${x.name}`, [{ path: "document", message: `Já cadastrado: ${x.code} - ${x.name}`, aba: abaDoDocumento, existente: { id: x.id, code: x.code, name: x.name } }]);
 
+}
+
+/** Campos que só existem num tipo de pessoa (C-6). Chaves estáticas; nenhuma vem do cliente. */
+export const CAMPOS_SO_DE_FISICA = ["rg", "caepf", "sexo"] as const;
+export const CAMPOS_SO_DE_JURIDICA = ["matriz_id"] as const;
+const preenchido = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== "";
+
+/**
+ * Matriz só em Jurídica (viva, desta organização, não ele mesmo); RG, CAEPF e Sexo só em Física. Conferido quando
+ * o corpo traz o tipo ou um desses campos, contra o valor que a linha TERÁ (corpo sobre o gravado): quem troca o
+ * tipo precisa limpar o campo do outro tipo no mesmo corpo — a web manda `null` no campo que o tipo esconde.
+ * PUT que não toca em nenhum (web anterior) não é cobrado por dado antigo.
+ */
+async function conferirCamposDoTipoDePessoa(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Linha, atual: Linha | null) {
+  const campos = [...CAMPOS_SO_DE_FISICA, ...CAMPOS_SO_DE_JURIDICA].filter((c) => def.fields.some((f) => f.name === c));
+  if (!campos.length || !("person_type" in data || campos.some((c) => c in data))) return;
+  const presentes = campos.filter((c) => preenchido(valor(data, atual, c)));
+  if (!presentes.length) return;
+  const { tipo } = await tipoResultante(ctx, id, data, atual);
+  const erro = (campo: string, msg: string) => validation(`${def.fields.find((f) => f.name === campo)?.label ?? campo}: ${msg}`, [{ path: campo, message: msg, aba: abaDe(def, { campo }) }]);
+  for (const c of presentes) {
+    if ((CAMPOS_SO_DE_FISICA as readonly string[]).includes(c) && tipo !== "natural") throw erro(c, `Só para pessoa Física (o parceiro está como ${rotuloDoTipo(tipo)}).`);
+    if ((CAMPOS_SO_DE_JURIDICA as readonly string[]).includes(c) && tipo !== "legal") throw erro(c, `Só para pessoa Jurídica (o parceiro está como ${rotuloDoTipo(tipo)}).`);
+  }
+  if (!("matriz_id" in data) || !preenchido(data["matriz_id"])) return;
+  const matriz = String(data["matriz_id"]);
+  if (id && matriz === id) throw erro("matriz_id", "O parceiro não pode ser a matriz dele mesmo.");
+  // viva e desta organização (a FK composta prova o tenant; a vida e o escopo, esta consulta sob RLS)
+  const r = await ctx.tx.query("select 1 from erp.people where id = $1 and organization_id = $2 and deleted_at is null", [matriz, ctx.orgId]);
+  if (!r.rowCount) throw erro("matriz_id", "Matriz não encontrada entre os parceiros ativos.");
+}
+
+/** Latitude e longitude andam juntas, no principal e em cada endereço adicional; faixas −90..90 e −180..180. */
+function conferirCoordenadas(def: ResourceDef, data: Linha, atual: Linha | null) {
+  const faixa = { latitude: 90, longitude: 180 } as const;
+  const conferir = (lat: unknown, lon: unknown, caminho: (c: string) => (string | number)[]) => {
+    for (const [c, v] of [["latitude", lat], ["longitude", lon]] as const) {
+      if (preenchido(v) && !(Math.abs(Number(v)) <= faixa[c])) throw new DomainError("VALIDATION_ERROR", `${c === "latitude" ? "Latitude" : "Longitude"} fora da faixa (−${faixa[c]} a ${faixa[c]})`, [detalheDoErro(def, caminho(c), `Fora da faixa (−${faixa[c]} a ${faixa[c]}).`)]);
+    }
+    if (preenchido(lat) !== preenchido(lon)) {
+      const falta = preenchido(lat) ? "longitude" : "latitude";
+      throw new DomainError("VALIDATION_ERROR", "Informe latitude e longitude juntas (ou nenhuma).", [detalheDoErro(def, caminho(falta), "Informe latitude e longitude juntas (ou nenhuma).")]);
+    }
+  };
+  if (def.fields.some((f) => f.name === "latitude") && ("latitude" in data || "longitude" in data)) conferir(valor(data, atual, "latitude"), valor(data, atual, "longitude"), (c) => [c]);
+  const linhas = data["enderecos"];
+  if (Array.isArray(linhas)) linhas.forEach((l: Linha, i) => conferir(l["latitude"], l["longitude"], (c) => ["enderecos", i, c]));
 }
 
 /**
