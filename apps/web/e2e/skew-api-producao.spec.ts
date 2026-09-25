@@ -1298,3 +1298,72 @@ test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, cor
   }
   v.semBloqueio();
 });
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * CADASTROS AJUSTES 01 · AJ-K1..AJ-K3 — o web NOVO contra a API da BASE (seção 7 da missão).
+ *
+ * A base (d91a772 em produção) responde 500 à busca de referência SEM texto e não declara `codigoAutomatico`,
+ * `moverComFilhos` nem `consultaCnpjJanela`. O ramo sai do que o binário DA BASE responde / declara — nunca
+ * escolhido por conveniência:
+ *   AJ-K1 busca sem texto: 500 → "Não foi possível carregar a lista." + [Tentar de novo]; texto livre nunca
+ *         vira valor e não há "digite o código" (isso é só para a rota AUSENTE, 404);
+ *   AJ-K2 sem as capacidades: Código digitável com sugestão, Mover só de folha, sem "Numeração dos cadastros";
+ *   AJ-K3 ficha de Parceiro: os campos da 0030 não viajam no PUT (a base é estrita: viraria 422).
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+function baseDeclaraCapacidade(nome: string): boolean {
+  const arq = path.resolve(__dirname, "../../..", ".api-anterior/apps/api/src/routes/auth.ts");
+  expect(fs.existsSync(arq), `a árvore da base precisa existir (${arq})`).toBe(true);
+  const n = fs.readFileSync(arq, "utf8").split(`${nome}:`).length - 1;
+  expect(n, "contagem ambígua não decide ramo nenhum").toBeLessThanOrEqual(1);
+  console.log(`[skew] AJUSTES 01 · a base ${n === 1 ? "DECLARA" : "NÃO declara"} ${nome}`);
+  return n === 1;
+}
+
+test("CADASTROS AJUSTES 01 · AJ-K1 — busca de referência sem texto contra a base: 500 vira \"Tentar de novo\", nunca texto livre", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const direto = await page.request.get(`${API}/api/referencias/bancos?pageSize=30`, { headers: cab });
+  const quebrada = direto.status() >= 500;
+  console.log(`[skew] AJ-K1 · a base responde ${direto.status()} à busca sem texto`);
+  const porCodigo: string[] = [];
+  page.on("request", (r) => { if (/\/api\/referencias\/bancos\/[^?]/.test(r.url())) porCodigo.push(r.url()); });
+  await page.goto("/cadastros/people/new");
+  await page.getByTestId("ficha-em-abas").getByRole("tab", { name: "Financeiro" }).click();
+  const campo = page.getByLabel("Banco", { exact: true });
+  await campo.click();
+  const painel = page.locator("[data-radix-popper-content-wrapper]").last();
+  if (quebrada) {
+    await expect(painel).toContainText("Não foi possível carregar a lista.");
+    await expect(page.getByTestId("referencia-tentar-de-novo")).toBeVisible();
+    await expect(page.getByTestId("referencia-codigo"), "500 não é rota ausente: nada de \"digite o código\"").toHaveCount(0);
+  } else {
+    await expect(painel.getByRole("option").first()).toBeVisible();
+  }
+  await painel.getByLabel("Pesquisar opção").fill("meu banco");
+  await page.keyboard.press("Escape");
+  await expect(campo).not.toContainText("meu banco");
+  expect(porCodigo, "texto livre não virou GET por código").toEqual([]);
+});
+
+test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva contra a base: os campos da 0030 não viajam, 200", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("AJ-K3 parceiro"), person_type: "legal", is_client: true } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  await page.goto(`/cadastros/people/${id}`);
+  const ficha = page.getByTestId("ficha-em-abas");
+  await expect(ficha).toBeVisible();
+  for (const rotulo of ["Matriz", "Site", "Caixa postal", "Latitude", "E-mail para NF-e", "Calcula FUNRURAL"]) await expect(page.getByLabel(rotulo, { exact: true }), `${rotulo} não aparece contra a base`).toHaveCount(0);
+  const editar = page.getByRole("button", { name: "Editar" });
+  if (await editar.count()) await editar.first().click();
+  await page.getByLabel("Nome Social/Fantasia").fill(uniq("AJ-K3 renomeado"));
+  const resposta = page.waitForResponse((x) => x.request().method() === "PUT" && new URL(x.url()).pathname === `/api/resources/people/${id}`);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  const put = await resposta;
+  const enviado = put.request().postDataJSON() as Record<string, unknown>;
+  const novos = ["matriz_id", "rg", "caepf", "sexo", "site", "caixa_postal", "latitude", "longitude", "email_nfe", "calcula_funrural"].filter((k) => k in enviado);
+  expect(novos, "nenhum campo da 0030 viaja para a base").toEqual([]);
+  expect(put.status(), await put.text()).toBe(200);
+  sql(`update erp.people set deleted_at = now() where id = '${id}'`);
+});

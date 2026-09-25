@@ -526,3 +526,84 @@ test("CADASTROS FASE 6 · PR-K2 — formulário ANTERIOR de Produto contra a API
   expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`)).toBe("nenhum/false");
   sql(`update erp.products set deleted_at = now() where id = '${id}'`);
 });
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * CADASTROS AJUSTES 01 · AJ-W1..AJ-W4 — o web da BASE contra a API deste HEAD (seção 7 da missão).
+ *
+ * (1) a busca de referência que o web da base abre SEM texto responde 200 com lista (na base ela dava 500);
+ * (2) POST de árvore com o código SUGERIDO (o que o web da base manda) é aceito; código diferente → 422 legível;
+ * (3) conta bancária/área/curral com `code` (a base exige "Sigla"/"Código") → 422 legível, nada gravado;
+ * (4) PUT de Parceiro sem os campos novos da 0030 → nada muda neles.
+ * /api/referencias/* nunca é mockado aqui: a lista vem do banco real (0026).
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+const BANCO_AJ = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+const sqlAj = (c: string) => execFileSync("psql", [BANCO_AJ, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
+const mensagensDoErro = async (r: { json: () => Promise<unknown> }) => { const e = (await r.json() as { error?: { message?: string; details?: { message?: string }[] } }).error; return [e?.message, ...(e?.details ?? []).map((d) => d.message)].filter(Boolean).join(" | "); };
+
+test("CADASTROS AJUSTES 01 · AJ-W1 — o campo Banco do web da base, aberto SEM texto, lista pela API nova (200, nunca 500)", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const buscas: { url: string; status: number }[] = [];
+  page.on("response", (r) => { if (/\/api\/referencias\/bancos(\?|$)/.test(r.url())) buscas.push({ url: r.url(), status: r.status() }); });
+  await page.goto("/cadastros/people/new");
+  await page.getByTestId("ficha-em-abas").getByRole("tab", { name: "Financeiro" }).click();
+  await page.getByLabel("Banco", { exact: true }).click();
+  const opcoes = page.locator(".cmd-panel [role=option]");
+  await expect(opcoes.first(), "a lista aparece sem digitar").toBeVisible();
+  expect(buscas.length, "premissa: a busca foi chamada").toBeGreaterThan(0);
+  expect(buscas.every((b) => b.status === 200), JSON.stringify(buscas)).toBe(true);
+  expect(buscas.some((b) => !new URL(b.url).searchParams.get("search")), "a busca SEM texto foi a que respondeu").toBe(true);
+  v.semBloqueio();
+  v.semErroDeContrato();
+});
+
+test("CADASTROS AJUSTES 01 · AJ-W2 — árvore: o código SUGERIDO que o web da base envia é aceito; código diferente → 422 legível, nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const sug = await (await page.request.get(`${API}/api/resources/financial_categories/proximo-codigo`, { headers: cab })).json() as { codigo: string };
+  expect(sug.codigo, "premissa: a sugestão continua servida ao web da base").toMatch(/^\d+$/);
+  const nome = uniq("AJ-W2 natureza web base");
+  const ok = await page.request.post(`${API}/api/resources/financial_categories`, { headers: cab, data: { code: sug.codigo, name: nome, nature: "both", kind: "synthetic", is_active: true } });
+  expect(ok.status(), await ok.text()).toBe(201);
+  const id = (await ok.json() as { id: string }).id;
+  expect(sqlAj(`select code from erp.financial_categories where id = '${id}'`)).toBe(sug.codigo);
+  const outro = uniq("AJ-W2 natureza pulando");
+  const ruim = await page.request.post(`${API}/api/resources/financial_categories`, { headers: cab, data: { code: String(Number(sug.codigo) + 5), name: outro, nature: "both", kind: "synthetic", is_active: true } });
+  expect(ruim.status(), await ruim.text()).toBe(422);
+  expect(await mensagensDoErro(ruim)).toContain("O código é gerado pelo sistema.");
+  expect(sqlAj(`select count(*) from erp.financial_categories where name = '${outro}'`), "nada gravado").toBe("0");
+  sqlAj(`update erp.financial_categories set deleted_at = now() where id = '${id}'`);
+});
+
+test("CADASTROS AJUSTES 01 · AJ-W3 — conta bancária, área e curral com `code` (formulário da base) → 422 legível, nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const empresa = sqlAj("select e.id from erp.empresas e join erp.organization_members m on m.organization_id = e.organization_id join erp.users u on u.id = m.user_id where u.email = 'admin@demo.local' and e.deleted_at is null order by e.code limit 1");
+  const setor = sqlAj(`select s.id from erp.feedlot_sectors s join erp.empresas e on e.organization_id = s.organization_id where e.id = '${empresa}' and s.deleted_at is null limit 1`);
+  const casos: [string, string, Record<string, unknown>][] = [
+    ["bank_accounts", "description", { code: "AJW3", description: uniq("AJ-W3 conta"), type: "checking", is_active: true }],
+    ["areas", "name", { empresa_id: empresa, code: "AJW3", name: uniq("AJ-W3 area"), area_ha: "1", is_active: true }],
+    ["feedlot_corrals", "name", { sector_id: setor, code: "AJW3", name: uniq("AJ-W3 curral"), capacity: 10, is_active: true }]
+  ];
+  for (const [key, campo, corpo] of casos) {
+    const r = await page.request.post(`${API}/api/resources/${key}`, { headers: cab, data: corpo });
+    expect(r.status(), `${key}: ${await r.text()}`).toBe(422);
+    const msg = await mensagensDoErro(r);
+    expect(msg, `${key}: mensagem legível`).toMatch(/c[óo]digo/i);
+    expect(msg).not.toMatch(/Unrecognized|Expected|Campo não reconhecido/);
+    expect(sqlAj(`select count(*) from erp.${key} where ${campo} = '${String(corpo[campo])}'`), `${key}: nada gravado`).toBe("0");
+  }
+});
+
+test("CADASTROS AJUSTES 01 · AJ-W4 — PUT de Parceiro do web da base (sem os campos da 0030): nada muda neles", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("AJ-W4 parceiro"), person_type: "natural", is_client: true, is_provider: false, is_employee: false, is_proprietary: false, is_transporter: false, is_active: true } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  sqlAj(`update erp.people set rg = '1234567', sexo = 'F', site = 'exemplo.com.br', latitude = -15.2, longitude = -59.3, calcula_funrural = true where id = '${id}'`);
+  const put = await page.request.put(`${API}/api/resources/people/${id}`, { headers: cab, data: { phone: "63 99999-0000", is_client: true } });
+  expect(put.status(), await put.text()).toBe(200);
+  expect(sqlAj(`select concat_ws('|', rg, sexo, site, latitude::text, longitude::text, calcula_funrural::text) from erp.people where id = '${id}'`)).toBe("1234567|F|exemplo.com.br|-15.200000|-59.300000|true");
+  sqlAj(`update erp.people set deleted_at = now() where id = '${id}'`);
+});
