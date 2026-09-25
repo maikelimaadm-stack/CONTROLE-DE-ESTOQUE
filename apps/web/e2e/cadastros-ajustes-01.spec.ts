@@ -8,7 +8,8 @@ import { login, logout, api, uniq } from "./helpers";
  * API e banco REAIS (0026 carregada pelo seed). `/api/referencias/*` NUNCA é mockado — foi exatamente a busca
  * real, aberta sem texto, que quebrou em produção (500) sem nenhum E2E ter aberto um desses campos. A única
  * exceção é o UI-11, que simula a falha de propósito. Só `/api/consultas/*` (CEP e CNPJ, fontes externas) é
- * mockado, por `page.route`.
+ * mockado, por `page.route`. O UI-3 ATRASA uma resposta de `/api/referencias/municipios/<código>` (`route.continue()`
+ * depois de um tempo: quem responde é a API real, com o conteúdo real) para provar o descarte da resposta fora de ordem.
  */
 const BANCO = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
 const sql = (c: string) => execFileSync("psql", [BANCO, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
@@ -228,7 +229,7 @@ test("UI-2 — lista de Parceiros → Novo pelo CNPJ → Importar → parceiro N
 });
 
 // ───────────────────────────── UI-3 ─────────────────────────────
-test("UI-3 — Cidade: nome, CEP (1ª opção) e Código IBGE; UF só leitura (lista de municípios REAL)", async ({ page }) => {
+test("UI-3 — Cidade: nome, CEP (1ª opção) e Código IBGE; UF só leitura (lista de municípios REAL); resposta do Código IBGE fora de ordem descartada", async ({ page }) => {
   await login(page);
   await mockCep(page);
   await page.goto("/cadastros/people/new");
@@ -257,6 +258,19 @@ test("UI-3 — Cidade: nome, CEP (1ª opção) e Código IBGE; UF só leitura (l
   await cidade.getByTestId("cidade-ibge").press("Tab");
   await expect(cidade.getByTestId("cidade-ibge"), "parcial: volta à cidade atual ao sair").toHaveValue("5103403");
   await expect(cidade.getByTestId("cidade-busca")).toContainText("Cuiabá - MT");
+  // R1 (W-8): resposta FORA DE ORDEM é descartada. A consulta do código A é ATRASADA (a API real responde, só depois);
+  // o código B, digitado logo em seguida, responde primeiro. A cidade final é a de B — a resposta velha de A não a troca.
+  const [codigoA, codigoB] = ["5106752", "5105507"]; // Pontes e Lacerda (atrasada) × Vila Bela da Santíssima Trindade
+  const caminhoA = `/api/referencias/municipios/${codigoA}`;
+  await page.route((u) => u.pathname === caminhoA, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue(); });
+  const respostaA = page.waitForResponse((r) => new URL(r.url()).pathname === caminhoA);
+  await cidade.getByTestId("cidade-ibge").fill(codigoA);
+  await cidade.getByTestId("cidade-ibge").fill(codigoB);
+  await expect(cidade.getByTestId("cidade-busca")).toContainText("Vila Bela da Santíssima Trindade - MT");
+  expect((await respostaA).status(), "premissa: a resposta atrasada de A chegou (e é a API real: 200)").toBe(200);
+  await page.waitForTimeout(500);
+  await expect(cidade.getByTestId("cidade-busca"), "a resposta velha de A não sobrescreve a cidade de B").toContainText("Vila Bela da Santíssima Trindade - MT");
+  await expect(cidade.getByTestId("cidade-ibge")).toHaveValue(codigoB);
 });
 
 // ───────────────────────────── UI-4 ─────────────────────────────
@@ -305,7 +319,7 @@ test("UI-4 — CEP + Tab preenche Endereço, Bairro, Cidade, IBGE e UF; foco no 
 });
 
 // ───────────────────────────── UI-5 ─────────────────────────────
-test("UI-5 — máscaras CPF, CNPJ, CNPJ alfanumérico, CEP, telefone e celular; colar com pontuação; grava normalizado", async ({ page }) => {
+test("UI-5 — máscaras CPF, CNPJ, CNPJ alfanumérico, CEP, telefone e celular; colar com pontuação e com rótulo (\"CNPJ: …\", \"CPF …\"); grava normalizado", async ({ page }) => {
   await login(page);
   await page.goto("/cadastros/people/new");
   const doc = page.getByLabel("CPF/CNPJ", { exact: true });
@@ -322,6 +336,14 @@ test("UI-5 — máscaras CPF, CNPJ, CNPJ alfanumérico, CEP, telefone e celular;
   // R1 (W-8): colar com o RÓTULO ("CNPJ: …", "CPF …") tira o rótulo antes de normalizar
   await doc.fill(`CNPJ: ${fmtCnpj(cnpj)}`);
   await expect(doc).toHaveValue(fmtCnpj(cnpj));
+  // …e "CPF 123…": sem tirar o rótulo, as letras "CPF" + 11 dígitos viravam um CNPJ ALFANUMÉRICO de 14 posições.
+  // Um CPF DIFERENTE do primeiro: a troca automática só age quando o documento de saída difere do de entrada no campo.
+  const cpfColado = cpfValido();
+  await doc.fill(`CPF ${cpfColado}`);
+  await doc.blur(); // 11 dígitos: Física (e a máscara de CPF) só ao SAIR
+  await expect(doc, "colar \"CPF …\" deixa o CPF formatado").toHaveValue(fmtCpf(cpfColado));
+  await expect(doc).toHaveAttribute("data-mascara", "cpf");
+  await expect(cabecalho(page, "person_type"), "o CPF colado com o rótulo é um CPF: Física").toContainText("Física");
   const alfa = cnpjDe(`${Date.now().toString(36).toUpperCase().slice(-8).padStart(8, "A")}0001`); // 8 + "0001" = as 12 posições
   await doc.fill(alfa.toLowerCase());
   await expect(doc).toHaveValue(fmtCnpj(alfa));
@@ -622,7 +644,7 @@ test("UI-13 (W-2) — CEP só é consultado quando MUDA: Tab por CEP gravado nã
 });
 
 // ───────────────────────────── UI-14 (W-3) ─────────────────────────────
-test("UI-14 (W-3) — trocar o tipo de pessoa pergunta antes de apagar campos preenchidos (lista-os); Cancelar mantém tipo e valores; na janela do CNPJ, junto das Divergências", async ({ page }) => {
+test("UI-14 (W-3) — trocar o tipo de pessoa pergunta antes de apagar campos preenchidos (lista-os); Cancelar mantém tipo e valores; na janela do CNPJ, junto das Divergências; na troca AUTOMÁTICA pelo documento, só ao SAIR do campo", async ({ page }) => {
   await login(page);
   const dialogo = page.getByTestId("confirmar-troca-de-tipo");
   // (a) pelo SELETOR, num parceiro novo
@@ -680,6 +702,69 @@ test("UI-14 (W-3) — trocar o tipo de pessoa pergunta antes de apagar campos pr
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(() => sql(`select person_type from erp.people where id = '${f.id}'`)).toBe("legal");
   expect(sql(`select concat_ws('|', coalesce(rg, 'nulo'), coalesce(caepf, 'nulo'), coalesce(sexo, 'nulo'), document) from erp.people where id = '${f.id}'`)).toBe(`nulo|nulo|nulo|${cnpj}`);
+
+  // (c) pela troca AUTOMÁTICA (o tipo segue o documento — R1, W-3/W-4): enquanto DIGITA um CNPJ, nada pergunta e nada
+  // muda (nem o tipo, nem os valores); ao SAIR do campo, pergunta listando os campos preenchidos. Cancelar mantém Física
+  // e os valores; sair de novo com o MESMO documento não pergunta outra vez; outro documento pergunta de novo, e
+  // Confirmar troca o tipo — o Salvar grava os campos vazios.
+  const auto = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-14 automática"), person_type: "natural", document: cpfValido(), is_client: true, rg: "1112223", sexo: "F" });
+  await page.goto(`/cadastros/people/${auto.id}`);
+  await editar(page);
+  await expect(page.getByRole("button", { name: "Salvar" }), "premissa: em edição").toBeVisible();
+  await expect(cabecalho(page, "person_type")).toContainText("Física");
+  const rg = page.getByLabel("RG", { exact: true });
+  await expect(rg, "premissa: o RG gravado aparece").toHaveValue("1112223");
+  // vigia do DOM durante a digitação: qualquer instante com a pergunta aberta ou o tipo já trocado fica registrado
+  await page.evaluate(() => {
+    const w = window as unknown as { __troca: string[] };
+    w.__troca = [];
+    const olhar = () => {
+      if (document.querySelector('[data-testid="confirmar-troca-de-tipo"]')) w.__troca.push("pergunta aberta");
+      const c = document.querySelector('[data-testid="cabecalho-person_type"]')?.textContent ?? "";
+      if (!/Física/.test(c)) w.__troca.push(`cabeçalho: ${c}`);
+      const r = document.querySelector<HTMLInputElement>('input[name="rg"]');
+      if (!r || r.value !== "1112223") w.__troca.push(`RG: ${r ? r.value : "sumiu"}`);
+    };
+    new MutationObserver(olhar).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+  });
+  const vistosNaDigitacao = () => page.evaluate(() => (window as unknown as { __troca: string[] }).__troca);
+  await expect(page.locator('input[name="rg"]'), "premissa: o vigia acha a caixa do RG").toHaveCount(1);
+  const documento = page.getByLabel("CPF/CNPJ", { exact: true });
+  const cnpjDigitado = cnpjSeq();
+  await documento.click();
+  await documento.fill("");
+  await documento.pressSequentially(cnpjDigitado, { delay: 30 });
+  await expect(documento, "a máscara deixa digitar o CNPJ inteiro").toHaveValue(fmtCnpj(cnpjDigitado));
+  expect(await vistosNaDigitacao(), "enquanto digita: nenhuma pergunta, o tipo e os valores ficam como estão").toEqual([]);
+  await expect(dialogo).toHaveCount(0);
+  await expect(cabecalho(page, "person_type")).toContainText("Física");
+  await expect(rg).toHaveValue("1112223");
+  // ao SAIR do campo: a pergunta, listando só os campos PREENCHIDOS que sumiriam (o CAEPF vazio não entra)
+  await documento.blur();
+  await expect(dialogo).toHaveText("Ao mudar para Jurídica, serão apagados: RG, Sexo.");
+  await page.getByRole("button", { name: "Cancelar", exact: true }).click();
+  await expect(dialogo).toHaveCount(0);
+  await expect(cabecalho(page, "person_type"), "Cancelar mantém Física").toContainText("Física");
+  await expect(rg, "e os valores").toHaveValue("1112223");
+  // sair de novo com o MESMO documento não pergunta outra vez
+  await documento.focus(); await documento.blur();
+  await page.waitForTimeout(500);
+  await expect(dialogo, "o mesmo documento, já recusado, não pergunta de novo").toHaveCount(0);
+  await expect(cabecalho(page, "person_type")).toContainText("Física");
+  // OUTRO documento pergunta de novo; Confirmar troca o tipo e apaga os campos — nada gravado até o Salvar
+  const cnpjConfirmado = cnpjSeq();
+  await documento.fill(fmtCnpj(cnpjConfirmado));
+  await documento.blur();
+  await expect(dialogo).toHaveText("Ao mudar para Jurídica, serão apagados: RG, Sexo.");
+  await page.getByRole("button", { name: "Mudar para Jurídica" }).click();
+  await expect(dialogo).toHaveCount(0);
+  await expect(cabecalho(page, "person_type")).toContainText("Jurídica");
+  await expect(rg).toHaveCount(0);
+  expect(sql(`select concat_ws('|', person_type, rg, sexo) from erp.people where id = '${auto.id}'`), "nada gravado sem Salvar").toBe("natural|1112223|F");
+  const salvo = await salvarFicha(page, auto.id);
+  const corpo = salvo.request().postDataJSON() as Record<string, unknown>;
+  expect({ person_type: corpo["person_type"], rg: corpo["rg"], sexo: corpo["sexo"] }, "o PUT leva o tipo novo e os campos apagados como null").toEqual({ person_type: "legal", rg: null, sexo: null });
+  expect(sql(`select concat_ws('|', person_type, coalesce(rg, 'nulo'), coalesce(sexo, 'nulo'), document) from erp.people where id = '${auto.id}'`)).toBe(`legal|nulo|nulo|${cnpjConfirmado}`);
 });
 
 // ───────────────────────────── UI-15 (W-4) ─────────────────────────────
@@ -856,6 +941,38 @@ test("UI-18d (W-8) — Filiais do fornecedor com máscara de CPF/CNPJ e de CEP; 
   await expect(filial.getByLabel("CEP", { exact: true })).toHaveValue("78250-000");
   await salvarFicha(page, p.id);
   expect(sql(`select concat_ws('|', document, zip_code) from erp.provider_branches where person_id = '${p.id}'`), "a filial grava normalizado").toBe(`${cnpj}|78250000`);
+});
+
+test("UI-18e (W-8) — \"Tipo do parceiro\" respeita a trava de layout: a opção travada não muda na ficha e não vai no PUT; as vizinhas continuam editáveis", async ({ page }) => {
+  await login(page);
+  // a trava do PRÓPRIO usuário, gravada pela API real de preferências (a mesma que a Configuração de layout grava) e
+  // desfeita no fim — o `finally` não deixa a trava vazar para os outros testes do mesmo usuário
+  const preferencia = "/api/preferences/people/form";
+  await api(page, "PUT", `${preferencia}?scope=user`, { preferences: { lockedFieldIds: ["is_provider"] } });
+  try {
+    const salva = await api<{ user: { preferences: { lockedFieldIds?: string[] } } | null }>(page, "GET", preferencia);
+    expect(salva.user?.preferences.lockedFieldIds, "premissa: a API gravou a trava do Fornecedor").toEqual(["is_provider"]);
+    const p = await criarParceiro(page, { name: uniq("UI-18e trava"), is_provider: true });
+    await page.goto(`/cadastros/people/${p.id}`);
+    await editar(page);
+    await expect(page.getByRole("button", { name: "Salvar" }), "premissa: em edição").toBeVisible();
+    const grupo = page.getByTestId("grupo-tipo-do-parceiro");
+    const fornecedor = grupo.getByLabel("Fornecedor", { exact: true });
+    const transportadora = grupo.getByLabel("Transportadora", { exact: true });
+    await expect(fornecedor, "premissa: o valor gravado aparece").toBeChecked();
+    await expect(fornecedor, "a opção travada pelo layout não muda na ficha").toBeDisabled();
+    await expect(transportadora, "a vizinha sem trava continua editável").toBeEnabled();
+    await fornecedor.click({ force: true }); // clicar na caixa travada não a muda
+    await expect(fornecedor).toBeChecked();
+    await transportadora.check();
+    const r = await salvarFicha(page, p.id);
+    const corpo = r.request().postDataJSON() as Record<string, unknown>;
+    expect("is_provider" in corpo, "a opção travada fica FORA do PUT").toBe(false);
+    expect(corpo["is_transporter"], "a vizinha editável vai no PUT").toBe(true);
+    expect(sql(`select concat_ws('|', is_provider, is_transporter) from erp.people where id = '${p.id}'`), "o Fornecedor gravado continua; a Transportadora marcada grava").toBe("t|t");
+  } finally {
+    await api(page, "DELETE", `${preferencia}?scope=user`, {});
+  }
 });
 
 // ───────────────────────────── UI-19 (W-8) ─────────────────────────────
