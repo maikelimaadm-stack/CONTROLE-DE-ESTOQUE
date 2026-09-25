@@ -18,7 +18,7 @@ import { filtroDaReferencia, RefSelect, ReferenciaSelect } from "@/components/ui
 import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Paperclip, Pencil, Plus, Search, Trash2, LayoutGrid, PanelLeft } from "lucide-react";
 import { IconBtn, PillBtn } from "@/features/base1/ui";
 import { useFormLayout } from "./form-layout";
-import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, capacidadeDoCampo, fichaDoRegistro, fichaParaApi, tipoDoDocumento, type ControleDoCampo, type ErroDaFicha } from "./ficha-em-abas";
+import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, camposApagadosNaTroca, capacidadeDoCampo, fichaDoRegistro, fichaParaApi, linhaNovaDaGrade, tipoDoDocumento, type ControleDoCampo, type ErroDaFicha, type ExtraDoCampo } from "./ficha-em-abas";
 import { JanelaConsultaCnpj, esquecerImportacaoPendente, lerImportacaoPendente, useConsultaCnpjJanela, type RespostaCnpj } from "./consulta-cnpj-janela";
 import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
 
@@ -29,16 +29,22 @@ function defaults(fields: FieldDef[], preset: Record<string, string>, layoutDefa
 function fromRecord(fields: FieldDef[], data: Values): Values { const v: Values = {}; for (const f of fields) { const x = data[f.name]; v[f.name] = f.type === "json" ? JSON.stringify(x ?? {}, null, 2) : x === null || x === undefined ? (f.type === "tags" ? [] : "") : f.type === "date" ? String(x).slice(0, 10) : x; } return v; }
 /** comparação das condições declarativas do registry (`visibleWhen`/`requiredWhen`): valor igual OU String igual */
 const iguala = (x: unknown, esperado: unknown) => x === esperado || String(x) === String(esperado);
-function toApi(fields: FieldDef[], v: Values, locked: string[] = []): Values { const o: Values = {}; for (const f of fields) { if (f.readOnly || locked.includes(f.name)) continue; /* campos travados pelo layout não vão no payload (mantêm o valor atual) */ let x = v[f.name]; /* AJUSTES 01: campo que o tipo esconde vai null (a API recusa o campo do outro tipo) */ if (f.limpaQuandoOculto && f.visibleWhen && !iguala(v[f.visibleWhen.field], f.visibleWhen.equals)) x = null; if (x === "" || x === undefined) x = null; if (f.type === "json" && typeof x === "string") { try { x = JSON.parse(x); } catch { throw new Error(`JSON inválido em ${f.label}`); } } if (f.type === "integer" && x !== null) x = Number(x); if (f.type === "boolean") x = Boolean(x); if (f.type === "date" && typeof x === "string") x = x.slice(0, 10); if (x === null && !f.required && f.type === "boolean") x = false; if (x === null && ["money", "quantity", "number", "percent", "integer"].includes(f.type)) continue; /* numérico vazio: deixa o default do banco (0) valer */ o[f.name] = x; } return o; }
+/**
+ * Valores do formulário → corpo. Numérico vazio fica FORA do corpo (o default do banco vale no novo; o valor gravado
+ * fica no editado — a coluna pode ser NOT NULL DEFAULT 0, ex.: Valor de referência do Produto). Só o campo MARCADO
+ * `anulaQuandoEsvaziado` e que o usuário ESVAZIOU (`original`, o registro como veio da API, tinha valor) vai null: é
+ * assim que latitude/longitude do Parceiro se limpam (R1, W-8), sem mudar o numérico das outras fichas.
+ */
+function toApi(fields: FieldDef[], v: Values, locked: string[] = [], original?: Values | null): Values { const o: Values = {}; for (const f of fields) { if (f.readOnly || locked.includes(f.name)) continue; /* campos travados pelo layout não vão no payload (mantêm o valor atual) */ let x = v[f.name]; /* AJUSTES 01: campo que o tipo esconde vai null (a API recusa o campo do outro tipo) */ if (f.limpaQuandoOculto && f.visibleWhen && !iguala(v[f.visibleWhen.field], f.visibleWhen.equals)) x = null; if (x === "" || x === undefined) x = null; if (f.type === "json" && typeof x === "string") { try { x = JSON.parse(x); } catch { throw new Error(`JSON inválido em ${f.label}`); } } if (f.type === "integer" && x !== null) x = Number(x); if (f.type === "boolean") x = Boolean(x); if (f.type === "date" && typeof x === "string") x = x.slice(0, 10); if (x === null && !f.required && f.type === "boolean") x = false; if (x === null && ["money", "quantity", "number", "percent", "integer"].includes(f.type) && !(f.anulaQuandoEsvaziado && original && original[f.name] !== "" && original[f.name] !== null && original[f.name] !== undefined)) continue; /* numérico vazio: deixa o default do banco (0) valer */ o[f.name] = x; } return o; }
 
 const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--mg-text-1)] shadow-none focus:ring-0 focus:outline-none read-only:bg-transparent disabled:bg-transparent disabled:text-[var(--mg-text-1)]";
 /** Controle de um campo declarativo (mesmo componente para todos os tipos), estilo "rótulo flutuante" do modelo base. */
-function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpenChange }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string; record?: Values | null; onOpenChange?: (o: boolean) => void }) {
+function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpenChange, extra }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string; record?: Values | null; onOpenChange?: (o: boolean) => void; /** ajuste de uma tela (ficha): interceptar a troca do seletor, ligar o rótulo, recortar a referência */ extra?: ExtraDoCampo }) {
   const rules = { required: required ? "Obrigatório" : false };
   // referência oficial (município, banco, NCM): busca no servidor, grava o mesmo código de sempre
   if (f.busca) return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <ReferenciaSelect id={id} referencia={f.busca!} value={field.value as string | number | null} onChange={(v) => field.onChange(v ?? "")} onOpenChange={onOpenChange} disabled={dis} className={cn(ctl, "h-6 justify-between")} />} />;
-  if (f.type === "ref") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <RefSelect resource={f.ref!.resource} filter={filtroDaReferencia(f)} value={field.value as string} onOpenChange={onOpenChange} labelHint={record && record[f.name] === field.value ? (record[`${f.name}_label`] as string | null) : null} onChange={(v) => field.onChange(v ?? "")} disabled={dis} includeInactive={!isNew} className={cn(ctl, "h-6 justify-between")} />} />;
-  if (f.type === "select") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgSelect id={id} value={String(field.value ?? "")} onChange={field.onChange} options={f.options ?? []} disabled={dis} allowEmpty={!required} onOpenChange={onOpenChange} />} />;
+  if (f.type === "ref") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <RefSelect resource={f.ref!.resource} filter={filtroDaReferencia(f)} value={field.value as string} onOpenChange={onOpenChange} labelHint={record && record[f.name] === field.value ? (record[`${f.name}_label`] as string | null) : null} onChange={(v) => field.onChange(v ?? "")} disabled={dis} includeInactive={!isNew} className={cn(ctl, "h-6 justify-between")} idDaCaixa={extra?.ligarRotulo ? id : undefined} excluirIds={extra?.excluirIds} buscarOpcoes={extra?.buscarOpcoes} />} />;
+  if (f.type === "select") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgSelect id={id} value={String(field.value ?? "")} onChange={extra?.aoMudar ?? field.onChange} options={f.options ?? []} disabled={dis} allowEmpty={extra?.permiteVazio ?? !required} onOpenChange={onOpenChange} />} />;
   if (f.type === "boolean") return <MgSelect id={id} value={values[f.name] === true || values[f.name] === "true" ? "true" : "false"} onChange={(v) => form.setValue(f.name, v === "true", { shouldDirty: true })} options={[{ value: "true", label: "Sim" }, { value: "false", label: "Não" }]} disabled={dis} onOpenChange={onOpenChange} />;
   if (f.type === "date") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgDatePicker id={id} value={String(field.value ?? "")} onChange={field.onChange} disabled={dis} onOpenChange={onOpenChange} />} />;
   if (f.type === "textarea" || f.type === "json") return <Textarea id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={cn(ctl, "h-auto min-h-[56px] py-0.5", f.type === "json" && "font-mono text-xs")} {...form.register(f.name, rules)} />;
@@ -81,14 +87,17 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   // AJUSTES 01 (257 D): com `codigoAutomatico` declarado, o código deste cadastro é gerado pelo servidor — só leitura,
   // fora do corpo e nunca obrigatório na tela. Sem a capacidade (API anterior), o código segue digitável como antes.
   const codigoTravado = useCodigoTravado(def);
-  const fields = React.useMemo(() => (def?.fields ?? []).map((f) => (codigoTravado && f.name === "code" ? { ...f, readOnly: true, required: false, help: "Será gerado ao salvar." } : f)), [def, codigoTravado]);
+  const isNew = embedded ? embedded.mode === "new" : id === "new";
+  // R1 (W-8): na árvore com código gerado, o SUPERIOR de um registro gravado só muda pelo Mover (a API recusa com
+  // "Use Mover."); no Novo ele continua escolhível — é dele que sai o código.
+  const superiorTravado = codigoTravado && def?.codigoAutomatico === "hierarquico" && !isNew;
+  const fields = React.useMemo(() => (def?.fields ?? []).map((f) => (codigoTravado && f.name === "code" ? { ...f, readOnly: true, required: false, help: "Será gerado ao salvar." } : superiorTravado && f.name === "parent_id" ? { ...f, readOnly: true, help: "Para mudar o superior, use Mover (tela de árvore)." } : f)), [def, codigoTravado, superiorTravado]);
   // FICHA EM ABAS (decisão 253): cadastro com `abas` no registry usa a ficha; os demais, o layout de painéis
   const ficha = Boolean(def?.abas?.length);
   const [errosFicha, setErrosFicha] = React.useState<ErroDaFicha[]>([]);
   const errosDoServidor = React.useRef<string[]>([]);
   const layout = useFormLayout(resourceKey, fields);
   const l: FormLayout = layout.prefs;
-  const isNew = embedded ? embedded.mode === "new" : id === "new";
   const canEdit = can(`${def?.permission}.edit`); const canDelete = can(`${def?.permission}.delete`); const canCreate = can(`${def?.permission}.create`);
   // "Importar para o cadastro" com a ficha em leitura entra em Editar (C-2) sem recarregar o formulário
   const [editarAqui, setEditarAqui] = React.useState(false);
@@ -97,7 +106,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   // campo SIGILOSO sem a permissão (R1-2, ex.: salário da Função sem employees.edit): não aparece e não vai no corpo —
   // a API não o devolve e recusaria (403) o corpo que o trouxesse. Só apresentação: quem recusa é o servidor.
   const sigilosos = fields.filter((f) => !campoVisivel(f, can) || !capacidadeDoCampo(f, ctx?.capacidades)).map((f) => f.name);
-  const travados = [...l.lockedFieldIds, ...(codigoTravado ? ["code"] : []), ...sigilosos, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
+  const travados = [...l.lockedFieldIds, ...(codigoTravado ? ["code"] : []), ...(superiorTravado ? ["parent_id"] : []), ...sigilosos, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
   // grade/perfil de aba sem a permissão de gravar ou de ler (R1-4, ex.: aba Cliente sem clients.edit) não vai no corpo —
   // a API recusaria o corpo inteiro com 403. Só apresentação: quem recusa é o servidor.
   const fichaBarrada = def ? new Set([...chavesBarradas(def, "permissaoDeEdicao", can), ...chavesBarradas(def, "permissaoDeLeitura", can)]) : new Set<string>();
@@ -154,9 +163,9 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const save = useMutation({
     // `original`: o registro como veio da API — campo de perfil ESVAZIADO pelo usuário vai como null (R1-2: limpar a data
     // de desligamento, o salário, a conta de pagamento); vazio que já era vazio não vai
-    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, travados), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => !fichaBarrada.has(k) && (isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k])), { original: form.formState.defaultValues as Values | undefined, pode: can }) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
+    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, travados, isNew ? null : (form.formState.defaultValues as Values | undefined) ?? null), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => !fichaBarrada.has(k) && (isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k])), { original: form.formState.defaultValues as Values | undefined, pode: can }) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
     onSuccess: (row) => { setErrosFicha([]); toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
-    onError: (e) => { const err = e as Error & { details?: ErroDaFicha[] }; const det = err.details?.filter((d) => d.path) ?? []; if (ficha) setErrosFicha(det); errosDoServidor.current = det.map((d) => d.path); det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
+    onError: (e) => { const err = e as Error & { details?: unknown }; /* `details` só é lista de campos na validação do corpo; erro do banco (23502, 23505, 23514) traz um objeto — cai na mensagem geral */ const det = Array.isArray(err.details) ? (err.details as ErroDaFicha[]).filter((d) => d?.path) : []; if (ficha) setErrosFicha(det); errosDoServidor.current = det.map((d) => d.path); det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
   });
   const remove = useMutation({ mutationFn: () => api(`/api/resources/${resourceKey}/${id}`, { method: "DELETE" }), onSuccess: () => { toast.success("Registro excluído"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); setConfirmDel(false); if (embedded) { embedded.refresh(); embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); }, onError: (e) => toast.error((e as Error).message) });
   // título da aba global ("Novo produto" / nome do registro) — hook antes de qualquer retorno antecipado; não se aplica ao formulário embutido na listagem
@@ -183,7 +192,12 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     const v = values[f.name]; const hasValue = f.type === "boolean" ? true : Array.isArray(v) ? v.length > 0 : v !== "" && v !== null && v !== undefined;
     // rótulo que segue outro campo (AJUSTES 01: "Razão social" em Jurídica, "Nome completo" em Física)
     const rotulo = l.fieldLabels[f.name] ?? (f.rotuloQuando ? f.rotuloQuando.rotulos[String(values[f.rotuloQuando.field] ?? "")] : undefined) ?? f.label;
-    return <B1Field key={f.name} flex label={rotulo} required={required} error={controle && f.name === "document" ? undefined : err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue || Boolean(controle)} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}>{controle ? controle({ dis }) : <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={(o) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur))} />}</B1Field>;
+    const aoAbrir = (o: boolean) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur));
+    // controle da ficha que só AJUSTA o de sempre (`padrao`) mantém a aparência de sempre (rótulo flutuante pelo valor)
+    let soAjuste = false;
+    const padrao = (extra?: ExtraDoCampo) => { if (extra) soAjuste = true; return <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={aoAbrir} extra={extra} />; };
+    const el = controle ? controle({ dis, required, onOpenChange: aoAbrir, padrao }) : padrao();
+    return <B1Field key={f.name} flex label={rotulo} required={required} error={controle && f.name === "document" ? undefined : err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue || (Boolean(controle) && !soAjuste)} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}>{el}</B1Field>;
   };
   const panels = l.panels.filter((p) => !p.hidden);
   const renderPanel = (panelId: string) => <div className="grid grid-cols-12 gap-3">{l.cards.filter((c) => c.panelId === panelId).map((c) => { const ids = cardFieldIds(c).filter((fid) => { const f = byId.get(fid); return f && visible(f); }); if (!ids.length) return null; return <LayoutCardView key={c.id} label={c.label} collapsible={c.collapsible} colSpan={c.colSpan}>{c.rows.map((r) => { const els = r.fieldIds.map((x) => renderField(x)).filter(Boolean); return els.length ? <div key={r.id} className="flex flex-wrap gap-2">{els}</div> : null; })}</LayoutCardView>; })}</div>;
@@ -200,12 +214,17 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const parceiroComJanela = resourceKey === "people" && consultaJanela && !rapido;
   // Editar a partir da leitura sem perder o que já está no formulário (importação, "Ajustar para Física")
   const entrarEmEdicao = () => { if (!readOnly) return; if (embedded) embedded.setMode("edit"); else setEditarAqui(true); };
-  const importarDaReceita = (v: Values) => { if (readOnly) { if (!canEdit) { toast.warning("Seu perfil não pode editar este parceiro."); return; } entrarEmEdicao(); } for (const [k, x] of Object.entries(v)) form.setValue(k, x, { shouldDirty: true }); toast.success("Dados da Receita no formulário. Confira e salve."); };
+  // campo que vai no corpo (fora dos travados do layout, dos sigilosos e dos que a API desta sessão não conhece)
+  const apagavel = (f: FieldDef) => !f.readOnly && !travados.includes(f.name);
+  // Importar torna o parceiro Jurídica: os campos só de outro tipo, preenchidos, são apagados — a janela os lista junto
+  // das Divergências e pede confirmação antes (R1, W-3); aqui eles saem do formulário junto com a importação
+  const apagadosAoImportar = def.fields.some((f) => f.name === "person_type") ? camposApagadosNaTroca(def, values, "legal", apagavel) : [];
+  const importarDaReceita = (v: Values) => { if (readOnly) { if (!canEdit) { toast.warning("Seu perfil não pode editar este parceiro."); return; } entrarEmEdicao(); } for (const f of camposApagadosNaTroca(def, form.getValues(), v["person_type"], apagavel)) form.setValue(f.name, f.type === "boolean" ? false : "", { shouldDirty: true }); for (const [k, x] of Object.entries(v)) form.setValue(k, x, { shouldDirty: true }); toast.success("Dados da Receita no formulário. Confira e salve."); };
   const validarDocumentoDaFicha = () => { const d = String(values["document"] ?? "").trim(); if (!d) { toast.info("Informe o CPF/CNPJ."); return; } if (values["person_type"] === "foreign") { toast.info("Estrangeiro: documento livre, sem conferência de dígitos."); return; } const r = validarDocumento(d); if (r.valido) toast.success(`${r.tipo === "cpf" ? "CPF" : "CNPJ"} válido.`); else toast.warning(r.motivo); };
   const copiarEnderecoParaEntrega = () => {
     if (readOnly) { if (!canEdit) return; entrarEmEdicao(); }
     const linhas = (form.getValues("enderecos") as Values[] | undefined) ?? [];
-    form.setValue("enderecos", [...linhas, { tipo: "entrega", descricao: "Entrega", cep: values["zip_code"] ?? "", logradouro: values["address"] ?? "", numero: values["address_number"] ?? "", complemento: values["complemento"] ?? "", bairro: values["district"] ?? "", city_id: values["city_id"] ?? "", inscricao_estadual: "", is_active: true }], { shouldDirty: true });
+    form.setValue("enderecos", [...linhas, linhaNovaDaGrade({ tipo: "entrega", descricao: "Entrega", cep: values["zip_code"] ?? "", logradouro: values["address"] ?? "", numero: values["address_number"] ?? "", complemento: values["complemento"] ?? "", bairro: values["district"] ?? "", city_id: values["city_id"] ?? "", inscricao_estadual: "", is_active: true })], { shouldDirty: true });
     toast.success("Endereço principal copiado para um endereço de entrega (grava ao Salvar).");
   };
   const atualizarSituacao = async () => {
@@ -252,13 +271,13 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
       </div>
       {/* painéis (área rolável; barra e cabeçalho ficam fixos) */}
       <div className="mg-form-scroll min-h-0 flex-1 overflow-auto">
-      {ficha && !rapido ? <FichaEmAbas def={def} form={form} readOnly={readOnly} isNew={isNew} record={q.data ?? null} erros={errosFicha} renderField={renderField} visivel={visible} consultaJanela={parceiroComJanela} entrarEmEdicao={entrarEmEdicao} abrirConsultaCnpj={() => setJanelaCnpj(true)} />
+      {ficha && !rapido ? <FichaEmAbas def={def} form={form} readOnly={readOnly} isNew={isNew} record={q.data ?? null} erros={errosFicha} renderField={renderField} visivel={visible} consultaJanela={parceiroComJanela} entrarEmEdicao={entrarEmEdicao} abrirConsultaCnpj={() => setJanelaCnpj(true)} travado={(f) => !apagavel(f)} />
         : rapido && def.camposRapidos ? <Card className="grid grid-cols-12 gap-3 p-3" data-testid="cadastro-rapido"><div className="col-span-12 flex flex-wrap gap-2">{def.camposRapidos.map((x) => renderField(x))}</div>{def.camposRapidos.includes("document") && <ConsultaCnpj form={form} dis={readOnly} />}</Card>
         : panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} style={panelStyle} onToggleStyle={togglePanelStyle} animate={!readOnly} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
       {!isNew && q.data && <div className="px-2 pt-2 text-[11px] text-slate-400">Criado em {dateTimeBR(q.data["created_at"] as string)} · atualizado em {dateTimeBR(q.data["updated_at"] as string)}</div>}
       </div>
       {ficha && !rapido && !isNew && q.data?.["id"] ? <AttachmentsDialog open={anexos} onOpenChange={setAnexos} entity={def.key} entityId={String(q.data["id"])} title={`Anexos · ${String(q.data[def.labelField] ?? "")}`} /> : null}
-      {parceiroComJanela && <JanelaConsultaCnpj open={janelaCnpj} onOpenChange={setJanelaCnpj} cnpjInicial={tipoDoDocumento(values["document"]) === "legal" ? normalizarDocumento(String(values["document"])) : ""} cadastro={values} onImportar={importarDaReceita} />}
+      {parceiroComJanela && <JanelaConsultaCnpj open={janelaCnpj} onOpenChange={setJanelaCnpj} cnpjInicial={tipoDoDocumento(values["document"]) === "legal" ? normalizarDocumento(String(values["document"])) : ""} cadastro={values} onImportar={importarDaReceita} camposApagados={apagadosAoImportar.map((f) => f.label)} />}
       <Confirm open={confirmDel} onOpenChange={setConfirmDel} title="Confirme a exclusão" text={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`} danger loading={remove.isPending} onConfirm={() => remove.mutate()} />
     </form>
   );

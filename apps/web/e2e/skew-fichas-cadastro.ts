@@ -15,7 +15,7 @@ import path from "node:path";
  * Mora aqui, e não em cada spec, porque os dois sentidos consultam a MESMA decisão: duas cópias envelheceriam
  * cada uma por conta própria.
  */
-export type FatiaDeCadastro = "grupoArvore" | "fichaParceiro" | "rhFuncionarios" | "fichaProduto";
+export type FatiaDeCadastro = "grupoArvore" | "fichaParceiro" | "rhFuncionarios" | "fichaProduto" | "cadastrosAjustes01";
 
 /**
  * CPF válido GERADO a cada chamada (os dois sentidos do RH no mundo atual). O banco do skew é o mesmo nos dois
@@ -29,7 +29,7 @@ export function cpfValido(): string {
   return [...b, d1, dv([...b, d1])].join("");
 }
 
-type Decisao = { baseSha: string; migrationsDaBase: string[]; fatias: Record<FatiaDeCadastro, { migration: string; presente: boolean }> };
+type Decisao = { baseSha: string; migrationsDaBase: string[]; fatias: Record<FatiaDeCadastro, { migration: string; capacidade?: string; declaradaNaBase?: boolean; presente: boolean }> };
 
 const RAIZ = path.resolve(__dirname, "../../..");
 
@@ -44,6 +44,8 @@ export function baseTemFatiaDeCadastro(fatia: FatiaDeCadastro, caso: string): bo
   expect(f, `o artefato traz a fatia ${fatia}`).toBeTruthy();
   const presente = d.migrationsDaBase.includes(f.migration);
   expect(presente, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(f.presente);
+  // fatia medida também por CAPACIDADE (AJUSTES 01): o artefato traz as duas assinaturas, e elas concordam
+  if (f.capacidade) expect(f.declaradaNaBase, `a base declara ${f.capacidade} exatamente quando tem ${f.migration}`).toBe(presente);
   // A decisão tem de ser a DESTA árvore: um arquivo sobrado de outra base decidiria sobre o binário errado.
   expect(d.baseSha, "a decisão foi medida na base que está servindo").toBe(fs.readFileSync(path.join(RAIZ, ".api-anterior.base"), "utf8").trim());
   const conferencia = (Object.keys(d.fatias) as FatiaDeCadastro[]).filter((k) => d.migrationsDaBase.includes(d.fatias[k].migration)).sort().join(",");
@@ -51,4 +53,16 @@ export function baseTemFatiaDeCadastro(fatia: FatiaDeCadastro, caso: string): bo
     "SKEW_BASE_FICHAS_CADASTRO não bate com a decisão recalculada — alguém fixou a variável por fora").toBe(conferencia);
   console.log(`[skew] ${caso} · base ${d.baseSha} ${presente ? "TEM" : "NÃO tem"} ${f.migration} (mundo ${presente ? "ATUAL" : "LEGADO"})`);
   return presente;
+}
+
+/**
+ * O BINÁRIO que está servindo declara a capacidade da fatia exatamente quando a árvore da base a tem (sentido 1: a
+ * API é a da base). A árvore diz o que a base É; `/auth/context` diz o que o processo no ar SERVE — as duas têm de
+ * concordar, senão o caso provaria um mundo e o navegador veria outro.
+ */
+export function capacidadeServidaConfere(capacidades: Record<string, unknown> | undefined, fatia: FatiaDeCadastro, presente: boolean, caso: string): void {
+  const d = JSON.parse(fs.readFileSync(path.join(RAIZ, ".skew-fichas-cadastro.json"), "utf8")) as Decisao;
+  const nome = d.fatias[fatia]?.capacidade;
+  expect(nome, `premissa: a fatia ${fatia} se mede também por uma capacidade`).toBeTruthy();
+  expect(capacidades?.[nome!] ?? null, `${caso}: /auth/context da API no ar ${presente ? "declara" : "NÃO declara"} ${nome}`).toBe(presente ? 1 : null);
 }

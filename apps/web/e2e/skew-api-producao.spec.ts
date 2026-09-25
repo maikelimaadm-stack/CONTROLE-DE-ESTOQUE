@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 import { criarEmpresaEConferirContador, provarContadorIncompativel } from "./skew-contador-empresa";
-import { baseTemFatiaDeCadastro, cpfValido } from "./skew-fichas-cadastro";
+import { baseTemFatiaDeCadastro, capacidadeServidaConfere, cpfValido } from "./skew-fichas-cadastro";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
@@ -1146,7 +1146,7 @@ test("CADASTROS-ESTRUTURA · CE-K3 — produto e grupo com o corpo da web NOVA: 
     "gravado como veio: código, nome, tipo e superior").toBe(`${codigo}|${nome}|analytic|${superior}`);
 });
 
-test("CADASTROS-ESTRUTURA · CE-K4 — parâmetros: máscara de Grupos recusada pela base sem a 0025 (422) ou gravada pela base com a 0025; sem ela, salva normal", async ({ page }) => {
+test("CADASTROS-ESTRUTURA · CE-K4 — parâmetros: máscara de Grupos recusada pela base sem a 0025 (422); gravada pela base com a 0025 e sem a 0030; com a 0030 (máscara travada, D-4) recusada com registros (422, nada muda) e gravada com o cadastro vazio", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
   const temArvore = baseTemFatiaDeCadastro("grupoArvore", "CE-K4");
@@ -1161,28 +1161,65 @@ test("CADASTROS-ESTRUTURA · CE-K4 — parâmetros: máscara de Grupos recusada 
     return;
   }
 
-  // MUNDO ATUAL: a base conhece a máscara de Grupos e a GRAVA. O valor enviado é DIFERENTE do que já está lá —
-  // senão a conferência no banco passaria sem a gravação ter acontecido.
+  // A base conhece a máscara de Grupos. Se ela TRAVA a máscara com registros (D-4) depende de a base já ser a da
+  // AJUSTES 01 — medido pela MESMA porta (a 0030 e a capacidade que entrou com ela), e conferido no binário no ar.
+  const travada = baseTemFatiaDeCadastro("cadastrosAjustes01", "CE-K4");
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cab })).json() as { capacidades?: Record<string, unknown> };
+  capacidadeServidaConfere(ctx.capacidades, "cadastrosAjustes01", travada, "CE-K4");
   const org = (await sessao(page)).orgId ?? "";
   expect(org, "o id vem da sessão e entra no SQL — tem de ser um UUID").toMatch(UUID);
   const mascarasAntes = sql(`select coalesce((parameters->'mascaras_codigo')::text, 'null') from erp.organizations where id = '${org}'`);
-  const nova = antes === "9.99.999" ? "9.9.99" : "9.99.999";
+  const gruposDaOrg = `select count(*) from erp.product_groups where organization_id = '${org}' and deleted_at is null`;
+  // O valor enviado é DIFERENTE da máscara EFETIVA (a gravada ou, sem ela, a padrão) — senão não haveria mudança a
+  // recusar nem a gravar, e a conferência no banco passaria sem a gravação ter acontecido.
+  const efetiva = antes === "<nada>" ? "9.99.999.9999" : antes;
+  const nova = efetiva === "9.99.999" ? "9.9.99" : "9.99.999";
+  const atuais = (mascarasAntes === "null" ? {} : JSON.parse(mascarasAntes)) as Record<string, string>;
+  let esvaziados: string[] = [];
   try {
-    const gravada = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { product_groups: nova } } });
-    expect(gravada.status(), await gravada.text()).toBe(200);
-    expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations where id = '${org}'`), "a base gravou a máscara de Grupos que veio").toBe(nova);
-    // E o corpo sem ela salva normal, como no mundo legado — a mesma porta, sem a chave nova.
-    const ok = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { chart_accounts: "9.99.999.9999" } } });
-    expect(ok.status(), await ok.text()).toBe(200);
-    expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'chart_accounts', '<nada>') from erp.organizations where id = '${org}'`), "e grava o que veio").toBe("9.99.999.9999");
+    if (!travada) {
+      // MUNDO DA 0025 SEM A 0030: a base grava a máscara de Grupos que veio, com o cadastro cheio.
+      const gravada = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { product_groups: nova } } });
+      expect(gravada.status(), await gravada.text()).toBe(200);
+      expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations where id = '${org}'`), "a base gravou a máscara de Grupos que veio").toBe(nova);
+      // E o corpo sem ela salva normal, como no mundo legado — a mesma porta, sem a chave nova.
+      const ok = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { chart_accounts: "9.99.999.9999" } } });
+      expect(ok.status(), await ok.text()).toBe(200);
+      expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'chart_accounts', '<nada>') from erp.organizations where id = '${org}'`), "e grava o que veio").toBe("9.99.999.9999");
+    } else {
+      // MUNDO DA 0030 (a base é a da AJUSTES 01): com grupos vivos, a troca é RECUSADA no campo, com o número de
+      // registros, e nada muda. O corpo leva as máscaras que já estão lá (o PUT substitui o objeto inteiro: cadastro
+      // ausente voltaria à padrão, e isso também seria mudança) — só a de Grupos muda.
+      const vivos = Number(sql(gruposDaOrg));
+      expect(vivos, "premissa: o seed tem grupos de produtos vivos").toBeGreaterThan(0);
+      const recusa = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { ...atuais, product_groups: nova } } });
+      expect(recusa.status(), await recusa.text()).toBe(422);
+      const detalhes = ((await recusa.json()) as { error: { details?: { path: string | string[]; message?: string }[] } }).error.details ?? [];
+      const mensagem = `Há ${vivos} ${vivos === 1 ? "registro" : "registros"}: a máscara só muda com o cadastro vazio.`;
+      expect(detalhes.map((d) => [([] as string[]).concat(d.path).join("."), d.message]), "a recusa aponta a máscara de Grupos, com o motivo").toContainEqual(["mascaras_codigo.product_groups", mensagem]);
+      expect(sql(`select coalesce((parameters->'mascaras_codigo')::text, 'null') from erp.organizations where id = '${org}'`), "nada mudou").toBe(mascarasAntes);
+      // A mesma porta sem mudança efetiva de máscara salva normal (200) — a trava é da MUDANÇA, não do parâmetro.
+      const semMudar = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { ...atuais } } });
+      expect(semMudar.status(), await semMudar.text()).toBe(200);
+      expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations where id = '${org}'`), "a de Grupos continua a de antes").toBe(antes);
+      // Cadastro VAZIO: os grupos vivos da organização excluídos LOGICAMENTE (restaurados no fim) → a MESMA troca grava.
+      esvaziados = sql(`with x as (update erp.product_groups set deleted_at = now() where organization_id = '${org}' and deleted_at is null returning id) select coalesce(string_agg(id::text, ','), '') from x`).split(",").filter(Boolean);
+      expect(esvaziados.length, "premissa: esvaziou exatamente os vivos contados").toBe(vivos);
+      expect(sql(gruposDaOrg), "premissa: o cadastro ficou vazio").toBe("0");
+      const gravada = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { ...atuais, product_groups: nova } } });
+      expect(gravada.status(), await gravada.text()).toBe(200);
+      expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations where id = '${org}'`), "com o cadastro vazio, a base gravou a máscara que veio").toBe(nova);
+    }
   } finally {
-    // O banco do skew é o MESMO nos dois sentidos, e a máscara de Grupos decide o código que o sentido 2 vai
-    // gerar: devolve as máscaras exatamente como estavam, em vez de deixar o cenário diferente do semeado.
+    // O banco do skew é o MESMO nos dois sentidos, e os grupos e a máscara de Grupos decidem o código que o sentido 2
+    // vai gerar: devolve os grupos (só os que ESTE caso excluiu) e as máscaras exatamente como estavam.
+    if (esvaziados.length) sql(`update erp.product_groups set deleted_at = null where id = any('{${esvaziados.join(",")}}'::uuid[])`);
     const literal = mascarasAntes.replace(/'/g, "''");
     sql(`update erp.organizations set parameters = case when '${literal}'::jsonb = 'null'::jsonb then parameters - 'mascaras_codigo'
         else jsonb_set(parameters, '{mascaras_codigo}', '${literal}'::jsonb) end where id = '${org}'`);
   }
   expect(sql(`select coalesce((parameters->'mascaras_codigo')::text, 'null') from erp.organizations where id = '${org}'`), "as máscaras voltaram ao que eram").toBe(mascarasAntes);
+  if (esvaziados.length) expect(sql(gruposDaOrg), "os grupos voltaram").toBe(String(esvaziados.length));
 });
 
 test("CADASTROS FASE 2 · IM-K1 — `modo=parcial` contra a API da base: recusa com 'Campo não reconhecido' (o que a tela reconhece) e nada é gravado; sem `modo`, a base importa como sempre", async ({ page }) => {
@@ -1521,7 +1558,12 @@ test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, cor
  *   AJ-K1 busca sem texto: 500 → "Não foi possível carregar a lista." + [Tentar de novo]; texto livre nunca
  *         vira valor e não há "digite o código" (isso é só para a rota AUSENTE, 404);
  *   AJ-K2 sem as capacidades: Código digitável com sugestão, Mover só de folha, sem "Numeração dos cadastros";
- *   AJ-K3 ficha de Parceiro: os campos da 0030 não viajam no PUT (a base é estrita: viraria 422).
+ *   AJ-K3 ficha de Parceiro: o mundo é MEDIDO pela porta dos cadastros da #62 (`scripts/lib/fichas-cadastro.mjs`,
+ *         fatia `cadastrosAjustes01`: a 0030 E a capacidade `consultaCnpjJanela` na árvore da base, conferidas no
+ *         binário no ar). Sem elas os campos da 0030 não aparecem nem viajam no PUT (a base é estrita: viraria 422);
+ *         com elas (a base já é a da AJUSTES 01, o mundo depois do merge) aparecem, viajam e voltam pelo banco.
+ *         TODOS os campos da 0030: os 7 de um parceiro Jurídica, RG/CAEPF/Sexo de um parceiro FÍSICA (só aparecem em
+ *         Física) e Latitude/Longitude de uma linha da grade "Outros endereços" (`parceiro_enderecos`).
  * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
 function baseDeclaraCapacidade(nome: string): boolean {
   const arq = path.resolve(__dirname, "../../..", ".api-anterior/apps/api/src/routes/auth.ts");
@@ -1604,25 +1646,171 @@ test("CADASTROS AJUSTES 01 · AJ-K2 — sem codigoAutomatico/moverComFilhos da b
   v.semBloqueio();
 });
 
-test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva contra a base: os campos da 0030 não viajam, 200", async ({ page }) => {
+test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva contra a base: sem a 0030 os campos novos não aparecem nem viajam (200); com a 0030 aparecem, viajam e voltam pelo banco (Jurídica, Física e a grade de endereços)", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
-  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("AJ-K3 parceiro"), person_type: "legal", is_client: true } });
+  // O MUNDO pela mesma porta dos cadastros da #62 (a 0030 e `consultaCnpjJanela` na árvore da base), conferido no
+  // binário no ar: a web só mostra e envia os campos da 0030 quando a API declara a capacidade.
+  const tem0030 = baseTemFatiaDeCadastro("cadastrosAjustes01", "AJ-K3");
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cab })).json() as { capacidades?: Record<string, unknown> };
+  capacidadeServidaConfere(ctx.capacidades, "cadastrosAjustes01", tem0030, "AJ-K3");
+  const nomeMatriz = uniq("AJ-K3 matriz");
+  const m = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: nomeMatriz, person_type: "legal", is_client: true } });
+  expect(m.status(), await m.text()).toBe(201);
+  const matriz = (await m.json() as { id: string }).id;
+  // o Jurídica nasce com UMA linha em "Outros endereços" (a grade existe na base desde a #62; Latitude/Longitude são da 0030)
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("AJ-K3 parceiro"), person_type: "legal", is_client: true, enderecos: [{ tipo: "entrega", logradouro: "Rua AJ-K3" }] } });
   expect(r.status(), await r.text()).toBe(201);
   const id = (await r.json() as { id: string }).id;
+  // RG, CAEPF e Sexo (0030) só aparecem em FÍSICA: um parceiro Física próprio para eles
+  const f = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("AJ-K3 física"), person_type: "natural", document: cpfValido(), is_client: true } });
+  expect(f.status(), await f.text()).toBe(201);
+  const fisica = (await f.json() as { id: string }).id;
+  expect([matriz, id, fisica], "os ids vêm da API e entram no SQL — têm de ser UUID").toEqual([expect.stringMatching(UUID), expect.stringMatching(UUID), expect.stringMatching(UUID)]);
   await page.goto(`/cadastros/people/${id}`);
   const ficha = page.getByTestId("ficha-em-abas");
   await expect(ficha).toBeVisible();
-  for (const rotulo of ["Matriz", "Site", "Caixa postal", "Latitude", "E-mail para NF-e", "Calcula FUNRURAL"]) await expect(page.getByLabel(rotulo, { exact: true }), `${rotulo} não aparece contra a base`).toHaveCount(0);
+  const aba = (nome: string) => ficha.getByRole("tab", { name: nome, exact: true });
+  // cada campo da 0030 NA SUA ABA, com um vizinho de sempre como premissa (a aba abriu e o localizador acha campo)
+  const porAba: [string, string, string[]][] = [
+    ["Identificação", "Inscrição estadual", ["Matriz", "Site"]],
+    ["Endereço", "Bairro", ["Caixa postal", "Latitude", "Longitude"]],
+    ["Contatos", "Telefone", ["E-mail para NF-e"]],
+    ["Fiscal", "Consumidor final", ["Calcula FUNRURAL"]]
+  ];
   const editar = page.getByRole("button", { name: "Editar" });
   if (await editar.count()) await editar.first().click();
-  await page.getByLabel("Nome Social/Fantasia").fill(uniq("AJ-K3 renomeado"));
-  const resposta = page.waitForResponse((x) => x.request().method() === "PUT" && new URL(x.url()).pathname === `/api/resources/people/${id}`);
-  await page.getByRole("button", { name: "Salvar" }).click();
-  const put = await resposta;
-  const enviado = put.request().postDataJSON() as Record<string, unknown>;
-  const novos = ["matriz_id", "rg", "caepf", "sexo", "site", "caixa_postal", "latitude", "longitude", "email_nfe", "calcula_funrural"].filter((k) => k in enviado);
-  expect(novos, "nenhum campo da 0030 viaja para a base").toEqual([]);
-  expect(put.status(), await put.text()).toBe(200);
-  sql(`update erp.people set deleted_at = now() where id = '${id}'`);
+  const novos = ["matriz_id", "rg", "caepf", "sexo", "site", "caixa_postal", "latitude", "longitude", "email_nfe", "calcula_funrural"];
+  const daFisica = ["RG", "CAEPF", "Sexo"];
+  const rotuloExato = (rotulo: string) => page.locator("label").filter({ hasText: new RegExp(`^${rotulo}( \\*)?$`) });
+  // a grade "Outros endereços" repete Bairro, Latitude e Longitude em cada linha (só `aria-label`): o campo PRINCIPAL é
+  // o que tem o `name` da coluna
+  const principal = (rotulo: string) => {
+    const nome = ({ Bairro: "district", Latitude: "latitude", Longitude: "longitude" } as Record<string, string>)[rotulo];
+    return nome ? page.getByLabel(rotulo, { exact: true }).and(page.locator(`[name="${nome}"]`)) : page.getByLabel(rotulo, { exact: true });
+  };
+  const grade = page.getByTestId("grade-enderecos");
+  const linha = page.getByTestId("linha-enderecos-1");
+  const coluna = (rotulo: string) => grade.locator("th").filter({ hasText: new RegExp(`^${rotulo}$`) });
+  const abrirFisica = async () => {
+    await page.goto(`/cadastros/people/${fisica}`);
+    await expect(ficha).toBeVisible();
+    if (await editar.count()) await editar.first().click();
+    await expect(page.getByLabel("Nome completo", { exact: true }), "premissa: a ficha é de Física (o rótulo segue o tipo) e abriu na Identificação").toBeVisible();
+  };
+  const salvarFicha = async (alvo: string) => {
+    const resposta = page.waitForResponse((x) => x.request().method() === "PUT" && new URL(x.url()).pathname === `/api/resources/people/${alvo}`);
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const put = await resposta;
+    return { put, enviado: put.request().postDataJSON() as Record<string, unknown> };
+  };
+
+  if (!tem0030) {
+    // MUNDO LEGADO: nenhum campo da 0030 aparece, em nenhuma aba, e nenhum viaja no PUT (a base é estrita: 422).
+    for (const [nome, vizinho, campos] of porAba) {
+      await aba(nome).click();
+      await expect(principal(vizinho), `premissa: a aba ${nome} abriu`).toBeVisible();
+      for (const rotulo of campos) {
+        await expect(page.getByLabel(rotulo, { exact: true }), `${rotulo} não aparece contra a base`).toHaveCount(0);
+        await expect(page.locator("label").filter({ hasText: new RegExp(`^${rotulo}( \\*)?$`) }), `nem o rótulo de ${rotulo}`).toHaveCount(0);
+      }
+    }
+    // a grade "Outros endereços" (da #62): a linha gravada aparece, SEM as colunas Latitude e Longitude (da 0030)
+    await aba("Endereço").click();
+    await expect(linha.getByLabel("Endereço", { exact: true }), "premissa: a linha gravada aparece na grade").toHaveValue("Rua AJ-K3");
+    await expect(coluna("IE"), "premissa: o localizador acha o cabeçalho de coluna da grade").toHaveCount(1);
+    for (const rotulo of ["Latitude", "Longitude"]) {
+      await expect(linha.getByLabel(rotulo, { exact: true }), `${rotulo} não aparece na linha da grade contra a base`).toHaveCount(0);
+      await expect(coluna(rotulo), `nem a coluna ${rotulo}`).toHaveCount(0);
+    }
+    await aba("Identificação").click();
+    await page.getByLabel("Nome Social/Fantasia").fill(uniq("AJ-K3 renomeado"));
+    const { put, enviado } = await salvarFicha(id);
+    expect(novos.filter((k) => k in enviado), "nenhum campo da 0030 viaja para a base").toEqual([]);
+    expect(put.status(), await put.text()).toBe(200);
+    // FÍSICA: RG, CAEPF e Sexo (0030) não aparecem e não viajam
+    await abrirFisica();
+    for (const rotulo of daFisica) {
+      await expect(page.getByLabel(rotulo, { exact: true }), `${rotulo} não aparece em Física contra a base`).toHaveCount(0);
+      await expect(rotuloExato(rotulo), `nem o rótulo de ${rotulo}`).toHaveCount(0);
+    }
+    await page.getByLabel("Nome Social/Fantasia").fill(uniq("AJ-K3 física renomeada"));
+    const sf = await salvarFicha(fisica);
+    expect(novos.filter((k) => k in sf.enviado), "nenhum campo da 0030 viaja da ficha de Física").toEqual([]);
+    expect(sf.put.status(), await sf.put.text()).toBe(200);
+  } else {
+    // MUNDO DA 0030 (a base é a da AJUSTES 01): os campos aparecem, o que se preenche VIAJA no PUT, a base GRAVA
+    // (conferido no banco) e a ficha reaberta mostra de volta o que foi gravado.
+    const valores = { site: "ajk3.exemplo.com.br", caixa_postal: "1234", latitude: "-15.228", longitude: "-59.335", email_nfe: "nfe-ajk3@exemplo.com.br" };
+    const linhaGrade = { latitude: "-15.5", longitude: "-59.25" };
+    for (const [nome, vizinho, campos] of porAba) {
+      await aba(nome).click();
+      await expect(principal(vizinho), `premissa: a aba ${nome} abriu`).toBeVisible();
+      for (const rotulo of campos) await expect(principal(rotulo), `${rotulo} aparece contra a base com a 0030`).toBeVisible();
+    }
+    await aba("Identificação").click();
+    await page.getByLabel("Matriz", { exact: true }).click();
+    const lista = page.locator("[data-radix-popper-content-wrapper]").last();
+    await lista.getByPlaceholder(/Pesquisar/).fill(nomeMatriz);
+    await lista.getByRole("option", { name: new RegExp(nomeMatriz) }).first().click();
+    await page.getByLabel("Site", { exact: true }).fill(valores.site);
+    await aba("Endereço").click();
+    await page.getByLabel("Caixa postal", { exact: true }).fill(valores.caixa_postal);
+    await principal("Latitude").fill(valores.latitude);
+    await principal("Longitude").fill(valores.longitude);
+    // a linha da grade "Outros endereços": Latitude e Longitude (0030) aparecem e se preenchem
+    await expect(linha.getByLabel("Endereço", { exact: true }), "premissa: a linha gravada aparece na grade").toHaveValue("Rua AJ-K3");
+    for (const rotulo of ["Latitude", "Longitude"]) await expect(coluna(rotulo), `a coluna ${rotulo} aparece na grade`).toHaveCount(1);
+    await linha.getByLabel("Latitude", { exact: true }).fill(linhaGrade.latitude);
+    await linha.getByLabel("Longitude", { exact: true }).fill(linhaGrade.longitude);
+    await aba("Contatos").click();
+    await page.getByLabel("E-mail para NF-e", { exact: true }).fill(valores.email_nfe);
+    await aba("Fiscal").click();
+    // booleano da ficha é o seletor Sim/Não (MgSelect), não um checkbox
+    await page.getByLabel("Calcula FUNRURAL", { exact: true }).click();
+    await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: "Sim", exact: true }).click();
+    const { put, enviado } = await salvarFicha(id);
+    expect({ matriz_id: enviado["matriz_id"], site: enviado["site"], caixa_postal: enviado["caixa_postal"], latitude: String(enviado["latitude"]), longitude: String(enviado["longitude"]), email_nfe: enviado["email_nfe"], calcula_funrural: enviado["calcula_funrural"] },
+      "os campos da 0030 VIAJAM para a base que os declara").toEqual({ matriz_id: matriz, ...valores, calcula_funrural: true });
+    expect(put.status(), await put.text()).toBe(200);
+    expect(sql(`select concat_ws('|', matriz_id, site, caixa_postal, latitude::text, longitude::text, email_nfe::text, calcula_funrural::text) from erp.people where id = '${id}'`),
+      "a base gravou exatamente o que viajou").toBe(`${matriz}|${valores.site}|${valores.caixa_postal}|-15.228000|-59.335000|${valores.email_nfe}|true`);
+    const linhasEnviadas = (enviado["enderecos"] ?? []) as Record<string, unknown>[];
+    expect(linhasEnviadas.map((l) => [l["logradouro"], String(l["latitude"]), String(l["longitude"])]), "a linha da grade leva Latitude e Longitude no PUT").toEqual([["Rua AJ-K3", linhaGrade.latitude, linhaGrade.longitude]]);
+    expect(sql(`select string_agg(concat_ws('|', logradouro, (latitude = ${linhaGrade.latitude})::text, (longitude = ${linhaGrade.longitude})::text), ';') from erp.parceiro_enderecos where person_id = '${id}' and deleted_at is null`),
+      "a base gravou Latitude e Longitude da linha em erp.parceiro_enderecos").toBe("Rua AJ-K3|true|true");
+    // IDA E VOLTA: a ficha reaberta mostra o que o banco tem
+    await page.goto(`/cadastros/people/${id}`);
+    await expect(ficha).toBeVisible();
+    await expect(page.getByLabel("Matriz", { exact: true }), "a Matriz gravada volta com o nome").toContainText(nomeMatriz);
+    await expect(page.getByLabel("Site", { exact: true })).toHaveValue(valores.site);
+    await aba("Endereço").click();
+    await expect(page.getByLabel("Caixa postal", { exact: true })).toHaveValue(valores.caixa_postal);
+    await expect(principal("Latitude")).toHaveValue(/^-15[.,]228/);
+    await expect(principal("Longitude")).toHaveValue(/^-59[.,]335/);
+    await expect(linha.getByLabel("Latitude", { exact: true }), "a linha da grade volta com a Latitude gravada").toHaveValue(/^-15[.,]5/);
+    await expect(linha.getByLabel("Longitude", { exact: true })).toHaveValue(/^-59[.,]25/);
+    await aba("Contatos").click();
+    await expect(page.getByLabel("E-mail para NF-e", { exact: true })).toHaveValue(valores.email_nfe);
+    await aba("Fiscal").click();
+    await expect(page.getByLabel("Calcula FUNRURAL", { exact: true })).toHaveText("Sim");
+    // FÍSICA: RG, CAEPF e Sexo (0030) aparecem na Identificação, VIAJAM no PUT, a base GRAVA e a ficha reaberta os mostra
+    await abrirFisica();
+    for (const rotulo of daFisica) await expect(page.getByLabel(rotulo, { exact: true }), `${rotulo} aparece em Física contra a base com a 0030`).toBeVisible();
+    await page.getByLabel("RG", { exact: true }).fill("7654321");
+    await page.getByLabel("CAEPF", { exact: true }).fill("12345678901234");
+    await page.getByLabel("Sexo", { exact: true }).click();
+    await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: "Feminino", exact: true }).click();
+    const sf = await salvarFicha(fisica);
+    expect({ rg: sf.enviado["rg"], caepf: sf.enviado["caepf"], sexo: sf.enviado["sexo"] }, "RG, CAEPF e Sexo VIAJAM para a base que os declara").toEqual({ rg: "7654321", caepf: "12345678901234", sexo: "F" });
+    expect(sf.put.status(), await sf.put.text()).toBe(200);
+    expect(sql(`select concat_ws('|', rg, caepf, sexo) from erp.people where id = '${fisica}'`), "a base gravou RG, CAEPF e Sexo").toBe("7654321|12345678901234|F");
+    await page.goto(`/cadastros/people/${fisica}`);
+    await expect(ficha).toBeVisible();
+    await expect(page.getByLabel("RG", { exact: true }), "IDA E VOLTA: a ficha reaberta mostra o RG gravado").toHaveValue("7654321");
+    await expect(page.getByLabel("CAEPF", { exact: true })).toHaveValue("12345678901234");
+    await expect(page.getByLabel("Sexo", { exact: true })).toHaveText("Feminino");
+  }
+  // o dado de teste fica excluído logicamente (nunca apagado)
+  sql(`update erp.people set deleted_at = now() where id in ('${id}', '${matriz}', '${fisica}')`);
 });

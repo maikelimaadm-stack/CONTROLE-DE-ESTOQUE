@@ -1193,8 +1193,10 @@ migration nem variável de ambiente nova.
 pré/pós-condições nomeadas, não reaplicável): colunas novas em `erp.people` (`matriz_id` com FK COMPOSTA
 `(matriz_id, organization_id)` → `people` e check "não é ele mesmo", `rg`, `caepf` 14 dígitos, `sexo` F/M, `site`,
 `caixa_postal`, `latitude`/`longitude` numeric(9,6) com faixa, `email_nfe` citext, `calcula_funrural` default false)
-e `latitude`/`longitude` em `erp.parceiro_enderecos`. Todas anuláveis ou com default; nenhuma linha muda de valor
-(a pós-condição confere). **Pré-condições:** 0027 e 0029 aplicadas; colunas ainda inexistentes. Nenhuma variável nova.
+e `latitude`/`longitude` em `erp.parceiro_enderecos`; nas duas tabelas, o CHECK do PAR latitude/longitude (as duas ou
+nenhuma: `chk_people_par_coordenadas`, `chk_parceiro_enderecos_par_coordenadas` — como as colunas nascem vazias, o
+check não recusa nenhuma linha existente). Todas anuláveis ou com default; nenhuma linha muda de valor (a
+pós-condição confere, e confere também que os dois CHECKs do par existem). **Pré-condições:** 0027 e 0029 aplicadas; colunas ainda inexistentes. Nenhuma variável nova.
 **Impacto em dados reais:** nenhum UPDATE, nenhum DELETE; parceiros existentes ficam com as colunas novas vazias.
 
 **Implantação — ordem: banco (0030) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
@@ -1204,8 +1206,20 @@ e `latitude`/`longitude` em `erp.parceiro_enderecos`. Todas anuláveis ou com de
    tipo de pessoa só cobram quando o corpo toca o tipo ou o campo). A consulta antiga continua funcionando.
 3. **web NOVA × API anterior:** a API anterior não declara `capacidades.consultaCnpjJanela`: a web nova não mostra
    nem envia os campos da 0030 (o schema estrito da anterior recusaria o corpo inteiro), não mostra `Consultar CNPJ`
-   na barra nem `Novo pelo CNPJ` na lista, e usa a consulta antiga na aba Identificação. Anexos na barra, Tipo do
-   parceiro num campo só, máscaras e o tipo de pessoa seguindo o documento são só tela e valem nos dois sentidos.
+   na barra nem `Novo pelo CNPJ` na lista, e usa a consulta antiga na aba Identificação.
+   **O que aparece de NOVO mesmo SEM a capacidade, e por que é seguro** — tudo isto é só tela e grava as MESMAS
+   chaves, com valores que a API anterior já aceita; nenhuma chave nova viaja, então o `.strict()` da anterior não
+   recusa o corpo e nada é descartado em silêncio:
+   - **máscaras** (CPF, CNPJ, CEP, telefone): a caixa mostra o formatado e grava o NORMALIZADO (só dígitos; no CNPJ
+     alfanumérico, [0-9A-Z]) — o mesmo valor que a anterior grava e confere (o documento ela normaliza igual);
+   - **campo Cidade** (nome, código IBGE ou CEP · Código IBGE · UF só leitura): grava o mesmo `city_id` (código IBGE)
+     de sempre; a lista vem da busca de referência que a anterior já tem (sem texto ela responde 500 → a tela mostra
+     "Tentar de novo" e não aceita texto livre, item 5);
+   - **tipo de pessoa seguindo o documento** (e a faixa "Ajustar para…"): muda o `person_type` do formulário para uma
+     das opções de sempre; a anterior confere tipo × documento com a mesma regra (R1-6) e recusa em 422 o que não bater;
+   - **"Tipo do parceiro" num campo só**: continua gravando os mesmos booleanos `is_client`, `is_provider`,
+     `is_transporter`, `is_employee`, `is_proprietary`;
+   - **Anexos na barra de ações**: o mesmo diálogo e as mesmas rotas de anexo de antes, só em outro lugar da ficha.
 4. **web ANTERIOR × API nova — referências (A):** a busca sem texto passa a responder 200 (a anterior dava 500 ao abrir
    Banco, NCM, CBO ou Cidade); o formato da resposta é o mesmo, só o texto do rótulo muda (`5106752 · Pontes e Lacerda -
    MT`, `001 · Banco do Brasil S.A.`). CEP passa a responder a qualquer membro da organização.
@@ -1213,20 +1227,45 @@ e `latitude`/`longitude` em `erp.parceiro_enderecos`. Todas anuláveis ou com de
    "Tentar de novo" e nunca aceita texto livre; com texto a busca funciona. Na anterior o CEP ainda exige
    `people.create`/`people.edit`: sem elas, aviso "Sem permissão para consultar CEP.".
 6. **web ANTERIOR × API nova — árvores e sequenciais (D):** POST de árvore com o código sugerido → aceito; código
-   diferente → 422 "O código é gerado pelo sistema."; mudar o superior pela edição → 422 "Use Mover.". Conta bancária,
+   diferente → 422 "O código é gerado pelo sistema."; mudar o superior pela edição → 422 "Use Mover." (também quando o
+   corpo traz o código novo junto, `{ parent_id, code }`: o superior é conferido antes do código). Registro do acervo
+   SEM código (Grupos de Produtos anteriores à 0025) ganha o código gerado ao ser salvo — pela web anterior também;
+   se ela mandar um código digitado diferente do gerado, 422. Conta bancária,
    área, pátio, setor e curral: a web anterior exige digitar o código e a API nova o recusa (422 legível) — **enquanto a
    web anterior estiver no ar, esses cinco cadastros não recebem inclusão**. Por isso o intervalo entre API e web deve ser
    curto (minutos), como nas fatias anteriores.
 7. **web NOVA × API anterior — árvores (D):** sem `codigoAutomatico`/`moverComFilhos`, a web mostra o código digitável com
    a sugestão de sempre, o Mover de antes (só registro sem filhos) e não mostra a Numeração dos cadastros.
-8. **Zerar numeração (D)** usa `LOCK TABLE … IN SHARE ROW EXCLUSIVE` por um instante: inclusões NAQUELA tabela esperam,
-   em todas as organizações, até a transação do Zerar terminar (milissegundos com o cadastro vazio). Com registro vivo o
-   Zerar recusa ANTES de pedir essa trava; e a trava espera no máximo 2 s (`lock_timeout`) — se outra gravação longa
-   (ex.: importação de outra organização) estiver na tabela, o Zerar desiste com 409 em vez de enfileirar todo mundo
-   atrás dele. Só roda com zero registros vivos; excluídos ficam com `EXC-<id>`; nada é apagado.
-9. **Mover (D)** também libera como `EXC-<id>` o código de descendente EXCLUÍDO que não pode acompanhar o galho (acervo
-   do Mover-de-folha anterior); o valor antigo fica no `audit` do Mover. Descendente vivo fora do prefixo continua
-   recusando.
+8. **Zerar numeração (D)**, na ordem em que acontece, numa transação: trava da numeração do cadastro NA organização
+   (advisory — as inclusões pela API daquele cadastro, naquela organização, esperam) → linha do contador `for update` →
+   contagem: com registro vivo, 422 com o motivo, sem nenhuma escrita e sem pedir trava de tabela → **limite de 1 Zerar
+   por cadastro por organização por minuto** (o segundo → 429; conferido na auditoria, dentro da transação: vale entre
+   instâncias da API e só conta o Zerar que gravou) → liberação dos excluídos que seguram código (`EXC-<id>`; os pares
+   `{ id, codigo_antigo }` vão na auditoria do Zerar, porque a maioria das tabelas não tem gatilho de auditoria) e
+   contador a 0 → auditoria → **só então** `LOCK TABLE … IN SHARE ROW EXCLUSIVE` e, sob ela, SÓ a recontagem, até o
+   commit. Com a tabela travada — quando inclusões NAQUELA tabela esperam, em TODAS as organizações — fica só a
+   RECONTAGEM, que LÊ as linhas da organização naquela tabela, excluídos inclusive, e não reescreve nenhuma: esse tempo
+   cresce com o acervo da organização. A liberação, que REESCREVE os excluídos (o passo longo, que só toca linhas desta
+   organização), roda antes da trava da tabela. Medido no banco local de teste, Contas bancárias com 50 mil excluídos:
+   Zerar em ~0,9 s; inclusões de OUTRA organização na mesma tabela, durante ele, esperaram no máximo 40 ms — é a
+   recontagem sob a trava (antes desta correção, 620 ms: a liberação rodava com a tabela travada). A trava da tabela espera no máximo 2 s (`lock_timeout`): se outra gravação longa (ex.:
+   importação de outra organização) estiver na tabela, o Zerar desiste com 409, sem efeito. Se a recontagem achar um
+   vivo (inclusão por porta que não passa pela trava da numeração: importação com código, SQL de fora), 422 e a
+   transação desfaz tudo — liberação, contador e auditoria. Só roda com zero registros vivos; nada é apagado.
+9. **Mover (D)** grava em DUAS fases (quem segura hoje o código final de outra linha sai da frente primeiro — o excluído
+   liberado já para `EXC-<id>`, o que continua no galho para um código provisório —, depois os códigos finais): a
+   ordem das linhas não importa mais e o POST nunca dá 409 onde a prévia deu 200 (a prévia é o mesmo plano). Libera
+   como `EXC-<id>` o código de descendente EXCLUÍDO que não pode acompanhar o galho (acervo do Mover-de-folha anterior)
+   e o de um EXCLUÍDO FORA do galho que segure o código novo de um registro VIVO do galho (em Grupos de Produtos o código
+   é único só entre vivos: o excluído não conta e não é tocado); excluído do galho que cabe e não colide acompanha com o
+   prefixo novo. Cada troca vai no plano, na prévia e no `audit` do Mover (`{ id, antes, depois }`, com o id canônico
+   do registro). Descendente vivo fora do prefixo, ou código novo já usado por um VIVO fora do galho, continuam
+   recusando (422).
+10. **Referências e parceiro (R1):** `page` da busca de referência acima de 1000 → 422 (antes, `?page=1e308` dava 500);
+   id malformado nas rotas do Mover → 404, a mesma de inexistente; CAEPF fora de 14 dígitos → 422 no campo, na aba
+   Identificação (antes, a mensagem genérica do CHECK do banco). **Matriz** (só quando o corpo MUDA a matriz): precisa
+   ser parceiro vivo, ativo, Jurídica, da organização, que não seja filial; parceiro que tem filiais não vira filial;
+   nunca ele mesmo — 422 no campo `matriz_id`. A web anterior não conhece a Matriz e não a manda: nada muda para ela.
 
 **Reversão.** Web: livre (itens 3, 5 e 7). API: a anterior ignora as colunas novas; a web nova volta sozinha ao
 comportamento dos itens 3, 5 e 7. Códigos gerados, renumerados pelo Mover ou liberados como `EXC-<id>` pelo Zerar são
@@ -1244,9 +1283,11 @@ marcar Fornecedor → aba Fornecedor aparece. UI-3 campo Cidade: "pontes" → `5
 a cidade do CEP como 1ª opção; 5106752 no Código IBGE → a cidade; UF só leitura. UI-5 máscaras: CPF, CNPJ (também colado
 com pontuação e com o tipo ainda em Física), CEP, telefone e celular aparecem formatados e gravam só os dígitos. UI-8
 abrir Banco, NCM e CBO SEM digitar → a lista aparece (antes: erro); "nubank" → 260. UI-9 Naturezas: Código só leitura;
-Novo filho mostra "será gerado ao salvar: …"; Mover um galho → prévia → Confirmar → códigos novos (usar um galho de teste
-ou desfazer movendo de volta). UI-10 Parametrizações → Numeração: cadastro com registros → Zerar desabilitado com o
-motivo (não zerar nada em produção sem querer).
+Novo filho mostra "será gerado ao salvar: …"; Mover um galho → prévia → Confirmar → códigos novos. **Use um galho de
+teste criado só para isso: o Mover é definitivo.** Mover de volta NÃO devolve os códigos antigos — o galho recebe o
+PRÓXIMO código livre debaixo do superior de origem (1.03 → 2.05 → 1.07, não 1.03), e o que virou `EXC-<id>` continua
+`EXC-<id>`; os códigos antigos ficam só no `audit` do Mover. UI-10 Parametrizações → Numeração: cadastro com registros →
+Zerar desabilitado com o motivo (não zerar nada em produção sem querer).
 
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)

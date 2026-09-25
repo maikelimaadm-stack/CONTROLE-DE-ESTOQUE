@@ -72,4 +72,11 @@ describe("ficha em abas — declaração coerente", () => {
     for (const x of p.fields.filter((y) => !da0030.includes(y.name))) expect(x.exigeCapacidade, x.name).toBeUndefined();
     expect(f("email_nfe").type).toBe("email");
   });
+  it("numérico ESVAZIADO que vai null (R1, W-8): só latitude/longitude do Parceiro — nenhum outro numérico de cadastro algum", () => {
+    // sem a marca, o numérico vazio fica fora do corpo (o valor gravado continua): Valor de referência do Produto é
+    // NOT NULL DEFAULT 0 e o null seria recusado pelo banco (23502)
+    const marcados = RESOURCES.flatMap((r) => [...r.fields, ...(r.detalhes ?? []).flatMap((d) => d.fields)].filter((x) => x.anulaQuandoEsvaziado).map((x) => `${r.key}.${x.name}`));
+    expect(marcados).toEqual(["people.latitude", "people.longitude"]);
+    expect(getResource("products")!.fields.find((x) => x.name === "reference_price")?.anulaQuandoEsvaziado).toBeUndefined();
+  });
 });

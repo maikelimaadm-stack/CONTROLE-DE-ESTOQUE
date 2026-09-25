@@ -8,7 +8,7 @@ import { runService, nextCode, requirePermission, comPermissaoResolvida } from "
 import { SEQUENCIA_EMPRESA } from "../lib/sequencia-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
 import { atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
-import { conferirRegrasDaArvore, conferirExclusaoNaArvore, conferirReferenciasAnaliticas, sugerirCodigo, gerarCodigoNaCriacao, planejarMover, moverNaArvore, travarNumeracao } from "../lib/arvore-cadastro.js";
+import { conferirRegrasDaArvore, conferirExclusaoNaArvore, conferirReferenciasAnaliticas, sugerirCodigo, gerarCodigoNaCriacao, gerarCodigoNaEdicao, planejarMover, moverNaArvore, travarNumeracao } from "../lib/arvore-cadastro.js";
 import { gerarCodigoSequencial, conferirCodigoSequencialNaEdicao, numeracaoDosCadastros, linhaDaNumeracao, zerarNumeracao, proximoCodigo } from "../lib/numeracao-cadastro.js";
 import { conferirGrupoDeProdutos, conferirGrupoDoProduto } from "../lib/grupo-de-produtos.js";
 import { conferirTipoDaNatureza } from "../lib/natureza-financeira.js";
@@ -40,7 +40,12 @@ export function buildSchema(def: ResourceDef, partial = false) {
 export function schemaDoCampo(f: FieldDef): z.ZodTypeAny {
   let t: z.ZodTypeAny;
   switch (f.type) {
-    case "text": case "textarea": t = z.string().max(f.maxLength ?? 4000); break;
+    case "text": case "textarea": {
+      // FORMATO declarado no registry (A-10, ex.: CAEPF com 14 dígitos): recusa no campo, com a mensagem do registry
+      const padrao = f.padrao ? { re: new RegExp(f.padrao.regex), mensagem: f.padrao.mensagem } : null;
+      t = padrao ? z.string().max(f.maxLength ?? 4000).refine((v) => v === "" || padrao.re.test(v), padrao.mensagem) : z.string().max(f.maxLength ?? 4000);
+      break;
+    }
     case "email": t = z.string().email().max(200); break;
     case "number": case "money": case "quantity": case "percent": t = z.union([z.number(), z.string().regex(/^-?\d+(\.\d+)?$/)]).transform(String); break;
     case "integer": t = z.coerce.number().int(); if (f.min !== undefined) t = (t as z.ZodNumber).min(f.min); if (f.max !== undefined) t = (t as z.ZodNumber).max(f.max); break;
@@ -100,6 +105,8 @@ async function checkColumns(ctx: ServiceCtx, def: ResourceDef): Promise<Set<stri
 }
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+/** UUID em qualquer caixa (a forma que o `z.string().uuid()` aceita e o Postgres converte). */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
  * Filtro avançado `campo__operador=valor` (ver @agro/shared/preferences). O nome da coluna vem SEMPRE da definição
  * declarativa (nunca do cliente) e os valores são parametrizados; operador desconhecido é ignorado.
@@ -340,7 +347,9 @@ export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, b
   conferirPermissoesDaFicha(ctx, def, data);
   fundirCamposJson(def, data, atual);
   conferirCodigoSequencialNaEdicao(def, data, atual);
-  await conferirRegrasDaArvore(ctx, def, id, data, atual);
+  // registro do acervo SEM código numa árvore com código travado ganha o código gerado ao salvar (A-7)
+  const codigoGerado = await gerarCodigoNaEdicao(ctx, def, data, atual);
+  await conferirRegrasDaArvore(ctx, def, id, data, atual, { codigoGerado });
   await conferirRegrasDoCadastro(ctx, def, id, data, atual);
   const existing = await checkColumns(ctx, def);
   const sets: string[] = []; const vals: unknown[] = [];
@@ -476,15 +485,17 @@ export default async function resourceRoutes(app: FastifyInstance) {
   // HISTÓRICO (Fase 6): auditoria do registro e das suas grades — quem, quando, o quê. Mesma permissão e mesma 404 da ficha.
   app.get("/resources/:key/:id/historico", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); const q = pageQuerySchema.parse(req.query); return runService(app, req, `${def.permission}.view`, async (ctx) => { await getOne(ctx, def, id); return historicoDoRegistro(ctx, def, id, q.page, q.pageSize); }); });
   // MOVER COM RENUMERAÇÃO (decisão 257 D-5): prévia e execução usam o MESMO plano. `superior=raiz` = raiz.
+  // Id que não é UUID (A-10) é a MESMA 404 de inexistente — depois da permissão, nunca o 500 do cast do banco.
+  const registroDoMover = async (ctx: ServiceCtx, def: ResourceDef, id: string) => { if (!UUID.test(id)) throw notFound(def.label); await getOne(ctx, def, id); };
   app.get("/resources/:key/:id/mover/previa", async (req) => {
     const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso");
     const q = z.object({ superior: z.union([z.literal("raiz"), z.string().uuid()]) }).strict().parse(req.query);
-    return runService(app, req, `${def.permission}.edit`, async (ctx) => { await getOne(ctx, def, id); return planejarMover(ctx, def, id, q.superior === "raiz" ? null : q.superior); });
+    return runService(app, req, `${def.permission}.edit`, async (ctx) => { await registroDoMover(ctx, def, id); return planejarMover(ctx, def, id, q.superior === "raiz" ? null : q.superior); });
   });
   app.post("/resources/:key/:id/mover", async (req) => {
     const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso");
     const b = z.object({ superior: z.string().uuid().nullable() }).strict().parse(req.body);
-    return runService(app, req, `${def.permission}.edit`, async (ctx) => { await getOne(ctx, def, id); return moverNaArvore(ctx, def, id, b.superior); });
+    return runService(app, req, `${def.permission}.edit`, async (ctx) => { await registroDoMover(ctx, def, id); return moverNaArvore(ctx, def, id, b.superior); });
   });
   app.get("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => getOne(ctx, def, id)); });
   // NUMERAÇÃO DOS CADASTROS (decisão 257 D-3): consulta e Zerar, só com `tenant_parameters.edit`

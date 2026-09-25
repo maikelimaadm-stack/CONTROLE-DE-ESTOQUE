@@ -49,6 +49,11 @@ export const MENSAGEM_REGISTRO_COM_FILHOS = "Registro com filhos: mova ou renume
 export const MENSAGEM_CODIGO_GERADO = "O código é gerado pelo sistema.";
 /** Árvore com código: trocar o superior é a operação Mover (renumera o galho), nunca a edição comum. */
 export const MENSAGEM_USE_MOVER = "Use Mover.";
+/**
+ * Superior do acervo sem código: o código não se digita (D-1) — ele o ganha ao ser SALVO (A-7) ou movido. Antes dizia
+ * "Informe o código dele", o que a tela com o código travado não deixa fazer.
+ */
+export const MENSAGEM_SUPERIOR_SEM_CODIGO = "O superior não tem código. Salve o superior antes (ele recebe o código gerado) e depois inclua os filhos.";
 
 /**
  * TRAVA DA NUMERAÇÃO de um cadastro numa organização (decisão 257 D): toda gravação que ESCOLHE um código
@@ -84,29 +89,43 @@ async function temFilhosVivos(ctx: ServiceCtx, def: ResourceDef, id: string): Pr
   return Boolean(r.rowCount);
 }
 
-/** `atual` = linha antes da edição (null na criação). `data` = corpo já validado pelo schema. */
-export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Linha, atual: Linha | null): Promise<void> {
+/** UUID na forma canônica (minúsculas): o schema aceita maiúsculas, o Postgres guarda e devolve minúsculas. */
+const canonico = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v.toLowerCase() : null);
+
+/**
+ * `atual` = linha antes da edição (null na criação). `data` = corpo já validado pelo schema.
+ * `codigoGerado`: o código em `data` acabou de ser GERADO pelo servidor para um registro do acervo sem código
+ * (`gerarCodigoNaEdicao`, AJUSTES 01 R1 A-7) — não é troca de código pedida pelo cliente.
+ */
+export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Linha, atual: Linha | null, opcoes: { codigoGerado?: boolean } = {}): Promise<void> {
   if (!def.tree) return;
-  const mudouPai = "parent_id" in data && (data["parent_id"] ?? null) !== (atual?.["parent_id"] ?? null);
+  // UUID é o mesmo em qualquer caixa (A-9): o superior do corpo passa à forma canônica ANTES de qualquer comparação
+  // — senão o superior atual, reenviado em maiúsculas, parecia "outro" (e o próprio registro passava por outro nó)
+  if (typeof data["parent_id"] === "string") data["parent_id"] = data["parent_id"].toLowerCase();
+  const idCanonico = canonico(id);
+  const mudouPai = "parent_id" in data && (data["parent_id"] ?? null) !== canonico(atual?.["parent_id"]);
   const mudouCodigo = "code" in data && data["code"] !== atual?.["code"];
+  const codigoGerado = opcoes.codigoGerado === true;
   const viraAnalitico = temCampo(def, "kind") && data["kind"] === "analytic" && atual?.["kind"] !== "analytic";
   // CÓDIGO TRAVADO (decisão 257 D-1): na edição comum de uma árvore com código, nem o código nem o superior
-  // mudam — o código nasce no servidor e trocar de superior é Mover, que renumera o galho inteiro junto.
+  // mudam — o código nasce no servidor e trocar de superior é Mover, que renumera o galho inteiro junto. O
+  // SUPERIOR fala primeiro (A-5): a web anterior manda `{ parent_id, code }` juntos e precisa ouvir "Use Mover.".
   if (id && def.codigoAutomatico === "hierarquico") {
-    if (mudouCodigo) throw campo("code", MENSAGEM_CODIGO_GERADO);
     if (mudouPai) throw campo("parent_id", MENSAGEM_USE_MOVER);
+    if (mudouCodigo && !codigoGerado) throw campo("code", MENSAGEM_CODIGO_GERADO);
   }
   // CONCORRÊNCIA (cabeçalho): primeiro o próprio registro, depois o superior
   if (id && (mudouPai || mudouCodigo || viraAnalitico)) await travarRegistro(ctx, def, id);
-  const parentId = ("parent_id" in data ? data["parent_id"] : atual?.["parent_id"]) as string | null | undefined ?? null;
+  const parentId = ("parent_id" in data ? canonico(data["parent_id"]) : canonico(atual?.["parent_id"]));
   let pai: Linha | null = null;
   if (parentId) {
     pai = await registroVivo(ctx, def, parentId, atual === null || mudouPai || mudouCodigo);
     if (!pai) throw campo("parent_id", "Superior não encontrado.");
     if (id && mudouPai) {
-      if (parentId === id) throw campo("parent_id", "O superior não pode ser o próprio registro nem um descendente dele.");
+      if (parentId === idCanonico) throw campo("parent_id", "O superior não pode ser o próprio registro nem um descendente dele.");
+      // o PRÓPRIO nó está na semente (A-9): ele E os descendentes — a comparação entre `uuid` é do banco, sem caixa
       const ciclo = await ctx.tx.query(
-        `with recursive desc_ as (select id from erp.${ident(def.table)} where parent_id=$1 and organization_id=$2
+        `with recursive desc_ as (select id from erp.${ident(def.table)} where id=$1 and organization_id=$2
            union select t.id from erp.${ident(def.table)} t join desc_ d on t.parent_id=d.id where t.organization_id=$2)
          select 1 from desc_ where id=$3 limit 1`, [id, ctx.orgId, parentId]);
       if (ciclo.rowCount) throw campo("parent_id", "O superior não pode ser o próprio registro nem um descendente dele.");
@@ -114,8 +133,10 @@ export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, 
     if (temCampo(def, "kind") && (atual === null || mudouPai) && pai["kind"] !== "synthetic") throw campo("parent_id", `O superior precisa ser sintético. Marque ${rotuloDoCampo(def, "kind")}: Não nele antes de incluir filhos.`);
   }
   // SUBÁRVORE: com filho vivo, nem superior nem código mudam — vale para TODO cadastro em árvore (o ciclo acima
-  // fala primeiro, com a mensagem própria). Mover um galho é mover (ou renumerar) as folhas antes.
-  if (id && (mudouPai || mudouCodigo) && await temFilhosVivos(ctx, def, id)) throw campo(mudouPai ? "parent_id" : "code", MENSAGEM_REGISTRO_COM_FILHOS);
+  // fala primeiro, com a mensagem própria). Mover um galho é mover (ou renumerar) as folhas antes. O código GERADO
+  // para um registro do acervo sem código não reescreve nada: sem código, os filhos não carregam prefixo dele.
+  const trocaCodigo = mudouCodigo && !codigoGerado;
+  if (id && (mudouPai || trocaCodigo) && await temFilhosVivos(ctx, def, id)) throw campo(mudouPai ? "parent_id" : "code", MENSAGEM_REGISTRO_COM_FILHOS);
   if (id && viraAnalitico && await temFilhosVivos(ctx, def, id)) {
     throw campo("kind", `Registro com filhos não pode ser analítico (${rotuloDoCampo(def, "kind")}: Sim). Mova ou exclua os filhos antes.`);
   }
@@ -124,7 +145,7 @@ export async function conferirRegrasDaArvore(ctx: ServiceCtx, def: ResourceDef, 
     const codigo = String(data["code"] ?? atual?.["code"]);
     if (atual === null || mudouCodigo || mudouPai) {
       // superior do acervo sem código (Grupos de Produtos anteriores à 0025): não há prefixo para conferir
-      if (pai && typeof pai["code"] !== "string") throw campo("parent_id", "O superior não tem código. Informe o código dele antes de incluir filhos.");
+      if (pai && typeof pai["code"] !== "string") throw campo("parent_id", MENSAGEM_SUPERIOR_SEM_CODIGO);
       const erro = validarCodigoHierarquico(codigo, await mascara(ctx, def), pai ? String(pai["code"]) : null);
       if (erro) throw campo("code", erro);
     }
@@ -150,7 +171,7 @@ export async function sugerirCodigo(ctx: ServiceCtx, def: ResourceDef, parentId:
   if (parentId) {
     const pai = await registroVivo(ctx, def, parentId);
     if (!pai) throw campo("parent_id", "Superior não encontrado.");
-    if (typeof pai["code"] !== "string") throw campo("parent_id", "O superior não tem código. Informe o código dele antes de incluir filhos.");
+    if (typeof pai["code"] !== "string") throw campo("parent_id", MENSAGEM_SUPERIOR_SEM_CODIGO);
     codigoPai = String(pai["code"]);
   }
   const p = await proximoAbaixo(ctx, def, codigoPai, m);
@@ -181,11 +202,35 @@ export async function gerarCodigoNaCriacao(ctx: ServiceCtx, def: ResourceDef, da
   data["code"] = codigo;
 }
 
+/**
+ * REGISTRO DO ACERVO SEM CÓDIGO (AJUSTES 01 R1, A-7 — ex.: Grupos de Produtos anteriores à 0025): numa árvore com
+ * código travado, o código não se digita; então a EDIÇÃO dá a ele o código gerado (a mesma regra do Novo: debaixo
+ * do superior ATUAL, ou o próximo da raiz), sob a trava da numeração, em vez de recusar a gravação para sempre.
+ * `code` no corpo igual ao gerado é aceito (web anterior); diferente → 422. Superior mudando: não gera — quem
+ * fala é "Use Mover." (`conferirRegrasDaArvore`). Devolve se gerou.
+ */
+export async function gerarCodigoNaEdicao(ctx: ServiceCtx, def: ResourceDef, data: Linha, atual: Linha): Promise<boolean> {
+  if (def.codigoAutomatico !== "hierarquico" || (typeof atual["code"] === "string" && atual["code"] !== "")) return false;
+  const superior = canonico(atual["parent_id"]);
+  if ("parent_id" in data && canonico(data["parent_id"]) !== superior) return false;
+  await travarNumeracao(ctx, def);
+  const pedido = typeof data["code"] === "string" && data["code"] !== "" ? data["code"] : null;
+  const { codigo } = await sugerirCodigo(ctx, def, superior);
+  if (pedido !== null && pedido !== codigo) throw campo("code", MENSAGEM_CODIGO_GERADO);
+  data["code"] = codigo;
+  return true;
+}
+
 /** Uma troca de código do Mover. */
 export interface CodigoMovido { id: string; antes: string | null; depois: string }
 export interface PlanoDoMover { id: string; de: string | null; para: string | null; codigos: CodigoMovido[] }
 
 const campoSuperior = (message: string) => validation(message, [{ path: ["superior"], message }]);
+/**
+ * Tabelas em que o código é único só entre VIVOS (índice parcial `where deleted_at is null`): Grupos de Produtos
+ * (`uq_product_groups_code_vivo`, 0025). Nas outras árvores o único `(organization_id, code)` inclui os excluídos.
+ */
+const CODIGO_UNICO_SO_ENTRE_VIVOS: ReadonlySet<string> = new Set(["product_groups"]);
 
 /**
  * MOVER COM RENUMERAÇÃO (decisão 257 D-5) — o plano, sem gravar nada. A prévia e o POST usam ESTA função: o
@@ -250,6 +295,7 @@ export async function planejarMover(ctx: ServiceCtx, def: ResourceDef, idBruto: 
   // EXCLUÍDO que não acompanha o galho (acervo do Mover-de-folha e da edição anteriores deixou prefixo antigo, ou o
   // número não cabe na máscara nova, ou colidiria) libera o código — `EXC-<id>`, a mesma liberação do Zerar — e
   // nunca trava o Mover: o usuário não vê a linha e não teria como corrigi-la. Descendente VIVO continua recusando.
+  // O excluído que CABE e não colide com nada acompanha o galho com o prefixo novo, como os vivos.
   const excluidos = new Set<string>();
   const liberar = (c: CodigoMovido) => { c.depois = `EXC-${c.id}`; };
   const renumerar = (code: string | null): string | { erro: string } => {
@@ -274,6 +320,9 @@ export async function planejarMover(ctx: ServiceCtx, def: ResourceDef, idBruto: 
     else throw campoSuperior(r.erro);
     if (x.excluido) excluidos.add(x.id);
   }
+  // Onde o código é único só entre VIVOS (Grupos de Produtos: `uq_product_groups_code_vivo`, 0025) o excluído não
+  // segura código nenhum: nunca colide, nunca precisa ser liberado por colisão (A-4).
+  const excluidoSeguraCodigo = !CODIGO_UNICO_SO_ENTRE_VIVOS.has(def.table);
   // código novo repetido DENTRO do galho (acervo com "1.03.1" e "1.03.001"): o excluído libera; dois vivos recusam
   const porCodigo = new Map<string, CodigoMovido[]>();
   for (const c of codigos) porCodigo.set(c.depois, [...(porCodigo.get(c.depois) ?? []), c]);
@@ -281,38 +330,70 @@ export async function planejarMover(ctx: ServiceCtx, def: ResourceDef, idBruto: 
     if (lista.length < 2) continue;
     const vivos = lista.filter((c) => !excluidos.has(c.id));
     if (vivos.length > 1) throw campoSuperior(`O código ${codigo} ficaria repetido neste galho.`);
+    if (!excluidoSeguraCodigo) continue;
     const fica = vivos[0] ?? lista[0]; // o vivo, se houver; senão o primeiro — os demais (todos excluídos) liberam
     for (const c of lista) if (c !== fica) liberar(c);
   }
-  // código novo já usado FORA do galho (inclusive excluído): o excluído do galho libera; o vivo recebe recusa legível
-  // em vez do 409 do banco
+  // código novo já usado FORA do galho (A-4): por um VIVO → o vivo do galho recebe recusa legível (nunca o 409 do
+  // banco) e o excluído do galho libera; por um EXCLUÍDO → o excluído do galho libera, e o VIVO do galho fica com o
+  // código: quem libera é o excluído de fora (`EXC-<id>`, o par vai no plano, na prévia e na auditoria) em vez de
+  // travar o Mover de um registro que o usuário vê por causa de uma linha que ele não vê. Onde o excluído não segura
+  // código (Grupos de Produtos), só o VIVO de fora conta, e só contra o VIVO do galho.
   const ids = codigos.map((c) => c.id);
-  const usado = await ctx.tx.query<{ code: string }>(`select code from ${t} where organization_id=$1 and code = any($2::text[]) and not (id = any($3::uuid[]))`, [ctx.orgId, codigos.map((c) => c.depois), ids]);
+  const usado = await ctx.tx.query<{ id: string; code: string; excluido: boolean }>(
+    `select id::text as id, code, deleted_at is not null as excluido from ${t}
+      where organization_id=$1 and code = any($2::text[]) and not (id = any($3::uuid[]))${excluidoSeguraCodigo ? "" : " and deleted_at is null"}
+      order by code, id`, [ctx.orgId, codigos.map((c) => c.depois), ids]);
+  const liberadosDeFora: CodigoMovido[] = [];
   for (const u of usado.rows) {
     for (const c of codigos.filter((x) => x.depois === u.code)) {
-      if (!excluidos.has(c.id)) throw campoSuperior(`O código ${u.code} já existe neste cadastro.`);
-      liberar(c);
+      if (excluidos.has(c.id)) { if (excluidoSeguraCodigo) liberar(c); }
+      else if (!u.excluido) throw campoSuperior(`O código ${u.code} já existe neste cadastro.`);
+      else if (!liberadosDeFora.some((l) => l.id === u.id)) liberadosDeFora.push({ id: u.id, antes: u.code, depois: `EXC-${u.id}` });
     }
   }
+  codigos.push(...liberadosDeFora);
   return { id, de: deAtual, para: superior, codigos };
 }
 
 /**
  * Executa o Mover numa transação, sob a trava da numeração (decisão 257 D-1): o registro `for update`, o
- * destino `for key share` (a exclusão dele espera), os códigos do galho num único UPDATE. Os ids NÃO mudam —
- * lançamento antigo continua apontando para o mesmo registro, agora com o código novo. Conta as linhas:
- * menos que o plano é recusa, nunca sucesso parcial.
+ * destino `for key share` (a exclusão dele espera). Os ids NÃO mudam — lançamento antigo continua apontando para o
+ * mesmo registro, agora com o código novo. Conta as linhas: menos que o plano é recusa, nunca sucesso parcial.
+ *
+ * GRAVAÇÃO EM DUAS FASES (AJUSTES 01 R1, A-3). O único `(organization_id, code)` não é adiável: o Postgres o confere
+ * LINHA A LINHA dentro do mesmo UPDATE. Num UPDATE só, a linha que recebe o código X antes de a linha que hoje SEGURA X
+ * ser atualizada morria em 23505 → 409 — onde a prévia (o mesmo plano, que não grava) tinha dado 200. Ex.: o vivo L
+ * vai para 2.05.001 e o excluído E do mesmo galho, que hoje é 2.05.001, vai para `EXC-<id>`. Então:
+ *   1ª fase: quem hoje segura o código FINAL de outra linha do plano sai da frente — o liberado já para o seu
+ *            `EXC-<id>` (final), o que continua no galho para um código PROVISÓRIO único (`MOVER-<id>`);
+ *   2ª fase: os códigos finais (e o superior do movido).
+ * Depois da 1ª fase nenhuma linha segura o código final de outra (fora do plano ninguém o segura — o plano confere),
+ * e a ordem das linhas deixa de importar. A prévia é o MESMO plano: o que ela mostra é o que o POST grava.
  */
 export async function moverNaArvore(ctx: ServiceCtx, def: ResourceDef, id: string, superior: string | null): Promise<PlanoDoMover> {
   if (def.codigoAutomatico !== "hierarquico") throw validation("Este cadastro não tem código hierárquico.");
   await travarNumeracao(ctx, def);
   const plano = await planejarMover(ctx, def, id, superior, true);
-  const u = await ctx.tx.query(
-    `update erp.${ident(def.table)} x set code = v.depois, parent_id = case when x.id = $3::uuid then $4::uuid else x.parent_id end
-       from (select unnest($1::uuid[]) as id, unnest($2::text[]) as depois) v where x.id = v.id and x.organization_id = $5`,
-    [plano.codigos.map((c) => c.id), plano.codigos.map((c) => c.depois), plano.id, plano.para, ctx.orgId]);
-  if (u.rowCount !== plano.codigos.length) throw err("CONCURRENCY_CONFLICT", "O galho mudou durante o Mover; tente de novo.");
-  await audit(ctx.tx, ctx, def.key, id, "mover", { de: plano.de, para: plano.para, codigos: plano.codigos });
+  const t = `erp.${ident(def.table)}`;
+  const mudam = plano.codigos.filter((c) => c.antes !== c.depois || c.id === plano.id);
+  const donoDoFinal = new Map(mudam.map((c) => [c.depois, c.id]));
+  const liberado = (c: CodigoMovido) => c.depois.startsWith("EXC-");
+  const bloqueia = (c: CodigoMovido) => c.antes !== null && donoDoFinal.has(c.antes) && donoDoFinal.get(c.antes) !== c.id;
+  const fase1 = mudam.filter((c) => liberado(c) || bloqueia(c)).map((c) => ({ id: c.id, codigo: liberado(c) ? c.depois : `MOVER-${c.id}` }));
+  const fase2 = mudam.filter((c) => !liberado(c));
+  const gravar = async (linhas: { id: string; codigo: string }[], comSuperior: boolean) => {
+    if (!linhas.length) return;
+    const u = await ctx.tx.query(
+      `update ${t} x set code = v.codigo${comSuperior ? ", parent_id = case when x.id = $4::uuid then $5::uuid else x.parent_id end" : ""}
+         from (select unnest($1::uuid[]) as id, unnest($2::text[]) as codigo) v where x.id = v.id and x.organization_id = $3`,
+      [linhas.map((l) => l.id), linhas.map((l) => l.codigo), ctx.orgId, ...(comSuperior ? [plano.id, plano.para] : [])]);
+    if (u.rowCount !== linhas.length) throw err("CONCURRENCY_CONFLICT", "O galho mudou durante o Mover; tente de novo.");
+  };
+  await gravar(fase1, false);
+  await gravar(fase2.map((c) => ({ id: c.id, codigo: c.depois })), true);
+  // o id CANÔNICO do plano (A-6), não o da URL: o histórico do registro procura pelo id como o banco o devolve
+  await audit(ctx.tx, ctx, def.key, plano.id, "mover", { de: plano.de, para: plano.para, codigos: plano.codigos });
   return plano;
 }
 

@@ -10,7 +10,7 @@ import type { DemoOrg } from "../src/seed.js";
  * PA-1 (schema) — O QUE A 0030 PROMETEU, PROVADO CONTRA O BANCO (CADASTROS AJUSTES 01, decisão 257, C-5).
  *
  * Colunas novas de erp.people e erp.parceiro_enderecos, anuláveis ou com default e SEM backfill; checks de
- * CAEPF, sexo, latitude e longitude; a FK COMPOSTA da matriz (coluna única não prova tenant: matriz de OUTRA
+ * CAEPF, sexo, latitude e longitude (e o PAR — as duas ou nenhuma, R1 A-11); a FK COMPOSTA da matriz (coluna única não prova tenant: matriz de OUTRA
  * organização é recusada pelo banco) e o check "não é ele mesmo". As regras que dependem do tipo de pessoa são da
  * API (lib/parceiro.ts) e ficam nos testes de integração. `db` é o papel de migração: constraint vale para todos.
  */
@@ -74,14 +74,24 @@ describe("PA-1 — 0030: colunas, checks e FK composta", () => {
     expect(await up("caepf", "1234567890123A")).toMatch(/chk_people_caepf/);
     expect(await up("sexo", "F")).toBe("aceito");
     expect(await up("sexo", "X")).toMatch(/chk_people_sexo/);
-    expect(await up("latitude", "-15.123456")).toBe("aceito");
-    expect(await up("latitude", "90.5")).toMatch(/chk_people_latitude/);
-    expect(await up("longitude", "-180")).toBe("aceito");
-    expect(await up("longitude", "-180.1")).toMatch(/chk_people_longitude/);
-    const ins = (lat: string, lon: string) => recusa("insert into erp.parceiro_enderecos (organization_id, person_id, tipo, latitude, longitude) values ($1,$2,'entrega',$3,$4)", [demo.orgId, p, lat, lon]);
+    // R1 (A-11): o PAR anda junto — a faixa é conferida com o par completo; o check da faixa fala antes do do par
+    // (os CHECKs são conferidos em ordem de nome), então fora da faixa continua sendo a recusa da faixa
+    const par = (lat: string | null, lon: string | null) => recusa("update erp.people set latitude = $2, longitude = $3 where id = $1", [p, lat, lon]);
+    expect(await par("-15.123456", "-59.1")).toBe("aceito");
+    expect(await par("90.5", "0")).toMatch(/chk_people_latitude/);
+    expect(await par("0", "-180")).toBe("aceito");
+    expect(await par("0", "-180.1")).toMatch(/chk_people_longitude/);
+    expect(await up("latitude", "90.5"), "fora da faixa E sem o par: fala a faixa").toMatch(/chk_people_latitude/);
+    expect(await par("-15.1", null)).toMatch(/chk_people_par_coordenadas/);
+    expect(await par(null, "-59.1")).toMatch(/chk_people_par_coordenadas/);
+    expect(await par(null, null)).toBe("aceito");
+    const ins = (lat: string | null, lon: string | null) => recusa("insert into erp.parceiro_enderecos (organization_id, person_id, tipo, latitude, longitude) values ($1,$2,'entrega',$3,$4)", [demo.orgId, p, lat, lon]);
     expect(await ins("-15.5", "-59.9")).toBe("aceito");
     expect(await ins("-91", "0")).toMatch(/chk_parceiro_enderecos_latitude/);
     expect(await ins("0", "181")).toMatch(/chk_parceiro_enderecos_longitude/);
+    expect(await ins("-15.5", null)).toMatch(/chk_parceiro_enderecos_par_coordenadas/);
+    expect(await ins(null, "-59.9")).toMatch(/chk_parceiro_enderecos_par_coordenadas/);
+    expect(await ins(null, null)).toBe("aceito");
   });
 
   it("Matriz: FK COMPOSTA recusa parceiro de OUTRA organização; ele mesmo é recusado; o da mesma organização é aceito", async () => {

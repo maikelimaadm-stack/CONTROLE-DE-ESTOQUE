@@ -5,9 +5,15 @@ import { harness, TEST_URL, type Harness } from "./setup.js";
 /**
  * CADASTROS — AJUSTES 01 · FRENTE D (testes da seção 8): ZN-1..ZN-5 — Zerar numeração (D-3).
  *
- * RV-Z1 (reversa): tirar a RECONTAGEM dentro da transação em lib/numeracao-cadastro.ts (`zerarNumeracao`) →
- * ZN-5 reprova: numa rodada em que o Novo grava primeiro, o Zerar volta 200 com um registro vivo e a numeração
- * "volta para 1" por cima dele.
+ * RV-Z1 (reversa, refeita no R1 — T-3): a versão anterior tirava a RECONTAGEM e esperava o ZN-5 reprovar, mas a
+ * PRÉ-CONTAGEM, já sob a trava advisory, via o Novo da API antes (todo Novo passa por aquela trava) — a reversa não
+ * provava nada. Agora quem prova é o ZN-7: uma inclusão por SQL DIRETO, que NÃO passa pela trava advisory, fica
+ * invisível à pré-contagem (ainda não confirmada) e é confirmada enquanto o Zerar ESPERA a trava da tabela. Tirar a
+ * recontagem sob a trava da tabela em `zerarNumeracao` → ZN-7 reprova (o Zerar volta 200 com um registro vivo).
+ * ZN-5 passa a AFIRMAR o resultado de cada rodada (efeitos de quem ganhou) e força as duas ordens pela fila da trava.
+ * O mesmo ZN-7 prova a ORDEM da A-2 ("liberar os excluídos ANTES do lock table"): parado na fila da trava da tabela, o
+ * Zerar já segura a linha do excluído liberado — `for update nowait` de outra conexão → 55P03. Liberação de volta para
+ * depois do lock table → a linha está livre e o ZN-7 reprova.
  */
 let h: Harness; let admin: Db;
 type Resp = { statusCode: number; body: string };
@@ -19,6 +25,12 @@ const post = (key: string, payload: Record<string, unknown>) => h.app.inject({ m
 const mensagens = (r: Resp) => [j(r).error?.message, ...((j(r).error?.details ?? []) as { message: string }[]).map((d) => d.message)].join(" | ");
 const q = async <T extends Record<string, unknown>>(sql: string, p: unknown[] = []) => (await admin.query<T>(sql, p)).rows;
 const esvaziar = (tabela: string) => admin.query(`update erp.${tabela} set deleted_at = now() where organization_id=$1 and deleted_at is null`, [h.demo.orgId]);
+/**
+ * "PASSA UM MINUTO" para o limite do Zerar (A-2: 1 por cadastro por organização por minuto, conferido na AUDITORIA):
+ * as suítes que zeram o MESMO cadastro várias vezes envelhecem a auditoria do último Zerar em vez de esperar 60 s.
+ * Não afrouxa nada — o limite em si é cobrado no ZN-8, com e sem o minuto passado.
+ */
+const passarUmMinuto = (cadastro: string) => admin.query("update erp.audit_logs set created_at = created_at - interval '61 seconds' where organization_id=$1 and entity='numeracao' and entity_id=$2 and action='zerar' and created_at > now() - interval '61 seconds'", [h.demo.orgId, cadastro]);
 
 beforeAll(async () => { h = await harness(); admin = createPool(TEST_URL, { max: 4 }); }, 240_000);
 afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end(); });
@@ -107,27 +119,44 @@ describe("ZN-4 sem tenant_parameters.edit → 403", () => {
 });
 
 describe("ZN-5 zerar ao mesmo tempo que um Novo", () => {
+  const auditsZerar = async (key: string) => (await q<{ n: number }>("select count(*)::int n from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id=$2 and action='zerar'", [h.demo.orgId, key]))[0]!.n;
+  /** Excluídos que AINDA seguram código (não liberados): o Zerar que vence os libera; o que perde não toca neles. */
+  const seguram = async (tabela: string) => (await q<{ id: string; code: string }>(`select id, code from erp.${tabela} where organization_id=$1 and deleted_at is not null and code is not null and code not like 'EXC-%' order by id`, [h.demo.orgId]));
+  /**
+   * O RESULTADO de uma corrida, AFIRMADO pelos efeitos (não só registrado): quem venceu deixou exatamente os
+   * rastros do seu caminho, e quem perdeu não deixou nenhum.
+   */
+  const conferirRodada = async (i: number, key: string, tabela: string, z: Resp, n: Resp, primeiro: (c: string) => boolean, antes: { audits: number; seguram: { id: string; code: string }[] }) => {
+    expect(n.statusCode, `rodada ${i}: o Novo sempre grava (${n.body})`).toBe(201);
+    expect([200, 422], `rodada ${i}: ${z.body}`).toContain(z.statusCode);
+    const [g] = await q<{ code: string }>(`select code from erp.${tabela} where id=$1`, [j(n).id]);
+    if (z.statusCode === 200) {
+      // ZEROU PRIMEIRO: não havia vivo; o Novo esperou e recebeu o PRIMEIRO código; os excluídos foram liberados; audit +1
+      expect(primeiro(g!.code), `rodada ${i}: zerou com o Novo ${g!.code} vivo — o Zerar não esperou/recontou`).toBe(true);
+      expect(await auditsZerar(key), `rodada ${i}: o Zerar que venceu audita`).toBe(antes.audits + 1);
+      expect(await seguram(tabela), `rodada ${i}: o Zerar que venceu liberou todos os excluídos`).toEqual([]);
+      return "zerou-antes" as const;
+    }
+    // O NOVO GRAVOU PRIMEIRO: o Zerar recusa pelo vivo e NÃO deixa rastro — nenhum excluído liberado, nenhum audit
+    expect(mensagens(z), `rodada ${i}`).toMatch(/Há 1 registro/);
+    expect(await auditsZerar(key), `rodada ${i}: o Zerar recusado não audita`).toBe(antes.audits);
+    expect(await seguram(tabela), `rodada ${i}: o Zerar recusado não liberou nenhum excluído`).toEqual(antes.seguram);
+    return "novo-antes" as const;
+  };
   const rodadas = async (key: string, corpo: (i: number) => Record<string, unknown>, primeiro: (c: string) => boolean, tabela: string) => {
     const resultados: string[] = [];
     for (let i = 0; i < 12; i++) {
       await esvaziar(tabela);
+      await passarUmMinuto(key);
+      const antes = { audits: await auditsZerar(key), seguram: await seguram(tabela) };
       const [z, n] = await Promise.all([zerar(key), post(key, corpo(i))]);
-      expect(n.statusCode, `rodada ${i}: o Novo sempre grava (${n.body})`).toBe(201);
-      expect([200, 422], `rodada ${i}: ${z.body}`).toContain(z.statusCode);
-      const [g] = await q<{ code: string }>(`select code from erp.${tabela} where id=$1`, [j(n).id]);
-      if (z.statusCode === 200) {
-        // zerou: não havia vivo — o Novo esperou e recebeu o PRIMEIRO código
-        expect(primeiro(g!.code), `rodada ${i}: zerou com o Novo ${g!.code} vivo — o Zerar não esperou/recontou`).toBe(true);
-        resultados.push("zerou-antes");
-      } else {
-        expect(mensagens(z)).toMatch(/Há 1 registro/);
-        resultados.push("novo-antes");
-      }
+      resultados.push(await conferirRodada(i, key, tabela, z, n, primeiro, antes));
       // nunca código repetido entre vivos e excluídos não liberados
       const rep = await q(`select code, count(*)::int n from erp.${tabela} where organization_id=$1 and code not like 'EXC-%' group by code having count(*) > 1`, [h.demo.orgId]);
       expect(rep, `rodada ${i}: código repetido`).toEqual([]);
     }
     console.log(`[ZN-5] ${key}: ${resultados.join(",")}`);
+    expect(resultados, "toda rodada terminou num dos dois resultados, afirmado pelos efeitos").toHaveLength(12);
     return resultados;
   };
   it("Naturezas (árvore): um espera o outro; se zerou, o Novo é \"1\"; nunca código repetido", async () => {
@@ -142,6 +171,172 @@ describe("ZN-5 zerar ao mesmo tempo que um Novo", () => {
     expect(n.statusCode).toBe(201);
     const z = await zerar("financial_categories");
     expect(z.statusCode, z.body).toBe(422);
+  });
+
+  /**
+   * A CORRIDA COM A ORDEM FORÇADA pela fila da trava da numeração: uma sessão externa segura a MESMA trava advisory
+   * (tabela + organização), os dois pedidos entram na fila numa ordem conhecida (cada um só é disparado depois de o
+   * anterior estar ESPERANDO), e a sessão solta. O Postgres atende a fila na ordem — o resultado da corrida é
+   * AFIRMADO nos dois sentidos, em vez de depender da sorte de 12 rodadas.
+   */
+  const esperandoTrava = async () => (await q<{ n: number }>("select count(*)::int n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and wait_event = 'advisory'"))[0]!.n;
+  const naFila = async (quantos: number, porque: string) => {
+    for (let t = 0; t < 200 && (await esperandoTrava()) < quantos; t++) await new Promise((r) => setTimeout(r, 25));
+    expect(await esperandoTrava(), porque).toBe(quantos);
+  };
+  const corridaForcada = async (key: string, tabela: string, ordem: "zerar-primeiro" | "novo-primeiro", corpo: Record<string, unknown>) => {
+    await esvaziar(tabela);
+    await passarUmMinuto(key);
+    const antes = { audits: await auditsZerar(key), seguram: await seguram(tabela) };
+    const outra = await admin.connect();
+    try {
+      await outra.query("begin");
+      await outra.query("select pg_advisory_xact_lock(hashtext('codigo-cadastro:' || $1 || ':' || $2))", [tabela, h.demo.orgId]);
+      const primeiro = ordem === "zerar-primeiro" ? zerar(key) : post(key, corpo);
+      await naFila(1, `premissa: o ${ordem === "zerar-primeiro" ? "Zerar" : "Novo"} espera a trava da numeração (tabela + organização) — se não espera, a chave da trava mudou`);
+      const segundo = ordem === "zerar-primeiro" ? post(key, corpo) : zerar(key);
+      await naFila(2, "premissa: o segundo pedido entrou na fila atrás do primeiro");
+      await outra.query("commit");
+      const [z, n] = ordem === "zerar-primeiro" ? [await primeiro, await segundo] : [await segundo, await primeiro];
+      return { z, n, antes };
+    } finally { await outra.query("rollback").catch(() => undefined); outra.release(); }
+  };
+  it("ordem forçada pela fila: Zerar ANTES do Novo → 200, o Novo recebe o PRIMEIRO código; Novo ANTES do Zerar → 422, nada liberado (Naturezas e Contas bancárias)", async () => {
+    for (const [key, corpo, primeiro] of [
+      ["financial_categories", { name: "ZN5 fila nat", nature: "income", kind: "synthetic" }, (c: string) => c === "1"],
+      ["bank_accounts", { description: "ZN5 fila conta", type: "checking" }, (c: string) => Number(c) === 1]
+    ] as const) {
+      const a = await corridaForcada(key, key, "zerar-primeiro", corpo);
+      expect(a.z.statusCode, `${key}, Zerar na frente: ${a.z.body}`).toBe(200);
+      expect(await conferirRodada(0, key, key, a.z, a.n, primeiro, a.antes), `${key}: Zerar na frente`).toBe("zerou-antes");
+      const b = await corridaForcada(key, key, "novo-primeiro", corpo);
+      expect(b.z.statusCode, `${key}, Novo na frente: ${b.z.body}`).toBe(422);
+      expect(await conferirRodada(1, key, key, b.z, b.n, primeiro, b.antes), `${key}: Novo na frente`).toBe("novo-antes");
+    }
+  }, 60_000);
+});
+
+// RV-Z1 (T-3): a recontagem SOB A TRAVA DA TABELA é a que decide. A pré-contagem roda sob a trava advisory, e todo Novo
+// da API passa por ela — então só uma inclusão que NÃO passa pela trava advisory (SQL direto: importação antiga, outra
+// porta, manutenção) mostra se a recontagem existe. A linha é incluída numa transação aberta ANTES do Zerar (a
+// pré-contagem não a vê: não está confirmada) e confirmada enquanto o Zerar ESPERA a trava da tabela (a inclusão
+// segura `row exclusive`, que a `share row exclusive` do Zerar não atravessa). Sem a recontagem → 200 com um vivo.
+describe("ZN-7 (RV-Z1) inclusão que não passa pela trava advisory: a recontagem sob a trava da tabela recusa", () => {
+  it("inclusão por SQL direto, invisível à pré-contagem e confirmada durante a espera da trava da tabela → 422; nada muda (códigos, contador, audit); a liberação dos excluídos já rodou ANTES da trava da tabela (A-2)", async () => {
+    await esvaziar("bank_accounts");
+    await passarUmMinuto("bank_accounts");
+    // um excluído que segura código (a liberação teria o que fazer) e o contador acima de 0 (zerar teria o que zerar)
+    const ex = await post("bank_accounts", { description: "ZN7 excluída", type: "checking" });
+    expect(ex.statusCode, ex.body).toBe(201);
+    await admin.query("update erp.bank_accounts set deleted_at=now() where id=$1", [j(ex).id]);
+    const foto = async () => ({
+      linhas: await q("select id, code, deleted_at is null as vivo from erp.bank_accounts where organization_id=$1 order by id", [h.demo.orgId]),
+      contador: await q("select last_value::text v from erp.code_sequences where organization_id=$1 and entity='bank_account'", [h.demo.orgId]),
+      audits: await q("select count(*)::int n from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id='bank_accounts'", [h.demo.orgId])
+    });
+    const antes = await foto();
+    expect(antes.linhas.some((l) => l["vivo"] === false && !String(l["code"]).startsWith("EXC-")), "premissa: um excluído segura código").toBe(true);
+    expect(Number(antes.contador[0]?.["v"] ?? 0), "premissa: o contador está acima de 0").toBeGreaterThan(0);
+    const aguardandoTabela = async () => (await q<{ n: number }>("select count(*)::int n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query ilike '%lock table%bank_accounts%'"))[0]!.n;
+    const outra = await admin.connect();
+    let direta = "";
+    try {
+      await outra.query("begin");
+      const codigo = `ZN7-${Date.now().toString(36)}`;
+      direta = (await outra.query<{ id: string }>("insert into erp.bank_accounts (organization_id, code, description, type) values ($1, $2, 'ZN7 inclusão direta', 'checking') returning id", [h.demo.orgId, codigo])).rows[0]!.id;
+      const z = zerar("bank_accounts");
+      // o Zerar passou pela trava advisory, pela pré-contagem (a linha direta ainda não está confirmada: zero vivos) e
+      // agora ESPERA a trava da tabela — que a inclusão aberta segura
+      for (let t = 0; t < 60 && (await aguardandoTabela()) < 1; t++) await new Promise((r) => setTimeout(r, 20));
+      expect(await aguardandoTabela(), "premissa: o Zerar passou da pré-contagem e espera a trava da TABELA").toBe(1);
+      // A-2 (a "trava longa"): a LIBERAÇÃO dos excluídos (UPDATE … 'EXC-' || id) roda ANTES da trava da tabela. O Zerar
+      // parado na fila da trava da tabela JÁ segura a linha do excluído — o `for update nowait` de uma terceira conexão
+      // é recusado (55P03). A `row share` do `for update` não conflita com a `share row exclusive` que espera na fila,
+      // então quem recusa é a TRAVA DA LINHA. Com a liberação depois do lock table, a linha estaria livre aqui.
+      const terceira = await admin.connect();
+      try {
+        await terceira.query("begin");
+        const recusa = await terceira.query("select 1 from erp.bank_accounts where id=$1 for update nowait", [j(ex).id])
+          .then(() => "linha livre: a liberação ainda não rodou", (e: { code?: string }) => e.code ?? "erro sem código");
+        expect(recusa, "a liberação do excluído veio ANTES da trava da tabela (a linha já está presa pelo Zerar)").toBe("55P03");
+      } finally { await terceira.query("rollback").catch(() => undefined); terceira.release(); }
+      await outra.query("commit");
+      const r = await z;
+      expect(r.statusCode, `a recontagem sob a trava da tabela vê o vivo que chegou por fora: ${r.body}`).toBe(422);
+      expect(mensagens(r)).toMatch(/Há 1 registro/);
+    } finally { await outra.query("rollback").catch(() => undefined); outra.release(); }
+    // nada mudou: os códigos (o excluído continua segurando o dele), o contador e o audit; a linha direta ficou viva
+    const depois = await foto();
+    expect(depois.linhas.filter((l) => l["id"] !== direta), "nenhum código liberado").toEqual(antes.linhas);
+    expect(depois.linhas.find((l) => l["id"] === direta)?.["vivo"], "a linha incluída por fora continua viva").toBe(true);
+    expect(depois.contador, "o contador não foi zerado").toEqual(antes.contador);
+    expect(depois.audits, "nenhum audit de zerar").toEqual(antes.audits);
+    await admin.query("update erp.bank_accounts set deleted_at=now() where id=$1", [direta]);
+  }, 30_000);
+});
+
+// AJUSTES 01 R1 (A-2): o UPDATE para EXC-<id> auditava só a contagem, e 8 das 11 tabelas não têm gatilho de auditoria —
+// o código antigo se perdia. A auditoria do Zerar leva os pares { id, codigo_antigo } de CADA linha liberada.
+describe("ZN-9 (A-2) a auditoria do Zerar leva os pares { id, codigo_antigo } de cada excluído liberado", () => {
+  it("Setores (sequencial, sem gatilho de auditoria): cada liberado com o código de antes; excluídos_liberados = quantidade de pares", async () => {
+    await esvaziar("feedlot_sectors");
+    await passarUmMinuto("feedlot_sectors");
+    const antes = await q<{ id: string; code: string }>("select id::text, code from erp.feedlot_sectors where organization_id=$1 and deleted_at is not null and code is not null and code not like 'EXC-%' order by code, id", [h.demo.orgId]);
+    expect(antes.length, "premissa: há excluídos segurando código").toBeGreaterThan(0);
+    const r = await zerar("feedlot_sectors");
+    expect(r.statusCode, r.body).toBe(200);
+    const [log] = await q<{ metadata: { excluidos_liberados: number; liberados: { id: string; codigo_antigo: string }[] } }>("select metadata from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id='feedlot_sectors' and action='zerar' order by id desc limit 1", [h.demo.orgId]);
+    const pares = [...(log?.metadata.liberados ?? [])].sort((a, b) => a.codigo_antigo.localeCompare(b.codigo_antigo) || a.id.localeCompare(b.id));
+    expect(pares, "um par por linha liberada, com o código de ANTES").toEqual(antes.map((x) => ({ id: x.id, codigo_antigo: x.code })));
+    expect(log?.metadata.excluidos_liberados).toBe(antes.length);
+    for (const x of antes) expect(await q("select code from erp.feedlot_sectors where id=$1", [x.id]), "e a linha ficou como EXC-<id>").toEqual([{ code: `EXC-${x.id}` }]);
+  });
+});
+
+// AJUSTES 01 R1 (A-2): 1 Zerar por cadastro por organização por minuto (429), conferido na AUDITORIA sob a trava — vale
+// entre instâncias e só conta o Zerar que GRAVOU. Com registro vivo a resposta continua o 422 com o motivo.
+describe("ZN-8 (A-2) limite de 1 Zerar por cadastro por organização por minuto", () => {
+  it("dois Zerar seguidos: o 2º → 429 legível e sem efeito; outro cadastro não é afetado; com vivo continua 422; passado o minuto → 200", async () => {
+    await esvaziar("feedlot_yards");
+    await passarUmMinuto("feedlot_yards");
+    const primeiro = await zerar("feedlot_yards");
+    expect(primeiro.statusCode, primeiro.body).toBe(200);
+    const audits = async () => (await q<{ n: number }>("select count(*)::int n from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id='feedlot_yards' and action='zerar'", [h.demo.orgId]))[0]!.n;
+    const n = await audits();
+    // um excluído novo segurando código: o 2º Zerar teria o que liberar — e não libera
+    const p = await post("feedlot_yards", { empresa_id: h.demo.empresaIds[0]!, name: "ZN8 pátio" });
+    expect(p.statusCode, p.body).toBe(201);
+    await admin.query("update erp.feedlot_yards set deleted_at=now() where id=$1", [j(p).id]);
+    const [{ code: codigo }] = await q<{ code: string }>("select code from erp.feedlot_yards where id=$1", [j(p).id]) as [{ code: string }];
+    const segundo = await zerar("feedlot_yards");
+    expect(segundo.statusCode, segundo.body).toBe(429);
+    expect(j(segundo).error).toEqual({ code: "RATE_LIMITED", message: "A numeração de Pátios foi zerada há menos de 1 minuto; aguarde para zerar de novo." });
+    expect(await audits(), "o 429 não audita").toBe(n);
+    expect(await q("select code from erp.feedlot_yards where id=$1", [j(p).id]), "o 429 não liberou nada").toEqual([{ code: codigo }]);
+    // o limite é POR CADASTRO: Currais, no mesmo minuto, zera
+    await esvaziar("feedlot_corrals");
+    await passarUmMinuto("feedlot_corrals");
+    expect((await zerar("feedlot_corrals")).statusCode, "outro cadastro não é afetado").toBe(200);
+    // com registro vivo a resposta é o 422 com o motivo, mesmo dentro do minuto
+    const vivo = await post("feedlot_yards", { empresa_id: h.demo.empresaIds[0]!, name: "ZN8 vivo" });
+    expect(vivo.statusCode, vivo.body).toBe(201);
+    const comVivo = await zerar("feedlot_yards");
+    expect(comVivo.statusCode, comVivo.body).toBe(422);
+    expect(mensagens(comVivo)).toMatch(/Há 1 registro/);
+    await admin.query("update erp.feedlot_yards set deleted_at=now() where id=$1", [j(vivo).id]);
+    // passado o minuto, zera
+    await passarUmMinuto("feedlot_yards");
+    const depois = await zerar("feedlot_yards");
+    expect(depois.statusCode, depois.body).toBe(200);
+    expect(await q("select code from erp.feedlot_yards where id=$1", [j(p).id])).toEqual([{ code: `EXC-${j(p).id}` }]);
+  });
+  it("o Zerar DESFEITO (422 na recontagem) não conta para o limite: o seguinte, no mesmo minuto, zera", async () => {
+    // ZN-7 acabou de ter o Zerar de Contas bancárias desfeito pela recontagem: nenhum audit, nenhum limite
+    await esvaziar("bank_accounts");
+    const recentes = (await q<{ n: number }>("select count(*)::int n from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id='bank_accounts' and action='zerar' and created_at > now() - interval '1 minute'", [h.demo.orgId]))[0]!.n;
+    expect(recentes, "o Zerar do ZN-7, desfeito pela recontagem, não deixou auditoria (e não conta para o limite)").toBe(0);
+    const r = await zerar("bank_accounts");
+    expect(r.statusCode, r.body).toBe(200);
   });
 });
 

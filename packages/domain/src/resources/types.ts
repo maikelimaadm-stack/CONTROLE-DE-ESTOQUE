@@ -44,6 +44,12 @@ export interface FieldDef {
   default?: unknown;
   help?: string;
   maxLength?: number;
+  /**
+   * FORMATO do valor de texto (AJUSTES 01 R1, A-10): expressão regular que o valor preenchido precisa casar, e a
+   * mensagem da recusa. A API a aplica no ESQUEMA do campo — a recusa sai em 422 no campo (e na aba da ficha), antes
+   * do CHECK do banco, que continua sendo a rede. Vazio não é conferido (vazio grava `null`).
+   */
+  padrao?: { regex: string; mensagem: string };
   min?: number;
   max?: number;
   /** agrupamento visual no formulário */
@@ -73,6 +79,13 @@ export interface FieldDef {
    * recusa o campo do outro tipo, e o valor que a tela não mostra não pode ficar gravado sem ninguém ver.
    */
   limpaQuandoOculto?: boolean;
+  /**
+   * Numérico que o usuário ESVAZIA na edição vai `null` na gravação (AJUSTES 01 R1, W-8: latitude/longitude do
+   * Parceiro — a coluna aceita nulo e "sem valor" tem sentido). SEM a marca, numérico vazio fica FORA do corpo: o
+   * default do banco vale no novo e o valor gravado continua no editado — a coluna pode ser `NOT NULL DEFAULT 0`
+   * (ex.: Valor de referência do Produto), e o `null` seria recusado pelo banco. Só a tela usa.
+   */
+  anulaQuandoEsvaziado?: boolean;
   /**
    * obrigatório CONDICIONAL: só quando outro campo tem esse valor (vazio = `default` dele).
    * O banco continua sendo a autoridade; isto serve para a tela e o modelo de importação avisarem antes.
