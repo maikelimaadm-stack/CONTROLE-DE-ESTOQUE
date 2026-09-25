@@ -67,7 +67,9 @@ describe("LT-K0 — a descoberta declara que esta API entende lote e validade na
   it("GET /auth/context traz capacidades.loteNaEntrada = 1 (sem ela a web nova esconde e não envia os campos)", async () => {
     const r = await h.app.inject({ method: "GET", url: "/api/auth/context", headers: h.headers() });
     expect(r.statusCode, r.body).toBe(200);
-    expect((JSON.parse(r.body) as { capacidades?: unknown }).capacidades).toEqual({ loteNaEntrada: 1 });
+    // AJUSTES 01 (seção 7): a mesma descoberta declara codigoAutomatico, moverComFilhos e consultaCnpjJanela —
+    // igualdade EXATA continua: capacidade a mais ou a menos (ou versão diferente) reprova
+    expect((JSON.parse(r.body) as { capacidades?: unknown }).capacidades).toEqual({ loteNaEntrada: 1, codigoAutomatico: 1, moverComFilhos: 1, consultaCnpjJanela: 1 });
   });
 });
 

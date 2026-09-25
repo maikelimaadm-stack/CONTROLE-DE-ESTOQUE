@@ -1345,6 +1345,38 @@ test("CADASTROS AJUSTES 01 · AJ-K1 — busca de referência sem texto contra a 
   expect(porCodigo, "texto livre não virou GET por código").toEqual([]);
 });
 
+test("CADASTROS AJUSTES 01 · AJ-K2 — sem codigoAutomatico/moverComFilhos da base: Código digitável com sugestão, Mover só de folha, sem Numeração dos cadastros", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const declara = { codigo: baseDeclaraCapacidade("codigoAutomatico"), mover: baseDeclaraCapacidade("moverComFilhos") };
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cab })).json() as { capacidades?: Record<string, unknown> };
+  expect(ctx.capacidades?.["codigoAutomatico"] ?? null, "o binário serve o que a árvore da base declara").toBe(declara.codigo ? 1 : null);
+  expect(ctx.capacidades?.["moverComFilhos"] ?? null).toBe(declara.mover ? 1 : null);
+  if (declara.codigo || declara.mover) return; // a base já é a desta missão: o ramo novo é provado na suíte comum
+
+  // Código digitável, com a sugestão da base
+  const sugestao = await (await page.request.get(`${API}/api/resources/financial_categories/proximo-codigo`, { headers: cab })).json() as { codigo: string };
+  await page.goto("/cadastros/financial_categories/new");
+  const codigo = page.getByLabel(/^Código/).first();
+  await expect(codigo).toBeEditable();
+  await expect(codigo).toHaveValue(sugestao.codigo);
+  // árvore: registro com filhos não oferece Mover (a base recusa); a folha oferece o Mover de hoje; sem o "Mover…" novo
+  await page.goto("/cadastros/financial_categories?visao=arvore");
+  const arvore = page.getByTestId("arvore-tela");
+  await arvore.getByTestId("arvore-no").filter({ hasText: "RECEITAS" }).first().getByRole("button", { name: /RECEITAS/ }).click();
+  await expect(page.getByTestId("arvore-mover-com-filhos")).toBeVisible();
+  await expect(page.getByTestId("arvore-mover")).toHaveCount(0);
+  await arvore.getByTestId("arvore-no").filter({ hasText: "Venda de Boi Gordo" }).first().getByRole("button", { name: /Venda de Boi Gordo/ }).click();
+  await expect(page.getByRole("button", { name: "Mover", exact: true })).toBeVisible();
+  await expect(page.getByTestId("arvore-codigo-previsto")).toHaveCount(0);
+  // Parametrizações: a seção nova não aparece (a base não tem /admin/numeracao)
+  await page.goto("/admin/parametros");
+  await expect(page.getByText("Parametrizações da Organização"), "premissa: a tela de parâmetros carregou").toBeVisible();
+  await expect(page.getByTestId("numeracao-cadastros")).toHaveCount(0);
+  v.semBloqueio();
+});
+
 test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva contra a base: os campos da 0030 não viajam, 200", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
