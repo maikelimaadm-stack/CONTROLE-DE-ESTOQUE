@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { normalizarDocumento, validarCnpj, semAcento } from "@agro/domain";
+import { normalizarDocumento, validarCnpj, semAcento, rotuloDaReferencia } from "@agro/domain";
 import { runService, audit } from "../lib/service.js";
 import { denied, err, notFound, validation } from "../lib/errors.js";
 import { hasPermission, type ServiceCtx } from "../lib/context.js";
@@ -23,8 +23,11 @@ declare module "fastify" {
  *                                   `?atualizar=1` ignora o cache, no máximo 1 vez por minuto por CNPJ.
  *                                   20/min por organização. Auditoria sem a resposta inteira. Nunca QSA.
  *
- * Permissão: people.create OU people.edit — é quem preenche a ficha. As duas consultas só LEEM fontes
- * públicas e gravam apenas o cache global e a auditoria; o cadastro continua gravado pela rota dele.
+ * Permissão (CADASTROS AJUSTES 01, A-4): CEP — qualquer membro autenticado da organização (o campo Cidade
+ * de empresas, filiais e endereços aceita CEP; é dado público, como as buscas de referência); o limite de
+ * 60/min por organização continua. CNPJ — people.create OU people.edit, como antes (é quem preenche a
+ * ficha). As duas consultas só LEEM fontes públicas e gravam apenas o cache global e a auditoria; o
+ * cadastro continua gravado pela rota dele.
  * A chamada externa acontece FORA da transação (não segura conexão do banco por até 5 s por fonte).
  */
 export const CACHE_CEP_DIAS = 30;
@@ -39,23 +42,32 @@ export const MSG_CNPJ_LETRAS = "as fontes gratuitas ainda não consultam CNPJ co
 const semQuery = z.object({}).strict();
 const cnpjQuery = z.object({ atualizar: z.enum(["1"]).optional() }).strict();
 
+/** CEP: basta ser membro da organização selecionada (requireCtx: autenticado + organização). */
+function exigirMembro(app: FastifyInstance, req: FastifyRequest) { return app.requireCtx(req); }
+
 function exigirPermissao(app: FastifyInstance, req: FastifyRequest) {
   const ctx = app.requireCtx(req);
   if (!hasPermission(ctx, "people.create") && !hasPermission(ctx, "people.edit")) throw denied("people.create ou people.edit");
   return ctx;
 }
 
-/** Município da fonte contra erp.cities: código IBGE; na falta dele, nome (sem acento) + UF. */
+/**
+ * Município da fonte contra erp.cities: código IBGE; na falta dele, nome (sem acento) + UF. `rotulo` é o
+ * mesmo da busca de referência ("5106752 · Pontes e Lacerda - MT"), campo ADITIVO (A-2).
+ */
+const municipio = (c: { id: number; name: string; state_code: string }) =>
+  ({ codigoIbge: c.id, nome: c.name, uf: c.state_code, rotulo: rotuloDaReferencia("municipios", { codigo: c.id, nome: c.name, extra: c.state_code }) });
+
 async function resolverMunicipio(ctx: ServiceCtx, ibge: number | null, nome: string | null, uf: string | null) {
   if (ibge) {
     const r = await ctx.tx.query<{ id: number; name: string; state_code: string }>("select id, name, state_code from erp.cities where id=$1", [ibge]);
-    if (r.rows[0]) return { codigoIbge: r.rows[0].id, nome: r.rows[0].name, uf: r.rows[0].state_code };
+    if (r.rows[0]) return municipio(r.rows[0]);
   }
   if (nome && uf) {
     const r = await ctx.tx.query<{ id: number; name: string; state_code: string }>("select id, name, state_code from erp.cities where state_code=$1", [uf.toUpperCase()]);
     const alvo = semAcento(nome).replace(/[^a-z0-9]/g, "");
     const achado = r.rows.find((c) => semAcento(c.name).replace(/[^a-z0-9]/g, "") === alvo);
-    if (achado) return { codigoIbge: achado.id, nome: achado.name, uf: achado.state_code };
+    if (achado) return municipio(achado);
   }
   return null;
 }
@@ -80,7 +92,7 @@ export default async function consultaRoutes(app: FastifyInstance) {
   const pausa = new PausaDeFontes();
 
   app.get("/consultas/cep/:cep", async (req) => {
-    const ctx = exigirPermissao(app, req);
+    const ctx = exigirMembro(app, req);
     semQuery.parse(req.query);
     const cep = String((req.params as { cep: string }).cep ?? "").replace(/[.\-\s]/g, "");
     if (!/^\d{8}$/.test(cep)) throw validation("CEP inválido", [{ path: ["cep"], message: "CEP deve ter 8 dígitos" }]);
