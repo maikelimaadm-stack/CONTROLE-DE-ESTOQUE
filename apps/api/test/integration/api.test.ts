@@ -34,7 +34,7 @@ describe("cadastros genéricos (recursos declarativos)", () => {
     expect(bad.statusCode).toBe(422); expect(j(bad).error!.code).toBe("VALIDATION_ERROR");
     // código repetido não chega mais ao banco (era 409): o código digitado diferente do gerado é recusado antes (422)
     const dup = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: codigo, name: "Dup" } });
-    expect(dup.statusCode).toBe(422); expect(j(dup).error!.message).toBe("O código é gerado pelo sistema.");
+    expect(dup.statusCode).toBe(422); expect(JSON.parse(dup.body).error.message).toBe("O código é gerado pelo sistema.");
     const u = await h.app.inject({ method: "PUT", url: `/api/resources/cost_centers/${id}`, headers: h.headers(), payload: { name: "Teste CC 2" } });
     expect(j(u).name).toBe("Teste CC 2");
     const d = await h.app.inject({ method: "DELETE", url: `/api/resources/cost_centers/${id}`, headers: h.headers() }); expect(d.statusCode).toBe(200);

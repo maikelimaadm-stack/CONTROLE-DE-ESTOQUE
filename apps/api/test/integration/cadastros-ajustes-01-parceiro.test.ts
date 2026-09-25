@@ -55,7 +55,7 @@ describe("PA-1 0030 — colunas, checks e FK composta", () => {
       const c = await admin.connect();
       try {
         await c.query("begin");
-        const r = await c.query(sql, p).then((x) => ({ ok: true, rc: x.rowCount }), (e: { code?: string }) => ({ ok: false, code: e.code }));
+        const r: { ok: boolean; rc?: number | null; code?: string } = await c.query(sql, p).then((x) => ({ ok: true, rc: x.rowCount }), (e: { code?: string }) => ({ ok: false, code: e.code }));
         if (sql.includes("parceiro_enderecos") && r.ok && r.rc === 0) continue; // nenhum endereço semeado: o check é conferido abaixo
         expect(r, sql).toMatchObject({ ok: false });
       } finally { await c.query("rollback"); c.release(); }
