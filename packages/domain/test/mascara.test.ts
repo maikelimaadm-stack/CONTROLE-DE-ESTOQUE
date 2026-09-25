@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatarMascara, normalizarMascara, formatarCep, formatarTelefone, mascaraDoTipoDePessoa, recusaDoDigitoDoDocumento, textoEhCep, validarCnpj } from "../src/documento.js";
+import { formatarMascara, normalizarMascara, formatarCep, formatarTelefone, mascaraDoTipoDePessoa, mascaraDoDocumento, recusaDoDigitoDoDocumento, textoEhCep, validarCnpj } from "../src/documento.js";
 
 /** B-3 / B-4 — máscaras de entrada: mostra formatado, grava normalizado, colar com pontuação funciona. */
 describe("B-3 máscaras: formato completo", () => {
@@ -45,6 +45,19 @@ describe("B-4 documento pelo tipo de pessoa e DV ao sair", () => {
     expect(mascaraDoTipoDePessoa("legal")).toBe("cnpj");
     expect(mascaraDoTipoDePessoa("foreign")).toBeNull();
     expect(mascaraDoTipoDePessoa("xyz")).toBeNull();
+  });
+  it("em Física o documento NUNCA é cortado: colar/digitar um CNPJ passa a máscara para CNPJ", () => {
+    // defeito achado pelo E2E UI-5/UI-6: a máscara de CPF cortava o CNPJ colado em 11 dígitos ("320.071.880-00")
+    expect(mascaraDoDocumento("natural", "32007188000196")).toBe("cnpj");
+    expect(formatarMascara(mascaraDoDocumento("natural", "32.007.188/0001-96")!, normalizarMascara("cnpj", "32.007.188/0001-96"))).toBe("32.007.188/0001-96");
+    expect(mascaraDoDocumento("natural", "529982247250")).toBe("cnpj"); // o 12º dígito já é CNPJ
+    expect(mascaraDoDocumento("natural", "12ABC")).toBe("cnpj"); // letra só existe em CNPJ
+    expect(mascaraDoDocumento("natural", "52998224725")).toBe("cpf");
+    expect(mascaraDoDocumento("legal", "5299")).toBe("cnpj");
+    expect(mascaraDoDocumento("legal", "32007188000196")).toBe("cnpj");
+    expect(mascaraDoDocumento("foreign", "32007188000196")).toBeNull();
+    expect(mascaraDoDocumento(null, "52998224725")).toBe("cpf");
+    expect(mascaraDoDocumento(null, "32007188000196")).toBe("cnpj");
   });
   it("DV: válido → null; errado → mensagem; vazio → null", () => {
     expect(recusaDoDigitoDoDocumento("cpf", "529.982.247-25")).toBeNull();

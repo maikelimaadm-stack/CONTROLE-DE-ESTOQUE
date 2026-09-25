@@ -137,6 +137,19 @@ export function mascaraDoTipoDePessoa(tipo: string | null | undefined): "cpf" | 
   return null;
 }
 
+/**
+ * Máscara EFETIVA do CPF/CNPJ enquanto se digita ou cola (AJUSTES 01, B-3/C-3). O tipo de pessoa dá o ponto de
+ * partida, mas NUNCA corta o documento: em Física, o 12º caractere (ou uma letra) passa para CNPJ, e o tipo segue o
+ * documento na ficha. Em Jurídica o CNPJ é formatado desde o 1º dígito. Estrangeira = sem máscara (null).
+ * O valor normalizado do documento, para qualquer máscara, é `normalizarMascara("cnpj", v)`: [0-9A-Z], até 14.
+ */
+export function mascaraDoDocumento(tipoPessoa: string | null | undefined, valor: string | null | undefined): "cpf" | "cnpj" | null {
+  if (tipoPessoa === "foreign") return null;
+  const n = normalizarMascara("cnpj", String(valor ?? ""));
+  if (n.length > 11 || /[A-Z]/.test(n)) return "cnpj";
+  return tipoPessoa === "legal" ? "cnpj" : "cpf";
+}
+
 /** DV do documento conferido ao sair do campo: mensagem da recusa ou null. Vazio não é recusado aqui (documento é opcional). */
 export function recusaDoDigitoDoDocumento(tipo: "cpf" | "cnpj", valor: string): string | null {
   const n = normalizarMascara(tipo, valor);

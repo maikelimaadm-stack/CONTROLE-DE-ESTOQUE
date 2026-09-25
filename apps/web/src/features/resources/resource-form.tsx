@@ -168,13 +168,16 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   if (!isNew && q.isLoading && !q.data) return <div className="p-6"><Spinner /></div>;
   if (q.error) return <ErrorBox error={q.error} />;
   const values = form.watch();
-  const visible = (f: FieldDef) => campoVisivel(f, can) && capacidadeDoCampo(f, ctx?.capacidades) && (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
+  const visible = (f: FieldDef) => campoVisivel(f, can) && capacidadeDoCampo(f, ctx?.capacidades) && (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code" && !codigoTravado);
   const back = basePath ?? `/cadastros/${resourceKey}`;
   const byId = new Map(fields.map((f) => [f.name, f]));
   // obrigatório do registry, do layout ou CONDICIONAL (`requiredWhen`): campo de condição vazio vale o `default` dele (ex.: Controla estoque = Sim)
   const obrigatorio = (f: FieldDef) => Boolean(f.required) || l.requiredFieldIds.includes(f.name) || (f.requiredWhen !== undefined && iguala(values[f.requiredWhen.field] ?? byId.get(f.requiredWhen.field)?.default, f.requiredWhen.equals));
-  const renderField = (fid: string, controle?: ControleDoCampo) => {
+  // código gerado pelo servidor (257 D) no Novo: só a prévia, sem caixa digitável — o número definitivo sai do Salvar
+  const previaDoCodigo: ControleDoCampo = () => <span className="text-[13px] text-slate-600" data-testid="codigo-previsto">{values["code"] ? `será gerado ao salvar: ${String(values["code"])}` : "será gerado ao salvar"}</span>;
+  const renderField = (fid: string, controleProprio?: ControleDoCampo) => {
     const f = byId.get(fid); if (!f || !visible(f)) return null;
+    const controle = controleProprio ?? (codigoTravado && isNew && f.name === "code" ? previaDoCodigo : undefined);
     const err = form.formState.errors[f.name]?.message as string | undefined; const locked = Boolean(f.readOnly) || travados.includes(f.name); const dis = readOnly || locked;
     const required = obrigatorio(f);
     const v = values[f.name]; const hasValue = f.type === "boolean" ? true : Array.isArray(v) ? v.length > 0 : v !== "" && v !== null && v !== undefined;
