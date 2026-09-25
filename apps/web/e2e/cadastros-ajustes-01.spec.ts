@@ -1090,7 +1090,7 @@ test("UI-21f (W-8, revisão final) — em LEITURA, focar o CPF/CNPJ de uma Jurí
   const doc = page.getByLabel("CPF/CNPJ", { exact: true });
   await expect(page.getByTestId("faixa-tipo-documento"), "premissa: a faixa da Jurídica com CPF").toBeVisible();
   await expect(doc, "premissa: CPF mostrado como CPF").toHaveAttribute("data-mascara", "cpf");
-  await doc.click();
+  await doc.focus(); // em leitura o foco chega pelo teclado (Tab): o clique cai no invólucro do campo
   await expect(doc, "premissa: a caixa tem o foco").toBeFocused();
   await expect(doc, "com o foco em leitura: continua CPF").toHaveAttribute("data-mascara", "cpf");
   await expect(doc).toHaveValue(fmtCpf(cpf));
