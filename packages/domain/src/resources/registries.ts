@@ -35,7 +35,7 @@ export const TRIBUTOS_DO_PRODUTO: FieldDef[] = [
 
 export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
-    key: "cost_centers", importacao: true, label: "Centro de Resultado", labelPlural: "Centros de Resultado", table: "cost_centers", permission: "cost_centers", labelField: "name", route: "/cadastros/centros-de-custo", tree: true, softDelete: true, printable: true, defaultSort: "code",
+    key: "cost_centers", importacao: true, codigoAutomatico: "hierarquico", label: "Centro de Resultado", labelPlural: "Centros de Resultado", table: "cost_centers", permission: "cost_centers", labelField: "name", route: "/cadastros/centros-de-custo", tree: true, softDelete: true, printable: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, help: "Código hierárquico, ex.: 1.01.001.0001", span: 3 }),
       T("name", "Descrição", { required: true, list: true, search: true, span: 5 }),
@@ -72,7 +72,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "product_groups", importacao: true, label: "Grupo de Produtos", labelPlural: "Grupos de Produtos", table: "product_groups", permission: "products", labelField: "name", route: "/cadastros/grupos-de-produto", tree: true, softDelete: true, defaultSort: "code",
+    key: "product_groups", importacao: true, codigoAutomatico: "hierarquico", label: "Grupo de Produtos", labelPlural: "Grupos de Produtos", table: "product_groups", permission: "products", labelField: "name", route: "/cadastros/grupos-de-produto", tree: true, softDelete: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, help: "Código hierárquico, ex.: 1.01", span: 3 }),
       T("name", "Nome", { required: true, list: true, search: true, span: 5 }),
@@ -186,7 +186,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 8 }), active()]
   },
   {
-    key: "financial_categories", importacao: true, label: "Natureza", labelPlural: "Naturezas", table: "financial_categories", permission: "financial_categories", labelField: "name", route: "/cadastros/categorias-financeiras", tree: true, softDelete: true, printable: true, defaultSort: "code",
+    key: "financial_categories", importacao: true, codigoAutomatico: "hierarquico", label: "Natureza", labelPlural: "Naturezas", table: "financial_categories", permission: "financial_categories", labelField: "name", route: "/cadastros/categorias-financeiras", tree: true, softDelete: true, printable: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, span: 3 }), T("name", "Descrição", { required: true, list: true, search: true, span: 5 }),
       S("nature", "Tipo", [["income", "Receita"], ["expense", "Despesa"], ["both", "Receita e despesa"]], { required: true, herdaDoSuperior: true, help: "Natureza filha segue o Tipo da superior (salvo superior Receita e despesa).", list: true, filter: true, span: 2 }),
@@ -196,7 +196,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "chart_accounts", importacao: true, label: "Conta Contábil", labelPlural: "Plano de Contas", table: "chart_accounts", permission: "chart_accounts", labelField: "description", route: "/cadastros/plano-de-contas", tree: true, softDelete: true, defaultSort: "code",
+    key: "chart_accounts", importacao: true, codigoAutomatico: "hierarquico", label: "Conta Contábil", labelPlural: "Plano de Contas", table: "chart_accounts", permission: "chart_accounts", labelField: "description", route: "/cadastros/plano-de-contas", tree: true, softDelete: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, span: 3 }), T("description", "Descrição", { required: true, list: true, search: true, span: 5 }),
       S("condition", "Condição", [["debit", "Débito"], ["credit", "Crédito"], ["both", "Ambos"]], { required: true, list: true, span: 2 }),
@@ -274,7 +274,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 4 }), M("value_per_hectare", "Valor por hectare", { required: true, list: true, span: 2 }), S("use_in", "Uso", [["both", "Ambos"], ["agriculture", "Agricultura"], ["fruit", "Fruticultura"], ["beef", "Pecuária de Corte"]], { required: true, default: "both", list: true, span: 2 }), S("type", "Tipo", [["custeio", "Custeio"], ["investimento", "Investimento"], ["a_definir", "A definir"]], { required: true, default: "custeio", list: true, span: 2 }), active(), { name: "description", label: "Descrição", type: "textarea", span: 12 }]
   },
   {
-    key: "bank_accounts", label: "Conta Bancária", labelPlural: "Contas Bancárias", table: "bank_accounts", permission: "bank_accounts", labelField: "description", route: "/cadastros/contas-bancarias", softDelete: true,
+    key: "bank_accounts", codeEntity: "bank_account", codigoAutomatico: "sequencial", label: "Conta Bancária", labelPlural: "Contas Bancárias", table: "bank_accounts", permission: "bank_accounts", labelField: "description", route: "/cadastros/contas-bancarias", softDelete: true,
     fields: [
       T("code", "Sigla", { required: true, list: true, search: true, span: 2 }), T("description", "Descrição", { required: true, list: true, search: true, span: 4 }),
       S("type", "Tipo", [["checking", "Conta Corrente"], ["savings", "Conta Poupança"], ["investment", "Aplicação Financeira"], ["cash", "Caixa Interno (Espécie)"]], { required: true, list: true, filter: true, span: 3 }),
@@ -345,7 +345,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("code", "Código", { readOnly: true, list: true, span: 2 }), REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), D("module_date", "Data de cadastro", { required: true, span: 2 }), T("responsible", "Responsável", { span: 4 }), T("description", "Descrição", { required: true, list: true, search: true, span: 6 }), REF("fodder_id", "Forragem", "fodders", { required: true, list: true, span: 3 }), T("color", "Cor do módulo", { span: 2 }), B("control_productivity", "Controla produtividade", { span: 3 })]
   },
   {
-    key: "areas", label: "Área (Piquete)", labelPlural: "Áreas", table: "areas", permission: "batch_area", labelField: "name", route: "/pecuaria/areas", softDelete: true, empresaScoped: true,
+    key: "areas", codeEntity: "area", codigoAutomatico: "sequencial", label: "Área (Piquete)", labelPlural: "Áreas", table: "areas", permission: "batch_area", labelField: "name", route: "/pecuaria/areas", softDelete: true, empresaScoped: true,
     fields: [REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), T("code", "Código", { required: true, list: true, search: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), { name: "area_ha", label: "Área (ha)", type: "quantity", required: true, list: true, span: 2 }, REF("grazing_module_id", "Módulo de pastejo", "grazing_modules", { list: true, filter: true, span: 4 }), REF("fodder_id", "Forragem", "fodders", { span: 4 }), active()]
   },
   {
@@ -364,15 +364,15 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "feedlot_yards", label: "Pátio", labelPlural: "Pátios", table: "feedlot_yards", permission: "feedlot_yards", labelField: "name", route: "/confinamento/patios", softDelete: true, empresaScoped: true,
+    key: "feedlot_yards", codeEntity: "feedlot_yard", codigoAutomatico: "sequencial", label: "Pátio", labelPlural: "Pátios", table: "feedlot_yards", permission: "feedlot_yards", labelField: "name", route: "/confinamento/patios", softDelete: true, empresaScoped: true,
     fields: [REF("empresa_id", "Empresa", "empresas", { required: true, list: true, filter: true, span: 4 }), T("code", "Código", { required: true, list: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), active()]
   },
   {
-    key: "feedlot_sectors", label: "Setor", labelPlural: "Setores", table: "feedlot_sectors", permission: "feedlot_sectors", labelField: "name", route: "/confinamento/setores", softDelete: true,
+    key: "feedlot_sectors", codeEntity: "feedlot_sector", codigoAutomatico: "sequencial", label: "Setor", labelPlural: "Setores", table: "feedlot_sectors", permission: "feedlot_sectors", labelField: "name", route: "/confinamento/setores", softDelete: true,
     fields: [REF("yard_id", "Pátio", "feedlot_yards", { required: true, list: true, filter: true, span: 4 }), T("code", "Código", { required: true, list: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 4 }), active()]
   },
   {
-    key: "feedlot_corrals", label: "Curral", labelPlural: "Currais", table: "feedlot_corrals", permission: "feedlot_corrals", labelField: "name", route: "/confinamento/currais", softDelete: true,
+    key: "feedlot_corrals", codeEntity: "feedlot_corral", codigoAutomatico: "sequencial", label: "Curral", labelPlural: "Currais", table: "feedlot_corrals", permission: "feedlot_corrals", labelField: "name", route: "/confinamento/currais", softDelete: true,
     fields: [REF("sector_id", "Setor", "feedlot_sectors", { required: true, list: true, filter: true, span: 4 }), T("code", "Código", { required: true, list: true, span: 2 }), T("name", "Nome", { required: true, list: true, search: true, span: 3 }), { name: "capacity", label: "Capacidade (cab.)", type: "integer", required: true, list: true, span: 2 }, { name: "area_m2", label: "Área (m²)", type: "quantity", span: 2 }, active()]
   },
   {

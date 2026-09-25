@@ -96,6 +96,14 @@ export interface ResourceDef {
   empresaScopedNulo?: boolean;
   /** entidade de sequência para código automático (coluna code) */
   codeEntity?: string;
+  /**
+   * CÓDIGO AUTOMÁTICO E TRAVADO (CADASTROS AJUSTES 01, decisão 257 D). O código é gerado NO SERVIDOR ao gravar
+   * e nunca é digitado: `"hierarquico"` = árvore com código (superior + máscara, `proximoCodigoHierarquico`);
+   * `"sequencial"` = `codeEntity` com número de `erp.code_sequences`, pulando número já usado por código antigo.
+   * A definição do campo `code` continua a de antes (a web SEM a capacidade `codigoAutomatico` mostra o
+   * comportamento anterior); a API honra esta marca sempre, e a web só com a capacidade declarada.
+   */
+  codigoAutomatico?: "hierarquico" | "sequencial";
   fields: FieldDef[];
   /**
    * Campos que a API ainda ACEITA na escrita, mas que saíram da tela, da listagem, dos filtros e da
