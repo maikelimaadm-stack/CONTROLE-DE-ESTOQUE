@@ -147,7 +147,7 @@ const cabecalho = (page: Page, campo: string) => page.getByTestId(`cabecalho-${c
  * Rótulo de um campo da ficha. Campo de referência (`RefSelect`, ex.: Matriz) não liga a caixa ao rótulo — `getByLabel`
  * não o acha NUNCA, e um `toHaveCount(0)` com ele passaria vazio. O rótulo do campo existe só quando o campo aparece.
  */
-const rotuloDoCampo = (page: Page, rotulo: string) => page.locator("label.mg-field__label").filter({ hasText: new RegExp(`^${rotulo}( \\*)?$`) });
+const rotuloDoCampo = (page: Page, rotulo: string) => page.locator("label").filter({ hasText: new RegExp(`^${rotulo}( \\*)?$`) });
 const janela = (page: Page) => page.getByTestId("janela-consulta-cnpj");
 
 // ───────────────────────────── UI-1 ─────────────────────────────
