@@ -1118,6 +1118,36 @@ Medir também (leitura; nenhuma delas para a migration):
   fuso da operação — fora do R1.
 - **Correção lê o saldo atual sem trava** (anterior a esta fatia): uma saída concorrente confirmada entre a leitura e
   o movimento faz o ajuste aplicar uma diferença velha. Fora do R1.
+- **Consulta de "em uso" sem índice, com o cadastro travado** (R1-5, decisão 256 (4)(b)): na troca analítico →
+  sintético a natureza, o centro ou a conta é travada `for update` e cada ramo da consulta de uso (movimentos de
+  estoque, rateios, itens de NF…) varre a tabela sem índice na FK. Lançamentos concorrentes naquele cadastro esperam a
+  varredura. Só disponibilidade; os índices exigem migration nova — PR própria, com autorização.
+- **Troca analítico → sintético exige visão da organização inteira** (R1-5, decisão 256 (4)(b)): a busca de uso roda
+  sob a RLS de quem grava, e "não vejo" não pode virar "não está em uso". Membro com escopo parcial de empresas não
+  faz a troca nem de registro sem uso (fail-closed). Afrouxar exige porta `SECURITY DEFINER` estreita — migration nova.
+- **Registro com filhos não muda de superior também nas árvores SEM código** (R1-5, decisão 256 (4)(a)):
+  Endereçamentos e Tipos de Documento seguem a regra literal; mover um galho exige mover as folhas antes.
+- **Oráculo "inexistente × outra organização" na NF-e e na entrada de insumo** (anterior ao R1, decisão 256 (4)(c)):
+  itens e rateio da NF e itens da entrada são gravados ANTES de `createTitles`/`createBankMovement` conferirem o
+  rateio. Id inexistente cai na FK (409 "referência inválida") e id de outra organização passa pela FK de coluna
+  única e cai na recusa 422 — distinção útil só a quem já tem o UUID alheio; e na entrada de insumo SEM movimento
+  bancário a classificação do item não passa pela conferência. Correção (conferir antes do insert): PR própria.
+- **Seletor genérico `GET /resources/:key/options` com filtro por qualquer coluna existente** (vem da `main`, fora do
+  R1): fora do campo com `sigilo` (R1-2) e da grade `employee_events`, `?coluna=valor` filtra por qualquer coluna, e a
+  rota só exige capacidade da tabela que é grade declarada. Ex.: sem permissão de RH, `bonuses/options?person_id=…`
+  lista os eventos lançados para o funcionário (e `&amount=…` confirma o valor por tentativa); o `person_id` sai de
+  `people/options`, que também não exige capacidade; `people/options?document=<CPF>` devolve o nome do parceiro a quem
+  não tem `people.view`. Correção (filtro extra só em campo `ref`/`filter` do registry e capacidade da tabela para
+  filtrar por outra coluna, ou `bonuses.amount` como dado de salário): PR própria, decisão do Maike.
+- **Aceitos sem mudança pela revisão do R1 (texto do Maike):** baixa em lote em "movimento único" sem rateio
+  (`movement_mode = single`, anterior a esta PR); códigos do eSocial pendentes de conferência do contador, sem mudança
+  de código agora; CNPJ com letras → 422 enquanto nenhuma fonte gratuita consultar (decisão 252); limite de consultas
+  de CNPJ/CEP em memória, por réplica (ver "CADASTROS FASE 3").
+- **Pendentes de decisão do Maike (nada mudou no código):** conta contábil do rateio ativa e analítica (hoje só tenant
+  e vida, decisão 256 (4)(c)); readmissão de quem tem a ficha de RH INATIVA (o novo pelo CPF recusa com 422 e não há
+  porta de readmissão pela tela, decisão 255 (2)(c)); estorno sem lote de produto que hoje controla lote → 422 (acima);
+  escrita da participação do proprietário pela UNIÃO dos módulos (decisão 253 (8)); subárvore travada também sem
+  código (acima).
 
 **Implantação — ordem: banco (0029) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
 
