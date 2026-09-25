@@ -1566,7 +1566,21 @@ test("CADASTROS AJUSTES 01 · AJ-K2 — sem codigoAutomatico/moverComFilhos da b
   const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cab })).json() as { capacidades?: Record<string, unknown> };
   expect(ctx.capacidades?.["codigoAutomatico"] ?? null, "o binário serve o que a árvore da base declara").toBe(declara.codigo ? 1 : null);
   expect(ctx.capacidades?.["moverComFilhos"] ?? null).toBe(declara.mover ? 1 : null);
-  if (declara.codigo || declara.mover) return; // a base já é a desta missão: o ramo novo é provado na suíte comum
+  expect(declara.codigo, "as duas capacidades entram juntas (decisão 257 D): base com uma só é estado que ninguém publicou").toBe(declara.mover);
+  if (declara.codigo) {
+    // MUNDO ATUAL — a base já é a desta missão: a web nova NÃO trata a base como servidor antigo. Código gerado e
+    // só leitura com a prévia, o "Mover…" do galho e a Numeração dos cadastros aparecem.
+    const previsto = await (await page.request.get(`${API}/api/resources/financial_categories/proximo-codigo`, { headers: cab })).json() as { codigo: string };
+    await page.goto("/cadastros/financial_categories/new");
+    await expect(page.getByTestId("codigo-previsto")).toHaveText(`será gerado ao salvar: ${previsto.codigo}`);
+    await page.goto("/cadastros/financial_categories?visao=arvore");
+    await page.getByTestId("arvore-tela").getByTestId("arvore-no").filter({ hasText: "RECEITAS" }).first().getByRole("button", { name: /RECEITAS/ }).click();
+    await expect(page.getByTestId("arvore-mover"), "o Mover do galho, mesmo com filhos").toBeVisible();
+    await page.goto("/admin/parametros");
+    await expect(page.getByTestId("numeracao-cadastros")).toBeVisible();
+    v.semBloqueio();
+    return;
+  }
 
   // Código digitável, com a sugestão da base
   const sugestao = await (await page.request.get(`${API}/api/resources/financial_categories/proximo-codigo`, { headers: cab })).json() as { codigo: string };

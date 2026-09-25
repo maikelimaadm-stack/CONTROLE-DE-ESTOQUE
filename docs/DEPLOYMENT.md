@@ -1220,8 +1220,13 @@ e `latitude`/`longitude` em `erp.parceiro_enderecos`. Todas anuláveis ou com de
 7. **web NOVA × API anterior — árvores (D):** sem `codigoAutomatico`/`moverComFilhos`, a web mostra o código digitável com
    a sugestão de sempre, o Mover de antes (só registro sem filhos) e não mostra a Numeração dos cadastros.
 8. **Zerar numeração (D)** usa `LOCK TABLE … IN SHARE ROW EXCLUSIVE` por um instante: inclusões NAQUELA tabela esperam,
-   em todas as organizações, até a transação do Zerar terminar (milissegundos com o cadastro vazio). Só roda com zero
-   registros vivos; excluídos ficam com `EXC-<id>`; nada é apagado.
+   em todas as organizações, até a transação do Zerar terminar (milissegundos com o cadastro vazio). Com registro vivo o
+   Zerar recusa ANTES de pedir essa trava; e a trava espera no máximo 2 s (`lock_timeout`) — se outra gravação longa
+   (ex.: importação de outra organização) estiver na tabela, o Zerar desiste com 409 em vez de enfileirar todo mundo
+   atrás dele. Só roda com zero registros vivos; excluídos ficam com `EXC-<id>`; nada é apagado.
+9. **Mover (D)** também libera como `EXC-<id>` o código de descendente EXCLUÍDO que não pode acompanhar o galho (acervo
+   do Mover-de-folha anterior); o valor antigo fica no `audit` do Mover. Descendente vivo fora do prefixo continua
+   recusando.
 
 **Reversão.** Web: livre (itens 3, 5 e 7). API: a anterior ignora as colunas novas; a web nova volta sozinha ao
 comportamento dos itens 3, 5 e 7. Códigos gerados, renumerados pelo Mover ou liberados como `EXC-<id>` pelo Zerar são
