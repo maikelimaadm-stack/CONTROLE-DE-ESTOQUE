@@ -1,5 +1,6 @@
 "use client";
 import * as React from "react";
+import { useCodigoTravado } from "./capacidade-codigo";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -77,7 +78,10 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const def = getResource(resourceKey); const router = useRouter(); const sp = useSearchParams(); const qc = useQueryClient(); const { can, ctx } = useAuth();
   // AJUSTES 01 (C-1/C-2, seção 7): a API declara a janela de consulta de CNPJ e os campos novos do Parceiro
   const consultaJanela = useConsultaCnpjJanela();
-  const fields = React.useMemo(() => def?.fields ?? [], [def]);
+  // AJUSTES 01 (257 D): com `codigoAutomatico` declarado, o código deste cadastro é gerado pelo servidor — só leitura,
+  // fora do corpo e nunca obrigatório na tela. Sem a capacidade (API anterior), o código segue digitável como antes.
+  const codigoTravado = useCodigoTravado(def);
+  const fields = React.useMemo(() => (def?.fields ?? []).map((f) => (codigoTravado && f.name === "code" ? { ...f, readOnly: true, required: false, help: "Será gerado ao salvar." } : f)), [def, codigoTravado]);
   // FICHA EM ABAS (decisão 253): cadastro com `abas` no registry usa a ficha; os demais, o layout de painéis
   const ficha = Boolean(def?.abas?.length);
   const [errosFicha, setErrosFicha] = React.useState<ErroDaFicha[]>([]);
@@ -93,7 +97,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   // campo SIGILOSO sem a permissão (R1-2, ex.: salário da Função sem employees.edit): não aparece e não vai no corpo —
   // a API não o devolve e recusaria (403) o corpo que o trouxesse. Só apresentação: quem recusa é o servidor.
   const sigilosos = fields.filter((f) => !campoVisivel(f, can) || !capacidadeDoCampo(f, ctx?.capacidades)).map((f) => f.name);
-  const travados = [...l.lockedFieldIds, ...sigilosos, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
+  const travados = [...l.lockedFieldIds, ...(codigoTravado ? ["code"] : []), ...sigilosos, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
   // grade/perfil de aba sem a permissão de gravar ou de ler (R1-4, ex.: aba Cliente sem clients.edit) não vai no corpo —
   // a API recusaria o corpo inteiro com 403. Só apresentação: quem recusa é o servidor.
   const fichaBarrada = def ? new Set([...chavesBarradas(def, "permissaoDeEdicao", can), ...chavesBarradas(def, "permissaoDeLeitura", can)]) : new Set<string>();
@@ -114,7 +118,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   // Código hierárquico (Plano de Contas, Naturezas, Centros de Resultado, Grupos de Produtos): o SERVIDOR sugere o
   // próximo código abaixo do superior escolhido, enquanto o usuário não digitou um código. A sugestão é editável; quem
   // confere máscara, prefixo e duplicidade é o servidor ao salvar.
-  const sugereCodigo = ehCadastroCodigoHierarquico(resourceKey) && isNew && !readOnly;
+  const sugereCodigo = (ehCadastroCodigoHierarquico(resourceKey) || (codigoTravado && Boolean(def?.codigoAutomatico))) && isNew && !readOnly;
   const superior = form.watch("parent_id") as string | null | undefined;
   React.useEffect(() => {
     if (!sugereCodigo || form.getFieldState("code").isDirty) return;
