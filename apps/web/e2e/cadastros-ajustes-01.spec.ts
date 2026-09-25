@@ -835,10 +835,26 @@ test("UI-15b (W-4) — a digitação vira Jurídica e o documento VOLTA ao CPF d
 });
 
 // ───────────────────────────── UI-16 (W-5) ─────────────────────────────
-test("UI-16 (W-5) — Novo pelo CNPJ leva os dados EM MEMÓRIA: nada da Receita no sessionStorage/localStorage; consumido uma vez", async ({ page }) => {
+test("UI-16 (W-5) — Novo pelo CNPJ leva os dados EM MEMÓRIA: nenhuma ESCRITA da Receita no sessionStorage/localStorage (vigiada desde o carregamento); consumido uma vez", async ({ page }) => {
+  const cnpj = cnpjSeq();
+  const termos = [cnpj, fmtCnpj(cnpj), "AGROPECUARIA", "FAZENDA PONTES", "RODOVIA BR 174", "contato@fazendapontes", "importacaoCnpj"];
+  // VIGIA DE ESCRITA (revisão final do R1): ler o armazenamento no fim não prova nada — a implementação antiga gravava a
+  // entrega no sessionStorage e a apagava no mesmo efeito que a consumia. Toda chamada a setItem, desde o carregamento de
+  // cada página e antes de qualquer script da aplicação, é contada AQUI (no processo do teste), só com a chave e QUAIS
+  // termos da Receita aparecem — nunca o valor (o armazenamento guarda a sessão).
+  const escritas: { chave: string; termos: string[] }[] = [];
+  await page.exposeBinding("__vigiaDeEscrita", (_origem, e: { chave: string; termos: string[] }) => { escritas.push(e); });
+  await page.addInitScript((lista: string[]) => {
+    const w = window as unknown as { __vigiaDeEscrita: (e: { chave: string; termos: string[] }) => void };
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (chave: string, valor: string) {
+      const texto = `${chave}=${String(valor)}`;
+      void w.__vigiaDeEscrita({ chave, termos: lista.filter((t) => texto.includes(t)) });
+      return original.call(this, chave, valor);
+    };
+  }, termos);
   await login(page);
   await mockCnpj(page);
-  const cnpj = cnpjSeq();
   await page.goto("/configuracoes?tab=parceiros");
   await page.getByTestId("parceiros-novo-pelo-cnpj").click();
   await page.getByTestId("consulta-cnpj-campo").fill(cnpj);
@@ -847,19 +863,17 @@ test("UI-16 (W-5) — Novo pelo CNPJ leva os dados EM MEMÓRIA: nada da Receita 
   await page.getByTestId("consulta-cnpj-importar").click();
   await expect(page).toHaveURL(/\/cadastros\/people\/new/);
   await expect(page.getByLabel("Nome Social/Fantasia")).toHaveValue("FAZENDA PONTES");
-  const armazenado = await page.evaluate(() => {
-    const tudo: string[] = [];
-    for (const s of [window.localStorage, window.sessionStorage]) for (let i = 0; i < s.length; i++) { const k = s.key(i)!; tudo.push(`${k}=${s.getItem(k) ?? ""}`); }
-    return tudo.join("\n");
-  });
-  // a asserção compara PRESENÇA, nunca imprime o armazenamento: ele guarda a sessão (token), que não vai para log algum
-  expect(armazenado.includes("agro.session"), "premissa: a leitura do armazenamento funciona (a sessão mora lá)").toBe(true);
-  const achados = [cnpj, fmtCnpj(cnpj), "AGROPECUARIA", "FAZENDA PONTES", "RODOVIA BR 174", "contato@fazendapontes", "importacaoCnpj"].filter((t) => armazenado.includes(t));
-  expect(achados, "nada da Receita no navegador (sessionStorage/localStorage)").toEqual([]);
-  // consumido UMA vez: recarregar o parceiro novo não traz os dados de novo
-  await page.reload();
+  await expect.poll(() => escritas.some((e) => e.chave === "agro.session"), { message: "premissa: o vigia vê as escritas da aplicação (a sessão do login)" }).toBe(true);
+  expect(escritas.filter((e) => e.termos.length > 0).map((e) => ({ chave: e.chave, termos: e.termos })), "nenhuma ESCRITA com dado da Receita no sessionStorage/localStorage").toEqual([]);
+  // consumido UMA vez, sem recarregar (a memória sobreviveria a uma navegação do cliente): voltar e avançar pelo
+  // histórico remonta a ficha nova, e ela vem vazia
+  await page.goBack();
+  await expect(page).toHaveURL(/\/configuracoes\?tab=parceiros/);
+  await page.goForward();
+  await expect(page).toHaveURL(/\/cadastros\/people\/new/);
   await expect(page.getByLabel("CPF/CNPJ", { exact: true })).toHaveValue("");
   await expect(page.getByLabel("Nome Social/Fantasia")).toHaveValue("");
+  expect(escritas.filter((e) => e.termos.length > 0), "nem depois").toEqual([]);
 });
 
 // ───────────────────────────── UI-17 (W-6) ─────────────────────────────
@@ -1168,6 +1182,23 @@ test("UI-21c (W-4/W-8) — cabeçalho da ficha de Funcionários: documento fora 
   await page.goto(`/cadastros/funcionarios/${f.id}`);
   await expect(ficha(page)).toBeVisible();
   await expect(cabecalho(page, "document").locator("b"), "sem pontuação de CNPJ").toHaveText(doc);
+});
+
+test("UI-21g (C-1, revisão final) — Anexos na barra só onde o cadastro aceita anexo: o Parceiro tem e abre a lista; a ficha de Funcionários (visão de Parceiros) não mostra o botão", async ({ page }) => {
+  await login(page);
+  const p = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-21g parceiro"), person_type: "legal", is_client: true });
+  await page.goto(`/cadastros/people/${p.id}`);
+  await expect(ficha(page)).toBeVisible();
+  const lista = page.waitForResponse((r) => r.request().method() === "GET" && new URL(r.url()).pathname === "/api/attachments");
+  await page.getByTestId("ficha-anexos").click();
+  const r = await lista;
+  expect(r.status(), "premissa: no Parceiro o diálogo lista os anexos da entidade canônica (a tabela)").toBe(200);
+  expect(new URL(r.url()).searchParams.get("entity")).toBe("people");
+  await page.keyboard.press("Escape");
+  const f = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-21g funcionário"), person_type: "natural", document: cpfValido(), is_employee: true });
+  await page.goto(`/cadastros/funcionarios/${f.id}`);
+  await expect(ficha(page)).toBeVisible();
+  await expect(page.getByTestId("ficha-anexos"), "Funcionários é visão de Parceiros: a API não aceita anexo nela — sem botão").toHaveCount(0);
 });
 
 test("UI-21d (W-3) — Tipo de pessoa em EDIÇÃO também sem o X de limpar (o tipo nunca fica vazio); o seletor opcional vizinho mantém o X", async ({ page }) => {

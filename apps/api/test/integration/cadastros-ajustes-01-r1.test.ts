@@ -219,9 +219,12 @@ describe("MK-2 (A-8) PUT /admin/parameters lê as máscaras ATUAIS sob a trava d
       await outra.query("update erp.organizations set parameters = jsonb_set(coalesce(parameters, '{}'::jsonb), '{mascaras_codigo}', '{\"cost_centers\":\"9.9.99\"}'::jsonb) where id=$1", [h.demo.orgId]);
       // a tela manda o objeto de máscaras que ela LEU antes (vazio = padrão para todos): pela leitura de antes, "sem mudança"
       const pedido = h.app.inject({ method: "PUT", url: "/api/admin/parameters", headers: hdr(), payload: { mascaras_codigo: {} } });
-      const esperando = async () => (await q<{ n: number }>("select count(*)::int n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'"))[0]!.n;
+      // a espera tem de ser na trava ADVISORY da numeração (revisão final do R1): a outra sessão também segura a linha da
+      // organização, e sem a trava advisory o PUT esperaria a LINHA e releria a máscara nova do mesmo jeito — contar
+      // qualquer espera deixava o MK-2 verde sem a trava que ele diz provar
+      const esperando = async () => (await q<{ n: number }>("select count(*)::int n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and wait_event = 'advisory'"))[0]!.n;
       for (let t = 0; t < 100 && (await esperando()) < 1; t++) await new Promise((r) => setTimeout(r, 20));
-      expect(await esperando(), "premissa: o PUT espera a outra sessão").toBe(1);
+      expect(await esperando(), "premissa: o PUT espera a trava da numeração (advisory) que a outra sessão segura").toBe(1);
       await outra.query("commit");
       const r = await pedido;
       recusaNoCampo(r, "mascaras_codigo.cost_centers", `Há ${vivos} registros: a máscara só muda com o cadastro vazio.`);

@@ -1219,7 +1219,9 @@ pós-condição confere, e confere também que os dois CHECKs do par existem). *
      das opções de sempre; a anterior confere tipo × documento com a mesma regra (R1-6) e recusa em 422 o que não bater;
    - **"Tipo do parceiro" num campo só**: continua gravando os mesmos booleanos `is_client`, `is_provider`,
      `is_transporter`, `is_employee`, `is_proprietary`;
-   - **Anexos na barra de ações**: o mesmo diálogo e as mesmas rotas de anexo de antes, só em outro lugar da ficha.
+   - **Anexos na barra de ações**: o mesmo diálogo e as mesmas rotas de anexo de antes, só em outro lugar da ficha — e só
+     nas fichas cujo cadastro aceita anexo. Funcionários é VISÃO de Parceiros (recorte fixo `is_employee`): a API não a
+     aceita como pai de anexo (422), então a ficha de Funcionários não mostra o botão (revisão final do R1).
 4. **web ANTERIOR × API nova — referências (A):** a busca sem texto passa a responder 200 (a anterior dava 500 ao abrir
    Banco, NCM, CBO ou Cidade); o formato da resposta é o mesmo, só o texto do rótulo muda (`5106752 · Pontes e Lacerda -
    MT`, `001 · Banco do Brasil S.A.`). CEP passa a responder a qualquer membro da organização.
@@ -1240,7 +1242,9 @@ pós-condição confere, e confere também que os dois CHECKs do par existem). *
    (advisory — as inclusões pela API daquele cadastro, naquela organização, esperam) → linha do contador `for update` →
    contagem: com registro vivo, 422 com o motivo, sem nenhuma escrita e sem pedir trava de tabela → **limite de 1 Zerar
    por cadastro por organização por minuto** (o segundo → 429; conferido na auditoria, dentro da transação: vale entre
-   instâncias da API e só conta o Zerar que gravou) → liberação dos excluídos que seguram código (`EXC-<id>`; os pares
+   instâncias da API e só conta o Zerar que gravou) → fila de Zerar da MESMA tabela entre organizações (advisory só da
+   tabela: sem ela, dois Zerar de organizações diferentes, cada um com a liberação feita, pediam a trava da tabela um
+   contra o outro e o banco derrubava um com 409; com ela, o segundo espera o primeiro) → liberação dos excluídos que seguram código (`EXC-<id>`; os pares
    `{ id, codigo_antigo }` vão na auditoria do Zerar, porque a maioria das tabelas não tem gatilho de auditoria) e
    contador a 0 → auditoria → **só então** `LOCK TABLE … IN SHARE ROW EXCLUSIVE` e, sob ela, SÓ a recontagem, até o
    commit. Com a tabela travada — quando inclusões NAQUELA tabela esperam, em TODAS as organizações — fica só a
@@ -1277,16 +1281,21 @@ UI-1 abrir um parceiro em leitura → `Consultar CNPJ` ao lado de `Anexos`, habi
 aba Divergências; `Importar para o cadastro` → entra em Editar com os campos preenchidos e Tipo = Jurídica; Cancelar
 (nada gravado). UI-2 lista de Parceiros → `Novo pelo CNPJ` → Importar → parceiro novo preenchido (Salvar só se
 quiser manter). UI-4 CEP + Tab → Endereço, Bairro, Cidade, Código IBGE, UF e foco no Número; CEP de outra cidade →
-aviso. UI-6 digitar 11 dígitos → Física (RG, CAEPF, Sexo aparecem; "Nome completo"); 14 → Jurídica (Matriz
-aparece); parceiro Jurídica com CPF → faixa âmbar e `Ajustar para Física`. UI-7 Tipo do parceiro num campo só;
+aviso. UI-6 digitar 11 dígitos e SAIR do campo (Tab) → Física (RG, CAEPF, Sexo aparecem; "Nome completo");
+enquanto se digita continua Jurídica, com máscara de CNPJ; a partir da 12ª posição → Jurídica já digitando (Matriz
+aparece); troca que apagaria campo preenchido pergunta antes, listando-os; parceiro Jurídica com CPF → faixa âmbar e
+`Ajustar para Física`. UI-7 Tipo do parceiro num campo só;
 marcar Fornecedor → aba Fornecedor aparece. UI-3 campo Cidade: "pontes" → `5106752 · Pontes e Lacerda - MT`; um CEP →
 a cidade do CEP como 1ª opção; 5106752 no Código IBGE → a cidade; UF só leitura. UI-5 máscaras: CPF, CNPJ (também colado
-com pontuação e com o tipo ainda em Física), CEP, telefone e celular aparecem formatados e gravam só os dígitos. UI-8
+com pontuação e com o tipo ainda em Física), CEP, telefone e celular aparecem formatados e gravam só os dígitos (telefone: formatado ao SAIR do campo —
+enquanto se digita, o texto digitado; com mais de 11 dígitos, ex. ramal, fica como digitado). UI-8
 abrir Banco, NCM e CBO SEM digitar → a lista aparece (antes: erro); "nubank" → 260. UI-9 Naturezas: Código só leitura;
-Novo filho mostra "será gerado ao salvar: …"; Mover um galho → prévia → Confirmar → códigos novos. **Use um galho de
-teste criado só para isso: o Mover é definitivo.** Mover de volta NÃO devolve os códigos antigos — o galho recebe o
-PRÓXIMO código livre debaixo do superior de origem (1.03 → 2.05 → 1.07, não 1.03), e o que virou `EXC-<id>` continua
-`EXC-<id>`; os códigos antigos ficam só no `audit` do Mover. UI-10 Parametrizações → Numeração: cadastro com registros →
+Novo filho mostra "será gerado ao salvar: …"; Mover um galho → PRÉVIA (os códigos novos) → **Cancelar**: a prévia é o
+mesmo plano do POST e não grava nada. **Confirmar só com um galho que se queira de fato mover: o Mover é definitivo** —
+e em produção nada se apaga (decisão 247): um galho de teste criado e excluído fica para sempre segurando os códigos.
+Mover de volta NÃO GARANTE os códigos antigos: o galho recebe o número seguinte ao MAIOR código debaixo do superior de
+origem (se era o último filho, volta ao mesmo número; senão ganha outro — ex.: 1.03 → 2.05 → 1.07); o que virou
+`EXC-<id>` continua `EXC-<id>`; os códigos antigos ficam no `audit` do Mover. UI-10 Parametrizações → Numeração: cadastro com registros →
 Zerar desabilitado com o motivo (não zerar nada em produção sem querer).
 
 ## Checklist de go-live

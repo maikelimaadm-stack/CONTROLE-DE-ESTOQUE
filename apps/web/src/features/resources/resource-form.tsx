@@ -94,6 +94,10 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const fields = React.useMemo(() => (def?.fields ?? []).map((f) => (codigoTravado && f.name === "code" ? { ...f, readOnly: true, required: false, help: "Será gerado ao salvar." } : superiorTravado && f.name === "parent_id" ? { ...f, readOnly: true, help: "Para mudar o superior, use Mover (tela de árvore)." } : f)), [def, codigoTravado, superiorTravado]);
   // FICHA EM ABAS (decisão 253): cadastro com `abas` no registry usa a ficha; os demais, o layout de painéis
   const ficha = Boolean(def?.abas?.length);
+  // ANEXOS na barra (C-1): a entidade do anexo é a TABELA do cadastro, e um cadastro com recorte fixo (ex.: Funcionários
+  // sobre Parceiros) é VISÃO de outro — a API não o aceita como pai de anexo (attachment-parent.ts). Sem o botão ali:
+  // antes ele abria o diálogo e recebia 422 "Entidade não aceita anexos" (revisão final do R1).
+  const anexavel = Boolean(def && !def.filtroFixo);
   const [errosFicha, setErrosFicha] = React.useState<ErroDaFicha[]>([]);
   const errosDoServidor = React.useRef<string[]>([]);
   const layout = useFormLayout(resourceKey, fields);
@@ -250,7 +254,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
         </>}
         {/* AJUSTES 01 (C-1): Anexos na barra de TODA ficha em abas (mesmo diálogo); no Parceiro, Consultar CNPJ
             SEMPRE habilitado (leitura e edição) e Outras opções — só com a API que declara a janela */}
-        {ficha && !rapido && <PillBtn tone="gray" data-testid="ficha-anexos" onClick={() => (isNew || !q.data?.["id"] ? toast.info(`Salve o ${def.label.toLowerCase()} para anexar arquivos.`) : setAnexos(true))}><Paperclip className="h-3.5 w-3.5" /> Anexos</PillBtn>}
+        {ficha && !rapido && anexavel && <PillBtn tone="gray" data-testid="ficha-anexos" onClick={() => (isNew || !q.data?.["id"] ? toast.info(`Salve o ${def.label.toLowerCase()} para anexar arquivos.`) : setAnexos(true))}><Paperclip className="h-3.5 w-3.5" /> Anexos</PillBtn>}
         {parceiroComJanela && <PillBtn tone="gray" data-testid="ficha-consultar-cnpj" onClick={() => setJanelaCnpj(true)}><Search className="h-3.5 w-3.5" /> Consultar CNPJ</PillBtn>}
         {parceiroComJanela && <Menu trigger={<PillBtn tone="gray" data-testid="ficha-outras-opcoes">Outras opções <ChevronDown className="h-3.5 w-3.5" /></PillBtn>} items={[
           { label: "Validar CPF/CNPJ", onClick: validarDocumentoDaFicha },
@@ -276,7 +280,7 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
         : panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} style={panelStyle} onToggleStyle={togglePanelStyle} animate={!readOnly} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
       {!isNew && q.data && <div className="px-2 pt-2 text-[11px] text-slate-400">Criado em {dateTimeBR(q.data["created_at"] as string)} · atualizado em {dateTimeBR(q.data["updated_at"] as string)}</div>}
       </div>
-      {ficha && !rapido && !isNew && q.data?.["id"] ? <AttachmentsDialog open={anexos} onOpenChange={setAnexos} entity={def.key} entityId={String(q.data["id"])} title={`Anexos · ${String(q.data[def.labelField] ?? "")}`} /> : null}
+      {ficha && !rapido && anexavel && !isNew && q.data?.["id"] ? <AttachmentsDialog open={anexos} onOpenChange={setAnexos} entity={def.table} entityId={String(q.data["id"])} title={`Anexos · ${String(q.data[def.labelField] ?? "")}`} /> : null}
       {parceiroComJanela && <JanelaConsultaCnpj open={janelaCnpj} onOpenChange={setJanelaCnpj} cnpjInicial={tipoDoDocumento(values["document"]) === "legal" ? normalizarDocumento(String(values["document"])) : ""} cadastro={values} onImportar={importarDaReceita} camposApagados={apagadosAoImportar.map((f) => f.label)} />}
       <Confirm open={confirmDel} onOpenChange={setConfirmDel} title="Confirme a exclusão" text={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`} danger loading={remove.isPending} onConfirm={() => remove.mutate()} />
     </form>
