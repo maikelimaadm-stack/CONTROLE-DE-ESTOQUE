@@ -738,10 +738,10 @@ test("UI-16 (W-5) — Novo pelo CNPJ leva os dados EM MEMÓRIA: nada da Receita 
     for (const s of [window.localStorage, window.sessionStorage]) for (let i = 0; i < s.length; i++) { const k = s.key(i)!; tudo.push(`${k}=${s.getItem(k) ?? ""}`); }
     return tudo.join("\n");
   });
-  expect(armazenado, "premissa: a leitura do armazenamento funciona (a sessão mora lá)").toContain("agro.session");
-  for (const t of [cnpj, fmtCnpj(cnpj), "AGROPECUARIA", "FAZENDA PONTES", "RODOVIA BR 174", "contato@fazendapontes", "importacaoCnpj"]) {
-    expect(armazenado, `nada da Receita no navegador: ${t}`).not.toContain(t);
-  }
+  // a asserção compara PRESENÇA, nunca imprime o armazenamento: ele guarda a sessão (token), que não vai para log algum
+  expect(armazenado.includes("agro.session"), "premissa: a leitura do armazenamento funciona (a sessão mora lá)").toBe(true);
+  const achados = [cnpj, fmtCnpj(cnpj), "AGROPECUARIA", "FAZENDA PONTES", "RODOVIA BR 174", "contato@fazendapontes", "importacaoCnpj"].filter((t) => armazenado.includes(t));
+  expect(achados, "nada da Receita no navegador (sessionStorage/localStorage)").toEqual([]);
   // consumido UMA vez: recarregar o parceiro novo não traz os dados de novo
   await page.reload();
   await expect(page.getByLabel("CPF/CNPJ", { exact: true })).toHaveValue("");
