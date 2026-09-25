@@ -390,3 +390,31 @@ describe("T-4 duplicidade no banco → 409 CONFLICT legível, nada gravado", () 
     expect(Number((await um<{ n: string }>("select count(*)::text n from erp.title_types where organization_id=$1", [h.demo.orgId]))!.n), "nada gravado").toBe(antes);
   });
 });
+
+// ───────────────────────────── A-7 sob concorrência (revisão final do R1) ─────────────────────────────
+describe("CG-1 (A-7) o código gerado na edição decide pela linha RELIDA sob a trava da numeração", () => {
+  it("o acervo sem código ganha código noutra sessão enquanto o PUT espera a trava: o PUT recusa com 409 e NÃO troca o código já dado", async () => {
+    const superior = (await um<{ id: string }>("select id from erp.product_groups where organization_id=$1 and code='1' and deleted_at is null", [h.demo.orgId]))!.id;
+    const nomeAntes = nome("acervo CG-1");
+    const acervo = (await um<{ id: string }>("insert into erp.product_groups(organization_id,name,parent_id) values ($1,$2,$3) returning id", [h.demo.orgId, nomeAntes, superior]))!.id;
+    const outra = await admin.connect();
+    try {
+      await outra.query("begin");
+      // a outra sessão (um salvamento que chegou antes) segura a trava da numeração de Grupos e dá ao acervo o código 1.97
+      await outra.query("select pg_advisory_xact_lock(hashtext('codigo-cadastro:' || 'product_groups' || ':' || $1))", [h.demo.orgId]);
+      await outra.query("update erp.product_groups set code='1.97' where id=$1", [acervo]);
+      // a ficha foi aberta ANTES: o PUT lê o acervo ainda sem código e fica na fila da trava
+      const pedido = put("product_groups", acervo, { name: "CG-1 salvo com a ficha velha" });
+      const esperando = async () => (await q<{ n: number }>("select count(*)::int n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and query ilike '%codigo-cadastro%'"))[0]!.n;
+      for (let t = 0; t < 150 && (await esperando()) < 1; t++) await new Promise((r) => setTimeout(r, 20));
+      expect(await esperando(), "premissa: o PUT espera a trava da numeração").toBe(1);
+      await outra.query("commit");
+      const r = await pedido;
+      expect(r.statusCode, r.body).toBe(409);
+      expect(j(r).error).toMatchObject({ code: "CONCURRENCY_CONFLICT" });
+      expect(await um("select code, name from erp.product_groups where id=$1", [acervo]), "o código já dado fica e nada do PUT grava").toEqual({ code: "1.97", name: nomeAntes });
+    } finally {
+      await outra.query("rollback").catch(() => undefined); outra.release();
+    }
+  }, 30_000);
+});

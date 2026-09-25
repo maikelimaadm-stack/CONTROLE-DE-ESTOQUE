@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { createPool, type Db } from "@agro/db";
+import { createPool, seedDemo, type Db } from "@agro/db";
 import { harness, TEST_URL, type Harness } from "./setup.js";
 
 /**
@@ -367,5 +367,41 @@ describe("ZN-6 a trava da tabela não congela as outras organizações", () => {
     } finally { await outra.query("rollback"); outra.release(); }
     const livre = await zerar("cost_centers");
     expect(livre.statusCode, livre.body).toBe(200);
+  }, 30_000);
+});
+
+describe("ZN-10 (A-2, revisão final do R1) dois Zerar do MESMO cadastro em organizações diferentes não se travam um ao outro", () => {
+  it("as liberações dos dois correm juntas (o caso real: dezenas de milhares de excluídos): o segundo espera o primeiro na fila do Zerar, e os dois terminam 200 — sem a fila, cada liberação segura a tabela, os dois pedem a trava dela e o banco derruba um (409)", async () => {
+    await esvaziar("bank_accounts");
+    await passarUmMinuto("bank_accounts");
+    const b = await seedDemo(admin, { orgName: "[TEST] Org ZN-10", adminEmail: "adminzn10@demo.local", adminPassword: "Demo@12345", slug: "org-zn10" }, () => {});
+    const tok = j(await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: "adminzn10@demo.local", password: "Demo@12345" } })).token as string;
+    const hb = { authorization: `Bearer ${tok}`, "x-org-id": b.orgId, "content-type": "application/json" };
+    await admin.query("update erp.bank_accounts set deleted_at = now() where organization_id=$1 and deleted_at is null", [b.orgId]);
+    for (const org of [h.demo.orgId, b.orgId]) expect(await q("select count(*)::int n from erp.bank_accounts where organization_id=$1 and deleted_at is null", [org]), "premissa: Contas bancárias vazias nas duas").toEqual([{ n: 0 }]);
+    const outra = await admin.connect();
+    try {
+      // outra sessão para a gravação da AUDITORIA (share mode barra insert), que no Zerar vem DEPOIS da liberação e ANTES
+      // da trava da tabela: é o jeito determinístico de pôr as duas liberações "ao mesmo tempo", como acontece quando
+      // cada uma leva segundos. Sem a fila do Zerar, as duas liberações acontecem e as duas param aqui, segurando a tabela.
+      await outra.query("begin");
+      await outra.query("lock table erp.audit_logs in share mode");
+      const parados = async () => (await q<{ n: number }>("select count(*)::int n from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock' and (query ilike '%insert into erp.audit_logs%' or query ilike '%zerar-tabela%')"))[0]!.n;
+      const zA = zerar("bank_accounts");
+      for (let t = 0; t < 150 && (await parados()) < 1; t++) await new Promise((r) => setTimeout(r, 20));
+      expect(await parados(), "premissa: o Zerar de A liberou e parou na auditoria").toBe(1);
+      const zB = zerar("bank_accounts", hb);
+      for (let t = 0; t < 150 && (await parados()) < 2; t++) await new Promise((r) => setTimeout(r, 20));
+      expect(await parados(), "premissa: o Zerar de B também parou (na fila do Zerar ou, sem ela, na auditoria)").toBe(2);
+      await outra.query("rollback");
+      const [rA, rB] = await Promise.all([zA, zB]);
+      expect([rA.statusCode, rB.statusCode], `A: ${rA.body} · B: ${rB.body}`).toEqual([200, 200]);
+      for (const org of [h.demo.orgId, b.orgId]) {
+        expect(await q("select count(*)::int n from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id='bank_accounts' and action='zerar' and created_at > now() - interval '1 minute'", [org]), "cada Zerar gravou a sua auditoria").toEqual([{ n: 1 }]);
+        expect(await q("select coalesce(max(last_value), 0)::int v from erp.code_sequences where organization_id=$1 and entity='bank_account'", [org])).toEqual([{ v: 0 }]);
+      }
+    } finally {
+      await outra.query("rollback").catch(() => undefined); outra.release();
+    }
   }, 30_000);
 });

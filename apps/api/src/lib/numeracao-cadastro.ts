@@ -133,7 +133,8 @@ const JANELA_DO_ZERAR = "1 minute";
  *     sob a trava: vale entre instâncias da API (o limitador em memória das consultas é por processo), serializa com
  *     o Zerar concorrente (o segundo espera a trava e vê a auditoria do primeiro) e só conta o Zerar que GRAVOU (o
  *     desfeito — 422 na recontagem, 409 na trava da tabela — não deixa auditoria);
- *  4. LIBERAÇÃO dos excluídos (`EXC-<id>`) com os pares `{ id, codigo_antigo }` (UPDATE … FROM alvo RETURNING: a
+ *  4. fila de Zerar da MESMA tabela entre organizações (advisory só da tabela — sem ela, duas liberações seguidas de
+ *     dois pedidos de trava da tabela se esperam uma à outra) e a LIBERAÇÃO dos excluídos (`EXC-<id>`) com os pares `{ id, codigo_antigo }` (UPDATE … FROM alvo RETURNING: a
  *     maioria das tabelas não tem gatilho de auditoria, e o código antigo se perderia) e contador a 0 — tudo ANTES da
  *     trava da tabela: esse UPDATE é o passo longo (dezenas de milhares de excluídos) e só toca linhas desta
  *     organização; quem inclui pela API já está parado na trava da numeração;
@@ -161,6 +162,11 @@ export async function zerarNumeracao(ctx0: ServiceCtx, cadastro: string): Promis
   // Zerar ia de fato gravar (e pedir a trava da tabela) pela segunda vez no mesmo minuto
   const recente = await ctx.tx.query("select 1 from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id=$2 and action='zerar' and created_at > now() - $3::interval limit 1", [ctx.orgId, def.key, JANELA_DO_ZERAR]);
   if (recente.rowCount) throw err("RATE_LIMITED", `A numeração de ${def.labelPlural} foi zerada há menos de 1 minuto; aguarde para zerar de novo.`);
+  // UM ZERAR POR TABELA DE CADA VEZ, entre organizações: a liberação (UPDATE) já segura ROW EXCLUSIVE na tabela e
+  // depois pede SHARE ROW EXCLUSIVE — dois Zerar do mesmo cadastro em organizações diferentes, cada um com a sua
+  // liberação feita, esperariam um pelo outro (impasse de promoção de trava: o banco derruba um com 409). Com esta
+  // fila (só de Zerar, antes da primeira escrita) o segundo espera o primeiro terminar e os dois terminam 200.
+  await ctx.tx.query("select pg_advisory_xact_lock(hashtext('zerar-tabela:' || $1))", [def.table]);
   const t = `erp.${ident(def.table)}`;
   const lib = await ctx.tx.query<{ id: string; codigo_antigo: string }>(
     `update ${t} x set code = 'EXC-' || x.id::text

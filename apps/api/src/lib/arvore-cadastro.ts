@@ -208,12 +208,22 @@ export async function gerarCodigoNaCriacao(ctx: ServiceCtx, def: ResourceDef, da
  * do superior ATUAL, ou o próximo da raiz), sob a trava da numeração, em vez de recusar a gravação para sempre.
  * `code` no corpo igual ao gerado é aceito (web anterior); diferente → 422. Superior mudando: não gera — quem
  * fala é "Use Mover." (`conferirRegrasDaArvore`). Devolve se gerou.
+ *
+ * `atual` foi lido ANTES da trava: dois salvamentos simultâneos do mesmo registro, ou um Mover no meio, veriam o
+ * código ainda vazio e o superior antigo — o segundo trocaria um código já dado (o que D-1 proíbe) ou gravaria um
+ * código debaixo do superior velho. Por isso a linha é relida SOB a trava (`for update`): se ela já ganhou código ou
+ * mudou de superior, 409 e nada grava — a ficha tem de ser recarregada.
  */
 export async function gerarCodigoNaEdicao(ctx: ServiceCtx, def: ResourceDef, data: Linha, atual: Linha): Promise<boolean> {
   if (def.codigoAutomatico !== "hierarquico" || (typeof atual["code"] === "string" && atual["code"] !== "")) return false;
   const superior = canonico(atual["parent_id"]);
   if ("parent_id" in data && canonico(data["parent_id"]) !== superior) return false;
   await travarNumeracao(ctx, def);
+  const agora = await ctx.tx.query<{ code: string | null; parent_id: string | null }>(
+    `select code, parent_id::text as parent_id from erp.${ident(def.table)} where id = $1 and organization_id = $2 for update`, [atual["id"], ctx.orgId]);
+  const linha = agora.rows[0];
+  if (!linha || (linha.code !== null && linha.code !== "") || canonico(linha.parent_id) !== superior)
+    throw err("CONCURRENCY_CONFLICT", "O registro mudou enquanto você editava (ganhou código ou mudou de superior); recarregue a ficha e salve de novo.");
   const pedido = typeof data["code"] === "string" && data["code"] !== "" ? data["code"] : null;
   const { codigo } = await sugerirCodigo(ctx, def, superior);
   if (pedido !== null && pedido !== codigo) throw campo("code", MENSAGEM_CODIGO_GERADO);
