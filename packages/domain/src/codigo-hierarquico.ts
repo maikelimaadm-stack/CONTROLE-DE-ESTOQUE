@@ -90,3 +90,22 @@ export function proximoCodigoHierarquico(codigoPai: string | null, codigosExiste
   if (proximo >= 10 ** largura) return { erro: `Não há mais códigos livres neste nível (${largura} dígito(s)).` };
   return { codigo: prefixo + String(proximo).padStart(largura, "0") };
 }
+
+/**
+ * CADASTROS COM "ZERAR NUMERAÇÃO" (decisão 257 D-3): uma linha por cadastro com código, na ordem da tela de
+ * Parametrizações. Lista FECHADA e explícita — nunca derivada de "tem `codeEntity`": documentos (títulos,
+ * notas, vendas, OS, lançamentos, apurações, contratos, planejamentos) também numeram e JAMAIS voltam a 1.
+ * Parceiro e Funcionário são a mesma tabela: uma linha só, `people`.
+ */
+export const CADASTROS_COM_NUMERACAO = [
+  "chart_accounts", "financial_categories", "cost_centers", "product_groups",
+  "people", "products", "bank_accounts", "areas", "feedlot_yards", "feedlot_sectors", "feedlot_corrals",
+] as const;
+export type CadastroComNumeracao = (typeof CADASTROS_COM_NUMERACAO)[number];
+export function ehCadastroComNumeracao(chave: string): chave is CadastroComNumeracao {
+  return (CADASTROS_COM_NUMERACAO as readonly string[]).includes(chave);
+}
+/** Largura do código sequencial (zeros à esquerda): Produto 5, os demais 4 — a mesma de sempre. */
+export function larguraDoCodigoSequencial(chave: string): number {
+  return chave === "products" ? 5 : 4;
+}

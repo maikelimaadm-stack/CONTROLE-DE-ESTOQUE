@@ -11,6 +11,7 @@ import { Card, Dialog, Field, Input, Button, EmptyState } from "@/components/ui"
 import { RefSelect } from "@/components/ui/ref-select";
 import { PillBtn } from "@/features/base1/ui";
 import { ResourceForm } from "./resource-form";
+import { useCodigoTravado, useMoverComFilhos } from "./capacidade-codigo";
 
 /** Linha da listagem em ordem de árvore (`GET /resources/:key` sem ordenação: `nivel`, `ancestrais`, `tem_filhos`). */
 interface No { id: string; code?: string | null; kind?: string | null; parent_id?: string | null; nivel: number; ancestrais: string[]; tem_filhos: boolean; [k: string]: unknown }
@@ -39,6 +40,11 @@ export function ArvoreTela({ resourceKey, alternar }: { resourceKey: string; alt
   const [modo, setModo] = React.useState<"view" | "edit" | "new">("view");
   const [paiNovo, setPaiNovo] = React.useState<string | null>(null);
   const [movendo, setMovendo] = React.useState(false);
+  // decisão 257 D: com a API nova, código gerado no servidor (prévia "será gerado ao salvar") e Mover do GALHO
+  // com renumeração; sem as capacidades (API anterior), a tela de antes
+  const codigoTravado = useCodigoTravado(def);
+  const moverGalho = useMoverComFilhos() && def.codigoAutomatico === "hierarquico";
+  const previsto = useQuery({ queryKey: ["b1", resourceKey, "codigo-previsto", paiNovo], queryFn: () => api<{ codigo: string }>(`/api/resources/${resourceKey}/proximo-codigo${paiNovo ? `?parent_id=${encodeURIComponent(paiNovo)}` : ""}`), enabled: codigoTravado && modo === "new", retry: false });
   const nos = React.useMemo(() => arvore.data?.items ?? [], [arvore.data]);
   const porId = React.useMemo(() => new Map(nos.map((n) => [n.id, n])), [nos]);
   const filtro = React.useMemo(() => {
@@ -81,21 +87,25 @@ export function ArvoreTela({ resourceKey, alternar }: { resourceKey: string; alt
     <section className="min-w-0" aria-label="Ficha">
       {modo === "new" ? <>
         <p className="mb-2 text-[12px] text-slate-500" data-testid="arvore-novo-superior">{paiNovo ? `Novo abaixo de ${porId.get(paiNovo) ? rotulo(porId.get(paiNovo)!) : "…"}` : "Novo na raiz"}</p>
+        {codigoTravado && <p className="mb-2 text-[12px] text-slate-600" data-testid="arvore-codigo-previsto">Código: {previsto.data ? `será gerado ao salvar: ${previsto.data.codigo}` : previsto.isError ? (previsto.error as Error).message : "será gerado ao salvar"}</p>}
         <ResourceForm key={`novo-${paiNovo ?? "raiz"}`} resourceKey={resourceKey} id="new" presetExtra={paiNovo ? { parent_id: paiNovo } : {}}
           embedded={{ mode: "new", row: null, setMode: setModo, onExit: () => setModo("view"), refresh: atualizar }}
           afterSave={(row) => { atualizar(); setSel(String(row["id"])); setModo("view"); }} onCancel={() => setModo("view")} />
       </> : selecionado ? <>
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
           {podeTerFilho(selecionado) && <PillBtn onClick={() => novoFilho(selecionado.id)}><Plus className="h-3.5 w-3.5" /> Novo filho</PillBtn>}
-          {/* Mover só registro SEM filhos (a API recusa o resto com a mesma frase): com filhos, o botão nem aparece */}
-          {podeEditar && (selecionado.tem_filhos
+          {/* API nova (moverComFilhos): Mover para QUALQUER registro, com prévia da renumeração do galho. API anterior:
+              Mover só registro SEM filhos (ela recusa o resto com a mesma frase): com filhos, o botão nem aparece */}
+          {podeEditar && moverGalho && <PillBtn tone="gray" data-testid="arvore-mover" onClick={() => setMovendo(true)}><MoveRight className="h-3.5 w-3.5" /> Mover…</PillBtn>}
+          {podeEditar && !moverGalho && (selecionado.tem_filhos
             ? <span className="text-[11px] text-slate-500" data-testid="arvore-mover-com-filhos">Registro com filhos: mova ou renumere os filhos antes.</span>
             : <PillBtn tone="gray" onClick={() => setMovendo(true)}><MoveRight className="h-3.5 w-3.5" /> Mover</PillBtn>)}
         </div>
         <ResourceForm key={`${selecionado.id}-${modo}`} resourceKey={resourceKey} id={selecionado.id}
           embedded={{ mode: modo, row: null, setMode: setModo, onExit: () => { setSel(null); setModo("view"); }, refresh: atualizar }}
           afterSave={() => { atualizar(); setModo("view"); }} />
-        {movendo && !selecionado.tem_filhos && <MoverDialogo resourceKey={resourceKey} no={selecionado} rotulo={rotulo(selecionado)} temKind={temKind} onFechar={() => setMovendo(false)} onMovido={() => { setMovendo(false); atualizar(); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); }} />}
+        {movendo && moverGalho && <MoverGalhoDialogo resourceKey={resourceKey} no={selecionado} rotulo={rotulo(selecionado)} temKind={temKind} onFechar={() => setMovendo(false)} onMovido={() => { setMovendo(false); atualizar(); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); }} />}
+        {movendo && !moverGalho && !selecionado.tem_filhos && <MoverDialogo resourceKey={resourceKey} no={selecionado} rotulo={rotulo(selecionado)} temKind={temKind} onFechar={() => setMovendo(false)} onMovido={() => { setMovendo(false); atualizar(); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); }} />}
       </> : <EmptyState title="Escolha um registro na árvore" description={podeCriar ? "Ou use Novo na raiz." : undefined} icon={<FolderTree className="h-6 w-6" />} />}
     </section>
   </div>;
@@ -135,6 +145,56 @@ function MoverDialogo({ resourceKey, no, rotulo, temKind, onFechar, onMovido }: 
       </Field>
       {comCodigo && <Field label="Código novo" span={12} help="Sugerido pelo servidor a partir do superior; pode editar."><Input aria-label="Código novo" value={codigo} onChange={(e) => { setCodigoMexido(true); setCodigo(e.target.value); }} /></Field>}
       {erro && <p role="alert" className="col-span-12 text-[12px] text-red-600">{erro}</p>}
+    </div>
+  </Dialog>;
+}
+
+/** Mensagem da recusa da API: detalhes do campo quando vierem, senão a mensagem geral. */
+function mensagemDoErro(e: unknown): string {
+  const det = (e as Error & { details?: { message: string }[] }).details;
+  return det?.length ? det.map((d) => d.message).join(" ") : (e as Error).message;
+}
+
+interface PlanoDoMover { id: string; de: string | null; para: string | null; codigos: { id: string; antes: string | null; depois: string }[] }
+
+/**
+ * MOVER COM RENUMERAÇÃO (decisão 257 D-5): destino (um superior sintético ou a Raiz) → PRÉVIA "de → para" de
+ * cada código do galho (o servidor calcula; a mesma conta do POST) → Confirmar. Os ids não mudam: o que muda é o
+ * superior do movido e o código dele e dos descendentes. Recusa da API aparece como veio.
+ */
+function MoverGalhoDialogo({ resourceKey, no, rotulo, temKind, onFechar, onMovido }: { resourceKey: string; no: No; rotulo: string; temKind: boolean; onFechar: () => void; onMovido: () => void }) {
+  const [raiz, setRaiz] = React.useState(false);
+  const [destino, setDestino] = React.useState<string | null>(null);
+  const alvo = raiz ? "raiz" : destino;
+  const previa = useQuery({
+    queryKey: ["b1", resourceKey, "mover-previa", no.id, alvo],
+    queryFn: () => api<PlanoDoMover>(`/api/resources/${resourceKey}/${no.id}/mover/previa${qs({ superior: alvo! })}`),
+    enabled: Boolean(alvo), retry: false,
+  });
+  const [erro, setErro] = React.useState<string | null>(null); const [gravando, setGravando] = React.useState(false);
+  const confirmar = async () => {
+    setGravando(true); setErro(null);
+    try {
+      await api(`/api/resources/${resourceKey}/${no.id}/mover`, { method: "POST", body: { superior: raiz ? null : destino } });
+      toast.success("Registro movido"); onMovido();
+    } catch (e) { setErro(mensagemDoErro(e)); } finally { setGravando(false); }
+  };
+  const recusa = erro ?? (previa.isError ? mensagemDoErro(previa.error) : null);
+  return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title={`Mover ${rotulo}`}
+    footer={<><Button variant="outline" onClick={onFechar}>Cancelar</Button><Button data-testid="mover-confirmar" loading={gravando} disabled={!previa.data || previa.isFetching} onClick={() => { void confirmar(); }}>Confirmar</Button></>}>
+    <div className="grid grid-cols-12 gap-3" data-testid="mover-dialogo">
+      <Field label="Novo superior" span={12} help={temKind ? "Só superior sintético e ativo. O registro recebe o próximo código livre abaixo dele, e cada descendente troca só o começo do código." : "O registro recebe o próximo código livre abaixo dele."}>
+        {raiz ? <p className="text-[13px] text-slate-600">Raiz</p> : <RefSelect resource={resourceKey} value={destino} onChange={(v) => setDestino(v)} filter={temKind ? { kind: "synthetic" } : undefined} />}
+      </Field>
+      <label className="col-span-12 flex items-center gap-2 text-[13px]"><input type="checkbox" data-testid="mover-raiz" checked={raiz} onChange={(e) => setRaiz(e.target.checked)} /> Mover para a raiz</label>
+      {previa.isFetching && <p className="col-span-12 text-[12px] text-slate-500">Calculando a prévia…</p>}
+      {previa.data && !previa.isFetching && <div className="col-span-12" data-testid="mover-previa">
+        <p className="mb-1 text-[12px] font-semibold text-slate-700">Prévia: {previa.data.codigos.length} {previa.data.codigos.length === 1 ? "código muda" : "códigos mudam"}</p>
+        <ul className="max-h-60 overflow-auto rounded border border-slate-200 text-[12px]">
+          {previa.data.codigos.map((c) => <li key={c.id} data-testid="mover-previa-linha" className="flex gap-2 border-b border-slate-100 px-2 py-0.5 last:border-0"><span className="text-slate-500">{c.antes ?? "(sem código)"}</span><span aria-hidden>→</span><span className="font-semibold">{c.depois}</span></li>)}
+        </ul>
+      </div>}
+      {recusa && <p role="alert" data-testid="mover-erro" className="col-span-12 text-[12px] text-red-600">{recusa}</p>}
     </div>
   </Dialog>;
 }

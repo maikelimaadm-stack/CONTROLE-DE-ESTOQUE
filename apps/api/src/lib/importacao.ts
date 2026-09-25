@@ -540,7 +540,7 @@ async function errosDaGravacao(ctx: ServiceCtx, e: unknown, def: ResourceDef, ro
  * contador da ORGANIZAÇÃO até o commit; dentro do laço, uma importação longa pararia todo cadastro com ID
  * Global da organização (e esgotaria o pool). A prévia, que desfaz tudo, não reserva nada.
  */
-export type Criar = (ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal: boolean }) => Promise<Record<string, unknown>>;
+export type Criar = (ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal: boolean; importacao?: boolean }) => Promise<Record<string, unknown>>;
 
 /** O que fazer quando o código está fora da máscara do cadastro: a regra diz a máscara, a importação diz o formato. */
 const comoCorrigir = (mensagem: string) => {
@@ -623,7 +623,7 @@ export async function importarPlanilha(ctx: ServiceCtx, def: ResourceDef, planil
     if (errosDaLinha.length) { erros.push(...errosDaLinha); registrarFalha(n, celulas, corpo); continue; }
     await ctx.tx.query("savepoint importacao_linha");
     try {
-      const criado = await criar(ctx, def, corpo, { adiarIdGlobal: true });
+      const criado = await criar(ctx, def, corpo, { adiarIdGlobal: true, importacao: true });
       await ctx.tx.query("release savepoint importacao_linha");
       criados.push({ linha: n, id: String(criado["id"]) });
       if (propria) adicionarCriado(propria, def, criado);
