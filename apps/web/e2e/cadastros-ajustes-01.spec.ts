@@ -355,3 +355,77 @@ test("UI-7 — Tipo do parceiro é UM campo de marcação múltipla; marcar Forn
   await grupo.getByLabel("Fornecedor", { exact: true }).uncheck();
   await expect(aba(page, "Fornecedor")).toHaveCount(0);
 });
+
+// ───────────────────────────── UI-9 ─────────────────────────────
+test("UI-9 — Naturezas: Código travado; Novo filho mostra a prévia; Mover galho → prévia → Confirmar → códigos novos", async ({ page }) => {
+  await login(page);
+  const receitas = await api<{ items: { id: string; code: string }[] }>(page, "GET", "/api/resources/financial_categories?code=1&pageSize=5");
+  const raiz1 = receitas.items.find((x) => x.code === "1")!;
+  expect(raiz1, "premissa: RECEITAS = 1").toBeTruthy();
+  const destino = await api<{ id: string; code: string }>(page, "POST", "/api/resources/financial_categories", { name: uniq("UI-9 destino"), nature: "both", kind: "synthetic" });
+  const galho = await api<{ id: string; code: string }>(page, "POST", "/api/resources/financial_categories", { name: uniq("UI-9 galho"), nature: "income", kind: "synthetic", parent_id: raiz1.id });
+  const folha = await api<{ id: string; code: string }>(page, "POST", "/api/resources/financial_categories", { name: uniq("UI-9 folha"), nature: "income", kind: "analytic", parent_id: galho.id });
+  expect(folha.code.startsWith(`${galho.code}.`), "premissa: a folha nasce debaixo do galho").toBe(true);
+
+  await page.goto("/cadastros/financial_categories?visao=arvore");
+  const arvore = page.getByTestId("arvore-tela");
+  await arvore.getByTestId("arvore-no").filter({ hasText: galho.code }).first().getByRole("button", { name: new RegExp(galho.code.replace(/\./g, "\\.")) }).click();
+  // Novo filho: prévia "será gerado ao salvar: <código>" e Código só leitura
+  const sugerido = await api<{ codigo: string }>(page, "GET", `/api/resources/financial_categories/proximo-codigo?parent_id=${galho.id}`);
+  await page.getByRole("button", { name: "Novo filho" }).click();
+  await expect(page.getByTestId("arvore-codigo-previsto")).toHaveText(`Código: será gerado ao salvar: ${sugerido.codigo}`);
+  const codigo = page.getByRole("region", { name: "Ficha" }).getByLabel(/^Código/);
+  if (await codigo.count()) await expect(codigo.first(), "Código não é digitável").not.toBeEditable();
+  await page.getByRole("region", { name: "Ficha" }).getByRole("button", { name: "Cancelar" }).click().catch(() => undefined);
+
+  // Mover o GALHO (com filho) para o destino
+  await page.goto("/cadastros/financial_categories?visao=arvore");
+  await arvore.getByTestId("arvore-no").filter({ hasText: galho.code }).first().getByRole("button", { name: new RegExp(galho.code.replace(/\./g, "\\.")) }).click();
+  await page.getByTestId("arvore-mover").click();
+  const dialogo = page.getByTestId("mover-dialogo");
+  await dialogo.locator("button").first().click();
+  await page.getByPlaceholder("Pesquisar...").fill("UI-9 destino");
+  await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: /UI-9 destino/ }).first().click();
+  const previa = page.getByTestId("mover-previa");
+  await expect(previa).toBeVisible();
+  const linhas = previa.getByTestId("mover-previa-linha");
+  await expect(linhas).toHaveCount(2);
+  const novoGalho = `${destino.code}.01`;
+  await expect(linhas.nth(0)).toContainText(galho.code);
+  await expect(linhas.nth(0)).toContainText(novoGalho);
+  await expect(linhas.nth(1)).toContainText(folha.code);
+  await expect(linhas.nth(1)).toContainText(`${novoGalho}${folha.code.slice(galho.code.length)}`);
+  await page.getByTestId("mover-confirmar").click();
+  await expect(page.getByTestId("mover-dialogo")).toHaveCount(0);
+  const g = await api<{ code: string; parent_id: string }>(page, "GET", `/api/resources/financial_categories/${galho.id}`);
+  const f = await api<{ code: string; parent_id: string }>(page, "GET", `/api/resources/financial_categories/${folha.id}`);
+  expect([g.code, g.parent_id]).toEqual([novoGalho, destino.id]);
+  expect([f.code, f.parent_id]).toEqual([`${novoGalho}${folha.code.slice(galho.code.length)}`, galho.id]);
+});
+
+// ───────────────────────────── UI-10 ─────────────────────────────
+test("UI-10 — Parametrizações › Numeração: zerar cadastro vazio → próximo 1; com registros → botão desabilitado com motivo", async ({ page }) => {
+  await login(page);
+  // Pátios esvaziado (exclusão lógica: a linha e o histórico ficam); nenhum outro spec depende de Pátio
+  const org = sql("select o.id from erp.organizations o join erp.organization_members m on m.organization_id=o.id join erp.users u on u.id=m.user_id where u.email='admin@demo.local' limit 1");
+  sql(`update erp.feedlot_yards set deleted_at = now() where organization_id = '${org}' and deleted_at is null`);
+  const excluidos = Number(sql(`select count(*) from erp.feedlot_yards where organization_id = '${org}' and deleted_at is not null and code is not null and code not like 'EXC-%'`));
+  // atalho na lista VAZIA
+  await page.goto("/cadastros/feedlot_yards");
+  if (excluidos > 0) await expect(page.getByTestId("numeracao-atalho")).toBeVisible();
+
+  await page.goto("/admin/parametros");
+  const secao = page.getByTestId("numeracao-cadastros");
+  await expect(secao).toBeVisible();
+  const patios = secao.getByTestId("numeracao-feedlot_yards");
+  await expect(patios.getByTestId("numeracao-registros")).toHaveText("0");
+  await patios.getByTestId("numeracao-zerar").click();
+  await expect(page.getByTestId("numeracao-confirmacao")).toHaveText(`A numeração de Pátios volta para 1. ${excluidos} ${excluidos === 1 ? "registro excluído terá" : "registros excluídos terão"} o código liberado (ficam como EXC-…). Continuar?`);
+  await page.getByTestId("numeracao-confirmar").click();
+  await expect.poll(async () => Number((await patios.getByTestId("numeracao-proximo").innerText()).trim())).toBe(1);
+  expect(sql(`select count(*) from erp.feedlot_yards where organization_id = '${org}' and deleted_at is not null and code not like 'EXC-%'`), "excluídos liberados").toBe("0");
+  // com registros: desabilitado com o motivo
+  const naturezas = secao.getByTestId("numeracao-financial_categories");
+  await expect(naturezas.getByTestId("numeracao-zerar")).toBeDisabled();
+  await expect(naturezas.getByTestId("numeracao-motivo")).toContainText(/Há \d+ registros em Naturezas/);
+});
