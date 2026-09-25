@@ -233,6 +233,41 @@ describe("MK-2 (A-8) PUT /admin/parameters lê as máscaras ATUAIS sob a trava d
   }, 30_000);
 });
 
+describe("MK-3 (A-8, correção da verificação) a leitura das máscaras trava a linha da organização SEM parar as inclusões dela", () => {
+  it("PUT /admin/parameters parado DEPOIS de ler a máscara (na contagem dos Centros): a linha da organização está travada, mas uma inclusão da MESMA organização noutra tabela não espera (a FK toma FOR KEY SHARE); o PUT termina com a recusa de sempre", async () => {
+    const mascaraAtual = async () => (await um<{ m: string | null }>("select parameters->'mascaras_codigo'->>'cost_centers' m from erp.organizations where id=$1", [h.demo.orgId]))!.m;
+    expect(await mascaraAtual(), "premissa: Centros na máscara padrão").toBeNull();
+    const vivos = Number((await um<{ n: string }>("select count(*)::text n from erp.cost_centers where organization_id=$1 and deleted_at is null", [h.demo.orgId]))!.n);
+    expect(vivos, "premissa: Centros com registros").toBeGreaterThan(0);
+    const trava = await admin.connect(); const outra = await admin.connect();
+    try {
+      // a contagem dos Centros (que vem DEPOIS da leitura da máscara) fica parada enquanto esta sessão segura a tabela
+      await trava.query("begin");
+      await trava.query("lock table erp.cost_centers in access exclusive mode");
+      const pedido = h.app.inject({ method: "PUT", url: "/api/admin/parameters", headers: hdr(), payload: { mascaras_codigo: { cost_centers: "9.9.99" } } });
+      const parado = async () => (await q<{ n: number }>("select count(*)::int n from pg_locks where not granted and relation = 'erp.cost_centers'::regclass"))[0]!.n;
+      for (let t = 0; t < 150 && (await parado()) < 1; t++) await new Promise((r) => setTimeout(r, 20));
+      expect(await parado(), "premissa: o PUT espera na contagem dos Centros").toBe(1);
+      // premissa: o PUT JÁ segura a linha da organização (a leitura da máscara vem antes da contagem)
+      await expect(outra.query("select 1 from erp.organizations where id=$1 for no key update nowait", [h.demo.orgId]), "premissa: a linha da organização está travada pelo PUT").rejects.toMatchObject({ code: "55P03" });
+      // a inclusão da mesma organização (FK → organizations) passa sem esperar a gravação de parâmetros
+      await outra.query("begin");
+      await outra.query("set local lock_timeout = '2s'");
+      const incluido = await outra.query("insert into erp.people(organization_id, code, name, person_type) values ($1, $2, $3, 'legal') returning id", [h.demo.orgId, `MK3-${Date.now()}`, nome("MK-3 inclusão durante o PUT")]);
+      expect(incluido.rowCount, "a inclusão não esperou o PUT (FOR NO KEY UPDATE não conflita com o FOR KEY SHARE da FK)").toBe(1);
+      await outra.query("rollback");
+      await trava.query("commit");
+      const r = await pedido;
+      recusaNoCampo(r, "mascaras_codigo.cost_centers", `Há ${vivos} registros: a máscara só muda com o cadastro vazio.`);
+      expect(await mascaraAtual(), "nada mudou").toBeNull();
+    } finally {
+      await outra.query("rollback").catch(() => undefined); outra.release();
+      await trava.query("rollback").catch(() => undefined); trava.release();
+      await admin.query("update erp.organizations set parameters = parameters - 'mascaras_codigo' where id=$1", [h.demo.orgId]);
+    }
+  }, 30_000);
+});
+
 // ───────────────────────────── A-10 ─────────────────────────────
 describe("A-10 CAEPF no esquema do campo; página das referências limitada; id malformado no Mover → 404", () => {
   it("CAEPF fora de ^\\d{14}$ → 422 no campo caepf, na aba Identificação, com a mensagem do registry (não a do CHECK do banco); nada gravado", async () => {

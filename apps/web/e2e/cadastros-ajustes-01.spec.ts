@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { login, logout, api, uniq } from "./helpers";
 
 /**
- * CADASTROS — AJUSTES 01 · E2E da seção 8 (UI-1..UI-11) e da revisão R1 da #63 (UI-12..UI-19: W-1 a W-8).
+ * CADASTROS — AJUSTES 01 · E2E da seção 8 (UI-1..UI-11) e da revisão R1 da #63 (UI-12..UI-21: W-1 a W-8 e as correções da verificação).
  *
  * API e banco REAIS (0026 carregada pelo seed). `/api/referencias/*` NUNCA é mockado — foi exatamente a busca
  * real, aberta sem texto, que quebrou em produção (500) sem nenhum E2E ter aberto um desses campos. A única
@@ -511,6 +511,8 @@ async function escolherOpcao(page: Page, rotulo: string, opcao: string) {
   await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: opcao, exact: true }).click();
 }
 const editar = async (page: Page) => { const b = page.getByRole("button", { name: "Editar" }); if (await b.count()) await b.first().click(); };
+/** O X de limpar de um seletor da ficha (MgSelect/RefSelect: irmão da caixa ligada ao rótulo). */
+const limparDoSeletor = (page: Page, rotulo: string) => page.getByLabel(rotulo, { exact: true }).locator("..").getByRole("button", { name: "Limpar" });
 
 // ───────────────────────────── UI-12 (W-1) ─────────────────────────────
 test("UI-12 (W-1) — Consultar CNPJ: editar a caixa limpa resultado, divergências, erro e Importar; resposta atrasada ou chegada depois de fechar é descartada; Enter não reconsulta durante \"Consultando…\"", async ({ page }) => {
@@ -630,6 +632,9 @@ test("UI-14 (W-3) — trocar o tipo de pessoa pergunta antes de apagar campos pr
   await expect(cabecalho(page, "person_type")).toContainText("Física");
   await page.getByLabel("RG", { exact: true }).fill("1234567");
   await escolherOpcao(page, "Sexo", "Feminino");
+  // o tipo nunca fica vazio (coluna NOT NULL): o seletor do Tipo de pessoa não tem o X de limpar (o vizinho opcional tem)
+  await expect(limparDoSeletor(page, "Sexo"), "premissa: um seletor opcional preenchido mostra o X").toHaveCount(1);
+  await expect(limparDoSeletor(page, "Tipo de pessoa"), "o Tipo de pessoa não se limpa (Novo)").toHaveCount(0);
   await escolherOpcao(page, "Tipo de pessoa", "Jurídica");
   await expect(dialogo).toHaveText("Ao mudar para Jurídica, serão apagados: RG, Sexo.");
   await page.getByRole("button", { name: "Cancelar", exact: true }).click();
@@ -895,4 +900,86 @@ test("UI-20 (W-8) — \"Ajustar para…\" só com people.edit: quem só vê o pa
   await page.goto(`/cadastros/people/${p.id}?view=1`);
   await expect(page.getByTestId("faixa-tipo-documento"), "quem vê o parceiro vê a faixa").toBeVisible();
   await expect(page.getByTestId("faixa-tipo-documento").getByRole("button", { name: /Ajustar para/ }), "mas não ajusta sem people.edit").toHaveCount(0);
+});
+
+// ───────────────────────────── UI-21 (W-4/W-8 — correções da verificação do W) ─────────────────────────────
+test("UI-21a (W-8) — Produto: apagar o Valor de referência (NOT NULL DEFAULT 0) NÃO manda null: o campo fica fora do PUT, salva e o valor gravado continua", async ({ page }) => {
+  await login(page);
+  const unidades = await api<{ id: string; label: string }[]>(page, "GET", "/api/resources/measurement_units/options");
+  const un = unidades.find((u) => u.label.toUpperCase() === "UN")!;
+  const grupos = await api<{ id: string }[]>(page, "GET", "/api/resources/product_groups/options?kind=analytic");
+  const naturezas = await api<{ id: string }[]>(page, "GET", "/api/resources/financial_categories/options?kind=analytic&nature=expense");
+  const p = await api<{ id: string }>(page, "POST", "/api/resources/products", { description: uniq("UI-21a produto"), group_id: grupos[0]!.id, measurement_id: un.id, financial_category_id: naturezas[0]!.id, reference_price: "10.00" });
+  expect(sql(`select reference_price::text from erp.products where id = '${p.id}'`), "premissa: o valor gravado").toBe("10.00");
+  await page.goto(`/cadastros/products/${p.id}`);
+  await editar(page);
+  await aba(page, "Custos e venda").click();
+  const campo = page.getByLabel("Valor de referência", { exact: true });
+  await expect(campo, "premissa: o valor gravado aparece").not.toHaveValue("");
+  await campo.fill("");
+  const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `/api/resources/products/${p.id}`);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  const r = await resposta;
+  expect(r.status(), await r.text()).toBe(200);
+  expect(Object.keys(r.request().postDataJSON() as Record<string, unknown>), "numérico esvaziado SEM a marca fica fora do corpo").not.toContain("reference_price");
+  await expect(page.getByText("Salvo com sucesso")).toBeVisible();
+  expect(sql(`select reference_price::text from erp.products where id = '${p.id}'`), "o valor gravado continua").toBe("10.00");
+});
+
+test("UI-21b (W-8) — Parceiro: apagar SÓ a Latitude → a API recusa o par pela metade NO CAMPO (\"Informe latitude e longitude juntas (ou nenhuma).\"); nada muda", async ({ page }) => {
+  await login(page);
+  const p = await criarParceiro(page, { name: uniq("UI-21b coordenadas"), latitude: "-15.2", longitude: "-59.3" });
+  await page.goto(`/cadastros/people/${p.id}`);
+  await editar(page);
+  await aba(page, "Endereço").click();
+  await expect(page.getByLabel("Latitude", { exact: true }), "premissa: o valor gravado aparece").toHaveValue(/^-15[.,]2/);
+  await page.getByLabel("Latitude", { exact: true }).fill("");
+  const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `/api/resources/people/${p.id}`);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  const r = await resposta;
+  expect(r.status(), await r.text()).toBe(422);
+  const enviado = r.request().postDataJSON() as Record<string, unknown>;
+  expect(enviado["latitude"], "a latitude esvaziada vai null").toBeNull();
+  expect(enviado["longitude"], "a longitude, intacta, vai com o valor").not.toBeNull();
+  expect((await r.json() as { error: { details: { path: string; message: string }[] } }).error.details, "a recusa é da regra do Parceiro, com o campo (não o CHECK genérico do banco)").toContainEqual(expect.objectContaining({ path: "latitude", message: "Informe latitude e longitude juntas (ou nenhuma)." }));
+  await expect(page.getByText("Informe latitude e longitude juntas (ou nenhuma).", { exact: true }), "a recusa aparece no campo").toBeVisible();
+  expect(sql(`select (latitude = -15.2 and longitude = -59.3)::text from erp.people where id = '${p.id}'`), "nada mudou").toBe("true");
+});
+
+test("UI-21e (W-8) — erro do banco com `details` OBJETO (409 de duplicidade) aparece na tela; antes o onError quebrava no `.filter` e o Salvar parecia não fazer nada", async ({ page }) => {
+  await login(page);
+  const existente = uniq("UI-21e tipo");
+  await api(page, "POST", "/api/resources/title_types", { name: existente });
+  const outro = await api<{ id: string }>(page, "POST", "/api/resources/title_types", { name: uniq("UI-21e outro") });
+  await page.goto(`/cadastros/title_types/${outro.id}`);
+  await editar(page);
+  await page.getByLabel(/^Nome/).fill(existente);
+  const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `/api/resources/title_types/${outro.id}`);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  const r = await resposta;
+  expect(r.status(), await r.text()).toBe(409);
+  const erro = (await r.json() as { error: { message: string; details: unknown } }).error;
+  expect([erro.message, Array.isArray(erro.details)], "premissa: details é objeto (constraint), não lista de campos").toEqual(["Registro duplicado", false]);
+  await expect(page.locator("[data-sonner-toast]").filter({ hasText: "Registro duplicado" }), "a recusa aparece").toBeVisible();
+  expect(sql(`select count(*)::text from erp.title_types where name = '${existente}'`), "nada gravado").toBe("1");
+});
+
+test("UI-21c (W-4/W-8) — cabeçalho da ficha de Funcionários: documento fora de 11/14 posições aparece como gravado (a máscara pelo tipo de pessoa é só da caixa do Parceiro)", async ({ page }) => {
+  await login(page);
+  const doc = `AB${Date.now().toString().slice(-6)}`;
+  const f = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-21c estrangeiro"), person_type: "foreign", document: doc, is_employee: true });
+  expect(sql(`select document from erp.people where id = '${f.id}'`), "premissa: gravado como digitado").toBe(doc);
+  await page.goto(`/cadastros/funcionarios/${f.id}`);
+  await expect(ficha(page)).toBeVisible();
+  await expect(cabecalho(page, "document").locator("b"), "sem pontuação de CNPJ").toHaveText(doc);
+});
+
+test("UI-21d (W-3) — Tipo de pessoa em EDIÇÃO também sem o X de limpar (o tipo nunca fica vazio); o seletor opcional vizinho mantém o X", async ({ page }) => {
+  await login(page);
+  const f = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-21d física"), person_type: "natural", document: cpfValido(), is_client: true, sexo: "M" });
+  await page.goto(`/cadastros/people/${f.id}`);
+  await editar(page);
+  await expect(page.getByRole("button", { name: "Salvar" }), "premissa: em edição").toBeVisible();
+  await expect(limparDoSeletor(page, "Sexo"), "premissa: o seletor opcional preenchido mostra o X").toHaveCount(1);
+  await expect(limparDoSeletor(page, "Tipo de pessoa"), "o Tipo de pessoa não se limpa (Editar)").toHaveCount(0);
 });
