@@ -14,15 +14,16 @@ import * as React from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { AlertTriangle, Plus, Search, Trash2 } from "lucide-react";
 import type { DetalheDef, FieldDef, PerfilDef, ResourceDef } from "@agro/domain";
-import { campoVisivel, chavesBarradas, formatarMascara, normalizarDocumento, validarCnpj } from "@agro/domain";
-import { api } from "@/lib/api";
+import { campoVisivel, chavesBarradas, formatarMascara, mascaraDoDocumento, normalizarDocumento, tipoPessoaPeloDocumento, validarCnpj } from "@agro/domain";
+import { api, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-import { Card, Input, NativeSelect } from "@/components/ui";
-import { CampoCidade, consultarCep, filtroDaReferencia, mensagemFalhaCep, RefSelect, ReferenciaSelect, type Municipio } from "@/components/ui/ref-select";
-import { EntradaDocumento, EntradaMascara } from "@/components/ui/entrada-mascara";
+import { Card, ConfirmDialog, Input, NativeSelect } from "@/components/ui";
+import { CampoCidade, consultarCep, filtroDaReferencia, mensagemFalhaCep, RefSelect, ReferenciaSelect, type BuscaDeOpcoes, type Municipio, type Option } from "@/components/ui/ref-select";
+import { EntradaCep, EntradaDocumento, EntradaMascara } from "@/components/ui/entrada-mascara";
 import { PillBtn } from "@/features/base1/ui";
+import { mensagemDaTrocaDeTipo } from "./consulta-cnpj-janela";
 
 type Values = Record<string, unknown>;
 export interface ErroDaFicha { path: string; message: string; aba?: string | null; detalhe?: string; linha?: number | null }
@@ -30,14 +31,27 @@ export interface ErroDaFicha { path: string; message: string; aba?: string | nul
 const TITULO = "text-[13px] font-semibold text-slate-800";
 const iguala = (x: unknown, esperado: unknown) => x === esperado || String(x) === String(esperado);
 const vazio = (v: unknown) => v === "" || v === null || v === undefined;
+const soDigitos = (v: unknown) => String(v ?? "").replace(/\D/g, "");
 
 /** Marca da linha que veio GRAVADA (R1-2: com as permissões do cadastro dono, a linha gravada edita com `editar` e sai com `excluir`; a nova, com `criar`). Nunca vai no corpo. */
 const GRAVADA = "__gravada";
+/**
+ * CHAVE da linha da grade (R1, W-8): identidade estável na tela, gerada no cliente e NUNCA enviada (o corpo só leva os
+ * campos declarados). O preenchimento pelo CEP grava na linha pela CHAVE, não pelo índice — excluir uma linha durante a
+ * consulta não escreve na vizinha.
+ */
+const CHAVE = "__chave";
+let sequenciaDeChaves = 0;
+const novaChave = () => `n${++sequenciaDeChaves}`;
+/** Linha nova de grade (com a chave da tela). */
+export function linhaNovaDaGrade(valores: Values): Values { return { ...valores, [CHAVE]: novaChave() }; }
+/** Chave de uma linha (a da tela; o id gravado; em último caso a posição). */
+export const chaveDaLinha = (l: Values, i: number) => String(l[CHAVE] ?? l["id"] ?? `pos${i}`);
 
 /** Registro da API → valores do formulário (grades como listas, perfis como objetos). */
 export function fichaDoRegistro(def: ResourceDef, data: Values | null | undefined): Values {
   const v: Values = {};
-  for (const d of def.detalhes ?? []) v[d.key] = ((data?.[d.key] as Values[] | undefined) ?? []).map((l) => ({ ...l, [GRAVADA]: true }));
+  for (const d of def.detalhes ?? []) v[d.key] = ((data?.[d.key] as Values[] | undefined) ?? []).map((l) => ({ ...l, [GRAVADA]: true, [CHAVE]: l["id"] ? String(l["id"]) : novaChave() }));
   for (const p of def.perfis ?? []) { const o = (data?.[p.key] as Values | null | undefined) ?? {}; v[p.key] = Object.fromEntries(p.fields.map((f) => [f.name, o[f.name] ?? (f.type === "boolean" ? false : "")])); }
   return v;
 }
@@ -89,9 +103,11 @@ export function abaDoCampo(def: ResourceDef, campo: string): string | undefined 
   return (f?.section ? def.abas?.find((a) => a.secoes?.includes(f.section!))?.key : undefined) ?? def.abas?.[0]?.key;
 }
 
-function CelulaDaGrade({ f, valor, onChange, dis, mascaras }: { f: FieldDef; valor: unknown; onChange: (v: unknown) => void; dis: boolean; /** ficha do Parceiro (AJUSTES 01): Cidade com CEP/IBGE e máscaras de CEP e telefone */ mascaras?: boolean }) {
+function CelulaDaGrade({ f, valor, onChange, dis, mascaras }: { f: FieldDef; valor: unknown; onChange: (v: unknown) => void; dis: boolean; /** ficha do Parceiro (AJUSTES 01): Cidade com CEP/IBGE e máscaras de CEP, telefone e CPF/CNPJ */ mascaras?: boolean }) {
   const cls = "h-7 w-full min-w-[90px] text-[12.5px]";
   if (mascaras && f.busca === "municipios") return <CampoCidade value={valor as number | string | null} onChange={(c) => onChange(c ?? "")} disabled={dis} className="min-w-[260px]" classeEntrada={cls} />;
+  // CPF/CNPJ da grade (Filiais, R1 W-8): sem tipo de pessoa — CPF até 11 posições, CNPJ a partir da 12ª; DV ao sair
+  if (mascaras && f.name === "document") return <EntradaDocumento aria-label={f.label} tipoPessoa={null} readOnly={dis} className={cn("rounded border px-1", cls, "min-w-[160px]")} value={String(valor ?? "")} onChange={(x) => onChange(x)} />;
   if (mascaras && MASCARA_DA_GRADE[f.name]) return <EntradaMascara aria-label={f.label} mascara={MASCARA_DA_GRADE[f.name]!} readOnly={dis} className={cn("rounded border px-1", cls)} value={String(valor ?? "")} onChange={(x) => onChange(x)} />;
   if (f.busca) return <ReferenciaSelect referencia={f.busca} value={valor as string | number | null} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
   if (f.type === "ref") return <RefSelect resource={f.ref!.resource} filter={filtroDaReferencia(f)} value={valor as string} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
@@ -100,43 +116,83 @@ function CelulaDaGrade({ f, valor, onChange, dis, mascaras }: { f: FieldDef; val
   return <Input aria-label={f.label} readOnly={dis} className={cls} type={f.type === "email" ? "email" : numerico.includes(f.type) ? "number" : "text"} value={String(valor ?? "")} onChange={(e) => onChange(e.target.value)} />;
 }
 
-/** Máscaras das grades do Parceiro (AJUSTES 01, B-3): mostra formatado, grava normalizado. */
-const MASCARA_DA_GRADE: Record<string, "cep" | "telefone"> = { cep: "cep", telefone: "telefone", celular: "telefone", phone: "telefone" };
+/** Máscaras das grades do Parceiro (AJUSTES 01, B-3; Filiais no R1, W-8): mostra formatado, grava normalizado. */
+const MASCARA_DA_GRADE: Record<string, "cep" | "telefone"> = { cep: "cep", zip_code: "cep", telefone: "telefone", celular: "telefone", phone: "telefone" };
 
 /** Grade de um detalhe 1:N dentro da aba. Linha com erro do servidor fica marcada. */
 function GradeDeDetalhe({ d, form, dis, erros, mascaras }: { d: DetalheDef; form: UseFormReturn<Values>; dis: boolean; erros: ErroDaFicha[]; mascaras?: boolean }) {
   const { can, ctx } = useAuth();
   const linhas = (form.watch(d.key) as Values[] | undefined) ?? [];
   const set = (nova: Values[]) => form.setValue(d.key, nova, { shouldDirty: true });
+  const atuais = () => (form.getValues(d.key) as Values[] | undefined) ?? [];
   const campos = d.fields.filter((f) => !f.readOnly && campoVisivel(f, can) && capacidadeDoCampo(f, ctx?.capacidades));
-  // "Outros endereços" (AJUSTES 01, C-4): CEP com a mesma lógica do principal — ao sair, preenche endereço, bairro e
-  // cidade da linha; complemento só se vazio. Falha nunca impede salvar.
-  const cepDaLinha = async (i: number) => {
-    const l = linhas[i]; const cep = String(l?.["cep"] ?? "").replace(/\D/g, "");
-    if (!mascaras || d.key !== "enderecos" || cep.length !== 8) return;
-    try {
-      const r = await consultarCep(cep);
-      const atual = ((form.getValues(d.key) as Values[] | undefined) ?? [])[i] ?? {};
-      const novo: Values = { ...atual, ...(r.logradouro ? { logradouro: r.logradouro } : {}), ...(r.bairro ? { bairro: r.bairro } : {}), ...(r.municipio ? { city_id: r.municipio.codigoIbge } : {}), ...(r.complemento && vazio(atual["complemento"]) ? { complemento: r.complemento } : {}) };
-      const aviso = avisoDeOutraCidade(cep, atual["city_id"], r.municipio);
-      if (aviso) toast.info(`Linha ${i + 1}: ${aviso}`);
-      set(((form.getValues(d.key) as Values[] | undefined) ?? []).map((y, k) => (k === i ? novo : y)));
-    } catch (e) { toast.info(mensagemFalhaCep(e)); }
-  };
   // grade de OUTRO cadastro (R1-2): cada operação com a permissão dele — incluir (criar), mudar a linha gravada
   // (editar), tirar a linha gravada (excluir). Só apresentação: o servidor confere cada uma.
   const ps = d.permissoes;
   const podeCriar = !ps || can(ps.criar); const podeEditar = !ps || can(ps.editar); const podeExcluir = !ps || can(ps.excluir);
   const travada = (l: Values, f: FieldDef) => dis || (l[GRAVADA] ? (f.name === d.chaveNatural ? !(podeCriar && podeExcluir) : !podeEditar) : !podeCriar);
+
+  // "Outros endereços" (AJUSTES 01, C-4; R1, W-2/W-8): CEP com a mesma lógica do principal — preenche endereço, bairro e
+  // cidade da linha (complemento só se vazio) e leva o foco ao Número. Só quando o CEP da linha MUDOU (o último CEP de
+  // cada linha é o que veio gravado, o já consultado ou o posto por fora — ex.: "Copiar endereço principal"); NUNCA em
+  // leitura; a lupa força. Grava pela CHAVE da linha; resposta velha (outra consulta da mesma linha depois) é
+  // descartada. Falha nunca impede salvar.
+  const ehEnderecos = Boolean(mascaras) && d.key === "enderecos";
+  const campoCep = d.fields.find((f) => f.name === "cep");
+  const ultimoCep = React.useRef(new Map<string, string>());
+  const pedidosCep = React.useRef(new Map<string, number>());
+  const disRef = React.useRef(dis); disRef.current = dis;
+  React.useEffect(() => {
+    if (!ehEnderecos) return;
+    // a linha cujo CEP está sendo DIGITADO fica de fora: a referência dela é o CEP de antes da digitação
+    const focada = typeof document !== "undefined" ? document.activeElement?.getAttribute("data-cep-da-linha") ?? null : null;
+    const vistas = new Set<string>();
+    linhas.forEach((l, i) => { const k = chaveDaLinha(l, i); vistas.add(k); if (k !== focada) ultimoCep.current.set(k, soDigitos(l["cep"])); });
+    for (const k of [...ultimoCep.current.keys()]) if (!vistas.has(k)) { ultimoCep.current.delete(k); pedidosCep.current.delete(k); }
+  }, [linhas, ehEnderecos]);
+  const cepDaLinha = async (chave: string, forcar = false) => {
+    if (!ehEnderecos || !campoCep || disRef.current) return;
+    const antes = atuais(); const i = antes.findIndex((y, n) => chaveDaLinha(y, n) === chave); const l = antes[i];
+    if (!l || travada(l, campoCep)) return;
+    const cep = soDigitos(l["cep"]);
+    if (cep.length !== 8 || (!forcar && ultimoCep.current.get(chave) === cep)) return;
+    ultimoCep.current.set(chave, cep);
+    const meu = (pedidosCep.current.get(chave) ?? 0) + 1; pedidosCep.current.set(chave, meu);
+    try {
+      const r = await consultarCep(cep);
+      if (pedidosCep.current.get(chave) !== meu || disRef.current) return;
+      const agora = atuais(); const k = agora.findIndex((y, n) => chaveDaLinha(y, n) === chave); const atual = agora[k];
+      // linha excluída durante a consulta, ou CEP trocado nela: nada é escrito
+      if (!atual || soDigitos(atual["cep"]) !== cep) return;
+      const novo: Values = { ...atual, ...(r.logradouro ? { logradouro: r.logradouro } : {}), ...(r.bairro ? { bairro: r.bairro } : {}), ...(r.municipio ? { city_id: r.municipio.codigoIbge } : {}), ...(r.complemento && vazio(atual["complemento"]) ? { complemento: r.complemento } : {}) };
+      const aviso = avisoDeOutraCidade(cep, atual["city_id"], r.municipio);
+      if (aviso) toast.info(`Linha ${k + 1}: ${aviso}`);
+      set(agora.map((y, n) => (n === k ? novo : y)));
+      if (typeof document !== "undefined") {
+        const tr = [...document.querySelectorAll<HTMLElement>(`[data-testid="grade-${d.key}"] tr[data-chave-da-linha]`)].find((x) => x.dataset["chaveDaLinha"] === chave);
+        const foco = document.activeElement;
+        if (tr && (!foco || foco === document.body || tr.contains(foco))) tr.querySelector<HTMLInputElement>('input[aria-label="Número"]')?.focus();
+      }
+    } catch (e) { if (pedidosCep.current.get(chave) === meu) toast.info(mensagemFalhaCep(e)); }
+  };
   const erroDaLinha = (i: number) => erros.filter((e) => e.detalhe === d.key && e.linha === i + 1);
+  const mudar = (chave: string, campo: string, x: unknown) => set(atuais().map((y, n) => (chaveDaLinha(y, n) === chave ? { ...y, [campo]: x } : y)));
+  const celula = (l: Values, f: FieldDef, chave: string) => {
+    const bloqueada = travada(l, f);
+    if (ehEnderecos && f.name === "cep") return <EntradaCep aria-label={f.label} data-cep-da-linha={chave} readOnly={bloqueada} className="h-7 w-full min-w-[90px] rounded border px-1 text-[12.5px]" value={String(l[f.name] ?? "")} onChange={(x) => mudar(chave, f.name, x)}
+      onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey) void cepDaLinha(chave); }} onBuscar={bloqueada ? undefined : () => void cepDaLinha(chave, true)} testIdLupa="cep-lupa-linha" />;
+    return <CelulaDaGrade f={f} valor={l[f.name]} dis={bloqueada} mascaras={mascaras} onChange={(x) => mudar(chave, f.name, x)} />;
+  };
   return <Card className="col-span-12 p-3" data-testid={`grade-${d.key}`}>
     <div className="mb-2 flex items-center justify-between"><h3 className={TITULO}>{d.label}</h3>
-      {!dis && podeCriar && <PillBtn tone="gray" onClick={() => set([...linhas, Object.fromEntries(campos.map((f) => [f.name, f.default ?? (f.type === "boolean" ? false : "")]))])}><Plus className="h-3.5 w-3.5" /> Incluir linha</PillBtn>}</div>
+      {!dis && podeCriar && <PillBtn tone="gray" onClick={() => set([...atuais(), linhaNovaDaGrade(Object.fromEntries(campos.map((f) => [f.name, f.default ?? (f.type === "boolean" ? false : "")])))])}><Plus className="h-3.5 w-3.5" /> Incluir linha</PillBtn>}</div>
     {linhas.length === 0 ? <p className="text-[12px] text-slate-400">Nenhuma linha.</p> :
       <div className="overflow-x-auto"><table className="w-full text-[12.5px]"><thead><tr>{campos.map((f) => <th key={f.name} className="px-1 text-left font-semibold text-slate-600">{f.label}{f.required && <span className="text-red-500"> *</span>}</th>)}<th /></tr></thead>
-        <tbody>{linhas.map((l, i) => { const es = erroDaLinha(i); return <React.Fragment key={String(l["id"] ?? `n${i}`)}>
-          <tr className={cn(es.length > 0 && "bg-red-50")} data-testid={`linha-${d.key}-${i + 1}`}>{campos.map((f) => <td key={f.name} className="px-1 py-0.5" onBlur={f.name === "cep" ? () => void cepDaLinha(i) : undefined}><CelulaDaGrade f={f} valor={l[f.name]} dis={travada(l, f)} mascaras={mascaras} onChange={(x) => set(linhas.map((y, k) => (k === i ? { ...y, [f.name]: x } : y)))} /></td>)}
-            <td>{!dis && (!l[GRAVADA] || podeExcluir) && <button type="button" aria-label={`Remover linha ${i + 1}`} className="rounded p-1 text-red-600 hover:bg-red-50" onClick={() => set(linhas.filter((_, k) => k !== i))}><Trash2 className="h-3.5 w-3.5" /></button>}</td></tr>
+        <tbody>{linhas.map((l, i) => { const es = erroDaLinha(i); const chave = chaveDaLinha(l, i); return <React.Fragment key={chave}>
+          <tr className={cn(es.length > 0 && "bg-red-50")} data-testid={`linha-${d.key}-${i + 1}`} data-chave-da-linha={chave}>{campos.map((f) => <td key={f.name} className="px-1 py-0.5"
+            // sair da célula do CEP (clique fora, não a lupa da própria célula): consulta se o CEP da linha mudou
+            onBlur={ehEnderecos && f.name === "cep" ? (e) => { if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return; void cepDaLinha(chave); } : undefined}>{celula(l, f, chave)}</td>)}
+            <td>{!dis && (!l[GRAVADA] || podeExcluir) && <button type="button" aria-label={`Remover linha ${i + 1}`} className="rounded p-1 text-red-600 hover:bg-red-50" onClick={() => set(atuais().filter((y, n) => chaveDaLinha(y, n) !== chave))}><Trash2 className="h-3.5 w-3.5" /></button>}</td></tr>
           {es.length > 0 && <tr><td colSpan={campos.length + 1} className="px-1 pb-1 text-[11px] text-red-600">Linha {i + 1}: {es.map((e) => e.message).join(" · ")}</td></tr>}
         </React.Fragment>; })}</tbody></table></div>}
   </Card>;
@@ -207,18 +263,31 @@ export function ConsultaCnpj({ form, dis }: { form: UseFormReturn<Values>; dis: 
 }
 
 /**
- * CEP do endereço principal (C-4): Tab (sair do campo) ou lupa → preenche Endereço, Bairro e Cidade (com o código
- * IBGE e a UF); Complemento só se vazio; o foco vai para o Número; CEP de outra cidade troca a cidade e avisa.
- * Falha nunca impede salvar. `forcar` (lupa) consulta de novo o mesmo CEP.
+ * CEP do endereço principal (C-4): Tab ou lupa → preenche Endereço, Bairro e Cidade (com o código IBGE e a UF);
+ * Complemento só se vazio; o foco vai para o Número; CEP de outra cidade troca a cidade e avisa. Falha nunca impede
+ * salvar. R1 (W-2): só consulta quando o CEP MUDOU — o "último CEP" é o do registro carregado, o já consultado ou o
+ * posto por fora (importação da Receita, cópia): passar com Tab por um CEP já gravado não sobrescreve o endereço
+ * corrigido à mão. `ativo` falso (LEITURA) = nunca consulta. `forcar` (lupa, só em edição) consulta de novo o mesmo
+ * CEP. Só a resposta do pedido mais recente vale.
  */
 export function useCepDaFicha(form: UseFormReturn<Values>, ativo: boolean) {
-  const ultimo = React.useRef<string>("");
+  const cepAtual = soDigitos(form.watch("zip_code"));
+  const ultimo = React.useRef<string>(cepAtual);
+  const pedido = React.useRef(0);
+  const ativoRef = React.useRef(ativo); ativoRef.current = ativo;
+  React.useEffect(() => {
+    // mudança que NÃO veio da digitação na própria caixa (registro carregado, importação, cópia) vira a referência
+    const foco = typeof document !== "undefined" ? (document.activeElement as HTMLInputElement | null) : null;
+    if (foco?.name !== "zip_code") ultimo.current = cepAtual;
+  }, [cepAtual]);
   return React.useCallback(async (forcar = false) => {
-    const cep = String(form.getValues("zip_code") ?? "").replace(/\D/g, "");
+    const cep = soDigitos(form.getValues("zip_code"));
     if (!ativo || cep.length !== 8 || (!forcar && ultimo.current === cep)) return;
     ultimo.current = cep;
+    const meu = ++pedido.current;
     try {
       const r = await consultarCep(cep);
+      if (meu !== pedido.current || !ativoRef.current || soDigitos(form.getValues("zip_code")) !== cep) return;
       const aviso = avisoDeOutraCidade(cep, form.getValues("city_id"), r.municipio);
       if (r.logradouro) form.setValue("address", r.logradouro, { shouldDirty: true });
       if (r.bairro) form.setValue("district", r.bairro, { shouldDirty: true });
@@ -226,7 +295,7 @@ export function useCepDaFicha(form: UseFormReturn<Values>, ativo: boolean) {
       if (r.complemento && vazio(form.getValues("complemento"))) form.setValue("complemento", r.complemento, { shouldDirty: true });
       if (aviso) toast.info(aviso);
       if (typeof document !== "undefined") document.querySelector<HTMLInputElement>('[name="address_number"]')?.focus();
-    } catch (e) { toast.info(mensagemFalhaCep(e)); }
+    } catch (e) { if (meu === pedido.current) toast.info(mensagemFalhaCep(e)); }
   }, [ativo, form]);
 }
 
@@ -292,17 +361,54 @@ export function CriacaoPorOutraPorta({ def, base }: { def: ResourceDef; base: st
   </Card>;
 }
 
-/** Controle próprio de um campo da ficha (máscara, CPF/CNPJ, Cidade): `renderField` o põe na mesma caixa de sempre. */
-export type ControleDoCampo = (p: { dis: boolean }) => React.ReactElement;
+/**
+ * Controle próprio de um campo da ficha (máscara, CPF/CNPJ, Cidade, Tipo de pessoa, Matriz): `renderField` o põe na
+ * mesma caixa de sempre. O elemento devolvido recebe o `id` do rótulo (R1, W-7) e o leva à CAIXA. `padrao` desenha o
+ * controle de sempre do formulário com um ajuste (`ExtraDoCampo`) — a mesma aparência, outra regra.
+ */
+export type ControleDoCampo = (p: { dis: boolean; required?: boolean; onOpenChange?: (o: boolean) => void; padrao?: (extra: ExtraDoCampo) => React.ReactElement }) => React.ReactElement;
+/** Ajustes do controle de sempre: interceptar a troca (seletor), ligar o rótulo à caixa, recortar a lista da referência. */
+export interface ExtraDoCampo { aoMudar?: (v: string) => void; ligarRotulo?: boolean; excluirIds?: string[]; buscarOpcoes?: BuscaDeOpcoes }
 
-/** Rótulo do valor no cabeçalho: opção do select pelo rótulo; documento formatado. */
-function valorDoCabecalho(f: FieldDef, v: unknown, tipoPessoa: unknown): string {
+/** Rótulo do valor no cabeçalho: opção do select pelo rótulo; documento com a MESMA máscara da caixa. */
+function valorDoCabecalho(f: FieldDef, v: unknown, tipoPessoa: unknown, digitandoDocumento: boolean): string {
   if (f.type === "select") return f.options?.find((o) => o.value === String(v))?.label ?? String(v);
-  if (f.name === "document") { const t = tipoDoDocumento(v); return t && tipoPessoa !== "foreign" ? formatarMascara(t === "natural" ? "cpf" : "cnpj", String(v)) : String(v); }
+  if (f.name === "document") { const m = mascaraDoDocumento(String(tipoPessoa ?? ""), String(v), digitandoDocumento); return m ? formatarMascara(m, String(v)) : String(v); }
   return String(v);
 }
 
-export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderField, visivel, consultaJanela = false, entrarEmEdicao, abrirConsultaCnpj }: {
+/**
+ * Campos que SOMEM — e são apagados — ao trocar o tipo de pessoa (R1, W-3): `limpaQuandoOculto` presos ao tipo, com
+ * valor, aparentes no tipo atual e ocultos no novo, e que iriam no corpo (`apagavel`: nem travados pelo layout, nem
+ * sigilosos, nem fora da API desta sessão — esses a tela não grava). Na ordem do registry.
+ */
+export function camposApagadosNaTroca(def: ResourceDef, valores: Values, novoTipo: unknown, apagavel: (f: FieldDef) => boolean): FieldDef[] {
+  const atual = valores["person_type"];
+  return def.fields.filter((f) => f.limpaQuandoOculto && f.visibleWhen?.field === "person_type" && apagavel(f) && !vazio(valores[f.name])
+    && iguala(atual, f.visibleWhen.equals) && !iguala(novoTipo, f.visibleWhen.equals));
+}
+const valorVazioDe = (f: FieldDef): unknown => (f.type === "boolean" ? false : f.type === "tags" ? [] : "");
+
+/** Rótulo de um tipo de pessoa pela opção declarada ("Jurídica"). */
+const rotuloDoTipo = (def: ResourceDef, tipo: unknown) => def.fields.find((f) => f.name === "person_type")?.options?.find((o) => o.value === String(tipo ?? ""))?.label ?? String(tipo ?? "");
+
+/**
+ * MATRIZ (R1, W-8): a busca só oferece parceiro JURÍDICA (o recorte declarado no registry), ATIVO, que NÃO é filial
+ * (sem matriz) e nunca o próprio registro. O `/options` só filtra por igualdade, então a busca vai pela listagem do
+ * cadastro (`matriz_id__is_empty`, servidor) — o próprio registro sai na tela. Quem recusa é o servidor (A-1).
+ */
+function buscaDaMatriz(f: FieldDef): BuscaDeOpcoes {
+  const recorte = filtroDaReferencia(f) ?? {};
+  return {
+    chave: `matriz:${JSON.stringify(recorte)}`,
+    buscar: async (search: string): Promise<Option[]> => {
+      const r = await api<{ items: Values[] }>(`/api/resources/people${qs({ search: search.trim() || undefined, pageSize: "30", sort: "name", ...recorte, is_active: "true", matriz_id__is_empty: "1" })}`);
+      return r.items.map((x) => ({ id: String(x["id"]), label: String(x["name"] ?? ""), code: (x["code"] as string | null | undefined) ?? null }));
+    }
+  };
+}
+
+export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderField, visivel, consultaJanela = false, entrarEmEdicao, abrirConsultaCnpj, travado = () => false }: {
   def: ResourceDef; form: UseFormReturn<Values>; readOnly: boolean; isNew: boolean; record: Values | null; erros: ErroDaFicha[];
   renderField: (fid: string, controle?: ControleDoCampo) => React.ReactNode; visivel: (f: FieldDef) => boolean;
   /** a API declara `consultaCnpjJanela` 1 (AJUSTES 01): consulta pela janela da barra; sem ela, a consulta antiga na Identificação */
@@ -311,6 +417,8 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   entrarEmEdicao?: () => void;
   /** abre a janela Consultar CNPJ (aviso "CNPJ válido — Consultar na Receita" do parceiro novo) */
   abrirConsultaCnpj?: () => void;
+  /** campo fora do corpo (travado pelo layout, sigiloso, fora da API): a tela não o muda (R1, W-8 "Tipo do parceiro") */
+  travado?: (f: FieldDef) => boolean;
 }) {
   const { can } = useAuth();
   const values = form.watch();
@@ -333,17 +441,49 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   const cab = (def.cabecalho ?? []).map((n) => def.fields.find((f) => f.name === n)).filter((f): f is FieldDef => Boolean(f));
   const tipos = cab.filter((f) => f.type === "boolean" && f.name !== "is_active" && values[f.name] === true).map((f) => f.label);
 
-  // TIPO DE PESSOA SEGUE O DOCUMENTO (C-3): 11 dígitos → Física; 14 → Jurídica; Estrangeira só manual. Só na tela.
+  // TROCA DO TIPO DE PESSOA (R1, W-3): automática (pelo documento), "Ajustar para…" e o próprio seletor passam por
+  // aqui. Campo preenchido que vai sumir → pergunta ANTES, listando-os; Cancelar mantém o tipo e os valores.
+  // Confirmar apaga os campos listados (o Salvar os grava vazios) e troca o tipo.
+  const apagavel = (f: FieldDef) => !travado(f);
+  const [troca, setTroca] = React.useState<{ novo: string; campos: FieldDef[]; antes?: () => void } | null>(null);
+  const aplicarTroca = (novo: string, campos: FieldDef[], antes?: () => void) => {
+    antes?.();
+    for (const f of campos) form.setValue(f.name, valorVazioDe(f), { shouldDirty: true });
+    form.setValue("person_type", novo, { shouldDirty: true });
+  };
+  const pedirTroca = (novo: string, opcoes: { antes?: () => void } = {}) => {
+    if (iguala(form.getValues("person_type"), novo)) return;
+    const campos = camposApagadosNaTroca(def, form.getValues(), novo, apagavel);
+    if (!campos.length) { aplicarTroca(novo, [], opcoes.antes); return; }
+    setTroca({ novo, campos, antes: opcoes.antes });
+  };
+
+  // TIPO DE PESSOA SEGUE O DOCUMENTO (C-3; R1, W-4): Jurídica a partir de 12 posições (já ao digitar); Física só ao SAIR
+  // do campo com 11 dígitos — o 11º dígito de um CNPJ em digitação não é CPF. Estrangeira só manual. Só na tela.
+  // Troca que apagaria campo preenchido espera a SAÍDA do campo para perguntar (não interrompe a digitação); recusada,
+  // não pergunta de novo para o mesmo documento (a faixa "Ajustar para…" continua lá).
   const tipoPessoa = values["person_type"];
   const doc = String(values["document"] ?? "");
-  const pedido = tipoDoDocumento(doc);
-  const mudarDocumento = (v: string) => {
-    form.setValue("document", v, { shouldDirty: true });
-    const t = tipoDoDocumento(v);
-    if (t && form.getValues("person_type") !== "foreign" && form.getValues("person_type") !== t) form.setValue("person_type", t, { shouldDirty: true });
+  const [digitandoDocumento, setDigitandoDocumento] = React.useState(false);
+  const recusada = React.useRef<string | null>(null);
+  // documento ao ENTRAR no campo: só a saída de um documento MUDADO troca o tipo (passar pelo campo não mexe no cadastro)
+  const docAoEntrar = React.useRef<string>("");
+  const trocaAutomatica = (valor: string, momento: "digitando" | "saindo") => {
+    const t = tipoPessoaPeloDocumento(valor, momento);
+    const atual = form.getValues("person_type");
+    if (!t || atual === "foreign" || iguala(atual, t)) return;
+    const marca = `${normalizarDocumento(valor)}>${t}`;
+    if (recusada.current === marca) return;
+    const campos = camposApagadosNaTroca(def, form.getValues(), t, apagavel);
+    if (!campos.length) { aplicarTroca(t, []); return; }
+    if (momento === "saindo") { recusada.current = marca; setTroca({ novo: t, campos }); }
   };
+  const mudarDocumento = (v: string) => { form.setValue("document", v, { shouldDirty: true }); trocaAutomatica(v, "digitando"); };
+  const pedido = (() => { const t = tipoDoDocumento(doc); return digitandoDocumento && t === "natural" ? null : t; })();
   const divergeDoDocumento = parceiro && pedido !== null && tipoPessoa !== "foreign" && !vazio(tipoPessoa) && tipoPessoa !== pedido;
   const rotuloDoPedido = pedido === "natural" ? "Física" : "Jurídica";
+  // "Ajustar para…" muda o cadastro: só com a edição do cadastro (em edição/novo a tela já é editável)
+  const podeAjustar = !readOnly || can(`${def.permission}.edit`);
   const cnpjValidoNovo = parceiro && consultaJanela && isNew && !readOnly && tipoPessoa !== "foreign" && doc.length === 14 && validarCnpj(normalizarDocumento(doc));
 
   // controles próprios da ficha do Parceiro (máscaras de B; a caixa, o rótulo e o erro continuam os do renderField)
@@ -351,16 +491,22 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
     if (!parceiro) return undefined;
     const reg = (n: string) => ({ name: n, value: String(values[n] ?? ""), onChange: (v: string) => form.setValue(n, v, { shouldDirty: true }) });
     const cls = "h-5 w-full border-0 bg-transparent px-0 text-[13px] font-medium shadow-none focus:outline-none";
-    if (f.name === "document") return ({ dis }) => <EntradaDocumento {...reg("document")} onChange={mudarDocumento} tipoPessoa={String(tipoPessoa ?? "")} readOnly={dis} className={cls} erro={(form.formState.errors["document"]?.message as string | undefined) ?? null} />;
-    if (f.name === "zip_code") return ({ dis }) => <span className="flex w-full items-center gap-1"><EntradaMascara {...reg("zip_code")} mascara="cep" readOnly={dis} className={cls} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey) void buscarCep(true); }} />{!dis && <button type="button" aria-label="Buscar o CEP" title="Buscar o CEP" data-testid="cep-lupa" className="rounded p-0.5 text-slate-500 hover:bg-slate-100" onClick={() => void buscarCep(true)}><Search className="h-3.5 w-3.5" /></button>}</span>;
+    if (f.name === "document") return ({ dis }) => <EntradaDocumento {...reg("document")} onChange={mudarDocumento} tipoPessoa={String(tipoPessoa ?? "")} readOnly={dis} className={cls} erro={(form.formState.errors["document"]?.message as string | undefined) ?? null}
+      onFocus={() => { docAoEntrar.current = normalizarDocumento(String(form.getValues("document") ?? "")); setDigitandoDocumento(true); }}
+      onBlur={() => { setDigitandoDocumento(false); const atual = String(form.getValues("document") ?? ""); if (!dis && normalizarDocumento(atual) !== docAoEntrar.current) trocaAutomatica(atual, "saindo"); }} />;
+    // o seletor de sempre, mas a troca passa por `pedirTroca` (pergunta antes de apagar campo preenchido — R1, W-3)
+    if (f.name === "person_type") return ({ padrao }) => padrao!({ aoMudar: (v) => pedirTroca(v) });
+    if (f.name === "zip_code") return ({ dis }) => <EntradaCep {...reg("zip_code")} readOnly={dis} className={cls} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey) void buscarCep(); }} onBuscar={dis ? undefined : () => void buscarCep(true)} />;
     if (["phone", "cellphone", "contact_phone"].includes(f.name)) return ({ dis }) => <EntradaMascara {...reg(f.name)} mascara="telefone" readOnly={dis} className={cls} />;
     if (f.busca === "municipios") return ({ dis }) => <CampoCidade value={values[f.name] as number | string | null} onChange={(c) => form.setValue(f.name, c ?? "", { shouldDirty: true })} disabled={dis} classeEntrada={cls} />;
+    if (f.name === "matriz_id") return ({ padrao }) => padrao!({ ligarRotulo: true, buscarOpcoes: buscaDaMatriz(f), excluirIds: !isNew && record?.["id"] ? [String(record["id"])] : [] });
     return undefined;
   };
-  // booleanos do mesmo `grupo` (C-3, "Tipo do parceiro"): UM campo de marcação múltipla; cada opção continua a sua coluna
+  // booleanos do mesmo `grupo` (C-3, "Tipo do parceiro"): UM campo de marcação múltipla; cada opção continua a sua coluna.
+  // Opção travada pelo layout (ou fora do corpo) não muda na tela (R1, W-8): ela nem iria no corpo.
   const grupo = (nome: string, fs: FieldDef[]) => <div key={`grupo-${nome}`} className="min-w-[280px] flex-[2]" data-testid={`grupo-${nome.toLowerCase().replace(/\s+/g, "-")}`} role="group" aria-label={nome}>
-    <div className={cn("rounded-md border border-slate-200 px-2.5 py-1", readOnly ? "bg-slate-50" : "bg-white")}><span className="block text-[11px] text-slate-500">{nome}</span>
-      <div className="flex flex-wrap gap-3 pt-0.5">{fs.map((f) => <label key={f.name} className="flex items-center gap-1 text-[12.5px]"><input type="checkbox" name={f.name} disabled={readOnly} className="accent-brand-500" checked={values[f.name] === true || values[f.name] === "true"} onChange={(e) => form.setValue(f.name, e.target.checked, { shouldDirty: true })} />{f.label}</label>)}</div></div>
+    <div className={cn("rounded-md border border-slate-200 px-2.5 py-1", readOnly || fs.every(travado) ? "bg-slate-50" : "bg-white")}><span className="block text-[11px] text-slate-500">{nome}</span>
+      <div className="flex flex-wrap gap-3 pt-0.5">{fs.map((f) => <label key={f.name} className="flex items-center gap-1 text-[12.5px]"><input type="checkbox" name={f.name} disabled={readOnly || travado(f)} className="accent-brand-500" checked={values[f.name] === true || values[f.name] === "true"} onChange={(e) => form.setValue(f.name, e.target.checked, { shouldDirty: true })} />{f.label}</label>)}</div></div>
     {erros.filter((e) => fs.some((f) => f.name === e.path)).map((e) => <p key={e.path} className="mt-0.5 text-[11px] text-red-600">{e.message}</p>)}
   </div>;
   const secao = (s: string) => {
@@ -376,7 +522,7 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   return <div className="flex min-h-0 flex-1 flex-col gap-2" data-testid="ficha-em-abas">
     {/* cabeçalho FIXO */}
     <Card className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[12.5px]" data-testid="ficha-cabecalho">
-      {cab.filter((f) => f.type !== "boolean" && f.name !== "situacao_receita").map((f) => <span key={f.name} data-testid={`cabecalho-${f.name}`}><span className="text-slate-500">{f.label}: </span><b>{vazio(values[f.name]) ? (f.name === "code" && isNew ? "novo" : "—") : valorDoCabecalho(f, values[f.name], tipoPessoa)}</b></span>)}
+      {cab.filter((f) => f.type !== "boolean" && f.name !== "situacao_receita").map((f) => <span key={f.name} data-testid={`cabecalho-${f.name}`}><span className="text-slate-500">{f.label}: </span><b>{vazio(values[f.name]) ? (f.name === "code" && isNew ? "novo" : "—") : valorDoCabecalho(f, values[f.name], tipoPessoa, digitandoDocumento)}</b></span>)}
       {cab.some((f) => f.type === "boolean" && f.name !== "is_active") && <span><span className="text-slate-500">Tipos: </span><b>{tipos.length ? tipos.join(", ") : "nenhum"}</b></span>}
       {cab.some((f) => f.name === "is_active") && <span className={cn("rounded px-1", values["is_active"] === false ? "bg-slate-200 text-slate-600" : "bg-green-100 text-green-800")}>{values["is_active"] === false ? "Inativo" : "Ativo"}</span>}
       {cab.some((f) => f.name === "situacao_receita") && situacao && <span data-testid="cabecalho-situacao_receita"><span className="text-slate-500">Receita: </span><b>{situacao}</b></span>}
@@ -384,8 +530,8 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
     </Card>
     {divergeDoDocumento && <div className="flex flex-wrap items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-[12.5px] text-amber-900" data-testid="faixa-tipo-documento">
       <AlertTriangle className="h-3.5 w-3.5" /> O documento é {pedido === "natural" ? "um CPF" : "um CNPJ"}, mas o tipo de pessoa está como {tipoPessoa === "legal" ? "Jurídica" : "Física"}.
-      <PillBtn tone="gray" onClick={() => { if (readOnly) entrarEmEdicao?.(); form.setValue("person_type", pedido, { shouldDirty: true }); }}>Ajustar para {rotuloDoPedido}</PillBtn>
-      <span className="text-amber-700">(grava ao Salvar)</span>
+      {podeAjustar && <><PillBtn tone="gray" onClick={() => pedirTroca(pedido, { antes: readOnly ? entrarEmEdicao : undefined })}>Ajustar para {rotuloDoPedido}</PillBtn>
+      <span className="text-amber-700">(grava ao Salvar)</span></>}
     </div>}
     {cnpjValidoNovo && <div className="flex items-center gap-2 rounded border border-green-300 bg-green-50 px-3 py-1.5 text-[12.5px] text-green-900" data-testid="aviso-cnpj-valido">CNPJ válido — <PillBtn tone="gray" onClick={() => abrirConsultaCnpj?.()}>Consultar na Receita</PillBtn></div>}
     <div className="flex flex-wrap gap-1" role="tablist">{abas.map((a) => { const n = contagem.get(a.key) ?? 0; return <button key={a.key} type="button" role="tab" aria-selected={cur === a.key} onClick={() => setAtiva(a.key)} className={cn("seg-tab", cur === a.key && "active")}>{a.label}{n > 0 && <span className="ml-1 rounded-full bg-red-600 px-1.5 text-[10px] text-white" data-testid={`erros-aba-${a.key}`}>{n}</span>}</button>; })}</div>
@@ -405,5 +551,10 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
         {a.painel === "historico" && <HistoricoDaFicha def={def} id={isNew ? null : (record?.["id"] as string | undefined) ?? null} />}
       </div>)}
     </div>
+    {/* R1, W-3: a troca do tipo apagaria campos preenchidos — pergunta antes; Cancelar mantém tipo e valores */}
+    <ConfirmDialog open={troca !== null} onOpenChange={(o) => { if (!o) setTroca(null); }} title="Mudar o tipo de pessoa" confirmLabel={troca ? `Mudar para ${rotuloDoTipo(def, troca.novo)}` : undefined} dismissLabel="Cancelar"
+      onConfirm={() => { if (troca) { recusada.current = null; aplicarTroca(troca.novo, troca.campos, troca.antes); } setTroca(null); }}>
+      {troca && <p className="text-sm text-slate-700" data-testid="confirmar-troca-de-tipo">{mensagemDaTrocaDeTipo(rotuloDoTipo(def, troca.novo), troca.campos.map((f) => f.label))}</p>}
+    </ConfirmDialog>
   </div>;
 }

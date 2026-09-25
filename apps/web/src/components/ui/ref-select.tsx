@@ -26,11 +26,22 @@ export function filtroDaReferencia(f: FieldDef): Record<string, string> | undefi
 }
 /** Texto mostrado de uma opção: o caminho na árvore quando houver; senão o rótulo. */
 const textoDaOpcao = (o: Option) => o.caminho || o.label;
+/**
+ * Fonte PRÓPRIA das opções (R1, W-8 — Matriz): quando o recorte não cabe no `/options` (que só filtra por igualdade),
+ * quem usa busca no servidor por outra rota (ex.: a listagem com `campo__is_empty`). `chave` entra na chave do cache.
+ */
+export interface BuscaDeOpcoes { chave: string; buscar: (search: string) => Promise<Option[]> }
+
 /** Select com busca server-side (equivalente ao select2 do sistema de referência), para campos de referência. */
-export function RefSelect({ resource, value, onChange, placeholder = "Selecione", filter, disabled, className, allowEmpty = true, includeInactive, labelHint, onOpenChange }: { resource: string; value: string | null | undefined; onChange: (v: string | null, opt?: Option) => void; placeholder?: string; filter?: Record<string, string | undefined>; disabled?: boolean; className?: string; allowEmpty?: boolean; includeInactive?: boolean; /** rótulo já conhecido do valor atual (evita consulta ao abrir o registro) */ labelHint?: string | null; onOpenChange?: (o: boolean) => void }) {
+export function RefSelect({ resource, value, onChange, placeholder = "Selecione", filter, disabled, className, allowEmpty = true, includeInactive, labelHint, onOpenChange, idDaCaixa, excluirIds, buscarOpcoes }: { resource: string; value: string | null | undefined; onChange: (v: string | null, opt?: Option) => void; placeholder?: string; filter?: Record<string, string | undefined>; disabled?: boolean; className?: string; allowEmpty?: boolean; includeInactive?: boolean; /** rótulo já conhecido do valor atual (evita consulta ao abrir o registro) */ labelHint?: string | null; onOpenChange?: (o: boolean) => void;
+  /** id da caixa (para `<label htmlFor>`); nome próprio para o `Field` genérico não o injetar em toda tela */ idDaCaixa?: string;
+  /** ids que nunca aparecem na lista (ex.: o próprio registro na Matriz); comparados em minúsculas */ excluirIds?: string[];
+  /** fonte própria das opções (ver `BuscaDeOpcoes`); sem ela, `/api/resources/:resource/options` */ buscarOpcoes?: BuscaDeOpcoes }) {
   const [open, setOpen] = React.useState(false); const [search, setSearch] = React.useState(""); const [creating, setCreating] = React.useState(false); const { can } = useAuth();
   const f = Object.fromEntries(Object.entries(filter ?? {}).filter(([, v]) => v));
-  const { data, isLoading } = useQuery({ queryKey: ["options", resource, search, f, includeInactive], queryFn: () => api<Option[]>(`/api/resources/${resource}/options${qs({ search, ...f, include_inactive: includeInactive ? "1" : undefined })}`), enabled: open, staleTime: 60_000 });
+  const excluidos = new Set((excluirIds ?? []).map((x) => x.toLowerCase()));
+  const { data: brutos, isLoading } = useQuery({ queryKey: buscarOpcoes ? ["options-proprias", resource, buscarOpcoes.chave, search] : ["options", resource, search, f, includeInactive], queryFn: () => (buscarOpcoes ? buscarOpcoes.buscar(search) : api<Option[]>(`/api/resources/${resource}/options${qs({ search, ...f, include_inactive: includeInactive ? "1" : undefined })}`)), enabled: open, staleTime: 60_000 });
+  const data = excluidos.size ? brutos?.filter((o) => !excluidos.has(String(o.id).toLowerCase())) : brutos;
   const [picked, setPicked] = React.useState<Option | null>(null);
   const current = data?.find((o) => o.id === value) ?? (picked && picked.id === value ? picked : null);
   const def = React.useMemo(() => getResource(resource), [resource]);
@@ -43,7 +54,7 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
   return (<>
     <Popover.Root open={open} onOpenChange={(o) => { if (disabled) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); }}>
       <Popover.Trigger asChild>
-        <CmdDisplay disabled={disabled} empty={!value} placeholder={placeholder} aria-expanded={open} className={cn("mg-input", className)} onClear={allowEmpty ? () => onChange(null) : undefined}>{value ? label || "…" : null}</CmdDisplay>
+        <CmdDisplay id={idDaCaixa} disabled={disabled} empty={!value} placeholder={placeholder} aria-expanded={open} className={cn("mg-input", className)} onClear={allowEmpty ? () => onChange(null) : undefined}>{value ? label || "…" : null}</CmdDisplay>
       </Popover.Trigger>
       <Popover.Portal><Popover.Content align="start" sideOffset={4} className="cmd-panel z-[10000] w-[var(--radix-popover-trigger-width)] min-w-[240px] outline-none">
         <CmdPanel options={opts} value={value ?? null} search={search} onSearch={setSearch} loading={isLoading} emptyText="Nenhum resultado" onPick={(o) => { const src = data?.find((x) => x.id === o.value); setPicked(src ?? { id: o.value, label: o.label, code: o.code ?? null }); onChange(o.value, src); setOpen(false); setSearch(""); }}
@@ -233,13 +244,30 @@ export function CampoCidade({ value, onChange, disabled, className, classeEntrad
   const [ibge, setIbge] = React.useState(codigoAtual === null ? "" : String(codigoAtual));
   const [ibgeErro, setIbgeErro] = React.useState<string | null>(null);
   React.useEffect(() => { setIbge(codigoAtual === null ? "" : String(codigoAtual)); setIbgeErro(null); }, [codigoAtual]);
+  // R1, W-8: só a resposta do ÚLTIMO código digitado vale (fora de ordem é descartada); ao SAIR com código parcial ou
+  // inexistente, a caixa volta à cidade atual — o texto nunca fica dizendo uma cidade que o valor não tem.
+  const pedidoIbge = React.useRef(0); const pendenteIbge = React.useRef<string | null>(null); const focoIbge = React.useRef(false);
+  const codigoRef = React.useRef(codigoAtual); codigoRef.current = codigoAtual;
+  const voltarACidadeAtual = () => { setIbge(codigoRef.current === null ? "" : String(codigoRef.current)); setIbgeErro(null); };
   const aoDigitarIbge = async (t: string) => {
     const d = t.replace(/\D/g, "").slice(0, 7); setIbge(d); setIbgeErro(null);
+    const meu = ++pedidoIbge.current; pendenteIbge.current = null;
     if (d === "") { if (codigoAtual !== null) escolher(null); return; }
     if (d.length < 7 || Number(d) === codigoAtual) return;
-    try { const m = municipioDoItem(await porCodigo(d)); if (m) escolher(m); else setIbgeErro("Código IBGE não encontrado."); }
-    catch (e) { setIbgeErro(e instanceof ApiError && e.status === 404 ? "Código IBGE não encontrado." : "Não foi possível conferir o código agora."); }
+    pendenteIbge.current = d;
+    try {
+      const m = municipioDoItem(await porCodigo(d));
+      if (meu !== pedidoIbge.current) return;
+      pendenteIbge.current = null;
+      if (m) escolher(m); else if (focoIbge.current) setIbgeErro("Código IBGE não encontrado."); else voltarACidadeAtual();
+    } catch (e) {
+      if (meu !== pedidoIbge.current) return;
+      pendenteIbge.current = null;
+      if (focoIbge.current) setIbgeErro(e instanceof ApiError && e.status === 404 ? "Código IBGE não encontrado." : "Não foi possível conferir o código agora."); else voltarACidadeAtual();
+    }
   };
+  // saiu da caixa: código completo ainda em consulta decide quando responder; o resto volta à cidade atual
+  const aoSairDoIbge = () => { focoIbge.current = false; if (pendenteIbge.current === ibge) return; if (ibge !== (codigoAtual === null ? "" : String(codigoAtual))) { pedidoIbge.current++; voltarACidadeAtual(); } else setIbgeErro(null); };
 
   return <span className={cn("flex w-full min-w-0 items-start gap-2", className)} data-testid="campo-cidade">
     <span className="flex min-w-0 flex-1 flex-col">
@@ -260,7 +288,7 @@ export function CampoCidade({ value, onChange, disabled, className, classeEntrad
     </span>
     <span className="flex w-24 shrink-0 flex-col">
       <input id={id ? `${id}-ibge` : undefined} aria-label="Código IBGE" title="Código IBGE" placeholder="Código IBGE" inputMode="numeric" maxLength={7} disabled={disabled} className={cn("w-full", classeEntrada)} data-testid="cidade-ibge"
-        value={ibge} aria-invalid={Boolean(ibgeErro) || undefined} onChange={(e) => void aoDigitarIbge(e.target.value)} />
+        value={ibge} aria-invalid={Boolean(ibgeErro) || undefined} onChange={(e) => void aoDigitarIbge(e.target.value)} onFocus={() => { focoIbge.current = true; }} onBlur={aoSairDoIbge} />
       {ibgeErro && <span className="text-[11px] text-red-600" role="alert">{ibgeErro}</span>}
     </span>
     <input id={id ? `${id}-uf` : undefined} aria-label="UF" title="UF" placeholder="UF" readOnly tabIndex={-1} className={cn("w-12 shrink-0", classeEntrada)} data-testid="cidade-uf" value={codigoAtual === null ? "" : atual?.uf ?? ""} />
