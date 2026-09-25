@@ -14,15 +14,15 @@ import * as React from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { AlertTriangle, Plus, Search, Trash2 } from "lucide-react";
 import type { DetalheDef, FieldDef, PerfilDef, ResourceDef } from "@agro/domain";
-import { campoVisivel, chavesBarradas, normalizarDocumento, validarCnpj } from "@agro/domain";
+import { campoVisivel, chavesBarradas, formatarMascara, normalizarDocumento, validarCnpj } from "@agro/domain";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { Card, Input, NativeSelect } from "@/components/ui";
-import { filtroDaReferencia, RefSelect, ReferenciaSelect } from "@/components/ui/ref-select";
+import { CampoCidade, consultarCep, filtroDaReferencia, mensagemFalhaCep, RefSelect, ReferenciaSelect, type Municipio } from "@/components/ui/ref-select";
+import { EntradaDocumento, EntradaMascara } from "@/components/ui/entrada-mascara";
 import { PillBtn } from "@/features/base1/ui";
-import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
 
 type Values = Record<string, unknown>;
 export interface ErroDaFicha { path: string; message: string; aba?: string | null; detalhe?: string; linha?: number | null }
@@ -89,8 +89,10 @@ export function abaDoCampo(def: ResourceDef, campo: string): string | undefined 
   return (f?.section ? def.abas?.find((a) => a.secoes?.includes(f.section!))?.key : undefined) ?? def.abas?.[0]?.key;
 }
 
-function CelulaDaGrade({ f, valor, onChange, dis }: { f: FieldDef; valor: unknown; onChange: (v: unknown) => void; dis: boolean }) {
+function CelulaDaGrade({ f, valor, onChange, dis, mascaras }: { f: FieldDef; valor: unknown; onChange: (v: unknown) => void; dis: boolean; /** ficha do Parceiro (AJUSTES 01): Cidade com CEP/IBGE e máscaras de CEP e telefone */ mascaras?: boolean }) {
   const cls = "h-7 w-full min-w-[90px] text-[12.5px]";
+  if (mascaras && f.busca === "municipios") return <CampoCidade value={valor as number | string | null} onChange={(c) => onChange(c ?? "")} disabled={dis} className="min-w-[260px]" classeEntrada={cls} />;
+  if (mascaras && MASCARA_DA_GRADE[f.name]) return <EntradaMascara aria-label={f.label} mascara={MASCARA_DA_GRADE[f.name]!} readOnly={dis} className={cn("rounded border px-1", cls)} value={String(valor ?? "")} onChange={(x) => onChange(x)} />;
   if (f.busca) return <ReferenciaSelect referencia={f.busca} value={valor as string | number | null} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
   if (f.type === "ref") return <RefSelect resource={f.ref!.resource} filter={filtroDaReferencia(f)} value={valor as string} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
   if (f.type === "boolean") return <input type="checkbox" aria-label={f.label} disabled={dis} className="accent-brand-500" checked={valor === true || valor === "true"} onChange={(e) => onChange(e.target.checked)} />;
@@ -98,12 +100,29 @@ function CelulaDaGrade({ f, valor, onChange, dis }: { f: FieldDef; valor: unknow
   return <Input aria-label={f.label} readOnly={dis} className={cls} type={f.type === "email" ? "email" : numerico.includes(f.type) ? "number" : "text"} value={String(valor ?? "")} onChange={(e) => onChange(e.target.value)} />;
 }
 
+/** Máscaras das grades do Parceiro (AJUSTES 01, B-3): mostra formatado, grava normalizado. */
+const MASCARA_DA_GRADE: Record<string, "cep" | "telefone"> = { cep: "cep", telefone: "telefone", celular: "telefone", phone: "telefone" };
+
 /** Grade de um detalhe 1:N dentro da aba. Linha com erro do servidor fica marcada. */
-function GradeDeDetalhe({ d, form, dis, erros }: { d: DetalheDef; form: UseFormReturn<Values>; dis: boolean; erros: ErroDaFicha[] }) {
-  const { can } = useAuth();
+function GradeDeDetalhe({ d, form, dis, erros, mascaras }: { d: DetalheDef; form: UseFormReturn<Values>; dis: boolean; erros: ErroDaFicha[]; mascaras?: boolean }) {
+  const { can, ctx } = useAuth();
   const linhas = (form.watch(d.key) as Values[] | undefined) ?? [];
   const set = (nova: Values[]) => form.setValue(d.key, nova, { shouldDirty: true });
-  const campos = d.fields.filter((f) => !f.readOnly && campoVisivel(f, can));
+  const campos = d.fields.filter((f) => !f.readOnly && campoVisivel(f, can) && capacidadeDoCampo(f, ctx?.capacidades));
+  // "Outros endereços" (AJUSTES 01, C-4): CEP com a mesma lógica do principal — ao sair, preenche endereço, bairro e
+  // cidade da linha; complemento só se vazio. Falha nunca impede salvar.
+  const cepDaLinha = async (i: number) => {
+    const l = linhas[i]; const cep = String(l?.["cep"] ?? "").replace(/\D/g, "");
+    if (!mascaras || d.key !== "enderecos" || cep.length !== 8) return;
+    try {
+      const r = await consultarCep(cep);
+      const atual = ((form.getValues(d.key) as Values[] | undefined) ?? [])[i] ?? {};
+      const novo: Values = { ...atual, ...(r.logradouro ? { logradouro: r.logradouro } : {}), ...(r.bairro ? { bairro: r.bairro } : {}), ...(r.municipio ? { city_id: r.municipio.codigoIbge } : {}), ...(r.complemento && vazio(atual["complemento"]) ? { complemento: r.complemento } : {}) };
+      const aviso = avisoDeOutraCidade(cep, atual["city_id"], r.municipio);
+      if (aviso) toast.info(`Linha ${i + 1}: ${aviso}`);
+      set(((form.getValues(d.key) as Values[] | undefined) ?? []).map((y, k) => (k === i ? novo : y)));
+    } catch (e) { toast.info(mensagemFalhaCep(e)); }
+  };
   // grade de OUTRO cadastro (R1-2): cada operação com a permissão dele — incluir (criar), mudar a linha gravada
   // (editar), tirar a linha gravada (excluir). Só apresentação: o servidor confere cada uma.
   const ps = d.permissoes;
@@ -116,7 +135,7 @@ function GradeDeDetalhe({ d, form, dis, erros }: { d: DetalheDef; form: UseFormR
     {linhas.length === 0 ? <p className="text-[12px] text-slate-400">Nenhuma linha.</p> :
       <div className="overflow-x-auto"><table className="w-full text-[12.5px]"><thead><tr>{campos.map((f) => <th key={f.name} className="px-1 text-left font-semibold text-slate-600">{f.label}{f.required && <span className="text-red-500"> *</span>}</th>)}<th /></tr></thead>
         <tbody>{linhas.map((l, i) => { const es = erroDaLinha(i); return <React.Fragment key={String(l["id"] ?? `n${i}`)}>
-          <tr className={cn(es.length > 0 && "bg-red-50")} data-testid={`linha-${d.key}-${i + 1}`}>{campos.map((f) => <td key={f.name} className="px-1 py-0.5"><CelulaDaGrade f={f} valor={l[f.name]} dis={travada(l, f)} onChange={(x) => set(linhas.map((y, k) => (k === i ? { ...y, [f.name]: x } : y)))} /></td>)}
+          <tr className={cn(es.length > 0 && "bg-red-50")} data-testid={`linha-${d.key}-${i + 1}`}>{campos.map((f) => <td key={f.name} className="px-1 py-0.5" onBlur={f.name === "cep" ? () => void cepDaLinha(i) : undefined}><CelulaDaGrade f={f} valor={l[f.name]} dis={travada(l, f)} mascaras={mascaras} onChange={(x) => set(linhas.map((y, k) => (k === i ? { ...y, [f.name]: x } : y)))} /></td>)}
             <td>{!dis && (!l[GRAVADA] || podeExcluir) && <button type="button" aria-label={`Remover linha ${i + 1}`} className="rounded p-1 text-red-600 hover:bg-red-50" onClick={() => set(linhas.filter((_, k) => k !== i))}><Trash2 className="h-3.5 w-3.5" /></button>}</td></tr>
           {es.length > 0 && <tr><td colSpan={campos.length + 1} className="px-1 pb-1 text-[11px] text-red-600">Linha {i + 1}: {es.map((e) => e.message).join(" · ")}</td></tr>}
         </React.Fragment>; })}</tbody></table></div>}
@@ -132,6 +151,25 @@ function CamposDoPerfil({ p, form, dis }: { p: PerfilDef; form: UseFormReturn<Va
   return <Card className="col-span-12 p-3"><h3 className={cn(TITULO, "mb-2")}>{p.label}</h3><div className="flex flex-wrap gap-3">
     {campos.map((f) => <label key={f.name} className="min-w-[200px] flex-1 text-[12px]"><span className="block text-[11px] text-slate-500">{f.label}</span><CelulaDaGrade f={f} valor={v[f.name]} dis={dis} onChange={(x) => form.setValue(p.key, { ...v, [f.name]: x }, { shouldDirty: true })} /></label>)}
   </div></Card>;
+}
+
+/** O campo existe na API desta sessão? (`exigeCapacidade`, AJUSTES 01 — versão EXATA; desconhecida = ausente). */
+export function capacidadeDoCampo(f: Pick<FieldDef, "exigeCapacidade">, capacidades: Record<string, unknown> | undefined): boolean {
+  return !f.exigeCapacidade || capacidades?.[f.exigeCapacidade.nome] === f.exigeCapacidade.versao;
+}
+
+/** CEP de OUTRA cidade (C-4): "CEP 78245-000 é de Vila Bela da Santíssima Trindade - MT"; mesma cidade ou sem cidade antes = nada. */
+export function avisoDeOutraCidade(cep: string, cidadeAntes: unknown, m: Municipio | null): string | null {
+  if (!m || vazio(cidadeAntes) || String(cidadeAntes) === String(m.codigoIbge)) return null;
+  return `CEP ${formatarMascara("cep", cep)} é de ${m.nome} - ${m.uf}`;
+}
+
+/** Tipo de pessoa que o DOCUMENTO pede (C-3): 11 dígitos → Física; 14 posições → Jurídica; outro → nenhum. */
+export function tipoDoDocumento(doc: unknown): "natural" | "legal" | null {
+  const n = normalizarDocumento(String(doc ?? ""));
+  if (/^\d{11}$/.test(n)) return "natural";
+  if (n.length === 14) return "legal";
+  return null;
 }
 
 /** Consulta de CNPJ na ficha: mostra os dados, a fonte e a data; "Usar estes dados" preenche vazio e pergunta no preenchido. */
@@ -168,21 +206,28 @@ export function ConsultaCnpj({ form, dis }: { form: UseFormReturn<Values>; dis: 
   </div>;
 }
 
-/** CEP: ao sair do campo, a consulta preenche endereço, bairro e município. Falha nunca impede salvar. */
+/**
+ * CEP do endereço principal (C-4): Tab (sair do campo) ou lupa → preenche Endereço, Bairro e Cidade (com o código
+ * IBGE e a UF); Complemento só se vazio; o foco vai para o Número; CEP de outra cidade troca a cidade e avisa.
+ * Falha nunca impede salvar. `forcar` (lupa) consulta de novo o mesmo CEP.
+ */
 export function useCepDaFicha(form: UseFormReturn<Values>, ativo: boolean) {
-  const cep = String(form.watch("zip_code") ?? "").replace(/\D/g, "");
   const ultimo = React.useRef<string>("");
-  return React.useCallback(async () => {
-    if (!ativo || cep.length !== 8 || ultimo.current === cep) return;
+  return React.useCallback(async (forcar = false) => {
+    const cep = String(form.getValues("zip_code") ?? "").replace(/\D/g, "");
+    if (!ativo || cep.length !== 8 || (!forcar && ultimo.current === cep)) return;
     ultimo.current = cep;
     try {
-      const r = await api<{ logradouro: string | null; bairro: string | null; complemento: string | null; municipio: { codigoIbge: number } | null }>(`/api/consultas/cep/${cep}`);
+      const r = await consultarCep(cep);
+      const aviso = avisoDeOutraCidade(cep, form.getValues("city_id"), r.municipio);
       if (r.logradouro) form.setValue("address", r.logradouro, { shouldDirty: true });
       if (r.bairro) form.setValue("district", r.bairro, { shouldDirty: true });
       if (r.municipio) form.setValue("city_id", r.municipio.codigoIbge, { shouldDirty: true });
       if (r.complemento && vazio(form.getValues("complemento"))) form.setValue("complemento", r.complemento, { shouldDirty: true });
-    } catch { toast.info("Não foi possível consultar o CEP agora; preencha o endereço."); }
-  }, [ativo, cep, form]);
+      if (aviso) toast.info(aviso);
+      if (typeof document !== "undefined") document.querySelector<HTMLInputElement>('[name="address_number"]')?.focus();
+    } catch (e) { toast.info(mensagemFalhaCep(e)); }
+  }, [ativo, form]);
 }
 
 /**
@@ -247,19 +292,38 @@ export function CriacaoPorOutraPorta({ def, base }: { def: ResourceDef; base: st
   </Card>;
 }
 
-export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderField, visivel }: { def: ResourceDef; form: UseFormReturn<Values>; readOnly: boolean; isNew: boolean; record: Values | null; erros: ErroDaFicha[]; renderField: (fid: string) => React.ReactNode; visivel: (f: FieldDef) => boolean }) {
+/** Controle próprio de um campo da ficha (máscara, CPF/CNPJ, Cidade): `renderField` o põe na mesma caixa de sempre. */
+export type ControleDoCampo = (p: { dis: boolean }) => React.ReactElement;
+
+/** Rótulo do valor no cabeçalho: opção do select pelo rótulo; documento formatado. */
+function valorDoCabecalho(f: FieldDef, v: unknown, tipoPessoa: unknown): string {
+  if (f.type === "select") return f.options?.find((o) => o.value === String(v))?.label ?? String(v);
+  if (f.name === "document") { const t = tipoDoDocumento(v); return t && tipoPessoa !== "foreign" ? formatarMascara(t === "natural" ? "cpf" : "cnpj", String(v)) : String(v); }
+  return String(v);
+}
+
+export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderField, visivel, consultaJanela = false, entrarEmEdicao, abrirConsultaCnpj }: {
+  def: ResourceDef; form: UseFormReturn<Values>; readOnly: boolean; isNew: boolean; record: Values | null; erros: ErroDaFicha[];
+  renderField: (fid: string, controle?: ControleDoCampo) => React.ReactNode; visivel: (f: FieldDef) => boolean;
+  /** a API declara `consultaCnpjJanela` 1 (AJUSTES 01): consulta pela janela da barra; sem ela, a consulta antiga na Identificação */
+  consultaJanela?: boolean;
+  /** entra em Editar (faixa "Ajustar para Física" com a ficha em leitura) */
+  entrarEmEdicao?: () => void;
+  /** abre a janela Consultar CNPJ (aviso "CNPJ válido — Consultar na Receita" do parceiro novo) */
+  abrirConsultaCnpj?: () => void;
+}) {
   const { can } = useAuth();
   const values = form.watch();
+  const parceiro = def.key === "people";
   // aba sem a permissão de LEITURA (R1-4, ex.: Cliente sem clients.view) não aparece — a API também não manda os dados dela.
   // Grade de OUTRO cadastro sem a leitura dele (R1-2) some; a aba que só tinha essas grades (Eventos fixos sem
-  // employee_events.view) não aparece.
+  // employee_events.view) não aparece. A aba "Anexos" (quem ainda a declara) não aparece: Anexos está na barra de ações (C-1).
   const barradas = chavesBarradas(def, "permissaoDeLeitura", can);
   const soGradesBarradas = (a: { secoes?: string[]; perfis?: string[]; detalhes?: string[]; painel?: string }) => !a.secoes?.length && !a.perfis?.length && !a.painel && Boolean(a.detalhes?.length) && a.detalhes!.every((k) => barradas.has(k));
-  const abas = (def.abas ?? []).filter((a) => (!a.permissaoDeLeitura || can(a.permissaoDeLeitura)) && !soGradesBarradas(a) && (!a.visivelQuando || iguala(values[a.visivelQuando.field], a.visivelQuando.equals)));
+  const abas = (def.abas ?? []).filter((a) => a.key !== "anexos" && (!a.permissaoDeLeitura || can(a.permissaoDeLeitura)) && !soGradesBarradas(a) && (!a.visivelQuando || iguala(values[a.visivelQuando.field], a.visivelQuando.equals)));
   const semEdicao = (a: { permissaoDeEdicao?: string }) => Boolean(a.permissaoDeEdicao && !can(a.permissaoDeEdicao));
   const [ativa, setAtiva] = React.useState(abas[0]?.key ?? "");
   const cur = abas.some((a) => a.key === ativa) ? ativa : abas[0]?.key ?? "";
-  const [anexos, setAnexos] = React.useState(false);
   const buscarCep = useCepDaFicha(form, !readOnly);
   // contador de erros por aba: erros do servidor (com aba) + campos obrigatórios pendentes do formulário
   const contagem = new Map<string, number>();
@@ -268,32 +332,77 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   const situacao = String(values["situacao_receita"] ?? record?.["situacao_receita"] ?? "");
   const cab = (def.cabecalho ?? []).map((n) => def.fields.find((f) => f.name === n)).filter((f): f is FieldDef => Boolean(f));
   const tipos = cab.filter((f) => f.type === "boolean" && f.name !== "is_active" && values[f.name] === true).map((f) => f.label);
-  const secao = (s: string) => { const fs = def.fields.filter((f) => f.section === s && visivel(f)); if (!fs.length) return null; return <Card key={s} className="col-span-12 p-3"><h3 className={cn(TITULO, "mb-2.5")}>{s}</h3><div className="flex flex-wrap gap-2" onBlur={s === "Endereço" ? () => void buscarCep() : undefined}>{fs.map((f) => (f.camposJson ? <JsonComoCampos key={f.name} f={f} form={form} dis={readOnly} /> : renderField(f.name)))}</div></Card>; };
+
+  // TIPO DE PESSOA SEGUE O DOCUMENTO (C-3): 11 dígitos → Física; 14 → Jurídica; Estrangeira só manual. Só na tela.
+  const tipoPessoa = values["person_type"];
+  const doc = String(values["document"] ?? "");
+  const pedido = tipoDoDocumento(doc);
+  const mudarDocumento = (v: string) => {
+    form.setValue("document", v, { shouldDirty: true });
+    const t = tipoDoDocumento(v);
+    if (t && form.getValues("person_type") !== "foreign" && form.getValues("person_type") !== t) form.setValue("person_type", t, { shouldDirty: true });
+  };
+  const divergeDoDocumento = parceiro && pedido !== null && tipoPessoa !== "foreign" && !vazio(tipoPessoa) && tipoPessoa !== pedido;
+  const rotuloDoPedido = pedido === "natural" ? "Física" : "Jurídica";
+  const cnpjValidoNovo = parceiro && consultaJanela && isNew && !readOnly && tipoPessoa !== "foreign" && doc.length === 14 && validarCnpj(normalizarDocumento(doc));
+
+  // controles próprios da ficha do Parceiro (máscaras de B; a caixa, o rótulo e o erro continuam os do renderField)
+  const controle = (f: FieldDef): ControleDoCampo | undefined => {
+    if (!parceiro) return undefined;
+    const reg = (n: string) => ({ name: n, value: String(values[n] ?? ""), onChange: (v: string) => form.setValue(n, v, { shouldDirty: true }) });
+    const cls = "h-5 w-full border-0 bg-transparent px-0 text-[13px] font-medium shadow-none focus:outline-none";
+    if (f.name === "document") return ({ dis }) => <EntradaDocumento {...reg("document")} onChange={mudarDocumento} tipoPessoa={String(tipoPessoa ?? "")} readOnly={dis} className={cls} erro={(form.formState.errors["document"]?.message as string | undefined) ?? null} />;
+    if (f.name === "zip_code") return ({ dis }) => <span className="flex w-full items-center gap-1"><EntradaMascara {...reg("zip_code")} mascara="cep" readOnly={dis} className={cls} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey) void buscarCep(true); }} />{!dis && <button type="button" aria-label="Buscar o CEP" title="Buscar o CEP" data-testid="cep-lupa" className="rounded p-0.5 text-slate-500 hover:bg-slate-100" onClick={() => void buscarCep(true)}><Search className="h-3.5 w-3.5" /></button>}</span>;
+    if (["phone", "cellphone", "contact_phone"].includes(f.name)) return ({ dis }) => <EntradaMascara {...reg(f.name)} mascara="telefone" readOnly={dis} className={cls} />;
+    if (f.busca === "municipios") return ({ dis }) => <CampoCidade value={values[f.name] as number | string | null} onChange={(c) => form.setValue(f.name, c ?? "", { shouldDirty: true })} disabled={dis} classeEntrada={cls} />;
+    return undefined;
+  };
+  // booleanos do mesmo `grupo` (C-3, "Tipo do parceiro"): UM campo de marcação múltipla; cada opção continua a sua coluna
+  const grupo = (nome: string, fs: FieldDef[]) => <div key={`grupo-${nome}`} className="min-w-[280px] flex-[2]" data-testid={`grupo-${nome.toLowerCase().replace(/\s+/g, "-")}`} role="group" aria-label={nome}>
+    <div className={cn("rounded-md border border-slate-200 px-2.5 py-1", readOnly ? "bg-slate-50" : "bg-white")}><span className="block text-[11px] text-slate-500">{nome}</span>
+      <div className="flex flex-wrap gap-3 pt-0.5">{fs.map((f) => <label key={f.name} className="flex items-center gap-1 text-[12.5px]"><input type="checkbox" name={f.name} disabled={readOnly} className="accent-brand-500" checked={values[f.name] === true || values[f.name] === "true"} onChange={(e) => form.setValue(f.name, e.target.checked, { shouldDirty: true })} />{f.label}</label>)}</div></div>
+    {erros.filter((e) => fs.some((f) => f.name === e.path)).map((e) => <p key={e.path} className="mt-0.5 text-[11px] text-red-600">{e.message}</p>)}
+  </div>;
+  const secao = (s: string) => {
+    const fs = def.fields.filter((f) => f.section === s && visivel(f)); if (!fs.length) return null;
+    const vistos = new Set<string>(); const nos: React.ReactNode[] = [];
+    for (const f of fs) {
+      if (f.grupo) { if (!vistos.has(f.grupo)) { vistos.add(f.grupo); nos.push(grupo(f.grupo, fs.filter((x) => x.grupo === f.grupo))); } continue; }
+      nos.push(f.camposJson ? <JsonComoCampos key={f.name} f={f} form={form} dis={readOnly} /> : renderField(f.name, controle(f)));
+    }
+    return <Card key={s} className="col-span-12 p-3"><h3 className={cn(TITULO, "mb-2.5")}>{s}</h3><div className="flex flex-wrap gap-2" onBlur={s === "Endereço" && !parceiro ? () => void buscarCep() : undefined}>{nos}</div></Card>;
+  };
   const semSecao = def.fields.filter((f) => !f.section && visivel(f)).map((f) => f.name);
   return <div className="flex min-h-0 flex-1 flex-col gap-2" data-testid="ficha-em-abas">
     {/* cabeçalho FIXO */}
     <Card className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[12.5px]" data-testid="ficha-cabecalho">
-      {cab.filter((f) => f.type !== "boolean").map((f) => <span key={f.name}><span className="text-slate-500">{f.label}: </span><b>{vazio(values[f.name]) ? (f.name === "code" && isNew ? "novo" : "—") : String(values[f.name])}</b></span>)}
+      {cab.filter((f) => f.type !== "boolean" && f.name !== "situacao_receita").map((f) => <span key={f.name} data-testid={`cabecalho-${f.name}`}><span className="text-slate-500">{f.label}: </span><b>{vazio(values[f.name]) ? (f.name === "code" && isNew ? "novo" : "—") : valorDoCabecalho(f, values[f.name], tipoPessoa)}</b></span>)}
       {cab.some((f) => f.type === "boolean" && f.name !== "is_active") && <span><span className="text-slate-500">Tipos: </span><b>{tipos.length ? tipos.join(", ") : "nenhum"}</b></span>}
       {cab.some((f) => f.name === "is_active") && <span className={cn("rounded px-1", values["is_active"] === false ? "bg-slate-200 text-slate-600" : "bg-green-100 text-green-800")}>{values["is_active"] === false ? "Inativo" : "Ativo"}</span>}
+      {cab.some((f) => f.name === "situacao_receita") && situacao && <span data-testid="cabecalho-situacao_receita"><span className="text-slate-500">Receita: </span><b>{situacao}</b></span>}
       {situacao && situacao !== "ATIVA" && <span className="flex items-center gap-1 rounded bg-amber-100 px-1 text-amber-800" data-testid="aviso-situacao"><AlertTriangle className="h-3.5 w-3.5" /> Situação na Receita: {situacao}</span>}
     </Card>
+    {divergeDoDocumento && <div className="flex flex-wrap items-center gap-2 rounded border border-amber-300 bg-amber-50 px-3 py-1.5 text-[12.5px] text-amber-900" data-testid="faixa-tipo-documento">
+      <AlertTriangle className="h-3.5 w-3.5" /> O documento é {pedido === "natural" ? "um CPF" : "um CNPJ"}, mas o tipo de pessoa está como {tipoPessoa === "legal" ? "Jurídica" : "Física"}.
+      <PillBtn tone="gray" onClick={() => { if (readOnly) entrarEmEdicao?.(); form.setValue("person_type", pedido, { shouldDirty: true }); }}>Ajustar para {rotuloDoPedido}</PillBtn>
+      <span className="text-amber-700">(grava ao Salvar)</span>
+    </div>}
+    {cnpjValidoNovo && <div className="flex items-center gap-2 rounded border border-green-300 bg-green-50 px-3 py-1.5 text-[12.5px] text-green-900" data-testid="aviso-cnpj-valido">CNPJ válido — <PillBtn tone="gray" onClick={() => abrirConsultaCnpj?.()}>Consultar na Receita</PillBtn></div>}
     <div className="flex flex-wrap gap-1" role="tablist">{abas.map((a) => { const n = contagem.get(a.key) ?? 0; return <button key={a.key} type="button" role="tab" aria-selected={cur === a.key} onClick={() => setAtiva(a.key)} className={cn("seg-tab", cur === a.key && "active")}>{a.label}{n > 0 && <span className="ml-1 rounded-full bg-red-600 px-1.5 text-[10px] text-white" data-testid={`erros-aba-${a.key}`}>{n}</span>}</button>; })}</div>
     <div className="min-h-0 flex-1 overflow-auto">
       {abas.map((a, i) => <div key={a.key} className={cn("grid grid-cols-12 gap-3", cur !== a.key && "hidden")} role="tabpanel" aria-label={a.label}>
-        {i === 0 && semSecao.length > 0 && <Card className="col-span-12 p-3"><div className="flex flex-wrap gap-2">{semSecao.map(renderField)}</div></Card>}
+        {i === 0 && semSecao.length > 0 && <Card className="col-span-12 p-3"><div className="flex flex-wrap gap-2">{semSecao.map((n) => renderField(n))}</div></Card>}
         {semEdicao(a) || (a.link && !isNew && record?.["id"]) ? <Card className="col-span-12 p-3 text-[12.5px]" data-testid={`aba-aviso-${a.key}`}>
           {semEdicao(a) && <span className="mr-2 text-slate-600">Somente leitura: o seu perfil não tem a permissão de edição desta aba.</span>}
           {a.link && !isNew && record?.["id"] ? <a className="text-brand-700 underline" href={a.link.href.replace(":id", String(record["id"]))}>{a.link.label}</a> : null}
         </Card> : null}
         {(a.secoes ?? []).map(secao)}
-        {a.key === "identificacao" && def.fields.some((f) => f.name === "document") && <ConsultaCnpj form={form} dis={readOnly} />}
+        {!consultaJanela && a.key === "identificacao" && def.fields.some((f) => f.name === "document") && <ConsultaCnpj form={form} dis={readOnly} />}
         {(a.perfis ?? []).map((k) => { const p = def.perfis?.find((x) => x.key === k); return p ? <CamposDoPerfil key={k} p={p} form={form} dis={readOnly || semEdicao(a)} /> : null; })}
-        {(a.detalhes ?? []).filter((k) => !barradas.has(k)).map((k) => { const d = def.detalhes?.find((x) => x.key === k); return d ? <GradeDeDetalhe key={k} d={d} form={form} dis={readOnly || semEdicao(a)} erros={erros} /> : null; })}
+        {(a.detalhes ?? []).filter((k) => !barradas.has(k)).map((k) => { const d = def.detalhes?.find((x) => x.key === k); return d ? <GradeDeDetalhe key={k} d={d} form={form} dis={readOnly || semEdicao(a)} erros={erros} mascaras={parceiro} /> : null; })}
         {a.key === "funcionario" && <Card className="col-span-12 p-3 text-[12.5px]">Funcionário: os eventos fixos, as ocorrências e a folha ficam no RH. {!isNew && record?.["id"] ? <a className="text-brand-700 underline" href={`/cadastros/funcionarios/${String(record["id"])}`}>Abrir no RH</a> : "Salve o parceiro para abrir no RH."}</Card>}
         {a.painel === "saldo_por_lote" && <SaldoPorLote id={isNew ? null : (record?.["id"] as string | undefined) ?? null} />}
         {a.painel === "historico" && <HistoricoDaFicha def={def} id={isNew ? null : (record?.["id"] as string | undefined) ?? null} />}
-        {a.key === "anexos" && <Card className="col-span-12 p-3 text-[12.5px]">{isNew || !record?.["id"] ? `Salve o ${def.label.toLowerCase()} para anexar arquivos.` : <><PillBtn tone="gray" onClick={() => setAnexos(true)}>Abrir anexos</PillBtn><AttachmentsDialog open={anexos} onOpenChange={setAnexos} entity={def.key} entityId={String(record["id"])} title={`Anexos · ${String(record[def.labelField] ?? "")}`} /></>}</Card>}
       </div>)}
     </div>
   </div>;

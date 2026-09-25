@@ -1184,6 +1184,40 @@ API: a anterior ignora colunas e tabelas novas; na saída volta à escolha ANTIG
 de um lote → 422, item 1); entrada e estorno sem lote de produto com lote continuam recusados pelo gatilho. Banco: a
 0029 fica (migration aplicada é histórico); nada a desfazer.
 
+## CADASTROS AJUSTES 01 — (C) ficha do Parceiro e `0030`
+
+Decisão 257, subitem (C).
+
+**A migration `0030_cadastros_ajustes_01.sql` é aditiva e SEM backfill** (trava (2026,64), `lock_timeout` 2 s,
+pré/pós-condições nomeadas, não reaplicável): colunas novas em `erp.people` (`matriz_id` com FK COMPOSTA
+`(matriz_id, organization_id)` → `people` e check "não é ele mesmo", `rg`, `caepf` 14 dígitos, `sexo` F/M, `site`,
+`caixa_postal`, `latitude`/`longitude` numeric(9,6) com faixa, `email_nfe` citext, `calcula_funrural` default false)
+e `latitude`/`longitude` em `erp.parceiro_enderecos`. Todas anuláveis ou com default; nenhuma linha muda de valor
+(a pós-condição confere). **Pré-condições:** 0027 e 0029 aplicadas; colunas ainda inexistentes. Nenhuma variável nova.
+**Impacto em dados reais:** nenhum UPDATE, nenhum DELETE; parceiros existentes ficam com as colunas novas vazias.
+
+**Implantação — ordem: banco (0030) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
+
+1. **API anterior × banco novo:** colunas novas inertes (anuláveis/default); a API anterior grava `erp.people` sem elas.
+2. **web ANTERIOR × API nova:** a ficha anterior não manda as chaves novas; PUT sem elas não muda nada (as regras de
+   tipo de pessoa só cobram quando o corpo toca o tipo ou o campo). A consulta antiga continua funcionando.
+3. **web NOVA × API anterior:** a API anterior não declara `capacidades.consultaCnpjJanela`: a web nova não mostra
+   nem envia os campos da 0030 (o schema estrito da anterior recusaria o corpo inteiro), não mostra `Consultar CNPJ`
+   na barra nem `Novo pelo CNPJ` na lista, e usa a consulta antiga na aba Identificação. Anexos na barra, Tipo do
+   parceiro num campo só, máscaras e o tipo de pessoa seguindo o documento são só tela e valem nos dois sentidos.
+
+**Reversão.** Web: livre (item 3). API: a anterior ignora as colunas novas; a web nova volta sozinha ao comportamento
+do item 3. Banco: a 0030 fica (migration aplicada é histórico); nada a desfazer.
+
+**Roteiro de teste do Maike depois do deploy (na mão, produção, sem gravar nada que não queira manter):**
+UI-1 abrir um parceiro em leitura → `Consultar CNPJ` ao lado de `Anexos`, habilitado; consultar → todos os dados;
+aba Divergências; `Importar para o cadastro` → entra em Editar com os campos preenchidos e Tipo = Jurídica; Cancelar
+(nada gravado). UI-2 lista de Parceiros → `Novo pelo CNPJ` → Importar → parceiro novo preenchido (Salvar só se
+quiser manter). UI-4 CEP + Tab → Endereço, Bairro, Cidade, Código IBGE, UF e foco no Número; CEP de outra cidade →
+aviso. UI-6 digitar 11 dígitos → Física (RG, CAEPF, Sexo aparecem; "Nome completo"); 14 → Jurídica (Matriz
+aparece); parceiro Jurídica com CPF → faixa âmbar e `Ajustar para Física`. UI-7 Tipo do parceiro num campo só;
+marcar Fornecedor → aba Fornecedor aparece. Os demais itens (UI-3, UI-5, UI-8 a UI-10) são das outras frentes.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)
