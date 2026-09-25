@@ -1178,3 +1178,123 @@ test("CADASTROS FASE 6 · PR-K1 — ficha de Produto da web NOVA contra a API da
   expect(erro.details?.map((d) => d.message), "a base não conhece os campos da ficha").toContain("Campo não reconhecido");
   expect(sql(`select count(*) from erp.products where description = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
 });
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * R1-1 c (PR #62) · LT-K1 — LOTE E VALIDADE NA ENTRADA CONTRA A API DA BASE.
+ *
+ * As telas novas de estoque mandam lote e validade na devolução, validade na correção para cima e validade na
+ * produção de ração. Os schemas da API da base NÃO são estritos e DESCARTAM essas chaves em silêncio: a devolução
+ * entraria sem lote, e o ajuste para cima gravaria o lote sem a validade (a escolha automática por validade poria
+ * esse lote por último) — "passa e corrompe". Por isso a API nova DECLARA `capacidades.loteNaEntrada` em
+ * `/auth/context`, e sem a declaração a web não oferece nem envia esses campos.
+ *
+ * A decisão do ramo sai da ÁRVORE da base (o fonte que o binário roda) e é conferida contra o que o binário
+ * responde: uma base que declara e não serve (ou o contrário) reprova — nenhum dos dois ramos é escolhido por
+ * conveniência.
+ *
+ * Ramo LEGADO (a base não declara): (1) correção: o campo Validade não aparece e `expiration_date` não viaja no
+ * POST — a base grava o ajuste com o lote; (2) devolução a partir de uma requisição de produto com controle de lote:
+ * as colunas Lote/Validade não aparecem, `provider_lot`/`expiration_date` não viajam, e a base RECUSA (422, o gatilho
+ * da 0029 exige o lote) sem gravar nada — nunca entra sem lote; (3) produção de ração: a Validade não aparece e
+ * `validade` não viaja no POST.
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+function baseDeclaraLoteNaEntrada(): boolean {
+  const arq = path.resolve(__dirname, "../../..", ".api-anterior/apps/api/src/routes/auth.ts");
+  expect(fs.existsSync(arq), `a árvore da base precisa existir (${arq}): scripts/api-anterior.mjs a monta antes do skew`).toBe(true);
+  const ocorrencias = fs.readFileSync(arq, "utf8").split("loteNaEntrada: CAPACIDADE_LOTE_NA_ENTRADA").length - 1;
+  expect(ocorrencias, "contagem ambígua não decide ramo nenhum").toBeLessThanOrEqual(1);
+  console.log(`[skew] R1-1 c · a base ${ocorrencias === 1 ? "DECLARA" : "NÃO declara"} loteNaEntrada`);
+  return ocorrencias === 1;
+}
+
+test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, correção, devolução e produção não mostram nem enviam lote/validade; a devolução de produto com lote é RECUSADA e nada gravado", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const cab = await cabecalhosDaSessao(page);
+  const declara = baseDeclaraLoteNaEntrada();
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cab })).json() as { capacidades?: { loteNaEntrada?: unknown }; empresas?: { id: string }[] };
+  expect(ctx.capacidades?.loteNaEntrada ?? null, "o binário serve exatamente o que a árvore da base declara").toBe(declara ? 1 : null);
+
+  // premissas lidas do banco (migrado pelo HEAD): o produto semeado com lote é "lote" depois da 0029
+  const empresaId = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId?: string | null }).empresaId ?? null) ?? ctx.empresas?.[0]?.id;
+  expect(empresaId, "premissa: há empresa visível").toMatch(UUID);
+  const produto = sql(`select id from erp.products where organization_id = '${s.orgId}' and description = 'Vacina Aftosa 50 doses' and deleted_at is null`);
+  expect(produto, "premissa: o produto semeado com lote existe").toMatch(UUID);
+  expect(sql(`select controle_lote from erp.products where id = '${produto}'`), "premissa: controle por lote").toBe("lote");
+  const armazem = sql(`select id from erp.warehouses where organization_id = '${s.orgId}' and empresa_id = '${empresaId}' and deleted_at is null and is_active order by created_at limit 1`);
+  expect(armazem, "premissa: a empresa ativa tem armazém").toMatch(UUID);
+
+  // fixture pela PRÓPRIA API da base: saldo num lote único e uma requisição dele com o lote informado
+  const lote = `LTK1-${Date.now().toString(36).toUpperCase()}`;
+  const saldo = await page.request.post(`${API}/api/stock/opening-balances`, { headers: cab, data: { empresa_id: empresaId, warehouse_id: armazem, product_id: produto, quantity: "5", unit_value: "3", provider_lot: lote } });
+  expect(saldo.status(), await saldo.text()).toBe(201);
+  const req = await page.request.post(`${API}/api/stock/requisitions`, { headers: cab, data: { empresa_id: empresaId, requisition_date: "2026-09-22", items: [{ warehouse_id: armazem, product_id: produto, provider_lot: lote, quantity: "2" }] } });
+  expect(req.status(), await req.text()).toBe(201);
+  const requisicao = (await req.json() as { id: string }).id;
+
+  // (1) CORREÇÃO, pela ação da linha do saldo (empresa, armazém, produto e lote pré-preenchidos)
+  await page.goto(`/estoque?tab=estoque&sub=saldo&product_id=${produto}`);
+  await page.getByRole("row").filter({ hasText: lote }).getByRole("button", { name: "Ajustar estoque" }).click();
+  const dialogo = page.getByRole("dialog").filter({ hasText: "Ajustar estoque" });
+  await expect(dialogo.getByLabel("Lote", { exact: true }), "premissa: o lote veio da linha").toHaveValue(lote);
+  if (declara) {
+    await expect(dialogo.getByLabel("Validade", { exact: true }), "declarada, a validade aparece").toBeVisible();
+  } else {
+    await expect(dialogo.getByLabel("Validade", { exact: true }), "o campo que a base descartaria não aparece").toHaveCount(0);
+    await dialogo.getByLabel("Nova quantidade").fill("4");
+    await dialogo.getByLabel("Justificativa").fill("LT-K1 ajuste para cima");
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/corrections");
+    await dialogo.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(enviado["provider_lot"], "premissa: o corpo é o deste ajuste").toBe(lote);
+    expect("expiration_date" in enviado, "a validade NÃO viaja para uma API que a descartaria").toBe(false);
+    expect(r.status(), "a base grava o ajuste com o lote, como sempre").toBe(201);
+  }
+
+  // (2) DEVOLUÇÃO a partir da requisição (itens pré-preenchidos com o lote do item)
+  const devolucoesAntes = sql(`select count(*) from erp.devolution_items where product_id = '${produto}'`);
+  const movimentosAntes = sql(`select count(*) from erp.stock_movements where product_id = '${produto}'`);
+  await page.goto(`/estoque/devolucoes/new?requisition_id=${requisicao}`);
+  const linhas = page.locator("table tbody tr");
+  await expect(linhas, "premissa: a linha da requisição foi pré-preenchida").toHaveCount(1);
+  const cabecalhosDaTabela = page.locator("table thead th");
+  if (declara) {
+    await expect(cabecalhosDaTabela.filter({ hasText: /^Lote$/ })).toHaveCount(1);
+    await expect(cabecalhosDaTabela.filter({ hasText: /^Validade$/ })).toHaveCount(1);
+  } else {
+    await expect(cabecalhosDaTabela.filter({ hasText: /^Lote$/ }), "a coluna que a base descartaria não aparece").toHaveCount(0);
+    await expect(cabecalhosDaTabela.filter({ hasText: /^Validade$/ })).toHaveCount(0);
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/devolutions");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    const itens = (r.request().postDataJSON() as { items: Record<string, unknown>[] }).items;
+    expect(itens.map((i) => i["product_id"]), "premissa: o corpo é o desta devolução").toEqual([produto]);
+    expect(itens.flatMap((i) => Object.keys(i).filter((k) => k === "provider_lot" || k === "expiration_date")), "lote e validade NÃO viajam").toEqual([]);
+    // sem lote, o produto com controle NÃO entra no balde sem lote: o gatilho da 0029 recusa, nada gravado
+    expect(r.status(), await r.text()).toBe(422);
+    expect(sql(`select count(*) from erp.devolution_items where product_id = '${produto}'`), "nenhum item de devolução").toBe(devolucoesAntes);
+    expect(sql(`select count(*) from erp.stock_movements where product_id = '${produto}'`), "nenhum movimento").toBe(movimentosAntes);
+    expect(sql(`select coalesce(sum(quantity), 0)::text from erp.stock_balances where product_id = '${produto}' and provider_lot = ''`), "o balde sem lote não recebeu nada").toMatch(/^0(\.0+)?$/);
+  }
+
+  // (3) PRODUÇÃO DE RAÇÃO: a validade do produto acabado
+  const formula = await page.request.post(`${API}/api/stock/feed-formulas`, { headers: cab, data: { name: uniq("LT-K1 formulação"), items: [{ product_id: produto, quantity: "1" }] } });
+  expect(formula.status(), await formula.text()).toBe(201);
+  const formulaId = (await formula.json() as { id: string }).id;
+  await page.goto("/estoque/batidas/new");
+  if (declara) {
+    await expect(page.getByLabel("Validade do produto acabado"), "declarada, a validade aparece").toBeVisible();
+  } else {
+    await expect(page.getByLabel("Validade do produto acabado"), "o campo que a base descartaria não aparece").toHaveCount(0);
+    await page.getByLabel("Formulação").selectOption(formulaId);
+    await page.getByLabel("Quantidade produzida").fill("1");
+    const pedido = page.waitForRequest((q) => q.method() === "POST" && new URL(q.url()).pathname === "/api/stock/feed-batches");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const enviado = (await pedido).postDataJSON() as Record<string, unknown>;
+    expect(enviado["formula_id"], "premissa: o corpo é o desta produção").toBe(formulaId);
+    expect("validade" in enviado, "a validade NÃO viaja para uma API que a descartaria").toBe(false);
+  }
+  v.semBloqueio();
+});

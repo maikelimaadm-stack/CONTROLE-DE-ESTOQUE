@@ -7,14 +7,17 @@ import { num, todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input, NativeSelect } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { useCreate, useEmpresaPadrao, type Row } from "@/features/docs/shared";
+import { useLoteNaEntrada } from "@/features/stock/capacidade-lote";
 export default function Page() {
   const router = useRouter(); const empresa = useEmpresaPadrao();
+  // a validade do produto acabado só com a API que a entende (`capacidades.loteNaEntrada`): a anterior a descartaria
+  const loteNaEntrada = useLoteNaEntrada();
   const [h, setH] = React.useState({ empresa_id: "", batch_date: todayISO(), formula_id: "", origin_warehouse_id: "", destination_warehouse_id: "", quantity_produced: "", multiplier: "1", validade: "" });
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
   const formulas = useQuery({ queryKey: ["formulas"], queryFn: () => api<{ items: (Row & { items: { product_name: string; quantity: string }[] | null })[] }>("/api/stock/feed-formulas") });
   const f = formulas.data?.items.find((x) => x["id"] === h.formula_id);
   const create = useCreate("/api/stock/feed-batches", () => router.push("/estoque?tab=fabrica&sub=producoes"));
-  return <Card><CardHeader title="Nova produção de ração" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.formula_id || !h.quantity_produced} onClick={() => create.mutate({ ...h, validade: h.validade || null })}>Salvar</Button></>} /><CardBody className="space-y-4">
+  return <Card><CardHeader title="Nova produção de ração" actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!h.formula_id || !h.quantity_produced} onClick={() => { const { validade, ...resto } = h; create.mutate({ ...resto, ...(loteNaEntrada ? { validade: validade || null } : {}) }); }}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
       <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.batch_date} onChange={(e) => setH({ ...h, batch_date: e.target.value })} /></Field>
@@ -23,7 +26,7 @@ export default function Page() {
       <Field label="Armazém de matérias-primas" required span={4}><RefSelect resource="warehouses" value={h.origin_warehouse_id} onChange={(v) => setH({ ...h, origin_warehouse_id: v ?? "" })} filter={{ empresa_id: h.empresa_id }} /></Field>
       <Field label="Armazém do produto acabado" required span={4}><RefSelect resource="warehouses" value={h.destination_warehouse_id} onChange={(v) => setH({ ...h, destination_warehouse_id: v ?? "" })} filter={{ empresa_id: h.empresa_id }} /></Field>
       <Field label="Quantidade produzida" required span={4}><Input type="number" step="0.0001" value={h.quantity_produced} onChange={(e) => setH({ ...h, quantity_produced: e.target.value })} /></Field>
-      <Field label="Validade do produto acabado" span={4} help="Exigida quando o produto controla lote e validade; o lote do produto acabado é o código da produção"><Input type="date" value={h.validade} onChange={(e) => setH({ ...h, validade: e.target.value })} /></Field>
+      {loteNaEntrada && <Field label="Validade do produto acabado" span={4} help="Exigida quando o produto controla lote e validade; o lote do produto acabado é o código da produção"><Input type="date" value={h.validade} onChange={(e) => setH({ ...h, validade: e.target.value })} /></Field>}
     </div>
     {f && <div className="rounded border p-3 text-xs"><div className="mb-1 font-semibold">Matéria prima consumida</div>{(f.items ?? []).map((i, k) => <div key={k}>{i.product_name}: {num(Number(i.quantity) * Number(h.multiplier || 1), 4)}</div>)}<div className="mt-1 text-slate-500">Produto acabado: {String(f["product_name"] ?? "(vincule na formulação)")}</div></div>}
   </CardBody></Card>;

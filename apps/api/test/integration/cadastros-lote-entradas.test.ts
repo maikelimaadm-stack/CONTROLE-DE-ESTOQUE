@@ -63,6 +63,14 @@ beforeAll(async () => {
 }, 240_000);
 afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end(); });
 
+describe("LT-K0 — a descoberta declara que esta API entende lote e validade na entrada", () => {
+  it("GET /auth/context traz capacidades.loteNaEntrada = 1 (sem ela a web nova esconde e não envia os campos)", async () => {
+    const r = await h.app.inject({ method: "GET", url: "/api/auth/context", headers: h.headers() });
+    expect(r.statusCode, r.body).toBe(200);
+    expect((JSON.parse(r.body) as { capacidades?: unknown }).capacidades).toEqual({ loteNaEntrada: 1 });
+  });
+});
+
 describe("LT-6 — devolução: lote e validade opcionais no item, exigidos só para produto com controle", () => {
   const devolucao = (product_id: string, extra: Record<string, unknown> = {}) =>
     post("/api/stock/devolutions", { empresa_id: I.empresa, devolution_date: DIA, items: [{ warehouse_id: I.warehouse, product_id, quantity: "2", unit_value: "4", ...extra }] });

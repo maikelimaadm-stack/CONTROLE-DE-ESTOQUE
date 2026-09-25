@@ -9,6 +9,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { RefSelect } from "@/components/ui/ref-select";
 import { useCreate, useEmpresaPadrao, StatusBadge, type Row } from "@/features/docs/shared";
 import { COPY } from "@/lib/copy";
+import { useLoteNaEntrada } from "@/features/stock/capacidade-lote";
 
 export interface CorrectionPrefill { empresa_id?: string; warehouse_id?: string; product_id?: string; provider_lot?: string }
 
@@ -18,19 +19,22 @@ export interface CorrectionPrefill { empresa_id?: string; warehouse_id?: string;
  */
 export function CorrectionDialog({ open, onOpenChange, prefill }: { open: boolean; onOpenChange: (o: boolean) => void; prefill?: CorrectionPrefill }) {
   const qc = useQueryClient(); const empresa = useEmpresaPadrao();
+  // a validade só com a API que a entende (`capacidades.loteNaEntrada`): a anterior a descartaria em silêncio e
+  // gravaria o lote do ajuste para cima SEM validade
+  const loteNaEntrada = useLoteNaEntrada();
   const blank = React.useCallback(() => ({ empresa_id: prefill?.empresa_id || empresa, correction_date: todayISO(), warehouse_id: prefill?.warehouse_id ?? "", product_id: prefill?.product_id ?? "", provider_lot: prefill?.provider_lot ?? "", expiration_date: "", new_quantity: "", unit_value: "", justification: "" }), [prefill, empresa]);
   const [v, setV] = React.useState(blank);
   React.useEffect(() => { if (open) setV(blank()); }, [open, blank]);
   const bal = useQuery({ queryKey: ["bal", v.warehouse_id, v.product_id], queryFn: () => api<{ quantity: string; averageCost: string }>(`/api/stock/balances/${v.warehouse_id}/${v.product_id}`), enabled: open && Boolean(v.warehouse_id && v.product_id) });
   const create = useCreate("/api/stock/corrections", () => { onOpenChange(false); void qc.invalidateQueries({ queryKey: ["corrections"] }); void qc.invalidateQueries({ queryKey: ["balances"] }); });
-  return <Dialog open={open} onOpenChange={onOpenChange} title="Ajustar estoque" footer={<><Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button><Button loading={create.isPending} disabled={!v.warehouse_id || !v.product_id || !v.new_quantity || !v.justification} onClick={() => create.mutate({ ...v, provider_lot: v.provider_lot.trim() || null, expiration_date: v.expiration_date || null, unit_value: v.unit_value || null })}>Salvar</Button></>}>
+  return <Dialog open={open} onOpenChange={onOpenChange} title="Ajustar estoque" footer={<><Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button><Button loading={create.isPending} disabled={!v.warehouse_id || !v.product_id || !v.new_quantity || !v.justification} onClick={() => { const { expiration_date, ...resto } = v; create.mutate({ ...resto, provider_lot: v.provider_lot.trim() || null, ...(loteNaEntrada ? { expiration_date: expiration_date || null } : {}), unit_value: v.unit_value || null }); }}>Salvar</Button></>}>
     <p className="mb-3 text-xs text-slate-500">Ajusta o saldo para a quantidade informada com justificativa; gera um movimento de correção no ledger (nunca edita movimentos anteriores).</p>
     <div className="grid grid-cols-12 gap-3">
       <Field label="Empresa" required span={6}><RefSelect resource="empresas" value={v.empresa_id} onChange={(x) => setV({ ...v, empresa_id: x ?? "", warehouse_id: "" })} /></Field>
       <Field label="Armazém" required span={6}><RefSelect resource="warehouses" value={v.warehouse_id} onChange={(x) => setV({ ...v, warehouse_id: x ?? "" })} filter={{ empresa_id: v.empresa_id }} /></Field>
       <Field label="Produto" required span={6}><RefSelect resource="products" value={v.product_id} onChange={(x) => setV({ ...v, product_id: x ?? "" })} /></Field>
-      <Field label="Lote" span={3}><Input value={v.provider_lot} onChange={(e) => setV({ ...v, provider_lot: e.target.value })} /></Field>
-      <Field label="Validade" span={3} help="Só no ajuste para cima; exigida quando o produto controla lote e validade"><Input type="date" value={v.expiration_date} onChange={(e) => setV({ ...v, expiration_date: e.target.value })} /></Field>
+      <Field label="Lote" span={loteNaEntrada ? 3 : 6}><Input value={v.provider_lot} onChange={(e) => setV({ ...v, provider_lot: e.target.value })} /></Field>
+      {loteNaEntrada && <Field label="Validade" span={3} help="Só no ajuste para cima; exigida quando o produto controla lote e validade"><Input type="date" value={v.expiration_date} onChange={(e) => setV({ ...v, expiration_date: e.target.value })} /></Field>}
       <Field label="Saldo atual" span={3}><Input readOnly value={bal.data ? num(bal.data.quantity, 4) : ""} /></Field>
       <Field label="Nova quantidade" required span={3}><Input type="number" step="0.0001" value={v.new_quantity} onChange={(e) => setV({ ...v, new_quantity: e.target.value })} /></Field>
       <Field label="Data" required span={3}><Input type="date" value={v.correction_date} onChange={(e) => setV({ ...v, correction_date: e.target.value })} /></Field>

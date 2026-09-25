@@ -1122,18 +1122,37 @@ Medir também (leitura; nenhuma delas para a migration):
 **Implantação — ordem: banco (0029) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
 
 1. **API anterior × banco novo:** colunas e tabelas novas inertes; `has_lot` gravado pela API anterior vira o
-   controle pelo gatilho; o gatilho de lote no movimento JÁ VALE (a API anterior escolhia o lote na saída — continua
-   escolhendo; entrada sem lote de produto com lote → erro de banco, 500/422 genérico).
+   controle pelo gatilho; o gatilho de lote no movimento JÁ VALE, e a API anterior NÃO tem a escolha da revisão R1-1:
+   ela escolhe UM lote com quantidade ≥ o pedido, ordenado só pela validade — INCLUSIVE lote vencido —, e sem lote
+   que baste grava o movimento sem lote, que o gatilho recusa (422 genérico "informe o lote"). Na janela (e numa
+   reversão da API) venda, OS, manejo, abastecimento, manutenção, dieta, ração, requisição e baixa de produto com
+   lote VOLTAM a falhar quando a quantidade precisa de mais de um lote, e lote vencido volta a sair automaticamente.
+   Entrada sem lote de produto com lote → erro do gatilho (422 genérico). Estorno sem lote de produto com lote
+   (cancelar documento cujo movimento foi gravado sem lote) → o gatilho recusa (LT-8b), nada gravado — a API
+   anterior não recria o saldo preso no balde sem lote.
 2. **web ANTERIOR × API nova:** o formulário anterior grava (`has_lot` true → "lote", false → "nenhum"; 2ª
    unidade, tipo e fator aceitos como legado); PUT sem as grades não mexe nelas; mudar `has_lot` com saldo → 422.
+   **Estoque pela web anterior (R1-1):** a devolução da web anterior não tem campo de lote — devolução de produto com
+   controle passa a responder **422** "informe o lote" (em produção hoje ela GRAVA, no balde sem lote); o ajuste para
+   cima sem lote de produto com controle também → 422 (antes gravava sem lote). Produto sem controle segue como antes.
+   As saídas (venda, OS, requisição, baixa…) pela web anterior gravam: a escolha automática da API nova não depende
+   da tela. É recusa declarada, nada gravado — nunca entrada sem lote.
 3. **web NOVA × API anterior:** a ficha manda `controle_lote`, colunas e grades novas; o schema estrito da API
    anterior RECUSA (422 "Campo não reconhecido") e nada é gravado. Provado em `skew-api-producao.spec.ts` (PR-K1).
-   **Exceção (R1-1):** as telas de estoque novas mandam lote e validade na devolução, validade na correção e na
-   produção de ração; esses schemas da API anterior NÃO são estritos e DESCARTAM o campo (a devolução entraria sem
-   lote). Por isso a ordem API → web é obrigatória: web nova só depois da API nova no ar.
+   **Estoque (R1-1, rodada 1 do R1):** lote e validade da devolução, validade da correção para cima e validade da
+   produção de ração só aparecem e só viajam quando a API DECLARA `capacidades.loteNaEntrada = 1` em `/auth/context`
+   (os schemas da API anterior não são estritos e DESCARTARIAM essas chaves em silêncio — a devolução entraria sem
+   lote e o ajuste para cima gravaria o lote sem a validade). A API anterior não declara: a web nova se comporta como
+   a anterior nas três telas, e o que a API anterior não sabe gravar o gatilho da 0029 recusa (devolução de produto
+   com controle → 422, nada gravado). Provado em `skew-api-producao.spec.ts` (LT-K1) e, com a mesma API sem a
+   declaração, pela reversa do LT-W1 (as colunas de lote somem). A ordem API → web deixa de ser condição de
+   integridade para estas telas: se a web subir antes (Vercel antes do Railway, ou pre-deploy parado na 0029), nada
+   é gravado sem o lote.
 
-**Reversão.** Web: livre. API: a anterior ignora colunas e tabelas novas (volta a escolher lote na saída; o gatilho
-ainda exige lote na entrada). Banco: a 0029 fica (migration aplicada é histórico); nada a desfazer.
+**Reversão.** Web: livre — a web nova sobre a API anterior esconde e não envia lote e validade na entrada (item 3).
+API: a anterior ignora colunas e tabelas novas; na saída volta à escolha ANTIGA (um lote só, inclusive vencido; mais
+de um lote → 422, item 1); entrada e estorno sem lote de produto com lote continuam recusados pelo gatilho. Banco: a
+0029 fica (migration aplicada é histórico); nada a desfazer.
 
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)

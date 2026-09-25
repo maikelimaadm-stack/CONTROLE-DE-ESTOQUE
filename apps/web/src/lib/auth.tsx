@@ -14,6 +14,11 @@ export interface AppContext {
   idioma?: { organizacao: string | null; usuario: string | null; efetivo: string };
   favorites: { route: string; label: string }[];
   unreadNotifications: number;
+  /**
+   * Capacidades que a API declara (ADITIVAS; ausentes na API anterior). Cada tela confere a versão EXATA que sabe
+   * usar — valor desconhecido é tratado como ausente. Ver `features/stock/capacidade-lote.ts`.
+   */
+  capacidades?: Record<string, unknown>;
 }
 interface AuthState { session: Session | null; ctx: AppContext | null; loading: boolean; can: (perm: string) => boolean; setEmpresa: (id: string | null) => void; setOrg: (id: string) => Promise<void>; refresh: () => Promise<void>; logout: () => void }
 const Ctx = createContext<AuthState | null>(null);
