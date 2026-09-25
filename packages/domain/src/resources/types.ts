@@ -80,6 +80,13 @@ export interface FieldDef {
    */
   limpaQuandoOculto?: boolean;
   /**
+   * Numérico que o usuário ESVAZIA na edição vai `null` na gravação (AJUSTES 01 R1, W-8: latitude/longitude do
+   * Parceiro — a coluna aceita nulo e "sem valor" tem sentido). SEM a marca, numérico vazio fica FORA do corpo: o
+   * default do banco vale no novo e o valor gravado continua no editado — a coluna pode ser `NOT NULL DEFAULT 0`
+   * (ex.: Valor de referência do Produto), e o `null` seria recusado pelo banco. Só a tela usa.
+   */
+  anulaQuandoEsvaziado?: boolean;
+  /**
    * obrigatório CONDICIONAL: só quando outro campo tem esse valor (vazio = `default` dele).
    * O banco continua sendo a autoridade; isto serve para a tela e o modelo de importação avisarem antes.
    */

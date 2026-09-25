@@ -367,13 +367,18 @@ export function CriacaoPorOutraPorta({ def, base }: { def: ResourceDef; base: st
  * controle de sempre do formulário com um ajuste (`ExtraDoCampo`) — a mesma aparência, outra regra.
  */
 export type ControleDoCampo = (p: { dis: boolean; required?: boolean; onOpenChange?: (o: boolean) => void; padrao?: (extra: ExtraDoCampo) => React.ReactElement }) => React.ReactElement;
-/** Ajustes do controle de sempre: interceptar a troca (seletor), ligar o rótulo à caixa, recortar a lista da referência. */
-export interface ExtraDoCampo { aoMudar?: (v: string) => void; ligarRotulo?: boolean; excluirIds?: string[]; buscarOpcoes?: BuscaDeOpcoes }
+/** Ajustes do controle de sempre: interceptar a troca (seletor), ligar o rótulo à caixa, recortar a lista da referência, tirar o X de limpar. */
+export interface ExtraDoCampo { aoMudar?: (v: string) => void; ligarRotulo?: boolean; excluirIds?: string[]; buscarOpcoes?: BuscaDeOpcoes; /** seletor: mostra o X de limpar (padrão: quando o campo não é obrigatório) */ permiteVazio?: boolean }
 
-/** Rótulo do valor no cabeçalho: opção do select pelo rótulo; documento com a MESMA máscara da caixa. */
-function valorDoCabecalho(f: FieldDef, v: unknown, tipoPessoa: unknown, digitandoDocumento: boolean): string {
+/**
+ * Rótulo do valor no cabeçalho: opção do select pelo rótulo; documento com a MESMA máscara da caixa. Só a caixa do
+ * Parceiro tem a máscara pelo tipo de pessoa (`mascaraDoDocumento`); nas outras fichas (ex.: Funcionários, caixa sem
+ * máscara) CPF/CNPJ só com 11/14 posições e o resto como gravado — documento estrangeiro não ganha pontuação de CNPJ.
+ */
+function valorDoCabecalho(f: FieldDef, v: unknown, tipoPessoa: unknown, digitandoDocumento: boolean, parceiro: boolean): string {
   if (f.type === "select") return f.options?.find((o) => o.value === String(v))?.label ?? String(v);
-  if (f.name === "document") { const m = mascaraDoDocumento(String(tipoPessoa ?? ""), String(v), digitandoDocumento); return m ? formatarMascara(m, String(v)) : String(v); }
+  if (f.name === "document" && parceiro) { const m = mascaraDoDocumento(String(tipoPessoa ?? ""), String(v), digitandoDocumento); return m ? formatarMascara(m, String(v)) : String(v); }
+  if (f.name === "document") { const t = tipoDoDocumento(v); return t && tipoPessoa !== "foreign" ? formatarMascara(t === "natural" ? "cpf" : "cnpj", String(v)) : String(v); }
   return String(v);
 }
 
@@ -452,7 +457,8 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
     form.setValue("person_type", novo, { shouldDirty: true });
   };
   const pedirTroca = (novo: string, opcoes: { antes?: () => void } = {}) => {
-    if (iguala(form.getValues("person_type"), novo)) return;
+    // o tipo nunca fica vazio (coluna NOT NULL): "trocar para nada" não pergunta nem apaga campo algum
+    if (vazio(novo) || iguala(form.getValues("person_type"), novo)) return;
     const campos = camposApagadosNaTroca(def, form.getValues(), novo, apagavel);
     if (!campos.length) { aplicarTroca(novo, [], opcoes.antes); return; }
     setTroca({ novo, campos, antes: opcoes.antes });
@@ -494,8 +500,9 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
     if (f.name === "document") return ({ dis }) => <EntradaDocumento {...reg("document")} onChange={mudarDocumento} tipoPessoa={String(tipoPessoa ?? "")} readOnly={dis} className={cls} erro={(form.formState.errors["document"]?.message as string | undefined) ?? null}
       onFocus={() => { docAoEntrar.current = normalizarDocumento(String(form.getValues("document") ?? "")); setDigitandoDocumento(true); }}
       onBlur={() => { setDigitandoDocumento(false); const atual = String(form.getValues("document") ?? ""); if (!dis && normalizarDocumento(atual) !== docAoEntrar.current) trocaAutomatica(atual, "saindo"); }} />;
-    // o seletor de sempre, mas a troca passa por `pedirTroca` (pergunta antes de apagar campo preenchido — R1, W-3)
-    if (f.name === "person_type") return ({ padrao }) => padrao!({ aoMudar: (v) => pedirTroca(v) });
+    // o seletor de sempre, mas a troca passa por `pedirTroca` (pergunta antes de apagar campo preenchido — R1, W-3) e SEM
+    // o X de limpar: o tipo de pessoa nunca fica vazio (coluna NOT NULL, padrão Jurídica) — trocar é escolher outro tipo
+    if (f.name === "person_type") return ({ padrao }) => padrao!({ aoMudar: (v) => pedirTroca(v), permiteVazio: false });
     if (f.name === "zip_code") return ({ dis }) => <EntradaCep {...reg("zip_code")} readOnly={dis} className={cls} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey) void buscarCep(); }} onBuscar={dis ? undefined : () => void buscarCep(true)} />;
     if (["phone", "cellphone", "contact_phone"].includes(f.name)) return ({ dis }) => <EntradaMascara {...reg(f.name)} mascara="telefone" readOnly={dis} className={cls} />;
     if (f.busca === "municipios") return ({ dis }) => <CampoCidade value={values[f.name] as number | string | null} onChange={(c) => form.setValue(f.name, c ?? "", { shouldDirty: true })} disabled={dis} classeEntrada={cls} />;
@@ -522,7 +529,7 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   return <div className="flex min-h-0 flex-1 flex-col gap-2" data-testid="ficha-em-abas">
     {/* cabeçalho FIXO */}
     <Card className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-[12.5px]" data-testid="ficha-cabecalho">
-      {cab.filter((f) => f.type !== "boolean" && f.name !== "situacao_receita").map((f) => <span key={f.name} data-testid={`cabecalho-${f.name}`}><span className="text-slate-500">{f.label}: </span><b>{vazio(values[f.name]) ? (f.name === "code" && isNew ? "novo" : "—") : valorDoCabecalho(f, values[f.name], tipoPessoa, digitandoDocumento)}</b></span>)}
+      {cab.filter((f) => f.type !== "boolean" && f.name !== "situacao_receita").map((f) => <span key={f.name} data-testid={`cabecalho-${f.name}`}><span className="text-slate-500">{f.label}: </span><b>{vazio(values[f.name]) ? (f.name === "code" && isNew ? "novo" : "—") : valorDoCabecalho(f, values[f.name], tipoPessoa, digitandoDocumento, parceiro)}</b></span>)}
       {cab.some((f) => f.type === "boolean" && f.name !== "is_active") && <span><span className="text-slate-500">Tipos: </span><b>{tipos.length ? tipos.join(", ") : "nenhum"}</b></span>}
       {cab.some((f) => f.name === "is_active") && <span className={cn("rounded px-1", values["is_active"] === false ? "bg-slate-200 text-slate-600" : "bg-green-100 text-green-800")}>{values["is_active"] === false ? "Inativo" : "Ativo"}</span>}
       {cab.some((f) => f.name === "situacao_receita") && situacao && <span data-testid="cabecalho-situacao_receita"><span className="text-slate-500">Receita: </span><b>{situacao}</b></span>}

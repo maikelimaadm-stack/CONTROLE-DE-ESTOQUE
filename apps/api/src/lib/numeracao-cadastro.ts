@@ -198,7 +198,10 @@ export async function zerarNumeracao(ctx0: ServiceCtx, cadastro: string): Promis
  *
  * As máscaras ATUAIS são lidas SOB a trava da geração (AJUSTES 01 R1, A-8): primeiro a trava da numeração de TODAS
  * as árvores com código (ordem fixa, a mesma lista — sem impasse entre duas gravações de parâmetros), depois a linha
- * da organização `for update` (duas gravações de parâmetros se enfileiram). Lidas antes da trava, uma gravação que
+ * da organização `for no key update`: conflita consigo mesma e com o UPDATE de `parameters` (duas gravações de
+ * parâmetros se enfileiram), mas NÃO com o `for key share` que a checagem de chave estrangeira toma em toda inclusão
+ * que referencia `organizations(id)` — um `for update` aqui pararia toda inclusão da organização, em qualquer
+ * tabela, até o commit desta gravação. Lidas antes da trava, uma gravação que
  * reenviava a máscara antiga (a tela manda o objeto inteiro) via "sem mudança", não conferia nada e DESFAZIA a
  * máscara nova depois de um Novo já ter gerado código com ela.
  */
@@ -206,7 +209,7 @@ export async function conferirMudancaDeMascara(ctx: ServiceCtx, novas: Record<st
   if (novas === undefined) return;
   const defs = CADASTROS_CODIGO_HIERARQUICO.map((c) => getResource(c)!);
   for (const def of defs) await travarNumeracao(ctx, def);
-  const parametrosAtuais = (await ctx.tx.query<{ parameters: unknown }>("select parameters from erp.organizations where id=$1 for update", [ctx.orgId])).rows[0]?.parameters ?? {};
+  const parametrosAtuais = (await ctx.tx.query<{ parameters: unknown }>("select parameters from erp.organizations where id=$1 for no key update", [ctx.orgId])).rows[0]?.parameters ?? {};
   for (const def of defs) {
     const c = def.key as (typeof CADASTROS_CODIGO_HIERARQUICO)[number];
     const antes = mascaraDoCadastro(parametrosAtuais, c);
