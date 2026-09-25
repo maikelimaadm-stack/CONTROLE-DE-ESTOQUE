@@ -7,8 +7,13 @@
 --     próprio id), rg, caepf (14 dígitos), sexo (F/M), site, caixa_postal, latitude/longitude (graus decimais,
 --     −90..90 / −180..180), email_nfe (citext) e calcula_funrural (boolean, default false);
 --   · erp.parceiro_enderecos: latitude/longitude, com os mesmos checks.
--- As regras que dependem do tipo de pessoa (Matriz só em Jurídica; RG, CAEPF e Sexo só em Física; latitude e
--- longitude juntas) são da API (`apps/api/src/lib/parceiro.ts`), que devolve o erro no campo e na aba.
+--   · o PAR latitude/longitude anda junto (as duas ou nenhuma), nas duas tabelas: `chk_people_par_coordenadas` e
+--     `chk_parceiro_enderecos_par_coordenadas` (AJUSTES 01 R1, A-11) — uma edição parcial de uma linha (da grade, de
+--     uma importação ou de SQL de fora) não deixa o par pela metade. A API confere antes e responde no campo; o CHECK
+--     é a rede. O nome começa por "par" para ser conferido DEPOIS das faixas (o Postgres confere os CHECKs em ordem
+--     de nome): valor fora da faixa continua recusado pelo check da faixa, com o nome dele.
+-- As regras que dependem do tipo de pessoa (Matriz só em Jurídica; RG, CAEPF e Sexo só em Física) e as da matriz são
+-- da API (`apps/api/src/lib/parceiro.ts`), que devolve o erro no campo e na aba.
 --
 -- SEM BACKFILL: tudo anulável ou com default; nenhuma linha existente muda de valor.
 --
@@ -67,10 +72,11 @@ alter table erp.people
 
 alter table erp.people
   add constraint fk_people_matriz foreign key (matriz_id, organization_id) references erp.people (id, organization_id),
-  add constraint chk_people_matriz_nao_ele_mesmo check (matriz_id is null or matriz_id <> id);
+  add constraint chk_people_matriz_nao_ele_mesmo check (matriz_id is null or matriz_id <> id),
+  add constraint chk_people_par_coordenadas check ((latitude is null) = (longitude is null));
 create index ix_people_matriz on erp.people (organization_id, matriz_id) where matriz_id is not null;
 
-comment on column erp.people.matriz_id is 'Matriz do parceiro (filial → matriz). Só Jurídica (regra da API); parceiro vivo da mesma organização (FK composta) e nunca ele mesmo.';
+comment on column erp.people.matriz_id is 'Matriz do parceiro (filial → matriz, um nível só). Regras da API: só Jurídica; matriz viva, ativa, Jurídica e que não é filial; quem tem filiais não vira filial. A FK composta prova a mesma organização; nunca ele mesmo.';
 comment on column erp.people.rg is 'RG (Física; a API recusa em Jurídica).';
 comment on column erp.people.caepf is 'CAEPF — Cadastro de Atividade Econômica da Pessoa Física (14 dígitos; só Física).';
 comment on column erp.people.sexo is 'Sexo (F ou M; só Física).';
@@ -85,6 +91,8 @@ comment on column erp.people.calcula_funrural is 'Calcula FUNRURAL: fornecedor p
 alter table erp.parceiro_enderecos
   add column latitude numeric(9,6) constraint chk_parceiro_enderecos_latitude check (latitude between -90 and 90),
   add column longitude numeric(9,6) constraint chk_parceiro_enderecos_longitude check (longitude between -180 and 180);
+alter table erp.parceiro_enderecos
+  add constraint chk_parceiro_enderecos_par_coordenadas check ((latitude is null) = (longitude is null));
 
 comment on column erp.parceiro_enderecos.latitude is 'Latitude do endereço em graus decimais (−90 a 90); informada junto com a longitude.';
 comment on column erp.parceiro_enderecos.longitude is 'Longitude do endereço em graus decimais (−180 a 180); informada junto com a latitude.';
@@ -107,5 +115,9 @@ begin
   end if;
   if not exists (select 1 from pg_constraint where conname = 'fk_people_matriz' and contype = 'f' and array_length(conkey, 1) = 2) then
     raise exception 'CADASTROS-AJ01: FK composta fk_people_matriz ausente.';
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'chk_people_par_coordenadas' and conrelid = 'erp.people'::regclass and contype = 'c')
+     or not exists (select 1 from pg_constraint where conname = 'chk_parceiro_enderecos_par_coordenadas' and conrelid = 'erp.parceiro_enderecos'::regclass and contype = 'c') then
+    raise exception 'CADASTROS-AJ01: CHECK do par latitude/longitude ausente (chk_people_par_coordenadas / chk_parceiro_enderecos_par_coordenadas).';
   end if;
 end $$;
