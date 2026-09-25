@@ -5,7 +5,8 @@ import { getResource, RESOURCES, type FieldDef, type ResourceDef } from "@agro/d
 import { parseFilterKey, isValidOperator, filterKindOf } from "@agro/shared";
 import { runService, requirePermission } from "../lib/service.js";
 import { notFound, validation, DomainError } from "../lib/errors.js";
-import { hasPermission, type ServiceCtx } from "../lib/context.js";
+import { hasPermission, type RequestContext, type ServiceCtx } from "../lib/context.js";
+import { exigirCampoVisivel, podeVerCampo } from "../lib/ficha-em-abas.js";
 import { listResource } from "./resources.js";
 
 /**
@@ -44,6 +45,20 @@ export function normalizeDefinition(def: ResourceDef, d: ReportDefinition): Repo
   return { columns, filters, search: d.search, sort, groupBy, totals, limit: d.limit };
 }
 
+/**
+ * SIGILO (R1-2): a definição inteira é conferida ANTES de rodar ou salvar — coluna, filtro, ordenação, agrupamento e
+ * total por campo sigiloso que o usuário não vê → 403 com o nome do campo. Nunca "tira a coluna e segue": o
+ * relatório salvo por quem vê o salário e aberto por quem não vê falha dizendo por quê, e o filtro/total não vira
+ * uma pergunta sobre o valor.
+ */
+export function conferirSigiloDaDefinicao(ctx: RequestContext, def: ResourceDef, d: ReportDefinition) {
+  for (const c of d.columns) exigirCampoVisivel(ctx, def, c, "no relatório (coluna)");
+  for (const k of Object.keys(d.filters)) exigirCampoVisivel(ctx, def, parseFilterKey(k)?.field ?? k, "no relatório (filtro)");
+  if (d.sort) exigirCampoVisivel(ctx, def, d.sort.key, "no relatório (ordenação)");
+  if (d.groupBy) exigirCampoVisivel(ctx, def, d.groupBy, "no relatório (agrupamento)");
+  for (const t of d.totals) exigirCampoVisivel(ctx, def, t, "no relatório (total)");
+}
+
 export interface ReportColumn { key: string; label: string; type: FieldDef["type"] }
 export interface ReportGroup { key: string; label: string; rows: Record<string, unknown>[]; totals: Record<string, string> }
 export interface ReportResult { columns: ReportColumn[]; rows: Record<string, unknown>[]; groups: ReportGroup[] | null; totals: Record<string, string>; count: number; truncated: boolean }
@@ -52,6 +67,7 @@ const sum = (rows: Record<string, unknown>[], keys: string[]) => Object.fromEntr
 const cellText = (f: FieldDef | undefined, r: Record<string, unknown>) => { if (!f) return ""; if (f.type === "ref") return String(r[`${f.name}_label`] ?? ""); const v = r[f.name]; if (v === null || v === undefined) return ""; if (f.type === "select") return f.options?.find((o) => o.value === String(v))?.label ?? String(v); if (f.type === "boolean") return v ? "Sim" : "Não"; return String(v); };
 
 export async function runSavedReport(ctx: ServiceCtx, def: ResourceDef, raw: ReportDefinition): Promise<ReportResult> {
+  conferirSigiloDaDefinicao(ctx, def, raw);
   const d = normalizeDefinition(def, raw);
   const byName = new Map(def.fields.map((f) => [f.name, f]));
   const rows: Record<string, unknown>[] = []; let total = 0; let truncated = false;
@@ -81,7 +97,8 @@ const canManage = (ctx: ServiceCtx, r: SavedRow, action: "edit" | "delete") => r
 
 export default async function savedReportRoutes(app: FastifyInstance) {
   /** Entidades disponíveis para relatório (recursos com permissão de visualização) e seus campos. */
-  app.get("/saved-reports/resources", async (req) => { const ctx = app.requireCtx(req); return RESOURCES.filter((r) => !r.reference && hasPermission(ctx, `${r.permission}.view`)).map((r) => ({ key: r.key, label: r.labelPlural, fields: r.fields.map((f) => ({ name: f.name, label: f.label, type: f.type, filter: Boolean(f.filter), resource: f.ref?.resource, options: f.options })) })); });
+  // campo sigiloso que o usuário não vê não é oferecido ao montador (R1-2; quem recusa é `conferirSigiloDaDefinicao`)
+  app.get("/saved-reports/resources", async (req) => { const ctx = app.requireCtx(req); return RESOURCES.filter((r) => !r.reference && hasPermission(ctx, `${r.permission}.view`)).map((r) => ({ key: r.key, label: r.labelPlural, fields: r.fields.filter((f) => podeVerCampo(ctx, f)).map((f) => ({ name: f.name, label: f.label, type: f.type, filter: Boolean(f.filter), resource: f.ref?.resource, options: f.options })) })); });
   app.get("/saved-reports", async (req) => runService(app, req, "saved_reports.view", async (ctx) => {
     const { resource } = req.query as { resource?: string };
     const r = await ctx.tx.query<SavedRow & { owner_name: string | null }>(`select s.id, s.resource_key, s.name, s.definition, s.is_shared, s.user_id, s.created_by, s.created_at, s.updated_at, u.name as owner_name from erp.saved_reports s left join erp.users u on u.id = s.user_id where s.organization_id=$1 and s.deleted_at is null and (s.is_shared or s.user_id=$2) ${resource ? "and s.resource_key=$3" : ""} order by s.name`, resource ? [ctx.orgId, ctx.user.id, resource] : [ctx.orgId, ctx.user.id]);
@@ -92,6 +109,7 @@ export default async function savedReportRoutes(app: FastifyInstance) {
     const body = saveSchema.parse(req.body); const def = getResource(body.resource_key); if (!def) throw notFound("Recurso");
     const r = await runService(app, req, "saved_reports.create", async (ctx) => {
       requirePermission(ctx, `${def.permission}.view`); if (body.is_shared) requirePermission(ctx, "saved_reports.share");
+      conferirSigiloDaDefinicao(ctx, def, body.definition);
       const d = normalizeDefinition(def, body.definition);
       const ins = await ctx.tx.query<{ id: string }>("insert into erp.saved_reports(organization_id,user_id,resource_key,name,definition,is_shared,created_by) values ($1,$2,$3,$4,$5,$6,$2) returning id", [ctx.orgId, ctx.user.id, body.resource_key, body.name, JSON.stringify(d), body.is_shared]);
       return getSaved(ctx, ins.rows[0]!.id);
@@ -104,6 +122,7 @@ export default async function savedReportRoutes(app: FastifyInstance) {
       const cur = await getSaved(ctx, (req.params as { id: string }).id);
       if (!canManage(ctx, cur, "edit")) throw new DomainError("PERMISSION_DENIED", "Somente o autor ou quem tem permissão de edição pode alterar este relatório");
       const def = getResource(cur.resource_key)!;
+      if (body.definition) conferirSigiloDaDefinicao(ctx, def, body.definition);
       const d = body.definition ? normalizeDefinition(def, body.definition) : cur.definition;
       if (body.is_shared !== undefined && body.is_shared !== cur.is_shared) requirePermission(ctx, "saved_reports.share");
       await ctx.tx.query("update erp.saved_reports set name=coalesce($2,name), definition=$3, is_shared=coalesce($4,is_shared) where id=$1", [cur.id, body.name ?? null, JSON.stringify(d), body.is_shared ?? null]);

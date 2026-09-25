@@ -110,7 +110,14 @@ export const CLASSIFICACAO_DO_SEED = {
   centro: { codigo: "1.01.001", nome: "Adm Geral" }
 } as const;
 
-export async function preencherClassificacaoFinanceira(page: Page) {
-  await pickRef(page, "Categoria financeira", CLASSIFICACAO_DO_SEED.categoria.nome);
-  await pickRef(page, "Centro de custo", CLASSIFICACAO_DO_SEED.centro.nome);
+/** Rótulos da tela deste HEAD; o skew com o web da base passa os rótulos que aquele bundle mostra. */
+export const ROTULOS_CLASSIFICACAO = { natureza: "Natureza", centro: "Centro de resultado" } as const;
+export const ROTULOS_CLASSIFICACAO_BASE = { natureza: "Categoria financeira", centro: "Centro de custo" } as const;
+
+export async function preencherClassificacaoFinanceira(
+  page: Page,
+  rotulos: { natureza: string; centro: string } = ROTULOS_CLASSIFICACAO,
+) {
+  await pickRef(page, rotulos.natureza, CLASSIFICACAO_DO_SEED.categoria.nome);
+  await pickRef(page, rotulos.centro, CLASSIFICACAO_DO_SEED.centro.nome);
 }

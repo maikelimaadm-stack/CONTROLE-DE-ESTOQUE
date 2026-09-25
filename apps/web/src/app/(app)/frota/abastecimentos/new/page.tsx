@@ -24,7 +24,7 @@ export default function Page() {
       <Field label="Origem" span={2}><NativeSelect value={h.origin} onChange={(e) => setH({ ...h, origin: e.target.value })}><option value="manual">Manual</option><option value="cta_smart">CTA Smart</option><option value="import">Importação</option></NativeSelect></Field>
       <Field label="Horímetro" span={2}><Input type="number" step="0.1" value={h.hour_meter} onChange={(e) => setH({ ...h, hour_meter: e.target.value })} /></Field>
       <Field label="Km" span={2}><Input type="number" step="0.1" value={h.mileage} onChange={(e) => setH({ ...h, mileage: e.target.value })} /></Field>
-      <Field label="Centro de Custo" span={4}><RefSelect resource="cost_centers" value={h.cost_center_id} onChange={(v) => setH({ ...h, cost_center_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
+      <Field label="Centro de Resultado" span={4}><RefSelect resource="cost_centers" value={h.cost_center_id} onChange={(v) => setH({ ...h, cost_center_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
       <Field label="Safra" span={4}><RefSelect resource="harvests" value={h.harvest_id} onChange={(v) => setH({ ...h, harvest_id: v ?? "" })} /></Field>
       <Field label="Observação" span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>
     </div>

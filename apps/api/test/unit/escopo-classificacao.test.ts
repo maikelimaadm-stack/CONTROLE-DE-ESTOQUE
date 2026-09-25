@@ -91,6 +91,10 @@ describe("classificação de escopo × schema real", () => {
       "registros_globais", "stock_movements", "herd_lots", "dfe_documents",
       "empresa_cost_centers", "proprietary_empresas", "authorizer_empresas", "bank_account_empresas",
       "membro_empresas", "membro_escopos_empresa",
+      // ficha de RH 1:1 do parceiro (CADASTROS Fase 5, decisão 255): `empresa_id` é LOTAÇÃO informativa e
+      // anulável, não empresa de lançamento — mesma classificação E de proprietary_empresas, registrada com
+      // motivo e proteção executável em packages/domain/empresa-rls.mjs (EXCECOES_RLS_EMPRESA.employee_profiles)
+      "employee_profiles",
       // arquivo morto de erp.member_farms (PRE-BASE2-03): não é recurso, não tem tela e não tem módulo
       "legado_escopo_empresa_v0"
     ]);

@@ -641,11 +641,13 @@ conferir.
    deixam de prometer efeito, e o aviso do padrão automático da VENDAS-A1 passa a seguir a prévia. A fatia
    não liga o gate e não muda efeito, código, ordem nem mensagem da confirmação.
 
-   **Estado: `PENDING`** até o web servir, em `/api/build`, um commit que contenha a VENDAS-A5-1 — em
-   CADA superfície web listada em § "Superfície web", com o `sha` servido tendo o merge da fatia como
-   ancestral (`git merge-base --is-ancestor <merge da VENDAS-A5-1> <sha servido>`). Quem confere e registra
-   aqui, com data (UTC) e o `sha` de cada superfície, é a sessão revisora, DEPOIS do deploy. Merge, CI
-   verde ou "deploy verde" não satisfazem o item, e a PR da própria fatia não o marca `OK`.
+   **Estado: `OK` em 24/09/2026 13:28 UTC** — leitura da sessão revisora, depois do deploy do merge da
+   VENDAS-A5-1 (`8445801`): a API em `/health`, o web Vercel em `/api/build` e o web Railway em
+   `/api/build` servem `844580160ae2ea5ac0063ffaaee75ed3e5a1523b`, que é o próprio merge da fatia (o
+   critério era o `sha` servido ter esse merge como ancestral — `git merge-base --is-ancestor`). Registrado
+   pela CADASTROS-ESTRUTURA a partir da leitura revisora; a PR da A5-1 não marcou o item. **A fase 2
+   continua DESLIGADA**: o item 5 (autorização do Maike para esta ação) não foi dado, e nenhum item
+   `OK` liga o gate sozinho.
 5. **Autorização explícita do Maike, pedida na hora, para ESTA ação** — autorização dada ao merge ou à
    fase 1 não vale para a fase 2 (`.claude/rules/security.md` § Produção).
 
@@ -853,6 +855,335 @@ select count(*) filter (where kind = 'sale' and deleted_at is null) as vendas,
 - **Banco:** a 0024 fica — migration aplicada é histórico, e as colunas anuláveis são inertes para o
   binário anterior.
 
+## CADASTROS-ESTRUTURA — Grupo de Produtos em árvore (`0025`) e nomes de mercado
+
+Decisão 250. Os nomes novos (Naturezas, Centros de Resultado, Conta Contábil, Analítica Sim/Não, "superior")
+são só RÓTULO: nenhum dado, chave, permissão ou endereço muda, e a web anterior continua funcionando com os
+nomes antigos. O que tem janela de deploy é o Grupo de Produtos.
+
+**A migration `0025_grupo_de_produtos_arvore.sql` é aditiva**: `erp.product_groups` ganha `code` (anulável —
+o acervo não tem código e a 240(3) proíbe inventar), `parent_id` (FK composta com o tenant, sem cascade),
+`kind` (padrão `analytic`) e `deleted_at`; a unicidade de nome passa da organização inteira para os IRMÃOS
+vivos (relaxamento — nenhuma linha muda); `erp.products.category_id` e `kind_id` deixam de ser NOT NULL.
+`product_categories` e `product_kinds` ficam (legado, fora de uso; remoção é da DATA-GOV). Trava própria,
+`lock_timeout` e pré/pós-condições nomeadas. Produção em 24/09/2026 (leitura revisora 13:29 UTC): 1 grupo
+("teste", sem código), 0 categorias, 0 classes, 0 produtos — o grupo do acervo fica raiz, sem código, no fim
+da lista.
+
+**Implantação — ordem: banco (0025) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela
+de deploy há QUATRO combinações, todas provadas no harness de skew (`skew-web-anterior.spec.ts` e
+`skew-api-producao.spec.ts`, casos CE-K1..CE-K4):
+
+1. **web ANTERIOR × API nova — produto:** o formulário anterior manda `category_id` e `kind_id`; a API nova
+   os aceita como campos LEGADOS opcionais (schema continua `.strict()`) e grava o que vier → **201**.
+2. **web ANTERIOR × API nova — grupo:** o formulário anterior manda só o nome; a API nova exige código →
+   **422 declarado** no campo Código, nada gravado. Cadastrar grupo espera a web nova.
+3. **web NOVA × API anterior — produto e grupo:** a API anterior exige categoria/classe e não conhece
+   `code`/`kind`/`parent_id` do grupo (`.strict()`) → gravação **RECUSADA (422)**, nada gravado
+   (fail-closed; nunca grava pela metade).
+4. **web NOVA × API anterior — parâmetros:** o schema das máscaras (`apps/api/src/routes/admin.ts`) é
+   `.strict()` sobre a lista de cadastros de código hierárquico; salvar máscara de **Grupos** na janela é
+   **recusado (422)**; sem máscara de grupo, os parâmetros salvam normalmente.
+
+**Reversão.** Web: livre (a anterior usa os lookups de Categoria/Classe, que continuam na API). API
+(binário): o anterior volta a exigir categoria/classe no produto e não edita grupo com os campos novos (422,
+caso 3) — seguro, sem gravação parcial; produto criado sem categoria/classe continua legível. Banco: a 0025
+fica — migration aplicada é histórico; as colunas novas são inertes para o binário anterior, e a unicidade
+relaxada não quebra nenhuma escrita dele (o `on conflict (organization_id, name)` só existia no seed).
+
+## CADASTROS FASE 2 — importação parcial (sem migration)
+
+Decisão 251. Nenhuma migration, nenhuma variável nova. Muda só o contrato de `POST /api/imports/:key`
+(parâmetro `modo`, campos novos e aditivos na resposta) e o diálogo de importação.
+
+**Implantação — ordem: API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela há duas
+combinações:
+
+1. **web ANTERIOR × API nova:** a web anterior não manda `modo` → `tudo`, exatamente o comportamento de
+   antes (qualquer erro → 422, nada gravado). Os campos novos da resposta são ignorados por ela. (IM-6)
+2. **web NOVA × API anterior:** a prévia e "Importar tudo" saem SEM `modo` e funcionam como antes;
+   "Importar só as X linhas certas" manda `modo=parcial`, a query `.strict()` da API anterior o recusa com
+   422 ("Campo não reconhecido") ANTES de abrir o arquivo — nada gravado — e a tela mostra "O servidor ainda
+   não aceita importação parcial; use Importar tudo." O corpo da recusa é medido contra o binário real da
+   base no harness de skew (`skew-api-producao.spec.ts`, IM-K1); a reação da tela a esse corpo, em IM-W2
+   (`cadastros-importacao.spec.ts`). Sem os campos novos, a prévia conta as linhas com erro pela própria lista.
+
+**Reversão.** Web: livre. API: a anterior volta ao tudo-ou-nada; o que já foi gravado no modo parcial é
+cadastro normal (com ID Global), legível e editável pelo binário anterior. Nenhum dado a desfazer.
+
+## CADASTROS FASE 3 — referências oficiais (`0026`) e consultas de CEP e CNPJ
+
+Decisão 252.
+
+**A migration `0026_referencias_oficiais.sql` é aditiva** (trava (2026,60), `lock_timeout`, pré/pós-condições
+nomeadas, não reaplicável): `erp.banks.ispb`; `erp.ncm.nivel`, `descricao_completa`, `vigencia_inicio`,
+`vigencia_fim`; tabelas novas `erp.cbo_ocupacoes`, `erp.consulta_cep_cache` e `erp.consulta_cnpj_cache` (as
+duas últimas GLOBAIS, RLS forçada, só `erp_app`; `authenticated`/`anon` sem acesso). A carga (27 UFs, 5.571
+municípios, 463 bancos, 15.156 linhas de NCM, 2.694 ocupações CBO; procedência no cabeçalho de
+`supabase/referencias/*.csv` e no DATA-DICTIONARY) é UPSERT: nada apagado, nome oficial pode mudar, os 14
+municípios e os 10 bancos anteriores (inclusive `000`) continuam — a pós-condição PARA se algum sumir. O
+arquivo tem ~1,7 MB (dados embutidos); a aplicação leva poucos segundos. Nenhuma tabela de organização é
+tocada. Atualizar uma referência depois = rodar `node scripts/referencias/baixar.mjs` e escrever OUTRA
+migration de carga.
+
+**Variável nova da API — `CONSULTA_CNPJ_FONTES`** (opcional; não é segredo). Ordem das fontes GRATUITAS e
+sem chave da consulta de CNPJ; padrão `brasilapi,cnpja,cnpjws`. `desligado` desliga a consulta (503). Nome
+desconhecido, repetido ou lista vazia derruba o startup. Não existe credencial de consulta, nem fonte paga.
+
+| Fonte | Endereço | Limite da fonte |
+|---|---|---|
+| BrasilAPI | `https://brasilapi.com.br/api/cnpj/v1/{cnpj}` (e `/api/cep/v1/{cep}`, reserva do CEP) | sem limite publicado |
+| CNPJá aberta | `https://open.cnpja.com/office/{cnpj}` | 5 por minuto por IP |
+| CNPJ.ws pública | `https://publica.cnpj.ws/cnpj/{cnpj}` | 3 por minuto por IP |
+| ViaCEP | `https://viacep.com.br/ws/{cep}/json/` (principal do CEP) | sem limite publicado |
+
+Limites da API: CEP 60/min e CNPJ 20/min por organização; "consultar de novo" 1/min por CNPJ; fonte que
+responde 429 fica 60 s em pausa. Cache global: CEP 30 dias, CNPJ 7 dias. Tempo por fonte: ~3 s (CEP),
+~5 s (CNPJ). Esses limites e a pausa vivem na MEMÓRIA de cada instância: com N réplicas o teto efetivo é N×.
+**Saída de rede:** a API passa a fazer HTTPS de saída para os quatro hosts acima — se o ambiente restringir
+egress, liberar só eles.
+
+**Implantação — ordem: banco (0026) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
+
+1. **API anterior × banco novo:** colunas e tabelas novas são inertes para ela; `people.city_id` e
+   `products.ncm_code` continuam FK para as mesmas tabelas, agora completas.
+2. **web ANTERIOR × API nova:** a cidade continua indo como código IBGE inteiro, banco como código e NCM como
+   texto — a API aceita igual. Diferença declarada: NCM nova no produto que não seja de 8 dígitos vigente é
+   recusada (422 no campo) — antes a FK já recusava qualquer código fora de `erp.ncm`, que estava vazia.
+3. **web NOVA × API anterior:** a API anterior não tem `/api/referencias` (404); o campo de busca vira
+   digitação do código com o aviso "Busca de … indisponível agora; digite o código" — a tela não trava.
+
+**Reversão.** Web: livre. API: a anterior ignora as tabelas e colunas novas; nada a desfazer. Banco: a 0026
+fica (migration aplicada é histórico); as referências carregadas são dado público oficial, e os caches podem
+simplesmente envelhecer.
+
+## CADASTROS FASE 4 — Parceiros: ficha em abas (`0027`)
+
+Decisão 253.
+
+**A migration `0027_parceiros_ficha_em_abas.sql` é aditiva** (trava (2026,61), `lock_timeout` 2 s, pré/pós-condições
+nomeadas, não reaplicável): `unique (id, organization_id)` em `erp.people` (alvo das FKs compostas); colunas novas
+em `erp.people` (`complemento`, `nascimento_abertura`, `indicador_ie`, `consumidor_final`, `produtor_rural`,
+`regime_tributario`, `cnae_principal`, `situacao_receita`, `situacao_receita_consultada_em` — todas anuláveis ou com
+default); `erp.client_profiles.limite_credito`; tabelas novas `erp.parceiro_enderecos`, `erp.parceiro_contatos` e
+`erp.parceiro_contas` (RLS forçada, política única de tenant, `erp_app` sem DELETE); índice único
+`ux_people_documento_normalizado` (organização + documento normalizado, entre vivos, só documento que NÃO fica vazio
+depois de normalizar — o mesmo filtro da pré-condição; documento só de pontuação fica fora). **Pré-condição:** nenhum
+documento duplicado entre parceiros vivos depois de normalizar — havendo, a migration PARA e nomeia os códigos
+(nada é aplicado; a decisão de qual corrigir é humana). Rodar antes, em leitura, para saber:
+`select organization_id, upper(regexp_replace(document,'[^0-9A-Za-z]','','g')), string_agg(code, ',') from erp.people
+where document is not null and deleted_at is null and upper(regexp_replace(document,'[^0-9A-Za-z]','','g')) <> ''
+group by 1, 2 having count(*) > 1;`. Nenhum UPDATE, nenhum DELETE: o parceiro de produção "Jurídica" com CPF formatado
+fica como está — a regra tipo × documento da API (decisão 253, item 7) só o cobra na próxima edição pela tela.
+Nenhuma variável nova.
+
+**Implantação — ordem: banco (0027) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
+
+1. **API anterior × banco novo:** colunas e tabelas novas são inertes; o índice novo passa a recusar documento
+   duplicado com pontuação diferente (antes só o igual byte a byte) — 409 genérico na API anterior.
+2. **web ANTERIOR × API nova:** o formulário anterior grava (campos de sempre); PUT sem as grades não mexe
+   nelas; sem nenhum tipo marcado → 422 declarado ("Marque pelo menos um tipo…"); documento inválido → 422;
+   duplicado → 409 com o código e o nome do existente. Provado em `skew-web-anterior.spec.ts` (PA-K2). Tipo ×
+   documento divergente (Física com CNPJ, Jurídica com CPF; o formulário anterior também manda os dois campos) →
+   422 declarado no campo do documento — provado na API em `cadastros-parceiros.test.ts` (DOC-1). As permissões
+   por tipo (decisão 253, item 8) não mudam nada para o formulário anterior: ele não manda grades nem perfis.
+3. **web NOVA × API anterior:** a ficha manda grades e perfis; o schema estrito da API anterior RECUSA (422
+   "Campo não reconhecido") e nada é gravado — o usuário vê o erro e salva depois do deploy da API. Provado em
+   `skew-api-producao.spec.ts` (PA-K1). O cadastro rápido manda só o principal e funciona.
+
+**Reversão.** Web: livre. API: a anterior ignora colunas e tabelas novas (grades gravadas ficam guardadas e
+voltam a aparecer quando a API nova voltar). Banco: a 0027 fica (migration aplicada é histórico); nada a desfazer.
+
+## CADASTROS FASE 5 — RH: Funcionários (`0028`)
+
+Decisão 255.
+
+**A migration `0028_rh_funcionarios.sql` é aditiva** (trava (2026,62), `lock_timeout` 2 s, pré/pós-condições
+nomeadas, não reaplicável): `erp.employee_profiles` ganha `organization_id` (preenchido a partir do parceiro — o
+ÚNICO `UPDATE` da migration — e depois NOT NULL, com trigger que o preenche quando quem insere não o informa; FK
+composta `(person_id, organization_id)` → `people`), `matricula`, `empresa_id` (FK composta com a organização),
+`tipo_vinculo`, `trabalhador_rural`, `jornada_semanal`, PIS/NIS, CTPS, RG, CNH, `conta_pagamento_id` (FK composta
+`(conta_pagamento_id, person_id)` → `parceiro_contas`, que ganha `unique (id, person_id)`) e `motivo_desligamento`;
+trigger `trg_employee_profiles_matricula` (matrícula única entre funcionários VIVOS, 23505); `erp.job_functions.cbo_code`
+ganha FK `NOT VALID` para `erp.cbo_ocupacoes` (acervo com CBO livre não é reconferido; só gravação nova do código);
+**auditoria com sigilo (R1-2):** função `erp.audit_row_sigilo()` (SECURITY INVOKER, `search_path` fixo) e os gatilhos
+`trg_employee_profiles_audit` e `trg_job_functions_audit` — a ficha de RH e a Função passam a ser auditadas, e o valor
+de salário, valor hora, meta e comissão NUNCA entra na trilha (só o nome do campo, em `metadata.sigilo`); a
+pós-condição confere os dois gatilhos.
+**Pré-condição:** nenhuma ficha de RH órfã (sem parceiro) — havendo, PARA. Nenhum DELETE. Nenhuma variável nova.
+
+**Implantação — ordem: banco (0028) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
+
+1. **API anterior × banco novo:** colunas novas inertes; a folha e o relatório de funcionários leem
+   `employee_profiles` como antes; o trigger preenche `organization_id` de qualquer insert antigo. Toda gravação
+   da API anterior em `employee_profiles`/`job_functions` passa a deixar trilha (sem o valor de salário): o insert
+   na trilha passa pela RLS de `erp.audit_logs` com a organização da própria linha — a API sempre grava com a
+   organização da sessão (`runService`), então nada muda para ela.
+2. **web ANTERIOR × API nova:** para quem tem `employees.edit` (e o proprietário) nada muda — "Novo funcionário"
+   antigo (Pessoas com `is_employee`) grava; Funções sem CBO gravam; CBO digitado fora da CBO oficial → 422.
+   Provado em `skew-web-anterior.spec.ts` (RH-K2, com o proprietário). **Mudança declarada (R1-2):** para perfil
+   SEM `employees.edit`, o formulário ANTERIOR de Funções mostra salário e valor hora como obrigatórios e vazios (a
+   API não os devolve): a própria tela anterior não deixa salvar sem preenchê-los, e preenchidos a API recusa (403
+   "campo sigiloso …"), nada gravado; a lista anterior de Funções deixa de mostrar o salário, e ordenar/filtrar por
+   ele → 403. É o sigilo valendo, não regressão: o web novo esconde os campos, não os manda e edita a Função; criar
+   Função (salário obrigatório) exige `employees.edit` nos dois.
+3. **web NOVA × API anterior:** a ficha de RH (`/api/resources/funcionarios`) e o novo pelo CPF
+   (`/api/hr/funcionarios/por-cpf`) não existem na API anterior → 404, nada gravado. Provado em
+   `skew-api-producao.spec.ts` (RH-K1).
+
+**Reversão.** Web: livre. API: a anterior ignora as colunas novas (dados da ficha ficam guardados). Banco: a 0028
+fica (migration aplicada é histórico); nada a desfazer.
+
+## CADASTROS FASE 6 — Produtos: ficha em abas (`0029`)
+
+Decisão 254.
+
+**A migration `0029_produtos_ficha_em_abas.sql` é aditiva** (trava (2026,63), `lock_timeout` 2 s, pré/pós-condições
+nomeadas, não reaplicável; depende da 0027, NÃO da 0028): `unique (id, organization_id)` em `erp.products`; colunas
+novas em `erp.products` (`marca`, `fabricante`, `tipo_item`, `estoque_maximo`, `controle_lote` NOT NULL default
+`nenhum`, `origem`, `cest`, `registro_mapa`); tabelas novas `erp.produto_unidades` e `erp.produto_fornecedores` (RLS
+forçada, política única de tenant, `erp_app` sem DELETE, FKs compostas, auditoria); gatilhos
+`trg_products_controle_lote` (has_lot ⇄ controle; controle não muda com saldo ≠ 0), `trg_stock_movements_exige_lote`
+(só INSERT: lote obrigatório para produto com controle, INCLUSIVE no estorno; validade na entrada para lote + validade,
+não no estorno) e
+`trg_produto_{unidades,fornecedores}_conferir`; coluna anulável nova `erp.feed_batches.validade` (validade do produto
+produzido, R1-1). **Pré-condição nomeada nova (R1-1 h):** produto com `has_lot` e saldo ≠ 0 no balde SEM lote
+(`provider_lot` vazio ou só espaços) PARA a migration nomeando os produtos (código, descrição, id) — depois dela esse
+saldo ficaria preso, porque todo movimento do produto exige lote e a escolha automática só olha lotes preenchidos.
+**UPDATEs (nada apagado):** `controle_lote = 'lote'` onde `has_lot`;
+`cest`/`origem` copiados de `taxes` quando o valor antigo já tem o formato novo (a chave em `taxes` fica); INSERT da
+2ª unidade de hoje como primeira linha de `produto_unidades`. Pós-condição confere contagens (produtos, movimentos,
+embalagens intactos; controle = has_lot de antes; uma linha de unidade por 2ª unidade válida). Nenhuma variável nova.
+
+**Regra do lote depois desta fatia (revisão R1-1, decisão 254):** todo produto com `has_lot = true` vira controle
+"lote", e todo movimento gravado dele leva o lote (API e gatilho).
+
+- **Saída SEM lote informado** — venda, abastecimento, manutenção, OS, manejo/nutrição, dieta, ração (insumo),
+  requisição, baixa, correção para baixo e perna de saída da transferência: a API ESCOLHE o lote pela validade (a mais
+  próxima primeiro; sem validade por último; empate pelo lote em ordem alfabética), divide a quantidade entre lotes (um
+  movimento por lote, com a validade do lote) e trava, na ordem da escolha, SÓ os saldos que vai consumir, antes de
+  gravar (revisão do R1: travar também os que não usa fechava deadlock com a trava do produto que o gatilho pega).
+  **Lote vencido** na data do movimento fica fora: só sai com o lote informado. Faltou saldo em lotes válidos → **409
+  `INSUFFICIENT_STOCK`** dizendo quanto há em lotes válidos e em vencidos; nada é gravado. Quantidade que arredonda a
+  zero na escala do estoque (4 casas) → 422.
+- **Valor do documento = soma das partes:** o total do item e do documento de saída (baixa, requisição, transferência,
+  manutenção, abastecimento, manejo, dieta, ração) é a soma do valor de cada parte (Σ lineTotal(qᵢ, cᵢ), a conta de
+  antes, meio centavo para o par), nunca quantidade × custo médio ponderado — numa saída dividida os dois diferem em
+  centavos. Com UMA parte (todo produto sem controle de lote, e toda saída que cabe num lote) o valor é exatamente o de
+  antes desta fatia; o `total_cost` do ledger pode diferir dele em 1 centavo só no empate exato de meio centavo, como já
+  diferia (LT-12c). Correção para baixo sem valor informado, de produto COM controle e sem lote informado, sai pela
+  média de CADA lote (a do saldo do lote); produto sem controle e lote informado seguem com a média do saldo lido, como
+  antes (LT-12d).
+- **Saída COM lote informado:** sai do lote informado, inclusive vencido; o movimento grava a validade do lote.
+- **Entradas:** NF-e, entrada de insumo e saldo inicial exigem o lote (e a validade no "lote + validade"). Devolução:
+  lote e validade no item, exigidos só para produto com controle. Correção para cima: lote e validade (esta no "lote +
+  validade"; num ajuste para baixo a validade é recusada). Transferência: o destino recebe o lote e a validade de cada
+  parte da saída. Produção de ração: o produzido com controle recebe o código da produção como lote e a validade
+  informada na produção (exigida no "lote + validade").
+- **Lote aparado** na borda da API; lote só de espaços é "sem lote". O lote informado é resolvido pela CHAVE GRAVADA
+  (`btrim(provider_lot)`): o saldo gravado pela API anterior com espaços nas pontas é achado pela correção (conta do
+  saldo atual), pela saída com o lote informado e pela entrada — nenhum lote "sem espaços" nasce ao lado dele. Dois
+  saldos do mesmo produto e armazém que só diferem por espaços, ambos com quantidade → 422 nomeando o lote.
+- **Estorno sem lote de produto que controla lote → 422:** cancelar documento cujo movimento foi gravado SEM lote
+  quando o produto ainda não controlava lote (API anterior, ou controle ligado depois com saldo zerado) é recusado,
+  nada gravado — o estorno devolveria saldo ao balde sem lote, onde ficaria preso. O acerto é devolução ou correção
+  informando o lote. A API recusa antes (`reverseStock`, com o nome do produto), e o GATILHO da 0029 também recusa
+  o estorno sem lote (LT-8b): quem estorna sem conferir — a API anterior na janela do deploy ou numa reversão — não
+  recria o saldo preso.
+- **Controle com saldo:** mudar o controle com saldo ≠ 0 na organização → 422 "zere o saldo em todos os armazéns".
+
+**Impacto em dados reais — medir ANTES, em leitura:** nenhum fluxo fica recusado por falta de campo de lote; o que
+muda para o usuário é a escolha automática por validade (e o 409 quando só há saldo vencido ou insuficiente). Contar:
+`select count(*) from erp.products where has_lot and deleted_at is null;`. A pré-condição nova tem de voltar VAZIA
+(o texto da revisão R1 registra 0 produtos em produção; reconferir na hora):
+`select p.code, p.description, b.warehouse_id, b.quantity from erp.products p join erp.stock_balances b on b.organization_id = p.organization_id and b.product_id = p.id where p.has_lot and btrim(b.provider_lot) = '' and b.quantity <> 0;`.
+Havendo linha, a 0029 PARA nomeando o produto: zerar esse saldo é decisão humana ANTES do deploy.
+Medir também (leitura; nenhuma delas para a migration):
+- saldos com lote gravado com espaços nas pontas — a API nova os acha pela chave gravada; havendo DOIS do mesmo lote
+  com quantidade no mesmo armazém, a saída com o lote informado responde 422 até o acerto (decisão humana):
+  `select organization_id, warehouse_id, product_id, btrim(provider_lot) as lote, count(*) filter (where quantity <> 0) as com_saldo, array_agg(provider_lot) as gravados from erp.stock_balances where btrim(provider_lot) <> '' group by 1,2,3,4 having bool_or(provider_lot <> btrim(provider_lot)) and bool_or(quantity <> 0);`
+  (`com_saldo` > 1 = o caso do 422);
+- movimentos SEM lote, não estornados, de produto com `has_lot` — depois do deploy o cancelamento do documento deles
+  responde 422 (o estorno cairia no balde sem lote); o que tiver de ser cancelado, cancelar ANTES do deploy:
+  `select p.code, p.description, m.source_type, m.source_id, m.direction, m.quantity from erp.stock_movements m join erp.products p on p.id = m.product_id and p.organization_id = m.organization_id where p.has_lot and coalesce(btrim(m.provider_lot), '') = '' and m.movement_type <> 'reversal' and not exists (select 1 from erp.stock_movements r where r.organization_id = m.organization_id and r.movement_type = 'reversal' and r.note = 'estorno de ' || m.id);`.
+
+**Riscos remanescentes declarados (revisão do R1):**
+- **Deadlock residual:** uma saída sem lote que PRECISA de dois ou mais lotes trava todos eles antes de gravar; uma
+  transferência concorrente PARA o mesmo armazém, de um desses lotes, que já segure a linha do produto, fecha ciclo. O
+  PostgreSQL aborta uma das duas (40P01 → 409 `CONCURRENCY_CONFLICT`, nada gravado; repetir resolve). A saída que
+  cabe num lote só não trava os outros (LT-9c).
+- **Data da OS em UTC:** a finalização da OS grava o movimento com a data UTC do servidor (`todayISO()`, anterior a
+  esta fatia; a API não tem fuso de negócio). Entre 21h e 24h no horário de Brasília, lote com validade de HOJE conta
+  como vencido na escolha automática da OS: ela consome o lote seguinte ou responde 409. Corrigir exige a política de
+  fuso da operação — fora do R1.
+- **Correção lê o saldo atual sem trava** (anterior a esta fatia): uma saída concorrente confirmada entre a leitura e
+  o movimento faz o ajuste aplicar uma diferença velha. Fora do R1.
+- **Consulta de "em uso" sem índice, com o cadastro travado** (R1-5, decisão 256 (4)(b)): na troca analítico →
+  sintético a natureza, o centro ou a conta é travada `for update` e cada ramo da consulta de uso (movimentos de
+  estoque, rateios, itens de NF…) varre a tabela sem índice na FK. Lançamentos concorrentes naquele cadastro esperam a
+  varredura. Só disponibilidade; os índices exigem migration nova — PR própria, com autorização.
+- **Troca analítico → sintético exige visão da organização inteira** (R1-5, decisão 256 (4)(b)): a busca de uso roda
+  sob a RLS de quem grava, e "não vejo" não pode virar "não está em uso". Membro com escopo parcial de empresas não
+  faz a troca nem de registro sem uso (fail-closed). Afrouxar exige porta `SECURITY DEFINER` estreita — migration nova.
+- **Registro com filhos não muda de superior também nas árvores SEM código** (R1-5, decisão 256 (4)(a)):
+  Endereçamentos e Tipos de Documento seguem a regra literal; mover um galho exige mover as folhas antes.
+- **Oráculo "inexistente × outra organização" na NF-e e na entrada de insumo** (anterior ao R1, decisão 256 (4)(c)):
+  itens e rateio da NF e itens da entrada são gravados ANTES de `createTitles`/`createBankMovement` conferirem o
+  rateio. Id inexistente cai na FK (409 "referência inválida") e id de outra organização passa pela FK de coluna
+  única e cai na recusa 422 — distinção útil só a quem já tem o UUID alheio; e na entrada de insumo SEM movimento
+  bancário a classificação do item não passa pela conferência. Correção (conferir antes do insert): PR própria.
+- **Seletor genérico `GET /resources/:key/options` com filtro por qualquer coluna existente** (vem da `main`, fora do
+  R1): fora do campo com `sigilo` (R1-2) e da grade `employee_events`, `?coluna=valor` filtra por qualquer coluna, e a
+  rota só exige capacidade da tabela que é grade declarada. Ex.: sem permissão de RH, `bonuses/options?person_id=…`
+  lista os eventos lançados para o funcionário (e `&amount=…` confirma o valor por tentativa); o `person_id` sai de
+  `people/options`, que também não exige capacidade; `people/options?document=<CPF>` devolve o nome do parceiro a quem
+  não tem `people.view`. Correção (filtro extra só em campo `ref`/`filter` do registry e capacidade da tabela para
+  filtrar por outra coluna, ou `bonuses.amount` como dado de salário): PR própria, decisão do Maike.
+- **Aceitos sem mudança pela revisão do R1 (texto do Maike):** baixa em lote em "movimento único" sem rateio
+  (`movement_mode = single`, anterior a esta PR); códigos do eSocial pendentes de conferência do contador, sem mudança
+  de código agora; CNPJ com letras → 422 enquanto nenhuma fonte gratuita consultar (decisão 252); limite de consultas
+  de CNPJ/CEP em memória, por réplica (ver "CADASTROS FASE 3").
+- **Pendentes de decisão do Maike (nada mudou no código):** conta contábil do rateio ativa e analítica (hoje só tenant
+  e vida, decisão 256 (4)(c)); readmissão de quem tem a ficha de RH INATIVA (o novo pelo CPF recusa com 422 e não há
+  porta de readmissão pela tela, decisão 255 (2)(c)); estorno sem lote de produto que hoje controla lote → 422 (acima);
+  escrita da participação do proprietário pela UNIÃO dos módulos (decisão 253 (8)); subárvore travada também sem
+  código (acima).
+
+**Implantação — ordem: banco (0029) → API → web.** **Janela de indisponibilidade: NÃO precisa.** Na janela:
+
+1. **API anterior × banco novo:** colunas e tabelas novas inertes; `has_lot` gravado pela API anterior vira o
+   controle pelo gatilho; o gatilho de lote no movimento JÁ VALE, e a API anterior NÃO tem a escolha da revisão R1-1:
+   ela escolhe UM lote com quantidade ≥ o pedido, ordenado só pela validade — INCLUSIVE lote vencido —, e sem lote
+   que baste grava o movimento sem lote, que o gatilho recusa (422 genérico "informe o lote"). Na janela (e numa
+   reversão da API) venda, OS, manejo, abastecimento, manutenção, dieta, ração, requisição e baixa de produto com
+   lote VOLTAM a falhar quando a quantidade precisa de mais de um lote, e lote vencido volta a sair automaticamente.
+   Entrada sem lote de produto com lote → erro do gatilho (422 genérico). Estorno sem lote de produto com lote
+   (cancelar documento cujo movimento foi gravado sem lote) → o gatilho recusa (LT-8b), nada gravado — a API
+   anterior não recria o saldo preso no balde sem lote.
+2. **web ANTERIOR × API nova:** o formulário anterior grava (`has_lot` true → "lote", false → "nenhum"; 2ª
+   unidade, tipo e fator aceitos como legado); PUT sem as grades não mexe nelas; mudar `has_lot` com saldo → 422.
+   **Estoque pela web anterior (R1-1):** a devolução da web anterior não tem campo de lote — devolução de produto com
+   controle passa a responder **422** "informe o lote" (em produção hoje ela GRAVA, no balde sem lote); o ajuste para
+   cima sem lote de produto com controle também → 422 (antes gravava sem lote). Produto sem controle segue como antes.
+   As saídas (venda, OS, requisição, baixa…) pela web anterior gravam: a escolha automática da API nova não depende
+   da tela. É recusa declarada, nada gravado — nunca entrada sem lote.
+3. **web NOVA × API anterior:** a ficha manda `controle_lote`, colunas e grades novas; o schema estrito da API
+   anterior RECUSA (422 "Campo não reconhecido") e nada é gravado. Provado em `skew-api-producao.spec.ts` (PR-K1).
+   **Estoque (R1-1, rodada 1 do R1):** lote e validade da devolução, validade da correção para cima e validade da
+   produção de ração só aparecem e só viajam quando a API DECLARA `capacidades.loteNaEntrada = 1` em `/auth/context`
+   (os schemas da API anterior não são estritos e DESCARTARIAM essas chaves em silêncio — a devolução entraria sem
+   lote e o ajuste para cima gravaria o lote sem a validade). A API anterior não declara: a web nova se comporta como
+   a anterior nas três telas, e o que a API anterior não sabe gravar o gatilho da 0029 recusa (devolução de produto
+   com controle → 422, nada gravado). Provado em `skew-api-producao.spec.ts` (LT-K1) e, com a mesma API sem a
+   declaração, pela reversa do LT-W1 (as colunas de lote somem). A ordem API → web deixa de ser condição de
+   integridade para estas telas: se a web subir antes (Vercel antes do Railway, ou pre-deploy parado na 0029), nada
+   é gravado sem o lote.
+
+**Reversão.** Web: livre — a web nova sobre a API anterior esconde e não envia lote e validade na entrada (item 3).
+API: a anterior ignora colunas e tabelas novas; na saída volta à escolha ANTIGA (um lote só, inclusive vencido; mais
+de um lote → 422, item 1); entrada e estorno sem lote de produto com lote continuam recusados pelo gatilho. Banco: a
+0029 fica (migration aplicada é histórico); nada a desfazer.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)
@@ -893,6 +1224,26 @@ estreita e não vira precedente: migration mesclada e JÁ APLICADA continua send
 
 Estado de produção no momento deste registro: `public.erp_migrations` em **0013**; API ativa ainda é a de
 PRE-BASE2-01 (`449730e`); 0014, 0015 e 0016 pendentes; backfill e verify NÃO executados.
+
+## CADASTROS FASE 7 — Tela de árvore e caminho nos campos de busca (sem migration)
+
+Decisão 256. **Sem migration, sem variável nova.** API e web podem subir em qualquer ordem:
+
+- **Web nova × API anterior:** as opções vêm sem `caminho`/`kind` e o campo mostra o rótulo de sempre; a tela de
+  árvore usa só rotas que já existem (`GET /resources/:key`, `proximo-codigo`, `PUT`). O recorte de analítico da
+  tela usa o filtro por coluna que a API anterior já aceitava.
+- **Web anterior × API nova:** as opções trazem dois campos a mais, ignorados; a busca passa a achar também pelo
+  código. A API nova passa a RECUSAR (422) rateio com natureza ou centro sintético e produto com grupo, natureza de
+  custo ou centro padrão sintético — a web anterior já não oferecia sintético nesses campos, então o 422 só aparece
+  para quem chama a API direto ou reenvia um rateio antigo.
+- **Reverter:** voltar o binário; nada no banco muda.
+
+**Impacto em dados reais — medir ANTES, em leitura:** título ou movimento com rateio sintético já gravado continua
+legível, mas a EDIÇÃO do rateio passa a exigir analítico:
+`select count(*) from erp.title_apportionments a join erp.financial_categories c on c.id=a.financial_category_id where c.kind<>'analytic';`
+(idem com `cost_centers` e com `bank_movement_apportionments`), e
+`select count(*) from erp.products where deleted_at is null and (financial_category_id in (select id from erp.financial_categories where kind<>'analytic') or default_cost_center_id in (select id from erp.cost_centers where kind<>'analytic'));`
+— produto nessa situação continua editável em outros campos; só a troca do valor é conferida.
 
 ## PRE-BASE2-04 — ativação do ID Global
 

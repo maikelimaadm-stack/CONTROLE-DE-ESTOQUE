@@ -49,6 +49,23 @@ const schema = z.object({
       ctx.addIssue({ code: "custom", message: "use 1 para ligar ou 0 (ou ausente) para desligar" });
     }
   }).transform((valor) => valor === "1"),
+  /**
+   * FONTES DA CONSULTA DE CNPJ (CADASTROS Fase 3), em ordem de tentativa. Só fontes GRATUITAS e sem chave:
+   * `brasilapi`, `cnpja` (CNPJá aberta), `cnpjws` (CNPJ.ws pública). Padrão: as três, nessa ordem.
+   * `desligado` desliga a consulta (503). Nome desconhecido, repetido ou lista vazia DERRUBA O STARTUP:
+   * uma fonte digitada errado sumiria da lista em silêncio. Não existe credencial de consulta.
+   */
+  CONSULTA_CNPJ_FONTES: z.string().default("brasilapi,cnpja,cnpjws").transform((valor, ctx) => {
+    const v = valor.trim();
+    if (v === "desligado") return [] as ("brasilapi" | "cnpja" | "cnpjws")[];
+    const lista = v.split(",").map((s) => s.trim());
+    const conhecidas = ["brasilapi", "cnpja", "cnpjws"];
+    if (!lista.length || lista.some((f) => !conhecidas.includes(f)) || new Set(lista).size !== lista.length) {
+      ctx.addIssue({ code: "custom", message: "use `desligado` ou uma lista sem repetição de: brasilapi, cnpja, cnpjws" });
+      return z.NEVER;
+    }
+    return lista as ("brasilapi" | "cnpja" | "cnpjws")[];
+  }),
   /** tentativas de login por IP por minuto (proteção contra força bruta) */
   LOGIN_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10)
 });

@@ -644,8 +644,8 @@ test("VENDAS-A1 · A1-K1 — sem a capacidade declarada pela base, os campos nã
   if (!declara) {
     // MUNDO LEGADO. A base não declara; o web não oferece o que ela jogaria fora.
     expect(corpoDesc.capacidades?.classificacaoFinanceira, "a base não declara a capacidade").toBeUndefined();
-    await expect(dados.locator("label", { hasText: "Categoria financeira" }), "o campo não aparece").toHaveCount(0);
-    await expect(dados.locator("label", { hasText: "Centro de custo" }), "o campo não aparece").toHaveCount(0);
+    await expect(dados.locator("label", { hasText: "Natureza" }), "o campo não aparece").toHaveCount(0);
+    await expect(dados.locator("label", { hasText: "Centro de resultado" }), "o campo não aparece").toHaveCount(0);
     await expect(salvar, "o Salvar segue a regra de antes: cliente e item bastam").toBeEnabled();
 
     // NO FIO: o POST vai de verdade para a base, e o corpo que saiu do navegador não carrega o par.
@@ -663,8 +663,8 @@ test("VENDAS-A1 · A1-K1 — sem a capacidade declarada pela base, os campos nã
 
   // MUNDO ATUAL. A base declara a versão que o web conhece; os campos aparecem e voltam a ser exigidos.
   expect(corpoDesc.capacidades?.classificacaoFinanceira, "a árvore da base declara, então o binário tem de servir").toBe(1);
-  await expect(dados.locator("label", { hasText: "Categoria financeira" })).toBeVisible();
-  await expect(dados.locator("label", { hasText: "Centro de custo" })).toBeVisible();
+  await expect(dados.locator("label", { hasText: "Natureza" })).toBeVisible();
+  await expect(dados.locator("label", { hasText: "Centro de resultado" })).toBeVisible();
   await expect(salvar, "declarada, a classificação é exigida").toBeDisabled();
   await preencherClassificacaoFinanceira(page);
   await expect(salvar).toBeEnabled();
@@ -918,8 +918,8 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
   // APARECE; sem isto, a contagem zero do caso classificado seria satisfeita por uma tela que nunca o desenha.
   const fioSem = await abrirDetalhe(semClassificacao);
   expect([fioSem["categoria_financeira_id"], fioSem["centro_custo_id"], fioSem["status"]], "premissa: venda aberta e sem classificação").toEqual([null, null, "open"]);
-  await expect(campo("Categoria financeira")).toContainText("Não informada");
-  await expect(campo("Centro de custo")).toContainText("Não informado");
+  await expect(campo("Natureza")).toContainText("Não informada");
+  await expect(campo("Centro de resultado")).toContainText("Não informado");
   await expect(aviso, "sem classificação, a venda aberta avisa o padrão automático — também sobre a base").toBeVisible();
 
   const fio = await abrirDetalhe(classificada);
@@ -933,10 +933,10 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
     expect(fio, "a base NÃO traz o código da categoria").not.toHaveProperty("categoria_financeira_codigo");
     expect(fio, "nem o do centro de custo").not.toHaveProperty("centro_custo_codigo");
     // A positiva vem primeiro: ela espera a tela desenhar ESTE documento, e só então as ausências significam algo.
-    await expect(campo("Categoria financeira"), "com o id e sem o nome, a tela diz que está informada").toContainText("Informada");
-    await expect(campo("Categoria financeira"), "e não o contrário").not.toContainText("Não informada");
-    await expect(campo("Centro de custo")).toContainText("Informado");
-    await expect(campo("Centro de custo")).not.toContainText("Não informado");
+    await expect(campo("Natureza"), "com o id e sem o nome, a tela diz que está informada").toContainText("Informada");
+    await expect(campo("Natureza"), "e não o contrário").not.toContainText("Não informada");
+    await expect(campo("Centro de resultado")).toContainText("Informado");
+    await expect(campo("Centro de resultado")).not.toContainText("Não informado");
     await expect(aviso, "classificada, a venda não promete um padrão que a guarda recusaria").toHaveCount(0);
     v.semBloqueio();
     return;
@@ -948,10 +948,10 @@ test("VENDAS-A1 · A1-K5 — venda classificada lida da API da base: o detalhe n
   // Rótulo vazio faria o `toContainText` abaixo passar em qualquer tela: a leitura tem de ter trazido os dois.
   expect([rotuloCategoria, rotuloCentro], "premissa: código e nome lidos do banco").toEqual([expect.stringMatching(/^.+ · .+$/), expect.stringMatching(/^.+ · .+$/)]);
   expect(fio["categoria_financeira_codigo"], "a árvore da base declara a classificação, então o binário traz o código").toBeTruthy();
-  await expect(campo("Categoria financeira")).toContainText(rotuloCategoria);
-  await expect(campo("Centro de custo")).toContainText(rotuloCentro);
-  await expect(campo("Categoria financeira")).not.toContainText("Não informada");
-  await expect(campo("Centro de custo")).not.toContainText("Não informado");
+  await expect(campo("Natureza")).toContainText(rotuloCategoria);
+  await expect(campo("Centro de resultado")).toContainText(rotuloCentro);
+  await expect(campo("Natureza")).not.toContainText("Não informada");
+  await expect(campo("Centro de resultado")).not.toContainText("Não informado");
   await expect(aviso, "classificada, a venda não fala de padrão automático").toHaveCount(0);
   v.semBloqueio();
 });
@@ -991,7 +991,7 @@ function baseServePrevia(): boolean {
 /** O texto NEUTRO do diálogo sem prévia — por extenso: é o contrato com o usuário. */
 const TEXTO_SEM_PREVIA = "A confirmação aplica o Tipo de Operação desta venda. Não foi possível carregar a prévia dos efeitos; o servidor recusa o que não puder executar.";
 /** O aviso da A1 quando a tela não tem a prévia — a regra decidida pelo id. */
-const AVISO_A1 = "Sem classificação: ao confirmar, a venda usará o padrão automático (primeira categoria de receita e primeiro centro de custo analíticos, pela ordem do código).";
+const AVISO_A1 = "Sem classificação: ao confirmar, a venda usará o padrão automático (primeira natureza de receita e primeiro centro de resultado analíticos, pela ordem do código).";
 
 test("VENDAS-A5-1 · A5-K1 — contra a API da base, o diálogo de confirmação cai no texto neutro com o botão habilitado e confirma (ou, se a base já serve a prévia, mostra a prévia)", async ({ page }) => {
   const v = vigiar(page);
@@ -1054,11 +1054,247 @@ test("VENDAS-A5-1 · A5-K1 — contra a API da base, o diálogo de confirmação
   const corpo = await direto.json() as { contractVersion: number; podeConfirmar: boolean };
   expect([corpo.contractVersion, corpo.podeConfirmar]).toEqual([1, true]);
   expect(rAviso.status()).toBe(200);
-  await expect(aviso, "com a prévia, o aviso nomeia o par").toContainText("padrão automático — categoria");
+  await expect(aviso, "com a prévia, o aviso nomeia o par").toContainText("padrão automático — natureza");
   expect((await abrirDialogo()).status()).toBe(200);
   await expect(dlg.getByTestId("previa-confirmacao")).toBeVisible();
   await expect(dlg.getByTestId("previa-confirmacao-neutra"), "a base não é tratada como servidor antigo").toHaveCount(0);
   await expect(botao).toBeEnabled();
   await confirmar();
+  v.semBloqueio();
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * CADASTROS-ESTRUTURA (decisão 250) · WEB NOVA × API ANTERIOR — os casos 3 e 4 da janela de deploy
+ *
+ * A base NUNCA terá os campos novos do Grupo (code/kind/parent_id) nem o produto sem categoria/classe: o
+ * comportamento é FIXO, e por isso não há decisão medida aqui (ao contrário do contador ou da A1). O que
+ * se prova é que a recusa é DECLARADA (422, nada gravado) — a janela fecha para o lado seguro, nunca grava
+ * um produto ou grupo pela metade.
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+async function cabecalhosDaSessao(page: Page) {
+  const s = await sessao(page);
+  return { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+}
+
+test("CADASTROS-ESTRUTURA · CE-K3 — produto e grupo com o corpo da web NOVA: a API da base RECUSA (422) e nada é gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const grupoAnalitico = sql("select id from erp.product_groups where kind = 'analytic' and deleted_at is null and code is not null order by code limit 1");
+  expect(grupoAnalitico, "premissa: o banco (migrado pelo HEAD) tem grupo analítico").toMatch(UUID);
+  const unidade = sql("select id from erp.measurement_units where organization_id is null and symbol = 'un'");
+  expect(unidade, "premissa: a unidade 'un' existe").toMatch(UUID);
+
+  // (3a) PRODUTO: a web nova não manda category_id nem kind_id — a base os exige.
+  const desc = uniq("CE-K3 produto web nova");
+  const p = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: desc, measurement_id: unidade, group_id: grupoAnalitico, control_stock: false, is_active: true } });
+  expect(p.status(), await p.text()).toBe(422);
+  const campos = ((await p.json()) as { error: { details?: { path: string | string[] }[] } }).error.details?.map((d) => String(d.path)) ?? [];
+  expect(campos, "a recusa aponta os campos que a base exige").toEqual(expect.arrayContaining(["category_id", "kind_id"]));
+  expect(sql(`select count(*) from erp.products where description = '${desc.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+
+  // (3b) GRUPO: code/kind/parent_id não existem para a base, cujo schema é .strict() → 422, não descarte.
+  const nome = uniq("CE-K3 grupo web nova");
+  const g = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { code: "9.99", name: nome, kind: "analytic", parent_id: null, is_active: true } });
+  expect(g.status(), await g.text()).toBe(422);
+  expect(sql(`select count(*) from erp.product_groups where name = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+});
+
+test("CADASTROS-ESTRUTURA · CE-K4 — parâmetros: máscara de Grupos é recusada pela base (422); sem ela, salva normal", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const antes = sql("select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations o join erp.organization_members m on m.organization_id = o.id join erp.users u on u.id = m.user_id where u.email = 'admin@demo.local' limit 1");
+  const recusa = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { product_groups: "9.99.999" } } });
+  expect(recusa.status(), await recusa.text()).toBe(422);
+  expect(sql("select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations o join erp.organization_members m on m.organization_id = o.id join erp.users u on u.id = m.user_id where u.email = 'admin@demo.local' limit 1"), "nada mudou").toBe(antes);
+  const ok = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { chart_accounts: "9.99.999.9999" } } });
+  expect(ok.status(), await ok.text()).toBe(200);
+});
+
+test("CADASTROS FASE 2 · IM-K1 — `modo=parcial` contra a API da base: recusa com 'Campo não reconhecido' (o que a tela reconhece) e nada é gravado; sem `modo`, a base importa como sempre", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  // o próprio modelo da base, vazio: arquivo válido que nenhuma versão grava
+  const modelo = await page.request.get(`${API}/api/imports/financial_categories/modelo`, { headers: cab });
+  expect(modelo.status()).toBe(200);
+  const arquivo_base64 = (await modelo.body()).toString("base64");
+  const antes = sql("select count(*) from erp.financial_categories");
+  const r = await page.request.post(`${API}/api/imports/financial_categories?simular=1&modo=parcial`, { headers: cab, data: { arquivo_base64 } });
+  expect(r.status(), await r.text()).toBe(422);
+  const corpo = (await r.json()) as { error?: { code?: string; details?: { message?: string }[] }; modo?: string };
+  if (corpo.error) {
+    // base anterior à Fase 2: é EXATAMENTE este corpo que o diálogo traduz para "use Importar tudo"
+    expect(corpo.error.code).toBe("VALIDATION_ERROR");
+    expect(corpo.error.details?.map((d) => d.message)).toContain("Campo não reconhecido");
+  } else {
+    // base que já tem a Fase 2: aceita o modo e recusa o arquivo vazio pela leitura
+    expect(corpo.modo).toBe("parcial");
+  }
+  // sem `modo` (prévia e "Importar tudo" da web nova): a base responde como sempre — arquivo vazio, 422 pela leitura
+  const semModo = await page.request.post(`${API}/api/imports/financial_categories?simular=1`, { headers: cab, data: { arquivo_base64 } });
+  expect(semModo.status(), await semModo.text()).toBe(422);
+  expect(((await semModo.json()) as { erros?: { mensagem: string }[] }).erros?.[0]?.mensagem).toBe("Nenhuma linha preenchida.");
+  expect(sql("select count(*) from erp.financial_categories"), "nada gravado").toBe(antes);
+});
+
+test("CADASTROS FASE 4 · PA-K1 — ficha de Parceiro da web NOVA contra a API da base: grades e perfis RECUSADOS (422, schema estrito) e nada gravado; o corpo só do principal grava", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const nome = uniq("PA-K1 parceiro web nova");
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: {
+    name: nome, person_type: "legal", is_client: true, enderecos: [{ tipo: "entrega", logradouro: "Rua A" }], perfil_cliente: { limite_credito: "100" } } });
+  expect(r.status(), await r.text()).toBe(422);
+  const erro = ((await r.json()) as { error: { details?: { message?: string }[] } }).error;
+  expect(erro.details?.map((d) => d.message), "a base não conhece as chaves da ficha").toContain("Campo não reconhecido");
+  expect(sql(`select count(*) from erp.people where name = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+  const ok = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: nome, person_type: "legal", is_client: true } });
+  expect(ok.status(), await ok.text()).toBe(201);
+});
+
+test("CADASTROS FASE 5 · RH-K1 — ficha de RH da web NOVA contra a API da base: RECUSADA (a base não conhece `funcionarios` nem o novo pelo CPF) e nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const antes = sql("select count(*) from erp.people");
+  const novo = await page.request.post(`${API}/api/hr/funcionarios/por-cpf`, { headers: cab, data: { document: "390.533.447-05", name: uniq("RH-K1") } });
+  expect(novo.status(), await novo.text()).toBe(404);
+  const id = sql("select id from erp.people where is_employee and deleted_at is null order by code limit 1");
+  expect((await page.request.get(`${API}/api/resources/funcionarios/${id}`, { headers: cab })).status()).toBe(404);
+  const put = await page.request.put(`${API}/api/resources/funcionarios/${id}`, { headers: cab, data: { rh_admissao: { matricula: "RH-K1" } } });
+  expect(put.status(), await put.text()).toBe(404);
+  expect(sql("select count(*) from erp.people"), "nada gravado").toBe(antes);
+});
+
+test("CADASTROS FASE 6 · PR-K1 — ficha de Produto da web NOVA contra a API da base: controle de lote, colunas e grades novas RECUSADOS (422, schema estrito) e nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const grupo = sql("select id from erp.product_groups where deleted_at is null and kind = 'analytic' order by code limit 1");
+  const unidade = sql("select id from erp.measurement_units where upper(symbol) = 'UN' order by organization_id nulls last limit 1");
+  const natureza = sql("select id from erp.financial_categories where deleted_at is null and kind = 'analytic' and nature = 'expense' order by code limit 1");
+  const nome = uniq("PR-K1 produto web nova");
+  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: {
+    description: nome, group_id: grupo, measurement_id: unidade, financial_category_id: natureza, controle_lote: "lote", marca: "X",
+    unidades: [{ measurement_id: unidade, tipo_fator: "multiply", fator: "2" }] } });
+  expect(r.status(), await r.text()).toBe(422);
+  const erro = ((await r.json()) as { error: { details?: { message?: string }[] } }).error;
+  expect(erro.details?.map((d) => d.message), "a base não conhece os campos da ficha").toContain("Campo não reconhecido");
+  expect(sql(`select count(*) from erp.products where description = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * R1-1 c (PR #62) · LT-K1 — LOTE E VALIDADE NA ENTRADA CONTRA A API DA BASE.
+ *
+ * As telas novas de estoque mandam lote e validade na devolução, validade na correção para cima e validade na
+ * produção de ração. Os schemas da API da base NÃO são estritos e DESCARTAM essas chaves em silêncio: a devolução
+ * entraria sem lote, e o ajuste para cima gravaria o lote sem a validade (a escolha automática por validade poria
+ * esse lote por último) — "passa e corrompe". Por isso a API nova DECLARA `capacidades.loteNaEntrada` em
+ * `/auth/context`, e sem a declaração a web não oferece nem envia esses campos.
+ *
+ * A decisão do ramo sai da ÁRVORE da base (o fonte que o binário roda) e é conferida contra o que o binário
+ * responde: uma base que declara e não serve (ou o contrário) reprova — nenhum dos dois ramos é escolhido por
+ * conveniência.
+ *
+ * Ramo LEGADO (a base não declara): (1) correção: o campo Validade não aparece e `expiration_date` não viaja no
+ * POST — a base grava o ajuste com o lote; (2) devolução a partir de uma requisição de produto com controle de lote:
+ * as colunas Lote/Validade não aparecem, `provider_lot`/`expiration_date` não viajam, e a base RECUSA (422, o gatilho
+ * da 0029 exige o lote) sem gravar nada — nunca entra sem lote; (3) produção de ração: a Validade não aparece e
+ * `validade` não viaja no POST.
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+function baseDeclaraLoteNaEntrada(): boolean {
+  const arq = path.resolve(__dirname, "../../..", ".api-anterior/apps/api/src/routes/auth.ts");
+  expect(fs.existsSync(arq), `a árvore da base precisa existir (${arq}): scripts/api-anterior.mjs a monta antes do skew`).toBe(true);
+  const ocorrencias = fs.readFileSync(arq, "utf8").split("loteNaEntrada: CAPACIDADE_LOTE_NA_ENTRADA").length - 1;
+  expect(ocorrencias, "contagem ambígua não decide ramo nenhum").toBeLessThanOrEqual(1);
+  console.log(`[skew] R1-1 c · a base ${ocorrencias === 1 ? "DECLARA" : "NÃO declara"} loteNaEntrada`);
+  return ocorrencias === 1;
+}
+
+test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, correção, devolução e produção não mostram nem enviam lote/validade; a devolução de produto com lote é RECUSADA e nada gravado", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const cab = await cabecalhosDaSessao(page);
+  const declara = baseDeclaraLoteNaEntrada();
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cab })).json() as { capacidades?: { loteNaEntrada?: unknown }; empresas?: { id: string }[] };
+  expect(ctx.capacidades?.loteNaEntrada ?? null, "o binário serve exatamente o que a árvore da base declara").toBe(declara ? 1 : null);
+
+  // premissas lidas do banco (migrado pelo HEAD): o produto semeado com lote é "lote" depois da 0029
+  const empresaId = await page.evaluate(() => (JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { empresaId?: string | null }).empresaId ?? null) ?? ctx.empresas?.[0]?.id;
+  expect(empresaId, "premissa: há empresa visível").toMatch(UUID);
+  const produto = sql(`select id from erp.products where organization_id = '${s.orgId}' and description = 'Vacina Aftosa 50 doses' and deleted_at is null`);
+  expect(produto, "premissa: o produto semeado com lote existe").toMatch(UUID);
+  expect(sql(`select controle_lote from erp.products where id = '${produto}'`), "premissa: controle por lote").toBe("lote");
+  const armazem = sql(`select id from erp.warehouses where organization_id = '${s.orgId}' and empresa_id = '${empresaId}' and deleted_at is null and is_active order by created_at limit 1`);
+  expect(armazem, "premissa: a empresa ativa tem armazém").toMatch(UUID);
+
+  // fixture pela PRÓPRIA API da base: saldo num lote único e uma requisição dele com o lote informado
+  const lote = `LTK1-${Date.now().toString(36).toUpperCase()}`;
+  const saldo = await page.request.post(`${API}/api/stock/opening-balances`, { headers: cab, data: { empresa_id: empresaId, warehouse_id: armazem, product_id: produto, quantity: "5", unit_value: "3", provider_lot: lote } });
+  expect(saldo.status(), await saldo.text()).toBe(201);
+  const req = await page.request.post(`${API}/api/stock/requisitions`, { headers: cab, data: { empresa_id: empresaId, requisition_date: "2026-09-22", items: [{ warehouse_id: armazem, product_id: produto, provider_lot: lote, quantity: "2" }] } });
+  expect(req.status(), await req.text()).toBe(201);
+  const requisicao = (await req.json() as { id: string }).id;
+
+  // (1) CORREÇÃO, pela ação da linha do saldo (empresa, armazém, produto e lote pré-preenchidos)
+  await page.goto(`/estoque?tab=estoque&sub=saldo&product_id=${produto}`);
+  await page.getByRole("row").filter({ hasText: lote }).getByRole("button", { name: "Ajustar estoque" }).click();
+  const dialogo = page.getByRole("dialog").filter({ hasText: "Ajustar estoque" });
+  await expect(dialogo.getByLabel("Lote", { exact: true }), "premissa: o lote veio da linha").toHaveValue(lote);
+  if (declara) {
+    await expect(dialogo.getByLabel("Validade", { exact: true }), "declarada, a validade aparece").toBeVisible();
+  } else {
+    await expect(dialogo.getByLabel("Validade", { exact: true }), "o campo que a base descartaria não aparece").toHaveCount(0);
+    await dialogo.getByLabel("Nova quantidade").fill("4");
+    await dialogo.getByLabel("Justificativa").fill("LT-K1 ajuste para cima");
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/corrections");
+    await dialogo.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(enviado["provider_lot"], "premissa: o corpo é o deste ajuste").toBe(lote);
+    expect("expiration_date" in enviado, "a validade NÃO viaja para uma API que a descartaria").toBe(false);
+    expect(r.status(), "a base grava o ajuste com o lote, como sempre").toBe(201);
+  }
+
+  // (2) DEVOLUÇÃO a partir da requisição (itens pré-preenchidos com o lote do item)
+  const devolucoesAntes = sql(`select count(*) from erp.devolution_items where product_id = '${produto}'`);
+  const movimentosAntes = sql(`select count(*) from erp.stock_movements where product_id = '${produto}'`);
+  await page.goto(`/estoque/devolucoes/new?requisition_id=${requisicao}`);
+  const linhas = page.locator("table tbody tr");
+  await expect(linhas, "premissa: a linha da requisição foi pré-preenchida").toHaveCount(1);
+  const cabecalhosDaTabela = page.locator("table thead th");
+  if (declara) {
+    await expect(cabecalhosDaTabela.filter({ hasText: /^Lote$/ })).toHaveCount(1);
+    await expect(cabecalhosDaTabela.filter({ hasText: /^Validade$/ })).toHaveCount(1);
+  } else {
+    await expect(cabecalhosDaTabela.filter({ hasText: /^Lote$/ }), "a coluna que a base descartaria não aparece").toHaveCount(0);
+    await expect(cabecalhosDaTabela.filter({ hasText: /^Validade$/ })).toHaveCount(0);
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/devolutions");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    const itens = (r.request().postDataJSON() as { items: Record<string, unknown>[] }).items;
+    expect(itens.map((i) => i["product_id"]), "premissa: o corpo é o desta devolução").toEqual([produto]);
+    expect(itens.flatMap((i) => Object.keys(i).filter((k) => k === "provider_lot" || k === "expiration_date")), "lote e validade NÃO viajam").toEqual([]);
+    // sem lote, o produto com controle NÃO entra no balde sem lote: o gatilho da 0029 recusa, nada gravado
+    expect(r.status(), await r.text()).toBe(422);
+    expect(sql(`select count(*) from erp.devolution_items where product_id = '${produto}'`), "nenhum item de devolução").toBe(devolucoesAntes);
+    expect(sql(`select count(*) from erp.stock_movements where product_id = '${produto}'`), "nenhum movimento").toBe(movimentosAntes);
+    expect(sql(`select coalesce(sum(quantity), 0)::text from erp.stock_balances where product_id = '${produto}' and provider_lot = ''`), "o balde sem lote não recebeu nada").toMatch(/^0(\.0+)?$/);
+  }
+
+  // (3) PRODUÇÃO DE RAÇÃO: a validade do produto acabado
+  const formula = await page.request.post(`${API}/api/stock/feed-formulas`, { headers: cab, data: { name: uniq("LT-K1 formulação"), items: [{ product_id: produto, quantity: "1" }] } });
+  expect(formula.status(), await formula.text()).toBe(201);
+  const formulaId = (await formula.json() as { id: string }).id;
+  await page.goto("/estoque/batidas/new");
+  if (declara) {
+    await expect(page.getByLabel("Validade do produto acabado"), "declarada, a validade aparece").toBeVisible();
+  } else {
+    await expect(page.getByLabel("Validade do produto acabado"), "o campo que a base descartaria não aparece").toHaveCount(0);
+    await page.getByLabel("Formulação").selectOption(formulaId);
+    await page.getByLabel("Quantidade produzida").fill("1");
+    const pedido = page.waitForRequest((q) => q.method() === "POST" && new URL(q.url()).pathname === "/api/stock/feed-batches");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const enviado = (await pedido).postDataJSON() as Record<string, unknown>;
+    expect(enviado["formula_id"], "premissa: o corpo é o desta produção").toBe(formulaId);
+    expect("validade" in enviado, "a validade NÃO viaja para uma API que a descartaria").toBe(false);
+  }
   v.semBloqueio();
 });

@@ -72,7 +72,12 @@ export const ErrorCodes = {
    * usuário completa o DOCUMENTO para cumprir a regra da operação, e a tela precisa saber qual exigência
    * faltou (`details.exigencias`) sem interpretar texto.
    */
-  TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA: "TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA"
+  TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA: "TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA",
+  /**
+   * Consulta externa (CEP, CNPJ — CADASTROS Fase 3) sem fonte que responda agora, ou desligada pela
+   * configuração. 503: o pedido é válido, e o usuário segue preenchendo à mão.
+   */
+  CONSULTA_INDISPONIVEL: "CONSULTA_INDISPONIVEL"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -117,7 +122,8 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   // 409: o pedido é válido; é o estado do servidor que não permite executá-lo agora.
   TIPO_OPERACAO_EXECUCAO_INDISPONIVEL: 409,
   // 422: falta um dado no documento que a regra congelada da operação exige.
-  TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA: 422
+  TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA: 422,
+  CONSULTA_INDISPONIVEL: 503
 };
 
 export class DomainError extends Error {

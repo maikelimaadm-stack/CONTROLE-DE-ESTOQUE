@@ -25,7 +25,7 @@ export default function Page() {
       <Field label="Safra" span={3}><RefSelect resource="harvests" value={h.harvest_id} onChange={(v) => setH({ ...h, harvest_id: v ?? "" })} /></Field>
       <Field label="Atividade" span={2}><RefSelect resource="activities" value={h.activity_id} onChange={(v) => setH({ ...h, activity_id: v ?? "" })} /></Field>
       <Field label="Operação" span={2}><RefSelect resource="operations" value={h.operation_id} onChange={(v) => setH({ ...h, operation_id: v ?? "" })} /></Field>
-      <Field label="Centro de Custo" span={3}><RefSelect resource="cost_centers" value={h.cost_center_id} onChange={(v) => setH({ ...h, cost_center_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
+      <Field label="Centro de Resultado" span={3}><RefSelect resource="cost_centers" value={h.cost_center_id} onChange={(v) => setH({ ...h, cost_center_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
       <Field label="Responsável" span={3}><RefSelect resource="people" value={h.responsible_person_id} onChange={(v) => setH({ ...h, responsible_person_id: v ?? "" })} filter={{ is_employee: "true" }} /></Field>
       <Field label="Equipe" span={2}><RefSelect resource="teams" value={h.team_id} onChange={(v) => setH({ ...h, team_id: v ?? "" })} /></Field>
       <Field label="Início previsto" span={2}><Input type="date" value={h.planned_start} onChange={(e) => setH({ ...h, planned_start: e.target.value })} /></Field>

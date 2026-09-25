@@ -43,7 +43,7 @@ test("menu principal: só módulos (≤ 14), sem abas repetidas; breadcrumbs der
   const more = nav.getByTestId("nav-more"); if (await more.count()) await more.click(); // módulos que não couberam ficam em "Mais"
   const modules = nav.getByTestId("nav-module"); const n = await modules.count(); expect(n).toBeGreaterThanOrEqual(10); expect(n).toBeLessThanOrEqual(13);
   await expect(nav.getByText("Cadastros Base")).toHaveCount(0); await expect(nav.getByText("Saldo e Movimentações")).toHaveCount(0); await expect(nav.getByText("Entradas e Recebimentos")).toHaveCount(0);
-  for (const m of ["Compras", "Estoque", "Financeiro", "Vendas", "Pecuária", "Confinamento", "Frota e Ativos", "Pessoas e RH", "Ordens de Serviço", "Fiscal", "Relatórios", "Configurações"]) await expect(modules.filter({ hasText: m }).first()).toBeVisible();
+  for (const m of ["Compras", "Estoque", "Financeiro", "Vendas", "Pecuária", "Confinamento", "Frota e Ativos", "RH", "Ordens de Serviço", "Fiscal", "Relatórios", "Configurações"]) await expect(modules.filter({ hasText: m }).first()).toBeVisible();
   await page.goto("/configuracoes?tab=financeiro&sub=chart-accounts");
   const crumbs = page.getByRole("navigation", { name: "Navegação" }); await expect(crumbs).toContainText("Configurações"); await expect(crumbs).toContainText("Financeiro"); await expect(crumbs).toContainText("Plano de Contas");
   await expect(page.locator("table")).toBeVisible();

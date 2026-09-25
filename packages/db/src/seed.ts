@@ -136,13 +136,35 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
     const dAgro = await fc("2.04", "Custos Agrícolas", "expense", "synthetic", desp); const catFert = await fc("2.04.001", "Fertilizantes", "expense", "analytic", dAgro); await fc("2.04.002", "Sementes", "expense", "analytic", dAgro); await fc("2.04.003", "Defensivos", "expense", "analytic", dAgro);
     // Plano de contas (mínimo)
     await tx.query("insert into erp.chart_accounts(organization_id,code,description,condition,kind) values ($1,'1','ATIVO','debit','synthetic'),($1,'1.1.01','Caixa e Bancos','debit','analytic'),($1,'1.1.02','Estoques','debit','analytic'),($1,'2','PASSIVO','credit','synthetic'),($1,'2.1.01','Fornecedores','credit','analytic'),($1,'3','RESULTADO','both','synthetic'),($1,'3.1.01','Receitas','credit','analytic'),($1,'3.2.01','Despesas','debit','analytic') on conflict do nothing", [orgId]);
-    // Produtos: grupos/categorias/classes
-    const pg = async (name: string) => (await tx.query<{ id: string }>("insert into erp.product_groups(organization_id,name) values ($1,$2) on conflict (organization_id,name) do update set name=excluded.name returning id", [orgId, name])).rows[0]!.id;
-    const pc = async (g: string, name: string) => (await tx.query<{ id: string }>("insert into erp.product_categories(organization_id,group_id,name) values ($1,$2,$3) on conflict (group_id,name) do update set name=excluded.name returning id", [orgId, g, name])).rows[0]!.id;
-    const pk = async (c: string, name: string) => (await tx.query<{ id: string }>("insert into erp.product_kinds(organization_id,category_id,name) values ($1,$2,$3) on conflict (category_id,name) do update set name=excluded.name returning id", [orgId, c, name])).rows[0]!.id;
-    const gPec = await pg("Insumos Pecuária"), gAgro = await pg("Insumos Agrícola"), gGer = await pg("Insumos Gerais"), gMaq = await pg("Máquinas/Equipamentos/Veículos"), gProd = await pg("Produção");
-    const cNut = await pc(gPec, "Nutrição Animal"), cSan = await pc(gPec, "Sanidade Animal"), cFert = await pc(gAgro, "Fertilizantes"), cComb = await pc(gGer, "Combustíveis"), cPecas = await pc(gMaq, "Peças"), cGraos = await pc(gProd, "Grãos");
-    const kSal = await pk(cNut, "Sal Mineral"), kRacao = await pk(cNut, "Ração/Concentrado"), kVac = await pk(cSan, "Vacinas"), kVerm = await pk(cSan, "Vermífugos"), kNPK = await pk(cFert, "NPK"), kDiesel = await pk(cComb, "Diesel"), kFiltro = await pk(cPecas, "Filtros"), kSoja = await pk(cGraos, "Soja");
+    // Produtos: Grupo de Produtos em ÁRVORE (CADASTROS-ESTRUTURA, 0025). Categoria e Classe de produto são
+    // legado fora de uso: o seed não cria mais. Idempotência pela unicidade de nome entre IRMÃOS vivos da 0025
+    // (a unique (organization_id, name) da 0002 saiu, e com ela o `on conflict (organization_id, name)`): o seed
+    // procura o irmão homônimo antes de inserir — um índice de expressão parcial não serve de alvo ao `on conflict`.
+    //
+    // Banco PARADO ANTES da 0025 (o teste de upgrade da 0024 semeia a demo sobre a 0023): lá o grupo não tem
+    // árvore e categoria/classe ainda são NOT NULL. Nesse schema o seed grava a mesma árvore ACHATADA (só os
+    // grupos analíticos, cada um com uma categoria e uma classe homônimas) — o suficiente para os produtos.
+    const comArvore = Boolean((await tx.query("select 1 from information_schema.columns where table_schema='erp' and table_name='product_groups' and column_name='parent_id'")).rowCount);
+    const legado = new Map<string, { c: string; k: string }>();
+    const pg = async (code: string, name: string, kind: "synthetic" | "analytic", parent: string | null) => {
+      if (comArvore) {
+        const ja = await tx.query<{ id: string }>("select id from erp.product_groups where organization_id=$1 and parent_id is not distinct from $2::uuid and lower(name)=lower($3) and deleted_at is null", [orgId, parent, name]);
+        if (ja.rows[0]) return ja.rows[0].id;
+        return (await tx.query<{ id: string }>("insert into erp.product_groups(organization_id,code,name,kind,parent_id) values ($1,$2,$3,$4,$5) returning id", [orgId, code, name, kind, parent])).rows[0]!.id;
+      }
+      if (kind === "synthetic") return name;
+      const g = (await tx.query<{ id: string }>("insert into erp.product_groups(organization_id,name) values ($1,$2) on conflict (organization_id,name) do update set name=excluded.name returning id", [orgId, name])).rows[0]!.id;
+      const c = (await tx.query<{ id: string }>("insert into erp.product_categories(organization_id,group_id,name) values ($1,$2,$3) on conflict (group_id,name) do update set name=excluded.name returning id", [orgId, g, name])).rows[0]!.id;
+      const k = (await tx.query<{ id: string }>("insert into erp.product_kinds(organization_id,category_id,name) values ($1,$2,$3) on conflict (category_id,name) do update set name=excluded.name returning id", [orgId, c, name])).rows[0]!.id;
+      legado.set(g, { c, k });
+      return g;
+    };
+    const gIns = await pg("1", "Insumos", "synthetic", null);
+    const gFert = await pg("1.01", "Fertilizantes", "analytic", gIns); await pg("1.02", "Defensivos", "analytic", gIns); await pg("1.03", "Sementes", "analytic", gIns);
+    const gComb = await pg("1.04", "Combustíveis e Lubrificantes", "analytic", gIns); const gPecas = await pg("1.05", "Peças e Filtros", "analytic", gIns);
+    const gPecuaria = await pg("2", "Pecuária", "synthetic", null);
+    const gRacoes = await pg("2.01", "Rações e Suplementos", "analytic", gPecuaria); const gSanidade = await pg("2.02", "Sanidade Animal", "analytic", gPecuaria);
+    const gProducao = await pg("3", "Produção", "synthetic", null); const gGraos = await pg("3.01", "Grãos", "analytic", gProducao);
     const unit = async (s: string) => (await tx.query<{ id: string }>("select id from erp.measurement_units where organization_id is null and symbol=$1", [s])).rows[0]!.id;
     const uKg = await unit("kg"), uSc = await unit("sc"), uL = await unit("L"), uUn = await unit("un"), uDose = await unit("dose"), uTon = await unit("ton");
     const wh: Record<string, string> = {};
@@ -151,22 +173,22 @@ export async function seedDemo(db: Db, opts: { orgName?: string; adminEmail?: st
       wh[fid] = w.rows[0]!.id;
       await tx.query("insert into erp.warehouses(organization_id,empresa_id,initials,description,type) values ($1,$2,'FAB','Fábrica de Ração','formulation'),($1,$2,'SILO','Silo de Grãos','production') on conflict do nothing", [orgId, fid]);
     }
-    const prod = async (desc: string, g: string, c: string, k: string, u: string, fcat: string, extra: Record<string, unknown> = {}) => {
+    const prod = async (desc: string, g: string, u: string, fcat: string, extra: Record<string, unknown> = {}) => {
       const code = String((await tx.query<{ n: string }>("select erp.next_code($1,'product') n", [orgId])).rows[0]!.n).padStart(5, "0");
-      return (await tx.query<{ id: string }>("insert into erp.products(organization_id,code,description,group_id,category_id,kind_id,measurement_id,financial_category_id,control_stock,has_lot,min_stock,reference_price,default_warehouse_id,withdrawal_period_days,ncm_code,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10,$11,$12,$13,$14,$15) returning id", [orgId, code, desc, g, c, k, u, fcat, extra.has_lot ?? false, extra.min_stock ?? 0, extra.price ?? 0, wh[empresaIds[0]!], extra.withdrawal ?? null, extra.ncm ?? null, adminUserId])).rows[0]!.id;
+      return (await tx.query<{ id: string }>("insert into erp.products(organization_id,code,description,group_id,measurement_id,financial_category_id,control_stock,has_lot,min_stock,reference_price,default_warehouse_id,withdrawal_period_days,ncm_code,created_by,category_id,kind_id) values ($1,$2,$3,$4,$5,$6,true,$7,$8,$9,$10,$11,$12,$13,$14,$15) returning id", [orgId, code, desc, g, u, fcat, extra.has_lot ?? false, extra.min_stock ?? 0, extra.price ?? 0, wh[empresaIds[0]!], extra.withdrawal ?? null, extra.ncm ?? null, adminUserId, legado.get(g)?.c ?? null, legado.get(g)?.k ?? null])).rows[0]!.id;
     };
     const existing = await tx.query("select 1 from erp.products where organization_id=$1 limit 1", [orgId]);
     let products: Record<string, string> = {};
     if (!existing.rowCount) {
       products = {
-        sal: await prod("Sal Mineral 80 Proteinado 25kg", gPec, cNut, kSal, uKg, catNutri, { min_stock: 500, price: 4.5 }),
-        racao: await prod("Ração Confinamento 18% 40kg", gPec, cNut, kRacao, uKg, catNutri, { min_stock: 2000, price: 2.1 }),
-        vacina: await prod("Vacina Aftosa 50 doses", gPec, cSan, kVac, uDose, catSan, { has_lot: true, min_stock: 100, price: 3.2, withdrawal: 0 }),
-        ivermectina: await prod("Ivermectina 1% 500mL", gPec, cSan, kVerm, uL, catSan, { has_lot: true, min_stock: 5, price: 85, withdrawal: 28 }),
-        npk: await prod("Adubo NPK 04-14-08 50kg", gAgro, cFert, kNPK, uSc, catFert, { min_stock: 100, price: 180 }),
-        diesel: await prod("Óleo Diesel S10", gGer, cComb, kDiesel, uL, catComb, { min_stock: 1000, price: 6.2 }),
-        filtro: await prod("Filtro de Óleo Trator", gMaq, cPecas, kFiltro, uUn, catPecas, { min_stock: 4, price: 95 }),
-        soja: await prod("Soja em Grãos", gProd, cGraos, kSoja, uTon, catFert, { price: 1950 })
+        sal: await prod("Sal Mineral 80 Proteinado 25kg", gRacoes, uKg, catNutri, { min_stock: 500, price: 4.5 }),
+        racao: await prod("Ração Confinamento 18% 40kg", gRacoes, uKg, catNutri, { min_stock: 2000, price: 2.1 }),
+        vacina: await prod("Vacina Aftosa 50 doses", gSanidade, uDose, catSan, { has_lot: true, min_stock: 100, price: 3.2, withdrawal: 0 }),
+        ivermectina: await prod("Ivermectina 1% 500mL", gSanidade, uL, catSan, { has_lot: true, min_stock: 5, price: 85, withdrawal: 28 }),
+        npk: await prod("Adubo NPK 04-14-08 50kg", gFert, uSc, catFert, { min_stock: 100, price: 180 }),
+        diesel: await prod("Óleo Diesel S10", gComb, uL, catComb, { min_stock: 1000, price: 6.2 }),
+        filtro: await prod("Filtro de Óleo Trator", gPecas, uUn, catPecas, { min_stock: 4, price: 95 }),
+        soja: await prod("Soja em Grãos", gGraos, uTon, catFert, { price: 1950 })
       };
     }
     // Pessoas

@@ -6,17 +6,18 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller, type UseFormReturn } from "react-hook-form";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { toast } from "@/lib/toast";
-import { getResource, ehCadastroCodigoHierarquico, type FieldDef } from "@agro/domain";
+import { campoVisivel, chavesBarradas, getResource, ehCadastroCodigoHierarquico, type FieldDef } from "@agro/domain";
 import { cardFieldIds, type FormLayout } from "@agro/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { dateTimeBR, cn } from "@/lib/utils";
-import { Input, Textarea, Spinner, ErrorBox, Confirm } from "@/components/ui";
+import { Card, Input, Textarea, Spinner, ErrorBox, Confirm } from "@/components/ui";
 import { MgSelect, MgDatePicker, RequiredPill, REQUIRED_FIELDS_MESSAGE } from "@/components/ui/mg-controls";
-import { RefSelect } from "@/components/ui/ref-select";
+import { filtroDaReferencia, RefSelect, ReferenciaSelect } from "@/components/ui/ref-select";
 import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Pencil, Plus, Trash2, LayoutGrid, PanelLeft } from "lucide-react";
 import { IconBtn, PillBtn } from "@/features/base1/ui";
 import { useFormLayout } from "./form-layout";
+import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, fichaDoRegistro, fichaParaApi, type ErroDaFicha } from "./ficha-em-abas";
 
 type Values = Record<string, unknown>;
 export interface EmbeddedForm { mode: "view" | "edit" | "new"; /** linha já carregada na listagem: evita tela de carregamento ao navegar entre registros */ row?: Values | null; setMode: (m: "view" | "edit" | "new") => void; onExit: () => void; refresh: () => void; copyFrom?: Values | null; rightSlot?: React.ReactNode; nav?: { index: number; total: number; go: (i: number) => void } }
@@ -31,7 +32,9 @@ const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] fo
 /** Controle de um campo declarativo (mesmo componente para todos os tipos), estilo "rótulo flutuante" do modelo base. */
 function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpenChange }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string; record?: Values | null; onOpenChange?: (o: boolean) => void }) {
   const rules = { required: required ? "Obrigatório" : false };
-  if (f.type === "ref") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <RefSelect resource={f.ref!.resource} value={field.value as string} onOpenChange={onOpenChange} labelHint={record && record[f.name] === field.value ? (record[`${f.name}_label`] as string | null) : null} onChange={(v) => field.onChange(v ?? "")} disabled={dis} includeInactive={!isNew} className={cn(ctl, "h-6 justify-between")} />} />;
+  // referência oficial (município, banco, NCM): busca no servidor, grava o mesmo código de sempre
+  if (f.busca) return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <ReferenciaSelect id={id} referencia={f.busca!} value={field.value as string | number | null} onChange={(v) => field.onChange(v ?? "")} onOpenChange={onOpenChange} disabled={dis} className={cn(ctl, "h-6 justify-between")} />} />;
+  if (f.type === "ref") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <RefSelect resource={f.ref!.resource} filter={filtroDaReferencia(f)} value={field.value as string} onOpenChange={onOpenChange} labelHint={record && record[f.name] === field.value ? (record[`${f.name}_label`] as string | null) : null} onChange={(v) => field.onChange(v ?? "")} disabled={dis} includeInactive={!isNew} className={cn(ctl, "h-6 justify-between")} />} />;
   if (f.type === "select") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgSelect id={id} value={String(field.value ?? "")} onChange={field.onChange} options={f.options ?? []} disabled={dis} allowEmpty={!required} onOpenChange={onOpenChange} />} />;
   if (f.type === "boolean") return <MgSelect id={id} value={values[f.name] === true || values[f.name] === "true" ? "true" : "false"} onChange={(v) => form.setValue(f.name, v === "true", { shouldDirty: true })} options={[{ value: "true", label: "Sim" }, { value: "false", label: "Não" }]} disabled={dis} onOpenChange={onOpenChange} />;
   if (f.type === "date") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgDatePicker id={id} value={String(field.value ?? "")} onChange={field.onChange} disabled={dis} onOpenChange={onOpenChange} />} />;
@@ -68,41 +71,64 @@ function LayoutCardView({ label, collapsible, colSpan, children }: { label: stri
  * Renderiza o layout configurável (painéis → cards → linhas → campos) com campos ocultos/travados/obrigatórios,
  * rótulos e valores padrão definidos pelo usuário ou pela organização.
  */
-export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, onCancel }: { resourceKey: string; id: string; basePath?: string; afterSave?: (row: Values) => void; embedded?: EmbeddedForm; /** modo diálogo: cancelar fecha o diálogo em vez de navegar */ onCancel?: () => void }) {
+export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, onCancel, rapido, presetExtra }: { resourceKey: string; id: string; basePath?: string; afterSave?: (row: Values) => void; embedded?: EmbeddedForm; /** modo diálogo: cancelar fecha o diálogo em vez de navegar */ onCancel?: () => void; /** CADASTRO RÁPIDO: só `camposRapidos` do registry, mesma API */ rapido?: boolean; /** valores iniciais vindos de quem abriu (ex.: tipo pré-marcado no cadastro rápido) */ presetExtra?: Record<string, string> }) {
   const def = getResource(resourceKey); const router = useRouter(); const sp = useSearchParams(); const qc = useQueryClient(); const { can } = useAuth();
   const fields = React.useMemo(() => def?.fields ?? [], [def]);
+  // FICHA EM ABAS (decisão 253): cadastro com `abas` no registry usa a ficha; os demais, o layout de painéis
+  const ficha = Boolean(def?.abas?.length);
+  const [errosFicha, setErrosFicha] = React.useState<ErroDaFicha[]>([]);
+  const errosDoServidor = React.useRef<string[]>([]);
   const layout = useFormLayout(resourceKey, fields);
   const l: FormLayout = layout.prefs;
   const isNew = embedded ? embedded.mode === "new" : id === "new";
   const canEdit = can(`${def?.permission}.edit`); const canDelete = can(`${def?.permission}.delete`); const canCreate = can(`${def?.permission}.create`);
   const readOnly = embedded ? embedded.mode === "view" : sp.get("view") === "1" || (!isNew && !canEdit);
-  const preset = React.useMemo(() => { const p: Record<string, string> = {}; if (!embedded) sp.forEach((v, k) => { if (k !== "view" && k !== "copy") p[k] = v; }); return p; }, [sp, embedded]);
+  // aba com `permissaoDeEdicao` que o usuário não tem (ex.: Pessoal do RH sem people.edit): campos travados e fora do corpo
+  // campo SIGILOSO sem a permissão (R1-2, ex.: salário da Função sem employees.edit): não aparece e não vai no corpo —
+  // a API não o devolve e recusaria (403) o corpo que o trouxesse. Só apresentação: quem recusa é o servidor.
+  const sigilosos = fields.filter((f) => !campoVisivel(f, can)).map((f) => f.name);
+  const travados = [...l.lockedFieldIds, ...sigilosos, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
+  // grade/perfil de aba sem a permissão de gravar ou de ler (R1-4, ex.: aba Cliente sem clients.edit) não vai no corpo —
+  // a API recusaria o corpo inteiro com 403. Só apresentação: quem recusa é o servidor.
+  const fichaBarrada = def ? new Set([...chavesBarradas(def, "permissaoDeEdicao", can), ...chavesBarradas(def, "permissaoDeLeitura", can)]) : new Set<string>();
+  const preset = React.useMemo(() => { const p: Record<string, string> = { ...(presetExtra ?? {}) }; if (!embedded && !presetExtra) sp.forEach((v, k) => { if (k !== "view" && k !== "copy") p[k] = v; }); return p; }, [sp, embedded, presetExtra]);
   const copyId = embedded ? null : sp.get("copy");
   const q = useQuery({ queryKey: ["res", resourceKey, id], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${id}`), enabled: !isNew && id !== "new", placeholderData: embedded?.row && String(embedded.row["id"]) === id ? embedded.row : undefined, staleTime: 30_000 });
   const copyQ = useQuery({ queryKey: ["res", resourceKey, copyId], queryFn: () => api<Values>(`/api/resources/${resourceKey}/${copyId}`), enabled: Boolean(copyId) });
-  const form = useForm<Values>({ defaultValues: defaults(fields, preset, l.fieldDefaultValues) });
+  const form = useForm<Values>({ defaultValues: { ...defaults(fields, preset, l.fieldDefaultValues), ...(def?.abas?.length ? fichaDoRegistro(def, null) : {}) } });
   // contrato de estado não salvo do shell: a aba mostra indicador e fechar/trocar empresa/sair pedem confirmação
   useDirtyTab(!readOnly && form.formState.isDirty);
   const appliedDefaults = React.useRef(false);
   // valores padrão do layout entram só em campos ainda não editados pelo usuário (não descarta o que já foi digitado)
   React.useEffect(() => { if (isNew && layout.loaded && !appliedDefaults.current && Object.keys(l.fieldDefaultValues).length) { appliedDefaults.current = true; const d = defaults(fields, preset, l.fieldDefaultValues); for (const f of fields) { if (!(f.name in l.fieldDefaultValues) || preset[f.name] !== undefined) continue; if (form.getFieldState(f.name).isDirty) continue; form.setValue(f.name, d[f.name]); } } }, [isNew, layout.loaded, l.fieldDefaultValues, fields, preset, form]);
-  React.useEffect(() => { if (q.data && def && !isNew) form.reset(fromRecord(def.fields, q.data)); }, [q.data, def, form, isNew]);
+  React.useEffect(() => { if (q.data && def && !isNew) form.reset({ ...fromRecord(def.fields, q.data), ...(ficha ? fichaDoRegistro(def, q.data) : {}) }); }, [q.data, def, form, isNew]);
   // duplicar: novo registro pré-preenchido com os valores do registro de origem (exceto código/identificadores)
   const copySrc = embedded?.copyFrom ?? copyQ.data ?? null;
   React.useEffect(() => { if (isNew && def) { if (copySrc) { const v = fromRecord(def.fields, copySrc); for (const f of def.fields) if (f.name === "code" || f.readOnly) v[f.name] = f.type === "boolean" ? false : f.type === "tags" ? [] : ""; form.reset(v); } else form.reset(defaults(fields, preset, l.fieldDefaultValues)); } }, [isNew, copySrc, def]);
-  // Código hierárquico (Plano de Contas, Categorias, Centros de Custo): o SERVIDOR sugere o próximo código
-  // abaixo do antecessor escolhido, enquanto o usuário não digitou um código. A sugestão é editável; quem
+  // Código hierárquico (Plano de Contas, Naturezas, Centros de Resultado, Grupos de Produtos): o SERVIDOR sugere o
+  // próximo código abaixo do superior escolhido, enquanto o usuário não digitou um código. A sugestão é editável; quem
   // confere máscara, prefixo e duplicidade é o servidor ao salvar.
   const sugereCodigo = ehCadastroCodigoHierarquico(resourceKey) && isNew && !readOnly;
-  const antecessor = form.watch("parent_id") as string | null | undefined;
+  const superior = form.watch("parent_id") as string | null | undefined;
   React.useEffect(() => {
     if (!sugereCodigo || form.getFieldState("code").isDirty) return;
     let vivo = true;
-    api<{ codigo: string }>(`/api/resources/${resourceKey}/proximo-codigo${antecessor ? `?parent_id=${encodeURIComponent(antecessor)}` : ""}`)
+    api<{ codigo: string }>(`/api/resources/${resourceKey}/proximo-codigo${superior ? `?parent_id=${encodeURIComponent(superior)}` : ""}`)
       .then((r) => { if (vivo && !form.getFieldState("code").isDirty) form.setValue("code", r.codigo, { shouldDirty: false }); })
       .catch(() => { /* sem sugestão (ex.: último nível da máscara): o usuário digita e o servidor confere */ });
     return () => { vivo = false; };
-  }, [sugereCodigo, antecessor, resourceKey, form]);
+  }, [sugereCodigo, superior, resourceKey, form]);
+  // Campos `herdaDoSuperior` (ex.: Tipo da Natureza): o registro novo nasce com o valor do superior escolhido,
+  // enquanto o usuário não mexeu no campo. É só pré-preenchimento; a divergência é recusada pela API.
+  const herdados = React.useMemo(() => (def?.tree ? fields.filter((f) => f.herdaDoSuperior).map((f) => f.name) : []), [def, fields]);
+  React.useEffect(() => {
+    if (!isNew || readOnly || !herdados.length || !superior) return;
+    let vivo = true;
+    api<Values>(`/api/resources/${resourceKey}/${encodeURIComponent(superior)}`)
+      .then((pai) => { if (!vivo) return; for (const n of herdados) { const v = pai[n]; if (v !== undefined && v !== null && !form.getFieldState(n).isDirty) form.setValue(n, v, { shouldDirty: false }); } })
+      .catch(() => { /* superior ilegível: o campo fica como está e o servidor confere ao salvar */ });
+    return () => { vivo = false; };
+  }, [isNew, readOnly, herdados, superior, resourceKey, form]);
   const [confirmDel, setConfirmDel] = React.useState(false);
   const [openField, setOpenField] = React.useState<string | null>(null);
   // painéis em abas horizontais ("tabs") ou lista lateral ("sidebar"), como o modelo base do MG; lembrado por cadastro
@@ -111,26 +137,30 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   React.useEffect(() => { try { const v = localStorage.getItem(panelStyleKey); if (v === "sidebar") setPanelStyle("sidebar"); } catch { /* sem storage */ } }, [panelStyleKey]);
   const togglePanelStyle = () => setPanelStyle((p) => { const n = p === "tabs" ? "sidebar" : "tabs"; try { localStorage.setItem(panelStyleKey, n); } catch { /* sem storage */ } return n; });
   const save = useMutation({
-    mutationFn: (v: Values) => isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body: toApi(def!.fields, v, l.lockedFieldIds) }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body: toApi(def!.fields, v, l.lockedFieldIds) }),
-    onSuccess: (row) => { toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
-    onError: (e) => { const err = e as Error & { details?: { path: string; message: string }[] }; const det = err.details?.filter((d) => d.path) ?? []; det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
+    // `original`: o registro como veio da API — campo de perfil ESVAZIADO pelo usuário vai como null (R1-2: limpar a data
+    // de desligamento, o salário, a conta de pagamento); vazio que já era vazio não vai
+    mutationFn: (v: Values) => { const body = { ...toApi(def!.fields, v, travados), ...(ficha && !rapido ? fichaParaApi(def!, v, (k) => !fichaBarrada.has(k) && (isNew || Boolean((form.formState.dirtyFields as Record<string, unknown>)[k])), { original: form.formState.defaultValues as Values | undefined, pode: can }) : {}) }; return isNew ? api<Values>(`/api/resources/${resourceKey}`, { method: "POST", body }) : api<Values>(`/api/resources/${resourceKey}/${id}`, { method: "PUT", body }); },
+    onSuccess: (row) => { setErrosFicha([]); toast.success("Salvo com sucesso"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); if (afterSave) afterSave(row); else if (embedded) { embedded.refresh(); embedded.setMode("view"); if (isNew) embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); },
+    onError: (e) => { const err = e as Error & { details?: ErroDaFicha[] }; const det = err.details?.filter((d) => d.path) ?? []; if (ficha) setErrosFicha(det); errosDoServidor.current = det.map((d) => d.path); det.forEach((d) => form.setError(d.path, { message: d.message })); const missing = det.filter((d) => d.message === "Campo obrigatório"); if (missing.length) toast.warning(`${REQUIRED_FIELDS_MESSAGE}\n${missing.map((d) => labelOf(d.path)).join(", ")}`, { duration: 5000 }); else toast.error(det.length ? det.map((d) => `${labelOf(d.path)}: ${d.message}`).join(" · ") : err.message); }
   });
   const remove = useMutation({ mutationFn: () => api(`/api/resources/${resourceKey}/${id}`, { method: "DELETE" }), onSuccess: () => { toast.success("Registro excluído"); void qc.invalidateQueries({ queryKey: ["res", resourceKey] }); void qc.invalidateQueries({ queryKey: ["b1", resourceKey] }); setConfirmDel(false); if (embedded) { embedded.refresh(); embedded.onExit(); } else router.push(basePath ?? `/cadastros/${resourceKey}`); }, onError: (e) => toast.error((e as Error).message) });
   // título da aba global ("Novo produto" / nome do registro) — hook antes de qualquer retorno antecipado; não se aplica ao formulário embutido na listagem
   const tabTitle = !def ? undefined : isNew ? `Novo ${def.label.toLowerCase()}` : String(q.data?.[def.labelField] ?? q.data?.["name"] ?? q.data?.["description"] ?? "");
   useTabTitle(embedded ? undefined : tabTitle || undefined);
   if (!def) return <div>Recurso desconhecido</div>;
+  // cadastro que nasce por OUTRA porta (ex.: funcionário pelo CPF): o "novo" pergunta só o necessário
+  if (isNew && def.criacao) return <CriacaoPorOutraPorta def={def} base={basePath ?? `/cadastros/${resourceKey}`} />;
   if (!isNew && q.isLoading && !q.data) return <div className="p-6"><Spinner /></div>;
   if (q.error) return <ErrorBox error={q.error} />;
   const values = form.watch();
-  const visible = (f: FieldDef) => !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
+  const visible = (f: FieldDef) => campoVisivel(f, can) && (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
   const back = basePath ?? `/cadastros/${resourceKey}`;
   const byId = new Map(fields.map((f) => [f.name, f]));
   // obrigatório do registry, do layout ou CONDICIONAL (`requiredWhen`): campo de condição vazio vale o `default` dele (ex.: Controla estoque = Sim)
   const obrigatorio = (f: FieldDef) => Boolean(f.required) || l.requiredFieldIds.includes(f.name) || (f.requiredWhen !== undefined && iguala(values[f.requiredWhen.field] ?? byId.get(f.requiredWhen.field)?.default, f.requiredWhen.equals));
   const renderField = (fid: string) => {
     const f = byId.get(fid); if (!f || !visible(f)) return null;
-    const err = form.formState.errors[f.name]?.message as string | undefined; const locked = Boolean(f.readOnly) || l.lockedFieldIds.includes(f.name); const dis = readOnly || locked;
+    const err = form.formState.errors[f.name]?.message as string | undefined; const locked = Boolean(f.readOnly) || travados.includes(f.name); const dis = readOnly || locked;
     const required = obrigatorio(f);
     const v = values[f.name]; const hasValue = f.type === "boolean" ? true : Array.isArray(v) ? v.length > 0 : v !== "" && v !== null && v !== undefined;
     return <B1Field key={f.name} flex label={l.fieldLabels[f.name] ?? f.label} required={required} error={err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}><FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={(o) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur))} /></B1Field>;
@@ -142,8 +172,12 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const nav = embedded?.nav;
   const labelOf = (name: string) => l.fieldLabels[name] ?? byId.get(name)?.label ?? name;
   // obrigatórios pendentes: marca cada campo e avisa no canto superior quais faltam (como o modelo base do MG)
-  const submit = form.handleSubmit((v) => save.mutate(v), (errs) => { const names = Object.keys(errs); toast.warning("Campos obrigatórios pendentes", { description: names.map(labelOf).join(", "), duration: 6000 }); const el = document.querySelector<HTMLElement>(`[name="${names[0]}"]`); el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus?.(); });
-  const cancel = () => { if (onCancel) { onCancel(); return; } if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset(fromRecord(def.fields, q.data)); embedded.setMode("view"); } } else router.push(back); };
+  // Erro devolvido pelo SERVIDOR é retrato da tentativa anterior: o react-hook-form mantém `setError` de caminho
+  // não registrado (ex.: `enderecos.1`, linha da grade) e com ele recusaria para sempre o envio seguinte, mesmo
+  // corrigido. Limpa-se antes de reenviar; quem julga de novo é o servidor.
+  const enviar = form.handleSubmit((v) => save.mutate(v), (errs) => { const names = Object.keys(errs); toast.warning("Campos obrigatórios pendentes", { description: names.map(labelOf).join(", "), duration: 6000 }); const el = document.querySelector<HTMLElement>(`[name="${names[0]}"]`); el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus?.(); });
+  const submit = (e?: React.BaseSyntheticEvent) => { if (errosDoServidor.current.length) { form.clearErrors(errosDoServidor.current); errosDoServidor.current = []; } return enviar(e); };
+  const cancel = () => { if (onCancel) { onCancel(); return; } if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset({ ...fromRecord(def.fields, q.data), ...(ficha ? fichaDoRegistro(def, q.data) : {}) }); embedded.setMode("view"); } } else router.push(back); };
   return (
     <form onSubmit={submit} className="b1 flex min-h-0 flex-1 flex-col gap-2" data-testid="b1-form">
       {/* barra de ações */}
@@ -172,7 +206,9 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
       </div>
       {/* painéis (área rolável; barra e cabeçalho ficam fixos) */}
       <div className="mg-form-scroll min-h-0 flex-1 overflow-auto">
-      {panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} style={panelStyle} onToggleStyle={togglePanelStyle} animate={!readOnly} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
+      {ficha && !rapido ? <FichaEmAbas def={def} form={form} readOnly={readOnly} isNew={isNew} record={q.data ?? null} erros={errosFicha} renderField={renderField} visivel={visible} />
+        : rapido && def.camposRapidos ? <Card className="grid grid-cols-12 gap-3 p-3" data-testid="cadastro-rapido"><div className="col-span-12 flex flex-wrap gap-2">{def.camposRapidos.map(renderField)}</div>{def.camposRapidos.includes("document") && <ConsultaCnpj form={form} dis={readOnly} />}</Card>
+        : panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} style={panelStyle} onToggleStyle={togglePanelStyle} animate={!readOnly} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
       {!isNew && q.data && <div className="px-2 pt-2 text-[11px] text-slate-400">Criado em {dateTimeBR(q.data["created_at"] as string)} · atualizado em {dateTimeBR(q.data["updated_at"] as string)}</div>}
       </div>
       <Confirm open={confirmDel} onOpenChange={setConfirmDel} title="Confirme a exclusão" text={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`} danger loading={remove.isPending} onConfirm={() => remove.mutate()} />

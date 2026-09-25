@@ -39,11 +39,58 @@ export function parcelasDoTitulo(input: Pick<TitleInput, "amount" | "dueDate" | 
     : [{ number: 1, dueDate: input.dueDate, amount: total, isDownPayment: false }];
 }
 
+/**
+ * RATEIO SÓ EM ANALÍTICO (CADASTROS Fase 7 e R1-5, decisão 256): natureza e centro de resultado sintéticos
+ * agrupam, não recebem lançamento. TODO id do rateio precisa existir NESTA organização, estar vivo (sem
+ * `deleted_at`), ATIVO e ser analítico. Inexistente, de outra organização, excluído, inativo e sintético caem
+ * na MESMA recusa, com a MESMA mensagem: distinguir seria um oráculo de existência sobre o cadastro vizinho.
+ *
+ * A CONTA CONTÁBIL da linha (opcional) é conferida só quanto ao TENANT e à vida: existir nesta organização e
+ * não estar excluída. A FK `chart_account_id` é de coluna única — não prova a organização —, e sem esta
+ * conferência um título de A gravaria a conta de B. Situação ativa e analítico da conta NÃO são conferidos:
+ * a tela oferece qualquer conta do plano, e exigi-los é regra de produto em aberto (decisão 256 (4)(c)).
+ *
+ * `for share` (como a venda, `validarClassificacaoFinanceira`): as linhas lidas ficam travadas contra
+ * alteração até o fim da transação — uma inativação ou uma troca para sintético concorrente espera o lançamento
+ * terminar, em vez de commitar entre a conferência e a gravação. Uma consulta por cadastro para o rateio
+ * inteiro (sem N+1; `for share` não combina com `union`).
+ *
+ * Vale para rateio NOVO (título, movimento, NF, entrada, venda — criação e edição). A BAIXA não passa por aqui:
+ * ela copia o rateio JÁ GRAVADO no título para o movimento (`BankMovementInput.rateioJaGravado`), e valor que
+ * não muda não é reconferido (decisão 256). Reconferir travaria o título em aberto cuja natureza ou centro foi
+ * inativado, excluído (sem volta pela API) ou é sintético do acervo — com o período da emissão fechado, nem o
+ * rateio nem o cancelamento do título teriam conserto.
+ */
+export const MENSAGEM_RATEIO_NATUREZA = "Natureza sintética ou inativa não recebe lançamento. Escolha uma natureza analítica e ativa.";
+export const MENSAGEM_RATEIO_CENTRO = "Centro de resultado sintético ou inativo não recebe lançamento. Escolha um centro de resultado analítico e ativo.";
+export const MENSAGEM_RATEIO_CONTA = "Conta contábil não encontrada no plano de contas. Escolha outra conta contábil.";
+/** Linha de rateio que se confere: a conta contábil é chave OBRIGATÓRIA do tipo (mesmo nula), para nenhum chamador esquecê-la. */
+export type LinhaDeRateioConferida = Pick<ApportionmentLine, "financialCategoryId" | "costCenterId"> & { chartAccountId: string | null | undefined };
+export async function exigirRateioAnalitico(ctx: ServiceCtx, lines: readonly LinhaDeRateioConferida[]): Promise<void> {
+  const conferir = async (tabela: "financial_categories" | "cost_centers" | "chart_accounts", ids: string[], campo: string, message: string) => {
+    if (!ids.length) return;
+    // whitelist estática: a tabela nunca vem da entrada. A conta só confere tenant e vida (ver acima).
+    const situacao = tabela === "chart_accounts" ? "" : " and is_active and kind='analytic'";
+    const r = await ctx.tx.query<{ id: string }>(
+      `select id::text as id from erp.${tabela} where organization_id=$1 and id = any($2::uuid[]) and deleted_at is null${situacao} for share`,
+      [ctx.orgId, ids]);
+    const ok = new Set(r.rows.map((x) => x.id));
+    if (ids.some((x) => !ok.has(x))) throw validation(message, [{ path: ["apportionment", campo], message }]);
+  };
+  await conferir("financial_categories", [...new Set(lines.map((l) => l.financialCategoryId))], "financial_category_id", MENSAGEM_RATEIO_NATUREZA);
+  await conferir("cost_centers", [...new Set(lines.map((l) => l.costCenterId))], "cost_center_id", MENSAGEM_RATEIO_CENTRO);
+  await conferir("chart_accounts", [...new Set(lines.flatMap((l) => (l.chartAccountId ? [l.chartAccountId] : [])))], "chart_account_id", MENSAGEM_RATEIO_CONTA);
+}
+/** As linhas do rateio de domínio no formato da conferência (a conta contábil, opcional no domínio, vira chave explícita). */
+const linhasConferidas = (lines: readonly ApportionmentLine[]): LinhaDeRateioConferida[] =>
+  lines.map((l) => ({ financialCategoryId: l.financialCategoryId, costCenterId: l.costCenterId, chartAccountId: l.chartAccountId }));
+
 /** Cria título(s) financeiro(s) com rateio; se houver plano de parcelamento, cria uma linha por parcela (group_id comum). */
 export async function createTitles(ctx: ServiceCtx, input: TitleInput): Promise<{ ids: string[]; groupId: string | null }> {
   await assertPeriodOpen(ctx.tx, ctx.orgId, input.empresaId, input.emissionDate);
   const total = money(input.amount);
   if (D(total).lte(0)) throw validation("Valor do título deve ser positivo");
+  await exigirRateioAnalitico(ctx, linhasConferidas(input.apportionment));
   const lines = normalizeApportionment(money(D(total).minus(input.discount ?? 0)), input.apportionment);
   const parts = parcelasDoTitulo(input);
   const groupId = parts.length > 1 ? (await ctx.tx.query<{ id: string }>("select gen_random_uuid() id")).rows[0]!.id : null;
@@ -77,6 +124,11 @@ export interface BankMovementInput {
   empresaId: string | null; bankAccountId: string; date: string; type: "in" | "out"; categoryType?: string; amount: string; interest?: string; document?: string | null; note?: string | null;
   proprietaryId?: string | null; personId?: string | null; harvestId?: string | null; isDeductible?: boolean; generatesObligation?: boolean; sourceType?: string; sourceId?: string; destinationAccountId?: string | null;
   apportionment?: ApportionmentLine[];
+  /**
+   * O rateio é a CÓPIA do rateio já gravado num título (baixa): não passa por `exigirRateioAnalitico`, que é a
+   * regra da classificação NOVA. Só a baixa liga isto; rateio vindo do cliente nunca.
+   */
+  rateioJaGravado?: boolean;
 }
 export async function createBankMovement(ctx: ServiceCtx, i: BankMovementInput): Promise<string> {
   await assertPeriodOpen(ctx.tx, ctx.orgId, i.empresaId, i.date);
@@ -88,6 +140,7 @@ export async function createBankMovement(ctx: ServiceCtx, i: BankMovementInput):
     [ctx.orgId, i.empresaId, code, i.bankAccountId, i.date, i.type, i.categoryType ?? i.type, i.destinationAccountId ?? null, money(i.amount), money(i.interest ?? 0), i.document ?? null, i.generatesObligation ?? false, i.isDeductible ?? false, i.note ?? null, i.proprietaryId ?? null, i.personId ?? null, i.harvestId ?? null, i.sourceType ?? null, i.sourceId ?? null, ctx.user.id]);
   const id = r.rows[0]!.id;
   await atribuirIdGlobal(ctx, "bank_movements", id);
+  if (i.apportionment?.length && !i.rateioJaGravado) await exigirRateioAnalitico(ctx, linhasConferidas(i.apportionment));
   if (i.apportionment?.length) for (const l of normalizeApportionment(money(i.amount), i.apportionment)) await ctx.tx.query("insert into erp.bank_movement_apportionments(movement_id,financial_category_id,chart_account_id,cost_center_id,harvest_id,percentage,amount) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.financialCategoryId, l.chartAccountId, l.costCenterId, l.harvestId, l.percentage, l.amount]);
   // transferência interna: cria o par na conta destino
   if (i.categoryType === "internal_transfer" && i.destinationAccountId) {

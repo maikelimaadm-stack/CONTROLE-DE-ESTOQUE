@@ -38,8 +38,10 @@ describe("cadastros genéricos (recursos declarativos)", () => {
     expect((await h.app.inject({ method: "GET", url: `/api/resources/cost_centers/${id}`, headers: h.headers() })).statusCode).toBe(404);
   });
   it("produto que controla estoque exige categoria financeira (CHECK do banco)", async () => {
-    const r = await h.app.inject({ method: "POST", url: "/api/resources/products", headers: h.headers(), payload: { description: "X", measurement_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/measurement_units/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, group_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/product_groups/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, category_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/product_categories/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, kind_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/product_kinds/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, control_stock: true } });
+    const r = await h.app.inject({ method: "POST", url: "/api/resources/products", headers: h.headers(), payload: { description: "X", measurement_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/measurement_units/options", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, group_id: (j(await h.app.inject({ method: "GET", url: "/api/resources/product_groups/options?kind=analytic", headers: h.headers() })) as unknown as { id: string }[])[0]!.id, control_stock: true } });
     expect(r.statusCode).toBe(422);
+    // premissa (CADASTROS-ESTRUTURA): o 422 é do CHECK da categoria financeira, não da regra do grupo analítico
+    expect(r.body).not.toContain("grupo de produtos");
   });
 });
 
@@ -333,7 +335,7 @@ describe("vendas, frota, RH e pecuária", () => {
     expect((await h.app.inject({ method: "GET", url: "/api/livestock/weighings/00000000-0000-4000-8000-000000000000", headers: h.headers() })).statusCode).toBe(404);
     const ivm = j(await h.app.inject({ method: "GET", url: "/api/resources/products?search=Ivermectina", headers: h.headers() })).items![0] as { id: string };
     await h.app.inject({ method: "POST", url: "/api/stock/opening-balances", headers: h.headers(), payload: { empresa_id: I.empresa, warehouse_id: I.warehouse, product_id: ivm.id, quantity: "10", unit_value: "85", provider_lot: "L1", expiration_date: "2027-01-01" } });
-    const san2 = await h.app.inject({ method: "POST", url: "/api/livestock/handlings", headers: h.headers(), payload: { empresa_id: I.empresa, handling_type: "sanitary", handling_date: "2026-09-12", batch_id: I.batch, product_id: ivm.id, warehouse_id: I.warehouse, dose: "0.01", items: [{ animal_id: I.animal, quantity: "1" }] } });
+    const san2 = await h.app.inject({ method: "POST", url: "/api/livestock/handlings", headers: h.headers(), payload: { empresa_id: I.empresa, handling_type: "sanitary", handling_date: "2026-09-12", batch_id: I.batch, product_id: ivm.id, warehouse_id: I.warehouse, provider_lot: "L1" /* Fase 6: produto com controle de lote exige o lote */, dose: "0.01", items: [{ animal_id: I.animal, quantity: "1" }] } });
     expect(san2.statusCode).toBe(201); expect(j(san2).withdrawal_until).toBe("2026-10-10");
     const sale = await h.app.inject({ method: "POST", url: "/api/livestock/movements", headers: h.headers(), payload: { empresa_id: I.empresa, movement_type: "sale", movement_date: "2026-09-15", person_id: I.client, generate_financial: true, items: [{ animal_id: I.animal, weight: "290", unit_value: "2900" }] } });
     expect(st(sale, 201)).toBe(201); expect((j(sale).title_ids as string[]).length).toBe(1);

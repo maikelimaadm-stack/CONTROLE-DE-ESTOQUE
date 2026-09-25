@@ -5,7 +5,7 @@ import { login, logout } from "./helpers";
  * UI-STAB-01 — AppShell: TopNavigation (módulos do nav.registry + "Mais"), mega-menu por módulo, busca global
  * (Ctrl+K), seletor de empresa, menus de notificações/usuário, acessibilidade por teclado e responsividade.
  */
-const MODULES = ["Compras", "Estoque", "Financeiro", "Vendas", "Pecuária", "Confinamento", "Frota e Ativos", "Pessoas e RH", "Ordens de Serviço", "Fiscal", "Relatórios", "Configurações"];
+const MODULES = ["Compras", "Estoque", "Financeiro", "Vendas", "Pecuária", "Confinamento", "Frota e Ativos", "RH", "Ordens de Serviço", "Fiscal", "Relatórios", "Configurações"];
 
 test.describe("shell: menu superior e mega-menu", () => {
   test("módulo → mega-menu → destino: aba criada e URL canônica", async ({ page }) => {

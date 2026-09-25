@@ -159,7 +159,7 @@ beforeAll(async () => {
 afterAll(async () => { await db?.end(); });
 
 describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na purga", () => {
-  it("o diretório tem 24 migrations e a purga é a 17ª", () => {
+  it("o diretório tem 29 migrations e a purga é a 17ª", () => {
     const noDisco = listMigrations().map((m) => m.name);
     // Números explícitos de propósito: este é o gate da fatia destrutiva, e uma migration nova precisa
     // passar por aqui conscientemente — não entrar de carona num `>= 16`. A 05C-2 passou: acrescentou a
@@ -176,8 +176,17 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // cria um GATILHO em `erp.sales_documents` (guarda da execução configurada), sem coluna, sem dado e sem
     // tocar o recorte que a purga lê — a posição 17 segue intacta. A VENDAS-A1 é a oitava: a 0024 acrescenta
     // duas colunas nulas e um gatilho a `erp.sales_documents` e chaves candidatas de tenant às categorias e
-    // centros — nada no recorte que a purga lê, e a posição 17 segue intacta.
-    expect(noDisco.length, "24 migrations no repositório").toBe(24);
+    // centros — nada no recorte que a purga lê, e a posição 17 segue intacta. A CADASTROS-ESTRUTURA é a nona:
+    // a 0025 acrescenta colunas de árvore a `erp.product_groups` e solta o NOT NULL de categoria/classe do
+    // produto — cadastros de organização, fora do recorte que a purga lê; a posição 17 segue intacta. A CADASTROS
+    // FASE 3 é a décima: a 0026 carrega referências GLOBAIS (municípios, bancos, NCM, CBO) e cria caches
+    // globais das consultas — nada no recorte que a purga lê; a posição 17 segue intacta. A CADASTROS FASE 4 é
+    // a décima primeira: a 0027 acrescenta colunas a `erp.people`, o limite a `erp.client_profiles`, três
+    // tabelas de detalhe do parceiro e um índice único de documento — cadastros de organização, fora do
+    // recorte que a purga lê; a posição 17 segue intacta. As CADASTROS FASES 5 e 6 são a décima segunda e a décima
+    // terceira: a 0028 (RH) e a 0029 (produtos: colunas, grades e gatilhos de lote) — cadastros de organização e um
+    // gatilho de INSERT no ledger que não reescreve nada do acervo; a posição 17 segue intacta.
+    expect(noDisco.length, "29 migrations no repositório").toBe(29);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -186,6 +195,11 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[21], "e a 22ª é a configuração versionada da TOP (TOP-CONFIG-03)").toBe("0022_tipo_operacao_configuracao_versionada.sql");
     expect(noDisco[22], "e a 23ª é a guarda da execução configurada da venda (TOP-CONFIG-04A)").toBe("0023_venda_execucao_configurada_guarda.sql");
     expect(noDisco[23], "e a 24ª é a classificação financeira do documento de venda (VENDAS-A1)").toBe("0024_venda_classificacao_financeira.sql");
+    expect(noDisco[24], "e a 25ª é o Grupo de Produtos em árvore (CADASTROS-ESTRUTURA)").toBe("0025_grupo_de_produtos_arvore.sql");
+    expect(noDisco[25], "e a 26ª são as referências oficiais (CADASTROS Fase 3)").toBe("0026_referencias_oficiais.sql");
+    expect(noDisco[26], "e a 27ª é a ficha de Parceiros (CADASTROS Fase 4)").toBe("0027_parceiros_ficha_em_abas.sql");
+    expect(noDisco[27], "e a 28ª é a ficha de RH / funcionários (CADASTROS Fase 5)").toBe("0028_rh_funcionarios.sql");
+    expect(noDisco[28], "e a 29ª é a ficha de Produtos (CADASTROS Fase 6)").toBe("0029_produtos_ficha_em_abas.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {

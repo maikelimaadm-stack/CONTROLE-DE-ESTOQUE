@@ -34,7 +34,7 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Estoque | Ações | Nova requisição | `/estoque/requisicoes/new` | requisitions.create | sim | não | aba própria (/estoque/requisicoes/new) | barra ou **Mais** |
 | Estoque | Ações | Nova saída direta | `/estoque/baixas/new` | stock_writeoffs.create | sim | não | aba própria (/estoque/baixas/new) | barra ou **Mais** |
 | Estoque | Ações | Transferência entre armazéns | `/estoque/transferencias/new?kind=warehouse` | warehouse_transfers.create | sim | não | aba própria (/estoque/transferencias/new) | barra ou **Mais** |
-| Estoque | Ações | Transferência entre fazendas | `/estoque/transferencias/new?kind=farm` | farm_transfers.create | sim | não | aba própria (/estoque/transferencias/new) | barra ou **Mais** |
+| Estoque | Ações | Transferência entre empresas | `/estoque/transferencias/new?kind=farm` | farm_transfers.create | sim | não | aba própria (/estoque/transferencias/new) | barra ou **Mais** |
 | Estoque | Ações | Nova produção de ração | `/estoque/batidas/new` | feed_batches.create | sim | não | aba própria (/estoque/batidas/new) | barra ou **Mais** |
 | Financeiro | (módulo) | Financeiro | `/financeiro` | união das áreas | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
 | Financeiro | Visão Geral | Visão Geral | `/financeiro?tab=visao-geral` | dashboard.financial.view | sim | sim | aba do módulo Financeiro | barra ou **Mais** |
@@ -51,12 +51,7 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Financeiro | Ações | Nova receita (conta a receber) | `/financeiro/contas-a-receber/new` | receivables.create | sim | não | aba própria (/financeiro/contas-a-receber/new) | barra ou **Mais** |
 | Financeiro | Ações | Novo movimento bancário | `/financeiro/movimentos/new` | bank_movements.create | sim | não | aba própria (/financeiro/movimentos/new) | barra ou **Mais** |
 | Vendas | (módulo) | Vendas | `/vendas` | união das áreas | sim | sim | aba do módulo Vendas | barra ou **Mais** |
-| Vendas | Orçamentos | Orçamentos | `/vendas?tab=budgets` | budgets.view | sim | sim | aba do módulo Vendas | barra ou **Mais** |
-| Vendas | Pedidos | Pedidos | `/vendas?tab=orders` | orders.view | sim | sim | aba do módulo Vendas | barra ou **Mais** |
-| Vendas | Vendas | Vendas | `/vendas?tab=sales` | sales.view | sim | sim | aba do módulo Vendas | barra ou **Mais** |
-| Vendas | Ações | Novo orçamento | `/vendas/budgets/new` | budgets.create | sim | não | aba própria (/vendas/budgets/new) | barra ou **Mais** |
-| Vendas | Ações | Novo pedido | `/vendas/orders/new` | orders.create | sim | não | aba própria (/vendas/orders/new) | barra ou **Mais** |
-| Vendas | Ações | Nova venda | `/vendas/sales/new` | sales.create | sim | não | aba própria (/vendas/sales/new) | barra ou **Mais** |
+| Vendas | Documentos comerciais | Documentos comerciais | `/vendas?tab=documentos` | budgets.view \| orders.view \| sales.view | sim | sim | aba do módulo Vendas | barra ou **Mais** |
 | Pecuária | (módulo) | Pecuária | `/pecuaria` | união das áreas | sim | sim | aba do módulo Pecuária | barra ou **Mais** |
 | Pecuária | Visão Geral | Visão Geral | `/pecuaria?tab=visao-geral` | dashboard.livestock.view | sim | sim | aba do módulo Pecuária | barra ou **Mais** |
 | Pecuária | Rebanho | Animais | `/pecuaria?tab=rebanho&sub=animais` | animals.view \| animals_management.view \| locate_animals.view \| processings.view | sim | sim | aba do módulo Pecuária | barra ou **Mais** |
@@ -117,27 +112,28 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Relatórios | Relatórios | Relatórios | `/relatorios` | report.stock_movement.view \| saved_reports.view | sim | sim | aba do módulo Relatórios | barra ou **Mais** |
 | Relatórios | Ações | Novo relatório personalizado | `/relatorios/personalizados/novo` | saved_reports.create | sim | não | aba própria (/relatorios/personalizados/novo) | barra ou **Mais** |
 | Configurações | (módulo) | Configurações | `/configuracoes` | união das áreas | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Empresa e Fazendas | Fazendas | `/configuracoes?tab=empresa&sub=farms` | farms.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Empresa e Fazendas | Centros de Custo | `/configuracoes?tab=empresa&sub=cost-centers` | cost_centers.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Empresa e Fazendas | Safras | `/configuracoes?tab=empresa&sub=harvests` | harvests.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Empresa e Fazendas | Pluviometria | `/configuracoes?tab=empresa&sub=rainfalls` | rainfalls.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Empresa e Fazendas | Indicadores de chuva | `/configuracoes?tab=empresa&sub=pluviometria` | dashboard.rainfall.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Empresa e Fazendas | Parâmetros | `/configuracoes?tab=empresa&sub=parametros` | tenant_parameters.edit | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Empresa e Empresas | Empresas | `/configuracoes?tab=empresa&sub=empresas` | farms.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Empresa e Empresas | Safras | `/configuracoes?tab=empresa&sub=harvests` | harvests.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Empresa e Empresas | Pluviometria | `/configuracoes?tab=empresa&sub=rainfalls` | rainfalls.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Empresa e Empresas | Indicadores de chuva | `/configuracoes?tab=empresa&sub=pluviometria` | dashboard.rainfall.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Empresa e Empresas | Parâmetros | `/configuracoes?tab=empresa&sub=parametros` | tenant_parameters.edit | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Produtos | `/configuracoes?tab=produtos&sub=products` | products.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Produtos e Classificações | Grupos / Categorias / Classes | `/configuracoes?tab=produtos&sub=product-groups` | products.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Produtos e Classificações | Grupos de Produtos | `/configuracoes?tab=produtos&sub=product-groups` | products.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Unidades de Medida | `/configuracoes?tab=produtos&sub=measurement-units` | products.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Variedades / Culturas | `/configuracoes?tab=produtos&sub=cultivations` | products.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Armazéns | `/configuracoes?tab=produtos&sub=warehouses` | warehouses.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Endereçamentos | `/configuracoes?tab=produtos&sub=addressings` | addressings.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Perfis de Lançamento (NF-e) | `/configuracoes?tab=produtos&sub=provider-launch-profiles` | provider_launch_profiles.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Produtos e Classificações | Categorias de Rateio | `/configuracoes?tab=produtos&sub=apportionment-categories` | apportionments.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Operações | Tipos de Operação | `/configuracoes?tab=operacoes&sub=tipos-operacao` | tipos_operacao.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Compras | SLA por etapa | `/configuracoes?tab=compras&sub=sla` | supply_sla.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Compras | Autorizadores | `/configuracoes?tab=compras&sub=authorizers` | authorizers.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Financeiro | Categorias Financeiras | `/configuracoes?tab=financeiro&sub=financial-categories` | financial_categories.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Financeiro | Naturezas | `/configuracoes?tab=financeiro&sub=financial-categories` | financial_categories.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Financeiro | Centros de Resultado | `/configuracoes?tab=financeiro&sub=cost-centers` | cost_centers.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
+| Configurações | Financeiro | Plano de Contas | `/configuracoes?tab=financeiro&sub=chart-accounts` | chart_accounts.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Financeiro | Tipos de Título | `/configuracoes?tab=financeiro&sub=title-types` | payables.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Financeiro | Formas de Pagamento | `/configuracoes?tab=financeiro&sub=payment-methods` | sales.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Financeiro | Congelamentos | `/configuracoes?tab=financeiro&sub=financial-freezes` | financial_freezes.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
-| Configurações | Financeiro | Plano de Contas | `/configuracoes?tab=financeiro&sub=chart-accounts` | chart_accounts.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Pecuária | Espécies / Categorias / Raças | `/configuracoes?tab=pecuaria&sub=animal-categories` | animals.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Pecuária | Tipos de Identificação | `/configuracoes?tab=pecuaria&sub=identification-types` | animals.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Pecuária | Parâmetros de Peso | `/configuracoes?tab=pecuaria&sub=weight-parameters` | weight_parameters.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
@@ -169,4 +165,4 @@ disponibilidade responsiva (1024–1920: sempre acessível — módulos que não
 | Configurações | Integrações | Exportações CSV / XLSX | `/configuracoes?tab=integracoes&sub=exportacoes` | integration.csv_export.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 | Configurações | Auditoria | Auditoria | `/configuracoes?tab=auditoria` | audit_logs.view | sim | sim | aba do módulo Configurações | barra ou **Mais** |
 
-Total: 161 destinos · 13 módulos. Menu, mega-menu, busca (`searchNav`), favoritos e abas convergem a este mesmo universo (nenhuma árvore paralela).
+Total: 157 destinos · 13 módulos. Menu, mega-menu, busca (`searchNav`), favoritos e abas convergem a este mesmo universo (nenhuma árvore paralela).

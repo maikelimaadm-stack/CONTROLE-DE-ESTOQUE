@@ -42,7 +42,7 @@ describe("código hierárquico", () => {
 
   it("H2: código fora da máscara, com prefixo errado ou raiz com dois níveis → 422 no campo código; nada gravado", async () => {
     const antes = await contar();
-    for (const [code, parent, msg] of [["4.01", filho, /começar com o código do antecessor \(3\.01\.\)/], ["3.01.1", filho, /3º nível .* 3 dígito/], ["5.01", undefined, /Sem antecessor/], ["1.01.001.0001.1", undefined, /mais níveis/]] as const) {
+    for (const [code, parent, msg] of [["4.01", filho, /começar com o código do superior \(3\.01\.\)/], ["3.01.1", filho, /3º nível .* 3 dígito/], ["5.01", undefined, /Sem superior/], ["1.01.001.0001.1", undefined, /mais níveis/]] as const) {
       const r = await post({ code, name: "X", nature: "income", kind: "analytic", ...(parent ? { parent_id: parent } : {}) });
       expect(r.statusCode, code).toBe(422);
       expect(erroDoCampo(r)).toMatchObject({ path: ["code"], message: expect.stringMatching(msg) });
@@ -54,12 +54,12 @@ describe("código hierárquico", () => {
     const r = await post({ code: "3.01.001.0001", name: "X", nature: "income", kind: "analytic", parent_id: neto });
     expect(r.statusCode).toBe(422); expect(erroDoCampo(r)).toMatchObject({ path: ["parent_id"], message: expect.stringMatching(/precisa ser sintético/) });
     const x = await post({ code: "3.02", name: "X", nature: "income", kind: "analytic", parent_id: "00000000-0000-4000-8000-000000000000" });
-    expect(x.statusCode).toBe(422); expect(erroDoCampo(x).message).toBe("Antecessor não encontrado.");
+    expect(x.statusCode).toBe(422); expect(erroDoCampo(x).message).toBe("Superior não encontrado.");
     // antecessor de OUTRA organização é "não encontrado" (sem revelar existência)
     const outra = (await admin.query<{ id: string }>("insert into erp.organizations(name,slug) values ('Outra','arvore-outra') returning id")).rows[0]!.id;
     const alheio = (await admin.query<{ id: string }>("insert into erp.financial_categories(organization_id,code,name,nature,kind) values ($1,'1','Alheia','income','synthetic') returning id", [outra])).rows[0]!.id;
     const y = await post({ code: "1.09", name: "X", nature: "income", kind: "analytic", parent_id: alheio });
-    expect(y.statusCode).toBe(422); expect(erroDoCampo(y).message).toBe("Antecessor não encontrado.");
+    expect(y.statusCode).toBe(422); expect(erroDoCampo(y).message).toBe("Superior não encontrado.");
   });
 
   it("H4: registro com filhos não vira analítico; ciclo é recusado", async () => {

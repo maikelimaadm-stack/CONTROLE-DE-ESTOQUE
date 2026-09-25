@@ -55,7 +55,7 @@ const preencher = (wb: ExcelJS.Workbook, linha: number, valores: Record<string, 
  * coluna que ele sobrescreve, não estas. "Controla estoque" = Não dispensa a categoria financeira.
  */
 const produto = (wb: ExcelJS.Workbook, linha: number, descricao: string, extra: Record<string, string> = {}) =>
-  preencher(wb, linha, { "Descrição": descricao, "1ª Un. Medida": "un", "Grupo": "Insumos Pecuária", "Categoria": "Nutrição Animal", "Classe": "Sal Mineral", "Controla estoque": "Não", ...extra });
+  preencher(wb, linha, { "Descrição": descricao, "1ª Un. Medida": "un", "Grupo": "Rações e Suplementos", "Controla estoque": "Não", ...extra });
 const criar = async (key: string, corpo: Record<string, unknown>, headers: Hdr = h.headers()) => {
   const r = await h.app.inject({ method: "POST", url: `/api/resources/${key}`, headers, payload: corpo });
   expect(r.statusCode, `${key}: ${r.body}`).toBe(201);
@@ -180,38 +180,30 @@ describe("unidade de medida da organização com a sigla da padrão", () => {
   });
 });
 
-describe("categoria e classe com o mesmo nome em grupos diferentes", () => {
-  it("R5: 'Nome (Grupo)' e 'Nome (Grupo > Categoria)' distintos na lista, cada um grava o registro certo; o nome nu é ambíguo", async () => {
-    const gAlfa = await criar("product_groups", { name: "Grupo Ref Alfa" });
-    const gBeta = await criar("product_groups", { name: "Grupo Ref Beta" });
-    const cAlfa = await criar("product_categories", { group_id: gAlfa, name: "Categoria Comum" });
-    const cBeta = await criar("product_categories", { group_id: gBeta, name: "Categoria Comum" });
-    const kAlfa = await criar("product_kinds", { category_id: cAlfa, name: "Classe Comum" });
-    const kBeta = await criar("product_kinds", { category_id: cBeta, name: "Classe Comum" });
-    const n = async (tabela: string) => Number((await admin.query<{ n: string }>(`select count(*) n from erp.${tabela} where organization_id=$1 and is_active`, [h.demo.orgId])).rows[0]!.n);
+// CADASTROS-ESTRUTURA: Categoria e Classe saíram do produto (o Grupo virou árvore). O caso "mesmo nome em ramos
+// diferentes" passou a ser do próprio GRUPO: o código distingue os dois na lista, e o nome nu é ambíguo.
+describe("grupo com o mesmo nome em ramos diferentes da árvore", () => {
+  it("R5: 'código - nome' distintos na lista, cada um grava o registro certo; o nome nu é ambíguo", async () => {
+    const pai = async (code: string) => (await admin.query<{ id: string }>("select id from erp.product_groups where organization_id=$1 and code=$2", [h.demo.orgId, code])).rows[0]!.id;
+    const gAlfa = await criar("product_groups", { code: "1.09", name: "Grupo Comum", parent_id: await pai("1") });
+    const gBeta = await criar("product_groups", { code: "2.09", name: "Grupo Comum", parent_id: await pai("2") });
     const wb = await modelo("products");
-    const cats = listaDe(wb, "Categoria"); const classes = listaDe(wb, "Classe");
-    expect(cats.length).toBe(await n("product_categories")); expect(classes.length).toBe(await n("product_kinds"));
-    expect(vezes(cats, "Categoria Comum (Grupo Ref Alfa)")).toBe(1);
-    expect(vezes(cats, "Categoria Comum (Grupo Ref Beta)")).toBe(1);
-    expect(vezes(cats, "Nutrição Animal (Insumos Pecuária)"), "as da semente também vêm qualificadas").toBe(1);
-    expect(vezes(classes, "Classe Comum (Grupo Ref Alfa > Categoria Comum)")).toBe(1);
-    expect(vezes(classes, "Classe Comum (Grupo Ref Beta > Categoria Comum)")).toBe(1);
-    expect(vezes(classes, "Sal Mineral (Insumos Pecuária > Nutrição Animal)")).toBe(1);
+    const grupos = listaDe(wb, "Grupo");
+    expect(vezes(grupos, "1.09 - Grupo Comum")).toBe(1);
+    expect(vezes(grupos, "2.09 - Grupo Comum")).toBe(1);
+    expect(vezes(grupos, "2.01 - Rações e Suplementos"), "os da semente também vêm com o código").toBe(1);
 
-    produto(wb, 2, "Ref Classificação Beta", { "Grupo": "Grupo Ref Beta", "Categoria": "Categoria Comum (Grupo Ref Beta)", "Classe": "Classe Comum (Grupo Ref Beta > Categoria Comum)" });
-    produto(wb, 3, "Ref Classificação Alfa", { "Grupo": "Grupo Ref Alfa", "Categoria": "Categoria Comum (Grupo Ref Alfa)", "Classe": "Classe Comum (Grupo Ref Alfa > Categoria Comum)" });
+    produto(wb, 2, "Ref Classificação Beta", { "Grupo": "2.09 - Grupo Comum" });
+    produto(wb, 3, "Ref Classificação Alfa", { "Grupo": "1.09 - Grupo Comum" });
     aceitou(await importar(wb, "products"), 2);
-    expect(await gravado("Ref Classificação Beta")).toMatchObject({ group_id: gBeta, category_id: cBeta, kind_id: kBeta });
-    expect(await gravado("Ref Classificação Alfa")).toMatchObject({ group_id: gAlfa, category_id: cAlfa, kind_id: kAlfa });
+    expect(await gravado("Ref Classificação Beta")).toMatchObject({ group_id: gBeta, category_id: null, kind_id: null });
+    expect(await gravado("Ref Classificação Alfa")).toMatchObject({ group_id: gAlfa, category_id: null, kind_id: null });
 
     const wb2 = await modelo("products");
-    produto(wb2, 2, "Ref Categoria Nua", { "Grupo": "Grupo Ref Beta", "Categoria": "Categoria Comum" });
-    produto(wb2, 3, "Ref Classe Nua", { "Grupo": "Grupo Ref Beta", "Categoria": "Categoria Comum (Grupo Ref Beta)", "Classe": "Classe Comum" });
+    produto(wb2, 2, "Ref Grupo Nu", { "Grupo": "Grupo Comum" });
     const antes = await contarProdutos();
     recusou(await importar(wb2, "products"), [
-      { linha: 2, coluna: "Categoria", mensagem: ambiguo("Categoria Comum", "Categorias de Produto") },
-      { linha: 3, coluna: "Classe", mensagem: ambiguo("Classe Comum", "Classes de Produto") },
+      { linha: 2, coluna: "Grupo", mensagem: ambiguo("Grupo Comum", "Grupos de Produtos") },
     ]);
     expect(await contarProdutos()).toBe(antes);
   });
@@ -355,14 +347,14 @@ describe("inexistente, inativo e excluído", () => {
   it("R10: os três recebem a MESMA mensagem '\"X\" não encontrado em <labelPlural>. Use um valor da aba Listas.'", async () => {
     const ina = await criar("warehouses", { empresa_id: A, initials: "INA", description: "Armazém Inativo Ref", type: "inputs" });
     const exc = await criar("warehouses", { empresa_id: A, initials: "EXC", description: "Armazém Excluído Ref", type: "inputs" });
-    const grupo = await criar("product_groups", { name: "Grupo Inativo Ref" });
+    const grupo = await criar("product_groups", { code: "4", name: "Grupo Inativo Ref" });
     const endereco = await criar("addressings", { description: "Endereço Excluído Ref" });
     const textoIna = `INA - Armazém Inativo Ref (${nomeA})`; const textoExc = `EXC - Armazém Excluído Ref (${nomeA})`;
     // premissa: enquanto ativos e vivos, os quatro estão na lista com exatamente estes textos
     const antesWb = await modelo("products");
     expect(vezes(listaDe(antesWb, "Armazém padrão"), textoIna)).toBe(1);
     expect(vezes(listaDe(antesWb, "Armazém padrão"), textoExc)).toBe(1);
-    expect(vezes(listaDe(antesWb, "Grupo"), "Grupo Inativo Ref")).toBe(1);
+    expect(vezes(listaDe(antesWb, "Grupo"), "4 - Grupo Inativo Ref")).toBe(1);
     expect(vezes(listaDe(antesWb, "Endereçamento"), "Endereço Excluído Ref")).toBe(1);
 
     const put = async (key: string, id: string) => { const r = await h.app.inject({ method: "PUT", url: `/api/resources/${key}/${id}`, headers: h.headers(), payload: { is_active: false } }); expect(r.statusCode, r.body).toBe(200); };
@@ -378,7 +370,7 @@ describe("inexistente, inativo e excluído", () => {
     const wb = await modelo("products");
     const armazens = listaDe(wb, "Armazém padrão");
     expect(armazens.some((x) => x.includes("Armazém Inativo Ref") || x.includes("Armazém Excluído Ref"))).toBe(false);
-    expect(listaDe(wb, "Grupo")).not.toContain("Grupo Inativo Ref");
+    expect(listaDe(wb, "Grupo")).not.toContain("4 - Grupo Inativo Ref");
     expect(listaDe(wb, "Endereçamento").some((x) => x.includes("Endereço Excluído Ref"))).toBe(false);
 
     const casos: [string, string, string][] = [
@@ -387,7 +379,7 @@ describe("inexistente, inativo e excluído", () => {
       ["Armazém padrão", textoExc, "Armazéns"],
       ["Armazém padrão", "Armazém Inativo Ref", "Armazéns"],
       ["Armazém padrão", "Armazém Excluído Ref", "Armazéns"],
-      ["Grupo", "Grupo Inativo Ref", "Grupos de Produto"],
+      ["Grupo", "Grupo Inativo Ref", "Grupos de Produtos"],
       ["Endereçamento", "Endereço Excluído Ref", "Endereçamentos"],
     ];
     casos.forEach(([coluna, valor], k) => produto(wb, k + 2, `Ref Recusa ${k}`, { [coluna]: valor }));
@@ -406,10 +398,10 @@ describe("árvore: antecessor numa linha anterior do mesmo arquivo", () => {
     const existe = await admin.query("select 1 from erp.financial_categories where organization_id=$1 and code like '8%'", [h.demo.orgId]);
     expect(existe.rowCount, "premissa: códigos 8.* ainda não existem").toBe(0);
     const wb = await modelo("financial_categories");
-    expect(listaDe(wb, "Antecessor").some((x) => x.startsWith("8"))).toBe(false);
-    preencher(wb, 2, { "Código": "8", "Descrição": "Ref Raiz Imp", "Natureza": "Receita", "Classe": "Sintética" });
-    preencher(wb, 3, { "Código": "8.01", "Descrição": "Ref Filha Imp", "Natureza": "Receita", "Classe": "Sintética", "Antecessor": "8 - Ref Raiz Imp" });
-    preencher(wb, 4, { "Código": "8.01.001", "Descrição": "Ref Neta Imp", "Natureza": "Receita", "Classe": "Analítica", "Antecessor": "8.01 - Ref Filha Imp" });
+    expect(listaDe(wb, "Natureza superior").some((x) => x.startsWith("8"))).toBe(false);
+    preencher(wb, 2, { "Código": "8", "Descrição": "Ref Raiz Imp", "Tipo": "Receita", "Analítica": "Não" });
+    preencher(wb, 3, { "Código": "8.01", "Descrição": "Ref Filha Imp", "Tipo": "Receita", "Analítica": "Não", "Natureza superior": "8 - Ref Raiz Imp" });
+    preencher(wb, 4, { "Código": "8.01.001", "Descrição": "Ref Neta Imp", "Tipo": "Receita", "Analítica": "Sim", "Natureza superior": "8.01 - Ref Filha Imp" });
     const previa = await importar(wb, "financial_categories", { simular: true });
     expect(previa.statusCode, previa.body).toBe(200);
     expect(j(previa)).toMatchObject({ linhas: 3, gravadas: 0, erros: [], simulacao: true });

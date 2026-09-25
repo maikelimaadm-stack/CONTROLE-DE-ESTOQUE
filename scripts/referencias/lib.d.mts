@@ -1,0 +1,12 @@
+export declare const FONTES: Record<"estados" | "municipios" | "bancos" | "ncm" | "cbo", string>;
+export declare function sha256(buf: string | Uint8Array): string;
+export declare function linhasDeEstados(json: string): [string, string, number][];
+export declare function linhasDeMunicipios(json: string, estados: [string, string, number][]): [number, string, string][];
+export declare function lerCsv(texto: string, sep?: string): string[][];
+export declare function linhasDeBancos(texto: string): [string, string, string][];
+export declare function limparTexto(s: string): string;
+export declare function linhasDeNcm(json: string): { linhas: [string, number, string, string, string][]; versao: string };
+export declare function linhasDeCbo(buffer: Uint8Array): [string, string][];
+export declare function escreverCsv(meta: Record<string, string | number>, colunas: string[], linhas: (string | number)[][]): string;
+export declare function lerCsvDeReferencia(texto: string): { meta: Record<string, string>; colunas: string[]; linhas: string[][] };
+export declare function sqlTexto(s: string): string;

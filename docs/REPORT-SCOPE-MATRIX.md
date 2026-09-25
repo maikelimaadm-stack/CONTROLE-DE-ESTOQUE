@@ -102,8 +102,8 @@ recortada) ou **derivado** (declarado na definição, com justificativa). Nenhum
 | machine_supplies | report.machine_supplies | frota_ativos | fuel_supplies (predicado), equipments (predicado) | OK |
 | machine_maintenances | report.machine_maintenances | frota_ativos | maintenances (predicado), equipments (predicado) | OK |
 | monthly_calculation | report.monthly_calculation | pessoas_rh | earnings (predicado) | OK |
-| birthdays | report.birthdays | organização | sem fonte de empresa | OK |
-| active_employees | report.active_employees | organização | sem fonte de empresa | OK |
+| birthdays | report.birthdays | organização | employee_profiles (organização) | ORGANIZAÇÃO JUSTIFICADO |
+| active_employees | report.active_employees | organização | employee_profiles (organização) | ORGANIZAÇÃO JUSTIFICADO |
 | advances | report.advances | pessoas_rh | salary_advances (predicado), financial_titles (predicado) | OK |
 | logged_hours | report.logged_hours | organização | sem fonte de empresa | OK |
 | rainfall | report.rainfall | pecuaria | rainfalls (predicado) | OK |

@@ -254,8 +254,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
         {campo(<Field label="Data" required span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>)}
         {campo(<Field label="Vencimento" span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>)}
         {pesquisa(<Field label="Forma de pagamento" span={12}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} /></Field>)}
-        {classificacaoAtiva && pesquisa(<Field label="Categoria financeira" required span={12}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} /></Field>)}
-        {classificacaoAtiva && pesquisa(<Field label="Centro de custo" required span={12}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>)}
+        {classificacaoAtiva && pesquisa(<Field label="Natureza" required span={12}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} /></Field>)}
+        {classificacaoAtiva && pesquisa(<Field label="Centro de resultado" required span={12}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>)}
         {campo(<Field label="Data de saída" span={12}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>)}
         <button type="button" className={estilosCv.maisDados} aria-expanded={maisDados} aria-controls="dados-adicionais" onClick={() => setMaisDados((m) => !m)}>
           <ChevronRight aria-hidden /> Dados adicionais <span className={estilosCv.mudo}>· 1 campo</span>

@@ -25,8 +25,8 @@ describe("validarCodigoHierarquico", () => {
   it("recusa largura errada, nível a mais, raiz com vários níveis e prefixo errado", () => {
     expect(validarCodigoHierarquico("1.1", M, "1")).toMatch(/2º nível .* 2 dígito/);
     expect(validarCodigoHierarquico("1.01.001.1", M, "1.01.001")).toMatch(/mais níveis/);
-    expect(validarCodigoHierarquico("1.01", M, null)).toMatch(/Sem antecessor/);
-    expect(validarCodigoHierarquico("2.01", M, "1")).toMatch(/começar com o código do antecessor \(1\.\)/);
+    expect(validarCodigoHierarquico("1.01", M, null)).toMatch(/Sem superior/);
+    expect(validarCodigoHierarquico("2.01", M, "1")).toMatch(/começar com o código do superior \(1\.\)/);
     expect(validarCodigoHierarquico("1.01.001", M, "1")).toMatch(/um nível a mais/);
     expect(validarCodigoHierarquico("1.0a", M, "1")).toMatch(/dígito/);
   });

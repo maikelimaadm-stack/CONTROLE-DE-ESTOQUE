@@ -69,8 +69,9 @@ test("o usuário configurado enxerga Estoque na empresa A e Financeiro na empres
   // fixtures em CADA empresa: uma entrada de estoque e um título a pagar
   const refs = await pedir("/api/admin/members?pageSize=1");
   expect(refs.status).toBe(200);
-  const um = async (recurso: string) => (await pedir(`/api/resources/${recurso}?pageSize=1`)).body.items[0].id as string;
-  const [produto, fornecedor, categoria, centro] = await Promise.all([um("products"), um("people"), um("financial_categories"), um("cost_centers")]);
+  // lançamento e rateio só em ANALÍTICO (decisão 256): o 1º da lista é sintético e seria recusado (422)
+  const um = async (recurso: string, filtro = "") => (await pedir(`/api/resources/${recurso}?pageSize=1${filtro}`)).body.items[0].id as string;
+  const [produto, fornecedor, categoria, centro] = await Promise.all([um("products"), um("people"), um("financial_categories", "&kind=analytic&nature=expense"), um("cost_centers", "&kind=analytic")]);
   const armazem = async (empresaId: string) => (await pedir(`/api/resources/warehouses?pageSize=50`)).body.items.find((w: { empresa_id: string }) => w.empresa_id === empresaId).id as string;
   const entrada = async (empresaId: string, marca: string) => pedir("/api/stock/input-entries", {
     empresa_id: empresaId, entry_date: "2026-09-01", note: marca,

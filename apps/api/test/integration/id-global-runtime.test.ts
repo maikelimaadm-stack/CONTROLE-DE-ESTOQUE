@@ -58,8 +58,8 @@ async function animalAtivo(): Promise<string> {
   return r.rows[0]!.id;
 }
 
-const opcao = async (recurso: string): Promise<string> =>
-  ((j(await h.app.inject({ method: "GET", url: `/api/resources/${recurso}/options`, headers: h.headers() })) as unknown) as { id: string }[])[0]!.id;
+const opcao = async (recurso: string, filtro = ""): Promise<string> =>
+  ((j(await h.app.inject({ method: "GET", url: `/api/resources/${recurso}/options${filtro}`, headers: h.headers() })) as unknown) as { id: string }[])[0]!.id;
 
 let EQUIPAMENTO = ""; let DIESEL = ""; let FORMULA = ""; let ANIMAL = ""; let LOTE = "";
 
@@ -87,8 +87,8 @@ afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end();
 describe("CADASTROS — a porta GENÉRICA do Resource Registry aloca sem um `if` por tabela", () => {
   it("produto recebe ID Global", async () => {
     const id = await criar("/api/resources/products", {
-      description: "Produto ID Global", measurement_id: await opcao("measurement_units"), group_id: await opcao("product_groups"),
-      category_id: await opcao("product_categories"), kind_id: await opcao("product_kinds"), control_stock: true,
+      description: "Produto ID Global", measurement_id: await opcao("measurement_units"), group_id: await opcao("product_groups", "?kind=analytic"),
+      control_stock: true,
       financial_category_id: I.category });
     await conferir("products", id, { empresa: null, modulo: "cadastros", rota: `/cadastros/products/${id}?view=1` });
   });

@@ -498,7 +498,7 @@ describe("a primeira recusa da prévia é a recusa da confirmação — código,
     const m = await montarC8();
     try {
       const p = await lerPrevia(m.app, m.docId);
-      expect(p.recusas).toEqual([{ code: "VALIDATION_ERROR", message: "Cadastre uma categoria financeira de receita e um centro de custo analítico" }]);
+      expect(p.recusas).toEqual([{ code: "VALIDATION_ERROR", message: "Cadastre uma natureza de receita analítica e um centro de resultado analítico" }]);
       expect(p).toMatchObject({ podeConfirmar: false, financeiro: { efeito: "receber", classificacao: null } });
       const r = await confirmar(m.app, m.docId);
       expect(r.statusCode, r.body).toBe(422);

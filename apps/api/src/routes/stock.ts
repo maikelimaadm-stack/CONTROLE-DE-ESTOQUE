@@ -8,7 +8,7 @@ import { consultaEscopada, empresaScope, empresaScopePar, exigirEmpresaDeLancame
 import { empresasDisponiveis } from "../lib/empresa.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
-import { postStock, reverseStock, currentBalance, lineTotal } from "../services/stock-core.js";
+import { postStock, reverseStock, currentBalance, lineTotal, chaveDoLote, controleDeLote } from "../services/stock-core.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfer.js";
@@ -16,6 +16,14 @@ import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfe
 const dec = z.union([z.number(), z.string()]).transform((v) => String(v));
 const date = z.string().refine(isISODate, "Data inválida");
 const uuid = z.string().uuid();
+/**
+ * LOTE NA BORDA DA API (R1-1 f): aparado; vazio depois de aparar é "sem lote" (null). O saldo é chaveado pelo TEXTO
+ * do lote — " L-1" e "L-1" seriam dois lotes do mesmo produto no mesmo armazém —, e por isso o que o item grava, a
+ * conta do saldo atual da correção e a conferência de duplicidade do saldo inicial usam o MESMO texto aparado que o
+ * movimento grava.
+ */
+const lote = z.string().trim().nullish().transform((v) => (v ? v : null));
+const loteAte60 = z.string().trim().max(60).nullish().transform((v) => (v ? v : null));
 const idem = (req: { headers: Record<string, unknown> }) => req.headers["idempotency-key"] as string | undefined;
 
 const exigirEmpresa = (ctx: ServiceCtx, empresaId: string) => exigirEmpresaDeLancamento(ctx, empresaId);
@@ -52,7 +60,10 @@ async function getDoc(ctx: ServiceCtx, table: string, id: string, itemsTable: st
   if (!d.rows[0]) throw notFound("Documento");
   const itemJoins = opts.headerWarehouse ? `left join erp.${table} h on h.id=i.${fk} left join erp.warehouses w on w.id=h.warehouse_id left join erp.cost_centers cc on cc.id=h.cost_center_id` : "left join erp.warehouses w on w.id=i.warehouse_id left join erp.cost_centers cc on cc.id=i.cost_center_id";
   const items = await ctx.tx.query(`select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, cc.name as cost_center_name from erp.${itemsTable} i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id ${itemJoins} where i.${fk}=$1 order by i.id`, [id]);
-  const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, table, id]);
+  // Cada movimento diz DE QUAL lote saiu (ou em qual entrou), com a validade, o armazém, o produto e o centro: numa
+  // saída sem lote a escolha automática grava o lote só no MOVIMENTO (o item fica sem lote), e a devolução a partir
+  // da requisição parte daqui (revisão do R1, R1-1 c). Campos só acrescentados — a tela anterior os ignora.
+  const movements = await ctx.tx.query("select id, movement_type, direction, quantity, unit_cost, total_cost, balance_after, movement_date, warehouse_id, product_id, provider_lot, expiration_date, cost_center_id from erp.stock_movements where organization_id=$1 and source_type=$2 and source_id=$3 order by created_at", [ctx.orgId, table, id]);
   return { ...(d.rows[0] as Record<string, unknown>), items: items.rows, movements: movements.rows };
 }
 
@@ -90,7 +101,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.get("/stock/balances/:warehouseId/:productId", async (req) => runService(app, req, "stocks.view", async (ctx) => { const { warehouseId, productId } = req.params as { warehouseId: string; productId: string }; const wh = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.warehouses where id=$1 and organization_id=$2", [warehouseId, ctx.orgId]); if (!wh.rows[0]) throw notFound("Armazém"); await exigirEmpresaVisivel(ctx, wh.rows[0].empresa_id, "Armazém"); const b = await currentBalance(ctx, warehouseId, productId); const lots = await ctx.tx.query("select provider_lot, quantity, average_cost, total_value, expiration_date from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and quantity<>0 order by expiration_date nulls last", [ctx.orgId, warehouseId, productId]); return { ...b, lots: lots.rows }; }));
 
   // ---------- Estoque inicial ----------
-  const openingSchema = z.object({ empresa_id: uuid, warehouse_id: uuid, product_id: uuid, quantity: dec, unit_value: dec, provider_lot: z.string().max(60).optional().nullable(), expiration_date: date.optional().nullable(), cultivation_id: uuid.optional().nullable() });
+  const openingSchema = z.object({ empresa_id: uuid, warehouse_id: uuid, product_id: uuid, quantity: dec, unit_value: dec, provider_lot: loteAte60, expiration_date: date.optional().nullable(), cultivation_id: uuid.optional().nullable() });
   app.get("/stock/opening-balances", async (req) => runService(app, req, "opening_balances.view", async (ctx) => {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
     const where = ["o.organization_id=$1"]; const params: unknown[] = [ctx.orgId]; where.push(...empresaScope(ctx, "o", params));
@@ -103,7 +114,8 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.post("/stock/opening-balances", async (req, reply) => reply.status(201).send(await runService(app, req, "opening_balances.create", async (ctx) => {
     const d = openingSchema.parse(req.body); await exigirEmpresa(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
-      const exists = await ctx.tx.query("select 1 from erp.opening_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and provider_lot is not distinct from $4 and status='confirmed'", [ctx.orgId, d.warehouse_id, d.product_id, d.provider_lot ?? null]);
+      // o lote já vem aparado; o gravado antes do R1-1 pode ter espaços — a conferência apara os dois lados
+      const exists = await ctx.tx.query("select 1 from erp.opening_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and nullif(btrim(provider_lot),'') is not distinct from $4::text and status='confirmed'", [ctx.orgId, d.warehouse_id, d.product_id, d.provider_lot]);
       if (exists.rowCount) throw err("DUPLICATE_DOCUMENT", "Já existe estoque inicial confirmado para este produto/armazém/lote");
       const total = lineTotal(d.quantity, d.unit_value);
       const r = await ctx.tx.query<{ id: string }>("insert into erp.opening_balances(organization_id,empresa_id,warehouse_id,product_id,quantity,unit_value,total_value,provider_lot,expiration_date,cultivation_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) returning id", [ctx.orgId, d.empresa_id, d.warehouse_id, d.product_id, d.quantity, d.unit_value, total, d.provider_lot ?? null, d.expiration_date ?? null, d.cultivation_id ?? null, ctx.user.id]);
@@ -122,7 +134,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   }));
 
   // ---------- Entrada de insumos (sem NF) ----------
-  const entryItem = z.object({ product_id: uuid, measurement_id: uuid.optional().nullable(), quantity: dec, unit_value: dec, generate_stock: z.boolean().default(true), warehouse_id: uuid.optional().nullable(), appropriation_type: z.enum(["livestock", "maintenance", "fuel"]).optional().nullable(), provider_lot: z.string().optional().nullable(), expiration_date: date.optional().nullable(), cultivation_id: uuid.optional().nullable(), financial_category_id: uuid.optional().nullable(), cost_center_id: uuid.optional().nullable() });
+  const entryItem = z.object({ product_id: uuid, measurement_id: uuid.optional().nullable(), quantity: dec, unit_value: dec, generate_stock: z.boolean().default(true), warehouse_id: uuid.optional().nullable(), appropriation_type: z.enum(["livestock", "maintenance", "fuel"]).optional().nullable(), provider_lot: lote, expiration_date: date.optional().nullable(), cultivation_id: uuid.optional().nullable(), financial_category_id: uuid.optional().nullable(), cost_center_id: uuid.optional().nullable() });
   const entrySchema = z.object({ empresa_id: uuid, entry_date: date, harvest_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), note: z.string().max(2000).optional().nullable(), items: z.array(entryItem).min(1), bank_movement: z.object({ account_id: uuid, date: date }).optional().nullable() });
   app.get("/stock/input-entries", async (req) => runService(app, req, "input_entries.view", (ctx) => listDocs(ctx, "input_entries", "entry_date", req.query as Record<string, unknown>, ", (select count(*) from erp.input_entry_items i where i.entry_id=d.id)::int as item_count")));
   app.get("/stock/input-entries/:id", async (req) => runService(app, req, "input_entries.view", (ctx) => getDoc(ctx, "input_entries", (req.params as { id: string }).id, "input_entry_items", "entry_id")));
@@ -160,7 +172,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   }));
 
   // ---------- Documento fiscal de entrada (NF) ----------
-  const invoiceItem = z.object({ product_id: uuid, xml_product_description: z.string().optional().nullable(), measurement_id: uuid.optional().nullable(), quantity: dec, unit_value: dec, discount: dec.default("0"), ipi: dec.default("0"), icms: dec.default("0"), generate_stock: z.boolean().default(true), warehouse_id: uuid.optional().nullable(), appropriation_type: z.enum(["livestock", "maintenance", "fuel"]).optional().nullable(), provider_lot: z.string().optional().nullable(), expiration_date: date.optional().nullable(), cultivation_id: uuid.optional().nullable(), financial_category_id: uuid.optional().nullable(), cost_center_id: uuid.optional().nullable(), is_equipment: z.boolean().default(false), equipment: z.record(z.string(), z.unknown()).optional().nullable(), grain_quality: z.record(z.string(), z.unknown()).optional().nullable() });
+  const invoiceItem = z.object({ product_id: uuid, xml_product_description: z.string().optional().nullable(), measurement_id: uuid.optional().nullable(), quantity: dec, unit_value: dec, discount: dec.default("0"), ipi: dec.default("0"), icms: dec.default("0"), generate_stock: z.boolean().default(true), warehouse_id: uuid.optional().nullable(), appropriation_type: z.enum(["livestock", "maintenance", "fuel"]).optional().nullable(), provider_lot: lote, expiration_date: date.optional().nullable(), cultivation_id: uuid.optional().nullable(), financial_category_id: uuid.optional().nullable(), cost_center_id: uuid.optional().nullable(), is_equipment: z.boolean().default(false), equipment: z.record(z.string(), z.unknown()).optional().nullable(), grain_quality: z.record(z.string(), z.unknown()).optional().nullable() });
   const invoiceSchema = z.object({
     empresa_id: uuid, number: z.string().min(1).max(20), series: z.string().max(5).default("1"), access_key: z.string().length(44).optional().nullable(), provider_id: uuid, branch_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(),
     emission_date: date, delivery_date: date.optional().nullable(), state_code: z.string().length(2).optional().nullable(), document_type: z.enum(["nfe", "cte", "nfse", "nfce", "danfe", "darf", "dare", "gru", "other"]).default("nfe"), title_type_id: uuid.optional().nullable(),
@@ -225,7 +237,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       if (d.generate_financial) {
         let lines: { financialCategoryId: string; costCenterId: string; chartAccountId?: string | null; harvestId?: string | null; percentage?: string | number; amount?: string | number }[] = d.apportionment_type === "by_product" ? prodLines : (d.apportionment ?? []).map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, percentage: a.percentage, amount: a.amount }));
         if (!lines.length) lines = prodLines;
-        if (!lines.length) throw validation("Informe o rateio financeiro (categoria/centro de custo) ou categoria e centro de custo nos itens");
+        if (!lines.length) throw validation("Informe o rateio financeiro (natureza/centro de resultado) ou natureza e centro de resultado nos itens");
         if (d.apportionment_type === "by_product") { // ajusta frete/outros na última linha
           const sumLines = lines.reduce((a, l) => a.plus(l.amount ?? 0), D(0)); const diff = D(total).minus(sumLines); if (!diff.isZero()) { const last = lines[lines.length - 1]!; last.amount = money(D(last.amount ?? 0).plus(diff)); }
         }
@@ -253,7 +265,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   }));
 
   // ---------- Baixa de estoque ----------
-  const writeoffSchema = z.object({ empresa_id: uuid, writeoff_date: date, reason: z.enum(["loss", "deterioration", "theft", "damage", "inventory", "accounting", "burglary", "expiration", "gift", "donation", "consumption", "payment_with_product", "other"]), reason_note: z.string().optional().nullable(), cost_center_id: uuid.optional().nullable(), warehouse_id: uuid, justification: z.string().min(3), items: z.array(z.object({ product_id: uuid, provider_lot: z.string().optional().nullable(), quantity: dec })).min(1) });
+  const writeoffSchema = z.object({ empresa_id: uuid, writeoff_date: date, reason: z.enum(["loss", "deterioration", "theft", "damage", "inventory", "accounting", "burglary", "expiration", "gift", "donation", "consumption", "payment_with_product", "other"]), reason_note: z.string().optional().nullable(), cost_center_id: uuid.optional().nullable(), warehouse_id: uuid, justification: z.string().min(3), items: z.array(z.object({ product_id: uuid, provider_lot: lote, quantity: dec })).min(1) });
   app.get("/stock/writeoffs", async (req) => runService(app, req, "stock_writeoffs.view", (ctx) => listDocs(ctx, "stock_writeoffs", "writeoff_date", req.query as Record<string, unknown>, ", w.description as warehouse_name", "left join erp.warehouses w on w.id=d.warehouse_id")));
   app.get("/stock/writeoffs/:id", async (req) => runService(app, req, "stock_writeoffs.view", (ctx) => getDoc(ctx, "stock_writeoffs", (req.params as { id: string }).id, "stock_writeoff_items", "writeoff_id", { headerWarehouse: true })));
   app.post("/stock/writeoffs", async (req, reply) => reply.status(201).send(await runService(app, req, "stock_writeoffs.create", async (ctx) => {
@@ -265,7 +277,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       await atribuirIdGlobal(ctx, "stock_writeoffs", id);
       for (const it of d.items) {
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: it.product_id, movementType: "writeoff", direction: -1, quantity: it.quantity, providerLot: it.provider_lot, costCenterId: d.cost_center_id, sourceType: "stock_writeoffs", sourceId: id, date: d.writeoff_date, note: d.reason });
-        const t = lineTotal(it.quantity, m.unitCost); total = total.plus(t);
+        const t = m.total; total = total.plus(t); // Σ das partes (lineTotal de cada uma), nunca quantidade × custo médio
         await ctx.tx.query("insert into erp.stock_writeoff_items(writeoff_id,product_id,provider_lot,quantity,unit_value,total_value) values ($1,$2,$3,$4,$5,$6)", [id, it.product_id, it.provider_lot ?? null, it.quantity, m.unitCost, t]);
       }
       await ctx.tx.query("update erp.stock_writeoffs set total_amount=$2 where id=$1", [id, money(total)]);
@@ -276,7 +288,7 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.post("/stock/writeoffs/:id/cancel", async (req) => runService(app, req, "stock_writeoffs.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "stock_writeoffs", id, "Baixa"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "stock_writeoffs", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.stock_writeoffs set status='cancelled' where id=$1", [id]); await audit(ctx.tx, ctx, "stock_writeoffs", id, "cancel"); return { id, status: "cancelled" }; }));
 
   // ---------- Requisição/Saída ----------
-  const reqSchema = z.object({ empresa_id: uuid, requisition_date: date, classification: z.enum(["unclassified", "capex", "opex"]).default("unclassified"), requester_person_id: uuid.optional().nullable(), area_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), items: z.array(z.object({ warehouse_id: uuid, product_id: uuid, provider_lot: z.string().optional().nullable(), quantity: dec, cost_center_id: uuid.optional().nullable(), addressing: z.string().optional().nullable() })).min(1) });
+  const reqSchema = z.object({ empresa_id: uuid, requisition_date: date, classification: z.enum(["unclassified", "capex", "opex"]).default("unclassified"), requester_person_id: uuid.optional().nullable(), area_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), items: z.array(z.object({ warehouse_id: uuid, product_id: uuid, provider_lot: lote, quantity: dec, cost_center_id: uuid.optional().nullable(), addressing: z.string().optional().nullable() })).min(1) });
   app.get("/stock/requisitions", async (req) => runService(app, req, "requisitions.view", async (ctx) => {
     const f = req.query as Record<string, string>;
     const res = await listDocs(ctx, "requisitions", "requisition_date", req.query as Record<string, unknown>, ", rp.name as requester_name, (select count(*) from erp.requisition_items i where i.requisition_id=d.id)::int as item_count, (select string_agg(p.description, ', ') from erp.requisition_items i join erp.products p on p.id=i.product_id where i.requisition_id=d.id) as items_summary", "left join erp.people rp on rp.id=d.requester_person_id");
@@ -293,7 +305,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       await atribuirIdGlobal(ctx, "requisitions", id);
       for (const it of d.items) {
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "requisition", direction: -1, quantity: it.quantity, providerLot: it.provider_lot, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "requisitions", sourceId: id, date: d.requisition_date });
-        const t = lineTotal(it.quantity, m.unitCost); total = total.plus(t);
+        const t = m.total; total = total.plus(t); // Σ das partes (lineTotal de cada uma)
         await ctx.tx.query("insert into erp.requisition_items(requisition_id,warehouse_id,product_id,provider_lot,quantity,unit_value,total_value,cost_center_id,addressing) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)", [id, it.warehouse_id, it.product_id, it.provider_lot ?? null, it.quantity, m.unitCost, t, it.cost_center_id ?? null, it.addressing ?? null]);
       }
       await ctx.tx.query("update erp.requisitions set total_amount=$2 where id=$1", [id, money(total)]);
@@ -305,7 +317,9 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.post("/stock/requisitions/:id/cancel", async (req) => runService(app, req, "requisitions.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "requisitions", id, "Requisição"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "requisitions", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.requisitions set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "requisitions", id, "cancel"); return { id, status: "cancelled" }; }));
 
   // ---------- Devolução/Entrada ----------
-  const devSchema = z.object({ empresa_id: uuid, devolution_date: date, responsible_person_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), items: z.array(z.object({ warehouse_id: uuid, product_id: uuid, quantity: dec, unit_value: dec.optional().nullable(), cost_center_id: uuid.optional().nullable() })).min(1) });
+  // Devolução é ENTRADA avulsa: lote e validade do item são opcionais no contrato e exigidos pelo núcleo só para
+  // produto com controle de lote (validade no "lote + validade") — R1-1 c.
+  const devSchema = z.object({ empresa_id: uuid, devolution_date: date, responsible_person_id: uuid.optional().nullable(), harvest_id: uuid.optional().nullable(), items: z.array(z.object({ warehouse_id: uuid, product_id: uuid, quantity: dec, unit_value: dec.optional().nullable(), cost_center_id: uuid.optional().nullable(), provider_lot: lote, expiration_date: date.optional().nullable() })).min(1) });
   app.get("/stock/devolutions", async (req) => runService(app, req, "devolutions.view", (ctx) => listDocs(ctx, "devolutions", "devolution_date", req.query as Record<string, unknown>, ", rp.name as responsible_name", "left join erp.people rp on rp.id=d.responsible_person_id")));
   app.get("/stock/devolutions/:id", async (req) => runService(app, req, "devolutions.view", (ctx) => getDoc(ctx, "devolutions", (req.params as { id: string }).id, "devolution_items", "devolution_id")));
   app.post("/stock/devolutions", async (req, reply) => reply.status(201).send(await runService(app, req, "devolutions.create", async (ctx) => {
@@ -317,7 +331,7 @@ export default async function stockRoutes(app: FastifyInstance) {
       await atribuirIdGlobal(ctx, "devolutions", id);
       for (const it of d.items) {
         const cost = it.unit_value ?? (await ctx.tx.query<{ average_cost: string }>("select average_cost from erp.products where id=$1", [it.product_id])).rows[0]!.average_cost;
-        await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "devolution", direction: 1, quantity: it.quantity, unitCost: cost, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "devolutions", sourceId: id, date: d.devolution_date });
+        await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "devolution", direction: 1, quantity: it.quantity, unitCost: cost, providerLot: it.provider_lot, expirationDate: it.expiration_date, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "devolutions", sourceId: id, date: d.devolution_date });
         const t = lineTotal(it.quantity, cost); total = total.plus(t);
         await ctx.tx.query("insert into erp.devolution_items(devolution_id,warehouse_id,product_id,quantity,unit_value,total_value,cost_center_id) values ($1,$2,$3,$4,$5,$6,$7)", [id, it.warehouse_id, it.product_id, it.quantity, cost, t, it.cost_center_id ?? null]);
       }
@@ -329,25 +343,39 @@ export default async function stockRoutes(app: FastifyInstance) {
   app.post("/stock/devolutions/:id/cancel", async (req) => runService(app, req, "devolutions.delete", async (ctx) => { const { id } = req.params as { id: string }; const w_ = await loadForWrite(ctx, "devolutions", id, "Devolução"); const w = { rows: [w_] as [typeof w_] }; if (w.rows[0].status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelada"); await reverseStock(ctx, "devolutions", id, new Date().toISOString().slice(0, 10)); await ctx.tx.query("update erp.devolutions set status='cancelled', updated_at=now() where id=$1", [id]); await audit(ctx.tx, ctx, "devolutions", id, "cancel"); return { id, status: "cancelled" }; }));
 
   // ---------- Correção de estoque ----------
-  const corrSchema = z.object({ empresa_id: uuid, correction_date: date, warehouse_id: uuid, product_id: uuid, provider_lot: z.string().optional().nullable(), new_quantity: dec, unit_value: dec.optional().nullable(), justification: z.string().min(3) });
+  // `expiration_date`: validade do lote que ENTRA num ajuste para cima (exigida no "lote + validade"); num ajuste
+  // para baixo o lote sai com a validade que já tem, e a validade informada é recusada (422), nunca ignorada.
+  // O lote informado é resolvido pela CHAVE GRAVADA (`chaveDoLote`): o saldo gravado antes do R1-1 pode ter espaços
+  // nas pontas, e a conta do saldo atual tem de ler ESSE saldo (revisão do R1).
+  const corrSchema = z.object({ empresa_id: uuid, correction_date: date, warehouse_id: uuid, product_id: uuid, provider_lot: lote, expiration_date: date.optional().nullable(), new_quantity: dec, unit_value: dec.optional().nullable(), justification: z.string().min(3) });
   app.get("/stock/corrections", async (req) => runService(app, req, "stock_corrections.view", (ctx) => listDocs(ctx, "stock_corrections", "correction_date", { ...(req.query as Record<string, unknown>) }, ", p.description as product_name, w.description as warehouse_name", "left join erp.products p on p.id=d.product_id left join erp.warehouses w on w.id=d.warehouse_id").then((r) => r)));
   app.post("/stock/corrections", async (req, reply) => reply.status(201).send(await runService(app, req, "stock_corrections.create", async (ctx) => {
     const d = corrSchema.parse(req.body); await exigirEmpresa(ctx, d.empresa_id);
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
-      const b = await currentBalance(ctx, d.warehouse_id, d.product_id, d.provider_lot ?? null);
+      const loteGravado = d.provider_lot ? await chaveDoLote(ctx, d.warehouse_id, d.product_id, d.provider_lot) : null;
+      const b = await currentBalance(ctx, d.warehouse_id, d.product_id, loteGravado);
       const diff = D(d.new_quantity).minus(b.quantity);
       if (diff.isZero()) throw validation("Nova quantidade igual ao saldo atual");
+      if (diff.lt(0) && d.expiration_date) throw validation("A validade só é informada quando o ajuste aumenta o saldo.", [{ path: "expiration_date", message: "Validade só no ajuste para cima" }]);
       const code = await nextCode(ctx.tx, ctx.orgId, "stock_correction");
       const cost = d.unit_value ?? b.averageCost;
-      const r = await ctx.tx.query<{ id: string }>("insert into erp.stock_corrections(organization_id,empresa_id,code,correction_date,warehouse_id,product_id,provider_lot,previous_quantity,new_quantity,unit_value,justification,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id", [ctx.orgId, d.empresa_id, code, d.correction_date, d.warehouse_id, d.product_id, d.provider_lot ?? null, b.quantity, d.new_quantity, cost, d.justification, ctx.user.id]);
-      await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: diff.gt(0) ? "correction_in" : "correction_out", direction: diff.gt(0) ? 1 : -1, quantity: diff.abs().toFixed(4), unitCost: cost, providerLot: d.provider_lot, sourceType: "stock_corrections", sourceId: r.rows[0]!.id, date: d.correction_date, note: d.justification });
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.stock_corrections(organization_id,empresa_id,code,correction_date,warehouse_id,product_id,provider_lot,previous_quantity,new_quantity,unit_value,justification,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) returning id", [ctx.orgId, d.empresa_id, code, d.correction_date, d.warehouse_id, d.product_id, d.provider_lot, b.quantity, d.new_quantity, cost, d.justification, ctx.user.id]);
+      // Ajuste para BAIXO sem lote informado de produto COM controle de lote: a escolha automática divide a saída
+      // entre lotes, e sem valor informado o custo é o de CADA lote que sai (null → o gatilho usa a média do saldo do
+      // lote). Passar a média de todos os lotes (`b.averageCost` sem lote) gravava no razão um valor diferente do que
+      // o saldo de cada lote perdeu (revisão do R1). Nos demais casos — ajuste para cima, produto SEM controle, lote
+      // informado — a saída é UM movimento e o custo continua o de antes (`cost`, valor informado ou média do saldo
+      // lido): o R1 não muda o custo de quem não é dividido.
+      const divideEntreLotes = diff.lt(0) && !loteGravado && (await controleDeLote(ctx, d.product_id)) !== "nenhum";
+      const custoDoMovimento = divideEntreLotes ? (d.unit_value ?? null) : cost;
+      await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.warehouse_id, productId: d.product_id, movementType: diff.gt(0) ? "correction_in" : "correction_out", direction: diff.gt(0) ? 1 : -1, quantity: diff.abs().toFixed(4), unitCost: custoDoMovimento, providerLot: loteGravado, expirationDate: d.expiration_date, sourceType: "stock_corrections", sourceId: r.rows[0]!.id, date: d.correction_date, note: d.justification });
       await audit(ctx.tx, ctx, "stock_corrections", r.rows[0]!.id, "create", { code, diff: diff.toFixed(4) });
       return { id: r.rows[0]!.id, code, difference: diff.toFixed(4) };
     })).result;
   })));
 
   // ---------- Transferências (armazém e entre fazendas) ----------
-  const transferSchema = z.object({ kind: z.enum(["warehouse", "farm"]), transfer_date: date, empresa_origem_id: uuid, origin_warehouse_id: uuid, empresa_destino_id: uuid.optional(), destination_warehouse_id: uuid, harvest_id: uuid.optional().nullable(), items: z.array(z.object({ product_id: uuid, provider_lot: z.string().optional().nullable(), quantity: dec, cost_center_id: uuid.optional().nullable() })).min(1), generate_financial: z.boolean().default(false), proprietary_id: uuid.optional().nullable(), plan: installmentPlanSchema.optional().nullable(), income_apportionment: apportionmentSchema.optional(), expense_apportionment: apportionmentSchema.optional(), is_deductible: z.boolean().default(false) });
+  const transferSchema = z.object({ kind: z.enum(["warehouse", "farm"]), transfer_date: date, empresa_origem_id: uuid, origin_warehouse_id: uuid, empresa_destino_id: uuid.optional(), destination_warehouse_id: uuid, harvest_id: uuid.optional().nullable(), items: z.array(z.object({ product_id: uuid, provider_lot: lote, quantity: dec, cost_center_id: uuid.optional().nullable() })).min(1), generate_financial: z.boolean().default(false), proprietary_id: uuid.optional().nullable(), plan: installmentPlanSchema.optional().nullable(), income_apportionment: apportionmentSchema.optional(), expense_apportionment: apportionmentSchema.optional(), is_deductible: z.boolean().default(false) });
   app.get("/stock/transfers", async (req) => runService(app, req, "warehouse_transfers.view", async (ctx) => {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
     const where = ["d.organization_id=$1", "d.deleted_at is null"]; const params: unknown[] = [ctx.orgId];
@@ -382,8 +410,12 @@ export default async function stockRoutes(app: FastifyInstance) {
       await atribuirIdGlobal(ctx, "warehouse_transfers", id);
       for (const it of d.items) {
         const out = await postStock(ctx, { empresaId: d.empresa_origem_id, warehouseId: d.origin_warehouse_id, productId: it.product_id, movementType: d.kind === "farm" ? "farm_transfer_out" : "transfer_out", direction: -1, quantity: it.quantity, providerLot: it.provider_lot, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "warehouse_transfers", sourceId: id, date: d.transfer_date });
-        await postStock(ctx, { empresaId: destFarm, warehouseId: d.destination_warehouse_id, productId: it.product_id, movementType: d.kind === "farm" ? "farm_transfer_in" : "transfer_in", direction: 1, quantity: it.quantity, unitCost: out.unitCost, providerLot: it.provider_lot, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "warehouse_transfers", sourceId: id, date: d.transfer_date });
-        const t = lineTotal(it.quantity, out.unitCost); total = total.plus(t);
+        // R1-1 c: a perna de ENTRADA espelha a de SAÍDA parte por parte — mesmo lote, mesma validade, mesma quantidade
+        // e custo. Uma saída que a escolha automática dividiu em dois lotes chega ao destino como os mesmos dois lotes.
+        for (const parte of out.partes) {
+          await postStock(ctx, { empresaId: destFarm, warehouseId: d.destination_warehouse_id, productId: it.product_id, movementType: d.kind === "farm" ? "farm_transfer_in" : "transfer_in", direction: 1, quantity: parte.quantidade, unitCost: parte.unitCost, providerLot: parte.lote, expirationDate: parte.validade, costCenterId: it.cost_center_id, harvestId: d.harvest_id, sourceType: "warehouse_transfers", sourceId: id, date: d.transfer_date });
+        }
+        const t = out.total; total = total.plus(t); // Σ das partes (lineTotal de cada uma): com uma parte, a conta de antes
         await ctx.tx.query("insert into erp.warehouse_transfer_items(transfer_id,product_id,provider_lot,quantity,unit_value,total_value,cost_center_id) values ($1,$2,$3,$4,$5,$6,$7)", [id, it.product_id, it.provider_lot ?? null, it.quantity, out.unitCost, t, it.cost_center_id ?? null]);
       }
       await ctx.tx.query("update erp.warehouse_transfers set total_value=$2 where id=$1", [id, money(total)]);
@@ -437,7 +469,9 @@ export default async function stockRoutes(app: FastifyInstance) {
     return { id };
   }));
   app.delete("/stock/feed-formulas/:id", async (req) => runService(app, req, "feed_formulas.delete", async (ctx) => { await ctx.tx.query("update erp.feed_formulas set deleted_at=now() where id=$1 and organization_id=$2", [(req.params as { id: string }).id, ctx.orgId]); return { deleted: true }; }));
-  const feedBatchSchema = z.object({ empresa_id: uuid, batch_date: date, formula_id: uuid, origin_warehouse_id: uuid, destination_warehouse_id: uuid, quantity_produced: dec, multiplier: dec.default("1") });
+  // `validade`: do produto PRODUZIDO (R1-1 c) — opcional, exigida quando ele controla "lote + validade". O lote do
+  // produzido com controle é o CÓDIGO da produção.
+  const feedBatchSchema = z.object({ empresa_id: uuid, batch_date: date, formula_id: uuid, origin_warehouse_id: uuid, destination_warehouse_id: uuid, quantity_produced: dec, multiplier: dec.default("1"), validade: date.optional().nullable() });
   app.get("/stock/feed-batches", async (req) => runService(app, req, "feed_batches.view", (ctx) => listDocs(ctx, "feed_batches", "batch_date", req.query as Record<string, unknown>, ", ff.name as formula_name", "left join erp.feed_formulas ff on ff.id=d.formula_id", { softDelete: false })));
   // detalhe da produção de ração (UI-STAB-01: /estoque/batidas/:id não tinha GET by id) — escopo de organização + fazenda, permissão feed_batches.view, id inválido/inexistente → 404
   app.get("/stock/feed-batches/:id", async (req) => runService(app, req, "feed_batches.view", async (ctx) => {
@@ -454,19 +488,24 @@ export default async function stockRoutes(app: FastifyInstance) {
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
       const f = await ctx.tx.query<{ product_id: string | null; name: string }>("select product_id, name from erp.feed_formulas where id=$1 and organization_id=$2", [d.formula_id, ctx.orgId]); if (!f.rows[0]) throw notFound("Formulação");
       if (!f.rows[0].product_id) throw validation("Formulação sem produto acabado vinculado");
+      const acabado = await ctx.tx.query<{ controle_lote: string | null; has_lot: boolean }>("select to_jsonb(p)->>'controle_lote' as controle_lote, has_lot from erp.products p where id=$1 and organization_id=$2", [f.rows[0].product_id, ctx.orgId]);
+      const controleDoAcabado = acabado.rows[0]?.controle_lote ?? (acabado.rows[0]?.has_lot ? "lote" : "nenhum");
+      // recusa ANTES de consumir a matéria-prima, no campo da tela (o núcleo recusaria de novo, no campo do movimento)
+      if (controleDoAcabado === "lote_validade" && !d.validade) throw validation("O produto produzido controla lote e validade: informe a validade da produção.", [{ path: "validade", message: "Informe a validade" }]);
       const items = await ctx.tx.query<{ product_id: string; quantity: string }>("select product_id, quantity from erp.feed_formula_items where formula_id=$1", [d.formula_id]);
       const code = await nextCode(ctx.tx, ctx.orgId, "feed_batch");
-      const r = await ctx.tx.query<{ id: string }>("insert into erp.feed_batches(organization_id,empresa_id,code,batch_date,formula_id,origin_warehouse_id,destination_warehouse_id,quantity_produced,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9) returning id", [ctx.orgId, d.empresa_id, code, d.batch_date, d.formula_id, d.origin_warehouse_id, d.destination_warehouse_id, d.quantity_produced, ctx.user.id]);
+      const r = await ctx.tx.query<{ id: string }>("insert into erp.feed_batches(organization_id,empresa_id,code,batch_date,formula_id,origin_warehouse_id,destination_warehouse_id,quantity_produced,validade,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) returning id", [ctx.orgId, d.empresa_id, code, d.batch_date, d.formula_id, d.origin_warehouse_id, d.destination_warehouse_id, d.quantity_produced, d.validade ?? null, ctx.user.id]);
       const id = r.rows[0]!.id; const consumed: { quantity: string; unitCost: string }[] = [];
       await atribuirIdGlobal(ctx, "feed_batches", id);
       for (const it of items.rows) {
         const q = D(it.quantity).mul(d.multiplier).toFixed(4);
         const m = await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.origin_warehouse_id, productId: it.product_id, movementType: "production_out", direction: -1, quantity: q, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code}` });
-        consumed.push({ quantity: q, unitCost: m.unitCost });
-        await ctx.tx.query("insert into erp.feed_batch_items(batch_id,product_id,quantity,unit_cost,total_cost) values ($1,$2,$3,$4,$5)", [id, it.product_id, q, m.unitCost, lineTotal(q, m.unitCost)]);
+        // uma parte por lote consumido: a média ponderada arredondada não entra no custo da produção
+        for (const x of m.partes) consumed.push({ quantity: x.quantidade, unitCost: x.unitCost });
+        await ctx.tx.query("insert into erp.feed_batch_items(batch_id,product_id,quantity,unit_cost,total_cost) values ($1,$2,$3,$4,$5)", [id, it.product_id, q, m.unitCost, m.total]);
       }
       const cost = batchCost(consumed, d.quantity_produced);
-      await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.destination_warehouse_id, productId: f.rows[0].product_id, movementType: "production_in", direction: 1, quantity: d.quantity_produced, unitCost: cost.unit, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code} (${f.rows[0].name})` });
+      await postStock(ctx, { empresaId: d.empresa_id, warehouseId: d.destination_warehouse_id, productId: f.rows[0].product_id, movementType: "production_in", direction: 1, quantity: d.quantity_produced, unitCost: cost.unit, providerLot: controleDoAcabado === "nenhum" ? null : code, expirationDate: d.validade ?? null, sourceType: "feed_batches", sourceId: id, date: d.batch_date, note: `Batida ${code} (${f.rows[0].name})` });
       await ctx.tx.query("update erp.feed_batches set production_cost=$2 where id=$1", [id, cost.total]);
       await audit(ctx.tx, ctx, "feed_batches", id, "create", { code, cost: cost.total });
       return { id, code, production_cost: cost.total, unit_cost: cost.unit };

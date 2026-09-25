@@ -76,7 +76,8 @@ const EXPLICIT: Record<string, ParentRule> = {
 export const ATTACHMENT_PARENTS: Readonly<Record<string, ParentRule>> = (() => {
   const out: Record<string, ParentRule> = {};
   for (const def of RESOURCES) {
-    if (EXPLICIT[def.table] || def.table === "users") continue;
+    // cadastro com recorte fixo (ex.: `funcionarios` sobre people) é VISÃO de outro: o pai do anexo é o original
+    if (EXPLICIT[def.table] || def.table === "users" || def.filtroFixo) continue;
     out[def.table] = { kind: (def.empresaScoped || def.empresaScopedNulo) ? "farm" : "org", viewPerm: `${def.permission}.view`, origin: "registry", load: byId(def.table, { softDelete: Boolean(def.softDelete), shared: Boolean(def.reference || def.sharedDefaults) }) };
   }
   return { ...out, ...EXPLICIT };

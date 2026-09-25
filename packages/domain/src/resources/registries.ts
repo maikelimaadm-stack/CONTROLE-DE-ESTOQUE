@@ -7,16 +7,41 @@ const M = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef
 const S = (name: string, label: string, options: [string, string][], extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "select", options: options.map(([value, label]) => ({ value, label })), ...extra });
 const REF = (name: string, label: string, resource: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "ref", ref: { resource }, ...extra });
 const D = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "date", ...extra });
+const P = (name: string, label: string): FieldDef => ({ name, label, type: "percent" });
+
+/** Tipo do item do SPED (registro 0200, campo TIPO_ITEM) — CADASTROS Fase 6. */
+const TIPOS_DE_ITEM: [string, string][] = [
+  ["00", "00 - Mercadoria para revenda"], ["01", "01 - Matéria-prima"], ["02", "02 - Embalagem"], ["03", "03 - Produto em processo"],
+  ["04", "04 - Produto acabado"], ["05", "05 - Subproduto"], ["06", "06 - Produto intermediário"], ["07", "07 - Material de uso e consumo"],
+  ["08", "08 - Ativo imobilizado"], ["09", "09 - Serviços"], ["10", "10 - Outros insumos"], ["99", "99 - Outras"]
+];
+/** Origem da mercadoria (tabela A da NF-e, 0 a 8). */
+const ORIGENS_DA_MERCADORIA: [string, string][] = [
+  ["0", "0 - Nacional"], ["1", "1 - Estrangeira (importação direta)"], ["2", "2 - Estrangeira (mercado interno)"], ["3", "3 - Nacional, importado > 40% e ≤ 70%"],
+  ["4", "4 - Nacional, processos produtivos básicos"], ["5", "5 - Nacional, importado ≤ 40%"], ["6", "6 - Estrangeira (importação direta) sem similar nacional (CAMEX)"],
+  ["7", "7 - Estrangeira (mercado interno) sem similar nacional (CAMEX)"], ["8", "8 - Nacional, importado > 70%"]
+];
+/**
+ * `products.taxes` desenhado como CAMPOS (CADASTROS Fase 6): as MESMAS chaves dos tributos da Regra Fiscal
+ * (`tax_rules`; um teste confere que cada chave existe lá). CEST e origem viraram colunas do produto; `reform` e
+ * qualquer outra chave continuam no JSON e são PRESERVADAS.
+ */
+export const TRIBUTOS_DO_PRODUTO: FieldDef[] = [
+  T("cfop_out_internal", "CFOP Saída Interno"), T("cfop_out_external", "CFOP Saída Externo"), T("cbenef", "Código de benefício fiscal"),
+  T("cst_csosn", "CST/CSOSN"), T("cst_csosn_export", "CST/CSOSN Exportação"), T("cst_pis", "CST PIS"), T("cst_cofins", "CST COFINS"), T("cst_ipi", "CST IPI"), T("cenq_ipi", "Enquadramento IPI"),
+  P("perc_icms", "% ICMS"), P("perc_pis", "% PIS"), P("perc_cofins", "% COFINS"), P("perc_ipi", "% IPI"), P("percent_reduction", "% Redução BC"),
+  S("modality_bc", "Modalidade BC ICMS", [["0", "0 - Margem Valor Agregado"], ["1", "1 - Pauta"], ["2", "2 - Preço Tabelado Máx."], ["3", "3 - Valor da operação"]])
+];
 
 export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
-    key: "cost_centers", importacao: true, label: "Centro de Custo", labelPlural: "Centros de Custo", table: "cost_centers", permission: "cost_centers", labelField: "name", route: "/cadastros/centros-de-custo", tree: true, softDelete: true, printable: true, defaultSort: "code",
+    key: "cost_centers", importacao: true, label: "Centro de Resultado", labelPlural: "Centros de Resultado", table: "cost_centers", permission: "cost_centers", labelField: "name", route: "/cadastros/centros-de-custo", tree: true, softDelete: true, printable: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, help: "Código hierárquico, ex.: 1.01.001.0001", span: 3 }),
       T("name", "Descrição", { required: true, list: true, search: true, span: 5 }),
-      S("kind", "Classe", [["synthetic", "Sintética"], ["analytic", "Analítica"]], { default: "analytic", list: true, span: 2 }),
+      S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
       S("activity_type", "Tipo", [["custeio", "Custeio"], ["investimento", "Investimento"], ["a_definir", "A definir"]], { span: 2 }),
-      REF("parent_id", "Antecessor", "cost_centers", { span: 6 }),
+      REF("parent_id", "Centro superior", "cost_centers", { span: 6 }),
       active()
     ]
   },
@@ -47,8 +72,14 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ]
   },
   {
-    key: "product_groups", importacao: true, label: "Grupo de Produto", labelPlural: "Grupos de Produto", table: "product_groups", permission: "products", labelField: "name", route: "/cadastros/grupos-de-produto",
-    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 8 }), active()]
+    key: "product_groups", importacao: true, label: "Grupo de Produtos", labelPlural: "Grupos de Produtos", table: "product_groups", permission: "products", labelField: "name", route: "/cadastros/grupos-de-produto", tree: true, softDelete: true, defaultSort: "code",
+    fields: [
+      T("code", "Código", { required: true, list: true, search: true, help: "Código hierárquico, ex.: 1.01", span: 3 }),
+      T("name", "Nome", { required: true, list: true, search: true, span: 5 }),
+      S("kind", "Analítico", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe produtos. Não: só agrupa outros grupos.", span: 2 }),
+      REF("parent_id", "Grupo superior", "product_groups", { span: 6 }),
+      active()
+    ]
   },
   {
     key: "product_categories", label: "Categoria de Produto", labelPlural: "Categorias de Produto", table: "product_categories", permission: "products", labelField: "name", route: "/cadastros/categorias-de-produto",
@@ -81,53 +112,96 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   {
     key: "products", importacao: true, label: "Produto", labelPlural: "Produtos", table: "products", permission: "products", labelField: "description", route: "/cadastros/produtos", softDelete: true, codeEntity: "product", printable: true, importExport: true, defaultSort: "description",
     fields: [
-      T("code", "Código", { readOnly: true, list: true, search: true, span: 2 }),
-      T("description", "Descrição", { required: true, list: true, search: true, maxLength: 120, help: "Nome do produto que está sendo cadastrado", span: 6 }),
-      T("reference", "Cod. Produto (fornecedor)", { search: true, span: 2 }), T("barcode", "Código de barras", { span: 2 }),
-      T("ncm_code", "NCM", { list: true, help: "Nomenclatura Comum do Mercosul (8 dígitos)", maxLength: 8, span: 3 }),
-      REF("measurement_id", "1ª Un. Medida", "measurement_units", { required: true, span: 3 }), REF("second_measurement_id", "2ª Un. Medida", "measurement_units", { span: 2 }),
-      S("factor_type", "Tipo de conversão", [["multiply", "Multiplica"], ["divide", "Divide"]], { help: "Quando converte de uma unidade maior para menor, multiplica; caso contrário divide.", span: 2 }),
-      { name: "factor", label: "Fator conversão", type: "quantity", span: 2 },
-      REF("group_id", "Grupo", "product_groups", { required: true, list: true, filter: true, section: "Classificação", span: 4 }),
-      REF("category_id", "Categoria", "product_categories", { required: true, list: true, filter: true, section: "Classificação", span: 4 }),
-      REF("kind_id", "Classe", "product_kinds", { required: true, list: true, filter: true, section: "Classificação", span: 4 }),
-      REF("cultivation_id", "Variedade", "cultivations", { section: "Classificação", span: 4 }), T("quality", "Qualidade", { section: "Classificação", span: 2 }), T("active_principle", "Princípio ativo", { search: true, section: "Classificação", span: 6 }),
-      B("has_lot", "Controla Lote/Validade", { section: "Estoque", help: "Ao ativar, o sistema controla lotes e alerta sobre validade", filter: true, span: 3 }),
+      T("code", "Código", { readOnly: true, list: true, search: true, section: "Geral", span: 2 }),
+      T("description", "Descrição", { required: true, list: true, search: true, maxLength: 120, help: "Nome do produto que está sendo cadastrado", section: "Geral", span: 6 }),
+      REF("group_id", "Grupo", "product_groups", { ref: { resource: "product_groups", filtro: { kind: "analytic" }, exigeAnalitico: true }, required: true, list: true, filter: true, help: "Só grupo analítico recebe produto", section: "Geral", span: 4 }),
+      REF("measurement_id", "1ª Un. Medida", "measurement_units", { required: true, help: "Unidade padrão (o rótulo é também o cabeçalho da planilha de importação)", section: "Geral", span: 3 }),
+      T("marca", "Marca", { search: true, maxLength: 120, section: "Geral", span: 3 }), T("fabricante", "Fabricante", { maxLength: 120, section: "Geral", span: 3 }),
+      T("reference", "Cod. Produto (fornecedor)", { search: true, help: "Referência", section: "Geral", span: 3 }), T("barcode", "Código de barras", { section: "Geral", span: 3 }),
+      S("tipo_item", "Tipo do item", TIPOS_DE_ITEM, { filter: true, help: "Tipo do item do SPED (registro 0200)", section: "Geral", span: 4 }),
+      // ESTOQUE E LOTES
       B("control_stock", "Controla estoque", { default: true, section: "Estoque", help: "Gerencia o produto no estoque e calcula custo médio automaticamente", span: 3 }),
       { name: "min_stock", label: "Estoque mínimo", type: "quantity", section: "Estoque", list: true, help: "Alerta quando o estoque atingir ou ficar abaixo", span: 3 },
-      M("reference_price", "Valor de referência", { section: "Estoque", help: "Valor de mercado do produto", span: 3 }),
-      { name: "average_cost", label: "Custo médio (calculado)", type: "money", readOnly: true, section: "Estoque", span: 3 }, D("last_purchase_date", "Última compra", { readOnly: true, section: "Estoque", span: 3 }),
-      REF("financial_category_id", "Categoria financeira (custo)", "financial_categories", { section: "Estoque", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
-      REF("default_cost_center_id", "Centro de custo padrão", "cost_centers", { section: "Estoque", span: 4 }), REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
+      { name: "estoque_maximo", label: "Estoque máximo", type: "quantity", section: "Estoque", span: 3 },
+      REF("default_warehouse_id", "Armazém padrão", "warehouses", { section: "Estoque", span: 4 }), REF("addressing_id", "Endereçamento", "addressings", { section: "Estoque", span: 4 }),
+      S("controle_lote", "Controle de lote", [["nenhum", "Nenhum"], ["lote", "Lote"], ["lote_validade", "Lote + validade"]], { default: "nenhum", filter: true, section: "Estoque", help: "Lote: exige o lote na entrada; na saída sem lote informado, o sistema escolhe pela validade mais próxima (lote vencido só sai informado). Lote + validade: também exige a validade na entrada. Mudar com saldo exige zerar o saldo em todos os armazéns.", span: 4 }),
       { name: "withdrawal_period_days", label: "Período de Carência (dias)", type: "integer", section: "Estoque", help: "Dias de espera após aplicação antes de vender/abater o animal", span: 3 },
-      B("allow_pointing", "Apontamento", { section: "Estoque", help: "Permite uso na aba de apontamentos", span: 3 }),
-      B("is_equipment", "Adiciona ao Inventário", { section: "Estoque", help: "Cadastra automaticamente no inventário de bens", filter: true, span: 3 }),
-      B("is_fiscal", "Emitir NFe", { section: "Fiscal", span: 3 }), REF("tax_rule_id", "Regra fiscal", "tax_rules", { section: "Fiscal", span: 5 }),
-      { name: "taxes", label: "Parâmetros fiscais (CFOP, CST, alíquotas, IBS/CBS)", type: "json", section: "Fiscal", span: 12 },
-      active()
-    ]
+      // legado derivado do controle: continua na leitura (relatórios, web anterior); gravado pela API a partir do controle
+      B("has_lot", "Controla lote (derivado)", { readOnly: true, section: "Estoque", help: "Derivado do Controle de lote", span: 3 }),
+      // FISCAL
+      T("ncm_code", "NCM", { list: true, help: "Nomenclatura Comum do Mercosul (8 dígitos)", maxLength: 8, section: "Fiscal", span: 3, busca: "ncm" }),
+      T("cest", "CEST", { maxLength: 9, help: "7 dígitos (ex.: 28.038.00)", section: "Fiscal", span: 2 }),
+      S("origem", "Origem", ORIGENS_DA_MERCADORIA, { section: "Fiscal", span: 5 }),
+      B("is_fiscal", "Emitir NFe", { section: "Fiscal", span: 2 }), REF("tax_rule_id", "Regra fiscal", "tax_rules", { section: "Fiscal", span: 5 }),
+      { name: "taxes", label: "Parâmetros fiscais (CFOP, CST, alíquotas, IBS/CBS)", type: "json", section: "Fiscal", span: 12, camposJson: TRIBUTOS_DO_PRODUTO },
+      // CUSTOS E VENDA
+      REF("financial_category_id", "Natureza de custo", "financial_categories", { ref: { resource: "financial_categories", filtro: { kind: "analytic" }, exigeAnalitico: true }, section: "Custos e venda", help: "Obrigatória quando o produto controla estoque", requiredWhen: { field: "control_stock", equals: true }, span: 6 }),
+      REF("default_cost_center_id", "Centro de resultado padrão", "cost_centers", { ref: { resource: "cost_centers", filtro: { kind: "analytic" }, exigeAnalitico: true }, section: "Custos e venda", span: 4 }),
+      M("reference_price", "Valor de referência", { section: "Custos e venda", help: "Valor de mercado do produto", span: 3 }),
+      { name: "average_cost", label: "Custo médio (calculado)", type: "money", readOnly: true, section: "Custos e venda", span: 3 }, D("last_purchase_date", "Última compra", { readOnly: true, section: "Custos e venda", span: 3 }),
+      // AGRO
+      REF("cultivation_id", "Variedade", "cultivations", { section: "Agro", span: 4 }), T("quality", "Qualidade", { section: "Agro", span: 2 }), T("active_principle", "Princípio ativo", { search: true, section: "Agro", span: 6 }),
+      T("registro_mapa", "Registro no MAPA", { maxLength: 60, section: "Agro", span: 3 }),
+      B("allow_pointing", "Apontamento", { section: "Agro", help: "Permite uso na aba de apontamentos", span: 3 }),
+      B("is_equipment", "Adiciona ao Inventário", { section: "Agro", help: "Cadastra automaticamente no inventário de bens", filter: true, span: 3 }),
+      active("is_active")
+    ],
+    // FICHA EM ABAS (CADASTROS Fase 6) — mecanismo genérico da decisão 253
+    cabecalho: ["code", "description", "ncm_code", "is_active"],
+    abas: [
+      { key: "geral", label: "Geral", secoes: ["Geral"] },
+      { key: "estoque", label: "Estoque e lotes", secoes: ["Estoque"], painel: "saldo_por_lote" },
+      { key: "unidades", label: "Unidades e embalagens", detalhes: ["unidades"] },
+      { key: "fiscal", label: "Fiscal", secoes: ["Fiscal"] },
+      { key: "compras", label: "Compras", detalhes: ["fornecedores"] },
+      { key: "custos", label: "Custos e venda", secoes: ["Custos e venda"] },
+      { key: "agro", label: "Agro", secoes: ["Agro"] },
+      { key: "historico", label: "Histórico", painel: "historico" },
+      { key: "anexos", label: "Anexos" }
+    ],
+    detalhes: [
+      { key: "unidades", label: "Unidades alternativas e embalagens", table: "produto_unidades", chavePai: "product_id", organizacao: true, softDelete: true, maxLinhas: 50, fields: [
+        REF("measurement_id", "Unidade", "measurement_units", { required: true }),
+        S("tipo_fator", "Conversão", [["multiply", "Multiplica"], ["divide", "Divide"]], { required: true, default: "multiply" }),
+        { name: "fator", label: "Fator", type: "quantity", required: true },
+        T("codigo_barras", "Código de barras", { maxLength: 60 }),
+        B("uso_compra", "Compra", { default: true }), B("uso_venda", "Venda", { default: true })] },
+      { key: "fornecedores", label: "Fornecedores do produto", table: "produto_fornecedores", chavePai: "product_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
+        REF("person_id", "Fornecedor", "people", { required: true, ref: { resource: "people", filtro: { is_provider: "true" } } }),
+        T("codigo_no_fornecedor", "Código no fornecedor", { maxLength: 60 }),
+        REF("measurement_id", "Unidade de compra", "measurement_units"),
+        B("preferencial", "Preferencial")] }
+    ],
+    // CADASTROS-ESTRUTURA: Categoria e Classe saíram do produto (o Grupo de Produtos virou árvore), mas a web
+    // ANTERIOR ainda manda os dois na janela de deploy. Sem esta aceitação o `.strict()` recusaria o corpo
+    // inteiro e o cadastro de produto pararia no meio do deploy. Opcionais; a API grava o que vier.
+    // CADASTROS Fase 6: `has_lot` (vira o controle: true → lote, false → nenhum) e a 2ª unidade (agora a grade de
+    // Unidades e embalagens) saíram da tela; a web ANTERIOR continua mandando e a API continua aceitando.
+    camposLegadosDeEscrita: [REF("category_id", "Categoria (legado)", "product_categories"), REF("kind_id", "Classe (legado)", "product_kinds"),
+      B("has_lot", "Controla Lote/Validade (legado)"), REF("second_measurement_id", "2ª Un. Medida (legado)", "measurement_units"),
+      S("factor_type", "Tipo de conversão (legado)", [["multiply", "Multiplica"], ["divide", "Divide"]]), { name: "factor", label: "Fator conversão (legado)", type: "quantity" }]
   },
   {
     key: "apportionment_categories", label: "Categoria de Rateio", labelPlural: "Categorias de Rateio", table: "apportionment_categories", permission: "apportionments", labelField: "name", route: "/cadastros/rateios", softDelete: true,
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 8 }), active()]
   },
   {
-    key: "financial_categories", importacao: true, label: "Categoria Financeira", labelPlural: "Categorias Financeiras", table: "financial_categories", permission: "financial_categories", labelField: "name", route: "/cadastros/categorias-financeiras", tree: true, softDelete: true, printable: true, defaultSort: "code",
+    key: "financial_categories", importacao: true, label: "Natureza", labelPlural: "Naturezas", table: "financial_categories", permission: "financial_categories", labelField: "name", route: "/cadastros/categorias-financeiras", tree: true, softDelete: true, printable: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, span: 3 }), T("name", "Descrição", { required: true, list: true, search: true, span: 5 }),
-      S("nature", "Natureza", [["income", "Receita"], ["expense", "Despesa"], ["both", "Ambas"]], { required: true, list: true, filter: true, span: 2 }),
-      S("kind", "Classe", [["synthetic", "Sintética"], ["analytic", "Analítica"]], { default: "analytic", list: true, span: 2 }),
+      S("nature", "Tipo", [["income", "Receita"], ["expense", "Despesa"], ["both", "Receita e despesa"]], { required: true, herdaDoSuperior: true, help: "Natureza filha segue o Tipo da superior (salvo superior Receita e despesa).", list: true, filter: true, span: 2 }),
+      S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { default: "analytic", list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
       S("classification", "Classificação", [["unclassified", "Não Classificado"], ["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }),
-      B("is_tax", "É tributo?", { span: 2 }), REF("parent_id", "Antecessor", "financial_categories", { span: 5 }), active()
+      B("is_tax", "É tributo?", { span: 2 }), REF("parent_id", "Natureza superior", "financial_categories", { span: 5 }), active()
     ]
   },
   {
-    key: "chart_accounts", importacao: true, label: "Conta do Plano", labelPlural: "Plano de Contas", table: "chart_accounts", permission: "chart_accounts", labelField: "description", route: "/cadastros/plano-de-contas", tree: true, softDelete: true, defaultSort: "code",
+    key: "chart_accounts", importacao: true, label: "Conta Contábil", labelPlural: "Plano de Contas", table: "chart_accounts", permission: "chart_accounts", labelField: "description", route: "/cadastros/plano-de-contas", tree: true, softDelete: true, defaultSort: "code",
     fields: [
       T("code", "Código", { required: true, list: true, search: true, span: 3 }), T("description", "Descrição", { required: true, list: true, search: true, span: 5 }),
       S("condition", "Condição", [["debit", "Débito"], ["credit", "Crédito"], ["both", "Ambos"]], { required: true, list: true, span: 2 }),
-      S("kind", "Classe", [["synthetic", "Sintética"], ["analytic", "Analítica"]], { required: true, list: true, span: 2 }),
-      S("type", "Tipo", [["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }), REF("parent_id", "Antecessor", "chart_accounts", { span: 5 }), active()
+      S("kind", "Analítica", [["analytic", "Sim"], ["synthetic", "Não"]], { required: true, list: true, help: "Sim: recebe lançamentos. Não: sintética, só agrupa outras.", span: 2 }),
+      S("type", "Tipo", [["capex", "CAPEX"], ["opex", "OPEX"]], { span: 3 }), REF("parent_id", "Conta superior", "chart_accounts", { span: 5 }), active()
     ]
   },
   {
@@ -160,7 +234,9 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   },
   {
     key: "job_functions", label: "Função", labelPlural: "Funções", table: "job_functions", permission: "job_functions", labelField: "name", route: "/gestao-pessoal/funcoes", softDelete: true,
-    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 4 }), T("cbo_code", "CBO", { list: true, span: 2 }), M("base_salary", "Salário base", { required: true, list: true, span: 2 }), { name: "monthly_hours", label: "Horas mensais", type: "integer", required: true, default: 220, span: 2 }, M("hour_value", "Valor da hora", { required: true, span: 2 }), active(), { name: "description", label: "Descrição", type: "textarea", required: true, span: 12 }]
+    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 4 }), T("cbo_code", "CBO", { list: true, span: 3, busca: "cbo", help: "Ocupação da CBO oficial (MTE)." }), M("base_salary", "Salário base", { required: true, list: true, span: 2, sigilo: "employees.edit" }), { name: "monthly_hours", label: "Horas mensais", type: "integer", required: true, default: 220, span: 2 }, M("hour_value", "Valor da hora", { required: true, span: 2, sigilo: "employees.edit" }), active(), { name: "description", label: "Descrição", type: "textarea", required: true, span: 12 }]
+    // R1-2: salário e valor hora da FUNÇÃO são o salário real de quem não tem salário próprio (a folha usa
+    // coalesce(ficha, função)) — o mesmo sigilo da ficha de RH (decisão 255).
   },
   {
     key: "teams", label: "Equipe", labelPlural: "Equipes", table: "teams", permission: "teams", labelField: "name", route: "/gestao-pessoal/equipes", softDelete: true,
@@ -178,7 +254,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
   },
   {
     key: "document_types", label: "Tipo de Documento", labelPlural: "Tipos de Documento", table: "document_types", permission: "document_types", labelField: "name", route: "/documentos/tipos", tree: true, softDelete: true,
-    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "position", label: "Ordem", type: "integer", required: true, default: 0, list: true, span: 2 }, active(), REF("parent_id", "Antecessor", "document_types", { span: 5 })]
+    fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "position", label: "Ordem", type: "integer", required: true, default: 0, list: true, span: 2 }, active(), REF("parent_id", "Tipo superior", "document_types", { span: 5 })]
   },
   {
     key: "documents", label: "Documento", labelPlural: "Documentos", table: "documents", permission: "documents", labelField: "title", route: "/documentos", softDelete: true, empresaScopedNulo: true,
@@ -380,17 +456,133 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "email", label: "E-mail", type: "email", required: true, list: true, search: true, span: 5 }, T("phone", "Telefone", { span: 3 }), active()]
   },
   {
-    key: "people", importacao: true, label: "Pessoa", labelPlural: "Pessoas", table: "people", permission: "people", labelField: "name", route: "/cadastros/pessoas", softDelete: true, codeEntity: "person", importExport: true, defaultSort: "name",
+    // PARCEIRO (CADASTROS Fase 4, decisão 253): a tabela, a chave, a permissão e a rota continuam `people`;
+    // a tela é a FICHA EM ABAS declarada em `abas`/`detalhes`/`perfis` abaixo.
+    key: "people", importacao: true, label: "Parceiro", labelPlural: "Parceiros", table: "people", permission: "people", labelField: "name", route: "/cadastros/pessoas", softDelete: true, codeEntity: "person", importExport: true, defaultSort: "name",
     fields: [
-      T("code", "Código", { readOnly: true, list: true, span: 2 }), T("document", "CPF/CNPJ", { list: true, search: true, span: 3 }),
-      S("person_type", "Tipo de pessoa", [["natural", "Física"], ["legal", "Jurídica"], ["foreign", "Estrangeira"]], { default: "legal", span: 2 }),
-      T("name", "Nome Social/Fantasia", { required: true, list: true, search: true, span: 5 }), T("legal_name", "Nome Completo/Razão Social", { search: true, span: 6 }),
-      { name: "email", label: "E-mail", type: "email", span: 3 }, T("phone", "Telefone", { list: true, span: 3 }), T("cellphone", "Celular", { span: 3 }),
-      T("zip_code", "CEP", { section: "Endereço", span: 2 }), T("address", "Endereço", { section: "Endereço", span: 5 }), T("address_number", "Número", { section: "Endereço", span: 2 }), T("district", "Bairro", { section: "Endereço", span: 3 }), { name: "city_id", label: "Cidade (IBGE)", type: "integer", section: "Endereço", span: 3 },
-      T("state_registration", "Inscrição estadual", { section: "Fiscal", span: 3 }), T("city_registration", "Inscrição municipal", { section: "Fiscal", span: 3 }), T("contact_name", "Contato", { section: "Fiscal", span: 3 }), T("contact_phone", "Telefone do contato", { section: "Fiscal", span: 3 }),
-      T("bank_code", "Banco", { section: "Conta", span: 2 }), S("bank_account_type", "Tipo", [["checking", "Corrente"], ["savings", "Poupança"]], { section: "Conta", span: 2 }), T("bank_agency", "Agência", { section: "Conta", span: 2 }), T("bank_account", "Conta", { section: "Conta", span: 2 }), S("pix_type", "Tipo chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]], { section: "Conta", span: 2 }), T("pix_key", "Pix", { section: "Conta", span: 2 }),
-      B("is_provider", "Fornecedor", { list: true, filter: true, section: "Papéis", span: 2 }), B("is_client", "Cliente", { list: true, filter: true, section: "Papéis", span: 2 }), B("is_employee", "Funcionário", { list: true, filter: true, section: "Papéis", span: 2 }), B("is_proprietary", "Proprietário", { list: true, filter: true, section: "Papéis", span: 2 }), B("is_transporter", "Transportador", { section: "Papéis", span: 2 }),
-      active()
+      T("code", "Código", { readOnly: true, list: true, section: "Identificação", span: 2 }),
+      S("person_type", "Tipo de pessoa", [["natural", "Física"], ["legal", "Jurídica"], ["foreign", "Estrangeira"]], { default: "legal", section: "Identificação", span: 2 }),
+      T("document", "CPF/CNPJ", { list: true, search: true, section: "Identificação", span: 3, help: "CPF ou CNPJ (também o alfanumérico). Estrangeiro: livre." }),
+      T("name", "Nome Social/Fantasia", { required: true, list: true, search: true, section: "Identificação", span: 5 }), T("legal_name", "Nome Completo/Razão Social", { search: true, section: "Identificação", span: 6 }),
+      D("nascimento_abertura", "Nascimento/Abertura", { section: "Identificação", span: 3 }),
+      B("is_client", "Cliente", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_provider", "Fornecedor", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_transporter", "Transportadora", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_employee", "Funcionário", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_proprietary", "Proprietário", { list: true, filter: true, section: "Tipos", span: 2 }),
+      active("is_active"),
+      T("zip_code", "CEP", { section: "Endereço", span: 2 }), T("address", "Endereço", { section: "Endereço", span: 5 }), T("address_number", "Número", { section: "Endereço", span: 2 }), T("complemento", "Complemento", { section: "Endereço", span: 3 }), T("district", "Bairro", { section: "Endereço", span: 3 }), { name: "city_id", label: "Município", type: "integer", list: true, section: "Endereço", span: 4, busca: "municipios" },
+      { name: "email", label: "E-mail", type: "email", section: "Contato", span: 4 }, T("phone", "Telefone", { list: true, section: "Contato", span: 3 }), T("cellphone", "Celular", { section: "Contato", span: 3 }), T("contact_name", "Contato principal", { section: "Contato", span: 4 }), T("contact_phone", "Telefone do contato", { section: "Contato", span: 3 }),
+      S("indicador_ie", "Indicador de IE", [["contribuinte", "Contribuinte"], ["isento", "Isento"], ["nao_contribuinte", "Não contribuinte"]], { section: "Fiscal", span: 3 }),
+      T("state_registration", "Inscrição estadual", { section: "Fiscal", span: 3 }), T("city_registration", "Inscrição municipal", { section: "Fiscal", span: 3 }),
+      B("consumidor_final", "Consumidor final", { section: "Fiscal", span: 2 }), B("produtor_rural", "Produtor rural", { section: "Fiscal", span: 2, help: "Um parceiro por CPF; cada propriedade tem a sua IE nos Endereços adicionais." }),
+      S("regime_tributario", "Regime tributário", [["simples", "Simples Nacional"], ["mei", "MEI"], ["normal", "Normal"]], { section: "Fiscal", span: 3 }),
+      T("cnae_principal", "CNAE principal", { section: "Fiscal", span: 3, maxLength: 7, help: "7 dígitos" }),
+      T("situacao_receita", "Situação na Receita", { readOnly: true, list: true, section: "Fiscal", span: 3, help: "Vem da consulta de CNPJ." }), T("situacao_receita_consultada_em", "Consultado em", { readOnly: true, section: "Fiscal", span: 3 }),
+      T("bank_code", "Banco", { section: "Conta", span: 3, busca: "bancos" }), S("bank_account_type", "Tipo", [["checking", "Corrente"], ["savings", "Poupança"]], { section: "Conta", span: 2 }), T("bank_agency", "Agência", { section: "Conta", span: 2 }), T("bank_account", "Conta", { section: "Conta", span: 2 }), S("pix_type", "Tipo chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]], { section: "Conta", span: 2 }), T("pix_key", "Pix", { section: "Conta", span: 3 })
+    ],
+    cabecalho: ["code", "name", "document", "is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary", "is_active"],
+    camposRapidos: ["is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary", "person_type", "document", "name", "city_id", "phone", "email"],
+    abas: [
+      { key: "identificacao", label: "Identificação", secoes: ["Identificação", "Tipos"] },
+      { key: "enderecos", label: "Endereços", secoes: ["Endereço"], detalhes: ["enderecos"] },
+      { key: "contatos", label: "Contatos", secoes: ["Contato"], detalhes: ["contatos"] },
+      { key: "fiscal", label: "Fiscal", secoes: ["Fiscal"] },
+      { key: "financeiro", label: "Financeiro", secoes: ["Conta"], detalhes: ["contas"] },
+      // ABAS DE TIPO (R1-4): ler exige `<tipo>.view` e gravar exige `<tipo>.edit`; marcar/desmarcar o tipo é do parceiro
+      { key: "cliente", label: "Cliente", perfis: ["perfil_cliente"], visivelQuando: { field: "is_client", equals: true }, permissaoDeLeitura: "clients.view", permissaoDeEdicao: "clients.edit" },
+      { key: "fornecedor", label: "Fornecedor", perfis: ["perfil_fornecedor"], detalhes: ["filiais", "vendedores"], visivelQuando: { field: "is_provider", equals: true }, permissaoDeLeitura: "providers.view", permissaoDeEdicao: "providers.edit" },
+      { key: "proprietario", label: "Proprietário", perfis: ["perfil_proprietario"], detalhes: ["participacoes"], visivelQuando: { field: "is_proprietary", equals: true }, permissaoDeLeitura: "proprietaries.view", permissaoDeEdicao: "proprietaries.edit" },
+      { key: "funcionario", label: "Funcionário", visivelQuando: { field: "is_employee", equals: true } },
+      { key: "anexos", label: "Anexos" }
+    ],
+    detalhes: [
+      { key: "enderecos", label: "Endereços adicionais", table: "parceiro_enderecos", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
+        S("tipo", "Tipo", [["entrega", "Entrega"], ["cobranca", "Cobrança"], ["propriedade", "Propriedade"], ["outro", "Outro"]], { required: true }), T("descricao", "Descrição"),
+        T("cep", "CEP", { maxLength: 8 }), T("logradouro", "Endereço"), T("numero", "Número"), T("complemento", "Complemento"), T("bairro", "Bairro"), { name: "city_id", label: "Município", type: "integer", busca: "municipios" },
+        T("inscricao_estadual", "IE", { help: "Dígitos ou ISENTO" }), active("is_active")
+      ] },
+      { key: "contatos", label: "Contatos adicionais", table: "parceiro_contatos", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
+        T("nome", "Nome", { required: true }), T("funcao", "Função"), T("telefone", "Telefone"), T("celular", "Celular"), { name: "email", label: "E-mail", type: "email" }, B("recebe_nfe_email", "Recebe NF-e por e-mail")
+      ] },
+      { key: "contas", label: "Contas adicionais", table: "parceiro_contas", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 50, fields: [
+        T("bank_code", "Banco", { busca: "bancos" }), T("agencia", "Agência"), T("conta", "Conta"), S("tipo", "Tipo", [["checking", "Corrente"], ["savings", "Poupança"]]), T("titular", "Titular"),
+        S("pix_tipo", "Tipo chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]]), T("pix_chave", "Chave Pix")
+      ] },
+      { key: "filiais", label: "Filiais do fornecedor", table: "provider_branches", chavePai: "person_id", maxLinhas: 100, fields: [
+        T("name", "Nome"), T("document", "CPF/CNPJ"), T("state_registration", "IE"), T("zip_code", "CEP"), T("address", "Endereço"), { name: "city_id", label: "Município", type: "integer", busca: "municipios" }
+      ] },
+      { key: "vendedores", label: "Vendedores do fornecedor", table: "provider_sellers", chavePai: "person_id", maxLinhas: 100, fields: [
+        T("name", "Nome", { required: true }), { name: "email", label: "E-mail", type: "email" }, T("phone", "Telefone")
+      ] },
+      { key: "participacoes", label: "Participação por empresa", table: "proprietary_empresas", chavePai: "person_id", chaveNatural: "empresa_id", campoEmpresa: "empresa_id", maxLinhas: 100, fields: [
+        REF("empresa_id", "Empresa", "empresas", { required: true }), { name: "percentage", label: "Participação (%)", type: "percent", required: true, min: 0, max: 100 }, T("registration_number", "Matrícula/Registro")
+      ] }
+    ],
+    perfis: [
+      { key: "perfil_cliente", label: "Perfil de cliente", table: "client_profiles", chavePai: "person_id", ativoPor: "is_client", fields: [M("limite_credito", "Limite de crédito (informativo)")] },
+      { key: "perfil_fornecedor", label: "Perfil de fornecedor", table: "provider_profiles", chavePai: "person_id", ativoPor: "is_provider", fields: [S("provider_type", "Tipo de fornecedor", [["provider", "Fornecedor"], ["outsourced", "Terceirizado"], ["transporter", "Transportador"], ["employee", "Funcionário"]]), M("hour_value", "Valor da hora"), REF("default_cost_center_id", "Centro de resultado padrão", "cost_centers")] },
+      { key: "perfil_proprietario", label: "Perfil de proprietário", table: "proprietary_profiles", chavePai: "person_id", ativoPor: "is_proprietary", fields: [] }
+    ]
+  },
+  {
+    // FUNCIONÁRIO (CADASTROS Fase 5): o PARCEIRO do tipo Funcionário (erp.people, recorte fixo is_employee) com a
+    // FICHA DE RH (erp.employee_profiles, 1:1) sobre o mecanismo genérico de abas da Fase 4. Nasce pelo CPF
+    // (`POST /api/hr/funcionarios/por-cpf`), nunca pela porta genérica. Salário, valor hora, meta e comissão são SIGILOSOS (R1-2).
+    key: "funcionarios", label: "Funcionário", labelPlural: "Funcionários", table: "people", permission: "employees", labelField: "name", route: "/pessoas", softDelete: true, defaultSort: "name",
+    filtroFixo: { is_employee: true },
+    criacao: { rota: "/api/hr/funcionarios/por-cpf", mensagem: "Novo funcionário começa pelo CPF: CPF de parceiro existente abre a ficha dele e marca o tipo Funcionário; CPF novo cria o parceiro.", campos: ["document", "name"] },
+    fields: [
+      T("code", "Código", { readOnly: true, list: true, section: "Pessoal", span: 2 }),
+      T("document", "CPF", { list: true, search: true, section: "Pessoal", span: 3 }),
+      T("name", "Nome", { required: true, list: true, search: true, section: "Pessoal", span: 5 }), T("legal_name", "Nome completo", { search: true, section: "Pessoal", span: 6 }),
+      D("nascimento_abertura", "Nascimento", { section: "Pessoal", span: 3 }),
+      { name: "email", label: "E-mail", type: "email", section: "Pessoal", span: 4 }, T("phone", "Telefone", { list: true, section: "Pessoal", span: 3 }), T("cellphone", "Celular", { section: "Pessoal", span: 3 }),
+      { ...active("is_active"), section: "Pessoal" }
+    ],
+    cabecalho: ["code", "name", "document", "is_active"],
+    abas: [
+      { key: "pessoal", label: "Pessoal", secoes: ["Pessoal"], permissaoDeEdicao: "people.edit", link: { label: "Abrir no cadastro de parceiros", href: "/cadastros/people/:id" } },
+      { key: "admissao", label: "Admissão e lotação", perfis: ["rh_admissao"], detalhes: ["equipes"] },
+      { key: "remuneracao", label: "Remuneração", perfis: ["rh_remuneracao"] },
+      { key: "documentos", label: "Documentos", perfis: ["rh_documentos"] },
+      { key: "pagamento", label: "Pagamento", perfis: ["rh_pagamento"] },
+      { key: "desligamento", label: "Desligamento", perfis: ["rh_desligamento"] },
+      { key: "eventos", label: "Eventos fixos", detalhes: ["eventos"] },
+      { key: "usuario", label: "Usuário do sistema", perfis: ["rh_usuario"] }
+    ],
+    // R1-2: as duas grades gravam linhas de OUTRO cadastro e obedecem às permissões DELE. Equipes: a composição é
+    // parte da equipe (Configurações › RH › Equipes), então incluir, mudar ou tirar o funcionário é EDITAR a equipe.
+    detalhes: [
+      { key: "equipes", label: "Equipes", table: "team_members", chavePai: "person_id", chaveNatural: "team_id", maxLinhas: 50,
+        permissoes: { ler: "teams.view", criar: "teams.edit", editar: "teams.edit", excluir: "teams.edit" }, fields: [
+        REF("team_id", "Equipe", "teams", { required: true }), S("member_type", "Tipo", [["employee", "Funcionário"], ["outsourced", "Terceirizado"]], { required: true, default: "employee" }), active("is_active")
+      ] },
+      { key: "eventos", label: "Eventos fixos", table: "employee_events", chavePai: "person_id", organizacao: true, maxLinhas: 100,
+        permissoes: { ler: "employee_events.view", criar: "employee_events.create", editar: "employee_events.edit", excluir: "employee_events.delete" }, fields: [
+        REF("event_id", "Evento", "hr_events", { required: true }), M("amount", "Valor", { required: true }), active("is_active")
+      ] }
+    ],
+    // Vários perfis sobre a MESMA linha 1:1 (erp.employee_profiles): um por aba. Cada um grava só os seus campos.
+    perfis: [
+      { key: "rh_admissao", label: "Admissão e lotação", table: "employee_profiles", chavePai: "person_id", fields: [
+        T("matricula", "Matrícula", { maxLength: 30 }), D("admission_date", "Admissão"), REF("empresa_id", "Empresa", "empresas"), REF("function_id", "Função", "job_functions"),
+        REF("cost_center_id", "Centro de resultado", "cost_centers", { ref: { resource: "cost_centers", filtro: { kind: "analytic" }, exigeAnalitico: true } }),
+        S("tipo_vinculo", "Tipo de vínculo", [["clt_indeterminado", "CLT prazo indeterminado"], ["clt_determinado", "CLT prazo determinado/safra"], ["temporario", "Temporário"], ["aprendiz", "Aprendiz"], ["estagio", "Estágio"], ["autonomo", "Autônomo/diarista"]]),
+        B("trabalhador_rural", "Trabalhador rural"), T("office", "Cargo (texto livre)")
+      ] },
+      { key: "rh_remuneracao", label: "Remuneração", table: "employee_profiles", chavePai: "person_id", fields: [
+        M("base_salary", "Salário base", { sigilo: "employees.edit" }), M("hour_value", "Valor da hora", { sigilo: "employees.edit" }), M("goal_salary", "Meta", { sigilo: "employees.edit" }),
+        { name: "commission_percent", label: "Comissão (%)", type: "percent", min: 0, max: 100, sigilo: "employees.edit" }, { name: "jornada_semanal", label: "Jornada semanal (h)", type: "number", min: 0, max: 168 }
+      ] },
+      { key: "rh_documentos", label: "Documentos", table: "employee_profiles", chavePai: "person_id", fields: [
+        T("pis_nis", "PIS/NIS", { maxLength: 11, help: "11 dígitos" }), T("ctps_numero", "CTPS número"), T("ctps_serie", "CTPS série"), T("rg_numero", "RG"), T("rg_orgao", "RG órgão emissor"),
+        T("cnh_numero", "CNH número", { maxLength: 11 }), S("cnh_categoria", "CNH categoria", [["A", "A"], ["B", "B"], ["C", "C"], ["D", "D"], ["E", "E"], ["AB", "AB"], ["AC", "AC"], ["AD", "AD"], ["AE", "AE"]]), D("cnh_validade", "CNH validade")
+      ] },
+      { key: "rh_pagamento", label: "Pagamento", table: "employee_profiles", chavePai: "person_id", fields: [
+        T("conta_pagamento_id", "Conta de pagamento", { help: "Vazio = conta principal do parceiro; ou uma conta adicional dele (aba Financeiro do parceiro)." })
+      ] },
+      { key: "rh_desligamento", label: "Desligamento", table: "employee_profiles", chavePai: "person_id", fields: [
+        D("dismissal_date", "Data do desligamento"),
+        S("motivo_desligamento", "Motivo", [["pedido_demissao", "Pedido de demissão"], ["sem_justa_causa", "Sem justa causa"], ["com_justa_causa", "Com justa causa"], ["termino_contrato", "Término de contrato"], ["acordo", "Acordo"], ["outro", "Outro"]])
+      ] },
+      { key: "rh_usuario", label: "Usuário do sistema", table: "employee_profiles", chavePai: "person_id", fields: [REF("user_id", "Usuário", "users")] }
     ]
   }
 ];

@@ -200,7 +200,7 @@ test("BASE2-03B: o Rateio é seção permanente em Base2Items, com contagem e se
   await expect(tabela.getByTestId("base2-items-linha")).toHaveCount(doServidor.apportionments.length);
 
   // colunas do rateio, e NENHUM rodapé de total: o total do título é campo do cabeçalho
-  for (const coluna of ["Categoria", "Centro de Custo", "%", "Valor"]) {
+  for (const coluna of ["Natureza", "Centro de Resultado", "%", "Valor"]) {
     await expect(tabela.locator("thead th", { hasText: coluna }).first()).toBeVisible();
   }
   await expect(tabela.locator("tfoot"), "o Base2Items não totaliza — total de documento é campo").toHaveCount(0);

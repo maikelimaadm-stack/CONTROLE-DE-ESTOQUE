@@ -21,10 +21,14 @@ import supplyRoutes from "./routes/supply.js";
 import financialRoutes from "./routes/financial.js";
 import salesRoutes from "./routes/sales.js";
 import fleetHrRoutes from "./routes/fleet-hr.js";
+import rhFuncionariosRoutes from "./routes/rh-funcionarios.js";
 import livestockRoutes from "./routes/livestock.js";
 import reportRoutes from "./routes/reports.js";
 import dashboardRoutes from "./routes/dashboards.js";
 import plataformaRoutes from "./routes/plataforma.js";
+import referenciaRoutes from "./routes/referencias.js";
+import consultaRoutes from "./routes/consultas.js";
+import type { BuscarFn } from "./lib/consultas/http.js";
 import { politicaDeOrigem } from "./lib/cors-origem.js";
 
 /**
@@ -35,7 +39,7 @@ import { politicaDeOrigem } from "./lib/cors-origem.js";
  * culpado e acusa o inocente não guarda nada. Com a costura, o teste conta quantos pools nasceram
  * antes da recusa, e a resposta certa é ZERO.
  */
-export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolean; criarPool?: (dsn: string) => Db } = {}): Promise<FastifyInstance> {
+export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolean; criarPool?: (dsn: string) => Db; /** porta HTTP das consultas externas (CEP/CNPJ); testes injetam mock */ buscarExterno?: BuscarFn } = {}): Promise<FastifyInstance> {
   const config = opts.config ?? loadConfig();
   // PRIMEIRA COISA, antes de existir servidor e antes de existir pool: a política de origem é montada
   // a partir do valor BRUTO da configuração e VALIDA o sufixo de preview ali dentro. Sufixo genérico
@@ -46,6 +50,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   const db = opts.db ?? (opts.criarPool ?? createPool)(config.DATABASE_URL);
   app.decorate("db", db);
   app.decorate("config", config);
+  app.decorate("buscarExterno", opts.buscarExterno ?? ((url, init) => fetch(url, init)));
   await app.register(helmet, { contentSecurityPolicy: false });
   // Origem exata (produção) OU preview ancorado na conta do projeto. A decisão mora em `cors-origem.ts`,
   // com o porquê de não existir curinga de provedor aqui: `credentials` está ligado.
@@ -67,10 +72,13 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(financialRoutes, { prefix: "/api" });
   await app.register(salesRoutes, { prefix: "/api" });
   await app.register(fleetHrRoutes, { prefix: "/api" });
+  await app.register(rhFuncionariosRoutes, { prefix: "/api" });
   await app.register(livestockRoutes, { prefix: "/api" });
   await app.register(reportRoutes, { prefix: "/api" });
   await app.register(dashboardRoutes, { prefix: "/api" });
   await app.register(plataformaRoutes, { prefix: "/api" });
+  await app.register(referenciaRoutes, { prefix: "/api" });
+  await app.register(consultaRoutes, { prefix: "/api" });
   // ------------------------------------------------------------------------------------------------
   // CONTRATO NEGATIVO DO NOME ANTIGO DE EMPRESA (PRE-BASE2-05B).
   // A borda de COMPATIBILIDADE acabou: não há mais tradução de entrada nem apelido de saída. O que sobra é

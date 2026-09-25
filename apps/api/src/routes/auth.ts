@@ -10,6 +10,19 @@ import { resolverIdioma } from "@erp/plataforma";
 import { withTx } from "@agro/db";
 import { runService } from "../lib/service.js";
 
+/**
+ * CAPACIDADES DECLARADAS NA DESCOBERTA (`GET /auth/context`, que toda tela já carrega). ADITIVAS: a web que não
+ * as conhece as ignora; a web nova só mostra e envia um campo quando a API declara a versão EXATA que sabe usar.
+ *
+ * `loteNaEntrada` (R1-1 c, PR #62): esta API entende o lote e a validade da devolução, a validade da correção para
+ * cima e a validade da produção de ração. A API anterior NÃO os entende — os schemas dela não são estritos e
+ * DESCARTAM essas chaves em silêncio (a devolução entraria sem lote; o ajuste para cima gravaria o lote sem a
+ * validade, e a escolha automática por validade poria esse lote por último). Sem a declaração, a web nova não
+ * oferece nem envia esses campos: numa janela em que a web suba antes da API, ou numa reversão só da API, o
+ * pedido chega à API anterior exatamente como a web anterior o mandaria.
+ */
+export const CAPACIDADE_LOTE_NA_ENTRADA = 1;
+
 export default async function authRoutes(app: FastifyInstance) {
   app.post("/auth/login", { config: { rateLimit: { max: app.config.LOGIN_RATE_LIMIT_MAX, timeWindow: "1 minute" } } }, async (req) => {
     if (app.config.AUTH_MODE !== "local") throw new DomainError("VALIDATION_ERROR", "Login local desabilitado: use Supabase Auth");
@@ -46,6 +59,6 @@ export default async function authRoutes(app: FastifyInstance) {
     // `empresas` é o campo CANÔNICO e, desde PRE-BASE2-05B, o ÚNICO. O apelido saiu junto com o aliasador
     // de resposta: o cliente em produção já lê só este campo, e mantê-lo duplicado deixaria a resposta com
     // duas verdades que ninguém garante que continuariam iguais.
-    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma };
+    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma, capacidades: { loteNaEntrada: CAPACIDADE_LOTE_NA_ENTRADA } };
   }));
 }

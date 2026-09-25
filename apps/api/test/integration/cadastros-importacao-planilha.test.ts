@@ -59,28 +59,31 @@ const gruposComo = async (like: string) => (await admin.query<{ name: string }>(
 /** numeric do banco sem os zeros de escala (`1234.5600` → `1234.56`), comparado como TEXTO — nunca ponto flutuante. */
 const dec = (s: string | null) => (s === null ? null : s.includes(".") ? s.replace(/0+$/, "").replace(/\.$/, "") : s);
 
-/** Grupos de produto: linhas `Nome *` a partir da linha 2, com UMA linha vazia no meio (2502). Devolve as linhas usadas. */
+/**
+ * Grupos de produto: linhas `Código *` + `Nome *` a partir da linha 2, com UMA linha vazia no meio (2502). Devolve
+ * as linhas usadas. CADASTROS-ESTRUTURA: o grupo virou árvore com código obrigatório; os códigos são raízes da
+ * máscara de 4 dígitos que o `beforeAll` configura (a padrão só tem 9 raízes).
+ */
 function preencherGrupos(wb: ExcelJS.Workbook, quantas: number, prefixo: string): number[] {
-  const ws = wb.getWorksheet("Dados")!; const c = col(wb, "Nome *"); const usadas: number[] = [];
+  const ws = wb.getWorksheet("Dados")!; const c = col(wb, "Nome *"); const cc = col(wb, "Código *"); const usadas: number[] = [];
   for (let n = 2; usadas.length < quantas; n++) {
     if (n === 2502) continue;
+    ws.getRow(n).getCell(cc).value = String(usadas.length + 1).padStart(4, "0");
     ws.getRow(n).getCell(c).value = `${prefixo} ${String(usadas.length + 1).padStart(4, "0")}`;
     usadas.push(n);
   }
   return usadas;
 }
 
-interface BaseProduto { grupo: string; categoria: string; classe: string; sigla: string; unidade: string }
+interface BaseProduto { grupo: string; sigla: string; unidade: string }
 let base: BaseProduto;
-/** Produto com as colunas obrigatórias preenchidas com valores COERENTES da aba Listas (grupo > categoria > classe). */
+/** Produto com as colunas obrigatórias preenchidas com valores da aba Listas (grupo analítico "código - nome"). */
 function produto(wb: ExcelJS.Workbook, n: number, descricao: string, extra: Record<string, ExcelJS.CellValue> = {}, b: BaseProduto = base) {
   const row = wb.getWorksheet("Dados")!.getRow(n);
   const valores: Record<string, ExcelJS.CellValue> = {
     "Descrição *": descricao,
     "1ª Un. Medida *": daLista(wb, "1ª Un. Medida", (x) => x.startsWith(`${b.sigla} - ${b.unidade}`)),
     "Grupo *": daLista(wb, "Grupo", (x) => x === b.grupo || x.startsWith(`${b.grupo} [`)),
-    "Categoria *": daLista(wb, "Categoria", (x) => x.startsWith(`${b.categoria} (`) && x.includes(b.grupo)),
-    "Classe *": daLista(wb, "Classe", (x) => x.startsWith(`${b.classe} (`) && x.includes(b.categoria)),
     // "Não" dispensa a categoria financeira (obrigatória só quando controla estoque)
     "Controla estoque": "Não",
     ...extra,
@@ -126,19 +129,19 @@ const REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships
 const PKG = "http://schemas.openxmlformats.org/package/2006/relationships";
 const xml = (s: string) => Buffer.from(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n${s}`, "utf8");
 /**
- * XLSX mínimo de GRUPOS DE PRODUTO montado à mão: aba "Dados" com `Nome *` e uma linha. O enchimento é espaço
+ * XLSX mínimo de GRUPOS DE PRODUTO montado à mão: aba "Dados" com `Nome *` e `Código *` e uma linha. O enchimento é espaço
  * entre elementos — XML válido, que o deflate comprime ~1000:1 (60 MB viram ~60 KB).
  */
 function pacote(nome: string, o: { enchimentoPlanilha?: number; enchimentoStrings?: number; declararPlanilha?: number } = {}) {
   const planilha = Buffer.concat([
-    xml(`<worksheet xmlns="${NS}"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c></row>`),
+    xml(`<worksheet xmlns="${NS}"><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>2</v></c></row>`),
     Buffer.alloc(o.enchimentoPlanilha ?? 0, 0x20),
-    Buffer.from(`<row r="2"><c r="A2" t="s"><v>1</v></c></row></sheetData></worksheet>`, "utf8"),
+    Buffer.from(`<row r="2"><c r="A2" t="s"><v>1</v></c><c r="B2" t="s"><v>3</v></c></row></sheetData></worksheet>`, "utf8"),
   ]);
   const strings = Buffer.concat([
-    xml(`<sst xmlns="${NS}" count="2" uniqueCount="2"><si><t>Nome *</t></si>`),
+    xml(`<sst xmlns="${NS}" count="4" uniqueCount="4"><si><t>Nome *</t></si>`),
     Buffer.alloc(o.enchimentoStrings ?? 0, 0x20),
-    Buffer.from(`<si><t>${nome}</t></si></sst>`, "utf8"),
+    Buffer.from(`<si><t>${nome}</t></si><si><t>Código *</t></si><si><t>0999</t></si></sst>`, "utf8"),
   ]);
   const partes: Parte[] = [
     { nome: "[Content_Types].xml", dados: xml(`<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>`) },
@@ -153,13 +156,15 @@ function pacote(nome: string, o: { enchimentoPlanilha?: number; enchimentoString
 
 beforeAll(async () => {
   h = await harness(); admin = createPool(TEST_URL, { max: 2 });
-  // grupo > categoria > classe e unidade de um produto do seed: combinação que existe de verdade
+  // grupo e unidade de um produto do seed: combinação que existe de verdade
   base = (await admin.query<BaseProduto>(
-    `select g.name grupo, c.name categoria, k.name classe, u.symbol sigla, u.name unidade
-       from erp.products p join erp.product_groups g on g.id=p.group_id join erp.product_categories c on c.id=p.category_id
-       join erp.product_kinds k on k.id=p.kind_id join erp.measurement_units u on u.id=p.measurement_id
+    `select g.code || ' - ' || g.name grupo, u.symbol sigla, u.name unidade
+       from erp.products p join erp.product_groups g on g.id=p.group_id join erp.measurement_units u on u.id=p.measurement_id
       where p.organization_id=$1 and p.description like 'Sal Mineral%' limit 1`, [h.demo.orgId])).rows[0]!;
   expect(base).toBeTruthy();
+  // CADASTROS-ESTRUTURA: Grupos de Produtos tem código hierárquico obrigatório. Os testes de tamanho usam o grupo
+  // como cadastro de uma coluna só e precisam de até 5001 códigos de raiz: máscara de 4 dígitos, de propósito.
+  await admin.query(`update erp.organizations set parameters = jsonb_set(coalesce(parameters, '{}'::jsonb), '{mascaras_codigo}', coalesce(parameters->'mascaras_codigo', '{}'::jsonb) || '{"product_groups":"9999"}'::jsonb) where id=$1`, [h.demo.orgId]);
 }, 120_000);
 afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end(); });
 
@@ -168,6 +173,7 @@ afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end();
 describe("leitura — tamanho e forma do arquivo", () => {
   it("X1: célula solitária na linha 1.048.576 → resposta em segundos, erro NESSA linha, memória sem explodir (só as linhas que existem são lidas)", async () => {
     const wb = await modelo("product_groups"); const ws = wb.getWorksheet("Dados")!;
+    ws.getRow(2).getCell(col(wb, "Código *")).value = "0101";
     ws.getRow(2).getCell(col(wb, "Nome *")).value = "XLSX Grupo Linha Dois"; ws.getRow(2).getCell(col(wb, "Ativo")).value = "Sim";
     ws.getRow(1_048_576).getCell(col(wb, "Ativo")).value = "Sim";
     const buf = await bufferDe(wb);
@@ -182,7 +188,7 @@ describe("leitura — tamanho e forma do arquivo", () => {
     const { r, ms } = await cronometrado(() => enviar(buf, "product_groups"));
     const crescimento = process.memoryUsage().rss - rss0;
     expect(r.statusCode, r.body.slice(0, 300)).toBe(422);
-    expect(j(r).erros).toEqual([{ linha: 1_048_576, coluna: "Nome", mensagem: MSG.obrigatorio }]);
+    expect(porLinha(j(r).erros)).toEqual([{ linha: 1_048_576, coluna: "Código", mensagem: MSG.obrigatorio }, { linha: 1_048_576, coluna: "Nome", mensagem: MSG.obrigatorio }]);
     expect(j(r)).toMatchObject({ linhas: 2, gravadas: 0 });
     expect(ms).toBeLessThan(15_000);
     expect(crescimento).toBeLessThan(300 * MB);
@@ -290,6 +296,7 @@ describe("leitura — tamanho e forma do arquivo", () => {
   it("X9: a MESMA coluna duas vezes no cabeçalho → linha 1, coluna = o título, `Coluna repetida no arquivo.`; sem ela o arquivo passa", async () => {
     const wb = await modelo("product_groups"); const ws = wb.getWorksheet("Dados")!;
     const extra = cabecalho(wb).length + 1;
+    ws.getRow(2).getCell(col(wb, "Código *")).value = "0102";
     ws.getRow(2).getCell(col(wb, "Nome *")).value = "XLSX Grupo Cabecalho"; ws.getRow(2).getCell(col(wb, "Ativo")).value = "Sim";
     const ok = await enviar(await bufferDe(wb), "product_groups", true);
     expect(ok.statusCode, ok.body).toBe(200); expect(j(ok)).toMatchObject({ linhas: 1, erros: [] });
@@ -306,9 +313,9 @@ describe("leitura — tamanho e forma do arquivo", () => {
   it("X10: valor em coluna SEM título → `Coluna Z`/`Coluna AB` + mensagem exata; a linha só com esse valor conta e não some", async () => {
     const wb = await modelo("product_groups"); const ws = wb.getWorksheet("Dados")!;
     expect(cabecalho(wb).length).toBeLessThan(26); // Z (26) e AB (28) ficam fora do cabeçalho
-    ws.getRow(2).getCell(col(wb, "Nome *")).value = "XLSX Grupo Sem Titulo A";
+    ws.getRow(2).getCell(col(wb, "Código *")).value = "0103"; ws.getRow(2).getCell(col(wb, "Nome *")).value = "XLSX Grupo Sem Titulo A";
     ws.getRow(3).getCell(26).value = "perdido";
-    ws.getRow(4).getCell(col(wb, "Nome *")).value = "XLSX Grupo Sem Titulo B"; ws.getRow(4).getCell(28).value = "x";
+    ws.getRow(4).getCell(col(wb, "Código *")).value = "0104"; ws.getRow(4).getCell(col(wb, "Nome *")).value = "XLSX Grupo Sem Titulo B"; ws.getRow(4).getCell(28).value = "x";
     const buf = await bufferDe(wb);
     const lida = await releitura(buf); const naLinha3: number[] = []; lida.getRow(3).eachCell((_c, n) => naLinha3.push(n));
     expect(naLinha3).toEqual([26]); // premissa: a linha 3 só tem o valor na coluna Z
@@ -316,6 +323,7 @@ describe("leitura — tamanho e forma do arquivo", () => {
     expect(r.statusCode, r.body.slice(0, 300)).toBe(422);
     expect(j(r).linhas).toBe(3);
     expect(porLinha(j(r).erros)).toEqual([
+      { linha: 3, coluna: "Código", mensagem: MSG.obrigatorio },
       { linha: 3, coluna: "Coluna Z", mensagem: MSG.semTitulo },
       { linha: 3, coluna: "Nome", mensagem: MSG.obrigatorio },
       { linha: 4, coluna: "Coluna AB", mensagem: MSG.semTitulo },
@@ -330,6 +338,7 @@ describe("leitura — células de erro, datas e rich text", () => {
   it("X11: #N/A, fórmula com resultado #REF!, fórmula sem resultado, #DIV/0! em Sim/Não → mensagens exatas; linha SÓ com erro conta; fórmula com resultado vale", async () => {
     const wb = await modelo("product_groups"); const ws = wb.getWorksheet("Dados")!;
     const nome = col(wb, "Nome *"); const ativo = col(wb, "Ativo");
+    for (let n = 2; n <= 6; n++) ws.getRow(n).getCell(col(wb, "Código *")).value = String(200 + n).padStart(4, "0");
     ws.getRow(2).getCell(nome).value = { error: "#N/A" };
     ws.getRow(3).getCell(nome).value = { formula: "A1", result: { error: "#REF!" } };
     ws.getRow(4).getCell(nome).value = { formula: "A1" };
@@ -358,6 +367,7 @@ describe("leitura — células de erro, datas e rich text", () => {
 
   it("X12: célula Date inválida (new Date(NaN)) → `Data inválida na célula.` (422, nunca 500)", async () => {
     const wb = await modelo("product_groups"); const ws = wb.getWorksheet("Dados")!;
+    ws.getRow(2).getCell(col(wb, "Código *")).value = "0301";
     const c = ws.getRow(2).getCell(col(wb, "Nome *")); c.value = new Date(Number.NaN); c.numFmt = "dd/mm/yyyy";
     const buf = await bufferDe(wb);
     const v = (await releitura(buf)).getRow(2).getCell(col(wb, "Nome *")).value;
@@ -368,14 +378,22 @@ describe("leitura — células de erro, datas e rich text", () => {
     expect(j(r).erros).toEqual([{ linha: 2, coluna: "Nome", mensagem: MSG.dataCelula }]);
   });
 
-  it("X13: nenhum dos 10 cadastros importáveis tem campo DATA editável — `31/02/2024 → Data inválida (use DD/MM/AAAA).` não é alcançável pela API hoje", () => {
-    // Quando um cadastro importável ganhar data editável, este teste falha de propósito: cubra ali o caso
-    // 31/02/2024 (texto) e AAAA-MM-DD inexistente. Hoje a única data dos importáveis é "Última compra" do
-    // produto, que é readOnly (calculada) e não vai no modelo.
+  it("X13: a única data editável dos importáveis é Nascimento/Abertura do parceiro (Fase 4) — `31/02/2024` → Data inválida (use DD/MM/AAAA)., nada gravado", async () => {
+    // Este teste falhou de propósito quando o Parceiro ganhou data editável (CADASTROS Fase 4), como pedia:
+    // o caso 31/02/2024 (texto) passa a ser coberto aqui. "Última compra" do produto continua readOnly.
     const importaveis = RESOURCES.filter((r) => r.importacao);
     expect(importaveis.map((r) => r.key).sort()).toEqual(["addressings", "chart_accounts", "cost_centers", "cultivations", "financial_categories", "measurement_units", "people", "product_groups", "products", "warehouses"]);
     const datas = importaveis.flatMap((r) => r.fields.filter((f) => f.type === "date" && !f.readOnly).map((f) => `${r.key}.${f.name}`));
-    expect(datas).toEqual([]);
+    expect(datas).toEqual(["people.nascimento_abertura"]);
+    const wb = await modelo("people"); const row = wb.getWorksheet("Dados")!.getRow(2);
+    row.getCell(col(wb, "Nome Social/Fantasia *")).value = "XLSX Data Inexistente";
+    row.getCell(col(wb, "Cliente")).value = "Sim";
+    row.getCell(col(wb, "Nascimento/Abertura")).value = "31/02/2024";
+    const antes = await contar("people");
+    const r = await enviar(await bufferDe(wb), "people");
+    expect(r.statusCode, r.body.slice(0, 300)).toBe(422);
+    expect(j(r).erros).toEqual([{ linha: 2, coluna: "Nascimento/Abertura", mensagem: "Data inválida (use DD/MM/AAAA)." }]);
+    expect(await contar("people")).toBe(antes);
     const defProduto = RESOURCES.find((r) => r.key === "products")!;
     expect(defProduto.fields.find((f) => f.name === "last_purchase_date")).toMatchObject({ type: "date", readOnly: true });
   });
@@ -385,6 +403,7 @@ describe("leitura — células de erro, datas e rich text", () => {
     const nome = col(wb, "Nome *"); const ativo = col(wb, "Ativo");
     ws.getRow(2).getCell(nome).value = { richText: [{ text: "   " }, { font: { bold: true }, text: "  " }] };
     ws.getRow(2).getCell(ativo).value = "Sim"; // a linha tem outro valor: conta, e o Nome "vazio" é recusado
+    ws.getRow(2).getCell(col(wb, "Código *")).value = "0401";
     const vazio = await bufferDe(wb);
     expect((await releitura(vazio)).getRow(2).getCell(nome).value).toMatchObject({ richText: [{ text: "   " }, { text: "  " }] });
     const r1 = await enviar(vazio, "product_groups");
@@ -392,6 +411,7 @@ describe("leitura — células de erro, datas e rich text", () => {
     expect(j(r1).erros).toEqual([{ linha: 2, coluna: "Nome", mensagem: MSG.obrigatorio }]);
 
     const wb2 = await modelo("product_groups"); const ws2 = wb2.getWorksheet("Dados")!;
+    ws2.getRow(2).getCell(col(wb2, "Código *")).value = "0402"; ws2.getRow(3).getCell(col(wb2, "Código *")).value = "0403";
     ws2.getRow(2).getCell(nome).value = { richText: [{ text: "  XLSX Grupo " }, { font: { bold: true }, text: "Rico  " }] };
     ws2.getRow(3).getCell(nome).value = { text: { richText: [{ text: " XLSX Grupo Link " }] }, hyperlink: "http://x" } as unknown as ExcelJS.CellHyperlinkValue;
     const buf = await bufferDe(wb2);
@@ -431,7 +451,7 @@ describe("leitura — números em pt-BR", () => {
     expect(await contar("products")).toBe(antes);
   });
 
-  it("X16: `1234,56`, `1.234,56`, `1,5`, `12` e o número nativo 2.5 aceitos — valor conferido no banco (quantidade, dinheiro, fator, inteiro)", async () => {
+  it("X16: `1234,56`, `1.234,56`, `1,5`, `12` e o número nativo 2.5 aceitos — valor conferido no banco (quantidade, dinheiro, estoque máximo, inteiro)", async () => {
     const wb = await modelo("products");
     const casos: [string, ExcelJS.CellValue, string][] = [
       ["XLSX Num A", "1234,56", "1234.56"],
@@ -443,7 +463,7 @@ describe("leitura — números em pt-BR", () => {
     casos.forEach(([d, v], k) => produto(wb, k + 2, d, { "Estoque mínimo": v }));
     const ws = wb.getWorksheet("Dados")!;
     ws.getRow(2).getCell(col(wb, "Valor de referência")).value = "1.234,56";
-    ws.getRow(2).getCell(col(wb, "Fator conversão")).value = "1,5";
+    ws.getRow(2).getCell(col(wb, "Estoque máximo")).value = "1,5"; // Fase 6: o fator foi para a grade de unidades
     ws.getRow(3).getCell(col(wb, "Período de Carência (dias)")).value = "30";
     const buf = await bufferDe(wb);
     const lida = await releitura(buf);
@@ -451,11 +471,11 @@ describe("leitura — números em pt-BR", () => {
     const r = await enviar(buf, "products");
     expect(r.statusCode, r.body.slice(0, 500)).toBe(201);
     expect(j(r)).toMatchObject({ linhas: 5, gravadas: 5, erros: [] });
-    const gravados = (await admin.query<{ description: string; min_stock: string | null; reference_price: string; factor: string | null; withdrawal_period_days: number | null }>(
-      "select description, min_stock::text, reference_price::text, factor::text, withdrawal_period_days from erp.products where organization_id=$1 and description like 'XLSX Num _' and deleted_at is null order by description", [h.demo.orgId])).rows;
+    const gravados = (await admin.query<{ description: string; min_stock: string | null; reference_price: string; estoque_maximo: string | null; withdrawal_period_days: number | null }>(
+      "select description, min_stock::text, reference_price::text, estoque_maximo::text, withdrawal_period_days from erp.products where organization_id=$1 and description like 'XLSX Num _' and deleted_at is null order by description", [h.demo.orgId])).rows;
     expect(gravados.map((x) => [x.description, dec(x.min_stock)])).toEqual(casos.map(([d, , esperado]) => [d, esperado]));
     const a = gravados.find((x) => x.description === "XLSX Num A")!;
-    expect(dec(a.reference_price)).toBe("1234.56"); expect(dec(a.factor)).toBe("1.5");
+    expect(dec(a.reference_price)).toBe("1234.56"); expect(dec(a.estoque_maximo)).toBe("1.5");
     expect(gravados.find((x) => x.description === "XLSX Num B")!.withdrawal_period_days).toBe(30);
   });
 });
@@ -477,7 +497,7 @@ describe("leitura — colunas de texto e zeros à esquerda", () => {
       if (TIPOS_TEXTO.includes(f.type)) { expect(fmt, rotulo).toBe("@"); comTexto += 1; } else { expect(fmt, rotulo).not.toBe("@"); semTexto += 1; }
     }
     for (const t of ["CPF/CNPJ", "CEP", "Agência", "Conta", "Telefone", "Número", "Nome Social/Fantasia *"]) expect(ws.getColumn(col(wb, t)).numFmt, t).toBe("@");
-    for (const t of ["Fornecedor", "Ativo", "Tipo de pessoa", "Tipo chave Pix", "Cidade (IBGE)"]) expect(ws.getColumn(col(wb, t)).numFmt, t).not.toBe("@");
+    for (const t of ["Fornecedor", "Ativo", "Tipo de pessoa", "Tipo chave Pix", "Município"]) expect(ws.getColumn(col(wb, t)).numFmt, t).not.toBe("@");
     expect(comTexto).toBeGreaterThanOrEqual(10); expect(semTexto).toBeGreaterThanOrEqual(8);
     // produto: referência é texto; quantidade e dinheiro não
     const wp = await modelo("products"); const dp = wp.getWorksheet("Dados")!;
@@ -491,6 +511,8 @@ describe("leitura — colunas de texto e zeros à esquerda", () => {
     row.getCell(col(wb, "Nome Social/Fantasia *")).value = "XLSX Pessoa Zeros";
     row.getCell(col(wb, "CPF/CNPJ")).value = "01234567890";
     row.getCell(col(wb, "CEP")).value = "01310100";
+    row.getCell(col(wb, "Cliente")).value = "Sim"; // pelo menos um tipo (CADASTROS Fase 4)
+    row.getCell(col(wb, "Tipo de pessoa")).value = "Física"; // CPF é de pessoa física (R1-6, decisão 253)
     const numero = row.getCell(col(wb, "Número")); numero.value = 123; numero.numFmt = "General";
     const buf = await bufferDe(wb);
     const lida = (await releitura(buf)).getRow(2);
@@ -536,8 +558,6 @@ describe("leitura — colunas de texto e zeros à esquerda", () => {
     const gEspecial = await grupo("XLSX Grupo￿ Especial");
     const gDois = await grupo("XLSX Grupo￾ Dois");
     const gTres = await grupo("XLSX Grupo\u0001 Tres");
-    const cat = (await admin.query<{ id: string }>("insert into erp.product_categories(organization_id,group_id,name) values ($1,$2,'XLSX Categoria Especial') returning id", [org, gEspecial])).rows[0]!.id;
-    await admin.query("insert into erp.product_kinds(organization_id,category_id,name) values ($1,$2,'XLSX Classe Especial')", [org, cat]);
     // premissa: o banco guarda os caracteres que o XML 1.0 proíbe
     const nomes = (await admin.query<{ id: string; name: string }>("select id, name from erp.product_groups where id = any($1::uuid[])", [[gEspecial, gDois, gTres]])).rows;
     expect(nomes.find((x) => x.id === gEspecial)!.name).toContain("￿");
@@ -551,12 +571,12 @@ describe("leitura — colunas de texto e zeros à esquerda", () => {
     expect(textos.length).toBeGreaterThan(10);
     expect(textos.filter(proibido)).toEqual([]);
 
-    produto(wb, 2, "XLSX Produto Grupo Especial", {}, { ...base, grupo: "XLSX Grupo Especial", categoria: "XLSX Categoria Especial", classe: "XLSX Classe Especial" });
+    produto(wb, 2, "XLSX Produto Grupo Especial", {}, { ...base, grupo: "XLSX Grupo Especial" });
     expect(wb.getWorksheet("Dados")!.getRow(2).getCell(col(wb, "Grupo *")).value).toBe("XLSX Grupo Especial");
     const r = await enviar(await bufferDe(wb), "products");
     expect(r.statusCode, r.body.slice(0, 500)).toBe(201);
     expect(j(r)).toMatchObject({ linhas: 1, gravadas: 1, erros: [] });
-    const p = (await admin.query<{ group_id: string; category_id: string }>("select group_id, category_id from erp.products where organization_id=$1 and description='XLSX Produto Grupo Especial'", [org])).rows;
-    expect(p).toEqual([{ group_id: gEspecial, category_id: cat }]);
+    const p = (await admin.query<{ group_id: string; category_id: string | null }>("select group_id, category_id from erp.products where organization_id=$1 and description='XLSX Produto Grupo Especial'", [org])).rows;
+    expect(p).toEqual([{ group_id: gEspecial, category_id: null }]);
   });
 });

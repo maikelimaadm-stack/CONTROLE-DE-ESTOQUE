@@ -278,9 +278,9 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
         {/* VENDAS-A1: a classificação financeira escolhida no documento. Venda ainda não confirmada sem classificação
             confirma pelo padrão automático, e a tela diz isso em vez de deixar o campo vazio. */}
-        <CampoLeitura rotulo="Categoria financeira" adorno="travado" testId="central-vendas-campo"
+        <CampoLeitura rotulo="Natureza" adorno="travado" testId="central-vendas-campo"
           valor={rotuloDaClassificacao(d["categoria_financeira_id"], d["categoria_financeira_codigo"], d["categoria_financeira_nome"], "Não informada", "Informada")} />
-        <CampoLeitura rotulo="Centro de custo" adorno="travado" testId="central-vendas-campo"
+        <CampoLeitura rotulo="Centro de resultado" adorno="travado" testId="central-vendas-campo"
           valor={rotuloDaClassificacao(d["centro_custo_id"], d["centro_custo_codigo"], d["centro_custo_nome"], "Não informado", "Informado")} />
         {/* O AVISO DO PADRÃO AUTOMÁTICO (A1, refeito na A5-1). Com a prévia, ele só aparece quando ela diz que a
             confirmação PODE acontecer e VAI gerar contas a receber pelo recuo — e nomeia o par. Sem a prévia (API
@@ -288,7 +288,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         {variante === "sale" && !d["categoria_financeira_id"] && editavel && (
           previaDaConfirmacao.situacao === "pronto"
             ? padraoAutomaticoPrevisto(previaDaConfirmacao.previa) && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático — {padraoAutomaticoPrevisto(previaDaConfirmacao.previa)}.</p>
-            : previaDaConfirmacao.situacao === "nao-confirmado" && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira categoria de receita e primeiro centro de custo analíticos, pela ordem do código).</p>
+            : previaDaConfirmacao.situacao === "nao-confirmado" && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira natureza de receita e primeiro centro de resultado analíticos, pela ordem do código).</p>
         )}
         <CampoLeitura rotulo="Responsável" adorno="travado" testId="central-vendas-campo" valor={String(d["responsible_name"] ?? "")} />
         <CampoLeitura rotulo="Data de saída" adorno="data" testId="central-vendas-campo" valor={d["shipping_date"] ? dateBR(d["shipping_date"] as string) : ""} />

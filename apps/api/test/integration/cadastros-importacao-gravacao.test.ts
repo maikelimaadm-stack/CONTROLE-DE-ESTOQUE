@@ -44,7 +44,7 @@ const preencher = (wb: ExcelJS.Workbook, linha: number, valores: Record<string, 
 /** Só as colunas VERMELHAS do produto, com o primeiro item de cada lista do próprio modelo. */
 const obrigatoriosDoProduto = (wb: ExcelJS.Workbook, descricao: string): Record<string, string> => {
   const primeiro = (lista: string) => { const v = listaDe(wb, lista)[0]; expect(v, `lista ${lista} vazia no modelo`).toBeTruthy(); return v!; };
-  return { "Descrição *": descricao, "1ª Un. Medida *": primeiro("1ª Un. Medida"), "Grupo *": primeiro("Grupo"), "Categoria *": primeiro("Categoria"), "Classe *": primeiro("Classe") };
+  return { "Descrição *": descricao, "1ª Un. Medida *": primeiro("1ª Un. Medida"), "Grupo *": primeiro("Grupo") };
 };
 const textoDaNota = (n: string | ExcelJS.Comment | undefined): string => (typeof n === "string" ? n : (n?.texts ?? []).map((t) => t.text).join(""));
 const corDoCabecalho = (wb: ExcelJS.Workbook, titulo: string) => (dados(wb).getRow(1).getCell(col(wb, titulo)).fill as ExcelJS.FillPattern | undefined)?.fgColor?.argb;
@@ -54,7 +54,7 @@ const contar = async (tabela: "people" | "products" | "chart_accounts" | "regist
 /** Contador de ID Global da organização (null = a linha ainda não existe). */
 const contador = async () => (await admin.query<{ v: string }>("select ultimo_valor::text v from erp.sequencias_id_global where organization_id=$1", [h.demo.orgId])).rows[0]?.v ?? null;
 const idGlobalDe = async (idEntidade: string) => (await admin.query<{ v: string; tipo: string }>("select id_global::text v, tipo_entidade tipo from erp.registros_globais where organization_id=$1 and id_entidade=$2", [h.demo.orgId, idEntidade])).rows[0] ?? null;
-const criarPessoa = (nome: string) => h.app.inject({ method: "POST", url: "/api/resources/people", headers: h.headers({ "content-type": "application/json" }), payload: { name: nome } });
+const criarPessoa = (nome: string) => h.app.inject({ method: "POST", url: "/api/resources/people", headers: h.headers({ "content-type": "application/json" }), payload: { name: nome, is_client: true } });
 
 beforeAll(async () => { h = await harness(); admin = createPool(TEST_URL, { max: 2 }); }, 180_000);
 afterAll(async () => { await admin.end(); await h.app.close(); await h.db.end(); });
@@ -66,7 +66,7 @@ describe("erros de gravação: coluna e português", () => {
     expect(bancos).not.toContain("999");
     expect(bancos.length).toBeGreaterThan(0);
     const wb = await modelo("people");
-    preencher(wb, 2, { "Nome Social/Fantasia *": "Pessoa Banco Inexistente", "Banco": "999" });
+    preencher(wb, 2, { "Nome Social/Fantasia *": "Pessoa Banco Inexistente", "Banco": "999", "Cliente": "Sim" });
     const antes = await contar("people");
     const r = await enviar(wb, "people");
     expect(r.statusCode, r.body).toBe(422);
@@ -85,7 +85,7 @@ describe("erros de gravação: coluna e português", () => {
     const existente = (await admin.query<{ description: string }>("select description from erp.chart_accounts where organization_id=$1 and code='2'", [h.demo.orgId])).rows;
     expect(existente).toEqual([{ description: "PASSIVO" }]);
     const wb = await modelo("chart_accounts");
-    preencher(wb, 2, { "Código *": "2", "Descrição *": "Conta Repetida", "Condição *": "Crédito", "Classe *": "Sintética" });
+    preencher(wb, 2, { "Código *": "2", "Descrição *": "Conta Repetida", "Condição *": "Crédito", "Analítica *": "Não" });
     const antes = await contar("chart_accounts");
     const r = await enviar(wb, "chart_accounts");
     expect(r.statusCode, r.body).toBe(422);
@@ -143,7 +143,7 @@ describe("erros de gravação: coluna e português", () => {
   it("G5: 100 linhas com o mesmo Código já existente → 422 com os 100 erros (nenhum 500) e a conexão segue saudável", async () => {
     expect((await admin.query("select 1 from erp.chart_accounts where organization_id=$1 and code='3'", [h.demo.orgId])).rowCount).toBe(1);
     const wb = await modelo("chart_accounts");
-    for (let i = 0; i < 100; i++) preencher(wb, i + 2, { "Código *": "3", "Descrição *": `Repetida ${i + 1}`, "Condição *": "Ambos", "Classe *": "Sintética" });
+    for (let i = 0; i < 100; i++) preencher(wb, i + 2, { "Código *": "3", "Descrição *": `Repetida ${i + 1}`, "Condição *": "Ambos", "Analítica *": "Não" });
     const antes = await contar("chart_accounts");
     const r = await enviar(wb, "chart_accounts");
     expect(r.statusCode, r.body.slice(0, 300)).toBe(422);
@@ -156,7 +156,7 @@ describe("erros de gravação: coluna e português", () => {
     expect(await contar("chart_accounts")).toBe(antes);
     // a transação foi desfeita inteira e o pool não ficou com conexão quebrada: uma importação válida em seguida funciona
     const wb2 = await modelo("chart_accounts");
-    preencher(wb2, 2, { "Código *": "9", "Descrição *": "Depois das Repetidas", "Condição *": "Ambos", "Classe *": "Sintética" });
+    preencher(wb2, 2, { "Código *": "9", "Descrição *": "Depois das Repetidas", "Condição *": "Ambos", "Analítica *": "Não" });
     const ok = await enviar(wb2, "chart_accounts", true);
     expect(ok.statusCode, ok.body).toBe(200);
     expect(j(ok)).toMatchObject({ linhas: 1, erros: [] });
@@ -164,9 +164,9 @@ describe("erros de gravação: coluna e português", () => {
 });
 
 describe("obrigatório condicional (requiredWhen)", () => {
-  const TITULO = "Categoria financeira (custo)";
+  const TITULO = "Natureza de custo";
 
-  it("G6: modelo de produtos — 'Categoria financeira (custo)' laranja FFEF6C00, sem *, nota 'OBRIGATÓRIO quando'; obrigatórias seguem vermelhas FFC62828 com *", async () => {
+  it("G6: modelo de produtos — 'Natureza de custo' laranja FFEF6C00, sem *, nota 'OBRIGATÓRIO quando'; obrigatórias seguem vermelhas FFC62828 com *", async () => {
     const wb = await modelo("products");
     const cab = cabecalho(wb);
     expect(cab).toContain(TITULO);
@@ -175,9 +175,10 @@ describe("obrigatório condicional (requiredWhen)", () => {
     expect(textoDaNota(dados(wb).getRow(1).getCell(col(wb, TITULO)).note)).toMatch(/^OBRIGATÓRIO quando/);
     // a cor laranja é só da coluna condicional: exatamente uma no modelo de produtos
     expect(cab.filter((t) => corDoCabecalho(wb, t) === "FFEF6C00")).toEqual([TITULO]);
-    // as obrigatórias continuam vermelhas e com *, e são exatamente as cinco do registry
+    // as obrigatórias continuam vermelhas e com *, e são exatamente as três do registry (CADASTROS-ESTRUTURA:
+    // Categoria e Classe saíram do produto)
     const obrigatorias = cab.filter((t) => t.endsWith(" *"));
-    expect(obrigatorias.sort()).toEqual(["1ª Un. Medida *", "Categoria *", "Classe *", "Descrição *", "Grupo *"]);
+    expect(obrigatorias.sort()).toEqual(["1ª Un. Medida *", "Descrição *", "Grupo *"]);
     for (const t of obrigatorias) {
       expect(corDoCabecalho(wb, t), t).toBe("FFC62828");
       expect(textoDaNota(dados(wb).getRow(1).getCell(col(wb, t)).note), t).toMatch(/^OBRIGATÓRIO/);
@@ -219,12 +220,13 @@ describe("obrigatório condicional (requiredWhen)", () => {
 });
 
 describe("árvore: antecessor da mesma planilha", () => {
-  it("G8: no modelo dos 4 cadastros em árvore, a lista da coluna do auto-relacionamento é 'warning' e as demais listas são 'stop'", async () => {
+  it("G8: no modelo dos 5 cadastros em árvore, a lista da coluna do auto-relacionamento é 'warning' e as demais listas são 'stop'", async () => {
     // Lido do arquivo GERADO (validações carregadas pelo ExcelJS a partir do XML), na primeira linha de dados.
     const casos: { key: string; propria: string; demais: string[] }[] = [
-      { key: "chart_accounts", propria: "Antecessor", demais: ["Condição *", "Classe *", "Tipo", "Ativo"] },
-      { key: "financial_categories", propria: "Antecessor", demais: ["Natureza *", "Classe", "Classificação", "É tributo?", "Ativo"] },
-      { key: "cost_centers", propria: "Antecessor", demais: ["Classe", "Tipo", "Ativo"] },
+      { key: "chart_accounts", propria: "Conta superior", demais: ["Condição *", "Analítica *", "Tipo", "Ativo"] },
+      { key: "financial_categories", propria: "Natureza superior", demais: ["Tipo *", "Analítica", "Classificação", "É tributo?", "Ativo"] },
+      { key: "cost_centers", propria: "Centro superior", demais: ["Analítica", "Tipo", "Ativo"] },
+      { key: "product_groups", propria: "Grupo superior", demais: ["Analítico", "Ativo"] },
       // endereçamento só tem a lista do pai: nenhuma "demais" a conferir aqui (as três acima cobrem o "stop")
       { key: "addressings", propria: "Endereçamento pai", demais: [] },
     ];

@@ -2,6 +2,8 @@
  * Definição declarativa de recursos (cadastros) — usada pela API (rotas genéricas, validação, SQL) e pelo
  * frontend (listagem, filtros e formulários). Evita telas vazias: todo recurso definido aqui persiste de verdade.
  */
+import type { ChaveReferencia } from "./referencias.js";
+
 export type FieldType = "text" | "textarea" | "number" | "integer" | "money" | "quantity" | "percent" | "date" | "boolean" | "select" | "ref" | "email" | "json" | "tags";
 
 export interface FieldOption { value: string; label: string }
@@ -14,7 +16,24 @@ export interface FieldDef {
   required?: boolean;
   options?: FieldOption[];
   /** referência a outro recurso (select com busca) */
-  ref?: { resource: string; labelField?: string };
+  ref?: {
+    resource: string; labelField?: string;
+    /**
+     * Recorte fixo da LISTA de opções (`GET /resources/:key/options?campo=valor`). Só apresentação: quem
+     * recusa o valor fora do recorte é o servidor ao gravar.
+     */
+    filtro?: Record<string, string>;
+    /**
+     * O lançamento exige registro ANALÍTICO do cadastro em árvore apontado (CADASTROS Fase 7, decisão 256):
+     * a tela só oferece analíticos e o SERVIDOR recusa sintético (422) quando o valor é gravado ou trocado.
+     */
+    exigeAnalitico?: boolean;
+  };
+  /**
+   * Campo preenchido por BUSCA numa referência oficial (município, banco, NCM, CBO — `referencias.ts`). O
+   * valor gravado continua o CÓDIGO oficial (o mesmo de antes da busca existir); só a tela muda.
+   */
+  busca?: ChaveReferencia;
   /** exibir na listagem */
   list?: boolean;
   /** filtrar na listagem */
@@ -38,6 +57,25 @@ export interface FieldDef {
    * O banco continua sendo a autoridade; isto serve para a tela e o modelo de importação avisarem antes.
    */
   requiredWhen?: { field: string; equals: unknown };
+  /**
+   * Cadastro em árvore: no registro NOVO, o campo nasce com o valor do SUPERIOR escolhido (pré-preenchido e
+   * editável, enquanto o usuário não o alterou). Só a tela usa; a regra que recusa divergência mora na API.
+   */
+  herdaDoSuperior?: boolean;
+  /**
+   * Campo `json` desenhado como CAMPOS (CADASTROS Fase 6): as chaves conhecidas viram entradas tipadas; o valor
+   * continua UM objeto JSON. Chave desconhecida é PRESERVADA: na edição a API funde o objeto enviado sobre o
+   * gravado (só `null` remove uma chave).
+   */
+  camposJson?: FieldDef[];
+  /**
+   * SIGILO (CADASTROS Fase 5; R1-2): permissão exigida para o campo SAIR da API (leitura) e ser gravado (escrita).
+   * Sem ela o campo some da resposta (lista, ficha, exportação, relatório salvo) e a gravação dele é recusada
+   * (403). Também não serve de PERGUNTA: filtro, ordenação, valores distintos, busca, coluna de relatório salvo e
+   * filtro do seletor com o campo → 403 com o nome do campo (senão o valor se descobriria por busca). Ex.: salário.
+   * A pergunta é `campoVisivel` (a mesma na API e na tela).
+   */
+  sigilo?: string;
 }
 
 export interface ResourceDef {
@@ -59,6 +97,12 @@ export interface ResourceDef {
   /** entidade de sequência para código automático (coluna code) */
   codeEntity?: string;
   fields: FieldDef[];
+  /**
+   * Campos que a API ainda ACEITA na escrita, mas que saíram da tela, da listagem, dos filtros e da
+   * importação (legado). Existem para a janela de deploy: a web ANTERIOR continua mandando o campo e a API
+   * nova grava o que vier, em vez de recusar o corpo inteiro pelo `.strict()`. Nunca obrigatórios.
+   */
+  camposLegadosDeEscrita?: FieldDef[];
   /** coluna padrão de ordenação */
   defaultSort?: string;
   /** soft delete (deleted_at) */
@@ -79,6 +123,161 @@ export interface ResourceDef {
   reference?: boolean;
   /** tabela com registros padrão do sistema (organization_id null) visíveis a todas as organizações */
   sharedDefaults?: boolean;
+  /**
+   * FICHA EM ABAS (CADASTROS Fase 4, decisão 253) — ver `AbaDef`, `DetalheDef` e `PerfilDef`. Cadastro sem
+   * `abas` continua exatamente como antes (formulário de painéis do layout configurável).
+   */
+  abas?: AbaDef[];
+  /** tabelas 1:N gravadas junto com o principal (grade dentro de uma aba) */
+  detalhes?: DetalheDef[];
+  /** tabelas 1:1 (perfil) gravadas junto com o principal */
+  perfis?: PerfilDef[];
+  /** campos do cabeçalho FIXO da ficha (ficam visíveis em todas as abas) */
+  cabecalho?: string[];
+  /** campos do CADASTRO RÁPIDO (diálogo aberto de dentro de outra tela: venda, compra…) — mesma API */
+  camposRapidos?: string[];
+  /**
+   * Recorte FIXO do cadastro (CADASTROS Fase 5): a lista, a ficha e a edição só alcançam linhas com estes
+   * valores (ex.: Funcionários = parceiros com `is_employee = true`). Linha fora do recorte = a mesma 404.
+   */
+  filtroFixo?: Record<string, string | boolean>;
+  /**
+   * O registro NÃO nasce nem é excluído pela porta genérica (`POST`/`DELETE /resources/:key`): nasce por
+   * `rota` (ex.: novo funcionário pelo CPF). A tela de "novo" pergunta `campos` e chama a rota.
+   */
+  criacao?: { rota: string; mensagem: string; campos: string[] };
 }
+
+/**
+ * FICHA EM ABAS — mecanismo GENÉRICO do registry (Fases 4 a 7 do programa CADASTROS).
+ *
+ * API do mecanismo (quem declara, o que acontece):
+ *  · `ResourceDef.abas`: ordem = ordem do array. Cada aba junta SEÇÕES de campos do principal (`FieldDef.section`),
+ *    grades de DETALHE (`detalhes`, chaves de `ResourceDef.detalhes`) e PERFIS (`perfis`, chaves de
+ *    `ResourceDef.perfis`). `visivelQuando` esconde a aba inteira enquanto o campo do principal não tem o valor.
+ *    Campo sem seção cai na PRIMEIRA aba.
+ *  · Corpo do POST/PUT `/resources/:key[/:id]`: os campos do principal + `<detalhe.key>: linha[]` +
+ *    `<perfil.key>: {…}`. Schema ESTRITO: uma API anterior ao mecanismo recusa essas chaves (422) em vez de
+ *    ignorá-las.
+ *  · GRAVAÇÃO ATÔMICA: principal, detalhes e perfis na MESMA transação do `runService`. Qualquer erro → nada
+ *    gravado; o 422 traz `details[]` com `path`, `aba`, `detalhe` e `linha` (1-based) para a tela marcar a aba.
+ *  · PUT: detalhe AUSENTE no corpo = a grade não é tocada; PRESENTE = lista COMPLETA (linha com `id` atualiza,
+ *    sem `id` inclui, linha viva que não veio é removida — soft delete quando a tabela tem `deleted_at`).
+ *  · PERFIL com `ativoPor`: o perfil acompanha o campo booleano do principal. Desmarcar NÃO apaga o perfil:
+ *    inativa (`is_active = false`) e a aba some; remarcar reativa com os dados de antes.
+ *  · GET `/resources/:key/:id` devolve as grades e os perfis nas mesmas chaves do corpo.
+ */
+export interface AbaDef {
+  key: string;
+  label: string;
+  /** seções de `fields` exibidas nesta aba, na ordem */
+  secoes?: string[];
+  /** grades de detalhe (chaves de `ResourceDef.detalhes`) */
+  detalhes?: string[];
+  /** perfis 1:1 (chaves de `ResourceDef.perfis`) */
+  perfis?: string[];
+  /** aba só aparece quando o campo do principal tem esse valor */
+  visivelQuando?: { field: string; equals: unknown };
+  /**
+   * Painel SOMENTE LEITURA da aba (CADASTROS Fase 6): `historico` = auditoria do registro e das suas grades
+   * (`GET /resources/:key/:id/historico`); `saldo_por_lote` = saldo do produto por armazém e lote no escopo de
+   * empresa do usuário (`GET /stock/balances?product_id=`).
+   */
+  painel?: "historico" | "saldo_por_lote";
+  /**
+   * Os campos das SEÇÕES, as GRADES e os PERFIS desta aba só são gravados por quem tem esta permissão (além da do
+   * cadastro); sem ela a aba é somente leitura na tela e a API recusa (403) o corpo que traga qualquer um deles
+   * (CADASTROS Fase 5; grades e perfis desde o R1-4). Ex.: aba Pessoal da ficha de RH exige `people.edit`; aba
+   * Cliente do parceiro exige `clients.edit`. O campo booleano que LIGA o perfil (`ativoPor`, ex.: `is_client`)
+   * é do principal: marcar e desmarcar o tipo continua sendo a permissão do cadastro.
+   */
+  permissaoDeEdicao?: string;
+  /**
+   * Permissão de LEITURA da aba (R1-4): sem ela a aba não aparece na tela e as grades e os perfis dela NÃO saem da
+   * API (nem a chave, nem os dados). Ex.: aba Cliente do parceiro exige `clients.view`. Gravar a grade ou o perfil
+   * da aba também a exige (403), mesmo com a `permissaoDeEdicao`: a grade enviada é a lista COMPLETA, e gravá-la
+   * às cegas apagaria o que o usuário não vê.
+   */
+  permissaoDeLeitura?: string;
+  /** link da aba para outro cadastro (ex.: "Editar no cadastro de parceiros"); `:id` = id do registro */
+  link?: { label: string; href: string };
+}
+
+export interface DetalheDef {
+  /** chave no corpo da API e na resposta */
+  key: string;
+  label: string;
+  table: string;
+  /** coluna que aponta para o principal (ex.: person_id) */
+  chavePai: string;
+  fields: FieldDef[];
+  /**
+   * Linha SEM coluna `id`: a identidade é esta coluna (ex.: empresa_id em proprietary_empresas). Sem ela a
+   * tabela tem `id uuid`.
+   */
+  chaveNatural?: string;
+  /** a tabela tem `organization_id` (FK composta com o principal) */
+  organizacao?: boolean;
+  /** a tabela tem `deleted_at`: linha removida da grade é EXCLUÍDA logicamente, nunca apagada */
+  softDelete?: boolean;
+  /**
+   * Coluna de empresa da linha. ESCOPO (R1-4): a linha de empresa fora do escopo do usuário não sai na leitura,
+   * não é alterada e NÃO é apagada quando fica de fora da lista enviada ("ausente = não mexe" vale para o que o
+   * usuário não vê); a empresa de cada linha enviada tem de estar no escopo (422 na linha). O escopo é o da RLS
+   * empresarial no módulo da rota — em cadastro da organização (módulo indefinido), a UNIÃO das empresas que o
+   * membro enxerga em algum módulo, nunca "todas".
+   */
+  campoEmpresa?: string;
+  /** máximo de linhas por gravação */
+  maxLinhas?: number;
+  /**
+   * A grade grava linhas de OUTRO cadastro (R1-2): obedece às permissões DELE, por operação, conferidas no servidor.
+   * Sem `ler` a grade não sai da API (nem a chave, nem os dados), não aparece na tela e o corpo que a traga é
+   * recusado (403 — gravar às cegas apagaria o que não se vê). Com `ler`, a linha NOVA exige `criar`, a linha que
+   * MUDA exige `editar` e a linha que SAI exige `excluir` (403 com a permissão; nada gravado). Linha reenviada sem
+   * mudança não exige nada. Ex.: Eventos fixos da ficha de RH = `employee_events.*`; Equipes = `teams.*`.
+   */
+  permissoes?: { ler: string; criar: string; editar: string; excluir: string };
+}
+
+export interface PerfilDef {
+  key: string;
+  label: string;
+  table: string;
+  /** coluna que aponta para o principal (é a chave primária do perfil) */
+  chavePai: string;
+  fields: FieldDef[];
+  /** campo booleano do principal que liga o perfil (ex.: is_client) */
+  ativoPor?: string;
+}
+
+/**
+ * Chaves de GRADE e de PERFIL (as do corpo e da resposta) que pertencem a abas BARRADAS por uma permissão que o
+ * usuário não tem (R1-4). A MESMA pergunta na API (`hasPermission`) e na tela (`can`, só apresentação):
+ * `permissaoDeLeitura` → a chave não sai da API; `permissaoDeEdicao` → a chave no corpo é recusada (403).
+ * Grade com `permissoes` (R1-2) entra por ELAS: sem `ler` ela é barrada na leitura; sem nenhuma de criar, editar e
+ * excluir, barrada na edição (a tela não a manda; o servidor confere cada operação, ver `DetalheDef.permissoes`).
+ */
+export function chavesBarradas(def: ResourceDef, qual: "permissaoDeLeitura" | "permissaoDeEdicao", pode: (permissao: string) => boolean): Set<string> {
+  const out = new Set<string>();
+  for (const a of def.abas ?? []) {
+    const p = a[qual];
+    if (!p || pode(p)) continue;
+    for (const k of [...(a.detalhes ?? []), ...(a.perfis ?? [])]) out.add(k);
+  }
+  for (const d of def.detalhes ?? []) {
+    const ps = d.permissoes;
+    if (!ps) continue;
+    if (qual === "permissaoDeLeitura" ? !pode(ps.ler) : !pode(ps.criar) && !pode(ps.editar) && !pode(ps.excluir)) out.add(d.key);
+  }
+  return out;
+}
+
+/**
+ * SIGILO (R1-2): o campo pode SAIR para este usuário e ser usado como pergunta (filtro, ordenação, valores
+ * distintos, busca, relatório)? A MESMA pergunta na API (`hasPermission`, a autoridade) e na tela (`can`, só
+ * apresentação: esconde a coluna, o filtro e o campo).
+ */
+export const campoVisivel = (f: Pick<FieldDef, "sigilo">, pode: (permissao: string) => boolean): boolean => !f.sigilo || pode(f.sigilo);
 
 export const yesNo: FieldOption[] = [{ value: "true", label: "Sim" }, { value: "false", label: "Não" }];

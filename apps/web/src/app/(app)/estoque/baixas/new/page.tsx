@@ -18,7 +18,7 @@ export default function Page() {
       <Field label="Data de criação" required span={2}><Input type="date" value={h.writeoff_date} onChange={(e) => setH({ ...h, writeoff_date: e.target.value })} /></Field>
       <Field label="Motivo da baixa" required span={3}><NativeSelect value={h.reason} onChange={(e) => setH({ ...h, reason: e.target.value })}>{REASONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</NativeSelect></Field>
       <Field label="Armazém" required span={4}><RefSelect resource="warehouses" value={h.warehouse_id} onChange={(v) => setH({ ...h, warehouse_id: v ?? "" })} filter={{ empresa_id: h.empresa_id }} /></Field>
-      <Field label="Centro de Custo" span={4}><RefSelect resource="cost_centers" value={h.cost_center_id} onChange={(v) => setH({ ...h, cost_center_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
+      <Field label="Centro de Resultado" span={4}><RefSelect resource="cost_centers" value={h.cost_center_id} onChange={(v) => setH({ ...h, cost_center_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
       <Field label="Motivo/Observação da Baixa" span={8}><Input value={h.reason_note} onChange={(e) => setH({ ...h, reason_note: e.target.value })} /></Field>
       <Field label="Justificativa" required span={12}><Textarea value={h.justification} onChange={(e) => setH({ ...h, justification: e.target.value })} /></Field>
     </div>

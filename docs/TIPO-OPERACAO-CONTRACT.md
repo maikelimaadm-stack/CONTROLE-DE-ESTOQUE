@@ -1136,8 +1136,8 @@ regra que executa a confirmação.
   congelada e gate (`TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`, §12.4) → exigências da versão
   (`TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA`, com `details.exigencias`) → período (`PERIOD_FROZEN`) →
   classificação financeira, só quando haverá título (a do documento revalidada — recusa no campo —, ou,
-  sem classificação, o recuo "padrão legado", recusado com "Cadastre uma categoria financeira de receita e
-  um centro de custo analítico" quando falta cadastro). A **primeira** recusa é exatamente a que a
+  sem classificação, o recuo "padrão legado", recusado com "Cadastre uma natureza de receita analítica e
+  um centro de resultado analítico" quando falta cadastro — texto da decisão 250). A **primeira** recusa é exatamente a que a
   confirmação daria agora: mesmo código, mensagem e detalhes. Situação e política recusadas PARAM a lista
   (sem política não há efeito a prever); exigências, período e classificação recusados SEGUEM. Por
   último, quando haverá título, a conta de parcelas (`parcelasDoTitulo`): se ela recusa (entrada maior ou

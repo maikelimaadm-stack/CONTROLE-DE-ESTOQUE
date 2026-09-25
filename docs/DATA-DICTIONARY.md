@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 184 |
-| Tabelas com `organization_id` (escopo de organização) | 129 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 53 |
-| Entidades curadas neste dicionário | 37 |
+| Tabelas no schema `erp` | 192 |
+| Tabelas com `organization_id` (escopo de organização) | 135 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 54 |
+| Entidades curadas neste dicionário | 49 |
 | Entidades com ID Global | 23 |
 | Entidades com Tipo de Operação | 13 |
 | Tipos de Operação referenciados | 17 |
-| Cobertura curada | 20.1% |
+| Cobertura curada | 25.5% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -300,7 +300,7 @@ Contador ÚNICO por organização que gera o ID Global. Compartilhado por todas 
 
 ### ERP-CADASTROS-PRODUTO — Produto
 
-Item de estoque, insumo ou serviço. Compartilhado pela organização (não pertence a uma empresa).
+Item de estoque, insumo ou serviço. Compartilhado pela organização (não pertence a uma empresa). Ficha em abas (CADASTROS Fase 6, decisão 254).
 
 | Propriedade | Valor |
 | --- | --- |
@@ -325,11 +325,11 @@ Item de estoque, insumo ou serviço. Compartilhado pela organização (não pert
 | `factor_type` |  | text | não |  |  | `multiply` · `divide` |  |
 | `factor` |  | numeric(18,6) | não |  |  |  |  |
 | `group_id` |  | uuid | sim | FK | `erp.product_groups` |  |  |
-| `category_id` |  | uuid | sim | FK | `erp.product_categories` |  |  |
-| `kind_id` |  | uuid | sim | FK | `erp.product_kinds` |  |  |
+| `category_id` |  | uuid | não | FK | `erp.product_categories` |  |  |
+| `kind_id` |  | uuid | não | FK | `erp.product_kinds` |  |  |
 | `cultivation_id` |  | uuid | não |  |  |  |  |
 | `quality` |  | text | não |  |  |  |  |
-| `has_lot` |  | boolean | sim |  |  |  |  |
+| `has_lot` | Controla lote (legado) | boolean | sim |  |  |  | Derivado de controle_lote (controle ≠ nenhum). Gravar has_lot=true grava o controle 'lote'; false, 'nenhum'. |
 | `control_stock` |  | boolean | sim |  |  |  |  |
 | `min_stock` |  | numeric(18,4) | não |  |  |  |  |
 | `last_purchase_date` |  | date | não |  |  |  |  |
@@ -347,11 +347,19 @@ Item de estoque, insumo ou serviço. Compartilhado pela organização (não pert
 | `is_fiscal` |  | boolean | sim |  |  |  |  |
 | `tax_rule_id` |  | uuid | não | FK | `erp.tax_rules` |  |  |
 | `barcode` |  | text | não |  |  |  |  |
-| `taxes` |  | jsonb | sim |  |  |  |  |
+| `taxes` | Parâmetros fiscais | jsonb | sim |  |  |  | Mesmas chaves dos tributos da Regra Fiscal. Chave desconhecida é preservada na edição (a API funde; só null remove). |
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
+| `marca` |  | text | não |  |  |  |  |
+| `fabricante` |  | text | não |  |  |  |  |
+| `tipo_item` |  | text | não |  |  | `00` · `01` · `02` · `03` · `04` · `05` · `06` · `07` · `08` · `09` · `10` · `99` |  |
+| `estoque_maximo` |  | numeric(18,4) | não |  |  |  |  |
+| `controle_lote` | Controle de lote | text | sim |  |  | `nenhum` · `lote` · `lote_validade` | nenhum, lote (lote obrigatório na entrada e na saída) ou lote_validade (também exige validade na entrada). Mudar com saldo ≠ 0 é recusado. |
+| `origem` |  | smallint | não |  |  |  |  |
+| `cest` |  | text | não |  |  |  |  |
+| `registro_mapa` |  | text | não |  |  |  |  |
 
 ### ERP-CADASTROS-PESSOA — Pessoa
 
@@ -372,7 +380,7 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | `id` |  | uuid | não | PK |  |  |  |
 | `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
 | `code` |  | text | sim |  |  |  |  |
-| `document` |  | text | não |  |  |  |  |
+| `document` | Documento | text | não |  |  |  | CPF (11 dígitos) ou CNPJ (14 posições) normalizado: sem pontuação, maiúsculas. Desde a Fase 3 do CADASTROS o CNPJ pode ser ALFANUMÉRICO (IN RFB 2.229/2024: 12 primeiras posições dígitos ou letras, 2 DV dígitos) — o comentário "somente dígitos" da 0002 deixa de valer para CNPJ com letras. Regra única em packages/domain/src/documento.ts. |
 | `person_type` |  | text | sim |  |  | `natural` · `legal` · `foreign` |  |
 | `name` |  | text | sim |  |  |  |  |
 | `legal_name` |  | text | não |  |  |  |  |
@@ -383,12 +391,12 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | `address` |  | text | não |  |  |  |  |
 | `address_number` |  | text | não |  |  |  |  |
 | `district` |  | text | não |  |  |  |  |
-| `city_id` |  | int | não | FK | `erp.cities` |  |  |
+| `city_id` | Município | int | não | FK | `erp.cities` |  | Código IBGE do município (erp.cities), escolhido pela busca de Município. |
 | `state_registration` |  | text | não |  |  |  |  |
 | `city_registration` |  | text | não |  |  |  |  |
 | `contact_name` |  | text | não |  |  |  |  |
 | `contact_phone` |  | text | não |  |  |  |  |
-| `bank_code` |  | text | não | FK | `erp.banks` |  |  |
+| `bank_code` | Banco | text | não | FK | `erp.banks` |  | Código COMPE do banco (erp.banks), escolhido pela busca de Banco. |
 | `bank_account_type` |  | text | não |  |  | `checking` · `savings` |  |
 | `bank_agency` |  | text | não |  |  |  |  |
 | `bank_account` |  | text | não |  |  |  |  |
@@ -400,6 +408,295 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | `is_proprietary` |  | boolean | sim |  |  |  |  |
 | `is_transporter` |  | boolean | sim |  |  |  |  |
 | `is_active` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+| `complemento` |  | text | não |  |  |  |  |
+| `nascimento_abertura` |  | date | não |  |  |  |  |
+| `indicador_ie` |  | text | não |  |  | `contribuinte` · `isento` · `nao_contribuinte` |  |
+| `consumidor_final` |  | boolean | sim |  |  |  |  |
+| `produtor_rural` |  | boolean | sim |  |  |  |  |
+| `regime_tributario` |  | text | não |  |  | `simples` · `mei` · `normal` |  |
+| `cnae_principal` |  | text | não |  |  |  |  |
+| `situacao_receita` |  | text | não |  |  |  |  |
+| `situacao_receita_consultada_em` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-REF-MUNICIPIO — Município (IBGE)
+
+Referência oficial global, só leitura. Fonte: https://servicodados.ibge.gov.br/api/v1/localidades/municipios — baixado em 2026-09-24, 5.571 linhas, sha256 do bruto 86ecdccdf97d72e7e5e46f0854cfcea8bacc28154cc1bc4ed0e6110e3a6c9c02 (supabase/referencias/municipios.csv). UF pelos 2 primeiros dígitos do código IBGE.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.cities` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` | Código IBGE | int | não | PK |  |  | 7 dígitos; os 2 primeiros são a UF. |
+| `name` |  | text | sim |  |  |  |  |
+| `state_code` |  | char(2) | sim | FK | `erp.states` |  |  |
+
+### ERP-CADASTROS-REF-UF — UF (IBGE)
+
+Referência oficial global. Fonte: https://servicodados.ibge.gov.br/api/v1/localidades/estados — baixado em 2026-09-24, 27 linhas, sha256 do bruto 7ca1368dea3af83cba1af84ae8a7e88f1173c97586831d086cc8b3c1ba9c6596.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.states` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `code` |  | char(2) | não | PK |  |  |  |
+| `name` |  | text | sim |  |  |  |  |
+| `ibge_code` |  | int | não |  |  |  |  |
+
+### ERP-CADASTROS-REF-BANCO — Banco
+
+Referência oficial global. Fonte: BCB, lista de participantes do STR (https://www.bcb.gov.br/content/estabilidadefinanceira/str1/ParticipantesSTR.csv) — baixado em 2026-09-24, 463 participantes com código COMPE, sha256 do bruto 3073c905bcf196c56c78e5cd8244588b7781c6aa02fd8659027d7f5529e3abb9. Os códigos anteriores à carga (ex.: 000 Caixa Interno) continuam.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.banks` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `code` |  | text | não | PK |  |  |  |
+| `name` |  | text | sim |  |  |  |  |
+| `ispb` | ISPB | text | não |  |  |  | Identificador do participante no SPB (8 dígitos); nulo fora da lista do STR. |
+
+### ERP-CADASTROS-REF-NCM — NCM
+
+Referência oficial global. Fonte: Siscomex (https://portalunico.siscomex.gov.br/classif/api/publico/nomenclatura/download/json) — baixado em 2026-09-24, 15.156 linhas (10.515 de 8 dígitos), vigente em 24/09/2026 pela Resolução Gecex nº 926/2026, sha256 do bruto da9f6e28c09d4639322891d354a6441686d2dff4d1c7f4de1987277f0ea1df24. Só a NCM de 8 dígitos vigente é escolhível no produto.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.ncm` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `code` | Código | text | não | PK |  |  | Só dígitos (2, 4, 5, 6, 7 ou 8). |
+| `description` |  | text | sim |  |  |  |  |
+| `nivel` | Nível | smallint | não |  |  |  | Quantidade de dígitos do código. |
+| `descricao_completa` | Descrição completa | text | não |  |  |  | Da posição (4 dígitos) até o código, juntando os níveis de cima. |
+| `vigencia_inicio` |  | date | não |  |  |  |  |
+| `vigencia_fim` |  | date | não |  |  |  |  |
+
+### ERP-CADASTROS-REF-CBO — Ocupação (CBO)
+
+Referência oficial global. Fonte: MTE (https://www.gov.br/trabalho-e-emprego/pt-br/assuntos/cbo/servicos/downloads/cbo2002-ocupacao.csv, ISO-8859-1 convertido para UTF-8) — baixado em 2026-09-24, 2.694 ocupações, sha256 do bruto ad6d51d5d139125b15ea746464b2a39fa832ae295cdb6aa63dc7eddf2d2bed00.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.cbo_ocupacoes` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `codigo` |  | text | não | PK |  |  |  |
+| `titulo` |  | text | sim |  |  |  |  |
+
+### ERP-CADASTROS-CACHE-CEP — Cache da consulta de CEP
+
+Cache global (30 dias) da consulta de CEP (ViaCEP, BrasilAPI). Só a API lê e grava.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.consulta_cep_cache` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `cep` |  | text | não | PK |  |  |  |
+| `dados` |  | jsonb | sim |  |  |  |  |
+| `fonte` |  | text | sim |  |  |  |  |
+| `consultado_em` |  | timestamptz | sim |  |  |  |  |
+
+### ERP-CADASTROS-CACHE-CNPJ — Cache da consulta de CNPJ
+
+Cache global (7 dias) da consulta de CNPJ nas fontes gratuitas (BrasilAPI, CNPJá aberta, CNPJ.ws pública). Nunca guarda o quadro societário. Só a API lê e grava.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.consulta_cnpj_cache` |
+| Natureza | infraestrutura |
+| Escopo de organização | não |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `cnpj` |  | text | não | PK |  |  |  |
+| `dados` |  | jsonb | sim |  |  |  |  |
+| `fonte` |  | text | sim |  |  |  |  |
+| `consultado_em` |  | timestamptz | sim |  |  |  |  |
+
+### ERP-CADASTROS-PARCEIRO-ENDERECO — Endereço adicional do parceiro
+
+Endereços ADICIONAIS do parceiro (entrega, cobrança, propriedade, outro), gravados junto com a ficha (CADASTROS Fase 4, decisão 253). O principal continua nas colunas de erp.people. Linha removida da grade é excluída logicamente.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.parceiro_enderecos` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `person_id` |  | uuid | sim |  |  |  |  |
+| `tipo` |  | text | sim |  |  | `entrega` · `cobranca` · `propriedade` · `outro` |  |
+| `descricao` |  | text | não |  |  |  |  |
+| `cep` |  | text | não |  |  |  |  |
+| `logradouro` |  | text | não |  |  |  |  |
+| `numero` |  | text | não |  |  |  |  |
+| `complemento` |  | text | não |  |  |  |  |
+| `bairro` |  | text | não |  |  |  |  |
+| `city_id` |  | int | não | FK | `erp.cities` |  |  |
+| `inscricao_estadual` | IE | text | não |  |  |  | IE própria do endereço (produtor rural: uma por propriedade). Só formato: dígitos ou ISENTO. |
+| `is_active` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-PARCEIRO-CONTATO — Contato adicional do parceiro
+
+Contatos ADICIONAIS do parceiro (nome, função, telefones, e-mail, recebe NF-e por e-mail). O contato principal continua em erp.people.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.parceiro_contatos` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `person_id` |  | uuid | sim |  |  |  |  |
+| `nome` |  | text | sim |  |  |  |  |
+| `funcao` |  | text | não |  |  |  |  |
+| `telefone` |  | text | não |  |  |  |  |
+| `celular` |  | text | não |  |  |  |  |
+| `email` |  | citext | não |  |  |  |  |
+| `recebe_nfe_email` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-PARCEIRO-CONTA — Conta bancária adicional do parceiro
+
+Contas bancárias ADICIONAIS do parceiro (banco pela busca, agência, conta, tipo, titular, Pix). A principal continua nas colunas de erp.people.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.parceiro_contas` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `person_id` |  | uuid | sim |  |  |  |  |
+| `bank_code` |  | text | não | FK | `erp.banks` |  |  |
+| `agencia` |  | text | não |  |  |  |  |
+| `conta` |  | text | não |  |  |  |  |
+| `tipo` |  | text | não |  |  | `checking` · `savings` |  |
+| `titular` |  | text | não |  |  |  |  |
+| `pix_tipo` |  | text | não |  |  | `document` · `phone` · `email` · `random` |  |
+| `pix_chave` |  | text | não |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-PRODUTO-UNIDADE — Unidade alternativa do produto
+
+Unidades ALTERNATIVAS e embalagens do produto (unidade, multiplica/divide, fator > 0, código de barras, uso compra e/ou venda), gravadas junto com a ficha (CADASTROS Fase 6, decisão 254). Não repete a unidade padrão. A 2ª unidade antiga virou a primeira linha; erp.product_packages fica como legado.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.produto_unidades` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `product_id` |  | uuid | sim |  |  |  |  |
+| `measurement_id` |  | uuid | sim | FK | `erp.measurement_units` |  |  |
+| `tipo_fator` |  | text | sim |  |  | `multiply` · `divide` |  |
+| `fator` |  | numeric(18,6) | sim |  |  |  |  |
+| `codigo_barras` |  | text | não |  |  |  |  |
+| `uso_compra` |  | boolean | sim |  |  |  |  |
+| `uso_venda` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
+### ERP-CADASTROS-PRODUTO-FORNECEDOR — Fornecedor do produto
+
+Fornecedores do produto (CADASTROS Fase 6): só parceiro com tipo Fornecedor, código do produto no fornecedor, unidade de compra e no máximo um preferencial.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.produto_fornecedores` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim |  |  |  |  |
+| `product_id` |  | uuid | sim |  |  |  |  |
+| `person_id` |  | uuid | sim |  |  |  |  |
+| `codigo_no_fornecedor` |  | text | não |  |  |  |  |
+| `measurement_id` |  | uuid | não | FK | `erp.measurement_units` |  |  |
+| `preferencial` |  | boolean | sim |  |  |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
@@ -720,6 +1017,7 @@ Produção de ração a partir de uma fórmula: consome insumos e gera produto a
 | `created_by` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+| `validade` |  | date | não |  |  |  |  |
 
 ### ERP-ESTOQUE-MOVIMENTO — Movimento de Estoque
 
@@ -1409,7 +1707,6 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.bank_account_proprietaries` | 2 | não | — | não |
 | `erp.bank_accounts` | 20 | sim | — | sim |
 | `erp.bank_movement_apportionments` | 8 | não | — | não |
-| `erp.banks` | 2 | não | — | não |
 | `erp.batch_categories` | 2 | não | — | não |
 | `erp.batches` | 21 | sim | `empresa_id` | sim |
 | `erp.bonuses` | 11 | sim | — | sim |
@@ -1421,8 +1718,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.budget_planning_values` | 4 | não | — | não |
 | `erp.budget_plannings` | 10 | sim | `empresa_id` | sim |
 | `erp.chart_accounts` | 12 | sim | — | sim |
-| `erp.cities` | 3 | não | — | não |
-| `erp.client_profiles` | 8 | não | — | não |
+| `erp.client_profiles` | 9 | não | — | não |
 | `erp.contract_items` | 6 | não | — | não |
 | `erp.contracts` | 18 | sim | `empresa_id` | sim |
 | `erp.cost_centers` | 11 | sim | — | sim |
@@ -1440,7 +1736,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.earning_lines` | 7 | não | — | não |
 | `erp.earnings` | 12 | sim | `empresa_id` | não |
 | `erp.employee_events` | 6 | sim | — | não |
-| `erp.employee_profiles` | 13 | não | — | não |
+| `erp.employee_profiles` | 29 | sim | `empresa_id` | não |
 | `erp.empresa_cost_centers` | 2 | não | `empresa_id` | não |
 | `erp.equipment_cost_centers` | 3 | não | — | não |
 | `erp.equipment_families` | 5 | sim | — | não |
@@ -1477,7 +1773,6 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.membro_escopos_empresa` | 7 | sim | — | não |
 | `erp.modulos_escopo_empresa` | 3 | não | — | não |
 | `erp.nature_operations` | 21 | sim | — | sim |
-| `erp.ncm` | 2 | não | — | não |
 | `erp.notificacao_leituras` | 4 | sim | — | não |
 | `erp.notifications` | 17 | sim | `empresa_id` | não |
 | `erp.ofx_transactions` | 10 | sim | — | não |
@@ -1488,7 +1783,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.preventive_maintenances` | 12 | sim | — | sim |
 | `erp.processings` | 13 | sim | `empresa_id` | não |
 | `erp.product_categories` | 5 | sim | — | não |
-| `erp.product_groups` | 4 | sim | — | não |
+| `erp.product_groups` | 8 | sim | — | sim |
 | `erp.product_kinds` | 5 | sim | — | não |
 | `erp.product_merges` | 6 | sim | — | não |
 | `erp.product_packages` | 6 | sim | — | não |
@@ -1511,7 +1806,6 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.saved_reports` | 11 | sim | — | sim |
 | `erp.scheduled_reviews` | 10 | sim | — | sim |
 | `erp.service_order_lines` | 12 | não | — | não |
-| `erp.states` | 3 | não | — | não |
 | `erp.stock_balances` | 10 | sim | — | não |
 | `erp.stock_corrections` | 16 | sim | `empresa_id` | não |
 | `erp.stock_writeoff_items` | 7 | não | — | não |

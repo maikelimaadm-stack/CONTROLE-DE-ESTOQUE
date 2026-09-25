@@ -7,7 +7,7 @@ import { notFound, validation, err } from "../lib/errors.js";
 import { empresaScope, exigirEmpresaDeLancamento, exigirEmpresaVisivel, empresaPermitida, empresaScopeSql, scopedById, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
-import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
+import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema, exigirRateioAnalitico } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
@@ -134,6 +134,7 @@ export default async function financialRoutes(app: FastifyInstance) {
       if (d.apportionment) {
         const t = await ctx.tx.query<{ net: string }>("select amount - discount as net from erp.financial_titles where id=$1", [id]);
         const { normalizeApportionment } = await import("@agro/domain");
+        await exigirRateioAnalitico(ctx, d.apportionment.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id })));
         const lines = normalizeApportionment(t.rows[0]!.net, d.apportionment.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, areaId: a.area_id ?? null, percentage: a.percentage, amount: a.amount })));
         await ctx.tx.query("delete from erp.title_apportionments where title_id=$1", [id]);
         for (const l of lines) await ctx.tx.query("insert into erp.title_apportionments(title_id,financial_category_id,chart_account_id,cost_center_id,area_id,harvest_id,percentage,amount) values ($1,$2,$3,$4,$5,$6,$7,$8)", [id, l.financialCategoryId, l.chartAccountId, l.costCenterId, l.areaId, l.harvestId, l.percentage, l.amount]);
@@ -291,8 +292,10 @@ export default async function financialRoutes(app: FastifyInstance) {
     if (d.settlement_kind === "bank_movement") {
       if (!d.bank_account_id) throw validation("Conta bancária obrigatória");
       if (!movementId) {
+        // o movimento COPIA o rateio gravado no título e não o reconfere (`rateioJaGravado`, decisão 256): natureza ou
+        // centro inativado/excluído depois da emissão não pode deixar o título em aberto sem baixa
         const lines = await ctx.tx.query<{ financial_category_id: string; cost_center_id: string; chart_account_id: string | null; harvest_id: string | null; percentage: string }>("select financial_category_id, cost_center_id, chart_account_id, harvest_id, percentage from erp.title_apportionments where title_id=$1", [titleId]);
-        movementId = await createBankMovement(ctx, { empresaId: title.empresa_id, bankAccountId: d.bank_account_id, date: d.settlement_date, type: title.direction === "payable" ? "out" : "in", amount: net, interest: "0", document: title.number, note: d.note ?? `Baixa do título ${title.number}`, proprietaryId: title.proprietary_id, personId: title.person_id, harvestId: title.harvest_id, isDeductible: title.is_deductible, sourceType: "title_settlements", sourceId: titleId, apportionment: lines.rows.map((l) => ({ financialCategoryId: l.financial_category_id, costCenterId: l.cost_center_id, chartAccountId: l.chart_account_id, harvestId: l.harvest_id, percentage: l.percentage })) });
+        movementId = await createBankMovement(ctx, { empresaId: title.empresa_id, bankAccountId: d.bank_account_id, date: d.settlement_date, type: title.direction === "payable" ? "out" : "in", amount: net, interest: "0", document: title.number, note: d.note ?? `Baixa do título ${title.number}`, proprietaryId: title.proprietary_id, personId: title.person_id, harvestId: title.harvest_id, isDeductible: title.is_deductible, sourceType: "title_settlements", sourceId: titleId, apportionment: lines.rows.map((l) => ({ financialCategoryId: l.financial_category_id, costCenterId: l.cost_center_id, chartAccountId: l.chart_account_id, harvestId: l.harvest_id, percentage: l.percentage })), rateioJaGravado: true });
       }
     } else if (d.settlement_kind === "cross_settlement" || d.settlement_kind === "advance_compensation") {
       if (!d.cross_title_id) throw validation("Título contrário obrigatório para baixa cruzada");
@@ -391,7 +394,7 @@ export default async function financialRoutes(app: FastifyInstance) {
   app.post("/financial/bank-movements", async (req, reply) => reply.status(201).send(await runService(app, req, "bank_movements.create", async (ctx) => {
     const d = bmSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id);
     if (d.category_type === "internal_transfer" && !d.destination_account_id) throw validation("Conta destino obrigatória em transferência interna");
-    if (d.category_type !== "internal_transfer" && !d.apportionment?.length) throw validation("Rateio (categoria/centro de custo) obrigatório");
+    if (d.category_type !== "internal_transfer" && !d.apportionment?.length) throw validation("Rateio (natureza/centro de resultado) obrigatório");
     return (await idempotent(ctx.tx, ctx.orgId, idem(req), d, async () => {
       const id = await createBankMovement(ctx, { empresaId: d.empresa_id ?? ctx.empresaId, bankAccountId: d.bank_account_id, date: d.movement_date, type: d.type, categoryType: d.category_type, destinationAccountId: d.destination_account_id ?? null, amount: d.amount, interest: d.interest, document: d.document, note: d.note, proprietaryId: d.proprietary_id, personId: d.person_id, harvestId: d.harvest_id, isDeductible: d.is_deductible, generatesObligation: d.generates_obligation, sourceType: "manual", sourceId: undefined, apportionment: d.apportionment?.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, percentage: a.percentage, amount: a.amount })) });
       // "Gera obrigação": cria título correspondente já baixado por este movimento (ex.: saída sem título prévio)
@@ -410,7 +413,7 @@ export default async function financialRoutes(app: FastifyInstance) {
     if (cur.rows[0].source_type && cur.rows[0].source_type !== "manual") throw err("CONFLICT", "Movimento gerado por outro documento: altere pela origem");
     await assertPeriodOpen(ctx.tx, ctx.orgId, cur.rows[0].empresa_id, cur.rows[0].movement_date);
     await ctx.tx.query("update erp.bank_movements set movement_date=coalesce($3,movement_date), amount=coalesce($4,amount), interest=coalesce($5,interest), document=coalesce($6,document), note=coalesce($7,note), is_deductible=coalesce($8,is_deductible), person_id=coalesce($9,person_id), proprietary_id=coalesce($10,proprietary_id), harvest_id=coalesce($11,harvest_id), updated_at=now() where id=$1 and organization_id=$2", [id, ctx.orgId, d.movement_date ?? null, d.amount ?? null, d.interest ?? null, d.document ?? null, d.note ?? null, d.is_deductible ?? null, d.person_id ?? null, d.proprietary_id ?? null, d.harvest_id ?? null]);
-    if (d.apportionment) { const { normalizeApportionment } = await import("@agro/domain"); const amt = (await ctx.tx.query<{ amount: string }>("select amount from erp.bank_movements where id=$1", [id])).rows[0]!.amount; await ctx.tx.query("delete from erp.bank_movement_apportionments where movement_id=$1", [id]); for (const l of normalizeApportionment(amt, d.apportionment.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, percentage: a.percentage, amount: a.amount })))) await ctx.tx.query("insert into erp.bank_movement_apportionments(movement_id,financial_category_id,chart_account_id,cost_center_id,harvest_id,percentage,amount) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.financialCategoryId, l.chartAccountId, l.costCenterId, l.harvestId, l.percentage, l.amount]); }
+    if (d.apportionment) { await exigirRateioAnalitico(ctx, d.apportionment.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id }))); const { normalizeApportionment } = await import("@agro/domain"); const amt = (await ctx.tx.query<{ amount: string }>("select amount from erp.bank_movements where id=$1", [id])).rows[0]!.amount; await ctx.tx.query("delete from erp.bank_movement_apportionments where movement_id=$1", [id]); for (const l of normalizeApportionment(amt, d.apportionment.map((a) => ({ financialCategoryId: a.financial_category_id, costCenterId: a.cost_center_id, chartAccountId: a.chart_account_id ?? null, harvestId: a.harvest_id ?? null, percentage: a.percentage, amount: a.amount })))) await ctx.tx.query("insert into erp.bank_movement_apportionments(movement_id,financial_category_id,chart_account_id,cost_center_id,harvest_id,percentage,amount) values ($1,$2,$3,$4,$5,$6,$7)", [id, l.financialCategoryId, l.chartAccountId, l.costCenterId, l.harvestId, l.percentage, l.amount]); }
     await audit(ctx.tx, ctx, "bank_movements", id, "update");
     return { id };
   }));

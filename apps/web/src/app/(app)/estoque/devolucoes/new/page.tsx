@@ -8,24 +8,39 @@ import { todayISO } from "@/lib/utils";
 import { Button, Card, CardHeader, CardBody, Field, Input } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { ItemsEditor, useCreate, useEmpresaPadrao, type ItemRow, type Row } from "@/features/docs/shared";
+import { useLoteNaEntrada } from "@/features/stock/capacidade-lote";
+/**
+ * Linhas da devolução feita a partir de uma requisição: UMA POR MOVIMENTO DE SAÍDA da requisição, com o armazém, o
+ * produto, a quantidade, o lote e a validade de cada parte. Numa saída sem lote a escolha automática grava o lote só
+ * no MOVIMENTO (o item da requisição fica sem lote) e pode dividir o item entre lotes — pré-preencher pelo item
+ * mandava a devolução sem lote, e produto com controle recebia 422 ao salvar (revisão do R1, R1-1 c).
+ * API anterior (movimentos sem produto e armazém no detalhe): cai nos itens, como antes.
+ */
+function linhasDaRequisicao(d: Row & { items: Row[]; movements?: Row[] }): ItemRow[] {
+  const saidas = (d.movements ?? []).filter((m) => m["movement_type"] === "requisition" && Number(m["direction"]) === -1 && m["product_id"] && m["warehouse_id"]);
+  if (saidas.length) return saidas.map((m) => ({ warehouse_id: String(m["warehouse_id"]), product_id: String(m["product_id"]), quantity: String(m["quantity"] ?? "0"), unit_value: "0", cost_center_id: String(m["cost_center_id"] ?? ""), provider_lot: String(m["provider_lot"] ?? ""), expiration_date: String(m["expiration_date"] ?? "") }));
+  return d.items.map((i) => ({ warehouse_id: String(i["warehouse_id"] ?? ""), product_id: String(i["product_id"] ?? ""), quantity: String(i["quantity"] ?? "0"), unit_value: "0", cost_center_id: String(i["cost_center_id"] ?? ""), provider_lot: String(i["provider_lot"] ?? "") }));
+}
 function Inner() {
   const router = useRouter(); const empresa = useEmpresaPadrao(); const reqId = useSearchParams().get("requisition_id");
+  // lote e validade só com a API que os entende (`capacidades.loteNaEntrada`): a anterior os descartaria em silêncio
+  const loteNaEntrada = useLoteNaEntrada();
   // devolução a partir de uma requisição (ação contextual "Devolver itens"): pré-preenche empresa e itens
-  const req = useQuery({ queryKey: ["docone", `/api/stock/requisitions/${reqId}`], queryFn: () => api<Row & { items: Row[] }>(`/api/stock/requisitions/${reqId}`), enabled: Boolean(reqId) });
+  const req = useQuery({ queryKey: ["docone", `/api/stock/requisitions/${reqId}`], queryFn: () => api<Row & { items: Row[]; movements?: Row[] }>(`/api/stock/requisitions/${reqId}`), enabled: Boolean(reqId) });
   const [h, setH] = React.useState({ empresa_id: "", devolution_date: todayISO(), responsible_person_id: "", harvest_id: "" });
   const [items, setItems] = React.useState<ItemRow[]>([]);
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
-  React.useEffect(() => { const d = req.data; if (!d) return; setH((o) => ({ ...o, empresa_id: String(d["empresa_id"] ?? o.empresa_id) })); setItems(d.items.map((i) => ({ warehouse_id: String(i["warehouse_id"] ?? ""), product_id: String(i["product_id"] ?? ""), quantity: String(i["quantity"] ?? "0"), unit_value: "0", cost_center_id: String(i["cost_center_id"] ?? "") }))); }, [req.data]);
+  React.useEffect(() => { const d = req.data; if (!d) return; setH((o) => ({ ...o, empresa_id: String(d["empresa_id"] ?? o.empresa_id) })); setItems(linhasDaRequisicao(d)); }, [req.data]);
   const create = useCreate("/api/stock/devolutions", () => router.push("/estoque?tab=operacoes&sub=devolucoes"));
-  return <Card><CardHeader title={reqId ? `Devolução de itens da requisição ${String(req.data?.["code"] ?? "")}` : "Devolução do Estoque (entrada)"} actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!items.length} onClick={() => create.mutate({ ...h, responsible_person_id: h.responsible_person_id || null, harvest_id: h.harvest_id || null, items: items.map((i) => ({ warehouse_id: i.warehouse_id, product_id: i.product_id, quantity: i.quantity, unit_value: i.unit_value && Number(i.unit_value) > 0 ? i.unit_value : null, cost_center_id: i.cost_center_id || null })) })}>Salvar</Button></>} /><CardBody className="space-y-4">
+  return <Card><CardHeader title={reqId ? `Devolução de itens da requisição ${String(req.data?.["code"] ?? "")}` : "Devolução do Estoque (entrada)"} actions={<><Button variant="outline" size="sm" onClick={() => router.back()}>Voltar</Button><Button size="sm" loading={create.isPending} disabled={!items.length} onClick={() => create.mutate({ ...h, responsible_person_id: h.responsible_person_id || null, harvest_id: h.harvest_id || null, items: items.map((i) => ({ warehouse_id: i.warehouse_id, product_id: i.product_id, quantity: i.quantity, unit_value: i.unit_value && Number(i.unit_value) > 0 ? i.unit_value : null, cost_center_id: i.cost_center_id || null, ...(loteNaEntrada ? { provider_lot: i.provider_lot?.trim() || null, expiration_date: i.expiration_date || null } : {}) })) })}>Salvar</Button></>} /><CardBody className="space-y-4">
     <div className="grid grid-cols-12 gap-3">
       <Field label="Empresa" required span={3}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>
       <Field label="Data" required span={2}><Input type="date" value={h.devolution_date} onChange={(e) => setH({ ...h, devolution_date: e.target.value })} /></Field>
       <Field label="Responsável pela devolução" span={4}><RefSelect resource="people" value={h.responsible_person_id} onChange={(v) => setH({ ...h, responsible_person_id: v ?? "" })} /></Field>
       <Field label="Safra" span={3}><RefSelect resource="harvests" value={h.harvest_id} onChange={(v) => setH({ ...h, harvest_id: v ?? "" })} /></Field>
     </div>
-    <ItemsEditor items={items} onChange={setItems} fields={["warehouse", "product", "quantity", "unit_value", "cost_center"]} />
-    <p className="text-xs text-slate-500">Valor unitário em branco/zero usa o custo médio do produto.</p>
+    <ItemsEditor items={items} onChange={setItems} fields={loteNaEntrada ? ["warehouse", "product", "quantity", "unit_value", "lot", "expiration", "cost_center"] : ["warehouse", "product", "quantity", "unit_value", "cost_center"]} />
+    <p className="text-xs text-slate-500">Valor unitário em branco/zero usa o custo médio do produto.{loteNaEntrada ? " Lote e validade são exigidos só para produto com controle de lote (a validade, no controle por lote e validade)." : ""}</p>
   </CardBody></Card>;
 }
 export default function Page() { return <Suspense><Inner /></Suspense>; }

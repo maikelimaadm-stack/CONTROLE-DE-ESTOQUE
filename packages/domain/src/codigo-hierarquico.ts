@@ -1,7 +1,8 @@
 /**
- * Código hierárquico dos cadastros em árvore (Plano de Contas, Categorias Financeiras, Centros de Custo).
+ * Código hierárquico dos cadastros em árvore (Plano de Contas, Naturezas, Centros de Resultado e
+ * Grupos de Produtos).
  *
- * O código de um filho é SEMPRE o código do antecessor + um nível: `1.01` → `1.01.001`. A máscara diz
+ * O código de um filho é SEMPRE o código do superior + um nível: `1.01` → `1.01.001`. A máscara diz
  * quantos níveis existem e quantos dígitos cada um tem (`9.99.999.9999`), e é configurada POR CADASTRO
  * nos parâmetros da organização (`mascaras_codigo`). Sem configuração vale a máscara padrão, que é o
  * formato que o sistema sempre usou.
@@ -11,7 +12,7 @@
  */
 
 /** Cadastros com código hierárquico. Endereçamento é árvore, mas não tem código. */
-export const CADASTROS_CODIGO_HIERARQUICO = ["chart_accounts", "financial_categories", "cost_centers"] as const;
+export const CADASTROS_CODIGO_HIERARQUICO = ["chart_accounts", "financial_categories", "cost_centers", "product_groups"] as const;
 export type CadastroCodigoHierarquico = (typeof CADASTROS_CODIGO_HIERARQUICO)[number];
 
 export const PARAMETRO_MASCARAS_CODIGO = "mascaras_codigo";
@@ -63,20 +64,20 @@ export function validarCodigoHierarquico(codigo: string, mascara: string, codigo
     if (!/^\d+$/.test(parte) || parte.length !== largura) return `O ${i + 1}º nível do código deve ter ${largura} dígito(s) (máscara ${mascara}).`;
   }
   if (codigoPai === null) {
-    if (partes.length !== 1) return "Sem antecessor, o código é de 1º nível. Informe o antecessor ou use um código de um nível só.";
+    if (partes.length !== 1) return "Sem superior, o código é de 1º nível. Informe o superior ou use um código de um nível só.";
     return null;
   }
   if (!codigo.startsWith(`${codigoPai}.`) || partes.length !== nivelDoCodigo(codigoPai) + 1) {
-    return `O código deve começar com o código do antecessor (${codigoPai}.) e ter um nível a mais.`;
+    return `O código deve começar com o código do superior (${codigoPai}.) e ter um nível a mais.`;
   }
   return null;
 }
 
-/** Próximo código livre abaixo do antecessor (ou na raiz). `codigosExistentes` pode trazer o cadastro inteiro. */
+/** Próximo código livre abaixo do superior (ou na raiz). `codigosExistentes` pode trazer o cadastro inteiro. */
 export function proximoCodigoHierarquico(codigoPai: string | null, codigosExistentes: readonly string[], mascara: string): { codigo: string } | { erro: string } {
   const larguras = larguraDosNiveis(mascara) ?? larguraDosNiveis(MASCARA_CODIGO_PADRAO)!;
   const nivel = codigoPai === null ? 1 : nivelDoCodigo(codigoPai) + 1;
-  if (nivel > larguras.length) return { erro: `O antecessor já está no último nível da máscara (${mascara}).` };
+  if (nivel > larguras.length) return { erro: `O superior já está no último nível da máscara (${mascara}).` };
   const largura = larguras[nivel - 1]!;
   const prefixo = codigoPai === null ? "" : `${codigoPai}.`;
   let maior = 0;

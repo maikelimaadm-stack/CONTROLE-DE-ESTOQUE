@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, uniq, pickRef, preencherClassificacaoFinanceira } from "./helpers";
+import { login, uniq, pickRef, preencherClassificacaoFinanceira, ROTULOS_CLASSIFICACAO_BASE } from "./helpers";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -315,7 +315,7 @@ test("VENDAS-A1 · A1-K2 — o web da base cria venda sem classificação: 201 c
   if (baseMostraCampos) {
     // Mundo em que a base já é posterior à A1: o web dela preenche como o deste HEAD (W1). O caso do cliente
     // ANTERIOR à fatia deixou de existir em produção, e fingi-lo aqui certificaria o que não roda.
-    await preencherClassificacaoFinanceira(page);
+    await preencherClassificacaoFinanceira(page, ROTULOS_CLASSIFICACAO_BASE);
   }
   await salvar.click();
   const r = await resposta;
@@ -409,4 +409,120 @@ test("VENDAS-A5-1 · A5-K2 — o web da base confirma uma venda contra a API des
   // A premissa da trilha: a mesma leitura ENXERGA uma escrita — a confirmação aparece nela.
   expect((await trilha()).filter((i) => i.action === "confirm"), "a confirmação ficou na trilha").toHaveLength(1);
   v.semBloqueio(); v.semErroDeContrato();
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * CADASTROS-ESTRUTURA (decisão 250) · WEB ANTERIOR × API NOVA — os casos 1 e 2 da janela de deploy
+ *
+ * (1) o formulário de produto da base manda category_id e kind_id: a API nova os aceita como campos
+ *     LEGADOS opcionais (`camposLegadosDeEscrita`) e grava o que vier → 201;
+ * (2) o formulário de grupo da base manda só nome: a API nova exige código → 422 DECLARADO, nada gravado.
+ * O corpo é o que o web da base envia (a base nunca terá os campos novos — comportamento fixo, sem decisão
+ * medida).
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+async function cabecalhosDaSessao(page: Page) {
+  const s = await sessao(page);
+  return { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+}
+
+test("CADASTROS-ESTRUTURA · CE-K1 — corpo ANTIGO de produto (com category_id e kind_id): 201 na API nova, gravado como veio", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const primeiro = async (p: string) => {
+    const r = await page.request.get(`${API}${p}`, { headers: cab });
+    expect(r.status(), p).toBe(200);
+    return (await r.json() as { items: { id: string }[] }).items?.[0]?.id;
+  };
+  const grupo = await primeiro("/api/resources/product_groups?kind=analytic&pageSize=1");
+  expect(grupo, "premissa: há grupo analítico").toBeTruthy();
+  const unidade = await primeiro("/api/resources/measurement_units?symbol=un&pageSize=1");
+  expect(unidade, "premissa: há unidade").toBeTruthy();
+  // os lookups de Categoria/Classe que a web anterior usa continuam na API nova
+  const cat = await page.request.post(`${API}/api/resources/product_categories`, { headers: cab, data: { group_id: grupo, name: uniq("CE-K1 Categoria"), is_active: true } });
+  expect(cat.status(), await cat.text()).toBe(201);
+  const categoria = (await cat.json() as { id: string }).id;
+  const cls = await page.request.post(`${API}/api/resources/product_kinds`, { headers: cab, data: { category_id: categoria, name: uniq("CE-K1 Classe"), is_active: true } });
+  expect(cls.status(), await cls.text()).toBe(201);
+  const classe = (await cls.json() as { id: string }).id;
+
+  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: {
+    description: uniq("CE-K1 produto web anterior"), measurement_id: unidade, group_id: grupo, category_id: categoria, kind_id: classe, control_stock: false, is_active: true } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  // Lido do BANCO: a API nova não devolve os campos legados na leitura (saíram do registry), só os grava.
+  const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+  const gravado = execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `select category_id || '|' || kind_id from erp.products where id = '${id}'`], { encoding: "utf8" }).trim();
+  expect(gravado, "a API grava o que veio").toBe(`${categoria}|${classe}`);
+});
+
+test("CADASTROS-ESTRUTURA · CE-K2 — grupo pelo corpo ANTIGO (sem código): 422 declarado no código, nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const nome = uniq("CE-K2 grupo web anterior");
+  const r = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { name: nome, is_active: true } });
+  expect(r.status(), await r.text()).toBe(422);
+  const erro = ((await r.json()) as { error: { details?: { path: string | string[] }[] } }).error;
+  expect(erro.details?.map((d) => String(d.path)), "a recusa aponta o Código").toContain("code");
+  const lista = await (await page.request.get(`${API}/api/resources/product_groups?search=${encodeURIComponent(nome)}`, { headers: cab })).json() as { items: unknown[] };
+  expect(lista.items, "nada gravado").toHaveLength(0);
+});
+
+test("CADASTROS FASE 4 · PA-K2 — formulário ANTERIOR de Pessoas contra a API nova: grava; PUT sem grades não mexe nelas; sem tipo → 422; documento inválido 422 e duplicado 409", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+  const sql = (c: string) => execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
+  // corpo do formulário anterior: só colunas de people, nenhuma chave da ficha
+  const semTipo = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 sem tipo"), person_type: "legal", is_provider: false, is_client: false, is_employee: false, is_proprietary: false, is_transporter: false } });
+  expect(semTipo.status(), await semTipo.text()).toBe(422);
+  expect((await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 doc"), document: "529.982.247-00", person_type: "natural", is_client: true } })).status(), "CPF com DV errado").toBe(422);
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 web anterior"), document: "12.ABC.345/01DE-35", person_type: "legal", is_client: true, is_provider: false, is_employee: false, is_proprietary: false, is_transporter: false, is_active: true } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+  const org = sql(`select organization_id from erp.people where id = '${id}'`);
+  sql(`insert into erp.parceiro_enderecos (organization_id, person_id, tipo, logradouro) values ('${org}', '${id}', 'entrega', 'PA-K2 rua')`);
+  const put = await page.request.put(`${API}/api/resources/people/${id}`, { headers: cab, data: { phone: "63 99999-0000", is_client: true } });
+  expect(put.status(), await put.text()).toBe(200);
+  expect(sql(`select count(*) from erp.parceiro_enderecos where person_id = '${id}' and deleted_at is null`), "grade intacta").toBe("1");
+  const dup = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 dup"), document: "12ABC34501DE35", person_type: "legal", is_client: true } });
+  expect(dup.status(), await dup.text()).toBe(409);
+  // o dado de teste fica excluído logicamente (nunca apagado)
+  sql(`update erp.people set deleted_at = now() where id = '${id}'`);
+});
+
+test("CADASTROS FASE 5 · RH-K2 — web ANTERIOR contra a API nova: nada muda (funcionário pelo cadastro de Pessoas grava; folha e Funções como antes)", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  // "Novo funcionário" da web anterior: formulário de Pessoas com is_employee
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("RH-K2 funcionario"), person_type: "natural", is_employee: true, is_client: false, is_provider: false, is_proprietary: false, is_transporter: false } });
+  expect(r.status(), await r.text()).toBe(201);
+  // Funções: o corpo anterior (sem CBO) grava
+  const f = await page.request.post(`${API}/api/resources/job_functions`, { headers: cab, data: { name: uniq("RH-K2 funcao"), base_salary: "1000", monthly_hours: 220, hour_value: "5", description: "RH-K2", is_active: true } });
+  expect(f.status(), await f.text()).toBe(201);
+  // o dado de teste fica excluído logicamente (nunca apagado)
+  const id = (await r.json() as { id: string }).id;
+  const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+  execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `update erp.people set deleted_at = now() where id = '${id}'`], { encoding: "utf8" });
+});
+
+test("CADASTROS FASE 6 · PR-K2 — formulário ANTERIOR de Produto contra a API nova: has_lot=true grava 'lote', false grava 'nenhum'; 2ª unidade aceita como legado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+  const sql = (c: string) => execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
+  const grupo = sql("select id from erp.product_groups where deleted_at is null and kind = 'analytic' order by code limit 1");
+  const un = sql("select id from erp.measurement_units where upper(symbol) = 'UN' order by organization_id nulls last limit 1");
+  const kg = sql("select id from erp.measurement_units where upper(symbol) = 'KG' order by organization_id nulls last limit 1");
+  const natureza = sql("select id from erp.financial_categories where deleted_at is null and kind = 'analytic' and nature = 'expense' order by code limit 1");
+  // corpo do formulário anterior: has_lot e a 2ª unidade, nenhuma chave da ficha
+  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: uniq("PR-K2 web anterior"), group_id: grupo, measurement_id: un, financial_category_id: natureza, has_lot: true, second_measurement_id: kg, factor_type: "multiply", factor: "25", control_stock: true, is_active: true } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string; has_lot: boolean }).id;
+  expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`)).toBe("lote/true");
+  const put = await page.request.put(`${API}/api/resources/products/${id}`, { headers: cab, data: { has_lot: false } });
+  expect(put.status(), await put.text()).toBe(200);
+  expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`)).toBe("nenhum/false");
+  sql(`update erp.products set deleted_at = now() where id = '${id}'`);
 });

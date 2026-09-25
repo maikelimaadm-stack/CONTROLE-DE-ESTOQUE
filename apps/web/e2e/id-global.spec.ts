@@ -98,11 +98,12 @@ test.describe("ID Global — busca e identidade", () => {
     const produto = await page.evaluate(async (base: string) => {
       const s = JSON.parse(localStorage.getItem("agro.session") ?? "{}") as { token: string; orgId: string };
       const cab = { "content-type": "application/json", authorization: `Bearer ${s.token}`, "x-org-id": s.orgId };
-      const um = async (r: string) => (await (await fetch(`${base}/api/resources/${r}/options`, { headers: cab })).json())[0].id;
+      // `recurso?filtro`: o grupo do produto precisa ser ANALÍTICO (CADASTROS-ESTRUTURA)
+      const um = async (r: string) => { const [recurso, filtro] = r.split("?"); return (await (await fetch(`${base}/api/resources/${recurso}/options${filtro ? `?${filtro}` : ""}`, { headers: cab })).json())[0].id; };
       const cat = await (await fetch(`${base}/api/resources/financial_categories?pageSize=1&kind=analytic`, { headers: cab })).json();
       const novo = await (await fetch(`${base}/api/resources/products`, { method: "POST", headers: cab, body: JSON.stringify({
-        description: `Produto ID Global ${Date.now()}`, measurement_id: await um("measurement_units"), group_id: await um("product_groups"),
-        category_id: await um("product_categories"), kind_id: await um("product_kinds"), control_stock: true,
+        description: `Produto ID Global ${Date.now()}`, measurement_id: await um("measurement_units"), group_id: await um("product_groups?kind=analytic"),
+        control_stock: true,
         financial_category_id: cat.items[0].id }) })).json();
       return novo.id as string;
     }, API);
@@ -139,7 +140,8 @@ async function cenarioCruzado(page: Page): Promise<Restrito> {
     const A = ctx.empresas[0]; const B = ctx.empresas[1];
     const pessoa = (await get("/api/resources/people/options?is_provider=true"))[0];
     const cats = await get("/api/resources/financial_categories?pageSize=1&kind=analytic&nature=expense");
-    const centros = await get("/api/resources/cost_centers/options");
+    // rateio só em ANALÍTICO (decisão 256): o 1º centro das opções é sintético e o título seria recusado (422)
+    const centros = (await get("/api/resources/cost_centers?pageSize=1&kind=analytic")).items;
     const titulo = await post("/api/financial/payables", { empresa_id: B.id, number: `CRUZ-${Date.now()}`, person_id: pessoa.id, amount: "10",
       emission_date: "2031-06-01", due_date: "2031-07-01", note: "cruzado",
       apportionment: [{ financial_category_id: cats.items[0].id, cost_center_id: centros[0].id, percentage: "100" }] });
