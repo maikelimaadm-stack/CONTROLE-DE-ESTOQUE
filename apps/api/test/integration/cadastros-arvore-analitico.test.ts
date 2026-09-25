@@ -6,7 +6,7 @@ import { escoposDeTodosOsModulos, harness, ids, TEST_URL, type Harness } from ".
 import { CADASTROS_COM_REGRA_PROPRIA_DE_USO, MENSAGEM_ANALITICO_EM_USO, MENSAGEM_ANALITICO_SEM_VISAO_TOTAL, REFERENCIAS_DE_USO } from "../../src/lib/analitico-em-uso.js";
 import { MENSAGEM_REGISTRO_COM_FILHOS } from "../../src/lib/arvore-cadastro.js";
 import { MENSAGEM_GRUPO_COM_PRODUTOS } from "../../src/lib/grupo-de-produtos.js";
-import { MENSAGEM_RATEIO_CENTRO, MENSAGEM_RATEIO_NATUREZA } from "../../src/services/financial-core.js";
+import { MENSAGEM_RATEIO_CENTRO, MENSAGEM_RATEIO_CONTA, MENSAGEM_RATEIO_NATUREZA } from "../../src/services/financial-core.js";
 
 /**
  * CADASTROS R1-5 — ÁRVORE E ANALÍTICO (decisão 256).
@@ -20,6 +20,8 @@ import { MENSAGEM_RATEIO_CENTRO, MENSAGEM_RATEIO_NATUREZA } from "../../src/serv
  * AN-2  rateio: id de outra organização, inexistente, excluído, inativo ou sintético → a MESMA recusa; e a
  *       leitura é `for share` (uma inativação concorrente é vista, não atropelada). A BAIXA reaproveita o
  *       rateio já gravado e não o reconfere (d): cadastro excluído/inativado depois não trava título aberto.
+ *       A CONTA CONTÁBIL da linha (e) confere tenant e vida: de outra organização, inexistente ou excluída → a
+ *       MESMA 422 no campo `chart_account_id` (a FK é de coluna única e não prova a organização).
  * AN-3  perfil de RH: centro de resultado sintético → 422; o recuo do adiantamento só escolhe analítico ativo.
  * CAT   a whitelist de "em uso" é o catálogo de FKs do banco migrado — FK nova não coberta reprova aqui.
  *
@@ -304,11 +306,12 @@ describe("AN-1 — analítico em uso não vira sintético", () => {
 });
 
 describe("AN-2 — rateio: todo id existe NA organização, vivo, ativo e analítico", () => {
-  let catOutraOrg: string; let ccOutraOrg: string;
+  let catOutraOrg: string; let ccOutraOrg: string; let contaOutraOrg: string;
   beforeAll(async () => {
     const outra = (await linha<{ id: string }>("insert into erp.organizations(name,slug) values ('Outra AN2','an2-outra') returning id", [])).id;
     catOutraOrg = (await linha<{ id: string }>("insert into erp.financial_categories(organization_id,code,name,nature,kind) values ($1,'1','Alheia AN2','expense','analytic') returning id", [outra])).id;
     ccOutraOrg = (await linha<{ id: string }>("insert into erp.cost_centers(organization_id,code,name,kind) values ($1,'1','Alheio AN2','analytic') returning id", [outra])).id;
+    contaOutraOrg = (await linha<{ id: string }>("insert into erp.chart_accounts(organization_id,code,description,condition,kind) values ($1,'3.2.01','Alheia AN2','debit','analytic') returning id", [outra])).id;
   });
 
   it("AN-2a: natureza de outra organização, inexistente, excluída, inativa ou sintética → a MESMA 422; nada gravado", async () => {
@@ -407,6 +410,37 @@ describe("AN-2 — rateio: todo id existe NA organização, vivo, ativo e analí
     expect(await rateioDaBaixa(individual)).toEqual([{ financial_category_id: nat, cost_center_id: cc }]);
     expect(await rateioDaBaixa(emLote)).toEqual([{ financial_category_id: nat, cost_center_id: cc }]);
     expect(await rateioDaBaixa(acervo)).toEqual([{ financial_category_id: paiNat, cost_center_id: I.costCenter }]);
+  });
+  it("AN-2e: conta contábil de outra organização, inexistente ou excluída → a MESMA 422 no campo (título, movimento e edição); conta viva grava; a baixa não reconfere", async () => {
+    const viva = (await linha<{ id: string }>("select id from erp.chart_accounts where organization_id=$1 and code='3.2.01' and deleted_at is null", [h.demo.orgId])).id;
+    const excluida = (await linha<{ id: string }>("insert into erp.chart_accounts(organization_id,code,description,condition,kind,deleted_at) values ($1,'3.2.901','AN2 Conta Excluída','debit','analytic',now()) returning id", [h.demo.orgId])).id;
+    const casos: [string, string][] = [["outra organização", contaOutraOrg], ["inexistente", "00000000-0000-4000-8000-0000000000e2"], ["excluída", excluida]];
+    const movimentos = async () => Number((await linha<{ n: string }>("select count(*)::text n from erp.bank_movements where organization_id=$1 and note='AN2e'", [h.demo.orgId])).n);
+    for (const [nome, id] of casos) {
+      const r = await post("/api/financial/payables", titulo("AN2e", I.category, I.costCenter, { chart_account_id: id }));
+      expect(r.statusCode, `${nome}: ${r.body}`).toBe(422);
+      expect(j(r).error.message, nome).toBe(MENSAGEM_RATEIO_CONTA);
+      expect(j(r).error.details[0], nome).toEqual({ path: ["apportionment", "chart_account_id"], message: MENSAGEM_RATEIO_CONTA });
+      const mov = await post("/api/financial/bank-movements", { empresa_id: I.empresa, bank_account_id: I.bankAccount, movement_date: "2026-09-02", type: "out", amount: "10.00", note: "AN2e", apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, chart_account_id: id, percentage: "100" }] });
+      expect(mov.statusCode, `${nome}: ${mov.body}`).toBe(422);
+      expect(j(mov).error.message, nome).toBe(MENSAGEM_RATEIO_CONTA);
+    }
+    expect(await contarTitulos("AN2e")).toBe(0);
+    expect(await movimentos()).toBe(0);
+    // conta VIVA da organização grava (e sem conta a linha continua valendo)
+    const tid = criado(await post("/api/financial/payables", titulo("AN2e", I.category, I.costCenter, { chart_account_id: viva })));
+    expect((await admin.query<{ chart_account_id: string | null }>("select chart_account_id from erp.title_apportionments where title_id=$1", [tid])).rows).toEqual([{ chart_account_id: viva }]);
+    // edição do rateio com a conta de outra organização: recusada, e o rateio gravado fica como estava
+    const e = await h.app.inject({ method: "PUT", url: `/api/financial/payables/${tid}`, headers: hdr(), payload: { apportionment: [{ financial_category_id: I.category, cost_center_id: I.costCenter, chart_account_id: contaOutraOrg, percentage: "100" }] } });
+    expect(e.statusCode, e.body).toBe(422);
+    expect(j(e).error.details[0]).toEqual({ path: ["apportionment", "chart_account_id"], message: MENSAGEM_RATEIO_CONTA });
+    expect((await admin.query<{ chart_account_id: string | null }>("select chart_account_id from erp.title_apportionments where title_id=$1", [tid])).rows).toEqual([{ chart_account_id: viva }]);
+    // a BAIXA copia o rateio gravado sem reconferir: conta excluída DEPOIS do título não trava a baixa
+    const contaDoTitulo = (await linha<{ id: string }>("insert into erp.chart_accounts(organization_id,code,description,condition,kind) values ($1,'3.2.902','AN2 Conta Baixa','debit','analytic') returning id", [h.demo.orgId])).id;
+    const aBaixar = criado(await post("/api/financial/payables", titulo("AN2e", I.category, I.costCenter, { chart_account_id: contaDoTitulo })));
+    await admin.query("update erp.chart_accounts set deleted_at=now() where id=$1", [contaDoTitulo]);
+    const b = await h.app.inject({ method: "POST", url: `/api/financial/payables/${aBaixar}/settle`, headers: hdr(), payload: { settlement_date: "2026-09-10", bank_account_id: I.bankAccount, amount: "100.00" } });
+    expect(b.statusCode, b.body).toBe(201);
   });
 });
 
