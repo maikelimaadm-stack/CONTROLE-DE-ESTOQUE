@@ -1243,11 +1243,12 @@ pós-condição confere, e confere também que os dois CHECKs do par existem). *
    instâncias da API e só conta o Zerar que gravou) → liberação dos excluídos que seguram código (`EXC-<id>`; os pares
    `{ id, codigo_antigo }` vão na auditoria do Zerar, porque a maioria das tabelas não tem gatilho de auditoria) e
    contador a 0 → auditoria → **só então** `LOCK TABLE … IN SHARE ROW EXCLUSIVE` e, sob ela, SÓ a recontagem, até o
-   commit. O tempo com a tabela travada — quando inclusões NAQUELA tabela esperam, em TODAS as organizações — não
-   depende de quantos excluídos o cadastro tem: a liberação (o passo longo, que só toca linhas desta organização) roda
-   antes. Medido no banco local de teste, Contas bancárias com 50 mil excluídos: Zerar em ~0,9 s; inclusões de OUTRA
-   organização na mesma tabela, durante ele, esperaram no máximo 40 ms (antes desta correção, 620 ms: a liberação
-   rodava com a tabela travada). A trava da tabela espera no máximo 2 s (`lock_timeout`): se outra gravação longa (ex.:
+   commit. Com a tabela travada — quando inclusões NAQUELA tabela esperam, em TODAS as organizações — fica só a
+   RECONTAGEM, que LÊ as linhas da organização naquela tabela, excluídos inclusive, e não reescreve nenhuma: esse tempo
+   cresce com o acervo da organização. A liberação, que REESCREVE os excluídos (o passo longo, que só toca linhas desta
+   organização), roda antes da trava da tabela. Medido no banco local de teste, Contas bancárias com 50 mil excluídos:
+   Zerar em ~0,9 s; inclusões de OUTRA organização na mesma tabela, durante ele, esperaram no máximo 40 ms — é a
+   recontagem sob a trava (antes desta correção, 620 ms: a liberação rodava com a tabela travada). A trava da tabela espera no máximo 2 s (`lock_timeout`): se outra gravação longa (ex.:
    importação de outra organização) estiver na tabela, o Zerar desiste com 409, sem efeito. Se a recontagem achar um
    vivo (inclusão por porta que não passa pela trava da numeração: importação com código, SQL de fora), 422 e a
    transação desfaz tudo — liberação, contador e auditoria. Só roda com zero registros vivos; nada é apagado.
