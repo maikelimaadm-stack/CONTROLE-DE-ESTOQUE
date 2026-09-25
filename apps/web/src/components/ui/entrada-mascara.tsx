@@ -15,12 +15,19 @@ type InputBase = Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "on
  * O `id` (o do `<label htmlFor>`) fica NA CAIXA (R1, W-7): o rótulo nomeia a entrada, não um invólucro.
  */
 export const EntradaMascara = React.forwardRef<HTMLInputElement, InputBase & { mascara: TipoMascara | null; value: string | null | undefined; onChange: (normalizado: string) => void; /** troca a normalização da digitação (CPF/CNPJ: a mais larga) */ normalizar?: (texto: string) => string }>(
-  ({ mascara, value, onChange, normalizar, className, ...p }, ref) => {
+  ({ mascara, value, onChange, normalizar, className, onFocus, onBlur, ...p }, ref) => {
+    // TELEFONE enquanto se DIGITA (R1, revisão final): a caixa mostra o texto digitado (rascunho) e entrega a
+    // normalização DELE a cada tecla; a máscara volta ao sair. Remascarar a cada tecla comia o separador digitado depois
+    // de um número completo ("(65) 3266-1234 / …") e, passando de 11 dígitos, gravava a máscara remontada em vez do texto.
+    const [rascunho, setRascunho] = React.useState<string | null>(null);
+    const livreAoDigitar = mascara === "telefone" && !p.readOnly;
     const bruto = value ?? "";
-    const mostrado = mascara ? formatarMascara(mascara, bruto) : bruto;
+    const mostrado = rascunho ?? (mascara ? formatarMascara(mascara, bruto) : bruto);
     return <input ref={ref} {...p} type="text" className={cn("w-full", className)} value={mostrado}
       inputMode={mascara && mascara !== "cnpj" ? "numeric" : p.inputMode} data-mascara={mascara ?? "livre"}
-      onChange={(e) => onChange(normalizar ? normalizar(e.target.value) : mascara ? normalizarMascara(mascara, e.target.value) : e.target.value)} />;
+      onFocus={(e) => { if (livreAoDigitar) setRascunho(mostrado); onFocus?.(e); }}
+      onBlur={(e) => { setRascunho(null); onBlur?.(e); }}
+      onChange={(e) => { if (livreAoDigitar) setRascunho(e.target.value); onChange(normalizar ? normalizar(e.target.value) : mascara ? normalizarMascara(mascara, e.target.value) : e.target.value); }} />;
   }
 );
 EntradaMascara.displayName = "EntradaMascara";
@@ -57,7 +64,8 @@ export const EntradaDocumento = React.forwardRef<HTMLInputElement, InputBase & {
       <EntradaMascara ref={ref} {...p} mascara={mascara} value={value} aria-invalid={Boolean(msg) || undefined} className={cn(msg && "border-red-500", className)}
         // normaliza pelo formato MAIS LARGO (CNPJ: [0-9A-Z], até 14) — a máscara efetiva sai do valor, não o corta
         onChange={onChange} normalizar={mascara ? (t) => normalizarMascara("cnpj", t) : undefined}
-        onFocus={(e) => { setDigitando(true); onFocus?.(e); }}
+        // em LEITURA o foco (para copiar) não é digitação: a máscara e a faixa da Jurídica com CPF ficam (R1, revisão final)
+        onFocus={(e) => { if (!p.readOnly) setDigitando(true); onFocus?.(e); }}
         onBlur={(e) => { setDigitando(false); setConferido(true); const m = mascaraDoDocumento(tipoPessoa, value, false); onValidade?.(m ? recusaDoDigitoDoDocumento(m, value ?? "") : null); onBlur?.(e); }} />
       {msg && <span className="text-[11px] text-red-600" role="alert" data-testid="documento-invalido">{msg}</span>}
     </span>;

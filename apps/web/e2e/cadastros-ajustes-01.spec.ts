@@ -358,8 +358,10 @@ test("UI-5 — máscaras CPF, CNPJ, CNPJ alfanumérico, CEP, telefone e celular;
   await expect(page.getByLabel("CEP", { exact: true })).toHaveValue("78250-000");
   await aba(page, "Contatos").click();
   await page.getByLabel("Telefone", { exact: true }).fill("(65) 3333-4444");
+  await page.getByLabel("Telefone", { exact: true }).blur(); // telefone: a máscara aparece AO SAIR (revisão final do R1)
   await expect(page.getByLabel("Telefone", { exact: true })).toHaveValue("(65) 3333-4444");
   await page.getByLabel("Celular", { exact: true }).fill("65999998888");
+  await page.getByLabel("Celular", { exact: true }).blur();
   await expect(page.getByLabel("Celular", { exact: true })).toHaveValue("(65) 99999-8888");
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(() => sql(`select count(*) from erp.people where document = '${alfa}'`)).toBe("1");
@@ -870,12 +872,44 @@ test("UI-17 (W-6) — telefone nunca corta dígito: \"+55 (65) 99999-8888\" grav
   await aba(page, "Contatos").click();
   const tel = page.getByLabel("Telefone", { exact: true }); const cel = page.getByLabel("Celular", { exact: true });
   await tel.fill("+55 (65) 99999-8888");
+  await tel.blur(); // telefone: a máscara aparece AO SAIR (revisão final do R1)
   await expect(tel).toHaveValue("(65) 99999-8888");
   await cel.fill("(65) 3266-1234 r.22");
+  await cel.blur();
   await expect(cel, "passou de 11 dígitos sem o 55: como digitado, sem máscara e sem cortar").toHaveValue("(65) 3266-1234 r.22");
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(() => sql(`select count(*) from erp.people where name = '${nome}' and deleted_at is null`)).toBe("1");
   expect(sql(`select concat_ws('|', phone, cellphone) from erp.people where name = '${nome}'`)).toBe("65999998888|(65) 3266-1234 r.22");
+});
+
+test("UI-17b (W-6, revisão final) — telefone digitado TECLA A TECLA: enquanto se digita, a caixa mostra o texto digitado; ao sair, a máscara (até 11 dígitos) ou o texto como digitado — nenhum separador comido; DDD 55 entre parênteses não perde o DDD", async ({ page }) => {
+  await login(page);
+  await page.goto("/cadastros/people/new");
+  const nome = uniq("UI-17b telefones");
+  await page.getByLabel("Nome Social/Fantasia").fill(nome);
+  await page.getByTestId("grupo-tipo-do-parceiro").getByLabel("Cliente").check();
+  await aba(page, "Contatos").click();
+  const tel = page.getByLabel("Telefone", { exact: true }); const cel = page.getByLabel("Celular", { exact: true });
+  const doisNumeros = "(65) 3266-1234 / (65) 3266-5678";
+  await cel.click();
+  await cel.pressSequentially(doisNumeros, { delay: 25 });
+  await expect(cel, "enquanto se digita: o texto digitado, sem remascarar").toHaveValue(doisNumeros);
+  await cel.blur();
+  await expect(cel, "ao sair, mais de 11 dígitos: como digitado").toHaveValue(doisNumeros);
+  const rs = "(55) 3222-1234 r.22";
+  await tel.click();
+  await tel.pressSequentially(rs, { delay: 25 });
+  await tel.blur();
+  await expect(tel, "DDD 55 escrito com ramal: nada some").toHaveValue(rs);
+  const contato = page.getByLabel("Telefone do contato", { exact: true });
+  await contato.click();
+  await contato.pressSequentially("65999998888", { delay: 25 });
+  await expect(contato, "enquanto se digita: só os dígitos digitados").toHaveValue("65999998888");
+  await contato.blur();
+  await expect(contato, "11 dígitos: ao sair, a máscara de celular").toHaveValue("(65) 99999-8888");
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(() => sql(`select count(*) from erp.people where name = '${nome}' and deleted_at is null`)).toBe("1");
+  expect(sql(`select concat_ws('|', phone, cellphone, contact_phone) from erp.people where name = '${nome}'`), "gravado como digitado (e os 11 dígitos normalizados)").toBe(`${rs}|${doisNumeros}|65999998888`);
 });
 
 // ───────────────────────────── UI-18 (W-8) ─────────────────────────────
@@ -1044,6 +1078,24 @@ test("UI-20 (W-8) — \"Ajustar para…\" só com people.edit: quem só vê o pa
   await page.goto(`/cadastros/people/${p.id}?view=1`);
   await expect(page.getByTestId("faixa-tipo-documento"), "quem vê o parceiro vê a faixa").toBeVisible();
   await expect(page.getByTestId("faixa-tipo-documento").getByRole("button", { name: /Ajustar para/ }), "mas não ajusta sem people.edit").toHaveCount(0);
+});
+
+test("UI-21f (W-8, revisão final) — em LEITURA, focar o CPF/CNPJ de uma Jurídica com CPF (para copiar) não troca a máscara nem esconde a faixa", async ({ page }) => {
+  await login(page);
+  const cpf = cpfValido();
+  const p = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-21f leitura"), person_type: "natural", document: cpf, is_client: true });
+  sql(`update erp.people set person_type = 'legal' where id = '${p.id}'`);
+  await page.goto(`/cadastros/people/${p.id}?view=1`);
+  await expect(page.getByRole("button", { name: "Salvar" }), "premissa: em LEITURA").toHaveCount(0);
+  const doc = page.getByLabel("CPF/CNPJ", { exact: true });
+  await expect(page.getByTestId("faixa-tipo-documento"), "premissa: a faixa da Jurídica com CPF").toBeVisible();
+  await expect(doc, "premissa: CPF mostrado como CPF").toHaveAttribute("data-mascara", "cpf");
+  await doc.click();
+  await expect(doc, "premissa: a caixa tem o foco").toBeFocused();
+  await expect(doc, "com o foco em leitura: continua CPF").toHaveAttribute("data-mascara", "cpf");
+  await expect(doc).toHaveValue(fmtCpf(cpf));
+  await expect(page.getByTestId("faixa-tipo-documento"), "e a faixa continua").toBeVisible();
+  await expect(cabecalho(page, "document"), "o cabeçalho também").toContainText(fmtCpf(cpf));
 });
 
 // ───────────────────────────── UI-21 (W-4/W-8 — correções da verificação do W) ─────────────────────────────

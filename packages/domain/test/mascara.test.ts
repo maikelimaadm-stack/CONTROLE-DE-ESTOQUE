@@ -98,6 +98,15 @@ describe("R1 W-6 telefone sem corte", () => {
     expect(normalizarMascara("telefone", "(55) 99999-8888")).toBe("55999998888");
     expect(formatarTelefone("55999998888")).toBe("(55) 99999-8888");
   });
+  it("DDD 55 ESCRITO entre parênteses com ramal: o 55 é DDD, não DDI — fica como digitado (revisão final do R1)", () => {
+    for (const c of ["(55) 3222-1234 r.22", "(55) 99999-8888 1", " ( 55 ) 3222-1234 22"]) {
+      expect(normalizarMascara("telefone", c), c).toBe(c.trim());
+      expect(formatarTelefone(c), c).toBe(c.trim());
+    }
+    // o DDI explícito na frente do DDD 55 continua saindo
+    expect(normalizarMascara("telefone", "+55 (55) 99999-8888")).toBe("55999998888");
+    expect(formatarTelefone("+55 (55) 99999-8888")).toBe("(55) 99999-8888");
+  });
   it("propriedade: todo dígito digitado sobrevive (tirando só o 55 que leva a 11 ou menos)", () => {
     const casos = ["65999998888", "6532661234", "+55 (65) 99999-8888", "0800 123 4567", "(65) 3266-1234 ramal 22", "+1 (555) 123-4567 x89", "5565999998888123"];
     for (const c of casos) {
@@ -106,11 +115,22 @@ describe("R1 W-6 telefone sem corte", () => {
       expect(digitos(formatarMascara("telefone", n)), `formatado de ${c}`).toBe(dn);
     }
   });
+  // A caixa do telefone guarda o texto DIGITADO enquanto tem o foco (rascunho — revisão final do R1) e grava, a cada
+  // tecla, a normalização desse texto; antes ela remascarava a cada tecla, o que comia separadores e remontava a
+  // máscara num texto com mais de 11 dígitos. A simulação segue a caixa de hoje: rascunho += tecla.
   it("digitação progressiva com +55 termina no celular de 11 dígitos", () => {
-    let valor = "";
-    for (const c of "+5565999998888") valor = normalizarMascara("telefone", formatarMascara("telefone", valor) + c);
+    let rascunho = ""; let valor = "";
+    for (const c of "+5565999998888") { rascunho += c; valor = normalizarMascara("telefone", rascunho); }
     expect(valor).toBe("65999998888");
     expect(formatarTelefone(valor)).toBe("(65) 99999-8888");
+  });
+  it("digitação progressiva de dois números e de ramal: grava o texto digitado, sem remontar máscara", () => {
+    for (const texto of ["(65) 3266-1234 / (65) 3266-5678", "(65) 3266-1234 r.22", "(55) 3222-1234 r.22"]) {
+      let rascunho = ""; let valor = "";
+      for (const c of texto) { rascunho += c; valor = normalizarMascara("telefone", rascunho); }
+      expect(valor, texto).toBe(texto);
+      expect(formatarTelefone(valor), texto).toBe(texto);
+    }
   });
 });
 

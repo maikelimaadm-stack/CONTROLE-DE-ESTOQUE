@@ -110,13 +110,15 @@ export function semRotuloDeDocumento(valor: string): string {
 
 /**
  * TELEFONE (AJUSTES 01 R1, W-6) — NUNCA corta dígito calado. Até 11 dígitos grava só os dígitos (e a tela mascara);
- * passando de 11, o "55" do início (DDI do Brasil) sai; se AINDA passar de 11 (ramal, dois números, legado), o texto
+ * passando de 11, o "55" do início (DDI do Brasil) sai — MENOS quando ele está escrito como DDD, entre parênteses
+ * ("(55) 3222-1234 r.22": Rio Grande do Sul com ramal); se AINDA passar de 11 (ramal, dois números, legado), o texto
  * fica COMO DIGITADO — sem máscara e sem perder nada.
  */
+const DDD_55_ESCRITO = /^\s*\(\s*55\s*\)/;
 function normalizarTelefone(valor: string): string {
   const texto = String(valor ?? "");
   let d = soDigitos(texto);
-  if (d.length > 11 && d.startsWith("55")) d = d.slice(2);
+  if (d.length > 11 && d.startsWith("55") && !DDD_55_ESCRITO.test(texto)) d = d.slice(2);
   return d.length <= 11 ? d : texto.trim();
 }
 

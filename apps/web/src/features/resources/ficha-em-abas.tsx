@@ -501,7 +501,7 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
     const reg = (n: string) => ({ name: n, value: String(values[n] ?? ""), onChange: (v: string) => form.setValue(n, v, { shouldDirty: true }) });
     const cls = "h-5 w-full border-0 bg-transparent px-0 text-[13px] font-medium shadow-none focus:outline-none";
     if (f.name === "document") return ({ dis }) => <EntradaDocumento {...reg("document")} onChange={mudarDocumento} tipoPessoa={String(tipoPessoa ?? "")} readOnly={dis} className={cls} erro={(form.formState.errors["document"]?.message as string | undefined) ?? null}
-      onFocus={() => { docAoEntrar.current = normalizarDocumento(String(form.getValues("document") ?? "")); tipoAoEntrar.current = form.getValues("person_type"); setDigitandoDocumento(true); }}
+      onFocus={() => { if (dis) return; docAoEntrar.current = normalizarDocumento(String(form.getValues("document") ?? "")); tipoAoEntrar.current = form.getValues("person_type"); setDigitandoDocumento(true); }}
       onBlur={() => {
         setDigitandoDocumento(false);
         const atual = String(form.getValues("document") ?? "");
