@@ -143,6 +143,11 @@ async function mockCep(page: Page) {
 const ficha = (page: Page) => page.getByTestId("ficha-em-abas");
 const aba = (page: Page, nome: string) => ficha(page).getByRole("tab", { name: nome, exact: true });
 const cabecalho = (page: Page, campo: string) => page.getByTestId(`cabecalho-${campo}`);
+/**
+ * Rótulo de um campo da ficha. Campo de referência (`RefSelect`, ex.: Matriz) não liga a caixa ao rótulo — `getByLabel`
+ * não o acha NUNCA, e um `toHaveCount(0)` com ele passaria vazio. O rótulo do campo existe só quando o campo aparece.
+ */
+const rotuloDoCampo = (page: Page, rotulo: string) => page.locator("label.mg-field__label").filter({ hasText: new RegExp(`^${rotulo}( \\*)?$`) });
 const janela = (page: Page) => page.getByTestId("janela-consulta-cnpj");
 
 // ───────────────────────────── UI-1 ─────────────────────────────
@@ -290,7 +295,7 @@ test("UI-5 — máscaras CPF, CNPJ, CNPJ alfanumérico, CEP, telefone e celular;
   await doc.fill(fmtCnpj(cnpj)); // colar com pontuação
   await expect(doc).toHaveValue(fmtCnpj(cnpj));
   await expect(doc).toHaveAttribute("data-mascara", "cnpj");
-  const alfa = cnpjDe(`${Date.now().toString(36).toUpperCase().slice(-6).padStart(6, "A")}0001`);
+  const alfa = cnpjDe(`${Date.now().toString(36).toUpperCase().slice(-8).padStart(8, "A")}0001`); // 8 + "0001" = as 12 posições
   await doc.fill(alfa.toLowerCase());
   await expect(doc).toHaveValue(fmtCnpj(alfa));
   // DV conferido ao sair do campo
@@ -320,10 +325,14 @@ test("UI-6 — tipo de pessoa segue o documento; campos de Física/Jurídica; Ju
   await doc.fill(cpfValido());
   await expect(cabecalho(page, "person_type")).toContainText("Física");
   for (const r of ["RG", "CAEPF", "Sexo", "Nome completo", "Nascimento"]) await expect(page.getByLabel(r, { exact: true }), r).toBeVisible();
-  for (const r of ["Matriz", "Razão social", "Abertura"]) await expect(page.getByLabel(r, { exact: true }), `${r} não aparece em Física`).toHaveCount(0);
+  await expect(rotuloDoCampo(page, "Razão social"), "premissa: o localizador acha rótulo de campo").toHaveCount(0);
+  await expect(rotuloDoCampo(page, "Nome completo"), "premissa: o localizador acha rótulo de campo visível").toHaveCount(1);
+  await expect(rotuloDoCampo(page, "Matriz"), "Matriz não aparece em Física").toHaveCount(0);
+  for (const r of ["Razão social", "Abertura"]) await expect(page.getByLabel(r, { exact: true }), `${r} não aparece em Física`).toHaveCount(0);
   await doc.fill(cnpjNovo());
   await expect(cabecalho(page, "person_type")).toContainText("Jurídica");
-  for (const r of ["Matriz", "Razão social", "Abertura"]) await expect(page.getByLabel(r, { exact: true }), r).toBeVisible();
+  await expect(rotuloDoCampo(page, "Matriz"), "Matriz aparece em Jurídica").toBeVisible();
+  for (const r of ["Razão social", "Abertura"]) await expect(page.getByLabel(r, { exact: true }), r).toBeVisible();
   for (const r of ["RG", "CAEPF", "Sexo", "Nome completo"]) await expect(page.getByLabel(r, { exact: true }), `${r} não aparece em Jurídica`).toHaveCount(0);
 
   // o caso da produção: parceiro JURÍDICA com CPF (dado legado)
