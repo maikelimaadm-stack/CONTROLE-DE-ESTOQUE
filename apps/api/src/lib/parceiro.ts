@@ -12,10 +12,12 @@
  *  · único entre VIVOS da organização (o índice ux_people_documento_normalizado é a autoridade; aqui o 409
  *    sai antes, com o código e o nome do existente, e com o MESMO filtro do índice: normalizado não vazio);
  *  · situação na Receita: copiada do cache da consulta de CNPJ da própria API (nunca do cliente);
- *  · CAMPOS POR TIPO DE PESSOA (AJUSTES 01, C-6, decisão 257): Matriz só em Jurídica, parceiro VIVO desta
- *    organização e nunca ele mesmo; RG, CAEPF e Sexo só em Física — 422 no campo, conferidos contra o tipo que a
- *    linha TERÁ quando o corpo mexe no tipo ou no campo; latitude e longitude juntas (ou nenhuma), no principal e
- *    em cada endereço adicional. O e-mail NF-e é `email` no registry (o schema recusa o inválido).
+ *  · CAMPOS POR TIPO DE PESSOA (AJUSTES 01, C-6, decisão 257): Matriz só em Jurídica; RG, CAEPF e Sexo só em
+ *    Física — 422 no campo, conferidos contra o tipo que a linha TERÁ quando o corpo mexe no tipo ou no campo;
+ *    latitude e longitude juntas (ou nenhuma), no principal e em cada endereço adicional (a 0030 tem o CHECK do par
+ *    como rede). O e-mail NF-e é `email` no registry (o schema recusa o inválido);
+ *  · MATRIZ (AJUSTES 01 R1, A-1), só quando ela MUDA: viva, ativa, Jurídica, desta organização, não ele mesmo e não
+ *    filial; parceiro com filiais não vira filial (`conferirMatriz`).
  */
 import { getResource, recusaDoTipoDePessoa, validarDocumento, type ResourceDef } from "@agro/domain";
 import { DomainError } from "@agro/shared";
@@ -111,10 +113,10 @@ export const CAMPOS_SO_DE_JURIDICA = ["matriz_id"] as const;
 const preenchido = (v: unknown) => v !== null && v !== undefined && String(v).trim() !== "";
 
 /**
- * Matriz só em Jurídica (viva, desta organização, não ele mesmo); RG, CAEPF e Sexo só em Física. Conferido quando
- * o corpo traz o tipo ou um desses campos, contra o valor que a linha TERÁ (corpo sobre o gravado): quem troca o
- * tipo precisa limpar o campo do outro tipo no mesmo corpo — a web manda `null` no campo que o tipo esconde.
- * PUT que não toca em nenhum (web anterior) não é cobrado por dado antigo.
+ * Matriz só em Jurídica; RG, CAEPF e Sexo só em Física. Conferido quando o corpo traz o tipo ou um desses campos,
+ * contra o valor que a linha TERÁ (corpo sobre o gravado): quem troca o tipo precisa limpar o campo do outro tipo no
+ * mesmo corpo — a web manda `null` no campo que o tipo esconde. PUT que não toca em nenhum (web anterior) não é
+ * cobrado por dado antigo. A matriz em si (viva, ativa, Jurídica, não filial…) só quando MUDA: `conferirMatriz`.
  */
 async function conferirCamposDoTipoDePessoa(ctx: ServiceCtx, def: ResourceDef, id: string | null, data: Linha, atual: Linha | null) {
   const campos = [...CAMPOS_SO_DE_FISICA, ...CAMPOS_SO_DE_JURIDICA].filter((c) => def.fields.some((f) => f.name === c));
@@ -128,11 +130,42 @@ async function conferirCamposDoTipoDePessoa(ctx: ServiceCtx, def: ResourceDef, i
     if ((CAMPOS_SO_DE_JURIDICA as readonly string[]).includes(c) && tipo !== "legal") throw erro(c, `Só para pessoa Jurídica (o parceiro está como ${rotuloDoTipo(tipo)}).`);
   }
   if (!("matriz_id" in data) || !preenchido(data["matriz_id"])) return;
-  const matriz = String(data["matriz_id"]);
-  if (id && matriz === id) throw erro("matriz_id", "O parceiro não pode ser a matriz dele mesmo.");
-  // viva e desta organização (a FK composta prova o tenant; a vida e o escopo, esta consulta sob RLS)
-  const r = await ctx.tx.query("select 1 from erp.people where id = $1 and organization_id = $2 and deleted_at is null", [matriz, ctx.orgId]);
-  if (!r.rowCount) throw erro("matriz_id", "Matriz não encontrada entre os parceiros ativos.");
+  // UUID é o mesmo em qualquer caixa (o schema aceita maiúsculas): compara-se — e grava-se — a forma canônica
+  const matriz = String(data["matriz_id"]).toLowerCase();
+  data["matriz_id"] = matriz;
+  // Só quando a matriz MUDA (AJUSTES 01 R1, A-1): a filial cuja matriz foi excluída, inativada ou mudou de tipo DEPOIS
+  // continua editável — o PUT que reenvia a mesma matriz não é cobrado pelo que aconteceu com a outra ficha.
+  if (atual && typeof atual["matriz_id"] === "string" && atual["matriz_id"].toLowerCase() === matriz) return;
+  await conferirMatriz(ctx, id === null ? null : id.toLowerCase(), matriz, (msg) => erro("matriz_id", msg));
+}
+
+/**
+ * MATRIZ (AJUSTES 01 R1, A-1): parceiro VIVO, ATIVO, JURÍDICA, desta organização, que não é ele mesmo e que NÃO é
+ * filial (`matriz_id` nulo); e o parceiro que TEM filiais não vira filial. Um nível só: matriz → filiais — sem
+ * cadeia e sem ciclo (A→B e B→A).
+ *
+ * CONCORRÊNCIA: primeiro o PRÓPRIO registro `for update`, depois a matriz `for share`. "C vira filial de A" (lê A
+ * `for share`) e "A vira filial de B" (trava A `for update`) se esperam: quem chega depois relê e vê A já filial, ou
+ * a filial C já gravada. Duas gravações cruzadas (A→B e B→A ao mesmo tempo) travam em ordem inversa e o banco derruba
+ * uma delas (40P01 → 409); a outra grava, e a repetição da derrubada recebe a recusa legível.
+ */
+async function conferirMatriz(ctx: ServiceCtx, proprio: string | null, matriz: string, erro: (msg: string) => Error) {
+  if (proprio !== null && matriz === proprio) throw erro("O parceiro não pode ser a matriz dele mesmo.");
+  if (proprio !== null) await ctx.tx.query("select 1 from erp.people where id = $1 and organization_id = $2 for update", [proprio, ctx.orgId]);
+  // viva e desta organização (a FK composta prova o tenant; a vida e o escopo, esta consulta sob RLS). Inexistente, de
+  // outra organização e excluída recebem a MESMA recusa (não revela existência).
+  const r = await ctx.tx.query<{ person_type: string; is_active: boolean; e_filial: boolean }>(
+    "select person_type, is_active, matriz_id is not null as e_filial from erp.people where id = $1 and organization_id = $2 and deleted_at is null for share",
+    [matriz, ctx.orgId]);
+  const m = r.rows[0];
+  if (!m) throw erro("Matriz não encontrada entre os parceiros ativos.");
+  if (!m.is_active) throw erro("A matriz escolhida está inativa.");
+  if (m.person_type !== "legal") throw erro(`A matriz precisa ser pessoa Jurídica (a escolhida está como ${rotuloDoTipo(m.person_type)}).`);
+  if (m.e_filial) throw erro("A matriz escolhida é filial de outro parceiro: escolha a matriz dela.");
+  if (proprio !== null) {
+    const f = await ctx.tx.query("select 1 from erp.people where organization_id = $1 and matriz_id = $2 and deleted_at is null limit 1", [ctx.orgId, proprio]);
+    if (f.rowCount) throw erro("Este parceiro é matriz de outros parceiros e não pode ser filial.");
+  }
 }
 
 /** Latitude e longitude andam juntas, no principal e em cada endereço adicional; faixas −90..90 e −180..180. */
