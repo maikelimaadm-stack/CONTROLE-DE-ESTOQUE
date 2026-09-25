@@ -805,6 +805,33 @@ test("UI-15 (W-4) — digitar um CNPJ tecla a tecla nunca passa por Física (nem
   await expect(doc).toHaveValue(fmtCpf(cpf));
 });
 
+test("UI-15b (W-4) — a digitação vira Jurídica e o documento VOLTA ao CPF de entrada: ao sair é Física de novo; só passar pelo campo não troca o tipo", async ({ page }) => {
+  await login(page);
+  const cpf = cpfValido();
+  const p = await criarParceiro(page, { name: uniq("UI-15b volta"), person_type: "natural", document: cpf });
+  await page.goto(`/cadastros/people/${p.id}`);
+  await editar(page);
+  await expect(page.getByRole("button", { name: "Salvar" }), "premissa: em edição").toBeVisible();
+  await expect(cabecalho(page, "person_type"), "premissa: gravado como Física").toContainText("Física");
+  const doc = page.getByLabel("CPF/CNPJ", { exact: true });
+  // só passar pelo campo (entrar e sair sem mudar nada) não mexe no cadastro
+  await doc.focus();
+  await doc.blur();
+  await expect(cabecalho(page, "person_type")).toContainText("Física");
+  // entrar, digitar até CNPJ (vira Jurídica AINDA digitando — nada a apagar) e apagar de volta ao CPF de entrada
+  await doc.focus();
+  await doc.press("End");
+  await doc.pressSequentially("123", { delay: 40 });
+  await expect(cabecalho(page, "person_type"), "premissa: 14 posições em digitação → Jurídica").toContainText("Jurídica");
+  for (let i = 0; i < 3; i++) await doc.press("Backspace");
+  expect((await doc.inputValue()).replace(/\D/g, ""), "premissa: o documento voltou ao CPF de entrada").toBe(cpf);
+  await doc.blur();
+  await expect(cabecalho(page, "person_type"), "saiu com 11 dígitos: Física, mesmo com o documento igual ao de entrada").toContainText("Física");
+  await expect(doc).toHaveAttribute("data-mascara", "cpf");
+  await expect(doc).toHaveValue(fmtCpf(cpf));
+  await expect(page.getByTestId("faixa-tipo-documento"), "sem a faixa de tipo divergente (Jurídica com CPF)").toHaveCount(0);
+});
+
 // ───────────────────────────── UI-16 (W-5) ─────────────────────────────
 test("UI-16 (W-5) — Novo pelo CNPJ leva os dados EM MEMÓRIA: nada da Receita no sessionStorage/localStorage; consumido uma vez", async ({ page }) => {
   await login(page);

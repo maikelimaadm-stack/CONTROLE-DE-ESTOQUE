@@ -472,8 +472,11 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   const doc = String(values["document"] ?? "");
   const [digitandoDocumento, setDigitandoDocumento] = React.useState(false);
   const recusada = React.useRef<string | null>(null);
-  // documento ao ENTRAR no campo: só a saída de um documento MUDADO troca o tipo (passar pelo campo não mexe no cadastro)
+  // documento e tipo ao ENTRAR no campo: só a saída de um documento MUDADO troca o tipo (passar pelo campo não mexe no
+  // cadastro). Se a DIGITAÇÃO trocou o tipo (CPF → CNPJ vira Jurídica) e o documento voltou ao de entrada, a saída
+  // também confere: senão ficaria Jurídica com o CPF de entrada, contra a regra "Física ao sair com 11 dígitos".
   const docAoEntrar = React.useRef<string>("");
+  const tipoAoEntrar = React.useRef<unknown>(undefined);
   const trocaAutomatica = (valor: string, momento: "digitando" | "saindo") => {
     const t = tipoPessoaPeloDocumento(valor, momento);
     const atual = form.getValues("person_type");
@@ -498,8 +501,13 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
     const reg = (n: string) => ({ name: n, value: String(values[n] ?? ""), onChange: (v: string) => form.setValue(n, v, { shouldDirty: true }) });
     const cls = "h-5 w-full border-0 bg-transparent px-0 text-[13px] font-medium shadow-none focus:outline-none";
     if (f.name === "document") return ({ dis }) => <EntradaDocumento {...reg("document")} onChange={mudarDocumento} tipoPessoa={String(tipoPessoa ?? "")} readOnly={dis} className={cls} erro={(form.formState.errors["document"]?.message as string | undefined) ?? null}
-      onFocus={() => { docAoEntrar.current = normalizarDocumento(String(form.getValues("document") ?? "")); setDigitandoDocumento(true); }}
-      onBlur={() => { setDigitandoDocumento(false); const atual = String(form.getValues("document") ?? ""); if (!dis && normalizarDocumento(atual) !== docAoEntrar.current) trocaAutomatica(atual, "saindo"); }} />;
+      onFocus={() => { docAoEntrar.current = normalizarDocumento(String(form.getValues("document") ?? "")); tipoAoEntrar.current = form.getValues("person_type"); setDigitandoDocumento(true); }}
+      onBlur={() => {
+        setDigitandoDocumento(false);
+        const atual = String(form.getValues("document") ?? "");
+        const mudou = normalizarDocumento(atual) !== docAoEntrar.current || !iguala(form.getValues("person_type"), tipoAoEntrar.current);
+        if (!dis && mudou) trocaAutomatica(atual, "saindo");
+      }} />;
     // o seletor de sempre, mas a troca passa por `pedirTroca` (pergunta antes de apagar campo preenchido — R1, W-3) e SEM
     // o X de limpar: o tipo de pessoa nunca fica vazio (coluna NOT NULL, padrão Jurídica) — trocar é escolher outro tipo
     if (f.name === "person_type") return ({ padrao }) => padrao!({ aoMudar: (v) => pedirTroca(v), permiteVazio: false });
