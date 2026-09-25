@@ -18,6 +18,11 @@ import { TEST_URL } from "./setup.js";
  *
  * Mesmo mecanismo do CE-5 (grupo-produtos-arvore-upgrade): o runner recarregado sobre um diretório só com as
  * migrations anteriores; o acervo é plantado no schema da 0028, como a produção estaria.
+ *
+ * LT-8b — depois da 0029, o ESTORNO também exige lote no gatilho: a API anterior (na janela do deploy ou numa
+ * reversão) estorna copiando o lote do original sem conferir; o estorno de uma saída gravada SEM lote de produto com
+ * controle recriaria no balde '' exatamente o saldo preso que a pré-condição recusa. Só a exigência de lote vale
+ * para o estorno — a de validade não (o estorno não carrega validade).
  */
 const ALVO = "0029_produtos_ficha_em_abas.sql";
 let db: Db; let demo: DemoOrg;
@@ -154,5 +159,38 @@ describe("LT-8 — 0029 com saldo no balde sem lote de produto com lote", () => 
     // a coluna nova do lote de produção (R1-1 c) nasceu anulável
     expect((await db.query("select data_type, is_nullable from information_schema.columns where table_schema='erp' and table_name='feed_batches' and column_name='validade'")).rows)
       .toEqual([{ data_type: "date", is_nullable: "YES" }]);
+  });
+
+  /** Um estorno como a API anterior o grava: tipo 'reversal', lote copiado do original (pode ser nulo), sem validade. */
+  const estorno = (product_id: string, direction: 1 | -1, quantity: string, provider_lot: string | null) =>
+    db.query(`insert into erp.stock_movements (organization_id, empresa_id, warehouse_id, product_id, movement_type, direction, quantity, unit_cost, provider_lot, source_type, source_id, movement_date, note)
+       values ($1,$2,$3,$4,'reversal',$5,$6,3,$7,'teste_lt8b',gen_random_uuid(),'2026-09-21','estorno LT-8b')`,
+      [demo.orgId, armazem.empresa_id, armazem.id, product_id, direction, quantity, provider_lot]);
+  const saldoDe = async (product_id: string) => Object.fromEntries((await db.query<{ provider_lot: string; quantity: string }>(
+    "select provider_lot, quantity::text from erp.stock_balances where product_id=$1 order by provider_lot", [product_id])).rows.map((x) => [x.provider_lot, x.quantity]));
+
+  it("LT-8b: sobre a 0029, estorno SEM lote de produto com controle → recusado (nada gravado); com lote passa; sem controle passa; a validade não é exigida no estorno", async () => {
+    expect(await noLedger(), "premissa: a 0029 está aplicada").toBe(1);
+    const movimentos = async () => Number((await db.query<{ n: string }>("select count(*)::text n from erp.stock_movements where source_type='teste_lt8b'")).rows[0]!.n);
+    // o estorno da baixa sem lote do acervo (−4 no balde '') devolveria 4 ao balde '' da vacina: saldo preso
+    for (const lote of [null, "", "   "]) {
+      await expect(estorno(vacina.id, 1, "4", lote), `lote ${JSON.stringify(lote)}`).rejects.toThrow(
+        /^VALIDATION_ERROR: Estorno de movimento sem lote de produto com controle de lote: o saldo voltaria sem lote e ficaria preso\./);
+    }
+    expect(await movimentos()).toBe(0);
+    expect(await saldoDe(vacina.id)).toEqual({ "": "0.0000", "L-1": "10.0000" });
+    // estorno COM o lote do original passa
+    await estorno(vacina.id, -1, "1", "L-1");
+    expect(await saldoDe(vacina.id)).toEqual({ "": "0.0000", "L-1": "9.0000" });
+    // produto SEM controle: o estorno sem lote continua valendo
+    await estorno(sal, -1, "5", null);
+    expect(await saldoDe(sal)).toEqual({ "": "20.0000" });
+    // lote + validade: o estorno leva o lote e NÃO precisa de validade (só a entrada comum precisa)
+    await db.query("update erp.products set controle_lote='lote_validade' where id=$1", [ivermectina.id]);
+    await db.query(`insert into erp.stock_movements (organization_id, empresa_id, warehouse_id, product_id, movement_type, direction, quantity, unit_cost, provider_lot, expiration_date, source_type, source_id, movement_date)
+       values ($1,$2,$3,$4,'entry',1,3,3,'IV-1','2099-01-01','teste_lt8b_entrada',gen_random_uuid(),'2026-09-21')`, [demo.orgId, armazem.empresa_id, armazem.id, ivermectina.id]);
+    await estorno(ivermectina.id, 1, "1", "IV-1");
+    expect(await saldoDe(ivermectina.id)).toEqual({ "IV-1": "4.0000" });
+    expect(await movimentos()).toBe(3);
   });
 });

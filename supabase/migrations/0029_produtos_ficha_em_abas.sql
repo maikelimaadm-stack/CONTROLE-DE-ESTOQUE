@@ -209,16 +209,24 @@ revoke execute on function erp.products_controle_lote() from public;
 create trigger trg_products_controle_lote before insert or update on erp.products for each row execute function erp.products_controle_lote();
 
 -- 8.2 movimento de produto com controle de lote exige lote; lote + validade exige validade na entrada.
--- Estorno repete o lote do original; a perna de ENTRADA da transferência carrega o lote da saída.
+-- A perna de ENTRADA da transferência carrega o lote da saída.
+-- ESTORNO também exige o lote (R1): ele repete o lote do original, e um estorno SEM lote de produto com controle
+-- devolveria saldo ao balde '' — o saldo preso que a pré-condição 2.1 recusa, recriado depois do deploy por quem
+-- ainda estorna sem conferir (a API anterior, na janela ou numa reversão). A API nova recusa antes (reverseStock);
+-- o banco é a autoridade. Só a exigência de LOTE vale para o estorno: a de validade não, porque o estorno não
+-- carrega a validade do original (o saldo do lote já a tem).
 create or replace function erp.stock_movements_exige_lote() returns trigger
 language plpgsql security definer set search_path = erp, pg_catalog as $$
 declare v_controle text;
 begin
-  if new.movement_type = 'reversal' then return new; end if;
   select p.controle_lote into v_controle from erp.products p where p.id = new.product_id and p.organization_id = new.organization_id;
   if v_controle in ('lote','lote_validade') and coalesce(btrim(new.provider_lot), '') = '' then
+    if new.movement_type = 'reversal' then
+      raise exception 'VALIDATION_ERROR: Estorno de movimento sem lote de produto com controle de lote: o saldo voltaria sem lote e ficaria preso. Registre o acerto do estoque informando o lote (devolução ou correção de estoque).';
+    end if;
     raise exception 'VALIDATION_ERROR: O produto controla lote: informe o lote no movimento.';
   end if;
+  if new.movement_type = 'reversal' then return new; end if;
   if v_controle = 'lote_validade' and new.direction = 1 and new.expiration_date is null
      and new.movement_type not in ('transfer_in','farm_transfer_in') then
     raise exception 'VALIDATION_ERROR: O produto controla lote e validade: informe a validade na entrada.';

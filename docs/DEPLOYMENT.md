@@ -1044,7 +1044,8 @@ novas em `erp.products` (`marca`, `fabricante`, `tipo_item`, `estoque_maximo`, `
 `nenhum`, `origem`, `cest`, `registro_mapa`); tabelas novas `erp.produto_unidades` e `erp.produto_fornecedores` (RLS
 forçada, política única de tenant, `erp_app` sem DELETE, FKs compostas, auditoria); gatilhos
 `trg_products_controle_lote` (has_lot ⇄ controle; controle não muda com saldo ≠ 0), `trg_stock_movements_exige_lote`
-(só INSERT: lote obrigatório para produto com controle; validade na entrada para lote + validade) e
+(só INSERT: lote obrigatório para produto com controle, INCLUSIVE no estorno; validade na entrada para lote + validade,
+não no estorno) e
 `trg_produto_{unidades,fornecedores}_conferir`; coluna anulável nova `erp.feed_batches.validade` (validade do produto
 produzido, R1-1). **Pré-condição nomeada nova (R1-1 h):** produto com `has_lot` e saldo ≠ 0 no balde SEM lote
 (`provider_lot` vazio ou só espaços) PARA a migration nomeando os produtos (código, descrição, id) — depois dela esse
@@ -1086,7 +1087,9 @@ embalagens intactos; controle = has_lot de antes; uma linha de unidade por 2ª u
 - **Estorno sem lote de produto que controla lote → 422:** cancelar documento cujo movimento foi gravado SEM lote
   quando o produto ainda não controlava lote (API anterior, ou controle ligado depois com saldo zerado) é recusado,
   nada gravado — o estorno devolveria saldo ao balde sem lote, onde ficaria preso. O acerto é devolução ou correção
-  informando o lote.
+  informando o lote. A API recusa antes (`reverseStock`, com o nome do produto), e o GATILHO da 0029 também recusa
+  o estorno sem lote (LT-8b): quem estorna sem conferir — a API anterior na janela do deploy ou numa reversão — não
+  recria o saldo preso.
 - **Controle com saldo:** mudar o controle com saldo ≠ 0 na organização → 422 "zere o saldo em todos os armazéns".
 
 **Impacto em dados reais — medir ANTES, em leitura:** nenhum fluxo fica recusado por falta de campo de lote; o que
