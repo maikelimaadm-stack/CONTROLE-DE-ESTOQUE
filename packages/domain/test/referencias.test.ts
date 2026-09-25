@@ -4,8 +4,9 @@ import { REFERENCIAS_DE_BUSCA, getReferencia, rotuloDaReferencia, formatarNcm, s
 
 describe("RF-2 buscas de referência: rótulo e normalização", () => {
   it("rótulos no formato combinado", () => {
-    expect(rotuloDaReferencia("municipios", { codigo: 1709500, nome: "Gurupi", extra: "TO" })).toBe("Gurupi - TO");
-    expect(rotuloDaReferencia("bancos", { codigo: "001", nome: "Banco do Brasil S.A." })).toBe("001 - Banco do Brasil S.A.");
+    expect(rotuloDaReferencia("municipios", { codigo: 1709500, nome: "Gurupi", extra: "TO" })).toBe("1709500 · Gurupi - TO");
+    expect(rotuloDaReferencia("bancos", { codigo: "001", nome: "Banco do Brasil S.A." })).toBe("001 · Banco do Brasil S.A.");
+    expect(rotuloDaReferencia("municipios", { codigo: 5106752, nome: "Pontes e Lacerda", extra: "MT" })).toBe("5106752 · Pontes e Lacerda - MT");
     expect(rotuloDaReferencia("ncm", { codigo: "01022110", nome: "Bovinos - Reprodutores de raça pura - Prenhes" })).toBe("0102.21.10 - Bovinos - Reprodutores de raça pura - Prenhes");
     expect(rotuloDaReferencia("cbo", { codigo: "622005", nome: "Caseiro (agricultura)" })).toBe("622005 - Caseiro (agricultura)");
     expect(formatarNcm("01022110")).toBe("0102.21.10");
