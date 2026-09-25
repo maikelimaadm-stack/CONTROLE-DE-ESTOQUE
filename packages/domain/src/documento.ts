@@ -80,3 +80,72 @@ export function validarDocumento(valor: string): ResultadoDocumento {
   if (n.length === 14) return validarCnpj(n) ? { valido: true, tipo: "cnpj", normalizado: n, formatado: formatarCnpj(n), alfanumerico: cnpjAlfanumerico(n) } : { valido: false, normalizado: n, motivo: "CNPJ inválido" };
   return { valido: false, normalizado: n, motivo: "Documento deve ter 11 (CPF) ou 14 (CNPJ) posições" };
 }
+
+/*
+ * MÁSCARAS DE ENTRADA (CADASTROS AJUSTES 01, B-3) — formatadores ÚNICOS para a web. A tela MOSTRA o formatado
+ * e GRAVA o normalizado (`normalizarMascara`). São PROGRESSIVOS: formatam o que já foi digitado, para a máscara
+ * acompanhar a digitação e o colar com pontuação. Não validam — o DV é de `validarCpf`/`validarCnpj`.
+ */
+export type TipoMascara = "cpf" | "cnpj" | "cep" | "telefone";
+
+const soDigitos = (v: string) => String(v ?? "").replace(/\D/g, "");
+/** Encaixa `valor` no molde (`0` = uma posição); para onde o valor acaba, sem pontuação sobrando no fim. */
+function encaixar(valor: string, molde: string): string {
+  let o = ""; let i = 0;
+  for (const m of molde) {
+    if (i >= valor.length) break;
+    if (m === "0") o += valor[i++]; else o += m;
+  }
+  return o;
+}
+
+/** Normaliza para gravar: CPF/CEP/telefone só dígitos; CNPJ [0-9A-Z] maiúsculo, DV (2 últimas) só dígito. Corta no tamanho. */
+export function normalizarMascara(tipo: TipoMascara, valor: string): string {
+  switch (tipo) {
+    case "cpf": return soDigitos(valor).slice(0, 11);
+    case "cep": return soDigitos(valor).slice(0, 8);
+    case "telefone": return soDigitos(valor).slice(0, 11);
+    case "cnpj": {
+      const bruto = String(valor ?? "").toUpperCase().replace(/[^0-9A-Z]/g, "");
+      let o = "";
+      for (const c of bruto) { if (o.length >= 14) break; if (o.length >= 12 && !/\d/.test(c)) continue; o += c; }
+      return o;
+    }
+  }
+}
+
+/** Formata (progressivo): CPF 000.000.000-00 · CNPJ 00.000.000/0000-00 (alfanumérico AA.AAA.AAA/AAAA-00) · CEP 00000-000 · telefone (00) 0000-0000 / celular (00) 00000-0000. */
+export function formatarMascara(tipo: TipoMascara, valor: string): string {
+  const n = normalizarMascara(tipo, valor);
+  switch (tipo) {
+    case "cpf": return encaixar(n, "000.000.000-00");
+    case "cnpj": return encaixar(n, "00.000.000/0000-00");
+    case "cep": return encaixar(n, "00000-000");
+    case "telefone":
+      if (n.length <= 2) return n.length ? `(${n}` : "";
+      return encaixar(n, n.length === 11 ? "(00) 00000-0000" : "(00) 0000-0000");
+  }
+}
+
+export const formatarCep = (v: string) => formatarMascara("cep", v);
+export const formatarTelefone = (v: string) => formatarMascara("telefone", v);
+
+/** Máscara do documento pelo tipo de pessoa: Física → CPF; Jurídica → CNPJ; Estrangeira ou desconhecido → sem máscara (null). */
+export function mascaraDoTipoDePessoa(tipo: string | null | undefined): "cpf" | "cnpj" | null {
+  if (tipo === "natural") return "cpf";
+  if (tipo === "legal") return "cnpj";
+  return null;
+}
+
+/** DV do documento conferido ao sair do campo: mensagem da recusa ou null. Vazio não é recusado aqui (documento é opcional). */
+export function recusaDoDigitoDoDocumento(tipo: "cpf" | "cnpj", valor: string): string | null {
+  const n = normalizarMascara(tipo, valor);
+  if (!n) return null;
+  if (tipo === "cpf") return validarCpf(n) ? null : "CPF inválido";
+  return validarCnpj(n) ? null : "CNPJ inválido";
+}
+
+/** Texto é um CEP (8 dígitos, com ou sem hífen/ponto)? Usado pelo campo Cidade para decidir consultar o CEP. */
+export function textoEhCep(texto: string): boolean {
+  return /^\d{5}[-.]?\d{3}$/.test(String(texto ?? "").trim()) || /^\d{2}\.\d{3}-\d{3}$/.test(String(texto ?? "").trim());
+}
