@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { api, getSession, setSession, writeSession, type Session } from "./api";
+import { esquecerEntregas } from "./entrega-em-memoria";
 
 export interface AppContext {
   user: { id: string; email: string; name: string };
@@ -47,7 +48,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch { setCtx(null); }
     setLoading(false);
   }, []);
-  useEffect(() => { void refresh(); const h = () => void refresh(); window.addEventListener("agro:session", h); return () => window.removeEventListener("agro:session", h); }, [refresh]);
+  // toda troca de sessão (login, logout, troca de organização, sessão expirada) apaga as entregas em memória entre
+  // telas (ex.: dados da Receita do "Novo pelo CNPJ", AJUSTES 01 R1 W-5) antes de recarregar o contexto
+  useEffect(() => { void refresh(); const h = () => { esquecerEntregas(); void refresh(); }; window.addEventListener("agro:session", h); return () => window.removeEventListener("agro:session", h); }, [refresh]);
   useEffect(() => { if (!loading && !session?.token && !pathname.startsWith("/login")) router.replace("/login"); }, [loading, session, pathname, router]);
   const perms = useMemo(() => new Set(ctx?.permissions ?? []), [ctx]);
   const value: AuthState = useMemo(() => ({
