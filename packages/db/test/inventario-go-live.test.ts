@@ -68,7 +68,7 @@ describe("inventário go-live", () => {
         expect(membros).toHaveLength(2);
         expect(Number(volume![0]!.empresas)).toBe(2);
         expect(Number(volume![0]!.animais)).toBe(20);
-        expect(ledger![0]).toMatchObject({ migrations: "29", ultima: "0029_produtos_ficha_em_abas.sql" });
+        expect(ledger![0]).toMatchObject({ migrations: "30", ultima: "0030_cadastros_ajustes_01.sql" });
         expect(gatilho).toEqual([{ tgname: "trg_sales_documents_execucao_configurada", clausula_r1: true }]);
         expect(versoes).toEqual([{ versoes_com_execucao_configurada: "0" }]);
       } finally { await cli.query("rollback").catch(() => {}); cli.release(); }

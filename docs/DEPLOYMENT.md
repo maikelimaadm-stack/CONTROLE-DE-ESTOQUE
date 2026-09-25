@@ -1184,9 +1184,10 @@ API: a anterior ignora colunas e tabelas novas; na saída volta à escolha ANTIG
 de um lote → 422, item 1); entrada e estorno sem lote de produto com lote continuam recusados pelo gatilho. Banco: a
 0029 fica (migration aplicada é histórico); nada a desfazer.
 
-## CADASTROS AJUSTES 01 — (C) ficha do Parceiro e `0030`
+## CADASTROS AJUSTES 01 — parceiro, buscas, máscaras, árvores e `0030`
 
-Decisão 257, subitem (C).
+Decisão 257, subitens (A) a (E). A única migration é a `0030` (subitem C); as frentes A, B, D e E não têm
+migration nem variável de ambiente nova.
 
 **A migration `0030_cadastros_ajustes_01.sql` é aditiva e SEM backfill** (trava (2026,64), `lock_timeout` 2 s,
 pré/pós-condições nomeadas, não reaplicável): colunas novas em `erp.people` (`matriz_id` com FK COMPOSTA
@@ -1205,9 +1206,27 @@ e `latitude`/`longitude` em `erp.parceiro_enderecos`. Todas anuláveis ou com de
    nem envia os campos da 0030 (o schema estrito da anterior recusaria o corpo inteiro), não mostra `Consultar CNPJ`
    na barra nem `Novo pelo CNPJ` na lista, e usa a consulta antiga na aba Identificação. Anexos na barra, Tipo do
    parceiro num campo só, máscaras e o tipo de pessoa seguindo o documento são só tela e valem nos dois sentidos.
+4. **web ANTERIOR × API nova — referências (A):** a busca sem texto passa a responder 200 (a anterior dava 500 ao abrir
+   Banco, NCM, CBO ou Cidade); o formato da resposta é o mesmo, só o texto do rótulo muda (`5106752 · Pontes e Lacerda -
+   MT`, `001 · Banco do Brasil S.A.`). CEP passa a responder a qualquer membro da organização.
+5. **web NOVA × API anterior — referências (B):** a busca sem texto da anterior continua dando 500 → a tela mostra
+   "Tentar de novo" e nunca aceita texto livre; com texto a busca funciona. Na anterior o CEP ainda exige
+   `people.create`/`people.edit`: sem elas, aviso "Sem permissão para consultar CEP.".
+6. **web ANTERIOR × API nova — árvores e sequenciais (D):** POST de árvore com o código sugerido → aceito; código
+   diferente → 422 "O código é gerado pelo sistema."; mudar o superior pela edição → 422 "Use Mover.". Conta bancária,
+   área, pátio, setor e curral: a web anterior exige digitar o código e a API nova o recusa (422 legível) — **enquanto a
+   web anterior estiver no ar, esses cinco cadastros não recebem inclusão**. Por isso o intervalo entre API e web deve ser
+   curto (minutos), como nas fatias anteriores.
+7. **web NOVA × API anterior — árvores (D):** sem `codigoAutomatico`/`moverComFilhos`, a web mostra o código digitável com
+   a sugestão de sempre, o Mover de antes (só registro sem filhos) e não mostra a Numeração dos cadastros.
+8. **Zerar numeração (D)** usa `LOCK TABLE … IN SHARE ROW EXCLUSIVE` por um instante: inclusões NAQUELA tabela esperam,
+   em todas as organizações, até a transação do Zerar terminar (milissegundos com o cadastro vazio). Só roda com zero
+   registros vivos; excluídos ficam com `EXC-<id>`; nada é apagado.
 
-**Reversão.** Web: livre (item 3). API: a anterior ignora as colunas novas; a web nova volta sozinha ao comportamento
-do item 3. Banco: a 0030 fica (migration aplicada é histórico); nada a desfazer.
+**Reversão.** Web: livre (itens 3, 5 e 7). API: a anterior ignora as colunas novas; a web nova volta sozinha ao
+comportamento dos itens 3, 5 e 7. Códigos gerados, renumerados pelo Mover ou liberados como `EXC-<id>` pelo Zerar são
+códigos comuns para a API anterior e ficam como estão (histórico, auditado). Banco: a 0030 fica (migration aplicada é
+histórico); nada a desfazer.
 
 **Roteiro de teste do Maike depois do deploy (na mão, produção, sem gravar nada que não queira manter):**
 UI-1 abrir um parceiro em leitura → `Consultar CNPJ` ao lado de `Anexos`, habilitado; consultar → todos os dados;
@@ -1216,7 +1235,13 @@ aba Divergências; `Importar para o cadastro` → entra em Editar com os campos 
 quiser manter). UI-4 CEP + Tab → Endereço, Bairro, Cidade, Código IBGE, UF e foco no Número; CEP de outra cidade →
 aviso. UI-6 digitar 11 dígitos → Física (RG, CAEPF, Sexo aparecem; "Nome completo"); 14 → Jurídica (Matriz
 aparece); parceiro Jurídica com CPF → faixa âmbar e `Ajustar para Física`. UI-7 Tipo do parceiro num campo só;
-marcar Fornecedor → aba Fornecedor aparece. Os demais itens (UI-3, UI-5, UI-8 a UI-10) são das outras frentes.
+marcar Fornecedor → aba Fornecedor aparece. UI-3 campo Cidade: "pontes" → `5106752 · Pontes e Lacerda - MT`; um CEP →
+a cidade do CEP como 1ª opção; 5106752 no Código IBGE → a cidade; UF só leitura. UI-5 máscaras: CPF, CNPJ (também colado
+com pontuação e com o tipo ainda em Física), CEP, telefone e celular aparecem formatados e gravam só os dígitos. UI-8
+abrir Banco, NCM e CBO SEM digitar → a lista aparece (antes: erro); "nubank" → 260. UI-9 Naturezas: Código só leitura;
+Novo filho mostra "será gerado ao salvar: …"; Mover um galho → prévia → Confirmar → códigos novos (usar um galho de teste
+ou desfazer movendo de volta). UI-10 Parametrizações → Numeração: cadastro com registros → Zerar desabilitado com o
+motivo (não zerar nada em produção sem querer).
 
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)

@@ -159,7 +159,7 @@ beforeAll(async () => {
 afterAll(async () => { await db?.end(); });
 
 describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na purga", () => {
-  it("o diretório tem 29 migrations e a purga é a 17ª", () => {
+  it("o diretório tem 30 migrations e a purga é a 17ª", () => {
     const noDisco = listMigrations().map((m) => m.name);
     // Números explícitos de propósito: este é o gate da fatia destrutiva, e uma migration nova precisa
     // passar por aqui conscientemente — não entrar de carona num `>= 16`. A 05C-2 passou: acrescentou a
@@ -185,8 +185,11 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // tabelas de detalhe do parceiro e um índice único de documento — cadastros de organização, fora do
     // recorte que a purga lê; a posição 17 segue intacta. As CADASTROS FASES 5 e 6 são a décima segunda e a décima
     // terceira: a 0028 (RH) e a 0029 (produtos: colunas, grades e gatilhos de lote) — cadastros de organização e um
-    // gatilho de INSERT no ledger que não reescreve nada do acervo; a posição 17 segue intacta.
-    expect(noDisco.length, "29 migrations no repositório").toBe(29);
+    // gatilho de INSERT no ledger que não reescreve nada do acervo; a posição 17 segue intacta. A CADASTROS AJUSTES 01
+    // é a décima quarta: a 0030 só ACRESCENTA colunas anuláveis (ou com default) a `erp.people` e
+    // `erp.parceiro_enderecos`, com checks e a FK composta da matriz — cadastros de organização, fora do recorte
+    // que a purga lê; a posição 17 segue intacta.
+    expect(noDisco.length, "30 migrations no repositório").toBe(30);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -200,6 +203,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[26], "e a 27ª é a ficha de Parceiros (CADASTROS Fase 4)").toBe("0027_parceiros_ficha_em_abas.sql");
     expect(noDisco[27], "e a 28ª é a ficha de RH / funcionários (CADASTROS Fase 5)").toBe("0028_rh_funcionarios.sql");
     expect(noDisco[28], "e a 29ª é a ficha de Produtos (CADASTROS Fase 6)").toBe("0029_produtos_ficha_em_abas.sql");
+    expect(noDisco[29], "e a 30ª são os ajustes do Parceiro (CADASTROS AJUSTES 01)").toBe("0030_cadastros_ajustes_01.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {
