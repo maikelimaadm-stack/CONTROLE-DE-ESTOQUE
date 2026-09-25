@@ -14,6 +14,7 @@ import type { Base1Column, Base1FilterDef, Row } from "@/features/base1/types";
 import { ResourceForm } from "./resource-form";
 import { ImportDialog } from "./import-dialog";
 import { ArvoreTela } from "./arvore-tela";
+import { NumeracaoAtalho } from "@/features/admin/numeracao";
 import { PillBtn } from "@/features/base1/ui";
 import { FolderTree, List } from "lucide-react";
 
@@ -115,7 +116,7 @@ export function ResourceList({ resourceKey, title, fixedFilters, basePath, extra
     { key: "importar", label: "Importar planilha", onClick: () => setImportando(true) },
   ] : [];
   if (visaoArvore) return <ArvoreTela resourceKey={resourceKey} alternar={<PillBtn tone="outline" data-testid="visao-lista" onClick={() => trocarVisao(false)}><List className="h-3.5 w-3.5" /> Ver lista</PillBtn>} />;
-  return <>{comArvore && <div className="mb-2 flex"><PillBtn tone="outline" data-testid="visao-arvore" onClick={() => trocarVisao(true)}><FolderTree className="h-3.5 w-3.5" /> Ver em árvore</PillBtn></div>}{podeImportar && <ImportDialog resourceKey={resourceKey} labelPlural={def.labelPlural} open={importando} onOpenChange={setImportando} avisoFiltro={avisoDeFiltroFixo(fields, fixed)} />}<Base1List
+  return <>{comArvore && <div className="mb-2 flex"><PillBtn tone="outline" data-testid="visao-arvore" onClick={() => trocarVisao(true)}><FolderTree className="h-3.5 w-3.5" /> Ver em árvore</PillBtn></div>}<NumeracaoAtalho resourceKey={resourceKey} />{podeImportar && <ImportDialog resourceKey={resourceKey} labelPlural={def.labelPlural} open={importando} onOpenChange={setImportando} avisoFiltro={avisoDeFiltroFixo(fields, fixed)} />}<Base1List
     moduleId={resourceKey} title={title ?? def.labelPlural} columns={columns} filters={filters} entity={def.table} csvName={resourceKey}
     fetchPage={(p) => api<{ items: Row[]; total: number }>(`/api/resources/${resourceKey}${qs({ page: p.page, pageSize: p.pageSize, sort: p.sort && sigilosos.has(p.sort) ? undefined : p.sort, dir: p.dir, search: p.search, ...p.filters, ...fixed })}`)}
     distinct={(key, search) => api<{ value: string; label: string; count: number }[]>(`/api/resources/${resourceKey}/distinct${qs({ field: key, search, limit: 100 })}`)}

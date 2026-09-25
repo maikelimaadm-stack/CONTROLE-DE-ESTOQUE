@@ -5,11 +5,13 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { Button, Card, CardHeader, CardBody, Field, NativeSelect, Input, LoadingState } from "@/components/ui";
 import { useAction } from "@/features/docs/actions";
+import { NumeracaoCadastros } from "./numeracao";
+import { useCodigoAutomatico } from "@/features/resources/capacidade-codigo";
 import { CADASTROS_CODIGO_HIERARQUICO, MASCARA_CODIGO_PADRAO, PARAMETRO_MASCARAS_CODIGO, getResource } from "@agro/domain";
 export function ParametersPanel() {
   const { can } = useAuth(); const q = useQuery({ queryKey: ["params"], queryFn: () => api<{ parameters: Record<string, unknown> }>("/api/admin/parameters") });
   const [p, setP] = React.useState<Record<string, unknown>>({}); React.useEffect(() => { if (q.data) setP(q.data.parameters ?? {}); }, [q.data]);
-  const act = useAction();
+  const act = useAction(); const codigoAutomatico = useCodigoAutomatico();
   const str = (k: string) => String(p[k] ?? "");
   const mascaras = (p[PARAMETRO_MASCARAS_CODIGO] ?? {}) as Record<string, string | undefined>;
   return <Card><CardHeader title="Parametrizações da Organização" subtitle="Regras configuráveis por tenant (armazenadas em JSON versionado pela auditoria)." actions={can("tenant_parameters.edit") && <Button size="sm" loading={act.isPending} onClick={() => act.mutate({ path: "/api/admin/parameters", method: "PUT", body: p })}>Salvar</Button>} /><CardBody>{q.isLoading ? <LoadingState /> : <div className="grid grid-cols-12 gap-3">
@@ -18,7 +20,8 @@ export function ParametersPanel() {
     <Field label="Fluxo de compras simplificado (padrão)" span={4} help="Novas empresas pulam cotação/autorização"><NativeSelect value={p["simplified_purchase_flow"] ? "1" : "0"} onChange={(e) => setP({ ...p, simplified_purchase_flow: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim</option></NativeSelect></Field>
     <Field label="Permitir estoque negativo" span={4} help="Bloqueado por padrão (ledger rejeita saída maior que o saldo)"><NativeSelect value={p["allow_negative_stock"] ? "1" : "0"} onChange={(e) => setP({ ...p, allow_negative_stock: e.target.value === "1" })}><option value="0">Não (recomendado)</option><option value="1">Sim</option></NativeSelect></Field>
     <Field label="Dias de aviso de vencimento" span={4}><Input type="number" min={0} value={str("due_alert_days") || "3"} onChange={(e) => setP({ ...p, due_alert_days: Number(e.target.value) })} /></Field>
-    {CADASTROS_CODIGO_HIERARQUICO.map((c) => <Field key={c} label={`Máscara de código — ${getResource(c)?.labelPlural ?? c}`} span={4} help={`9 para cada dígito, ponto entre níveis. Padrão: ${MASCARA_CODIGO_PADRAO}`}><Input data-testid={`mascara-${c}`} placeholder={MASCARA_CODIGO_PADRAO} value={mascaras[c] ?? ""} onChange={(e) => setP({ ...p, [PARAMETRO_MASCARAS_CODIGO]: { ...mascaras, [c]: e.target.value || undefined } })} /></Field>)}
+    {CADASTROS_CODIGO_HIERARQUICO.map((c) => <Field key={c} label={`Máscara de código — ${getResource(c)?.labelPlural ?? c}`} span={4} help={`9 para cada dígito, ponto entre níveis. Padrão: ${MASCARA_CODIGO_PADRAO}${codigoAutomatico ? ". Só muda com o cadastro vazio." : ""}`}><Input data-testid={`mascara-${c}`} placeholder={MASCARA_CODIGO_PADRAO} value={mascaras[c] ?? ""} onChange={(e) => setP({ ...p, [PARAMETRO_MASCARAS_CODIGO]: { ...mascaras, [c]: e.target.value || undefined } })} /></Field>)}
     <Field label="Moeda / locale" span={4}><Input value={str("locale") || "pt-BR"} onChange={(e) => setP({ ...p, locale: e.target.value })} /></Field>
+    <NumeracaoCadastros />
   </div>}</CardBody></Card>;
 }

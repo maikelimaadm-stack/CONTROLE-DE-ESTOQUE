@@ -38,7 +38,20 @@ const post = (url: string, payload: Record<string, unknown>, base?: Hdr) => h.ap
 const put = (key: string, id: string, payload: Record<string, unknown>, base?: Hdr) => h.app.inject({ method: "PUT", url: `/api/resources/${key}/${id}`, headers: hdr(base), payload });
 const del = (key: string, id: string) => h.app.inject({ method: "DELETE", url: `/api/resources/${key}/${id}`, headers: h.headers() });
 const criado = (r: Resp) => { expect(r.statusCode, r.body).toBe(201); return j(r).id as string; };
-const cadastrar = async (key: string, payload: Record<string, unknown>) => criado(await post(`/api/resources/${key}`, payload));
+/**
+ * AJUSTES 01 (D-1): nas árvores com código o código é GERADO no servidor e o POST com código diferente é recusado.
+ * Estas suítes não testam a geração (cadastros-ajustes-01-arvore.test.ts testa): o fixture cria SEM código e
+ * põe, pelo banco, o código que o cenário precisa — as asserções abaixo continuam as mesmas.
+ */
+const CODIGO_GERADO = new Set(["financial_categories", "cost_centers", "chart_accounts", "product_groups"]);
+const cadastrar = async (key: string, payload: Record<string, unknown>) => {
+  if (!CODIGO_GERADO.has(key) || payload["code"] === undefined) return criado(await post(`/api/resources/${key}`, payload));
+  const { code, ...resto } = payload;
+  const id = criado(await post(`/api/resources/${key}`, resto));
+  const u = await admin.query(`update erp.${key} set code=$2 where id=$1`, [id, code]);
+  expect(u.rowCount, `fixture: código ${String(code)} posto em ${key}`).toBe(1);
+  return id;
+};
 const erroDoCampo = (r: Resp) => { const d = (j(r).error.details as { path: string[] | string; message: string }[])[0]!; return { path: ([] as string[]).concat(d.path), message: d.message }; };
 const linha = async <T extends Record<string, unknown>>(sql: string, p: unknown[]) => (await admin.query<T>(sql, p)).rows[0]!;
 const contarTitulos = async (nota: string) => Number((await linha<{ n: string }>("select count(*)::text n from erp.financial_titles where organization_id=$1 and note=$2", [h.demo.orgId, nota])).n);
@@ -97,25 +110,32 @@ describe("AR-5 — registro com filhos não muda de superior nem de código", ()
   });
   const estado = (id: string) => linha("select code, parent_id from erp.financial_categories where id=$1", [id]);
 
+  // AJUSTES 01 (D-1/D-5, decisão 257): nas árvores COM código a edição comum não muda código nem superior de
+  // NENHUM registro (com ou sem filhos) — o caminho é o Mover, que renumera o galho. As recusas mudaram de texto;
+  // "nada muda" continua cobrado. Endereçamentos (sem código) seguem a regra antiga (AR-5d).
   it("AR-5a: mover registro COM filho → 422 no superior; renumerar → 422 no código; nada muda", async () => {
+    // A-5 (R1): o superior é conferido ANTES do código — a web anterior manda { parent_id, code } juntos e ouve
+    // "Use Mover." no superior (o que o DEPLOYMENT promete), não "O código é gerado" (T-4: campo + mensagem exatos)
     const mover = await put("financial_categories", meio, { parent_id: outraRaiz, code: "6.01" });
     expect(mover.statusCode, mover.body).toBe(422);
-    expect(erroDoCampo(mover)).toEqual({ path: ["parent_id"], message: MENSAGEM_REGISTRO_COM_FILHOS });
-    // só o superior (o código fica): a recusa é a dos FILHOS, antes da conferência do prefixo do código
+    expect(erroDoCampo(mover)).toEqual({ path: ["parent_id"], message: "Use Mover." });
     const soSuperior = await put("financial_categories", meio, { parent_id: outraRaiz });
     expect(soSuperior.statusCode, soSuperior.body).toBe(422);
-    expect(erroDoCampo(soSuperior)).toEqual({ path: ["parent_id"], message: MENSAGEM_REGISTRO_COM_FILHOS });
+    expect(erroDoCampo(soSuperior)).toEqual({ path: ["parent_id"], message: "Use Mover." });
     const renumerar = await put("financial_categories", meio, { code: "5.02" });
     expect(renumerar.statusCode, renumerar.body).toBe(422);
-    expect(erroDoCampo(renumerar)).toEqual({ path: ["code"], message: MENSAGEM_REGISTRO_COM_FILHOS });
+    expect(erroDoCampo(renumerar)).toEqual({ path: ["code"], message: "O código é gerado pelo sistema." });
     expect(await estado(meio)).toEqual({ code: "5.01", parent_id: raiz });
     // outro campo do registro com filhos continua editável (a regra é só de superior e código)
     const nome = await put("financial_categories", meio, { name: "AR5 Meio renomeado", code: "5.01", parent_id: raiz });
     expect(nome.statusCode, nome.body).toBe(200);
   });
 
-  it("AR-5b: mover a FOLHA → 200 com superior e código novos", async () => {
-    const r = await put("financial_categories", folha, { parent_id: outraRaiz, code: "6.01" });
+  it("AR-5b: mover a FOLHA → 200 com superior e código novos (pelo Mover; a edição comum recusa)", async () => {
+    const comum = await put("financial_categories", folha, { parent_id: outraRaiz, code: "6.01" });
+    expect(comum.statusCode, comum.body).toBe(422);
+    expect(await estado(folha)).toEqual({ code: "5.01.001", parent_id: meio });
+    const r = await post(`/api/resources/financial_categories/${folha}/mover`, { superior: outraRaiz });
     expect(r.statusCode, r.body).toBe(200);
     expect(await estado(folha)).toEqual({ code: "6.01", parent_id: outraRaiz });
   });
@@ -124,9 +144,11 @@ describe("AR-5 — registro com filhos não muda de superior nem de código", ()
     const extra = await cadastrar("financial_categories", { code: "5.01.002", name: "AR5 Excluída", nature: "income", kind: "analytic", parent_id: meio });
     expect((await put("financial_categories", meio, { code: "5.02" })).statusCode, "premissa: com o filho vivo, recusa").toBe(422);
     expect((await del("financial_categories", extra)).statusCode).toBe(200);
-    const r = await put("financial_categories", meio, { code: "6.02", parent_id: outraRaiz });
+    // pelo Mover (D-5): o filho excluído vai junto, com o prefixo trocado
+    const r = await post(`/api/resources/financial_categories/${meio}/mover`, { superior: outraRaiz });
     expect(r.statusCode, r.body).toBe(200);
     expect(await estado(meio)).toEqual({ code: "6.02", parent_id: outraRaiz });
+    expect(await linha("select code from erp.financial_categories where id=$1", [extra])).toEqual({ code: "6.02.002" });
   });
 
   it("AR-5d: árvore SEM código (Endereçamentos) — com filho não muda de superior; a folha muda", async () => {
@@ -158,18 +180,20 @@ describe("AR-5 — registro com filhos não muda de superior nem de código", ()
     expect(await estado(pai)).toEqual({ code: "5.04", parent_id: raiz });
   });
 
+  // AJUSTES 01 (D-5): a renumeração do superior agora é o MOVER — ele espera o filho a caminho e o leva junto
   it("AR-5f: CONCORRÊNCIA — filho ainda não confirmado: a renumeração do superior ESPERA e vê o filho", async () => {
     const pai = await cadastrar("financial_categories", { code: "5.05", name: "AR5 Com filho a caminho", nature: "income", kind: "synthetic", parent_id: raiz });
     // `outro` = a criação do filho por outra sessão que já conferiu o prefixo "5.05"
     const { r, esperou } = await comTransacaoConcorrente(
       (outro) => outro.query("insert into erp.financial_categories(organization_id,code,name,nature,kind,parent_id) values ($1,'5.05.001','AR5 Filho a caminho','income','analytic',$2)", [h.demo.orgId, pai]),
-      () => put("financial_categories", pai, { code: "5.06" }),
+      () => post(`/api/resources/financial_categories/${pai}/mover`, { superior: outraRaiz }),
       "%financial_categories%for update%");
-    expect(r.statusCode, r.body).toBe(422);
+    expect(r.statusCode, r.body).toBe(200);
     expect(esperou, "a renumeração esperou a trava do registro").toBe(true);
-    expect(erroDoCampo(r)).toEqual({ path: ["code"], message: MENSAGEM_REGISTRO_COM_FILHOS });
-    expect(await estado(pai)).toEqual({ code: "5.05", parent_id: raiz });
-    expect(await filhosDe(pai)).toEqual(["5.05.001"]);
+    const novo = (await estado(pai))["code"] as string;
+    expect(await estado(pai)).toEqual({ code: novo, parent_id: outraRaiz });
+    expect(novo).toMatch(/^6\.\d{2}$/);
+    expect(await filhosDe(pai), "o filho que chegou durante a espera foi renumerado junto").toEqual([`${novo}.001`]);
   });
 });
 

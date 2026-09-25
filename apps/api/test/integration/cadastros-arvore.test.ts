@@ -35,17 +35,23 @@ describe("código hierárquico", () => {
     const n = await post({ code: "3.01.001", name: "Juros de aplicação", nature: "income", kind: "analytic", parent_id: filho });
     expect(n.statusCode, n.body).toBe(201); neto = j(n).id;
     expect(j(await get(`${base}/proximo-codigo?parent_id=${filho}`)).codigo).toBe("3.01.002");
-    // O código sugerido é editável: pular número é permitido, e a próxima sugestão parte do maior.
-    expect((await post({ code: "3.01.005", name: "Outros juros", nature: "income", kind: "analytic", parent_id: filho })).statusCode).toBe(201);
-    expect(j(await get(`${base}/proximo-codigo?parent_id=${filho}`)).codigo).toBe("3.01.006");
+    // AJUSTES 01 (D-1): o código é GERADO no servidor. O sugerido (o que o web anterior manda) é aceito, como acima;
+    // pular número deixou de ser permitido (422, nada gravado) e o POST sem código recebe o próximo.
+    const pulo = await post({ code: "3.01.005", name: "Outros juros", nature: "income", kind: "analytic", parent_id: filho });
+    expect(pulo.statusCode).toBe(422); expect(erroDoCampo(pulo)).toEqual({ path: ["code"], message: "O código é gerado pelo sistema." });
+    const semCodigo = await post({ name: "Outros juros", nature: "income", kind: "analytic", parent_id: filho });
+    expect(semCodigo.statusCode, semCodigo.body).toBe(201); expect(j(semCodigo).code).toBe("3.01.002");
+    expect(j(await get(`${base}/proximo-codigo?parent_id=${filho}`)).codigo).toBe("3.01.003");
   });
 
+  // AJUSTES 01 (D-1): pela API, qualquer código diferente do gerado é recusado ANTES da máscara (a regra da máscara
+  // continua valendo na geração e na importação; coberta em packages/domain/test/codigo-hierarquico.test.ts).
   it("H2: código fora da máscara, com prefixo errado ou raiz com dois níveis → 422 no campo código; nada gravado", async () => {
     const antes = await contar();
-    for (const [code, parent, msg] of [["4.01", filho, /começar com o código do superior \(3\.01\.\)/], ["3.01.1", filho, /3º nível .* 3 dígito/], ["5.01", undefined, /Sem superior/], ["1.01.001.0001.1", undefined, /mais níveis/]] as const) {
+    for (const [code, parent] of [["4.01", filho], ["3.01.1", filho], ["5.01", undefined], ["1.01.001.0001.1", undefined]] as const) {
       const r = await post({ code, name: "X", nature: "income", kind: "analytic", ...(parent ? { parent_id: parent } : {}) });
       expect(r.statusCode, code).toBe(422);
-      expect(erroDoCampo(r)).toMatchObject({ path: ["code"], message: expect.stringMatching(msg) });
+      expect(erroDoCampo(r)).toMatchObject({ path: ["code"], message: "O código é gerado pelo sistema." });
     }
     expect(await contar()).toBe(antes);
   });
@@ -65,8 +71,10 @@ describe("código hierárquico", () => {
   it("H4: registro com filhos não vira analítico; ciclo é recusado", async () => {
     const k = await put(filho, { kind: "analytic" });
     expect(k.statusCode).toBe(422); expect(erroDoCampo(k)).toMatchObject({ path: ["kind"] });
+    // AJUSTES 01 (D-5): mudar o superior pela edição comum é recusado antes do ciclo ("Use Mover."); o ciclo
+    // pelo Mover é cobrado em cadastros-ajustes-01-arvore.test.ts (MV-4)
     const c = await put(raiz, { parent_id: neto });
-    expect(c.statusCode).toBe(422); expect(erroDoCampo(c).message).toMatch(/descendente/);
+    expect(c.statusCode).toBe(422); expect(erroDoCampo(c).message).toMatch(/Use Mover\./);
     const s = await put(raiz, { parent_id: raiz });
     expect(s.statusCode).toBe(422);
     expect((await admin.query("select parent_id from erp.financial_categories where id=$1", [raiz])).rows[0]).toEqual({ parent_id: null });
@@ -86,27 +94,47 @@ describe("código hierárquico", () => {
     expect(m.statusCode).toBe(422);
   });
 
+  // AJUSTES 01 (D-4): a máscara só muda com o cadastro VAZIO. Naturezas tem registros → 422; o efeito da máscara
+  // por cadastro é provado em Centros de Resultado esvaziado (excluído logicamente e restaurado ao fim).
+  const esvaziarCentros = async () => (await admin.query<{ id: string }>("update erp.cost_centers set deleted_at=now() where organization_id=$1 and deleted_at is null returning id", [h.demo.orgId])).rows.map((x) => x.id);
+  const restaurarCentros = async (ids: string[]) => { await admin.query("update erp.cost_centers set deleted_at=now() where organization_id=$1 and deleted_at is null", [h.demo.orgId]); await admin.query("update erp.cost_centers set deleted_at=null where id = any($1::uuid[])", [ids]); };
   it("H7: máscara por cadastro nos parâmetros; máscara inválida ou cadastro desconhecido → 422", async () => {
-    expect((await params({ mascaras_codigo: { financial_categories: "9.9.99" } })).statusCode).toBe(200);
-    expect(j(await get(`${base}/proximo-codigo?parent_id=${raiz}`))).toEqual({ codigo: "3.2", mascara: "9.9.99" }); // o "3.01" existente conta como irmão 1
-    expect((await post({ code: "3.02", name: "X", nature: "income", kind: "synthetic", parent_id: raiz })).statusCode).toBe(422);
-    expect((await post({ code: "3.2", name: "Dividendos", nature: "income", kind: "synthetic", parent_id: raiz })).statusCode).toBe(201);
-    // outros cadastros seguem na padrão
-    expect(j(await get("/api/resources/cost_centers/proximo-codigo")).mascara).toBe("9.99.999.9999");
-    for (const bad of [{ financial_categories: "x" }, { financial_categories: "9..9" }, { produtos: "9" }]) {
-      const r = await params({ mascaras_codigo: bad });
-      expect(r.statusCode, JSON.stringify(bad)).toBe(422);
-    }
-    expect((await admin.query("select parameters->'mascaras_codigo' m from erp.organizations where id=$1", [h.demo.orgId])).rows[0]).toEqual({ m: { financial_categories: "9.9.99" } });
-    expect((await params({ mascaras_codigo: {} })).statusCode).toBe(200);
-    expect(j(await get(`${base}/proximo-codigo?parent_id=${raiz}`)).mascara).toBe("9.99.999.9999");
+    const vivos = await contar();
+    const travada = await params({ mascaras_codigo: { financial_categories: "9.9.99" } });
+    expect(travada.statusCode).toBe(422);
+    expect(erroDoCampo(travada).message).toMatch(/a máscara só muda com o cadastro vazio/);
+    expect(vivos).toBeGreaterThan(0);
+    const ids = await esvaziarCentros();
+    try {
+      expect((await params({ mascaras_codigo: { cost_centers: "9.9.99" } })).statusCode).toBe(200);
+      expect(j(await get("/api/resources/cost_centers/proximo-codigo"))).toEqual({ codigo: "1", mascara: "9.9.99" });
+      // outros cadastros seguem na padrão
+      expect(j(await get(`${base}/proximo-codigo?parent_id=${raiz}`)).mascara).toBe("9.99.999.9999");
+      for (const bad of [{ cost_centers: "x" }, { cost_centers: "9..9" }, { produtos: "9" }]) {
+        const r = await params({ mascaras_codigo: bad });
+        expect(r.statusCode, JSON.stringify(bad)).toBe(422);
+      }
+      expect((await admin.query("select parameters->'mascaras_codigo' m from erp.organizations where id=$1", [h.demo.orgId])).rows[0]).toEqual({ m: { cost_centers: "9.9.99" } });
+      expect((await params({ mascaras_codigo: {} })).statusCode).toBe(200);
+      expect(j(await get("/api/resources/cost_centers/proximo-codigo")).mascara).toBe("9.99.999.9999");
+    } finally { await params({ mascaras_codigo: {} }); await restaurarCentros(ids); }
   });
 
   it("H8: último nível da máscara não tem sugestão (erro, não número inventado)", async () => {
-    await params({ mascaras_codigo: { financial_categories: "9.99" } });
-    const r = await get(`${base}/proximo-codigo?parent_id=${filho}`);
-    expect(r.statusCode).toBe(422); expect(erroDoCampo(r).message).toMatch(/último nível/);
-    await params({ mascaras_codigo: {} });
+    const ids = await esvaziarCentros();
+    try {
+      expect((await params({ mascaras_codigo: { cost_centers: "9.99" } })).statusCode).toBe(200);
+      const r1 = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers({ "content-type": "application/json" }), payload: { name: "H8 raiz", kind: "synthetic" } });
+      expect(r1.statusCode, r1.body).toBe(201);
+      const r2 = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers({ "content-type": "application/json" }), payload: { name: "H8 filho", kind: "synthetic", parent_id: j(r1).id } });
+      expect(r2.statusCode, r2.body).toBe(201); expect(j(r2).code).toMatch(/^1\.\d{2}$/); // excluídos seguram "1.01"…
+      const r = await get(`/api/resources/cost_centers/proximo-codigo?parent_id=${j(r2).id}`);
+      expect(r.statusCode).toBe(422); expect(erroDoCampo(r).message).toMatch(/último nível/);
+    } finally {
+      await admin.query("update erp.cost_centers set deleted_at=now() where organization_id=$1 and deleted_at is null", [h.demo.orgId]);
+      expect((await params({ mascaras_codigo: {} })).statusCode).toBe(200);
+      await restaurarCentros(ids);
+    }
   });
 
   it("H9: sugestão exige permissão de criar; cadastro sem código hierárquico → 422", async () => {

@@ -15,7 +15,9 @@ test("PR-W1 — ficha de produto em abas: grade de unidades, fiscal em campos, s
   const ficha = page.getByTestId("ficha-em-abas");
   await expect(ficha).toBeVisible();
   const abas = (await ficha.getByRole("tab").allInnerTexts()).map((t) => t.trim());
-  expect(abas).toEqual(["Geral", "Estoque e lotes", "Unidades e embalagens", "Fiscal", "Compras", "Custos e venda", "Agro", "Histórico", "Anexos"]);
+  // AJUSTES 01 (C-1): Anexos saiu da última aba e virou botão da barra de ações de TODA ficha em abas
+  expect(abas).toEqual(["Geral", "Estoque e lotes", "Unidades e embalagens", "Fiscal", "Compras", "Custos e venda", "Agro", "Histórico"]);
+  await expect(page.getByTestId("ficha-anexos")).toBeVisible();
 
   const unidades = await api<{ id: string; label: string }[]>(page, "GET", "/api/resources/measurement_units/options");
   const un = unidades.find((u) => u.label.toUpperCase() === "UN")!; const kg = unidades.find((u) => u.label.toUpperCase() === "KG")!;

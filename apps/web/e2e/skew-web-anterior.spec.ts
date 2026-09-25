@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, uniq, pickRef, preencherClassificacaoFinanceira, ROTULOS_CLASSIFICACAO_BASE } from "./helpers";
+import { login, uniq, pickRef, preencherClassificacaoFinanceira } from "./helpers";
+import { baseTemFatiaDeCadastro, cpfValido } from "./skew-fichas-cadastro";
 import { criarEmpresaEConferirContador } from "./skew-contador-empresa";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -272,6 +273,35 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
 });
 
 /**
+ * OS RÓTULOS DA CLASSIFICAÇÃO NO FORMULÁRIO DE VENDA DO WEB DA BASE — lidos do COMMIT da base (`.api-anterior.base`,
+ * provado pelo caso IDENTIDADE), nunca da worktree nem da tela. `null` = o web da base não tem os campos (anterior
+ * à VENDAS-A1). A assinatura é o `Field` obrigatório cujo filho é o `RefSelect` do recurso: zero ou um por recurso;
+ * qualquer outro número, ou natureza sem centro, é detector quebrado e REPROVA. E a medição tem de concordar com a da
+ * API da mesma base (`.skew-classificacao-financeira.json`, gravado por `scripts/skew-classificacao-financeira.mjs`):
+ * os dois lados nasceram juntos na VENDAS-A1, e divergência entre eles é o detector errado, não um terceiro mundo.
+ */
+function rotulosDaClassificacaoNoWebDaBase(): { natureza: string; centro: string } | null {
+  const raiz = path.resolve(__dirname, "../../..");
+  const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
+  expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
+  const fonte = execFileSync("git", ["show", `${sha}:apps/web/src/app/(app)/vendas/[kind]/new/page.tsx`], { cwd: raiz, encoding: "utf8" });
+  const rotulos = (recurso: string) => [...fonte.matchAll(new RegExp(`<Field label="([^"]+)" required[^>]*><RefSelect resource="${recurso}"`, "g"))].map((m) => m[1]!);
+  const natureza = rotulos("financial_categories");
+  const centro = rotulos("cost_centers");
+  expect([natureza.length, centro.length], `detector dos rótulos da classificação no web da base: ${JSON.stringify({ natureza, centro })}`).toEqual(natureza.length ? [1, 1] : [0, 0]);
+  const arq = path.join(raiz, ".skew-classificacao-financeira.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão da classificação financeira ausente (${arq}): rode scripts/skew-classificacao-financeira.mjs antes do skew. `
+      + "Sem ela não há como conferir a medição do web da base contra a da API da mesma base.");
+  }
+  const api = JSON.parse(fs.readFileSync(arq, "utf8")) as { baseSha: string; ocorrencias: number; declara: boolean };
+  expect(api.baseSha, "a decisão da API foi medida na mesma base").toBe(sha);
+  expect(natureza.length === 1, "o web da base tem os campos exatamente quando a API da mesma base declara a classificação").toBe(api.ocorrencias === 1 && api.declara);
+  console.log(`[skew] A1-K2 · o web da base ${sha} ${natureza.length ? `desenha "${natureza[0]}" e "${centro[0]}"` : "NÃO tem os campos da classificação"}`);
+  return natureza.length ? { natureza: natureza[0]!, centro: centro[0]! } : null;
+}
+
+/**
  * VENDAS-A1 · A1-K2 — O WEB DA BASE LANÇA UMA VENDA CONTRA A API DESTE HEAD.
  *
  * O cliente anterior não conhece `categoria_financeira_id`/`centro_custo_id`: o corpo dele não os leva. A
@@ -281,10 +311,17 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
  * em que a API sobe antes do web poderia recusar lançamentos de todo navegador aberto.
  *
  * Vale nos dois mundos: um web da base anterior à fatia não envia os campos; um web da base posterior só
- * os envia com a capacidade declarada — e aí o caso seria o do W1, não este. Por isso o POST é observado
- * no fio e o ramo é escolhido pelo que o cliente da base DE FATO enviou.
+ * os envia com a capacidade declarada — e aí o caso seria o do W1, não este. O POST é observado no fio.
+ *
+ * O RAMO É MEDIDO NO FONTE DO WEB DA BASE, E NÃO ADIVINHADO PELO RÓTULO NA TELA. A versão anterior decidia
+ * contando `label` "Categoria financeira" no formulário — o rótulo que o bundle da base tinha quando o caso foi
+ * escrito. A #62 renomeou os campos para "Natureza" e "Centro de resultado"; com ela na base, a contagem deu zero,
+ * o caso escolheu o mundo LEGADO para um web que EXIGE a classificação, e morreu esperando um Salvar que nunca
+ * habilita. Um detector que depende de um texto de tela troca de ramo em silêncio a cada renomeação. Agora os
+ * rótulos saem do COMMIT da base (`rotulosDaClassificacaoNoWebDaBase`), conferidos contra a decisão medida da API
+ * da mesma base: nenhum dos dois ramos é escolhido pela tela que ele mesmo vai medir.
  */
-test("VENDAS-A1 · A1-K2 — o web da base cria venda sem classificação: 201 com nulos, e a confirmação usa o padrão legado", async ({ page, request }) => {
+test("VENDAS-A1 · A1-K2 — o web da base cria venda: sem os campos (base anterior à A1), 201 com nulos e a confirmação usa o padrão legado; com eles, 201 com o par escolhido", async ({ page, request }) => {
   const v = vigiar(page);
   await login(page);
   const s = await sessao(page);
@@ -311,11 +348,15 @@ test("VENDAS-A1 · A1-K2 — o web da base cria venda sem classificação: 201 c
 
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));
   const salvar = page.getByRole("button", { name: "Salvar" });
-  const baseMostraCampos = await page.getByTestId("central-vendas").locator("label", { hasText: "Categoria financeira" }).count() > 0;
-  if (baseMostraCampos) {
+  const rotulos = rotulosDaClassificacaoNoWebDaBase();
+  const baseMostraCampos = rotulos !== null;
+  if (rotulos) {
     // Mundo em que a base já é posterior à A1: o web dela preenche como o deste HEAD (W1). O caso do cliente
     // ANTERIOR à fatia deixou de existir em produção, e fingi-lo aqui certificaria o que não roda.
-    await preencherClassificacaoFinanceira(page, ROTULOS_CLASSIFICACAO_BASE);
+    await expect(page.getByTestId("central-vendas").locator("label", { hasText: rotulos.natureza }).first(), "o web da base desenha o campo que o fonte dele declara").toBeVisible();
+    await expect(salvar, "declarada, a classificação é exigida pelo web da base").toBeDisabled();
+    await preencherClassificacaoFinanceira(page, rotulos);
+    await expect(salvar, "com o par escolhido, o Salvar do web da base habilita").toBeEnabled();
   }
   await salvar.click();
   const r = await resposta;
@@ -324,7 +365,8 @@ test("VENDAS-A1 · A1-K2 — o web da base cria venda sem classificação: 201 c
   const { id } = await r.json() as { id: string };
   const lido = await (await request.get(`${API}/api/sales/sales/${id}`, { headers: auth })).json() as Record<string, unknown>;
   if (baseMostraCampos) {
-    expect(lido["categoria_financeira_id"], "o web da base (pós-A1) gravou a classificação que enviou").toBe(enviado["categoria_financeira_id"]);
+    expect([enviado["categoria_financeira_id"], enviado["centro_custo_id"]], "o web da base (pós-A1) enviou o par escolhido").toEqual([expect.stringMatching(/^[0-9a-f-]{36}$/), expect.stringMatching(/^[0-9a-f-]{36}$/)]);
+    expect([lido["categoria_financeira_id"], lido["centro_custo_id"]], "o web da base (pós-A1) gravou a classificação que enviou").toEqual([enviado["categoria_financeira_id"], enviado["centro_custo_id"]]);
     v.semBloqueio(); v.semErroDeContrato();
     return;
   }
@@ -412,22 +454,37 @@ test("VENDAS-A5-1 · A5-K2 — o web da base confirma uma venda contra a API des
 });
 
 /* ───────────────────────────────────────────────────────────────────────────────────────────────────
- * CADASTROS-ESTRUTURA (decisão 250) · WEB ANTERIOR × API NOVA — os casos 1 e 2 da janela de deploy
+ * CADASTROS-ESTRUTURA (decisão 250) e FASES 4 a 6 · WEB DA BASE × API NOVA — os casos 1 e 2 da janela de deploy
  *
- * (1) o formulário de produto da base manda category_id e kind_id: a API nova os aceita como campos
- *     LEGADOS opcionais (`camposLegadosDeEscrita`) e grava o que vier → 201;
- * (2) o formulário de grupo da base manda só nome: a API nova exige código → 422 DECLARADO, nada gravado.
- * O corpo é o que o web da base envia (a base nunca terá os campos novos — comportamento fixo, sem decisão
- * medida).
+ * O corpo de cada caso é o que o web DA BASE envia — e esse corpo depende de a base já ter, ou não, a fatia.
+ * Este bloco nasceu na #62 dizendo "a base nunca terá os campos novos — comportamento fixo, sem decisão medida".
+ * Era uma verdade COM PRAZO: com a #62 na `main`, o web da base de toda PR nova JÁ É o da ficha em abas, e o
+ * "corpo antigo" que CE-K1, PA-K2, RH-K2 e PR-K2 mandavam deixou de ser o de qualquer navegador em produção —
+ * certificá-lo seria provar um cliente que não roda. O mundo é MEDIDO na árvore da base (a migration de cada
+ * fatia, `scripts/lib/fichas-cadastro.mjs`, lida por `skew-fichas-cadastro.ts`), e cada um cobra a sua prova:
+ *
+ *   base SEM a migration → o corpo ANTIGO, exatamente como antes (produto com category_id/kind_id; Pessoas sem
+ *                          grade; funcionário pelo cadastro de Pessoas; produto com has_lot e 2ª unidade);
+ *   base COM a migration → o corpo da ficha que o web da base manda (produto sem categoria/classe; grupo com o
+ *                          código sugerido e o superior; Parceiro com grade e perfil; novo funcionário pelo CPF e
+ *                          Função com CBO; produto com controle_lote e grade de unidades) — aceito com o status
+ *                          exato e gravado com os valores que vieram, conferidos no banco.
+ *
+ * CE-K2 mudou também pelo lado da API, e isso NÃO é skew: a decisão 257 (D-1, esta PR) tornou o código das
+ * árvores GERADO pelo servidor — "POST sem `code` gera; `code` igual ao gerado é aceito; diferente → 422". A
+ * asserção antiga ("a API nova exige código → 422") descrevia o contrato anterior da API deste HEAD, e foi
+ * trocada pela do contrato novo nos dois mundos, com a conferência no banco do código gerado.
  * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
 async function cabecalhosDaSessao(page: Page) {
   const s = await sessao(page);
   return { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
 }
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-test("CADASTROS-ESTRUTURA · CE-K1 — corpo ANTIGO de produto (com category_id e kind_id): 201 na API nova, gravado como veio", async ({ page }) => {
+test("CADASTROS-ESTRUTURA · CE-K1 — corpo de produto do web da BASE (sem a 0025: com category_id e kind_id; com a 0025: sem os dois): 201 na API nova, gravado como veio", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
+  const temArvore = baseTemFatiaDeCadastro("grupoArvore", "CE-K1");
   const primeiro = async (p: string) => {
     const r = await page.request.get(`${API}${p}`, { headers: cab });
     expect(r.status(), p).toBe(200);
@@ -437,52 +494,122 @@ test("CADASTROS-ESTRUTURA · CE-K1 — corpo ANTIGO de produto (com category_id 
   expect(grupo, "premissa: há grupo analítico").toBeTruthy();
   const unidade = await primeiro("/api/resources/measurement_units?symbol=un&pageSize=1");
   expect(unidade, "premissa: há unidade").toBeTruthy();
-  // os lookups de Categoria/Classe que a web anterior usa continuam na API nova
-  const cat = await page.request.post(`${API}/api/resources/product_categories`, { headers: cab, data: { group_id: grupo, name: uniq("CE-K1 Categoria"), is_active: true } });
-  expect(cat.status(), await cat.text()).toBe(201);
-  const categoria = (await cat.json() as { id: string }).id;
-  const cls = await page.request.post(`${API}/api/resources/product_kinds`, { headers: cab, data: { category_id: categoria, name: uniq("CE-K1 Classe"), is_active: true } });
-  expect(cls.status(), await cls.text()).toBe(201);
-  const classe = (await cls.json() as { id: string }).id;
+  const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+  if (!temArvore) {
+    // MUNDO LEGADO: os lookups de Categoria/Classe que a web anterior usa continuam na API nova
+    const cat = await page.request.post(`${API}/api/resources/product_categories`, { headers: cab, data: { group_id: grupo, name: uniq("CE-K1 Categoria"), is_active: true } });
+    expect(cat.status(), await cat.text()).toBe(201);
+    const categoria = (await cat.json() as { id: string }).id;
+    const cls = await page.request.post(`${API}/api/resources/product_kinds`, { headers: cab, data: { category_id: categoria, name: uniq("CE-K1 Classe"), is_active: true } });
+    expect(cls.status(), await cls.text()).toBe(201);
+    const classe = (await cls.json() as { id: string }).id;
 
-  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: {
-    description: uniq("CE-K1 produto web anterior"), measurement_id: unidade, group_id: grupo, category_id: categoria, kind_id: classe, control_stock: false, is_active: true } });
+    const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: {
+      description: uniq("CE-K1 produto web anterior"), measurement_id: unidade, group_id: grupo, category_id: categoria, kind_id: classe, control_stock: false, is_active: true } });
+    expect(r.status(), await r.text()).toBe(201);
+    const id = (await r.json() as { id: string }).id;
+    expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    // Lido do BANCO: a API nova não devolve os campos legados na leitura (saíram do registry), só os grava.
+    const gravado = execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `select category_id || '|' || kind_id from erp.products where id = '${id}'`], { encoding: "utf8" }).trim();
+    expect(gravado, "a API grava o que veio").toBe(`${categoria}|${classe}`);
+    return;
+  }
+
+  // MUNDO ATUAL: o formulário de produto da base (com a 0025) não tem mais Categoria nem Classe — o corpo não os leva.
+  const desc = uniq("CE-K1 produto web da base");
+  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: desc, measurement_id: unidade, group_id: grupo, control_stock: false, is_active: true } });
   expect(r.status(), await r.text()).toBe(201);
   const id = (await r.json() as { id: string }).id;
-  expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-  // Lido do BANCO: a API nova não devolve os campos legados na leitura (saíram do registry), só os grava.
+  expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  const gravado = execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `select concat_ws('|', description, group_id, measurement_id, coalesce(category_id::text, 'sem categoria'), coalesce(kind_id::text, 'sem classe')) from erp.products where id = '${id}'`], { encoding: "utf8" }).trim();
+  expect(gravado, "a API grava o que veio, sem inventar categoria nem classe").toBe(`${desc}|${grupo}|${unidade}|sem categoria|sem classe`);
+  execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `update erp.products set deleted_at = now() where id = '${id}'`], { encoding: "utf8" });
+});
+
+test("CADASTROS-ESTRUTURA · CE-K2 — grupo pelo corpo do web da BASE: sem a 0025 (só o nome) a API nova GERA o código; com a 0025 (código sugerido e superior) aceita, e código diferente é 422 legível, nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const temArvore = baseTemFatiaDeCadastro("grupoArvore", "CE-K2");
   const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
-  const gravado = execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `select category_id || '|' || kind_id from erp.products where id = '${id}'`], { encoding: "utf8" }).trim();
-  expect(gravado, "a API grava o que veio").toBe(`${categoria}|${classe}`);
-});
-
-test("CADASTROS-ESTRUTURA · CE-K2 — grupo pelo corpo ANTIGO (sem código): 422 declarado no código, nada gravado", async ({ page }) => {
-  await login(page);
-  const cab = await cabecalhosDaSessao(page);
+  const sql = (c: string) => execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
+  const sugerir = async (superior: string | null) => {
+    const r = await page.request.get(`${API}/api/resources/product_groups/proximo-codigo${superior ? `?parent_id=${superior}` : ""}`, { headers: cab });
+    expect(r.status(), "a API nova sugere o código da árvore").toBe(200);
+    const { codigo } = await r.json() as { codigo: string };
+    expect(codigo, "premissa: a sugestão é um código de verdade").toMatch(/^\d+(\.\d+)*$/);
+    return codigo;
+  };
   const nome = uniq("CE-K2 grupo web anterior");
-  const r = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { name: nome, is_active: true } });
-  expect(r.status(), await r.text()).toBe(422);
-  const erro = ((await r.json()) as { error: { details?: { path: string | string[] }[] } }).error;
-  expect(erro.details?.map((d) => String(d.path)), "a recusa aponta o Código").toContain("code");
-  const lista = await (await page.request.get(`${API}/api/resources/product_groups?search=${encodeURIComponent(nome)}`, { headers: cab })).json() as { items: unknown[] };
-  expect(lista.items, "nada gravado").toHaveLength(0);
+
+  if (!temArvore) {
+    // MUNDO LEGADO: o formulário de grupo da base manda só o nome. Pelo contrato D-1 a API nova GERA o código — o
+    // próximo da raiz, o mesmo que ela sugere — e grava o grupo analítico na raiz.
+    const previsto = await sugerir(null);
+    const r = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { name: nome, is_active: true } });
+    expect(r.status(), await r.text()).toBe(201);
+    const id = (await r.json() as { id: string }).id;
+    expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+    expect(sql(`select concat_ws('|', code, name, kind, coalesce(parent_id::text, 'raiz')) from erp.product_groups where id = '${id}' and deleted_at is null`),
+      "o servidor gerou o código previsto; nome, tipo e raiz como vieram").toBe(`${previsto}|${nome}|analytic|raiz`);
+    return;
+  }
+
+  // MUNDO ATUAL: o formulário de grupo da base (com a 0025, sem `codigoAutomatico`) manda o código SUGERIDO, o tipo e
+  // o superior. Debaixo do primeiro sintético da raiz do seed — a raiz só comporta nove códigos de um dígito.
+  const superior = sql("select id from erp.product_groups where kind = 'synthetic' and parent_id is null and deleted_at is null and code is not null order by code limit 1");
+  expect(superior, "premissa: o seed tem um grupo sintético na raiz").toMatch(UUID);
+  const sugerido = await sugerir(superior);
+  const ok = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { code: sugerido, name: nome, kind: "analytic", parent_id: superior, is_active: true } });
+  expect(ok.status(), await ok.text()).toBe(201);
+  const id = (await ok.json() as { id: string }).id;
+  expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  expect(sql(`select concat_ws('|', code, name, kind, parent_id) from erp.product_groups where id = '${id}' and deleted_at is null`),
+    "o código sugerido que o web da base enviou foi aceito e gravado; nome, tipo e superior como vieram").toBe(`${sugerido}|${nome}|analytic|${superior}`);
+
+  // E o código que o usuário EDITA na tela da base (lá ele é digitável): 422 no campo, com a mensagem legível, nada gravado.
+  const proximo = await sugerir(superior);
+  const ultimo = proximo.slice(proximo.lastIndexOf(".") + 1);
+  const trocado = `${proximo.slice(0, proximo.lastIndexOf(".") + 1)}${String(Number(ultimo) >= 90 ? Number(ultimo) - 5 : Number(ultimo) + 5).padStart(ultimo.length, "0")}`;
+  expect(trocado, "premissa: um código diferente do que o servidor geraria").not.toBe(proximo);
+  const outro = uniq("CE-K2 grupo codigo editado");
+  const ruim = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { code: trocado, name: outro, kind: "analytic", parent_id: superior, is_active: true } });
+  expect(ruim.status(), await ruim.text()).toBe(422);
+  const erro = ((await ruim.json()) as { error: { details?: { path: string | string[]; message?: string }[] } }).error;
+  expect(erro.details?.map((d) => [String(d.path), d.message]), "a recusa aponta o Código, com a mensagem do contrato").toContainEqual(["code", "O código é gerado pelo sistema."]);
+  expect(sql(`select count(*) from erp.product_groups where name = '${outro.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
 });
 
-test("CADASTROS FASE 4 · PA-K2 — formulário ANTERIOR de Pessoas contra a API nova: grava; PUT sem grades não mexe nelas; sem tipo → 422; documento inválido 422 e duplicado 409", async ({ page }) => {
+test("CADASTROS FASE 4 · PA-K2 — formulário de Pessoas do web da BASE contra a API nova (sem a 0027: sem grade; com a 0027: ficha com grade e perfil): grava; PUT sem grades não mexe nelas; sem tipo → 422; documento inválido 422 e duplicado 409", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
+  const temFicha = baseTemFatiaDeCadastro("fichaParceiro", "PA-K2");
   const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
   const sql = (c: string) => execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
   // corpo do formulário anterior: só colunas de people, nenhuma chave da ficha
   const semTipo = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 sem tipo"), person_type: "legal", is_provider: false, is_client: false, is_employee: false, is_proprietary: false, is_transporter: false } });
   expect(semTipo.status(), await semTipo.text()).toBe(422);
   expect((await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 doc"), document: "529.982.247-00", person_type: "natural", is_client: true } })).status(), "CPF com DV errado").toBe(422);
-  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 web anterior"), document: "12.ABC.345/01DE-35", person_type: "legal", is_client: true, is_provider: false, is_employee: false, is_proprietary: false, is_transporter: false, is_active: true } });
-  expect(r.status(), await r.text()).toBe(201);
-  const id = (await r.json() as { id: string }).id;
-  expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-  const org = sql(`select organization_id from erp.people where id = '${id}'`);
-  sql(`insert into erp.parceiro_enderecos (organization_id, person_id, tipo, logradouro) values ('${org}', '${id}', 'entrega', 'PA-K2 rua')`);
+  let id: string;
+  if (!temFicha) {
+    // MUNDO LEGADO: o formulário anterior não tem grade — ela é PREPARADA no banco, para o PUT abaixo ter o que preservar.
+    const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("PA-K2 web anterior"), document: "12.ABC.345/01DE-35", person_type: "legal", is_client: true, is_provider: false, is_employee: false, is_proprietary: false, is_transporter: false, is_active: true } });
+    expect(r.status(), await r.text()).toBe(201);
+    id = (await r.json() as { id: string }).id;
+    expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    const org = sql(`select organization_id from erp.people where id = '${id}'`);
+    sql(`insert into erp.parceiro_enderecos (organization_id, person_id, tipo, logradouro) values ('${org}', '${id}', 'entrega', 'PA-K2 rua')`);
+  } else {
+    // MUNDO ATUAL: o formulário da base É a ficha em abas — a grade e o perfil vão no MESMO POST do principal.
+    const nome = uniq("PA-K2 ficha da base");
+    const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: nome, document: "12.ABC.345/01DE-35", person_type: "legal", is_client: true, is_provider: false, is_employee: false, is_proprietary: false, is_transporter: false, is_active: true,
+      enderecos: [{ tipo: "entrega", logradouro: "PA-K2 rua" }], perfil_cliente: { limite_credito: "250" } } });
+    expect(r.status(), await r.text()).toBe(201);
+    id = (await r.json() as { id: string }).id;
+    expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+    expect(sql(`select concat_ws('|', name, document, person_type, is_client) from erp.people where id = '${id}' and deleted_at is null`), "o principal, com o documento normalizado").toBe(`${nome}|12ABC34501DE35|legal|t`);
+    expect(sql(`select string_agg(concat_ws('|', tipo, logradouro), ';') from erp.parceiro_enderecos where person_id = '${id}' and deleted_at is null`), "a grade de endereços, exatamente a enviada").toBe("entrega|PA-K2 rua");
+    expect(sql(`select limite_credito::text from erp.client_profiles where person_id = '${id}'`), "o perfil de cliente com o limite enviado").toBe("250.00");
+  }
   const put = await page.request.put(`${API}/api/resources/people/${id}`, { headers: cab, data: { phone: "63 99999-0000", is_client: true } });
   expect(put.status(), await put.text()).toBe(200);
   expect(sql(`select count(*) from erp.parceiro_enderecos where person_id = '${id}' and deleted_at is null`), "grade intacta").toBe("1");
@@ -492,37 +619,161 @@ test("CADASTROS FASE 4 · PA-K2 — formulário ANTERIOR de Pessoas contra a API
   sql(`update erp.people set deleted_at = now() where id = '${id}'`);
 });
 
-test("CADASTROS FASE 5 · RH-K2 — web ANTERIOR contra a API nova: nada muda (funcionário pelo cadastro de Pessoas grava; folha e Funções como antes)", async ({ page }) => {
+test("CADASTROS FASE 5 · RH-K2 — web da BASE contra a API nova: sem a 0028, nada muda (funcionário pelo cadastro de Pessoas grava; Funções como antes); com a 0028, o novo pelo CPF e a Função com CBO gravam", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
-  // "Novo funcionário" da web anterior: formulário de Pessoas com is_employee
-  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("RH-K2 funcionario"), person_type: "natural", is_employee: true, is_client: false, is_provider: false, is_proprietary: false, is_transporter: false } });
-  expect(r.status(), await r.text()).toBe(201);
-  // Funções: o corpo anterior (sem CBO) grava
-  const f = await page.request.post(`${API}/api/resources/job_functions`, { headers: cab, data: { name: uniq("RH-K2 funcao"), base_salary: "1000", monthly_hours: 220, hour_value: "5", description: "RH-K2", is_active: true } });
-  expect(f.status(), await f.text()).toBe(201);
-  // o dado de teste fica excluído logicamente (nunca apagado)
-  const id = (await r.json() as { id: string }).id;
+  const temRh = baseTemFatiaDeCadastro("rhFuncionarios", "RH-K2");
   const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
-  execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `update erp.people set deleted_at = now() where id = '${id}'`], { encoding: "utf8" });
+  if (!temRh) {
+    // MUNDO LEGADO — "Novo funcionário" da web anterior: formulário de Pessoas com is_employee
+    const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("RH-K2 funcionario"), person_type: "natural", is_employee: true, is_client: false, is_provider: false, is_proprietary: false, is_transporter: false } });
+    expect(r.status(), await r.text()).toBe(201);
+    // Funções: o corpo anterior (sem CBO) grava
+    const f = await page.request.post(`${API}/api/resources/job_functions`, { headers: cab, data: { name: uniq("RH-K2 funcao"), base_salary: "1000", monthly_hours: 220, hour_value: "5", description: "RH-K2", is_active: true } });
+    expect(f.status(), await f.text()).toBe(201);
+    // o dado de teste fica excluído logicamente (nunca apagado)
+    const id = (await r.json() as { id: string }).id;
+    execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", `update erp.people set deleted_at = now() where id = '${id}'`], { encoding: "utf8" });
+    return;
+  }
+
+  // MUNDO ATUAL: o "Novo funcionário" do web da base (com a 0028) é a porta do CPF, e a Função leva a CBO oficial.
+  const sql = (c: string) => execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
+  const cpf = cpfValido();
+  const nome = uniq("RH-K2 funcionario");
+  const novo = await page.request.post(`${API}/api/hr/funcionarios/por-cpf`, { headers: cab, data: { document: cpf, name: nome } });
+  expect(novo.status(), await novo.text()).toBe(201);
+  const criado = await novo.json() as { id: string; criado: boolean };
+  expect(criado.criado, "CPF novo: o parceiro nasce agora").toBe(true);
+  expect(criado.id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  expect(sql(`select concat_ws('|', document, name, is_employee) from erp.people where id = '${criado.id}' and deleted_at is null`), "gravado como Funcionário, com o CPF e o nome enviados").toBe(`${cpf}|${nome}|t`);
+  const cbo = sql("select codigo from erp.cbo_ocupacoes order by codigo limit 1");
+  expect(cbo, "premissa: a CBO oficial está carregada (0026)").toMatch(/^\d{6}$/);
+  const funcao = uniq("RH-K2 funcao");
+  const f = await page.request.post(`${API}/api/resources/job_functions`, { headers: cab, data: { name: funcao, cbo_code: cbo, base_salary: "1000", monthly_hours: 220, hour_value: "5", description: "RH-K2", is_active: true } });
+  expect(f.status(), await f.text()).toBe(201);
+  const funcaoId = (await f.json() as { id: string }).id;
+  expect(funcaoId, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  expect(sql(`select concat_ws('|', name, cbo_code) from erp.job_functions where id = '${funcaoId}'`), "a Função gravou a CBO enviada").toBe(`${funcao}|${cbo}`);
+  // o dado de teste fica excluído logicamente (nunca apagado)
+  sql(`update erp.people set deleted_at = now() where id = '${criado.id}'`);
 });
 
-test("CADASTROS FASE 6 · PR-K2 — formulário ANTERIOR de Produto contra a API nova: has_lot=true grava 'lote', false grava 'nenhum'; 2ª unidade aceita como legado", async ({ page }) => {
+test("CADASTROS FASE 6 · PR-K2 — formulário de Produto do web da BASE contra a API nova: sem a 0029, has_lot=true grava 'lote', false grava 'nenhum' e a 2ª unidade é aceita como legado; com a 0029, controle_lote e a grade de unidades gravam como vieram", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
+  const temFicha = baseTemFatiaDeCadastro("fichaProduto", "PR-K2");
   const banco = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
   const sql = (c: string) => execFileSync("psql", [banco, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
   const grupo = sql("select id from erp.product_groups where deleted_at is null and kind = 'analytic' order by code limit 1");
   const un = sql("select id from erp.measurement_units where upper(symbol) = 'UN' order by organization_id nulls last limit 1");
   const kg = sql("select id from erp.measurement_units where upper(symbol) = 'KG' order by organization_id nulls last limit 1");
   const natureza = sql("select id from erp.financial_categories where deleted_at is null and kind = 'analytic' and nature = 'expense' order by code limit 1");
-  // corpo do formulário anterior: has_lot e a 2ª unidade, nenhuma chave da ficha
-  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: uniq("PR-K2 web anterior"), group_id: grupo, measurement_id: un, financial_category_id: natureza, has_lot: true, second_measurement_id: kg, factor_type: "multiply", factor: "25", control_stock: true, is_active: true } });
+  if (!temFicha) {
+    // MUNDO LEGADO — corpo do formulário anterior: has_lot e a 2ª unidade, nenhuma chave da ficha
+    const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: uniq("PR-K2 web anterior"), group_id: grupo, measurement_id: un, financial_category_id: natureza, has_lot: true, second_measurement_id: kg, factor_type: "multiply", factor: "25", control_stock: true, is_active: true } });
+    expect(r.status(), await r.text()).toBe(201);
+    const id = (await r.json() as { id: string; has_lot: boolean }).id;
+    expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`)).toBe("lote/true");
+    const put = await page.request.put(`${API}/api/resources/products/${id}`, { headers: cab, data: { has_lot: false } });
+    expect(put.status(), await put.text()).toBe(200);
+    expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`)).toBe("nenhum/false");
+    sql(`update erp.products set deleted_at = now() where id = '${id}'`);
+    return;
+  }
+
+  // MUNDO ATUAL: o formulário da base (com a 0029) é a ficha do Produto — controle_lote e a grade de unidades.
+  expect([grupo, un, kg, natureza], "premissas do seed: grupo analítico, UN, KG e natureza de despesa").toEqual([expect.stringMatching(UUID), expect.stringMatching(UUID), expect.stringMatching(UUID), expect.stringMatching(UUID)]);
+  const desc = uniq("PR-K2 ficha da base");
+  const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: desc, group_id: grupo, measurement_id: un, financial_category_id: natureza, controle_lote: "lote", unidades: [{ measurement_id: kg, tipo_fator: "multiply", fator: "25" }], control_stock: true, is_active: true } });
   expect(r.status(), await r.text()).toBe(201);
-  const id = (await r.json() as { id: string; has_lot: boolean }).id;
-  expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`)).toBe("lote/true");
-  const put = await page.request.put(`${API}/api/resources/products/${id}`, { headers: cab, data: { has_lot: false } });
+  const id = (await r.json() as { id: string }).id;
+  expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}' and description = '${desc.replace(/'/g, "''")}'`), "o controle de lote enviado, e o legado derivado dele").toBe("lote/true");
+  expect(sql(`select string_agg(concat_ws('|', measurement_id, tipo_fator, fator), ';') from erp.produto_unidades where product_id = '${id}' and deleted_at is null`), "a grade de unidades, exatamente a enviada").toBe(`${kg}|multiply|25.000000`);
+  const put = await page.request.put(`${API}/api/resources/products/${id}`, { headers: cab, data: { controle_lote: "nenhum" } });
   expect(put.status(), await put.text()).toBe(200);
-  expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`)).toBe("nenhum/false");
+  expect(sql(`select controle_lote || '/' || has_lot from erp.products where id = '${id}'`), "o PUT da ficha troca o controle, e o legado acompanha").toBe("nenhum/false");
   sql(`update erp.products set deleted_at = now() where id = '${id}'`);
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * CADASTROS AJUSTES 01 · AJ-W1..AJ-W4 — o web da BASE contra a API deste HEAD (seção 7 da missão).
+ *
+ * (1) a busca de referência que o web da base abre SEM texto responde 200 com lista (na base ela dava 500);
+ * (2) POST de árvore com o código SUGERIDO (o que o web da base manda) é aceito; código diferente → 422 legível;
+ * (3) conta bancária/área/curral com `code` (a base exige "Sigla"/"Código") → 422 legível, nada gravado;
+ * (4) PUT de Parceiro sem os campos novos da 0030 → nada muda neles.
+ * /api/referencias/* nunca é mockado aqui: a lista vem do banco real (0026).
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+const BANCO_AJ = process.env.E2E_DATABASE_URL ?? process.env.TEST_DATABASE_URL?.replace(/\/[^/]+$/, "/agro_erp_e2e") ?? "postgresql://postgres@127.0.0.1:5433/agro_erp_e2e";
+const sqlAj = (c: string) => execFileSync("psql", [BANCO_AJ, "-v", "ON_ERROR_STOP=1", "-Atc", c], { encoding: "utf8" }).trim();
+const mensagensDoErro = async (r: { json: () => Promise<unknown> }) => { const e = (await r.json() as { error?: { message?: string; details?: { message?: string }[] } }).error; return [e?.message, ...(e?.details ?? []).map((d) => d.message)].filter(Boolean).join(" | "); };
+
+test("CADASTROS AJUSTES 01 · AJ-W1 — o campo Banco do web da base, aberto SEM texto, lista pela API nova (200, nunca 500)", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const buscas: { url: string; status: number }[] = [];
+  page.on("response", (r) => { if (/\/api\/referencias\/bancos(\?|$)/.test(r.url())) buscas.push({ url: r.url(), status: r.status() }); });
+  await page.goto("/cadastros/people/new");
+  await page.getByTestId("ficha-em-abas").getByRole("tab", { name: "Financeiro" }).click();
+  await page.getByLabel("Banco", { exact: true }).click();
+  const opcoes = page.locator(".cmd-panel [role=option]");
+  await expect(opcoes.first(), "a lista aparece sem digitar").toBeVisible();
+  expect(buscas.length, "premissa: a busca foi chamada").toBeGreaterThan(0);
+  expect(buscas.every((b) => b.status === 200), JSON.stringify(buscas)).toBe(true);
+  expect(buscas.some((b) => !new URL(b.url).searchParams.get("search")), "a busca SEM texto foi a que respondeu").toBe(true);
+  v.semBloqueio();
+  v.semErroDeContrato();
+});
+
+test("CADASTROS AJUSTES 01 · AJ-W2 — árvore: o código SUGERIDO que o web da base envia é aceito; código diferente → 422 legível, nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const sug = await (await page.request.get(`${API}/api/resources/financial_categories/proximo-codigo`, { headers: cab })).json() as { codigo: string };
+  expect(sug.codigo, "premissa: a sugestão continua servida ao web da base").toMatch(/^\d+$/);
+  const nome = uniq("AJ-W2 natureza web base");
+  const ok = await page.request.post(`${API}/api/resources/financial_categories`, { headers: cab, data: { code: sug.codigo, name: nome, nature: "both", kind: "synthetic", is_active: true } });
+  expect(ok.status(), await ok.text()).toBe(201);
+  const id = (await ok.json() as { id: string }).id;
+  expect(sqlAj(`select code from erp.financial_categories where id = '${id}'`)).toBe(sug.codigo);
+  const outro = uniq("AJ-W2 natureza pulando");
+  const ruim = await page.request.post(`${API}/api/resources/financial_categories`, { headers: cab, data: { code: String(Number(sug.codigo) + 5), name: outro, nature: "both", kind: "synthetic", is_active: true } });
+  expect(ruim.status(), await ruim.text()).toBe(422);
+  expect(await mensagensDoErro(ruim)).toContain("O código é gerado pelo sistema.");
+  expect(sqlAj(`select count(*) from erp.financial_categories where name = '${outro}'`), "nada gravado").toBe("0");
+  sqlAj(`update erp.financial_categories set deleted_at = now() where id = '${id}'`);
+});
+
+test("CADASTROS AJUSTES 01 · AJ-W3 — conta bancária, área e curral com `code` (formulário da base) → 422 legível, nada gravado", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const empresa = sqlAj("select e.id from erp.empresas e join erp.organization_members m on m.organization_id = e.organization_id join erp.users u on u.id = m.user_id where u.email = 'admin@demo.local' and e.deleted_at is null order by e.code limit 1");
+  const setor = sqlAj(`select s.id from erp.feedlot_sectors s join erp.empresas e on e.organization_id = s.organization_id where e.id = '${empresa}' and s.deleted_at is null limit 1`);
+  const casos: [string, string, Record<string, unknown>][] = [
+    ["bank_accounts", "description", { code: "AJW3", description: uniq("AJ-W3 conta"), type: "checking", is_active: true }],
+    ["areas", "name", { empresa_id: empresa, code: "AJW3", name: uniq("AJ-W3 area"), area_ha: "1", is_active: true }],
+    ["feedlot_corrals", "name", { sector_id: setor, code: "AJW3", name: uniq("AJ-W3 curral"), capacity: 10, is_active: true }]
+  ];
+  for (const [key, campo, corpo] of casos) {
+    const r = await page.request.post(`${API}/api/resources/${key}`, { headers: cab, data: corpo });
+    expect(r.status(), `${key}: ${await r.text()}`).toBe(422);
+    const msg = await mensagensDoErro(r);
+    expect(msg, `${key}: mensagem legível`).toMatch(/c[óo]digo/i);
+    expect(msg).not.toMatch(/Unrecognized|Expected|Campo não reconhecido/);
+    expect(sqlAj(`select count(*) from erp.${key} where ${campo} = '${String(corpo[campo])}'`), `${key}: nada gravado`).toBe("0");
+  }
+});
+
+test("CADASTROS AJUSTES 01 · AJ-W4 — PUT de Parceiro do web da base (sem os campos da 0030): nada muda neles", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("AJ-W4 parceiro"), person_type: "natural", is_client: true, is_provider: false, is_employee: false, is_proprietary: false, is_transporter: false, is_active: true } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  sqlAj(`update erp.people set rg = '1234567', sexo = 'F', site = 'exemplo.com.br', latitude = -15.2, longitude = -59.3, calcula_funrural = true where id = '${id}'`);
+  const put = await page.request.put(`${API}/api/resources/people/${id}`, { headers: cab, data: { phone: "63 99999-0000", is_client: true } });
+  expect(put.status(), await put.text()).toBe(200);
+  expect(sqlAj(`select concat_ws('|', rg, sexo, site, latitude::text, longitude::text, calcula_funrural::text) from erp.people where id = '${id}'`)).toBe("1234567|F|exemplo.com.br|-15.200000|-59.300000|true");
+  sqlAj(`update erp.people set deleted_at = now() where id = '${id}'`);
 });

@@ -185,8 +185,11 @@ describe("unidade de medida da organização com a sigla da padrão", () => {
 describe("grupo com o mesmo nome em ramos diferentes da árvore", () => {
   it("R5: 'código - nome' distintos na lista, cada um grava o registro certo; o nome nu é ambíguo", async () => {
     const pai = async (code: string) => (await admin.query<{ id: string }>("select id from erp.product_groups where organization_id=$1 and code=$2", [h.demo.orgId, code])).rows[0]!.id;
-    const gAlfa = await criar("product_groups", { code: "1.09", name: "Grupo Comum", parent_id: await pai("1") });
-    const gBeta = await criar("product_groups", { code: "2.09", name: "Grupo Comum", parent_id: await pai("2") });
+    // AJUSTES 01 (D-1): o código do grupo é gerado no servidor — o preparo cria sem código e põe pelo banco o
+    // código que o cenário usa (o que se testa aqui é a lista e a importação, não a geração)
+    const comCodigo = async (code: string, corpo: Record<string, unknown>) => { const id = await criar("product_groups", corpo); expect((await admin.query("update erp.product_groups set code=$2 where id=$1", [id, code])).rowCount).toBe(1); return id; };
+    const gAlfa = await comCodigo("1.09", { name: "Grupo Comum", parent_id: await pai("1") });
+    const gBeta = await comCodigo("2.09", { name: "Grupo Comum", parent_id: await pai("2") });
     const wb = await modelo("products");
     const grupos = listaDe(wb, "Grupo");
     expect(vezes(grupos, "1.09 - Grupo Comum")).toBe(1);

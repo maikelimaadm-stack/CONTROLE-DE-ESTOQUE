@@ -196,6 +196,13 @@ jobs:
       # árvore da base e expira sozinha. Falha fechado.
       - name: A API da base já serve a prévia da confirmação da venda? (VENDAS-A5-1)
         run: node scripts/skew-previa-confirmacao.mjs --github-env
+      # A BASE JÁ TEM A ESTRUTURA E AS FICHAS DE CADASTRO? (CADASTROS-ESTRUTURA e Fases 4 a 6, #62)
+      # Mesmo desenho: sem a migration de uma fatia (0025, 0027, 0028, 0029, 0030) na árvore da base, o sentido 1 cobra
+      # que a base RECUSA o corpo da web nova (422, nada gravado) e o sentido 2 que a API nova aceita o corpo
+      # antigo; com ela, o sentido 1 cobra que a base ACEITA e grava o corpo novo, e o sentido 2 que a API nova
+      # aceita o corpo que o web da base manda — conferidos no banco. A decisão é MEDIDA e expira sozinha. Falha fechado.
+      - name: A base já tem a estrutura e as fichas de cadastro? (CADASTROS 0025–0030)
+        run: node scripts/skew-fichas-cadastro.mjs --github-env
       - run: pnpm --filter @agro/web exec playwright install --with-deps chromium
       # SENTIDO 1 — o web desta PR contra a API que está no ar (o Vercel sobe antes do Railway).
       - name: E2E de version skew (web deste HEAD × API da base)

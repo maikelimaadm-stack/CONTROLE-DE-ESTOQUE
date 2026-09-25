@@ -1,5 +1,6 @@
 export * from "./types.js";
 export * from "./referencias.js";
+export * from "./apelidos-bancos.js";
 import { REGISTRY_RESOURCES } from "./registries.js";
 import type { ResourceDef } from "./types.js";
 export const RESOURCES: readonly ResourceDef[] = REGISTRY_RESOURCES;

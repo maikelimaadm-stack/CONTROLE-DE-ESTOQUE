@@ -55,17 +55,18 @@ test("PA-W2 — ficha em abas: cabeçalho, perfil por tipo, grade de endereços 
   const ficha = page.getByTestId("ficha-em-abas");
   await expect(ficha).toBeVisible();
   const abas = (await ficha.getByRole("tab").allInnerTexts()).map((t) => t.trim());
-  expect(abas.slice(0, 5)).toEqual(["Identificação", "Endereços", "Contatos", "Fiscal", "Financeiro"]);
+  // AJUSTES 01 (C-4): a aba passou a se chamar "Endereço"
+  expect(abas.slice(0, 5)).toEqual(["Identificação", "Endereço", "Contatos", "Fiscal", "Financeiro"]);
   expect(abas, "aba de perfil só aparece com o tipo marcado").not.toContain("Cliente");
 
   await page.getByLabel("Nome Social/Fantasia").fill(nome);
-  // marca Cliente (campo booleano do modelo base)
-  await page.getByLabel("Cliente", { exact: true }).click();
-  await page.getByRole("option", { name: "Sim" }).click();
+  // marca Cliente — AJUSTES 01 (C-3): "Tipo do parceiro" é UM campo de marcação múltipla, e o cabeçalho fixo
+  // passou a ser Código · Ativo · Tipo de pessoa · CPF/CNPJ · Nome · situação (o tipo do parceiro saiu dele)
+  await page.getByTestId("grupo-tipo-do-parceiro").getByLabel("Cliente", { exact: true }).check();
   await expect(ficha.getByRole("tab", { name: "Cliente" })).toBeVisible();
-  await expect(page.getByTestId("ficha-cabecalho")).toContainText("Cliente");
+  await expect(page.getByTestId("grupo-tipo-do-parceiro").getByLabel("Cliente", { exact: true })).toBeChecked();
 
-  await ficha.getByRole("tab", { name: "Endereços" }).click();
+  await ficha.getByRole("tab", { name: "Endereço" }).click();
   const grade = page.getByTestId("grade-enderecos");
   await grade.getByRole("button", { name: "Incluir linha" }).click();
   await grade.getByRole("button", { name: "Incluir linha" }).click();
@@ -113,10 +114,13 @@ test("PA-W4 — Jurídica com CPF: a mensagem aparece no campo do documento; Fí
   const ficha = page.getByTestId("ficha-em-abas");
   await expect(ficha).toBeVisible();
   await page.getByLabel("Nome Social/Fantasia").fill(nome);
-  await page.getByLabel("Cliente", { exact: true }).click();
-  await page.getByRole("option", { name: "Sim" }).click();
-  // o tipo de pessoa nasce Jurídica (padrão do registry); o documento é um CPF formatado
+  await page.getByTestId("grupo-tipo-do-parceiro").getByLabel("Cliente", { exact: true }).check();
+  // o documento é um CPF formatado. AJUSTES 01 (C-3): o tipo de pessoa SEGUE o documento (vira Física sozinho);
+  // "Jurídica com CPF" agora só existe se o usuário escolher Jurídica À MÃO depois — e a API continua recusando
   await page.getByLabel("CPF/CNPJ").fill(`${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`);
+  await page.getByLabel("Tipo de pessoa").click();
+  await page.getByRole("option", { name: "Jurídica", exact: true }).click();
+  await expect(page.getByTestId("faixa-tipo-documento")).toBeVisible();
   await page.getByRole("button", { name: "Salvar" }).click();
 
   // a recusa (422) volta com `path: "document"` e a ficha a mostra NO CAMPO, com o contador na aba
@@ -146,7 +150,8 @@ test("PA-W5 — perfil sem clients/providers/proprietaries: as abas de tipo não
   const ficha = page.getByTestId("ficha-em-abas");
   await expect(ficha).toBeVisible();
   await expect(ficha.getByRole("tab", { name: "Identificação" })).toBeVisible();
-  await expect(page.getByTestId("ficha-cabecalho")).toContainText("Cliente");
+  // AJUSTES 01 (C-3): o tipo do parceiro saiu do cabeçalho fixo; está no campo de marcação múltipla
+  await expect(page.getByTestId("grupo-tipo-do-parceiro").getByLabel("Cliente", { exact: true })).toBeChecked();
   const abas = (await ficha.getByRole("tab").allInnerTexts()).map((t) => t.trim());
   for (const t of ["Cliente", "Fornecedor", "Proprietário"]) expect(abas, `aba ${t} sem a permissão de leitura`).not.toContain(t);
   const lido = await api<Record<string, unknown>>(page, "GET", `/api/resources/people/${x.id}`);
@@ -157,9 +162,7 @@ test("PA-W5 — perfil sem clients/providers/proprietaries: as abas de tipo não
   await page.goto("/cadastros/people/new");
   await expect(ficha).toBeVisible();
   await page.getByLabel("Nome Social/Fantasia").fill(nome);
-  await page.getByLabel("Cliente", { exact: true }).click();
-  await page.getByRole("option", { name: "Sim" }).click();
-  await expect(page.getByTestId("ficha-cabecalho")).toContainText("Cliente");
+  await page.getByTestId("grupo-tipo-do-parceiro").getByLabel("Cliente", { exact: true }).check();
   await expect(ficha.getByRole("tab", { name: "Cliente", exact: true }), "marcar o tipo não mostra a aba sem clients.view").toHaveCount(0);
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(async () => (await api<{ items: { is_client: boolean }[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`)).items.map((i) => i.is_client)).toEqual([true]);

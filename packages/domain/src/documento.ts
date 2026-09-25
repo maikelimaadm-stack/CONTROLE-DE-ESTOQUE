@@ -80,3 +80,132 @@ export function validarDocumento(valor: string): ResultadoDocumento {
   if (n.length === 14) return validarCnpj(n) ? { valido: true, tipo: "cnpj", normalizado: n, formatado: formatarCnpj(n), alfanumerico: cnpjAlfanumerico(n) } : { valido: false, normalizado: n, motivo: "CNPJ inválido" };
   return { valido: false, normalizado: n, motivo: "Documento deve ter 11 (CPF) ou 14 (CNPJ) posições" };
 }
+
+/*
+ * MÁSCARAS DE ENTRADA (CADASTROS AJUSTES 01, B-3) — formatadores ÚNICOS para a web. A tela MOSTRA o formatado
+ * e GRAVA o normalizado (`normalizarMascara`). São PROGRESSIVOS: formatam o que já foi digitado, para a máscara
+ * acompanhar a digitação e o colar com pontuação. Não validam — o DV é de `validarCpf`/`validarCnpj`.
+ */
+export type TipoMascara = "cpf" | "cnpj" | "cep" | "telefone";
+
+const soDigitos = (v: string) => String(v ?? "").replace(/\D/g, "");
+/** Encaixa `valor` no molde (`0` = uma posição); para onde o valor acaba, sem pontuação sobrando no fim. */
+function encaixar(valor: string, molde: string): string {
+  let o = ""; let i = 0;
+  for (const m of molde) {
+    if (i >= valor.length) break;
+    if (m === "0") o += valor[i++]; else o += m;
+  }
+  return o;
+}
+
+/**
+ * Rótulo colado junto do documento (AJUSTES 01 R1, W-8): "CNPJ: 12.345…", "CPF 123…", "CPF/CNPJ nº …". Só sai o rótulo
+ * SEGUIDO de separador (espaço, dois-pontos, hífen): um CNPJ alfanumérico que comece por "CPF…" continua inteiro.
+ */
+const ROTULO_DE_DOCUMENTO = /^\s*(?:CPF\s*\/\s*CNPJ|CNPJ|CPF)(?:\s*N[º°oO]\.?)?(?:\s*[:\-–]\s*|\s+)/i;
+export function semRotuloDeDocumento(valor: string): string {
+  return String(valor ?? "").replace(ROTULO_DE_DOCUMENTO, "");
+}
+
+/**
+ * TELEFONE (AJUSTES 01 R1, W-6) — NUNCA corta dígito calado. Até 11 dígitos grava só os dígitos (e a tela mascara);
+ * passando de 11, o "55" do início (DDI do Brasil) sai — MENOS quando ele está escrito como DDD, entre parênteses
+ * ("(55) 3222-1234 r.22": Rio Grande do Sul com ramal); se AINDA passar de 11 (ramal, dois números, legado), o texto
+ * fica COMO DIGITADO — sem máscara e sem perder nada.
+ */
+const DDD_55_ESCRITO = /^\s*\(\s*55\s*\)/;
+function normalizarTelefone(valor: string): string {
+  const texto = String(valor ?? "");
+  let d = soDigitos(texto);
+  if (d.length > 11 && d.startsWith("55") && !DDD_55_ESCRITO.test(texto)) d = d.slice(2);
+  return d.length <= 11 ? d : texto.trim();
+}
+
+/**
+ * Normaliza para gravar: CPF/CEP só dígitos (cortados no tamanho); CNPJ [0-9A-Z] maiúsculo, DV (2 últimas) só dígito,
+ * até 14; telefone pela regra acima (nunca corta). CPF e CNPJ ignoram o rótulo colado ("CNPJ: …").
+ */
+export function normalizarMascara(tipo: TipoMascara, valor: string): string {
+  switch (tipo) {
+    case "cpf": return soDigitos(semRotuloDeDocumento(valor)).slice(0, 11);
+    case "cep": return soDigitos(valor).slice(0, 8);
+    case "telefone": return normalizarTelefone(valor);
+    case "cnpj": {
+      const bruto = semRotuloDeDocumento(valor).toUpperCase().replace(/[^0-9A-Z]/g, "");
+      let o = "";
+      for (const c of bruto) { if (o.length >= 14) break; if (o.length >= 12 && !/\d/.test(c)) continue; o += c; }
+      return o;
+    }
+  }
+}
+
+/**
+ * Formata (progressivo): CPF 000.000.000-00 · CNPJ 00.000.000/0000-00 (alfanumérico AA.AAA.AAA/AAAA-00) · CEP 00000-000 ·
+ * telefone (00) 0000-0000 / celular (00) 00000-0000. Telefone com mais de 11 dígitos (depois de tirar o 55) volta
+ * como digitado, sem máscara.
+ */
+export function formatarMascara(tipo: TipoMascara, valor: string): string {
+  const n = normalizarMascara(tipo, valor);
+  switch (tipo) {
+    case "cpf": return encaixar(n, "000.000.000-00");
+    case "cnpj": return encaixar(n, "00.000.000/0000-00");
+    case "cep": return encaixar(n, "00000-000");
+    case "telefone":
+      if (!/^\d{0,11}$/.test(n)) return n;
+      if (n.length <= 2) return n.length ? `(${n}` : "";
+      return encaixar(n, n.length === 11 ? "(00) 00000-0000" : "(00) 0000-0000");
+  }
+}
+
+export const formatarCep = (v: string) => formatarMascara("cep", v);
+export const formatarTelefone = (v: string) => formatarMascara("telefone", v);
+
+/** Máscara do documento pelo tipo de pessoa: Física → CPF; Jurídica → CNPJ; Estrangeira ou desconhecido → sem máscara (null). */
+export function mascaraDoTipoDePessoa(tipo: string | null | undefined): "cpf" | "cnpj" | null {
+  if (tipo === "natural") return "cpf";
+  if (tipo === "legal") return "cnpj";
+  return null;
+}
+
+/**
+ * Máscara EFETIVA do CPF/CNPJ enquanto se digita ou cola (AJUSTES 01, B-3/C-3). O tipo de pessoa dá o ponto de
+ * partida, mas NUNCA corta o documento: em Física, o 12º caractere (ou uma letra) passa para CNPJ, e o tipo segue o
+ * documento na ficha. Em Jurídica o CNPJ é formatado desde o 1º dígito ENQUANTO SE DIGITA (`digitando`): o 11º dígito
+ * de um CNPJ não vira máscara de CPF (R1, W-4). Fora do campo, Jurídica com exatamente 11 dígitos é um CPF e aparece
+ * formatado como CPF (R1, W-8) — sem "CNPJ inválido" falso; a ficha mostra a faixa "Ajustar para Física".
+ * Estrangeira = sem máscara (null). O valor normalizado do documento, para qualquer máscara, é
+ * `normalizarMascara("cnpj", v)`: [0-9A-Z], até 14.
+ */
+export function mascaraDoDocumento(tipoPessoa: string | null | undefined, valor: string | null | undefined, digitando = false): "cpf" | "cnpj" | null {
+  if (tipoPessoa === "foreign") return null;
+  const n = normalizarMascara("cnpj", String(valor ?? ""));
+  if (n.length > 11 || /[A-Z]/.test(n)) return "cnpj";
+  if (tipoPessoa === "legal") return !digitando && /^\d{11}$/.test(n) ? "cpf" : "cnpj";
+  return "cpf";
+}
+
+/**
+ * TIPO DE PESSOA PELO DOCUMENTO (AJUSTES 01 R1, W-4): Jurídica a partir de 12 posições — já enquanto se digita;
+ * Física só AO SAIR do campo com 11 dígitos (o 11º dígito de um CNPJ em digitação não é um CPF). Outro caso: null
+ * (nenhuma troca). Estrangeira é só manual: quem chama não troca a partir dela.
+ */
+export function tipoPessoaPeloDocumento(valor: string | null | undefined, momento: "digitando" | "saindo"): "natural" | "legal" | null {
+  const n = normalizarMascara("cnpj", String(valor ?? ""));
+  if (n.length >= 12) return "legal";
+  if (momento === "saindo" && /^\d{11}$/.test(n)) return "natural";
+  return null;
+}
+
+/** DV do documento conferido ao sair do campo: mensagem da recusa ou null. Vazio não é recusado aqui (documento é opcional). */
+export function recusaDoDigitoDoDocumento(tipo: "cpf" | "cnpj", valor: string): string | null {
+  const n = normalizarMascara(tipo, valor);
+  if (!n) return null;
+  if (tipo === "cpf") return validarCpf(n) ? null : "CPF inválido";
+  return validarCnpj(n) ? null : "CNPJ inválido";
+}
+
+/** Texto é um CEP (8 dígitos, com ou sem hífen/ponto)? Usado pelo campo Cidade para decidir consultar o CEP. */
+export function textoEhCep(texto: string): boolean {
+  return /^\d{5}[-.]?\d{3}$/.test(String(texto ?? "").trim()) || /^\d{2}\.\d{3}-\d{3}$/.test(String(texto ?? "").trim());
+}

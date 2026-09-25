@@ -214,7 +214,8 @@ describe("PA-10 — contrato da definição (navegação e ficha)", () => {
   it("a definição publicada tem abas, detalhes, perfis, cabeçalho e campos rápidos; rótulo Parceiro", async () => {
     const d = j(await get("/api/resources/people/definition"));
     expect(d.label).toBe("Parceiro");
-    expect((d.abas as { key: string }[]).map((a) => a.key)).toEqual(["identificacao", "enderecos", "contatos", "fiscal", "financeiro", "cliente", "fornecedor", "proprietario", "funcionario", "anexos"]);
+    // AJUSTES 01 (C-1/C-4): Anexos saiu da última aba para a barra de ações; a ficha termina em Histórico.
+    expect((d.abas as { key: string }[]).map((a) => a.key)).toEqual(["identificacao", "enderecos", "contatos", "fiscal", "financeiro", "cliente", "fornecedor", "proprietario", "funcionario", "historico"]);
     expect((d.detalhes as { key: string }[]).map((x) => x.key)).toEqual(["enderecos", "contatos", "contas", "filiais", "vendedores", "participacoes"]);
     expect(d.cabecalho).toContain("document");
   });

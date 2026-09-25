@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { login, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
 import { criarEmpresaEConferirContador, provarContadorIncompativel } from "./skew-contador-empresa";
+import { baseTemFatiaDeCadastro, capacidadeServidaConfere, cpfValido } from "./skew-fichas-cadastro";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import fs from "node:fs";
@@ -1064,50 +1065,161 @@ test("VENDAS-A5-1 · A5-K1 — contra a API da base, o diálogo de confirmação
 });
 
 /* ───────────────────────────────────────────────────────────────────────────────────────────────────
- * CADASTROS-ESTRUTURA (decisão 250) · WEB NOVA × API ANTERIOR — os casos 3 e 4 da janela de deploy
+ * CADASTROS-ESTRUTURA (decisão 250) e FASES 4 a 6 · WEB NOVA × API DA BASE — os casos 3 e 4 da janela de deploy
  *
- * A base NUNCA terá os campos novos do Grupo (code/kind/parent_id) nem o produto sem categoria/classe: o
- * comportamento é FIXO, e por isso não há decisão medida aqui (ao contrário do contador ou da A1). O que
- * se prova é que a recusa é DECLARADA (422, nada gravado) — a janela fecha para o lado seguro, nunca grava
- * um produto ou grupo pela metade.
+ * POR QUE ESTES CASOS TÊM DOIS RAMOS, E POR QUE ISSO NÃO É AFROUXAMENTO
+ * ----------------------------------------------------------------------
+ * Este bloco nasceu na #62 afirmando que "a base NUNCA terá os campos novos do Grupo (code/kind/parent_id) nem
+ * o produto sem categoria/classe" e que, por isso, o comportamento era FIXO e não precisava de decisão medida.
+ * Era uma verdade COM PRAZO: valia enquanto a base de uma PR era anterior à #62 e deixou de valer no instante em
+ * que a #62 entrou na `main`. A partir daí a base de toda PR JÁ TEM o schema e o contrato de escrita novos — a
+ * recusa 422 que CE-K3, CE-K4, PA-K1, RH-K1 e PR-K1 cobravam passou a ser 201/200, e o job ficou vermelho para
+ * qualquer PR, inclusive uma de diff vazio, sem nenhuma linha de código quebrar.
+ *
+ * O ramo não se escolhe por SHA digitado nem por interruptor: mede-se a ÁRVORE DA BASE desta execução — a
+ * migration de cada fatia, pelo nome (`scripts/lib/fichas-cadastro.mjs`, lido por `skew-fichas-cadastro.ts`) — e
+ * cada mundo cobra a SUA prova:
+ *
+ *   base SEM a migration → exatamente a prova original: a recusa é DECLARADA (422, nada gravado) — a janela
+ *                          fecha para o lado seguro, nunca grava um produto, grupo ou parceiro pela metade;
+ *   base COM a migration → a prova positiva: a base ACEITA o corpo da web nova com o status exato e GRAVA os
+ *                          valores que vieram, conferidos no banco por SQL — nunca "qualquer 2xx".
+ *
+ * Nenhum dos dois ramos só passa. A decisão volta sozinha ao mundo legado se a #62 for revertida, e REPROVA se a
+ * assinatura deixar de identificar a fatia. O NOME de cada caso vale nos dois ramos; qual rodou sai no log.
  * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
 async function cabecalhosDaSessao(page: Page) {
   const s = await sessao(page);
   return { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
 }
 
-test("CADASTROS-ESTRUTURA · CE-K3 — produto e grupo com o corpo da web NOVA: a API da base RECUSA (422) e nada é gravado", async ({ page }) => {
+test("CADASTROS-ESTRUTURA · CE-K3 — produto e grupo com o corpo da web NOVA: a base sem a 0025 RECUSA (422) e nada é gravado; a base com a 0025 aceita e grava o que veio", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
+  const temArvore = baseTemFatiaDeCadastro("grupoArvore", "CE-K3");
   const grupoAnalitico = sql("select id from erp.product_groups where kind = 'analytic' and deleted_at is null and code is not null order by code limit 1");
   expect(grupoAnalitico, "premissa: o banco (migrado pelo HEAD) tem grupo analítico").toMatch(UUID);
   const unidade = sql("select id from erp.measurement_units where organization_id is null and symbol = 'un'");
   expect(unidade, "premissa: a unidade 'un' existe").toMatch(UUID);
 
-  // (3a) PRODUTO: a web nova não manda category_id nem kind_id — a base os exige.
+  // (3a) PRODUTO: a web nova não manda category_id nem kind_id.
   const desc = uniq("CE-K3 produto web nova");
   const p = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: desc, measurement_id: unidade, group_id: grupoAnalitico, control_stock: false, is_active: true } });
-  expect(p.status(), await p.text()).toBe(422);
-  const campos = ((await p.json()) as { error: { details?: { path: string | string[] }[] } }).error.details?.map((d) => String(d.path)) ?? [];
-  expect(campos, "a recusa aponta os campos que a base exige").toEqual(expect.arrayContaining(["category_id", "kind_id"]));
-  expect(sql(`select count(*) from erp.products where description = '${desc.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+  if (!temArvore) {
+    // MUNDO LEGADO — a base os exige.
+    expect(p.status(), await p.text()).toBe(422);
+    const campos = ((await p.json()) as { error: { details?: { path: string | string[] }[] } }).error.details?.map((d) => String(d.path)) ?? [];
+    expect(campos, "a recusa aponta os campos que a base exige").toEqual(expect.arrayContaining(["category_id", "kind_id"]));
+    expect(sql(`select count(*) from erp.products where description = '${desc.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+  } else {
+    // MUNDO ATUAL — a 0025 soltou categoria e classe: a base grava o produto como veio, SEM inventar as duas.
+    expect(p.status(), await p.text()).toBe(201);
+    const id = (await p.json() as { id: string }).id;
+    expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+    expect(sql(`select concat_ws('|', description, group_id, measurement_id, coalesce(category_id::text, 'sem categoria'), coalesce(kind_id::text, 'sem classe'), control_stock) from erp.products where id = '${id}'`),
+      "gravado como veio: o grupo e a unidade enviados, sem categoria e sem classe").toBe(`${desc}|${grupoAnalitico}|${unidade}|sem categoria|sem classe|f`);
+  }
 
-  // (3b) GRUPO: code/kind/parent_id não existem para a base, cujo schema é .strict() → 422, não descarte.
   const nome = uniq("CE-K3 grupo web nova");
-  const g = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { code: "9.99", name: nome, kind: "analytic", parent_id: null, is_active: true } });
-  expect(g.status(), await g.text()).toBe(422);
-  expect(sql(`select count(*) from erp.product_groups where name = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+  if (!temArvore) {
+    // (3b) GRUPO, MUNDO LEGADO: code/kind/parent_id não existem para a base, cujo schema é .strict() → 422, não descarte.
+    const g = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { code: "9.99", name: nome, kind: "analytic", parent_id: null, is_active: true } });
+    expect(g.status(), await g.text()).toBe(422);
+    expect(sql(`select count(*) from erp.product_groups where name = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+    return;
+  }
+  // (3b) GRUPO, MUNDO ATUAL. Contra uma base sem `codigoAutomatico` (decisão 257 D-1) a web nova mostra o Código
+  // DIGITÁVEL com a sugestão DA BASE e o envia junto com o superior — é esse o corpo que ela manda. O superior é o
+  // primeiro grupo sintético raiz do seed: a raiz só comporta nove códigos de um dígito e se esgotaria em banco
+  // reaproveitado; debaixo de um sintético há 99.
+  const superior = sql("select id from erp.product_groups where kind = 'synthetic' and parent_id is null and deleted_at is null and code is not null order by code limit 1");
+  expect(superior, "premissa: o seed tem um grupo sintético na raiz").toMatch(UUID);
+  const sugestao = await page.request.get(`${API}/api/resources/product_groups/proximo-codigo?parent_id=${superior}`, { headers: cab });
+  expect(sugestao.status(), "a base com a 0025 sugere o código do grupo").toBe(200);
+  const { codigo } = await sugestao.json() as { codigo: string };
+  expect(codigo, "premissa: a sugestão é um código de verdade, debaixo do superior").toMatch(/^\d+\.\d+$/);
+  const g = await page.request.post(`${API}/api/resources/product_groups`, { headers: cab, data: { code: codigo, name: nome, kind: "analytic", parent_id: superior, is_active: true } });
+  expect(g.status(), await g.text()).toBe(201);
+  const grupo = (await g.json() as { id: string }).id;
+  expect(grupo, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  expect(sql(`select concat_ws('|', code, name, kind, parent_id) from erp.product_groups where id = '${grupo}' and deleted_at is null`),
+    "gravado como veio: código, nome, tipo e superior").toBe(`${codigo}|${nome}|analytic|${superior}`);
 });
 
-test("CADASTROS-ESTRUTURA · CE-K4 — parâmetros: máscara de Grupos é recusada pela base (422); sem ela, salva normal", async ({ page }) => {
+test("CADASTROS-ESTRUTURA · CE-K4 — parâmetros: máscara de Grupos recusada pela base sem a 0025 (422); gravada pela base com a 0025 e sem a 0030; com a 0030 (máscara travada, D-4) recusada com registros (422, nada muda) e gravada com o cadastro vazio", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
+  const temArvore = baseTemFatiaDeCadastro("grupoArvore", "CE-K4");
   const antes = sql("select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations o join erp.organization_members m on m.organization_id = o.id join erp.users u on u.id = m.user_id where u.email = 'admin@demo.local' limit 1");
-  const recusa = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { product_groups: "9.99.999" } } });
-  expect(recusa.status(), await recusa.text()).toBe(422);
-  expect(sql("select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations o join erp.organization_members m on m.organization_id = o.id join erp.users u on u.id = m.user_id where u.email = 'admin@demo.local' limit 1"), "nada mudou").toBe(antes);
-  const ok = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { chart_accounts: "9.99.999.9999" } } });
-  expect(ok.status(), await ok.text()).toBe(200);
+  if (!temArvore) {
+    // MUNDO LEGADO: a base não conhece o cadastro `product_groups` na máscara → 422, nada muda.
+    const recusa = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { product_groups: "9.99.999" } } });
+    expect(recusa.status(), await recusa.text()).toBe(422);
+    expect(sql("select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations o join erp.organization_members m on m.organization_id = o.id join erp.users u on u.id = m.user_id where u.email = 'admin@demo.local' limit 1"), "nada mudou").toBe(antes);
+    const ok = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { chart_accounts: "9.99.999.9999" } } });
+    expect(ok.status(), await ok.text()).toBe(200);
+    return;
+  }
+
+  // A base conhece a máscara de Grupos. Se ela TRAVA a máscara com registros (D-4) depende de a base já ser a da
+  // AJUSTES 01 — medido pela MESMA porta (a 0030 e a capacidade que entrou com ela), e conferido no binário no ar.
+  const travada = baseTemFatiaDeCadastro("cadastrosAjustes01", "CE-K4");
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cab })).json() as { capacidades?: Record<string, unknown> };
+  capacidadeServidaConfere(ctx.capacidades, "cadastrosAjustes01", travada, "CE-K4");
+  const org = (await sessao(page)).orgId ?? "";
+  expect(org, "o id vem da sessão e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  const mascarasAntes = sql(`select coalesce((parameters->'mascaras_codigo')::text, 'null') from erp.organizations where id = '${org}'`);
+  const gruposDaOrg = `select count(*) from erp.product_groups where organization_id = '${org}' and deleted_at is null`;
+  // O valor enviado é DIFERENTE da máscara EFETIVA (a gravada ou, sem ela, a padrão) — senão não haveria mudança a
+  // recusar nem a gravar, e a conferência no banco passaria sem a gravação ter acontecido.
+  const efetiva = antes === "<nada>" ? "9.99.999.9999" : antes;
+  const nova = efetiva === "9.99.999" ? "9.9.99" : "9.99.999";
+  const atuais = (mascarasAntes === "null" ? {} : JSON.parse(mascarasAntes)) as Record<string, string>;
+  let esvaziados: string[] = [];
+  try {
+    if (!travada) {
+      // MUNDO DA 0025 SEM A 0030: a base grava a máscara de Grupos que veio, com o cadastro cheio.
+      const gravada = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { product_groups: nova } } });
+      expect(gravada.status(), await gravada.text()).toBe(200);
+      expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations where id = '${org}'`), "a base gravou a máscara de Grupos que veio").toBe(nova);
+      // E o corpo sem ela salva normal, como no mundo legado — a mesma porta, sem a chave nova.
+      const ok = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { chart_accounts: "9.99.999.9999" } } });
+      expect(ok.status(), await ok.text()).toBe(200);
+      expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'chart_accounts', '<nada>') from erp.organizations where id = '${org}'`), "e grava o que veio").toBe("9.99.999.9999");
+    } else {
+      // MUNDO DA 0030 (a base é a da AJUSTES 01): com grupos vivos, a troca é RECUSADA no campo, com o número de
+      // registros, e nada muda. O corpo leva as máscaras que já estão lá (o PUT substitui o objeto inteiro: cadastro
+      // ausente voltaria à padrão, e isso também seria mudança) — só a de Grupos muda.
+      const vivos = Number(sql(gruposDaOrg));
+      expect(vivos, "premissa: o seed tem grupos de produtos vivos").toBeGreaterThan(0);
+      const recusa = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { ...atuais, product_groups: nova } } });
+      expect(recusa.status(), await recusa.text()).toBe(422);
+      const detalhes = ((await recusa.json()) as { error: { details?: { path: string | string[]; message?: string }[] } }).error.details ?? [];
+      const mensagem = `Há ${vivos} ${vivos === 1 ? "registro" : "registros"}: a máscara só muda com o cadastro vazio.`;
+      expect(detalhes.map((d) => [([] as string[]).concat(d.path).join("."), d.message]), "a recusa aponta a máscara de Grupos, com o motivo").toContainEqual(["mascaras_codigo.product_groups", mensagem]);
+      expect(sql(`select coalesce((parameters->'mascaras_codigo')::text, 'null') from erp.organizations where id = '${org}'`), "nada mudou").toBe(mascarasAntes);
+      // A mesma porta sem mudança efetiva de máscara salva normal (200) — a trava é da MUDANÇA, não do parâmetro.
+      const semMudar = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { ...atuais } } });
+      expect(semMudar.status(), await semMudar.text()).toBe(200);
+      expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations where id = '${org}'`), "a de Grupos continua a de antes").toBe(antes);
+      // Cadastro VAZIO: os grupos vivos da organização excluídos LOGICAMENTE (restaurados no fim) → a MESMA troca grava.
+      esvaziados = sql(`with x as (update erp.product_groups set deleted_at = now() where organization_id = '${org}' and deleted_at is null returning id) select coalesce(string_agg(id::text, ','), '') from x`).split(",").filter(Boolean);
+      expect(esvaziados.length, "premissa: esvaziou exatamente os vivos contados").toBe(vivos);
+      expect(sql(gruposDaOrg), "premissa: o cadastro ficou vazio").toBe("0");
+      const gravada = await page.request.put(`${API}/api/admin/parameters`, { headers: cab, data: { mascaras_codigo: { ...atuais, product_groups: nova } } });
+      expect(gravada.status(), await gravada.text()).toBe(200);
+      expect(sql(`select coalesce(parameters->'mascaras_codigo'->>'product_groups', '<nada>') from erp.organizations where id = '${org}'`), "com o cadastro vazio, a base gravou a máscara que veio").toBe(nova);
+    }
+  } finally {
+    // O banco do skew é o MESMO nos dois sentidos, e os grupos e a máscara de Grupos decidem o código que o sentido 2
+    // vai gerar: devolve os grupos (só os que ESTE caso excluiu) e as máscaras exatamente como estavam.
+    if (esvaziados.length) sql(`update erp.product_groups set deleted_at = null where id = any('{${esvaziados.join(",")}}'::uuid[])`);
+    const literal = mascarasAntes.replace(/'/g, "''");
+    sql(`update erp.organizations set parameters = case when '${literal}'::jsonb = 'null'::jsonb then parameters - 'mascaras_codigo'
+        else jsonb_set(parameters, '{mascaras_codigo}', '${literal}'::jsonb) end where id = '${org}'`);
+  }
+  expect(sql(`select coalesce((parameters->'mascaras_codigo')::text, 'null') from erp.organizations where id = '${org}'`), "as máscaras voltaram ao que eram").toBe(mascarasAntes);
+  if (esvaziados.length) expect(sql(gruposDaOrg), "os grupos voltaram").toBe(String(esvaziados.length));
 });
 
 test("CADASTROS FASE 2 · IM-K1 — `modo=parcial` contra a API da base: recusa com 'Campo não reconhecido' (o que a tela reconhece) e nada é gravado; sem `modo`, a base importa como sempre", async ({ page }) => {
@@ -1136,47 +1248,111 @@ test("CADASTROS FASE 2 · IM-K1 — `modo=parcial` contra a API da base: recusa 
   expect(sql("select count(*) from erp.financial_categories"), "nada gravado").toBe(antes);
 });
 
-test("CADASTROS FASE 4 · PA-K1 — ficha de Parceiro da web NOVA contra a API da base: grades e perfis RECUSADOS (422, schema estrito) e nada gravado; o corpo só do principal grava", async ({ page }) => {
+test("CADASTROS FASE 4 · PA-K1 — ficha de Parceiro da web NOVA contra a API da base: sem a 0027, grades e perfis RECUSADOS (422, schema estrito) e nada gravado; com a 0027, gravados como vieram; o corpo só do principal grava", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
+  const temFicha = baseTemFatiaDeCadastro("fichaParceiro", "PA-K1");
   const nome = uniq("PA-K1 parceiro web nova");
   const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: {
     name: nome, person_type: "legal", is_client: true, enderecos: [{ tipo: "entrega", logradouro: "Rua A" }], perfil_cliente: { limite_credito: "100" } } });
-  expect(r.status(), await r.text()).toBe(422);
-  const erro = ((await r.json()) as { error: { details?: { message?: string }[] } }).error;
-  expect(erro.details?.map((d) => d.message), "a base não conhece as chaves da ficha").toContain("Campo não reconhecido");
-  expect(sql(`select count(*) from erp.people where name = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+  if (!temFicha) {
+    // MUNDO LEGADO: a base não conhece as chaves da ficha.
+    expect(r.status(), await r.text()).toBe(422);
+    const erro = ((await r.json()) as { error: { details?: { message?: string }[] } }).error;
+    expect(erro.details?.map((d) => d.message), "a base não conhece as chaves da ficha").toContain("Campo não reconhecido");
+    expect(sql(`select count(*) from erp.people where name = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+  } else {
+    // MUNDO ATUAL: a base com a 0027 grava o principal, a grade e o perfil — lidos de onde cada um mora.
+    expect(r.status(), await r.text()).toBe(201);
+    const id = (await r.json() as { id: string }).id;
+    expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+    expect(sql(`select concat_ws('|', name, person_type, is_client) from erp.people where id = '${id}' and deleted_at is null`), "o principal").toBe(`${nome}|legal|t`);
+    expect(sql(`select string_agg(concat_ws('|', tipo, logradouro), ';') from erp.parceiro_enderecos where person_id = '${id}' and deleted_at is null`), "a grade de endereços, exatamente a enviada").toBe("entrega|Rua A");
+    expect(sql(`select limite_credito::text from erp.client_profiles where person_id = '${id}'`), "o perfil de cliente com o limite enviado").toBe("100.00");
+    // o dado de teste fica excluído logicamente (nunca apagado), para o corpo só do principal abaixo não repetir o nome de um vivo
+    sql(`update erp.people set deleted_at = now() where id = '${id}'`);
+  }
   const ok = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: nome, person_type: "legal", is_client: true } });
   expect(ok.status(), await ok.text()).toBe(201);
 });
 
-test("CADASTROS FASE 5 · RH-K1 — ficha de RH da web NOVA contra a API da base: RECUSADA (a base não conhece `funcionarios` nem o novo pelo CPF) e nada gravado", async ({ page }) => {
+test("CADASTROS FASE 5 · RH-K1 — ficha de RH da web NOVA contra a API da base: sem a 0028, RECUSADA (a base não conhece `funcionarios` nem o novo pelo CPF) e nada gravado; com a 0028, o novo pelo CPF e a admissão gravam", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
+  const temRh = baseTemFatiaDeCadastro("rhFuncionarios", "RH-K1");
   const antes = sql("select count(*) from erp.people");
-  const novo = await page.request.post(`${API}/api/hr/funcionarios/por-cpf`, { headers: cab, data: { document: "390.533.447-05", name: uniq("RH-K1") } });
-  expect(novo.status(), await novo.text()).toBe(404);
-  const id = sql("select id from erp.people where is_employee and deleted_at is null order by code limit 1");
-  expect((await page.request.get(`${API}/api/resources/funcionarios/${id}`, { headers: cab })).status()).toBe(404);
-  const put = await page.request.put(`${API}/api/resources/funcionarios/${id}`, { headers: cab, data: { rh_admissao: { matricula: "RH-K1" } } });
-  expect(put.status(), await put.text()).toBe(404);
-  expect(sql("select count(*) from erp.people"), "nada gravado").toBe(antes);
+  if (!temRh) {
+    // MUNDO LEGADO: nenhuma das três rotas existe na base.
+    const novo = await page.request.post(`${API}/api/hr/funcionarios/por-cpf`, { headers: cab, data: { document: "390.533.447-05", name: uniq("RH-K1") } });
+    expect(novo.status(), await novo.text()).toBe(404);
+    const id = sql("select id from erp.people where is_employee and deleted_at is null order by code limit 1");
+    expect((await page.request.get(`${API}/api/resources/funcionarios/${id}`, { headers: cab })).status()).toBe(404);
+    const put = await page.request.put(`${API}/api/resources/funcionarios/${id}`, { headers: cab, data: { rh_admissao: { matricula: "RH-K1" } } });
+    expect(put.status(), await put.text()).toBe(404);
+    expect(sql("select count(*) from erp.people"), "nada gravado").toBe(antes);
+    return;
+  }
+
+  // MUNDO ATUAL: a base com a 0028 faz o caminho inteiro da web nova. CPF GERADO a cada execução: o banco do skew
+  // é reaproveitado, e um CPF fixo viraria "já existe" (200, criado=false) na segunda — outro caminho, não este.
+  const cpf = cpfValido();
+  const nome = uniq("RH-K1");
+  const novo = await page.request.post(`${API}/api/hr/funcionarios/por-cpf`, { headers: cab, data: { document: cpf, name: nome } });
+  expect(novo.status(), await novo.text()).toBe(201);
+  const criado = await novo.json() as { id: string; criado: boolean };
+  expect(criado.criado, "CPF novo: o parceiro nasce agora").toBe(true);
+  expect(criado.id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  expect(sql(`select concat_ws('|', document, name, is_employee) from erp.people where id = '${criado.id}' and deleted_at is null`), "gravado como Funcionário, com o CPF e o nome enviados").toBe(`${cpf}|${nome}|t`);
+  expect(sql("select count(*) from erp.people"), "exatamente um parceiro novo").toBe(String(Number(antes) + 1));
+  const lido = await page.request.get(`${API}/api/resources/funcionarios/${criado.id}`, { headers: cab });
+  expect(lido.status(), await lido.text()).toBe(200);
+  expect((await lido.json() as { id: string }).id, "a ficha lida é a deste funcionário").toBe(criado.id);
+  const matricula = `RHK1-${Date.now().toString(36).toUpperCase()}`;
+  const put = await page.request.put(`${API}/api/resources/funcionarios/${criado.id}`, { headers: cab, data: { rh_admissao: { matricula } } });
+  expect(put.status(), await put.text()).toBe(200);
+  expect(sql(`select matricula from erp.employee_profiles where person_id = '${criado.id}'`), "a admissão gravou a matrícula enviada").toBe(matricula);
+  // o dado de teste fica excluído logicamente (nunca apagado)
+  sql(`update erp.people set deleted_at = now() where id = '${criado.id}'`);
 });
 
-test("CADASTROS FASE 6 · PR-K1 — ficha de Produto da web NOVA contra a API da base: controle de lote, colunas e grades novas RECUSADOS (422, schema estrito) e nada gravado", async ({ page }) => {
+test("CADASTROS FASE 6 · PR-K1 — ficha de Produto da web NOVA contra a API da base: sem a 0029, controle de lote, colunas e grades novas RECUSADOS (422, schema estrito) e nada gravado; com a 0029, gravados como vieram", async ({ page }) => {
   await login(page);
   const cab = await cabecalhosDaSessao(page);
+  const temFicha = baseTemFatiaDeCadastro("fichaProduto", "PR-K1");
   const grupo = sql("select id from erp.product_groups where deleted_at is null and kind = 'analytic' order by code limit 1");
   const unidade = sql("select id from erp.measurement_units where upper(symbol) = 'UN' order by organization_id nulls last limit 1");
   const natureza = sql("select id from erp.financial_categories where deleted_at is null and kind = 'analytic' and nature = 'expense' order by code limit 1");
   const nome = uniq("PR-K1 produto web nova");
+  if (!temFicha) {
+    // MUNDO LEGADO: a base não conhece os campos da ficha.
+    const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: {
+      description: nome, group_id: grupo, measurement_id: unidade, financial_category_id: natureza, controle_lote: "lote", marca: "X",
+      unidades: [{ measurement_id: unidade, tipo_fator: "multiply", fator: "2" }] } });
+    expect(r.status(), await r.text()).toBe(422);
+    const erro = ((await r.json()) as { error: { details?: { message?: string }[] } }).error;
+    expect(erro.details?.map((d) => d.message), "a base não conhece os campos da ficha").toContain("Campo não reconhecido");
+    expect(sql(`select count(*) from erp.products where description = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+    return;
+  }
+
+  // MUNDO ATUAL: a base com a 0029 grava a ficha. A unidade ALTERNATIVA é outra que não a padrão — a web nova não
+  // deixa repetir a padrão e a base, com a 0029, recusa essa repetição por conta própria ("A unidade alternativa não
+  // pode repetir a unidade padrão do produto."); o corpo do ramo legado a repetia porque ali a recusa vinha antes,
+  // pelo schema estrito, e o conteúdo da grade nunca chegava a ser lido.
+  const kg = sql("select id from erp.measurement_units where upper(symbol) = 'KG' order by organization_id nulls last limit 1");
+  expect([grupo, unidade, natureza, kg], "premissas do seed: grupo analítico, UN, natureza de despesa e KG").toEqual([expect.stringMatching(UUID), expect.stringMatching(UUID), expect.stringMatching(UUID), expect.stringMatching(UUID)]);
   const r = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: {
     description: nome, group_id: grupo, measurement_id: unidade, financial_category_id: natureza, controle_lote: "lote", marca: "X",
-    unidades: [{ measurement_id: unidade, tipo_fator: "multiply", fator: "2" }] } });
-  expect(r.status(), await r.text()).toBe(422);
-  const erro = ((await r.json()) as { error: { details?: { message?: string }[] } }).error;
-  expect(erro.details?.map((d) => d.message), "a base não conhece os campos da ficha").toContain("Campo não reconhecido");
-  expect(sql(`select count(*) from erp.products where description = '${nome.replace(/'/g, "''")}'`), "nada gravado").toBe("0");
+    unidades: [{ measurement_id: kg, tipo_fator: "multiply", fator: "2" }] } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  expect(id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+  expect(sql(`select concat_ws('|', description, group_id, measurement_id, financial_category_id, controle_lote, has_lot, marca) from erp.products where id = '${id}' and deleted_at is null`),
+    "o principal e as colunas da ficha, como vieram").toBe(`${nome}|${grupo}|${unidade}|${natureza}|lote|t|X`);
+  expect(sql(`select string_agg(concat_ws('|', measurement_id, tipo_fator, fator), ';') from erp.produto_unidades where product_id = '${id}' and deleted_at is null`),
+    "a grade de unidades, exatamente a enviada").toBe(`${kg}|multiply|2.000000`);
+  // o dado de teste fica excluído logicamente (nunca apagado)
+  sql(`update erp.products set deleted_at = now() where id = '${id}'`);
 });
 
 /* ───────────────────────────────────────────────────────────────────────────────────────────────────
@@ -1197,6 +1373,15 @@ test("CADASTROS FASE 6 · PR-K1 — ficha de Produto da web NOVA contra a API da
  * as colunas Lote/Validade não aparecem, `provider_lot`/`expiration_date` não viajam, e a base RECUSA (422, o gatilho
  * da 0029 exige o lote) sem gravar nada — nunca entra sem lote; (3) produção de ração: a Validade não aparece e
  * `validade` não viaja no POST.
+ *
+ * Ramo ATUAL (a base declara — é o caso de toda base que já contém a #62). Até aqui este ramo só conferia que os
+ * campos APARECEM: uma asserção de presença é satisfeita por uma tela que mostra o campo e o joga fora no envio,
+ * que é exatamente o "passa e corrompe" que a capacidade existe para impedir. Ele passa a cobrar, com o mesmo rigor
+ * do ramo legado, a outra metade: o que a tela mostra VIAJA no corpo e a base GRAVA, conferido no banco —
+ * (1) correção para cima com validade: `expiration_date` no POST, 201, e o movimento de entrada do lote com essa
+ * validade; (2) devolução: o lote da requisição viaja, 201, e o movimento da devolução entra NESSE lote (nunca no
+ * balde sem lote); (3) produção de ração de um acabado com "lote + validade": a validade viaja, 201, e fica na
+ * produção e no movimento de entrada do acabado, cujo lote é o código da produção.
  * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
 function baseDeclaraLoteNaEntrada(): boolean {
   const arq = path.resolve(__dirname, "../../..", ".api-anterior/apps/api/src/routes/auth.ts");
@@ -1207,7 +1392,7 @@ function baseDeclaraLoteNaEntrada(): boolean {
   return ocorrencias === 1;
 }
 
-test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, correção, devolução e produção não mostram nem enviam lote/validade; a devolução de produto com lote é RECUSADA e nada gravado", async ({ page }) => {
+test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, correção, devolução e produção não mostram nem enviam lote/validade e a devolução de produto com lote é RECUSADA sem gravar nada; com ela, mostram, enviam e a base grava", async ({ page }) => {
   const v = vigiar(page);
   await login(page);
   const s = await sessao(page);
@@ -1240,6 +1425,23 @@ test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, cor
   await expect(dialogo.getByLabel("Lote", { exact: true }), "premissa: o lote veio da linha").toHaveValue(lote);
   if (declara) {
     await expect(dialogo.getByLabel("Validade", { exact: true }), "declarada, a validade aparece").toBeVisible();
+    // MUNDO ATUAL: o que a tela mostra VIAJA e a base GRAVA — a presença do campo sozinha não prova nada.
+    await dialogo.getByLabel("Nova quantidade").fill("4");
+    // o campo de data é o calendário do produto: digita-se dd/mm/aaaa e Enter confirma (o valor vira ISO)
+    await dialogo.getByLabel("Validade", { exact: true }).fill("15/03/2099");
+    await dialogo.getByLabel("Validade", { exact: true }).press("Enter");
+    await dialogo.getByLabel("Justificativa").fill("LT-K1 ajuste para cima com validade");
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/corrections");
+    await dialogo.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(enviado["provider_lot"], "premissa: o corpo é o deste ajuste").toBe(lote);
+    expect(enviado["expiration_date"], "a validade VIAJA para a base que a declara").toBe("2099-03-15");
+    expect(r.status(), await r.text()).toBe(201);
+    const correcao = (await r.json() as { id: string }).id;
+    expect(correcao, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+    expect(sql(`select string_agg(concat_ws('|', movement_type, quantity, provider_lot, expiration_date), ';') from erp.stock_movements where source_id = '${correcao}'`),
+      "a base gravou a entrada de 1 no lote, COM a validade enviada").toBe(`correction_in|1.0000|${lote}|2099-03-15`);
   } else {
     await expect(dialogo.getByLabel("Validade", { exact: true }), "o campo que a base descartaria não aparece").toHaveCount(0);
     await dialogo.getByLabel("Nova quantidade").fill("4");
@@ -1263,6 +1465,22 @@ test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, cor
   if (declara) {
     await expect(cabecalhosDaTabela.filter({ hasText: /^Lote$/ })).toHaveCount(1);
     await expect(cabecalhosDaTabela.filter({ hasText: /^Validade$/ })).toHaveCount(1);
+    // MUNDO ATUAL: o lote do item da requisição viaja no corpo e a devolução entra NESSE lote, com a validade
+    // que viajou junto (a da linha pré-preenchida) — nunca no balde sem lote.
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/devolutions");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    const itens = (r.request().postDataJSON() as { items: Record<string, unknown>[] }).items;
+    expect(itens.map((i) => i["product_id"]), "premissa: o corpo é o desta devolução").toEqual([produto]);
+    expect(itens.map((i) => i["provider_lot"]), "o lote VIAJA para a base que o declara").toEqual([lote]);
+    expect(r.status(), await r.text()).toBe(201);
+    const devolucao = (await r.json() as { id: string }).id;
+    expect(devolucao, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+    const validadeEnviada = typeof itens[0]?.["expiration_date"] === "string" && itens[0]["expiration_date"] ? String(itens[0]["expiration_date"]) : "sem validade";
+    expect(sql(`select string_agg(concat_ws('|', movement_type, quantity, provider_lot, coalesce(expiration_date::text, 'sem validade')), ';') from erp.stock_movements where source_id = '${devolucao}'`),
+      "a base gravou a devolução de 2 no lote da requisição, com a validade que viajou").toBe(`devolution|2.0000|${lote}|${validadeEnviada}`);
+    expect(sql(`select count(*) from erp.devolution_items where product_id = '${produto}'`), "exatamente um item de devolução").toBe(String(Number(devolucoesAntes) + 1));
+    expect(sql(`select coalesce(sum(quantity), 0)::text from erp.stock_balances where product_id = '${produto}' and provider_lot = ''`), "o balde sem lote não recebeu nada").toMatch(/^0(\.0+)?$/);
   } else {
     await expect(cabecalhosDaTabela.filter({ hasText: /^Lote$/ }), "a coluna que a base descartaria não aparece").toHaveCount(0);
     await expect(cabecalhosDaTabela.filter({ hasText: /^Validade$/ })).toHaveCount(0);
@@ -1286,6 +1504,38 @@ test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, cor
   await page.goto("/estoque/batidas/new");
   if (declara) {
     await expect(page.getByLabel("Validade do produto acabado"), "declarada, a validade aparece").toBeVisible();
+    // MUNDO ATUAL: uma produção de verdade, que a base aceita. O acabado controla "lote + validade" — o caso em
+    // que a base EXIGE a validade — e nasce pela própria base (com a 0029 ela conhece `controle_lote`); a
+    // formulação passa a produzi-lo. A matéria-prima é o produto semeado, com saldo no armazém da empresa ativa.
+    const grupo = sql("select id from erp.product_groups where deleted_at is null and kind = 'analytic' order by code limit 1");
+    const un = sql("select id from erp.measurement_units where upper(symbol) = 'UN' order by organization_id nulls last limit 1");
+    const natureza = sql("select id from erp.financial_categories where deleted_at is null and kind = 'analytic' and nature = 'expense' order by code limit 1");
+    expect([grupo, un, natureza], "premissas do seed: grupo analítico, UN e natureza de despesa").toEqual([expect.stringMatching(UUID), expect.stringMatching(UUID), expect.stringMatching(UUID)]);
+    const acabado = await page.request.post(`${API}/api/resources/products`, { headers: cab, data: { description: uniq("LT-K1 ração acabada"), group_id: grupo, measurement_id: un, financial_category_id: natureza, controle_lote: "lote_validade", control_stock: true, is_active: true } });
+    expect(acabado.status(), await acabado.text()).toBe(201);
+    const acabadoId = (await acabado.json() as { id: string }).id;
+    const vinculada = await page.request.put(`${API}/api/stock/feed-formulas/${formulaId}`, { headers: cab, data: { name: uniq("LT-K1 formulação"), product_id: acabadoId, items: [{ product_id: produto, quantity: "1" }] } });
+    expect(vinculada.status(), await vinculada.text()).toBe(200);
+    const nomeDoArmazem = sql(`select description from erp.warehouses where id = '${armazem}'`);
+    await page.reload();
+    await page.getByLabel("Formulação").selectOption(formulaId);
+    await pickRef(page, "Armazém de matérias-primas", nomeDoArmazem);
+    await pickRef(page, "Armazém do produto acabado", nomeDoArmazem);
+    await page.getByLabel("Quantidade produzida").fill("1");
+    await page.getByLabel("Validade do produto acabado").fill("20/04/2099");
+    await page.getByLabel("Validade do produto acabado").press("Enter");
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/stock/feed-batches");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect([enviado["formula_id"], enviado["origin_warehouse_id"], enviado["destination_warehouse_id"]], "premissa: o corpo é o desta produção").toEqual([formulaId, armazem, armazem]);
+    expect(enviado["validade"], "a validade VIAJA para a base que a declara").toBe("2099-04-20");
+    expect(r.status(), await r.text()).toBe(201);
+    const batida = await r.json() as { id: string; code: string };
+    expect(batida.id, "o id vem da API e entra no SQL — tem de ser um UUID").toMatch(UUID);
+    expect(sql(`select validade::text from erp.feed_batches where id = '${batida.id}'`), "a produção gravou a validade enviada").toBe("2099-04-20");
+    expect(sql(`select string_agg(concat_ws('|', product_id, provider_lot, expiration_date), ';') from erp.stock_movements where source_id = '${batida.id}' and movement_type = 'production_in'`),
+      "e o acabado entrou no lote = código da produção, com essa validade").toBe(`${acabadoId}|${batida.code}|2099-04-20`);
   } else {
     await expect(page.getByLabel("Validade do produto acabado"), "o campo que a base descartaria não aparece").toHaveCount(0);
     await page.getByLabel("Formulação").selectOption(formulaId);
@@ -1297,4 +1547,270 @@ test("CADASTROS FASE 6 · LT-K1 — sem `capacidades.loteNaEntrada` da base, cor
     expect("validade" in enviado, "a validade NÃO viaja para uma API que a descartaria").toBe(false);
   }
   v.semBloqueio();
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * CADASTROS AJUSTES 01 · AJ-K1..AJ-K3 — o web NOVO contra a API da BASE (seção 7 da missão).
+ *
+ * A base (d91a772 em produção) responde 500 à busca de referência SEM texto e não declara `codigoAutomatico`,
+ * `moverComFilhos` nem `consultaCnpjJanela`. O ramo sai do que o binário DA BASE responde / declara — nunca
+ * escolhido por conveniência:
+ *   AJ-K1 busca sem texto: 500 → "Não foi possível carregar a lista." + [Tentar de novo]; texto livre nunca
+ *         vira valor e não há "digite o código" (isso é só para a rota AUSENTE, 404);
+ *   AJ-K2 sem as capacidades: Código digitável com sugestão, Mover só de folha, sem "Numeração dos cadastros";
+ *   AJ-K3 ficha de Parceiro: o mundo é MEDIDO pela porta dos cadastros da #62 (`scripts/lib/fichas-cadastro.mjs`,
+ *         fatia `cadastrosAjustes01`: a 0030 E a capacidade `consultaCnpjJanela` na árvore da base, conferidas no
+ *         binário no ar). Sem elas os campos da 0030 não aparecem nem viajam no PUT (a base é estrita: viraria 422);
+ *         com elas (a base já é a da AJUSTES 01, o mundo depois do merge) aparecem, viajam e voltam pelo banco.
+ *         TODOS os campos da 0030: os 7 de um parceiro Jurídica, RG/CAEPF/Sexo de um parceiro FÍSICA (só aparecem em
+ *         Física) e Latitude/Longitude de uma linha da grade "Outros endereços" (`parceiro_enderecos`).
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+function baseDeclaraCapacidade(nome: string): boolean {
+  const arq = path.resolve(__dirname, "../../..", ".api-anterior/apps/api/src/routes/auth.ts");
+  expect(fs.existsSync(arq), `a árvore da base precisa existir (${arq})`).toBe(true);
+  const n = fs.readFileSync(arq, "utf8").split(`${nome}:`).length - 1;
+  expect(n, "contagem ambígua não decide ramo nenhum").toBeLessThanOrEqual(1);
+  console.log(`[skew] AJUSTES 01 · a base ${n === 1 ? "DECLARA" : "NÃO declara"} ${nome}`);
+  return n === 1;
+}
+
+test("CADASTROS AJUSTES 01 · AJ-K1 — busca de referência sem texto contra a base: 500 vira \"Tentar de novo\", nunca texto livre", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const direto = await page.request.get(`${API}/api/referencias/bancos?pageSize=30`, { headers: cab });
+  const quebrada = direto.status() >= 500;
+  console.log(`[skew] AJ-K1 · a base responde ${direto.status()} à busca sem texto`);
+  const porCodigo: string[] = [];
+  page.on("request", (r) => { if (/\/api\/referencias\/bancos\/[^?]/.test(r.url())) porCodigo.push(r.url()); });
+  await page.goto("/cadastros/people/new");
+  await page.getByTestId("ficha-em-abas").getByRole("tab", { name: "Financeiro" }).click();
+  const campo = page.getByLabel("Banco", { exact: true });
+  await campo.click();
+  const painel = page.locator("[data-radix-popper-content-wrapper]").last();
+  if (quebrada) {
+    await expect(painel).toContainText("Não foi possível carregar a lista.");
+    await expect(page.getByTestId("referencia-tentar-de-novo")).toBeVisible();
+    await expect(page.getByTestId("referencia-codigo"), "500 não é rota ausente: nada de \"digite o código\"").toHaveCount(0);
+  } else {
+    await expect(painel.getByRole("option").first()).toBeVisible();
+  }
+  await painel.getByLabel("Pesquisar opção").fill("meu banco");
+  await page.keyboard.press("Escape");
+  await expect(campo).not.toContainText("meu banco");
+  expect(porCodigo, "texto livre não virou GET por código").toEqual([]);
+});
+
+test("CADASTROS AJUSTES 01 · AJ-K2 — sem codigoAutomatico/moverComFilhos da base: Código digitável com sugestão, Mover só de folha, sem Numeração dos cadastros", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const declara = { codigo: baseDeclaraCapacidade("codigoAutomatico"), mover: baseDeclaraCapacidade("moverComFilhos") };
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cab })).json() as { capacidades?: Record<string, unknown> };
+  expect(ctx.capacidades?.["codigoAutomatico"] ?? null, "o binário serve o que a árvore da base declara").toBe(declara.codigo ? 1 : null);
+  expect(ctx.capacidades?.["moverComFilhos"] ?? null).toBe(declara.mover ? 1 : null);
+  expect(declara.codigo, "as duas capacidades entram juntas (decisão 257 D): base com uma só é estado que ninguém publicou").toBe(declara.mover);
+  if (declara.codigo) {
+    // MUNDO ATUAL — a base já é a desta missão: a web nova NÃO trata a base como servidor antigo. Código gerado e
+    // só leitura com a prévia, o "Mover…" do galho e a Numeração dos cadastros aparecem.
+    const previsto = await (await page.request.get(`${API}/api/resources/financial_categories/proximo-codigo`, { headers: cab })).json() as { codigo: string };
+    await page.goto("/cadastros/financial_categories/new");
+    await expect(page.getByTestId("codigo-previsto")).toHaveText(`será gerado ao salvar: ${previsto.codigo}`);
+    await page.goto("/cadastros/financial_categories?visao=arvore");
+    await page.getByTestId("arvore-tela").getByTestId("arvore-no").filter({ hasText: "RECEITAS" }).first().getByRole("button", { name: /RECEITAS/ }).click();
+    await expect(page.getByTestId("arvore-mover"), "o Mover do galho, mesmo com filhos").toBeVisible();
+    await page.goto("/admin/parametros");
+    await expect(page.getByTestId("numeracao-cadastros")).toBeVisible();
+    v.semBloqueio();
+    return;
+  }
+
+  // Código digitável, com a sugestão da base
+  const sugestao = await (await page.request.get(`${API}/api/resources/financial_categories/proximo-codigo`, { headers: cab })).json() as { codigo: string };
+  await page.goto("/cadastros/financial_categories/new");
+  const codigo = page.getByLabel(/^Código/).first();
+  await expect(codigo).toBeEditable();
+  await expect(codigo).toHaveValue(sugestao.codigo);
+  // árvore: registro com filhos não oferece Mover (a base recusa); a folha oferece o Mover de hoje; sem o "Mover…" novo
+  await page.goto("/cadastros/financial_categories?visao=arvore");
+  const arvore = page.getByTestId("arvore-tela");
+  await arvore.getByTestId("arvore-no").filter({ hasText: "RECEITAS" }).first().getByRole("button", { name: /RECEITAS/ }).click();
+  await expect(page.getByTestId("arvore-mover-com-filhos")).toBeVisible();
+  await expect(page.getByTestId("arvore-mover")).toHaveCount(0);
+  await arvore.getByTestId("arvore-no").filter({ hasText: "Venda de Boi Gordo" }).first().getByRole("button", { name: /Venda de Boi Gordo/ }).click();
+  await expect(page.getByRole("button", { name: "Mover", exact: true })).toBeVisible();
+  await expect(page.getByTestId("arvore-codigo-previsto")).toHaveCount(0);
+  // Parametrizações: a seção nova não aparece (a base não tem /admin/numeracao)
+  await page.goto("/admin/parametros");
+  await expect(page.getByText("Parametrizações da Organização"), "premissa: a tela de parâmetros carregou").toBeVisible();
+  await expect(page.getByTestId("numeracao-cadastros")).toHaveCount(0);
+  v.semBloqueio();
+});
+
+test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva contra a base: sem a 0030 os campos novos não aparecem nem viajam (200); com a 0030 aparecem, viajam e voltam pelo banco (Jurídica, Física e a grade de endereços)", async ({ page }) => {
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  // O MUNDO pela mesma porta dos cadastros da #62 (a 0030 e `consultaCnpjJanela` na árvore da base), conferido no
+  // binário no ar: a web só mostra e envia os campos da 0030 quando a API declara a capacidade.
+  const tem0030 = baseTemFatiaDeCadastro("cadastrosAjustes01", "AJ-K3");
+  const ctx = await (await page.request.get(`${API}/api/auth/context`, { headers: cab })).json() as { capacidades?: Record<string, unknown> };
+  capacidadeServidaConfere(ctx.capacidades, "cadastrosAjustes01", tem0030, "AJ-K3");
+  const nomeMatriz = uniq("AJ-K3 matriz");
+  const m = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: nomeMatriz, person_type: "legal", is_client: true } });
+  expect(m.status(), await m.text()).toBe(201);
+  const matriz = (await m.json() as { id: string }).id;
+  // o Jurídica nasce com UMA linha em "Outros endereços" (a grade existe na base desde a #62; Latitude/Longitude são da 0030)
+  const r = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("AJ-K3 parceiro"), person_type: "legal", is_client: true, enderecos: [{ tipo: "entrega", logradouro: "Rua AJ-K3" }] } });
+  expect(r.status(), await r.text()).toBe(201);
+  const id = (await r.json() as { id: string }).id;
+  // RG, CAEPF e Sexo (0030) só aparecem em FÍSICA: um parceiro Física próprio para eles
+  const f = await page.request.post(`${API}/api/resources/people`, { headers: cab, data: { name: uniq("AJ-K3 física"), person_type: "natural", document: cpfValido(), is_client: true } });
+  expect(f.status(), await f.text()).toBe(201);
+  const fisica = (await f.json() as { id: string }).id;
+  expect([matriz, id, fisica], "os ids vêm da API e entram no SQL — têm de ser UUID").toEqual([expect.stringMatching(UUID), expect.stringMatching(UUID), expect.stringMatching(UUID)]);
+  await page.goto(`/cadastros/people/${id}`);
+  const ficha = page.getByTestId("ficha-em-abas");
+  await expect(ficha).toBeVisible();
+  const aba = (nome: string) => ficha.getByRole("tab", { name: nome, exact: true });
+  // cada campo da 0030 NA SUA ABA, com um vizinho de sempre como premissa (a aba abriu e o localizador acha campo)
+  const porAba: [string, string, string[]][] = [
+    ["Identificação", "Inscrição estadual", ["Matriz", "Site"]],
+    ["Endereço", "Bairro", ["Caixa postal", "Latitude", "Longitude"]],
+    ["Contatos", "Telefone", ["E-mail para NF-e"]],
+    ["Fiscal", "Consumidor final", ["Calcula FUNRURAL"]]
+  ];
+  const editar = page.getByRole("button", { name: "Editar" });
+  if (await editar.count()) await editar.first().click();
+  const novos = ["matriz_id", "rg", "caepf", "sexo", "site", "caixa_postal", "latitude", "longitude", "email_nfe", "calcula_funrural"];
+  const daFisica = ["RG", "CAEPF", "Sexo"];
+  const rotuloExato = (rotulo: string) => page.locator("label").filter({ hasText: new RegExp(`^${rotulo}( \\*)?$`) });
+  // a grade "Outros endereços" repete Bairro, Latitude e Longitude em cada linha (só `aria-label`): o campo PRINCIPAL é
+  // o que tem o `name` da coluna
+  const principal = (rotulo: string) => {
+    const nome = ({ Bairro: "district", Latitude: "latitude", Longitude: "longitude" } as Record<string, string>)[rotulo];
+    return nome ? page.getByLabel(rotulo, { exact: true }).and(page.locator(`[name="${nome}"]`)) : page.getByLabel(rotulo, { exact: true });
+  };
+  const grade = page.getByTestId("grade-enderecos");
+  const linha = page.getByTestId("linha-enderecos-1");
+  const coluna = (rotulo: string) => grade.locator("th").filter({ hasText: new RegExp(`^${rotulo}$`) });
+  const abrirFisica = async () => {
+    await page.goto(`/cadastros/people/${fisica}`);
+    await expect(ficha).toBeVisible();
+    if (await editar.count()) await editar.first().click();
+    await expect(page.getByLabel("Nome completo", { exact: true }), "premissa: a ficha é de Física (o rótulo segue o tipo) e abriu na Identificação").toBeVisible();
+  };
+  const salvarFicha = async (alvo: string) => {
+    const resposta = page.waitForResponse((x) => x.request().method() === "PUT" && new URL(x.url()).pathname === `/api/resources/people/${alvo}`);
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const put = await resposta;
+    return { put, enviado: put.request().postDataJSON() as Record<string, unknown> };
+  };
+
+  if (!tem0030) {
+    // MUNDO LEGADO: nenhum campo da 0030 aparece, em nenhuma aba, e nenhum viaja no PUT (a base é estrita: 422).
+    for (const [nome, vizinho, campos] of porAba) {
+      await aba(nome).click();
+      await expect(principal(vizinho), `premissa: a aba ${nome} abriu`).toBeVisible();
+      for (const rotulo of campos) {
+        await expect(page.getByLabel(rotulo, { exact: true }), `${rotulo} não aparece contra a base`).toHaveCount(0);
+        await expect(page.locator("label").filter({ hasText: new RegExp(`^${rotulo}( \\*)?$`) }), `nem o rótulo de ${rotulo}`).toHaveCount(0);
+      }
+    }
+    // a grade "Outros endereços" (da #62): a linha gravada aparece, SEM as colunas Latitude e Longitude (da 0030)
+    await aba("Endereço").click();
+    await expect(linha.getByLabel("Endereço", { exact: true }), "premissa: a linha gravada aparece na grade").toHaveValue("Rua AJ-K3");
+    await expect(coluna("IE"), "premissa: o localizador acha o cabeçalho de coluna da grade").toHaveCount(1);
+    for (const rotulo of ["Latitude", "Longitude"]) {
+      await expect(linha.getByLabel(rotulo, { exact: true }), `${rotulo} não aparece na linha da grade contra a base`).toHaveCount(0);
+      await expect(coluna(rotulo), `nem a coluna ${rotulo}`).toHaveCount(0);
+    }
+    await aba("Identificação").click();
+    await page.getByLabel("Nome Social/Fantasia").fill(uniq("AJ-K3 renomeado"));
+    const { put, enviado } = await salvarFicha(id);
+    expect(novos.filter((k) => k in enviado), "nenhum campo da 0030 viaja para a base").toEqual([]);
+    expect(put.status(), await put.text()).toBe(200);
+    // FÍSICA: RG, CAEPF e Sexo (0030) não aparecem e não viajam
+    await abrirFisica();
+    for (const rotulo of daFisica) {
+      await expect(page.getByLabel(rotulo, { exact: true }), `${rotulo} não aparece em Física contra a base`).toHaveCount(0);
+      await expect(rotuloExato(rotulo), `nem o rótulo de ${rotulo}`).toHaveCount(0);
+    }
+    await page.getByLabel("Nome Social/Fantasia").fill(uniq("AJ-K3 física renomeada"));
+    const sf = await salvarFicha(fisica);
+    expect(novos.filter((k) => k in sf.enviado), "nenhum campo da 0030 viaja da ficha de Física").toEqual([]);
+    expect(sf.put.status(), await sf.put.text()).toBe(200);
+  } else {
+    // MUNDO DA 0030 (a base é a da AJUSTES 01): os campos aparecem, o que se preenche VIAJA no PUT, a base GRAVA
+    // (conferido no banco) e a ficha reaberta mostra de volta o que foi gravado.
+    const valores = { site: "ajk3.exemplo.com.br", caixa_postal: "1234", latitude: "-15.228", longitude: "-59.335", email_nfe: "nfe-ajk3@exemplo.com.br" };
+    const linhaGrade = { latitude: "-15.5", longitude: "-59.25" };
+    for (const [nome, vizinho, campos] of porAba) {
+      await aba(nome).click();
+      await expect(principal(vizinho), `premissa: a aba ${nome} abriu`).toBeVisible();
+      for (const rotulo of campos) await expect(principal(rotulo), `${rotulo} aparece contra a base com a 0030`).toBeVisible();
+    }
+    await aba("Identificação").click();
+    await page.getByLabel("Matriz", { exact: true }).click();
+    const lista = page.locator("[data-radix-popper-content-wrapper]").last();
+    await lista.getByPlaceholder(/Pesquisar/).fill(nomeMatriz);
+    await lista.getByRole("option", { name: new RegExp(nomeMatriz) }).first().click();
+    await page.getByLabel("Site", { exact: true }).fill(valores.site);
+    await aba("Endereço").click();
+    await page.getByLabel("Caixa postal", { exact: true }).fill(valores.caixa_postal);
+    await principal("Latitude").fill(valores.latitude);
+    await principal("Longitude").fill(valores.longitude);
+    // a linha da grade "Outros endereços": Latitude e Longitude (0030) aparecem e se preenchem
+    await expect(linha.getByLabel("Endereço", { exact: true }), "premissa: a linha gravada aparece na grade").toHaveValue("Rua AJ-K3");
+    for (const rotulo of ["Latitude", "Longitude"]) await expect(coluna(rotulo), `a coluna ${rotulo} aparece na grade`).toHaveCount(1);
+    await linha.getByLabel("Latitude", { exact: true }).fill(linhaGrade.latitude);
+    await linha.getByLabel("Longitude", { exact: true }).fill(linhaGrade.longitude);
+    await aba("Contatos").click();
+    await page.getByLabel("E-mail para NF-e", { exact: true }).fill(valores.email_nfe);
+    await aba("Fiscal").click();
+    // booleano da ficha é o seletor Sim/Não (MgSelect), não um checkbox
+    await page.getByLabel("Calcula FUNRURAL", { exact: true }).click();
+    await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: "Sim", exact: true }).click();
+    const { put, enviado } = await salvarFicha(id);
+    expect({ matriz_id: enviado["matriz_id"], site: enviado["site"], caixa_postal: enviado["caixa_postal"], latitude: String(enviado["latitude"]), longitude: String(enviado["longitude"]), email_nfe: enviado["email_nfe"], calcula_funrural: enviado["calcula_funrural"] },
+      "os campos da 0030 VIAJAM para a base que os declara").toEqual({ matriz_id: matriz, ...valores, calcula_funrural: true });
+    expect(put.status(), await put.text()).toBe(200);
+    expect(sql(`select concat_ws('|', matriz_id, site, caixa_postal, latitude::text, longitude::text, email_nfe::text, calcula_funrural::text) from erp.people where id = '${id}'`),
+      "a base gravou exatamente o que viajou").toBe(`${matriz}|${valores.site}|${valores.caixa_postal}|-15.228000|-59.335000|${valores.email_nfe}|true`);
+    const linhasEnviadas = (enviado["enderecos"] ?? []) as Record<string, unknown>[];
+    expect(linhasEnviadas.map((l) => [l["logradouro"], String(l["latitude"]), String(l["longitude"])]), "a linha da grade leva Latitude e Longitude no PUT").toEqual([["Rua AJ-K3", linhaGrade.latitude, linhaGrade.longitude]]);
+    expect(sql(`select string_agg(concat_ws('|', logradouro, (latitude = ${linhaGrade.latitude})::text, (longitude = ${linhaGrade.longitude})::text), ';') from erp.parceiro_enderecos where person_id = '${id}' and deleted_at is null`),
+      "a base gravou Latitude e Longitude da linha em erp.parceiro_enderecos").toBe("Rua AJ-K3|true|true");
+    // IDA E VOLTA: a ficha reaberta mostra o que o banco tem
+    await page.goto(`/cadastros/people/${id}`);
+    await expect(ficha).toBeVisible();
+    await expect(page.getByLabel("Matriz", { exact: true }), "a Matriz gravada volta com o nome").toContainText(nomeMatriz);
+    await expect(page.getByLabel("Site", { exact: true })).toHaveValue(valores.site);
+    await aba("Endereço").click();
+    await expect(page.getByLabel("Caixa postal", { exact: true })).toHaveValue(valores.caixa_postal);
+    await expect(principal("Latitude")).toHaveValue(/^-15[.,]228/);
+    await expect(principal("Longitude")).toHaveValue(/^-59[.,]335/);
+    await expect(linha.getByLabel("Latitude", { exact: true }), "a linha da grade volta com a Latitude gravada").toHaveValue(/^-15[.,]5/);
+    await expect(linha.getByLabel("Longitude", { exact: true })).toHaveValue(/^-59[.,]25/);
+    await aba("Contatos").click();
+    await expect(page.getByLabel("E-mail para NF-e", { exact: true })).toHaveValue(valores.email_nfe);
+    await aba("Fiscal").click();
+    await expect(page.getByLabel("Calcula FUNRURAL", { exact: true })).toHaveText("Sim");
+    // FÍSICA: RG, CAEPF e Sexo (0030) aparecem na Identificação, VIAJAM no PUT, a base GRAVA e a ficha reaberta os mostra
+    await abrirFisica();
+    for (const rotulo of daFisica) await expect(page.getByLabel(rotulo, { exact: true }), `${rotulo} aparece em Física contra a base com a 0030`).toBeVisible();
+    await page.getByLabel("RG", { exact: true }).fill("7654321");
+    await page.getByLabel("CAEPF", { exact: true }).fill("12345678901234");
+    await page.getByLabel("Sexo", { exact: true }).click();
+    await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: "Feminino", exact: true }).click();
+    const sf = await salvarFicha(fisica);
+    expect({ rg: sf.enviado["rg"], caepf: sf.enviado["caepf"], sexo: sf.enviado["sexo"] }, "RG, CAEPF e Sexo VIAJAM para a base que os declara").toEqual({ rg: "7654321", caepf: "12345678901234", sexo: "F" });
+    expect(sf.put.status(), await sf.put.text()).toBe(200);
+    expect(sql(`select concat_ws('|', rg, caepf, sexo) from erp.people where id = '${fisica}'`), "a base gravou RG, CAEPF e Sexo").toBe("7654321|12345678901234|F");
+    await page.goto(`/cadastros/people/${fisica}`);
+    await expect(ficha).toBeVisible();
+    await expect(page.getByLabel("RG", { exact: true }), "IDA E VOLTA: a ficha reaberta mostra o RG gravado").toHaveValue("7654321");
+    await expect(page.getByLabel("CAEPF", { exact: true })).toHaveValue("12345678901234");
+    await expect(page.getByLabel("Sexo", { exact: true })).toHaveText("Feminino");
+  }
+  // o dado de teste fica excluído logicamente (nunca apagado)
+  sql(`update erp.people set deleted_at = now() where id in ('${id}', '${matriz}', '${fisica}')`);
 });

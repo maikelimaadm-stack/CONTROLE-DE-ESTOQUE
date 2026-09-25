@@ -19,6 +19,22 @@ const post = (key: string, payload: Record<string, unknown>) => h.app.inject({ m
 const put = (key: string, id: string, payload: Record<string, unknown>) => h.app.inject({ method: "PUT", url: `/api/resources/${key}/${id}`, headers: hdr(), payload });
 const del = (key: string, id: string) => h.app.inject({ method: "DELETE", url: `/api/resources/${key}/${id}`, headers: h.headers() });
 const criado = (r: Resp) => { expect(r.statusCode, r.body).toBe(201); return j(r).id as string; };
+/**
+ * AJUSTES 01 (D-1): nas árvores com código o POST com código diferente do gerado é recusado. Os FIXTURES destas
+ * suítes (que não testam a geração) criam SEM código e põem pelo banco o código que o cenário usa.
+ */
+const criarNaArvore = async (key: string, payload: Record<string, unknown>) => {
+  const { code, ...resto } = payload;
+  // RAIZ de fixture direto no banco: a raiz tem 1 dígito na máscara e o gerador segue o MAIOR código (as raízes
+  // 8 e 9 dos casos de inativo/excluído esgotam o nível) — e a raiz de fixture não é o que se testa aqui
+  if (resto["parent_id"] === undefined && code !== undefined) {
+    const cols = Object.keys(resto);
+    return (await admin.query<{ id: string }>(`insert into erp.${key} (organization_id, code, ${cols.join(", ")}) values ($1, $2, ${cols.map((_, i) => `$${i + 3}`).join(", ")}) returning id`, [h.demo.orgId, code, ...Object.values(resto)])).rows[0]!.id;
+  }
+  const id = criado(await post(key, resto));
+  if (code !== undefined) expect((await admin.query(`update erp.${key} set code=$2 where id=$1`, [id, code])).rowCount).toBe(1);
+  return id;
+};
 /** O primeiro erro de campo, com o caminho normalizado para lista (Zod e regra de negócio o entregam em formas diferentes). */
 const erroDoCampo = (r: Resp) => { const d = (j(r).error.details as { path: string[] | string; message: string }[])[0]!; return { path: ([] as string[]).concat(d.path), message: d.message }; };
 const umaLinha = async <T extends Record<string, unknown>>(sql: string, p: unknown[]) => (await admin.query<T>(sql, p)).rows[0];
@@ -65,8 +81,10 @@ describe("CE-1 — Grupo de Produtos em árvore, com as regras da decisão 244",
   });
 
   it("ciclo → 422; grupo com filhos não vira analítico; exclusão com filho vivo → 422", async () => {
+    // AJUSTES 01 (D-5): mudar o superior pela edição comum é recusado antes do ciclo ("Use Mover."); o ciclo pelo
+    // Mover é cobrado em cadastros-ajustes-01-arvore.test.ts (MV-4)
     const c = await put("product_groups", raiz, { parent_id: filho });
-    expect(c.statusCode, c.body).toBe(422); expect(erroDoCampo(c).message).toMatch(/descendente/);
+    expect(c.statusCode, c.body).toBe(422); expect(erroDoCampo(c).message).toMatch(/Use Mover\./);
     const k = await put("product_groups", raiz, { kind: "analytic" });
     expect(k.statusCode, k.body).toBe(422); expect(erroDoCampo(k).path).toEqual(["kind"]);
     const d = await del("product_groups", raiz);
@@ -76,8 +94,8 @@ describe("CE-1 — Grupo de Produtos em árvore, com as regras da decisão 244",
 
   it("mesmo nome sob pais diferentes → ok; entre irmãos (também sem diferenciar maiúsculas) → 422; duas raízes com o mesmo nome → 422", async () => {
     const pecuaria = await grupoDoSeed("2");
-    criado(await post("product_groups", { code: "4.02", name: "CE Comum", parent_id: raiz }));
-    criado(await post("product_groups", { code: "2.03", name: "CE Comum", parent_id: pecuaria }));
+    await criarNaArvore("product_groups", { code: "4.02", name: "CE Comum", parent_id: raiz });
+    await criarNaArvore("product_groups", { code: "2.03", name: "CE Comum", parent_id: pecuaria });
     const antes = await contarGrupos();
     for (const name of ["CE Comum", "ce comum"]) {
       const r = await post("product_groups", { code: "4.03", name, parent_id: raiz });
@@ -90,26 +108,40 @@ describe("CE-1 — Grupo de Produtos em árvore, com as regras da decisão 244",
     await expect(admin.query("insert into erp.product_groups(organization_id,code,name) values ($1,'6','ce raiz')", [h.demo.orgId])).rejects.toMatchObject({ code: "23505", constraint: "uq_product_groups_nome_irmaos" });
   });
 
-  it("grupo SEM código → 422 ao criar e ao editar; o grupo do acervo sem código aparece como raiz, no fim da lista", async () => {
+  // AJUSTES 01 (D-1) e R1 (A-7): o título antigo ("grupo SEM código → 422 ao criar e ao editar") descrevia o contrato
+  // anterior. Hoje o POST sem código GERA o código; o acervo sem código (anterior à 0025) continua listado como raiz, no
+  // fim, não aceita código DIGITADO e ganha código pelo Mover ou ao SALVAR (sob a trava da numeração).
+  it("grupo SEM código: o POST gera; o acervo sem código aparece como raiz no fim da lista, recusa código digitado e ganha o código gerado pelo Mover ou ao salvar (A-7)", async () => {
     const r = await post("product_groups", { name: "CE Sem Código" });
-    expect(r.statusCode, r.body).toBe(422); expect(erroDoCampo(r).path).toEqual(["code"]);
+    expect(r.statusCode, r.body).toBe(201); expect(j(r).code).toMatch(/^\d+$/);
     const acervo = (await umaLinha<{ id: string }>("insert into erp.product_groups(organization_id,name) values ($1,'AAA Acervo CE') returning id", [h.demo.orgId]))!.id;
-    for (const payload of [{ name: "AAA Acervo CE 2" }, { code: null }]) {
-      const e = await put("product_groups", acervo, payload);
-      expect(e.statusCode, e.body).toBe(422); expect(erroDoCampo(e).path).toEqual(["code"]);
-    }
-    expect(await umaLinha("select code, name from erp.product_groups where id=$1", [acervo])).toEqual({ code: null, name: "AAA Acervo CE" });
     const lista = j(await get("/api/resources/product_groups?pageSize=200")).items as { id: string; nivel: number }[];
     // premissa: o nome "AAA…" viria PRIMEIRO numa ordem por nome; ele sai por último por não ter código
     expect(lista.length).toBeGreaterThan(5);
     expect(lista.at(-1)).toMatchObject({ id: acervo, nivel: 0 });
-    // com código, o acervo passa a valer como qualquer grupo
-    const ok = await put("product_groups", acervo, { code: "7" });
+    // o código não se digita, nem no acervo: 422 no campo e nada muda
+    const digitado = await put("product_groups", acervo, { code: "7" });
+    expect(digitado.statusCode, digitado.body).toBe(422);
+    expect(erroDoCampo(digitado)).toEqual({ path: ["code"], message: "O código é gerado pelo sistema." });
+    expect(await umaLinha("select code, name from erp.product_groups where id=$1", [acervo])).toEqual({ code: null, name: "AAA Acervo CE" });
+    // pelo MOVER (para a raiz: o próximo da raiz) o acervo passa a valer como qualquer grupo
+    const ok = await h.app.inject({ method: "POST", url: `/api/resources/product_groups/${acervo}/mover`, headers: hdr(), payload: { superior: null } });
     expect(ok.statusCode, ok.body).toBe(200);
+    expect((await umaLinha<{ code: string | null }>("select code from erp.product_groups where id=$1", [acervo]))!.code).toMatch(/^\d+$/);
+    // A-7: SALVAR o acervo sem código (outro campo qualquer) gera o código — o próximo debaixo do superior — em vez de
+    // recusar para sempre. Debaixo do sintético "1" do seed: a raiz só comporta nove códigos (o CE-6 ainda usa um) e
+    // debaixo de "2" o CE-6 põe "2.04" fixo.
+    const superior = await grupoDoSeed("1");
+    const acervo2 = (await umaLinha<{ id: string }>("insert into erp.product_groups(organization_id,name,parent_id) values ($1,'AAA Acervo CE A7',$2) returning id", [h.demo.orgId, superior]))!.id;
+    const previsto = j(await get(`/api/resources/product_groups/proximo-codigo?parent_id=${superior}`)).codigo as string;
+    expect(previsto, "premissa: o próximo código debaixo do superior").toMatch(/^1\.\d{2}$/);
+    const salvo = await put("product_groups", acervo2, { name: "AAA Acervo CE A7 salvo" });
+    expect(salvo.statusCode, salvo.body).toBe(200);
+    expect(await umaLinha("select code, name, parent_id from erp.product_groups where id=$1", [acervo2])).toEqual({ code: previsto, name: "AAA Acervo CE A7 salvo", parent_id: superior });
   });
 
   it("grupo analítico com produto VIVO não vira sintético (422); sem produto vivo, vira", async () => {
-    const g = criado(await post("product_groups", { code: "4.04", name: "CE Com Produto", parent_id: raiz }));
+    const g = await criarNaArvore("product_groups", { code: "4.04", name: "CE Com Produto", parent_id: raiz });
     const p = criado(await post("products", produto(g)));
     const r = await put("product_groups", g, { kind: "synthetic" });
     expect(r.statusCode, r.body).toBe(422);
@@ -187,19 +219,20 @@ describe("CE-4 — Tipo da natureza (financial_categories.nature) segue o superi
     const receitas = (await umaLinha<{ id: string; nature: string }>("select id, nature from erp.financial_categories where organization_id=$1 and code='1'", [h.demo.orgId]))!;
     expect(receitas.nature).toBe("income");
     const antes = Number((await umaLinha<{ n: string }>("select count(*)::text n from erp.financial_categories where organization_id=$1", [h.demo.orgId]))!.n);
-    const r = await post("financial_categories", { code: "1.09", name: "CE Divergente", nature: "expense", kind: "analytic", parent_id: receitas.id });
+    // AJUSTES 01 (D-1): sem código (o servidor gera) — o que se testa aqui é o Tipo
+    const r = await post("financial_categories", { name: "CE Divergente", nature: "expense", kind: "analytic", parent_id: receitas.id });
     expect(r.statusCode, r.body).toBe(422); expect(erroDoCampo(r).path).toEqual(["nature"]);
     expect(Number((await umaLinha<{ n: string }>("select count(*)::text n from erp.financial_categories where organization_id=$1", [h.demo.orgId]))!.n)).toBe(antes);
-    const ambos = criado(await post("financial_categories", { code: "7", name: "CE Ambos", nature: "both", kind: "synthetic" }));
-    criado(await post("financial_categories", { code: "7.01", name: "CE Receita", nature: "income", kind: "analytic", parent_id: ambos }));
-    criado(await post("financial_categories", { code: "7.02", name: "CE Despesa", nature: "expense", kind: "analytic", parent_id: ambos }));
+    const ambos = await criarNaArvore("financial_categories", { code: "7", name: "CE Ambos", nature: "both", kind: "synthetic" });
+    await criarNaArvore("financial_categories", { code: "7.01", name: "CE Receita", nature: "income", kind: "analytic", parent_id: ambos });
+    await criarNaArvore("financial_categories", { code: "7.02", name: "CE Despesa", nature: "expense", kind: "analytic", parent_id: ambos });
     // mesmo Tipo do superior: ok
-    criado(await post("financial_categories", { code: "1.09", name: "CE Igual", nature: "income", kind: "analytic", parent_id: receitas.id }));
+    await criarNaArvore("financial_categories", { code: "1.09", name: "CE Igual", nature: "income", kind: "analytic", parent_id: receitas.id });
   });
 
   it("o outro lado: superior com filha Despesa não muda para Receita (422); para 'Receita e despesa' pode", async () => {
-    const pai = criado(await post("financial_categories", { code: "8", name: "CE Pai Despesa", nature: "expense", kind: "synthetic" }));
-    const filha = criado(await post("financial_categories", { code: "8.01", name: "CE Filha Despesa", nature: "expense", kind: "analytic", parent_id: pai }));
+    const pai = await criarNaArvore("financial_categories", { code: "8", name: "CE Pai Despesa", nature: "expense", kind: "synthetic" });
+    const filha = await criarNaArvore("financial_categories", { code: "8.01", name: "CE Filha Despesa", nature: "expense", kind: "analytic", parent_id: pai });
     const r = await put("financial_categories", pai, { nature: "income" });
     expect(r.statusCode, r.body).toBe(422); expect(erroDoCampo(r).path).toEqual(["nature"]);
     expect(await umaLinha("select nature from erp.financial_categories where id=$1", [pai])).toEqual({ nature: "expense" });
@@ -225,17 +258,21 @@ describe("CE-6 — relatório e painel de nutrição olham a ÁRVORE", () => {
   const saldo = (produtoId: string, qtd: string) => admin.query(
     "insert into erp.stock_balances(organization_id,warehouse_id,product_id,quantity,average_cost,total_value) values ($1,$2,$3,$4,1,$4)", [h.demo.orgId, I.warehouse, produtoId, qtd]);
   beforeAll(async () => {
-    raiz6 = criado(await post("product_groups", { code: "6", name: "CE6 Raiz", kind: "synthetic" }));
-    const meio = criado(await post("product_groups", { code: "6.01", name: "CE6 Meio", kind: "synthetic", parent_id: raiz6 }));
-    filhoA = criado(await post("product_groups", { code: "6.01.001", name: "CE6 Folha A", parent_id: meio }));
-    filhoB = criado(await post("product_groups", { code: "6.02", name: "CE6 Folha B", parent_id: raiz6 }));
+    // AJUSTES 01: o acervo do CE-1 ganha código de raiz pelo Mover — a raiz do CE-6 usa um dígito ainda livre
+    const r6 = (await umaLinha<{ c: string }>("select min(d)::text c from generate_series(1,9) d where not exists (select 1 from erp.product_groups where organization_id=$1 and code=d::text)", [h.demo.orgId]))!.c;
+    expect(r6, "premissa: há dígito de raiz livre").toMatch(/^\d$/);
+    raiz6 = await criarNaArvore("product_groups", { code: r6, name: "CE6 Raiz", kind: "synthetic" });
+    const meio = await criarNaArvore("product_groups", { code: `${r6}.01`, name: "CE6 Meio", kind: "synthetic", parent_id: raiz6 });
+    filhoA = await criarNaArvore("product_groups", { code: `${r6}.01.001`, name: "CE6 Folha A", parent_id: meio });
+    filhoB = await criarNaArvore("product_groups", { code: `${r6}.02`, name: "CE6 Folha B", parent_id: raiz6 });
     pA = criado(await post("products", produto(filhoA, { description: "CE6 Produto A" })));
     pB = criado(await post("products", produto(filhoB, { description: "CE6 Produto B" })));
     pFora = criado(await post("products", produto(await grupoDoSeed("1.01"), { description: "CE6 Produto Fora" })));
     // painel: produto num FILHO de "Pecuária" (o nome do filho não tem pecu/nutri) e um num grupo RAIZ "Nutrição…"
-    const filhoPec = criado(await post("product_groups", { code: "2.04", name: "CE6 Suplemento", parent_id: await grupoDoSeed("2") }));
+    const filhoPec = await criarNaArvore("product_groups", { code: "2.04", name: "CE6 Suplemento", parent_id: await grupoDoSeed("2") });
     pNutriFilho = criado(await post("products", produto(filhoPec, { description: "CE6 Suplemento do filho" })));
-    const raizNutri = await grupoDoSeed("7"); // o acervo do CE-1 ganhou o código 7; renomeia para cair no filtro por nome
+    // o acervo do CE-1 ganhou código de raiz (AJUSTES 01: pelo Mover); renomeia para cair no filtro por nome
+    const raizNutri = (await umaLinha<{ id: string }>("select id from erp.product_groups where organization_id=$1 and name='AAA Acervo CE' and parent_id is null and code is not null", [h.demo.orgId]))!.id;
     await admin.query("update erp.product_groups set name='Nutrição CE6' where id=$1", [raizNutri]);
     pNutriRaiz = criado(await post("products", produto(raizNutri, { description: "CE6 Nutrição da raiz" })));
     for (const p of [pA, pB, pFora, pNutriFilho, pNutriRaiz]) await saldo(p, "10");

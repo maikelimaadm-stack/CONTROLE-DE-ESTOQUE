@@ -8,7 +8,8 @@ import { runService, nextCode, requirePermission, comPermissaoResolvida } from "
 import { SEQUENCIA_EMPRESA } from "../lib/sequencia-empresa.js";
 import { notFound, validation } from "../lib/errors.js";
 import { atribuirIdGlobalSeAplicavel, paginaComIdGlobal } from "../lib/id-global.js";
-import { conferirRegrasDaArvore, conferirExclusaoNaArvore, conferirReferenciasAnaliticas, sugerirCodigo } from "../lib/arvore-cadastro.js";
+import { conferirRegrasDaArvore, conferirExclusaoNaArvore, conferirReferenciasAnaliticas, sugerirCodigo, gerarCodigoNaCriacao, gerarCodigoNaEdicao, planejarMover, moverNaArvore, travarNumeracao } from "../lib/arvore-cadastro.js";
+import { gerarCodigoSequencial, conferirCodigoSequencialNaEdicao, numeracaoDosCadastros, linhaDaNumeracao, zerarNumeracao, proximoCodigo } from "../lib/numeracao-cadastro.js";
 import { conferirGrupoDeProdutos, conferirGrupoDoProduto } from "../lib/grupo-de-produtos.js";
 import { conferirTipoDaNatureza } from "../lib/natureza-financeira.js";
 import { conferirNcmDoProduto } from "../lib/ncm-do-produto.js";
@@ -24,6 +25,9 @@ export function buildSchema(def: ResourceDef, partial = false) {
   for (const f of camposDeEscrita(def)) {
     if (f.readOnly) continue;
     const t = schemaDoCampo(f);
+    // CÓDIGO AUTOMÁTICO (decisão 257 D): nunca obrigatório no corpo — o servidor gera. Continua ACEITO no schema
+    // para a recusa ser legível (422 "O código é gerado pelo sistema."), e não um "campo desconhecido".
+    if (def.codigoAutomatico && f.name === "code") { shape[f.name] = t.nullable().optional(); continue; }
     if (f.type === "boolean") { shape[f.name] = partial ? t.optional() : t.optional().default(Boolean(f.default ?? false)); continue; }
     shape[f.name] = f.required && !partial ? t : t.nullable().optional();
   }
@@ -36,7 +40,12 @@ export function buildSchema(def: ResourceDef, partial = false) {
 export function schemaDoCampo(f: FieldDef): z.ZodTypeAny {
   let t: z.ZodTypeAny;
   switch (f.type) {
-    case "text": case "textarea": t = z.string().max(f.maxLength ?? 4000); break;
+    case "text": case "textarea": {
+      // FORMATO declarado no registry (A-10, ex.: CAEPF com 14 dígitos): recusa no campo, com a mensagem do registry
+      const padrao = f.padrao ? { re: new RegExp(f.padrao.regex), mensagem: f.padrao.mensagem } : null;
+      t = padrao ? z.string().max(f.maxLength ?? 4000).refine((v) => v === "" || padrao.re.test(v), padrao.mensagem) : z.string().max(f.maxLength ?? 4000);
+      break;
+    }
     case "email": t = z.string().email().max(200); break;
     case "number": case "money": case "quantity": case "percent": t = z.union([z.number(), z.string().regex(/^-?\d+(\.\d+)?$/)]).transform(String); break;
     case "integer": t = z.coerce.number().int(); if (f.min !== undefined) t = (t as z.ZodNumber).min(f.min); if (f.max !== undefined) t = (t as z.ZodNumber).max(f.max); break;
@@ -96,6 +105,8 @@ async function checkColumns(ctx: ServiceCtx, def: ResourceDef): Promise<Set<stri
 }
 
 const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+/** UUID em qualquer caixa (a forma que o `z.string().uuid()` aceita e o Postgres converte). */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /**
  * Filtro avançado `campo__operador=valor` (ver @agro/shared/preferences). O nome da coluna vem SEMPRE da definição
  * declarativa (nunca do cliente) e os valores são parametrizados; operador desconhecido é ignorado.
@@ -270,7 +281,7 @@ function coerceValue(f: FieldDef, v: unknown): unknown {
  * `adiarIdGlobal` é interno da importação em lote, que reserva o ID Global de todas as linhas no fim do lote
  * (mesma transação): reservar linha a linha prenderia o contador da organização a importação inteira.
  */
-export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal?: boolean } = {}) {
+export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown, opcoes: { adiarIdGlobal?: boolean; importacao?: boolean } = {}) {
   // cadastro que nasce por OUTRA porta (ex.: funcionário pelo CPF) não nasce pela genérica
   if (def.criacao) throw validation(def.criacao.mensagem);
   conferirSigiloNaCriacao(ctx, def);
@@ -287,12 +298,21 @@ export async function createOne(ctx: ServiceCtx, def: ResourceDef, body: unknown
   // A EMPRESA é o único cadastro cuja RLS de leitura depende do escopo do próprio membro: a linha nasce
   // fora do escopo de todo mundo. Ver `exigirEscopoTotalDaOrganizacao`.
   if (def.table === "empresas") exigirEscopoTotalDaOrganizacao(ctx, def.label);
+  // CÓDIGO GERADO NO SERVIDOR (decisão 257 D-1/D-2), sob a trava da numeração, ANTES das regras da árvore:
+  // elas conferem o código gerado como confeririam um digitado (máscara, prefixo do superior)
+  await gerarCodigoNaCriacao(ctx, def, data, Boolean(opcoes.importacao));
+  const sequencial = await gerarCodigoSequencial(ctx, def, data);
   await conferirRegrasDaArvore(ctx, def, null, data, null);
   await conferirRegrasDoCadastro(ctx, def, null, data, null);
   const existing = await checkColumns(ctx, def);
   const cols: string[] = []; const vals: unknown[] = [];
   if (existing.has("organization_id")) { cols.push("organization_id"); vals.push(ctx.orgId); }
-  if (def.codeEntity && existing.has("code") && !data["code"]) { cols.push("code"); vals.push(await nextCode(ctx.tx, ctx.orgId, def.codeEntity, def.key === "products" ? 5 : 4)); }
+  if (sequencial !== null) { cols.push("code"); vals.push(sequencial); }
+  else if (def.codeEntity && existing.has("code") && !data["code"]) {
+    // mesma trava do Zerar numeração (decisão 257 D-3): o Novo e o Zerar se esperam
+    await travarNumeracao(ctx, def);
+    cols.push("code"); vals.push(await nextCode(ctx.tx, ctx.orgId, def.codeEntity, def.key === "products" ? 5 : 4));
+  }
   if (existing.has("created_by")) { cols.push("created_by"); vals.push(ctx.user.id); }
   if (escC.ativo && existing.has("empresa_id") && !data["empresa_id"] && ctx.empresaId) { cols.push("empresa_id"); vals.push(ctx.empresaId); }
   for (const f of camposDeEscrita(def)) {
@@ -326,7 +346,10 @@ export async function updateOne(ctx: ServiceCtx, def: ResourceDef, id: string, b
   const data = validarCorpo(def, buildSchema(def, true), body);
   conferirPermissoesDaFicha(ctx, def, data);
   fundirCamposJson(def, data, atual);
-  await conferirRegrasDaArvore(ctx, def, id, data, atual);
+  conferirCodigoSequencialNaEdicao(def, data, atual);
+  // registro do acervo SEM código numa árvore com código travado ganha o código gerado ao salvar (A-7)
+  const codigoGerado = await gerarCodigoNaEdicao(ctx, def, data, atual);
+  await conferirRegrasDaArvore(ctx, def, id, data, atual, { codigoGerado });
   await conferirRegrasDoCadastro(ctx, def, id, data, atual);
   const existing = await checkColumns(ctx, def);
   const sets: string[] = []; const vals: unknown[] = [];
@@ -457,11 +480,28 @@ export default async function resourceRoutes(app: FastifyInstance) {
       for (const p of leiturasDeclaradasDaTabela(def.table)) requirePermission(ctx, p);
       return options(await comPermissaoResolvida(ctx, `${def.permission}.view`), def, search, extra);
     }); });
-  app.get("/resources/:key/proximo-codigo", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ parent_id: z.string().uuid().optional() }).strict().parse(req.query); return runService(app, req, `${def.permission}.create`, (ctx) => sugerirCodigo(ctx, def, q.parent_id ?? null)); });
+  app.get("/resources/:key/proximo-codigo", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ parent_id: z.string().uuid().optional() }).strict().parse(req.query); return runService(app, req, `${def.permission}.create`, async (ctx) => def.codigoAutomatico === "sequencial" && !q.parent_id ? { codigo: await proximoCodigo(ctx, def), mascara: null } : sugerirCodigo(ctx, def, q.parent_id ?? null)); });
   app.get("/resources/:key/distinct", async (req) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const q = z.object({ field: z.string().regex(/^[a-z_][a-z0-9_]*$/), search: z.string().max(200).optional(), limit: z.coerce.number().int().min(1).max(500).default(100) }).parse(req.query); return runService(app, req, `${def.permission}.view`, (ctx) => distinctValues(ctx, def, q.field, q.search, q.limit)); });
   // HISTÓRICO (Fase 6): auditoria do registro e das suas grades — quem, quando, o quê. Mesma permissão e mesma 404 da ficha.
   app.get("/resources/:key/:id/historico", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); const q = pageQuerySchema.parse(req.query); return runService(app, req, `${def.permission}.view`, async (ctx) => { await getOne(ctx, def, id); return historicoDoRegistro(ctx, def, id, q.page, q.pageSize); }); });
+  // MOVER COM RENUMERAÇÃO (decisão 257 D-5): prévia e execução usam o MESMO plano. `superior=raiz` = raiz.
+  // Id que não é UUID (A-10) é a MESMA 404 de inexistente — depois da permissão, nunca o 500 do cast do banco.
+  const registroDoMover = async (ctx: ServiceCtx, def: ResourceDef, id: string) => { if (!UUID.test(id)) throw notFound(def.label); await getOne(ctx, def, id); };
+  app.get("/resources/:key/:id/mover/previa", async (req) => {
+    const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso");
+    const q = z.object({ superior: z.union([z.literal("raiz"), z.string().uuid()]) }).strict().parse(req.query);
+    return runService(app, req, `${def.permission}.edit`, async (ctx) => { await registroDoMover(ctx, def, id); return planejarMover(ctx, def, id, q.superior === "raiz" ? null : q.superior); });
+  });
+  app.post("/resources/:key/:id/mover", async (req) => {
+    const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso");
+    const b = z.object({ superior: z.string().uuid().nullable() }).strict().parse(req.body);
+    return runService(app, req, `${def.permission}.edit`, async (ctx) => { await registroDoMover(ctx, def, id); return moverNaArvore(ctx, def, id, b.superior); });
+  });
   app.get("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.view`, (ctx) => getOne(ctx, def, id)); });
+  // NUMERAÇÃO DOS CADASTROS (decisão 257 D-3): consulta e Zerar, só com `tenant_parameters.edit`
+  app.get("/admin/numeracao", async (req) => runService(app, req, "tenant_parameters.edit", (ctx) => numeracaoDosCadastros(ctx)));
+  app.get("/admin/numeracao/:cadastro", async (req) => { const { cadastro } = req.params as { cadastro: string }; return runService(app, req, "tenant_parameters.edit", (ctx) => linhaDaNumeracao(ctx, cadastro)); });
+  app.post("/admin/numeracao/:cadastro/zerar", async (req) => { const { cadastro } = req.params as { cadastro: string }; return runService(app, req, "tenant_parameters.edit", (ctx) => zerarNumeracao(ctx, cadastro)); });
   app.post("/resources/:key", async (req, reply) => { const def = getResource((req.params as { key: string }).key); if (!def) throw notFound("Recurso"); const r = await runService(app, req, `${def.permission}.create`, (ctx) => createOne(ctx, def, req.body)); return reply.status(201).send(r); });
   app.put("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.edit`, (ctx) => updateOne(ctx, def, id, req.body)); });
   app.delete("/resources/:key/:id", async (req) => { const { key, id } = req.params as { key: string; id: string }; const def = getResource(key); if (!def) throw notFound("Recurso"); return runService(app, req, `${def.permission}.delete`, (ctx) => { requirePermission(ctx, `${def.permission}.delete`); return deleteOne(ctx, def, id); }); });

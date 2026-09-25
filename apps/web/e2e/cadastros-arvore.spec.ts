@@ -20,7 +20,9 @@ test("A1 — listagem em árvore: recuo, sintético em destaque e recolher/expan
   await expect(filho).toBeVisible();
 });
 
-test("A2 — novo registro com antecessor: o código vem sugerido e continua editável", async ({ page }) => {
+// AJUSTES 01 (D-1): o código das árvores é GERADO no servidor — o formulário Novo mostra "será gerado ao salvar:
+// <código>" e não deixa digitar (antes: sugerido e editável).
+test("A2 — novo registro com antecessor: o código vem previsto pelo servidor e não é digitável", async ({ page }) => {
   await login(page);
   const r = await api<{ items: { id: string; code: string }[] }>(page, "GET", "/api/resources/financial_categories?code=1");
   const raiz = r.items.find((x) => x.code === "1");
@@ -28,8 +30,7 @@ test("A2 — novo registro com antecessor: o código vem sugerido e continua edi
   const s = await api<{ codigo: string }>(page, "GET", `/api/resources/financial_categories/proximo-codigo?parent_id=${raiz!.id}`);
   expect(s.codigo).toMatch(/^1\.\d{2}$/);
   await page.goto(`/cadastros/financial_categories/new?parent_id=${raiz!.id}`);
-  const codigo = page.getByLabel(/^Código/).first();
-  await expect(codigo).toHaveValue(s.codigo);
-  await codigo.fill("1.99");
-  await expect(codigo).toHaveValue("1.99");
+  await expect(page.getByText(`será gerado ao salvar: ${s.codigo}`), "prévia do código no Novo (D-1)").toBeVisible();
+  const codigo = page.getByLabel(/^Código/);
+  if (await codigo.count()) await expect(codigo.first()).not.toBeEditable();
 });

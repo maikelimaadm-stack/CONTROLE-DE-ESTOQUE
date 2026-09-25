@@ -47,10 +47,36 @@ describe("ficha em abas — declaração coerente", () => {
     expect(todos.length).toBeGreaterThanOrEqual(6);
     for (const x of todos) expect(catalogo.has(x.split(":")[1]!), x).toBe(true);
   });
-  it("Parceiro: tipos no cabeçalho e no cadastro rápido; situação na Receita só leitura", () => {
+  it("Parceiro: cabeçalho do padrão de tela (AJUSTES 01, C-3); tipos num campo só (grupo) e no cadastro rápido; situação na Receita só leitura", () => {
     const p = getResource("people")!;
-    for (const t of ["is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary"]) { expect(p.cabecalho).toContain(t); expect(p.camposRapidos).toContain(t); }
+    expect(p.cabecalho).toEqual(["code", "is_active", "person_type", "document", "name", "situacao_receita"]);
+    for (const t of ["is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary"]) {
+      const f = p.fields.find((x) => x.name === t)!;
+      expect(f.type).toBe("boolean"); expect(f.grupo, t).toBe("Tipo do parceiro"); expect(f.section).toBe("Identificação"); expect(p.camposRapidos).toContain(t);
+    }
+    expect(p.abas!.map((a) => a.key)).toEqual(["identificacao", "enderecos", "contatos", "fiscal", "financeiro", "cliente", "fornecedor", "proprietario", "funcionario", "historico"]);
     expect(p.fields.find((f) => f.name === "situacao_receita")?.readOnly).toBe(true);
     expect(p.label).toBe("Parceiro");
+  });
+  it("Parceiro (AJUSTES 01, C-4/C-5): campo de Física só em Física, de Jurídica só em Jurídica, limpos quando o tipo os esconde; campos da 0030 só com a capacidade", () => {
+    const p = getResource("people")!;
+    const f = (n: string) => p.fields.find((x) => x.name === n)!;
+    for (const n of ["rg", "caepf", "sexo"]) { expect(f(n).visibleWhen, n).toEqual({ field: "person_type", equals: "natural" }); expect(f(n).limpaQuandoOculto, n).toBe(true); }
+    expect(f("matriz_id").visibleWhen).toEqual({ field: "person_type", equals: "legal" }); expect(f("matriz_id").limpaQuandoOculto).toBe(true);
+    expect(f("matriz_id").ref?.resource).toBe("people");
+    const da0030 = ["matriz_id", "rg", "caepf", "sexo", "site", "caixa_postal", "latitude", "longitude", "email_nfe", "calcula_funrural"];
+    for (const n of da0030) expect(f(n).exigeCapacidade, n).toEqual({ nome: "consultaCnpjJanela", versao: 1 });
+    const end = p.detalhes!.find((d) => d.key === "enderecos")!;
+    for (const n of ["latitude", "longitude"]) expect(end.fields.find((x) => x.name === n)?.exigeCapacidade, n).toEqual({ nome: "consultaCnpjJanela", versao: 1 });
+    // campo que existia antes da 0030 NÃO depende da capacidade (a API anterior o entende)
+    for (const x of p.fields.filter((y) => !da0030.includes(y.name))) expect(x.exigeCapacidade, x.name).toBeUndefined();
+    expect(f("email_nfe").type).toBe("email");
+  });
+  it("numérico ESVAZIADO que vai null (R1, W-8): só latitude/longitude do Parceiro — nenhum outro numérico de cadastro algum", () => {
+    // sem a marca, o numérico vazio fica fora do corpo (o valor gravado continua): Valor de referência do Produto é
+    // NOT NULL DEFAULT 0 e o null seria recusado pelo banco (23502)
+    const marcados = RESOURCES.flatMap((r) => [...r.fields, ...(r.detalhes ?? []).flatMap((d) => d.fields)].filter((x) => x.anulaQuandoEsvaziado).map((x) => `${r.key}.${x.name}`));
+    expect(marcados).toEqual(["people.latitude", "people.longitude"]);
+    expect(getResource("products")!.fields.find((x) => x.name === "reference_price")?.anulaQuandoEsvaziado).toBeUndefined();
   });
 });

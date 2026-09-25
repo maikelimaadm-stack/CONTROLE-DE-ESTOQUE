@@ -9,9 +9,10 @@ import { login, api, uniq, abrirLancamentoDeVendas, escolherTopEContinuar, CLASS
  * AR-2 "Novo filho": superior preenchido e código sugerido pelo servidor; grava e aparece na árvore.
  * AR-3 o campo de busca da venda mostra o CAMINHO e só oferece analítico (premissa: sem o recorte, a
  *      sintética existe e viria). RV1: tirar o recorte do lookup da venda deixa este teste vermelho.
- * AR-4 "Mover": novo superior + código novo sugerido; a recusa da API (decisão 244) aparece na tela.
- * AR-5 (R1-5) "Mover" só para registro SEM filhos: com filhos a tela não oferece o botão e diz o porquê, e a
- *      API recusa o mesmo pedido feito por fora da tela (422 "Registro com filhos: …").
+ * AR-4 "Mover": novo superior → prévia do código novo; a recusa da API aparece na tela.
+ * AR-5 (R1-5, revisto pela decisão 257 D-5 / AJUSTES 01) "Mover…" também para registro COM filhos, com a prévia
+ *      do galho; a edição comum continua recusando a troca de superior (422 "Use Mover.").
+ * AJUSTES 01 (D-1): o código não é mais digitado — o Novo filho mostra "será gerado ao salvar: <código>".
  */
 type No = { id: string; code: string; name: string; kind: string; parent_id: string | null };
 const naturezas = async (page: Page) => (await api<{ items: No[] }>(page, "GET", "/api/resources/financial_categories?pageSize=1000")).items;
@@ -53,8 +54,10 @@ test("AR-2 — Novo filho: superior preenchido, código sugerido pelo servidor, 
   await no(page, "Receitas da Pecuária").getByRole("button", { name: /Receitas da Pecuária/ }).click();
   await page.getByRole("button", { name: "Novo filho" }).click();
   await expect(page.getByTestId("arvore-novo-superior")).toContainText("1.01 Receitas da Pecuária");
-  const codigo = page.getByRole("region", { name: "Ficha" }).getByLabel(/^Código/).first();
-  await expect(codigo).toHaveValue(sugerido.codigo);
+  // AJUSTES 01 (D-1): código gerado no servidor — a ficha mostra a prévia e não oferece o campo para digitar
+  await expect(page.getByTestId("arvore-codigo-previsto")).toHaveText(`Código: será gerado ao salvar: ${sugerido.codigo}`);
+  const codigo = page.getByRole("region", { name: "Ficha" }).getByLabel(/^Código/);
+  if (await codigo.count()) await expect(codigo.first()).not.toBeEditable();
   const nome = uniq("Filho AR2");
   await page.getByRole("region", { name: "Ficha" }).getByLabel(/^Descrição/).first().fill(nome);
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/resources/financial_categories");
@@ -62,7 +65,9 @@ test("AR-2 — Novo filho: superior preenchido, código sugerido pelo servidor, 
   const r = await resposta;
   expect(r.status(), await r.text()).toBe(201);
   const enviado = r.request().postDataJSON() as Record<string, unknown>;
-  expect(enviado["parent_id"]).toBe(pai.id); expect(enviado["code"]).toBe(sugerido.codigo);
+  // o código fica FORA do corpo (o servidor gera) e o gravado é o que a prévia mostrou
+  expect(enviado["parent_id"]).toBe(pai.id); expect("code" in enviado, "código fora do corpo").toBe(false);
+  expect((await r.json() as { code: string }).code).toBe(sugerido.codigo);
   await expect(no(page, nome)).toBeVisible();
   await expect(no(page, nome)).toHaveAttribute("aria-level", "3");
 });
@@ -99,30 +104,34 @@ test("AR-4 — Mover: novo superior com código sugerido; a recusa da API aparec
   const destino = nos.find((x) => x.code === "1.02")!;
   const origem = nos.find((x) => x.code === "1.01")!;
   expect(destino && origem, "premissa: 1.01 e 1.02 do seed").toBeTruthy();
-  const s = await api<{ codigo: string }>(page, "GET", `/api/resources/financial_categories/proximo-codigo?parent_id=${origem.id}`);
   const nome = uniq("Mover AR4");
-  await api(page, "POST", "/api/resources/financial_categories", { code: s.codigo, name: nome, nature: "income", kind: "analytic", parent_id: origem.id });
+  // AJUSTES 01 (D-1): o registro nasce sem código no corpo; o servidor gera
+  await api(page, "POST", "/api/resources/financial_categories", { name: nome, nature: "income", kind: "analytic", parent_id: origem.id });
   const esperado = await api<{ codigo: string }>(page, "GET", `/api/resources/financial_categories/proximo-codigo?parent_id=${destino.id}`);
   await page.goto("/cadastros/financial_categories?visao=arvore");
   await no(page, nome).getByRole("button").last().click();
-  await page.getByRole("region", { name: "Ficha" }).getByRole("button", { name: "Mover", exact: true }).click();
-  const dialogo = page.getByRole("dialog");
-  await dialogo.locator("label", { hasText: "Novo superior" }).first().locator("..").locator("button").first().click();
+  // AJUSTES 01 (D-5): "Mover…" com prévia; o código novo é o do servidor (não se digita)
+  await page.getByRole("region", { name: "Ficha" }).getByTestId("arvore-mover").click();
+  const dialogo = page.getByTestId("mover-dialogo");
+  // recusa da API na tela: destino de Tipo incompatível (DESPESAS, Despesa) para uma Receita
+  await dialogo.locator("button").first().click();
+  await page.getByPlaceholder("Pesquisar...").fill("DESPESAS");
+  await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: /^2 DESPESAS|DESPESAS$/ }).first().click();
+  // T-2 (R1): volta a conferir o TEXTO da recusa — a da API (natureza-financeira.ts), não só que "algo" apareceu
+  await expect(page.getByTestId("mover-erro")).toHaveText("O Tipo precisa ser o mesmo da natureza superior (só um superior \"Receita e despesa\" aceita filhas de outro Tipo).");
+  await expect(page.getByTestId("mover-confirmar")).toBeDisabled();
+  await dialogo.locator("button").first().click();
   await page.getByPlaceholder("Pesquisar...").fill("Receitas Agrícolas");
   await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option").first().click();
-  await expect(dialogo.getByLabel("Código novo")).toHaveValue(esperado.codigo);
-  // código fora do prefixo: a API recusa (244) e a tela mostra
-  await dialogo.getByLabel("Código novo").fill("1.01.999");
-  await dialogo.getByRole("button", { name: "Mover", exact: true }).click();
-  await expect(dialogo.getByRole("alert")).toContainText(/começar com o código do superior/);
-  await dialogo.getByLabel("Código novo").fill(esperado.codigo);
-  await dialogo.getByRole("button", { name: "Mover", exact: true }).click();
+  await expect(page.getByTestId("mover-previa-linha")).toHaveCount(1);
+  await expect(page.getByTestId("mover-previa-linha").first()).toContainText(esperado.codigo);
+  await page.getByTestId("mover-confirmar").click();
   await expect(dialogo).toBeHidden();
   const depois = (await naturezas(page)).find((x) => x.name === nome)!;
   expect(depois.parent_id).toBe(destino.id); expect(depois.code).toBe(esperado.codigo);
 });
 
-test("AR-5 — Mover só para registro SEM filhos: com filhos a tela não oferece e a API recusa", async ({ page }) => {
+test("AR-5 — Mover também para registro COM filhos (prévia do galho); a edição comum recusa a troca de superior", async ({ page }) => {
   await login(page);
   const nos = await naturezas(page);
   const comFilhos = nos.find((x) => x.code === "1.01")!;
@@ -132,14 +141,19 @@ test("AR-5 — Mover só para registro SEM filhos: com filhos a tela não oferec
   await page.goto("/cadastros/financial_categories?visao=arvore");
   const ficha = page.getByRole("region", { name: "Ficha" });
   await no(page, "Receitas da Pecuária").getByRole("button", { name: /Receitas da Pecuária/ }).click();
-  await expect(ficha.getByTestId("arvore-mover-com-filhos")).toHaveText("Registro com filhos: mova ou renumere os filhos antes.");
-  await expect(ficha.getByRole("button", { name: "Mover", exact: true }), "com filhos, Mover não é oferecido").toHaveCount(0);
-  // a FOLHA continua movível (premissa: o botão existe quando pode)
-  await no(page, "Venda de Boi Gordo").getByRole("button", { name: /Venda de Boi Gordo/ }).click();
-  await expect(ficha.getByRole("button", { name: "Mover", exact: true })).toBeVisible();
+  // AJUSTES 01 (D-5): com filhos, o "Mover…" é oferecido (renumera o galho); o aviso antigo sumiu
+  await expect(ficha.getByTestId("arvore-mover")).toBeVisible();
   await expect(ficha.getByTestId("arvore-mover-com-filhos")).toHaveCount(0);
-  // a API é a autoridade: o mesmo pedido, por fora da tela, é recusado e nada muda
-  await expect(api(page, "PUT", `/api/resources/financial_categories/${comFilhos.id}`, { parent_id: destino.id })).rejects.toThrow(/422 .*Registro com filhos: mova ou renumere os filhos antes/);
+  // a prévia mostra o galho inteiro (o registro e os descendentes), sem gravar nada
+  const previa = await api<{ codigos: { id: string }[] }>(page, "GET", `/api/resources/financial_categories/${comFilhos.id}/mover/previa?superior=${destino.id}`);
+  // (excluídos também vão junto: a prévia tem PELO MENOS o registro e os descendentes vivos)
+  expect(previa.codigos.length, "o galho inteiro na prévia").toBeGreaterThanOrEqual(1 + nos.filter((x) => x.code.startsWith(`${comFilhos.code}.`)).length);
+  expect(previa.codigos.length).toBeGreaterThan(1);
+  // a FOLHA também é movível
+  await no(page, "Venda de Boi Gordo").getByRole("button", { name: /Venda de Boi Gordo/ }).click();
+  await expect(ficha.getByTestId("arvore-mover")).toBeVisible();
+  // a API é a autoridade: a troca de superior pela edição comum é recusada e nada muda
+  await expect(api(page, "PUT", `/api/resources/financial_categories/${comFilhos.id}`, { parent_id: destino.id })).rejects.toThrow(/422 .*Use Mover\./);
   const depois = (await naturezas(page)).find((x) => x.id === comFilhos.id)!;
   expect([depois.parent_id, depois.code]).toEqual([comFilhos.parent_id, comFilhos.code]);
 });
