@@ -1,6 +1,6 @@
 # Paridade de Campos
 
-_Gerado por `node scripts/parity.mjs` em 2026-09-24 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
+_Gerado por `node scripts/parity.mjs` em 2026-09-25 a partir de docs/reference/SYSTEM-INVENTORY.md (455 telas) e do código deste repositório. Legenda de status: NÃO INICIADO · MAPEADO · EM IMPLEMENTAÇÃO · IMPLEMENTADO · TESTADO (coberto por teste automatizado) · BLOQUEADO · NÃO APLICÁVEL · MELHORADO (comportamento intencionalmente diferente/superior, ver observação) · UNIFICADO (tela absorvida como aba/filtro/ação de uma área unificada — ver docs/UX-ARCHITECTURE.md; a rota antiga redireciona)._
 
 Comparação quantitativa por tela: campos de formulário / filtros / colunas observados na referência × campos declarados no nosso código (registro declarativo de cadastros em packages/domain/src/resources ou `<Field>` nas páginas). A comparação nome-a-nome está em docs/reference/screens/*.md (referência) e nos próprios registries (nosso). Diferenças intencionais: campos de marketing/licença omitidos; campos calculados exibidos no detalhe e não no formulário.
 
@@ -268,8 +268,8 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-263 | Integração CTA Smart | `/frota/abastecimentos` | 3 | 0 | 9 | — | NÃO INICIADO |
 | SCR-264 | CTA Smart - Abastecimentos Importados | `/frota/abastecimentos` | 1 | 3 | 9 | — | NÃO INICIADO |
 | SCR-265 | Exportar CSV - Contas Pagas/Recebidas | `/integracoes/exportacoes` | 0 | 2 | 0 | — | UNIFICADO |
-| SCR-267 | Funcionários | `/cadastros/people/new?is_employee=true` | 23 | 0 | 0 | 38 | MELHORADO |
-| SCR-269 | Funcionários | `/cadastros/people/[id]?is_employee=true` | 21 | 0 | 0 | 38 | MELHORADO |
+| SCR-267 | Funcionários | `/cadastros/people/new?is_employee=true` | 23 | 0 | 0 | 48 | MELHORADO |
+| SCR-269 | Funcionários | `/cadastros/people/[id]?is_employee=true` | 21 | 0 | 0 | 48 | MELHORADO |
 | SCR-272 | Usuários | `/admin/usuarios/[id]` | 11 | 0 | 0 | — | TESTADO |
 | SCR-273 | Documento Fiscal | `/estoque/documentos-fiscais/new` | 142 | 0 | 10 | 18 | TESTADO |
 | SCR-274 | Consulte os documentos | `/estoque/dfe/new` | 0 | 0 | 4 | — | EM IMPLEMENTAÇÃO |
@@ -304,14 +304,14 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-311 | Saldo Inicial | `/cadastros/apportionment_categories/new` | 11 | 0 | 0 | 2 | IMPLEMENTADO |
 | SCR-312 | Perfil Usuário | `/admin/perfis/new` | 668 | 0 | 0 | — | TESTADO |
 | SCR-314 | Perfil Usuário | `/admin/perfis/[id]` | 668 | 0 | 0 | 3 | TESTADO |
-| SCR-315 | Inscrições Estaduais | `/cadastros/people/new` | 69 | 0 | 7 | 38 | IMPLEMENTADO |
-| SCR-317 | Inscrições Estaduais | `/cadastros/people/[id]` | 67 | 0 | 7 | 38 | IMPLEMENTADO |
-| SCR-319 | Inscrições Estaduais | `/cadastros/people/new?is_proprietary=true` | 10 | 0 | 5 | 38 | MELHORADO |
-| SCR-321 | Inscrições Estaduais | `/cadastros/people/[id]?is_proprietary=true` | 12 | 0 | 5 | 38 | MELHORADO |
-| SCR-323 | Fornecedores | `/cadastros/people/new?is_provider=true` | 33 | 0 | 0 | 38 | MELHORADO |
-| SCR-325 | Fornecedores | `/cadastros/people/[id]?is_provider=true` | 33 | 0 | 0 | 38 | MELHORADO |
-| SCR-327 | Inscrições Estaduais | `/cadastros/people/new?is_client=true` | 21 | 0 | 2 | 38 | MELHORADO |
-| SCR-329 | Inscrições Estaduais | `/cadastros/people/[id]?is_client=true` | 21 | 0 | 2 | 38 | MELHORADO |
+| SCR-315 | Inscrições Estaduais | `/cadastros/people/new` | 69 | 0 | 7 | 48 | IMPLEMENTADO |
+| SCR-317 | Inscrições Estaduais | `/cadastros/people/[id]` | 67 | 0 | 7 | 48 | IMPLEMENTADO |
+| SCR-319 | Inscrições Estaduais | `/cadastros/people/new?is_proprietary=true` | 10 | 0 | 5 | 48 | MELHORADO |
+| SCR-321 | Inscrições Estaduais | `/cadastros/people/[id]?is_proprietary=true` | 12 | 0 | 5 | 48 | MELHORADO |
+| SCR-323 | Fornecedores | `/cadastros/people/new?is_provider=true` | 33 | 0 | 0 | 48 | MELHORADO |
+| SCR-325 | Fornecedores | `/cadastros/people/[id]?is_provider=true` | 33 | 0 | 0 | 48 | MELHORADO |
+| SCR-327 | Inscrições Estaduais | `/cadastros/people/new?is_client=true` | 21 | 0 | 2 | 48 | MELHORADO |
+| SCR-329 | Inscrições Estaduais | `/cadastros/people/[id]?is_client=true` | 21 | 0 | 2 | 48 | MELHORADO |
 | SCR-330 | Regras de Autorização | `/cadastros/authorizers/new` | 13 | 0 | 3 | 8 | TESTADO |
 | SCR-332 | Regras de Autorização | `/cadastros/authorizers/[id]` | 13 | 0 | 3 | 8 | TESTADO |
 | SCR-333 | Conta Bancaria | `/cadastros/bank_accounts/new` | 16 | 0 | 0 | 15 | TESTADO |
@@ -322,7 +322,7 @@ Comparação quantitativa por tela: campos de formulário / filtros / colunas ob
 | SCR-341 | Sincronização DFe | `/fiscal/new` | 2 | 0 | 0 | — | NÃO INICIADO |
 | SCR-342 | Sincronização NFS-e | `/fiscal/new` | 2 | 0 | 0 | — | NÃO INICIADO |
 | SCR-343 | Regras Fiscais | `/cadastros/tax_rules/new` | 37 | 0 | 0 | 20 | IMPLEMENTADO |
-| SCR-344 | Novo Contador | `/cadastros/people/new` | 13 | 0 | 0 | 38 | MAPEADO |
+| SCR-344 | Novo Contador | `/cadastros/people/new` | 13 | 0 | 0 | 48 | MAPEADO |
 | SCR-345 | Natureza de Operaçao | `/cadastros/nature_operations/new` | 47 | 0 | 0 | 16 | IMPLEMENTADO |
 | SCR-346 | Natureza de Operação | `/cadastros/nature_operations/[id]` | 47 | 0 | 0 | 16 | IMPLEMENTADO |
 | SCR-347 | Informações Complementares | `/cadastros/additional_infos/new` | 3 | 0 | 0 | 3 | IMPLEMENTADO |
