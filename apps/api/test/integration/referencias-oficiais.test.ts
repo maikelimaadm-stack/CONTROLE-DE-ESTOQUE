@@ -73,16 +73,18 @@ describe("RF-1 cargas no banco (0026)", () => {
 
 describe("RF-2 buscas de referência", () => {
   const get = (url: string) => h.app.inject({ method: "GET", url, headers: h.headers() });
-  it("'sao paulo' acha 'São Paulo - SP'; 'Gurupi - TO' acha pelo rótulo", async () => {
+  // AJUSTES 01 (A-2): o rótulo do município passou a trazer o código IBGE — "<ibge> · <nome> - <UF>".
+  it("'sao paulo' acha '3550308 · São Paulo - SP'; 'Gurupi - TO' acha pelo rótulo", async () => {
     const r = j(await get("/api/referencias/municipios?search=sao%20paulo"));
-    expect(r.items.map((x: { rotulo: string }) => x.rotulo)).toContain("São Paulo - SP");
-    expect(r.items.find((x: { rotulo: string }) => x.rotulo === "São Paulo - SP").codigo).toBe(3550308);
+    expect(r.items.map((x: { rotulo: string }) => x.rotulo)).toContain("3550308 · São Paulo - SP");
+    expect(r.items.find((x: { rotulo: string }) => x.rotulo === "3550308 · São Paulo - SP").codigo).toBe(3550308);
     const g = j(await get("/api/referencias/municipios?search=Gurupi%20-%20TO"));
-    expect(g.items).toEqual([{ codigo: 1709500, nome: "Gurupi", extra: "TO", rotulo: "Gurupi - TO", escolhivel: true }]);
-    expect(j(await get("/api/referencias/municipios/1709500")).rotulo).toBe("Gurupi - TO");
+    expect(g.items).toEqual([{ codigo: 1709500, nome: "Gurupi", extra: "TO", rotulo: "1709500 · Gurupi - TO", escolhivel: true }]);
+    expect(j(await get("/api/referencias/municipios/1709500")).rotulo).toBe("1709500 · Gurupi - TO");
   });
-  it("banco '001 - Banco do Brasil S.A.'; CBO por código", async () => {
-    expect(j(await get("/api/referencias/bancos/001")).rotulo).toBe("001 - Banco do Brasil S.A.");
+  // AJUSTES 01 (A-3): rótulo do banco "<código> · <nome>".
+  it("banco '001 · Banco do Brasil S.A.'; CBO por código", async () => {
+    expect(j(await get("/api/referencias/bancos/001")).rotulo).toBe("001 · Banco do Brasil S.A.");
     const c = j(await get("/api/referencias/cbo?search=622005"));
     expect(c.items[0].rotulo).toMatch(/^622005 - /);
   });

@@ -4,8 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { FastifyInstance } from "fastify";
 import { createPool, type Db } from "@agro/db";
-import * as dominio from "@agro/domain";
-import { REFERENCIAS_DE_BUSCA } from "@agro/domain";
+import { REFERENCIAS_DE_BUSCA, APELIDOS_DE_BANCO } from "@agro/domain";
 import { buildApp } from "../../src/server.js";
 import type { BuscarFn } from "../../src/lib/consultas/http.js";
 import { harness, configDeTeste, TEST_URL, type Harness } from "./setup.js";
@@ -82,33 +81,26 @@ describe("BR-3 bancos: código com/sem zeros, nome sem acento, ISPB e apelido", 
     const ispb = (await admin.query<{ ispb: string }>("select ispb from erp.banks where code='001'")).rows[0]!.ispb;
     expect(ispb).toMatch(/^\d{8}$/);
     expect(String((await primeiro(ispb))[0]!.codigo)).toBe("001");
+    const ispbNu = (await admin.query<{ ispb: string }>("select ispb from erp.banks where code='260'")).rows[0]!.ispb;
+    expect(String((await primeiro(ispbNu))[0]!.codigo)).toBe("260");
   });
   it("rótulo \"001 · Banco do Brasil S.A.\"", async () => {
     expect(j(await get("/api/referencias/bancos/001")).rotulo).toBe("001 · Banco do Brasil S.A.");
   });
   it("tabela de apelidos do domínio: cada código existe na 0026 e o nome bate", async () => {
-    const tabela = Object.entries(dominio).find(([k, v]) => /apelido/i.test(k) && v && typeof v === "object")?.[1] as unknown;
-    expect(tabela, "a tabela de apelidos de banco é exportada pelo domínio").toBeTruthy();
-    const pares: [string, string][] = Array.isArray(tabela)
-      ? (tabela as Record<string, unknown>[]).flatMap((e) => {
-        const cod = String(e["codigo"] ?? e["code"]); const ap = e["apelidos"] ?? e["apelido"];
-        return (Array.isArray(ap) ? ap : [ap]).map((a) => [String(a), cod] as [string, string]);
-      })
-      : Object.entries(tabela as Record<string, string>).map(([a, c]) => [a, String(c)]);
+    const pares = APELIDOS_DE_BANCO.flatMap((e) => e.apelidos.map((a) => [a.toLowerCase(), e.codigo] as [string, string]));
     const exigidos: Record<string, string> = { bb: "001", "banco do brasil": "001", caixa: "104", cef: "104", bradesco: "237", itau: "341", santander: "033", nubank: "260", nu: "260", inter: "077", c6: "336", sicredi: "748", sicoob: "756", original: "212", btg: "208", banrisul: "041", safra: "422", "mercado pago": "323", pagbank: "290", pagseguro: "290", picpay: "380", brb: "070", bnb: "004", "banco do nordeste": "004", unicred: "136", ailos: "085", cora: "403", stone: "197", bv: "655", votorantim: "655" };
-    const mapa = new Map(pares.map(([a, c]) => [a.toLowerCase(), c]));
+    const mapa = new Map(pares);
     for (const [a, c] of Object.entries(exigidos)) expect(mapa.get(a), `apelido "${a}"`).toBe(c);
-    // conferido contra a 0026: o código existe e o nome do banco "bate" com o apelido (palavra do apelido no nome, ou apelido de sigla)
     const sql = fs.readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../supabase/migrations/0026_referencias_oficiais.sql"), "utf8");
-    const semAcento = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
-    for (const [apelido, codigo] of pares) {
-      const b = (await admin.query<{ name: string }>("select name from erp.banks where code=$1", [codigo])).rows[0];
-      expect(b, `código ${codigo} (apelido ${apelido}) existe em erp.banks`).toBeTruthy();
-      expect(sql.includes(`'${codigo}'`), `código ${codigo} está na 0026`).toBe(true);
-      const nome = semAcento(b!.name);
-      const siglas: Record<string, string> = { bb: "brasil", cef: "caixa", nu: "nu", bnb: "nordeste", bv: "bv", brb: "brasilia", c6: "c6", btg: "btg", pagbank: "pagseguro", pagseguro: "pagseguro", inter: "inter", ailos: "ailos", cora: "cora", stone: "stone", votorantim: "bv", itau: "itau", caixa: "caixa" };
-      const chave = siglas[semAcento(apelido)] ?? semAcento(apelido).split(" ").find((p) => p.length > 2) ?? semAcento(apelido);
-      expect(nome.replace(/[^a-z0-9 ]/g, " "), `nome "${b!.name}" bate com o apelido "${apelido}"`).toContain(chave);
+    for (const e of APELIDOS_DE_BANCO) {
+      const b = (await admin.query<{ name: string }>("select name from erp.banks where code=$1", [e.codigo])).rows[0];
+      expect(b, `código ${e.codigo} existe em erp.banks`).toBeTruthy();
+      expect(sql.includes(`'${e.codigo}'`), `código ${e.codigo} está na 0026`).toBe(true);
+      const norm = (x: string) => x.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ");
+      expect(norm(b!.name), `nome do apelido ${e.codigo} ("${e.nome}") bate com a 0026`).toContain(norm(e.nome));
+      // e a BUSCA pelo apelido acha esse banco em primeiro
+      for (const a of e.apelidos) expect(String((await primeiro(a))[0]?.codigo), `busca "${a}"`).toBe(e.codigo);
     }
   });
 });
