@@ -51,10 +51,15 @@ export function formatarNcm(codigo: string): string {
   return d.length === 8 ? `${d.slice(0, 4)}.${d.slice(4, 6)}.${d.slice(6)}` : d;
 }
 
-/** Rótulo único de uma linha de referência: "Gurupi - TO", "001 - Banco do Brasil S.A.", "0102.21.10 - …", "622005 - …". */
+/**
+ * Rótulo único de uma linha de referência (CADASTROS AJUSTES 01): código · nome.
+ *   município "5106752 · Pontes e Lacerda - MT" · banco "001 · Banco do Brasil S.A."
+ *   NCM "0102.21.10 - …" · CBO "622005 - …" (sem mudança).
+ */
 export function rotuloDaReferencia(chave: ChaveReferencia, linha: { codigo: string | number; nome: string; extra?: string | null }): string {
   switch (chave) {
-    case "municipios": return `${linha.nome} - ${linha.extra ?? ""}`.trim();
+    case "municipios": return `${linha.codigo} · ${linha.nome}${linha.extra ? ` - ${linha.extra}` : ""}`;
+    case "bancos": return `${String(linha.codigo).padStart(3, "0")} · ${linha.nome}`;
     case "ncm": return `${formatarNcm(String(linha.codigo))} - ${linha.nome}`;
     default: return `${linha.codigo} - ${linha.nome}`;
   }
