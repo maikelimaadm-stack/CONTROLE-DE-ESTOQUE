@@ -11,6 +11,9 @@ import { harness, TEST_URL, type Harness } from "./setup.js";
  * invisível à pré-contagem (ainda não confirmada) e é confirmada enquanto o Zerar ESPERA a trava da tabela. Tirar a
  * recontagem sob a trava da tabela em `zerarNumeracao` → ZN-7 reprova (o Zerar volta 200 com um registro vivo).
  * ZN-5 passa a AFIRMAR o resultado de cada rodada (efeitos de quem ganhou) e força as duas ordens pela fila da trava.
+ * O mesmo ZN-7 prova a ORDEM da A-2 ("liberar os excluídos ANTES do lock table"): parado na fila da trava da tabela, o
+ * Zerar já segura a linha do excluído liberado — `for update nowait` de outra conexão → 55P03. Liberação de volta para
+ * depois do lock table → a linha está livre e o ZN-7 reprova.
  */
 let h: Harness; let admin: Db;
 type Resp = { statusCode: number; body: string };
@@ -219,7 +222,7 @@ describe("ZN-5 zerar ao mesmo tempo que um Novo", () => {
 // pré-contagem não a vê: não está confirmada) e confirmada enquanto o Zerar ESPERA a trava da tabela (a inclusão
 // segura `row exclusive`, que a `share row exclusive` do Zerar não atravessa). Sem a recontagem → 200 com um vivo.
 describe("ZN-7 (RV-Z1) inclusão que não passa pela trava advisory: a recontagem sob a trava da tabela recusa", () => {
-  it("inclusão por SQL direto, invisível à pré-contagem e confirmada durante a espera da trava da tabela → 422; nada muda (códigos, contador, audit)", async () => {
+  it("inclusão por SQL direto, invisível à pré-contagem e confirmada durante a espera da trava da tabela → 422; nada muda (códigos, contador, audit); a liberação dos excluídos já rodou ANTES da trava da tabela (A-2)", async () => {
     await esvaziar("bank_accounts");
     await passarUmMinuto("bank_accounts");
     // um excluído que segura código (a liberação teria o que fazer) e o contador acima de 0 (zerar teria o que zerar)
@@ -246,6 +249,17 @@ describe("ZN-7 (RV-Z1) inclusão que não passa pela trava advisory: a recontage
       // agora ESPERA a trava da tabela — que a inclusão aberta segura
       for (let t = 0; t < 60 && (await aguardandoTabela()) < 1; t++) await new Promise((r) => setTimeout(r, 20));
       expect(await aguardandoTabela(), "premissa: o Zerar passou da pré-contagem e espera a trava da TABELA").toBe(1);
+      // A-2 (a "trava longa"): a LIBERAÇÃO dos excluídos (UPDATE … 'EXC-' || id) roda ANTES da trava da tabela. O Zerar
+      // parado na fila da trava da tabela JÁ segura a linha do excluído — o `for update nowait` de uma terceira conexão
+      // é recusado (55P03). A `row share` do `for update` não conflita com a `share row exclusive` que espera na fila,
+      // então quem recusa é a TRAVA DA LINHA. Com a liberação depois do lock table, a linha estaria livre aqui.
+      const terceira = await admin.connect();
+      try {
+        await terceira.query("begin");
+        const recusa = await terceira.query("select 1 from erp.bank_accounts where id=$1 for update nowait", [j(ex).id])
+          .then(() => "linha livre: a liberação ainda não rodou", (e: { code?: string }) => e.code ?? "erro sem código");
+        expect(recusa, "a liberação do excluído veio ANTES da trava da tabela (a linha já está presa pelo Zerar)").toBe("55P03");
+      } finally { await terceira.query("rollback").catch(() => undefined); terceira.release(); }
       await outra.query("commit");
       const r = await z;
       expect(r.statusCode, `a recontagem sob a trava da tabela vê o vivo que chegou por fora: ${r.body}`).toBe(422);
