@@ -118,11 +118,30 @@ export async function numeracaoDosCadastros(ctx: ServiceCtx): Promise<{ cadastro
   return { cadastros };
 }
 
+/** Janela do limite do Zerar (A-2): um Zerar por cadastro, por organização, a cada minuto. */
+const JANELA_DO_ZERAR = "1 minute";
+
 /**
- * ZERAR (decisão 257 D-3). A ORDEM das travas é a mesma de quem inclui: numeração → contador → tabela. Assim o
- * Novo que já pegou número (e segura a linha do contador até o commit) termina primeiro e a recontagem o vê;
- * e o Novo que chega depois espera o Zerar e recebe o 1. A trava da TABELA (`share row exclusive`: não convive
- * com inclusão e nem com outro Zerar) fecha as portas que numeram sem passar por aqui.
+ * ZERAR (decisão 257 D-3; AJUSTES 01 R1, A-2). A ORDEM das travas é a mesma de quem inclui: numeração → contador →
+ * tabela. Assim o Novo que já pegou número (e segura a linha do contador até o commit) termina primeiro e a contagem
+ * o vê; e o Novo que chega depois espera o Zerar e recebe o 1.
+ *
+ *  1. trava da NUMERAÇÃO (advisory, tabela + organização): serializa com toda inclusão pela API, com o Mover e com
+ *     outro Zerar do mesmo cadastro;
+ *  2. contador `for update` e contagem → com registro vivo, 422 antes de qualquer escrita;
+ *  3. LIMITE: um Zerar por cadastro por organização por minuto → 429. Conferido na AUDITORIA, dentro da transação e
+ *     sob a trava: vale entre instâncias da API (o limitador em memória das consultas é por processo), serializa com
+ *     o Zerar concorrente (o segundo espera a trava e vê a auditoria do primeiro) e só conta o Zerar que GRAVOU (o
+ *     desfeito — 422 na recontagem, 409 na trava da tabela — não deixa auditoria);
+ *  4. LIBERAÇÃO dos excluídos (`EXC-<id>`) com os pares `{ id, codigo_antigo }` (UPDATE … FROM alvo RETURNING: a
+ *     maioria das tabelas não tem gatilho de auditoria, e o código antigo se perderia) e contador a 0 — tudo ANTES da
+ *     trava da tabela: esse UPDATE é o passo longo (dezenas de milhares de excluídos) e só toca linhas desta
+ *     organização; quem inclui pela API já está parado na trava da numeração;
+ *  5. auditoria (com os pares) e o próximo código;
+ *  6. SÓ ENTÃO a trava da TABELA (`share row exclusive`: não convive com gravação de NENHUMA organização; espera no
+ *     máximo 2 s e desiste com 409) e, sob ela, SÓ a RECONTAGEM — ela fecha as portas que incluem sem passar pela trava
+ *     da numeração (importação com código, SQL de fora). Achou vivo → 422, e a transação desfaz tudo: liberação,
+ *     contador e auditoria. A trava da tabela dura só a recontagem e o commit.
  */
 export async function zerarNumeracao(ctx0: ServiceCtx, cadastro: string): Promise<{ proximoCodigo: string | null }> {
   const def = defDaNumeracao(cadastro);
@@ -135,45 +154,64 @@ export async function zerarNumeracao(ctx0: ServiceCtx, cadastro: string): Promis
     contadorAnterior = s.rows[0] ? Number(s.rows[0].last_value) : null;
   }
   // recusa CEDO, já sob a trava da numeração (quem inclui pela API passa por ela, então o Novo que pegou número antes
-  // já commitou e aparece aqui) e ANTES da trava da TABELA: com registro vivo o Zerar nunca pede a trava que vale para
-  // todas as organizações. A recontagem dentro da trava da tabela, mais abaixo, continua sendo a que decide.
+  // já commitou e aparece aqui) e ANTES de qualquer escrita e da trava da TABELA
   const previa = await contar(ctx, def);
   if (previa.registros > 0) throw validation(motivoComRegistros(previa.registros, def));
+  // LIMITE depois do motivo: com registro vivo a resposta é sempre o 422 que diz o porquê; o 429 só aparece quando o
+  // Zerar ia de fato gravar (e pedir a trava da tabela) pela segunda vez no mesmo minuto
+  const recente = await ctx.tx.query("select 1 from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id=$2 and action='zerar' and created_at > now() - $3::interval limit 1", [ctx.orgId, def.key, JANELA_DO_ZERAR]);
+  if (recente.rowCount) throw err("RATE_LIMITED", `A numeração de ${def.labelPlural} foi zerada há menos de 1 minuto; aguarde para zerar de novo.`);
+  const t = `erp.${ident(def.table)}`;
+  const lib = await ctx.tx.query<{ id: string; codigo_antigo: string }>(
+    `update ${t} x set code = 'EXC-' || x.id::text
+       from (select id, code from ${t} where organization_id=$1 and deleted_at is not null and code is not null and code not like 'EXC-%') alvo
+      where x.id = alvo.id and x.organization_id = $1
+      returning x.id::text as id, alvo.code as codigo_antigo`, [ctx.orgId]);
+  const liberados = lib.rows.map((l) => ({ id: l.id, codigo_antigo: l.codigo_antigo })).sort((a, b) => a.codigo_antigo.localeCompare(b.codigo_antigo) || a.id.localeCompare(b.id));
+  if (def.codeEntity && contadorAnterior !== null) {
+    const z = await ctx.tx.query("update erp.code_sequences set last_value = 0 where organization_id=$1 and entity=$2", [ctx.orgId, def.codeEntity]);
+    if (z.rowCount !== 1) throw validation("Não foi possível zerar o contador deste cadastro.");
+  }
+  await audit(ctx.tx, ctx, "numeracao", def.key, "zerar", { excluidos_liberados: liberados.length, contador_anterior: contadorAnterior, liberados });
+  const proximo = await proximoCodigo(ctx, def);
   // a trava da TABELA não convive com nenhuma gravação na tabela, de NENHUMA organização, e o pedido na fila já faz
   // as gravações novas esperarem: espera no máximo 2 s (uma importação longa de outra organização não congela todo
   // mundo atrás deste Zerar) e desiste com 409, sem efeito.
   const anterior = (await ctx.tx.query<{ v: string }>("select current_setting('lock_timeout') as v")).rows[0]!.v;
   await ctx.tx.query("select set_config('lock_timeout', '2s', true)");
-  try { await ctx.tx.query(`lock table erp.${ident(def.table)} in share row exclusive mode`); }
+  try { await ctx.tx.query(`lock table ${t} in share row exclusive mode`); }
   catch (e) {
     if ((e as { code?: string }).code === "55P03") throw err("CONCURRENCY_CONFLICT", `O cadastro ${def.labelPlural} está em uso agora; tente zerar de novo em instantes.`);
     throw e;
   }
   await ctx.tx.query("select set_config('lock_timeout', $1, true)", [anterior]);
-  // RECONTAGEM DENTRO DA TRAVA: a contagem da tela é de antes; só esta decide
+  // RECONTAGEM DENTRO DA TRAVA: a única consulta sob ela. Achou vivo (entrou por uma porta que não passa pela trava
+  // da numeração) → 422 e a transação desfaz tudo o que veio antes
   const { registros } = await contar(ctx, def);
   if (registros > 0) throw validation(motivoComRegistros(registros, def));
-  const lib = await ctx.tx.query(`update erp.${ident(def.table)} set code = 'EXC-' || id::text where organization_id=$1 and deleted_at is not null and code is not null and code not like 'EXC-%'`, [ctx.orgId]);
-  if (def.codeEntity && contadorAnterior !== null) {
-    const z = await ctx.tx.query("update erp.code_sequences set last_value = 0 where organization_id=$1 and entity=$2", [ctx.orgId, def.codeEntity]);
-    if (z.rowCount !== 1) throw validation("Não foi possível zerar o contador deste cadastro.");
-  }
-  await audit(ctx.tx, ctx, "numeracao", def.key, "zerar", { excluidos_liberados: lib.rowCount ?? 0, contador_anterior: contadorAnterior });
-  return { proximoCodigo: await proximoCodigo(ctx, def) };
+  return { proximoCodigo: proximo };
 }
 
 /**
  * MÁSCARA TRAVADA COM REGISTROS (decisão 257 D-4). `novas` = objeto `mascaras_codigo` que VAI ser gravado
  * (a gravação substitui o objeto inteiro: cadastro ausente volta à máscara padrão, e isso também é mudança).
+ *
+ * As máscaras ATUAIS são lidas SOB a trava da geração (AJUSTES 01 R1, A-8): primeiro a trava da numeração de TODAS
+ * as árvores com código (ordem fixa, a mesma lista — sem impasse entre duas gravações de parâmetros), depois a linha
+ * da organização `for update` (duas gravações de parâmetros se enfileiram). Lidas antes da trava, uma gravação que
+ * reenviava a máscara antiga (a tela manda o objeto inteiro) via "sem mudança", não conferia nada e DESFAZIA a
+ * máscara nova depois de um Novo já ter gerado código com ela.
  */
-export async function conferirMudancaDeMascara(ctx: ServiceCtx, parametrosAtuais: unknown, novas: Record<string, unknown> | undefined): Promise<void> {
+export async function conferirMudancaDeMascara(ctx: ServiceCtx, novas: Record<string, unknown> | undefined): Promise<void> {
   if (novas === undefined) return;
-  for (const c of CADASTROS_CODIGO_HIERARQUICO) {
+  const defs = CADASTROS_CODIGO_HIERARQUICO.map((c) => getResource(c)!);
+  for (const def of defs) await travarNumeracao(ctx, def);
+  const parametrosAtuais = (await ctx.tx.query<{ parameters: unknown }>("select parameters from erp.organizations where id=$1 for update", [ctx.orgId])).rows[0]?.parameters ?? {};
+  for (const def of defs) {
+    const c = def.key as (typeof CADASTROS_CODIGO_HIERARQUICO)[number];
     const antes = mascaraDoCadastro(parametrosAtuais, c);
     const depois = mascaraDoCadastro({ [PARAMETRO_MASCARAS_CODIGO]: novas }, c);
     if (antes === depois) continue;
-    const def = getResource(c)!;
-    await travarNumeracao(ctx, def);
     const { registros } = await contar(ctx, def);
     if (registros > 0) {
       const message = `Há ${registros} ${registros === 1 ? "registro" : "registros"}: a máscara só muda com o cadastro vazio.`;

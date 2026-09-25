@@ -473,7 +473,7 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       REF("matriz_id", "Matriz", "people", { exigeCapacidade: CAP_AJ01, limpaQuandoOculto: true, section: "Identificação", span: 5, visibleWhen: { field: "person_type", equals: "legal" }, help: "Parceiro matriz desta filial (só Jurídica)." }),
       T("state_registration", "Inscrição estadual", { section: "Identificação", span: 3 }), T("city_registration", "Inscrição municipal", { section: "Identificação", span: 3 }),
       T("rg", "RG", { exigeCapacidade: CAP_AJ01, limpaQuandoOculto: true, section: "Identificação", span: 3, visibleWhen: { field: "person_type", equals: "natural" } }),
-      T("caepf", "CAEPF", { exigeCapacidade: CAP_AJ01, limpaQuandoOculto: true, section: "Identificação", span: 3, maxLength: 14, visibleWhen: { field: "person_type", equals: "natural" }, help: "14 dígitos" }),
+      T("caepf", "CAEPF", { exigeCapacidade: CAP_AJ01, limpaQuandoOculto: true, section: "Identificação", span: 3, maxLength: 14, padrao: { regex: "^\\d{14}$", mensagem: "Informe os 14 dígitos do CAEPF (só números)." }, visibleWhen: { field: "person_type", equals: "natural" }, help: "14 dígitos" }),
       D("nascimento_abertura", "Nascimento/Abertura", { section: "Identificação", span: 3, rotuloQuando: { field: "person_type", rotulos: { legal: "Abertura", natural: "Nascimento" } } }),
       S("sexo", "Sexo", [["F", "Feminino"], ["M", "Masculino"]], { exigeCapacidade: CAP_AJ01, limpaQuandoOculto: true, section: "Identificação", span: 2, visibleWhen: { field: "person_type", equals: "natural" } }),
       T("site", "Site", { exigeCapacidade: CAP_AJ01, section: "Identificação", span: 4 }),

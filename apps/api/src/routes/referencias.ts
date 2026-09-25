@@ -13,9 +13,14 @@ import type { ServiceCtx } from "../lib/context.js";
  * página. Paginação e busca no servidor. Qualquer membro autenticado da organização pode buscar: é dado
  * público oficial, e quem grava o código no cadastro continua sendo a rota do cadastro, com a permissão dele.
  */
+/**
+ * Maior página aceita (AJUSTES 01 R1, A-10): 1000 × 50 = 50 mil linhas, mais que qualquer tabela oficial. Sem limite,
+ * `?page=1e308` passava pelo `int()` (1e308 é inteiro para o JavaScript) e o OFFSET gigante estourava no banco → 500.
+ */
+export const PAGINA_MAXIMA_REFERENCIA = 1000;
 export const consultaSchema = z.object({
   search: z.string().max(200).optional(),
-  page: z.coerce.number().int().min(1).default(1),
+  page: z.coerce.number().int().min(1).max(PAGINA_MAXIMA_REFERENCIA).default(1),
   pageSize: z.coerce.number().int().min(1).max(50).default(20),
   /** `todos=1`: inclui o que não é escolhível (ex.: NCM de outro nível), só para exibir valor antigo */
   todos: z.enum(["1"]).optional()

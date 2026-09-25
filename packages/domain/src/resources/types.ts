@@ -44,6 +44,12 @@ export interface FieldDef {
   default?: unknown;
   help?: string;
   maxLength?: number;
+  /**
+   * FORMATO do valor de texto (AJUSTES 01 R1, A-10): expressão regular que o valor preenchido precisa casar, e a
+   * mensagem da recusa. A API a aplica no ESQUEMA do campo — a recusa sai em 422 no campo (e na aba da ficha), antes
+   * do CHECK do banco, que continua sendo a rede. Vazio não é conferido (vazio grava `null`).
+   */
+  padrao?: { regex: string; mensagem: string };
   min?: number;
   max?: number;
   /** agrupamento visual no formulário */
