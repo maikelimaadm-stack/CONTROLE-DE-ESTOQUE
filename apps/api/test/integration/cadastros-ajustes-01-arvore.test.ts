@@ -141,7 +141,8 @@ describe("CD-3 importação continua aceitando o código da planilha", () => {
       row.getCell(col("Código *")).value = code; row.getCell(col("Descrição *")).value = `AJ CD3 ${code}`; row.getCell(col("Condição *")).value = "Ambos"; row.getCell(col("Analítica *")).value = "Não"; row.commit();
     }
     const r = await h.app.inject({ method: "POST", url: "/api/imports/chart_accounts?simular=0", headers: hdr(), payload: { arquivo_base64: Buffer.from(await wb.xlsx.writeBuffer() as ArrayBuffer).toString("base64") } });
-    expect(r.statusCode, r.body).toBe(200);
+    expect(r.statusCode, r.body).toBe(201);
+    expect(JSON.parse(r.body)).toMatchObject({ gravadas: 2, erros: [] });
     const g = (await admin.query<{ code: string }>("select code from erp.chart_accounts where organization_id=$1 and description like 'AJ CD3 %' order by code", [h.demo.orgId])).rows.map((x) => x.code);
     expect(g).toEqual(["6", "8"]);
   });
