@@ -1065,10 +1065,14 @@ embalagens intactos; controle = has_lot de antes; uma linha de unidade por 2ª u
   **Lote vencido** na data do movimento fica fora: só sai com o lote informado. Faltou saldo em lotes válidos → **409
   `INSUFFICIENT_STOCK`** dizendo quanto há em lotes válidos e em vencidos; nada é gravado. Quantidade que arredonda a
   zero na escala do estoque (4 casas) → 422.
-- **Valor do documento = soma do razão:** o total do item e do documento de saída (baixa, requisição, transferência,
-  manutenção, abastecimento, manejo, dieta, ração) é a soma do que o ledger gravou em cada parte (Σ round(qᵢ × cᵢ, 2)),
-  nunca quantidade × custo médio ponderado — numa saída dividida os dois diferem em centavos. Correção para baixo sem
-  valor informado sai pela média de CADA lote (a do saldo do lote).
+- **Valor do documento = soma das partes:** o total do item e do documento de saída (baixa, requisição, transferência,
+  manutenção, abastecimento, manejo, dieta, ração) é a soma do valor de cada parte (Σ lineTotal(qᵢ, cᵢ), a conta de
+  antes, meio centavo para o par), nunca quantidade × custo médio ponderado — numa saída dividida os dois diferem em
+  centavos. Com UMA parte (todo produto sem controle de lote, e toda saída que cabe num lote) o valor é exatamente o de
+  antes desta fatia; o `total_cost` do ledger pode diferir dele em 1 centavo só no empate exato de meio centavo, como já
+  diferia (LT-12c). Correção para baixo sem valor informado, de produto COM controle e sem lote informado, sai pela
+  média de CADA lote (a do saldo do lote); produto sem controle e lote informado seguem com a média do saldo lido, como
+  antes (LT-12d).
 - **Saída COM lote informado:** sai do lote informado, inclusive vencido; o movimento grava a validade do lote.
 - **Entradas:** NF-e, entrada de insumo e saldo inicial exigem o lote (e a validade no "lote + validade"). Devolução:
   lote e validade no item, exigidos só para produto com controle. Correção para cima: lote e validade (esta no "lote +

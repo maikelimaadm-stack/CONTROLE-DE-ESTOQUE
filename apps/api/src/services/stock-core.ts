@@ -9,8 +9,11 @@ export interface StockPost {
 }
 
 /**
- * Um movimento gravado no ledger: UM lote e a quantidade que entrou ou saiu dele. `total` é o `total_cost` que o
- * PRÓPRIO ledger gravou (round(quantidade × custo, 2), coluna gerada) — o valor que o saldo do lote ganhou ou perdeu.
+ * Um movimento gravado no ledger: UM lote e a quantidade que entrou ou saiu dele. `total` é o valor da PARTE,
+ * `lineTotal(quantidade, custo gravado)` — a MESMA conta que o documento fazia antes da divisão por lotes
+ * (`money`, meio centavo para o par, `@agro/shared`). Não é o `total_cost` gerado pelo banco (round(q × c, 2), meio
+ * centavo para longe do zero): trocar um pelo outro mudaria o valor de TODA saída, inclusive a de produto sem lote,
+ * no empate exato de meio centavo — mudança lateral que o R1 não pede.
  */
 export interface ParteDoMovimento {
   id: string; lote: string | null; validade: string | null; quantidade: string; unitCost: string; total: string; balanceAfter: string; avgCostAfter: string;
@@ -22,10 +25,10 @@ export interface ParteDoMovimento {
  *   · `id` é o do primeiro movimento e `ids` são todos — quem registra os movimentos da origem usa `ids`;
  *   · `unitCost` é o custo médio PONDERADO pelas quantidades das partes (com uma parte só, é o custo dela) —
  *     informativo, para o "valor unitário" do item;
- *   · `total` é a SOMA do que o ledger gravou nas partes (Σ round(qᵢ × cᵢ, 2)). O valor do item e do documento é
- *     este, nunca quantidade × `unitCost`: numa saída dividida, a média ponderada arredondada a 6 casas vezes a
- *     quantidade difere em centavos da soma do razão (revisão do R1) — o documento diria um valor e o estoque
- *     perderia outro.
+ *   · `total` é a SOMA das partes (Σ lineTotal(qᵢ, cᵢ)). Com uma parte só — todo produto sem controle de lote, e
+ *     toda saída que cabe num lote — é exatamente o `lineTotal(quantidade, custo)` de antes. O valor do item e do
+ *     documento é este, nunca quantidade × `unitCost`: numa saída dividida, a média ponderada arredondada a 6 casas
+ *     vezes a quantidade difere em centavos da soma das partes (revisão do R1).
  */
 export interface ResultadoDoMovimento { id: string; ids: string[]; unitCost: string; total: string; partes: ParteDoMovimento[] }
 
@@ -155,11 +158,23 @@ export async function chaveDoLote(ctx: ServiceCtx, warehouseId: string, productI
 }
 
 async function gravarMovimento(ctx: ServiceCtx, p: StockPost, lote: string | null, validade: string | null, quantidade: string): Promise<ParteDoMovimento> {
-  const r = await ctx.tx.query<{ id: string; balance_after: string; avg_cost_after: string; unit_cost: string; total_cost: string }>(
-    "insert into erp.stock_movements(organization_id,empresa_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,provider_lot,expiration_date,cost_center_id,harvest_id,cultivation_id,source_type,source_id,movement_date,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id, balance_after, avg_cost_after, unit_cost, total_cost",
+  const r = await ctx.tx.query<{ id: string; balance_after: string; avg_cost_after: string; unit_cost: string }>(
+    "insert into erp.stock_movements(organization_id,empresa_id,warehouse_id,product_id,movement_type,direction,quantity,unit_cost,provider_lot,expiration_date,cost_center_id,harvest_id,cultivation_id,source_type,source_id,movement_date,note,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) returning id, balance_after, avg_cost_after, unit_cost",
     [ctx.orgId, p.empresaId, p.warehouseId, p.productId, p.movementType, p.direction, fqty(quantidade), p.unitCost ? D(p.unitCost).toFixed(6) : "0", lote, validade, p.costCenterId ?? null, p.harvestId ?? null, p.cultivationId ?? null, p.sourceType, p.sourceId, p.date, p.note ?? null, ctx.user.id]);
   const row = r.rows[0]!;
-  return { id: row.id, lote, validade, quantidade: fqty(quantidade), unitCost: row.unit_cost, total: money(row.total_cost), balanceAfter: row.balance_after, avgCostAfter: row.avg_cost_after };
+  // `quantidade` como veio de quem chama (a parte da divisão, ou a quantidade do pedido): a conta de antes do R1
+  return { id: row.id, lote, validade, quantidade: fqty(quantidade), unitCost: row.unit_cost, total: lineTotal(quantidade, row.unit_cost), balanceAfter: row.balance_after, avgCostAfter: row.avg_cost_after };
+}
+
+/**
+ * O controle de lote do produto (`nenhum` | `lote` | `lote_validade`). Lido por `to_jsonb` — como em `postStock` e
+ * `reverseStock` —, para valer também sem a coluna da 0029: sem ela, `has_lot` decide.
+ */
+export async function controleDeLote(ctx: ServiceCtx, productId: string): Promise<string> {
+  const r = await ctx.tx.query<{ controle: string }>(
+    "select coalesce(to_jsonb(p)->>'controle_lote', case when p.has_lot then 'lote' else 'nenhum' end) as controle from erp.products p where id=$1 and organization_id=$2",
+    [productId, ctx.orgId]);
+  return r.rows[0]?.controle ?? "nenhum";
 }
 
 /**

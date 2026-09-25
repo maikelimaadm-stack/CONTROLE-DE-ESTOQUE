@@ -359,7 +359,7 @@ describe("LT-11 — quantidade que arredonda a zero na escala do estoque (4 casa
   });
 });
 
-describe("LT-12 — soma exata: o valor do documento é a soma do razão, também quando a saída é dividida", () => {
+describe("LT-12 — soma exata: o valor do documento é a soma das partes, também quando a saída é dividida", () => {
   /** Soma de `total_cost` (round(q × custo, 2) por movimento) de uma origem, lida do banco. */
   const razao = async (source_type: string, source_id: string, tipo?: string) => (await um<{ t: string }>(
     "select coalesce(sum(total_cost),0)::text t from erp.stock_movements where source_type=$1 and source_id=$2 and ($3::text is null or movement_type=$3)", [source_type, source_id, tipo ?? null]))!.t;
@@ -404,6 +404,28 @@ describe("LT-12 — soma exata: o valor do documento é a soma do razão, també
       .toEqual([{ provider_lot: "A-CEDO", quantity: "10.0000", unit_cost: "5.000000", total_cost: "50.00" }, { provider_lot: "B-TARDE", quantity: "4.0000", unit_cost: "7.000000", total_cost: "28.00" }]);
     expect(await valor()).toBe("42.00");
     expect(await razao("stock_corrections", c)).toBe("78.00"); // 120 − 42
+  });
+
+  it("LT-12c: saída de UMA parte (produto SEM controle de lote) — o total é money(q × custo), meio centavo para o par, como antes do R1; o razão arredonda para longe do zero", async () => {
+    const p = criado(await post("/api/resources/products", { ...base, description: nome("uma parte"), controle_lote: "nenhum" }));
+    criado(await post("/api/stock/opening-balances", { empresa_id: I.empresa, warehouse_id: I.warehouse, product_id: p, quantity: "4", unit_value: "0.125" }));
+    const r = await baixa(p, "1");
+    const bx = criado(r);
+    // empate exato: 1 × 0,125. O documento segue a conta de antes (0,12); o `total_cost` gerado pelo banco dá 0,13
+    expect(j(r).total_amount).toBe("0.12");
+    expect(await um("select total_value::text t from erp.stock_writeoff_items where writeoff_id=$1", [bx])).toEqual({ t: "0.12" });
+    expect(await razao("stock_writeoffs", bx)).toBe("0.13");
+  });
+
+  it("LT-12d: correção para BAIXO de produto SEM controle — o custo do movimento continua a média do saldo lido (como antes do R1), não a do balde sem lote", async () => {
+    const p = criado(await post("/api/resources/products", { ...base, description: nome("correcao sem controle"), controle_lote: "nenhum" }));
+    // sem controle, o lote é opcional: um saldo sem lote (10 a 5) e um com lote (10 a 7) → média lida 6
+    criado(await post("/api/stock/opening-balances", { empresa_id: I.empresa, warehouse_id: I.warehouse, product_id: p, quantity: "10", unit_value: "5" }));
+    await lote(p, "X-SEM-CONTROLE", null, "10", "7");
+    const c = criado(await post("/api/stock/corrections", { empresa_id: I.empresa, correction_date: "2026-09-20", warehouse_id: I.warehouse, product_id: p, new_quantity: "15", justification: "teste sem controle" }));
+    expect((await admin.query("select provider_lot, quantity::text, unit_cost::text from erp.stock_movements where source_id=$1", [c])).rows)
+      .toEqual([{ provider_lot: null, quantity: "5.0000", unit_cost: "6.000000" }]);
+    expect(await um("select unit_value::text v from erp.stock_corrections where id=$1", [c])).toEqual({ v: "6.000000" });
   });
 });
 
