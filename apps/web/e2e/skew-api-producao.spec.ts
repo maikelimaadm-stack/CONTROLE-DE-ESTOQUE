@@ -1715,7 +1715,9 @@ test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva cont
     await aba("Contatos").click();
     await page.getByLabel("E-mail para NF-e", { exact: true }).fill(valores.email_nfe);
     await aba("Fiscal").click();
-    await page.getByLabel("Calcula FUNRURAL", { exact: true }).check();
+    // booleano da ficha é o seletor Sim/Não (MgSelect), não um checkbox
+    await page.getByLabel("Calcula FUNRURAL", { exact: true }).click();
+    await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: "Sim", exact: true }).click();
     const resposta = page.waitForResponse((x) => x.request().method() === "PUT" && new URL(x.url()).pathname === `/api/resources/people/${id}`);
     await page.getByRole("button", { name: "Salvar" }).click();
     const put = await resposta;
@@ -1737,7 +1739,7 @@ test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva cont
     await aba("Contatos").click();
     await expect(page.getByLabel("E-mail para NF-e", { exact: true })).toHaveValue(valores.email_nfe);
     await aba("Fiscal").click();
-    await expect(page.getByLabel("Calcula FUNRURAL", { exact: true })).toBeChecked();
+    await expect(page.getByLabel("Calcula FUNRURAL", { exact: true })).toHaveText("Sim");
   }
   // o dado de teste fica excluído logicamente (nunca apagado)
   sql(`update erp.people set deleted_at = now() where id in ('${id}', '${matriz}')`);
