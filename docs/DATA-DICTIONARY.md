@@ -420,6 +420,16 @@ Cadastro unificado de pessoa física/jurídica; os papéis (fornecedor, cliente,
 | `cnae_principal` |  | text | não |  |  |  |  |
 | `situacao_receita` |  | text | não |  |  |  |  |
 | `situacao_receita_consultada_em` |  | timestamptz | não |  |  |  |  |
+| `matriz_id` |  | uuid | não |  |  |  |  |
+| `rg` |  | text | não |  |  |  |  |
+| `caepf` |  | text | não |  |  |  |  |
+| `sexo` |  | text | não |  |  | `F` · `M` |  |
+| `site` |  | text | não |  |  |  |  |
+| `caixa_postal` |  | text | não |  |  |  |  |
+| `latitude` |  | numeric(9,6) | não |  |  |  |  |
+| `longitude` |  | numeric(9,6) | não |  |  |  |  |
+| `email_nfe` |  | citext | não |  |  |  |  |
+| `calcula_funrural` |  | boolean | sim |  |  |  |  |
 
 ### ERP-CADASTROS-REF-MUNICIPIO — Município (IBGE)
 
@@ -589,6 +599,8 @@ Endereços ADICIONAIS do parceiro (entrega, cobrança, propriedade, outro), grav
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
+| `latitude` |  | numeric(9,6) | não |  |  |  |  |
+| `longitude` |  | numeric(9,6) | não |  |  |  |  |
 
 ### ERP-CADASTROS-PARCEIRO-CONTATO — Contato adicional do parceiro
 
