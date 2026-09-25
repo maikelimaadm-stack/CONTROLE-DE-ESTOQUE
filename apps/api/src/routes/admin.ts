@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { conferirMudancaDeMascara } from "../lib/numeracao-cadastro.js";
 import bcrypt from "bcryptjs";
 import { CADASTROS_CODIGO_HIERARQUICO, MASCARA_CODIGO_PADRAO, PARAMETRO_MASCARAS_CODIGO, mascaraValida, PERMISSION_RESOURCES, ACTION_LABELS, MODULOS_ESCOPO_EMPRESA, allPermissionKeys, modulosDasPermissoes } from "@agro/domain";
 import { runService, audit } from "../lib/service.js";
@@ -174,6 +175,11 @@ export default async function adminRoutes(app: FastifyInstance) {
     // descartada em silêncio — uma máscara ignorada faria o servidor recusar códigos que a tela sugeriu.
     const mascaras = z.object(Object.fromEntries(CADASTROS_CODIGO_HIERARQUICO.map((c) => [c, z.string().refine(mascaraValida, `Máscara inválida. Use 9 para cada dígito e ponto entre níveis (ex.: ${MASCARA_CODIGO_PADRAO}).`).optional()]))).strict();
     const d = z.object({ calc_icms_desonerado: z.boolean().optional(), financial_freeze_scope: z.enum(["organization", "farm"]).optional(), [PARAMETRO_MASCARAS_CODIGO]: mascaras.optional() }).passthrough().parse(req.body);
+    // MÁSCARA TRAVADA COM REGISTROS (decisão 257 D-4): os códigos gravados seguem a máscara de quando nasceram
+    if (PARAMETRO_MASCARAS_CODIGO in d) {
+      const atuais = (await ctx.tx.query<{ parameters: unknown }>("select parameters from erp.organizations where id=$1", [ctx.orgId])).rows[0]?.parameters ?? {};
+      await conferirMudancaDeMascara(ctx, atuais, (d[PARAMETRO_MASCARAS_CODIGO] ?? {}) as Record<string, unknown>);
+    }
     // A marca de origem (GO-LIVE-01) é quem diz ao seed demo onde ele pode escrever. Pela tela, ela só pode
     // voltar como veio (a tela reenvia o objeto inteiro); qualquer mudança é recusada, nunca ignorada.
     if (CHAVE_ORIGEM_SEED in d) {
