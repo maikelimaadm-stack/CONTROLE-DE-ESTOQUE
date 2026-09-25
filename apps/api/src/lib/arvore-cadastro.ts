@@ -194,12 +194,16 @@ const campoSuperior = (message: string) => validation(message, [{ path: ["superi
  * Destino: SINTÉTICO (onde há `kind`), ATIVO, vivo, da organização — ou a RAIZ (`superior` null). Nunca o
  * próprio registro nem um descendente. O movido recebe o próximo código livre DEBAIXO do destino (a regra do
  * Novo filho; na raiz, o próximo da raiz) e cada descendente — excluídos inclusive, eles seguram código —
- * troca SÓ o prefixo: 1.03 → 2.05, 1.03.001 → 2.05.001. Se o galho muda de NÍVEL, cada segmento abaixo do
+ * troca SÓ o prefixo: 1.03 → 2.05, 1.03.001 → 2.05.001 (o excluído que não pode acompanhar libera o código
+ * como `EXC-<id>`, igual ao Zerar, em vez de travar o Mover). Se o galho muda de NÍVEL, cada segmento abaixo do
  * movido mantém o número e ganha a largura do nível novo da máscara (1.03.001 → 3.01 ao subir para a raiz,
  * na máscara 9.99.999.9999); número que não cabe na largura, ou galho mais fundo que a máscara, é recusado.
  */
-export async function planejarMover(ctx: ServiceCtx, def: ResourceDef, id: string, superior: string | null, travar = false): Promise<PlanoDoMover> {
+export async function planejarMover(ctx: ServiceCtx, def: ResourceDef, idBruto: string, superiorBruto: string | null, travar = false): Promise<PlanoDoMover> {
   if (def.codigoAutomatico !== "hierarquico") throw validation("Este cadastro não tem código hierárquico.");
+  // UUID é o mesmo em qualquer caixa (o schema aceita maiúsculas): as comparações abaixo usam a forma canônica,
+  // senão o PRÓPRIO registro, escrito em outra caixa, passaria por "outro" superior e viraria pai de si mesmo.
+  const id = idBruto.toLowerCase(); const superior = superiorBruto === null ? null : superiorBruto.toLowerCase();
   const t = `erp.${ident(def.table)}`;
   const temKind = temCampo(def, "kind"); const temAtivo = temCampo(def, "is_active"); const temTipo = def.key === "financial_categories";
   const extras = [...(temKind ? ["kind"] : []), ...(temAtivo ? ["is_active"] : []), ...(temTipo ? ["nature"] : []), ...(temCampo(def, "name") ? ["name"] : [])];
@@ -217,9 +221,9 @@ export async function planejarMover(ctx: ServiceCtx, def: ResourceDef, id: strin
     const dest = d.rows[0] as Linha | undefined;
     if (!dest) throw campoSuperior("Superior não encontrado.");
     const ciclo = await ctx.tx.query(
-      `with recursive desc_ as (select id from ${t} where parent_id=$1 and organization_id=$2
+      `with recursive desc_ as (select id from ${t} where id=$1 and organization_id=$2
          union select x.id from ${t} x join desc_ y on x.parent_id=y.id where x.organization_id=$2)
-       select 1 from desc_ where id=$3 limit 1`, [id, ctx.orgId, superior]);
+       select 1 from desc_ where id=$3 limit 1`, [id, ctx.orgId, superior]); // o próprio nó está na semente: ele E os descendentes
     if (ciclo.rowCount) throw campoSuperior("O superior não pode ser o próprio registro nem um descendente dele.");
     if (temKind && dest["kind"] !== "synthetic") throw campoSuperior("O superior precisa ser sintético.");
     if (temAtivo && dest["is_active"] === false) throw campoSuperior("O superior está inativo.");
@@ -238,30 +242,58 @@ export async function planejarMover(ctx: ServiceCtx, def: ResourceDef, id: strin
   if ("erro" in p) throw campoSuperior(nivelDoCodigo(codigoDestino ?? "") + 1 > larguras.length && codigoDestino !== null ? maximo : p.erro);
   const novo = p.codigo; const nivelNovo = nivelDoCodigo(novo);
   // descendentes, EXCLUÍDOS inclusive (seguram código), na ordem do código
-  const desc = await ctx.tx.query<{ id: string; code: string | null }>(
-    `with recursive desc_ as (select id, code, 1 as d from ${t} where parent_id=$1 and organization_id=$2
-       union all select x.id, x.code, y.d + 1 from ${t} x join desc_ y on x.parent_id=y.id where x.organization_id=$2 and y.d < 16)
-     select id::text as id, code from desc_ order by code nulls last, id`, [id, ctx.orgId]);
+  const desc = await ctx.tx.query<{ id: string; code: string | null; excluido: boolean }>(
+    `with recursive desc_ as (select id, code, deleted_at, 1 as d from ${t} where parent_id=$1 and organization_id=$2
+       union all select x.id, x.code, x.deleted_at, y.d + 1 from ${t} x join desc_ y on x.parent_id=y.id where x.organization_id=$2 and y.d < 16)
+     select id::text as id, code, deleted_at is not null as excluido from desc_ order by code nulls last, id`, [id, ctx.orgId]);
   const codigos: CodigoMovido[] = [{ id, antes: antigo, depois: novo }];
-  for (const x of desc.rows) {
-    if (antigo === null || typeof x.code !== "string" || !x.code.startsWith(`${antigo}.`)) {
-      throw campoSuperior(`O descendente ${x.code ?? "sem código"} não começa pelo código deste registro (${antigo ?? "sem código"}.): o galho não pode ser renumerado.`);
+  // EXCLUÍDO que não acompanha o galho (acervo do Mover-de-folha e da edição anteriores deixou prefixo antigo, ou o
+  // número não cabe na máscara nova, ou colidiria) libera o código — `EXC-<id>`, a mesma liberação do Zerar — e
+  // nunca trava o Mover: o usuário não vê a linha e não teria como corrigi-la. Descendente VIVO continua recusando.
+  const excluidos = new Set<string>();
+  const liberar = (c: CodigoMovido) => { c.depois = `EXC-${c.id}`; };
+  const renumerar = (code: string | null): string | { erro: string } => {
+    if (antigo === null || typeof code !== "string" || !code.startsWith(`${antigo}.`)) {
+      return { erro: `O descendente ${code ?? "sem código"} não começa pelo código deste registro (${antigo ?? "sem código"}.): o galho não pode ser renumerado.` };
     }
-    const segmentos = x.code.slice(antigo.length + 1).split(".");
     const partes: string[] = [];
-    for (const [i, seg] of segmentos.entries()) {
+    for (const [i, seg] of code.slice(antigo.length + 1).split(".").entries()) {
       const nivel = nivelNovo + 1 + i;
-      if (nivel > larguras.length) throw campoSuperior(maximo);
+      if (nivel > larguras.length) return { erro: maximo };
       const largura = larguras[nivel - 1]!;
-      if (!/^\d+$/.test(seg) || String(Number(seg)).length > largura) throw campoSuperior(`O código ${x.code} não cabe na máscara (${m}) abaixo deste superior.`);
+      if (!/^\d+$/.test(seg) || String(Number(seg)).length > largura) return { erro: `O código ${code} não cabe na máscara (${m}) abaixo deste superior.` };
       partes.push(String(Number(seg)).padStart(largura, "0"));
     }
-    codigos.push({ id: x.id, antes: x.code, depois: [novo, ...partes].join(".") });
+    return [novo, ...partes].join(".");
+  };
+  for (const x of desc.rows) {
+    if (x.excluido && (x.code === null || x.code.startsWith("EXC-"))) continue; // excluído sem código ou já liberado: nada a mover
+    const r = renumerar(x.code);
+    if (typeof r === "string") codigos.push({ id: x.id, antes: x.code, depois: r });
+    else if (x.excluido) codigos.push({ id: x.id, antes: x.code, depois: `EXC-${x.id}` });
+    else throw campoSuperior(r.erro);
+    if (x.excluido) excluidos.add(x.id);
   }
-  // código novo já usado FORA do galho (inclusive excluído): recusa legível em vez do 409 do banco
+  // código novo repetido DENTRO do galho (acervo com "1.03.1" e "1.03.001"): o excluído libera; dois vivos recusam
+  const porCodigo = new Map<string, CodigoMovido[]>();
+  for (const c of codigos) porCodigo.set(c.depois, [...(porCodigo.get(c.depois) ?? []), c]);
+  for (const [codigo, lista] of porCodigo) {
+    if (lista.length < 2) continue;
+    const vivos = lista.filter((c) => !excluidos.has(c.id));
+    if (vivos.length > 1) throw campoSuperior(`O código ${codigo} ficaria repetido neste galho.`);
+    const fica = vivos[0] ?? lista[0]; // o vivo, se houver; senão o primeiro — os demais (todos excluídos) liberam
+    for (const c of lista) if (c !== fica) liberar(c);
+  }
+  // código novo já usado FORA do galho (inclusive excluído): o excluído do galho libera; o vivo recebe recusa legível
+  // em vez do 409 do banco
   const ids = codigos.map((c) => c.id);
-  const usado = await ctx.tx.query<{ code: string }>(`select code from ${t} where organization_id=$1 and code = any($2::text[]) and not (id = any($3::uuid[])) limit 1`, [ctx.orgId, codigos.map((c) => c.depois), ids]);
-  if (usado.rowCount) throw campoSuperior(`O código ${usado.rows[0]!.code} já existe neste cadastro.`);
+  const usado = await ctx.tx.query<{ code: string }>(`select code from ${t} where organization_id=$1 and code = any($2::text[]) and not (id = any($3::uuid[]))`, [ctx.orgId, codigos.map((c) => c.depois), ids]);
+  for (const u of usado.rows) {
+    for (const c of codigos.filter((x) => x.depois === u.code)) {
+      if (!excluidos.has(c.id)) throw campoSuperior(`O código ${u.code} já existe neste cadastro.`);
+      liberar(c);
+    }
+  }
   return { id, de: deAtual, para: superior, codigos };
 }
 
@@ -278,7 +310,7 @@ export async function moverNaArvore(ctx: ServiceCtx, def: ResourceDef, id: strin
   const u = await ctx.tx.query(
     `update erp.${ident(def.table)} x set code = v.depois, parent_id = case when x.id = $3::uuid then $4::uuid else x.parent_id end
        from (select unnest($1::uuid[]) as id, unnest($2::text[]) as depois) v where x.id = v.id and x.organization_id = $5`,
-    [plano.codigos.map((c) => c.id), plano.codigos.map((c) => c.depois), id, superior, ctx.orgId]);
+    [plano.codigos.map((c) => c.id), plano.codigos.map((c) => c.depois), plano.id, plano.para, ctx.orgId]);
   if (u.rowCount !== plano.codigos.length) throw err("CONCURRENCY_CONFLICT", "O galho mudou durante o Mover; tente de novo.");
   await audit(ctx.tx, ctx, def.key, id, "mover", { de: plano.de, para: plano.para, codigos: plano.codigos });
   return plano;

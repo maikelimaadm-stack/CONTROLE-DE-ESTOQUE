@@ -267,4 +267,60 @@ describe("MV Mover com renumeração (Naturezas)", () => {
     expect(mensagens(r)).toContain("Use Mover.");
     expect((await admin.query("select parent_id from erp.financial_categories where id=$1", [galho])).rows[0]).toEqual({ parent_id: null });
   });
+
+  // revisão adversarial: o schema aceita UUID em maiúsculas; comparar texto deixava o PRÓPRIO registro passar por
+  // "outro" superior — ele virava pai de si mesmo e o galho sumia da árvore, sem conserto pela aplicação
+  it("MV-7 UUID em outra caixa não engana: o próprio registro como superior → 422; o superior atual → \"já está neste superior\"; nada muda", async () => {
+    const sint = criado(await nova({ name: "AJ MV7 sintético", nature: "both", kind: "synthetic" })).id; // sintético, ativo, sem filhos
+    const filhoDoDestino = criado(await nova({ name: "AJ MV7 filho", parent_id: destino })).id;
+    const foto = async () => (await admin.query("select id, code, parent_id from erp.financial_categories where organization_id=$1 order by id", [h.demo.orgId])).rows;
+    const antes = await foto();
+    const casos: [string, string, RegExp][] = [
+      [sint, sint.toUpperCase(), /próprio registro/],
+      [sint.toUpperCase(), sint, /próprio registro/],
+      [filhoDoDestino, destino.toUpperCase(), /já está neste superior/]
+    ];
+    for (const [id, dest, msg] of casos) {
+      const r = await mover(NAT, id, dest);
+      expect(r.statusCode, `${id}→${dest}: ${r.body}`).toBe(422);
+      expect(mensagens(r)).toMatch(msg);
+      const pr = await previa(NAT, id, dest);
+      expect(pr.statusCode, `prévia ${id}→${dest}: ${pr.body}`).toBe(422);
+    }
+    expect(await foto()).toEqual(antes);
+    expect((await admin.query("select count(*)::int n from erp.financial_categories where id = parent_id")).rows[0]).toEqual({ n: 0 });
+  });
+
+  // revisão adversarial: a versão anterior movia registro com filho EXCLUÍDO (olhava só os vivos) e deixava o excluído
+  // com o prefixo antigo. Ele não pode travar o Mover para sempre: o usuário não o vê nem o corrige.
+  it("MV-8 descendente EXCLUÍDO com prefixo antigo (acervo) não trava o Mover: libera o código como EXC-<id>; o vivo acompanha; VIVO fora do prefixo continua recusando", async () => {
+    const pai = criado(await nova({ name: "AJ MV8 pai", nature: "both", kind: "synthetic" })).id;
+    const vivo = criado(await nova({ name: "AJ MV8 vivo", parent_id: pai })).id;
+    const morto = criado(await nova({ name: "AJ MV8 excluido", parent_id: pai })).id;
+    await admin.query("update erp.financial_categories set deleted_at=now(), code='7.77.777' where id=$1", [morto]); // o acervo: prefixo de antes
+    const cp = await codigoDe(pai); const cv = await codigoDe(vivo);
+    const p = await previa(NAT, pai, destino);
+    expect(p.statusCode, p.body).toBe(200);
+    const r = await mover(NAT, pai, destino);
+    expect(r.statusCode, r.body).toBe(200);
+    const np = await codigoDe(pai);
+    expect(np.startsWith(`${await codigoDe(destino)}.`)).toBe(true);
+    // o vivo troca o prefixo e, descendo um nível, o segmento ganha a largura do nível novo (01 → 001)
+    const nv = await codigoDe(vivo);
+    expect(nv.startsWith(`${np}.`), `o vivo acompanha o pai: ${nv}`).toBe(true);
+    expect(Number(nv.slice(np.length + 1)), "mesmo número no segmento").toBe(Number(cv.slice(cp.length + 1)));
+    expect(await codigoDe(morto), "o excluído libera o código").toBe(`EXC-${morto}`);
+    expect((await admin.query("select parent_id, deleted_at is not null as excluido from erp.financial_categories where id=$1", [morto])).rows[0]).toEqual({ parent_id: pai, excluido: true });
+    expect(j(p).codigos).toContainEqual({ id: morto, antes: "7.77.777", depois: `EXC-${morto}` });
+    const log = (await admin.query<{ metadata: { codigos: unknown[] } }>("select metadata from erp.audit_logs where organization_id=$1 and entity_id=$2 and action='mover' order by id desc limit 1", [h.demo.orgId, pai])).rows[0];
+    expect(log?.metadata.codigos).toContainEqual({ id: morto, antes: "7.77.777", depois: `EXC-${morto}` });
+    // VIVO com prefixo que não é o do pai: continua recusando (não se inventa código para linha que o usuário vê)
+    const pai2 = criado(await nova({ name: "AJ MV8 pai2", nature: "both", kind: "synthetic" })).id;
+    const torto = criado(await nova({ name: "AJ MV8 torto", parent_id: pai2 })).id;
+    await admin.query("update erp.financial_categories set code='7.77.778' where id=$1", [torto]);
+    const recusa = await mover(NAT, pai2, destino);
+    expect(recusa.statusCode, recusa.body).toBe(422);
+    expect(mensagens(recusa)).toMatch(/não começa pelo código deste registro/);
+    expect(await codigoDe(torto)).toBe("7.77.778");
+  });
 });

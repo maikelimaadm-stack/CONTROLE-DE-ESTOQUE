@@ -15,7 +15,7 @@ import type { ResourceDef } from "@agro/domain";
 import { CADASTROS_CODIGO_HIERARQUICO, CADASTROS_COM_NUMERACAO, ehCadastroCodigoHierarquico, getResource, larguraDoCodigoSequencial, mascaraDoCadastro, PARAMETRO_MASCARAS_CODIGO } from "@agro/domain";
 import { escopoDoModulo } from "@erp/plataforma";
 import { ident } from "./sql.js";
-import { notFound, validation } from "./errors.js";
+import { err, notFound, validation } from "./errors.js";
 import { audit, nextCode, publicarModuloEmpresa } from "./service.js";
 import type { ServiceCtx } from "./context.js";
 import { sugerirCodigo, travarNumeracao, MENSAGEM_CODIGO_GERADO } from "./arvore-cadastro.js";
@@ -134,7 +134,22 @@ export async function zerarNumeracao(ctx0: ServiceCtx, cadastro: string): Promis
     const s = await ctx.tx.query<{ last_value: string }>("select last_value::text from erp.code_sequences where organization_id=$1 and entity=$2 for update", [ctx.orgId, def.codeEntity]);
     contadorAnterior = s.rows[0] ? Number(s.rows[0].last_value) : null;
   }
-  await ctx.tx.query(`lock table erp.${ident(def.table)} in share row exclusive mode`);
+  // recusa CEDO, já sob a trava da numeração (quem inclui pela API passa por ela, então o Novo que pegou número antes
+  // já commitou e aparece aqui) e ANTES da trava da TABELA: com registro vivo o Zerar nunca pede a trava que vale para
+  // todas as organizações. A recontagem dentro da trava da tabela, mais abaixo, continua sendo a que decide.
+  const previa = await contar(ctx, def);
+  if (previa.registros > 0) throw validation(motivoComRegistros(previa.registros, def));
+  // a trava da TABELA não convive com nenhuma gravação na tabela, de NENHUMA organização, e o pedido na fila já faz
+  // as gravações novas esperarem: espera no máximo 2 s (uma importação longa de outra organização não congela todo
+  // mundo atrás deste Zerar) e desiste com 409, sem efeito.
+  const anterior = (await ctx.tx.query<{ v: string }>("select current_setting('lock_timeout') as v")).rows[0]!.v;
+  await ctx.tx.query("select set_config('lock_timeout', '2s', true)");
+  try { await ctx.tx.query(`lock table erp.${ident(def.table)} in share row exclusive mode`); }
+  catch (e) {
+    if ((e as { code?: string }).code === "55P03") throw err("CONCURRENCY_CONFLICT", `O cadastro ${def.labelPlural} está em uso agora; tente zerar de novo em instantes.`);
+    throw e;
+  }
+  await ctx.tx.query("select set_config('lock_timeout', $1, true)", [anterior]);
   // RECONTAGEM DENTRO DA TRAVA: a contagem da tela é de antes; só esta decide
   const { registros } = await contar(ctx, def);
   if (registros > 0) throw validation(motivoComRegistros(registros, def));

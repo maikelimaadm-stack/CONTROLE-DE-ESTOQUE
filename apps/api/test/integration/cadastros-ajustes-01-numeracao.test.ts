@@ -144,3 +144,33 @@ describe("ZN-5 zerar ao mesmo tempo que um Novo", () => {
     expect(z.statusCode, z.body).toBe(422);
   });
 });
+
+// revisão adversarial: a trava da TABELA vale para todas as organizações, e o pedido na fila já faz as gravações
+// novas esperarem. Com registro vivo o Zerar recusa ANTES de pedir a trava; vazio, espera no máximo 2 s e desiste.
+describe("ZN-6 a trava da tabela não congela as outras organizações", () => {
+  it("cadastro em uso por outra transação (ex.: importação longa de outra organização): com vivos → 422 sem esperar; vazio → 409 em ~2 s, nada muda; livre → 200", async () => {
+    const outra = await admin.connect();
+    const exc = async () => (await q<{ n: number }>("select count(*)::int n from erp.cost_centers where organization_id=$1 and code like 'EXC-%'", [h.demo.orgId]))[0]!.n;
+    const zerados = async () => (await q<{ n: number }>("select count(*)::int n from erp.audit_logs where organization_id=$1 and entity='numeracao' and entity_id='cost_centers' and action='zerar'", [h.demo.orgId]))[0]!.n;
+    try {
+      await outra.query("begin");
+      await outra.query("lock table erp.cost_centers in row exclusive mode"); // o que uma gravação em curso segura
+      const t0 = Date.now();
+      const comVivos = await zerar("cost_centers");
+      expect(comVivos.statusCode, comVivos.body).toBe(422);
+      expect(Date.now() - t0, "recusa sem entrar na fila da trava").toBeLessThan(1500);
+      await esvaziar("cost_centers");
+      const [excAntes, zeradosAntes] = [await exc(), await zerados()];
+      const t1 = Date.now();
+      const emUso = await zerar("cost_centers");
+      const espera = Date.now() - t1;
+      expect(emUso.statusCode, emUso.body).toBe(409);
+      expect(mensagens(emUso)).toMatch(/em uso agora/);
+      expect(espera, "esperou a trava").toBeGreaterThanOrEqual(1800);
+      expect(espera, "e desistiu, em vez de ficar na fila").toBeLessThan(6000);
+      expect([await exc(), await zerados()], "nada mudou").toEqual([excAntes, zeradosAntes]);
+    } finally { await outra.query("rollback"); outra.release(); }
+    const livre = await zerar("cost_centers");
+    expect(livre.statusCode, livre.body).toBe(200);
+  }, 30_000);
+});
