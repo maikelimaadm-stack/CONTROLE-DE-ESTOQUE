@@ -371,7 +371,8 @@ test("UI-9 — Naturezas: Código travado; Novo filho mostra a prévia; Mover ga
   const receitas = await api<{ items: { id: string; code: string }[] }>(page, "GET", "/api/resources/financial_categories?code=1&pageSize=5");
   const raiz1 = receitas.items.find((x) => x.code === "1")!;
   expect(raiz1, "premissa: RECEITAS = 1").toBeTruthy();
-  const destino = await api<{ id: string; code: string }>(page, "POST", "/api/resources/financial_categories", { name: uniq("UI-9 destino"), nature: "both", kind: "synthetic" });
+  const nomeDestino = uniq("UI-9 destino"); // o nome desta execução: num banco reaproveitado há destinos de rodadas anteriores
+  const destino = await api<{ id: string; code: string }>(page, "POST", "/api/resources/financial_categories", { name: nomeDestino, nature: "both", kind: "synthetic" });
   const galho = await api<{ id: string; code: string }>(page, "POST", "/api/resources/financial_categories", { name: uniq("UI-9 galho"), nature: "income", kind: "synthetic", parent_id: raiz1.id });
   const folha = await api<{ id: string; code: string }>(page, "POST", "/api/resources/financial_categories", { name: uniq("UI-9 folha"), nature: "income", kind: "analytic", parent_id: galho.id });
   expect(folha.code.startsWith(`${galho.code}.`), "premissa: a folha nasce debaixo do galho").toBe(true);
@@ -393,8 +394,8 @@ test("UI-9 — Naturezas: Código travado; Novo filho mostra a prévia; Mover ga
   await page.getByTestId("arvore-mover").click();
   const dialogo = page.getByTestId("mover-dialogo");
   await dialogo.locator("button").first().click();
-  await page.getByPlaceholder("Pesquisar...").fill("UI-9 destino");
-  await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: /UI-9 destino/ }).first().click();
+  await page.getByPlaceholder("Pesquisar...").fill(nomeDestino);
+  await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: new RegExp(nomeDestino) }).click();
   const previa = page.getByTestId("mover-previa");
   await expect(previa).toBeVisible();
   const linhas = previa.getByTestId("mover-previa-linha");
