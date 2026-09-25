@@ -26,12 +26,15 @@ describe("cadastros genéricos (recursos declarativos)", () => {
     expect(r.statusCode).toBe(200); const b = j(r); expect(b.total).toBe(1); expect(b.items![0]!.description).toContain("Sal Mineral"); expect(b.items![0]!.group_id_label).toBeTruthy();
   });
   it("cria, edita, valida e exclui (soft) um centro de custo", async () => {
-    const c = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: "9", name: "Teste CC", kind: "analytic" } });
-    expect(c.statusCode).toBe(201); const id = j(c).id as string;
-    const bad = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: "8" } });
+    // AJUSTES 01 (D-1): o código da árvore é gerado no servidor — o POST vai sem `code`
+    const c = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { name: "Teste CC", kind: "analytic" } });
+    expect(c.statusCode).toBe(201); const id = j(c).id as string; const codigo = j(c).code as string;
+    expect(codigo).toMatch(/^\d+$/);
+    const bad = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: {} });
     expect(bad.statusCode).toBe(422); expect(j(bad).error!.code).toBe("VALIDATION_ERROR");
-    const dup = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: "9", name: "Dup" } });
-    expect(dup.statusCode).toBe(409);
+    // código repetido não chega mais ao banco (era 409): o código digitado diferente do gerado é recusado antes (422)
+    const dup = await h.app.inject({ method: "POST", url: "/api/resources/cost_centers", headers: h.headers(), payload: { code: codigo, name: "Dup" } });
+    expect(dup.statusCode).toBe(422); expect(j(dup).error!.message).toBe("O código é gerado pelo sistema.");
     const u = await h.app.inject({ method: "PUT", url: `/api/resources/cost_centers/${id}`, headers: h.headers(), payload: { name: "Teste CC 2" } });
     expect(j(u).name).toBe("Teste CC 2");
     const d = await h.app.inject({ method: "DELETE", url: `/api/resources/cost_centers/${id}`, headers: h.headers() }); expect(d.statusCode).toBe(200);
