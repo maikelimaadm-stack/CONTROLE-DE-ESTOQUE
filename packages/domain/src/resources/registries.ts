@@ -8,6 +8,8 @@ const S = (name: string, label: string, options: [string, string][], extra: Part
 const REF = (name: string, label: string, resource: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "ref", ref: { resource }, ...extra });
 const D = (name: string, label: string, extra: Partial<FieldDef> = {}): FieldDef => ({ name, label, type: "date", ...extra });
 const P = (name: string, label: string): FieldDef => ({ name, label, type: "percent" });
+/** Campos novos do Parceiro (AJUSTES 01, 0030): só com a API que declara `consultaCnpjJanela` 1 (seção 7 da missão). */
+const CAP_AJ01 = { nome: "consultaCnpjJanela", versao: 1 };
 
 /** Tipo do item do SPED (registro 0200, campo TIPO_ITEM) — CADASTROS Fase 6. */
 const TIPOS_DE_ITEM: [string, string][] = [
@@ -460,28 +462,38 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     // a tela é a FICHA EM ABAS declarada em `abas`/`detalhes`/`perfis` abaixo.
     key: "people", importacao: true, label: "Parceiro", labelPlural: "Parceiros", table: "people", permission: "people", labelField: "name", route: "/cadastros/pessoas", softDelete: true, codeEntity: "person", importExport: true, defaultSort: "name",
     fields: [
-      T("code", "Código", { readOnly: true, list: true, section: "Identificação", span: 2 }),
-      S("person_type", "Tipo de pessoa", [["natural", "Física"], ["legal", "Jurídica"], ["foreign", "Estrangeira"]], { default: "legal", section: "Identificação", span: 2 }),
+      // AJUSTES 01 (decisão 257, C-3/C-4): Código (travado) fica no cabeçalho fixo (e só leitura no topo da 1ª aba); Identificação na ordem do padrão
+      // de tela; campos de Física só aparecem em Física e os de Jurídica só em Jurídica (a API recusa o do outro tipo)
+      T("code", "Código", { readOnly: true, list: true, span: 2 }),
+      S("person_type", "Tipo de pessoa", [["natural", "Física"], ["legal", "Jurídica"], ["foreign", "Estrangeira"]], { default: "legal", section: "Identificação", span: 2, help: "Segue o documento: 11 dígitos → Física; 14 → Jurídica. Estrangeira só manual." }),
       T("document", "CPF/CNPJ", { list: true, search: true, section: "Identificação", span: 3, help: "CPF ou CNPJ (também o alfanumérico). Estrangeiro: livre." }),
-      T("name", "Nome Social/Fantasia", { required: true, list: true, search: true, section: "Identificação", span: 5 }), T("legal_name", "Nome Completo/Razão Social", { search: true, section: "Identificação", span: 6 }),
-      D("nascimento_abertura", "Nascimento/Abertura", { section: "Identificação", span: 3 }),
-      B("is_client", "Cliente", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_provider", "Fornecedor", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_transporter", "Transportadora", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_employee", "Funcionário", { list: true, filter: true, section: "Tipos", span: 2 }), B("is_proprietary", "Proprietário", { list: true, filter: true, section: "Tipos", span: 2 }),
+      T("name", "Nome Social/Fantasia", { required: true, list: true, search: true, section: "Identificação", span: 5 }),
+      T("legal_name", "Nome Completo/Razão Social", { search: true, section: "Identificação", span: 6, rotuloQuando: { field: "person_type", rotulos: { legal: "Razão social", natural: "Nome completo" } } }),
+      B("is_client", "Cliente", { list: true, filter: true, section: "Identificação", grupo: "Tipo do parceiro", span: 2 }), B("is_provider", "Fornecedor", { list: true, filter: true, section: "Identificação", grupo: "Tipo do parceiro", span: 2 }), B("is_transporter", "Transportadora", { list: true, filter: true, section: "Identificação", grupo: "Tipo do parceiro", span: 2 }), B("is_employee", "Funcionário", { list: true, filter: true, section: "Identificação", grupo: "Tipo do parceiro", span: 2 }), B("is_proprietary", "Proprietário", { list: true, filter: true, section: "Identificação", grupo: "Tipo do parceiro", span: 2 }),
+      REF("matriz_id", "Matriz", "people", { exigeCapacidade: CAP_AJ01, limpaQuandoOculto: true, section: "Identificação", span: 5, visibleWhen: { field: "person_type", equals: "legal" }, help: "Parceiro matriz desta filial (só Jurídica)." }),
+      T("state_registration", "Inscrição estadual", { section: "Identificação", span: 3 }), T("city_registration", "Inscrição municipal", { section: "Identificação", span: 3 }),
+      T("rg", "RG", { exigeCapacidade: CAP_AJ01, limpaQuandoOculto: true, section: "Identificação", span: 3, visibleWhen: { field: "person_type", equals: "natural" } }),
+      T("caepf", "CAEPF", { exigeCapacidade: CAP_AJ01, limpaQuandoOculto: true, section: "Identificação", span: 3, maxLength: 14, visibleWhen: { field: "person_type", equals: "natural" }, help: "14 dígitos" }),
+      D("nascimento_abertura", "Nascimento/Abertura", { section: "Identificação", span: 3, rotuloQuando: { field: "person_type", rotulos: { legal: "Abertura", natural: "Nascimento" } } }),
+      S("sexo", "Sexo", [["F", "Feminino"], ["M", "Masculino"]], { exigeCapacidade: CAP_AJ01, limpaQuandoOculto: true, section: "Identificação", span: 2, visibleWhen: { field: "person_type", equals: "natural" } }),
+      T("site", "Site", { exigeCapacidade: CAP_AJ01, section: "Identificação", span: 4 }),
       active("is_active"),
-      T("zip_code", "CEP", { section: "Endereço", span: 2 }), T("address", "Endereço", { section: "Endereço", span: 5 }), T("address_number", "Número", { section: "Endereço", span: 2 }), T("complemento", "Complemento", { section: "Endereço", span: 3 }), T("district", "Bairro", { section: "Endereço", span: 3 }), { name: "city_id", label: "Município", type: "integer", list: true, section: "Endereço", span: 4, busca: "municipios" },
-      { name: "email", label: "E-mail", type: "email", section: "Contato", span: 4 }, T("phone", "Telefone", { list: true, section: "Contato", span: 3 }), T("cellphone", "Celular", { section: "Contato", span: 3 }), T("contact_name", "Contato principal", { section: "Contato", span: 4 }), T("contact_phone", "Telefone do contato", { section: "Contato", span: 3 }),
+      T("zip_code", "CEP", { section: "Endereço", span: 2 }), T("address", "Endereço", { section: "Endereço", span: 5 }), T("address_number", "Número", { section: "Endereço", span: 2 }), T("complemento", "Complemento", { section: "Endereço", span: 3 }), T("district", "Bairro", { section: "Endereço", span: 3 }), { name: "city_id", label: "Cidade", type: "integer", list: true, section: "Endereço", span: 4, busca: "municipios" },
+      T("caixa_postal", "Caixa postal", { exigeCapacidade: CAP_AJ01, section: "Endereço", span: 2 }), { name: "latitude", label: "Latitude", type: "number", exigeCapacidade: CAP_AJ01, section: "Endereço", span: 2, min: -90, max: 90 }, { name: "longitude", label: "Longitude", type: "number", exigeCapacidade: CAP_AJ01, section: "Endereço", span: 2, min: -180, max: 180 },
+      T("phone", "Telefone", { list: true, section: "Contato", span: 3 }), T("cellphone", "Celular", { section: "Contato", span: 3 }), { name: "email", label: "E-mail", type: "email", section: "Contato", span: 4 }, { name: "email_nfe", label: "E-mail para NF-e", type: "email", exigeCapacidade: CAP_AJ01, section: "Contato", span: 4 }, T("contact_name", "Contato principal", { section: "Contato", span: 4 }), T("contact_phone", "Telefone do contato", { section: "Contato", span: 3 }),
       S("indicador_ie", "Indicador de IE", [["contribuinte", "Contribuinte"], ["isento", "Isento"], ["nao_contribuinte", "Não contribuinte"]], { section: "Fiscal", span: 3 }),
-      T("state_registration", "Inscrição estadual", { section: "Fiscal", span: 3 }), T("city_registration", "Inscrição municipal", { section: "Fiscal", span: 3 }),
       B("consumidor_final", "Consumidor final", { section: "Fiscal", span: 2 }), B("produtor_rural", "Produtor rural", { section: "Fiscal", span: 2, help: "Um parceiro por CPF; cada propriedade tem a sua IE nos Endereços adicionais." }),
+      B("calcula_funrural", "Calcula FUNRURAL", { exigeCapacidade: CAP_AJ01, section: "Fiscal", span: 2, help: "fornecedor produtor rural: a compra retém o FUNRURAL" }),
       S("regime_tributario", "Regime tributário", [["simples", "Simples Nacional"], ["mei", "MEI"], ["normal", "Normal"]], { section: "Fiscal", span: 3 }),
       T("cnae_principal", "CNAE principal", { section: "Fiscal", span: 3, maxLength: 7, help: "7 dígitos" }),
       T("situacao_receita", "Situação na Receita", { readOnly: true, list: true, section: "Fiscal", span: 3, help: "Vem da consulta de CNPJ." }), T("situacao_receita_consultada_em", "Consultado em", { readOnly: true, section: "Fiscal", span: 3 }),
-      T("bank_code", "Banco", { section: "Conta", span: 3, busca: "bancos" }), S("bank_account_type", "Tipo", [["checking", "Corrente"], ["savings", "Poupança"]], { section: "Conta", span: 2 }), T("bank_agency", "Agência", { section: "Conta", span: 2 }), T("bank_account", "Conta", { section: "Conta", span: 2 }), S("pix_type", "Tipo chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]], { section: "Conta", span: 2 }), T("pix_key", "Pix", { section: "Conta", span: 3 })
+      T("bank_code", "Banco", { section: "Conta", span: 3, busca: "bancos" }), S("bank_account_type", "Tipo de conta", [["checking", "Corrente"], ["savings", "Poupança"]], { section: "Conta", span: 2 }), T("bank_agency", "Agência", { section: "Conta", span: 2 }), T("bank_account", "Conta", { section: "Conta", span: 2 }), S("pix_type", "Tipo de chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]], { section: "Conta", span: 2 }), T("pix_key", "Chave Pix", { section: "Conta", span: 3 })
     ],
-    cabecalho: ["code", "name", "document", "is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary", "is_active"],
+    cabecalho: ["code", "is_active", "person_type", "document", "name", "situacao_receita"],
     camposRapidos: ["is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary", "person_type", "document", "name", "city_id", "phone", "email"],
     abas: [
-      { key: "identificacao", label: "Identificação", secoes: ["Identificação", "Tipos"] },
-      { key: "enderecos", label: "Endereços", secoes: ["Endereço"], detalhes: ["enderecos"] },
+      { key: "identificacao", label: "Identificação", secoes: ["Identificação"] },
+      { key: "enderecos", label: "Endereço", secoes: ["Endereço"], detalhes: ["enderecos"] },
       { key: "contatos", label: "Contatos", secoes: ["Contato"], detalhes: ["contatos"] },
       { key: "fiscal", label: "Fiscal", secoes: ["Fiscal"] },
       { key: "financeiro", label: "Financeiro", secoes: ["Conta"], detalhes: ["contas"] },
@@ -490,13 +502,14 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
       { key: "fornecedor", label: "Fornecedor", perfis: ["perfil_fornecedor"], detalhes: ["filiais", "vendedores"], visivelQuando: { field: "is_provider", equals: true }, permissaoDeLeitura: "providers.view", permissaoDeEdicao: "providers.edit" },
       { key: "proprietario", label: "Proprietário", perfis: ["perfil_proprietario"], detalhes: ["participacoes"], visivelQuando: { field: "is_proprietary", equals: true }, permissaoDeLeitura: "proprietaries.view", permissaoDeEdicao: "proprietaries.edit" },
       { key: "funcionario", label: "Funcionário", visivelQuando: { field: "is_employee", equals: true } },
-      { key: "anexos", label: "Anexos" }
+      // Anexos saiu da última aba para a barra de ações (AJUSTES 01, C-1): mesmo diálogo
+      { key: "historico", label: "Histórico", painel: "historico" }
     ],
     detalhes: [
-      { key: "enderecos", label: "Endereços adicionais", table: "parceiro_enderecos", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
+      { key: "enderecos", label: "Outros endereços", table: "parceiro_enderecos", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
         S("tipo", "Tipo", [["entrega", "Entrega"], ["cobranca", "Cobrança"], ["propriedade", "Propriedade"], ["outro", "Outro"]], { required: true }), T("descricao", "Descrição"),
-        T("cep", "CEP", { maxLength: 8 }), T("logradouro", "Endereço"), T("numero", "Número"), T("complemento", "Complemento"), T("bairro", "Bairro"), { name: "city_id", label: "Município", type: "integer", busca: "municipios" },
-        T("inscricao_estadual", "IE", { help: "Dígitos ou ISENTO" }), active("is_active")
+        T("cep", "CEP", { maxLength: 8 }), T("logradouro", "Endereço"), T("numero", "Número"), T("complemento", "Complemento"), T("bairro", "Bairro"), { name: "city_id", label: "Cidade", type: "integer", busca: "municipios" },
+        T("inscricao_estadual", "IE", { help: "Dígitos ou ISENTO" }), { name: "latitude", label: "Latitude", type: "number", exigeCapacidade: CAP_AJ01, min: -90, max: 90 }, { name: "longitude", label: "Longitude", type: "number", exigeCapacidade: CAP_AJ01, min: -180, max: 180 }, active("is_active")
       ] },
       { key: "contatos", label: "Contatos adicionais", table: "parceiro_contatos", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
         T("nome", "Nome", { required: true }), T("funcao", "Função"), T("telefone", "Telefone"), T("celular", "Celular"), { name: "email", label: "E-mail", type: "email" }, B("recebe_nfe_email", "Recebe NF-e por e-mail")
