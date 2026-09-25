@@ -359,8 +359,8 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   };
   // booleanos do mesmo `grupo` (C-3, "Tipo do parceiro"): UM campo de marcação múltipla; cada opção continua a sua coluna
   const grupo = (nome: string, fs: FieldDef[]) => <div key={`grupo-${nome}`} className="min-w-[280px] flex-[2]" data-testid={`grupo-${nome.toLowerCase().replace(/\s+/g, "-")}`} role="group" aria-label={nome}>
-    <div className={cn("mg-field mg-has-value", readOnly && "mg-field--disabled")}><span className="mg-field__label">{nome}</span>
-      <div className="mg-field__control flex flex-wrap gap-3 pt-0.5">{fs.map((f) => <label key={f.name} className="flex items-center gap-1 text-[12.5px]"><input type="checkbox" name={f.name} disabled={readOnly} className="accent-brand-500" checked={values[f.name] === true || values[f.name] === "true"} onChange={(e) => form.setValue(f.name, e.target.checked, { shouldDirty: true })} />{f.label}</label>)}</div></div>
+    <div className={cn("rounded-md border border-slate-200 px-2.5 py-1", readOnly ? "bg-slate-50" : "bg-white")}><span className="block text-[11px] text-slate-500">{nome}</span>
+      <div className="flex flex-wrap gap-3 pt-0.5">{fs.map((f) => <label key={f.name} className="flex items-center gap-1 text-[12.5px]"><input type="checkbox" name={f.name} disabled={readOnly} className="accent-brand-500" checked={values[f.name] === true || values[f.name] === "true"} onChange={(e) => form.setValue(f.name, e.target.checked, { shouldDirty: true })} />{f.label}</label>)}</div></div>
     {erros.filter((e) => fs.some((f) => f.name === e.path)).map((e) => <p key={e.path} className="mt-0.5 text-[11px] text-red-600">{e.message}</p>)}
   </div>;
   const secao = (s: string) => {

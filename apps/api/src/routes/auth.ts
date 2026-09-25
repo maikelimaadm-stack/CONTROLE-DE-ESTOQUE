@@ -22,6 +22,17 @@ import { runService } from "../lib/service.js";
  * pedido chega à API anterior exatamente como a web anterior o mandaria.
  */
 export const CAPACIDADE_LOTE_NA_ENTRADA = 1;
+/**
+ * `codigoAutomatico` (CADASTROS AJUSTES 01, decisão 257 D): esta API GERA o código das árvores com código e dos
+ * cadastros sequenciais, recusa código digitado diferente do gerado e tem a Numeração dos cadastros (Zerar).
+ * Sem a declaração (API anterior), a web mostra o código digitável com sugestão e não mostra a Numeração.
+ */
+export const CAPACIDADE_CODIGO_AUTOMATICO = 1;
+/**
+ * `moverComFilhos` (decisão 257 D-5): esta API tem o Mover com renumeração do galho (`/mover/previa` e `/mover`).
+ * Sem a declaração, a web oferece o Mover de antes (só registro sem filhos, pela edição).
+ */
+export const CAPACIDADE_MOVER_COM_FILHOS = 1;
 
 /**
  * `consultaCnpjJanela` (CADASTROS AJUSTES 01, decisão 257): esta API entende os campos novos do Parceiro (0030:
@@ -67,6 +78,6 @@ export default async function authRoutes(app: FastifyInstance) {
     // `empresas` é o campo CANÔNICO e, desde PRE-BASE2-05B, o ÚNICO. O apelido saiu junto com o aliasador
     // de resposta: o cliente em produção já lê só este campo, e mantê-lo duplicado deixaria a resposta com
     // duas verdades que ninguém garante que continuariam iguais.
-    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma, capacidades: { loteNaEntrada: CAPACIDADE_LOTE_NA_ENTRADA, consultaCnpjJanela: CAPACIDADE_CONSULTA_CNPJ_JANELA } };
+    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma, capacidades: { loteNaEntrada: CAPACIDADE_LOTE_NA_ENTRADA, codigoAutomatico: CAPACIDADE_CODIGO_AUTOMATICO, moverComFilhos: CAPACIDADE_MOVER_COM_FILHOS, consultaCnpjJanela: CAPACIDADE_CONSULTA_CNPJ_JANELA } };
   }));
 }
