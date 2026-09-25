@@ -23,6 +23,14 @@ import { runService } from "../lib/service.js";
  */
 export const CAPACIDADE_LOTE_NA_ENTRADA = 1;
 
+/**
+ * `consultaCnpjJanela` (CADASTROS AJUSTES 01, decisão 257): esta API entende os campos novos do Parceiro (0030:
+ * matriz, RG, CAEPF, sexo, site, caixa postal, latitude/longitude, e-mail NF-e, calcula FUNRURAL) e as regras de
+ * tipo de pessoa deles, e a web pode usar a janela "Consultar CNPJ" com Importar. A API anterior RECUSA essas chaves
+ * (schema estrito, 422 no corpo inteiro): sem a declaração a web não mostra nem envia os campos e usa a consulta antiga.
+ */
+export const CAPACIDADE_CONSULTA_CNPJ_JANELA = 1;
+
 export default async function authRoutes(app: FastifyInstance) {
   app.post("/auth/login", { config: { rateLimit: { max: app.config.LOGIN_RATE_LIMIT_MAX, timeWindow: "1 minute" } } }, async (req) => {
     if (app.config.AUTH_MODE !== "local") throw new DomainError("VALIDATION_ERROR", "Login local desabilitado: use Supabase Auth");
@@ -59,6 +67,6 @@ export default async function authRoutes(app: FastifyInstance) {
     // `empresas` é o campo CANÔNICO e, desde PRE-BASE2-05B, o ÚNICO. O apelido saiu junto com o aliasador
     // de resposta: o cliente em produção já lê só este campo, e mantê-lo duplicado deixaria a resposta com
     // duas verdades que ninguém garante que continuariam iguais.
-    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma, capacidades: { loteNaEntrada: CAPACIDADE_LOTE_NA_ENTRADA } };
+    return { user: ctx.user, organization: { id: ctx.orgId, name: org.rows[0]?.name, parameters: org.rows[0]?.parameters ?? {} }, isOwner: ctx.membership.isOwner, empresas, permissions: perms, favorites: fav.rows, unreadNotifications: unread.total, canViewUsers: hasPermission(ctx, "users.view"), idioma, capacidades: { loteNaEntrada: CAPACIDADE_LOTE_NA_ENTRADA, consultaCnpjJanela: CAPACIDADE_CONSULTA_CNPJ_JANELA } };
   }));
 }

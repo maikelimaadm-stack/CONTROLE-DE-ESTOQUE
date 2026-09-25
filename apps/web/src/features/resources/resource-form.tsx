@@ -6,18 +6,20 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, Controller, type UseFormReturn } from "react-hook-form";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { toast } from "@/lib/toast";
-import { campoVisivel, chavesBarradas, getResource, ehCadastroCodigoHierarquico, type FieldDef } from "@agro/domain";
+import { campoVisivel, chavesBarradas, getResource, ehCadastroCodigoHierarquico, normalizarDocumento, validarDocumento, type FieldDef } from "@agro/domain";
 import { cardFieldIds, type FormLayout } from "@agro/shared";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { dateTimeBR, cn } from "@/lib/utils";
-import { Card, Input, Textarea, Spinner, ErrorBox, Confirm } from "@/components/ui";
+import { Card, Input, Textarea, Spinner, ErrorBox, Confirm, Menu } from "@/components/ui";
 import { MgSelect, MgDatePicker, RequiredPill, REQUIRED_FIELDS_MESSAGE } from "@/components/ui/mg-controls";
 import { filtroDaReferencia, RefSelect, ReferenciaSelect } from "@/components/ui/ref-select";
-import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Pencil, Plus, Trash2, LayoutGrid, PanelLeft } from "lucide-react";
+import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Paperclip, Pencil, Plus, Search, Trash2, LayoutGrid, PanelLeft } from "lucide-react";
 import { IconBtn, PillBtn } from "@/features/base1/ui";
 import { useFormLayout } from "./form-layout";
-import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, fichaDoRegistro, fichaParaApi, type ErroDaFicha } from "./ficha-em-abas";
+import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, capacidadeDoCampo, fichaDoRegistro, fichaParaApi, tipoDoDocumento, type ControleDoCampo, type ErroDaFicha } from "./ficha-em-abas";
+import { JanelaConsultaCnpj, esquecerImportacaoPendente, lerImportacaoPendente, useConsultaCnpjJanela, type RespostaCnpj } from "./consulta-cnpj-janela";
+import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
 
 type Values = Record<string, unknown>;
 export interface EmbeddedForm { mode: "view" | "edit" | "new"; /** linha já carregada na listagem: evita tela de carregamento ao navegar entre registros */ row?: Values | null; setMode: (m: "view" | "edit" | "new") => void; onExit: () => void; refresh: () => void; copyFrom?: Values | null; rightSlot?: React.ReactNode; nav?: { index: number; total: number; go: (i: number) => void } }
@@ -26,7 +28,7 @@ function defaults(fields: FieldDef[], preset: Record<string, string>, layoutDefa
 function fromRecord(fields: FieldDef[], data: Values): Values { const v: Values = {}; for (const f of fields) { const x = data[f.name]; v[f.name] = f.type === "json" ? JSON.stringify(x ?? {}, null, 2) : x === null || x === undefined ? (f.type === "tags" ? [] : "") : f.type === "date" ? String(x).slice(0, 10) : x; } return v; }
 /** comparação das condições declarativas do registry (`visibleWhen`/`requiredWhen`): valor igual OU String igual */
 const iguala = (x: unknown, esperado: unknown) => x === esperado || String(x) === String(esperado);
-function toApi(fields: FieldDef[], v: Values, locked: string[] = []): Values { const o: Values = {}; for (const f of fields) { if (f.readOnly || locked.includes(f.name)) continue; /* campos travados pelo layout não vão no payload (mantêm o valor atual) */ let x = v[f.name]; if (x === "" || x === undefined) x = null; if (f.type === "json" && typeof x === "string") { try { x = JSON.parse(x); } catch { throw new Error(`JSON inválido em ${f.label}`); } } if (f.type === "integer" && x !== null) x = Number(x); if (f.type === "boolean") x = Boolean(x); if (f.type === "date" && typeof x === "string") x = x.slice(0, 10); if (x === null && !f.required && f.type === "boolean") x = false; if (x === null && ["money", "quantity", "number", "percent", "integer"].includes(f.type)) continue; /* numérico vazio: deixa o default do banco (0) valer */ o[f.name] = x; } return o; }
+function toApi(fields: FieldDef[], v: Values, locked: string[] = []): Values { const o: Values = {}; for (const f of fields) { if (f.readOnly || locked.includes(f.name)) continue; /* campos travados pelo layout não vão no payload (mantêm o valor atual) */ let x = v[f.name]; /* AJUSTES 01: campo que o tipo esconde vai null (a API recusa o campo do outro tipo) */ if (f.limpaQuandoOculto && f.visibleWhen && !iguala(v[f.visibleWhen.field], f.visibleWhen.equals)) x = null; if (x === "" || x === undefined) x = null; if (f.type === "json" && typeof x === "string") { try { x = JSON.parse(x); } catch { throw new Error(`JSON inválido em ${f.label}`); } } if (f.type === "integer" && x !== null) x = Number(x); if (f.type === "boolean") x = Boolean(x); if (f.type === "date" && typeof x === "string") x = x.slice(0, 10); if (x === null && !f.required && f.type === "boolean") x = false; if (x === null && ["money", "quantity", "number", "percent", "integer"].includes(f.type)) continue; /* numérico vazio: deixa o default do banco (0) valer */ o[f.name] = x; } return o; }
 
 const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--mg-text-1)] shadow-none focus:ring-0 focus:outline-none read-only:bg-transparent disabled:bg-transparent disabled:text-[var(--mg-text-1)]";
 /** Controle de um campo declarativo (mesmo componente para todos os tipos), estilo "rótulo flutuante" do modelo base. */
@@ -72,7 +74,9 @@ function LayoutCardView({ label, collapsible, colSpan, children }: { label: stri
  * rótulos e valores padrão definidos pelo usuário ou pela organização.
  */
 export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, onCancel, rapido, presetExtra }: { resourceKey: string; id: string; basePath?: string; afterSave?: (row: Values) => void; embedded?: EmbeddedForm; /** modo diálogo: cancelar fecha o diálogo em vez de navegar */ onCancel?: () => void; /** CADASTRO RÁPIDO: só `camposRapidos` do registry, mesma API */ rapido?: boolean; /** valores iniciais vindos de quem abriu (ex.: tipo pré-marcado no cadastro rápido) */ presetExtra?: Record<string, string> }) {
-  const def = getResource(resourceKey); const router = useRouter(); const sp = useSearchParams(); const qc = useQueryClient(); const { can } = useAuth();
+  const def = getResource(resourceKey); const router = useRouter(); const sp = useSearchParams(); const qc = useQueryClient(); const { can, ctx } = useAuth();
+  // AJUSTES 01 (C-1/C-2, seção 7): a API declara a janela de consulta de CNPJ e os campos novos do Parceiro
+  const consultaJanela = useConsultaCnpjJanela();
   const fields = React.useMemo(() => def?.fields ?? [], [def]);
   // FICHA EM ABAS (decisão 253): cadastro com `abas` no registry usa a ficha; os demais, o layout de painéis
   const ficha = Boolean(def?.abas?.length);
@@ -82,11 +86,13 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   const l: FormLayout = layout.prefs;
   const isNew = embedded ? embedded.mode === "new" : id === "new";
   const canEdit = can(`${def?.permission}.edit`); const canDelete = can(`${def?.permission}.delete`); const canCreate = can(`${def?.permission}.create`);
-  const readOnly = embedded ? embedded.mode === "view" : sp.get("view") === "1" || (!isNew && !canEdit);
+  // "Importar para o cadastro" com a ficha em leitura entra em Editar (C-2) sem recarregar o formulário
+  const [editarAqui, setEditarAqui] = React.useState(false);
+  const readOnly = embedded ? embedded.mode === "view" : (sp.get("view") === "1" && !editarAqui) || (!isNew && !canEdit);
   // aba com `permissaoDeEdicao` que o usuário não tem (ex.: Pessoal do RH sem people.edit): campos travados e fora do corpo
   // campo SIGILOSO sem a permissão (R1-2, ex.: salário da Função sem employees.edit): não aparece e não vai no corpo —
   // a API não o devolve e recusaria (403) o corpo que o trouxesse. Só apresentação: quem recusa é o servidor.
-  const sigilosos = fields.filter((f) => !campoVisivel(f, can)).map((f) => f.name);
+  const sigilosos = fields.filter((f) => !campoVisivel(f, can) || !capacidadeDoCampo(f, ctx?.capacidades)).map((f) => f.name);
   const travados = [...l.lockedFieldIds, ...sigilosos, ...(def?.abas ?? []).filter((a) => a.permissaoDeEdicao && !can(a.permissaoDeEdicao)).flatMap((a) => fields.filter((f) => f.section && a.secoes?.includes(f.section)).map((f) => f.name))];
   // grade/perfil de aba sem a permissão de gravar ou de ler (R1-4, ex.: aba Cliente sem clients.edit) não vai no corpo —
   // a API recusaria o corpo inteiro com 403. Só apresentação: quem recusa é o servidor.
@@ -129,7 +135,12 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
       .catch(() => { /* superior ilegível: o campo fica como está e o servidor confere ao salvar */ });
     return () => { vivo = false; };
   }, [isNew, readOnly, herdados, superior, resourceKey, form]);
+  // "Novo pelo CNPJ" (lista de Parceiros, C-2): o parceiro NOVO nasce com o que a janela importou (nada gravado)
+  const [importacao] = React.useState(() => (isNew && resourceKey === "people" && !embedded ? lerImportacaoPendente() : null));
+  React.useEffect(() => { if (!importacao) return; for (const [k, x] of Object.entries(importacao)) form.setValue(k, x, { shouldDirty: true }); esquecerImportacaoPendente(); }, [importacao, form]);
   const [confirmDel, setConfirmDel] = React.useState(false);
+  const [anexos, setAnexos] = React.useState(false);
+  const [janelaCnpj, setJanelaCnpj] = React.useState(false);
   const [openField, setOpenField] = React.useState<string | null>(null);
   // painéis em abas horizontais ("tabs") ou lista lateral ("sidebar"), como o modelo base do MG; lembrado por cadastro
   const panelStyleKey = `agro.launchPanelStyle.${resourceKey}`;
@@ -153,20 +164,22 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   if (!isNew && q.isLoading && !q.data) return <div className="p-6"><Spinner /></div>;
   if (q.error) return <ErrorBox error={q.error} />;
   const values = form.watch();
-  const visible = (f: FieldDef) => campoVisivel(f, can) && (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
+  const visible = (f: FieldDef) => campoVisivel(f, can) && capacidadeDoCampo(f, ctx?.capacidades) && (!rapido || !def.camposRapidos || def.camposRapidos.includes(f.name)) && !l.hiddenFieldIds.includes(f.name) && (!f.visibleWhen || iguala(values[f.visibleWhen.field], f.visibleWhen.equals)) && !(isNew && f.readOnly && f.name === "code");
   const back = basePath ?? `/cadastros/${resourceKey}`;
   const byId = new Map(fields.map((f) => [f.name, f]));
   // obrigatório do registry, do layout ou CONDICIONAL (`requiredWhen`): campo de condição vazio vale o `default` dele (ex.: Controla estoque = Sim)
   const obrigatorio = (f: FieldDef) => Boolean(f.required) || l.requiredFieldIds.includes(f.name) || (f.requiredWhen !== undefined && iguala(values[f.requiredWhen.field] ?? byId.get(f.requiredWhen.field)?.default, f.requiredWhen.equals));
-  const renderField = (fid: string) => {
+  const renderField = (fid: string, controle?: ControleDoCampo) => {
     const f = byId.get(fid); if (!f || !visible(f)) return null;
     const err = form.formState.errors[f.name]?.message as string | undefined; const locked = Boolean(f.readOnly) || travados.includes(f.name); const dis = readOnly || locked;
     const required = obrigatorio(f);
     const v = values[f.name]; const hasValue = f.type === "boolean" ? true : Array.isArray(v) ? v.length > 0 : v !== "" && v !== null && v !== undefined;
-    return <B1Field key={f.name} flex label={l.fieldLabels[f.name] ?? f.label} required={required} error={err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}><FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={(o) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur))} /></B1Field>;
+    // rótulo que segue outro campo (AJUSTES 01: "Razão social" em Jurídica, "Nome completo" em Física)
+    const rotulo = l.fieldLabels[f.name] ?? (f.rotuloQuando ? f.rotuloQuando.rotulos[String(values[f.rotuloQuando.field] ?? "")] : undefined) ?? f.label;
+    return <B1Field key={f.name} flex label={rotulo} required={required} error={controle && f.name === "document" ? undefined : err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue || Boolean(controle)} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}>{controle ? controle({ dis }) : <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={(o) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur))} />}</B1Field>;
   };
   const panels = l.panels.filter((p) => !p.hidden);
-  const renderPanel = (panelId: string) => <div className="grid grid-cols-12 gap-3">{l.cards.filter((c) => c.panelId === panelId).map((c) => { const ids = cardFieldIds(c).filter((fid) => { const f = byId.get(fid); return f && visible(f); }); if (!ids.length) return null; return <LayoutCardView key={c.id} label={c.label} collapsible={c.collapsible} colSpan={c.colSpan}>{c.rows.map((r) => { const els = r.fieldIds.map(renderField).filter(Boolean); return els.length ? <div key={r.id} className="flex flex-wrap gap-2">{els}</div> : null; })}</LayoutCardView>; })}</div>;
+  const renderPanel = (panelId: string) => <div className="grid grid-cols-12 gap-3">{l.cards.filter((c) => c.panelId === panelId).map((c) => { const ids = cardFieldIds(c).filter((fid) => { const f = byId.get(fid); return f && visible(f); }); if (!ids.length) return null; return <LayoutCardView key={c.id} label={c.label} collapsible={c.collapsible} colSpan={c.colSpan}>{c.rows.map((r) => { const els = r.fieldIds.map((x) => renderField(x)).filter(Boolean); return els.length ? <div key={r.id} className="flex flex-wrap gap-2">{els}</div> : null; })}</LayoutCardView>; })}</div>;
   const title = isNew ? `Novo ${def.label.toLowerCase()}` : String(q.data?.[def.labelField] ?? q.data?.["name"] ?? q.data?.["description"] ?? "");
   const code = !isNew && q.data?.["code"] ? String(q.data["code"]) : null;
   const nav = embedded?.nav;
@@ -177,6 +190,23 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
   // corrigido. Limpa-se antes de reenviar; quem julga de novo é o servidor.
   const enviar = form.handleSubmit((v) => save.mutate(v), (errs) => { const names = Object.keys(errs); toast.warning("Campos obrigatórios pendentes", { description: names.map(labelOf).join(", "), duration: 6000 }); const el = document.querySelector<HTMLElement>(`[name="${names[0]}"]`); el?.scrollIntoView({ block: "center", behavior: "smooth" }); el?.focus?.(); });
   const submit = (e?: React.BaseSyntheticEvent) => { if (errosDoServidor.current.length) { form.clearErrors(errosDoServidor.current); errosDoServidor.current = []; } return enviar(e); };
+  const parceiroComJanela = resourceKey === "people" && consultaJanela && !rapido;
+  // Editar a partir da leitura sem perder o que já está no formulário (importação, "Ajustar para Física")
+  const entrarEmEdicao = () => { if (!readOnly) return; if (embedded) embedded.setMode("edit"); else setEditarAqui(true); };
+  const importarDaReceita = (v: Values) => { if (readOnly) { if (!canEdit) { toast.warning("Seu perfil não pode editar este parceiro."); return; } entrarEmEdicao(); } for (const [k, x] of Object.entries(v)) form.setValue(k, x, { shouldDirty: true }); toast.success("Dados da Receita no formulário. Confira e salve."); };
+  const validarDocumentoDaFicha = () => { const d = String(values["document"] ?? "").trim(); if (!d) { toast.info("Informe o CPF/CNPJ."); return; } if (values["person_type"] === "foreign") { toast.info("Estrangeiro: documento livre, sem conferência de dígitos."); return; } const r = validarDocumento(d); if (r.valido) toast.success(`${r.tipo === "cpf" ? "CPF" : "CNPJ"} válido.`); else toast.warning(r.motivo); };
+  const copiarEnderecoParaEntrega = () => {
+    if (readOnly) { if (!canEdit) return; entrarEmEdicao(); }
+    const linhas = (form.getValues("enderecos") as Values[] | undefined) ?? [];
+    form.setValue("enderecos", [...linhas, { tipo: "entrega", descricao: "Entrega", cep: values["zip_code"] ?? "", logradouro: values["address"] ?? "", numero: values["address_number"] ?? "", complemento: values["complemento"] ?? "", bairro: values["district"] ?? "", city_id: values["city_id"] ?? "", inscricao_estadual: "", is_active: true }], { shouldDirty: true });
+    toast.success("Endereço principal copiado para um endereço de entrega (grava ao Salvar).");
+  };
+  const atualizarSituacao = async () => {
+    const d = normalizarDocumento(String(values["document"] ?? ""));
+    if (tipoDoDocumento(d) !== "legal") { toast.info("A situação na Receita é consultada pelo CNPJ."); return; }
+    try { const r = await api<RespostaCnpj>(`/api/consultas/cnpj/${d}?atualizar=1`); const s = r.situacao.descricao?.toUpperCase() ?? ""; form.setValue("situacao_receita", s); toast.success(`Situação na Receita: ${s || "—"} (${r.fonte}). ${readOnly ? "Edite e salve" : "Salve"} para gravar no cadastro.`); }
+    catch (e) { toast.warning((e as Error).message); }
+  };
   const cancel = () => { if (onCancel) { onCancel(); return; } if (embedded) { if (embedded.mode === "new") embedded.onExit(); else { if (q.data) form.reset({ ...fromRecord(def.fields, q.data), ...(ficha ? fichaDoRegistro(def, q.data) : {}) }); embedded.setMode("view"); } } else router.push(back); };
   return (
     <form onSubmit={submit} className="b1 flex min-h-0 flex-1 flex-col gap-2" data-testid="b1-form">
@@ -192,6 +222,15 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
           <PillBtn type="submit" disabled={save.isPending}>{save.isPending ? "Salvando…" : "Salvar"}</PillBtn>
           <PillBtn tone="gray" onClick={cancel}>Cancelar</PillBtn>
         </>}
+        {/* AJUSTES 01 (C-1): Anexos na barra de TODA ficha em abas (mesmo diálogo); no Parceiro, Consultar CNPJ
+            SEMPRE habilitado (leitura e edição) e Outras opções — só com a API que declara a janela */}
+        {ficha && !rapido && <PillBtn tone="gray" data-testid="ficha-anexos" onClick={() => (isNew || !q.data?.["id"] ? toast.info(`Salve o ${def.label.toLowerCase()} para anexar arquivos.`) : setAnexos(true))}><Paperclip className="h-3.5 w-3.5" /> Anexos</PillBtn>}
+        {parceiroComJanela && <PillBtn tone="gray" data-testid="ficha-consultar-cnpj" onClick={() => setJanelaCnpj(true)}><Search className="h-3.5 w-3.5" /> Consultar CNPJ</PillBtn>}
+        {parceiroComJanela && <Menu trigger={<PillBtn tone="gray" data-testid="ficha-outras-opcoes">Outras opções <ChevronDown className="h-3.5 w-3.5" /></PillBtn>} items={[
+          { label: "Validar CPF/CNPJ", onClick: validarDocumentoDaFicha },
+          { label: "Copiar endereço principal para entrega", onClick: copiarEnderecoParaEntrega, disabled: !canEdit && !isNew },
+          { label: "Atualizar situação na Receita", onClick: () => void atualizarSituacao() }
+        ]} />}
         {embedded?.rightSlot ?? <div className="ml-auto flex items-center gap-1.5">{!embedded && !onCancel && <Link href={back}><IconBtn aria-label="Voltar para a listagem" title="Voltar para a listagem"><ArrowLeft className="h-4 w-4" /></IconBtn></Link>}</div>}
       </div>
       {/* cabeçalho do registro + navegação */}
@@ -206,11 +245,13 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
       </div>
       {/* painéis (área rolável; barra e cabeçalho ficam fixos) */}
       <div className="mg-form-scroll min-h-0 flex-1 overflow-auto">
-      {ficha && !rapido ? <FichaEmAbas def={def} form={form} readOnly={readOnly} isNew={isNew} record={q.data ?? null} erros={errosFicha} renderField={renderField} visivel={visible} />
-        : rapido && def.camposRapidos ? <Card className="grid grid-cols-12 gap-3 p-3" data-testid="cadastro-rapido"><div className="col-span-12 flex flex-wrap gap-2">{def.camposRapidos.map(renderField)}</div>{def.camposRapidos.includes("document") && <ConsultaCnpj form={form} dis={readOnly} />}</Card>
+      {ficha && !rapido ? <FichaEmAbas def={def} form={form} readOnly={readOnly} isNew={isNew} record={q.data ?? null} erros={errosFicha} renderField={renderField} visivel={visible} consultaJanela={parceiroComJanela} entrarEmEdicao={entrarEmEdicao} abrirConsultaCnpj={() => setJanelaCnpj(true)} />
+        : rapido && def.camposRapidos ? <Card className="grid grid-cols-12 gap-3 p-3" data-testid="cadastro-rapido"><div className="col-span-12 flex flex-wrap gap-2">{def.camposRapidos.map((x) => renderField(x))}</div>{def.camposRapidos.includes("document") && <ConsultaCnpj form={form} dis={readOnly} />}</Card>
         : panels.length > 1 ? <PanelTabs panels={panels.map((p) => ({ id: p.id, label: p.label }))} render={renderPanel} style={panelStyle} onToggleStyle={togglePanelStyle} animate={!readOnly} /> : renderPanel(panels[0]?.id ?? l.panels[0]!.id)}
       {!isNew && q.data && <div className="px-2 pt-2 text-[11px] text-slate-400">Criado em {dateTimeBR(q.data["created_at"] as string)} · atualizado em {dateTimeBR(q.data["updated_at"] as string)}</div>}
       </div>
+      {ficha && !rapido && !isNew && q.data?.["id"] ? <AttachmentsDialog open={anexos} onOpenChange={setAnexos} entity={def.key} entityId={String(q.data["id"])} title={`Anexos · ${String(q.data[def.labelField] ?? "")}`} /> : null}
+      {parceiroComJanela && <JanelaConsultaCnpj open={janelaCnpj} onOpenChange={setJanelaCnpj} cnpjInicial={tipoDoDocumento(values["document"]) === "legal" ? normalizarDocumento(String(values["document"])) : ""} cadastro={values} onImportar={importarDaReceita} />}
       <Confirm open={confirmDel} onOpenChange={setConfirmDel} title="Confirme a exclusão" text={`Excluir este registro de ${def.label.toLowerCase()}? A ação fica registrada na auditoria.`} danger loading={remove.isPending} onConfirm={() => remove.mutate()} />
     </form>
   );

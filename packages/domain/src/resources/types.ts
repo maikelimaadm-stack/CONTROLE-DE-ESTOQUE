@@ -53,6 +53,27 @@ export interface FieldDef {
   /** campo dependente: só visível quando outro campo tem valor */
   visibleWhen?: { field: string; equals: unknown };
   /**
+   * Rótulo que muda com o valor de outro campo (AJUSTES 01, ex.: "Razão social" em Jurídica, "Nome completo" em
+   * Física). Valor sem rótulo declarado usa `label`. Só apresentação: a coluna e a chave são as mesmas.
+   */
+  rotuloQuando?: { field: string; rotulos: Record<string, string> };
+  /**
+   * Booleanos com o MESMO `grupo` são desenhados na ficha como UM campo de marcação múltipla com esse rótulo
+   * (AJUSTES 01, "Tipo do parceiro"). Cada opção continua a sua coluna e a sua chave no contrato da API.
+   */
+  grupo?: string;
+  /**
+   * O campo só existe na API que DECLARA a capacidade nessa versão EXATA (`capacidades` de GET /auth/context).
+   * Sem a declaração (API anterior, na janela de deploy ou numa reversão só da API), a web não mostra nem envia o
+   * campo — o schema estrito da API anterior recusaria o corpo inteiro com a chave desconhecida.
+   */
+  exigeCapacidade?: { nome: string; versao: number };
+  /**
+   * Campo escondido por `visibleWhen` vai `null` na gravação (ex.: RG ao mudar o parceiro para Jurídica): a API
+   * recusa o campo do outro tipo, e o valor que a tela não mostra não pode ficar gravado sem ninguém ver.
+   */
+  limpaQuandoOculto?: boolean;
+  /**
    * obrigatório CONDICIONAL: só quando outro campo tem esse valor (vazio = `default` dele).
    * O banco continua sendo a autoridade; isto serve para a tela e o modelo de importação avisarem antes.
    */
