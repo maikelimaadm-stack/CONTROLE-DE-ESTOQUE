@@ -117,7 +117,8 @@ test("AR-4 — Mover: novo superior com código sugerido; a recusa da API aparec
   await dialogo.locator("button").first().click();
   await page.getByPlaceholder("Pesquisar...").fill("DESPESAS");
   await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: /^2 DESPESAS|DESPESAS$/ }).first().click();
-  await expect(page.getByTestId("mover-erro")).toBeVisible();
+  // T-2 (R1): volta a conferir o TEXTO da recusa — a da API (natureza-financeira.ts), não só que "algo" apareceu
+  await expect(page.getByTestId("mover-erro")).toHaveText("O Tipo precisa ser o mesmo da natureza superior (só um superior \"Receita e despesa\" aceita filhas de outro Tipo).");
   await expect(page.getByTestId("mover-confirmar")).toBeDisabled();
   await dialogo.locator("button").first().click();
   await page.getByPlaceholder("Pesquisar...").fill("Receitas Agrícolas");

@@ -1,9 +1,9 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { login, api, uniq } from "./helpers";
+import { login, logout, api, uniq } from "./helpers";
 
 /**
- * CADASTROS — AJUSTES 01 · E2E da seção 8 (UI-1..UI-11).
+ * CADASTROS — AJUSTES 01 · E2E da seção 8 (UI-1..UI-11) e da revisão R1 da #63 (UI-12..UI-19: W-1 a W-8).
  *
  * API e banco REAIS (0026 carregada pelo seed). `/api/referencias/*` NUNCA é mockado — foi exatamente a busca
  * real, aberta sem texto, que quebrou em produção (500) sem nenhum E2E ter aberto um desses campos. A única
@@ -179,7 +179,11 @@ test("UI-1 — Consultar CNPJ na barra ao lado de Anexos, habilitado em LEITURA;
   await expect(page.getByTestId("consulta-cnpj-campo")).toHaveValue(fmtCnpj(cnpj));
   await page.getByTestId("consulta-cnpj-consultar").click();
   const dados = page.getByTestId("consulta-cnpj-dados");
-  for (const t of ["AGROPECUARIA PONTES LTDA", "FAZENDA PONTES", "ATIVA", "10/03/2005", "SEM MOTIVO", "2062", "Sociedade Empresária Limitada", "DEMAIS", "0151201", "Criação de bovinos para corte", "0115600", "Cultivo de soja", "RODOVIA BR 174", "KM 10", "ZONA RURAL", "5106752 · Pontes e Lacerda - MT", "6532661234", "contato@fazendapontes.com.br", "Optante desde 01/01/2010", "Matriz", "brasilapi"]) await expect(dados, t).toContainText(t);
+  for (const t of ["AGROPECUARIA PONTES LTDA", "FAZENDA PONTES", "ATIVA", "10/03/2005", "SEM MOTIVO", "2062", "Sociedade Empresária Limitada", "DEMAIS", "0151201", "Criação de bovinos para corte", "0115600", "Cultivo de soja", "RODOVIA BR 174", "KM 10", "ZONA RURAL", "5106752 · Pontes e Lacerda - MT", "contato@fazendapontes.com.br", "Optante desde 01/01/2010", "Matriz", "brasilapi"]) await expect(dados, t).toContainText(t);
+  // R1 (W-1/W-8): a janela mostra o CNPJ DO RESULTADO e o CEP e os telefones formatados
+  await expect(page.getByTestId("consulta-cnpj-numero")).toContainText(fmtCnpj(cnpj));
+  await expect(page.getByTestId("consulta-cnpj-cep")).toContainText("78250-000");
+  await expect(page.getByTestId("consulta-cnpj-telefones")).toContainText("(65) 3266-1234");
   expect(chamadas).toEqual([cnpj]);
   await janela(page).getByRole("tab", { name: /Divergências/ }).click();
   const div = page.getByTestId("divergencia-legal_name");
@@ -245,6 +249,14 @@ test("UI-3 — Cidade: nome, CEP (1ª opção) e Código IBGE; UF só leitura (l
   await cidade.getByTestId("cidade-ibge").fill("9999999");
   await expect(cidade).toContainText("Código IBGE não encontrado.");
   await expect(cidade.getByTestId("cidade-busca"), "código inexistente não muda o valor").toContainText("Cuiabá - MT");
+  // R1 (W-8): ao SAIR com código inexistente ou parcial, a caixa volta à cidade atual (o texto nunca diz outra cidade)
+  await cidade.getByTestId("cidade-ibge").press("Tab");
+  await expect(cidade.getByTestId("cidade-ibge"), "inexistente: volta à cidade atual ao sair").toHaveValue("5103403");
+  await expect(cidade).not.toContainText("Código IBGE não encontrado.");
+  await cidade.getByTestId("cidade-ibge").fill("51067");
+  await cidade.getByTestId("cidade-ibge").press("Tab");
+  await expect(cidade.getByTestId("cidade-ibge"), "parcial: volta à cidade atual ao sair").toHaveValue("5103403");
+  await expect(cidade.getByTestId("cidade-busca")).toContainText("Cuiabá - MT");
 });
 
 // ───────────────────────────── UI-4 ─────────────────────────────
@@ -253,7 +265,9 @@ test("UI-4 — CEP + Tab preenche Endereço, Bairro, Cidade, IBGE e UF; foco no 
   await mockCep(page);
   await page.goto("/cadastros/people/new");
   await aba(page, "Endereço").click();
-  const cep = page.locator('input[name="zip_code"]');
+  // R1 (W-7): o rótulo "CEP" nomeia a CAIXA (antes apontava para um <span> e o E2E precisava de input[name])
+  const cep = page.getByLabel("CEP", { exact: true });
+  await expect(cep).toHaveAttribute("name", "zip_code");
   await cep.fill("78250000");
   await expect(cep).toHaveValue("78250-000");
   await cep.press("Tab");
@@ -271,15 +285,23 @@ test("UI-4 — CEP + Tab preenche Endereço, Bairro, Cidade, IBGE e UF; foco no 
   await expect(page.getByText("CEP 78245-000 é de Vila Bela da Santíssima Trindade - MT")).toBeVisible();
   await expect(cidade.getByTestId("cidade-ibge")).toHaveValue("5105507");
   await expect(page.locator('input[name="complemento"]')).toHaveValue("até 999");
-  // Outros endereços
+  // Outros endereços (R1, W-8): a MESMA lógica do principal — lupa no CEP da linha e foco no Número da linha
   const grade = page.getByTestId("grade-enderecos");
   await grade.getByRole("button", { name: "Incluir linha" }).click();
   const linha = page.getByTestId("linha-enderecos-1");
-  await linha.getByLabel("CEP").fill("78250000");
-  await linha.getByLabel("CEP").press("Tab");
+  await expect(linha.getByTestId("cep-lupa-linha"), "a linha tem a lupa do CEP").toBeVisible();
+  await linha.getByLabel("CEP", { exact: true }).fill("78250000");
+  await expect(linha.getByLabel("CEP", { exact: true })).toHaveValue("78250-000");
+  await linha.getByLabel("CEP", { exact: true }).press("Tab");
   await expect(linha.getByTestId("cidade-ibge")).toHaveValue("5106752");
-  await expect(linha.locator("input").filter({ hasText: "" }).first()).toBeVisible();
-  await expect.poll(async () => (await linha.locator("input").evaluateAll((xs) => (xs as HTMLInputElement[]).map((x) => x.value))).join("|")).toContain("Avenida Marechal Rondon");
+  // T-4: antes, uma conferência vazia (`filter({ hasText: "" })` acha qualquer input); agora o que o usuário vê
+  await expect(linha.getByLabel("Endereço", { exact: true }), "o logradouro do CEP na PRÓPRIA linha").toHaveValue("Avenida Marechal Rondon");
+  await expect(linha.getByLabel("Bairro", { exact: true })).toHaveValue("Centro");
+  await expect(linha.getByLabel("Número", { exact: true }), "o foco vai para o Número da linha").toBeFocused();
+  // a lupa da linha força a consulta do mesmo CEP (o logradouro corrigido à mão volta ao do CEP)
+  await linha.getByLabel("Endereço", { exact: true }).fill("Corrigido à mão");
+  await linha.getByTestId("cep-lupa-linha").click();
+  await expect(linha.getByLabel("Endereço", { exact: true })).toHaveValue("Avenida Marechal Rondon");
 });
 
 // ───────────────────────────── UI-5 ─────────────────────────────
@@ -289,12 +311,17 @@ test("UI-5 — máscaras CPF, CNPJ, CNPJ alfanumérico, CEP, telefone e celular;
   const doc = page.getByLabel("CPF/CNPJ", { exact: true });
   const cpf = cpfValido();
   await doc.fill(cpf);
+  // R1 (W-4): o tipo só vira Física ao SAIR do campo com 11 dígitos (enquanto digita, pode ser um CNPJ incompleto)
+  await doc.blur();
   await expect(doc).toHaveValue(`${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`);
   await expect(doc).toHaveAttribute("data-mascara", "cpf");
   const cnpj = cnpjNovo();
   await doc.fill(fmtCnpj(cnpj)); // colar com pontuação
   await expect(doc).toHaveValue(fmtCnpj(cnpj));
   await expect(doc).toHaveAttribute("data-mascara", "cnpj");
+  // R1 (W-8): colar com o RÓTULO ("CNPJ: …", "CPF …") tira o rótulo antes de normalizar
+  await doc.fill(`CNPJ: ${fmtCnpj(cnpj)}`);
+  await expect(doc).toHaveValue(fmtCnpj(cnpj));
   const alfa = cnpjDe(`${Date.now().toString(36).toUpperCase().slice(-8).padStart(8, "A")}0001`); // 8 + "0001" = as 12 posições
   await doc.fill(alfa.toLowerCase());
   await expect(doc).toHaveValue(fmtCnpj(alfa));
@@ -305,8 +332,8 @@ test("UI-5 — máscaras CPF, CNPJ, CNPJ alfanumérico, CEP, telefone e celular;
   await page.getByLabel("Nome Social/Fantasia").fill(uniq("UI-5 máscaras"));
   await page.getByTestId("grupo-tipo-do-parceiro").getByLabel("Cliente").check();
   await aba(page, "Endereço").click();
-  await page.locator('input[name="zip_code"]').fill("78250000");
-  await expect(page.locator('input[name="zip_code"]')).toHaveValue("78250-000");
+  await page.getByLabel("CEP", { exact: true }).fill("78250000");
+  await expect(page.getByLabel("CEP", { exact: true })).toHaveValue("78250-000");
   await aba(page, "Contatos").click();
   await page.getByLabel("Telefone", { exact: true }).fill("(65) 3333-4444");
   await expect(page.getByLabel("Telefone", { exact: true })).toHaveValue("(65) 3333-4444");
@@ -323,6 +350,7 @@ test("UI-6 — tipo de pessoa segue o documento; campos de Física/Jurídica; Ju
   await page.goto("/cadastros/people/new");
   const doc = page.getByLabel("CPF/CNPJ", { exact: true });
   await doc.fill(cpfValido());
+  await doc.blur(); // R1 (W-4): Física só ao SAIR do campo com 11 dígitos
   await expect(cabecalho(page, "person_type")).toContainText("Física");
   for (const r of ["RG", "CAEPF", "Sexo", "Nome completo", "Nascimento"]) await expect(page.getByLabel(r, { exact: true }), r).toBeVisible();
   await expect(rotuloDoCampo(page, "Razão social"), "premissa: o localizador acha rótulo de campo").toHaveCount(0);
@@ -342,6 +370,9 @@ test("UI-6 — tipo de pessoa segue o documento; campos de Física/Jurídica; Ju
   await page.goto(`/cadastros/people/${p.id}?view=1`);
   const faixa = page.getByTestId("faixa-tipo-documento");
   await expect(faixa).toBeVisible();
+  // R1 (W-8): Jurídica com CPF aparece COMO CPF (formatado), sem o "CNPJ inválido" falso
+  await expect(page.getByLabel("CPF/CNPJ", { exact: true })).toHaveValue(`${cpf.slice(0, 3)}.${cpf.slice(3, 6)}.${cpf.slice(6, 9)}-${cpf.slice(9)}`);
+  await expect(page.getByTestId("documento-invalido"), "sem recusa falsa de CNPJ").toHaveCount(0);
   await faixa.getByRole("button", { name: "Ajustar para Física" }).click();
   await expect(cabecalho(page, "person_type")).toContainText("Física");
   expect(sql(`select person_type from erp.people where id = '${p.id}'`), "só na tela até o Salvar").toBe("legal");
@@ -438,4 +469,430 @@ test("UI-10 — Parametrizações › Numeração: zerar cadastro vazio → pró
   const naturezas = secao.getByTestId("numeracao-financial_categories");
   await expect(naturezas.getByTestId("numeracao-zerar")).toBeDisabled();
   await expect(naturezas.getByTestId("numeracao-motivo")).toContainText(/Há \d+ registros em Naturezas/);
+});
+
+/* ───────────────────────────────────────────────────────────────────────────────────────────────────
+ * REVISÃO R1 DA #63 — os testes das correções da tela (W-1 a W-8). Mesmo harness: API e banco reais; só
+ * `/api/consultas/*` mockado (aqui com ATRASO controlado, para provar o descarte de resposta velha).
+ * ─────────────────────────────────────────────────────────────────────────────────────────────────── */
+let sequenciaCnpj = 0;
+/** CNPJ válido e DISTINTO a cada chamada (o `cnpjNovo` repete dentro do mesmo milissegundo). */
+const cnpjSeq = () => cnpjDe(`${Date.now().toString().slice(-6)}${String(++sequenciaCnpj % 100).padStart(2, "0")}0001`);
+const fmtCpf = (c: string) => `${c.slice(0, 3)}.${c.slice(3, 6)}.${c.slice(6, 9)}-${c.slice(9)}`;
+/** Mock do CNPJ com atraso por CNPJ e razão social que identifica a resposta ("RAZAO <cnpj>"). */
+async function mockCnpjComAtraso(page: Page) {
+  const atrasos = new Map<string, number>(); const chamadas: string[] = [];
+  await page.route(/\/api\/consultas\/cnpj\//, async (route) => {
+    const cnpj = new URL(route.request().url()).pathname.split("/").pop()!.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+    chamadas.push(cnpj);
+    const ms = atrasos.get(cnpj) ?? 0;
+    if (ms) await new Promise((r) => setTimeout(r, ms));
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ...respostaCnpj(cnpj), razaoSocial: `RAZAO ${cnpj}` }) }).catch(() => undefined);
+  });
+  return { atrasos, chamadas };
+}
+/** Mock do CEP que CONTA as chamadas (W-2: "nenhuma chamada") e aceita atraso por CEP (W-8: grade pela chave). */
+async function mockCepContando(page: Page) {
+  const atrasos = new Map<string, number>(); const chamadas: string[] = [];
+  await page.route(/\/api\/consultas\/cep\//, async (route) => {
+    const cep = new URL(route.request().url()).pathname.split("/").pop()!.replace(/\D/g, "");
+    chamadas.push(cep);
+    const ms = atrasos.get(cep) ?? 0;
+    if (ms) await new Promise((r) => setTimeout(r, ms));
+    const d = CEPS[cep];
+    if (!d) { await route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ error: { code: "NOT_FOUND", message: "CEP não encontrado" } }) }).catch(() => undefined); return; }
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ cep, ...d, fonte: "viacep", consultadoEm: "2026-09-25T10:00:00.000Z" }) }).catch(() => undefined);
+  });
+  return { atrasos, chamadas };
+}
+/** Escolhe uma opção num seletor da ficha (MgSelect: a caixa tem o id do rótulo). */
+async function escolherOpcao(page: Page, rotulo: string, opcao: string) {
+  await page.getByLabel(rotulo, { exact: true }).click();
+  await page.locator("[data-radix-popper-content-wrapper]").last().getByRole("option", { name: opcao, exact: true }).click();
+}
+const editar = async (page: Page) => { const b = page.getByRole("button", { name: "Editar" }); if (await b.count()) await b.first().click(); };
+
+// ───────────────────────────── UI-12 (W-1) ─────────────────────────────
+test("UI-12 (W-1) — Consultar CNPJ: editar a caixa limpa resultado, divergências, erro e Importar; resposta atrasada ou chegada depois de fechar é descartada; Enter não reconsulta durante \"Consultando…\"", async ({ page }) => {
+  await login(page);
+  const { atrasos, chamadas } = await mockCnpjComAtraso(page);
+  const p = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-12 parceiro"), legal_name: "RAZAO ANTIGA", person_type: "legal", is_client: true });
+  await page.goto(`/cadastros/people/${p.id}?view=1`);
+  await expect(ficha(page)).toBeVisible();
+  await page.getByTestId("ficha-consultar-cnpj").click();
+  const caixa = page.getByTestId("consulta-cnpj-campo"); const consultar = page.getByTestId("consulta-cnpj-consultar");
+  const dados = page.getByTestId("consulta-cnpj-dados"); const importar = page.getByTestId("consulta-cnpj-importar");
+  const [a, b, c, d] = [cnpjSeq(), cnpjSeq(), cnpjSeq(), cnpjSeq()];
+  expect(new Set([a, b, c, d]).size, "premissa: quatro CNPJs distintos").toBe(4);
+
+  // (1) consulta A: o resultado mostra o CNPJ de A e oferece Importar
+  await caixa.fill(a); await consultar.click();
+  await expect(dados).toContainText(`RAZAO ${a}`);
+  await expect(page.getByTestId("consulta-cnpj-numero")).toContainText(fmtCnpj(a));
+  await expect(importar).toBeVisible();
+  await expect(janela(page).getByRole("tab", { name: /Divergências/ })).toBeVisible();
+  // (2) editar a caixa para B: resultado, divergências e Importar de A somem (Importar nunca leva os dados de A)
+  await caixa.fill(b);
+  await expect(dados, "o resultado era de OUTRO CNPJ").toHaveCount(0);
+  await expect(importar, "sem resultado do CNPJ da caixa, sem Importar").toHaveCount(0);
+  await expect(janela(page).getByRole("tab", { name: /Divergências/ })).toHaveCount(0);
+  // o erro também é do CNPJ anterior: some ao editar
+  await caixa.fill("11.222.333/0001-80"); await consultar.click();
+  await expect(page.getByTestId("consulta-cnpj-erro")).toHaveText("CNPJ inválido");
+  await caixa.fill(b);
+  await expect(page.getByTestId("consulta-cnpj-erro")).toHaveCount(0);
+
+  // (3) B demora; Enter durante "Consultando…" não dispara outra consulta
+  atrasos.set(b, 2500);
+  await consultar.click();
+  await expect(consultar).toHaveText("Consultando…");
+  await caixa.press("Enter"); await caixa.press("Enter");
+  expect(chamadas.filter((x) => x === b), "uma consulta só de B").toHaveLength(1);
+  // (4) troca para C (rápido) e consulta: vale C; a resposta atrasada de B chega DEPOIS e é descartada
+  await caixa.fill(c); await consultar.click();
+  await expect(dados).toContainText(`RAZAO ${c}`);
+  await page.waitForTimeout(3000);
+  await expect(dados, "a resposta velha de B não substitui a de C").toContainText(`RAZAO ${c}`);
+  await expect(dados).not.toContainText(`RAZAO ${b}`);
+  await expect(page.getByTestId("consulta-cnpj-numero")).toContainText(fmtCnpj(c));
+  expect(chamadas.filter((x) => x === b), "B foi de fato respondida (a premissa do descarte)").toHaveLength(1);
+
+  // (5) resposta que chega DEPOIS de fechar a janela não aparece na janela reaberta
+  atrasos.set(d, 2500);
+  await caixa.fill(d); await consultar.click();
+  await expect(consultar).toHaveText("Consultando…");
+  await page.keyboard.press("Escape");
+  await expect(janela(page)).toHaveCount(0);
+  await page.getByTestId("ficha-consultar-cnpj").click();
+  await expect(janela(page)).toBeVisible();
+  await page.waitForTimeout(3000);
+  await expect(dados, "a resposta de D chegou com a janela fechada: descartada").toHaveCount(0);
+  await expect(importar).toHaveCount(0);
+
+  // (6) Importar leva o resultado do CNPJ DA CAIXA
+  await caixa.fill(c); await consultar.click();
+  await expect(dados).toContainText(`RAZAO ${c}`);
+  await importar.click();
+  await expect(janela(page)).toHaveCount(0);
+  await expect(page.getByLabel("CPF/CNPJ", { exact: true })).toHaveValue(fmtCnpj(c));
+  await expect(page.getByLabel("Razão social", { exact: true })).toHaveValue(`RAZAO ${c}`);
+});
+
+// ───────────────────────────── UI-13 (W-2) ─────────────────────────────
+test("UI-13 (W-2) — CEP só é consultado quando MUDA: Tab por CEP gravado não chama nem sobrescreve; em LEITURA nunca chama; a lupa força (só em edição)", async ({ page }) => {
+  await login(page);
+  const { chamadas } = await mockCepContando(page);
+  const p = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-13 parceiro"), person_type: "legal", is_client: true,
+    zip_code: "78250000", address: "Rua corrigida à mão", district: "Bairro corrigido", city_id: 5106752,
+    enderecos: [{ tipo: "entrega", cep: "78245000", logradouro: "Rua da grade à mão", bairro: "Bairro da grade" }] });
+  const cepPrincipal = page.getByLabel("CEP", { exact: true }).and(page.locator("[name=zip_code]"));
+  const linha = page.getByTestId("linha-enderecos-1");
+  const esperarSemChamada = async (porque: string) => { await page.waitForTimeout(700); expect(chamadas, porque).toEqual([]); };
+
+  // LEITURA: sair de uma célula de CEP (principal ou da grade) nunca chama a API, e não há lupa
+  await page.goto(`/cadastros/people/${p.id}?view=1`);
+  await aba(page, "Endereço").click();
+  await expect(cepPrincipal).toHaveValue("78250-000");
+  await cepPrincipal.focus(); await cepPrincipal.press("Tab");
+  await linha.getByLabel("CEP", { exact: true }).focus(); await linha.getByLabel("CEP", { exact: true }).press("Tab");
+  await esperarSemChamada("em leitura, nenhuma consulta de CEP");
+  await expect(page.getByTestId("cep-lupa"), "sem lupa em leitura").toHaveCount(0);
+  await expect(page.getByTestId("cep-lupa-linha")).toHaveCount(0);
+
+  // EDIÇÃO: Tab pelo CEP gravado (sem mudar) não chama e não sobrescreve o endereço corrigido à mão
+  await editar(page);
+  await aba(page, "Endereço").click();
+  await cepPrincipal.focus(); await cepPrincipal.press("Tab");
+  await linha.getByLabel("CEP", { exact: true }).focus(); await linha.getByLabel("CEP", { exact: true }).press("Tab");
+  await esperarSemChamada("CEP que não mudou não é consultado");
+  await expect(page.locator('input[name="address"]')).toHaveValue("Rua corrigida à mão");
+  await expect(linha.getByLabel("Endereço", { exact: true })).toHaveValue("Rua da grade à mão");
+  // a lupa FORÇA a consulta do mesmo CEP (só em edição)
+  await page.getByTestId("cep-lupa").click();
+  await expect(page.locator('input[name="address"]')).toHaveValue("Avenida Marechal Rondon");
+  expect(chamadas).toEqual(["78250000"]);
+  // CEP que MUDOU: Tab consulta
+  await cepPrincipal.fill("78245-000"); await cepPrincipal.press("Tab");
+  await expect(page.locator('input[name="address"]')).toHaveValue("Rua Principal");
+  expect(chamadas).toEqual(["78250000", "78245000"]);
+  // nada foi gravado pela consulta (só o Salvar grava)
+  expect(sql(`select concat_ws('|', zip_code, address) from erp.people where id = '${p.id}'`)).toBe("78250000|Rua corrigida à mão");
+});
+
+// ───────────────────────────── UI-14 (W-3) ─────────────────────────────
+test("UI-14 (W-3) — trocar o tipo de pessoa pergunta antes de apagar campos preenchidos (lista-os); Cancelar mantém tipo e valores; na janela do CNPJ, junto das Divergências", async ({ page }) => {
+  await login(page);
+  const dialogo = page.getByTestId("confirmar-troca-de-tipo");
+  // (a) pelo SELETOR, num parceiro novo
+  await page.goto("/cadastros/people/new");
+  const doc = page.getByLabel("CPF/CNPJ", { exact: true });
+  await doc.fill(cpfValido()); await doc.blur();
+  await expect(cabecalho(page, "person_type")).toContainText("Física");
+  await page.getByLabel("RG", { exact: true }).fill("1234567");
+  await escolherOpcao(page, "Sexo", "Feminino");
+  await escolherOpcao(page, "Tipo de pessoa", "Jurídica");
+  await expect(dialogo).toHaveText("Ao mudar para Jurídica, serão apagados: RG, Sexo.");
+  await page.getByRole("button", { name: "Cancelar", exact: true }).click();
+  await expect(dialogo).toHaveCount(0);
+  await expect(cabecalho(page, "person_type"), "Cancelar mantém o tipo").toContainText("Física");
+  await expect(page.getByLabel("RG", { exact: true }), "e os valores").toHaveValue("1234567");
+  await escolherOpcao(page, "Tipo de pessoa", "Jurídica");
+  await page.getByRole("button", { name: "Mudar para Jurídica" }).click();
+  await expect(cabecalho(page, "person_type")).toContainText("Jurídica");
+  await expect(page.getByLabel("RG", { exact: true })).toHaveCount(0);
+
+  // (b) pela JANELA do CNPJ (Importar torna o parceiro Jurídica): a lista aparece junto das Divergências
+  await mockCnpj(page);
+  const cpf = cpfValido();
+  const f = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-14 física"), person_type: "natural", document: cpf, is_client: true, rg: "7654321", caepf: "12345678901234", sexo: "M" });
+  await page.goto(`/cadastros/people/${f.id}?view=1`);
+  await expect(ficha(page)).toBeVisible();
+  const cnpj = cnpjSeq();
+  const consultarNaJanela = async () => {
+    await page.getByTestId("ficha-consultar-cnpj").click();
+    await page.getByTestId("consulta-cnpj-campo").fill(cnpj); await page.getByTestId("consulta-cnpj-consultar").click();
+    await expect(page.getByTestId("consulta-cnpj-dados")).toContainText("AGROPECUARIA PONTES LTDA");
+  };
+  await consultarNaJanela();
+  await janela(page).getByRole("tab", { name: /Divergências/ }).click();
+  await expect(page.getByTestId("consulta-cnpj-campos-apagados")).toHaveText("Ao mudar para Jurídica, serão apagados: RG, CAEPF, Sexo.");
+  await page.getByTestId("consulta-cnpj-importar").click();
+  await expect(dialogo).toHaveText("Ao mudar para Jurídica, serão apagados: RG, CAEPF, Sexo.");
+  await page.getByRole("button", { name: "Cancelar", exact: true }).click();
+  await expect(dialogo).toHaveCount(0);
+  await expect(janela(page), "Cancelar não importa").toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(cabecalho(page, "person_type"), "nada mudou na ficha").toContainText("Física");
+  await expect(page.getByLabel("RG", { exact: true })).toHaveValue("7654321");
+  // confirmando: importa, vira Jurídica, e o Salvar grava os três vazios
+  await consultarNaJanela();
+  await page.getByTestId("consulta-cnpj-importar").click();
+  // a confirmação é outra janela (portal), com o mesmo rótulo do Importar
+  await page.locator('[role="dialog"], [role="alertdialog"]').filter({ has: dialogo }).getByRole("button", { name: "Importar para o cadastro" }).click();
+  await expect(janela(page)).toHaveCount(0);
+  await expect(cabecalho(page, "person_type")).toContainText("Jurídica");
+  expect(sql(`select concat_ws('|', person_type, rg, caepf, sexo) from erp.people where id = '${f.id}'`), "nada gravado sem Salvar").toBe("natural|7654321|12345678901234|M");
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(() => sql(`select person_type from erp.people where id = '${f.id}'`)).toBe("legal");
+  expect(sql(`select concat_ws('|', coalesce(rg, 'nulo'), coalesce(caepf, 'nulo'), coalesce(sexo, 'nulo'), document) from erp.people where id = '${f.id}'`)).toBe(`nulo|nulo|nulo|${cnpj}`);
+});
+
+// ───────────────────────────── UI-15 (W-4) ─────────────────────────────
+test("UI-15 (W-4) — digitar um CNPJ tecla a tecla nunca passa por Física (nem máscara de CPF, nem RG); Física só ao SAIR com 11 dígitos", async ({ page }) => {
+  await login(page);
+  await page.goto("/cadastros/people/new");
+  await expect(cabecalho(page, "person_type")).toContainText("Jurídica");
+  // vigia do DOM: qualquer instante em que a tela mostre Física (cabeçalho, rótulo RG ou máscara de CPF) fica registrado
+  await page.evaluate(() => {
+    const w = window as unknown as { __fisica: string[] };
+    w.__fisica = [];
+    const olhar = () => {
+      const c = document.querySelector('[data-testid="cabecalho-person_type"]')?.textContent ?? "";
+      if (/Física/.test(c)) w.__fisica.push(`cabeçalho: ${c}`);
+      if ([...document.querySelectorAll("label")].some((l) => /^RG( \*)?$/.test((l.textContent ?? "").trim()))) w.__fisica.push("rótulo RG");
+      const doc = document.querySelector<HTMLInputElement>('input[data-mascara]');
+      if (doc?.getAttribute("data-mascara") === "cpf") w.__fisica.push(`máscara de CPF em ${doc.value}`);
+    };
+    new MutationObserver(olhar).observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true });
+  });
+  const vistos = () => page.evaluate(() => (window as unknown as { __fisica: string[] }).__fisica);
+  const doc = page.getByLabel("CPF/CNPJ", { exact: true });
+  const cnpj = cnpjSeq();
+  await doc.click();
+  await doc.pressSequentially(cnpj, { delay: 40 });
+  await expect(doc, "a máscara nunca atrapalha continuar digitando até 14").toHaveValue(fmtCnpj(cnpj));
+  expect(await vistos(), "nenhum instante de Física durante a digitação").toEqual([]);
+  await expect(cabecalho(page, "person_type")).toContainText("Jurídica");
+  // 11 dígitos: enquanto o campo tem o foco, continua Jurídica; ao SAIR, Física
+  const cpf = cpfValido();
+  await doc.fill("");
+  await doc.pressSequentially(cpf, { delay: 30 });
+  expect(await vistos(), "11 dígitos ainda digitando: não é Física").toEqual([]);
+  await expect(cabecalho(page, "person_type")).toContainText("Jurídica");
+  await doc.blur();
+  await expect(cabecalho(page, "person_type")).toContainText("Física");
+  await expect(doc).toHaveAttribute("data-mascara", "cpf");
+  await expect(doc).toHaveValue(fmtCpf(cpf));
+});
+
+// ───────────────────────────── UI-16 (W-5) ─────────────────────────────
+test("UI-16 (W-5) — Novo pelo CNPJ leva os dados EM MEMÓRIA: nada da Receita no sessionStorage/localStorage; consumido uma vez", async ({ page }) => {
+  await login(page);
+  await mockCnpj(page);
+  const cnpj = cnpjSeq();
+  await page.goto("/configuracoes?tab=parceiros");
+  await page.getByTestId("parceiros-novo-pelo-cnpj").click();
+  await page.getByTestId("consulta-cnpj-campo").fill(cnpj);
+  await page.getByTestId("consulta-cnpj-consultar").click();
+  await expect(page.getByTestId("consulta-cnpj-dados")).toContainText("AGROPECUARIA PONTES LTDA");
+  await page.getByTestId("consulta-cnpj-importar").click();
+  await expect(page).toHaveURL(/\/cadastros\/people\/new/);
+  await expect(page.getByLabel("Nome Social/Fantasia")).toHaveValue("FAZENDA PONTES");
+  const armazenado = await page.evaluate(() => {
+    const tudo: string[] = [];
+    for (const s of [window.localStorage, window.sessionStorage]) for (let i = 0; i < s.length; i++) { const k = s.key(i)!; tudo.push(`${k}=${s.getItem(k) ?? ""}`); }
+    return tudo.join("\n");
+  });
+  expect(armazenado, "premissa: a leitura do armazenamento funciona (a sessão mora lá)").toContain("agro.session");
+  for (const t of [cnpj, fmtCnpj(cnpj), "AGROPECUARIA", "FAZENDA PONTES", "RODOVIA BR 174", "contato@fazendapontes", "importacaoCnpj"]) {
+    expect(armazenado, `nada da Receita no navegador: ${t}`).not.toContain(t);
+  }
+  // consumido UMA vez: recarregar o parceiro novo não traz os dados de novo
+  await page.reload();
+  await expect(page.getByLabel("CPF/CNPJ", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("Nome Social/Fantasia")).toHaveValue("");
+});
+
+// ───────────────────────────── UI-17 (W-6) ─────────────────────────────
+test("UI-17 (W-6) — telefone nunca corta dígito: \"+55 (65) 99999-8888\" grava 65999998888; o legado com ramal fica como digitado", async ({ page }) => {
+  await login(page);
+  await page.goto("/cadastros/people/new");
+  const nome = uniq("UI-17 telefones");
+  await page.getByLabel("Nome Social/Fantasia").fill(nome);
+  await page.getByTestId("grupo-tipo-do-parceiro").getByLabel("Cliente").check();
+  await aba(page, "Contatos").click();
+  const tel = page.getByLabel("Telefone", { exact: true }); const cel = page.getByLabel("Celular", { exact: true });
+  await tel.fill("+55 (65) 99999-8888");
+  await expect(tel).toHaveValue("(65) 99999-8888");
+  await cel.fill("(65) 3266-1234 r.22");
+  await expect(cel, "passou de 11 dígitos sem o 55: como digitado, sem máscara e sem cortar").toHaveValue("(65) 3266-1234 r.22");
+  await page.getByRole("button", { name: "Salvar" }).click();
+  await expect.poll(() => sql(`select count(*) from erp.people where name = '${nome}' and deleted_at is null`)).toBe("1");
+  expect(sql(`select concat_ws('|', phone, cellphone) from erp.people where name = '${nome}'`)).toBe("65999998888|(65) 3266-1234 r.22");
+});
+
+// ───────────────────────────── UI-18 (W-8) ─────────────────────────────
+const criarParceiro = (page: Page, extra: Record<string, unknown>) => api<{ id: string }>(page, "POST", "/api/resources/people", { is_client: true, person_type: "legal", ...extra });
+/** Salva a ficha e devolve a resposta do PUT (o status sai na mensagem se falhar). */
+async function salvarFicha(page: Page, id: string) {
+  const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `/api/resources/people/${id}`);
+  await page.getByRole("button", { name: "Salvar" }).click();
+  const r = await resposta;
+  expect(r.status(), await r.text()).toBe(200);
+  return r;
+}
+
+test("UI-18a (W-8) — Matriz: a busca só oferece Jurídica ATIVA que não é filial, nunca o próprio registro", async ({ page }) => {
+  await login(page);
+  const prefixo = uniq("UI18M");
+  const matriz = await criarParceiro(page, { name: `${prefixo} jurídica` });
+  await criarParceiro(page, { name: `${prefixo} física`, person_type: "natural" });
+  await criarParceiro(page, { name: `${prefixo} filial`, matriz_id: matriz.id });
+  const inativa = await criarParceiro(page, { name: `${prefixo} inativa` });
+  sql(`update erp.people set is_active = false where id = '${inativa.id}'`);
+  const proprio = await criarParceiro(page, { name: `${prefixo} próprio` });
+  await page.goto(`/cadastros/people/${proprio.id}`);
+  await editar(page);
+  await page.getByLabel("Matriz", { exact: true }).click();
+  const lista = page.locator("[data-radix-popper-content-wrapper]").last();
+  await lista.getByPlaceholder(/Pesquisar/).fill(prefixo);
+  await expect(lista.getByRole("option"), "só a Jurídica ativa sem matriz; nem Física, nem filial, nem inativa, nem ele mesmo").toHaveText([new RegExp(`${prefixo} jurídica`)]);
+  await lista.getByRole("option").first().click();
+  await salvarFicha(page, proprio.id);
+  expect(sql(`select matriz_id from erp.people where id = '${proprio.id}'`)).toBe(matriz.id);
+});
+
+test("UI-18b (W-8) — latitude e longitude esvaziadas na ficha gravam null (antes, o vazio numérico ficava fora do corpo e o valor antigo ficava)", async ({ page }) => {
+  await login(page);
+  const p = await criarParceiro(page, { name: uniq("UI-18b coordenadas"), latitude: "-15.2", longitude: "-59.3" });
+  await page.goto(`/cadastros/people/${p.id}`);
+  await editar(page);
+  await aba(page, "Endereço").click();
+  await expect(page.getByLabel("Latitude", { exact: true }), "premissa: o valor gravado aparece").toHaveValue(/^-15[.,]2/);
+  await page.getByLabel("Latitude", { exact: true }).fill("");
+  await page.getByLabel("Longitude", { exact: true }).fill("");
+  const r = await salvarFicha(page, p.id);
+  const enviado = r.request().postDataJSON() as Record<string, unknown>;
+  expect([enviado["latitude"], enviado["longitude"]], "o par vai null no corpo").toEqual([null, null]);
+  expect(sql(`select concat_ws('|', coalesce(latitude::text, 'nulo'), coalesce(longitude::text, 'nulo')) from erp.people where id = '${p.id}'`)).toBe("nulo|nulo");
+});
+
+test("UI-18c (W-8) — grade de endereços: o preenchimento pelo CEP grava pela CHAVE da linha — excluir a linha durante a consulta não escreve na vizinha", async ({ page }) => {
+  await login(page);
+  const { atrasos, chamadas } = await mockCepContando(page);
+  atrasos.set("78250000", 1500);
+  const p = await criarParceiro(page, { name: uniq("UI-18c grade") });
+  await page.goto(`/cadastros/people/${p.id}`);
+  await editar(page);
+  await aba(page, "Endereço").click();
+  const grade = page.getByTestId("grade-enderecos");
+  await grade.getByRole("button", { name: "Incluir linha" }).click();
+  await grade.getByRole("button", { name: "Incluir linha" }).click();
+  await page.getByTestId("linha-enderecos-2").getByLabel("Endereço", { exact: true }).fill("Linha que fica");
+  const primeira = page.getByTestId("linha-enderecos-1");
+  await primeira.getByLabel("CEP", { exact: true }).fill("78250000");
+  await primeira.getByLabel("CEP", { exact: true }).press("Tab");
+  await expect.poll(() => chamadas.length, { message: "premissa: a consulta da 1ª linha saiu" }).toBe(1);
+  await grade.getByRole("button", { name: "Remover linha 1" }).click();
+  await expect(page.getByTestId("linha-enderecos-2")).toHaveCount(0);
+  await page.waitForTimeout(2200); // a resposta atrasada chega aqui
+  await expect(page.getByTestId("linha-enderecos-1").getByLabel("Endereço", { exact: true }), "a resposta da linha excluída não caiu na vizinha").toHaveValue("Linha que fica");
+  await expect(page.getByTestId("linha-enderecos-1").getByLabel("Bairro", { exact: true })).toHaveValue("");
+});
+
+test("UI-18d (W-8) — Filiais do fornecedor com máscara de CPF/CNPJ e de CEP; grava normalizado", async ({ page }) => {
+  await login(page);
+  const p = await criarParceiro(page, { name: uniq("UI-18d fornecedor"), is_provider: true });
+  await page.goto(`/cadastros/people/${p.id}`);
+  await editar(page);
+  await aba(page, "Fornecedor").click();
+  const filiais = page.getByTestId("grade-filiais");
+  await filiais.getByRole("button", { name: "Incluir linha" }).click();
+  const filial = page.getByTestId("linha-filiais-1");
+  const cnpj = cnpjSeq();
+  await filial.getByLabel("Nome", { exact: true }).fill("Filial UI-18d");
+  await filial.getByLabel("CPF/CNPJ", { exact: true }).fill(cnpj);
+  await expect(filial.getByLabel("CPF/CNPJ", { exact: true })).toHaveValue(fmtCnpj(cnpj));
+  const cpf = cpfValido();
+  await filial.getByLabel("CPF/CNPJ", { exact: true }).fill(cpf);
+  await expect(filial.getByLabel("CPF/CNPJ", { exact: true }), "até 11 posições, CPF").toHaveValue(fmtCpf(cpf));
+  await filial.getByLabel("CPF/CNPJ", { exact: true }).fill(cnpj);
+  await filial.getByLabel("CEP", { exact: true }).fill("78250000");
+  await expect(filial.getByLabel("CEP", { exact: true })).toHaveValue("78250-000");
+  await salvarFicha(page, p.id);
+  expect(sql(`select concat_ws('|', document, zip_code) from erp.provider_branches where person_id = '${p.id}'`), "a filial grava normalizado").toBe(`${cnpj}|78250000`);
+});
+
+// ───────────────────────────── UI-19 (W-8) ─────────────────────────────
+test("UI-19 (W-8) — árvore com código gerado: o Superior de um registro gravado fica travado no formulário, com a ajuda do Mover; no Novo continua escolhível", async ({ page }) => {
+  await login(page);
+  const receitas = await api<{ items: { id: string; code: string }[] }>(page, "GET", "/api/resources/financial_categories?code=1.01&pageSize=5");
+  const reg = receitas.items.find((x) => x.code === "1.01")!;
+  expect(reg, "premissa: 1.01 do seed").toBeTruthy();
+  const rotulo = page.locator("label", { hasText: /^Natureza superior/ });
+  const caixa = rotulo.locator("..").getByRole("combobox");
+  await page.goto(`/cadastros/financial_categories/${reg.id}`);
+  await editar(page);
+  await expect(page.getByRole("button", { name: "Salvar" }), "premissa: em edição").toBeVisible();
+  await expect(rotulo, "a ajuda diz o caminho").toHaveAttribute("title", "Para mudar o superior, use Mover (tela de árvore).");
+  await expect(caixa, "o Superior não se muda pela edição comum").toBeDisabled();
+  await expect(page.getByLabel("Descrição *", { exact: true }), "premissa: os outros campos continuam editáveis").toBeEditable();
+  // no Novo o Superior continua escolhível (é dele que sai o código)
+  await page.goto("/cadastros/financial_categories/new");
+  await expect(caixa).toBeEnabled();
+  await expect(rotulo).not.toHaveAttribute("title", "Para mudar o superior, use Mover (tela de árvore).");
+});
+
+// ───────────────────────────── UI-20 (W-8) ─────────────────────────────
+test("UI-20 (W-8) — \"Ajustar para…\" só com people.edit: quem só vê o parceiro vê a faixa, mas não o botão", async ({ page }) => {
+  // um perfil SÓ de leitura de Parceiros, montado no banco do e2e (o seed não tem): mesma senha do operador do seed
+  const org = sql("select o.id from erp.organizations o join erp.organization_members m on m.organization_id=o.id join erp.users u on u.id=m.user_id where u.email='admin@demo.local' limit 1");
+  const email = "leitor-parceiros-r1@demo.local";
+  const papel = sql(`with x as (insert into erp.roles(organization_id,name,description) values ('${org}','R1 Leitor de Parceiros','só people.view') on conflict (organization_id,name) do update set description=excluded.description returning id) select id from x`);
+  sql(`insert into erp.role_permissions(role_id,permission_key) select '${papel}', key from erp.permissions where key = 'people.view' on conflict do nothing`);
+  const usuario = sql(`with x as (insert into erp.users(email,name,password_hash) select '${email}','Leitor R1', password_hash from erp.users where email='operador@demo.local' on conflict (email) do update set name=excluded.name returning id) select id from x`);
+  sql(`insert into erp.organization_members(organization_id,user_id,role_id,is_owner) values ('${org}','${usuario}','${papel}',false) on conflict do nothing`);
+  expect(sql(`select string_agg(permission_key, ',') from erp.role_permissions where role_id='${papel}'`), "premissa: o perfil só vê Parceiros").toBe("people.view");
+  // o caso da produção: Jurídica com CPF (dado legado) — a faixa aparece para quem vê
+  await login(page);
+  const cpf = cpfValido();
+  const p = await api<{ id: string }>(page, "POST", "/api/resources/people", { name: uniq("UI-20 legado"), person_type: "natural", document: cpf, is_client: true });
+  sql(`update erp.people set person_type = 'legal' where id = '${p.id}'`);
+  await page.goto(`/cadastros/people/${p.id}?view=1`);
+  await expect(page.getByTestId("faixa-tipo-documento").getByRole("button", { name: "Ajustar para Física" }), "premissa: com a edição, o botão existe").toBeVisible();
+  await logout(page);
+  await login(page, { email, password: "Demo@12345" });
+  await page.goto(`/cadastros/people/${p.id}?view=1`);
+  await expect(page.getByTestId("faixa-tipo-documento"), "quem vê o parceiro vê a faixa").toBeVisible();
+  await expect(page.getByTestId("faixa-tipo-documento").getByRole("button", { name: /Ajustar para/ }), "mas não ajusta sem people.edit").toHaveCount(0);
 });
