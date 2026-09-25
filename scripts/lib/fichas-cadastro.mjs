@@ -25,10 +25,18 @@
  *
  * Nos dois mundos o gate COBRA alguma coisa do binário real. Não existe ramo que apenas passe.
  *
+ * AJUSTES 01 (0030, decisão 257). A PR que trouxe a 0030 mudou também o CONTRATO — a máscara de uma árvore com
+ * registros passou a ser recusada (D-4) e o Parceiro ganhou os campos da 0030, que a web só mostra e envia com a
+ * capacidade `consultaCnpjJanela`. Os casos do sentido 1 que falavam disso (CE-K4, AJ-K3) foram escritos quando a
+ * base ERA ANTERIOR a ela, e afirmariam para sempre o mundo legado depois do merge. A fatia entra nesta MESMA lista,
+ * com DUAS assinaturas que entraram juntas: a migration e a CAPACIDADE declarada em `/auth/context`
+ * (`ARQUIVO_CAPACIDADES`). As duas têm de concordar na base; uma sem a outra é estado que ninguém publicou: REPROVA.
+ *
  * FALHA FECHADO, E O ESTADO AMBÍGUO REPROVA. Presente ou ausente são respostas. Mas se a assinatura não existe
  * neste HEAD, ou se o NÚMERO da migration existe na base com OUTRO nome, o detector deixou de identificar o que
  * promete (arquivo renomeado, numeração reaproveitada) — escolher um ramo aí é decidir às cegas: REPROVA. Base
- * sem nenhuma migration também reprova: é leitura quebrada, não uma base "anterior a tudo".
+ * sem nenhuma migration também reprova: é leitura quebrada, não uma base "anterior a tudo". Fatia com capacidade:
+ * a capacidade tem de existir UMA vez neste HEAD, no máximo uma vez na base, e na base junto com a migration.
  */
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
@@ -46,7 +54,20 @@ export const FATIAS = Object.freeze({
   fichaParceiro: Object.freeze({ migration: "0027_parceiros_ficha_em_abas.sql", oQue: "ficha do Parceiro com grades e perfis" }),
   rhFuncionarios: Object.freeze({ migration: "0028_rh_funcionarios.sql", oQue: "RH: Funcionários e o novo pelo CPF" }),
   fichaProduto: Object.freeze({ migration: "0029_produtos_ficha_em_abas.sql", oQue: "ficha do Produto: controle de lote, colunas e unidades" }),
+  cadastrosAjustes01: Object.freeze({ migration: "0030_cadastros_ajustes_01.sql", capacidade: "consultaCnpjJanela", oQue: "AJUSTES 01: campos do Parceiro (0030) e janela Consultar CNPJ; máscara travada com registros (D-4)" }),
 });
+
+/**
+ * Onde a API declara as capacidades (`GET /auth/context` → `capacidades`), relativo à raiz. A assinatura de uma
+ * capacidade é a chave `<nome>:` no objeto — a mesma leitura do caso AJ-K2 do sentido 1.
+ */
+export const ARQUIVO_CAPACIDADES = "apps/api/src/routes/auth.ts";
+
+/** Quantas vezes a capacidade é declarada numa fonte de `ARQUIVO_CAPACIDADES` (`<nome>:`). */
+export function declaracoesDaCapacidade(fonte, nome) {
+  if (typeof fonte !== "string") return null;
+  return fonte.split(`${nome}:`).length - 1;
+}
 
 /** Onde a decisão é gravada. `skew-fichas-cadastro.mjs` escreve; os dois specs de skew leem e RECALCULAM. */
 export const ARQUIVO_DECISAO = ".skew-fichas-cadastro.json";
@@ -84,20 +105,22 @@ export function valorDaVariavel(fatias) {
 }
 
 /**
- * A decisão, pura: recebe as listas já lidas — a da BASE e a deste HEAD —, e é testável sem git nem disco.
- * `motivo` é para o log do CI: um job que decide sozinho tem de dizer em voz alta o que decidiu.
+ * A decisão, pura: recebe as listas já lidas — a da BASE e a deste HEAD — e, para as fatias com capacidade, a fonte
+ * de `ARQUIVO_CAPACIDADES` nos dois commits; é testável sem git nem disco. Fonte ausente com fatia que a exige
+ * REPROVA (não se decide só pela metade da assinatura). `motivo` é para o log do CI: um job que decide sozinho tem
+ * de dizer em voz alta o que decidiu.
  *
- * @param {{ daBase: string[], doHead: string[] }} entrada
+ * @param {{ daBase: string[], doHead: string[], capacidadesDaBase?: string | null, capacidadesDoHead?: string | null }} entrada
  * @returns {{ fatias: Record<string, boolean>, motivo: string }}
  */
-export function decidir({ daBase, doHead }) {
+export function decidir({ daBase, doHead, capacidadesDaBase, capacidadesDoHead }) {
   if (!Array.isArray(daBase) || daBase.length === 0) {
     throw new Error(`a base não tem nenhuma migration em ${DIR_MIGRATIONS}: isso é leitura quebrada, não uma base anterior `
       + "a tudo. Sem a lista não dá para medir, e supor um dos dois mundos certificaria um cenário que pode não ser o desta execução.");
   }
   const fatias = {};
   const linhas = [];
-  for (const [chave, { migration }] of Object.entries(FATIAS)) {
+  for (const [chave, { migration, capacidade }] of Object.entries(FATIAS)) {
     if (!doHead.includes(migration)) {
       throw new Error(`a assinatura ${migration} (${chave}) não existe neste HEAD: o detector deixou de identificar o que promete `
         + "(migration renomeada ou movida). Escolher um ramo aqui seria decidir às cegas, então o gate REPROVA.");
@@ -108,6 +131,25 @@ export function decidir({ daBase, doHead }) {
     if (mesmoNumero.length > (presente ? 1 : 0)) {
       throw new Error(`a base tem ${mesmoNumero.join(", ")} com o número de ${migration} (${chave}): a numeração foi reaproveitada ou o `
         + "arquivo foi renomeado, e a presença do nome deixou de responder à pergunta. O gate REPROVA e alguém revisa a assinatura.");
+    }
+    if (capacidade) {
+      const noHead = declaracoesDaCapacidade(capacidadesDoHead, capacidade);
+      const naBase = declaracoesDaCapacidade(capacidadesDaBase, capacidade);
+      if (noHead === null || naBase === null) {
+        throw new Error(`a fatia ${chave} se mede também pela capacidade ${capacidade} (${ARQUIVO_CAPACIDADES}), e a fonte `
+          + `${noHead === null ? "deste HEAD" : "da base"} não foi lida. Decidir só pela migration seria decidir pela metade da assinatura: REPROVA.`);
+      }
+      if (noHead !== 1) {
+        throw new Error(`a capacidade ${capacidade} (${chave}) aparece ${noHead} vez(es) em ${ARQUIVO_CAPACIDADES} deste HEAD, e não 1: o detector `
+          + "deixou de identificar o que promete (capacidade renomeada ou duplicada). O gate REPROVA.");
+      }
+      if (naBase > 1) {
+        throw new Error(`a capacidade ${capacidade} (${chave}) aparece ${naBase} vezes em ${ARQUIVO_CAPACIDADES} da base: contagem ambígua não decide ramo nenhum.`);
+      }
+      if ((naBase === 1) !== presente) {
+        throw new Error(`a base ${presente ? "tem" : "NÃO tem"} ${migration} mas ${naBase === 1 ? "declara" : "NÃO declara"} ${capacidade} (${chave}): `
+          + "as duas assinaturas entraram juntas, e uma sem a outra é um estado que ninguém publicou. O gate REPROVA e alguém revisa a assinatura.");
+      }
     }
     fatias[chave] = presente;
     linhas.push(`${chave}=${presente ? "ATUAL" : "LEGADO"}`);
