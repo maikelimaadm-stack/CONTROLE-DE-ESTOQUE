@@ -497,7 +497,8 @@ describe("leitura — colunas de texto e zeros à esquerda", () => {
       if (TIPOS_TEXTO.includes(f.type)) { expect(fmt, rotulo).toBe("@"); comTexto += 1; } else { expect(fmt, rotulo).not.toBe("@"); semTexto += 1; }
     }
     for (const t of ["CPF/CNPJ", "CEP", "Agência", "Conta", "Telefone", "Número", "Nome Social/Fantasia *"]) expect(ws.getColumn(col(wb, t)).numFmt, t).toBe("@");
-    for (const t of ["Fornecedor", "Ativo", "Tipo de pessoa", "Tipo chave Pix", "Município"]) expect(ws.getColumn(col(wb, t)).numFmt, t).not.toBe("@");
+    // AJUSTES 01 (C-4): rótulos novos da ficha — "Tipo de chave Pix" e "Cidade" (antes "Tipo chave Pix" e "Município")
+    for (const t of ["Fornecedor", "Ativo", "Tipo de pessoa", "Tipo de chave Pix", "Cidade"]) expect(ws.getColumn(col(wb, t)).numFmt, t).not.toBe("@");
     expect(comTexto).toBeGreaterThanOrEqual(10); expect(semTexto).toBeGreaterThanOrEqual(8);
     // produto: referência é texto; quantidade e dinheiro não
     const wp = await modelo("products"); const dp = wp.getWorksheet("Dados")!;
