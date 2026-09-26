@@ -996,6 +996,8 @@ Declarado sem rodeio, e verificável no código:
   operação — só EXIGÊNCIAS. Um UUID dentro de um JSON imutável não é validado por chave estrangeira,
   pode ser de outro tenant e pode ser excluído depois, deixando uma versão que nunca poderá ser
   corrigida porque versão não se edita. Isso fica como dívida declarada, com arquitetura própria.
+- **a condição de pagamento (VENDAS-A4, decisão 258) também NÃO entra na configuração da TOP** — pelo mesmo
+  motivo: seria referência concreta (UUID) no JSON da versão. "Exigir condição" por TOP virá pelo perfil de campos (A3).
 
 Ligar os efeitos é fatia posterior, **com contrato de cutover próprio** — o cutover entre "o código
 decide" e "a configuração decide" é a parte difícil, e não se resolve de passagem.

@@ -30,6 +30,7 @@ supabase/.temp
 .skew-capacidade-top.json
 .skew-execucao-top.json
 .skew-classificacao-financeira.json
+.skew-condicao-pagamento.json
 .skew-previa-confirmacao.json
 .skew-fichas-cadastro.json
 

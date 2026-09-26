@@ -100,6 +100,7 @@ export function proximoCodigoHierarquico(codigoPai: string | null, codigosExiste
 export const CADASTROS_COM_NUMERACAO = [
   "chart_accounts", "financial_categories", "cost_centers", "product_groups",
   "people", "products", "bank_accounts", "areas", "feedlot_yards", "feedlot_sectors", "feedlot_corrals",
+  "condicoes_pagamento",
 ] as const;
 export type CadastroComNumeracao = (typeof CADASTROS_COM_NUMERACAO)[number];
 export function ehCadastroComNumeracao(chave: string): chave is CadastroComNumeracao {
