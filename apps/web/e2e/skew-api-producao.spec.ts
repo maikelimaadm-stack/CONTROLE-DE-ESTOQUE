@@ -1691,7 +1691,8 @@ test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva cont
   };
   const grade = page.getByTestId("grade-enderecos");
   const linha = page.getByTestId("linha-enderecos-1");
-  const coluna = (rotulo: string) => grade.locator("th").filter({ hasText: new RegExp(`^${rotulo}$`) });
+  // AJUSTES 02 (2.4): "Outros endereços" virou CARTÕES (sem <th>); cada parte do cartão é uma caixa com o rótulo do bloco
+  const noCartao = (rotulo: string) => grade.getByTestId("linha-enderecos-1").getByLabel(rotulo, { exact: true });
   const abrirFisica = async () => {
     await page.goto(`/cadastros/people/${fisica}`);
     await expect(ficha).toBeVisible();
@@ -1718,10 +1719,10 @@ test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva cont
     // a grade "Outros endereços" (da #62): a linha gravada aparece, SEM as colunas Latitude e Longitude (da 0030)
     await aba("Endereço").click();
     await expect(linha.getByLabel("Endereço", { exact: true }), "premissa: a linha gravada aparece na grade").toHaveValue("Rua AJ-K3");
-    await expect(coluna("IE"), "premissa: o localizador acha o cabeçalho de coluna da grade").toHaveCount(1);
+    await expect(noCartao("IE da propriedade"), "premissa: o localizador acha a caixa do cartão pelo rótulo").toHaveCount(1);
     for (const rotulo of ["Latitude", "Longitude"]) {
       await expect(linha.getByLabel(rotulo, { exact: true }), `${rotulo} não aparece na linha da grade contra a base`).toHaveCount(0);
-      await expect(coluna(rotulo), `nem a coluna ${rotulo}`).toHaveCount(0);
+      await expect(noCartao(rotulo), `nem a caixa ${rotulo} no cartão`).toHaveCount(0);
     }
     await aba("Identificação").click();
     await page.getByLabel("Nome Social/Fantasia").fill(uniq("AJ-K3 renomeado"));
@@ -1760,7 +1761,7 @@ test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva cont
     await principal("Longitude").fill(valores.longitude);
     // a linha da grade "Outros endereços": Latitude e Longitude (0030) aparecem e se preenchem
     await expect(linha.getByLabel("Endereço", { exact: true }), "premissa: a linha gravada aparece na grade").toHaveValue("Rua AJ-K3");
-    for (const rotulo of ["Latitude", "Longitude"]) await expect(coluna(rotulo), `a coluna ${rotulo} aparece na grade`).toHaveCount(1);
+    for (const rotulo of ["Latitude", "Longitude"]) await expect(noCartao(rotulo), `a caixa ${rotulo} aparece no cartão`).toHaveCount(1);
     await linha.getByLabel("Latitude", { exact: true }).fill(linhaGrade.latitude);
     await linha.getByLabel("Longitude", { exact: true }).fill(linhaGrade.longitude);
     await aba("Contatos").click();
