@@ -75,6 +75,11 @@ describe("LB-D1 padrão registro: aceito em cada campo de referência e na colun
     expect(topo.filter((c) => c.tipo === "referencia").every((c) => Boolean(c.referencia?.recurso))).toBe(true);
     expect(catalogoDaFamilia(F).filter((c) => c.parte === "itens" && !COLUNAS_COM_PADRAO_REGISTRO.includes(c.chave)).map((c) => [c.chave, c.rotulo])).toEqual(OUTRAS_COLUNAS);
     expect(COLUNAS_COM_PADRAO_REGISTRO).toEqual(["warehouse_id"]);
+    // Nos itens há DUAS guardas (lista de colunas e `referencia` do catálogo), cada uma cobrindo a outra: Produto é
+    // "referencia" sem cadastro declarado. Se o catálogo passar a declarar cadastro em outra coluna, este teste cai.
+    const itens = catalogoDaFamilia(F).filter((c) => c.parte === "itens");
+    expect(itens.filter((c) => c.referencia).map((c) => c.chave)).toEqual(["warehouse_id"]);
+    expect(itens.filter((c) => c.tipo === "referencia").map((c) => [c.chave, Boolean(c.referencia)])).toEqual([["product_id", false], ["warehouse_id", true]]);
   });
 
   it.each(REFERENCIAS_DO_TOPO)("%s aceita registro com UUID", (campo) => {
