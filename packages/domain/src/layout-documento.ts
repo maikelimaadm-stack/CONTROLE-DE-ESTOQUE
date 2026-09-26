@@ -8,9 +8,14 @@
  * registro (nenhum UUID): o valor padrão é literal ou variável.
  */
 
-export const FAMILIAS_COM_LAYOUT = ["vendas.orcamento", "vendas.pedido", "vendas.venda"] as const;
-export type FamiliaComLayout = (typeof FAMILIAS_COM_LAYOUT)[number];
-export function familiaTemLayout(f: string): f is FamiliaComLayout { return (FAMILIAS_COM_LAYOUT as readonly string[]).includes(f); }
+import { TIPOS_OPERACAO } from "./tipo-operacao.js";
+
+/** As famílias da Central de Vendas, LIDAS do registry (dono único da lista): as variantes de `erp.sales_documents`. */
+export const FAMILIAS_COM_LAYOUT: readonly string[] = Object.freeze(
+  TIPOS_OPERACAO.filter((t) => t.origem.tabela === "erp.sales_documents").map((t) => t.codigo)
+);
+export type FamiliaComLayout = string;
+export function familiaTemLayout(f: string): f is FamiliaComLayout { return FAMILIAS_COM_LAYOUT.includes(f); }
 
 export type ParteDoLayout = "cabecalho" | "rodape" | "itens";
 export type TipoDoCampoLayout = "referencia" | "empresa" | "data" | "texto" | "texto_longo" | "numero" | "booleano" | "plano";
