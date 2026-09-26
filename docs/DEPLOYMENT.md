@@ -1343,6 +1343,29 @@ produção nunca é apagado — decisão 247).
 aparece com 3 parcelas e 1º vencimento em 30 dias. 3. Salvar e abrir: "Condição de pagamento: <código> · 30/60/90".
 4. Só numa venda de verdade: ao confirmar, as parcelas do financeiro batem com o plano.
 
+## VENDAS-A3-1 — layout do documento por TOP (0032)
+
+Decisão 259. **Uma migration: `0032_layout_documento.sql`** (pre-deploy; trava (2026,66), `lock_timeout` 2 s,
+pré/pós-condições nomeadas, não destrutiva): tabelas novas `erp.layouts_documento` e `erp.layout_documento_tops`,
+**VAZIAS**. Nenhuma linha existente muda. Nenhuma variável nova. **Sem layout cadastrado, tudo é como hoje** (vale o
+layout do sistema = a Central atual, e nada novo é cobrado ao salvar).
+
+**Ordem: banco (0032) → API → web.** Janela:
+1. **API anterior × banco novo:** tabelas novas inertes.
+2. **web ANTERIOR × API nova:** a web anterior não conhece o layout; sem layout cadastrado nada muda. Com layout
+   cadastrado, o servidor cobra os obrigatórios dele ao salvar (a recusa vem no campo, 422 `LAYOUT_CAMPO_OBRIGATORIO`)
+   — por isso cadastrar layouts só depois de a web nova estar no ar.
+3. **web NOVA × API anterior:** sem `capacidades.layoutDocumento`, a Central é a de hoje, idêntica; a aba Layouts de
+   documento mostra erro legível (a rota não existe na API anterior).
+
+**Reversão:** API e web voltam por redeploy; as tabelas ficam, inertes para o binário anterior (decisão 247).
+
+**Roteiro do Maike (depois do deploy):** 1. Configurações › Operações › Layouts de documento › Novo (Venda) a partir do
+sistema: tirar "ICMS frete", renomear "Transportadora" para "Transp." e marcar obrigatória, pôr "Data de saída" com
+padrão "data de hoje" e não editável; ligar à TOP de venda. 2. Central com essa TOP: "ICMS frete" some, "Transp." com
+"*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
+vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)

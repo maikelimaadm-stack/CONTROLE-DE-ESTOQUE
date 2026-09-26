@@ -996,6 +996,9 @@ Declarado sem rodeio, e verificável no código:
   operação — só EXIGÊNCIAS. Um UUID dentro de um JSON imutável não é validado por chave estrangeira,
   pode ser de outro tenant e pode ser excluído depois, deixando uma versão que nunca poderá ser
   corrigida porque versão não se edita. Isso fica como dívida declarada, com arquitetura própria.
+- **o layout do documento (VENDAS-A3-1, decisão 259) também NÃO entra na configuração da TOP**: a ligação TOP →
+  layout é RELACIONAL (`erp.layout_documento_tops`) e NÃO muda a versão da TOP — trocar o layout de uma TOP não cria
+  versão, porque o layout só governa a digitação; os efeitos do documento continuam os da versão que ele guarda.
 - **a condição de pagamento (VENDAS-A4, decisão 258) também NÃO entra na configuração da TOP** — pelo mesmo
   motivo: seria referência concreta (UUID) no JSON da versão. "Exigir condição" por TOP virá pelo perfil de campos (A3).
 
