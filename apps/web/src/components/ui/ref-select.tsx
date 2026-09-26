@@ -204,6 +204,14 @@ const porCodigo = (codigo: string) => api<ItemReferencia>(`/api/referencias/muni
  * Falha da lista segue o B-1 ("Não foi possível carregar a lista." + [Tentar de novo]); texto nunca vira valor.
  */
 export function CampoCidade({ value, onChange, disabled, className, classeEntrada, id, municipioInicial }: {
+  /* CONTRATO AJUSTES 02 (2.1/2.2): três partes — Cidade (busca: nome, código IBGE ou CEP) · Código IBGE (SÓ LEITURA,
+     sempre visível) · UF (só leitura), cada uma desenhada por `envolver` (um B1Field por parte no formulário).
+     testids: cidade-busca, cidade-ibge, cidade-uf, cidade-pelo-cep (marca "pelo CEP" quando `travadaPeloCep`).
+     `travadaPeloCep`: com CEP preenchido e encontrado, a busca fica travada com a marca "pelo CEP".
+     `aoDigitarCep(cep)`: CEP (8 dígitos) digitado na busca vai para o campo CEP de quem chama (fluxo completo). */
+  travadaPeloCep?: boolean;
+  aoDigitarCep?: (cep: string) => void;
+  envolver?: import("./campo-referencia-oficial").EnvolverParte;
   value: number | string | null | undefined;
   onChange: (codigo: number | null, municipio: Municipio | null) => void;
   disabled?: boolean; className?: string;

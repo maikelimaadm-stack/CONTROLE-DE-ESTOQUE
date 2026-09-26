@@ -508,19 +508,22 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     ],
     detalhes: [
       { key: "enderecos", label: "Outros endereços", table: "parceiro_enderecos", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
+        // ordem e rótulos = BLOCO_ENDERECO (blocos-parceiro.ts, AJUSTES 02): topo Tipo · Descrição; corpo igual ao principal; fim IE · Ativo
         S("tipo", "Tipo", [["entrega", "Entrega"], ["cobranca", "Cobrança"], ["propriedade", "Propriedade"], ["outro", "Outro"]], { required: true }), T("descricao", "Descrição"),
         T("cep", "CEP", { maxLength: 8 }), T("logradouro", "Endereço"), T("numero", "Número"), T("complemento", "Complemento"), T("bairro", "Bairro"), { name: "city_id", label: "Cidade", type: "integer", busca: "municipios" },
-        T("inscricao_estadual", "IE", { help: "Dígitos ou ISENTO" }), { name: "latitude", label: "Latitude", type: "number", exigeCapacidade: CAP_AJ01, min: -90, max: 90 }, { name: "longitude", label: "Longitude", type: "number", exigeCapacidade: CAP_AJ01, min: -180, max: 180 }, active("is_active")
+        { name: "latitude", label: "Latitude", type: "number", exigeCapacidade: CAP_AJ01, min: -90, max: 90 }, { name: "longitude", label: "Longitude", type: "number", exigeCapacidade: CAP_AJ01, min: -180, max: 180 },
+        T("inscricao_estadual", "IE da propriedade", { help: "Dígitos ou ISENTO" }), active("is_active")
       ] },
       { key: "contatos", label: "Contatos adicionais", table: "parceiro_contatos", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 100, fields: [
         T("nome", "Nome", { required: true }), T("funcao", "Função"), T("telefone", "Telefone"), T("celular", "Celular"), { name: "email", label: "E-mail", type: "email" }, B("recebe_nfe_email", "Recebe NF-e por e-mail")
       ] },
       { key: "contas", label: "Contas adicionais", table: "parceiro_contas", chavePai: "person_id", organizacao: true, softDelete: true, maxLinhas: 50, fields: [
-        T("bank_code", "Banco", { busca: "bancos" }), T("agencia", "Agência"), T("conta", "Conta"), S("tipo", "Tipo", [["checking", "Corrente"], ["savings", "Poupança"]]), T("titular", "Titular"),
-        S("pix_tipo", "Tipo chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]]), T("pix_chave", "Chave Pix")
+        // ordem e rótulos = BLOCO_CONTA (AJUSTES 02): topo Titular; corpo igual ao principal
+        T("titular", "Titular"), T("bank_code", "Banco", { busca: "bancos" }), S("tipo", "Tipo de conta", [["checking", "Corrente"], ["savings", "Poupança"]]), T("agencia", "Agência"), T("conta", "Conta"),
+        S("pix_tipo", "Tipo de chave Pix", [["document", "CPF/CNPJ"], ["phone", "Telefone"], ["email", "E-mail"], ["random", "Aleatória"]]), T("pix_chave", "Chave Pix")
       ] },
       { key: "filiais", label: "Filiais do fornecedor", table: "provider_branches", chavePai: "person_id", maxLinhas: 100, fields: [
-        T("name", "Nome"), T("document", "CPF/CNPJ"), T("state_registration", "IE"), T("zip_code", "CEP"), T("address", "Endereço"), { name: "city_id", label: "Município", type: "integer", busca: "municipios" }
+        T("name", "Nome"), T("document", "CPF/CNPJ"), T("state_registration", "IE"), T("zip_code", "CEP"), T("address", "Endereço"), { name: "city_id", label: "Cidade", type: "integer", busca: "municipios" }
       ] },
       { key: "vendedores", label: "Vendedores do fornecedor", table: "provider_sellers", chavePai: "person_id", maxLinhas: 100, fields: [
         T("name", "Nome", { required: true }), { name: "email", label: "E-mail", type: "email" }, T("phone", "Telefone")
