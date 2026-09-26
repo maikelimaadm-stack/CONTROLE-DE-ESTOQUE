@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { FAMILIAS_COM_LAYOUT, LAYOUT_DO_SISTEMA, validarEstruturaLayout, type EstruturaLayout } from "@agro/domain";
+import { FAMILIAS_COM_LAYOUT, LAYOUT_DO_SISTEMA, familiaTemLayout, validarEstruturaLayout, type EstruturaLayout } from "@agro/domain";
 import { runService, audit, nextCode } from "../lib/service.js";
 import { notFound, validation } from "../lib/errors.js";
 import type { ServiceCtx } from "../lib/context.js";
+import { layoutEfetivo } from "../lib/layout-documento.js";
 
 /**
  * LAYOUT DO DOCUMENTO POR TOP (VENDAS-A3-1) — administração.
@@ -43,6 +44,7 @@ const ativoSchema = z.object({ ativo: z.boolean() }).strict();
 const topsSchema = z.object({ tipoOperacaoIds: z.array(z.string().uuid()).max(500) }).strict();
 const listaSchema = z.object({ familia: familiaSchema.optional() }).strict();
 const idSchema = z.object({ id: z.string() }).strict();
+const efetivoSchema = z.object({ tipoOperacaoId: z.string() }).strict();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Estrutura → EstruturaLayout validada (forma + regras do domínio), ou 422 com details [{path, message}]. */
@@ -132,6 +134,24 @@ export default async function layoutsDocumentoRoutes(app: FastifyInstance) {
         where l.organization_id = $1 and l.deleted_at is null${filtro}
         order by l.familia, l.code`, params);
     return { items: r.rows.map((x) => ({ ...paraTela(x), qtdTops: Number(x.qtd_tops) })) };
+  }));
+
+  /**
+   * LAYOUT EFETIVO DA TOP, PELA PORTA DE CONFIGURAÇÕES (R1): é o que a linha "Layout do documento" do editor da TOP
+   * mostra. A permissão é a da tela (`tipos_operacao.view`), não a de lançar venda; e a TOP pode estar INATIVA — quem
+   * configura precisa ver o layout dela. A consulta é a MESMA da Central (`layoutEfetivo`, um dono).
+   * TOP inexistente, de outra organização, excluída, id malformado ou de família sem layout: a MESMA 404.
+   * Registrada ANTES de `/:id`: "efetivo" nunca é tratado como id de layout.
+   */
+  app.get(`${BASE}/efetivo`, async (req) => runService(app, req, "tipos_operacao.view", async (ctx) => {
+    const q = efetivoSchema.parse(req.query);
+    if (!UUID.test(q.tipoOperacaoId)) throw notFound("Tipo de operação");
+    const t = await ctx.tx.query<{ codigo_base: string }>(
+      "select codigo_base from erp.tipos_operacao where id = $1 and organization_id = $2 and excluido_em is null", [q.tipoOperacaoId, ctx.orgId]);
+    const familia = t.rows[0]?.codigo_base;
+    if (!familia || !familiaTemLayout(familia)) throw notFound("Tipo de operação");
+    const l = await layoutEfetivo(ctx, familia, q.tipoOperacaoId);
+    return { origem: l.origem, nome: l.nome, id: l.id };
   }));
 
   app.get(`${BASE}/:id`, async (req) => runService(app, req, "tipos_operacao.view", async (ctx) => {

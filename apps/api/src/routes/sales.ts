@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, resolverLayout, camposObrigatoriosFaltando, mensagemCampoObrigatorio, type EstruturaLayout, type OrigemDoLayout, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js";
@@ -11,6 +11,7 @@ import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock } from "../services/stock-core.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
+import { layoutEfetivo } from "../lib/layout-documento.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -222,29 +223,6 @@ async function condicaoDaEdicao(ctx: ServiceCtx, corpo: unknown, atual: { condic
   return { linha: await validarCondicaoDoDocumento(ctx, String(v)), gravar: true };
 }
 
-/**
- * LAYOUT DO DOCUMENTO (VENDAS-A3-1). A escolha é a do domínio (`resolverLayout`): ligado à TOP (ativo, vivo) →
- * padrão ativo da família → LAYOUT DO SISTEMA. Documento SEM TOP usa o do sistema (não o padrão da família: sem
- * TOP não há família escolhida, como na criação sem `tipo_operacao_id`). Recorte de organização em toda consulta.
- */
-async function layoutEfetivo(ctx: ServiceCtx, familia: string, tipoOperacaoId: string | null): Promise<{ estrutura: EstruturaLayout; origem: OrigemDoLayout; nome: string | null; id: string | null }> {
-  type Linha = { id: string; nome: string; estrutura: EstruturaLayout };
-  let ligado: Linha | undefined; let padrao: Linha | undefined;
-  if (tipoOperacaoId) {
-    ligado = (await ctx.tx.query<Linha>(
-      `select l.id, l.nome, l.estrutura from erp.layout_documento_tops lt
-         join erp.layouts_documento l on l.id = lt.layout_id and l.organization_id = lt.organization_id
-        where lt.tipo_operacao_id = $1 and lt.organization_id = $2 and l.familia = $3 and l.is_active and l.deleted_at is null`,
-      [tipoOperacaoId, ctx.orgId, familia])).rows[0];
-    if (!ligado) padrao = (await ctx.tx.query<Linha>(
-      `select id, nome, estrutura from erp.layouts_documento
-        where organization_id = $1 and familia = $2 and padrao and is_active and deleted_at is null order by created_at limit 1`,
-      [ctx.orgId, familia])).rows[0];
-  }
-  const r = resolverLayout(familia, { ligado: ligado?.estrutura ?? null, padraoDaFamilia: padrao?.estrutura ?? null });
-  const linha = r.origem === "ligado" ? ligado : r.origem === "padrao_da_familia" ? padrao : undefined;
-  return { ...r, nome: linha?.nome ?? null, id: linha?.id ?? null };
-}
 
 /**
  * COBRANÇA DO LAYOUT AO SALVAR (POST/PUT de orçamento, pedido e venda) — SEMPRE depois de todas as recusas que já
