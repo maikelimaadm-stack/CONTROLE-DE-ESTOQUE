@@ -20,6 +20,10 @@ import { sql } from "./aj02-comum";
 
 const WORKSPACE = "central-vendas";
 const DATA_DOC = "2026-09-01";
+/** "2026-09-01" → "01/09/2026" (a caixa de data da Central é digitada em dd/mm/aaaa) */
+/** "01/10/2026" → "2026-10-01" (o que a tela mostra, no formato gravado) */
+const isoDeBr = (br: string) => `${br.slice(6, 10)}-${br.slice(3, 5)}-${br.slice(0, 2)}`;
+const brData = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
 
 /** Soma dias a uma data ISO (UTC) — só para escrever o esperado; a conta de verdade é do domínio. */
 const maisDias = (iso: string, dias: number) => { const d = new Date(`${iso}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + dias); return d.toISOString().slice(0, 10); };
@@ -44,10 +48,14 @@ async function abrirCriacaoDeVenda(page: Page) {
   await abrirLancamentoDeVendas(page, "sales");
   await escolherTopEContinuar(page, top.id);
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
-  await page.getByLabel("Data", { exact: true }).fill(DATA_DOC);
+  await page.getByLabel("Data *", { exact: true }).fill(brData(DATA_DOC));
   await pickRef(page, "Cliente", "DEMO");
   await page.getByRole("button", { name: /Adicionar item/ }).click();
   await escolherPrimeiroProdutoDaLinha(page);
+  // total POSITIVO: o plano (entrada, parcelas) e os títulos dependem dele — 1 × 100,00
+  const linha = page.getByTestId("central-vendas-linha").first();
+  await linha.getByLabel("Quantidade").fill("1");
+  await linha.getByLabel("Valor unitário").fill("100");
   await preencherClassificacaoFinanceira(page);
   await abrirAbaDoLancamento(page, "Financeiro");
 }
@@ -85,20 +93,20 @@ const planoGravado = (id: string) => JSON.parse(sql(`select installment_plan::te
 test("CP-W1 — Configurações › Financeiro › Condições de pagamento: código gerado; Dia do vencimento só no Dia fixo; Entrada (%) só com Entrada", async ({ page }) => {
   await login(page);
   await page.goto("/configuracoes?tab=financeiro");
-  const abaCondicoes = page.locator("main").getByRole("tab", { name: "Condições de pagamento", exact: true });
+  const abaCondicoes = page.locator("main").getByRole("tab", { name: "Condições de Pagamento", exact: true });
   await expect(abaCondicoes, "a aba existe em Configurações › Financeiro").toBeVisible();
   await abaCondicoes.click();
   await page.locator("main").getByRole("button", { name: /^Novo/ }).first().click();
 
   const nome = uniq("30/60/90");
-  await page.getByLabel("Nome", { exact: true }).fill(nome);
-  await page.getByLabel("Parcelas", { exact: true }).fill("3");
-  await page.getByLabel("Dias até a 1ª parcela", { exact: true }).fill("30");
+  await page.getByLabel(/^Nome( \*)?$/).fill(nome);
+  await page.getByLabel(/^Parcelas( \*)?$/).fill("3");
+  await page.getByLabel(/^Dias\ até\ a\ 1ª\ parcela( \*)?$/).fill("30");
   await page.getByLabel("Intervalo (dias)", { exact: true }).fill("30");
 
   // Vencimentos: com "Intervalo em dias" (o padrão) o Dia do vencimento não existe; no "Dia fixo" aparece.
-  const vencimentos = page.getByLabel("Vencimentos", { exact: true });
-  const diaVencimento = page.getByLabel("Dia do vencimento", { exact: true });
+  const vencimentos = page.getByLabel(/^Vencimentos( \*)?$/);
+  const diaVencimento = page.getByLabel(/^Dia\ do\ vencimento( \*)?$/);
   await expect(vencimentos, "premissa: o modo nasce Intervalo em dias").toContainText("Intervalo em dias");
   await expect(diaVencimento, "no intervalo, sem Dia do vencimento").toHaveCount(0);
   const escolher = async (campo: ReturnType<Page["getByLabel"]>, opcao: string) => {
@@ -113,7 +121,7 @@ test("CP-W1 — Configurações › Financeiro › Condições de pagamento: có
 
   // Entrada: sem entrada, sem percentual; com entrada, o percentual aparece.
   const entrada = page.getByLabel("Entrada", { exact: true });
-  const percentual = page.getByLabel("Entrada (%)", { exact: true });
+  const percentual = page.getByLabel(/^Entrada\ \(%\)( \*)?$/);
   await expect(entrada, "premissa: o booleano Entrada existe").toBeVisible();
   await expect(percentual, "sem entrada, sem percentual").toHaveCount(0);
   await escolher(entrada, "Sim");
@@ -143,7 +151,7 @@ test("CP-W2 + CP-W5 — escolher a condição preenche o plano; sem ajuste o cor
   const p = plano(page);
   const primeiro = maisDias(DATA_DOC, 30);
   await expect(p.parcelas).toHaveValue("3");
-  await expect(p.primeiro, "1º vencimento = data do documento + 30").toHaveValue(primeiro);
+  await expect(p.primeiro, "1º vencimento = data do documento + 30").toHaveValue(brData(primeiro));
   await expect(p.intervalo).toHaveValue("30");
 
   const { corpo, id } = await salvar(page);
@@ -204,17 +212,17 @@ test("CP-W4 — mudar a data e a quantidade depois de escolher (sem ajuste): a t
   await abrirCriacaoDeVenda(page);
   await escolherCondicao(page, c);
   const p = plano(page);
-  await expect(p.primeiro, "premissa: 1º vencimento a partir da data inicial").toHaveValue(maisDias(DATA_DOC, 30));
+  await expect(p.primeiro, "premissa: 1º vencimento a partir da data inicial").toHaveValue(brData(maisDias(DATA_DOC, 30)));
   await expect(p.entrada, "premissa: a condição com entrada mostra o valor").toBeVisible();
   const entradaAntes = await p.entrada.inputValue();
 
   const novaData = "2026-09-15";
-  await page.getByLabel("Data", { exact: true }).fill(novaData);
+  await page.getByLabel("Data *", { exact: true }).fill(brData(novaData));
   await page.getByRole("button", { name: "Formulário", exact: true }).click();
   await page.getByTestId("central-vendas-item-form").getByLabel("Quantidade").fill("7");
   await abrirAbaDoLancamento(page, "Financeiro");
 
-  await expect(p.primeiro, "o 1º vencimento acompanhou a data").toHaveValue(maisDias(novaData, 30));
+  await expect(p.primeiro, "o 1º vencimento acompanhou a data").toHaveValue(brData(maisDias(novaData, 30)));
   await expect(p.parcelas).toHaveValue("3");
   await expect(p.intervalo).toHaveValue("30");
   await expect(p.entrada, "o valor da entrada acompanhou o total").not.toHaveValue(entradaAntes);
@@ -227,7 +235,7 @@ test("CP-W4 — mudar a data e a quantidade depois de escolher (sem ajuste): a t
   const lido = await api<Record<string, unknown>>(page, "GET", `/api/sales/sales/${id}`);
   expect(lido["parcelas_ajustadas"]).toBe(false);
   const gravado = planoGravado(id);
-  expect(gravado.first_due_date, "o servidor derivou o mesmo 1º vencimento").toBe(mostrado.primeiro);
+  expect(gravado.first_due_date, "o servidor derivou o mesmo 1º vencimento").toBe(isoDeBr(mostrado.primeiro));
   expect(Number(gravado.down_payment_value), "e a mesma entrada").toBe(Number(mostrado.entrada));
   expect([gravado.installments, gravado.interval_days, gravado.has_down_payment]).toEqual([3, 30, true]);
 });
