@@ -7,7 +7,10 @@ import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
-import { MensagemTop, entendeClassificacaoFinanceira, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
+import { useQuery } from "@tanstack/react-query";
+import { documentTotals, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CondicaoPagamento } from "@agro/domain";
+import { api } from "@/lib/api";
+import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
 import { ChevronRight, Repeat2, Save, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -128,7 +131,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   escritaTopConfirmada: boolean;
 }) {
   const router = useRouter(); const empresa = useEmpresaPadrao();
-  const [h, setH] = React.useState({ empresa_id: "", document_date: todayISO(), shipping_date: "", due_date: "", client_id: "", transporter_id: "", proprietary_id: "", driver_name: "", payment_method_id: "", freight: "0", freight_icms: "0", other_values: "0", discount: "0", note: "", is_deductible: false, installments: false, categoria_financeira_id: "", centro_custo_id: "" });
+  const [h, setH] = React.useState({ empresa_id: "", document_date: todayISO(), shipping_date: "", due_date: "", client_id: "", transporter_id: "", proprietary_id: "", driver_name: "", payment_method_id: "", freight: "0", freight_icms: "0", other_values: "0", discount: "0", note: "", is_deductible: false, installments: false, categoria_financeira_id: "", centro_custo_id: "", condicao_pagamento_id: "" });
   const [items, setItems] = React.useState<ItemRow[]>([]); const [plan, setPlan] = React.useState<Plan>(defaultPlan());
   const [confirmarTroca, setConfirmarTroca] = React.useState(false);
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
@@ -156,6 +159,42 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    * classificação viraria venda sem classificação, sem conserto.
    */
   const classificacaoAtiva = entendeClassificacaoFinanceira(estadoTop);
+  /**
+   * CONDIÇÃO DE PAGAMENTO (VENDAS-A4): só existe na tela quando a API DECLARA que a entende. Escolhida, o plano
+   * mostrado é o de `planoDaCondicao` (a MESMA conta da API) sobre a data e o total do documento (`documentTotals`,
+   * o MESMO total da API). Enquanto o usuário não mexe no plano, o corpo leva `installment_plan: null` e o servidor
+   * deriva; mexeu em qualquer campo do plano → AJUSTE: o corpo leva o plano e a tela para de recalcular.
+   */
+  const condicaoAtiva = entendeCondicaoPagamento(estadoTop);
+  const condicaoId = condicaoAtiva ? h.condicao_pagamento_id : "";
+  const [ajustado, setAjustado] = React.useState(false);
+  const condicao = useQuery({
+    queryKey: ["condicao-pagamento", condicaoId],
+    queryFn: () => api<Record<string, unknown>>(`/api/resources/condicoes_pagamento/${encodeURIComponent(condicaoId)}`),
+    enabled: Boolean(condicaoId)
+  });
+  const planoCalculado = React.useMemo(() => {
+    const r = condicao.data;
+    if (!condicaoId || !r) return null;
+    const c = normalizarCondicaoPagamento({
+      parcelas: Number(r["parcelas"]), dias_primeira_parcela: Number(r["dias_primeira_parcela"]), modo: r["modo"] as CondicaoPagamento["modo"],
+      intervalo_dias: Number(r["intervalo_dias"]), dia_vencimento: r["dia_vencimento"] === null || r["dia_vencimento"] === undefined ? null : Number(r["dia_vencimento"]),
+      entrada: r["entrada"] === true, entrada_percentual: (r["entrada_percentual"] ?? null) as CondicaoPagamento["entrada_percentual"]
+    });
+    if (validarCondicaoPagamento(c).length) return null;
+    try {
+      const { total } = documentTotals(items.map((i) => ({ quantity: i.quantity, unitPrice: i.unit_value ?? "0", discount: i.discount || "0", discountPercent: i.discount_percent || "0" })), { freight: h.freight || "0", freightIcms: h.freight_icms || "0", otherValues: h.other_values || "0", discount: h.discount || "0" });
+      return planoDaCondicao(c, { dataDocumento: h.document_date, total }) as Plan;
+    } catch { return null; }
+  }, [condicaoId, condicao.data, items, h.freight, h.freight_icms, h.other_values, h.discount, h.document_date]);
+  /** Sem ajuste, a data ou o total mudou → o plano mostrado acompanha. Ajustado, a tela não recalcula mais. */
+  React.useEffect(() => { if (planoCalculado && !ajustado) setPlan(planoCalculado); }, [planoCalculado, ajustado]);
+  const escolherCondicao = (v: string | null) => {
+    setH((o) => ({ ...o, condicao_pagamento_id: v ?? "" }));
+    setAjustado(false);
+    if (!v) setPlan(defaultPlan());
+  };
+  const ajustarPlano = (p: Plan) => { setPlan(p); setAjustado(true); };
   const semClassificacao = classificacaoAtiva && (!h.categoria_financeira_id || !h.centro_custo_id);
   /** O UUID que vai no corpo é o da TOP VALIDADA contra a lista — nunca o texto cru da URL. */
   const submit = () => {
@@ -168,7 +207,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
      */
     if (!escritaTopConfirmada) return;
     if (semClassificacao) return;
-    create.mutate({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: h.installments ? plan : null, items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}) });
+    create.mutate({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
   };
 
   const voltarAoLancador = () => router.replace(`/vendas/${kind}/new`);
@@ -271,8 +310,10 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
           {campo(<Field label="Outros valores" span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>)}
         </div> },
         { value: "financeiro", label: "Financeiro", content: <div className={estilosCv.painelColuna}>
-          <div style={{ maxWidth: 330 }}>{campo(<Field label="Parcelamento" span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>)}</div>
-          {h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
+          {condicaoAtiva && <div style={{ maxWidth: 330 }} data-testid="condicao-pagamento">{pesquisa(<Field label="Condição de pagamento" span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} /></Field>)}</div>}
+          {!condicaoId && <div style={{ maxWidth: 330 }}>{campo(<Field label="Parcelamento" span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>)}</div>}
+          {!condicaoId && h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
+          {condicaoId && planoCalculado && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={ajustarPlano} /></div>}
         </div> },
         { value: "frete", label: "Frete e transporte", content: <div className={estilosCv.painelGrade}>
           <div className={estilosCv.painelColuna}>

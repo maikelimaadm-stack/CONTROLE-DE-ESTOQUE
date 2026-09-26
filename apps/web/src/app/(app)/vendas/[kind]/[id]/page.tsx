@@ -276,6 +276,9 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
         <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
         <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
+        {/* CONDIÇÃO DE PAGAMENTO (VENDAS-A4): só quando a API devolve o campo preenchido — API anterior não o conhece. */}
+        {d["condicao_pagamento_id"] !== undefined && d["condicao_pagamento_id"] !== null && <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" testId="consulta-condicao-pagamento"
+          valor={`${[d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"]].filter((x) => x !== null && x !== undefined && x !== "").map(String).join(" · ")}${d["parcelas_ajustadas"] === true ? " (parcelas ajustadas)" : ""}`} />}
         {/* VENDAS-A1: a classificação financeira escolhida no documento. Venda ainda não confirmada sem classificação
             confirma pelo padrão automático, e a tela diz isso em vez de deixar o campo vazio. */}
         <CampoLeitura rotulo="Natureza" adorno="travado" testId="central-vendas-campo"

@@ -5,6 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { NativeSelect, Field } from "@/components/ui";
 import type { Row } from "@/features/docs/shared";
+import { CAPACIDADE_CONDICAO_PAGAMENTO } from "@agro/domain";
 import type { Column } from "@/components/ui/data-table";
 
 /**
@@ -104,6 +105,17 @@ export function entendeClassificacaoFinanceira(e: EstadoTop): boolean {
   if (e.situacao !== "pronto") return false;
   const c = (e.dados as unknown as { capacidades?: unknown }).capacidades;
   return ehObjeto(c) && c.classificacaoFinanceira === CAPACIDADE_CLASSIFICACAO_FINANCEIRA;
+}
+
+/**
+ * A API DECLARA QUE ENTENDE A CONDIÇÃO DE PAGAMENTO (VENDAS-A4)? — declaração ADITIVA em `/operation-types`
+ * (`capacidades.condicaoPagamento`), no mesmo molde da classificação financeira. Sem ela o campo não aparece e
+ * `condicao_pagamento_id` não viaja no corpo: a API anterior o descartaria em silêncio. Forma e versão EXATAS.
+ */
+export function entendeCondicaoPagamento(e: EstadoTop): boolean {
+  if (e.situacao !== "pronto") return false;
+  const c = (e.dados as unknown as { capacidades?: unknown }).capacidades;
+  return ehObjeto(c) && c.condicaoPagamento === CAPACIDADE_CONDICAO_PAGAMENTO;
 }
 
 /** O que a tela precisa decidir. Três situações distintas, três mensagens distintas — nunca uma só. */

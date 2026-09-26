@@ -233,6 +233,7 @@ export const AREAS = [
   cfg("financeiro", "chart-accounts", "Plano de Contas", "chart_accounts.view", { keywords: ["conta contábil", "conta do plano"] }),
   cfg("financeiro", "title-types", "Tipos de Título", "payables.view"),
   cfg("financeiro", "payment-methods", "Formas de Pagamento", "sales.view"),
+  cfg("financeiro", "condicoes-pagamento", "Condições de Pagamento", "sales.view"),
   cfg("financeiro", "financial-freezes", "Congelamentos", "financial_freezes.view", { keywords: ["fechar período", "bloquear lançamentos"] }),
   cfg("pecuaria", null, "Pecuária", P.LIVESTOCK_CFG),
   cfg("pecuaria", "animal-categories", "Espécies / Categorias / Raças", "animals.view", { keywords: ["categoria animal", "raça"] }),
