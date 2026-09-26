@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Columns2, Columns3, FileText, LayoutGrid, Lock, Plus, Search, Trash2 } from "lucide-react";
-import { getResource, type ColunaDoLayout } from "@agro/domain";
+import { getResource, catalogoDaFamilia, FAMILIAS_COM_LAYOUT, type ColunaDoLayout } from "@agro/domain";
 import { cn, brl, num } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Field, Input } from "@/components/ui";
@@ -96,6 +96,14 @@ const COLUNA_DO_CATALOGO: Record<string, ChaveColuna> = {
 };
 const CHAVE_DO_CATALOGO = Object.fromEntries(Object.entries(COLUNA_DO_CATALOGO).map(([k, v]) => [v, k])) as Record<ChaveColuna, string>;
 const ehChaveColuna = (k: string): k is ChaveColuna => k in COLUNAS;
+/**
+ * Colunas do SISTEMA (produto, quantidade, valor unitário): a grade de hoje não as marca com "*" — quem as exige é o
+ * formulário do item e o Salvar desabilitado, como sempre. O "*" da GRADE marca só o que o layout tornou obrigatório,
+ * para o layout do sistema desenhar exatamente a Central de hoje.
+ */
+const COLUNAS_DO_SISTEMA: ReadonlySet<string> = new Set(
+  catalogoDaFamilia(FAMILIAS_COM_LAYOUT[0] ?? "").filter((c) => c.parte === "itens" && c.sistema).map((c) => c.chave)
+);
 
 /** O layout dos itens como esta tela o usa: colunas na ordem do layout, com rótulo e obrigatoriedade. */
 export interface LayoutDosItens { colunas: readonly ColunaDoLayout[] }
@@ -264,7 +272,7 @@ export function ItensDaCentral({ items, onChange, layout, erros }: {
       <colgroup><col style={{ width: LARGURA_EXCLUIR }} />{colunasVisiveis.map((k) => <col key={k} style={COLUNAS[k].elastica ? { minWidth: COLUNAS[k].largura } : { width: COLUNAS[k].largura }} />)}</colgroup>
       <thead><tr>
         <th aria-label="Excluir" />
-        {colunasVisiveis.map((k) => <th key={k} className={COLUNAS[k].numero ? estilos.numero : undefined} {...dataCampo(k)}>{rotuloColuna(k)}{obrigatoria(k) && <span className="req text-red-500"> *</span>}</th>)}
+        {colunasVisiveis.map((k) => <th key={k} className={COLUNAS[k].numero ? estilos.numero : undefined} {...dataCampo(k)}>{rotuloColuna(k)}{obrigatoria(k) && !COLUNAS_DO_SISTEMA.has(CHAVE_DO_CATALOGO[k]) && <span className="req text-red-500"> *</span>}</th>)}
       </tr></thead>
       <tbody>
         {items.length === 0 && <tr><td colSpan={1 + colunasVisiveis.length} className={estilos.vazio}>Nenhum item. Use o botão verde para adicionar.</td></tr>}
