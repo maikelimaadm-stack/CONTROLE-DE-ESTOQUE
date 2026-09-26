@@ -23,7 +23,8 @@ const familiaSchema = z.enum(FAMILIAS_COM_LAYOUT);
 const nomeSchema = z.string().trim().min(1).max(120);
 
 /**
- * Forma da EstruturaLayout v1 (só tipos; as regras são do domínio). Strict: chave desconhecida é 422.
+ * Forma da EstruturaLayout v1 (só tipos; as regras são do domínio). Strict: chave desconhecida é 422. Dono único:
+ * o arquivo do layout (`layouts-documento-arquivo.ts`) importa este schema.
  * `registro` (VENDAS-A3-1b): só `{ tipo, id }` — o recurso NÃO vai no JSON (sai do catálogo pelo campo); a forma UUID
  * do id e o LUGAR onde o registro vale são regra do domínio; a existência no cadastro, da API (conferirPadroesRegistro).
  */
@@ -36,7 +37,7 @@ const campoSchema = z.object({
   campo: z.string().min(1).max(80), rotulo: z.string().max(120).optional(), obrigatorio: z.boolean(), editavel: z.boolean(),
   valorPadrao: valorPadraoSchema.optional()
 }).strict();
-const estruturaSchema = z.object({
+export const estruturaSchema = z.object({
   versaoSchema: z.literal(1),
   cabecalho: z.array(campoSchema).max(200),
   rodape: z.array(z.object({ aba: z.string().min(1).max(80), campos: z.array(campoSchema).max(200) }).strict()).max(50),
@@ -87,7 +88,7 @@ async function estruturaValida(ctx: ServiceCtx, familia: string, bruta: unknown)
 
 interface LinhaLayout { id: string; code: string; nome: string; familia: string; padrao: boolean; is_active: boolean; estrutura: EstruturaLayout; created_at: string; updated_at: string }
 
-async function lerLayout(ctx: ServiceCtx, id: string, travar = false): Promise<LinhaLayout> {
+export async function lerLayout(ctx: ServiceCtx, id: string, travar = false): Promise<LinhaLayout> {
   if (!UUID.test(id)) throw notFound("Layout");
   const r = await ctx.tx.query<LinhaLayout>(
     `select id, code, nome, familia, padrao, is_active, estrutura, created_at, updated_at from erp.layouts_documento
@@ -109,7 +110,7 @@ async function topsLigadas(ctx: ServiceCtx, layoutId: string) {
 
 const paraTela = (l: LinhaLayout) => ({ id: l.id, code: l.code, nome: l.nome, familia: l.familia, padrao: l.padrao, is_active: l.is_active, created_at: l.created_at, updated_at: l.updated_at });
 
-async function gerarCodigo(ctx: ServiceCtx): Promise<string> {
+export async function gerarCodigo(ctx: ServiceCtx): Promise<string> {
   for (let i = 0; i < 1000; i++) {
     const codigo = await nextCode(ctx.tx, ctx.orgId, "layout_documento");
     const usado = await ctx.tx.query("select 1 from erp.layouts_documento where organization_id=$1 and code=$2", [ctx.orgId, codigo]);

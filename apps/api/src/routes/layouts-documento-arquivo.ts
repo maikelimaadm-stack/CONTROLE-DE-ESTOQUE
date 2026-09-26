@@ -4,10 +4,11 @@ import {
   FORMATO_ARQUIVO_LAYOUT, VERSAO_ARQUIVO_LAYOUT, familiaTemLayout, padroesRegistroDaEstrutura, removerPadroesRegistro,
   validarEstruturaLayout, type ArquivoLayoutDocumento, type EstruturaLayout
 } from "@agro/domain";
-import { runService, audit, nextCode } from "../lib/service.js";
-import { err, notFound, validation } from "../lib/errors.js";
+import { runService, audit } from "../lib/service.js";
+import { err, validation } from "../lib/errors.js";
 import type { ServiceCtx } from "../lib/context.js";
 import { conferirPadroesRegistro } from "../lib/layout-documento.js";
+import { estruturaSchema, gerarCodigo, lerLayout } from "./layouts-documento.js";
 
 /**
  * ARQUIVO DO LAYOUT DO DOCUMENTO (VENDAS-A3-1b) — exportar e importar.
@@ -26,33 +27,8 @@ import { conferirPadroesRegistro } from "../lib/layout-documento.js";
 
 const LIMITE_ARQUIVO = 65536;
 const MOTIVO_REGISTRO_NAO_VALE = "Registro padrão não vale nesta organização.";
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const idSchema = z.object({ id: z.string() }).strict();
 const nomeSchema = z.string().trim().min(1).max(120);
-
-/*
- * CÓPIA FIEL da forma da EstruturaLayout v1 de `routes/layouts-documento.ts` (lá ela não é exportada, e aquele arquivo
- * é de outro agente nesta fatia), já com o `registro` do contrato 2.2 no campo e na coluna. Só tipos: as regras são
- * do domínio. Strict: chave desconhecida é 422. Ao exportar o schema de lá, este bloco sai e passa a importá-lo.
- */
-const valorPadraoSchema = z.union([
-  z.object({ tipo: z.literal("literal"), valor: z.union([z.string(), z.number(), z.boolean()]) }).strict(),
-  z.object({ tipo: z.literal("variavel"), variavel: z.enum(["data_atual", "empresa_selecionada"]) }).strict(),
-  z.object({ tipo: z.literal("registro"), id: z.string() }).strict()
-]);
-const campoSchema = z.object({
-  campo: z.string().min(1).max(80), rotulo: z.string().max(120).optional(), obrigatorio: z.boolean(), editavel: z.boolean(),
-  valorPadrao: valorPadraoSchema.optional()
-}).strict();
-const estruturaSchema = z.object({
-  versaoSchema: z.literal(1),
-  cabecalho: z.array(campoSchema).max(200),
-  rodape: z.array(z.object({ aba: z.string().min(1).max(80), campos: z.array(campoSchema).max(200) }).strict()).max(50),
-  itens: z.array(z.object({
-    campo: z.string().min(1).max(80), rotulo: z.string().max(120).optional(), obrigatorio: z.boolean(),
-    valorPadrao: valorPadraoSchema.optional()
-  }).strict()).max(200)
-}).strict();
 
 /** O arquivo, ESTRITO: chave desconhecida, formato, versão ou família fora do contrato → 422 no próprio caminho. */
 const arquivoSchema = z.object({
@@ -62,27 +38,6 @@ const arquivoSchema = z.object({
   nome: nomeSchema,
   estrutura: estruturaSchema
 }).strict();
-
-interface LinhaLayout { id: string; code: string; nome: string; familia: string; estrutura: EstruturaLayout }
-
-/** A MESMA leitura do cadastro: UUID conferido, organização e `deleted_at is null` antes de decidir; senão 404 "Layout". */
-async function lerLayout(ctx: ServiceCtx, id: string): Promise<LinhaLayout> {
-  if (!UUID.test(id)) throw notFound("Layout");
-  const r = await ctx.tx.query<LinhaLayout>(
-    "select id, code, nome, familia, estrutura from erp.layouts_documento where id=$1 and organization_id=$2 and deleted_at is null", [id, ctx.orgId]);
-  if (!r.rows[0]) throw notFound("Layout");
-  return r.rows[0];
-}
-
-/** O MESMO gerador de código do POST do cadastro (contador `layout_documento`, pulando código já ocupado). */
-async function gerarCodigo(ctx: ServiceCtx): Promise<string> {
-  for (let i = 0; i < 1000; i++) {
-    const codigo = await nextCode(ctx.tx, ctx.orgId, "layout_documento");
-    const usado = await ctx.tx.query("select 1 from erp.layouts_documento where organization_id=$1 and code=$2", [ctx.orgId, codigo]);
-    if (!usado.rowCount) return codigo;
-  }
-  throw validation("Não foi possível gerar o código do layout.");
-}
 
 /**
  * Nome livre entre os VIVOS da organização: o do arquivo, senão "<nome> (importado)", "<nome> (importado 2)"...

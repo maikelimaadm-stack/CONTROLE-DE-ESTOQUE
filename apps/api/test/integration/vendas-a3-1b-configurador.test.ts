@@ -13,7 +13,9 @@ import { harness, ids, TEST_URL, type Harness } from "./setup.js";
  *  LB-A5  importar: chave desconhecida, família, versão, formato, estrutura inválida e tamanho → 422; exportar de outra org → a MESMA 404
  */
 let h: Harness; let admin: Db;
-let fx: Awaited<ReturnType<typeof ids>>;
+/** Fixtures do seed desta suíte (premissa: todas presentes — `definido` falha alto se faltar). */
+let fx: { incomeCategory: string; category: string; warehouse: string; warehouseEmpresa2: string; empresa: string };
+const definido = (v: string | undefined, nome: string): string => { if (!v) throw new Error(`fixture ausente: ${nome}`); return v; };
 type Resp = { statusCode: number; body: string; headers: Record<string, unknown> };
 const j = (r: { body: string }) => JSON.parse(r.body);
 const URL_ = "/api/admin/layouts-documento";
@@ -63,7 +65,9 @@ let outra: { orgId: string; headers: Record<string, string>; natureza: string };
 let condicao: string; let transportadora: string; let sintetica: string;
 
 beforeAll(async () => {
-  h = await harness(); admin = createPool(TEST_URL, { max: 2 }); fx = await ids(h);
+  h = await harness(); admin = createPool(TEST_URL, { max: 2 });
+  const f = await ids(h);
+  fx = { incomeCategory: definido(f.incomeCategory, "natureza de receita"), category: definido(f.category, "natureza de despesa"), warehouse: definido(f.warehouse, "armazém"), warehouseEmpresa2: definido(f.warehouseEmpresa2, "armazém da empresa 2"), empresa: definido(f.empresa, "empresa") };
   const c = await h.app.inject({ method: "POST", url: "/api/resources/condicoes_pagamento", headers: h.headers(), payload: { nome: "LB 30 dias", parcelas: 1, dias_primeira_parcela: 30, modo: "intervalo" } });
   if (c.statusCode !== 201) throw new Error(c.body);
   condicao = j(c).id as string;
