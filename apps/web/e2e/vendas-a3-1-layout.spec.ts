@@ -92,6 +92,15 @@ test("LD-W1 — cria o layout de venda a partir do sistema: tira ICMS frete, Tra
     await d.getByTestId("layout-cfg-rotulo").fill("Transp.");
     await d.getByTestId("layout-cfg-obrigatorio").selectOption("true");
   });
+  // R1: Parcelamento sempre tem valor → o seletor Obrigatório nasce desabilitado
+  await page.getByTestId("layout-campo-installment_plan").getByRole("button", { name: "Configurar campo" }).click();
+  const cfgParcelamento = page.getByTestId("layout-configurar-campo");
+  await expect(cfgParcelamento.getByTestId("layout-cfg-rotulo"), "premissa: o diálogo abriu").toBeVisible();
+  await expect(cfgParcelamento.getByTestId("layout-cfg-obrigatorio")).toBeDisabled();
+  await expect(cfgParcelamento.locator(`[title="Sempre tem valor"]`), "a dica do campo (title, padrão do Field)").toHaveCount(1);
+  await cfgParcelamento.getByRole("button", { name: "Fechar", exact: true }).last().click();
+  await expect(cfgParcelamento).toHaveCount(0);
+
   // Data de saída: padrão data de hoje, não editável
   await configurar(page, "shipping_date", async (d) => {
     await d.getByTestId("layout-cfg-editavel").selectOption("false");
@@ -200,6 +209,10 @@ test("LD-W4 — o editor da TOP diz qual layout vale (ligado · do sistema)", as
   const semLayout = await criarTop(page, "vendas.orcamento", "Layout W4");
   const codigoDe = async (id: string) => (await api<{ codigo: string }>(page, "GET", `/api/admin/tipos-operacao/${id}`)).codigo;
 
+  // R1: a linha lê a porta de Configurações — conferido no fio; nenhuma chamada a /api/sales/
+  const pedidos: string[] = [];
+  page.on("request", (r) => { const u = new URL(r.url()); if (u.pathname.startsWith("/api/")) pedidos.push(`${u.pathname}${u.search}`); });
+
   for (const [id, esperado, origem] of [[topW1, `Layout do documento: ${NOME_W1} (ligado)`, "ligado"], [semLayout, "Layout do documento: Layout do sistema (do sistema)", "sistema"]] as const) {
     const codigo = await codigoDe(id);
     await page.goto("/configuracoes?tab=operacoes&sub=tipos-operacao");
@@ -211,5 +224,7 @@ test("LD-W4 — o editor da TOP diz qual layout vale (ligado · do sistema)", as
     const linhaLayout = page.getByTestId("form-tipo-operacao").getByTestId("top-layout-documento");
     await expect(linhaLayout).toHaveAttribute("data-origem", origem);
     await expect(linhaLayout).toHaveText(esperado);
+    expect(pedidos, "a linha pediu a rota nova com a TOP").toContain(`/api/admin/layouts-documento/efetivo?tipoOperacaoId=${id}`);
   }
+  expect(pedidos.filter((u) => u.startsWith("/api/sales/")), "nenhuma chamada à porta de vendas").toEqual([]);
 });

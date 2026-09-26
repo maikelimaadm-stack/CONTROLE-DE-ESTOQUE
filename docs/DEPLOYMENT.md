@@ -1360,9 +1360,11 @@ layout do sistema = a Central atual, e nada novo é cobrado ao salvar).
 
 **Reversão:** API e web voltam por redeploy; as tabelas ficam, inertes para o binário anterior (decisão 247).
 
-**Roteiro do Maike (depois do deploy):** 1. Configurações › Operações › Layouts de documento › Novo (Venda) a partir do
+**Roteiro do Maike (depois do deploy) — no PEDIDO, não na venda** (em produção só existem as TOPs 1 Orçamento e 2
+Pedido; não há TOP de venda): 1. Configurações › Operações › Layouts de documento › Novo (Pedido) a partir do
 sistema: tirar "ICMS frete", renomear "Transportadora" para "Transp." e marcar obrigatória, pôr "Data de saída" com
-padrão "data de hoje" e não editável; ligar à TOP de venda. 2. Central com essa TOP: "ICMS frete" some, "Transp." com
+padrão "data de hoje" e não editável; ligar à TOP 2 Pedido. "Parcelamento" (e Desconto, Outros valores, Frete, ICMS
+frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Central com essa TOP: "ICMS frete" some, "Transp." com
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
