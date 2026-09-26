@@ -38,6 +38,11 @@ export interface CampoDoCatalogo {
   sistema?: "sempre" | "classificacao";
   somenteLeitura?: boolean;
   exige?: "classificacao" | "condicao";
+  /**
+   * O corpo SEMPRE leva valor ("0", false, ou o plano nulo que o servidor deriva da condição): "obrigatório" nele
+   * diria uma coisa e faria outra (ou travaria a Central, no Parcelamento). Aceita valor padrão e não editável.
+   */
+  sempreTemValor?: boolean;
 }
 
 const C = (chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partial<CampoDoCatalogo> = {}): CampoDoCatalogo => ({ chave, rotulo, parte: "cabecalho", tipo, ...extra });
@@ -55,15 +60,15 @@ const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   C("centro_custo_id", "Centro de resultado", "referencia", { sistema: "classificacao", exige: "classificacao" }),
   C("shipping_date", "Data de saída", "data"),
   C("proprietary_id", "Proprietário", "referencia"),
-  R("Totais", "discount", "Desconto", "numero"),
-  R("Totais", "other_values", "Outros valores", "numero"),
+  R("Totais", "discount", "Desconto", "numero", { sempreTemValor: true }),
+  R("Totais", "other_values", "Outros valores", "numero", { sempreTemValor: true }),
   R("Financeiro", "condicao_pagamento_id", "Condição de pagamento", "referencia", { exige: "condicao" }),
-  R("Financeiro", "installment_plan", "Parcelamento", "plano"),
+  R("Financeiro", "installment_plan", "Parcelamento", "plano", { sempreTemValor: true }),
   R("Frete e transporte", "transporter_id", "Transportadora", "referencia"),
   R("Frete e transporte", "driver_name", "Motorista", "texto"),
-  R("Frete e transporte", "freight", "Frete", "numero"),
-  R("Frete e transporte", "freight_icms", "ICMS frete", "numero"),
-  R("Fiscal", "is_deductible", "Dedutível", "booleano"),
+  R("Frete e transporte", "freight", "Frete", "numero", { sempreTemValor: true }),
+  R("Frete e transporte", "freight_icms", "ICMS frete", "numero", { sempreTemValor: true }),
+  R("Fiscal", "is_deductible", "Dedutível", "booleano", { sempreTemValor: true }),
   R("Observações", "note", "Observação", "texto_longo"),
   I("codigo", "Código", "texto", { somenteLeitura: true }),
   I("product_id", "Produto", "referencia", { sistema: "sempre" }),
@@ -71,8 +76,8 @@ const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   I("estoque", "Estoque", "numero", { somenteLeitura: true }),
   I("quantity", "Quantidade", "numero", { sistema: "sempre" }),
   I("unit_price", "Valor unitário", "numero", { sistema: "sempre" }),
-  I("discount", "Desconto", "numero"),
-  I("discount_percent", "Desconto %", "numero"),
+  I("discount", "Desconto", "numero", { sempreTemValor: true }),
+  I("discount_percent", "Desconto %", "numero", { sempreTemValor: true }),
   I("total", "Total", "numero", { somenteLeitura: true })
 ];
 
@@ -110,6 +115,9 @@ function padraoCompativel(tipo: TipoDoCampoLayout, v: ValorPadraoLayout): boolea
   }
 }
 
+/** Recusa do obrigatório em campo que sempre tem valor (R1). */
+export const mensagemSempreTemValor = (rotulo: string) => `"${rotulo}" sempre tem valor: não pode ser obrigatório.`;
+
 /** Regras do layout → erros por caminho (vazio = válido). */
 export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayout): ErroDoLayout[] {
   const e: ErroDoLayout[] = [];
@@ -125,6 +133,7 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     if (vistosDoc.has(x.campo)) { e.push({ caminho: `${caminho}.campo`, mensagem: `Campo "${c.rotulo}" repetido no layout.` }); return; }
     vistosDoc.add(x.campo);
     if (c.somenteLeitura && (x.obrigatorio || x.editavel)) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatório nem editável.` });
+    if (c.sempreTemValor && x.obrigatorio) e.push({ caminho: `${caminho}.obrigatorio`, mensagem: mensagemSempreTemValor(c.rotulo) });
     if (x.valorPadrao && !padraoCompativel(c.tipo, x.valorPadrao)) e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `Valor padrão incompatível com "${c.rotulo}".` });
     if (x.obrigatorio && !x.editavel && !x.valorPadrao) e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `"${c.rotulo}" é obrigatório e não editável: informe o valor padrão.` });
   };
@@ -140,6 +149,7 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     if (vistosItem.has(x.campo)) { e.push({ caminho: `${caminho}.campo`, mensagem: `Coluna "${c.rotulo}" repetida.` }); return; }
     vistosItem.add(x.campo);
     if (c.somenteLeitura && x.obrigatorio) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatória.` });
+    if (c.sempreTemValor && x.obrigatorio) e.push({ caminho: `${caminho}.obrigatorio`, mensagem: mensagemSempreTemValor(c.rotulo) });
   });
   // campo "do sistema" fora do layout SEM valor padrão (itens não têm padrão: a coluna tem de estar lá)
   const caminhoDe = (campo: string): string => {
@@ -184,7 +194,8 @@ export function camposObrigatoriosFaltando(familia: string, estrutura: Estrutura
   const out: { caminho: string; rotulo: string }[] = [];
   const topo = (x: CampoDoLayout, parte: ParteDoLayout) => {
     const c = cat.get(`${parte}:${x.campo}`);
-    if (!x.obrigatorio || !ativo(c) || c!.somenteLeitura) return;
+    // sempreTemValor: defesa para estrutura gravada antes da regra (R1) — nunca cobrado
+    if (!x.obrigatorio || !ativo(c) || c!.somenteLeitura || c!.sempreTemValor) return;
     if (vazio(documento[x.campo])) out.push({ caminho: x.campo, rotulo: x.rotulo ?? c!.rotulo });
   };
   estrutura.cabecalho.forEach((x) => topo(x, "cabecalho"));
@@ -192,7 +203,7 @@ export function camposObrigatoriosFaltando(familia: string, estrutura: Estrutura
   (documento.items ?? []).forEach((linha, i) => {
     for (const x of estrutura.itens) {
       const c = cat.get(`itens:${x.campo}`);
-      if (!x.obrigatorio || !c || c.somenteLeitura) continue;
+      if (!x.obrigatorio || !c || c.somenteLeitura || c.sempreTemValor) continue;
       if (vazio(linha[x.campo])) out.push({ caminho: `items[${i}].${x.campo}`, rotulo: x.rotulo ?? c.rotulo });
     }
   });

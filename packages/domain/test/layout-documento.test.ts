@@ -154,3 +154,47 @@ describe("LD-D2b — campo do sistema no layout não pode ficar opcional", () =>
     expect(caminhos).toHaveLength(2);
   });
 });
+
+/** R1: campos que o corpo SEMPRE leva com valor ("0", false, plano nulo derivado da condição). */
+const SEMPRE_TEM_VALOR: readonly [parte: "rodape" | "itens", campo: string, rotulo: string][] = [
+  ["rodape", "discount", "Desconto"], ["rodape", "other_values", "Outros valores"], ["rodape", "installment_plan", "Parcelamento"],
+  ["rodape", "freight", "Frete"], ["rodape", "freight_icms", "ICMS frete"], ["rodape", "is_deductible", "Dedutível"],
+  ["itens", "discount", "Desconto"], ["itens", "discount_percent", "Desconto %"]
+];
+/** Marca `obrigatorio` no campo e devolve o caminho dele. */
+function marcarObrigatorio(l: EstruturaLayout, parte: "rodape" | "itens", campo: string): string {
+  if (parte === "itens") { const i = l.itens.findIndex((x) => x.campo === campo); at(l.itens, i).obrigatorio = true; return `itens[${i}]`; }
+  for (const [ai, a] of l.rodape.entries()) { const j = a.campos.findIndex((x) => x.campo === campo); if (j >= 0) { at(a.campos, j).obrigatorio = true; return `rodape[${ai}].campos[${j}]`; } }
+  throw new Error(`campo ${campo} fora do layout`);
+}
+
+describe("LD-D5 campo que sempre tem valor não pode ser obrigatório (R1)", () => {
+  it.each(SEMPRE_TEM_VALOR)("%s.%s recusado no caminho .obrigatorio", (parte, campo, rotulo) => {
+    const l = sis(); const caminho = marcarObrigatorio(l, parte, campo);
+    expect(validarEstruturaLayout(F, l)).toEqual([{ caminho: `${caminho}.obrigatorio`, mensagem: `"${rotulo}" sempre tem valor: não pode ser obrigatório.` }]);
+  });
+  it("aceita valor padrão + não editável (Frete travado em 0)", () => {
+    const l = sis();
+    for (const a of l.rodape) for (const x of a.campos) if (x.campo === "freight") { x.editavel = false; x.valorPadrao = { tipo: "literal", valor: "0" }; }
+    expect(validarEstruturaLayout(F, l)).toEqual([]);
+  });
+});
+
+describe("LD-D6 camposObrigatoriosFaltando ignora os campos que sempre têm valor (R1)", () => {
+  const cap = { classificacao: true, condicao: true };
+  const doc = (extra: Record<string, unknown> = {}) => ({
+    client_id: "c", empresa_id: "e", document_date: "2026-01-01", categoria_financeira_id: "n", centro_custo_id: "r",
+    discount: null, other_values: null, freight: null, freight_icms: null, is_deductible: null,
+    items: [{ product_id: "p", quantity: "1", unit_price: "2", discount: null, discount_percent: null }], ...extra
+  } as Record<string, unknown> & { items: Record<string, unknown>[] });
+  it("estrutura gravada com obrigatorio: true neles (antes da regra) não cobra nada", () => {
+    const l = sis(); for (const [p, c] of SEMPRE_TEM_VALOR) marcarObrigatorio(l, p, c);
+    expect(validarEstruturaLayout(F, l), "premissa: a estrutura é a proibida").toHaveLength(8);
+    expect(camposObrigatoriosFaltando(F, l, doc({ installment_plan: null }), cap)).toEqual([]);
+  });
+  it("regressão do achado: Parcelamento obrigatório com condição sem ajuste e à vista (plano nulo) → nada cobrado", () => {
+    const l = sis(); marcarObrigatorio(l, "rodape", "installment_plan");
+    expect(camposObrigatoriosFaltando(F, l, doc({ condicao_pagamento_id: "cp", installment_plan: null }), cap), "com condição, sem ajuste").toEqual([]);
+    expect(camposObrigatoriosFaltando(F, l, doc({ installment_plan: null }), cap), "à vista").toEqual([]);
+  });
+});
