@@ -777,3 +777,70 @@ test("CADASTROS AJUSTES 01 · AJ-W4 — PUT de Parceiro do web da base (sem os c
   expect(sqlAj(`select concat_ws('|', rg, sexo, site, latitude::text, longitude::text, calcula_funrural::text) from erp.people where id = '${id}'`)).toBe("1234567|F|exemplo.com.br|-15.200000|-59.300000|true");
   sqlAj(`update erp.people set deleted_at = now() where id = '${id}'`);
 });
+
+/**
+ * VENDAS-A4 · CP-K2 — O WEB DA BASE CRIA ORÇAMENTO, PEDIDO E VENDA CONTRA A API DESTE HEAD.
+ *
+ * O cliente da base não conhece `condicao_pagamento_id`: o corpo dele não o leva. A API deste HEAD tem de
+ * aceitar esse corpo (201), gravar o documento com a condição NULA (conferido por SQL) e o plano como veio, e
+ * a conversão (orçamento → pedido → venda) e a confirmação seguem como hoje. O corpo é observado no fio.
+ */
+test("VENDAS-A4 · CP-K2 — o web da base cria orçamento, pedido e venda sem a condição de pagamento: 201, condição nula, plano como enviado; conversão e confirmação como hoje", async ({ page, request }) => {
+  const v = vigiar(page);
+  await login(page);
+  const auth = await cabecalhosDaSessao(page);
+  const rotulos = rotulosDaClassificacaoNoWebDaBase();
+  const BASE = { budgets: "vendas.orcamento", orders: "vendas.pedido", sales: "vendas.venda" } as const;
+  const criados: Partial<Record<keyof typeof BASE, string>> = {};
+
+  for (const variante of ["budgets", "orders", "sales"] as const) {
+    const codigo = `CK2${variante[0]!.toUpperCase()}${Date.now().toString(36).toUpperCase()}`;
+    const criada = await request.post(`${API}/api/admin/tipos-operacao`, { headers: auth, data: { codigo, codigoBase: BASE[variante], nome: `Skew A4 ${codigo}` } });
+    expect(criada.status(), await criada.text()).toBe(201);
+    const topId = (await criada.json() as { id: string }).id;
+
+    await page.goto(`/vendas/${variante}/new`);
+    await expect(page.getByTestId("top-lancador")).toBeVisible();
+    await page.locator(`[data-testid="top-opcao"][data-top-id="${topId}"]`).click();
+    await page.getByTestId("top-continuar").click();
+    await expect(page.getByTestId("top-contexto")).toBeVisible();
+    await pickRef(page, "Cliente", "DEMO");
+    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
+    await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
+    await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
+    if (rotulos) await preencherClassificacaoFinanceira(page, rotulos);
+    await expect(page.getByTestId("condicao-pagamento"), "o web da base não conhece o campo").toHaveCount(0);
+
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/sales/${variante}`);
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    expect(r.status(), `a API deste HEAD aceita o corpo do cliente da base (${variante})`).toBe(201);
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(Object.keys(enviado), "premissa: o cliente da base não conhece o campo").not.toContain("condicao_pagamento_id");
+    const { id } = await r.json() as { id: string };
+    expect(id).toMatch(UUID);
+    expect(sqlAj(`select coalesce(condicao_pagamento_id::text, 'NULL') from erp.sales_documents where id = '${id}'`), `condição nula (${variante})`).toBe("NULL");
+    // O plano como veio: o web da base (à vista) envia null, e a API grava só o `is_deductible` de sempre.
+    const plano = sqlAj(`select (installment_plan - 'is_deductible')::text from erp.sales_documents where id = '${id}'`);
+    expect(JSON.parse(plano), `plano como enviado (${variante})`).toEqual((enviado["installment_plan"] as Record<string, unknown> | null) ?? {});
+    criados[variante] = id;
+  }
+
+  // CONVERSÃO como hoje: orçamento → pedido e pedido → venda, 201 e fonte `converted`; a condição segue nula.
+  for (const variante of ["budgets", "orders"] as const) {
+    const c = await request.post(`${API}/api/sales/${variante}/${criados[variante]}/convert`, { headers: auth, data: {} });
+    expect(c.status(), await c.text()).toBe(201);
+    expect(sqlAj(`select status from erp.sales_documents where id = '${criados[variante]}'`), `a fonte (${variante}) virou convertida`).toBe("converted");
+    const destino = (await c.json() as { id: string }).id;
+    expect(destino).toMatch(UUID);
+    expect(sqlAj(`select coalesce(condicao_pagamento_id::text, 'NULL') from erp.sales_documents where id = '${destino}'`), "a conversão não inventa condição").toBe("NULL");
+  }
+
+  // CONFIRMAÇÃO como hoje: a venda criada pelo web da base confirma (200) e gera título.
+  const conf = await request.post(`${API}/api/sales/sales/${criados.sales}/confirm`, { headers: auth, data: {} });
+  expect(conf.status(), await conf.text()).toBe(200);
+  expect(sqlAj(`select status from erp.sales_documents where id = '${criados.sales}'`)).toBe("confirmed");
+  expect((await conf.json() as { title_ids: string[] }).title_ids.length, "a confirmação gerou título, como hoje").toBeGreaterThan(0);
+  v.semBloqueio(); v.semErroDeContrato();
+});

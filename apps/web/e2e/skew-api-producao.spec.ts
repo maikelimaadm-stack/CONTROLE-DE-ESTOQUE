@@ -1815,3 +1815,97 @@ test("CADASTROS AJUSTES 01 · AJ-K3 — ficha de Parceiro da web NOVA salva cont
   // o dado de teste fica excluído logicamente (nunca apagado)
   sql(`update erp.people set deleted_at = now() where id in ('${id}', '${matriz}', '${fisica}')`);
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * VENDAS-A4 · CP-K1 — A CONDIÇÃO DE PAGAMENTO, COM O WEB DESTE HEAD SOBRE A API DA BASE
+ *
+ * O web desta PR sabe mostrar e enviar `condicao_pagamento_id`. Contra uma API que não DECLARA que o entende
+ * (`capacidades.condicaoPagamento`), ele não pode fazer nenhuma das duas coisas: o `docSchema` da base é
+ * `z.object` sem `.strict()` e DESCARTARIA o campo em silêncio. A prova do mundo legado é NO FIO.
+ *
+ * O mundo é MEDIDO na árvore da base (`scripts/lib/condicao-pagamento.mjs`) e cada um cobra a sua prova;
+ * nenhum dos dois ramos só passa.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+function baseDeclaraCondicaoPagamento(): boolean {
+  const raiz = path.resolve(__dirname, "../../..");
+  const arq = path.join(raiz, ".skew-condicao-pagamento.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão da condição de pagamento ausente (${arq}): rode scripts/skew-condicao-pagamento.mjs antes do skew. `
+      + "Sem ela não há como saber qual ramo provar, e escolher o mais fácil seria certificar o que não se mediu.");
+  }
+  const d = JSON.parse(fs.readFileSync(arq, "utf8")) as { baseSha: string; ocorrencias: number; declara: boolean };
+  expect(d.ocorrencias, "contagem ambígua não decide ramo nenhum — o produtor deveria ter reprovado antes").toBeLessThanOrEqual(1);
+  const declara = d.ocorrencias === 1;
+  expect(declara, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(d.declara);
+  expect(d.baseSha, "a decisão foi medida na base que está servindo").toBe(fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim());
+  expect(process.env.SKEW_BASE_TEM_CONDICAO_PAGAMENTO ?? (declara ? "1" : "0"),
+    "SKEW_BASE_TEM_CONDICAO_PAGAMENTO não bate com a decisão recalculada — alguém fixou a variável por fora").toBe(declara ? "1" : "0");
+  console.log(`[skew] VENDAS-A4 · base ${d.baseSha} ${declara ? "DECLARA" : "NÃO declara"} a condição de pagamento (ocorrências=${d.ocorrencias})`);
+  return declara;
+}
+
+test("VENDAS-A4 · CP-K1 — sem a capacidade declarada pela base, a Condição de pagamento não aparece, NÃO viaja no POST, o documento nasce como hoje e a aba de Configurações mostra erro legível", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const declara = baseDeclaraCondicaoPagamento();
+  const classificacao = baseDeclaraClassificacao();
+
+  const desc = await page.request.get(`${API}/api/sales/sales/operation-types`, { headers: cabecalhos });
+  expect(desc.status(), "premissa: a base serve a descoberta da TOP de venda").toBe(200);
+  const corpoDesc = await desc.json() as { contractVersion?: number; capacidades?: { condicaoPagamento?: unknown } };
+  expect(corpoDesc.contractVersion, "a declaração é ADITIVA: o contrato continua o 1").toBe(1);
+
+  const codigo = `CP${Date.now().toString(36).toUpperCase()}`;
+  const criada = await page.request.post(`${API}/api/admin/tipos-operacao`, { headers: cabecalhos, data: { codigo, codigoBase: "vendas.venda", nome: `Skew condição ${codigo}` } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const topId = (await criada.json() as { id: string }).id;
+
+  await abrirLancamentoDeVendas(page, "sales");
+  await escolherTopEContinuar(page, topId);
+  const central = page.getByTestId("central-vendas");
+  await pickRef(page, "Cliente", "DEMO");
+  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await escolherPrimeiroProdutoDaLinha(page);
+  if (classificacao) await preencherClassificacaoFinanceira(page);
+  await central.getByRole("tab", { name: "Financeiro" }).click();
+  await expect(central.getByText("Parcelamento").first(), "premissa: a aba Financeiro montou").toBeVisible();
+  const campo = page.getByTestId("condicao-pagamento");
+  const salvar = page.getByRole("button", { name: "Salvar" });
+
+  if (declara) {
+    // MUNDO ATUAL: a base declara; o web mostra o campo em vez de tratá-la como servidor antigo.
+    expect(corpoDesc.capacidades?.condicaoPagamento, "a árvore da base declara, então o binário tem de servir").toBeDefined();
+    await expect(campo).toBeVisible();
+    v.semBloqueio();
+    return;
+  }
+
+  // MUNDO LEGADO.
+  expect(corpoDesc.capacidades?.condicaoPagamento, "a base não declara a capacidade").toBeUndefined();
+  await expect(campo, "o campo não aparece na aba Financeiro").toHaveCount(0);
+  await expect(salvar, "o Salvar segue a regra de antes").toBeEnabled();
+
+  // NO FIO: o POST vai de verdade para a base, e o corpo que saiu do navegador não carrega o campo.
+  const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));
+  await salvar.click();
+  const r = await resposta;
+  expect(r.status(), "a base aceita o que o web enviou — o documento nasce como hoje").toBe(201);
+  const enviado = r.request().postDataJSON() as Record<string, unknown>;
+  expect(enviado["tipo_operacao_id"], "premissa: o corpo capturado é o deste lançamento").toBe(topId);
+  expect(Object.keys(enviado), "condicao_pagamento_id NÃO viaja para uma API que o descartaria em silêncio").not.toContain("condicao_pagamento_id");
+  const { id } = await r.json() as { id: string };
+  expect(id).toMatch(UUID);
+  expect(sql(`select status from erp.sales_documents where id = '${id}'`), "no banco: aberto, como hoje").toBe("open");
+
+  // CONFIGURAÇÕES › FINANCEIRO › "Condições de pagamento" contra a base: estado de erro legível, nunca tela em branco.
+  await page.goto("/configuracoes?tab=financeiro");
+  await page.getByRole("tab", { name: "Condições de pagamento" }).click();
+  const principal = page.locator("main");
+  await expect(principal, "a página não fica em branco").not.toBeEmpty();
+  await expect(principal.getByRole("alert").or(principal.getByText(/erro|não foi possível|indisponível|falha/i)).first(),
+    "a base não serve o recurso: a aba mostra um erro legível").toBeVisible();
+  expect((await principal.innerText()).trim().length, "há texto na página, não um corpo vazio").toBeGreaterThan(0);
+});

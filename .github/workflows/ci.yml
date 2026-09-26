@@ -189,6 +189,12 @@ jobs:
       # cobra que o web os mostra. A decisão é MEDIDA na árvore da base e expira sozinha. Falha fechado.
       - name: A API da base já declara a classificação financeira da venda? (VENDAS-A1)
         run: node scripts/skew-classificacao-financeira.mjs --github-env
+      # A API DA BASE JÁ DECLARA A CONDIÇÃO DE PAGAMENTO DO DOCUMENTO DE VENDA? (VENDAS-A4)
+      # Mesmo desenho: sem `capacidades.condicaoPagamento` na descoberta da base, CP-K1 cobra que o web NÃO
+      # mostra o campo e NÃO envia `condicao_pagamento_id` no POST (a base o descartaria em silêncio); com ela,
+      # cobra que o web o mostra. A decisão é MEDIDA na árvore da base e expira sozinha. Falha fechado.
+      - name: A API da base já declara a condição de pagamento da venda? (VENDAS-A4)
+        run: node scripts/skew-condicao-pagamento.mjs --github-env
       # A API DA BASE JÁ SERVE A PRÉVIA DA CONFIRMAÇÃO DA VENDA? (VENDAS-A5-1)
       # Mesmo desenho: sem a rota `previa-confirmacao` declarada na base, o sentido 1 cobra que o diálogo
       # "Confirmar venda" deste web mostra o texto NEUTRO, com o botão habilitado, e que a confirmação funciona
