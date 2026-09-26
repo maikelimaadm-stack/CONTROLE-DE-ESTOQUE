@@ -182,7 +182,10 @@ test("LB-W2 — natureza inativada: a Central abre o campo EDITÁVEL, vazio, com
 test("LB-W3 — Exportar → Importar pela tela: \"(importado)\" aparece na lista", async ({ page }, testInfo) => {
   expect(layout, "depende do LB-W1").toBeTruthy();
   await login(page);
+  // Reativa a natureza do W2: inativa, ela seria REMOVIDA na importação e a Natureza (obrigatória, não editável) reprovaria
+  if (naturezaInativada) { await api(page, "PUT", `/api/resources/financial_categories/${natureza.id}`, { is_active: true }); naturezaInativada = false; }
   const d = await api<Detalhe>(page, "GET", `${BASE}/${layout}`);
+  expect(d.padroesInvalidos, "premissa: nenhum padrão morto").toEqual([]);
   await page.goto(ROTA_LAYOUTS);
   await expect(page.getByTestId("layouts-documento")).toBeVisible();
 
@@ -202,7 +205,7 @@ test("LB-W3 — Exportar → Importar pela tela: \"(importado)\" aparece na list
   const corpo = (await r.json()) as { id: string; code: string; nome: string; removidos: unknown[] };
   criados.push(corpo.id);
   expect(corpo.nome).toBe(`${NOME_LAYOUT} (importado)`);
-  expect(corpo.removidos, "mesma organização: nada removido (a natureza inativa continua da organização)").toEqual(expect.any(Array));
+  expect(corpo.removidos, "mesma organização: nada removido").toEqual([]);
   const resultado = page.getByTestId("layouts-importar-resultado");
   await expect(resultado).toContainText(`${NOME_LAYOUT} (importado)`);
   await resultado.getByRole("button", { name: "Fechar", exact: true }).last().click();
