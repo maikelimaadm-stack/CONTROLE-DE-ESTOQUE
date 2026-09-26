@@ -44,7 +44,7 @@ const DONO = "packages/domain/src/tipo-operacao.ts";
 const EXCECOES = {
   "packages/domain/src/tipo-operacao.ts": "é o dono da lista",
   "packages/plataforma/src/idiomas/pt-BR.ts": "o catálogo de rótulos tem uma chave `top.<codigo>` por família — é o par declarado do registry, não uma segunda lista de famílias",
-  "scripts/familia-operacional-ssot-audit.mjs": "é este gate"
+  "scripts/familia-operacional-ssot-audit.mjs": "é este gate",
 };
 
 /** Onde procurar: o runtime de produto. Teste, E2E e documentação ficam de fora pelo motivo do cabeçalho. */

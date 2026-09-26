@@ -6,10 +6,11 @@ import { useAuth } from "@/lib/auth";
 import { dateTimeBR } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
 import {
-  Badge, Button, Card, CardBody, ConfirmDialog, EmptyState, ErrorState,
+  Badge, Button, Card, CardBody, ConfirmDialog, Dialog, EmptyState, ErrorState,
   Input, LoadingState, Menu, NativeSelect, PageHeader, StatusBadge
 } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
+import { familiaTemLayout } from "@agro/domain";
 import { EditorTipoOperacao, type FamiliaTop } from "./top-editor";
 import { HistoricoDeVersoesTop } from "./top-historico";
 
@@ -43,6 +44,24 @@ function RotuloFamilia({ familia }: { familia: Familia }) {
   return <span>{familia.rotulo} <span className="text-[11px] text-slate-400">{familia.codigo}</span></span>;
 }
 
+const ORIGEM_LAYOUT: Record<string, string> = { ligado: "ligado", padrao_da_familia: "padrão da família", sistema: "do sistema" };
+
+/** Linha SÓ DE LEITURA: qual layout a Central usa para esta TOP (servidor resolve: ligado → padrão → sistema). */
+export function LinhaLayoutDocumentoTop({ tipoOperacaoId, familia }: { tipoOperacaoId: string; familia: string }) {
+  // R1: porta de Configurações (tipos_operacao.view, TOP ativa ou inativa) — não a de vendas, que exige lançar venda.
+  const temLayout = familiaTemLayout(familia);
+  const q = useQuery({
+    queryKey: ["layouts-documento", "efetivo", tipoOperacaoId],
+    queryFn: () => api<{ nome?: string | null; origem?: string }>(`/api/admin/layouts-documento/efetivo${qs({ tipoOperacaoId })}`),
+    enabled: temLayout
+  });
+  if (!temLayout) return null;
+  const nome = q.data?.nome || (q.data?.origem === "sistema" ? "Layout do sistema" : "—");
+  return <p data-testid="top-layout-documento" data-origem={q.data?.origem ?? ""} className="text-[12.5px] text-slate-700">
+    Layout do documento: {q.isLoading ? "…" : q.isError ? "indisponível" : <>{nome} <span className="text-slate-500">({ORIGEM_LAYOUT[q.data?.origem ?? ""] ?? q.data?.origem ?? "—"})</span></>}
+  </p>;
+}
+
 export function TiposOperacaoPanel() {
   const { can } = useAuth();
   const qc = useQueryClient();
@@ -55,6 +74,7 @@ export function TiposOperacaoPanel() {
   const [criando, setCriando] = React.useState(false);
   const [excluindo, setExcluindo] = React.useState<TipoOperacao | null>(null);
   const [vendoVersoes, setVendoVersoes] = React.useState<TipoOperacao | null>(null);
+  const [vendoLayout, setVendoLayout] = React.useState<TipoOperacao | null>(null);
   const [erro, setErro] = React.useState<unknown>(null);
 
   // Paginação, busca e filtros são SERVER-SIDE: a página pede o recorte, nunca baixa tudo e filtra na tela.
@@ -139,6 +159,7 @@ export function TiposOperacaoPanel() {
               trigger={<Button variant="ghost" size="sm" aria-label={COPY.maisOpcoes}>⋯</Button>}
               items={[
                 { label: "Ver versões", onClick: () => setVendoVersoes(r) },
+                ...(familiaTemLayout(r.familia.codigo) ? [{ label: "Layout do documento", onClick: () => setVendoLayout(r) }] : []),
                 { label: "Editar", onClick: () => setEditando(r), disabled: !podeEditar },
                 { label: r.ativo ? "Desativar" : "Ativar", disabled: !podeEditar, onClick: () => mudarEstado.mutate({ t: r, campos: { ativo: !r.ativo } }) },
                 { label: "Definir como padrão", disabled: !podeEditar || r.padrao || !r.ativo, onClick: () => mudarEstado.mutate({ t: r, campos: { padrao: true } }) },
@@ -170,6 +191,10 @@ export function TiposOperacaoPanel() {
       onFechar={() => setEditando(null)}
       onPronto={() => { setEditando(null); recarregar(); }}
     />}
+    {vendoLayout && <Dialog open onOpenChange={(o) => { if (!o) setVendoLayout(null); }} title={`Layout do documento — ${vendoLayout.codigo}`} size="sm" testId="top-layout-documento-dialog">
+      <LinhaLayoutDocumentoTop tipoOperacaoId={vendoLayout.id} familia={vendoLayout.familia.codigo} />
+      <p className="mt-2 text-[12px] text-slate-500">Para trocar, ligue esta TOP a um layout em Configurações › Operações › Layouts de documento.</p>
+    </Dialog>}
     {vendoVersoes && <HistoricoDeVersoesTop id={vendoVersoes.id} codigo={vendoVersoes.codigo} onFechar={() => setVendoVersoes(null)} />}
     <ConfirmDialog
       open={!!excluindo}

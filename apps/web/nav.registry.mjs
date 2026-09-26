@@ -222,6 +222,7 @@ export const AREAS = [
   // parametrização, não lançamento — quem opera escolhe a TOP no portal; quem configura, cadastra aqui.
   cfg("operacoes", null, "Operações", ["tipos_operacao.view"]),
   cfg("operacoes", "tipos-operacao", "Tipos de Operação", "tipos_operacao.view", { keywords: ["top", "tipo de lançamento", "natureza do lançamento", "família operacional"] }),
+  cfg("operacoes", "layouts-documento", "Layouts de documento", "tipos_operacao.view", { keywords: ["layout", "campos da central", "campo obrigatório", "tela de venda"] }),
   cfg("compras", null, "Compras", ["supply_sla.view", "authorizers.view"]),
   cfg("compras", "sla", "SLA por etapa", "supply_sla.view", { aliases: ["/suprimentos/sla"], keywords: ["prazo", "sla"] }),
   cfg("compras", "authorizers", "Autorizadores", "authorizers.view", { keywords: ["aprovador", "alçada"] }),

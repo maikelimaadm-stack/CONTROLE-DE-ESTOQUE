@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
+import fs from "node:fs";
 import { decidir, ocorrenciasNaArvore, ocorrenciasNoTexto } from "../../../../scripts/lib/condicao-pagamento.mjs";
 import { ocorrenciasNoTexto as ocorrenciasDaA1 } from "../../../../scripts/lib/classificacao-financeira.mjs";
+import { CAMINHO_CAPACIDADES, ocorrenciasNaOrdem, ocorrenciasNoTexto as ocorrenciasDaA31 } from "../../../../scripts/lib/layout-documento.mjs";
 
 /**
  * A PROVA DE SKEW DA VENDAS-A4 TAMBÉM EXPIRA SOZINHA: enquanto a base não declara a condição de pagamento,
@@ -35,4 +37,10 @@ describe("decisão da capacidade de condição de pagamento da base (version ske
     expect(ocorrenciasNoTexto(INVERTIDA)).toBe(1);
   });
   it("a árvore deste HEAD declara (exatamente uma vez)", () => expect(ocorrenciasNaArvore(RAIZ)).toBe(1));
+  // VENDAS-A3-1: `layoutDocumento` só entra DEPOIS de `condicaoPagamento`. Declarado antes, este teste fica
+  // vermelho — a mesma guarda de ordem que a A1 exerce sobre a primeira chave.
+  it("na árvore deste HEAD, o layoutDocumento (se declarado) vem depois da condicaoPagamento", () => {
+    const texto = fs.readFileSync(path.join(RAIZ, CAMINHO_CAPACIDADES), "utf8");
+    expect(ocorrenciasNaOrdem(texto), "layoutDocumento declarado fora da ordem prevista").toBe(ocorrenciasDaA31(texto));
+  });
 });

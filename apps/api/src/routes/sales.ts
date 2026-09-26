@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js";
@@ -11,6 +11,7 @@ import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock } from "../services/stock-core.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
+import { layoutEfetivo } from "../lib/layout-documento.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -220,6 +221,34 @@ async function condicaoDaEdicao(ctx: ServiceCtx, corpo: unknown, atual: { condic
   if (v === null) return { linha: null, gravar: true };
   if (atual.condicao_pagamento_id !== null && String(v) === atual.condicao_pagamento_id) return { linha: await condicaoGravada(ctx, atual.condicao_pagamento_id), gravar: false };
   return { linha: await validarCondicaoDoDocumento(ctx, String(v)), gravar: true };
+}
+
+
+/**
+ * COBRANÇA DO LAYOUT AO SALVAR (POST/PUT de orçamento, pedido e venda) — SEMPRE depois de todas as recusas que já
+ * existiam (TOP, classificação, condição): nenhuma ordem, código ou mensagem anterior muda.
+ *
+ * `documento` é o documento COMO FICARÁ depois de gravar (o PUT preserva os campos de três estados ausentes).
+ *
+ * O servidor NÃO aplica valor padrão e NÃO recusa campo "não editável": o layout governa a DIGITAÇÃO na tela; aqui
+ * só se cobra o obrigatório vazio. Aplicar padrão no servidor faria a mesma chamada gravar coisas diferentes
+ * conforme a configuração do dia (a mesma razão de não aplicar a TOP padrão na criação).
+ *
+ * LAYOUT DO SISTEMA = NO-OP (LD-A8). Os obrigatórios dele já são cobrados antes pelo zod (cliente, empresa, data,
+ * produto, quantidade, valor unitário); a natureza/centro são "do sistema" só na TELA quando a API declara a
+ * classificação — o servidor nunca os exigiu ao salvar, e cobrá-los aqui recusaria documento que hoje passa.
+ * Por isso o sistema não é cobrado: documento sem layout configurado não ganha recusa nova nenhuma.
+ *
+ * Não cobrada na CONVERSÃO (o documento gerado herda o de origem) nem na CONFIRMAÇÃO — só na digitação.
+ */
+async function cobrarLayoutAoSalvar(ctx: ServiceCtx, kind: SalesKind, documento: Record<string, unknown> & { tipo_operacao_id?: string | null; items: Record<string, unknown>[] }) {
+  const familia = familiaDaVariante(kind);
+  const layout = await layoutEfetivo(ctx, familia, documento.tipo_operacao_id ?? null);
+  if (layout.origem === "sistema") return;
+  const faltando = camposObrigatoriosFaltando(familia, layout.estrutura, documento, { classificacao: CAPACIDADE_CLASSIFICACAO_FINANCEIRA > 0, condicao: true });
+  if (!faltando.length) return;
+  const details = faltando.map((f) => ({ path: f.caminho, message: mensagemCampoObrigatorio(f.rotulo) }));
+  throw err(ERRO_LAYOUT_CAMPO_OBRIGATORIO, details[0]!.message, details);
 }
 
 /**
@@ -864,11 +893,30 @@ export default async function salesRoutes(app: FastifyInstance) {
         // ADITIVO, sem mexer em `contractVersion` (a web anterior compara a versão EXATA e bloquearia a
         // escrita): declara que esta API entende a classificação financeira do documento (VENDAS-A1). A web
         // nova só mostra e envia os campos com esta declaração — a API anterior os descartaria em silêncio.
-        capacidades: { classificacaoFinanceira: CAPACIDADE_CLASSIFICACAO_FINANCEIRA, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO },
+        capacidades: { classificacaoFinanceira: CAPACIDADE_CLASSIFICACAO_FINANCEIRA, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
         items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao }))
       };
+    }));
+    /**
+     * LAYOUT EFETIVO da TOP escolhida (VENDAS-A3-1) — mesma permissão e porta de `operation-types`. TOP que a
+     * variante não enxerga (inexistente, de outro tenant, de outra família, inativa, excluída, id malformado) cai na
+     * MESMA 404: distinguir seria oráculo de existência. Sem o parâmetro = layout de documento sem TOP (sistema).
+     */
+    app.get(`${base}/layout-efetivo`, async (req) => runService(app, req, `${perm}.create`, async (ctx) => {
+      const familia = familiaDaVariante(kind);
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      const bruto = q["tipo_operacao_id"];
+      let topId: string | null = null;
+      if (bruto !== undefined) {
+        if (typeof bruto !== "string" || !FORMA_UUID.test(bruto)) throw notFound("Tipo de operação");
+        const v = await ctx.tx.query("select 1 from erp.tipos_operacao where id=$1 and organization_id=$2 and codigo_base=$3 and ativo and excluido_em is null", [bruto, ctx.orgId, familia]);
+        if (!v.rowCount) throw notFound("Tipo de operação");
+        topId = bruto;
+      }
+      const l = await layoutEfetivo(ctx, familia, topId);
+      return { estrutura: l.estrutura, origem: l.origem, nome: l.nome, id: l.id };
     }));
     app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id, kind)));
     /**
@@ -881,7 +929,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      * faria a mesma chamada significar coisas diferentes conforme a configuração do dia. A web NOVA escolhe
      * explicitamente (podendo PRÉ-SELECIONAR o padrão, com o valor visível).
      */
-    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
+    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; await cobrarLayoutAoSalvar(ctx, kind, d); const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
     /**
      * EDIÇÃO. A regra do snapshot está toda nas três linhas de `top` abaixo:
      *
@@ -932,6 +980,12 @@ export default async function salesRoutes(app: FastifyInstance) {
       const top = trocouTop ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id!) : undefined;
       const classificacao = await classificacaoDaEdicao(ctx, req.body, cur);
       const condicao = await condicaoDaEdicao(ctx, req.body, cur);
+      // O documento COMO FICARÁ: campos de três estados ausentes preservam o gravado (e contam como preenchidos).
+      await cobrarLayoutAoSalvar(ctx, kind, { ...d,
+        tipo_operacao_id: top ? top.tipoOperacaoId : cur.tipo_operacao_id,
+        categoria_financeira_id: classificacao === undefined ? cur.categoria_financeira_id : classificacao?.categoriaFinanceiraId ?? null,
+        centro_custo_id: classificacao === undefined ? cur.centro_custo_id : classificacao?.centroCustoId ?? null,
+        condicao_pagamento_id: condicao.gravar ? condicao.linha?.id ?? null : cur.condicao_pagamento_id });
       const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao, condicao);
       await audit(ctx.tx, ctx, "sales_documents", id, "update");
       // Mudança de identidade do lançamento é evento PRÓPRIO: quem trocou a TOP de um documento não pode

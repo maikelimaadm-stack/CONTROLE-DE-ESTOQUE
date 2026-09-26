@@ -1909,3 +1909,83 @@ test("VENDAS-A4 · CP-K1 — sem a capacidade declarada pela base, a Condição 
     "a base não serve o recurso: a aba mostra um erro legível").toBeVisible();
   expect((await principal.innerText()).trim().length, "há texto na página, não um corpo vazio").toBeGreaterThan(0);
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * VENDAS-A3-1 · LD-K1 — O LAYOUT DO DOCUMENTO, COM O WEB DESTE HEAD SOBRE A API DA BASE
+ *
+ * O web desta PR sabe pedir `/layout-efetivo` e aplicar o layout. Contra uma API que não DECLARA
+ * `capacidades.layoutDocumento`, a Central tem de ser a de hoje, idêntica: NENHUM pedido a `/layout-efetivo`
+ * (conferido no fio, durante todo o lançamento) e o documento nasce como hoje (201). Nenhum atributo
+ * `data-campo` é exigido. O mundo é MEDIDO na árvore da base (`scripts/lib/layout-documento.mjs`).
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+function baseDeclaraLayoutDocumento(): boolean {
+  const raiz = path.resolve(__dirname, "../../..");
+  const arq = path.join(raiz, ".skew-layout-documento.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão do layout do documento ausente (${arq}): rode scripts/skew-layout-documento.mjs antes do skew. `
+      + "Sem ela não há como saber qual ramo provar, e escolher o mais fácil seria certificar o que não se mediu.");
+  }
+  const d = JSON.parse(fs.readFileSync(arq, "utf8")) as { baseSha: string; ocorrencias: number; declara: boolean };
+  expect(d.ocorrencias, "contagem ambígua não decide ramo nenhum — o produtor deveria ter reprovado antes").toBeLessThanOrEqual(1);
+  const declara = d.ocorrencias === 1;
+  expect(declara, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(d.declara);
+  expect(d.baseSha, "a decisão foi medida na base que está servindo").toBe(fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim());
+  expect(process.env.SKEW_BASE_TEM_LAYOUT_DOCUMENTO ?? (declara ? "1" : "0"),
+    "SKEW_BASE_TEM_LAYOUT_DOCUMENTO não bate com a decisão recalculada — alguém fixou a variável por fora").toBe(declara ? "1" : "0");
+  console.log(`[skew] VENDAS-A3-1 · base ${d.baseSha} ${declara ? "DECLARA" : "NÃO declara"} o layout do documento (ocorrências=${d.ocorrencias})`);
+  return declara;
+}
+
+test("VENDAS-A3-1 · LD-K1 — sem a capacidade declarada pela base, o web não pede /layout-efetivo e o documento nasce como hoje", async ({ page }) => {
+  const v = vigiar(page);
+  // NO FIO, desde antes do login: qualquer pedido a /layout-efetivo durante o lançamento fica registrado.
+  const pedidosLayout: string[] = [];
+  page.on("request", (req) => { if (new URL(req.url()).pathname.includes("/layout-efetivo")) pedidosLayout.push(req.url()); });
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const declara = baseDeclaraLayoutDocumento();
+  const classificacao = baseDeclaraClassificacao();
+
+  const desc = await page.request.get(`${API}/api/sales/sales/operation-types`, { headers: cabecalhos });
+  expect(desc.status(), "premissa: a base serve a descoberta da TOP de venda").toBe(200);
+  const corpoDesc = await desc.json() as { contractVersion?: number; capacidades?: { layoutDocumento?: unknown } };
+  expect(corpoDesc.contractVersion, "a declaração é ADITIVA: o contrato continua o 1").toBe(1);
+
+  if (declara) {
+    // MUNDO ATUAL: a árvore da base declara, então o binário tem de servir a capacidade.
+    expect(corpoDesc.capacidades?.layoutDocumento, "a árvore da base declara, então o binário tem de servir").toBeDefined();
+    v.semBloqueio();
+    return;
+  }
+
+  // MUNDO LEGADO.
+  expect(corpoDesc.capacidades?.layoutDocumento, "a base não declara a capacidade").toBeUndefined();
+
+  const codigo = `LD${Date.now().toString(36).toUpperCase()}`;
+  const criada = await page.request.post(`${API}/api/admin/tipos-operacao`, { headers: cabecalhos, data: { codigo, codigoBase: "vendas.venda", nome: `Skew layout ${codigo}` } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const topId = (await criada.json() as { id: string }).id;
+
+  await abrirLancamentoDeVendas(page, "sales");
+  await escolherTopEContinuar(page, topId);
+  await expect(page.getByTestId("central-vendas"), "premissa: a Central montou").toBeVisible();
+  await pickRef(page, "Cliente", "DEMO");
+  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await escolherPrimeiroProdutoDaLinha(page);
+  if (classificacao) await preencherClassificacaoFinanceira(page);
+
+  const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));
+  await page.getByRole("button", { name: "Salvar" }).click();
+  const r = await resposta;
+  expect(r.status(), "a base aceita o que o web enviou — o documento nasce como hoje").toBe(201);
+  const enviado = r.request().postDataJSON() as Record<string, unknown>;
+  expect(enviado["tipo_operacao_id"], "premissa: o corpo capturado é o deste lançamento").toBe(topId);
+  const { id } = await r.json() as { id: string };
+  expect(id).toMatch(UUID);
+  expect(sql(`select status from erp.sales_documents where id = '${id}'`), "no banco: aberto, como hoje").toBe("open");
+
+  expect(pedidosLayout, "o web NÃO pede /layout-efetivo a uma API que não declara a capacidade").toEqual([]);
+  v.semBloqueio();
+});
