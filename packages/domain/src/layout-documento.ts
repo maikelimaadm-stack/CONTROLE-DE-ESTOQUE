@@ -4,8 +4,8 @@
  * layout; ordem de escolha: layout ligado à TOP → padrão ativo da família → LAYOUT DO SISTEMA (a tela de hoje).
  *
  * UMA conta só: a API e a tela usam `validarEstruturaLayout`, `resolverLayout` e `camposObrigatoriosFaltando` daqui.
- * O layout governa só a DIGITAÇÃO; os efeitos continuam presos à versão da TOP do documento. Nada aqui aponta para
- * registro (nenhum UUID): o valor padrão é literal ou variável.
+ * O layout governa só a DIGITAÇÃO; os efeitos continuam presos à versão da TOP do documento. O valor padrão é literal,
+ * variável ou (VENDAS-A3-1b) registro de cadastro: aqui só a forma (UUID) e o lugar; a existência é conferida pela API.
  */
 
 import { TIPOS_OPERACAO } from "./tipo-operacao.js";
@@ -114,10 +114,15 @@ export function LAYOUT_DO_SISTEMA(familia: string): EstruturaLayout {
   return { versaoSchema: 1, cabecalho: cab, rodape: abas, itens };
 }
 
-/** Que valores padrão um tipo aceita. Referência a registro: nenhum (sem UUID nesta fatia). */
-function padraoCompativel(tipo: TipoDoCampoLayout, v: ValorPadraoLayout): boolean {
+/**
+ * Que valores padrão um campo do catálogo aceita. `registro` (VENDAS-A3-1b): só em campo "referencia" que declara o
+ * cadastro (`referencia`) e só com id em forma de UUID — "Empresa" (tipo empresa) continua só com a variável. ONDE
+ * vale nos itens (só a coluna Armazém) é conferido na coluna; a existência do registro é da API.
+ */
+function padraoCompativel(c: CampoDoCatalogo, v: ValorPadraoLayout): boolean {
+  const tipo = c.tipo;
   if (v.tipo === "variavel") return (v.variavel === "data_atual" && tipo === "data") || (v.variavel === "empresa_selecionada" && tipo === "empresa");
-  if (v.tipo === "registro") return false; // VENDAS-A3-1b: onde o registro vale é regra do agente D (contrato 2.1)
+  if (v.tipo === "registro") return tipo === "referencia" && Boolean(c.referencia) && typeof v.id === "string" && FORMA_UUID_PADRAO.test(v.id);
   switch (tipo) {
     case "data": return typeof v.valor === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.valor);
     case "texto": case "texto_longo": return typeof v.valor === "string";
@@ -146,7 +151,7 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     vistosDoc.add(x.campo);
     if (c.somenteLeitura && (x.obrigatorio || x.editavel)) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatório nem editável.` });
     if (c.sempreTemValor && x.obrigatorio) e.push({ caminho: `${caminho}.obrigatorio`, mensagem: mensagemSempreTemValor(c.rotulo) });
-    if (x.valorPadrao && !padraoCompativel(c.tipo, x.valorPadrao)) e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `Valor padrão incompatível com "${c.rotulo}".` });
+    if (x.valorPadrao && !padraoCompativel(c, x.valorPadrao)) e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `Valor padrão incompatível com "${c.rotulo}".` });
     if (x.obrigatorio && !x.editavel && !x.valorPadrao) e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `"${c.rotulo}" é obrigatório e não editável: informe o valor padrão.` });
   };
   estrutura.cabecalho.forEach((x, i) => conferirCampo(x, `cabecalho[${i}]`, topo));
@@ -162,8 +167,11 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     vistosItem.add(x.campo);
     if (c.somenteLeitura && x.obrigatorio) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatória.` });
     if (c.sempreTemValor && x.obrigatorio) e.push({ caminho: `${caminho}.obrigatorio`, mensagem: mensagemSempreTemValor(c.rotulo) });
+    // VENDAS-A3-1b: valor padrão de coluna só na coluna Armazém e só do tipo registro (UUID)
+    if (x.valorPadrao && !(COLUNAS_COM_PADRAO_REGISTRO.includes(x.campo) && x.valorPadrao.tipo === "registro" && padraoCompativel(c, x.valorPadrao)))
+      e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `Valor padrão incompatível com "${c.rotulo}".` });
   });
-  // campo "do sistema" fora do layout SEM valor padrão (itens não têm padrão: a coluna tem de estar lá)
+  // campo "do sistema" fora do layout SEM valor padrão (coluna do sistema não tem padrão: tem de estar lá)
   const caminhoDe = (campo: string): string => {
     const i = estrutura.cabecalho.findIndex((x) => x.campo === campo); if (i >= 0) return `cabecalho[${i}]`;
     for (const [ai, a] of estrutura.rodape.entries()) { const j = a.campos.findIndex((x) => x.campo === campo); if (j >= 0) return `rodape[${ai}].campos[${j}]`; }
