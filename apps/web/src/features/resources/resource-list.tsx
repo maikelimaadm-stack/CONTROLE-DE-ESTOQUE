@@ -18,9 +18,16 @@ import { NumeracaoAtalho } from "@/features/admin/numeracao";
 import { PillBtn } from "@/features/base1/ui";
 import { FolderTree, List } from "lucide-react";
 
+/** Busca oficial (AJUSTES 02, 2.5): a coluna mostra o NOME que a API manda em `<campo>_nome`; sem ele, o código. */
+function nomeDaBusca(f: FieldDef, row: Record<string, unknown>): string | null {
+  const n = row[`${f.name}_nome`];
+  return typeof n === "string" && n.trim() !== "" ? n : null;
+}
+
 export function formatCell(f: FieldDef, row: Record<string, unknown>) {
   const v = row[f.name];
   if (f.type === "ref") return (row[`${f.name}_label`] as string) ?? "";
+  if (f.busca && nomeDaBusca(f, row)) return nomeDaBusca(f, row)!;
   if (v === null || v === undefined || v === "") return "";
   switch (f.type) {
     case "money": return brl(v as string);
@@ -38,6 +45,7 @@ export function formatCell(f: FieldDef, row: Record<string, unknown>) {
 export function cellText(f: FieldDef, row: Record<string, unknown>): string {
   const v = row[f.name];
   if (f.type === "ref") return String(row[`${f.name}_label`] ?? "");
+  if (f.busca && nomeDaBusca(f, row)) return nomeDaBusca(f, row)!;
   if (v === null || v === undefined || v === "") return "";
   switch (f.type) {
     case "money": return brl(v as string);
