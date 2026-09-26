@@ -1316,7 +1316,8 @@ aviso e Cidade livre; digitar um CEP na busca da Cidade leva ao campo CEP. (15) 
 cartão tem os mesmos campos, na mesma ordem, do endereço principal, mais Tipo/Descrição/IE da propriedade/Ativo; CEP +
 Tab preenche e trava; salvar, reabrir, valores lá. (16) Financeiro → Incluir conta → buscar "260" → Banco "NU
 PAGAMENTOS S.A. - INSTITUIÇÃO DE PAGAMENTO" e Código do banco "260" em campos separados; salvar e reabrir. (17) Funções
-→ CBO "621005" → Ocupação (CBO) "Trabalhador agropecuário em geral" e Código CBO "621005" separados. **Não apagar
+→ CBO "621005" → Ocupação (CBO) "Trabalhador agropecuário em geral" e Código CBO "621005" separados. (R1) Abrir um parceiro já gravado com CEP → Editar → a Cidade vem travada "pelo CEP"
+(se a cidade gravada for de outro CEP: aviso e botão "Usar a cidade do CEP"). **Não apagar
 nada criado no teste** (decisão 247): usar um parceiro de teste já existente ou inativá-lo depois.
 
 ## Checklist de go-live
