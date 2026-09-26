@@ -224,12 +224,24 @@ async function conferirReferencias(ctx: ServiceCtx, def: ResourceDef, fields: Fi
   }
 }
 
+/**
+ * Grades de pessoa exibidas como CARTÕES (endereço/conta/contato): o prefixo do erro nomeia o cartão
+ * ("Endereço 2: …"), com o mesmo N 1-based. Whitelist estática por chave de detalhe; as demais grades
+ * seguem "<rótulo>, linha N". `details[].message` não muda.
+ */
+const CARTAO_DO_DETALHE: Readonly<Record<string, string>> = { enderecos: "Endereço", contas: "Conta", contatos: "Contato" };
+
+function prefixoDaLinha(d: DetalheDef, i: number): string {
+  const cartao = Object.hasOwn(CARTAO_DO_DETALHE, d.key) ? CARTAO_DO_DETALHE[d.key] : undefined;
+  return cartao ? `${cartao} ${i + 1}` : `${d.label}, linha ${i + 1}`;
+}
+
 /** Erro de banco numa linha da grade: vira o erro da API apontando a aba e a linha. */
 function erroNaLinha(def: ResourceDef, d: DetalheDef, i: number, e: unknown, campo?: string): never {
   const de = e instanceof DomainError ? e : fromPgError(e);
   if (!de) throw e;
   const det = detalheDoErro(def, campo ? [d.key, i, campo] : [d.key, i], de.message);
-  throw new DomainError(de.code, `${d.label}, linha ${i + 1}: ${de.message}`, [det]);
+  throw new DomainError(de.code, `${prefixoDaLinha(d, i)}: ${de.message}`, [det]);
 }
 
 async function gravarDetalhe(ctx: ServiceCtx, def: ResourceDef, d: DetalheDef, paiId: string, linhas: Linha[]) {
