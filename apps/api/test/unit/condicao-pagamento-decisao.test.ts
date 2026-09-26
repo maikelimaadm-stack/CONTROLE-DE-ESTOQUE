@@ -34,5 +34,5 @@ describe("decisão da capacidade de condição de pagamento da base (version ske
     expect(ocorrenciasDaA1(INVERTIDA)).toBe(0);
     expect(ocorrenciasNoTexto(INVERTIDA)).toBe(1);
   });
-  it("a árvore deste HEAD tem 0 ou 1 declaração (nunca ambígua)", () => expect([0, 1]).toContain(ocorrenciasNaArvore(RAIZ)));
+  it("a árvore deste HEAD declara (exatamente uma vez)", () => expect(ocorrenciasNaArvore(RAIZ)).toBe(1));
 });
