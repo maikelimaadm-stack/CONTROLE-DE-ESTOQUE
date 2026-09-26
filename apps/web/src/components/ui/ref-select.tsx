@@ -190,7 +190,9 @@ export const rotuloMunicipio = (m: Municipio) => `${m.codigoIbge} · ${m.nome} -
 
 export type ParteDoCampo = "busca" | "codigo" | "extra";
 /** Uma parte desenhada: quem chama decide a moldura (B1Field no formulário, célula na grade). `id` é o da caixa. */
-export interface ParteRenderizada { parte: ParteDoCampo; rotulo: string; hasValue: boolean; somenteLeitura: boolean; node: React.ReactNode; id: string }
+export interface ParteRenderizada { parte: ParteDoCampo; rotulo: string; hasValue: boolean; somenteLeitura: boolean; node: React.ReactNode; id: string;
+  /** avisos e botões da parte: ficam ABAIXO da caixa (a caixa do formulário tem altura fixa; dentro dela transbordariam sobre o que vem depois) */
+  abaixo?: React.ReactNode }
 export type EnvolverParte = (p: ParteRenderizada) => React.ReactNode;
 /** Texto da caixa do nome enquanto ele não está na mão: nunca o código. */
 export const TXT_CARREGANDO = "carregando…";
@@ -199,7 +201,7 @@ export const TXT_CARREGANDO = "carregando…";
 export function desenharPartes(partes: ParteRenderizada[], envolver: EnvolverParte | undefined, className?: string, testId?: string): React.ReactElement {
   if (envolver) return <>{partes.map((p) => <React.Fragment key={p.parte}>{envolver(p)}</React.Fragment>)}</>;
   return <span className={cn("flex w-full min-w-0 items-start gap-2", className)} data-testid={testId}>
-    {partes.map((p) => <span key={p.parte} className={cn("flex min-w-0 flex-col", p.parte === "busca" ? "flex-1" : p.parte === "codigo" ? "w-24 shrink-0" : "w-12 shrink-0")}>{p.node}</span>)}
+    {partes.map((p) => <span key={p.parte} className={cn("flex min-w-0 flex-col", p.parte === "busca" ? "flex-1" : p.parte === "codigo" ? "w-24 shrink-0" : "w-12 shrink-0")}>{p.node}{p.abaixo}</span>)}
   </span>;
 }
 
@@ -289,8 +291,7 @@ export function CampoCidade({ value, onChange, disabled, className, classeEntrad
     : atual ? "Nome da cidade indisponível agora." : null;
   const texto = codigoAtual === null ? null : atual?.nome || (avisoDoValor ? null : TXT_CARREGANDO);
 
-  const busca = <span className="flex w-full min-w-0 flex-col">
-    <span className="flex w-full min-w-0 items-center gap-1">
+  const busca = <span className="flex w-full min-w-0 items-center gap-1">
       <Popover.Root open={open} onOpenChange={abrir}>
         <Popover.Trigger asChild>
           <CmdDisplay id={base} disabled={disabled || travada} empty={codigoAtual === null} placeholder="Nome, código IBGE ou CEP" aria-label={rotulos.busca} aria-expanded={open} className={cn("w-full", classeEntrada)} data-testid="cidade-busca" onClear={travada ? undefined : () => escolher(null)}>{texto}</CmdDisplay>
@@ -303,19 +304,21 @@ export function CampoCidade({ value, onChange, disabled, className, classeEntrad
         </Popover.Content></Popover.Portal>
       </Popover.Root>
       {travadaPeloCep && <span className="shrink-0 rounded bg-slate-100 px-1 text-[10.5px] font-medium text-slate-600" data-testid="cidade-pelo-cep" title="A cidade segue o CEP; mude ou limpe o CEP para escolher outra.">pelo CEP</span>}
-    </span>
+    </span>;
+  const temAbaixo = Boolean(avisoDoValor || cepDivergente || (aviso && opcoes.length > 0 && open));
+  const abaixo = temAbaixo ? <span className="flex min-w-0 flex-col">
     {avisoDoValor && <span className="text-[11px] text-amber-600" data-testid="cidade-aviso">{avisoDoValor}</span>}
     {cepDivergente && <span className="flex flex-wrap items-center gap-1 text-[11px] text-amber-600">
       <span data-testid="cidade-aviso-cep">{`O CEP ${formatarCep(cepDivergente.cep)} é de ${cepDivergente.municipio.nome} - ${cepDivergente.municipio.uf}; a cidade gravada é ${atual?.nome ? `${atual.nome} - ${atual.uf}` : TXT_CARREGANDO}.`}</span>
       {!disabled && <button type="button" className="rounded border border-amber-300 bg-white px-1 font-medium text-amber-700 hover:bg-amber-50" data-testid="cidade-usar-do-cep" onClick={cepDivergente.aoUsar}>Usar a cidade do CEP</button>}
     </span>}
     {aviso && opcoes.length > 0 && open && <span className="text-[11px] text-amber-600">{aviso}</span>}
-  </span>;
+  </span> : undefined;
   const ibge = <input id={`${base}-ibge`} aria-label={rotulos.codigo} title={rotulos.codigo} readOnly tabIndex={-1} className={cn("w-full", classeEntrada)} data-testid="cidade-ibge" value={codigoAtual === null ? "" : String(codigoAtual)} />;
   const uf = <input id={`${base}-uf`} aria-label={rotulos.extra} title={rotulos.extra} readOnly tabIndex={-1} className={cn("w-full", classeEntrada)} data-testid="cidade-uf" value={codigoAtual === null ? "" : atual?.uf ?? ""} />;
   const tem = codigoAtual !== null;
   return desenharPartes([
-    { parte: "busca", rotulo: rotulos.busca, hasValue: tem, somenteLeitura: travada, node: busca, id: base },
+    { parte: "busca", rotulo: rotulos.busca, hasValue: tem, somenteLeitura: travada, node: busca, id: base, abaixo },
     { parte: "codigo", rotulo: rotulos.codigo, hasValue: tem, somenteLeitura: true, node: ibge, id: `${base}-ibge` },
     { parte: "extra", rotulo: rotulos.extra ?? "UF", hasValue: tem && Boolean(atual?.uf), somenteLeitura: true, node: uf, id: `${base}-uf` }
   ], envolver, className, "campo-cidade");

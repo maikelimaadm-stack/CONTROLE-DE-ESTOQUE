@@ -264,7 +264,7 @@ function GradeDeDetalhe({ d, form, dis, erros, mascaras }: { d: DetalheDef; form
       if (parte.parteDe) return null; // Código IBGE, UF, Código do banco: desenhados pela busca, ao lado dela
       const f = campos.find((x) => x.name === parte.adicional); if (!f) return null;
       const bloqueada = travada(l, f); const id = `${d.key}-${chave}-${f.name}`; const valor = l[f.name];
-      const envolver: EnvolverParte = (p) => <B1Field key={p.parte} flex idDoControle={p.id} label={p.parte === "busca" ? parte.rotulo : p.rotulo} required={p.parte === "busca" && Boolean(f.required)} disabled={dis} locked={bloqueada || p.somenteLeitura} hasValue={p.hasValue}
+      const envolver: EnvolverParte = (p) => <B1Field key={p.parte} flex idDoControle={p.id} label={p.parte === "busca" ? parte.rotulo : p.rotulo} required={p.parte === "busca" && Boolean(f.required)} disabled={dis} locked={bloqueada || p.somenteLeitura} hasValue={p.hasValue} abaixo={p.abaixo}
         className={p.parte === "busca" ? undefined : p.parte === "codigo" ? "min-w-[110px] max-w-[160px]" : "min-w-[64px] max-w-[80px]"}>{p.node}</B1Field>;
       if (f.busca === "municipios") return <CampoCidade id={id} value={valor as number | string | null} onChange={(c) => mudar(chave, f.name, c ?? "")} disabled={bloqueada} classeEntrada={cn(CLS_B1, "h-6")} envolver={envolver}
         travadaPeloCep={cepTravaCidade(l, chave)} cepDivergente={divergenteDaLinha(l, chave)} aoDigitarCep={ehEnderecos && campoCep && !travada(l, campoCep) ? cepPelaCidade(chave) : undefined} />;
@@ -286,7 +286,7 @@ function GradeDeDetalhe({ d, form, dis, erros, mascaras }: { d: DetalheDef; form
     const bloqueada = travada(l, f);
     if (ehEnderecos && f.name === "cep") return <td key={f.name} className="px-1 py-0.5" onBlur={aoSairDoCep(chave)}>{entradaCep(l, f, chave, bloqueada, "h-7 w-full min-w-[90px] rounded border px-1 text-[12.5px]")}</td>;
     // busca oficial: uma CÉLULA por parte (a busca e as caixas só leitura)
-    if (f.busca) return <CelulaDaGrade key={f.name} f={f} valor={l[f.name]} dis={bloqueada} mascaras={mascaras} aoDigitarCep={ehFiliais && f.name === "city_id" && !bloqueada && !travada(l, d.fields.find((x) => x.name === "zip_code")!) ? (cep) => void cepDaFilial(chave)(cep) : undefined} onChange={(x) => mudar(chave, f.name, x)} envolver={(p) => <td key={p.parte} className={cn("px-1 py-0.5", p.parte !== "busca" && "w-24")}>{p.node}</td>} />;
+    if (f.busca) return <CelulaDaGrade key={f.name} f={f} valor={l[f.name]} dis={bloqueada} mascaras={mascaras} aoDigitarCep={ehFiliais && f.name === "city_id" && !bloqueada && !travada(l, d.fields.find((x) => x.name === "zip_code")!) ? (cep) => void cepDaFilial(chave)(cep) : undefined} onChange={(x) => mudar(chave, f.name, x)} envolver={(p) => <td key={p.parte} className={cn("px-1 py-0.5", p.parte !== "busca" && "w-24")}>{p.node}{p.abaixo}</td>} />;
     return <td key={f.name} className="px-1 py-0.5"><CelulaDaGrade f={f} valor={l[f.name]} dis={bloqueada} mascaras={mascaras} onChange={(x) => mudar(chave, f.name, x)} /></td>;
   };
   return <Card className="col-span-12 p-3" data-testid={`grade-${d.key}`}>
@@ -311,7 +311,7 @@ function CamposDoPerfil({ p, form, dis }: { p: PerfilDef; form: UseFormReturn<Va
   return <Card className="col-span-12 p-3"><h3 className={cn(TITULO, "mb-2")}>{p.label}</h3><div className="flex flex-wrap gap-3">
     {campos.map((f) => { const on = (x: unknown) => form.setValue(p.key, { ...v, [f.name]: x }, { shouldDirty: true });
       // busca oficial: uma caixa rotulada por PARTE (AJUSTES 02, 2.1)
-      if (f.busca) return <CelulaDaGrade key={f.name} f={f} valor={v[f.name]} dis={dis} onChange={on} envolver={(x) => <label key={x.parte} className={cn("text-[12px]", x.parte === "busca" ? "min-w-[200px] flex-1" : "w-28")}><span className="block text-[11px] text-slate-500">{x.parte === "busca" ? f.label : x.rotulo}</span>{x.node}</label>} />;
+      if (f.busca) return <CelulaDaGrade key={f.name} f={f} valor={v[f.name]} dis={dis} onChange={on} envolver={(x) => <label key={x.parte} className={cn("text-[12px]", x.parte === "busca" ? "min-w-[200px] flex-1" : "w-28")}><span className="block text-[11px] text-slate-500">{x.parte === "busca" ? f.label : x.rotulo}</span>{x.node}{x.abaixo}</label>} />;
       return <label key={f.name} className="min-w-[200px] flex-1 text-[12px]"><span className="block text-[11px] text-slate-500">{f.label}</span><CelulaDaGrade f={f} valor={v[f.name]} dis={dis} onChange={on} /></label>; })}
   </div></Card>;
 }

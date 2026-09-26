@@ -311,7 +311,7 @@ test("UI-3 — Cidade: nome, Código IBGE e CEP na BUSCA; Código IBGE e UF só 
   await expect(cidade.busca).toContainText("Vila Bela da Santíssima Trindade");
   await expect(cidade.ibge).toHaveValue(codigoB);
   // AJUSTES 02 (2.2): CEP digitado na BUSCA da Cidade do principal vai para o campo CEP, que consulta e preenche tudo
-  // (antes virava a 1ª opção da lista; esse comportamento continua só onde não há campo CEP que o receba — ver UI-3b)
+  // (antes virava a 1ª opção da lista; nas Filiais o CEP também vai para a coluna CEP da linha — ver UI-3b)
   await cidade.busca.click();
   await painel(page).getByLabel("Pesquisar opção").fill("78250-000");
   await expect(page.getByLabel("CEP", { exact: true }), "o CEP digitado na busca foi para o campo CEP").toHaveValue("78250-000");
@@ -322,7 +322,7 @@ test("UI-3 — Cidade: nome, Código IBGE e CEP na BUSCA; Código IBGE e UF só 
   await expect(cidade.peloCep, "CEP encontrado trava a Cidade com a marca \"pelo CEP\"").toBeVisible();
 });
 
-test("UI-3b — Cidade SEM campo CEP que a receba (Filiais do fornecedor): CEP digitado na busca é a 1ª opção e escolhe a cidade do CEP", async ({ page }) => {
+test("UI-3b — Filiais do fornecedor (AJUSTES 02 · R1-B): CEP digitado na busca da Cidade vai para a coluna CEP da linha e a cidade vem dele", async ({ page }) => {
   await login(page);
   await mockCep(page);
   const p = await criarParceiro(page, { name: uniq("UI-3b fornecedor"), is_provider: true });
@@ -334,10 +334,10 @@ test("UI-3b — Cidade SEM campo CEP que a receba (Filiais do fornecedor): CEP d
   const filial = page.getByTestId("linha-filiais-1");
   await filial.getByTestId("cidade-busca").click();
   await painel(page).getByLabel("Pesquisar opção").fill("78250-000");
-  await expect(opcoes(page).first()).toHaveText("CEP 78250-000 → 5106752 · Pontes e Lacerda - MT");
-  await opcoes(page).first().click();
+  await expect(filial.getByLabel("CEP", { exact: true }), "o CEP digitado na busca foi para a coluna CEP da linha").toHaveValue("78250-000");
   await expect(filial.getByTestId("cidade-ibge")).toHaveValue("5106752");
   await expect(filial.getByTestId("cidade-uf")).toHaveValue("MT");
+  await expect(filial.getByTestId("cidade-busca")).toContainText("Pontes e Lacerda");
   await expect(filial.getByTestId("cidade-ibge")).toHaveAttribute("readonly", "");
   await expect(filial.getByTestId("cidade-uf")).toHaveAttribute("readonly", "");
 });
@@ -706,12 +706,19 @@ test("UI-13 (W-2) — CEP só é consultado quando MUDA: Tab por CEP gravado nã
   await expect(page.getByTestId("cep-lupa"), "sem lupa em leitura").toHaveCount(0);
   await expect(page.getByTestId("cep-lupa-linha")).toHaveCount(0);
 
-  // EDIÇÃO: Tab pelo CEP gravado (sem mudar) não chama e não sobrescreve o endereço corrigido à mão
+  // EDIÇÃO (AJUSTES 02 · R1-A): ao ENTRAR, cada CEP gravado é consultado UMA vez em modo CONFERÊNCIA (principal e cartão),
+  // que não preenche nem sobrescreve nada; depois disso, Tab pelo CEP gravado (sem mudar) não chama de novo
   await editar(page);
   await aba(page, "Endereço").click();
+  await expect.poll(() => [...chamadas].sort(), { message: "uma conferência por CEP gravado ao entrar em edição" }).toEqual(["78245000", "78250000"]);
+  await page.waitForTimeout(700);
+  expect([...chamadas].sort(), "a conferência não se repete").toEqual(["78245000", "78250000"]);
+  await expect(page.locator('input[name="address"]'), "a conferência não sobrescreve o endereço corrigido à mão").toHaveValue("Rua corrigida à mão");
+  await expect(linha.getByLabel("Endereço", { exact: true })).toHaveValue("Rua da grade à mão");
+  chamadas.length = 0;
   await cepPrincipal.focus(); await cepPrincipal.press("Tab");
   await linha.getByLabel("CEP", { exact: true }).focus(); await linha.getByLabel("CEP", { exact: true }).press("Tab");
-  await esperarSemChamada("CEP que não mudou não é consultado");
+  await esperarSemChamada("CEP que não mudou não é consultado de novo");
   await expect(page.locator('input[name="address"]')).toHaveValue("Rua corrigida à mão");
   await expect(linha.getByLabel("Endereço", { exact: true })).toHaveValue("Rua da grade à mão");
   // a lupa FORÇA a consulta do mesmo CEP (só em edição)

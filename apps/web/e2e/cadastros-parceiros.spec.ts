@@ -79,7 +79,7 @@ test("PA-W2 — ficha em abas: cabeçalho, perfil por tipo, grade de endereços 
   await expect(page.getByTestId("erros-aba-enderecos")).toHaveText("1");
   await expect(page.getByTestId("linha-enderecos-2")).toHaveClass(/bg-red-50/);
   await expect(page.getByTestId("linha-enderecos-1"), "só o cartão com erro fica marcado").not.toHaveClass(/bg-red-50/);
-  await expect(page.getByTestId("linha-enderecos-2"), "a mensagem do servidor aparece no cartão").toContainText("Linha 2:");
+  await expect(page.getByTestId("linha-enderecos-2"), "a mensagem do servidor aparece no cartão").toContainText("Endereço 2:");
   const nada = await api<{ items: unknown[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`);
   expect(nada.items, "nada gravado").toHaveLength(0);
 

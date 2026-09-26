@@ -69,11 +69,11 @@ export function CampoReferenciaOficial({ referencia, value, onChange, disabled, 
           onPick={(o) => { const it = lista.data?.items.find((x) => String(x.codigo) === o.value) ?? null; if (!it) return; setPicked(it); onChange(it.codigo); setOpen(false); setSearch(""); }} />
       </Popover.Content></Popover.Portal>
     </Popover.Root>
-    {aviso && <span className="text-[11px] text-amber-600" data-testid={`ref-${referencia}-aviso`}>{aviso}</span>}
   </span>;
+  const abaixo = aviso ? <span className="text-[11px] text-amber-600" data-testid={`ref-${referencia}-aviso`}>{aviso}</span> : undefined;
   const codigo = <input id={`${base}-codigo`} aria-label={rotulos.codigo} readOnly tabIndex={-1} className={cn("w-full", classeEntrada)} data-testid={`ref-${referencia}-codigo`} value={partes?.codigo ?? ""} />;
   return desenharPartes([
-    { parte: "busca", rotulo: rotulos.busca, hasValue: temValor, somenteLeitura: false, node: busca, id: base },
+    { parte: "busca", rotulo: rotulos.busca, hasValue: temValor, somenteLeitura: false, node: busca, id: base, abaixo },
     { parte: "codigo", rotulo: rotulos.codigo, hasValue: temValor, somenteLeitura: true, node: codigo, id: `${base}-codigo` }
   ], envolver, undefined, `campo-ref-${referencia}`);
 }
