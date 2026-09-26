@@ -8,6 +8,8 @@ import {
   type EstruturaLayout
 } from "../src/layout-documento.js";
 
+function at<T>(a: readonly T[], i: number): T { const v = a[i]; if (v === undefined) throw new Error(`índice ${i} ausente`); return v; }
+
 const F = "vendas.pedido";
 const sis = (f: string = F): EstruturaLayout => structuredClone(LAYOUT_DO_SISTEMA(f));
 const caminhos = (f: string, e: EstruturaLayout) => validarEstruturaLayout(f, e).map((x) => x.caminho);
@@ -58,28 +60,28 @@ describe("LD-D2 regras de validarEstruturaLayout", () => {
   it("obrigatório e não editável sem padrão", () => {
     const l = sis(); l.cabecalho[3] = { campo: "due_date", obrigatorio: true, editavel: false };
     expect(caminhos(F, l)).toEqual(["cabecalho[3].valorPadrao"]);
-    l.cabecalho[3].valorPadrao = { tipo: "variavel", variavel: "data_atual" };
+    at(l.cabecalho, 3).valorPadrao = { tipo: "variavel", variavel: "data_atual" };
     expect(validarEstruturaLayout(F, l)).toEqual([]);
   });
   it("padrão incompatível", () => {
-    const l = sis(); l.rodape[0].campos[0].valorPadrao = { tipo: "variavel", variavel: "data_atual" }; // numero
+    const l = sis(); at(at(l.rodape, 0).campos, 0).valorPadrao = { tipo: "variavel", variavel: "data_atual" }; // numero
     expect(caminhos(F, l)).toEqual(["rodape[0].campos[0].valorPadrao"]);
-    const l2 = sis(); l2.cabecalho[3].valorPadrao = { tipo: "variavel", variavel: "empresa_selecionada" }; // data
+    const l2 = sis(); at(l2.cabecalho, 3).valorPadrao = { tipo: "variavel", variavel: "empresa_selecionada" }; // data
     expect(caminhos(F, l2)).toEqual(["cabecalho[3].valorPadrao"]);
-    const l3 = sis(); l3.cabecalho[4].valorPadrao = { tipo: "literal", valor: "x" }; // referencia
+    const l3 = sis(); at(l3.cabecalho, 4).valorPadrao = { tipo: "literal", valor: "x" }; // referencia
     expect(caminhos(F, l3)).toEqual(["cabecalho[4].valorPadrao"]);
     const ok = sis();
-    ok.cabecalho[1].valorPadrao = { tipo: "variavel", variavel: "empresa_selecionada" };
-    ok.rodape[0].campos[0].valorPadrao = { tipo: "literal", valor: "10.5" };
-    ok.rodape[3].campos[0].valorPadrao = { tipo: "literal", valor: true };
+    at(ok.cabecalho, 1).valorPadrao = { tipo: "variavel", variavel: "empresa_selecionada" };
+    at(at(ok.rodape, 0).campos, 0).valorPadrao = { tipo: "literal", valor: "10.5" };
+    at(at(ok.rodape, 3).campos, 0).valorPadrao = { tipo: "literal", valor: true };
     expect(validarEstruturaLayout(F, ok)).toEqual([]);
   });
   it("só leitura marcado obrigatório/editável", () => {
-    const l = sis(); l.itens[8].obrigatorio = true; // total
+    const l = sis(); at(l.itens, 8).obrigatorio = true; // total
     expect(caminhos(F, l)).toEqual(["itens[8]"]);
   });
   it("aba vazia", () => {
-    const l = sis(); l.rodape[3].campos = [];
+    const l = sis(); at(l.rodape, 3).campos = [];
     expect(caminhos(F, l)).toEqual(["rodape[3]"]);
   });
   it("coluna do sistema faltando nos itens", () => {
@@ -96,8 +98,8 @@ describe("LD-D2 regras de validarEstruturaLayout", () => {
 });
 
 describe("LD-D3 resolverLayout", () => {
-  const a = sis(); a.cabecalho[3].rotulo = "A";
-  const b = sis(); b.cabecalho[3].rotulo = "B";
+  const a = sis(); at(a.cabecalho, 3).rotulo = "A";
+  const b = sis(); at(b.cabecalho, 3).rotulo = "B";
   it("ligado vence", () => expect(resolverLayout(F, { ligado: a, padraoDaFamilia: b })).toEqual({ estrutura: a, origem: "ligado" }));
   it("padrão da família sem ligado", () => expect(resolverLayout(F, { ligado: null, padraoDaFamilia: b })).toEqual({ estrutura: b, origem: "padrao_da_familia" }));
   it("sistema sem nada", () => expect(resolverLayout(F, {})).toEqual({ estrutura: LAYOUT_DO_SISTEMA(F), origem: "sistema" }));
@@ -117,26 +119,26 @@ describe("LD-D4 camposObrigatoriosFaltando", () => {
     ]);
   });
   it("rodapé obrigatório vazio, com rótulo próprio", () => {
-    const l = sis(); l.rodape[2].campos[0].obrigatorio = true;
+    const l = sis(); at(at(l.rodape, 2).campos, 0).obrigatorio = true;
     expect(camposObrigatoriosFaltando(F, l, cheio(), cap)).toEqual([{ caminho: "transporter_id", rotulo: "Transportadora" }]);
-    l.rodape[2].campos[0].rotulo = "Transp.";
+    at(at(l.rodape, 2).campos, 0).rotulo = "Transp.";
     expect(camposObrigatoriosFaltando(F, l, cheio(), cap)).toEqual([{ caminho: "transporter_id", rotulo: "Transp." }]);
   });
   it("item obrigatório vazio na linha 1", () => {
-    const l = sis(); l.itens[2].obrigatorio = true;
-    const d = cheio(); d.items[0].warehouse_id = "w";
+    const l = sis(); at(l.itens, 2).obrigatorio = true;
+    const d = cheio(); at(d.items, 0).warehouse_id = "w";
     expect(camposObrigatoriosFaltando(F, l, d, cap)).toEqual([{ caminho: "items[1].warehouse_id", rotulo: "Armazém" }]);
   });
   it("campo com capacidade ausente não é cobrado", () => {
     const d = cheio(); d.categoria_financeira_id = ""; d.centro_custo_id = undefined;
     expect(camposObrigatoriosFaltando(F, sis(), d, { classificacao: false })).toEqual([]);
     expect(camposObrigatoriosFaltando(F, sis(), d, cap).map((x) => x.caminho)).toEqual(["categoria_financeira_id", "centro_custo_id"]);
-    const l = sis(); l.rodape[1].campos[0].obrigatorio = true; // condicao_pagamento_id
+    const l = sis(); at(at(l.rodape, 1).campos, 0).obrigatorio = true; // condicao_pagamento_id
     expect(camposObrigatoriosFaltando(F, l, cheio(), { classificacao: true, condicao: false })).toEqual([]);
     expect(camposObrigatoriosFaltando(F, l, cheio(), cap).map((x) => x.caminho)).toEqual(["condicao_pagamento_id"]);
   });
   it("só leitura nunca é cobrado", () => {
-    const l = sis(); l.itens[8].obrigatorio = true; l.itens[3].obrigatorio = true;
+    const l = sis(); at(l.itens, 8).obrigatorio = true; at(l.itens, 3).obrigatorio = true;
     expect(camposObrigatoriosFaltando(F, l, cheio(), cap)).toEqual([]);
   });
 });
