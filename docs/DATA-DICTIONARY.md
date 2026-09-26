@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 192 |
-| Tabelas com `organization_id` (escopo de organização) | 135 |
+| Tabelas no schema `erp` | 193 |
+| Tabelas com `organization_id` (escopo de organização) | 136 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 54 |
 | Entidades curadas neste dicionário | 49 |
 | Entidades com ID Global | 23 |
 | Entidades com Tipo de Operação | 13 |
 | Tipos de Operação referenciados | 17 |
-| Cobertura curada | 25.5% |
+| Cobertura curada | 25.4% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1348,6 +1348,8 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | `tipo_operacao_versao_id` |  | uuid | não |  |  |  |  |
 | `categoria_financeira_id` | Categoria financeira | uuid | não |  |  |  | Categoria de RECEITA analítica e ativa dos títulos a receber gerados pela confirmação. Anda em PAR com o centro de custo (os dois ou nenhum); FK composta com o tenant. Documento sem classificação confirma pelo padrão legado (decisão 248). |
 | `centro_custo_id` | Centro de custo | uuid | não |  |  |  | Centro de custo analítico e ativo dos títulos a receber gerados pela confirmação. Anda em PAR com a categoria financeira (os dois ou nenhum); FK composta com o tenant (decisão 248). |
+| `condicao_pagamento_id` |  | uuid | não |  |  |  |  |
+| `parcelas_ajustadas` |  | boolean | sim |  |  |  |  |
 
 ## Pecuária
 
@@ -1731,6 +1733,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.budget_plannings` | 10 | sim | `empresa_id` | sim |
 | `erp.chart_accounts` | 12 | sim | — | sim |
 | `erp.client_profiles` | 9 | não | — | não |
+| `erp.condicoes_pagamento` | 16 | sim | — | sim |
 | `erp.contract_items` | 6 | não | — | não |
 | `erp.contracts` | 18 | sim | `empresa_id` | sim |
 | `erp.cost_centers` | 11 | sim | — | sim |

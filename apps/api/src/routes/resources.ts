@@ -17,6 +17,7 @@ import { conferirParceiro, atualizarSituacaoReceita } from "../lib/parceiro.js";
 import { conferirProduto, fundirCamposJson, historicoDoRegistro } from "../lib/produto.js";
 import { shapeDaFicha, validarCorpo, gravarFicha, lerFicha, temFicha, semSigilo, conferirPermissoesDaFicha, conferirSigiloNaCriacao, exigirCampoVisivel, podeVerCampo } from "../lib/ficha-em-abas.js";
 import { conferirFuncionario, conferirCboDaFuncao } from "../lib/funcionario.js";
+import { conferirCondicaoPagamento } from "../lib/condicao-pagamento.js";
 import { empresaScopeBuilder, exigirEmpresaDeLancamento, exigirEscopoTotalDoModulo, exigirEscopoTotalDaOrganizacao, empresaScopeSql, hasPermission, type ServiceCtx } from "../lib/context.js";
 
 /** Constrói o schema zod de um recurso a partir da definição declarativa. */
@@ -79,6 +80,7 @@ async function conferirRegrasDoCadastro(ctx: ServiceCtx, def: ResourceDef, id: s
   else if (def.key === "people") await conferirParceiro(ctx, def, id, data, atual);
   else if (def.key === "funcionarios") await conferirFuncionario(ctx, def, id, data, atual);
   else if (def.key === "job_functions") await conferirCboDaFuncao(ctx, data);
+  else if (def.key === "condicoes_pagamento") conferirCondicaoPagamento(data, atual);
   // depois das regras próprias: a recusa específica (ex.: grupo do produto) fala primeiro
   await conferirReferenciasAnaliticas(ctx, def, data, atual);
 }

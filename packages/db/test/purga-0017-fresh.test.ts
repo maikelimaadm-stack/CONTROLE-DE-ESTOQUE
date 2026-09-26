@@ -188,8 +188,10 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // gatilho de INSERT no ledger que não reescreve nada do acervo; a posição 17 segue intacta. A CADASTROS AJUSTES 01
     // é a décima quarta: a 0030 só ACRESCENTA colunas anuláveis (ou com default) a `erp.people` e
     // `erp.parceiro_enderecos`, com checks e a FK composta da matriz — cadastros de organização, fora do recorte
-    // que a purga lê; a posição 17 segue intacta.
-    expect(noDisco.length, "30 migrations no repositório").toBe(30);
+    // que a purga lê; a posição 17 segue intacta. A VENDAS-A4 é a décima quinta: a 0031 cria o cadastro de
+    // organização `erp.condicoes_pagamento` e acrescenta duas colunas (anulável / com default) a
+    // `erp.sales_documents` — fora do recorte que a purga lê; a posição 17 segue intacta.
+    expect(noDisco.length, "31 migrations no repositório").toBe(31);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -204,6 +206,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[27], "e a 28ª é a ficha de RH / funcionários (CADASTROS Fase 5)").toBe("0028_rh_funcionarios.sql");
     expect(noDisco[28], "e a 29ª é a ficha de Produtos (CADASTROS Fase 6)").toBe("0029_produtos_ficha_em_abas.sql");
     expect(noDisco[29], "e a 30ª são os ajustes do Parceiro (CADASTROS AJUSTES 01)").toBe("0030_cadastros_ajustes_01.sql");
+    expect(noDisco[30], "e a 31ª é a condição de pagamento (VENDAS-A4)").toBe("0031_vendas_condicao_pagamento.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {
