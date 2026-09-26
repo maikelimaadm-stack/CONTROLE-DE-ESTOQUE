@@ -20,7 +20,12 @@ export function familiaTemLayout(f: string): f is FamiliaComLayout { return FAMI
 export type ParteDoLayout = "cabecalho" | "rodape" | "itens";
 export type TipoDoCampoLayout = "referencia" | "empresa" | "data" | "texto" | "texto_longo" | "numero" | "booleano" | "plano";
 export type VariavelPadrao = "data_atual" | "empresa_selecionada";
-export type ValorPadraoLayout = { tipo: "literal"; valor: string | number | boolean } | { tipo: "variavel"; variavel: VariavelPadrao };
+/**
+ * `registro` (VENDAS-A3-1b): um registro de CADASTRO já escolhido no layout (natureza, condição, armazém...). O recurso
+ * NÃO vai no JSON — sai do catálogo pelo campo (`referencia`), para não haver par campo/recurso trocado. A existência
+ * do registro é conferida pela API ao gravar o layout e a cada uso; o domínio só confere a forma (UUID) e o lugar.
+ */
+export type ValorPadraoLayout = { tipo: "literal"; valor: string | number | boolean } | { tipo: "variavel"; variavel: VariavelPadrao } | { tipo: "registro"; id: string };
 
 /**
  * Campo do catálogo. `chave` = a chave do corpo enviado à API (cabeçalho/rodapé) ou da linha do item.
@@ -43,6 +48,11 @@ export interface CampoDoCatalogo {
    * diria uma coisa e faria outra (ou travaria a Central, no Parcelamento). Aceita valor padrão e não editável.
    */
   sempreTemValor?: boolean;
+  /**
+   * VENDAS-A3-1b: o cadastro de onde vem o valor de um campo "referencia" — o MESMO recurso e filtro que a Central usa
+   * no RefSelect. Dono único: a API (conferência do padrão registro) e a tela (RefSelect do padrão) leem daqui.
+   */
+  referencia?: { recurso: string; filtro?: Readonly<Record<string, string>> };
 }
 
 const C = (chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partial<CampoDoCatalogo> = {}): CampoDoCatalogo => ({ chave, rotulo, parte: "cabecalho", tipo, ...extra });
@@ -51,20 +61,20 @@ const I = (chave: string, rotulo: string, tipo: TipoDoCampoLayout, extra: Partia
 
 /** O catálogo das vendas (orçamento, pedido, venda): exatamente os campos da Central de hoje, na ordem de hoje. */
 const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
-  C("client_id", "Cliente", "referencia", { sistema: "sempre" }),
+  C("client_id", "Cliente", "referencia", { sistema: "sempre", referencia: { recurso: "people", filtro: { is_client: "true" } } }),
   C("empresa_id", "Empresa", "empresa", { sistema: "sempre" }),
   C("document_date", "Data", "data", { sistema: "sempre" }),
   C("due_date", "Vencimento", "data"),
-  C("payment_method_id", "Forma de pagamento", "referencia"),
-  C("categoria_financeira_id", "Natureza", "referencia", { sistema: "classificacao", exige: "classificacao" }),
-  C("centro_custo_id", "Centro de resultado", "referencia", { sistema: "classificacao", exige: "classificacao" }),
+  C("payment_method_id", "Forma de pagamento", "referencia", { referencia: { recurso: "payment_methods" } }),
+  C("categoria_financeira_id", "Natureza", "referencia", { sistema: "classificacao", exige: "classificacao", referencia: { recurso: "financial_categories", filtro: { kind: "analytic", nature: "income" } } }),
+  C("centro_custo_id", "Centro de resultado", "referencia", { sistema: "classificacao", exige: "classificacao", referencia: { recurso: "cost_centers", filtro: { kind: "analytic" } } }),
   C("shipping_date", "Data de saída", "data"),
-  C("proprietary_id", "Proprietário", "referencia"),
+  C("proprietary_id", "Proprietário", "referencia", { referencia: { recurso: "people", filtro: { is_proprietary: "true" } } }),
   R("Totais", "discount", "Desconto", "numero", { sempreTemValor: true }),
   R("Totais", "other_values", "Outros valores", "numero", { sempreTemValor: true }),
-  R("Financeiro", "condicao_pagamento_id", "Condição de pagamento", "referencia", { exige: "condicao" }),
+  R("Financeiro", "condicao_pagamento_id", "Condição de pagamento", "referencia", { exige: "condicao", referencia: { recurso: "condicoes_pagamento" } }),
   R("Financeiro", "installment_plan", "Parcelamento", "plano", { sempreTemValor: true }),
-  R("Frete e transporte", "transporter_id", "Transportadora", "referencia"),
+  R("Frete e transporte", "transporter_id", "Transportadora", "referencia", { referencia: { recurso: "people", filtro: { is_transporter: "true" } } }),
   R("Frete e transporte", "driver_name", "Motorista", "texto"),
   R("Frete e transporte", "freight", "Frete", "numero", { sempreTemValor: true }),
   R("Frete e transporte", "freight_icms", "ICMS frete", "numero", { sempreTemValor: true }),
@@ -72,7 +82,7 @@ const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
   R("Observações", "note", "Observação", "texto_longo"),
   I("codigo", "Código", "texto", { somenteLeitura: true }),
   I("product_id", "Produto", "referencia", { sistema: "sempre" }),
-  I("warehouse_id", "Armazém", "referencia"),
+  I("warehouse_id", "Armazém", "referencia", { referencia: { recurso: "warehouses" } }),
   I("estoque", "Estoque", "numero", { somenteLeitura: true }),
   I("quantity", "Quantidade", "numero", { sistema: "sempre" }),
   I("unit_price", "Valor unitário", "numero", { sistema: "sempre" }),
@@ -86,7 +96,8 @@ export function catalogoDaFamilia(familia: string): readonly CampoDoCatalogo[] {
 /* ─────────────── ESTRUTURA (versaoSchema 1) ─────────────── */
 export interface CampoDoLayout { campo: string; rotulo?: string; obrigatorio: boolean; editavel: boolean; valorPadrao?: ValorPadraoLayout }
 export interface AbaDoLayout { aba: string; campos: CampoDoLayout[] }
-export interface ColunaDoLayout { campo: string; rotulo?: string; obrigatorio: boolean }
+/** `valorPadrao` (VENDAS-A3-1b): só na coluna Armazém e só do tipo registro. */
+export interface ColunaDoLayout { campo: string; rotulo?: string; obrigatorio: boolean; valorPadrao?: ValorPadraoLayout }
 export interface EstruturaLayout { versaoSchema: 1; cabecalho: CampoDoLayout[]; rodape: AbaDoLayout[]; itens: ColunaDoLayout[] }
 export interface ErroDoLayout { caminho: string; mensagem: string }
 
@@ -106,6 +117,7 @@ export function LAYOUT_DO_SISTEMA(familia: string): EstruturaLayout {
 /** Que valores padrão um tipo aceita. Referência a registro: nenhum (sem UUID nesta fatia). */
 function padraoCompativel(tipo: TipoDoCampoLayout, v: ValorPadraoLayout): boolean {
   if (v.tipo === "variavel") return (v.variavel === "data_atual" && tipo === "data") || (v.variavel === "empresa_selecionada" && tipo === "empresa");
+  if (v.tipo === "registro") return false; // VENDAS-A3-1b: onde o registro vale é regra do agente D (contrato 2.1)
   switch (tipo) {
     case "data": return typeof v.valor === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v.valor);
     case "texto": case "texto_longo": return typeof v.valor === "string";
@@ -215,3 +227,71 @@ export const CAPACIDADE_LAYOUT_DOCUMENTO = 1;
 /** Código da recusa ao salvar: obrigatório do layout vazio. Mensagem por campo: mensagemCampoObrigatorio(rotulo). */
 export const ERRO_LAYOUT_CAMPO_OBRIGATORIO = "LAYOUT_CAMPO_OBRIGATORIO";
 export const mensagemCampoObrigatorio = (rotulo: string) => `O campo '${rotulo}' é obrigatório nesta operação.`;
+
+/* ─────────────── VENDAS-A3-1b: padrão de CADASTRO (registro) e arquivo do layout ─────────────── */
+/** Colunas de item que aceitam padrão registro (só o Armazém). */
+export const COLUNAS_COM_PADRAO_REGISTRO: readonly string[] = Object.freeze(["warehouse_id"]);
+/** Chave do padrão de cadastro nos mapas da API: o campo (cabeçalho/rodapé) ou "itens.<coluna>". */
+export const chavePadraoDeCadastro = (parte: ParteDoLayout, campo: string) => (parte === "itens" ? `itens.${campo}` : campo);
+export const FORMA_UUID_PADRAO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Recusa ao gravar/importar: a MESMA para inexistente, de outra organização, inativo, excluído e fora do filtro. */
+export const mensagemRegistroPadraoInvalido = (rotulo: string) => `Registro padrão inválido para "${rotulo}".`;
+/** Aviso no editor quando o padrão gravado morreu. */
+export const AVISO_PADRAO_REGISTRO_MORTO = "O registro padrão não vale mais (inativo ou excluído). Escolha outro.";
+/** Aviso na Central quando o padrão de um campo morreu (o campo fica editável nessa abertura). */
+export const AVISO_PADRAO_INVALIDO_CENTRAL = "O valor padrão deste campo não vale mais no cadastro. Ajuste o layout.";
+/** Arquivo exportado: { formato, versao, familia, nome, estrutura }. */
+export const FORMATO_ARQUIVO_LAYOUT = "layout-documento";
+export const VERSAO_ARQUIVO_LAYOUT = 1;
+export interface ArquivoLayoutDocumento { formato: typeof FORMATO_ARQUIVO_LAYOUT; versao: typeof VERSAO_ARQUIVO_LAYOUT; familia: string; nome: string; estrutura: EstruturaLayout }
+
+export interface PadraoRegistroDaEstrutura {
+  /** chavePadraoDeCadastro: o campo, ou "itens.<coluna>" */
+  chave: string;
+  /** caminho do valor padrão na estrutura, ex.: "rodape[1].campos[0].valorPadrao", "itens[2].valorPadrao" */
+  caminho: string;
+  parte: ParteDoLayout;
+  campo: string;
+  id: string;
+  /** rótulo do campo: o do layout, ou o do catálogo */
+  rotulo: string;
+  /** recurso e filtro do catálogo; ausente se o campo não é de referência (a validação do domínio recusa) */
+  referencia?: { recurso: string; filtro?: Readonly<Record<string, string>> };
+}
+
+/** Todos os padrões `registro` da estrutura, com o recurso tirado do CATÁLOGO pelo campo. */
+export function padroesRegistroDaEstrutura(familia: string, estrutura: EstruturaLayout): PadraoRegistroDaEstrutura[] {
+  const cat = catalogoDaFamilia(familia);
+  const doCatalogo = (parte: ParteDoLayout, campo: string) =>
+    cat.find((c) => c.chave === campo && (parte === "itens" ? c.parte === "itens" : c.parte !== "itens"));
+  const out: PadraoRegistroDaEstrutura[] = [];
+  const ver = (parte: ParteDoLayout, x: { campo: string; rotulo?: string; valorPadrao?: ValorPadraoLayout }, caminho: string) => {
+    if (x.valorPadrao?.tipo !== "registro") return;
+    const c = doCatalogo(parte, x.campo);
+    out.push({ chave: chavePadraoDeCadastro(parte, x.campo), caminho: `${caminho}.valorPadrao`, parte, campo: x.campo, id: x.valorPadrao.id,
+      rotulo: x.rotulo ?? c?.rotulo ?? x.campo, ...(c?.referencia ? { referencia: c.referencia } : {}) });
+  };
+  estrutura.cabecalho.forEach((x, i) => ver("cabecalho", x, `cabecalho[${i}]`));
+  estrutura.rodape.forEach((a, ai) => a.campos.forEach((x, i) => ver("rodape", x, `rodape[${ai}].campos[${i}]`)));
+  estrutura.itens.forEach((x, i) => ver("itens", x, `itens[${i}]`));
+  return out;
+}
+
+/**
+ * Cópia da estrutura SEM os padrões `registro` — todos, ou só os das `chaves` dadas. Usada na resposta do layout efetivo
+ * (a web da A3-1 nunca vê um tipo de padrão que não conhece) e na importação (padrão que não vale nesta organização).
+ * O resto fica igual, inclusive `editavel`.
+ */
+export function removerPadroesRegistro(estrutura: EstruturaLayout, chaves?: ReadonlySet<string>): EstruturaLayout {
+  const tira = <T extends { campo: string; valorPadrao?: ValorPadraoLayout }>(parte: ParteDoLayout, x: T): T => {
+    if (x.valorPadrao?.tipo !== "registro" || (chaves && !chaves.has(chavePadraoDeCadastro(parte, x.campo)))) return { ...x };
+    const { valorPadrao: _fora, ...resto } = x;
+    return resto as T;
+  };
+  return {
+    versaoSchema: 1,
+    cabecalho: estrutura.cabecalho.map((x) => tira("cabecalho", x)),
+    rodape: estrutura.rodape.map((a) => ({ aba: a.aba, campos: a.campos.map((x) => tira("rodape", x)) })),
+    itens: estrutura.itens.map((x) => tira("itens", x))
+  };
+}

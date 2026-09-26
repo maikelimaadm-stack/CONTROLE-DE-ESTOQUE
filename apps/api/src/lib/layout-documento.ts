@@ -25,3 +25,20 @@ export async function layoutEfetivo(ctx: ServiceCtx, familia: string, tipoOperac
   const linha = r.origem === "ligado" ? ligado : r.origem === "padrao_da_familia" ? padrao : undefined;
   return { ...r, nome: linha?.nome ?? null, id: linha?.id ?? null };
 }
+
+/* ─────────────── VENDAS-A3-1b: conferência do padrão de CADASTRO (implementação: agente A1) ─────────────── */
+/** Registro padrão que vale AGORA nesta organização: id, o mesmo rótulo que o RefSelect mostra e, no armazém, a empresa. */
+export interface RegistroPadraoConferido { id: string; rotulo: string; empresaId?: string | null }
+/**
+ * Confere TODOS os padrões `registro` da estrutura nesta organização (padroesRegistroDaEstrutura do domínio): mapa
+ * ESTÁTICO recurso → SQL (whitelist), o mesmo recorte de organização do cadastro (payment_methods: organização OU
+ * compartilhado), ativo e vivo, e o filtro do catálogo. UMA consulta por recurso presente (`= any($ids)`), sem N+1.
+ * `validos`: chavePadraoDeCadastro → registro; `invalidos`: os que não valem (inexistente, outra organização, inativo,
+ * excluído, fora do filtro, campo sem `referencia`), com o caminho do valorPadrao e o rótulo do campo.
+ */
+export async function conferirPadroesRegistro(_ctx: ServiceCtx, _familia: string, _estrutura: EstruturaLayout): Promise<{
+  validos: Map<string, RegistroPadraoConferido>;
+  invalidos: { chave: string; caminho: string; rotulo: string }[];
+}> {
+  throw new Error("conferirPadroesRegistro: ainda não implementado (agente A1)");
+}

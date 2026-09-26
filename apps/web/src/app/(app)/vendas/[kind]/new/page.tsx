@@ -37,6 +37,8 @@ function ehEstruturaLayout(v: unknown): v is EstruturaLayout {
 /** Valor padrão do layout → valor do estado do formulário. `null` = não se aplica (o validador do domínio já recusa esses). */
 function valorDoPadrao(v: ValorPadraoLayout, empresa: string): string | boolean | null {
   if (v.tipo === "variavel") return v.variavel === "data_atual" ? todayISO() : empresa || null;
+  // VENDAS-A3-1b: o padrão registro nunca chega pela `estrutura` (a API o tira dela); vem em `padroesDeCadastro`.
+  if (v.tipo === "registro") return null;
   return typeof v.valor === "boolean" ? v.valor : String(v.valor);
 }
 
