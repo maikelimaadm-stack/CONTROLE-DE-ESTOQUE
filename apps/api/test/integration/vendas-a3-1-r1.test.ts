@@ -98,9 +98,9 @@ describe("R1-B rota de Configurações do layout efetivo da TOP", () => {
     const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil R1-B4 ${++seq}`, permissions: ["tipos_operacao.view"] } });
     expect(papel.statusCode, papel.body).toBe(201);
     const email = `r1b4-${seq}@demo.local`;
-    const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: "Só configura TOP", email, password: "Config@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos([]) } });
+    const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: "Só configura TOP", email, password: "Variante@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos([]) } });
     expect(vinculo.statusCode, vinculo.body).toBe(201);
-    const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Config@12345" } });
+    const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Variante@12345" } });
     expect(login.statusCode, login.body).toBe(200);
     const hdr = { authorization: `Bearer ${j(login).token as string}`, "x-org-id": h.demo.orgId };
     const nova = await efetivo(top, hdr);
