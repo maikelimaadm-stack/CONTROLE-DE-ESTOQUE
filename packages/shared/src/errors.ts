@@ -77,7 +77,12 @@ export const ErrorCodes = {
    * Consulta externa (CEP, CNPJ — CADASTROS Fase 3) sem fonte que responda agora, ou desligada pela
    * configuração. 503: o pedido é válido, e o usuário segue preenchendo à mão.
    */
-  CONSULTA_INDISPONIVEL: "CONSULTA_INDISPONIVEL"
+  CONSULTA_INDISPONIVEL: "CONSULTA_INDISPONIVEL",
+  /**
+   * Condição de pagamento do documento de venda (VENDAS-A4): inexistente, de outra organização, excluída ou
+   * inativa — a MESMA recusa, no campo `condicao_pagamento_id`. Distinguir seria oráculo de existência.
+   */
+  CONDICAO_PAGAMENTO_INVALIDA: "CONDICAO_PAGAMENTO_INVALIDA"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -123,7 +128,9 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   TIPO_OPERACAO_EXECUCAO_INDISPONIVEL: 409,
   // 422: falta um dado no documento que a regra congelada da operação exige.
   TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA: 422,
-  CONSULTA_INDISPONIVEL: 503
+  CONSULTA_INDISPONIVEL: 503,
+  // 422: a condição escolhida não serve para lançamento (entrada inválida, não conflito de estado).
+  CONDICAO_PAGAMENTO_INVALIDA: 422
 };
 
 export class DomainError extends Error {

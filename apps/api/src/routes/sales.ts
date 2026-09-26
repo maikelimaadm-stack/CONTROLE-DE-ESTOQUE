@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js";
@@ -18,7 +18,7 @@ const uuid = z.string().uuid();
 /** Forma canônica de UUID, para conferir ENTRADA DE FILTRO antes de ela virar parâmetro de SQL. */
 const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_date: date.optional().nullable(), due_date: date.optional().nullable(), client_id: uuid, transporter_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), driver_name: z.string().optional().nullable(), payment_method_id: uuid.optional().nullable(), freight: dec.default("0"), freight_icms: dec.default("0"), other_values: dec.default("0"), discount: dec.default("0"), note: z.string().optional().nullable(), installment_plan: installmentPlanSchema.optional().nullable(), is_deductible: z.boolean().default(false), items: z.array(z.object({ product_id: uuid, warehouse_id: uuid.optional().nullable(), quantity: dec, unit_price: dec, discount: dec.default("0"), discount_percent: dec.default("0"), note: z.string().optional().nullable() })).min(1), tipo_operacao_id: uuid.optional().nullable(), categoria_financeira_id: uuid.optional().nullable(), centro_custo_id: uuid.optional().nullable() });
+const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_date: date.optional().nullable(), due_date: date.optional().nullable(), client_id: uuid, transporter_id: uuid.optional().nullable(), proprietary_id: uuid.optional().nullable(), driver_name: z.string().optional().nullable(), payment_method_id: uuid.optional().nullable(), freight: dec.default("0"), freight_icms: dec.default("0"), other_values: dec.default("0"), discount: dec.default("0"), note: z.string().optional().nullable(), installment_plan: installmentPlanSchema.optional().nullable(), is_deductible: z.boolean().default(false), items: z.array(z.object({ product_id: uuid, warehouse_id: uuid.optional().nullable(), quantity: dec, unit_price: dec, discount: dec.default("0"), discount_percent: dec.default("0"), note: z.string().optional().nullable() })).min(1), tipo_operacao_id: uuid.optional().nullable(), categoria_financeira_id: uuid.optional().nullable(), centro_custo_id: uuid.optional().nullable(), condicao_pagamento_id: uuid.optional().nullable() });
 const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "orders" : "sales");
 /**
  * O CORPO DO CANCELAMENTO — declarado, e não mais descartado.
@@ -185,6 +185,43 @@ async function classificacaoDaEdicao(ctx: ServiceCtx, corpo: unknown, atual: { c
   return validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: cat, centroCustoId: cc });
 }
 
+/** A condição de pagamento lida do cadastro, no formato que `planoDaCondicao` consome (VENDAS-A4). */
+type CondicaoDoDocumento = CondicaoPagamento & { id: string };
+const COLUNAS_CONDICAO = "id, parcelas, dias_primeira_parcela, modo, intervalo_dias, dia_vencimento, entrada, entrada_percentual::text as entrada_percentual";
+/**
+ * A PORTA ÚNICA DE VALIDAÇÃO da condição de pagamento — criação, edição (valor novo ou trocado) e conversão.
+ *
+ * Inexistente, de outra organização, excluída e inativa caem na MESMA recusa (422, mesmo código, mesma
+ * mensagem, mesmo campo): distinguir seria oráculo de existência. `for share` pelo mesmo motivo da
+ * classificação: a inativação concorrente espera o lançamento terminar.
+ */
+async function validarCondicaoDoDocumento(ctx: ServiceCtx, id: string): Promise<CondicaoDoDocumento> {
+  const r = await ctx.tx.query<CondicaoDoDocumento>(`select ${COLUNAS_CONDICAO} from erp.condicoes_pagamento where id=$1 and organization_id=$2 and deleted_at is null and is_active for share`, [id, ctx.orgId]);
+  if (!r.rows[0]) throw err(ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, [{ path: "condicao_pagamento_id", message: MSG_CONDICAO_PAGAMENTO_INVALIDA }]);
+  return r.rows[0];
+}
+/**
+ * A condição que o documento JÁ tem (preservada ou reenviada igual): NÃO é revalidada — inativar o cadastro
+ * não pode tornar o documento ineditável. Lida só para derivar o plano; recorte de organização sempre.
+ */
+async function condicaoGravada(ctx: ServiceCtx, id: string): Promise<CondicaoDoDocumento | null> {
+  const r = await ctx.tx.query<CondicaoDoDocumento>(`select ${COLUNAS_CONDICAO} from erp.condicoes_pagamento where id=$1 and organization_id=$2`, [id, ctx.orgId]);
+  return r.rows[0] ?? null;
+}
+/**
+ * Condição da EDIÇÃO — o mesmo contrato de três estados de `tipo_operacao_id`/classificação:
+ *   campo AUSENTE → preserva · null → remove · uuid → troca (validado só se for NOVO ou DIFERENTE do gravado).
+ * `gravar: false` = não toca na coluna; `linha` é a condição que o documento TERÁ (para derivar o plano).
+ */
+async function condicaoDaEdicao(ctx: ServiceCtx, corpo: unknown, atual: { condicao_pagamento_id: string | null }): Promise<{ linha: CondicaoDoDocumento | null; gravar: boolean }> {
+  const cru = corpo !== null && typeof corpo === "object" ? corpo as Record<string, unknown> : {};
+  const v = cru["condicao_pagamento_id"];
+  if (!("condicao_pagamento_id" in cru) || v === undefined) return { linha: atual.condicao_pagamento_id ? await condicaoGravada(ctx, atual.condicao_pagamento_id) : null, gravar: false };
+  if (v === null) return { linha: null, gravar: true };
+  if (atual.condicao_pagamento_id !== null && String(v) === atual.condicao_pagamento_id) return { linha: await condicaoGravada(ctx, atual.condicao_pagamento_id), gravar: false };
+  return { linha: await validarCondicaoDoDocumento(ctx, String(v)), gravar: true };
+}
+
 /**
  * CARREGA O DOCUMENTO JÁ AMARRADO À VARIANTE DA PORTA (BASE2-03C).
  *
@@ -317,7 +354,7 @@ async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts
   // própria porta de detalhe — 404 num registro que está lá. O nome sai de `topv` (a versão CONGELADA),
   // nunca da versão corrente do pai: é isso que faz a renomeação administrativa de amanhã não reescrever
   // o que este documento diz que é.
-  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao, fcat.code as categoria_financeira_codigo, fcat.name as categoria_financeira_nome, ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id left join erp.financial_categories fcat on fcat.id=d.categoria_financeira_id and fcat.organization_id=d.organization_id left join erp.cost_centers ccus on ccus.id=d.centro_custo_id and ccus.organization_id=d.organization_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + (opts.lock ? " for update of d" : ""), sc.params); if (!r.rows[0]) throw notFound("Documento");
+  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao, fcat.code as categoria_financeira_codigo, fcat.name as categoria_financeira_nome, ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome, cpag.code as condicao_pagamento_codigo, cpag.nome as condicao_pagamento_nome from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id left join erp.financial_categories fcat on fcat.id=d.categoria_financeira_id and fcat.organization_id=d.organization_id left join erp.cost_centers ccus on ccus.id=d.centro_custo_id and ccus.organization_id=d.organization_id left join erp.condicoes_pagamento cpag on cpag.id=d.condicao_pagamento_id and cpag.organization_id=d.organization_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + (opts.lock ? " for update of d" : ""), sc.params); if (!r.rows[0]) throw notFound("Documento");
   const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id where i.document_id=$1 order by i.position", [id]);
   const titles = await ctx.tx.query("select id, code, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by due_date", [ctx.orgId, id]);
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
@@ -360,11 +397,20 @@ async function exigirDocumentoVisivel(ctx: ServiceCtx, id: string, expectedKind:
  *   `null`      → grava NULL/NULL. É a criação por cliente legado, que não declarou TOP nenhuma.
  *   objeto      → grava o snapshot resolvido pelo servidor.
  */
-async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docSchema>, existingId?: string, origin?: string | null, top?: TopDoLancamento | null, classificacao?: ClassificacaoFinanceira | null) {
+async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docSchema>, existingId?: string, origin?: string | null, top?: TopDoLancamento | null, classificacao?: ClassificacaoFinanceira | null, condicao: { linha: CondicaoDoDocumento | null; gravar: boolean } = { linha: null, gravar: true }) {
   const totals = documentTotals(d.items.map((i) => ({ quantity: i.quantity, unitPrice: i.unit_price, discount: i.discount, discountPercent: i.discount_percent })), { freight: d.freight, freightIcms: d.freight_icms, otherValues: d.other_values, discount: d.discount });
   let id = existingId;
-  const plan = d.installment_plan ? { ...d.installment_plan, is_deductible: d.is_deductible } : {};
-  if (!id) { const code = await nextCode(ctx.tx, ctx.orgId, `sales_${kind}`); id = (await ctx.tx.query<{ id: string }>("insert into erp.sales_documents(organization_id,empresa_id,kind,code,document_date,shipping_date,due_date,responsible_user_id,client_id,transporter_id,proprietary_id,driver_name,payment_method_id,subtotal,freight,freight_icms,other_values,discount,total,note,installment_plan,origin_document_id,tipo_operacao_id,tipo_operacao_versao_id,categoria_financeira_id,centro_custo_id,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$8) returning id", [ctx.orgId, d.empresa_id, kind, code, d.document_date, d.shipping_date ?? null, d.due_date ?? null, ctx.user.id, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), origin ?? null, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null, classificacao?.categoriaFinanceiraId ?? null, classificacao?.centroCustoId ?? null])).rows[0]!.id; await atribuirIdGlobal(ctx, "sales_documents", id); }
+  /*
+   * O PLANO GRAVADO (VENDAS-A4). Corpo com plano → o do corpo; ajustado se o documento tem condição.
+   * Corpo sem plano e documento COM condição → derivado pela conta única do domínio, na data e no total
+   * que estão sendo gravados (o mesmo `total` que a confirmação usa nos títulos); não ajustado.
+   * Sem condição e sem plano → como antes, mas a marca de dedutível (D-1) sobrevive sem plano.
+   */
+  const plan: Record<string, unknown> = d.installment_plan ? { ...d.installment_plan, is_deductible: d.is_deductible }
+    : condicao.linha ? { ...planoDaCondicao(condicao.linha, { dataDocumento: d.document_date, total: totals.total }), is_deductible: d.is_deductible }
+    : d.is_deductible ? { is_deductible: true } : {};
+  const parcelasAjustadas = Boolean(d.installment_plan) && condicao.linha !== null;
+  if (!id) { const code = await nextCode(ctx.tx, ctx.orgId, `sales_${kind}`); id = (await ctx.tx.query<{ id: string }>("insert into erp.sales_documents(organization_id,empresa_id,kind,code,document_date,shipping_date,due_date,responsible_user_id,client_id,transporter_id,proprietary_id,driver_name,payment_method_id,subtotal,freight,freight_icms,other_values,discount,total,note,installment_plan,origin_document_id,tipo_operacao_id,tipo_operacao_versao_id,categoria_financeira_id,centro_custo_id,condicao_pagamento_id,parcelas_ajustadas,created_by) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$8) returning id", [ctx.orgId, d.empresa_id, kind, code, d.document_date, d.shipping_date ?? null, d.due_date ?? null, ctx.user.id, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), origin ?? null, top?.tipoOperacaoId ?? null, top?.tipoOperacaoVersaoId ?? null, classificacao?.categoriaFinanceiraId ?? null, classificacao?.centroCustoId ?? null, condicao.linha?.id ?? null, parcelasAjustadas])).rows[0]!.id; await atribuirIdGlobal(ctx, "sales_documents", id); }
   else {
     // As colunas de TOP só entram no SET quando houve decisão explícita. `undefined` preserva o snapshot.
     const topSet = top === undefined ? "" : ", tipo_operacao_id=$19, tipo_operacao_versao_id=$20";
@@ -373,7 +419,11 @@ async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docS
     const n0 = 19 + topParams.length;
     const classSet = classificacao === undefined ? "" : `, categoria_financeira_id=$${n0}, centro_custo_id=$${n0 + 1}`;
     const classParams = classificacao === undefined ? [] : [classificacao?.categoriaFinanceiraId ?? null, classificacao?.centroCustoId ?? null];
-    await ctx.tx.query(`update erp.sales_documents set document_date=$3, shipping_date=$4, due_date=$5, client_id=$6, transporter_id=$7, proprietary_id=$8, driver_name=$9, payment_method_id=$10, subtotal=$11, freight=$12, freight_icms=$13, other_values=$14, discount=$15, total=$16, note=$17, installment_plan=$18${topSet}${classSet}, updated_at=now() where id=$1 and organization_id=$2`, [id, ctx.orgId, d.document_date, d.shipping_date ?? null, d.due_date ?? null, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), ...topParams, ...classParams]);
+    // Condição: `gravar: false` preserva a coluna; `parcelas_ajustadas` acompanha sempre o plano gravado.
+    const n1 = n0 + classParams.length;
+    const condSet = `, parcelas_ajustadas=$${n1}` + (condicao.gravar ? `, condicao_pagamento_id=$${n1 + 1}` : "");
+    const condParams: unknown[] = condicao.gravar ? [parcelasAjustadas, condicao.linha?.id ?? null] : [parcelasAjustadas];
+    await ctx.tx.query(`update erp.sales_documents set document_date=$3, shipping_date=$4, due_date=$5, client_id=$6, transporter_id=$7, proprietary_id=$8, driver_name=$9, payment_method_id=$10, subtotal=$11, freight=$12, freight_icms=$13, other_values=$14, discount=$15, total=$16, note=$17, installment_plan=$18${topSet}${classSet}${condSet}, updated_at=now() where id=$1 and organization_id=$2`, [id, ctx.orgId, d.document_date, d.shipping_date ?? null, d.due_date ?? null, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), ...topParams, ...classParams, ...condParams]);
     await ctx.tx.query("delete from erp.sales_document_items where document_id=$1", [id]);
   }
   for (const [i, it] of d.items.entries()) await ctx.tx.query("insert into erp.sales_document_items(document_id,product_id,warehouse_id,quantity,unit_price,discount,discount_percent,total,note,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", [id, it.product_id, it.warehouse_id ?? null, it.quantity, it.unit_price, money(it.discount), it.discount_percent, itemTotal({ quantity: it.quantity, unitPrice: it.unit_price, discount: it.discount, discountPercent: it.discount_percent }), it.note ?? null, i]);
@@ -814,7 +864,7 @@ export default async function salesRoutes(app: FastifyInstance) {
         // ADITIVO, sem mexer em `contractVersion` (a web anterior compara a versão EXATA e bloquearia a
         // escrita): declara que esta API entende a classificação financeira do documento (VENDAS-A1). A web
         // nova só mostra e envia os campos com esta declaração — a API anterior os descartaria em silêncio.
-        capacidades: { classificacaoFinanceira: CAPACIDADE_CLASSIFICACAO_FINANCEIRA },
+        capacidades: { classificacaoFinanceira: CAPACIDADE_CLASSIFICACAO_FINANCEIRA, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
         items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao }))
@@ -831,7 +881,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      * faria a mesma chamada significar coisas diferentes conforme a configuração do dia. A web NOVA escolhe
      * explicitamente (podendo PRÉ-SELECIONAR o padrão, com o valor visível).
      */
-    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
+    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
     /**
      * EDIÇÃO. A regra do snapshot está toda nas três linhas de `top` abaixo:
      *
@@ -850,7 +900,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       // — que não reavalia status nenhum. O resultado é um documento `confirmed` cujos itens e total foram
       // TROCADOS depois de o estoque ter sido baixado e os títulos gerados pelo conjunto antigo: a venda
       // diz uma coisa e o ledger diz outra, sem que nenhuma das duas respostas seja erro.
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null };
       if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
       const d = docSchema.parse(req.body);
       /**
@@ -881,7 +931,8 @@ export default async function salesRoutes(app: FastifyInstance) {
       const trocouTop = d.tipo_operacao_id != null && d.tipo_operacao_id !== cur.tipo_operacao_id;
       const top = trocouTop ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id!) : undefined;
       const classificacao = await classificacaoDaEdicao(ctx, req.body, cur);
-      const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao);
+      const condicao = await condicaoDaEdicao(ctx, req.body, cur);
+      const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao, condicao);
       await audit(ctx.tx, ctx, "sales_documents", id, "update");
       // Mudança de identidade do lançamento é evento PRÓPRIO: quem trocou a TOP de um documento não pode
       // ficar escondido dentro de um `update` genérico sem diff.
@@ -1127,13 +1178,19 @@ export default async function salesRoutes(app: FastifyInstance) {
         requirePermission(ctx, `${permOf(destino)}.create`);
         topDestino = alvo.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(destino), alvo.tipo_operacao_id) : null;
       }
-      const body = docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments ? cur.installment_plan : null, items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
+      // CONDIÇÃO DA ORIGEM (VENDAS-A4): ajustada → plano copiado como está; não ajustada → o destino deriva o
+      // plano na SUA data e no SEU total. A marca de dedutível (D-1) é copiada da origem, com ou sem plano.
+      const origemCond = cur as unknown as { condicao_pagamento_id: string | null; parcelas_ajustadas: boolean };
+      const body = docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments && (!origemCond.condicao_pagamento_id || origemCond.parcelas_ajustadas) ? cur.installment_plan : null, is_deductible: Boolean((cur.installment_plan as { is_deductible?: boolean } | null)?.is_deductible), items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
       // A classificação da ORIGEM é copiada e passa pela MESMA porta: se deixou de valer, a conversão inteira
       // é recusada antes de qualquer efeito (a fonte continua aberta; a transação garante).
       const origemClass = cur as unknown as { categoria_financeira_id: string | null; centro_custo_id: string | null };
       const classificacao = origemClass.categoria_financeira_id && origemClass.centro_custo_id
         ? await validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: origemClass.categoria_financeira_id, centroCustoId: origemClass.centro_custo_id }, "origem") : null;
-      const r = await writeDoc(ctx, destino, body, undefined, id, topDestino, classificacao);
+      // A condição da ORIGEM passa pela MESMA porta: se deixou de valer, a conversão inteira é recusada antes
+      // de qualquer efeito (fonte aberta, zero derivado, zero auditoria).
+      const condicao = { linha: origemCond.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, origemCond.condicao_pagamento_id) : null, gravar: true };
+      const r = await writeDoc(ctx, destino, body, undefined, id, topDestino, classificacao, condicao);
       await ctx.tx.query("update erp.sales_documents set status='converted', updated_at=now() where id=$1", [id]);
       await audit(ctx.tx, ctx, "sales_documents", id, "convert", topDestino ? { to: r.id, tipoOperacaoDestinoId: topDestino.tipoOperacaoId, tipoOperacaoDestinoVersaoId: topDestino.tipoOperacaoVersaoId } : { to: r.id });
       if (topDestino) await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", { tipoOperacaoId: topDestino.tipoOperacaoId, tipoOperacaoVersaoId: topDestino.tipoOperacaoVersaoId, tipoOperacaoCodigo: topDestino.codigo, tipoOperacaoVersao: topDestino.versao, from: id });
