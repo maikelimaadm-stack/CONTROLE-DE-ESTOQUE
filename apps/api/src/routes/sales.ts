@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, padroesRegistroDaEstrutura, removerPadroesRegistro, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js";
@@ -11,7 +11,7 @@ import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock } from "../services/stock-core.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
-import { layoutEfetivo } from "../lib/layout-documento.js";
+import { layoutEfetivo, conferirPadroesRegistro, type RegistroPadraoConferido } from "../lib/layout-documento.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -916,7 +916,24 @@ export default async function salesRoutes(app: FastifyInstance) {
         topId = bruto;
       }
       const l = await layoutEfetivo(ctx, familia, topId);
-      return { estrutura: l.estrutura, origem: l.origem, nome: l.nome, id: l.id };
+      /*
+       * PADRÃO DE CADASTRO (VENDAS-A3-1b). A `estrutura` sai SEM os padrões `registro` (a web da A3-1 nunca vê um tipo
+       * de padrão que não conhece); eles vêm à parte, CONFERIDOS AGORA nesta organização (`conferirPadroesRegistro`):
+       * `padroesDeCadastro` = só os que valem (id, rótulo do cadastro e, no armazém, a empresa); `padroesInvalidos` =
+       * as chaves dos que morreram (inativo, excluído, fora do filtro). Layout sem padrão registro — inclusive o do
+       * sistema — não consulta nada a mais: mapas vazios e a estrutura de sempre. O servidor NÃO aplica padrão (2.6).
+       */
+      let padroesDeCadastro: Record<string, RegistroPadraoConferido> = {};
+      let padroesInvalidos: string[] = [];
+      let estrutura = l.estrutura;
+      if (padroesRegistroDaEstrutura(familia, l.estrutura).length) {
+        const c = await conferirPadroesRegistro(ctx, familia, l.estrutura);
+        padroesDeCadastro = Object.fromEntries([...c.validos].map(([chave, v]) =>
+          [chave, { id: v.id, rotulo: v.rotulo, ...(v.empresaId !== undefined ? { empresaId: v.empresaId } : {}) }]));
+        padroesInvalidos = [...new Set(c.invalidos.map((x) => x.chave))];
+        estrutura = removerPadroesRegistro(l.estrutura);
+      }
+      return { estrutura, origem: l.origem, nome: l.nome, id: l.id, padroesDeCadastro, padroesInvalidos };
     }));
     app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id, kind)));
     /**
