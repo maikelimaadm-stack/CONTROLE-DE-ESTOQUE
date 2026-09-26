@@ -253,7 +253,8 @@ describe("CP-A9 capacidade", () => {
       expect(r.statusCode, r.body).toBe(200);
       const b = j(r) as { contractVersion: number; capacidades: Record<string, number> };
       expect(b.contractVersion).toBe(1);
-      expect(b.capacidades).toEqual({ classificacaoFinanceira: 1, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO });
+      // VENDAS-A3-1: `layoutDocumento` entra por último (aditiva); a comparação segue EXATA de propósito.
+      expect(b.capacidades).toEqual({ classificacaoFinanceira: 1, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: 1 });
       expect(CAPACIDADE_CONDICAO_PAGAMENTO).toBe(1);
     }
   });
