@@ -226,7 +226,7 @@ const porCodigo = (codigo: string) => api<ItemReferencia>(`/api/referencias/muni
  * sem ele (ex.: Filiais), o CEP é consultado aqui e a cidade dele vem como 1ª opção. A cidade nunca preenche o CEP.
  * Falha da lista segue o B-1 ("Não foi possível carregar a lista." + [Tentar de novo]); texto nunca vira valor.
  */
-export function CampoCidade({ value, onChange, disabled, className, classeEntrada, id, municipioInicial, travadaPeloCep, aoDigitarCep, envolver, onOpenChange }: {
+export function CampoCidade({ value, onChange, disabled, className, classeEntrada, id, municipioInicial, travadaPeloCep, cepDivergente, aoDigitarCep, envolver, onOpenChange }: {
   value: number | string | null | undefined;
   onChange: (codigo: number | null, municipio: Municipio | null) => void;
   disabled?: boolean; className?: string;
@@ -237,6 +237,11 @@ export function CampoCidade({ value, onChange, disabled, className, classeEntrad
   /** município já conhecido do valor (evita consulta ao abrir o registro) */
   municipioInicial?: Municipio | null;
   travadaPeloCep?: boolean;
+  /**
+   * Conferência do CEP ao entrar em edição (AJUSTES 02 · R1-A): o CEP gravado é de OUTRA cidade. A cidade fica travada
+   * na GRAVADA, com o aviso `cidade-aviso-cep` e o botão `cidade-usar-do-cep` (quem chama troca a cidade e marca alterado).
+   */
+  cepDivergente?: { cep: string; municipio: Municipio; aoUsar: () => void } | null;
   aoDigitarCep?: (cep: string) => void;
   envolver?: EnvolverParte;
   onOpenChange?: (o: boolean) => void;
@@ -269,7 +274,7 @@ export function CampoCidade({ value, onChange, disabled, className, classeEntrad
   const aviso = cepDigitado && cep.error ? mensagemFalhaCep(cep.error) : cepDigitado && cep.data && !cepMun ? "A cidade deste CEP não foi encontrada; busque pelo nome." : null;
   const carregando = (lista.isFetching && !lista.data) || (cepDigitado !== null && cep.isFetching);
 
-  const travada = Boolean(travadaPeloCep) && !disabled;
+  const travada = (Boolean(travadaPeloCep) || Boolean(cepDivergente)) && !disabled;
   const escolher = (m: Municipio | null) => { setEscolhido(m); onChange(m ? m.codigoIbge : null, m); };
   const abrir = (o: boolean) => { if (o && (disabled || travada)) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); };
   // CEP digitado na busca (com quem o receba): vai para o campo CEP, que consulta e preenche tudo
@@ -300,6 +305,10 @@ export function CampoCidade({ value, onChange, disabled, className, classeEntrad
       {travadaPeloCep && <span className="shrink-0 rounded bg-slate-100 px-1 text-[10.5px] font-medium text-slate-600" data-testid="cidade-pelo-cep" title="A cidade segue o CEP; mude ou limpe o CEP para escolher outra.">pelo CEP</span>}
     </span>
     {avisoDoValor && <span className="text-[11px] text-amber-600" data-testid="cidade-aviso">{avisoDoValor}</span>}
+    {cepDivergente && <span className="flex flex-wrap items-center gap-1 text-[11px] text-amber-600">
+      <span data-testid="cidade-aviso-cep">{`O CEP ${formatarCep(cepDivergente.cep)} é de ${cepDivergente.municipio.nome} - ${cepDivergente.municipio.uf}; a cidade gravada é ${atual?.nome ? `${atual.nome} - ${atual.uf}` : TXT_CARREGANDO}.`}</span>
+      {!disabled && <button type="button" className="rounded border border-amber-300 bg-white px-1 font-medium text-amber-700 hover:bg-amber-50" data-testid="cidade-usar-do-cep" onClick={cepDivergente.aoUsar}>Usar a cidade do CEP</button>}
+    </span>}
     {aviso && opcoes.length > 0 && open && <span className="text-[11px] text-amber-600">{aviso}</span>}
   </span>;
   const ibge = <input id={`${base}-ibge`} aria-label={rotulos.codigo} title={rotulos.codigo} readOnly tabIndex={-1} className={cn("w-full", classeEntrada)} data-testid="cidade-ibge" value={codigoAtual === null ? "" : String(codigoAtual)} />;

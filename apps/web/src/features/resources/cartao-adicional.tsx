@@ -4,7 +4,7 @@
  * Cada endereço/conta/contato adicional é um CARTÃO cujo corpo é desenhado pelo MESMO componente do bloco
  * principal (blocos-parceiro.tsx), na ordem de BLOCO_* (@agro/domain). A regra da linha (permissões criar/editar/excluir,
  * gravada × nova, CEP com resposta velha descartada, trava "pelo CEP", limite de linhas) continua na GradeDeDetalhe
- * (ficha-em-abas.tsx); aqui só se desenha: cartão, marca de erro do servidor ("Linha N: …"), Incluir e Remover.
+ * (ficha-em-abas.tsx); aqui só se desenha: cartão, marca de erro do servidor ("Endereço N: …" / "Conta N: …" / "Contato N: …" — R1-C; tabelas seguem "Linha N"), Incluir e Remover.
  * testids: contêiner `grade-<detalhe>`; cartão `linha-<detalhe>-N`; botão `incluir-<detalhe>` ("Incluir endereço" /
  * "Incluir conta" / "Incluir contato"); remover com aria-label "Remover endereço N" / "Remover conta N" / "Remover contato N".
  */
@@ -41,7 +41,7 @@ export function GradeDeCartoes({ bloco, titulo, cartoes, podeIncluir, noLimite, 
         <div className="mb-1.5 flex items-center justify-between"><span className="text-[12px] font-semibold text-slate-600">{bloco.secao} {i + 1}</span>
           {c.podeRemover && <button type="button" aria-label={`${bloco.remover} ${i + 1}`} className="rounded p-1 text-red-600 hover:bg-red-50" onClick={() => onRemover(c.chave)}><Trash2 className="h-3.5 w-3.5" /></button>}</div>
         <div className="flex flex-wrap gap-2"><CorpoDoBloco bloco={bloco} lado="adicional" campo={c.campo} /></div>
-        {c.erros.length > 0 && <p className="mt-1 text-[11px] text-red-600">Linha {i + 1}: {c.erros.join(" · ")}</p>}
+        {c.erros.length > 0 && <p className="mt-1 text-[11px] text-red-600">{bloco.secao} {i + 1}: {c.erros.join(" · ")}</p>}
       </div>)}</div>}
   </Card>;
 }
