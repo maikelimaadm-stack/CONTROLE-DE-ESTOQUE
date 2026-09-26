@@ -140,3 +140,15 @@ describe("LD-D4 camposObrigatoriosFaltando", () => {
     expect(camposObrigatoriosFaltando(F, l, cheio(), cap)).toEqual([]);
   });
 });
+
+describe("LD-D2b — campo do sistema no layout não pode ficar opcional", () => {
+  it("cabeçalho (client_id) e coluna (product_id) opcionais → erro em .obrigatorio", async () => {
+    const { LAYOUT_DO_SISTEMA, validarEstruturaLayout } = await import("../src/index.js");
+    const l = LAYOUT_DO_SISTEMA("vendas.venda");
+    l.cabecalho = l.cabecalho.map((x) => (x.campo === "client_id" ? { ...x, obrigatorio: false } : x));
+    l.itens = l.itens.map((x) => (x.campo === "product_id" ? { ...x, obrigatorio: false } : x));
+    const caminhos = validarEstruturaLayout("vendas.venda", l).map((e) => e.caminho);
+    expect(caminhos).toEqual(expect.arrayContaining([`cabecalho[${l.cabecalho.findIndex((x) => x.campo === "client_id")}].obrigatorio`, `itens[${l.itens.findIndex((x) => x.campo === "product_id")}].obrigatorio`]));
+    expect(caminhos).toHaveLength(2);
+  });
+});

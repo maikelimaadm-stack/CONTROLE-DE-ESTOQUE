@@ -137,12 +137,23 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     if (c.somenteLeitura && x.obrigatorio) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatória.` });
   });
   // campo "do sistema" fora do layout SEM valor padrão (itens não têm padrão: a coluna tem de estar lá)
+  const caminhoDe = (campo: string): string => {
+    const i = estrutura.cabecalho.findIndex((x) => x.campo === campo); if (i >= 0) return `cabecalho[${i}]`;
+    for (const [ai, a] of estrutura.rodape.entries()) { const j = a.campos.findIndex((x) => x.campo === campo); if (j >= 0) return `rodape[${ai}].campos[${j}]`; }
+    return campo;
+  };
   const noLayout = new Map<string, CampoDoLayout>([...estrutura.cabecalho, ...estrutura.rodape.flatMap((a) => a.campos)].map((x) => [x.campo, x]));
   for (const c of cat) {
     if (!c.sistema) continue;
-    if (c.parte === "itens") { if (!vistosItem.has(c.chave)) e.push({ caminho: "itens", mensagem: `A coluna "${c.rotulo}" é obrigatória do sistema e tem de estar no layout.` }); continue; }
+    if (c.parte === "itens") {
+      const i = estrutura.itens.findIndex((x) => x.campo === c.chave);
+      if (i < 0) e.push({ caminho: "itens", mensagem: `A coluna "${c.rotulo}" é obrigatória do sistema e tem de estar no layout.` });
+      else if (!estrutura.itens[i]!.obrigatorio) e.push({ caminho: `itens[${i}].obrigatorio`, mensagem: `A coluna "${c.rotulo}" é obrigatória do sistema: não pode ficar opcional.` });
+      continue;
+    }
     const x = noLayout.get(c.chave);
-    if (!x) e.push({ caminho: c.parte, mensagem: `"${c.rotulo}" é obrigatório do sistema: ponha no layout (ou dê um valor padrão).` });
+    if (!x) e.push({ caminho: c.parte, mensagem: `"${c.rotulo}" é obrigatório do sistema: ponha no layout.` });
+    else if (!x.obrigatorio) e.push({ caminho: caminhoDe(x.campo) + ".obrigatorio", mensagem: `"${c.rotulo}" é obrigatório do sistema: não pode ficar opcional.` });
   }
   return e;
 }
