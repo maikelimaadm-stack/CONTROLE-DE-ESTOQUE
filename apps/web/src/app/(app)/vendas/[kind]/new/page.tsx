@@ -8,9 +8,9 @@ import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
-import { documentTotals, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CondicaoPagamento } from "@agro/domain";
-import { api } from "@/lib/api";
-import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
+import { ERRO_LAYOUT_CAMPO_OBRIGATORIO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type ValorPadraoLayout } from "@agro/domain";
+import { api, ApiError } from "@/lib/api";
+import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
 import { ChevronRight, Repeat2, Save, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -20,6 +20,40 @@ import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
 import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
+
+/**
+ * LAYOUT DO DOCUMENTO (VENDAS-A3-1) — o que `/layout-efetivo` devolve, CONFERIDO antes de governar a tela (mesma
+ * postura de `ehTopsDaVariante`: o corpo é `unknown` até provar a forma; o que não se reconhece não vale).
+ */
+const ehObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+const ehCampoDoLayout = (v: unknown) => ehObj(v) && typeof v.campo === "string" && typeof v.obrigatorio === "boolean" && typeof v.editavel === "boolean" && (v.rotulo === undefined || v.rotulo === null || typeof v.rotulo === "string");
+function ehEstruturaLayout(v: unknown): v is EstruturaLayout {
+  return ehObj(v) && v.versaoSchema === 1
+    && Array.isArray(v.cabecalho) && v.cabecalho.every(ehCampoDoLayout)
+    && Array.isArray(v.rodape) && v.rodape.every((a) => ehObj(a) && typeof a.aba === "string" && Array.isArray(a.campos) && a.campos.every(ehCampoDoLayout))
+    && Array.isArray(v.itens) && v.itens.every((c) => ehObj(c) && typeof c.campo === "string" && typeof c.obrigatorio === "boolean");
+}
+
+/** Valor padrão do layout → valor do estado do formulário. `null` = não se aplica (o validador do domínio já recusa esses). */
+function valorDoPadrao(v: ValorPadraoLayout, empresa: string): string | boolean | null {
+  if (v.tipo === "variavel") return v.variavel === "data_atual" ? todayISO() : empresa || null;
+  return typeof v.valor === "boolean" ? v.valor : String(v.valor);
+}
+
+/** Detalhe do 422 LAYOUT_CAMPO_OBRIGATORIO → { caminho: mensagem }. Aceita lista direta ou embrulhada. */
+function errosDoServidor(details: unknown): Record<string, string> {
+  const lista: unknown[] = Array.isArray(details) ? details
+    : ehObj(details) ? (Array.isArray(details.campos) ? details.campos : Array.isArray(details.fields) ? details.fields : Array.isArray(details.erros) ? details.erros : []) : [];
+  const out: Record<string, string> = {};
+  for (const d of lista) {
+    if (!ehObj(d)) continue;
+    const caminho = typeof d.caminho === "string" ? d.caminho : typeof d.path === "string" ? d.path : typeof d.campo === "string" ? d.campo : null;
+    if (!caminho) continue;
+    const msg = typeof d.mensagem === "string" ? d.mensagem : typeof d.message === "string" ? d.message : typeof d.rotulo === "string" ? mensagemCampoObrigatorio(d.rotulo) : "Campo obrigatório.";
+    out[caminho] = msg;
+  }
+  return out;
+}
 
 /**
  * NOVO LANÇAMENTO DE VENDAS — TOP PRIMEIRO, FORMULÁRIO DEPOIS (TOP-CONFIG-02B).
@@ -137,6 +171,36 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   React.useEffect(() => { setH((o) => ({ ...o, empresa_id: o.empresa_id || empresa })); }, [empresa]);
 
   /**
+   * LAYOUT DO DOCUMENTO (VENDAS-A3-1): SÓ com `capacidades.layoutDocumento` EXATA. Sem ela nenhuma pergunta sai e a
+   * tela é a de hoje (a estrutura usada para desenhar é `LAYOUT_DO_SISTEMA`, que É a tela de hoje, e nenhum
+   * `data-campo` nem cobrança nova aparece). Com ela, a TOP escolhida (trocar a TOP remonta este formulário, então a
+   * chave é `top.id`) pergunta o layout efetivo; enquanto ele não chega, ou se não chega conferido, o Salvar trava:
+   * gravar sem saber o que é obrigatório seria descobrir no 422.
+   */
+  /* A família vem do SERVIDOR (`family.code` de `/operation-types`) — o cliente não enumera famílias. Guardada ao
+     montar: um refetch adverso não pode desmontar a estrutura da tela. */
+  const familiaAgora = estadoTop.situacao === "pronto" ? estadoTop.dados.family.code : "";
+  const [familiaLayout, setFamiliaLayout] = React.useState(familiaAgora);
+  React.useEffect(() => { if (familiaAgora && familiaAgora !== familiaLayout) setFamiliaLayout(familiaAgora); }, [familiaAgora, familiaLayout]);
+  const layoutAtivo = entendeLayoutDocumento(estadoTop);
+  const layoutQ = useQuery<unknown, ApiError>({
+    queryKey: ["layout-efetivo", kind, top.id],
+    queryFn: () => api<unknown>(`/api/sales/${kind}/layout-efetivo?tipo_operacao_id=${encodeURIComponent(top.id)}`),
+    enabled: layoutAtivo,
+    retry: false
+  });
+  const layoutRecebido = layoutQ.data;
+  const layout: EstruturaLayout | null = React.useMemo(() => {
+    if (!layoutAtivo || !ehObj(layoutRecebido)) return null;
+    return ehEstruturaLayout(layoutRecebido.estrutura) ? layoutRecebido.estrutura : null;
+  }, [layoutAtivo, layoutRecebido]);
+  const layoutPendente = layoutAtivo && !layout;
+  const estrutura = React.useMemo(() => layout ?? LAYOUT_DO_SISTEMA(familiaLayout), [layout, familiaLayout]);
+  /** Configuração do layout por chave (cabeçalho e rodapé) — só com layout de verdade. */
+  const cfg = React.useMemo(() => new Map<string, CampoDoLayout>(layout ? [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)].map((x) => [x.campo, x]) : []), [layout]);
+  const rotuloDoCatalogo = React.useMemo(() => new Map(catalogoDaFamilia(familiaLayout).filter((c) => c.parte !== "itens").map((c) => [c.chave, c.rotulo])), [familiaLayout]);
+
+  /**
    * O QUE CONTA COMO "TEM COISA DIGITADA".
    *
    * A comparação é com o estado INICIAL, capturado no primeiro render — não com uma lista de campos
@@ -151,6 +215,31 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const semEmpresa = ({ empresa_id: _, ...resto }: typeof h) => resto;
   const sujo = items.length > 0 || JSON.stringify(semEmpresa(h)) !== JSON.stringify(semEmpresa(inicial.current));
   useDirtyTab(sujo);
+
+  /**
+   * VALOR PADRÃO DO LAYOUT, aplicado ao ABRIR (quando o layout chega), só a campo ainda intocado — o valor digitado
+   * nunca é sobrescrito. O estado inicial acompanha, para o padrão não contar como "tem coisa digitada".
+   */
+  const padroesAplicados = React.useRef<EstruturaLayout | null>(null);
+  React.useEffect(() => {
+    if (!layout || padroesAplicados.current === layout) return;
+    padroesAplicados.current = layout;
+    const novos: Partial<typeof h> = {};
+    for (const x of [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)]) {
+      if (!x.valorPadrao || !(x.campo in inicial.current)) continue;
+      const v = valorDoPadrao(x.valorPadrao, empresa);
+      if (v === null) continue;
+      Object.assign(novos, { [x.campo]: v });
+    }
+    if (!Object.keys(novos).length) return;
+    const antes = inicial.current;
+    inicial.current = { ...antes, ...novos };
+    setH((o) => {
+      const r = { ...o };
+      for (const [k, v] of Object.entries(novos)) if (JSON.stringify(o[k as keyof typeof o]) === JSON.stringify(antes[k as keyof typeof antes]) || k === "empresa_id") Object.assign(r, { [k]: v });
+      return r;
+    });
+  }, [layout, empresa]);
 
   const create = useCreate<{ id: string }>(`/api/sales/${kind}`, (r) => router.push(`/vendas/${kind}/${r.id}`));
   /**
@@ -196,6 +285,20 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   };
   const ajustarPlano = (p: Plan) => { setPlan(p); setAjustado(true); };
   const semClassificacao = classificacaoAtiva && (!h.categoria_financeira_id || !h.centro_custo_id);
+  /** O corpo do POST — o MESMO objeto que a cobrança do layout confere antes de sair. */
+  const corpo = () => ({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
+
+  /**
+   * OBRIGATÓRIOS DO LAYOUT: a MESMA função do domínio que a API usa (`camposObrigatoriosFaltando`), sobre o MESMO
+   * corpo. Depois da primeira tentativa de salvar, os erros acompanham a digitação; os do servidor (422
+   * LAYOUT_CAMPO_OBRIGATORIO) ficam até a próxima tentativa.
+   */
+  const [tentouSalvar, setTentouSalvar] = React.useState(false);
+  const [errosServidor, setErrosServidor] = React.useState<Record<string, string>>({});
+  const faltando = () => (layout ? camposObrigatoriosFaltando(familiaLayout, layout, corpo(), { classificacao: classificacaoAtiva, condicao: condicaoAtiva }) : []);
+  const errosLocais: Record<string, string> = layout && tentouSalvar ? Object.fromEntries(faltando().map((f) => [f.caminho, mensagemCampoObrigatorio(f.rotulo)])) : {};
+  const erros: Record<string, string> = layout ? { ...errosServidor, ...errosLocais } : {};
+  const [maisDados, setMaisDados] = React.useState(false);
   /** O UUID que vai no corpo é o da TOP VALIDADA contra a lista — nunca o texto cru da URL. */
   const submit = () => {
     /**
@@ -207,7 +310,14 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
      */
     if (!escritaTopConfirmada) return;
     if (semClassificacao) return;
-    create.mutate({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
+    if (!layoutAtivo) { create.mutate(corpo()); return; }
+    if (!layout) return;
+    setTentouSalvar(true); setErrosServidor({});
+    const f = faltando();
+    if (f.length) { if (f.some((x) => x.caminho === "proprietary_id")) setMaisDados(true); return; }
+    create.mutate(corpo(), {
+      onError: (e) => { if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if ("proprietary_id" in m) setMaisDados(true); } }
+    });
   };
 
   const voltarAoLancador = () => router.replace(`/vendas/${kind}/new`);
@@ -234,7 +344,6 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    * visão da barra de abas). "Confirmar venda", "Descartar", "Editar" e "Anexos" do design não têm
    * contrato nesta etapa (`docs/DECISIONS.md` 224) — não aparecem, nem desabilitadas.
    */
-  const [maisDados, setMaisDados] = React.useState(false);
 
   /*
     A OPERAÇÃO É CONTEXTO, NÃO IDENTIDADE. Ela aparece como campo travado em Dados principais — o design
@@ -261,6 +370,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     servidor nem configuração ausente; é a operação escolhida que saiu de circulação. A frase é a
     mesma da recusa do lançador, e continua sem revelar a causa.
   */
+  const avisoDeLayout = layoutPendente && (layoutQ.isError || (layoutQ.isSuccess && !layout)) && <div className="rounded-md bg-amber-50 p-3">
+    <p data-testid="layout-nao-carregado" className="text-sm text-amber-700">Não foi possível carregar o layout deste Tipo de Operação. O lançamento está bloqueado até ele ser carregado.</p>
+  </div>;
   const avisoDeEscrita = !escritaTopConfirmada && <div className="space-y-1 rounded-md bg-amber-50 p-3">
     <MensagemTop estado={estadoTop} />
     {estadoTop.situacao === "pronto" && <p data-testid="top-indisponivel" className="text-sm text-amber-800">
@@ -271,8 +383,90 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     </p>
   </div>;
 
-  const pesquisa = (conteudo: React.ReactNode) => <div className={cn(estilosCv.campo, estilosCv.campoPesquisa)}>{conteudo}<span className={estilosCv.adorno} aria-hidden><Search /></span></div>;
-  const campo = (conteudo: React.ReactNode) => <div className={estilosCv.campo}>{conteudo}</div>;
+  /**
+   * CADA CAMPO DESENHADO PELA ESTRUTURA (VENDAS-A3-1). Sem layout (sem a capacidade) a estrutura é `LAYOUT_DO_SISTEMA`
+   * — a ordem, os rótulos e as abas de hoje — e nada muda no DOM: sem `data-campo`, sem erro, sem obrigatório novo.
+   * Com layout: rótulo e obrigatório do layout, `data-campo="<chave>"` no invólucro, erro no próprio campo, e o campo
+   * não editável aparece travado (fieldset desabilitado) mostrando o valor (o padrão aplicado ao abrir).
+   */
+  const dc = (chave: string) => (layout ? { "data-campo": chave } : {});
+  const rot = (chave: string, hoje: string) => cfg.get(chave)?.rotulo || hoje;
+  const req = (chave: string, hoje: boolean) => (layout ? Boolean(cfg.get(chave)?.obrigatorio) : hoje);
+  const err = (chave: string) => erros[chave];
+  const pesquisa = (conteudo: React.ReactNode, chave?: string) => <div className={cn(estilosCv.campo, estilosCv.campoPesquisa)} {...(chave ? dc(chave) : {})}>{conteudo}<span className={estilosCv.adorno} aria-hidden><Search /></span></div>;
+  const campo = (conteudo: React.ReactNode, chave?: string) => <div className={estilosCv.campo} {...(chave ? dc(chave) : {})}>{conteudo}</div>;
+  const larguraFixa = { maxWidth: 330 };
+
+  const desenhar = (chave: string): React.ReactNode => {
+    switch (chave) {
+      case "client_id": return pesquisa(<Field label={rot(chave, "Cliente")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} /></Field>, chave);
+      case "empresa_id": return pesquisa(<Field label={rot(chave, "Empresa")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>, chave);
+      case "document_date": return campo(<Field label={rot(chave, "Data")} required={req(chave, true)} error={err(chave)} span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>, chave);
+      case "due_date": return campo(<Field label={rot(chave, "Vencimento")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>, chave);
+      case "payment_method_id": return pesquisa(<Field label={rot(chave, "Forma de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} /></Field>, chave);
+      case "categoria_financeira_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Natureza")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} /></Field>, chave);
+      case "centro_custo_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Centro de resultado")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>, chave);
+      case "shipping_date": return campo(<Field label={rot(chave, "Data de saída")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>, chave);
+      case "proprietary_id": return pesquisa(<Field label={rot(chave, "Proprietário")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} /></Field>, chave);
+      case "discount": return campo(<Field label={rot(chave, "Desconto")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>, chave);
+      case "other_values": return campo(<Field label={rot(chave, "Outros valores")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>, chave);
+      case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} /></Field>, chave)}</div>;
+      case "installment_plan": return <>
+        {!condicaoId && <div style={larguraFixa}>{campo(<Field label={rot(chave, "Parcelamento")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>, chave)}</div>}
+        {!condicaoId && h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
+        {condicaoId && planoCalculado && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={ajustarPlano} /></div>}
+      </>;
+      case "transporter_id": return pesquisa(<Field label={rot(chave, "Transportadora")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>, chave);
+      case "driver_name": return campo(<Field label={rot(chave, "Motorista")} required={req(chave, false)} error={err(chave)} span={12}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>, chave);
+      case "freight": return campo(<Field label={rot(chave, "Frete")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} /></Field>, chave);
+      case "freight_icms": return campo(<Field label={rot(chave, "ICMS frete")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} /></Field>, chave);
+      case "is_deductible": return campo(<Field label={rot(chave, "Dedutível")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.is_deductible ? "1" : "0"} onChange={(e) => setH({ ...h, is_deductible: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim</option></NativeSelect></Field>, chave);
+      case "note": return campo(<Field label={rot(chave, "Observação")} required={req(chave, false)} error={err(chave)} span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>, chave);
+      default: return null;
+    }
+  };
+  /** Campo com gate de capacidade que a API não declara não existe — nem conta para montar aba. */
+  const existe = (chave: string) => rotuloDoCatalogo.has(chave)
+    && !((chave === "categoria_financeira_id" || chave === "centro_custo_id") && !classificacaoAtiva)
+    && !(chave === "condicao_pagamento_id" && !condicaoAtiva);
+  /** O campo, com a chave do React e — só com layout e `editavel: false` — travado. */
+  const render = (chave: string) => {
+    const n = desenhar(chave);
+    const travado = layout && cfg.get(chave)?.editavel === false;
+    return <React.Fragment key={chave}>{travado ? <fieldset disabled data-editavel="false" style={{ display: "contents" }}>{n}</fieldset> : n}</React.Fragment>;
+  };
+
+  /* Dados principais: ordem do layout; a Operação logo depois da Empresa (ou depois dos dois primeiros); o
+     Proprietário em "Dados adicionais", como hoje. */
+  const cabecalho = estrutura.cabecalho.map((x) => x.campo).filter(existe);
+  const principais = cabecalho.filter((c) => c !== "proprietary_id");
+  const adicionais = cabecalho.filter((c) => c === "proprietary_id");
+  const posEmpresa = principais.indexOf("empresa_id");
+  const posTop = posEmpresa >= 0 ? posEmpresa + 1 : Math.min(2, principais.length);
+
+  /* Rodapé: as abas do layout, na ordem, com os campos dele. A arrumação de cada aba segue a de hoje. */
+  const VALOR_DA_ABA: Record<string, string> = { "Totais": "totais", "Financeiro": "financeiro", "Frete e transporte": "frete", "Fiscal": "fiscal", "Observações": "observacoes" };
+  const usados = new Set<string>();
+  const abas = estrutura.rodape.flatMap((a, i) => {
+    const campos = a.campos.map((x) => x.campo).filter(existe);
+    if (!campos.length) return [];
+    const preferido = VALOR_DA_ABA[a.aba];
+    const value = preferido && !usados.has(preferido) ? preferido : `aba-${i}`;
+    usados.add(value);
+    const especial = (c: string) => c === "installment_plan" || c === "condicao_pagamento_id";
+    let content: React.ReactNode;
+    if (campos.length === 1 && campos[0] === "note") content = <div className={estilosCv.painelLargo}>{render("note")}</div>;
+    else if (campos.some(especial)) content = <div className={estilosCv.painelColuna}>{campos.map((c) => (especial(c) ? render(c) : <div key={c} style={larguraFixa}>{render(c)}</div>))}</div>;
+    else if (campos.length >= 4) {
+      const metade = Math.ceil(campos.length / 2);
+      content = <div className={estilosCv.painelGrade}>
+        <div className={estilosCv.painelColuna}>{campos.slice(0, metade).map(render)}</div>
+        <div className={estilosCv.painelColuna}>{campos.slice(metade).map(render)}</div>
+      </div>;
+    } else content = <div className={estilosCv.painelColuna} style={larguraFixa}>{campos.map(render)}</div>;
+    return [{ value, label: a.aba, content }];
+  });
+  const layoutDosItens = React.useMemo(() => (layout ? { colunas: layout.itens } : null), [layout]);
 
   return <>
     <CentralVendasWorkspace
@@ -280,58 +474,27 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo, dica: kind === "sales" ? "O que a confirmação faz no estoque e no financeiro depende do Tipo de Operação e é mostrado antes de confirmar." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada." }}
       acoes={<>
         {/* sem "Voltar": como no design, a barra só tem ações do documento; navegar é a barra de abas */}
-        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
+        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
         <DivisorDaBarra />
         <AcaoDaBarra rotulo="Alterar operação" data-testid="top-alterar" onClick={alterarOperacao}><Repeat2 aria-hidden /></AcaoDaBarra>
       </>}
       acoesDireita={<DocumentosAbertos />}
-      aviso={avisoDeEscrita}
+      aviso={avisoDeLayout ? <>{avisoDeEscrita}{avisoDeLayout}</> : avisoDeEscrita}
       dados={<>
-        {pesquisa(<Field label="Cliente" required span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} /></Field>)}
-        {pesquisa(<Field label="Empresa" required span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>)}
+        {principais.slice(0, posTop).map(render)}
         {contextoOperacional}
-        {campo(<Field label="Data" required span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>)}
-        {campo(<Field label="Vencimento" span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>)}
-        {pesquisa(<Field label="Forma de pagamento" span={12}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} /></Field>)}
-        {classificacaoAtiva && pesquisa(<Field label="Natureza" required span={12}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} /></Field>)}
-        {classificacaoAtiva && pesquisa(<Field label="Centro de resultado" required span={12}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>)}
-        {campo(<Field label="Data de saída" span={12}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>)}
-        <button type="button" className={estilosCv.maisDados} aria-expanded={maisDados} aria-controls="dados-adicionais" onClick={() => setMaisDados((m) => !m)}>
-          <ChevronRight aria-hidden /> Dados adicionais <span className={estilosCv.mudo}>· 1 campo</span>
-        </button>
-        {maisDados && <div id="dados-adicionais">
-          {pesquisa(<Field label="Proprietário" span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} /></Field>)}
-        </div>}
+        {principais.slice(posTop).map(render)}
+        {adicionais.length > 0 && <>
+          <button type="button" className={estilosCv.maisDados} aria-expanded={maisDados} aria-controls="dados-adicionais" onClick={() => setMaisDados((m) => !m)}>
+            <ChevronRight aria-hidden /> Dados adicionais <span className={estilosCv.mudo}>· {adicionais.length} {adicionais.length === 1 ? "campo" : "campos"}</span>
+          </button>
+          {maisDados && <div id="dados-adicionais">
+            {adicionais.map(render)}
+          </div>}
+        </>}
       </>}
-      itens={<ItensDaCentral items={items} onChange={setItems} />}
-      abas={[
-        { value: "totais", label: "Totais", content: <div className={estilosCv.painelColuna} style={{ maxWidth: 330 }}>
-          {campo(<Field label="Desconto" span={12}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>)}
-          {campo(<Field label="Outros valores" span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>)}
-        </div> },
-        { value: "financeiro", label: "Financeiro", content: <div className={estilosCv.painelColuna}>
-          {condicaoAtiva && <div style={{ maxWidth: 330 }} data-testid="condicao-pagamento">{pesquisa(<Field label="Condição de pagamento" span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} /></Field>)}</div>}
-          {!condicaoId && <div style={{ maxWidth: 330 }}>{campo(<Field label="Parcelamento" span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>)}</div>}
-          {!condicaoId && h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
-          {condicaoId && planoCalculado && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={ajustarPlano} /></div>}
-        </div> },
-        { value: "frete", label: "Frete e transporte", content: <div className={estilosCv.painelGrade}>
-          <div className={estilosCv.painelColuna}>
-            {pesquisa(<Field label="Transportadora" span={12}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>)}
-            {campo(<Field label="Motorista" span={12}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>)}
-          </div>
-          <div className={estilosCv.painelColuna}>
-            {campo(<Field label="Frete" span={12}><Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} /></Field>)}
-            {campo(<Field label="ICMS frete" span={12}><Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} /></Field>)}
-          </div>
-        </div> },
-        { value: "fiscal", label: "Fiscal", content: <div className={estilosCv.painelColuna} style={{ maxWidth: 330 }}>
-          {campo(<Field label="Dedutível" span={12}><NativeSelect value={h.is_deductible ? "1" : "0"} onChange={(e) => setH({ ...h, is_deductible: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim</option></NativeSelect></Field>)}
-        </div> },
-        { value: "observacoes", label: "Observações", content: <div className={estilosCv.painelLargo}>
-          {campo(<Field label="Observação" span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>)}
-        </div> }
-      ]}
+      itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout ? erros : undefined} />}
+      abas={abas}
     />
 
     {/* Trocar a operação descarta o que foi digitado — então pergunta antes, em vez de descobrir depois. */}

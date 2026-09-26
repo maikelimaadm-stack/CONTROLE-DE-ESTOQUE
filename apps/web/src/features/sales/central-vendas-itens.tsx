@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Columns2, Columns3, FileText, LayoutGrid, Lock, Plus, Search, Trash2 } from "lucide-react";
-import { getResource } from "@agro/domain";
+import { getResource, type ColunaDoLayout } from "@agro/domain";
 import { cn, brl, num } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Field, Input } from "@/components/ui";
@@ -84,6 +84,31 @@ const padrao = <K extends string>(chaves: K[]): Preferencia<K>[] => chaves.map((
 const COLUNAS_PADRAO = () => padrao(Object.keys(COLUNAS) as ChaveColuna[]);
 const CAMPOS_PADRAO = () => padrao(Object.keys(CAMPOS) as ChaveCampo[]);
 
+/**
+ * LAYOUT DO DOCUMENTO (VENDAS-A3-1): a chave do catálogo (`@agro/domain`, a da linha do item no corpo) ↔ a coluna
+ * e o campo desta tela. "Unidade" não é chave do item nem do catálogo: aparece no formulário sempre, antes da
+ * Quantidade. Com layout, a grade e o formulário só oferecem o que o layout tem, na ordem dele; a preferência de
+ * mostrar/esconder/reordenar do usuário continua valendo DENTRO dessas colunas.
+ */
+const COLUNA_DO_CATALOGO: Record<string, ChaveColuna> = {
+  codigo: "codigo", product_id: "produto", warehouse_id: "armazem", estoque: "estoque", quantity: "quantidade",
+  unit_price: "unitario", discount: "desconto", discount_percent: "descontoPercentual", total: "total"
+};
+const CHAVE_DO_CATALOGO = Object.fromEntries(Object.entries(COLUNA_DO_CATALOGO).map(([k, v]) => [v, k])) as Record<ChaveColuna, string>;
+const ehChaveColuna = (k: string): k is ChaveColuna => k in COLUNAS;
+
+/** O layout dos itens como esta tela o usa: colunas na ordem do layout, com rótulo e obrigatoriedade. */
+export interface LayoutDosItens { colunas: readonly ColunaDoLayout[] }
+function colunasDoLayout(l: LayoutDosItens): { chave: ChaveColuna; rotulo?: string; obrigatorio: boolean }[] {
+  return l.colunas.flatMap((c) => { const k = COLUNA_DO_CATALOGO[c.campo]; return k ? [{ chave: k, rotulo: c.rotulo, obrigatorio: c.obrigatorio }] : []; });
+}
+function camposDoLayout(l: LayoutDosItens): ChaveCampo[] {
+  const lista: ChaveCampo[] = colunasDoLayout(l).map((c) => c.chave).filter((k): k is Exclude<ChaveColuna, "codigo"> => k !== "codigo");
+  const i = lista.indexOf("quantidade");
+  lista.splice(i >= 0 ? i : lista.length, 0, "unidade");
+  return lista;
+}
+
 /** Rótulo de um registro já escolhido: o que a pesquisa devolveu, ou o próprio registro (como o `RefSelect` faz). */
 function useRotulo(recurso: string, id: string | undefined, conhecido: OpcaoReal | undefined) {
   const def = React.useMemo(() => getResource(recurso), [recurso]);
@@ -141,7 +166,13 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
   return <span className={estilos.codigo}>{o?.code ?? (id ? "" : "—")}</span>;
 }
 
-export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange: (i: ItemRow[]) => void }) {
+export function ItensDaCentral({ items, onChange, layout, erros }: {
+  items: ItemRow[]; onChange: (i: ItemRow[]) => void;
+  /** Só com a capacidade `layoutDocumento`: sem ele a grade é a de hoje, idêntica. */
+  layout?: LayoutDosItens | null;
+  /** Erros por caminho `items[i].<chave do catálogo>` (os mesmos de `camposObrigatoriosFaltando` e do 422). */
+  erros?: Record<string, string>;
+}) {
   const [visao, setVisao] = React.useState<Visao>("grade");
   const [selecionado, setSelecionado] = React.useState<number>(-1);
   const [pesquisa, setPesquisa] = React.useState<{ linha: number; campo: "product_id" | "warehouse_id"; ancora: HTMLElement | null; modo: "flutuante" | "fluxo" } | null>(null);
@@ -152,6 +183,25 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
   const [colunas, setColunas] = React.useState<Preferencia<ChaveColuna>[]>(COLUNAS_PADRAO);
   const [campos, setCampos] = React.useState<Preferencia<ChaveCampo>[]>(CAMPOS_PADRAO);
   const [configurando, setConfigurando] = React.useState(false);
+  /** Com layout: o padrão é o do layout; trocar de layout devolve a preferência ao padrão dele. */
+  const colunasPadrao = React.useCallback(() => (layout ? padrao(colunasDoLayout(layout).map((c) => c.chave)) : COLUNAS_PADRAO()), [layout]);
+  const camposPadrao = React.useCallback(() => (layout ? padrao(camposDoLayout(layout)) : CAMPOS_PADRAO()), [layout]);
+  const layoutAplicado = React.useRef<LayoutDosItens | null | undefined>(undefined);
+  React.useEffect(() => {
+    if (layoutAplicado.current === layout) return;
+    const primeiro = layoutAplicado.current === undefined;
+    layoutAplicado.current = layout;
+    if (primeiro && !layout) return;
+    setColunas(colunasPadrao()); setCampos(camposPadrao());
+  }, [layout, colunasPadrao, camposPadrao]);
+  const doLayout = React.useMemo(() => (layout ? new Map(colunasDoLayout(layout).map((c) => [c.chave, c])) : null), [layout]);
+  const rotuloColuna = (k: ChaveColuna) => doLayout?.get(k)?.rotulo || COLUNAS[k].rotulo;
+  const rotuloCampo = (k: ChaveCampo) => (ehChaveColuna(k) && doLayout?.get(k)?.rotulo) || CAMPOS[k];
+  const obrigatoria = (k: ChaveColuna) => Boolean(doLayout?.get(k)?.obrigatorio);
+  /** `data-campo` só existe com layout: sem a capacidade o DOM é o de hoje. */
+  const dataCampo = (k: ChaveColuna) => (layout ? { "data-campo": CHAVE_DO_CATALOGO[k] } : {});
+  const erroDe = (i: number, k: ChaveColuna) => erros?.[`items[${i}].${CHAVE_DO_CATALOGO[k]}`];
+  const errosDosItens = erros ? Object.entries(erros).filter(([c]) => c.startsWith("items[")) : [];
 
   // seleção nunca órfã: se o array encolheu, a seleção vem junto
   const sel = selecionado >= items.length ? items.length - 1 : selecionado;
@@ -183,7 +233,7 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
   const subtotal = items.reduce((a, it) => a + totalDaLinhaExibido(it), 0);
   const item = sel >= 0 ? items[sel] : undefined;
 
-  const colunasVisiveis = colunas.filter((c) => c.visivel).map((c) => c.chave);
+  const colunasVisiveis = colunas.filter((c) => c.visivel && (!doLayout || doLayout.has(c.chave))).map((c) => c.chave);
   // largura mínima DERIVADA das colunas visíveis (a lixeira + cada coluna), nunca contada à mão
   const larguraMinima = LARGURA_EXCLUIR + colunasVisiveis.reduce((a, k) => a + COLUNAS[k].largura, 0);
 
@@ -214,7 +264,7 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
       <colgroup><col style={{ width: LARGURA_EXCLUIR }} />{colunasVisiveis.map((k) => <col key={k} style={COLUNAS[k].elastica ? { minWidth: COLUNAS[k].largura } : { width: COLUNAS[k].largura }} />)}</colgroup>
       <thead><tr>
         <th aria-label="Excluir" />
-        {colunasVisiveis.map((k) => <th key={k} className={COLUNAS[k].numero ? estilos.numero : undefined}>{COLUNAS[k].rotulo}</th>)}
+        {colunasVisiveis.map((k) => <th key={k} className={COLUNAS[k].numero ? estilos.numero : undefined} {...dataCampo(k)}>{rotuloColuna(k)}{obrigatoria(k) && <span className="req text-red-500"> *</span>}</th>)}
       </tr></thead>
       <tbody>
         {items.length === 0 && <tr><td colSpan={1 + colunasVisiveis.length} className={estilos.vazio}>Nenhum item. Use o botão verde para adicionar.</td></tr>}
@@ -224,7 +274,12 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
             aria-selected={ativa} tabIndex={ativa || (sel < 0 && i === 0) ? 0 : -1} data-testid="central-vendas-linha"
             onClick={() => setSelecionado(i)} onKeyDown={(e) => tecladoDaLinha(e, i)}>
             <td className={estilos.excluir}><button type="button" className={estilos.remover} aria-label={`Excluir item ${i + 1}`} data-dica="Excluir item" onClick={(e) => { e.stopPropagation(); remover(i); }}><Trash2 aria-hidden /></button></td>
-            {colunasVisiveis.map((k) => celula(k, it, i, ativa))}
+            {colunasVisiveis.map((k) => {
+              const td = celula(k, it, i, ativa);
+              if (!layout) return td;
+              const erro = erroDe(i, k);
+              return React.cloneElement(td, { ...dataCampo(k), ...(erro ? { "aria-invalid": true, title: erro, "data-erro": erro } : {}) });
+            })}
           </tr>;
         })}
       </tbody>
@@ -236,10 +291,13 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
         valor={item?.[campo] as string | undefined} modo="fluxo" ancora={pesquisa.ancora} onEscolher={escolher} onFechar={fechar} testId="central-vendas-pesquisa" />
     : null;
 
+  /** Atributos do campo do formulário do item com layout: `data-campo`, obrigatório e erro da linha selecionada. */
+  const doCampo = (k: ChaveColuna) => ({ attrs: dataCampo(k), required: obrigatoria(k), error: layout ? erroDe(sel, k) : undefined, label: rotuloColuna(k) });
   const campoDeReferencia = (campo: "product_id" | "warehouse_id", rotulo: string, recurso: string) => {
     const id = (item?.[campo] as string | undefined) || undefined;
-    return <div key={campo} className={cn(estilos.campo, estilos.campoPesquisa)}>
-      <Field label={rotulo} span={12}>
+    const d = doCampo(campo === "product_id" ? "produto" : "armazem");
+    return <div key={campo} className={cn(estilos.campo, estilos.campoPesquisa)} {...d.attrs}>
+      <Field label={layout ? d.label : rotulo} required={d.required} error={d.error} span={12}>
         <CampoReferenciaBotao recurso={recurso} valor={id} conhecido={id ? conhecidos[id] : undefined} aberto={Boolean(pesquisa?.modo === "fluxo" && pesquisa.campo === campo)}
           onAbrir={(el) => setPesquisa(pesquisa?.modo === "fluxo" && pesquisa.campo === campo ? null : { linha: sel, campo, ancora: el, modo: "fluxo" })} />
       </Field>
@@ -251,13 +309,13 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
     switch (k) {
       case "produto": return [campoDeReferencia("product_id", "Produto", "products"), pesquisaEmFluxo("product_id")];
       case "armazem": return [campoDeReferencia("warehouse_id", "Armazém", "warehouses"), pesquisaEmFluxo("warehouse_id")];
-      case "estoque": return <Travado key={k} rotulo="Estoque"><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* só exibe: quem preenche o custo médio é `efeitosDoEstoque`, montado sempre */ }} /></Travado>;
+      case "estoque": return <Travado key={k} rotulo={rotuloCampo(k)} campo={layout ? "estoque" : undefined}><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* só exibe: quem preenche o custo médio é `efeitosDoEstoque`, montado sempre */ }} /></Travado>;
       case "unidade": return <Travado key={k} rotulo="Unidade" testId="central-vendas-item-unidade"><UnidadeTravada produto={it.product_id} /></Travado>;
-      case "quantidade": return <div key={k} className={estilos.campo}><Field label="Quantidade" span={12}><Input type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(sel, "quantity", e.target.value)} /></Field></div>;
-      case "unitario": return <div key={k} className={estilos.campo}><Field label="Valor unitário" span={12}><Input type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(sel, "unit_value", e.target.value)} /></Field></div>;
-      case "desconto": return <div key={k} className={estilos.campo}><Field label="Desconto" span={12}><Input type="number" step="0.01" min="0" value={it.discount ?? ""} onChange={(e) => atualizar(sel, "discount", e.target.value)} /></Field></div>;
-      case "descontoPercentual": return <div key={k} className={estilos.campo}><Field label="Desconto %" span={12}><Input type="number" step="0.01" min="0" max="100" value={it.discount_percent ?? ""} onChange={(e) => atualizar(sel, "discount_percent", e.target.value)} /></Field></div>;
-      case "total": return <Travado key={k} rotulo="Total"><span data-testid="central-vendas-item-total">{brl(totalDaLinhaExibido(it))}</span></Travado>;
+      case "quantidade": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(sel, "quantity", e.target.value)} /></Field></div>; }
+      case "unitario": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(sel, "unit_value", e.target.value)} /></Field></div>; }
+      case "desconto": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.01" min="0" value={it.discount ?? ""} onChange={(e) => atualizar(sel, "discount", e.target.value)} /></Field></div>; }
+      case "descontoPercentual": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.01" min="0" max="100" value={it.discount_percent ?? ""} onChange={(e) => atualizar(sel, "discount_percent", e.target.value)} /></Field></div>; }
+      case "total": return <Travado key={k} rotulo={rotuloCampo(k)} campo={layout ? "total" : undefined}><span data-testid="central-vendas-item-total">{brl(totalDaLinhaExibido(it))}</span></Travado>;
     }
   };
 
@@ -268,7 +326,7 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
         <button type="button" className={estilos.itemNavBotao} aria-label="Item anterior" data-dica="Item anterior" disabled={sel <= 0} onClick={() => setSelecionado(sel - 1)}><ChevronLeft aria-hidden /></button>
         <button type="button" className={estilos.itemNavBotao} aria-label="Próximo item" data-dica="Próximo item" disabled={sel >= items.length - 1} onClick={() => setSelecionado(sel + 1)}><ChevronRight aria-hidden /></button>
       </div>
-      {campos.filter((c) => c.visivel).map((c) => <React.Fragment key={c.chave}>{campoDoItem(c.chave, item)}</React.Fragment>)}
+      {campos.filter((c) => c.visivel && (!doLayout || !ehChaveColuna(c.chave) || doLayout.has(c.chave))).map((c) => <React.Fragment key={c.chave}>{campoDoItem(c.chave, item)}</React.Fragment>)}
     </div>}
   </div>;
 
@@ -297,14 +355,17 @@ export function ItensDaCentral({ items, onChange }: { items: ItemRow[]; onChange
           onClick={() => { setVisao(v); setPesquisa(null); setConfigurando(false); if (v !== "grade" && sel < 0 && items.length) setSelecionado(0); }}><Icone aria-hidden /></button>)}
       </div>
       {configDoFormulario
-        ? <ConfiguracaoDeVisao<ChaveCampo> titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem" rotulos={CAMPOS} lista={campos} onLista={setCampos} onRestaurar={() => setCampos(CAMPOS_PADRAO())} aberta={configurando} onAberta={setConfigurando} />
-        : <ConfiguracaoDeVisao<ChaveColuna> titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem" rotulos={Object.fromEntries(Object.entries(COLUNAS).map(([k, c]) => [k, c.rotulo])) as Record<ChaveColuna, string>} lista={colunas} onLista={setColunas} onRestaurar={() => setColunas(COLUNAS_PADRAO())} aberta={configurando} onAberta={setConfigurando} />}
+        ? <ConfiguracaoDeVisao<ChaveCampo> titulo="Visualização do formulário" subtitulo="Campos visíveis e ordem" rotulos={layout ? (Object.fromEntries((Object.keys(CAMPOS) as ChaveCampo[]).map((k) => [k, rotuloCampo(k)])) as Record<ChaveCampo, string>) : CAMPOS} lista={campos} onLista={setCampos} onRestaurar={() => setCampos(camposPadrao())} aberta={configurando} onAberta={setConfigurando} />
+        : <ConfiguracaoDeVisao<ChaveColuna> titulo="Colunas da grade" subtitulo="Colunas visíveis e ordem" rotulos={Object.fromEntries((Object.keys(COLUNAS) as ChaveColuna[]).map((k) => [k, rotuloColuna(k)])) as Record<ChaveColuna, string>} lista={colunas} onLista={setColunas} onRestaurar={() => setColunas(colunasPadrao())} aberta={configurando} onAberta={setConfigurando} />}
     </div>
     <div className={estilos.itensCorpo} data-visao={visao} data-testid="central-vendas-itens-corpo">
       {visao !== "formulario" && grade}
       {visao !== "grade" && formulario}
       {efeitosDoEstoque}
     </div>
+    {errosDosItens.length > 0 && <div role="alert" data-testid="central-vendas-itens-erros" className="px-3 py-1 text-[11px] text-red-600">
+      {errosDosItens.map(([caminho, msg]) => { const n = /^items\[(\d+)\]/.exec(caminho); return <p key={caminho} data-erro-campo={caminho}>{n ? `Item ${Number(n[1]) + 1}: ` : ""}{msg}</p>; })}
+    </div>}
     <div className={estilos.itensRodape}>Subtotal dos itens <b data-testid="central-vendas-subtotal">{brl(subtotal)}</b></div>
     {pesquisa?.modo === "flutuante" && <PainelDePesquisa recurso={pesquisa.campo === "product_id" ? "products" : "warehouses"}
       rotulo={pesquisa.campo === "product_id" ? "Pesquisar produto" : "Pesquisar armazém"} valor={items[pesquisa.linha]?.[pesquisa.campo] as string | undefined}
@@ -362,8 +423,8 @@ function CampoReferenciaBotao({ recurso, valor, conhecido, aberto, onAbrir, id: 
 }
 
 /** Valor travado pelo sistema (fundo cinza-azulado, cadeado): leitura, nunca entrada. */
-export function Travado({ rotulo, children, testId }: { rotulo: string; children: React.ReactNode; testId?: string }) {
-  return <div className={estilos.travado} role="group" aria-label={rotulo} data-testid={testId}>
+export function Travado({ rotulo, children, testId, campo }: { rotulo: string; children: React.ReactNode; testId?: string; campo?: string }) {
+  return <div className={estilos.travado} role="group" aria-label={rotulo} data-testid={testId} data-campo={campo}>
     <span className={estilos.travadoRotulo}>{rotulo}</span>
     <span className={estilos.travadoValor}>{children}</span>
     <span className={estilos.adorno} aria-hidden><Lock /></span>

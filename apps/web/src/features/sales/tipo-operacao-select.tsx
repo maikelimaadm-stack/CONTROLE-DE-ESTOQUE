@@ -5,7 +5,7 @@ import { api, ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { NativeSelect, Field } from "@/components/ui";
 import type { Row } from "@/features/docs/shared";
-import { CAPACIDADE_CONDICAO_PAGAMENTO } from "@agro/domain";
+import { CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO } from "@agro/domain";
 import type { Column } from "@/components/ui/data-table";
 
 /**
@@ -116,6 +116,17 @@ export function entendeCondicaoPagamento(e: EstadoTop): boolean {
   if (e.situacao !== "pronto") return false;
   const c = (e.dados as unknown as { capacidades?: unknown }).capacidades;
   return ehObjeto(c) && c.condicaoPagamento === CAPACIDADE_CONDICAO_PAGAMENTO;
+}
+
+/**
+ * A API DECLARA QUE ENTENDE O LAYOUT DO DOCUMENTO (VENDAS-A3-1)? — declaração ADITIVA em `/operation-types`
+ * (`capacidades.layoutDocumento`), no mesmo molde das anteriores. Sem ela a Central é a de hoje, idêntica: nenhuma
+ * pergunta a `/layout-efetivo`, nenhuma cobrança de obrigatório do layout. Forma e versão EXATAS.
+ */
+export function entendeLayoutDocumento(e: EstadoTop): boolean {
+  if (e.situacao !== "pronto") return false;
+  const c = (e.dados as unknown as { capacidades?: unknown }).capacidades;
+  return ehObjeto(c) && c.layoutDocumento === CAPACIDADE_LAYOUT_DOCUMENTO;
 }
 
 /** O que a tela precisa decidir. Três situações distintas, três mensagens distintas — nunca uma só. */
