@@ -917,23 +917,19 @@ export default async function salesRoutes(app: FastifyInstance) {
       }
       const l = await layoutEfetivo(ctx, familia, topId);
       /*
-       * PADRÃO DE CADASTRO (VENDAS-A3-1b). A `estrutura` sai SEM os padrões `registro` (a web da A3-1 nunca vê um tipo
-       * de padrão que não conhece); eles vêm à parte, CONFERIDOS AGORA nesta organização (`conferirPadroesRegistro`):
-       * `padroesDeCadastro` = só os que valem (id, rótulo do cadastro e, no armazém, a empresa); `padroesInvalidos` =
-       * as chaves dos que morreram (inativo, excluído, fora do filtro). Layout sem padrão registro — inclusive o do
-       * sistema — não consulta nada a mais: mapas vazios e a estrutura de sempre. O servidor NÃO aplica padrão (2.6).
+       * PADRÃO DE CADASTRO (VENDAS-A3-1b). Layout SEM padrão `registro` — inclusive o do sistema — responde EXATAMENTE
+       * como antes (mesmas chaves, nenhuma consulta a mais): a web aceita a ausência dos mapas (contrato 3.3). Com padrão
+       * registro, a `estrutura` sai SEM eles (a web da A3-1 nunca vê um tipo de padrão que não conhece) e eles vêm à
+       * parte, CONFERIDOS AGORA nesta organização (`conferirPadroesRegistro`): `padroesDeCadastro` = só os que valem (id,
+       * rótulo do cadastro e, no armazém, a empresa); `padroesInvalidos` = as chaves dos que morreram. O servidor NÃO
+       * aplica padrão ao salvar o documento (2.6).
        */
-      let padroesDeCadastro: Record<string, RegistroPadraoConferido> = {};
-      let padroesInvalidos: string[] = [];
-      let estrutura = l.estrutura;
-      if (padroesRegistroDaEstrutura(familia, l.estrutura).length) {
-        const c = await conferirPadroesRegistro(ctx, familia, l.estrutura);
-        padroesDeCadastro = Object.fromEntries([...c.validos].map(([chave, v]) =>
-          [chave, { id: v.id, rotulo: v.rotulo, ...(v.empresaId !== undefined ? { empresaId: v.empresaId } : {}) }]));
-        padroesInvalidos = [...new Set(c.invalidos.map((x) => x.chave))];
-        estrutura = removerPadroesRegistro(l.estrutura);
-      }
-      return { estrutura, origem: l.origem, nome: l.nome, id: l.id, padroesDeCadastro, padroesInvalidos };
+      if (!padroesRegistroDaEstrutura(familia, l.estrutura).length) return { estrutura: l.estrutura, origem: l.origem, nome: l.nome, id: l.id };
+      const c = await conferirPadroesRegistro(ctx, familia, l.estrutura);
+      const padroesDeCadastro: Record<string, RegistroPadraoConferido> = Object.fromEntries([...c.validos].map(([chave, v]) =>
+        [chave, { id: v.id, rotulo: v.rotulo, ...(v.empresaId !== undefined ? { empresaId: v.empresaId } : {}) }]));
+      const padroesInvalidos = [...new Set(c.invalidos.map((x) => x.chave))];
+      return { estrutura: removerPadroesRegistro(l.estrutura), origem: l.origem, nome: l.nome, id: l.id, padroesDeCadastro, padroesInvalidos };
     }));
     app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id, kind)));
     /**
