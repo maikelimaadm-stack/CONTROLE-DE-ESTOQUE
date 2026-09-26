@@ -1320,6 +1320,29 @@ PAGAMENTOS S.A. - INSTITUIÇÃO DE PAGAMENTO" e Código do banco "260" em campos
 (se a cidade gravada for de outro CEP: aviso e botão "Usar a cidade do CEP"). **Não apagar
 nada criado no teste** (decisão 247): usar um parceiro de teste já existente ou inativá-lo depois.
 
+## VENDAS-A4 — condição de pagamento (0031)
+
+Decisão 258. **Uma migration: `0031_vendas_condicao_pagamento.sql`** (pre-deploy; trava (2026,65), `lock_timeout` 2 s,
+pré/pós-condições nomeadas, não destrutiva): tabela nova `erp.condicoes_pagamento` (VAZIA — nenhuma condição nasce),
+e em `erp.sales_documents` duas colunas novas: `condicao_pagamento_id` (nula, FK composta) e `parcelas_ajustadas`
+(falso). **Sem backfill: nenhuma linha existente muda de valor.** Nenhuma variável nova; o gate da 04A continua desligado.
+
+**Ordem: banco (0031) → API → web.** Janela:
+1. **API anterior × banco novo:** tabela e colunas inertes; a API anterior grava documentos sem elas (nula/falso).
+2. **web ANTERIOR × API nova:** a web anterior não manda `condicao_pagamento_id`; POST sem a chave = sem condição e o
+   plano como enviado; PUT sem a chave PRESERVA — exatamente o de hoje.
+3. **web NOVA × API anterior:** sem `capacidades.condicaoPagamento`, a Central não mostra o campo e não envia a chave;
+   a aba Configurações › Condições de pagamento mostra erro legível (a rota do cadastro não existe na API anterior).
+
+**Reversão:** API e web voltam por redeploy; a tabela e as colunas ficam, inertes para o binário anterior (dado de
+produção nunca é apagado — decisão 247).
+
+**Roteiro do Maike (depois do deploy):** 1. Configurações › Financeiro › Condições de pagamento: criar "À vista"
+(1 parcela, 0 dias), "30/60/90" (3 parcelas, 30 dias, intervalo 30) e "Entrada 30% + 2x" (entrada 30%, 2 parcelas,
+30 dias, intervalo 30) — o código aparece sozinho. 2. Novo pedido ou venda → aba Financeiro → "30/60/90": o plano
+aparece com 3 parcelas e 1º vencimento em 30 dias. 3. Salvar e abrir: "Condição de pagamento: <código> · 30/60/90".
+4. Só numa venda de verdade: ao confirmar, as parcelas do financeiro batem com o plano.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)
