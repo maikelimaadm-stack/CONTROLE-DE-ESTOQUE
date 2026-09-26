@@ -439,7 +439,9 @@ describe("A1-D4 descoberta — a capacidade é ADITIVA, e o contrato continua na
       // A web da base compara `contractVersion` EXATO: mudar para 2 bloquearia a escrita dela.
       expect(b.contractVersion).toBe(1);
       // VENDAS-A4 (decisão 258): a capacidade da condição de pagamento entra DEPOIS; a comparação continua EXATA
-      expect(b.capacidades).toEqual({ classificacaoFinanceira: 1, condicaoPagamento: 1 });
+      // VENDAS-A3-1 (decisão 259): a capacidade do layout do documento entra por ÚLTIMO, também aditiva; a comparação
+      // continua EXATA para que qualquer chave nova (ou sumida) continue reprovando aqui.
+      expect(b.capacidades).toEqual({ classificacaoFinanceira: 1, condicaoPagamento: 1, layoutDocumento: 1 });
     });
   }
 });

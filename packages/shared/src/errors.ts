@@ -82,7 +82,9 @@ export const ErrorCodes = {
    * Condição de pagamento do documento de venda (VENDAS-A4): inexistente, de outra organização, excluída ou
    * inativa — a MESMA recusa, no campo `condicao_pagamento_id`. Distinguir seria oráculo de existência.
    */
-  CONDICAO_PAGAMENTO_INVALIDA: "CONDICAO_PAGAMENTO_INVALIDA"
+  CONDICAO_PAGAMENTO_INVALIDA: "CONDICAO_PAGAMENTO_INVALIDA",
+  /** Layout do documento (VENDAS-A3-1): campo obrigatório do layout da TOP vazio ao salvar — um detalhe por campo. */
+  LAYOUT_CAMPO_OBRIGATORIO: "LAYOUT_CAMPO_OBRIGATORIO"
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];
@@ -130,7 +132,9 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA: 422,
   CONSULTA_INDISPONIVEL: 503,
   // 422: a condição escolhida não serve para lançamento (entrada inválida, não conflito de estado).
-  CONDICAO_PAGAMENTO_INVALIDA: 422
+  CONDICAO_PAGAMENTO_INVALIDA: 422,
+  // 422: falta no documento um campo que o layout da operação exige (entrada incompleta, não conflito).
+  LAYOUT_CAMPO_OBRIGATORIO: 422
 };
 
 export class DomainError extends Error {
