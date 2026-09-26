@@ -647,9 +647,26 @@ conferir.
    critério era o `sha` servido ter esse merge como ancestral — `git merge-base --is-ancestor`). Registrado
    pela CADASTROS-ESTRUTURA a partir da leitura revisora; a PR da A5-1 não marcou o item. **A fase 2
    continua DESLIGADA**: o item 5 (autorização do Maike para esta ação) não foi dado, e nenhum item
-   `OK` liga o gate sozinho.
+   `OK` liga o gate sozinho. (Estado em 24/09; a fase 2 foi LIGADA em 26/09 — registro abaixo, depois do item 5.)
 5. **Autorização explícita do Maike, pedida na hora, para ESTA ação** — autorização dada ao merge ou à
    fase 1 não vale para a fase 2 (`.claude/rules/security.md` § Produção).
+
+   **Estado: `OK` em 26/09/2026** — autorização explícita do Maike nesta data, para esta ação.
+
+**FASE 2 LIGADA — 26/09/2026.** Evidência lida pela sessão revisora (nenhum valor de variável lido):
+
+- **Antes de ligar:** a 0023 no ledger (23/09 18:28 UTC) com o gatilho da R1 (item 1); contagem de versões:
+  **3** / formato 2: **3** / declaram execução configurada: **0** (item 3).
+- **Item 5:** autorização explícita do Maike nesta data, para esta ação.
+- **26/09/2026 23:16:55 UTC:** variável `TOP_EFFECTS_RUNTIME_V1_ENABLED = 1` no serviço `api` (Railway,
+  production).
+- **Deployment `797b6e2a-687b-4261-8c80-42e581b502d9`:** `SUCCESS` às 23:19:30 UTC; o deployment anterior foi
+  `REMOVED` às 23:19:34 UTC (item 2: nenhuma instância anterior atendendo).
+- **`/health` às 23:19:57 UTC:** status `ok`, db `ok`, build `49a96ab` (API) e `49a96ab` nas duas webs.
+
+Nenhuma TOP executa até o administrador escolher "configurada". Ligar o gate só PERMITE a ativação, por efeito,
+dentro da matriz; com as 3 versões em `legado`, toda venda continua confirmando pelo legado. Desligar é a
+"Reversão por fase" abaixo — e desligar NÃO é voltar ao legado para versão já configurada.
 
 **Reversão por fase.**
 
@@ -1367,6 +1384,35 @@ padrão "data de hoje" e não editável; ligar à TOP 2 Pedido. "Parcelamento" (
 frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Central com essa TOP: "ICMS frete" some, "Transp." com
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
+
+## VENDAS-A3-1b — padrão de cadastro no layout e exportar/importar (sem migration)
+
+Decisão 260. **Sem migration, sem variável, sem permissão e sem capacidade nova.** Layout que já existe continua
+igual: nenhum tem padrão de cadastro até o administrador pôr um. O servidor NÃO aplica padrão ao gravar documento.
+
+**Ordem: API → web** (qualquer ordem é segura). Janela:
+1. **web ANTERIOR × API nova:** o `layout-efetivo` devolve a estrutura SEM o padrão de cadastro (o registro vai só
+   no mapa `padroesDeCadastro`, que a web anterior ignora) — a Central abre como hoje e o documento nasce como hoje.
+2. **web NOVA × API anterior:** sem `padroesDeCadastro` na resposta, a Central é a de hoje; no editor, a opção
+   "Registro do cadastro" é recusada pela API anterior ao gravar, e Exportar/Importar respondem erro legível (as
+   rotas não existem nela).
+
+**Reversão:** API e web voltam por redeploy, sem tocar no banco. **Antes de reverter a API, tirar o padrão de
+cadastro dos layouts que o tenham (ou inativá-los):** a API anterior devolve a estrutura crua no `layout-efetivo`,
+com o `{tipo:"registro"}` dentro, e a Central ANTERIOR não conhece esse tipo — poria um texto inválido no campo, e o
+documento seria recusado ao salvar (422 no campo). A Central nova ignora o tipo e abre como hoje, então o risco só
+existe com a web anterior no ar. A API anterior também recusa regravar um layout que ainda tenha o padrão
+(validador de antes, 422 no caminho).
+
+**Roteiro do Maike (depois do deploy) — no PEDIDO (TOP 2), sem gravar documento:**
+1. Configurações › Operações › Layouts de documento › Novo (Pedido), um layout de TESTE: em "Natureza", Configurar
+   campo › Valor padrão "Registro do cadastro", escolher uma natureza analítica de receita, desmarcar "Editável";
+   salvar; ligar à TOP 2 Pedido.
+2. Central com a TOP 2: a Natureza vem preenchida e travada. Não salvar o documento.
+3. Na lista de layouts, "Exportar" o layout de teste; "Importar" o arquivo baixado → nasce "… (importado)", sem TOP
+   e não padrão, com a Natureza padrão mantida (mesma organização).
+4. No fim: desligar a TOP 2 do layout de teste (ou religá-la ao layout anterior) e INATIVAR os dois layouts (o de
+   teste e o importado).
 
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
