@@ -14,13 +14,16 @@ import { useAuth } from "@/lib/auth";
 import { dateTimeBR, cn } from "@/lib/utils";
 import { Card, Input, Textarea, Spinner, ErrorBox, Confirm, Menu } from "@/components/ui";
 import { MgSelect, MgDatePicker, RequiredPill, REQUIRED_FIELDS_MESSAGE } from "@/components/ui/mg-controls";
-import { filtroDaReferencia, RefSelect, ReferenciaSelect } from "@/components/ui/ref-select";
+import { CampoCidade, filtroDaReferencia, RefSelect, type EnvolverParte } from "@/components/ui/ref-select";
+import { CampoReferenciaOficial } from "@/components/ui/campo-referencia-oficial";
 import { ArrowLeft, Bookmark, ChevronDown, ChevronRight, ChevronsLeft, ChevronLeft, ChevronsRight, Copy, LayoutPanelTop, Paperclip, Pencil, Plus, Search, Trash2, LayoutGrid, PanelLeft } from "lucide-react";
 import { IconBtn, PillBtn } from "@/features/base1/ui";
 import { useFormLayout } from "./form-layout";
 import { FichaEmAbas, ConsultaCnpj, CriacaoPorOutraPorta, camposApagadosNaTroca, capacidadeDoCampo, fichaDoRegistro, fichaParaApi, linhaNovaDaGrade, tipoDoDocumento, type ControleDoCampo, type ErroDaFicha, type ExtraDoCampo } from "./ficha-em-abas";
 import { JanelaConsultaCnpj, esquecerImportacaoPendente, lerImportacaoPendente, useConsultaCnpjJanela, type RespostaCnpj } from "./consulta-cnpj-janela";
 import { AttachmentsDialog } from "@/features/base1/attachments-dialog";
+import { B1Field } from "./campo-b1";
+export { B1Field };
 
 type Values = Record<string, unknown>;
 export interface EmbeddedForm { mode: "view" | "edit" | "new"; /** linha já carregada na listagem: evita tela de carregamento ao navegar entre registros */ row?: Values | null; setMode: (m: "view" | "edit" | "new") => void; onExit: () => void; refresh: () => void; copyFrom?: Values | null; rightSlot?: React.ReactNode; nav?: { index: number; total: number; go: (i: number) => void } }
@@ -39,10 +42,12 @@ function toApi(fields: FieldDef[], v: Values, locked: string[] = [], original?: 
 
 const ctl = "h-5 w-full rounded-none border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--mg-text-1)] shadow-none focus:ring-0 focus:outline-none read-only:bg-transparent disabled:bg-transparent disabled:text-[var(--mg-text-1)]";
 /** Controle de um campo declarativo (mesmo componente para todos os tipos), estilo "rótulo flutuante" do modelo base. */
-function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpenChange, extra }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string; record?: Values | null; onOpenChange?: (o: boolean) => void; /** ajuste de uma tela (ficha): interceptar a troca do seletor, ligar o rótulo, recortar a referência */ extra?: ExtraDoCampo }) {
+function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpenChange, extra, envolver }: { f: FieldDef; form: UseFormReturn<Values>; dis: boolean; required: boolean; isNew: boolean; values: Values; id?: string; record?: Values | null; onOpenChange?: (o: boolean) => void; /** ajuste de uma tela (ficha): interceptar a troca do seletor, ligar o rótulo, recortar a referência */ extra?: ExtraDoCampo; /** busca oficial: moldura de cada PARTE (AJUSTES 02, 2.1) */ envolver?: EnvolverParte }) {
   const rules = { required: required ? "Obrigatório" : false };
   // referência oficial (município, banco, NCM): busca no servidor, grava o mesmo código de sempre
-  if (f.busca) return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <ReferenciaSelect id={id} referencia={f.busca!} value={field.value as string | number | null} onChange={(v) => field.onChange(v ?? "")} onOpenChange={onOpenChange} disabled={dis} className={cn(ctl, "h-6 justify-between")} />} />;
+  // referência oficial (município, banco, NCM, CBO): cada PARTE é um campo (AJUSTES 02, 2.1) — só a busca é editável; grava o mesmo código de sempre
+  if (f.busca === "municipios") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <CampoCidade id={id} value={field.value as string | number | null} onChange={(c) => field.onChange(c ?? "")} onOpenChange={onOpenChange} disabled={dis} classeEntrada={cn(ctl, "h-6")} travadaPeloCep={extra?.travadaPeloCep} aoDigitarCep={extra?.aoDigitarCep} envolver={envolver} />} />;
+  if (f.busca) { const ref = f.busca; return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <CampoReferenciaOficial id={id} referencia={ref} value={field.value as string | number | null} onChange={(v) => field.onChange(v ?? "")} onOpenChange={onOpenChange} disabled={dis} classeEntrada={cn(ctl, "h-6 justify-between")} envolver={envolver} />} />; }
   if (f.type === "ref") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <RefSelect resource={f.ref!.resource} filter={filtroDaReferencia(f)} value={field.value as string} onOpenChange={onOpenChange} labelHint={record && record[f.name] === field.value ? (record[`${f.name}_label`] as string | null) : null} onChange={(v) => field.onChange(v ?? "")} disabled={dis} includeInactive={!isNew} className={cn(ctl, "h-6 justify-between")} idDaCaixa={extra?.ligarRotulo ? id : undefined} excluirIds={extra?.excluirIds} buscarOpcoes={extra?.buscarOpcoes} />} />;
   if (f.type === "select") return <Controller name={f.name} control={form.control} rules={rules} render={({ field }) => <MgSelect id={id} value={String(field.value ?? "")} onChange={extra?.aoMudar ?? field.onChange} options={f.options ?? []} disabled={dis} allowEmpty={extra?.permiteVazio ?? !required} onOpenChange={onOpenChange} />} />;
   if (f.type === "boolean") return <MgSelect id={id} value={values[f.name] === true || values[f.name] === "true" ? "true" : "false"} onChange={(v) => form.setValue(f.name, v === "true", { shouldDirty: true })} options={[{ value: "true", label: "Sim" }, { value: "false", label: "Não" }]} disabled={dis} onOpenChange={onOpenChange} />;
@@ -50,20 +55,6 @@ function FieldControl({ f, form, dis, required, isNew, values, id, record, onOpe
   if (f.type === "textarea" || f.type === "json") return <Textarea id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={cn(ctl, "h-auto min-h-[56px] py-0.5", f.type === "json" && "font-mono text-xs")} {...form.register(f.name, rules)} />;
   if (f.type === "tags") return <div className="flex flex-wrap gap-2 pt-1">{f.options?.map((o) => <label key={o.value} className="flex items-center gap-1 text-[12.5px]"><input type="checkbox" disabled={dis} className="accent-brand-500" checked={(values[f.name] as string[] | undefined)?.includes(o.value) ?? false} onChange={(e) => { const cur = new Set((values[f.name] as string[]) ?? []); if (e.target.checked) cur.add(o.value); else cur.delete(o.value); form.setValue(f.name, [...cur], { shouldDirty: true }); }} />{o.label}</label>)}</div>;
   return <Input id={id} readOnly={dis} tabIndex={dis ? -1 : undefined} className={ctl} type={f.type === "email" ? "email" : ["money", "quantity", "number", "percent", "integer"].includes(f.type) ? "number" : "text"} step={f.type === "integer" ? 1 : f.type === "money" ? "0.01" : "0.0001"} maxLength={f.maxLength} {...form.register(f.name, rules)} />;
-}
-
-const SPAN: Record<number, string> = { 1: "md:col-span-1", 2: "md:col-span-2", 3: "md:col-span-3", 4: "md:col-span-4", 5: "md:col-span-5", 6: "md:col-span-6", 7: "md:col-span-7", 8: "md:col-span-8", 9: "md:col-span-9", 10: "md:col-span-10", 11: "md:col-span-11", 12: "md:col-span-12" };
-/** Campo do modelo base: caixa cinza arredondada com rótulo pequeno acima do valor (como o cadastro de Empresas do MG). */
-export function B1Field({ label, required, error, help, span = 3, disabled, locked, hasValue = true, multiline, open, children, className, flex }: { label: string; required?: boolean; error?: string; help?: string; span?: number; /** modo visualização */ disabled?: boolean; /** travado em edição (somente leitura) */ locked?: boolean; /** rótulo pequeno no topo e valor na base; vazio = rótulo centralizado */ hasValue?: boolean; multiline?: boolean; /** seletor/calendário aberto */ open?: boolean; children: React.ReactNode; className?: string; flex?: boolean }) {
-  const id = React.useId();
-  const child = React.isValidElement(children) && !(children.props as { id?: string }).id ? React.cloneElement(children as React.ReactElement<{ id?: string }>, { id }) : children;
-  return <div className={cn(flex ? "min-w-[140px] flex-1" : cn("col-span-12", SPAN[span] ?? "md:col-span-3"), className)}>
-    <div className={cn("mg-field", disabled && "mg-field--disabled", locked && !disabled && "mg-field--locked", hasValue && "mg-has-value", multiline && "mg-field--multiline", open && "is-open", error && "is-invalid")}>
-      <label htmlFor={id} title={help} className="mg-field__label">{label}{required && <span className="req text-red-500"> *</span>}</label>
-      <div className="mg-field__control">{child}</div>
-    </div>
-    {error && <p className="mt-0.5 text-[11px] text-red-600">{error}</p>}
-  </div>;
 }
 
 function LayoutCardView({ label, collapsible, colSpan, children }: { label: string; collapsible?: boolean; colSpan: 6 | 12; children: React.ReactNode }) {
@@ -199,8 +190,12 @@ export function ResourceForm({ resourceKey, id, basePath, afterSave, embedded, o
     const aoAbrir = (o: boolean) => setOpenField(o ? f.name : (cur) => (cur === f.name ? null : cur));
     // controle da ficha que só AJUSTA o de sempre (`padrao`) mantém a aparência de sempre (rótulo flutuante pelo valor)
     let soAjuste = false;
-    const padrao = (extra?: ExtraDoCampo) => { if (extra) soAjuste = true; return <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={aoAbrir} extra={extra} />; };
+    // busca oficial (AJUSTES 02, 2.1): UM B1Field POR PARTE, lado a lado na linha; a busca leva rótulo, obrigatório e erro;
+    // as partes só leitura têm a cara de travadas em edição
+    const envolver: EnvolverParte | undefined = f.busca ? (p) => <B1Field key={p.parte} flex idDoControle={p.id} label={p.parte === "busca" ? l.fieldLabels[f.name] ?? p.rotulo : p.rotulo} required={p.parte === "busca" && required} error={p.parte === "busca" ? err : undefined} help={p.parte === "busca" ? f.help : undefined} disabled={readOnly} locked={locked || p.somenteLeitura} hasValue={p.hasValue} open={p.parte === "busca" && openField === f.name} className={p.parte === "busca" ? undefined : p.parte === "codigo" ? "min-w-[110px] max-w-[160px]" : "min-w-[64px] max-w-[80px]"}>{p.node}</B1Field> : undefined;
+    const padrao = (extra?: ExtraDoCampo) => { if (extra) soAjuste = true; return <FieldControl f={f} form={form} dis={dis} required={required} isNew={isNew} values={values} record={q.data ?? null} onOpenChange={aoAbrir} extra={extra} envolver={envolver} />; };
     const el = controle ? controle({ dis, required, onOpenChange: aoAbrir, padrao }) : padrao();
+    if (envolver && (!controle || soAjuste)) return <React.Fragment key={f.name}>{el}</React.Fragment>;
     return <B1Field key={f.name} flex label={rotulo} required={required} error={controle && f.name === "document" ? undefined : err} help={f.help} disabled={readOnly} locked={locked} hasValue={hasValue || (Boolean(controle) && !soAjuste)} multiline={f.type === "textarea" || f.type === "json" || f.type === "tags"} open={openField === f.name}>{el}</B1Field>;
   };
   const panels = l.panels.filter((p) => !p.hidden);
