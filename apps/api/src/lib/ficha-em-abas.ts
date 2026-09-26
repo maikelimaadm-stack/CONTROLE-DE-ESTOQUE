@@ -18,6 +18,16 @@ import { ident } from "./sql.js";
 import { denied, fromPgError, validation } from "./errors.js";
 import { hasPermission, moduloAtivo, type RequestContext, type ServiceCtx } from "./context.js";
 import { translateIssue } from "../plugins/errors.js";
+import { cepOuCidadeMudou, divergenciaCepCidade } from "./cep-da-cidade.js";
+
+/**
+ * Grades com par CEP × CIDADE (AJUSTES 02): chave do detalhe → [campo do CEP, campo da cidade]. Declaração ESTÁTICA;
+ * nenhum nome vem do corpo. A conferência é por linha NOVA ou cujo CEP/cidade MUDA, numa consulta para a grade inteira.
+ */
+const CEP_E_CIDADE_DO_DETALHE: Readonly<Record<string, readonly [string, string]>> = {
+  enderecos: ["cep", "city_id"],
+  filiais: ["zip_code", "city_id"]
+};
 
 type Linha = Record<string, unknown>;
 type SchemaDeCampo = (f: FieldDef) => z.ZodTypeAny;
@@ -215,10 +225,10 @@ async function conferirReferencias(ctx: ServiceCtx, def: ResourceDef, fields: Fi
 }
 
 /** Erro de banco numa linha da grade: vira o erro da API apontando a aba e a linha. */
-function erroNaLinha(def: ResourceDef, d: DetalheDef, i: number, e: unknown): never {
+function erroNaLinha(def: ResourceDef, d: DetalheDef, i: number, e: unknown, campo?: string): never {
   const de = e instanceof DomainError ? e : fromPgError(e);
   if (!de) throw e;
-  const det = detalheDoErro(def, [d.key, i], de.message);
+  const det = detalheDoErro(def, campo ? [d.key, i, campo] : [d.key, i], de.message);
   throw new DomainError(de.code, `${d.label}, linha ${i + 1}: ${de.message}`, [det]);
 }
 
@@ -255,7 +265,9 @@ async function gravarDetalhe(ctx: ServiceCtx, def: ResourceDef, d: DetalheDef, p
   const filtroPai = filtro(1);
   // grade de OUTRO cadastro (R1-2): lê também os valores gravados (como texto) para saber que linha MUDA
   const ps = d.permissoes;
-  const comparaveis = ps ? campos.filter((f) => f.name !== chave) : [];
+  const parCep = CEP_E_CIDADE_DO_DETALHE[d.key];
+  const doPar = parCep ? campos.filter((f) => f.name !== chave && parCep.includes(f.name)) : [];
+  const comparaveis = [...new Set([...(ps ? campos.filter((f) => f.name !== chave) : []), ...doPar])];
   const lidas = (await ctx.tx.query<Linha & { __k: string }>(`select ${[`${ident(chave)}::text as __k`, ...comparaveis.map((f) => `${ident(f.name)}::text as ${ident(f.name)}`)].join(", ")} from erp.${ident(d.table)} where ${filtroPai}`, pp)).rows;
   const atuais = new Set(lidas.map((r) => r.__k));
   const enviados = new Set<string>();
@@ -267,6 +279,21 @@ async function gravarDetalhe(ctx: ServiceCtx, def: ResourceDef, d: DetalheDef, p
       // `id` que não é desta ficha nunca é aceito (nem de outro parceiro, nem de outra organização)
       if (!d.chaveNatural && !atuais.has(k)) erroNaLinha(def, d, i, validation("linha não pertence a este registro"));
     }
+  }
+  if (parCep && doPar.length === 2) {
+    // CEP × cidade só das linhas NOVAS ou que MUDAM o par; os valores gravados vêm da leitura acima (sem N+1)
+    const [fCep, fCid] = parCep;
+    const gravadas = new Map(lidas.map((r) => [r.__k, r]));
+    const idx: number[] = []; const pares: { cep: unknown; cityId: unknown }[] = [];
+    for (const [i, l] of linhas.entries()) {
+      const k = l[chave] === undefined || l[chave] === null ? null : String(l[chave]);
+      const g = k === null ? undefined : gravadas.get(k);
+      const novo = { cep: fCep in l ? l[fCep] : g?.[fCep], cityId: fCid in l ? l[fCid] : g?.[fCid] };
+      if (!cepOuCidadeMudou(novo, g ? { cep: g[fCep], cityId: g[fCid] } : null)) continue;
+      idx.push(i); pares.push(novo);
+    }
+    const div = pares.length ? await divergenciaCepCidade(ctx, pares) : null;
+    if (div) erroNaLinha(def, d, idx[div.indice]!, validation(div.mensagem), fCid);
   }
   if (ps) {
     // cada OPERAÇÃO com a permissão do cadastro dono da linha, ANTES de qualquer escrita nesta grade (o que já foi
