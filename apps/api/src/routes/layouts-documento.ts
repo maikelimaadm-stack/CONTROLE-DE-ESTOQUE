@@ -1,10 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { FAMILIAS_COM_LAYOUT, LAYOUT_DO_SISTEMA, familiaTemLayout, validarEstruturaLayout, type EstruturaLayout } from "@agro/domain";
+import { FAMILIAS_COM_LAYOUT, LAYOUT_DO_SISTEMA, familiaTemLayout, mensagemRegistroPadraoInvalido, validarEstruturaLayout, type EstruturaLayout } from "@agro/domain";
 import { runService, audit, nextCode } from "../lib/service.js";
 import { notFound, validation } from "../lib/errors.js";
 import type { ServiceCtx } from "../lib/context.js";
-import { layoutEfetivo } from "../lib/layout-documento.js";
+import { conferirPadroesRegistro, layoutEfetivo } from "../lib/layout-documento.js";
 
 /**
  * LAYOUT DO DOCUMENTO POR TOP (VENDAS-A3-1) — administração.
@@ -22,10 +22,15 @@ const LIMITE_ESTRUTURA = 65536;
 const familiaSchema = z.enum(FAMILIAS_COM_LAYOUT);
 const nomeSchema = z.string().trim().min(1).max(120);
 
-/** Forma da EstruturaLayout v1 (só tipos; as regras são do domínio). Strict: chave desconhecida é 422. */
+/**
+ * Forma da EstruturaLayout v1 (só tipos; as regras são do domínio). Strict: chave desconhecida é 422.
+ * `registro` (VENDAS-A3-1b): só `{ tipo, id }` — o recurso NÃO vai no JSON (sai do catálogo pelo campo); a forma UUID
+ * do id e o LUGAR onde o registro vale são regra do domínio; a existência no cadastro, da API (conferirPadroesRegistro).
+ */
 const valorPadraoSchema = z.union([
   z.object({ tipo: z.literal("literal"), valor: z.union([z.string(), z.number(), z.boolean()]) }).strict(),
-  z.object({ tipo: z.literal("variavel"), variavel: z.enum(["data_atual", "empresa_selecionada"]) }).strict()
+  z.object({ tipo: z.literal("variavel"), variavel: z.enum(["data_atual", "empresa_selecionada"]) }).strict(),
+  z.object({ tipo: z.literal("registro"), id: z.string() }).strict()
 ]);
 const campoSchema = z.object({
   campo: z.string().min(1).max(80), rotulo: z.string().max(120).optional(), obrigatorio: z.boolean(), editavel: z.boolean(),
@@ -35,7 +40,11 @@ const estruturaSchema = z.object({
   versaoSchema: z.literal(1),
   cabecalho: z.array(campoSchema).max(200),
   rodape: z.array(z.object({ aba: z.string().min(1).max(80), campos: z.array(campoSchema).max(200) }).strict()).max(50),
-  itens: z.array(z.object({ campo: z.string().min(1).max(80), rotulo: z.string().max(120).optional(), obrigatorio: z.boolean() }).strict()).max(200)
+  itens: z.array(z.object({
+    campo: z.string().min(1).max(80), rotulo: z.string().max(120).optional(), obrigatorio: z.boolean(),
+    // VENDAS-A3-1b: onde a coluna aceita padrão (só Armazém, só registro) é regra do domínio
+    valorPadrao: valorPadraoSchema.optional()
+  }).strict()).max(200)
 }).strict();
 
 const criarSchema = z.object({ nome: nomeSchema, familia: familiaSchema, estrutura: z.unknown().optional() }).strict();
@@ -47,8 +56,13 @@ const idSchema = z.object({ id: z.string() }).strict();
 const efetivoSchema = z.object({ tipoOperacaoId: z.string() }).strict();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Estrutura → EstruturaLayout validada (forma + regras do domínio), ou 422 com details [{path, message}]. */
-function estruturaValida(familia: string, bruta: unknown): EstruturaLayout {
+/**
+ * Estrutura → EstruturaLayout validada, ou 422 com details [{path, message}]. Ordem: forma (zod) → regras do domínio
+ * → tamanho → padrão de CADASTRO (VENDAS-A3-1b: cada `registro` tem de valer AGORA nesta organização — existe, ativo,
+ * vivo, no filtro do campo). A MESMA mensagem para todo padrão que não vale: nada revela por que (outra organização,
+ * inexistente, inativo, excluído, fora do filtro). Sem padrão registro, nenhuma consulta e nada muda.
+ */
+async function estruturaValida(ctx: ServiceCtx, familia: string, bruta: unknown): Promise<EstruturaLayout> {
   const forma = estruturaSchema.safeParse(bruta);
   if (!forma.success) {
     const details = forma.error.issues.map((i) => ({ path: ["estrutura", ...i.path].join("."), message: i.message }));
@@ -62,6 +76,11 @@ function estruturaValida(familia: string, bruta: unknown): EstruturaLayout {
   }
   if (JSON.stringify(estrutura).length > LIMITE_ESTRUTURA) {
     throw validation("Estrutura do layout grande demais", [{ path: "estrutura", message: "A estrutura excede 64 KiB." }]);
+  }
+  const { invalidos } = await conferirPadroesRegistro(ctx, familia, estrutura);
+  if (invalidos.length) {
+    const details = invalidos.map((x) => ({ path: x.caminho, message: mensagemRegistroPadraoInvalido(x.rotulo) }));
+    throw validation(details[0]!.message, details);
   }
   return estrutura;
 }
@@ -154,17 +173,26 @@ export default async function layoutsDocumentoRoutes(app: FastifyInstance) {
     return { origem: l.origem, nome: l.nome, id: l.id };
   }));
 
+  /**
+   * Leitura do editor: a estrutura COMPLETA (com os ids dos padrões registro) + `padroesDeCadastro` (chave → registro que
+   * vale AGORA, com o rótulo do RefSelect e, no armazém, a empresa) + `padroesInvalidos` (chaves dos que morreram:
+   * o editor avisa e o PUT recusa até trocar ou retirar). Mesma conferência da gravação (conferirPadroesRegistro).
+   */
   app.get(`${BASE}/:id`, async (req) => runService(app, req, "tipos_operacao.view", async (ctx) => {
     const { id } = idSchema.parse(req.params);
     const l = await lerLayout(ctx, id);
-    return { ...paraTela(l), estrutura: l.estrutura, tops: await topsLigadas(ctx, id) };
+    const { validos, invalidos } = await conferirPadroesRegistro(ctx, l.familia, l.estrutura);
+    return {
+      ...paraTela(l), estrutura: l.estrutura, tops: await topsLigadas(ctx, id),
+      padroesDeCadastro: Object.fromEntries(validos), padroesInvalidos: invalidos.map((x) => x.chave)
+    };
   }));
 
   app.post(BASE, async (req, reply) => reply.status(201).send(await runService(app, req, "tipos_operacao.create", async (ctx) => {
     const corpo = (req.body ?? {}) as Record<string, unknown>;
     if (corpo["code"] !== undefined) throw validation("code: o código é gerado pelo sistema", [{ path: "code", message: "O código é gerado pelo sistema; não o envie." }]);
     const d = criarSchema.parse(corpo);
-    const estrutura = d.estrutura === undefined ? LAYOUT_DO_SISTEMA(d.familia) : estruturaValida(d.familia, d.estrutura);
+    const estrutura = d.estrutura === undefined ? LAYOUT_DO_SISTEMA(d.familia) : await estruturaValida(ctx, d.familia, d.estrutura);
     const code = await gerarCodigo(ctx);
     const r = await ctx.tx.query<{ id: string }>(
       `insert into erp.layouts_documento (organization_id, code, nome, familia, estrutura) values ($1,$2,$3,$4,$5) returning id`,
@@ -179,7 +207,7 @@ export default async function layoutsDocumentoRoutes(app: FastifyInstance) {
     const d = editarSchema.parse(req.body ?? {});
     const atual = await lerLayout(ctx, id, true);
     const nome = d.nome ?? atual.nome;
-    const estrutura = d.estrutura === undefined ? atual.estrutura : estruturaValida(atual.familia, d.estrutura);
+    const estrutura = d.estrutura === undefined ? atual.estrutura : await estruturaValida(ctx, atual.familia, d.estrutura);
     const u = await ctx.tx.query(`update erp.layouts_documento set nome=$3, estrutura=$4 where id=$1 and organization_id=$2 and deleted_at is null`,
       [id, ctx.orgId, nome, JSON.stringify(estrutura)]);
     if (!u.rowCount) throw notFound("Layout");

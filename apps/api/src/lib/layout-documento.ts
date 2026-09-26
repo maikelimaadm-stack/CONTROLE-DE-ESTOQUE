@@ -1,4 +1,4 @@
-import { resolverLayout, type EstruturaLayout, type OrigemDoLayout } from "@agro/domain";
+import { FORMA_UUID_PADRAO, padroesRegistroDaEstrutura, resolverLayout, type EstruturaLayout, type OrigemDoLayout } from "@agro/domain";
 import type { ServiceCtx } from "./context.js";
 
 /**
@@ -27,6 +27,72 @@ export async function layoutEfetivo(ctx: ServiceCtx, familia: string, tipoOperac
 }
 
 /* ─────────────── VENDAS-A3-1b: conferência do padrão de CADASTRO (implementação: agente A1) ─────────────── */
+/**
+ * Consulta ESTÁTICA de um recurso de cadastro (whitelist): nenhum identificador vem de entrada — tabela, colunas e
+ * predicados são texto fixo deste arquivo; só os ids (`$1`, uuid[]) e a organização (`$2`) são parâmetros.
+ * - recorte de organização IGUAL ao do cadastro (`options` em routes/resources.ts): `sharedDefaults` (Formas de
+ *   pagamento) = da organização OU compartilhado (organization_id nulo); os demais, só da organização. O escopo de
+ *   EMPRESA do armazém é o do RLS (erp.warehouses: empresa no escopo do módulo) — o papel da API não o ignora;
+ * - ativo (`is_active`) e vivo (`deleted_at is null`; Formas de pagamento não têm exclusão lógica);
+ * - rótulo = o `labelField` do registry (o `label` que a rota de opções devolve ao RefSelect);
+ * - `filtros`: o filtro do CATÁLOGO (`referencia.filtro`, forma canônica de `chaveDoFiltro`) → coluna booleana que a
+ *   consulta devolve com o predicado já traduzido em SQL. Filtro que não está aqui = inválido (nunca "sem filtro").
+ */
+interface ConsultaDoPadrao { sql: string; filtros: ReadonlyMap<string, string>; comEmpresa: boolean }
+type LinhaDoPadrao = { id: string; rotulo: string; empresa_id: string | null } & Record<string, unknown>;
+
+const CONSULTA_DO_PADRAO: ReadonlyMap<string, ConsultaDoPadrao> = new Map<string, ConsultaDoPadrao>([
+  ["people", {
+    sql: `select t.id::text as id, t.name::text as rotulo, null::text as empresa_id,
+                 t.is_client as f_cliente, t.is_proprietary as f_proprietario, t.is_transporter as f_transportadora
+            from erp.people t
+           where t.id = any($1::uuid[]) and t.organization_id = $2 and t.is_active and t.deleted_at is null`,
+    filtros: new Map([["is_client=true", "f_cliente"], ["is_proprietary=true", "f_proprietario"], ["is_transporter=true", "f_transportadora"]]),
+    comEmpresa: false
+  }],
+  ["payment_methods", {
+    sql: `select t.id::text as id, t.name::text as rotulo, null::text as empresa_id, true as f_todos
+            from erp.payment_methods t
+           where t.id = any($1::uuid[]) and (t.organization_id is null or t.organization_id = $2) and t.is_active`,
+    filtros: new Map([["", "f_todos"]]),
+    comEmpresa: false
+  }],
+  ["financial_categories", {
+    sql: `select t.id::text as id, t.name::text as rotulo, null::text as empresa_id,
+                 (t.kind = 'analytic' and t.nature = 'income') as f_analitica_receita
+            from erp.financial_categories t
+           where t.id = any($1::uuid[]) and t.organization_id = $2 and t.is_active and t.deleted_at is null`,
+    filtros: new Map([["kind=analytic&nature=income", "f_analitica_receita"]]),
+    comEmpresa: false
+  }],
+  ["cost_centers", {
+    sql: `select t.id::text as id, t.name::text as rotulo, null::text as empresa_id, (t.kind = 'analytic') as f_analitico
+            from erp.cost_centers t
+           where t.id = any($1::uuid[]) and t.organization_id = $2 and t.is_active and t.deleted_at is null`,
+    filtros: new Map([["kind=analytic", "f_analitico"]]),
+    comEmpresa: false
+  }],
+  ["condicoes_pagamento", {
+    sql: `select t.id::text as id, t.nome::text as rotulo, null::text as empresa_id, true as f_todos
+            from erp.condicoes_pagamento t
+           where t.id = any($1::uuid[]) and t.organization_id = $2 and t.is_active and t.deleted_at is null`,
+    filtros: new Map([["", "f_todos"]]),
+    comEmpresa: false
+  }],
+  ["warehouses", {
+    sql: `select t.id::text as id, t.description::text as rotulo, t.empresa_id::text as empresa_id, true as f_todos
+            from erp.warehouses t
+           where t.id = any($1::uuid[]) and t.organization_id = $2 and t.is_active and t.deleted_at is null`,
+    filtros: new Map([["", "f_todos"]]),
+    comEmpresa: true
+  }]
+]);
+
+/** Forma canônica do filtro do catálogo: pares `chave=valor` em ordem de chave, unidos por "&"; sem filtro = "". */
+function chaveDoFiltro(filtro: Readonly<Record<string, string>> | undefined): string {
+  return Object.entries(filtro ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([k, v]) => `${k}=${v}`).join("&");
+}
+
 /** Registro padrão que vale AGORA nesta organização: id, o mesmo rótulo que o RefSelect mostra e, no armazém, a empresa. */
 export interface RegistroPadraoConferido { id: string; rotulo: string; empresaId?: string | null }
 /**
@@ -36,9 +102,41 @@ export interface RegistroPadraoConferido { id: string; rotulo: string; empresaId
  * `validos`: chavePadraoDeCadastro → registro; `invalidos`: os que não valem (inexistente, outra organização, inativo,
  * excluído, fora do filtro, campo sem `referencia`), com o caminho do valorPadrao e o rótulo do campo.
  */
-export async function conferirPadroesRegistro(_ctx: ServiceCtx, _familia: string, _estrutura: EstruturaLayout): Promise<{
+export async function conferirPadroesRegistro(ctx: ServiceCtx, familia: string, estrutura: EstruturaLayout): Promise<{
   validos: Map<string, RegistroPadraoConferido>;
   invalidos: { chave: string; caminho: string; rotulo: string }[];
 }> {
-  throw new Error("conferirPadroesRegistro: ainda não implementado (agente A1)");
+  const padroes = padroesRegistroDaEstrutura(familia, estrutura);
+  const validos = new Map<string, RegistroPadraoConferido>();
+  if (!padroes.length) return { validos, invalidos: [] };
+  // veredito por padrão, na ORDEM da estrutura (o primeiro inválido é o primeiro detalhe da recusa)
+  const veredito: (RegistroPadraoConferido | null)[] = padroes.map(() => null);
+  const porRecurso = new Map<ConsultaDoPadrao, { i: number; id: string; coluna: string }[]>();
+  padroes.forEach((p, i) => {
+    // campo sem `referencia`, recurso fora da whitelist, filtro desconhecido ou id fora da forma UUID: inválido SEM
+    // consulta (discriminador desconhecido NEGA; e um id malformado nunca chega ao cast `::uuid[]` do banco)
+    const consulta = p.referencia ? CONSULTA_DO_PADRAO.get(p.referencia.recurso) : undefined;
+    const coluna = consulta?.filtros.get(chaveDoFiltro(p.referencia?.filtro));
+    if (!consulta || !coluna || !FORMA_UUID_PADRAO.test(p.id)) return;
+    const lista = porRecurso.get(consulta) ?? [];
+    lista.push({ i, id: p.id.toLowerCase(), coluna });
+    porRecurso.set(consulta, lista);
+  });
+  // UMA consulta por recurso presente (`= any($1)`), com o recorte de organização do cadastro
+  for (const [consulta, pedidos] of porRecurso) {
+    const r = await ctx.tx.query<LinhaDoPadrao>(consulta.sql, [[...new Set(pedidos.map((x) => x.id))], ctx.orgId]);
+    const porId = new Map(r.rows.map((x) => [x.id, x]));
+    for (const { i, id, coluna } of pedidos) {
+      const linha = porId.get(id);
+      if (!linha || linha[coluna] !== true) continue;
+      veredito[i] = { id: linha.id, rotulo: linha.rotulo, ...(consulta.comEmpresa ? { empresaId: linha.empresa_id } : {}) };
+    }
+  }
+  const invalidos: { chave: string; caminho: string; rotulo: string }[] = [];
+  padroes.forEach((p, i) => {
+    const v = veredito[i];
+    if (v) validos.set(p.chave, v);
+    else invalidos.push({ chave: p.chave, caminho: p.caminho, rotulo: p.rotulo });
+  });
+  return { validos, invalidos };
 }
