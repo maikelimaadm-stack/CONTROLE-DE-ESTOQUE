@@ -200,7 +200,7 @@ describe("LB-A3 GET do administrador", () => {
 });
 
 describe("LB-A4 exportar e importar", () => {
-  it("mesma organização: padrões mantidos, nome \"(importado)\" e \"(importado 2)\", sem TOP e não padrão; outra: removidos e listados", async () => {
+  it("mesma organização: padrões mantidos, \"(importado)\" e \"(importado 2)\", sem TOP e não padrão; outra: removidos e listados (campo travado sem padrão → 422)", async () => {
     const { id, nome } = await criarLayout("LB-A4");
     const est = comPadroes({ categoria_financeira_id: fx.incomeCategory, warehouse_id: fx.warehouse }, ["categoria_financeira_id"]);
     expect((await req("PUT", `${URL_}/${id}`, { estrutura: est })).statusCode).toBe(200);
@@ -233,8 +233,16 @@ describe("LB-A4 exportar e importar", () => {
       expect(i2.statusCode, i2.body).toBe(201);
       expect(j(i2).nome).toBe(`${nome} (importado 2)`);
 
-      // outra organização: a natureza e o armazém de cá não valem lá → removidos e listados; o resto fica
-      const o = await req("POST", `${URL_}/importar`, arquivo, outra.headers);
+      // OUTRA organização: a natureza e o armazém de cá não valem lá → REMOVIDOS; o resto passa pelo validador.
+      // (a) a Natureza do arquivo é obrigatória e NÃO editável: sem o padrão removido ela reprova → 422 no caminho, nada criado
+      const antesLa = await um<{ n: number }>("select count(*)::int n from erp.layouts_documento where organization_id=$1", [outra.orgId]);
+      const travada = await req("POST", `${URL_}/importar`, arquivo, outra.headers);
+      expect(travada.statusCode, travada.body).toBe(422);
+      expect(j(travada).error.details).toEqual([{ path: caminhoDe(est, "categoria_financeira_id"), message: "\"Natureza\" é obrigatório e não editável: informe o valor padrão." }]);
+      expect(await um("select count(*)::int n from erp.layouts_documento where organization_id=$1", [outra.orgId]), "nada criado lá").toEqual(antesLa);
+      // (b) o mesmo layout com a Natureza editável: 201, os dois padrões removidos e listados, o resto do layout fica
+      const editavel = { ...arquivo, estrutura: comPadroes({ categoria_financeira_id: fx.incomeCategory, warehouse_id: fx.warehouse }) };
+      const o = await req("POST", `${URL_}/importar`, editavel, outra.headers);
       expect(o.statusCode, o.body).toBe(201);
       expect(j(o).nome, "nome livre lá").toBe(nome);
       expect([...j(o).removidos].sort((a: { campo: string }, b: { campo: string }) => a.campo.localeCompare(b.campo))).toEqual([
@@ -245,7 +253,7 @@ describe("LB-A4 exportar e importar", () => {
       expect(la.organization_id).toBe(outra.orgId);
       expect(la.padrao).toBe(false);
       expect(temRegistro(la.estrutura), "padrões removidos").toBe(false);
-      expect(la.estrutura.cabecalho.find((c) => c.campo === "categoria_financeira_id")?.editavel, "o resto do campo fica").toBe(false);
+      expect(la.estrutura, "só os padrões saíram").toEqual(LAYOUT_DO_SISTEMA(FAM));
       expect(await um("select count(*)::int n from erp.layout_documento_tops where layout_id=$1", [j(o).id])).toEqual({ n: 0 });
     } finally {
       await req("POST", `${URL_}/${id}/ativo`, { ativo: false });
