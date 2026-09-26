@@ -38,7 +38,5 @@ describe("decisão da capacidade de layout do documento da base (version skew)",
     expect(ocorrenciasNaOrdem(INVERTIDA)).toBe(0);
     expect(ocorrenciasNoTexto(INVERTIDA)).toBe(1);
   });
-  // PROVISÓRIO: este commit ainda não declara a chave em sales.ts, então a árvore conta 0. O coordenador
-  // endurece para `toBe(1)` quando a declaração entrar na mesma fatia.
-  it("a árvore deste HEAD declara no máximo uma vez (0 ou 1 — endurecer para 1)", () => expect([0, 1]).toContain(ocorrenciasNaArvore(RAIZ)));
+  it("a árvore deste HEAD declara exatamente uma vez", () => expect(ocorrenciasNaArvore(RAIZ)).toBe(1));
 });
