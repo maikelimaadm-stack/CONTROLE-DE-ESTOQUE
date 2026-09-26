@@ -297,6 +297,23 @@ export const REGISTRY_RESOURCES: ResourceDef[] = [
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 6 }), active()]
   },
   {
+    // CONDIÇÃO DE PAGAMENTO (VENDAS-A4, decisão 258): o MODELO que deriva o plano de parcelas (planoDaCondicao, domínio).
+    // Mesma permissão das Formas de pagamento: quem vende precisa LISTAR as condições no documento.
+    key: "condicoes_pagamento", codeEntity: "condicao_pagamento", codigoAutomatico: "sequencial", label: "Condição de Pagamento", labelPlural: "Condições de Pagamento", table: "condicoes_pagamento", permission: "sales", labelField: "nome", route: "/cadastros/condicoes-de-pagamento", softDelete: true, defaultSort: "code",
+    fields: [
+      T("code", "Código", { list: true, search: true, span: 2 }), T("nome", "Nome", { required: true, list: true, search: true, span: 5 }),
+      { name: "parcelas", label: "Parcelas", type: "integer", required: true, default: 1, list: true, span: 2, min: 1, max: 120, help: "Sem contar a entrada." },
+      { name: "dias_primeira_parcela", label: "Dias até a 1ª parcela", type: "integer", required: true, default: 0, list: true, span: 2, min: 0, max: 366, help: "0 = na data do documento." },
+      S("modo", "Vencimentos", [["intervalo", "Intervalo em dias"], ["dia_fixo", "Dia fixo do mês"]], { required: true, default: "intervalo", span: 3 }),
+      { name: "intervalo_dias", label: "Intervalo (dias)", type: "integer", default: 30, span: 2, min: 1, max: 366 },
+      { name: "dia_vencimento", label: "Dia do vencimento", type: "integer", span: 2, min: 1, max: 31, visibleWhen: { field: "modo", equals: "dia_fixo" }, requiredWhen: { field: "modo", equals: "dia_fixo" } },
+      B("entrada", "Entrada", { span: 2 }),
+      { name: "entrada_percentual", label: "Entrada (%)", type: "percent", span: 2, visibleWhen: { field: "entrada", equals: true }, requiredWhen: { field: "entrada", equals: true } },
+      { name: "observacao", label: "Observação", type: "textarea", span: 12 },
+      active()
+    ]
+  },
+  {
     key: "equipment_families", label: "Família de Bem", labelPlural: "Famílias de Bens", table: "equipment_families", permission: "equipments", labelField: "name", route: "/cadastros/familias-de-bens", sharedDefaults: true,
     fields: [T("name", "Nome", { required: true, list: true, search: true, span: 5 }), { name: "default_life_years", label: "Vida útil padrão (anos)", type: "integer", list: true, span: 3 }, { name: "default_depreciation_percent", label: "Depreciação padrão (%)", type: "percent", list: true, span: 3 }]
   },
