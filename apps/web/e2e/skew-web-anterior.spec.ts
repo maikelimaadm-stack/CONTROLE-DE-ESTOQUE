@@ -844,3 +844,47 @@ test("VENDAS-A4 · CP-K2 — o web da base cria orçamento, pedido e venda sem a
   expect((await conf.json() as { title_ids: string[] }).title_ids.length, "a confirmação gerou título, como hoje").toBeGreaterThan(0);
   v.semBloqueio(); v.semErroDeContrato();
 });
+
+/**
+ * VENDAS-A3-1 · LD-K2 — O WEB DA BASE CRIA ORÇAMENTO, PEDIDO E VENDA CONTRA A API DESTE HEAD.
+ *
+ * O web da base não conhece o layout do documento e nenhum layout está cadastrado: nada muda. A API deste HEAD
+ * aceita o corpo de sempre e cada documento nasce (201), aberto, conferido por SQL. O corpo é observado no fio.
+ */
+test("VENDAS-A3-1 · LD-K2 — o web da base cria orçamento, pedido e venda como hoje contra a API deste HEAD: 201", async ({ page, request }) => {
+  const v = vigiar(page);
+  await login(page);
+  const auth = await cabecalhosDaSessao(page);
+  const rotulos = rotulosDaClassificacaoNoWebDaBase();
+  const BASE = { budgets: "vendas.orcamento", orders: "vendas.pedido", sales: "vendas.venda" } as const;
+
+  for (const variante of ["budgets", "orders", "sales"] as const) {
+    const codigo = `LK2${variante[0]!.toUpperCase()}${Date.now().toString(36).toUpperCase()}`;
+    const criada = await request.post(`${API}/api/admin/tipos-operacao`, { headers: auth, data: { codigo, codigoBase: BASE[variante], nome: `Skew A3-1 ${codigo}` } });
+    expect(criada.status(), await criada.text()).toBe(201);
+    const topId = (await criada.json() as { id: string }).id;
+
+    await page.goto(`/vendas/${variante}/new`);
+    await expect(page.getByTestId("top-lancador")).toBeVisible();
+    await page.locator(`[data-testid="top-opcao"][data-top-id="${topId}"]`).click();
+    await page.getByTestId("top-continuar").click();
+    await expect(page.getByTestId("top-contexto")).toBeVisible();
+    await pickRef(page, "Cliente", "DEMO");
+    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
+    await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
+    await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
+    if (rotulos) await preencherClassificacaoFinanceira(page, rotulos);
+
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/sales/${variante}`);
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    expect(r.status(), `a API deste HEAD aceita o corpo do cliente da base (${variante})`).toBe(201);
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(enviado["tipo_operacao_id"], `premissa: o corpo capturado é o deste lançamento (${variante})`).toBe(topId);
+    const { id } = await r.json() as { id: string };
+    expect(id).toMatch(UUID);
+    expect(sqlAj(`select status from erp.sales_documents where id = '${id}'`), `no banco: aberto, como hoje (${variante})`).toBe("open");
+  }
+  v.semBloqueio(); v.semErroDeContrato();
+});

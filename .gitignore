@@ -31,6 +31,7 @@ supabase/.temp
 .skew-execucao-top.json
 .skew-classificacao-financeira.json
 .skew-condicao-pagamento.json
+.skew-layout-documento.json
 .skew-previa-confirmacao.json
 .skew-fichas-cadastro.json
 

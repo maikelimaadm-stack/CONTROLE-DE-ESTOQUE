@@ -195,6 +195,12 @@ jobs:
       # cobra que o web o mostra. A decisão é MEDIDA na árvore da base e expira sozinha. Falha fechado.
       - name: A API da base já declara a condição de pagamento da venda? (VENDAS-A4)
         run: node scripts/skew-condicao-pagamento.mjs --github-env
+      # A API DA BASE JÁ DECLARA O LAYOUT DO DOCUMENTO DE VENDA? (VENDAS-A3-1)
+      # Mesmo desenho: sem `capacidades.layoutDocumento` na descoberta da base, LD-K1 cobra que o web NÃO pede
+      # `/layout-efetivo` (no fio) e que o documento nasce como hoje (201); com ela, cobra que a base a serve.
+      # A decisão é MEDIDA na árvore da base e expira sozinha. Falha fechado.
+      - name: A API da base já declara o layout do documento de venda? (VENDAS-A3-1)
+        run: node scripts/skew-layout-documento.mjs --github-env
       # A API DA BASE JÁ SERVE A PRÉVIA DA CONFIRMAÇÃO DA VENDA? (VENDAS-A5-1)
       # Mesmo desenho: sem a rota `previa-confirmacao` declarada na base, o sentido 1 cobra que o diálogo
       # "Confirmar venda" deste web mostra o texto NEUTRO, com o botão habilitado, e que a confirmação funciona
