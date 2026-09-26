@@ -5,10 +5,12 @@ import * as Popover from "@radix-ui/react-popover";
 import { cn } from "@/lib/utils";
 import { CmdDisplay, CmdPanel } from "./mg-controls";
 import { api, ApiError, qs } from "@/lib/api";
-import { getResource, getReferencia, formatarCep, normalizarMascara, textoEhCep, type ChaveReferencia, type FieldDef } from "@agro/domain";
+import { getResource, getReferencia, formatarCep, normalizarMascara, partesDaReferencia, ROTULOS_DAS_PARTES, textoEhCep, type ChaveReferencia, type FieldDef } from "@agro/domain";
 import { Plus, RotateCw } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { Dialog } from "./overlays";
+/** controles da busca, reusados pelo campo de referência oficial (campo-referencia-oficial.tsx) */
+export { CmdDisplay, CmdPanel };
 // carregado sob demanda: evita ciclo de módulos (o formulário declarativo usa RefSelect)
 const ResourceQuickCreate = React.lazy(() => import("@/features/resources/quick-create").then((m) => ({ default: m.ResourceQuickCreate })));
 
@@ -67,7 +69,8 @@ export function RefSelect({ resource, value, onChange, placeholder = "Selecione"
   </>);
 }
 
-export interface ItemReferencia { codigo: string | number; rotulo: string; escolhivel: boolean }
+/** Item da API de referência: `nome`/`extra` são as partes (AJUSTES 02); `rotulo` é só texto da LISTA — nunca recortado. */
+export interface ItemReferencia { codigo: string | number; rotulo: string; escolhivel: boolean; nome?: string | null; extra?: string | null }
 
 /** Mensagens do campo de busca de referência (os E2E procuram por estes textos). */
 export const MSG_LISTA_FALHOU = "Não foi possível carregar a lista.";
@@ -144,7 +147,7 @@ export function BotaoTentarDeNovo({ onClick }: { onClick: () => void }) {
  * API anterior sem a rota de busca: digitação do código. Só o código no FORMATO oficial vira valor; o resto fica
  * na caixa com aviso e o valor gravado não muda (texto livre nunca vira valor).
  */
-function EntradaDeCodigo({ referencia, value, onChange, disabled, className, id }: { referencia: ChaveReferencia; value: string | number | null | undefined; onChange: (v: string | number | null) => void; disabled?: boolean; className?: string; id?: string }) {
+export function EntradaDeCodigo({ referencia, value, onChange, disabled, className, id }: { referencia: ChaveReferencia; value: string | number | null | undefined; onChange: (v: string | number | null) => void; disabled?: boolean; className?: string; id?: string }) {
   const def = getReferencia(referencia);
   const [texto, setTexto] = React.useState(value === null || value === undefined ? "" : String(value));
   const t = texto.replace(/[\s.\-/]/g, "");
@@ -183,47 +186,81 @@ export function mensagemFalhaCep(e: unknown): string {
 /** "5106752 · Pontes e Lacerda - MT" */
 export const rotuloMunicipio = (m: Municipio) => `${m.codigoIbge} · ${m.nome} - ${m.uf}`;
 
-/** Item da referência de municípios → Municipio. Aceita o rótulo da API nova ("5106752 · Nome - UF") e da anterior ("Nome - UF"). */
+/* ───────────── PARTES DE UM CAMPO DE BUSCA OFICIAL (AJUSTES 02, 2.1) — usadas pela Cidade e por CampoReferenciaOficial ───────────── */
+
+export type ParteDoCampo = "busca" | "codigo" | "extra";
+/** Uma parte desenhada: quem chama decide a moldura (B1Field no formulário, célula na grade). `id` é o da caixa. */
+export interface ParteRenderizada { parte: ParteDoCampo; rotulo: string; hasValue: boolean; somenteLeitura: boolean; node: React.ReactNode; id: string;
+  /** avisos e botões da parte: ficam ABAIXO da caixa (a caixa do formulário tem altura fixa; dentro dela transbordariam sobre o que vem depois) */
+  abaixo?: React.ReactNode }
+export type EnvolverParte = (p: ParteRenderizada) => React.ReactNode;
+/** Texto da caixa do nome enquanto ele não está na mão: nunca o código. */
+export const TXT_CARREGANDO = "carregando…";
+
+/** Desenha as partes com `envolver` (irmãs, sem contêiner — viram B1Fields ou células) ou, sem ele, lado a lado numa linha. */
+export function desenharPartes(partes: ParteRenderizada[], envolver: EnvolverParte | undefined, className?: string, testId?: string): React.ReactElement {
+  if (envolver) return <>{partes.map((p) => <React.Fragment key={p.parte}>{envolver(p)}</React.Fragment>)}</>;
+  return <span className={cn("flex w-full min-w-0 items-start gap-2", className)} data-testid={testId}>
+    {partes.map((p) => <span key={p.parte} className={cn("flex min-w-0 flex-col", p.parte === "busca" ? "flex-1" : p.parte === "codigo" ? "w-24 shrink-0" : "w-12 shrink-0")}>{p.node}{p.abaixo}</span>)}
+  </span>;
+}
+
+/**
+ * Item da referência de municípios → Municipio, pelas PARTES do item (`nome`/`extra`, partesDaReferencia) — o rótulo
+ * nunca é recortado. Item sem nome → `nome` vazio (a caixa mostra aviso, nunca o código).
+ */
 export function municipioDoItem(it: ItemReferencia): Municipio | null {
   const codigo = Number(it.codigo);
   if (!Number.isInteger(codigo)) return null;
-  const sem = it.rotulo.replace(/^\s*\d{7}\s*·\s*/, "");
-  const m = /^(.*?)\s*-\s*([A-Z]{2})\s*$/.exec(sem);
-  return m ? { codigoIbge: codigo, nome: m[1]!.trim(), uf: m[2]! } : { codigoIbge: codigo, nome: sem.trim(), uf: "" };
+  const p = partesDaReferencia("municipios", it);
+  return { codigoIbge: codigo, nome: p.nome ?? "", uf: p.extra ?? "" };
 }
 
 const porCodigo = (codigo: string) => api<ItemReferencia>(`/api/referencias/municipios/${codigo}`);
 
 /**
- * CAMPO CIDADE (CADASTROS AJUSTES 01, B-2) — endereço principal, outros endereços, empresas, filiais.
- * Três caixas numa linha: Cidade (busca) · Código IBGE (editável) · UF (só leitura). Cidade e Código IBGE andam juntos:
- * `value` é o código IBGE gravado; `onChange(codigo, municipio)` entrega os dois.
- * Na caixa Cidade o texto pode ser NOME, CÓDIGO IBGE (7 dígitos) ou CEP (8 dígitos, com/sem hífen): o CEP é
- * consultado e a cidade dele vem como 1ª opção "CEP 78250-000 → 5106752 · Pontes e Lacerda - MT".
- * No Código IBGE, 7 dígitos resolvem a cidade; código inexistente não muda o valor.
+ * CAMPO CIDADE (AJUSTES 01, B-2; AJUSTES 02, 2.1/2.2) — endereço principal, outros endereços, empresas, filiais.
+ * Três PARTES, cada uma um campo: Cidade (busca: nome, código IBGE ou CEP) · Código IBGE (só leitura, sempre visível) ·
+ * UF (só leitura). `envolver` desenha cada parte (um B1Field por parte no formulário, uma célula na grade); sem ele, lado a
+ * lado. `value` é o código IBGE gravado; `onChange(codigo, municipio)` entrega os dois. A caixa Cidade mostra SÓ o nome.
+ * `travadaPeloCep`: CEP preenchido e encontrado manda na cidade — a busca trava com a marca "pelo CEP".
+ * `aoDigitarCep(cep)`: CEP (8 dígitos) digitado na busca vai para o campo CEP de quem chama, que roda o fluxo completo;
+ * sem ele (ex.: Filiais), o CEP é consultado aqui e a cidade dele vem como 1ª opção. A cidade nunca preenche o CEP.
  * Falha da lista segue o B-1 ("Não foi possível carregar a lista." + [Tentar de novo]); texto nunca vira valor.
  */
-export function CampoCidade({ value, onChange, disabled, className, classeEntrada, id, municipioInicial }: {
+export function CampoCidade({ value, onChange, disabled, className, classeEntrada, id, municipioInicial, travadaPeloCep, cepDivergente, aoDigitarCep, envolver, onOpenChange }: {
   value: number | string | null | undefined;
   onChange: (codigo: number | null, municipio: Municipio | null) => void;
   disabled?: boolean; className?: string;
-  /** classe das caixas Código IBGE e UF (a mesma das outras entradas da ficha) */
+  /** classe das caixas (a mesma das outras entradas de quem chama) */
   classeEntrada?: string;
   /** id da caixa Cidade (para <label htmlFor>); as outras recebem `${id}-ibge` e `${id}-uf` */
   id?: string;
   /** município já conhecido do valor (evita consulta ao abrir o registro) */
   municipioInicial?: Municipio | null;
+  travadaPeloCep?: boolean;
+  /**
+   * Conferência do CEP ao entrar em edição (AJUSTES 02 · R1-A): o CEP gravado é de OUTRA cidade. A cidade fica travada
+   * na GRAVADA, com o aviso `cidade-aviso-cep` e o botão `cidade-usar-do-cep` (quem chama troca a cidade e marca alterado).
+   */
+  cepDivergente?: { cep: string; municipio: Municipio; aoUsar: () => void } | null;
+  aoDigitarCep?: (cep: string) => void;
+  envolver?: EnvolverParte;
+  onOpenChange?: (o: boolean) => void;
 }) {
+  const rotulos = ROTULOS_DAS_PARTES.municipios;
+  const gerado = React.useId(); const base = id ?? `cidade-${gerado}`;
   const codigoAtual = value === null || value === undefined || value === "" ? null : Number(value);
   const [open, setOpen] = React.useState(false); const [search, setSearch] = React.useState("");
   const [escolhido, setEscolhido] = React.useState<Municipio | null>(municipioInicial ?? null);
   const conhecido = escolhido && escolhido.codigoIbge === codigoAtual ? escolhido : null;
-  const um = useQuery({ queryKey: ["referencia-um", "municipios", String(codigoAtual)], queryFn: () => porCodigo(String(codigoAtual)), enabled: codigoAtual !== null && /^\d{7}$/.test(String(codigoAtual)) && !conhecido, staleTime: 300_000, retry: false });
+  const noFormato = codigoAtual !== null && /^\d{7}$/.test(String(codigoAtual));
+  const um = useQuery({ queryKey: ["referencia-um", "municipios", String(codigoAtual)], queryFn: () => porCodigo(String(codigoAtual)), enabled: noFormato && !conhecido, staleTime: 300_000, retry: false });
   const atual = conhecido ?? (um.data ? municipioDoItem(um.data) : null);
 
   const lista = useBuscaReferencia("municipios", search, open);
   const q = useComEspera(search.trim());
-  const cepDigitado = textoEhCep(q) ? normalizarMascara("cep", q) : null;
+  const cepDigitado = !aoDigitarCep && textoEhCep(q) ? normalizarMascara("cep", q) : null;
   const cep = useQuery({ queryKey: ["cep", cepDigitado], queryFn: () => consultarCep(cepDigitado!), enabled: open && cepDigitado !== null, staleTime: 300_000, retry: false });
   const ibgeDigitado = /^\d{7}$/.test(q) ? q : null;
   const doCodigo = useQuery({ queryKey: ["referencia-um", "municipios", ibgeDigitado], queryFn: () => porCodigo(ibgeDigitado!), enabled: open && ibgeDigitado !== null, staleTime: 300_000, retry: false });
@@ -233,64 +270,56 @@ export function CampoCidade({ value, onChange, disabled, className, classeEntrad
   const cepMun = cep.data?.municipio ?? null;
   if (cepDigitado && cepMun) { escolhas.set(`cep:${cepMun.codigoIbge}`, cepMun); opcoes.push({ value: `cep:${cepMun.codigoIbge}`, label: `CEP ${formatarCep(cepDigitado)} → ${rotuloMunicipio(cepMun)}` }); }
   const itens = [...(doCodigo.data ? [doCodigo.data] : []), ...(lista.data?.items ?? [])];
-  for (const it of itens) { const m = municipioDoItem(it); if (!m || escolhas.has(String(m.codigoIbge))) continue; escolhas.set(String(m.codigoIbge), m); opcoes.push({ value: String(m.codigoIbge), label: rotuloMunicipio(m) }); }
+  // na LISTA o código pode aparecer (o rótulo da API); na caixa, só o nome
+  for (const it of itens) { const m = municipioDoItem(it); if (!m || escolhas.has(String(m.codigoIbge))) continue; escolhas.set(String(m.codigoIbge), m); opcoes.push({ value: String(m.codigoIbge), label: m.nome ? rotuloMunicipio(m) : it.rotulo }); }
   const falhou = Boolean(lista.error) && !lista.isFetching && opcoes.length === 0;
   const aviso = cepDigitado && cep.error ? mensagemFalhaCep(cep.error) : cepDigitado && cep.data && !cepMun ? "A cidade deste CEP não foi encontrada; busque pelo nome." : null;
   const carregando = (lista.isFetching && !lista.data) || (cepDigitado !== null && cep.isFetching);
 
+  const travada = (Boolean(travadaPeloCep) || Boolean(cepDivergente)) && !disabled;
   const escolher = (m: Municipio | null) => { setEscolhido(m); onChange(m ? m.codigoIbge : null, m); };
-
-  // Código IBGE: caixa própria; reflete o valor quando ele muda por fora
-  const [ibge, setIbge] = React.useState(codigoAtual === null ? "" : String(codigoAtual));
-  const [ibgeErro, setIbgeErro] = React.useState<string | null>(null);
-  React.useEffect(() => { setIbge(codigoAtual === null ? "" : String(codigoAtual)); setIbgeErro(null); }, [codigoAtual]);
-  // R1, W-8: só a resposta do ÚLTIMO código digitado vale (fora de ordem é descartada); ao SAIR com código parcial ou
-  // inexistente, a caixa volta à cidade atual — o texto nunca fica dizendo uma cidade que o valor não tem.
-  const pedidoIbge = React.useRef(0); const pendenteIbge = React.useRef<string | null>(null); const focoIbge = React.useRef(false);
-  const codigoRef = React.useRef(codigoAtual); codigoRef.current = codigoAtual;
-  const voltarACidadeAtual = () => { setIbge(codigoRef.current === null ? "" : String(codigoRef.current)); setIbgeErro(null); };
-  const aoDigitarIbge = async (t: string) => {
-    const d = t.replace(/\D/g, "").slice(0, 7); setIbge(d); setIbgeErro(null);
-    const meu = ++pedidoIbge.current; pendenteIbge.current = null;
-    if (d === "") { if (codigoAtual !== null) escolher(null); return; }
-    if (d.length < 7 || Number(d) === codigoAtual) return;
-    pendenteIbge.current = d;
-    try {
-      const m = municipioDoItem(await porCodigo(d));
-      if (meu !== pedidoIbge.current) return;
-      pendenteIbge.current = null;
-      if (m) escolher(m); else if (focoIbge.current) setIbgeErro("Código IBGE não encontrado."); else voltarACidadeAtual();
-    } catch (e) {
-      if (meu !== pedidoIbge.current) return;
-      pendenteIbge.current = null;
-      if (focoIbge.current) setIbgeErro(e instanceof ApiError && e.status === 404 ? "Código IBGE não encontrado." : "Não foi possível conferir o código agora."); else voltarACidadeAtual();
-    }
+  const abrir = (o: boolean) => { if (o && (disabled || travada)) return; setOpen(o); onOpenChange?.(o); if (!o) setSearch(""); };
+  // CEP digitado na busca (com quem o receba): vai para o campo CEP, que consulta e preenche tudo
+  const aoBuscar = (t: string) => {
+    if (aoDigitarCep && textoEhCep(t.trim())) { aoDigitarCep(normalizarMascara("cep", t.trim())); abrir(false); return; }
+    setSearch(t);
   };
-  // saiu da caixa: código completo ainda em consulta decide quando responder; o resto volta à cidade atual
-  const aoSairDoIbge = () => { focoIbge.current = false; if (pendenteIbge.current === ibge) return; if (ibge !== (codigoAtual === null ? "" : String(codigoAtual))) { pedidoIbge.current++; voltarACidadeAtual(); } else setIbgeErro(null); };
+  // a caixa do nome: o nome; enquanto consulta, "carregando…"; falha, aviso legível — NUNCA o código
+  const avisoDoValor = codigoAtual === null || atual?.nome ? null
+    : !noFormato ? "Código IBGE fora do formato; escolha a cidade de novo."
+    : um.error ? (um.error instanceof ApiError && um.error.status === 404 ? "Cidade não encontrada para este código IBGE." : "Não foi possível carregar a cidade.")
+    : atual ? "Nome da cidade indisponível agora." : null;
+  const texto = codigoAtual === null ? null : atual?.nome || (avisoDoValor ? null : TXT_CARREGANDO);
 
-  return <span className={cn("flex w-full min-w-0 items-start gap-2", className)} data-testid="campo-cidade">
-    <span className="flex min-w-0 flex-1 flex-col">
-      <Popover.Root open={open} onOpenChange={(o) => { if (disabled) return; setOpen(o); if (!o) setSearch(""); }}>
+  const busca = <span className="flex w-full min-w-0 items-center gap-1">
+      <Popover.Root open={open} onOpenChange={abrir}>
         <Popover.Trigger asChild>
-          <CmdDisplay id={id} disabled={disabled} empty={codigoAtual === null} placeholder="Nome, código IBGE ou CEP" aria-label="Cidade" aria-expanded={open} className={cn("w-full", classeEntrada)} data-testid="cidade-busca" onClear={() => escolher(null)}>
-            {codigoAtual === null ? null : atual ? `${atual.nome} - ${atual.uf}`.replace(/ - $/, "") : String(codigoAtual)}
-          </CmdDisplay>
+          <CmdDisplay id={base} disabled={disabled || travada} empty={codigoAtual === null} placeholder="Nome, código IBGE ou CEP" aria-label={rotulos.busca} aria-expanded={open} className={cn("w-full", classeEntrada)} data-testid="cidade-busca" onClear={travada ? undefined : () => escolher(null)}>{texto}</CmdDisplay>
         </Popover.Trigger>
         <Popover.Portal><Popover.Content align="start" sideOffset={4} className="cmd-panel z-[10000] w-[var(--radix-popover-trigger-width)] min-w-[320px] outline-none">
-          <CmdPanel options={opcoes} value={codigoAtual === null ? null : String(codigoAtual)} search={search} onSearch={setSearch} loading={carregando} placeholder="Nome, código IBGE ou CEP"
+          <CmdPanel options={opcoes} value={codigoAtual === null ? null : String(codigoAtual)} search={search} onSearch={aoBuscar} loading={carregando} placeholder="Nome, código IBGE ou CEP"
             emptyText={aviso ?? (falhou ? MSG_LISTA_FALHOU : "Nenhum resultado")}
             footer={falhou ? <BotaoTentarDeNovo onClick={() => void lista.refetch()} /> : undefined}
-            onPick={(o) => { const m = escolhas.get(o.value); if (!m) return; escolher(m); setOpen(false); setSearch(""); }} />
+            onPick={(o) => { const m = escolhas.get(o.value); if (!m) return; escolher(m); abrir(false); }} />
         </Popover.Content></Popover.Portal>
       </Popover.Root>
-      {aviso && opcoes.length > 0 && open && <span className="text-[11px] text-amber-600">{aviso}</span>}
-    </span>
-    <span className="flex w-24 shrink-0 flex-col">
-      <input id={id ? `${id}-ibge` : undefined} aria-label="Código IBGE" title="Código IBGE" placeholder="Código IBGE" inputMode="numeric" maxLength={7} disabled={disabled} className={cn("w-full", classeEntrada)} data-testid="cidade-ibge"
-        value={ibge} aria-invalid={Boolean(ibgeErro) || undefined} onChange={(e) => void aoDigitarIbge(e.target.value)} onFocus={() => { focoIbge.current = true; }} onBlur={aoSairDoIbge} />
-      {ibgeErro && <span className="text-[11px] text-red-600" role="alert">{ibgeErro}</span>}
-    </span>
-    <input id={id ? `${id}-uf` : undefined} aria-label="UF" title="UF" placeholder="UF" readOnly tabIndex={-1} className={cn("w-12 shrink-0", classeEntrada)} data-testid="cidade-uf" value={codigoAtual === null ? "" : atual?.uf ?? ""} />
-  </span>;
+      {travadaPeloCep && <span className="shrink-0 rounded bg-slate-100 px-1 text-[10.5px] font-medium text-slate-600" data-testid="cidade-pelo-cep" title="A cidade segue o CEP; mude ou limpe o CEP para escolher outra.">pelo CEP</span>}
+    </span>;
+  const temAbaixo = Boolean(avisoDoValor || cepDivergente || (aviso && opcoes.length > 0 && open));
+  const abaixo = temAbaixo ? <span className="flex min-w-0 flex-col">
+    {avisoDoValor && <span className="text-[11px] text-amber-600" data-testid="cidade-aviso">{avisoDoValor}</span>}
+    {cepDivergente && <span className="flex flex-wrap items-center gap-1 text-[11px] text-amber-600">
+      <span data-testid="cidade-aviso-cep">{`O CEP ${formatarCep(cepDivergente.cep)} é de ${cepDivergente.municipio.nome} - ${cepDivergente.municipio.uf}; a cidade gravada é ${atual?.nome ? `${atual.nome} - ${atual.uf}` : TXT_CARREGANDO}.`}</span>
+      {!disabled && <button type="button" className="rounded border border-amber-300 bg-white px-1 font-medium text-amber-700 hover:bg-amber-50" data-testid="cidade-usar-do-cep" onClick={cepDivergente.aoUsar}>Usar a cidade do CEP</button>}
+    </span>}
+    {aviso && opcoes.length > 0 && open && <span className="text-[11px] text-amber-600">{aviso}</span>}
+  </span> : undefined;
+  const ibge = <input id={`${base}-ibge`} aria-label={rotulos.codigo} title={rotulos.codigo} readOnly tabIndex={-1} className={cn("w-full", classeEntrada)} data-testid="cidade-ibge" value={codigoAtual === null ? "" : String(codigoAtual)} />;
+  const uf = <input id={`${base}-uf`} aria-label={rotulos.extra} title={rotulos.extra} readOnly tabIndex={-1} className={cn("w-full", classeEntrada)} data-testid="cidade-uf" value={codigoAtual === null ? "" : atual?.uf ?? ""} />;
+  const tem = codigoAtual !== null;
+  return desenharPartes([
+    { parte: "busca", rotulo: rotulos.busca, hasValue: tem, somenteLeitura: travada, node: busca, id: base, abaixo },
+    { parte: "codigo", rotulo: rotulos.codigo, hasValue: tem, somenteLeitura: true, node: ibge, id: `${base}-ibge` },
+    { parte: "extra", rotulo: rotulos.extra ?? "UF", hasValue: tem && Boolean(atual?.uf), somenteLeitura: true, node: uf, id: `${base}-uf` }
+  ], envolver, className, "campo-cidade");
 }

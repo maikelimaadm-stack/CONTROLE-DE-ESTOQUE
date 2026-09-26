@@ -71,3 +71,33 @@ export const ACENTOS_PARA = "aaaaaeeeeiiiiooooouuuucnAAAAAEEEEIIIIOOOOOUUUUCN";
 export function semAcento(s: string): string {
   let o = ""; for (const c of String(s)) { const i = ACENTOS_DE.indexOf(c); o += i >= 0 ? ACENTOS_PARA[i] : c; } return o.toLowerCase();
 }
+
+/**
+ * PARTES DE UM ITEM DE REFERÊNCIA (CADASTROS AJUSTES 02, 2.1): cada parte é um CAMPO na tela — o nome na busca, o
+ * código (e a UF do município) em caixas próprias, só leitura. Tudo sai de `nome`/`extra`/`codigo` do item da API,
+ * nunca recortando o `rotulo`: o nome NUNCA contém o código. Item sem `nome` (resposta sem o campo) → `nome` null,
+ * e a tela mostra "carregando…"/aviso — nunca o código no lugar do nome.
+ *   municípios → { nome: "Pontes e Lacerda", codigo: "5106752", extra: "MT" }
+ *   bancos     → { nome: "Banco do Brasil S.A.", codigo: "001", extra: null }
+ *   ncm        → { nome: "<descrição>", codigo: "0102.21.10", extra: null }
+ *   cbo        → { nome: "Trabalhador agropecuário em geral", codigo: "621005", extra: null }
+ */
+export interface PartesDaReferencia { nome: string | null; codigo: string; extra: string | null }
+export function partesDaReferencia(chave: ChaveReferencia, item: { codigo: string | number; nome?: string | null; extra?: string | null }): PartesDaReferencia {
+  const bruto = String(item.codigo ?? "").trim();
+  const codigo = chave === "bancos" && /^\d{1,3}$/.test(bruto) ? bruto.padStart(3, "0") : chave === "ncm" ? formatarNcm(bruto) : bruto;
+  const nome = typeof item.nome === "string" && item.nome.trim() !== "" ? item.nome.trim() : null;
+  const extra = chave === "municipios" && typeof item.extra === "string" && item.extra.trim() !== "" ? item.extra.trim() : null;
+  return { nome, codigo, extra };
+}
+
+/** Rótulos das partes de cada referência (2.1). A busca é a única parte editável. */
+export const ROTULOS_DAS_PARTES: Record<ChaveReferencia, { busca: string; codigo: string; extra?: string }> = {
+  municipios: { busca: "Cidade", codigo: "Código IBGE", extra: "UF" },
+  cbo: { busca: "Ocupação (CBO)", codigo: "Código CBO" },
+  bancos: { busca: "Banco", codigo: "Código do banco" },
+  ncm: { busca: "Descrição do NCM", codigo: "NCM" }
+};
+
+/** Nome de exibição de um município ("Pontes e Lacerda - MT"), pelas partes. */
+export function nomeDoMunicipio(p: PartesDaReferencia): string | null { return p.nome === null ? null : p.extra ? `${p.nome} - ${p.extra}` : p.nome; }

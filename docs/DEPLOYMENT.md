@@ -1298,6 +1298,28 @@ origem (se era o último filho, volta ao mesmo número; senão ganha outro — e
 `EXC-<id>` continua `EXC-<id>`; os códigos antigos ficam no `audit` do Mover. UI-10 Parametrizações → Numeração: cadastro com registros →
 Zerar desabilitado com o motivo (não zerar nada em produção sem querer).
 
+## CADASTROS AJUSTES 02 — campos de referência, CEP × cidade e cartões
+
+Decisão 257, bloco "AJUSTES 02 (pós-merge)". **Sem migration, sem permissão, sem variável nova.** Implanta a web e
+duas mudanças na API: `<campo>_nome` na listagem/detalhe (aditiva) e a conferência CEP × cidade na gravação
+(validação). **Ordem livre** entre API e web; nenhum dado muda no deploy.
+
+1. **web NOVA × API anterior:** sem `<campo>_nome`, a coluna da lista mostra o código (como hoje); a ficha funciona
+   igual (o corpo enviado não mudou) e a API anterior não confere CEP × cidade — a trava "pelo CEP" da tela continua.
+2. **web ANTERIOR × API nova:** a chave `<campo>_nome` a mais é ignorada pela web anterior; a gravação com CEP e
+   cidade divergentes (CEP no cache) passa a ser recusada com a mensagem no campo da cidade — só quando o CEP ou a
+   cidade mudou naquela gravação.
+
+**Roteiro do Maike (na mão, em produção, depois do deploy):** (14) Parceiro novo → CEP 78250-000 + Tab → Cidade
+"Pontes e Lacerda", Código IBGE "5106752", UF "MT", travada com "pelo CEP"; apagar o CEP destrava; CEP inexistente →
+aviso e Cidade livre; digitar um CEP na busca da Cidade leva ao campo CEP. (15) Endereço → Incluir endereço: o
+cartão tem os mesmos campos, na mesma ordem, do endereço principal, mais Tipo/Descrição/IE da propriedade/Ativo; CEP +
+Tab preenche e trava; salvar, reabrir, valores lá. (16) Financeiro → Incluir conta → buscar "260" → Banco "NU
+PAGAMENTOS S.A. - INSTITUIÇÃO DE PAGAMENTO" e Código do banco "260" em campos separados; salvar e reabrir. (17) Funções
+→ CBO "621005" → Ocupação (CBO) "Trabalhador agropecuário em geral" e Código CBO "621005" separados. (R1) Abrir um parceiro já gravado com CEP → Editar → a Cidade vem travada "pelo CEP"
+(se a cidade gravada for de outro CEP: aviso e botão "Usar a cidade do CEP"). **Não apagar
+nada criado no teste** (decisão 247): usar um parceiro de teste já existente ou inativá-lo depois.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)

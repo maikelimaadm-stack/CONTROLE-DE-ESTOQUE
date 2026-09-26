@@ -68,18 +68,22 @@ test("PA-W2 — ficha em abas: cabeçalho, perfil por tipo, grade de endereços 
 
   await ficha.getByRole("tab", { name: "Endereço" }).click();
   const grade = page.getByTestId("grade-enderecos");
-  await grade.getByRole("button", { name: "Incluir linha" }).click();
-  await grade.getByRole("button", { name: "Incluir linha" }).click();
-  await grade.getByLabel("Tipo").nth(0).selectOption("entrega");
-  await grade.getByLabel("Tipo").nth(1).selectOption("propriedade");
-  await grade.getByLabel("IE").nth(1).fill("12AB");
+  // AJUSTES 02 (2.4): Outros endereços viraram CARTÕES ("Incluir endereço"); o rótulo da IE do cartão é "IE da propriedade"
+  await grade.getByTestId("incluir-enderecos").click();
+  await grade.getByTestId("incluir-enderecos").click();
+  const cartao = (n: number) => page.getByTestId(`linha-enderecos-${n}`);
+  await cartao(1).getByLabel("Tipo", { exact: true }).selectOption("entrega");
+  await cartao(2).getByLabel("Tipo", { exact: true }).selectOption("propriedade");
+  await cartao(2).getByLabel("IE da propriedade", { exact: true }).fill("12AB");
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect(page.getByTestId("erros-aba-enderecos")).toHaveText("1");
   await expect(page.getByTestId("linha-enderecos-2")).toHaveClass(/bg-red-50/);
+  await expect(page.getByTestId("linha-enderecos-1"), "só o cartão com erro fica marcado").not.toHaveClass(/bg-red-50/);
+  await expect(page.getByTestId("linha-enderecos-2"), "a mensagem do servidor aparece no cartão").toContainText("Endereço 2:");
   const nada = await api<{ items: unknown[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`);
   expect(nada.items, "nada gravado").toHaveLength(0);
 
-  await grade.getByLabel("IE").nth(1).fill("ISENTO");
+  await cartao(2).getByLabel("IE da propriedade", { exact: true }).fill("ISENTO");
   await page.getByRole("button", { name: "Salvar" }).click();
   await expect.poll(async () => (await api<{ items: { id: string }[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`)).items.length).toBe(1);
   const id = (await api<{ items: { id: string }[] }>(page, "GET", `/api/resources/people?search=${encodeURIComponent(nome)}`)).items[0]!.id;

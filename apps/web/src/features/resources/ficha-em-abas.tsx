@@ -13,17 +13,21 @@
 import * as React from "react";
 import type { UseFormReturn } from "react-hook-form";
 import { AlertTriangle, Plus, Search, Trash2 } from "lucide-react";
-import type { DetalheDef, FieldDef, PerfilDef, ResourceDef } from "@agro/domain";
-import { campoVisivel, chavesBarradas, formatarMascara, mascaraDoDocumento, normalizarDocumento, tipoPessoaPeloDocumento, validarCnpj } from "@agro/domain";
+import type { DetalheDef, FieldDef, ParteDoBloco, PerfilDef, ResourceDef } from "@agro/domain";
+import { BLOCOS_DO_PARCEIRO, blocoDoDetalhe, campoVisivel, chavesBarradas, formatarMascara, mascaraDoDocumento, normalizarDocumento, ROTULOS_DAS_PARTES, tipoPessoaPeloDocumento, validarCnpj } from "@agro/domain";
 import { api, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 import { Card, ConfirmDialog, Input, NativeSelect } from "@/components/ui";
-import { CampoCidade, consultarCep, filtroDaReferencia, mensagemFalhaCep, RefSelect, ReferenciaSelect, type BuscaDeOpcoes, type Municipio, type Option } from "@/components/ui/ref-select";
+import { CampoCidade, consultarCep, filtroDaReferencia, mensagemFalhaCep, RefSelect, type BuscaDeOpcoes, type EnvolverParte, type Municipio, type Option } from "@/components/ui/ref-select";
+import { CampoReferenciaOficial } from "@/components/ui/campo-referencia-oficial";
 import { EntradaCep, EntradaDocumento, EntradaMascara } from "@/components/ui/entrada-mascara";
 import { PillBtn } from "@/features/base1/ui";
 import { mensagemDaTrocaDeTipo } from "./consulta-cnpj-janela";
+import { B1Field } from "./campo-b1";
+import { CorpoDoBloco } from "./blocos-parceiro";
+import { GradeDeCartoes } from "./cartao-adicional";
 
 type Values = Record<string, unknown>;
 export interface ErroDaFicha { path: string; message: string; aba?: string | null; detalhe?: string; linha?: number | null }
@@ -103,13 +107,14 @@ export function abaDoCampo(def: ResourceDef, campo: string): string | undefined 
   return (f?.section ? def.abas?.find((a) => a.secoes?.includes(f.section!))?.key : undefined) ?? def.abas?.[0]?.key;
 }
 
-function CelulaDaGrade({ f, valor, onChange, dis, mascaras }: { f: FieldDef; valor: unknown; onChange: (v: unknown) => void; dis: boolean; /** ficha do Parceiro (AJUSTES 01): Cidade com CEP/IBGE e máscaras de CEP, telefone e CPF/CNPJ */ mascaras?: boolean }) {
+function CelulaDaGrade({ f, valor, onChange, dis, mascaras, envolver, aoDigitarCep }: { f: FieldDef; /** Filiais (R1-B): CEP digitado na busca da Cidade */ aoDigitarCep?: (cep: string) => void; valor: unknown; onChange: (v: unknown) => void; dis: boolean; /** ficha do Parceiro (AJUSTES 01): Cidade com CEP/IBGE e máscaras de CEP, telefone e CPF/CNPJ */ mascaras?: boolean;
+  /** busca oficial (AJUSTES 02, 2.1): moldura de cada PARTE (célula da tabela, rótulo do perfil); sem ela, lado a lado */ envolver?: EnvolverParte }) {
   const cls = "h-7 w-full min-w-[90px] text-[12.5px]";
-  if (mascaras && f.busca === "municipios") return <CampoCidade value={valor as number | string | null} onChange={(c) => onChange(c ?? "")} disabled={dis} className="min-w-[260px]" classeEntrada={cls} />;
+  if (f.busca === "municipios") return <CampoCidade value={valor as number | string | null} onChange={(c) => onChange(c ?? "")} disabled={dis} className="min-w-[260px]" classeEntrada={cls} envolver={envolver} aoDigitarCep={aoDigitarCep} />;
   // CPF/CNPJ da grade (Filiais, R1 W-8): sem tipo de pessoa — CPF até 11 posições, CNPJ a partir da 12ª; DV ao sair
   if (mascaras && f.name === "document") return <EntradaDocumento aria-label={f.label} tipoPessoa={null} readOnly={dis} className={cn("rounded border px-1", cls, "min-w-[160px]")} value={String(valor ?? "")} onChange={(x) => onChange(x)} />;
   if (mascaras && MASCARA_DA_GRADE[f.name]) return <EntradaMascara aria-label={f.label} mascara={MASCARA_DA_GRADE[f.name]!} readOnly={dis} className={cn("rounded border px-1", cls)} value={String(valor ?? "")} onChange={(x) => onChange(x)} />;
-  if (f.busca) return <ReferenciaSelect referencia={f.busca} value={valor as string | number | null} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
+  if (f.busca) return <CampoReferenciaOficial referencia={f.busca} value={valor as string | number | null} onChange={(x) => onChange(x ?? "")} disabled={dis} classeEntrada={cls} envolver={envolver} />;
   if (f.type === "ref") return <RefSelect resource={f.ref!.resource} filter={filtroDaReferencia(f)} value={valor as string} onChange={(x) => onChange(x ?? "")} disabled={dis} className={cls} />;
   if (f.type === "boolean") return <input type="checkbox" aria-label={f.label} disabled={dis} className="accent-brand-500" checked={valor === true || valor === "true"} onChange={(e) => onChange(e.target.checked)} />;
   if (f.type === "select") return <NativeSelect aria-label={f.label} disabled={dis} className={cls} value={String(valor ?? "")} onChange={(e) => onChange(e.target.value)}><option value="" />{f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>;
@@ -119,7 +124,20 @@ function CelulaDaGrade({ f, valor, onChange, dis, mascaras }: { f: FieldDef; val
 /** Máscaras das grades do Parceiro (AJUSTES 01, B-3; Filiais no R1, W-8): mostra formatado, grava normalizado. */
 const MASCARA_DA_GRADE: Record<string, "cep" | "telefone"> = { cep: "cep", zip_code: "cep", telefone: "telefone", celular: "telefone", phone: "telefone" };
 
-/** Grade de um detalhe 1:N dentro da aba. Linha com erro do servidor fica marcada. */
+/** Quantas colunas um campo ocupa na grade em TABELA: busca oficial = uma por parte (AJUSTES 02, 2.4 — Filiais: Cidade · Código IBGE · UF). */
+const partesDaColuna = (f: FieldDef): { chave: string; rotulo: string }[] => {
+  if (!f.busca) return [{ chave: f.name, rotulo: f.label }];
+  const r = ROTULOS_DAS_PARTES[f.busca];
+  return [{ chave: `${f.name}:busca`, rotulo: r.busca }, { chave: `${f.name}:codigo`, rotulo: r.codigo }, ...(r.extra ? [{ chave: `${f.name}:extra`, rotulo: r.extra }] : [])];
+};
+/** Classe das caixas dentro de um B1Field (a mesma do controle da ficha). */
+const CLS_B1 = "h-5 w-full border-0 bg-transparent px-0 text-[13px] font-medium shadow-none focus:outline-none";
+
+/**
+ * Grade de um detalhe 1:N dentro da aba. Linha com erro do servidor fica marcada. Endereços, contas e contatos do
+ * Parceiro (AJUSTES 02, 2.4) são CARTÕES com o corpo do bloco principal (GradeDeCartoes); as outras grades seguem em
+ * tabela, com a busca oficial em uma coluna por parte.
+ */
 function GradeDeDetalhe({ d, form, dis, erros, mascaras }: { d: DetalheDef; form: UseFormReturn<Values>; dis: boolean; erros: ErroDaFicha[]; mascaras?: boolean }) {
   const { can, ctx } = useAuth();
   const linhas = (form.watch(d.key) as Values[] | undefined) ?? [];
@@ -141,6 +159,10 @@ function GradeDeDetalhe({ d, form, dis, erros, mascaras }: { d: DetalheDef; form
   const campoCep = d.fields.find((f) => f.name === "cep");
   const ultimoCep = React.useRef(new Map<string, string>());
   const pedidosCep = React.useRef(new Map<string, number>());
+  // CEP que MANDA na cidade (AJUSTES 02, 2.2): o último CEP de cada linha que a consulta ENCONTROU nesta sessão, com cidade.
+  // Cidade travada "pelo CEP" enquanto o CEP da linha for esse; trocar ou limpar o CEP destrava. Registro aberto: livre
+  // até o CEP ser consultado.
+  const [resolvidos, setResolvidos] = React.useState<Record<string, string>>({});
   const disRef = React.useRef(dis); disRef.current = dis;
   React.useEffect(() => {
     if (!ehEnderecos) return;
@@ -148,15 +170,46 @@ function GradeDeDetalhe({ d, form, dis, erros, mascaras }: { d: DetalheDef; form
     const focada = typeof document !== "undefined" ? document.activeElement?.getAttribute("data-cep-da-linha") ?? null : null;
     const vistas = new Set<string>();
     linhas.forEach((l, i) => { const k = chaveDaLinha(l, i); vistas.add(k); if (k !== focada) ultimoCep.current.set(k, soDigitos(l["cep"])); });
-    for (const k of [...ultimoCep.current.keys()]) if (!vistas.has(k)) { ultimoCep.current.delete(k); pedidosCep.current.delete(k); }
+    for (const k of [...ultimoCep.current.keys()]) if (!vistas.has(k)) { ultimoCep.current.delete(k); pedidosCep.current.delete(k); conferidos.current.delete(k); }
   }, [linhas, ehEnderecos]);
+  // CONFERÊNCIA ao entrar em edição (AJUSTES 02 · R1-A), por cartão: CEP de 8 dígitos já na linha (cartão presente ao
+  // entrar em edição, ou posto por fora) é consultado SEM escrever nada. Mesma regra do principal: cidade igual → trava
+  // "pelo CEP"; OUTRA → trava na gravada + aviso e "Usar a cidade do CEP"; vazia → nada; falha → livre + aviso de hoje.
+  const conferidos = React.useRef(new Map<string, string>());
+  const [divergentes, setDivergentes] = React.useState<Record<string, { cep: string; municipio: Municipio }>>({});
+  React.useEffect(() => {
+    if (!ehEnderecos) return;
+    if (dis) { conferidos.current.clear(); return; }
+    const focada = typeof document !== "undefined" ? document.activeElement?.getAttribute("data-cep-da-linha") ?? null : null;
+    linhas.forEach((l, i) => {
+      const chave = chaveDaLinha(l, i); const cep = soDigitos(l["cep"]);
+      if (chave === focada || cep.length !== 8 || conferidos.current.get(chave) === cep) return;
+      conferidos.current.set(chave, cep);
+      const meu = (pedidosCep.current.get(chave) ?? 0) + 1; pedidosCep.current.set(chave, meu);
+      void consultarCep(cep).then((r) => {
+        if (pedidosCep.current.get(chave) !== meu || disRef.current || !r.municipio) return;
+        const agora = atuais(); const atual = agora.find((y, n) => chaveDaLinha(y, n) === chave);
+        if (!atual || soDigitos(atual["cep"]) !== cep || vazio(atual["city_id"])) return;
+        const m = r.municipio;
+        if (String(atual["city_id"]) === String(m.codigoIbge)) setResolvidos((x) => ({ ...x, [chave]: cep }));
+        else setDivergentes((x) => ({ ...x, [chave]: { cep, municipio: m } }));
+      }, (e: unknown) => { if (pedidosCep.current.get(chave) === meu) toast.info(mensagemFalhaCep(e)); });
+    });
+  // `atuais` lê o formulário na hora: a conferência segue as linhas e a edição
+  }, [linhas, ehEnderecos, dis]);
+  const divergenteDaLinha = (l: Values, chave: string) => {
+    const x = ehEnderecos && !dis ? divergentes[chave] : undefined;
+    if (!x || x.cep !== soDigitos(l["cep"])) return null;
+    return { ...x, aoUsar: () => { mudar(chave, "city_id", x.municipio.codigoIbge); setResolvidos((y) => ({ ...y, [chave]: x.cep })); setDivergentes((y) => { const { [chave]: _, ...resto } = y; return resto; }); } };
+  };
   const cepDaLinha = async (chave: string, forcar = false) => {
     if (!ehEnderecos || !campoCep || disRef.current) return;
     const antes = atuais(); const i = antes.findIndex((y, n) => chaveDaLinha(y, n) === chave); const l = antes[i];
     if (!l || travada(l, campoCep)) return;
     const cep = soDigitos(l["cep"]);
     if (cep.length !== 8 || (!forcar && ultimoCep.current.get(chave) === cep)) return;
-    ultimoCep.current.set(chave, cep);
+    ultimoCep.current.set(chave, cep); conferidos.current.set(chave, cep);
+    setDivergentes((y) => { if (!(chave in y)) return y; const { [chave]: _, ...resto } = y; return resto; });
     const meu = (pedidosCep.current.get(chave) ?? 0) + 1; pedidosCep.current.set(chave, meu);
     try {
       const r = await consultarCep(cep);
@@ -168,32 +221,83 @@ function GradeDeDetalhe({ d, form, dis, erros, mascaras }: { d: DetalheDef; form
       const aviso = avisoDeOutraCidade(cep, atual["city_id"], r.municipio);
       if (aviso) toast.info(`Linha ${k + 1}: ${aviso}`);
       set(agora.map((y, n) => (n === k ? novo : y)));
+      if (r.municipio) setResolvidos((x) => ({ ...x, [chave]: cep }));
       if (typeof document !== "undefined") {
-        const tr = [...document.querySelectorAll<HTMLElement>(`[data-testid="grade-${d.key}"] tr[data-chave-da-linha]`)].find((x) => x.dataset["chaveDaLinha"] === chave);
+        const el = [...document.querySelectorAll<HTMLElement>(`[data-testid="grade-${d.key}"] [data-chave-da-linha]`)].find((x) => x.dataset["chaveDaLinha"] === chave);
         const foco = document.activeElement;
-        if (tr && (!foco || foco === document.body || tr.contains(foco))) tr.querySelector<HTMLInputElement>('input[aria-label="Número"]')?.focus();
+        if (el && (!foco || foco === document.body || el.contains(foco))) el.querySelector<HTMLInputElement>('input[aria-label="Número"]')?.focus();
       }
+    } catch (e) { if (pedidosCep.current.get(chave) === meu) toast.info(mensagemFalhaCep(e)); }
+  };
+  const cepTravaCidade = (l: Values, chave: string) => ehEnderecos && resolvidos[chave] !== undefined && resolvidos[chave] === soDigitos(l["cep"]) && !divergenteDaLinha(l, chave);
+  // CEP digitado na busca da Cidade: vai para o CEP da linha e roda o fluxo completo (AJUSTES 02, 2.2)
+  const cepPelaCidade = (chave: string) => (cep: string) => { mudar(chave, "cep", cep); void cepDaLinha(chave, true); };
+  // FILIAIS (AJUSTES 02 · R1-B): CEP digitado na busca da Cidade de uma linha vai TAMBÉM para o CEP (zip_code) da linha
+  // e a cidade vem dele (consulta; resposta velha descartada; CEP não encontrado ou sem cidade → aviso, cidade intocada).
+  const ehFiliais = d.key === "filiais" && d.fields.some((f) => f.name === "zip_code") && d.fields.some((f) => f.name === "city_id" && f.busca === "municipios");
+  const cepDaFilial = (chave: string) => async (cep: string) => {
+    mudar(chave, "zip_code", cep);
+    const meu = (pedidosCep.current.get(chave) ?? 0) + 1; pedidosCep.current.set(chave, meu);
+    try {
+      const r = await consultarCep(cep);
+      if (pedidosCep.current.get(chave) !== meu || disRef.current) return;
+      const atual = atuais().find((y, n) => chaveDaLinha(y, n) === chave);
+      if (!atual || soDigitos(atual["zip_code"]) !== soDigitos(cep)) return;
+      if (r.municipio) mudar(chave, "city_id", r.municipio.codigoIbge);
+      else toast.info("A cidade deste CEP não foi encontrada; busque pelo nome.");
     } catch (e) { if (pedidosCep.current.get(chave) === meu) toast.info(mensagemFalhaCep(e)); }
   };
   const erroDaLinha = (i: number) => erros.filter((e) => e.detalhe === d.key && e.linha === i + 1);
   const mudar = (chave: string, campo: string, x: unknown) => set(atuais().map((y, n) => (chaveDaLinha(y, n) === chave ? { ...y, [campo]: x } : y)));
-  const celula = (l: Values, f: FieldDef, chave: string) => {
+  const incluir = () => set([...atuais(), linhaNovaDaGrade(Object.fromEntries(campos.map((f) => [f.name, f.default ?? (f.type === "boolean" ? false : "")])))]);
+  const remover = (chave: string) => set(atuais().filter((y, n) => chaveDaLinha(y, n) !== chave));
+  const noLimite = d.maxLinhas !== undefined && linhas.length >= d.maxLinhas ? { max: d.maxLinhas } : null;
+  // sair do CEP (clique fora, não a lupa do próprio CEP): consulta se o CEP da linha mudou
+  const aoSairDoCep = (chave: string) => (e: React.FocusEvent<HTMLElement>) => { if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return; void cepDaLinha(chave); };
+  const entradaCep = (l: Values, f: FieldDef, chave: string, bloqueada: boolean, className: string, id?: string) => <EntradaCep id={id} aria-label={f.label} data-cep-da-linha={chave} readOnly={bloqueada} className={className} value={String(l[f.name] ?? "")} onChange={(x) => mudar(chave, f.name, x)}
+    onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey) void cepDaLinha(chave); }} onBuscar={bloqueada ? undefined : () => void cepDaLinha(chave, true)} testIdLupa="cep-lupa-linha" />;
+
+  // CARTÕES (AJUSTES 02, 2.4): o corpo é o do bloco principal, na ordem e com os rótulos de BLOCO_*
+  const bloco = mascaras ? blocoDoDetalhe(d.key) : undefined;
+  if (bloco) {
+    const campoDoCartao = (l: Values, chave: string) => (parte: ParteDoBloco): React.ReactNode => {
+      if (parte.parteDe) return null; // Código IBGE, UF, Código do banco: desenhados pela busca, ao lado dela
+      const f = campos.find((x) => x.name === parte.adicional); if (!f) return null;
+      const bloqueada = travada(l, f); const id = `${d.key}-${chave}-${f.name}`; const valor = l[f.name];
+      const envolver: EnvolverParte = (p) => <B1Field key={p.parte} flex idDoControle={p.id} label={p.parte === "busca" ? parte.rotulo : p.rotulo} required={p.parte === "busca" && Boolean(f.required)} disabled={dis} locked={bloqueada || p.somenteLeitura} hasValue={p.hasValue} abaixo={p.abaixo}
+        className={p.parte === "busca" ? undefined : p.parte === "codigo" ? "min-w-[110px] max-w-[160px]" : "min-w-[64px] max-w-[80px]"}>{p.node}</B1Field>;
+      if (f.busca === "municipios") return <CampoCidade id={id} value={valor as number | string | null} onChange={(c) => mudar(chave, f.name, c ?? "")} disabled={bloqueada} classeEntrada={cn(CLS_B1, "h-6")} envolver={envolver}
+        travadaPeloCep={cepTravaCidade(l, chave)} cepDivergente={divergenteDaLinha(l, chave)} aoDigitarCep={ehEnderecos && campoCep && !travada(l, campoCep) ? cepPelaCidade(chave) : undefined} />;
+      if (f.busca) return <CampoReferenciaOficial id={id} referencia={f.busca} value={valor as string | number | null} onChange={(x) => mudar(chave, f.name, x ?? "")} disabled={bloqueada} classeEntrada={cn(CLS_B1, "h-6 justify-between")} envolver={envolver} />;
+      const on = (x: unknown) => mudar(chave, f.name, x);
+      const no = ehEnderecos && f.name === "cep" ? <span className="flex w-full" onBlur={aoSairDoCep(chave)}>{entradaCep(l, f, chave, bloqueada, CLS_B1, id)}</span>
+        : MASCARA_DA_GRADE[f.name] ? <EntradaMascara id={id} aria-label={parte.rotulo} mascara={MASCARA_DA_GRADE[f.name]!} readOnly={bloqueada} className={CLS_B1} value={String(valor ?? "")} onChange={on} />
+        : f.type === "boolean" ? <input id={id} type="checkbox" aria-label={parte.rotulo} disabled={bloqueada} className="accent-brand-500" checked={valor === true || valor === "true"} onChange={(e) => on(e.target.checked)} />
+        : f.type === "select" ? <NativeSelect id={id} aria-label={parte.rotulo} disabled={bloqueada} className={cn(CLS_B1, "h-6")} value={String(valor ?? "")} onChange={(e) => on(e.target.value)}><option value="" />{f.options?.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</NativeSelect>
+        : <Input id={id} aria-label={parte.rotulo} readOnly={bloqueada} className={CLS_B1} type={f.type === "email" ? "email" : numerico.includes(f.type) ? "number" : "text"} value={String(valor ?? "")} onChange={(e) => on(e.target.value)} />;
+      return <B1Field key={f.name} flex idDoControle={id} label={parte.rotulo} required={Boolean(f.required)} disabled={dis} locked={bloqueada} hasValue={f.type === "boolean" || !vazio(valor)}>{no}</B1Field>;
+    };
+    return <GradeDeCartoes bloco={bloco} titulo={d.label} podeIncluir={!dis && podeCriar} noLimite={noLimite} onIncluir={incluir} onRemover={remover}
+      cartoes={linhas.map((l, i) => { const chave = chaveDaLinha(l, i); return { chave, erros: erroDaLinha(i).map((e) => e.message), podeRemover: !dis && (!l[GRAVADA] || podeExcluir), campo: campoDoCartao(l, chave) }; })} />;
+  }
+
+  const colunas = campos.flatMap((f) => partesDaColuna(f).map((c) => ({ ...c, f })));
+  const celulas = (l: Values, f: FieldDef, chave: string) => {
     const bloqueada = travada(l, f);
-    if (ehEnderecos && f.name === "cep") return <EntradaCep aria-label={f.label} data-cep-da-linha={chave} readOnly={bloqueada} className="h-7 w-full min-w-[90px] rounded border px-1 text-[12.5px]" value={String(l[f.name] ?? "")} onChange={(x) => mudar(chave, f.name, x)}
-      onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey) void cepDaLinha(chave); }} onBuscar={bloqueada ? undefined : () => void cepDaLinha(chave, true)} testIdLupa="cep-lupa-linha" />;
-    return <CelulaDaGrade f={f} valor={l[f.name]} dis={bloqueada} mascaras={mascaras} onChange={(x) => mudar(chave, f.name, x)} />;
+    if (ehEnderecos && f.name === "cep") return <td key={f.name} className="px-1 py-0.5" onBlur={aoSairDoCep(chave)}>{entradaCep(l, f, chave, bloqueada, "h-7 w-full min-w-[90px] rounded border px-1 text-[12.5px]")}</td>;
+    // busca oficial: uma CÉLULA por parte (a busca e as caixas só leitura)
+    if (f.busca) return <CelulaDaGrade key={f.name} f={f} valor={l[f.name]} dis={bloqueada} mascaras={mascaras} aoDigitarCep={ehFiliais && f.name === "city_id" && !bloqueada && !travada(l, d.fields.find((x) => x.name === "zip_code")!) ? (cep) => void cepDaFilial(chave)(cep) : undefined} onChange={(x) => mudar(chave, f.name, x)} envolver={(p) => <td key={p.parte} className={cn("px-1 py-0.5", p.parte !== "busca" && "w-24")}>{p.node}{p.abaixo}</td>} />;
+    return <td key={f.name} className="px-1 py-0.5"><CelulaDaGrade f={f} valor={l[f.name]} dis={bloqueada} mascaras={mascaras} onChange={(x) => mudar(chave, f.name, x)} /></td>;
   };
   return <Card className="col-span-12 p-3" data-testid={`grade-${d.key}`}>
     <div className="mb-2 flex items-center justify-between"><h3 className={TITULO}>{d.label}</h3>
-      {!dis && podeCriar && <PillBtn tone="gray" onClick={() => set([...atuais(), linhaNovaDaGrade(Object.fromEntries(campos.map((f) => [f.name, f.default ?? (f.type === "boolean" ? false : "")])))])}><Plus className="h-3.5 w-3.5" /> Incluir linha</PillBtn>}</div>
+      {!dis && podeCriar && <PillBtn tone="gray" disabled={Boolean(noLimite)} title={noLimite ? `Limite de ${noLimite.max} alcançado.` : undefined} onClick={incluir}><Plus className="h-3.5 w-3.5" /> Incluir linha</PillBtn>}</div>
     {linhas.length === 0 ? <p className="text-[12px] text-slate-400">Nenhuma linha.</p> :
-      <div className="overflow-x-auto"><table className="w-full text-[12.5px]"><thead><tr>{campos.map((f) => <th key={f.name} className="px-1 text-left font-semibold text-slate-600">{f.label}{f.required && <span className="text-red-500"> *</span>}</th>)}<th /></tr></thead>
+      <div className="overflow-x-auto"><table className="w-full text-[12.5px]"><thead><tr>{colunas.map((c) => <th key={c.chave} className="px-1 text-left font-semibold text-slate-600">{c.rotulo}{c.f.required && !c.chave.endsWith(":codigo") && !c.chave.endsWith(":extra") && <span className="text-red-500"> *</span>}</th>)}<th /></tr></thead>
         <tbody>{linhas.map((l, i) => { const es = erroDaLinha(i); const chave = chaveDaLinha(l, i); return <React.Fragment key={chave}>
-          <tr className={cn(es.length > 0 && "bg-red-50")} data-testid={`linha-${d.key}-${i + 1}`} data-chave-da-linha={chave}>{campos.map((f) => <td key={f.name} className="px-1 py-0.5"
-            // sair da célula do CEP (clique fora, não a lupa da própria célula): consulta se o CEP da linha mudou
-            onBlur={ehEnderecos && f.name === "cep" ? (e) => { if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return; void cepDaLinha(chave); } : undefined}>{celula(l, f, chave)}</td>)}
-            <td>{!dis && (!l[GRAVADA] || podeExcluir) && <button type="button" aria-label={`Remover linha ${i + 1}`} className="rounded p-1 text-red-600 hover:bg-red-50" onClick={() => set(atuais().filter((y, n) => chaveDaLinha(y, n) !== chave))}><Trash2 className="h-3.5 w-3.5" /></button>}</td></tr>
-          {es.length > 0 && <tr><td colSpan={campos.length + 1} className="px-1 pb-1 text-[11px] text-red-600">Linha {i + 1}: {es.map((e) => e.message).join(" · ")}</td></tr>}
+          <tr className={cn(es.length > 0 && "bg-red-50")} data-testid={`linha-${d.key}-${i + 1}`} data-chave-da-linha={chave}>{campos.map((f) => celulas(l, f, chave))}
+            <td>{!dis && (!l[GRAVADA] || podeExcluir) && <button type="button" aria-label={`Remover linha ${i + 1}`} className="rounded p-1 text-red-600 hover:bg-red-50" onClick={() => remover(chave)}><Trash2 className="h-3.5 w-3.5" /></button>}</td></tr>
+          {es.length > 0 && <tr><td colSpan={colunas.length + 1} className="px-1 pb-1 text-[11px] text-red-600">Linha {i + 1}: {es.map((e) => e.message).join(" · ")}</td></tr>}
         </React.Fragment>; })}</tbody></table></div>}
   </Card>;
 }
@@ -205,7 +309,10 @@ function CamposDoPerfil({ p, form, dis }: { p: PerfilDef; form: UseFormReturn<Va
   const v = (form.watch(p.key) as Values | undefined) ?? {};
   if (!campos.length) return null;
   return <Card className="col-span-12 p-3"><h3 className={cn(TITULO, "mb-2")}>{p.label}</h3><div className="flex flex-wrap gap-3">
-    {campos.map((f) => <label key={f.name} className="min-w-[200px] flex-1 text-[12px]"><span className="block text-[11px] text-slate-500">{f.label}</span><CelulaDaGrade f={f} valor={v[f.name]} dis={dis} onChange={(x) => form.setValue(p.key, { ...v, [f.name]: x }, { shouldDirty: true })} /></label>)}
+    {campos.map((f) => { const on = (x: unknown) => form.setValue(p.key, { ...v, [f.name]: x }, { shouldDirty: true });
+      // busca oficial: uma caixa rotulada por PARTE (AJUSTES 02, 2.1)
+      if (f.busca) return <CelulaDaGrade key={f.name} f={f} valor={v[f.name]} dis={dis} onChange={on} envolver={(x) => <label key={x.parte} className={cn("text-[12px]", x.parte === "busca" ? "min-w-[200px] flex-1" : "w-28")}><span className="block text-[11px] text-slate-500">{x.parte === "busca" ? f.label : x.rotulo}</span>{x.node}{x.abaixo}</label>} />;
+      return <label key={f.name} className="min-w-[200px] flex-1 text-[12px]"><span className="block text-[11px] text-slate-500">{f.label}</span><CelulaDaGrade f={f} valor={v[f.name]} dis={dis} onChange={on} /></label>; })}
   </div></Card>;
 }
 
@@ -273,6 +380,9 @@ export function ConsultaCnpj({ form, dis }: { form: UseFormReturn<Values>; dis: 
 export function useCepDaFicha(form: UseFormReturn<Values>, ativo: boolean) {
   const cepAtual = soDigitos(form.watch("zip_code"));
   const ultimo = React.useRef<string>(cepAtual);
+  // CEP que MANDA na cidade (AJUSTES 02, 2.2): o último CEP que a consulta ENCONTROU nesta sessão, com cidade. A Cidade fica
+  // travada "pelo CEP" enquanto o CEP for esse; trocar ou limpar o CEP destrava. Registro aberto: livre até consultar.
+  const [resolvido, setResolvido] = React.useState<string | null>(null);
   const pedido = React.useRef(0);
   const ativoRef = React.useRef(ativo); ativoRef.current = ativo;
   React.useEffect(() => {
@@ -280,10 +390,35 @@ export function useCepDaFicha(form: UseFormReturn<Values>, ativo: boolean) {
     const foco = typeof document !== "undefined" ? (document.activeElement as HTMLInputElement | null) : null;
     if (foco?.name !== "zip_code") ultimo.current = cepAtual;
   }, [cepAtual]);
-  return React.useCallback(async (forcar = false) => {
+  // CONFERÊNCIA ao entrar em edição (AJUSTES 02 · R1-A): CEP de 8 dígitos já preenchido (registro carregado em edição,
+  // ou posto por fora) é consultado SEM preencher nada e SEM marcar alterado. Encontrado com a cidade gravada igual →
+  // trava "pelo CEP"; cidade gravada OUTRA → trava na gravada + aviso e "Usar a cidade do CEP"; cidade gravada vazia →
+  // nada (conferência não preenche; a cidade fica livre); falha → livre + o aviso de hoje. Leitura: nunca consulta.
+  const conferido = React.useRef<string | null>(null);
+  const [divergente, setDivergente] = React.useState<{ cep: string; municipio: Municipio } | null>(null);
+  React.useEffect(() => {
+    if (!ativo) { conferido.current = null; return; }
+    const foco = typeof document !== "undefined" ? (document.activeElement as HTMLInputElement | null) : null;
+    if (foco?.name === "zip_code" || cepAtual.length !== 8 || conferido.current === cepAtual) return;
+    conferido.current = cepAtual;
+    const cep = cepAtual; const meu = ++pedido.current;
+    void consultarCep(cep).then((r) => {
+      if (meu !== pedido.current || !ativoRef.current || soDigitos(form.getValues("zip_code")) !== cep || !r.municipio) return;
+      const gravada = form.getValues("city_id");
+      if (vazio(gravada)) return;
+      if (String(gravada) === String(r.municipio.codigoIbge)) setResolvido(cep);
+      else setDivergente({ cep, municipio: r.municipio });
+    }, (e: unknown) => { if (meu === pedido.current) toast.info(mensagemFalhaCep(e)); });
+  }, [ativo, cepAtual, form]);
+  const usarCidadeDoCep = React.useCallback(() => {
+    if (!divergente) return;
+    form.setValue("city_id", divergente.municipio.codigoIbge, { shouldDirty: true });
+    setResolvido(divergente.cep); setDivergente(null);
+  }, [divergente, form]);
+  const buscar = React.useCallback(async (forcar = false) => {
     const cep = soDigitos(form.getValues("zip_code"));
     if (!ativo || cep.length !== 8 || (!forcar && ultimo.current === cep)) return;
-    ultimo.current = cep;
+    ultimo.current = cep; conferido.current = cep; setDivergente(null);
     const meu = ++pedido.current;
     try {
       const r = await consultarCep(cep);
@@ -293,10 +428,15 @@ export function useCepDaFicha(form: UseFormReturn<Values>, ativo: boolean) {
       if (r.bairro) form.setValue("district", r.bairro, { shouldDirty: true });
       if (r.municipio) form.setValue("city_id", r.municipio.codigoIbge, { shouldDirty: true });
       if (r.complemento && vazio(form.getValues("complemento"))) form.setValue("complemento", r.complemento, { shouldDirty: true });
+      if (r.municipio) setResolvido(cep);
       if (aviso) toast.info(aviso);
       if (typeof document !== "undefined") document.querySelector<HTMLInputElement>('[name="address_number"]')?.focus();
     } catch (e) { if (meu === pedido.current) toast.info(mensagemFalhaCep(e)); }
   }, [ativo, form]);
+  // CEP digitado na busca da Cidade: vai para o campo CEP e roda o fluxo completo (a cidade nunca preenche o CEP)
+  const aoDigitarCep = React.useCallback((cep: string) => { form.setValue("zip_code", cep, { shouldDirty: true }); void buscar(true); }, [form, buscar]);
+  const cepDivergente = ativo && divergente && divergente.cep === cepAtual ? { ...divergente, aoUsar: usarCidadeDoCep } : null;
+  return { buscar, travadaPeloCep: resolvido !== null && resolvido === cepAtual && !cepDivergente, cepDivergente, aoDigitarCep };
 }
 
 /**
@@ -368,7 +508,9 @@ export function CriacaoPorOutraPorta({ def, base }: { def: ResourceDef; base: st
  */
 export type ControleDoCampo = (p: { dis: boolean; required?: boolean; onOpenChange?: (o: boolean) => void; padrao?: (extra: ExtraDoCampo) => React.ReactElement }) => React.ReactElement;
 /** Ajustes do controle de sempre: interceptar a troca (seletor), ligar o rótulo à caixa, recortar a lista da referência, tirar o X de limpar. */
-export interface ExtraDoCampo { aoMudar?: (v: string) => void; ligarRotulo?: boolean; excluirIds?: string[]; buscarOpcoes?: BuscaDeOpcoes; /** seletor: mostra o X de limpar (padrão: quando o campo não é obrigatório) */ permiteVazio?: boolean }
+export interface ExtraDoCampo { aoMudar?: (v: string) => void; ligarRotulo?: boolean; excluirIds?: string[]; buscarOpcoes?: BuscaDeOpcoes; /** seletor: mostra o X de limpar (padrão: quando o campo não é obrigatório) */ permiteVazio?: boolean;
+  /** Cidade (AJUSTES 02, 2.2): travada pelo CEP encontrado; CEP digitado na busca vai para o campo CEP */ travadaPeloCep?: boolean; aoDigitarCep?: (cep: string) => void;
+  /** R1-A: CEP gravado de outra cidade (aviso + "Usar a cidade do CEP") */ cepDivergente?: { cep: string; municipio: Municipio; aoUsar: () => void } | null }
 
 /**
  * Rótulo do valor no cabeçalho: opção do select pelo rótulo; documento com a MESMA máscara da caixa. Só a caixa do
@@ -437,7 +579,7 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   const semEdicao = (a: { permissaoDeEdicao?: string }) => Boolean(a.permissaoDeEdicao && !can(a.permissaoDeEdicao));
   const [ativa, setAtiva] = React.useState(abas[0]?.key ?? "");
   const cur = abas.some((a) => a.key === ativa) ? ativa : abas[0]?.key ?? "";
-  const buscarCep = useCepDaFicha(form, !readOnly);
+  const cepDaFicha = useCepDaFicha(form, !readOnly); const buscarCep = cepDaFicha.buscar;
   // contador de erros por aba: erros do servidor (com aba) + campos obrigatórios pendentes do formulário
   const contagem = new Map<string, number>();
   for (const e of erros) { const k = e.aba ?? abaDoCampo(def, e.path.split(".")[0] ?? ""); if (k) contagem.set(k, (contagem.get(k) ?? 0) + 1); }
@@ -513,7 +655,8 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
     if (f.name === "person_type") return ({ padrao }) => padrao!({ aoMudar: (v) => pedirTroca(v), permiteVazio: false });
     if (f.name === "zip_code") return ({ dis }) => <EntradaCep {...reg("zip_code")} readOnly={dis} className={cls} onKeyDown={(e) => { if (e.key === "Tab" && !e.shiftKey) void buscarCep(); }} onBuscar={dis ? undefined : () => void buscarCep(true)} />;
     if (["phone", "cellphone", "contact_phone"].includes(f.name)) return ({ dis }) => <EntradaMascara {...reg(f.name)} mascara="telefone" readOnly={dis} className={cls} />;
-    if (f.busca === "municipios") return ({ dis }) => <CampoCidade value={values[f.name] as number | string | null} onChange={(c) => form.setValue(f.name, c ?? "", { shouldDirty: true })} disabled={dis} classeEntrada={cls} />;
+    // Cidade do endereço principal: as PARTES do renderField (AJUSTES 02, 2.1), com a trava "pelo CEP" e o CEP digitado na busca (2.2)
+    if (f.name === "city_id") return ({ padrao }) => padrao!({ travadaPeloCep: cepDaFicha.travadaPeloCep, cepDivergente: cepDaFicha.cepDivergente, aoDigitarCep: readOnly ? undefined : cepDaFicha.aoDigitarCep });
     if (f.name === "matriz_id") return ({ padrao }) => padrao!({ ligarRotulo: true, buscarOpcoes: buscaDaMatriz(f), excluirIds: !isNew && record?.["id"] ? [String(record["id"])] : [] });
     return undefined;
   };
@@ -527,7 +670,14 @@ export function FichaEmAbas({ def, form, readOnly, isNew, record, erros, renderF
   const secao = (s: string) => {
     const fs = def.fields.filter((f) => f.section === s && visivel(f)); if (!fs.length) return null;
     const vistos = new Set<string>(); const nos: React.ReactNode[] = [];
-    for (const f of fs) {
+    // Endereço, Conta e Contato do Parceiro (AJUSTES 02, 2.4): o MESMO corpo do cartão adicional, na ordem de BLOCO_*; o
+    // que a seção tem além do bloco (E-mail para NF-e, Contato principal…) vem depois, na ordem do registry
+    const bloco = parceiro ? BLOCOS_DO_PARCEIRO.find((b) => b.secao === s) : undefined;
+    if (bloco) {
+      nos.push(<CorpoDoBloco key={`bloco-${bloco.detalhe}`} bloco={bloco} lado="principal" campo={(x) => { if (x.parteDe || !x.principal) return null; const f = fs.find((y) => y.name === x.principal); return f ? renderField(f.name, controle(f)) : null; }} />);
+    }
+    const doBloco = new Set(bloco ? bloco.corpo.map((x) => x.principal).filter((n): n is string => Boolean(n)) : []);
+    for (const f of fs.filter((y) => !doBloco.has(y.name))) {
       if (f.grupo) { if (!vistos.has(f.grupo)) { vistos.add(f.grupo); nos.push(grupo(f.grupo, fs.filter((x) => x.grupo === f.grupo))); } continue; }
       nos.push(f.camposJson ? <JsonComoCampos key={f.name} f={f} form={form} dis={readOnly} /> : renderField(f.name, controle(f)));
     }
