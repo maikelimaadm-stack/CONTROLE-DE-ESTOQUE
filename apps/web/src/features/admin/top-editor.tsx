@@ -1,4 +1,5 @@
 "use client";
+import { LinhaLayoutDocumentoTop } from "./tipos-operacao";
 import * as React from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
@@ -334,6 +335,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <Button data-testid="top-salvar" onClick={() => salvar.mutate()} disabled={!valido} loading={salvar.isPending}>{COPY.salvar}</Button>
       </>}
     >
+      {edicao && id && detalhe ? <div className="mb-2"><LinhaLayoutDocumentoTop tipoOperacaoId={id} familia={detalhe.familia.codigo} /></div> : null}
       <div role="tablist" aria-label="Seções do tipo de operação" className="mb-3 flex flex-wrap gap-1 border-b">
         {ABAS.map((a) => <button
           key={a.chave}

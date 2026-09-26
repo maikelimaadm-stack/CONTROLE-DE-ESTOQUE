@@ -45,7 +45,6 @@ const EXCECOES = {
   "packages/domain/src/tipo-operacao.ts": "é o dono da lista",
   "packages/plataforma/src/idiomas/pt-BR.ts": "o catálogo de rótulos tem uma chave `top.<codigo>` por família — é o par declarado do registry, não uma segunda lista de famílias",
   "scripts/familia-operacional-ssot-audit.mjs": "é este gate",
-  "packages/domain/src/layout-documento.ts": "declara o SUBCONJUNTO de famílias que têm layout de documento (VENDAS-A3-1) — espelhado pelo CHECK chk_layouts_documento_familia da 0032; não é a lista das famílias, que continua em tipo-operacao.ts"
 };
 
 /** Onde procurar: o runtime de produto. Teste, E2E e documentação ficam de fora pelo motivo do cabeçalho. */

@@ -52,7 +52,7 @@ function lerLinha(v: unknown): LayoutLinha {
   return {
     id: str(o.id), code: str(o.code ?? o.codigo), nome: str(o.nome), familia: str(o.familia),
     padrao: Boolean(o.padrao), ativo: Boolean(o.ativo ?? o.isActive ?? o.is_active),
-    topsLigadas: Number(o.topsLigadas ?? o.tops_ligadas ?? o.topsCount ?? o.tops_count ?? (Array.isArray(tops) ? tops.length : 0)) || 0
+    topsLigadas: Number(o.qtdTops ?? o.topsLigadas ?? o.tops_ligadas ?? o.topsCount ?? o.tops_count ?? (Array.isArray(tops) ? tops.length : 0)) || 0
   };
 }
 function lerDetalhe(v: unknown): LayoutDetalhe {
