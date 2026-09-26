@@ -41,12 +41,15 @@ test("UI-8 — Banco, NCM e CBO abertos SEM digitar mostram a lista (API real); 
 
   await page.goto("/cadastros/products/new");
   await page.getByRole("tab", { name: "Fiscal" }).click();
-  await abrirSemDigitar(page, "NCM");
+  // AJUSTES 02 (2.1): o campo virou PARTES — a busca é "Descrição do NCM"; "NCM" é a caixa só leitura do código
+  await expect(page.getByTestId("ref-ncm-codigo"), "a parte do código é só leitura").toHaveAttribute("readonly", "");
+  await abrirSemDigitar(page, "Descrição do NCM");
   v.abriuSemTexto("ncm");
   await page.keyboard.press("Escape");
 
   await page.goto("/cadastros/job_functions/new");
-  await abrirSemDigitar(page, "CBO");
+  await expect(page.getByTestId("ref-cbo-codigo")).toHaveAttribute("readonly", "");
+  await abrirSemDigitar(page, "Ocupação (CBO)");
   v.abriuSemTexto("cbo");
   await page.keyboard.press("Escape");
 
@@ -56,8 +59,14 @@ test("UI-8 — Banco, NCM e CBO abertos SEM digitar mostram a lista (API real); 
   v.abriuSemTexto("bancos");
   await painel(page).getByLabel("Pesquisar opção").fill("nubank");
   await expect(opcoes(page).first()).toHaveText(/^260 · /);
+  const nomeDo260 = (await opcoes(page).first().innerText()).replace(/^260 · /, "").trim();
+  expect(nomeDo260, "premissa: a opção traz o nome do banco").not.toBe("");
   await opcoes(page).first().click();
-  await expect(page.getByLabel("Banco", { exact: true })).toContainText("260");
+  // AJUSTES 02 (2.1): o código vai para a parte "Código do banco" (só leitura); a caixa Banco mostra SÓ o nome
+  await expect(page.getByTestId("ref-bancos-codigo")).toHaveValue("260");
+  await expect(page.getByLabel("Código do banco", { exact: true })).toHaveValue("260");
+  await expect(page.getByTestId("ref-bancos-busca"), "a caixa Banco mostra o nome da opção escolhida").toContainText(nomeDo260);
+  await expect(page.getByTestId("ref-bancos-busca"), "a caixa do nome nunca mostra o código").not.toContainText("260");
   v.semErro();
 });
 
@@ -229,48 +238,108 @@ test("UI-2 — lista de Parceiros → Novo pelo CNPJ → Importar → parceiro N
 });
 
 // ───────────────────────────── UI-3 ─────────────────────────────
-test("UI-3 — Cidade: nome, CEP (1ª opção) e Código IBGE; UF só leitura (lista de municípios REAL); resposta do Código IBGE fora de ordem descartada", async ({ page }) => {
+/**
+ * Cidade do ENDEREÇO PRINCIPAL. AJUSTES 02 (2.1): as partes Cidade · Código IBGE · UF são B1Fields irmãos (sem o
+ * contêiner `campo-cidade`); os adicionais moram em cartões dentro de `grade-enderecos`. O principal é a parte que
+ * NÃO está dentro da grade — e a premissa de unicidade é conferida, para o `.first()` nunca esconder um segundo.
+ */
+function cidadePrincipal(page: Page) {
+  const fora = (t: string) => page.locator(`[data-testid="${t}"]:not([data-testid="grade-enderecos"] [data-testid="${t}"])`);
+  return { busca: fora("cidade-busca"), ibge: fora("cidade-ibge"), uf: fora("cidade-uf"), peloCep: fora("cidade-pelo-cep"), aviso: fora("cidade-aviso") };
+}
+
+test("UI-3 — Cidade: nome, Código IBGE e CEP na BUSCA; Código IBGE e UF só leitura (lista de municípios REAL); CEP na busca vai para o campo CEP; resposta do código fora de ordem descartada", async ({ page }) => {
   await login(page);
   await mockCep(page);
   await page.goto("/cadastros/people/new");
   await aba(page, "Endereço").click();
-  const cidade = page.getByTestId("campo-cidade").first();
-  await cidade.getByTestId("cidade-busca").click();
+  const cidade = cidadePrincipal(page);
+  await expect(cidade.busca, "premissa: uma única Cidade principal").toHaveCount(1);
+  // AJUSTES 02 (2.1): Código IBGE e UF são SEMPRE só leitura (antes o Código IBGE era digitável)
+  await expect(cidade.ibge).toHaveAttribute("readonly", "");
+  await expect(cidade.uf).toHaveAttribute("readonly", "");
+  // por NOME (lista real)
+  await cidade.busca.click();
   await painel(page).getByLabel("Pesquisar opção").fill("pontes");
   await expect(opcoes(page).filter({ hasText: "5106752 · Pontes e Lacerda - MT" })).toHaveCount(1);
+  await opcoes(page).filter({ hasText: "5106752 · Pontes e Lacerda - MT" }).click();
+  await expect(cidade.ibge).toHaveValue("5106752");
+  await expect(cidade.uf).toHaveValue("MT");
+  // a caixa Cidade mostra SÓ o nome (a UF tem caixa própria; o código nunca aparece nela)
+  await expect(cidade.busca).toContainText("Pontes e Lacerda");
+  await expect(cidade.busca).not.toContainText(" - MT");
+  await expect(cidade.busca).not.toContainText("5106752");
+  // por CÓDIGO IBGE digitado na BUSCA (substitui o antigo "digitar no Código IBGE", que agora é só leitura)
+  await cidade.busca.click();
+  await painel(page).getByLabel("Pesquisar opção").fill("5103403");
+  await expect(opcoes(page).filter({ hasText: "5103403 · Cuiabá - MT" })).toHaveCount(1);
+  await opcoes(page).filter({ hasText: "5103403 · Cuiabá - MT" }).click();
+  await expect(cidade.busca).toContainText("Cuiabá");
+  await expect(cidade.ibge).toHaveValue("5103403");
+  await expect(cidade.uf).toHaveValue("MT");
+  // código INEXISTENTE na busca: nenhuma opção, e o valor NÃO muda (nem ao sair)
+  await cidade.busca.click();
+  await painel(page).getByLabel("Pesquisar opção").fill("9999999");
+  await expect(painel(page)).toContainText("Nenhum resultado");
+  await expect(opcoes(page)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(cidade.ibge, "inexistente: o valor continua a cidade atual").toHaveValue("5103403");
+  await expect(cidade.busca, "o texto nunca diz outra cidade").toContainText("Cuiabá");
+  // código PARCIAL na busca: sair sem escolher não muda o valor
+  await cidade.busca.click();
+  await painel(page).getByLabel("Pesquisar opção").fill("51067");
+  await page.keyboard.press("Escape");
+  await expect(cidade.ibge, "parcial: o valor continua a cidade atual").toHaveValue("5103403");
+  await expect(cidade.busca).toContainText("Cuiabá");
+  // R1 (W-8): resposta FORA DE ORDEM é descartada. A consulta do código A é ATRASADA (a API real responde, só depois);
+  // o código B, digitado logo em seguida, responde primeiro. As opções e a cidade final são as de B — a resposta velha de A não entra.
+  const [codigoA, codigoB] = ["5106752", "5105507"]; // Pontes e Lacerda (atrasada) × Vila Bela da Santíssima Trindade
+  const caminhoA = `/api/referencias/municipios/${codigoA}`;
+  // o valor atual (Cuiabá) é conhecido; só a consulta do código digitado vai a este caminho
+  await page.route((u) => u.pathname === caminhoA, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue(); });
+  const pedidoA = page.waitForRequest((r) => new URL(r.url()).pathname === caminhoA);
+  const respostaA = page.waitForResponse((r) => new URL(r.url()).pathname === caminhoA);
+  await cidade.busca.click();
+  await painel(page).getByLabel("Pesquisar opção").fill(codigoA);
+  await pedidoA; // premissa: a consulta de A saiu (e está presa)
+  await painel(page).getByLabel("Pesquisar opção").fill(codigoB);
+  await expect(opcoes(page).filter({ hasText: `${codigoB} · Vila Bela da Santíssima Trindade - MT` })).toHaveCount(1);
+  expect((await respostaA).status(), "premissa: a resposta atrasada de A chegou (e é a API real: 200)").toBe(200);
+  await page.waitForTimeout(500);
+  await expect(opcoes(page).filter({ hasText: "Pontes e Lacerda" }), "a resposta velha de A não entra nas opções de B").toHaveCount(0);
+  await opcoes(page).filter({ hasText: `${codigoB} · Vila Bela da Santíssima Trindade - MT` }).click();
+  await expect(cidade.busca).toContainText("Vila Bela da Santíssima Trindade");
+  await expect(cidade.ibge).toHaveValue(codigoB);
+  // AJUSTES 02 (2.2): CEP digitado na BUSCA da Cidade do principal vai para o campo CEP, que consulta e preenche tudo
+  // (antes virava a 1ª opção da lista; esse comportamento continua só onde não há campo CEP que o receba — ver UI-3b)
+  await cidade.busca.click();
+  await painel(page).getByLabel("Pesquisar opção").fill("78250-000");
+  await expect(page.getByLabel("CEP", { exact: true }), "o CEP digitado na busca foi para o campo CEP").toHaveValue("78250-000");
+  await expect(cidade.ibge).toHaveValue("5106752");
+  await expect(cidade.uf).toHaveValue("MT");
+  await expect(cidade.busca).toContainText("Pontes e Lacerda");
+  await expect(page.locator('input[name="address"]')).toHaveValue("Avenida Marechal Rondon");
+  await expect(cidade.peloCep, "CEP encontrado trava a Cidade com a marca \"pelo CEP\"").toBeVisible();
+});
+
+test("UI-3b — Cidade SEM campo CEP que a receba (Filiais do fornecedor): CEP digitado na busca é a 1ª opção e escolhe a cidade do CEP", async ({ page }) => {
+  await login(page);
+  await mockCep(page);
+  const p = await criarParceiro(page, { name: uniq("UI-3b fornecedor"), is_provider: true });
+  await page.goto(`/cadastros/people/${p.id}`);
+  await editar(page);
+  await aba(page, "Fornecedor").click();
+  const filiais = page.getByTestId("grade-filiais");
+  await filiais.getByRole("button", { name: "Incluir linha" }).click();
+  const filial = page.getByTestId("linha-filiais-1");
+  await filial.getByTestId("cidade-busca").click();
   await painel(page).getByLabel("Pesquisar opção").fill("78250-000");
   await expect(opcoes(page).first()).toHaveText("CEP 78250-000 → 5106752 · Pontes e Lacerda - MT");
   await opcoes(page).first().click();
-  await expect(cidade.getByTestId("cidade-ibge")).toHaveValue("5106752");
-  await expect(cidade.getByTestId("cidade-uf")).toHaveValue("MT");
-  await expect(cidade.getByTestId("cidade-uf")).toHaveAttribute("readonly", "");
-  await cidade.getByTestId("cidade-ibge").fill("5103403");
-  await expect(cidade.getByTestId("cidade-busca")).toContainText("Cuiabá - MT");
-  await expect(cidade.getByTestId("cidade-uf")).toHaveValue("MT");
-  await cidade.getByTestId("cidade-ibge").fill("9999999");
-  await expect(cidade).toContainText("Código IBGE não encontrado.");
-  await expect(cidade.getByTestId("cidade-busca"), "código inexistente não muda o valor").toContainText("Cuiabá - MT");
-  // R1 (W-8): ao SAIR com código inexistente ou parcial, a caixa volta à cidade atual (o texto nunca diz outra cidade)
-  await cidade.getByTestId("cidade-ibge").press("Tab");
-  await expect(cidade.getByTestId("cidade-ibge"), "inexistente: volta à cidade atual ao sair").toHaveValue("5103403");
-  await expect(cidade).not.toContainText("Código IBGE não encontrado.");
-  await cidade.getByTestId("cidade-ibge").fill("51067");
-  await cidade.getByTestId("cidade-ibge").press("Tab");
-  await expect(cidade.getByTestId("cidade-ibge"), "parcial: volta à cidade atual ao sair").toHaveValue("5103403");
-  await expect(cidade.getByTestId("cidade-busca")).toContainText("Cuiabá - MT");
-  // R1 (W-8): resposta FORA DE ORDEM é descartada. A consulta do código A é ATRASADA (a API real responde, só depois);
-  // o código B, digitado logo em seguida, responde primeiro. A cidade final é a de B — a resposta velha de A não a troca.
-  const [codigoA, codigoB] = ["5106752", "5105507"]; // Pontes e Lacerda (atrasada) × Vila Bela da Santíssima Trindade
-  const caminhoA = `/api/referencias/municipios/${codigoA}`;
-  await page.route((u) => u.pathname === caminhoA, async (route) => { await new Promise((r) => setTimeout(r, 1500)); await route.continue(); });
-  const respostaA = page.waitForResponse((r) => new URL(r.url()).pathname === caminhoA);
-  await cidade.getByTestId("cidade-ibge").fill(codigoA);
-  await cidade.getByTestId("cidade-ibge").fill(codigoB);
-  await expect(cidade.getByTestId("cidade-busca")).toContainText("Vila Bela da Santíssima Trindade - MT");
-  expect((await respostaA).status(), "premissa: a resposta atrasada de A chegou (e é a API real: 200)").toBe(200);
-  await page.waitForTimeout(500);
-  await expect(cidade.getByTestId("cidade-busca"), "a resposta velha de A não sobrescreve a cidade de B").toContainText("Vila Bela da Santíssima Trindade - MT");
-  await expect(cidade.getByTestId("cidade-ibge")).toHaveValue(codigoB);
+  await expect(filial.getByTestId("cidade-ibge")).toHaveValue("5106752");
+  await expect(filial.getByTestId("cidade-uf")).toHaveValue("MT");
+  await expect(filial.getByTestId("cidade-ibge")).toHaveAttribute("readonly", "");
+  await expect(filial.getByTestId("cidade-uf")).toHaveAttribute("readonly", "");
 });
 
 // ───────────────────────────── UI-4 ─────────────────────────────
@@ -288,26 +357,38 @@ test("UI-4 — CEP + Tab preenche Endereço, Bairro, Cidade, IBGE e UF; foco no 
   await expect(page.locator('input[name="address"]')).toHaveValue("Avenida Marechal Rondon");
   await expect(page.locator('input[name="district"]')).toHaveValue("Centro");
   await expect(page.locator('input[name="complemento"]'), "complemento vazio recebe o do CEP").toHaveValue("até 999");
-  const cidade = page.getByTestId("campo-cidade").first();
-  await expect(cidade.getByTestId("cidade-ibge")).toHaveValue("5106752");
-  await expect(cidade.getByTestId("cidade-uf")).toHaveValue("MT");
-  await expect(cidade.getByTestId("cidade-busca")).toContainText("Pontes e Lacerda - MT");
+  const cidade = cidadePrincipal(page);
+  await expect(cidade.ibge).toHaveValue("5106752");
+  await expect(cidade.uf).toHaveValue("MT");
+  // AJUSTES 02 (2.1): a caixa Cidade mostra SÓ o nome ("Pontes e Lacerda"); a UF está na caixa própria
+  await expect(cidade.busca).toContainText("Pontes e Lacerda");
+  await expect(cidade.busca).not.toContainText(" - MT");
+  // AJUSTES 02 (2.2): CEP encontrado trava a Cidade "pelo CEP"
+  await expect(cidade.peloCep).toBeVisible();
   await expect(page.locator('[name="address_number"]')).toBeFocused();
   // CEP de outra cidade: troca e avisa; complemento já preenchido não é sobrescrito
   await cep.fill("78245-000");
   await cep.press("Tab");
   await expect(page.getByText("CEP 78245-000 é de Vila Bela da Santíssima Trindade - MT")).toBeVisible();
-  await expect(cidade.getByTestId("cidade-ibge")).toHaveValue("5105507");
+  await expect(cidade.ibge).toHaveValue("5105507");
+  await expect(cidade.busca).toContainText("Vila Bela da Santíssima Trindade");
+  await expect(cidade.peloCep).toBeVisible();
   await expect(page.locator('input[name="complemento"]')).toHaveValue("até 999");
   // Outros endereços (R1, W-8): a MESMA lógica do principal — lupa no CEP da linha e foco no Número da linha
+  // AJUSTES 02 (2.4): Outros endereços são CARTÕES — "Incluir endereço" (testid incluir-enderecos)
   const grade = page.getByTestId("grade-enderecos");
-  await grade.getByRole("button", { name: "Incluir linha" }).click();
+  await expect(grade.getByTestId("incluir-enderecos")).toHaveText(/Incluir endereço/);
+  await grade.getByTestId("incluir-enderecos").click();
   const linha = page.getByTestId("linha-enderecos-1");
   await expect(linha.getByTestId("cep-lupa-linha"), "a linha tem a lupa do CEP").toBeVisible();
   await linha.getByLabel("CEP", { exact: true }).fill("78250000");
   await expect(linha.getByLabel("CEP", { exact: true })).toHaveValue("78250-000");
   await linha.getByLabel("CEP", { exact: true }).press("Tab");
   await expect(linha.getByTestId("cidade-ibge")).toHaveValue("5106752");
+  await expect(linha.getByTestId("cidade-uf")).toHaveValue("MT");
+  await expect(linha.getByTestId("cidade-busca")).toContainText("Pontes e Lacerda");
+  await expect(linha.getByTestId("cidade-pelo-cep"), "o cartão também trava a Cidade pelo CEP").toBeVisible();
+  await expect(cidade.ibge, "o CEP do cartão não mexe no principal").toHaveValue("5105507");
   // T-4: antes, uma conferência vazia (`filter({ hasText: "" })` acha qualquer input); agora o que o usuário vê
   await expect(linha.getByLabel("Endereço", { exact: true }), "o logradouro do CEP na PRÓPRIA linha").toHaveValue("Avenida Marechal Rondon");
   await expect(linha.getByLabel("Bairro", { exact: true })).toHaveValue("Centro");
@@ -981,14 +1062,15 @@ test("UI-18c (W-8) — grade de endereços: o preenchimento pelo CEP grava pela 
   await editar(page);
   await aba(page, "Endereço").click();
   const grade = page.getByTestId("grade-enderecos");
-  await grade.getByRole("button", { name: "Incluir linha" }).click();
-  await grade.getByRole("button", { name: "Incluir linha" }).click();
+  // AJUSTES 02 (2.4): cartões — "Incluir endereço" / "Remover endereço N"
+  await grade.getByTestId("incluir-enderecos").click();
+  await grade.getByTestId("incluir-enderecos").click();
   await page.getByTestId("linha-enderecos-2").getByLabel("Endereço", { exact: true }).fill("Linha que fica");
   const primeira = page.getByTestId("linha-enderecos-1");
   await primeira.getByLabel("CEP", { exact: true }).fill("78250000");
   await primeira.getByLabel("CEP", { exact: true }).press("Tab");
   await expect.poll(() => chamadas.length, { message: "premissa: a consulta da 1ª linha saiu" }).toBe(1);
-  await grade.getByRole("button", { name: "Remover linha 1" }).click();
+  await grade.getByRole("button", { name: "Remover endereço 1", exact: true }).click();
   await expect(page.getByTestId("linha-enderecos-2")).toHaveCount(0);
   await page.waitForTimeout(2200); // a resposta atrasada chega aqui
   await expect(page.getByTestId("linha-enderecos-1").getByLabel("Endereço", { exact: true }), "a resposta da linha excluída não caiu na vizinha").toHaveValue("Linha que fica");
