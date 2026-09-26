@@ -24,6 +24,7 @@ import { DomainError } from "@agro/shared";
 import { notFound, validation } from "./errors.js";
 import type { ServiceCtx } from "./context.js";
 import { abaDe, detalheDoErro } from "./ficha-em-abas.js";
+import { cepOuCidadeMudou, divergenciaCepCidade } from "./cep-da-cidade.js";
 
 export const TIPOS_DE_PARCEIRO = ["is_client", "is_provider", "is_transporter", "is_employee", "is_proprietary"] as const;
 export const MSG_SEM_TIPO = "Marque pelo menos um tipo: Cliente, Fornecedor, Transportadora, Funcionário ou Proprietário.";
@@ -65,6 +66,7 @@ export async function conferirParceiro(ctx: ServiceCtx, def: ResourceDef, id: st
 
   await conferirCamposDoTipoDePessoa(ctx, def, id, data, atual);
   conferirCoordenadas(def, data, atual);
+  await conferirCepDaCidadePrincipal(ctx, def, data, atual);
 
   // Documento e tipo só são conferidos quando o corpo manda um dos dois: um PUT que não mexe em nenhum não é
   // recusado por dado antigo (o parceiro gravado antes da regra só é cobrado quando alguém mexer no tipo ou no
@@ -166,6 +168,19 @@ async function conferirMatriz(ctx: ServiceCtx, proprio: string | null, matriz: s
     const f = await ctx.tx.query("select 1 from erp.people where organization_id = $1 and matriz_id = $2 and deleted_at is null limit 1", [ctx.orgId, proprio]);
     if (f.rowCount) throw erro("Este parceiro é matriz de outros parceiros e não pode ser filial.");
   }
+}
+
+/**
+ * CEP × CIDADE do endereço principal (AJUSTES 02): só quando o CEP ou a cidade MUDAM nesta gravação (criação com os
+ * dois preenchidos conta como mudança). PUT que não toca no par não é cobrado por dado antigo. Erro na CIDADE.
+ */
+async function conferirCepDaCidadePrincipal(ctx: ServiceCtx, def: ResourceDef, data: Linha, atual: Linha | null) {
+  if (!def.fields.some((f) => f.name === "zip_code") || !def.fields.some((f) => f.name === "city_id")) return;
+  if (atual !== null && !("zip_code" in data) && !("city_id" in data)) return;
+  const novo = { cep: valor(data, atual, "zip_code"), cityId: valor(data, atual, "city_id") };
+  if (!cepOuCidadeMudou(novo, atual === null ? null : { cep: atual["zip_code"], cityId: atual["city_id"] })) return;
+  const d = await divergenciaCepCidade(ctx, [novo]);
+  if (d) throw validation(d.mensagem, [{ path: "city_id", message: d.mensagem, aba: abaDe(def, { campo: "city_id" }) }]);
 }
 
 /** Latitude e longitude andam juntas, no principal e em cada endereço adicional; faixas −90..90 e −180..180. */

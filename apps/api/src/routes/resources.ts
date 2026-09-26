@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getResource, RESOURCES, tipoEntidadeDaTabela, type FieldDef, type ResourceDef } from "@agro/domain";
+import { getResource, getReferencia, nomeDoMunicipio, partesDaReferencia, RESOURCES, tipoEntidadeDaTabela, type ChaveReferencia, type FieldDef, type ResourceDef } from "@agro/domain";
 import { isISODate, parseFilterKey, filterKindOf, isValidOperator, decodeRange, decodeList, relativeDateRange } from "@agro/shared";
 import { ident, SqlBuilder } from "../lib/sql.js";
 import { pageQuerySchema, extractFilters } from "../lib/pagination.js";
@@ -250,7 +250,37 @@ async function refLabels(ctx: ServiceCtx, def: ResourceDef, rows: Record<string,
     parts.push(`select ${lb.add(f.name)}::text as f, id::text as id, ${ident(rdef.labelField)}::text as label from erp.${ident(rdef.table)} where id = any(${lb.add(ids)}::uuid[])`);
   }
   if (parts.length) { const lr = await ctx.tx.query<{ f: string; id: string; label: string }>(parts.join(" union all "), lb.params); for (const r of lr.rows) (labels[r.f] ??= {})[r.id] = r.label; }
-  return rows.map((r) => { const o: Record<string, string | null> = {}; for (const f of refs) { const v = r[f.name] as string | null; o[`${f.name}_label`] = v ? labels[f.name]?.[v] ?? null : null; } return o; });
+  const nomes = await nomesDasBuscas(ctx, def, rows);
+  return rows.map((r, i) => { const o: Record<string, string | null> = {}; for (const f of refs) { const v = r[f.name] as string | null; o[`${f.name}_label`] = v ? labels[f.name]?.[v] ?? null : null; } return { ...o, ...nomes[i] }; });
+}
+
+/**
+ * NOME DAS BUSCAS OFICIAIS (AJUSTES 02): `<campo>_nome` para todo campo com `busca` (município, banco, NCM, CBO) —
+ * município "Pontes e Lacerda - MT", os demais só o nome (partes do domínio, nunca recorte do rótulo). UMA consulta
+ * por referência (não por linha nem por campo); tabela e colunas saem da whitelist `getReferencia`. Código ausente ou
+ * inexistente → null. Campo sigiloso que o usuário não vê não ganha `_nome` (o nome revelaria o valor).
+ */
+async function nomesDasBuscas(ctx: ServiceCtx, def: ResourceDef, rows: Record<string, unknown>[]): Promise<Record<string, string | null>[]> {
+  const campos = def.fields.filter((f) => f.busca && getReferencia(f.busca) && podeVerCampo(ctx, f));
+  const nomes = new Map<string, Map<string, string | null>>();
+  for (const chave of [...new Set(campos.map((f) => f.busca as ChaveReferencia))]) {
+    const ref = getReferencia(chave)!;
+    const padrao = new RegExp(ref.padraoCodigo);
+    const codigos = [...new Set(campos.filter((f) => f.busca === chave).flatMap((f) => rows.map((r) => r[f.name])).filter((v) => v !== null && v !== undefined).map(String).filter((v) => padrao.test(v)))];
+    if (!codigos.length) continue;
+    const extra = ref.colunaExtra ? `${ident(ref.colunaExtra)}::text` : "null::text";
+    const r = await ctx.tx.query<{ codigo: string; nome: string | null; extra: string | null }>(
+      `select ${ident(ref.colunaCodigo)}::text as codigo, ${ident(ref.colunaNome)}::text as nome, ${extra} as extra from erp.${ident(ref.tabela)} where ${ident(ref.colunaCodigo)} = any($1::${ref.codigoInteiro ? "int" : "text"}[])`,
+      [ref.codigoInteiro ? codigos.map(Number) : codigos]);
+    const m = new Map<string, string | null>();
+    for (const x of r.rows) { const p = partesDaReferencia(chave, { codigo: x.codigo, nome: x.nome, extra: x.extra }); m.set(x.codigo, chave === "municipios" ? nomeDoMunicipio(p) : p.nome); }
+    nomes.set(chave, m);
+  }
+  return rows.map((r) => {
+    const o: Record<string, string | null> = {};
+    for (const f of campos) { const v = r[f.name]; o[`${f.name}_nome`] = v === null || v === undefined ? null : nomes.get(f.busca!)?.get(String(v)) ?? null; }
+    return o;
+  });
 }
 
 export async function getOne(ctx: ServiceCtx, def: ResourceDef, id: string) {
