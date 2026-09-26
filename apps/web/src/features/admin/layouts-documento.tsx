@@ -384,6 +384,8 @@ function ConfigurarCampo({ parte, valor, catalogo, onFechar, onAplicar }: {
   const aceitaLiteral = ["data", "texto", "texto_longo", "numero", "booleano"].includes(tipo);
   const variavel = tipo === "data" ? "data_atual" as const : tipo === "empresa" ? "empresa_selecionada" as const : null;
   const somenteLeitura = Boolean(catalogo?.somenteLeitura);
+  /** R1: o corpo sempre leva valor ("0", false, plano derivado) — o domínio recusa "obrigatório" nele. */
+  const sempreTemValor = Boolean(catalogo?.sempreTemValor);
 
   const aplicar = () => {
     const r = rotulo.trim() ? { rotulo: rotulo.trim() } : {};
@@ -400,8 +402,8 @@ function ConfigurarCampo({ parte, valor, catalogo, onFechar, onAplicar }: {
       <Field label="Rótulo" span={12} help={catalogo ? `Vazio = "${catalogo.rotulo}".` : undefined}>
         <Input data-testid="layout-cfg-rotulo" value={rotulo} onChange={(e) => setRotulo(e.target.value)} />
       </Field>
-      <Field label="Obrigatório" span={6}>
-        <NativeSelect data-testid="layout-cfg-obrigatorio" value={obrigatorio ? "true" : "false"} disabled={somenteLeitura} onChange={(e) => setObrigatorio(e.target.value === "true")}>
+      <Field label="Obrigatório" span={6} help={sempreTemValor ? "Sempre tem valor" : undefined}>
+        <NativeSelect data-testid="layout-cfg-obrigatorio" value={obrigatorio ? "true" : "false"} disabled={somenteLeitura || sempreTemValor} onChange={(e) => setObrigatorio(e.target.value === "true")}>
           <option value="false">Não</option><option value="true">Sim</option>
         </NativeSelect>
       </Field>

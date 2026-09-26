@@ -44,23 +44,18 @@ function RotuloFamilia({ familia }: { familia: Familia }) {
   return <span>{familia.rotulo} <span className="text-[11px] text-slate-400">{familia.codigo}</span></span>;
 }
 
-/**
- * Variante da rota de vendas a partir da família (`vendas.<x>`). Só famílias com layout (`familiaTemLayout`);
- * as outras não têm layout de documento e a linha não aparece.
- */
-const VARIANTE_POR_SUFIXO: Record<string, string> = { orcamento: "budgets", pedido: "orders", venda: "sales" };
-const varianteDaFamilia = (codigo: string) => (familiaTemLayout(codigo) ? VARIANTE_POR_SUFIXO[codigo.split(".")[1] ?? ""] ?? null : null);
 const ORIGEM_LAYOUT: Record<string, string> = { ligado: "ligado", padrao_da_familia: "padrão da família", sistema: "do sistema" };
 
 /** Linha SÓ DE LEITURA: qual layout a Central usa para esta TOP (servidor resolve: ligado → padrão → sistema). */
 export function LinhaLayoutDocumentoTop({ tipoOperacaoId, familia }: { tipoOperacaoId: string; familia: string }) {
-  const variante = varianteDaFamilia(familia);
+  // R1: porta de Configurações (tipos_operacao.view, TOP ativa ou inativa) — não a de vendas, que exige lançar venda.
+  const temLayout = familiaTemLayout(familia);
   const q = useQuery({
-    queryKey: ["layouts-documento", "efetivo", variante, tipoOperacaoId],
-    queryFn: () => api<{ nome?: string | null; origem?: string }>(`/api/sales/${variante}/layout-efetivo${qs({ tipo_operacao_id: tipoOperacaoId })}`),
-    enabled: !!variante
+    queryKey: ["layouts-documento", "efetivo", tipoOperacaoId],
+    queryFn: () => api<{ nome?: string | null; origem?: string }>(`/api/admin/layouts-documento/efetivo${qs({ tipoOperacaoId })}`),
+    enabled: temLayout
   });
-  if (!variante) return null;
+  if (!temLayout) return null;
   const nome = q.data?.nome || (q.data?.origem === "sistema" ? "Layout do sistema" : "—");
   return <p data-testid="top-layout-documento" data-origem={q.data?.origem ?? ""} className="text-[12.5px] text-slate-700">
     Layout do documento: {q.isLoading ? "…" : q.isError ? "indisponível" : <>{nome} <span className="text-slate-500">({ORIGEM_LAYOUT[q.data?.origem ?? ""] ?? q.data?.origem ?? "—"})</span></>}
@@ -164,7 +159,7 @@ export function TiposOperacaoPanel() {
               trigger={<Button variant="ghost" size="sm" aria-label={COPY.maisOpcoes}>⋯</Button>}
               items={[
                 { label: "Ver versões", onClick: () => setVendoVersoes(r) },
-                ...(varianteDaFamilia(r.familia.codigo) ? [{ label: "Layout do documento", onClick: () => setVendoLayout(r) }] : []),
+                ...(familiaTemLayout(r.familia.codigo) ? [{ label: "Layout do documento", onClick: () => setVendoLayout(r) }] : []),
                 { label: "Editar", onClick: () => setEditando(r), disabled: !podeEditar },
                 { label: r.ativo ? "Desativar" : "Ativar", disabled: !podeEditar, onClick: () => mudarEstado.mutate({ t: r, campos: { ativo: !r.ativo } }) },
                 { label: "Definir como padrão", disabled: !podeEditar || r.padrao || !r.ativo, onClick: () => mudarEstado.mutate({ t: r, campos: { padrao: true } }) },
