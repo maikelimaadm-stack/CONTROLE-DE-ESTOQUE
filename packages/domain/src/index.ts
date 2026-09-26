@@ -18,5 +18,6 @@ export * from "./tipo-operacao-execucao.js";
 export * from "./sales.js";
 export * from "./codigo-hierarquico.js";
 export * from "./condicao-pagamento.js";
+export * from "./layout-documento.js";
 export * from "./documento.js";
 export * from "./resources/index.js";
