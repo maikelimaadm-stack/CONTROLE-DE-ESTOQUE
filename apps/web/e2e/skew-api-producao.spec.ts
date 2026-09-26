@@ -1989,3 +1989,166 @@ test("VENDAS-A3-1 · LD-K1 — sem a capacidade declarada pela base, o web não 
   expect(pedidosLayout, "o web NÃO pede /layout-efetivo a uma API que não declara a capacidade").toEqual([]);
   v.semBloqueio();
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * VENDAS-A3-1b · LB-K1 — O PADRÃO DE CADASTRO, COM O WEB DESTE HEAD SOBRE A API DA BASE
+ *
+ * A fatia NÃO declara capacidade nova (decisão 260): a compatibilidade vem do DESENHO. A API da A3-1 serve
+ * `/layout-efetivo` sem `padroesDeCadastro` e sem `padroesInvalidos`, e o web deste HEAD tem de aceitar essa ausência:
+ * a Central abre como a da A3-1 — o layout ligado à TOP governa a tela (rótulo e padrão VARIÁVEL dele), nenhum aviso de
+ * padrão inválido (`padrao-invalido-aviso`), nenhum erro de forma do layout (`layout-nao-carregado`) — e o documento
+ * nasce como hoje (201). Presença positiva (o rótulo e o valor do layout NO `data-campo`) vem antes de toda ausência.
+ *
+ * DOIS MUNDOS, os dois MEDIDOS na árvore da base, nenhum suposto:
+ *   · `capacidades.layoutDocumento` (a MESMA decisão de LD-K1, `.skew-layout-documento.json`): sem ela o web não pede
+ *     `/layout-efetivo`, e LB-K1 cobra a Central de hoje, sem `data-campo` e sem aviso nenhum;
+ *   · `padroesDeCadastro` na rota da base (`baseServePadroesDeCadastro`, lido do COMMIT da base): sem ele, a premissa
+ *     deste ramo é conferida NO FIO — a resposta que o navegador recebeu não traz as duas chaves; com ele (base já
+ *     posterior à A3-1b), elas vêm vazias, porque o layout daqui não tem padrão registro.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A API DA BASE JÁ MANDA `padroesDeCadastro` NO `/layout-efetivo`? Sem capacidade declarada (decisão 260), o mundo é
+ * medido no FONTE da rota — o mesmo arquivo que a decisão do layout mede (`apps/api/src/routes/sales.ts`) —, lido do
+ * COMMIT de `.api-anterior.base` (provado pelo caso IDENTIDADE), nunca da worktree montada. A MESMA assinatura tem de
+ * aparecer no checkout deste HEAD: um detector que não reconhece a implementação que existe hoje nunca mudaria de mundo
+ * depois do merge, e o ramo "a base não manda" passaria a afirmar uma premissa vencida. Falha fechado.
+ */
+function baseServePadroesDeCadastro(declaraLayout: boolean): boolean {
+  const raiz = path.resolve(__dirname, "../../..");
+  const ROTA = "apps/api/src/routes/sales.ts";
+  const ocorrencias = (texto: string) => (texto.match(/\bpadroesDeCadastro\b/g) ?? []).length;
+  const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
+  expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
+  const naBase = ocorrencias(execFileSync("git", ["show", `${sha}:${ROTA}`], { cwd: raiz, encoding: "utf8" }));
+  const noHead = ocorrencias(fs.readFileSync(path.join(raiz, ROTA), "utf8"));
+  expect(noHead, `o detector reconhece a implementação deste HEAD em ${ROTA} — sem isso ele nunca mudaria de mundo`).toBeGreaterThan(0);
+  const serve = naBase > 0;
+  if (serve) expect(declaraLayout, "uma base que manda padroesDeCadastro já declara o layout do documento").toBe(true);
+  console.log(`[skew] VENDAS-A3-1b · base ${sha} ${serve ? "MANDA" : "NÃO manda"} padroesDeCadastro no /layout-efetivo (ocorrências=${naBase})`);
+  return serve;
+}
+
+/** Data de hoje (local) no formato do controle de data da Central — a mesma conta de LD-W2. */
+const hojeIso = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
+
+test("VENDAS-A3-1b · LB-K1 — a API da base não manda padroesDeCadastro: a Central deste web abre como a da A3-1 (layout aplicado, nenhum aviso) e o documento nasce como hoje (201)", async ({ page }) => {
+  const v = vigiar(page);
+  // NO FIO, desde antes do login: todo pedido a /layout-efetivo durante o lançamento fica registrado.
+  const pedidosLayout: string[] = [];
+  page.on("request", (req) => { if (new URL(req.url()).pathname.includes("/layout-efetivo")) pedidosLayout.push(req.url()); });
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const declara = baseDeclaraLayoutDocumento();
+  const servePadroes = baseServePadroesDeCadastro(declara);
+  const classificacao = baseDeclaraClassificacao();
+
+  const desc = await page.request.get(`${API}/api/sales/sales/operation-types`, { headers: cabecalhos });
+  expect(desc.status(), "premissa: a base serve a descoberta da TOP de venda").toBe(200);
+  const corpoDesc = await desc.json() as { contractVersion?: number; capacidades?: { layoutDocumento?: unknown } };
+  expect(corpoDesc.contractVersion, "a fatia não mexe no contrato: continua o 1").toBe(1);
+
+  const codigo = `LB1${Date.now().toString(36).toUpperCase()}`;
+  const criada = await page.request.post(`${API}/api/admin/tipos-operacao`, { headers: cabecalhos, data: { codigo, codigoBase: "vendas.venda", nome: `Skew padrão ${codigo}` } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const topId = (await criada.json() as { id: string }).id;
+
+  const central = page.getByTestId("central-vendas");
+  const semAvisoDoLayout = async () => {
+    await expect(page.getByTestId("layout-nao-carregado"), "nenhum erro de forma do layout").toHaveCount(0);
+    await expect(page.getByTestId("padrao-invalido-aviso"), "nenhum aviso de padrão inválido").toHaveCount(0);
+  };
+  /** Cliente, um item e Salvar: o POST vai de verdade para a base, e o documento nasce como hoje. */
+  const salvarComoHoje = async (): Promise<Record<string, unknown>> => {
+    await pickRef(page, "Cliente", "DEMO");
+    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await escolherPrimeiroProdutoDaLinha(page);
+    if (classificacao) await preencherClassificacaoFinanceira(page);
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    expect(r.status(), "a base aceita o que o web enviou — o documento nasce como hoje").toBe(201);
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(enviado["tipo_operacao_id"], "premissa: o corpo capturado é o deste lançamento").toBe(topId);
+    const { id } = await r.json() as { id: string };
+    expect(id).toMatch(UUID);
+    expect(sql(`select status from erp.sales_documents where id = '${id}'`), "no banco: aberto, como hoje").toBe("open");
+    return enviado;
+  };
+
+  if (!declara) {
+    // MUNDO LEGADO (o de LD-K1): o web não pergunta o layout; a Central é a de hoje e nenhum aviso novo aparece.
+    expect(corpoDesc.capacidades?.layoutDocumento, "a base não declara a capacidade").toBeUndefined();
+    await abrirLancamentoDeVendas(page, "sales");
+    await escolherTopEContinuar(page, topId);
+    await expect(central, "premissa: a Central montou").toBeVisible();
+    await expect(central.getByRole("region", { name: "Dados principais" }).locator("label", { hasText: "Cliente" }).first(),
+      "presença: o cabeçalho de hoje está desenhado").toBeVisible();
+    await expect(central.locator("[data-campo]"), "sem layout, nenhum data-campo na Central").toHaveCount(0);
+    await semAvisoDoLayout();
+    await salvarComoHoje();
+    expect(pedidosLayout, "o web NÃO pede /layout-efetivo a uma API que não declara a capacidade").toEqual([]);
+    v.semBloqueio();
+    return;
+  }
+
+  // MUNDO ATUAL: a base declara e serve o layout. Um layout PELA API DA BASE — a cópia do sistema, com um rótulo e um
+  // padrão VARIÁVEL que só ele tem na Data de saída —, ligado à TOP nova.
+  expect(corpoDesc.capacidades?.layoutDocumento, "a árvore da base declara, então o binário tem de servir").toBeDefined();
+  type Campo = { campo: string; rotulo?: string; obrigatorio: boolean; editavel: boolean; valorPadrao?: unknown };
+  type Estrutura = { versaoSchema: number; cabecalho: Campo[]; rodape: { aba: string; campos: Campo[] }[]; itens: { campo: string; obrigatorio: boolean }[] };
+  const ROTULO = "Saída (LB-K1)";
+  const LAYOUTS = `${API}/api/admin/layouts-documento`;
+  const novo = await page.request.post(LAYOUTS, { headers: cabecalhos, data: { nome: uniq("LB-K1 Venda"), familia: "vendas.venda" } });
+  expect(novo.status(), await novo.text()).toBe(201);
+  const layoutId = (await novo.json() as { id: string }).id;
+  try {
+    const lido = await page.request.get(`${LAYOUTS}/${layoutId}`, { headers: cabecalhos });
+    expect(lido.status(), await lido.text()).toBe(200);
+    const doSistema = (await lido.json() as { estrutura: Estrutura }).estrutura;
+    expect(doSistema.cabecalho.some((c) => c.campo === "shipping_date"), "premissa: a cópia do sistema traz a Data de saída no cabeçalho").toBe(true);
+    const estrutura: Estrutura = { ...doSistema, cabecalho: doSistema.cabecalho.map((c) => c.campo === "shipping_date" ? { ...c, rotulo: ROTULO, valorPadrao: { tipo: "variavel", variavel: "data_atual" } } : c) };
+    const gravado = await page.request.put(`${LAYOUTS}/${layoutId}`, { headers: cabecalhos, data: { estrutura } });
+    expect(gravado.status(), await gravado.text()).toBe(200);
+    const ligado = await page.request.put(`${LAYOUTS}/${layoutId}/tops`, { headers: cabecalhos, data: { tipoOperacaoIds: [topId] } });
+    expect(ligado.status(), await ligado.text()).toBe(200);
+
+    // NO FIO: a resposta que o navegador deste HEAD recebeu da base, para ESTA TOP.
+    const noFio = page.waitForResponse((r) => {
+      const u = new URL(r.url());
+      return r.request().method() === "GET" && u.pathname === "/api/sales/sales/layout-efetivo" && u.searchParams.get("tipo_operacao_id") === topId;
+    });
+    await abrirLancamentoDeVendas(page, "sales");
+    await escolherTopEContinuar(page, topId);
+    const efetivo = await noFio;
+    expect(efetivo.status(), "a base serve o layout efetivo").toBe(200);
+    const corpo = await efetivo.json() as Record<string, unknown>;
+    expect(corpo, "premissa: o layout servido é o ligado a esta TOP").toMatchObject({ origem: "ligado", id: layoutId });
+    if (servePadroes) {
+      // Base já posterior à A3-1b: as duas chaves vêm, e vazias — o layout daqui não tem padrão registro.
+      expect([corpo["padroesDeCadastro"], corpo["padroesInvalidos"]], "a base que manda os padrões os manda vazios para este layout").toEqual([{}, []]);
+    } else {
+      expect(Object.keys(corpo), "a premissa deste ramo, NO FIO: a API da base não manda os padrões de cadastro").not.toContain("padroesDeCadastro");
+      expect(Object.keys(corpo), "nem os padrões inválidos").not.toContain("padroesInvalidos");
+    }
+
+    // PRESENÇA ANTES DA AUSÊNCIA: a resposta sem os padrões foi ACEITA — o layout da base governa a Central, com o rótulo
+    // e o padrão variável dele aplicado ao abrir, como na A3-1 ...
+    await expect(central, "premissa: a Central montou").toBeVisible();
+    const saida = page.locator('[data-campo="shipping_date"]').first();
+    await expect(saida, "o layout da base foi aceito: o rótulo dele está na Central").toContainText(ROTULO);
+    await expect(saida.locator("input").first(), "e o padrão variável dele foi aplicado ao abrir").toHaveValue(hojeIso());
+    // ... e nada do que a ausência dos padrões poderia disparar aparece.
+    await semAvisoDoLayout();
+
+    const enviado = await salvarComoHoje();
+    expect(enviado["shipping_date"], "o padrão variável do layout viajou, como na A3-1").toBe(hojeIso());
+    expect(pedidosLayout.length, "o web perguntou o layout à base que o declara").toBeGreaterThan(0);
+  } finally {
+    // O dado de teste fica INATIVO (nunca apagado): o layout sai de circulação e a TOP volta ao padrão da família.
+    const desligado = await page.request.post(`${LAYOUTS}/${layoutId}/ativo`, { headers: cabecalhos, data: { ativo: false } });
+    expect.soft(desligado.status(), "limpeza: o layout do LB-K1 foi inativado").toBe(200);
+  }
+  v.semBloqueio();
+});

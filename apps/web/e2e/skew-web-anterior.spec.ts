@@ -888,3 +888,172 @@ test("VENDAS-A3-1 · LD-K2 — o web da base cria orçamento, pedido e venda com
   }
   v.semBloqueio(); v.semErroDeContrato();
 });
+
+/**
+ * O WEB DA BASE PERGUNTA `/layout-efetivo`? Medido no COMMIT da base (`.api-anterior.base`, provado pelo caso
+ * IDENTIDADE), nunca na tela que o ramo vai medir: o pedido aparece no fonte da página de lançamento de vendas zero ou
+ * uma vez — qualquer outro número é detector quebrado e REPROVA. E a medição tem de concordar com a da API da mesma base
+ * (`.skew-layout-documento.json`, gravado por `scripts/skew-layout-documento.mjs`): o web e a API do layout nasceram
+ * juntos na VENDAS-A3-1, e divergência entre eles é o detector errado, não um terceiro mundo.
+ */
+function webDaBaseConheceLayout(): boolean {
+  const raiz = path.resolve(__dirname, "../../..");
+  const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
+  expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
+  const fonte = execFileSync("git", ["show", `${sha}:apps/web/src/app/(app)/vendas/[kind]/new/page.tsx`], { cwd: raiz, encoding: "utf8" });
+  const pedidos = (fonte.match(/\/layout-efetivo\?tipo_operacao_id=/g) ?? []).length;
+  expect(pedidos, "detector do pedido de layout no web da base: zero ou uma ocorrência").toBeLessThanOrEqual(1);
+  const arq = path.join(raiz, ".skew-layout-documento.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão do layout do documento ausente (${arq}): rode scripts/skew-layout-documento.mjs antes do skew. `
+      + "Sem ela não há como conferir a medição do web da base contra a da API da mesma base.");
+  }
+  const api = JSON.parse(fs.readFileSync(arq, "utf8")) as { baseSha: string; ocorrencias: number; declara: boolean };
+  expect(api.baseSha, "a decisão da API foi medida na mesma base").toBe(sha);
+  expect(pedidos === 1, "o web da base pergunta o layout exatamente quando a API da mesma base o declara").toBe(api.ocorrencias === 1 && api.declara);
+  console.log(`[skew] LB-K2 · o web da base ${sha} ${pedidos === 1 ? "PERGUNTA" : "NÃO pergunta"} /layout-efetivo`);
+  return pedidos === 1;
+}
+
+/**
+ * VENDAS-A3-1b · LB-K2 — O WEB DA BASE LÊ UM LAYOUT COM PADRÃO DE CADASTRO, SERVIDO PELA API DESTE HEAD.
+ *
+ * A fatia NÃO declara capacidade nova (decisão 260): a compatibilidade vem do DESENHO — a `estrutura` de `/layout-efetivo`
+ * sai SEM os padrões `registro`, que viajam à parte em `padroesDeCadastro`. É isso que protege o web da A3-1: o
+ * `valorDoPadrao` dele não conhece o tipo `registro` e faria `String(undefined)` — um "undefined" no campo e no POST.
+ * O caso cadastra, PELA API DESTE HEAD, um layout com padrão registro na Forma de pagamento (cabeçalho) e no Armazém
+ * (coluna dos itens), ligado a uma TOP nova, e prova:
+ *   · PRESENÇA antes da ausência: o GET de administração devolve a estrutura COM os dois registros;
+ *   · NO FIO (page.waitForResponse): o `/layout-efetivo` que o web da base recebeu não tem NENHUM `"tipo":"registro"` na
+ *     `estrutura`; os dois campos continuam nela (só o padrão saiu), e os ids viajam em `padroesDeCadastro`;
+ *   · o web da base aplicou esse layout (`data-campo`) e o documento nasce como hoje (201), aberto; a Forma de pagamento
+ *     do corpo é nula (web da A3-1, que não conhece o padrão) ou o próprio registro (web da base posterior à A3-1b) —
+ *     nunca "undefined".
+ * Mundo LEGADO (web da base anterior à A3-1, `webDaBaseConheceLayout`): o web não pergunta o layout — nenhum pedido no
+ * fio —, a mesma resposta é conferida direto na API deste HEAD, e o documento nasce como hoje.
+ * Limpeza no finally: o layout é INATIVADO (dado de teste nunca é apagado).
+ */
+test("VENDAS-A3-1b · LB-K2 — layout com padrão de cadastro pela API deste HEAD: o /layout-efetivo que o web da base lê não traz registro na estrutura, e o documento nasce como hoje (201)", async ({ page, request }) => {
+  const v = vigiar(page);
+  // NO FIO, desde antes do login: todo pedido a /layout-efetivo que o web da base fizer fica registrado.
+  const pedidosLayout: string[] = [];
+  page.on("request", (r) => { if (new URL(r.url()).pathname.includes("/layout-efetivo")) pedidosLayout.push(r.url()); });
+  await login(page);
+  const auth = await cabecalhosDaSessao(page);
+  const conhece = webDaBaseConheceLayout();
+  const rotulos = rotulosDaClassificacaoNoWebDaBase();
+  const LAYOUTS = `${API}/api/admin/layouts-documento`;
+  type Campo = { campo: string; valorPadrao?: unknown };
+  type Estrutura = { versaoSchema: number; cabecalho: Campo[]; rodape: { aba: string; campos: Campo[] }[]; itens: Campo[] };
+  type Efetivo = { estrutura: Estrutura; origem?: string; id?: string; padroesDeCadastro?: Record<string, { id?: string }> };
+
+  /** Um registro ATIVO do cadastro, pela API deste HEAD — o padrão tem de valer agora, senão iria para os inválidos. */
+  const umAtivo = async (p: string) => {
+    const r = await request.get(`${API}${p}`, { headers: auth });
+    expect(r.status(), p).toBe(200);
+    const id = (await r.json() as { items: { id: string }[] }).items?.[0]?.id;
+    expect(id, `o seed precisa ter um registro ativo em ${p}`).toMatch(UUID);
+    return id!;
+  };
+  const forma = await umAtivo("/api/resources/payment_methods?is_active=true&pageSize=1");
+  const armazem = await umAtivo("/api/resources/warehouses?is_active=true&pageSize=1");
+  const REGISTRO_FORMA = { tipo: "registro", id: forma };
+  const REGISTRO_ARMAZEM = { tipo: "registro", id: armazem };
+
+  const codigo = `LB2${Date.now().toString(36).toUpperCase()}`;
+  const criada = await request.post(`${API}/api/admin/tipos-operacao`, { headers: auth, data: { codigo, codigoBase: "vendas.venda", nome: `Skew A3-1b ${codigo}` } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const topId = (await criada.json() as { id: string }).id;
+
+  const novo = await request.post(LAYOUTS, { headers: auth, data: { nome: uniq("LB-K2 Venda"), familia: "vendas.venda" } });
+  expect(novo.status(), await novo.text()).toBe(201);
+  const layoutId = (await novo.json() as { id: string }).id;
+  try {
+    const lido = await request.get(`${LAYOUTS}/${layoutId}`, { headers: auth });
+    expect(lido.status(), await lido.text()).toBe(200);
+    const doSistema = (await lido.json() as { estrutura: Estrutura }).estrutura;
+    expect(doSistema.cabecalho.some((c) => c.campo === "payment_method_id"), "premissa: a cópia do sistema traz a Forma de pagamento no cabeçalho").toBe(true);
+    expect(doSistema.itens.some((c) => c.campo === "warehouse_id"), "premissa: e o Armazém nos itens").toBe(true);
+    const estrutura: Estrutura = {
+      ...doSistema,
+      cabecalho: doSistema.cabecalho.map((c) => c.campo === "payment_method_id" ? { ...c, valorPadrao: REGISTRO_FORMA } : c),
+      itens: doSistema.itens.map((c) => c.campo === "warehouse_id" ? { ...c, valorPadrao: REGISTRO_ARMAZEM } : c)
+    };
+    const gravado = await request.put(`${LAYOUTS}/${layoutId}`, { headers: auth, data: { estrutura } });
+    expect(gravado.status(), await gravado.text()).toBe(200);
+    const ligado = await request.put(`${LAYOUTS}/${layoutId}/tops`, { headers: auth, data: { tipoOperacaoIds: [topId] } });
+    expect(ligado.status(), await ligado.text()).toBe(200);
+
+    // PRESENÇA ANTES DA AUSÊNCIA: o layout gravado TEM os dois padrões registro (a leitura de administração é completa).
+    const admin = await request.get(`${LAYOUTS}/${layoutId}`, { headers: auth });
+    expect(admin.status(), await admin.text()).toBe(200);
+    const completo = (await admin.json() as { estrutura: Estrutura }).estrutura;
+    expect(completo.cabecalho.find((c) => c.campo === "payment_method_id")?.valorPadrao, "o layout gravado TEM o padrão registro da Forma de pagamento").toEqual(REGISTRO_FORMA);
+    expect(completo.itens.find((c) => c.campo === "warehouse_id")?.valorPadrao, "e o do Armazém").toEqual(REGISTRO_ARMAZEM);
+
+    /** A resposta de /layout-efetivo: a estrutura sem nenhum registro, os campos nela, os ids à parte. */
+    const conferirEfetivo = (texto: string) => {
+      const corpo = JSON.parse(texto) as Efetivo;
+      expect([corpo.origem, corpo.id], "premissa: o layout efetivo é o ligado a esta TOP").toEqual(["ligado", layoutId]);
+      const campoForma = corpo.estrutura.cabecalho.find((c) => c.campo === "payment_method_id");
+      const colunaArmazem = corpo.estrutura.itens.find((c) => c.campo === "warehouse_id");
+      expect(campoForma, "a Forma de pagamento continua na estrutura servida — só o padrão sai").toBeDefined();
+      expect(colunaArmazem, "o Armazém também").toBeDefined();
+      expect(campoForma, "sem o padrão registro").not.toHaveProperty("valorPadrao");
+      expect(colunaArmazem, "sem o padrão registro").not.toHaveProperty("valorPadrao");
+      expect(JSON.stringify(corpo.estrutura), "NENHUM padrão registro na estrutura servida").not.toMatch(/"tipo"\s*:\s*"registro"/);
+      expect([corpo.padroesDeCadastro?.["payment_method_id"]?.id, corpo.padroesDeCadastro?.["itens.warehouse_id"]?.id],
+        "os registros viajam À PARTE, em padroesDeCadastro").toEqual([forma, armazem]);
+    };
+
+    const noFio = conhece ? page.waitForResponse((r) => {
+      const u = new URL(r.url());
+      return r.request().method() === "GET" && u.pathname === "/api/sales/sales/layout-efetivo" && u.searchParams.get("tipo_operacao_id") === topId;
+    }) : null;
+    await page.goto("/vendas/sales/new");
+    await expect(page.getByTestId("top-lancador")).toBeVisible();
+    await page.locator(`[data-testid="top-opcao"][data-top-id="${topId}"]`).click();
+    await page.getByTestId("top-continuar").click();
+    await expect(page.getByTestId("top-contexto")).toBeVisible();
+    if (noFio) {
+      // O web da base pergunta o layout: a prova é o que ELE recebeu, no fio.
+      const efetivo = await noFio;
+      expect(efetivo.status(), "a API deste HEAD serve o layout efetivo ao web da base").toBe(200);
+      conferirEfetivo(await efetivo.text());
+      await expect(page.locator('[data-campo="payment_method_id"]').first(), "o web da base aplicou o layout servido: a Forma de pagamento é desenhada por ele").toBeVisible();
+      await expect(page.getByTestId("layout-nao-carregado"), "e o aceitou: nenhum erro de forma do layout").toHaveCount(0);
+    } else {
+      // MUNDO LEGADO: o web da base não pergunta; a mesma resposta, conferida direto na API deste HEAD.
+      const direto = await request.get(`${API}/api/sales/sales/layout-efetivo?tipo_operacao_id=${topId}`, { headers: auth });
+      expect(direto.status(), await direto.text()).toBe(200);
+      conferirEfetivo(await direto.text());
+    }
+
+    await pickRef(page, "Cliente", "DEMO");
+    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
+    await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
+    await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
+    if (rotulos) await preencherClassificacaoFinanceira(page, rotulos);
+
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/sales/sales");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    expect(r.status(), "a API deste HEAD aceita o corpo do cliente da base — o documento nasce como hoje").toBe(201);
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(enviado["tipo_operacao_id"], "premissa: o corpo capturado é o deste lançamento").toBe(topId);
+    expect(JSON.stringify(enviado), "nenhum \"undefined\" viajou no corpo — o padrão registro não vazou para o web da base").not.toContain("\"undefined\"");
+    expect([null, forma], `a Forma de pagamento viaja nula (o web da A3-1 não conhece o padrão) ou com o próprio registro padrão — nunca outro valor (${String(enviado["payment_method_id"])})`)
+      .toContain(enviado["payment_method_id"]);
+    const { id } = await r.json() as { id: string };
+    expect(id).toMatch(UUID);
+    expect(sqlAj(`select status from erp.sales_documents where id = '${id}'`), "no banco: aberto, como hoje").toBe("open");
+    if (conhece) expect(pedidosLayout.length, "o web da base perguntou o layout à API deste HEAD").toBeGreaterThan(0);
+    else expect(pedidosLayout, "o web da base anterior à A3-1 não pergunta o layout").toEqual([]);
+  } finally {
+    // O dado de teste fica INATIVO (nunca apagado): o layout sai de circulação e a TOP volta ao padrão da família.
+    const desligado = await request.post(`${LAYOUTS}/${layoutId}/ativo`, { headers: auth, data: { ativo: false } });
+    expect.soft(desligado.status(), "limpeza: o layout do LB-K2 foi inativado").toBe(200);
+  }
+  v.semBloqueio(); v.semErroDeContrato();
+});
