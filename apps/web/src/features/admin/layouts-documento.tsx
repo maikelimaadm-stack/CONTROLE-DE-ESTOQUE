@@ -177,7 +177,7 @@ export function LayoutsDocumentoPanel() {
       </div>
     </CardBody>
 
-    {criando && <NovoLayoutDialogo familias={familias.map((f) => ({ codigo: f.codigo, nome: f.rotulo }))} onFechar={() => { setCriando(false); recarregar(); }} />}
+    {criando && <NovoLayoutDialogo familias={familias} onFechar={() => { setCriando(false); recarregar(); }} />}
     <ConfirmDialog
       open={!!excluindo}
       onOpenChange={(o) => { if (!o) setExcluindo(null); }}
