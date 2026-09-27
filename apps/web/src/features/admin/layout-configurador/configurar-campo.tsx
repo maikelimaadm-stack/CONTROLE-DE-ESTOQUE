@@ -5,7 +5,7 @@ import { Button, Dialog, Field, Input, NativeSelect } from "@/components/ui";
 import { RefSelect, type Option } from "@/components/ui/ref-select";
 import { AVISO_PADRAO_REGISTRO_MORTO, COLUNAS_COM_PADRAO_REGISTRO, type CampoDoCatalogo, type ValorPadraoLayout } from "@agro/domain";
 import {
-  campoDaChave, ehChaveDeColuna, useConfigurador,
+  TEXTOS, campoDaChave, ehChaveDeColuna, useConfigurador,
   type CampoDoLayout, type ColunaDoLayout, type EstruturaLayout, type RegistroConhecido
 } from "./contrato";
 import { substituirCampo } from "./operacoes";
@@ -15,6 +15,11 @@ import { substituirCampo } from "./operacoes";
  * e `layout-cfg-*`, mesma validação local: Aplicar desligado sem registro no modo "Registro do cadastro") + "Restaurar
  * nome do sistema" (`layout-cfg-restaurar-nome`), que limpa o rótulo próprio — volta a valer o do catálogo.
  * A mudança entra no rascunho por `substituirCampo` + `ctx.aplicar` (desfazível; recusa → aviso da página).
+ *
+ * VENDAS-A3-1d (decisão 262): rodapé [Fechar] (`layout-cfg-fechar`) [Aplicar]. Fechar por qualquer caminho (Fechar, X,
+ * Esc, clique fora) COM mudança pendente no formulário pergunta antes (`TEXTOS.descartarCampo`): "Descartar"
+ * (`layout-cfg-descartar`) fecha sem tocar no campo; "Voltar ao campo" (`layout-cfg-voltar`, Esc ou clique fora da
+ * pergunta) volta ao diálogo com o que foi digitado. Sem mudança, fecha direto. Sem permissão o diálogo não abre.
  */
 type ModoPadrao = "nenhum" | "literal" | "variavel" | "registro";
 
@@ -36,7 +41,8 @@ export function ConfigurarCampoDialogo({ chave, onFechar, idMorto: idMortoProp, 
 }) {
   const ctx = useConfigurador();
   const valor = acharNaEstrutura(ctx.estrutura, chave);
-  if (!valor) return null;
+  // `can` só apresenta (quem nega é a rota): sem permissão não há rascunho para configurar
+  if (!valor || !ctx.podeEditar) return null;
   const ehItem = ehChaveDeColuna(chave);
   const catalogo = ctx.catalogo.find((c) => c.chave === valor.campo && (ehItem ? c.parte === "itens" : c.parte !== "itens"));
   const vpAtual = (valor as Partial<CampoDoLayout>).valorPadrao;
@@ -82,6 +88,14 @@ function Corpo({ ehItem, valor, catalogo, idMorto, rotuloDe, onFechar, onAplicar
   // `grupo` (cabeçalho) é da POSIÇÃO, não da configuração: preservado
   const grupo = !ehItem && base.grupo ? { grupo: base.grupo } : {};
 
+  /** A3-1d: o estado do formulário ao abrir (o 1º render); qualquer diferença é mudança pendente. */
+  const [inicial] = React.useState({ rotulo, obrigatorio, editavel, modo, literal, registroId });
+  const pendente = rotulo !== inicial.rotulo || obrigatorio !== inicial.obrigatorio || editavel !== inicial.editavel
+    || modo !== inicial.modo || literal !== inicial.literal || registroId !== inicial.registroId;
+  const [perguntando, setPerguntando] = React.useState(false);
+  /** Fechar, X, Esc e clique fora passam por aqui: com mudança pendente, pergunta antes de descartar. */
+  const pedirFechar = () => { if (pendente) setPerguntando(true); else onFechar(); };
+
   const aplicar = () => {
     const r = rotulo.trim() ? { rotulo: rotulo.trim() } : {};
     const registro = aceitaRegistro && modo === "registro" && registroId ? { id: registroId, rotulo: registroRotulo || (rotuloDe(registroId) ?? "") } : undefined;
@@ -93,8 +107,8 @@ function Corpo({ ehItem, valor, catalogo, idMorto, rotuloDe, onFechar, onAplicar
     onAplicar({ campo: valor.campo, ...r, obrigatorio, editavel, ...grupo, ...(vp ? { valorPadrao: vp } : {}) }, registro);
   };
 
-  return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title={`Configurar campo — ${catalogo?.rotulo ?? valor.campo}`} size="sm" testId="layout-configurar-campo"
-    footer={<><Button variant="outline" onClick={onFechar}>{COPY.fechar}</Button><Button data-testid="layout-configurar-aplicar" disabled={faltaRegistro} onClick={aplicar}>Aplicar</Button></>}>
+  return <><Dialog open onOpenChange={(o) => { if (!o) pedirFechar(); }} title={`Configurar campo — ${catalogo?.rotulo ?? valor.campo}`} size="sm" testId="layout-configurar-campo"
+    footer={<><Button variant="outline" data-testid="layout-cfg-fechar" onClick={pedirFechar}>{COPY.fechar}</Button><Button data-testid="layout-configurar-aplicar" disabled={faltaRegistro} onClick={aplicar}>Aplicar</Button></>}>
     <div className="grid grid-cols-12 gap-3">
       <Field label="Rótulo" span={12} help={catalogo ? `Vazio = "${catalogo.rotulo}".` : undefined}>
         <div className="flex items-center gap-2">
@@ -133,5 +147,13 @@ function Corpo({ ehItem, valor, catalogo, idMorto, rotuloDe, onFechar, onAplicar
           : <Input data-testid="layout-cfg-padrao-valor" type={tipo === "data" ? "date" : tipo === "numero" ? "number" : "text"} value={literal} onChange={(e) => setLiteral(e.target.value)} />}
       </Field>}
     </div>
-  </Dialog>;
+  </Dialog>
+
+  {/* A3-1d: a pergunta antes de descartar. Não é o ConfirmDialog porque ele não leva testid nos botões; mesmo visual
+      (sm, texto em slate, [dispensar] [confirmar perigo]). Fica num portal próprio, por cima do diálogo do campo:
+      Esc e clique fora dela só fecham a pergunta (= Voltar ao campo). */}
+  <Dialog open={perguntando} onOpenChange={(o) => { if (!o) setPerguntando(false); }} title="Descartar alterações" size="sm" testId="layout-cfg-descartar-dialogo"
+    footer={<><Button variant="outline" data-testid="layout-cfg-voltar" onClick={() => setPerguntando(false)}>Voltar ao campo</Button><Button variant="danger" data-testid="layout-cfg-descartar" onClick={onFechar}>Descartar</Button></>}>
+    <p className="text-sm text-slate-600">{TEXTOS.descartarCampo}</p>
+  </Dialog></>;
 }
