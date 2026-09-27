@@ -94,7 +94,14 @@ const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
 export function catalogoDaFamilia(familia: string): readonly CampoDoCatalogo[] { return familiaTemLayout(familia) ? CATALOGO_VENDAS : []; }
 
 /* ─────────────── ESTRUTURA (versaoSchema 1) ─────────────── */
-export interface CampoDoLayout { campo: string; rotulo?: string; obrigatorio: boolean; editavel: boolean; valorPadrao?: ValorPadraoLayout }
+/**
+ * VENDAS-A3-1c (decisão 261): `grupo` só no CABEÇALHO — "principal" (Dados principais) ou "adicionais" (Dados adicionais,
+ * recolhível na Central). Ausente = principal. Estrutura em que NENHUM campo do cabeçalho declara grupo segue a regra de
+ * antes (Proprietário em Dados adicionais): compatibilidade com layout gravado antes da fatia.
+ */
+export type GrupoDoCabecalho = "principal" | "adicionais";
+export const GRUPOS_DO_CABECALHO: readonly GrupoDoCabecalho[] = Object.freeze(["principal", "adicionais"]);
+export interface CampoDoLayout { campo: string; rotulo?: string; obrigatorio: boolean; editavel: boolean; valorPadrao?: ValorPadraoLayout; grupo?: GrupoDoCabecalho }
 export interface AbaDoLayout { aba: string; campos: CampoDoLayout[] }
 /** `valorPadrao` (VENDAS-A3-1b): só na coluna Armazém e só do tipo registro. */
 export interface ColunaDoLayout { campo: string; rotulo?: string; obrigatorio: boolean; valorPadrao?: ValorPadraoLayout }
@@ -104,7 +111,7 @@ export interface ErroDoLayout { caminho: string; mensagem: string }
 /** LAYOUT DO SISTEMA: a Central de hoje — todos os campos, ordem, rótulos e obrigatórios de hoje. */
 export function LAYOUT_DO_SISTEMA(familia: string): EstruturaLayout {
   const cat = catalogoDaFamilia(familia);
-  const cab = cat.filter((c) => c.parte === "cabecalho").map((c): CampoDoLayout => ({ campo: c.chave, obrigatorio: Boolean(c.sistema), editavel: true }));
+  const cab = cat.filter((c) => c.parte === "cabecalho").map((c): CampoDoLayout => ({ campo: c.chave, obrigatorio: Boolean(c.sistema), editavel: true, ...(CAMPOS_ADICIONAIS_DO_SISTEMA.includes(c.chave) ? { grupo: "adicionais" as const } : {}) }));
   const abas: AbaDoLayout[] = [];
   for (const c of cat.filter((x) => x.parte === "rodape")) {
     let a = abas.find((x) => x.aba === c.aba); if (!a) { a = { aba: c.aba!, campos: [] }; abas.push(a); }
@@ -302,4 +309,40 @@ export function removerPadroesRegistro(estrutura: EstruturaLayout, chaves?: Read
     rodape: estrutura.rodape.map((a) => ({ aba: a.aba, campos: a.campos.map((x) => tira("rodape", x)) })),
     itens: estrutura.itens.map((x) => tira("itens", x))
   };
+}
+
+/* ─────────────── VENDAS-A3-1c: ZONAS do documento (decisão 261) ─────────────── */
+/**
+ * Campo do DOCUMENTO (parte "cabecalho" ou "rodape" no catálogo) pode ficar em QUALQUER zona do documento: cabeçalho
+ * (grupo principal ou adicionais) ou qualquer aba do rodapé. A `parte` do catálogo continua sendo a posição NO LAYOUT DO
+ * SISTEMA. Exceção: os campos de BLOCO LARGO só no rodapé. Coluna de item só nos itens.
+ */
+export const CAMPOS_SO_NO_RODAPE: readonly string[] = Object.freeze(["installment_plan"]);
+/** Onde o layout do sistema põe em "Dados adicionais" (a Central de antes da fatia: o Proprietário). */
+export const CAMPOS_ADICIONAIS_DO_SISTEMA: readonly string[] = Object.freeze(["proprietary_id"]);
+export const mensagemSoNoRodape = (rotulo: string) => `"${rotulo}" só pode ficar numa aba do rodapé.`;
+export const MENSAGEM_GRUPO_SO_NO_CABECALHO = "Grupo só vale nos campos do cabeçalho.";
+export const MENSAGEM_OBRIGATORIO_NAO_SAI = "Campo obrigatório do sistema não pode sair do layout.";
+/** Zona do documento onde um campo pode ser solto. */
+export type ZonaDoLayout = { tipo: "principal" } | { tipo: "adicionais" } | { tipo: "aba"; indice: number } | { tipo: "itens" };
+/**
+ * Pode soltar `chave` (do catálogo da família) em `zona`? null = pode; string = o motivo (mostrado na tela). Dono único
+ * da regra de zona para o configurador; `validarEstruturaLayout` aplica a mesma regra na gravação.
+ */
+export function motivoZonaProibida(familia: string, chave: string, zona: ZonaDoLayout): string | null {
+  const cat = catalogoDaFamilia(familia);
+  const doc = cat.find((c) => c.chave === chave && c.parte !== "itens");
+  const col = cat.find((c) => c.chave === chave && c.parte === "itens");
+  if (zona.tipo === "itens") return col ? null : "Só colunas dos itens podem ficar na grade de itens.";
+  if (!doc) return "Colunas dos itens só podem ficar na grade de itens.";
+  if ((zona.tipo === "principal" || zona.tipo === "adicionais") && CAMPOS_SO_NO_RODAPE.includes(chave)) return mensagemSoNoRodape(doc.rotulo);
+  return null;
+}
+/**
+ * Os campos do cabeçalho em "Dados adicionais" SEGUNDO a estrutura: se algum campo do cabeçalho declara grupo, vale o
+ * grupo; se nenhum declara (layout gravado antes da A3-1c), vale a regra de antes (CAMPOS_ADICIONAIS_DO_SISTEMA).
+ */
+export function camposAdicionaisDoCabecalho(estrutura: EstruturaLayout): string[] {
+  const algumDeclara = estrutura.cabecalho.some((x) => x.grupo !== undefined);
+  return estrutura.cabecalho.filter((x) => (algumDeclara ? x.grupo === "adicionais" : CAMPOS_ADICIONAIS_DO_SISTEMA.includes(x.campo))).map((x) => x.campo);
 }
