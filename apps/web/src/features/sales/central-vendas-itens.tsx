@@ -54,8 +54,11 @@ const VISOES: { v: Visao; rotulo: string; Icone: typeof LayoutGrid }[] = [
   { v: "ambos", rotulo: "Grade e formulário", Icone: Columns2 }
 ];
 
-/** A linha nova é a MESMA que o `ItemsEditor` cria — para o payload não perceber a troca de apresentação. */
-const linhaNova = (): ItemRow => ({ product_id: "", quantity: "1", unit_value: "0", generate_stock: true });
+/**
+ * A linha nova é a MESMA que o `ItemsEditor` cria — para o payload não perceber a troca de apresentação. Com armazém
+ * padrão (VENDAS-A3-1b), ele entra como o `defaults` do editor: só o `warehouse_id` a mais.
+ */
+const linhaNova = (armazem?: string): ItemRow => ({ product_id: "", quantity: "1", unit_value: "0", generate_stock: true, ...(armazem ? { warehouse_id: armazem } : {}) });
 
 /** Colunas da grade, na ordem padrão do design. `largura` é a do protótipo; Produto é a coluna elástica (mínimo). */
 type ChaveColuna = "codigo" | "produto" | "armazem" | "estoque" | "quantidade" | "unitario" | "desconto" | "descontoPercentual" | "total";
@@ -174,12 +177,17 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
   return <span className={estilos.codigo}>{o?.code ?? (id ? "" : "—")}</span>;
 }
 
-export function ItensDaCentral({ items, onChange, layout, erros }: {
+export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao }: {
   items: ItemRow[]; onChange: (i: ItemRow[]) => void;
   /** Só com a capacidade `layoutDocumento`: sem ele a grade é a de hoje, idêntica. */
   layout?: LayoutDosItens | null;
   /** Erros por caminho `items[i].<chave do catálogo>` (os mesmos de `camposObrigatoriosFaltando` e do 422). */
   erros?: Record<string, string>;
+  /**
+   * VENDAS-A3-1b: armazém padrão do layout que vale AGORA (a página só o passa quando é da empresa do documento). Toda
+   * linha NOVA nasce com ele, com o rótulo já conhecido; as linhas que existem não mudam. Ausente/null: como hoje.
+   */
+  armazemPadrao?: { id: string; rotulo: string } | null;
 }) {
   const [visao, setVisao] = React.useState<Visao>("grade");
   const [selecionado, setSelecionado] = React.useState<number>(-1);
@@ -216,7 +224,13 @@ export function ItensDaCentral({ items, onChange, layout, erros }: {
   React.useEffect(() => { if (sel !== selecionado) setSelecionado(sel); }, [sel, selecionado]);
 
   const atualizar = (i: number, chave: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [chave]: v } : it)));
-  const adicionar = () => { onChange([...items, linhaNova()]); setSelecionado(items.length); };
+  const adicionar = () => {
+    if (armazemPadrao) {
+      const { id, rotulo } = armazemPadrao;
+      setConhecidos((c) => (c[id] ? c : { ...c, [id]: { id, label: rotulo, code: null } }));
+    }
+    onChange([...items, linhaNova(armazemPadrao?.id)]); setSelecionado(items.length);
+  };
   const remover = (i: number) => {
     onChange(items.filter((_, j) => j !== i));
     setPesquisa(null);

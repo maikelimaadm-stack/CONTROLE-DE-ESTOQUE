@@ -16,6 +16,7 @@ import savedReportRoutes from "./routes/saved-reports.js";
 import adminRoutes from "./routes/admin.js";
 import tiposOperacaoRoutes from "./routes/tipos-operacao.js";
 import layoutsDocumentoRoutes from "./routes/layouts-documento.js";
+import layoutsDocumentoArquivoRoutes from "./routes/layouts-documento-arquivo.js";
 import attachmentRoutes from "./routes/attachments.js";
 import stockRoutes from "./routes/stock.js";
 import supplyRoutes from "./routes/supply.js";
@@ -68,6 +69,7 @@ export async function buildApp(opts: { config?: Config; db?: Db; logger?: boolea
   await app.register(adminRoutes, { prefix: "/api" });
   await app.register(tiposOperacaoRoutes, { prefix: "/api" });
   await app.register(layoutsDocumentoRoutes, { prefix: "/api" });
+  await app.register(layoutsDocumentoArquivoRoutes, { prefix: "/api" });
   await app.register(attachmentRoutes, { prefix: "/api" });
   await app.register(stockRoutes, { prefix: "/api" });
   await app.register(supplyRoutes, { prefix: "/api" });

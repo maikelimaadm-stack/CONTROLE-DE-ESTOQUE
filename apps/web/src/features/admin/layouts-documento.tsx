@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, ApiError, qs } from "@/lib/api";
+import { api, ApiError, download, qs } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { COPY } from "@/lib/copy";
 import {
@@ -9,8 +9,10 @@ import {
   LoadingState, Menu, NativeSelect, PageHeader, StatusBadge
 } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
+import { RefSelect, type Option } from "@/components/ui/ref-select";
 import {
-  catalogoDaFamilia, familiaTemLayout, validarEstruturaLayout,
+  AVISO_PADRAO_REGISTRO_MORTO, COLUNAS_COM_PADRAO_REGISTRO,
+  catalogoDaFamilia, chavePadraoDeCadastro, familiaTemLayout, padroesRegistroDaEstrutura, validarEstruturaLayout,
   type AbaDoLayout, type CampoDoCatalogo, type CampoDoLayout, type ColunaDoLayout, type ErroDoLayout,
   type EstruturaLayout, type ParteDoLayout, type ValorPadraoLayout
 } from "@agro/domain";
@@ -24,6 +26,11 @@ import {
  * (`/api/admin/tipos-operacao/familias`), recortadas por `familiaTemLayout`; o cliente não tem lista própria.
  *
  * `can()` só ESCONDE botão; quem nega é a rota (permissões `tipos_operacao.*`).
+ *
+ * VENDAS-A3-1b (decisão 260): valor padrão "Registro do cadastro" nos campos de referência (o recurso e o filtro vêm
+ * do catálogo do domínio, `referencia`) e na coluna Armazém; exportar/importar o layout como arquivo JSON. Quem diz se
+ * o registro vale é o servidor: o GET do layout devolve `padroesDeCadastro` (rótulo do que vale) e `padroesInvalidos`
+ * (o que morreu); a gravação recusa o que não vale. API anterior não manda os dois — a tela lê como vazios.
  */
 const BASE = "/api/admin/layouts-documento";
 const CHAVE = ["layouts-documento"] as const;
@@ -33,8 +40,17 @@ interface LayoutLinha extends Record<string, unknown> {
   id: string; code: string; nome: string; familia: string; padrao: boolean; ativo: boolean; topsLigadas: number;
 }
 interface TopLigada { id: string; codigo: string; nome: string }
-interface LayoutDetalhe extends LayoutLinha { estrutura: EstruturaLayout; tops: TopLigada[] }
+/** Registro padrão com o rótulo que o RefSelect mostra (GET admin: `padroesDeCadastro`). */
+interface RegistroConhecido { id: string; rotulo: string }
+interface LayoutDetalhe extends LayoutLinha {
+  estrutura: EstruturaLayout; tops: TopLigada[];
+  /** chavePadraoDeCadastro → registro que vale AGORA (vazio na API anterior) */
+  padroesDeCadastro: ReadonlyMap<string, RegistroConhecido>;
+  /** chaves cujo registro padrão gravado não vale mais (vazio na API anterior) */
+  padroesInvalidos: ReadonlySet<string>;
+}
 interface TopDaFamilia { id: string; codigo: string; nome: string; ativo: boolean }
+interface ResultadoImportacao { id: string; code: string; nome: string; removidos: { campo: string; motivo: string }[] }
 
 // ── leitura tolerante do contrato (snake_case ou camelCase), sem inventar valor ──────────────────────
 type Obj = Record<string, unknown>;
@@ -55,9 +71,29 @@ function lerLinha(v: unknown): LayoutLinha {
     topsLigadas: Number(o.qtdTops ?? o.topsLigadas ?? o.tops_ligadas ?? o.topsCount ?? o.tops_count ?? (Array.isArray(tops) ? tops.length : 0)) || 0
   };
 }
+/** `padroesDeCadastro` → Map (chave vinda do servidor nunca vira propriedade de objeto). Sem id, a entrada não conta. */
+function lerPadroesDeCadastro(v: unknown): Map<string, RegistroConhecido> {
+  const m = new Map<string, RegistroConhecido>();
+  if (!v || typeof v !== "object" || Array.isArray(v)) return m;
+  for (const [chave, x] of Object.entries(v as Obj)) { const o = obj(x); const id = str(o.id); if (id) m.set(chave, { id, rotulo: str(o.rotulo) }); }
+  return m;
+}
 function lerDetalhe(v: unknown): LayoutDetalhe {
   const o = obj(v);
-  return { ...lerLinha(o), estrutura: o.estrutura as EstruturaLayout, tops: (Array.isArray(o.tops) ? o.tops : []).map(lerTop) };
+  return {
+    ...lerLinha(o), estrutura: o.estrutura as EstruturaLayout, tops: (Array.isArray(o.tops) ? o.tops : []).map(lerTop),
+    padroesDeCadastro: lerPadroesDeCadastro(o.padroesDeCadastro),
+    padroesInvalidos: new Set(Array.isArray(o.padroesInvalidos) ? o.padroesInvalidos.filter((x): x is string => typeof x === "string") : [])
+  };
+}
+function lerImportacao(v: unknown): ResultadoImportacao {
+  const o = obj(v);
+  const removidos = (Array.isArray(o.removidos) ? o.removidos : []).map((x) => { const r = obj(x); return { campo: str(r.campo), motivo: str(r.motivo) }; }).filter((r) => r.campo);
+  return { id: str(o.id), code: str(o.code ?? o.codigo), nome: str(o.nome), removidos };
+}
+/** Rótulo do campo de uma chave de padrão ("client_id", "itens.warehouse_id") pelo catálogo da família (dono: domínio). */
+function rotuloDaChave(familia: string, chave: string): string {
+  return catalogoDaFamilia(familia).find((c) => chavePadraoDeCadastro(c.parte, c.chave) === chave)?.rotulo ?? chave;
 }
 /** 422 → erros por caminho. Aceita `details` como lista ou `{ erros | errors | campos }`. */
 function errosDaApi(e: unknown): ErroDoLayout[] {
@@ -95,6 +131,32 @@ export function LayoutsDocumentoPanel() {
     onError: (e) => { setExcluindo(null); setErro(e); }
   });
 
+  // ── Exportar / importar (VENDAS-A3-1b) ──
+  const exportar = (r: LayoutLinha) => {
+    setErro(null);
+    download(`${BASE}/${r.id}/exportar`, `layout-${r.code}.json`).catch((e: unknown) => setErro(e));
+  };
+  const arquivoRef = React.useRef<HTMLInputElement>(null);
+  const [importacao, setImportacao] = React.useState<
+    { tipo: "sucesso"; resultado: ResultadoImportacao; familia: string } | { tipo: "erro"; erro?: unknown; mensagem?: string } | null
+  >(null);
+  const importar = useMutation({
+    mutationFn: (arquivo: unknown) => api<unknown>(`${BASE}/importar`, { method: "POST", body: arquivo }),
+    onSuccess: (r, arquivo) => { setImportacao({ tipo: "sucesso", resultado: lerImportacao(r), familia: str(obj(arquivo).familia) }); recarregar(); },
+    onError: (e) => setImportacao({ tipo: "erro", erro: e })
+  });
+  /** Lê o arquivo escolhido e manda o objeto como veio: quem decide se o conteúdo vale é o servidor (schema estrito). */
+  const escolherArquivo = async (f: File | undefined) => {
+    if (!f) return;
+    let conteudo: unknown;
+    try { conteudo = JSON.parse(await f.text()) as unknown; } catch {
+      setImportacao({ tipo: "erro", mensagem: "O arquivo não é um JSON válido. Escolha um arquivo exportado de um layout de documento." });
+      return;
+    }
+    importar.mutate(conteudo);
+  };
+
+  const podeVer = can("tipos_operacao.view");
   const podeEditar = can("tipos_operacao.edit");
   const podeCriar = can("tipos_operacao.create");
   const podeExcluir = can("tipos_operacao.delete");
@@ -105,8 +167,13 @@ export function LayoutsDocumentoPanel() {
       inCard
       title="Layouts de documento"
       subtitle="O que a Central de Vendas mostra, em que ordem, com que rótulo e o que é obrigatório ao salvar. A TOP usa o layout ligado a ela; sem ligação, o padrão da família; sem padrão, o layout do sistema."
-      actions={podeCriar && <Button size="sm" onClick={() => setCriando(true)}>Novo layout</Button>}
+      actions={podeCriar && <>
+        <Button size="sm" variant="outline" data-testid="layouts-importar" loading={importar.isPending} onClick={() => arquivoRef.current?.click()}>Importar</Button>
+        <Button size="sm" onClick={() => setCriando(true)}>Novo layout</Button>
+      </>}
     />
+    {podeCriar && <input ref={arquivoRef} type="file" accept="application/json,.json" data-testid="layouts-importar-arquivo" aria-label="Arquivo do layout (JSON)" hidden
+      onChange={(e) => { const f = e.currentTarget.files?.[0]; e.currentTarget.value = ""; void escolherArquivo(f); }} />}
     <CardBody>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <NativeSelect aria-label="Família" data-testid="layouts-filtro-familia" className="w-56" value={filtroFamilia} onChange={(e) => setFiltroFamilia(e.target.value)}>
@@ -125,6 +192,7 @@ export function LayoutsDocumentoPanel() {
                 items={[
                   { label: podeEditar ? "Editar" : "Ver", onClick: () => setEditando(r) },
                   ...(podeCriar ? [{ label: "Duplicar", onClick: () => acao.mutate({ caminho: `${BASE}/${r.id}/duplicar`, method: "POST" }) }] : []),
+                  ...(podeVer ? [{ label: "Exportar", onClick: () => exportar(r) }] : []),
                   ...(podeEditar ? [
                     { label: r.ativo ? "Inativar" : "Ativar", onClick: () => acao.mutate({ caminho: `${BASE}/${r.id}/ativo`, method: "POST", body: { ativo: !r.ativo } }) },
                     { label: "Padrão da família", disabled: r.padrao || !r.ativo, onClick: () => acao.mutate({ caminho: `${BASE}/${r.id}/padrao`, method: "POST" }) }
@@ -156,7 +224,37 @@ export function LayoutsDocumentoPanel() {
       loading={acao.isPending}
       onConfirm={() => excluindo && acao.mutate({ caminho: `${BASE}/${excluindo.id}`, method: "DELETE" })}
     />
+    {importacao && <ResultadoDaImportacao estado={importacao} onFechar={() => setImportacao(null)} />}
   </Card>;
+}
+
+/** Resultado do "Importar": o layout criado e os padrões de cadastro retirados, ou a recusa (422 por caminho). */
+function ResultadoDaImportacao({ estado, onFechar }: {
+  estado: { tipo: "sucesso"; resultado: ResultadoImportacao; familia: string } | { tipo: "erro"; erro?: unknown; mensagem?: string };
+  onFechar: () => void;
+}) {
+  const detalhes = estado.tipo === "erro" ? errosDaApi(estado.erro) : [];
+  return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title="Importar layout" size="sm" testId="layouts-importar-resultado"
+    footer={<Button variant="outline" onClick={onFechar}>{COPY.fechar}</Button>}>
+    {estado.tipo === "sucesso" ? <div className="space-y-2 text-[12.5px]">
+      <p data-testid="layouts-importar-sucesso" className="text-emerald-700">Layout importado: {estado.resultado.nome} ({estado.resultado.code})</p>
+      {estado.resultado.removidos.length > 0 && <div>
+        <p className="text-slate-600">Valores padrão retirados:</p>
+        <ul className="ml-4 list-disc">{estado.resultado.removidos.map((r) =>
+          <li key={r.campo} data-testid="layouts-importar-removido" data-campo={r.campo}>{rotuloDaChave(estado.familia, r.campo)}: {r.motivo}</li>)}
+        </ul>
+      </div>}
+    </div> : <div data-testid="layouts-importar-erro" className="space-y-2">
+      <ErrorState
+        title="O layout não foi importado"
+        {...(estado.mensagem ? { message: estado.mensagem }
+          : detalhes.length === 1 ? { message: detalhes[0]!.mensagem }
+          : detalhes.length > 1 ? { message: "O arquivo tem problemas:" }
+          : { error: estado.erro })}
+      />
+      {detalhes.length > 1 && <ul className="ml-4 list-disc text-[12px] text-red-700">{detalhes.map((e, k) => <li key={k} data-caminho={e.caminho}>{e.mensagem}</li>)}</ul>}
+    </div>}
+  </Dialog>;
 }
 
 function NovoLayout({ familias, onFechar, onPronto }: { familias: Familia[]; onFechar: () => void; onPronto: () => void }) {
@@ -214,6 +312,15 @@ function CorpoEditor({ d, podeEditar, rotuloFamilia, onFechar, onPronto }: {
   const [busca, setBusca] = React.useState("");
   const [configurando, setConfigurando] = React.useState<Alvo | null>(null);
   const [salvo, setSalvo] = React.useState(false);
+  // Padrão de CADASTRO (A3-1b): o id GRAVADO de cada chave; morto = o servidor o listou em `padroesInvalidos` e o id na
+  // tela ainda é o gravado (trocar ou retirar tira o aviso). Rótulos: os do servidor e os escolhidos nesta edição.
+  const gravados = React.useMemo(() => new Map(padroesRegistroDaEstrutura(d.familia, d.estrutura).map((p) => [p.chave, p.id])), [d.familia, d.estrutura]);
+  const idMorto = (chave: string) => (d.padroesInvalidos.has(chave) ? gravados.get(chave) : undefined);
+  const [escolhidos, setEscolhidos] = React.useState<ReadonlyMap<string, RegistroConhecido>>(() => new Map());
+  const rotuloConhecido = (chave: string, id: string): string | undefined => {
+    for (const m of [escolhidos, d.padroesDeCadastro]) { const r = m.get(chave); if (r && r.id === id && r.rotulo) return r.rotulo; }
+    return undefined;
+  };
 
   const mudar = (e: EstruturaLayout) => { setEst(e); setSalvo(false); };
   const noLayout = new Set([...est.cabecalho.map((x) => `cabecalho:${x.campo}`), ...est.rodape.flatMap((a) => a.campos.map((x) => `rodape:${x.campo}`)), ...est.itens.map((x) => `itens:${x.campo}`)]);
@@ -270,6 +377,7 @@ function CorpoEditor({ d, podeEditar, rotuloFamilia, onFechar, onPronto }: {
     const caminho = caminhoDe(a);
     const meus = errosDe(caminho);
     const cfg = x as Partial<CampoDoLayout>;
+    const morto = cfg.valorPadrao?.tipo === "registro" && cfg.valorPadrao.id === idMorto(chavePadraoDeCadastro(parte, x.campo));
     return <li key={`${parte}-${x.campo}`} data-testid={`layout-campo-${x.campo}`} data-campo={x.campo} data-caminho={caminho} className="border-b border-slate-100 py-1.5 last:border-b-0">
       <div className="flex flex-wrap items-center gap-2 text-[12.5px]">
         <span className="min-w-0 flex-1 truncate">{x.rotulo || c?.rotulo || x.campo}
@@ -277,7 +385,8 @@ function CorpoEditor({ d, podeEditar, rotuloFamilia, onFechar, onPronto }: {
         </span>
         {x.obrigatorio && <Badge tone="amber">Obrigatório</Badge>}
         {cfg.editavel === false && <Badge tone="slate">Não editável</Badge>}
-        {cfg.valorPadrao && <Badge tone="blue">Com valor padrão</Badge>}
+        {cfg.valorPadrao && <Badge tone="blue" data-testid="layout-campo-com-padrao">Com valor padrão</Badge>}
+        {morto && <Badge tone="red" data-testid="layout-campo-padrao-invalido">Padrão inválido</Badge>}
         {podeEditar && <>
           {extra}
           <Button variant="ghost" size="sm" aria-label={`Subir ${c?.rotulo ?? x.campo}`} disabled={a.i === 0} onClick={() => deslocar(a, -1)}>↑</Button>
@@ -294,6 +403,7 @@ function CorpoEditor({ d, podeEditar, rotuloFamilia, onFechar, onPronto }: {
   const alvoCfg = configurando;
   const campoCfg = alvoCfg ? (alvoCfg.parte === "rodape" ? est.rodape[alvoCfg.aba]?.campos[alvoCfg.i] : est[alvoCfg.parte][alvoCfg.i]) : undefined;
   const catCfg = alvoCfg && campoCfg ? doCat(alvoCfg.parte, campoCfg.campo) : undefined;
+  const chaveCfg = alvoCfg && campoCfg ? chavePadraoDeCadastro(alvoCfg.parte, campoCfg.campo) : "";
 
   return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title={`Layout de documento — ${d.nome}`} description={`${rotuloFamilia(d.familia)} · ${d.code}`} size="xl" testId="layout-editor"
     footer={<><Button variant="outline" onClick={onFechar}>{COPY.fechar}</Button>{podeEditar && <Button data-testid="layout-salvar" loading={salvar.isPending} onClick={tentarSalvar}>Salvar layout</Button>}</>}>
@@ -361,17 +471,26 @@ function CorpoEditor({ d, podeEditar, rotuloFamilia, onFechar, onPronto }: {
 
     {alvoCfg && campoCfg && <ConfigurarCampo
       parte={alvoCfg.parte} valor={campoCfg} catalogo={catCfg}
+      idMorto={idMorto(chaveCfg)} rotuloDe={(id) => rotuloConhecido(chaveCfg, id)}
       onFechar={() => setConfigurando(null)}
-      onAplicar={(v) => { aplicarConfig(alvoCfg, v); setConfigurando(null); }}
+      onAplicar={(v, registro) => {
+        aplicarConfig(alvoCfg, v);
+        if (registro?.rotulo) setEscolhidos((m) => new Map(m).set(chaveCfg, registro));
+        setConfigurando(null);
+      }}
     />}
   </Dialog>;
 }
 
 // ── Configurar campo ────────────────────────────────────────────────────────────────────────────────────
-type ModoPadrao = "nenhum" | "literal" | "variavel";
-function ConfigurarCampo({ parte, valor, catalogo, onFechar, onAplicar }: {
+type ModoPadrao = "nenhum" | "literal" | "variavel" | "registro";
+function ConfigurarCampo({ parte, valor, catalogo, idMorto, rotuloDe, onFechar, onAplicar }: {
   parte: ParteDoLayout; valor: CampoDoLayout | ColunaDoLayout; catalogo?: CampoDoCatalogo;
-  onFechar: () => void; onAplicar: (v: CampoDoLayout | ColunaDoLayout) => void;
+  /** id do registro padrão GRAVADO que o servidor declarou morto (`padroesInvalidos`), se houver */
+  idMorto?: string;
+  /** rótulo já conhecido de um registro deste campo (GET admin `padroesDeCadastro`, ou escolhido nesta edição) */
+  rotuloDe: (id: string) => string | undefined;
+  onFechar: () => void; onAplicar: (v: CampoDoLayout | ColunaDoLayout, registro?: RegistroConhecido) => void;
 }) {
   const ehItem = parte === "itens";
   const base = valor as Partial<CampoDoLayout>;
@@ -379,25 +498,40 @@ function ConfigurarCampo({ parte, valor, catalogo, onFechar, onAplicar }: {
   const [rotulo, setRotulo] = React.useState(valor.rotulo ?? "");
   const [obrigatorio, setObrigatorio] = React.useState(valor.obrigatorio);
   const [editavel, setEditavel] = React.useState(base.editavel ?? true);
-  const [modo, setModo] = React.useState<ModoPadrao>(base.valorPadrao ? (base.valorPadrao.tipo === "literal" ? "literal" : "variavel") : "nenhum");
+  const tipoInicial = base.valorPadrao?.tipo;
+  const [modo, setModo] = React.useState<ModoPadrao>(tipoInicial === "literal" ? "literal" : tipoInicial === "variavel" ? "variavel" : tipoInicial === "registro" ? "registro" : "nenhum");
   const [literal, setLiteral] = React.useState<string>(base.valorPadrao?.tipo === "literal" ? String(base.valorPadrao.valor) : "");
   const aceitaLiteral = ["data", "texto", "texto_longo", "numero", "booleano"].includes(tipo);
   const variavel = tipo === "data" ? "data_atual" as const : tipo === "empresa" ? "empresa_selecionada" as const : null;
   const somenteLeitura = Boolean(catalogo?.somenteLeitura);
   /** R1: o corpo sempre leva valor ("0", false, plano derivado) — o domínio recusa "obrigatório" nele. */
   const sempreTemValor = Boolean(catalogo?.sempreTemValor);
+  /**
+   * A3-1b: "Registro do cadastro" — campo com `referencia` no catálogo (cabeçalho/rodapé) e, nos itens, só as colunas de
+   * COLUNAS_COM_PADRAO_REGISTRO (Armazém). O recurso e o filtro do RefSelect são os do catálogo (os mesmos da Central).
+   */
+  const referencia = catalogo?.referencia;
+  const aceitaRegistro = Boolean(referencia) && (!ehItem || COLUNAS_COM_PADRAO_REGISTRO.includes(valor.campo));
+  const [registroId, setRegistroId] = React.useState<string | null>(base.valorPadrao?.tipo === "registro" ? base.valorPadrao.id : null);
+  const [registroRotulo, setRegistroRotulo] = React.useState("");
+  const morto = modo === "registro" && Boolean(idMorto) && registroId === idMorto;
+  const labelHint = registroId ? (rotuloDe(registroId) ?? (registroId === idMorto ? "Registro indisponível" : undefined)) : undefined;
+  const faltaRegistro = aceitaRegistro && modo === "registro" && !registroId;
 
   const aplicar = () => {
     const r = rotulo.trim() ? { rotulo: rotulo.trim() } : {};
-    if (ehItem) { onAplicar({ campo: valor.campo, ...r, obrigatorio }); return; }
-    let vp: ValorPadraoLayout | undefined;
+    const registro = aceitaRegistro && modo === "registro" && registroId ? { id: registroId, rotulo: registroRotulo || (rotuloDe(registroId) ?? "") } : undefined;
+    const vpRegistro: ValorPadraoLayout | undefined = registro ? { tipo: "registro", id: registro.id } : undefined;
+    // coluna: só rótulo e obrigatório — e o padrão registro, só na coluna que o aceita (Armazém)
+    if (ehItem) { onAplicar({ campo: valor.campo, ...r, obrigatorio, ...(vpRegistro ? { valorPadrao: vpRegistro } : {}) }, registro); return; }
+    let vp: ValorPadraoLayout | undefined = vpRegistro;
     if (modo === "variavel" && variavel) vp = { tipo: "variavel", variavel };
     if (modo === "literal") vp = { tipo: "literal", valor: tipo === "numero" ? Number(literal) : tipo === "booleano" ? literal === "true" : literal };
-    onAplicar({ campo: valor.campo, ...r, obrigatorio, editavel, ...(vp ? { valorPadrao: vp } : {}) });
+    onAplicar({ campo: valor.campo, ...r, obrigatorio, editavel, ...(vp ? { valorPadrao: vp } : {}) }, registro);
   };
 
   return <Dialog open onOpenChange={(o) => { if (!o) onFechar(); }} title={`Configurar campo — ${catalogo?.rotulo ?? valor.campo}`} size="sm" testId="layout-configurar-campo"
-    footer={<><Button variant="outline" onClick={onFechar}>{COPY.fechar}</Button><Button data-testid="layout-configurar-aplicar" onClick={aplicar}>Aplicar</Button></>}>
+    footer={<><Button variant="outline" onClick={onFechar}>{COPY.fechar}</Button><Button data-testid="layout-configurar-aplicar" disabled={faltaRegistro} onClick={aplicar}>Aplicar</Button></>}>
     <div className="grid grid-cols-12 gap-3">
       <Field label="Rótulo" span={12} help={catalogo ? `Vazio = "${catalogo.rotulo}".` : undefined}>
         <Input data-testid="layout-cfg-rotulo" value={rotulo} onChange={(e) => setRotulo(e.target.value)} />
@@ -412,13 +546,21 @@ function ConfigurarCampo({ parte, valor, catalogo, onFechar, onAplicar }: {
           <option value="true">Sim</option><option value="false">Não</option>
         </NativeSelect>
       </Field>}
-      {!ehItem && <Field label="Valor padrão" span={12}>
+      {(!ehItem || aceitaRegistro) && <Field label="Valor padrão" span={12}>
         <NativeSelect data-testid="layout-cfg-padrao-modo" value={modo} onChange={(e) => setModo(e.target.value as ModoPadrao)}>
           <option value="nenhum">Nenhum</option>
-          {aceitaLiteral && <option value="literal">Valor fixo</option>}
-          {variavel && <option value="variavel">{variavel === "data_atual" ? "Variável: data de hoje" : "Variável: empresa selecionada"}</option>}
+          {!ehItem && aceitaLiteral && <option value="literal">Valor fixo</option>}
+          {!ehItem && variavel && <option value="variavel">{variavel === "data_atual" ? "Variável: data de hoje" : "Variável: empresa selecionada"}</option>}
+          {aceitaRegistro && <option value="registro">Registro do cadastro</option>}
         </NativeSelect>
       </Field>}
+      {aceitaRegistro && referencia && modo === "registro" && <div data-testid="layout-cfg-padrao-registro" className="col-span-12 space-y-1">
+        <Field label="Registro padrão" span={12} required>
+          <RefSelect resource={referencia.recurso} filter={referencia.filtro} value={registroId} labelHint={labelHint}
+            onChange={(v: string | null, opt?: Option) => { setRegistroId(v); setRegistroRotulo(v && opt ? (opt.caminho || opt.label) : ""); }} />
+        </Field>
+        {morto && <p data-testid="layout-cfg-padrao-invalido" role="alert" className="text-[11.5px] text-amber-700">{AVISO_PADRAO_REGISTRO_MORTO}</p>}
+      </div>}
       {!ehItem && modo === "literal" && <Field label="Valor fixo" span={12}>
         {tipo === "booleano"
           ? <NativeSelect data-testid="layout-cfg-padrao-valor" value={literal} onChange={(e) => setLiteral(e.target.value)}><option value="">—</option><option value="true">Sim</option><option value="false">Não</option></NativeSelect>

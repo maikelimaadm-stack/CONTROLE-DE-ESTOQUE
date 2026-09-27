@@ -8,7 +8,7 @@ import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
-import { ERRO_LAYOUT_CAMPO_OBRIGATORIO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type ValorPadraoLayout } from "@agro/domain";
+import { AVISO_PADRAO_INVALIDO_CENTRAL, ERRO_LAYOUT_CAMPO_OBRIGATORIO, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type ValorPadraoLayout } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
@@ -37,7 +37,37 @@ function ehEstruturaLayout(v: unknown): v is EstruturaLayout {
 /** Valor padrão do layout → valor do estado do formulário. `null` = não se aplica (o validador do domínio já recusa esses). */
 function valorDoPadrao(v: ValorPadraoLayout, empresa: string): string | boolean | null {
   if (v.tipo === "variavel") return v.variavel === "data_atual" ? todayISO() : empresa || null;
+  // VENDAS-A3-1b: o padrão registro nunca chega pela `estrutura` (a API o tira dela); vem em `padroesDeCadastro`.
+  if (v.tipo === "registro") return null;
   return typeof v.valor === "boolean" ? v.valor : String(v.valor);
+}
+
+/**
+ * PADRÃO DE CADASTRO (VENDAS-A3-1b) — dois campos OPCIONAIS da resposta de `/layout-efetivo`:
+ * `padroesDeCadastro` ({ [chave]: { id, rotulo, empresaId? } }, só os que valem AGORA) e `padroesInvalidos` (as chaves
+ * dos que morreram). A API anterior não os manda: ausentes = {} e [], e a Central é a da A3-1. Forma errada de um deles
+ * → ele é IGNORADO por inteiro (o que não se reconhece não vale) — nunca bloqueia o Salvar, que depende só da estrutura.
+ * Chave nas duas listas → não se aplica (vale o aviso).
+ */
+interface PadraoDeCadastro { id: string; rotulo: string; empresaId: string | null }
+interface PadroesDaResposta { validos: ReadonlyMap<string, PadraoDeCadastro>; invalidos: ReadonlySet<string> }
+const SEM_PADROES: PadroesDaResposta = { validos: new Map(), invalidos: new Set() };
+const ehPadraoDeCadastro = (v: unknown): v is { id: string; rotulo: string; empresaId?: string | null } =>
+  ehObj(v) && typeof v.id === "string" && FORMA_UUID_PADRAO.test(v.id) && typeof v.rotulo === "string"
+  && (v.empresaId === undefined || v.empresaId === null || typeof v.empresaId === "string");
+function padroesDaResposta(r: unknown): PadroesDaResposta {
+  if (!ehObj(r)) return SEM_PADROES;
+  let validos = new Map<string, PadraoDeCadastro>();
+  if (ehObj(r.padroesDeCadastro)) {
+    for (const [chave, v] of Object.entries(r.padroesDeCadastro)) {
+      if (!ehPadraoDeCadastro(v)) { validos = new Map(); break; }
+      validos.set(chave, { id: v.id, rotulo: v.rotulo, empresaId: typeof v.empresaId === "string" ? v.empresaId : null });
+    }
+  }
+  const lista = r.padroesInvalidos;
+  const invalidos = new Set<string>(Array.isArray(lista) && lista.every((x): x is string => typeof x === "string") ? lista : []);
+  for (const chave of invalidos) validos.delete(chave);
+  return validos.size || invalidos.size ? { validos, invalidos } : SEM_PADROES;
 }
 
 /** Detalhe do 422 LAYOUT_CAMPO_OBRIGATORIO → { caminho: mensagem }. Aceita lista direta ou embrulhada. */
@@ -199,6 +229,17 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   /** Configuração do layout por chave (cabeçalho e rodapé) — só com layout de verdade. */
   const cfg = React.useMemo(() => new Map<string, CampoDoLayout>(layout ? [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)].map((x) => [x.campo, x]) : []), [layout]);
   const rotuloDoCatalogo = React.useMemo(() => new Map(catalogoDaFamilia(familiaLayout).filter((c) => c.parte !== "itens").map((c) => [c.chave, c.rotulo])), [familiaLayout]);
+  /**
+   * PADRÃO DE CADASTRO (VENDAS-A3-1b): só com layout de verdade, e só em campo de cabeçalho/rodapé que o CATÁLOGO declara
+   * de referência (dono único: `referencia` em `@agro/domain`) e que o layout desenha. Chave de outro campo não vale.
+   */
+  const padroes = React.useMemo(() => (layout ? padroesDaResposta(layoutRecebido) : SEM_PADROES), [layout, layoutRecebido]);
+  const camposDeCadastro = React.useMemo(() => new Set(catalogoDaFamilia(familiaLayout).filter((c) => c.parte !== "itens" && c.referencia).map((c) => chavePadraoDeCadastro(c.parte, c.chave))), [familiaLayout]);
+  const doLayoutComCadastro = (chave: string) => Boolean(layout) && camposDeCadastro.has(chave) && cfg.has(chave);
+  /** O padrão que vale agora para o campo (null: nenhum). */
+  const padraoDoCampo = (chave: string) => (doLayoutComCadastro(chave) ? padroes.validos.get(chave) ?? null : null);
+  /** O padrão do campo morreu no cadastro: nada é aplicado, o aviso aparece e o campo fica editável nesta abertura. */
+  const padraoInvalido = (chave: string) => doLayoutComCadastro(chave) && padroes.invalidos.has(chave);
 
   /**
    * O QUE CONTA COMO "TEM COISA DIGITADA".
@@ -393,30 +434,34 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const rot = (chave: string, hoje: string) => cfg.get(chave)?.rotulo || hoje;
   const req = (chave: string, hoje: boolean) => (layout ? Boolean(cfg.get(chave)?.obrigatorio) : hoje);
   const err = (chave: string) => erros[chave];
-  const pesquisa = (conteudo: React.ReactNode, chave?: string) => <div className={cn(estilosCv.campo, estilosCv.campoPesquisa)} {...(chave ? dc(chave) : {})}>{conteudo}<span className={estilosCv.adorno} aria-hidden><Search /></span></div>;
+  /** VENDAS-A3-1b: o rótulo do padrão de cadastro vai ao RefSelect enquanto o valor for o do padrão (sem consulta). */
+  const dica = (chave: keyof typeof h) => { const p = padraoDoCampo(chave); return p && h[chave] === p.id ? p.rotulo : undefined; };
+  /** VENDAS-A3-1b: aviso do padrão morto, dentro do invólucro `data-campo` do campo. Sem padrão inválido, nada. */
+  const avisoDoPadrao = (chave?: string) => (chave && padraoInvalido(chave) ? <p data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p> : null);
+  const pesquisa = (conteudo: React.ReactNode, chave?: string) => <div className={cn(estilosCv.campo, estilosCv.campoPesquisa)} {...(chave ? dc(chave) : {})}>{conteudo}{avisoDoPadrao(chave)}<span className={estilosCv.adorno} aria-hidden><Search /></span></div>;
   const campo = (conteudo: React.ReactNode, chave?: string) => <div className={estilosCv.campo} {...(chave ? dc(chave) : {})}>{conteudo}</div>;
   const larguraFixa = { maxWidth: 330 };
 
   const desenhar = (chave: string): React.ReactNode => {
     switch (chave) {
-      case "client_id": return pesquisa(<Field label={rot(chave, "Cliente")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} /></Field>, chave);
+      case "client_id": return pesquisa(<Field label={rot(chave, "Cliente")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} labelHint={dica("client_id")} /></Field>, chave);
       case "empresa_id": return pesquisa(<Field label={rot(chave, "Empresa")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>, chave);
       case "document_date": return campo(<Field label={rot(chave, "Data")} required={req(chave, true)} error={err(chave)} span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>, chave);
       case "due_date": return campo(<Field label={rot(chave, "Vencimento")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>, chave);
-      case "payment_method_id": return pesquisa(<Field label={rot(chave, "Forma de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} /></Field>, chave);
-      case "categoria_financeira_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Natureza")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} /></Field>, chave);
-      case "centro_custo_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Centro de resultado")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>, chave);
+      case "payment_method_id": return pesquisa(<Field label={rot(chave, "Forma de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} labelHint={dica("payment_method_id")} /></Field>, chave);
+      case "categoria_financeira_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Natureza")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} labelHint={dica("categoria_financeira_id")} /></Field>, chave);
+      case "centro_custo_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Centro de resultado")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} labelHint={dica("centro_custo_id")} /></Field>, chave);
       case "shipping_date": return campo(<Field label={rot(chave, "Data de saída")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>, chave);
-      case "proprietary_id": return pesquisa(<Field label={rot(chave, "Proprietário")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} /></Field>, chave);
+      case "proprietary_id": return pesquisa(<Field label={rot(chave, "Proprietário")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} labelHint={dica("proprietary_id")} /></Field>, chave);
       case "discount": return campo(<Field label={rot(chave, "Desconto")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>, chave);
       case "other_values": return campo(<Field label={rot(chave, "Outros valores")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>, chave);
-      case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} /></Field>, chave)}</div>;
+      case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} /></Field>, chave)}</div>;
       case "installment_plan": return <>
         {!condicaoId && <div style={larguraFixa}>{campo(<Field label={rot(chave, "Parcelamento")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>, chave)}</div>}
         {!condicaoId && h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
         {condicaoId && planoCalculado && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={ajustarPlano} /></div>}
       </>;
-      case "transporter_id": return pesquisa(<Field label={rot(chave, "Transportadora")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>, chave);
+      case "transporter_id": return pesquisa(<Field label={rot(chave, "Transportadora")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transporter_id")} /></Field>, chave);
       case "driver_name": return campo(<Field label={rot(chave, "Motorista")} required={req(chave, false)} error={err(chave)} span={12}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>, chave);
       case "freight": return campo(<Field label={rot(chave, "Frete")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} /></Field>, chave);
       case "freight_icms": return campo(<Field label={rot(chave, "ICMS frete")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} /></Field>, chave);
@@ -429,10 +474,47 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const existe = (chave: string) => rotuloDoCatalogo.has(chave)
     && !((chave === "categoria_financeira_id" || chave === "centro_custo_id") && !classificacaoAtiva)
     && !(chave === "condicao_pagamento_id" && !condicaoAtiva);
-  /** O campo, com a chave do React e — só com layout e `editavel: false` — travado. */
+
+  /**
+   * PADRÃO DE CADASTRO (VENDAS-A3-1b), aplicado ao ABRIR (quando a resposta do layout chega), só a campo que EXISTE na tela
+   * e ainda está intocado — o valor escolhido nunca é sobrescrito — e pelo MESMO caminho da escolha manual: `setH` do
+   * campo (o rótulo vai ao RefSelect por `labelHint`, sem consulta) e, na condição de pagamento, `escolherCondicao`, para
+   * o plano ser calculado como se o usuário a tivesse escolhido. O estado inicial acompanha, como no padrão literal, para
+   * o padrão não contar como "tem coisa digitada". O efeito lê o `h` do render em que a resposta chegou; a guarda por
+   * resposta impede reaplicar a cada render.
+   */
+  const padroesDeCadastroAplicados = React.useRef<PadroesDaResposta | null>(null);
+  React.useEffect(() => {
+    if (!layout || padroesDeCadastroAplicados.current === padroes) return;
+    padroesDeCadastroAplicados.current = padroes;
+    const antes = inicial.current;
+    const novos: Partial<typeof h> = {};
+    let condicaoPadrao: string | null = null;
+    for (const [chave, p] of padroes.validos) {
+      if (!padraoDoCampo(chave) || !existe(chave) || !(chave in antes)) continue;
+      const k = chave as keyof typeof h;
+      if (JSON.stringify(h[k]) !== JSON.stringify(antes[k])) continue;
+      if (k === "condicao_pagamento_id") condicaoPadrao = p.id;
+      else Object.assign(novos, { [k]: p.id });
+    }
+    if (Object.keys(novos).length) {
+      inicial.current = { ...antes, ...novos };
+      setH((o) => {
+        const r = { ...o };
+        for (const [k, v] of Object.entries(novos)) if (JSON.stringify(o[k as keyof typeof o]) === JSON.stringify(antes[k as keyof typeof antes])) Object.assign(r, { [k]: v });
+        return r;
+      });
+    }
+    if (condicaoPadrao !== null) {
+      inicial.current = { ...inicial.current, condicao_pagamento_id: condicaoPadrao };
+      escolherCondicao(condicaoPadrao);
+    }
+  }, [layout, padroes, h, padraoDoCampo, existe, escolherCondicao]);
+
+  /** O campo, com a chave do React e — só com layout e `editavel: false` — travado. Padrão de cadastro morto destrava. */
   const render = (chave: string) => {
     const n = desenhar(chave);
-    const travado = layout && cfg.get(chave)?.editavel === false;
+    const travado = layout && cfg.get(chave)?.editavel === false && !padraoInvalido(chave);
     return <React.Fragment key={chave}>{travado ? <fieldset disabled data-editavel="false" style={{ display: "contents" }}>{n}</fieldset> : n}</React.Fragment>;
   };
 
@@ -467,6 +549,16 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     return [{ value, label: a.aba, content }];
   });
   const layoutDosItens = React.useMemo(() => (layout ? { colunas: layout.itens } : null), [layout]);
+  /**
+   * ARMAZÉM PADRÃO (VENDAS-A3-1b): o padrão da coluna Armazém vale SÓ para a empresa do documento de AGORA
+   * (`empresaId` da resposta === `h.empresa_id`); de outra empresa, ou sem empresa na resposta, nenhum. Só a linha NOVA o
+   * recebe — trocar a empresa não mexe nas linhas que já existem.
+   */
+  const padraoArmazem = layout && layout.itens.some((c) => c.campo === "warehouse_id") ? padroes.validos.get(chavePadraoDeCadastro("itens", "warehouse_id")) : undefined;
+  const armazemPadrao = React.useMemo(
+    () => (padraoArmazem && padraoArmazem.empresaId && padraoArmazem.empresaId === h.empresa_id ? { id: padraoArmazem.id, rotulo: padraoArmazem.rotulo } : null),
+    [padraoArmazem, h.empresa_id]
+  );
 
   return <>
     <CentralVendasWorkspace
@@ -493,7 +585,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
           </div>}
         </>}
       </>}
-      itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout ? erros : undefined} />}
+      itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout ? erros : undefined} armazemPadrao={armazemPadrao} />}
       abas={abas}
     />
 
