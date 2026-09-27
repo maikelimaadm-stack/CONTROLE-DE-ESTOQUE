@@ -285,7 +285,8 @@ function rotulosDaClassificacaoNoWebDaBase(): { natureza: string; centro: string
   const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
   expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
   const fonte = execFileSync("git", ["show", `${sha}:apps/web/src/app/(app)/vendas/[kind]/new/page.tsx`], { cwd: raiz, encoding: "utf8" });
-  const rotulos = (recurso: string) => [...fonte.matchAll(new RegExp(`<Field label="([^"]+)" required[^>]*><RefSelect resource="${recurso}"`, "g"))].map((m) => m[1]!);
+  // o rótulo é literal (`label="…"`) até a A3-1; a partir dela vem do layout com o de hoje como reserva (`label={rot(chave, "…")}`)
+  const rotulos = (recurso: string) => [...fonte.matchAll(new RegExp(`<Field label=(?:"([^"]+)"|\\{rot\\(chave, "([^"]+)"\\)\\}) required[^>]*><RefSelect resource="${recurso}"`, "g"))].map((m) => (m[1] ?? m[2])!);
   const natureza = rotulos("financial_categories");
   const centro = rotulos("cost_centers");
   expect([natureza.length, centro.length], `detector dos rótulos da classificação no web da base: ${JSON.stringify({ natureza, centro })}`).toEqual(natureza.length ? [1, 1] : [0, 0]);
