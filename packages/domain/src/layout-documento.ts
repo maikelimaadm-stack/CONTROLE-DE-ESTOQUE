@@ -146,7 +146,7 @@ export const mensagemSempreTemValor = (rotulo: string) => `"${rotulo}" sempre te
 export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayout): ErroDoLayout[] {
   const e: ErroDoLayout[] = [];
   const cat = catalogoDaFamilia(familia);
-  if (!cat.length) return [{ caminho: "familia", mensagem: "Família sem layout de documento." }];
+  if (!cat.length) return [{ caminho: "familia", mensagem: "Movimento sem layout de documento." }];
   if (!estrutura || estrutura.versaoSchema !== 1) return [{ caminho: "estrutura.versaoSchema", mensagem: "Versão da estrutura desconhecida." }];
   const porChave = (parte: ParteDoLayout) => new Map(cat.filter((c) => c.parte === parte).map((c) => [c.chave, c]));
   const topo = porChave("cabecalho"); const rod = porChave("rodape"); const it = porChave("itens");

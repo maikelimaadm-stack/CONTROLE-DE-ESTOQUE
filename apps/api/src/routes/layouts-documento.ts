@@ -35,7 +35,7 @@ const valorPadraoSchema = z.union([
 ]);
 const campoSchema = z.object({
   campo: z.string().min(1).max(80), rotulo: z.string().max(120).optional(), obrigatorio: z.boolean(), editavel: z.boolean(),
-  valorPadrao: valorPadraoSchema.optional()
+  valorPadrao: valorPadraoSchema.optional(), grupo: z.enum(["principal", "adicionais"]).optional()
 }).strict();
 export const estruturaSchema = z.object({
   versaoSchema: z.literal(1),
@@ -259,7 +259,7 @@ export default async function layoutsDocumentoRoutes(app: FastifyInstance) {
     const { id } = idSchema.parse(req.params);
     if (req.body !== undefined && req.body !== null && Object.keys(req.body as object).length) z.object({}).strict().parse(req.body);
     const atual = await lerLayout(ctx, id, true);
-    if (!atual.is_active) throw validation("Layout inativo não pode ser o padrão da família", [{ path: "ativo", message: "Ative o layout antes de marcá-lo como padrão." }]);
+    if (!atual.is_active) throw validation("Layout inativo não pode ser o padrão do movimento", [{ path: "ativo", message: "Ative o layout antes de marcá-lo como padrão." }]);
     if (atual.padrao) return { ok: true };
     await liberarPadrao(ctx, atual.familia, id, id);
     const u = await ctx.tx.query("update erp.layouts_documento set padrao=true where id=$1 and organization_id=$2 and deleted_at is null", [id, ctx.orgId]);
@@ -283,7 +283,7 @@ export default async function layoutsDocumentoRoutes(app: FastifyInstance) {
     }
     const outraFamilia = tipoOperacaoIds.map((t, i) => ({ t, i })).filter(({ t }) => familiaDe.get(t) !== atual.familia);
     if (outraFamilia.length) {
-      throw validation("TOP de outra família", outraFamilia.map(({ i }) => ({ path: `tipoOperacaoIds.${i}`, message: `A TOP não é da família ${atual.familia} deste layout.` })));
+      throw validation("TOP de outro movimento", outraFamilia.map(({ i }) => ({ path: `tipoOperacaoIds.${i}`, message: `A TOP não é do movimento ${atual.familia} deste layout.` })));
     }
     const antes = await ctx.tx.query<{ tipo_operacao_id: string; layout_id: string }>(
       `select tipo_operacao_id, layout_id from erp.layout_documento_tops
