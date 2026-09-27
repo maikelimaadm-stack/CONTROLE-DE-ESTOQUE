@@ -167,8 +167,9 @@ export const rotuloDaTop = (t: { codigo: string; nome: string }) => (t.codigo ? 
 
 /**
  * TESTIDS (contrato com os E2E — não renomeie):
- *  página ............... config-layout-pagina · cabeçalho: config-nome, config-movimento, config-codigo, config-padrao-selo, config-voltar
- *  barra ................ config-editar, config-salvar, config-cancelar, config-desfazer, config-refazer, config-restaurar, config-exportar
+ *  página ............... config-layout-pagina · cabeçalho: config-nome, config-movimento, config-codigo, config-padrao-selo
+ *  barra ................ config-salvar, config-cancelar, config-desfazer, config-refazer, config-restaurar
+ *                         (A3-1d: config-editar, config-voltar e config-exportar saíram — ver o bloco da A3-1d abaixo)
  *  aviso ................ config-aviso (recusa de operação: motivo)
  *  (A) disponíveis ...... config-disponiveis, config-busca, config-so-obrigatorios, config-disponivel-<chave> (coluna: config-disponivel-itens.<campo>),
  *                         config-disponiveis-vazio ("Todos os campos já estão no layout."), config-incluir-em (menu "Incluir em…")
