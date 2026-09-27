@@ -111,8 +111,6 @@ export function VisualizarTopsDialogo({ layoutId, familia, onFechar }: { layoutI
         </div>
         <p className="text-[12px] text-slate-500">Só TOPs deste movimento. Uma TOP usa um layout só: ligar aqui uma TOP que está em outro layout a tira de lá. Duplo clique move.</p>
         {salvo && <p data-testid="config-tops-salvo" className="text-[12px] text-emerald-700">TOPs ligadas salvas.</p>}
-        {selDisp.size > 0 && <p data-testid="config-tops-pendente" role="status"
-          className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">{TEXTOS.topsPendente}</p>}
         {salvar.isError && <ErrorState error={salvar.error} />}
         {detalhe.isError ? <ErrorState error={detalhe.error} />
           : carregando ? <LoadingState variant="compact" />
@@ -138,6 +136,9 @@ export function VisualizarTopsDialogo({ layoutId, familia, onFechar }: { layoutI
                     </div>
                   </div>}
             </>}
+        {/* A3-1d: o aviso fica ABAIXO das listas — acima, ele empurraria as TOPs no 1º clique e o duplo clique erraria o alvo */}
+        {selDisp.size > 0 && <p data-testid="config-tops-pendente" role="status"
+          className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">{TEXTOS.topsPendente}</p>}
       </section>
     </Dialog>
     <Dialog open={confirmaDescarte} onOpenChange={setConfirmaDescarte} title="Descartar mudanças" size="sm" testId="config-tops-descartar-dialogo"

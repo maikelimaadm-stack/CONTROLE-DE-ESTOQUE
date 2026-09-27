@@ -50,7 +50,7 @@ export function CampoPrevia({ chave }: { chave: string }) {
     : {};
 
   return (
-    <div className="emp-layout-config-field-slot" style={{ flex: "3 1 0" }}>
+    <div className="emp-layout-config-field-slot flex-wrap" style={{ flex: "3 1 0" }}>
       <div
         role="button"
         tabIndex={0}
