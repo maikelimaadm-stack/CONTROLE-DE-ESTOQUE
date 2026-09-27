@@ -34,7 +34,7 @@ const nomeSchema = z.string().trim().min(1).max(120);
 const arquivoSchema = z.object({
   formato: z.string().refine((v) => v === FORMATO_ARQUIVO_LAYOUT, `Formato de arquivo não reconhecido (esperado "${FORMATO_ARQUIVO_LAYOUT}").`),
   versao: z.number().refine((v) => v === VERSAO_ARQUIVO_LAYOUT, `Versão do arquivo não suportada (esperada ${VERSAO_ARQUIVO_LAYOUT}).`),
-  familia: z.string().refine((v) => familiaTemLayout(v), "Família sem layout de documento."),
+  familia: z.string().refine((v) => familiaTemLayout(v), "Movimento sem layout de documento."),
   nome: nomeSchema,
   estrutura: estruturaSchema
 }).strict();

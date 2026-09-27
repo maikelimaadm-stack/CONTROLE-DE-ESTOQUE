@@ -628,7 +628,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // FAIL-CLOSED contra o registry, ANTES de qualquer escrita. Família desconhecida não vira linha.
       if (!familiaOperacionalDeclarada(d.codigoBase)) {
         throw new DomainError("TIPO_OPERACAO_BASE_DESCONHECIDA",
-          `Família operacional desconhecida: ${d.codigoBase}`, { codigoBase: d.codigoBase });
+          `Movimento operacional desconhecido: ${d.codigoBase}`, { codigoBase: d.codigoBase });
       }
 
       // AUSENTE = NEUTRO. Não é o mesmo que "configurado com tudo desligado por decisão": é "ninguém
@@ -705,7 +705,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     for (const imutavel of ["codigo", "codigoBase", "codigo_base"]) {
       if (imutavel in corpo) {
         throw new DomainError("TIPO_OPERACAO_IDENTIDADE_IMUTAVEL",
-          "Código e família operacional não mudam depois da criação; crie um tipo de operação novo",
+          "Código e movimento operacional não mudam depois da criação; crie um tipo de operação novo",
           { campo: imutavel });
       }
     }
