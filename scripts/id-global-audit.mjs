@@ -179,7 +179,9 @@ const LISTAGENS_CUSTOM_SEM_ID_GLOBAL = {
   // ("2103"), que é a razão de ser do cadastro. Dar-lhe também um ID Global poria DOIS números humanos na
   // mesma linha, e o usuário teria de aprender qual dos dois usar para falar do mesmo registro. É
   // configuração da organização, não lançamento navegável por número.
-  "apps/web/src/features/admin/layouts-documento.tsx": "layout de documento (configuração da digitação da Central): o `code` do próprio cadastro já é o localizador humano; um segundo número competiria com ele",
+  // A3-1d (decisão 262): a MESMA grade de layouts saiu de `layouts-documento.tsx` (que passou a só montar a tela única)
+  // para `layout-configurador/grade.tsx`. Só o CAMINHO mudou — mesma entidade, mesmo motivo, nenhuma declaração a mais.
+  "apps/web/src/features/admin/layout-configurador/grade.tsx": "layout de documento (configuração da digitação da Central): o `code` do próprio cadastro já é o localizador humano; um segundo número competiria com ele",
   "apps/web/src/features/admin/tipos-operacao.tsx":"tipo de operação configurado: o `codigo` do próprio cadastro já é o localizador humano; um segundo número competiria com ele",
   "apps/web/src/features/fleet/depreciations.tsx": "cálculo de depreciação por equipamento, não uma entidade própria",
   "apps/web/src/features/hr/advances.tsx": "adiantamentos salariais: entidade fora do catálogo",
