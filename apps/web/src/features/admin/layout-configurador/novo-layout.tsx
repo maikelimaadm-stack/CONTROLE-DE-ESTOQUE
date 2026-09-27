@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, qs } from "@/lib/api";
 import { COPY } from "@/lib/copy";
 import { Button, Dialog, EmptyState, ErrorState, Field, Input, LoadingState, NativeSelect } from "@/components/ui";
-import { BASE_LAYOUTS, TEXTOS, chaveLista, invalidarLayouts, lerLinhaLayout, rotuloDaTop, type LayoutLinha } from "./contrato";
+import { BASE_LAYOUTS, TEXTOS, chaveLista, invalidarLayouts, lerLinhaLayout, rotuloDaTop } from "./contrato";
 import { useTopsDoMovimento } from "./tops-do-movimento";
 
 /**
