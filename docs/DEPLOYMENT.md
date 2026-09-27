@@ -1414,6 +1414,24 @@ existe com a web anterior no ar. A API anterior também recusa regravar um layou
 4. No fim: desligar a TOP 2 do layout de teste (ou religá-la ao layout anterior) e INATIVAR os dois layouts (o de
    teste e o importado).
 
+## VENDAS-A3-1d — configurador organizado (tela única) e o fim do "não salva" (sem migration)
+
+Decisão 262. **Só web**: sem migration, sem rota nova, sem variável, sem permissão, sem mudança de API. Deploy do web
+sozinho; a API continua a da A3-1c. **Reversão:** redeploy do web anterior (nada gravado muda de forma).
+
+Quem estiver com a aba aberta antes do deploy verá a faixa "Saiu uma versão nova do sistema" (a casca compara o `sha`
+de `GET /api/build`): clicar em "Atualizar agora". Sem o sha do provedor (local, CI), a faixa nunca aparece.
+
+**Roteiro do Maike (depois do deploy), sem gravar documento:**
+0. Se aparecer "Saiu uma versão nova do sistema. Atualize a página para usar a versão nova.", clicar em "Atualizar agora".
+1. Configurações › Operações › Layouts de documento: a grade mostra o "Em uso" real de cada layout ("Não está em uso"
+   em destaque quando não vale para nenhuma TOP).
+2. Selecionar o 0001 → a área abre logo abaixo, já editável; o status diz se ele está em uso → "Visualizar TOPs" →
+   selecionar a TOP 1 Orçamento → "Mover →" → Salvar → o status passa a "Em uso nas TOPs: 1 · Orçamento".
+3. "Abrir na Central" ao lado da TOP → no topo de Dados principais: "Layout: 0001… (ligado à TOP)", e os campos que o
+   layout tirou não aparecem.
+4. No fim, se o Maike quiser: desligar a TOP (Visualizar TOPs → "← Remover" → Salvar) ou inativar o layout.
+
 ## VENDAS-A3-1c — configurador visual do layout e "Movimento" (sem migration)
 
 Decisão 261. **Sem migration, sem variável, sem permissão, sem capacidade nova.** Layout que já existe continua igual (sem
