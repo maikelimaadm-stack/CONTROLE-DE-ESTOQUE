@@ -11,6 +11,11 @@ import { login, api, uniq, abrirLancamentoDeVendas, escolherTopEContinuar, abrir
  *
  * Anti-vacuidade: toda ausência vem depois de uma presença positiva do mesmo alvo (o campo aparece ONDE deve antes de
  * se conferir que não está onde não deve).
+ *
+ * A3-1d (decisão 262): a tela única dos layouts não muda este spec — ele não passa por ela (o layout é montado e ligado
+ * pela API). Na Central, a linha nova "Layout: …" (`central-layout-efetivo`, no topo de Dados principais) é texto e um
+ * link "Configurar": sem `data-campo` e sem botão, não mexe nas contagens de campo nem na ausência do botão "Dados
+ * adicionais" medidas aqui. A linha é medida nos specs da A3-1d.
  */
 
 const BASE = "/api/admin/layouts-documento";

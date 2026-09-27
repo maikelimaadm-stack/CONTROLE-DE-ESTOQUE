@@ -12,6 +12,11 @@ import { login, api, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinu
  * usuário diz "movimento" onde dizia "família" da TOP. Os passos de UI foram migrados sem perder asserção; os
  * identificadores de código (`familia`, `padrao_da_familia`) não mudam.
  *
+ * A3-1d (decisão 262): TELA ÚNICA — a grade de layouts em cima (com a barra: Novo, Visualizar TOPs, Exportar…) e, ao
+ * clicar na linha, a área do layout logo abaixo, já no rascunho (não há mais "Editar"). Novo é um assistente de 3 passos
+ * que SELECIONA o criado; Salvar só liga com mudança e, depois de salvar, a área continua editável; as TOPs ligadas saíram
+ * do fim da página para o diálogo "Visualizar TOPs". Só os passos de UI mudaram; toda asserção de regra ficou.
+ *
  * Anti-vacuidade: toda ausência (campo fora do layout) vem depois de uma presença positiva do mesmo tipo de alvo.
  */
 
@@ -36,40 +41,53 @@ async function abrirCentral(page: Page, variante: string, topId: string) {
   await expect(page.getByTestId("central-vendas")).toBeVisible();
 }
 
-/** Cria o layout PELA TELA e devolve o id (lido da resposta do POST que a tela disparou). */
+/**
+ * Cria o layout PELA TELA e devolve o id (lido da resposta do POST que a tela disparou).
+ * A3-1d (decisão 262): "Novo" da barra da grade abre o ASSISTENTE de 3 passos (antes: botão "Novo layout" e um diálogo
+ * só). Modelo = layout do sistema (o inicial: o POST é o da raiz, sem duplicar); sem padrão e sem TOP no passo 3 — a TOP
+ * é ligada depois, pelo "Visualizar TOPs", como antes.
+ */
 async function criarLayoutPelaTela(page: Page, familia: string, nome: string): Promise<string> {
   await page.goto(ROTA_LAYOUTS);
   await expect(page.getByTestId("layouts-documento")).toBeVisible();
-  await page.getByRole("button", { name: "Novo layout" }).click();
+  await page.getByTestId("layouts-barra").getByTestId("layouts-novo").click();
   const dialogo = page.getByTestId("layout-novo");
   await dialogo.getByTestId("layout-novo-familia").selectOption(familia);
   await dialogo.getByTestId("layout-novo-nome").fill(nome);
+  await dialogo.getByTestId("layout-novo-avancar").click();
+  await expect(dialogo.getByTestId("layout-novo-origem"), "passo 2: o modelo").toBeVisible();
+  await dialogo.getByTestId("layout-novo-avancar").click();
+  await expect(dialogo.getByTestId("layout-novo-padrao"), "passo 3: onde usar").toBeVisible();
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === BASE);
   await dialogo.getByTestId("layout-novo-criar").click();
   const r = await resposta;
   expect(r.status(), "o layout foi criado").toBe(201);
-  const id = ((await r.json()) as { id: string }).id;
-  // A3-1c (W8): ao criar, o diálogo navega para a página do configurador do layout novo
-  await expect(page).toHaveURL(new RegExp(`/configuracoes/layouts-documento/${id}$`));
+  const { id, code } = (await r.json()) as { id: string; code: string };
+  // A3-1d (decisão 262): ao criar, a tela SELECIONA o novo na grade e abre a área dele (antes: navegava para
+  // /configuracoes/layouts-documento/<id> — asserção de URL trocada pela linha selecionada + código/nome na área).
+  await expect(dialogo).toHaveCount(0);
+  await expect(page.getByTestId(`layout-linha-${id}`)).toHaveAttribute("data-selecionado", "true");
+  const area = page.getByTestId("config-layout-pagina");
+  await expect(area.getByTestId("config-codigo")).toHaveText(code);
+  await expect(area.getByTestId("config-nome")).toHaveValue(nome);
   return id;
 }
 
 /**
- * A3-1c (decisão 261): o editor deixou de ser um diálogo — "Editar" na lista NAVEGA para a página do configurador
- * (/configuracoes/layouts-documento/<id>), que abre em leitura; "Editar" da barra entra em edição.
- * Antes: menu Editar → diálogo `layout-editor`.
+ * A3-1d (decisão 262): TELA ÚNICA — clicar na linha da grade SELECIONA e abre a área do layout logo abaixo, já no
+ * rascunho: não há mais menu "⋯ Editar" (a asserção de URL virou a linha selecionada) nem o passo `config-editar`.
+ * Sem mudança, Salvar fica desligado. Antes (A3-1c): menu Editar → página → "Editar" da barra.
  */
 async function abrirEditor(page: Page, id: string) {
   await page.goto(ROTA_LAYOUTS);
   await expect(page.getByTestId("layouts-documento")).toBeVisible();
   const linha = page.locator("tr", { has: page.getByTestId(`layout-linha-${id}`) });
   await expect(linha).toHaveCount(1);
-  await linha.getByRole("button", { name: "Mais opções" }).click();
-  await page.getByRole("menuitem", { name: "Editar" }).click();
-  await expect(page).toHaveURL(new RegExp(`/configuracoes/layouts-documento/${id}$`));
+  await page.getByTestId(`layout-linha-${id}`).click();
+  await expect(page.getByTestId(`layout-linha-${id}`)).toHaveAttribute("data-selecionado", "true");
   await expect(page.getByTestId("config-layout-pagina")).toBeVisible();
-  await page.getByTestId("config-editar").click();
   await expect(page.getByTestId("config-salvar")).toBeVisible();
+  await expect(page.getByTestId("config-salvar"), "sem mudança, Salvar desligado").toBeDisabled();
 }
 
 /**
@@ -101,9 +119,16 @@ async function configurar(page: Page, id: string, chave: string, f: (d: ReturnTy
   await expect(d).toHaveCount(0);
 }
 
-/** Liga a TOP pela lista dupla da página (antes: caixa na lista `layout-tops-ligadas` + `layout-tops-salvar`/`layout-tops-salvo`). */
+/**
+ * Liga a TOP pela lista dupla (antes: caixa na lista `layout-tops-ligadas` + `layout-tops-salvar`/`layout-tops-salvo`).
+ * A3-1d (decisão 262): a lista dupla saiu do fim da página para o diálogo "Visualizar TOPs" (barra da grade, age sobre a
+ * linha selecionada); mesmos testids `config-tops-*`, e Salvar desligado enquanto nada muda.
+ */
 async function ligarTop(page: Page, topId: string) {
-  const tops = page.getByTestId("config-tops");
+  await page.getByTestId("layouts-barra").getByTestId("layouts-visualizar-tops").click();
+  const tops = page.getByTestId("config-tops-dialogo");
+  await expect(tops).toBeVisible();
+  await expect(tops.getByTestId("config-tops-salvar"), "sem mudança, Salvar das TOPs desligado").toBeDisabled();
   await tops.getByTestId("config-tops-disponiveis").getByTestId(`config-top-${topId}`).click();
   await tops.getByTestId("config-tops-mover").click();
   await expect(tops.getByTestId("config-tops-ligadas").getByTestId(`config-top-${topId}`)).toHaveCount(1);
@@ -111,12 +136,18 @@ async function ligarTop(page: Page, topId: string) {
   await expect(tops.getByTestId("config-tops-salvo")).toBeVisible();
 }
 
-/** Salva o rascunho (PUT) — antes: `layout-salvar` + mensagem `layout-salvo`; agora: `config-salvar`, sem recusa e de volta à leitura. */
+/**
+ * Salva o rascunho (PUT) — `config-salvar`, sem recusa.
+ * A3-1d (decisão 262): depois de salvar a área CONTINUA editável (não volta a `config-editar`, que não existe mais):
+ * "Layout salvo." (`layout-salvo`) e Salvar desliga — nada pendente.
+ */
 async function salvarLayout(page: Page, id: string) {
   const put = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `${BASE}/${id}`);
   await page.getByTestId("config-salvar").click();
   expect((await put).status(), "o layout foi gravado").toBe(200);
-  await expect(page.getByTestId("config-editar"), "gravado: a página volta à leitura").toBeVisible();
+  await expect(page.getByTestId("layout-salvo"), "gravado: a confirmação").toContainText("Layout salvo.");
+  await expect(page.getByTestId("config-salvar"), "gravado: nada pendente, Salvar desliga").toBeDisabled();
+  await expect(page.getByTestId("config-nome"), "gravado: a área continua editável").toBeEditable();
   await expect(page.getByTestId("config-aviso")).toHaveCount(0);
 }
 
@@ -156,7 +187,8 @@ test("LD-W1 — cria o layout de venda a partir do sistema: tira ICMS frete, Tra
   await expect(cfgParcelamento.getByTestId("layout-cfg-rotulo"), "premissa: o diálogo abriu").toBeVisible();
   await expect(cfgParcelamento.getByTestId("layout-cfg-obrigatorio")).toBeDisabled();
   await expect(cfgParcelamento.locator(`[title="Sempre tem valor"]`), "a dica do campo (title, padrão do Field)").toHaveCount(1);
-  await cfgParcelamento.getByRole("button", { name: "Fechar", exact: true }).last().click();
+  // A3-1d (decisão 262): o Fechar do rodapé tem testid próprio; nada mudou no formulário → fecha direto, sem pergunta.
+  await cfgParcelamento.getByTestId("layout-cfg-fechar").click();
   await expect(cfgParcelamento).toHaveCount(0);
 
   // Data de saída: padrão data de hoje, não editável

@@ -11,6 +11,11 @@ import { login, api, uniq, empresaAtiva, abrirLancamentoDeVendas, escolherTopECo
  * A3-1c (decisão 261): o editor virou a PÁGINA /configuracoes/layouts-documento/<id> (testids config-*); os passos
  * de UI foram migrados sem perder asserção.
  *
+ * A3-1d (decisão 262): TELA ÚNICA — grade em cima com a barra (Novo, Visualizar TOPs, Exportar, Importar…) e a área do
+ * layout selecionado logo abaixo, já no rascunho (sem "Editar", sem menu "⋯" na linha). Novo é o assistente de 3 passos;
+ * depois de salvar a área continua editável; TOPs pelo diálogo "Visualizar TOPs"; Exportar pela barra, com a linha
+ * selecionada. Só os passos de UI mudaram; toda asserção de regra ficou.
+ *
  * O spec cria o que inativa (a natureza é dele) e, no fim, inativa os layouts e reativa a natureza.
  */
 
@@ -33,42 +38,53 @@ async function abrirCentral(page: Page, topId: string) {
   await expect(page.getByTestId("central-vendas")).toBeVisible();
 }
 
+/**
+ * A3-1d (decisão 262): "Novo" da barra da grade abre o ASSISTENTE de 3 passos (antes: botão "Novo layout" e um diálogo
+ * só). Modelo = layout do sistema (o inicial: o POST é o da raiz); sem padrão e sem TOP — a TOP é ligada depois.
+ */
 async function criarLayoutPelaTela(page: Page, nome: string): Promise<string> {
   await page.goto(ROTA_LAYOUTS);
   await expect(page.getByTestId("layouts-documento")).toBeVisible();
-  await page.getByRole("button", { name: "Novo layout" }).click();
+  await page.getByTestId("layouts-barra").getByTestId("layouts-novo").click();
   const dialogo = page.getByTestId("layout-novo");
   await dialogo.getByTestId("layout-novo-familia").selectOption(FAM);
   await dialogo.getByTestId("layout-novo-nome").fill(nome);
+  await dialogo.getByTestId("layout-novo-avancar").click();
+  await expect(dialogo.getByTestId("layout-novo-origem"), "passo 2: o modelo").toBeVisible();
+  await dialogo.getByTestId("layout-novo-avancar").click();
+  await expect(dialogo.getByTestId("layout-novo-padrao"), "passo 3: onde usar").toBeVisible();
   const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === BASE);
   await dialogo.getByTestId("layout-novo-criar").click();
   const r = await resposta;
   expect(r.status(), "o layout foi criado").toBe(201);
-  const id = ((await r.json()) as { id: string }).id;
-  // A3-1c (W8): ao criar, o diálogo navega para a página do configurador do layout novo
-  await expect(page).toHaveURL(new RegExp(`/configuracoes/layouts-documento/${id}$`));
+  const { id, code } = (await r.json()) as { id: string; code: string };
+  // A3-1d (decisão 262): ao criar, a tela SELECIONA o novo na grade e abre a área dele (antes: navegava para
+  // /configuracoes/layouts-documento/<id> — asserção de URL trocada pela linha selecionada + código/nome na área).
+  await expect(dialogo).toHaveCount(0);
+  await expect(page.getByTestId(`layout-linha-${id}`)).toHaveAttribute("data-selecionado", "true");
+  const area = page.getByTestId("config-layout-pagina");
+  await expect(area.getByTestId("config-codigo")).toHaveText(code);
+  await expect(area.getByTestId("config-nome")).toHaveValue(nome);
   return id;
 }
 
 const linhaDaLista = (page: Page, id: string) => page.locator("tr", { has: page.getByTestId(`layout-linha-${id}`) });
 
 /**
- * A3-1c (decisão 261): "Editar" na lista NAVEGA para a página do configurador (/configuracoes/layouts-documento/<id>;
- * antes: diálogo `layout-editor`). A página abre em leitura; `editar` entra em edição pela barra.
+ * A3-1d (decisão 262): TELA ÚNICA — clicar na linha da grade SELECIONA e abre a área do layout logo abaixo, já no
+ * rascunho: não há mais menu "⋯ Editar" (a asserção de URL virou a linha selecionada) nem o passo `config-editar` — por
+ * isso saiu o parâmetro `editar`. Sem mudança, Salvar fica desligado. Antes (A3-1c): menu Editar → página → "Editar".
  */
-async function abrirEditor(page: Page, id: string, editar = true) {
+async function abrirEditor(page: Page, id: string) {
   await page.goto(ROTA_LAYOUTS);
   await expect(page.getByTestId("layouts-documento")).toBeVisible();
   const linha = linhaDaLista(page, id);
   await expect(linha).toHaveCount(1);
-  await linha.getByRole("button", { name: "Mais opções" }).click();
-  await page.getByRole("menuitem", { name: "Editar" }).click();
-  await expect(page).toHaveURL(new RegExp(`/configuracoes/layouts-documento/${id}$`));
+  await page.getByTestId(`layout-linha-${id}`).click();
+  await expect(page.getByTestId(`layout-linha-${id}`)).toHaveAttribute("data-selecionado", "true");
   await expect(page.getByTestId("config-layout-pagina")).toBeVisible();
-  if (editar) {
-    await page.getByTestId("config-editar").click();
-    await expect(page.getByTestId("config-salvar")).toBeVisible();
-  }
+  await expect(page.getByTestId("config-salvar")).toBeVisible();
+  await expect(page.getByTestId("config-salvar"), "sem mudança, Salvar desligado").toBeDisabled();
 }
 
 /** Um campo do rodapé só está na prévia com a aba dele ativa: abre a aba (lida do layout gravado; premissa conferida). */
@@ -154,15 +170,24 @@ test("LB-W1 — pelo editor: Natureza padrão não editável, Condição e Armaz
   await configurar(page, layout, "condicao_pagamento_id", async (d) => { await escolherRegistro(page, d, condicao.nome); });
   await configurar(page, layout, "itens.warehouse_id", async (d) => { await escolherRegistro(page, d, armazem.rotulo); });
 
-  // A3-1c: `config-salvar` (antes `layout-salvar`); "salvo" = PUT 200, sem recusa e a página de volta à leitura
-  // (antes: mensagem `layout-salvo`).
+  // A3-1c: `config-salvar` (antes `layout-salvar`); "salvo" = PUT 200 e sem recusa.
+  // A3-1d (decisão 262): depois de salvar a área CONTINUA editável (não volta a `config-editar`, que não existe mais):
+  // "Layout salvo." (`layout-salvo`) e Salvar desliga — nada pendente.
   const put = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `${BASE}/${layout}`);
   await page.getByTestId("config-salvar").click();
   expect((await put).status(), "o layout foi gravado").toBe(200);
-  await expect(page.getByTestId("config-editar"), "gravado: a página volta à leitura").toBeVisible();
+  await expect(page.getByTestId("layout-salvo"), "gravado: a confirmação").toContainText("Layout salvo.");
+  await expect(page.getByTestId("config-salvar"), "gravado: nada pendente, Salvar desliga").toBeDisabled();
+  await expect(page.getByTestId("config-nome"), "gravado: a área continua editável").toBeEditable();
   await expect(page.getByTestId("config-aviso")).toHaveCount(0);
-  // A3-1c: lista dupla Disponíveis × Ligadas (antes: caixa na lista `layout-tops-ligadas`)
-  const tops = page.getByTestId("config-tops");
+  // A3-1c: lista dupla Disponíveis × Ligadas (antes: caixa na lista `layout-tops-ligadas`).
+  // A3-1d (decisão 262): a lista dupla está no diálogo "Visualizar TOPs", aberto pelo status de uso da área
+  // (`config-status-visualizar-tops`; o outro caminho, o da barra da grade, é o do vendas-a3-1-layout); mesmos testids e
+  // Salvar desligado enquanto nada muda.
+  await page.getByTestId("config-status").getByTestId("config-status-visualizar-tops").click();
+  const tops = page.getByTestId("config-tops-dialogo");
+  await expect(tops).toBeVisible();
+  await expect(tops.getByTestId("config-tops-salvar"), "sem mudança, Salvar das TOPs desligado").toBeDisabled();
   await tops.getByTestId("config-tops-disponiveis").getByTestId(`config-top-${top}`).click();
   await tops.getByTestId("config-tops-mover").click();
   await expect(tops.getByTestId("config-tops-ligadas").getByTestId(`config-top-${top}`)).toHaveCount(1);
@@ -211,8 +236,9 @@ test("LB-W2 — natureza inativada: a Central abre o campo EDITÁVEL, vazio, com
   await expect(nat).not.toContainText(natureza.nome);
 
   // O editor aponta o padrão morto (A3-1c: na prévia da página, selo `config-marca-padrao-invalido` no campo;
-  // antes: linha `layout-campo-<k>` do diálogo). Só leitura: não entra em edição.
-  await abrirEditor(page, layout, false);
+  // antes: linha `layout-campo-<k>` do diálogo). A3-1d (decisão 262): não há passo "Editar" — só olhar a prévia, sem
+  // mexer em nada (abrirEditor confere que nada ficou pendente: Salvar desligado).
+  await abrirEditor(page, layout);
   await expect(page.getByTestId("config-campo-categoria_financeira_id")).toContainText("Padrão inválido");
   await expect(page.getByTestId("config-campo-categoria_financeira_id").getByTestId("config-marca-padrao-invalido")).toHaveCount(1);
 });
@@ -227,10 +253,14 @@ test("LB-W3 — Exportar → Importar pela tela: \"(importado)\" aparece na list
   await page.goto(ROTA_LAYOUTS);
   await expect(page.getByTestId("layouts-documento")).toBeVisible();
 
+  // A3-1d (decisão 262): Exportar saiu do menu "⋯" da linha (e da área) para a barra da grade — age sobre a linha
+  // SELECIONADA: clicar na linha, conferir a seleção, Exportar.
   const linha = linhaDaLista(page, layout);
-  await linha.getByRole("button", { name: "Mais opções" }).click();
+  await expect(linha).toHaveCount(1);
+  await page.getByTestId(`layout-linha-${layout}`).click();
+  await expect(page.getByTestId(`layout-linha-${layout}`)).toHaveAttribute("data-selecionado", "true");
   const baixando = page.waitForEvent("download");
-  await page.getByRole("menuitem", { name: "Exportar" }).click();
+  await page.getByTestId("layouts-barra").getByTestId("layouts-exportar").click();
   const download = await baixando;
   expect(download.suggestedFilename()).toBe(`layout-${d.code}.json`);
   const arquivo = testInfo.outputPath(download.suggestedFilename());
@@ -248,4 +278,6 @@ test("LB-W3 — Exportar → Importar pela tela: \"(importado)\" aparece na list
   await expect(resultado).toContainText(`${NOME_LAYOUT} (importado)`);
   await resultado.getByRole("button", { name: "Fechar", exact: true }).last().click();
   await expect(linhaDaLista(page, corpo.id)).toContainText(`${NOME_LAYOUT} (importado)`);
+  // A3-1d (decisão 262): importado com sucesso, a grade SELECIONA o layout importado (a área abre nele).
+  await expect(page.getByTestId(`layout-linha-${corpo.id}`)).toHaveAttribute("data-selecionado", "true");
 });
