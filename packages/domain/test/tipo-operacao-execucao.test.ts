@@ -369,7 +369,7 @@ describe("D10 — outra família não ativa execução configurada", () => {
       // legado não é ativação: a família sem consumidor continua editável
       expect(validarExecucaoTop(familia, configuracaoNeutraTopV2())).toEqual([]);
     }
-    expect(MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP).toBe("Execução configurada ainda não disponível para esta família.");
+    expect(MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP).toBe("Execução configurada ainda não disponível para este movimento.");
   });
 
   it("D10c a política da VENDA recusa uma versão de outra família, mesmo que alguma matriz a aceitasse", () => {
