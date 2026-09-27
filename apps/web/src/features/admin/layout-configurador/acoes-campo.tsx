@@ -23,7 +23,8 @@ export function AcoesDoCampo({ chave }: { chave: string }) {
     ];
     return todas.filter((z) => (atual === null || valorDaZona(z.zona) !== valorDaZona(atual)) && moverCampo(familia, estrutura, chave, z.zona).ok);
   }, [estrutura, familia, chave]);
-  if (!ctx.editando) return null;
+  // A3-1d: sem passo "Editar" — a barra existe só com permissão (`can` só apresenta; quem nega é a rota)
+  if (!ctx.podeEditar) return null;
   const parar = (ev: React.SyntheticEvent) => ev.stopPropagation();
   return (
     <div data-testid="config-acoes" className="emp-layout-config-acoes" role="toolbar" aria-label="Ações do campo" onClick={parar} onDoubleClick={parar}>
