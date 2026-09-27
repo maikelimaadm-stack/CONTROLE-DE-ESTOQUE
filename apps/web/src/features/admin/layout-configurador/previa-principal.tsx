@@ -36,9 +36,9 @@ export function PreviaPrincipal() {
       <div {...zonaPrincipal} data-testid="config-zona-principal" className="emp-layout-config-panel-fields flex-wrap">
         {itens}
       </div>
-      <details open className="rounded border border-[var(--mg-border)]">
+      <details open className="rounded border border-slate-200">
         <summary className="flex cursor-pointer items-center gap-1 px-2 py-1 text-xs font-semibold">
-          <ChevronDown className="h-3 w-3" aria-hidden /> Dados adicionais <span className="font-normal text-[var(--mg-text-3)]">· {adicionais.length} {adicionais.length === 1 ? "campo" : "campos"}</span>
+          <ChevronDown className="h-3 w-3" aria-hidden /> Dados adicionais <span className="font-normal text-slate-500">· {adicionais.length} {adicionais.length === 1 ? "campo" : "campos"}</span>
         </summary>
         <div {...zonaAdicionais} data-testid="config-zona-adicionais" className="emp-layout-config-panel-fields flex-wrap p-2">
           {adicionais.length === 0 && <span className="emp-layout-config-row-dropzone">{ctx.editando ? "Arraste campos para Dados adicionais" : "Nenhum campo em Dados adicionais"}</span>}

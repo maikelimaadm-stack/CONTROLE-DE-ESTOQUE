@@ -162,18 +162,18 @@ function Configurador({ d, estrutura: gravada }: { d: Detalhe; estrutura: Estrut
   return <ConfiguradorContexto.Provider value={ctx}>
     <div className="b1 emp-layout-configurator flex flex-col gap-2" data-testid="config-layout-pagina">
       {/* cabeçalho */}
-      <div className="mg-card flex flex-wrap items-center gap-3 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-3 rounded border border-slate-200 bg-white px-3 py-2 shadow-sm">
         <Link href="/configuracoes?tab=operacoes&sub=layouts-documento" data-testid="config-voltar" className="tb-btn tb-btn-ghost is-primary">Voltar</Link>
         {editando
           ? <Input data-testid="config-nome" aria-label="Nome do layout" className="w-72" value={nome} onChange={(e) => { setNome(e.target.value); setSalvo(false); }} />
-          : <h1 data-testid="config-nome" className="text-[15px] font-semibold text-[var(--mg-text-1)]">{nomeGravado}</h1>}
-        <span className="text-[12px] text-[var(--mg-text-2)]">Movimento: <b data-testid="config-movimento">{rotuloMovimento}</b></span>
-        <span className="text-[12px] text-[var(--mg-text-2)]">Código: <b data-testid="config-codigo">{d.code}</b></span>
+          : <h1 data-testid="config-nome" className="text-[15px] font-semibold text-slate-900">{nomeGravado}</h1>}
+        <span className="text-[12px] text-slate-600">Movimento: <b data-testid="config-movimento">{rotuloMovimento}</b></span>
+        <span className="text-[12px] text-slate-600">Código: <b data-testid="config-codigo">{d.code}</b></span>
         {d.padrao && <Badge tone="green" data-testid="config-padrao-selo">Padrão do movimento</Badge>}
       </div>
 
       {/* barra de ações */}
-      <div className="mg-toolbar mg-card flex-wrap no-print">
+      <div className="flex min-h-9 flex-wrap items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1 shadow-sm no-print">
         {podeEditar && !editando && <button type="button" data-testid="config-editar" className="tb-btn tb-btn-ghost is-primary" onClick={entrar}><Pencil /> Editar</button>}
         {editando && <>
           <button type="button" data-testid="config-salvar" className="tb-btn tb-btn-green" disabled={salvar.isPending} onClick={tentarSalvar}><Save /> Salvar</button>
@@ -200,8 +200,8 @@ function Configurador({ d, estrutura: gravada }: { d: Detalhe; estrutura: Estrut
       <div className={cn("emp-layout-config-grid", editando && "emp-layout-config-editing", arrastando && "emp-layout-config-is-dragging")}>
         <aside className="emp-layout-config-sidebar"><Disponiveis /></aside>
         <section className="emp-layout-config-transfer" aria-hidden>
-          <span className="mg-nav-btn emp-layout-config-transfer-btn"><ChevronFirst /></span>
-          <span className="mg-nav-btn emp-layout-config-transfer-btn"><ChevronLast /></span>
+          <span className="emp-layout-config-transfer-btn inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 [&_svg]:h-3 [&_svg]:w-3"><ChevronFirst /></span>
+          <span className="emp-layout-config-transfer-btn inline-flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-slate-600 [&_svg]:h-3 [&_svg]:w-3"><ChevronLast /></span>
         </section>
         <main className="emp-layout-config-main flex flex-col gap-3">
           <PreviaPrincipal />

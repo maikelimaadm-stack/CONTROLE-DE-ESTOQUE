@@ -103,7 +103,7 @@ export function Disponiveis() {
       if (chave && noLayout.has(chave)) ctx.aplicar(removerCampo(familia, estrutura, chave));
     }}>
     <div className="emp-layout-config-sidebar-title">Campos disponíveis</div>
-    <div className="mg-search-pill emp-layout-config-sidebar-search" role="search"><Search className="mg-search-pill-icon" aria-hidden /><input data-testid="config-busca" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar campo disponível" aria-label="Procurar campo disponível" /></div>
+    <div className="emp-layout-config-sidebar-search flex h-7 w-full items-center rounded-full border border-transparent bg-slate-100 px-2.5 focus-within:border-emerald-600 focus-within:bg-white" role="search"><Search className="mr-1 h-3 w-3 shrink-0 text-slate-500" aria-hidden /><input data-testid="config-busca" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Procurar campo disponível" aria-label="Procurar campo disponível" /></div>
     <label className="flex items-center gap-1.5 px-1 text-[11px]"><input type="checkbox" data-testid="config-so-obrigatorios" checked={soObrigatorios} onChange={(e) => setSoObrigatorios(e.target.checked)} />Mostrar só obrigatórios</label>
     {editando && <label className="flex flex-col gap-0.5 px-1 text-[11px]">Incluir em…
       <select data-testid="config-incluir-em" aria-label="Incluir em…" value="" disabled={!selDisponivel || zonas.length === 0} onChange={(e) => incluir(e.target.value)} className="rounded border px-1 py-0.5 text-xs">
@@ -114,8 +114,8 @@ export function Disponiveis() {
     <div className={cn("emp-layout-config-available-list", arrastandoDoLayout && "emp-layout-config-drop-target")}>
       {secao("Campos do documento", doDocumento)}
       {secao("Colunas dos itens", dosItens)}
-      {disponiveis.length === 0 && <div data-testid="config-disponiveis-vazio" className="py-6 text-center text-[11px] text-[var(--mg-text-3)]">Todos os campos já estão no layout.</div>}
-      {disponiveis.length > 0 && filtrados.length === 0 && <div className="py-6 text-center text-[11px] text-[var(--mg-text-3)]">Nenhum campo encontrado.</div>}
+      {disponiveis.length === 0 && <div data-testid="config-disponiveis-vazio" className="py-6 text-center text-[11px] text-slate-500">Todos os campos já estão no layout.</div>}
+      {disponiveis.length > 0 && filtrados.length === 0 && <div className="py-6 text-center text-[11px] text-slate-500">Nenhum campo encontrado.</div>}
     </div>
   </aside>;
 }
