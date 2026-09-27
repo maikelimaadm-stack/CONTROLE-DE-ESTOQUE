@@ -10,6 +10,11 @@ import { login, api, uniq } from "./helpers";
  *
  * Anti-vacuidade: toda ausência vem depois de uma presença positiva do mesmo tipo de alvo.
  * Limpeza: cada teste inativa o que criou e devolve o padrão do movimento a quem o tinha.
+ *
+ * A3-1d (decisão 262): TELA ÚNICA — a rota /configuracoes/layouts-documento/<id> abre a grade com a linha selecionada e a
+ * área do layout logo abaixo, já no rascunho (não há mais "Editar"); Novo é o assistente de 3 passos na barra da grade e
+ * SELECIONA o criado (não navega); as TOPs ligadas estão no diálogo "Visualizar TOPs". Só os passos de UI mudaram; toda
+ * asserção de regra ficou.
  */
 
 const ROTA_LAYOUTS = "/configuracoes?tab=operacoes&sub=layouts-documento";
@@ -37,12 +42,16 @@ async function criarTop(page: Page, familia: string, nome: string): Promise<stri
   return (await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", { codigo, codigoBase: familia, nome: uniq(nome) })).id;
 }
 
-/** Abre a página do configurador e entra em edição. */
+/**
+ * Abre o layout pela rota dele. A3-1d (decisão 262): a rota abre a TELA ÚNICA com a linha já selecionada na grade e a
+ * área logo abaixo, já no rascunho — não há mais o passo `config-editar`; sem mudança, Salvar fica desligado.
+ */
 async function abrirPagina(page: Page, id: string) {
   await page.goto(`/configuracoes/layouts-documento/${id}`);
+  await expect(tid(page, `layout-linha-${id}`), "a rota abre com a linha selecionada").toHaveAttribute("data-selecionado", "true");
   await expect(tid(page, "config-layout-pagina")).toBeVisible();
-  await tid(page, "config-editar").click();
   await expect(tid(page, "config-salvar")).toBeVisible();
+  await expect(tid(page, "config-salvar"), "sem mudança, Salvar desligado").toBeDisabled();
 }
 
 /** Salva e devolve o status do PUT que a página disparou. */
@@ -227,23 +236,38 @@ test("LC-W4 — Novo layout começando de um existente, como padrão; TOPs em li
 
     await page.goto(ROTA_LAYOUTS);
     await expect(page.getByTestId("layouts-documento")).toBeVisible();
-    await page.getByRole("button", { name: "Novo layout" }).click();
+    // A3-1d (decisão 262): "Novo" da barra da grade abre o ASSISTENTE de 3 passos (antes: botão "Novo layout", um passo).
+    await tid(page, "layouts-barra").getByTestId("layouts-novo").click();
     const dialogo = tid(page, "layout-novo");
     await expect(dialogo).toBeVisible();
     await expect(dialogo, "o diálogo fala em Movimento").toContainText("Movimento");
+    // passo 1: movimento e descrição
     await dialogo.getByTestId("layout-novo-familia").selectOption(familia);
     const nome = uniq("LC-W4 Cópia");
     await dialogo.getByTestId("layout-novo-nome").fill(nome);
+    await dialogo.getByTestId("layout-novo-avancar").click();
+    // passo 2: o modelo é o layout existente
     await dialogo.getByTestId("layout-novo-origem").selectOption(origem);
+    await dialogo.getByTestId("layout-novo-avancar").click();
+    // passo 3: padrão do movimento
     await dialogo.getByTestId("layout-novo-padrao").check();
+    const duplicou = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `${BASE}/${origem}/duplicar`);
     await dialogo.getByTestId("layout-novo-criar").click();
 
-    await expect(page).toHaveURL(/\/configuracoes\/layouts-documento\/[0-9a-f-]{36}/);
-    const novo = new URL(page.url()).pathname.split("/").pop()!;
-    expect(novo).not.toBe(origem);
+    // A3-1d (decisão 262): ao criar, a tela SELECIONA o novo (não navega mais para /configuracoes/layouts-documento/<id>):
+    // o id sai da resposta do POST que a tela disparou (duplicar a origem), e a asserção de URL virou "a linha do novo
+    // está selecionada e a área mostra o código e o nome dele".
+    const rd = await duplicou;
+    expect(rd.status(), "a cópia da origem foi criada").toBe(201);
+    const { id: novo, code } = (await rd.json()) as { id: string; code: string };
     criados.push(novo);
+    expect(novo).not.toBe(origem);
+    await expect(dialogo).toHaveCount(0);
+    await expect(tid(page, `layout-linha-${novo}`)).toHaveAttribute("data-selecionado", "true");
     await expect(tid(page, "config-layout-pagina")).toBeVisible();
-    await expect(tid(page, "config-nome")).toContainText(nome);
+    await expect(tid(page, "config-layout-pagina").getByTestId("config-codigo")).toHaveText(code);
+    // A3-1d (decisão 262): com permissão o nome é campo editável da área (Input) — antes era título (h1)
+    await expect(tid(page, "config-nome")).toHaveValue(nome);
     await expect(tid(page, "config-padrao-selo")).toBeVisible();
 
     const d = await lerLayout(page, novo);
@@ -255,22 +279,30 @@ test("LC-W4 — Novo layout começando de um existente, como padrão; TOPs em li
     // TOPs em lista dupla: Mover → e duplo clique; Salvar
     const topA = await criarTop(page, familia, "LC-W4 A");
     const topB = await criarTop(page, familia, "LC-W4 B");
-    await page.reload();
-    await expect(tid(page, "config-tops")).toBeVisible();
-    const disp = tid(page, "config-tops-disponiveis");
-    const lig = tid(page, "config-tops-ligadas");
+    // A3-1d (decisão 262): a tela não navegou ao criar (a URL segue a da lista), então "recarregar" é abrir a rota do
+    // layout, que abre a tela com a linha selecionada — as TOPs novas chegam do servidor (antes: page.reload()).
+    await abrirPagina(page, novo);
+    // A3-1d (decisão 262): a lista dupla saiu do fim da página para o diálogo "Visualizar TOPs" (barra da grade, age sobre
+    // a linha selecionada); mesmos testids `config-tops-*`, e Salvar desligado enquanto nada muda.
+    await tid(page, "layouts-barra").getByTestId("layouts-visualizar-tops").click();
+    const dlg = tid(page, "config-tops-dialogo");
+    await expect(dlg).toBeVisible();
+    await expect(dlg.getByTestId("config-tops")).toBeVisible();
+    const disp = dlg.getByTestId("config-tops-disponiveis");
+    const lig = dlg.getByTestId("config-tops-ligadas");
     await expect(disp.getByTestId(`config-top-${topA}`)).toBeVisible();
     await expect(disp.getByTestId(`config-top-${topB}`)).toBeVisible();
+    await expect(dlg.getByTestId("config-tops-salvar"), "sem mudança, Salvar das TOPs desligado").toBeDisabled();
     await disp.getByTestId(`config-top-${topA}`).click();
-    await tid(page, "config-tops-mover").click();
+    await dlg.getByTestId("config-tops-mover").click();
     await expect(lig.getByTestId(`config-top-${topA}`)).toBeVisible();
     await expect(disp.getByTestId(`config-top-${topA}`)).toHaveCount(0);
     await disp.getByTestId(`config-top-${topB}`).dblclick();
     await expect(lig.getByTestId(`config-top-${topB}`)).toBeVisible();
     const put = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `${BASE}/${novo}/tops`);
-    await tid(page, "config-tops-salvar").click();
+    await dlg.getByTestId("config-tops-salvar").click();
     expect((await put).status()).toBe(200);
-    await expect(tid(page, "config-tops-salvo")).toBeVisible();
+    await expect(dlg.getByTestId("config-tops-salvo")).toBeVisible();
     const comTops = await lerLayout(page, novo);
     expect(comTops.tops.map((t) => t.id).sort()).toEqual([topA, topB].sort());
   } finally {
@@ -305,7 +337,8 @@ test("LC-W5 — \"Movimento\" no lugar de \"família\": TOPs, editor da TOP, lay
   await page.goto(ROTA_LAYOUTS);
   await expect(tid(page, "layouts-documento")).toBeVisible();
   await semFamilia(page, "lista de layouts");
-  await page.getByRole("button", { name: "Novo layout" }).click();
+  // A3-1d (decisão 262): "Novo" está na barra da grade (antes: botão "Novo layout") e abre o assistente no passo 1
+  await tid(page, "layouts-barra").getByTestId("layouts-novo").click();
   await expect(tid(page, "layout-novo")).toBeVisible();
   await semFamilia(page, "Novo layout");
 
