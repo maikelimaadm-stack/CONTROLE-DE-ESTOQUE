@@ -847,7 +847,7 @@ test("W5 — família sem consumidor: a execução configurada não está dispon
   const top = await topSimples(page, "vendas.pedido");
   await abrirTela(page);
   const forma = await abrirExecucao(page, top.codigo);
-  await expect(forma.getByTestId("top-execucao-familia-nao-suportada")).toContainText("Execução configurada ainda não disponível para esta família.");
+  await expect(forma.getByTestId("top-execucao-familia-nao-suportada")).toContainText("Execução configurada ainda não disponível para este movimento."); // decisão 261: "família" → "movimento" na tela
   for (const efeito of ["estoque", "financeiro"]) {
     await expect(forma.getByTestId(`top-campo-execucao-${efeito}`), `${efeito}: fica no legado`).toHaveValue("legado");
     await expect(forma.getByTestId(`top-campo-execucao-${efeito}`)).toBeDisabled();

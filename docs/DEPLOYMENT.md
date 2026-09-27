@@ -1414,6 +1414,23 @@ existe com a web anterior no ar. A API anterior também recusa regravar um layou
 4. No fim: desligar a TOP 2 do layout de teste (ou religá-la ao layout anterior) e INATIVAR os dois layouts (o de
    teste e o importado).
 
+## VENDAS-A3-1c — configurador visual do layout e "Movimento" (sem migration)
+
+Decisão 261. **Sem migration, sem variável, sem permissão, sem capacidade nova.** Layout que já existe continua igual (sem
+`grupo` = regra de antes: Proprietário em Dados adicionais). **Ordem: API → web** (qualquer ordem é segura: o `grupo` é
+opcional; a web anterior ignora a chave e desenha como hoje; a API anterior recusa (422) layout gravado com `grupo`, então
+só use o configurador novo depois da API nova no ar).
+
+**Reversão:** API e web voltam por redeploy. Layout gravado com campo fora da zona do sistema ou com `grupo` continua
+legível para a API anterior, mas a Central anterior desenha o campo onde ele está no JSON; antes de reverter a API,
+confira os layouts editados na página nova.
+
+**Roteiro do Maike (depois do deploy), sem gravar documento:**
+1. Configurações › Operações › Layouts de documento › abrir o layout "teste" (Orçamento) → abre a PÁGINA com a prévia.
+2. Editar → arrastar "Vencimento" para a aba "Financeiro" → Salvar.
+3. Central de Orçamento com uma TOP ligada a esse layout: "Vencimento" aparece na aba Financeiro, não no cabeçalho.
+4. No fim: inativar o layout de teste.
+
 ## Checklist de go-live
 - [x] Migrations aplicadas e `erp_app` sem privilégio de bypass RLS (verificado: `rolbypassrls=false`, 171 tabelas com RLS forçada, 187 políticas)
 - [x] Autenticação: `AUTH_MODE=local` com `LOCAL_AUTH_SECRET` aleatório (Supabase Auth: evolução)

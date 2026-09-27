@@ -383,6 +383,7 @@ export const DETAIL_ROUTES = [
   { id: "frota.abastecimentos.detalhe", module: "frota", area: "abastecimentos", label: "Abastecimento", pattern: "/frota/abastecimentos/:id", perm: "fuel_supplies.view" },
   { id: "frota.manutencoes.detalhe", module: "frota", area: "manutencoes", label: "Manutenção", pattern: "/frota/manutencoes/:id", perm: "maintenances.view" },
   { id: "os.detalhe", module: "os", area: null, label: "Ordem de serviço", pattern: "/os/:id", perm: "service_orders.view" },
+  { id: "configuracoes.operacoes.layouts-documento.detalhe", module: "configuracoes", area: null, label: "Layout do documento", pattern: "/configuracoes/layouts-documento/:id", perm: "tipos_operacao.view" },
   { id: "cadastros.detalhe", module: "configuracoes", area: null, label: "Registro", pattern: "/cadastros/:resource/:id", perm: null }
 ];
 

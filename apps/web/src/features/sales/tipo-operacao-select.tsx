@@ -240,7 +240,7 @@ export function CampoTipoOperacao({ estado, valor, onChange, span = 4 }: { estad
       <option value="">Selecione…</option>
       {pronto && estado.dados.items.map((x) => <option key={x.id} value={x.id}>{x.code} — {x.name}</option>)}
     </NativeSelect>
-    {pronto && <span className="mt-1 block text-xs text-slate-500">Família: {estado.dados.family.label}</span>}
+    {pronto && <span className="mt-1 block text-xs text-slate-500">Movimento: {estado.dados.family.label}</span>}
     <MensagemTop estado={estado} />
   </Field>;
 }

@@ -272,7 +272,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         <CampoLeitura rotulo={tr("termos.tipo_operacao")} adorno="travado" testId="top-contexto"
           valor={topConfigurada ? <><span className={estilosCentral.codigo}>{topConfigurada.codigo}</span><span className={estilosCentral.separador}>·</span><span>{topConfigurada.nome}</span></> : "Não configurada (registro legado)"} />
         {/* A FAMÍLIA CANÔNICA sai do REGISTRO (`kind`), em memória — campo próprio, ao lado da TOP configurada */}
-        <CampoLeitura rotulo="Família operacional" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />
+        <CampoLeitura rotulo="Movimento" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />
         <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
         <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
         <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />

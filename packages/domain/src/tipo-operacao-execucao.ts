@@ -77,7 +77,7 @@ export interface SuporteExecucaoFamiliaTop {
 }
 
 /** A mensagem de família sem consumidor. Uma só, dita igual na API e na tela. */
-export const MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP = "Execução configurada ainda não disponível para esta família.";
+export const MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP = "Execução configurada ainda não disponível para este movimento.";
 
 const MENSAGEM_CAMPO_SEM_REGRA = "Este campo ainda não tem execução configurada nesta versão do produto.";
 

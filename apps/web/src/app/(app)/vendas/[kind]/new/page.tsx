@@ -8,7 +8,7 @@ import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
-import { AVISO_PADRAO_INVALIDO_CENTRAL, ERRO_LAYOUT_CAMPO_OBRIGATORIO, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type ValorPadraoLayout } from "@agro/domain";
+import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_LAYOUT_CAMPO_OBRIGATORIO, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type ValorPadraoLayout } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
@@ -226,6 +226,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   }, [layoutAtivo, layoutRecebido]);
   const layoutPendente = layoutAtivo && !layout;
   const estrutura = React.useMemo(() => layout ?? LAYOUT_DO_SISTEMA(familiaLayout), [layout, familiaLayout]);
+  /** VENDAS-A3-1c: os campos de "Dados adicionais" segundo o layout — abre o grupo quando um deles tem erro. */
+  const adicionaisDoLayout = React.useMemo(() => new Set(camposAdicionaisDoCabecalho(estrutura)), [estrutura]);
   /** Configuração do layout por chave (cabeçalho e rodapé) — só com layout de verdade. */
   const cfg = React.useMemo(() => new Map<string, CampoDoLayout>(layout ? [...layout.cabecalho, ...layout.rodape.flatMap((a) => a.campos)].map((x) => [x.campo, x]) : []), [layout]);
   const rotuloDoCatalogo = React.useMemo(() => new Map(catalogoDaFamilia(familiaLayout).filter((c) => c.parte !== "itens").map((c) => [c.chave, c.rotulo])), [familiaLayout]);
@@ -355,9 +357,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     if (!layout) return;
     setTentouSalvar(true); setErrosServidor({});
     const f = faltando();
-    if (f.length) { if (f.some((x) => x.caminho === "proprietary_id")) setMaisDados(true); return; }
+    if (f.length) { if (f.some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true); return; }
     create.mutate(corpo(), {
-      onError: (e) => { if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if ("proprietary_id" in m) setMaisDados(true); } }
+      onError: (e) => { if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true); } }
     });
   };
 
@@ -518,11 +520,12 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     return <React.Fragment key={chave}>{travado ? <fieldset disabled data-editavel="false" style={{ display: "contents" }}>{n}</fieldset> : n}</React.Fragment>;
   };
 
-  /* Dados principais: ordem do layout; a Operação logo depois da Empresa (ou depois dos dois primeiros); o
-     Proprietário em "Dados adicionais", como hoje. */
-  const cabecalho = estrutura.cabecalho.map((x) => x.campo).filter(existe);
-  const principais = cabecalho.filter((c) => c !== "proprietary_id");
-  const adicionais = cabecalho.filter((c) => c === "proprietary_id");
+  /* Dados principais: ordem do layout; a Operação logo depois da Empresa (ou depois dos dois primeiros). "Dados
+     adicionais" = os campos que o LAYOUT põe lá (VENDAS-A3-1c, dono: `camposAdicionaisDoCabecalho`; sem layout é o
+     LAYOUT_DO_SISTEMA → o Proprietário, como hoje). Bloco largo (plano de parcelas) nunca no cabeçalho. */
+  const cabecalho = estrutura.cabecalho.map((x) => x.campo).filter(existe).filter((c) => !CAMPOS_SO_NO_RODAPE.includes(c));
+  const principais = cabecalho.filter((c) => !adicionaisDoLayout.has(c));
+  const adicionais = cabecalho.filter((c) => adicionaisDoLayout.has(c));
   const posEmpresa = principais.indexOf("empresa_id");
   const posTop = posEmpresa >= 0 ? posEmpresa + 1 : Math.min(2, principais.length);
 

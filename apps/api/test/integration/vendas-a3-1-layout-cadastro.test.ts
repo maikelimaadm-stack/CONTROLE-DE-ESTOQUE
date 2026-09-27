@@ -171,7 +171,7 @@ describe("LD-A3 ligação de TOPs", () => {
     const outraFamilia = await criarTop("estoque.baixa");
     const r = await req("PUT", `${URL_}/${l}/tops`, { tipoOperacaoIds: [outraFamilia] });
     expect(r.statusCode, r.body).toBe(422);
-    expect(j(r).error.message).toBe("TOP de outra família");
+    expect(j(r).error.message).toBe("TOP de outro movimento");
 
     const topOutraOrg = await criarTop("vendas.venda", (await outraOrg()).headers);
     const excluida = await criarTop("vendas.venda");

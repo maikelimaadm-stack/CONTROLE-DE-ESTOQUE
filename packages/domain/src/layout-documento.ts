@@ -94,7 +94,14 @@ const CATALOGO_VENDAS: readonly CampoDoCatalogo[] = [
 export function catalogoDaFamilia(familia: string): readonly CampoDoCatalogo[] { return familiaTemLayout(familia) ? CATALOGO_VENDAS : []; }
 
 /* ─────────────── ESTRUTURA (versaoSchema 1) ─────────────── */
-export interface CampoDoLayout { campo: string; rotulo?: string; obrigatorio: boolean; editavel: boolean; valorPadrao?: ValorPadraoLayout }
+/**
+ * VENDAS-A3-1c (decisão 261): `grupo` só no CABEÇALHO — "principal" (Dados principais) ou "adicionais" (Dados adicionais,
+ * recolhível na Central). Ausente = principal. Estrutura em que NENHUM campo do cabeçalho declara grupo segue a regra de
+ * antes (Proprietário em Dados adicionais): compatibilidade com layout gravado antes da fatia.
+ */
+export type GrupoDoCabecalho = "principal" | "adicionais";
+export const GRUPOS_DO_CABECALHO: readonly GrupoDoCabecalho[] = Object.freeze(["principal", "adicionais"]);
+export interface CampoDoLayout { campo: string; rotulo?: string; obrigatorio: boolean; editavel: boolean; valorPadrao?: ValorPadraoLayout; grupo?: GrupoDoCabecalho }
 export interface AbaDoLayout { aba: string; campos: CampoDoLayout[] }
 /** `valorPadrao` (VENDAS-A3-1b): só na coluna Armazém e só do tipo registro. */
 export interface ColunaDoLayout { campo: string; rotulo?: string; obrigatorio: boolean; valorPadrao?: ValorPadraoLayout }
@@ -104,7 +111,7 @@ export interface ErroDoLayout { caminho: string; mensagem: string }
 /** LAYOUT DO SISTEMA: a Central de hoje — todos os campos, ordem, rótulos e obrigatórios de hoje. */
 export function LAYOUT_DO_SISTEMA(familia: string): EstruturaLayout {
   const cat = catalogoDaFamilia(familia);
-  const cab = cat.filter((c) => c.parte === "cabecalho").map((c): CampoDoLayout => ({ campo: c.chave, obrigatorio: Boolean(c.sistema), editavel: true }));
+  const cab = cat.filter((c) => c.parte === "cabecalho").map((c): CampoDoLayout => ({ campo: c.chave, obrigatorio: Boolean(c.sistema), editavel: true, ...(CAMPOS_ADICIONAIS_DO_SISTEMA.includes(c.chave) ? { grupo: "adicionais" as const } : {}) }));
   const abas: AbaDoLayout[] = [];
   for (const c of cat.filter((x) => x.parte === "rodape")) {
     let a = abas.find((x) => x.aba === c.aba); if (!a) { a = { aba: c.aba!, campos: [] }; abas.push(a); }
@@ -139,14 +146,18 @@ export const mensagemSempreTemValor = (rotulo: string) => `"${rotulo}" sempre te
 export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayout): ErroDoLayout[] {
   const e: ErroDoLayout[] = [];
   const cat = catalogoDaFamilia(familia);
-  if (!cat.length) return [{ caminho: "familia", mensagem: "Família sem layout de documento." }];
+  if (!cat.length) return [{ caminho: "familia", mensagem: "Movimento sem layout de documento." }];
   if (!estrutura || estrutura.versaoSchema !== 1) return [{ caminho: "estrutura.versaoSchema", mensagem: "Versão da estrutura desconhecida." }];
   const porChave = (parte: ParteDoLayout) => new Map(cat.filter((c) => c.parte === parte).map((c) => [c.chave, c]));
-  const topo = porChave("cabecalho"); const rod = porChave("rodape"); const it = porChave("itens");
+  // VENDAS-A3-1c (decisão 261): campo do DOCUMENTO (cabeçalho ou rodapé no catálogo) vale em qualquer zona do documento
+  const doDocumento = new Map(cat.filter((c) => c.parte !== "itens").map((c) => [c.chave, c]));
+  const it = porChave("itens");
   const vistosDoc = new Set<string>();
-  const conferirCampo = (x: CampoDoLayout, caminho: string, doCatalogo: Map<string, CampoDoCatalogo>) => {
-    const c = doCatalogo.get(x.campo);
+  const conferirCampo = (x: CampoDoLayout, caminho: string, zona: ZonaDoLayout) => {
+    const c = doDocumento.get(x.campo);
     if (!c) { e.push({ caminho: `${caminho}.campo`, mensagem: `Campo "${x.campo}" não existe nesta parte do documento.` }); return; }
+    if (motivoZonaProibida(familia, x.campo, zona) !== null) { e.push({ caminho: `${caminho}.campo`, mensagem: mensagemSoNoRodape(c.rotulo) }); return; }
+    if (zona.tipo === "aba" && x.grupo !== undefined) e.push({ caminho: `${caminho}.grupo`, mensagem: MENSAGEM_GRUPO_SO_NO_CABECALHO });
     if (vistosDoc.has(x.campo)) { e.push({ caminho: `${caminho}.campo`, mensagem: `Campo "${c.rotulo}" repetido no layout.` }); return; }
     vistosDoc.add(x.campo);
     if (c.somenteLeitura && (x.obrigatorio || x.editavel)) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatório nem editável.` });
@@ -154,10 +165,10 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     if (x.valorPadrao && !padraoCompativel(c, x.valorPadrao)) e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `Valor padrão incompatível com "${c.rotulo}".` });
     if (x.obrigatorio && !x.editavel && !x.valorPadrao) e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `"${c.rotulo}" é obrigatório e não editável: informe o valor padrão.` });
   };
-  estrutura.cabecalho.forEach((x, i) => conferirCampo(x, `cabecalho[${i}]`, topo));
+  estrutura.cabecalho.forEach((x, i) => conferirCampo(x, `cabecalho[${i}]`, { tipo: x.grupo === "adicionais" ? "adicionais" : "principal" }));
   estrutura.rodape.forEach((a, ai) => {
     if (!a.campos.length) e.push({ caminho: `rodape[${ai}]`, mensagem: `A aba "${a.aba}" está vazia.` });
-    a.campos.forEach((x, i) => conferirCampo(x, `rodape[${ai}].campos[${i}]`, rod));
+    a.campos.forEach((x, i) => conferirCampo(x, `rodape[${ai}].campos[${i}]`, { tipo: "aba", indice: ai }));
   });
   const vistosItem = new Set<string>();
   estrutura.itens.forEach((x, i) => {
@@ -209,17 +220,18 @@ const vazio = (v: unknown) => v === null || v === undefined || (typeof v === "st
  * Campo com `exige` que a API não declara (`capacidades`) não é cobrado.
  */
 export function camposObrigatoriosFaltando(familia: string, estrutura: EstruturaLayout, documento: Record<string, unknown> & { items?: Record<string, unknown>[] }, capacidades: { classificacao?: boolean; condicao?: boolean } = {}): { caminho: string; rotulo: string }[] {
-  const cat = new Map(catalogoDaFamilia(familia).map((c) => [`${c.parte}:${c.chave}`, c]));
+  // VENDAS-A3-1c: campo do documento achado pela CHAVE em qualquer zona (cabeçalho ou aba); coluna só nos itens
+  const cat = new Map(catalogoDaFamilia(familia).map((c) => [c.parte === "itens" ? `itens:${c.chave}` : `documento:${c.chave}`, c]));
   const ativo = (c: CampoDoCatalogo | undefined) => Boolean(c) && (!c!.exige || (c!.exige === "classificacao" ? capacidades.classificacao : capacidades.condicao));
   const out: { caminho: string; rotulo: string }[] = [];
-  const topo = (x: CampoDoLayout, parte: ParteDoLayout) => {
-    const c = cat.get(`${parte}:${x.campo}`);
+  const topo = (x: CampoDoLayout) => {
+    const c = cat.get(`documento:${x.campo}`);
     // sempreTemValor: defesa para estrutura gravada antes da regra (R1) — nunca cobrado
     if (!x.obrigatorio || !ativo(c) || c!.somenteLeitura || c!.sempreTemValor) return;
     if (vazio(documento[x.campo])) out.push({ caminho: x.campo, rotulo: x.rotulo ?? c!.rotulo });
   };
-  estrutura.cabecalho.forEach((x) => topo(x, "cabecalho"));
-  estrutura.rodape.forEach((a) => a.campos.forEach((x) => topo(x, "rodape")));
+  estrutura.cabecalho.forEach((x) => topo(x));
+  estrutura.rodape.forEach((a) => a.campos.forEach((x) => topo(x)));
   (documento.items ?? []).forEach((linha, i) => {
     for (const x of estrutura.itens) {
       const c = cat.get(`itens:${x.campo}`);
@@ -302,4 +314,40 @@ export function removerPadroesRegistro(estrutura: EstruturaLayout, chaves?: Read
     rodape: estrutura.rodape.map((a) => ({ aba: a.aba, campos: a.campos.map((x) => tira("rodape", x)) })),
     itens: estrutura.itens.map((x) => tira("itens", x))
   };
+}
+
+/* ─────────────── VENDAS-A3-1c: ZONAS do documento (decisão 261) ─────────────── */
+/**
+ * Campo do DOCUMENTO (parte "cabecalho" ou "rodape" no catálogo) pode ficar em QUALQUER zona do documento: cabeçalho
+ * (grupo principal ou adicionais) ou qualquer aba do rodapé. A `parte` do catálogo continua sendo a posição NO LAYOUT DO
+ * SISTEMA. Exceção: os campos de BLOCO LARGO só no rodapé. Coluna de item só nos itens.
+ */
+export const CAMPOS_SO_NO_RODAPE: readonly string[] = Object.freeze(["installment_plan"]);
+/** Onde o layout do sistema põe em "Dados adicionais" (a Central de antes da fatia: o Proprietário). */
+export const CAMPOS_ADICIONAIS_DO_SISTEMA: readonly string[] = Object.freeze(["proprietary_id"]);
+export const mensagemSoNoRodape = (rotulo: string) => `"${rotulo}" só pode ficar numa aba do rodapé.`;
+export const MENSAGEM_GRUPO_SO_NO_CABECALHO = "Grupo só vale nos campos do cabeçalho.";
+export const MENSAGEM_OBRIGATORIO_NAO_SAI = "Campo obrigatório do sistema não pode sair do layout.";
+/** Zona do documento onde um campo pode ser solto. */
+export type ZonaDoLayout = { tipo: "principal" } | { tipo: "adicionais" } | { tipo: "aba"; indice: number } | { tipo: "itens" };
+/**
+ * Pode soltar `chave` (do catálogo da família) em `zona`? null = pode; string = o motivo (mostrado na tela). Dono único
+ * da regra de zona para o configurador; `validarEstruturaLayout` aplica a mesma regra na gravação.
+ */
+export function motivoZonaProibida(familia: string, chave: string, zona: ZonaDoLayout): string | null {
+  const cat = catalogoDaFamilia(familia);
+  const doc = cat.find((c) => c.chave === chave && c.parte !== "itens");
+  const col = cat.find((c) => c.chave === chave && c.parte === "itens");
+  if (zona.tipo === "itens") return col ? null : "Só colunas dos itens podem ficar na grade de itens.";
+  if (!doc) return "Colunas dos itens só podem ficar na grade de itens.";
+  if ((zona.tipo === "principal" || zona.tipo === "adicionais") && CAMPOS_SO_NO_RODAPE.includes(chave)) return mensagemSoNoRodape(doc.rotulo);
+  return null;
+}
+/**
+ * Os campos do cabeçalho em "Dados adicionais" SEGUNDO a estrutura: se algum campo do cabeçalho declara grupo, vale o
+ * grupo; se nenhum declara (layout gravado antes da A3-1c), vale a regra de antes (CAMPOS_ADICIONAIS_DO_SISTEMA).
+ */
+export function camposAdicionaisDoCabecalho(estrutura: EstruturaLayout): string[] {
+  const algumDeclara = estrutura.cabecalho.some((x) => x.grupo !== undefined);
+  return estrutura.cabecalho.filter((x) => (algumDeclara ? x.grupo === "adicionais" : CAMPOS_ADICIONAIS_DO_SISTEMA.includes(x.campo))).map((x) => x.campo);
 }

@@ -44,7 +44,7 @@ function RotuloFamilia({ familia }: { familia: Familia }) {
   return <span>{familia.rotulo} <span className="text-[11px] text-slate-400">{familia.codigo}</span></span>;
 }
 
-const ORIGEM_LAYOUT: Record<string, string> = { ligado: "ligado", padrao_da_familia: "padrão da família", sistema: "do sistema" };
+const ORIGEM_LAYOUT: Record<string, string> = { ligado: "ligado", padrao_da_familia: "padrão do movimento", sistema: "do sistema" };
 
 /** Linha SÓ DE LEITURA: qual layout a Central usa para esta TOP (servidor resolve: ligado → padrão → sistema). */
 export function LinhaLayoutDocumentoTop({ tipoOperacaoId, familia }: { tipoOperacaoId: string; familia: string }) {
@@ -118,7 +118,7 @@ export function TiposOperacaoPanel() {
     <PageHeader
       inCard
       title="Tipos de Operação"
-      subtitle="Cada tipo de operação da organização aponta para uma família operacional do produto. Vários tipos podem apontar para a mesma família."
+      subtitle="Cada tipo de operação da organização aponta para um movimento do produto. Vários tipos podem apontar para o mesmo movimento."
       actions={can("tipos_operacao.create") && <Button size="sm" onClick={() => setCriando(true)}>Novo tipo de operação</Button>}
     />
     <CardBody>
@@ -169,7 +169,7 @@ export function TiposOperacaoPanel() {
             columns={[
               { key: "codigo", label: "Código", width: 110 },
               { key: "nome", label: "Nome" },
-              { key: "familia", label: "Família operacional", render: (r: TipoOperacao) => <RotuloFamilia familia={r.familia} /> },
+              { key: "familia", label: "Movimento", render: (r: TipoOperacao) => <RotuloFamilia familia={r.familia} /> },
               { key: "modulo", label: "Módulo", render: (r: TipoOperacao) => r.familia.modulo ?? "—" },
               { key: "ativo", label: COPY.situacao, render: (r: TipoOperacao) => <StatusBadge domain="status" value={r.ativo ? "active" : "inactive"} /> },
               { key: "padrao", label: "Padrão", render: (r: TipoOperacao) => r.padrao ? <Badge tone="blue">Padrão</Badge> : <span className="text-slate-400">—</span> },

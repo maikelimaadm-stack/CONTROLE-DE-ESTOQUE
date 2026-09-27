@@ -36,7 +36,8 @@ test("cadastra, edita (versão 2), define padrão e desativa um tipo de operaç�
   await forma.getByLabel("Código").fill(codigo);
   await forma.getByLabel("Nome").fill(nome);
   // A família vem do SERVIDOR (derivada do registry); a tela não tem catálogo próprio.
-  await forma.getByLabel("Família operacional").selectOption("vendas.venda");
+  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  await forma.getByTestId("top-campo-familia").selectOption("vendas.venda");
   await forma.getByRole("button", { name: "Salvar" }).click();
   await expect(forma).toBeHidden();
 
@@ -53,7 +54,8 @@ test("cadastra, edita (versão 2), define padrão e desativa um tipo de operaç�
   await expect(edicao).toBeVisible();
   // Identidade é imutável: a tela nem oferece o caminho.
   await expect(edicao.getByLabel("Código")).toBeDisabled();
-  await expect(edicao.getByLabel("Família operacional")).toBeDisabled();
+  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  await expect(edicao.getByTestId("top-campo-familia")).toBeDisabled();
   const nomeCorrigido = `${nome} (corrigido)`;
   await edicao.getByLabel("Nome").fill(nomeCorrigido);
   await edicao.getByRole("button", { name: "Salvar" }).click();
@@ -96,7 +98,8 @@ test("exclui pela tela — e a tela ENVIA a revisão da linha", async ({ page })
   const forma = page.getByTestId("form-tipo-operacao");
   await forma.getByLabel("Código").fill(codigo);
   await forma.getByLabel("Nome").fill(uniq("Para excluir"));
-  await forma.getByLabel("Família operacional").selectOption("vendas.orcamento");
+  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  await forma.getByTestId("top-campo-familia").selectOption("vendas.orcamento");
   await forma.getByRole("button", { name: "Salvar" }).click();
   await expect(forma).toBeHidden();
   await expect(page.getByRole("row").filter({ hasText: codigo }).first()).toBeVisible();
@@ -122,7 +125,8 @@ test("a família operacional oferecida vem do servidor, não de uma lista da tel
   const doServidor = await api<{ items: { codigo: string }[] }>(page, "GET", "/api/admin/tipos-operacao/familias");
   await abrirTela(page);
   await page.getByRole("button", { name: "Novo tipo de operação" }).click();
-  const seletor = page.getByTestId("form-tipo-operacao").getByLabel("Família operacional");
+  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  const seletor = page.getByTestId("form-tipo-operacao").getByTestId("top-campo-familia");
   const opcoes = await seletor.locator("option").evaluateAll((os) =>
     os.map((o) => (o as HTMLOptionElement).value).filter(Boolean));
   // Uma lista digitada na tela divergiria aqui na primeira família nova — e é exatamente essa divergência
