@@ -8,6 +8,9 @@ import { login, api, uniq, empresaAtiva, abrirLancamentoDeVendas, escolherTopECo
  * cadastro (W1), a Central o aplica — travado quando não editável, na linha nova de item, com o plano da condição —,
  * o padrão que morreu no cadastro destrava o campo com o aviso (W2), e Exportar → Importar pela lista (W3).
  *
+ * A3-1c (decisão 261): o editor virou a PÁGINA /configuracoes/layouts-documento/<id> (testids config-*); os passos
+ * de UI foram migrados sem perder asserção.
+ *
  * O spec cria o que inativa (a natureza é dele) e, no fim, inativa os layouts e reativa a natureza.
  */
 
@@ -41,17 +44,38 @@ async function criarLayoutPelaTela(page: Page, nome: string): Promise<string> {
   await dialogo.getByTestId("layout-novo-criar").click();
   const r = await resposta;
   expect(r.status(), "o layout foi criado").toBe(201);
-  return ((await r.json()) as { id: string }).id;
+  const id = ((await r.json()) as { id: string }).id;
+  // A3-1c (W8): ao criar, o diálogo navega para a página do configurador do layout novo
+  await expect(page).toHaveURL(new RegExp(`/configuracoes/layouts-documento/${id}$`));
+  return id;
 }
 
 const linhaDaLista = (page: Page, id: string) => page.locator("tr", { has: page.getByTestId(`layout-linha-${id}`) });
 
-async function abrirEditor(page: Page, id: string) {
+/**
+ * A3-1c (decisão 261): "Editar" na lista NAVEGA para a página do configurador (/configuracoes/layouts-documento/<id>;
+ * antes: diálogo `layout-editor`). A página abre em leitura; `editar` entra em edição pela barra.
+ */
+async function abrirEditor(page: Page, id: string, editar = true) {
+  await page.goto(ROTA_LAYOUTS);
+  await expect(page.getByTestId("layouts-documento")).toBeVisible();
   const linha = linhaDaLista(page, id);
   await expect(linha).toHaveCount(1);
   await linha.getByRole("button", { name: "Mais opções" }).click();
   await page.getByRole("menuitem", { name: "Editar" }).click();
-  await expect(page.getByTestId("layout-editor")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/configuracoes/layouts-documento/${id}$`));
+  await expect(page.getByTestId("config-layout-pagina")).toBeVisible();
+  if (editar) {
+    await page.getByTestId("config-editar").click();
+    await expect(page.getByTestId("config-salvar")).toBeVisible();
+  }
+}
+
+/** Um campo do rodapé só está na prévia com a aba dele ativa: abre a aba (lida do layout gravado; premissa conferida). */
+async function mostrarCampo(page: Page, id: string, chave: string) {
+  const e = (await api<Detalhe>(page, "GET", `${BASE}/${id}`)).estrutura;
+  const aba = e.rodape.findIndex((a) => a.campos.some((c) => c.campo === chave));
+  if (aba >= 0) await page.getByTestId(`config-aba-${aba}`).click();
 }
 
 /** Escolhe o registro no RefSelect do "Valor padrão: Registro do cadastro" do diálogo Configurar campo. */
@@ -65,8 +89,15 @@ async function escolherRegistro(page: Page, d: Locator, busca: string) {
   await expect(alvo).toContainText(busca);
 }
 
-async function configurar(page: Page, testid: string, f: (d: Locator) => Promise<void>) {
-  await page.getByTestId(testid).getByRole("button", { name: "Configurar campo" }).click();
+/**
+ * Seleciona o campo na prévia e abre "Configurar campo" pela barra de ações (antes: botão "Configurar campo" na linha
+ * `layout-campo-<k>`). `chave` é a do contrato: documento = a chave; coluna de item = "itens.<campo>".
+ */
+async function configurar(page: Page, id: string, chave: string, f: (d: Locator) => Promise<void>) {
+  await mostrarCampo(page, id, chave);
+  await page.getByTestId(`config-campo-${chave}`).click();
+  await expect(page.getByTestId(`config-campo-${chave}`)).toHaveAttribute("data-selecionado", "true");
+  await page.getByTestId("config-acoes").getByTestId("config-acao-configurar").click();
   const d = page.getByTestId("layout-configurar-campo");
   await expect(d).toBeVisible();
   await f(d);
@@ -79,8 +110,8 @@ test.describe.configure({ mode: "serial" });
 const NOME_LAYOUT = uniq("LB-W1 Pedido");
 let layout = "";
 let top = "";
-let natureza = { id: "", nome: "" };
-let condicao = { id: "", nome: "" };
+const natureza = { id: "", nome: "" };
+const condicao = { id: "", nome: "" };
 let armazem = { id: "", rotulo: "" };
 const criados: string[] = [];
 let naturezaInativada = false;
@@ -116,21 +147,27 @@ test("LB-W1 — pelo editor: Natureza padrão não editável, Condição e Armaz
   criados.push(layout);
   await abrirEditor(page, layout);
 
-  await configurar(page, "layout-campo-categoria_financeira_id", async (d) => {
+  await configurar(page, layout, "categoria_financeira_id", async (d) => {
     await d.getByTestId("layout-cfg-editavel").selectOption("false");
     await escolherRegistro(page, d, natureza.nome);
   });
-  await configurar(page, "layout-campo-condicao_pagamento_id", async (d) => { await escolherRegistro(page, d, condicao.nome); });
-  await configurar(page, "layout-campo-warehouse_id", async (d) => { await escolherRegistro(page, d, armazem.rotulo); });
+  await configurar(page, layout, "condicao_pagamento_id", async (d) => { await escolherRegistro(page, d, condicao.nome); });
+  await configurar(page, layout, "itens.warehouse_id", async (d) => { await escolherRegistro(page, d, armazem.rotulo); });
 
+  // A3-1c: `config-salvar` (antes `layout-salvar`); "salvo" = PUT 200, sem recusa e a página de volta à leitura
+  // (antes: mensagem `layout-salvo`).
   const put = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `${BASE}/${layout}`);
-  await page.getByTestId("layout-salvar").click();
+  await page.getByTestId("config-salvar").click();
   expect((await put).status(), "o layout foi gravado").toBe(200);
-  await expect(page.getByTestId("layout-salvo")).toBeVisible();
-  const topas = page.getByTestId("layout-tops-ligadas");
-  await topas.getByTestId(`layout-top-${top}`).getByRole("checkbox").check();
-  await topas.getByTestId("layout-tops-salvar").click();
-  await expect(page.getByTestId("layout-tops-salvo")).toBeVisible();
+  await expect(page.getByTestId("config-editar"), "gravado: a página volta à leitura").toBeVisible();
+  await expect(page.getByTestId("config-aviso")).toHaveCount(0);
+  // A3-1c: lista dupla Disponíveis × Ligadas (antes: caixa na lista `layout-tops-ligadas`)
+  const tops = page.getByTestId("config-tops");
+  await tops.getByTestId("config-tops-disponiveis").getByTestId(`config-top-${top}`).click();
+  await tops.getByTestId("config-tops-mover").click();
+  await expect(tops.getByTestId("config-tops-ligadas").getByTestId(`config-top-${top}`)).toHaveCount(1);
+  await tops.getByTestId("config-tops-salvar").click();
+  await expect(tops.getByTestId("config-tops-salvo")).toBeVisible();
 
   // O que a tela gravou, lido do servidor
   const d = await api<Detalhe>(page, "GET", `${BASE}/${layout}`);
@@ -173,10 +210,11 @@ test("LB-W2 — natureza inativada: a Central abre o campo EDITÁVEL, vazio, com
   await expect(nat.locator("button.cmd-display")).toBeEnabled();
   await expect(nat).not.toContainText(natureza.nome);
 
-  // O editor aponta o padrão morto
-  await page.goto(ROTA_LAYOUTS);
-  await abrirEditor(page, layout);
-  await expect(page.getByTestId("layout-campo-categoria_financeira_id")).toContainText("Padrão inválido");
+  // O editor aponta o padrão morto (A3-1c: na prévia da página, selo `config-marca-padrao-invalido` no campo;
+  // antes: linha `layout-campo-<k>` do diálogo). Só leitura: não entra em edição.
+  await abrirEditor(page, layout, false);
+  await expect(page.getByTestId("config-campo-categoria_financeira_id")).toContainText("Padrão inválido");
+  await expect(page.getByTestId("config-campo-categoria_financeira_id").getByTestId("config-marca-padrao-invalido")).toHaveCount(1);
 });
 
 test("LB-W3 — Exportar → Importar pela tela: \"(importado)\" aparece na lista", async ({ page }, testInfo) => {

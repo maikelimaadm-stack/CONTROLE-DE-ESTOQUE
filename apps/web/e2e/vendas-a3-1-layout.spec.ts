@@ -5,8 +5,12 @@ import { login, api, uniq, pickRef, abrirLancamentoDeVendas, escolherTopEContinu
  * VENDAS-A3-1 — LAYOUT DO DOCUMENTO POR TOP, PELA TELA (API e banco REAIS; nada mockado).
  *
  * O domínio prova a conta (validar, resolver, cobrar) e a integração prova a gravação. Aqui se mede o que a TELA
- * promete: o cadastro monta o layout (W1), a Central obedece a ele (W2), a ordem de escolha ligado → padrão da
- * família → sistema chega à tela (W3), e o editor da TOP diz qual layout vale (W4).
+ * promete: o cadastro monta o layout (W1), a Central obedece a ele (W2), a ordem de escolha ligado → padrão do
+ * movimento → sistema chega à tela (W3), e o editor da TOP diz qual layout vale (W4).
+ *
+ * A3-1c (decisão 261): o editor virou a PÁGINA /configuracoes/layouts-documento/<id> (testids config-*) e o texto ao
+ * usuário diz "movimento" onde dizia "família" da TOP. Os passos de UI foram migrados sem perder asserção; os
+ * identificadores de código (`familia`, `padrao_da_familia`) não mudam.
  *
  * Anti-vacuidade: toda ausência (campo fora do layout) vem depois de uma presença positiva do mesmo tipo de alvo.
  */
@@ -44,24 +48,76 @@ async function criarLayoutPelaTela(page: Page, familia: string, nome: string): P
   await dialogo.getByTestId("layout-novo-criar").click();
   const r = await resposta;
   expect(r.status(), "o layout foi criado").toBe(201);
-  return ((await r.json()) as { id: string }).id;
+  const id = ((await r.json()) as { id: string }).id;
+  // A3-1c (W8): ao criar, o diálogo navega para a página do configurador do layout novo
+  await expect(page).toHaveURL(new RegExp(`/configuracoes/layouts-documento/${id}$`));
+  return id;
 }
 
+/**
+ * A3-1c (decisão 261): o editor deixou de ser um diálogo — "Editar" na lista NAVEGA para a página do configurador
+ * (/configuracoes/layouts-documento/<id>), que abre em leitura; "Editar" da barra entra em edição.
+ * Antes: menu Editar → diálogo `layout-editor`.
+ */
 async function abrirEditor(page: Page, id: string) {
+  await page.goto(ROTA_LAYOUTS);
+  await expect(page.getByTestId("layouts-documento")).toBeVisible();
   const linha = page.locator("tr", { has: page.getByTestId(`layout-linha-${id}`) });
   await expect(linha).toHaveCount(1);
   await linha.getByRole("button", { name: "Mais opções" }).click();
   await page.getByRole("menuitem", { name: "Editar" }).click();
-  await expect(page.getByTestId("layout-editor")).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/configuracoes/layouts-documento/${id}$`));
+  await expect(page.getByTestId("config-layout-pagina")).toBeVisible();
+  await page.getByTestId("config-editar").click();
+  await expect(page.getByTestId("config-salvar")).toBeVisible();
 }
 
-async function configurar(page: Page, chave: string, f: (d: ReturnType<Page["getByTestId"]>) => Promise<void>) {
-  await page.getByTestId(`layout-campo-${chave}`).getByRole("button", { name: "Configurar campo" }).click();
+/**
+ * A prévia mostra UMA aba do rodapé por vez: um campo do rodapé só está na tela com a aba dele ativa. A aba vem do
+ * layout GRAVADO (o rascunho só muda no que o próprio teste mexe) — premissa conferida, nunca suposta.
+ */
+async function mostrarCampo(page: Page, id: string, chave: string) {
+  const e = (await api<Detalhe>(page, "GET", `${BASE}/${id}`)).estrutura;
+  if (e.cabecalho.some((c) => c.campo === chave)) return;
+  const aba = e.rodape.findIndex((a) => a.campos.some((c) => c.campo === chave));
+  expect(aba, `premissa: ${chave} está no layout`).toBeGreaterThanOrEqual(0);
+  await page.getByTestId(`config-aba-${aba}`).click();
+}
+
+/** Seleciona o campo na prévia e abre "Configurar campo" pela barra de ações (antes: botão "Configurar campo" na linha `layout-campo-<k>`). */
+async function abrirConfigurar(page: Page, id: string, chave: string) {
+  await mostrarCampo(page, id, chave);
+  await page.getByTestId(`config-campo-${chave}`).click();
+  await expect(page.getByTestId(`config-campo-${chave}`)).toHaveAttribute("data-selecionado", "true");
+  await page.getByTestId("config-acoes").getByTestId("config-acao-configurar").click();
+}
+
+async function configurar(page: Page, id: string, chave: string, f: (d: ReturnType<Page["getByTestId"]>) => Promise<void>) {
+  await abrirConfigurar(page, id, chave);
   const d = page.getByTestId("layout-configurar-campo");
   await expect(d).toBeVisible();
   await f(d);
   await d.getByTestId("layout-configurar-aplicar").click();
   await expect(d).toHaveCount(0);
+}
+
+/** Liga a TOP pela lista dupla da página (antes: caixa na lista `layout-tops-ligadas` + `layout-tops-salvar`/`layout-tops-salvo`). */
+async function ligarTop(page: Page, topId: string) {
+  const tops = page.getByTestId("config-tops");
+  await tops.getByTestId("config-tops-disponiveis").getByTestId(`config-top-${topId}`).click();
+  await tops.getByTestId("config-tops-mover").click();
+  await expect(tops.getByTestId("config-tops-ligadas").getByTestId(`config-top-${topId}`)).toHaveCount(1);
+  await tops.getByTestId("config-tops-salvar").click();
+  await expect(tops.getByTestId("config-tops-salvo")).toBeVisible();
+}
+
+/** Salva o rascunho (PUT) — antes: `layout-salvar` + mensagem `layout-salvo`; agora: `config-salvar`, sem recusa e de volta à leitura. */
+async function salvarLayout(page: Page, id: string) {
+  const put = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `${BASE}/${id}`);
+  await page.getByTestId("config-salvar").click();
+  expect((await put).status(), "o layout foi gravado").toBe(200);
+  await expect(page.getByTestId("config-editar"), "gravado: a página volta à leitura").toBeVisible();
+  await expect(page.getByTestId("config-aviso")).toHaveCount(0);
 }
 
 /** Desliga os padrões da família deixados por uma execução anterior deste arquivo (o banco de e2e é compartilhado). */
@@ -82,18 +138,20 @@ test("LD-W1 — cria o layout de venda a partir do sistema: tira ICMS frete, Tra
   layoutW1 = await criarLayoutPelaTela(page, "vendas.venda", NOME_W1);
   await abrirEditor(page, layoutW1);
 
-  // Remover ICMS frete
-  await expect(page.getByTestId("layout-campo-freight_icms"), "premissa: a cópia do sistema traz o ICMS frete").toHaveCount(1);
-  await page.getByTestId("layout-campo-freight_icms").getByRole("button", { name: /^Remover/ }).click();
-  await expect(page.getByTestId("layout-campo-freight_icms")).toHaveCount(0);
+  // Remover ICMS frete (A3-1c: seleciona na prévia → "Remover" da barra de ações; antes: botão "Remover" na linha).
+  await mostrarCampo(page, layoutW1, "freight_icms");
+  await expect(page.getByTestId("config-campo-freight_icms"), "premissa: a cópia do sistema traz o ICMS frete").toHaveCount(1);
+  await page.getByTestId("config-campo-freight_icms").click();
+  await page.getByTestId("config-acoes").getByTestId("config-acao-remover").click();
+  await expect(page.getByTestId("config-campo-freight_icms")).toHaveCount(0);
 
   // Transportadora → "Transp.", obrigatória
-  await configurar(page, "transporter_id", async (d) => {
+  await configurar(page, layoutW1, "transporter_id", async (d) => {
     await d.getByTestId("layout-cfg-rotulo").fill("Transp.");
     await d.getByTestId("layout-cfg-obrigatorio").selectOption("true");
   });
   // R1: Parcelamento sempre tem valor → o seletor Obrigatório nasce desabilitado
-  await page.getByTestId("layout-campo-installment_plan").getByRole("button", { name: "Configurar campo" }).click();
+  await abrirConfigurar(page, layoutW1, "installment_plan");
   const cfgParcelamento = page.getByTestId("layout-configurar-campo");
   await expect(cfgParcelamento.getByTestId("layout-cfg-rotulo"), "premissa: o diálogo abriu").toBeVisible();
   await expect(cfgParcelamento.getByTestId("layout-cfg-obrigatorio")).toBeDisabled();
@@ -102,21 +160,15 @@ test("LD-W1 — cria o layout de venda a partir do sistema: tira ICMS frete, Tra
   await expect(cfgParcelamento).toHaveCount(0);
 
   // Data de saída: padrão data de hoje, não editável
-  await configurar(page, "shipping_date", async (d) => {
+  await configurar(page, layoutW1, "shipping_date", async (d) => {
     await d.getByTestId("layout-cfg-editavel").selectOption("false");
     await d.getByTestId("layout-cfg-padrao-modo").selectOption("variavel");
   });
 
-  const put = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname === `${BASE}/${layoutW1}`);
-  await page.getByTestId("layout-salvar").click();
-  expect((await put).status(), "o layout foi gravado").toBe(200);
-  await expect(page.getByTestId("layout-salvo")).toBeVisible();
+  await salvarLayout(page, layoutW1);
 
   // Liga à TOP
-  const topas = page.getByTestId("layout-tops-ligadas");
-  await topas.getByTestId(`layout-top-${topW1}`).getByRole("checkbox").check();
-  await topas.getByTestId("layout-tops-salvar").click();
-  await expect(page.getByTestId("layout-tops-salvo")).toBeVisible();
+  await ligarTop(page, topW1);
 
   // O que a tela gravou, lido do servidor
   const d = await api<Detalhe>(page, "GET", `${BASE}/${layoutW1}`);
@@ -172,12 +224,12 @@ test("LD-W2 — a Central obedece ao layout: sem transportadora, erro no campo; 
   expect(corpo["transporter_id"]).toBeTruthy();
 });
 
-test("LD-W3 — TOP sem layout: sem padrão, a Central de hoje; com padrão da família, o padrão", async ({ page }) => {
+test("LD-W3 — TOP sem layout: sem padrão, a Central de hoje; com padrão do movimento, o padrão", async ({ page }) => {
   await login(page);
   const familia = "vendas.pedido";
   await limparPadroesW3(page, familia);
   const lista = await api<{ items: Linha[] }>(page, "GET", `${BASE}?familia=${familia}`);
-  expect(lista.items.filter((l) => l.padrao && l.is_active), "premissa: a família não tem padrão").toHaveLength(0);
+  expect(lista.items.filter((l) => l.padrao && l.is_active), "premissa: o movimento não tem padrão").toHaveLength(0);
   const top = await criarTop(page, familia, "Layout W3");
 
   // Sem padrão → layout do sistema: o rótulo de hoje e o ICMS frete presente.
@@ -186,7 +238,7 @@ test("LD-W3 — TOP sem layout: sem padrão, a Central de hoje; com padrão da f
   await page.getByRole("tab", { name: "Frete e transporte" }).click();
   await expect(page.locator('[data-campo="freight_icms"]')).toHaveCount(1);
 
-  // Padrão da família, com um rótulo que só ele tem.
+  // Padrão do movimento (A3-1c: antes "da família"), com um rótulo que só ele tem.
   const criado = await api<{ id: string }>(page, "POST", BASE, { familia, nome: uniq("LD-W3 Padrão") });
   try {
     const d = await api<Detalhe>(page, "GET", `${BASE}/${criado.id}`);
