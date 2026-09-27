@@ -117,7 +117,7 @@ function Configurador({ d, estrutura: gravada }: { d: Detalhe; estrutura: Estrut
   }, [r]);
 
   const ctx: ConfiguradorCtx = {
-    familia: d.familia, estrutura, editando, selecionado, selecionar: setSelecionado, aplicar,
+    familia: d.familia, estrutura, editando, podeEditar, avisar: setAviso, selecionado, selecionar: setSelecionado, aplicar,
     arrastando, setArrastando, abaAtiva, setAbaAtiva, configurar: setConfigurando,
     padroesDeCadastro: d.padroesDeCadastro, padroesInvalidos: d.padroesInvalidos, catalogo
   };
