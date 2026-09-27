@@ -149,11 +149,15 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
   if (!cat.length) return [{ caminho: "familia", mensagem: "Família sem layout de documento." }];
   if (!estrutura || estrutura.versaoSchema !== 1) return [{ caminho: "estrutura.versaoSchema", mensagem: "Versão da estrutura desconhecida." }];
   const porChave = (parte: ParteDoLayout) => new Map(cat.filter((c) => c.parte === parte).map((c) => [c.chave, c]));
-  const topo = porChave("cabecalho"); const rod = porChave("rodape"); const it = porChave("itens");
+  // VENDAS-A3-1c (decisão 261): campo do DOCUMENTO (cabeçalho ou rodapé no catálogo) vale em qualquer zona do documento
+  const doDocumento = new Map(cat.filter((c) => c.parte !== "itens").map((c) => [c.chave, c]));
+  const it = porChave("itens");
   const vistosDoc = new Set<string>();
-  const conferirCampo = (x: CampoDoLayout, caminho: string, doCatalogo: Map<string, CampoDoCatalogo>) => {
-    const c = doCatalogo.get(x.campo);
+  const conferirCampo = (x: CampoDoLayout, caminho: string, zona: ZonaDoLayout) => {
+    const c = doDocumento.get(x.campo);
     if (!c) { e.push({ caminho: `${caminho}.campo`, mensagem: `Campo "${x.campo}" não existe nesta parte do documento.` }); return; }
+    if (motivoZonaProibida(familia, x.campo, zona) !== null) { e.push({ caminho: `${caminho}.campo`, mensagem: mensagemSoNoRodape(c.rotulo) }); return; }
+    if (zona.tipo === "aba" && x.grupo !== undefined) e.push({ caminho: `${caminho}.grupo`, mensagem: MENSAGEM_GRUPO_SO_NO_CABECALHO });
     if (vistosDoc.has(x.campo)) { e.push({ caminho: `${caminho}.campo`, mensagem: `Campo "${c.rotulo}" repetido no layout.` }); return; }
     vistosDoc.add(x.campo);
     if (c.somenteLeitura && (x.obrigatorio || x.editavel)) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatório nem editável.` });
@@ -161,10 +165,10 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     if (x.valorPadrao && !padraoCompativel(c, x.valorPadrao)) e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `Valor padrão incompatível com "${c.rotulo}".` });
     if (x.obrigatorio && !x.editavel && !x.valorPadrao) e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `"${c.rotulo}" é obrigatório e não editável: informe o valor padrão.` });
   };
-  estrutura.cabecalho.forEach((x, i) => conferirCampo(x, `cabecalho[${i}]`, topo));
+  estrutura.cabecalho.forEach((x, i) => conferirCampo(x, `cabecalho[${i}]`, { tipo: x.grupo === "adicionais" ? "adicionais" : "principal" }));
   estrutura.rodape.forEach((a, ai) => {
     if (!a.campos.length) e.push({ caminho: `rodape[${ai}]`, mensagem: `A aba "${a.aba}" está vazia.` });
-    a.campos.forEach((x, i) => conferirCampo(x, `rodape[${ai}].campos[${i}]`, rod));
+    a.campos.forEach((x, i) => conferirCampo(x, `rodape[${ai}].campos[${i}]`, { tipo: "aba", indice: ai }));
   });
   const vistosItem = new Set<string>();
   estrutura.itens.forEach((x, i) => {
@@ -216,17 +220,18 @@ const vazio = (v: unknown) => v === null || v === undefined || (typeof v === "st
  * Campo com `exige` que a API não declara (`capacidades`) não é cobrado.
  */
 export function camposObrigatoriosFaltando(familia: string, estrutura: EstruturaLayout, documento: Record<string, unknown> & { items?: Record<string, unknown>[] }, capacidades: { classificacao?: boolean; condicao?: boolean } = {}): { caminho: string; rotulo: string }[] {
-  const cat = new Map(catalogoDaFamilia(familia).map((c) => [`${c.parte}:${c.chave}`, c]));
+  // VENDAS-A3-1c: campo do documento achado pela CHAVE em qualquer zona (cabeçalho ou aba); coluna só nos itens
+  const cat = new Map(catalogoDaFamilia(familia).map((c) => [c.parte === "itens" ? `itens:${c.chave}` : `documento:${c.chave}`, c]));
   const ativo = (c: CampoDoCatalogo | undefined) => Boolean(c) && (!c!.exige || (c!.exige === "classificacao" ? capacidades.classificacao : capacidades.condicao));
   const out: { caminho: string; rotulo: string }[] = [];
-  const topo = (x: CampoDoLayout, parte: ParteDoLayout) => {
-    const c = cat.get(`${parte}:${x.campo}`);
+  const topo = (x: CampoDoLayout) => {
+    const c = cat.get(`documento:${x.campo}`);
     // sempreTemValor: defesa para estrutura gravada antes da regra (R1) — nunca cobrado
     if (!x.obrigatorio || !ativo(c) || c!.somenteLeitura || c!.sempreTemValor) return;
     if (vazio(documento[x.campo])) out.push({ caminho: x.campo, rotulo: x.rotulo ?? c!.rotulo });
   };
-  estrutura.cabecalho.forEach((x) => topo(x, "cabecalho"));
-  estrutura.rodape.forEach((a) => a.campos.forEach((x) => topo(x, "rodape")));
+  estrutura.cabecalho.forEach((x) => topo(x));
+  estrutura.rodape.forEach((a) => a.campos.forEach((x) => topo(x)));
   (documento.items ?? []).forEach((linha, i) => {
     for (const x of estrutura.itens) {
       const c = cat.get(`itens:${x.campo}`);
