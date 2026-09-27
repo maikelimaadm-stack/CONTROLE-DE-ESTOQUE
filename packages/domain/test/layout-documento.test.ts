@@ -33,6 +33,9 @@ describe("LD-D1 layout do sistema reproduz a Central de hoje", () => {
     expect(l.itens.map((c) => c.campo)).toEqual([
       "codigo", "product_id", "warehouse_id", "estoque", "quantity", "unit_price", "discount", "discount_percent", "total"
     ]);
+    // Decisão 261 (VENDAS-A3-1c): o layout do sistema passa a DECLARAR o grupo — só o Proprietário, em "Dados
+    // adicionais", onde a Central já o mostrava. Nenhum outro campo ganha grupo (ausente = principal).
+    expect(l.cabecalho.filter((c) => c.grupo !== undefined).map((c) => [c.campo, c.grupo])).toEqual([["proprietary_id", "adicionais"]]);
     const obrig = [...l.cabecalho, ...l.rodape.flatMap((a) => a.campos), ...l.itens].filter((c) => c.obrigatorio).map((c) => c.campo);
     expect(obrig).toEqual(["client_id", "empresa_id", "document_date", "categoria_financeira_id", "centro_custo_id", "product_id", "quantity", "unit_price"]);
   });
@@ -42,7 +45,8 @@ describe("LD-D2 regras de validarEstruturaLayout", () => {
   it("campo fora do catálogo", () => {
     const l = sis(); l.cabecalho.push({ campo: "inventado", obrigatorio: false, editavel: true });
     expect(caminhos(F, l)).toEqual(["cabecalho[9].campo"]);
-    const l2 = sis(); l2.cabecalho.push({ campo: "note", obrigatorio: false, editavel: true }); // parte errada
+    // decisão 261: campo do rodapé agora vale no cabeçalho — o "fora do catálogo" usa uma chave inexistente
+    const l2 = sis(); l2.cabecalho.push({ campo: "nao_existe", obrigatorio: false, editavel: true });
     expect(caminhos(F, l2)).toContain("cabecalho[9].campo");
     const l3 = sis(); l3.itens.push({ campo: "inventado", obrigatorio: false });
     expect(caminhos(F, l3)).toEqual(["itens[9].campo"]);
