@@ -61,7 +61,8 @@ describe("LC-A1 zonas e grupo no PUT do layout", () => {
     const t = tirar(est, "note"); est = t.est;
     const fin = indiceDaAba(est, "Financeiro");
     est = { ...est, cabecalho: [...est.cabecalho, { ...t.c, grupo: "adicionais" }],
-      rodape: est.rodape.map((a, i) => (i === fin ? { ...a, campos: [...a.campos, venc] } : a)) };
+      // a aba "Observações" só tinha a Observação: vazia, sai do layout (aba vazia é recusada, regra de antes)
+      rodape: est.rodape.map((a, i) => (i === fin ? { ...a, campos: [...a.campos, venc] } : a)).filter((a) => a.campos.length) };
     const r = await req("PUT", `${URL_}/${id}`, { estrutura: est });
     expect(r.statusCode, r.body).toBe(200);
     const gravada = await estruturaGravada(id);
