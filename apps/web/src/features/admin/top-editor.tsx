@@ -68,7 +68,7 @@ type ChaveAba = (typeof ABAS)[number]["chave"];
 /** O texto de ajuda de cada seção. Um por aba, cada um explicando o que AQUELA seção decide. */
 const AJUDA: Record<ChaveAba, string> = {
   identificacao:
-    "Como esta operação é reconhecida: o código que o operador digita, o nome que ele lê e a família do produto que define de que operação se trata. O código e a família são escolhidos na criação e não mudam depois.",
+    "Como esta operação é reconhecida: o código que o operador digita, o nome que ele lê e o movimento do produto que define de que operação se trata. O código e o movimento são escolhidos na criação e não mudam depois.",
   geral:
     "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação. Estas regras ficam registradas nesta versão, mas ainda não são executadas: a confirmação automática, por exemplo, não confirma documento nenhum.",
   destinos:
@@ -363,7 +363,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <Field label="Nome" required span={9}>
           <Input data-testid="top-campo-nome" value={rascunho.nome} onChange={(e) => mudar({ nome: e.target.value })} placeholder="Venda de gado a prazo" />
         </Field>
-        <Field label="Família operacional" required span={6} help="Define qual operação do produto este tipo representa. Não muda depois da criação.">
+        <Field label="Movimento" required span={6} help="Define qual operação do produto este tipo representa. Não muda depois da criação.">
           {edicao
             ? <Input data-testid="top-campo-familia" value={detalhe ? `${detalhe.familia.rotulo} (${detalhe.familia.codigo})` : ""} readOnly disabled />
             : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => mudar({ codigoBase: e.target.value, destinos: [] })}>
@@ -374,8 +374,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <CampoSimNao rotulo={COPY.situacao} span={3} testId="top-campo-situacao" valor={rascunho.ativo}
           ajuda="Um tipo inativo continua no histórico, mas deixa de ser oferecido em lançamentos novos."
           onChange={(v) => mudar({ ativo: v, padrao: v ? rascunho.padrao : false })} />
-        <CampoSimNao rotulo="Padrão da família" span={3} testId="top-campo-padrao" valor={rascunho.padrao} desabilitado={!rascunho.ativo}
-          ajuda="No máximo um tipo padrão por família. Ao marcar este, o anterior deixa de ser o padrão."
+        <CampoSimNao rotulo="Padrão do movimento" span={3} testId="top-campo-padrao" valor={rascunho.padrao} desabilitado={!rascunho.ativo}
+          ajuda="No máximo um tipo padrão por movimento. Ao marcar este, o anterior deixa de ser o padrão."
           onChange={(v) => mudar({ padrao: v })} />
         <Field label="Descrição" span={12}>
           <Textarea data-testid="top-campo-descricao" rows={3} value={rascunho.descricao} onChange={(e) => mudar({ descricao: e.target.value })} />
@@ -608,7 +608,7 @@ function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativa
     </p>;
   }
   if (!codigoBase) {
-    return <p className="text-[12px] text-slate-500">Escolha a família operacional na aba de identificação para ver o que ela pode executar.</p>;
+    return <p className="text-[12px] text-slate-500">Escolha o movimento na aba de identificação para ver o que ele pode executar.</p>;
   }
 
   const familiaAceita = familiaAceitaExecucaoConfiguradaTop(codigoBase, execucao.matriz);
@@ -750,7 +750,7 @@ function AbaDestinos({ codigoBase, destinos, limite, habilitado, ilegivel, decla
     </p>;
   }
   if (!codigoBase) {
-    return <p className="text-[12px] text-slate-500">Escolha a família operacional na aba de identificação para ver os destinos possíveis.</p>;
+    return <p className="text-[12px] text-slate-500">Escolha o movimento na aba de identificação para ver os destinos possíveis.</p>;
   }
   if (carregando) return <LoadingState variant="compact" />;
   if (erro) return <ErrorState error={erro} />;

@@ -126,7 +126,8 @@ for (const variante of ["budget", "order", "sale"] as Variante[]) {
     // e "Tipo de operação" passou a carregar a TOP CONFIGURADA pela organização. A asserção de
     // não-cruzamento entre variantes segue valendo — mas no campo que continua sendo derivado do
     // registro, que é onde ela sempre quis morar.
-    const familia = campo(page, "Família operacional");
+    // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+    const familia = campo(page, "Movimento");
     await expect(familia).toContainText(V[variante].top);
     for (const outra of (["budget", "order", "sale"] as Variante[]).filter((x) => x !== variante)) {
       await expect(familia, `${variante} não pode exibir a família de ${outra}`).not.toContainText(V[outra].top);
@@ -210,7 +211,8 @@ test("BASE2-03C: a conversão liga origem e derivado, e cada lado abre na SUA ro
   await page.goto(`/vendas/orders/${convertido.id}`);
   await expect(page.getByTestId("central-vendas")).toBeVisible();
   await expect(page.getByRole("region", { name: `Pedido de venda ${pedido.code}` })).toBeVisible();
-  await expect(campo(page, "Família operacional"), "a família sai do registro DERIVADO").toContainText(V.order.top);
+  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  await expect(campo(page, "Movimento"), "a família sai do registro DERIVADO").toContainText(V.order.top);
   await expect(campo(page, "Origem"), "o pedido nasceu de uma conversão").toContainText("Convertido");
 });
 
