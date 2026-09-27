@@ -2125,13 +2125,12 @@ test("VENDAS-A3-1b · LB-K1 — a API da base não manda padroesDeCadastro: a Ce
     expect(efetivo.status(), "a base serve o layout efetivo").toBe(200);
     const corpo = await efetivo.json() as Record<string, unknown>;
     expect(corpo, "premissa: o layout servido é o ligado a esta TOP").toMatchObject({ origem: "ligado", id: layoutId });
-    if (servePadroes) {
-      // Base já posterior à A3-1b: as duas chaves vêm, e vazias — o layout daqui não tem padrão registro.
-      expect([corpo["padroesDeCadastro"], corpo["padroesInvalidos"]], "a base que manda os padrões os manda vazios para este layout").toEqual([{}, []]);
-    } else {
-      expect(Object.keys(corpo), "a premissa deste ramo, NO FIO: a API da base não manda os padrões de cadastro").not.toContain("padroesDeCadastro");
-      expect(Object.keys(corpo), "nem os padrões inválidos").not.toContain("padroesInvalidos");
-    }
+    // NO FIO, nos dois mundos, as chaves NÃO vêm: a base anterior à A3-1b não as conhece, e a base A3-1b responde a layout
+    // SEM padrão `registro` EXATAMENTE como antes (contrato 3.3; `layout-efetivo` em apps/api/src/routes/sales.ts).
+    // VENDAS-A3-1c: o ramo "base A3-1b" só passou a executar agora e esperava `{}`/`[]`, que a API nunca mandou aqui.
+    console.log(`[skew] LB-K1 · base ${servePadroes ? "A3-1b" : "anterior"}: padroesDeCadastro ausente para layout sem padrão registro`);
+    expect(Object.keys(corpo), "a premissa, NO FIO: a API da base não manda os padrões de cadastro para este layout").not.toContain("padroesDeCadastro");
+    expect(Object.keys(corpo), "nem os padrões inválidos").not.toContain("padroesInvalidos");
 
     // PRESENÇA ANTES DA AUSÊNCIA: a resposta sem os padrões foi ACEITA — o layout da base governa a Central, com o rótulo
     // e o padrão variável dele aplicado ao abrir, como na A3-1 ...
