@@ -176,7 +176,7 @@ export function LancadorDeTipoOperacao({ estado, titulo, indisponivel, onContinu
           <legend className="sr-only">Tipos de Operação disponíveis</legend>
           {itens.map((t) => <Opcao key={t.id} top={t} marcada={t.id === escolhida} onEscolher={() => setEscolhida(t.id)} />)}
         </fieldset>
-        <p className="text-xs text-slate-500">Família: {estado.dados.family.label}</p>
+        <p className="text-xs text-slate-500">Movimento: {estado.dados.family.label}</p>
         <div className="flex justify-end">
           <Button data-testid="top-continuar" disabled={!top} onClick={() => top && onContinuar(top)}>Continuar</Button>
         </div>

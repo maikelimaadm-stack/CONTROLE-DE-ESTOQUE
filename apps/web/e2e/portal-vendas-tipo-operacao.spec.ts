@@ -74,7 +74,8 @@ test("cadastra TOPs, lança pelo Portal de Vendas e o detalhe mostra o snapshot"
   await expect(page.getByTestId("central-vendas")).toBeVisible();
   // TOP configurada E família canônica aparecem como coisas DIFERENTES.
   await expect(page.getByText(nomeTop)).toBeVisible();
-  await expect(page.getByText("Família operacional")).toBeVisible();
+  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  await expect(page.getByText("Movimento", { exact: true })).toBeVisible();
 });
 
 test("editar a TOP cria a versão 2 e o documento ANTIGO continua exibindo a versão 1", async ({ page }) => {
@@ -349,7 +350,8 @@ test("LEGADO — documento sem TOP abre, diz que não está configurado e manté
   await expect(page.getByTestId("central-vendas"), "legado continua abrindo").toBeVisible();
   await expect(page.getByText("Não configurada (registro legado)")).toBeVisible();
   // A família canônica CONTINUA correta — ela vem do registro, não da configuração.
-  await expect(page.getByText("Família operacional")).toBeVisible();
+  // Decisão 261: o rótulo de tela da família da TOP passou a ser "Movimento" (só texto; código/API seguem `familia`).
+  await expect(page.getByText("Movimento", { exact: true })).toBeVisible();
 
   // E continua na listagem: um INNER JOIN o teria feito sumir.
   await page.goto("/vendas?tab=sales");
