@@ -75,7 +75,7 @@ const AJUDA: Record<ChaveAba, string> = {
   identificacao:
     "Como esta operação é reconhecida: o código que o operador digita, o nome que ele lê e o movimento do produto que define de que operação se trata. O código e o movimento são escolhidos na criação e não mudam depois.",
   geral:
-    "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação. Estas regras ficam registradas nesta versão, mas ainda não são executadas: a confirmação automática, por exemplo, não confirma documento nenhum.",
+    "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação. Confirmação e alteração após confirmar ficam registradas nesta versão, mas ainda não são executadas: a confirmação automática, por exemplo, não confirma documento nenhum. As exigências de preenchimento só são cobradas no lançamento em versões gravadas com as restrições da operação.",
   destinos:
     "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Enquanto esta operação não declarar a política, a conversão continua seguindo o caminho anterior do produto.",
   estoque:
@@ -841,8 +841,9 @@ function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativa
       aconteceu na confirmação.
     </p>
     <p data-testid="top-execucao-declarativo" className="text-[11.5px] leading-relaxed text-slate-500">
-      Preparadas, ainda não executadas: fiscal, aprovação, confirmação automática, alteração após confirmar e
-      as exigências da aba Geral. Elas ficam registradas nesta versão, mas nada as executa nesta etapa do produto.
+      Preparadas, ainda não executadas: fiscal, aprovação, confirmação automática e alteração após confirmar.
+      Elas ficam registradas nesta versão, mas nada as executa nesta etapa do produto. As exigências da aba Geral
+      só são cobradas no lançamento em versões gravadas com as restrições da operação.
     </p>
   </div>;
 }

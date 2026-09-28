@@ -120,10 +120,10 @@ test("TR-W2 — TOP de Pedido formato 3 na Central: transportadora exigida apare
       configuracao: configuracaoDaTop("bloqueia"), condicoesPermitidas: [permitidaA.id, permitidaB.id]
     });
     tops.push(top.id);
-    const regras = await api<{ formato: number; exigencias: { caminho: string }[]; condicoesPermitidas: string[] | null; clienteEmAtraso: { politica: string } }>(
+    const regras = await api<{ formato: number; exigencias: string[]; condicoesPermitidas: string[] | null; clienteEmAtraso: { politica: string } }>(
       page, "GET", `/api/sales/${SEGMENTO}/regras-da-operacao?tipo_operacao_id=${top.id}`);
     expect(regras.formato, "premissa: a TOP gravou no formato 3").toBe(3);
-    expect(regras.exigencias.map((e) => e.caminho), "premissa: a transportadora é exigida").toContain(TRANSPORTADORA);
+    expect(regras.exigencias, "premissa: a transportadora é exigida").toContain(TRANSPORTADORA);
     expect([...(regras.condicoesPermitidas ?? [])].sort(), "premissa: a lista de condições gravou").toEqual([permitidaA.id, permitidaB.id].sort());
     expect(regras.clienteEmAtraso.politica).toBe("bloqueia");
 

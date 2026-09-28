@@ -108,9 +108,12 @@ async function criarTopDeVenda(page: Page, rotulo: string): Promise<TopFixture> 
 
 /** Limpeza: a exclusão lógica da própria API. Falha aqui é registrada, mas não esconde o erro do teste. */
 async function excluirTop(page: Page, id: string) {
-  await api(page, "DELETE", `/api/admin/tipos-operacao/${id}`).catch((e: unknown) => {
-    console.warn(`[top-config-05-editor] limpeza da TOP ${id} falhou: ${String(e)}`);
-  });
+  // A exclusão exige a `revisao` corrente (concorrência otimista): lida na hora, como na limpeza do spec da Central.
+  await api<{ revisao: number }>(page, "GET", `/api/admin/tipos-operacao/${id}`)
+    .then((d) => api(page, "DELETE", `/api/admin/tipos-operacao/${id}`, { revisao: d.revisao }))
+    .catch((e: unknown) => {
+      console.warn(`[top-config-05-editor] limpeza da TOP ${id} falhou: ${String(e)}`);
+    });
 }
 
 const detalheNoServidor = (page: Page, id: string) => api<DetalheTopFormato3>(page, "GET", `/api/admin/tipos-operacao/${id}`);
