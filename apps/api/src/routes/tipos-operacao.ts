@@ -10,6 +10,7 @@ import {
   moduloDaFamiliaOperacional,
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
   VERSOES_SCHEMA_CONFIGURACAO_TOP,
   SECOES_CONFIGURACAO_TOP,
   MATRIZ_EXECUCAO_TOP,
@@ -25,6 +26,9 @@ import {
   validarDestinoOperacao,
   varianteDeDocumentoVendaDaFamilia,
   LIMITE_DESTINOS_POR_VERSAO,
+  LIMITE_CONDICOES_PERMITIDAS,
+  recusasFiscaisDaFamiliaTop,
+  restricoesExecutamTop,
   type DestinoOperacaoV1,
   type ConfiguracaoTipoOperacao
 } from "@agro/domain";
@@ -69,6 +73,12 @@ const familiaParaTela = (codigo: string) => ({
 const codigoSchema = z.string().trim().regex(FORMA_CODIGO_TIPO_OPERACAO, "Código inválido");
 const nomeSchema = z.string().trim().min(1).max(LIMITE_NOME_TIPO_OPERACAO);
 const descricaoSchema = z.string().trim().max(LIMITE_DESCRICAO_TIPO_OPERACAO).optional().nullable();
+/**
+ * CONDIÇÕES PERMITIDAS (TOP-CONFIG-05) — no MESMO molde de `destinos`: presença da chave é declaração.
+ * A forma (uuid, teto) é da borda; existência, estado e repetição são conferidos contra o banco em UMA
+ * consulta (`conferirCondicoes`), com a mesma recusa para inexistente, de outra organização, inativa e excluída.
+ */
+const condicoesPermitidasSchema = z.array(z.string().uuid()).max(LIMITE_CONDICOES_PERMITIDAS).optional();
 
 /**
  * `.strict()` NAS TRÊS ENTRADAS DE ESCRITA — porque `z.object` descarta chave desconhecida EM SILÊNCIO.
@@ -98,7 +108,9 @@ const criarSchema = z.object({
    */
   configuracao: z.unknown().optional(),
   /** Grafo de próximas operações. Ausente = nenhuma transição declarada. Mesma razão do `z.unknown()`. */
-  destinos: z.unknown().optional()
+  destinos: z.unknown().optional(),
+  /** TOP-CONFIG-05: condições de pagamento permitidas (formato 3). Ausente = sem lista. Ver `conferirCondicoes`. */
+  condicoesPermitidas: condicoesPermitidasSchema
 }).strict();
 
 /**
@@ -118,7 +130,9 @@ const editarSchema = z.object({
   /** Ausente = PRESERVAR a configuração atual. Ver `configuracaoPedida` e o handler de edição. */
   configuracao: z.unknown().optional(),
   /** Ausente = PRESERVAR os destinos da versão corrente, pelo mesmo motivo. */
-  destinos: z.unknown().optional()
+  destinos: z.unknown().optional(),
+  /** Ausente = PRESERVAR as condições permitidas da versão corrente (copiadas para a versão nova). */
+  condicoesPermitidas: condicoesPermitidasSchema
 }).strict();
 
 /**
@@ -181,6 +195,106 @@ function configuracaoPedida(bruta: unknown): ConfiguracaoTipoOperacao {
   throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
     "A configuração operacional enviada é inválida", { recusas: r.recusas });
 }
+
+/**
+ * O SENTIDO DOS CFOPs, DEPOIS DO PARSE (TOP-CONFIG-05) — a forma já foi conferida pela leitura; aqui entra o que
+ * depende da FAMÍLIA da TOP (vendas = saída, compras = entrada). Mesma recusa e mesma forma do parse.
+ * Formato 1/2: o domínio devolve `[]` (as chaves nem existem), então nada muda para o legado.
+ */
+function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: string): void {
+  const recusas = recusasFiscaisDaFamiliaTop(config, codigoBase);
+  if (recusas.length) {
+    throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
+      "A configuração operacional enviada é inválida", { recusas });
+  }
+}
+
+const MENSAGEM_CONDICAO_INEXISTENTE = "Condição de pagamento inexistente ou inativa.";
+
+/** Condições permitidas presentes exigem a configuração resultante no formato 3 — a única que as executa. */
+function exigirFormato3ParaCondicoes(config: ConfiguracaoTipoOperacao): void {
+  if (!restricoesExecutamTop(config)) {
+    throw new DomainError("TIPO_OPERACAO_CONDICOES_INVALIDAS",
+      "As condições de pagamento permitidas enviadas são inválidas",
+      { recusas: [{ caminho: "condicoesPermitidas", mensagem: "Condições permitidas exigem a configuração no formato 3." }] });
+  }
+}
+
+/**
+ * CONFERE AS CONDIÇÕES PEDIDAS — em UMA consulta (`= any($2::uuid[])`), nunca uma por id.
+ *
+ * SUPERFÍCIE ÚNICA DE RECUSA: inexistente, de outra organização, inativa (`is_active = false`) e excluída
+ * (`deleted_at`) recebem a MESMA mensagem — distinguir faria do editor um oráculo de ids da vizinha.
+ * `for share`: a condição não pode ser excluída entre a conferência e o `insert` das linhas.
+ */
+async function conferirCondicoes(ctx: ServiceCtx, pedidas: readonly string[]): Promise<string[]> {
+  if (pedidas.length === 0) return [];
+  const ids = pedidas.map((x) => x.toLowerCase());
+  const r = await ctx.tx.query<{ id: string }>(
+    `select id from erp.condicoes_pagamento
+      where organization_id = $1 and id = any($2::uuid[]) and is_active and deleted_at is null
+      for share`,
+    [ctx.orgId, ids]);
+  const vivas = new Set(r.rows.map((x) => x.id));
+  const vistas = new Set<string>();
+  const recusas: { caminho: string; mensagem: string }[] = [];
+  ids.forEach((id, i) => {
+    if (vistas.has(id)) {
+      recusas.push({ caminho: `condicoesPermitidas.${i}`, mensagem: "Condição de pagamento repetida." });
+      return;
+    }
+    vistas.add(id);
+    if (!vivas.has(id)) recusas.push({ caminho: `condicoesPermitidas.${i}`, mensagem: MENSAGEM_CONDICAO_INEXISTENTE });
+  });
+  if (recusas.length) {
+    throw new DomainError("TIPO_OPERACAO_CONDICOES_INVALIDAS",
+      "As condições de pagamento permitidas enviadas são inválidas", { recusas });
+  }
+  return ids;
+}
+
+/** Uma condição permitida, resolvida para a tela. */
+interface CondicaoPermitidaResolvida { id: string; codigo: string; nome: string }
+
+/** As condições permitidas de VÁRIAS versões — em lote (UMA consulta), para detalhe, histórico e edição. */
+async function condicoesDaVersao(ctx: ServiceCtx, versaoIds: readonly string[]): Promise<Map<string, CondicaoPermitidaResolvida[]>> {
+  const mapa = new Map<string, CondicaoPermitidaResolvida[]>();
+  if (versaoIds.length === 0) return mapa;
+  const r = await ctx.tx.query<{ origem_versao_id: string; id: string; codigo: string; nome: string }>(
+    `select x.origem_versao_id, c.id, c.code as codigo, c.nome
+       from erp.tipos_operacao_versao_condicoes x
+       join erp.condicoes_pagamento c
+         on c.id = x.condicao_pagamento_id and c.organization_id = x.organization_id
+      where x.organization_id = $1 and x.origem_versao_id = any($2::uuid[])
+      order by c.code, c.id`,
+    [ctx.orgId, [...versaoIds]]);
+  for (const linha of r.rows) {
+    const lista = mapa.get(linha.origem_versao_id) ?? [];
+    lista.push({ id: linha.id, codigo: linha.codigo, nome: linha.nome });
+    mapa.set(linha.origem_versao_id, lista);
+  }
+  return mapa;
+}
+
+/** Grava as condições de UMA versão: uma instrução para a lista inteira, com ROW COUNT conferido. */
+async function gravarCondicoes(ctx: ServiceCtx, versaoId: string, tipoOperacaoId: string, ids: readonly string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const r = await ctx.tx.query(
+    `insert into erp.tipos_operacao_versao_condicoes
+       (organization_id, origem_versao_id, origem_tipo_operacao_id, condicao_pagamento_id, criado_por)
+     select $1, $2, $3, x.id, $4 from unnest($5::uuid[]) as x(id)`,
+    [ctx.orgId, versaoId, tipoOperacaoId, ctx.user.id, [...ids]]);
+  // ROW COUNT SOB RLS: menos linhas que o pedido, sem conferência, viraria "salvo" sem a restrição gravada.
+  if (r.rowCount !== ids.length) throw new Error("gravação das condições permitidas incompleta");
+}
+
+/** Mesmo CONJUNTO = no-op: a ordem de envio não é política. */
+const mesmoConjunto = (a: readonly string[], b: readonly string[]): boolean => {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  return sa.every((x, i) => x === sb[i]);
+};
 
 /**
  * A EXECUÇÃO PEDIDA PODE SER GRAVADA? — a porta de ativação da TOP-CONFIG-04A, ANTES de qualquer escrita.
@@ -461,7 +575,12 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
       runtimeHabilitado: app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED,
       matriz: MATRIZ_EXECUCAO_TOP
-    }
+    },
+    /**
+     * RESTRIÇÕES COMERCIAIS E FISCAL (TOP-CONFIG-05) — bloco OPCIONAL novo, pelo precedente de `execucao`:
+     * `contractVersion` e `configuracao.versaoSchema` NÃO mudam. Ausente = servidor sem formato 3.
+     */
+    restricoes: { suportado: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 }
   })));
 
   /**
@@ -554,7 +673,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     // UMA consulta para os destinos desta versão — a mesma função que o histórico usa, para as duas telas
     // nunca discordarem sobre o que a versão declara.
     const destinos = (await destinosDaVersao(ctx, [linha.versao_id])).get(linha.versao_id) ?? [];
-    return { ...paraTelaDetalhe(linha), destinos };
+    // Vazio = sem restrição de condição. UMA consulta, a mesma função do histórico.
+    const condicoesPermitidas = (await condicoesDaVersao(ctx, [linha.versao_id])).get(linha.versao_id) ?? [];
+    return { ...paraTelaDetalhe(linha), destinos, condicoesPermitidas };
   }));
 
   // ---------- Histórico de versões ----------
@@ -589,6 +710,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     // UMA consulta para o histórico INTEIRO. Uma por versão viraria N+1 numa TOP com trinta versões, e
     // nenhuma asserção funcional notaria — a tela ficaria idêntica, só mais lenta a cada edição.
     const destinosPorVersao = await destinosDaVersao(ctx, linhas.map((v) => v.id));
+    const condicoesPorVersao = await condicoesDaVersao(ctx, linhas.map((v) => v.id));
     return {
       items: linhas.map((v, i) => {
         const atual = cfg[i]!;
@@ -605,6 +727,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           // OS DESTINOS DAQUELA ÉPOCA, não os de hoje. É a mesma razão pela qual a configuração sai da
           // própria linha: o histórico não pode explicar uma conversão antiga com a política atual.
           destinos: destinosPorVersao.get(v.id) ?? [],
+          // AS CONDIÇÕES DAQUELA VERSÃO (vazio = sem restrição), pela mesma razão dos destinos.
+          condicoesPermitidas: condicoesPorVersao.get(v.id) ?? [],
           /**
            * E SE AQUELA VERSÃO CHEGOU A DECLARAR POLÍTICA — lido da coluna da PRÓPRIA linha, nunca deduzido
            * do tamanho da lista acima. Uma versão com zero destinos tem duas histórias possíveis, e só esta
@@ -641,7 +765,11 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // só, e a recusa desfaz tudo —, mas conferir primeiro evita trabalho e deixa a leitura óbvia: nada do
       // que vem abaixo (posto de padrão, pai, versão) roda para um corpo que seria recusado.
       const configuracao = d.configuracao === undefined ? configuracaoNeutraTopV2() : configuracaoPedida(d.configuracao);
+      conferirFiscalDaFamilia(configuracao, d.codigoBase);
       conferirExecucaoPedida(d.codigoBase, null, configuracao, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED);
+      // CONDIÇÕES PERMITIDAS: ausente no POST = sem lista. Presente exige formato 3 e é conferida em UMA consulta.
+      if (d.condicoesPermitidas !== undefined) exigirFormato3ParaCondicoes(configuracao);
+      const condicoes = d.condicoesPermitidas === undefined ? [] : await conferirCondicoes(ctx, d.condicoesPermitidas);
 
       const nasceuPadrao = d.padrao && d.ativo;
       // Se nasce como padrão, o posto tem de estar livre — e a troca é atômica (mesma transação).
@@ -676,6 +804,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // para TOP indisponível nasceria como um botão que não tem serviço atrás.
       const destinos = await conferirDestinos(ctx, d.codigoBase, destinosPedidos(d.destinos));
       await gravarDestinos(ctx, versaoNova.rows[0]!.id, id, destinos);
+      await gravarCondicoes(ctx, versaoNova.rows[0]!.id, id, condicoes);
 
       await audit(ctx.tx, ctx, "tipos_operacao", id, "create",
         { codigo: d.codigo, codigoBase: d.codigoBase, ativo: d.ativo, padrao: nasceuPadrao, versao: 1,
@@ -683,7 +812,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           // O NÚMERO E O ESTADO, porque um não responde pelo outro: `destinos: 0` com
           // `destinosConfigurados: true` é "não gera nada, por decisão", e com `false` é "ninguém decidiu".
           // Sem o booleano, a trilha registra o mesmo zero para as duas e a investigação fica sem resposta.
-          destinosConfigurados: declarouDestinos, destinos: destinos.length });
+          destinosConfigurados: declarouDestinos, destinos: destinos.length,
+          ...(d.condicoesPermitidas !== undefined ? { condicoesPermitidas: condicoes } : {}) });
       // A TOP anterior perdeu o padrão nesta mesma transação: quem perdeu tem evento próprio, com autor.
       await auditarPadraoLiberado(ctx, liberados, id);
       // E quem ASSUMIU também. Sem isto, "esta TOP virou padrão ao nascer" só existiria dentro do payload
@@ -756,11 +886,15 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * aceitá-lo desligaria a execução configurada EM SILÊNCIO, porque o formato 1 é legado por definição.
      * Voltar ao legado continua possível, e explícito: formato 2 com o efeito em `legado`.
      */
-    if (configuracao.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP && atualConfig.valor.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2) {
+    //
+    // TOP-CONFIG-05 GENERALIZA: qualquer formato enviado MENOR que o vigente é recusado (v2 sobre v3 desligaria as
+    // restrições em silêncio). v1 sobre v2 responde exatamente o que respondia: mesmo código, mensagem e details.
+    if (configuracao.versaoSchema < atualConfig.valor.versaoSchema) {
       throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO",
         "Este tipo de operação já usa o formato atual de configuração; recarregue a tela antes de editar",
-        { versaoEnviada: VERSAO_SCHEMA_CONFIGURACAO_TOP, versaoVigente: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 });
+        { versaoEnviada: configuracao.versaoSchema, versaoVigente: atualConfig.valor.versaoSchema });
     }
+    if (d.configuracao !== undefined) conferirFiscalDaFamilia(configuracao, antes.codigo_base);
     conferirExecucaoPedida(antes.codigo_base, atualConfig.valor, configuracao, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED);
     const mudouConfiguracao = !configuracoesTopIguais(atualConfig.valor, configuracao);
 
@@ -807,6 +941,16 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const mudouDestinos = !destinosOperacaoIguais(destinosAtuais, destinos)
       || (destinosConfigurados && !antes.destinos_configurados);
 
+    /**
+     * CONDIÇÕES PERMITIDAS (TOP-CONFIG-05) — mesmo molde dos destinos. AUSENTE = preservar (e copiar para a
+     * versão nova, se houver). PRESENTE = a lista declarada, vazia inclusive, e exige o formato 3 resultante.
+     * Mudança do CONJUNTO é conteúdo (versão nova); o mesmo conjunto é no-op.
+     */
+    const condicoesAtuais = ((await condicoesDaVersao(ctx, [antes.versao_id])).get(antes.versao_id) ?? []).map((c) => c.id);
+    if (d.condicoesPermitidas !== undefined) exigirFormato3ParaCondicoes(configuracao);
+    const condicoes = d.condicoesPermitidas === undefined ? condicoesAtuais : await conferirCondicoes(ctx, d.condicoesPermitidas);
+    const mudouCondicoes = !mesmoConjunto(condicoesAtuais, condicoes);
+
     // CONTEÚDO gera versão; ESTADO não. O nome de uma TOP é o que um documento vai citar — mudou o nome,
     // nasce uma versão nova, e a anterior continua legível. Ativar/desativar não muda o que a TOP É.
     //
@@ -814,7 +958,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     // E nome + descrição + configuração viajam numa versão SÓ — uma edição que mexe nos três gera UMA
     // N+1, não três. Versão por aba faria o histórico contar uma sequência de eventos que nunca existiu.
     const mudouConteudo = nome !== antes.nome || (descricao ?? null) !== (antes.descricao ?? null)
-      || mudouConfiguracao || mudouDestinos;
+      || mudouConfiguracao || mudouDestinos || mudouCondicoes;
     const versao = mudouConteudo ? antes.versao_atual + 1 : antes.versao_atual;
 
     /**
@@ -843,6 +987,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       // a política INTEIRA dela. Herdar por referência faria a versão nova depender da anterior para ser
       // lida, e o histórico deixaria de ser autossuficiente — que é a única coisa que ele promete ser.
       await gravarDestinos(ctx, versaoNova.rows[0]!.id, id, destinos);
+      // As condições também são COPIADAS: a versão N+1 declara a política inteira dela.
+      await gravarCondicoes(ctx, versaoNova.rows[0]!.id, id, condicoes);
     }
 
     const u = await ctx.tx.query(
@@ -875,6 +1021,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           // `destinos: 0` sozinho não responde o que aconteceu. Com `destinosConfigurados`, a trilha separa
           // a edição que DECLAROU "não gera nada" da que apenas não falou do assunto.
           destinosAlterados: mudouDestinos, destinos: destinos.length, destinosConfigurados,
+          ...(mudouCondicoes ? { condicoesPermitidas: condicoes } : {}),
           configuracaoSchema: configuracao.versaoSchema },
         { before: { nome: antes.nome, descricao: antes.descricao }, after: { nome, descricao } });
     }
