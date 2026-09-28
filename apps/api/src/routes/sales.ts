@@ -931,6 +931,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       const padroesInvalidos = [...new Set(c.invalidos.map((x) => x.chave))];
       return { estrutura: removerPadroesRegistro(l.estrutura), origem: l.origem, nome: l.nome, id: l.id, padroesDeCadastro, padroesInvalidos };
     }));
+    (await import("./vendas-atraso-cliente.js")).registrarSituacaoCliente(app, kind, base, perm); // TOP-CONFIG-05: antes de `/:id`
     app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id, kind)));
     /**
      * CRIAÇÃO. `tipo_operacao_id` é OPCIONAL na API — e isso é compatibilidade de rolling deploy, não
