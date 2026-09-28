@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, padroesRegistroDaEstrutura, removerPadroesRegistro, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, confirmacaoExigeMarcaDaGuarda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, padroesRegistroDaEstrutura, removerPadroesRegistro, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js";
@@ -690,7 +690,9 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
   // legado. `true` no terceiro argumento: vale só até o fim desta transação. O valor é o id CANÔNICO da
   // linha travada (`d.id`), nunca o texto da URL: o Postgres aceita o UUID em maiúsculas e acha a venda, mas
   // o gatilho compara a marca com `NEW.id::text`, e a guarda recusaria a própria confirmação legítima.
-  if (politica.estoque.autoridade === "configurada" || politica.financeiro.autoridade === "configurada") {
+  // TOP-CONFIG-05_R2: a marca significa "o binário que conhece o formato desta versão resolveu a política" —
+  // o formato 3 a exige mesmo em legado/legado (espelho da guarda em `confirmacaoExigeMarcaDaGuarda`).
+  if (confirmacaoExigeMarcaDaGuarda(politica)) {
     await ctx.tx.query("select set_config('app.venda_execucao_configurada', $1, true)", [d.id]);
   }
   // A MARCA DA CLASSIFICAÇÃO (0024): venda classificada só entra em confirmed/invoiced com ela — com ou sem

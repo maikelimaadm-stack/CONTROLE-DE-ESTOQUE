@@ -5,6 +5,7 @@ import {
   MATRIZ_EXECUCAO_TOP,
   configuracaoNeutraTop,
   configuracaoNeutraTopV2,
+  configuracaoNeutraTopV3,
   type ConfiguracaoTipoOperacaoV2,
   type ModoExecucaoTop,
 } from "@agro/domain";
@@ -167,6 +168,54 @@ describe("legado — o comportamento anterior, intacto", () => {
       await confirmada(h.app, id);
       expect([(await efeitos(id)).saidas, (await efeitos(id)).titulos]).toEqual([1, 1]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// TOP-CONFIG-05_R2 — a versão do FORMATO 3 confirma. O neutro do formato 3 herda legado/legado do 2; sem a
+// marca da 0023, a guarda do banco ("formato que este banco ainda não conhece") recusava a confirmação.
+// ---------------------------------------------------------------------------------------------------
+describe("TOP-CONFIG-05_R2 — venda com TOP no formato 3 confirma", () => {
+  const v3 = (estoque: Eixo, financeiro: Eixo) => {
+    const c = configuracaoNeutraTopV3();
+    c.execucao = { estoque: estoque === "legado" ? "legado" : "configurada", financeiro: financeiro === "legado" ? "legado" : "configurada" };
+    if (estoque === "efeito") c.estoque.atualizacao = "saida";
+    if (financeiro === "efeito") c.financeiro.atualizacao = "receber";
+    return c;
+  };
+  /** O que o formato 2 legado/legado materializa — a referência de igualdade do formato 3 legado/legado. */
+  const referenciaV2 = async (app: FastifyInstance) => {
+    const id = await venda(await top(configuracaoDe("legado", "legado")));
+    await confirmada(app, id);
+    return efeitos(id);
+  };
+
+  it("R2-I1 formato 3 legado/legado com o gate LIGADO confirma; estoque e títulos EXATAMENTE como o formato 2 legado/legado", async () => {
+    const id = await venda(await top(v3("legado", "legado")));
+    await confirmada(ligada, id);
+    const e = await efeitos(id);
+    const ref = await referenciaV2(ligada);
+    expect([e.status, e.saidas, e.titulos]).toEqual(["confirmed", 1, 1]);
+    expect([e.saidas, e.estornos, e.liquido, e.titulos, e.titulo?.amount, e.titulo?.due_date])
+      .toEqual([ref.saidas, ref.estornos, ref.liquido, ref.titulos, ref.titulo?.amount, ref.titulo?.due_date]);
+    expect(e.confirmacao).toMatchObject({ execucao: { origem: 3, estoque: "legado", financeiro: "legado" } });
+  });
+
+  it("R2-I2 o mesmo com o gate DESLIGADO confirma igual (o legado não depende do gate)", async () => {
+    const id = await venda(await top(v3("legado", "legado")));
+    await confirmada(h.app, id);
+    const e = await efeitos(id);
+    const ref = await referenciaV2(h.app);
+    expect([e.status, e.saidas, e.titulos]).toEqual(["confirmed", ref.saidas, ref.titulos]);
+    expect(e.confirmacao).toMatchObject({ execucao: { origem: 3, estoque: "legado", financeiro: "legado" } });
+  });
+
+  it("R2-I3 formato 3 com 'Saída' e 'A receber' configurados, gate ligado, confirma pela política configurada", async () => {
+    const id = await venda(await top(v3("efeito", "efeito")));
+    await confirmada(ligada, id);
+    const e = await efeitos(id);
+    expect([e.status, e.saidas, e.titulos]).toEqual(["confirmed", 1, 1]);
+    expect(e.confirmacao).toMatchObject({ execucao: { origem: 3, estoque: "configurada:saida", financeiro: "configurada:receber" } });
   });
 });
 

@@ -1385,6 +1385,19 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
+## TOP-CONFIG-05_R2 — venda com TOP no formato 3 confirma (sem migration)
+
+**Só API**: sem migration, sem rota, sem variável, sem permissão, sem mudança de tela. A confirmação de venda passa
+a gravar a marca da 0023 (`app.venda_execucao_configurada`) também quando a versão congelada é do formato 3 com os
+dois efeitos em legado — o neutro do formato 3. Antes, a guarda do banco tratava essa versão como "formato que este
+banco ainda não conhece" e recusava a confirmação. A guarda não muda.
+
+**Impacto em dados reais:** nenhum dado muda. Venda com TOP no formato 3 passa a confirmar; a produção ainda não tem
+TOP de Venda.
+
+**Reversão:** redeploy da API anterior (a venda com TOP no formato 3 volta a ser recusada na confirmação, sem efeito
+parcial).
+
 ## TOP-CONFIG-05 — restrições comerciais e fiscal configurado na TOP (0033)
 
 Decisão 263; contrato em `docs/TIPO-OPERACAO-CONTRACT.md` §13. **Uma migration: `0033_tipo_operacao_restricoes.sql`**

@@ -13,6 +13,9 @@ import {
   POLITICAS_SALDO_NEGATIVO,
   configuracaoNeutraTop,
   configuracaoNeutraTopV2,
+  configuracaoNeutraTopV3,
+  confirmacaoExigeMarcaDaGuarda,
+  type PoliticaEfetivaDaVenda,
   configuracaoTopEhNeutra,
   configuracaoTopParaEdicao,
   configuracoesTopIguais,
@@ -460,5 +463,40 @@ describe("a matriz como contrato — o servidor declara, a tela lê estritamente
     ];
     for (const caso of casos) expect(lerMatrizExecucaoTop(caso), JSON.stringify(caso)).toBeNull();
     expect(lerMatrizExecucaoTop([])).toEqual([]);
+  });
+});
+
+/**
+ * R2-D1 (TOP-CONFIG-05_R2) — quando a confirmação precisa da marca `app.venda_execucao_configurada`.
+ * ESPELHO: a guarda da 0023 (`erp.venda_execucao_configurada_guarda`) só dispensa a marca no formato 1 e
+ * no formato 2 com legado/legado; todo o resto (inclusive o formato 3 neutro) exige a marca.
+ */
+describe("R2-D1 — a marca da 0023 espelhada no domínio", () => {
+  const politicaDe = (configuracao: unknown) => {
+    const r = resolverPoliticaEfetivaDaVenda({
+      versaoCongelada: configuracao === null ? null : { codigoBase: MATRIZ_EXECUCAO_TOP[0]!.familia, configuracao },
+      execucaoConfiguradaHabilitada: true
+    });
+    if (!r.ok) throw new Error(`premissa: a política resolve (${r.motivo})`);
+    return r.politica;
+  };
+  const v2 = (estoque: "legado" | "configurada", financeiro: "legado" | "configurada") => ({ ...configuracaoNeutraTopV2(), execucao: { estoque, financeiro } });
+  const v3 = (estoque: "legado" | "configurada", financeiro: "legado" | "configurada") => ({ ...configuracaoNeutraTopV3(), execucao: { estoque, financeiro } });
+  const casos: [string, unknown, boolean][] = [
+    ["sem TOP", null, false],
+    ["formato 1", configuracaoNeutraTop(), false],
+    ["formato 2 legado/legado", v2("legado", "legado"), false],
+    ["formato 2 estoque configurado", v2("configurada", "legado"), true],
+    ["formato 2 financeiro configurado", v2("legado", "configurada"), true],
+    ["formato 3 legado/legado (o neutro)", v3("legado", "legado"), true],
+    ["formato 3 configurado", v3("configurada", "configurada"), true],
+  ];
+  for (const [nome, configuracao, exige] of casos) {
+    it(`${nome} → ${exige ? "exige" : "dispensa"} a marca`, () => {
+      expect(confirmacaoExigeMarcaDaGuarda(politicaDe(configuracao))).toBe(exige);
+    });
+  }
+  it("formato desconhecido (origem fora de 1 e 2) → exige a marca (fail-closed, como a guarda)", () => {
+    expect(confirmacaoExigeMarcaDaGuarda({ origem: 9 as unknown as PoliticaEfetivaDaVenda["origem"], estoque: { autoridade: "legado" }, financeiro: { autoridade: "legado" } })).toBe(true);
   });
 });

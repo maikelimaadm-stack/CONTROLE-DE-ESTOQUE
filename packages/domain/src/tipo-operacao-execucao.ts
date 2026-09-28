@@ -39,6 +39,7 @@ import {
   MOMENTOS_EFEITO,
   POLITICAS_SALDO_NEGATIVO,
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
   configuracaoNeutraTopV2,
   configuracaoTopParaEdicao,
   execucaoDeclaradaTop,
@@ -381,6 +382,26 @@ export function resolverPoliticaEfetivaDaVenda(entrada: EntradaPoliticaDaVenda):
     } else return { ok: false, motivo: "execucao_nao_suportada", recusas: [{ motivo: "combinacao_nao_suportada", caminho: "financeiro.atualizacao", mensagem: MENSAGEM_CAMPO_SEM_REGRA }] };
   }
   return { ok: true, politica: { origem: formato, estoque, financeiro } };
+}
+
+/**
+ * A confirmação desta venda precisa gravar a marca `app.venda_execucao_configurada`? (TOP-CONFIG-05_R2)
+ *
+ * ESPELHO DA GUARDA DA 0023 (`erp.venda_execucao_configurada_guarda`). A marca significa "o binário que
+ * conhece o formato desta versão resolveu a política" — não "algum efeito é configurado". A guarda só
+ * dispensa a marca em dois casos, e esta função diz NÃO exatamente nesses dois:
+ *   · sem TOP                          → não (a guarda nem olha);
+ *   · formato 1                        → não (legado para sempre);
+ *   · formato 2 com legado/legado      → não (legado declarado);
+ *   · qualquer outro caso              → SIM: formato 2 com algo configurado, formato 3 com QUALQUER
+ *                                         execução (inclusive o neutro legado/legado) e formato futuro.
+ * Sem a marca no formato 3, a guarda recusa ("formato que este banco ainda não conhece") — e a primeira
+ * TOP de venda salva no editor novo não confirmava.
+ */
+export function confirmacaoExigeMarcaDaGuarda(p: Pick<PoliticaEfetivaDaVenda, "origem" | "estoque" | "financeiro">): boolean {
+  if (p.origem === "sem_top" || p.origem === VERSAO_SCHEMA_CONFIGURACAO_TOP) return false;
+  if (p.origem === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 && p.estoque.autoridade === "legado" && p.financeiro.autoridade === "legado") return false;
+  return true;
 }
 
 /**
