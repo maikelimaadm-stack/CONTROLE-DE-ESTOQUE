@@ -538,10 +538,12 @@ export interface RascunhoTop {
    * ESTA EDIÇÃO DECLARA A LISTA DE CONDIÇÕES? Decide se `condicoesPermitidas` VAI NO CORPO (o contrato do
    * servidor é a PRESENÇA DA CHAVE: ausente = preservar; presente, mesmo vazia = declarar).
    *
-   * Régua escolhida: nasce `true` quando a lista foi LIDA do servidor (inclusive vazia — reenviar o mesmo
-   * conjunto é no-op no servidor) e no cadastro novo (POST sem a chave = sem lista, o mesmo que `[]`).
-   * Nasce `false` só quando o detalhe NÃO trouxe a lista: aí a chave é omitida (preservar) e a lista fica
-   * bloqueada na tela, porque reescrever o que não foi lido apagaria condições que ninguém viu.
+   * RÉGUA ESCOLHIDA: nasce SEMPRE `false` e vira `true` só quando o usuário MEXE na lista (incluir ou
+   * remover). Lista intocada = chave ausente = o servidor preserva (e copia para a versão nova). Por que não
+   * "reenviar sempre a lista lida": uma condição permitida que foi inativada DEPOIS voltaria no corpo e o
+   * servidor recusaria (422, "inexistente ou inativa") uma gravação que só trocou o nome. No cadastro novo,
+   * POST sem a chave = sem lista, o mesmo que `[]`. Se o detalhe NÃO trouxe a lista (API anterior), ela fica
+   * bloqueada na tela: reescrever o que não foi lido apagaria condições que ninguém viu.
    */
   condicoesDeclaradas?: boolean;
   destinos: DestinoEmEdicao[];

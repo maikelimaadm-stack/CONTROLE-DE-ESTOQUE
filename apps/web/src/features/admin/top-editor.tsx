@@ -255,8 +255,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      * tivesse pedido isso, na edição de um campo que nada tem a ver com o assunto.
      */
     destinosDeclarados: detalhe?.destinosConfigurados === true,
-    ...camposDeRestricoes(restricoes, edicao, detalhe)
-  }), [detalhe, restricoes, edicao]);
+    ...camposDeRestricoes(restricoes, detalhe)
+  }), [detalhe, restricoes]);
 
   const [rascunho, setRascunho] = React.useState<RascunhoTop>(inicial);
   const [aba, setAba] = React.useState<ChaveAba>("identificacao");
@@ -273,8 +273,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    */
   React.useEffect(() => {
     if (!restricoes) return;
-    setRascunho((r) => (r.configuracaoV3 ? r : { ...r, ...camposDeRestricoes(true, edicao, detalhe) }));
-  }, [restricoes, edicao, detalhe]);
+    setRascunho((r) => (r.configuracaoV3 ? r : { ...r, ...camposDeRestricoes(true, detalhe) }));
+  }, [restricoes, detalhe]);
 
   const assinaturaInicial = React.useMemo(() => assinaturaRascunho(inicial), [inicial]);
   const alterado = assinaturaRascunho(rascunho) !== assinaturaInicial;
@@ -341,7 +341,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       /**
        * TOP-CONFIG-05 — a PRESENÇA DA CHAVE `condicoesPermitidas` também é a declaração (ausente = preservar).
        * Só vai com a configuração no formato 3 no mesmo corpo (o servidor recusa a lista sem ele) e só quando
-       * a lista foi lida ou é cadastro novo (`condicoesDeclaradas`, régua em `RascunhoTop`).
+       * o usuário mexeu na lista (`condicoesDeclaradas`, régua em `RascunhoTop`).
        */
       if (liberado && restricoes && base.configuracao !== undefined && rascunho.configuracaoV3
         && rascunho.condicoesPermitidas && rascunho.condicoesDeclaradas && !condicoesIlegiveis) {
@@ -690,7 +690,6 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
  */
 function camposDeRestricoes(
   restricoes: boolean,
-  edicao: boolean,
   detalhe: ReturnType<typeof lerDetalheTop>
 ): Partial<RascunhoTop> {
   if (!restricoes) return {};
@@ -700,7 +699,8 @@ function camposDeRestricoes(
     configuracaoV3: v3,
     configuracao: configuracaoTopParaEdicao(v3),
     condicoesPermitidas: lidas ?? [],
-    condicoesDeclaradas: !edicao || lidas !== null
+    // Nasce NÃO declarada: lista intocada não vai no corpo (régua em `RascunhoTop.condicoesDeclaradas`).
+    condicoesDeclaradas: false
   };
 }
 
