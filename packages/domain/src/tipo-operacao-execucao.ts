@@ -159,6 +159,15 @@ export interface RecusaExecucaoTop {
  * `matriz` é parâmetro para a tela poder avaliar contra a matriz QUE O SERVIDOR DECLAROU (a autoridade),
  * e não contra a que veio no pacote dela — as duas podem divergir no meio de uma implantação.
  */
+/**
+ * TOP-CONFIG-05 (decisão 263): chaves do formato 3 que moram na seção do efeito mas NÃO são parte do efeito —
+ * são RESTRIÇÕES do lançamento (cliente em atraso), executadas por `cobrarRegrasDaOperacao`, e valem com o efeito
+ * em legado ou configurado. Lista FECHADA e explícita: qualquer outro campo sem regra continua recusado (fail-closed).
+ */
+const CAMPOS_DE_RESTRICAO_FORA_DO_EFEITO: Readonly<Partial<Record<string, readonly string[]>>> = Object.freeze({
+  financeiro: ["clienteEmAtraso", "toleranciaAtrasoDias"],
+});
+
 export function validarExecucaoTop(
   codigoBase: string,
   configuracao: ConfiguracaoTipoOperacao,
@@ -176,11 +185,13 @@ export function validarExecucaoTop(
 
   const recusas: RecusaExecucaoTop[] = [];
   for (const efeito of configurados) {
+    const foraDoEfeito: readonly string[] = CAMPOS_DE_RESTRICAO_FORA_DO_EFEITO[efeito] ?? [];
     const secao = c[efeito] as unknown as Record<string, unknown>;
     const regras = suporte[efeito] as unknown as Record<string, RegraCampoExecucaoTop<unknown> | undefined>;
     // Percorre os campos da SEÇÃO, não os da regra: campo sem regra é recusado (fail-closed), nunca
     // aceito por omissão.
     for (const campo of Object.keys(secao)) {
+      if (foraDoEfeito.includes(campo)) continue;
       const regra = regras[campo];
       if (regra && regra.aceitos.includes(secao[campo])) continue;
       recusas.push({ motivo: "combinacao_nao_suportada", caminho: `${efeito}.${campo}`, mensagem: regra?.motivo ?? MENSAGEM_CAMPO_SEM_REGRA });

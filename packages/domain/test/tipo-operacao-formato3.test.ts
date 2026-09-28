@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { validarExecucaoTop } from "../src/tipo-operacao-execucao.js";
 import {
   NATUREZA_OPERACAO_MAXIMO,
   TOLERANCIA_ATRASO_MAXIMA_DIAS,
@@ -630,5 +631,15 @@ describe("TR-D2 igualdade e diferença entre formatos", () => {
     d.fiscal.habilitado = true;
     d.fiscal.cfopDentroEstado = "5102";
     expect(configuracaoTopEhNeutra(d)).toBe(false);
+  });
+});
+
+describe("TR-D2 — execução configurada convive com as restrições do formato 3", () => {
+  it("TR-D2 financeiro configurado em venda aceita clienteEmAtraso/tolerância (restrição, não efeito); a isenção não abre família sem suporte", () => {
+    const c = configuracaoNeutraTopV3();
+    const v3 = { ...c, financeiro: { ...c.financeiro, atualizacao: "receber" as const, clienteEmAtraso: "bloqueia" as const, toleranciaAtrasoDias: 5 }, execucao: { estoque: "legado" as const, financeiro: "configurada" as const } };
+    expect(validarExecucaoTop("vendas.venda", v3)).toEqual([]);
+    // A isenção é SÓ das chaves de restrição: família sem execução configurada continua recusada.
+    expect(validarExecucaoTop("compras.solicitacao", v3).map((r) => r.motivo)).toContain("familia_sem_execucao_configurada");
   });
 });

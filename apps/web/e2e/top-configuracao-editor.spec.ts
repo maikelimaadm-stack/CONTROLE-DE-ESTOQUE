@@ -701,7 +701,7 @@ test("W1 — uma TOP do FORMATO 1 aparece como Legado/Legado, e o histórico diz
   await expect(versoes.getByTestId("top-versao-nota-execucao"), "o formato 1 é legado, e a tela diz isso").toBeVisible();
 });
 
-test("W2 — uma TOP NOVA nasce no formato 2 com Legado/Legado", async ({ page }) => {
+test("W2 — uma TOP NOVA nasce sem efeito configurado (Legado/Legado; formato 3 com o servidor da TOP-CONFIG-05)", async ({ page }) => {
   await login(page);
   await abrirTela(page);
   const codigo = codigoNovo();
@@ -716,7 +716,9 @@ test("W2 — uma TOP NOVA nasce no formato 2 com Legado/Legado", async ({ page }
   await forma.getByTestId("top-salvar").click();
   await expect(forma).toBeHidden();
   const d = await detalheNoServidor(page, await idDoCodigo(page, codigo));
-  expect(d.configuracaoSchema, "a TOP nova grava o formato 2").toBe(2);
+  // TOP-CONFIG-05 (decisão 263): com o servidor que declara `restricoes`, o editor grava o formato 3 (o formato 2 +
+  // as restrições no neutro). O que este teste protege continua igual: nenhum efeito nasce configurado.
+  expect(d.configuracaoSchema, "a TOP nova grava o formato 3 (restrições no neutro)").toBe(3);
   expect(d.configuracao.valor.execucao, "e nenhum efeito começa configurado").toEqual({ estoque: "legado", financeiro: "legado" });
 });
 
@@ -736,7 +738,9 @@ test("W3 — abrir e salvar uma TOP do formato 1 sem mudar nada NÃO cria versã
   const r = await resposta;
   expect(r.status()).toBe(200);
   const corpo = r.request().postDataJSON() as { configuracao?: { versaoSchema: number; execucao?: unknown } };
-  expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 2").toBe(2);
+  // TOP-CONFIG-05 (decisão 263): o editor novo envia o formato 3; o neutro v3 é IGUAL ao v1 neutro, então a
+  // garantia do teste (nenhuma versão só para trocar o formato) segue provada logo abaixo.
+  expect(corpo.configuracao?.versaoSchema, "o corpo enviado é o formato 3").toBe(3);
   expect(corpo.configuracao?.execucao).toEqual({ estoque: "legado", financeiro: "legado" });
   const d = await detalheNoServidor(page, top.id);
   expect([d.versao, d.configuracaoSchema], "nenhuma versão só para trocar o formato").toEqual([1, 1]);
