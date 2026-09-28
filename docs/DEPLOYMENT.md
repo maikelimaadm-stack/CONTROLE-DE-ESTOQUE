@@ -1413,7 +1413,7 @@ já salva no formato 3 fica ilegível para ela até a API nova voltar, e o forma
 do roteiro abaixo exige essa decisão consciente do Maike.
 
 **Roteiro do Maike em produção (depois do deploy) — SEM salvar documento:**
-1. Configurações › Operações › Tipos de operação › TOP 2 Pedido › editar: marcar "Exige transportadora" e, em
+1. Configurações › Operações › Tipos de Operação › TOP 2 Pedido › editar: marcar "Exige transportadora" e, em
    Condições permitidas, adicionar UMA condição (ex.: "À vista"); salvar → versão nova no histórico, com a condição.
    Antes de salvar, olhar a seção Geral: exigência de parceiro, centro de resultado ou observação que já estiver
    ligada passa a VALER no formato 3 (o salvar cria versão justamente por isso).
