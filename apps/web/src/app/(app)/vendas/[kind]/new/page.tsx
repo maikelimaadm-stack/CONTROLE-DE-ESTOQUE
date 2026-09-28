@@ -14,7 +14,6 @@ import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoC
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
-import { entendeRegrasDaOperacao, useRegrasDaOperacao } from "@/features/sales/regras-da-operacao";
 import { ChevronRight, Repeat2, Save, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
@@ -264,6 +263,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    */
   const regrasAtivo = entendeRegrasDaOperacao(estadoTop);
   const { regras, pendente: regrasPendente } = useRegrasDaOperacao(kind, top.id, regrasAtivo);
+  /* TOP-CONFIG-05 condição: a lista permitida da versão atual (null = sem restrição). Declarada aqui, antes de qualquer
+     leitura de padrão de cadastro, para `padraoNaoPermitido` nunca ler antes da inicialização. */
+  const condicoesPermitidas = regras?.condicoesPermitidas ?? null;
   const exigidos = React.useMemo(() => new Set<string>(regras?.exigencias ?? []), [regras]);
   /**
    * VENDAS-A3-1d: a linha "Layout: …" no topo de Dados principais. Só com a capacidade do layout E a resposta conferida
@@ -407,9 +409,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    * e aparece como padrão inválido (`padraoDoCampo`/`padraoInvalido` acima); e o valor escolhido que deixa de ser
    * permitido (as regras chegaram ou mudaram) é limpo pelo MESMO caminho da escolha manual (`escolherCondicao`).
    * Apresentação — quem recusa é o servidor (`CONDICAO_PAGAMENTO_NAO_PERMITIDA`). */
-  const regrasAtivo = entendeRegrasDaOperacao(estadoTop);
-  const { regras } = useRegrasDaOperacao(kind, top.id, regrasAtivo);
-  const condicoesPermitidas = regras?.condicoesPermitidas ?? null;
+  // `regras` vem do bloco "TOP-CONFIG-05 exigências" (uma pergunta só por TOP); `condicoesPermitidas` é lida lá em cima.
   const condicaoNaoPermitida = (id: string) => condicoesPermitidas !== null && id !== "" && !condicoesPermitidas.some((x) => x.toLowerCase() === id.toLowerCase());
   function padraoNaoPermitido(chave: string): boolean {
     return chave === "condicao_pagamento_id" && condicaoNaoPermitida(padroes.validos.get(chave)?.id ?? "");
