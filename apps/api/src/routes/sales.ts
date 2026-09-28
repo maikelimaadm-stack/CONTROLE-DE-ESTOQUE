@@ -17,6 +17,9 @@ import { layoutEfetivo, conferirPadroesRegistro, type RegistroPadraoConferido } 
 import { CAPACIDADE_REGRAS_DA_OPERACAO, camposExigidosTop, type RegrasDaOperacaoResposta } from "@agro/domain";
 import { regrasDaVersaoTop, regrasDaTopAtual, cobrarRegrasDaOperacao } from "./vendas-regras-operacao.js";
 import { registrarSituacaoCliente } from "./vendas-atraso-cliente.js";
+// TOP-CONFIG-06 (decisão 265): faturar em partes — as contas no domínio, as leituras em `vendas-faturar-em-partes`.
+import { validarItensDaParte, itensDoSaldoInteiro, itensCanonicosDaParte, calcularParte, saldoDoItem, MSG_ITENS_DA_PARTE, type ItemPedidoDaParte } from "@agro/domain";
+import { itensDeOrigemComSaldo, cabecalhoJaAlocado, partesDaOrigem, saldoTotal, MSG_NAO_PERMITE_EM_PARTES, MSG_SEM_SALDO_PARA_CONVERTER, MSG_SEM_PARTES, MSG_SEM_SALDO_A_ENCERRAR, MSG_ORIGEM_COM_PARTES_ATIVAS_PUT, MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT, MSG_ORIGEM_COM_PARTES_ATIVAS_CANCEL, msgItensDaParte } from "./vendas-faturar-em-partes.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -52,6 +55,16 @@ const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "
  * `features/docs/shared.tsx`) mandam `{ reason }` e nada mais: `.strict()` não quebra nenhum deles.
  */
 const cancelSchema = z.object({ reason: z.string().trim().min(1).max(500).optional().nullable() }).strict();
+/**
+ * O CORPO DA CONVERSÃO (TOP-CONFIG-06). `.strict()`: `itens` é contrato novo, e um typo (`iten`) não pode virar
+ * "converter o documento inteiro" em silêncio. `itens` AUSENTE é o pedido de hoje, byte a byte.
+ */
+const convertSchema = z.object({
+  tipo_operacao_id: uuid.optional().nullable(),
+  itens: z.array(z.object({ item_id: uuid, quantidade: z.union([z.string(), z.number()]).transform(String) }).strict()).optional(),
+}).strict();
+/** O corpo do encerramento do saldo: motivo obrigatório, até 500 caracteres. */
+const encerrarSaldoSchema = z.object({ motivo: z.string().trim().min(1).max(500) }).strict();
 
 const t = criarTradutor(ptBR);
 
@@ -291,6 +304,8 @@ async function cobrarLayoutAoSalvar(ctx: ServiceCtx, kind: SalesKind, documento:
 interface ProximoPasso {
   tipoOperacaoId: string; codigo: string; nome: string;
   codigoBase: string; familiaRotulo: string; variante: SalesKind; ordem: number;
+  /** TOP-CONFIG-06: a aresta permite converter em partes. */
+  emPartes: boolean;
 }
 
 /**
@@ -336,10 +351,10 @@ async function politicaDeDestinos(ctx: ServiceCtx, versaoOrigemId: string | null
 
   const r = await ctx.tx.query<{
     destinos_configurados: boolean; destino_id: string | null; codigo: string | null;
-    nome: string | null; codigo_base: string | null; ordem: number | null;
+    nome: string | null; codigo_base: string | null; ordem: number | null; em_partes: boolean | null;
   }>(
     `select vo.destinos_configurados,
-            t.id as destino_id, t.codigo, tv.nome, t.codigo_base, d.ordem
+            t.id as destino_id, t.codigo, tv.nome, t.codigo_base, d.ordem, d.em_partes
        from erp.tipos_operacao_versoes vo
        left join erp.tipos_operacao_versao_destinos d
          on d.origem_versao_id = vo.id and d.organization_id = vo.organization_id
@@ -376,7 +391,7 @@ async function politicaDeDestinos(ctx: ServiceCtx, versaoOrigemId: string | null
     itens.push({
       tipoOperacaoId: linha.destino_id, codigo: linha.codigo, nome: linha.nome,
       codigoBase: linha.codigo_base, familiaRotulo: t(chaveI18nDaFamiliaOperacional(linha.codigo_base) ?? linha.codigo_base),
-      variante: variante as SalesKind, ordem: linha.ordem
+      variante: variante as SalesKind, ordem: linha.ordem, emPartes: linha.em_partes === true
     });
   }
   return { configurada: primeira.destinos_configurados, itens };
@@ -388,8 +403,15 @@ async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts
   // própria porta de detalhe — 404 num registro que está lá. O nome sai de `topv` (a versão CONGELADA),
   // nunca da versão corrente do pai: é isso que faz a renomeação administrativa de amanhã não reescrever
   // o que este documento diz que é.
-  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao, fcat.code as categoria_financeira_codigo, fcat.name as categoria_financeira_nome, ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome, cpag.code as condicao_pagamento_codigo, cpag.nome as condicao_pagamento_nome from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id left join erp.financial_categories fcat on fcat.id=d.categoria_financeira_id and fcat.organization_id=d.organization_id left join erp.cost_centers ccus on ccus.id=d.centro_custo_id and ccus.organization_id=d.organization_id left join erp.condicoes_pagamento cpag on cpag.id=d.condicao_pagamento_id and cpag.organization_id=d.organization_id where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + (opts.lock ? " for update of d" : ""), sc.params); if (!r.rows[0]) throw notFound("Documento");
-  const items = await ctx.tx.query("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id where i.document_id=$1 order by i.position", [id]);
+  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao, fcat.code as categoria_financeira_codigo, fcat.name as categoria_financeira_nome, ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome, cpag.code as condicao_pagamento_codigo, cpag.nome as condicao_pagamento_nome, ue.name as saldo_encerrado_por_nome from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id left join erp.financial_categories fcat on fcat.id=d.categoria_financeira_id and fcat.organization_id=d.organization_id left join erp.cost_centers ccus on ccus.id=d.centro_custo_id and ccus.organization_id=d.organization_id left join erp.condicoes_pagamento cpag on cpag.id=d.condicao_pagamento_id and cpag.organization_id=d.organization_id left join erp.users ue on ue.id=d.saldo_encerrado_por where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + (opts.lock ? " for update of d" : ""), sc.params); if (!r.rows[0]) throw notFound("Documento");
+  // TOP-CONFIG-06: o faturado de cada item (partes NÃO canceladas) e quantas linhas o citam (inclusive canceladas)
+  // vêm na MESMA consulta dos itens — nada de consulta por item. `faturado`/`saldo` só aparecem quando o documento
+  // tem parte gerada; sem parte, os itens saem exatamente como antes.
+  const itensLidos = await ctx.tx.query<Record<string, unknown> & { quantity: string; fp_faturado: string; fp_ligadas: number }>("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, fp.faturado::text as fp_faturado, fp.ligadas::int as fp_ligadas from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id left join lateral (select coalesce(sum(pi.quantity) filter (where pd.status <> 'cancelled'), 0) as faturado, count(*) as ligadas from erp.sales_document_items pi join erp.sales_documents pd on pd.id=pi.document_id where pi.origem_item_id=i.id) fp on true where i.document_id=$1 order by i.position", [id]);
+  const temParte = itensLidos.rows.some((x) => x.fp_ligadas > 0);
+  const items = { rows: itensLidos.rows.map(({ fp_faturado, fp_ligadas: _l, ...resto }) => temParte
+    ? { ...resto, faturado: D(fp_faturado).toFixed(4), saldo: saldoDoItem({ quantity: resto.quantity, faturado: fp_faturado }) }
+    : resto) };
   const titles = await ctx.tx.query("select id, code, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by due_date", [ctx.orgId, id]);
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
   const linha = r.rows[0] as Record<string, unknown> & { tipo_operacao_id: string | null; top_codigo: string | null; top_codigo_base: string | null; top_nome: string | null; top_versao: number | null };
@@ -431,7 +453,7 @@ async function exigirDocumentoVisivel(ctx: ServiceCtx, id: string, expectedKind:
  *   `null`      → grava NULL/NULL. É a criação por cliente legado, que não declarou TOP nenhuma.
  *   objeto      → grava o snapshot resolvido pelo servidor.
  */
-async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docSchema>, existingId?: string, origin?: string | null, top?: TopDoLancamento | null, classificacao?: ClassificacaoFinanceira | null, condicao: { linha: CondicaoDoDocumento | null; gravar: boolean } = { linha: null, gravar: true }) {
+async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docSchema>, existingId?: string, origin?: string | null, top?: TopDoLancamento | null, classificacao?: ClassificacaoFinanceira | null, condicao: { linha: CondicaoDoDocumento | null; gravar: boolean } = { linha: null, gravar: true }, origemItemIds: readonly (string | null)[] = []) {
   const totals = documentTotals(d.items.map((i) => ({ quantity: i.quantity, unitPrice: i.unit_price, discount: i.discount, discountPercent: i.discount_percent })), { freight: d.freight, freightIcms: d.freight_icms, otherValues: d.other_values, discount: d.discount });
   let id = existingId;
   /*
@@ -460,7 +482,8 @@ async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docS
     await ctx.tx.query(`update erp.sales_documents set document_date=$3, shipping_date=$4, due_date=$5, client_id=$6, transporter_id=$7, proprietary_id=$8, driver_name=$9, payment_method_id=$10, subtotal=$11, freight=$12, freight_icms=$13, other_values=$14, discount=$15, total=$16, note=$17, installment_plan=$18${topSet}${classSet}${condSet}, updated_at=now() where id=$1 and organization_id=$2`, [id, ctx.orgId, d.document_date, d.shipping_date ?? null, d.due_date ?? null, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), ...topParams, ...classParams, ...condParams]);
     await ctx.tx.query("delete from erp.sales_document_items where document_id=$1", [id]);
   }
-  for (const [i, it] of d.items.entries()) await ctx.tx.query("insert into erp.sales_document_items(document_id,product_id,warehouse_id,quantity,unit_price,discount,discount_percent,total,note,position) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", [id, it.product_id, it.warehouse_id ?? null, it.quantity, it.unit_price, money(it.discount), it.discount_percent, itemTotal({ quantity: it.quantity, unitPrice: it.unit_price, discount: it.discount, discountPercent: it.discount_percent }), it.note ?? null, i]);
+  // TOP-CONFIG-06: `origemItemIds[i]` liga a linha i ao item de origem (parte gerada). Vazio = sem ligação, como antes.
+  for (const [i, it] of d.items.entries()) await ctx.tx.query("insert into erp.sales_document_items(document_id,product_id,warehouse_id,quantity,unit_price,discount,discount_percent,total,note,position,origem_item_id) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)", [id, it.product_id, it.warehouse_id ?? null, it.quantity, it.unit_price, money(it.discount), it.discount_percent, itemTotal({ quantity: it.quantity, unitPrice: it.unit_price, discount: it.discount, discountPercent: it.discount_percent }), it.note ?? null, i, origemItemIds[i] ?? null]);
   return { id, ...totals };
 }
 /**
@@ -991,9 +1014,28 @@ export default async function salesRoutes(app: FastifyInstance) {
       // — que não reavalia status nenhum. O resultado é um documento `confirmed` cujos itens e total foram
       // TROCADOS depois de o estoque ter sido baixado e os títulos gerados pelo conjunto antigo: a venda
       // diz uma coisa e o ledger diz outra, sem que nenhuma das duas respostas seja erro.
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; client_id: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; client_id: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null; origin_document_id: string | null; items: { origem_item_id: string | null; product_id: string; quantity: string; unit_price: string; discount: string; discount_percent: string }[] };
       if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
+      // TOP-CONFIG-06 — ORIGEM COM PARTES: trocar itens reescreveria o saldo das partes já geradas. Com partes só
+      // canceladas os itens também ficam (a FK `origem_item_id` é `on delete restrict`, e apagá-los perderia a ligação).
+      const partes = await partesDaOrigem(ctx, id);
+      if (partes.ativas > 0) throw err("INVALID_STATUS_TRANSITION", MSG_ORIGEM_COM_PARTES_ATIVAS_PUT);
+      if (partes.total > 0) throw err("INVALID_STATUS_TRANSITION", MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT);
       const d = docSchema.parse(req.body);
+      // TOP-CONFIG-06 — A PARTE GERADA: itens na MESMA ordem, com mesmo produto, quantidade, preço e descontos. Só
+      // armazém e observação do item mudam; a ligação é preservada pela posição.
+      const origemItemIds = cur.items.map((i) => i.origem_item_id);
+      if (origemItemIds.some((x) => x !== null)) {
+        const iguais = d.items.length === cur.items.length && d.items.every((n, k) => {
+          const o = cur.items[k]!;
+          return n.product_id === o.product_id && D(n.quantity).eq(o.quantity) && D(n.unit_price).eq(o.unit_price) && D(n.discount).eq(o.discount) && D(n.discount_percent).eq(o.discount_percent);
+        });
+        if (!iguais) {
+          const codigoOrigem = cur.origin_document_id ? (await ctx.tx.query<{ code: string }>("select code from erp.sales_documents where id=$1 and organization_id=$2", [cur.origin_document_id, ctx.orgId])).rows[0]?.code ?? "" : "";
+          const mensagem = msgItensDaParte(codigoOrigem);
+          throw err("VALIDATION_ERROR", mensagem, [{ path: "items", message: mensagem }]);
+        }
+      }
       /**
        * `null` EXPLÍCITO É RECUSADO — e a diferença para o campo AUSENTE é o contrato inteiro.
        *
@@ -1037,7 +1079,7 @@ export default async function salesRoutes(app: FastifyInstance) {
         conferirCondicao: corpoPut["condicao_pagamento_id"] !== undefined && corpoPut["condicao_pagamento_id"] !== null,
         conferirAtraso: d.client_id !== cur.client_id });
       await cobrarLayoutAoSalvar(ctx, kind, comoFicara);
-      const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao, condicao);
+      const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao, condicao, origemItemIds);
       await audit(ctx.tx, ctx, "sales_documents", id, "update");
       // Mudança de identidade do lançamento é evento PRÓPRIO: quem trocou a TOP de um documento não pode
       // ficar escondido dentro de um `update` genérico sem diff.
@@ -1103,8 +1145,11 @@ export default async function salesRoutes(app: FastifyInstance) {
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
         { action: "cancel_sales_document", sourceId: id, sourceKind: kind, reason: motivo, actorId: ctx.user.id },
         async () => {
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; origin_document_id: string | null; items: { origem_item_id: string | null }[] };
       if (cur.status === "cancelled") throw err("ALREADY_CANCELLED", "Já cancelado");
+      // TOP-CONFIG-06: a ORIGEM com parte não cancelada não se cancela — as partes continuariam citando um
+      // documento cancelado, com saldo que ninguém mais controla.
+      if ((await partesDaOrigem(ctx, id)).ativas > 0) throw err("INVALID_STATUS_TRANSITION", MSG_ORIGEM_COM_PARTES_ATIVAS_CANCEL);
       /**
        * ESTORNA SÓ O QUE FOI MATERIALIZADO (TOP-CONFIG-04A). Uma venda confirmada pode ter estoque e títulos,
        * só um dos dois, ou nenhum — conforme a política da versão congelada. O cancelamento NÃO pergunta à
@@ -1129,6 +1174,19 @@ export default async function salesRoutes(app: FastifyInstance) {
       // vai também o que foi estornado: é a evidência de que o cancelamento reverteu o que existia, e só.
       const metadados = { ...(motivo ? { reason: motivo } : {}), ...(evidencia ?? {}) };
       await audit(ctx.tx, ctx, "sales_documents", id, "cancel", Object.keys(metadados).length ? metadados : undefined);
+      /*
+       * TOP-CONFIG-06 — CANCELAR UMA PARTE devolve o saldo sozinho (o saldo é conta, não coluna). Se a origem estava
+       * `converted` porque o saldo ZEROU (e não porque foi encerrado), ela volta a `open`, sob a trava da origem.
+       * Derivado de conversão sem "Em partes" (nenhum item ligado) não mexe na origem, como antes.
+       */
+      if (cur.origin_document_id && cur.items.some((i) => i.origem_item_id !== null)) {
+        const o = (await ctx.tx.query<{ status: string; saldo_encerrado_em: string | null }>("select status, saldo_encerrado_em from erp.sales_documents where id=$1 and organization_id=$2 for update", [cur.origin_document_id, ctx.orgId])).rows[0];
+        if (o && o.status === "converted" && o.saldo_encerrado_em === null) {
+          const v = await ctx.tx.query("update erp.sales_documents set status='open', updated_at=now() where id=$1 and organization_id=$2 and status='converted' and saldo_encerrado_em is null", [cur.origin_document_id, ctx.orgId]);
+          if (v.rowCount !== 1) throw notFound("Documento");
+          await audit(ctx.tx, ctx, "sales_documents", cur.origin_document_id, "parte_cancelada", { parte: id }, { before: { status: "converted" }, after: { status: "open" } });
+        }
+      }
       return { id, status: "cancelled" };
         })).result;
     }));
@@ -1175,7 +1233,8 @@ export default async function salesRoutes(app: FastifyInstance) {
       // A resolução acontece ANTES de qualquer escrita. Como tudo roda numa transação só do `runService`,
       // uma TOP alvo inválida derruba a operação inteira e a fonte NÃO vira `converted` — nem por um
       // instante, nem em caso de erro no meio.
-      const alvo = z.object({ tipo_operacao_id: uuid.optional().nullable() }).parse(req.body ?? {});
+      const alvo = convertSchema.parse(req.body ?? {});
+      const itensPedidos: ItemPedidoDaParte[] | undefined = alvo.itens?.map((i) => ({ itemId: i.item_id, quantidade: i.quantidade }));
       /**
        * IDEMPOTÊNCIA — a web JÁ manda `Idempotency-Key` (`idem: true` no diálogo de conversão) e o
        * servidor IGNORAVA o cabeçalho: duplo clique, retry de rede ou duas abas convertiam DUAS vezes.
@@ -1209,7 +1268,10 @@ export default async function salesRoutes(app: FastifyInstance) {
         // forma faria o binário antigo e o novo calcularem chaves DIFERENTES para o mesmo pedido durante o
         // rolling deploy, e um retry que atravessasse a janela converteria duas vezes. O destino real já
         // entra no hash por `tipo_operacao_id`, que é o que distingue duas escolhas diferentes.
-        { action: "convert_sales_document", sourceId: id, sourceKind: kind, targetKind: next, tipo_operacao_id: alvo.tipo_operacao_id ?? null },
+        // TOP-CONFIG-06: `itens` entra no hash SÓ quando presente (normalizado). Ausente, o hash é o de antes — um
+        // retry em voo durante o deploy continua casando com a chave reservada pelo binário anterior.
+        { action: "convert_sales_document", sourceId: id, sourceKind: kind, targetKind: next, tipo_operacao_id: alvo.tipo_operacao_id ?? null,
+          ...(itensPedidos ? { itens: itensCanonicosDaParte(itensPedidos) } : {}) },
         async () => {
       // `lock: true` — a fonte é LIDA E MUTADA na mesma transação, e é a única leitura desta rota que
       // disputa linha com outra requisição. Ver a justificativa inteira no cabeçalho de `getDoc`.
@@ -1249,6 +1311,8 @@ export default async function salesRoutes(app: FastifyInstance) {
       const politica = await politicaDeDestinos(ctx, cur.tipo_operacao_versao_id);
       let destino: SalesKind;
       let topDestino: TopDoLancamento | null = null;
+      // TOP-CONFIG-06: só a aresta da versão CONGELADA da origem liga "Em partes"; a ponte legada, nunca.
+      let emPartes = false;
 
       if (politica.configurada) {
         // POLÍTICA DECLARADA SEM NENHUM DESTINO É UMA DECISÃO, e a decisão é "não converte". Cair na ponte
@@ -1270,6 +1334,7 @@ export default async function salesRoutes(app: FastifyInstance) {
             "Esta próxima operação não está disponível para este documento");
         }
         destino = escolhido.variante;
+        emPartes = escolhido.emPartes;
         // A CAPACIDADE DO DESTINO É COBRADA DEPOIS DE SABER QUAL É O DESTINO REAL — e ainda ANTES de
         // qualquer efeito. Ler e travar a fonte não é efeito; a fonte só vira `converted` bem mais abaixo,
         // e um throw aqui desfaz a transação inteira: 403, fonte segue `open`, zero derivado, zero
@@ -1283,10 +1348,50 @@ export default async function salesRoutes(app: FastifyInstance) {
         requirePermission(ctx, `${permOf(destino)}.create`);
         topDestino = alvo.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(destino), alvo.tipo_operacao_id) : null;
       }
+      if (itensPedidos && !emPartes) throw err("VALIDATION_ERROR", MSG_NAO_PERMITE_EM_PARTES, [{ path: "itens", message: MSG_NAO_PERMITE_EM_PARTES }]);
+      /*
+       * TOP-CONFIG-06 — A PARTE. Lida DEPOIS da trava da origem (`getDoc(..., { lock: true })` acima): duas conversões
+       * simultâneas se enfileiram ali, e a segunda lê o saldo que a primeira deixou. O gatilho da 0034 é a rede.
+       */
+      let parte: { calculo: ReturnType<typeof calcularParte>; porId: Map<string, { warehouseId: string | null; note: string | null }> } | null = null;
+      if (emPartes) {
+        const origemItens = await itensDeOrigemComSaldo(ctx, id);
+        let pedidos: ItemPedidoDaParte[];
+        if (itensPedidos) {
+          const v = validarItensDaParte(origemItens, itensPedidos);
+          if (!v.ok) {
+            const details = v.recusas.map((x) => ({ path: "itens", message: MSG_ITENS_DA_PARTE[x.motivo], ...x }));
+            throw err("VALIDATION_ERROR", details[0]!.message, details);
+          }
+          pedidos = v.itens;
+        } else {
+          pedidos = itensDoSaldoInteiro(origemItens);
+          if (!pedidos.length) throw err("VALIDATION_ERROR", MSG_SEM_SALDO_PARA_CONVERTER, [{ path: "itens", message: MSG_SEM_SALDO_PARA_CONVERTER }]);
+        }
+        const planoOrigem = (cur.installment_plan ?? {}) as { installments?: number; has_down_payment?: boolean; down_payment_value?: string | number };
+        const cabecalhoOrigem = { freight: String(cur.freight), freightIcms: String(cur.freight_icms), otherValues: String(cur.other_values), discount: String(cur.discount),
+          entrada: planoOrigem.has_down_payment && planoOrigem.down_payment_value !== undefined ? String(planoOrigem.down_payment_value) : "0" };
+        parte = { calculo: calcularParte(origemItens, cabecalhoOrigem, await cabecalhoJaAlocado(ctx, id), pedidos), porId: new Map(origemItens.map((i) => [i.id, i])) };
+      }
       // CONDIÇÃO DA ORIGEM (VENDAS-A4): ajustada → plano copiado como está; não ajustada → o destino deriva o
       // plano na SUA data e no SEU total. A marca de dedutível (D-1) é copiada da origem, com ou sem plano.
       const origemCond = cur as unknown as { condicao_pagamento_id: string | null; parcelas_ajustadas: boolean };
-      const body = docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments && (!origemCond.condicao_pagamento_id || origemCond.parcelas_ajustadas) ? cur.installment_plan : null, is_deductible: Boolean((cur.installment_plan as { is_deductible?: boolean } | null)?.is_deductible), items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
+      const bodyInteiro = () => docSchema.parse({ empresa_id: cur.empresa_id, document_date: new Date().toISOString().slice(0, 10), shipping_date: cur.shipping_date, due_date: cur.due_date, client_id: cur.client_id, transporter_id: cur.transporter_id, proprietary_id: cur.proprietary_id, driver_name: cur.driver_name, payment_method_id: cur.payment_method_id, freight: cur.freight, freight_icms: cur.freight_icms, other_values: cur.other_values, discount: cur.discount, note: cur.note, installment_plan: (cur.installment_plan as { installments?: number })?.installments && (!origemCond.condicao_pagamento_id || origemCond.parcelas_ajustadas) ? cur.installment_plan : null, is_deductible: Boolean((cur.installment_plan as { is_deductible?: boolean } | null)?.is_deductible), items: cur.items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id, quantity: i.quantity, unit_price: i.unit_price, discount: i.discount, discount_percent: i.discount_percent, note: i.note })) });
+      /*
+       * A PARTE: mesmo corpo, com os itens e os valores de cabeçalho de `calcularParte`. Parcelamento: com condição a
+       * parte RECALCULA pela condição no total dela (parcela ajustada à mão não passa); sem condição vai o plano da
+       * origem com a entrada fixa proporcional.
+       */
+      const bodyDaParte = (p: NonNullable<typeof parte>) => {
+        const planoOrigem = cur.installment_plan as { installments?: number; has_down_payment?: boolean } | null;
+        const plano = !origemCond.condicao_pagamento_id && planoOrigem?.installments
+          ? { ...planoOrigem, ...(planoOrigem.has_down_payment ? { down_payment_value: p.calculo.cabecalho.entrada } : {}) } : null;
+        return docSchema.parse({ ...bodyInteiro(), freight: p.calculo.cabecalho.freight, freight_icms: p.calculo.cabecalho.freightIcms,
+          other_values: p.calculo.cabecalho.otherValues, discount: p.calculo.cabecalho.discount, installment_plan: plano,
+          items: p.calculo.itens.map((i) => ({ product_id: i.productId, warehouse_id: p.porId.get(i.origemItemId)?.warehouseId ?? null, quantity: i.quantity,
+            unit_price: i.unitPrice, discount: i.discount, discount_percent: i.discountPercent, note: p.porId.get(i.origemItemId)?.note ?? null })) });
+      };
+      const body = parte ? bodyDaParte(parte) : bodyInteiro();
       // A classificação da ORIGEM é copiada e passa pela MESMA porta: se deixou de valer, a conversão inteira
       // é recusada antes de qualquer efeito (a fonte continua aberta; a transação garante).
       const origemClass = cur as unknown as { categoria_financeira_id: string | null; centro_custo_id: string | null };
@@ -1310,13 +1415,48 @@ export default async function salesRoutes(app: FastifyInstance) {
           condicao_pagamento_id: origemCond.condicao_pagamento_id,
         }, { conferirCondicao: true, conferirAtraso: true });
       }
-      const r = await writeDoc(ctx, destino, body, undefined, id, topDestino, classificacao, condicao);
-      await ctx.tx.query("update erp.sales_documents set status='converted', updated_at=now() where id=$1", [id]);
-      await audit(ctx.tx, ctx, "sales_documents", id, "convert", topDestino ? { to: r.id, tipoOperacaoDestinoId: topDestino.tipoOperacaoId, tipoOperacaoDestinoVersaoId: topDestino.tipoOperacaoVersaoId } : { to: r.id });
+      const r = await writeDoc(ctx, destino, body, undefined, id, topDestino, classificacao, condicao, parte ? parte.calculo.itens.map((i) => i.origemItemId) : []);
+      if (!parte) {
+        await ctx.tx.query("update erp.sales_documents set status='converted', updated_at=now() where id=$1", [id]);
+        await audit(ctx.tx, ctx, "sales_documents", id, "convert", topDestino ? { to: r.id, tipoOperacaoDestinoId: topDestino.tipoOperacaoId, tipoOperacaoDestinoVersaoId: topDestino.tipoOperacaoVersaoId } : { to: r.id });
+      } else {
+        // A origem só vira `converted` quando esta parte zera o saldo de TODOS os itens; senão o status não muda.
+        if (parte.calculo.zeraOSaldo) {
+          const u = await ctx.tx.query("update erp.sales_documents set status='converted', updated_at=now() where id=$1 and organization_id=$2 and status in ('open','approved')", [id, ctx.orgId]);
+          if (u.rowCount !== 1) throw notFound("Documento");
+        }
+        await audit(ctx.tx, ctx, "sales_documents", id, "convert", { to: r.id, ...(topDestino ? { tipoOperacaoDestinoId: topDestino.tipoOperacaoId, tipoOperacaoDestinoVersaoId: topDestino.tipoOperacaoVersaoId } : {}),
+          emPartes: true, zeraOSaldo: parte.calculo.zeraOSaldo, itens: parte.calculo.itens.map((i) => ({ origemItemId: i.origemItemId, quantidade: i.quantity })) });
+      }
       if (topDestino) await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", { tipoOperacaoId: topDestino.tipoOperacaoId, tipoOperacaoVersaoId: topDestino.tipoOperacaoVersaoId, tipoOperacaoCodigo: topDestino.codigo, tipoOperacaoVersao: topDestino.versao, from: id });
       return { id: r.id, kind: destino, from: id };
         })).result;
     })));
+    /**
+     * ENCERRAR SALDO (TOP-CONFIG-06, decisão 265). O documento convertido em partes deixa de ter saldo a converter:
+     * vira `converted` com quem, quando e por quê. Só com pelo menos uma parte não cancelada e saldo > 0. Capacidade
+     * `${perm}.edit` — muta a origem, como a conversão. Visibilidade conferida ANTES do helper de idempotência
+     * (`exigirDocumentoVisivel`), e o autor entra no hash pelo mesmo motivo do cancelamento.
+     */
+    if (kind !== "sale") app.post(`${base}/:id/encerrar-saldo`, async (req) => runService(app, req, `${perm}.edit`, async (ctx) => {
+      const { id } = req.params as { id: string };
+      const { motivo } = encerrarSaldoSchema.parse(req.body ?? {});
+      await exigirDocumentoVisivel(ctx, id, kind);
+      return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
+        { action: "encerrar_saldo", sourceId: id, sourceKind: kind, motivo, actorId: ctx.user.id },
+        async () => {
+          const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string };
+          if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
+          if ((await partesDaOrigem(ctx, id)).ativas === 0) throw err("VALIDATION_ERROR", MSG_SEM_PARTES);
+          const saldo = saldoTotal(await itensDeOrigemComSaldo(ctx, id));
+          if (!saldo.gt(0)) throw err("VALIDATION_ERROR", MSG_SEM_SALDO_A_ENCERRAR);
+          const u = await ctx.tx.query("update erp.sales_documents set status='converted', saldo_encerrado_em=now(), saldo_encerrado_por=$3, saldo_encerrado_motivo=$4, updated_at=now() where id=$1 and organization_id=$2 and status in ('open','approved')", [id, ctx.orgId, ctx.user.id, motivo]);
+          // ROW COUNT SOB RLS: zero linha sem conferência seria "encerrado" sem efeito.
+          if (u.rowCount !== 1) throw notFound("Documento");
+          await audit(ctx.tx, ctx, "sales_documents", id, "encerrar_saldo", { motivo, saldo: saldo.toFixed(4) }, { before: { status: cur.status }, after: { status: "converted" } });
+          return { id, status: "converted" };
+        })).result;
+    }));
     /**
      * CONFIRMAÇÃO. A trava mora em `confirmSale`, junto da primeira decisão que ela protege; aqui fica só
      * a idempotência, que resolve o outro problema — o REENVIO do mesmo pedido.
