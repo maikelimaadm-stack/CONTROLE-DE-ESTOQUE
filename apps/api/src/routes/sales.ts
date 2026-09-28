@@ -903,11 +903,6 @@ export default async function salesRoutes(app: FastifyInstance) {
       };
     }));
     /**
-     * LAYOUT EFETIVO da TOP escolhida (VENDAS-A3-1) — mesma permissão e porta de `operation-types`. TOP que a
-     * variante não enxerga (inexistente, de outro tenant, de outra família, inativa, excluída, id malformado) cai na
-     * MESMA 404: distinguir seria oráculo de existência. Sem o parâmetro = layout de documento sem TOP (sistema).
-     */
-    /**
      * REGRAS DA OPERAÇÃO da TOP escolhida (TOP-CONFIG-05, decisão 263) — MESMA permissão, porta e 404 de
      * `/layout-efetivo` (a resolução da TOP é a mesma consulta): inexistente, de outro tenant, de outra família,
      * inativa, excluída, id malformado e parâmetro AUSENTE caem na MESMA 404. Sem TOP não há regra a perguntar.
@@ -929,6 +924,11 @@ export default async function salesRoutes(app: FastifyInstance) {
         clienteEmAtraso: { politica: regras.config.financeiro.clienteEmAtraso, toleranciaDias: regras.config.financeiro.toleranciaAtrasoDias },
       };
     }));
+    /**
+     * LAYOUT EFETIVO da TOP escolhida (VENDAS-A3-1) — mesma permissão e porta de `operation-types`. TOP que a
+     * variante não enxerga (inexistente, de outro tenant, de outra família, inativa, excluída, id malformado) cai na
+     * MESMA 404: distinguir seria oráculo de existência. Sem o parâmetro = layout de documento sem TOP (sistema).
+     */
     app.get(`${base}/layout-efetivo`, async (req) => runService(app, req, `${perm}.create`, async (ctx) => {
       const familia = familiaDaVariante(kind);
       const q = (req.query ?? {}) as Record<string, unknown>;
