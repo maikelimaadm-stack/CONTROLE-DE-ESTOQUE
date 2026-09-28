@@ -254,7 +254,8 @@ describe("CP-A9 capacidade", () => {
       const b = j(r) as { contractVersion: number; capacidades: Record<string, number> };
       expect(b.contractVersion).toBe(1);
       // VENDAS-A3-1: `layoutDocumento` entra por último (aditiva); a comparação segue EXATA de propósito.
-      expect(b.capacidades).toEqual({ classificacaoFinanceira: 1, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: 1 });
+      // TOP-CONFIG-05: capacidade aditiva regrasDaOperacao/restricoes; `regrasDaOperacao` entra POR ÚLTIMO e a comparação segue EXATA.
+      expect(b.capacidades).toEqual({ classificacaoFinanceira: 1, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: 1, regrasDaOperacao: 1 });
       expect(CAPACIDADE_CONDICAO_PAGAMENTO).toBe(1);
     }
   });
