@@ -1467,16 +1467,35 @@ existe com a web anterior no ar. A API anterior também recusa regravar um layou
 4. No fim: desligar a TOP 2 do layout de teste (ou religá-la ao layout anterior) e INATIVAR os dois layouts (o de
    teste e o importado).
 
+## VENDAS-A3-1d_R1 — correções do configurador de layout (sem migration)
+
+**Só web**: sem migration, sem rota, sem variável, sem permissão. Três correções da revisão da A3-1d:
+(1) com o rascunho sujo, "Abrir na Central" fica desligado, com a frase "Salve o layout para ver as mudanças na
+Central." — a navegação do cliente não passa pela proteção de aba suja e descartava o rascunho em silêncio;
+(2) na tela de Configurações a seleção mora no endereço (`&layout=<id>`): voltar da Central reabre o mesmo layout;
+id que a API não encontra é ignorado sem mensagem e sai do endereço; (3) o texto da faixa de versão nova passa a
+morar na casca (`components/layout/versao-nova.tsx`), que deixa de depender da tela de administração.
+
+**Impacto em dados reais: nenhum.** (nenhuma gravação nova)
+
+**Reversão:** redeploy do web anterior.
+
+**Roteiro do Maike (1 minuto, produção de hoje: layout 0001 ligado à TOP 1 Orçamento):**
+1. Layouts de documento → selecionar o 0001 → mexer num campo sem salvar → "Abrir na Central" desligado, com a frase.
+2. Salvar → vira link → clicar → a Central mostra a mudança.
+3. Voltar do navegador → o 0001 continua selecionado, com a área aberta.
+4. Restaurar: desfazer a mudança e salvar.
+
 ## VENDAS-A3-1d — configurador organizado (tela única) e o fim do "não salva" (sem migration)
 
 Decisão 262. **Só web**: sem migration, sem rota nova, sem variável, sem permissão, sem mudança de API. Deploy do web
 sozinho; a API continua a da A3-1c. **Reversão:** redeploy do web anterior (nada gravado muda de forma).
 
-Quem estiver com a aba aberta antes do deploy verá a faixa "Saiu uma versão nova do sistema" (a casca compara o `sha`
-de `GET /api/build`): clicar em "Atualizar agora". Sem o sha do provedor (local, CI), a faixa nunca aparece.
+Na publicação da A3-1d, quem já estava com a aba aberta precisou recarregar (F5) uma vez: a aba antiga não tinha o código da faixa. A partir da publicação seguinte (TOP-CONFIG-05), a faixa aparece sozinha. A faixa ("Saiu uma versão nova do sistema", a casca compara o `sha`
+de `GET /api/build`) oferece "Atualizar agora". Sem o sha do provedor (local, CI), a faixa nunca aparece.
 
 **Roteiro do Maike (depois do deploy), sem gravar documento:**
-0. Se aparecer "Saiu uma versão nova do sistema. Atualize a página para usar a versão nova.", clicar em "Atualizar agora".
+0. Na publicação da A3-1d, quem já estava com a aba aberta precisou recarregar (F5) uma vez: a aba antiga não tinha o código da faixa. A partir da publicação seguinte (TOP-CONFIG-05), a faixa aparece sozinha. Com a faixa na tela, clicar em "Atualizar agora".
 1. Configurações › Operações › Layouts de documento: a grade mostra o "Em uso" real de cada layout ("Não está em uso"
    em destaque quando não vale para nenhuma TOP).
 2. Selecionar o 0001 → a área abre logo abaixo, já editável; o status diz se ele está em uso → "Visualizar TOPs" →

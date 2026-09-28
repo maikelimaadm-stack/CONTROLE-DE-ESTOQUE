@@ -1,11 +1,12 @@
 "use client";
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, qs } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { ApiError, api, qs } from "@/lib/api";
 import { COPY } from "@/lib/copy";
 import { Button, Dialog, EmptyState, ErrorState, LoadingState, NativeSelect } from "@/components/ui";
 import { familiaTemLayout } from "@agro/domain";
-import { BASE_LAYOUTS, TEXTOS, chaveLista, lerLinhaLayout, type LayoutLinha } from "./contrato";
+import { BASE_LAYOUTS, TEXTOS, chaveDetalhe, chaveLista, lerLinhaLayout, type LayoutLinha } from "./contrato";
 import { BarraGrade } from "./barra-grade";
 import { GradeLayouts } from "./grade";
 import { AreaConfiguracao } from "./pagina";
@@ -50,9 +51,40 @@ export function useNomeDoLayout(id: string): string | undefined {
   return q.data?.find((l) => l.id === id)?.nome || undefined;
 }
 
-export function TelaLayouts({ idInicial }: { idInicial?: string }) {
+export function TelaLayouts({ idInicial, sincronizarEndereco = false }: { idInicial?: string; sincronizarEndereco?: boolean }) {
   const [filtro, setFiltro] = React.useState("");
   const [selecionadoId, setSelecionadoId] = React.useState<string | null>(idInicial ?? null);
+  /**
+   * VENDAS-A3-1d_R1 — o id que veio do ENDEREÇO é pedido, não fato: antes de abrir a área, o GET do layout confirma que
+   * ele existe. 404 → nenhuma linha, nenhuma mensagem, e o `layout=` sai do endereço. Não se decide pela página da
+   * grade: layout válido fora da página visível continua selecionável.
+   */
+  const [aVerificar, setAVerificar] = React.useState<string | null>(sincronizarEndereco ? idInicial ?? null : null);
+  const verificacao = useQuery({
+    queryKey: chaveDetalhe(aVerificar ?? ""), queryFn: () => api<unknown>(`${BASE_LAYOUTS}/${aVerificar}`),
+    enabled: aVerificar !== null, retry: false
+  });
+  React.useEffect(() => {
+    if (aVerificar === null) return;
+    if (verificacao.isSuccess) setAVerificar(null);
+    else if (verificacao.isError) {
+      if (verificacao.error instanceof ApiError && verificacao.error.status === 404) {
+        setSelecionadoId((atual) => (atual === aVerificar ? null : atual));
+      }
+      setAVerificar(null);
+    }
+  }, [aVerificar, verificacao.isSuccess, verificacao.isError, verificacao.error]);
+
+  // Toda seleção (clique, troca confirmada, Novo/Duplicar/Importar, exclusão) vai para `&layout=` com replace:
+  // sem recarregar, sem remontar a área e sem aba de trabalho nova. Os outros parâmetros (tab, sub) ficam.
+  const router = useRouter();
+  React.useEffect(() => {
+    if (!sincronizarEndereco || aVerificar !== null) return;
+    const url = new URL(window.location.href);
+    if ((url.searchParams.get("layout") ?? null) === selecionadoId) return;
+    if (selecionadoId) url.searchParams.set("layout", selecionadoId); else url.searchParams.delete("layout");
+    router.replace(`${url.pathname}${url.search}`, { scroll: false });
+  }, [sincronizarEndereco, selecionadoId, aVerificar, router]);
   /** Remonta a área depois de "Descartar" (o rascunho da mesma linha sai de verdade antes de abrir o Novo). */
   const [geracao, setGeracao] = React.useState(0);
   const [pendente, setPendente] = React.useState<Pedido | null>(null);
@@ -133,7 +165,8 @@ export function TelaLayouts({ idInicial }: { idInicial?: string }) {
         : <GradeLayouts linhas={linhas} selecionadoId={selecionadoId} onSelecionar={selecionar} rotuloMovimento={rotuloMovimento} />}
     </div>
 
-    {selecionadoId
+    {selecionadoId && aVerificar === selecionadoId ? <LoadingState />
+      : selecionadoId
       ? <AreaConfiguracao key={`${selecionadoId}:${geracao}`} id={selecionadoId} onSujo={marcarSujo} onVisualizarTops={abrirTops} />
       : linhas.length > 0 && <p data-testid="layouts-sem-selecao"
         className="rounded border border-dashed border-slate-300 bg-slate-50 px-3 py-6 text-center text-[12.5px] text-slate-500">

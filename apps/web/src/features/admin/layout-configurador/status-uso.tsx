@@ -149,8 +149,10 @@ export function AvisoNaoUsado({ layoutId, onVisualizarTops, testId }: { layoutId
 }
 
 /** Status de uso no topo da área de configuração (container `config-status`, data-estado). */
-export function StatusDeUso({ layoutId, familia, rotuloMovimento, onVisualizarTops }: {
+export function StatusDeUso({ layoutId, familia, rotuloMovimento, onVisualizarTops, sujo = false }: {
   layoutId: string; familia: string; rotuloMovimento: string; onVisualizarTops: () => void;
+  /** rascunho com mudança não salva (VENDAS-A3-1d_R1): navegar agora descartaria o trabalho em silêncio */
+  sujo?: boolean;
 }) {
   const { can } = useAuth();
   const qc = useQueryClient();
@@ -197,10 +199,14 @@ export function StatusDeUso({ layoutId, familia, rotuloMovimento, onVisualizarTo
     {podeAbrir && uso.valeEm.length > 0 && <ul aria-label="Abrir a Central nas TOPs em que o layout vale" className="flex flex-wrap gap-x-4 gap-y-1 px-1 text-[12px] text-slate-600">
       {uso.valeEm.map((t) => <li key={t.id} className="flex items-center gap-1.5">
         <span>{rotuloDaTop(t)}</span>
-        <Link data-testid="config-abrir-central" data-top-id={t.id} className="font-medium text-brand-700 underline-offset-2 hover:underline"
-          href={`/vendas/${variante.segmento}/new?tipo_operacao_id=${encodeURIComponent(t.id)}`}>{TEXTOS.abrirNaCentral}</Link>
+        {sujo
+          ? <button type="button" disabled data-testid="config-abrir-central" data-top-id={t.id} className="font-medium text-slate-400">{TEXTOS.abrirNaCentral}</button>
+          : <Link data-testid="config-abrir-central" data-top-id={t.id} className="font-medium text-brand-700 underline-offset-2 hover:underline"
+            href={`/vendas/${variante.segmento}/new?tipo_operacao_id=${encodeURIComponent(t.id)}`}>{TEXTOS.abrirNaCentral}</Link>}
       </li>)}
     </ul>}
+    {/* A navegação do cliente não passa pelo useDirtyTab: com rascunho sujo, o link desliga em vez de descartar. */}
+    {podeAbrir && uso.valeEm.length > 0 && sujo && <p data-testid="config-abrir-central-salvar-antes" className="px-1 text-[12px] text-amber-800">{TEXTOS.salvarAntesDeAbrirCentral}</p>}
 
     {ativar.isError && <ErrorState error={ativar.error} />}
     {uso.erro !== null && <ErrorState error={uso.erro} />}

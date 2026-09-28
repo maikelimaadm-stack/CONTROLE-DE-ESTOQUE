@@ -421,3 +421,112 @@ test("LD2-W4 — link direto abre a tela com a linha selecionada; o \"Configurar
     await limpar(page, layouts, tops);
   }
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * LD2-W8 (VENDAS-A3-1d_R1) — "Abrir na Central" não joga o rascunho fora; a seleção mora no endereço
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+test("LD2-W8 a) — com rascunho sujo, \"Abrir na Central\" desliga com a frase; salvo, volta a ser link e a Central mostra a mudança", async ({ page }) => {
+  await login(page);
+  const layouts: string[] = [];
+  const tops: string[] = [];
+  try {
+    const top = await criarTop(page, "LD2-W8a TOP");
+    tops.push(top.id);
+    const nome = uniq("LD2-W8a Layout");
+    const layout = await criarLayoutPorApi(page, nome);
+    layouts.push(layout.id);
+    await api(page, "PUT", `${BASE}/${layout.id}/tops`, { tipoOperacaoIds: [top.id] });
+    const antes = await lerLayout(page, layout.id);
+    const iFrete = antes.estrutura.rodape.findIndex((a) => a.aba === "Frete e transporte");
+    expect(iFrete, "premissa: a cópia do sistema tem a aba Frete e transporte").toBeGreaterThanOrEqual(0);
+
+    await page.goto(rotaDoLayout(layout.id));
+    await expect(tid(page, "config-layout-pagina")).toBeVisible();
+    const abrir = page.locator(`[data-testid="config-abrir-central"][data-top-id="${top.id}"]`);
+    const frase = tid(page, "config-abrir-central-salvar-antes");
+    // PRESENÇA ANTES DA AUSÊNCIA: sem mudança, é link habilitado e a frase não existe.
+    await expect(abrir).toBeVisible();
+    await expect(abrir).toHaveAttribute("href", rotaDaCentral(top.id));
+    await expect(abrir).toBeEnabled();
+    await expect(frase).toHaveCount(0);
+
+    // Mexer num campo (sem salvar) → cada "Abrir na Central" desligado + a frase, uma vez.
+    await tid(page, `config-aba-${iFrete}`).click();
+    await campoPrevia(page, "freight_icms").click();
+    await tid(page, "config-acao-remover").click();
+    await expect(tid(page, "config-salvar"), "premissa: o rascunho ficou sujo").toBeEnabled();
+    const todos = page.getByTestId("config-abrir-central");
+    const n = await todos.count();
+    expect(n, "premissa: há pelo menos um Abrir na Central").toBeGreaterThan(0);
+    for (let i = 0; i < n; i++) {
+      await expect(todos.nth(i)).toBeDisabled();
+      await expect(todos.nth(i)).not.toHaveAttribute("href", /.*/);
+    }
+    await expect(abrir).toHaveText(TEXTOS.abrirNaCentral);
+    await expect(frase).toHaveCount(1);
+    await expect(frase).toHaveText(TEXTOS.salvarAntesDeAbrirCentral);
+    await expect(page, "nada navegou").toHaveURL(new RegExp(`/configuracoes/layouts-documento/${layout.id}`));
+
+    // Salvar → volta a ser link, sem recarregar.
+    expect(await salvar(page, layout.id), "o layout foi gravado").toBe(200);
+    await expect(abrir).toHaveAttribute("href", rotaDaCentral(top.id));
+    await expect(frase).toHaveCount(0);
+
+    // Clicar → a Central mostra o layout ligado, com a mudança.
+    await abrir.click();
+    const efetivo = tid(page, "central-layout-efetivo");
+    await expect(efetivo).toContainText(`Layout: ${nome} (ligado à TOP)`);
+    const frete = await painelDoFrete(page);
+    await expect(frete.locator('[data-campo="freight"]'), "presença: o Frete continua").toBeVisible();
+    await expect(page.locator('[data-campo="freight_icms"]'), "a mudança salva vale na Central").toHaveCount(0);
+  } finally {
+    await limpar(page, layouts, tops);
+  }
+});
+
+test("LD2-W8 b) — na tela de Configurações a seleção vai para &layout=; voltar da Central reabre a mesma linha; id inexistente sai do endereço", async ({ page }) => {
+  await login(page);
+  const layouts: string[] = [];
+  const tops: string[] = [];
+  try {
+    const top = await criarTop(page, "LD2-W8b TOP");
+    tops.push(top.id);
+    const layout = await criarLayoutPorApi(page, uniq("LD2-W8b Layout"));
+    layouts.push(layout.id);
+    await api(page, "PUT", `${BASE}/${layout.id}/tops`, { tipoOperacaoIds: [top.id] });
+
+    await page.goto(ROTA_LAYOUTS);
+    await expect(tid(page, "layouts-tela")).toBeVisible();
+    const abas = page.getByTestId("workspace-tabs").getByRole("tab");
+    const nAbas = await abas.count();
+    expect(nAbas, "premissa: a barra de abas existe").toBeGreaterThan(0);
+    const linha = tid(page, `layout-linha-${layout.id}`);
+    await linha.click();
+    await expect(linha).toHaveAttribute("data-selecionado", "true");
+    await expect(page).toHaveURL((u) => u.searchParams.get("layout") === layout.id
+      && u.searchParams.get("tab") === "operacoes" && u.searchParams.get("sub") === "layouts-documento");
+    await expect(abas, "nenhuma aba de trabalho nova").toHaveCount(nAbas);
+
+    // "Abrir na Central" → Voltar do navegador → a MESMA linha, com a área aberta.
+    await expect(tid(page, "config-layout-pagina")).toBeVisible();
+    await page.locator(`[data-testid="config-abrir-central"][data-top-id="${top.id}"]`).click();
+    await expect(tid(page, "central-layout-efetivo")).toBeVisible();
+    await page.goBack();
+    await expect(tid(page, "layouts-tela")).toBeVisible();
+    await expect(tid(page, `layout-linha-${layout.id}`)).toHaveAttribute("data-selecionado", "true");
+    await expect(tid(page, "config-layout-pagina")).toBeVisible();
+
+    // id que a API não encontra → nenhuma linha, nenhum erro, e o layout= sai do endereço.
+    const inexistente = "00000000-0000-4000-8000-000000000000";
+    await page.goto(`${ROTA_LAYOUTS}&layout=${inexistente}`);
+    await expect(tid(page, "layouts-tela")).toBeVisible();
+    await expect(page).toHaveURL((u) => !u.searchParams.has("layout") && u.searchParams.get("sub") === "layouts-documento");
+    await expect(tid(page, "layouts-sem-selecao"), "nenhuma linha selecionada").toBeVisible();
+    await expect(page.locator('[data-selecionado="true"][data-testid^="layout-linha-"]')).toHaveCount(0);
+    await expect(tid(page, "config-layout-pagina")).toHaveCount(0);
+    await expect(tid(page, "layouts-tela").getByRole("alert")).toHaveCount(0);
+  } finally {
+    await limpar(page, layouts, tops);
+  }
+});

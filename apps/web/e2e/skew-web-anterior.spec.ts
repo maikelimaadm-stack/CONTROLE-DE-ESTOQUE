@@ -266,7 +266,10 @@ test("TOP-CONFIG-04A · o web da base renomeia uma TOP do formato 2 e a configur
   // O SERVIDOR é o árbitro: nome novo, versão nova, e a configuração do formato 2 INTEIRA preservada.
   const d = await (await request.get(`${API}/api/admin/tipos-operacao/${id}`, { headers: auth })).json() as
     { nome: string; versao: number; configuracaoSchema: number; configuracao: { valor: typeof configuracao } };
-  expect([d.nome, d.versao, d.configuracaoSchema]).toEqual([nome, 2, 2]);
+  // Formato gravado depende do MUNDO da base: o web da base com a TOP-CONFIG-05 (declara as regras da operação)
+  // grava o formato 3 quando o servidor declara `restricoes` — o mesmo que W2/W3 do editor esperam. Sem ela, o 2.
+  const formatoEsperado = process.env.SKEW_BASE_TEM_REGRAS_DA_OPERACAO === "1" ? 3 : 2;
+  expect([d.nome, d.versao, d.configuracaoSchema]).toEqual([nome, 2, formatoEsperado]);
   expect(d.configuracao.valor.execucao, "o bloco de execução não foi apagado").toEqual({ estoque: "legado", financeiro: "legado" });
   expect(d.configuracao.valor.estoque.atualizacao, "nem a seção que ele não sabia ler").toBe("saida");
   v.semBloqueio();
