@@ -1,14 +1,16 @@
 "use client";
 import * as React from "react";
 import { Suspense, use } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useAuth } from "@/lib/auth";
 import { todayISO } from "@/lib/utils";
 import { useDirtyTab, useTabTitle } from "@/lib/workspace-tabs";
 import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
-import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_LAYOUT_CAMPO_OBRIGATORIO, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type ValorPadraoLayout } from "@agro/domain";
+import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_LAYOUT_CAMPO_OBRIGATORIO, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type OrigemDoLayout, type ValorPadraoLayout } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
@@ -69,6 +71,32 @@ function padroesDaResposta(r: unknown): PadroesDaResposta {
   for (const chave of invalidos) validos.delete(chave);
   return validos.size || invalidos.size ? { validos, invalidos } : SEM_PADROES;
 }
+
+/**
+ * QUAL LAYOUT VALE (VENDAS-A3-1d) — `origem`/`nome`/`id` da MESMA resposta de `/layout-efetivo`, lidos com a mesma
+ * postura tolerante: origem que não se reconhece NÃO vira "do sistema" (seria afirmar o que não se sabe) — a linha
+ * simplesmente não aparece. Nome vazio ou ausente → "do sistema". O `id` só vale com forma de UUID: ele vai para o
+ * endereço do configurador, e texto cru da resposta não monta URL. É só INFORMAÇÃO: não governa campo, cobrança nem Salvar.
+ */
+interface LayoutQueVale { origem: OrigemDoLayout; nome: string | null; id: string | null }
+function layoutQueVale(r: unknown): LayoutQueVale | null {
+  if (!ehObj(r)) return null;
+  const origem = r.origem === "ligado" || r.origem === "padrao_da_familia" || r.origem === "sistema" ? r.origem : null;
+  if (!origem) return null;
+  return {
+    origem,
+    nome: typeof r.nome === "string" && r.nome.trim() ? r.nome : null,
+    id: typeof r.id === "string" && FORMA_UUID_PADRAO.test(r.id) ? r.id : null
+  };
+}
+function textoDoLayoutQueVale(l: LayoutQueVale): string {
+  if (l.origem === "sistema" || !l.nome) return "Layout: do sistema";
+  return l.origem === "ligado" ? `Layout: ${l.nome} (ligado à TOP)` : `Layout: ${l.nome} (padrão do movimento)`;
+}
+/** "Configurar": o layout que vale, ou — no do sistema / sem id — a lista de layouts em Configurações. */
+const hrefDoConfigurador = (l: LayoutQueVale) => (l.origem !== "sistema" && l.id
+  ? `/configuracoes/layouts-documento/${l.id}`
+  : "/configuracoes?tab=operacoes&sub=layouts-documento");
 
 /** Detalhe do 422 LAYOUT_CAMPO_OBRIGATORIO → { caminho: mensagem }. Aceita lista direta ou embrulhada. */
 function errosDoServidor(details: unknown): Record<string, string> {
@@ -225,6 +253,13 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     return ehEstruturaLayout(layoutRecebido.estrutura) ? layoutRecebido.estrutura : null;
   }, [layoutAtivo, layoutRecebido]);
   const layoutPendente = layoutAtivo && !layout;
+  /**
+   * VENDAS-A3-1d: a linha "Layout: …" no topo de Dados principais. Só com a capacidade do layout E a resposta conferida
+   * (`layout` só existe assim) — sem a capacidade, nada: a Central de hoje, idêntica. `can` só decide se o atalho
+   * "Configurar" aparece (apresentação); quem nega o configurador é a rota.
+   */
+  const { can } = useAuth();
+  const layoutVale = React.useMemo(() => (layout ? layoutQueVale(layoutRecebido) : null), [layout, layoutRecebido]);
   const estrutura = React.useMemo(() => layout ?? LAYOUT_DO_SISTEMA(familiaLayout), [layout, familiaLayout]);
   /** VENDAS-A3-1c: os campos de "Dados adicionais" segundo o layout — abre o grupo quando um deles tem erro. */
   const adicionaisDoLayout = React.useMemo(() => new Set(camposAdicionaisDoCabecalho(estrutura)), [estrutura]);
@@ -416,6 +451,11 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const avisoDeLayout = layoutPendente && (layoutQ.isError || (layoutQ.isSuccess && !layout)) && <div className="rounded-md bg-amber-50 p-3">
     <p data-testid="layout-nao-carregado" className="text-sm text-amber-700">Não foi possível carregar o layout deste Tipo de Operação. O lançamento está bloqueado até ele ser carregado.</p>
   </div>;
+  /* O texto fica sozinho no <p> (o E2E confere o texto exato); o atalho "Configurar" vai ao lado, fora dele. */
+  const linhaDoLayout = layoutVale && <div className="flex flex-wrap items-baseline gap-x-2">
+    <p data-testid="central-layout-efetivo" data-origem={layoutVale.origem} data-layout-id={layoutVale.id ?? ""} className="text-[11.5px] text-slate-500">{textoDoLayoutQueVale(layoutVale)}</p>
+    {can("tipos_operacao.edit") && <Link data-testid="central-layout-configurar" href={hrefDoConfigurador(layoutVale)} className="text-[11.5px] font-medium text-emerald-700 hover:underline">Configurar</Link>}
+  </div>;
   const avisoDeEscrita = !escritaTopConfirmada && <div className="space-y-1 rounded-md bg-amber-50 p-3">
     <MensagemTop estado={estadoTop} />
     {estadoTop.situacao === "pronto" && <p data-testid="top-indisponivel" className="text-sm text-amber-800">
@@ -576,6 +616,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       acoesDireita={<DocumentosAbertos />}
       aviso={avisoDeLayout ? <>{avisoDeEscrita}{avisoDeLayout}</> : avisoDeEscrita}
       dados={<>
+        {linhaDoLayout}
         {principais.slice(0, posTop).map(render)}
         {contextoOperacional}
         {principais.slice(posTop).map(render)}

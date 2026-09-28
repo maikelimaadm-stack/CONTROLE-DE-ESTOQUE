@@ -3,7 +3,7 @@ import * as React from "react";
 import { LockKeyhole } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AcoesDoCampo } from "./acoes-campo";
-import { MIME_ARRASTE, campoDaChave, ehChaveDeColuna, useConfigurador, type CampoDoLayout, type ColunaDoLayout, type EstruturaLayout } from "./contrato";
+import { MIME_ARRASTE, TEXTOS, campoDaChave, ehChaveDeColuna, useConfigurador, type CampoDoLayout, type ColunaDoLayout, type EstruturaLayout } from "./contrato";
 
 /** Acha o campo no layout pela chave de seleção (documento: cabeçalho ou qualquer aba; coluna: "itens.<campo>"). */
 function noLayout(estrutura: EstruturaLayout, chave: string): CampoDoLayout | ColunaDoLayout | undefined {
@@ -16,6 +16,11 @@ function noLayout(estrutura: EstruturaLayout, chave: string): CampoDoLayout | Co
  * O campo na prévia do configurador (VENDAS-A3-1c): chip no estilo do configurador dos cadastros (verde; vermelho =
  * obrigatório). Clique seleciona, duplo clique abre "Configurar campo", arrastável (HTML5) quando em edição.
  * Serve ao cabeçalho, às abas do rodapé e às colunas dos itens (chave "itens.<campo>").
+ *
+ * VENDAS-A3-1d (decisão 262): sem passo "Editar", quem manda é `ctx.podeEditar`. Com permissão: clique (ou Espaço)
+ * seleciona, duplo clique/Enter abrem "Configurar campo", arrastável. SEM permissão: clique, duplo clique, Enter e
+ * Espaço só avisam (`TEXTOS.somenteLeitura` em `ctx.avisar`) — nada é selecionado nem aberto, e não arrasta. `can` só
+ * apresenta: quem nega a gravação é a rota.
  */
 export function CampoPrevia({ chave }: { chave: string }) {
   const ctx = useConfigurador();
@@ -31,7 +36,12 @@ export function CampoPrevia({ chave }: { chave: string }) {
   const padraoInvalido = ctx.padroesInvalidos.has(chave);
   const selecionado = ctx.selecionado === chave;
 
-  const arraste: React.HTMLAttributes<HTMLDivElement> & { draggable?: boolean } = ctx.editando
+  const pode = ctx.podeEditar;
+  const somenteLeitura = () => ctx.avisar(TEXTOS.somenteLeitura);
+  const alternar = () => { if (pode) ctx.selecionar(selecionado ? null : chave); else somenteLeitura(); };
+  const abrir = () => { if (pode) { ctx.selecionar(chave); ctx.configurar(chave); } else somenteLeitura(); };
+
+  const arraste: React.HTMLAttributes<HTMLDivElement> & { draggable?: boolean } = pode
     ? {
         draggable: true,
         onDragStart: (e) => { e.stopPropagation(); e.dataTransfer.setData(MIME_ARRASTE, chave); e.dataTransfer.effectAllowed = "move"; ctx.setArrastando(chave); },
@@ -40,7 +50,7 @@ export function CampoPrevia({ chave }: { chave: string }) {
     : {};
 
   return (
-    <div className="emp-layout-config-field-slot" style={{ flex: "3 1 0" }}>
+    <div className="emp-layout-config-field-slot flex-wrap" style={{ flex: "3 1 0" }}>
       <div
         role="button"
         tabIndex={0}
@@ -50,18 +60,18 @@ export function CampoPrevia({ chave }: { chave: string }) {
         data-chave={chave}
         data-selecionado={selecionado ? "true" : "false"}
         {...arraste}
-        onClick={(e) => { e.stopPropagation(); ctx.selecionar(selecionado ? null : chave); }}
-        onDoubleClick={(e) => { e.stopPropagation(); ctx.selecionar(chave); ctx.configurar(chave); }}
+        onClick={(e) => { e.stopPropagation(); alternar(); }}
+        onDoubleClick={(e) => { e.stopPropagation(); abrir(); }}
         onKeyDown={(e) => {
           if (e.target !== e.currentTarget) return;
-          if (e.key === "Enter") { e.preventDefault(); ctx.selecionar(chave); ctx.configurar(chave); }
-          else if (e.key === " ") { e.preventDefault(); ctx.selecionar(selecionado ? null : chave); }
+          if (e.key === "Enter") { e.preventDefault(); abrir(); }
+          else if (e.key === " ") { e.preventDefault(); alternar(); }
         }}
         className={cn(
           "emp-layout-config-field emp-layout-config-field-panel",
           obrigatorio ? "emp-layout-config-field-required" : "emp-layout-config-field-optional",
           selecionado && "emp-layout-config-field-selected",
-          !ctx.editando && "emp-layout-config-field-readonly",
+          !pode && "emp-layout-config-field-readonly",
           ctx.arrastando === chave && "emp-layout-config-field--dragging",
         )}
       >
@@ -75,7 +85,7 @@ export function CampoPrevia({ chave }: { chave: string }) {
           {travado && <LockKeyhole data-testid="config-marca-travado" className="h-3 w-3" aria-label={cat?.somenteLeitura ? "Somente leitura" : "Não editável"} />}
         </span>
       </div>
-      {selecionado && ctx.editando && <AcoesDoCampo chave={chave} />}
+      {selecionado && pode && <AcoesDoCampo chave={chave} />}
     </div>
   );
 }

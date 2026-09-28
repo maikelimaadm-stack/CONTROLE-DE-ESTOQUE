@@ -13,6 +13,7 @@ import { WorkspaceTabsBar } from "./workspace-tabs";
 import { IdGlobalDaRotaAtual } from "./id-global-registro";
 import { lerPedidoEmpresa, type PedidoEmpresa } from "@/lib/empresa-ativa";
 import { WorkspaceImersivoProvider, useTrilhaCedida } from "./workspace-imersivo";
+import { FaixaVersaoNova } from "./versao-nova";
 
 /**
  * AppShell (docs/UI-STANDARD.md › App Shell & Workspace):
@@ -96,6 +97,7 @@ function ShellInner({ children }: { children: React.ReactNode }) {
     <WorkspaceImersivoProvider>
       <ContextGuard>
         <div className="mg-app-shell flex h-dvh flex-col overflow-hidden">
+          <FaixaVersaoNova />
           <TopNavigation onFocusSearch={focusSearch} />
           <WorkspaceTabsBar onNewTab={() => focusSearch.current?.()} />
           <main key={pathname} className="mg-page-enter flex min-h-0 flex-1 flex-col overflow-auto p-3" data-testid="active-workspace">

@@ -13,7 +13,7 @@ export interface Rascunho {
   mudar: (e: EstruturaLayout) => void;
   desfazer: () => void;
   refazer: () => void;
-  /** recomeça do zero (sem histórico) — ao entrar/sair da edição */
+  /** recomeça do zero (sem histórico) — no Cancelar e depois de Salvar (o gravado novo vira a base) */
   reiniciar: (e: EstruturaLayout) => void;
 }
 
