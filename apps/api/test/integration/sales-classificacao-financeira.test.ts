@@ -441,7 +441,8 @@ describe("A1-D4 descoberta — a capacidade é ADITIVA, e o contrato continua na
       // VENDAS-A4 (decisão 258): a capacidade da condição de pagamento entra DEPOIS; a comparação continua EXATA
       // VENDAS-A3-1 (decisão 259): a capacidade do layout do documento entra por ÚLTIMO, também aditiva; a comparação
       // continua EXATA para que qualquer chave nova (ou sumida) continue reprovando aqui.
-      expect(b.capacidades).toEqual({ classificacaoFinanceira: 1, condicaoPagamento: 1, layoutDocumento: 1 });
+      // TOP-CONFIG-05: capacidade aditiva regrasDaOperacao/restricoes; `regrasDaOperacao` entra POR ÚLTIMO, a comparação segue EXATA.
+      expect(b.capacidades).toEqual({ classificacaoFinanceira: 1, condicaoPagamento: 1, layoutDocumento: 1, regrasDaOperacao: 1 });
     });
   }
 });
