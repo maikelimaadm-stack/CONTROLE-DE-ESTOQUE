@@ -10,7 +10,7 @@ import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
-import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_LAYOUT_CAMPO_OBRIGATORIO, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type OrigemDoLayout, type ValorPadraoLayout } from "@agro/domain";
+import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_EXIGENCIA_NAO_ATENDIDA, ERRO_LAYOUT_CAMPO_OBRIGATORIO, exigenciasFaltandoPorCampos, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type OrigemDoLayout, type ValorPadraoLayout } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
@@ -19,6 +19,8 @@ import { cn } from "@/lib/utils";
 import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
 import { ItensDaCentral, Travado } from "@/features/sales/central-vendas-itens";
 import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+/* TOP-CONFIG-05 exigências: as regras da operação (só com `capacidades.regrasDaOperacao` exata). */
+import { entendeRegrasDaOperacao, useRegrasDaOperacao } from "@/features/sales/regras-da-operacao";
 import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
@@ -254,6 +256,15 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   }, [layoutAtivo, layoutRecebido]);
   const layoutPendente = layoutAtivo && !layout;
   /**
+   * TOP-CONFIG-05 exigências — AS REGRAS DA OPERAÇÃO (decisão 263). SÓ com `capacidades.regrasDaOperacao` EXATA; sem ela
+   * `regrasAtivo` é falso, nenhuma pergunta sai, `regras` é null, `exigidos` é vazio e a Central é a de hoje, idêntica.
+   * Com ela, enquanto as regras não chegam conferidas o Salvar trava (como com `layoutPendente`). `regras` e
+   * `regrasPendente` ficam neste escopo para a condição (W5) e a faixa de atraso (W6).
+   */
+  const regrasAtivo = entendeRegrasDaOperacao(estadoTop);
+  const { regras, pendente: regrasPendente } = useRegrasDaOperacao(kind, top.id, regrasAtivo);
+  const exigidos = React.useMemo(() => new Set<string>(regras?.exigencias ?? []), [regras]);
+  /**
    * VENDAS-A3-1d: a linha "Layout: …" no topo de Dados principais. Só com a capacidade do layout E a resposta conferida
    * (`layout` só existe assim) — sem a capacidade, nada: a Central de hoje, idêntica. `can` só decide se o atalho
    * "Configurar" aparece (apresentação); quem nega o configurador é a rota.
@@ -261,6 +272,31 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const { can } = useAuth();
   const layoutVale = React.useMemo(() => (layout ? layoutQueVale(layoutRecebido) : null), [layout, layoutRecebido]);
   const estrutura = React.useMemo(() => layout ?? LAYOUT_DO_SISTEMA(familiaLayout), [layout, familiaLayout]);
+  /**
+   * TOP-CONFIG-05 exigências — A EXIGÊNCIA DA TOP VENCE O LAYOUT. Campo exigido que o layout vigente não desenha
+   * (nem no cabeçalho nem em aba alguma) entra mesmo assim, EDITÁVEL, na zona onde `LAYOUT_DO_SISTEMA` o põe: cabeçalho
+   * → fim de Dados principais (sem `grupo`, para não mudar a zona dos outros campos); rodapé → a aba de mesmo nome do
+   * sistema (criada no fim, se o layout não a tem). Não entra em `cfg`: rótulo de hoje, sem padrão, sem trava. Só governa
+   * o DESENHO — a cobrança do layout continua lendo `layout`. Sem exigências, é `estrutura`, o mesmo objeto.
+   */
+  const estruturaDesenhada = React.useMemo((): EstruturaLayout => {
+    if (!exigidos.size) return estrutura;
+    const desenhados = new Set([...estrutura.cabecalho.map((x) => x.campo), ...estrutura.rodape.flatMap((a) => a.campos.map((x) => x.campo))]);
+    const faltam = [...exigidos].filter((c) => !desenhados.has(c));
+    if (!faltam.length) return estrutura;
+    const sistema = LAYOUT_DO_SISTEMA(familiaLayout);
+    const cabecalho = [...estrutura.cabecalho];
+    const rodape = estrutura.rodape.map((a) => ({ ...a, campos: [...a.campos] }));
+    for (const c of faltam) {
+      const sintetico: CampoDoLayout = { campo: c, obrigatorio: false, editavel: true };
+      if (sistema.cabecalho.some((x) => x.campo === c)) { cabecalho.push(sintetico); continue; }
+      const abaDoSistema = sistema.rodape.find((a) => a.campos.some((x) => x.campo === c));
+      if (!abaDoSistema) continue;
+      const aba = rodape.find((a) => a.aba === abaDoSistema.aba);
+      if (aba) aba.campos.push(sintetico); else rodape.push({ aba: abaDoSistema.aba, campos: [sintetico] });
+    }
+    return { ...estrutura, cabecalho, rodape };
+  }, [estrutura, exigidos, familiaLayout]);
   /** VENDAS-A3-1c: os campos de "Dados adicionais" segundo o layout — abre o grupo quando um deles tem erro. */
   const adicionaisDoLayout = React.useMemo(() => new Set(camposAdicionaisDoCabecalho(estrutura)), [estrutura]);
   /** Configuração do layout por chave (cabeçalho e rodapé) — só com layout de verdade. */
@@ -375,8 +411,23 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const [errosServidor, setErrosServidor] = React.useState<Record<string, string>>({});
   const faltando = () => (layout ? camposObrigatoriosFaltando(familiaLayout, layout, corpo(), { classificacao: classificacaoAtiva, condicao: condicaoAtiva }) : []);
   const errosLocais: Record<string, string> = layout && tentouSalvar ? Object.fromEntries(faltando().map((f) => [f.caminho, mensagemCampoObrigatorio(f.rotulo)])) : {};
-  const erros: Record<string, string> = layout ? { ...errosServidor, ...errosLocais } : {};
+  /**
+   * TOP-CONFIG-05 exigências: a MESMA régua da API (`exigenciasFaltandoPorCampos`) sobre o MESMO corpo do POST. Sem
+   * `regras` (sem a capacidade) nada é conferido e `erros` é exatamente o de antes. A mensagem da exigência vence a do
+   * layout no mesmo campo (é a regra mais estrita que a API cobra primeiro).
+   */
+  const exigenciasFaltando = () => (regras ? exigenciasFaltandoPorCampos(regras.exigencias, corpo()) : []);
+  const errosExigencia: Record<string, string> = regras && tentouSalvar ? Object.fromEntries(exigenciasFaltando().map((f) => [f.caminho, `${f.rotulo} é obrigatório nesta operação.`])) : {};
+  const erros: Record<string, string> = layout || regras ? { ...errosServidor, ...errosLocais, ...errosExigencia } : {};
   const [maisDados, setMaisDados] = React.useState(false);
+  /** TOP-CONFIG-05 exigências: 422 TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA (`details.exigencias` [{caminho, mensagem}]) → erro no campo. */
+  const errouExigencia = (e: unknown): boolean => {
+    if (!(e instanceof ApiError) || e.code !== ERRO_EXIGENCIA_NAO_ATENDIDA) return false;
+    const m = errosDoServidor(ehObj(e.details) ? e.details.exigencias : undefined);
+    setErrosServidor(m);
+    if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true);
+    return true;
+  };
   /** O UUID que vai no corpo é o da TOP VALIDADA contra a lista — nunca o texto cru da URL. */
   const submit = () => {
     /**
@@ -388,13 +439,21 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
      */
     if (!escritaTopConfirmada) return;
     if (semClassificacao) return;
-    if (!layoutAtivo) { create.mutate(corpo()); return; }
+    /* TOP-CONFIG-05 exigências: regras pendentes travam; exigência faltando → erro no campo e NADA sai. Sem a
+       capacidade `regrasPendente` é falso e `regras` é null: o caminho abaixo é o de antes, linha a linha. */
+    if (regrasPendente) return;
+    if (regras) {
+      setTentouSalvar(true); setErrosServidor({});
+      const fe = exigenciasFaltando();
+      if (fe.length) { if ([...fe, ...faltando()].some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true); return; }
+    }
+    if (!layoutAtivo) { if (regras) create.mutate(corpo(), { onError: errouExigencia }); else create.mutate(corpo()); return; }
     if (!layout) return;
     setTentouSalvar(true); setErrosServidor({});
     const f = faltando();
     if (f.length) { if (f.some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true); return; }
     create.mutate(corpo(), {
-      onError: (e) => { if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true); } }
+      onError: (e) => { if (regras && errouExigencia(e)) return; if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true); } }
     });
   };
 
@@ -472,9 +531,15 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    * Com layout: rótulo e obrigatório do layout, `data-campo="<chave>"` no invólucro, erro no próprio campo, e o campo
    * não editável aparece travado (fieldset desabilitado) mostrando o valor (o padrão aplicado ao abrir).
    */
-  const dc = (chave: string) => (layout ? { "data-campo": chave } : {});
+  /* TOP-CONFIG-05 exigências: campo exigido pela TOP ganha `data-exigido-top="1"` e `data-testid="central-campo-<caminho>"`
+     no invólucro (nenhum destes invólucros tem testid hoje). Sem `regras`, `exigidos` é vazio e nada muda no DOM. */
+  const dc = (chave: string) => ({
+    ...(layout ? { "data-campo": chave } : {}),
+    ...(exigidos.has(chave) ? { "data-exigido-top": "1", "data-testid": `central-campo-${chave}` } : {})
+  });
   const rot = (chave: string, hoje: string) => cfg.get(chave)?.rotulo || hoje;
-  const req = (chave: string, hoje: boolean) => (layout ? Boolean(cfg.get(chave)?.obrigatorio) : hoje);
+  /* TOP-CONFIG-05 exigências: o "*" soma o obrigatório do layout (ou o de hoje) com a exigência da TOP. */
+  const req = (chave: string, hoje: boolean) => (layout ? Boolean(cfg.get(chave)?.obrigatorio) : hoje) || exigidos.has(chave);
   const err = (chave: string) => erros[chave];
   /** VENDAS-A3-1b: o rótulo do padrão de cadastro vai ao RefSelect enquanto o valor for o do padrão (sem consulta). */
   const dica = (chave: keyof typeof h) => { const p = padraoDoCampo(chave); return p && h[chave] === p.id ? p.rotulo : undefined; };
@@ -563,7 +628,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   /* Dados principais: ordem do layout; a Operação logo depois da Empresa (ou depois dos dois primeiros). "Dados
      adicionais" = os campos que o LAYOUT põe lá (VENDAS-A3-1c, dono: `camposAdicionaisDoCabecalho`; sem layout é o
      LAYOUT_DO_SISTEMA → o Proprietário, como hoje). Bloco largo (plano de parcelas) nunca no cabeçalho. */
-  const cabecalho = estrutura.cabecalho.map((x) => x.campo).filter(existe).filter((c) => !CAMPOS_SO_NO_RODAPE.includes(c));
+  /* TOP-CONFIG-05 exigências: desenha a partir de `estruturaDesenhada` (= `estrutura` sem exigido faltante). */
+  const cabecalho = estruturaDesenhada.cabecalho.map((x) => x.campo).filter(existe).filter((c) => !CAMPOS_SO_NO_RODAPE.includes(c));
   const principais = cabecalho.filter((c) => !adicionaisDoLayout.has(c));
   const adicionais = cabecalho.filter((c) => adicionaisDoLayout.has(c));
   const posEmpresa = principais.indexOf("empresa_id");
@@ -572,7 +638,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   /* Rodapé: as abas do layout, na ordem, com os campos dele. A arrumação de cada aba segue a de hoje. */
   const VALOR_DA_ABA: Record<string, string> = { "Totais": "totais", "Financeiro": "financeiro", "Frete e transporte": "frete", "Fiscal": "fiscal", "Observações": "observacoes" };
   const usados = new Set<string>();
-  const abas = estrutura.rodape.flatMap((a, i) => {
+  const abas = estruturaDesenhada.rodape.flatMap((a, i) => {
     const campos = a.campos.map((x) => x.campo).filter(existe);
     if (!campos.length) return [];
     const preferido = VALOR_DA_ABA[a.aba];
@@ -609,7 +675,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo, dica: kind === "sales" ? "O que a confirmação faz no estoque e no financeiro depende do Tipo de Operação e é mostrado antes de confirmar." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada." }}
       acoes={<>
         {/* sem "Voltar": como no design, a barra só tem ações do documento; navegar é a barra de abas */}
-        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
+        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || regrasPendente || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
         <DivisorDaBarra />
         <AcaoDaBarra rotulo="Alterar operação" data-testid="top-alterar" onClick={alterarOperacao}><Repeat2 aria-hidden /></AcaoDaBarra>
       </>}
