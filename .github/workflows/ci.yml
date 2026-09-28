@@ -201,6 +201,13 @@ jobs:
       # A decisão é MEDIDA na árvore da base e expira sozinha. Falha fechado.
       - name: A API da base já declara o layout do documento de venda? (VENDAS-A3-1)
         run: node scripts/skew-layout-documento.mjs --github-env
+      # A API DA BASE JÁ DECLARA AS REGRAS DA OPERAÇÃO DO DOCUMENTO DE VENDA? (TOP-CONFIG-05)
+      # Mesmo desenho: sem `capacidades.regrasDaOperacao` na descoberta da base, RO-K1 cobra que o web NÃO pede
+      # `/regras-da-operacao` nem `/situacao-cliente` (no fio) e que o documento nasce como hoje (201); com ela,
+      # cobra que a base a declara e serve `/regras-da-operacao`. A decisão é MEDIDA na árvore da base e expira
+      # sozinha. Falha fechado.
+      - name: A API da base já declara as regras da operação da venda? (TOP-CONFIG-05)
+        run: node scripts/skew-regras-da-operacao.mjs --github-env
       # A API DA BASE JÁ SERVE A PRÉVIA DA CONFIRMAÇÃO DA VENDA? (VENDAS-A5-1)
       # Mesmo desenho: sem a rota `previa-confirmacao` declarada na base, o sentido 1 cobra que o diálogo
       # "Confirmar venda" deste web mostra o texto NEUTRO, com o botão habilitado, e que a confirmação funciona

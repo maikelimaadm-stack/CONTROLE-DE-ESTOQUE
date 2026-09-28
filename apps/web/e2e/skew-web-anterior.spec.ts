@@ -891,6 +891,87 @@ test("VENDAS-A3-1 · LD-K2 — o web da base cria orçamento, pedido e venda com
 });
 
 /**
+ * TOP-CONFIG-05 · RO-K2 — O WEB DA BASE CRIA ORÇAMENTO, PEDIDO E VENDA CONTRA A API DESTE HEAD.
+ *
+ * Gêmeo de LD-K2. A TOP criada aqui não tem restrição nenhuma (formato de hoje, sem condições permitidas): a API
+ * deste HEAD aceita o corpo de sempre e cada documento nasce (201), aberto, conferido por SQL. O mundo vem de
+ * `.skew-regras-da-operacao.json` (gravado por `scripts/skew-regras-da-operacao.mjs`): com a base LEGADA, o web da
+ * base não conhece as rotas novas e NÃO as pede (no fio); com a base ATUAL, todo `/regras-da-operacao` que ele pedir
+ * responde 200.
+ */
+function baseDeclaraRegrasDaOperacao(): boolean {
+  const raiz = path.resolve(__dirname, "../../..");
+  const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
+  const arq = path.join(raiz, ".skew-regras-da-operacao.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão das regras da operação ausente (${arq}): rode scripts/skew-regras-da-operacao.mjs antes do skew. `
+      + "Sem ela não há como saber qual ramo provar, e escolher o mais fácil seria certificar o que não se mediu.");
+  }
+  const d = JSON.parse(fs.readFileSync(arq, "utf8")) as { baseSha: string; ocorrencias: number; declara: boolean };
+  expect(d.ocorrencias, "contagem ambígua não decide ramo nenhum — o produtor deveria ter reprovado antes").toBeLessThanOrEqual(1);
+  const declara = d.ocorrencias === 1;
+  expect(declara, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(d.declara);
+  expect(d.baseSha, "a decisão foi medida na mesma base").toBe(sha);
+  console.log(`[skew] RO-K2 · base ${sha} ${declara ? "DECLARA" : "NÃO declara"} as regras da operação (ocorrências=${d.ocorrencias})`);
+  return declara;
+}
+
+test("TOP-CONFIG-05 · RO-K2 — o web da base cria orçamento, pedido e venda como hoje contra a API deste HEAD: 201", async ({ page, request }) => {
+  const v = vigiar(page);
+  // NO FIO, desde antes do login: todo pedido às rotas novas que o web da base fizer fica registrado, com o status.
+  const pedidosRegras: string[] = [];
+  const statusRegras: number[] = [];
+  page.on("request", (req) => {
+    const p = new URL(req.url()).pathname;
+    if (p.includes("/regras-da-operacao") || p.includes("/situacao-cliente")) pedidosRegras.push(req.url());
+  });
+  page.on("response", (res) => { if (new URL(res.url()).pathname.includes("/regras-da-operacao")) statusRegras.push(res.status()); });
+  await login(page);
+  const auth = await cabecalhosDaSessao(page);
+  const declara = baseDeclaraRegrasDaOperacao();
+  const rotulos = rotulosDaClassificacaoNoWebDaBase();
+  const BASE = { budgets: "vendas.orcamento", orders: "vendas.pedido", sales: "vendas.venda" } as const;
+
+  for (const variante of ["budgets", "orders", "sales"] as const) {
+    const codigo = `RK2${variante[0]!.toUpperCase()}${Date.now().toString(36).toUpperCase()}`;
+    const criada = await request.post(`${API}/api/admin/tipos-operacao`, { headers: auth, data: { codigo, codigoBase: BASE[variante], nome: `Skew TOP-CONFIG-05 ${codigo}` } });
+    expect(criada.status(), await criada.text()).toBe(201);
+    const topId = (await criada.json() as { id: string }).id;
+
+    await page.goto(`/vendas/${variante}/new`);
+    await expect(page.getByTestId("top-lancador")).toBeVisible();
+    await page.locator(`[data-testid="top-opcao"][data-top-id="${topId}"]`).click();
+    await page.getByTestId("top-continuar").click();
+    await expect(page.getByTestId("top-contexto")).toBeVisible();
+    await pickRef(page, "Cliente", "DEMO");
+    await page.getByRole("button", { name: /Adicionar item/ }).click();
+    await page.getByTestId("central-vendas-linha").first().getByTestId("central-vendas-produto").click();
+    await page.getByTestId("central-vendas-pesquisa").getByRole("option").first().click();
+    await page.getByTestId("central-vendas-linha").first().getByLabel("Valor unitário").fill("10");
+    if (rotulos) await preencherClassificacaoFinanceira(page, rotulos);
+
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === `/api/sales/${variante}`);
+    await page.getByRole("button", { name: "Salvar" }).click();
+    const r = await resposta;
+    expect(r.status(), `a API deste HEAD aceita o corpo do cliente da base (${variante})`).toBe(201);
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(enviado["tipo_operacao_id"], `premissa: o corpo capturado é o deste lançamento (${variante})`).toBe(topId);
+    const { id } = await r.json() as { id: string };
+    expect(id).toMatch(UUID);
+    expect(sqlAj(`select status from erp.sales_documents where id = '${id}'`), `no banco: aberto, como hoje (${variante})`).toBe("open");
+  }
+
+  if (declara) {
+    // MUNDO ATUAL: o web da base conhece as rotas; toda resposta de /regras-da-operacao que ele recebeu foi 200.
+    expect(statusRegras.every((st) => st === 200), `a API deste HEAD serve /regras-da-operacao (${statusRegras.join(",")})`).toBe(true);
+  } else {
+    // MUNDO LEGADO: o web da base não conhece as rotas novas e não as pede.
+    expect(pedidosRegras, "o web da base NÃO pede /regras-da-operacao nem /situacao-cliente").toEqual([]);
+  }
+  v.semBloqueio(); v.semErroDeContrato();
+});
+
+/**
  * O WEB DA BASE PERGUNTA `/layout-efetivo`? Medido no COMMIT da base (`.api-anterior.base`, provado pelo caso
  * IDENTIDADE), nunca na tela que o ramo vai medir: o pedido aparece no fonte da página de lançamento de vendas zero ou
  * uma vez — qualquer outro número é detector quebrado e REPROVA. E a medição tem de concordar com a da API da mesma base
