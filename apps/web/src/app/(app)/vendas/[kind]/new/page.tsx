@@ -20,6 +20,10 @@ import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/
 import { ItensDaCentral, Travado } from "@/features/sales/central-vendas-itens";
 import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
 import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
+/* TOP-CONFIG-05 atraso — faixa do cliente em atraso (só com `capacidades.regrasDaOperacao` exata). */
+import { ERRO_CLIENTE_EM_ATRASO } from "@agro/domain";
+import { entendeRegrasDaOperacao, useSituacaoCliente } from "@/features/sales/regras-da-operacao";
+import { FaixaAtrasoCliente, bloqueiaSalvar } from "@/features/sales/faixa-atraso-cliente";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
 
@@ -363,6 +367,19 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   };
   const ajustarPlano = (p: Plan) => { setPlan(p); setAjustado(true); };
   const semClassificacao = classificacaoAtiva && (!h.categoria_financeira_id || !h.centro_custo_id);
+  /*
+   * TOP-CONFIG-05 atraso — SÓ com `capacidades.regrasDaOperacao` EXATA (`entendeRegrasDaOperacao`). Sem ela o hook
+   * fica desligado (nenhum `/situacao-cliente` sai), a faixa não existe e o Salvar é o de hoje. "bloqueia" com atraso
+   * trava o Salvar (no botão E no `submit`); trocar para cliente em dia destrava. O 422 `CLIENTE_EM_ATRASO` do
+   * servidor (a autoridade) aparece no campo Cliente até o cliente mudar.
+   */
+  const regrasAtivo = entendeRegrasDaOperacao(estadoTop);
+  const { situacao: situacaoAtraso } = useSituacaoCliente(kind, h.client_id, top.id, regrasAtivo);
+  const atrasoTravaSalvar = regrasAtivo && bloqueiaSalvar(situacaoAtraso);
+  const [erroAtraso, setErroAtraso] = React.useState<{ cliente: string; mensagem: string } | null>(null);
+  const erroAtrasoDoCliente = erroAtraso && erroAtraso.cliente === h.client_id ? erroAtraso.mensagem : undefined;
+  const aoRecusarAtraso = (e: unknown) => { if (regrasAtivo && e instanceof ApiError && e.code === ERRO_CLIENTE_EM_ATRASO) setErroAtraso({ cliente: h.client_id, mensagem: e.message }); };
+  /* fim TOP-CONFIG-05 atraso */
   /** O corpo do POST — o MESMO objeto que a cobrança do layout confere antes de sair. */
   const corpo = () => ({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
 
@@ -388,13 +405,14 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
      */
     if (!escritaTopConfirmada) return;
     if (semClassificacao) return;
-    if (!layoutAtivo) { create.mutate(corpo()); return; }
+    if (atrasoTravaSalvar) return; /* TOP-CONFIG-05 atraso: a trava também no handler */
+    if (!layoutAtivo) { create.mutate(corpo(), regrasAtivo ? { onError: aoRecusarAtraso } : undefined); return; }
     if (!layout) return;
     setTentouSalvar(true); setErrosServidor({});
     const f = faltando();
     if (f.length) { if (f.some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true); return; }
     create.mutate(corpo(), {
-      onError: (e) => { if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true); } }
+      onError: (e) => { aoRecusarAtraso(e); /* TOP-CONFIG-05 atraso */ if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true); } }
     });
   };
 
@@ -486,7 +504,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
 
   const desenhar = (chave: string): React.ReactNode => {
     switch (chave) {
-      case "client_id": return pesquisa(<Field label={rot(chave, "Cliente")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} labelHint={dica("client_id")} /></Field>, chave);
+      /* TOP-CONFIG-05 atraso: erro do 422 no campo Cliente e a faixa LOGO ABAIXO dele (fora do invólucro, sem espaço reservado quando não há faixa). */
+      case "client_id": return <>{pesquisa(<Field label={rot(chave, "Cliente")} required={req(chave, true)} error={err(chave) ?? erroAtrasoDoCliente} span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} labelHint={dica("client_id")} /></Field>, chave)}{regrasAtivo && <FaixaAtrasoCliente situacao={situacaoAtraso} />}</>;
       case "empresa_id": return pesquisa(<Field label={rot(chave, "Empresa")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>, chave);
       case "document_date": return campo(<Field label={rot(chave, "Data")} required={req(chave, true)} error={err(chave)} span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>, chave);
       case "due_date": return campo(<Field label={rot(chave, "Vencimento")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>, chave);
@@ -609,7 +628,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo, dica: kind === "sales" ? "O que a confirmação faz no estoque e no financeiro depende do Tipo de Operação e é mostrado antes de confirmar." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada." }}
       acoes={<>
         {/* sem "Voltar": como no design, a barra só tem ações do documento; navegar é a barra de abas */}
-        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
+        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || atrasoTravaSalvar /* TOP-CONFIG-05 atraso */ || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
         <DivisorDaBarra />
         <AcaoDaBarra rotulo="Alterar operação" data-testid="top-alterar" onClick={alterarOperacao}><Repeat2 aria-hidden /></AcaoDaBarra>
       </>}

@@ -22,11 +22,11 @@ export const bloqueiaSalvar = (s: SituacaoClienteResposta | null): boolean =>
 export function FaixaAtrasoCliente({ situacao }: PropsFaixaAtrasoCliente): React.ReactElement | null {
   if (!situacao || situacao.politica === "nao_valida" || !situacao.emAtraso) return null;
   if (situacao.politica === "bloqueia") {
-    return <div data-testid="central-faixa-atraso" data-politica="bloqueia" role="alert" className="mt-1 rounded-md border border-red-200 bg-red-50 p-3">
+    return <div data-testid="central-faixa-atraso" data-politica="bloqueia" role="alert" className="rounded-md border border-red-200 bg-red-50 p-3">
       <p className="text-sm text-red-700">{mensagemClienteEmAtraso(situacao)}</p>
     </div>;
   }
-  return <div data-testid="central-faixa-atraso" data-politica="avisa" className="mt-1 rounded-md bg-amber-50 p-3">
+  return <div data-testid="central-faixa-atraso" data-politica="avisa" className="rounded-md bg-amber-50 p-3">
     <p className="text-sm text-amber-700">{textoSituacaoAtraso(situacao)}</p>
   </div>;
 }
