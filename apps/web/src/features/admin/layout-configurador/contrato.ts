@@ -125,10 +125,10 @@ export const TEXTOS = {
   descartarTops: "Descartar as mudanças nas TOPs?",
   topsPendente: "A TOP selecionada ainda não está ligada: clique em Mover → (ou dê duplo clique) e depois em Salvar.",
   novoNaoUsado: "Sem padrão e sem TOP, o layout não estará em uso: a Central continua usando outro.",
-  versaoNova: "Saiu uma versão nova do sistema. Atualize a página para usar a versão nova.",
   visualizarTops: "Visualizar TOPs",
   usarComoPadrao: "Usar como padrão do movimento",
-  abrirNaCentral: "Abrir na Central"
+  abrirNaCentral: "Abrir na Central",
+  salvarAntesDeAbrirCentral: "Salve o layout para ver as mudanças na Central."
 } as const;
 
 /** "1 · Orçamento" — como a TOP aparece no status de uso. */
@@ -149,7 +149,8 @@ export const rotuloDaTop = (t: { codigo: string; nome: string }) => (t.codigo ? 
  *  rascunho sujo ........ config-descartar-dialogo, config-descartar, config-descartar-voltar
  *  status de uso ........ config-status (data-estado="tops"|"padrao"|"nao-usado"|"inativo"), config-status-nao-usado
  *                         (faixa amarela), config-status-visualizar-tops, config-status-usar-padrao, config-status-ativar,
- *                         config-abrir-central (um por TOP; data-top-id), config-salvo-nao-usado (aviso ao salvar)
+ *                         config-abrir-central (um por TOP; data-top-id; botão desligado com rascunho sujo),
+ *                         config-abrir-central-salvar-antes (a frase, uma vez), config-salvo-nao-usado (aviso ao salvar)
  *  visualizar TOPs ...... config-tops-dialogo + os da A3-1c (config-tops, config-tops-disponiveis, config-tops-ligadas,
  *                         config-top-<id>, config-tops-mover, config-tops-remover, config-tops-salvar, config-tops-salvo,
  *                         config-tops-aviso) + config-tops-pendente, config-tops-fechar, config-tops-descartar,
@@ -162,7 +163,7 @@ export const rotuloDaTop = (t: { codigo: string; nome: string }) => (t.codigo ? 
  *                         layout-novo-avancar, layout-novo-voltar, layout-novo-criar
  *  Central .............. central-layout-efetivo (data-origem="ligado"|"padrao_da_familia"|"sistema", data-layout-id),
  *                         central-layout-configurar
- *  versão nova .......... versao-nova, versao-nova-atualizar
+ *  (a faixa de versão nova é da casca: components/layout/versao-nova.tsx)
  */
 
 /**

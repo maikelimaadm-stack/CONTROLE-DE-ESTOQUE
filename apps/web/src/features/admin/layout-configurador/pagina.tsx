@@ -218,7 +218,7 @@ function Configurador({ d, estrutura: gravadaInicial, onSujo, onVisualizarTops }
         {d.padrao && <Badge tone="green" data-testid="config-padrao-selo">Padrão do movimento</Badge>}
       </div>
 
-      <StatusDeUso layoutId={d.id} familia={d.familia} rotuloMovimento={rotuloMovimento} onVisualizarTops={onVisualizarTops} />
+      <StatusDeUso layoutId={d.id} familia={d.familia} rotuloMovimento={rotuloMovimento} onVisualizarTops={onVisualizarTops} sujo={sujo} />
 
       {/* ferramentas da área */}
       <div className="flex min-h-9 flex-wrap items-center gap-2 rounded border border-slate-200 bg-white px-3 py-1 shadow-sm no-print">

@@ -1,7 +1,6 @@
 "use client";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import { TEXTOS } from "@/features/admin/layout-configurador/contrato";
 
 /**
  * AVISO DE VERSÃO NOVA PUBLICADA (VENDAS-A3-1d).
@@ -20,6 +19,12 @@ import { TEXTOS } from "@/features/admin/layout-configurador/contrato";
  * resposta não-OK ou erro de rede não são evidência de versão nova: nada muda. Se a faixa já apareceu, ela
  * fica — uma leitura ruim depois não "desmente" a mudança já vista.
  */
+
+/**
+ * Texto da faixa — mora aqui (um dono só): a casca não depende de tela de administração (VENDAS-A3-1d_R1).
+ * TESTIDS: versao-nova, versao-nova-atualizar.
+ */
+export const TEXTO_VERSAO_NOVA = "Saiu uma versão nova do sistema. Atualize a página para usar a versão nova.";
 
 /** SHA completo de commit (o que os provedores injetam). `unknown` e SHA curto não entram. */
 const SHA_COMPLETO = /^[0-9a-f]{40}$/;
@@ -86,7 +91,7 @@ export function FaixaVersaoNova() {
 
   if (!versaoNova) return null;
   return <div data-testid="versao-nova" role="status" className="flex shrink-0 flex-wrap items-center justify-center gap-x-3 gap-y-1 border-b border-amber-300 bg-amber-100 px-3 py-1.5 text-[12.5px] text-amber-900">
-    <span>{TEXTOS.versaoNova}</span>
+    <span>{TEXTO_VERSAO_NOVA}</span>
     <Button type="button" variant="outline" size="sm" data-testid="versao-nova-atualizar" onClick={() => window.location.reload()}>Atualizar agora</Button>
   </div>;
 }

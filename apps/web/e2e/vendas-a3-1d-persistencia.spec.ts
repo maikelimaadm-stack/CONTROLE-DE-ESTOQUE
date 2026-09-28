@@ -1,6 +1,7 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { login, api, uniq } from "./helpers";
 import { BASE_LAYOUTS, TEXTOS } from "../src/features/admin/layout-configurador/contrato";
+import { TEXTO_VERSAO_NOVA } from "../src/components/layout/versao-nova";
 
 /**
  * VENDAS-A3-1d (decisão 262) — TELA ÚNICA DOS LAYOUTS: o que fica GRAVADO, o que se DESCARTA e a faixa de versão nova.
@@ -307,7 +308,7 @@ test("LD2-W7 — versão nova: sha diferente mostra a faixa e \"Atualizar agora\
   await focarJanela(page);
   await chegouB;
   await expect(faixa).toBeVisible();
-  await expect(faixa).toContainText(TEXTOS.versaoNova);
+  await expect(faixa).toContainText(TEXTO_VERSAO_NOVA);
   await expect(tid(page, "versao-nova-atualizar")).toBeVisible();
   expect(await page.evaluate(() => (window as JanelaMarcada).__a31dAntesDoReload === true), "a faixa nunca recarrega sozinha").toBe(true);
 
