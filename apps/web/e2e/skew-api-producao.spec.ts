@@ -1991,6 +1991,103 @@ test("VENDAS-A3-1 · LD-K1 — sem a capacidade declarada pela base, o web não 
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * TOP-CONFIG-05 · RO-K1 — AS REGRAS DA OPERAÇÃO, COM O WEB DESTE HEAD SOBRE A API DA BASE
+ *
+ * O web desta PR sabe pedir `/regras-da-operacao` e `/situacao-cliente` — mas só com
+ * `capacidades.regrasDaOperacao` declarada com o valor exato. Contra uma API que não a DECLARA, a Central tem de ser
+ * a de hoje, idêntica: NENHUM pedido a `/regras-da-operacao` nem a `/situacao-cliente` (conferido no fio, durante
+ * todo o lançamento) e o documento nasce como hoje (201). Contra uma base que declara, a base serve
+ * `/regras-da-operacao` (200, com a forma do contrato). O mundo é MEDIDO na árvore da base
+ * (`scripts/lib/regras-da-operacao.mjs`), gêmeo exato de LD-K1.
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+function baseDeclaraRegrasDaOperacao(): boolean {
+  const raiz = path.resolve(__dirname, "../../..");
+  const arq = path.join(raiz, ".skew-regras-da-operacao.json");
+  if (!fs.existsSync(arq)) {
+    throw new Error(`decisão das regras da operação ausente (${arq}): rode scripts/skew-regras-da-operacao.mjs antes do skew. `
+      + "Sem ela não há como saber qual ramo provar, e escolher o mais fácil seria certificar o que não se mediu.");
+  }
+  const d = JSON.parse(fs.readFileSync(arq, "utf8")) as { baseSha: string; ocorrencias: number; declara: boolean };
+  expect(d.ocorrencias, "contagem ambígua não decide ramo nenhum — o produtor deveria ter reprovado antes").toBeLessThanOrEqual(1);
+  const declara = d.ocorrencias === 1;
+  expect(declara, "o artefato tem de ser coerente com a própria decisão que carrega").toBe(d.declara);
+  expect(d.baseSha, "a decisão foi medida na base que está servindo").toBe(fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim());
+  expect(process.env.SKEW_BASE_TEM_REGRAS_DA_OPERACAO ?? (declara ? "1" : "0"),
+    "SKEW_BASE_TEM_REGRAS_DA_OPERACAO não bate com a decisão recalculada — alguém fixou a variável por fora").toBe(declara ? "1" : "0");
+  console.log(`[skew] TOP-CONFIG-05 · base ${d.baseSha} ${declara ? "DECLARA" : "NÃO declara"} as regras da operação (ocorrências=${d.ocorrencias})`);
+  return declara;
+}
+
+test("TOP-CONFIG-05 · RO-K1 — sem a capacidade declarada pela base, o web não pede /regras-da-operacao nem /situacao-cliente e o documento nasce como hoje", async ({ page }) => {
+  const v = vigiar(page);
+  // NO FIO, desde antes do login: qualquer pedido às rotas novas durante o lançamento fica registrado.
+  const pedidosRegras: string[] = [];
+  page.on("request", (req) => {
+    const p = new URL(req.url()).pathname;
+    if (p.includes("/regras-da-operacao") || p.includes("/situacao-cliente")) pedidosRegras.push(req.url());
+  });
+  await login(page);
+  const s = await sessao(page);
+  const cabecalhos = { Authorization: `Bearer ${s.token}`, "X-Org-Id": s.orgId!, "Content-Type": "application/json" };
+  const declara = baseDeclaraRegrasDaOperacao();
+  const classificacao = baseDeclaraClassificacao();
+
+  const desc = await page.request.get(`${API}/api/sales/sales/operation-types`, { headers: cabecalhos });
+  expect(desc.status(), "premissa: a base serve a descoberta da TOP de venda").toBe(200);
+  const corpoDesc = await desc.json() as { contractVersion?: number; capacidades?: { regrasDaOperacao?: unknown } };
+  expect(corpoDesc.contractVersion, "a declaração é ADITIVA: o contrato continua o 1").toBe(1);
+
+  const codigo = `RO${Date.now().toString(36).toUpperCase()}`;
+  const criada = await page.request.post(`${API}/api/admin/tipos-operacao`, { headers: cabecalhos, data: { codigo, codigoBase: "vendas.venda", nome: `Skew regras ${codigo}` } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const topId = (await criada.json() as { id: string }).id;
+
+  if (declara) {
+    // MUNDO ATUAL: a árvore da base declara, então o binário tem de declarar o valor exato e servir a rota.
+    expect(corpoDesc.capacidades?.regrasDaOperacao, "a árvore da base declara, então o binário tem de servir").toBe(1);
+    const regras = await page.request.get(`${API}/api/sales/sales/regras-da-operacao?tipo_operacao_id=${topId}`, { headers: cabecalhos });
+    expect(regras.status(), await regras.text()).toBe(200);
+    const corpo = await regras.json() as {
+      formato?: unknown; exigencias?: unknown; condicoesPermitidas?: unknown;
+      clienteEmAtraso?: { politica?: unknown; toleranciaDias?: unknown };
+    };
+    expect(typeof corpo.formato, "forma do contrato: formato numérico").toBe("number");
+    expect(Array.isArray(corpo.exigencias), "forma do contrato: exigencias é lista").toBe(true);
+    expect(corpo.condicoesPermitidas === null || Array.isArray(corpo.condicoesPermitidas),
+      "forma do contrato: condicoesPermitidas é lista ou null").toBe(true);
+    expect(["nao_valida", "avisa", "bloqueia"], "forma do contrato: política conhecida").toContain(corpo.clienteEmAtraso?.politica);
+    expect(typeof corpo.clienteEmAtraso?.toleranciaDias, "forma do contrato: tolerância numérica").toBe("number");
+    v.semBloqueio();
+    return;
+  }
+
+  // MUNDO LEGADO.
+  expect(corpoDesc.capacidades?.regrasDaOperacao, "a base não declara a capacidade").toBeUndefined();
+
+  await abrirLancamentoDeVendas(page, "sales");
+  await escolherTopEContinuar(page, topId);
+  await expect(page.getByTestId("central-vendas"), "premissa: a Central montou").toBeVisible();
+  await pickRef(page, "Cliente", "DEMO");
+  await page.getByRole("button", { name: /Adicionar item/ }).click();
+  await escolherPrimeiroProdutoDaLinha(page);
+  if (classificacao) await preencherClassificacaoFinanceira(page);
+
+  const resposta = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/sales\/sales$/.test(new URL(r.url()).pathname));
+  await page.getByRole("button", { name: "Salvar" }).click();
+  const r = await resposta;
+  expect(r.status(), "a base aceita o que o web enviou — o documento nasce como hoje").toBe(201);
+  const enviado = r.request().postDataJSON() as Record<string, unknown>;
+  expect(enviado["tipo_operacao_id"], "premissa: o corpo capturado é o deste lançamento").toBe(topId);
+  const { id } = await r.json() as { id: string };
+  expect(id).toMatch(UUID);
+  expect(sql(`select status from erp.sales_documents where id = '${id}'`), "no banco: aberto, como hoje").toBe("open");
+
+  expect(pedidosRegras, "o web NÃO pede /regras-da-operacao nem /situacao-cliente a uma API que não declara a capacidade").toEqual([]);
+  v.semBloqueio();
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
  * VENDAS-A3-1b · LB-K1 — O PADRÃO DE CADASTRO, COM O WEB DESTE HEAD SOBRE A API DA BASE
  *
  * A fatia NÃO declara capacidade nova (decisão 260): a compatibilidade vem do DESENHO. A API da A3-1 serve
