@@ -675,6 +675,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo, dica: kind === "sales" ? "O que a confirmação faz no estoque e no financeiro depende do Tipo de Operação e é mostrado antes de confirmar." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada." }}
       acoes={<>
         {/* sem "Voltar": como no design, a barra só tem ações do documento; navegar é a barra de abas */}
+        {/* TOP-CONFIG-05 exigências: `regrasPendente` trava o Salvar como `layoutPendente` (falso sem a capacidade). */}
         <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || regrasPendente || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
         <DivisorDaBarra />
         <AcaoDaBarra rotulo="Alterar operação" data-testid="top-alterar" onClick={alterarOperacao}><Repeat2 aria-hidden /></AcaoDaBarra>
