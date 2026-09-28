@@ -5,8 +5,11 @@ import { api, ApiError } from "@/lib/api";
 import {
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
+  VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
   configuracaoNeutraTopV2,
+  configuracaoNeutraTopV3,
   configuracaoTopParaEdicao,
+  configuracaoTopParaEdicaoV3,
   execucaoDeclaradaTop,
   lerConfiguracaoTop,
   lerMatrizExecucaoTop,
@@ -16,17 +19,20 @@ import {
   type ConfiguracaoTipoOperacao,
   type ConfiguracaoTipoOperacaoV1,
   type ConfiguracaoTipoOperacaoV2,
+  type ConfiguracaoTipoOperacaoV3,
   type ModoConfirmacao,
   type ModoFinanceiro,
   type MomentoAprovacao,
   type MomentoEfeito,
   type PoliticaAlteracao,
   type PoliticaAprovacao,
+  type PoliticaClienteEmAtraso,
   type PoliticaDocumentoSemItens,
   type PoliticaSaldoNegativo,
   type SecaoConfiguracaoTopV2,
   type SuporteExecucaoFamiliaTop
 } from "@agro/domain";
+import type { CondicaoPermitidaEmEdicao } from "./top-condicoes-permitidas";
 
 /**
  * O CONTRATO DE CONFIGURAÇÃO DE TOP VISTO DO LADO DO NAVEGADOR (TOP-CONFIG-03).
@@ -88,12 +94,26 @@ export interface CapacidadesExecucaoTop {
   matriz: SuporteExecucaoFamiliaTop[];
 }
 
+/**
+ * O que o servidor declara sobre as RESTRIÇÕES DA OPERAÇÃO (TOP-CONFIG-05): se ele grava o formato 3
+ * (exigências novas, cliente em atraso, fiscal de configuração) e a lista de condições permitidas.
+ * Ausente = servidor anterior: `{ suportado: false, versaoSchema: 0 }`, e o editor é exatamente o de hoje.
+ */
+export interface CapacidadesRestricoesTop {
+  suportado: boolean;
+  versaoSchema: number;
+}
+
 export interface CapacidadesTop {
   contractVersion: typeof CONTRATO_CAPACIDADES_TOP;
   configuracao: { versaoSchema: number; secoes: string[] };
   destinos: CapacidadesDestinosTop;
   execucao: CapacidadesExecucaoTop;
+  restricoes: CapacidadesRestricoesTop;
 }
+
+/** Servidor sem restrições: nada do formato 3 aparece e nada dele é enviado. */
+const SEM_RESTRICOES: CapacidadesRestricoesTop = { suportado: false, versaoSchema: 0 };
 
 /** Servidor sem execução configurada: nada é executável e nada do bloco é enviado. */
 const SEM_EXECUCAO: CapacidadesExecucaoTop = { suportado: false, runtimeHabilitado: false, matriz: [] };
@@ -140,11 +160,25 @@ export function lerCapacidadesTop(bruto: unknown): CapacidadesTop | null {
     }
   }
 
+  /**
+   * O BLOCO `restricoes` (TOP-CONFIG-05) SEGUE A MESMA RÉGUA: ausente = servidor anterior (editor de hoje,
+   * formato 2, nenhuma chave nova no fio); presente e malformado = contrato desconhecido, o corpo inteiro NEGA.
+   * Um `versaoSchema` que esta tela não escreve não é malformação: `podeConfigurarRestricoes` o recusa.
+   */
+  let restricoes = SEM_RESTRICOES;
+  if (bruto.restricoes !== undefined) {
+    const r = bruto.restricoes;
+    if (!ehObjeto(r) || typeof r.suportado !== "boolean") return null;
+    if (typeof r.versaoSchema !== "number" || !Number.isInteger(r.versaoSchema) || r.versaoSchema < 0) return null;
+    restricoes = { suportado: r.suportado, versaoSchema: r.versaoSchema };
+  }
+
   return {
     contractVersion: CONTRATO_CAPACIDADES_TOP,
     configuracao: { versaoSchema: c.versaoSchema, secoes: c.secoes as string[] },
     destinos,
-    execucao
+    execucao,
+    restricoes
   };
 }
 
@@ -203,6 +237,14 @@ export const podeConfigurar = (
 /** Os destinos podem ser ENVIADOS? Exige contrato confirmado E o bloco de destinos declarado pela API. */
 export const podeConfigurarDestinos = (e: EstadoCapacidadesTop): boolean =>
   podeConfigurar(e) && e.capacidades.destinos.suportado;
+
+/**
+ * As restrições (formato 3 + condições permitidas) podem ser EDITADAS e ENVIADAS? Exige contrato confirmado,
+ * o bloco declarado E o formato que esta tela escreve (3). Qualquer outra resposta = editor de hoje.
+ */
+export const podeConfigurarRestricoes = (e: EstadoCapacidadesTop): boolean =>
+  podeConfigurar(e) && e.capacidades.restricoes.suportado
+  && e.capacidades.restricoes.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
 
 /** Quantos destinos esta API aceita. Zero quando ela não os suporta — e zero bloqueia a inclusão. */
 export const limiteDeDestinos = (e: EstadoCapacidadesTop): number =>
@@ -320,7 +362,15 @@ export interface DetalheTop {
    * diferença entre eles decide se um documento converte ou não.
    */
   destinosConfigurados: boolean | null;
+  /**
+   * As condições de pagamento permitidas da versão atual (TOP-CONFIG-05). Vazia = sem restrição (todas).
+   * `null` = o servidor não entregou a lista (API anterior) — NÃO é "vazia": a tela não a reescreve.
+   */
+  condicoesPermitidas: CondicaoPermitidaEmEdicao[] | null;
 }
+
+const ehCondicaoPermitida = (v: unknown): v is CondicaoPermitidaEmEdicao =>
+  ehObjeto(v) && ehTexto(v.id) && ehTexto(v.codigo) && ehTexto(v.nome);
 
 export function lerDetalheTop(bruto: unknown): DetalheTop | null {
   if (!ehObjeto(bruto)) return null;
@@ -332,6 +382,10 @@ export function lerDetalheTop(bruto: unknown): DetalheTop | null {
   // AUSENTE é tolerado (API anterior) e vira `null`; PRESENTE com outro tipo é contrato desconhecido e
   // NEGA o corpo inteiro — a mesma régua do bloco `destinos` das capacidades.
   if (bruto.destinosConfigurados !== undefined && typeof bruto.destinosConfigurados !== "boolean") return null;
+  // Mesma régua: ausente = `null` (API anterior); presente com item malformado NEGA o corpo inteiro —
+  // esconder uma condição que o servidor declarou seria descarte silencioso do lado de cá.
+  if (bruto.condicoesPermitidas !== undefined
+    && (!Array.isArray(bruto.condicoesPermitidas) || !bruto.condicoesPermitidas.every(ehCondicaoPermitida))) return null;
   return {
     id: bruto.id,
     codigo: bruto.codigo,
@@ -344,7 +398,10 @@ export function lerDetalheTop(bruto: unknown): DetalheTop | null {
     revisao: bruto.revisao,
     configuracao: bruto.configuracao === undefined ? null : lerConfiguracaoDoServidor(bruto.configuracao),
     destinos: bruto.destinos === undefined ? null : lerDestinosConfigurados(bruto.destinos),
-    destinosConfigurados: bruto.destinosConfigurados === undefined ? null : bruto.destinosConfigurados
+    destinosConfigurados: bruto.destinosConfigurados === undefined ? null : bruto.destinosConfigurados,
+    condicoesPermitidas: bruto.condicoesPermitidas === undefined
+      ? null
+      : (bruto.condicoesPermitidas as CondicaoPermitidaEmEdicao[]).map((c) => ({ id: c.id, codigo: c.codigo, nome: c.nome }))
   };
 }
 
@@ -425,7 +482,9 @@ export const ROTULOS_TOP = {
     sempre: "Sempre",
     por_valor: "A partir de um valor"
   } satisfies Record<PoliticaAprovacao, string>,
-  momentoAprovacao: { antes_da_confirmacao: "Antes da confirmação" } satisfies Record<MomentoAprovacao, string>
+  momentoAprovacao: { antes_da_confirmacao: "Antes da confirmação" } satisfies Record<MomentoAprovacao, string>,
+  // TOP-CONFIG-05 — mesma dívida, mesmo destino (`ENUM_LABELS`, domínio `top_cliente_em_atraso`).
+  clienteEmAtraso: { nao_valida: "Não valida", avisa: "Avisa", bloqueia: "Bloqueia" } satisfies Record<PoliticaClienteEmAtraso, string>
 } as const;
 
 /** Rótulo de seção para o resumo do histórico. Mesma dívida, mesmo destino. */
@@ -466,6 +525,25 @@ export interface RascunhoTop {
    * cria versão (o servidor compara os dois formatos pelo significado). Ler não regrava nada.
    */
   configuracao: ConfiguracaoTipoOperacaoV2;
+  /**
+   * TOP-CONFIG-05 — o rascunho no FORMATO 3, presente SÓ quando o servidor declara restrições
+   * (`podeConfigurarRestricoes`). Ausente = editor de hoje: `configuracao` (formato 2) é a única verdade e
+   * nenhuma chave nova existe na tela nem no fio. Presente, ele é a verdade da configuração e `configuracao`
+   * não é usada para o envio.
+   */
+  configuracaoV3?: ConfiguracaoTipoOperacaoV3;
+  /** As condições permitidas em edição (só com restrições). Vazia = todas as condições. */
+  condicoesPermitidas?: CondicaoPermitidaEmEdicao[];
+  /**
+   * ESTA EDIÇÃO DECLARA A LISTA DE CONDIÇÕES? Decide se `condicoesPermitidas` VAI NO CORPO (o contrato do
+   * servidor é a PRESENÇA DA CHAVE: ausente = preservar; presente, mesmo vazia = declarar).
+   *
+   * Régua escolhida: nasce `true` quando a lista foi LIDA do servidor (inclusive vazia — reenviar o mesmo
+   * conjunto é no-op no servidor) e no cadastro novo (POST sem a chave = sem lista, o mesmo que `[]`).
+   * Nasce `false` só quando o detalhe NÃO trouxe a lista: aí a chave é omitida (preservar) e a lista fica
+   * bloqueada na tela, porque reescrever o que não foi lido apagaria condições que ninguém viu.
+   */
+  condicoesDeclaradas?: boolean;
   destinos: DestinoEmEdicao[];
   /**
    * ESTA EDIÇÃO DECLARA A POLÍTICA DE PRÓXIMAS OPERAÇÕES?
@@ -493,6 +571,11 @@ export function configuracaoInicial(c: ConfiguracaoDoServidor | null): Configura
   return c && c.suportada ? configuracaoTopParaEdicao(c.valor) : configuracaoNeutraTopV2();
 }
 
+/** A configuração inicial do editor COM restrições: formato 3 (v1/v2 promovidos com as chaves novas no neutro). */
+export function configuracaoInicialV3(c: ConfiguracaoDoServidor | null): ConfiguracaoTipoOperacaoV3 {
+  return c && c.suportada ? configuracaoTopParaEdicaoV3(c.valor) : configuracaoNeutraTopV3();
+}
+
 /**
  * A configuração no formato que ESTE servidor grava — ou `null` quando não há como enviá-la sem mudar o
  * que ela significa.
@@ -510,6 +593,52 @@ export function configuracaoParaEnvio(c: ConfiguracaoTipoOperacaoV2, execucaoSup
   const { execucao: _execucao, versaoSchema: _versao, ...secoes } = c;
   const v1: ConfiguracaoTipoOperacaoV1 = { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP, ...secoes };
   return v1;
+}
+
+/**
+ * Aplica uma mudança escrita para o FORMATO 2 (as seções de hoje) sobre o rascunho no FORMATO 3, sem perder
+ * as chaves novas. É o que deixa os campos de hoje funcionarem iguais nos dois editores: eles continuam
+ * mexendo na vista formato 2, e as chaves novas do formato 3 são reaplicadas por cima. A normalização do
+ * domínio vem depois, em quem chama.
+ */
+export function aplicarNoFormato3(
+  v3: ConfiguracaoTipoOperacaoV3,
+  f: (c: ConfiguracaoTipoOperacaoV2) => ConfiguracaoTipoOperacaoV2
+): ConfiguracaoTipoOperacaoV3 {
+  const novo = f(configuracaoTopParaEdicao(v3));
+  const { exigeTransportadora } = v3.geral;
+  const { clienteEmAtraso, toleranciaAtrasoDias } = v3.financeiro;
+  const { modeloDocumento, finalidade, naturezaOperacao, cfopDentroEstado, cfopForaEstado, cfopExterior } = v3.fiscal;
+  return {
+    ...novo,
+    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+    geral: { ...novo.geral, exigeTransportadora },
+    financeiro: { ...novo.financeiro, clienteEmAtraso, toleranciaAtrasoDias },
+    fiscal: { ...novo.fiscal, modeloDocumento, finalidade, naturezaOperacao, cfopDentroEstado, cfopForaEstado, cfopExterior }
+  };
+}
+
+/**
+ * A configuração que a gravação ENVIA, decidida pelo rascunho (TOP-CONFIG-05).
+ *
+ *   · Com restrições (`configuracaoV3` presente): o formato 3, como está.
+ *   · Sem restrições e a versão VIGENTE já no formato 3: `null` — a mesma régua da execução. Mandar o
+ *     formato 2 por cima apagaria as chaves novas (o servidor recusa o retrocesso de formato de todo jeito).
+ *   · Sem restrições, vigente no formato 1/2: o caminho de hoje, intocado (`configuracaoParaEnvio`).
+ */
+export function configuracaoDoRascunhoParaEnvio(
+  r: RascunhoTop,
+  execucaoSuportada: boolean,
+  vigenteNoFormato3: boolean
+): ConfiguracaoTipoOperacao | null {
+  if (r.configuracaoV3) {
+    // Mesma régua de `configuracaoParaEnvio`: sem execução no servidor, efeito configurado não tem envio honesto.
+    const e = execucaoDeclaradaTop(r.configuracaoV3);
+    if (!execucaoSuportada && (e.estoque !== "legado" || e.financeiro !== "legado")) return null;
+    return r.configuracaoV3;
+  }
+  if (vigenteNoFormato3) return null;
+  return configuracaoParaEnvio(r.configuracao, execucaoSuportada);
 }
 
 /**
@@ -542,8 +671,32 @@ export function assinaturaRascunho(r: RascunhoTop): string {
     // DECLARAR É CONTEÚDO, e por isso entra aqui. Sair da tela depois de declarar "esta operação não gera
     // próxima operação" — sem nenhum destino na lista — é sair com alteração pendente: a lista continua
     // vazia, mas o significado dela mudou, e é justamente essa mudança que a gravação registra.
-    destinosDeclarados: r.destinosDeclarados
+    destinosDeclarados: r.destinosDeclarados,
+    // TOP-CONFIG-05: só com restrições (sem elas as chaves ficam AUSENTES e a assinatura é a de hoje).
+    // Da lista de condições só a identidade e a ORDEM viajam; código e nome são apresentação.
+    ...(r.configuracaoV3 ? { configuracaoV3: r.configuracaoV3 } : {}),
+    ...(r.condicoesPermitidas ? { condicoesPermitidas: r.condicoesPermitidas.map((c) => c.id) } : {}),
+    ...(r.condicoesDeclaradas !== undefined ? { condicoesDeclaradas: r.condicoesDeclaradas } : {})
   });
+}
+
+/**
+ * OS ERROS DE CAMPO DE UM 422 DO SERVIDOR, como mapa caminho → mensagem (TOP-CONFIG-05).
+ *
+ * `TIPO_OPERACAO_CONFIGURACAO_INVALIDA` e `TIPO_OPERACAO_CONDICOES_INVALIDAS` trazem `details.recusas`
+ * `[{caminho, mensagem}]`. Qualquer outra forma devolve `{}` e o erro segue para o `ErrorState` geral —
+ * item malformado é ignorado só neste mapa, nunca o erro inteiro.
+ */
+export const CODIGOS_ERRO_DE_CAMPO_TOP = ["TIPO_OPERACAO_CONFIGURACAO_INVALIDA", "TIPO_OPERACAO_CONDICOES_INVALIDAS"] as const;
+export function errosDeCampoDoServidor(e: unknown): Record<string, string> {
+  if (!(e instanceof ApiError) || !(CODIGOS_ERRO_DE_CAMPO_TOP as readonly string[]).includes(e.code)) return {};
+  const d = e.details;
+  if (!ehObjeto(d) || !Array.isArray(d.recusas)) return {};
+  const mapa: Record<string, string> = {};
+  for (const r of d.recusas) {
+    if (ehObjeto(r) && ehTexto(r.caminho) && ehTexto(r.mensagem) && !(r.caminho in mapa)) mapa[r.caminho] = r.mensagem;
+  }
+  return mapa;
 }
 
 /**
