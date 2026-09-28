@@ -6,10 +6,12 @@ import { dateTimeBR } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
 import { Badge, Button, Dialog, EmptyState, ErrorState, LoadingState } from "@/components/ui";
 import {
-  ENUM_LABELS, SECOES_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP, execucaoDeclaradaTop,
-  type ConfiguracaoTipoOperacao, type SecaoConfiguracaoTopV2
+  ENUM_LABELS, SECOES_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+  execucaoDeclaradaTop, restricoesExecutamTop,
+  type ConfiguracaoTipoOperacao, type PoliticaClienteEmAtraso, type SecaoConfiguracaoTopV2
 } from "@agro/domain";
 import { ROTULOS_SECAO_TOP, ROTULOS_TOP, lerConfiguracaoDoServidor, type ConfiguracaoDoServidor } from "./top-contrato";
+import { ROTULOS_FINALIDADE_DOCUMENTO, ROTULOS_MODELO_DOCUMENTO } from "./top-fiscal-formato3";
 
 /**
  * O HISTÓRICO DE VERSÕES — LEITURA, E SÓ LEITURA (TOP-CONFIG-03).
@@ -31,6 +33,9 @@ import { ROTULOS_SECAO_TOP, ROTULOS_TOP, lerConfiguracaoDoServidor, type Configu
 
 interface DestinoDaVersao { tipoOperacaoId: string; ordem: number; codigo: string; nome: string; familiaRotulo: string }
 
+/** Uma condição de pagamento permitida por aquela versão (TOP-CONFIG-05), como o servidor a entrega. */
+interface CondicaoDaVersao { id: string; codigo: string; nome: string }
+
 interface VersaoTop {
   versao: number;
   nome: string;
@@ -51,6 +56,14 @@ interface VersaoTop {
    * e as duas explicam desfechos OPOSTOS para uma conversão daquela época.
    */
   destinosConfigurados: boolean | null;
+  /**
+   * AS CONDIÇÕES DE PAGAMENTO QUE AQUELA VERSÃO PERMITIA (TOP-CONFIG-05).
+   *
+   * `[]` = sem restrição ("Todas as condições") · `null` = o servidor não informou (servidor anterior ao
+   * formato 3, ou campo ilegível) — e aí a linha NÃO aparece: dizer "todas" sobre o que não se sabe seria
+   * afirmar uma regra que talvez não vigorasse.
+   */
+  condicoesPermitidas: CondicaoDaVersao[] | null;
 }
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> =>
@@ -60,6 +73,9 @@ const ehTexto = (v: unknown): v is string => typeof v === "string";
 const ehDestinoDaVersao = (v: unknown): v is DestinoDaVersao =>
   ehObjeto(v) && ehTexto(v.tipoOperacaoId) && typeof v.ordem === "number"
   && ehTexto(v.codigo) && ehTexto(v.nome) && ehTexto(v.familiaRotulo);
+
+const ehCondicaoDaVersao = (v: unknown): v is CondicaoDaVersao =>
+  ehObjeto(v) && ehTexto(v.id) && ehTexto(v.codigo) && ehTexto(v.nome);
 
 /** Conferência campo a campo: o corpo do 200 é `unknown` até aqui, e o que não se reconhece vira `null`. */
 function lerVersao(bruto: unknown): VersaoTop | null {
@@ -83,7 +99,12 @@ function lerVersao(bruto: unknown): VersaoTop | null {
     // Cada campo do histórico degrada SOZINHO para `null` — a mesma régua de `destinos` e
     // `secoesAlteradas` acima. Aqui `null` vira uma frase que diz que não se sabe; nunca `false`, que
     // afirmaria "ninguém declarou" sobre uma versão que talvez tenha declarado.
-    destinosConfigurados: typeof bruto.destinosConfigurados === "boolean" ? bruto.destinosConfigurados : null
+    destinosConfigurados: typeof bruto.destinosConfigurados === "boolean" ? bruto.destinosConfigurados : null,
+    // TOLERANTE: campo novo (TOP-CONFIG-05). Ausente ou ilegível degrada SOZINHO para `null` — nunca derruba a
+    // versão inteira, porque um servidor anterior simplesmente não o publica.
+    condicoesPermitidas: Array.isArray(bruto.condicoesPermitidas) && bruto.condicoesPermitidas.every(ehCondicaoDaVersao)
+      ? [...(bruto.condicoesPermitidas as CondicaoDaVersao[])]
+      : null
   };
 }
 
@@ -140,11 +161,30 @@ function LinhaDeVersao({ versao }: { versao: VersaoTop }) {
         {versao.configuracao ? versao.configuracao.versaoSchema : COPY.naoInformado}
       </p>
       <p className="mt-0.5"><span className="text-slate-400">Seções alteradas: </span>{resumoDeSecoes(versao.secoesAlteradas)}</p>
+      {mostraCondicoes(versao) && versao.condicoesPermitidas !== null && <p className="mt-0.5" data-testid={`top-historico-condicoes-${versao.versao}`}>
+        <span className="text-slate-400">Condições de pagamento permitidas: </span>
+        {versao.condicoesPermitidas.length === 0
+          ? "Todas as condições"
+          : versao.condicoesPermitidas.map((c) => `${c.codigo} — ${c.nome}`).join(", ")}
+      </p>}
     </div>
     {aberto && <div className="border-t bg-slate-50 px-3 py-2">
       <DetalheDaVersao versao={versao} />
     </div>}
   </li>;
+}
+
+/**
+ * A linha das condições permitidas aparece quando o servidor as informou (`!== null`) E a versão é do formato 3 —
+ * o único em que a restrição existe. Versões 1/2 aparecem como antes: "Todas as condições" sobre uma versão em que
+ * a regra nem existia seria registro inventado. Lista NÃO vazia aparece sempre (é fato gravado, seja qual for o
+ * formato que esta tela consegue ler).
+ */
+function mostraCondicoes(versao: VersaoTop): boolean {
+  const lista = versao.condicoesPermitidas;
+  if (lista === null) return false;
+  if (lista.length > 0) return true;
+  return versao.configuracao !== null && versao.configuracao.versaoSchema >= VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
 }
 
 /**
@@ -217,11 +257,22 @@ function PoliticaDaVersao({ versao }: { versao: VersaoTop }) {
 
 const simNao = (v: boolean) => (v ? "Sim" : "Não");
 
+/**
+ * Rótulo da política de cliente em atraso (TOP-CONFIG-05). O registro de rótulos do domínio não tem este enum;
+ * os VALORES vêm do domínio e `satisfies` confere que nenhum ficou sem tradução. Modelo e finalidade do documento
+ * usam a tradução do próprio campo fiscal (`top-fiscal-formato3`).
+ */
+const ROTULOS_CLIENTE_EM_ATRASO = { nao_valida: "Não valida", avisa: "Avisa", bloqueia: "Bloqueia" } satisfies Record<PoliticaClienteEmAtraso, string>;
+const textoOuTraco = (v: string) => (v.length > 0 ? v : "—");
+
 /** As mesmas seções do editor, sem nenhum controle: aqui não se altera nada. */
 function SecoesSomenteLeitura({ valor }: { valor: ConfiguracaoTipoOperacao }) {
   // A EXECUÇÃO DAQUELA VERSÃO, lida pela única função que a interpreta. Uma versão do formato 1 é legado
   // nos dois efeitos, seja o que for que as seções dela declarem — e a tela diz isso com todas as letras.
   const execucao = execucaoDeclaradaTop(valor);
+  // AS CHAVES DO FORMATO 3 SÓ EXISTEM NA VERSÃO GRAVADA NO FORMATO 3. Versões 1/2 aparecem como sempre
+  // apareceram: mostrar "Exigir transportadora: Não" numa versão que nem tinha a chave seria inventar registro.
+  const v3 = restricoesExecutamTop(valor) ? valor : null;
   const blocos: { chave: SecaoConfiguracaoTopV2; itens: [string, string][]; nota?: string }[] = [
     { chave: "geral", itens: [
       ["Confirmação", ROTULOS_TOP.confirmacao[valor.geral.confirmacao]],
@@ -229,7 +280,8 @@ function SecoesSomenteLeitura({ valor }: { valor: ConfiguracaoTipoOperacao }) {
       ["Documento sem itens", ROTULOS_TOP.documentoSemItens[valor.geral.documentoSemItens]],
       ["Exigir parceiro", simNao(valor.geral.exigeParceiro)],
       ["Exigir centro de resultado", simNao(valor.geral.exigeCentroResultado)],
-      ["Exigir observação", simNao(valor.geral.exigeObservacao)]
+      ["Exigir observação", simNao(valor.geral.exigeObservacao)],
+      ...(v3 ? [["Exigir transportadora", simNao(v3.geral.exigeTransportadora)] as [string, string]] : [])
     ] },
     { chave: "estoque", itens: [
       ["Movimentação", ROTULOS_TOP.estoqueAtualizacao[valor.estoque.atualizacao]],
@@ -243,14 +295,26 @@ function SecoesSomenteLeitura({ valor }: { valor: ConfiguracaoTipoOperacao }) {
       ["Momento do efeito", ROTULOS_TOP.momentoEfeito[valor.financeiro.momento]],
       ["Exigir forma de pagamento", simNao(valor.financeiro.exigeFormaPagamento)],
       ["Exigir vencimento", simNao(valor.financeiro.exigeVencimento)],
-      ["Exigir centro de resultado", simNao(valor.financeiro.exigeCentroResultado)]
+      ["Exigir centro de resultado", simNao(valor.financeiro.exigeCentroResultado)],
+      ...(v3 ? [
+        ["Cliente em atraso", ROTULOS_CLIENTE_EM_ATRASO[v3.financeiro.clienteEmAtraso]],
+        ["Tolerância de atraso (dias)", String(v3.financeiro.toleranciaAtrasoDias)]
+      ] as [string, string][] : [])
     ] },
     { chave: "fiscal", itens: [
       ["Relevante para o fiscal", simNao(valor.fiscal.habilitado)],
       ["Exigir documento fiscal", simNao(valor.fiscal.exigeDocumentoFiscal)],
       ["Exigir natureza da operação", simNao(valor.fiscal.exigeNaturezaOperacao)],
       ["Exigir regra tributária", simNao(valor.fiscal.exigeRegraTributaria)],
-      ["Cálculo de tributos", ROTULOS_TOP.calculoTributario[valor.fiscal.calculoTributario]]
+      ["Cálculo de tributos", ROTULOS_TOP.calculoTributario[valor.fiscal.calculoTributario]],
+      ...(v3 ? [
+        ["Modelo do documento", ROTULOS_MODELO_DOCUMENTO[v3.fiscal.modeloDocumento]],
+        ["Finalidade", ROTULOS_FINALIDADE_DOCUMENTO[v3.fiscal.finalidade]],
+        ["Natureza da operação", textoOuTraco(v3.fiscal.naturezaOperacao)],
+        ["CFOP dentro do estado", textoOuTraco(v3.fiscal.cfopDentroEstado)],
+        ["CFOP fora do estado", textoOuTraco(v3.fiscal.cfopForaEstado)],
+        ["CFOP exterior", textoOuTraco(v3.fiscal.cfopExterior)]
+      ] as [string, string][] : [])
     ] },
     { chave: "aprovacao", itens: [
       ["Critério de aprovação", ROTULOS_TOP.aprovacaoPolitica[valor.aprovacao.politica]],
