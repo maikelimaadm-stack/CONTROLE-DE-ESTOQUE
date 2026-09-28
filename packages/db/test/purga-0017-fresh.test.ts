@@ -192,8 +192,10 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // organização `erp.condicoes_pagamento` e acrescenta duas colunas (anulável / com default) a
     // `erp.sales_documents` — fora do recorte que a purga lê; a posição 17 segue intacta. A VENDAS-A3-1 é a décima
     // sexta: a 0032 cria os cadastros de organização `erp.layouts_documento` e `erp.layout_documento_tops` —
-    // tabelas novas, fora do recorte que a purga lê; a posição 17 segue intacta.
-    expect(noDisco.length, "32 migrations no repositório").toBe(32);
+    // tabelas novas, fora do recorte que a purga lê; a posição 17 segue intacta. A TOP-CONFIG-05 é a décima sétima:
+    // a 0033 cria `erp.tipos_operacao_versao_condicoes` (tabela nova, vazia) e a função `erp.situacao_atraso_cliente` —
+    // fora do recorte que a purga lê; a posição 17 segue intacta.
+    expect(noDisco.length, "33 migrations no repositório").toBe(33);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -210,6 +212,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[29], "e a 30ª são os ajustes do Parceiro (CADASTROS AJUSTES 01)").toBe("0030_cadastros_ajustes_01.sql");
     expect(noDisco[30], "e a 31ª é a condição de pagamento (VENDAS-A4)").toBe("0031_vendas_condicao_pagamento.sql");
     expect(noDisco[31], "e a 32ª é o layout do documento por TOP (VENDAS-A3-1)").toBe("0032_layout_documento.sql");
+    expect(noDisco[32], "e a 33ª são as restrições da TOP no formato 3 (TOP-CONFIG-05)").toBe("0033_tipo_operacao_restricoes.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {
