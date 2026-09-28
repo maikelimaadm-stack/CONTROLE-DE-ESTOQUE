@@ -12,6 +12,9 @@ import { postStock, reverseStock } from "../services/stock-core.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 import { layoutEfetivo, conferirPadroesRegistro, type RegistroPadraoConferido } from "../lib/layout-documento.js";
+// TOP-CONFIG-05 (A4): conversão conferida contra a TOP DESTINO, `/regras-da-operacao` e a capacidade nova.
+import { CAPACIDADE_REGRAS_DA_OPERACAO, camposExigidosTop, type RegrasDaOperacaoResposta } from "@agro/domain";
+import { regrasDaTopAtual as regrasDaTopAtualA4, cobrarRegrasDaOperacao as cobrarRegrasDaOperacaoA4 } from "./vendas-regras-operacao.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -893,10 +896,32 @@ export default async function salesRoutes(app: FastifyInstance) {
         // ADITIVO, sem mexer em `contractVersion` (a web anterior compara a versão EXATA e bloquearia a
         // escrita): declara que esta API entende a classificação financeira do documento (VENDAS-A1). A web
         // nova só mostra e envia os campos com esta declaração — a API anterior os descartaria em silêncio.
-        capacidades: { classificacaoFinanceira: CAPACIDADE_CLASSIFICACAO_FINANCEIRA, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO },
+        capacidades: { classificacaoFinanceira: CAPACIDADE_CLASSIFICACAO_FINANCEIRA, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO, regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
         items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao }))
+      };
+    }));
+    /**
+     * REGRAS DA OPERAÇÃO da TOP escolhida (TOP-CONFIG-05, decisão 263) — MESMA permissão, porta e 404 de
+     * `/layout-efetivo` (a resolução da TOP é a mesma consulta): inexistente, de outro tenant, de outra família,
+     * inativa, excluída, id malformado e parâmetro AUSENTE caem na MESMA 404. Sem TOP não há regra a perguntar.
+     * Só o formato 3 executa restrições; formato 1/2 responde o NEUTRO (nada exigido, toda condição, não valida).
+     */
+    app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${perm}.create`, async (ctx): Promise<RegrasDaOperacaoResposta> => {
+      const familia = familiaDaVariante(kind);
+      const q = (req.query ?? {}) as Record<string, unknown>;
+      const bruto = q["tipo_operacao_id"];
+      if (typeof bruto !== "string" || !FORMA_UUID.test(bruto)) throw notFound("Tipo de operação");
+      const v = await ctx.tx.query("select 1 from erp.tipos_operacao where id=$1 and organization_id=$2 and codigo_base=$3 and ativo and excluido_em is null", [bruto, ctx.orgId, familia]);
+      if (!v.rowCount) throw notFound("Tipo de operação");
+      const { formato, regras } = await regrasDaTopAtualA4(ctx, bruto);
+      if (!regras) return { formato, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 } };
+      return {
+        formato,
+        exigencias: camposExigidosTop(regras.config),
+        condicoesPermitidas: regras.condicoesPermitidas,
+        clienteEmAtraso: { politica: regras.config.financeiro.clienteEmAtraso, toleranciaDias: regras.config.financeiro.toleranciaAtrasoDias },
       };
     }));
     /**
@@ -1258,6 +1283,21 @@ export default async function salesRoutes(app: FastifyInstance) {
       // A condição da ORIGEM passa pela MESMA porta: se deixou de valer, a conversão inteira é recusada antes
       // de qualquer efeito (fonte aberta, zero derivado, zero auditoria).
       const condicao = { linha: origemCond.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, origemCond.condicao_pagamento_id) : null, gravar: true };
+      /*
+       * REGRAS DA OPERAÇÃO DA TOP DESTINO (TOP-CONFIG-05, decisão 263). O documento GERADO é conferido contra a
+       * versão ATUAL da TOP destino — a mesma que `writeDoc` congela nele — com a), b), c) na ordem fixa e os
+       * MESMOS códigos da criação. ANTES de `writeDoc`: um throw aqui desfaz a transação inteira (fonte `open`,
+       * zero derivado, zero auditoria). Destino sem TOP ou TOP formato 1/2 → `regras` null → nada muda.
+       * Pedido cuja condição a TOP de venda não permite NÃO converte (declarado na decisão 263).
+       */
+      if (topDestino) {
+        const { regras } = await regrasDaTopAtualA4(ctx, topDestino.tipoOperacaoId);
+        await cobrarRegrasDaOperacaoA4(ctx, regras, {
+          client_id: body.client_id ?? null, transporter_id: body.transporter_id ?? null, note: body.note ?? null,
+          centro_custo_id: classificacao?.centroCustoId ?? null,
+          condicao_pagamento_id: origemCond.condicao_pagamento_id,
+        }, { conferirCondicao: true, conferirAtraso: true });
+      }
       const r = await writeDoc(ctx, destino, body, undefined, id, topDestino, classificacao, condicao);
       await ctx.tx.query("update erp.sales_documents set status='converted', updated_at=now() where id=$1", [id]);
       await audit(ctx.tx, ctx, "sales_documents", id, "convert", topDestino ? { to: r.id, tipoOperacaoDestinoId: topDestino.tipoOperacaoId, tipoOperacaoDestinoVersaoId: topDestino.tipoOperacaoVersaoId } : { to: r.id });
