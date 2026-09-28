@@ -12,6 +12,7 @@ import { postStock, reverseStock } from "../services/stock-core.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 import { layoutEfetivo, conferirPadroesRegistro, type RegistroPadraoConferido } from "../lib/layout-documento.js";
+import { regrasDaVersaoTop, cobrarRegrasDaOperacao } from "./vendas-regras-operacao.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -942,7 +943,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      * faria a mesma chamada significar coisas diferentes conforme a configuração do dia. A web NOVA escolhe
      * explicitamente (podendo PRÉ-SELECIONAR o padrão, com o valor visível).
      */
-    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; await cobrarLayoutAoSalvar(ctx, kind, d); const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
+    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; await cobrarRegrasDaOperacao(ctx, top ? await regrasDaVersaoTop(ctx, top.tipoOperacaoVersaoId) : null, d, { conferirCondicao: true, conferirAtraso: true }); await cobrarLayoutAoSalvar(ctx, kind, d); const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
     /**
      * EDIÇÃO. A regra do snapshot está toda nas três linhas de `top` abaixo:
      *
@@ -961,7 +962,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       // — que não reavalia status nenhum. O resultado é um documento `confirmed` cujos itens e total foram
       // TROCADOS depois de o estoque ter sido baixado e os títulos gerados pelo conjunto antigo: a venda
       // diz uma coisa e o ledger diz outra, sem que nenhuma das duas respostas seja erro.
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; client_id: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null };
       if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
       const d = docSchema.parse(req.body);
       /**
@@ -994,11 +995,19 @@ export default async function salesRoutes(app: FastifyInstance) {
       const classificacao = await classificacaoDaEdicao(ctx, req.body, cur);
       const condicao = await condicaoDaEdicao(ctx, req.body, cur);
       // O documento COMO FICARÁ: campos de três estados ausentes preservam o gravado (e contam como preenchidos).
-      await cobrarLayoutAoSalvar(ctx, kind, { ...d,
+      const comoFicara = { ...d,
         tipo_operacao_id: top ? top.tipoOperacaoId : cur.tipo_operacao_id,
         categoria_financeira_id: classificacao === undefined ? cur.categoria_financeira_id : classificacao?.categoriaFinanceiraId ?? null,
         centro_custo_id: classificacao === undefined ? cur.centro_custo_id : classificacao?.centroCustoId ?? null,
-        condicao_pagamento_id: condicao.gravar ? condicao.linha?.id ?? null : cur.condicao_pagamento_id });
+        condicao_pagamento_id: condicao.gravar ? condicao.linha?.id ?? null : cur.condicao_pagamento_id };
+      // TOP-CONFIG-05: as regras da versão em que o documento NASCEU (ou a atual da TOP nova, se o PUT a troca).
+      // Condição só é conferida quando o PUT a ENVIA; atraso só quando o PUT TROCA o cliente.
+      const versaoDasRegras = top ? top.tipoOperacaoVersaoId : cur.tipo_operacao_versao_id;
+      const corpoPut = req.body !== null && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
+      await cobrarRegrasDaOperacao(ctx, versaoDasRegras ? await regrasDaVersaoTop(ctx, versaoDasRegras) : null, comoFicara, {
+        conferirCondicao: corpoPut["condicao_pagamento_id"] !== undefined && corpoPut["condicao_pagamento_id"] !== null,
+        conferirAtraso: d.client_id !== cur.client_id });
+      await cobrarLayoutAoSalvar(ctx, kind, comoFicara);
       const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao, condicao);
       await audit(ctx.tx, ctx, "sales_documents", id, "update");
       // Mudança de identidade do lançamento é evento PRÓPRIO: quem trocou a TOP de um documento não pode
