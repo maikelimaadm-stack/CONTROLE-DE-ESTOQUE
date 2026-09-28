@@ -79,6 +79,8 @@ const ehInteiroPositivo = (v: unknown): v is number =>
 export interface CapacidadesDestinosTop {
   suportado: boolean;
   limite: number;
+  /** TOP-CONFIG-06: o servidor aceita `emPartes` por aresta (`destinos.emPartes === 1`). Ausente = não aceita. */
+  emPartes: boolean;
 }
 
 /**
@@ -135,12 +137,13 @@ export function lerCapacidadesTop(bruto: unknown): CapacidadesTop | null {
   if (!ehObjeto(c) || !ehInteiroPositivo(c.versaoSchema)) return null;
   if (!Array.isArray(c.secoes) || !c.secoes.every(ehTexto)) return null;
 
-  let destinos: CapacidadesDestinosTop = { suportado: false, limite: 0 };
+  let destinos: CapacidadesDestinosTop = { suportado: false, limite: 0, emPartes: false };
   if (bruto.destinos !== undefined) {
     const d = bruto.destinos;
     if (!ehObjeto(d) || typeof d.suportado !== "boolean") return null;
     if (d.suportado && !ehInteiroPositivo(d.limite)) return null;
-    destinos = { suportado: d.suportado, limite: ehInteiroPositivo(d.limite) ? d.limite : 0 };
+    // `emPartes` é ADITIVO: só o valor 1 liga a caixa; qualquer outra coisa (inclusive ausência) a esconde.
+    destinos = { suportado: d.suportado, limite: ehInteiroPositivo(d.limite) ? d.limite : 0, emPartes: d.suportado && d.emPartes === 1 };
   }
 
   /**
@@ -247,6 +250,10 @@ export const podeConfigurarRestricoes = (e: EstadoCapacidadesTop): boolean =>
   && e.capacidades.restricoes.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
 
 /** Quantos destinos esta API aceita. Zero quando ela não os suporta — e zero bloqueia a inclusão. */
+/** A caixa "Em partes" aparece e `emPartes` vai no corpo? Só quando a API declara `destinos.emPartes === 1`. */
+export const podeConfigurarEmPartes = (e: EstadoCapacidadesTop): boolean =>
+  podeConfigurarDestinos(e) && e.situacao === "pronto" && e.capacidades.destinos.emPartes;
+
 export const limiteDeDestinos = (e: EstadoCapacidadesTop): number =>
   podeConfigurar(e) ? e.capacidades.destinos.limite : 0;
 
@@ -318,12 +325,15 @@ export interface DestinoConfigurado {
   ativo: boolean;
   /** O destino serve HOJE? Avaliado pelo servidor no estado atual, nunca congelado. */
   disponivel: boolean;
+  /** TOP-CONFIG-06: conversão em partes. Ausente numa API anterior (lida como `false`). */
+  emPartes?: boolean;
 }
 
 const ehDestinoConfigurado = (v: unknown): v is DestinoConfigurado =>
   ehObjeto(v) && ehTexto(v.tipoOperacaoId) && typeof v.ordem === "number" && Number.isInteger(v.ordem)
   && ehTexto(v.codigo) && ehTexto(v.nome) && ehTexto(v.codigoBase) && ehTexto(v.familiaRotulo)
-  && typeof v.ativo === "boolean" && typeof v.disponivel === "boolean";
+  && typeof v.ativo === "boolean" && typeof v.disponivel === "boolean"
+  && (v.emPartes === undefined || typeof v.emPartes === "boolean");
 
 /**
  * Lê a lista de destinos. `null` = a API não entregou a lista nesta forma (bloqueia a aba).
@@ -509,6 +519,8 @@ export interface DestinoEmEdicao {
   familiaRotulo: string;
   /** O destino continua servindo? Só o servidor sabe; `undefined` num destino recém-escolhido. */
   disponivel?: boolean;
+  /** TOP-CONFIG-06: o documento pode ser convertido várias vezes para este destino. */
+  emPartes: boolean;
 }
 
 /** Tudo o que o editor mantém em memória. Comparar este objeto inteiro é o que detecta alteração pendente. */
@@ -669,7 +681,7 @@ export function assinaturaRascunho(r: RascunhoTop): string {
     configuracao: r.configuracao,
     // Só identidade e ORDEM viajam na assinatura: código e nome do destino são apresentação e podem mudar
     // no servidor sem que o rascunho do usuário tenha mudado.
-    destinos: r.destinos.map((d) => d.tipoOperacaoId),
+    destinos: r.destinos.map((d) => d.emPartes ? `${d.tipoOperacaoId}:partes` : d.tipoOperacaoId),
     // DECLARAR É CONTEÚDO, e por isso entra aqui. Sair da tela depois de declarar "esta operação não gera
     // próxima operação" — sem nenhum destino na lista — é sair com alteração pendente: a lista continua
     // vazia, mas o significado dela mudou, e é justamente essa mudança que a gravação registra.

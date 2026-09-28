@@ -23,7 +23,7 @@ import {
 import {
   MensagemCapacidadesTop, ROTULOS_TOP, aplicarNoFormato3, assinaturaRascunho, capacidadesDeExecucao, configuracaoDoRascunhoParaEnvio,
   configuracaoInicial, configuracaoInicialV3, ehConflitoDeConcorrencia, errosDeCampoDoServidor, lerDetalheTop, limiteDeDestinos,
-  podeConfigurar, podeConfigurarDestinos, podeConfigurarRestricoes, useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
+  podeConfigurar, podeConfigurarDestinos, podeConfigurarEmPartes, podeConfigurarRestricoes, useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
   type CapacidadesExecucaoTop, type DestinoEmEdicao, type EstadoCapacidadesTop, type RascunhoTop
 } from "./top-contrato";
 
@@ -202,6 +202,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const configuravel = podeConfigurar(capacidades);
   const destinosConfiguraveis = podeConfigurarDestinos(capacidades);
   const limite = limiteDeDestinos(capacidades);
+  const emPartesConfiguravel = podeConfigurarEmPartes(capacidades);
   const execucao = capacidadesDeExecucao(capacidades);
   /**
    * TOP-CONFIG-05 — o servidor grava o formato 3? Só então o rascunho carrega `configuracaoV3`, os campos
@@ -243,7 +244,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
     codigoBase: detalhe?.familia.codigo ?? "",
     configuracao: configuracaoInicial(detalhe?.configuracao ?? null),
     destinos: (detalhe?.destinos ?? []).map((d) => ({
-      tipoOperacaoId: d.tipoOperacaoId, codigo: d.codigo, nome: d.nome, familiaRotulo: d.familiaRotulo, disponivel: d.disponivel
+      tipoOperacaoId: d.tipoOperacaoId, codigo: d.codigo, nome: d.nome, familiaRotulo: d.familiaRotulo, disponivel: d.disponivel, emPartes: d.emPartes === true
     })),
     /**
      * SÓ `true` COMEÇA DECLARADO. `false` (legado) e `null` (servidor que não informou) começam como NÃO
@@ -336,7 +337,8 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
        * dois estados, e é justamente o que ela NÃO consegue distinguir.
        */
       if (liberado && destinosConfiguraveis && !destinosIlegiveis && rascunho.destinosDeclarados) {
-        base.destinos = rascunho.destinos.map((d, i) => ({ tipoOperacaoId: d.tipoOperacaoId, ordem: i + 1 }));
+        // `emPartes` só viaja quando a API o declara: servidor anterior recusaria a chave desconhecida.
+        base.destinos = rascunho.destinos.map((d, i) => ({ tipoOperacaoId: d.tipoOperacaoId, ordem: i + 1, ...(emPartesConfiguravel ? { emPartes: d.emPartes } : {}) }));
       }
       /**
        * TOP-CONFIG-05 — a PRESENÇA DA CHAVE `condicoesPermitidas` também é a declaração (ausente = preservar).
@@ -511,6 +513,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
             destinos={rascunho.destinos}
             limite={limite}
             habilitado={destinosConfiguraveis}
+            emPartesConfiguravel={emPartesConfiguravel}
             ilegivel={destinosIlegiveis}
             declarado={rascunho.destinosDeclarados}
             estadoNoServidor={edicao ? detalhe?.destinosConfigurados ?? null : false}
@@ -910,9 +913,11 @@ function BloqueioDeConfiguracao({ estado, ilegivel }: { estado: EstadoCapacidade
  * │ uma decisão que já estava certa — ou deixar sem política uma operação que ele achou configurada.    │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
-function AbaDestinos({ codigoBase, destinos, limite, habilitado, ilegivel, declarado, estadoNoServidor, onChange, onDeclarar }: {
+function AbaDestinos({ codigoBase, destinos, limite, habilitado, emPartesConfiguravel, ilegivel, declarado, estadoNoServidor, onChange, onDeclarar }: {
   codigoBase: string;
   destinos: DestinoEmEdicao[];
+  /** A API aceita `emPartes` (capabilities.destinos.emPartes === 1)? Sem isso, a caixa não aparece. */
+  emPartesConfiguravel: boolean;
   limite: number;
   habilitado: boolean;
   /** O servidor sustenta destinos, mas o detalhe não trouxe a lista de forma legível: bloqueia. */
@@ -959,7 +964,7 @@ function AbaDestinos({ codigoBase, destinos, limite, habilitado, ilegivel, decla
   const adicionar = () => {
     const alvo = itens.find((i) => i.id === escolhido);
     if (!alvo || jaEscolhidos.has(alvo.id) || noLimite) return;
-    onChange([...destinos, { tipoOperacaoId: alvo.id, codigo: alvo.codigo, nome: alvo.nome, familiaRotulo: alvo.familiaRotulo }]);
+    onChange([...destinos, { tipoOperacaoId: alvo.id, codigo: alvo.codigo, nome: alvo.nome, familiaRotulo: alvo.familiaRotulo, emPartes: false }]);
     setEscolhido("");
   };
   const remover = (idAlvo: string) => onChange(destinos.filter((d) => d.tipoOperacaoId !== idAlvo));
@@ -998,6 +1003,11 @@ function AbaDestinos({ codigoBase, destinos, limite, habilitado, ilegivel, decla
               <span className="ml-2 text-[11px] text-slate-400">{d.familiaRotulo}</span>
             </span>
             {d.disponivel === false && <Badge tone="amber">Indisponível hoje</Badge>}
+            {emPartesConfiguravel && <label className="flex items-center gap-1.5 text-[12px] text-slate-700" title="O documento pode ser convertido várias vezes, escolhendo itens e quantidades.">
+              <input type="checkbox" data-testid={`top-destino-${d.tipoOperacaoId}-em-partes`} checked={d.emPartes}
+                onChange={(e) => onChange(destinos.map((x) => x.tipoOperacaoId === d.tipoOperacaoId ? { ...x, emPartes: e.target.checked } : x))} />
+              Em partes
+            </label>}
             <Button size="sm" variant="ghost" aria-label="Subir" disabled={i === 0} onClick={() => mover(i, -1)}>↑</Button>
             <Button size="sm" variant="ghost" aria-label="Descer" disabled={i === destinos.length - 1} onClick={() => mover(i, 1)}>↓</Button>
             <Button size="sm" variant="ghost" data-testid="top-destino-remover" aria-label={COPY.remover} onClick={() => remover(d.tipoOperacaoId)}>✕</Button>
@@ -1009,6 +1019,9 @@ function AbaDestinos({ codigoBase, destinos, limite, habilitado, ilegivel, decla
       normalmente porque o tipo de operação de destino foi desativado. Habilitar um destino aqui não dá
       permissão a ninguém: quem pode criar o documento seguinte continua sendo decidido pelas permissões.
     </p>
+    {emPartesConfiguravel && <p data-testid="top-destinos-em-partes-dica" className="mt-1 text-[11.5px] leading-relaxed text-slate-500">
+      Em partes: o documento pode ser convertido várias vezes, escolhendo itens e quantidades.
+    </p>}
   </div>;
 }
 

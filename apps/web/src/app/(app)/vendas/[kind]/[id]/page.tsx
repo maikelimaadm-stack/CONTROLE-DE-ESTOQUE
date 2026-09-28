@@ -22,6 +22,8 @@ import { COPY, enumLabel, statusLabel } from "@/lib/copy";
 import { CampoTipoOperacao, useTopsDaVariante, usePadraoTop } from "@/features/sales/tipo-operacao-select";
 import { destinoDeCompatibilidade, usaCadeiaDeCompatibilidade, useProximosPassos, type ProximoPasso } from "@/features/sales/proximos-passos";
 import { varianteDeVenda } from "@/features/sales/variantes";
+import { DialogoEncerrarSaldo, ItensDaConversao, ehParteGerada, itensParaEnvio, linhasIniciais, saldoDoItem, temParteGerada, useCodigoDaOrigem, type LinhaDaParte } from "@/features/sales/faturar-em-partes";
+import { D } from "@agro/shared";
 import { usePreviaDaConfirmacao, linhaDeEstoque, linhaFinanceira, padraoAutomaticoPrevisto, TEXTO_SEM_PREVIA, type EstadoDaPrevia } from "@/features/sales/previa-confirmacao";
 
 /** O snapshot da TOP como o servidor o devolve: nome e versão CONGELADOS no instante do lançamento. */
@@ -127,7 +129,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const { kind: segmentoDaRota, id } = use(params);
   const { can } = useAuth(); const router = useRouter(); const tr = useTradutor();
   const q = useDoc<Row & { items: Row[]; titles: Row[]; derived: Row[] }>(`/api/sales/${segmentoDaRota}/${id}`);
-  const [confirmar, setConfirmar] = React.useState<"confirm" | "cancel" | "convert" | null>(null);
+  const [confirmar, setConfirmar] = React.useState<"confirm" | "cancel" | "convert" | "encerrar" | null>(null);
   const d = q.data;
   const variante = d ? String(d["kind"]) : "";
   const k = DO_REGISTRO[variante];
@@ -200,6 +202,10 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   /** Escolha entre 2+ próximos passos. Com UM item não há escolha a fazer — e com zero não há diálogo. */
   const [passoEscolhido, setPassoEscolhido] = React.useState("");
   const [historicoAberto, setHistoricoAberto] = React.useState(false);
+  /** TOP-CONFIG-06: seleção de itens e quantidades da parte, refeita a cada abertura do diálogo. */
+  const [linhasDaParte, setLinhasDaParte] = React.useState<LinhaDaParte[]>([]);
+  const parteGerada = d ? ehParteGerada(d.items) : false;
+  const codigoDaOrigem = useCodigoDaOrigem(d, parteGerada, can);
   // o rótulo da aba de trabalho é o de antes da Central: título da variante + código do servidor
   useTabTitle(d ? `${k?.titulo ?? "Documento de venda"} ${String(d["code"] ?? "")}`.trim() : null);
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
@@ -208,6 +214,14 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const topDaConversao = passoSelecionado ? passoSelecionado.tipoOperacaoId : legado ? topLegado : "";
   const segmentoDoDestino = passoSelecionado ? varianteDeVenda(passoSelecionado.variante)?.segmento ?? "" : legado?.segmento ?? "";
   const ofereceConversao = itens.length > 0 || legadoPermitido;
+  /** Destino "Em partes": o diálogo mostra os itens com saldo. `emPartes` ausente = diálogo de hoje. */
+  const emPartes = passoSelecionado?.emPartes === true;
+  const itensDaParte = emPartes ? itensParaEnvio(d.items, linhasDaParte) : null;
+  const abrirConversao = () => { setLinhasDaParte(linhasIniciais(d.items)); setConfirmar("convert"); };
+  /** Origem com parte gerada: colunas Faturado e Saldo, e o "Encerrar saldo" enquanto houver saldo. */
+  const origemComParte = temParteGerada(d.items);
+  const haSaldo = d.items.some((it) => D(saldoDoItem(it)).gt(0));
+  const saldoEncerradoEm = d["saldo_encerrado_em"] as string | null | undefined;
   /**
    * O RÓTULO NUNCA É UM UUID. Com um destino só, o botão nomeia a TOP (código e nome, os dois do
    * servidor); com vários, ele apenas convida ao diálogo, onde a escolha aparece inteira; na
@@ -259,7 +273,8 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         {variante === "sale" && editavel && can("sales.edit") && <AcaoPrincipal icone={<Check aria-hidden />} onClick={() => { setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm"); }}>Confirmar venda</AcaoPrincipal>}
         {/* CONVERTER exige AS DUAS capacidades, como a API passou a exigir: editar a FONTE e criar o
             DESTINO. Mostrar o botão só com a do destino ofereceria uma ação que a API recusa com 403. */}
-        {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <AcaoPrincipal icone={<ArrowRightLeft aria-hidden />} data-testid="acao-conversao" onClick={() => setConfirmar("convert")}>{rotuloDaConversao}</AcaoPrincipal>}
+        {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <AcaoPrincipal icone={<ArrowRightLeft aria-hidden />} data-testid="acao-conversao" onClick={abrirConversao}>{rotuloDaConversao}</AcaoPrincipal>}
+        {k && origemComParte && haSaldo && !saldoEncerradoEm && situacao !== "converted" && can(`${k.perm}.edit`) && <AcaoPrincipal icone={<FileX2 aria-hidden />} data-testid="acao-encerrar-saldo" onClick={() => setConfirmar("encerrar")}>Encerrar saldo</AcaoPrincipal>}
       </>}
       acoesDireita={<>
         <AcaoDaBarra rotulo="Imprimir" onClick={() => window.print()}><Printer aria-hidden /></AcaoDaBarra>
@@ -300,7 +315,14 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         {topConfigurada && <CampoLeitura rotulo="Versão da operação" adorno="travado" testId="central-vendas-campo" valor={String(topConfigurada.versao)} />}
         <CampoLeitura rotulo="Origem" adorno="travado" testId="central-vendas-campo" valor={d["origin_document_id"] ? "Convertido" : "Manual"} />
       </>}
-      itens={<ItensSalvos itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`} />}
+      itens={<>
+        {saldoEncerradoEm && <p data-testid="saldo-encerrado" className="mb-2 text-sm text-slate-700">
+          Saldo encerrado em {dateBR(saldoEncerradoEm).slice(0, 5)} por {String(d["saldo_encerrado_por_nome"] ?? "—")}: {String(d["saldo_encerrado_motivo"] ?? "")}
+        </p>}
+        {/* A parte gerada não muda produto, quantidade, preço nem descontos: eles vêm do pedido de origem. */}
+        {parteGerada && <p data-testid="parte-itens-da-origem" className="mb-2 text-sm text-slate-700">Itens gerados do pedido {codigoDaOrigem ?? "de origem"}.</p>}
+        <ItensSalvos mostrarSaldo={origemComParte} itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`} />
+      </>}
       totalDoDocumento={brl(d["total"] as string)}
       abas={[
         { value: "totais", label: "Totais", content: <div className={estilosCentral.painelGrade}>
@@ -342,10 +364,10 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     </Confirm>
     {/* CONVERSÃO NÃO É MAIS UM "TEM CERTEZA?". O documento de destino é de OUTRA família, então precisa
         da TOP dele — a da fonte não serve e não é herdada. Sem TOP alvo escolhível, o botão não converte. */}
-    <Dialog open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={rotuloDaConversao} size="sm" testId="dialog-conversao"
+    <Dialog open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={rotuloDaConversao} size={emPartes ? "md" : "sm"} testId="dialog-conversao"
       footer={<><Button variant="outline" onClick={() => setConfirmar(null)}>Voltar</Button>
-        <Button loading={act.isPending} disabled={!topDaConversao || !segmentoDoDestino}
-          onClick={() => { destinoDaConversao.current = segmentoDoDestino; act.mutate({ path: `/api/sales/${rota}/${id}/convert`, idem: true, body: { tipo_operacao_id: topDaConversao } }); }}>Converter</Button></>}>
+        <Button loading={act.isPending} disabled={!topDaConversao || !segmentoDoDestino || (emPartes && !itensDaParte)}
+          onClick={() => { destinoDaConversao.current = segmentoDoDestino; act.mutate({ path: `/api/sales/${rota}/${id}/convert`, idem: true, body: { tipo_operacao_id: topDaConversao, ...(emPartes && itensDaParte ? { itens: itensDaParte } : {}) } }); }}>Converter</Button></>}>
       <div className="space-y-3" data-testid="proximos-passos">
         {/* UM destino: nada a escolher, mas a operação de destino fica À VISTA — converter sem ver em que
             operação o documento novo nasce é o efeito colateral que esta fatia veio desfazer. */}
@@ -376,8 +398,13 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         {legado && <div className="grid grid-cols-12 gap-3">
           <CampoTipoOperacao estado={estadoTopLegado} valor={topLegado} onChange={setTopLegado} span={12} />
         </div>}
+
+        {emPartes && <ItensDaConversao itens={d.items} linhas={linhasDaParte} onChange={setLinhasDaParte} />}
       </div>
     </Dialog>
+    {/* ENCERRAR SALDO (TOP-CONFIG-06): com chave de idempotência, como as outras ações de estado. */}
+    <DialogoEncerrarSaldo open={confirmar === "encerrar"} onOpenChange={() => setConfirmar(null)} loading={act.isPending}
+      onConfirmar={(motivo) => act.mutate({ path: `/api/sales/${rota}/${id}/encerrar-saldo`, idem: true, body: { motivo } })} />
     {/* `idem: true` como na confirmação e na conversão: cancelar venda confirmada ESTORNA estoque e
         cancela títulos, e um reenvio do MESMO pedido não pode virar um segundo estorno. Era a única das
         três ações desta tela que mandava o pedido sem chave. */}
