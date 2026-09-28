@@ -397,6 +397,8 @@ function destinosPedidos(bruta: unknown): DestinoOperacaoV1[] {
 interface DestinoResolvido {
   tipoOperacaoId: string; ordem: number; codigo: string; nome: string;
   codigoBase: string; familiaRotulo: string; ativo: boolean; disponivel: boolean;
+  /** TOP-CONFIG-06: a aresta permite converter em partes. Sempre booleano na leitura. */
+  emPartes: boolean;
 }
 
 /**
@@ -451,10 +453,10 @@ async function destinosDaVersao(ctx: ServiceCtx, versaoIds: readonly string[]): 
   const mapa = new Map<string, DestinoResolvido[]>();
   if (versaoIds.length === 0) return mapa;
   const r = await ctx.tx.query<{
-    origem_versao_id: string; destino_tipo_operacao_id: string; ordem: number;
+    origem_versao_id: string; destino_tipo_operacao_id: string; ordem: number; em_partes: boolean;
     codigo: string; nome: string; codigo_base: string; ativo: boolean; excluido: boolean;
   }>(
-    `select d.origem_versao_id, d.destino_tipo_operacao_id, d.ordem,
+    `select d.origem_versao_id, d.destino_tipo_operacao_id, d.ordem, d.em_partes,
             t.codigo, tv.nome, t.codigo_base, t.ativo,
             (t.excluido_em is not null) as excluido
        from erp.tipos_operacao_versao_destinos d
@@ -479,7 +481,8 @@ async function destinosDaVersao(ctx: ServiceCtx, versaoIds: readonly string[]): 
       codigoBase: linha.codigo_base,
       familiaRotulo: familiaParaTela(linha.codigo_base).rotulo,
       ativo: linha.ativo,
-      disponivel: linha.ativo && !linha.excluido
+      disponivel: linha.ativo && !linha.excluido,
+      emPartes: linha.em_partes
     });
     mapa.set(linha.origem_versao_id, lista);
   }
@@ -491,16 +494,36 @@ async function gravarDestinos(ctx: ServiceCtx, versaoId: string, tipoOperacaoId:
   if (destinos.length === 0) return;
   await ctx.tx.query(
     `insert into erp.tipos_operacao_versao_destinos
-       (organization_id, origem_versao_id, origem_tipo_operacao_id, destino_tipo_operacao_id, ordem, criado_por)
-     select $1, $2, $3, x.destino::uuid, x.ordem::int, $4
-       from jsonb_to_recordset($5::jsonb) as x(destino text, ordem int)`,
+       (organization_id, origem_versao_id, origem_tipo_operacao_id, destino_tipo_operacao_id, ordem, em_partes, criado_por)
+     select $1, $2, $3, x.destino::uuid, x.ordem::int, x.em_partes, $4
+       from jsonb_to_recordset($5::jsonb) as x(destino text, ordem int, em_partes boolean)`,
     [ctx.orgId, versaoId, tipoOperacaoId, ctx.user.id,
-     JSON.stringify(destinos.map((d) => ({ destino: d.tipoOperacaoId, ordem: d.ordem })))]);
+     JSON.stringify(destinos.map((d) => ({ destino: d.tipoOperacaoId, ordem: d.ordem, em_partes: d.emPartes === true })))]);
 }
 
-/** Só a identidade e a ordem entram na comparação de no-op: código e nome são apresentação, não política. */
+/**
+ * Identidade, ordem e "Em partes" entram na comparação de no-op: código e nome são apresentação, não
+ * política. `emPartes` sai SEMPRE booleano daqui, porque a aresta gravada sempre tem o valor.
+ */
 const soPolitica = (d: readonly DestinoResolvido[]): DestinoOperacaoV1[] =>
-  d.map((x) => ({ tipoOperacaoId: x.tipoOperacaoId, ordem: x.ordem }));
+  d.map((x) => ({ tipoOperacaoId: x.tipoOperacaoId, ordem: x.ordem, emPartes: x.emPartes }));
+
+/**
+ * "EM PARTES" AUSENTE PRESERVA (TOP-CONFIG-06) — resolve cada aresta pedida para um booleano.
+ *
+ * PRESENTE declara. AUSENTE usa o valor da aresta da versão ATUAL para o MESMO destino; aresta nova nasce
+ * `false`. Tratar ausente como `false` faria o editor anterior (que manda só `{ tipoOperacaoId, ordem }`)
+ * desligar em silêncio o que o editor novo ligou. `atuais` já veio em lote (`destinosDaVersao`): nenhuma
+ * consulta aqui.
+ */
+function resolverEmPartes(pedidos: readonly DestinoOperacaoV1[], atuais: readonly DestinoOperacaoV1[]): DestinoOperacaoV1[] {
+  const atualPorDestino = new Map(atuais.map((a) => [a.tipoOperacaoId, a.emPartes === true]));
+  return pedidos.map((p) => ({
+    tipoOperacaoId: p.tipoOperacaoId,
+    ordem: p.ordem,
+    emPartes: p.emPartes ?? atualPorDestino.get(p.tipoOperacaoId) ?? false
+  }));
+}
 
 /** O DETALHE — aí sim com a configuração, porque é a tela que vai editá-la. */
 const paraTelaDetalhe = (r: LinhaTipoOperacao) => ({
@@ -558,8 +581,11 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * BLOCO PRÓPRIO, E NÃO UMA SEÇÃO DA CONFIGURAÇÃO — porque o grafo não mora no payload: mora em tabela.
      * Declará-lo aqui permite que um cliente mais novo ligue a aba de próximas operações só quando o
      * servidor de fato a sustenta, sem deduzir capacidade pela falha de uma escrita.
+     *
+     * `emPartes: 1` (TOP-CONFIG-06) é ADITIVO: a aresta aceita e devolve "Em partes"; ausente na escrita
+     * preserva o valor da versão atual. `contractVersion` não muda, pelo mesmo motivo de `execucao`.
      */
-    destinos: { suportado: true, limite: LIMITE_DESTINOS_POR_VERSAO },
+    destinos: { suportado: true, limite: LIMITE_DESTINOS_POR_VERSAO, emPartes: 1 },
     /**
      * EXECUÇÃO CONFIGURADA (TOP-CONFIG-04A) — outro bloco OPCIONAL, pelo mesmo precedente de `destinos`.
      *
@@ -802,7 +828,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
 
       // AS PRÓXIMAS OPERAÇÕES DA VERSÃO 1. Conferidas contra banco e registry ANTES de gravar: uma aresta
       // para TOP indisponível nasceria como um botão que não tem serviço atrás.
-      const destinos = await conferirDestinos(ctx, d.codigoBase, destinosPedidos(d.destinos));
+      // TOP nova: não há versão atual, então "Em partes" ausente nasce `false`.
+      const destinos = resolverEmPartes(await conferirDestinos(ctx, d.codigoBase, destinosPedidos(d.destinos)), []);
       await gravarDestinos(ctx, versaoNova.rows[0]!.id, id, destinos);
       await gravarCondicoes(ctx, versaoNova.rows[0]!.id, id, condicoes);
 
@@ -918,7 +945,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      */
     const declarouAgora = d.destinos !== undefined;
     const destinos = declarouAgora
-      ? await conferirDestinos(ctx, antes.codigo_base, destinosPedidos(d.destinos))
+      ? resolverEmPartes(await conferirDestinos(ctx, antes.codigo_base, destinosPedidos(d.destinos)), destinosAtuais)
       : destinosAtuais;
     /**
      * A VERSÃO NOVA É AUTOSSUFICIENTE, ENTÃO O BOOLEANO TAMBÉM VIAJA. Quando uma versão nasce por mudança
