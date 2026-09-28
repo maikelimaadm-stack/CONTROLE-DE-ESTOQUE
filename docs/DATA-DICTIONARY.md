@@ -1350,6 +1350,10 @@ Documento comercial. A coluna `kind` decide a etapa e a tela (orçamento, pedido
 | `centro_custo_id` | Centro de custo | uuid | não |  |  |  | Centro de custo analítico e ativo dos títulos a receber gerados pela confirmação. Anda em PAR com a categoria financeira (os dois ou nenhum); FK composta com o tenant (decisão 248). |
 | `condicao_pagamento_id` |  | uuid | não |  |  |  |  |
 | `parcelas_ajustadas` |  | boolean | sim |  |  |  |  |
+| `saldo_encerrado_em` |  | timestamptz | não |  |  |  |  |
+| `saldo_encerrado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `saldo_encerrado_motivo` |  | text | não |  |  |  |  |
+| `add` |  | constraint | sim |  |  |  |  |
 
 ## Pecuária
 
@@ -1819,7 +1823,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.rainfalls` | 8 | sim | `empresa_id` | não |
 | `erp.requisition_items` | 10 | não | — | não |
 | `erp.salary_advances` | 14 | sim | `empresa_id` | sim |
-| `erp.sales_document_items` | 11 | não | — | não |
+| `erp.sales_document_items` | 12 | não | — | não |
 | `erp.saved_reports` | 11 | sim | — | sim |
 | `erp.scheduled_reviews` | 10 | sim | — | sim |
 | `erp.service_order_lines` | 12 | não | — | não |
@@ -1833,7 +1837,7 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.tipos_notificacao` | 5 | não | — | não |
 | `erp.tipos_operacao` | 12 | sim | — | sim |
 | `erp.tipos_operacao_versao_condicoes` | 7 | sim | — | não |
-| `erp.tipos_operacao_versao_destinos` | 8 | sim | — | não |
+| `erp.tipos_operacao_versao_destinos` | 9 | sim | — | não |
 | `erp.tipos_operacao_versoes` | 11 | sim | — | não |
 | `erp.title_apportionments` | 9 | não | — | não |
 | `erp.title_appropriations` | 5 | não | — | não |
