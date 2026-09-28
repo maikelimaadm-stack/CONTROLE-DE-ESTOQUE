@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Locator, type Request } from "@playwright/test";
+import { configuracaoNeutraTopV2 } from "@agro/domain";
 import { login, api, uniq } from "./helpers";
 
 /**
@@ -278,5 +279,72 @@ test("R2 — venda com CFOP 1102 dentro do estado: erro no campo, e nenhuma escr
     expect(escritas, "nenhuma requisição PUT/POST saiu para a TOP").toEqual([]);
   } finally {
     await excluirTop(page, top.id);
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════════════════════════════
+ * TR-W3 (R1) — SALVAR QUE LEVA A TOP DO FORMATO 2 AO 3 COM EXIGÊNCIA DA GERAL MARCADA PERGUNTA ANTES
+ * ═══════════════════════════════════════════════════════════════════════════════════════════════════ */
+
+test("TR-W3 — formato 2 com 'Exigir observação' pede confirmação antes do PUT; formato 3 salva sem pergunta", async ({ page }) => {
+  await login(page);
+  // PRESENÇA ANTES DA AUSÊNCIA: primeiro a TOP que nasce no formato 3 salva direto, sem diálogo.
+  const nova = await criarTopDeVenda(page, "TOP formato 3 TR-W3");
+  // A TOP legada: formato 2 com a marca de observação — o acervo real da produção (TOP 1/2).
+  const v2 = configuracaoNeutraTopV2();
+  const legada = { codigo: codigoNovo(), nome: uniq("TOP formato 2 TR-W3") };
+  const criada = await api<{ id: string }>(page, "POST", "/api/admin/tipos-operacao", {
+    ...legada, codigoBase: "vendas.venda", configuracao: { ...v2, geral: { ...v2.geral, exigeObservacao: true } }
+  });
+  try {
+    // 1. Formato 3 → o PUT sai sem diálogo.
+    const primeira = await detalheNoServidor(page, nova.id);
+    await abrirTela(page);
+    let forma = await abrirEdicao(page, nova.codigo);
+    let transportadora = await abrirAbaCom(forma, "top-geral-exige-transportadora", ["geral"]);
+    await transportadora.check();
+    const putDireto = page.waitForRequest((r) => r.method() === "PUT" && new URL(r.url()).pathname.endsWith(`/api/admin/tipos-operacao/${nova.id}`));
+    await forma.getByTestId("top-salvar").click();
+    expect((await putDireto).method()).toBe("PUT");
+    await expect(page.getByTestId("top-exigencias-passam-a-valer"), "formato 3 não pergunta").toHaveCount(0);
+    await expect(forma).toBeHidden();
+    expect((await detalheNoServidor(page, nova.id)).versao, "versão nova gravada").toBe(primeira.versao + 1);
+
+    // 2. Formato 2 com observação → Salvar abre a confirmação, e nada sai no fio.
+    const antes = await detalheNoServidor(page, criada.id);
+    expect(antes.configuracaoSchema, "premissa: a TOP legada está no formato 2").toBe(2);
+    const escritas: string[] = [];
+    page.on("request", (r) => { if (ehEscritaDeTop(r)) escritas.push(`${r.method()} ${r.url()}`); });
+    forma = await abrirEdicao(page, legada.codigo);
+    transportadora = await abrirAbaCom(forma, "top-geral-exige-transportadora", ["geral"]);
+    await transportadora.check();
+    await forma.getByTestId("top-salvar").click();
+    const dialogo = page.getByTestId("top-exigencias-passam-a-valer");
+    await expect(dialogo).toBeVisible();
+    await expect(dialogo).toContainText("Estas exigências passam a valer");
+    await expect(dialogo).toContainText("A partir desta versão, o lançamento vai exigir: Observação. Até hoje essas marcas estavam só registradas e não eram cobradas.");
+    await expect(dialogo, "transportadora nunca entra na lista").not.toContainText("Transportadora");
+
+    // 3. "Voltar e revisar" → fecha, nenhuma escrita.
+    await dialogo.getByTestId("top-exigencias-voltar").click();
+    await expect(dialogo).toHaveCount(0);
+    await expect(forma, "o editor continua aberto").toBeVisible();
+    await page.waitForTimeout(500);
+    expect(escritas, "nenhum PUT saiu ao voltar").toEqual([]);
+    expect((await detalheNoServidor(page, criada.id)).versao, "a versão não mudou").toBe(antes.versao);
+
+    // 4. Salvar → "Salvar assim mesmo" → PUT 200 e versão nova no formato 3.
+    await forma.getByTestId("top-salvar").click();
+    await expect(dialogo).toBeVisible();
+    const resposta = page.waitForResponse((r) => r.request().method() === "PUT" && new URL(r.url()).pathname.endsWith(`/api/admin/tipos-operacao/${criada.id}`));
+    await dialogo.getByTestId("top-exigencias-salvar").click();
+    expect((await resposta).status(), "PUT 200").toBe(200);
+    await expect(forma).toBeHidden();
+    const depois = await detalheNoServidor(page, criada.id);
+    expect(depois.versao, "versão nova").toBe(antes.versao + 1);
+    expect(depois.configuracaoSchema, "no formato 3").toBe(3);
+  } finally {
+    await excluirTop(page, nova.id);
+    await excluirTop(page, criada.id);
   }
 });

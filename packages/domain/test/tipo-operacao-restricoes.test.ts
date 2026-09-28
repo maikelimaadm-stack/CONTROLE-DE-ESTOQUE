@@ -31,6 +31,7 @@ import {
   sentidoCfopDaFamilia,
   textoSituacaoAtraso,
   type DocumentoParaExigencias,
+  exigenciasQuePassamAValer,
 } from "../src/tipo-operacao-restricoes.js";
 
 /**
@@ -336,5 +337,29 @@ describe("TR-D3 capacidade, códigos e textos fixos", () => {
     expect(MENSAGEM_EXIGENCIA_NAO_ATENDIDA).toBe("A operação exige dados que o documento não tem.");
     expect(LIMITE_CONDICOES_PERMITIDAS).toBe(50);
     expect(AVISO_FISCAL_SO_CONFIGURACAO).toBe("Usado na emissão da nota fiscal. A emissão ainda não existe no sistema.");
+  });
+});
+
+describe("TR-D4 — exigências que passam a valer (R1)", () => {
+  const v2 = (g: Partial<{ exigeParceiro: boolean; exigeCentroResultado: boolean; exigeObservacao: boolean }>) => {
+    const n = configuracaoNeutraTopV2(); return { ...n, geral: { ...n.geral, ...g } };
+  };
+  const paraV3 = (c: ReturnType<typeof v2>, extra: Record<string, unknown> = {}) => {
+    const n = configuracaoNeutraTopV3(); return { ...n, geral: { ...n.geral, ...c.geral, ...extra } };
+  };
+  it("TR-D4 v2 com as 3 marcas → v3: os 3 rótulos, na ordem do domínio; transportadora nova não entra", () => {
+    const antes = v2({ exigeParceiro: true, exigeCentroResultado: true, exigeObservacao: true });
+    expect(exigenciasQuePassamAValer(antes, paraV3(antes, { exigeTransportadora: true }))).toEqual(["Cliente", "Centro de resultado", "Observação"]);
+  });
+  it("TR-D4 v2 sem marcas → vazio; marca desmarcada na mesma gravação → não entra", () => {
+    expect(exigenciasQuePassamAValer(v2({}), paraV3(v2({}), { exigeTransportadora: true }))).toEqual([]);
+    const antes = v2({ exigeObservacao: true, exigeParceiro: true });
+    expect(exigenciasQuePassamAValer(antes, paraV3(antes, { exigeObservacao: false }))).toEqual(["Cliente"]);
+  });
+  it("TR-D4 v3 → v3 e v2 → v2: vazio", () => {
+    const a = paraV3(v2({ exigeObservacao: true }));
+    expect(exigenciasQuePassamAValer(a, a)).toEqual([]);
+    const b = v2({ exigeObservacao: true });
+    expect(exigenciasQuePassamAValer(b, b)).toEqual([]);
   });
 });

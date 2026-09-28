@@ -194,3 +194,19 @@ export interface RegrasDaOperacaoResposta {
 export type SituacaoClienteResposta =
   | { politica: "nao_valida" }
   | { politica: "avisa" | "bloqueia"; emAtraso: boolean; titulos: number; total: string; vencimentoMaisAntigo: string | null };
+
+// ─────────────── exigências que passam a valer (TOP-CONFIG-05_R1) ───────────────
+
+/**
+ * As exigências da Geral que ESTAVAM só registradas (versão vigente no formato 1/2) e PASSAM A SER COBRADAS
+ * porque a gravação leva a TOP ao formato 3. Rótulos na ordem de `EXIGENCIAS_GERAIS_TOP`.
+ * Vazio quando: a vigente já é formato 3; a nova não é formato 3; ou nenhuma marca antiga continua ligada.
+ * "Exige transportadora" nunca entra: não existe fora do formato 3 (é marcada agora, não "passa a valer").
+ */
+export function exigenciasQuePassamAValer(vigente: ConfiguracaoTipoOperacao, nova: ConfiguracaoTipoOperacao): string[] {
+  if (restricoesExecutamTop(vigente) || !restricoesExecutamTop(nova)) return [];
+  const antes = vigente.geral as unknown as Record<string, unknown>;
+  return EXIGENCIAS_GERAIS_TOP
+    .filter((e) => e.chave !== "exigeTransportadora" && antes[e.chave] === true && nova.geral[e.chave])
+    .map((e) => e.rotulo);
+}

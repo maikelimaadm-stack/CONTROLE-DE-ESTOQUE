@@ -15,7 +15,7 @@ import {
   LIMITE_CONDICOES_PERMITIDAS, MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO,
   POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
   TOLERANCIA_ATRASO_MAXIMA_DIAS, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
-  configuracaoTopParaEdicao, efeitosAtivadosTop, familiaAceitaExecucaoConfiguradaTop, normalizarConfiguracaoTop,
+  configuracaoTopParaEdicao, efeitosAtivadosTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, normalizarConfiguracaoTop,
   recusasFiscaisDaFamiliaTop, validarExecucaoTop,
   type ConfiguracaoTipoOperacaoV2, type ConfiguracaoTipoOperacaoV3, type EfeitoExecucaoTop, type ModoExecucaoTop,
   type RecusaExecucaoTop
@@ -382,6 +382,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    * tolerância no intervalo. Havendo recusa, o erro vai para o campo, a aba dele abre e NADA é enviado.
    * O servidor continua sendo a autoridade — ele recusa de novo com 422, para qualquer cliente.
    */
+  const [aConfirmar, setAConfirmar] = React.useState<string[] | null>(null);
   const tentarSalvar = () => {
     const locais: Record<string, string> = {};
     const v3 = liberado ? rascunho.configuracaoV3 : undefined;
@@ -399,6 +400,14 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
     setErrosCampo(locais);
     const primeiro = Object.keys(locais)[0];
     if (primeiro) { setAba(abaDoCaminho(primeiro)); return; }
+    /**
+     * TOP-CONFIG-05_R1 — gravar leva a TOP do formato 1/2 ao 3 e alguma exigência da Geral estava marcada: a
+     * partir desta versão ela passa a ser COBRADA no lançamento. Pergunta ANTES de qualquer PUT. A lista vem
+     * do domínio (uma fonte); a tela não tem a sua.
+     */
+    const aValer = edicao && v3 && detalhe?.configuracao?.suportada
+      ? exigenciasQuePassamAValer(detalhe.configuracao.valor, v3) : [];
+    if (aValer.length > 0) { setAConfirmar(aValer); return; }
     salvar.mutate();
   };
 
@@ -666,6 +675,22 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       {erro ? <div className="mt-3"><ErrorState error={erro} /></div> : null}
 
       <AvisoDeVersionamento />
+    </Dialog>
+
+    <Dialog
+      open={aConfirmar !== null}
+      onOpenChange={(o) => { if (!o) setAConfirmar(null); }}
+      testId="top-exigencias-passam-a-valer"
+      title="Estas exigências passam a valer"
+      footer={<>
+        <Button variant="outline" data-testid="top-exigencias-voltar" onClick={() => setAConfirmar(null)}>Voltar e revisar</Button>
+        <Button data-testid="top-exigencias-salvar" onClick={() => { setAConfirmar(null); salvar.mutate(); }}>Salvar assim mesmo</Button>
+      </>}
+    >
+      <p className="text-sm text-slate-600">
+        A partir desta versão, o lançamento vai exigir: {(aConfirmar ?? []).join(", ")}. Até hoje essas marcas
+        estavam só registradas e não eram cobradas.
+      </p>
     </Dialog>
 
     <ConfirmDialog
