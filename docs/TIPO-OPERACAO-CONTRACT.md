@@ -1192,3 +1192,96 @@ auditoria como a seção `execucao` alterada (com o antes e o depois).
 confirmar e as exigências da seção `geral`. Orçamento, pedido e a conversão não mudaram. Próximas fatias
 (Compras, Movimentações de Estoque, Financeiro) reutilizam o formato 2, a matriz e a recusa — não este
 resolvedor, que é da venda.
+
+## 13. Formato 3: restrições comerciais e fiscal configurado (TOP-CONFIG-05)
+
+Decisão 263 (o porquê mora lá). Esta seção é o contrato: chaves, rotas e códigos.
+
+### 13.1 Só o formato 3 executa
+
+`versaoSchema: 3` (`VERSAO_SCHEMA_CONFIGURACAO_TOP_V3`). A única pergunta "as restrições executam?" é
+`restricoesExecutamTop(config)` no domínio. Versão gravada no formato 1 ou 2 é legado para sempre: nenhuma
+regra desta seção vale para ela e nada do que ela recusa hoje muda. O formato não retrocede: configuração
+enviada com `versaoSchema` menor que a vigente → 422 `TIPO_OPERACAO_CONFIGURACAO_SCHEMA_NAO_SUPORTADO`
+`{versaoEnviada, versaoVigente}`. Comparação (`configuracoesTopIguais`) é feita no formato 3: v<3 × v3 é
+DIFERENTE quando `geral.exigeParceiro`, `exigeCentroResultado` ou `exigeObservacao` está ligado — no formato 3
+elas passam a executar, então salvar cria versão (e `secoesAlteradasTop` inclui `geral`).
+
+Chaves novas (todas obrigatórias no formato 3; leitura estrita):
+
+| Seção | Chave | Valores | Neutro |
+| --- | --- | --- | --- |
+| `geral` | `exigeTransportadora` | booleano | `false` |
+| `financeiro` | `clienteEmAtraso` | `nao_valida` · `avisa` · `bloqueia` | `nao_valida` |
+| `financeiro` | `toleranciaAtrasoDias` | inteiro 0–365 | `0` |
+| `fiscal` | `modeloDocumento` | `nenhum` · `nfe` · `nfce` · `nfse` | `nenhum` |
+| `fiscal` | `finalidade` | `normal` · `complementar` · `ajuste` · `devolucao` | `normal` |
+| `fiscal` | `naturezaOperacao` | texto até 60 | `""` |
+| `fiscal` | `cfopDentroEstado`, `cfopForaEstado`, `cfopExterior` | vazio ou `^[1-7]\d{3}$` | `""` |
+
+Normalização (`normalizarConfiguracaoTop`, dona única): fiscal desligado zera TAMBÉM as chaves fiscais novas;
+`clienteEmAtraso` independe de `financeiro.atualizacao`; `toleranciaAtrasoDias` zera quando a política é
+`nao_valida`. **CFOP por sentido do movimento** (`recusasFiscaisDaFamiliaTop`): o módulo da família dá o
+sentido (vendas = saída, compras = entrada); o primeiro dígito do CFOP tem de ser o do destino (dentro do estado
+1/5, fora 2/6, exterior 3/7), o do sentido da família, e os CFOPs preenchidos têm o mesmo sentido entre si; fora disso → 422 `TIPO_OPERACAO_CONFIGURACAO_INVALIDA` `{recusas}` com
+`caminho: "fiscal.<campo>"`, a mesma forma do parse. **O fiscal é só configuração**: nada emite nem calcula; o
+editor mostra "Usado na emissão da nota fiscal. A emissão ainda não existe no sistema.".
+
+### 13.2 Condições permitidas: tabela por versão
+
+`erp.tipos_operacao_versao_condicoes` (0033): uma linha por (versão, condição de pagamento), FK composta com a
+versão (`id, tipo_operacao_id, organization_id`) e com a condição (`id, organization_id`), RLS de tenant,
+`erp_app` só insere e lê, gatilho de imutabilidade. **Sem linhas para a versão = sem restrição** (todas as
+condições). Nunca UUID no JSON da versão.
+
+Corpo de `POST`/`PUT /api/admin/tipos-operacao`: `condicoesPermitidas?: uuid[]` (até 50).
+
+- **AUSENTE** = preserva a lista da versão atual (copiada para a versão nova, se houver). No POST = sem lista.
+- **PRESENTE** = declara a lista, inclusive vazia. Presente com configuração resultante fora do formato 3 → 422
+  `TIPO_OPERACAO_CONDICOES_INVALIDAS` `{recusas:[{caminho:"condicoesPermitidas", mensagem:"Condições permitidas exigem a configuração no formato 3."}]}`.
+- Cada id tem de ser da organização, vivo e ativo; senão 422 `TIPO_OPERACAO_CONDICOES_INVALIDAS` com
+  `caminho: "condicoesPermitidas.<i>"` e a MESMA mensagem "Condição de pagamento inexistente ou inativa." para
+  inexistente, de outra organização, inativa ou excluída. Repetida: mesmo código, "Condição de pagamento repetida.".
+  Conferência em uma consulta, nunca N+1.
+- Mudar o CONJUNTO é mudança de conteúdo (versão nova); o mesmo conjunto é no-op.
+
+Detalhe (`GET /api/admin/tipos-operacao/:id`) e cada versão do histórico: `condicoesPermitidas: {id, codigo, nome}[]`
+(vazio = sem restrição). A auditoria da versão leva os ids quando o conjunto mudou.
+
+`GET /api/admin/tipos-operacao/capabilities` ganha `restricoes: { suportado: true, versaoSchema: 3 }`;
+`contractVersion` e `configuracao.versaoSchema` não mudam. Web sem esse bloco edita o formato 2, como antes.
+
+### 13.3 Execução no documento de venda
+
+Só para documento cuja versão da TOP é formato 3 (`regrasDaVersaoTop`). Ordem fixa, depois de TOP, classificação
+e condição inválida, e antes do layout:
+
+| Passo | Código (422) | Quando | `details` |
+| --- | --- | --- | --- |
+| a) exigências | `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA` | campo exigido vazio (Cliente, Centro de resultado, Observação com conteúdo, Transportadora) | `{exigencias:[{caminho, mensagem}]}` |
+| b) condição | `CONDICAO_PAGAMENTO_NAO_PERMITIDA` | condição informada fora da lista não vazia | `{campo:"condicao_pagamento_id"}` |
+| c) atraso | `CLIENTE_EM_ATRASO` | política `bloqueia` e cliente com título vencido além da tolerância | `{campo:"client_id", titulos, total, vencimentoMaisAntigo}` |
+
+No PUT vale a versão em que o documento nasceu (ou a atual da TOP nova, se o PUT troca a TOP); a condição só é
+conferida se o PUT a envia, o atraso só se o PUT troca o cliente. `avisa` nunca recusa. **Conversão:** o
+documento GERADO é conferido contra a versão ATUAL da TOP destino (a, b, c), antes de gravar — pedido cuja
+condição a TOP de venda não permite não converte. A confirmação não muda.
+
+Atraso = `erp.situacao_atraso_cliente(cliente, tolerância)`, porta estreita (decisão 263): só agregados, títulos
+a receber em aberto com saldo e vencimento anterior a `current_date - tolerância`, em todas as empresas da
+organização; sem a capacidade de lançar venda, zero linhas.
+
+### 13.4 Rotas da Central
+
+Ambas com a porta, a permissão (`<variante>.create`) e a MESMA 404 de `/layout-efetivo`.
+
+`GET /api/sales/<variante>/regras-da-operacao?tipo_operacao_id=` →
+`{ formato, exigencias: [{caminho, rotulo}], condicoesPermitidas: uuid[] | null, clienteEmAtraso: {politica, toleranciaDias} }`.
+Formato < 3 → `{ formato, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: {politica:"nao_valida", toleranciaDias:0} }`.
+
+`GET /api/sales/<variante>/situacao-cliente?client_id=&tipo_operacao_id=` → formato < 3 ou `nao_valida`:
+`{ politica: "nao_valida" }` sem consultar títulos; senão `{ politica, emAtraso, titulos, total, vencimentoMaisAntigo }`
+(`total` string decimal). Cliente ou TOP malformado, inexistente, de outra organização ou excluído: a mesma 404.
+
+A Central só usa isso com `capacidades.regrasDaOperacao === 1` exato (gêmeo de skew do `layoutDocumento`);
+sem ele, é a Central de hoje. A exigência da TOP vence o layout: campo exigido que o layout não mostra aparece.

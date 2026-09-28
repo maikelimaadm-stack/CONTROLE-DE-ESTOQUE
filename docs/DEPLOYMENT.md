@@ -1385,6 +1385,48 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
+## TOP-CONFIG-05 — restrições comerciais e fiscal configurado na TOP (0033)
+
+Decisão 263; contrato em `docs/TIPO-OPERACAO-CONTRACT.md` §13. **Uma migration: `0033_tipo_operacao_restricoes.sql`**
+(pre-deploy; trava (2026,67), `lock_timeout` 2 s, pré/pós-condições nomeadas `TOP-CONFIG-05: ...`, não destrutiva,
+sem backfill): tabela nova `erp.tipos_operacao_versao_condicoes` (**VAZIA**) e a função `erp.situacao_atraso_cliente`
+(porta estreita, `SECURITY DEFINER`, `execute` só para o papel da API). Nenhuma linha existente muda. Nenhuma
+variável nova; o gate da 04A continua como está.
+
+**Pré-condição:** quem aplica a 0033 é o dono da função e precisa atravessar RLS (superusuário ou `BYPASSRLS`) — a
+própria migration recusa, com `TOP-CONFIG-05: o papel que aplica a migration (dono da funcao) nao atravessa RLS`,
+e nada é aplicado. Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0033) → API → web.** Janela:
+1. **API anterior × banco novo:** a API anterior ignora a tabela e a função; tudo como hoje.
+2. **web ANTERIOR × API nova:** a web anterior não conhece `restricoes` (capabilities da TOP) nem
+   `capacidades.regrasDaOperacao`: o editor segue gravando o formato 2 e a Central é a de hoje. PUT sem
+   `condicoesPermitidas` PRESERVA a lista. Nenhuma regra nova executa, porque nenhuma TOP está no formato 3.
+3. **API nova × web nova, TOPs antigas:** as TOPs continuam no formato 2 (e sem restrição) até alguém salvá-las no
+   editor novo — só então nasce uma versão formato 3.
+4. **web NOVA × API anterior:** sem `restricoes` o editor é o de hoje (formato 2, nenhuma chave nova visível); sem
+   `regrasDaOperacao` a Central é a de hoje, sem pedido novo no fio.
+
+**Reversão:** API e web voltam por redeploy; a tabela (vazia ou não) e a função ficam, inertes para o binário
+anterior. Nada de apagar dado de produção (decisão 247). **Atenção:** a API anterior só lê os formatos 1 e 2 — TOP
+já salva no formato 3 fica ilegível para ela até a API nova voltar, e o formato não retrocede. Reverter a API depois
+do roteiro abaixo exige essa decisão consciente do Maike.
+
+**Roteiro do Maike em produção (depois do deploy) — SEM salvar documento:**
+1. Configurações › Operações › Tipos de operação › TOP 2 Pedido › editar: marcar "Exige transportadora" e, em
+   Condições permitidas, adicionar UMA condição (ex.: "À vista"); salvar → versão nova no histórico, com a condição.
+   Antes de salvar, olhar a seção Geral: exigência de parceiro, centro de resultado ou observação que já estiver
+   ligada passa a VALER no formato 3 (o salvar cria versão justamente por isso).
+2. Central, novo Pedido com a TOP 2: "Transportadora" com "*" (aparece mesmo se o layout não a mostra) e o campo
+   Condição de pagamento oferece só a condição permitida. **NÃO salvar o documento.**
+3. No fim, restaurar: editar a TOP 2 de novo, desmarcar "Exige transportadora" e esvaziar a lista (volta a "Todas as
+   condições"); salvar → versão nova sem as opções. As versões de teste ficam no histórico (imutável).
+
+**Impacto em dados reais:** tabela nova vazia; função sem efeito de escrita; nenhuma TOP muda sozinha — 1 Orçamento
+e 2 Pedido seguem no formato 2 até serem salvas no editor novo; o roteiro acima cria só versões da TOP 2 (a última
+no formato 3 e sem as opções do teste) e nenhum documento. **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso
+autenticado à produção.
+
 ## VENDAS-A3-1b — padrão de cadastro no layout e exportar/importar (sem migration)
 
 Decisão 260. **Sem migration, sem variável, sem permissão e sem capacidade nova.** Layout que já existe continua
