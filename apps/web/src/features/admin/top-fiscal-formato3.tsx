@@ -31,15 +31,16 @@ export interface PropsFiscalFormato3 {
 /**
  * Rótulos locais PT-BR: o registro de rótulos do domínio não tem estes enums e o editor de TOP traduz os seus
  * localmente (`ROTULOS_TOP`). Os VALORES vêm do domínio; aqui só a tradução, conferida por `satisfies`.
+ * Exportados: o histórico de versões usa ESTES, para não haver uma segunda tradução.
  */
-const ROTULOS_MODELO = {
+export const ROTULOS_MODELO_DOCUMENTO = {
   nenhum: "Nenhum",
   nfe: "NF-e",
   nfce: "NFC-e",
   nfse: "NFS-e"
 } satisfies Record<ModeloDocumentoFiscal, string>;
 
-const ROTULOS_FINALIDADE = {
+export const ROTULOS_FINALIDADE_DOCUMENTO = {
   normal: "Normal",
   complementar: "Complementar",
   ajuste: "Ajuste",
@@ -92,7 +93,7 @@ export function FiscalFormato3({ fiscal, familia, onChange, desabilitado, erros 
       <NativeSelect data-testid="top-fiscal-modelo" value={fiscal.modeloDocumento} disabled={travado}
         aria-invalid={erros["fiscal.modeloDocumento"] ? true : undefined}
         onChange={(e) => mudar({ modeloDocumento: e.target.value as ModeloDocumentoFiscal })}>
-        {MODELOS_DOCUMENTO_FISCAL.map((m) => <option key={m} value={m}>{ROTULOS_MODELO[m]}</option>)}
+        {MODELOS_DOCUMENTO_FISCAL.map((m) => <option key={m} value={m}>{ROTULOS_MODELO_DOCUMENTO[m]}</option>)}
       </NativeSelect>
     </CampoFiscal>
     <CampoFiscal rotulo="Finalidade" caminho="fiscal.finalidade" erros={erros}
@@ -100,7 +101,7 @@ export function FiscalFormato3({ fiscal, familia, onChange, desabilitado, erros 
       <NativeSelect data-testid="top-fiscal-finalidade" value={fiscal.finalidade} disabled={travado}
         aria-invalid={erros["fiscal.finalidade"] ? true : undefined}
         onChange={(e) => mudar({ finalidade: e.target.value as FinalidadeDocumentoFiscal })}>
-        {FINALIDADES_DOCUMENTO_FISCAL.map((f) => <option key={f} value={f}>{ROTULOS_FINALIDADE[f]}</option>)}
+        {FINALIDADES_DOCUMENTO_FISCAL.map((f) => <option key={f} value={f}>{ROTULOS_FINALIDADE_DOCUMENTO[f]}</option>)}
       </NativeSelect>
     </CampoFiscal>
     <CampoFiscal rotulo="Natureza da operação" caminho="fiscal.naturezaOperacao" erros={erros}

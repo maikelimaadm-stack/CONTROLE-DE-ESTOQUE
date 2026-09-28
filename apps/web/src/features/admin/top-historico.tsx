@@ -6,11 +6,12 @@ import { dateTimeBR } from "@/lib/utils";
 import { COPY } from "@/lib/copy";
 import { Badge, Button, Dialog, EmptyState, ErrorState, LoadingState } from "@/components/ui";
 import {
-  ENUM_LABELS, SECOES_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP, execucaoDeclaradaTop, restricoesExecutamTop,
-  type ConfiguracaoTipoOperacao, type FinalidadeDocumentoFiscal, type ModeloDocumentoFiscal,
-  type PoliticaClienteEmAtraso, type SecaoConfiguracaoTopV2
+  ENUM_LABELS, SECOES_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+  execucaoDeclaradaTop, restricoesExecutamTop,
+  type ConfiguracaoTipoOperacao, type PoliticaClienteEmAtraso, type SecaoConfiguracaoTopV2
 } from "@agro/domain";
 import { ROTULOS_SECAO_TOP, ROTULOS_TOP, lerConfiguracaoDoServidor, type ConfiguracaoDoServidor } from "./top-contrato";
+import { ROTULOS_FINALIDADE_DOCUMENTO, ROTULOS_MODELO_DOCUMENTO } from "./top-fiscal-formato3";
 
 /**
  * O HISTÓRICO DE VERSÕES — LEITURA, E SÓ LEITURA (TOP-CONFIG-03).
@@ -160,7 +161,7 @@ function LinhaDeVersao({ versao }: { versao: VersaoTop }) {
         {versao.configuracao ? versao.configuracao.versaoSchema : COPY.naoInformado}
       </p>
       <p className="mt-0.5"><span className="text-slate-400">Seções alteradas: </span>{resumoDeSecoes(versao.secoesAlteradas)}</p>
-      {versao.condicoesPermitidas !== null && <p className="mt-0.5" data-testid={`top-historico-condicoes-${versao.versao}`}>
+      {mostraCondicoes(versao) && versao.condicoesPermitidas !== null && <p className="mt-0.5" data-testid={`top-historico-condicoes-${versao.versao}`}>
         <span className="text-slate-400">Condições de pagamento permitidas: </span>
         {versao.condicoesPermitidas.length === 0
           ? "Todas as condições"
@@ -171,6 +172,19 @@ function LinhaDeVersao({ versao }: { versao: VersaoTop }) {
       <DetalheDaVersao versao={versao} />
     </div>}
   </li>;
+}
+
+/**
+ * A linha das condições permitidas aparece quando o servidor as informou (`!== null`) E a versão é do formato 3 —
+ * o único em que a restrição existe. Versões 1/2 aparecem como antes: "Todas as condições" sobre uma versão em que
+ * a regra nem existia seria registro inventado. Lista NÃO vazia aparece sempre (é fato gravado, seja qual for o
+ * formato que esta tela consegue ler).
+ */
+function mostraCondicoes(versao: VersaoTop): boolean {
+  const lista = versao.condicoesPermitidas;
+  if (lista === null) return false;
+  if (lista.length > 0) return true;
+  return versao.configuracao !== null && versao.configuracao.versaoSchema >= VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
 }
 
 /**
@@ -244,14 +258,11 @@ function PoliticaDaVersao({ versao }: { versao: VersaoTop }) {
 const simNao = (v: boolean) => (v ? "Sim" : "Não");
 
 /**
- * Rótulos das chaves do formato 3 (TOP-CONFIG-05). O registro de rótulos do domínio não tem estes enums; os
- * VALORES vêm do domínio e `satisfies` confere que nenhum ficou sem tradução.
+ * Rótulo da política de cliente em atraso (TOP-CONFIG-05). O registro de rótulos do domínio não tem este enum;
+ * os VALORES vêm do domínio e `satisfies` confere que nenhum ficou sem tradução. Modelo e finalidade do documento
+ * usam a tradução do próprio campo fiscal (`top-fiscal-formato3`).
  */
 const ROTULOS_CLIENTE_EM_ATRASO = { nao_valida: "Não valida", avisa: "Avisa", bloqueia: "Bloqueia" } satisfies Record<PoliticaClienteEmAtraso, string>;
-const ROTULOS_MODELO_DOCUMENTO = { nenhum: "Nenhum", nfe: "NF-e", nfce: "NFC-e", nfse: "NFS-e" } satisfies Record<ModeloDocumentoFiscal, string>;
-const ROTULOS_FINALIDADE_DOCUMENTO = {
-  normal: "Normal", complementar: "Complementar", ajuste: "Ajuste", devolucao: "Devolução"
-} satisfies Record<FinalidadeDocumentoFiscal, string>;
 const textoOuTraco = (v: string) => (v.length > 0 ? v : "—");
 
 /** As mesmas seções do editor, sem nenhum controle: aqui não se altera nada. */
