@@ -35,15 +35,21 @@ const textoDaOpcao = (o: Option) => o.caminho || o.label;
 export interface BuscaDeOpcoes { chave: string; buscar: (search: string) => Promise<Option[]> }
 
 /** Select com busca server-side (equivalente ao select2 do sistema de referência), para campos de referência. */
-export function RefSelect({ resource, value, onChange, placeholder = "Selecione", filter, disabled, className, allowEmpty = true, includeInactive, labelHint, onOpenChange, idDaCaixa, excluirIds, buscarOpcoes }: { resource: string; value: string | null | undefined; onChange: (v: string | null, opt?: Option) => void; placeholder?: string; filter?: Record<string, string | undefined>; disabled?: boolean; className?: string; allowEmpty?: boolean; includeInactive?: boolean; /** rótulo já conhecido do valor atual (evita consulta ao abrir o registro) */ labelHint?: string | null; onOpenChange?: (o: boolean) => void;
+export function RefSelect({ resource, value, onChange, placeholder = "Selecione", filter, disabled, className, allowEmpty = true, includeInactive, labelHint, onOpenChange, idDaCaixa, excluirIds, buscarOpcoes, somenteIds }: { resource: string; value: string | null | undefined; onChange: (v: string | null, opt?: Option) => void; placeholder?: string; filter?: Record<string, string | undefined>; disabled?: boolean; className?: string; allowEmpty?: boolean; includeInactive?: boolean; /** rótulo já conhecido do valor atual (evita consulta ao abrir o registro) */ labelHint?: string | null; onOpenChange?: (o: boolean) => void;
   /** id da caixa (para `<label htmlFor>`); nome próprio para o `Field` genérico não o injetar em toda tela */ idDaCaixa?: string;
   /** ids que nunca aparecem na lista (ex.: o próprio registro na Matriz); comparados em minúsculas */ excluirIds?: string[];
-  /** fonte própria das opções (ver `BuscaDeOpcoes`); sem ela, `/api/resources/:resource/options` */ buscarOpcoes?: BuscaDeOpcoes }) {
+  /** fonte própria das opções (ver `BuscaDeOpcoes`); sem ela, `/api/resources/:resource/options` */ buscarOpcoes?: BuscaDeOpcoes;
+  /**
+   * TOP-CONFIG-05: SÓ estes ids aparecem na lista (comparados em minúsculas); o valor atual fora dela também não é
+   * oferecido. `null`/ausente = sem recorte (a lista de hoje, idêntica). Apresentação — quem recusa é o servidor.
+   */
+  somenteIds?: readonly string[] | null }) {
   const [open, setOpen] = React.useState(false); const [search, setSearch] = React.useState(""); const [creating, setCreating] = React.useState(false); const { can } = useAuth();
   const f = Object.fromEntries(Object.entries(filter ?? {}).filter(([, v]) => v));
   const excluidos = new Set((excluirIds ?? []).map((x) => x.toLowerCase()));
+  const somente = somenteIds ? new Set(somenteIds.map((x) => x.toLowerCase())) : null;
   const { data: brutos, isLoading } = useQuery({ queryKey: buscarOpcoes ? ["options-proprias", resource, buscarOpcoes.chave, search] : ["options", resource, search, f, includeInactive], queryFn: () => (buscarOpcoes ? buscarOpcoes.buscar(search) : api<Option[]>(`/api/resources/${resource}/options${qs({ search, ...f, include_inactive: includeInactive ? "1" : undefined })}`)), enabled: open, staleTime: 60_000 });
-  const data = excluidos.size ? brutos?.filter((o) => !excluidos.has(String(o.id).toLowerCase())) : brutos;
+  const data = excluidos.size || somente ? brutos?.filter((o) => { const id = String(o.id).toLowerCase(); return !excluidos.has(id) && (!somente || somente.has(id)); }) : brutos;
   const [picked, setPicked] = React.useState<Option | null>(null);
   const current = data?.find((o) => o.id === value) ?? (picked && picked.id === value ? picked : null);
   const def = React.useMemo(() => getResource(resource), [resource]);

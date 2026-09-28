@@ -14,6 +14,7 @@ import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoC
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
+import { entendeRegrasDaOperacao, useRegrasDaOperacao } from "@/features/sales/regras-da-operacao";
 import { ChevronRight, Repeat2, Save, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
@@ -310,9 +311,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const camposDeCadastro = React.useMemo(() => new Set(catalogoDaFamilia(familiaLayout).filter((c) => c.parte !== "itens" && c.referencia).map((c) => chavePadraoDeCadastro(c.parte, c.chave))), [familiaLayout]);
   const doLayoutComCadastro = (chave: string) => Boolean(layout) && camposDeCadastro.has(chave) && cfg.has(chave);
   /** O padrão que vale agora para o campo (null: nenhum). */
-  const padraoDoCampo = (chave: string) => (doLayoutComCadastro(chave) ? padroes.validos.get(chave) ?? null : null);
+  const padraoDoCampo = (chave: string) => (doLayoutComCadastro(chave) && !padraoNaoPermitido(chave) ? padroes.validos.get(chave) ?? null : null); // TOP-CONFIG-05 condição: padrão não permitido não vale
   /** O padrão do campo morreu no cadastro: nada é aplicado, o aviso aparece e o campo fica editável nesta abertura. */
-  const padraoInvalido = (chave: string) => doLayoutComCadastro(chave) && padroes.invalidos.has(chave);
+  const padraoInvalido = (chave: string) => doLayoutComCadastro(chave) && (padroes.invalidos.has(chave) || padraoNaoPermitido(chave)); // TOP-CONFIG-05 condição: não permitido = padrão inválido
 
   /**
    * O QUE CONTA COMO "TEM COISA DIGITADA".
@@ -398,6 +399,28 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     if (!v) setPlan(defaultPlan());
   };
   const ajustarPlano = (p: Plan) => { setPlan(p); setAjustado(true); };
+
+  /* ── TOP-CONFIG-05 condição (W5) ──────────────────────────────────────────────────────────────────────────────
+   * CONDIÇÕES PERMITIDAS (decisão 263): SÓ com `capacidades.regrasDaOperacao` EXATA (`entendeRegrasDaOperacao`); sem
+   * ela `regras` é null, nenhuma pergunta sai e a condição é a de hoje. Com a lista NÃO nula da versão atual da TOP:
+   * o RefSelect só oferece as permitidas (`somenteIds`); o PADRÃO de cadastro da condição fora da lista não é aplicado
+   * e aparece como padrão inválido (`padraoDoCampo`/`padraoInvalido` acima); e o valor escolhido que deixa de ser
+   * permitido (as regras chegaram ou mudaram) é limpo pelo MESMO caminho da escolha manual (`escolherCondicao`).
+   * Apresentação — quem recusa é o servidor (`CONDICAO_PAGAMENTO_NAO_PERMITIDA`). */
+  const regrasAtivo = entendeRegrasDaOperacao(estadoTop);
+  const { regras } = useRegrasDaOperacao(kind, top.id, regrasAtivo);
+  const condicoesPermitidas = regras?.condicoesPermitidas ?? null;
+  const condicaoNaoPermitida = (id: string) => condicoesPermitidas !== null && id !== "" && !condicoesPermitidas.some((x) => x.toLowerCase() === id.toLowerCase());
+  function padraoNaoPermitido(chave: string): boolean {
+    return chave === "condicao_pagamento_id" && condicaoNaoPermitida(padroes.validos.get(chave)?.id ?? "");
+  }
+  React.useEffect(() => {
+    if (!condicaoNaoPermitida(h.condicao_pagamento_id)) return;
+    // o padrão aplicado ao abrir (antes de as regras chegarem) sai também do estado inicial: retirá-lo não é digitação
+    if (inicial.current.condicao_pagamento_id === h.condicao_pagamento_id) inicial.current = { ...inicial.current, condicao_pagamento_id: "" };
+    escolherCondicao(null);
+  }, [h.condicao_pagamento_id, condicaoNaoPermitida, escolherCondicao]);
+  /* ── fim TOP-CONFIG-05 condição ── */
   const semClassificacao = classificacaoAtiva && (!h.categoria_financeira_id || !h.centro_custo_id);
   /** O corpo do POST — o MESMO objeto que a cobrança do layout confere antes de sair. */
   const corpo = () => ({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
@@ -562,7 +585,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       case "proprietary_id": return pesquisa(<Field label={rot(chave, "Proprietário")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} labelHint={dica("proprietary_id")} /></Field>, chave);
       case "discount": return campo(<Field label={rot(chave, "Desconto")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>, chave);
       case "other_values": return campo(<Field label={rot(chave, "Outros valores")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>, chave);
-      case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} /></Field>, chave)}</div>;
+      case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} somenteIds={condicoesPermitidas} /></Field>, chave)}</div>;
       case "installment_plan": return <>
         {!condicaoId && <div style={larguraFixa}>{campo(<Field label={rot(chave, "Parcelamento")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>, chave)}</div>}
         {!condicaoId && h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
