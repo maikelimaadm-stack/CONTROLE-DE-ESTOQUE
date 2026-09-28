@@ -41,7 +41,8 @@ export function CampoLeitura({ rotulo, valor, adorno, testId }: { rotulo: string
  * que excluir (HANDOFF: "a primeira coluna só existe em edição"). O saldo é o mesmo `StockCell` da
  * criação, só para exibir; o preenchimento de custo não existe aqui, porque nada é editável.
  */
-export function ItensSalvos({ itens, subtotal, legenda }: { itens: Row[]; subtotal: string; legenda: string }) {
+/** `mostrarSaldo` (TOP-CONFIG-06): documento com parte gerada ganha as colunas Faturado e Saldo, do servidor. */
+export function ItensSalvos({ itens, subtotal, legenda, mostrarSaldo = false }: { itens: Row[]; subtotal: string; legenda: string; mostrarSaldo?: boolean }) {
   const texto = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
   return <>
     <div className={estilos.itensBarra} role="toolbar" aria-label="Itens">
@@ -50,13 +51,14 @@ export function ItensSalvos({ itens, subtotal, legenda }: { itens: Row[]; subtot
     <div className={estilos.itensCorpo} data-testid="central-vendas-itens-corpo">
       <div className={estilos.gradeRolagem}>
         <table className={estilos.grade} style={{ minWidth: 880 }} aria-label={legenda} data-testid="central-vendas-grade">
-          <colgroup><col style={{ width: 70 }} /><col style={{ minWidth: 170 }} /><col style={{ width: 120 }} /><col style={{ width: 92 }} /><col style={{ width: 110 }} /><col style={{ width: 108 }} /><col style={{ width: 88 }} /><col style={{ width: 90 }} /><col style={{ width: 106 }} /></colgroup>
+          <colgroup><col style={{ width: 70 }} /><col style={{ minWidth: 170 }} /><col style={{ width: 120 }} /><col style={{ width: 92 }} /><col style={{ width: 110 }} /><col style={{ width: 108 }} /><col style={{ width: 88 }} /><col style={{ width: 90 }} /><col style={{ width: 106 }} />{mostrarSaldo && <><col style={{ width: 100 }} /><col style={{ width: 100 }} /></>}</colgroup>
           <thead><tr>
             <th>Código</th><th>Produto</th><th>Armazém</th><th className={estilos.numero}>Estoque</th><th className={estilos.numero}>Quantidade</th>
             <th className={estilos.numero}>Valor unitário</th><th className={estilos.numero}>Desconto</th><th className={estilos.numero}>Desconto %</th><th className={estilos.numero}>Total</th>
+            {mostrarSaldo && <><th className={estilos.numero}>Faturado</th><th className={estilos.numero}>Saldo</th></>}
           </tr></thead>
           <tbody>
-            {itens.length === 0 && <tr><td colSpan={9} className={estilos.vazio}>Nenhum item neste documento.</td></tr>}
+            {itens.length === 0 && <tr><td colSpan={mostrarSaldo ? 11 : 9} className={estilos.vazio}>Nenhum item neste documento.</td></tr>}
             {itens.map((it, i) => <tr key={String(it["id"] ?? i)} className={estilos.linhaLeitura} data-testid="central-vendas-linha">
               <td><span className={estilos.codigo}>{texto(it["product_code"])}</span></td>
               <td>{texto(it["product_name"])}</td>
@@ -70,6 +72,10 @@ export function ItensSalvos({ itens, subtotal, legenda }: { itens: Row[]; subtot
               <td className={estilos.numero}>{Number(it["discount"] || 0) ? brl(String(it["discount"])) : "—"}</td>
               <td className={estilos.numero}>{Number(it["discount_percent"] || 0) ? `${num(String(it["discount_percent"]), 2)}%` : "—"}</td>
               <td className={cn(estilos.numero, estilos.forte)}>{brl(String(it["total"] ?? "0"))}</td>
+              {mostrarSaldo && <>
+                <td className={estilos.numero} data-testid="doc-item-faturado">{num(String(it["faturado"] ?? "0"), 2)}</td>
+                <td className={estilos.numero} data-testid="doc-item-saldo">{num(String(it["saldo"] ?? it["quantity"] ?? "0"), 2)}</td>
+              </>}
             </tr>)}
           </tbody>
         </table>
