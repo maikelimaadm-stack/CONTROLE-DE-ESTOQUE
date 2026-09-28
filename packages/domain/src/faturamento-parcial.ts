@@ -147,7 +147,6 @@ export function calcularParte(
   jaAlocado: ValoresDoCabecalho,
   itens: readonly ItemPedidoDaParte[],
 ): CalculoDaParte {
-  const porId = new Map(origem.map((i) => [i.id, i]));
   const pedidos = new Map(itens.map((i) => [i.itemId, i.quantidade]));
 
   const calculados: ItemCalculadoDaParte[] = [];
