@@ -83,6 +83,10 @@ export const ErrorCodes = {
    * inativa — a MESMA recusa, no campo `condicao_pagamento_id`. Distinguir seria oráculo de existência.
    */
   CONDICAO_PAGAMENTO_INVALIDA: "CONDICAO_PAGAMENTO_INVALIDA",
+  // TOP-CONFIG-05 (decisão 263): restrições comerciais do formato 3 da TOP.
+  CONDICAO_PAGAMENTO_NAO_PERMITIDA: "CONDICAO_PAGAMENTO_NAO_PERMITIDA",
+  CLIENTE_EM_ATRASO: "CLIENTE_EM_ATRASO",
+  TIPO_OPERACAO_CONDICOES_INVALIDAS: "TIPO_OPERACAO_CONDICOES_INVALIDAS",
   /** Layout do documento (VENDAS-A3-1): campo obrigatório do layout da TOP vazio ao salvar — um detalhe por campo. */
   LAYOUT_CAMPO_OBRIGATORIO: "LAYOUT_CAMPO_OBRIGATORIO"
 } as const;
@@ -133,6 +137,9 @@ export const errorHttpStatus: Record<ErrorCode, number> = {
   CONSULTA_INDISPONIVEL: 503,
   // 422: a condição escolhida não serve para lançamento (entrada inválida, não conflito de estado).
   CONDICAO_PAGAMENTO_INVALIDA: 422,
+  CONDICAO_PAGAMENTO_NAO_PERMITIDA: 422,
+  CLIENTE_EM_ATRASO: 422,
+  TIPO_OPERACAO_CONDICOES_INVALIDAS: 422,
   // 422: falta no documento um campo que o layout da operação exige (entrada incompleta, não conflito).
   LAYOUT_CAMPO_OBRIGATORIO: 422
 };

@@ -1,5 +1,7 @@
 "use client";
 import { LinhaLayoutDocumentoTop } from "./tipos-operacao";
+import { CondicoesPermitidasTop } from "./top-condicoes-permitidas";
+import { FiscalFormato3 } from "./top-fiscal-formato3";
 import * as React from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
@@ -10,15 +12,18 @@ import {
 } from "@/components/ui";
 import {
   ATUALIZACOES_ESTOQUE, ATUALIZACOES_FINANCEIRO, CALCULOS_TRIBUTARIOS, ENUM_LABELS, MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP,
-  MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO, POLITICAS_ALTERACAO,
-  POLITICAS_APROVACAO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
-  efeitosAtivadosTop, familiaAceitaExecucaoConfiguradaTop, normalizarConfiguracaoTop, validarExecucaoTop,
-  type ConfiguracaoTipoOperacaoV2, type EfeitoExecucaoTop, type ModoExecucaoTop, type RecusaExecucaoTop
+  LIMITE_CONDICOES_PERMITIDAS, MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO,
+  POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
+  TOLERANCIA_ATRASO_MAXIMA_DIAS, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+  configuracaoTopParaEdicao, efeitosAtivadosTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, normalizarConfiguracaoTop,
+  recusasFiscaisDaFamiliaTop, validarExecucaoTop,
+  type ConfiguracaoTipoOperacaoV2, type ConfiguracaoTipoOperacaoV3, type EfeitoExecucaoTop, type ModoExecucaoTop,
+  type RecusaExecucaoTop
 } from "@agro/domain";
 import {
-  MensagemCapacidadesTop, ROTULOS_TOP, assinaturaRascunho, capacidadesDeExecucao, configuracaoInicial,
-  configuracaoParaEnvio, ehConflitoDeConcorrencia, lerDetalheTop, limiteDeDestinos, podeConfigurar,
-  podeConfigurarDestinos, useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
+  MensagemCapacidadesTop, ROTULOS_TOP, aplicarNoFormato3, assinaturaRascunho, capacidadesDeExecucao, configuracaoDoRascunhoParaEnvio,
+  configuracaoInicial, configuracaoInicialV3, ehConflitoDeConcorrencia, errosDeCampoDoServidor, lerDetalheTop, limiteDeDestinos,
+  podeConfigurar, podeConfigurarDestinos, podeConfigurarRestricoes, useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
   type CapacidadesExecucaoTop, type DestinoEmEdicao, type EstadoCapacidadesTop, type RascunhoTop
 } from "./top-contrato";
 
@@ -70,7 +75,7 @@ const AJUDA: Record<ChaveAba, string> = {
   identificacao:
     "Como esta operação é reconhecida: o código que o operador digita, o nome que ele lê e o movimento do produto que define de que operação se trata. O código e o movimento são escolhidos na criação e não mudam depois.",
   geral:
-    "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação. Estas regras ficam registradas nesta versão, mas ainda não são executadas: a confirmação automática, por exemplo, não confirma documento nenhum.",
+    "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação. Confirmação e alteração após confirmar ficam registradas nesta versão, mas ainda não são executadas: a confirmação automática, por exemplo, não confirma documento nenhum. As exigências de preenchimento só são cobradas no lançamento em versões gravadas com as restrições da operação.",
   destinos:
     "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Enquanto esta operação não declarar a política, a conversão continua seguindo o caminho anterior do produto.",
   estoque:
@@ -198,6 +203,16 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const destinosConfiguraveis = podeConfigurarDestinos(capacidades);
   const limite = limiteDeDestinos(capacidades);
   const execucao = capacidadesDeExecucao(capacidades);
+  /**
+   * TOP-CONFIG-05 — o servidor grava o formato 3? Só então o rascunho carrega `configuracaoV3`, os campos
+   * novos aparecem e `condicoesPermitidas` pode ir no corpo. Sem isso o editor é o de hoje, byte a byte.
+   */
+  const restricoes = podeConfigurarRestricoes(capacidades);
+  /** A versão vigente já está no formato 3 — sem restrições no servidor, a configuração não tem envio honesto. */
+  const vigenteNoFormato3 = edicao && !!detalhe?.configuracao && detalhe.configuracao.suportada
+    && detalhe.configuracao.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
+  /** A lista de condições não foi lida (API anterior): não é reescrita, e a tela a bloqueia. */
+  const condicoesIlegiveis = edicao && !!detalhe && restricoes && detalhe.condicoesPermitidas === null;
 
   /**
    * A configuração de partida.
@@ -239,14 +254,27 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      * nenhuma próxima operação" — e a conversão daquela operação pararia de funcionar sem que ninguém
      * tivesse pedido isso, na edição de um campo que nada tem a ver com o assunto.
      */
-    destinosDeclarados: detalhe?.destinosConfigurados === true
-  }), [detalhe]);
+    destinosDeclarados: detalhe?.destinosConfigurados === true,
+    ...camposDeRestricoes(restricoes, detalhe)
+  }), [detalhe, restricoes]);
 
   const [rascunho, setRascunho] = React.useState<RascunhoTop>(inicial);
   const [aba, setAba] = React.useState<ChaveAba>("identificacao");
   const [confirmandoDescarte, setConfirmandoDescarte] = React.useState(false);
   const [erro, setErro] = React.useState<unknown>(null);
   const [conflito, setConflito] = React.useState(false);
+  /** Erros de campo (caminho → mensagem): do domínio antes de enviar, ou do 422 do servidor. */
+  const [errosCampo, setErrosCampo] = React.useState<Record<string, string>>({});
+
+  /**
+   * As capacidades chegam DEPOIS da montagem. Quando o servidor confirma as restrições, o rascunho ganha o
+   * formato 3 da versão carregada (as seções de configuração só abrem nesse mesmo instante, então não há
+   * edição de configuração a preservar); os campos de identificação digitados enquanto isso ficam.
+   */
+  React.useEffect(() => {
+    if (!restricoes) return;
+    setRascunho((r) => (r.configuracaoV3 ? r : { ...r, ...camposDeRestricoes(true, detalhe) }));
+  }, [restricoes, detalhe]);
 
   const assinaturaInicial = React.useMemo(() => assinaturaRascunho(inicial), [inicial]);
   const alterado = assinaturaRascunho(rascunho) !== assinaturaInicial;
@@ -254,7 +282,20 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const mudar = React.useCallback((p: Partial<RascunhoTop>) => setRascunho((r) => ({ ...r, ...p })), []);
   /** Toda mudança de configuração passa pela normalização do domínio: o rascunho nunca guarda campo pendurado. */
   const mudarConfig = React.useCallback((f: (c: ConfiguracaoTipoOperacaoV2) => ConfiguracaoTipoOperacaoV2) => {
-    setRascunho((r) => ({ ...r, configuracao: normalizarConfiguracaoTop(f(r.configuracao)) }));
+    setRascunho((r) => {
+      if (!r.configuracaoV3) return { ...r, configuracao: normalizarConfiguracaoTop(f(r.configuracao)) };
+      // Com restrições, o formato 3 é a verdade; a vista formato 2 é sempre DERIVADA dele (uma verdade só).
+      const v3 = normalizarConfiguracaoTop(aplicarNoFormato3(r.configuracaoV3, f));
+      return { ...r, configuracaoV3: v3, configuracao: configuracaoTopParaEdicao(v3) };
+    });
+  }, []);
+  /** As chaves novas do formato 3. Sem restrições não há `configuracaoV3`, e nada muda. */
+  const mudarConfigV3 = React.useCallback((f: (c: ConfiguracaoTipoOperacaoV3) => ConfiguracaoTipoOperacaoV3) => {
+    setRascunho((r) => {
+      if (!r.configuracaoV3) return r;
+      const v3 = normalizarConfiguracaoTop(f(r.configuracaoV3));
+      return { ...r, configuracaoV3: v3, configuracao: configuracaoTopParaEdicao(v3) };
+    });
   }, []);
 
   /**
@@ -266,7 +307,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
     ? validarExecucaoTop(rascunho.codigoBase, rascunho.configuracao, execucao.matriz) : [];
   const ativacaoSemRuntime = liberado && execucao.suportado && !execucao.runtimeHabilitado
     ? efeitosAtivadosTop(edicao ? inicial.configuracao : null, rascunho.configuracao) : [];
-  const envio = configuracaoParaEnvio(rascunho.configuracao, execucao.suportado);
+  const envio = configuracaoDoRascunhoParaEnvio(rascunho, execucao.suportado, vigenteNoFormato3);
   const bloqueioDaSecao = (efeito: EfeitoExecucaoTop): BloqueioDaSecao =>
     recusasExecucao.some((r) => r.caminho === `execucao.${efeito}` || r.caminho.startsWith(`${efeito}.`)) ? "combinacao_recusada"
       : execucao.suportado && !execucao.runtimeHabilitado ? "execucao_desligada" : null;
@@ -297,6 +338,15 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       if (liberado && destinosConfiguraveis && !destinosIlegiveis && rascunho.destinosDeclarados) {
         base.destinos = rascunho.destinos.map((d, i) => ({ tipoOperacaoId: d.tipoOperacaoId, ordem: i + 1 }));
       }
+      /**
+       * TOP-CONFIG-05 — a PRESENÇA DA CHAVE `condicoesPermitidas` também é a declaração (ausente = preservar).
+       * Só vai com a configuração no formato 3 no mesmo corpo (o servidor recusa a lista sem ele) e só quando
+       * o usuário mexeu na lista (`condicoesDeclaradas`, régua em `RascunhoTop`).
+       */
+      if (liberado && restricoes && base.configuracao !== undefined && rascunho.configuracaoV3
+        && rascunho.condicoesPermitidas && rascunho.condicoesDeclaradas && !condicoesIlegiveis) {
+        base.condicoesPermitidas = rascunho.condicoesPermitidas.map((c) => c.id);
+      }
       if (edicao) return api(`/api/admin/tipos-operacao/${id}`, { method: "PUT", body: { ...base, revisao } });
       return api("/api/admin/tipos-operacao", {
         method: "POST",
@@ -309,6 +359,11 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       if (ehConflitoDeConcorrencia(e)) { setConflito(true); setErro(null); return; }
       setConflito(false);
       setErro(e);
+      // 422 de configuração/condições: o erro vai também para o CAMPO (e a aba dele abre).
+      const doServidor = errosDeCampoDoServidor(e);
+      setErrosCampo(doServidor);
+      const primeiro = Object.keys(doServidor)[0];
+      if (primeiro) setAba(abaDoCaminho(primeiro));
     }
   });
 
@@ -322,6 +377,40 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
 
   const fechar = () => { if (alterado) setConfirmandoDescarte(true); else onFechar(); };
 
+  /**
+   * ANTES DE ENVIAR, a mesma pergunta que o servidor fará (TOP-CONFIG-05): CFOP no sentido da família e a
+   * tolerância no intervalo. Havendo recusa, o erro vai para o campo, a aba dele abre e NADA é enviado.
+   * O servidor continua sendo a autoridade — ele recusa de novo com 422, para qualquer cliente.
+   */
+  const [aConfirmar, setAConfirmar] = React.useState<string[] | null>(null);
+  const tentarSalvar = () => {
+    const locais: Record<string, string> = {};
+    const v3 = liberado ? rascunho.configuracaoV3 : undefined;
+    if (v3) {
+      if (rascunho.codigoBase) {
+        for (const r of recusasFiscaisDaFamiliaTop(v3, rascunho.codigoBase)) {
+          if (!(r.caminho in locais)) locais[r.caminho] = r.mensagem;
+        }
+      }
+      const t = v3.financeiro.toleranciaAtrasoDias;
+      if (!Number.isInteger(t) || t < 0 || t > TOLERANCIA_ATRASO_MAXIMA_DIAS) {
+        locais["financeiro.toleranciaAtrasoDias"] = `Informe de 0 a ${TOLERANCIA_ATRASO_MAXIMA_DIAS} dias.`;
+      }
+    }
+    setErrosCampo(locais);
+    const primeiro = Object.keys(locais)[0];
+    if (primeiro) { setAba(abaDoCaminho(primeiro)); return; }
+    /**
+     * TOP-CONFIG-05_R1 — gravar leva a TOP do formato 1/2 ao 3 e alguma exigência da Geral estava marcada: a
+     * partir desta versão ela passa a ser COBRADA no lançamento. Pergunta ANTES de qualquer PUT. A lista vem
+     * do domínio (uma fonte); a tela não tem a sua.
+     */
+    const aValer = edicao && v3 && detalhe?.configuracao?.suportada
+      ? exigenciasQuePassamAValer(detalhe.configuracao.valor, v3) : [];
+    if (aValer.length > 0) { setAConfirmar(aValer); return; }
+    salvar.mutate();
+  };
+
   return <>
     <Dialog
       open
@@ -332,7 +421,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       testId="form-tipo-operacao"
       footer={<>
         <Button variant="ghost" data-testid="top-cancelar" onClick={fechar}>{COPY.cancelar}</Button>
-        <Button data-testid="top-salvar" onClick={() => salvar.mutate()} disabled={!valido} loading={salvar.isPending}>{COPY.salvar}</Button>
+        <Button data-testid="top-salvar" onClick={tentarSalvar} disabled={!valido} loading={salvar.isPending}>{COPY.salvar}</Button>
       </>}
     >
       {edicao && id && detalhe ? <div className="mb-2"><LinhaLayoutDocumentoTop tipoOperacaoId={id} familia={detalhe.familia.codigo} /></div> : null}
@@ -401,6 +490,18 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeCentroResultado: v } }))} />
         <CampoSimNao rotulo="Exigir observação" testId="top-campo-geral-observacao" valor={rascunho.configuracao.geral.exigeObservacao}
           onChange={(v) => mudarConfig((c) => ({ ...c, geral: { ...c.geral, exigeObservacao: v } }))} />
+        {rascunho.configuracaoV3 && <Field label="Exigir transportadora" span={4}>
+          <label className="flex items-center gap-1 text-xs">
+            <input type="checkbox" data-testid="top-geral-exige-transportadora"
+              checked={rascunho.configuracaoV3.geral.exigeTransportadora}
+              onChange={(e) => {
+                const marcado = e.target.checked;
+                mudarConfigV3((c) => ({ ...c, geral: { ...c.geral, exigeTransportadora: marcado } }));
+              }} />
+            Exige transportadora
+          </label>
+        </Field>}
+        <ErrosDeCampo erros={errosCampo} prefixos={["geral"]} />
       </Secao>}
 
       {aba === "destinos" && liberado && <Secao chave="destinos">
@@ -465,6 +566,35 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <CampoSimNao rotulo="Exigir centro de resultado" testId="top-campo-financeiro-centro" valor={rascunho.configuracao.financeiro.exigeCentroResultado}
           desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
           onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeCentroResultado: v } }))} />
+        {rascunho.configuracaoV3 && <>
+          {/* INDEPENDE do efeito financeiro (decisão 263): por isso não é desabilitado com "nenhuma". */}
+          <CampoEnum rotulo="Cliente em atraso" testId="top-financeiro-cliente-em-atraso" valor={rascunho.configuracaoV3.financeiro.clienteEmAtraso}
+            opcoes={POLITICAS_CLIENTE_EM_ATRASO} rotulos={ROTULOS_TOP.clienteEmAtraso}
+            ajuda="O que fazer quando o cliente tem título vencido ao lançar um documento desta operação."
+            onChange={(v) => mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: v } }))} />
+          <Field label="Tolerância (dias)" span={4}
+            help="Dias de atraso tolerados antes de o título contar como vencido para esta regra.">
+            <Input data-testid="top-financeiro-tolerancia-atraso" type="number" inputMode="numeric"
+              min={0} max={TOLERANCIA_ATRASO_MAXIMA_DIAS} step={1}
+              value={String(rascunho.configuracaoV3.financeiro.toleranciaAtrasoDias)}
+              disabled={rascunho.configuracaoV3.financeiro.clienteEmAtraso === "nao_valida"}
+              onChange={(e) => {
+                // Vazio vira 0; fora do intervalo NÃO é corrigido em silêncio — a conferência antes de salvar recusa.
+                const n = e.target.value.trim() === "" ? 0 : Number(e.target.value);
+                mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, toleranciaAtrasoDias: Number.isFinite(n) ? n : 0 } }));
+              }} />
+          </Field>
+          <div className="col-span-12">
+            <CondicoesPermitidasTop
+              valor={rascunho.condicoesPermitidas ?? []}
+              limite={LIMITE_CONDICOES_PERMITIDAS}
+              desabilitado={condicoesIlegiveis}
+              // MEXER NA LISTA É DECLARAR — a mesma régua dos destinos.
+              onChange={(v) => mudar({ condicoesPermitidas: v, condicoesDeclaradas: true })}
+            />
+          </div>
+        </>}
+        <ErrosDeCampo erros={errosCampo} prefixos={["financeiro", "condicoesPermitidas"]} />
         {rascunho.configuracao.financeiro.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem efeito financeiro declarado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
         <AvisoDeAutoridade efeito="financeiro" modo={rascunho.configuracao.execucao.financeiro} bloqueio={bloqueioDaSecao("financeiro")} />
       </Secao>}
@@ -487,6 +617,15 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           desabilitado={!rascunho.configuracao.fiscal.habilitado}
           ajuda="Declara a intenção. Nenhum tributo é calculado por esta configuração."
           onChange={(v) => mudarConfig((c) => ({ ...c, fiscal: { ...c.fiscal, calculoTributario: v } }))} />
+        {/* Só com o fiscal ligado: desligado, a normalização do domínio zera também as chaves novas. */}
+        {rascunho.configuracaoV3 && rascunho.configuracaoV3.fiscal.habilitado && <div className="col-span-12">
+          <FiscalFormato3
+            fiscal={rascunho.configuracaoV3.fiscal}
+            familia={rascunho.codigoBase}
+            erros={errosCampo}
+            onChange={(f) => mudarConfigV3((c) => ({ ...c, fiscal: f }))}
+          />
+        </div>}
         {!rascunho.configuracao.fiscal.habilitado && <AvisoDeSecaoDesligada texto="Com o fiscal desligado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
       </Secao>}
 
@@ -538,6 +677,22 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
       <AvisoDeVersionamento />
     </Dialog>
 
+    <Dialog
+      open={aConfirmar !== null}
+      onOpenChange={(o) => { if (!o) setAConfirmar(null); }}
+      testId="top-exigencias-passam-a-valer"
+      title="Estas exigências passam a valer"
+      footer={<>
+        <Button variant="outline" data-testid="top-exigencias-voltar" onClick={() => setAConfirmar(null)}>Voltar e revisar</Button>
+        <Button data-testid="top-exigencias-salvar" onClick={() => { setAConfirmar(null); salvar.mutate(); }}>Salvar assim mesmo</Button>
+      </>}
+    >
+      <p className="text-sm text-slate-600">
+        A partir desta versão, o lançamento vai exigir: {(aConfirmar ?? []).join(", ")}. Até hoje essas marcas
+        estavam só registradas e não eram cobradas.
+      </p>
+    </Dialog>
+
     <ConfirmDialog
       open={confirmandoDescarte}
       onOpenChange={setConfirmandoDescarte}
@@ -553,6 +708,41 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
     </ConfirmDialog>
   </>;
 }
+
+/**
+ * Os campos de restrições do rascunho (TOP-CONFIG-05), ou nenhum. Sem restrições devolve `{}` — o rascunho
+ * fica EXATAMENTE o de hoje (sem `configuracaoV3`, sem condições), e a assinatura também.
+ */
+function camposDeRestricoes(
+  restricoes: boolean,
+  detalhe: ReturnType<typeof lerDetalheTop>
+): Partial<RascunhoTop> {
+  if (!restricoes) return {};
+  const v3 = configuracaoInicialV3(detalhe?.configuracao ?? null);
+  const lidas = detalhe?.condicoesPermitidas ?? null;
+  return {
+    configuracaoV3: v3,
+    configuracao: configuracaoTopParaEdicao(v3),
+    condicoesPermitidas: lidas ?? [],
+    // Nasce NÃO declarada: lista intocada não vai no corpo (régua em `RascunhoTop.condicoesDeclaradas`).
+    condicoesDeclaradas: false
+  };
+}
+
+/** A aba onde mora o campo de um caminho de erro. */
+function abaDoCaminho(caminho: string): ChaveAba {
+  if (caminho.startsWith("fiscal.")) return "fiscal";
+  if (caminho.startsWith("financeiro.") || caminho === "condicoesPermitidas" || caminho.startsWith("condicoesPermitidas.")) return "financeiro";
+  if (caminho.startsWith("geral.")) return "geral";
+  return "identificacao";
+}
+
+/** Erros de campo das seções Geral/Financeiro (o Fiscal os recebe em `FiscalFormato3`). */
+const ErrosDeCampo = ({ erros, prefixos }: { erros: Readonly<Record<string, string>>; prefixos: readonly string[] }) => <>
+  {Object.entries(erros)
+    .filter(([caminho]) => prefixos.some((p) => caminho === p || caminho.startsWith(`${p}.`)))
+    .map(([caminho, mensagem]) => <p key={caminho} data-testid={`top-erro-${caminho}`} className="col-span-12 text-[11.5px] text-red-700">{mensagem}</p>)}
+</>;
 
 const AvisoDeSecaoDesligada = ({ texto }: { texto: string }) => <p className="col-span-12 text-[11.5px] text-slate-500">{texto}</p>;
 
@@ -676,8 +866,9 @@ function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativa
       aconteceu na confirmação.
     </p>
     <p data-testid="top-execucao-declarativo" className="text-[11.5px] leading-relaxed text-slate-500">
-      Preparadas, ainda não executadas: fiscal, aprovação, confirmação automática, alteração após confirmar e
-      as exigências da aba Geral. Elas ficam registradas nesta versão, mas nada as executa nesta etapa do produto.
+      Preparadas, ainda não executadas: fiscal, aprovação, confirmação automática e alteração após confirmar.
+      Elas ficam registradas nesta versão, mas nada as executa nesta etapa do produto. As exigências da aba Geral
+      só são cobradas no lançamento em versões gravadas com as restrições da operação.
     </p>
   </div>;
 }

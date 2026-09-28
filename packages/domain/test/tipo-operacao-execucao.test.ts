@@ -87,7 +87,8 @@ describe("D1 — o formato 1 continua válido", () => {
   it("D1b o formato 1 continua sendo o do neutro e o da 0022 — o formato novo é outra constante", () => {
     expect(VERSAO_SCHEMA_CONFIGURACAO_TOP).toBe(1);
     expect(configuracaoNeutraTop().versaoSchema).toBe(1);
-    expect(VERSOES_SCHEMA_CONFIGURACAO_TOP).toEqual([1, 2]);
+    // TOP-CONFIG-05 (decisão 263): o formato 3 passou a ser conhecido — a lista cresce; o formato 1 não muda.
+    expect(VERSOES_SCHEMA_CONFIGURACAO_TOP).toEqual([1, 2, 3]);
   });
 });
 
@@ -182,7 +183,8 @@ describe("D3 — o formato 2 é estrito", () => {
 
 describe("D4 — formato futuro é recusado", () => {
   it("D4 qualquer formato fora dos conhecidos é UMA recusa só, antes de ler campo", () => {
-    for (const versao of [0, 3, Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1, "2", null, 1.5]) {
+    // TOP-CONFIG-05: o 3 virou formato conhecido (decisão 263); o "futuro" agora é o 4.
+    for (const versao of [0, 4, Math.max(...VERSOES_SCHEMA_CONFIGURACAO_TOP) + 1, "2", "3", null, 1.5]) {
       const r = lerConfiguracaoTop({ ...clonar(configuracaoNeutraTopV2()), versaoSchema: versao });
       expect(r.ok, `versaoSchema ${JSON.stringify(versao)}`).toBe(false);
       if (!r.ok) expect(r.recusas).toEqual([{ motivo: "schema_nao_suportado", caminho: "versaoSchema" }]);

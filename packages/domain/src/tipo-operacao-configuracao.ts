@@ -63,8 +63,17 @@ export const VERSAO_SCHEMA_CONFIGURACAO_TOP = 1 as const;
  */
 export const VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 = 2 as const;
 
+/**
+ * O FORMATO 3 (TOP-CONFIG-05): o formato 2 mais as RESTRIÇÕES COMERCIAIS e o FISCAL declarado — chaves novas
+ * em `geral`, `financeiro` e `fiscal`, nenhuma seção nova. É o ÚNICO formato cujas restrições EXECUTAM
+ * (exigências gerais, condição permitida, cliente em atraso): os formatos 1 e 2 são legado para sempre, e
+ * ler as exigências deles como regra atribuiria a documentos antigos uma intenção que ninguém tomou
+ * (decisão 263). Esta constante NÃO substitui `VERSAO_SCHEMA_CONFIGURACAO_TOP` nem a do formato 2.
+ */
+export const VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 = 3 as const;
+
 /** Os formatos que este código sabe LER. Qualquer outro é recusado — nunca lido "parecido". */
-export const VERSOES_SCHEMA_CONFIGURACAO_TOP = [VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V2] as const;
+export const VERSOES_SCHEMA_CONFIGURACAO_TOP = [VERSAO_SCHEMA_CONFIGURACAO_TOP, VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3] as const;
 export type VersaoSchemaConfiguracaoTop = (typeof VERSOES_SCHEMA_CONFIGURACAO_TOP)[number];
 
 // ---------------------------------------------------------------------------------------------------
@@ -133,6 +142,27 @@ export type MomentoAprovacao = (typeof MOMENTOS_APROVACAO)[number];
  */
 export const MODOS_EXECUCAO_TOP = ["legado", "configurada"] as const;
 export type ModoExecucaoTop = (typeof MODOS_EXECUCAO_TOP)[number];
+
+/** Formato 3 — o que a operação faz com cliente que tem título a receber vencido. Neutro: `nao_valida`. */
+export const POLITICAS_CLIENTE_EM_ATRASO = ["nao_valida", "avisa", "bloqueia"] as const;
+export type PoliticaClienteEmAtraso = (typeof POLITICAS_CLIENTE_EM_ATRASO)[number];
+
+/** Formato 3 — tolerância de atraso, em dias inteiros (0 a 365). Neutro: 0. */
+export const TOLERANCIA_ATRASO_MAXIMA_DIAS = 365;
+
+/** Formato 3 — modelo do documento fiscal que a operação emitiria. SÓ CONFIGURAÇÃO: nada é emitido. */
+export const MODELOS_DOCUMENTO_FISCAL = ["nenhum", "nfe", "nfce", "nfse"] as const;
+export type ModeloDocumentoFiscal = (typeof MODELOS_DOCUMENTO_FISCAL)[number];
+
+/** Formato 3 — finalidade do documento fiscal. SÓ CONFIGURAÇÃO. Neutro: `normal`. */
+export const FINALIDADES_DOCUMENTO_FISCAL = ["normal", "complementar", "ajuste", "devolucao"] as const;
+export type FinalidadeDocumentoFiscal = (typeof FINALIDADES_DOCUMENTO_FISCAL)[number];
+
+/** Formato 3 — tamanho máximo do texto da natureza da operação. */
+export const NATUREZA_OPERACAO_MAXIMO = 60;
+
+/** Formato 3 — a FORMA de um CFOP preenchido (4 dígitos, primeiro de 1 a 7). Vazio = não informado. */
+export const FORMA_CFOP = /^[1-7]\d{3}$/;
 
 // ---------------------------------------------------------------------------------------------------
 // 2. O ENVELOPE
@@ -207,8 +237,41 @@ export interface ConfiguracaoTipoOperacaoV2 extends Omit<ConfiguracaoTipoOperaca
   execucao: ConfiguracaoExecucaoTop;
 }
 
+/** Formato 3 — `geral` ganha a exigência de transportadora. */
+export interface ConfiguracaoGeralV3 extends ConfiguracaoGeralV1 {
+  exigeTransportadora: boolean;
+}
+
+/** Formato 3 — `financeiro` ganha a política de cliente em atraso. INDEPENDE de `atualizacao`. */
+export interface ConfiguracaoFinanceiroV3 extends ConfiguracaoFinanceiroV1 {
+  clienteEmAtraso: PoliticaClienteEmAtraso;
+  toleranciaAtrasoDias: number;
+}
+
+/** Formato 3 — `fiscal` ganha o que a emissão futura usaria. Só configuração: nada é emitido nem calculado. */
+export interface ConfiguracaoFiscalV3 extends ConfiguracaoFiscalV1 {
+  modeloDocumento: ModeloDocumentoFiscal;
+  finalidade: FinalidadeDocumentoFiscal;
+  naturezaOperacao: string;
+  cfopDentroEstado: string;
+  cfopForaEstado: string;
+  cfopExterior: string;
+}
+
+/** O formato 3: o formato 2 com as chaves novas. Nenhuma seção nova, nenhum UUID (condições vão em tabela). */
+export interface ConfiguracaoTipoOperacaoV3 extends Omit<ConfiguracaoTipoOperacaoV2, "versaoSchema" | "geral" | "financeiro" | "fiscal"> {
+  versaoSchema: typeof VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
+  geral: ConfiguracaoGeralV3;
+  financeiro: ConfiguracaoFinanceiroV3;
+  fiscal: ConfiguracaoFiscalV3;
+}
+
 /** Qualquer configuração que este código sabe ler. Quem precisa distinguir pergunta às funções abaixo. */
-export type ConfiguracaoTipoOperacao = ConfiguracaoTipoOperacaoV1 | ConfiguracaoTipoOperacaoV2;
+export type ConfiguracaoTipoOperacao = ConfiguracaoTipoOperacaoV1 | ConfiguracaoTipoOperacaoV2 | ConfiguracaoTipoOperacaoV3;
+
+/** A configuração é do formato 3 — o único cujas restrições executam (decisão 263)? */
+export const restricoesExecutamTop = (c: ConfiguracaoTipoOperacao): c is ConfiguracaoTipoOperacaoV3 =>
+  c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
 
 /**
  * As seções que a auditoria e o histórico comparam no formato 2. É a lista do formato 1 mais `execucao`,
@@ -277,6 +340,25 @@ const execucaoLegada = (): ConfiguracaoExecucaoTop => ({ estoque: "legado", fina
  */
 export function configuracaoNeutraTopV2(): ConfiguracaoTipoOperacaoV2 {
   return { ...configuracaoNeutraTop(), versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, execucao: execucaoLegada() };
+}
+
+/** Os valores neutros das chaves que o formato 3 acrescenta — um dono só, usado pelo neutro e pela promoção. */
+const NEUTRO_GERAL_V3 = (): Pick<ConfiguracaoGeralV3, "exigeTransportadora"> => ({ exigeTransportadora: false });
+const NEUTRO_FINANCEIRO_V3 = (): Pick<ConfiguracaoFinanceiroV3, "clienteEmAtraso" | "toleranciaAtrasoDias"> =>
+  ({ clienteEmAtraso: "nao_valida", toleranciaAtrasoDias: 0 });
+const NEUTRO_FISCAL_V3 = (): Omit<ConfiguracaoFiscalV3, keyof ConfiguracaoFiscalV1> =>
+  ({ modeloDocumento: "nenhum", finalidade: "normal", naturezaOperacao: "", cfopDentroEstado: "", cfopForaEstado: "", cfopExterior: "" });
+
+/** O NEUTRO DO FORMATO 3 — derivado do formato 2, com as chaves novas no neutro. */
+export function configuracaoNeutraTopV3(): ConfiguracaoTipoOperacaoV3 {
+  const n = configuracaoNeutraTopV2();
+  return {
+    ...n,
+    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+    geral: { ...n.geral, ...NEUTRO_GERAL_V3() },
+    financeiro: { ...n.financeiro, ...NEUTRO_FINANCEIRO_V3() },
+    fiscal: { ...n.fiscal, ...NEUTRO_FISCAL_V3() },
+  };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -394,6 +476,27 @@ const CHAVES_ESTOQUE = ["atualizacao", "momento", "exigeArmazem", "saldoNegativo
 const CHAVES_FINANCEIRO = ["atualizacao", "modo", "momento", "exigeFormaPagamento", "exigeVencimento", "exigeCentroResultado"] as const;
 const CHAVES_FISCAL = ["habilitado", "exigeDocumentoFiscal", "exigeNaturezaOperacao", "exigeRegraTributaria", "calculoTributario"] as const;
 const CHAVES_APROVACAO = ["politica", "valorMinimo", "momento"] as const;
+const CHAVES_GERAL_V3 = [...CHAVES_GERAL, "exigeTransportadora"] as const;
+const CHAVES_FINANCEIRO_V3 = [...CHAVES_FINANCEIRO, "clienteEmAtraso", "toleranciaAtrasoDias"] as const;
+const CHAVES_FISCAL_V3 = [...CHAVES_FISCAL, "modeloDocumento", "finalidade", "naturezaOperacao", "cfopDentroEstado", "cfopForaEstado", "cfopExterior"] as const;
+
+/** Inteiro no intervalo fechado; fora dele (ou não inteiro) é recusa no caminho do campo. */
+function inteiro(s: Record<string, unknown> | null, secaoNome: string, campo: string, min: number, max: number, recusas: RecusaConfiguracaoTop[]): number {
+  if (!s) return min;
+  const v = s[campo];
+  if (typeof v !== "number" || !Number.isInteger(v)) { recusas.push({ motivo: "tipo_invalido", caminho: `${secaoNome}.${campo}` }); return min; }
+  if (v < min || v > max) { recusas.push({ motivo: "valor_invalido", caminho: `${secaoNome}.${campo}` }); return min; }
+  return v;
+}
+
+/** Texto com tamanho máximo; opcionalmente com forma obrigatória quando preenchido. */
+function texto(s: Record<string, unknown> | null, secaoNome: string, campo: string, max: number, forma: RegExp | null, recusas: RecusaConfiguracaoTop[]): string {
+  if (!s) return "";
+  const v = s[campo];
+  if (typeof v !== "string") { recusas.push({ motivo: "tipo_invalido", caminho: `${secaoNome}.${campo}` }); return ""; }
+  if (v.length > max || (forma && v !== "" && !forma.test(v))) { recusas.push({ motivo: "valor_invalido", caminho: `${secaoNome}.${campo}` }); return ""; }
+  return v;
+}
 
 /**
  * O formato que o candidato DECLARA, se for um que este código conhece — e nada além disso.
@@ -433,7 +536,8 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
     return { ok: false, recusas: [{ motivo: "schema_nao_suportado", caminho: "versaoSchema" }] };
   }
 
-  for (const k of chavesDesconhecidas(bruto, versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 ? CHAVES_RAIZ_V2 : CHAVES_RAIZ)) {
+  const v3 = versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
+  for (const k of chavesDesconhecidas(bruto, versao === VERSAO_SCHEMA_CONFIGURACAO_TOP ? CHAVES_RAIZ : CHAVES_RAIZ_V2)) {
     recusas.push({ motivo: "campo_desconhecido", caminho: k });
   }
 
@@ -443,10 +547,10 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
   const fi = secao(bruto, "fiscal", recusas);
   const a = secao(bruto, "aprovacao", recusas);
 
-  conferirChaves(g, "geral", CHAVES_GERAL, recusas);
+  conferirChaves(g, "geral", v3 ? CHAVES_GERAL_V3 : CHAVES_GERAL, recusas);
   conferirChaves(e, "estoque", CHAVES_ESTOQUE, recusas);
-  conferirChaves(f, "financeiro", CHAVES_FINANCEIRO, recusas);
-  conferirChaves(fi, "fiscal", CHAVES_FISCAL, recusas);
+  conferirChaves(f, "financeiro", v3 ? CHAVES_FINANCEIRO_V3 : CHAVES_FINANCEIRO, recusas);
+  conferirChaves(fi, "fiscal", v3 ? CHAVES_FISCAL_V3 : CHAVES_FISCAL, recusas);
   conferirChaves(a, "aprovacao", CHAVES_APROVACAO, recusas);
 
   const politica = enumerado(a, "aprovacao", "politica", POLITICAS_APROVACAO, recusas);
@@ -455,7 +559,7 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
   // No formato 2 a chave é OBRIGATÓRIA: só `null` explícito ou um valor passam — ausência traduzida para
   // `null` seria aceitar um corpo que o contrato não descreve. O formato 1 mantém a leitura de sempre: é
   // legado para sempre, e versões antigas gravadas sem a chave continuam legíveis.
-  if (versao === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2 && a && !("valorMinimo" in a)) {
+  if (versao !== VERSAO_SCHEMA_CONFIGURACAO_TOP && a && !("valorMinimo" in a)) {
     recusas.push({ motivo: "tipo_invalido", caminho: "aprovacao.valorMinimo" });
   } else if (valorBruto !== null && valorBruto !== undefined) {
     if (typeof valorBruto !== "string") recusas.push({ motivo: "tipo_invalido", caminho: "aprovacao.valorMinimo" });
@@ -514,8 +618,37 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
   };
   // Só depois de TODAS as recusas: `enumerado` devolve um valor de preenchimento quando recusa, e esse
   // valor não pode escapar daqui como se fosse a decisão do administrador.
+  if (!v3) {
+    if (recusas.length) return { ok: false, recusas };
+    return { ok: true, valor: normalizarConfiguracaoTop({ versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, ...secoes, execucao }) };
+  }
+
+  // FORMATO 3: as chaves novas são OBRIGATÓRIAS (estrito como o formato 2 com `execucao`). CFOP aqui só tem a
+  // FORMA conferida; as regras de sentido (dentro/fora/exterior, mesmo sentido, sentido do movimento) moram
+  // em `recusasFiscaisDaFamiliaTop` (`tipo-operacao-restricoes.ts`), porque dependem da família da TOP.
+  const cfop = (campo: string) => texto(fi, "fiscal", campo, 4, FORMA_CFOP, recusas);
+  const valor: ConfiguracaoTipoOperacaoV3 = {
+    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+    ...secoes,
+    geral: { ...secoes.geral, exigeTransportadora: booleano(g, "geral", "exigeTransportadora", recusas) },
+    financeiro: {
+      ...secoes.financeiro,
+      clienteEmAtraso: enumerado(f, "financeiro", "clienteEmAtraso", POLITICAS_CLIENTE_EM_ATRASO, recusas),
+      toleranciaAtrasoDias: inteiro(f, "financeiro", "toleranciaAtrasoDias", 0, TOLERANCIA_ATRASO_MAXIMA_DIAS, recusas),
+    },
+    fiscal: {
+      ...secoes.fiscal,
+      modeloDocumento: enumerado(fi, "fiscal", "modeloDocumento", MODELOS_DOCUMENTO_FISCAL, recusas),
+      finalidade: enumerado(fi, "fiscal", "finalidade", FINALIDADES_DOCUMENTO_FISCAL, recusas),
+      naturezaOperacao: texto(fi, "fiscal", "naturezaOperacao", NATUREZA_OPERACAO_MAXIMO, null, recusas),
+      cfopDentroEstado: cfop("cfopDentroEstado"),
+      cfopForaEstado: cfop("cfopForaEstado"),
+      cfopExterior: cfop("cfopExterior"),
+    },
+    execucao,
+  };
   if (recusas.length) return { ok: false, recusas };
-  return { ok: true, valor: normalizarConfiguracaoTop({ versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, ...secoes, execucao }) };
+  return { ok: true, valor: normalizarConfiguracaoTop(valor) };
 }
 
 // ---------------------------------------------------------------------------------------------------
@@ -539,6 +672,7 @@ export function lerConfiguracaoTop(bruto: unknown): ResultadoConfiguracaoTop {
  */
 export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV1): ConfiguracaoTipoOperacaoV1;
 export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV2): ConfiguracaoTipoOperacaoV2;
+export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacaoV3): ConfiguracaoTipoOperacaoV3;
 export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacao;
 export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacao {
   const neutro = configuracaoNeutraTop();
@@ -546,6 +680,8 @@ export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): Configur
   const financeiroLigado = c.financeiro.atualizacao !== "nenhuma";
   const fiscalLigado = c.fiscal.habilitado;
   const porValor = c.aprovacao.politica === "por_valor";
+
+  if (restricoesExecutamTop(c)) return normalizarV3(c);
 
   const secoes: Omit<ConfiguracaoTipoOperacaoV1, "versaoSchema"> = {
     geral: { ...c.geral },
@@ -569,6 +705,43 @@ export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): Configur
     : { versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP, ...secoes };
 }
 
+/**
+ * A normalização do formato 3 — a mesma régua do formato 2 nas chaves antigas, mais:
+ *   · fiscal desligado zera TAMBÉM as chaves fiscais novas (elas são parte do fiscal);
+ *   · `clienteEmAtraso`/`toleranciaAtrasoDias` NÃO dependem de `financeiro.atualizacao` — um Pedido não gera
+ *     título e ainda assim pode recusar cliente em atraso; só a tolerância zera quando a política é `nao_valida`;
+ *   · `exigeTransportadora` é independente, como as outras exigências de `geral`.
+ */
+function normalizarV3(c: ConfiguracaoTipoOperacaoV3): ConfiguracaoTipoOperacaoV3 {
+  const base = normalizarConfiguracaoTop({
+    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
+    geral: c.geral, estoque: c.estoque, financeiro: c.financeiro, fiscal: c.fiscal, aprovacao: c.aprovacao, execucao: c.execucao,
+  });
+  const fiscalLigado = c.fiscal.habilitado;
+  const valida = c.financeiro.clienteEmAtraso !== "nao_valida";
+  const pick = <T extends object, K extends keyof T>(o: T, ks: readonly K[]): Pick<T, K> =>
+    Object.fromEntries(ks.map((k) => [k, o[k]])) as Pick<T, K>;
+  return {
+    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+    geral: { ...pick(base.geral, CHAVES_GERAL), exigeTransportadora: c.geral.exigeTransportadora },
+    estoque: base.estoque,
+    financeiro: {
+      ...pick(base.financeiro, CHAVES_FINANCEIRO),
+      clienteEmAtraso: c.financeiro.clienteEmAtraso,
+      toleranciaAtrasoDias: valida ? c.financeiro.toleranciaAtrasoDias : 0,
+    },
+    fiscal: fiscalLigado
+      ? {
+          ...pick(base.fiscal, CHAVES_FISCAL),
+          modeloDocumento: c.fiscal.modeloDocumento, finalidade: c.fiscal.finalidade, naturezaOperacao: c.fiscal.naturezaOperacao,
+          cfopDentroEstado: c.fiscal.cfopDentroEstado, cfopForaEstado: c.fiscal.cfopForaEstado, cfopExterior: c.fiscal.cfopExterior,
+        }
+      : { ...pick(base.fiscal, CHAVES_FISCAL), ...NEUTRO_FISCAL_V3() },
+    aprovacao: base.aprovacao,
+    execucao: base.execucao,
+  };
+}
+
 // ---------------------------------------------------------------------------------------------------
 // 6b. A EXECUÇÃO — A ÚNICA LEITURA DE "QUEM TEM AUTORIDADE SOBRE O EFEITO"
 // ---------------------------------------------------------------------------------------------------
@@ -582,7 +755,7 @@ export function normalizarConfiguracaoTop(c: ConfiguracaoTipoOperacao): Configur
  * as seções do formato 1 — e é por isso que ela é a única que qualquer consumidor pode chamar.
  */
 export function execucaoDeclaradaTop(c: ConfiguracaoTipoOperacao): ConfiguracaoExecucaoTop {
-  return c.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2
+  return c.versaoSchema !== VERSAO_SCHEMA_CONFIGURACAO_TOP
     ? { estoque: c.execucao.estoque, financeiro: c.execucao.financeiro }
     : execucaoLegada();
 }
@@ -608,10 +781,41 @@ export const declaraExecucaoConfiguradaTop = (c: ConfiguracaoTipoOperacao): bool
  */
 export function configuracaoTopParaEdicao(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacaoV2 {
   const n = normalizarConfiguracaoTop(c);
-  return n.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2
-    ? n
-    : { ...n, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, execucao: execucaoLegada() };
+  if (n.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V2) return n;
+  if (n.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3) {
+    // VISTA do formato 2 de uma versão do formato 3: as chaves novas ficam de fora. Só para exibição por quem
+    // não conhece o formato 3 — gravar isto sobre um formato 3 é recusado pelo servidor (formato não retrocede).
+    const pick = <T extends object, K extends keyof T>(o: T, ks: readonly K[]): Pick<T, K> =>
+      Object.fromEntries(ks.map((k) => [k, o[k]])) as Pick<T, K>;
+    return {
+      versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2,
+      geral: pick(n.geral, CHAVES_GERAL), estoque: n.estoque, financeiro: pick(n.financeiro, CHAVES_FINANCEIRO),
+      fiscal: pick(n.fiscal, CHAVES_FISCAL), aprovacao: n.aprovacao, execucao: n.execucao,
+    };
+  }
+  return { ...n, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V2, execucao: execucaoLegada() };
 }
+
+/**
+ * A configuração no formato 3, PARA EXIBIR E EDITAR no editor que conhece as restrições. Formato 1/2 vira
+ * formato 3 com as chaves novas no NEUTRO (e a execução do formato 1 em `legado`). Ler não regrava nada.
+ */
+export function configuracaoTopParaEdicaoV3(c: ConfiguracaoTipoOperacao): ConfiguracaoTipoOperacaoV3 {
+  const n = normalizarConfiguracaoTop(c);
+  if (restricoesExecutamTop(n)) return n;
+  const v2 = configuracaoTopParaEdicao(n);
+  return normalizarConfiguracaoTop({
+    ...v2,
+    versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
+    geral: { ...v2.geral, ...NEUTRO_GERAL_V3() },
+    financeiro: { ...v2.financeiro, ...NEUTRO_FINANCEIRO_V3() },
+    fiscal: { ...v2.fiscal, ...NEUTRO_FISCAL_V3() },
+  });
+}
+
+/** Exigência de `geral` que o formato 1/2 só DECLARAVA e o formato 3 EXECUTA. */
+const exigeAlgoNoGeral = (c: ConfiguracaoTipoOperacao): boolean =>
+  c.geral.exigeParceiro || c.geral.exigeCentroResultado || c.geral.exigeObservacao;
 
 // ---------------------------------------------------------------------------------------------------
 // 7. IGUALDADE SEMÂNTICA E DIFERENÇA POR SEÇÃO
@@ -641,7 +845,10 @@ function canonico(v: unknown): string {
  * versão N+1 só para trocar o formato — e "salvar sem alterar não é escrita" deixaria de valer.
  */
 export const configuracoesTopIguais = (a: ConfiguracaoTipoOperacao, b: ConfiguracaoTipoOperacao): boolean =>
-  canonico(configuracaoTopParaEdicao(a)) === canonico(configuracaoTopParaEdicao(b));
+  canonico(configuracaoTopParaEdicaoV3(a)) === canonico(configuracaoTopParaEdicaoV3(b))
+  // FORMATO 3 × ANTERIOR (decisão 263): mesmas chaves não bastam quando o formato 3 passaria a EXECUTAR uma
+  // exigência que o anterior só declarava — aí a troca de formato é mudança de comportamento, e cria versão.
+  && (restricoesExecutamTop(a) === restricoesExecutamTop(b) || !exigeAlgoNoGeral(a));
 
 /**
  * Quais seções mudaram, para a auditoria.
@@ -656,9 +863,10 @@ export function secoesAlteradasTop(
   antes: ConfiguracaoTipoOperacao,
   depois: ConfiguracaoTipoOperacao,
 ): SecaoConfiguracaoTopV2[] {
-  const a = configuracaoTopParaEdicao(antes);
-  const b = configuracaoTopParaEdicao(depois);
-  return SECOES_CONFIGURACAO_TOP_V2.filter((s) => canonico(a[s]) !== canonico(b[s]));
+  const a = configuracaoTopParaEdicaoV3(antes);
+  const b = configuracaoTopParaEdicaoV3(depois);
+  const passouAExecutar = restricoesExecutamTop(antes) !== restricoesExecutamTop(depois) && exigeAlgoNoGeral(antes);
+  return SECOES_CONFIGURACAO_TOP_V2.filter((s) => canonico(a[s]) !== canonico(b[s]) || (s === "geral" && passouAExecutar));
 }
 
 /** A configuração está no neutro? Usado pela tela para dizer "nada configurado" sem repetir o literal. */

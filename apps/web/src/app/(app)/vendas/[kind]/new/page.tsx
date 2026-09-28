@@ -10,7 +10,7 @@ import { Confirm, Field, Input, NativeSelect, Textarea } from "@/components/ui";
 import { RefSelect } from "@/components/ui/ref-select";
 import { PlanEditor, defaultPlan, useCreate, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { useQuery } from "@tanstack/react-query";
-import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_LAYOUT_CAMPO_OBRIGATORIO, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type OrigemDoLayout, type ValorPadraoLayout } from "@agro/domain";
+import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoCabecalho, ERRO_EXIGENCIA_NAO_ATENDIDA, ERRO_LAYOUT_CAMPO_OBRIGATORIO, exigenciasFaltandoPorCampos, FORMA_UUID_PADRAO, LAYOUT_DO_SISTEMA, camposObrigatoriosFaltando, chavePadraoDeCadastro, catalogoDaFamilia, documentTotals, mensagemCampoObrigatorio, normalizarCondicaoPagamento, planoDaCondicao, validarCondicaoPagamento, type CampoDoLayout, type CondicaoPagamento, type EstruturaLayout, type OrigemDoLayout, type ValorPadraoLayout } from "@agro/domain";
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
@@ -19,7 +19,12 @@ import { cn } from "@/lib/utils";
 import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
 import { ItensDaCentral, Travado } from "@/features/sales/central-vendas-itens";
 import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+/* TOP-CONFIG-05 exigências: as regras da operação (só com `capacidades.regrasDaOperacao` exata). */
+import { entendeRegrasDaOperacao, useRegrasDaOperacao, useSituacaoCliente } from "@/features/sales/regras-da-operacao";
 import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
+/* TOP-CONFIG-05 atraso — faixa do cliente em atraso (só com `capacidades.regrasDaOperacao` exata). */
+import { ERRO_CLIENTE_EM_ATRASO } from "@agro/domain";
+import { FaixaAtrasoCliente, bloqueiaSalvar } from "@/features/sales/faixa-atraso-cliente";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
 
@@ -254,6 +259,18 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   }, [layoutAtivo, layoutRecebido]);
   const layoutPendente = layoutAtivo && !layout;
   /**
+   * TOP-CONFIG-05 exigências — AS REGRAS DA OPERAÇÃO (decisão 263). SÓ com `capacidades.regrasDaOperacao` EXATA; sem ela
+   * `regrasAtivo` é falso, nenhuma pergunta sai, `regras` é null, `exigidos` é vazio e a Central é a de hoje, idêntica.
+   * Com ela, enquanto as regras não chegam conferidas o Salvar trava (como com `layoutPendente`). `regras` e
+   * `regrasPendente` ficam neste escopo para a condição (W5) e a faixa de atraso (W6).
+   */
+  const regrasAtivo = entendeRegrasDaOperacao(estadoTop);
+  const { regras, pendente: regrasPendente } = useRegrasDaOperacao(kind, top.id, regrasAtivo);
+  /* TOP-CONFIG-05 condição: a lista permitida da versão atual (null = sem restrição). Declarada aqui, antes de qualquer
+     leitura de padrão de cadastro, para `padraoNaoPermitido` nunca ler antes da inicialização. */
+  const condicoesPermitidas = regras?.condicoesPermitidas ?? null;
+  const exigidos = React.useMemo(() => new Set<string>(regras?.exigencias ?? []), [regras]);
+  /**
    * VENDAS-A3-1d: a linha "Layout: …" no topo de Dados principais. Só com a capacidade do layout E a resposta conferida
    * (`layout` só existe assim) — sem a capacidade, nada: a Central de hoje, idêntica. `can` só decide se o atalho
    * "Configurar" aparece (apresentação); quem nega o configurador é a rota.
@@ -261,6 +278,31 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const { can } = useAuth();
   const layoutVale = React.useMemo(() => (layout ? layoutQueVale(layoutRecebido) : null), [layout, layoutRecebido]);
   const estrutura = React.useMemo(() => layout ?? LAYOUT_DO_SISTEMA(familiaLayout), [layout, familiaLayout]);
+  /**
+   * TOP-CONFIG-05 exigências — A EXIGÊNCIA DA TOP VENCE O LAYOUT. Campo exigido que o layout vigente não desenha
+   * (nem no cabeçalho nem em aba alguma) entra mesmo assim, EDITÁVEL, na zona onde `LAYOUT_DO_SISTEMA` o põe: cabeçalho
+   * → fim de Dados principais (sem `grupo`, para não mudar a zona dos outros campos); rodapé → a aba de mesmo nome do
+   * sistema (criada no fim, se o layout não a tem). Não entra em `cfg`: rótulo de hoje, sem padrão, sem trava. Só governa
+   * o DESENHO — a cobrança do layout continua lendo `layout`. Sem exigências, é `estrutura`, o mesmo objeto.
+   */
+  const estruturaDesenhada = React.useMemo((): EstruturaLayout => {
+    if (!exigidos.size) return estrutura;
+    const desenhados = new Set([...estrutura.cabecalho.map((x) => x.campo), ...estrutura.rodape.flatMap((a) => a.campos.map((x) => x.campo))]);
+    const faltam = [...exigidos].filter((c) => !desenhados.has(c));
+    if (!faltam.length) return estrutura;
+    const sistema = LAYOUT_DO_SISTEMA(familiaLayout);
+    const cabecalho = [...estrutura.cabecalho];
+    const rodape = estrutura.rodape.map((a) => ({ ...a, campos: [...a.campos] }));
+    for (const c of faltam) {
+      const sintetico: CampoDoLayout = { campo: c, obrigatorio: false, editavel: true };
+      if (sistema.cabecalho.some((x) => x.campo === c)) { cabecalho.push(sintetico); continue; }
+      const abaDoSistema = sistema.rodape.find((a) => a.campos.some((x) => x.campo === c));
+      if (!abaDoSistema) continue;
+      const aba = rodape.find((a) => a.aba === abaDoSistema.aba);
+      if (aba) aba.campos.push(sintetico); else rodape.push({ aba: abaDoSistema.aba, campos: [sintetico] });
+    }
+    return { ...estrutura, cabecalho, rodape };
+  }, [estrutura, exigidos, familiaLayout]);
   /** VENDAS-A3-1c: os campos de "Dados adicionais" segundo o layout — abre o grupo quando um deles tem erro. */
   const adicionaisDoLayout = React.useMemo(() => new Set(camposAdicionaisDoCabecalho(estrutura)), [estrutura]);
   /** Configuração do layout por chave (cabeçalho e rodapé) — só com layout de verdade. */
@@ -274,9 +316,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const camposDeCadastro = React.useMemo(() => new Set(catalogoDaFamilia(familiaLayout).filter((c) => c.parte !== "itens" && c.referencia).map((c) => chavePadraoDeCadastro(c.parte, c.chave))), [familiaLayout]);
   const doLayoutComCadastro = (chave: string) => Boolean(layout) && camposDeCadastro.has(chave) && cfg.has(chave);
   /** O padrão que vale agora para o campo (null: nenhum). */
-  const padraoDoCampo = (chave: string) => (doLayoutComCadastro(chave) ? padroes.validos.get(chave) ?? null : null);
+  const padraoDoCampo = (chave: string) => (doLayoutComCadastro(chave) && !padraoNaoPermitido(chave) ? padroes.validos.get(chave) ?? null : null); // TOP-CONFIG-05 condição: padrão não permitido não vale
   /** O padrão do campo morreu no cadastro: nada é aplicado, o aviso aparece e o campo fica editável nesta abertura. */
-  const padraoInvalido = (chave: string) => doLayoutComCadastro(chave) && padroes.invalidos.has(chave);
+  const padraoInvalido = (chave: string) => doLayoutComCadastro(chave) && (padroes.invalidos.has(chave) || padraoNaoPermitido(chave)); // TOP-CONFIG-05 condição: não permitido = padrão inválido
 
   /**
    * O QUE CONTA COMO "TEM COISA DIGITADA".
@@ -362,7 +404,40 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     if (!v) setPlan(defaultPlan());
   };
   const ajustarPlano = (p: Plan) => { setPlan(p); setAjustado(true); };
+
+  /* ── TOP-CONFIG-05 condição (W5) ──────────────────────────────────────────────────────────────────────────────
+   * CONDIÇÕES PERMITIDAS (decisão 263): SÓ com `capacidades.regrasDaOperacao` EXATA (`entendeRegrasDaOperacao`); sem
+   * ela `regras` é null, nenhuma pergunta sai e a condição é a de hoje. Com a lista NÃO nula da versão atual da TOP:
+   * o RefSelect só oferece as permitidas (`somenteIds`); o PADRÃO de cadastro da condição fora da lista não é aplicado
+   * e aparece como padrão inválido (`padraoDoCampo`/`padraoInvalido` acima); e o valor escolhido que deixa de ser
+   * permitido (as regras chegaram ou mudaram) é limpo pelo MESMO caminho da escolha manual (`escolherCondicao`).
+   * Apresentação — quem recusa é o servidor (`CONDICAO_PAGAMENTO_NAO_PERMITIDA`). */
+  // `regras` vem do bloco "TOP-CONFIG-05 exigências" (uma pergunta só por TOP); `condicoesPermitidas` é lida lá em cima.
+  const condicaoNaoPermitida = (id: string) => condicoesPermitidas !== null && id !== "" && !condicoesPermitidas.some((x) => x.toLowerCase() === id.toLowerCase());
+  function padraoNaoPermitido(chave: string): boolean {
+    return chave === "condicao_pagamento_id" && condicaoNaoPermitida(padroes.validos.get(chave)?.id ?? "");
+  }
+  React.useEffect(() => {
+    if (!condicaoNaoPermitida(h.condicao_pagamento_id)) return;
+    // o padrão aplicado ao abrir (antes de as regras chegarem) sai também do estado inicial: retirá-lo não é digitação
+    if (inicial.current.condicao_pagamento_id === h.condicao_pagamento_id) inicial.current = { ...inicial.current, condicao_pagamento_id: "" };
+    escolherCondicao(null);
+  }, [h.condicao_pagamento_id, condicaoNaoPermitida, escolherCondicao]);
+  /* ── fim TOP-CONFIG-05 condição ── */
   const semClassificacao = classificacaoAtiva && (!h.categoria_financeira_id || !h.centro_custo_id);
+  /*
+   * TOP-CONFIG-05 atraso — SÓ com `capacidades.regrasDaOperacao` EXATA (`entendeRegrasDaOperacao`). Sem ela o hook
+   * fica desligado (nenhum `/situacao-cliente` sai), a faixa não existe e o Salvar é o de hoje. "bloqueia" com atraso
+   * trava o Salvar (no botão E no `submit`); trocar para cliente em dia destrava. O 422 `CLIENTE_EM_ATRASO` do
+   * servidor (a autoridade) aparece no campo Cliente até o cliente mudar.
+   */
+  // `regrasAtivo`/`regras` vêm do bloco "TOP-CONFIG-05 exigências". Só pergunta quando a política da versão atual valida.
+  const { situacao: situacaoAtraso } = useSituacaoCliente(kind, h.client_id, top.id, regrasAtivo && regras !== null && regras.clienteEmAtraso.politica !== "nao_valida");
+  const atrasoTravaSalvar = regrasAtivo && bloqueiaSalvar(situacaoAtraso);
+  const [erroAtraso, setErroAtraso] = React.useState<{ cliente: string; mensagem: string } | null>(null);
+  const erroAtrasoDoCliente = erroAtraso && erroAtraso.cliente === h.client_id ? erroAtraso.mensagem : undefined;
+  const aoRecusarAtraso = (e: unknown) => { if (regrasAtivo && e instanceof ApiError && e.code === ERRO_CLIENTE_EM_ATRASO) setErroAtraso({ cliente: h.client_id, mensagem: e.message }); };
+  /* fim TOP-CONFIG-05 atraso */
   /** O corpo do POST — o MESMO objeto que a cobrança do layout confere antes de sair. */
   const corpo = () => ({ empresa_id: h.empresa_id, document_date: h.document_date, shipping_date: h.shipping_date || null, due_date: h.due_date || null, client_id: h.client_id, transporter_id: h.transporter_id || null, proprietary_id: h.proprietary_id || null, driver_name: h.driver_name || null, payment_method_id: h.payment_method_id || null, freight: h.freight || "0", freight_icms: h.freight_icms || "0", other_values: h.other_values || "0", discount: h.discount || "0", note: h.note || null, is_deductible: h.is_deductible, installment_plan: condicaoId ? (ajustado ? plan : null) : (h.installments ? plan : null), items: items.map((i) => ({ product_id: i.product_id, warehouse_id: i.warehouse_id || null, quantity: i.quantity, unit_price: i.unit_value ?? "0", discount: i.discount || "0", discount_percent: i.discount_percent || "0", note: null })), tipo_operacao_id: top.id, ...(classificacaoAtiva ? { categoria_financeira_id: h.categoria_financeira_id, centro_custo_id: h.centro_custo_id } : {}), ...(condicaoId ? { condicao_pagamento_id: condicaoId } : {}) });
 
@@ -375,8 +450,23 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const [errosServidor, setErrosServidor] = React.useState<Record<string, string>>({});
   const faltando = () => (layout ? camposObrigatoriosFaltando(familiaLayout, layout, corpo(), { classificacao: classificacaoAtiva, condicao: condicaoAtiva }) : []);
   const errosLocais: Record<string, string> = layout && tentouSalvar ? Object.fromEntries(faltando().map((f) => [f.caminho, mensagemCampoObrigatorio(f.rotulo)])) : {};
-  const erros: Record<string, string> = layout ? { ...errosServidor, ...errosLocais } : {};
+  /**
+   * TOP-CONFIG-05 exigências: a MESMA régua da API (`exigenciasFaltandoPorCampos`) sobre o MESMO corpo do POST. Sem
+   * `regras` (sem a capacidade) nada é conferido e `erros` é exatamente o de antes. A mensagem da exigência vence a do
+   * layout no mesmo campo (é a regra mais estrita que a API cobra primeiro).
+   */
+  const exigenciasFaltando = () => (regras ? exigenciasFaltandoPorCampos(regras.exigencias, corpo()) : []);
+  const errosExigencia: Record<string, string> = regras && tentouSalvar ? Object.fromEntries(exigenciasFaltando().map((f) => [f.caminho, `${f.rotulo} é obrigatório nesta operação.`])) : {};
+  const erros: Record<string, string> = layout || regras ? { ...errosServidor, ...errosLocais, ...errosExigencia } : {};
   const [maisDados, setMaisDados] = React.useState(false);
+  /** TOP-CONFIG-05 exigências: 422 TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA (`details.exigencias` [{caminho, mensagem}]) → erro no campo. */
+  const errouExigencia = (e: unknown): boolean => {
+    if (!(e instanceof ApiError) || e.code !== ERRO_EXIGENCIA_NAO_ATENDIDA) return false;
+    const m = errosDoServidor(ehObj(e.details) ? e.details.exigencias : undefined);
+    setErrosServidor(m);
+    if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true);
+    return true;
+  };
   /** O UUID que vai no corpo é o da TOP VALIDADA contra a lista — nunca o texto cru da URL. */
   const submit = () => {
     /**
@@ -388,13 +478,22 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
      */
     if (!escritaTopConfirmada) return;
     if (semClassificacao) return;
-    if (!layoutAtivo) { create.mutate(corpo()); return; }
+    if (atrasoTravaSalvar) return; /* TOP-CONFIG-05 atraso: a trava também no handler */
+    /* TOP-CONFIG-05 exigências: regras pendentes travam; exigência faltando → erro no campo e NADA sai. Sem a
+       capacidade `regrasPendente` é falso e `regras` é null: o caminho abaixo é o de antes, linha a linha. */
+    if (regrasPendente) return;
+    if (regras) {
+      setTentouSalvar(true); setErrosServidor({});
+      const fe = exigenciasFaltando();
+      if (fe.length) { if ([...fe, ...faltando()].some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true); return; }
+    }
+    if (!layoutAtivo) { if (regras) create.mutate(corpo(), { onError: (e) => { aoRecusarAtraso(e); errouExigencia(e); } }); else create.mutate(corpo(), regrasAtivo ? { onError: aoRecusarAtraso } : undefined); return; }
     if (!layout) return;
     setTentouSalvar(true); setErrosServidor({});
     const f = faltando();
     if (f.length) { if (f.some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true); return; }
     create.mutate(corpo(), {
-      onError: (e) => { if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true); } }
+      onError: (e) => { aoRecusarAtraso(e); /* TOP-CONFIG-05 atraso */ if (regras && errouExigencia(e)) return; if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true); } }
     });
   };
 
@@ -472,9 +571,15 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
    * Com layout: rótulo e obrigatório do layout, `data-campo="<chave>"` no invólucro, erro no próprio campo, e o campo
    * não editável aparece travado (fieldset desabilitado) mostrando o valor (o padrão aplicado ao abrir).
    */
-  const dc = (chave: string) => (layout ? { "data-campo": chave } : {});
+  /* TOP-CONFIG-05 exigências: campo exigido pela TOP ganha `data-exigido-top="1"` e `data-testid="central-campo-<caminho>"`
+     no invólucro (nenhum destes invólucros tem testid hoje). Sem `regras`, `exigidos` é vazio e nada muda no DOM. */
+  const dc = (chave: string) => ({
+    ...(layout ? { "data-campo": chave } : {}),
+    ...(exigidos.has(chave) ? { "data-exigido-top": "1", "data-testid": `central-campo-${chave}` } : {})
+  });
   const rot = (chave: string, hoje: string) => cfg.get(chave)?.rotulo || hoje;
-  const req = (chave: string, hoje: boolean) => (layout ? Boolean(cfg.get(chave)?.obrigatorio) : hoje);
+  /* TOP-CONFIG-05 exigências: o "*" soma o obrigatório do layout (ou o de hoje) com a exigência da TOP. */
+  const req = (chave: string, hoje: boolean) => (layout ? Boolean(cfg.get(chave)?.obrigatorio) : hoje) || exigidos.has(chave);
   const err = (chave: string) => erros[chave];
   /** VENDAS-A3-1b: o rótulo do padrão de cadastro vai ao RefSelect enquanto o valor for o do padrão (sem consulta). */
   const dica = (chave: keyof typeof h) => { const p = padraoDoCampo(chave); return p && h[chave] === p.id ? p.rotulo : undefined; };
@@ -486,7 +591,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
 
   const desenhar = (chave: string): React.ReactNode => {
     switch (chave) {
-      case "client_id": return pesquisa(<Field label={rot(chave, "Cliente")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} labelHint={dica("client_id")} /></Field>, chave);
+      /* TOP-CONFIG-05 atraso: erro do 422 no campo Cliente e a faixa LOGO ABAIXO dele (fora do invólucro, sem espaço reservado quando não há faixa). */
+      case "client_id": return <>{pesquisa(<Field label={rot(chave, "Cliente")} required={req(chave, true)} error={err(chave) ?? erroAtrasoDoCliente} span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} labelHint={dica("client_id")} /></Field>, chave)}{regrasAtivo && <FaixaAtrasoCliente situacao={situacaoAtraso} />}</>;
       case "empresa_id": return pesquisa(<Field label={rot(chave, "Empresa")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>, chave);
       case "document_date": return campo(<Field label={rot(chave, "Data")} required={req(chave, true)} error={err(chave)} span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>, chave);
       case "due_date": return campo(<Field label={rot(chave, "Vencimento")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>, chave);
@@ -497,7 +603,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       case "proprietary_id": return pesquisa(<Field label={rot(chave, "Proprietário")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} labelHint={dica("proprietary_id")} /></Field>, chave);
       case "discount": return campo(<Field label={rot(chave, "Desconto")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>, chave);
       case "other_values": return campo(<Field label={rot(chave, "Outros valores")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>, chave);
-      case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} /></Field>, chave)}</div>;
+      case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} somenteIds={condicoesPermitidas} /></Field>, chave)}</div>;
       case "installment_plan": return <>
         {!condicaoId && <div style={larguraFixa}>{campo(<Field label={rot(chave, "Parcelamento")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>, chave)}</div>}
         {!condicaoId && h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
@@ -563,7 +669,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   /* Dados principais: ordem do layout; a Operação logo depois da Empresa (ou depois dos dois primeiros). "Dados
      adicionais" = os campos que o LAYOUT põe lá (VENDAS-A3-1c, dono: `camposAdicionaisDoCabecalho`; sem layout é o
      LAYOUT_DO_SISTEMA → o Proprietário, como hoje). Bloco largo (plano de parcelas) nunca no cabeçalho. */
-  const cabecalho = estrutura.cabecalho.map((x) => x.campo).filter(existe).filter((c) => !CAMPOS_SO_NO_RODAPE.includes(c));
+  /* TOP-CONFIG-05 exigências: desenha a partir de `estruturaDesenhada` (= `estrutura` sem exigido faltante). */
+  const cabecalho = estruturaDesenhada.cabecalho.map((x) => x.campo).filter(existe).filter((c) => !CAMPOS_SO_NO_RODAPE.includes(c));
   const principais = cabecalho.filter((c) => !adicionaisDoLayout.has(c));
   const adicionais = cabecalho.filter((c) => adicionaisDoLayout.has(c));
   const posEmpresa = principais.indexOf("empresa_id");
@@ -572,7 +679,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   /* Rodapé: as abas do layout, na ordem, com os campos dele. A arrumação de cada aba segue a de hoje. */
   const VALOR_DA_ABA: Record<string, string> = { "Totais": "totais", "Financeiro": "financeiro", "Frete e transporte": "frete", "Fiscal": "fiscal", "Observações": "observacoes" };
   const usados = new Set<string>();
-  const abas = estrutura.rodape.flatMap((a, i) => {
+  const abas = estruturaDesenhada.rodape.flatMap((a, i) => {
     const campos = a.campos.map((x) => x.campo).filter(existe);
     if (!campos.length) return [];
     const preferido = VALOR_DA_ABA[a.aba];
@@ -609,7 +716,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       identidade={{ nome: T[kind] ?? "Novo documento", alterado: sujo, dica: kind === "sales" ? "O que a confirmação faz no estoque e no financeiro depende do Tipo de Operação e é mostrado antes de confirmar." : "Documento comercial sem efeito em estoque/financeiro até ser convertido em venda confirmada." }}
       acoes={<>
         {/* sem "Voltar": como no design, a barra só tem ações do documento; navegar é a barra de abas */}
-        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
+        {/* TOP-CONFIG-05 exigências/atraso: `regrasPendente` trava como `layoutPendente`; `atrasoTravaSalvar` trava o cliente em atraso com "bloqueia" (os dois falsos sem a capacidade). */}
+        <AcaoDaBarra rotulo="Salvar" destaque="salvar" dica="inicio" ocupado={create.isPending} disabled={!escritaTopConfirmada || semClassificacao || layoutPendente || regrasPendente || atrasoTravaSalvar || !h.client_id || !items.length || items.some((i) => !i.product_id)} onClick={submit}><Save aria-hidden /></AcaoDaBarra>
         <DivisorDaBarra />
         <AcaoDaBarra rotulo="Alterar operação" data-testid="top-alterar" onClick={alterarOperacao}><Repeat2 aria-hidden /></AcaoDaBarra>
       </>}
