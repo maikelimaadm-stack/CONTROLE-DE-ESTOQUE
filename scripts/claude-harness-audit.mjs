@@ -124,21 +124,22 @@ for (const r of REGRAS) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// 3b. A LEI DE UMA PR ABERTA POR VEZ (PRE-PR-01) CONTINUA ESCRITA NOS DOIS DONOS
+// 3b. A LEI DE UMA PR ABERTA POR FAIXA, NO MÁXIMO 3 (PRE-PR-01, decisão 264) ESCRITA NOS DOIS DONOS
 //
 // POR QUE ISTO É UM GATE. A lei que mais custa quando falha é a que ninguém percebe ter sumido.
 // Uma linha apagada de `CLAUDE.md` não quebra build, tipo nem teste: a sessão seguinte simplesmente
-// não a carrega, abre a segunda PR e o defeito só aparece na revisão, quando a resposta a um
-// comentário está numa PR e o código correspondente está na outra.
+// não a carrega, abre a segunda PR na mesma faixa (ou a quarta no repositório) e o defeito só aparece
+// na revisão, quando a resposta a um comentário está numa PR e o código correspondente está na outra.
 //
-// O QUE ELE PROVA, e é uma coisa só: que as CLÁUSULAS da lei continuam presentes nos dois donos.
-// Não prova que a lei foi obedecida — isso é comportamento da sessão, não estado do repositório.
-// Dizer o contrário seria gate que promete o que não entrega.
+// O QUE ELE PROVA: que as CLÁUSULAS da lei vigente continuam presentes nos dois donos, e que a lei
+// ANTERIOR ("PRs abertas > 0 ⇒ PR nova = PROIBIDA", decisão 222) não continua escrita como vigente —
+// duas leis contraditórias valem como nenhuma. Não prova que a lei foi obedecida: isso é comportamento
+// da sessão, não estado do repositório.
 //
 // POR QUE ESTÁTICO. Contar PR aberta exigiria falar com a API do GitHub, e este gate roda dentro de
 // `pnpm lint`. Um lint que precisa de token fica vermelho offline, vermelho no fork e vermelho
 // quando o GitHub oscila — e o que ele passaria a medir seria a rede, não o contrato. Quem conta PR
-// aberta é a sessão, na hora de abrir, com uma listagem de leitura.
+// aberta, por faixa e no total, é a sessão, na hora de abrir, com uma listagem de leitura.
 //
 // COMENTÁRIO DE HTML NÃO CONTA. `<!-- … -->` não é lido pelo modelo como instrução ativa: comentar
 // a lei é apagá-la com o texto ainda no arquivo, e seria a forma mais barata de passar por aqui.
@@ -146,16 +147,29 @@ for (const r of REGRAS) {
 /** Texto sem comentário de HTML e com espaço normalizado — a lei quebra linha, o casamento não pode depender disso. */
 const textoDaLei = (t) => t.replace(/<!--[\s\S]*?-->/g, " ").replace(/\s+/g, " ");
 
+const FORMULA_FAIXA = /PRs abertas na faixa\s*>\s*0\s*⇒\s*PR nova nessa faixa\s*=\s*PROIBIDA/i;
+const FORMULA_TETO = /PRs abertas no reposit[óo]rio\s*≥\s*3\s*⇒\s*PR nova\s*=\s*PROIBIDA/i;
+/** A lei anterior (222). Não pode continuar escrita como vigente em nenhum dos dois donos. */
+const FORMULA_ANTERIOR = /PRs abertas\s*>\s*0\s*⇒\s*PR nova\s*=\s*PROIBIDA/i;
+
+const clausulasComuns = (arquivo) => [
+  { arquivo, garante: "o identificador da lei", re: /PRE-PR-01/ },
+  { arquivo, garante: "a fórmula da faixa", re: FORMULA_FAIXA },
+  { arquivo, garante: "a fórmula do teto de 3", re: FORMULA_TETO },
+  { arquivo, garante: '"uma PR aberta por faixa"', re: /uma PR aberta por faixa/i },
+  { arquivo, garante: '"no máximo 3"', re: /no m[áa]ximo 3/i },
+  { arquivo, garante: "que PR sem faixa no título ocupa as três", re: /sem faixa no t[íi]tulo ocupa as tr[êe]s faixas/i },
+  { arquivo, garante: "que só a F1 cria migration", re: /[ÚU]NICA faixa que cria migration/i }
+];
 const LEI_PRE_PR_01 = [
-  { arquivo: "CLAUDE.md", garante: "o identificador da lei", re: /PRE-PR-01/ },
-  { arquivo: "CLAUDE.md", garante: "a fórmula da proibição", re: /PRs abertas\s*>\s*0\s*⇒\s*PR nova\s*=\s*PROIBIDA/i },
+  ...clausulasComuns("CLAUDE.md"),
   { arquivo: "CLAUDE.md", garante: "que corrigir é atualizar a MESMA PR", re: /a mesma branch e a mesma PR/i },
-  { arquivo: "CLAUDE.md", garante: "que fechar a PR aberta não libera caminho", re: /fechar, mesclar, marcar \*ready\*, criar branch concorrente ou abrir PR "temporária"/i },
+  { arquivo: "CLAUDE.md", garante: "que fechar a PR aberta não libera a faixa", re: /fechar, mesclar, marcar \*ready\*, criar branch concorrente ou abrir PR "temporária"/i },
   { arquivo: "CLAUDE.md", garante: "que a lei vence a instrução de sessão", re: /PRE-PR-01 vence o pedido/i },
 
-  { arquivo: ".claude/rules/workflow.md", garante: "o identificador da lei", re: /PRE-PR-01/ },
-  { arquivo: ".claude/rules/workflow.md", garante: "a fórmula da proibição", re: /PRs abertas\s*>\s*0\s*⇒\s*PR nova\s*=\s*PROIBIDA/i },
+  ...clausulasComuns(".claude/rules/workflow.md"),
   { arquivo: ".claude/rules/workflow.md", garante: "a checagem por listagem antes de abrir", re: /LISTE as abertas/i },
+  { arquivo: ".claude/rules/workflow.md", garante: "que a listagem conta por faixa E no total", re: /por faixa[^.]*E no total/i },
   { arquivo: ".claude/rules/workflow.md", garante: "que fechar a PR aberta não libera caminho", re: /fechar a PR aberta para liberar o caminho/i },
   { arquivo: ".claude/rules/workflow.md", garante: "que mesclar não libera caminho", re: /mesclar a PR aberta/i },
   { arquivo: ".claude/rules/workflow.md", garante: "que branch concorrente é a mesma violação", re: /branch concorrente/i },
@@ -164,22 +178,32 @@ const LEI_PRE_PR_01 = [
   { arquivo: ".claude/rules/workflow.md", garante: "que o gate é estático e o lint não fala com a rede", re: /`pnpm lint` não fala com a rede/i }
 ];
 
-/** As cláusulas ausentes de um texto. Função pura, para o autoteste poder exercê-la sem tocar a árvore. */
-const clausulasAusentes = (texto, clausulas) => clausulas.filter((c) => !c.re.test(textoDaLei(texto)));
+/** As cláusulas ausentes de um texto, e a lei anterior se continuar escrita. Função pura, para o autoteste. */
+const clausulasAusentes = (texto, clausulas) => {
+  const t = textoDaLei(texto);
+  const faltam = clausulas.filter((c) => !c.re.test(t));
+  if (FORMULA_ANTERIOR.test(t)) faltam.push({ garante: 'a retirada da lei anterior ("PRs abertas > 0 ⇒ PR nova = PROIBIDA", 222) — duas leis contraditórias valem como nenhuma' });
+  return faltam;
+};
 
 // AUTOTESTE — nas duas direções, porque um verificador que nunca acusa é indistinguível de um
 // verificador correto: a tela verde é a mesma. Inclui o caso do comentário, que é a burla barata.
 {
   const doArquivo = (f) => LEI_PRE_PR_01.filter((c) => c.arquivo === f);
   const CLAUDE = doArquivo("CLAUDE.md");
-  const COMPLETO = 'PRE-PR-01: PRs abertas > 0 ⇒ PR nova = PROIBIDA. Corrigir é atualizar a mesma branch e a mesma PR. '
-    + 'Nunca fechar, mesclar, marcar *ready*, criar branch concorrente ou abrir PR "temporária" para liberar caminho. '
-    + 'Havendo uma aberta, PRE-PR-01 vence o pedido.';
+  const COMPLETO = 'PRE-PR-01 — uma PR aberta por faixa, no máximo 3 no repositório. F1 é a ÚNICA faixa que cria migration. '
+    + 'PRs abertas na faixa > 0 ⇒ PR nova nessa faixa = PROIBIDA e PRs abertas no repositório ≥ 3 ⇒ PR nova = PROIBIDA. '
+    + 'PR aberta sem faixa no título ocupa as três faixas. Corrigir é atualizar a mesma branch e a mesma PR. '
+    + 'Nunca fechar, mesclar, marcar *ready*, criar branch concorrente ou abrir PR "temporária" para liberar uma faixa. '
+    + 'Faixa ocupada: PRE-PR-01 vence o pedido.';
   const AMOSTRAS = [
     { nome: "lei inteira", texto: COMPLETO, ausentes: 0 },
     { nome: "lei quebrada em linhas", texto: COMPLETO.replace(/ /g, "\n"), ausentes: 0 },
-    { nome: "fórmula apagada", texto: COMPLETO.replace("PRs abertas > 0 ⇒ PR nova = PROIBIDA", "evite abrir duas PRs"), ausentes: 1 },
+    { nome: "fórmula da faixa apagada", texto: COMPLETO.replace("PRs abertas na faixa > 0 ⇒ PR nova nessa faixa = PROIBIDA", "evite duas na faixa"), ausentes: 1 },
+    { nome: "fórmula do teto apagada", texto: COMPLETO.replace("PRs abertas no repositório ≥ 3 ⇒ PR nova = PROIBIDA", "não exagere"), ausentes: 1 },
+    { nome: '"no máximo 3" apagado', texto: COMPLETO.replace("no máximo 3", "várias"), ausentes: 1 },
     { nome: "precedência apagada", texto: COMPLETO.replace("PRE-PR-01 vence o pedido", "use o bom senso"), ausentes: 1 },
+    { nome: "lei anterior ainda escrita", texto: `${COMPLETO} PRs abertas > 0 ⇒ PR nova = PROIBIDA.`, ausentes: 1 },
     { nome: "lei inteira comentada em HTML", texto: `<!-- ${COMPLETO} -->`, ausentes: CLAUDE.length },
     { nome: "arquivo sem a lei", texto: "# Fluxo\n\nBranch, commit, push.", ausentes: CLAUDE.length }
   ];
@@ -192,7 +216,7 @@ const clausulasAusentes = (texto, clausulas) => clausulas.filter((c) => !c.re.te
 for (const f of [...new Set(LEI_PRE_PR_01.map((c) => c.arquivo))]) {
   if (!existe(f)) continue;                                  // a ausência do arquivo já é acusada acima
   for (const c of clausulasAusentes(ler(f), LEI_PRE_PR_01.filter((x) => x.arquivo === f))) {
-    erro(`${f}: a lei PRE-PR-01 perdeu ${c.garante} — uma PR aberta deixaria de impedir a segunda, e nada quebraria`);
+    erro(`${f}: a lei PRE-PR-01 perdeu ${c.garante} — uma PR aberta deixaria de impedir a segunda na mesma faixa (ou a quarta no repositório), e nada quebraria`);
   }
 }
 
@@ -533,4 +557,4 @@ if (problemas.length) {
 // A contagem de E2E vai na linha verde de propósito: um escaneamento que achasse ZERO scripts
 // também passaria calado, e "0 script de E2E auditado" é visivelmente errado num repositório que
 // tem quatro. Verde que não prova nada é reprovação — então o verde diz o que contou.
-console.log(`claude-harness-audit: OK (${REGRAS.length} regras, ${SKILLS.length} skills, ${AGENTES.length} subagentes com limite de leitura mecânico, ${HOOKS.length} hooks com autoteste, ${LEI_PRE_PR_01.length} cláusulas de PRE-PR-01 presentes nos 2 donos, ${(settings?.permissions?.deny ?? []).length} negações de leitura, ${CONTAGEM_E2E.total} script(s) de E2E com alvo de banco declarado (${CONTAGEM_E2E.semBanco} declarado(s) sem banco), conectores só por modelo)`);
+console.log(`claude-harness-audit: OK (${REGRAS.length} regras, ${SKILLS.length} skills, ${AGENTES.length} subagentes com limite de leitura mecânico, ${HOOKS.length} hooks com autoteste, ${LEI_PRE_PR_01.length} cláusulas de PRE-PR-01 (uma PR por faixa, no máximo 3) presentes nos 2 donos e a lei anterior retirada, ${(settings?.permissions?.deny ?? []).length} negações de leitura, ${CONTAGEM_E2E.total} script(s) de E2E com alvo de banco declarado (${CONTAGEM_E2E.semBanco} declarado(s) sem banco), conectores só por modelo)`);
