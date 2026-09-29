@@ -15,7 +15,7 @@ import {
   LIMITE_CONDICOES_PERMITIDAS, MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO,
   POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
   TOLERANCIA_ATRASO_MAXIMA_DIAS, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
-  configuracaoTopParaEdicao, efeitosAtivadosTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
+  configuracaoTopParaEdicao, efeitosAtivadosTop, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
   normalizarConfiguracaoTop, tipoOperacao,
   recusasFiscaisDaFamiliaTop, validarExecucaoTop,
   type ConfiguracaoTipoOperacaoV2, type ConfiguracaoTipoOperacaoV3, type EfeitoExecucaoTop, type ModoExecucaoTop,
@@ -447,7 +447,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      * do domínio (uma fonte); a tela não tem a sua.
      */
     const aValer = edicao && v3 && detalhe?.configuracao?.suportada
-      ? exigenciasQuePassamAValer(detalhe.configuracao.valor, v3) : [];
+      ? exigenciasQuePassamAValer(detalhe.configuracao.valor, v3, exigenciasGeraisDaFamiliaTop(detalhe.familia.codigo)) : [];
     if (aValer.length > 0) { setAConfirmar(aValer); return; }
     salvar.mutate();
   };
@@ -496,7 +496,12 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <Field label="Movimento" required span={6} help="Define qual operação do produto este tipo representa. Não muda depois da criação.">
           {edicao
             ? <Input data-testid="top-campo-familia" value={detalhe ? `${detalhe.familia.rotulo} (${detalhe.familia.codigo})` : ""} readOnly disabled />
-            : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => mudar({ codigoBase: e.target.value, destinos: [], reservaEstoque: false })}>
+            : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => {
+                const codigoBase = e.target.value;
+                mudar({ codigoBase, destinos: [], reservaEstoque: false });
+                // "Cliente em atraso" só existe na venda: fora dela volta para "não valida" (a API recusa outro valor).
+                if (!ehMovimentoDeVendas(codigoBase)) mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: "nao_valida" } }));
+              }}>
                 <option value="">Selecione…</option>
                 {familias.map((f) => <option key={f.codigo} value={f.codigo}>{f.rotulo} — {f.codigo}</option>)}
               </NativeSelect>}

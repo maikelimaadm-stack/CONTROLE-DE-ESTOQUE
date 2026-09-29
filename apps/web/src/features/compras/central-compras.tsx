@@ -1,14 +1,15 @@
 "use client";
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, ERRO_EXIGENCIA_NAO_ATENDIDA } from "@agro/domain";
 import { api, ApiError, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { useTradutor } from "@/lib/i18n";
 import { brl, todayISO } from "@/lib/utils";
 import { Button, Card, CardBody, CardHeader, Field, Input, NativeSelect, Textarea } from "@/components/ui";
-import { RefSelect } from "@/components/ui/ref-select";
+import { RefSelect, type BuscaDeOpcoes, type Option } from "@/components/ui/ref-select";
 import { ItemsEditor, PlanEditor, defaultPlan, totalDaLinhaExibido, useEmpresaPadrao, type ItemRow, type Plan } from "@/features/docs/shared";
 import { CampoTipoOperacao, podeLancar } from "@/features/sales/tipo-operacao-select";
 import { useTopsDaEspecie, type VarianteDeCompra } from "./variantes";
@@ -37,9 +38,21 @@ type Cabecalho = {
 const vazio = (v: string) => v.trim() === "";
 const opcional = (v: string) => (vazio(v) ? undefined : v.trim());
 
-/** Os erros de campo que o servidor devolveu (`details: [{ path, message }]`), por caminho. */
+const ehObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * Os erros de campo que o servidor devolveu, por caminho: `details: [{ path, message }]` (validação),
+ * `details.exigencias: [{ caminho, mensagem }]` (regras da operação) e `details.campo` (condição não permitida).
+ */
 function errosDoServidor(e: unknown): Record<string, string> {
-  if (!(e instanceof ApiError) || !Array.isArray(e.details)) return {};
+  if (!(e instanceof ApiError)) return {};
+  if (e.code === ERRO_EXIGENCIA_NAO_ATENDIDA && ehObj(e.details) && Array.isArray(e.details.exigencias)) {
+    const out: Record<string, string> = {};
+    for (const x of e.details.exigencias as unknown[]) if (ehObj(x) && typeof x.caminho === "string" && typeof x.mensagem === "string") out[x.caminho] = x.mensagem;
+    return out;
+  }
+  if (e.code === ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA) return { [ehObj(e.details) && typeof e.details.campo === "string" ? e.details.campo : "condicao_pagamento_id"]: e.message };
+  if (!Array.isArray(e.details)) return {};
   const out: Record<string, string> = {};
   for (const d of e.details as unknown[]) {
     if (typeof d === "object" && d !== null && typeof (d as { path?: unknown }).path === "string" && typeof (d as { message?: unknown }).message === "string") {
@@ -47,6 +60,46 @@ function errosDoServidor(e: unknown): Record<string, string> {
     }
   }
   return out;
+}
+
+/** Resposta de `/api/compras/{seg}/regras-da-operacao` conferida; forma estranha = `null` (nenhum asterisco a mais). */
+interface RegrasDaCompra { exigencias: string[]; condicoesPermitidas: string[] | null; geraTitulos: boolean | null }
+function lerRegras(v: unknown): RegrasDaCompra | null {
+  if (!ehObj(v) || !Array.isArray(v.exigencias) || !v.exigencias.every((x) => typeof x === "string")) return null;
+  const cp = v.condicoesPermitidas;
+  if (cp !== null && cp !== undefined && !(Array.isArray(cp) && cp.every((x) => typeof x === "string"))) return null;
+  return { exigencias: v.exigencias as string[], condicoesPermitidas: (cp as string[] | null | undefined) ?? null, geraTitulos: typeof v.geraTitulos === "boolean" ? v.geraTitulos : null };
+}
+function useRegrasDaCompra(segmento: string, top: string, ativo: boolean): RegrasDaCompra | null {
+  const q = useQuery<unknown, ApiError>({
+    queryKey: ["compras-regras-da-operacao", segmento, top],
+    queryFn: () => api<unknown>(`/api/compras/${segmento}/regras-da-operacao?tipo_operacao_id=${encodeURIComponent(top)}`),
+    enabled: ativo && Boolean(top), retry: false
+  });
+  return React.useMemo(() => (ativo && q.data !== undefined ? lerRegras(q.data) : null), [ativo, q.data]);
+}
+
+/** Natureza de DESPESA para compra: analítica, do tipo despesa OU receita e despesa (a mesma régua da API). */
+const opcoesDeNaturezaDeDespesa: BuscaDeOpcoes = {
+  chave: "compras-natureza-despesa",
+  buscar: async (search) => {
+    const uma = (nature: string) => api<Option[]>(`/api/resources/financial_categories/options?${new URLSearchParams({ kind: "analytic", nature, ...(search ? { search } : {}) }).toString()}`);
+    const [despesa, ambas] = await Promise.all([uma("expense"), uma("both")]);
+    return [...despesa, ...ambas].sort((a, b) => String(a.code ?? a.label).localeCompare(String(b.code ?? b.label), "pt-BR", { numeric: true }));
+  }
+};
+
+/** Controle de lote de cada produto (cadastro); desconhecido = campos abertos (o servidor é quem recusa). */
+function useControleDeLote(produtos: string[]): (produtoId: string) => { lote: boolean; validade: boolean } {
+  const unicos = Array.from(new Set(produtos.filter(Boolean)));
+  const qs = useQueries({ queries: unicos.map((id) => ({ queryKey: ["compras-produto-lote", id], queryFn: () => api<Record<string, unknown>>(`/api/resources/products/${id}`), staleTime: 60_000, retry: false })) });
+  const mapa = new Map<string, string>();
+  unicos.forEach((id, i) => { const c = qs[i]?.data?.["controle_lote"]; if (typeof c === "string") mapa.set(id, c); });
+  return (produtoId) => {
+    const c = mapa.get(produtoId);
+    if (c === undefined) return { lote: true, validade: true };
+    return { lote: c !== "nenhum", validade: c === "lote_validade" };
+  };
 }
 
 export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
@@ -117,9 +170,27 @@ export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
     onError: (e) => { chave.current = newIdem(); setErros(errosDoServidor(e)); toast.error((e as Error).message); }
   });
 
+  const regras = useRegrasDaCompra(variante.segmento, top, pronto0(estado, top));
+  const exigidos = new Set(regras?.exigencias ?? []);
+  // Compra que gera contas a pagar exige natureza e centro (a API recusa no campo); pedido não gera título.
+  const classificacaoObrigatoria = ehCompra && regras?.geraTitulos === true;
+  const obrig = (c: string) => exigidos.has(c) || ((c === "categoria_financeira_id" || c === "centro_custo_id") && classificacaoObrigatoria);
+  const loteDoProduto = useControleDeLote(ehCompra ? itens.map((i) => i.product_id) : []);
+  // Produto que deixou de controlar lote/validade não leva o valor digitado antes (evita a recusa do item).
+  React.useEffect(() => {
+    if (!ehCompra) return;
+    let mudou = false;
+    const novos = itens.map((it) => {
+      const c = loteDoProduto(it.product_id);
+      const lote = c.lote ? it.provider_lot : ""; const validade = c.validade ? it.expiration_date : "";
+      if ((it.provider_lot ?? "") !== (lote ?? "") || (it.expiration_date ?? "") !== (validade ?? "")) { mudou = true; return { ...it, provider_lot: lote, expiration_date: validade }; }
+      return it;
+    });
+    if (mudou) setItens(novos);
+  });
   const erro = (c: string) => erros[c];
   const errosDeItens = Object.entries(erros).filter(([c]) => c.startsWith("itens"));
-  const pronto = podeLancar(estado) && !!top && !topRecusada;
+  const pronto = pronto0(estado, top) && !topRecusada;
   const titulo = `Novo documento · ${tr(variante.chaveI18n)}`;
 
   return <Card data-testid="compras-central" data-especie={variante.variante}>
@@ -138,10 +209,10 @@ export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
         <Field label="Vencimento" span={2} error={erro("data_vencimento")}><Input data-testid="compras-data-vencimento" type="date" value={h.data_vencimento} onChange={(e) => mudar({ data_vencimento: e.target.value })} /></Field>
         {ehCompra && <Field label="Número da nota" span={2} error={erro("numero_nota")}><Input data-testid="compras-numero-nota" value={h.numero_nota} onChange={(e) => mudar({ numero_nota: e.target.value })} /></Field>}
         {ehCompra && <Field label="Série" span={1} error={erro("serie_nota")}><Input data-testid="compras-serie-nota" value={h.serie_nota} onChange={(e) => mudar({ serie_nota: e.target.value })} /></Field>}
-        <Field label="Transportadora" span={3} error={erro("transportadora_id")}><RefSelect resource="people" value={h.transportadora_id} onChange={(v) => mudar({ transportadora_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>
-        <Field label="Natureza de despesa" span={3} error={erro("categoria_financeira_id")}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => mudar({ categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
-        <Field label="Centro de resultado" span={3} error={erro("centro_custo_id")}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => mudar({ centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
-        <Field label="Condição de pagamento" span={3} error={erro("condicao_pagamento_id")}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={(v) => mudar({ condicao_pagamento_id: v ?? "" })} /></Field>
+        <Field label="Transportadora" required={obrig("transportadora_id")} span={3} error={erro("transportadora_id")}><RefSelect resource="people" value={h.transportadora_id} onChange={(v) => mudar({ transportadora_id: v ?? "" })} filter={{ is_transporter: "true" }} /></Field>
+        <Field label="Natureza de despesa" required={obrig("categoria_financeira_id")} span={3} error={erro("categoria_financeira_id")}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => mudar({ categoria_financeira_id: v ?? "" })} buscarOpcoes={opcoesDeNaturezaDeDespesa} /></Field>
+        <Field label="Centro de resultado" required={obrig("centro_custo_id")} span={3} error={erro("centro_custo_id")}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => mudar({ centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} /></Field>
+        <Field label="Condição de pagamento" span={3} error={erro("condicao_pagamento_id")}><RefSelect resource="condicoes_pagamento" somenteIds={regras?.condicoesPermitidas ?? null} value={h.condicao_pagamento_id} onChange={(v) => mudar({ condicao_pagamento_id: v ?? "" })} /></Field>
         <Field label="Forma de pagamento" span={3} error={erro("forma_pagamento_id")}><RefSelect resource="payment_methods" value={h.forma_pagamento_id} onChange={(v) => mudar({ forma_pagamento_id: v ?? "" })} /></Field>
         <Field label="Frete" span={2} error={erro("frete")}><Input data-testid="compras-frete" type="number" step="0.01" min="0" value={h.frete} onChange={(e) => mudar({ frete: e.target.value })} /></Field>
         <Field label="Outras despesas" span={2} error={erro("outras_despesas")}><Input data-testid="compras-outras-despesas" type="number" step="0.01" min="0" value={h.outras_despesas} onChange={(e) => mudar({ outras_despesas: e.target.value })} /></Field>
@@ -152,11 +223,11 @@ export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
             <option value="ajustar">Ajustar parcelas</option>
           </NativeSelect>
         </Field>
-        <Field label="Observação" span={12} error={erro("observacao")}><Textarea data-testid="compras-observacao" value={h.observacao} onChange={(e) => mudar({ observacao: e.target.value })} /></Field>
+        <Field label="Observação" required={obrig("observacao")} span={12} error={erro("observacao")}><Textarea data-testid="compras-observacao" value={h.observacao} onChange={(e) => mudar({ observacao: e.target.value })} /></Field>
       </div>
       {ajustarParcelas && <div data-testid="compras-plano"><PlanEditor plan={plano} onChange={setPlano} /></div>}
       <div data-testid="compras-itens">
-        <ItemsEditor items={itens} onChange={setItens}
+        <ItemsEditor items={itens} onChange={setItens} loteDaLinha={ehCompra ? (it) => loteDoProduto(it.product_id) : undefined}
           fields={ehCompra ? ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent", "lot", "expiration"] : ["warehouse", "product", "quantity", "unit_value", "discount", "discount_percent"]} />
         {errosDeItens.length > 0 && <ul data-testid="compras-erros-itens" className="mt-2 space-y-0.5 text-[12px] text-red-700">
           {errosDeItens.map(([c, m]) => <li key={c}>{descreverCaminhoDeItem(c)}: {m}</li>)}
@@ -166,6 +237,8 @@ export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
     </CardBody>
   </Card>;
 }
+
+function pronto0(estado: ReturnType<typeof useTopsDaEspecie>, top: string): boolean { return podeLancar(estado) && !!top; }
 
 const ROTULO_DO_CAMPO_DO_ITEM: Record<string, string> = {
   produto_id: "produto", armazem_id: "armazém", quantidade: "quantidade", valor_unitario: "valor unitário",

@@ -18,12 +18,18 @@ export const CONTRATO_PREVIA_CONFIRMACAO_COMPRA = 1 as const;
 export interface RecusaPrevistaCompra { code: string; message: string }
 export interface EntradaPrevista { item_id: string; produto: string; armazem: string | null; quantidade: string; lote: string | null; validade: string | null; valorEntrada: string; custoUnitario: string }
 export interface ParcelaPrevista { numero: number; entrada: boolean; vencimento: string; valor: string }
+export interface ItemDaClassificacaoCompra { id: string; codigo: string; nome: string }
 export interface PreviaDaConfirmacaoCompra {
   contractVersion: typeof CONTRATO_PREVIA_CONFIRMACAO_COMPRA;
   podeConfirmar: boolean;
   recusas: RecusaPrevistaCompra[];
-  estoque: { efeito: "entrada" | "nenhum" | null; dataEntrada: string | null; itens: EntradaPrevista[] };
-  financeiro: { efeito: "pagar" | "nenhum" | null; valor: string | null; numero: string | null; parcelas: ParcelaPrevista[]; primeiroVencimento: string | null };
+  /** `itensForaDaEntrada`: itens que NÃO entram no estoque (sem armazém, ou produto sem controle de estoque). */
+  estoque: { efeito: "entrada" | "nenhum" | null; dataEntrada: string | null; itens: EntradaPrevista[]; itensForaDaEntrada?: number };
+  financeiro: {
+    efeito: "pagar" | "nenhum" | null; valor: string | null; numero: string | null; parcelas: ParcelaPrevista[]; primeiroVencimento: string | null;
+    /** Natureza e centro de resultado das contas a pagar (presente quando gera título). */
+    classificacao?: { categoria: ItemDaClassificacaoCompra; centro: ItemDaClassificacaoCompra } | null;
+  };
 }
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -31,6 +37,8 @@ const ehTexto = (v: unknown): v is string => typeof v === "string";
 const ehTextoOuNulo = (v: unknown) => v === null || ehTexto(v);
 const ehEntrada = (v: unknown): v is EntradaPrevista => ehObjeto(v) && ehTexto(v.item_id) && ehTexto(v.produto) && ehTextoOuNulo(v.armazem)
   && ehTexto(v.quantidade) && ehTextoOuNulo(v.lote) && ehTextoOuNulo(v.validade) && ehTexto(v.valorEntrada) && ehTexto(v.custoUnitario);
+const ehItemClass = (v: unknown): v is ItemDaClassificacaoCompra => ehObjeto(v) && ehTexto(v.id) && ehTexto(v.codigo) && ehTexto(v.nome);
+const ehContagem = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0;
 const ehParcela = (v: unknown): v is ParcelaPrevista => ehObjeto(v) && typeof v.numero === "number" && typeof v.entrada === "boolean" && ehTexto(v.vencimento) && ehTexto(v.valor);
 
 export const ehPreviaDaConfirmacaoCompra = (v: unknown): v is PreviaDaConfirmacaoCompra => {
@@ -41,6 +49,10 @@ export const ehPreviaDaConfirmacaoCompra = (v: unknown): v is PreviaDaConfirmaca
   if (!ehObjeto(e) || !(e.efeito === "entrada" || e.efeito === "nenhum" || e.efeito === null) || !ehTextoOuNulo(e.dataEntrada) || !Array.isArray(e.itens) || !e.itens.every(ehEntrada)) return false;
   if (!ehObjeto(f) || !(f.efeito === "pagar" || f.efeito === "nenhum" || f.efeito === null) || !ehTextoOuNulo(f.valor) || !ehTextoOuNulo(f.numero)
     || !Array.isArray(f.parcelas) || !f.parcelas.every(ehParcela) || !ehTextoOuNulo(f.primeiroVencimento)) return false;
+  // Campos acrescentados no R1: ausentes são tolerados; presentes, só na forma do contrato.
+  if (e.itensForaDaEntrada !== undefined && !ehContagem(e.itensForaDaEntrada)) return false;
+  const c = f.classificacao;
+  if (c !== undefined && c !== null && !(ehObjeto(c) && ehItemClass(c.categoria) && ehItemClass(c.centro))) return false;
   return true;
 };
 

@@ -20,6 +20,8 @@ import type { VarianteDeCompra } from "./variantes";
  * capacidade (`can()` só esconde): Confirmar pede `compras.edit`, Cancelar pede `<recurso>.delete`. Quem recusa é
  * o servidor — inclusive quando o botão estava à vista.
  */
+const rotuloClass = (i: { codigo: string; nome: string }) => [i.codigo, i.nome].filter(Boolean).join(" — ");
+const codigoNome = (codigo: unknown, nome: unknown) => (nome ? [codigo, nome].filter(Boolean).join(" — ") : "—");
 const t = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
 
 export function ConsultaDeCompra({ variante, id }: { variante: VarianteDeCompra; id: string }) {
@@ -70,6 +72,10 @@ export function ConsultaDeCompra({ variante, id }: { variante: VarianteDeCompra;
           ...(ehCompra ? [["Data de entrada", d["data_entrada"] ? dateBR(d["data_entrada"] as string) : "—"] as [string, React.ReactNode]] : []),
           ["Vencimento", d["data_vencimento"] ? dateBR(d["data_vencimento"] as string) : "—"],
           ...(ehCompra ? [["Nota / série", d["numero_nota"] ? `${t(d["numero_nota"])} / ${t(d["serie_nota"] || "1")}` : "—"] as [string, React.ReactNode]] : []),
+          ["Natureza de despesa", codigoNome(d["categoria_financeira_codigo"], d["categoria_financeira_nome"])],
+          ["Centro de resultado", codigoNome(d["centro_custo_codigo"], d["centro_custo_nome"])],
+          ["Condição de pagamento", codigoNome(d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"])],
+          ["Forma de pagamento", t(d["forma_pagamento_nome"])],
           ["Itens", brl(d["valor_itens"] as string)],
           ["Frete", brl(d["frete"] as string)],
           ["Outras despesas", brl(d["outras_despesas"] as string)],
@@ -163,12 +169,18 @@ function CorpoDaPrevia({ previa }: { previa: PreviaDaConfirmacaoCompra }) {
           ]} />
         </>
         : <p className="text-slate-600">{estoque.efeito === "nenhum" ? "Não movimenta o estoque." : "O efeito no estoque não pôde ser previsto."}</p>}
+      {(estoque.itensForaDaEntrada ?? 0) > 0 && <p className="mt-1 text-slate-600" data-testid="compras-previa-fora-da-entrada">
+        {estoque.itensForaDaEntrada === 1 ? "1 item não entra no estoque" : `${estoque.itensForaDaEntrada} itens não entram no estoque`} (sem armazém ou produto sem controle de estoque).
+      </p>}
     </section>
     <section data-testid="compras-previa-financeiro" data-efeito={financeiro.efeito ?? ""}>
       <h3 className="mb-1 font-semibold">Financeiro</h3>
       {financeiro.efeito === "pagar"
         ? <>
           <p className="mb-1 text-slate-600">Gera contas a pagar de {brl(financeiro.valor ?? "0")}{financeiro.numero ? `, número ${financeiro.numero}` : ""}.</p>
+          {financeiro.classificacao && <p className="mb-1 text-slate-600" data-testid="compras-previa-classificacao">
+            Natureza {rotuloClass(financeiro.classificacao.categoria)} · centro de resultado {rotuloClass(financeiro.classificacao.centro)}
+          </p>}
           <SimpleTable rows={financeiro.parcelas as unknown as Row[]} cols={[
             { key: "numero", label: "Parcela", render: (r) => (r["entrada"] ? "Entrada" : String(r["numero"])) },
             { key: "vencimento", label: "Vencimento", render: (r) => dateBR(r["vencimento"] as string) },
