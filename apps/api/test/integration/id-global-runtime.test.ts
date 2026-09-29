@@ -186,7 +186,7 @@ describe("COMPRAS — pedido de compra e compra, duas permissões", () => {
     it(`documento de compra: ${especie}`, async () => {
       const top = await post("/api/admin/tipos-operacao", { codigo: `IDGC${especie.slice(0, 1).toUpperCase()}`, codigoBase: familia, nome: `ID Global ${especie}` });
       expect(top.statusCode, top.body).toBe(201);
-      const id = await criar(`/api/compras/${rota}`, { empresa_id: I.empresa, tipo_operacao_id: String(j(top).id), fornecedor_id: I.provider, data_documento: "2031-01-16", itens: [{ produto_id: I.product, quantidade: "1", valor_unitario: "10" }] });
+      const id = await criar(`/api/compras/${rota}`, { empresa_id: I.empresa, tipo_operacao_id: String(j(top).id), fornecedor_id: I.provider, data_documento: "2031-01-16", itens: [{ produto_id: I.product, quantidade: "1", valor_unitario: "10" }], ...(especie === "compra" ? { categoria_financeira_id: I.category, centro_custo_id: I.costCenter } : {}) });
       await conferir("documentos_compra", id, { empresa: I.empresa, modulo: "compras", rota: `/compras/${rota}/${id}` });
     });
   }
