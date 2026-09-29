@@ -6,7 +6,11 @@ import { configuracaoNeutraTopV3 } from "@agro/domain";
 import { appCom, harness, ids, TEST_URL, type Harness } from "./setup.js";
 
 /**
- * TOP-CONFIG-07 (decisão 266) — RESERVA DE ESTOQUE PELO PEDIDO, pela porta da API. RE-1..RE-11.
+ * TOP-CONFIG-07 (decisão 266) — RESERVA DE ESTOQUE PELO PEDIDO, pela porta da API. RE-1..RE-13.
+ *
+ * TOP-CONFIG-07_R1 (RE-12, RE-13): produto SEM controle de estoque (`control_stock = false` — serviço, frete) fica
+ * FORA da reserva: o item não exige armazém nem confere disponível, a conta da 0035 não o soma e o documento o
+ * mostra com `reservado` "0.0000". O serviço nasce por SQL (admin), com os campos do modelo e sem saldo.
  *
  * O cenário de cada caso é um PRODUTO NOVO com 10 unidades no armazém A (`armazemA`), aberto por
  * `POST /api/stock/opening-balances`: nenhum caso lê saldo ou reserva de outro, e a ordem de execução não importa.
@@ -95,6 +99,24 @@ async function produtoCom10(rotulo: string): Promise<Produto> {
   expect(await reservado(p.id), "premissa: nada reservado").toBe("0.0000");
   return p;
 }
+/**
+ * Produto SEM controle de estoque (serviço), gravado por SQL (admin) com os campos do modelo — a categoria financeira
+ * vai junto, embora `chk_product_fin_cat` só a exija de quem controla. PREMISSAS lidas no banco: não controla e não
+ * tem saldo (o disponível dele é 0 — é o que a conferência antiga recusava).
+ */
+let seqServico = 0;
+async function servico(rotulo: string): Promise<Produto> {
+  const sufixo = `${++seqServico}${Math.random().toString(36).slice(2, 7)}`;
+  const id = (await admin.query<{ id: string }>(
+    `insert into erp.products (organization_id, code, description, measurement_id, group_id, category_id, kind_id, financial_category_id, control_stock)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, false) returning id`,
+    [h.demo.orgId, `RS${sufixo}`, `${rotulo} serviço ${sufixo}`, modeloProduto.measurement_id, modeloProduto.group_id,
+      modeloProduto.category_id, modeloProduto.kind_id, modeloProduto.financial_category_id])).rows[0]!.id;
+  const lido = (await admin.query<{ description: string; control_stock: boolean }>("select description, control_stock from erp.products where id=$1", [id])).rows[0]!;
+  expect(lido.control_stock, "premissa: o serviço não controla estoque").toBe(false);
+  expect(await fisico(id), "premissa: o serviço não tem saldo").toBe("0.0000");
+  return { id, nome: lido.description };
+}
 /** Físico do par (todos os lotes), no banco. */
 const fisico = async (productId: string, warehouseId = armazemA) => (await admin.query<{ q: string }>(
   "select coalesce(sum(quantity),0)::numeric(18,4)::text q from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3",
@@ -150,6 +172,12 @@ async function ler(rota: "orders" | "sales", id: string): Promise<DocLido> {
   return j(r) as DocLido;
 }
 const statusDe = async (id: string) => (await admin.query<{ status: string }>("select status from erp.sales_documents where id=$1", [id])).rows[0]!.status;
+/** A versão CONGELADA no documento reserva? Lido no banco — testemunha fora da rota. */
+const reservaDoDocumento = async (id: string) => (await admin.query<{ reserva_estoque: boolean }>(
+  "select v.reserva_estoque from erp.sales_documents d join erp.tipos_operacao_versoes v on v.id = d.tipo_operacao_versao_id where d.id=$1", [id])).rows[0]!.reserva_estoque;
+/** Os itens do documento, como o banco os guarda (ordem da posição). */
+const itensNoBanco = async (id: string) => (await admin.query<{ product_id: string; warehouse_id: string | null; quantity: string }>(
+  "select product_id, warehouse_id, quantity::text quantity from erp.sales_document_items where document_id=$1 order by position, id", [id])).rows;
 /** A mensagem amigável da confirmação (contrato A2). */
 const msgConfirmacao = (p: Produto, d: string, q: string, r: string) => `${p.nome} no armazém ${nomeArmazemA}: disponível ${d}, solicitado ${q} (${r} reservado para pedidos).`;
 /** A linha da recusa do pedido (contrato A1). */
@@ -509,5 +537,76 @@ describe("RE-11 — Estoque › Saldo lê a reserva em lote", () => {
     // Produto com lote: o disponível é do PAR (4 + 6 − 3), o mesmo nas duas linhas — nunca do lote.
     expect(linha(p3.id, armazemA, "L1")).toMatchObject({ quantity: "4.0000", reservado: "3.0000", disponivel: "7.0000" });
     expect(linha(p3.id, armazemA, "L2")).toMatchObject({ quantity: "6.0000", reservado: "3.0000", disponivel: "7.0000" });
+  });
+});
+
+describe("RE-12 — produto sem controle de estoque fica fora da reserva do pedido (TOP-CONFIG-07_R1)", () => {
+  it("RE-12 pedido com 8 do controlado e 1 serviço SEM armazém → 201; o banco reserva só os 8; o documento mostra 0 no serviço", async () => {
+    const p = await produtoCom10("RE-12");
+    const s = await servico("RE-12");
+    const r = await postPedido(topPedidoEmPartes, [ITEM(p.id, "8"), ITEM(s.id, "1", null)]);
+    expect(r.statusCode, r.body).toBe(201);
+    const id = j(r).id as string;
+    // PREMISSA: gravou os dois itens como vieram (o serviço sem armazém), e a versão congelada no pedido reserva.
+    expect(await itensNoBanco(id)).toEqual([
+      { product_id: p.id, warehouse_id: armazemA, quantity: "8.0000" },
+      { product_id: s.id, warehouse_id: null, quantity: "1.0000" }]);
+    expect(await reservaDoDocumento(id)).toBe(true);
+
+    // O BANCO: o controlado reserva 8 pela conta da 0035, sem movimentar; o serviço não entra na conta.
+    expect([await reservado(p.id), await fisico(p.id)]).toEqual(["8.0000", "10.0000"]);
+    expect([await reservado(s.id), await fisico(s.id)]).toEqual(["0.0000", "0.0000"]);
+
+    // A API: o item controlado com 8, o do serviço com 0; o saldo do controlado diz o mesmo.
+    const doc = await ler("orders", id);
+    expect(doc.reserva_estoque).toBe(true);
+    expect(doc.items.map((i) => [i["product_id"], i.reservado])).toEqual([[p.id, "8.0000"], [s.id, "0.0000"]]);
+    expect(await saldoApi(p.id)).toMatchObject({ quantity: "10.0000", reservado: "8.0000", disponivel: "2.0000" });
+
+    const c = await cancelar("orders", id);
+    expect(c.statusCode, c.body).toBe(200);
+    expect(await reservado(p.id), "cancelado, nada reservado").toBe("0.0000");
+  });
+});
+
+describe("RE-13 — a conta do banco não soma produto sem controle de estoque (TOP-CONFIG-07_R1)", () => {
+  it("RE-13 serviço COM armazém, inserido por SQL no pedido com reserva (A) e na parte aberta dele (B) → 0 no par do serviço; o controlado do mesmo pedido soma", async () => {
+    const p = await produtoCom10("RE-13");
+    const s = await servico("RE-13");
+    const id = await pedido(topPedidoEmPartes, p.id, "3");
+    const [item] = (await ler("orders", id)).items;
+    const v = await parte(id, [{ item_id: item!.id, quantidade: "1" }]);
+
+    // O item do serviço entra DIRETO no banco (admin), com armazém, no pedido (A) e na parte aberta (B): a conta
+    // decide sozinha, sem depender do que a API aceita gravar.
+    const inserir = async (documento: string, quantidade: string) => (await admin.query<{ id: string }>(
+      `insert into erp.sales_document_items (document_id, product_id, warehouse_id, quantity, unit_price, total, position)
+       values ($1, $2, $3, $4, 5, $4::numeric * 5, 9) returning id`, [documento, s.id, armazemA, quantidade])).rows[0]!.id;
+    const inseridos = [await inserir(id, "5"), await inserir(v, "2")];
+    // PREMISSA: os dois documentos estão vivos para a conta — pedido aberto cuja versão reserva, parte aberta gerada
+    // dele — e cada um tem o item do serviço no armazém A.
+    expect([await statusDe(id), await statusDe(v), await reservaDoDocumento(id)]).toEqual(["open", "open", true]);
+    expect(await itensNoBanco(id)).toEqual([
+      { product_id: p.id, warehouse_id: armazemA, quantity: "3.0000" },
+      { product_id: s.id, warehouse_id: armazemA, quantity: "5.0000" }]);
+    expect(await itensNoBanco(v)).toEqual([
+      { product_id: p.id, warehouse_id: armazemA, quantity: "1.0000" },
+      { product_id: s.id, warehouse_id: armazemA, quantity: "2.0000" }]);
+
+    // A CONTA: o par do serviço não soma nada — nem A (sem a parte), nem B (sem o pedido), nem o total.
+    expect([await reservado(s.id), await reservado(s.id, v), await reservado(s.id, id)], "serviço: total, só A, só B").toEqual(["0.0000", "0.0000", "0.0000"]);
+    // PREMISSA contra verde vazio: no MESMO pedido e na MESMA parte o controlado soma — A (saldo 2) + B (1).
+    expect([await reservado(p.id), await reservado(p.id, v), await reservado(p.id, id)], "controlado: total, só A, só B").toEqual(["3.0000", "2.0000", "1.0000"]);
+    // A API diz o mesmo no documento: o item do serviço, mesmo com armazém, sai com 0; o controlado, com o saldo dele.
+    expect((await ler("orders", id)).items.map((i) => [i["product_id"], i.reservado])).toEqual([[p.id, "2.0000"], [s.id, "0.0000"]]);
+
+    // Limpa: os itens inseridos saem; a parte e o pedido são cancelados; nada fica reservado.
+    const apagados = await admin.query("delete from erp.sales_document_items where id = any($1::uuid[])", [inseridos]);
+    expect(apagados.rowCount).toBe(2);
+    for (const [rota, doc] of [["sales", v], ["orders", id]] as const) {
+      const c = await cancelar(rota, doc);
+      expect(c.statusCode, `${rota}: ${c.body}`).toBe(200);
+    }
+    expect([await reservado(p.id), await reservado(s.id)]).toEqual(["0.0000", "0.0000"]);
   });
 });
