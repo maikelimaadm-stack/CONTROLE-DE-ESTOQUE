@@ -49,6 +49,8 @@ export const CONTRATO_PROXIMOS_PASSOS = 1 as const;
 export interface ProximoPasso {
   tipoOperacaoId: string; codigo: string; nome: string;
   codigoBase: string; familiaRotulo: string; variante: string; ordem: number;
+  /** TOP-CONFIG-06: destino "Em partes". Ausente numa API anterior — a tela trata como `false`. */
+  emPartes?: boolean;
 }
 
 const ehTexto = (v: unknown): v is string => typeof v === "string";
@@ -58,7 +60,8 @@ const ehObjeto = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 const ehProximoPasso = (v: unknown): v is ProximoPasso =>
   ehObjeto(v) && ehTexto(v.tipoOperacaoId) && ehTexto(v.codigo) && ehTexto(v.nome)
   && ehTexto(v.codigoBase) && ehTexto(v.familiaRotulo) && ehTexto(v.variante)
-  && typeof v.ordem === "number" && Number.isFinite(v.ordem);
+  && typeof v.ordem === "number" && Number.isFinite(v.ordem)
+  && (v.emPartes === undefined || typeof v.emPartes === "boolean");
 
 /**
  * `politicaConfigurada` é OPCIONAL na leitura, e isso é medido, não descuido.

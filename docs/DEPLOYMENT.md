@@ -1385,6 +1385,39 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
+## TOP-CONFIG-06 — faturar em partes (0034)
+
+Decisão 265. **Uma migration: `0034_faturar_em_partes.sql`** (pre-deploy; trava (2026,68), `lock_timeout` 2 s,
+pré/pós-condições nomeadas `TOP-CONFIG-06: ...`, não destrutiva, sem backfill): `em_partes` nas arestas das próximas
+operações (default false), `origem_item_id` nos itens de venda (FK para o item de origem, índice parcial), três colunas de
+saldo encerrado no documento (com CHECK), índice parcial em `origin_document_id` e o gatilho do saldo
+(`trg_sales_document_items_origem_guarda`). Nenhuma variável nova, nenhuma permissão nova.
+
+**Ordem: banco (0034) → API → web.** Janela:
+1. **API anterior × banco novo:** a API anterior não lê nem grava as colunas novas; o gatilho só age em item com origem,
+   que ela nunca grava. Tudo como hoje.
+2. **web ANTERIOR × API nova:** o web anterior manda arestas sem `emPartes` — a API preserva o valor da versão atual; a
+   conversão sem `itens` é a de hoje. Nada é desligado em silêncio.
+3. **web NOVA × API anterior:** sem `destinos.emPartes` nas capabilities, o editor esconde a caixa; sem `emPartes` nos
+   próximos passos, o diálogo de conversão é o de hoje.
+
+**Impacto em dados reais:** colunas novas; toda aresta existente fica sem "Em partes", então nada muda no que existe.
+A produção não tem documento de venda.
+
+**Reversão:** API e web voltam por redeploy; as colunas e o gatilho ficam, inertes para o binário anterior. Documento já
+convertido em partes continua com a ligação gravada; a API anterior converte e cancela como antes (sem saldo) — não
+reverter com partes em uso sem decisão do Maike. Nada de apagar dado de produção (decisão 247).
+
+**Roteiro do Maike (opcional; cria documentos de teste, que ficam cancelados):**
+1. Criar a TOP de Venda no editor novo.
+2. Na TOP 2 Pedido, em Próximas operações, pôr a Venda com "Em partes".
+3. Criar um Pedido NOVO com 2 itens (a versão congelada tem de ser a nova).
+4. Converter uma parte → ver Faturado e Saldo.
+5. Converter o resto → 'Convertido'.
+6. Cancelar uma parte → o saldo volta e o pedido reabre.
+7. No fim, encerrar o saldo (pede uma parte ativa e saldo > 0) e cancelar a parte que sobrou — o pedido continua
+   encerrado.
+
 ## TOP-CONFIG-05_R2 — venda com TOP no formato 3 confirma (sem migration)
 
 **Só API**: sem migration, sem rota, sem variável, sem permissão, sem mudança de tela. A confirmação de venda passa

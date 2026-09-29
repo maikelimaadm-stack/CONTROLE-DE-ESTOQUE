@@ -105,6 +105,12 @@ export interface DestinoOperacaoV1 {
   readonly tipoOperacaoId: string;
   /** Ordem de APRESENTAÇÃO. Sem significado de negócio; existe para o leque não sair do acaso do insert. */
   readonly ordem: number;
+  /**
+   * "Em partes" (TOP-CONFIG-06, decisão 265): o documento pode ser convertido várias vezes para este destino,
+   * escolhendo itens e quantidades. AUSENTE na entrada = "não declarado": a API preserva o valor da versão
+   * atual para o mesmo destino (aresta nova: falso). Depois de resolvido, sempre booleano.
+   */
+  readonly emPartes?: boolean;
 }
 
 export type RecusaListaDestinos =
@@ -112,7 +118,8 @@ export type RecusaListaDestinos =
   | { motivo: "excede_limite"; limite: number }
   | { motivo: "destino_duplicado"; tipoOperacaoId: string }
   | { motivo: "id_invalido"; posicao: number }
-  | { motivo: "ordem_invalida"; posicao: number };
+  | { motivo: "ordem_invalida"; posicao: number }
+  | { motivo: "em_partes_invalido"; posicao: number };
 
 const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -156,7 +163,7 @@ export function lerDestinosOperacao(bruta: unknown): ResultadoDestinos {
     // `{ tipoOperacaoId }` receberia 200 com a lista vazia, e o administrador leria "salvo" sobre uma
     // política que não existe.
     for (const chave of Object.keys(saco)) {
-      if (chave !== "tipoOperacaoId" && chave !== "ordem") {
+      if (chave !== "tipoOperacaoId" && chave !== "ordem" && chave !== "emPartes") {
         recusas.push({ motivo: "id_invalido", posicao });
         return;
       }
@@ -171,18 +178,22 @@ export function lerDestinosOperacao(bruta: unknown): ResultadoDestinos {
       recusas.push({ motivo: "ordem_invalida", posicao });
       return;
     }
+    if (saco.emPartes !== undefined && typeof saco.emPartes !== "boolean") {
+      recusas.push({ motivo: "em_partes_invalido", posicao });
+      return;
+    }
     if (vistos.has(id)) {
       recusas.push({ motivo: "destino_duplicado", tipoOperacaoId: id });
       return;
     }
     vistos.add(id);
-    lidos.push({ tipoOperacaoId: id, ordem });
+    lidos.push(saco.emPartes === undefined ? { tipoOperacaoId: id, ordem } : { tipoOperacaoId: id, ordem, emPartes: saco.emPartes });
   });
 
   if (recusas.length > 0) return { ok: false, recusas };
 
   const ordenados = [...lidos].sort((a, b) => (a.ordem - b.ordem) || a.tipoOperacaoId.localeCompare(b.tipoOperacaoId));
-  return { ok: true, valor: ordenados.map((d, i) => ({ tipoOperacaoId: d.tipoOperacaoId, ordem: i })) };
+  return { ok: true, valor: ordenados.map((d, i) => (d.emPartes === undefined ? { tipoOperacaoId: d.tipoOperacaoId, ordem: i } : { tipoOperacaoId: d.tipoOperacaoId, ordem: i, emPartes: d.emPartes })) };
 }
 
 /**
@@ -194,5 +205,6 @@ export function lerDestinosOperacao(bruta: unknown): ResultadoDestinos {
  */
 export function destinosOperacaoIguais(a: readonly DestinoOperacaoV1[], b: readonly DestinoOperacaoV1[]): boolean {
   if (a.length !== b.length) return false;
-  return a.every((x, i) => x.tipoOperacaoId === b[i]!.tipoOperacaoId && x.ordem === b[i]!.ordem);
+  // "Em partes" é parte da política: mudar só a caixa cria versão nova. Ausente conta como falso.
+  return a.every((x, i) => x.tipoOperacaoId === b[i]!.tipoOperacaoId && x.ordem === b[i]!.ordem && Boolean(x.emPartes) === Boolean(b[i]!.emPartes));
 }
