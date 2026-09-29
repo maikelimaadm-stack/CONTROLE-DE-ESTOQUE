@@ -12,6 +12,10 @@
 -- 3) Situação por espécie: 'aberto' | 'confirmado' | 'cancelado'; o pedido nunca é confirmado (CHECK) e as
 --    transições são do banco (gatilho): aberto→confirmado (só compra), aberto→cancelado, confirmado→cancelado;
 --    cancelado é final. Todo documento nasce aberto — a confirmação é que gera estoque e títulos.
+--    CABEÇALHO CONGELADO fora do aberto: confirmado ou cancelado só muda situacao (e atualizado_em, do gatilho).
+--    TOP e versão congelada NUNCA mudam depois do INSERT (nem aberto); organização e espécie também não.
+--    Totais conferidos por CHECK (valor_total = itens + frete + outras despesas − desconto); nota e série sem
+--    espaço nas pontas; desconto percentual do item ≤ 100; valor unitário com 6 casas (precisão do ledger).
 --    Item só nasce, muda ou sai com o documento ABERTO (gatilho, com FOR SHARE no cabeçalho: espera a
 --    confirmação concorrente terminar em vez de ler o 'aberto' de antes dela).
 -- 4) Parceiros: fornecedor precisa ser parceiro Fornecedor (is_provider) vivo; transportadora, parceiro
@@ -22,7 +26,8 @@
 -- 6) Nota do fornecedor: única entre compras não canceladas por (organização, fornecedor, número, série), com a
 --    série vazia valendo "1". Cancelar libera a nota. Número, série e data de entrada só existem na compra.
 -- 7) Chave (id, organization_id) em erp.warehouses, para a FK composta do armazém do item (como a 0027 fez em
---    erp.people). O armazém do item precisa ser da empresa do documento (gatilho do item).
+--    erp.people), criada DEPOIS das tabelas novas (a FK do armazém entra por ALTER logo em seguida). O armazém do
+--    item precisa ser da empresa do documento (gatilho do item).
 --    FORMA DE PAGAMENTO: erp.payment_methods tem linhas GLOBAIS (organization_id nulo, semeadas para todas as
 --    organizações). Uma FK composta (id, organization_id) recusaria justamente elas. A FK é simples (prova que
 --    existe) e o gatilho do cabeçalho confere o tenant: global OU da organização do documento.
@@ -79,16 +84,15 @@ begin
   if not exists (select 1 from erp.modulos_escopo_empresa where chave = 'compras') then
     raise exception 'COMPRAS-01: modulo de escopo empresarial compras ausente (0011).';
   end if;
-end $$;
-
--- ---------- 3) chave (id, organization_id) em armazéns, se faltar ----------
-do $$
-begin
-  if not exists (select 1 from pg_constraint c
-                  where c.conrelid = 'erp.warehouses'::regclass and c.contype in ('u', 'p')
-                    and c.conkey = array[(select attnum from pg_attribute where attrelid = 'erp.warehouses'::regclass and attname = 'id'),
-                                         (select attnum from pg_attribute where attrelid = 'erp.warehouses'::regclass and attname = 'organization_id')]::int2[]) then
-    alter table erp.warehouses add constraint uq_warehouses_tenant unique (id, organization_id);
+  if to_regprocedure('erp.documentos_compra_conferir()') is not null or to_regprocedure('erp.documentos_compra_transicao()') is not null
+     or to_regprocedure('erp.documentos_compra_itens_documento_aberto()') is not null then
+    raise exception 'COMPRAS-01: funcoes do documento de compra ja existem; a 0036 ja foi aplicada ou ha schema divergente.';
+  end if;
+  if exists (select 1 from pg_constraint where conrelid = 'erp.warehouses'::regclass and conname = 'uq_warehouses_tenant') then
+    raise exception 'COMPRAS-01: erp.warehouses.uq_warehouses_tenant ja existe; a 0036 ja foi aplicada ou ha schema divergente.';
+  end if;
+  if not exists (select 1 from pg_roles where rolname = current_user and (rolsuper or rolbypassrls)) then
+    raise exception 'COMPRAS-01: o papel que aplica a migration (dono das funcoes SECURITY DEFINER) nao atravessa RLS; as conferencias dos gatilhos nao veriam o cadastro da organizacao.';
   end if;
 end $$;
 
@@ -128,7 +132,9 @@ create table erp.documentos_compra (
   constraint uq_documentos_compra_tenant unique (id, organization_id),
   constraint chk_documentos_compra_situacao_especie check (especie = 'compra' or situacao in ('aberto','cancelado')),
   constraint chk_documentos_compra_campos_da_compra check (especie = 'compra' or (data_entrada is null and numero_nota is null and serie_nota is null)),
-  constraint chk_documentos_compra_nota check ((numero_nota is null or btrim(numero_nota) <> '') and (serie_nota is null or numero_nota is not null)),
+  constraint chk_documentos_compra_nota check ((numero_nota is null or (btrim(numero_nota) <> '' and numero_nota = btrim(numero_nota)))
+                                             and (serie_nota is null or (numero_nota is not null and serie_nota = btrim(serie_nota)))),
+  constraint chk_documentos_compra_total_conferido check (valor_total = valor_itens + frete + outras_despesas - desconto),
   constraint chk_documentos_compra_classificacao_par check ((categoria_financeira_id is null) = (centro_custo_id is null)),
   constraint chk_documentos_compra_plano check (plano_parcelas is null or jsonb_typeof(plano_parcelas) in ('object','array')),
   constraint fk_documentos_compra_empresa foreign key (organization_id, empresa_id) references erp.empresas (organization_id, id),
@@ -176,7 +182,7 @@ comment on column erp.documentos_compra.valor_itens is 'Soma dos totais dos iten
 comment on column erp.documentos_compra.frete is 'Frete (entra no custo de entrada).';
 comment on column erp.documentos_compra.outras_despesas is 'Outras despesas (entram no custo de entrada).';
 comment on column erp.documentos_compra.desconto is 'Desconto do documento (sai do custo de entrada).';
-comment on column erp.documentos_compra.valor_total is 'Total: itens + frete + outras despesas − desconto.';
+comment on column erp.documentos_compra.valor_total is 'Total: itens + frete + outras despesas − desconto (CHECK).';
 comment on column erp.documentos_compra.observacao is 'Observação livre.';
 comment on column erp.documentos_compra.criado_por is 'Usuário que lançou.';
 comment on column erp.documentos_compra.created_at is 'Criação do registro. Nome exigido pelo contrato do ID Global: o backfill lê created_at do registro fonte.';
@@ -190,18 +196,23 @@ create table erp.documentos_compra_itens (
   produto_id uuid not null,
   armazem_id uuid,
   quantidade numeric(18,4) not null constraint chk_documentos_compra_itens_quantidade check (quantidade > 0),
-  valor_unitario numeric(18,4) not null default 0 constraint chk_documentos_compra_itens_valor_unitario check (valor_unitario >= 0),
+  valor_unitario numeric(18,6) not null default 0 constraint chk_documentos_compra_itens_valor_unitario check (valor_unitario >= 0),
   desconto numeric(18,2) not null default 0 constraint chk_documentos_compra_itens_desconto check (desconto >= 0),
-  desconto_percentual numeric(9,4) not null default 0 constraint chk_documentos_compra_itens_desconto_percentual check (desconto_percentual >= 0),
+  desconto_percentual numeric(9,4) not null default 0 constraint chk_documentos_compra_itens_desconto_percentual check (desconto_percentual >= 0 and desconto_percentual <= 100),
   valor_total numeric(18,2) not null default 0 constraint chk_documentos_compra_itens_valor_total check (valor_total >= 0),
   lote text,
   validade date,
   observacao text,
   posicao int not null,
   constraint fk_documentos_compra_itens_documento foreign key (documento_id, organization_id) references erp.documentos_compra (id, organization_id),
-  constraint fk_documentos_compra_itens_produto foreign key (produto_id, organization_id) references erp.products (id, organization_id),
-  constraint fk_documentos_compra_itens_armazem foreign key (armazem_id, organization_id) references erp.warehouses (id, organization_id)
+  constraint fk_documentos_compra_itens_produto foreign key (produto_id, organization_id) references erp.products (id, organization_id)
 );
+
+-- Chave (id, organization_id) em armazéns DEPOIS dos CREATE (a pré-condição provou que não existe), e a FK
+-- composta do armazém do item por cima dela.
+alter table erp.warehouses add constraint uq_warehouses_tenant unique (id, organization_id);
+alter table erp.documentos_compra_itens add constraint fk_documentos_compra_itens_armazem
+  foreign key (armazem_id, organization_id) references erp.warehouses (id, organization_id);
 create index ix_documentos_compra_itens_documento on erp.documentos_compra_itens (documento_id, posicao);
 create index ix_documentos_compra_itens_produto on erp.documentos_compra_itens (organization_id, produto_id);
 
@@ -212,9 +223,9 @@ comment on column erp.documentos_compra_itens.documento_id is 'Documento de comp
 comment on column erp.documentos_compra_itens.produto_id is 'Produto (FK composta com a organização).';
 comment on column erp.documentos_compra_itens.armazem_id is 'Armazém de entrada (da empresa do documento); nulo para produto sem controle de estoque.';
 comment on column erp.documentos_compra_itens.quantidade is 'Quantidade (> 0).';
-comment on column erp.documentos_compra_itens.valor_unitario is 'Valor unitário.';
+comment on column erp.documentos_compra_itens.valor_unitario is 'Valor unitário (6 casas, precisão do ledger).';
 comment on column erp.documentos_compra_itens.desconto is 'Desconto em valor do item.';
-comment on column erp.documentos_compra_itens.desconto_percentual is 'Desconto percentual do item.';
+comment on column erp.documentos_compra_itens.desconto_percentual is 'Desconto percentual do item (0 a 100).';
 comment on column erp.documentos_compra_itens.valor_total is 'Total do item (quantidade × unitário − descontos).';
 comment on column erp.documentos_compra_itens.lote is 'Lote do fornecedor (só compra).';
 comment on column erp.documentos_compra_itens.validade is 'Validade do lote (só compra).';
@@ -224,13 +235,21 @@ comment on column erp.documentos_compra_itens.posicao is 'Ordem do item no docum
 -- ---------- 6) gatilhos do cabeçalho ----------
 -- 6.1 Conferência de parceiros, TOP, forma de pagamento e campos imutáveis. SECURITY DEFINER estreita: lê o
 -- cadastro da MESMA organização da linha, devolve só a recusa, sem SQL dinâmico.
-create or replace function erp.documentos_compra_conferir() returns trigger
+create function erp.documentos_compra_conferir() returns trigger
 language plpgsql security definer set search_path = erp, pg_catalog as $$
 begin
   if tg_op = 'UPDATE' then
     if new.organization_id is distinct from old.organization_id or new.especie is distinct from old.especie
        or new.empresa_id is distinct from old.empresa_id or new.codigo is distinct from old.codigo then
       raise exception 'VALIDATION_ERROR: Organização, empresa, espécie e código do documento de compra não mudam.' using errcode = 'P0001';
+    end if;
+    if new.tipo_operacao_id is distinct from old.tipo_operacao_id or new.tipo_operacao_versao_id is distinct from old.tipo_operacao_versao_id then
+      raise exception 'VALIDATION_ERROR: O tipo de operação e a versão congelada do documento de compra não mudam depois do lançamento.' using errcode = 'P0001';
+    end if;
+    -- Cabeçalho CONGELADO fora do aberto: só a situação (e o carimbo abaixo) muda.
+    if old.situacao <> 'aberto'
+       and (to_jsonb(new) - 'situacao' - 'atualizado_em') is distinct from (to_jsonb(old) - 'situacao' - 'atualizado_em') then
+      raise exception 'CONFLICT: O documento de compra está %; só a situação muda.', old.situacao using errcode = 'P0001';
     end if;
     new.atualizado_em := now();
   end if;
@@ -249,7 +268,7 @@ begin
       raise exception 'VALIDATION_ERROR: A transportadora precisa ser um parceiro do tipo Transportadora.' using errcode = 'P0001';
     end if;
   end if;
-  if tg_op = 'INSERT' or new.tipo_operacao_id is distinct from old.tipo_operacao_id then
+  if tg_op = 'INSERT' then
     if not exists (select 1 from erp.tipos_operacao t where t.id = new.tipo_operacao_id and t.organization_id = new.organization_id
                     and t.codigo_base = 'compras.' || new.especie) then
       raise exception 'VALIDATION_ERROR: O tipo de operação não é da família do documento (compras.%).', new.especie using errcode = 'P0001';
@@ -264,13 +283,13 @@ begin
   return new;
 end $$;
 comment on function erp.documentos_compra_conferir() is
-  'COMPRAS-01: fornecedor is_provider, transportadora is_transporter (vivos, da organização), TOP da família compras.<especie>, forma de pagamento global ou da organização; organização/empresa/espécie/código imutáveis; nasce aberto; carimba atualizado_em.';
+  'COMPRAS-01: fornecedor is_provider, transportadora is_transporter (vivos, da organização), TOP da família compras.<especie>, forma de pagamento global ou da organização; organização/empresa/espécie/código/TOP/versão imutáveis; fora do aberto só a situação muda; nasce aberto; carimba atualizado_em.';
 create trigger trg_documentos_compra_conferir
   before insert or update on erp.documentos_compra
   for each row execute function erp.documentos_compra_conferir();
 
 -- 6.2 Transição de situação.
-create or replace function erp.documentos_compra_transicao() returns trigger
+create function erp.documentos_compra_transicao() returns trigger
 language plpgsql set search_path = erp, pg_catalog as $$
 begin
   if new.situacao = old.situacao then
@@ -303,11 +322,10 @@ create trigger trg_documentos_compra_audit
 -- ---------- 7) gatilho dos itens: só com o documento aberto ----------
 -- FOR SHARE no cabeçalho: se uma confirmação concorrente já travou o documento (FOR UPDATE / UPDATE de
 -- situação), o item espera ela terminar e lê a situação NOVA — sem isso, entraria item em compra confirmada.
-create or replace function erp.documentos_compra_itens_documento_aberto() returns trigger
+create function erp.documentos_compra_itens_documento_aberto() returns trigger
 language plpgsql security definer set search_path = erp, pg_catalog as $$
 declare
   v_doc record;
-  v_ids uuid[];
   v_id uuid;
   v_org uuid;
 begin
@@ -405,9 +423,11 @@ begin
      or (select array_agg(policyname::text order by policyname) from pg_policies where schemaname = 'erp' and tablename = 'documentos_compra_itens') is distinct from array['api_child'] then
     raise exception 'COMPRAS-01: politicas das tabelas novas diferentes de tenant_e_empresa (cabecalho) e api_child (itens).';
   end if;
-  if not exists (select 1 from pg_constraint where conname = 'uq_warehouses_tenant' and contype = 'u')
-     and not exists (select 1 from pg_constraint c where c.conrelid = 'erp.warehouses'::regclass and c.contype = 'u' and array_length(c.conkey, 1) = 2) then
-    raise exception 'COMPRAS-01: chave (id, organization_id) de erp.warehouses ausente.';
+  if not exists (select 1 from pg_constraint c
+                  where c.conrelid = 'erp.warehouses'::regclass and c.conname = 'uq_warehouses_tenant' and c.contype = 'u'
+                    and c.conkey = array[(select attnum from pg_attribute where attrelid = 'erp.warehouses'::regclass and attname = 'id'),
+                                         (select attnum from pg_attribute where attrelid = 'erp.warehouses'::regclass and attname = 'organization_id')]::int2[]) then
+    raise exception 'COMPRAS-01: chave uq_warehouses_tenant de erp.warehouses ausente ou com colunas diferentes de (id, organization_id).';
   end if;
   if (select count(*) from pg_constraint where contype = 'f' and confdeltype = 'a' and confupdtype = 'a'
         and conname in ('fk_documentos_compra_empresa', 'fk_documentos_compra_tipo_operacao', 'fk_documentos_compra_tipo_operacao_versao',
@@ -417,8 +437,8 @@ begin
         and array_length(conkey, 1) >= 2) <> 11 then
     raise exception 'COMPRAS-01: FKs compostas (sem cascata) incompletas (esperadas 11).';
   end if;
-  if (select count(*) from pg_constraint where contype = 'c' and conrelid = 'erp.documentos_compra'::regclass and conname like 'chk_documentos_compra_%') <> 12 then
-    raise exception 'COMPRAS-01: CHECKs de erp.documentos_compra incompletos (esperados 12).';
+  if (select count(*) from pg_constraint where contype = 'c' and conrelid = 'erp.documentos_compra'::regclass and conname like 'chk_documentos_compra_%') <> 13 then
+    raise exception 'COMPRAS-01: CHECKs de erp.documentos_compra incompletos (esperados 13).';
   end if;
   if to_regclass('erp.ux_documentos_compra_nota') is null then
     raise exception 'COMPRAS-01: indice unico parcial da nota ausente.';
@@ -428,6 +448,41 @@ begin
          and ((t.tgrelid = 'erp.documentos_compra'::regclass and t.tgname in ('trg_documentos_compra_conferir', 'trg_documentos_compra_transicao', 'trg_documentos_compra_audit'))
            or (t.tgrelid = 'erp.documentos_compra_itens'::regclass and t.tgname = 'trg_documentos_compra_itens_documento_aberto'))) <> 4 then
     raise exception 'COMPRAS-01: gatilhos do documento de compra ausentes ou desligados (esperados 4).';
+  end if;
+  -- Tipo dos gatilhos (tgtype: 1 ROW, 2 BEFORE, 4 INSERT, 8 DELETE, 16 UPDATE) e a função de cada um.
+  if not exists (select 1 from pg_trigger t where t.tgrelid = 'erp.documentos_compra_itens'::regclass
+                    and t.tgname = 'trg_documentos_compra_itens_documento_aberto'
+                    and t.tgfoid = 'erp.documentos_compra_itens_documento_aberto()'::regprocedure
+                    and (t.tgtype & 31) = (1 | 2 | 4 | 8 | 16)) then
+    raise exception 'COMPRAS-01: gatilho do item nao e BEFORE INSERT OR UPDATE OR DELETE FOR EACH ROW com a funcao certa.';
+  end if;
+  if not exists (select 1 from pg_trigger t where t.tgrelid = 'erp.documentos_compra'::regclass
+                    and t.tgname = 'trg_documentos_compra_transicao'
+                    and t.tgfoid = 'erp.documentos_compra_transicao()'::regprocedure
+                    and (t.tgtype & 31) = (1 | 2 | 16)
+                    and (select array_agg(x) from unnest(t.tgattr) x) = array[(select attnum from pg_attribute where attrelid = 'erp.documentos_compra'::regclass and attname = 'situacao')]::int2[]) then
+    raise exception 'COMPRAS-01: gatilho de transicao nao e BEFORE UPDATE OF situacao FOR EACH ROW com a funcao certa.';
+  end if;
+  if not exists (select 1 from pg_trigger t where t.tgrelid = 'erp.documentos_compra'::regclass
+                    and t.tgname = 'trg_documentos_compra_conferir'
+                    and t.tgfoid = 'erp.documentos_compra_conferir()'::regprocedure
+                    and (t.tgtype & 31) = (1 | 2 | 4 | 16) and cardinality(t.tgattr::int2[]) = 0) then
+    raise exception 'COMPRAS-01: gatilho de conferencia nao e BEFORE INSERT OR UPDATE FOR EACH ROW (todas as colunas) com a funcao certa.';
+  end if;
+  if (select count(*) from pg_proc p
+       where p.oid in ('erp.documentos_compra_conferir()'::regprocedure, 'erp.documentos_compra_itens_documento_aberto()'::regprocedure)
+         and p.prosecdef
+         and exists (select 1 from unnest(coalesce(p.proconfig, '{}'::text[])) c where c like 'search_path=%')) <> 2
+     or not exists (select 1 from pg_proc p where p.oid = 'erp.documentos_compra_transicao()'::regprocedure
+                     and exists (select 1 from unnest(coalesce(p.proconfig, '{}'::text[])) c where c like 'search_path=%')) then
+    raise exception 'COMPRAS-01: funcoes de conferencia/item sem SECURITY DEFINER ou funcoes sem search_path fixo.';
+  end if;
+  if exists (select 1 from pg_proc p
+               cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+              where p.oid in ('erp.documentos_compra_conferir()'::regprocedure, 'erp.documentos_compra_transicao()'::regprocedure,
+                              'erp.documentos_compra_itens_documento_aberto()'::regprocedure)
+                and a.privilege_type = 'EXECUTE' and a.grantee <> p.proowner) then
+    raise exception 'COMPRAS-01: EXECUTE das funcoes de gatilho ainda concedido alem do dono.';
   end if;
   if exists (select 1 from pg_roles where rolname = 'erp_app')
      and (has_table_privilege('erp_app', 'erp.documentos_compra', 'delete') or has_table_privilege('erp_app', 'erp.documentos_compra_itens', 'delete')

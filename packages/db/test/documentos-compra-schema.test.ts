@@ -318,6 +318,77 @@ describe("gatilho do item: só com documento aberto", () => {
   });
 });
 
+describe("R1: cabeçalho congelado fora do aberto; TOP, espécie e organização imutáveis", () => {
+  const upd = (id: string, set: string, p: unknown[] = []) => db.query(`update erp.documentos_compra set ${set} where id=$1`, [id, ...p]);
+  it("espécie e organização não mudam (nem aberto)", async () => {
+    const d = await doc();
+    expect((await erroDe(upd(d, "especie='pedido'"))).message).toMatch(/não mudam/);
+    expect((await erroDe(upd(d, "organization_id=$2", [outraOrg]))).message).toMatch(/não mudam/);
+  });
+  it("TOP e versão não mudam nem com o documento aberto", async () => {
+    const outra = await criarTop(demo.orgId, "compras.compra");
+    const d = await doc();
+    expect((await erroDe(upd(d, "tipo_operacao_id=$2, tipo_operacao_versao_id=$3", [outra.top, outra.versao]))).message).toMatch(/tipo de operação e a versão congelada/);
+    const v2 = await withTx(db, { orgId: demo.orgId, userId: null }, async (tx) => (await tx.query<{ id: string }>(
+      "insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome) values ($1,$2,2,'TOP compras v2') returning id", [demo.orgId, topCompra.top])).rows[0]!.id);
+    expect((await erroDe(upd(d, "tipo_operacao_versao_id=$2", [v2]))).message).toMatch(/versão congelada/);
+    // contraprova: aberto, o resto do cabeçalho muda
+    const f = await pessoa(demo.orgId, { provider: true });
+    await expect(upd(d, "fornecedor_id=$2, frete=5, valor_total=5, numero_nota='A1'", [f])).resolves.toMatchObject({ rowCount: 1 });
+  });
+  for (const destino of [["confirmado"], ["cancelado"], ["confirmado", "cancelado"]] as const) {
+    it(`${destino.join("→")}: recusa mudar valor, fornecedor, nota e TOP; só a situação muda`, async () => {
+      const d = await doc({ numero: `NF-FZ-${++seq}` });
+      for (const s of destino) await situacao(d, s);
+      const f = await pessoa(demo.orgId, { provider: true });
+      const outra = await criarTop(demo.orgId, "compras.compra");
+      for (const [set, p] of [
+        ["frete=5, valor_total=5", []], ["observacao='x'", []], ["fornecedor_id=$2", [f]], ["numero_nota='OUTRA'", []],
+        ["serie_nota='9'", []], ["data_documento='2026-09-02'", []]
+      ] as [string, unknown[]][]) {
+        expect((await erroDe(upd(d, set, p))).message, set).toMatch(/^CONFLICT: O documento de compra está (confirmado|cancelado); só a situação muda/);
+      }
+      expect((await erroDe(upd(d, "tipo_operacao_id=$2, tipo_operacao_versao_id=$3", [outra.top, outra.versao]))).message).toMatch(/versão congelada/);
+      const r = (await db.query<{ fornecedor_id: string; frete: string }>("select fornecedor_id, frete from erp.documentos_compra where id=$1", [d])).rows[0]!;
+      expect(r).toEqual({ fornecedor_id: fornecedor, frete: "0.00" });
+    });
+  }
+  it("confirmado → cancelado continua passando (só a situação muda)", async () => {
+    const d = await doc(); await situacao(d, "confirmado");
+    await expect(situacao(d, "cancelado")).resolves.toMatchObject({ rowCount: 1 });
+  });
+});
+
+describe("R1: CHECKs novos (gatilhos desligados: o CHECK sozinho)", () => {
+  const chk = async (set: string) => (await erroDe(semGatilhos(async (q) => {
+    const id = await inserirDoc(q);
+    await q.query(`update erp.documentos_compra set ${set} where id=$1`, [id]);
+  }))).constraint;
+  it("valor_total = itens + frete + outras despesas − desconto", async () => {
+    await expect(semGatilhos(async (q) => { const id = await inserirDoc(q);
+      return q.query("update erp.documentos_compra set valor_itens=100, frete=15, outras_despesas=5, desconto=10, valor_total=110 where id=$1", [id]); }))
+      .resolves.toMatchObject({ rowCount: 1 });
+    expect(await chk("valor_itens=100, frete=15, outras_despesas=5, desconto=10, valor_total=120")).toBe("chk_documentos_compra_total_conferido");
+    expect(await chk("valor_itens=100")).toBe("chk_documentos_compra_total_conferido");
+  });
+  it("número e série da nota sem espaço nas pontas", async () => {
+    expect(await chk("numero_nota=' 12'")).toBe("chk_documentos_compra_nota");
+    expect(await chk("numero_nota='12 '")).toBe("chk_documentos_compra_nota");
+    expect(await chk("numero_nota='12', serie_nota=' 1'")).toBe("chk_documentos_compra_nota");
+    await expect(semGatilhos(async (q) => { const id = await inserirDoc(q);
+      return q.query("update erp.documentos_compra set numero_nota='12', serie_nota='' where id=$1", [id]); })).resolves.toMatchObject({ rowCount: 1 });
+  });
+  it("item: desconto percentual até 100; valor unitário com 6 casas", async () => {
+    const d = await doc();
+    const ins = (pct: string, vu = "10") => db.query(
+      "insert into erp.documentos_compra_itens (organization_id, documento_id, produto_id, armazem_id, quantidade, valor_unitario, desconto_percentual, posicao) values ($1,$2,$3,$4,1,$5,$6,0) returning valor_unitario",
+      [demo.orgId, d, produto, armazemA, vu, pct]);
+    expect((await erroDe(ins("100.0001"))).constraint).toBe("chk_documentos_compra_itens_desconto_percentual");
+    await expect(ins("100")).resolves.toMatchObject({ rowCount: 1 });
+    expect((await ins("0", "0.333333")).rows[0]).toEqual({ valor_unitario: "0.333333" });
+  });
+});
+
 describe("unicidade da nota do fornecedor", () => {
   it("mesma nota do mesmo fornecedor: série vazia, nula e '1' são a MESMA; outra série ou outro fornecedor passam", async () => {
     const n = `NF-${++seq}`;

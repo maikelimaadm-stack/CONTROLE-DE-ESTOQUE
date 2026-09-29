@@ -1190,7 +1190,7 @@ Linha de produto do documento de compra. Identidade pertence ao documento; só m
 | `produto_id` |  | uuid | sim |  |  |  |  |
 | `armazem_id` |  | uuid | não |  |  |  |  |
 | `quantidade` |  | numeric(18,4) | sim |  |  |  |  |
-| `valor_unitario` |  | numeric(18,4) | sim |  |  |  |  |
+| `valor_unitario` |  | numeric(18,6) | sim |  |  |  |  |
 | `desconto` |  | numeric(18,2) | sim |  |  |  |  |
 | `desconto_percentual` |  | numeric(9,4) | sim |  |  |  |  |
 | `valor_total` |  | numeric(18,2) | sim |  |  |  |  |
