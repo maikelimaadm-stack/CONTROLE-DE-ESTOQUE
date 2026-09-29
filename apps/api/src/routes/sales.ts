@@ -1503,6 +1503,14 @@ export default async function salesRoutes(app: FastifyInstance) {
           condicao_pagamento_id: origemCond.condicao_pagamento_id,
         }, { conferirCondicao: true, conferirAtraso: true });
       }
+      /*
+       * TOP-CONFIG-07 — O PEDIDO GERADO por conversão (orçamento → pedido) sob TOP destino que reserva É um pedido com
+       * reserva sendo salvo: a MESMA conferência do POST (armazém obrigatório e da empresa, cabe no disponível sob a
+       * trava do produto), ANTES de writeDoc — sem ela, converter seria a porta lateral para reservar além do físico.
+       */
+      if (destino === "order" && topDestino && await versaoReservaEstoque(ctx, topDestino.tipoOperacaoVersaoId)) {
+        await conferirReservaDoDocumento(ctx, { itens: body.items, empresaId: body.empresa_id, excluirDocumentoId: null });
+      }
       const r = await writeDoc(ctx, destino, body, undefined, id, topDestino, classificacao, condicao, parte ? parte.calculo.itens.map((i) => i.origemItemId) : []);
       if (!parte) {
         await ctx.tx.query("update erp.sales_documents set status='converted', updated_at=now() where id=$1", [id]);

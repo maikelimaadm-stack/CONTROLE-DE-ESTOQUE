@@ -30,9 +30,9 @@
  * — armazéns, trava (que já traz o nome do produto), físico e reservado — por documento inteiro, nunca por item.
  */
 import { D, DomainError, type Decimal } from "@agro/shared";
-import { formatarNumero } from "@erp/plataforma";
 import type { ServiceCtx } from "../lib/context.js";
 import { err } from "../lib/errors.js";
+import { quantidadeLegivel } from "../services/stock-core.js";
 import { chaveDoPar, saldoComReservaEmLote, MAX_PARES_POR_CHAMADA, type ParDeEstoque, type SaldoDoPar } from "../services/reserva-estoque.js";
 
 export const MSG_RESERVA_ARMAZEM_OBRIGATORIO = "Informe o armazém: esta operação reserva estoque.";
@@ -71,8 +71,11 @@ export async function origemReservaEstoque(ctx: ServiceCtx, origemId: string): P
   return r.rows[0]?.reserva_estoque === true;
 }
 
-/** Número para a mensagem: PT-BR, vírgula decimal, sem zeros à direita (até 4 casas, as da quantidade). */
-const numeroLegivel = (v: Decimal | string) => formatarNumero(D(v).toString(), { casasMaximas: 4 });
+/**
+ * Número para a mensagem: vírgula decimal, sem zeros à direita — o MESMO formatador da pré-conferência da confirmação
+ * (A2) e o mesmo formato do gatilho da 0035, para que as três recusas da reserva escrevam o número igual.
+ */
+const numeroLegivel = (v: Decimal | string) => quantidadeLegivel(D(v).toFixed(4));
 
 /**
  * A CONFERÊNCIA (a → d, nesta ordem). `excluirDocumentoId` tira da conta o próprio documento: o pedido sendo

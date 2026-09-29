@@ -215,6 +215,28 @@ describe("Orçamento e pedido sem reserva — nada muda", () => {
   });
 });
 
+describe("Conversão orçamento → pedido cuja TOP destino reserva — a mesma conferência do POST", () => {
+  it("11 com físico 10 → 422 sem gerar pedido; orçamento sem armazém → 422 no campo; 4 → gera o pedido e reserva 4", async () => {
+    await semReserva();
+    const converter = (id: string) => h.app.inject({ method: "POST", url: `/api/sales/budgets/${id}/convert`, headers: h.headers(), payload: { tipo_operacao_id: topReserva } });
+    const pedidosAntes = await contar("order");
+    // PREMISSA: o orçamento salva sem conferir nada (orçamento nunca reserva).
+    const alto = await criado("budgets", topOrcamento, [item("11")]);
+    recusa(await converter(alto), linha(nomeSal, nomeAlm, "10", "11"), [{ path: "items", message: linha(nomeSal, nomeAlm, "10", "11") }]);
+    const semArmazem = await criado("budgets", topOrcamento, [item("1", null)]);
+    recusa(await converter(semArmazem), "Informe o armazém: esta operação reserva estoque.", [{ path: "items[0].warehouse_id", message: "Informe o armazém: esta operação reserva estoque." }]);
+    expect(await contar("order"), "nenhuma recusa gerou pedido").toBe(pedidosAntes);
+    expect([(await ler("budgets", alto)).status, (await ler("budgets", semArmazem)).status], "a origem fica aberta").toEqual(["open", "open"]);
+    const cabe = await criado("budgets", topOrcamento, [item("4")]);
+    const r = await converter(cabe);
+    expect(r.statusCode, r.body).toBe(201);
+    expect(await reservado(ALM, SAL), "o pedido gerado reserva pela versão da TOP destino").toBe("4.0000");
+    await cancelar("orders", j(r).id as string);
+    await cancelar("budgets", alto); await cancelar("budgets", semArmazem);
+    await semReserva();
+  });
+});
+
 describe("GET do documento — reserva_estoque e reservado por item", () => {
   it("pedido com reserva: reserva_estoque true e reservado = saldo a faturar; cancelado: 0.0000; sem reserva: sem o campo", async () => {
     await semReserva();
