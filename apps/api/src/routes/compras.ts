@@ -233,12 +233,12 @@ async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieCompr
   const total = await ctx.tx.query<{ n: string; soma: string }>(`select count(*)::text n, coalesce(sum(d.valor_total), 0)::text soma ${de}`, params);
   const r = await ctx.tx.query<Record<string, unknown> & { especie: string; tipo_operacao_id: string | null; top_codigo: string | null; top_codigo_base: string | null; top_nome: string | null; top_versao: number | null }>(
     `select d.id, d.codigo, d.especie, d.situacao, d.data_documento, d.data_entrada, d.numero_nota, d.serie_nota,
-            d.valor_itens, d.frete, d.outras_despesas, d.desconto, d.valor_total, d.empresa_id, d.fornecedor_id, d.criado_em,
+            d.valor_itens, d.frete, d.outras_despesas, d.desconto, d.valor_total, d.empresa_id, d.fornecedor_id, d.created_at as criado_em,
             d.tipo_operacao_id, fo.name as fornecedor_nome, e.name as empresa_nome,
             toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao,
             (select count(*) from erp.documentos_compra_itens i where i.documento_id = d.id and i.organization_id = d.organization_id)::int as quantidade_itens
        ${de}
-      order by d.data_documento desc, d.criado_em desc, d.id
+      order by d.data_documento desc, d.created_at desc, d.id
       limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
   const items = r.rows.map(({ top_codigo, top_codigo_base, top_nome, top_versao, ...x }) => ({
     ...x,

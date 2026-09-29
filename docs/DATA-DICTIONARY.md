@@ -1166,7 +1166,7 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | `valor_total` |  | numeric(18,2) | sim |  |  |  |  |
 | `observacao` |  | text | não |  |  |  |  |
 | `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
-| `criado_em` |  | timestamptz | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
 | `atualizado_em` |  | timestamptz | sim |  |  |  |  |
 
 ### ERP-COMPRAS-DOCUMENTO-ITEM — Item do Documento de Compra

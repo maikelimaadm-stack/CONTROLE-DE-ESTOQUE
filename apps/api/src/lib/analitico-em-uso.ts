@@ -46,6 +46,7 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
   financial_categories: [
     r("bank_movement_apportionments", "financial_category_id"),
     r("budget_planning_values", "financial_category_id"),
+    r("documentos_compra", "categoria_financeira_id"),
     r("input_entry_items", "financial_category_id"),
     r("invoice_apportionments", "financial_category_id"),
     r("invoice_items", "financial_category_id"),
@@ -58,6 +59,7 @@ export const REFERENCIAS_DE_USO: Readonly<Record<string, readonly ReferenciaDeUs
     r("apportionment_category_items", "cost_center_id"),
     r("bank_movement_apportionments", "cost_center_id"),
     r("devolution_items", "cost_center_id"),
+    r("documentos_compra", "centro_custo_id"),
     r("empresa_cost_centers", "cost_center_id"),
     r("employee_profiles", "cost_center_id"),
     r("equipment_cost_centers", "cost_center_id"),

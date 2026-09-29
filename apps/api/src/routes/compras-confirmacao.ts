@@ -403,7 +403,7 @@ export async function compraComANota(ctx: ServiceCtx, chave: ChaveDaNota & { exc
     `select codigo from erp.documentos_compra
       where organization_id=$1 and especie='compra' and situacao<>'cancelado' and fornecedor_id=$2
         and btrim(numero_nota)=$3 and coalesce(nullif(btrim(serie_nota), ''), '1')=$4 and ($5::uuid is null or id <> $5::uuid)
-      order by criado_em limit 1`, [ctx.orgId, chave.fornecedorId, numero, serie, chave.excluirDocumentoId ?? null]);
+      order by created_at limit 1`, [ctx.orgId, chave.fornecedorId, numero, serie, chave.excluirDocumentoId ?? null]);
   return r.rows[0]?.codigo ?? null;
 }
 

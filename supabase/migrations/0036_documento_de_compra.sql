@@ -122,7 +122,7 @@ create table erp.documentos_compra (
   valor_total numeric(18,2) not null default 0 constraint chk_documentos_compra_valor_total check (valor_total >= 0),
   observacao text,
   criado_por uuid references erp.users(id),
-  criado_em timestamptz not null default now(),
+  created_at timestamptz not null default now(),
   atualizado_em timestamptz not null default now(),
   unique (organization_id, especie, codigo),
   constraint uq_documentos_compra_tenant unique (id, organization_id),
@@ -179,7 +179,7 @@ comment on column erp.documentos_compra.desconto is 'Desconto do documento (sai 
 comment on column erp.documentos_compra.valor_total is 'Total: itens + frete + outras despesas − desconto.';
 comment on column erp.documentos_compra.observacao is 'Observação livre.';
 comment on column erp.documentos_compra.criado_por is 'Usuário que lançou.';
-comment on column erp.documentos_compra.criado_em is 'Criação do registro.';
+comment on column erp.documentos_compra.created_at is 'Criação do registro. Nome exigido pelo contrato do ID Global: o backfill lê created_at do registro fonte.';
 comment on column erp.documentos_compra.atualizado_em is 'Última alteração (gatilho).';
 
 -- ---------- 5) itens ----------
