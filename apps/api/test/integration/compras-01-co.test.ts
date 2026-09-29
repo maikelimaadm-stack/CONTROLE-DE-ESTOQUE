@@ -456,9 +456,9 @@ async function membro(nome: string, perms: string[]): Promise<Hdr> {
   const email = `${nome.toLowerCase().replace(/\W+/g, "")}${unico()}@co01.local`;
   const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `Perfil ${nome} ${unico()}`, permissions: perms } });
   expect(papel.statusCode, papel.body).toBe(201);
-  const v = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Compra@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos([]) } });
+  const v = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: nome, email, password: "Restrito@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos([]) } });
   expect(v.statusCode, v.body).toBe(201);
-  const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Compra@12345" } });
+  const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Restrito@12345" } });
   expect(login.statusCode, login.body).toBe(200);
   return { authorization: `Bearer ${(login.json() as { token: string }).token}`, "x-org-id": h.demo.orgId };
 }
@@ -497,7 +497,7 @@ describe("CO-7 — lista única: recorte por capacidade, 403 sem capacidade, 404
     expect((await listar(nenhuma)).statusCode).toBe(403);
 
     // OUTRA ORGANIZAÇÃO: uma compra real dela, lida pelo administrador desta → a MESMA 404 de um id inexistente.
-    const demoB = await seedDemo(admin, { slug: `co01b${unico()}`, orgName: "[TEST] Org CO-7", adminEmail: `admin-b-${unico()}@co01.local`, adminPassword: "Compra@12345" }, () => {});
+    const demoB = await seedDemo(admin, { slug: `co01b${unico()}`, orgName: "[TEST] Org CO-7", adminEmail: `admin-b-${unico()}@co01.local`, adminPassword: "Restrito@12345" }, () => {});
     const lb = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: demoB.adminEmail, password: demoB.adminPassword } });
     expect(lb.statusCode, lb.body).toBe(200);
     const hB = { authorization: `Bearer ${(lb.json() as { token: string }).token}`, "x-org-id": demoB.orgId };

@@ -152,9 +152,9 @@ describe("consultar, listar, cancelar", () => {
       const email = `a1-compras-${perms.join("-") || "nada"}@demo.local`.replace(/[^a-z0-9@.-]/g, "");
       const papel = await h.app.inject({ method: "POST", url: "/api/admin/roles", headers: h.headers(), payload: { name: `A1 ${email}`, permissions: perms } });
       expect(papel.statusCode, papel.body).toBeLessThan(300);
-      const u = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: email, email, password: "Senha@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos([]) } });
+      const u = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(), payload: { name: email, email, password: "Restrito@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos([]) } });
       expect(u.statusCode, u.body).toBeLessThan(300);
-      const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Senha@12345" } });
+      const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Restrito@12345" } });
       expect(login.statusCode, login.body).toBe(200);
       return { authorization: `Bearer ${(login.json() as { token: string }).token}`, "x-org-id": h.demo.orgId };
     };
