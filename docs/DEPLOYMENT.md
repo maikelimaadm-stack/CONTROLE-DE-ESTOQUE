@@ -1393,7 +1393,8 @@ da TOP (default false; o gatilho `trg_tipos_operacao_versoes_reserva_familia` s�
 a conta do reservado `erp.reserva_estoque_nucleo` (só produto com controle de estoque; sem `execute` para o papel da API), a porta exposta
 `erp.reserva_estoque` (`SECURITY DEFINER`, `execute` só para o papel da API, capacidade conferida dentro), o gatilho
 de saída `trg_stock_movement_reserva` (AFTER INSERT em `erp.stock_movements`, depois de `trg_stock_movement_apply`) e
-o índice parcial `ix_sales_document_items_reserva`. As pós-condições conferem que nenhuma versão nasceu reservando e
+o índice parcial `ix_sales_document_items_reserva` e o gatilho `BEFORE UPDATE OF control_stock` em `erp.products`, que
+recusa trocar "Controla estoque" de produto citado por pedido com reserva vivo (ou venda aberta gerada dele). As pós-condições conferem que nenhuma versão nasceu reservando e
 que as contagens de versões, movimentos, saldos e documentos e a quantidade total em estoque não mudaram. Nenhuma
 variável nova, nenhuma permissão nova.
 
@@ -1414,7 +1415,8 @@ e nada é aplicado. Em erro, publique o nome do papel, nunca a conexão.
    reserva aparece nele. O físico continua em `quantity`; `reservado` e `disponivel` só vêm da API nova.
 
 **Impacto em dados reais:** coluna nova desligada em toda versão; nenhum saldo muda; nenhuma saída que passa hoje
-passa a ser recusada, porque não existe pedido reservando.
+passa a ser recusada, porque não existe pedido reservando; pela mesma razão, nenhuma troca de "Controla estoque" no
+cadastro de produto (nem a da importação) é recusada pelo gatilho novo.
 
 **Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0035 fica: o gatilho não recusa
 nada enquanto nenhuma versão reservar. Com a reserva já ligada e pedido reservando, o gatilho continua valendo sob a
