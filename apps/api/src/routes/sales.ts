@@ -1031,8 +1031,8 @@ export default async function salesRoutes(app: FastifyInstance) {
           return n.product_id === o.product_id && D(n.quantity).eq(o.quantity) && D(n.unit_price).eq(o.unit_price) && D(n.discount).eq(o.discount) && D(n.discount_percent).eq(o.discount_percent);
         });
         if (!iguais) {
-          const codigoOrigem = cur.origin_document_id ? (await ctx.tx.query<{ code: string }>("select code from erp.sales_documents where id=$1 and organization_id=$2", [cur.origin_document_id, ctx.orgId])).rows[0]?.code ?? "" : "";
-          const mensagem = msgItensDaParte(codigoOrigem);
+          const origem = cur.origin_document_id ? (await ctx.tx.query<{ code: string; kind: string }>("select code, kind from erp.sales_documents where id=$1 and organization_id=$2", [cur.origin_document_id, ctx.orgId])).rows[0] : undefined;
+          const mensagem = msgItensDaParte(kind, origem?.kind, origem?.code);
           throw err("VALIDATION_ERROR", mensagem, [{ path: "items", message: mensagem }]);
         }
       }

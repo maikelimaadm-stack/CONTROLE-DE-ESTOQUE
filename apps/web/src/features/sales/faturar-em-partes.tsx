@@ -2,6 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { D, money } from "@agro/shared";
+import { especieNaFrase } from "@agro/domain";
 import { api } from "@/lib/api";
 import { brl, num } from "@/lib/utils";
 import { Button, Dialog, Field, Input, Textarea } from "@/components/ui";
@@ -124,28 +125,40 @@ export function DialogoEncerrarSaldo({ open, onOpenChange, loading, onConfirmar 
   </Dialog>;
 }
 
+/** O documento de origem de uma parte gerada: código e espécie (`kind`), ou `null` enquanto não se sabe. */
+export interface OrigemDaParte { codigo: string | null; kind: string | null }
+const ORIGEM_DESCONHECIDA: OrigemDaParte = { codigo: null, kind: null };
+
 /**
- * O código do documento de origem de uma parte gerada. Usa o que o detalhe trouxer; senão pergunta a
- * origem pelas portas das variantes que o usuário pode ver — 404 numa porta é só "não é desta variante".
+ * O código e a espécie do documento de origem de uma parte gerada. O detalhe não os traz: pergunta a origem
+ * pelas portas das variantes que o usuário pode ver — 404 numa porta é só "não é desta variante". A espécie é
+ * a que o SERVIDOR classificou (`kind` da resposta), não a porta que respondeu.
  */
-export function useCodigoDaOrigem(d: Row | undefined, habilitado: boolean, podeVer: (perm: string) => boolean): string | null {
-  const direto = d ? (d["origin_document_code"] ?? d["origem_codigo"]) : undefined;
+export function useOrigemDaParte(d: Row | undefined, habilitado: boolean, podeVer: (perm: string) => boolean): OrigemDaParte {
   const origem = d && typeof d["origin_document_id"] === "string" ? d["origin_document_id"] : "";
-  const precisa = habilitado && !direto && Boolean(origem);
-  const q = useQuery<string | null>({
-    queryKey: ["sales-origem-codigo", origem],
-    enabled: precisa,
+  const q = useQuery<OrigemDaParte>({
+    queryKey: ["sales-origem-da-parte", origem],
+    enabled: habilitado && Boolean(origem),
     retry: false,
     queryFn: async () => {
       for (const v of variantesDeVenda().filter((x) => podeVer(`${x.perm}.view`))) {
         try {
           const r = await api<Row>(`/api/sales/${v.segmento}/${origem}`);
-          if (r && r["code"] !== undefined && r["code"] !== null) return String(r["code"]);
+          if (r && r["code"] !== undefined && r["code"] !== null) return { codigo: String(r["code"]), kind: typeof r["kind"] === "string" ? r["kind"] : null };
         } catch { /* outra variante: segue */ }
       }
-      return null;
+      return ORIGEM_DESCONHECIDA;
     }
   });
-  if (typeof direto === "string" && direto) return direto;
-  return q.data ?? null;
+  return q.data ?? ORIGEM_DESCONHECIDA;
+}
+
+/**
+ * "Itens gerados do orçamento 0003." — a espécie vem da origem (a frase dizia "do pedido" também quando a
+ * origem era um orçamento). Sem código e espécie conhecidos, a frase não chuta: "do documento de origem".
+ */
+export function fraseItensDaOrigem(origem: OrigemDaParte): string {
+  return origem.codigo && origem.kind
+    ? `Itens gerados ${especieNaFrase(origem.kind).do} ${origem.codigo}.`
+    : "Itens gerados do documento de origem.";
 }
