@@ -15,15 +15,17 @@ import {
   LIMITE_CONDICOES_PERMITIDAS, MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO,
   POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
   TOLERANCIA_ATRASO_MAXIMA_DIAS, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
-  configuracaoTopParaEdicao, efeitosAtivadosTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, normalizarConfiguracaoTop,
+  configuracaoTopParaEdicao, efeitosAtivadosTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
+  normalizarConfiguracaoTop,
   recusasFiscaisDaFamiliaTop, validarExecucaoTop,
   type ConfiguracaoTipoOperacaoV2, type ConfiguracaoTipoOperacaoV3, type EfeitoExecucaoTop, type ModoExecucaoTop,
   type RecusaExecucaoTop
 } from "@agro/domain";
 import {
-  MensagemCapacidadesTop, ROTULOS_TOP, aplicarNoFormato3, assinaturaRascunho, capacidadesDeExecucao, configuracaoDoRascunhoParaEnvio,
+  CAMINHO_ERRO_RESERVA_ESTOQUE, MensagemCapacidadesTop, ROTULOS_TOP, aplicarNoFormato3, assinaturaRascunho, capacidadesDeExecucao, configuracaoDoRascunhoParaEnvio,
   configuracaoInicial, configuracaoInicialV3, ehConflitoDeConcorrencia, errosDeCampoDoServidor, lerDetalheTop, limiteDeDestinos,
-  podeConfigurar, podeConfigurarDestinos, podeConfigurarEmPartes, podeConfigurarRestricoes, useCapacidadesTop, useDestinosPossiveis, valorMinimoAceitavel,
+  podeConfigurar, podeConfigurarDestinos, podeConfigurarEmPartes, podeConfigurarReservaEstoque, podeConfigurarRestricoes, useCapacidadesTop,
+  useDestinosPossiveis, valorMinimoAceitavel,
   type CapacidadesExecucaoTop, type DestinoEmEdicao, type EstadoCapacidadesTop, type RascunhoTop
 } from "./top-contrato";
 
@@ -56,6 +58,13 @@ import {
  */
 
 export interface FamiliaTop { codigo: string; rotulo: string; modulo: string | null }
+
+/**
+ * TOP-CONFIG-07 — a ÚNICA família que pode reservar estoque: a do PEDIDO, perguntada ao registry do domínio (SSOT),
+ * nunca escrita aqui. `undefined` (registry sem a variante) esconde a caixa — fail-closed. O servidor recusa com 422
+ * a reserva em outra família de qualquer jeito, e o banco também.
+ */
+const FAMILIA_DO_PEDIDO = familiaOperacionalDeDocumentoVenda("order");
 
 /** As oito seções, na ordem em que a tela as mostra. */
 const ABAS = [
@@ -209,6 +218,9 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
    * novos aparecem e `condicoesPermitidas` pode ir no corpo. Sem isso o editor é o de hoje, byte a byte.
    */
   const restricoes = podeConfigurarRestricoes(capacidades);
+  /** TOP-CONFIG-07 — o servidor grava a reserva de estoque na versão (`capabilities.reservaEstoque === 1`). */
+  const reservaConfiguravel = podeConfigurarReservaEstoque(capacidades);
+  const idDicaReserva = React.useId();
   /** A versão vigente já está no formato 3 — sem restrições no servidor, a configuração não tem envio honesto. */
   const vigenteNoFormato3 = edicao && !!detalhe?.configuracao && detalhe.configuracao.suportada
     && detalhe.configuracao.versaoSchema === VERSAO_SCHEMA_CONFIGURACAO_TOP_V3;
@@ -256,6 +268,12 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      * tivesse pedido isso, na edição de um campo que nada tem a ver com o assunto.
      */
     destinosDeclarados: detalhe?.destinosConfigurados === true,
+    /**
+     * TOP-CONFIG-07 — na edição, o valor que o detalhe LEU (ausente quando ele não informou: a caixa fica bloqueada
+     * e a chave não vai no corpo); na criação, `false`. Não depende das capacidades, que chegam depois: quem decide
+     * se a chave É ENVIADA é a gravação.
+     */
+    ...(detalhe ? (detalhe.reservaEstoque !== null ? { reservaEstoque: detalhe.reservaEstoque } : {}) : { reservaEstoque: false }),
     ...camposDeRestricoes(restricoes, detalhe)
   }), [detalhe, restricoes]);
 
@@ -309,6 +327,13 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
   const ativacaoSemRuntime = liberado && execucao.suportado && !execucao.runtimeHabilitado
     ? efeitosAtivadosTop(edicao ? inicial.configuracao : null, rascunho.configuracao) : [];
   const envio = configuracaoDoRascunhoParaEnvio(rascunho, execucao.suportado, vigenteNoFormato3);
+  /**
+   * TOP-CONFIG-07 — a caixa da reserva existe? Capacidade declarada E família do pedido. Ela NÃO depende da
+   * movimentação declarada nem da aba Execução: a reserva vale para o pedido salvo mesmo com "Não movimenta estoque".
+   * `reservaIlegivel`: o detalhe não informou o valor — a caixa fica bloqueada e nada sobre ela é enviado.
+   */
+  const reservaOferecida = reservaConfiguravel && !!FAMILIA_DO_PEDIDO && rascunho.codigoBase === FAMILIA_DO_PEDIDO;
+  const reservaIlegivel = reservaOferecida && rascunho.reservaEstoque === undefined;
   const bloqueioDaSecao = (efeito: EfeitoExecucaoTop): BloqueioDaSecao =>
     recusasExecucao.some((r) => r.caminho === `execucao.${efeito}` || r.caminho.startsWith(`${efeito}.`)) ? "combinacao_recusada"
       : execucao.suportado && !execucao.runtimeHabilitado ? "execucao_desligada" : null;
@@ -349,6 +374,12 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         && rascunho.condicoesPermitidas && rascunho.condicoesDeclaradas && !condicoesIlegiveis) {
         base.condicoesPermitidas = rascunho.condicoesPermitidas.map((c) => c.id);
       }
+      /**
+       * TOP-CONFIG-07 — `reservaEstoque` só viaja com a capacidade declarada e na família do pedido (servidor anterior
+       * recusaria a chave; outra família é 422). No PUT o servidor lê AUSENTE como "preserve", então valor não lido
+       * (`reservaIlegivel`) simplesmente não vai.
+       */
+      if (liberado && reservaOferecida && rascunho.reservaEstoque !== undefined) base.reservaEstoque = rascunho.reservaEstoque;
       if (edicao) return api(`/api/admin/tipos-operacao/${id}`, { method: "PUT", body: { ...base, revisao } });
       return api("/api/admin/tipos-operacao", {
         method: "POST",
@@ -457,7 +488,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <Field label="Movimento" required span={6} help="Define qual operação do produto este tipo representa. Não muda depois da criação.">
           {edicao
             ? <Input data-testid="top-campo-familia" value={detalhe ? `${detalhe.familia.rotulo} (${detalhe.familia.codigo})` : ""} readOnly disabled />
-            : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => mudar({ codigoBase: e.target.value, destinos: [] })}>
+            : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => mudar({ codigoBase: e.target.value, destinos: [], reservaEstoque: false })}>
                 <option value="">Selecione…</option>
                 {familias.map((f) => <option key={f.codigo} value={f.codigo}>{f.rotulo} — {f.codigo}</option>)}
               </NativeSelect>}
@@ -544,6 +575,30 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, saldoNegativo: v } }))} />
         {rascunho.configuracao.estoque.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem movimentação declarada, os demais campos de estoque ficam no estado neutro e não são gravados como exigência." />}
         <AvisoDeAutoridade efeito="estoque" modo={rascunho.configuracao.execucao.estoque} bloqueio={bloqueioDaSecao("estoque")} />
+        {/* TOP-CONFIG-07: fora da configuração (coluna da versão) e fora do "desligado" da movimentação — por isso
+            nunca é desabilitada por "Não movimenta estoque". */}
+        {reservaOferecida && <div className="col-span-12 border-t border-slate-200 pt-3" data-testid="top-reserva-estoque-secao">
+          {reservaIlegivel
+            ? <p data-testid="top-reserva-estoque-ilegivel" className="text-[12px] text-amber-700">
+                Este servidor não informou se esta versão reserva estoque. A opção fica bloqueada e nada sobre ela é
+                enviado ao salvar, para não substituir um valor que não foi lido.
+              </p>
+            : <label className="flex items-start gap-2 text-[12.5px] text-slate-700">
+                <input type="checkbox" data-testid="top-reserva-estoque" className="mt-0.5" aria-describedby={idDicaReserva}
+                  checked={rascunho.reservaEstoque === true}
+                  onChange={(e) => { const marcado = e.target.checked; mudar({ reservaEstoque: marcado }); }} />
+                <span>
+                  <span className="font-medium">Reservar estoque ao salvar o pedido</span>
+                  <span id={idDicaReserva} className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">
+                    O pedido separa as quantidades no armazém de cada item. Outro documento não usa o que está reservado, e a venda gerada do pedido consome a reserva.
+                  </span>
+                  <span className="mt-0.5 block text-[11.5px] leading-relaxed text-slate-500">
+                    Vale para os pedidos lançados a partir da versão salva e não depende da movimentação nem da aba Execução.
+                  </span>
+                </span>
+              </label>}
+          <ErrosDeCampo erros={errosCampo} prefixos={[CAMINHO_ERRO_RESERVA_ESTOQUE]} />
+        </div>}
       </Secao>}
 
       {aba === "financeiro" && liberado && <Secao chave="financeiro">
@@ -734,6 +789,7 @@ function camposDeRestricoes(
 
 /** A aba onde mora o campo de um caminho de erro. */
 function abaDoCaminho(caminho: string): ChaveAba {
+  if (caminho === CAMINHO_ERRO_RESERVA_ESTOQUE) return "estoque";
   if (caminho.startsWith("fiscal.")) return "fiscal";
   if (caminho.startsWith("financeiro.") || caminho === "condicoesPermitidas" || caminho.startsWith("condicoesPermitidas.")) return "financeiro";
   if (caminho.startsWith("geral.")) return "geral";

@@ -25,6 +25,9 @@ import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
 /* TOP-CONFIG-05 atraso — faixa do cliente em atraso (só com `capacidades.regrasDaOperacao` exata). */
 import { ERRO_CLIENTE_EM_ATRASO } from "@agro/domain";
 import { FaixaAtrasoCliente, bloqueiaSalvar } from "@/features/sales/faixa-atraso-cliente";
+/* TOP-CONFIG-07 — reserva de estoque (só com `regras.reservaEstoque === true`, na família do pedido). */
+import { familiaOperacionalDeDocumentoVenda, type ColunaDoLayout } from "@agro/domain";
+import { CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA, ehCaminhoDeItemDaReserva } from "@/features/sales/regras-da-operacao";
 
 const T: Record<string, string> = { budgets: "Novo Orçamento", orders: "Novo Pedido de Venda", sales: "Nova Venda" };
 
@@ -102,6 +105,20 @@ function textoDoLayoutQueVale(l: LayoutQueVale): string {
 const hrefDoConfigurador = (l: LayoutQueVale) => (l.origem !== "sistema" && l.id
   ? `/configuracoes/layouts-documento/${l.id}`
   : "/configuracoes?tab=operacoes&sub=layouts-documento");
+
+/**
+ * TOP-CONFIG-07 — A RESERVA VENCE O LAYOUT NOS ITENS (a mesma régua de "a exigência da TOP vence o layout" no
+ * cabeçalho): a coluna que a reserva exige e o layout não desenha entra mesmo assim, logo depois do Produto (onde o
+ * layout do sistema a põe) — sem ela o operador não teria onde escolher o armazém que o servidor cobra. Só o DESENHO:
+ * a cobrança do layout continua lendo `layout`, e o "*" vem da reserva (`ItensDaCentral`), não daqui.
+ */
+function comColunasDaReserva(itens: readonly ColunaDoLayout[]): readonly ColunaDoLayout[] {
+  const faltam = CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA.filter((c) => !itens.some((x) => x.campo === c));
+  if (!faltam.length) return itens;
+  const lista = [...itens];
+  lista.splice(lista.findIndex((x) => x.campo === "product_id") + 1, 0, ...faltam.map((campo): ColunaDoLayout => ({ campo, obrigatorio: false })));
+  return lista;
+}
 
 /** Detalhe do 422 LAYOUT_CAMPO_OBRIGATORIO → { caminho: mensagem }. Aceita lista direta ou embrulhada. */
 function errosDoServidor(details: unknown): Record<string, string> {
@@ -270,6 +287,14 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
      leitura de padrão de cadastro, para `padraoNaoPermitido` nunca ler antes da inicialização. */
   const condicoesPermitidas = regras?.condicoesPermitidas ?? null;
   const exigidos = React.useMemo(() => new Set<string>(regras?.exigencias ?? []), [regras]);
+  /**
+   * TOP-CONFIG-07 — A RESERVA DE ESTOQUE da versão atual da TOP. Só com as regras conferidas (`reservaEstoque === true`;
+   * ausente = API anterior = a Central de hoje) E na família do PEDIDO, perguntada ao SSOT do domínio contra a família
+   * que o SERVIDOR declarou para esta TOP. Com ela: o armazém do item ganha "*" (coluna e formulário), a célula Estoque
+   * mostra o disponível do armazém, e o 422 da reserva cai no item. Apresentação — quem recusa é o servidor.
+   */
+  const reservaAtiva = regras?.reservaEstoque === true && familiaLayout !== "" && familiaLayout === familiaOperacionalDeDocumentoVenda("order");
+  const reservaDosItens = React.useMemo(() => (reservaAtiva ? { obrigatorias: CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA } : null), [reservaAtiva]);
   /**
    * VENDAS-A3-1d: a linha "Layout: …" no topo de Dados principais. Só com a capacidade do layout E a resposta conferida
    * (`layout` só existe assim) — sem a capacidade, nada: a Central de hoje, idêntica. `can` só decide se o atalho
@@ -467,6 +492,19 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true);
     return true;
   };
+  /**
+   * TOP-CONFIG-07 — 422 `VALIDATION_ERROR` da reserva (`details [{path: "items[i].warehouse_id", message}]`) → erro no
+   * item. SÓ os caminhos de item da reserva; outro VALIDATION_ERROR (e o de disponível insuficiente, `path: "items"`)
+   * segue no aviso geral, com a mensagem do servidor. Vale mesmo que a reserva tenha sido ligada depois de a Central
+   * abrir: o servidor confere a versão ATUAL no POST.
+   */
+  const errouReserva = (e: unknown): boolean => {
+    if (!(e instanceof ApiError) || e.code !== "VALIDATION_ERROR") return false;
+    const m = Object.fromEntries(Object.entries(errosDoServidor(e.details)).filter(([caminho]) => ehCaminhoDeItemDaReserva(caminho)));
+    if (!Object.keys(m).length) return false;
+    setErrosServidor(m);
+    return true;
+  };
   /** O UUID que vai no corpo é o da TOP VALIDADA contra a lista — nunca o texto cru da URL. */
   const submit = () => {
     /**
@@ -487,13 +525,13 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       const fe = exigenciasFaltando();
       if (fe.length) { if ([...fe, ...faltando()].some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true); return; }
     }
-    if (!layoutAtivo) { if (regras) create.mutate(corpo(), { onError: (e) => { aoRecusarAtraso(e); errouExigencia(e); } }); else create.mutate(corpo(), regrasAtivo ? { onError: aoRecusarAtraso } : undefined); return; }
+    if (!layoutAtivo) { if (regras) create.mutate(corpo(), { onError: (e) => { aoRecusarAtraso(e); if (!errouExigencia(e)) errouReserva(e); } }); else create.mutate(corpo(), regrasAtivo ? { onError: aoRecusarAtraso } : undefined); return; }
     if (!layout) return;
     setTentouSalvar(true); setErrosServidor({});
     const f = faltando();
     if (f.length) { if (f.some((x) => adicionaisDoLayout.has(x.caminho))) setMaisDados(true); return; }
     create.mutate(corpo(), {
-      onError: (e) => { aoRecusarAtraso(e); /* TOP-CONFIG-05 atraso */ if (regras && errouExigencia(e)) return; if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true); } }
+      onError: (e) => { aoRecusarAtraso(e); /* TOP-CONFIG-05 atraso */ if (regras && errouExigencia(e)) return; if (regras && errouReserva(e)) return; /* TOP-CONFIG-07 */ if (e instanceof ApiError && e.code === ERRO_LAYOUT_CAMPO_OBRIGATORIO) { const m = errosDoServidor(e.details); setErrosServidor(m); if (Object.keys(m).some((k) => adicionaisDoLayout.has(k))) setMaisDados(true); } }
     });
   };
 
@@ -698,7 +736,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     } else content = <div className={estilosCv.painelColuna} style={larguraFixa}>{campos.map(render)}</div>;
     return [{ value, label: a.aba, content }];
   });
-  const layoutDosItens = React.useMemo(() => (layout ? { colunas: layout.itens } : null), [layout]);
+  /* TOP-CONFIG-07: com a reserva, a coluna do armazém entra mesmo que o layout não a desenhe (`comColunasDaReserva`). */
+  const layoutDosItens = React.useMemo(() => (layout ? { colunas: reservaAtiva ? comColunasDaReserva(layout.itens) : layout.itens } : null), [layout, reservaAtiva]);
   /**
    * ARMAZÉM PADRÃO (VENDAS-A3-1b): o padrão da coluna Armazém vale SÓ para a empresa do documento de AGORA
    * (`empresaId` da resposta === `h.empresa_id`); de outra empresa, ou sem empresa na resposta, nenhum. Só a linha NOVA o
@@ -737,7 +776,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
           </div>}
         </>}
       </>}
-      itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout ? erros : undefined} armazemPadrao={armazemPadrao} />}
+      itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout || regras ? erros : undefined} armazemPadrao={armazemPadrao} reservaEstoque={reservaDosItens} />}
       abas={abas}
     />
 

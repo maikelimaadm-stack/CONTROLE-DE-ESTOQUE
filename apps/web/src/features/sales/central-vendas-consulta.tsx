@@ -4,6 +4,7 @@ import * as DropdownP from "@radix-ui/react-dropdown-menu";
 import { Calendar, EllipsisVertical, Lock, Search } from "lucide-react";
 import { cn, brl, num } from "@/lib/utils";
 import { StockCell, type Row } from "@/features/docs/shared";
+import { ehDecimalDaApi } from "@/features/stock/reserva-estoque";
 import estilos from "./central-vendas-workspace.module.css";
 
 /**
@@ -40,10 +41,50 @@ export function CampoLeitura({ rotulo, valor, adorno, testId }: { rotulo: string
  * Os itens do documento salvo, na grade da Central — sem lixeira e sem edição: em consulta não há o
  * que excluir (HANDOFF: "a primeira coluna só existe em edição"). O saldo é o mesmo `StockCell` da
  * criação, só para exibir; o preenchimento de custo não existe aqui, porque nada é editável.
+ *
+ * AS COLUNAS SÃO UMA LISTA SÓ: `colgroup`, cabeçalho, linhas e o `colSpan` da linha vazia leem a MESMA lista
+ * (`.claude/rules/frontend-web.md`: colSpan derivado, nunca contado à mão). Cada coluna opcional entra na lista
+ * pela sua marca, e a linha vazia acompanha sozinha.
  */
-/** `mostrarSaldo` (TOP-CONFIG-06): documento com parte gerada ganha as colunas Faturado e Saldo, do servidor. */
-export function ItensSalvos({ itens, subtotal, legenda, mostrarSaldo = false }: { itens: Row[]; subtotal: string; legenda: string; mostrarSaldo?: boolean }) {
-  const texto = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
+interface ColunaDoItemSalvo { chave: string; rotulo: string; largura: React.CSSProperties; numero?: boolean; celula: (it: Row) => React.ReactElement }
+
+const textoDoItem = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
+
+const COLUNAS_DO_ITEM_SALVO: readonly ColunaDoItemSalvo[] = [
+  { chave: "codigo", rotulo: "Código", largura: { width: 70 }, celula: (it) => <td><span className={estilos.codigo}>{textoDoItem(it["product_code"])}</span></td> },
+  { chave: "produto", rotulo: "Produto", largura: { minWidth: 170 }, celula: (it) => <td>{textoDoItem(it["product_name"])}</td> },
+  { chave: "armazem", rotulo: "Armazém", largura: { width: 120 }, celula: (it) => <td>{textoDoItem(it["warehouse_name"])}</td> },
+  { chave: "estoque", rotulo: "Estoque", largura: { width: 92 }, numero: true, celula: (it) => <td className={cn(estilos.numero, estilos.estoque)}><StockCell warehouseId={(it["warehouse_id"] as string | null) ?? undefined} productId={(it["product_id"] as string | null) ?? undefined} onCost={() => { /* consulta: só exibe o saldo */ }} /></td> },
+  { chave: "quantidade", rotulo: "Quantidade", largura: { width: 110 }, numero: true, celula: (it) => <td className={estilos.numero}><span className={estilos.quantidade}>
+    <span data-testid="central-vendas-quantidade">{num(String(it["quantity"] ?? "0"), 2)}</span>
+    {it["unit"] ? <span className={estilos.unidade} data-testid="central-vendas-unidade">{String(it["unit"])}</span> : null}
+  </span></td> },
+  { chave: "unitario", rotulo: "Valor unitário", largura: { width: 108 }, numero: true, celula: (it) => <td className={estilos.numero}>{brl(String(it["unit_price"] ?? "0"))}</td> },
+  { chave: "desconto", rotulo: "Desconto", largura: { width: 88 }, numero: true, celula: (it) => <td className={estilos.numero}>{Number(it["discount"] || 0) ? brl(String(it["discount"])) : "—"}</td> },
+  { chave: "descontoPercentual", rotulo: "Desconto %", largura: { width: 90 }, numero: true, celula: (it) => <td className={estilos.numero}>{Number(it["discount_percent"] || 0) ? `${num(String(it["discount_percent"]), 2)}%` : "—"}</td> },
+  { chave: "total", rotulo: "Total", largura: { width: 106 }, numero: true, celula: (it) => <td className={cn(estilos.numero, estilos.forte)}>{brl(String(it["total"] ?? "0"))}</td> }
+];
+
+/** TOP-CONFIG-06: documento com parte gerada — Faturado e Saldo, do servidor. */
+const COLUNAS_DO_SALDO: readonly ColunaDoItemSalvo[] = [
+  { chave: "faturado", rotulo: "Faturado", largura: { width: 100 }, numero: true, celula: (it) => <td className={estilos.numero} data-testid="doc-item-faturado">{num(String(it["faturado"] ?? "0"), 2)}</td> },
+  { chave: "saldo", rotulo: "Saldo", largura: { width: 100 }, numero: true, celula: (it) => <td className={estilos.numero} data-testid="doc-item-saldo">{num(String(it["saldo"] ?? it["quantity"] ?? "0"), 2)}</td> }
+];
+
+/**
+ * TOP-CONFIG-07: pedido cuja versão congelada reserva estoque — o que cada item ainda segura no armazém (o saldo a
+ * faturar enquanto o pedido está aberto; zero depois), do servidor. Valor ausente ou fora da forma decimal: "—".
+ */
+const COLUNAS_DA_RESERVA: readonly ColunaDoItemSalvo[] = [
+  { chave: "reservado", rotulo: "Reservado", largura: { width: 100 }, numero: true, celula: (it) => <td className={estilos.numero} data-testid="doc-item-reservado">{ehDecimalDaApi(it["reservado"]) ? num(it["reservado"], 2) : "—"}</td> }
+];
+
+/**
+ * `mostrarSaldo` (TOP-CONFIG-06): documento com parte gerada ganha as colunas Faturado e Saldo, do servidor.
+ * `mostrarReservado` (TOP-CONFIG-07): pedido com reserva de estoque ganha a coluna Reservado, do servidor.
+ */
+export function ItensSalvos({ itens, subtotal, legenda, mostrarSaldo = false, mostrarReservado = false }: { itens: Row[]; subtotal: string; legenda: string; mostrarSaldo?: boolean; mostrarReservado?: boolean }) {
+  const colunas = [...COLUNAS_DO_ITEM_SALVO, ...(mostrarSaldo ? COLUNAS_DO_SALDO : []), ...(mostrarReservado ? COLUNAS_DA_RESERVA : [])];
   return <>
     <div className={estilos.itensBarra} role="toolbar" aria-label="Itens">
       <span className={estilos.itensTitulo}>Itens <span className={estilos.itensContagem} data-testid="central-vendas-itens-contagem">({itens.length})</span></span>
@@ -51,31 +92,14 @@ export function ItensSalvos({ itens, subtotal, legenda, mostrarSaldo = false }: 
     <div className={estilos.itensCorpo} data-testid="central-vendas-itens-corpo">
       <div className={estilos.gradeRolagem}>
         <table className={estilos.grade} style={{ minWidth: 880 }} aria-label={legenda} data-testid="central-vendas-grade">
-          <colgroup><col style={{ width: 70 }} /><col style={{ minWidth: 170 }} /><col style={{ width: 120 }} /><col style={{ width: 92 }} /><col style={{ width: 110 }} /><col style={{ width: 108 }} /><col style={{ width: 88 }} /><col style={{ width: 90 }} /><col style={{ width: 106 }} />{mostrarSaldo && <><col style={{ width: 100 }} /><col style={{ width: 100 }} /></>}</colgroup>
+          <colgroup>{colunas.map((c) => <col key={c.chave} style={c.largura} />)}</colgroup>
           <thead><tr>
-            <th>Código</th><th>Produto</th><th>Armazém</th><th className={estilos.numero}>Estoque</th><th className={estilos.numero}>Quantidade</th>
-            <th className={estilos.numero}>Valor unitário</th><th className={estilos.numero}>Desconto</th><th className={estilos.numero}>Desconto %</th><th className={estilos.numero}>Total</th>
-            {mostrarSaldo && <><th className={estilos.numero}>Faturado</th><th className={estilos.numero}>Saldo</th></>}
+            {colunas.map((c) => <th key={c.chave} className={c.numero ? estilos.numero : undefined}>{c.rotulo}</th>)}
           </tr></thead>
           <tbody>
-            {itens.length === 0 && <tr><td colSpan={mostrarSaldo ? 11 : 9} className={estilos.vazio}>Nenhum item neste documento.</td></tr>}
+            {itens.length === 0 && <tr><td colSpan={colunas.length} className={estilos.vazio}>Nenhum item neste documento.</td></tr>}
             {itens.map((it, i) => <tr key={String(it["id"] ?? i)} className={estilos.linhaLeitura} data-testid="central-vendas-linha">
-              <td><span className={estilos.codigo}>{texto(it["product_code"])}</span></td>
-              <td>{texto(it["product_name"])}</td>
-              <td>{texto(it["warehouse_name"])}</td>
-              <td className={cn(estilos.numero, estilos.estoque)}><StockCell warehouseId={(it["warehouse_id"] as string | null) ?? undefined} productId={(it["product_id"] as string | null) ?? undefined} onCost={() => { /* consulta: só exibe o saldo */ }} /></td>
-              <td className={estilos.numero}><span className={estilos.quantidade}>
-                <span data-testid="central-vendas-quantidade">{num(String(it["quantity"] ?? "0"), 2)}</span>
-                {it["unit"] ? <span className={estilos.unidade} data-testid="central-vendas-unidade">{String(it["unit"])}</span> : null}
-              </span></td>
-              <td className={estilos.numero}>{brl(String(it["unit_price"] ?? "0"))}</td>
-              <td className={estilos.numero}>{Number(it["discount"] || 0) ? brl(String(it["discount"])) : "—"}</td>
-              <td className={estilos.numero}>{Number(it["discount_percent"] || 0) ? `${num(String(it["discount_percent"]), 2)}%` : "—"}</td>
-              <td className={cn(estilos.numero, estilos.forte)}>{brl(String(it["total"] ?? "0"))}</td>
-              {mostrarSaldo && <>
-                <td className={estilos.numero} data-testid="doc-item-faturado">{num(String(it["faturado"] ?? "0"), 2)}</td>
-                <td className={estilos.numero} data-testid="doc-item-saldo">{num(String(it["saldo"] ?? it["quantity"] ?? "0"), 2)}</td>
-              </>}
+              {colunas.map((c) => <React.Fragment key={c.chave}>{c.celula(it)}</React.Fragment>)}
             </tr>)}
           </tbody>
         </table>
