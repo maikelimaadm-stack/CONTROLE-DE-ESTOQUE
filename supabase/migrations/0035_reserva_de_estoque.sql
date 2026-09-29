@@ -134,10 +134,15 @@ create index ix_tipos_operacao_versoes_reserva
 
 -- ---------- 5) a conta, num lugar só (núcleo; só o dono chama) ----------
 -- A e B são agregados UMA vez por par e só então juntados aos pares pedidos: uma chamada com 1000 pares custa
--- o mesmo que uma com 1 (a forma com subconsulta por par reexecutava a conta 1000 vezes).
+-- o mesmo que uma com 1 (a forma com subconsulta por par reexecutava a conta 1000 vezes). PL/pgSQL, e não SQL:
+-- a guarda chama a conta em TODA saída, e o plano de uma função SQL é refeito a cada chamada; o do PL/pgSQL fica
+-- em cache na conexão. `use_column`: os nomes da saída (warehouse_id, product_id) são sempre as colunas.
 create function erp.reserva_estoque_nucleo(p_org uuid, p_armazens uuid[], p_produtos uuid[], p_excluir_documento uuid)
   returns table (warehouse_id uuid, product_id uuid, reservado numeric)
-language sql stable security definer set search_path = erp, pg_temp as $$
+language plpgsql stable security definer set search_path = erp, pg_temp as $$
+#variable_conflict use_column
+begin
+  return query
   with pares as (
     select distinct x.w as warehouse_id, x.p as product_id
       from unnest(p_armazens, p_produtos) as x(w, p)
@@ -175,8 +180,8 @@ language sql stable security definer set search_path = erp, pg_temp as $$
   select x.warehouse_id, x.product_id, (coalesce(a.q, 0) + coalesce(b.q, 0))::numeric(18,4)
     from pares x
     left join a on a.warehouse_id = x.warehouse_id and a.product_id = x.product_id
-    left join b on b.warehouse_id = x.warehouse_id and b.product_id = x.product_id
-$$;
+    left join b on b.warehouse_id = x.warehouse_id and b.product_id = x.product_id;
+end $$;
 comment on function erp.reserva_estoque_nucleo(uuid, uuid[], uuid[], uuid) is
   'TOP-CONFIG-07: reservado por (armazem, produto) na organizacao informada = A (saldo a faturar de pedidos com reserva abertos) + B (itens de vendas abertas geradas deles). Sem grant: so o dono chama (gatilho de saida e erp.reserva_estoque).';
 
