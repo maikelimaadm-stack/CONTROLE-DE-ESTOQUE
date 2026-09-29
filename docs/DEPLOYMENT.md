@@ -1385,6 +1385,57 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
+## TOP-CONFIG-07 — reserva de estoque (0035)
+
+Decisão 266. **Uma migration: `0035_reserva_de_estoque.sql`** (pre-deploy; trava (2026,69), `lock_timeout` 2 s,
+pré/pós-condições nomeadas `TOP-CONFIG-07: ...`, não destrutiva, sem backfill): coluna `reserva_estoque` nas versões
+da TOP (default false; o gatilho `trg_tipos_operacao_versoes_reserva_familia` só a aceita ligada na família pedido),
+a conta do reservado `erp.reserva_estoque_nucleo` (sem `execute` para o papel da API), a porta exposta
+`erp.reserva_estoque` (`SECURITY DEFINER`, `execute` só para o papel da API, capacidade conferida dentro), o gatilho
+de saída `trg_stock_movement_reserva` (AFTER INSERT em `erp.stock_movements`, depois de `trg_stock_movement_apply`) e
+o índice parcial `ix_sales_document_items_reserva`. As pós-condições conferem que nenhuma versão nasceu reservando e
+que as contagens de versões, movimentos, saldos e documentos e a quantidade total em estoque não mudaram. Nenhuma
+variável nova, nenhuma permissão nova.
+
+**Pré-condição:** quem aplica a 0035 é o dono das funções e precisa atravessar RLS (superusuário ou `BYPASSRLS`) — a
+própria migration recusa, com `TOP-CONFIG-07: o papel que aplica a migration (dono das funcoes) nao atravessa RLS`,
+e nada é aplicado. Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0035) → API → web.** Janela:
+1. **API anterior × banco novo:** a API anterior não lê nem grava a coluna nova; versão de TOP salva por ela nasce sem
+   reserva (default). O gatilho de saída roda, mas não recusa nada: nenhuma versão reserva, o reservado é zero.
+   Tudo como hoje.
+2. **web ANTERIOR × API nova:** o editor anterior não manda `reservaEstoque` — a API preserva o valor da versão atual;
+   nada é desligado em silêncio. A Central anterior não marca o armazém como obrigatório: com a reserva ligada, pedido
+   sem armazém volta 422 no item — por isso ligar a caixa só com a web nova no ar. Os campos novos das respostas
+   (`reservado`, `disponivel`, `reserva_estoque`) são aditivos.
+3. **web NOVA × API anterior:** sem `reservaEstoque` nas capabilities da TOP, o editor esconde a caixa; sem
+   `reservaEstoque` nas regras da operação, a Central não exige armazém; sem `reserva_estoque` no documento, nada de
+   reserva aparece nele. O físico continua em `quantity`; `reservado` e `disponivel` só vêm da API nova.
+
+**Impacto em dados reais:** coluna nova desligada em toda versão; nenhum saldo muda; nenhuma saída que passa hoje
+passa a ser recusada, porque não existe pedido reservando.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0035 fica: o gatilho não recusa
+nada enquanto nenhuma versão reservar. Com a reserva já ligada e pedido reservando, o gatilho continua valendo sob a
+API anterior (saída que invade a reserva volta 409 `INSUFFICIENT_STOCK`), mas a API anterior salva pedido sem conferir
+o disponível — reverter nesse estado é decisão do Maike (antes, desligar a caixa na TOP; pedido já salvo continua
+reservando pela versão congelada até ser faturado, cancelado ou ter o saldo encerrado). O caminho inverso do banco, se
+um dia for preciso, é migration NOVA que desliga o gatilho e as funções — nunca editar a 0035. Nada de apagar dado de
+produção (decisão 247).
+
+**Roteiro do Maike (opcional; cria documentos de teste, que ficam cancelados):** produção é operacional (decisões
+240 e 247) — nada criado no teste é apagado.
+1. Na TOP 2 Pedido, ligar "Reservar estoque ao salvar o pedido" (aba Estoque) e salvar.
+2. Criar um Pedido NOVO (a versão congelada tem de ser a nova) com armazém nos itens, de produto com saldo nesse
+   armazém.
+3. Ver o disponível cair na Central (coluna Estoque do mesmo produto e armazém) e em Estoque › Saldo ("Reservado no
+   armazém" / "Disponível no armazém").
+4. Cancelar o pedido e ver o disponível voltar.
+
+Se os pedidos novos não devem reservar, desligar a caixa de novo na TOP 2 (versão nova; as de teste ficam no
+histórico, imutável). **Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## TOP-CONFIG-06 — faturar em partes (0034)
 
 Decisão 265. **Uma migration: `0034_faturar_em_partes.sql`** (pre-deploy; trava (2026,68), `lock_timeout` 2 s,
