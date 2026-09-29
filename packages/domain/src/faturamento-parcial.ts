@@ -11,10 +11,17 @@
  * │ (33,33 × 3 = 99,99). A soma das partes tem de ser EXATAMENTE o valor da origem, senão o faturado    │
  * │ diverge do pedido sem ninguém ter decidido. Por isso cada parte leva a proporção arredondada, e a   │
  * │ parte que zera o saldo leva o RESTO (origem − o que já foi para partes não canceladas).            │
+ * │                                                                                                      │
+ * │ E NENHUMA PARTE LEVA MAIS DO QUE AINDA FALTA (TOP-CONFIG-07, revisão da 06). Centavos divididos em   │
+ * │ muitas partes arredondam para CIMA: desconto de 0,12 em 20 partes de 1 dá 0,006 → 0,01 por parte, e │
+ * │ dezenove partes já somariam 0,19 — o resto da última seria −0,07, um desconto NEGATIVO. Então cada  │
+ * │ parte leva min(proporção arredondada, falta), com falta = max(origem − já levado, 0): as primeiras │
+ * │ esgotam o valor, as seguintes levam 0, e a soma continua exatamente a origem, sem parte negativa.   │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 import { D, money } from "@agro/shared";
 import { itemTotal } from "./sales.js";
+import { enumLabel, hasEnumLabel } from "./labels.js";
 
 /** Quantidade: até 4 casas, sempre positiva numa parte. */
 const CASAS_QUANTIDADE = 4;
@@ -130,6 +137,24 @@ export interface CalculoDaParte {
 }
 
 /**
+ * O VALOR QUE UMA PARTE LEVA de um valor da origem, dado o que partes não canceladas já levaram dele:
+ *
+ *   falta           = max(origem − jaLevado, 0)
+ *   parte que zera  → falta                                   (o resto, exato)
+ *   outra parte     → max(min(money(proporcional), falta), 0) (nunca além do que falta, nunca negativa)
+ *
+ * Origem zero (ou negativa, que o negócio não produz) → falta 0 → parte 0.
+ */
+function quantoAParteLeva(origem: string, jaLevado: string, proporcional: ReturnType<typeof D>, zera: boolean): string {
+  const resto = D(origem).minus(jaLevado);
+  const falta = resto.lt(0) ? D(0) : resto;
+  if (zera) return money(falta);
+  const arredondado = D(money(proporcional));
+  const valor = arredondado.gt(falta) ? falta : arredondado;
+  return money(valor.lt(0) ? 0 : valor);
+}
+
+/**
  * Os valores de uma parte.
  *
  *   · preço unitário e desconto %: os da origem;
@@ -138,6 +163,8 @@ export interface CalculoDaParte {
  *   · frete, ICMS do frete, outros valores, desconto do cabeçalho e entrada fixa: proporcionais ao valor
  *     dos itens desta parte sobre o valor dos itens da origem, com 2 casas; a parte que zera o saldo do
  *     DOCUMENTO leva o resto (valor da origem − `jaAlocado`, a soma das partes não canceladas).
+ *
+ * Em todos eles nenhuma parte leva mais do que ainda falta, e nenhuma fica negativa (`quantoAParteLeva`).
  *
  * `itens` já validados (`validarItensDaParte`). Quem chama garante isso.
  */
@@ -154,9 +181,7 @@ export function calcularParte(
     const q = pedidos.get(o.id);
     if (q === undefined) continue;
     const zeraItem = D(q).eq(saldoDoItem(o));
-    const discount = zeraItem
-      ? money(D(o.discount).minus(o.descontoAlocado))
-      : money(D(o.discount).mul(q).div(D(o.quantity).isZero() ? 1 : o.quantity));
+    const discount = quantoAParteLeva(o.discount, o.descontoAlocado, D(o.discount).mul(q).div(D(o.quantity).isZero() ? 1 : o.quantity), zeraItem);
     calculados.push({ origemItemId: o.id, productId: o.productId, quantity: qtd(q), unitPrice: o.unitPrice, discount, discountPercent: o.discountPercent });
   }
 
@@ -168,9 +193,25 @@ export function calcularParte(
 
   const cabecalho = {} as ValoresDoCabecalho;
   for (const k of CHAVES_CABECALHO) {
-    cabecalho[k] = zeraOSaldo
-      ? money(D(cabecalhoDaOrigem[k]).minus(jaAlocado[k]))
-      : money(D(cabecalhoDaOrigem[k]).mul(razao));
+    cabecalho[k] = quantoAParteLeva(cabecalhoDaOrigem[k], jaAlocado[k], D(cabecalhoDaOrigem[k]).mul(razao), zeraOSaldo);
   }
   return { itens: calculados, cabecalho, zeraOSaldo };
+}
+
+/**
+ * A ESPÉCIE DO DOCUMENTO NAS FRASES DA PARTE — "vieram do orçamento X", "cancele esta venda".
+ *
+ * O NOME vem do rótulo de `sales_kind` (`labels.ts`, a fonte única do rótulo de enum); aqui mora só o que o
+ * rótulo não carrega: o gênero, para o artigo. Espécie sem rótulo vira "documento" — genérico, mas nunca a
+ * espécie errada (a frase dizia "do pedido" também quando a origem era um orçamento).
+ */
+const ESPECIES_FEMININAS: ReadonlySet<string> = new Set(["sale"]);
+export interface EspecieNaFrase { do: string; deste: string; este: string }
+export function especieNaFrase(kind: string | null | undefined): EspecieNaFrase {
+  const conhecida = typeof kind === "string" && hasEnumLabel("sales_kind", kind);
+  const nome = conhecida ? enumLabel("sales_kind", kind).toLowerCase() : "documento";
+  const feminina = conhecida && ESPECIES_FEMININAS.has(kind);
+  return feminina
+    ? { do: `da ${nome}`, deste: `desta ${nome}`, este: `esta ${nome}` }
+    : { do: `do ${nome}`, deste: `deste ${nome}`, este: `este ${nome}` };
 }
