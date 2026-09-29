@@ -6,6 +6,7 @@
  * da API (`exigenciasFaltandoPorCampos`, `@agro/domain`); aqui ela só adianta o erro no campo antes do POST — a
  * autoridade continua sendo o servidor.
  */
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CAPACIDADE_REGRAS_DA_OPERACAO, POLITICAS_CLIENTE_EM_ATRASO, type RegrasDaOperacaoResposta, type SituacaoClienteResposta } from "@agro/domain";
 import { api, type ApiError } from "@/lib/api";
@@ -21,15 +22,35 @@ export function entendeRegrasDaOperacao(e: EstadoTop): boolean {
   return ehObjeto(c) && c.regrasDaOperacao === CAPACIDADE_REGRAS_DA_OPERACAO;
 }
 
+/**
+ * As regras como a tela as usa: a resposta conferida + `reservaEstoque` (TOP-CONFIG-07), que é ADITIVO — a API
+ * anterior não o manda, e ausente (ou qualquer valor que não seja `true`) é "esta operação não reserva": a Central é
+ * a de antes. Não trava a resposta inteira: as outras regras continuam valendo.
+ */
+export type RegrasDaOperacaoNaTela = RegrasDaOperacaoResposta & { reservaEstoque: boolean };
+
+/**
+ * O QUE A RESERVA EXIGE DO ITEM — a chave do catálogo da linha do item que a API cobra quando a versão da TOP
+ * reserva (`422 VALIDATION_ERROR`, caminho `items[i].warehouse_id`). A reserva é por armazém e produto: sem armazém
+ * não há onde reservar. A tela só marca o "*" e mostra o erro; quem recusa é o servidor.
+ */
+export const CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA: readonly string[] = Object.freeze(["warehouse_id"]);
+
+/** O caminho do erro do servidor que a reserva devolve no item (`items[<i>].warehouse_id`). */
+export function ehCaminhoDeItemDaReserva(caminho: string): boolean {
+  const m = /^items\[\d+\]\.([a-z_]+)$/.exec(caminho);
+  return m !== null && m[1] !== undefined && CAMPOS_DO_ITEM_EXIGIDOS_PELA_RESERVA.includes(m[1]);
+}
+
 /** Confere a resposta de `/regras-da-operacao` antes de ela governar a tela. Forma estranha = `null` (trava). */
-export function lerRegrasDaOperacao(bruto: unknown): RegrasDaOperacaoResposta | null {
+export function lerRegrasDaOperacao(bruto: unknown): RegrasDaOperacaoNaTela | null {
   if (!ehObjeto(bruto) || typeof bruto.formato !== "number" || !Array.isArray(bruto.exigencias)) return null;
   if (!bruto.exigencias.every((x) => typeof x === "string")) return null;
   const cp = bruto.condicoesPermitidas;
   if (cp !== null && !(Array.isArray(cp) && cp.every(ehUuid))) return null;
   const ca = bruto.clienteEmAtraso;
   if (!ehObjeto(ca) || !(POLITICAS_CLIENTE_EM_ATRASO as readonly unknown[]).includes(ca.politica) || typeof ca.toleranciaDias !== "number") return null;
-  return bruto as unknown as RegrasDaOperacaoResposta;
+  return { ...(bruto as unknown as RegrasDaOperacaoResposta), reservaEstoque: bruto.reservaEstoque === true };
 }
 
 /** As regras da versão ATUAL da TOP escolhida. `ativo` = capacidade exata E TOP escolhida. */
@@ -40,7 +61,9 @@ export function useRegrasDaOperacao(kind: string, tipoOperacaoId: string, ativo:
     enabled: ativo && Boolean(tipoOperacaoId),
     retry: false,
   });
-  const regras = ativo && q.data !== undefined ? lerRegrasDaOperacao(q.data) : null;
+  // Memorizada pela resposta: a leitura monta um objeto novo (com `reservaEstoque`), e quem depende de `regras` num
+  // `useMemo`/efeito não pode ver "mudou" a cada render.
+  const regras = useMemo(() => (ativo && q.data !== undefined ? lerRegrasDaOperacao(q.data) : null), [ativo, q.data]);
   return { regras, pendente: ativo && Boolean(tipoOperacaoId) && !regras, erro: q.error ?? null };
 }
 

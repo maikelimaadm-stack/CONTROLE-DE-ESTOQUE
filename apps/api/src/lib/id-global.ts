@@ -79,6 +79,27 @@ async function lerRegistroFonte(ctx: ServiceCtx, entidade: EntidadeIdGlobal, idE
 }
 
 /**
+ * TRAVA O CONTADOR DO ID GLOBAL DA ORGANIZAÇÃO — sem alocar número (TOP-CONFIG-07, revisão adversarial).
+ *
+ * A linha de `erp.sequencias_id_global` fica travada até o fim da transação de quem aloca. As rotas de documento de
+ * estoque alocam o ID Global ANTES da saída (contador → produto, pelo gatilho de saldo). O salvamento do pedido com
+ * reserva (POST e conversão) trava a linha do PRODUTO e depois aloca o número do pedido: chama esta função PRIMEIRO,
+ * e a ordem fica a das rotas de estoque — contador → produto. Sem isso, pedido × requisição do mesmo produto fechavam
+ * um ciclo (ABBA) e um dos dois morria em 40P01.
+ *
+ * A confirmação da venda NÃO a chama: lá a disputa é de propósito na linha de saldo (LT-9 em
+ * `cadastros-lote-saida.test.ts`), e a ordem produto → contador dela (saída, depois títulos) é anterior à reserva.
+ *
+ * O upsert é o MESMO de `erp.proximo_id_global`, mas não soma nada: organização sem linha ganha a linha com 0
+ * (nenhum número alocado), e a próxima alocação continua dando 1.
+ */
+export async function travarContadorIdGlobal(ctx: ServiceCtx): Promise<void> {
+  await ctx.tx.query(
+    `insert into erp.sequencias_id_global (organization_id, ultimo_valor) values ($1, 0)
+     on conflict (organization_id) do update set ultimo_valor = erp.sequencias_id_global.ultimo_valor`, [ctx.orgId]);
+}
+
+/**
  * Atribui (ou devolve, se já existir) o ID Global do registro. Idempotente por (organização, tipo, registro).
  * NÃO confia em linha vinda do chamador: o registro é lido na MESMA transação, de modo que nunca se cria uma
  * ponte global para um registro inexistente (ou já excluído).

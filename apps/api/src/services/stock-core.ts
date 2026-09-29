@@ -72,7 +72,8 @@ export function dividirPorValidade(candidatos: readonly LoteCandidato[], quantid
   return { partes, falta: fqty(falta) };
 }
 
-const quantidadeLegivel = (v: string) => D(v).toFixed().replace(".", ",");
+/** Quantidade para a mensagem: vírgula decimal, sem zeros à direita ("2.5000" → "2,5"; "-3.0000" → "-3"). */
+export const quantidadeLegivel = (v: string) => D(v).toFixed().replace(".", ",");
 
 /** Filtro dos lotes que a escolha automática pode usar: lote preenchido, saldo positivo, não vencido na data. */
 const LOTE_ESCOLHIVEL = `organization_id=$1 and warehouse_id=$2 and product_id=$3 and btrim(provider_lot) <> '' and quantity > 0

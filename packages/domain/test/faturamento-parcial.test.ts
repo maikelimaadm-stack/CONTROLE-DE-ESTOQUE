@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
+import { D } from "@agro/shared";
 import {
   calcularParte, itensCanonicosDaParte, itensDoSaldoInteiro, saldoDoItem, validarItensDaParte,
-  destinosOperacaoIguais, lerDestinosOperacao,
+  destinosOperacaoIguais, lerDestinosOperacao, especieNaFrase,
   type ItemDeOrigem, type ValoresDoCabecalho,
 } from "../src/index.js";
 
@@ -93,5 +94,65 @@ describe("FP-D3 a aresta declara 'Em partes'", () => {
     const id = "00000000-0000-4000-8000-000000000001";
     expect(destinosOperacaoIguais([{ tipoOperacaoId: id, ordem: 0, emPartes: true }], [{ tipoOperacaoId: id, ordem: 0, emPartes: false }])).toBe(false);
     expect(destinosOperacaoIguais([{ tipoOperacaoId: id, ordem: 0 }], [{ tipoOperacaoId: id, ordem: 0, emPartes: false }])).toBe(true);
+  });
+});
+
+/** Soma EXATA (decimal, sem float) de valores com 2 casas. */
+const somaExata = (xs: string[]) => xs.reduce((a, x) => a.plus(x), D(0)).toFixed(2);
+
+describe("FP-D4 nenhuma parte leva mais do que ainda falta (centavos em muitas partes)", () => {
+  it("desconto de 0,12 num item de 20 un, faturado de 1 em 1 → soma EXATAMENTE 0,12 e nenhuma parte negativa", () => {
+    const partes: string[] = [];
+    let faturado = D(0); let alocado = D(0);
+    for (let n = 0; n < 20; n++) {
+      const o = [item("a", "20", { discount: "0.12", faturado: faturado.toFixed(4), descontoAlocado: alocado.toFixed(2) })];
+      const r = calcularParte(o, ZERO, ZERO, [{ itemId: "a", quantidade: "1" }]);
+      expect(r.zeraOSaldo).toBe(n === 19);
+      const d = r.itens[0]!.discount;
+      partes.push(d);
+      faturado = faturado.plus(1); alocado = alocado.plus(d);
+    }
+    expect(partes.filter((x) => D(x).lt(0))).toEqual([]);
+    expect(somaExata(partes)).toBe("0.12");
+    // As primeiras esgotam o valor (0,006 → 0,01) e as seguintes levam zero; a última leva o resto, que é 0.
+    expect(partes.slice(0, 12)).toEqual(Array(12).fill("0.01"));
+    expect(partes.slice(12)).toEqual(Array(8).fill("0.00"));
+  });
+
+  it("frete, ICMS do frete, outros, desconto do cabeçalho e entrada de centavos em 20 partes → soma EXATA da origem, nenhuma negativa", () => {
+    const cab: ValoresDoCabecalho = { freight: "0.12", freightIcms: "0.05", otherValues: "0.07", discount: "0.12", entrada: "0.19" };
+    const chaves = Object.keys(cab) as (keyof ValoresDoCabecalho)[];
+    const partes: ValoresDoCabecalho[] = [];
+    let faturado = D(0);
+    for (let n = 0; n < 20; n++) {
+      const jaAlocado = Object.fromEntries(chaves.map((k) => [k, somaExata(partes.map((p) => p[k]))])) as unknown as ValoresDoCabecalho;
+      const r = calcularParte([item("a", "20", { faturado: faturado.toFixed(4) })], cab, jaAlocado, [{ itemId: "a", quantidade: "1" }]);
+      expect(r.zeraOSaldo).toBe(n === 19);
+      partes.push(r.cabecalho);
+      faturado = faturado.plus(1);
+    }
+    for (const k of chaves) {
+      expect(partes.filter((p) => D(p[k]).lt(0)).map((p) => p[k]), k).toEqual([]);
+      expect(somaExata(partes.map((p) => p[k])), k).toBe(cab[k]);
+    }
+    expect(partes.slice(0, 12).map((p) => p.freight)).toEqual(Array(12).fill("0.01"));
+  });
+
+  it("origem zero → toda parte leva zero; o que já foi levado além da origem não vira resto negativo", () => {
+    const zerada = calcularParte([item("a", "3")], ZERO, ZERO, [{ itemId: "a", quantidade: "3" }]);
+    expect([zerada.itens[0]!.discount, zerada.cabecalho]).toEqual(["0.00", ZERO]);
+    const excedida = calcularParte([item("a", "3", { discount: "0.10", faturado: "2", descontoAlocado: "0.20" })], { ...ZERO, freight: "1.00" }, { ...ZERO, freight: "1.50" },
+      [{ itemId: "a", quantidade: "1" }]);
+    expect([excedida.itens[0]!.discount, excedida.cabecalho.freight]).toEqual(["0.00", "0.00"]);
+  });
+});
+
+describe("FP-D5 a espécie do documento nas frases da parte", () => {
+  it("o nome vem do rótulo de sales_kind; o artigo segue o gênero; espécie sem rótulo vira 'documento'", () => {
+    expect(especieNaFrase("budget")).toEqual({ do: "do orçamento", deste: "deste orçamento", este: "este orçamento" });
+    expect(especieNaFrase("order")).toEqual({ do: "do pedido", deste: "deste pedido", este: "este pedido" });
+    expect(especieNaFrase("sale")).toEqual({ do: "da venda", deste: "desta venda", este: "esta venda" });
+    expect(especieNaFrase("purchase").do).toBe("do documento");
+    expect(especieNaFrase(null).do).toBe("do documento");
   });
 });

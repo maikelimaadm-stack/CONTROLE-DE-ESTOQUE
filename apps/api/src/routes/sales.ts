@@ -8,9 +8,10 @@ import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js
 import { consultaEscopada, exigirEmpresaDeLancamento, empresaScope, scopedById, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
-import { postStock, reverseStock } from "../services/stock-core.js";
+import { postStock, reverseStock, quantidadeLegivel } from "../services/stock-core.js";
+import { saldoComReservaEmLote, chaveDoPar, type ParDeEstoque } from "../services/reserva-estoque.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
-import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
+import { atribuirIdGlobal , paginaComIdGlobal, travarContadorIdGlobal } from "../lib/id-global.js";
 import { layoutEfetivo, conferirPadroesRegistro, type RegistroPadraoConferido } from "../lib/layout-documento.js";
 // TOP-CONFIG-05 (decisão 263): regras da operação no lançamento, na conversão (TOP DESTINO), `/regras-da-operacao`,
 // `/situacao-cliente` e a capacidade nova.
@@ -20,6 +21,8 @@ import { registrarSituacaoCliente } from "./vendas-atraso-cliente.js";
 // TOP-CONFIG-06 (decisão 265): faturar em partes — as contas no domínio, as leituras em `vendas-faturar-em-partes`.
 import { validarItensDaParte, itensDoSaldoInteiro, itensCanonicosDaParte, calcularParte, saldoDoItem, MSG_ITENS_DA_PARTE, type ItemPedidoDaParte } from "@agro/domain";
 import { itensDeOrigemComSaldo, cabecalhoJaAlocado, partesDaOrigem, saldoTotal, MSG_NAO_PERMITE_EM_PARTES, MSG_SEM_SALDO_PARA_CONVERTER, MSG_SEM_PARTES, MSG_SEM_SALDO_A_ENCERRAR, MSG_ORIGEM_COM_PARTES_ATIVAS_PUT, MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT, MSG_ORIGEM_COM_PARTES_ATIVAS_CANCEL, msgItensDaParte } from "./vendas-faturar-em-partes.js";
+// TOP-CONFIG-07 (decisão 266): o pedido com reserva confere o disponível ao salvar (POST/PUT) — `vendas-reserva-estoque`.
+import { versaoReservaEstoque, origemReservaEstoque, conferirReservaDoDocumento, MSG_PARTE_RESERVA_ARMAZEM } from "./vendas-reserva-estoque.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -403,18 +406,29 @@ async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts
   // própria porta de detalhe — 404 num registro que está lá. O nome sai de `topv` (a versão CONGELADA),
   // nunca da versão corrente do pai: é isso que faz a renomeação administrativa de amanhã não reescrever
   // o que este documento diz que é.
-  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao, fcat.code as categoria_financeira_codigo, fcat.name as categoria_financeira_nome, ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome, cpag.code as condicao_pagamento_codigo, cpag.nome as condicao_pagamento_nome, ue.name as saldo_encerrado_por_nome from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id left join erp.financial_categories fcat on fcat.id=d.categoria_financeira_id and fcat.organization_id=d.organization_id left join erp.cost_centers ccus on ccus.id=d.centro_custo_id and ccus.organization_id=d.organization_id left join erp.condicoes_pagamento cpag on cpag.id=d.condicao_pagamento_id and cpag.organization_id=d.organization_id left join erp.users ue on ue.id=d.saldo_encerrado_por where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + (opts.lock ? " for update of d" : ""), sc.params); if (!r.rows[0]) throw notFound("Documento");
+  // TOP-CONFIG-07: `reserva_estoque` sai da versão CONGELADA (`topv`, já no join) — só pedido pode ser true.
+  const r = await ctx.tx.query("select d.*, c.name as client_name, c.document as client_document, t.name as transporter_name, pm.name as payment_method_name, u.name as responsible_name, f.name as empresa_name, toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao, (d.kind = 'order' and coalesce(topv.reserva_estoque, false)) as reserva_estoque, fcat.code as categoria_financeira_codigo, fcat.name as categoria_financeira_nome, ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome, cpag.code as condicao_pagamento_codigo, cpag.nome as condicao_pagamento_nome, ue.name as saldo_encerrado_por_nome from erp.sales_documents d join erp.people c on c.id=d.client_id left join erp.people t on t.id=d.transporter_id left join erp.payment_methods pm on pm.id=d.payment_method_id left join erp.users u on u.id=d.responsible_user_id join erp.empresas f on f.id=d.empresa_id left join erp.tipos_operacao toper on toper.id=d.tipo_operacao_id and toper.organization_id=d.organization_id left join erp.tipos_operacao_versoes topv on topv.id=d.tipo_operacao_versao_id and topv.organization_id=d.organization_id left join erp.financial_categories fcat on fcat.id=d.categoria_financeira_id and fcat.organization_id=d.organization_id left join erp.cost_centers ccus on ccus.id=d.centro_custo_id and ccus.organization_id=d.organization_id left join erp.condicoes_pagamento cpag on cpag.id=d.condicao_pagamento_id and cpag.organization_id=d.organization_id left join erp.users ue on ue.id=d.saldo_encerrado_por where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + (opts.lock ? " for update of d" : ""), sc.params); if (!r.rows[0]) throw notFound("Documento");
   // TOP-CONFIG-06: o faturado de cada item (partes NÃO canceladas) e quantas linhas o citam (inclusive canceladas)
   // vêm na MESMA consulta dos itens — nada de consulta por item. `faturado`/`saldo` só aparecem quando o documento
   // tem parte gerada; sem parte, os itens saem exatamente como antes.
-  const itensLidos = await ctx.tx.query<Record<string, unknown> & { quantity: string; fp_faturado: string; fp_ligadas: number }>("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, fp.faturado::text as fp_faturado, fp.ligadas::int as fp_ligadas from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id left join lateral (select coalesce(sum(pi.quantity) filter (where pd.status <> 'cancelled'), 0) as faturado, count(*) as ligadas from erp.sales_document_items pi join erp.sales_documents pd on pd.id=pi.document_id where pi.origem_item_id=i.id) fp on true where i.document_id=$1 order by i.position", [id]);
+  // TOP-CONFIG-07: `product_control_stock` (aditivo, do join que já existe) — a reserva, a guarda do armazém da parte e
+  // a pré-conferência da saída deixam de fora o produto que não controla estoque.
+  const itensLidos = await ctx.tx.query<Record<string, unknown> & { quantity: string; product_control_stock: boolean; fp_faturado: string; fp_ligadas: number }>("select i.*, p.description as product_name, p.code as product_code, p.control_stock as product_control_stock, mu.symbol as unit, w.description as warehouse_name, fp.faturado::text as fp_faturado, fp.ligadas::int as fp_ligadas from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id left join lateral (select coalesce(sum(pi.quantity) filter (where pd.status <> 'cancelled'), 0) as faturado, count(*) as ligadas from erp.sales_document_items pi join erp.sales_documents pd on pd.id=pi.document_id where pi.origem_item_id=i.id) fp on true where i.document_id=$1 order by i.position", [id]);
   const temParte = itensLidos.rows.some((x) => x.fp_ligadas > 0);
-  const items = { rows: itensLidos.rows.map(({ fp_faturado, fp_ligadas: _l, ...resto }) => temParte
-    ? { ...resto, faturado: D(fp_faturado).toFixed(4), saldo: saldoDoItem({ quantity: resto.quantity, faturado: fp_faturado }) }
-    : resto) };
+  const linha = r.rows[0] as Record<string, unknown> & { status: string; saldo_encerrado_em: unknown; reserva_estoque: boolean; tipo_operacao_id: string | null; top_codigo: string | null; top_codigo_base: string | null; top_nome: string | null; top_versao: number | null };
+  /*
+   * TOP-CONFIG-07: pedido com reserva — `reservado` por item, da MESMA consulta (o faturado da lateral acima). É a
+   * parte A da conta do banco (`erp.reserva_estoque_nucleo`) item a item: o saldo a faturar enquanto o pedido está
+   * aberto e sem saldo encerrado, e só em item com armazém (sem par não há reserva) de produto que controla estoque
+   * (serviço e frete não têm saldo, e a conta do banco não os soma); fora disso, zero.
+   */
+  const reservaAtiva = linha.reserva_estoque && (linha.status === "open" || linha.status === "approved") && linha.saldo_encerrado_em === null;
+  const items = { rows: itensLidos.rows.map(({ fp_faturado, fp_ligadas: _l, ...resto }) => ({
+    ...(temParte ? { ...resto, faturado: D(fp_faturado).toFixed(4), saldo: saldoDoItem({ quantity: resto.quantity, faturado: fp_faturado }) } : resto),
+    ...(linha.reserva_estoque ? { reservado: reservaAtiva && resto["warehouse_id"] && resto.product_control_stock !== false ? saldoDoItem({ quantity: resto.quantity, faturado: fp_faturado }) : "0.0000" } : {}),
+  })) };
   const titles = await ctx.tx.query("select id, code, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by due_date", [ctx.orgId, id]);
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
-  const linha = r.rows[0] as Record<string, unknown> & { tipo_operacao_id: string | null; top_codigo: string | null; top_codigo_base: string | null; top_nome: string | null; top_versao: number | null };
   return { ...linha, tipo_operacao: topParaTela(linha), items: items.rows, titles: titles.rows, derived: derived.rows } as Record<string, unknown>;
 }
 
@@ -562,7 +576,7 @@ async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execuca
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 /** A venda como a confirmação a lê (`getDoc` da variante `sale`). */
-type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
+type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string; product_name: string; product_control_stock: boolean; warehouse_name: string | null }[] };
 /** A classificação que vai para o rateio dos títulos: a do documento, ou o recuo "padrão legado". */
 type ClassificacaoResolvida = ClassificacaoFinanceira & { origem: "documento" | "padrão legado" };
 
@@ -610,7 +624,8 @@ function tituloDaVenda(d: VendaParaConfirmar, plan: InstallmentPlan | null) {
  * O PLANEJAMENTO DA CONFIRMAÇÃO — UMA função, usada pela confirmação E pela prévia (VENDAS-A5-1).
  *
  * Decide, NESTA ORDEM, o que a confirmação conferia antes de qualquer efeito: situação → política da versão
- * congelada e gate → exigências da versão → período → classificação financeira. Quem só MOSTRA o efeito
+ * congelada e gate → exigências da versão → período → classificação financeira → reserva de estoque
+ * (TOP-CONFIG-07, `conferirReservaNaSaida`). Quem só MOSTRA o efeito
  * (a prévia) não pode ter uma cópia desta regra: uma cópia "equivalente" divergiria na primeira fatia que
  * mexesse em uma das duas, e a tela prometeria o que o servidor não faz. O que muda entre as duas está
  * inteiro em `modo`.
@@ -676,7 +691,68 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
       else plano.classificacao = { categoriaFinanceiraId: cat.id, centroCustoId: cc.id, origem: "padrão legado" };
     }
   }
+
+  // RESERVA DE ESTOQUE (TOP-CONFIG-07) — a última conferência antes do primeiro efeito, e só quando HAVERÁ saída.
+  if (plano.baixaEstoque) await conferirReservaNaSaida(ctx, d, modo);
   return plano;
+}
+
+/**
+ * PRÉ-CONFERÊNCIA DA RESERVA NA SAÍDA DA VENDA (TOP-CONFIG-07, decisão 266) — a mensagem AMIGÁVEL da recusa que o
+ * gatilho `trg_stock_movement_reserva` (0035) daria no INSERT do movimento.
+ *
+ * Por (armazém, produto) dos itens com armazém de produto que controla estoque: a soma da quantidade da venda cabe
+ * no DISPONÍVEL = físico do armazém (todos os lotes) − reservado pelos OUTROS (`excluir` = a própria venda: a parte
+ * B dela é exatamente o que esta confirmação consome; a parte A do pedido de origem já desconta as partes não
+ * canceladas). Não coube → 409 INSUFFICIENT_STOCK, uma linha por produto, unidas por "\n", e `details` por par.
+ * Produto sem controle de estoque (serviço, frete) não tem saldo nem entra na conta do banco: fica fora.
+ *
+ * SÓ RECUSA QUANDO HÁ RESERVA NO PAR (reservado > 0). Sem reserva, disponível = físico, e a falta de físico já
+ * tem dono e mensagem (a escolha de lote em `postStock` e o gatilho de saldo da 0003) — a confirmação de quem
+ * não usa reserva continua exatamente como era (código, texto e detalhes), inclusive a ordem das recusas.
+ *
+ * LEITURA SEM TRAVA, e de propósito: `stock-core` trava as linhas de saldo antes e o PRODUTO por último (o gatilho
+ * de saldo o atualiza) — travar o produto aqui, antes da linha de saldo, reabriria o ciclo do LT-9c. A corrida
+ * entre esta leitura e o INSERT continua coberta pelo gatilho da 0035, que confere sob a trava do produto e
+ * recusa com o mesmo código. Custo fixo: as DUAS consultas do lote (`saldoComReservaEmLote`), nunca uma por item.
+ */
+async function conferirReservaNaSaida(ctx: ServiceCtx, d: VendaParaConfirmar, modo: ModoDoPlanejamento): Promise<void> {
+  const porPar = new Map<string, ParDeEstoque & { quantidade: string; produto: string; armazem: string }>();
+  for (const it of d.items) {
+    // Produto sem controle de estoque (flag do `getDoc`) fica fora da conta: não tem saldo nem reserva. Com armazém,
+    // quem o recusa é o `postStock` (PRODUCT_NOT_STOCK_CONTROLLED), como sempre recusou.
+    if (!it.warehouse_id || it.product_control_stock === false) continue;
+    const chave = chaveDoPar(it.warehouse_id, it.product_id);
+    const atual = porPar.get(chave);
+    porPar.set(chave, { warehouseId: it.warehouse_id, productId: it.product_id, produto: it.product_name, armazem: it.warehouse_name ?? "",
+      quantidade: D(atual?.quantidade ?? 0).plus(it.quantity).toFixed(4) });
+  }
+  if (porPar.size === 0) return;
+  /*
+   * NENHUM NÚMERO DE ARMAZÉM ALHEIO (revisão de segurança da TOP-CONFIG-07). O item de venda aceita qualquer armazém
+   * da organização (FK de coluna única), e quem recusava o armazém de OUTRA empresa era o `postStock`
+   * (WAREHOUSE_FARM_MISMATCH) — antes de qualquer número sair. Esta pré-conferência roda antes dele, e também na
+   * prévia (só `sales.view`): sem este recorte, físico e reservado de um armazém de outra empresa sairiam na
+   * mensagem. Par de armazém que não é da empresa da venda fica FORA da conta; o `postStock` o recusa depois, como
+   * sempre recusou.
+   */
+  const daEmpresa = new Set((await ctx.tx.query<{ id: string }>(
+    "select id from erp.warehouses where organization_id=$1 and empresa_id=$2 and id = any($3::uuid[])",
+    [ctx.orgId, d.empresa_id, [...new Set([...porPar.values()].map((p) => p.warehouseId))]])).rows.map((r) => r.id));
+  for (const [chave, p] of porPar) if (!daEmpresa.has(p.warehouseId)) porPar.delete(chave);
+  if (porPar.size === 0) return;
+  const saldo = await saldoComReservaEmLote(ctx, [...porPar.values()], d.id);
+  const faltas: { linha: string; detalhe: Record<string, string> }[] = [];
+  for (const [chave, p] of porPar) {
+    const s = saldo.get(chave);
+    if (!s) throw new Error(`conferirReservaNaSaida: par ${chave} sem saldo lido`);
+    if (!D(s.reservado).gt(0) || !D(p.quantidade).gt(s.disponivel)) continue;
+    faltas.push({
+      linha: `${p.produto} no armazém ${p.armazem}: disponível ${quantidadeLegivel(s.disponivel)}, solicitado ${quantidadeLegivel(p.quantidade)} (${quantidadeLegivel(s.reservado)} reservado para pedidos).`,
+      detalhe: { produto_id: p.productId, armazem_id: p.warehouseId, fisico: s.fisico, reservado: s.reservado, disponivel: s.disponivel, solicitado: p.quantidade },
+    });
+  }
+  if (faltas.length) modo.recusar(err("INSUFFICIENT_STOCK", faltas.map((f) => f.linha).join("\n"), faltas.map((f) => ({ ...f.detalhe, message: f.linha }))));
 }
 
 async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
@@ -691,7 +767,8 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
 
   // ESTOQUE. Legado e "saída" configurada chamam a MESMA primitiva com os MESMOS identificadores; "nenhum"
   // não chama nada. O item sem armazém continua fora da baixa nos dois caminhos que baixam — com
-  // `exigeArmazem` ele já foi recusado acima.
+  // `exigeArmazem` ele já foi recusado acima. A reserva de estoque também (`conferirReservaNaSaida`, no
+  // planejamento); a corrida entre aquela leitura e estes INSERTs é do gatilho `trg_stock_movement_reserva`.
   const movimentos: string[] = [];
   if (plano.baixaEstoque) {
     for (const it of d.items) if (it.warehouse_id) movimentos.push(...(await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "sale", direction: -1, quantity: it.quantity, sourceType: "sales_documents", sourceId: id, date: d.shipping_date ?? d.document_date, note: `Venda ${d.code}` })).ids);
@@ -750,7 +827,9 @@ export const CONTRATO_PREVIA_CONFIRMACAO = 1;
  * mudar, e é a confirmação que decide com a trava. Recusa que nasce DENTRO das primitivas de efeito — saldo
  * de estoque insuficiente e as demais conferências de `postStock`, valor do título não positivo em
  * `createTitles` — não está no planejamento e, por isso, não aparece aqui. A exceção é o parcelamento: a
- * prévia faz a MESMA conta de parcelas (`parcelasDoTitulo`) e, se ela recusar, a recusa entra na lista.
+ * prévia faz a MESMA conta de parcelas (`parcelasDoTitulo`) e, se ela recusar, a recusa entra na lista. E a
+ * reserva de estoque (TOP-CONFIG-07): a pré-conferência mora no planejamento (`conferirReservaNaSaida`), então a
+ * recusa por estoque reservado para pedidos aparece aqui com o mesmo código, texto e detalhes da confirmação.
  *
  * Autorização pela MESMA `getDoc` do GET do documento: a prévia responde o que o GET responde para o mesmo
  * id — outro tenant, fora do escopo, inexistente, excluído e id de outra variante dão a MESMA 404 (o id
@@ -935,20 +1014,28 @@ export default async function salesRoutes(app: FastifyInstance) {
      * inativa, excluída, id malformado e parâmetro AUSENTE caem na MESMA 404. Sem TOP não há regra a perguntar.
      * Só o formato 3 executa restrições; formato 1/2 responde o NEUTRO (nada exigido, toda condição, não valida).
      */
-    app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${perm}.create`, async (ctx): Promise<RegrasDaOperacaoResposta> => {
+    app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${perm}.create`, async (ctx): Promise<RegrasDaOperacaoResposta & { reservaEstoque: boolean }> => {
       const familia = familiaDaVariante(kind);
       const q = (req.query ?? {}) as Record<string, unknown>;
       const bruto = q["tipo_operacao_id"];
       if (typeof bruto !== "string" || !FORMA_UUID.test(bruto)) throw notFound("Tipo de operação");
-      const v = await ctx.tx.query("select 1 from erp.tipos_operacao where id=$1 and organization_id=$2 and codigo_base=$3 and ativo and excluido_em is null", [bruto, ctx.orgId, familia]);
-      if (!v.rowCount) throw notFound("Tipo de operação");
+      // TOP-CONFIG-07: `reservaEstoque` (aditivo) da versão ATUAL, na MESMA consulta da existência — nenhuma ida a mais.
+      // A Central usa para marcar o armazém do item como obrigatório. Só pedido pode ser true.
+      const v = await ctx.tx.query<{ reserva_estoque: boolean }>(
+        `select coalesce(tv.reserva_estoque, false) as reserva_estoque
+           from erp.tipos_operacao t
+           left join erp.tipos_operacao_versoes tv on tv.tipo_operacao_id = t.id and tv.organization_id = t.organization_id and tv.versao = t.versao_atual
+          where t.id=$1 and t.organization_id=$2 and t.codigo_base=$3 and t.ativo and t.excluido_em is null`, [bruto, ctx.orgId, familia]);
+      if (!v.rows[0]) throw notFound("Tipo de operação");
+      const reservaEstoque = kind === "order" && v.rows[0].reserva_estoque === true;
       const { formato, regras } = await regrasDaTopAtual(ctx, bruto);
-      if (!regras) return { formato, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 } };
+      if (!regras) return { formato, exigencias: [], condicoesPermitidas: null, clienteEmAtraso: { politica: "nao_valida", toleranciaDias: 0 }, reservaEstoque };
       return {
         formato,
         exigencias: camposExigidosTop(regras.config),
         condicoesPermitidas: regras.condicoesPermitidas,
         clienteEmAtraso: { politica: regras.config.financeiro.clienteEmAtraso, toleranciaDias: regras.config.financeiro.toleranciaAtrasoDias },
+        reservaEstoque,
       };
     }));
     /**
@@ -994,8 +1081,14 @@ export default async function salesRoutes(app: FastifyInstance) {
      * um cliente antigo não declarou intenção nenhuma, e o padrão é administrável — atribuí-lo em silêncio
      * faria a mesma chamada significar coisas diferentes conforme a configuração do dia. A web NOVA escolhe
      * explicitamente (podendo PRÉ-SELECIONAR o padrão, com o valor visível).
+     *
+     * TOP-CONFIG-07: pedido cuja versão resolvida reserva estoque confere o disponível DEPOIS de todas as recusas de
+     * antes (nenhuma ordem, código ou mensagem muda) e imediatamente ANTES de gravar — a trava dos produtos vale até o
+     * commit. Orçamento e venda nunca perguntam; pedido sem TOP também não.
      */
-    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; await cobrarRegrasDaOperacao(ctx, top ? await regrasDaVersaoTop(ctx, top.tipoOperacaoVersaoId) : null, d, { conferirCondicao: true, conferirAtraso: true }); await cobrarLayoutAoSalvar(ctx, kind, d); const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
+    app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; await cobrarRegrasDaOperacao(ctx, top ? await regrasDaVersaoTop(ctx, top.tipoOperacaoVersaoId) : null, d, { conferirCondicao: true, conferirAtraso: true }); await cobrarLayoutAoSalvar(ctx, kind, d);
+      if (kind === "order" && top && await versaoReservaEstoque(ctx, top.tipoOperacaoVersaoId)) { await travarContadorIdGlobal(ctx); await conferirReservaDoDocumento(ctx, { itens: d.items, empresaId: d.empresa_id, excluirDocumentoId: null }); }
+      const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
     /**
      * EDIÇÃO. A regra do snapshot está toda nas três linhas de `top` abaixo:
      *
@@ -1014,7 +1107,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       // — que não reavalia status nenhum. O resultado é um documento `confirmed` cujos itens e total foram
       // TROCADOS depois de o estoque ter sido baixado e os títulos gerados pelo conjunto antigo: a venda
       // diz uma coisa e o ledger diz outra, sem que nenhuma das duas respostas seja erro.
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; client_id: string; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null; origin_document_id: string | null; items: { origem_item_id: string | null; product_id: string; quantity: string; unit_price: string; discount: string; discount_percent: string }[] };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; client_id: string; empresa_id: string; reserva_estoque: boolean; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null; origin_document_id: string | null; items: { origem_item_id: string | null; product_id: string; product_control_stock: boolean; warehouse_id: string | null; quantity: string; unit_price: string; discount: string; discount_percent: string }[] };
       if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
       // TOP-CONFIG-06 — ORIGEM COM PARTES: trocar itens reescreveria o saldo das partes já geradas. Com partes só
       // canceladas os itens também ficam (a FK `origem_item_id` é `on delete restrict`, e apagá-los perderia a ligação).
@@ -1025,15 +1118,34 @@ export default async function salesRoutes(app: FastifyInstance) {
       // TOP-CONFIG-06 — A PARTE GERADA: itens na MESMA ordem, com mesmo produto, quantidade, preço e descontos. Só
       // armazém e observação do item mudam; a ligação é preservada pela posição.
       const origemItemIds = cur.items.map((i) => i.origem_item_id);
+      // A venda gerada de pedido com reserva: a mesma pergunta serve à guarda do armazém da parte (abaixo) e à
+      // conferência da reserva (antes de gravar). UMA consulta, e só quando a venda tem origem.
+      const origemReserva = kind === "sale" && cur.origin_document_id ? await origemReservaEstoque(ctx, cur.origin_document_id) : false;
       if (origemItemIds.some((x) => x !== null)) {
         const iguais = d.items.length === cur.items.length && d.items.every((n, k) => {
           const o = cur.items[k]!;
           return n.product_id === o.product_id && D(n.quantity).eq(o.quantity) && D(n.unit_price).eq(o.unit_price) && D(n.discount).eq(o.discount) && D(n.discount_percent).eq(o.discount_percent);
         });
         if (!iguais) {
-          const codigoOrigem = cur.origin_document_id ? (await ctx.tx.query<{ code: string }>("select code from erp.sales_documents where id=$1 and organization_id=$2", [cur.origin_document_id, ctx.orgId])).rows[0]?.code ?? "" : "";
-          const mensagem = msgItensDaParte(codigoOrigem);
+          const origem = cur.origin_document_id ? (await ctx.tx.query<{ code: string; kind: string }>("select code, kind from erp.sales_documents where id=$1 and organization_id=$2", [cur.origin_document_id, ctx.orgId])).rows[0] : undefined;
+          const mensagem = msgItensDaParte(kind, origem?.kind, origem?.code);
           throw err("VALIDATION_ERROR", mensagem, [{ path: "items", message: mensagem }]);
+        }
+        /*
+         * TOP-CONFIG-07 — A PARTE DE PEDIDO COM RESERVA NÃO TROCA DE ARMAZÉM (revisão adversarial). A parte A da conta
+         * desconta do item do pedido toda parte não cancelada, em qualquer armazém; a parte B conta a parte no armazém
+         * dela. Com o armazém trocado, o armazém do pedido fica livre para outra saída — e cancelar a parte devolve a
+         * reserva ao armazém do pedido sem conferir: disponível negativo por um fluxo comum. Mantendo o armazém, a
+         * reserva que a parte carrega é sempre a mesma que o pedido deixou de carregar.
+         * Item de produto SEM controle de estoque fica fora da guarda: não reserva (a conta não o soma), então o armazém
+         * dele não carrega reserva nenhuma. O produto é o mesmo da origem (`iguais`), e o flag vem do `getDoc`.
+         * A comparação é em MINÚSCULAS: o zod aceita UUID em maiúsculas e o gravado vem do banco em minúsculas — o
+         * mesmo armazém repetido em maiúsculas não é troca.
+         */
+        if (origemReserva) {
+          const trocados = d.items.flatMap((n, k) => cur.items[k]!.product_control_stock !== false && (n.warehouse_id?.toLowerCase() ?? null) !== (cur.items[k]!.warehouse_id?.toLowerCase() ?? null)
+            ? [{ path: `items[${k}].warehouse_id`, message: MSG_PARTE_RESERVA_ARMAZEM }] : []);
+          if (trocados.length) throw err("VALIDATION_ERROR", MSG_PARTE_RESERVA_ARMAZEM, trocados);
         }
       }
       /**
@@ -1079,6 +1191,20 @@ export default async function salesRoutes(app: FastifyInstance) {
         conferirCondicao: corpoPut["condicao_pagamento_id"] !== undefined && corpoPut["condicao_pagamento_id"] !== null,
         conferirAtraso: d.client_id !== cur.client_id });
       await cobrarLayoutAoSalvar(ctx, kind, comoFicara);
+      /*
+       * TOP-CONFIG-07 — RESERVA DE ESTOQUE. DEPOIS das guardas de status e da 06 (origem com partes já foi recusada lá
+       * em cima, antes de travar produto) e de todas as recusas de antes; imediatamente ANTES de gravar. A empresa é a
+       * GRAVADA (`cur.empresa_id`): o PUT não muda empresa. O próprio documento sai da conta — salvar de novo o que já
+       * estava reservado não conta contra si.
+       *   pedido → a versão congelada (`cur.reserva_estoque`, lida no `getDoc` — zero consulta) ou, se o PUT troca a
+       *            TOP, a versão nova (uma consulta).
+       *   venda  → só a gerada de pedido com reserva (parte B da conta): não pode crescer, nem mudar de armazém, sem
+       *            caber. Uma consulta, e só quando a venda tem origem.
+       *   orçamento → nunca.
+       */
+      const reservaNoPut = kind === "order" ? (top ? await versaoReservaEstoque(ctx, top.tipoOperacaoVersaoId) : cur.reserva_estoque === true)
+        : origemReserva;
+      if (reservaNoPut) await conferirReservaDoDocumento(ctx, { itens: d.items, empresaId: cur.empresa_id, excluirDocumentoId: id });
       const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao, condicao, origemItemIds);
       await audit(ctx.tx, ctx, "sales_documents", id, "update");
       // Mudança de identidade do lançamento é evento PRÓPRIO: quem trocou a TOP de um documento não pode
@@ -1414,6 +1540,16 @@ export default async function salesRoutes(app: FastifyInstance) {
           centro_custo_id: classificacao?.centroCustoId ?? null,
           condicao_pagamento_id: origemCond.condicao_pagamento_id,
         }, { conferirCondicao: true, conferirAtraso: true });
+      }
+      /*
+       * TOP-CONFIG-07 — O PEDIDO GERADO por conversão (orçamento → pedido) sob TOP destino que reserva É um pedido com
+       * reserva sendo salvo: a MESMA conferência do POST (armazém obrigatório e da empresa, cabe no disponível sob a
+       * trava do produto), ANTES de writeDoc — sem ela, converter seria a porta lateral para reservar além do físico.
+       */
+      if (destino === "order" && topDestino && await versaoReservaEstoque(ctx, topDestino.tipoOperacaoVersaoId)) {
+        // Contador do ID Global ANTES da trava do produto: writeDoc vai alocar, e a ordem é contador → produto em todo caminho.
+        await travarContadorIdGlobal(ctx);
+        await conferirReservaDoDocumento(ctx, { itens: body.items, empresaId: body.empresa_id, excluirDocumentoId: null });
       }
       const r = await writeDoc(ctx, destino, body, undefined, id, topDestino, classificacao, condicao, parte ? parte.calculo.itens.map((i) => i.origemItemId) : []);
       if (!parte) {

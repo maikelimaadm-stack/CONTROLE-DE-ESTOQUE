@@ -9,7 +9,7 @@
  * sozinho não basta: a conversão sem "Em partes" também o grava, e aquele derivado não é parte de nada.
  */
 import { D } from "@agro/shared";
-import type { ItemDeOrigem, ValoresDoCabecalho } from "@agro/domain";
+import { especieNaFrase, type ItemDeOrigem, type ValoresDoCabecalho } from "@agro/domain";
 import type { ServiceCtx } from "../lib/context.js";
 
 /** Os itens da origem com o que já foi para partes NÃO canceladas — uma consulta. */
@@ -63,7 +63,16 @@ export const MSG_NAO_PERMITE_EM_PARTES = "Esta operação não permite converter
 export const MSG_SEM_SALDO_PARA_CONVERTER = "Não há saldo para converter.";
 export const MSG_SEM_PARTES = "Este documento não tem partes geradas.";
 export const MSG_SEM_SALDO_A_ENCERRAR = "Não há saldo a encerrar.";
-export const MSG_ORIGEM_COM_PARTES_ATIVAS_PUT = "Este documento já tem partes geradas. Para mudar os itens, cancele as partes ou encerre o saldo.";
+/** Nem cancelar as partes nem encerrar o saldo libera a troca dos itens: a mensagem diz o que dá para fazer. */
+export const MSG_ORIGEM_COM_PARTES_ATIVAS_PUT = "Este documento já tem partes geradas, e os itens não podem mais ser trocados. Para faturar o resto, converta outra parte; para parar, encerre o saldo.";
 export const MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT = "Este documento já teve partes geradas; os itens não podem mais ser trocados.";
 export const MSG_ORIGEM_COM_PARTES_ATIVAS_CANCEL = "Cancele antes as partes geradas deste documento, ou encerre o saldo.";
-export const msgItensDaParte = (codigoOrigem: string) => `Os itens desta venda vieram do pedido ${codigoOrigem}. Para mudar, cancele esta venda e gere de novo.`;
+/**
+ * A parte com os itens trocados. As ESPÉCIES vêm dos documentos (a da parte, pela rota; a da origem, pela linha
+ * lida): a origem pode ser um orçamento, e a parte pode ser um pedido — "desta venda … do pedido" era fixo.
+ */
+export const msgItensDaParte = (kindDaParte: string, kindDaOrigem: string | null | undefined, codigoOrigem: string | null | undefined) => {
+  const parte = especieNaFrase(kindDaParte);
+  const origem = codigoOrigem ? `${especieNaFrase(kindDaOrigem).do} ${codigoOrigem}` : "do documento de origem";
+  return `Os itens ${parte.deste} vieram ${origem}. Para mudar, cancele ${parte.este} e gere de novo.`;
+};

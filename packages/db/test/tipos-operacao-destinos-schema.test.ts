@@ -285,12 +285,18 @@ describe("0022 — `destinos_configurados` separa LEGADO de POLÍTICA DECLARADA 
   it("nenhum gatilho NOVO foi criado para a coluna: a proteção herdada é a única verdade", async () => {
     // Um segundo gatilho sobre a mesma tabela seria uma segunda afirmação sobre a mesma regra, e as duas
     // divergiriam no dia em que só uma fosse alterada.
-    const r = await db.query<{ tgname: string }>(
-      `select t.tgname from pg_trigger t join pg_class c on c.oid=t.tgrelid
+    const r = await db.query<{ tgname: string; cita_destinos: boolean }>(
+      `select t.tgname, pg_get_functiondef(t.tgfoid) ~ 'destinos_configurados' as cita_destinos
+         from pg_trigger t join pg_class c on c.oid=t.tgrelid
          join pg_namespace n on n.oid=c.relnamespace
         where n.nspname='erp' and c.relname='tipos_operacao_versoes' and not t.tgisinternal
         order by t.tgname`);
-    expect(r.rows.map((x) => x.tgname)).toEqual(["trg_tipos_operacao_versoes_imutavel"]);
+    // TOP-CONFIG-07 (0035) acrescentou a guarda de FAMÍLIA da reserva de estoque — outra coluna (`reserva_estoque`),
+    // outra regra. Para `destinos_configurados` continua valendo só a proteção herdada: nenhum gatilho a cita.
+    expect(r.rows).toEqual([
+      { tgname: "trg_tipos_operacao_versoes_imutavel", cita_destinos: false },
+      { tgname: "trg_tipos_operacao_versoes_reserva_familia", cita_destinos: false },
+    ]);
   });
 
   it("`true` com ZERO arestas é estado VÁLIDO e representável — e a cardinalidade sozinha não o distingue do legado", async () => {

@@ -78,7 +78,7 @@ async function parte(id: string, itens?: ItemDaParte[]): Promise<string> {
   return j(r).id as string;
 }
 type DocLido = Record<string, unknown> & { status: string; code: string; items: (Record<string, unknown> & { id: string; quantity: string; faturado?: string; saldo?: string; origem_item_id: string | null })[] };
-const ler = async (rota: "orders" | "sales", id: string) => {
+const ler = async (rota: "budgets" | "orders" | "sales", id: string) => {
   const r = await h.app.inject({ method: "GET", url: `/api/sales/${rota}/${id}`, headers: h.headers() });
   expect(r.statusCode, r.body).toBe(200);
   return j(r) as DocLido;
@@ -297,7 +297,7 @@ describe("FP-7 — a origem com partes", () => {
       payload: { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, items: [ITEM("20")] } });
     const r1 = await put();
     expect(r1.statusCode, r1.body).toBe(409);
-    expect(j(r1).error).toMatchObject({ code: "INVALID_STATUS_TRANSITION", message: "Este documento já tem partes geradas. Para mudar os itens, cancele as partes ou encerre o saldo." });
+    expect(j(r1).error).toMatchObject({ code: "INVALID_STATUS_TRANSITION", message: "Este documento já tem partes geradas, e os itens não podem mais ser trocados. Para faturar o resto, converta outra parte; para parar, encerre o saldo." });
     const c1 = await cancelar("orders", id);
     expect(c1.statusCode, c1.body).toBe(409);
     expect(j(c1).error).toMatchObject({ code: "INVALID_STATUS_TRANSITION", message: "Cancele antes as partes geradas deste documento, ou encerre o saldo." });
@@ -393,5 +393,60 @@ describe("FP-10 — idempotência", () => {
     expect(j(r3).error!.code).toBe("CONFLICT");
     expect(await derivados(id)).toBe(1);
     expect(await ligado(item!.id)).toBe("4.0000");
+  });
+});
+
+describe("FP-13 — a espécie da origem nas mensagens (TOP-CONFIG-07, revisão da 06)", () => {
+  const orcamento = async (topId: string, items: ItemPedido[] = [ITEM()]) => {
+    const r = await h.app.inject({ method: "POST", url: "/api/sales/budgets", headers: h.headers(),
+      payload: { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, items, tipo_operacao_id: topId } });
+    expect(r.statusCode, r.body).toBe(201);
+    return j(r).id as string;
+  };
+  const parteDoOrcamento = async (id: string, itemId: string, destino: string) => {
+    const r = await h.app.inject({ method: "POST", url: `/api/sales/budgets/${id}/convert`, headers: h.headers(),
+      payload: { tipo_operacao_id: destino, itens: [{ item_id: itemId, quantidade: "4" }] } });
+    expect(r.statusCode, r.body).toBe(201);
+    return j(r) as { id: string; kind: string };
+  };
+  const quantidadesNoBanco = async (docId: string) => (await admin.query<{ quantity: string }>(
+    "select quantity::text from erp.sales_document_items where document_id=$1 order by position", [docId])).rows.map((x) => x.quantity);
+
+  it("FP-13 orçamento → PEDIDO em partes: o PUT da parte diz 'deste pedido … do orçamento'; o PUT da origem diz que os itens não trocam mais", async () => {
+    const topOrcamento = await criarTop(h.app, "vendas.orcamento", "Orçamento em partes → pedido");
+    await arestaNaVersaoNova(topOrcamento, topPedidoSemPartes, true);
+    const id = await orcamento(topOrcamento);
+    const origem = await ler("budgets", id);
+    const p = await parteDoOrcamento(id, origem.items[0]!.id, topPedidoSemPartes);
+    expect(p.kind).toBe("order");
+
+    const r = await h.app.inject({ method: "PUT", url: `/api/sales/orders/${p.id}`, headers: h.headers(),
+      payload: { empresa_id: I.empresa, document_date: "2026-09-12", client_id: I.client, items: [ITEM("3")] } });
+    expect(r.statusCode, r.body).toBe(422);
+    const mensagem = `Os itens deste pedido vieram do orçamento ${origem.code}. Para mudar, cancele este pedido e gere de novo.`;
+    expect(j(r).error).toMatchObject({ code: "VALIDATION_ERROR", message: mensagem, details: [{ path: "items", message: mensagem }] });
+    expect(await quantidadesNoBanco(p.id)).toEqual(["4.0000"]);
+
+    const o = await h.app.inject({ method: "PUT", url: `/api/sales/budgets/${id}`, headers: h.headers(),
+      payload: { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, items: [ITEM("20")] } });
+    expect(o.statusCode, o.body).toBe(409);
+    expect(j(o).error).toMatchObject({ code: "INVALID_STATUS_TRANSITION",
+      message: "Este documento já tem partes geradas, e os itens não podem mais ser trocados. Para faturar o resto, converta outra parte; para parar, encerre o saldo." });
+    expect(await quantidadesNoBanco(id)).toEqual(["10.0000"]);
+  });
+
+  it("FP-13 orçamento → VENDA em partes: o PUT da parte diz 'desta venda … do orçamento'", async () => {
+    const topOrcamento = await criarTop(h.app, "vendas.orcamento", "Orçamento em partes → venda");
+    await arestaNaVersaoNova(topOrcamento, topVenda, true);
+    const id = await orcamento(topOrcamento);
+    const origem = await ler("budgets", id);
+    const p = await parteDoOrcamento(id, origem.items[0]!.id, topVenda);
+    expect(p.kind).toBe("sale");
+    const r = await h.app.inject({ method: "PUT", url: `/api/sales/sales/${p.id}`, headers: h.headers(),
+      payload: { empresa_id: I.empresa, document_date: "2026-09-12", client_id: I.client, items: [ITEM("3")] } });
+    expect(r.statusCode, r.body).toBe(422);
+    const mensagem = `Os itens desta venda vieram do orçamento ${origem.code}. Para mudar, cancele esta venda e gere de novo.`;
+    expect(j(r).error).toMatchObject({ code: "VALIDATION_ERROR", message: mensagem, details: [{ path: "items", message: mensagem }] });
+    expect(await quantidadesNoBanco(p.id)).toEqual(["4.0000"]);
   });
 });

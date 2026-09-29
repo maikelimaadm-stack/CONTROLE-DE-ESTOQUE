@@ -6,6 +6,7 @@ import {
   LIMITE_NOME_TIPO_OPERACAO,
   chaveI18nDaFamiliaOperacional,
   familiaOperacionalDeclarada,
+  familiaOperacionalDeDocumentoVenda,
   familiasOperacionaisDisponiveis,
   moduloDaFamiliaOperacional,
   VERSAO_SCHEMA_CONFIGURACAO_TOP,
@@ -13,6 +14,7 @@ import {
   VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
   VERSOES_SCHEMA_CONFIGURACAO_TOP,
   SECOES_CONFIGURACAO_TOP,
+  SECOES_CONFIGURACAO_TOP_V2,
   MATRIZ_EXECUCAO_TOP,
   configuracaoNeutraTopV2,
   configuracoesTopIguais,
@@ -30,12 +32,13 @@ import {
   recusasFiscaisDaFamiliaTop,
   restricoesExecutamTop,
   type DestinoOperacaoV1,
-  type ConfiguracaoTipoOperacao
+  type ConfiguracaoTipoOperacao,
+  type SecaoConfiguracaoTopV2
 } from "@agro/domain";
 import { DomainError } from "@agro/shared";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, audit } from "../lib/service.js";
-import { notFound } from "../lib/errors.js";
+import { notFound, validation } from "../lib/errors.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import type { ServiceCtx } from "../lib/context.js";
 
@@ -110,7 +113,9 @@ const criarSchema = z.object({
   /** Grafo de próximas operações. Ausente = nenhuma transição declarada. Mesma razão do `z.unknown()`. */
   destinos: z.unknown().optional(),
   /** TOP-CONFIG-05: condições de pagamento permitidas (formato 3). Ausente = sem lista. Ver `conferirCondicoes`. */
-  condicoesPermitidas: condicoesPermitidasSchema
+  condicoesPermitidas: condicoesPermitidasSchema,
+  /** TOP-CONFIG-07: "Reservar estoque" da versão 1. Ausente = `false` (a web anterior não o manda). Só a família do pedido. */
+  reservaEstoque: z.boolean().optional()
 }).strict();
 
 /**
@@ -132,7 +137,9 @@ const editarSchema = z.object({
   /** Ausente = PRESERVAR os destinos da versão corrente, pelo mesmo motivo. */
   destinos: z.unknown().optional(),
   /** Ausente = PRESERVAR as condições permitidas da versão corrente (copiadas para a versão nova). */
-  condicoesPermitidas: condicoesPermitidasSchema
+  condicoesPermitidas: condicoesPermitidasSchema,
+  /** TOP-CONFIG-07: ausente = PRESERVAR o "Reservar estoque" da versão corrente; presente = declara. */
+  reservaEstoque: z.boolean().optional()
 }).strict();
 
 /**
@@ -148,7 +155,7 @@ const SELECAO = `
   select t.id, t.codigo, t.codigo_base, t.ativo, t.padrao, t.versao_atual, t.revisao,
          t.criado_em, t.atualizado_em,
          v.id as versao_id, v.nome, v.descricao, v.configuracao, v.configuracao_schema_version,
-         v.destinos_configurados
+         v.destinos_configurados, v.reserva_estoque
     from erp.tipos_operacao t
     join erp.tipos_operacao_versoes v
       on v.tipo_operacao_id = t.id and v.versao = t.versao_atual
@@ -170,6 +177,8 @@ interface LinhaTipoOperacao {
    * coisas com o mesmo zero. Ver o cabeçalho da coluna na migration 0022.
    */
   destinos_configurados: boolean;
+  /** TOP-CONFIG-07: o pedido criado com esta versão reserva estoque (0035). Imutável com a versão. */
+  reserva_estoque: boolean;
 }
 
 /**
@@ -525,6 +534,34 @@ function resolverEmPartes(pedidos: readonly DestinoOperacaoV1[], atuais: readonl
   }));
 }
 
+const MENSAGEM_RESERVA_SO_PEDIDO = "Só a operação de pedido reserva estoque.";
+
+/**
+ * "RESERVAR ESTOQUE" SÓ NA FAMÍLIA DO PEDIDO (TOP-CONFIG-07) — conferido ANTES de qualquer escrita.
+ *
+ * A família do pedido sai do REGISTRY (`familiaOperacionalDeDocumentoVenda("order")`), nunca de um literal
+ * nesta rota: o literal envelheceria em silêncio no dia em que o registry mudasse. Registry sem a variante
+ * `order` devolve `undefined`, e aí NENHUMA família reserva (fail closed). `false` é aceito em qualquer
+ * família: é o padrão, e declarar "não reserva" nunca é pedido indevido. O gatilho da 0035
+ * (`trg_tipos_operacao_versoes_reserva_familia`) é a rede para quem chegar por fora da API.
+ */
+function conferirReservaDaFamilia(codigoBase: string, reservaEstoque: boolean | undefined): void {
+  if (reservaEstoque !== true) return;
+  const familiaDoPedido = familiaOperacionalDeDocumentoVenda("order");
+  if (familiaDoPedido !== undefined && codigoBase === familiaDoPedido) return;
+  throw validation(MENSAGEM_RESERVA_SO_PEDIDO, [{ path: "reservaEstoque", message: MENSAGEM_RESERVA_SO_PEDIDO }]);
+}
+
+/**
+ * AS SEÇÕES ALTERADAS, COM A RESERVA — `estoque` entra quando só a caixa "Reservar estoque" mudou.
+ *
+ * A reserva mora numa COLUNA da versão, não no payload da configuração, então `secoesAlteradasTop` não a vê.
+ * Na tela ela está na aba Estoque; a trilha e o histórico precisam dizer "mexeram no estoque" pelo mesmo
+ * motivo que dizem das outras seções. A ordem continua a do domínio (`SECOES_CONFIGURACAO_TOP_V2`).
+ */
+const secoesComReserva = (secoes: readonly SecaoConfiguracaoTopV2[], mudouReserva: boolean): SecaoConfiguracaoTopV2[] =>
+  SECOES_CONFIGURACAO_TOP_V2.filter((s) => secoes.includes(s) || (mudouReserva && s === "estoque"));
+
 /** O DETALHE — aí sim com a configuração, porque é a tela que vai editá-la. */
 const paraTelaDetalhe = (r: LinhaTipoOperacao) => ({
   ...paraTela(r),
@@ -535,7 +572,9 @@ const paraTelaDetalhe = (r: LinhaTipoOperacao) => ({
    * Deduzir devolveria `false` para a versão que declarou "esta operação não gera nada" — e o editor
    * mostraria o estado de quem nunca configurou a uma política que alguém escreveu de propósito.
    */
-  destinosConfigurados: r.destinos_configurados
+  destinosConfigurados: r.destinos_configurados,
+  /** TOP-CONFIG-07: "Reservar estoque" da versão corrente. Sempre booleano (a coluna é `not null`). */
+  reservaEstoque: r.reserva_estoque
 });
 
 export default async function tiposOperacaoRoutes(app: FastifyInstance) {
@@ -606,7 +645,14 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
      * RESTRIÇÕES COMERCIAIS E FISCAL (TOP-CONFIG-05) — bloco OPCIONAL novo, pelo precedente de `execucao`:
      * `contractVersion` e `configuracao.versaoSchema` NÃO mudam. Ausente = servidor sem formato 3.
      */
-    restricoes: { suportado: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 }
+    restricoes: { suportado: true, versaoSchema: VERSAO_SCHEMA_CONFIGURACAO_TOP_V3 },
+    /**
+     * RESERVA DE ESTOQUE (TOP-CONFIG-07) — marcador ADITIVO, pelo precedente de `destinos.emPartes`: a versão
+     * aceita e devolve `reservaEstoque` (só família do pedido); ausente na edição preserva o valor da versão
+     * corrente. `contractVersion` não muda. Ausente = servidor anterior: o editor esconde a caixa e não manda
+     * a chave, que a API anterior recusaria (`.strict()`).
+     */
+    reservaEstoque: 1
   })));
 
   /**
@@ -712,9 +758,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const pai = await ctx.tx.query<{ id: string }>(
       "select id from erp.tipos_operacao where id=$1 and organization_id=$2 and excluido_em is null", [id, ctx.orgId]);
     if (!pai.rows[0]) throw notFound("Tipo de operação");
-    const r = await ctx.tx.query<{ id: string; versao: number; nome: string; descricao: string | null; criado_em: Date; criado_por_nome: string | null; configuracao: unknown; configuracao_schema_version: number; destinos_configurados: boolean }>(
+    const r = await ctx.tx.query<{ id: string; versao: number; nome: string; descricao: string | null; criado_em: Date; criado_por_nome: string | null; configuracao: unknown; configuracao_schema_version: number; destinos_configurados: boolean; reserva_estoque: boolean }>(
       `select v.id, v.versao, v.nome, v.descricao, v.criado_em, u.name as criado_por_nome,
-              v.configuracao, v.configuracao_schema_version, v.destinos_configurados
+              v.configuracao, v.configuracao_schema_version, v.destinos_configurados, v.reserva_estoque
          from erp.tipos_operacao_versoes v
          left join erp.users u on u.id = v.criado_por
         where v.tipo_operacao_id = $1 and v.organization_id = $2
@@ -743,6 +789,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
         // As linhas vêm em ordem DECRESCENTE: a anterior desta versão é a do índice seguinte.
         const anterior = cfg[i + 1];
         const comparavel = atual.suportada && anterior?.suportada === true;
+        // A reserva é coluna da versão, fora do payload: a mudança dela marca `estoque` (ver `secoesComReserva`).
+        const mudouReserva = linhas[i + 1] !== undefined && linhas[i + 1]!.reserva_estoque !== v.reserva_estoque;
         return {
           versao: v.versao,
           nome: v.nome,
@@ -762,9 +810,11 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
            * operação não gera nenhuma outra". O histórico existe justamente para responder isso.
            */
           destinosConfigurados: v.destinos_configurados,
+          // TOP-CONFIG-07: o "Reservar estoque" DAQUELA versão, da própria linha — nunca o de hoje.
+          reservaEstoque: v.reserva_estoque,
           // Sem versão anterior legível não há comparação possível — e `[]` afirmaria "nada mudou", que é
           // diferente de "não dá para saber". `null` diz a segunda coisa.
-          secoesAlteradas: comparavel ? secoesAlteradasTop(anterior.valor, atual.valor) : null
+          secoesAlteradas: comparavel ? secoesComReserva(secoesAlteradasTop(anterior.valor, atual.valor), mudouReserva) : null
         };
       })
     };
@@ -780,6 +830,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
         throw new DomainError("TIPO_OPERACAO_BASE_DESCONHECIDA",
           `Movimento operacional desconhecido: ${d.codigoBase}`, { codigoBase: d.codigoBase });
       }
+      // TOP-CONFIG-07: "Reservar estoque" só na família do pedido, ANTES de qualquer escrita. Ausente = `false`.
+      conferirReservaDaFamilia(d.codigoBase, d.reservaEstoque);
+      const reservaEstoque = d.reservaEstoque ?? false;
 
       // AUSENTE = NEUTRO. Não é o mesmo que "configurado com tudo desligado por decisão": é "ninguém
       // declarou". Desde a TOP-CONFIG-04A o neutro de uma TOP NOVA é o formato 2 com os dois efeitos em
@@ -822,9 +875,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
       const declarouDestinos = d.destinos !== undefined;
 
       const versaoNova = await ctx.tx.query<{ id: string }>(
-        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version, destinos_configurados)
-         values ($1,$2,1,$3,$4,$5,$6::jsonb,$7,$8) returning id`,
-        [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id, JSON.stringify(configuracao), configuracao.versaoSchema, declarouDestinos]);
+        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version, destinos_configurados, reserva_estoque)
+         values ($1,$2,1,$3,$4,$5,$6::jsonb,$7,$8,$9) returning id`,
+        [ctx.orgId, id, d.nome, d.descricao ?? null, ctx.user.id, JSON.stringify(configuracao), configuracao.versaoSchema, declarouDestinos, reservaEstoque]);
 
       // AS PRÓXIMAS OPERAÇÕES DA VERSÃO 1. Conferidas contra banco e registry ANTES de gravar: uma aresta
       // para TOP indisponível nasceria como um botão que não tem serviço atrás.
@@ -839,7 +892,7 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           // O NÚMERO E O ESTADO, porque um não responde pelo outro: `destinos: 0` com
           // `destinosConfigurados: true` é "não gera nada, por decisão", e com `false` é "ninguém decidiu".
           // Sem o booleano, a trilha registra o mesmo zero para as duas e a investigação fica sem resposta.
-          destinosConfigurados: declarouDestinos, destinos: destinos.length,
+          destinosConfigurados: declarouDestinos, destinos: destinos.length, reservaEstoque,
           ...(d.condicoesPermitidas !== undefined ? { condicoesPermitidas: condicoes } : {}) });
       // A TOP anterior perdeu o padrão nesta mesma transação: quem perdeu tem evento próprio, com autor.
       await auditarPadraoLiberado(ctx, liberados, id);
@@ -880,6 +933,17 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
         "Este tipo de operação foi alterado por outra pessoa; recarregue e tente novamente",
         { revisaoAtual: antes.revisao, revisaoEnviada: d.revisao });
     }
+
+    /**
+     * "RESERVAR ESTOQUE" (TOP-CONFIG-07) — AUSENTE PRESERVA, PRESENTE DECLARA, no molde do "Em partes".
+     *
+     * A web anterior não manda a chave; ler a ausência como `false` desligaria em silêncio a reserva que o
+     * editor novo ligou, e os pedidos seguintes deixariam de separar estoque sem ninguém ter pedido isso. A
+     * família é conferida ANTES de qualquer escrita (o `liberarPadrao` abaixo já escreve).
+     */
+    conferirReservaDaFamilia(antes.codigo_base, d.reservaEstoque);
+    const reservaEstoque = d.reservaEstoque ?? antes.reserva_estoque;
+    const mudouReserva = reservaEstoque !== antes.reserva_estoque;
 
     const ativo = d.ativo ?? antes.ativo;
     // Desativar quem é padrão tira o posto na MESMA transação: um padrão inativo seria oferecido a ninguém
@@ -984,8 +1048,10 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     // A CONFIGURAÇÃO É CONTEÚDO, pelo mesmo motivo e com mais força: ela é a REGRA que explica o efeito.
     // E nome + descrição + configuração viajam numa versão SÓ — uma edição que mexe nos três gera UMA
     // N+1, não três. Versão por aba faria o histórico contar uma sequência de eventos que nunca existiu.
+    // A RESERVA TAMBÉM É CONTEÚDO: ela decide o que o pedido criado sob a versão faz com o estoque, e o
+    // pedido congela a versão. Mudar só a caixa cria a N+1; mandar o mesmo valor não cria nada.
     const mudouConteudo = nome !== antes.nome || (descricao ?? null) !== (antes.descricao ?? null)
-      || mudouConfiguracao || mudouDestinos || mudouCondicoes;
+      || mudouConfiguracao || mudouDestinos || mudouCondicoes || mudouReserva;
     const versao = mudouConteudo ? antes.versao_atual + 1 : antes.versao_atual;
 
     /**
@@ -1007,9 +1073,9 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
 
     if (mudouConteudo) {
       const versaoNova = await ctx.tx.query<{ id: string }>(
-        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version, destinos_configurados)
-         values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) returning id`,
-        [ctx.orgId, id, versao, nome, descricao ?? null, ctx.user.id, JSON.stringify(configuracao), configuracao.versaoSchema, destinosConfigurados]);
+        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, descricao, criado_por, configuracao, configuracao_schema_version, destinos_configurados, reserva_estoque)
+         values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10) returning id`,
+        [ctx.orgId, id, versao, nome, descricao ?? null, ctx.user.id, JSON.stringify(configuracao), configuracao.versaoSchema, destinosConfigurados, reservaEstoque]);
       // As arestas são COPIADAS para a versão nova mesmo quando não mudaram: a versão N+1 precisa declarar
       // a política INTEIRA dela. Herdar por referência faria a versão nova depender da anterior para ser
       // lida, e o histórico deixaria de ser autossuficiente — que é a única coisa que ele promete ser.
@@ -1036,7 +1102,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
        * pergunta que se faz numa investigação ("o que mexeram?") e manda o leitor à versão para o detalhe
        * exato, que está lá, imutável, por construção.
        */
-      const secoesAlteradas = mudouConfiguracao ? secoesAlteradasTop(atualConfig.valor, configuracao) : [];
+      const secoesAlteradas = secoesComReserva(
+        mudouConfiguracao ? secoesAlteradasTop(atualConfig.valor, configuracao) : [], mudouReserva);
       await audit(ctx.tx, ctx, "tipos_operacao", id, "update",
         { versaoAnterior: antes.versao_atual, versao,
           secoesAlteradas,
@@ -1049,6 +1116,8 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
           // a edição que DECLAROU "não gera nada" da que apenas não falou do assunto.
           destinosAlterados: mudouDestinos, destinos: destinos.length, destinosConfigurados,
           ...(mudouCondicoes ? { condicoesPermitidas: condicoes } : {}),
+          // TOP-CONFIG-07: de onde saiu e para onde foi, só quando a caixa mudou.
+          ...(mudouReserva ? { reservaEstoque: { antes: antes.reserva_estoque, depois: reservaEstoque } } : {}),
           configuracaoSchema: configuracao.versaoSchema },
         { before: { nome: antes.nome, descricao: antes.descricao }, after: { nome, descricao } });
     }
