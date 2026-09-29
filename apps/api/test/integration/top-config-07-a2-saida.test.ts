@@ -273,3 +273,53 @@ describe("leituras de saldo com reservado e disponível", () => {
     } finally { espiao.mockRestore(); }
   });
 });
+
+describe("revisão adversarial — números de armazém alheio e o armazém da parte", () => {
+  it("venda da empresa A com item no armazém da empresa B: prévia e confirmação não revelam físico nem reservado de B", async () => {
+    const p = await produto("armazém alheio");
+    const r0 = await post("/api/stock/opening-balances", { empresa_id: I.empresa2, warehouse_id: I.warehouseEmpresa2, product_id: p.id, quantity: "10", unit_value: "5" });
+    expect(r0.statusCode, r0.body).toBe(201);
+    criado(await post("/api/sales/orders", { empresa_id: I.empresa2, document_date: "2026-09-10", client_id: I.client, tipo_operacao_id: topPedidoInteiro,
+      items: [{ product_id: p.id, warehouse_id: I.warehouseEmpresa2, quantity: "8", unit_price: "5.00" }] }));
+    // PREMISSA: a empresa B reserva 8 de 10 no par — sem o recorte, 3 não caberia e a recusa diria os números de B.
+    const reservadoEmB = (await admin.query<{ r: string }>("select reservado::text r from erp.reserva_estoque_nucleo($1, array[$2]::uuid[], array[$3]::uuid[], null)",
+      [h.demo.orgId, I.warehouseEmpresa2, p.id])).rows[0]!.r;
+    expect(reservadoEmB).toBe("8.0000");
+    const venda = criado(await post("/api/sales/sales", { empresa_id: I.empresa, document_date: "2026-09-20", client_id: I.client,
+      items: [{ product_id: p.id, warehouse_id: I.warehouseEmpresa2, quantity: "3", unit_price: "20.00" }] }));
+    const pv = await previa(venda);
+    expect(JSON.stringify(pv.recusas), "a prévia não pode dizer nada do estoque de B").not.toMatch(/reservado|dispon[ií]vel|INSUFFICIENT_STOCK/);
+    const c = await confirmar(venda);
+    expect(c.statusCode, c.body).toBe(422);
+    expect(j(c).error!.code, "quem recusa é o armazém de outra empresa, como sempre foi").toBe("WAREHOUSE_FARM_MISMATCH");
+    expect(JSON.stringify(j(c).error)).not.toMatch(/reservado|dispon[ií]vel/);
+    expect(await saidas(venda)).toEqual([]);
+  });
+
+  it("a parte de pedido com reserva não troca de armazém (422 no item); a observação muda; o armazém gravado fica", async () => {
+    const p = await produto("parte armazém");
+    await estoque(p.id, "10");
+    // O armazém de destino TEM estoque: sem a guarda, a troca caberia e passaria (é o furo que a guarda fecha).
+    const r2 = await post("/api/stock/opening-balances", { empresa_id: I.empresa, warehouse_id: I.warehouse2, product_id: p.id, quantity: "10", unit_value: "5" });
+    expect(r2.statusCode, r2.body).toBe(201);
+    const ped = await pedido(topPedidoEmPartes, p.id, "8");
+    const item = ((j(await get(`/api/sales/orders/${ped}`)).items) as { id: string }[])[0]!;
+    const parte = criado(await post(`/api/sales/orders/${ped}/convert`, { tipo_operacao_id: topVenda, itens: [{ item_id: item.id, quantidade: "4" }] }));
+    const v = j(await get(`/api/sales/sales/${parte}`)) as { items: Record<string, unknown>[] };
+    const base = v.items.map((i) => ({ product_id: i.product_id as string, warehouse_id: i.warehouse_id as string | null, quantity: String(i.quantity),
+      unit_price: i.unit_price as string, discount: i.discount as string, discount_percent: i.discount_percent as string, note: i.note as string | null }));
+    const put = (items: typeof base) => h.app.inject({ method: "PUT", url: `/api/sales/sales/${parte}`, headers: h.headers(),
+      payload: { empresa_id: I.empresa, document_date: "2026-09-12", client_id: I.client, items } });
+    const msg = "O armazém deste item vem do pedido de origem, que reserva estoque no armazém de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
+    const r = await put(base.map((i) => ({ ...i, warehouse_id: I.warehouse2! })));
+    expect(r.statusCode, r.body).toBe(422);
+    expect(j(r).error).toMatchObject({ code: "VALIDATION_ERROR", message: msg, details: [{ path: "items[0].warehouse_id", message: msg }] });
+    const armazem = async () => (await admin.query<{ w: string }>("select warehouse_id::text w from erp.sales_document_items where document_id=$1", [parte])).rows.map((x) => x.w);
+    expect(await armazem()).toEqual([I.warehouse]);
+    const ok = await put(base.map((i) => ({ ...i, note: "obs" })));
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(await armazem()).toEqual([I.warehouse]);
+    // A conta continua fechando: A (4) + B (4) no armazém do pedido.
+    expect(await saldoDoPar(p.id)).toMatchObject({ reservado: "8.0000", disponivel: "2.0000" });
+  });
+});

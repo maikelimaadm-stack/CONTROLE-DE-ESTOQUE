@@ -11,7 +11,7 @@ import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, quantidadeLegivel } from "../services/stock-core.js";
 import { saldoComReservaEmLote, chaveDoPar, type ParDeEstoque } from "../services/reserva-estoque.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
-import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
+import { atribuirIdGlobal , paginaComIdGlobal, travarContadorIdGlobal } from "../lib/id-global.js";
 import { layoutEfetivo, conferirPadroesRegistro, type RegistroPadraoConferido } from "../lib/layout-documento.js";
 // TOP-CONFIG-05 (decisão 263): regras da operação no lançamento, na conversão (TOP DESTINO), `/regras-da-operacao`,
 // `/situacao-cliente` e a capacidade nova.
@@ -22,7 +22,7 @@ import { registrarSituacaoCliente } from "./vendas-atraso-cliente.js";
 import { validarItensDaParte, itensDoSaldoInteiro, itensCanonicosDaParte, calcularParte, saldoDoItem, MSG_ITENS_DA_PARTE, type ItemPedidoDaParte } from "@agro/domain";
 import { itensDeOrigemComSaldo, cabecalhoJaAlocado, partesDaOrigem, saldoTotal, MSG_NAO_PERMITE_EM_PARTES, MSG_SEM_SALDO_PARA_CONVERTER, MSG_SEM_PARTES, MSG_SEM_SALDO_A_ENCERRAR, MSG_ORIGEM_COM_PARTES_ATIVAS_PUT, MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT, MSG_ORIGEM_COM_PARTES_ATIVAS_CANCEL, msgItensDaParte } from "./vendas-faturar-em-partes.js";
 // TOP-CONFIG-07 (decisão 266): o pedido com reserva confere o disponível ao salvar (POST/PUT) — `vendas-reserva-estoque`.
-import { versaoReservaEstoque, origemReservaEstoque, conferirReservaDoDocumento } from "./vendas-reserva-estoque.js";
+import { versaoReservaEstoque, origemReservaEstoque, conferirReservaDoDocumento, MSG_PARTE_RESERVA_ARMAZEM } from "./vendas-reserva-estoque.js";
 
 const dec = z.union([z.number(), z.string()]).transform(String);
 const date = z.string().refine(isISODate, "Data inválida");
@@ -722,6 +722,19 @@ async function conferirReservaNaSaida(ctx: ServiceCtx, d: VendaParaConfirmar, mo
       quantidade: D(atual?.quantidade ?? 0).plus(it.quantity).toFixed(4) });
   }
   if (porPar.size === 0) return;
+  /*
+   * NENHUM NÚMERO DE ARMAZÉM ALHEIO (revisão de segurança da TOP-CONFIG-07). O item de venda aceita qualquer armazém
+   * da organização (FK de coluna única), e quem recusava o armazém de OUTRA empresa era o `postStock`
+   * (WAREHOUSE_FARM_MISMATCH) — antes de qualquer número sair. Esta pré-conferência roda antes dele, e também na
+   * prévia (só `sales.view`): sem este recorte, físico e reservado de um armazém de outra empresa sairiam na
+   * mensagem. Par de armazém que não é da empresa da venda fica FORA da conta; o `postStock` o recusa depois, como
+   * sempre recusou.
+   */
+  const daEmpresa = new Set((await ctx.tx.query<{ id: string }>(
+    "select id from erp.warehouses where organization_id=$1 and empresa_id=$2 and id = any($3::uuid[])",
+    [ctx.orgId, d.empresa_id, [...new Set([...porPar.values()].map((p) => p.warehouseId))]])).rows.map((r) => r.id));
+  for (const [chave, p] of porPar) if (!daEmpresa.has(p.warehouseId)) porPar.delete(chave);
+  if (porPar.size === 0) return;
   const saldo = await saldoComReservaEmLote(ctx, [...porPar.values()], d.id);
   const faltas: { linha: string; detalhe: Record<string, string> }[] = [];
   for (const [chave, p] of porPar) {
@@ -1068,7 +1081,7 @@ export default async function salesRoutes(app: FastifyInstance) {
      * commit. Orçamento e venda nunca perguntam; pedido sem TOP também não.
      */
     app.post(base, async (req, reply) => reply.status(201).send(await runService(app, req, `${perm}.create`, async (ctx) => { const d = docSchema.parse(req.body); await exigirEmpresaDeLancamento(ctx, d.empresa_id); return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined, d, async () => { const top = d.tipo_operacao_id ? await resolverTopParaLancamento(ctx, familiaDaVariante(kind), d.tipo_operacao_id) : null; const classificacao = await classificacaoDaCriacao(ctx, d); const condicao = { linha: d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null, gravar: true }; await cobrarRegrasDaOperacao(ctx, top ? await regrasDaVersaoTop(ctx, top.tipoOperacaoVersaoId) : null, d, { conferirCondicao: true, conferirAtraso: true }); await cobrarLayoutAoSalvar(ctx, kind, d);
-      if (kind === "order" && top && await versaoReservaEstoque(ctx, top.tipoOperacaoVersaoId)) await conferirReservaDoDocumento(ctx, { itens: d.items, empresaId: d.empresa_id, excluirDocumentoId: null });
+      if (kind === "order" && top && await versaoReservaEstoque(ctx, top.tipoOperacaoVersaoId)) { await travarContadorIdGlobal(ctx); await conferirReservaDoDocumento(ctx, { itens: d.items, empresaId: d.empresa_id, excluirDocumentoId: null }); }
       const r = await writeDoc(ctx, kind, d, undefined, null, top, classificacao, condicao); await audit(ctx.tx, ctx, "sales_documents", r.id!, "create", top ? { tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao } : undefined); return r; })).result; })));
     /**
      * EDIÇÃO. A regra do snapshot está toda nas três linhas de `top` abaixo:
@@ -1088,7 +1101,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       // — que não reavalia status nenhum. O resultado é um documento `confirmed` cujos itens e total foram
       // TROCADOS depois de o estoque ter sido baixado e os títulos gerados pelo conjunto antigo: a venda
       // diz uma coisa e o ledger diz outra, sem que nenhuma das duas respostas seja erro.
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; client_id: string; empresa_id: string; reserva_estoque: boolean; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null; origin_document_id: string | null; items: { origem_item_id: string | null; product_id: string; quantity: string; unit_price: string; discount: string; discount_percent: string }[] };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; client_id: string; empresa_id: string; reserva_estoque: boolean; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null; origin_document_id: string | null; items: { origem_item_id: string | null; product_id: string; warehouse_id: string | null; quantity: string; unit_price: string; discount: string; discount_percent: string }[] };
       if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
       // TOP-CONFIG-06 — ORIGEM COM PARTES: trocar itens reescreveria o saldo das partes já geradas. Com partes só
       // canceladas os itens também ficam (a FK `origem_item_id` é `on delete restrict`, e apagá-los perderia a ligação).
@@ -1099,6 +1112,9 @@ export default async function salesRoutes(app: FastifyInstance) {
       // TOP-CONFIG-06 — A PARTE GERADA: itens na MESMA ordem, com mesmo produto, quantidade, preço e descontos. Só
       // armazém e observação do item mudam; a ligação é preservada pela posição.
       const origemItemIds = cur.items.map((i) => i.origem_item_id);
+      // A venda gerada de pedido com reserva: a mesma pergunta serve à guarda do armazém da parte (abaixo) e à
+      // conferência da reserva (antes de gravar). UMA consulta, e só quando a venda tem origem.
+      const origemReserva = kind === "sale" && cur.origin_document_id ? await origemReservaEstoque(ctx, cur.origin_document_id) : false;
       if (origemItemIds.some((x) => x !== null)) {
         const iguais = d.items.length === cur.items.length && d.items.every((n, k) => {
           const o = cur.items[k]!;
@@ -1108,6 +1124,18 @@ export default async function salesRoutes(app: FastifyInstance) {
           const origem = cur.origin_document_id ? (await ctx.tx.query<{ code: string; kind: string }>("select code, kind from erp.sales_documents where id=$1 and organization_id=$2", [cur.origin_document_id, ctx.orgId])).rows[0] : undefined;
           const mensagem = msgItensDaParte(kind, origem?.kind, origem?.code);
           throw err("VALIDATION_ERROR", mensagem, [{ path: "items", message: mensagem }]);
+        }
+        /*
+         * TOP-CONFIG-07 — A PARTE DE PEDIDO COM RESERVA NÃO TROCA DE ARMAZÉM (revisão adversarial). A parte A da conta
+         * desconta do item do pedido toda parte não cancelada, em qualquer armazém; a parte B conta a parte no armazém
+         * dela. Com o armazém trocado, o armazém do pedido fica livre para outra saída — e cancelar a parte devolve a
+         * reserva ao armazém do pedido sem conferir: disponível negativo por um fluxo comum. Mantendo o armazém, a
+         * reserva que a parte carrega é sempre a mesma que o pedido deixou de carregar.
+         */
+        if (origemReserva) {
+          const trocados = d.items.flatMap((n, k) => (n.warehouse_id ?? null) !== (cur.items[k]!.warehouse_id ?? null)
+            ? [{ path: `items[${k}].warehouse_id`, message: MSG_PARTE_RESERVA_ARMAZEM }] : []);
+          if (trocados.length) throw err("VALIDATION_ERROR", MSG_PARTE_RESERVA_ARMAZEM, trocados);
         }
       }
       /**
@@ -1165,7 +1193,7 @@ export default async function salesRoutes(app: FastifyInstance) {
        *   orçamento → nunca.
        */
       const reservaNoPut = kind === "order" ? (top ? await versaoReservaEstoque(ctx, top.tipoOperacaoVersaoId) : cur.reserva_estoque === true)
-        : kind === "sale" && cur.origin_document_id ? await origemReservaEstoque(ctx, cur.origin_document_id) : false;
+        : origemReserva;
       if (reservaNoPut) await conferirReservaDoDocumento(ctx, { itens: d.items, empresaId: cur.empresa_id, excluirDocumentoId: id });
       const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao, condicao, origemItemIds);
       await audit(ctx.tx, ctx, "sales_documents", id, "update");
@@ -1509,6 +1537,8 @@ export default async function salesRoutes(app: FastifyInstance) {
        * trava do produto), ANTES de writeDoc — sem ela, converter seria a porta lateral para reservar além do físico.
        */
       if (destino === "order" && topDestino && await versaoReservaEstoque(ctx, topDestino.tipoOperacaoVersaoId)) {
+        // Contador do ID Global ANTES da trava do produto: writeDoc vai alocar, e a ordem é contador → produto em todo caminho.
+        await travarContadorIdGlobal(ctx);
         await conferirReservaDoDocumento(ctx, { itens: body.items, empresaId: body.empresa_id, excluirDocumentoId: null });
       }
       const r = await writeDoc(ctx, destino, body, undefined, id, topDestino, classificacao, condicao, parte ? parte.calculo.itens.map((i) => i.origemItemId) : []);

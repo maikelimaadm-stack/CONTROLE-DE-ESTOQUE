@@ -93,6 +93,14 @@ test("RE-W1 — pedido com reserva: a Central mostra o disponível, o documento 
   await page.reload();
   await expect(linhaSaldo.getByTestId("saldo-reservado")).toHaveText(numero(8));
   await expect(linhaSaldo.getByTestId("saldo-disponivel")).toHaveText(numero(-3));
+
+  // (5) CANCELADO, o pedido não segura mais nada: o servidor zera a reserva, e o documento mostra o Reservado 0 do item
+  //     (a prova de que a tela carregou o pedido com reserva) SEM dizer que a reserva está "ativa".
+  await api(page, "POST", `/api/sales/orders/${pedido.id}/cancel`, {});
+  expect(await saldoNoServidor(page, c.armazem, c.produto)).toMatchObject({ quantity: "5.0000", reservado: "0.0000", disponivel: "5.0000" });
+  await page.goto(`/vendas/orders/${pedido.id}`);
+  await expect(page.getByTestId("doc-item-reservado"), "premissa: o pedido cancelado abriu com a coluna Reservado").toHaveText([numero(0)]);
+  await expect(page.getByTestId("doc-reserva-ativa"), "pedido cancelado não diz 'Reserva de estoque: ativa'").toHaveCount(0);
 });
 
 test("RE-W2 — editor da TOP: 'Reservar estoque ao salvar o pedido' existe só no pedido e grava", async ({ page }) => {

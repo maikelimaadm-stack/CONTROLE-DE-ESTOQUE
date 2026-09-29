@@ -291,7 +291,9 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         {/* A FAMÍLIA CANÔNICA sai do REGISTRO (`kind`), em memória — campo próprio, ao lado da TOP configurada */}
         <CampoLeitura rotulo="Movimento" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />
         {/* TOP-CONFIG-07: a versão CONGELADA no pedido reserva estoque. Só `=== true` do servidor; ausente (API anterior) = nada. */}
-        {reservaAtiva && <p data-testid="doc-reserva-ativa" className={estilosCentral.descricao}>Reserva de estoque: ativa</p>}
+        {/* "ativa" só enquanto o pedido de fato segura estoque (aberto e sem saldo encerrado); a coluna Reservado mostra o que resta. */}
+        {reservaAtiva && (situacao === "open" || situacao === "approved") && !saldoEncerradoEm
+          && <p data-testid="doc-reserva-ativa" className={estilosCentral.descricao}>Reserva de estoque: ativa</p>}
         <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
         <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
         <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />

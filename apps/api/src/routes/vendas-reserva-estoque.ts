@@ -37,6 +37,8 @@ import { chaveDoPar, saldoComReservaEmLote, MAX_PARES_POR_CHAMADA, type ParDeEst
 
 export const MSG_RESERVA_ARMAZEM_OBRIGATORIO = "Informe o armazém: esta operação reserva estoque.";
 export const MSG_RESERVA_ARMAZEM_DE_OUTRA_EMPRESA = "O armazém não é da empresa do documento.";
+/** A parte gerada de pedido com reserva mantém o armazém do item de origem (ver o PUT da venda em sales.ts). */
+export const MSG_PARTE_RESERVA_ARMAZEM = "O armazém deste item vem do pedido de origem, que reserva estoque no armazém de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
 
 /** A trava (c): exportada para a suíte provar o modo contra o gatilho de saldo e contra a FK (ver o cabeçalho). */
 export const SQL_TRAVA_PRODUTOS = "select id, description from erp.products where organization_id = $1 and id = any($2::uuid[]) order by id for no key update";

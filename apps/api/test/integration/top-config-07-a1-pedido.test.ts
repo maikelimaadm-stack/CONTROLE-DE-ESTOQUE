@@ -237,6 +237,43 @@ describe("Conversão orçamento → pedido cuja TOP destino reserva — a mesma 
   });
 });
 
+describe("Ordem das travas — contador do ID Global antes do produto (revisão adversarial)", () => {
+  it("outra transação segura o contador e depois pede o produto: o pedido com reserva espera no contador SEM prender o produto — sem deadlock", async () => {
+    await semReserva();
+    const cli = await admin.connect();
+    let pedido: Promise<Resposta> | null = null;
+    try {
+      // Uma rota de estoque em voo: aloca o ID Global (contador) e só depois a saída atualiza a linha do produto.
+      // A linha do contador tem de EXISTIR para ser presa (organização que ainda não alocou nada não tem linha, e o
+      // `for update` sobre zero linhas não prende nada). Criá-la com o valor atual não aloca número.
+      await cli.query("insert into erp.sequencias_id_global (organization_id, ultimo_valor) values ($1, 0) on conflict (organization_id) do nothing", [h.demo.orgId]);
+      await cli.query("begin");
+      await cli.query("set local lock_timeout = '5s'");
+      const preso = await cli.query("select ultimo_valor from erp.sequencias_id_global where organization_id = $1 for update", [h.demo.orgId]);
+      expect(preso.rowCount, "a linha do contador está presa por esta transação").toBe(1);
+      // `inject` é preguiçoso: só despacha no `then`. Promise.resolve o dispara AGORA, com o contador preso.
+      pedido = Promise.resolve(criar("orders", topReserva, [item("1")]));
+      // PREMISSA: o salvamento chegou a esperar uma trava (senão o teste não prova ordem nenhuma).
+      let esperando = 0;
+      for (let t = 0; t < 50 && esperando === 0; t++) {
+        await new Promise((r) => setTimeout(r, 100));
+        esperando = Number((await admin.query<{ n: string }>("select count(*) n from pg_locks where not granted")).rows[0]!.n);
+      }
+      expect(esperando, "o pedido está parado numa trava").toBeGreaterThan(0);
+      // Com a ordem certa (contador → produto) o pedido NÃO segura o produto: esta atualização passa na hora.
+      await cli.query("update erp.products set average_cost = average_cost where id = $1", [SAL]);
+      await cli.query("commit");
+    } catch (e) {
+      await cli.query("rollback").catch(() => undefined);
+      throw e;
+    } finally { cli.release(); }
+    const r = await pedido!;
+    expect(r.statusCode, r.body).toBe(201);
+    await cancelar("orders", j(r).id as string);
+    await semReserva();
+  });
+});
+
 describe("GET do documento — reserva_estoque e reservado por item", () => {
   it("pedido com reserva: reserva_estoque true e reservado = saldo a faturar; cancelado: 0.0000; sem reserva: sem o campo", async () => {
     await semReserva();
