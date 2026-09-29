@@ -134,7 +134,10 @@ describe("A2-1 confirmação padrão: entrada com custo rateado e parcelas; a pr
 
   it("gera título e não tem natureza/centro → 422 sem efeito (sem padrão silencioso)", async () => {
     const topId = await top();
-    const { id } = await compra(topId, { categoria_financeira_id: null, centro_custo_id: null });
+    // Ao SALVAR já é recusado (R1 g); a confirmação continua conferindo: a classificação é tirada no banco,
+    // com o documento ainda aberto, para provar a trava da confirmação.
+    const { id } = await compra(topId);
+    await comPool((c) => c.query("update erp.documentos_compra set categoria_financeira_id=null, centro_custo_id=null where id=$1", [id]));
     const pv = j(await previa(id)) as unknown as { podeConfirmar: boolean; recusas: { code: string }[] };
     expect(pv.podeConfirmar).toBe(false);
     const r = await confirmar(id);

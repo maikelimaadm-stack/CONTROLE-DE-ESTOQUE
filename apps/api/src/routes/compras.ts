@@ -90,7 +90,6 @@ const documentoSchema = z.object({
   centro_custo_id: uuid.nullish(),
   condicao_pagamento_id: uuid.nullish(),
   plano_parcelas: installmentPlanSchema.nullish(),
-  parcelas_ajustadas: z.boolean().optional(),
   forma_pagamento_id: uuid.nullish(),
   frete: decNaoNegativo.default("0"),
   outras_despesas: decNaoNegativo.default("0"),
@@ -196,9 +195,11 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
  * (`especies` = as que o usuário pode ver). A espécie entra no WHERE ANTES do LIMIT (recorte de autorização,
  * nunca filtro sobre o resultado) e o escopo de empresa do módulo compras é aplicado no SQL.
  */
-async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieCompra[], query: unknown, opts: { filtroEspecie: boolean }) {
+async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieCompra[], query: unknown, opts: { filtroEspecie: boolean; unica: boolean }) {
   // `limit` é apelido de `pageSize` (a sonda da tela pede `limit=1`); os dois juntos → vale `pageSize`.
   const bruta = (query ?? {}) as Record<string, unknown>;
+  // Parâmetro repetido chega como lista: 422 no parâmetro, nunca 500 (e nunca "o primeiro vale").
+  for (const [chave, valor] of Object.entries(bruta)) if (Array.isArray(valor)) throw recusa(chave, "Parâmetro repetido: informe um valor só");
   const q = pageQuerySchema.parse(bruta.pageSize === undefined && bruta.limit !== undefined ? { ...bruta, pageSize: bruta.limit } : bruta);
   const f = (query ?? {}) as Record<string, string | undefined>;
   const params: unknown[] = [ctx.orgId];
@@ -222,7 +223,8 @@ async function listarDocumentos(ctx: ServiceCtx, especies: readonly EspecieCompr
     if (v) { if (isISODate(v)) { params.push(v); where.push(`d.data_documento ${op} $${params.length}::date`); } else where.push("false"); }
   }
   if (q.search) { params.push(`%${q.search}%`); where.push(`(d.codigo ilike $${params.length} or fo.name ilike $${params.length} or d.numero_nota ilike $${params.length})`); }
-  where.push(...empresaScope(ctx, "d", params, { ignoreSelected: Boolean(f.empresa_id), modulo: moduloDaPermissao("compras.view") }));
+  // A lista única ignora a empresa selecionada (como a de Vendas); a da espécie a respeita, salvo filtro explícito.
+  where.push(...empresaScope(ctx, "d", params, { ignoreSelected: opts.unica || Boolean(f.empresa_id), modulo: moduloDaPermissao("compras.view") }));
 
   const de = `from erp.documentos_compra d
               join erp.people fo on fo.id = d.fornecedor_id and fo.organization_id = d.organization_id
@@ -279,17 +281,61 @@ async function conferirParceiros(ctx: ServiceCtx, d: DocumentoCompraEntrada): Pr
   }
 }
 
-/** A entrada no estoque que a política da versão congelada PREVÊ (para cobrar lote/validade ao salvar). */
-async function compraDaEntradaNoEstoque(ctx: ServiceCtx, top: TopDoLancamento, execucaoConfiguradaHabilitada: boolean): Promise<boolean> {
+/** O que a política da versão congelada PREVÊ para a confirmação — cobrado já ao SALVAR (a confirmação confere de novo). */
+interface EfeitosPrevistos { entrada: boolean; titulo: boolean; exigeArmazem: boolean; exigeFormaPagamento: boolean; exigeVencimento: boolean }
+
+async function efeitosPrevistosDaCompra(ctx: ServiceCtx, top: Pick<TopDoLancamento, "tipoOperacaoVersaoId" | "codigoBase">, execucaoConfiguradaHabilitada: boolean): Promise<EfeitosPrevistos> {
   const v = await ctx.tx.query<{ configuracao: unknown }>("select configuracao from erp.tipos_operacao_versoes where id = $1 and organization_id = $2", [top.tipoOperacaoVersaoId, ctx.orgId]);
   const r = resolverPoliticaEfetivaDaCompra({ versaoCongelada: { codigoBase: top.codigoBase, configuracao: v.rows[0]?.configuracao ?? null }, execucaoConfiguradaHabilitada });
-  // Política não resolvida: a confirmação recusará; ao salvar, cobra-se o que a entrada exigiria (fail-closed).
-  if (!r.ok) return true;
-  return r.politica.estoque.autoridade === "padrao" || (r.politica.estoque.autoridade === "configurada" && r.politica.estoque.efeito === "entrada");
+  // Política não resolvida (ex.: execução configurada desligada): a confirmação recusará. Ao salvar, cobra-se o
+  // lote/validade que a entrada exigiria (fail-closed); o título não é presumido — não se sabe se haverá.
+  if (!r.ok) return { entrada: true, titulo: false, exigeArmazem: false, exigeFormaPagamento: false, exigeVencimento: false };
+  const { estoque, financeiro } = r.politica;
+  const entradaConfigurada = estoque.autoridade === "configurada" && estoque.efeito === "entrada";
+  const pagarConfigurado = financeiro.autoridade === "configurada" && financeiro.efeito === "pagar";
+  return {
+    entrada: estoque.autoridade === "padrao" || entradaConfigurada,
+    titulo: financeiro.autoridade === "padrao" || pagarConfigurado,
+    exigeArmazem: entradaConfigurada && Boolean(estoque.exigeArmazem),
+    exigeFormaPagamento: pagarConfigurado && Boolean(financeiro.exigeFormaPagamento),
+    exigeVencimento: pagarConfigurado && Boolean(financeiro.exigeVencimento),
+  };
 }
 
-/** Itens: produto da organização; armazém da empresa do documento; lote/validade quando o item vai dar entrada. */
-async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, entradaPrevista: boolean): Promise<void> {
+/**
+ * COMPRA QUE VAI GERAR TÍTULO (política congelada prevê conta a pagar E valor_total > 0): natureza e centro
+ * obrigatórios e as exigências financeiras da política conferidos AO SALVAR, 422 no campo. Valor zero não gera
+ * título (a confirmação também não) — nada é exigido.
+ */
+function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos, total: string): void {
+  if (!efeitos.titulo || !D(total).gt(0)) return;
+  const msg = "Informe a natureza financeira e o centro de resultado: esta compra gera contas a pagar";
+  if (!d.categoria_financeira_id) throw recusa("categoria_financeira_id", msg);
+  if (!d.centro_custo_id) throw recusa("centro_custo_id", msg);
+  if (efeitos.exigeFormaPagamento && !d.forma_pagamento_id) throw recusa("forma_pagamento_id", "A operação desta compra exige a forma de pagamento");
+  if (efeitos.exigeVencimento && !(d.plano_parcelas?.first_due_date ?? d.data_vencimento)) throw recusa("data_vencimento", "A operação desta compra exige o vencimento");
+}
+
+/** Casas decimais: quantidade até 4 (precisão do estoque), valor unitário até 6 (precisão do custo). */
+const casas = (v: string) => { try { return D(v).decimalPlaces(); } catch { return Infinity; } };
+function conferirFormaDoDocumento(d: DocumentoCompraEntrada): void {
+  if (d.serie_nota && !d.numero_nota) throw recusa("serie_nota", "Série sem número de nota: informe o número da nota");
+  // Valores em dinheiro do cabeçalho: 2 casas (o CHECK do total no banco confere a soma exata).
+  for (const campo of ["frete", "outras_despesas", "desconto"] as const) if (casas(d[campo]) > 2) throw recusa(campo, "Informe o valor com no máximo 2 casas decimais");
+  d.itens.forEach((it, i) => {
+    if (casas(it.desconto) > 2) throw recusaDoItem(i, "desconto", "Informe o desconto com no máximo 2 casas decimais");
+    if (D(it.desconto_percentual).gt(100)) throw recusaDoItem(i, "desconto_percentual", "O desconto percentual não pode passar de 100");
+    if (casas(it.quantidade) > 4) throw recusaDoItem(i, "quantidade", "A quantidade aceita no máximo 4 casas decimais");
+    if (casas(it.valor_unitario) > 6) throw recusaDoItem(i, "valor_unitario", "O valor unitário aceita no máximo 6 casas decimais");
+  });
+}
+
+/**
+ * Itens: produto da organização; armazém da empresa do documento; lote só em produto que controla lote e
+ * validade só em "lote e validade" (senão 422 no item); lote/validade obrigatórios quando o item vai dar entrada;
+ * armazém obrigatório quando a política exige armazém.
+ */
+async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos | null): Promise<void> {
   const produtos = await ctx.tx.query<{ id: string; control_stock: boolean; controle_lote: string }>(
     "select id, control_stock, controle_lote from erp.products where id = any($1::uuid[]) and organization_id = $2 and deleted_at is null",
     [[...new Set(d.itens.map((i) => i.produto_id))], ctx.orgId]);
@@ -303,8 +349,14 @@ async function conferirItens(ctx: ServiceCtx, especie: EspecieCompra, d: Documen
     const p = porProduto.get(it.produto_id);
     if (!p) throw recusaDoItem(i, "produto_id", "Produto inválido");
     if (it.armazem_id && !armazemValido.has(it.armazem_id)) throw recusaDoItem(i, "armazem_id", "Armazém inválido: escolha um armazém ativo da empresa do documento");
+    if (it.lote && p.controle_lote === "nenhum") throw recusaDoItem(i, "lote", "Este produto não controla lote: não informe o lote");
+    if (it.validade && p.controle_lote !== "lote_validade") throw recusaDoItem(i, "validade", "Este produto não controla validade: não informe a validade");
     // Produto sem controle de estoque não entra no estoque: armazém, lote e validade não são exigidos.
-    if (especie !== "compra" || !p.control_stock || !entradaPrevista || !it.armazem_id) return;
+    if (especie !== "compra" || !efeitos || !p.control_stock || !efeitos.entrada) return;
+    if (!it.armazem_id) {
+      if (efeitos.exigeArmazem) throw recusaDoItem(i, "armazem_id", "A operação desta compra exige o armazém de todos os itens");
+      return;
+    }
     if (p.controle_lote !== "nenhum" && !it.lote) throw recusaDoItem(i, "lote", "Este produto controla lote: informe o lote");
     if (p.controle_lote === "lote_validade" && !it.validade) throw recusaDoItem(i, "validade", "Este produto controla lote e validade: informe a validade");
   });
@@ -329,26 +381,38 @@ const COLUNAS_INSERCAO = `organization_id, empresa_id, especie, codigo, situacao
   categoria_financeira_id, centro_custo_id, condicao_pagamento_id, parcelas_ajustadas, plano_parcelas, forma_pagamento_id,
   valor_itens, frete, outras_despesas, desconto, valor_total, observacao, criado_por`;
 
+/**
+ * A nota já está numa Compra que o usuário NÃO vê (outra empresa): a conferência sob RLS não a achou e o índice
+ * único recusa. 409 DUPLICATE_DOCUMENT SEM dizer onde — dizer seria revelar o documento fora do escopo.
+ */
+function recusaDaNotaInvisivel(e: unknown): never {
+  const pe = e as { code?: string; constraint?: string };
+  if (pe.code === "23505" && pe.constraint === "ux_documentos_compra_nota") throw err("DUPLICATE_DOCUMENT", "Esta nota já foi lançada nesta organização.");
+  throw e;
+}
+
 async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean) {
   conferirCamposDaEspecie(especie, d);
+  conferirFormaDoDocumento(d);
   const top = await resolverTopParaLancamento(ctx, familiaDaEspecie(especie), d.tipo_operacao_id);
   await conferirParceiros(ctx, d);
   const classificacao = await classificacaoDaCompra(ctx, d);
   const condicao = d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null;
-  if (d.parcelas_ajustadas && !d.plano_parcelas) throw recusa("parcelas_ajustadas", "Parcelas ajustadas exigem o plano de parcelas");
   await cobrarRegrasDaCompra(ctx, top, d);
-  const entradaPrevista = especie === "compra" ? await compraDaEntradaNoEstoque(ctx, top, execucaoConfiguradaHabilitada) : false;
-  await conferirItens(ctx, especie, d, entradaPrevista);
+  const efeitos = especie === "compra" ? await efeitosPrevistosDaCompra(ctx, top, execucaoConfiguradaHabilitada) : null;
+  await conferirItens(ctx, especie, d, efeitos);
 
   // Totais SEMPRE no servidor: itens − descontos + frete + outras − desconto.
   const itensCalculo = d.itens.map((i) => ({ quantity: i.quantidade, unitPrice: i.valor_unitario, discount: i.desconto, discountPercent: i.desconto_percentual }));
   const totais = documentTotals(itensCalculo, { freight: d.frete, otherValues: d.outras_despesas, discount: d.desconto });
+  if (efeitos) conferirExigenciasDoTitulo(d, efeitos, totais.total);
 
   if (especie === "compra" && d.numero_nota) await conferirNotaDuplicada(ctx, { fornecedorId: d.fornecedor_id, numero: d.numero_nota, serie: d.serie_nota, excluirDocumentoId: null });
 
   const plano: Record<string, unknown> | null = d.plano_parcelas ? { ...d.plano_parcelas }
     : condicao ? { ...planoDaCondicao(condicao, { dataDocumento: d.data_documento, total: totais.total }) } : null;
-  const parcelasAjustadas = d.parcelas_ajustadas ?? (Boolean(d.plano_parcelas) && condicao !== null);
+  // Derivado no servidor, como na venda: plano próprio sobre uma condição = parcelas ajustadas.
+  const parcelasAjustadas = Boolean(d.plano_parcelas) && condicao !== null;
 
   const codigo = await nextCode(ctx.tx, ctx.orgId, `compras_${especie}`);
   const valores = [ctx.orgId, d.empresa_id, especie, codigo, top.tipoOperacaoId, top.tipoOperacaoVersaoId,
@@ -358,7 +422,7 @@ async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompr
     totais.subtotal, money(d.frete), money(d.outras_despesas), money(d.desconto), totais.total, d.observacao, ctx.user.id];
   const id = (await ctx.tx.query<{ id: string }>(
     `insert into erp.documentos_compra (${COLUNAS_INSERCAO}) values ($1,$2,$3,$4,'aberto',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26) returning id`,
-    valores)).rows[0]!.id;
+    valores).catch(recusaDaNotaInvisivel)).rows[0]!.id;
   await atribuirIdGlobal(ctx, "documentos_compra", id);
   for (const [i, it] of d.itens.entries()) {
     await ctx.tx.query(
@@ -379,7 +443,7 @@ export default async function comprasRoutes(app: FastifyInstance) {
   for (const { especie, segmento, recurso } of ESPECIES) {
     const base = `/compras/${segmento}`;
 
-    app.get(base, async (req) => runService(app, req, `${recurso}.view`, (ctx) => listarDocumentos(ctx, [especie], req.query, { filtroEspecie: false })));
+    app.get(base, async (req) => runService(app, req, `${recurso}.view`, (ctx) => listarDocumentos(ctx, [especie], req.query, { filtroEspecie: false, unica: false })));
 
     /** As TOPs que esta espécie pode lançar — porta OPERACIONAL (`<recurso>.create`), não administrativa. */
     app.get(`${base}/operation-types`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
@@ -407,14 +471,21 @@ export default async function comprasRoutes(app: FastifyInstance) {
       const familia = familiaDaEspecie(especie);
       const bruto = ((req.query ?? {}) as Record<string, unknown>)["tipo_operacao_id"];
       if (typeof bruto !== "string" || !FORMA_UUID.test(bruto)) throw notFound("Tipo de operação");
-      const v = await ctx.tx.query("select 1 from erp.tipos_operacao where id = $1 and organization_id = $2 and codigo_base = $3 and ativo and excluido_em is null", [bruto, ctx.orgId, familia]);
-      if (!v.rowCount) throw notFound("Tipo de operação");
+      const v = await ctx.tx.query<{ versao_id: string }>(
+        `select v.id as versao_id from erp.tipos_operacao t
+           join erp.tipos_operacao_versoes v on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
+          where t.id = $1 and t.organization_id = $2 and t.codigo_base = $3 and t.ativo and t.excluido_em is null`, [bruto, ctx.orgId, familia]);
+      if (!v.rows[0]) throw notFound("Tipo de operação");
       const { formato, regras } = await regrasDaTopAtual(ctx, bruto);
+      // A versão ATUAL gera contas a pagar? (a tela marca natureza/centro como obrigatórios). Pedido nunca gera.
+      const geraTitulos = especie === "compra"
+        && (await efeitosPrevistosDaCompra(ctx, { tipoOperacaoVersaoId: v.rows[0].versao_id, codigoBase: familia }, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED)).titulo;
       return {
         contractVersion: 1,
         formato,
         exigencias: regras ? camposExigidosTop(regras.config, EXIGENCIAS_GERAIS_COMPRA_TOP) : [],
         condicoesPermitidas: regras?.condicoesPermitidas ?? null,
+        geraTitulos,
       };
     }));
 
@@ -460,7 +531,7 @@ export default async function comprasRoutes(app: FastifyInstance) {
   app.get("/compras/documentos", async (req) => runService(app, req, null, async (ctx) => {
     const permitidas = ESPECIES.filter((e) => hasPermission(ctx, `${e.recurso}.view`)).map((e) => e.especie);
     if (permitidas.length === 0) throw denied(`${recursoDa("compra")}.view`);
-    return listarDocumentos(ctx, permitidas, req.query, { filtroEspecie: true });
+    return listarDocumentos(ctx, permitidas, req.query, { filtroEspecie: true, unica: true });
   }));
 
   registrarConfirmacaoCompras(app);

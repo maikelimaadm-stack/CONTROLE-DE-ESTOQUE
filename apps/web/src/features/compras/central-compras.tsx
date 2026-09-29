@@ -145,7 +145,7 @@ export function CentralDeCompras({ variante }: { variante: VarianteDeCompra }) {
     categoria_financeira_id: opcional(h.categoria_financeira_id),
     centro_custo_id: opcional(h.centro_custo_id),
     condicao_pagamento_id: opcional(h.condicao_pagamento_id),
-    ...(ajustarParcelas ? { plano_parcelas: plano, parcelas_ajustadas: !vazio(h.condicao_pagamento_id) } : {}),
+    ...(ajustarParcelas ? { plano_parcelas: plano } : {}),
     forma_pagamento_id: opcional(h.forma_pagamento_id),
     frete: opcional(h.frete),
     outras_despesas: opcional(h.outras_despesas),

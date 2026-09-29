@@ -23,7 +23,8 @@ import type { ServiceCtx } from "../lib/context.js";
 import { postStock, reverseStock, quantidadeLegivel } from "../services/stock-core.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { travarContadorIdGlobal } from "../lib/id-global.js";
-import { lerDocumentoCompra } from "./compras.js";
+import { lerDocumentoCompra, REGRA_CLASSIFICACAO_COMPRA } from "./compras.js";
+import { validarClassificacaoDoDocumento } from "../lib/documento-comercial.js";
 
 /** Versão do contrato da prévia. A web confere forma E versão antes de usar o corpo. */
 export const CONTRATO_PREVIA_CONFIRMACAO_COMPRA = 1;
@@ -121,19 +122,6 @@ interface PlanoDaConfirmacao {
 }
 
 const MSG_NATUREZA_OBRIGATORIA = "Informe a natureza financeira e o centro de resultado: a confirmação gera contas a pagar.";
-const MSG_NATUREZA_INVALIDA = "Natureza financeira inválida: escolha uma natureza de despesa analítica e ativa.";
-const MSG_CENTRO_INVALIDO = "Centro de resultado inválido: escolha um centro de resultado analítico e ativo.";
-
-/** Natureza de DESPESA (ou ambas), analítica e ativa; centro analítico e ativo. Mesma recusa para inexistente/alheio. */
-async function conferirClassificacao(ctx: ServiceCtx, categoriaId: string, centroId: string, trava: boolean): Promise<string | null> {
-  const lock = trava ? " for share" : "";
-  const c = await ctx.tx.query("select 1 from erp.financial_categories where id=$1 and organization_id=$2 and nature in ('expense','both') and kind='analytic' and is_active and deleted_at is null" + lock, [categoriaId, ctx.orgId]);
-  if (!c.rowCount) return "natureza";
-  const cc = await ctx.tx.query("select 1 from erp.cost_centers where id=$1 and organization_id=$2 and kind='analytic' and is_active and deleted_at is null" + lock, [centroId, ctx.orgId]);
-  if (!cc.rowCount) return "centro";
-  return null;
-}
-
 function lerPlano(bruto: unknown): InstallmentPlan | null {
   if (!bruto || typeof bruto !== "object" || !(bruto as { installments?: number }).installments) return null;
   return installmentPlanSchema.parse(bruto);
@@ -164,7 +152,8 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   plano.politica = politica;
   // PADRÃO da compra: entrada dos itens com armazém e conta a pagar do total.
   plano.daEntrada = politica.estoque.autoridade === "padrao" || politica.estoque.efeito === "entrada";
-  plano.geraTitulos = politica.financeiro.autoridade === "padrao" || politica.financeiro.efeito === "pagar";
+  // Valor zero não gera título (nem exige natureza/centro) — a prévia e a confirmação leem a MESMA regra.
+  plano.geraTitulos = (politica.financeiro.autoridade === "padrao" || politica.financeiro.efeito === "pagar") && D(d.valor_total).gt(0);
   plano.plano = lerPlano(d.plano_parcelas);
 
   // AS EXIGÊNCIAS DA POLÍTICA — todas conferidas, todas juntas, antes de qualquer efeito.
@@ -191,12 +180,17 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
   // CLASSIFICAÇÃO: obrigatória quando HAVERÁ título — sem padrão silencioso ("primeira por código" não existe aqui).
   if (plano.geraTitulos) {
     if (!d.categoria_financeira_id || !d.centro_custo_id) {
-      modo.recusar(validation(MSG_NATUREZA_OBRIGATORIA, [{ path: ["categoria_financeira_id"], message: MSG_NATUREZA_OBRIGATORIA }]));
+      const campo = d.categoria_financeira_id ? "centro_custo_id" : "categoria_financeira_id";
+      modo.recusar(validation(MSG_NATUREZA_OBRIGATORIA, [{ path: campo, message: MSG_NATUREZA_OBRIGATORIA }]));
     } else {
-      const falha = await conferirClassificacao(ctx, d.categoria_financeira_id, d.centro_custo_id, modo.trava);
-      if (falha === "natureza") modo.recusar(validation(MSG_NATUREZA_INVALIDA, [{ path: ["categoria_financeira_id"], message: MSG_NATUREZA_INVALIDA }]));
-      else if (falha === "centro") modo.recusar(validation(MSG_CENTRO_INVALIDO, [{ path: ["centro_custo_id"], message: MSG_CENTRO_INVALIDO }]));
-      else plano.classificacao = { categoriaFinanceiraId: d.categoria_financeira_id, centroCustoId: d.centro_custo_id };
+      // A porta única da classificação, com a regra da compra (a mesma do lançamento).
+      try {
+        plano.classificacao = await validarClassificacaoDoDocumento(ctx, REGRA_CLASSIFICACAO_COMPRA,
+          { categoriaFinanceiraId: d.categoria_financeira_id, centroCustoId: d.centro_custo_id }, "confirmacao", { trava: modo.trava });
+      } catch (e) {
+        if (!(e instanceof DomainError)) throw e;
+        modo.recusar(e);
+      }
     }
   }
 
@@ -332,7 +326,8 @@ async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfigur
  * ESTORNO DE COMPRA CONFIRMADA — chamado pela rota `/cancel` (compras.ts) com o documento JÁ TRAVADO.
  * Trava os títulos em ordem de id; título com baixa → 409; estoque já consumido → 409 dizendo produto e
  * armazém (antes do estorno, nunca 500); `reverseStock`; títulos cancelados; situação cancelado; auditoria.
- * Estorno pelo custo gravado no movimento (o `reverseStock` de sempre); `reversal` não passa pela guarda da reserva.
+ * O estorno sai pelo CUSTO MÉDIO ATUAL do produto (o `reverseStock` de sempre), não pelo custo gravado na entrada;
+ * `reversal` não passa pela guarda da reserva.
  */
 export async function cancelarCompraConfirmada(ctx: ServiceCtx, doc: Record<string, unknown>, opcoes: { motivo?: string | null } = {}) {
   const id = String(doc.id);
@@ -386,11 +381,12 @@ export interface ChaveDaNota { fornecedorId: string; numero: string | null | und
 const serieNormal = (s: string | null | undefined) => (s && s.trim() ? s.trim() : "1");
 
 /**
+ * O id do fornecedor entra em MINÚSCULAS: o mesmo UUID escrito em maiúsculas por uma das portas cairia noutra chave.
  * Serializa as duas portas (Compra e Documento fiscal de Estoque) na MESMA chave de nota, até o fim da
  * transação: sem isto, uma Compra e um Documento fiscal simultâneos com a mesma nota passariam os dois.
  */
 async function travarChaveDaNota(ctx: ServiceCtx, k: { fornecedorId: string; numero: string; serie: string }) {
-  await ctx.tx.query("select pg_advisory_xact_lock(hashtextextended($1, 267))", [`nota:${ctx.orgId}:${k.fornecedorId}:${k.numero}:${k.serie}`]);
+  await ctx.tx.query("select pg_advisory_xact_lock(hashtextextended($1, 267))", [`nota:${ctx.orgId}:${k.fornecedorId.toLowerCase()}:${k.numero}:${k.serie}`]);
 }
 
 /** A Compra NÃO cancelada que já tem esta nota (o Documento fiscal de Estoque recusa por ela). */

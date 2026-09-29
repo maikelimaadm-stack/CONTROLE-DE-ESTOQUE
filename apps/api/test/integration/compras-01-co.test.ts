@@ -235,14 +235,15 @@ describe("CO-2 — recusas no lançamento → 422 no campo; serviço sem armazé
 // CO-3 — confirmar com a TOP padrão
 // ---------------------------------------------------------------------------------------------------------
 describe("CO-3 — confirmar com TOP padrão: entrada com custo rateado e títulos a pagar nas parcelas", () => {
-  it("CO-3 frete, outras e desconto entram no custo; centavo no último; 2 parcelas; a prévia mostra exatamente isso", async () => {
+  it("CO-3 frete, outras e desconto entram no custo; centavo pelo maior resto; custo com 6 casas; 2 parcelas; a prévia mostra exatamente isso", async () => {
     const topCompra = await top(COMPRA);
     const a = await produto(); const b = await produto();
     const cond = await condicao(2, 30, 30);
     const nota = `N${unico()}`;
     // itens: A 10 × 10,00 = 100,00 · B 4 × 12,50 = 50,00 → 150,00; + frete 15 + outras 5 − desconto 10 = 160,00.
-    // Rateio pelo total do item, cada parte arredondada PARA BAIXO no centavo e o que sobra no último:
-    // A 100/150 × 160 = 106,666… → 106,66 · B (último) = 160 − 106,66 = 53,34.
+    // MAIOR RESTO: cada item recebe o piso da sua parte no centavo; o centavo que falta vai ao de maior resto.
+    // A 100/150 × 160 = 106,666… (piso 106,66, resto ,006…) · B 53,333… (piso 53,33, resto ,003…) → A 106,67 · B 53,33.
+    // Custo unitário com 6 casas: 106,67 ÷ 10 = 10,667 · 53,33 ÷ 4 = 13,3325.
     const id = await lancada("compra", topCompra, [
       { produto_id: a.id, armazem_id: I.warehouse, quantidade: "10", valor_unitario: "10.00" },
       { produto_id: b.id, armazem_id: I.warehouse, quantidade: "4", valor_unitario: "12.50" },
@@ -259,12 +260,12 @@ describe("CO-3 — confirmar com TOP padrão: entrada com custo rateado e títul
     expect(e.situacao).toBe("confirmado");
     const porProduto = (pid: string) => e.entradas.filter((m) => m.product_id === pid);
     expect(e.entradas.length).toBe(2);
-    expect(porProduto(a.id).map((m) => [m.direction, m.quantity, m.total_cost, m.movement_date, Number(m.unit_cost)])).toEqual([[1, "10.0000", "106.66", "2026-09-12", 10.666]]);
-    expect(porProduto(b.id).map((m) => [m.direction, m.quantity, m.total_cost, m.movement_date, Number(m.unit_cost)])).toEqual([[1, "4.0000", "53.34", "2026-09-12", 13.335]]);
+    expect(porProduto(a.id).map((m) => [m.direction, m.quantity, m.total_cost, m.movement_date, m.unit_cost])).toEqual([[1, "10.0000", "106.67", "2026-09-12", "10.667000"]]);
+    expect(porProduto(b.id).map((m) => [m.direction, m.quantity, m.total_cost, m.movement_date, m.unit_cost])).toEqual([[1, "4.0000", "53.33", "2026-09-12", "13.332500"]]);
     expect(e.entradas.reduce((x, m) => x + Math.round(Number(m.total_cost) * 100), 0), "as entradas fecham com o total do documento").toBe(16000);
     expect([await saldo(I.warehouse, a.id), await saldo(I.warehouse, b.id)]).toEqual(["10.0000", "4.0000"]);
     const custoMedio = (await admin.query<{ c: string }>("select average_cost::text as c from erp.stock_balances where warehouse_id=$1 and product_id=$2", [I.warehouse, a.id])).rows[0]!.c;
-    expect(Number(custoMedio), "o saldo carrega o custo rateado").toBe(10.666);
+    expect(Number(custoMedio), "o saldo carrega o custo rateado").toBe(10.667);
     const compra = (await admin.query<{ d: string | null }>("select to_char(last_purchase_date,'YYYY-MM-DD') as d from erp.products where id=$1", [a.id])).rows[0]!.d;
     expect(compra, "última compra do produto").toBe("2026-09-12");
 
@@ -280,9 +281,9 @@ describe("CO-3 — confirmar com TOP padrão: entrada com custo rateado e títul
 
     // A PRÉVIA mostrou exatamente isso: os mesmos valores de entrada, custos, parcelas e vencimentos.
     const texto = previa.body;
-    for (const v of ["106.66", "53.34", "80.00", e.titulos[0]!.due_date, e.titulos[1]!.due_date]) expect(texto, `a prévia mostra ${v}`).toContain(v);
-    expect(texto).toMatch(/10\.666/);
-    expect(texto).toMatch(/13\.335/);
+    for (const v of ["106.67", "53.33", "80.00", e.titulos[0]!.due_date, e.titulos[1]!.due_date]) expect(texto, `a prévia mostra ${v}`).toContain(v);
+    expect(texto).toMatch(/"custoUnitario":"10\.667000"/);
+    expect(texto).toMatch(/"custoUnitario":"13\.332500"/);
   });
 
   it("CO-3b sem nota, o título é \"CMP-<código>\"; confirmar de novo não duplica", async () => {
@@ -554,7 +555,8 @@ describe("CO-8 — nota duplicada → 409 DUPLICATE_DOCUMENT dizendo onde está"
     expect(r.statusCode, r.body).toBe(409);
     expect(j(r).error!.code).toBe("DUPLICATE_DOCUMENT");
     expect(j(r).error!.message).toContain("Documento fiscal de Estoque");
-    if (cod) expect(j(r).error!.message).toContain(cod);
+    expect(cod, "premissa: o Documento fiscal tem código").toBeTruthy();
+    expect(j(r).error!.message).toContain(cod!);
   });
 
   it("CO-8c Documento fiscal de Estoque × Compra (e nenhum movimento do Documento fiscal)", async () => {

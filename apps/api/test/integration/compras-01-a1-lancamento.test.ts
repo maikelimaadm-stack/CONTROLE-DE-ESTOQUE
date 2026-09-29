@@ -26,6 +26,8 @@ async function criarTop(codigoBase: string, nome: string): Promise<string> {
 const base = (o: Record<string, unknown> = {}) => ({
   empresa_id: I.empresa, tipo_operacao_id: topCompra, fornecedor_id: I.provider, data_documento: "2026-09-10",
   frete: "10", outras_despesas: "5", desconto: "2",
+  // A compra que gera título exige natureza e centro já ao salvar (R1 g).
+  categoria_financeira_id: categoriaDespesa, centro_custo_id: I.costCenter,
   itens: [{ produto_id: I.product, armazem_id: I.warehouse, quantidade: "4", valor_unitario: "12.5", desconto: "1" }],
   ...o,
 });
@@ -82,7 +84,8 @@ describe("lançar", () => {
       ["compras", { fornecedor_id: I.client }, "fornecedor_id"],
       ["compras", { transportadora_id: I.client }, "transportadora_id"],
       ["compras", { categoria_financeira_id: I.incomeCategory, centro_custo_id: I.costCenter }, "categoria_financeira_id"],
-      ["compras", { categoria_financeira_id: categoriaDespesa }, "centro_custo_id"],
+      ["compras", { centro_custo_id: null }, "centro_custo_id"],
+      ["compras", { categoria_financeira_id: null }, "categoria_financeira_id"],
       ["compras", { itens: [{ produto_id: I.product, armazem_id: I.warehouseEmpresa2, quantidade: "1", valor_unitario: "1" }] }, "itens[0].armazem_id"],
       ["compras", { itens: [{ produto_id: I.productLot, armazem_id: I.warehouse, quantidade: "1", valor_unitario: "1" }] }, "itens[0].lote"],
       ["pedidos", { tipo_operacao_id: topPedido, numero_nota: "9" }, "numero_nota"],
@@ -98,7 +101,7 @@ describe("lançar", () => {
     expect((await lancar("compras", base({ nota: "1" }))).statusCode).toBe(422);
     expect((await lancar("compras", base({ itens: [{ produto_id: I.product, quantidade: "1", valor_unitario: "1", preco: "1" }] }))).statusCode).toBe(422);
     // produto com lote e lote informado → passa; sem armazém (não entra no estoque) → passa
-    expect((await lancar("compras", base({ itens: [{ produto_id: I.productLot, armazem_id: I.warehouse, quantidade: "1", valor_unitario: "1", lote: "L-A1", validade: "2027-01-01" }] }))).statusCode).toBe(201);
+    expect((await lancar("compras", base({ itens: [{ produto_id: I.productLot, armazem_id: I.warehouse, quantidade: "1", valor_unitario: "1", lote: "L-A1" }] }))).statusCode).toBe(201);
     expect((await lancar("compras", base({ itens: [{ produto_id: I.productLot, quantidade: "1", valor_unitario: "1" }] }))).statusCode).toBe(201);
   });
 
