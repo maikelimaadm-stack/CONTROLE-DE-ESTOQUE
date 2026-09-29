@@ -1310,5 +1310,5 @@ motor paralelo, como o §12 previu. `compras.pedido` fica FORA da matriz: o pedi
   textos da aba Execução neutros.
 - **Sem guarda de marca (0023):** nenhum binário anterior conhece `erp.documentos_compra`.
 - **Custo de entrada:** a parte de cada item no total do documento, na proporção do total do item (frete, outras
-  despesas e desconto entram); soma zero → pela quantidade; cada parte truncada no centavo, o que sobra vai para o último; custo unitário com
-  4 casas. Ordem das travas na confirmação: documento → contador do ID Global → primeiro movimento.
+  despesas e desconto entram); soma zero → pela quantidade; maior resto no centavo (piso de cada parte; os centavos que faltam vão aos
+  maiores restos, empate pelo maior valor e depois pela ordem dos itens); custo unitário com 6 casas. Ordem das travas na confirmação: documento → contador do ID Global → primeiro movimento.

@@ -1403,7 +1403,9 @@ conferem os objetos criados; não comparam contagens de tabelas vivas. As permis
    `POST /stock/invoices` anterior não confere nota em Compra, mas não existe Compra ainda. Tudo como hoje.
 2. **web ANTERIOR × API nova:** a web anterior não tem a aba Documentos de Compras nem a Central de Compras; o
    Documento fiscal de Estoque segue igual, com a única diferença de recusar (409 `DUPLICATE_DOCUMENT`) a nota que já
-   está numa Compra. O editor anterior da TOP não oferece as famílias de compra.
+   está numa Compra. O editor anterior da TOP OFERECE as famílias de compra (lê a lista da API) e manda o "Cliente em
+   atraso" que conhece; a API nova recusa, nas duas famílias de compra, valor ≠ "não valida" (422 no campo) — fail-closed,
+   nada é gravado. Salvar TOP de compra com o valor neutro funciona.
 3. **web NOVA × API anterior:** sem `GET /api/compras/documentos`, a aba Documentos mostra "indisponível nesta versão
    do servidor"; "Processos" e "Visão geral" de Compras continuam funcionando.
 
