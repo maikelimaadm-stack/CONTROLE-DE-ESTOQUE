@@ -26,7 +26,7 @@ const TODOS = "all";
 
 export interface OpcaoDeTipo { value: string; label: string }
 
-export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMontar }: {
+export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMontar, prefixo = "vendas" }: {
   /** A variante ativa, ou "" para todos os tipos. */
   valor: string;
   /** Os tipos que o usuário pode LER, já rotulados. "Todos os tipos" é acrescentado aqui. */
@@ -38,6 +38,8 @@ export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMonta
    * pedido; o seletor novo, ao montar, devolve o foco a si mesmo e limpa o pedido.
    */
   focarAoMontar?: React.MutableRefObject<boolean>;
+  /** Prefixo dos `data-testid` (o portal que monta o seletor). Vendas fica com o de sempre. */
+  prefixo?: string;
 }) {
   const gatilho = React.useRef<HTMLButtonElement>(null);
   React.useEffect(() => {
@@ -54,18 +56,18 @@ export function SeletorDeTipoDeDocumento({ valor, opcoes, onChange, focarAoMonta
   return <MenuP.Root modal={false}>
     <MenuP.Trigger asChild>
       <button ref={gatilho} type="button" className={estilos.tipo} title="Tipo de documento"
-        data-testid="vendas-tipo" data-valor={valor || TODOS}>
+        data-testid={`${prefixo}-tipo`} data-valor={valor || TODOS}>
         <span className={estilos.tipoPrefixo}>Tipo</span>{" "}
         <span className={estilos.tipoValor}>{atual}</span>
         <ChevronDown className={estilos.seta11} strokeWidth={2.4} aria-hidden />
       </button>
     </MenuP.Trigger>
     <MenuP.Portal>
-      <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuTipo)} aria-label="Tipo de documento" data-testid="vendas-tipo-opcoes">
+      <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuTipo)} aria-label="Tipo de documento" data-testid={`${prefixo}-tipo-opcoes`}>
         <MenuP.RadioGroup value={valor || TODOS} onValueChange={(v) => { if (v !== (valor || TODOS)) onChange(v === TODOS ? "" : v); }}>
           {todas.map((o, i) => <React.Fragment key={o.value}>
             {i === 1 && <MenuP.Separator className={estilos.separador} />}
-            <MenuP.RadioItem value={o.value} className={estilos.opcaoTipo} data-testid="vendas-tipo-opcao" data-valor={o.value}>
+            <MenuP.RadioItem value={o.value} className={estilos.opcaoTipo} data-testid={`${prefixo}-tipo-opcao`} data-valor={o.value}>
               <span className={estilos.marca}><MenuP.ItemIndicator><Check strokeWidth={3} aria-hidden /></MenuP.ItemIndicator></span>
               {o.label}
             </MenuP.RadioItem>

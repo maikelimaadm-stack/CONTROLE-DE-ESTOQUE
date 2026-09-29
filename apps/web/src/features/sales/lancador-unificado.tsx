@@ -117,6 +117,25 @@ export function NovoDocumentoDeVenda({ variante, rotuloDoTipo }: {
   /** O rótulo humano do contexto ("Venda", "Todos os tipos") — o mesmo que a pílula Tipo mostra. */
   rotuloDoTipo: string;
 }) {
+  const grupos = useTopsDeVendas();
+  return <NovoDocumentoPorTop variante={variante} rotuloDoTipo={rotuloDoTipo} todosOsGrupos={grupos} prefixo="vendas" rota={rotaDeLancamento} />;
+}
+
+/**
+ * O MESMO `Novo` para outro portal (COMPRAS-01, decisão 267): a janela, o menu rápido e as regras de escolha são
+ * os de cima, inteiros. O portal dá só o que é dele — os grupos de TOPs (perguntados à porta operacional DELE), o
+ * prefixo dos `data-testid` e a rota de lançamento. Vendas continua passando pelos mesmos valores de antes.
+ */
+export function NovoDocumentoPorTop({ variante, rotuloDoTipo, todosOsGrupos, prefixo, rota }: {
+  variante: string;
+  rotuloDoTipo: string;
+  /** Os grupos do portal, um por variante (o hook de TOPs do portal). */
+  todosOsGrupos: GrupoDeTops[];
+  /** Prefixo dos `data-testid` do botão e do menu (`vendas`, `compras`). */
+  prefixo: string;
+  /** A porta de lançamento de uma linha escolhida. */
+  rota: (linha: LinhaDeLancamento) => string;
+}) {
   const router = useRouter();
   const [aberto, setAberto] = React.useState(false);
   const [busca, setBusca] = React.useState("");
@@ -143,7 +162,7 @@ export function NovoDocumentoDeVenda({ variante, rotuloDoTipo }: {
 
   // Só os grupos que o usuário pode LANÇAR, e só os do tipo da barra. Sem nenhum, o `Novo` não existe:
   // oferecer "Novo" a quem não pode criar nada NESTE contexto é oferecer uma porta fechada.
-  const grupos = useTopsDeVendas().filter((g) => g.habilitado && (!variante || g.variante.variante === variante));
+  const grupos = todosOsGrupos.filter((g) => g.habilitado && (!variante || g.variante.variante === variante));
   const todas = linhasDeLancamento(grupos);
   const visiveis = filtrarLinhas(todas, busca);
   const padrao = padraoDeLancamento(todas);
@@ -169,8 +188,8 @@ export function NovoDocumentoDeVenda({ variante, rotuloDoTipo }: {
     setOcupado(true);
     // FECHA ANTES DE NAVEGAR: com o overlay montado sobre a rota nova, ele capturaria o clique seguinte.
     setAberto(false);
-    router.push(rotaDeLancamento(linha));
-  }, [router]);
+    router.push(rota(linha));
+  }, [router, rota]);
 
   const escolher = (linha: LinhaDeLancamento) => { setEscolhido(linha.id); campoBusca.current?.focus(); };
 
@@ -218,18 +237,18 @@ export function NovoDocumentoDeVenda({ variante, rotuloDoTipo }: {
   if (!grupos.length) return null;
   return <>
     <span className={estilos.dividido}>
-      <button ref={botaoNovo} type="button" className={estilos.novo} data-testid="vendas-novo" aria-haspopup="dialog" aria-expanded={aberto}
+      <button ref={botaoNovo} type="button" className={estilos.novo} data-testid={`${prefixo}-novo`} aria-haspopup="dialog" aria-expanded={aberto}
         title={`Novo documento · ${rotuloDoTipo}: escolher a operação`} onClick={abrir}>
         <Plus strokeWidth={2.4} aria-hidden /><span>Novo</span>
       </button>
       <MenuP.Root modal={false}>
         <MenuP.Trigger asChild>
-          <button type="button" className={estilos.abrirMenu} aria-label="Escolher a operação do novo documento" data-testid="vendas-novo-menu">
+          <button type="button" className={estilos.abrirMenu} aria-label="Escolher a operação do novo documento" data-testid={`${prefixo}-novo-menu`}>
             <ChevronDown strokeWidth={2.4} aria-hidden />
           </button>
         </MenuP.Trigger>
         <MenuP.Portal>
-          <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuOperacoes)} aria-label="Nova operação" data-testid="vendas-novo-operacoes"
+          <MenuP.Content align="start" sideOffset={6} className={cn(estilos.menu, estilos.menuOperacoes)} aria-label="Nova operação" data-testid={`${prefixo}-novo-operacoes`}
             // "Escolher operação…": o menu devolve o foco ao `Novo` e SÓ ENTÃO a janela abre — assim a
             // janela guarda o `Novo` como quem a abriu, e o ESC devolve o foco a ele, não ao `<body>`.
             onCloseAutoFocus={(e) => { if (!janelaPedidaPeloMenu.current) return; janelaPedidaPeloMenu.current = false; e.preventDefault(); botaoNovo.current?.focus(); abrir(); }}>

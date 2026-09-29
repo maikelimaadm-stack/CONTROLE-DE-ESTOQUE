@@ -67,6 +67,10 @@ export const MODULES = [
 
 export const AREAS = [
   // ---------------- Compras ----------------
+  // COMPRAS-01 (decisão 267): a lista única de documentos de compra (pedido de compra e compra), no desenho do
+  // Portal de Vendas — primeira e padrão. O lançamento começa pelo `+ Novo` da própria lista (a TOP escolhe a
+  // espécie), então, como em Vendas, não há ação de variante aqui.
+  a("compras", "documentos", "Documentos", ["pedidos_compra.view", "compras.view"], { keywords: ["pedido de compra", "compra", "nota de compra", "fornecedor", "entrada de mercadoria", "documento de compra"], description: "Uma lista com filtro por tipo de documento de compra" }),
   a("compras", "visao-geral", "Visão Geral", "dashboard.supply.view", { aliases: ["/dashboards/suprimentos"], keywords: ["indicadores de compras", "dashboard"] }),
   a("compras", "processos", "Processos", P.PURCHASE, { keywords: ["solicitação", "cotação", "aprovação", "autorização", "compra", "recebimento", "meus processos", "rejeitados"], description: "Uma lista: escopo (todos / meus) + etapa como filtro" }),
   act("compras", "solicitacao", "Nova solicitação de compra", "/suprimentos/new", "purchase_requests.create", { keywords: ["comprar", "pedir", "requisitar compra"] }),
@@ -363,6 +367,7 @@ export const EXTRA_REDIRECTS = [
  * precisa casar com uma página existente ou com um destes padrões).
  */
 export const DETAIL_ROUTES = [
+  { id: "compras.documentos.detalhe", module: "compras", area: "documentos", label: "Documento de compra", pattern: "/compras/:especie/:id", perm: ["pedidos_compra.view", "compras.view"] },
   { id: "compras.processos.detalhe", module: "compras", area: "processos", label: "Processo de compra", pattern: "/suprimentos/view/:id", perm: "purchase_requests.view" },
   { id: "estoque.recebimentos.manuais.detalhe", module: "estoque", area: "recebimentos", label: "Entrada manual", pattern: "/estoque/entradas/:id", perm: "input_entries.view" },
   { id: "estoque.recebimentos.fiscais.detalhe", module: "estoque", area: "recebimentos", label: "Documento fiscal", pattern: "/estoque/documentos-fiscais/:id", perm: "invoices.view" },

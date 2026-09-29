@@ -192,7 +192,7 @@ for (const [forma, { tabela, discriminador }] of Object.entries(POR_VARIANTE)) {
   const uniques = t.constraints.filter((c) => /^unique\b/i.test(c));
   const cobre = uniques.some((u) => {
     const cols = (u.match(/\(([^)]*)\)/)?.[1] ?? "").split(",").map((s) => s.trim());
-    return cols.includes("code") && cols.includes(discriminador);
+    return (cols.includes("code") || cols.includes("codigo")) && cols.includes(discriminador);
   });
   if (!cobre) {
     semDiscriminador.push(

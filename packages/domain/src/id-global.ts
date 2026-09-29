@@ -69,7 +69,7 @@ export const ENTIDADES_ID_GLOBAL: readonly EntidadeIdGlobal[] = [
   E("documentos_compra", "Documento de Compra", "compras", "erp.documentos_compra", porVariante("especie", {
     pedido: { rota: "/compras/pedidos/:id", permissao: "pedidos_compra.view" },
     compra: { rota: "/compras/compras/:id", permissao: "compras.view" }
-  })),
+  }), { exclusaoLogica: false }),
   // Pecuária — variantes derivadas da fonte única de operações de rebanho
   E("animals", "Animal", "pecuaria", "erp.animals", fixa("/pecuaria/animais/:id", "animals.view")),
   E("animal_movements", "Movimentação de Rebanho", "pecuaria", "erp.animal_movements", porVariante("movement_type", variantesDeOperacoes(MOVIMENTACOES_REBANHO))),
