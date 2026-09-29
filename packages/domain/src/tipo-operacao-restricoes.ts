@@ -18,6 +18,7 @@ import {
   type RecusaConfiguracaoTop,
 } from "./tipo-operacao-configuracao.js";
 import { tipoOperacao } from "./tipo-operacao.js";
+import { TABELA_DOCUMENTO_COMPRA } from "./tipo-operacao-configurado.js";
 
 // ─────────────── capacidade e códigos ───────────────
 
@@ -112,7 +113,14 @@ export function recusasFiscaisDaFamiliaTop(c: ConfiguracaoTipoOperacao, familia:
 
 // ─────────────── exigências gerais ───────────────
 
-/** O mapa exigência → campo do documento → rótulo. Uma lista só; a tela e a API leem esta. */
+/** Uma linha do mapa exigência → campo do documento → rótulo. */
+export interface ExigenciaGeralTop<C extends string = string> {
+  readonly chave: "exigeParceiro" | "exigeCentroResultado" | "exigeObservacao" | "exigeTransportadora";
+  readonly caminho: C;
+  readonly rotulo: string;
+}
+
+/** O mapa exigência → campo do documento → rótulo DA VENDA. Uma lista só; a tela e a API leem esta. */
 export const EXIGENCIAS_GERAIS_TOP = [
   { chave: "exigeParceiro", caminho: "client_id", rotulo: "Cliente" },
   { chave: "exigeCentroResultado", caminho: "centro_custo_id", rotulo: "Centro de resultado" },
@@ -120,31 +128,62 @@ export const EXIGENCIAS_GERAIS_TOP = [
   { chave: "exigeTransportadora", caminho: "transporter_id", rotulo: "Transportadora" },
 ] as const;
 
+/**
+ * COMPRAS-01 (decisão 267): o MESMO mapa, com os campos do documento de compra (`erp.documentos_compra`).
+ * As chaves de exigência são as mesmas da TOP; muda só onde o documento guarda o dado e como ele se chama.
+ */
+export const EXIGENCIAS_GERAIS_COMPRA_TOP = [
+  { chave: "exigeParceiro", caminho: "fornecedor_id", rotulo: "Fornecedor" },
+  { chave: "exigeCentroResultado", caminho: "centro_custo_id", rotulo: "Centro de resultado" },
+  { chave: "exigeObservacao", caminho: "observacao", rotulo: "Observação" },
+  { chave: "exigeTransportadora", caminho: "transportadora_id", rotulo: "Transportadora" },
+] as const;
+
 export type CampoExigidoTop = (typeof EXIGENCIAS_GERAIS_TOP)[number]["caminho"];
+export type CampoExigidoCompraTop = (typeof EXIGENCIAS_GERAIS_COMPRA_TOP)[number]["caminho"];
 
 /** O documento como será gravado (só os campos que as exigências olham). */
 export type DocumentoParaExigencias = Partial<Record<CampoExigidoTop, unknown>>;
+export type DocumentoCompraParaExigencias = Partial<Record<CampoExigidoCompraTop, unknown>>;
+
+/**
+ * O mapa de exigências do DOCUMENTO que a família lança: famílias do documento de compra → mapa da compra;
+ * qualquer outra → o mapa da venda (o comportamento de sempre, que não muda).
+ */
+export function exigenciasGeraisDaFamiliaTop(familia: string): readonly ExigenciaGeralTop[] {
+  return tipoOperacao(familia)?.origem.tabela === TABELA_DOCUMENTO_COMPRA ? EXIGENCIAS_GERAIS_COMPRA_TOP : EXIGENCIAS_GERAIS_TOP;
+}
 
 const vazio = (v: unknown): boolean => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 
-/** Os campos que a configuração EXIGE (formato 3; vazio nos formatos 1/2). Usado pela tela para o asterisco. */
-export function camposExigidosTop(c: ConfiguracaoTipoOperacao): CampoExigidoTop[] {
+/**
+ * Os campos que a configuração EXIGE (formato 3; vazio nos formatos 1/2). Usado pela tela para o asterisco.
+ * `mapa` omitido = o da venda (saída de vendas inalterada).
+ */
+export function camposExigidosTop(c: ConfiguracaoTipoOperacao): CampoExigidoTop[];
+export function camposExigidosTop<C extends string>(c: ConfiguracaoTipoOperacao, mapa: readonly ExigenciaGeralTop<C>[]): C[];
+export function camposExigidosTop(c: ConfiguracaoTipoOperacao, mapa: readonly ExigenciaGeralTop[] = EXIGENCIAS_GERAIS_TOP): string[] {
   if (!restricoesExecutamTop(c)) return [];
-  return EXIGENCIAS_GERAIS_TOP.filter((e) => c.geral[e.chave]).map((e) => e.caminho);
+  return mapa.filter((e) => c.geral[e.chave]).map((e) => e.caminho);
 }
 
 /**
  * As exigências gerais que o documento NÃO atende — a MESMA função na API e na tela.
  * Formato 1/2: lista vazia SEMPRE (legado, decisão 263). Observação exige texto com conteúdo.
+ * `mapa` omitido = o da venda.
  */
-export function exigenciasGeraisFaltando(c: ConfiguracaoTipoOperacao, documento: DocumentoParaExigencias): { caminho: CampoExigidoTop; rotulo: string }[] {
+export function exigenciasGeraisFaltando(c: ConfiguracaoTipoOperacao, documento: DocumentoParaExigencias): { caminho: CampoExigidoTop; rotulo: string }[];
+export function exigenciasGeraisFaltando<C extends string>(c: ConfiguracaoTipoOperacao, documento: Partial<Record<C, unknown>>, mapa: readonly ExigenciaGeralTop<C>[]): { caminho: C; rotulo: string }[];
+export function exigenciasGeraisFaltando(c: ConfiguracaoTipoOperacao, documento: Partial<Record<string, unknown>>, mapa: readonly ExigenciaGeralTop[] = EXIGENCIAS_GERAIS_TOP): { caminho: string; rotulo: string }[] {
   if (!restricoesExecutamTop(c)) return [];
-  return EXIGENCIAS_GERAIS_TOP.filter((e) => c.geral[e.chave] && vazio(documento[e.caminho])).map((e) => ({ caminho: e.caminho, rotulo: e.rotulo }));
+  return mapa.filter((e) => c.geral[e.chave] && vazio(documento[e.caminho])).map((e) => ({ caminho: e.caminho, rotulo: e.rotulo }));
 }
 
-/** Idem, a partir da LISTA de campos exigidos (o que `/regras-da-operacao` devolve à tela). */
-export function exigenciasFaltandoPorCampos(campos: readonly string[], documento: DocumentoParaExigencias): { caminho: CampoExigidoTop; rotulo: string }[] {
-  return EXIGENCIAS_GERAIS_TOP.filter((e) => campos.includes(e.caminho) && vazio(documento[e.caminho])).map((e) => ({ caminho: e.caminho, rotulo: e.rotulo }));
+/** Idem, a partir da LISTA de campos exigidos (o que `/regras-da-operacao` devolve à tela). `mapa` omitido = venda. */
+export function exigenciasFaltandoPorCampos(campos: readonly string[], documento: DocumentoParaExigencias): { caminho: CampoExigidoTop; rotulo: string }[];
+export function exigenciasFaltandoPorCampos<C extends string>(campos: readonly string[], documento: Partial<Record<C, unknown>>, mapa: readonly ExigenciaGeralTop<C>[]): { caminho: C; rotulo: string }[];
+export function exigenciasFaltandoPorCampos(campos: readonly string[], documento: Partial<Record<string, unknown>>, mapa: readonly ExigenciaGeralTop[] = EXIGENCIAS_GERAIS_TOP): { caminho: string; rotulo: string }[] {
+  return mapa.filter((e) => campos.includes(e.caminho) && vazio(documento[e.caminho])).map((e) => ({ caminho: e.caminho, rotulo: e.rotulo }));
 }
 
 // ─────────────── cliente em atraso ───────────────
@@ -180,12 +219,34 @@ export function textoSituacaoAtraso(s: SituacaoAtrasoCliente): string {
 export const mensagemClienteEmAtraso = (s: SituacaoAtrasoCliente): string =>
   `${textoSituacaoAtraso(s)} Esta operação não aceita cliente em atraso.`;
 
+/**
+ * COMPRAS-01 (decisão 267): "Cliente em atraso" vale para esta família? Só fora do documento de compra —
+ * comprar de um fornecedor não tem cliente, e a política não tem o que conferir. A API da TOP recusa, nas
+ * famílias de compra, qualquer valor diferente de "não valida"; o editor esconde o bloco.
+ */
+export function clienteEmAtrasoValeParaFamiliaTop(familia: string): boolean {
+  return tipoOperacao(familia)?.origem.tabela !== TABELA_DOCUMENTO_COMPRA;
+}
+
+/** Mensagem da recusa do "Cliente em atraso" numa família de compra (422 no campo). */
+export const MENSAGEM_CLIENTE_EM_ATRASO_FORA_DE_VENDAS = "\"Cliente em atraso\" não vale para compras: use \"Não valida\".";
+
+/**
+ * A recusa do "Cliente em atraso" para a família (formato 3; vazio nos formatos 1/2 e nas famílias em que vale).
+ * Caminho `financeiro.clienteEmAtraso`, no formato das outras recusas de configuração.
+ */
+export function recusasClienteEmAtrasoDaFamiliaTop(c: ConfiguracaoTipoOperacao, familia: string): RecusaFiscalTop[] {
+  if (!restricoesExecutamTop(c) || clienteEmAtrasoValeParaFamiliaTop(familia)) return [];
+  if (c.financeiro.clienteEmAtraso === "nao_valida") return [];
+  return [{ motivo: "valor_invalido", caminho: "financeiro.clienteEmAtraso", mensagem: MENSAGEM_CLIENTE_EM_ATRASO_FORA_DE_VENDAS }];
+}
+
 // ─────────────── respostas das rotas novas de vendas ───────────────
 
 /** `GET /api/sales/<variante>/regras-da-operacao?tipo_operacao_id=` — da versão ATUAL da TOP. */
-export interface RegrasDaOperacaoResposta {
+export interface RegrasDaOperacaoResposta<C extends string = CampoExigidoTop> {
   formato: number;
-  exigencias: CampoExigidoTop[];
+  exigencias: C[];
   condicoesPermitidas: string[] | null;
   clienteEmAtraso: { politica: PoliticaClienteEmAtraso; toleranciaDias: number };
 }
@@ -203,10 +264,10 @@ export type SituacaoClienteResposta =
  * Vazio quando: a vigente já é formato 3; a nova não é formato 3; ou nenhuma marca antiga continua ligada.
  * "Exige transportadora" nunca entra: não existe fora do formato 3 (é marcada agora, não "passa a valer").
  */
-export function exigenciasQuePassamAValer(vigente: ConfiguracaoTipoOperacao, nova: ConfiguracaoTipoOperacao): string[] {
+export function exigenciasQuePassamAValer(vigente: ConfiguracaoTipoOperacao, nova: ConfiguracaoTipoOperacao, mapa: readonly ExigenciaGeralTop[] = EXIGENCIAS_GERAIS_TOP): string[] {
   if (restricoesExecutamTop(vigente) || !restricoesExecutamTop(nova)) return [];
   const antes = vigente.geral as unknown as Record<string, unknown>;
-  return EXIGENCIAS_GERAIS_TOP
+  return mapa
     .filter((e) => e.chave !== "exigeTransportadora" && antes[e.chave] === true && nova.geral[e.chave])
     .map((e) => e.rotulo);
 }

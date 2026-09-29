@@ -89,6 +89,8 @@ export const ptBR: Catalogo = {
     "top.estoque.transferencia_entre_empresas": "Transferência entre empresas",
     "top.estoque.producao_de_racao": "Produção de ração",
     "top.compras.solicitacao": "Solicitação de compra",
+    "top.compras.pedido": "Pedido de compra",
+    "top.compras.compra": "Compra",
     "top.financeiro.conta_a_pagar": "Conta a pagar",
     "top.financeiro.conta_a_receber": "Conta a receber",
     "top.vendas.orcamento": "Orçamento de venda",

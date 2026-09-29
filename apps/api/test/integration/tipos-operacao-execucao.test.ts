@@ -178,7 +178,7 @@ describe("I12 — combinação sem executor real é impossível de ativar (com o
 
   it("I12c família sem consumidor: a recusa objetiva, com o gate ligado ou desligado", async () => {
     const familias = (j(await h.app.inject({ method: "GET", url: "/api/admin/tipos-operacao/familias", headers: h.headers() })).items as { codigo: string }[])
-      .map((f) => f.codigo).filter((f) => f !== VENDA);
+      .map((f) => f.codigo).filter((f) => !MATRIZ_EXECUCAO_TOP.some((m) => m.familia === f));
     expect(familias.length).toBeGreaterThan(10);
     for (const familia of familias) {
       for (const app of [ligada, h.app]) {

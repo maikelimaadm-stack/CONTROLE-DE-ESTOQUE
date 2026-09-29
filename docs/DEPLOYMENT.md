@@ -1385,6 +1385,54 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
+## COMPRAS-01 — documento de compra (0036)
+
+Decisão 267. **Uma migration: `0036_documento_de_compra.sql`** (pre-deploy; trava (2026,70), pré/pós-condições
+nomeadas `COMPRAS-01: ...`, não destrutiva, sem backfill): tabelas `erp.documentos_compra` e
+`erp.documentos_compra_itens` (vazias), gatilhos de transição de situação e de item só com documento aberto, unique
+parcial da nota da Compra não cancelada, RLS (cabeçalho com a política de empresa da 0015, módulo `compras`; itens
+`api_child`), `erp.audit_row` no cabeçalho, `revoke delete` do papel da API nas duas tabelas e a chave
+`(id, organization_id)` em `erp.warehouses` (alvo da FK composta do armazém do item). A forma de pagamento tem FK
+simples e gatilho de organização: `erp.payment_methods` tem linhas globais (`organization_id` nulo), que uma FK
+composta recusaria. As pós-condições
+conferem os objetos criados; não comparam contagens de tabelas vivas. As permissões novas (`pedidos_compra.*`,
+`compras.*`) não têm migration: o pre-deploy sincroniza o catálogo. Nenhuma variável nova.
+
+**Ordem: banco (0036) → API → web.** Janelas:
+1. **API anterior × banco novo:** a API anterior não conhece as tabelas novas nem as permissões novas; o
+   `POST /stock/invoices` anterior não confere nota em Compra, mas não existe Compra ainda. Tudo como hoje.
+2. **web ANTERIOR × API nova:** a web anterior não tem a aba Documentos de Compras nem a Central de Compras; o
+   Documento fiscal de Estoque segue igual, com a única diferença de recusar (409 `DUPLICATE_DOCUMENT`) a nota que já
+   está numa Compra. O editor anterior da TOP OFERECE as famílias de compra (lê a lista da API) e manda o "Cliente em
+   atraso" que conhece; a API nova recusa, nas duas famílias de compra, valor ≠ "não valida" (422 no campo) — fail-closed,
+   nada é gravado. Salvar TOP de compra com o valor neutro funciona.
+3. **web NOVA × API anterior:** sem `GET /api/compras/documentos`, a aba Documentos mostra "indisponível nesta versão
+   do servidor"; "Processos" e "Visão geral" de Compras continuam funcionando.
+
+**Impacto em dados reais:** tabelas novas, vazias. Chave (id, organization_id) nova em armazéns, sem mudar dado. Permissões novas: o Administrador recebe; papel personalizado recebe pelo admin. Nenhum dado existente
+muda.
+
+Nota: a missão previa a chave nova também em formas de pagamento; ela não foi criada porque `erp.payment_methods`
+tem formas globais (sem organização), que uma FK composta não aceitaria — lá a forma do documento é conferida por FK
+simples e por um gatilho que só aceita forma global ou da mesma organização.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0036 fica: tabelas vazias (ou
+com as compras já lançadas) não afetam a API anterior. Compra confirmada antes da reversão continua com a entrada e os
+títulos no ledger; a API anterior não a lê nem a cancela — reverter nesse estado é decisão do Maike. O caminho inverso
+do banco, se um dia for preciso, é migration NOVA — nunca editar a 0036. Nada de apagar dado de produção (decisão 247).
+
+**Roteiro do Maike (cria documentos reais; produção é operacional — decisões 240 e 247, nada é apagado):**
+1. Configurações › Tipos de operação: criar a TOP "Compra" (Movimento: Compra) e salvar.
+2. Compras › Documentos › Novo: escolher a TOP "Compra" e lançar uma compra de um produto que controla estoque, com
+   armazém, natureza de despesa, centro, condição de pagamento e frete; salvar.
+3. Na consulta da compra, Confirmar (conferir a prévia: entrada com o custo rateado e as parcelas).
+4. Conferir Estoque › Saldo (a entrada com o custo, frete incluído) e Financeiro › Pagar (as parcelas do fornecedor).
+
+**Aviso:** a mesma nota não entra pelos dois caminhos. Nota (fornecedor, número e série) lançada numa Compra é
+recusada no Documento fiscal de Estoque, e vice-versa (409 dizendo onde ela já está). Escolha um caminho por nota.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## TOP-CONFIG-07 — reserva de estoque (0035)
 
 Decisão 266. **Uma migration: `0035_reserva_de_estoque.sql`** (pre-deploy; trava (2026,69), `lock_timeout` 2 s,

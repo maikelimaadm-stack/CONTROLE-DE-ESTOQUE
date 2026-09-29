@@ -45,6 +45,7 @@ import { MIGRATION_HOTFIX } from "./lib/hotfix-0019.mjs";
 const POR_VARIANTE = {
   "title_${...}": { tabela: "erp.financial_titles", discriminador: "direction" },
   "sales_${...}": { tabela: "erp.sales_documents", discriminador: "kind" },
+  "compras_${...}": { tabela: "erp.documentos_compra", discriminador: "especie" },
   // `animalCode(ctx, \`animal_${d.movement_type}\`)` em `apps/api/src/routes/livestock.ts`. Só ficou
   // visível quando o auditor passou a enxergar os invólucros — e é LEGÍTIMO: `movement_type` está dentro
   // da UNIQUE de `erp.animal_movements`, então cada tipo de movimentação tem namespace próprio. A metade
@@ -191,7 +192,7 @@ for (const [forma, { tabela, discriminador }] of Object.entries(POR_VARIANTE)) {
   const uniques = t.constraints.filter((c) => /^unique\b/i.test(c));
   const cobre = uniques.some((u) => {
     const cols = (u.match(/\(([^)]*)\)/)?.[1] ?? "").split(",").map((s) => s.trim());
-    return cols.includes("code") && cols.includes(discriminador);
+    return (cols.includes("code") || cols.includes("codigo")) && cols.includes(discriminador);
   });
   if (!cobre) {
     semDiscriminador.push(

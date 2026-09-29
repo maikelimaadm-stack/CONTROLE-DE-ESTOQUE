@@ -29,7 +29,7 @@ import {
   varianteDeDocumentoVendaDaFamilia,
   LIMITE_DESTINOS_POR_VERSAO,
   LIMITE_CONDICOES_PERMITIDAS,
-  recusasFiscaisDaFamiliaTop,
+  recusasFiscaisDaFamiliaTop, recusasClienteEmAtrasoDaFamiliaTop,
   restricoesExecutamTop,
   type DestinoOperacaoV1,
   type ConfiguracaoTipoOperacao,
@@ -211,7 +211,9 @@ function configuracaoPedida(bruta: unknown): ConfiguracaoTipoOperacao {
  * Formato 1/2: o domínio devolve `[]` (as chaves nem existem), então nada muda para o legado.
  */
 function conferirFiscalDaFamilia(config: ConfiguracaoTipoOperacao, codigoBase: string): void {
-  const recusas = recusasFiscaisDaFamiliaTop(config, codigoBase);
+  // COMPRAS-01 (decisão 267): "Cliente em atraso" não vale nas famílias de compra — valor ≠ "não valida" é recusado
+  // no campo, com a mesma forma das recusas fiscais. Nas outras famílias o domínio devolve `[]` (nada muda).
+  const recusas = [...recusasFiscaisDaFamiliaTop(config, codigoBase), ...recusasClienteEmAtrasoDaFamiliaTop(config, codigoBase)];
   if (recusas.length) {
     throw new DomainError("TIPO_OPERACAO_CONFIGURACAO_INVALIDA",
       "A configuração operacional enviada é inválida", { recusas });

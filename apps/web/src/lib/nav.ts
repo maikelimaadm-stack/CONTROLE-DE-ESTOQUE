@@ -77,7 +77,7 @@ export function crumbsFor(pathname: string, search?: string | URLSearchParams | 
 }
 
 /** Parâmetros estáveis de contexto que fazem parte da rota canônica/favorito (filtros temporários de pesquisa não). */
-export const STABLE_PARAMS = ["tab", "sub", "type", "scope", "stage", "kind", "role", "view", "action", "module"];
+export const STABLE_PARAMS = ["tab", "sub", "type", "scope", "stage", "kind", "especie", "role", "view", "action", "module"];
 /** Rota canônica para favoritos/notificações: caminho + tab + sub + parâmetros estáveis (sem filtros temporários). */
 export function favoriteRoute(pathname: string, search?: string | URLSearchParams | null): string {
   const canon = canonicalize(pathname, search); if (canon) { const [p, q] = canon.split("?"); return favoriteRoute(p!, q ?? null); }

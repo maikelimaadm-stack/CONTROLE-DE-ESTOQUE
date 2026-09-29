@@ -2248,3 +2248,33 @@ test("VENDAS-A3-1b · LB-K1 — a API da base não manda padroesDeCadastro: a Ce
   }
   v.semBloqueio();
 });
+
+/**
+ * COMPRAS-01 · CO-K1 — A ABA DOCUMENTOS DE COMPRAS DESTE WEB CONTRA A API DA BASE (janela 3 da DEPLOYMENT).
+ *
+ * A base anterior à COMPRAS-01 não tem `GET /api/compras/documentos` (404): a aba tem de dizer que a lista está
+ * indisponível nesta versão do servidor — nunca uma lista vazia, que afirmaria "não há documentos". A pergunta é feita
+ * à base ANTES da tela, e decide o ramo: base que já serve a porta (depois do merge) mostra a lista, sem o aviso.
+ */
+test("COMPRAS-01 · CO-K1 — sem a porta de documentos de compra na base, a aba Documentos diz \"indisponível nesta versão do servidor\" (e Processos segue abrindo)", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const direto = await page.request.get(`${API}/api/compras/documentos?page=1&pageSize=1`, { headers: cab });
+  const ausente = direto.status() === 404;
+  console.log(`[skew] CO-K1 · a base responde ${direto.status()} a GET /api/compras/documentos`);
+  expect([200, 404], "a base ou serve a porta ou não a conhece — outro código é defeito, não skew").toContain(direto.status());
+  await page.goto("/compras?tab=documentos");
+  const aviso = page.getByTestId("compras-documentos-indisponivel");
+  if (ausente) {
+    await expect(aviso).toBeVisible();
+    await expect(aviso).toContainText("indisponível nesta versão do servidor");
+    await expect(page.getByRole("table"), "nada de lista vazia afirmando que não há documentos").toHaveCount(0);
+  } else {
+    await expect(page.getByRole("table").first(), "a base serve a porta: a lista aparece").toBeVisible();
+    await expect(aviso).toHaveCount(0);
+  }
+  await page.goto("/compras?tab=processos");
+  await expect(page.getByTestId("compras-documentos-indisponivel"), "Processos não depende da porta nova").toHaveCount(0);
+  v.semBloqueio();
+});

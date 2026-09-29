@@ -198,7 +198,9 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     // colunas (arestas "em partes", ligação de item, saldo encerrado) e o gatilho do saldo — fora do recorte da purga.
     // A TOP-CONFIG-07 é a décima nona: a 0035 acrescenta a coluna de reserva à versão da TOP, a conta do reservado
     // (funções), o gatilho de saída em `erp.stock_movements` e índices — nada no recorte que a purga lê.
-    expect(noDisco.length, "35 migrations no repositório").toBe(35);
+    // A COMPRAS-01 é a vigésima: a 0036 cria `erp.documentos_compra` e `erp.documentos_compra_itens` (tabelas novas,
+    // vazias) e a chave (id, organization_id) de `erp.warehouses` — nada no recorte que a purga lê.
+    expect(noDisco.length, "36 migrations no repositório").toBe(36);
     expect(noDisco[16], "a purga é a 17ª da ordem").toBe(ALVO);
     expect(noDisco[17], "e a 18ª é o cutover do contador (PRE-BASE2-05C-2)").toBe("0018_empresa_code_sequence.sql");
     expect(noDisco[18], "e a 19ª é o hotfix da numeração de transferências").toBe("0019_warehouse_transfer_code_sequence.sql");
@@ -218,6 +220,7 @@ describe("0017 em banco zero: a sequência inteira aplica e o ledger fecha na pu
     expect(noDisco[32], "e a 33ª são as restrições da TOP no formato 3 (TOP-CONFIG-05)").toBe("0033_tipo_operacao_restricoes.sql");
     expect(noDisco[33], "e a 34ª é faturar em partes (TOP-CONFIG-06)").toBe("0034_faturar_em_partes.sql");
     expect(noDisco[34], "e a 35ª é a reserva de estoque pelo pedido (TOP-CONFIG-07)").toBe("0035_reserva_de_estoque.sql");
+    expect(noDisco[35], "e a 36ª é o documento de compra (COMPRAS-01)").toBe("0036_documento_de_compra.sql");
   });
 
   it("as 16 anteriores aplicam, e a 0017 aplica sozinha em seguida", () => {

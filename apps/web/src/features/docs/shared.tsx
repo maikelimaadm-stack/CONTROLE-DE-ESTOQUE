@@ -93,7 +93,9 @@ export const totalDaLinhaExibido = (it: ItemRow) => { const g = Number(it.quanti
 
 /** Editor de itens (produto, qtd, valor) usado nos documentos de estoque/vendas. */
 export interface ItemRow { product_id: string; warehouse_id?: string; quantity: string; unit_value?: string; cost_center_id?: string; provider_lot?: string; expiration_date?: string; financial_category_id?: string; cost_center?: string; generate_stock?: boolean; discount?: string; discount_percent?: string; description?: string; [k: string]: unknown }
-export function ItemsEditor({ items, onChange, fields, defaults }: { items: ItemRow[]; onChange: (i: ItemRow[]) => void; fields: ("warehouse" | "product" | "quantity" | "unit_value" | "cost_center" | "lot" | "expiration" | "financial_category" | "generate_stock" | "discount" | "discount_percent" | "stock")[]; defaults?: Partial<ItemRow> }) {
+export function ItemsEditor({ items, onChange, fields, defaults, loteDaLinha }: { items: ItemRow[]; onChange: (i: ItemRow[]) => void; fields: ("warehouse" | "product" | "quantity" | "unit_value" | "cost_center" | "lot" | "expiration" | "financial_category" | "generate_stock" | "discount" | "discount_percent" | "stock")[]; defaults?: Partial<ItemRow>;
+  /** Opcional (Central de Compras): quais campos de lote a linha aceita. Ausente = os dois abertos (o de sempre). */
+  loteDaLinha?: (it: ItemRow) => { lote: boolean; validade: boolean } }) {
   const upd = (i: number, k: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [k]: v } : it)));
   const add = () => onChange([...items, { product_id: "", quantity: "1", unit_value: "0", generate_stock: true, ...(defaults ?? {}) }]);
   const totalOf = totalDaLinhaExibido;
@@ -111,8 +113,8 @@ export function ItemsEditor({ items, onChange, fields, defaults }: { items: Item
       {has("discount_percent") && <td><Input type="number" step="0.01" min="0" max="100" value={it.discount_percent ?? ""} onChange={(e) => upd(i, "discount_percent", e.target.value)} /></td>}
       <td className="num">{brl(totalOf(it))}</td>
       {has("generate_stock") && <td><NativeSelect value={it.generate_stock === false ? "false" : "true"} onChange={(e) => upd(i, "generate_stock", e.target.value === "true")}><option value="true">Sim</option><option value="false">Não</option></NativeSelect></td>}
-      {has("lot") && <td><Input value={it.provider_lot ?? ""} onChange={(e) => upd(i, "provider_lot", e.target.value)} /></td>}
-      {has("expiration") && <td><Input type="date" value={it.expiration_date ?? ""} onChange={(e) => upd(i, "expiration_date", e.target.value)} /></td>}
+      {has("lot") && <td><Input value={it.provider_lot ?? ""} disabled={loteDaLinha ? !loteDaLinha(it).lote : undefined} onChange={(e) => upd(i, "provider_lot", e.target.value)} /></td>}
+      {has("expiration") && <td><Input type="date" value={it.expiration_date ?? ""} disabled={loteDaLinha ? !loteDaLinha(it).validade : undefined} onChange={(e) => upd(i, "expiration_date", e.target.value)} /></td>}
       {has("financial_category") && <td><RefSelect resource="financial_categories" value={it.financial_category_id ?? null} onChange={(v) => upd(i, "financial_category_id", v ?? "")} filter={{ kind: "analytic" }} /></td>}
       {has("cost_center") && <td><RefSelect resource="cost_centers" value={it.cost_center_id ?? null} onChange={(v) => upd(i, "cost_center_id", v ?? "")} filter={{ kind: "analytic" }} /></td>}
       <td><button type="button" className="p-1 text-slate-400 hover:text-red-600" onClick={() => onChange(items.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button></td>

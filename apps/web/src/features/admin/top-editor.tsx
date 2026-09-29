@@ -15,8 +15,8 @@ import {
   LIMITE_CONDICOES_PERMITIDAS, MODOS_CONFIRMACAO, MODOS_EXECUCAO_TOP, MODOS_FINANCEIRO, MOMENTOS_APROVACAO, MOMENTOS_EFEITO,
   POLITICAS_ALTERACAO, POLITICAS_APROVACAO, POLITICAS_CLIENTE_EM_ATRASO, POLITICAS_DOCUMENTO_SEM_ITENS, POLITICAS_SALDO_NEGATIVO,
   TOLERANCIA_ATRASO_MAXIMA_DIAS, VERSAO_SCHEMA_CONFIGURACAO_TOP_V3,
-  configuracaoTopParaEdicao, efeitosAtivadosTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
-  normalizarConfiguracaoTop,
+  configuracaoTopParaEdicao, efeitosAtivadosTop, exigenciasGeraisDaFamiliaTop, exigenciasQuePassamAValer, familiaAceitaExecucaoConfiguradaTop, familiaOperacionalDeDocumentoVenda,
+  normalizarConfiguracaoTop, tipoOperacao,
   recusasFiscaisDaFamiliaTop, validarExecucaoTop,
   type ConfiguracaoTipoOperacaoV2, type ConfiguracaoTipoOperacaoV3, type EfeitoExecucaoTop, type ModoExecucaoTop,
   type RecusaExecucaoTop
@@ -65,6 +65,14 @@ export interface FamiliaTop { codigo: string; rotulo: string; modulo: string | n
  * a reserva em outra família de qualquer jeito, e o banco também.
  */
 const FAMILIA_DO_PEDIDO = familiaOperacionalDeDocumentoVenda("order");
+
+/**
+ * COMPRAS-01 (decisão 267) — o movimento é de VENDAS? Perguntado ao registry (o módulo dono da família), nunca a
+ * uma lista daqui. Decide duas coisas de APRESENTAÇÃO: o bloco "Cliente em atraso" (regra que só existe na venda; a
+ * API recusa outro valor nas famílias de compra) e as frases da aba Execução, que falam de "vendas" só quando o
+ * movimento é de vendas. Família vazia ou desconhecida não é venda: o texto fica neutro, e o bloco some.
+ */
+const ehMovimentoDeVendas = (codigoBase: string): boolean => !!codigoBase && tipoOperacao(codigoBase)?.modulo === "vendas";
 
 /** As oito seções, na ordem em que a tela as mostra. */
 const ABAS = [
@@ -439,7 +447,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
      * do domínio (uma fonte); a tela não tem a sua.
      */
     const aValer = edicao && v3 && detalhe?.configuracao?.suportada
-      ? exigenciasQuePassamAValer(detalhe.configuracao.valor, v3) : [];
+      ? exigenciasQuePassamAValer(detalhe.configuracao.valor, v3, exigenciasGeraisDaFamiliaTop(detalhe.familia.codigo)) : [];
     if (aValer.length > 0) { setAConfirmar(aValer); return; }
     salvar.mutate();
   };
@@ -488,7 +496,12 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         <Field label="Movimento" required span={6} help="Define qual operação do produto este tipo representa. Não muda depois da criação.">
           {edicao
             ? <Input data-testid="top-campo-familia" value={detalhe ? `${detalhe.familia.rotulo} (${detalhe.familia.codigo})` : ""} readOnly disabled />
-            : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => mudar({ codigoBase: e.target.value, destinos: [], reservaEstoque: false })}>
+            : <NativeSelect data-testid="top-campo-familia" value={rascunho.codigoBase} onChange={(e) => {
+                const codigoBase = e.target.value;
+                mudar({ codigoBase, destinos: [], reservaEstoque: false });
+                // "Cliente em atraso" só existe na venda: fora dela volta para "não valida" (a API recusa outro valor).
+                if (!ehMovimentoDeVendas(codigoBase)) mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: "nao_valida" } }));
+              }}>
                 <option value="">Selecione…</option>
                 {familias.map((f) => <option key={f.codigo} value={f.codigo}>{f.rotulo} — {f.codigo}</option>)}
               </NativeSelect>}
@@ -574,7 +587,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           ajuda="O que fazer quando a operação levaria o saldo abaixo de zero."
           onChange={(v) => mudarConfig((c) => ({ ...c, estoque: { ...c.estoque, saldoNegativo: v } }))} />
         {rascunho.configuracao.estoque.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem movimentação declarada, os demais campos de estoque ficam no estado neutro e não são gravados como exigência." />}
-        <AvisoDeAutoridade efeito="estoque" modo={rascunho.configuracao.execucao.estoque} bloqueio={bloqueioDaSecao("estoque")} />
+        <AvisoDeAutoridade efeito="estoque" modo={rascunho.configuracao.execucao.estoque} bloqueio={bloqueioDaSecao("estoque")} venda={ehMovimentoDeVendas(rascunho.codigoBase)} />
         {/* TOP-CONFIG-07: fora da configuração (coluna da versão) e fora do "desligado" da movimentação — por isso
             nunca é desabilitada por "Não movimenta estoque". */}
         {reservaOferecida && <div className="col-span-12 border-t border-slate-200 pt-3" data-testid="top-reserva-estoque-secao">
@@ -625,8 +638,9 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
           desabilitado={rascunho.configuracao.financeiro.atualizacao === "nenhuma"}
           onChange={(v) => mudarConfig((c) => ({ ...c, financeiro: { ...c.financeiro, exigeCentroResultado: v } }))} />
         {rascunho.configuracaoV3 && <>
-          {/* INDEPENDE do efeito financeiro (decisão 263): por isso não é desabilitado com "nenhuma". */}
-          <CampoEnum rotulo="Cliente em atraso" testId="top-financeiro-cliente-em-atraso" valor={rascunho.configuracaoV3.financeiro.clienteEmAtraso}
+          {/* INDEPENDE do efeito financeiro (decisão 263): por isso não é desabilitado com "nenhuma".
+              COMPRAS-01: só nos movimentos de vendas — fora deles o valor fica o que está ("não valida"). */}
+          {ehMovimentoDeVendas(rascunho.codigoBase) && <><CampoEnum rotulo="Cliente em atraso" testId="top-financeiro-cliente-em-atraso" valor={rascunho.configuracaoV3.financeiro.clienteEmAtraso}
             opcoes={POLITICAS_CLIENTE_EM_ATRASO} rotulos={ROTULOS_TOP.clienteEmAtraso}
             ajuda="O que fazer quando o cliente tem título vencido ao lançar um documento desta operação."
             onChange={(v) => mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, clienteEmAtraso: v } }))} />
@@ -641,7 +655,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
                 const n = e.target.value.trim() === "" ? 0 : Number(e.target.value);
                 mudarConfigV3((c) => ({ ...c, financeiro: { ...c.financeiro, toleranciaAtrasoDias: Number.isFinite(n) ? n : 0 } }));
               }} />
-          </Field>
+          </Field></>}
           <div className="col-span-12">
             <CondicoesPermitidasTop
               valor={rascunho.condicoesPermitidas ?? []}
@@ -654,7 +668,7 @@ function CorpoDoEditor({ id, revisao, detalhe, familias, capacidades, onFechar, 
         </>}
         <ErrosDeCampo erros={errosCampo} prefixos={["financeiro", "condicoesPermitidas"]} />
         {rascunho.configuracao.financeiro.atualizacao === "nenhuma" && <AvisoDeSecaoDesligada texto="Sem efeito financeiro declarado, os demais campos desta seção ficam no estado neutro e não são gravados como exigência." />}
-        <AvisoDeAutoridade efeito="financeiro" modo={rascunho.configuracao.execucao.financeiro} bloqueio={bloqueioDaSecao("financeiro")} />
+        <AvisoDeAutoridade efeito="financeiro" modo={rascunho.configuracao.execucao.financeiro} bloqueio={bloqueioDaSecao("financeiro")} venda={ehMovimentoDeVendas(rascunho.codigoBase)} />
       </Secao>}
 
       {aba === "fiscal" && liberado && <Secao chave="fiscal">
@@ -813,7 +827,7 @@ const AvisoDeSecaoDesligada = ({ texto }: { texto: string }) => <p className="co
  * motivo detalhado continua na aba Execução, mas esta aba nunca afirma o contrário dele.
  */
 type BloqueioDaSecao = "combinacao_recusada" | "execucao_desligada" | null;
-const AvisoDeAutoridade = ({ efeito, modo, bloqueio }: { efeito: EfeitoExecucaoTop; modo: ModoExecucaoTop; bloqueio: BloqueioDaSecao }) =>
+const AvisoDeAutoridade = ({ efeito, modo, bloqueio, venda }: { efeito: EfeitoExecucaoTop; modo: ModoExecucaoTop; bloqueio: BloqueioDaSecao; /** o movimento é de vendas (texto de vendas igual ao de antes) */ venda: boolean }) =>
   <p data-testid={`top-secao-autoridade-${efeito}`} data-modo={modo} data-bloqueio={modo === "configurada" ? bloqueio ?? "" : ""}
     className={`col-span-12 text-[11.5px] ${modo === "configurada" && bloqueio ? "text-amber-800" : "text-slate-500"}`}>
     {modo !== "configurada"
@@ -821,8 +835,8 @@ const AvisoDeAutoridade = ({ efeito, modo, bloqueio }: { efeito: EfeitoExecucaoT
       : bloqueio === "combinacao_recusada"
         ? "A aba Execução entrega este efeito à configuração da TOP, mas esta combinação não tem execução e não pode ser salva; o motivo está na aba Execução."
         : bloqueio === "execucao_desligada"
-          ? "A aba Execução entrega este efeito à configuração da TOP, mas este ambiente ainda não a executa: a confirmação de vendas desta versão é recusada até a execução ser habilitada."
-          : "A aba Execução entrega este efeito à configuração da TOP: o que está nesta seção é executado na confirmação da venda."}
+          ? `A aba Execução entrega este efeito à configuração da TOP, mas este ambiente ainda não a executa: a confirmação ${venda ? "de vendas" : "de documentos"} desta versão é recusada até a execução ser habilitada.`
+          : `A aba Execução entrega este efeito à configuração da TOP: o que está nesta seção é executado na confirmação ${venda ? "da venda" : "do documento"}.`}
   </p>;
 
 // ---------------------------------------------------------------------------------------------------
@@ -877,7 +891,7 @@ function AbaExecucao({ execucao, codigoBase, configuracao, salva, recusas, ativa
     </p>}
     {salvaConfigurada && !execucao.runtimeHabilitado && <p data-testid="top-execucao-configurada-sem-execucao" className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
       A versão salva desta operação usa a configuração da TOP, mas este ambiente ainda não a executa: a
-      confirmação de vendas criadas sob essa versão é recusada até a execução ser habilitada. Voltar ao
+      confirmação {ehMovimentoDeVendas(codigoBase) ? "de vendas criadas" : "de documentos criados"} sob essa versão é recusada até a execução ser habilitada. Voltar ao
       comportamento legado continua possível.
     </p>}
 

@@ -13,6 +13,7 @@ import { saldoComReservaEmLote, reservadoEmLote, chaveDoPar } from "../services/
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfer.js";
+import { compraComANota } from "./compras-confirmacao.js";
 
 const dec = z.union([z.number(), z.string()]).transform((v) => String(v));
 const date = z.string().refine(isISODate, "Data inválida");
@@ -226,6 +227,9 @@ export default async function stockRoutes(app: FastifyInstance) {
       await assertPeriodOpen(ctx.tx, ctx.orgId, d.empresa_id, d.emission_date);
       const dup = await ctx.tx.query("select 1 from erp.invoices where organization_id=$1 and provider_id=$2 and number=$3 and series=$4 and status<>'cancelled' and deleted_at is null", [ctx.orgId, d.provider_id, d.number, d.series]);
       if (dup.rowCount) throw err("DUPLICATE_DOCUMENT", `Documento ${d.number}/${d.series} já lançado para este fornecedor`);
+      // COMPRAS-01 (decisão 267): a nota que já está numa Compra não cancelada não entra de novo por aqui.
+      const compra = await compraComANota(ctx, { fornecedorId: d.provider_id, numero: d.number, serie: d.series });
+      if (compra) throw err("DUPLICATE_DOCUMENT", `A nota ${d.number.trim()}/${d.series.trim() || "1"} deste fornecedor já está na Compra ${compra}.`, { onde: "compra", codigo: compra });
       const code = await nextCode(ctx.tx, ctx.orgId, "invoice");
       let products = D(0), disc = D(0), ipi = D(0), icms = D(0);
       for (const it of d.items) { products = products.plus(D(it.quantity).mul(it.unit_value)); disc = disc.plus(it.discount); ipi = ipi.plus(it.ipi); icms = icms.plus(it.icms); }

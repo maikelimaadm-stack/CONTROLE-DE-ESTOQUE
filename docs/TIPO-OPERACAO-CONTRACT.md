@@ -1285,3 +1285,30 @@ Formato < 3 → `{ formato, exigencias: [], condicoesPermitidas: null, clienteEm
 
 A Central só usa isso com `capacidades.regrasDaOperacao === 1` exato (gêmeo de skew do `layoutDocumento`);
 sem ele, é a Central de hoje. A exigência da TOP vence o layout: campo exigido que o layout não mostra aparece.
+
+## 14. Execução da compra (COMPRAS-01)
+
+> Contrato: `packages/domain/src/tipo-operacao-execucao.ts` (`MATRIZ_EXECUCAO_TOP` e `resolverPoliticaEfetivaDaCompra`),
+> `packages/domain/src/compras-custo-entrada.ts` (`ratearCustoDeEntrada`). Executor: `apps/api/src/routes/compras-confirmacao.ts`
+> (prévia e confirmação pela MESMA função de planejamento). Decisão 267; implantação em `docs/DEPLOYMENT.md`.
+
+A segunda família com execução configurada é `compras.compra` — uma entrada na matriz e um resolvedor gêmeo, sem
+motor paralelo, como o §12 previu. `compras.pedido` fica FORA da matriz: o pedido de compra não tem efeito.
+
+- **Matriz:** estoque `nenhuma` ("Não movimenta") ou `entrada`; `exigeArmazem` livre. Financeiro `nenhuma` ("Não
+  gera") ou `pagar`, modo só `incluir`; `exigeFormaPagamento`, `exigeVencimento` e `exigeCentroResultado` livres.
+- **Resolvedor:** `resolverPoliticaEfetivaDaCompra` faz as mesmas perguntas, na mesma ordem, e dá as mesmas recusas
+  do da venda: versão ilegível, execução configurada com o gate desligado (409 `TIPO_OPERACAO_EXECUCAO_INDISPONIVEL`,
+  sem efeito e sem cair no padrão) e combinação fora da matriz.
+- **Padrão ("legado") da compra:** TOP sem execução configurada (formato 1, ou efeito em `legado`) dá entrada dos
+  itens com armazém e gera conta a pagar do total — o que o operador espera de uma compra. A TOP é obrigatória no
+  documento de compra: não existe compra "sem TOP".
+- **Exigências gerais por documento:** o mapa de campos da compra troca o parceiro por **Fornecedor**
+  (`fornecedor_id`); centro, observação e transportadora como na venda; a saída da venda não muda.
+- **Cliente em atraso não existe na compra:** a API da TOP recusa, em `compras.pedido` e `compras.compra`, política
+  ≠ `nao_valida` (422 no campo `clienteEmAtraso`); o editor esconde o bloco fora dos movimentos de vendas e deixa os
+  textos da aba Execução neutros.
+- **Sem guarda de marca (0023):** nenhum binário anterior conhece `erp.documentos_compra`.
+- **Custo de entrada:** a parte de cada item no total do documento, na proporção do total do item (frete, outras
+  despesas e desconto entram); soma zero → pela quantidade; maior resto no centavo (piso de cada parte; os centavos que faltam vão aos
+  maiores restos, empate pelo maior valor e depois pela ordem dos itens); custo unitário com 6 casas. Ordem das travas na confirmação: documento → contador do ID Global → primeiro movimento.

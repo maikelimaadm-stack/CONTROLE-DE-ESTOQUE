@@ -31,7 +31,7 @@
  * │ "A pagar"                  venda gera conta a RECEBER; o sentido oposto não tem executor aqui.      │
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
-import { familiaOperacionalDeDocumentoVenda } from "./tipo-operacao-configurado.js";
+import { familiaOperacionalDeDocumentoCompra, familiaOperacionalDeDocumentoVenda } from "./tipo-operacao-configurado.js";
 import {
   ATUALIZACOES_ESTOQUE,
   ATUALIZACOES_FINANCEIRO,
@@ -123,13 +123,50 @@ const SUPORTE_DA_VENDA = (familia: string): SuporteExecucaoFamiliaTop => ({
 });
 
 /**
- * A MATRIZ. Hoje, UMA família: a venda — o primeiro consumidor real. Qualquer família fora daqui não pode
- * ativar execução configurada, e isso inclui orçamento e pedido: a intenção declarada neles continua só
- * declarada.
+ * COMPRAS-01 (decisão 267): a família da Compra — a espécie que a confirmação de compra confirma. O pedido
+ * de compra NÃO entra na matriz: ele não confirma nada, e a intenção declarada nele continua só declarada.
  */
-export const MATRIZ_EXECUCAO_TOP: readonly SuporteExecucaoFamiliaTop[] = Object.freeze(
-  FAMILIA_DA_VENDA ? [SUPORTE_DA_VENDA(FAMILIA_DA_VENDA)] : [],
-);
+const FAMILIA_DA_COMPRA = familiaOperacionalDeDocumentoCompra("compra");
+
+const SUPORTE_DA_COMPRA = (familia: string): SuporteExecucaoFamiliaTop => ({
+  familia,
+  estoque: {
+    atualizacao: {
+      aceitos: ["nenhuma", "entrada"],
+      motivo: "Na compra, o estoque configurado só executa \"Entrada\" ou \"Não movimenta estoque\": a confirmação da compra não sabe dar saída nem transferir.",
+    },
+    momento: { aceitos: MOMENTOS_EFEITO },
+    exigeArmazem: { aceitos: [false, true] },
+    saldoNegativo: {
+      aceitos: ["bloquear"],
+      motivo: "Saldo negativo \"Permitir\" não tem execução real: o estoque recusa toda saída sem saldo, e a configuração não pode prometer o contrário.",
+    },
+  },
+  financeiro: {
+    atualizacao: {
+      aceitos: ["nenhuma", "pagar"],
+      motivo: "Na compra, o financeiro configurado só executa \"A pagar\" ou \"Não gera efeito financeiro\": compra não gera conta a receber.",
+    },
+    modo: {
+      aceitos: ["incluir"],
+      motivo: "O modo \"Previsão\" não tem execução real: o financeiro só gera título firme.",
+    },
+    momento: { aceitos: MOMENTOS_EFEITO },
+    exigeFormaPagamento: { aceitos: [false, true] },
+    exigeVencimento: { aceitos: [false, true] },
+    exigeCentroResultado: { aceitos: [false, true] },
+  },
+});
+
+/**
+ * A MATRIZ. A venda (primeiro consumidor real, SEMPRE a primeira entrada) e a compra (COMPRAS-01). Qualquer
+ * família fora daqui não pode ativar execução configurada, e isso inclui orçamento, pedido de venda e pedido
+ * de compra: a intenção declarada neles continua só declarada.
+ */
+export const MATRIZ_EXECUCAO_TOP: readonly SuporteExecucaoFamiliaTop[] = Object.freeze([
+  ...(FAMILIA_DA_VENDA ? [SUPORTE_DA_VENDA(FAMILIA_DA_VENDA)] : []),
+  ...(FAMILIA_DA_COMPRA ? [SUPORTE_DA_COMPRA(FAMILIA_DA_COMPRA)] : []),
+]);
 
 /** A família aceita execução configurada em algum efeito? */
 export const familiaAceitaExecucaoConfiguradaTop = (
@@ -413,5 +450,108 @@ export function resumoDaPoliticaDaVenda(p: PoliticaEfetivaDaVenda): { estoque: s
   return {
     estoque: p.estoque.autoridade === "legado" ? "legado" : `configurada:${p.estoque.efeito}`,
     financeiro: p.financeiro.autoridade === "legado" ? "legado" : `configurada:${p.financeiro.efeito}`,
+  };
+}
+
+// ---------------------------------------------------------------------------------------------------
+// 5. A POLÍTICA EFETIVA DA COMPRA (COMPRAS-01, decisão 267) — gêmea da venda, executada pelo serviço de compras
+// ---------------------------------------------------------------------------------------------------
+
+/**
+ * Estoque da confirmação da compra. `padrao` é o "legado" da compra: a compra não tem acervo anterior à
+ * TOP, então o que vale sem configuração é o PADRÃO — entrada dos itens com armazém.
+ */
+export type PoliticaEstoqueDaCompra =
+  | { autoridade: "padrao" }
+  | { autoridade: "configurada"; efeito: "nenhum" }
+  | { autoridade: "configurada"; efeito: "entrada"; exigeArmazem: boolean };
+
+/** Financeiro da confirmação da compra. `padrao` = conta a pagar do total. */
+export type PoliticaFinanceiroDaCompra =
+  | { autoridade: "padrao" }
+  | { autoridade: "configurada"; efeito: "nenhum" }
+  | { autoridade: "configurada"; efeito: "pagar"; exigeFormaPagamento: boolean; exigeVencimento: boolean; exigeCentroResultado: boolean };
+
+export interface PoliticaEfetivaDaCompra {
+  origem: "sem_top" | VersaoSchemaConfiguracaoTop;
+  estoque: PoliticaEstoqueDaCompra;
+  financeiro: PoliticaFinanceiroDaCompra;
+}
+
+export type ResultadoPoliticaDaCompra =
+  | { ok: true; politica: PoliticaEfetivaDaCompra }
+  | { ok: false; motivo: "configuracao_ilegivel" | "execucao_desligada" | "execucao_nao_suportada"; recusas: RecusaExecucaoTop[] };
+
+/** Mesma entrada da venda: a versão congelada do documento, o gate operacional e (só em teste) a matriz. */
+export type EntradaPoliticaDaCompra = EntradaPoliticaDaVenda;
+
+const PADRAO_DA_COMPRA: Pick<PoliticaEfetivaDaCompra, "estoque" | "financeiro"> = Object.freeze({
+  estoque: Object.freeze({ autoridade: "padrao" as const }),
+  financeiro: Object.freeze({ autoridade: "padrao" as const }),
+});
+
+/**
+ * A política de estoque e financeiro que a confirmação DESTA compra executa. MESMA ordem de perguntas e
+ * MESMAS recusas de `resolverPoliticaEfetivaDaVenda`; só muda o que "legado" significa (aqui: o padrão da
+ * compra — entrada dos itens com armazém e conta a pagar do total) e os efeitos aceitos (entrada / pagar).
+ *   1. sem versão congelada          → padrão;
+ *   2. formato 1                     → padrão, sem ler as seções;
+ *   3. formato desconhecido/ilegível → recusa;
+ *   4. formato 2/3 sem nada configurado → padrão;
+ *   5. algo configurado e gate desligado → recusa (nunca padrão);
+ *   6. família que não é a da compra, ou combinação fora da matriz → recusa;
+ *   7. o resto vira decisão tipada, efeito a efeito.
+ */
+export function resolverPoliticaEfetivaDaCompra(entrada: EntradaPoliticaDaCompra): ResultadoPoliticaDaCompra {
+  const { versaoCongelada, execucaoConfiguradaHabilitada } = entrada;
+  const matriz = entrada.matriz ?? MATRIZ_EXECUCAO_TOP;
+  if (!versaoCongelada) return { ok: true, politica: { origem: "sem_top", ...PADRAO_DA_COMPRA } };
+
+  const formato = versaoSchemaDaConfiguracaoTop(versaoCongelada.configuracao);
+  if (formato === VERSAO_SCHEMA_CONFIGURACAO_TOP) return { ok: true, politica: { origem: formato, ...PADRAO_DA_COMPRA } };
+  if (formato === null) return { ok: false, motivo: "configuracao_ilegivel", recusas: [] };
+
+  const lida = lerConfiguracaoTop(versaoCongelada.configuracao);
+  if (!lida.ok) return { ok: false, motivo: "configuracao_ilegivel", recusas: [] };
+  const c = lida.valor;
+  const execucao = execucaoDeclaradaTop(c);
+  if (execucao.estoque === "legado" && execucao.financeiro === "legado") return { ok: true, politica: { origem: formato, ...PADRAO_DA_COMPRA } };
+
+  if (!execucaoConfiguradaHabilitada) return { ok: false, motivo: "execucao_desligada", recusas: [] };
+
+  if (!FAMILIA_DA_COMPRA || versaoCongelada.codigoBase !== FAMILIA_DA_COMPRA) {
+    return {
+      ok: false, motivo: "execucao_nao_suportada",
+      recusas: EFEITOS_EXECUCAO_TOP.filter((e) => execucao[e] === "configurada")
+        .map((e) => ({ motivo: "familia_sem_execucao_configurada", caminho: `execucao.${e}`, mensagem: MENSAGEM_FAMILIA_SEM_EXECUCAO_TOP })),
+    };
+  }
+  const recusas = validarExecucaoTop(versaoCongelada.codigoBase, c, matriz);
+  if (recusas.length) return { ok: false, motivo: "execucao_nao_suportada", recusas };
+
+  let estoque: PoliticaEstoqueDaCompra = PADRAO_DA_COMPRA.estoque;
+  if (execucao.estoque === "configurada") {
+    if (c.estoque.atualizacao === "nenhuma") estoque = { autoridade: "configurada", efeito: "nenhum" };
+    else if (c.estoque.atualizacao === "entrada") estoque = { autoridade: "configurada", efeito: "entrada", exigeArmazem: c.estoque.exigeArmazem };
+    else return { ok: false, motivo: "execucao_nao_suportada", recusas: [{ motivo: "combinacao_nao_suportada", caminho: "estoque.atualizacao", mensagem: MENSAGEM_CAMPO_SEM_REGRA }] };
+  }
+  let financeiro: PoliticaFinanceiroDaCompra = PADRAO_DA_COMPRA.financeiro;
+  if (execucao.financeiro === "configurada") {
+    if (c.financeiro.atualizacao === "nenhuma") financeiro = { autoridade: "configurada", efeito: "nenhum" };
+    else if (c.financeiro.atualizacao === "pagar") {
+      financeiro = {
+        autoridade: "configurada", efeito: "pagar",
+        exigeFormaPagamento: c.financeiro.exigeFormaPagamento, exigeVencimento: c.financeiro.exigeVencimento, exigeCentroResultado: c.financeiro.exigeCentroResultado,
+      };
+    } else return { ok: false, motivo: "execucao_nao_suportada", recusas: [{ motivo: "combinacao_nao_suportada", caminho: "financeiro.atualizacao", mensagem: MENSAGEM_CAMPO_SEM_REGRA }] };
+  }
+  return { ok: true, politica: { origem: formato, estoque, financeiro } };
+}
+
+/** O resumo da política da compra para a auditoria da confirmação (texto estável). */
+export function resumoDaPoliticaDaCompra(p: PoliticaEfetivaDaCompra): { estoque: string; financeiro: string } {
+  return {
+    estoque: p.estoque.autoridade === "padrao" ? "padrao" : `configurada:${p.estoque.efeito}`,
+    financeiro: p.financeiro.autoridade === "padrao" ? "padrao" : `configurada:${p.financeiro.efeito}`,
   };
 }
