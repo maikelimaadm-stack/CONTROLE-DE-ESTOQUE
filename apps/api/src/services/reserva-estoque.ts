@@ -16,8 +16,12 @@ import { D, qty as fqty } from "@agro/shared";
 export interface ParDeEstoque { warehouseId: string; productId: string }
 export interface SaldoDoPar { fisico: string; reservado: string; disponivel: string }
 
-/** Chave estável de um par — a mesma nos três mapas. */
-export const chaveDoPar = (warehouseId: string, productId: string) => `${warehouseId}:${productId}`;
+/**
+ * Chave estável de um par — a mesma nos três mapas —, em MINÚSCULAS: o zod (`z.string().uuid()`) e o parâmetro de
+ * rota aceitam UUID em maiúsculas, e o banco devolve sempre em minúsculas. Sem normalizar, o par pedido não se acha
+ * entre as linhas lidas: o reservado "falta" (403) e o físico some (disponível 0).
+ */
+export const chaveDoPar = (warehouseId: string, productId: string) => `${warehouseId.toLowerCase()}:${productId.toLowerCase()}`;
 
 function distintos(pares: readonly ParDeEstoque[]): ParDeEstoque[] {
   const vistos = new Map<string, ParDeEstoque>();
@@ -41,6 +45,7 @@ export async function reservadoEmLote(ctx: ServiceCtx, pares: readonly ParDeEsto
     "select warehouse_id, product_id, reservado from erp.reserva_estoque($1::uuid[], $2::uuid[], $3::uuid)",
     [lista.map((p) => p.warehouseId), lista.map((p) => p.productId), excluirDocumentoId]);
   for (const row of r.rows) saida.set(chaveDoPar(row.warehouse_id, row.product_id), fqty(row.reservado));
+  // Os dois lados passam por `chaveDoPar` (minúsculas): par pedido em maiúsculas acha a linha que o banco devolveu.
   if (lista.some((p) => !saida.has(chaveDoPar(p.warehouseId, p.productId)))) throw denied("reserva de estoque");
   return saida;
 }

@@ -1139,9 +1139,11 @@ export default async function salesRoutes(app: FastifyInstance) {
          * reserva que a parte carrega é sempre a mesma que o pedido deixou de carregar.
          * Item de produto SEM controle de estoque fica fora da guarda: não reserva (a conta não o soma), então o armazém
          * dele não carrega reserva nenhuma. O produto é o mesmo da origem (`iguais`), e o flag vem do `getDoc`.
+         * A comparação é em MINÚSCULAS: o zod aceita UUID em maiúsculas e o gravado vem do banco em minúsculas — o
+         * mesmo armazém repetido em maiúsculas não é troca.
          */
         if (origemReserva) {
-          const trocados = d.items.flatMap((n, k) => cur.items[k]!.product_control_stock !== false && (n.warehouse_id ?? null) !== (cur.items[k]!.warehouse_id ?? null)
+          const trocados = d.items.flatMap((n, k) => cur.items[k]!.product_control_stock !== false && (n.warehouse_id?.toLowerCase() ?? null) !== (cur.items[k]!.warehouse_id?.toLowerCase() ?? null)
             ? [{ path: `items[${k}].warehouse_id`, message: MSG_PARTE_RESERVA_ARMAZEM }] : []);
           if (trocados.length) throw err("VALIDATION_ERROR", MSG_PARTE_RESERVA_ARMAZEM, trocados);
         }

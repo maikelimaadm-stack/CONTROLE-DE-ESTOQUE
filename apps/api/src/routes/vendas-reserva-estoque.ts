@@ -100,7 +100,11 @@ const numeroLegivel = (v: Decimal | string) => quantidadeLegivel(D(v).toFixed(4)
  * não conta contra si mesmo. `null` na criação.
  */
 export async function conferirReservaDoDocumento(ctx: ServiceCtx, entrada: { itens: readonly ItemParaReserva[]; empresaId: string; excluirDocumentoId: string | null }): Promise<void> {
-  const { itens, empresaId, excluirDocumentoId } = entrada;
+  const { empresaId, excluirDocumentoId } = entrada;
+  // Ids em MINÚSCULAS antes de virarem chave: o zod aceita UUID em maiúsculas e o banco devolve minúsculas. Sem isto,
+  // o serviço em maiúsculas não se acharia em `semControle` (exigiria armazém), o par não se acharia no saldo lido
+  // (403) e a linha do 422 perderia os nomes. Só a CONFERÊNCIA usa a cópia; o que se grava é o corpo, como veio.
+  const itens = entrada.itens.map((it) => ({ ...it, product_id: it.product_id.toLowerCase(), warehouse_id: it.warehouse_id ? it.warehouse_id.toLowerCase() : null }));
 
   // a) a trava, em ordem de id (dois salvamentos do mesmo conjunto fazem fila em vez de travar um ao outro), em
   //    TODOS os produtos do documento. O nome e o `control_stock` do produto vêm na mesma instrução.
