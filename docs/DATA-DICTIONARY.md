@@ -11,14 +11,14 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 
 | Métrica | Valor |
 | --- | ---: |
-| Tabelas no schema `erp` | 196 |
-| Tabelas com `organization_id` (escopo de organização) | 139 |
-| Tabelas com coluna de empresa (hoje `farm_id`) | 54 |
-| Entidades curadas neste dicionário | 49 |
-| Entidades com ID Global | 23 |
-| Entidades com Tipo de Operação | 13 |
-| Tipos de Operação referenciados | 17 |
-| Cobertura curada | 25.0% |
+| Tabelas no schema `erp` | 198 |
+| Tabelas com `organization_id` (escopo de organização) | 141 |
+| Tabelas com coluna de empresa (hoje `farm_id`) | 55 |
+| Entidades curadas neste dicionário | 51 |
+| Entidades com ID Global | 24 |
+| Entidades com Tipo de Operação | 14 |
+| Tipos de Operação referenciados | 19 |
+| Cobertura curada | 25.8% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -1118,6 +1118,86 @@ Pedido interno de compra que percorre autorização, cotação e recebimento.
 | `updated_at` |  | timestamptz | sim |  |  |  |  |
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
+
+### ERP-COMPRAS-DOCUMENTO — Documento de Compra
+
+Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa e a tela (pedido de compra, compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.documentos_compra` |
+| Natureza | entidade |
+| Escopo de organização | sim |
+| Escopo de empresa | `empresa_id` |
+| Exclusão lógica | não |
+| ID Global | sim |
+| Discriminador | `especie` (decide tela **e** permissão — ver docs/GLOBAL-ID-CONTRACT.md) |
+| Rotas por variante | `pedido` → `/compras/pedidos/:id` · `compra` → `/compras/compras/:id` |
+| Tipo de Operação | `compras.pedido` (Pedido de compra) · `compras.compra` (Compra) |
+| Discriminador do Tipo de Operação | `especie` (decide qual das operações acima o registro é) |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `empresa_id` |  | uuid | sim |  |  |  |  |
+| `especie` | Espécie | text | sim |  |  | `pedido` · `compra` | pedido \| compra. Valor canônico persistido; o rótulo é traduzido na apresentação. |
+| `codigo` |  | text | sim |  |  |  |  |
+| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado \| cancelado. O pedido só fica aberto ou cancelado; cancelado é final. |
+| `tipo_operacao_id` |  | uuid | sim |  |  |  |  |
+| `tipo_operacao_versao_id` |  | uuid | sim |  |  |  |  |
+| `fornecedor_id` |  | uuid | sim |  |  |  |  |
+| `transportadora_id` |  | uuid | não |  |  |  |  |
+| `data_documento` |  | date | sim |  |  |  |  |
+| `data_entrada` |  | date | não |  |  |  |  |
+| `data_vencimento` |  | date | não |  |  |  |  |
+| `numero_nota` |  | text | não |  |  |  |  |
+| `serie_nota` |  | text | não |  |  |  |  |
+| `categoria_financeira_id` | Natureza de despesa | uuid | não |  |  |  | Categoria de DESPESA analítica e ativa dos títulos a pagar gerados pela confirmação. Anda em PAR com o centro de custo (os dois ou nenhum); FK composta com o tenant. |
+| `centro_custo_id` | Centro de custo | uuid | não |  |  |  | Centro de custo analítico dos títulos a pagar. Anda em PAR com a natureza de despesa; FK composta com o tenant. |
+| `condicao_pagamento_id` |  | uuid | não |  |  |  |  |
+| `parcelas_ajustadas` |  | boolean | sim |  |  |  |  |
+| `plano_parcelas` |  | jsonb | não |  |  |  |  |
+| `forma_pagamento_id` |  | uuid | não | FK | `erp.payment_methods` |  |  |
+| `valor_itens` |  | numeric(18,2) | sim |  |  |  |  |
+| `frete` |  | numeric(18,2) | sim |  |  |  |  |
+| `outras_despesas` |  | numeric(18,2) | sim |  |  |  |  |
+| `desconto` |  | numeric(18,2) | sim |  |  |  |  |
+| `valor_total` |  | numeric(18,2) | sim |  |  |  |  |
+| `observacao` |  | text | não |  |  |  |  |
+| `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
+| `criado_em` |  | timestamptz | sim |  |  |  |  |
+| `atualizado_em` |  | timestamptz | sim |  |  |  |  |
+
+### ERP-COMPRAS-DOCUMENTO-ITEM — Item do Documento de Compra
+
+Linha de produto do documento de compra. Identidade pertence ao documento; só muda com o documento aberto.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.documentos_compra_itens` |
+| Natureza | linha |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | não |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `documento_id` |  | uuid | sim |  |  |  |  |
+| `produto_id` |  | uuid | sim |  |  |  |  |
+| `armazem_id` |  | uuid | não |  |  |  |  |
+| `quantidade` |  | numeric(18,4) | sim |  |  |  |  |
+| `valor_unitario` |  | numeric(18,4) | sim |  |  |  |  |
+| `desconto` |  | numeric(18,2) | sim |  |  |  |  |
+| `desconto_percentual` |  | numeric(9,4) | sim |  |  |  |  |
+| `valor_total` |  | numeric(18,2) | sim |  |  |  |  |
+| `lote` |  | text | não |  |  |  |  |
+| `validade` |  | date | não |  |  |  |  |
+| `observacao` |  | text | não |  |  |  |  |
+| `posicao` |  | int | sim |  |  |  |  |
 
 ## Financeiro
 
