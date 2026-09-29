@@ -8,7 +8,8 @@ import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js
 import { consultaEscopada, exigirEmpresaDeLancamento, empresaScope, scopedById, hasPermission, type ServiceCtx } from "../lib/context.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
-import { postStock, reverseStock } from "../services/stock-core.js";
+import { postStock, reverseStock, quantidadeLegivel } from "../services/stock-core.js";
+import { saldoComReservaEmLote, chaveDoPar, type ParDeEstoque } from "../services/reserva-estoque.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal } from "../lib/id-global.js";
 import { layoutEfetivo, conferirPadroesRegistro, type RegistroPadraoConferido } from "../lib/layout-documento.js";
@@ -562,7 +563,7 @@ async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execuca
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 /** A venda como a confirmação a lê (`getDoc` da variante `sale`). */
-type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string }[] };
+type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string; product_name: string; warehouse_name: string | null }[] };
 /** A classificação que vai para o rateio dos títulos: a do documento, ou o recuo "padrão legado". */
 type ClassificacaoResolvida = ClassificacaoFinanceira & { origem: "documento" | "padrão legado" };
 
@@ -610,7 +611,8 @@ function tituloDaVenda(d: VendaParaConfirmar, plan: InstallmentPlan | null) {
  * O PLANEJAMENTO DA CONFIRMAÇÃO — UMA função, usada pela confirmação E pela prévia (VENDAS-A5-1).
  *
  * Decide, NESTA ORDEM, o que a confirmação conferia antes de qualquer efeito: situação → política da versão
- * congelada e gate → exigências da versão → período → classificação financeira. Quem só MOSTRA o efeito
+ * congelada e gate → exigências da versão → período → classificação financeira → reserva de estoque
+ * (TOP-CONFIG-07, `conferirReservaNaSaida`). Quem só MOSTRA o efeito
  * (a prévia) não pode ter uma cópia desta regra: uma cópia "equivalente" divergiria na primeira fatia que
  * mexesse em uma das duas, e a tela prometeria o que o servidor não faz. O que muda entre as duas está
  * inteiro em `modo`.
@@ -676,7 +678,52 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
       else plano.classificacao = { categoriaFinanceiraId: cat.id, centroCustoId: cc.id, origem: "padrão legado" };
     }
   }
+
+  // RESERVA DE ESTOQUE (TOP-CONFIG-07) — a última conferência antes do primeiro efeito, e só quando HAVERÁ saída.
+  if (plano.baixaEstoque) await conferirReservaNaSaida(ctx, d, modo);
   return plano;
+}
+
+/**
+ * PRÉ-CONFERÊNCIA DA RESERVA NA SAÍDA DA VENDA (TOP-CONFIG-07, decisão 266) — a mensagem AMIGÁVEL da recusa que o
+ * gatilho `trg_stock_movement_reserva` (0035) daria no INSERT do movimento.
+ *
+ * Por (armazém, produto) dos itens com armazém: a soma da quantidade da venda cabe no DISPONÍVEL = físico do
+ * armazém (todos os lotes) − reservado pelos OUTROS (`excluir` = a própria venda: a parte B dela é exatamente o
+ * que esta confirmação consome; a parte A do pedido de origem já desconta as partes não canceladas). Não coube →
+ * 409 INSUFFICIENT_STOCK, uma linha por produto, unidas por "\n", e `details` por par.
+ *
+ * SÓ RECUSA QUANDO HÁ RESERVA NO PAR (reservado > 0). Sem reserva, disponível = físico, e a falta de físico já
+ * tem dono e mensagem (a escolha de lote em `postStock` e o gatilho de saldo da 0003) — a confirmação de quem
+ * não usa reserva continua exatamente como era (código, texto e detalhes), inclusive a ordem das recusas.
+ *
+ * LEITURA SEM TRAVA, e de propósito: `stock-core` trava as linhas de saldo antes e o PRODUTO por último (o gatilho
+ * de saldo o atualiza) — travar o produto aqui, antes da linha de saldo, reabriria o ciclo do LT-9c. A corrida
+ * entre esta leitura e o INSERT continua coberta pelo gatilho da 0035, que confere sob a trava do produto e
+ * recusa com o mesmo código. Custo fixo: as DUAS consultas do lote (`saldoComReservaEmLote`), nunca uma por item.
+ */
+async function conferirReservaNaSaida(ctx: ServiceCtx, d: VendaParaConfirmar, modo: ModoDoPlanejamento): Promise<void> {
+  const porPar = new Map<string, ParDeEstoque & { quantidade: string; produto: string; armazem: string }>();
+  for (const it of d.items) {
+    if (!it.warehouse_id) continue;
+    const chave = chaveDoPar(it.warehouse_id, it.product_id);
+    const atual = porPar.get(chave);
+    porPar.set(chave, { warehouseId: it.warehouse_id, productId: it.product_id, produto: it.product_name, armazem: it.warehouse_name ?? "",
+      quantidade: D(atual?.quantidade ?? 0).plus(it.quantity).toFixed(4) });
+  }
+  if (porPar.size === 0) return;
+  const saldo = await saldoComReservaEmLote(ctx, [...porPar.values()], d.id);
+  const faltas: { linha: string; detalhe: Record<string, string> }[] = [];
+  for (const [chave, p] of porPar) {
+    const s = saldo.get(chave);
+    if (!s) throw new Error(`conferirReservaNaSaida: par ${chave} sem saldo lido`);
+    if (!D(s.reservado).gt(0) || !D(p.quantidade).gt(s.disponivel)) continue;
+    faltas.push({
+      linha: `${p.produto} no armazém ${p.armazem}: disponível ${quantidadeLegivel(s.disponivel)}, solicitado ${quantidadeLegivel(p.quantidade)} (${quantidadeLegivel(s.reservado)} reservado para pedidos).`,
+      detalhe: { produto_id: p.productId, armazem_id: p.warehouseId, fisico: s.fisico, reservado: s.reservado, disponivel: s.disponivel, solicitado: p.quantidade },
+    });
+  }
+  if (faltas.length) modo.recusar(err("INSUFFICIENT_STOCK", faltas.map((f) => f.linha).join("\n"), faltas.map((f) => ({ ...f.detalhe, message: f.linha }))));
 }
 
 async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabilitada: boolean) {
@@ -691,7 +738,8 @@ async function confirmSale(ctx: ServiceCtx, id: string, execucaoConfiguradaHabil
 
   // ESTOQUE. Legado e "saída" configurada chamam a MESMA primitiva com os MESMOS identificadores; "nenhum"
   // não chama nada. O item sem armazém continua fora da baixa nos dois caminhos que baixam — com
-  // `exigeArmazem` ele já foi recusado acima.
+  // `exigeArmazem` ele já foi recusado acima. A reserva de estoque também (`conferirReservaNaSaida`, no
+  // planejamento); a corrida entre aquela leitura e estes INSERTs é do gatilho `trg_stock_movement_reserva`.
   const movimentos: string[] = [];
   if (plano.baixaEstoque) {
     for (const it of d.items) if (it.warehouse_id) movimentos.push(...(await postStock(ctx, { empresaId: d.empresa_id, warehouseId: it.warehouse_id, productId: it.product_id, movementType: "sale", direction: -1, quantity: it.quantity, sourceType: "sales_documents", sourceId: id, date: d.shipping_date ?? d.document_date, note: `Venda ${d.code}` })).ids);
@@ -750,7 +798,9 @@ export const CONTRATO_PREVIA_CONFIRMACAO = 1;
  * mudar, e é a confirmação que decide com a trava. Recusa que nasce DENTRO das primitivas de efeito — saldo
  * de estoque insuficiente e as demais conferências de `postStock`, valor do título não positivo em
  * `createTitles` — não está no planejamento e, por isso, não aparece aqui. A exceção é o parcelamento: a
- * prévia faz a MESMA conta de parcelas (`parcelasDoTitulo`) e, se ela recusar, a recusa entra na lista.
+ * prévia faz a MESMA conta de parcelas (`parcelasDoTitulo`) e, se ela recusar, a recusa entra na lista. E a
+ * reserva de estoque (TOP-CONFIG-07): a pré-conferência mora no planejamento (`conferirReservaNaSaida`), então a
+ * recusa por estoque reservado para pedidos aparece aqui com o mesmo código, texto e detalhes da confirmação.
  *
  * Autorização pela MESMA `getDoc` do GET do documento: a prévia responde o que o GET responde para o mesmo
  * id — outro tenant, fora do escopo, inexistente, excluído e id de outra variante dão a MESMA 404 (o id
