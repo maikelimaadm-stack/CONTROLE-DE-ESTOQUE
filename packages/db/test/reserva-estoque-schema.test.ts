@@ -74,15 +74,17 @@ async function item(doc: string, par: Par, qtd: string, origem: string | null = 
     `insert into erp.sales_document_items (document_id, product_id, warehouse_id, quantity, unit_price, total, position, origem_item_id)
      values ($1,$2,$3,$4,10,0,0,$5) returning id`, [doc, par.p, par.w, qtd, origem])).rows[0]!.id);
 }
-/** Produto SEM controle de estoque (serviço), cópia do produto A na organização do demo. chk_product_fin_cat só exige
- * a categoria financeira de quem controla estoque; grupo, unidade e classificação vêm do produto A. */
-async function produtoSemControle(): Promise<string> {
+/** Produto NOVO, cópia do produto A na organização do demo, com ou sem controle de estoque (serviço). Grupo, unidade,
+ * classificação e categoria financeira vêm do produto A — com a categoria, chk_product_fin_cat aceita ligar o
+ * controle depois (BR7). */
+async function produtoNovo(controla: boolean): Promise<string> {
   seq += 1;
   return (await db.query<{ id: string }>(
-    `insert into erp.products (organization_id, code, description, group_id, measurement_id, category_id, kind_id, control_stock)
-     select organization_id, $2, $3, group_id, measurement_id, category_id, kind_id, false from erp.products where id=$1 returning id`,
-    [produtoA, `RS${seq}`, `Servico reserva ${seq}`])).rows[0]!.id;
+    `insert into erp.products (organization_id, code, description, group_id, measurement_id, category_id, kind_id, financial_category_id, control_stock)
+     select organization_id, $2, $3, group_id, measurement_id, category_id, kind_id, financial_category_id, $4 from erp.products where id=$1 returning id`,
+    [produtoA, `RS${seq}`, `Produto reserva ${seq}`, controla])).rows[0]!.id;
 }
+const produtoSemControle = () => produtoNovo(false);
 /** Pedido com UM item no par, na TOP dada. */
 async function pedido(par: Par, qtd: string, top: Top = pedidoComReserva, status = "open"): Promise<{ id: string; item: string }> {
   const id = await documento("order", { top, status });
@@ -335,14 +337,14 @@ describe("BR3 — a porta exposta é estreita", () => {
          from pg_proc p join pg_namespace n on n.oid = p.pronamespace
          cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x
         where n.nspname='erp' and x.privilege_type='EXECUTE' and x.grantee <> p.proowner
-          and p.proname in ('reserva_estoque','reserva_estoque_nucleo','stock_movement_reserva_guarda','tipos_operacao_versao_reserva_familia')
+          and p.proname in ('reserva_estoque','reserva_estoque_nucleo','stock_movement_reserva_guarda','tipos_operacao_versao_reserva_familia','products_controle_estoque_reserva')
         group by p.proname order by p.proname`);
     expect(acl.rows).toEqual([{ proname: "reserva_estoque", grantees: ["erp_app"] }]);
     const def = await db.query<{ proname: string; prosecdef: boolean; config: string }>(
       `select p.proname, p.prosecdef, array_to_string(p.proconfig, ';') config from pg_proc p join pg_namespace n on n.oid=p.pronamespace
-        where n.nspname='erp' and p.proname in ('reserva_estoque','reserva_estoque_nucleo','stock_movement_reserva_guarda') order by 1`);
+        where n.nspname='erp' and p.proname in ('reserva_estoque','reserva_estoque_nucleo','stock_movement_reserva_guarda','products_controle_estoque_reserva') order by 1`);
     expect(def.rows.every((x) => x.prosecdef && /search_path=erp, pg_temp/.test(x.config))).toBe(true);
-    expect(def.rowCount).toBe(3);
+    expect(def.rowCount).toBe(4);
   });
 });
 
@@ -439,22 +441,24 @@ describe("BR5 — ordem dos gatilhos em erp.stock_movements", () => {
   });
 });
 
+/** Transação aberta pelo papel da aplicação, com as GUCs, e o pid dela (para ver quem espera quem). */
+async function abrir(ctx: TenantContext): Promise<{ c: Tx; pid: number }> {
+  const c = await app.connect();
+  await c.query("begin");
+  await c.query("select set_config('app.org_id',$1,true), set_config('app.user_id',$2,true), set_config('app.modulo_empresa',$3,true)", [ctx.orgId, ctx.userId, ctx.modulo]);
+  const pid = (await c.query<{ pid: number }>("select pg_backend_pid() pid")).rows[0]!.pid;
+  return { c, pid };
+}
+async function esperaPor(bloqueado: number, quem: number): Promise<void> {
+  for (let i = 0; i < 250; i++) {
+    const r = await db.query<{ b: number[] }>("select pg_blocking_pids($1) b", [bloqueado]);
+    if (r.rows[0]!.b.includes(quem)) return;
+    await new Promise((ok) => setTimeout(ok, 20));
+  }
+  throw new Error(`o processo ${bloqueado} não chegou a esperar ${quem}`);
+}
+
 describe("BR6 — concorrência: pedido × saída do mesmo produto (READ COMMITTED)", () => {
-  async function abrir(ctx: TenantContext): Promise<{ c: Tx; pid: number }> {
-    const c = await app.connect();
-    await c.query("begin");
-    await c.query("select set_config('app.org_id',$1,true), set_config('app.user_id',$2,true), set_config('app.modulo_empresa',$3,true)", [ctx.orgId, ctx.userId, ctx.modulo]);
-    const pid = (await c.query<{ pid: number }>("select pg_backend_pid() pid")).rows[0]!.pid;
-    return { c, pid };
-  }
-  async function esperaPor(bloqueado: number, quem: number): Promise<void> {
-    for (let i = 0; i < 250; i++) {
-      const r = await db.query<{ b: number[] }>("select pg_blocking_pids($1) b", [bloqueado]);
-      if (r.rows[0]!.b.includes(quem)) return;
-      await new Promise((ok) => setTimeout(ok, 20));
-    }
-    throw new Error(`o processo ${bloqueado} não chegou a esperar ${quem}`);
-  }
   const TRAVA_PRODUTO = "select id from erp.products where organization_id=$1 and id = any($2::uuid[]) order by id for update";
 
   it("BR6 a saída que esperou a trava do produto enxerga o pedido que comitou nesse meio-tempo — e sem o commit, passa", async () => {
@@ -510,5 +514,166 @@ describe("BR6 — concorrência: pedido × saída do mesmo produto (READ COMMITT
       await P.c.query("rollback").catch(() => {}); await M.c.query("rollback").catch(() => {});
       P.c.release(); M.c.release();
     }
+  });
+});
+
+describe("BR7 — o flag control_stock não muda sob reserva viva (gatilho em erp.products)", () => {
+  const RECUSA_CONTROLE = 'VALIDATION_ERROR: O produto está em pedido com reserva de estoque em aberto (ou em venda aberta gerada dele): não pode mudar "Controla estoque" agora. Fature, cancele ou encerre o saldo do pedido antes.';
+  interface Estado { kind: string; status: string; saldo_encerrado: boolean; excluido: boolean; reserva: boolean | null; itens: number }
+  /** A troca do cadastro pelo PAPEL DA APLICAÇÃO (o caminho da API), com as GUCs; confere o ROW COUNT. */
+  const trocaControle = (produto: string, controla: boolean) => withTx(app, ctxEstoque(), async (tx) => {
+    const r = await tx.query("update erp.products set control_stock=$2 where id=$1 and organization_id=$3", [produto, controla, demo.orgId]);
+    expect(r.rowCount, "a RLS deixou o papel da aplicação gravar a linha").toBe(1);
+  });
+  const controla = async (produto: string) => (await db.query<{ control_stock: boolean }>(
+    "select control_stock from erp.products where id=$1 and organization_id=$2", [produto, demo.orgId])).rows[0]!.control_stock;
+  /** O documento como está NO BANCO (premissa contra verde vazio); `reserva` é a da versão congelada dele. */
+  const estado = async (doc: string): Promise<Estado | undefined> => (await db.query<Estado>(
+    `select d.kind, d.status, d.saldo_encerrado_em is not null saldo_encerrado, d.deleted_at is not null excluido, v.reserva_estoque reserva,
+            (select count(*)::int from erp.sales_document_items i where i.document_id = d.id) itens
+       from erp.sales_documents d left join erp.tipos_operacao_versoes v on v.id = d.tipo_operacao_versao_id
+      where d.id=$1 and d.organization_id=$2`, [doc, demo.orgId])).rows[0];
+  const ITEM_SEM_ARMAZEM = "insert into erp.sales_document_items (document_id, product_id, warehouse_id, quantity, unit_price, total, position) values ($1,$2,null,$3,10,0,0)";
+
+  it("BR7 false→true com pedido com reserva aberto (item sem armazém, como o serviço é gravado): recusado pelo papel da aplicação; o flag fica false", async () => {
+    const servico = await produtoNovo(false);
+    const o = await documento("order", { top: pedidoComReserva });
+    await withTx(app, ctxVendas(), (tx) => tx.query(ITEM_SEM_ARMAZEM, [o, servico, "2"]));
+    expect(await estado(o), "PREMISSA: pedido aberto, da versão que reserva, com o item").toEqual(
+      { kind: "order", status: "open", saldo_encerrado: false, excluido: false, reserva: true, itens: 1 });
+    await expect(trocaControle(servico, true)).rejects.toThrow(RECUSA_CONTROLE);
+    expect(await controla(servico), "a recusa desfez a troca").toBe(false);
+    // Item COM armazém, pedido 'approved': a mesma recusa.
+    const outro = await produtoNovo(false);
+    const p = await pedido(await novoPar(outro), "3", pedidoComReserva, "approved");
+    expect(await estado(p.id)).toMatchObject({ kind: "order", status: "approved", reserva: true, itens: 1 });
+    await expect(trocaControle(outro, true)).rejects.toThrow(RECUSA_CONTROLE);
+    expect(await controla(outro)).toBe(false);
+  });
+
+  it("BR7 true→false com pedido com reserva aberto: recusado; o flag fica true e a reserva prometida continua na conta", async () => {
+    const produto = await produtoNovo(true);
+    const par = await novoPar(produto);
+    await pedido(par, "4");
+    expect(await reservado(par), "PREMISSA: o pedido reserva o produto controlado").toBe("4.0000");
+    await expect(trocaControle(produto, false)).rejects.toThrow(RECUSA_CONTROLE);
+    expect(await controla(produto)).toBe(true);
+    expect(await reservado(par), "a reserva não sumiu em silêncio").toBe("4.0000");
+  });
+
+  it("BR7 parte B: pedido cancelado com venda aberta gerada dele → recusado (nas duas direções); venda confirmada ou cancelada → passa", async () => {
+    const produto = await produtoNovo(false);
+    const par = await novoPar(produto);
+    const p = await pedido(par, "5");                         // 4 na primeira venda, 1 na segunda
+    const v = await documento("sale", { origem: p.id });
+    await item(v, par, "4", p.item);
+    await situacao(p.id, "cancelled");
+    expect(await estado(p.id), "PREMISSA: o pedido já não é A").toMatchObject({ kind: "order", status: "cancelled", reserva: true });
+    expect(await estado(v), "PREMISSA: a venda gerada dele está aberta, com o item").toMatchObject({ kind: "sale", status: "open", excluido: false, itens: 1 });
+    await expect(trocaControle(produto, true)).rejects.toThrow(RECUSA_CONTROLE);
+    expect(await controla(produto)).toBe(false);
+    await situacao(v, "confirmed");
+    await trocaControle(produto, true);
+    expect(await controla(produto), "venda confirmada: nada mais reserva o produto").toBe(true);
+
+    // Controlado, outra venda aberta do mesmo pedido cancelado: true→false também é recusado.
+    const v2 = await documento("sale", { origem: p.id });
+    await item(v2, par, "1", p.item);
+    expect(await reservado(par), "PREMISSA: a venda aberta é B do produto controlado").toBe("1.0000");
+    await expect(trocaControle(produto, false)).rejects.toThrow(RECUSA_CONTROLE);
+    expect(await controla(produto)).toBe(true);
+    await situacao(v2, "cancelled");
+    await trocaControle(produto, false);
+    expect(await controla(produto), "venda cancelada e pedido cancelado: nada reserva").toBe(false);
+  });
+
+  it("BR7 sem documento que a conta enxergue, a troca passa: pedido cancelado, saldo encerrado, excluído, SEM reserva, orçamento com a versão que reserva", async () => {
+    const aberto = async (par: Par, top: Top = pedidoComReserva) => (await pedido(par, "2", top)).id;
+    const cenarios: [string, (par: Par) => Promise<string>, Partial<Estado>][] = [
+      ["pedido cancelado", async (par) => { const id = await aberto(par); await situacao(id, "cancelled"); return id; },
+        { kind: "order", status: "cancelled", reserva: true }],
+      ["saldo encerrado", async (par) => {
+        const id = await aberto(par);
+        await db.query("update erp.sales_documents set saldo_encerrado_em=now(), saldo_encerrado_por=$2, saldo_encerrado_motivo='teste' where id=$1", [id, demo.adminUserId]);
+        return id;
+      }, { kind: "order", status: "open", saldo_encerrado: true, excluido: false, reserva: true }],
+      ["pedido excluído", async (par) => { const id = await aberto(par); await db.query("update erp.sales_documents set deleted_at=now() where id=$1", [id]); return id; },
+        { kind: "order", status: "open", saldo_encerrado: false, excluido: true, reserva: true }],
+      ["pedido SEM reserva", (par) => aberto(par, pedidoSemReserva), { kind: "order", status: "open", saldo_encerrado: false, excluido: false, reserva: false }],
+      ["orçamento com a versão que reserva", async (par) => { const o = await documento("budget", { top: pedidoComReserva }); await item(o, par, "2"); return o; },
+        { kind: "budget", status: "open", excluido: false, reserva: true }],
+    ];
+    for (const [nome, criar, esperado] of cenarios) {
+      const produto = await produtoNovo(false);
+      const par = await novoPar(produto);
+      const doc = await criar(par);
+      expect(await estado(doc), `PREMISSA (${nome}): o documento existe no estado dito, com o item`).toMatchObject({ ...esperado, itens: 1 });
+      await trocaControle(produto, true);
+      expect(await controla(produto), `${nome}: a troca passou`).toBe(true);
+      // PREMISSA contra verde vazio: o MESMO produto, com um pedido com reserva aberto, já não troca.
+      await pedido(par, "1");
+      await expect(trocaControle(produto, false), `${nome}: com pedido vivo a troca é recusada`).rejects.toThrow(RECUSA_CONTROLE);
+    }
+  });
+
+  it("BR7 update que não troca o flag passa com reserva viva: descrição, e control_stock regravado com o MESMO valor", async () => {
+    const produto = await produtoNovo(true);
+    await pedido(await novoPar(produto), "2");
+    await expect(trocaControle(produto, false), "PREMISSA: a reserva está viva — trocar o flag é recusado").rejects.toThrow(RECUSA_CONTROLE);
+    await withTx(app, ctxEstoque(), async (tx) => {
+      const r = await tx.query("update erp.products set description=$2 where id=$1 and organization_id=$3", [produto, "Descricao nova", demo.orgId]);
+      expect(r.rowCount).toBe(1);
+    });
+    await trocaControle(produto, true);                       // o mesmo valor: o WHEN do gatilho não dispara
+    expect((await db.query("select description, control_stock from erp.products where id=$1", [produto])).rows)
+      .toEqual([{ description: "Descricao nova", control_stock: true }]);
+  });
+
+  it("BR7 concorrência: a troca que esperou a trava do produto (salvamento do pedido) enxerga o pedido que comitou — e sem o commit, passa", async () => {
+    for (const commitDoPedido of [false, true]) {
+      const produto = await produtoNovo(false);
+      const P = await abrir(ctxVendas());
+      const M = await abrir(ctxEstoque());
+      try {
+        // A trava do salvamento do pedido (SQL_TRAVA_PRODUTOS da API): for no key update, em ordem de id.
+        await P.c.query("select id from erp.products where organization_id=$1 and id = any($2::uuid[]) order by id for no key update", [demo.orgId, [produto]]);
+        const troca = M.c.query("update erp.products set control_stock=true where id=$1 and organization_id=$2", [produto, demo.orgId])
+          .then(() => null, (e: Error) => e);
+        await esperaPor(M.pid, P.pid);                         // a troca está parada na linha que o pedido travou
+        const doc = (await P.c.query<{ id: string }>(
+          `insert into erp.sales_documents (organization_id, empresa_id, kind, code, document_date, client_id, status, tipo_operacao_id, tipo_operacao_versao_id)
+           values ($1,$2,'order',$3,'2026-09-01',$4,'open',$5,$6) returning id`,
+          [demo.orgId, empresa, `RE-F-${++seq}`, cliente, pedidoComReserva.top, pedidoComReserva.versao])).rows[0]!.id;
+        await P.c.query(ITEM_SEM_ARMAZEM, [doc, produto, "1"]);
+        await P.c.query(commitDoPedido ? "commit" : "rollback");
+        const erro = await troca;
+        if (commitDoPedido) {
+          expect(erro?.message, "a conferência tirou foto DEPOIS da espera").toBe(RECUSA_CONTROLE);
+          await M.c.query("rollback");
+          expect(await controla(produto)).toBe(false);
+          expect(await estado(doc), "PREMISSA: o pedido comitado existe").toMatchObject({ kind: "order", status: "open", reserva: true, itens: 1 });
+        } else {
+          expect(erro, "PREMISSA: sem o pedido comitado a mesma troca passa").toBeNull();
+          await M.c.query("commit");
+          expect(await controla(produto)).toBe(true);
+        }
+      } finally {
+        await P.c.query("rollback").catch(() => {}); await M.c.query("rollback").catch(() => {});
+        P.c.release(); M.c.release();
+      }
+    }
+  });
+
+  it("BR7 gatilho BEFORE UPDATE OF control_stock FOR EACH ROW em erp.products, ligado, função certa e VOLÁTIL; o papel da aplicação não a executa", async () => {
+    const r = await db.query(
+      `select (tgtype & 2) = 2 antes, (tgtype & 1) = 1 linha, (tgtype & 16) = 16 atualizacao, (tgtype & 4) = 4 insercao, tgenabled ligado, tgfoid::regprocedure::text funcao
+         from pg_trigger where tgrelid='erp.products'::regclass and tgname='trg_products_controle_estoque_reserva'`);
+    expect(r.rows).toEqual([{ antes: true, linha: true, atualizacao: true, insercao: false, ligado: "O", funcao: "erp.products_controle_estoque_reserva()" }]);
+    const def = (await db.query<{ def: string }>("select pg_get_triggerdef(oid) def from pg_trigger where tgrelid='erp.products'::regclass and tgname='trg_products_controle_estoque_reserva'")).rows[0]!.def;
+    expect(def).toContain("BEFORE UPDATE OF control_stock ON erp.products FOR EACH ROW WHEN ((old.control_stock IS DISTINCT FROM new.control_stock))");
+    // VOLÁTIL: foto nova por instrução (com `stable`, o teste de concorrência acima fica vermelho).
+    expect((await db.query("select provolatile from pg_proc where oid='erp.products_controle_estoque_reserva()'::regprocedure")).rows).toEqual([{ provolatile: "v" }]);
+    await expect(withTx(app, ctxVendas(), (tx) => tx.query("select erp.products_controle_estoque_reserva()")))
+      .rejects.toThrow(/permission denied for function products_controle_estoque_reserva/);
   });
 });

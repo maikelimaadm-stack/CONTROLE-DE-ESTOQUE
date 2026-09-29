@@ -36,6 +36,11 @@
 --    existe) e chega aos itens POR DOCUMENTO — sem o índice por documento, cada saída leria todo o histórico
 --    de itens do par. O índice por (produto, armazém) cobre o caso inverso (muitos documentos vivos, par com
 --    pouco histórico); o planejador escolhe. O índice parcial das versões que reservam atende o atalho do gatilho.
+-- 7) O FLAG NÃO MUDA SOB RESERVA VIVA: products.control_stock decide o que a conta enxerga (item 2) e é lido ao vivo
+--    pelo núcleo, pela API e pela guarda. Gatilho BEFORE UPDATE OF control_stock em erp.products
+--    (trg_products_controle_estoque_reserva) recusa a troca, nas DUAS direções, enquanto houver item do produto em A
+--    ou em B: false→true ativaria reserva que a API nunca conferiu (armazém, empresa, disponível); true→false tiraria
+--    em silêncio a reserva prometida (e o ciclo true→false→true pularia a conferência).
 --
 -- SEM BACKFILL: coluna nova false; nenhum saldo, movimento ou documento muda.
 -- JANELA DE DEPLOY: a API anterior não lê a coluna; o gatilho não recusa nada enquanto nenhuma versão reservar.
@@ -84,7 +89,9 @@ begin
      or to_regclass('erp.ix_sales_document_items_reserva') is not null
      or to_regclass('erp.ix_sales_document_items_documento') is not null
      or to_regclass('erp.ix_tipos_operacao_versoes_reserva') is not null
-     or exists (select 1 from pg_trigger t where t.tgrelid = 'erp.stock_movements'::regclass and t.tgname = 'trg_stock_movement_reserva') then
+     or to_regprocedure('erp.products_controle_estoque_reserva()') is not null
+     or exists (select 1 from pg_trigger t where t.tgrelid = 'erp.stock_movements'::regclass and t.tgname = 'trg_stock_movement_reserva')
+     or exists (select 1 from pg_trigger t where t.tgrelid = 'erp.products'::regclass and t.tgname = 'trg_products_controle_estoque_reserva') then
     raise exception 'TOP-CONFIG-07: reserva_estoque ja existe; a 0035 ja foi aplicada ou ha schema divergente.';
   end if;
   -- A PORTA ESTREITA SÓ FUNCIONA SE O DONO DA FUNÇÃO ATRAVESSA A RLS: sem isso a conta devolveria o recorte de
@@ -275,6 +282,53 @@ create trigger trg_stock_movement_reserva
   for each row when (NEW.direction = -1 and NEW.movement_type not in ('correction_out', 'reversal'))
   execute function erp.stock_movement_reserva_guarda();
 
+-- ---------- 7a) o flag control_stock não muda sob reserva viva ----------
+-- O flag decide se o item entra na conta, e a API só confere armazém, empresa e disponível do item CONTROLADO.
+-- Trocá-lo com documento vivo citando o produto mudaria a reserva por fora da conferência: false→true ativa reserva
+-- nunca conferida (armazém de outra empresa, acima do físico: disponível negativo e saídas bloqueadas); true→false
+-- tira em silêncio a reserva já prometida. Recusa nas DUAS direções enquanto houver item do produto (com ou sem
+-- armazém) em A ou em B — as mesmas condições do núcleo, sem o saldo a faturar (fail closed).
+-- · SECURITY DEFINER com search_path fixo: confere a organização INTEIRA da linha (a RLS de quem grava esconderia
+--   pedido de outra empresa); devolve só a recusa; sem SQL dinâmico.
+-- · VOLÁTIL DE PROPÓSITO (o padrão): o salvamento do pedido trava a linha do produto (`for no key update`) antes de
+--   conferir; este UPDATE espera essa trava, e cada instrução abaixo tira foto NOVA — o pedido que comitou durante a
+--   espera entra na conferência. Com `stable`, a foto seria a do UPDATE, de antes da espera.
+create function erp.products_controle_estoque_reserva() returns trigger
+language plpgsql security definer set search_path = erp, pg_temp as $$
+begin
+  -- ATALHO EXATO (índice parcial ix_tipos_operacao_versoes_reserva): sem versão que reserve, A e B são vazios.
+  if not exists (select 1 from erp.tipos_operacao_versoes v
+                  where v.organization_id = NEW.organization_id and v.reserva_estoque) then
+    return NEW;
+  end if;
+  if exists (select 1
+               from erp.sales_documents o
+               join erp.tipos_operacao_versoes v on v.id = o.tipo_operacao_versao_id and v.organization_id = o.organization_id
+               join erp.sales_document_items oi on oi.document_id = o.id
+              where o.organization_id = NEW.organization_id and o.kind = 'order' and o.status in ('open', 'approved')
+                and o.saldo_encerrado_em is null and o.deleted_at is null and v.reserva_estoque
+                and oi.product_id = NEW.id)
+     or exists (select 1
+               from erp.sales_documents s
+               join erp.sales_documents o on o.id = s.origin_document_id and o.organization_id = s.organization_id
+               join erp.tipos_operacao_versoes v on v.id = o.tipo_operacao_versao_id and v.organization_id = o.organization_id
+               join erp.sales_document_items si on si.document_id = s.id
+              where s.organization_id = NEW.organization_id and s.kind = 'sale' and s.status in ('open', 'approved')
+                and s.deleted_at is null and o.kind = 'order' and v.reserva_estoque
+                and si.product_id = NEW.id) then
+    raise exception 'VALIDATION_ERROR: O produto está em pedido com reserva de estoque em aberto (ou em venda aberta gerada dele): não pode mudar "Controla estoque" agora. Fature, cancele ou encerre o saldo do pedido antes.'
+      using errcode = 'P0001';
+  end if;
+  return NEW;
+end $$;
+comment on function erp.products_controle_estoque_reserva() is
+  'TOP-CONFIG-07: recusa trocar products.control_stock (nas duas direcoes) enquanto houver item do produto em pedido com reserva aberto ou em venda aberta gerada dele: o flag decide o que a conta da reserva enxerga. Confere a organizacao inteira; devolve so a recusa.';
+
+create trigger trg_products_controle_estoque_reserva
+  before update of control_stock on erp.products
+  for each row when (OLD.control_stock is distinct from NEW.control_stock)
+  execute function erp.products_controle_estoque_reserva();
+
 -- ---------- 7b) quem executa o quê ----------
 -- A 0007 declarou `alter default privileges ... grant execute on functions to erp_app`, e toda função nasce com
 -- execute para PUBLIC: sem a revogação o núcleo nasceria executável pela API (e a conferência de capacidade da
@@ -290,7 +344,8 @@ begin
       join pg_namespace n on n.oid = p.pronamespace
       cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
      where n.nspname = 'erp'
-       and p.proname in ('reserva_estoque', 'reserva_estoque_nucleo', 'stock_movement_reserva_guarda', 'tipos_operacao_versao_reserva_familia')
+       and p.proname in ('reserva_estoque', 'reserva_estoque_nucleo', 'stock_movement_reserva_guarda', 'tipos_operacao_versao_reserva_familia',
+                         'products_controle_estoque_reserva')
        and a.privilege_type = 'EXECUTE' and a.grantee <> p.proowner
   loop
     if r.grantee = 0 then
@@ -335,18 +390,31 @@ begin
     raise exception 'TOP-CONFIG-07: a imutabilidade da versao (0020) ou a guarda de familia da reserva esta ausente.';
   end if;
   if (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'erp' and p.proname in ('reserva_estoque', 'reserva_estoque_nucleo', 'stock_movement_reserva_guarda')
+       where n.nspname = 'erp' and p.proname in ('reserva_estoque', 'reserva_estoque_nucleo', 'stock_movement_reserva_guarda', 'products_controle_estoque_reserva')
          and p.prosecdef
-         and exists (select 1 from unnest(coalesce(p.proconfig, '{}'::text[])) c where c like 'search_path=%')) <> 3 then
+         and exists (select 1 from unnest(coalesce(p.proconfig, '{}'::text[])) c where c like 'search_path=%')) <> 4 then
     raise exception 'TOP-CONFIG-07: funcoes da reserva sem SECURITY DEFINER ou sem search_path fixo.';
   end if;
   if (select p.provolatile from pg_proc p where p.oid = 'erp.stock_movement_reserva_guarda()'::regprocedure) <> 'v' then
     raise exception 'TOP-CONFIG-07: a guarda de saida precisa ser VOLATIL (foto nova por instrucao); stable leria o saldo de antes da baixa e perderia o pedido comitado durante a espera.';
   end if;
+  if not exists (select 1 from pg_trigger t where t.tgrelid = 'erp.products'::regclass
+                  and t.tgname = 'trg_products_controle_estoque_reserva' and not t.tgisinternal and t.tgenabled = 'O'
+                  and t.tgfoid = 'erp.products_controle_estoque_reserva()'::regprocedure
+                  and (t.tgtype & 2) = 2            -- BEFORE
+                  and (t.tgtype & 1) = 1            -- ROW
+                  and (t.tgtype & 16) = 16          -- UPDATE
+                  and (t.tgtype & (4 | 8 | 32)) = 0 -- só UPDATE
+                  and array(select unnest(t.tgattr::int2[])) = array[(select c.attnum from pg_attribute c   -- UPDATE OF control_stock
+                                                                    where c.attrelid = 'erp.products'::regclass and c.attname = 'control_stock')])
+     or (select p.provolatile from pg_proc p where p.oid = 'erp.products_controle_estoque_reserva()'::regprocedure) <> 'v' then
+    raise exception 'TOP-CONFIG-07: trg_products_controle_estoque_reserva ausente, desligado, com outra funcao, nao e BEFORE UPDATE OF control_stock FOR EACH ROW ou a funcao nao e VOLATIL; o flag control_stock mudaria sob reserva viva.';
+  end if;
   if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
               cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) x
              where n.nspname = 'erp'
-               and p.proname in ('reserva_estoque', 'reserva_estoque_nucleo', 'stock_movement_reserva_guarda', 'tipos_operacao_versao_reserva_familia')
+               and p.proname in ('reserva_estoque', 'reserva_estoque_nucleo', 'stock_movement_reserva_guarda', 'tipos_operacao_versao_reserva_familia',
+                                 'products_controle_estoque_reserva')
                and x.privilege_type = 'EXECUTE' and x.grantee <> p.proowner
                and not (p.proname = 'reserva_estoque' and x.grantee = 'erp_app'::regrole)) then
     raise exception 'TOP-CONFIG-07: papel alem do dono executa a conta da reserva (so erp_app, e so na porta exposta erp.reserva_estoque).';
