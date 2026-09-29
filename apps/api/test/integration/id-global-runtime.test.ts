@@ -181,6 +181,17 @@ describe("VENDAS — três variantes, três permissões", () => {
   }
 });
 
+describe("COMPRAS — pedido de compra e compra, duas permissões", () => {
+  for (const [especie, familia, rota] of [["pedido", "compras.pedido", "pedidos"], ["compra", "compras.compra", "compras"]] as const) {
+    it(`documento de compra: ${especie}`, async () => {
+      const top = await post("/api/admin/tipos-operacao", { codigo: `IDGC${especie.slice(0, 1).toUpperCase()}`, codigoBase: familia, nome: `ID Global ${especie}` });
+      expect(top.statusCode, top.body).toBe(201);
+      const id = await criar(`/api/compras/${rota}`, { empresa_id: I.empresa, tipo_operacao_id: String(j(top).id), fornecedor_id: I.provider, data_documento: "2031-01-16", itens: [{ produto_id: I.product, quantidade: "1", valor_unitario: "10" }] });
+      await conferir("documentos_compra", id, { empresa: I.empresa, modulo: "compras", rota: `/compras/${rota}/${id}` });
+    });
+  }
+});
+
 describe("PECUÁRIA — cada variante user-facing recebe; as INTERNAS não", () => {
   it("animal", async () => {
     const id = await criar("/api/livestock/animals", { empresa_id: I.empresa, species_id: await opcao("animal_species"), category_id: I.speciesCategory, entry_date: "2031-01-17", sex: "M", identifications: [{ identification_type_id: I.idType, value: "IDG-ANIMAL-1", is_primary: true }] });
