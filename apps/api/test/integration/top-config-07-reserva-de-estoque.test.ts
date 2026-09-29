@@ -501,7 +501,8 @@ describe("RE-11 — Estoque › Saldo lê a reserva em lote", () => {
     expect(corpo.items, "a página tem 5 linhas de 4 pares (senão a contagem não prova nada)").toHaveLength(5);
     expect(consultasDeReserva, "uma consulta de reserva para a página inteira").toBe(1);
 
-    const linha = (p: string, w: string, lote: string | null = null) => corpo.items.find((i) => i.product_id === p && i.warehouse_id === w && (i.provider_lot ?? null) === lote);
+    // Sem lote o saldo é gravado com provider_lot = '' (chave da 0003), não null: '' e null são "sem lote".
+    const linha = (p: string, w: string, lote: string | null = null) => corpo.items.find((i) => i.product_id === p && i.warehouse_id === w && (i.provider_lot || null) === lote);
     expect(linha(p1.id, armazemA)).toMatchObject({ reservado: "4.0000", disponivel: "6.0000" });
     expect(linha(p2.id, armazemA)).toMatchObject({ reservado: "0.0000", disponivel: "10.0000" });
     expect(linha(p2.id, armazemB)).toMatchObject({ reservado: "0.0000", disponivel: "5.0000" });
