@@ -411,18 +411,21 @@ async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts
   // TOP-CONFIG-06: o faturado de cada item (partes NÃO canceladas) e quantas linhas o citam (inclusive canceladas)
   // vêm na MESMA consulta dos itens — nada de consulta por item. `faturado`/`saldo` só aparecem quando o documento
   // tem parte gerada; sem parte, os itens saem exatamente como antes.
-  const itensLidos = await ctx.tx.query<Record<string, unknown> & { quantity: string; fp_faturado: string; fp_ligadas: number }>("select i.*, p.description as product_name, p.code as product_code, mu.symbol as unit, w.description as warehouse_name, fp.faturado::text as fp_faturado, fp.ligadas::int as fp_ligadas from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id left join lateral (select coalesce(sum(pi.quantity) filter (where pd.status <> 'cancelled'), 0) as faturado, count(*) as ligadas from erp.sales_document_items pi join erp.sales_documents pd on pd.id=pi.document_id where pi.origem_item_id=i.id) fp on true where i.document_id=$1 order by i.position", [id]);
+  // TOP-CONFIG-07: `product_control_stock` (aditivo, do join que já existe) — a reserva, a guarda do armazém da parte e
+  // a pré-conferência da saída deixam de fora o produto que não controla estoque.
+  const itensLidos = await ctx.tx.query<Record<string, unknown> & { quantity: string; product_control_stock: boolean; fp_faturado: string; fp_ligadas: number }>("select i.*, p.description as product_name, p.code as product_code, p.control_stock as product_control_stock, mu.symbol as unit, w.description as warehouse_name, fp.faturado::text as fp_faturado, fp.ligadas::int as fp_ligadas from erp.sales_document_items i join erp.products p on p.id=i.product_id left join erp.measurement_units mu on mu.id=p.measurement_id left join erp.warehouses w on w.id=i.warehouse_id left join lateral (select coalesce(sum(pi.quantity) filter (where pd.status <> 'cancelled'), 0) as faturado, count(*) as ligadas from erp.sales_document_items pi join erp.sales_documents pd on pd.id=pi.document_id where pi.origem_item_id=i.id) fp on true where i.document_id=$1 order by i.position", [id]);
   const temParte = itensLidos.rows.some((x) => x.fp_ligadas > 0);
   const linha = r.rows[0] as Record<string, unknown> & { status: string; saldo_encerrado_em: unknown; reserva_estoque: boolean; tipo_operacao_id: string | null; top_codigo: string | null; top_codigo_base: string | null; top_nome: string | null; top_versao: number | null };
   /*
    * TOP-CONFIG-07: pedido com reserva — `reservado` por item, da MESMA consulta (o faturado da lateral acima). É a
    * parte A da conta do banco (`erp.reserva_estoque_nucleo`) item a item: o saldo a faturar enquanto o pedido está
-   * aberto e sem saldo encerrado, e só em item com armazém (sem par não há reserva); fora disso, zero.
+   * aberto e sem saldo encerrado, e só em item com armazém (sem par não há reserva) de produto que controla estoque
+   * (serviço e frete não têm saldo, e a conta do banco não os soma); fora disso, zero.
    */
   const reservaAtiva = linha.reserva_estoque && (linha.status === "open" || linha.status === "approved") && linha.saldo_encerrado_em === null;
   const items = { rows: itensLidos.rows.map(({ fp_faturado, fp_ligadas: _l, ...resto }) => ({
     ...(temParte ? { ...resto, faturado: D(fp_faturado).toFixed(4), saldo: saldoDoItem({ quantity: resto.quantity, faturado: fp_faturado }) } : resto),
-    ...(linha.reserva_estoque ? { reservado: reservaAtiva && resto["warehouse_id"] ? saldoDoItem({ quantity: resto.quantity, faturado: fp_faturado }) : "0.0000" } : {}),
+    ...(linha.reserva_estoque ? { reservado: reservaAtiva && resto["warehouse_id"] && resto.product_control_stock !== false ? saldoDoItem({ quantity: resto.quantity, faturado: fp_faturado }) : "0.0000" } : {}),
   })) };
   const titles = await ctx.tx.query("select id, code, number, due_date, amount, balance, status from erp.financial_titles where organization_id=$1 and source_type='sales_documents' and source_id=$2 order by due_date", [ctx.orgId, id]);
   const derived = await ctx.tx.query("select id, kind, code, status from erp.sales_documents where origin_document_id=$1", [id]);
@@ -573,7 +576,7 @@ async function politicaDaVenda(ctx: ServiceCtx, versaoId: string | null, execuca
  * └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 /** A venda como a confirmação a lê (`getDoc` da variante `sale`). */
-type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string; product_name: string; warehouse_name: string | null }[] };
+type VendaParaConfirmar = Record<string, unknown> & { id: string; kind: SalesKind; status: string; empresa_id: string; document_date: string; shipping_date: string | null; due_date: string | null; client_id: string; payment_method_id: string | null; total: string; code: string; installment_plan: Record<string, unknown>; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; items: { product_id: string; warehouse_id: string | null; quantity: string; total: string; product_name: string; product_control_stock: boolean; warehouse_name: string | null }[] };
 /** A classificação que vai para o rateio dos títulos: a do documento, ou o recuo "padrão legado". */
 type ClassificacaoResolvida = ClassificacaoFinanceira & { origem: "documento" | "padrão legado" };
 
@@ -698,10 +701,11 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
  * PRÉ-CONFERÊNCIA DA RESERVA NA SAÍDA DA VENDA (TOP-CONFIG-07, decisão 266) — a mensagem AMIGÁVEL da recusa que o
  * gatilho `trg_stock_movement_reserva` (0035) daria no INSERT do movimento.
  *
- * Por (armazém, produto) dos itens com armazém: a soma da quantidade da venda cabe no DISPONÍVEL = físico do
- * armazém (todos os lotes) − reservado pelos OUTROS (`excluir` = a própria venda: a parte B dela é exatamente o
- * que esta confirmação consome; a parte A do pedido de origem já desconta as partes não canceladas). Não coube →
- * 409 INSUFFICIENT_STOCK, uma linha por produto, unidas por "\n", e `details` por par.
+ * Por (armazém, produto) dos itens com armazém de produto que controla estoque: a soma da quantidade da venda cabe
+ * no DISPONÍVEL = físico do armazém (todos os lotes) − reservado pelos OUTROS (`excluir` = a própria venda: a parte
+ * B dela é exatamente o que esta confirmação consome; a parte A do pedido de origem já desconta as partes não
+ * canceladas). Não coube → 409 INSUFFICIENT_STOCK, uma linha por produto, unidas por "\n", e `details` por par.
+ * Produto sem controle de estoque (serviço, frete) não tem saldo nem entra na conta do banco: fica fora.
  *
  * SÓ RECUSA QUANDO HÁ RESERVA NO PAR (reservado > 0). Sem reserva, disponível = físico, e a falta de físico já
  * tem dono e mensagem (a escolha de lote em `postStock` e o gatilho de saldo da 0003) — a confirmação de quem
@@ -715,7 +719,9 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: VendaParaConfirmar, execu
 async function conferirReservaNaSaida(ctx: ServiceCtx, d: VendaParaConfirmar, modo: ModoDoPlanejamento): Promise<void> {
   const porPar = new Map<string, ParDeEstoque & { quantidade: string; produto: string; armazem: string }>();
   for (const it of d.items) {
-    if (!it.warehouse_id) continue;
+    // Produto sem controle de estoque (flag do `getDoc`) fica fora da conta: não tem saldo nem reserva. Com armazém,
+    // quem o recusa é o `postStock` (PRODUCT_NOT_STOCK_CONTROLLED), como sempre recusou.
+    if (!it.warehouse_id || it.product_control_stock === false) continue;
     const chave = chaveDoPar(it.warehouse_id, it.product_id);
     const atual = porPar.get(chave);
     porPar.set(chave, { warehouseId: it.warehouse_id, productId: it.product_id, produto: it.product_name, armazem: it.warehouse_name ?? "",
@@ -1101,7 +1107,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       // — que não reavalia status nenhum. O resultado é um documento `confirmed` cujos itens e total foram
       // TROCADOS depois de o estoque ter sido baixado e os títulos gerados pelo conjunto antigo: a venda
       // diz uma coisa e o ledger diz outra, sem que nenhuma das duas respostas seja erro.
-      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; client_id: string; empresa_id: string; reserva_estoque: boolean; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null; origin_document_id: string | null; items: { origem_item_id: string | null; product_id: string; warehouse_id: string | null; quantity: string; unit_price: string; discount: string; discount_percent: string }[] };
+      const cur = await getDoc(ctx, id, kind, { lock: true }) as { status: string; kind: string; client_id: string; empresa_id: string; reserva_estoque: boolean; tipo_operacao_id: string | null; tipo_operacao_versao_id: string | null; categoria_financeira_id: string | null; centro_custo_id: string | null; condicao_pagamento_id: string | null; origin_document_id: string | null; items: { origem_item_id: string | null; product_id: string; product_control_stock: boolean; warehouse_id: string | null; quantity: string; unit_price: string; discount: string; discount_percent: string }[] };
       if (cur.status !== "open" && cur.status !== "approved") throw err("INVALID_STATUS_TRANSITION", "Documento não editável neste status");
       // TOP-CONFIG-06 — ORIGEM COM PARTES: trocar itens reescreveria o saldo das partes já geradas. Com partes só
       // canceladas os itens também ficam (a FK `origem_item_id` é `on delete restrict`, e apagá-los perderia a ligação).
@@ -1131,9 +1137,11 @@ export default async function salesRoutes(app: FastifyInstance) {
          * dela. Com o armazém trocado, o armazém do pedido fica livre para outra saída — e cancelar a parte devolve a
          * reserva ao armazém do pedido sem conferir: disponível negativo por um fluxo comum. Mantendo o armazém, a
          * reserva que a parte carrega é sempre a mesma que o pedido deixou de carregar.
+         * Item de produto SEM controle de estoque fica fora da guarda: não reserva (a conta não o soma), então o armazém
+         * dele não carrega reserva nenhuma. O produto é o mesmo da origem (`iguais`), e o flag vem do `getDoc`.
          */
         if (origemReserva) {
-          const trocados = d.items.flatMap((n, k) => (n.warehouse_id ?? null) !== (cur.items[k]!.warehouse_id ?? null)
+          const trocados = d.items.flatMap((n, k) => cur.items[k]!.product_control_stock !== false && (n.warehouse_id ?? null) !== (cur.items[k]!.warehouse_id ?? null)
             ? [{ path: `items[${k}].warehouse_id`, message: MSG_PARTE_RESERVA_ARMAZEM }] : []);
           if (trocados.length) throw err("VALIDATION_ERROR", MSG_PARTE_RESERVA_ARMAZEM, trocados);
         }

@@ -14,10 +14,13 @@ import { SQL_TRAVA_PRODUTOS } from "../../src/routes/vendas-reserva-estoque.js";
  *
  * Estoque: Sal Mineral 10 no Almoxarifado (empresa 1) e 5 no Silo (empresa 1); Ração 0 no Almoxarifado. Cada caso
  * devolve o reservado a zero no fim (cancela o que criou), e o começo do caso seguinte PROVA isso antes de contar.
+ *
+ * TOP-CONFIG-07_R1: um SERVIÇO (produto com `control_stock = false`, criado pela API de cadastro) fica FORA da
+ * reserva — não exige armazém, não confere a empresa do armazém nem o disponível, e o GET mostra `reservado` 0 nele.
  */
 let h: Harness; let I: Awaited<ReturnType<typeof ids>>; let admin: Db;
 let topReserva: string; let topSemReserva: string; let topOrcamento: string;
-let SAL: string; let RACAO: string; let ALM: string; let SILO: string;
+let SAL: string; let RACAO: string; let ALM: string; let SILO: string; let SERV: string;
 
 type Resposta = { statusCode: number; body: string; json: () => unknown };
 type Erro = { code: string; message: string; details?: { path: string; message: string }[] };
@@ -31,6 +34,9 @@ const reservado = (w: string, p: string, excluir: string | null = null) => umVal
   "select reservado::text from erp.reserva_estoque_nucleo($1, array[$2]::uuid[], array[$3]::uuid[], $4)", [h.demo.orgId, w, p, excluir]);
 const contar = async (kind: string) => Number(await umValor("select count(*) from erp.sales_documents where organization_id=$1 and kind=$2", [h.demo.orgId, kind]));
 const quantidades = async (id: string) => (await admin.query<{ q: string }>("select quantity::text q from erp.sales_document_items where document_id=$1 order by position", [id])).rows.map((x) => x.q);
+/** Os itens como o banco os guarda: [produto, armazém, quantidade], na ordem da posição. */
+const itensDe = async (id: string) => (await admin.query<{ p: string; w: string | null; q: string }>(
+  "select product_id::text p, warehouse_id::text w, quantity::text q from erp.sales_document_items where document_id=$1 order by position", [id])).rows.map((x) => [x.p, x.w, x.q]);
 
 let seq = 0;
 async function criarTop(codigoBase: string, nome: string): Promise<string> {
@@ -108,6 +114,17 @@ beforeAll(async () => {
   [nomeSal, nomeRacao, nomeAlm, nomeSilo] = [await nome("products", SAL), await nome("products", RACAO), await nome("warehouses", ALM), await nome("warehouses", SILO)];
   // PREMISSA: o armazém "de outra empresa" é mesmo de outra empresa.
   expect(await umValor("select empresa_id::text from erp.warehouses where id=$1", [I.warehouseEmpresa2])).not.toBe(I.empresa);
+  // TOP-CONFIG-07_R1: o SERVIÇO nasce pela API de cadastro, sem natureza de custo (`chk_product_fin_cat` só a exige de
+  // quem controla estoque). PREMISSAS no banco: não controla, e não tem saldo — o disponível dele é 0, que é o que a
+  // conferência antiga recusava.
+  const cad = await h.app.inject({ method: "POST", url: "/api/resources/products", headers: h.headers(), payload: {
+    description: "R1 Frete de entrega", control_stock: false,
+    group_id: await umValor("select id::text from erp.product_groups where organization_id=$1 and kind='analytic' and deleted_at is null order by code limit 1", [h.demo.orgId]),
+    measurement_id: await umValor("select id::text from erp.measurement_units where (organization_id is null or organization_id=$1) and upper(symbol)='UN' order by organization_id nulls last limit 1", [h.demo.orgId]) } });
+  expect(cad.statusCode, cad.body).toBe(201);
+  SERV = j(cad).id as string;
+  expect(await umValor("select control_stock::text from erp.products where id=$1", [SERV]), "premissa: o serviço não controla estoque").toBe("false");
+  expect([await fisico(ALM, SERV), await fisico(SILO, SERV), await fisico(I.warehouseEmpresa2!, SERV)], "premissa: o serviço não tem saldo").toEqual(["0.0000", "0.0000", "0.0000"]);
 
   topReserva = await criarTop("vendas.pedido", "Pedido com reserva");
   await versaoNova(topReserva, true);
@@ -337,6 +354,118 @@ describe("PUT da venda aberta gerada de pedido com reserva (parte B)", () => {
   });
 });
 
+describe("TOP-CONFIG-07_R1 — produto sem controle de estoque fica FORA da reserva do pedido", () => {
+  const obrigatorio = "Informe o armazém: esta operação reserva estoque.";
+  const outra = "O armazém não é da empresa do documento.";
+
+  it("POST com o controlado + serviço SEM armazém → 201; serviço no armazém de OUTRA empresa → 201; PUT idem; só o controlado reserva; GET: 0 no serviço", async () => {
+    await semReserva();
+    const a = await criado("orders", topReserva, [item("8"), item("1", null, SERV)]);
+    // PREMISSA: gravou o serviço como veio (sem armazém), e a versão congelada no pedido reserva.
+    expect(await itensDe(a)).toEqual([[SAL, ALM, "8.0000"], [SERV, null, "1.0000"]]);
+    expect((await ler("orders", a)).reserva_estoque).toBe(true);
+    expect(await reservado(ALM, SAL)).toBe("8.0000");
+    // o serviço num armazém de OUTRA empresa também passa: está fora da reserva, e (c) não o confere
+    const b = await criado("orders", topReserva, [item("2"), item("1", I.warehouseEmpresa2, SERV)]);
+    expect(await itensDe(b)).toEqual([[SAL, ALM, "2.0000"], [SERV, I.warehouseEmpresa2, "1.0000"]]);
+    // o controlado continua contando: 10 de 10 reservados, e o próximo pedido com serviço não leva nada do Sal
+    expect(await reservado(ALM, SAL)).toBe("10.0000");
+    recusa(await criar("orders", topReserva, [item("1"), item("1", null, SERV)]), linha(nomeSal, nomeAlm, "0", "1"), [{ path: "items", message: linha(nomeSal, nomeAlm, "0", "1") }]);
+
+    // PUT do mesmo pedido: o serviço cresce sem armazém, vai para o armazém de outra empresa, e vem para a frente
+    for (const itens of [[item("8"), item("3", null, SERV)], [item("8"), item("3", I.warehouseEmpresa2, SERV)], [item("3", SILO, SERV), item("8")]]) {
+      const r = await editar("orders", a, null, itens);
+      expect(r.statusCode, r.body).toBe(200);
+    }
+    expect(await itensDe(a)).toEqual([[SERV, SILO, "3.0000"], [SAL, ALM, "8.0000"]]);
+    expect(await reservado(ALM, SAL)).toBe("10.0000");
+    // e o PUT continua conferindo o controlado
+    recusa(await editar("orders", a, null, [item("3", SILO, SERV), item("9")]), linha(nomeSal, nomeAlm, "8", "9"), [{ path: "items", message: linha(nomeSal, nomeAlm, "8", "9") }]);
+
+    // GET: o serviço COM armazém (o Silo) e pedido aberto mostra reservado 0; o flag do produto sai no item (aditivo)
+    const d = await ler("orders", a);
+    expect(d.items.map((i) => [i["product_id"], i.quantity, i["reservado"], i["product_control_stock"]])).toEqual([
+      [SERV, "3.0000", "0.0000", false], [SAL, "8.0000", "8.0000", true]]);
+    await cancelar("orders", a); await cancelar("orders", b);
+    await semReserva();
+  });
+
+  it("REGRESSÃO: o controlado continua exigindo armazém e armazém da empresa — o `path` aponta o item do DOCUMENTO, com o serviço antes dele", async () => {
+    await semReserva();
+    const antes = await contar("order");
+    recusa(await criar("orders", topReserva, [item("1", null, SERV), item("1", null)]), obrigatorio, [{ path: "items[1].warehouse_id", message: obrigatorio }]);
+    recusa(await criar("orders", topReserva, [item("1", I.warehouseEmpresa2, SERV), item("1", I.warehouseEmpresa2)]), outra, [{ path: "items[1].warehouse_id", message: outra }]);
+    recusa(await criar("orders", topReserva, [item("1", null, SERV), item("11")]), linha(nomeSal, nomeAlm, "10", "11"), [{ path: "items", message: linha(nomeSal, nomeAlm, "10", "11") }]);
+    expect(await contar("order"), "nenhuma recusa gravou").toBe(antes);
+    // só serviço, sem armazém nenhum: não há o que reservar — salva
+    const so = await criado("orders", topReserva, [item("1", null, SERV), item("2", null, SERV)]);
+    expect(await itensDe(so)).toEqual([[SERV, null, "1.0000"], [SERV, null, "2.0000"]]);
+    await cancelar("orders", so);
+  });
+
+  it("conversão orçamento → pedido com reserva, com serviço sem armazém → gera o pedido; só o controlado reserva; GET: 0 no serviço", async () => {
+    await semReserva();
+    const orc = await criado("budgets", topOrcamento, [item("4"), item("1", null, SERV)]);
+    const r = await h.app.inject({ method: "POST", url: `/api/sales/budgets/${orc}/convert`, headers: h.headers(), payload: { tipo_operacao_id: topReserva } });
+    expect(r.statusCode, r.body).toBe(201);
+    const ped = j(r).id as string;
+    expect(await itensDe(ped)).toEqual([[SAL, ALM, "4.0000"], [SERV, null, "1.0000"]]);
+    expect(await reservado(ALM, SAL), "o pedido gerado reserva o controlado pela versão da TOP destino").toBe("4.0000");
+    const d = await ler("orders", ped);
+    expect([d.reserva_estoque, d.items.map((i) => [i["reservado"], i["product_control_stock"]])]).toEqual([true, [["4.0000", true], ["0.0000", false]]]);
+    await cancelar("orders", ped);
+    await semReserva();
+  });
+
+  describe("PUT da venda gerada EM PARTES de pedido com reserva — a guarda do armazém da parte", () => {
+    let emPartes: string; let venda: string;
+    beforeAll(async () => {
+      // HELPER ISOLADO: TOP de venda + TOP de pedido cuja versão N+1 reserva, declara destinos e tem UMA aresta em partes
+      // para a venda (a mesma montagem por SQL da suíte A2). Sem parte (`origem_item_id`), a guarda não existe.
+      venda = await criarTop("vendas.venda", "Venda R1");
+      emPartes = await criarTop("vendas.pedido", "Pedido com reserva em partes R1");
+      const v = (await admin.query<{ id: string }>(
+        `insert into erp.tipos_operacao_versoes (organization_id, tipo_operacao_id, versao, nome, configuracao, configuracao_schema_version, destinos_configurados, reserva_estoque)
+         select v.organization_id, v.tipo_operacao_id, v.versao + 1, v.nome, v.configuracao, v.configuracao_schema_version, true, true
+           from erp.tipos_operacao_versoes v join erp.tipos_operacao t on t.id = v.tipo_operacao_id and t.versao_atual = v.versao
+          where t.id = $1 returning id`, [emPartes])).rows[0]!.id;
+      expect((await admin.query("update erp.tipos_operacao set versao_atual = versao_atual + 1 where id = $1", [emPartes])).rowCount).toBe(1);
+      await admin.query("insert into erp.tipos_operacao_versao_destinos (organization_id, origem_versao_id, origem_tipo_operacao_id, destino_tipo_operacao_id, ordem, em_partes) values ($1,$2,$3,$4,0,true)",
+        [h.demo.orgId, v, emPartes, venda]);
+    });
+
+    it("trocar o armazém do item de SERVIÇO → 200; trocar o do controlado → continua 422 no item; a conta do Sal não muda", async () => {
+      await semReserva();
+      const ped = await criado("orders", emPartes, [item("8"), item("1", null, SERV)]);
+      const itensPed = (await ler("orders", ped)).items.map((i) => i["id"] as string);
+      const conv = await h.app.inject({ method: "POST", url: `/api/sales/orders/${ped}/convert`, headers: h.headers(),
+        payload: { tipo_operacao_id: venda, itens: [{ item_id: itensPed[0]!, quantidade: "4" }, { item_id: itensPed[1]!, quantidade: "1" }] } });
+      expect(conv.statusCode, conv.body).toBe(201);
+      const parte = j(conv).id as string;
+      // PREMISSA: é PARTE (os itens citam a origem), o pedido segue aberto, e a reserva do Sal é A (4) + B (4)
+      expect((await admin.query<{ o: string | null }>("select origem_item_id::text o from erp.sales_document_items where document_id=$1 order by position", [parte])).rows.map((x) => x.o)).toEqual(itensPed);
+      expect([await umValor("select status from erp.sales_documents where id=$1", [ped]), await reservado(ALM, SAL)]).toEqual(["open", "8.0000"]);
+      const v = await ler("sales", parte);
+      expect(v.items.map((i) => i["product_control_stock"])).toEqual([true, false]);
+      const base = v.items.map((i) => ({ product_id: i["product_id"] as string, warehouse_id: i["warehouse_id"] as string | null, quantity: i.quantity,
+        unit_price: i["unit_price"] as string, discount: i["discount"] as string, discount_percent: i["discount_percent"] as string }));
+      const put = (items: typeof base) => h.app.inject({ method: "PUT", url: `/api/sales/sales/${parte}`, headers: h.headers(),
+        payload: { empresa_id: I.empresa, document_date: "2026-09-20", client_id: I.client, items } });
+      // o serviço ganha armazém (Silo): fora da guarda e fora da conferência — passa
+      const ok = await put([base[0]!, { ...base[1]!, warehouse_id: SILO }]);
+      expect(ok.statusCode, ok.body).toBe(200);
+      expect(await itensDe(parte)).toEqual([[SAL, ALM, "4.0000"], [SERV, SILO, "1.0000"]]);
+      // o controlado para o Silo (que TEM 5 — caberia): a guarda da parte continua recusando, no campo do item
+      const msg = "O armazém deste item vem do pedido de origem, que reserva estoque no armazém de cada item: não pode ser trocado. Para mudar, cancele esta venda e gere de novo.";
+      recusa(await put([{ ...base[0]!, warehouse_id: SILO }, { ...base[1]!, warehouse_id: SILO }]), msg, [{ path: "items[0].warehouse_id", message: msg }]);
+      expect(await itensDe(parte)).toEqual([[SAL, ALM, "4.0000"], [SERV, SILO, "1.0000"]]);
+      expect([await reservado(ALM, SAL), await reservado(SILO, SAL)]).toEqual(["8.0000", "0.0000"]);
+      await cancelar("sales", parte); await cancelar("orders", ped);
+      await semReserva();
+    });
+  });
+});
+
 describe("Contagem de consultas por salvamento", () => {
   const padroes = {
     flag: /select reserva_estoque from erp\.tipos_operacao_versoes/,
@@ -345,13 +474,13 @@ describe("Contagem de consultas por salvamento", () => {
     reservado: /from erp\.reserva_estoque\(/,
     fisico: /from unnest\(\$2::uuid\[\], \$3::uuid\[\]\)/,
   };
-  async function medir(fazer: () => Promise<Resposta>): Promise<{ r: Resposta; n: Record<keyof typeof padroes, number> }> {
+  async function medir(fazer: () => Promise<Resposta>): Promise<{ r: Resposta; n: Record<keyof typeof padroes, number>; params: (k: keyof typeof padroes) => unknown[][] }> {
     const espiao = vi.spyOn(pg.Client.prototype, "query");
     try {
       const r = await fazer();
-      const textos = espiao.mock.calls.map((c) => (typeof c[0] === "string" ? c[0] : ""));
-      const n = Object.fromEntries(Object.entries(padroes).map(([k, re]) => [k, textos.filter((t) => re.test(t)).length])) as Record<keyof typeof padroes, number>;
-      return { r, n };
+      const chamadas = espiao.mock.calls.map((c) => ({ sql: typeof c[0] === "string" ? c[0] : "", params: Array.isArray(c[1]) ? c[1] as unknown[] : [] }));
+      const n = Object.fromEntries(Object.entries(padroes).map(([k, re]) => [k, chamadas.filter((c) => re.test(c.sql)).length])) as Record<keyof typeof padroes, number>;
+      return { r, n, params: (k) => chamadas.filter((c) => padroes[k].test(c.sql)).map((c) => c.params) };
     } finally { espiao.mockRestore(); }
   }
   it("pedido com reserva (3 itens, 2 pares): 1 flag + 1 armazéns + 1 trava + 1 físico + 1 reservado — por documento, não por item", async () => {
@@ -365,6 +494,22 @@ describe("Contagem de consultas por salvamento", () => {
     expect(put.r.statusCode, put.r.body).toBe(200);
     expect(put.n).toEqual({ flag: 0, armazens: 1, trava: 1, reservado: 1, fisico: 1 });
     await cancelar("orders", id);
+  });
+  it("R1 — com serviço, a MESMA contagem: a trava leva TODOS os produtos; armazéns e saldo, só os controlados. Só serviço: a trava e mais nada", async () => {
+    await semReserva();
+    const misto = await medir(() => criar("orders", topReserva, [item("1"), item("1", I.warehouseEmpresa2, SERV), item("1", SILO)]));
+    expect(misto.r.statusCode, misto.r.body).toBe(201);
+    expect(misto.n).toEqual({ flag: 1, armazens: 1, trava: 1, reservado: 1, fisico: 1 });
+    // trava: [org, produtos]; armazéns: [org, empresa, armazéns]; físico: [org, armazéns, produtos]; reservado: [armazéns, produtos, excluir]
+    expect((misto.params("trava")[0]![1] as string[]).slice().sort()).toEqual([SAL, SERV].sort());
+    expect(misto.params("armazens")[0]![2], "o armazém alheio do serviço nem é perguntado").toEqual([ALM, SILO]);
+    expect(misto.params("fisico")[0]!.slice(1)).toEqual([[ALM, SILO], [SAL, SAL]]);
+    expect(misto.params("reservado")[0]!.slice(0, 2)).toEqual([[ALM, SILO], [SAL, SAL]]);
+    const so = await medir(() => criar("orders", topReserva, [item("1", null, SERV)]));
+    expect(so.r.statusCode, so.r.body).toBe(201);
+    expect(so.n).toEqual({ flag: 1, armazens: 0, trava: 1, reservado: 0, fisico: 0 });
+    for (const r of [misto.r, so.r]) await cancelar("orders", j(r).id as string);
+    await semReserva();
   });
   it("pedido sem reserva: só a leitura da marca; orçamento e pedido sem TOP: nenhuma", async () => {
     const sem = await medir(() => criar("orders", topSemReserva, [item("1")]));

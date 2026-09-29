@@ -14,7 +14,9 @@ import { appCom, harness, ids, TEST_URL, type Harness } from "./setup.js";
  *     mensagem amigável por produto, ANTES de qualquer efeito — e a prévia da confirmação mostra a MESMA recusa;
  *   · a venda gerada do pedido consome a PRÓPRIA reserva (a parte B dela não conta contra ela);
  *   · GET /stock/balances e GET /stock/balances/:w/:p com `reservado`/`disponivel` do PAR (armazém, produto);
- *   · RE-11: a página inteira de /stock/balances faz UMA chamada à porta `erp.reserva_estoque` — contada.
+ *   · RE-11: a página inteira de /stock/balances faz UMA chamada à porta `erp.reserva_estoque` — contada;
+ *   · TOP-CONFIG-07_R1: item de produto SEM controle de estoque (serviço, frete) fica FORA da conta da saída — com ou
+ *     sem armazém, a porta da reserva e o físico nem o recebem; com armazém, quem o recusa continua o `postStock`.
  *
  * O PEDIDO COM RESERVA NÃO DEPENDE DA API NOVA DA TOP: a TOP de pedido nasce pela API e a versão NOVA com
  * `reserva_estoque = true` (e a aresta para a TOP de venda) é gravada por SQL de superusuário, como a aresta da
@@ -83,6 +85,17 @@ async function versaoComReserva(origemTop: string, destino: string, emPartes: bo
 async function produto(rotulo: string, extra: Record<string, unknown> = {}): Promise<{ id: string; nome: string }> {
   const nome = `${TAG} ${rotulo}`;
   return { id: criado(await post("/api/resources/products", { ...base, description: nome, ...extra })), nome };
+}
+/**
+ * SERVIÇO (TOP-CONFIG-07_R1): produto novo com `control_stock: false`, pela API de cadastro. PREMISSAS no banco: não
+ * controla estoque e não tem saldo — o disponível dele é 0.
+ */
+async function servico(rotulo: string): Promise<{ id: string; nome: string }> {
+  const s = await produto(rotulo, { control_stock: false });
+  const lido = (await admin.query<{ c: boolean }>("select control_stock c from erp.products where id=$1", [s.id])).rows[0]!.c;
+  expect(lido, "premissa: o serviço não controla estoque").toBe(false);
+  expect(await fisico(s.id), "premissa: o serviço não tem saldo").toBe("0");
+  return s;
 }
 async function estoque(productId: string, quantity: string, providerLot?: string) {
   const r = await post("/api/stock/opening-balances", { empresa_id: I.empresa, warehouse_id: I.warehouse, product_id: productId, quantity, unit_value: "5", ...(providerLot ? { provider_lot: providerLot } : {}) });
@@ -321,5 +334,72 @@ describe("revisão adversarial — números de armazém alheio e o armazém da p
     expect(await armazem()).toEqual([I.warehouse]);
     // A conta continua fechando: A (4) + B (4) no armazém do pedido.
     expect(await saldoDoPar(p.id)).toMatchObject({ reservado: "8.0000", disponivel: "2.0000" });
+  });
+});
+
+describe("TOP-CONFIG-07_R1 — produto sem controle de estoque fica FORA da conta da saída", () => {
+  /** A prévia, com as chamadas à porta da reserva e ao físico do lote capturadas: [armazéns, produtos] de cada uma. */
+  async function previaEspiada(id: string, app: FastifyInstance) {
+    const espiao = vi.spyOn(pg.Client.prototype, "query");
+    try {
+      const pv = await previa(id, app);
+      const chamadas = espiao.mock.calls.map((c) => ({ sql: typeof c[0] === "string" ? c[0] : "", params: Array.isArray(c[1]) ? c[1] as unknown[] : [] }));
+      return {
+        pv,
+        reserva: chamadas.filter((c) => /from erp\.reserva_estoque\(/.test(c.sql)).map((c) => c.params.slice(0, 2)),
+        fisico: chamadas.filter((c) => /from unnest\(\$2::uuid\[\], \$3::uuid\[\]\)/.test(c.sql)).map((c) => c.params.slice(1, 3)),
+      };
+    } finally { espiao.mockRestore(); }
+  }
+  const itensDe = async (id: string) => (await admin.query<{ p: string; w: string | null; q: string }>(
+    "select product_id::text p, warehouse_id::text w, quantity::text q from erp.sales_document_items where document_id=$1 order by position", [id])).rows.map((x) => [x.p, x.w, x.q]);
+
+  it("venda gerada de pedido com reserva, com serviço SEM armazém: prévia e confirmação contam só o controlado — cabe EXATO e confirma", async () => {
+    const p = await produto("R1 controlado");
+    await estoque(p.id, "10");
+    const s = await servico("R1 frete");
+    // O pedido com reserva leva o controlado e o serviço SEM armazém (o que o R1 destrava ao salvar).
+    const ped = criado(await post("/api/sales/orders", { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, tipo_operacao_id: topPedidoInteiro,
+      items: [{ product_id: p.id, warehouse_id: I.warehouse, quantity: "8", unit_price: "5.00" }, { product_id: s.id, quantity: "1", unit_price: "30.00" }] }));
+    // Outro pedido reserva o resto: para a venda, o disponível do Sal é EXATAMENTE os 8 dela (10 − 2 dos outros).
+    await pedido(topPedidoInteiro, p.id, "2");
+    const venda = criado(await post(`/api/sales/orders/${ped}/convert`, { tipo_operacao_id: topVenda }));
+    // PREMISSAS: a venda leva os dois itens (o serviço sem armazém), e a reserva do par é 10 de 10.
+    expect(await itensDe(venda)).toEqual([[p.id, I.warehouse, "8.0000"], [s.id, null, "1.0000"]]);
+    expect(await saldoDoPar(p.id)).toMatchObject({ quantity: "10.0000", reservado: "10.0000", disponivel: "0.0000" });
+
+    const { pv, reserva, fisico: fis } = await previaEspiada(venda, ligada);
+    expect(pv.recusas).toEqual([]);
+    expect(pv.podeConfirmar).toBe(true);
+    // a conta da saída foi feita (uma chamada de cada), e só com o controlado
+    expect(reserva).toEqual([[[I.warehouse], [p.id]]]);
+    expect(fis).toEqual([[[I.warehouse], [p.id]]]);
+
+    const r = await confirmar(venda, ligada);
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await saidas(venda)).toEqual([{ movement_type: "sale", quantity: "8.0000" }]);
+    expect(await saldoDoPar(p.id)).toMatchObject({ quantity: "2.0000", reservado: "2.0000", disponivel: "0.0000" });
+    expect(await fisico(s.id), "o serviço não movimenta").toBe("0");
+  });
+
+  it("serviço COM armazém: fora da conta (a porta da reserva nem o recebe); a confirmação continua recusada pelo postStock (PRODUCT_NOT_STOCK_CONTROLLED), sem efeito", async () => {
+    const p = await produto("R1 controlado 2");
+    await estoque(p.id, "10");
+    const s = await servico("R1 frete 2");
+    const ped = criado(await post("/api/sales/orders", { empresa_id: I.empresa, document_date: "2026-09-10", client_id: I.client, tipo_operacao_id: topPedidoInteiro,
+      items: [{ product_id: p.id, warehouse_id: I.warehouse, quantity: "3", unit_price: "5.00" }, { product_id: s.id, warehouse_id: I.warehouse, quantity: "1", unit_price: "30.00" }] }));
+    const venda = criado(await post(`/api/sales/orders/${ped}/convert`, { tipo_operacao_id: topVenda }));
+    expect(await itensDe(venda)).toEqual([[p.id, I.warehouse, "3.0000"], [s.id, I.warehouse, "1.0000"]]);
+
+    const { pv, reserva, fisico: fis } = await previaEspiada(venda, ligada);
+    expect(reserva, "o par do serviço não vai à porta da reserva").toEqual([[[I.warehouse], [p.id]]]);
+    expect(fis, "nem ao físico").toEqual([[[I.warehouse], [p.id]]]);
+    expect(JSON.stringify(pv.recusas), "nenhuma recusa de reserva inventada para o serviço").not.toMatch(/reservado para pedidos|INSUFFICIENT_STOCK/);
+
+    // A recusa de ANTES continua: produto sem controle com armazém não baixa estoque — e nada sai do controlado.
+    const c = await confirmar(venda, ligada);
+    expect(c.statusCode, c.body).toBe(422);
+    expect(j(c).error!.code).toBe("PRODUCT_NOT_STOCK_CONTROLLED");
+    expect([await statusDe(venda), await saidas(venda), await fisico(p.id)]).toEqual(["open", [], "10.0000"]);
   });
 });
