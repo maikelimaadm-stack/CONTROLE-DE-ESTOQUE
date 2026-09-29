@@ -137,6 +137,11 @@ export const TIPOS_OPERACAO: readonly TipoOperacao[] = Object.freeze([
 
   // ---------- Compras ----------
   T("compras.solicitacao", "compras", entidade("erp.purchase_requests")),
+  // COMPRAS-01 (decisão 267): o documento comercial de compra. Uma tabela, duas etapas (`especie`): o
+  // pedido ao fornecedor e a compra que dá entrada e gera a conta a pagar. A solicitação acima continua
+  // sendo outra coisa (suprimentos) e não muda.
+  T("compras.pedido", "compras", variante("erp.documentos_compra", "especie", "pedido")),
+  T("compras.compra", "compras", variante("erp.documentos_compra", "especie", "compra")),
 
   // ---------- Financeiro ----------
   // `direction` é o discriminador que o dicionário já declarava; a prosa "Conta a pagar / Conta a

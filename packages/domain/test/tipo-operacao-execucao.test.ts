@@ -24,6 +24,7 @@ import {
   execucaoDeclaradaTop,
   familiaAceitaExecucaoConfiguradaTop,
   familiaOperacionalDeDocumentoVenda,
+  familiaOperacionalDeDocumentoCompra,
   financeiroSobConfiguracaoTop,
   lerConfiguracaoTop,
   lerMatrizExecucaoTop,
@@ -50,6 +51,7 @@ import {
 
 const clonar = <T,>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
 const VENDA = familiaOperacionalDeDocumentoVenda("sale")!;
+const COMPRA = familiaOperacionalDeDocumentoCompra("compra")!;
 
 /** Um v1 que DECLARA saída e contas a receber — o caso que um consumidor ingênuo leria como "execute". */
 function v1QueDeclaraEfeitos(): ConfiguracaoTipoOperacaoV1 {
@@ -356,13 +358,15 @@ describe("D9 — combinação sem primitive real é recusada, e nunca executada 
 });
 
 describe("D10 — outra família não ativa execução configurada", () => {
-  it("D10 a matriz tem UMA família: a da venda, perguntada ao registry", () => {
-    expect(MATRIZ_EXECUCAO_TOP.map((m) => m.familia)).toEqual([VENDA]);
+  it("D10 a matriz tem DUAS famílias: a da venda (primeira) e a da compra (COMPRAS-01), perguntadas ao registry", () => {
+    expect(MATRIZ_EXECUCAO_TOP.map((m) => m.familia)).toEqual([VENDA, COMPRA]);
     expect(familiaAceitaExecucaoConfiguradaTop(VENDA)).toBe(true);
+    expect(familiaAceitaExecucaoConfiguradaTop(COMPRA)).toBe(true);
+    expect(familiaAceitaExecucaoConfiguradaTop(familiaOperacionalDeDocumentoCompra("pedido")!)).toBe(false);
   });
 
   it("D10b toda outra família do registry recebe a MESMA recusa objetiva, por efeito configurado", () => {
-    const outras = CODIGOS_TIPO_OPERACAO.filter((c) => c !== VENDA);
+    const outras = CODIGOS_TIPO_OPERACAO.filter((c) => c !== VENDA && c !== COMPRA);
     expect(outras.length).toBeGreaterThan(10);
     const c = v2({ estoque: "configurada", financeiro: "configurada" }, (x) => { x.estoque.atualizacao = "saida"; x.financeiro.atualizacao = "receber"; });
     for (const familia of outras) {

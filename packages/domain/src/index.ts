@@ -17,6 +17,7 @@ export * from "./tipo-operacao-restricoes.js";
 export * from "./tipo-operacao-destinos.js";
 export * from "./faturamento-parcial.js";
 export * from "./tipo-operacao-execucao.js";
+export * from "./compras-custo-entrada.js";
 export * from "./sales.js";
 export * from "./codigo-hierarquico.js";
 export * from "./condicao-pagamento.js";

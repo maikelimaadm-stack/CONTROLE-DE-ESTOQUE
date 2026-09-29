@@ -250,6 +250,22 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     codigo: "ERP-COMPRAS-SOLICITACAO", tabela: "erp.purchase_requests", nome: "Solicitação de Compra", modulo: "COMPRAS", natureza: "entidade", idGlobal: true, rota: "/suprimentos/view/:id",
     top: "compras.solicitacao", descricao: "Pedido interno de compra que percorre autorização, cotação e recebimento."
   },
+  {
+    codigo: "ERP-COMPRAS-DOCUMENTO", tabela: "erp.documentos_compra", nome: "Documento de Compra", modulo: "COMPRAS", natureza: "entidade", idGlobal: true,
+    discriminador: "especie", rotas: { pedido: "/compras/pedidos/:id", compra: "/compras/compras/:id" },
+    discriminadorTop: "especie",
+    tops: ["compras.pedido", "compras.compra"], descricao: "Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa e a tela (pedido de compra, compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar.",
+    campos: {
+      especie: { nome: "Espécie", descricao: "pedido | compra. Valor canônico persistido; o rótulo é traduzido na apresentação." },
+      situacao: { nome: "Situação", descricao: "aberto | confirmado | cancelado. O pedido só fica aberto ou cancelado; cancelado é final." },
+      categoria_financeira_id: { nome: "Natureza de despesa", descricao: "Categoria de DESPESA analítica e ativa dos títulos a pagar gerados pela confirmação. Anda em PAR com o centro de custo (os dois ou nenhum); FK composta com o tenant." },
+      centro_custo_id: { nome: "Centro de custo", descricao: "Centro de custo analítico dos títulos a pagar. Anda em PAR com a natureza de despesa; FK composta com o tenant." }
+    }
+  },
+  {
+    codigo: "ERP-COMPRAS-DOCUMENTO-ITEM", tabela: "erp.documentos_compra_itens", nome: "Item do Documento de Compra", modulo: "COMPRAS", natureza: "linha", idGlobal: false,
+    descricao: "Linha de produto do documento de compra. Identidade pertence ao documento; só muda com o documento aberto."
+  },
 
   // ---------- Financeiro ----------
   {

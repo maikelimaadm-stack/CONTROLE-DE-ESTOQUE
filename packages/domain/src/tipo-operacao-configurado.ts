@@ -126,3 +126,19 @@ export const TABELA_DOCUMENTO_VENDA = "erp.sales_documents";
  */
 export const familiaOperacionalDeDocumentoVenda = (kind: string | null | undefined): string | undefined =>
   resolverTipoOperacao(TABELA_DOCUMENTO_VENDA, kind)?.codigo;
+
+/**
+ * COMPRAS-01 (decisão 267): a TABELA que o Portal de Compras lança — o endereço no registry, não uma lista
+ * de famílias. Mesmo raciocínio de `TABELA_DOCUMENTO_VENDA`.
+ */
+export const TABELA_DOCUMENTO_COMPRA = "erp.documentos_compra";
+
+/** As espécies do documento de compra, como o banco as persiste (`erp.documentos_compra.especie`). */
+export type EspecieDocumentoCompra = "pedido" | "compra";
+
+/**
+ * A família canônica que um documento de compra de determinada espécie É — perguntada ao registry
+ * (`TIPOS_OPERACAO`), nunca escrita aqui. Espécie desconhecida, vazia ou ausente → `undefined` (fail-closed).
+ */
+export const familiaOperacionalDeDocumentoCompra = (especie: EspecieDocumentoCompra | string | null | undefined): string | undefined =>
+  resolverTipoOperacao(TABELA_DOCUMENTO_COMPRA, especie)?.codigo;

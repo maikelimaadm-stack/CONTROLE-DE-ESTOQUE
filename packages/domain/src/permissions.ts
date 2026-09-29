@@ -156,6 +156,9 @@ export const PERMISSION_RESOURCES: readonly PermissionResource[] = [
   R("budgets", "Orçamentos", "Operacional > Vendas"),
   R("orders", "Pedidos", "Operacional > Vendas"),
   R("sales", "Vendas", "Operacional > Vendas"),
+  // COMPRAS-01 (decisão 267): o documento comercial de compra, um recurso por espécie.
+  R("pedidos_compra", "Pedidos de Compra", "Operacional > Compras"),
+  R("compras", "Compras", "Operacional > Compras"),
   R("service_orders", "Ordens de Serviço", "Operacional > Ordens de Serviço", [...CRUD, "monitor", "rate"]),
   // Financeiro
   R("payables", "Contas a Pagar", "Financeiro", [...CRUD, "settle", "cancel_settlement", "import", "export", "receipt", "boleto", "duplicate"]),

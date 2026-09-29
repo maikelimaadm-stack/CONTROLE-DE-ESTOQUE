@@ -110,6 +110,8 @@ const RECURSOS_POR_MODULO: Readonly<Record<string, readonly string[]>> = {
   compras: [
     "purchase_requests", "rejected_requests", "purchase_quotations", "purchase_authorization",
     "purchase_buy", "purchase_receipts",
+    // COMPRAS-01 (decisão 267): o documento comercial de compra.
+    "pedidos_compra", "compras",
     "dashboard.supply",
     "report.supplies", "report.savings", "report.ans", "report.quotations", "report.purchase_forecast",
     "report.supply_sla", "report.purchase_management"
