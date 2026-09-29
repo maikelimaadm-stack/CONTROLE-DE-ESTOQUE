@@ -6,13 +6,14 @@
  * quem foi comprado, na medida do que cada item pesa na compra.
  *
  *   · soma dos totais dos itens zero (tudo bonificado) → a proporção passa a ser a QUANTIDADE;
- *   · cada item, menos o último, é truncado no centavo (para baixo — assim o último nunca fica negativo); o
- *     centavo que sobra vai para o ÚLTIMO item, e a soma dos valores de entrada é EXATAMENTE o valor total;
- *   · custo unitário = valor de entrada ÷ quantidade, com 4 casas.
+ *   · MAIOR RESTO: cada item recebe o PISO da sua parte exata, no centavo; os centavos que faltam para fechar
+ *     o total vão, um a um, aos itens de MAIOR RESTO (empate → maior peso do item — valor, ou quantidade no
+ *     caso bonificado —, depois a ordem do item). A soma é EXATAMENTE o valor total e nenhum item fica negativo;
+ *   · custo unitário = valor de entrada ÷ quantidade, com 6 casas (`unitCost`, ROUND_HALF_EVEN — a regra da casa).
  *
  * FUNÇÃO PURA: sem banco, sem relógio; dinheiro em string decimal, conta em `decimal.js` (nunca ponto flutuante).
  */
-import { D, money, qty, type DecimalString } from "@agro/shared";
+import { D, unitCost, type DecimalString } from "@agro/shared";
 
 export interface ItemParaCustoDeEntrada {
   quantidade: DecimalString;
@@ -36,13 +37,18 @@ export function ratearCustoDeEntrada(itens: readonly ItemParaCustoDeEntrada[], v
   const peso = somaValores.isZero() ? (i: ItemParaCustoDeEntrada) => D(i.quantidade) : (i: ItemParaCustoDeEntrada) => D(i.valorTotal);
   const somaPesos = somaValores.isZero() ? itens.reduce((a, i) => a.plus(D(i.quantidade)), D(0)) : somaValores;
 
-  const valores: DecimalString[] = [];
-  let acumulado = D(0);
-  // `toDecimalPlaces(2, 1)`: o modo 1 do decimal.js é ROUND_DOWN (trunca em direção ao zero).
-  itens.forEach((item, n) => {
-    const v = n === itens.length - 1 ? money(total.minus(acumulado)) : total.times(peso(item)).div(somaPesos).toDecimalPlaces(2, 1).toFixed(2);
-    acumulado = acumulado.plus(D(v));
-    valores.push(v);
-  });
-  return itens.map((item, n) => ({ valorEntrada: valores[n]!, custoUnitario: qty(D(valores[n]!).div(D(item.quantidade)), 4) }));
+  // Parte exata de cada item e o seu piso no centavo (`toDecimalPlaces(2, 1)`: modo 1 = ROUND_DOWN; parte ≥ 0).
+  const partes = itens.map((item) => total.times(peso(item)).div(somaPesos));
+  const centavos = partes.map((p) => p.toDecimalPlaces(2, 1));
+  const distribuido = centavos.reduce((a, v) => a.plus(v), D(0));
+  let faltam = total.minus(distribuido).times(100).toDecimalPlaces(0).toNumber(); // inteiro em [0, n)
+  const ordem = itens
+    .map((item, n) => ({ n, resto: partes[n]!.minus(centavos[n]!), peso: peso(item) }))
+    .sort((a, b) => b.resto.comparedTo(a.resto) || b.peso.comparedTo(a.peso) || a.n - b.n);
+  for (const o of ordem) {
+    if (faltam <= 0) break;
+    centavos[o.n] = centavos[o.n]!.plus("0.01");
+    faltam -= 1;
+  }
+  return itens.map((item, n) => ({ valorEntrada: centavos[n]!.toFixed(2), custoUnitario: unitCost(centavos[n]!.div(D(item.quantidade))) }));
 }

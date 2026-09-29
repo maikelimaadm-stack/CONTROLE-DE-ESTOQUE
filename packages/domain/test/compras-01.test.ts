@@ -111,32 +111,53 @@ describe("CO-D2 resolverPoliticaEfetivaDaCompra — tabela de casos", () => {
   });
 });
 
-describe("CO-D3 ratearCustoDeEntrada", () => {
+describe("CO-D3 ratearCustoDeEntrada (maior resto)", () => {
+  const soma = (r: { valorEntrada: string }[]) => r.reduce((a, x) => a + Math.round(Number(x.valorEntrada) * 100), 0);
   it("proporção pelo total do item; frete/outras/desconto entram no custo", () => {
-    // itens 100 + 300 = 400; documento = 400 + frete 40 + outras 20 − desconto 10 = 450
     const r = ratearCustoDeEntrada([{ quantidade: "10", valorTotal: "100.00" }, { quantidade: "3", valorTotal: "300.00" }], "450.00");
-    expect(r).toEqual([{ valorEntrada: "112.50", custoUnitario: "11.2500" }, { valorEntrada: "337.50", custoUnitario: "112.5000" }]);
+    expect(r).toEqual([{ valorEntrada: "112.50", custoUnitario: "11.250000" }, { valorEntrada: "337.50", custoUnitario: "112.500000" }]);
   });
-  it("desconto reduz o custo", () => {
-    expect(ratearCustoDeEntrada([{ quantidade: "4", valorTotal: "100.00" }, { quantidade: "1", valorTotal: "100.00" }], "150.00"))
-      .toEqual([{ valorEntrada: "75.00", custoUnitario: "18.7500" }, { valorEntrada: "75.00", custoUnitario: "75.0000" }]);
+  it("100 e 50, frete 15, outras 5, desconto 10 → 106.67 e 53.33", () => {
+    const r = ratearCustoDeEntrada([{ quantidade: "1", valorTotal: "100.00" }, { quantidade: "1", valorTotal: "50.00" }], "160.00");
+    expect(r.map((x) => x.valorEntrada)).toEqual(["106.67", "53.33"]);
+    expect(soma(r)).toBe(16000);
   });
-  it("centavo que sobra vai para o último; a soma é exatamente o total", () => {
+  it("3000 unidades por 1000.00 → custo 0.333333 e valor fecha em 1000.00", () => {
+    expect(ratearCustoDeEntrada([{ quantidade: "3000", valorTotal: "1000.00" }], "1000.00")).toEqual([{ valorEntrada: "1000.00", custoUnitario: "0.333333" }]);
+  });
+  it("empate de resto → maior valor do item, depois a ordem; soma exata", () => {
     const r = ratearCustoDeEntrada([{ quantidade: "1", valorTotal: "1" }, { quantidade: "1", valorTotal: "1" }, { quantidade: "3", valorTotal: "1" }], "100.00");
-    expect(r.map((x) => x.valorEntrada)).toEqual(["33.33", "33.33", "33.34"]);
-    expect(r[2]!.custoUnitario).toBe("11.1133");
+    expect(r.map((x) => x.valorEntrada)).toEqual(["33.34", "33.33", "33.33"]);
+    expect(r[2]!.custoUnitario).toBe("11.110000");
+    const r2 = ratearCustoDeEntrada([{ quantidade: "1", valorTotal: "1" }, { quantidade: "1", valorTotal: "2" }], "0.03");
+    expect(r2.map((x) => x.valorEntrada)).toEqual(["0.01", "0.02"]);
+    const r3 = ratearCustoDeEntrada([{ quantidade: "1", valorTotal: "1" }, { quantidade: "1", valorTotal: "1" }, { quantidade: "1", valorTotal: "2" }], "0.01");
+    expect(r3.map((x) => x.valorEntrada)).toEqual(["0.00", "0.00", "0.01"]);
   });
-  it("o último nunca fica negativo (item de valor zero no fim)", () => {
+  it("nenhum item negativo; item de valor zero não recebe centavo", () => {
     const r = ratearCustoDeEntrada([{ quantidade: "1", valorTotal: "1" }, { quantidade: "1", valorTotal: "1" }, { quantidade: "1", valorTotal: "1" }, { quantidade: "1", valorTotal: "0" }], "0.02");
-    expect(r.map((x) => x.valorEntrada)).toEqual(["0.00", "0.00", "0.00", "0.02"]);
+    expect(r.map((x) => x.valorEntrada)).toEqual(["0.01", "0.01", "0.00", "0.00"]);
   });
-  it("soma zero → pela quantidade", () => {
+  it("tudo bonificado com frete → pela quantidade", () => {
     expect(ratearCustoDeEntrada([{ quantidade: "1", valorTotal: "0" }, { quantidade: "3", valorTotal: "0.00" }], "20.00"))
-      .toEqual([{ valorEntrada: "5.00", custoUnitario: "5.0000" }, { valorEntrada: "15.00", custoUnitario: "5.0000" }]);
+      .toEqual([{ valorEntrada: "5.00", custoUnitario: "5.000000" }, { valorEntrada: "15.00", custoUnitario: "5.000000" }]);
+    const r = ratearCustoDeEntrada([{ quantidade: "1", valorTotal: "0" }, { quantidade: "2", valorTotal: "0" }], "10.00");
+    expect(r.map((x) => x.valorEntrada)).toEqual(["3.33", "6.67"]);
   });
-  it("custo unitário com 4 casas e quantidade fracionária", () => {
-    expect(ratearCustoDeEntrada([{ quantidade: "3", valorTotal: "10.00" }], "10.00")).toEqual([{ valorEntrada: "10.00", custoUnitario: "3.3333" }]);
-    expect(ratearCustoDeEntrada([{ quantidade: "0.5", valorTotal: "10.00" }], "10.00")).toEqual([{ valorEntrada: "10.00", custoUnitario: "20.0000" }]);
+  it("soma sempre igual ao total e nunca negativa (varredura)", () => {
+    const vals = ["0", "0.01", "1", "7.77", "33.33", "100", "250.5"];
+    for (const t of ["0.00", "0.01", "0.07", "1.00", "99.99", "1000.00", "12345.67"]) {
+      for (let k = 1; k <= 5; k++) {
+        const itens = Array.from({ length: k }, (_, n) => ({ quantidade: String(n + 1), valorTotal: vals[(n * 3 + k) % vals.length]! }));
+        const r = ratearCustoDeEntrada(itens, t);
+        expect(soma(r)).toBe(Math.round(Number(t) * 100));
+        for (const x of r) expect(x.valorEntrada.startsWith("-")).toBe(false);
+      }
+    }
+  });
+  it("custo unitário com 6 casas e quantidade fracionária", () => {
+    expect(ratearCustoDeEntrada([{ quantidade: "3", valorTotal: "10.00" }], "10.00")).toEqual([{ valorEntrada: "10.00", custoUnitario: "3.333333" }]);
+    expect(ratearCustoDeEntrada([{ quantidade: "0.5", valorTotal: "10.00" }], "10.00")).toEqual([{ valorEntrada: "10.00", custoUnitario: "20.000000" }]);
   });
   it("sem itens → vazio; quantidade zero ou total negativo → erro", () => {
     expect(ratearCustoDeEntrada([], "10.00")).toEqual([]);
