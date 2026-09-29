@@ -1390,7 +1390,7 @@ vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP 
 Decisão 266. **Uma migration: `0035_reserva_de_estoque.sql`** (pre-deploy; trava (2026,69), `lock_timeout` 2 s,
 pré/pós-condições nomeadas `TOP-CONFIG-07: ...`, não destrutiva, sem backfill): coluna `reserva_estoque` nas versões
 da TOP (default false; o gatilho `trg_tipos_operacao_versoes_reserva_familia` só a aceita ligada na família pedido),
-a conta do reservado `erp.reserva_estoque_nucleo` (sem `execute` para o papel da API), a porta exposta
+a conta do reservado `erp.reserva_estoque_nucleo` (só produto com controle de estoque; sem `execute` para o papel da API), a porta exposta
 `erp.reserva_estoque` (`SECURITY DEFINER`, `execute` só para o papel da API, capacidade conferida dentro), o gatilho
 de saída `trg_stock_movement_reserva` (AFTER INSERT em `erp.stock_movements`, depois de `trg_stock_movement_apply`) e
 o índice parcial `ix_sales_document_items_reserva`. As pós-condições conferem que nenhuma versão nasceu reservando e
@@ -1406,8 +1406,8 @@ e nada é aplicado. Em erro, publique o nome do papel, nunca a conexão.
    reserva (default). O gatilho de saída roda, mas não recusa nada: nenhuma versão reserva, o reservado é zero.
    Tudo como hoje.
 2. **web ANTERIOR × API nova:** o editor anterior não manda `reservaEstoque` — a API preserva o valor da versão atual;
-   nada é desligado em silêncio. A Central anterior não marca o armazém como obrigatório: com a reserva ligada, pedido
-   sem armazém volta 422 no item — por isso ligar a caixa só com a web nova no ar. Os campos novos das respostas
+   nada é desligado em silêncio. A Central anterior não marca o armazém como obrigatório: com a reserva ligada, item de
+   produto com controle de estoque sem armazém volta 422 (serviço e produto sem controle ficam fora da reserva) — por isso ligar a caixa só com a web nova no ar. Os campos novos das respostas
    (`reservado`, `disponivel`, `reserva_estoque`) são aditivos.
 3. **web NOVA × API anterior:** sem `reservaEstoque` nas capabilities da TOP, o editor esconde a caixa; sem
    `reservaEstoque` nas regras da operação, a Central não exige armazém; sem `reserva_estoque` no documento, nada de
@@ -1428,7 +1428,8 @@ produção (decisão 247).
 240 e 247) — nada criado no teste é apagado.
 1. Na TOP 2 Pedido, ligar "Reservar estoque ao salvar o pedido" (aba Estoque) e salvar.
 2. Criar um Pedido NOVO (a versão congelada tem de ser a nova) com armazém nos itens, de produto com saldo nesse
-   armazém.
+   armazém; incluir também o produto sem controle de estoque que já existe em produção, SEM armazém — o pedido salva e
+   ele não reserva nada.
 3. Ver o disponível cair na Central (coluna Estoque do mesmo produto e armazém) e em Estoque › Saldo ("Reservado no
    armazém" / "Disponível no armazém").
 4. Cancelar o pedido e ver o disponível voltar.
