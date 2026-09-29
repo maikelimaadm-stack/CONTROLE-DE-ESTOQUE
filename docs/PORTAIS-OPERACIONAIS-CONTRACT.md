@@ -56,8 +56,9 @@ sendo DESTINO declarado, e esta seção diz as famílias que cada um cobre.
 As famílias citadas aqui são as declaradas no registry — este documento as referencia, não as define.
 
 ### Portal de Compras
-Processos de compra, da solicitação ao recebimento. Famílias hoje declaradas no escopo: `compras.solicitacao`.
-O lançamento futuro escolherá uma TOP configurada dessa família.
+Processos de compra, da solicitação ao recebimento. Famílias hoje declaradas no escopo: `compras.solicitacao`,
+`compras.pedido` e `compras.compra` (COMPRAS-01, decisão 267). O lançamento de Pedido de compra e de Compra escolhe
+uma TOP configurada da família (obrigatória); a solicitação continua sem TOP.
 
 ### Portal de Vendas
 Orçamento, pedido e venda — as três variantes de `erp.sales_documents`, que a BASE2-03C já unificou na
@@ -100,7 +101,8 @@ das duas — autorização continua sendo CAPACIDADE ∧ ESCOPO, verificada no s
 | **TOP-CONFIG-03** | configuração operacional versionada, grafo de próximas operações e Portal de Vendas unificado | mesclada |
 | **TOP-CONFIG-04A** | ativação controlada dos efeitos da TOP, primeiro consumidor real: estoque e financeiro da confirmação de VENDA (formato 2, matriz de suporte, gate operacional, guarda de banco) | mesclada; fase 1 implantada (gate desligado); fase 2 pendente (pré-condições em `docs/DEPLOYMENT.md`) |
 | **VENDAS-A1** | classificação financeira no documento de venda: `categoria_financeira_id` e `centro_custo_id` em par no orçamento, pedido e venda, copiados na conversão e usados nos títulos a receber da confirmação (legado e configurado); guarda de banco contra binário que a ignora (decisão 248) | EM PR |
-| **TOP-CONFIG-04B+** | Compras documental (04B), Movimentações de Estoque (04C), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
+| **COMPRAS-01** | documento de compra (0036): Pedido de compra e Compra com TOP obrigatória, lista única, Central de Compras, confirmação da Compra com entrada no estoque (custo rateado) e contas a pagar pela matriz (`compras.compra`), cancelamento com estorno, nota duplicada recusada nos dois caminhos (decisão 267) | em revisão |
+| **TOP-CONFIG-04B+** | Compras: conversão, recebimento em partes e saldo (COMPRAS-02) e layout (COMPRAS-03); Movimentações de Estoque (04C), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
 
 A TOP-CONFIG-04A é a fatia que autoriza efeito configurável — e SÓ estoque e financeiro, SÓ na confirmação
 de `vendas.venda`, SÓ pelas combinações da matriz. Efeito fiscal e contábil, workflow genérico, aprovação
@@ -269,33 +271,35 @@ capacidade exigida depende do que o usuário pode ver), então o recorte de empr
 o módulo EXPLÍCITO da permissão de vendas: com módulo indefinido a RLS vale pela união das empresas
 visíveis, que é mais larga. RLS ∧ SQL = o escopo exato, e nenhum dos dois sozinho decide.
 
-## Portal de Compras — contrato FUTURO, explicitamente NÃO implementado
+## Portal de Compras — documento comercial de compra (COMPRAS-01) e o que falta
 
-Esta seção declara um DESTINO. Nada dela existe no código, e a fatia que a realizar terá contrato
-próprio.
+Decisão 267. O Portal de Compras segue o desenho do Portal de Vendas: lista única de documentos com o tipo como
+coluna e filtro, `+ Novo` escolhendo a Tipo de Operação, a Central de Compras e a consulta com as ações.
 
-**O destino.** O Portal de Compras terá uma **lista de documentos comerciais de compra**, no mesmo desenho
-do Portal de Vendas: uma lista principal com o tipo do documento como coluna e filtro, `+ Novo`
-escolhendo a Tipo de Operação, e as transições oferecidas como `Próximos passos` do detalhe.
+**Solicitação, cotação e autorização continuam WORKFLOW PREPARATÓRIO, não a identidade do documento comercial.**
+São o processo que ANTECEDE a compra: pedir, comparar e liberar (`compras.solicitacao`, `erp.purchase_requests`,
+aba "Processos"). Não mudaram, e não viram documento de compra.
 
-**As identidades documentais previstas** — Pedido de Compra, Compra/Nota e Devolução de Compra — são
-documentos comerciais **reais**, com identidade própria, e não situações de um mesmo registro. Faturar,
-receber e devolver serão **transições** entre eles, decididas pelo grafo configurado, e não etapas
-embutidas no código.
+**O que EXISTE (COMPRAS-01):**
 
-**O que é verdade HOJE, sem embelezamento:**
+- o modelo real do documento comercial, criado ANTES da tela: tabela `erp.documentos_compra` (+ itens, 0036) com
+  duas variantes pela coluna `especie` — **Pedido de compra** (`compras.pedido`, recurso `pedidos_compra`) e
+  **Compra** (`compras.compra`, recurso `compras`) —, permissões CRUD no grupo "Operacional > Compras", escopo de
+  empresa do módulo `compras` (RLS da 0015 no cabeçalho), auditoria, ID Global por variante e código por espécie;
+- API em `/api/compras/pedidos` e `/api/compras/compras` (lançar, consultar, cancelar; `operation-types` e
+  `regras-da-operacao`) e a lista única `GET /api/compras/documentos` — recorte por capacidade no WHERE antes do
+  LIMIT, nenhuma capacidade → 403, filtro de espécie só intersecta o que o usuário pode ver;
+- na tela, `/compras` com a aba **Documentos** (primeira e padrão; "Processos" e "Visão geral" continuam),
+  `+ Novo` → TOP → Central de Compras (`/compras/<espécie>/new`) e a consulta `/compras/<espécie>/<id>`, só leitura,
+  com Confirmar (Compra, com a prévia) e Cancelar;
+- a **Compra confirmada** dá entrada no estoque com o custo rateado (frete, outras despesas e desconto no custo) e
+  gera as contas a pagar nas parcelas da condição; cancelar a confirmada estorna o estoque e cancela os títulos;
+- a mesma nota (fornecedor, número e série) não entra pela Compra e pelo Documento fiscal de Estoque ao mesmo tempo.
 
-- o registry declara **uma única** família de compras: `compras.solicitacao`, com origem em
-  `erp.purchase_requests`;
-- `erp.purchase_requests` existe desde a 0003, e há uma UI de processos e de solicitações sobre ela;
-- **nada disso foi migrado.** Nenhuma família nova foi inventada, nenhuma tabela nova foi criada, nenhuma
-  coluna de compras foi tocada por esta fatia;
-- portanto **nenhum documento comercial de compra existe** no produto, e o Portal de Compras não tem lista
-  unificada nem próximos passos.
+**O que FALTA (e não deve ser simulado):**
 
-**Solicitação, cotação e autorização são WORKFLOW PREPARATÓRIO, não a identidade do documento comercial.**
-São o processo que ANTECEDE a compra: pedir, comparar e liberar. Tratá-las como se fossem o documento
-faria a lista principal de Compras ser uma lista de pedidos internos, e o Pedido de Compra — que é
-compromisso com o fornecedor — não teria onde existir. A fatia operacional de Compras terá de **criar o
-modelo real** do documento comercial (família canônica, tabela, serviço, permissões, RLS e auditoria)
-**antes** de trocar a UI principal. Trocar a tela primeiro ofereceria botões sem serviço atrás.
+- **COMPRAS-02** — converter Pedido de compra em Compra, receber em partes e encerrar saldo (as colunas de origem,
+  parte e saldo encerrado nascem lá); até lá o pedido é registro de compromisso, sem próximos passos;
+- **COMPRAS-03** — layout do documento de compra por TOP;
+- fora do roteiro atual: editar documento salvo, Devolução de Compra, solicitação → pedido, rateio por item ou
+  produto, impostos, NF-e, alçada, reserva e confirmação automática.
