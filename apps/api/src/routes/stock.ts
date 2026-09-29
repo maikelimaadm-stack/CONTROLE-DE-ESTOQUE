@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { D, money, isISODate } from "@agro/shared";
+import { D, money, qty, isISODate } from "@agro/shared";
 import { batchCost, tipoEntidadeDaTabela } from "@agro/domain";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen } from "../lib/service.js";
 import { notFound, validation, err } from "../lib/errors.js";
@@ -9,6 +9,7 @@ import { empresasDisponiveis } from "../lib/empresa.js";
 import { pageQuerySchema } from "../lib/pagination.js";
 import { wrapListing } from "../lib/column-filters.js";
 import { postStock, reverseStock, currentBalance, lineTotal, chaveDoLote, controleDeLote } from "../services/stock-core.js";
+import { saldoComReservaEmLote, reservadoEmLote, chaveDoPar } from "../services/reserva-estoque.js";
 import { createTitles, createBankMovement, apportionmentSchema, installmentPlanSchema } from "../services/financial-core.js";
 import { atribuirIdGlobal, paginaComIdGlobal } from "../lib/id-global.js";
 import { SEQUENCIA_WAREHOUSE_TRANSFER } from "../lib/sequencia-warehouse-transfer.js";
@@ -80,8 +81,19 @@ export default async function stockRoutes(app: FastifyInstance) {
     if (f.expiring_days) { params.push(Number(f.expiring_days)); where.push(`sb.expiration_date <= current_date + ($${params.length}::int)`); }
     const total = await ctx.tx.query<{ n: string; qty: string; value: string }>(`select count(*) n, coalesce(sum(sb.quantity),0) qty, coalesce(sum(sb.total_value),0) value from erp.stock_balances sb join erp.products p on p.id=sb.product_id join erp.warehouses w on w.id=sb.warehouse_id where ${where.join(" and ")}`, params);
     const sort = ["product_name", "quantity", "total_value", "warehouse_name", "expiration_date"].includes(q.sort ?? "") ? q.sort : "product_name";
-    const r = await ctx.tx.query(`select sb.warehouse_id, sb.product_id, sb.provider_lot, sb.quantity, sb.average_cost, sb.total_value, sb.expiration_date, sb.updated_at, p.code as product_code, p.description as product_name, p.ncm_code, p.min_stock, mu.symbol as unit, w.description as warehouse_name, w.initials as warehouse_initials, f.name as empresa_name from erp.stock_balances sb join erp.products p on p.id=sb.product_id left join erp.measurement_units mu on mu.id=p.measurement_id join erp.warehouses w on w.id=sb.warehouse_id join erp.empresas f on f.id=w.empresa_id where ${where.join(" and ")} order by ${sort} ${q.dir ?? "asc"} limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
-    return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { quantity: total.rows[0]!.qty, value: total.rows[0]!.value } };
+    const r = await ctx.tx.query<Record<string, unknown> & { warehouse_id: string; product_id: string }>(`select sb.warehouse_id, sb.product_id, sb.provider_lot, sb.quantity, sb.average_cost, sb.total_value, sb.expiration_date, sb.updated_at, p.code as product_code, p.description as product_name, p.ncm_code, p.min_stock, mu.symbol as unit, w.description as warehouse_name, w.initials as warehouse_initials, f.name as empresa_name from erp.stock_balances sb join erp.products p on p.id=sb.product_id left join erp.measurement_units mu on mu.id=p.measurement_id join erp.warehouses w on w.id=sb.warehouse_id join erp.empresas f on f.id=w.empresa_id where ${where.join(" and ")} order by ${sort} ${q.dir ?? "asc"} limit ${q.pageSize} offset ${(q.page - 1) * q.pageSize}`, params);
+    // RESERVA DE ESTOQUE (TOP-CONFIG-07, decisão 266): `reservado` e `disponivel` são do PAR (armazém, produto), não
+    // do lote — disponível = físico de TODOS os lotes do par − reservado; num produto com lote, as linhas dele
+    // repetem o mesmo valor. Os pares distintos da PÁGINA vão numa chamada só (`saldoComReservaEmLote`: duas
+    // consultas por página, nunca por linha; a página tem no máximo MAX_PAGE_SIZE = 1000 linhas, o limite da porta).
+    // Os totais não mudam.
+    const saldo = await saldoComReservaEmLote(ctx, r.rows.map((x) => ({ warehouseId: x.warehouse_id, productId: x.product_id })));
+    const items = r.rows.map((x) => {
+      const s = saldo.get(chaveDoPar(x.warehouse_id, x.product_id));
+      if (!s) throw new Error(`stock/balances: par ${x.warehouse_id}:${x.product_id} sem saldo lido`);
+      return { ...x, reservado: s.reservado, disponivel: s.disponivel };
+    });
+    return { items, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { quantity: total.rows[0]!.qty, value: total.rows[0]!.value } };
   }));
   app.get("/stock/movements", async (req) => runService(app, req, "stocks.view", async (ctx) => {
     const q = pageQuerySchema.parse(req.query); const f = req.query as Record<string, string>;
@@ -98,7 +110,20 @@ export default async function stockRoutes(app: FastifyInstance) {
     const r = await ctx.tx.query(wl.pageSql, wl.params);
     return { items: r.rows, total: Number(total.rows[0]!.n), page: q.page, pageSize: q.pageSize, totals: { in: total.rows[0]!.in_qty, out: total.rows[0]!.out_qty } };
   }));
-  app.get("/stock/balances/:warehouseId/:productId", async (req) => runService(app, req, "stocks.view", async (ctx) => { const { warehouseId, productId } = req.params as { warehouseId: string; productId: string }; const wh = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.warehouses where id=$1 and organization_id=$2", [warehouseId, ctx.orgId]); if (!wh.rows[0]) throw notFound("Armazém"); await exigirEmpresaVisivel(ctx, wh.rows[0].empresa_id, "Armazém"); const b = await currentBalance(ctx, warehouseId, productId); const lots = await ctx.tx.query("select provider_lot, quantity, average_cost, total_value, expiration_date from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and quantity<>0 order by expiration_date nulls last", [ctx.orgId, warehouseId, productId]); return { ...b, lots: lots.rows }; }));
+  app.get("/stock/balances/:warehouseId/:productId", async (req) => runService(app, req, "stocks.view", async (ctx) => {
+    const { warehouseId, productId } = req.params as { warehouseId: string; productId: string };
+    const wh = await ctx.tx.query<{ empresa_id: string }>("select empresa_id from erp.warehouses where id=$1 and organization_id=$2", [warehouseId, ctx.orgId]);
+    if (!wh.rows[0]) throw notFound("Armazém");
+    await exigirEmpresaVisivel(ctx, wh.rows[0].empresa_id, "Armazém");
+    const b = await currentBalance(ctx, warehouseId, productId);
+    const lots = await ctx.tx.query("select provider_lot, quantity, average_cost, total_value, expiration_date from erp.stock_balances where organization_id=$1 and warehouse_id=$2 and product_id=$3 and quantity<>0 order by expiration_date nulls last", [ctx.orgId, warehouseId, productId]);
+    // RESERVA DE ESTOQUE (TOP-CONFIG-07): `quantity` continua o físico (todos os lotes); `reservado` vem da porta
+    // exposta, e `disponivel` = `quantity` − `reservado` — sobre o MESMO físico que a resposta mostra (uma segunda
+    // leitura do saldo, noutra instrução, poderia ver outro commit e deixar os três números incoerentes).
+    const reservado = (await reservadoEmLote(ctx, [{ warehouseId, productId }])).get(chaveDoPar(warehouseId, productId));
+    if (reservado === undefined) throw new Error("stock/balances/:warehouseId/:productId: par sem reservado lido");
+    return { ...b, reservado, disponivel: qty(D(b.quantity).minus(reservado)), lots: lots.rows };
+  }));
 
   // ---------- Estoque inicial ----------
   const openingSchema = z.object({ empresa_id: uuid, warehouse_id: uuid, product_id: uuid, quantity: dec, unit_value: dec, provider_lot: loteAte60, expiration_date: date.optional().nullable(), cultivation_id: uuid.optional().nullable() });
