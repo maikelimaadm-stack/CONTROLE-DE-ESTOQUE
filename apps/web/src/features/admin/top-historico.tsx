@@ -64,6 +64,8 @@ interface VersaoTop {
    * afirmar uma regra que talvez não vigorasse.
    */
   condicoesPermitidas: CondicaoDaVersao[] | null;
+  /** TOP-CONFIG-07 — aquela versão reservava estoque? `null` = o servidor não informou (a linha não aparece). */
+  reservaEstoque: boolean | null;
 }
 
 const ehObjeto = (v: unknown): v is Record<string, unknown> =>
@@ -104,7 +106,9 @@ function lerVersao(bruto: unknown): VersaoTop | null {
     // versão inteira, porque um servidor anterior simplesmente não o publica.
     condicoesPermitidas: Array.isArray(bruto.condicoesPermitidas) && bruto.condicoesPermitidas.every(ehCondicaoDaVersao)
       ? [...(bruto.condicoesPermitidas as CondicaoDaVersao[])]
-      : null
+      : null,
+    // TOLERANTE, a mesma régua: campo novo (TOP-CONFIG-07) que degrada sozinho para `null`.
+    reservaEstoque: typeof bruto.reservaEstoque === "boolean" ? bruto.reservaEstoque : null
   };
 }
 
@@ -166,6 +170,10 @@ function LinhaDeVersao({ versao }: { versao: VersaoTop }) {
         {versao.condicoesPermitidas.length === 0
           ? "Todas as condições"
           : versao.condicoesPermitidas.map((c) => `${c.codigo} — ${c.nome}`).join(", ")}
+      </p>}
+      {/* Só quando a versão DECLARA a reserva: "inativa" em toda versão de toda operação seria ruído, e `null` não afirma nada. */}
+      {versao.reservaEstoque === true && <p className="mt-0.5" data-testid={`top-historico-reserva-${versao.versao}`}>
+        Reserva de estoque: ativa
       </p>}
     </div>
     {aberto && <div className="border-t bg-slate-50 px-3 py-2">

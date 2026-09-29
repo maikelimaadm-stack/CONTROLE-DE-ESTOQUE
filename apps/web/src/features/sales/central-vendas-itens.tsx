@@ -7,6 +7,7 @@ import { cn, brl, num } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Field, Input } from "@/components/ui";
 import { StockCell, totalDaLinhaExibido, type ItemRow } from "@/features/docs/shared";
+import { EstoqueDisponivelDoItem } from "@/features/stock/reserva-estoque";
 import { PainelDePesquisa, type OpcaoReal } from "./central-vendas-pesquisa";
 import estilos from "./central-vendas-workspace.module.css";
 
@@ -177,12 +178,18 @@ function CodigoDoProduto({ id, conhecido }: { id?: string; conhecido?: OpcaoReal
   return <span className={estilos.codigo}>{o?.code ?? (id ? "" : "—")}</span>;
 }
 
-export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao }: {
+export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao, reservaEstoque = null }: {
   items: ItemRow[]; onChange: (i: ItemRow[]) => void;
   /** Só com a capacidade `layoutDocumento`: sem ele a grade é a de hoje, idêntica. */
   layout?: LayoutDosItens | null;
   /** Erros por caminho `items[i].<chave do catálogo>` (os mesmos de `camposObrigatoriosFaltando` e do 422). */
   erros?: Record<string, string>;
+  /**
+   * TOP-CONFIG-07 — a versão da TOP escolhida RESERVA estoque (a página só passa com `regras.reservaEstoque === true`).
+   * `obrigatorias`: chaves do catálogo do item que a reserva exige (o "*" soma com o do layout); a célula Estoque passa a
+   * mostrar o DISPONÍVEL do armazém. Ausente/null: a grade de hoje, idêntica.
+   */
+  reservaEstoque?: { obrigatorias: readonly string[] } | null;
   /**
    * VENDAS-A3-1b: armazém padrão do layout que vale AGORA (a página só o passa quando é da empresa do documento). Toda
    * linha NOVA nasce com ele, com o rótulo já conhecido; as linhas que existem não mudam. Ausente/null: como hoje.
@@ -213,7 +220,7 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao }
   const doLayout = React.useMemo(() => (layout ? new Map(colunasDoLayout(layout).map((c) => [c.chave, c])) : null), [layout]);
   const rotuloColuna = (k: ChaveColuna) => doLayout?.get(k)?.rotulo || COLUNAS[k].rotulo;
   const rotuloCampo = (k: ChaveCampo) => (ehChaveColuna(k) && doLayout?.get(k)?.rotulo) || CAMPOS[k];
-  const obrigatoria = (k: ChaveColuna) => Boolean(doLayout?.get(k)?.obrigatorio);
+  const obrigatoria = (k: ChaveColuna) => Boolean(doLayout?.get(k)?.obrigatorio) || Boolean(reservaEstoque?.obrigatorias.includes(CHAVE_DO_CATALOGO[k]));
   /** `data-campo` só existe com layout: sem a capacidade o DOM é o de hoje. */
   const dataCampo = (k: ChaveColuna) => (layout ? { "data-campo": CHAVE_DO_CATALOGO[k] } : {});
   const erroDe = (i: number, k: ChaveColuna) => erros?.[`items[${i}].${CHAVE_DO_CATALOGO[k]}`];
@@ -259,6 +266,14 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao }
   // largura mínima DERIVADA das colunas visíveis (a lixeira + cada coluna), nunca contada à mão
   const larguraMinima = LARGURA_EXCLUIR + colunasVisiveis.reduce((a, k) => a + COLUNAS[k].largura, 0);
 
+  /**
+   * O saldo mostrado na coluna/campo Estoque. Só EXIBE — quem preenche o custo médio é `efeitosDoEstoque`, montado
+   * sempre. Com a reserva (TOP-CONFIG-07), o DISPONÍVEL do armazém; sem ela, a `StockCell` de hoje.
+   */
+  const saldoDoItem = (it: ItemRow) => (reservaEstoque
+    ? <EstoqueDisponivelDoItem warehouseId={it.warehouse_id} productId={it.product_id} />
+    : <StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* só exibe */ }} />);
+
   const celula = (k: ChaveColuna, it: ItemRow, i: number, ativa: boolean) => {
     switch (k) {
       case "codigo": return <td key={k}><CodigoDoProduto id={it.product_id} conhecido={conhecidos[it.product_id]} /></td>;
@@ -268,7 +283,7 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao }
       case "armazem": return <td key={k}><CelulaDeReferencia recurso="warehouses" id={it.warehouse_id} conhecido={it.warehouse_id ? conhecidos[it.warehouse_id] : undefined} vazio="—" rotuloAcao="Armazém"
         aberto={pesquisa?.linha === i && pesquisa.campo === "warehouse_id"} testId="central-vendas-armazem"
         onAbrir={(el) => { setSelecionado(i); setPesquisa({ linha: i, campo: "warehouse_id", ancora: el, modo: "flutuante" }); }} /></td>;
-      case "estoque": return <td key={k} className={cn(estilos.numero, estilos.estoque)}><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* só exibe: quem preenche o custo médio é `efeitosDoEstoque`, montado sempre */ }} /></td>;
+      case "estoque": return <td key={k} className={cn(estilos.numero, estilos.estoque)}>{saldoDoItem(it)}</td>;
       case "quantidade": return <td key={k} className={estilos.numero}><span className={estilos.quantidade}>
         {ativa ? <input className={estilos.entrada} aria-label="Quantidade" type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(i, "quantity", e.target.value)} onClick={(e) => e.stopPropagation()} />
           : <span data-testid="central-vendas-quantidade">{num(it.quantity || "0", 2)}</span>}
@@ -298,7 +313,8 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao }
             <td className={estilos.excluir}><button type="button" className={estilos.remover} aria-label={`Excluir item ${i + 1}`} data-dica="Excluir item" onClick={(e) => { e.stopPropagation(); remover(i); }}><Trash2 aria-hidden /></button></td>
             {colunasVisiveis.map((k) => {
               const td = celula(k, it, i, ativa);
-              if (!layout) return td;
+              // Sem layout E sem erros, a célula de hoje. Os erros sem layout só chegam com a reserva (TOP-CONFIG-07).
+              if (!layout && !erros) return td;
               const erro = erroDe(i, k);
               return React.cloneElement(td, { ...dataCampo(k), ...(erro ? { "aria-invalid": true, title: erro, "data-erro": erro } : {}) });
             })}
@@ -314,7 +330,7 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao }
     : null;
 
   /** Atributos do campo do formulário do item com layout: `data-campo`, obrigatório e erro da linha selecionada. */
-  const doCampo = (k: ChaveColuna) => ({ attrs: dataCampo(k), required: obrigatoria(k), error: layout ? erroDe(sel, k) : undefined, label: rotuloColuna(k) });
+  const doCampo = (k: ChaveColuna) => ({ attrs: dataCampo(k), required: obrigatoria(k), error: erroDe(sel, k), label: rotuloColuna(k) });
   const campoDeReferencia = (campo: "product_id" | "warehouse_id", rotulo: string, recurso: string) => {
     const id = (item?.[campo] as string | undefined) || undefined;
     const d = doCampo(campo === "product_id" ? "produto" : "armazem");
@@ -331,7 +347,7 @@ export function ItensDaCentral({ items, onChange, layout, erros, armazemPadrao }
     switch (k) {
       case "produto": return [campoDeReferencia("product_id", "Produto", "products"), pesquisaEmFluxo("product_id")];
       case "armazem": return [campoDeReferencia("warehouse_id", "Armazém", "warehouses"), pesquisaEmFluxo("warehouse_id")];
-      case "estoque": return <Travado key={k} rotulo={rotuloCampo(k)} campo={layout ? "estoque" : undefined}><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={() => { /* só exibe: quem preenche o custo médio é `efeitosDoEstoque`, montado sempre */ }} /></Travado>;
+      case "estoque": return <Travado key={k} rotulo={rotuloCampo(k)} campo={layout ? "estoque" : undefined}>{saldoDoItem(it)}</Travado>;
       case "unidade": return <Travado key={k} rotulo="Unidade" testId="central-vendas-item-unidade"><UnidadeTravada produto={it.product_id} /></Travado>;
       case "quantidade": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => atualizar(sel, "quantity", e.target.value)} /></Field></div>; }
       case "unitario": { const d = doCampo(k); return <div key={k} className={estilos.campo} {...d.attrs}><Field label={d.label} required={d.required} error={d.error} span={12}><Input type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => atualizar(sel, "unit_value", e.target.value)} /></Field></div>; }

@@ -112,6 +112,11 @@ export interface CapacidadesTop {
   destinos: CapacidadesDestinosTop;
   execucao: CapacidadesExecucaoTop;
   restricoes: CapacidadesRestricoesTop;
+  /**
+   * TOP-CONFIG-07: o servidor grava `reservaEstoque` na versão (`capabilities.reservaEstoque === 1`). ADITIVO:
+   * ausente ou qualquer outro valor = servidor anterior — a caixa não aparece e a chave nunca vai no corpo.
+   */
+  reservaEstoque: boolean;
 }
 
 /** Servidor sem restrições: nada do formato 3 aparece e nada dele é enviado. */
@@ -181,7 +186,10 @@ export function lerCapacidadesTop(bruto: unknown): CapacidadesTop | null {
     configuracao: { versaoSchema: c.versaoSchema, secoes: c.secoes as string[] },
     destinos,
     execucao,
-    restricoes
+    restricoes,
+    // Só o valor EXATO 1 liga (a régua de `destinos.emPartes`): ausente é o servidor anterior, e outro valor é
+    // um contrato que esta tela não leu — nos dois casos a reserva fica fora do editor, sem negar o resto.
+    reservaEstoque: bruto.reservaEstoque === 1
   };
 }
 
@@ -253,6 +261,13 @@ export const podeConfigurarRestricoes = (e: EstadoCapacidadesTop): boolean =>
 /** A caixa "Em partes" aparece e `emPartes` vai no corpo? Só quando a API declara `destinos.emPartes === 1`. */
 export const podeConfigurarEmPartes = (e: EstadoCapacidadesTop): boolean =>
   podeConfigurarDestinos(e) && e.situacao === "pronto" && e.capacidades.destinos.emPartes;
+
+/**
+ * TOP-CONFIG-07 — a caixa "Reservar estoque ao salvar o pedido" aparece e `reservaEstoque` vai no corpo? Só com o
+ * contrato confirmado E a capacidade declarada. A FAMÍLIA (só pedido) é a outra metade, decidida por quem desenha.
+ */
+export const podeConfigurarReservaEstoque = (e: EstadoCapacidadesTop): boolean =>
+  podeConfigurar(e) && e.capacidades.reservaEstoque;
 
 export const limiteDeDestinos = (e: EstadoCapacidadesTop): number =>
   podeConfigurar(e) ? e.capacidades.destinos.limite : 0;
@@ -377,6 +392,12 @@ export interface DetalheTop {
    * `null` = o servidor não entregou a lista (API anterior) — NÃO é "vazia": a tela não a reescreve.
    */
   condicoesPermitidas: CondicaoPermitidaEmEdicao[] | null;
+  /**
+   * TOP-CONFIG-07 — a versão atual reserva estoque? `null` = o servidor não informou (API anterior, ou valor que
+   * não é booleano). NÃO é `false`: a tela não oferece a caixa sobre um valor que não leu, e o corpo omite a
+   * chave — que o servidor lê como "preserve o que está gravado".
+   */
+  reservaEstoque: boolean | null;
 }
 
 const ehCondicaoPermitida = (v: unknown): v is CondicaoPermitidaEmEdicao =>
@@ -411,7 +432,10 @@ export function lerDetalheTop(bruto: unknown): DetalheTop | null {
     destinosConfigurados: bruto.destinosConfigurados === undefined ? null : bruto.destinosConfigurados,
     condicoesPermitidas: bruto.condicoesPermitidas === undefined
       ? null
-      : (bruto.condicoesPermitidas as CondicaoPermitidaEmEdicao[]).map((c) => ({ id: c.id, codigo: c.codigo, nome: c.nome }))
+      : (bruto.condicoesPermitidas as CondicaoPermitidaEmEdicao[]).map((c) => ({ id: c.id, codigo: c.codigo, nome: c.nome })),
+    // Degrada SOZINHO (a reserva é uma coluna da versão, não a configuração): forma estranha vira "não informado"
+    // e só a caixa fica bloqueada — o resto do editor, que foi lido, continua editável.
+    reservaEstoque: typeof bruto.reservaEstoque === "boolean" ? bruto.reservaEstoque : null
   };
 }
 
@@ -571,6 +595,14 @@ export interface RascunhoTop {
    * operação, o silêncio dele continua sendo silêncio, e não uma decisão que ninguém tomou.
    */
   destinosDeclarados: boolean;
+  /**
+   * TOP-CONFIG-07 — "Reservar estoque ao salvar o pedido" (coluna da versão, fora da configuração).
+   *
+   * AUSENTE quando a versão carregada não informou o valor (`DetalheTop.reservaEstoque === null`): a caixa fica
+   * bloqueada e a chave não vai no corpo (ausente = o servidor preserva). No cadastro novo nasce `false`. Quem
+   * decide se ela É ENVIADA é a gravação: capacidade declarada E família do pedido — nunca só este valor.
+   */
+  reservaEstoque?: boolean;
 }
 
 /**
@@ -690,7 +722,9 @@ export function assinaturaRascunho(r: RascunhoTop): string {
     // Da lista de condições só a identidade e a ORDEM viajam; código e nome são apresentação.
     ...(r.configuracaoV3 ? { configuracaoV3: r.configuracaoV3 } : {}),
     ...(r.condicoesPermitidas ? { condicoesPermitidas: r.condicoesPermitidas.map((c) => c.id) } : {}),
-    ...(r.condicoesDeclaradas !== undefined ? { condicoesDeclaradas: r.condicoesDeclaradas } : {})
+    ...(r.condicoesDeclaradas !== undefined ? { condicoesDeclaradas: r.condicoesDeclaradas } : {}),
+    // TOP-CONFIG-07: marcar ou desmarcar a reserva é conteúdo (cria versão). Ausente = não lida, fora da assinatura.
+    ...(r.reservaEstoque !== undefined ? { reservaEstoque: r.reservaEstoque } : {})
   });
 }
 
@@ -702,7 +736,14 @@ export function assinaturaRascunho(r: RascunhoTop): string {
  * item malformado é ignorado só neste mapa, nunca o erro inteiro.
  */
 export const CODIGOS_ERRO_DE_CAMPO_TOP = ["TIPO_OPERACAO_CONFIGURACAO_INVALIDA", "TIPO_OPERACAO_CONDICOES_INVALIDAS"] as const;
+/** TOP-CONFIG-07: o 422 `VALIDATION_ERROR` da reserva fora da família do pedido (`details [{path, message}]`). */
+export const CAMINHO_ERRO_RESERVA_ESTOQUE = "reservaEstoque";
 export function errosDeCampoDoServidor(e: unknown): Record<string, string> {
+  if (e instanceof ApiError && e.code === "VALIDATION_ERROR" && Array.isArray(e.details)) {
+    // Só o caminho da reserva vira erro de campo; qualquer outro VALIDATION_ERROR segue para o `ErrorState` geral.
+    const r = e.details.find((x) => ehObjeto(x) && x.path === CAMINHO_ERRO_RESERVA_ESTOQUE && ehTexto(x.message));
+    return ehObjeto(r) && ehTexto(r.message) ? { [CAMINHO_ERRO_RESERVA_ESTOQUE]: r.message } : {};
+  }
   if (!(e instanceof ApiError) || !(CODIGOS_ERRO_DE_CAMPO_TOP as readonly string[]).includes(e.code)) return {};
   const d = e.details;
   if (!ehObjeto(d) || !Array.isArray(d.recusas)) return {};

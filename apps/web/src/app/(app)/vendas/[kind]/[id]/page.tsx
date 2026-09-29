@@ -222,6 +222,8 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const origemComParte = temParteGerada(d.items);
   const haSaldo = d.items.some((it) => D(saldoDoItem(it)).gt(0));
   const saldoEncerradoEm = d["saldo_encerrado_em"] as string | null | undefined;
+  /** TOP-CONFIG-07: a versão congelada deste documento reserva estoque (só pedido pode). Ausente = API anterior = não. */
+  const reservaAtiva = d["reserva_estoque"] === true;
   /**
    * O RÓTULO NUNCA É UM UUID. Com um destino só, o botão nomeia a TOP (código e nome, os dois do
    * servidor); com vários, ele apenas convida ao diálogo, onde a escolha aparece inteira; na
@@ -288,6 +290,8 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
           valor={topConfigurada ? <><span className={estilosCentral.codigo}>{topConfigurada.codigo}</span><span className={estilosCentral.separador}>·</span><span>{topConfigurada.nome}</span></> : "Não configurada (registro legado)"} />
         {/* A FAMÍLIA CANÔNICA sai do REGISTRO (`kind`), em memória — campo próprio, ao lado da TOP configurada */}
         <CampoLeitura rotulo="Movimento" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />
+        {/* TOP-CONFIG-07: a versão CONGELADA no pedido reserva estoque. Só `=== true` do servidor; ausente (API anterior) = nada. */}
+        {reservaAtiva && <p data-testid="doc-reserva-ativa" className={estilosCentral.descricao}>Reserva de estoque: ativa</p>}
         <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
         <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
         <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
@@ -321,7 +325,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         </p>}
         {/* A parte gerada não muda produto, quantidade, preço nem descontos: eles vêm do pedido de origem. */}
         {parteGerada && <p data-testid="parte-itens-da-origem" className="mb-2 text-sm text-slate-700">Itens gerados do pedido {codigoDaOrigem ?? "de origem"}.</p>}
-        <ItensSalvos mostrarSaldo={origemComParte} itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`} />
+        <ItensSalvos mostrarSaldo={origemComParte} mostrarReservado={reservaAtiva} itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`} />
       </>}
       totalDoDocumento={brl(d["total"] as string)}
       abas={[
