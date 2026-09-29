@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, confirmacaoExigeMarcaDaGuarda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, padroesRegistroDaEstrutura, removerPadroesRegistro, type CondicaoPagamento, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, confirmacaoExigeMarcaDaGuarda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, padroesRegistroDaEstrutura, removerPadroesRegistro, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js";
@@ -13,6 +13,7 @@ import { saldoComReservaEmLote, chaveDoPar, type ParDeEstoque } from "../service
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal, travarContadorIdGlobal } from "../lib/id-global.js";
 import { layoutEfetivo, conferirPadroesRegistro, type RegistroPadraoConferido } from "../lib/layout-documento.js";
+import { resolverTopParaLancamento, validarClassificacaoDoDocumento, recusaDeCampoDaClassificacao, validarCondicaoDoDocumento, condicaoGravada, type TopDoLancamento, type ClassificacaoFinanceira, type RegraDaClassificacao, type CondicaoDoDocumento } from "../lib/documento-comercial.js";
 // TOP-CONFIG-05 (decisão 263): regras da operação no lançamento, na conversão (TOP DESTINO), `/regras-da-operacao`,
 // `/situacao-cliente` e a capacidade nova.
 import { CAPACIDADE_REGRAS_DA_OPERACAO, camposExigidosTop, type RegrasDaOperacaoResposta } from "@agro/domain";
@@ -88,8 +89,6 @@ function familiaDaVariante(kind: SalesKind): string {
   return familia;
 }
 
-/** O snapshot que o documento grava: identidade da TOP + a versão exata que valia no instante do lançamento. */
-interface TopDoLancamento { tipoOperacaoId: string; tipoOperacaoVersaoId: string; codigo: string; nome: string; versao: number; codigoBase: string }
 
 /**
  * O snapshot como a tela o lê. `null` é resposta LEGÍTIMA — documento do acervo, ou criado por cliente
@@ -106,50 +105,20 @@ const topParaTela = (l: { tipo_operacao_id: string | null; top_codigo: string | 
         familiaRotulo: l.top_codigo_base ? t(chaveI18nDaFamiliaOperacional(l.top_codigo_base) ?? l.top_codigo_base) : null }
     : null;
 
-/**
- * RESOLVE A TOP ESCOLHIDA E CONGELA A VERSÃO CORRENTE — a única porta por onde o snapshot nasce.
- *
- * O cliente manda `tipo_operacao_id` e NADA MAIS. Quem decide qual versão vale é o SERVIDOR, aqui, no
- * instante da escrita: deixar o cliente enviar `tipo_operacao_versao_id` seria deixá-lo escolher qual
- * passado citar, e um cliente desatualizado congelaria uma versão que já não é a corrente.
- *
- * `for share of t` — SÓ NO PAI, e isso não é descuido. A linha de versão é IMUTÁVEL por construção: a 0020
- * revogou `update` e `delete` dela do papel da aplicação e pôs um gatilho por cima. Travar uma linha que
- * ninguém pode alterar não protege de nada, e o banco recusaria de todo modo — `for share` exige privilégio
- * de UPDATE/DELETE, que é exatamente o que foi revogado ali. O que MUDA é o pai (`versao_atual`, `ativo`,
- * `excluido_em`), e é ele que o lock segura: enquanto esta transação vive, ninguém desativa, exclui ou
- * versiona esta TOP. Sem isso, um `update` administrativo entre o `select` e o `insert` gravaria um
- * documento apontando para uma versão que deixou de ser a corrente.
- *
- * SUPERFÍCIE ÚNICA DE RECUSA: inexistente, de outro tenant, de outra família, inativa e excluída caem todas
- * no MESMO 422. Distinguir transformaria a mensagem num oráculo — quem varresse UUIDs saberia quais existem
- * na organização vizinha e a que família cada um pertence (`.claude/rules/security.md`).
- */
-async function resolverTopParaLancamento(ctx: ServiceCtx, familiaEsperada: string, tipoOperacaoId: string): Promise<TopDoLancamento> {
-  const r = await ctx.tx.query<{ id: string; codigo: string; codigo_base: string; versao_id: string; nome: string; versao: number }>(
-    `select t.id, t.codigo, t.codigo_base, v.id as versao_id, v.nome, v.versao
-       from erp.tipos_operacao t
-       join erp.tipos_operacao_versoes v
-         on v.tipo_operacao_id = t.id and v.organization_id = t.organization_id and v.versao = t.versao_atual
-      where t.id = $1 and t.organization_id = $2 and t.ativo and t.excluido_em is null and t.codigo_base = $3
-        for share of t`,
-    [tipoOperacaoId, ctx.orgId, familiaEsperada]);
-  const top = r.rows[0];
-  if (!top) throw new DomainError("TIPO_OPERACAO_INDISPONIVEL", "Tipo de operação indisponível para este lançamento");
-  return { tipoOperacaoId: top.id, tipoOperacaoVersaoId: top.versao_id, codigo: top.codigo, nome: top.nome, versao: top.versao, codigoBase: top.codigo_base };
-}
+// `resolverTopParaLancamento` (e o tipo `TopDoLancamento`) moram em `lib/documento-comercial.ts` (COMPRAS-01),
+// parametrizados pela família — sem mudança de comportamento para a venda.
 
 /**
  * CLASSIFICAÇÃO FINANCEIRA DO DOCUMENTO (VENDAS-A1): o PAR categoria de receita × centro de custo que vai
  * para o rateio dos títulos a receber gerados na confirmação.
  */
-export interface ClassificacaoFinanceira { categoriaFinanceiraId: string; centroCustoId: string }
+export type { ClassificacaoFinanceira };
 /** Versão da capacidade declarada em `operation-types` (a web só mostra e envia os campos com ela). */
 export const CAPACIDADE_CLASSIFICACAO_FINANCEIRA = 1;
 const MSG_CATEGORIA_INVALIDA = "Natureza inválida para venda: escolha uma natureza analítica de receita, ativa";
 const MSG_CENTRO_INVALIDO = "Centro de resultado inválido para venda: escolha um centro de resultado analítico, ativo";
 const MSG_PAR_INCOMPLETO = "Informe a natureza e o centro de resultado juntos";
-const recusaDeCampo = (campo: "categoria_financeira_id" | "centro_custo_id", mensagem: string) => err("VALIDATION_ERROR", mensagem, [{ path: campo, message: mensagem }]);
+const recusaDeCampo = recusaDeCampoDaClassificacao;
 
 /**
  * A PORTA ÚNICA DE VALIDAÇÃO da classificação — usada na criação, na edição, na conversão e na confirmação.
@@ -165,18 +134,14 @@ const recusaDeCampo = (campo: "categoria_financeira_id" | "centro_custo_id", men
  *
  * `contexto` só troca o TEXTO da recusa (origem da conversão, confirmação); a regra é uma só.
  */
+/** A regra da VENDA: natureza de RECEITA (`income`) — a mesma consulta e os mesmos textos de antes da extração. */
+const REGRA_CLASSIFICACAO_VENDA: RegraDaClassificacao = {
+  naturezas: ["income"], msgCategoria: MSG_CATEGORIA_INVALIDA, msgCentro: MSG_CENTRO_INVALIDO,
+  textoConfirmacao: (base) => `A classificação financeira desta venda deixou de valer. ${base}. Reative-a no cadastro ou cancele a venda`,
+};
 async function validarClassificacaoFinanceira(ctx: ServiceCtx, par: ClassificacaoFinanceira, contexto: "lancamento" | "origem" | "confirmacao" = "lancamento", opcoes: { trava: boolean } = { trava: true }): Promise<ClassificacaoFinanceira> {
-  // `trava: false` só na PRÉVIA da confirmação (VENDAS-A5-1): ela lê para mostrar, não grava nada, e não pode
-  // fazer a inativação de uma categoria esperar por quem só abriu um diálogo. A REGRA (as duas consultas e as
-  // recusas) é a mesma; muda só o `for share`.
-  const trava = opcoes.trava ? " for share" : "";
-  const cat = await ctx.tx.query(`select 1 from erp.financial_categories where id=$1 and organization_id=$2 and deleted_at is null and is_active and kind='analytic' and nature='income'${trava}`, [par.categoriaFinanceiraId, ctx.orgId]);
-  const cc = await ctx.tx.query(`select 1 from erp.cost_centers where id=$1 and organization_id=$2 and deleted_at is null and is_active and kind='analytic'${trava}`, [par.centroCustoId, ctx.orgId]);
-  const texto = (base: string) => contexto === "origem" ? `A classificação do documento de origem deixou de valer. ${base}`
-    : contexto === "confirmacao" ? `A classificação financeira desta venda deixou de valer. ${base}. Reative-a no cadastro ou cancele a venda` : base;
-  if (!cat.rowCount) throw recusaDeCampo("categoria_financeira_id", texto(MSG_CATEGORIA_INVALIDA));
-  if (!cc.rowCount) throw recusaDeCampo("centro_custo_id", texto(MSG_CENTRO_INVALIDO));
-  return par;
+  // `trava: false` só na PRÉVIA da confirmação (VENDAS-A5-1). A regra mora em `lib/documento-comercial.ts`.
+  return validarClassificacaoDoDocumento(ctx, REGRA_CLASSIFICACAO_VENDA, par, contexto, opcoes);
 }
 
 /** Par vindo do corpo da CRIAÇÃO: ausente/null nos dois → sem classificação; um só → 422; os dois → validado. */
@@ -207,29 +172,7 @@ async function classificacaoDaEdicao(ctx: ServiceCtx, corpo: unknown, atual: { c
   return validarClassificacaoFinanceira(ctx, { categoriaFinanceiraId: cat, centroCustoId: cc });
 }
 
-/** A condição de pagamento lida do cadastro, no formato que `planoDaCondicao` consome (VENDAS-A4). */
-type CondicaoDoDocumento = CondicaoPagamento & { id: string };
-const COLUNAS_CONDICAO = "id, parcelas, dias_primeira_parcela, modo, intervalo_dias, dia_vencimento, entrada, entrada_percentual::text as entrada_percentual";
-/**
- * A PORTA ÚNICA DE VALIDAÇÃO da condição de pagamento — criação, edição (valor novo ou trocado) e conversão.
- *
- * Inexistente, de outra organização, excluída e inativa caem na MESMA recusa (422, mesmo código, mesma
- * mensagem, mesmo campo): distinguir seria oráculo de existência. `for share` pelo mesmo motivo da
- * classificação: a inativação concorrente espera o lançamento terminar.
- */
-async function validarCondicaoDoDocumento(ctx: ServiceCtx, id: string): Promise<CondicaoDoDocumento> {
-  const r = await ctx.tx.query<CondicaoDoDocumento>(`select ${COLUNAS_CONDICAO} from erp.condicoes_pagamento where id=$1 and organization_id=$2 and deleted_at is null and is_active for share`, [id, ctx.orgId]);
-  if (!r.rows[0]) throw err(ERRO_CONDICAO_PAGAMENTO_INVALIDA, MSG_CONDICAO_PAGAMENTO_INVALIDA, [{ path: "condicao_pagamento_id", message: MSG_CONDICAO_PAGAMENTO_INVALIDA }]);
-  return r.rows[0];
-}
-/**
- * A condição que o documento JÁ tem (preservada ou reenviada igual): NÃO é revalidada — inativar o cadastro
- * não pode tornar o documento ineditável. Lida só para derivar o plano; recorte de organização sempre.
- */
-async function condicaoGravada(ctx: ServiceCtx, id: string): Promise<CondicaoDoDocumento | null> {
-  const r = await ctx.tx.query<CondicaoDoDocumento>(`select ${COLUNAS_CONDICAO} from erp.condicoes_pagamento where id=$1 and organization_id=$2`, [id, ctx.orgId]);
-  return r.rows[0] ?? null;
-}
+// `CondicaoDoDocumento`, `validarCondicaoDoDocumento` e `condicaoGravada` moram em `lib/documento-comercial.ts` (COMPRAS-01).
 /**
  * Condição da EDIÇÃO — o mesmo contrato de três estados de `tipo_operacao_id`/classificação:
  *   campo AUSENTE → preserva · null → remove · uuid → troca (validado só se for NOVO ou DIFERENTE do gravado).
