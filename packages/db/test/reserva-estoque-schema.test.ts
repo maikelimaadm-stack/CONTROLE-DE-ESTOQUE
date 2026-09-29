@@ -74,6 +74,15 @@ async function item(doc: string, par: Par, qtd: string, origem: string | null = 
     `insert into erp.sales_document_items (document_id, product_id, warehouse_id, quantity, unit_price, total, position, origem_item_id)
      values ($1,$2,$3,$4,10,0,0,$5) returning id`, [doc, par.p, par.w, qtd, origem])).rows[0]!.id);
 }
+/** Produto SEM controle de estoque (serviço), cópia do produto A na organização do demo. chk_product_fin_cat só exige
+ * a categoria financeira de quem controla estoque; grupo, unidade e classificação vêm do produto A. */
+async function produtoSemControle(): Promise<string> {
+  seq += 1;
+  return (await db.query<{ id: string }>(
+    `insert into erp.products (organization_id, code, description, group_id, measurement_id, category_id, kind_id, control_stock)
+     select organization_id, $2, $3, group_id, measurement_id, category_id, kind_id, false from erp.products where id=$1 returning id`,
+    [produtoA, `RS${seq}`, `Servico reserva ${seq}`])).rows[0]!.id;
+}
 /** Pedido com UM item no par, na TOP dada. */
 async function pedido(par: Par, qtd: string, top: Top = pedidoComReserva, status = "open"): Promise<{ id: string; item: string }> {
   const id = await documento("order", { top, status });
@@ -229,6 +238,34 @@ describe("BR2 — a conta (A + B) pela porta exposta", () => {
     expect(await reservado(par), "a venda excluída não é B; a parte dela continua fora de A (a 0034 conta por situação)").toBe("6.0000");
     await db.query("update erp.sales_documents set deleted_at=now() where id=$1", [p.id]);
     expect(await reservado(par)).toBe("0.0000");
+  });
+
+  it("BR2 produto SEM controle de estoque fica fora de A e de B; o controlado do MESMO pedido e armazém conta cheio", async () => {
+    const servico = await produtoSemControle();
+    expect((await db.query("select control_stock from erp.products where id=$1 and organization_id=$2", [servico, demo.orgId])).rows,
+      "PREMISSA: o produto é da organização e não controla estoque").toEqual([{ control_stock: false }]);
+    const controlado = await novoPar(produtoA);
+    const semControle: Par = { w: controlado.w, p: servico };   // COM armazém, o mesmo do controlado
+    const o = await documento("order", { top: pedidoComReserva });
+    const itemControlado = await item(o, controlado, "10");
+    const itemServico = await item(o, semControle, "5");
+    // PREMISSA: o pedido reserva — o par do controlado recebe a quantidade cheia; o zero do serviço é do produto.
+    expect(await reservado(controlado)).toBe("10.0000");
+    expect(await reservado(semControle), "A: produto sem controle não reserva").toBe("0.0000");
+
+    // Parte B: venda aberta gerada do pedido, com os dois itens.
+    const v = await documento("sale", { origem: o });
+    await item(v, controlado, "4", itemControlado);
+    await item(v, semControle, "2", itemServico);
+    expect(await reservado(controlado), "A 6 + B 4").toBe("10.0000");
+    expect(await reservado(controlado, o), "PREMISSA: sem a A do pedido, a B do controlado conta").toBe("4.0000");
+    expect(await reservado(semControle, o), "B: item sem controle da venda aberta não reserva").toBe("0.0000");
+    expect(await reservado(semControle)).toBe("0.0000");
+    // O núcleo (o que o gatilho de saída lê) responde o mesmo, os dois pares numa chamada.
+    const n = await db.query<{ product_id: string; reservado: string }>(
+      "select product_id, reservado from erp.reserva_estoque_nucleo($1, $2::uuid[], $3::uuid[], null) order by reservado desc",
+      [demo.orgId, [controlado.w, semControle.w], [controlado.p, semControle.p]]);
+    expect(n.rows).toEqual([{ product_id: controlado.p, reservado: "10.0000" }, { product_id: servico, reservado: "0.0000" }]);
   });
 
   it("BR2 o par é armazém E produto; a organização vem de quem pergunta", async () => {

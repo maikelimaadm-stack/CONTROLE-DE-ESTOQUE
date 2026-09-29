@@ -13,7 +13,11 @@
 --    Converter move a reserva de A para B sem mudar o total; confirmar a venda tira a parte dela de B (a saída
 --    acontece); cancelar a venda devolve a A se o pedido estiver aberto; cancelar o pedido ou encerrar o saldo
 --    tira A. Nenhuma dessas transições atualiza coisa alguma: a conta lê o estado.
--- 3) erp.reserva_estoque_nucleo(org, armazéns[], produtos[], excluir): a conta, num lugar só. SECURITY DEFINER
+--    SÓ PRODUTO COM CONTROLE DE ESTOQUE (products.control_stock) entra em A e em B: produto sem controle não tem
+--    saldo nem movimento (postStock recusa), então reservá-lo seria prometer o que não existe e travaria todo
+--    pedido com serviço. Para ele a conta devolve 0 — e a guarda (item 5) nunca o vê, porque ele não tem saída.
+-- 3) erp.reserva_estoque_nucleo(org, armazéns[], produtos[], excluir): a conta, num lugar só (só itens de produto
+--    com controle de estoque, pelo join em erp.products da MESMA organização do documento). SECURITY DEFINER
 --    (lê pedidos e vendas da organização INTEIRA, qualquer que seja o módulo de quem pergunta), search_path fixo,
 --    sem SQL dinâmico, devolve SÓ números. SEM grant para ninguém além do dono: só o gatilho de saída e a porta
 --    exposta abaixo a chamam.
@@ -148,7 +152,8 @@ begin
       from unnest(p_armazens, p_produtos) as x(w, p)
      where p_org is not null and x.w is not null and x.p is not null
   ),
-  -- A) o saldo a faturar dos pedidos com reserva, abertos e sem saldo encerrado (partes: a mesma conta da 0034)
+  -- A) o saldo a faturar dos pedidos com reserva, abertos e sem saldo encerrado (partes: a mesma conta da 0034);
+  --    só item de produto com controle de estoque (o sem controle não tem saldo a prometer)
   a as (
     select oi.warehouse_id, oi.product_id,
            sum(greatest(oi.quantity - coalesce((select sum(pi.quantity)
@@ -159,12 +164,13 @@ begin
       join erp.tipos_operacao_versoes v on v.id = o.tipo_operacao_versao_id and v.organization_id = o.organization_id
       join erp.sales_document_items oi on oi.document_id = o.id
       join pares x on x.warehouse_id = oi.warehouse_id and x.product_id = oi.product_id
+      join erp.products p on p.id = oi.product_id and p.organization_id = o.organization_id and p.control_stock
      where o.organization_id = p_org and o.kind = 'order' and o.status in ('open', 'approved')
        and o.saldo_encerrado_em is null and o.deleted_at is null and v.reserva_estoque
        and o.id is distinct from p_excluir_documento
      group by oi.warehouse_id, oi.product_id
   ),
-  -- B) as vendas abertas geradas de pedido com reserva
+  -- B) as vendas abertas geradas de pedido com reserva; só item de produto com controle de estoque
   b as (
     select si.warehouse_id, si.product_id, sum(si.quantity) as q
       from erp.sales_documents s
@@ -172,6 +178,7 @@ begin
       join erp.tipos_operacao_versoes v on v.id = o.tipo_operacao_versao_id and v.organization_id = o.organization_id
       join erp.sales_document_items si on si.document_id = s.id
       join pares x on x.warehouse_id = si.warehouse_id and x.product_id = si.product_id
+      join erp.products p on p.id = si.product_id and p.organization_id = s.organization_id and p.control_stock
      where s.organization_id = p_org and s.kind = 'sale' and s.status in ('open', 'approved') and s.deleted_at is null
        and o.kind = 'order' and v.reserva_estoque
        and s.id is distinct from p_excluir_documento
@@ -183,7 +190,7 @@ begin
     left join b on b.warehouse_id = x.warehouse_id and b.product_id = x.product_id;
 end $$;
 comment on function erp.reserva_estoque_nucleo(uuid, uuid[], uuid[], uuid) is
-  'TOP-CONFIG-07: reservado por (armazem, produto) na organizacao informada = A (saldo a faturar de pedidos com reserva abertos) + B (itens de vendas abertas geradas deles). Sem grant: so o dono chama (gatilho de saida e erp.reserva_estoque).';
+  'TOP-CONFIG-07: reservado por (armazem, produto) na organizacao informada = A (saldo a faturar de pedidos com reserva abertos) + B (itens de vendas abertas geradas deles), so produto com controle de estoque (products.control_stock). Sem grant: so o dono chama (gatilho de saida e erp.reserva_estoque).';
 
 -- ---------- 6) a porta exposta à API ----------
 -- · SECURITY DEFINER com search_path FIXO; sem SQL dinâmico.
