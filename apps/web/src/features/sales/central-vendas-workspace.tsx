@@ -214,15 +214,6 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
     };
     return () => { controle.current = null; };
   }, [controle]);
-  /**
-   * O grupo das abas tem o nome do desenho ("Complementos do documento"). O `Tabs` oficial não recebe rótulo para a
-   * lista e o primitive é compartilhado com o resto do produto; o nome é posto aqui, na lista que ESTA moldura montou,
-   * a cada render (o `Tabs` remonta quando a primeira aba muda).
-   */
-  React.useEffect(() => {
-    const lista = painelRef.current?.querySelector('[role="tablist"]');
-    if (lista && lista.getAttribute("aria-label") !== ROTULO_DAS_ABAS) lista.setAttribute("aria-label", ROTULO_DAS_ABAS);
-  });
   /** Valor no INÍCIO do arrasto: o delta do ponteiro é aplicado sobre ele, não sobre o último render. */
   const base = React.useRef<{ largura: number; altura: number }>({ largura: LARGURA_DADOS.padrao, altura: ALTURA_PAINEL.padrao });
 
@@ -337,7 +328,7 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
           <span className={estilos.painelAmpliar}><BotaoAmpliar regiao="painel" /></span>
           {/* O `Tabs` oficial lê a aba inicial só ao montar: sem a chave, a Central que nasceu carregando (sem abas)
               ficaria sem aba ativa quando a leitura chega — a mesma instância, agora com abas. */}
-          <Tabs key={abas[0]?.value ?? "sem-abas"} className={estilos.abas} tabs={abasDoPainel} />
+          <Tabs key={abas[0]?.value ?? "sem-abas"} className={estilos.abas} tabs={abasDoPainel} rotuloDaLista={ROTULO_DAS_ABAS} />
           <span className={estilos.painelAcoes}>
             <button type="button" className={cn(estilos.recolher, estilos.dicaFim)} aria-label={rotuloRecolher} data-dica={rotuloRecolher}
               aria-expanded={!recolhido} data-testid="central-vendas-recolher" onClick={() => setRecolhido((r) => !r)}><span className={estilos.recolherIcone}><ChevronDown aria-hidden /></span></button>
