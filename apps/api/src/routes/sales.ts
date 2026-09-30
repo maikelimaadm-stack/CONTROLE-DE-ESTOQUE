@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { D, money, isISODate, DomainError } from "@agro/shared";
-import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, confirmacaoExigeMarcaDaGuarda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, padroesRegistroDaEstrutura, removerPadroesRegistro, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
+import { documentTotals, itemTotal, nextSalesKind, assertConvertible, familiaOperacionalDeDocumentoVenda, chaveI18nDaFamiliaOperacional, varianteDeDocumentoVendaDaFamilia, moduloDaPermissao, resolverPoliticaEfetivaDaVenda, confirmacaoExigeMarcaDaGuarda, resumoDaPoliticaDaVenda, planoDaCondicao, CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio, type PoliticaEfetivaDaVenda, type SalesKind } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit, assertPeriodOpen, requirePermission } from "../lib/service.js";
 import { notFound, validation, err, denied, fromPgError } from "../lib/errors.js";
@@ -12,7 +12,7 @@ import { postStock, reverseStock, quantidadeLegivel } from "../services/stock-co
 import { saldoComReservaEmLote, chaveDoPar, type ParDeEstoque } from "../services/reserva-estoque.js";
 import { createTitles, installmentPlanSchema, parcelasDoTitulo, type InstallmentPlan } from "../services/financial-core.js";
 import { atribuirIdGlobal , paginaComIdGlobal, travarContadorIdGlobal } from "../lib/id-global.js";
-import { layoutEfetivo, conferirPadroesRegistro, type RegistroPadraoConferido } from "../lib/layout-documento.js";
+import { layoutEfetivo, respostaDoLayoutEfetivo } from "../lib/layout-documento.js";
 import { resolverTopParaLancamento, validarClassificacaoDoDocumento, recusaDeCampoDaClassificacao, validarCondicaoDoDocumento, condicaoGravada, type TopDoLancamento, type ClassificacaoFinanceira, type RegraDaClassificacao, type CondicaoDoDocumento } from "../lib/documento-comercial.js";
 // TOP-CONFIG-05 (decisão 263): regras da operação no lançamento, na conversão (TOP DESTINO), `/regras-da-operacao`,
 // `/situacao-cliente` e a capacidade nova.
@@ -997,21 +997,14 @@ export default async function salesRoutes(app: FastifyInstance) {
         if (!v.rowCount) throw notFound("Tipo de operação");
         topId = bruto;
       }
-      const l = await layoutEfetivo(ctx, familia, topId);
       /*
-       * PADRÃO DE CADASTRO (VENDAS-A3-1b). Layout SEM padrão `registro` — inclusive o do sistema — responde EXATAMENTE
-       * como antes (mesmas chaves, nenhuma consulta a mais): a web aceita a ausência dos mapas (contrato 3.3). Com padrão
-       * registro, a `estrutura` sai SEM eles (a web da A3-1 nunca vê um tipo de padrão que não conhece) e eles vêm à
-       * parte, CONFERIDOS AGORA nesta organização (`conferirPadroesRegistro`): `padroesDeCadastro` = só os que valem (id,
-       * rótulo do cadastro e, no armazém, a empresa); `padroesInvalidos` = as chaves dos que morreram. O servidor NÃO
-       * aplica padrão ao salvar o documento (2.6).
+       * PADRÃO DE CADASTRO (VENDAS-A3-1b) e a forma da resposta: UM dono desde a ANEXOS-PESQUISA-01 (item 0) —
+       * `respostaDoLayoutEfetivo`, o mesmo contrato das rotas de compras. A resposta de vendas é a MESMA byte a byte
+       * (teste L-0): sem padrão `registro` (inclusive o do sistema) só `{ estrutura, origem, nome, id }`, sem consulta a
+       * mais; com padrão registro, a `estrutura` sai sem eles e eles vêm à parte, conferidos agora nesta organização.
+       * O servidor NÃO aplica padrão ao salvar o documento (2.6). A 404 uniforme continua sendo desta rota (acima).
        */
-      if (!padroesRegistroDaEstrutura(familia, l.estrutura).length) return { estrutura: l.estrutura, origem: l.origem, nome: l.nome, id: l.id };
-      const c = await conferirPadroesRegistro(ctx, familia, l.estrutura);
-      const padroesDeCadastro: Record<string, RegistroPadraoConferido> = Object.fromEntries([...c.validos].map(([chave, v]) =>
-        [chave, { id: v.id, rotulo: v.rotulo, ...(v.empresaId !== undefined ? { empresaId: v.empresaId } : {}) }]));
-      const padroesInvalidos = [...new Set(c.invalidos.map((x) => x.chave))];
-      return { estrutura: removerPadroesRegistro(l.estrutura), origem: l.origem, nome: l.nome, id: l.id, padroesDeCadastro, padroesInvalidos };
+      return respostaDoLayoutEfetivo(ctx, familia, topId);
     }));
     registrarSituacaoCliente(app, kind, base, perm); // TOP-CONFIG-05: antes de `/:id`
     app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id, kind)));
