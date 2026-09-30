@@ -19,6 +19,7 @@ import { resolverTopParaLancamento, validarClassificacaoDoDocumento, recusaDeCam
 import { CAPACIDADE_REGRAS_DA_OPERACAO, camposExigidosTop, type RegrasDaOperacaoResposta } from "@agro/domain";
 import { regrasDaVersaoTop, regrasDaTopAtual, cobrarRegrasDaOperacao } from "./vendas-regras-operacao.js";
 import { registrarSituacaoCliente } from "./vendas-atraso-cliente.js";
+import { registrarEdicaoDeVenda } from "./vendas-edicao.js";
 // TOP-CONFIG-06 (decisão 265): faturar em partes — as contas no domínio, as leituras em `vendas-faturar-em-partes`.
 import { validarItensDaParte, itensDoSaldoInteiro, itensCanonicosDaParte, calcularParte, saldoDoItem, MSG_ITENS_DA_PARTE, type ItemPedidoDaParte } from "@agro/domain";
 import { itensDeOrigemComSaldo, cabecalhoJaAlocado, partesDaOrigem, saldoTotal, MSG_NAO_PERMITE_EM_PARTES, MSG_SEM_SALDO_PARA_CONVERTER, MSG_SEM_PARTES, MSG_SEM_SALDO_A_ENCERRAR, MSG_ORIGEM_COM_PARTES_ATIVAS_PUT, MSG_ORIGEM_COM_PARTES_CANCELADAS_PUT, MSG_ORIGEM_COM_PARTES_ATIVAS_CANCEL, msgItensDaParte } from "./vendas-faturar-em-partes.js";
@@ -343,7 +344,7 @@ async function politicaDeDestinos(ctx: ServiceCtx, versaoOrigemId: string | null
   return { configurada: primeira.destinos_configurados, itens };
 }
 
-async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts: { lock?: boolean } = {}) {
+export async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKind, opts: { lock?: boolean } = {}) {
   const sc = scopedById(ctx, "d", id); sc.params.push(expectedKind);
   // LEFT JOIN nos dois, e não INNER: documento legado tem os ponteiros nulos, e um INNER o faria SUMIR da
   // própria porta de detalhe — 404 num registro que está lá. O nome sai de `topv` (a versão CONGELADA),
@@ -1007,6 +1008,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       return respostaDoLayoutEfetivo(ctx, familia, topId);
     }));
     registrarSituacaoCliente(app, kind, base, perm); // TOP-CONFIG-05: antes de `/:id`
+    registrarEdicaoDeVenda(app, kind, base, perm, { getDoc }); // EDITAR-01: `GET <base>/:id/edicao`
     app.get(`${base}/:id`, async (req) => runService(app, req, `${perm}.view`, (ctx) => getDoc(ctx, (req.params as { id: string }).id, kind)));
     /**
      * CRIAÇÃO. `tipo_operacao_id` é OPCIONAL na API — e isso é compatibilidade de rolling deploy, não
