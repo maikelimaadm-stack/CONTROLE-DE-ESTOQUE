@@ -81,6 +81,8 @@ export interface ControleDaCentral { abrirAba: (valor: string) => void }
 
 const AmpliarContexto = React.createContext<{ ampliado: RegiaoAmpliavel | null; alternar: (r: RegiaoAmpliavel) => void } | null>(null);
 
+const ROTULO_DAS_ABAS = "Complementos do documento";
+
 const ROTULO_AMPLIAR: Record<RegiaoAmpliavel, string> = { dados: "Ampliar Dados principais", itens: "Ampliar Itens", painel: "Ampliar painel inferior" };
 
 /**
@@ -212,6 +214,15 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
     };
     return () => { controle.current = null; };
   }, [controle]);
+  /**
+   * O grupo das abas tem o nome do desenho ("Complementos do documento"). O `Tabs` oficial não recebe rótulo para a
+   * lista e o primitive é compartilhado com o resto do produto; o nome é posto aqui, na lista que ESTA moldura montou,
+   * a cada render (o `Tabs` remonta quando a primeira aba muda).
+   */
+  React.useEffect(() => {
+    const lista = painelRef.current?.querySelector('[role="tablist"]');
+    if (lista && lista.getAttribute("aria-label") !== ROTULO_DAS_ABAS) lista.setAttribute("aria-label", ROTULO_DAS_ABAS);
+  });
   /** Valor no INÍCIO do arrasto: o delta do ponteiro é aplicado sobre ele, não sobre o último render. */
   const base = React.useRef<{ largura: number; altura: number }>({ largura: LARGURA_DADOS.padrao, altura: ALTURA_PAINEL.padrao });
 

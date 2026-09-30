@@ -2,7 +2,7 @@
 import * as React from "react";
 import { use } from "react";
 import { useRouter } from "next/navigation";
-import { FileCheck2, FileText, FileX2 } from "lucide-react";
+import { FileCheck, FileText, FileX } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { brl, dateBR, num, todayISO } from "@/lib/utils";
 import { Button, Dialog, StatusBadge, statusTone } from "@/components/ui";
@@ -10,7 +10,7 @@ import { useTabTitle, useWorkspaceTabs, type WsTab } from "@/lib/workspace-tabs"
 import { useDoc, LoadingOr, type Row } from "@/features/docs/shared";
 import { useAction } from "@/features/docs/actions";
 import { HistoryDialog } from "@/features/base1/history-dialog";
-import { CentralVendasWorkspace } from "@/features/sales/central-vendas-workspace";
+import { CentralVendasWorkspace, type AbaDoPainel } from "@/features/sales/central-vendas-workspace";
 import { ItensSalvos } from "@/features/sales/central-vendas-consulta";
 import { CampoLeitura, ChaveSimNao, ColunaDeCampos, DadosAdicionais } from "@/features/sales/central-vendas-campo";
 import { useQuery } from "@tanstack/react-query";
@@ -65,6 +65,19 @@ const DO_REGISTRO: Record<string, { titulo: string; novo: string; perm: string; 
  * código faria a tela dizer "Não informada" — e prometer o padrão automático — numa venda que a guarda do
  * banco vai RECUSAR confirmar. Com o id e sem o nome, a tela diz que está informada e não inventa o nome.
  */
+/**
+ * LEITURA PENDENTE: as abas que TODA variante tem, sem conteúdo — estrutura da tela, não dado do documento. Os valores
+ * são os das abas da consulta (abaixo), para a aba escolhida continuar a mesma quando a leitura chega; "Documentos
+ * derivados" só entra com o registro, porque depende da variante que só ele diz.
+ */
+const ABAS_DA_LEITURA_PENDENTE: AbaDoPainel[] = [
+  { value: "totais", label: "Totais", content: null },
+  { value: "financeiro", label: "Financeiro", content: null },
+  { value: "frete", label: "Frete e transporte", content: null },
+  { value: "fiscal", label: "Fiscal", content: null },
+  { value: "observacoes", label: "Observações", content: null }
+];
+
 function rotuloDaClassificacao(id: unknown, codigo: unknown, nome: unknown, ausente: string, semNome: string): string {
   if (!id) return ausente;
   if (!codigo) return semNome;
@@ -241,7 +254,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   useTabTitle(d ? `${k?.titulo ?? "Documento de venda"} ${String(d["code"] ?? "")}`.trim() : null);
   /* LEITURA PENDENTE (VISUAL-UX-02): a Central já aparece, com o esqueleto em Dados principais e nada do documento —
      nem a variante, que só o registro diz. Erro continua no estado oficial (404 igual para tudo o que não se vê). */
-  if (!d && q.isLoading) return <CentralVendasWorkspace carregando titulo="Documento de venda" identidade={{ nome: "Carregando documento", alterado: false }} acoes={null} dados={null} itens={null} abas={[]} />;
+  if (!d && q.isLoading) return <CentralVendasWorkspace carregando titulo="Documento de venda" identidade={{ nome: "Carregando documento", alterado: false }} acoes={null} dados={null} itens={null} abas={ABAS_DA_LEITURA_PENDENTE} />;
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
 
   const passoSelecionado = itens.length === 1 ? itens[0]! : itens.find((x) => x.tipoOperacaoId === passoEscolhido) ?? null;
@@ -290,7 +303,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
 
   const codigo = String(d["code"] ?? "");
   const tom = statusTone(situacao);
-  const IconeDaSituacao = tom === "positive" ? FileCheck2 : tom === "negative" ? FileX2 : FileText;
+  const IconeDaSituacao = tom === "positive" ? FileCheck : tom === "negative" ? FileX : FileText;
   const podeCancelar = Boolean(k) && !["cancelled", "confirmed", "invoiced"].includes(situacao) && can(`${k!.perm}.delete`);
   /* VISUAL-UX-02 W1 — o leque de Ações rápidas, de baixo para cima: Imprimir, Histórico, "N documentos abertos" (o
      próprio leque o põe) e, quando pode, Cancelar. Histórico e Cancelar só com a capacidade — `can` só esconde. */
@@ -321,7 +334,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   return <>
     <CentralVendasWorkspace
       titulo={`${titulo} ${codigo}`.trim()}
-      identidade={{ nome: codigo || titulo, alterado: false, icone: <IconeDaSituacao />, tom, dica: titulo, situacao: <StatusBadge value={situacao} /> }}
+      identidade={{ nome: codigo || titulo, codigo: Boolean(codigo), alterado: false, icone: <IconeDaSituacao />, tom, dica: titulo, situacao: <StatusBadge value={situacao} /> }}
       densidade={densidade}
       acoes={<ConjuntoDaBarra>
         {/* VISUAL-UX-02 W1 — consulta: [Novo documento +] [Duplicar documento] [pílula] */}
@@ -418,7 +431,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         </PainelColuna> },
         /* FISCAL: nenhuma NF-e é vinculada hoje (`nfe_id` nunca é gravado); Dedutível é o do plano gravado. */
         { value: "fiscal", label: "Fiscal", content: <PainelColuna>
-          <CampoLeitura rotulo="NF-e" valor={d["nfe_id"] ? "Vinculada" : "Nenhuma vinculada"} />
+          <CampoLeitura rotulo="NF-e" adorno="travado" valor={d["nfe_id"] ? "Vinculada" : "Nenhuma vinculada"} />
           <ChaveSimNao rotulo="Dedutível" valor={dedutivelDoPlano(d["installment_plan"])} />
         </PainelColuna> },
         /* DERIVADOS só em pedido e orçamento: venda não gera derivado (a conversão não existe para `sale`). */

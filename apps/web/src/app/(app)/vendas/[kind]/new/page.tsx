@@ -834,6 +834,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
     let content: React.ReactNode;
     if (campos.length === 1 && campos[0] === "note") content = <PainelLargo>{render("note")}</PainelLargo>;
     else if (campos.some(especial)) content = <PainelRepartido lado={<TitulosDoDocumento legenda="Contas a receber do documento" titulos={[]} />}>{campos.map(render)}</PainelRepartido>;
+    else if (value === "totais") content = <PainelRepartido>{campos.map(render)}</PainelRepartido>; /* Totais: a grade do desenho, sem lado */
     else content = <PainelColuna>{campos.map(render)}</PainelColuna>;
     return [{ value, label: a.aba, content }];
   });
