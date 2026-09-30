@@ -112,9 +112,9 @@ async function membro(rotulo: string, permissoes: string[]): Promise<Hdr> {
   expect(papel.statusCode, papel.body).toBe(201);
   const email = `ed3-${sufixo}@teste.local`;
   const vinculo = await h.app.inject({ method: "POST", url: "/api/admin/members", headers: h.headers(),
-    payload: { name: rotulo, email, password: "Editar@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos([]) } });
+    payload: { name: rotulo, email, password: "Variante@12345", role_id: j(papel).id, escopos_empresas: escoposDeTodosOsModulos([]) } });
   expect(vinculo.statusCode, vinculo.body).toBe(201);
-  const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Editar@12345" } });
+  const login = await h.app.inject({ method: "POST", url: "/api/auth/login", payload: { email, password: "Variante@12345" } });
   expect(login.statusCode, login.body).toBe(200);
   return { authorization: `Bearer ${(login.json() as { token: string }).token}`, "x-org-id": h.demo.orgId };
 }
