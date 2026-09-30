@@ -68,8 +68,20 @@ export const isoToBR = (iso?: string | null) => { if (!iso || !/^\d{4}-\d{2}-\d{
 const brToISO = (s: string) => { const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/); if (!m) return null; const iso = `${m[3]}-${m[2]}-${m[1]}`; const d = new Date(`${iso}T00:00:00`); return Number.isNaN(d.getTime()) || d.getDate() !== Number(m[1]) ? null : iso; };
 const toISO = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
-/** Calendário do modelo base (mg-dp): painel 320×320 com dias circulares; título abre meses → anos. Valor ISO (AAAA-MM-DD). */
-export function MgDatePicker({ value, onChange, disabled, id, name, className, onOpenChange, placeholder }: { value: string; onChange: (iso: string) => void; disabled?: boolean; id?: string; name?: string; className?: string; onOpenChange?: (o: boolean) => void; placeholder?: string }) {
+/**
+ * Painel PRÓPRIO de quem chama (ex.: o calendário da Central de Vendas, VISUAL-UX-02): troca só o conteúdo do popover
+ * e, com `semIcone`, o ícone da caixa. O campo, o texto digitado, o teclado e o valor ISO continuam os daqui. Ausente,
+ * o calendário é o de sempre, idêntico — as outras telas não mudam.
+ */
+export interface PainelDoCalendario {
+  desenhar: (p: { valor: string; escolher: (iso: string) => void; fechar: () => void }) => React.ReactNode;
+  className?: string;
+  rotulo?: string;
+  semIcone?: boolean;
+}
+
+/** Calendário do modelo base: painel 320×320 com dias circulares; título abre meses → anos. Valor ISO (AAAA-MM-DD). */
+export function MgDatePicker({ value, onChange, disabled, id, name, className, onOpenChange, placeholder, painel }: { value: string; onChange: (iso: string) => void; disabled?: boolean; id?: string; name?: string; className?: string; onOpenChange?: (o: boolean) => void; placeholder?: string; painel?: PainelDoCalendario }) {
   const [open, setOpenState] = React.useState(false); const [view, setView] = React.useState<"days" | "months" | "years">("days");
   const [text, setText] = React.useState(isoToBR(value));
   React.useEffect(() => { setText(isoToBR(value)); }, [value]);
@@ -94,10 +106,12 @@ export function MgDatePicker({ value, onChange, disabled, id, name, className, o
     <Popover.Anchor asChild>
       <div className="relative flex w-full items-center">
         <input id={id} name={name} type="text" inputMode="numeric" className={cn("mg-dp-field", className)} value={text} placeholder={placeholder ?? " "} disabled={disabled} onChange={(e) => setText(fmtInput(e.target.value))} onBlur={commitText} onKeyDown={onKey} onClick={() => setOpen(true)} onFocus={(e) => { if (!open && e.currentTarget.matches(":focus-visible")) setOpen(true); }} autoComplete="off" />
-        <span className="mg-dp-icon"><Calendar /></span>
+        {!painel?.semIcone && <span className="mg-dp-icon"><Calendar /></span>}
       </div>
     </Popover.Anchor>
-    <Popover.Portal><Popover.Content align="start" sideOffset={4} className="mg-dp-panel z-[10001] outline-none" onOpenAutoFocus={(e) => e.preventDefault()}>
+    <Popover.Portal>{painel ? <Popover.Content align="start" sideOffset={4} className={painel.className} aria-label={painel.rotulo} onOpenAutoFocus={(e) => e.preventDefault()}>
+      {painel.desenhar({ valor: value, escolher: (iso) => { onChange(iso); setOpen(false); }, fechar: () => setOpen(false) })}
+    </Popover.Content> : <Popover.Content align="start" sideOffset={4} className="mg-dp-panel z-[10001] outline-none" onOpenAutoFocus={(e) => e.preventDefault()}>
       <div className="mg-dp-header">
         <button type="button" className="mg-dp-nav" aria-label="Anterior" onClick={() => nav(-1)}><ChevronLeft /></button>
         <button type="button" className="mg-dp-title" onClick={() => setView(view === "days" ? "months" : "years")}>{title}</button>
@@ -111,7 +125,7 @@ export function MgDatePicker({ value, onChange, disabled, id, name, className, o
         <div className="mg-dp-view-layer mg-dp-view-layer--grid"><div className="mg-dp-grid">{MONTHS_SHORT.map((mm, i) => <button type="button" key={mm} className={cn("mg-dp-pick", i === m && "selected")} onClick={() => { setCursor(new Date(y, i, 1)); setView("days"); }}>{mm}</button>)}</div></div>
         <div className="mg-dp-view-layer mg-dp-view-layer--grid"><div className="mg-dp-grid">{Array.from({ length: 12 }, (_, i) => yearStart + i).map((yy) => <button type="button" key={yy} className={cn("mg-dp-pick", yy === y && "selected")} onClick={() => { setCursor(new Date(yy, m, 1)); setView("months"); }}>{yy}</button>)}</div></div>
       </div></div></div>
-    </Popover.Content></Popover.Portal>
+    </Popover.Content>}</Popover.Portal>
   </Popover.Root>;
 }
 
