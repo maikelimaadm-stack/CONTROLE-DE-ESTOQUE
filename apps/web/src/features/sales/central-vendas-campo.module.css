@@ -31,12 +31,11 @@
 /*
  * GEOMETRIA DO DESENHO: a linha tem borda TRANSPARENTE de 1px (o `.fld`), e rótulo, caixa e ícone moram no padding-box
  * dela — então, com rótulo à frente, o rótulo fica em +1,+1 e a caixa mede (largura − 138) × 28 a partir de +137.
- * `--ext` é quanto o controle passa da caixa para a esquerda, a direita e embaixo, até a caixa de referência do
- * desenho (o `.fx` a partir de 136px): é dela que a lista de pesquisa e o calendário saem (x e largura; topo +4).
+ * O controle ocupa EXATAMENTE a caixa (nada dele passa dela); a lista de pesquisa e o calendário saem da caixa de
+ * referência do desenho (o `.fx` a partir de 136px, topo +4 da linha) — o deslocamento mora no próprio painel, no fim.
  */
 .linha {
   --recuo: 10px;
-  --ext: 2px;
   position: relative;
   height: 30px;
   box-sizing: border-box;
@@ -111,25 +110,31 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
 .valor > :last-child { overflow: hidden; text-overflow: ellipsis; }
 .vazio { color: #94a3b8; }
 
-/* o controle (Input, RefSelect, MgDatePicker, Textarea) perde a caixa própria e ocupa a do desenho */
+/*
+ * o controle (Input, RefSelect, MgDatePicker, Textarea) perde a caixa própria e É a caixa do desenho (o `.fc`): cobre a
+ * border-box dela (−1px sobre o padding-box), com borda transparente de 1px e o padding de 10px (32px com ícone) —
+ * o texto termina em reticências antes do recuo direito, e antes do "limpar" quando há valor.
+ */
 .caixa[data-controle] { padding: 0; }
 .caixa[data-controle] > :not([type="hidden"]) {
   position: absolute;
-  inset: 0 calc(-1 * var(--ext)) calc(-1 * var(--ext));
+  inset: -1px;
   display: flex;
   align-items: stretch;
   min-width: 0;
   width: auto;
   height: auto;
 }
+/* Input e Textarea são o próprio filho da caixa: a altura sai do inset, não dos 100% do padding-box */
+.caixa[data-controle] > .controle:not([type="hidden"]) { height: auto !important; }
 .caixa .controle {
   box-sizing: border-box;
   width: 100%;
   height: 100% !important;
   min-height: 0;
   margin: 0;
-  padding: 0 calc(10px + var(--ext)) var(--ext) calc(var(--recuo) + var(--ext)) !important;
-  border: 0 !important;
+  padding: 0 10px 0 var(--recuo) !important;
+  border: 1px solid transparent !important;
   border-radius: 8px;
   background: transparent !important;
   box-shadow: none !important;
@@ -146,11 +151,11 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .caixa select.controle { appearance: none; background-image: none !important; }
 .caixa textarea.controle { resize: none; line-height: 1.5; }
 /* seletor de referência: a lupa mora à esquerda; o chevron sai, o "limpar" continua à direita */
-.caixa :global(.cmd-display) { display: flex; align-items: center; cursor: pointer; }
+.caixa :global(.cmd-display) { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; cursor: pointer; }
 .caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
 .caixa :global(.cmd-chevron) { display: none; }
-.caixa :global(.cmd-clear) { right: calc(10px + var(--ext)); margin-top: calc(-7px - var(--ext) / 2); }
-.linha:has(:global(.cmd-clear)) .controle { padding-right: calc(30px + var(--ext)) !important; }
+.caixa :global(.cmd-clear) { right: 11px; margin-top: -7px; }
+.linha:has(:global(.cmd-clear)) .controle { padding-right: 30px !important; }
 
 /* ícone À ESQUERDA, dentro da caixa (lupa, calendário, chevron) */
 .icone {
@@ -169,8 +174,8 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .icone[data-botao] { width: 22px; height: 22px; margin-left: -4px; align-items: center; justify-content: center; border-radius: 999px; }
 .botaoData {
   position: absolute;
-  left: 11px;
-  top: calc(50% - var(--ext) / 2);
+  left: 10px;
+  top: 50%;
   transform: translateY(-50%);
   z-index: 3;
   width: 22px;
@@ -207,7 +212,7 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .abaixo { padding-left: 138px; }
 
 /* ═════════════ compacto: rótulo DENTRO da caixa (flutuante), 32px ═════════════ */
-[data-densidade="compacto"] .linha { --ext: 1px; height: 32px; }
+[data-densidade="compacto"] .linha { height: 32px; }
 [data-densidade="compacto"] .linha[data-multilinha] { height: 80px; }
 /* no compacto a caixa É o `.fld` do desenho: cobre a linha inteira, borda incluída */
 [data-densidade="compacto"] .caixa {
@@ -231,20 +236,25 @@ fieldset:disabled .caixa .controle { cursor: default; }
 [data-densidade="compacto"] .obrigatorio { margin-left: 0; }
 [data-densidade="compacto"] .linha[data-icone] .rotulo { padding-left: 32px; max-width: calc(100% - 38px); }
 [data-densidade="compacto"] .icone { left: 10px; }
+[data-densidade="compacto"] .botaoData { left: 11px; }
 [data-densidade="compacto"] .erro,
 [data-densidade="compacto"] .abaixo { padding-left: 2px; }
 /* flutuante: preenchido, só leitura, travado, com foco ou aberto */
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .rotulo,
 [data-densidade="compacto"] fieldset:disabled .linha .rotulo,
 [data-densidade="compacto"] .linha[data-multilinha] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
-[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa:not([data-controle]),
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa:not([data-controle]) { padding-top: 13px !important; padding-bottom: 4px !important; align-items: flex-end; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .controle,
-[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: calc(3px + var(--ext)) !important; align-items: flex-end; }
+[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: 3px !important; align-items: flex-end; }
+/* o botão da pesquisa é bloco (as reticências pedem) e não desce a linha de 15px até o fim de uma área de 14: com 12px
+   em cima a área tem os 15 da linha, e o texto fica onde o flex-end do desenho o põe */
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa :global(.cmd-display),
+[data-densidade="compacto"] fieldset:disabled .linha .caixa :global(.cmd-display) { padding-top: 12px !important; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .icone,
 [data-densidade="compacto"] fieldset:disabled .linha .icone { top: calc(50% + 5px); }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .botaoData,
-[data-densidade="compacto"] fieldset:disabled .linha .botaoData { top: calc(50% - var(--ext) / 2 + 5px); }
-[data-densidade="compacto"] .linha[data-multilinha] .controle { padding-top: 13px !important; padding-bottom: calc(3px + var(--ext)) !important; }
+[data-densidade="compacto"] fieldset:disabled .linha .botaoData { top: calc(50% + 5px); }
+[data-densidade="compacto"] .linha[data-multilinha] .controle { padding-top: 13px !important; padding-bottom: 3px !important; }
 /* vazio no compacto: o rótulo ocupa a caixa — o traço de "sem valor" não aparece por baixo dele */
 [data-densidade="compacto"] .caixa :global(.cmd-display-placeholder) { visibility: hidden; }
 
@@ -335,6 +345,18 @@ fieldset:disabled .caixa .controle { cursor: default; }
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   :global(.cmd-panel).painelPesquisa { background: rgba(255, 255, 255, .97); }
 }
+/*
+ * A caixa de referência do desenho (`.lkp`): com rótulo à frente, a lista e o calendário saem de 136px — 1px à
+ * esquerda da caixa —, com a largura dela + 2 e o topo 4px abaixo da LINHA (5px abaixo da caixa, que é a âncora do
+ * Radix); no compacto a caixa é a linha, e eles saem dela sem deslocamento. O painel mora num portal, fora da raiz
+ * da Central: a densidade é lida na página. `translate` não mexe na medida do Radix nem no `transform` da entrada.
+ */
+:global(.cmd-panel).painelPesquisa { width: calc(var(--radix-popover-trigger-width) + 2px); translate: -1px 1px; }
+.calendario { translate: -1px 1px; }
+:global(.cmd-panel).painelPesquisa[data-side="top"],
+.calendario[data-side="top"] { translate: -1px -1px; }
+:global(body:has([data-densidade="compacto"])) :global(.cmd-panel).painelPesquisa { width: var(--radix-popover-trigger-width); translate: none; }
+:global(body:has([data-densidade="compacto"])) .calendario { translate: none; }
 .painelPesquisa :global(.cmd-panel__search) {
   display: block;
   width: 100%;

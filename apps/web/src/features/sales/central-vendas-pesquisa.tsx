@@ -26,7 +26,8 @@ import grade from "./central-vendas-grade.module.css";
  * classes de `central-vendas-grade.module.css`. O flutuante abre 2px abaixo do CONTEÚDO da linha (a borda de baixo da
  * célula não conta), preso à coluna da célula e sem passar da borda direita da linha — o `calc(100% + 2px)` e o
  * `max(0, min(coluna, 100% - 640px))` do desenho, medidos na tela porque o painel é `fixed`. Props, testids, papéis e
- * teclado são os de antes: a grade da criação consome este painel e não muda.
+ * teclado são os de antes: a grade da criação consome este painel e não muda. A opção ATIVA (a do teclado e do ponteiro,
+ * a que o `aria-activedescendant` aponta e o Enter escolhe) é a `aria-selected="true"`; as outras, "false".
  */
 
 export interface OpcaoReal { id: string; label: string; code?: string | null }
@@ -135,7 +136,7 @@ export function PainelDePesquisa({ recurso, rotulo, filtro, valor, modo, ancora,
         key={o.id}
         id={`${idLista}-${i}`}
         role="option"
-        aria-selected={o.id === valor}
+        aria-selected={i === ativa}
         data-ativa={i === ativa ? "true" : "false"}
         className={grade.pesquisaLinha}
         tabIndex={-1}
