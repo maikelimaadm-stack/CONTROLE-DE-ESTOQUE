@@ -1385,6 +1385,54 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
+## EDITAR-01 — editar o documento de venda salvo (0039)
+
+Decisão 272. **Uma migration: `0039_versao_do_documento_de_venda.sql`** (pre-deploy; trava (2026,73), `lock_timeout` 2 s,
+[[COORDENADOR: B1 — pré/pós-condições nomeadas `EDITAR-01: ...` e o que conferem]], não destrutiva, sem backfill): a
+coluna `erp.sales_documents.version bigint not null default 0` e o gatilho BEFORE UPDATE `trg_sales_documents_versao`
+(função `erp.sales_documents_versao()`, sem SECURITY DEFINER, `search_path = erp, pg_temp`, `execute` revogado de
+`public`), que soma 1 à versão em todo update da linha. A coluna nasce com o default constante, sem reescrever a
+tabela; o `alter table` pede a trava exclusiva de `erp.sales_documents` por um instante — com uma transação longa
+segurando a tabela, a migration desiste em 2 s sem aplicar nada e se repete. Nenhuma variável nova, nenhuma
+permissão nova: a PATCH e o `/edicao` usam `budgets.edit`, `orders.edit` e `sales.edit`, que já existem. **Sem tela**
+nesta fatia: nenhuma tela chama as rotas novas (o lápis vem na F2, depois da VISUAL-UX-02).
+
+**Pré-condição:** [[COORDENADOR: B1 — pré-condições da 0039 (papel que aplica, coluna e gatilho ainda inexistentes,
+0038 aplicada) e as mensagens de recusa]]. Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0039) → API → web.** Janelas:
+1. **API ANTERIOR × banco novo:** a API anterior nunca escreve `version`. O INSERT dela nomeia as colunas, e o
+   documento nasce com o default 0. Cada UPDATE dela (PUT, confirmar, cancelar, converter, encerrar saldo) passa pelo
+   gatilho, que só soma 1 à versão — e um `set` explícito seria sobrescrito. O gatilho não recusa nada, não lê outra
+   tabela e não toca outra coluna: nenhuma gravação da API anterior muda de resultado, código ou mensagem. Ele dispara
+   depois das guardas da tabela, e nenhuma delas compara a linha inteira [[COORDENADOR: B1 confirma]], então nenhuma
+   vê a versão mudar. O `select d.*` do `GET` anterior passa a trazer `version`, e o histórico de `erp.audit_row`
+   também: campo aditivo, que a web ignora.
+2. **web ANTERIOR × API nova:** a web anterior não chama a PATCH nem o `/edicao` — e nenhuma tela edita documento de
+   venda salvo, nem pelo PUT. O PUT não mudou (compatibilidade da API). O `GET` ganha `version` (aditivo). Confirmar,
+   cancelar, converter e encerrar saldo pela web anterior somam a versão (são update): quando a tela de edição existir,
+   uma PATCH com a versão lida antes deles recebe 409 `CONCURRENCY_CONFLICT` e recarrega — o efeito pretendido.
+3. **web NOVA × API anterior:** a web desta fatia não muda, e nenhuma tela chama as rotas novas. A API anterior
+   responde 404 de rota à PATCH e ao `/edicao`.
+
+**Impacto em dados reais: os documentos de venda ganham a coluna version (0 para todos); nenhum valor existente muda.**
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0039 fica: a API anterior
+convive com ela (janela 1). Remover a coluna ou o gatilho só por migration NOVA, e é decisão do Maike — nunca editando
+a 0039. As edições já feitas pela PATCH são edições comuns do documento e ficam; nada de apagar dado de produção
+(decisão 247).
+
+**Roteiro do Maike (produção é operacional — decisões 240 e 247; a prova é só leitura, não cria nem muda documento):**
+1. Depois da 0039, leitura no banco: `select version, count(*) from erp.sales_documents group by version;` → uma linha
+   só, `version = 0`, com o total de documentos; e `select tgname, tgenabled from pg_trigger where tgrelid =
+   'erp.sales_documents'::regclass and not tgisinternal order by tgname;` → `trg_sales_documents_versao` ligado (`O`).
+2. Depois da API nova: Vendas › abrir a consulta de um documento → a resposta de `GET /api/sales/<segmento>/<id>`
+   (ferramentas do navegador › Rede) traz `version` — `"0"` no documento que não mudou desde a 0039.
+3. Sem provocar nada: quando a operação confirmar, cancelar ou converter um documento, a mesma leitura do passo 1
+   mostra esse documento com versão ≥ 1. Não há tela nova para conferir: o lápis vem na F2.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## ANEXOS-PESQUISA-01 — anexos nos documentos de venda e de compra e pesquisa de produtos
 
 Decisão 271. **Sem migration**, sem variável nova, sem permissão nova. Ordem: **API → web**.
