@@ -102,7 +102,7 @@ export type ColunaDoEditorDeItens = "warehouse" | "product" | "quantity" | "unit
  */
 export interface ColunaDoLayoutNoEditor { coluna: ColunaDoEditorDeItens; chave: string; rotulo?: string; obrigatorio: boolean }
 /** As colunas do desenho: as do editor, mais as duas que ele mesmo põe (Saldo da origem e Valor total). */
-type ColunaDesenhada = ColunaDoEditorDeItens | "saldo" | "total";
+export type ColunaDesenhada = ColunaDoEditorDeItens | "saldo" | "total";
 /** A ORDEM DE SEMPRE do editor. Sem layout, o desenho é exatamente este — o DOM das telas que usam o editor não muda. */
 const ORDEM_DE_SEMPRE: readonly ColunaDesenhada[] = ["warehouse", "product", "stock", "saldo", "quantity", "unit_value", "discount", "discount_percent", "total", "generate_stock", "lot", "expiration", "financial_category", "cost_center"];
 /** As colunas que, na ordem de sempre, vêm ANTES do Valor total. Com layout, o total fica logo depois da última delas. */
@@ -114,7 +114,7 @@ const ANTES_DO_TOTAL: ReadonlySet<ColunaDesenhada> = new Set(ORDEM_DE_SEMPRE.sli
  * total logo depois da última coluna que o precede na ordem de sempre — com o layout do sistema da compra (armazém,
  * produto, quantidade, unitário, descontos, lote, validade), é o desenho de hoje, coluna por coluna.
  */
-function ordemDasColunas(visivel: (c: ColunaDesenhada) => boolean, layout: readonly ColunaDoLayoutNoEditor[] | undefined): ColunaDesenhada[] {
+export function ordemDasColunas(visivel: (c: ColunaDesenhada) => boolean, layout: readonly ColunaDoLayoutNoEditor[] | undefined): ColunaDesenhada[] {
   const deSempre = ORDEM_DE_SEMPRE.filter(visivel);
   if (!layout) return deSempre;
   const listadas: ColunaDesenhada[] = [];

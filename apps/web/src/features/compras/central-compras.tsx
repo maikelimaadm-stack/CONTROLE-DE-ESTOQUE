@@ -393,9 +393,6 @@ function FormularioDeCompra({ variante, estado, podeCriar, pedidoId, topDaUrl, t
   const padraoDoCampo = (c: string) => (doLayoutComCadastro(c) && !padraoNaoPermitido(c) ? padroes.validos.get(c) ?? null : null);
   /** O padrão do campo morreu no cadastro: nada é aplicado, o aviso aparece e o campo fica editável nesta abertura. */
   const padraoInvalido = (c: string) => doLayoutComCadastro(c) && (padroes.invalidos.has(c) || padraoNaoPermitido(c));
-  /** O desenho: o layout + o que a regra exige e ele esconde. Sem layout, o LAYOUT DO SISTEMA — a Central de hoje. */
-  const desenho = React.useMemo(() => (layout ? estruturaComExigidos(familia, layout, [...exigidosPelaRegra]) : null), [layout, familia, exigidosPelaRegra]);
-  const zonas = React.useMemo(() => zonasDaCentral(familia, desenho?.estrutura ?? LAYOUT_DO_SISTEMA(familia)), [familia, desenho]);
 
   /**
    * ARMAZÉM PADRÃO: o padrão da coluna Armazém vale SÓ para a empresa do documento de agora (`empresaId` da resposta
@@ -459,8 +456,20 @@ function FormularioDeCompra({ variante, estado, podeCriar, pedidoId, topDaUrl, t
   const erro = (c: string) => errosDaTela[c];
   const errosDeItens = Object.entries(errosDaTela).filter(([c]) => c.startsWith("itens"));
 
+  /**
+   * O desenho: o layout + o que ele esconde e a tela não pode esconder. Sem layout, o LAYOUT DO SISTEMA — a Central de
+   * hoje. Além do que a REGRA exige, aparece todo campo do cabeçalho com ERRO (422 do servidor ou conferência local: um
+   * erro num campo invisível não teria onde ser corrigido) e a condição de pagamento que a TOP não permite (o servidor a
+   * recusa, e escondida ela nunca sairia do documento). `estruturaComExigidos` só desenha chaves do catálogo do
+   * cabeçalho — caminhos de item (`itens[0].x`) não entram.
+   */
+  const aparecerSempre = [...exigidosPelaRegra, ...Object.keys(errosDaTela), ...(condicaoNaoPermitida(h.condicao_pagamento_id) ? ["condicao_pagamento_id"] : [])];
+  const chaveDoAparecer = [...new Set(aparecerSempre)].sort().join("|");
+  const desenho = React.useMemo(() => (layout ? estruturaComExigidos(familia, layout, chaveDoAparecer ? chaveDoAparecer.split("|") : []) : null), [layout, familia, chaveDoAparecer]);
+  const zonas = React.useMemo(() => zonasDaCentral(familia, desenho?.estrutura ?? LAYOUT_DO_SISTEMA(familia)), [familia, desenho]);
+
   const pronto = modoReceber ? Boolean(recebendo) && !!top : escritaTopConfirmada;
-  const salvarBloqueado = !pronto || !itens.length || salvar.isPending || layoutPendente || capacidadePendente;
+  const salvarBloqueado = !pronto || !itens.length || salvar.isPending || layoutPendente || capacidadePendente || regrasPendente;
   const submit = () => {
     // A defesa no handler, e não só no `disabled` do botão: `disabled` é apresentação.
     if (salvarBloqueado) return;
@@ -494,26 +503,30 @@ function FormularioDeCompra({ variante, estado, podeCriar, pedidoId, topDaUrl, t
   const req = (c: string) => (layout ? Boolean(cfg.get(c)?.obrigatorio) : doSistema.has(c)) || exigidosPelaRegra.has(c);
   /** O rótulo do padrão de cadastro vai ao RefSelect enquanto o valor for o do padrão (sem consulta). */
   const dica = (c: keyof Cabecalho) => { const p = padraoDoCampo(c); return p && h[c] === p.id ? p.rotulo : undefined; };
-  /** O aviso do padrão morto, dentro do campo (depois do controle). Sem padrão inválido, o controle sozinho — o de hoje. */
-  const comAviso = (c: string, controle: React.ReactElement): React.ReactNode => (padraoInvalido(c)
-    ? [<React.Fragment key="controle">{controle}</React.Fragment>, <p key="aviso" data-testid="padrao-invalido-aviso" className="mt-0.5 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p>]
-    : controle);
+  /**
+   * O aviso do padrão morto, AO LADO do campo (logo depois do `Field`, numa linha inteira do grid), nunca dentro dele: o
+   * `Field` liga o rótulo ao controle injetando o id no filho ÚNICO — com o aviso como segundo filho, o rótulo perderia
+   * o campo. Sem padrão inválido, o `Field` sozinho — o de hoje.
+   */
+  const comAviso = (c: string, campo: React.ReactElement): React.ReactNode => (padraoInvalido(c)
+    ? <>{campo}<p data-testid="padrao-invalido-aviso" className="col-span-12 -mt-2 text-[11px] text-amber-700">{AVISO_PADRAO_INVALIDO_CENTRAL}</p></>
+    : campo);
   const desenhar = (c: string): React.ReactNode => {
     switch (c) {
       case "empresa_id": return <Field label={rot(c, "Empresa")} required={req(c)} span={4} error={erro(c)}><RefSelect resource="empresas" value={h.empresa_id} disabled={modoReceber || undefined} allowEmpty={!modoReceber}
         labelHint={recebendo ? String(recebendo.pedido["empresa_nome"] ?? "") || null : undefined} onChange={(v) => mudar({ empresa_id: v ?? "" })} /></Field>;
-      case "fornecedor_id": return <Field label={rot(c, "Fornecedor")} required={req(c)} span={4} error={erro(c)}>{comAviso(c, <RefSelect resource="people" value={h.fornecedor_id} disabled={modoReceber || undefined} allowEmpty={!modoReceber}
-        labelHint={recebendo ? String(recebendo.pedido["fornecedor_nome"] ?? "") || null : dica("fornecedor_id")} onChange={(v) => mudar({ fornecedor_id: v ?? "" })} filter={{ is_provider: "true" }} />)}</Field>;
+      case "fornecedor_id": return comAviso(c, <Field label={rot(c, "Fornecedor")} required={req(c)} span={4} error={erro(c)}><RefSelect resource="people" value={h.fornecedor_id} disabled={modoReceber || undefined} allowEmpty={!modoReceber}
+        labelHint={recebendo ? String(recebendo.pedido["fornecedor_nome"] ?? "") || null : dica("fornecedor_id")} onChange={(v) => mudar({ fornecedor_id: v ?? "" })} filter={{ is_provider: "true" }} /></Field>);
       case "data_documento": return <Field label={rot(c, "Data do documento")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-data-documento" type="date" value={h.data_documento} onChange={(e) => mudar({ data_documento: e.target.value })} /></Field>;
       case "data_entrada": return <Field label={rot(c, "Data de entrada")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-data-entrada" type="date" value={h.data_entrada} onChange={(e) => mudar({ data_entrada: e.target.value })} /></Field>;
       case "data_vencimento": return <Field label={rot(c, "Vencimento")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-data-vencimento" type="date" value={h.data_vencimento} onChange={(e) => mudar({ data_vencimento: e.target.value })} /></Field>;
       case "numero_nota": return <Field label={rot(c, "Número da nota")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-numero-nota" value={h.numero_nota} onChange={(e) => mudar({ numero_nota: e.target.value })} /></Field>;
       case "serie_nota": return <Field label={rot(c, "Série")} required={req(c)} span={1} error={erro(c)}><Input data-testid="compras-serie-nota" value={h.serie_nota} onChange={(e) => mudar({ serie_nota: e.target.value })} /></Field>;
-      case "transportadora_id": return <Field label={rot(c, "Transportadora")} required={req(c)} span={3} error={erro(c)}>{comAviso(c, <RefSelect resource="people" value={h.transportadora_id} onChange={(v) => mudar({ transportadora_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transportadora_id")} />)}</Field>;
+      case "transportadora_id": return comAviso(c, <Field label={rot(c, "Transportadora")} required={req(c)} span={3} error={erro(c)}><RefSelect resource="people" value={h.transportadora_id} onChange={(v) => mudar({ transportadora_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transportadora_id")} /></Field>);
       case "categoria_financeira_id": return <Field label={rot(c, "Natureza de despesa")} required={req(c)} span={3} error={erro(c)}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => mudar({ categoria_financeira_id: v ?? "" })} buscarOpcoes={opcoesDeNaturezaDeDespesa} /></Field>;
-      case "centro_custo_id": return <Field label={rot(c, "Centro de resultado")} required={req(c)} span={3} error={erro(c)}>{comAviso(c, <RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => mudar({ centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} labelHint={dica("centro_custo_id")} />)}</Field>;
-      case "condicao_pagamento_id": return <Field label={rot(c, "Condição de pagamento")} required={req(c)} span={3} error={erro(c)}>{comAviso(c, <RefSelect resource="condicoes_pagamento" somenteIds={condicoesPermitidas} value={h.condicao_pagamento_id} onChange={(v) => mudar({ condicao_pagamento_id: v ?? "" })} labelHint={dica("condicao_pagamento_id")} />)}</Field>;
-      case "forma_pagamento_id": return <Field label={rot(c, "Forma de pagamento")} required={req(c)} span={3} error={erro(c)}>{comAviso(c, <RefSelect resource="payment_methods" value={h.forma_pagamento_id} onChange={(v) => mudar({ forma_pagamento_id: v ?? "" })} labelHint={dica("forma_pagamento_id")} />)}</Field>;
+      case "centro_custo_id": return comAviso(c, <Field label={rot(c, "Centro de resultado")} required={req(c)} span={3} error={erro(c)}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => mudar({ centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} labelHint={dica("centro_custo_id")} /></Field>);
+      case "condicao_pagamento_id": return comAviso(c, <Field label={rot(c, "Condição de pagamento")} required={req(c)} span={3} error={erro(c)}><RefSelect resource="condicoes_pagamento" somenteIds={condicoesPermitidas} value={h.condicao_pagamento_id} onChange={(v) => mudar({ condicao_pagamento_id: v ?? "" })} labelHint={dica("condicao_pagamento_id")} /></Field>);
+      case "forma_pagamento_id": return comAviso(c, <Field label={rot(c, "Forma de pagamento")} required={req(c)} span={3} error={erro(c)}><RefSelect resource="payment_methods" value={h.forma_pagamento_id} onChange={(v) => mudar({ forma_pagamento_id: v ?? "" })} labelHint={dica("forma_pagamento_id")} /></Field>);
       case "frete": return <Field label={rot(c, "Frete")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-frete" type="number" step="0.01" min="0" value={h.frete} onChange={(e) => mudar({ frete: e.target.value })} /></Field>;
       case "outras_despesas": return <Field label={rot(c, "Outras despesas")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-outras-despesas" type="number" step="0.01" min="0" value={h.outras_despesas} onChange={(e) => mudar({ outras_despesas: e.target.value })} /></Field>;
       case "desconto": return <Field label={rot(c, "Desconto")} required={req(c)} span={2} error={erro(c)}><Input data-testid="compras-desconto" type="number" step="0.01" min="0" value={h.desconto} onChange={(e) => mudar({ desconto: e.target.value })} /></Field>;
@@ -529,13 +542,14 @@ function FormularioDeCompra({ variante, estado, podeCriar, pedidoId, topDaUrl, t
   };
   /**
    * Não editável do layout TRAVA — salvo com o padrão de cadastro morto (fica editável nesta abertura) e salvo quando a
-   * REGRA exige o campo e o layout não lhe dá valor padrão (travado e vazio, o documento nunca seria salvo).
+   * REGRA exige o campo e ele ficaria travado VAZIO (o documento nunca seria salvo): sem valor padrão do layout e, no
+   * RECEBER, sem valor vindo do pedido — com o valor do pedido o campo continua travado, mostrando esse valor.
    */
   const temPadrao = (c: string) => Boolean(cfg.get(c)?.valorPadrao) || Boolean(padraoDoCampo(c));
   const render = (c: string) => {
     const n = desenhar(c);
     if (!layout) return <React.Fragment key={c}>{n}</React.Fragment>;
-    const travado = cfg.get(c)?.editavel === false && !padraoInvalido(c) && !(exigidosPelaRegra.has(c) && !temPadrao(c));
+    const travado = cfg.get(c)?.editavel === false && !padraoInvalido(c) && !(exigidosPelaRegra.has(c) && !temPadrao(c) && !(modoReceber && doPedido.current.has(c)));
     return <div key={c} style={{ display: "contents" }} data-campo={c} data-obrigatorio={String(req(c))} {...(desenho?.forcados.has(c) ? { "data-forcado": "true" } : {})}>
       {travado ? <fieldset disabled data-editavel="false" style={{ display: "contents" }}>{n}</fieldset> : n}
     </div>;

@@ -16,8 +16,8 @@ import { TEST_URL } from "./setup.js";
  *   · `erp.layouts_documento.familia` aceita as duas famílias de compra ao lado das três de venda, e nada além;
  *   · o gatilho "família da TOP = família do layout" da 0032 NÃO muda — e já recusa TOP de compra em layout de venda
  *     (e o inverso), e pedido de compra em layout de compra (e o inverso);
- *   · toda função SECURITY DEFINER de compras (o catálogo inteiro) fixa `search_path = erp, pg_catalog, pg_temp`,
- *     com pg_temp por último — e continua fazendo o que fazia.
+ *   · toda função SECURITY DEFINER de compras (o catálogo inteiro) fixa `search_path = erp, pg_temp` (padrão da 0033/0035),
+ *     com pg_temp por último — e continua fazendo o que fazia. (pg_catalog fora da lista é procurado PRIMEIRO.)
  *
  * Banco NOVO esconde a prova: sem layout gravado, "nenhuma linha muda" seria verdade sobre conjunto vazio. Este
  * arquivo sobe o banco até a 0037, grava layouts de VENDA ligados a TOPs pelo caminho de antes e só então aplica a
@@ -39,14 +39,14 @@ let fonteDoGatilhoAntes: string;
 
 const ALVO = "0038_layout_do_documento_de_compra.sql";
 const CINCO = ["compras.compra", "compras.pedido", "vendas.orcamento", "vendas.pedido", "vendas.venda"];
-const SEARCH_PATH_NOVO = ["search_path=erp, pg_catalog, pg_temp"];
+const SEARCH_PATH_NOVO = ["search_path=erp, pg_temp"];
 const DEFINER_DE_COMPRAS = [
   "erp.documentos_compra_conferir_v2()", "erp.documentos_compra_item_origem_guarda()",
   "erp.documentos_compra_itens_documento_aberto()", "erp.documentos_compra_transicao_v2()"
 ];
 /** O catálogo INTEIRO das SECURITY DEFINER de compras — pelo nome ou por lerem as tabelas de compra. */
 const SQL_DEFINER_DE_COMPRAS = `
-  select p.oid::regprocedure::text fn, p.proconfig cfg, has_function_privilege('erp_app', p.oid, 'execute') app
+  select n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')' fn, p.proconfig cfg, has_function_privilege('erp_app', p.oid, 'execute') app
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'erp' and p.prosecdef
      and (p.proname like 'documentos\\_compra%' or p.prosrc like '%documentos\\_compra%')
@@ -201,6 +201,52 @@ describe("0038 — sobre o acervo de layouts de venda, como o runner aplica", ()
     expect(await familiasDoCheck()).toEqual(["vendas.orcamento", "vendas.pedido", "vendas.venda"]);
   });
 
+  it("LB4b reversas: cada pré-condição quebrada recusa a 0038 com a SUA mensagem, sem efeito", async () => {
+    const QUATRO = DEFINER_DE_COMPRAS.join(", ");
+    // CHECK diferente do da 0032 (duas famílias de venda, mesmo nome, mesma coluna).
+    expect(await recusaDa0038((c) => c.query(`alter table erp.layouts_documento drop constraint chk_layouts_documento_familia,
+      add constraint chk_layouts_documento_familia check (familia in ('vendas.pedido','vendas.venda')) not valid`)))
+      .toMatch(/^COMPRAS-03: chk_layouts_documento_familia diferente do da 0032 /);
+    // A 0037 ausente: falta UMA das funções dela.
+    expect(await recusaDa0038((c) => c.query("drop function erp.documentos_compra_item_origem_guarda() cascade")))
+      .toBe("COMPRAS-03: funcoes do documento de compra da 0036/0037 ausentes; a 0037 nao esta aplicada ou ha schema divergente.");
+    // A 0036 ainda presente: uma das que a 0037 removeu existe de novo.
+    expect(await recusaDa0038((c) => c.query("create function erp.documentos_compra_conferir() returns trigger language plpgsql as 'begin return new; end'")))
+      .toBe("COMPRAS-03: funcoes da 0036 que a 0037 substituiu ainda existem; a 0037 nao terminou ou ha schema divergente.");
+    // O gatilho da família: desligado, apontando para outra função, ou de outro tipo (depois, em vez de antes).
+    const GATILHO = /^COMPRAS-03: gatilho trg_layout_documento_tops_familia ausente, desligado, de outro tipo/;
+    expect(await recusaDa0038((c) => c.query("alter table erp.layout_documento_tops disable trigger trg_layout_documento_tops_familia"))).toMatch(GATILHO);
+    expect(await recusaDa0038(async (c) => {
+      await c.query("create function erp.confere_familia_imitacao() returns trigger language plpgsql as 'begin return new; end'");
+      await c.query("drop trigger trg_layout_documento_tops_familia on erp.layout_documento_tops");
+      await c.query("create trigger trg_layout_documento_tops_familia before insert or update on erp.layout_documento_tops for each row execute function erp.confere_familia_imitacao()");
+    })).toMatch(GATILHO);
+    expect(await recusaDa0038(async (c) => {
+      await c.query("drop trigger trg_layout_documento_tops_familia on erp.layout_documento_tops");
+      await c.query("create trigger trg_layout_documento_tops_familia after insert or update on erp.layout_documento_tops for each row execute function erp.layout_documento_tops_confere_familia()");
+    })).toMatch(GATILHO);
+    // Dono sem bypass de RLS.
+    expect(await recusaDa0038(async (c) => {
+      await c.query("create role c03r_dono_sem_bypass nologin");
+      await c.query("alter function erp.documentos_compra_conferir_v2() owner to c03r_dono_sem_bypass");
+    })).toBe("COMPRAS-03: o dono de alguma funcao SECURITY DEFINER de compras nao atravessa RLS; os gatilhos nao veriam o pedido de origem nem o cadastro da organizacao.");
+    // Quem aplica não é dono das funções (o papel da aplicação).
+    expect(await recusaDa0038((c) => c.query("set local role erp_app")))
+      .toBe("COMPRAS-03: o papel que aplica a migration nao e dono das funcoes SECURITY DEFINER de compras; o ALTER FUNCTION seria recusado.");
+    // Quem aplica é dono das funções (atravessa RLS), mas não da tabela do layout.
+    expect(await recusaDa0038(async (c) => {
+      await c.query("create role c03r_aplicador nologin bypassrls");
+      await c.query("grant usage on schema erp to c03r_aplicador");    // enxerga o schema, como qualquer dono de objeto dele
+      for (const fn of DEFINER_DE_COMPRAS) await c.query(`alter function ${fn} owner to c03r_aplicador`);
+      await c.query("set local role c03r_aplicador");
+    })).toBe("COMPRAS-03: o papel que aplica a migration nao e dono de erp.layouts_documento; o ALTER TABLE e o COMMENT seriam recusados.");
+    // Nada ficou: o ledger, o CHECK, as quatro e os papéis de ensaio são os de antes.
+    expect(await noLedger()).toBe(false);
+    expect(await familiasDoCheck()).toEqual(["vendas.orcamento", "vendas.pedido", "vendas.venda"]);
+    expect((await configDasDefiner()).map((d) => d.fn).join(", ")).toBe(QUATRO);
+    expect((await db.query("select 1 from pg_roles where rolname like 'c03r\\_%'")).rowCount).toBe(0);
+  });
+
   it("LB5 aplica: ledger com 38 (a 0038 por último), layouts e ligações idênticos, CHECK com as cinco famílias do domínio, gatilho intacto", async () => {
     await aplicar();
     const ledger = (await db.query<{ n: number; ultima: string }>("select count(*)::int n, max(name) ultima from public.erp_migrations")).rows[0]!;
@@ -291,7 +337,7 @@ describe("layout de compra pelo papel da aplicação (RLS, GUC da transação)",
 });
 
 describe("search_path das funções SECURITY DEFINER de compras (item 0 e)", () => {
-  it("SP1 o catálogo inteiro: exatamente as quatro, cada uma com search_path 'erp, pg_catalog, pg_temp' (pg_temp por último) e EXECUTE só do dono", async () => {
+  it("SP1 o catálogo inteiro: exatamente as quatro, cada uma com search_path 'erp, pg_temp' (pg_temp por último) e EXECUTE só do dono", async () => {
     const definer = await configDasDefiner();
     expect(definer).toEqual(DEFINER_DE_COMPRAS.map((fn) => ({ fn, cfg: SEARCH_PATH_NOVO, app: false })));
     for (const d of definer) {

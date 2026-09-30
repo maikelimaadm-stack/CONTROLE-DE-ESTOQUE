@@ -74,7 +74,14 @@ const dec = z.union([z.number(), z.string()]).transform(String);
 const decNaoNegativo = dec.refine((v) => { try { return D(v).gte(0); } catch { return false; } }, "Informe um valor maior ou igual a zero");
 const decPositivo = dec.refine((v) => { try { return D(v).gt(0); } catch { return false; } }, "Informe uma quantidade maior que zero");
 const date = z.string().refine(isISODate, "Data inválida");
-const uuid = z.string().uuid();
+/**
+ * COMPRAS-03_R1 (c): TODO uuid dos corpos de compra (lançar pedido, lançar compra e, por derivação, receber) sai do
+ * parse em MINÚSCULAS. O banco devolve uuid → texto em minúsculas, e o servidor compara como TEXTO (armazém da
+ * empresa, condição permitida pela TOP, leque do pedido): o mesmo UUID em maiúsculas dava "Armazém inválido" e
+ * CONDICAO_PAGAMENTO_NAO_PERMITIDA falsos. Aplicado no parse, ANTES do hash da idempotência: corpo já em minúsculas
+ * sai idêntico (o MESMO hash de antes), e o reenvio com outra caixa é o mesmo pedido.
+ */
+const uuid = z.string().uuid().transform((v) => v.toLowerCase());
 const textoOpcional = (max: number) => z.string().trim().max(max).nullish().transform((v) => (v ? v : null));
 const FORMA_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

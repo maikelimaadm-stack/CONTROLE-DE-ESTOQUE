@@ -258,7 +258,9 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     if (c.somenteLeitura && x.obrigatorio) e.push({ caminho, mensagem: `"${c.rotulo}" é só leitura: não pode ser obrigatória.` });
     if (c.sempreTemValor && x.obrigatorio) e.push({ caminho: `${caminho}.obrigatorio`, mensagem: mensagemSempreTemValor(c.rotulo) });
     // VENDAS-A3-1b: valor padrão de coluna só na coluna Armazém e só do tipo registro (UUID); COMPRAS-03: a da família
-    if (x.valorPadrao && !(colunasComPadrao.includes(x.campo) && x.valorPadrao.tipo === "registro" && padraoCompativel(c, x.valorPadrao)))
+    // COMPRAS-03_R1: em compras, lote e validade têm a recusa própria (mais clara) — uma mensagem só por campo
+    const temRecusaPropria = familiaDeCompras(familia) && (x.campo === "lote" || x.campo === "validade");
+    if (x.valorPadrao && !temRecusaPropria && !(colunasComPadrao.includes(x.campo) && x.valorPadrao.tipo === "registro" && padraoCompativel(c, x.valorPadrao)))
       e.push({ caminho: `${caminho}.valorPadrao`, mensagem: `Valor padrão incompatível com "${c.rotulo}".` });
   });
   // campo "do sistema" fora do layout SEM valor padrão (coluna do sistema não tem padrão: tem de estar lá)
@@ -280,7 +282,39 @@ export function validarEstruturaLayout(familia: string, estrutura: EstruturaLayo
     if (!x) e.push({ caminho: c.parte, mensagem: `"${c.rotulo}" é obrigatório do sistema: ponha no layout.` });
     else if (!x.obrigatorio) e.push({ caminho: caminhoDe(x.campo) + ".obrigatorio", mensagem: `"${c.rotulo}" é obrigatório do sistema: não pode ficar opcional.` });
   }
+  if (familiaDeCompras(familia)) conferirRegrasDeCompras(estrutura, noLayout, caminhoDe, e);
   return e;
+}
+
+/**
+ * COMPRAS-03_R1 (decisão 269): o que o lançar de compras SEMPRE recusaria é recusado já na gravação do layout. Só nas
+ * famílias de compras — vendas não passa por aqui (a saída de vendas não muda). Cada recusa aponta o campo.
+ *  - Lote e Validade: o layout só decide se aparecem, rótulo e ordem; quem os exige é a regra do produto, item a item.
+ *  - Série só com Número da nota no layout; Série fixa (padrão e não editável) só com Número editável.
+ *  - Natureza de despesa e Centro de resultado: os dois no layout ou os dois fora, com o mesmo "obrigatório"; Centro fixo
+ *    (padrão e não editável) só com Natureza no layout e editável.
+ */
+function conferirRegrasDeCompras(estrutura: EstruturaLayout, noLayout: ReadonlyMap<string, CampoDoLayout>, caminhoDe: (campo: string) => string, e: ErroDoLayout[]): void {
+  estrutura.itens.forEach((x, i) => {
+    if (x.campo !== "lote" && x.campo !== "validade") return;
+    const rotulo = x.campo === "lote" ? "Lote" : "Validade";
+    if (x.obrigatorio) e.push({ caminho: `itens[${i}].obrigatorio`, mensagem: `"${rotulo}" é exigido pela regra do produto: o layout não o torna obrigatório.` });
+    if (x.valorPadrao) e.push({ caminho: `itens[${i}].valorPadrao`, mensagem: `"${rotulo}" é informado item a item: não aceita valor padrão.` });
+  });
+  const fixo = (x: CampoDoLayout) => Boolean(x.valorPadrao) && !x.editavel;
+  const serie = noLayout.get("serie_nota"); const numero = noLayout.get("numero_nota");
+  if (serie && !numero) e.push({ caminho: `${caminhoDe("serie_nota")}.campo`, mensagem: `"Série" só entra no layout com "Número da nota".` });
+  else if (serie && numero && fixo(serie) && !numero.editavel)
+    e.push({ caminho: `${caminhoDe("serie_nota")}.editavel`, mensagem: `"Série" com valor padrão fixo exige "Número da nota" editável.` });
+  const natureza = noLayout.get("categoria_financeira_id"); const centro = noLayout.get("centro_custo_id");
+  if (natureza && !centro) e.push({ caminho: `${caminhoDe("categoria_financeira_id")}.campo`, mensagem: `"Natureza de despesa" e "Centro de resultado" entram juntos no layout: ponha também "Centro de resultado".` });
+  if (centro && !natureza) e.push({ caminho: `${caminhoDe("centro_custo_id")}.campo`, mensagem: `"Natureza de despesa" e "Centro de resultado" entram juntos no layout: ponha também "Natureza de despesa".` });
+  if (natureza && centro) {
+    if (natureza.obrigatorio !== centro.obrigatorio)
+      e.push({ caminho: `${caminhoDe("centro_custo_id")}.obrigatorio`, mensagem: `"Centro de resultado" e "Natureza de despesa" têm de ser ambos obrigatórios ou ambos opcionais.` });
+    if (fixo(centro) && !natureza.editavel)
+      e.push({ caminho: `${caminhoDe("centro_custo_id")}.editavel`, mensagem: `"Centro de resultado" com valor padrão fixo exige "Natureza de despesa" editável.` });
+  }
 }
 
 export type OrigemDoLayout = "ligado" | "padrao_da_familia" | "sistema";

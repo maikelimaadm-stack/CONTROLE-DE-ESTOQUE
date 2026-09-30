@@ -1393,16 +1393,19 @@ de `erp.layouts_documento` passa a aceitar as duas famílias de compra (`compras
 das três de venda — drop e add na MESMA instrução, sem instante sem o CHECK; o gatilho que confere "família da TOP =
 família do layout" (`trg_layout_documento_tops_familia`, 0032) já era genérico e NÃO muda. E as funções SECURITY
 DEFINER do documento de compra vivas depois da 0037 (enumeradas pelo catálogo na pré-condição) passam a
-`search_path = erp, pg_catalog, pg_temp`, com `pg_temp` por último, por `ALTER FUNCTION` — corpo, dono, privilégios
+`search_path = erp, pg_temp` (padrão da 0033 e da 0035: `pg_catalog` implícito primeiro, `pg_temp` por último), por `ALTER FUNCTION` — corpo, dono, privilégios
 e gatilhos ficam como estão (item 0 e). As pós-condições conferem objetos (o CHECK aceita exatamente as cinco
 famílias; toda função definer de compras tem o `search_path` novo; o gatilho da família continua o da 0032); não
 comparam contagens de tabelas vivas. Nenhuma variável nova, nenhuma permissão nova: o layout de compra se administra
 com as capacidades da TOP (`tipos_operacao.*`) e a Central o lê com `pedidos_compra.create` / `compras.create`.
 
-**Pré-condição:** quem aplica a 0038 é dono (ou membro do papel dono) das funções de compras, e o dono atravessa RLS
-(superusuário ou `BYPASSRLS`) — a própria migration recusa, com `COMPRAS-03: o dono de alguma funcao SECURITY DEFINER
-de compras nao atravessa RLS; ...` ou `COMPRAS-03: o papel que aplica a migration nao e dono das funcoes SECURITY
-DEFINER de compras; ...`, e nada é aplicado. Em erro, publique o nome do papel, nunca a conexão. A 0038 também
+**Pré-condição:** quem aplica a 0038 é dono (ou membro do papel dono: `pg_has_role(..., 'USAGE')`) das funções de
+compras e de `erp.layouts_documento` (ALTER TABLE e COMMENT), e o dono das funções atravessa RLS (superusuário ou
+`BYPASSRLS`) — a própria migration recusa, com `COMPRAS-03: o dono de alguma funcao SECURITY DEFINER de compras nao
+atravessa RLS; ...`, `COMPRAS-03: o papel que aplica a migration nao e dono das funcoes SECURITY DEFINER de
+compras; ...` ou `COMPRAS-03: o papel que aplica a migration nao e dono de erp.layouts_documento; ...`, e nada é
+aplicado. Também recusa se o gatilho da família não for o da 0032 (ausente, desligado, de outro tipo ou em outra
+função), se o CHECK de família não for o da 0032, ou se a 0037 não terminou. Em erro, publique o nome do papel, nunca a conexão. A 0038 também
 exige que as funções SECURITY DEFINER do schema `erp` que se chamam `documentos_compra%` ou leem `documentos_compra`
 sejam EXATAMENTE as quatro da COMPRAS-01/02 (`documentos_compra_itens_documento_aberto`, `documentos_compra_conferir_v2`,
 `documentos_compra_transicao_v2` e `documentos_compra_item_origem_guarda`). Qualquer outra — criada à mão, schema
@@ -1425,8 +1428,12 @@ remove nem a altera.
 3. **web NOVA × API anterior:** sem `capacidades.layoutDocumento` em `operation-types`, a Central de Compras não pede
    `/layout-efetivo` e é a Central de hoje (sem campo governado, sem erro novo, Salvar como hoje); sem os três flags
    novos em `regras-da-operacao`, nenhum campo é forçado por eles — e sem layout nenhum campo está escondido. O
-   configurador novo oferece as famílias de compra, mas a API anterior recusa criar layout de compra (422 na família):
-   nada é gravado.
+   lançador que escolhe a TOP primeiro e a TOP travada na Central valem com qualquer API (dependem só de
+   `operation-types`, que a API anterior já responde). O configurador novo oferece as famílias de compra, mas a API
+   anterior recusa criar layout de compra (422 na família): nada é gravado; e o filtro do Movimento **Compra** na lista
+   de layouts chama a API anterior com `familia=compras.*`, que ela recusa — a grade mostra o 422 (os filtros de venda
+   seguem normais). Na lista de TOPs, as TOPs de compra mostram "Layout do documento: indisponível" (a API anterior não
+   responde o layout efetivo de compra); as de venda, como hoje.
 
 **Impacto em dados reais:** o CHECK de família dos layouts passa a aceitar as duas famílias de compra; nenhum dado muda.
 

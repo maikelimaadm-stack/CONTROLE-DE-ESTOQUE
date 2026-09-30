@@ -14,7 +14,8 @@
 --    O índice "no máximo um padrão ativo e vivo por (organização, família)" também não muda: a família faz
 --    parte da chave, e cada família de compra ganha o seu padrão sem tocar no das de venda.
 -- 2) Item 0 e) da revisão da COMPRAS-02: as funções SECURITY DEFINER do documento de compra passam a fixar
---    `search_path = erp, pg_catalog, pg_temp`, com pg_temp POR ÚLTIMO. Sem pg_temp na lista, o PostgreSQL
+--    `search_path = erp, pg_temp` (o padrão da 0033 e da 0035), com pg_temp POR ÚLTIMO. pg_catalog não precisa
+--    estar na lista: fora dela, o PostgreSQL o procura PRIMEIRO, antes de erp. Sem pg_temp na lista, o PostgreSQL
 --    procura as tabelas TEMPORÁRIAS da sessão ANTES de qualquer schema: uma função definer que citasse uma
 --    tabela sem schema leria a tabela temporária de quem a chama — com os privilégios do DONO, que atravessa
 --    a RLS. Hoje toda referência dessas funções é qualificada (`erp.`), então nada muda no comportamento: é o
@@ -90,13 +91,17 @@ begin
   if not exists (select 1 from pg_trigger t
                   where t.tgrelid = 'erp.layout_documento_tops'::regclass and t.tgname = 'trg_layout_documento_tops_familia'
                     and not t.tgisinternal and t.tgenabled = 'O'
-                    and t.tgfoid = to_regprocedure('erp.layout_documento_tops_confere_familia()')) then
-    raise exception 'COMPRAS-03: gatilho trg_layout_documento_tops_familia ausente, desligado ou fora de erp.layout_documento_tops_confere_familia(); schema divergente.';
+                    and t.tgfoid = to_regprocedure('erp.layout_documento_tops_confere_familia()')
+                    and (t.tgtype & 31) = (1 | 2 | 4 | 16)) then
+    raise exception 'COMPRAS-03: gatilho trg_layout_documento_tops_familia ausente, desligado, de outro tipo (antes de INSERT e UPDATE, por linha) ou fora de erp.layout_documento_tops_confere_familia(); schema divergente.';
   end if;
   -- ENUMERAÇÃO PELO CATÁLOGO: toda função SECURITY DEFINER do schema erp que é do documento de compra (pelo
   -- nome ou por ler as tabelas dele) tem de ser uma das quatro. Uma quinta que ninguém conhece ficaria com o
   -- search_path antigo, e o endurecimento seria só aparente.
-  select array_agg(p.oid::regprocedure::text order by p.oid::regprocedure::text) into v_definer
+  -- O nome vem de nspname, proname e argumentos, e não de oid::regprocedure::text: o texto do regprocedure
+  -- depende do search_path de quem aplica (sem erp no caminho sai "erp.x()", com erp sai só "x()").
+  select array_agg(n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+                   order by n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')') into v_definer
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'erp' and p.prosecdef
      and (p.proname like 'documentos\_compra%' or p.prosrc like '%documentos\_compra%');
@@ -115,8 +120,13 @@ begin
   if exists (select 1 from pg_proc p
               where p.oid in ('erp.documentos_compra_conferir_v2()'::regprocedure, 'erp.documentos_compra_transicao_v2()'::regprocedure,
                               'erp.documentos_compra_item_origem_guarda()'::regprocedure, 'erp.documentos_compra_itens_documento_aberto()'::regprocedure)
-                and not pg_has_role(current_user, p.proowner, 'MEMBER')) then
+                and not pg_has_role(current_user, p.proowner, 'USAGE')) then
     raise exception 'COMPRAS-03: o papel que aplica a migration nao e dono das funcoes SECURITY DEFINER de compras; o ALTER FUNCTION seria recusado.';
+  end if;
+  -- ALTER TABLE (drop/add do CHECK) e COMMENT exigem ser dono da tabela: sem isso a migration pararia no meio
+  -- com um erro de permissão genérico, em vez do motivo nomeado aqui.
+  if not pg_has_role(current_user, (select c.relowner from pg_class c where c.oid = 'erp.layouts_documento'::regclass), 'USAGE') then
+    raise exception 'COMPRAS-03: o papel que aplica a migration nao e dono de erp.layouts_documento; o ALTER TABLE e o COMMENT seriam recusados.';
   end if;
 end $$;
 
@@ -130,10 +140,10 @@ comment on table erp.layouts_documento is 'Layout do documento (VENDAS-A3-1; com
 comment on column erp.layouts_documento.familia is 'Família canônica do documento: vendas.orcamento, vendas.pedido, vendas.venda, compras.pedido ou compras.compra. Uma TOP só se liga a layout da própria família (gatilho).';
 
 -- ---------- 4) search_path das funções SECURITY DEFINER de compras, com pg_temp por último ----------
-alter function erp.documentos_compra_itens_documento_aberto() set search_path = erp, pg_catalog, pg_temp;
-alter function erp.documentos_compra_conferir_v2() set search_path = erp, pg_catalog, pg_temp;
-alter function erp.documentos_compra_transicao_v2() set search_path = erp, pg_catalog, pg_temp;
-alter function erp.documentos_compra_item_origem_guarda() set search_path = erp, pg_catalog, pg_temp;
+alter function erp.documentos_compra_itens_documento_aberto() set search_path = erp, pg_temp;
+alter function erp.documentos_compra_conferir_v2() set search_path = erp, pg_temp;
+alter function erp.documentos_compra_transicao_v2() set search_path = erp, pg_temp;
+alter function erp.documentos_compra_item_origem_guarda() set search_path = erp, pg_temp;
 
 -- ---------- 5) pós-condições nomeadas (objetos, nunca contagem de tabela viva) ----------
 do $$
@@ -163,18 +173,19 @@ begin
   end if;
   -- Toda função SECURITY DEFINER de compras (o catálogo inteiro, não a lista acima) tem o search_path novo,
   -- EXATO, com pg_temp por último.
-  select array_agg(p.oid::regprocedure::text order by p.oid::regprocedure::text) into v_ruins
+  select array_agg(n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+                   order by n.nspname || '.' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')') into v_ruins
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'erp' and p.prosecdef
      and (p.proname like 'documentos\_compra%' or p.prosrc like '%documentos\_compra%')
-     and coalesce(p.proconfig, '{}'::text[]) is distinct from array['search_path=erp, pg_catalog, pg_temp'];
+     and coalesce(p.proconfig, '{}'::text[]) is distinct from array['search_path=erp, pg_temp'];
   if v_ruins is not null then
-    raise exception 'COMPRAS-03: funcoes SECURITY DEFINER de compras sem search_path "erp, pg_catalog, pg_temp": %', v_ruins;
+    raise exception 'COMPRAS-03: funcoes SECURITY DEFINER de compras sem search_path "erp, pg_temp": %', v_ruins;
   end if;
   if (select count(*) from pg_proc p
        where p.oid in ('erp.documentos_compra_conferir_v2()'::regprocedure, 'erp.documentos_compra_transicao_v2()'::regprocedure,
                        'erp.documentos_compra_item_origem_guarda()'::regprocedure, 'erp.documentos_compra_itens_documento_aberto()'::regprocedure)
-         and p.prosecdef and p.proconfig = array['search_path=erp, pg_catalog, pg_temp']) <> 4 then
+         and p.prosecdef and p.proconfig = array['search_path=erp, pg_temp']) <> 4 then
     raise exception 'COMPRAS-03: as quatro funcoes de gatilho de compras nao estao todas SECURITY DEFINER com o search_path novo.';
   end if;
   -- ALTER FUNCTION não mexe em privilégio: o EXECUTE continua só do dono (a 0036/0037 tiraram de todos).

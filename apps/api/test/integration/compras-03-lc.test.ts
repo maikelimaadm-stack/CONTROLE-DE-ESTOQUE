@@ -247,6 +247,67 @@ describe("LC-1 — layout de compra: criar pela API, conferido pelo catálogo da
     expect((await admin.query<{ estrutura: EstruturaLayout }>("select estrutura from erp.layouts_documento where id=$1", [j(ok).id])).rows[0]!.estrutura).toEqual(e);
   });
 
+  it("LC-1e o que o lançar sempre recusaria é recusado na GRAVAÇÃO do layout de compra: 422 no campo, com a mensagem da regra; o par certo grava", async () => {
+    const sis = LAYOUT_DO_SISTEMA(COMPRA);
+    const iCab = (e: EstruturaLayout, chave: string) => e.cabecalho.findIndex((x) => x.campo === chave);
+    const iLote = sis.itens.findIndex((x) => x.campo === "lote"); const iValidade = sis.itens.findIndex((x) => x.campo === "validade");
+    type Caso = [string, string, (e: EstruturaLayout) => void, (e: EstruturaLayout) => Detalhe];
+    const casos: Caso[] = [
+      ["Lote obrigatório", COMPRA, (e) => { coluna(e, "lote").obrigatorio = true; },
+        () => ({ path: `itens[${iLote}].obrigatorio`, message: `"Lote" é exigido pela regra do produto: o layout não o torna obrigatório.` })],
+      ["Validade obrigatória", COMPRA, (e) => { coluna(e, "validade").obrigatorio = true; },
+        () => ({ path: `itens[${iValidade}].obrigatorio`, message: `"Validade" é exigido pela regra do produto: o layout não o torna obrigatório.` })],
+      ["Lote com valor padrão", COMPRA, (e) => { coluna(e, "lote").valorPadrao = { tipo: "literal", valor: "L1" }; },
+        () => ({ path: `itens[${iLote}].valorPadrao`, message: `"Lote" é informado item a item: não aceita valor padrão.` })],
+      ["Validade com valor padrão", COMPRA, (e) => { coluna(e, "validade").valorPadrao = { tipo: "variavel", variavel: "data_atual" }; },
+        () => ({ path: `itens[${iValidade}].valorPadrao`, message: `"Validade" é informado item a item: não aceita valor padrão.` })],
+      ["Série sem Número da nota", COMPRA, (e) => { tirar(e, "numero_nota"); },
+        (e) => ({ path: `cabecalho[${iCab(e, "serie_nota")}].campo`, message: `"Série" só entra no layout com "Número da nota".` })],
+      ["Série fixa com Número não editável", COMPRA, (e) => {
+        Object.assign(campo(e, "serie_nota"), { editavel: false, valorPadrao: { tipo: "literal", valor: "1" } });
+        campo(e, "numero_nota").editavel = false;
+      }, (e) => ({ path: `cabecalho[${iCab(e, "serie_nota")}].editavel`, message: `"Série" com valor padrão fixo exige "Número da nota" editável.` })],
+      ["Natureza sem Centro (compra)", COMPRA, (e) => { tirar(e, "centro_custo_id"); },
+        (e) => ({ path: `cabecalho[${iCab(e, "categoria_financeira_id")}].campo`, message: `"Natureza de despesa" e "Centro de resultado" entram juntos no layout: ponha também "Centro de resultado".` })],
+      ["Centro sem Natureza (pedido)", PEDIDO, (e) => { tirar(e, "categoria_financeira_id"); },
+        (e) => ({ path: `cabecalho[${iCab(e, "centro_custo_id")}].campo`, message: `"Natureza de despesa" e "Centro de resultado" entram juntos no layout: ponha também "Natureza de despesa".` })],
+      ["Natureza obrigatória e Centro opcional", COMPRA, (e) => { campo(e, "categoria_financeira_id").obrigatorio = true; },
+        (e) => ({ path: `cabecalho[${iCab(e, "centro_custo_id")}].obrigatorio`, message: `"Centro de resultado" e "Natureza de despesa" têm de ser ambos obrigatórios ou ambos opcionais.` })],
+      ["Centro fixo com Natureza não editável", COMPRA, (e) => {
+        Object.assign(campo(e, "centro_custo_id"), { editavel: false, valorPadrao: { tipo: "registro", id: I.costCenter } });
+        campo(e, "categoria_financeira_id").editavel = false;
+      }, (e) => ({ path: `cabecalho[${iCab(e, "centro_custo_id")}].editavel`, message: `"Centro de resultado" com valor padrão fixo exige "Natureza de despesa" editável.` })],
+    ];
+    for (const [nome, familia, ajuste, esperado] of casos) {
+      const e = structuredClone(LAYOUT_DO_SISTEMA(familia));
+      ajuste(e);
+      const antes = Number((await admin.query<{ n: string }>("select count(*)::text n from erp.layouts_documento where organization_id=$1", [h.demo.orgId])).rows[0]!.n);
+      const r = await criarLayout(familia, e);
+      expect(r.statusCode, `${nome}: ${r.body}`).toBe(422);
+      expect(j(r).error!.code, nome).toBe("VALIDATION_ERROR");
+      expect(detalhes(r), nome).toContainEqual(esperado(e));
+      expect(Number((await admin.query<{ n: string }>("select count(*)::text n from erp.layouts_documento where organization_id=$1", [h.demo.orgId])).rows[0]!.n), `${nome}: nada gravado`).toBe(antes);
+    }
+    // PREMISSAS (o par certo grava): Lote/Validade só com rótulo e ordem; Série com Número; Natureza e Centro juntos,
+    // ambos obrigatórios; Centro fixo com Natureza editável; e os dois fora juntos.
+    const certos: [string, (e: EstruturaLayout) => void][] = [
+      ["Lote e Validade renomeados e reordenados", (e) => {
+        coluna(e, "lote").rotulo = "Lote do fornecedor";
+        const [v] = e.itens.splice(e.itens.findIndex((x) => x.campo === "validade"), 1); e.itens.splice(e.itens.findIndex((x) => x.campo === "lote"), 0, v!);
+      }],
+      ["Série fixa com Número editável", (e) => { Object.assign(campo(e, "serie_nota"), { editavel: false, valorPadrao: { tipo: "literal", valor: "1" } }); }],
+      ["Natureza e Centro obrigatórios", (e) => { campo(e, "categoria_financeira_id").obrigatorio = true; campo(e, "centro_custo_id").obrigatorio = true; }],
+      ["Centro fixo com Natureza editável", (e) => { Object.assign(campo(e, "centro_custo_id"), { editavel: false, valorPadrao: { tipo: "registro", id: I.costCenter } }); }],
+      ["Natureza e Centro fora, Série e Número fora", (e) => { for (const k of ["categoria_financeira_id", "centro_custo_id", "serie_nota", "numero_nota"]) tirar(e, k); }],
+    ];
+    for (const [nome, ajuste] of certos) {
+      const e = structuredClone(LAYOUT_DO_SISTEMA(COMPRA));
+      ajuste(e);
+      const r = await criarLayout(COMPRA, e);
+      expect(r.statusCode, `premissa — ${nome}: ${r.body}`).toBe(201);
+    }
+  });
+
   it("LC-1c ligar TOP de compra → 200 e a ligação no banco; TOP de venda ou da OUTRA família de compra → 422 e nada muda", async () => {
     const l = await layout(COMPRA, () => {});
     const tCompra = await top(COMPRA);
@@ -370,6 +431,7 @@ describe("LC-2 — GET /api/compras/{pedidos|compras}/layout-efetivo por espéci
       corpos.add(r.body);
     }
     expect(corpos.size, "corpos idênticos em todos os casos, nas duas espécies").toBe(1);
+    expect(JSON.parse([...corpos][0]!), "o corpo cravado: nada da TOP sai na recusa").toEqual({ error: { code: "NOT_FOUND", message: "Tipo de operação não encontrado" } });
     // PREMISSAS: as válidas respondem na própria porta; a de outra organização responde lá (a 404 é recorte de tenant).
     expect((await efetivo("compras", `?tipo_operacao_id=${validaCompra}`)).statusCode).toBe(200);
     expect((await efetivo("pedidos", `?tipo_operacao_id=${validaPedido}`)).statusCode).toBe(200);
@@ -458,11 +520,14 @@ describe("LC-3 — obrigatório do layout vazio → 422 LAYOUT_CAMPO_OBRIGATORIO
       Object.assign(campo(e, "numero_nota"), { obrigatorio: true, rotulo: "Nº da NF" });
       coluna(e, "armazem_id").obrigatorio = true;
     }, [topCompra]);
-    // O PEDIDO não tem layout: a cobrança do recebimento é a da TOP de destino, não a da origem.
-    const p = await pedido(await topPedidoPara(topCompra, false), [
+    // A cobrança do recebimento é a da TOP de destino, não a da origem: o layout da TOP do PEDIDO, ligado depois de o
+    // pedido ser lançado, exige Observação — e o recebimento sem Observação grava.
+    const topPedido = await topPedidoPara(topCompra, false);
+    const p = await pedido(topPedido, [
       { produto_id: I.product!, quantidade: "4", valor_unitario: "5.00" },
       { produto_id: I.product2!, quantidade: "1", valor_unitario: "9.00" },
     ]);
+    await layout(PEDIDO, (e) => { campo(e, "observacao").obrigatorio = true; }, [topPedido]);
     const antes = await documentosDaOrg();
     const r = await receber(p.id, corpoReceber(topCompra, [
       { item_origem_id: p.itens[0]!.id, quantidade: "4" },
@@ -480,7 +545,7 @@ describe("LC-3 — obrigatório do layout vazio → 422 LAYOUT_CAMPO_OBRIGATORIO
       { item_origem_id: p.itens[0]!.id, quantidade: "4" },
       { item_origem_id: p.itens[1]!.id, quantidade: "1" },
     ], { numero_nota: `LC${unico()}` }));
-    expect(ok.statusCode, ok.body).toBe(201);
+    expect(ok.statusCode, `sem Observação (exigida só pelo layout do pedido de origem): ${ok.body}`).toBe(201);
     expect(await situacao(p.id)).toBe("convertido");
     expect((await comprasDoPedido(p.id)).map((c) => c.situacao)).toEqual(["aberto"]);
   });
@@ -681,11 +746,13 @@ describe("LC-5 — regras-da-operacao: exigeFormaPagamento, exigeVencimento e ex
 // ---------------------------------------------------------------------------------------------------------
 // LC-6 — item 0 a) c) d)
 // ---------------------------------------------------------------------------------------------------------
-describe("LC-6 — item 0: a) convertido com compra viva; c) UUID em maiúsculas no receber; d) confirmar sem título", () => {
-  const TEM_COMPRAS = "Este pedido tem compras: cancele-as ou encerre o saldo.";
-  const CONVERTIDO = "Este pedido já foi convertido em compra e não é cancelado.";
+describe("LC-6 — item 0: a) os três casos do cancelamento do pedido; c) UUID em maiúsculas; d) confirmar sem título", () => {
+  const corpo409 = (message: string) => ({ error: { code: "CONFLICT", message } });
+  const TEM_COMPRAS = corpo409("Este pedido tem compras: cancele-as ou encerre o saldo.");
+  const TEM_COMPRAS_CONVERTIDO = corpo409("Este pedido tem compras: cancele-as primeiro.");
+  const CONVERTIDO = corpo409("Este pedido já foi convertido em compra e não é cancelado.");
 
-  it("LC-6a pedido CONVERTIDO com compra viva responde EXATAMENTE o que o aberto com compra responde; o convertido sem compra viva, a mensagem do convertido", async () => {
+  it("LC-6a aberto com compra viva → cancele-as ou encerre; convertido SEM saldo encerrado com compra viva → cancele-as primeiro; convertido COM saldo encerrado, com e sem compra viva → não é cancelado", async () => {
     const topCompra = await top(COMPRA);
     const topPedido = await topPedidoPara(topCompra, true);
 
@@ -695,18 +762,23 @@ describe("LC-6 — item 0: a) convertido com compra viva; c) UUID em maiúsculas
     expect(await situacao(aberto.id), "premissa").toBe("aberto");
     const rAberto = await cancelar("pedidos", aberto.id);
     expect(rAberto.statusCode, rAberto.body).toBe(409);
-    expect(j(rAberto).error!.message).toBe(TEM_COMPRAS);
+    expect(JSON.parse(rAberto.body)).toEqual(TEM_COMPRAS);
 
-    // convertido pelo saldo zerado, com a compra viva
+    // convertido pelo saldo zerado (sem saldo encerrado), com a compra viva
     const cheio = await pedido(topPedido, [{ produto_id: I.product!, quantidade: "3", valor_unitario: "5.00" }]);
-    expect((await receber(cheio.id, corpoReceber(topCompra, [{ item_origem_id: cheio.itens[0]!.id, quantidade: "3" }]))).statusCode).toBe(201);
+    const recCheio = await receber(cheio.id, corpoReceber(topCompra, [{ item_origem_id: cheio.itens[0]!.id, quantidade: "3" }]));
+    expect(recCheio.statusCode, recCheio.body).toBe(201);
     expect(await situacao(cheio.id), "premissa").toBe("convertido");
     const rCheio = await cancelar("pedidos", cheio.id);
     expect(rCheio.statusCode, rCheio.body).toBe(409);
-    expect(rCheio.body, "o mesmo corpo do aberto com compra").toBe(rAberto.body);
+    expect(JSON.parse(rCheio.body)).toEqual(TEM_COMPRAS_CONVERTIDO);
     expect(await situacao(cheio.id)).toBe("convertido");
+    // o caminho que a mensagem aponta existe: cancelada a compra, o pedido reabre e se cancela
+    expect((await cancelar("compras", (j(recCheio) as { id: string }).id)).statusCode).toBe(200);
+    expect(await situacao(cheio.id)).toBe("aberto");
+    expect((await cancelar("pedidos", cheio.id)).statusCode).toBe(200);
 
-    // convertido por saldo ENCERRADO, com a compra viva → o mesmo; cancelada a compra (não reabre) → a mensagem do convertido
+    // convertido por saldo ENCERRADO: com a compra viva e, cancelada ela (não reabre), sem — a mensagem do convertido
     const encerrado = await pedido(topPedido, [{ produto_id: I.product!, quantidade: "6", valor_unitario: "5.00" }]);
     const rec = await receber(encerrado.id, corpoReceber(topCompra, [{ item_origem_id: encerrado.itens[0]!.id, quantidade: "1" }]));
     expect(rec.statusCode, rec.body).toBe(201);
@@ -715,17 +787,16 @@ describe("LC-6 — item 0: a) convertido com compra viva; c) UUID em maiúsculas
     expect(await situacao(encerrado.id), "premissa").toBe("convertido");
     const rEncerrado = await cancelar("pedidos", encerrado.id);
     expect(rEncerrado.statusCode, rEncerrado.body).toBe(409);
-    expect(rEncerrado.body).toBe(rAberto.body);
-    const compra = (j(rec) as { id: string }).id;
-    expect((await cancelar("compras", compra)).statusCode).toBe(200);
+    expect(JSON.parse(rEncerrado.body), "encerrado, com compra viva").toEqual(CONVERTIDO);
+    expect((await cancelar("compras", (j(rec) as { id: string }).id)).statusCode).toBe(200);
     expect(await situacao(encerrado.id), "saldo encerrado: cancelar a compra não reabre").toBe("convertido");
     const semCompraViva = await cancelar("pedidos", encerrado.id);
     expect(semCompraViva.statusCode, semCompraViva.body).toBe(409);
-    expect(j(semCompraViva).error!.message).toBe(CONVERTIDO);
+    expect(JSON.parse(semCompraViva.body), "encerrado, sem compra viva").toEqual(CONVERTIDO);
     expect(await situacao(encerrado.id)).toBe("convertido");
   });
 
-  it("LC-6c receber com a TOP de destino e os itens de origem em MAIÚSCULAS → 201 com as ligações certas; reenviado em minúsculas com a mesma chave é o mesmo recebimento", async () => {
+  it("LC-6c receber com o :id, a TOP de destino, os itens de origem e o armazém em MAIÚSCULAS → 201; reenviado em minúsculas com a mesma chave é o mesmo recebimento", async () => {
     const topCompra = await top(COMPRA);
     const p = await pedido(await topPedidoPara(topCompra, true), [
       { produto_id: I.product!, quantidade: "5", valor_unitario: "5.00" },
@@ -734,21 +805,34 @@ describe("LC-6 — item 0: a) convertido com compra viva; c) UUID em maiúsculas
     const [a, b] = p.itens;
     const chave = `lc6c-${unico()}`;
     const corpo = (caixa: (s: string) => string) => corpoReceber(caixa(topCompra), [
-      { item_origem_id: caixa(a!.id), quantidade: "2" },
-      { item_origem_id: caixa(b!.id), quantidade: "2" },
+      { item_origem_id: caixa(a!.id), quantidade: "2", armazem_id: caixa(I.warehouse!) },
+      { item_origem_id: caixa(b!.id), quantidade: "2", armazem_id: caixa(I.warehouse!) },
     ]);
-    const r = await receber(p.id, corpo((s) => s.toUpperCase()), h.headers({ "idempotency-key": chave }));
+    const r = await receber(p.id.toUpperCase(), corpo((s) => s.toUpperCase()), h.headers({ "idempotency-key": chave }));
     expect(r.statusCode, r.body).toBe(201);
     const compra = (j(r) as { id: string }).id;
-    const ligacoes = (await admin.query<{ origem_item_id: string; quantidade: string }>(
-      "select origem_item_id, quantidade::text from erp.documentos_compra_itens where documento_id=$1 order by posicao", [compra])).rows;
-    expect(ligacoes).toEqual([{ origem_item_id: a!.id, quantidade: "2.0000" }, { origem_item_id: b!.id, quantidade: "2.0000" }]);
-    expect((await admin.query<{ tipo_operacao_id: string }>("select tipo_operacao_id from erp.documentos_compra where id=$1", [compra])).rows[0]!.tipo_operacao_id).toBe(topCompra);
 
     const replay = await receber(p.id, corpo((s) => s.toLowerCase()), h.headers({ "idempotency-key": chave }));
     expect(replay.statusCode, replay.body).toBe(201);
     expect((j(replay) as { id: string }).id, "o mesmo recebimento").toBe(compra);
     expect((await comprasDoPedido(p.id)).length, "uma compra só").toBe(1);
+  });
+
+  it("LC-6c2 lançar compra com armazém e condição (restrita pela TOP) em MAIÚSCULAS → 201; o reenvio em minúsculas com a mesma chave é a mesma compra", async () => {
+    const cond = (await admin.query<{ id: string }>(
+      "insert into erp.condicoes_pagamento(organization_id,code,nome,parcelas,dias_primeira_parcela,modo,intervalo_dias,entrada) values ($1,$2,$3,1,30,'intervalo',30,false) returning id",
+      [h.demo.orgId, `LC6-${unico()}`, `Condição LC6 ${unico()}`])).rows[0]!.id;
+    const t = await top(COMPRA, { configuracao: configuracaoNeutraTopV3(), condicoesPermitidas: [cond] });
+    const corpo = (caixa: (s: string) => string) => corpoCompra(caixa(t), { condicao_pagamento_id: caixa(cond),
+      itens: [{ produto_id: caixa(I.product2!), armazem_id: caixa(I.warehouse!), quantidade: "1", valor_unitario: "10.00" }] });
+    const chave = `lc6c2-${unico()}`;
+    const r = await lancar("compras", corpo((s) => s.toUpperCase()), h.app, h.headers({ "idempotency-key": chave }));
+    expect(r.statusCode, `sem "Armazém inválido" nem condição não permitida falsos: ${r.body}`).toBe(201);
+    const antes = await documentosDaOrg();
+    const replay = await lancar("compras", corpo((s) => s.toLowerCase()), h.app, h.headers({ "idempotency-key": chave }));
+    expect(replay.statusCode, replay.body).toBe(201);
+    expect((j(replay) as { id: string }).id, "a mesma compra").toBe((j(r) as { id: string }).id);
+    expect(await documentosDaOrg()).toBe(antes);
   });
 
   it("LC-6d compra que NÃO gera título (valor zero) confirma sem forma e sem vencimento, mesmo com a TOP os exigindo; com valor, o salvar exige", async () => {

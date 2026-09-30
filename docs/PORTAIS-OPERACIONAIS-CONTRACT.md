@@ -319,7 +319,10 @@ aba "Processos"). Não mudaram, e não viram documento de compra.
 - **o saldo por item** (quantidade − recebido em compras não canceladas; só de quantidade): o pedido mostra Recebido,
   Saldo e as compras geradas; quando o saldo de todos os itens zera, o pedido vira **Convertido**; cancelar a compra
   devolve o saldo e reabre o pedido; **Encerrar saldo** (com motivo, só com compra ligada e saldo) fecha o pedido como
-  Convertido, e aí o cancelamento de uma compra não o reabre. Pedido com compra viva não se cancela;
+  Convertido, e aí o cancelamento de uma compra não o reabre. Cancelar o pedido (COMPRAS-03, item 0 a): aberto
+  com compra viva → "Este pedido tem compras: cancele-as ou encerre o saldo."; convertido sem saldo encerrado e com
+  compra viva → "Este pedido tem compras: cancele-as primeiro."; convertido com saldo encerrado (com ou sem compra
+  viva) → "Este pedido já foi convertido em compra e não é cancelado.";
 - na consulta da compra, "Origem: Pedido de compra <código>", com link.
 
 **O que EXISTE (COMPRAS-03, decisão 269) — o layout do documento de compra:**

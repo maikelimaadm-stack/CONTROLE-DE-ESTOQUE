@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { createHash } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { createPool, seedDemo, type Db } from "@agro/db";
 import {
-  CAPACIDADE_LAYOUT_DOCUMENTO, LAYOUT_DO_SISTEMA, configuracaoNeutraTopV2, mensagemCampoObrigatorio,
+  CAPACIDADE_LAYOUT_DOCUMENTO, LAYOUT_DO_SISTEMA, configuracaoNeutraTopV2, configuracaoNeutraTopV3, mensagemCampoObrigatorio,
   type EstruturaLayout, type CampoDoLayout, type ColunaDoLayout,
 } from "@agro/domain";
 import { appCom, harness, ids, TEST_URL, type Harness } from "./setup.js";
@@ -191,6 +192,8 @@ describe("A1-2 — GET /compras/{pedidos|compras}/layout-efetivo", () => {
       corpos.add(r.body);
     }
     expect(corpos.size, "corpos idênticos em todos os casos").toBe(1);
+    // O corpo CRAVADO: a mesma 404 de "Tipo de operação" das regras-da-operacao — nada da TOP sai na recusa.
+    expect(JSON.parse([...corpos][0]!)).toEqual({ error: { code: "NOT_FOUND", message: "Tipo de operação não encontrado" } });
     // A compra na porta do PEDIDO também é a mesma 404; premissa: a válida responde.
     expect((await efetivo("pedidos", `?tipo_operacao_id=${valida}`)).body).toBe([...corpos][0]);
     expect((await efetivo("compras", `?tipo_operacao_id=${valida}`)).statusCode).toBe(200);
@@ -255,7 +258,11 @@ describe("A1-3 — cobrança do layout ao lançar", () => {
   it("RECEBER: a compra de destino usa o layout da TOP DELA — 422 no campo, pedido intacto; preenchido → 201", async () => {
     const topCompra = await top(COMPRA);
     await layout(COMPRA, (e) => { exigeObservacao(e); exigeArmazem(e); }, [topCompra]);
-    const p = await pedido(await topPedidoPara(topCompra, true), [{ produto_id: I.product!, quantidade: "4", valor_unitario: "5.00" }]);
+    const topPedido = await topPedidoPara(topCompra, true);
+    const p = await pedido(topPedido, [{ produto_id: I.product!, quantidade: "4", valor_unitario: "5.00" }]);
+    // O layout da TOP do PEDIDO (origem) exigindo a Transportadora, ligado DEPOIS do pedido lançado: o recebimento
+    // não o cobra — a compra é cobrada só pelo layout da TOP de destino (a dela).
+    await layout(PEDIDO, (e) => { campo(e, "transportadora_id").obrigatorio = true; }, [topPedido]);
     const antes = await documentosNoBanco();
     const r = await receber(p.id, corpoReceber(topCompra, [{ item_origem_id: p.itens[0]!.id, quantidade: "4", armazem_id: null }]));
     expect(r.statusCode, r.body).toBe(422);
@@ -264,7 +271,7 @@ describe("A1-3 — cobrança do layout ao lançar", () => {
     expect(await documentosNoBanco()).toBe(antes);
     expect(await situacao(p.id)).toBe("aberto");
     const ok = await receber(p.id, corpoReceber(topCompra, [{ item_origem_id: p.itens[0]!.id, quantidade: "4" }], { observacao: "recebido" }));
-    expect(ok.statusCode, ok.body).toBe(201);
+    expect(ok.statusCode, `sem Transportadora (exigida só pelo layout do pedido de origem): ${ok.body}`).toBe(201);
     expect(await situacao(p.id)).toBe("convertido");
   });
 
@@ -411,49 +418,104 @@ describe("A1-5 — padrão de cadastro: Fornecedor (is_provider)", () => {
 // A1-6 item 0
 // ---------------------------------------------------------------------------------------------------------
 describe("A1-6 — item 0", () => {
-  it("a) pedido CONVERTIDO com compra viva → 'tem compras'; sem compra viva (saldo encerrado) → 'convertido não cancela'", async () => {
+  it("a) três casos, corpo exato: aberto com compra viva; convertido sem saldo encerrado com compra viva; convertido com saldo encerrado (com e sem compra viva)", async () => {
+    const corpo409 = (message: string) => ({ error: { code: "CONFLICT", message } });
     const topCompra = await top(COMPRA);
-    const p = await pedido(await topPedidoPara(topCompra, true), [{ produto_id: I.product!, quantidade: "3", valor_unitario: "2.00" }]);
-    const c = await receber(p.id, corpoReceber(topCompra, [{ item_origem_id: p.itens[0]!.id, quantidade: "3" }]));
-    expect(c.statusCode, c.body).toBe(201);
-    expect(await situacao(p.id)).toBe("convertido");
-    const r = await cancelar("pedidos", p.id);
-    expect(r.statusCode, r.body).toBe(409);
-    expect(j(r).error!.message).toBe("Este pedido tem compras: cancele-as ou encerre o saldo.");
+    const topPedido = await topPedidoPara(topCompra, true);
 
-    // Saldo encerrado e a compra cancelada depois: convertido SEM compra viva → a mensagem de hoje.
-    const p2 = await pedido(await topPedidoPara(topCompra, true), [{ produto_id: I.product!, quantidade: "5", valor_unitario: "1.00" }]);
-    const c2 = await receber(p2.id, corpoReceber(topCompra, [{ item_origem_id: p2.itens[0]!.id, quantidade: "2" }]));
+    // 1) aberto com compra viva (recebido em parte) → os dois caminhos.
+    const aberto = await pedido(topPedido, [{ produto_id: I.product!, quantidade: "5", valor_unitario: "1.00" }]);
+    expect((await receber(aberto.id, corpoReceber(topCompra, [{ item_origem_id: aberto.itens[0]!.id, quantidade: "2" }]))).statusCode).toBe(201);
+    expect(await situacao(aberto.id), "premissa").toBe("aberto");
+    const rAberto = await cancelar("pedidos", aberto.id);
+    expect(rAberto.statusCode, rAberto.body).toBe(409);
+    expect(JSON.parse(rAberto.body)).toEqual(corpo409("Este pedido tem compras: cancele-as ou encerre o saldo."));
+
+    // 2) convertido pelo saldo ZERADO (sem saldo encerrado), com compra viva → só cancelar as compras.
+    const cheio = await pedido(topPedido, [{ produto_id: I.product!, quantidade: "3", valor_unitario: "2.00" }]);
+    const c = await receber(cheio.id, corpoReceber(topCompra, [{ item_origem_id: cheio.itens[0]!.id, quantidade: "3" }]));
+    expect(c.statusCode, c.body).toBe(201);
+    expect(await situacao(cheio.id), "premissa").toBe("convertido");
+    const rCheio = await cancelar("pedidos", cheio.id);
+    expect(rCheio.statusCode, rCheio.body).toBe(409);
+    expect(JSON.parse(rCheio.body)).toEqual(corpo409("Este pedido tem compras: cancele-as primeiro."));
+    // e o caminho que a mensagem aponta existe: cancelada a compra, o pedido reabre e se cancela.
+    expect((await cancelar("compras", j(c).id as string)).statusCode).toBe(200);
+    expect(await situacao(cheio.id)).toBe("aberto");
+    expect((await cancelar("pedidos", cheio.id)).statusCode).toBe(200);
+
+    // 3) convertido com saldo ENCERRADO: com compra viva e sem ela, a mensagem do convertido.
+    const enc = await pedido(topPedido, [{ produto_id: I.product!, quantidade: "5", valor_unitario: "1.00" }]);
+    const c2 = await receber(enc.id, corpoReceber(topCompra, [{ item_origem_id: enc.itens[0]!.id, quantidade: "2" }]));
     expect(c2.statusCode, c2.body).toBe(201);
-    const enc = await h.app.inject({ method: "POST", url: `/api/compras/pedidos/${p2.id}/encerrar-saldo`, headers: h.headers(), payload: { motivo: "resto não vem" } });
-    expect(enc.statusCode, enc.body).toBe(200);
-    const comViva = await cancelar("pedidos", p2.id);
+    const e = await h.app.inject({ method: "POST", url: `/api/compras/pedidos/${enc.id}/encerrar-saldo`, headers: h.headers(), payload: { motivo: "resto não vem" } });
+    expect(e.statusCode, e.body).toBe(200);
+    const comViva = await cancelar("pedidos", enc.id);
     expect(comViva.statusCode, comViva.body).toBe(409);
-    expect(j(comViva).error!.message, "encerrado, mas ainda com compra viva").toBe("Este pedido tem compras: cancele-as ou encerre o saldo.");
+    expect(JSON.parse(comViva.body), "encerrado, com compra viva").toEqual(corpo409("Este pedido já foi convertido em compra e não é cancelado."));
     expect((await cancelar("compras", j(c2).id as string)).statusCode).toBe(200);
-    expect(await situacao(p2.id)).toBe("convertido");
-    const semViva = await cancelar("pedidos", p2.id);
+    expect(await situacao(enc.id), "saldo encerrado: cancelar a compra não reabre").toBe("convertido");
+    const semViva = await cancelar("pedidos", enc.id);
     expect(semViva.statusCode, semViva.body).toBe(409);
-    expect(j(semViva).error!.message).toBe("Este pedido já foi convertido em compra e não é cancelado.");
+    expect(JSON.parse(semViva.body), "encerrado, sem compra viva").toEqual(corpo409("Este pedido já foi convertido em compra e não é cancelado."));
   });
 
-  it("c) receber com tipo_operacao_id e item_origem_id em MAIÚSCULAS → 201, ligado ao item; o reenvio em minúsculas é o mesmo pedido", async () => {
+  it("c) receber com :id, tipo_operacao_id e item_origem_id em MAIÚSCULAS → 201; o reenvio em minúsculas com a mesma chave é o mesmo recebimento", async () => {
     const topCompra = await top(COMPRA);
     const p = await pedido(await topPedidoPara(topCompra, true), [{ produto_id: I.product!, quantidade: "6", valor_unitario: "2.00" }]);
     const item = p.itens[0]!.id;
     const chave = { "idempotency-key": `c03-a1-maiusculas-${p.id}` };
-    const r = await receber(p.id, corpoReceber(topCompra.toUpperCase(), [{ item_origem_id: item.toUpperCase(), quantidade: "2" }]), h.headers(chave));
+    const maiusculo = corpoReceber(topCompra.toUpperCase(), [{ item_origem_id: item.toUpperCase(), quantidade: "2", armazem_id: I.warehouse!.toUpperCase() }]);
+    const r = await receber(p.id.toUpperCase(), maiusculo, h.headers(chave));
     expect(r.statusCode, r.body).toBe(201);
     const compraId = j(r).id as string;
-    const linhas = (await admin.query<{ origem_item_id: string; tipo: string }>(
-      `select i.origem_item_id, d.tipo_operacao_id::text as tipo from erp.documentos_compra_itens i
-         join erp.documentos_compra d on d.id = i.documento_id where i.documento_id=$1`, [compraId])).rows;
-    expect(linhas).toEqual([{ origem_item_id: item, tipo: topCompra }]);
     const antes = await documentosNoBanco();
-    const replay = await receber(p.id, corpoReceber(topCompra, [{ item_origem_id: item, quantidade: "2" }]), h.headers(chave));
+    const replay = await receber(p.id, corpoReceber(topCompra, [{ item_origem_id: item, quantidade: "2", armazem_id: I.warehouse }]), h.headers(chave));
     expect(replay.statusCode, replay.body).toBe(201);
     expect(j(replay).id).toBe(compraId);
     expect(await documentosNoBanco()).toBe(antes);
+  });
+
+  it("c) lançar compra e pedido com armazém, condição e demais uuid em MAIÚSCULAS → 201; o corpo em minúsculas tem EXATAMENTE o hash de antes", async () => {
+    const s = `${Date.now().toString(36).slice(-4)}${++seq}`;
+    const cond = (await admin.query<{ id: string }>(
+      "insert into erp.condicoes_pagamento(organization_id,code,nome,parcelas,dias_primeira_parcela,modo,intervalo_dias,entrada) values ($1,$2,$3,1,30,'intervalo',30,false) returning id",
+      [h.demo.orgId, `A1M-${s}`, `Condição A1 ${s}`])).rows[0]!.id;
+    // A TOP restringe a condição: a comparação com a lista permitida é a que dava CONDICAO_PAGAMENTO_NAO_PERMITIDA falso.
+    const t = await top(COMPRA, { configuracao: configuracaoNeutraTopV3(), condicoesPermitidas: [cond] });
+    const ator = (await admin.query<{ id: string }>("select id from erp.users where email=$1", [h.demo.adminEmail])).rows[0]!.id;
+
+    // O corpo CANÔNICO (minúsculas, todas as chaves na ordem do schema, sem default a preencher): o parse de ANTES
+    // era a identidade nele, então o hash de antes é o sha256 de { action, especie, corpo: ele mesmo, actorId }.
+    const canonico = {
+      empresa_id: I.empresa, tipo_operacao_id: t, fornecedor_id: I.provider, transportadora_id: null, data_documento: DATA,
+      data_entrada: null, data_vencimento: null, numero_nota: null, serie_nota: null,
+      categoria_financeira_id: I.category, centro_custo_id: I.costCenter, condicao_pagamento_id: cond, plano_parcelas: null,
+      forma_pagamento_id: null, frete: "0", outras_despesas: "0", desconto: "0", observacao: null,
+      itens: [{ produto_id: I.product2, armazem_id: I.warehouse, quantidade: "1", valor_unitario: "10.00", desconto: "0",
+        desconto_percentual: "0", lote: null, validade: null, observacao: null }],
+    };
+    const chave = `c03-a1-hash-${s}`;
+    const r = await h.app.inject({ method: "POST", url: "/api/compras/compras", headers: h.headers({ "idempotency-key": chave }), payload: canonico });
+    expect(r.statusCode, r.body).toBe(201);
+    const gravado = (await admin.query<{ request_hash: string }>("select request_hash from erp.idempotency_keys where organization_id=$1 and key=$2", [h.demo.orgId, chave])).rows[0]!.request_hash;
+    const deAntes = createHash("sha256").update(JSON.stringify({ action: "lancar_documento_compra", especie: "compra", corpo: canonico, actorId: ator })).digest("hex");
+    expect(gravado, "corpo em minúsculas: o MESMO hash de antes").toBe(deAntes);
+
+    // O MESMO corpo em maiúsculas (todo uuid, armazém e condição inclusive) com a mesma chave: mesmo hash → a mesma compra.
+    const maiusculo = (o: unknown): unknown => typeof o === "string" && /^[0-9a-f-]{36}$/.test(o) ? o.toUpperCase()
+      : Array.isArray(o) ? o.map(maiusculo) : o && typeof o === "object" ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, maiusculo(v)])) : o;
+    const antes = await documentosNoBanco();
+    const replay = await h.app.inject({ method: "POST", url: "/api/compras/compras", headers: h.headers({ "idempotency-key": chave }), payload: maiusculo(canonico) as Record<string, unknown> });
+    expect(replay.statusCode, replay.body).toBe(201);
+    expect(j(replay).id).toBe(j(r).id);
+    expect(await documentosNoBanco()).toBe(antes);
+
+    // Sem chave, em maiúsculas: grava (sem "Armazém inválido" nem condição não permitida falsos), pedido também.
+    const nova = await h.app.inject({ method: "POST", url: "/api/compras/compras", headers: h.headers(), payload: maiusculo(canonico) as Record<string, unknown> });
+    expect(nova.statusCode, nova.body).toBe(201);
+    const ped = await lancar("pedidos", maiusculo(corpoPedido(await top(PEDIDO), { itens: [{ produto_id: I.product, armazem_id: I.warehouse, quantidade: "1", valor_unitario: "1.00" }] })));
+    expect(ped.statusCode, ped.body).toBe(201);
   });
 
   it("d) compra de valor ZERO com forma e vencimento exigidos: salva e confirma (não gera título); com valor, a exigência vale", async () => {
