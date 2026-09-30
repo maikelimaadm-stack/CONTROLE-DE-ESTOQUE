@@ -163,6 +163,7 @@ async function valorMostrado(invólucro: Locator) {
 
 /* ═════════════════════════════════════════════ VD-1 medidas-chave ═════════════════════════════════════════════ */
 
+/* VD-1 usa expect.soft nas MEDIDAS: uma divergência não esconde as seguintes; o caso reprova do mesmo jeito. */
 test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botões, pílula, documento, campos, itens e painel", async ({ page }) => {
   await login(page);
   // a criação fica suja (Cliente escolhido) antes de a consulta abrir por `goto`: aceita o beforeunload real das abas
@@ -175,77 +176,79 @@ test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botõ
 
   // BARRA: 44 px, cartão branco com borda #e7eaee e raio 12 (o próprio elemento ou o cartão que o envolve)
   const barra = ws.getByTestId("central-vendas-acoes");
-  expect(Math.round((await caixa(barra)).height), "altura da barra").toBe(MEDIDAS.barra.altura);
+  expect.soft(Math.round((await caixa(barra)).height), "altura da barra").toBe(MEDIDAS.barra.altura);
   const cartao = await barra.evaluate((el) => {
     let n: HTMLElement | null = el as HTMLElement;
     for (let i = 0; n && i < 3; i++, n = n.parentElement) { const cs = getComputedStyle(n); if (cs.borderTopLeftRadius === "12px") return { raio: cs.borderTopLeftRadius, fundo: cs.backgroundColor, borda: cs.borderTopColor }; }
     return null;
   });
-  expect(cartao, "o cartão da barra tem raio 12").toEqual({ raio: MEDIDAS.barra.raio, fundo: MEDIDAS.barra.fundo, borda: MEDIDAS.barra.borda });
+  expect.soft(cartao, "o cartão da barra tem raio 12").toEqual({ raio: MEDIDAS.barra.raio, fundo: MEDIDAS.barra.fundo, borda: MEDIDAS.barra.borda });
 
   // BOTÃO REDONDO (Descartar, criação): 25×25, fundo, ícone e sombra verde
   const descartar = page.getByTestId("central-vendas-descartar");
   const bd = await caixa(descartar);
-  expect([Math.round(bd.width), Math.round(bd.height)], "botão redondo 25×25").toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
+  expect.soft([Math.round(bd.width), Math.round(bd.height)], "botão redondo 25×25").toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
   const ed = await estilo(descartar, ["background-color", "color", "box-shadow"]);
-  expect(ed["background-color"]).toBe(MEDIDAS.botaoRedondo.fundo);
-  expect(ed["box-shadow"]).toBe(MEDIDAS.botaoRedondo.sombra);
-  expect(await descartar.locator("svg").first().evaluate((s) => getComputedStyle(s).color), "ícone #475569").toBe(MEDIDAS.botaoRedondo.icone);
+  expect.soft(ed["background-color"]).toBe(MEDIDAS.botaoRedondo.fundo);
+  expect.soft(ed["box-shadow"]).toBe(MEDIDAS.botaoRedondo.sombra);
+  expect.soft(await descartar.locator("svg").first().evaluate((s) => getComputedStyle(s).color), "ícone #475569").toBe(MEDIDAS.botaoRedondo.icone);
 
   // PÍLULA Confirmar venda: 25 px, 12,5 px peso 600
   const pilula = page.getByTestId("central-vendas-confirmar");
-  expect(Math.round((await caixa(pilula)).height)).toBe(MEDIDAS.pilula.altura);
-  expect(await estilo(pilula, ["font-size", "font-weight"])).toEqual({ "font-size": MEDIDAS.pilula.fonte, "font-weight": MEDIDAS.pilula.peso });
+  expect.soft(Math.round((await caixa(pilula)).height)).toBe(MEDIDAS.pilula.altura);
+  expect.soft(await estilo(pilula, ["font-size", "font-weight"])).toEqual({ "font-size": MEDIDAS.pilula.fonte, "font-weight": MEDIDAS.pilula.peso });
 
   // POSIÇÃO DO RÓTULO: segmentado de 25 px
-  expect(Math.round((await caixa(page.getByTestId("central-vendas-posicao-rotulo"))).height)).toBe(MEDIDAS.posicaoDoRotulo.altura);
+  expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-posicao-rotulo"))).height)).toBe(MEDIDAS.posicaoDoRotulo.altura);
 
   // DOCUMENTO: cartão raio 14 em volta de Dados principais; cabeçalho de Dados principais
   const raioDoDocumento = await ws.getByTestId("central-vendas-dados").evaluate((el) => {
     for (let n: HTMLElement | null = el as HTMLElement; n && n.dataset["testid"] !== "central-vendas"; n = n.parentElement) if (getComputedStyle(n).borderTopLeftRadius === "14px") return "14px";
     return null;
   });
-  expect(raioDoDocumento, "o documento é um cartão de raio 14").toBe(MEDIDAS.documento.raio);
-  expect(Math.round((await caixa(ws.getByTestId("central-vendas-dados").locator("div").first())).height), "cabeçalho de Dados principais").toBe(MEDIDAS.cabecalhoDeDados);
+  expect.soft(raioDoDocumento, "o documento é um cartão de raio 14").toBe(MEDIDAS.documento.raio);
+  expect.soft(Math.round((await caixa(ws.getByTestId("central-vendas-dados").locator("div").first())).height), "cabeçalho de Dados principais").toBe(MEDIDAS.cabecalhoDeDados);
 
   // CAMPO COM RÓTULO À FRENTE: rótulo 126 px à direita, 12 px 500 #64748b, ":" antes do "*"; caixa em 136, 30 px, raio 8
   const dados = ws.getByRole("region", { name: "Dados principais" });
   const cliente = campoPeloRotulo(dados, "Cliente");
   const rotulo = cliente.locator("label").first();
   const er = await rotulo.evaluate((el) => { const cs = getComputedStyle(el); const depois = getComputedStyle(el, "::after").content; return { largura: Math.round(el.getBoundingClientRect().width), fonte: cs.fontSize, peso: cs.fontWeight, cor: cs.color, alinhamento: cs.textAlign === "right" || cs.justifyContent === "flex-end" || cs.textAlign === "end", texto: (el.textContent ?? "").trim(), depois }; });
-  expect(er.largura, "rótulo com 126 px").toBe(MEDIDAS.campo.rotuloLargura);
-  expect([er.fonte, er.peso, er.cor]).toEqual([MEDIDAS.campo.rotuloFonte, MEDIDAS.campo.rotuloPeso, MEDIDAS.campo.rotuloCor]);
-  expect(er.alinhamento, "rótulo alinhado à direita").toBe(true);
+  expect.soft(er.largura, "rótulo: 126 + 2 de padding = 128 de caixa (D4)").toBe(MEDIDAS.campo.rotuloLargura);
+  expect.soft([er.fonte, er.peso, er.cor]).toEqual([MEDIDAS.campo.rotuloFonte, MEDIDAS.campo.rotuloPeso, MEDIDAS.campo.rotuloCor]);
+  expect.soft(er.alinhamento, "rótulo alinhado à direita").toBe(true);
   const temDoisPontos = er.texto.includes(":") || er.depois.includes(":");
-  expect(temDoisPontos, "o rótulo à frente leva ':'").toBe(true);
+  expect.soft(temDoisPontos, "o rótulo à frente leva ':'").toBe(true);
   if (er.texto.includes(":") && er.texto.includes("*")) expect(er.texto.indexOf(":"), "':' antes do '*'").toBeLessThan(er.texto.indexOf("*"));
   const vazia = await medirCaixa(cliente);
-  expect(vazia, "a caixa do campo foi encontrada").not.toBeNull();
-  expect([vazia!.x, vazia!.altura, vazia!.raio], "caixa em 136 px, 30 de altura, raio 8").toEqual([MEDIDAS.campo.caixaInicio, MEDIDAS.campo.caixaAltura, MEDIDAS.campo.caixaRaio]);
-  expect(vazia!.fundo, "caixa vazia").toBe(MEDIDAS.campo.vazia);
+  expect.soft(vazia, "a caixa do campo foi encontrada").not.toBeNull();
+  expect.soft([vazia!.x, vazia!.altura, vazia!.raio], "caixa em 137, 28 de altura, raio 8 (D3)").toEqual([MEDIDAS.campo.caixaInicio, MEDIDAS.campo.caixaAltura, MEDIDAS.campo.caixaRaio]);
+  expect.soft(vazia!.fundo, "caixa vazia").toBe(MEDIDAS.campo.vazia);
   // ícone à ESQUERDA dentro da caixa (lupa)
   const icone = await cliente.evaluate((raiz) => { const r0 = raiz.getBoundingClientRect(); const s = [...raiz.querySelectorAll("svg")].map((x) => x.getBoundingClientRect()).find((b) => b.width > 0); return s ? Math.round(s.left - r0.left) : null; });
-  expect(icone, "há ícone na caixa").not.toBeNull();
-  expect(icone!, "o ícone fica à esquerda, dentro da caixa").toBeGreaterThanOrEqual(MEDIDAS.campo.caixaInicio);
-  expect(icone!, "o ícone fica à esquerda, dentro da caixa").toBeLessThan(MEDIDAS.campo.caixaInicio + 40);
+  expect.soft(icone, "há ícone na caixa").not.toBeNull();
+  expect.soft(icone!, "o ícone fica à esquerda, dentro da caixa").toBeGreaterThanOrEqual(MEDIDAS.campo.caixaInicio);
+  expect.soft(icone!, "o ícone fica à esquerda, dentro da caixa").toBeLessThan(MEDIDAS.campo.caixaInicio + 40);
   // espaço entre campos: Cliente → Empresa
   const bCliente = await caixa(cliente); const bEmpresa = await caixa(campoPeloRotulo(dados, "Empresa"));
-  expect(Math.round(bEmpresa.y - (bCliente.y + bCliente.height)), "espaço entre campos").toBe(MEDIDAS.campo.espaco);
+  expect.soft(Math.round(bEmpresa.y - (bCliente.y + bCliente.height)), "espaço entre campos").toBe(MEDIDAS.campo.espaco);
   // preenchida: #fff com borda #e7eaee
   await pickRef(page, "Cliente", "DEMO");
+  // mede o estado PREENCHIDO, não o de foco (com o foco dentro, a borda é a do foco, #cfd6de)
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   const cheia = await medirCaixa(cliente);
-  expect([cheia!.fundo, cheia!.borda], "caixa preenchida").toEqual([MEDIDAS.campo.preenchida, MEDIDAS.campo.preenchidaBorda]);
+  expect.soft([cheia!.fundo, cheia!.borda], "caixa preenchida").toEqual([MEDIDAS.campo.preenchida, MEDIDAS.campo.preenchidaBorda]);
   // travada: Tipo de Operação
   const travada = await medirCaixa(page.getByTestId("top-contexto"));
-  expect(travada?.fundo, "campo travado").toBe(MEDIDAS.campo.travada);
+  expect.soft(travada?.fundo, "campo travado").toBe(MEDIDAS.campo.travada);
 
   // COMPACTO: rótulo DENTRO da caixa, 32 px
   await page.getByRole("button", { name: "Rótulo dentro do campo" }).click();
   await expect(ws).toHaveAttribute("data-densidade", "compacto");
   const compacta = await medirCaixa(cliente);
-  expect(compacta?.altura, "compacto: 32 px").toBe(MEDIDAS.compacto.caixaAltura);
+  expect.soft(compacta?.altura, "compacto: 32 px").toBe(MEDIDAS.compacto.caixaAltura);
   const dentro = await cliente.evaluate((raiz) => { const l = raiz.querySelector("label")!.getBoundingClientRect(); const r = raiz.getBoundingClientRect(); return l.left >= r.left && l.right <= r.right && l.top >= r.top && l.bottom <= r.bottom; });
-  expect(dentro, "o rótulo mora dentro da caixa").toBe(true);
+  expect.soft(dentro, "o rótulo mora dentro da caixa").toBe(true);
 
   // CONSULTA: só leitura, valor 12,5 px, itens e painel
   const venda = await vendaPelaApi(page, { tipo_operacao_id: top.id });
@@ -253,28 +256,30 @@ test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botõ
   const consulta = page.getByTestId(WORKSPACE);
   const clienteLido = consulta.locator('[data-campo="Cliente"]');
   const leitura = await medirCaixa(clienteLido);
-  expect(leitura?.fundo, "só leitura").toBe(MEDIDAS.campo.leitura);
+  expect.soft(leitura?.fundo, "só leitura").toBe(MEDIDAS.campo.leitura);
   const fonteDoValor = await clienteLido.getByText(venda.clientName).first().evaluate((el) => getComputedStyle(el).fontSize);
-  expect(fonteDoValor, "valor 12,5 px").toBe(MEDIDAS.campo.valorFonte);
-  expect((await medirCaixa(page.getByTestId("top-contexto")))?.fundo, "Tipo de Operação travado na consulta").toBe(MEDIDAS.campo.travada);
+  expect.soft(fonteDoValor, "valor 12,5 px").toBe(MEDIDAS.campo.valorFonte);
+  expect.soft((await medirCaixa(page.getByTestId("top-contexto")))?.fundo, "Tipo de Operação travado na consulta").toBe(MEDIDAS.campo.travada);
   // botão redondo e Novo verde na consulta
   const dup = page.getByTestId("central-vendas-duplicar");
   const bdup = await caixa(dup);
-  expect([Math.round(bdup.width), Math.round(bdup.height)]).toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
-  expect((await estilo(page.getByTestId("central-vendas-novo"), ["background-color"]))["background-color"], "Novo verde").toBe(MEDIDAS.novo.fundo);
+  expect.soft([Math.round(bdup.width), Math.round(bdup.height)]).toEqual([MEDIDAS.botaoRedondo.lado, MEDIDAS.botaoRedondo.lado]);
+  expect.soft((await estilo(page.getByTestId("central-vendas-novo"), ["background-color"]))["background-color"], "Novo verde").toBe(MEDIDAS.novo.fundo);
   // ITENS (consulta; a grade da criação é a Fase B): barra 36, cabeçalho 28, linha 23, rodapé 32
   const itens = consulta.getByTestId("central-vendas-itens");
-  expect(Math.round((await caixa(itens.getByRole("toolbar").first())).height), "barra de itens").toBe(MEDIDAS.itens.barra);
-  expect(Math.round((await caixa(page.getByTestId("central-vendas-grade").locator("thead tr").first())).height), "cabeçalho da grade").toBe(MEDIDAS.itens.cabecalho);
-  expect(Math.round((await caixa(page.getByTestId("central-vendas-linha").first())).height), "linha da grade").toBe(MEDIDAS.itens.linha);
-  expect(Math.round((await caixa(page.getByTestId("central-vendas-subtotal").locator(".."))).height), "rodapé dos itens").toBe(MEDIDAS.itens.rodape);
+  expect.soft(Math.round((await caixa(itens.getByRole("toolbar").first())).height), "barra de itens").toBe(MEDIDAS.itens.barra);
+  expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-grade").locator("thead tr").first())).height), "cabeçalho da grade").toBe(MEDIDAS.itens.cabecalho);
+  expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-linha").first())).height), "linha da grade").toBe(MEDIDAS.itens.linha);
+  // o rodapé é o primeiro ancestral do subtotal com altura de faixa (o pai imediato é o texto)
+  const rodape = await page.getByTestId("central-vendas-subtotal").evaluate((el) => { let n = el.parentElement; while (n && n.getBoundingClientRect().height < 25) n = n.parentElement; return n ? Math.round(n.getBoundingClientRect().height) : 0; });
+  expect.soft(rodape, "rodapé dos itens").toBe(MEDIDAS.itens.rodape);
   // PAINEL: faixa de abas 38 px
-  expect(Math.round((await caixa(page.getByTestId("central-vendas-painel").getByRole("tablist"))).height), "faixa de abas").toBe(MEDIDAS.painel.faixa);
+  expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-painel").getByRole("tablist"))).height), "faixa de abas").toBe(MEDIDAS.painel.faixa);
   // largura máxima 560: ampliado, a coluna é larga e nenhum campo passa de 560
   await page.getByTestId("central-vendas-ampliar-dados").click();
   const larguras = await consulta.getByTestId("central-vendas-dados").locator("[data-campo]").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
-  expect(larguras.length, "premissa: há campos para medir").toBeGreaterThan(3);
-  expect(Math.max(...larguras), "largura máxima do campo").toBeLessThanOrEqual(MEDIDAS.campo.larguraMaxima);
+  expect.soft(larguras.length, "premissa: há campos para medir").toBeGreaterThan(3);
+  expect.soft(Math.max(...larguras), "largura máxima do campo").toBeLessThanOrEqual(MEDIDAS.campo.larguraMaxima);
 });
 
 /* ═════════════════════════════════════════════ VD-2 posição do rótulo ═════════════════════════════════════════════ */
@@ -638,6 +643,16 @@ test("VD-7 — Salvar com pendências: ZERO POST, pílula com a lista, clique le
   const cliente = campoPeloRotulo(page.getByTestId(WORKSPACE).getByRole("region", { name: "Dados principais" }), "Cliente");
   await expect.poll(async () => (await cliente.evaluate((el) => el.contains(document.activeElement))) || (await page.locator("[data-radix-popper-content-wrapper]").count()) > 0,
     { message: "Cliente → o foco vai ao campo (ou a pesquisa dele abre)" }).toBe(true);
+  await page.keyboard.press("Escape");
+
+  // COM cliente e SEM item: a pendência que só a guarda NOVA segura (o obrigatório do layout cobre o Cliente, não os
+  // itens) — é este clique que a reversa R2 faz sair para o servidor
+  await pickRef(page, "Cliente", "DEMO");
+  await salvar.click();
+  await expect(pilula).toHaveText(/1 pendência/);
+  await expect(page.getByTestId("central-vendas-pendencia").filter({ hasText: "Itens" }), "a pendência que resta é a dos itens").toHaveCount(1);
+  await page.waitForTimeout(400);
+  expect(escritas, "ZERO POST também sem item — a guarda nova, no handler").toEqual([]);
   await page.keyboard.press("Escape");
 
   // ESTADO que não é pendência de campo continua DESABILITANDO: layout que não carrega. Sair de um rascunho sujo por
