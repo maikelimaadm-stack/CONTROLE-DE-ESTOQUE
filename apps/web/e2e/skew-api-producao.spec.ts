@@ -2117,8 +2117,13 @@ function baseServePadroesDeCadastro(declaraLayout: boolean): boolean {
   const ocorrencias = (texto: string) => (texto.match(/\bpadroesDeCadastro\b/g) ?? []).length;
   const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
   expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
-  const naBase = ocorrencias(execFileSync("git", ["show", `${sha}:${ROTA}`], { cwd: raiz, encoding: "utf8" }));
-  const noHead = ocorrencias(fs.readFileSync(path.join(raiz, ROTA), "utf8"));
+  // ANEXOS-PESQUISA-01 (decisão 271, item 0): a resposta do `/layout-efetivo` de vendas passou a ser montada pela lib
+  // (`respostaDoLayoutEfetivo`), um dono só para vendas e compras. A implementação é a ROTA + a LIB: o detector lê as
+  // duas, na base e no HEAD. Base anterior à COMPRAS-03 não tem a função na lib — o arquivo pode nem citar a chave.
+  const LIB = "apps/api/src/lib/layout-documento.ts";
+  const naLibDaBase = (): string => { try { return execFileSync("git", ["show", `${sha}:${LIB}`], { cwd: raiz, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); } catch { return ""; } };
+  const naBase = ocorrencias(execFileSync("git", ["show", `${sha}:${ROTA}`], { cwd: raiz, encoding: "utf8" })) + ocorrencias(naLibDaBase());
+  const noHead = ocorrencias(fs.readFileSync(path.join(raiz, ROTA), "utf8")) + ocorrencias(fs.readFileSync(path.join(raiz, LIB), "utf8"));
   expect(noHead, `o detector reconhece a implementação deste HEAD em ${ROTA} — sem isso ele nunca mudaria de mundo`).toBeGreaterThan(0);
   const serve = naBase > 0;
   if (serve) expect(declaraLayout, "uma base que manda padroesDeCadastro já declara o layout do documento").toBe(true);
@@ -2371,8 +2376,13 @@ function baseDeclaraLayoutDeCompras(): boolean {
   const ocorrencias = (texto: string) => (texto.match(/\blayoutDocumento\s*:\s*CAPACIDADE_LAYOUT_DOCUMENTO\b/g) ?? []).length;
   const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
   expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
-  const naBase = ocorrencias(execFileSync("git", ["show", `${sha}:${ROTA}`], { cwd: raiz, encoding: "utf8" }));
-  const noHead = ocorrencias(fs.readFileSync(path.join(raiz, ROTA), "utf8"));
+  // ANEXOS-PESQUISA-01 (decisão 271, item 0): a resposta do `/layout-efetivo` de vendas passou a ser montada pela lib
+  // (`respostaDoLayoutEfetivo`), um dono só para vendas e compras. A implementação é a ROTA + a LIB: o detector lê as
+  // duas, na base e no HEAD. Base anterior à COMPRAS-03 não tem a função na lib — o arquivo pode nem citar a chave.
+  const LIB = "apps/api/src/lib/layout-documento.ts";
+  const naLibDaBase = (): string => { try { return execFileSync("git", ["show", `${sha}:${LIB}`], { cwd: raiz, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); } catch { return ""; } };
+  const naBase = ocorrencias(execFileSync("git", ["show", `${sha}:${ROTA}`], { cwd: raiz, encoding: "utf8" })) + ocorrencias(naLibDaBase());
+  const noHead = ocorrencias(fs.readFileSync(path.join(raiz, ROTA), "utf8")) + ocorrencias(fs.readFileSync(path.join(raiz, LIB), "utf8"));
   expect(noHead, `o detector reconhece a declaração deste HEAD em ${ROTA} — sem isso ele nunca mudaria de mundo`).toBe(1);
   expect(naBase, "contagem ambígua não decide ramo nenhum").toBeLessThanOrEqual(1);
   const declara = naBase === 1;
