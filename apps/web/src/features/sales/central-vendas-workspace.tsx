@@ -323,7 +323,9 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
           onClickCapture={(e) => expandirPelaAba(e.target)}
           onKeyDownCapture={(e) => { if (["ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(e.key)) expandirPelaAba(e.target); }}>
           <span className={estilos.painelAmpliar}><BotaoAmpliar regiao="painel" /></span>
-          <Tabs className={estilos.abas} tabs={abasDoPainel} />
+          {/* O `Tabs` oficial lê a aba inicial só ao montar: sem a chave, a Central que nasceu carregando (sem abas)
+              ficaria sem aba ativa quando a leitura chega — a mesma instância, agora com abas. */}
+          <Tabs key={abas[0]?.value ?? "sem-abas"} className={estilos.abas} tabs={abasDoPainel} />
           <span className={estilos.painelAcoes}>
             <button type="button" className={cn(estilos.recolher, estilos.dicaFim)} aria-label={rotuloRecolher} data-dica={rotuloRecolher}
               aria-expanded={!recolhido} data-testid="central-vendas-recolher" onClick={() => setRecolhido((r) => !r)}><span className={estilos.recolherIcone}><ChevronDown aria-hidden /></span></button>

@@ -17,7 +17,7 @@
 .plano > div > * { min-width: 0; }
 
 /* relação: a pauta dos títulos do desenho — o cabeçalho em negrito, a borda da linha em cinza claro */
-.relacao { min-width: 0; }
+.relacao { min-width: 0; line-height: normal; }
 .linha {
   display: grid;
   column-gap: 10px;

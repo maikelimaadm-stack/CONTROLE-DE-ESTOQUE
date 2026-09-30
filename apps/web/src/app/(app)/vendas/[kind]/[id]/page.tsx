@@ -4,7 +4,7 @@ import { use } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowRightLeft, Check, FileCheck2, FileText, FileX2, Plus, Printer } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { brl, dateBR } from "@/lib/utils";
+import { brl, dateBR, num } from "@/lib/utils";
 import { Button, Confirm, Dialog, StatusBadge, statusTone } from "@/components/ui";
 import { useTabTitle } from "@/lib/workspace-tabs";
 import { useDoc, LoadingOr, type Row } from "@/features/docs/shared";
@@ -323,8 +323,8 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
           <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
           <div data-testid="central-vendas-total-campo"><CampoLeitura rotulo="Total do documento" adorno="travado" testId="central-vendas-total" valor={brl(d["total"] as string)} /></div>
         </PainelColuna>}>
-          <CampoLeitura rotulo="Desconto" valor={brl(d["discount"] as string)} />
-          <CampoLeitura rotulo="Outros valores" valor={brl(d["other_values"] as string)} />
+          <CampoLeitura rotulo="Desconto" valor={num(String(d["discount"] ?? "0"), 2)} />
+          <CampoLeitura rotulo="Outros valores" valor={num(String(d["other_values"] ?? "0"), 2)} />
         </PainelRepartido> },
         /* FINANCEIRO: o plano GRAVADO (`installment_plan` do detalhe), em só leitura, e os títulos gerados. */
         { value: "financeiro", label: "Financeiro", contador: d.titles.length, content: <PainelRepartido lado={<TitulosDoDocumento legenda={`Contas a receber geradas pelo documento ${codigo}`} titulos={d.titles} />}>
@@ -333,8 +333,8 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         { value: "frete", label: "Frete e transporte", content: <PainelColuna>
           <CampoLeitura rotulo="Transportadora" adorno="pesquisa" valor={String(d["transporter_name"] ?? "")} />
           <CampoLeitura rotulo="Motorista" valor={String(d["driver_name"] ?? "")} />
-          <CampoLeitura rotulo="Frete" valor={brl(d["freight"] as string)} />
-          <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
+          <CampoLeitura rotulo="Frete" valor={num(String(d["freight"] ?? "0"), 2)} />
+          <CampoLeitura rotulo="ICMS frete" valor={num(String(d["freight_icms"] ?? "0"), 2)} />
         </PainelColuna> },
         /* FISCAL: nenhuma NF-e é vinculada hoje (`nfe_id` nunca é gravado); Dedutível é o do plano gravado. */
         { value: "fiscal", label: "Fiscal", content: <PainelColuna>
