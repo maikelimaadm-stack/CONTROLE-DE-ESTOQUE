@@ -174,7 +174,7 @@ describe("ED-2 — itens com id", () => {
     expect((g.items as Linha[]).map((x) => [x.id, x.quantity, x.note])).toEqual([[a.id, "5.0000", "nota A"], [b.id, "3.0000", "nota B"], [novo.id, "4.0000", "novo"]]);
   });
 
-  it("ED-2 id de item de OUTRO documento (ou inexistente) → 422 no item (items[i].id); item novo sem preço → 422; nada gravado nos dois documentos", async () => {
+  it("ED-2 id de item de OUTRO documento (ou inexistente, ou repetido) → 422 no item (items[i].id); item novo sem preço → 422; nada gravado nos dois documentos", async () => {
     const id = await criar("order", { items: [ITEM({ quantity: "2" }), ITEM({ product_id: I.product!, quantity: "3" })] });
     const outro = await criar("order");
     const orcamento = await criar("budget");
@@ -187,6 +187,7 @@ describe("ED-2 — itens com id", () => {
       ["item de outro pedido", [{ id: a!.id }, { id: alheio!.id, quantity: "9" }], "items[1].id"],
       ["item de um orçamento", [{ id: deOutraVariante!.id }], "items[0].id"],
       ["item inexistente", [{ id: a!.id }, { id: "00000000-0000-4000-8000-000000000272" }], "items[1].id"],
+      ["item repetido", [{ id: a!.id }, { id: a!.id, quantity: "4" }], "items[1].id"],
     ];
     for (const [nome, items, caminho] of casos) {
       const r = await patch("order", id, { version: v, items });
@@ -209,7 +210,7 @@ describe("ED-2 — itens com id", () => {
 });
 
 describe("ED-6 — corpo estrito", () => {
-  it("ED-6 empresa_id ou tipo_operacao_id no corpo → 422 no campo (mesmo com o valor gravado); chave desconhecida → 422 na chave; version ausente ou torta → 422; nada gravado", async () => {
+  it("ED-6 empresa_id ou tipo_operacao_id no corpo → 422 no campo (mesmo com o valor gravado); chave desconhecida → 422 na chave; version ausente ou torta → 422; null em campo obrigatório → 422; nada gravado", async () => {
     const id = await criar("order", { note: "fica" });
     const outraTop = await criarTop("order", "ED-6 outra");
     const antes = await foto(id);
@@ -226,6 +227,9 @@ describe("ED-6 — corpo estrito", () => {
       ["version com letra", { version: "1a", note: "x" }, "version"],
       ["version negativa", { version: -1, note: "x" }, "version"],
       ["version fracionária", { version: 1.5, note: "x" }, "version"],
+      // `null` só limpa campo que aceita vazio; campo obrigatório com null → 422 no campo.
+      ["client_id null", { version: v, client_id: null }, "client_id"],
+      ["document_date null", { version: v, document_date: null }, "document_date"],
     ];
     for (const [nome, payload, caminho] of casos) {
       const r = await patch("order", id, payload);
