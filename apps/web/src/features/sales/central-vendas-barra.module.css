@@ -40,7 +40,6 @@
 /* pressionado: o ⚡ aberto usa o mesmo estado do "Configurar colunas" (`.radial.open .rs-fab`) */
 .botao:not(.solido)[data-state="open"],
 .botao[aria-pressed="true"] { background: #e2e8f0; color: #0f172a; box-shadow: inset 0 0 0 1px #cbd5e1, 0 2px 6px rgba(34, 197, 94, .30); }
-.botao:not(.solido)[data-state="open"]:hover:not(:disabled) { background: #dde3e8; color: #0f172a; }
 /* salvando (`.tbi.busy`) */
 .botao[aria-busy="true"],
 .botao[aria-busy="true"]:disabled { opacity: 1; background: #e8ecef; color: #475569; box-shadow: 0 2px 6px rgba(34, 197, 94, .30); cursor: default; }
@@ -141,8 +140,8 @@
 .pendencia { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; width: 100%; box-sizing: border-box; padding: 7px 12px; border: 0; background: transparent; text-align: left; cursor: pointer; font-family: inherit; }
 .pendencia:hover,
 .pendencia:focus-visible { background: #fef2f2; outline: none; }
-.pendencia > b { font-size: 12px; font-weight: 600; color: #0f172a; }
-.pendencia > span { font-size: 11.5px; color: #b91c1c; }
+.pendencia > b { font-size: 12px; font-weight: 600; line-height: normal; color: #0f172a; }
+.pendencia > span { font-size: 11.5px; line-height: normal; color: #b91c1c; }
 
 /* ═════════════ vidro (`.pop`) — portalado ═════════════ */
 .pop {
@@ -163,7 +162,7 @@
 
 /* menu Novo documento (`.pop` 336px + `.mi`) */
 .menuNovo { width: 338px; padding: 4px 0; }
-.menuTitulo { padding: 8px 12px 6px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #a3adb9; }
+.menuTitulo { padding: 8px 12px 6px; font-size: 10px; line-height: normal; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #a3adb9; }
 .menuAviso { padding: 6px 12px 8px; font-size: 12px; color: #64748b; }
 .mi {
   display: grid;
@@ -227,7 +226,9 @@
 .lequeConteudo .lequeItem[data-highlighted]:not([data-disabled]),
 .lequeConteudo .lequeItem:hover:not([data-disabled]) { border-color: #cbd5e1; background: #fff; color: #0f172a; }
 .lequeConteudo .lequeItem:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-.lequeConteudo .lequeItem[data-disabled] { opacity: .45; cursor: not-allowed; }
+/* no desenho `.radial.open .rs-item` vence o `:disabled`: o item desabilitado (Imprimir e Histórico na criação) fica
+   com opacidade 1 — só o cursor e a falta de resposta ao passar dizem que ele não age */
+.lequeConteudo .lequeItem[data-disabled] { opacity: 1; cursor: not-allowed; }
 /* a mesma especificidade da regra base do item (`.lequeConteudo .lequeItem[data-dica]`) + 1 classe: sem isso a cor da
    base vencia — o número saía #475569 e o Cancelar saía cinza, não vermelho (VD-3) */
 .lequeConteudo .lequeItem.lequeNumero[data-dica] { font-size: 13px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; color: #0f172a; }

@@ -313,7 +313,7 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
             rotulo="Largura de Dados principais e Itens" onInicio={() => iniciar("vertical")} onMover={moverVertical} onFim={terminar} onTeclado={tecladoVertical}
             arrastando={arrastando === "vertical"} testId="central-vendas-divisor-vertical" />
 
-          <section className={estilos.coluna} data-testid="central-vendas-itens" data-regiao="itens" aria-label="Itens">
+          <section className={estilos.coluna} data-testid="central-vendas-itens" data-regiao="itens" aria-label="Itens do documento">
             {itens}
           </section>
         </div>

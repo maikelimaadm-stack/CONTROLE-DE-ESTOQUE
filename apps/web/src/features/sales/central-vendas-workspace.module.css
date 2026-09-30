@@ -145,7 +145,7 @@
   .popover { background: rgba(255, 255, 255, .97); }
 }
 .popoverRodape { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px 8px 12px; border-top: 1px solid #eef1f4; background: #fbfcfd; font-size: 11px; color: #94a3b8; }
-.link { flex-shrink: 0; white-space: nowrap; border: 0; background: transparent; color: #15803d; font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
+.link { flex-shrink: 0; white-space: nowrap; border: 0; background: transparent; color: #15803d; font-size: 12px; line-height: normal; font-weight: 600; cursor: pointer; padding: 4px 6px; border-radius: 6px; }
 .link:hover { background: #ecfdf3; }
 .link:focus-visible { outline: 2px solid #22a85c; outline-offset: 1px; }
 
@@ -190,7 +190,7 @@
 .docsSituacao { pointer-events: none; }
 .docsPonto { pointer-events: none; }
 .docsFecharCelula { position: relative; z-index: 1; }
-.docsFechar { width: 22px; height: 22px; border: 0; border-radius: 999px; background: transparent; color: #475569; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; opacity: 0; transition: opacity 120ms, background-color 120ms, color 120ms; }
+.docsFechar { flex-shrink: 0; width: 22px; height: 22px; border: 0; border-radius: 999px; background: transparent; color: #475569; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; opacity: 0; transition: opacity 120ms, background-color 120ms, color 120ms; }
 .docsFechar svg { width: 13px; height: 13px; }
 .docsLinha:hover .docsFechar,
 .docsLinha:focus-within .docsFechar,
