@@ -330,7 +330,7 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
           <CampoLeitura rotulo="Número" adorno="travado" testId="central-vendas-campo" valor={codigo} />
         </ColunaDeCampos>
         {/* DADOS ADICIONAIS (VISUAL-UX-02): Proprietário (quando legível), Movimento, Versão da TOP e Origem, recolhidos como na criação. */}
-        <DadosAdicionais quantidade={(proprietario.isError ? 0 : 1) + 1 + (topConfigurada ? 1 : 0) + 1} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)}>
+        <DadosAdicionais quantidade={(proprietario.isError ? 0 : 1) + 1 + (topConfigurada ? 1 : 0) + 1} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)} manterMontado>
           {!proprietario.isError && <CampoLeitura rotulo="Proprietário" adorno="pesquisa" testId="central-vendas-campo" valor={proprietarioId && proprietario.data ? String(proprietario.data["name"] ?? "") : ""} />}
           {/* A FAMÍLIA CANÔNICA sai do REGISTRO (`kind`), em memória — campo próprio, ao lado da TOP configurada */}
           <CampoLeitura rotulo="Movimento" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />

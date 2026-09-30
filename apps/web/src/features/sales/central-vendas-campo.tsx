@@ -145,20 +145,24 @@ export function ChaveSimNao({ rotulo, valor, onChange, desabilitado, testId, ...
  * campo. Com Dados AMPLIADO (a moldura marca `data-ampliado="dados"` na raiz), mais de 3 campos viram duas colunas,
  * de cima para baixo — a conta das linhas é daqui, o resto é CSS. Nada persiste.
  */
-export function ColunaDeCampos({ children, id }: { children: React.ReactNode; id?: string }) {
+export function ColunaDeCampos({ children, id, hidden }: { children: React.ReactNode; id?: string; hidden?: boolean }) {
   const n = React.Children.toArray(children).length;
-  return <div id={id} className={estilos.coluna} data-muitos={n > 3 ? "true" : undefined} style={{ "--linhas": Math.ceil(n / 2) } as React.CSSProperties}>{children}</div>;
+  return <div id={id} hidden={hidden} className={estilos.coluna} data-muitos={n > 3 ? "true" : undefined} style={{ "--linhas": Math.ceil(n / 2) } as React.CSSProperties}>{children}</div>;
 }
 
-/** "Dados adicionais · N campos", recolhível — o mesmo botão na criação e na consulta. O aberto/fechado é de quem chama. */
-export function DadosAdicionais({ quantidade, aberto, onAlternar, children }: { quantidade: number; aberto: boolean; onAlternar: () => void; children: React.ReactNode }) {
+/**
+ * "Dados adicionais · N campos", recolhível — o mesmo botão na criação e na consulta. O aberto/fechado é de quem chama.
+ * `manterMontado` (consulta): fechado, o grupo fica no DOM com `hidden` — o `aria-controls` aponta para algo que existe e
+ * o valor continua legível por quem lê o documento; na criação ele sai da árvore, como antes.
+ */
+export function DadosAdicionais({ quantidade, aberto, onAlternar, manterMontado, children }: { quantidade: number; aberto: boolean; onAlternar: () => void; manterMontado?: boolean; children: React.ReactNode }) {
   if (quantidade < 1) return null;
   return <>
     <button type="button" className={estilos.maisDados} aria-expanded={aberto} aria-controls="dados-adicionais" onClick={onAlternar}>
       <span className={estilos.maisDadosSeta}><ChevronRight aria-hidden /></span>
       Dados adicionais <span className={estilos.mudo}>· {quantidade} {quantidade === 1 ? "campo" : "campos"}</span>
     </button>
-    {aberto && <ColunaDeCampos id="dados-adicionais">{children}</ColunaDeCampos>}
+    {(aberto || manterMontado) && <ColunaDeCampos id="dados-adicionais" hidden={!aberto}>{children}</ColunaDeCampos>}
   </>;
 }
 

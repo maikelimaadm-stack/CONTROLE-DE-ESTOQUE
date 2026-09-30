@@ -13,6 +13,7 @@
 /* ═════════════ coluna de campos (Dados principais / Dados adicionais) ═════════════ */
 .coluna { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .coluna .campo { max-width: 560px; }
+.coluna[hidden] { display: none; }
 /* ampliar Dados: os campos em duas colunas, de cima para baixo (a moldura marca `data-ampliado` na raiz) */
 [data-ampliado="dados"] .coluna[data-muitos="true"] {
   display: grid;
