@@ -73,10 +73,13 @@
 -- SEM BACKFILL: nenhum UPDATE nesta migration. As linhas de hoje leem 0 pelo default do catálogo; o gatilho
 -- nasce depois do ADD COLUMN e não roda para elas. A porta do atraso não grava nada.
 -- JANELA DE DEPLOY (pre-deploy, banco → API → web): a API anterior grava o documento por UPDATE sem citar a
--- coluna, e o gatilho só soma — nada do que ela grava muda de sentido nem é recusado. O `d.*` do GET
+-- coluna, e o gatilho só soma — nada do que ela grava muda de sentido por causa da versão. O `d.*` do GET
 -- anterior passa a trazer `version` na resposta: campo a mais, aditivo, que a web anterior ignora. Criar
--- documento (INSERT sem a coluna) continua igual: nasce 0. A porta do atraso só passa a responder a MAIS
--- gente (quem edita); a API anterior só a chama em rota que já exige `.create` — nada muda para ela.
+-- documento (INSERT sem a coluna) continua igual: nasce 0. A porta do atraso passa a responder a MAIS
+-- gente (quem edita), e isso ALCANÇA a API anterior: o PUT dela roda com `<perm>.edit` e chama a porta quando
+-- a edição troca o cliente. Quem tem alguma `.edit` de venda e nenhuma das três `.create` deixa de receber o
+-- falso "em dia" e, sob TOP cuja política de atraso bloqueia, passa a ser recusado ao trocar para um cliente
+-- devedor — o efeito pretendido (a regra configurada deixa de falhar aberta), declarado na decisão 272.
 -- VOLTA: API e web voltam por redeploy e convivem com a 0039 (a coluna e o gatilho não recusam nada; a porta
 -- do atraso só responde a mais capacidades). Tirar o gatilho, a função ou a coluna do banco, ou voltar a porta
 -- às três .create, é decisão humana, com migration própria.
