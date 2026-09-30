@@ -51,17 +51,20 @@ export interface DocumentoParaLimites {
  *                               não reserva (a conta da reserva não o soma), então o armazém dele não carrega reserva
  *                               e fica LIVRE — é a regra da guarda do armazém em `salvarEdicao` (sales.ts).
  * Consultas: no máximo UMA (a reserva da origem), e só quando há item que ela poderia travar — nunca uma por item.
+ * `opcoes.origemReserva`: quem JÁ leu `origemReservaEstoque` da MESMA origem (o `salvarEdicao`, que precisa dela também
+ * para conferir a reserva) passa o valor, e a função NÃO consulta de novo. Ausente → consulta como acima. O valor só
+ * vale combinado com o resto da regra (parte gerada ∧ venda ∧ com origem ∧ produto que controla estoque).
  */
 export interface LimitesDaEdicao {
   somenteArmazemEObservacao: boolean;
   itens: { id: string; armazemTravado: boolean }[];
 }
 
-export async function limitesDaEdicao(ctx: ServiceCtx, kind: SalesKind, doc: DocumentoParaLimites): Promise<LimitesDaEdicao> {
+export async function limitesDaEdicao(ctx: ServiceCtx, kind: SalesKind, doc: DocumentoParaLimites, opcoes?: { origemReserva?: boolean }): Promise<LimitesDaEdicao> {
   const somenteArmazemEObservacao = doc.items.some((i) => i.origem_item_id !== null);
   const reservaQueTrava = somenteArmazemEObservacao && kind === "sale" && doc.origin_document_id !== null
     && doc.items.some((i) => i.product_control_stock !== false)
-    ? await origemReservaEstoque(ctx, doc.origin_document_id) : false;
+    ? opcoes?.origemReserva ?? await origemReservaEstoque(ctx, doc.origin_document_id) : false;
   return {
     somenteArmazemEObservacao,
     itens: doc.items.map((i) => ({ id: i.id, armazemTravado: reservaQueTrava && i.product_control_stock !== false })),
