@@ -36,7 +36,8 @@ test.describe("overlays: perfis e estabilidade", () => {
     await page.getByTestId("workspace-tab").filter({ hasText: /Novo/ }).getByRole("button", { name: /Fechar aba/ }).click();
     const dlg = page.getByTestId("confirm-dialog"); await expect(dlg).toBeVisible(); await expect(dlg).toHaveAttribute("data-profile", "compact");
     const b = await box(page, "confirm-dialog"); expect(b.height).toBeLessThan(320); expect(b.width).toBeLessThanOrEqual(460);
-    await dlg.locator(".mg-dialog__footer").getByRole("button", { name: "Fechar", exact: true }).click(); await expect(dlg).toBeHidden();
+    // VISUAL-UX-02 (decisão 270): o diálogo de fechar aba cancela por "Continuar editando"
+    await dlg.locator(".mg-dialog__footer").getByRole("button", { name: "Continuar editando", exact: true }).click(); await expect(dlg).toBeHidden();
   });
 
   test("Drawer: altura estável desde a abertura até o conteúdo; ESC fecha e devolve o foco", async ({ page }) => {

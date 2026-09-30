@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, primeiroId, pickRef, abrirLancamentoDeVendas, escolherTopEContinuar, abrirAbaDoLancamento, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, acaoDaCentral } from "./helpers";
 
 /**
  * PORTAL DE VENDAS COM TOP CADASTRADA — o caminho que o usuário faz de verdade (TOP-CONFIG-02).
@@ -372,7 +372,9 @@ test("REGRESSÃO: a TOP não mudou a confirmação nem as ações do detalhe", a
   await page.goto(`/vendas/sales/${venda.id}`);
   // As ações da variante continuam as mesmas: a TOP é identidade, não comportamento.
   await expect(page.getByRole("button", { name: "Confirmar venda" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Imprimir" })).toBeVisible();
+  // VISUAL-UX-02 (decisão 270): Imprimir mora no leque de Ações rápidas
+  await expect(await acaoDaCentral(page, "central-vendas-imprimir")).toBeVisible();
+  await page.keyboard.press("Escape");
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════
@@ -550,14 +552,15 @@ test("ALTERAR OPERAÇÃO — volta ao lançador, e avisa antes de descartar o qu
   await escolherTopEContinuar(page, top.id);
 
   // (a) SEM nada digitado, a troca é imediata: perguntar aqui seria ruído que ensina a ignorar avisos.
-  await page.getByTestId("top-alterar").click();
+  // VISUAL-UX-02 (decisão 270): Alterar operação mora no leque de Ações rápidas.
+  await (await acaoDaCentral(page, "top-alterar")).click();
   await esperarLancadorSemFormulario(page);
 
   // (b) COM dado digitado, pergunta antes — e só descarta depois do "sim".
   await escolherTopEContinuar(page, top.id);
   await abrirAbaDoLancamento(page, "Observações");
   await page.getByLabel("Observação").fill("rascunho que não pode sumir calado");
-  await page.getByTestId("top-alterar").click();
+  await (await acaoDaCentral(page, "top-alterar")).click();
   await expect(page.getByRole("dialog")).toContainText("Alterar o Tipo de Operação?");
   await expect(page.getByTestId("top-contexto"), "enquanto não confirma, o formulário continua lá").toBeVisible();
   await page.getByTestId("confirm-dialog-confirm").click();
@@ -747,7 +750,8 @@ async function esperarRascunhoSemEscrita(page: Page, rascunho: string, posts: st
   await expect(page.getByTestId("top-contexto"), "o formulário continua montado").toBeVisible();
   await expect(page.getByLabel("Observação"), "o que foi digitado continua lá").toHaveValue(rascunho);
   await expect(page.getByRole("button", { name: "Salvar" }), "a escrita está fechada").toBeDisabled();
-  await expect(page.getByTestId("top-alterar"), "trocar de operação continua possível").toBeVisible();
+  await expect(await acaoDaCentral(page, "top-alterar"), "trocar de operação continua possível (leque, decisão 270)").toBeEnabled();
+  await page.keyboard.press("Escape");
   await expect(page.getByTestId("top-lancador"), "não voltou ao lançador sozinho").toHaveCount(0);
   expect(posts, "ZERO POST — o cliente JÁ SABE que não pode gravar").toEqual([]);
 }

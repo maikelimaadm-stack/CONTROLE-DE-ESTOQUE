@@ -1385,6 +1385,25 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
+## VISUAL-UX-02 — Central de Vendas igual ao desenho, Fase A (sem migration)
+
+Decisão 270. **Só web**: sem migration, sem rota, sem API, sem variável, sem permissão, sem domínio. A Central de
+Vendas (criação e consulta) passa a ter a barra e o leque de Ações rápidas do desenho, a posição do rótulo, Duplicar,
+Descartar, Salvar com pendências, Confirmar venda na criação (Salvar + diálogo com a prévia de sempre), Cancelar com
+motivo, Fiscal e plano na consulta, esqueleto e Ampliar; o diálogo de fechar aba ganha o texto do desenho. As
+escritas continuam as mesmas portas de hoje (`POST /api/sales/<seg>`, `/confirm`, `/cancel` com `reason`,
+`/convert`, `/encerrar-saldo`), com as mesmas chaves de corpo e a mesma `Idempotency-Key`.
+
+**Impacto em dados reais:** nenhum dado muda; a Central passa a oferecer Duplicar (abre rascunho) e Cancelar com
+motivo.
+
+**Version skew:** web nova contra a API da base — mesmas rotas e mesmos corpos (o `skew-api-producao.spec.ts` roda a
+Central nova contra a API anterior); web anterior contra a API nova — nada muda na API. Os helpers de E2E que o skew
+usa (`pickRef`, `acaoDaCentral`, `abrirDadosAdicionais`) funcionam nas duas Centrais.
+
+**Reversão:** reverter a PR (redeploy do web anterior). Nada a desfazer em banco ou configuração: a posição do
+rótulo, o ampliar, o Duplicar e o "Salvo" vivem só na memória da tela.
+
 ## COMPRAS-02 — receber o pedido de compra (0037)
 
 Decisão 268. **Uma migration: `0037_receber_pedido_de_compra.sql`** (pre-deploy; trava (2026,71), `lock_timeout` 2 s,

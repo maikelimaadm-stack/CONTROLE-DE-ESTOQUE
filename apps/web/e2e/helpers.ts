@@ -9,12 +9,20 @@ export async function logout(page: Page) {
   await page.getByLabel("Usuário").click(); await page.getByRole("menuitem", { name: "Sair" }).click();
   await expect(page).toHaveURL(/\/login/);
 }
-/** Seleciona uma opção em um RefSelect (popover com busca). */
+/**
+ * Seleciona uma opção em um RefSelect (popover com busca).
+ *
+ * TOLERANTE À CENTRAL ANTERIOR E À NOVA (VISUAL-UX-02): a pesquisa de hoje diz "Pesquisar..." e a do desenho
+ * diz "Pesquisar <campo>". O campo de busca é procurado DENTRO do painel aberto (o último popover/diálogo, o
+ * mesmo recorte da escolha da opção), por isso o prefixo não esbarra em outra busca da página ("Pesquisar por…"
+ * da listagem atrás de uma gaveta). Este helper roda também no skew contra o web da base.
+ */
 export async function pickRef(page: Page, fieldLabel: string, search: string) {
   const field = page.locator("label", { hasText: fieldLabel }).first().locator("..");
   await field.locator("button").first().click();
-  const input = page.getByPlaceholder("Pesquisar..."); await input.fill(search);
-  await page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last().getByRole("option", { name: new RegExp(search.slice(0, 12), "i") }).first().click();
+  const painel = page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last();
+  const input = painel.getByPlaceholder(/^Pesquisar/).first(); await input.fill(search);
+  await painel.getByRole("option", { name: new RegExp(search.slice(0, 12), "i") }).first().click();
 }
 export const uniq = (p: string) => `${p} ${Date.now().toString(36)}`;
 
@@ -120,4 +128,39 @@ export async function preencherClassificacaoFinanceira(
 ) {
   await pickRef(page, rotulos.natureza, CLASSIFICACAO_DO_SEED.categoria.nome);
   await pickRef(page, rotulos.centro, CLASSIFICACAO_DO_SEED.centro.nome);
+}
+
+/**
+ * UMA AÇÃO DA BARRA DA CENTRAL DE VENDAS QUE PODE MORAR NUM MENU (VISUAL-UX-02, decisão 270).
+ *
+ * Na Central do desenho, Imprimir, Histórico, Documentos abertos, Cancelar e Alterar operação moram no leque de
+ * "Ações rápidas" (`central-vendas-acoes-rapidas`); na Central anterior, Documentos abertos e Alterar operação
+ * ficavam direto na barra, e Histórico e Cancelar em "Mais ações" (`central-vendas-mais-acoes`). O testid do ITEM é
+ * o mesmo nas duas. TOLERANTE: se o item já está visível, nada é aberto; senão abre o leque (nova) ou "Mais ações"
+ * (anterior). Devolve o item visível — quem chama clica ou confere. Roda também no skew contra o web da base.
+ */
+export async function acaoDaCentral(page: Page, testId: string) {
+  await expect(page.getByTestId("central-vendas-acoes"), "a barra da Central montou").toBeVisible();
+  const item = page.getByTestId(testId);
+  if (await item.isVisible()) return item;
+  const leque = page.getByTestId("central-vendas-acoes-rapidas");
+  const mais = page.getByTestId("central-vendas-mais-acoes");
+  if (await leque.count()) { if ((await leque.getAttribute("aria-expanded")) !== "true") await leque.click(); }
+  else if (await mais.count()) await mais.click();
+  await expect(item, `a ação ${testId} aparece no menu da barra`).toBeVisible();
+  return item;
+}
+
+/**
+ * Abre "Dados adicionais" da Central quando o grupo existe e está recolhido (VISUAL-UX-02: na consulta, Movimento,
+ * Versão da operação e Origem moram nele). TOLERANTE: na consulta anterior esses campos estavam soltos em Dados
+ * principais e não havia grupo — aí nada é clicado.
+ */
+export async function abrirDadosAdicionais(page: Page) {
+  const dados = page.getByTestId("central-vendas-dados");
+  await expect(dados, "Dados principais montou").toBeVisible();
+  const grupo = dados.getByRole("button", { name: /^Dados adicionais/ });
+  if (!(await grupo.count())) return;
+  if ((await grupo.getAttribute("aria-expanded")) !== "true") await grupo.click();
+  await expect(grupo).toHaveAttribute("aria-expanded", "true");
 }

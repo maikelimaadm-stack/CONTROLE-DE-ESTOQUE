@@ -103,8 +103,10 @@ test.describe("abas globais", () => {
     await page.locator("main input:not([type=hidden]):not([readonly])").first().fill("Produto dirty e2e");
     const tab = tabs(page).filter({ hasText: /Novo/ }); await expect(tab.getByLabel("Alterações não salvas")).toBeVisible();
     await tab.getByRole("button", { name: /Fechar aba/ }).click();
-    const dlg = page.getByTestId("confirm-dialog"); await expect(dlg).toBeVisible(); await expect(dlg.getByRole("heading", { name: /alterações não salvas/ })).toBeVisible();
-    await dlg.locator(".mg-dialog__footer").getByRole("button", { name: "Fechar", exact: true }).click(); await expect(dlg).toBeHidden(); await expect(tab).toHaveCount(1);
+    // VISUAL-UX-02 (decisão 270): o texto do diálogo compartilhado passou a ser o do desenho
+    const dlg = page.getByTestId("confirm-dialog"); await expect(dlg).toBeVisible(); await expect(dlg.getByRole("heading", { name: /^Fechar .+\?$/ })).toBeVisible();
+    await expect(dlg).toContainText("Existem alterações não salvas. Ao fechar, elas serão descartadas.");
+    await dlg.locator(".mg-dialog__footer").getByRole("button", { name: "Continuar editando", exact: true }).click(); await expect(dlg).toBeHidden(); await expect(tab).toHaveCount(1);
     await tab.getByRole("button", { name: /Fechar aba/ }).click(); await page.getByTestId("confirm-dialog-confirm").click();
     await expect(tab).toHaveCount(0); await expect(activeTab(page)).toHaveText("Início");
   });

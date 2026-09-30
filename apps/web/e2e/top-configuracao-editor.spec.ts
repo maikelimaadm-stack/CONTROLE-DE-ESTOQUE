@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
-import { login, logout, api, uniq, empresaAtiva, primeiroId } from "./helpers";
+import { login, logout, api, uniq, empresaAtiva, primeiroId, acaoDaCentral } from "./helpers";
 
 /**
  * CONFIGURAÇÕES › OPERAÇÕES › TIPOS DE OPERAÇÃO — O EDITOR (TOP-CONFIG-03), E1 a E9 e E20; e a área de
@@ -638,8 +638,10 @@ test("E20 — declarar pela tela que NÃO há próxima operação cria versão, 
    * incondicionalmente, no mesmo fragmento de ações, sem depender da política. Ela descarta a página
    * quebrada; quem descarta a medição prematura é a espera pela resposta, lá em cima.
    */
-  await expect(page.getByRole("button", { name: "Imprimir" }),
+  // VISUAL-UX-02 (decisão 270): Imprimir mora no leque de Ações rápidas, renderizado incondicionalmente como antes
+  await expect(await acaoDaCentral(page, "central-vendas-imprimir"),
     "a tela montou: as demais ações do documento seguem lá").toBeVisible();
+  await page.keyboard.press("Escape");
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════════════════════════════

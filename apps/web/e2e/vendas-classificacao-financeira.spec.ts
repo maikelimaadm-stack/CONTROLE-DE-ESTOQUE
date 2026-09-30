@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, CLASSIFICACAO_DO_SEED } from "./helpers";
+import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirLancamentoDeVendas, escolherTopEContinuar, escolherPrimeiroProdutoDaLinha, preencherClassificacaoFinanceira, CLASSIFICACAO_DO_SEED, abrirDadosAdicionais } from "./helpers";
 
 /**
  * VENDAS-A1 — A CLASSIFICAÇÃO FINANCEIRA NO DOCUMENTO DE VENDA, PELA TELA.
@@ -187,9 +187,13 @@ test("A1-W2 — orçamento e pedido exigem os campos, e a conversão leva a clas
   expect([lidaVenda["categoria_financeira_id"], lidaVenda["centro_custo_id"]], "a venda herdou o MESMO par do orçamento")
     .toEqual([lidoOrcamento["categoria_financeira_id"], lidoOrcamento["centro_custo_id"]]);
 
+  const codigoDoPedido = String((await api<Record<string, unknown>>(page, "GET", `/api/sales/orders/${pedido.id}`))["code"]);
   await page.goto(`/vendas/sales/${venda.id}`);
   await expect(page.getByTestId(WORKSPACE)).toBeVisible();
-  await expect(campo(page, "Origem"), "premissa: a venda nasceu da conversão").toContainText("Convertido");
+  // VISUAL-UX-02 (decisão 270): Origem mora em "Dados adicionais" e diz "<Espécie> <código>" (ou "Convertido")
+  await abrirDadosAdicionais(page);
+  await expect(campo(page, "Origem"), "premissa: a venda nasceu da conversão").toContainText(new RegExp(`${codigoDoPedido}|Convertido`));
+  await expect(campo(page, "Origem")).not.toContainText("Lançamento direto");
   await expect(campo(page, "Natureza")).toContainText(`${CLASSIFICACAO_DO_SEED.categoria.codigo} · ${CLASSIFICACAO_DO_SEED.categoria.nome}`);
   await expect(campo(page, "Centro de resultado")).toContainText(`${CLASSIFICACAO_DO_SEED.centro.codigo} · ${CLASSIFICACAO_DO_SEED.centro.nome}`);
   await expect(page.getByTestId("classificacao-padrao-automatico")).toHaveCount(0);
