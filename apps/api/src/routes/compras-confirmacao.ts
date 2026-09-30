@@ -25,6 +25,7 @@ import { createTitles, installmentPlanSchema, parcelasDoTitulo, type Installment
 import { travarContadorIdGlobal } from "../lib/id-global.js";
 import { lerDocumentoCompra, REGRA_CLASSIFICACAO_COMPRA } from "./compras.js";
 import { validarClassificacaoDoDocumento } from "../lib/documento-comercial.js";
+import { travarPedidoDeOrigemDaCompra, reabrirPedidoDeOrigem } from "./compras-recebimento.js";
 
 /** Versão do contrato da prévia. A web confere forma E versão antes de usar o corpo. */
 export const CONTRATO_PREVIA_CONFIRMACAO_COMPRA = 1;
@@ -328,10 +329,16 @@ async function previaDaConfirmacao(ctx: ServiceCtx, id: string, execucaoConfigur
  * armazém (antes do estorno, nunca 500); `reverseStock`; títulos cancelados; situação cancelado; auditoria.
  * O estorno sai pelo CUSTO MÉDIO ATUAL do produto (o `reverseStock` de sempre), não pelo custo gravado na entrada;
  * `reversal` não passa pela guarda da reserva.
+ *
+ * COMPRAS-02 (decisão 268): a compra gerada de um PEDIDO trava o pedido LOGO DEPOIS da compra e ANTES dos títulos e
+ * do estorno — nunca pedido depois de movimento: o recebimento trava pedido → contador do ID Global, e o estorno
+ * trava saldo → produto (e pode alocar número); travar o pedido depois disso fecharia o ciclo. Cancelada a compra,
+ * o saldo volta (é conta) e o pedido convertido SEM saldo encerrado reabre.
  */
 export async function cancelarCompraConfirmada(ctx: ServiceCtx, doc: Record<string, unknown>, opcoes: { motivo?: string | null } = {}) {
   const id = String(doc.id);
   if (doc.situacao !== "confirmado") throw err("INVALID_STATUS_TRANSITION", "Só a compra confirmada é estornada");
+  const pedidoDeOrigem = await travarPedidoDeOrigemDaCompra(ctx, doc);
   const titulos = await ctx.tx.query<{ id: string; paid_amount: string }>(
     "select id, paid_amount::text as paid_amount from erp.financial_titles where organization_id=$1 and source_type='documentos_compra' and source_id=$2 order by id for update",
     [ctx.orgId, id]);
@@ -370,6 +377,7 @@ export async function cancelarCompraConfirmada(ctx: ServiceCtx, doc: Record<stri
   const u = await ctx.tx.query("update erp.documentos_compra set situacao='cancelado', atualizado_em=now() where id=$1 and organization_id=$2 and situacao='confirmado'", [id, ctx.orgId]);
   if (u.rowCount !== 1) throw notFound("Documento");
   await audit(ctx.tx, ctx, "documentos_compra", id, "cancel", { ...(opcoes.motivo ? { motivo: opcoes.motivo } : {}), estornos, titulosCancelados: tc.rowCount ?? 0 });
+  await reabrirPedidoDeOrigem(ctx, pedidoDeOrigem, id);
   return { id, situacao: "cancelado" };
 }
 
