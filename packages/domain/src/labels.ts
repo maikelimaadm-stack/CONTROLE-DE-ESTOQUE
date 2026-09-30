@@ -58,8 +58,9 @@ export const ENUM_LABELS = {
   decision: { approved: "Aprovada", rejected: "Reprovada", awareness: "Ciência" },
   sales_kind: { budget: "Orçamento", order: "Pedido", sale: "Venda" },
   // COMPRAS-01 (decisão 267): erp.documentos_compra.especie e .situacao.
+  // COMPRAS-02 (decisão 268): `convertido` — só do pedido, quando o saldo de todos os itens foi recebido ou encerrado.
   especie_documento_compra: { pedido: "Pedido de compra", compra: "Compra" },
-  situacao_documento_compra: { aberto: "Aberto", confirmado: "Confirmado", cancelado: "Cancelado" },
+  situacao_documento_compra: { aberto: "Aberto", confirmado: "Confirmado", convertido: "Convertido", cancelado: "Cancelado" },
   animal_movement_type: { purchase: "Compra", sale: "Venda", birth: "Nascimento", death: "Morte", loss: "Perda/desaparecimento", animal_batch_transfer: "Transferência de animais → lote", batch_transfer: "Transferência de animais → lote", batch_grouping: "Agrupamento de lotes", batch_module_area_transfer: "Transferência de lote → módulo/área", module_area_transfer: "Transferência de lote → módulo/área", farm_transfer: "Transferência entre empresas", evolution: "Evolução de categoria", weaning: "Desmama", separation: "Apartação", inventory: "Inventário", processing: "Processamento" },
   handling_type: { nutrition: "Nutrição", sanitary: "Sanitário", weaning: "Desmama", separation: "Apartação", pasture: "Manejo de pastagem", locate: "Localização" },
   sex: { M: "Macho", F: "Fêmea" },

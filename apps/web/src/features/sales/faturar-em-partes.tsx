@@ -108,15 +108,21 @@ export function ItensDaConversao({ itens, linhas, onChange }: { itens: Row[]; li
   </div>;
 }
 
-/** Diálogo "Encerrar saldo": motivo obrigatório (1 a 500 caracteres). */
-export function DialogoEncerrarSaldo({ open, onOpenChange, loading, onConfirmar }: { open: boolean; onOpenChange: (o: boolean) => void; loading: boolean; onConfirmar: (motivo: string) => void }) {
+/** O texto de sempre do diálogo (Vendas). */
+const DESCRICAO_ENCERRAR_SALDO = "O saldo restante deixa de poder ser convertido. As partes já geradas não mudam.";
+
+/**
+ * Diálogo "Encerrar saldo": motivo obrigatório (1 a 500 caracteres). `descricao` opcional (COMPRAS-02: o pedido de
+ * compra fala em receber, não em converter); ausente = o texto de Vendas, sem nenhuma diferença.
+ */
+export function DialogoEncerrarSaldo({ open, onOpenChange, loading, onConfirmar, descricao = DESCRICAO_ENCERRAR_SALDO }: { open: boolean; onOpenChange: (o: boolean) => void; loading: boolean; onConfirmar: (motivo: string) => void; descricao?: string }) {
   const [motivo, setMotivo] = React.useState("");
   React.useEffect(() => { if (open) setMotivo(""); }, [open]);
   const limpo = motivo.trim();
   return <Dialog open={open} onOpenChange={onOpenChange} title="Encerrar saldo" size="sm" testId="dialog-encerrar-saldo"
     footer={<><Button variant="outline" onClick={() => onOpenChange(false)}>Voltar</Button>
       <Button variant="danger" loading={loading} disabled={limpo.length === 0 || limpo.length > 500} data-testid="encerrar-saldo-confirmar" onClick={() => onConfirmar(limpo)}>Encerrar saldo</Button></>}>
-    <p className="mb-3 text-sm text-slate-600">O saldo restante deixa de poder ser convertido. As partes já geradas não mudam.</p>
+    <p className="mb-3 text-sm text-slate-600">{descricao}</p>
     <div className="grid grid-cols-12 gap-2">
       <Field label="Motivo" required span={12}>
         <Textarea data-testid="encerrar-saldo-motivo" maxLength={500} value={motivo} onChange={(e) => setMotivo(e.target.value)} />

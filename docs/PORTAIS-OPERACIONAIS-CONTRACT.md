@@ -51,14 +51,16 @@ O serviço de domínio executa.**
 
 ## 3. Os portais previstos
 
-Só o Portal de Vendas existe como lista unificada (ver a seção própria, mais abaixo); os demais continuam
-sendo DESTINO declarado, e esta seção diz as famílias que cada um cobre.
+Os Portais de Vendas e de Compras existem como lista unificada (ver as seções próprias, mais abaixo); os demais
+continuam sendo DESTINO declarado, e esta seção diz as famílias que cada um cobre.
 As famílias citadas aqui são as declaradas no registry — este documento as referencia, não as define.
 
 ### Portal de Compras
 Processos de compra, da solicitação ao recebimento. Famílias hoje declaradas no escopo: `compras.solicitacao`,
 `compras.pedido` e `compras.compra` (COMPRAS-01, decisão 267). O lançamento de Pedido de compra e de Compra escolhe
-uma TOP configurada da família (obrigatória); a solicitação continua sem TOP.
+uma TOP configurada da família (obrigatória); a solicitação continua sem TOP. O Pedido de compra tem próximos passos
+(COMPRAS-02, decisão 268): recebê-lo, inteiro ou em partes, gera uma Compra ligada a ele — a única aresta executável
+do grafo de compras.
 
 ### Portal de Vendas
 Orçamento, pedido e venda — as três variantes de `erp.sales_documents`, que a BASE2-03C já unificou na
@@ -101,8 +103,9 @@ das duas — autorização continua sendo CAPACIDADE ∧ ESCOPO, verificada no s
 | **TOP-CONFIG-03** | configuração operacional versionada, grafo de próximas operações e Portal de Vendas unificado | mesclada |
 | **TOP-CONFIG-04A** | ativação controlada dos efeitos da TOP, primeiro consumidor real: estoque e financeiro da confirmação de VENDA (formato 2, matriz de suporte, gate operacional, guarda de banco) | mesclada; fase 1 implantada (gate desligado); fase 2 pendente (pré-condições em `docs/DEPLOYMENT.md`) |
 | **VENDAS-A1** | classificação financeira no documento de venda: `categoria_financeira_id` e `centro_custo_id` em par no orçamento, pedido e venda, copiados na conversão e usados nos títulos a receber da confirmação (legado e configurado); guarda de banco contra binário que a ignora (decisão 248) | EM PR |
-| **COMPRAS-01** | documento de compra (0036): Pedido de compra e Compra com TOP obrigatória, lista única, Central de Compras, confirmação da Compra com entrada no estoque (custo rateado) e contas a pagar pela matriz (`compras.compra`), cancelamento com estorno, nota duplicada recusada nos dois caminhos (decisão 267) | em revisão |
-| **TOP-CONFIG-04B+** | Compras: conversão, recebimento em partes e saldo (COMPRAS-02) e layout (COMPRAS-03); Movimentações de Estoque (04C), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
+| **COMPRAS-01** | documento de compra (0036): Pedido de compra e Compra com TOP obrigatória, lista única, Central de Compras, confirmação da Compra com entrada no estoque (custo rateado) e contas a pagar pela matriz (`compras.compra`), cancelamento com estorno, nota duplicada recusada nos dois caminhos (decisão 267) | mesclada e implantada |
+| **COMPRAS-02** | próximos passos do Pedido de compra (0037): grafo de compras (só pedido → compra, nunca cruzando com vendas), receber inteiro ou em partes na Central de Compras pela MESMA função que lança a compra, saldo por item, reabertura ao cancelar a compra e encerramento do saldo (decisão 268) | em revisão |
+| **TOP-CONFIG-04B+** | Compras: layout (COMPRAS-03); Movimentações de Estoque (04C), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
 
 A TOP-CONFIG-04A é a fatia que autoriza efeito configurável — e SÓ estoque e financeiro, SÓ na confirmação
 de `vendas.venda`, SÓ pelas combinações da matriz. Efeito fiscal e contábil, workflow genérico, aprovação
@@ -228,7 +231,9 @@ código:
 
 Enquanto a política **nunca** foi declarada para aquela operação (o acervo), vale a ponte de
 compatibilidade — e só nesse estado. O contrato dela, com a condição de saída medível, é do
-`docs/TIPO-OPERACAO-CONTRACT.md` §11.7.
+`docs/TIPO-OPERACAO-CONTRACT.md` §11.7. **A ponte é só de Vendas**: em Compras não há acervo para proteger (a
+tabela nasceu com TOP obrigatória), e o Pedido de compra cuja versão não declarou próximas operações simplesmente
+não tem próximo passo (decisão 268).
 
 ## Portal de Vendas unificado (implementado)
 
@@ -271,7 +276,7 @@ capacidade exigida depende do que o usuário pode ver), então o recorte de empr
 o módulo EXPLÍCITO da permissão de vendas: com módulo indefinido a RLS vale pela união das empresas
 visíveis, que é mais larga. RLS ∧ SQL = o escopo exato, e nenhum dos dois sozinho decide.
 
-## Portal de Compras — documento comercial de compra (COMPRAS-01) e o que falta
+## Portal de Compras — documento comercial de compra (COMPRAS-01), recebimento do pedido (COMPRAS-02) e o que falta
 
 Decisão 267. O Portal de Compras segue o desenho do Portal de Vendas: lista única de documentos com o tipo como
 coluna e filtro, `+ Novo` escolhendo a Tipo de Operação, a Central de Compras e a consulta com as ações.
@@ -296,10 +301,28 @@ aba "Processos"). Não mudaram, e não viram documento de compra.
   gera as contas a pagar nas parcelas da condição; cancelar a confirmada estorna o estoque e cancela os títulos;
 - a mesma nota (fornecedor, número e série) não entra pela Compra e pelo Documento fiscal de Estoque ao mesmo tempo.
 
+**O que EXISTE (COMPRAS-02, decisão 268) — o pedido vira compra:**
+
+- **o grafo de compras**: a TOP de Pedido de compra declara, na aba "Próximas operações" (a mesma de Vendas), as TOPs
+  de Compra para onde o pedido pode ir, com ou sem "Em partes". É a ÚNICA aresta executável em compras — a compra não
+  converte e o pedido não nasce de conversão —, e nenhuma aresta cruza Vendas e Compras, em nenhum sentido. Sem ponte
+  legada: pedido sem política declarada não tem próximo passo;
+- **os próximos passos do pedido** (`GET /api/compras/pedidos/:id/proximos-passos`, o contrato do de Vendas): o leque
+  da versão congelada do pedido, com a disponibilidade de cada destino avaliada agora;
+- **receber = lançar uma Compra com origem**: escolher a TOP de Compra abre a Central de Compras em modo receber pedido
+  (fornecedor, empresa e produto do pedido, travados; preço e descontos do pedido, editáveis, porque valem os da nota;
+  quantidade igual ao saldo e travada sem "Em partes", editável até o saldo com ele); salvar chama
+  `POST /api/compras/pedidos/:id/convert`, que aplica TODAS as regras de lançar compra pela MESMA função e liga cada
+  item da compra ao item do pedido. A Compra gerada é uma Compra comum: confirma, estorna e cancela como na COMPRAS-01;
+- **o saldo por item** (quantidade − recebido em compras não canceladas; só de quantidade): o pedido mostra Recebido,
+  Saldo e as compras geradas; quando o saldo de todos os itens zera, o pedido vira **Convertido**; cancelar a compra
+  devolve o saldo e reabre o pedido; **Encerrar saldo** (com motivo, só com compra ligada e saldo) fecha o pedido como
+  Convertido, e aí o cancelamento de uma compra não o reabre. Pedido com compra viva não se cancela;
+- na consulta da compra, "Origem: Pedido de compra <código>", com link.
+
 **O que FALTA (e não deve ser simulado):**
 
-- **COMPRAS-02** — converter Pedido de compra em Compra, receber em partes e encerrar saldo (as colunas de origem,
-  parte e saldo encerrado nascem lá); até lá o pedido é registro de compromisso, sem próximos passos;
 - **COMPRAS-03** — layout do documento de compra por TOP;
-- fora do roteiro atual: editar documento salvo, Devolução de Compra, solicitação → pedido, rateio por item ou
-  produto, impostos, NF-e, alçada, reserva e confirmação automática.
+- fora do roteiro atual: editar documento salvo, Devolução de Compra, solicitação → pedido, item na compra que não
+  está no pedido (lança-se outra compra), reabrir saldo encerrado, rateio por item ou produto, impostos, NF-e, alçada,
+  reserva e confirmação automática.

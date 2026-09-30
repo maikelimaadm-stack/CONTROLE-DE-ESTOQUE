@@ -666,20 +666,38 @@ Quando a versão N+1 nasce, as arestas são **copiadas** para ela mesmo sem muda
 `destinos_configurados` viaja junto (§11.7): a versão nova precisa declarar a política inteira dela,
 senão o histórico deixaria de ser autossuficiente.
 
-**A compatibilidade de família é DERIVADA do registry**, não uma lista. `validarDestinoOperacao` aplica
-duas regras, e as duas se resolvem perguntando ao registry qual variante de `erp.sales_documents` cada
-família é:
+**A compatibilidade de família é DERIVADA do registry**, não uma lista. `validarDestinoOperacao`
+(`packages/domain/src/tipo-operacao-destinos.ts`) aplica quatro regras, e todas se resolvem perguntando ao
+registry de que TABELA COMERCIAL cada família é variante — `erp.sales_documents` (a variante) ou
+`erp.documentos_compra` (a espécie), por `tabelaComercialDaFamilia`, com ida e volta pelo registry:
 
-1. **as duas pontas precisam ser executáveis** — configurar destino de uma família que o produto não sabe
-   criar seria configurar um botão sem serviço atrás; a configuração passaria, e a falha apareceria no
-   primeiro clique do operador;
-2. **destino não pode ser da MESMA família da origem** — "deste pedido gere outro pedido" não é
+1. **as duas pontas precisam ser executáveis** — documentos de uma das duas tabelas comerciais que o
+   produto sabe criar. Configurar destino de uma família que o produto não sabe criar seria configurar um
+   botão sem serviço atrás; a configuração passaria, e a falha apareceria no primeiro clique do operador;
+2. **as duas pontas são da MESMA tabela comercial** (COMPRAS-02, decisão 268) — venda nunca liga com
+   compra, em nenhum dos dois sentidos. A conversão grava a origem numa FK para a PRÓPRIA tabela, e saldo,
+   preço e efeito de cada lado são outros: a aresta venda ↔ compra prometeria ligar dois ledgers que o
+   produto mantém separados;
+3. **destino não pode ser da MESMA família da origem** — "deste pedido gere outro pedido" não é
    conversão, é cópia de documento: outra funcionalidade, com outras perguntas, que esta fatia não
-   implementa.
+   implementa;
+4. **em compras, só a aresta que tem serviço: `compras.pedido → compras.compra`** (decisão 268). A compra
+   não converte (não existe rota de conversão a partir dela) e o pedido não nasce de conversão; qualquer
+   outra aresta de compras seria o botão sem serviço da regra 1. A aresta é escrita em ESPÉCIES (o dado que
+   o banco persiste), não em códigos de família — não é uma segunda lista, e renomear a família no registry
+   não a desfaz. Em vendas esta regra não existe e nada mudou.
 
-O que **não** existe, deliberadamente: nenhuma ordem obrigatória entre famílias. Orçamento pode apontar
-direto para venda, pulando o pedido, porque isso é decisão da organização — e era exatamente o que a
-cadeia fixa no código impedia.
+Os dois grafos, hoje:
+
+| Tabela | Arestas que o produto executa |
+| --- | --- |
+| `erp.sales_documents` | qualquer par de famílias DIFERENTES entre `vendas.orcamento`, `vendas.pedido` e `vendas.venda` (a organização escolhe quais habilita) |
+| `erp.documentos_compra` | só `compras.pedido → compras.compra`; `compras.solicitacao` mora em outra tabela e não entra no grafo |
+
+O que **não** existe, deliberadamente: nenhuma ordem obrigatória entre as famílias de VENDAS. Orçamento
+pode apontar direto para venda, pulando o pedido, porque isso é decisão da organização — e era exatamente
+o que a cadeia fixa no código impedia. Compras tem uma aresta só porque só uma tem serviço atrás; quando
+outra ganhar serviço (solicitação → pedido, por exemplo), ela entra na regra 4, não numa lista.
 
 O banco recusa, por check, o **laço sobre a própria TOP** (`destino_tipo_operacao_id <>
 origem_tipo_operacao_id`): é o único caso de ciclo sempre absurdo. Ciclos mais longos entre TOPs
@@ -696,8 +714,12 @@ de negócio.
 Quem monta a lista de destinos possíveis é o **servidor**
 (`GET /api/admin/tipos-operacao/destinos-possiveis?codigoBase=…`), com a MESMA função que a escrita usa.
 Filtrar no cliente exigiria uma cópia da regra — a segunda lista que o contrato proíbe — e ela divergiria
-na primeira família nova, oferecendo um destino que a escrita vai recusar. Família de origem desconhecida
-devolve lista VAZIA, nunca "todas".
+na primeira família nova, oferecendo um destino que a escrita vai recusar. A porta da consulta também é o
+grafo: `familiaTemProximasOperacoes` (existe ao menos um destino que as quatro regras admitem?) — sim para
+as três famílias de vendas e para `compras.pedido`; não para `compras.compra`, fim da cadeia. Família de
+origem desconhecida, ou sem destino possível, devolve lista VAZIA, nunca "todas". As recusas novas da
+COMPRAS-02 (`tabelas_diferentes`, `aresta_nao_executavel`) caem na MESMA `TIPO_OPERACAO_INDISPONIVEL`
+uniforme da escrita.
 
 ### 11.6 Capability e version skew
 
@@ -926,6 +948,24 @@ desfaz tudo em qualquer `throw`, e o `INSERT` da chave vai junto. A mesma chave 
 e será a primeira execução de verdade. E o **hash de idempotência manteve a forma**, com `targetKind` da
 cadeia anterior como componente, para que binário antigo e novo calculem a mesma chave para o mesmo
 pedido durante o rolling deploy (decisão 214); o destino real já entra no hash por `tipo_operacao_id`.
+
+#### Em COMPRAS não há ponte (COMPRAS-02, decisão 268)
+
+Tudo o que esta seção diz sobre a ponte vale só para `erp.sales_documents`. O marcador
+`destinos_configurados` vale igual nas TOPs de compra — é o que separa "não declarou" de "declarou vazio" —,
+mas os dois estados dão o MESMO resultado no recebimento do pedido de compra: **sem próximo passo**. A
+ponte existe para o acervo que nasceu antes de haver onde declarar política; `erp.documentos_compra`
+nasceu na COMPRAS-01 com TOP obrigatória e não tem acervo nenhum, e uma cadeia fixa "pedido → compra" no
+código seria exatamente a política implícita que o grafo existe para tirar do código.
+
+`GET /api/compras/pedidos/:id/proximos-passos` responde o contrato do de vendas (`contractVersion 1`,
+`politicaConfigurada`, `items` com `emPartes`, `especie: "compra"`), com o leque lido da versão CONGELADA do
+pedido e a disponibilidade de cada destino avaliada agora. O recebimento
+(`POST /api/compras/pedidos/:id/convert`) recusa com UMA mensagem — "A TOP deste pedido não tem próxima
+operação configurada." (`TIPO_OPERACAO_INDISPONIVEL`) — a política não declarada, a declarada vazia e a TOP
+fora do leque; e cobra `compras.create` (o destino) dentro, depois de saber o destino, somada a
+`pedidos_compra.edit` (a fonte) na porta. A regra de ouro não muda: o grafo restringe o caminho, a
+capacidade autoriza.
 
 #### Condição de saída da ponte
 
@@ -1312,3 +1352,23 @@ motor paralelo, como o §12 previu. `compras.pedido` fica FORA da matriz: o pedi
 - **Custo de entrada:** a parte de cada item no total do documento, na proporção do total do item (frete, outras
   despesas e desconto entram); soma zero → pela quantidade; maior resto no centavo (piso de cada parte; os centavos que faltam vão aos
   maiores restos, empate pelo maior valor e depois pela ordem dos itens); custo unitário com 6 casas. Ordem das travas na confirmação: documento → contador do ID Global → primeiro movimento.
+
+### 14.1 Receber o pedido de compra (COMPRAS-02)
+
+> Contrato: `packages/domain/src/compras-recebimento.ts` (`validarItensDoRecebimento`, `saldoDoItemDoPedido`) e o
+> grafo do §11.5. Executor: `apps/api/src/routes/compras-recebimento.ts`, que chama a MESMA `lancar` de
+> `apps/api/src/routes/compras.ts`. Invariante: gatilho `trg_documentos_compra_itens_origem_guarda` (0037).
+> Decisão 268.
+
+- **O pedido continua fora da matriz**: ele não tem efeito. Receber é LANÇAR UMA COMPRA COM ORIGEM, pela mesma função
+  e com a TOP de Compra escolhida no leque — a compra gerada resolve a política dela (`resolverPoliticaEfetivaDaCompra`)
+  e confirma, estorna e cancela como qualquer compra. Nenhuma regra de TOP, natureza, condição, itens, lote, efeitos
+  previstos ou nota é copiada para o recebimento.
+- **"Em partes" é da aresta**, como em vendas (decisão 265): a versão CONGELADA do pedido diz se o destino aceita
+  partes. Sem "Em partes", o recebimento traz todos os itens com saldo, cada um com a quantidade do saldo; com ele,
+  qualquer subconjunto, cada quantidade > 0 e ≤ saldo. Nos dois casos cada item da compra guarda `origem_item_id`.
+- **O saldo é só de quantidade**: preço unitário e descontos são os da nota (vêm do corpo). Não há rateio de cabeçalho
+  a partir do pedido — diferente da venda em partes, onde o valor é o da origem.
+- **Situação do pedido**: aberto → convertido quando o saldo de todos os itens zera, ou quando o saldo é encerrado
+  (com motivo, quem e quando, na mesma mudança); convertido → aberto quando uma compra ligada é cancelada, só sem saldo
+  encerrado; convertido → cancelado recusado; pedido com compra ligada viva não se cancela.

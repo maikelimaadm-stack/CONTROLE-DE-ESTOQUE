@@ -1143,7 +1143,7 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | `empresa_id` |  | uuid | sim |  |  |  |  |
 | `especie` | Espécie | text | sim |  |  | `pedido` · `compra` | pedido \| compra. Valor canônico persistido; o rótulo é traduzido na apresentação. |
 | `codigo` |  | text | sim |  |  |  |  |
-| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado \| cancelado. O pedido só fica aberto ou cancelado; cancelado é final. |
+| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado (só compra) \| convertido (só pedido: saldo recebido por inteiro ou encerrado) \| cancelado. Cancelado é final; o pedido convertido volta a aberto quando uma compra dele é cancelada, salvo com saldo encerrado (decisão 268). |
 | `tipo_operacao_id` |  | uuid | sim |  |  |  |  |
 | `tipo_operacao_versao_id` |  | uuid | sim |  |  |  |  |
 | `fornecedor_id` |  | uuid | sim |  |  |  |  |
@@ -1168,6 +1168,10 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | `criado_por` |  | uuid | não | FK | `erp.users` |  |  |
 | `created_at` |  | timestamptz | sim |  |  |  |  |
 | `atualizado_em` |  | timestamptz | sim |  |  |  |  |
+| `origem_documento_id` | Pedido de origem | uuid | não |  |  |  | Só compra: o pedido de compra de que ela foi recebida (decisão 268). Mesma empresa e mesmo fornecedor; não muda depois do lançamento; FK composta com o tenant. |
+| `saldo_encerrado_em` | Saldo encerrado em | timestamptz | não |  |  |  | Só pedido: quando o saldo a receber foi encerrado. Anda junto com saldo_encerrado_por e saldo_encerrado_motivo, gravados na passagem de aberto para convertido. |
+| `saldo_encerrado_por` | Saldo encerrado por | uuid | não | FK | `erp.users` |  | Só pedido: quem encerrou o saldo a receber. |
+| `saldo_encerrado_motivo` | Motivo do encerramento do saldo | text | não |  |  |  | Só pedido: por que o saldo a receber foi encerrado. |
 
 ### ERP-COMPRAS-DOCUMENTO-ITEM — Item do Documento de Compra
 
@@ -1198,6 +1202,7 @@ Linha de produto do documento de compra. Identidade pertence ao documento; só m
 | `validade` |  | date | não |  |  |  |  |
 | `observacao` |  | text | não |  |  |  |  |
 | `posicao` |  | int | sim |  |  |  |  |
+| `origem_item_id` | Item do pedido de origem | uuid | não |  |  |  | Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268). |
 
 ## Financeiro
 

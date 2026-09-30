@@ -19,13 +19,20 @@
  * │ o documento novo nascer sob uma regra que o administrador já corrigiu.                               │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────────┘
  *
+ * DOIS GRAFOS, UMA REGRA (COMPRAS-02, decisão 268). Vendas (`erp.sales_documents`) e compras
+ * (`erp.documentos_compra`) têm cada uma o seu grafo, e as arestas nunca atravessam de uma tabela para a
+ * outra. Em vendas vale o que já valia; em compras só o pedido → compra tem serviço atrás.
+ *
  * ESTE ARQUIVO NÃO EXECUTA NADA. Ele não converte documento, não cria linha, não conhece rota e não
  * conhece permissão. Habilitar uma aresta NUNCA autoriza ninguém a criar o destino: a capacidade continua
  * sendo conferida pela API, e autorização é CAPACIDADE ∧ ESCOPO — se o grafo passasse a liberar caminho,
  * a autorização viraria OR e valeria sempre pela mais frouxa.
  */
-import { tipoOperacao } from "./tipo-operacao.js";
-import { familiaOperacionalDeDocumentoVenda, TABELA_DOCUMENTO_VENDA } from "./tipo-operacao-configurado.js";
+import { CODIGOS_TIPO_OPERACAO, tipoOperacao } from "./tipo-operacao.js";
+import {
+  familiaOperacionalDeDocumentoCompra, familiaOperacionalDeDocumentoVenda, TABELA_DOCUMENTO_COMPRA, TABELA_DOCUMENTO_VENDA,
+  type EspecieDocumentoCompra
+} from "./tipo-operacao-configurado.js";
 
 /** Quantos destinos uma versão pode declarar. Teto de sanidade, não regra de negócio. */
 export const LIMITE_DESTINOS_POR_VERSAO = 20;
@@ -60,43 +67,135 @@ export function varianteDeDocumentoVendaDaFamilia(codigoBase: string | null | un
 export const familiaExecutavelEmVendas = (codigoBase: string | null | undefined): boolean =>
   varianteDeDocumentoVendaDaFamilia(codigoBase) !== undefined;
 
+/** As espécies que `erp.documentos_compra` persiste — o `check` da 0036, e o tipo que o domínio já declara. */
+const ehEspecieDocumentoCompra = (v: string | undefined): v is EspecieDocumentoCompra => v === "pedido" || v === "compra";
+
+/**
+ * COMPRAS-02 (decisão 268): a ESPÉCIE de `erp.documentos_compra` que uma família canônica de compras É — o
+ * caminho inverso de `familiaOperacionalDeDocumentoCompra`, pelo MESMO desenho de
+ * `varianteDeDocumentoVendaDaFamilia`: pergunta ao registry pela origem declarada, e a família tem de voltar
+ * a ser ela mesma na ida e volta. Nenhum par família → espécie está escrito aqui.
+ *
+ * FAIL-CLOSED: família desconhecida, de outra tabela (`compras.solicitacao` mora em `erp.purchase_requests`),
+ * sem variante, ou com um valor que a coluna não persiste → `undefined`. A espécie fora da união não "passa
+ * como string": o tipo de retorno promete `"pedido" | "compra"`, e quem o consome decide efeito por ele.
+ */
+export function varianteDeDocumentoCompraDaFamilia(codigoBase: string | null | undefined): EspecieDocumentoCompra | undefined {
+  if (!codigoBase) return undefined;
+  const declarada = tipoOperacao(codigoBase);
+  if (!declarada || declarada.origem.tabela !== TABELA_DOCUMENTO_COMPRA) return undefined;
+  const especie = declarada.origem.valor;
+  if (!ehEspecieDocumentoCompra(especie)) return undefined;
+  return familiaOperacionalDeDocumentoCompra(especie) === codigoBase ? especie : undefined;
+}
+
+/**
+ * A TABELA COMERCIAL de que a família é variante — `erp.sales_documents` ou `erp.documentos_compra` — e
+ * `undefined` para qualquer outra coisa (família desconhecida, de estoque, de financeiro, entidade inteira).
+ *
+ * É a pergunta que separa os dois grafos: uma aresta só existe entre documentos da MESMA tabela, porque a
+ * conversão copia linhas de um documento para outro da mesma estrutura, com a mesma FK de origem. Uma venda
+ * "gerada de um pedido de compra" não teria coluna onde guardar a origem, nem regra que a sustentasse.
+ *
+ * O endereço das duas tabelas vem de `tipo-operacao-configurado.ts`; as famílias, do registry. Só volta
+ * valor quando a ida e volta fecha (`variante…DaFamilia`), senão uma família mal declarada entraria no grafo.
+ */
+export function tabelaComercialDaFamilia(codigoBase: string | null | undefined): string | undefined {
+  if (varianteDeDocumentoVendaDaFamilia(codigoBase) !== undefined) return TABELA_DOCUMENTO_VENDA;
+  if (varianteDeDocumentoCompraDaFamilia(codigoBase) !== undefined) return TABELA_DOCUMENTO_COMPRA;
+  return undefined;
+}
+
+/**
+ * A ÚNICA ARESTA EXECUTÁVEL EM COMPRAS, escrita em ESPÉCIES (o dado que o banco persiste), nunca em códigos de
+ * família — assim ela não é uma segunda lista de famílias, e renomear a família no registry não a desfaz.
+ *
+ * Por que só pedido → compra (decisão 268): a COMPRA não converte — não existe rota de conversão a partir
+ * dela, e ela é o fim da cadeia (dá entrada e gera a conta a pagar); o PEDIDO não nasce de conversão — é
+ * lançado direto. Aceitar "compra → pedido" na configuração seria gravar um botão sem serviço atrás
+ * (§11 do contrato da TOP): a política passaria, o administrador acreditaria nela, e o primeiro clique
+ * do operador falharia.
+ */
+const ARESTA_EXECUTAVEL_EM_COMPRAS: { readonly origem: EspecieDocumentoCompra; readonly destino: EspecieDocumentoCompra } =
+  Object.freeze({ origem: "pedido", destino: "compra" });
+
 /** Por que uma aresta origem → destino foi recusada. Cada motivo vira uma recusa estável na API. */
 export type RecusaDestinoOperacao =
   | { motivo: "origem_nao_executavel"; codigoBase: string }
   | { motivo: "destino_nao_executavel"; codigoBase: string }
-  | { motivo: "mesma_familia"; codigoBase: string };
+  | { motivo: "mesma_familia"; codigoBase: string }
+  /** COMPRAS-02: as pontas são documentos comerciais de TABELAS diferentes — venda × compra, nos dois sentidos. */
+  | { motivo: "tabelas_diferentes" }
+  /** COMPRAS-02: as duas pontas são de compras, mas o produto não executa esta aresta (só pedido → compra). */
+  | { motivo: "aresta_nao_executavel"; origem: string; destino: string };
 
 /**
  * O TETO DE COMPATIBILIDADE, derivado — o que o PRODUTO admite, antes de o cliente escolher o que habilitar.
  *
- * Duas regras, e nenhuma delas é uma lista:
+ * Quatro regras, e nenhuma delas é uma lista de famílias:
  *
- *   1. AS DUAS PONTAS PRECISAM SER EXECUTÁVEIS. Configurar "deste orçamento gere uma devolução de venda"
- *      seria configurar um botão que, ao ser clicado, não tem serviço nenhum atrás. A configuração passaria,
- *      o administrador acreditaria nela, e a falha apareceria no primeiro clique do operador. Quando
- *      `vendas.devolucao` existir de verdade no registry, ela entra aqui sozinha — sem tocar neste arquivo.
+ *   1. AS DUAS PONTAS PRECISAM SER EXECUTÁVEIS — documentos de uma das duas tabelas comerciais que o produto
+ *      sabe criar. Configurar "deste orçamento gere uma devolução de venda" seria configurar um botão que,
+ *      ao ser clicado, não tem serviço nenhum atrás. A configuração passaria, o administrador acreditaria
+ *      nela, e a falha apareceria no primeiro clique do operador. Quando `vendas.devolucao` existir de
+ *      verdade no registry, ela entra aqui sozinha — sem tocar neste arquivo.
  *
- *   2. DESTINO DE FAMÍLIA IGUAL À ORIGEM NÃO É CONVERSÃO, É CÓPIA. "Deste pedido gere outro pedido" não
+ *   2. AS DUAS PONTAS SÃO DA MESMA TABELA COMERCIAL (COMPRAS-02, decisão 268). Venda nunca liga com compra,
+ *      em nenhum dos dois sentidos: a conversão grava a origem numa FK para a PRÓPRIA tabela, e a regra de
+ *      saldo, de preço e de efeito de cada lado é outra. "Deste pedido de venda gere uma compra" seria um
+ *      botão sem serviço — e, pior, um que prometeria ligar dois ledgers que o produto mantém separados.
+ *
+ *   3. DESTINO DE FAMÍLIA IGUAL À ORIGEM NÃO É CONVERSÃO, É CÓPIA. "Deste pedido gere outro pedido" não
  *      descreve uma etapa seguinte; descreve duplicar um documento — que é outra funcionalidade, com outras
  *      perguntas (copia os itens? o preço? mantém o vínculo?) e que esta fatia não implementa. Recusar é
  *      honesto; aceitar seria oferecer um caminho cujo comportamento ninguém definiu.
  *
- * O que NÃO está aqui, deliberadamente: nenhuma ordem obrigatória entre as famílias. Orçamento pode apontar
- * direto para venda, pulando o pedido, porque isso é decisão da organização — e era exatamente o que a
- * cadeia fixa no código impedia.
+ *   4. EM COMPRAS, SÓ A ARESTA QUE TEM SERVIÇO: pedido → compra (`ARESTA_EXECUTAVEL_EM_COMPRAS`). Em VENDAS
+ *      esta regra não existe e nada muda: as três regras acima são exatamente as que valiam antes.
+ *
+ * O que NÃO está aqui, deliberadamente: nenhuma ordem obrigatória entre as famílias de VENDAS. Orçamento
+ * pode apontar direto para venda, pulando o pedido, porque isso é decisão da organização — e era exatamente
+ * o que a cadeia fixa no código impedia. Compras tem uma aresta só porque só uma tem serviço atrás; quando
+ * outra ganhar serviço (solicitação → pedido, por exemplo), ela entra na regra 4, não numa lista.
  */
 export function validarDestinoOperacao(origemCodigoBase: string, destinoCodigoBase: string): RecusaDestinoOperacao[] {
   const recusas: RecusaDestinoOperacao[] = [];
-  if (!familiaExecutavelEmVendas(origemCodigoBase)) {
+  const tabelaOrigem = tabelaComercialDaFamilia(origemCodigoBase);
+  const tabelaDestino = tabelaComercialDaFamilia(destinoCodigoBase);
+  if (!tabelaOrigem) {
     recusas.push({ motivo: "origem_nao_executavel", codigoBase: origemCodigoBase });
   }
-  if (!familiaExecutavelEmVendas(destinoCodigoBase)) {
+  if (!tabelaDestino) {
     recusas.push({ motivo: "destino_nao_executavel", codigoBase: destinoCodigoBase });
+  }
+  if (tabelaOrigem && tabelaDestino && tabelaOrigem !== tabelaDestino) {
+    recusas.push({ motivo: "tabelas_diferentes" });
   }
   if (origemCodigoBase === destinoCodigoBase) {
     recusas.push({ motivo: "mesma_familia", codigoBase: destinoCodigoBase });
+  } else if (tabelaOrigem === TABELA_DOCUMENTO_COMPRA && tabelaDestino === TABELA_DOCUMENTO_COMPRA) {
+    const origem = varianteDeDocumentoCompraDaFamilia(origemCodigoBase);
+    const destino = varianteDeDocumentoCompraDaFamilia(destinoCodigoBase);
+    if (origem !== ARESTA_EXECUTAVEL_EM_COMPRAS.origem || destino !== ARESTA_EXECUTAVEL_EM_COMPRAS.destino) {
+      recusas.push({ motivo: "aresta_nao_executavel", origem: origemCodigoBase, destino: destinoCodigoBase });
+    }
   }
   return recusas;
+}
+
+/**
+ * A FAMÍLIA PODE TER PRÓXIMAS OPERAÇÕES? — existe ao menos UM destino que o teto de compatibilidade admite.
+ *
+ * DERIVADA, e não uma segunda lista: pergunta a `validarDestinoOperacao` por cada família do registry. Hoje
+ * responde sim para as três de vendas (qualquer uma aponta para outra) e para o pedido de compra (aponta para
+ * a compra); não para a compra, que é o fim da cadeia, nem para família desconhecida — fail-closed, lista
+ * vazia e nunca "todas". Uma família nova com serviço de conversão entra aqui sozinha, pela regra do grafo.
+ *
+ * É a porta de `/destinos-possiveis`: origem sem destino possível não abre consulta nenhuma.
+ */
+export function familiaTemProximasOperacoes(codigoBase: string | null | undefined): boolean {
+  if (!codigoBase || tabelaComercialDaFamilia(codigoBase) === undefined) return false;
+  return CODIGOS_TIPO_OPERACAO.some((destino) => validarDestinoOperacao(codigoBase, destino).length === 0);
 }
 
 /** Um destino declarado por uma versão, como o cliente o envia e como a API o devolve. */

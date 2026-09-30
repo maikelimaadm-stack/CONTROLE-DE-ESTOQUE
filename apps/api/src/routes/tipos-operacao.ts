@@ -26,7 +26,7 @@ import {
   lerDestinosOperacao,
   destinosOperacaoIguais,
   validarDestinoOperacao,
-  varianteDeDocumentoVendaDaFamilia,
+  familiaTemProximasOperacoes,
   LIMITE_DESTINOS_POR_VERSAO,
   LIMITE_CONDICOES_PERMITIDAS,
   recusasFiscaisDaFamiliaTop, recusasClienteEmAtrasoDaFamiliaTop,
@@ -428,6 +428,11 @@ interface DestinoResolvido {
  *
  * `for share` nas linhas de destino: elas não podem ser excluídas entre esta conferência e o `insert` das
  * arestas, ou a política nasceria apontando para uma TOP que deixou de existir dentro da mesma janela.
+ *
+ * COMPRAS-02 (decisão 268): a compatibilidade continua sendo UMA função (`validarDestinoOperacao`), agora
+ * com o grafo de compras dentro dela — venda × compra recusada nos dois sentidos, e em compras só
+ * pedido → compra. As razões novas (`tabelas_diferentes`, `aresta_nao_executavel`) caem na MESMA recusa
+ * uniforme abaixo: família incompatível continua indistinguível de destino inexistente.
  */
 async function conferirDestinos(
   ctx: ServiceCtx, origemCodigoBase: string, pedidos: readonly DestinoOperacaoV1[]
@@ -672,8 +677,11 @@ export default async function tiposOperacaoRoutes(app: FastifyInstance) {
     const q = z.object({ codigoBase: z.string().trim().min(1) }).strict().parse(req.query);
 
     // Origem que o produto não sabe executar não tem próxima operação nenhuma. Recusar aqui evita oferecer
-    // um leque para uma operação cuja conversão não existe.
-    if (!varianteDeDocumentoVendaDaFamilia(q.codigoBase)) return { items: [] };
+    // um leque para uma operação cuja conversão não existe. COMPRAS-02 (decisão 268): a pergunta deixou de
+    // ser "é de vendas?" e passou a ser a do GRAFO — existe algum destino que o teto admite? Vendas continua
+    // respondendo sim para as três famílias; o pedido de compra passa a responder sim (→ compra); a compra,
+    // fim da cadeia, e família desconhecida continuam com lista VAZIA, nunca "todas".
+    if (!familiaTemProximasOperacoes(q.codigoBase)) return { items: [] };
 
     const r = await ctx.tx.query<{ id: string; codigo: string; nome: string; codigo_base: string }>(
       `select t.id, t.codigo, v.nome, t.codigo_base

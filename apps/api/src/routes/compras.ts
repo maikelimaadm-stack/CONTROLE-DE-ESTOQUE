@@ -9,7 +9,13 @@
  * Este arquivo LANÇA, LISTA, CONSULTA e CANCELA o documento ABERTO. A prévia, a confirmação, o estorno da compra
  * confirmada e a conferência da nota duplicada moram em `compras-confirmacao.ts`.
  *
- * O que NÃO existe aqui (fora da fatia): editar documento salvo, converter pedido em compra, receber em partes.
+ * COMPRAS-02 (decisão 268): RECEBER o pedido (inteiro ou em partes) é LANÇAR UMA COMPRA COM ORIGEM — a rota do
+ * recebimento (`compras-recebimento.ts`) chama a MESMA `lancar` deste arquivo, com a origem como parâmetro; nenhuma
+ * regra de lançamento é copiada. Aqui ficam também o que o recebimento muda na leitura (recebido e saldo por item,
+ * compras geradas, origem da compra) e no cancelamento (pedido com compra não cancela; compra cancelada reabre o
+ * pedido).
+ *
+ * O que NÃO existe aqui (fora da fatia): editar documento salvo.
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -18,7 +24,7 @@ import {
   documentTotals, itemTotal, familiaOperacionalDeDocumentoCompra, chaveI18nDaFamiliaOperacional, moduloDaPermissao,
   resolverPoliticaEfetivaDaCompra, planoDaCondicao, camposExigidosTop, exigenciasGeraisFaltando, EXIGENCIAS_GERAIS_COMPRA_TOP,
   ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, MENSAGEM_CONDICAO_NAO_PERMITIDA,
-  CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_REGRAS_DA_OPERACAO,
+  CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, saldoDoItemDoPedido,
 } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
@@ -33,6 +39,9 @@ import {
 } from "../lib/documento-comercial.js";
 import { regrasDaVersaoTop, regrasDaTopAtual } from "./vendas-regras-operacao.js";
 import { registrarConfirmacaoCompras, cancelarCompraConfirmada, conferirNotaDuplicada } from "./compras-confirmacao.js";
+import {
+  registrarRecebimentoCompras, conferirCancelamentoDoPedido, travarPedidoDeOrigemDaCompra, reabrirPedidoDeOrigem,
+} from "./compras-recebimento.js";
 
 const t = criarTradutor(ptBR);
 
@@ -97,7 +106,22 @@ const documentoSchema = z.object({
   observacao: textoOpcional(2000),
   itens: z.array(itemSchema).min(1),
 }).strict();
-type DocumentoCompraEntrada = z.infer<typeof documentoSchema>;
+export type DocumentoCompraEntrada = z.infer<typeof documentoSchema>;
+
+/**
+ * COMPRAS-02 (decisão 268) — O CORPO DO RECEBIMENTO (`POST /compras/pedidos/:id/convert`). É o corpo de lançar
+ * compra, DERIVADO dele (e não reescrito ao lado, que envelheceria em silêncio), com três diferenças:
+ *   · sem `empresa_id` e sem `fornecedor_id` — vêm do PEDIDO; aceitá-los no corpo seria pedir ao cliente o que o
+ *     servidor já sabe, e abrir a porta para uma compra "do pedido" com outro fornecedor;
+ *   · cada item traz `item_origem_id` no lugar de `produto_id` — o produto vem do item do pedido;
+ *   · `tipo_operacao_id` é a TOP de DESTINO, conferida contra o leque da versão congelada do pedido.
+ * Preço unitário, descontos, lote, validade e armazém continuam no item: valem os da NOTA. `.strict()` nos dois
+ * níveis: `produto_id` ou `fornecedor_id` enviados aqui são 422, nunca descartados em silêncio.
+ */
+const itemDoRecebimentoSchema = itemSchema.omit({ produto_id: true }).extend({ item_origem_id: uuid }).strict();
+export const recebimentoSchema = documentoSchema.omit({ empresa_id: true, fornecedor_id: true })
+  .extend({ itens: z.array(itemDoRecebimentoSchema).min(1) }).strict();
+export type RecebimentoEntrada = z.infer<typeof recebimentoSchema>;
 
 /** O corpo do cancelamento: motivo opcional; presente, tem conteúdo. `.strict()` pelo mesmo motivo. */
 const cancelarSchema = z.object({ motivo: z.string().trim().min(1).max(500).nullish() }).strict();
@@ -132,7 +156,13 @@ const topParaTela = (l: { tipo_operacao_id: string | null; top_codigo: string | 
 /**
  * CARREGA O DOCUMENTO JÁ AMARRADO À ESPÉCIE DA PORTA. Espécie errada, inexistente, de outro tenant e fora do
  * escopo de empresa (módulo compras) caem na MESMA 404. `lock` trava SÓ o cabeçalho (`for update of d`) — é o
- * que serializa confirmação e cancelamento. Exportada para `compras-confirmacao.ts`.
+ * que serializa confirmação, cancelamento, recebimento e encerramento do saldo. Exportada para
+ * `compras-confirmacao.ts` e `compras-recebimento.ts`.
+ *
+ * COMPRAS-02: no PEDIDO, cada item sai com `recebido` (soma ligada em compras NÃO canceladas) e `saldo`, e o
+ * documento com `compras_geradas`; na COMPRA, `origem_codigo` (o pedido de onde veio). Os itens são lidos DEPOIS
+ * da trava do cabeçalho: com `lock`, o saldo que o recebimento e o encerramento conferem já enxerga a compra que
+ * a transação anterior sobre o mesmo pedido acabou de gravar. Uma consulta por pergunta, nunca por item.
  */
 export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: EspecieCompra, opts: { lock?: boolean } = {}): Promise<Record<string, unknown>> {
   // id malformado é a MESMA 404 (sem 22P02 → 500).
@@ -143,7 +173,8 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
             toper.codigo as top_codigo, toper.codigo_base as top_codigo_base, topv.nome as top_nome, topv.versao as top_versao,
             fcat.code as categoria_financeira_codigo, fcat.name as categoria_financeira_nome,
             ccus.code as centro_custo_codigo, ccus.name as centro_custo_nome,
-            cpag.code as condicao_pagamento_codigo, cpag.nome as condicao_pagamento_nome, pm.name as forma_pagamento_nome
+            cpag.code as condicao_pagamento_codigo, cpag.nome as condicao_pagamento_nome, pm.name as forma_pagamento_nome,
+            ue.name as saldo_encerrado_por_nome, dorig.codigo as origem_codigo
        from erp.documentos_compra d
        join erp.people fo on fo.id = d.fornecedor_id and fo.organization_id = d.organization_id
        left join erp.people tr on tr.id = d.transportadora_id and tr.organization_id = d.organization_id
@@ -154,19 +185,40 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
        left join erp.cost_centers ccus on ccus.id = d.centro_custo_id and ccus.organization_id = d.organization_id
        left join erp.condicoes_pagamento cpag on cpag.id = d.condicao_pagamento_id and cpag.organization_id = d.organization_id
        left join erp.payment_methods pm on pm.id = d.forma_pagamento_id
+       left join erp.users ue on ue.id = d.saldo_encerrado_por
+       left join erp.documentos_compra dorig on dorig.id = d.origem_documento_id and dorig.organization_id = d.organization_id
       where d.id = $1 and d.organization_id = $2 and d.especie = $${sc.params.length}${sc.sql}${opts.lock ? " for update of d" : ""}`,
     sc.params);
   const linha = r.rows[0];
   if (!linha) throw notFound("Documento");
-  const itens = await ctx.tx.query(
+  const ehPedido = especie === "pedido";
+  // O recebido de cada item do pedido na MESMA consulta dos itens (lateral agregada): compras canceladas não
+  // contam — cancelar a compra devolve o saldo sem ninguém atualizar coluna nenhuma. Na compra a lateral não roda.
+  const itensLidos = await ctx.tx.query<Record<string, unknown> & { quantidade: string; recebido_total: string | null }>(
     `select i.*, p.description as produto_nome, p.code as produto_codigo, p.control_stock as produto_controla_estoque,
-            p.controle_lote as produto_controle_lote, mu.symbol as unidade, w.description as armazem_nome
+            p.controle_lote as produto_controle_lote, mu.symbol as unidade, w.description as armazem_nome,
+            ${ehPedido ? "coalesce(rec.recebido, 0)::text" : "null::text"} as recebido_total
        from erp.documentos_compra_itens i
        join erp.products p on p.id = i.produto_id and p.organization_id = i.organization_id
        left join erp.measurement_units mu on mu.id = p.measurement_id
        left join erp.warehouses w on w.id = i.armazem_id and w.organization_id = i.organization_id
+       ${ehPedido ? `left join lateral (
+         select sum(ci.quantidade) as recebido
+           from erp.documentos_compra_itens ci
+           join erp.documentos_compra cd on cd.id = ci.documento_id and cd.organization_id = ci.organization_id
+          where ci.origem_item_id = i.id and ci.organization_id = i.organization_id and cd.situacao <> 'cancelado') rec on true` : ""}
       where i.documento_id = $1 and i.organization_id = $2
       order by i.posicao, i.id`, [id, ctx.orgId]);
+  const itens = itensLidos.rows.map(({ recebido_total, ...item }) => (ehPedido
+    ? { ...item, recebido: D(recebido_total ?? "0").toFixed(4), saldo: saldoDoItemDoPedido({ quantidade: item.quantidade, recebido: recebido_total ?? "0" }) }
+    : item));
+  // As compras geradas deste pedido (inclusive canceladas: é a história do pedido), na ordem em que nasceram.
+  const comprasGeradas = ehPedido
+    ? (await ctx.tx.query<{ id: string; codigo: string; situacao: string }>(
+      `select id, codigo, situacao from erp.documentos_compra
+        where organization_id = $1 and origem_documento_id = $2 and especie = 'compra'
+        order by created_at, id`, [ctx.orgId, id])).rows
+    : null;
   const titulos = await ctx.tx.query(
     `select id, code, number, installment_number, due_date, amount, balance, status
        from erp.financial_titles where organization_id = $1 and source_type = 'documentos_compra' and source_id = $2
@@ -184,7 +236,8 @@ export async function lerDocumentoCompra(ctx: ServiceCtx, id: string, especie: E
   return {
     ...cabecalho,
     tipo_operacao: topParaTela({ tipo_operacao_id: linha.tipo_operacao_id, top_codigo, top_codigo_base, top_nome, top_versao }),
-    itens: itens.rows, titulos: titulos.rows, movimentos: movimentos.rows,
+    itens, titulos: titulos.rows, movimentos: movimentos.rows,
+    ...(comprasGeradas ? { compras_geradas: comprasGeradas } : {}),
   };
 }
 
@@ -302,18 +355,26 @@ async function efeitosPrevistosDaCompra(ctx: ServiceCtx, top: Pick<TopDoLancamen
   };
 }
 
+/** O plano de parcelas que o documento GRAVA — do corpo, ou derivado da condição. É o que a confirmação lê. */
+type PlanoGravado = Record<string, unknown> & { first_due_date?: string };
+
 /**
  * COMPRA QUE VAI GERAR TÍTULO (política congelada prevê conta a pagar E valor_total > 0): natureza e centro
  * obrigatórios e as exigências financeiras da política conferidos AO SALVAR, 422 no campo. Valor zero não gera
  * título (a confirmação também não) — nada é exigido.
+ *
+ * COMPRAS-02 (item 0): o vencimento exigido é o PRIMEIRO do plano que será GRAVADO (o do corpo ou o derivado da
+ * condição), ou `data_vencimento` — a mesma conta da confirmação (`plano?.first_due_date ?? data_vencimento`).
+ * Olhar só `plano_parcelas` do corpo recusava ao salvar a compra com condição e sem o campo Vencimento, que a
+ * confirmação aceitaria: a condição já define os vencimentos, e o plano derivado dela é o que vai para o banco.
  */
-function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos, total: string): void {
+function conferirExigenciasDoTitulo(d: DocumentoCompraEntrada, efeitos: EfeitosPrevistos, total: string, plano: PlanoGravado | null): void {
   if (!efeitos.titulo || !D(total).gt(0)) return;
   const msg = "Informe a natureza financeira e o centro de resultado: esta compra gera contas a pagar";
   if (!d.categoria_financeira_id) throw recusa("categoria_financeira_id", msg);
   if (!d.centro_custo_id) throw recusa("centro_custo_id", msg);
   if (efeitos.exigeFormaPagamento && !d.forma_pagamento_id) throw recusa("forma_pagamento_id", "A operação desta compra exige a forma de pagamento");
-  if (efeitos.exigeVencimento && !(d.plano_parcelas?.first_due_date ?? d.data_vencimento)) throw recusa("data_vencimento", "A operação desta compra exige o vencimento");
+  if (efeitos.exigeVencimento && !(plano?.first_due_date ?? d.data_vencimento)) throw recusa("data_vencimento", "A operação desta compra exige o vencimento");
 }
 
 /** Casas decimais: quantidade até 4 (precisão do estoque), valor unitário até 6 (precisão do custo). */
@@ -379,7 +440,14 @@ async function cobrarRegrasDaCompra(ctx: ServiceCtx, top: TopDoLancamento, d: Do
 const COLUNAS_INSERCAO = `organization_id, empresa_id, especie, codigo, situacao, tipo_operacao_id, tipo_operacao_versao_id,
   fornecedor_id, transportadora_id, data_documento, data_entrada, data_vencimento, numero_nota, serie_nota,
   categoria_financeira_id, centro_custo_id, condicao_pagamento_id, parcelas_ajustadas, plano_parcelas, forma_pagamento_id,
-  valor_itens, frete, outras_despesas, desconto, valor_total, observacao, criado_por`;
+  valor_itens, frete, outras_despesas, desconto, valor_total, observacao, criado_por, origem_documento_id`;
+
+/**
+ * COMPRAS-02 — A ORIGEM DE UM LANÇAMENTO: o pedido de compra recebido e, UM POR ITEM E NA ORDEM DO CORPO, o item
+ * do pedido de onde cada linha veio. Só o recebimento (`compras-recebimento.ts`) passa origem; o POST de sempre
+ * não passa, e grava como antes (origem nula, nenhuma linha ligada) — que é o que o gatilho da 0037 exige.
+ */
+export interface OrigemDoLancamento { documentoId: string; itemOrigemIds: readonly string[] }
 
 /**
  * A nota já está numa Compra que o usuário NÃO vê (outra empresa): a conferência sob RLS não a achou e o índice
@@ -391,7 +459,17 @@ function recusaDaNotaInvisivel(e: unknown): never {
   throw e;
 }
 
-async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean) {
+/**
+ * LANÇAR — a porta ÚNICA das regras de lançamento, para o POST da espécie e para o RECEBIMENTO do pedido (COMPRAS-02,
+ * com `origem`). Receber não tem regra própria de TOP, natureza, condição, itens, lote, efeitos previstos, nota
+ * duplicada ou totais: uma segunda cópia "equivalente" divergiria na primeira fatia que mexesse numa das duas.
+ */
+export async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompraEntrada, execucaoConfiguradaHabilitada: boolean, origem?: OrigemDoLancamento) {
+  // Contrato interno, não entrada do cliente: origem só na compra, e uma ligação por linha. Quebrar isto é defeito
+  // de quem chama — o gatilho da 0037 recusaria depois, mas com uma mensagem que não aponta o chamador.
+  if (origem && (especie !== "compra" || origem.itemOrigemIds.length !== d.itens.length)) {
+    throw new Error("lancar: origem só na compra, com um item de origem por linha do corpo");
+  }
   conferirCamposDaEspecie(especie, d);
   conferirFormaDoDocumento(d);
   const top = await resolverTopParaLancamento(ctx, familiaDaEspecie(especie), d.tipo_operacao_id);
@@ -405,12 +483,14 @@ async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompr
   // Totais SEMPRE no servidor: itens − descontos + frete + outras − desconto.
   const itensCalculo = d.itens.map((i) => ({ quantity: i.quantidade, unitPrice: i.valor_unitario, discount: i.desconto, discountPercent: i.desconto_percentual }));
   const totais = documentTotals(itensCalculo, { freight: d.frete, otherValues: d.outras_despesas, discount: d.desconto });
-  if (efeitos) conferirExigenciasDoTitulo(d, efeitos, totais.total);
+  // O plano GRAVADO sai ANTES da conferência das exigências do título (item 0 da COMPRAS-02): a exigência de
+  // vencimento confere o primeiro vencimento deste plano — o que a confirmação vai ler do banco.
+  const plano: PlanoGravado | null = d.plano_parcelas ? { ...d.plano_parcelas }
+    : condicao ? { ...planoDaCondicao(condicao, { dataDocumento: d.data_documento, total: totais.total }) } : null;
+  if (efeitos) conferirExigenciasDoTitulo(d, efeitos, totais.total, plano);
 
   if (especie === "compra" && d.numero_nota) await conferirNotaDuplicada(ctx, { fornecedorId: d.fornecedor_id, numero: d.numero_nota, serie: d.serie_nota, excluirDocumentoId: null });
 
-  const plano: Record<string, unknown> | null = d.plano_parcelas ? { ...d.plano_parcelas }
-    : condicao ? { ...planoDaCondicao(condicao, { dataDocumento: d.data_documento, total: totais.total }) } : null;
   // Derivado no servidor, como na venda: plano próprio sobre uma condição = parcelas ajustadas.
   const parcelasAjustadas = Boolean(d.plano_parcelas) && condicao !== null;
 
@@ -419,21 +499,26 @@ async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: DocumentoCompr
     d.fornecedor_id, d.transportadora_id ?? null, d.data_documento, d.data_entrada ?? null, d.data_vencimento ?? null, d.numero_nota, d.serie_nota,
     classificacao?.categoriaFinanceiraId ?? null, classificacao?.centroCustoId ?? null, condicao?.id ?? null, parcelasAjustadas,
     plano ? JSON.stringify(plano) : null, d.forma_pagamento_id ?? null,
-    totais.subtotal, money(d.frete), money(d.outras_despesas), money(d.desconto), totais.total, d.observacao, ctx.user.id];
+    totais.subtotal, money(d.frete), money(d.outras_despesas), money(d.desconto), totais.total, d.observacao, ctx.user.id,
+    origem?.documentoId ?? null];
+  // Com origem, o gatilho de conferência da 0037 confere que ela é um PEDIDO ABERTO da mesma empresa e fornecedor.
   const id = (await ctx.tx.query<{ id: string }>(
-    `insert into erp.documentos_compra (${COLUNAS_INSERCAO}) values ($1,$2,$3,$4,'aberto',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26) returning id`,
+    `insert into erp.documentos_compra (${COLUNAS_INSERCAO}) values ($1,$2,$3,$4,'aberto',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27) returning id`,
     valores).catch(recusaDaNotaInvisivel)).rows[0]!.id;
   await atribuirIdGlobal(ctx, "documentos_compra", id);
+  // Com origem, cada linha liga ao item do pedido (`origem_item_id`); o gatilho da origem (0037) trava o item de
+  // origem e confere pedido, produto e soma ≤ quantidade — a rede atrás da conferência amigável do recebimento.
   for (const [i, it] of d.itens.entries()) {
     await ctx.tx.query(
       `insert into erp.documentos_compra_itens (organization_id, documento_id, produto_id, armazem_id, quantidade, valor_unitario, desconto,
-          desconto_percentual, valor_total, lote, validade, observacao, posicao)
-       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+          desconto_percentual, valor_total, lote, validade, observacao, posicao, origem_item_id)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [ctx.orgId, id, it.produto_id, it.armazem_id ?? null, it.quantidade, it.valor_unitario, money(it.desconto), it.desconto_percentual,
-        itemTotal(itensCalculo[i]!), it.lote, it.validade ?? null, it.observacao, i]);
+        itemTotal(itensCalculo[i]!), it.lote, it.validade ?? null, it.observacao, i, origem?.itemOrigemIds[i] ?? null]);
   }
   await audit(ctx.tx, ctx, "documentos_compra", id, "create",
-    { especie, codigo, tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao });
+    { especie, codigo, tipoOperacaoId: top.tipoOperacaoId, tipoOperacaoVersaoId: top.tipoOperacaoVersaoId, tipoOperacaoCodigo: top.codigo, tipoOperacaoVersao: top.versao,
+      ...(origem ? { from: origem.documentoId } : {}) });
   return { id, codigo, especie, situacao: "aberto", valor_itens: totais.subtotal, valor_total: totais.total };
 }
 
@@ -503,6 +588,12 @@ export default async function comprasRoutes(app: FastifyInstance) {
     /**
      * CANCELAR. Aberto → cancelado aqui; compra CONFIRMADA → estorno em `cancelarCompraConfirmada`. Visibilidade
      * conferida ANTES da idempotência (o replay não atravessa o escopo); o documento é travado antes da decisão.
+     *
+     * COMPRAS-02 (decisão 268): o PEDIDO convertido, ou com compra gerada não cancelada, NÃO cancela (409) — as
+     * compras continuariam citando um pedido cancelado, com saldo que ninguém mais controla. A COMPRA gerada de um
+     * pedido, cancelada, devolve o saldo (é conta, não coluna) e REABRE o pedido que estava convertido sem saldo
+     * encerrado. Trava na ordem compra → pedido; aqui não há movimento, e na confirmada o pedido é travado antes do
+     * estorno (`cancelarCompraConfirmada`).
      */
     app.post(`${base}/:id/cancel`, async (req) => runService(app, req, `${recurso}.delete`, async (ctx) => {
       const { id } = req.params as { id: string };
@@ -513,11 +604,14 @@ export default async function comprasRoutes(app: FastifyInstance) {
         async () => {
           const doc = await lerDocumentoCompra(ctx, id, especie, { lock: true });
           if (doc.situacao === "cancelado") throw err("ALREADY_CANCELLED", "Documento já cancelado");
+          if (especie === "pedido") conferirCancelamentoDoPedido(doc);
           if (doc.situacao === "confirmado") return cancelarCompraConfirmada(ctx, doc, { motivo });
+          const pedidoDeOrigem = await travarPedidoDeOrigemDaCompra(ctx, doc);
           const u = await ctx.tx.query("update erp.documentos_compra set situacao = 'cancelado', atualizado_em = now() where id = $1 and organization_id = $2 and situacao = 'aberto'", [id, ctx.orgId]);
           // ROW COUNT SOB RLS: zero linha sem conferência seria "cancelado" sem efeito.
           if (u.rowCount !== 1) throw notFound("Documento");
           await audit(ctx.tx, ctx, "documentos_compra", id, "cancel", motivo ? { motivo } : undefined, { before: { situacao: "aberto" }, after: { situacao: "cancelado" } });
+          await reabrirPedidoDeOrigem(ctx, pedidoDeOrigem, id);
           return { id, situacao: "cancelado" };
         })).result;
     }));
@@ -535,4 +629,5 @@ export default async function comprasRoutes(app: FastifyInstance) {
   }));
 
   registrarConfirmacaoCompras(app);
+  registrarRecebimentoCompras(app);
 }

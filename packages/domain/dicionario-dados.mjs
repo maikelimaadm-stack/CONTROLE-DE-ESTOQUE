@@ -257,14 +257,21 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     tops: ["compras.pedido", "compras.compra"], descricao: "Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa e a tela (pedido de compra, compra). A Compra confirmada dá entrada no estoque e gera as contas a pagar.",
     campos: {
       especie: { nome: "Espécie", descricao: "pedido | compra. Valor canônico persistido; o rótulo é traduzido na apresentação." },
-      situacao: { nome: "Situação", descricao: "aberto | confirmado | cancelado. O pedido só fica aberto ou cancelado; cancelado é final." },
+      situacao: { nome: "Situação", descricao: "aberto | confirmado (só compra) | convertido (só pedido: saldo recebido por inteiro ou encerrado) | cancelado. Cancelado é final; o pedido convertido volta a aberto quando uma compra dele é cancelada, salvo com saldo encerrado (decisão 268)." },
+      origem_documento_id: { nome: "Pedido de origem", descricao: "Só compra: o pedido de compra de que ela foi recebida (decisão 268). Mesma empresa e mesmo fornecedor; não muda depois do lançamento; FK composta com o tenant." },
+      saldo_encerrado_em: { nome: "Saldo encerrado em", descricao: "Só pedido: quando o saldo a receber foi encerrado. Anda junto com saldo_encerrado_por e saldo_encerrado_motivo, gravados na passagem de aberto para convertido." },
+      saldo_encerrado_por: { nome: "Saldo encerrado por", descricao: "Só pedido: quem encerrou o saldo a receber." },
+      saldo_encerrado_motivo: { nome: "Motivo do encerramento do saldo", descricao: "Só pedido: por que o saldo a receber foi encerrado." },
       categoria_financeira_id: { nome: "Natureza de despesa", descricao: "Categoria de DESPESA analítica e ativa dos títulos a pagar gerados pela confirmação. Anda em PAR com o centro de custo (os dois ou nenhum); FK composta com o tenant." },
       centro_custo_id: { nome: "Centro de custo", descricao: "Centro de custo analítico dos títulos a pagar. Anda em PAR com a natureza de despesa; FK composta com o tenant." }
     }
   },
   {
     codigo: "ERP-COMPRAS-DOCUMENTO-ITEM", tabela: "erp.documentos_compra_itens", nome: "Item do Documento de Compra", modulo: "COMPRAS", natureza: "linha", idGlobal: false,
-    descricao: "Linha de produto do documento de compra. Identidade pertence ao documento; só muda com o documento aberto."
+    descricao: "Linha de produto do documento de compra. Identidade pertence ao documento; só muda com o documento aberto.",
+    campos: {
+      origem_item_id: { nome: "Item do pedido de origem", descricao: "Só na compra recebida de um pedido: o item do pedido que esta linha recebe. Mesmo produto; a soma recebida por compras não canceladas não passa da quantidade do item (gatilho, decisão 268)." }
+    }
   },
 
   // ---------- Financeiro ----------
