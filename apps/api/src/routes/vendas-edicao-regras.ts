@@ -26,13 +26,44 @@ export async function recusaDaEdicao(ctx: ServiceCtx, doc: { id: string; status:
 }
 
 /**
- * OS LIMITES DE UMA EDIÇÃO PERMITIDA (TOP-CONFIG-06 e 07, as mesmas guardas do PUT):
- *   somenteArmazemEObservacao → a PARTE GERADA (algum item ligado a item de origem): só armazém e observação do item.
- *   armazemTravado            → a parte gerada de pedido que reserva estoque: nem o armazém.
+ * O que `limitesDaEdicao` lê do documento — o formato do `getDoc` (`GET <base>/:id`), que o PUT, a PATCH e o
+ * `/edicao` já carregam; nenhuma leitura a mais.
+ *   id                 → o documento (o mesmo que o `getDoc` carregou);
+ *   origin_document_id → a origem da venda gerada (pedido ou orçamento); `null` = lançada direto;
+ *   items[].id         → o item GRAVADO (é por ele que a tela e a PATCH endereçam o limite);
+ *   items[].origem_item_id → a ligação do item ao item de origem (TOP-CONFIG-06): algum preenchido = parte gerada;
+ *   items[].product_control_stock → `p.control_stock` do join do `getDoc` (TOP-CONFIG-07): `false` = não reserva.
  */
-export async function limitesDaEdicao(ctx: ServiceCtx, kind: SalesKind, doc: { origin_document_id: string | null; items: readonly { origem_item_id: string | null }[] }): Promise<{ somenteArmazemEObservacao: boolean; armazemTravado: boolean }> {
+export interface DocumentoParaLimites {
+  id: string;
+  origin_document_id: string | null;
+  items: readonly { id: string; origem_item_id: string | null; product_control_stock: boolean | null }[];
+}
+
+/**
+ * OS LIMITES DE UMA EDIÇÃO PERMITIDA (TOP-CONFIG-06 e 07) — a ÚNICA função que os calcula, para o PUT, a PATCH e o
+ * `/edicao`: a tela trava exatamente o que a gravação recusa, item por item.
+ *   somenteArmazemEObservacao → a PARTE GERADA (algum item ligado a item de origem): nos ITENS, só armazém e
+ *                               observação mudam. O cabeçalho da parte continua editável.
+ *   itens[]                   → um por item gravado, na ordem do documento.
+ *     armazemTravado          → parte gerada ∧ venda gerada de pedido que RESERVA estoque (a versão congelada da
+ *                               origem) ∧ o produto do item CONTROLA estoque. Item de produto sem controle de estoque
+ *                               não reserva (a conta da reserva não o soma), então o armazém dele não carrega reserva
+ *                               e fica LIVRE — é a regra da guarda do armazém em `salvarEdicao` (sales.ts).
+ * Consultas: no máximo UMA (a reserva da origem), e só quando há item que ela poderia travar — nunca uma por item.
+ */
+export interface LimitesDaEdicao {
+  somenteArmazemEObservacao: boolean;
+  itens: { id: string; armazemTravado: boolean }[];
+}
+
+export async function limitesDaEdicao(ctx: ServiceCtx, kind: SalesKind, doc: DocumentoParaLimites): Promise<LimitesDaEdicao> {
   const somenteArmazemEObservacao = doc.items.some((i) => i.origem_item_id !== null);
-  const armazemTravado = somenteArmazemEObservacao && kind === "sale" && doc.origin_document_id !== null
+  const reservaQueTrava = somenteArmazemEObservacao && kind === "sale" && doc.origin_document_id !== null
+    && doc.items.some((i) => i.product_control_stock !== false)
     ? await origemReservaEstoque(ctx, doc.origin_document_id) : false;
-  return { somenteArmazemEObservacao, armazemTravado };
+  return {
+    somenteArmazemEObservacao,
+    itens: doc.items.map((i) => ({ id: i.id, armazemTravado: reservaQueTrava && i.product_control_stock !== false })),
+  };
 }

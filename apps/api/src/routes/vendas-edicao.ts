@@ -5,7 +5,7 @@ import type { ServiceCtx } from "../lib/context.js";
 import { runService } from "../lib/service.js";
 import { notFound } from "../lib/errors.js";
 import { respostaDoLayoutEfetivo, type LayoutEfetivoDaCentral } from "../lib/layout-documento.js";
-import { recusaDaEdicao, limitesDaEdicao } from "./vendas-edicao-regras.js";
+import { recusaDaEdicao, limitesDaEdicao, type LimitesDaEdicao } from "./vendas-edicao-regras.js";
 import { regrasDaVersaoCongelada, respostaDasRegrasDaOperacao, type RegrasDaOperacaoDaVenda, type RegrasDaVersaoTop } from "./vendas-regras-operacao.js";
 import { respostaDaSituacaoCliente } from "./vendas-atraso-cliente.js";
 
@@ -21,7 +21,7 @@ type DocumentoDaEdicao = {
   /** bigint (0039): sai do pool como STRING, exatamente como o `GET <base>/:id` a devolve. */
   version: string;
   reserva_estoque: boolean;
-  items: { origem_item_id: string | null }[];
+  items: { id: string; origem_item_id: string | null; product_control_stock: boolean | null }[];
 };
 
 /**
@@ -37,7 +37,7 @@ type DocumentoDaEdicao = {
 export interface EdicaoDoDocumentoDeVenda {
   podeEditar: boolean;
   motivo: string | null;
-  limites: { somenteArmazemEObservacao: boolean; armazemTravado: boolean };
+  limites: LimitesDaEdicao;
   version: string;
   regras: RegrasDaOperacaoDaVenda;
   condicoesPermitidas: string[] | null;
