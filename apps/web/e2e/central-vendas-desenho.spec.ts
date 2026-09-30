@@ -157,6 +157,8 @@ async function valorMostrado(invólucro: Locator) {
 
 test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botões, pílula, documento, campos, itens e painel", async ({ page }) => {
   await login(page);
+  // a criação fica suja (Cliente escolhido) antes de a consulta abrir por `goto`: aceita o beforeunload real das abas
+  page.on("dialog", (d) => { void d.accept(); });
   await page.setViewportSize({ width: 1440, height: 900 });
   const top = await cadastrarTop(page);
   await abrirCriacao(page, top.id);
@@ -625,7 +627,9 @@ test("VD-7 — Salvar com pendências: ZERO POST, pílula com a lista, clique le
     { message: "Cliente → o foco vai ao campo (ou a pesquisa dele abre)" }).toBe(true);
   await page.keyboard.press("Escape");
 
-  // ESTADO que não é pendência de campo continua DESABILITANDO: layout que não carrega
+  // ESTADO que não é pendência de campo continua DESABILITANDO: layout que não carrega. Sair de um rascunho sujo por
+  // `goto` dispara o beforeunload REAL da barra de abas: aceitá-lo é o que o usuário faria ao trocar de endereço.
+  page.on("dialog", (d) => { void d.accept(); });
   await page.route("**/api/sales/sales/layout-efetivo**", (rota) => rota.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "INTERNAL", message: "falha simulada" } }) }));
   const outra = await cadastrarTop(page);
   await abrirCriacao(page, outra.id);
@@ -895,7 +899,8 @@ test("VD-13 — evidência desenho × produto em 1440×900 e 1280×800, sem rola
     await page.getByTestId("central-vendas-descartar").click();
     await expect(page.getByTestId("confirm-dialog")).toBeVisible();
     await foto("descartando", w, h);
-    await page.getByTestId("confirm-dialog").getByRole("button", { name: "Continuar editando", exact: true }).click();
+    await page.getByTestId("confirm-dialog").getByRole("button", { name: "Descartar alterações", exact: true }).click();
+    await expect(page.getByTestId("central-vendas-alterado"), "descartado: nada sujo antes de sair").toHaveCount(0);
     // consulta
     await abrirConsulta(page, venda);
     await foto("view-documento", w, h);
