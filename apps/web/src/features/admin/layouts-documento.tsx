@@ -6,8 +6,10 @@ import { TelaLayouts } from "./layout-configurador/tela";
 /**
  * CONFIGURAÇÕES › OPERAÇÕES › LAYOUTS DE DOCUMENTO (VENDAS-A3-1, decisão 259; tela única na VENDAS-A3-1d, decisão 262).
  *
- * O layout governa só a DIGITAÇÃO da Central de Vendas (o que aparece, em que ordem, com que rótulo, o que é
- * obrigatório). A regra mora no domínio (`layout-documento.ts`); o servidor refaz a validação na gravação.
+ * O layout governa só a DIGITAÇÃO da Central (o que aparece, em que ordem, com que rótulo, o que é obrigatório): a de
+ * Vendas e, desde a COMPRAS-03 (decisão 269), a de Compras (Pedido de compra e Compra). A regra mora no domínio
+ * (`layout-documento.ts`); o servidor refaz a validação na gravação. Por isso o subtítulo é neutro: ele fala da Central
+ * do movimento, não da de um portal só.
  *
  * A tela é uma só (`TelaLayouts`): a grade dos layouts em cima, com a barra de ações e o filtro de movimento, e a área
  * de configuração da linha selecionada logo abaixo. A rota `/configuracoes/layouts-documento/<id>` monta este mesmo
@@ -26,7 +28,7 @@ export function LayoutsDocumentoPanel({ idInicial }: { idInicial?: string } = {}
     <PageHeader
       inCard
       title="Layouts de documento"
-      subtitle="O que a Central de Vendas mostra, em que ordem, com que rótulo e o que é obrigatório ao salvar. A TOP usa o layout ligado a ela; sem ligação, o padrão do movimento; sem padrão, o layout do sistema."
+      subtitle="O que a Central mostra ao lançar o documento, em que ordem, com que rótulo e o que é obrigatório ao salvar. A TOP usa o layout ligado a ela; sem ligação, o padrão do movimento; sem padrão, o layout do sistema."
     />
     <CardBody>
       <TelaLayouts idInicial={idInicial ?? doEndereco} sincronizarEndereco={naLista} />

@@ -1,6 +1,7 @@
 "use client";
 import * as React from "react";
 import type { QueryClient } from "@tanstack/react-query";
+import { FAMILIAS_COM_LAYOUT } from "@agro/domain";
 import type { CampoDoCatalogo, CampoDoLayout, ColunaDoLayout, EstruturaLayout, ZonaDoLayout } from "@agro/domain";
 
 /**
@@ -81,6 +82,8 @@ export const chaveLista = (familia: string) => [...CHAVE_LAYOUTS, "lista", famil
  * O CACHE DA CENTRAL CAI EM TODA GRAVAÇÃO DE LAYOUT (2.7 e). A Central guarda ["layout-efetivo", kind, topId] por 15 s
  * (staleTime do QueryClient): sem isto, salvar e abrir a Central em seguida mostrava o layout anterior. Um helper só,
  * chamado em TODA gravação: salvar, TOPs, padrão, ativar/inativar, excluir, duplicar, importar, criar.
+ * COMPRAS-03 (decisão 269): a Central de Compras guarda o layout efetivo sob o MESMO prefixo "layout-efetivo" — é o
+ * prefixo, e não a chave inteira, que esta invalidação derruba; uma chave de compras fora dele sobreviveria à gravação.
  */
 export function invalidarLayouts(qc: QueryClient): Promise<void> {
   return Promise.all([
@@ -110,6 +113,19 @@ export function usoDaLinha(l: Pick<LayoutLinha, "padrao" | "ativo" | "qtdTops">)
   if (!l.ativo) return { emUso: false, texto: TEXTOS.naoEstaEmUso };
   const partes = [l.padrao ? "Padrão do movimento" : "", l.qtdTops > 0 ? `${l.qtdTops} TOP(s)` : ""].filter(Boolean);
   return partes.length ? { emUso: true, texto: partes.join(" · ") } : { emUso: false, texto: TEXTOS.naoEstaEmUso };
+}
+
+/**
+ * COMPRAS-03 (decisão 269) — OS MOVIMENTOS COM LAYOUT, NA ORDEM DO DOMÍNIO. Toda lista e todo select de Movimento da
+ * tela (filtro da grade, assistente "Novo") passa por aqui. A lista vem do servidor (`/api/admin/tipos-operacao/familias`,
+ * na ordem do registry, em que as famílias de compra vêm ANTES das de venda) e sai recortada e ORDENADA por
+ * `FAMILIAS_COM_LAYOUT`: vendas primeiro, compras depois. Sem a ordem, o "Novo" passaria a abrir em "Pedido de compra" e
+ * a tela mudaria para quem só usa vendas. O cliente não tem lista própria: o que o servidor não devolve não aparece, e o
+ * que o domínio não conhece como família com layout sai (a mesma pergunta de `familiaTemLayout`).
+ */
+export function movimentosComLayout<F extends { codigo: string }>(doServidor: readonly F[]): F[] {
+  const posicao = (codigo: string) => FAMILIAS_COM_LAYOUT.indexOf(codigo);
+  return doServidor.filter((f) => posicao(f.codigo) >= 0).sort((a, b) => posicao(a.codigo) - posicao(b.codigo));
 }
 
 /** Textos de tela da A3-1d — um dono só (os E2E conferem estes textos). */
@@ -149,7 +165,8 @@ export const rotuloDaTop = (t: { codigo: string; nome: string }) => (t.codigo ? 
  *  rascunho sujo ........ config-descartar-dialogo, config-descartar, config-descartar-voltar
  *  status de uso ........ config-status (data-estado="tops"|"padrao"|"nao-usado"|"inativo"), config-status-nao-usado
  *                         (faixa amarela), config-status-visualizar-tops, config-status-usar-padrao, config-status-ativar,
- *                         config-abrir-central (um por TOP; data-top-id; botão desligado com rascunho sujo),
+ *                         config-abrir-central (um por TOP; data-top-id; botão desligado com rascunho sujo; COMPRAS-03:
+ *                         também nos movimentos de compra, com o href da Central de Compras),
  *                         config-abrir-central-salvar-antes (a frase, uma vez), config-salvo-nao-usado (aviso ao salvar)
  *  visualizar TOPs ...... config-tops-dialogo + os da A3-1c (config-tops, config-tops-disponiveis, config-tops-ligadas,
  *                         config-top-<id>, config-tops-mover, config-tops-remover, config-tops-salvar, config-tops-salvo,
@@ -175,7 +192,8 @@ export const rotuloDaTop = (t: { codigo: string; nome: string }) => (t.codigo ? 
  *  (A) disponíveis ...... config-disponiveis, config-busca, config-so-obrigatorios, config-disponivel-<chave> (coluna: config-disponivel-itens.<campo>),
  *                         config-disponiveis-vazio ("Todos os campos já estão no layout."), config-incluir-em (menu "Incluir em…")
  *  (C) prévia ........... config-zona-principal, config-zona-adicionais, config-zona-itens, config-zona-aba-<i>,
- *                         config-operacao-fixa (linha "Operação"), config-aba-<i> (tab do rodapé), config-aba-nova ("+ Aba"),
+ *                         config-operacao-fixa (linha "Operação"; COMPRAS-03: primeira na prévia de compras),
+ *                         config-aba-<i> (tab do rodapé), config-aba-nova ("+ Aba"),
  *                         config-aba-nome-<i> (input de renomear), config-aba-remover-<i>, config-aba-esquerda-<i>, config-aba-direita-<i>
  *  campo na prévia ...... config-campo-<chave> (coluna: config-campo-itens.<campo>); data-selecionado="true"; marcas:
  *                         config-marca-obrigatorio ("*"), config-marca-travado (cadeado), config-marca-padrao, config-marca-padrao-invalido

@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import { ApiError, api, qs } from "@/lib/api";
 import { COPY } from "@/lib/copy";
 import { Button, Dialog, EmptyState, ErrorState, LoadingState, NativeSelect } from "@/components/ui";
-import { familiaTemLayout } from "@agro/domain";
-import { BASE_LAYOUTS, TEXTOS, chaveDetalhe, chaveLista, lerLinhaLayout, type LayoutLinha } from "./contrato";
+import { BASE_LAYOUTS, TEXTOS, chaveDetalhe, chaveLista, lerLinhaLayout, movimentosComLayout, type LayoutLinha } from "./contrato";
 import { BarraGrade } from "./barra-grade";
 import { GradeLayouts } from "./grade";
 import { AreaConfiguracao } from "./pagina";
@@ -24,8 +23,9 @@ import { NovoLayoutAssistente } from "./novo-layout";
  * (`TEXTOS.descartarRascunho`); "Descartar" remonta a área (o rascunho sai de verdade) e segue com o pedido; "Voltar"
  * não muda nada. Se a linha selecionada sair da lista por causa do filtro, a área continua aberta (o id continua).
  *
- * Os movimentos vêm do servidor (`/api/admin/tipos-operacao/familias`), recortados por `familiaTemLayout`; o cliente
- * não tem lista própria. `can()` só esconde botão (na barra e na área); quem nega é a rota.
+ * Os movimentos vêm do servidor (`/api/admin/tipos-operacao/familias`), recortados e ordenados por `movimentosComLayout`
+ * (COMPRAS-03: vendas primeiro, compras depois — a ordem do domínio, não a do registry); o cliente não tem lista própria.
+ * `can()` só esconde botão (na barra e na área); quem nega é a rota.
  */
 
 interface Familia { codigo: string; rotulo: string }
@@ -102,7 +102,7 @@ export function TelaLayouts({ idInicial, sincronizarEndereco = false }: { idInic
     queryFn: () => api<{ items: Familia[] }>("/api/admin/tipos-operacao/familias")
   });
   const familias = React.useMemo(
-    () => (familiasQ.data?.items ?? []).filter((f) => familiaTemLayout(f.codigo)).map((f) => ({ codigo: f.codigo, rotulo: f.rotulo })),
+    () => movimentosComLayout(familiasQ.data?.items ?? []).map((f) => ({ codigo: f.codigo, rotulo: f.rotulo })),
     [familiasQ.data]
   );
   const rotuloMovimento = React.useCallback((c: string) => familias.find((f) => f.codigo === c)?.rotulo ?? c, [familias]);
