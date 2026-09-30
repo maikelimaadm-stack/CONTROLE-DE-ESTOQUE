@@ -60,7 +60,8 @@ Processos de compra, da solicitação ao recebimento. Famílias hoje declaradas 
 `compras.pedido` e `compras.compra` (COMPRAS-01, decisão 267). O lançamento de Pedido de compra e de Compra escolhe
 uma TOP configurada da família (obrigatória); a solicitação continua sem TOP. O Pedido de compra tem próximos passos
 (COMPRAS-02, decisão 268): recebê-lo, inteiro ou em partes, gera uma Compra ligada a ele — a única aresta executável
-do grafo de compras.
+do grafo de compras. Os campos da Central de Compras seguem o layout do documento ligado à TOP (COMPRAS-03, decisão
+269), o mesmo mecanismo de Vendas.
 
 ### Portal de Vendas
 Orçamento, pedido e venda — as três variantes de `erp.sales_documents`, que a BASE2-03C já unificou na
@@ -104,8 +105,9 @@ das duas — autorização continua sendo CAPACIDADE ∧ ESCOPO, verificada no s
 | **TOP-CONFIG-04A** | ativação controlada dos efeitos da TOP, primeiro consumidor real: estoque e financeiro da confirmação de VENDA (formato 2, matriz de suporte, gate operacional, guarda de banco) | mesclada; fase 1 implantada (gate desligado); fase 2 pendente (pré-condições em `docs/DEPLOYMENT.md`) |
 | **VENDAS-A1** | classificação financeira no documento de venda: `categoria_financeira_id` e `centro_custo_id` em par no orçamento, pedido e venda, copiados na conversão e usados nos títulos a receber da confirmação (legado e configurado); guarda de banco contra binário que a ignora (decisão 248) | EM PR |
 | **COMPRAS-01** | documento de compra (0036): Pedido de compra e Compra com TOP obrigatória, lista única, Central de Compras, confirmação da Compra com entrada no estoque (custo rateado) e contas a pagar pela matriz (`compras.compra`), cancelamento com estorno, nota duplicada recusada nos dois caminhos (decisão 267) | mesclada e implantada |
-| **COMPRAS-02** | próximos passos do Pedido de compra (0037): grafo de compras (só pedido → compra, nunca cruzando com vendas), receber inteiro ou em partes na Central de Compras pela MESMA função que lança a compra, saldo por item, reabertura ao cancelar a compra e encerramento do saldo (decisão 268) | em revisão |
-| **TOP-CONFIG-04B+** | Compras: layout (COMPRAS-03); Movimentações de Estoque (04C), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
+| **COMPRAS-02** | próximos passos do Pedido de compra (0037): grafo de compras (só pedido → compra, nunca cruzando com vendas), receber inteiro ou em partes na Central de Compras pela MESMA função que lança a compra, saldo por item, reabertura ao cancelar a compra e encerramento do saldo (decisão 268) | mesclada e implantada |
+| **COMPRAS-03** | layout do documento de compra (0038): o mecanismo de layout de Vendas para o Pedido de compra e a Compra, com catálogo por família, cobrado ao lançar e ao receber, sem redesenho da Central de Compras (decisão 269) | EM PR |
+| **TOP-CONFIG-04B+** | Movimentações de Estoque (04C), Financeiro (04D) — reutilizando o formato 2 e a matriz | não iniciada |
 
 A TOP-CONFIG-04A é a fatia que autoriza efeito configurável — e SÓ estoque e financeiro, SÓ na confirmação
 de `vendas.venda`, SÓ pelas combinações da matriz. Efeito fiscal e contábil, workflow genérico, aprovação
@@ -276,7 +278,7 @@ capacidade exigida depende do que o usuário pode ver), então o recorte de empr
 o módulo EXPLÍCITO da permissão de vendas: com módulo indefinido a RLS vale pela união das empresas
 visíveis, que é mais larga. RLS ∧ SQL = o escopo exato, e nenhum dos dois sozinho decide.
 
-## Portal de Compras — documento comercial de compra (COMPRAS-01), recebimento do pedido (COMPRAS-02) e o que falta
+## Portal de Compras — documento comercial de compra (COMPRAS-01), recebimento do pedido (COMPRAS-02), layout (COMPRAS-03) e o que falta
 
 Decisão 267. O Portal de Compras segue o desenho do Portal de Vendas: lista única de documentos com o tipo como
 coluna e filtro, `+ Novo` escolhendo a Tipo de Operação, a Central de Compras e a consulta com as ações.
@@ -320,9 +322,28 @@ aba "Processos"). Não mudaram, e não viram documento de compra.
   Convertido, e aí o cancelamento de uma compra não o reabre. Pedido com compra viva não se cancela;
 - na consulta da compra, "Origem: Pedido de compra <código>", com link.
 
+**O que EXISTE (COMPRAS-03, decisão 269) — o layout do documento de compra:**
+
+- **o mesmo mecanismo de Vendas, com catálogo por família**: o Pedido de compra e a Compra têm layout do documento
+  (Configurações › Operações › Layouts de documento, movimentos "Pedido de compra" e "Compra", depois dos de venda) —
+  quais campos aparecem, em que ordem, com que rótulo, obrigatórios, não editáveis e valor padrão (literal, variável ou
+  de cadastro, inclusive o Fornecedor) —, ligado à TOP, com o padrão do movimento e o layout do sistema (a Central de
+  Compras de hoje) como reservas. Cadastro e conta são os de Vendas; o catálogo é o do corpo da compra, e a família
+  nunca cruza (TOP de compra não liga a layout de venda);
+- **a Central de Compras aplica o layout sem redesenho**: os componentes de hoje, com "Dados adicionais" e abas em
+  sequência depois dos campos principais; a TOP fica travada (trocar é voltar ao lançador); o campo que a regra exige
+  (exigências da TOP, natureza e centro quando gera título, forma de pagamento, vencimento e armazém quando a TOP os
+  exige, lote e validade de produto com lote) aparece mesmo que o layout o esconda;
+- **cobrado ao salvar, inclusive ao receber**: o obrigatório do layout vazio é recusado ao lançar o pedido, ao lançar
+  a compra e ao receber o pedido (a compra de destino usa o layout da TOP dela, e no receber o valor do pedido vence o
+  padrão); confirmar e cancelar não cobram layout;
+- **sem padrão de cadastro na Natureza de despesa** nesta fatia (o filtro de despesa ou "ambas" não cabe na
+  conferência do padrão).
+
 **O que FALTA (e não deve ser simulado):**
 
-- **COMPRAS-03** — layout do documento de compra por TOP;
+- o desenho visual da Central de Compras alinhado ao da Central de Vendas, com as zonas "de verdade" (faixa F2);
+- Natureza de despesa com padrão de cadastro;
 - fora do roteiro atual: editar documento salvo, Devolução de Compra, solicitação → pedido, item na compra que não
   está no pedido (lança-se outra compra), reabrir saldo encerrado, rateio por item ou produto, impostos, NF-e, alçada,
   reserva e confirmação automática.

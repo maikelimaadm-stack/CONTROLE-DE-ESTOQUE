@@ -1372,3 +1372,24 @@ motor paralelo, como o §12 previu. `compras.pedido` fica FORA da matriz: o pedi
 - **Situação do pedido**: aberto → convertido quando o saldo de todos os itens zera, ou quando o saldo é encerrado
   (com motivo, quem e quando, na mesma mudança); convertido → aberto quando uma compra ligada é cancelada, só sem saldo
   encerrado; convertido → cancelado recusado; pedido com compra ligada viva não se cancela.
+
+### 14.2 Layout do documento de compra (COMPRAS-03)
+
+> Contrato: `packages/domain/src/layout-documento.ts` (catálogo por família — `catalogoDaFamilia`,
+> `chaveDosItensDaFamilia`, `colunasComPadraoRegistro` — e a MESMA conta de Vendas). Executor: `lancar` em
+> `apps/api/src/routes/compras.ts` (cobrança) e `GET /api/compras/{pedidos|compras}/layout-efetivo`. Decisão 269.
+
+- **O layout continua FORA da configuração da TOP** (§11.8): a ligação TOP → layout é relacional
+  (`erp.layout_documento_tops`), vale para as famílias `compras.pedido` e `compras.compra` como para as de vendas, e
+  trocar o layout de uma TOP de compra não cria versão. TOP de compra só liga a layout da própria família (gatilho).
+- **Cobrança:** `lancar` confere o layout efetivo da TOP do corpo (ligado → padrão da família → sistema) DEPOIS de
+  todas as recusas de TOP, classificação, condição, regras da operação, itens, efeitos previstos e nota duplicada, e
+  ANTES do número; o do sistema não cobra nada. Receber o pedido é lançar (§14.1): a compra de destino é cobrada pelo
+  layout da TOP de DESTINO. Confirmar e cancelar não cobram.
+- **A regra vence o layout:** `GET /api/compras/<espécie>/regras-da-operacao` passa a dizer também
+  `exigeFormaPagamento`, `exigeVencimento` e `exigeArmazem` (os de `efeitosPrevistosDaCompra`, versão ATUAL; no
+  pedido, falsos), e a Central de Compras mostra esses campos — e as exigências gerais, a classificação quando gera
+  título e lote/validade de produto com lote — mesmo que o layout os esconda, como em vendas (§13.4).
+- **Capacidade:** `operation-types` de compras declara `capacidades.layoutDocumento` depois de `condicaoPagamento`;
+  a Central só usa o layout com a declaração exata. A TOP é obrigatória no `layout-efetivo` de compras: ausente,
+  malformada, de outra família, inativa, excluída ou de outra organização dão a MESMA 404 de `regras-da-operacao`.
