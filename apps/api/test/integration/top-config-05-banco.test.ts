@@ -5,7 +5,8 @@ import { harness, TEST_URL, type Harness } from "./setup.js";
 /**
  * TOP-CONFIG-05 · BANCO (0033) — TR-B.
  * erp.tipos_operacao_versao_condicoes (imutável, RLS de tenant, FKs compostas) e a porta estreita
- * erp.situacao_atraso_cliente (SECURITY DEFINER; org/usuário só da GUC; capacidade de lançar venda reconferida dentro).
+ * erp.situacao_atraso_cliente (SECURITY DEFINER; org/usuário só da GUC; capacidade reconferida dentro: pelo menos uma das
+ * seis — budgets/orders/sales .create ou .edit).
  * SQL direto: `admin` = superusuário (fixtures); `h.db` = erp_app (sem bypass de RLS), como a API.
  */
 let h: Harness; let admin: Db; let outra: DemoOrg;
@@ -197,7 +198,7 @@ describe("TR-B função erp.situacao_atraso_cliente (porta estreita)", () => {
       expect(await situacao(outra.orgId, outra.adminUserId, clienteA, 3)).toEqual([{ titulos: 1, total: "90.00", vencimento_mais_antigo: (await um<{ d: string }>("select (current_date - 20)::text as d")).d }]);
     });
 
-    it("TR-B sem budgets/orders/sales.create → zero linhas", async () => {
+    it("TR-B sem nenhuma das seis (budgets/orders/sales .create ou .edit) → zero linhas", async () => {
       expect(await situacao(h.demo.orgId, semVenda, clienteA, 3)).toEqual([]);
       // membro de OUTRA organização com a GUC desta → não é membro aqui → zero linhas
       expect(await situacao(h.demo.orgId, outra.adminUserId, clienteA, 3)).toEqual([]);
