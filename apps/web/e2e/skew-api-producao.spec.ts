@@ -2278,3 +2278,71 @@ test("COMPRAS-01 · CO-K1 — sem a porta de documentos de compra na base, a aba
   await expect(page.getByTestId("compras-documentos-indisponivel"), "Processos não depende da porta nova").toHaveCount(0);
   v.semBloqueio();
 });
+
+/**
+ * COMPRAS-02 · RP-K1 — OS PRÓXIMOS PASSOS DO PEDIDO DE COMPRA DESTE WEB CONTRA A API DA BASE (janela 3 da DEPLOYMENT).
+ *
+ * A base anterior à COMPRAS-02 já lança Pedido de compra (COMPRAS-01), mas não tem
+ * `GET /api/compras/pedidos/:id/proximos-passos` (404). A consulta do pedido tem de abrir como sempre, e o card
+ * Próximos passos tem de dizer que está indisponível nesta versão do servidor — nunca um leque vazio, que afirmaria
+ * "esta TOP não tem próxima operação", e nunca um botão de receber que levaria a uma porta que não existe. O pedido é
+ * lançado PELA BASE (TOP e documento pela API dela): o cenário é o de produção durante a janela. A pergunta é feita à
+ * base ANTES da tela, e decide o ramo: base que já serve a rota (depois do merge) mostra o card pronto, sem o aviso.
+ */
+test("COMPRAS-02 · RP-K1 — sem os próximos passos do pedido de compra na base, o card diz \"indisponível nesta versão do servidor\" e a consulta do pedido segue", async ({ page }) => {
+  const v = vigiar(page);
+  await login(page);
+  const cab = await cabecalhosDaSessao(page);
+  const primeiro = async (url: string): Promise<string> => {
+    const r = await page.request.get(`${API}${url}`, { headers: cab });
+    expect(r.status(), `premissa: a base serve ${url}`).toBe(200);
+    const corpo = await r.json() as { items?: { id: string }[]; empresas?: { id: string }[] } | { id: string }[];
+    const id = Array.isArray(corpo) ? corpo[0]?.id : (corpo.items ?? corpo.empresas ?? [])[0]?.id;
+    expect(id, `premissa: há registro em ${url}`).toBeTruthy();
+    return id!;
+  };
+  const empresa = await primeiro("/api/auth/context");
+  const fornecedor = await primeiro("/api/resources/people?is_provider=true&pageSize=1");
+  const produto = await primeiro("/api/resources/products?pageSize=1");
+  const natureza = await primeiro("/api/resources/financial_categories/options?kind=analytic&nature=expense");
+  const centro = await primeiro("/api/resources/cost_centers/options?kind=analytic");
+
+  const codigo = `RP${Date.now().toString(36).toUpperCase()}`;
+  const top = await page.request.post(`${API}/api/admin/tipos-operacao`, { headers: cab, data: { codigo, codigoBase: "compras.pedido", nome: `Skew pedido de compra ${codigo}` } });
+  expect(top.status(), `premissa: a base (COMPRAS-01 ou posterior) cadastra TOP de Pedido de compra — ${await top.text()}`).toBe(201);
+  const topId = (await top.json() as { id: string }).id;
+  const lancado = await page.request.post(`${API}/api/compras/pedidos`, { headers: cab, data: {
+    empresa_id: empresa, tipo_operacao_id: topId, fornecedor_id: fornecedor, data_documento: "2026-09-01",
+    categoria_financeira_id: natureza, centro_custo_id: centro, itens: [{ produto_id: produto, quantidade: "3", valor_unitario: "7.00" }]
+  } });
+  expect(lancado.status(), `premissa: a base lança o pedido de compra — ${await lancado.text()}`).toBe(201);
+  const pedidoId = (await lancado.json() as { id: string }).id;
+
+  const direto = await page.request.get(`${API}/api/compras/pedidos/${pedidoId}/proximos-passos`, { headers: cab });
+  const ausente = direto.status() === 404;
+  console.log(`[skew] RP-K1 · a base responde ${direto.status()} a GET /api/compras/pedidos/:id/proximos-passos`);
+  expect([200, 404], "a base ou serve a rota ou não a conhece — outro código é defeito, não skew").toContain(direto.status());
+
+  // A CONSULTA DO PEDIDO ABRE, nos dois mundos: cabeçalho, itens e o card de Próximos passos.
+  await page.goto(`/compras/pedidos/${pedidoId}`);
+  await expect(page.getByTestId("compras-consulta-corpo"), "a consulta do pedido não quebra").toHaveAttribute("data-situacao", "aberto");
+  await expect(page.getByTestId("compras-consulta-itens").getByRole("row"), "os itens do pedido aparecem").not.toHaveCount(0);
+  const cartao = page.getByTestId("compras-proximos-passos");
+  await expect(cartao).toBeVisible();
+  const aviso = page.getByTestId("compras-proximos-passos-indisponivel");
+  if (ausente) {
+    await expect(cartao).toHaveAttribute("data-situacao", "indisponivel");
+    await expect(aviso).toContainText("indisponível nesta versão do servidor");
+    await expect(page.getByTestId("compras-proximos-passos-vazio"), "nada de 'sem próxima operação': o servidor não disse isso").toHaveCount(0);
+    await expect(page.locator('[data-testid^="compras-proximo-passo-"]'), "nenhum passo para uma porta que a base não tem").toHaveCount(0);
+    // A base não declara recebido nem saldo: as colunas novas não inventam número.
+    await expect(page.getByTestId("compras-item-saldo")).toHaveCount(0);
+    await expect(page.getByTestId("compras-encerrar-saldo")).toHaveCount(0);
+  } else {
+    // MUNDO PÓS-MERGE: a base serve a rota; o pedido sem política declarada não tem próximo passo — e diz isso.
+    await expect(cartao).toHaveAttribute("data-situacao", "pronto");
+    await expect(aviso).toHaveCount(0);
+    await expect(page.getByTestId("compras-proximos-passos-vazio")).toBeVisible();
+  }
+  v.semBloqueio();
+});

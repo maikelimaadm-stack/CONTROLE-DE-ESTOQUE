@@ -1385,6 +1385,59 @@ frete, Dedutível) NÃO aceita obrigatório — sempre tem valor (R1). 2. Centra
 "*", Data de saída preenchida e só leitura; salvar sem transportadora → erro no campo; com → salva. 3. TOP sem layout →
 vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP mostra o layout e a origem.
 
+## COMPRAS-02 — receber o pedido de compra (0037)
+
+Decisão 268. **Uma migration: `0037_receber_pedido_de_compra.sql`** (pre-deploy; trava (2026,71), `lock_timeout` 2 s,
+pré/pós-condições nomeadas `COMPRAS-02: ...`, não destrutiva, sem backfill): em `erp.documentos_compra`, a origem da
+compra (`origem_documento_id`, FK composta com a organização para a própria tabela, só na compra) e o encerramento do
+saldo do pedido (`saldo_encerrado_em`, `saldo_encerrado_por`, `saldo_encerrado_motivo`, os três juntos, só no pedido
+convertido); a situação `convertido` (só no pedido) nos CHECKs de situação; em `erp.documentos_compra_itens`, a chave
+`(id, organization_id)` e `origem_item_id` (FK composta para a própria tabela); os gatilhos de conferência e de
+transição trocados por funções novas (`_v2`, mesmos nomes de gatilho) e o gatilho da origem
+`trg_documentos_compra_itens_origem_guarda` (mesmo pedido, mesmo produto, soma ≤ quantidade, item de origem travado).
+As pós-condições conferem os objetos criados; não comparam contagens de tabelas vivas. Nenhuma variável nova, nenhuma
+permissão nova (o recebimento usa `pedidos_compra.edit` e `compras.create`, que já existem).
+
+**Pré-condição:** quem aplica a 0037 é o dono das funções e precisa atravessar RLS (superusuário ou `BYPASSRLS`) — a
+própria migration recusa, com `COMPRAS-02: o papel que aplica a migration (dono das funcoes SECURITY DEFINER) nao
+atravessa RLS; ...`, e nada é aplicado. Em erro, publique o nome do papel, nunca a conexão.
+
+**Ordem: banco (0037) → API → web.** Janelas:
+1. **API anterior × banco novo:** a API anterior não lê nem grava as colunas novas. A compra que ela lança não tem
+   origem, e o gatilho da origem exige justamente item sem origem nesse caso — que é o que ela grava. Nenhum pedido
+   vira convertido sem a API nova, e nenhum pedido tem compra ligada, então cancelar pedido e compra segue como hoje.
+2. **web ANTERIOR × API nova:** a web anterior não mostra Próximos passos, Recebido, Saldo nem compras geradas; a
+   consulta do pedido e a Central de Compras seguem como na COMPRAS-01 (os campos novos das respostas são aditivos).
+   O editor anterior da TOP já tem a aba "Próximas operações" genérica: para a TOP de Pedido de compra ela passa a
+   listar as TOPs de Compra (a API nova as devolve em `/destinos-possiveis`), e salvar grava a aresta — sem efeito até
+   a web nova, que é quem oferece o recebimento. O aviso do editor anterior para política não declarada ("segue o
+   caminho anterior do produto") não vale para compras: sem política declarada, o pedido de compra não tem próximo
+   passo. Pedido recebido pela web nova e aberto na anterior mostra a situação `convertido` sem o rótulo e a cor novos.
+3. **web NOVA × API anterior:** sem `GET /api/compras/pedidos/:id/proximos-passos` (404), o card Próximos passos da
+   consulta do pedido diz "indisponível nesta versão do servidor" e a consulta segue funcionando; sem `recebido` e
+   `saldo` nos itens, as colunas novas não têm o que mostrar. Nada é gravado: o recebimento só é oferecido a partir
+   do leque, que não chega.
+
+**Impacto em dados reais:** colunas novas, vazias; nenhum dado muda.
+
+**Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0037 fica: colunas nulas e os
+gatilhos novos não mudam o que a API anterior faz (compra sem origem, pedido sem compra ligada). Com recebimentos já
+feitos, a API anterior lê pedido e compra sem a ligação, mas o banco continua valendo: ela não cancela pedido com
+compra ligada viva (o banco recusa) nem pedido convertido, e não reabre o pedido convertido ao cancelar uma
+compra — reverter nesse estado é decisão do Maike. O caminho inverso do banco, se um dia for preciso, é
+migration NOVA — nunca editar a 0037. Nada de apagar dado de produção (decisão 247).
+
+**Roteiro do Maike (cria documentos reais; produção é operacional — decisões 240 e 247, nada é apagado):**
+1. Configurações › Tipos de operação: criar a TOP "Pedido de compra" (Movimento: Pedido de compra), se ainda não
+   existir. Na aba Próximas operações dela: "Compra", com "Em partes"; salvar.
+2. Compras › Documentos › Novo: escolher a TOP "Pedido de compra" e lançar um pedido de 10 un de um produto que
+   controla estoque; salvar.
+3. Na consulta do pedido, Próximos passos › Compra: a Central abre em modo receber pedido. Receber 4 (nota, série,
+   data de entrada, armazém) → salvar → na consulta da compra, Confirmar → o pedido mostra Recebido 4 e saldo 6.
+4. Receber os 6 do mesmo jeito → o pedido vira Convertido.
+
+**Gate externo em produção: PENDING (Maike)** — a sessão não tem acesso autenticado à produção.
+
 ## COMPRAS-01 — documento de compra (0036)
 
 Decisão 267. **Uma migration: `0036_documento_de_compra.sql`** (pre-deploy; trava (2026,70), pré/pós-condições
