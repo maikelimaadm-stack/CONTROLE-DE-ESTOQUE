@@ -250,6 +250,12 @@ describe("ED-6 — corpo estrito", () => {
       // `null` só limpa campo que aceita vazio; campo obrigatório com null → 422 no campo.
       ["client_id null", { version: v, client_id: null }, "client_id"],
       ["document_date null", { version: v, document_date: null }, "document_date"],
+      // O plano é ESTRITO na PATCH: chave torta não some (virando o padrão do zod), e o dedutível vai no corpo.
+      ["plano com chave torta", { version: v, installment_plan: { instalments: 3, first_due_date: "2026-10-01" } }, "installment_plan.instalments"],
+      ["dedutível dentro do plano", { version: v, installment_plan: { installments: 1, first_due_date: "2026-10-01", is_deductible: true } }, "installment_plan.is_deductible"],
+      // Número sem forma de número → 422 no campo, ANTES de ler o registro (e não 500 do decimal.js).
+      ["frete com vírgula", { version: v, freight: "1,50" }, "freight"],
+      ["desconto sem número", { version: v, discount: "abc" }, "discount"],
     ];
     for (const [nome, payload, caminho] of casos) {
       const r = await patch("order", id, payload);
@@ -267,6 +273,9 @@ describe("ED-6 — corpo estrito", () => {
     expect(noItem.statusCode, noItem.body).toBe(422);
     expect(j(noItem).error!.code).toBe("VALIDATION_ERROR");
     expect(detalhes(noItem)).toEqual(expect.arrayContaining([expect.objectContaining({ path: "items[0].quantidade" })]));
+    const quantidadeTorta = await patch("order", id, { version: v, items: [{ id: item!.id, quantity: "abc" }] });
+    expect(quantidadeTorta.statusCode, quantidadeTorta.body).toBe(422);
+    expect(detalhes(quantidadeTorta)).toEqual(expect.arrayContaining([expect.objectContaining({ path: "items[0].quantity" })]));
     expect(await foto(id), "nenhuma recusa gravou").toEqual(antes);
     // PREMISSA: o mesmo documento, com o corpo canônico, aceita a PATCH.
     const ok = await patch("order", id, { version: v, note: "mudou" });
@@ -369,6 +378,23 @@ describe("ED-8 — histórico", () => {
       incluidos: [expect.objectContaining({ id: d!.id, product_id: I.product2, quantity: "4.0000", note: "entra" })] });
     expect(JSON.stringify(ev), "o item intocado não entra no histórico").not.toContain(b!.id as string);
     expect(ev.metadata).toMatchObject({ via: "patch" });
+  });
+
+  it("ED-8 reordenar os itens grava a posição, sobe a versão e o histórico diz a posição antes → depois", async () => {
+    const id = await criar("order", { items: [ITEM({ quantity: "1", unit_price: "10.00" }), ITEM({ product_id: I.product!, quantity: "2", unit_price: "5.00" })] });
+    const [a, b] = await itens(id);
+    const v0 = await versaoGravada(id);
+    const antesDaPatch = await eventos(id);
+    const r = await patch("order", id, { version: v0, items: [{ id: b!.id }, { id: a!.id }] });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(await versaoGravada(id)).toBe(mais(v0, 1));
+    const depois = await itens(id);
+    expect(depois.map((x) => [x.id, x.position])).toEqual([[b!.id, 0], [a!.id, 1]]);
+    const [ev] = daEdicao((await eventos(id)).slice(antesDaPatch.length));
+    expect(ev, "a gravação da posição tem evento").toBeDefined();
+    expect(ev!.metadata).toMatchObject({ via: "patch", campos: ["items"] });
+    expect(ev!.before).toEqual({ items: { alterados: [{ id: b!.id, position: 1 }, { id: a!.id, position: 0 }], removidos: [] } });
+    expect(ev!.after).toEqual({ items: { alterados: [{ id: b!.id, position: 0 }, { id: a!.id, position: 1 }], incluidos: [] } });
   });
 });
 

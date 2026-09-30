@@ -1429,8 +1429,9 @@ atravessa RLS, PUBLIC sem EXECUTE e `erp_app` com EXECUTE). Em erro, publique o 
    gatilho, que só soma 1 à versão — e um `set` explícito seria sobrescrito. O gatilho não recusa nada, não lê outra
    tabela e não toca outra coluna: por ele, nenhuma gravação da API anterior muda de resultado, código ou mensagem. Ele dispara
    depois das duas guardas da tabela (0023 e 0024, `before update of status`, que comparam colunas, não a linha
-   inteira), então nenhuma vê a versão mudar; `erp.audit_row` (AFTER) grava antes/depois já com a versão. O `select d.*` do `GET` anterior passa a trazer `version`, e o histórico de `erp.audit_row`
-   também: campo aditivo, que a web ignora. A API anterior chama `erp.situacao_atraso_cliente` com a mesma
+   inteira), então nenhuma vê a versão mudar; `erp.audit_row` (AFTER) grava antes/depois já com a versão. O `select d.*` do `GET` anterior passa a trazer `version` (campo aditivo, que a tela da consulta ignora), e a foto
+   de `erp.audit_row` também: o "Histórico de alterações", que lista os campos que mudaram tirando só `updated_at`,
+   passa a mostrar `version: N → N+1` em toda alteração — o único efeito visível na tela, verdadeiro; o lápis (F2) o esconde. A API anterior chama `erp.situacao_atraso_cliente` com a mesma
    assinatura e lê a mesma forma; quem passa a receber linhas é só o usuário com alguma `.edit` de venda e nenhuma
    `.create` — e, para ele,
    o PUT da API anterior que troca o cliente para um devedor numa TOP com "bloqueia" passa a ser recusado (abaixo).
@@ -1456,8 +1457,10 @@ editando a 0039. As edições já feitas pela PATCH são edições comuns do doc
 (decisão 247).
 
 **Roteiro do Maike (produção é operacional — decisões 240 e 247; a prova é só leitura, não cria nem muda documento):**
-1. Depois da 0039, leitura no banco: `select version, count(*) from erp.sales_documents group by version;` → uma linha
-   só, `version = 0`, com o total de documentos; e `select tgname, tgenabled from pg_trigger where tgrelid =
+1. Depois da 0039, leitura no banco: `select count(*) filter (where version = 0) as sem_mudanca, count(*) filter (where
+   version > 0) as mudaram from erp.sales_documents;` → os documentos parados desde a 0039 em 0; os que a operação
+   confirmou, cancelou, converteu ou editou DEPOIS da 0039 com versão ≥ 1 (com a produção em uso, `mudaram > 0` é
+   esperado — o gatilho soma já na janela da API anterior); e `select tgname, tgenabled from pg_trigger where tgrelid =
    'erp.sales_documents'::regclass and not tgisinternal order by tgname;` → `trg_sales_documents_versao` ligado (`O`);
    e `select pg_get_functiondef('erp.situacao_atraso_cliente(uuid,integer)'::regprocedure);` → a reconferência cita as
    seis capacidades (três `.create` e três `.edit`).

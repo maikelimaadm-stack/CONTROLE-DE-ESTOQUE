@@ -42,11 +42,20 @@ const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_dat
  * `docSchema` (a regra de forma é uma só); só os padrões (`default`) saem, porque na PATCH o campo AUSENTE quer dizer
  * "fica o gravado", e um padrão o transformaria em "zera o frete" em silêncio. `null` só onde o `docSchema` aceita.
  * `empresa_id`, `tipo_operacao_id` e `version` não estão aqui: têm conferência própria, antes (`lerPedidoDaEdicao`).
+ * Duas exceções, as duas mais ESTRITAS que o `docSchema`: os números conferem a forma (`decDaEdicao`), e o plano é
+ * `.strict()` — no `docSchema` ele descarta chave desconhecida e grava o padrão do zod no lugar (um `instalments`
+ * torto viraria 1 parcela com 200). A marca de dedutível vai no `is_deductible` do corpo, não dentro do plano.
  */
 const campoDoc = docSchema.shape;
 const campoItem = campoDoc.items.element.shape;
-const itemDaEdicaoSchema = z.object({ id: uuid.optional(), product_id: campoItem.product_id.optional(), warehouse_id: campoItem.warehouse_id, quantity: campoItem.quantity.optional(), unit_price: campoItem.unit_price.optional(), discount: campoItem.discount.unwrap().optional(), discount_percent: campoItem.discount_percent.unwrap().optional(), note: campoItem.note }).strict();
-const edicaoSchema = z.object({ document_date: campoDoc.document_date.optional(), shipping_date: campoDoc.shipping_date, due_date: campoDoc.due_date, client_id: campoDoc.client_id.optional(), transporter_id: campoDoc.transporter_id, proprietary_id: campoDoc.proprietary_id, driver_name: campoDoc.driver_name, payment_method_id: campoDoc.payment_method_id, freight: campoDoc.freight.unwrap().optional(), freight_icms: campoDoc.freight_icms.unwrap().optional(), other_values: campoDoc.other_values.unwrap().optional(), discount: campoDoc.discount.unwrap().optional(), note: campoDoc.note, installment_plan: campoDoc.installment_plan, is_deductible: campoDoc.is_deductible.unwrap().optional(), items: z.array(itemDaEdicaoSchema).min(1).optional(), categoria_financeira_id: campoDoc.categoria_financeira_id, centro_custo_id: campoDoc.centro_custo_id, condicao_pagamento_id: campoDoc.condicao_pagamento_id }).strict() satisfies z.ZodType<CamposDaEdicao>;
+/**
+ * Número da PATCH: o MESMO `dec` do `docSchema`, com a FORMA conferida aqui. O `dec` aceita qualquer texto e só o
+ * `decimal.js` o recusaria, DEPOIS de ler o registro, como erro comum (500); a PATCH promete 422 no campo, antes de
+ * ler qualquer coisa. Ponto como separador, sem expoente: "1,50" é recusado, e não lido como outra coisa.
+ */
+const decDaEdicao = dec.refine((v) => /^-?\d+(\.\d+)?$/.test(v), { message: "Número inválido: use dígitos e ponto como separador decimal" });
+const itemDaEdicaoSchema = z.object({ id: uuid.optional(), product_id: campoItem.product_id.optional(), warehouse_id: campoItem.warehouse_id, quantity: decDaEdicao.optional(), unit_price: decDaEdicao.optional(), discount: decDaEdicao.optional(), discount_percent: decDaEdicao.optional(), note: campoItem.note }).strict();
+const edicaoSchema = z.object({ document_date: campoDoc.document_date.optional(), shipping_date: campoDoc.shipping_date, due_date: campoDoc.due_date, client_id: campoDoc.client_id.optional(), transporter_id: campoDoc.transporter_id, proprietary_id: campoDoc.proprietary_id, driver_name: campoDoc.driver_name, payment_method_id: campoDoc.payment_method_id, freight: decDaEdicao.optional(), freight_icms: decDaEdicao.optional(), other_values: decDaEdicao.optional(), discount: decDaEdicao.optional(), note: campoDoc.note, installment_plan: installmentPlanSchema.strict().optional().nullable(), is_deductible: campoDoc.is_deductible.unwrap().optional(), items: z.array(itemDaEdicaoSchema).min(1).optional(), categoria_financeira_id: campoDoc.categoria_financeira_id, centro_custo_id: campoDoc.centro_custo_id, condicao_pagamento_id: campoDoc.condicao_pagamento_id }).strict() satisfies z.ZodType<CamposDaEdicao>;
 const CHAVES_DA_EDICAO: ReadonlySet<string> = new Set(Object.keys(edicaoSchema.shape));
 const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "orders" : "sales");
 /**

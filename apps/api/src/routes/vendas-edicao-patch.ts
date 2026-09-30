@@ -286,7 +286,8 @@ export function planoDaEdicao(cur: DocumentoGravado, e: Pick<EdicaoComoFicara, "
 // ---------------------------------------------------------------------------------------------------------------
 /** Colunas do cabeçalho comparadas no evento (lista estática): as editáveis e as derivadas (totais, plano). */
 const COLUNAS_DO_EVENTO = [...(Object.keys(CABECALHO) as CampoDoCabecalho[]), "subtotal", "total", "installment_plan", "parcelas_ajustadas"] as const;
-const CAMPOS_DO_ITEM = ["product_id", "warehouse_id", "quantity", "unit_price", "discount", "discount_percent", "total", "note"] as const;
+// `position` entra: reordenar é uma gravação (a versão sobe), e o evento tem de dizer o que foi gravado.
+const CAMPOS_DO_ITEM = ["product_id", "warehouse_id", "quantity", "unit_price", "discount", "discount_percent", "total", "note", "position"] as const;
 const mesmo = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 const linhaDoItem = (i: ItemGravado) => Object.fromEntries([["id", i.id], ...CAMPOS_DO_ITEM.map((c) => [c, i[c]])]) as Record<string, unknown>;
 

@@ -1443,7 +1443,8 @@ do POST/PUT, sem os valores padrão (na PATCH, ausente quer dizer "fica o gravad
 | --- | --- |
 | `version` | obrigatória: a versão que a tela leu (do `GET` ou do `/edicao`); ausente → "Informe a versão do documento que você abriu."; malformada → "Versão inválida: envie a versão que o documento devolveu." |
 | `document_date`, `shipping_date`, `due_date`, `client_id`, `transporter_id`, `proprietary_id`, `driver_name`, `payment_method_id`, `freight`, `freight_icms`, `other_values`, `discount`, `note`, `categoria_financeira_id`, `centro_custo_id`, `condicao_pagamento_id` | **ausente** = fica como está gravado · **`null`** = limpa (só onde o POST aceita vazio; senão 422 no campo) · **valor** = troca; valor igual ao gravado não é mudança |
-| `installment_plan` | enviado (objeto ou `null`) é decisão explícita: o plano é refeito pela conta do PUT |
+| `installment_plan` | enviado (objeto ou `null`) é decisão explícita: o plano é refeito pela conta do PUT. ESTRITO: chave desconhecida → 422 em `installment_plan.<chave>` (no POST/PUT ela seria descartada); a marca de dedutível vai em `is_deductible`, não dentro do plano |
+| números (`freight`, `freight_icms`, `other_values`, `discount` e, no item, `quantity`, `unit_price`, `discount`, `discount_percent`) | número JSON ou texto só com dígitos e ponto (`"1.50"`); outra forma (`"1,50"`, `"abc"`) → 422 no campo, antes de ler o registro |
 | `is_deductible` | muda a marca só se vier diferente da gravada |
 | `items` | **ausente** = nenhuma linha de item é tocada · **presente** = a LISTA NOVA COMPLETA, com pelo menos um item (tabela abaixo) |
 | `empresa_id` | 422 `VALIDATION_ERROR` no campo: "A empresa não muda na edição do documento." |
@@ -1507,7 +1508,7 @@ PATCH que grava acrescenta UM evento `update` (entidade `sales_documents`), lido
   mudou sem ter sido enviado (`subtotal`, `total`, `installment_plan`, `parcelas_ajustadas`);
 - `before`/`after` só das colunas do cabeçalho que mudaram, e `is_deductible` com o próprio nome;
 - itens: `before.items = { alterados, removidos }` e `after.items = { alterados, incluidos }` — em `alterados`, o id e
-  só os campos que mudaram; incluídos e removidos, a linha inteira.
+  só os campos que mudaram (inclusive `position`: reordenar é gravação); incluídos e removidos, a linha inteira.
 
 ### 15.3 GET `/api/sales/{budgets,orders,sales}/:id/edicao`
 
