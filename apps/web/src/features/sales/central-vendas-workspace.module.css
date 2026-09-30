@@ -200,7 +200,7 @@
 
 /* documentos abertos — a barra de abas vista como lista (`.pop` 430px + `.olist`/`.orow` do desenho, VISUAL-UX-02);
    ancora no leque de Ações rápidas, sob o ⚡ */
-.docs { right: 0; top: 38px; width: 430px; }
+.docs { right: 0; top: 38px; width: 432px; }
 .docsBusca { padding: 10px 12px 8px; border-bottom: 1px solid #eef1f4; }
 .pesquisaPilula { display: flex; align-items: center; gap: 7px; height: 30px; box-sizing: border-box; padding: 0 4px 0 10px; border: 1px solid #e1e6eb; border-radius: 999px; background: #fff; color: #94a3b8; transition: border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io); }
 .pesquisaPilula:focus-within { border-color: #40de63; box-shadow: 0 0 0 3px rgba(64, 222, 99, .15); }

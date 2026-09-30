@@ -90,7 +90,7 @@ export type PosicaoDoRotuloValor = "rotulo-a-frente" | "compacto";
 export function PosicaoDoRotulo({ valor, onChange }: { valor: PosicaoDoRotuloValor; onChange: (v: PosicaoDoRotuloValor) => void }) {
   const opcao = (v: PosicaoDoRotuloValor, rotulo: string, icone: React.ReactNode) =>
     <button type="button" aria-pressed={valor === v} aria-label={rotulo} data-dica={rotulo} className={estilosCentral.dicaFim} onClick={() => onChange(v)}>{icone}</button>;
-  return <div role="group" aria-label="Posição do rótulo" data-testid="central-vendas-posicao-rotulo" className={estilos.segmentado}>
+  return <div role="group" aria-label="Posição do rótulo dos campos" data-testid="central-vendas-posicao-rotulo" className={estilos.segmentado}>
     {opcao("rotulo-a-frente", "Rótulo antes do campo", <IconeRotuloAntes />)}
     {opcao("compacto", "Rótulo dentro do campo", <IconeRotuloDentro />)}
   </div>;
@@ -198,6 +198,7 @@ export function AcoesRapidas({ antes, depois = [], desabilitado }: { antes: Item
   const ancora = React.useRef<HTMLSpanElement>(null);
   const botao = React.useRef<HTMLButtonElement>(null);
   const escolheu = React.useRef(false);
+  const fecharLista = React.useCallback(() => setListaAberta(false), []);
   const total = documentos?.docs.length ?? 0;
   const itens: ItemRapido[] = [
     ...antes,
@@ -218,14 +219,17 @@ export function AcoesRapidas({ antes, depois = [], desabilitado }: { antes: Item
           return <DropdownP.Item key={it.chave} asChild disabled={it.desabilitado}
             onSelect={() => { escolheu.current = true; botao.current?.focus(); it.onSelect(); }}>
             <button type="button" className={cn(estilos.lequeItem, it.numero !== undefined && estilos.lequeNumero, it.perigo && estilos.lequePerigo, estilosCentral.dicaFim)} style={posicao}
-              aria-label={it.rotulo} data-dica={it.rotulo} data-testid={it.testId} disabled={it.desabilitado}>
+              aria-label={it.rotulo} data-dica={it.rotulo} data-testid={it.testId} disabled={it.desabilitado}
+              /* fechando, o círculo volta ao ⚡ por baixo do ponteiro: o Radix leria isso como "entrou/saiu do item" e
+                 puxaria o foco para o menu — tirando-o de quem a ação acabou de abrir (a pesquisa da lista, o diálogo) */
+              onPointerMove={(e) => { if (!aberto) e.preventDefault(); }} onPointerLeave={(e) => { if (!aberto) e.preventDefault(); }}>
               {it.numero !== undefined ? <span data-testid="central-vendas-documentos-contador">{it.numero}</span> : it.icone}
             </button>
           </DropdownP.Item>;
         })}
       </DropdownP.Content>
     </DropdownP.Root>
-    {documentos && <ListaDeDocumentosAbertos aberta={listaAberta} onFechar={() => setListaAberta(false)} ancora={ancora} botao={botao} documentos={documentos} />}
+    {documentos && <ListaDeDocumentosAbertos aberta={listaAberta} onFechar={fecharLista} ancora={ancora} botao={botao} documentos={documentos} />}
   </span>;
 }
 

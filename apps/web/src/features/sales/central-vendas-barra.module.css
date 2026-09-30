@@ -38,9 +38,9 @@
 .botao:disabled { opacity: .42; cursor: not-allowed; }
 .botao:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
 /* pressionado: o ⚡ aberto usa o mesmo estado do "Configurar colunas" (`.radial.open .rs-fab`) */
-.botao[data-state="open"],
+.botao:not(.solido)[data-state="open"],
 .botao[aria-pressed="true"] { background: #e2e8f0; color: #0f172a; box-shadow: inset 0 0 0 1px #cbd5e1, 0 2px 6px rgba(34, 197, 94, .30); }
-.botao[data-state="open"]:hover:not(:disabled) { background: #dde3e8; color: #0f172a; }
+.botao:not(.solido)[data-state="open"]:hover:not(:disabled) { background: #dde3e8; color: #0f172a; }
 /* salvando (`.tbi.busy`) */
 .botao[aria-busy="true"],
 .botao[aria-busy="true"]:disabled { opacity: 1; background: #e8ecef; color: #475569; box-shadow: 0 2px 6px rgba(34, 197, 94, .30); cursor: default; }
@@ -136,7 +136,8 @@
 }
 .pendencias:hover { background: #fee2e2; }
 .pendencias:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-.pendenciasLista { width: 300px; padding: 4px 0; }
+/* caixas do desenho: conteúdo + borda de 1px (border-box aqui) */
+.pendenciasLista { width: 302px; padding: 4px 0; }
 .pendencia { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; width: 100%; box-sizing: border-box; padding: 7px 12px; border: 0; background: transparent; text-align: left; cursor: pointer; font-family: inherit; }
 .pendencia:hover,
 .pendencia:focus-visible { background: #fef2f2; outline: none; }
@@ -161,7 +162,7 @@
 }
 
 /* menu Novo documento (`.pop` 336px + `.mi`) */
-.menuNovo { width: 336px; padding: 4px 0; }
+.menuNovo { width: 338px; padding: 4px 0; }
 .menuTitulo { padding: 8px 12px 6px; font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #a3adb9; }
 .menuAviso { padding: 6px 12px 8px; font-size: 12px; color: #64748b; }
 .mi {

@@ -840,6 +840,7 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada, densi
   /* ── VISUAL-UX-02 W1 — a barra da criação ── */
   const [perguntaDescartar, setPerguntaDescartar] = React.useState(false);
   const pendencias = tentouSalvar ? pendenciasDoSalvar() : [];
+  React.useEffect(() => { if (!pendencias.length) setPendenciasAbertas(false); }, [pendencias.length]);
   const salvarDesabilitado = !escritaTopConfirmada || semClassificacao || layoutPendente || regrasPendente || atrasoTravaSalvar || !sujo;
   /* "Confirmar venda" só na venda — perguntado ao SSOT da família (o mesmo caminho da reserva, acima). */
   const ehVenda = familiaLayout !== "" && familiaLayout === familiaOperacionalDeDocumentoVenda("sale");

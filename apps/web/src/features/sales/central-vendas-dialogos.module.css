@@ -64,29 +64,6 @@
 .girar { display: inline-flex; animation: girar 800ms linear infinite; }
 @keyframes girar { to { transform: rotate(360deg); } }
 
-/* Motivo (opcional): rótulo acima, caixa do desenho (vazia #f1f3f4; preenchida #fff com borda #e7eaee) */
-.motivo { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.motivoRotulo { font-size: 12px; font-weight: 500; color: #64748b; }
-.motivoCaixa {
-  height: 30px;
-  box-sizing: border-box;
-  width: 100%;
-  padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: #f1f3f4;
-  box-shadow: inset 0 1px 2px rgba(100, 116, 139, .05), inset 1px 0 1px rgba(148, 163, 184, .07), inset -1px 0 1px rgba(148, 163, 184, .07);
-  font-family: inherit;
-  font-size: 12.5px;
-  font-weight: 500;
-  color: #111827;
-  outline: none;
-  transition: background-color 170ms cubic-bezier(.4, 0, .2, 1), border-color 170ms cubic-bezier(.4, 0, .2, 1), box-shadow 170ms cubic-bezier(.4, 0, .2, 1);
-}
-.motivoCaixa:not(:placeholder-shown) { background: #fff; border-color: #e7eaee; box-shadow: none; }
-.motivoCaixa:focus { border-color: #cfd6de; box-shadow: 0 1px 3px rgba(15, 23, 42, .10); }
-.motivoCaixa::placeholder { color: #9ca3af; }
-
 /* o centro do diálogo oficial é um translate(-50%, -50%): a entrada do desenho (zoomIn) parte dele */
 @keyframes dialogoEntra {
   from { opacity: 0; transform: translate(-50%, -50%) scale(.965) translateY(6px); }
@@ -95,7 +72,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dialogo[data-size] { animation: none; }
-  .botao, .motivoCaixa { transition: none; }
+  .botao { transition: none; }
   .botao:active:not(:disabled) { transform: none; }
   .girar { animation-duration: 1.6s; }
 }

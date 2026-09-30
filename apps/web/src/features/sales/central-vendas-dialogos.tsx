@@ -1,6 +1,6 @@
 "use client";
 import * as React from "react";
-import { Dialog } from "@/components/ui";
+import { Dialog, Field, Input } from "@/components/ui";
 import { cn } from "@/lib/utils";
 import estilos from "./central-vendas-dialogos.module.css";
 
@@ -84,18 +84,16 @@ export function DialogoCancelarDocumento({ aberto, onFechar, especie, codigo, te
   onCancelar: (reason: string) => void;
 }) {
   const [motivo, setMotivo] = React.useState("");
-  const id = React.useId();
   React.useEffect(() => { if (aberto) setMotivo(""); }, [aberto]);
   return <DialogoDaCentral aberto={aberto} onFechar={onFechar} titulo={`Cancelar ${especie} ${codigo}?`.replace(/\s+\?$/, "?")} texto={texto} carregando={carregando} espacado
     acoes={<>
       <BotaoDoDialogo onClick={onFechar} disabled={carregando}>Voltar</BotaoDoDialogo>
       <BotaoDoDialogo tom="vermelho" icone={<IconeCancelar />} carregando={carregando} onClick={() => onCancelar(motivoDoCancelamento(motivo))} data-testid="confirm-dialog-confirm">{`Cancelar ${especie}`}</BotaoDoDialogo>
     </>}>
-    <div className={estilos.motivo}>
-      <label className={estilos.motivoRotulo} htmlFor={`${id}-motivo`}>Motivo (opcional)</label>
-      <input id={`${id}-motivo`} className={estilos.motivoCaixa} value={motivo} maxLength={LIMITE_DO_MOTIVO} placeholder="Registrado no cancelamento"
-        onChange={(e) => setMotivo(e.target.value)} data-testid="central-vendas-cancelar-motivo" />
-    </div>
+    {/* O desenho não estiliza o Motivo (classes inexistentes): o campo é o oficial — na integração, o campo da Central. */}
+    <Field label="Motivo (opcional)" span={12}>
+      <Input value={motivo} maxLength={LIMITE_DO_MOTIVO} placeholder="Registrado no cancelamento" onChange={(e) => setMotivo(e.target.value)} data-testid="central-vendas-cancelar-motivo" />
+    </Field>
   </DialogoDaCentral>;
 }
 
