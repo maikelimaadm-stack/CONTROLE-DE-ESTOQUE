@@ -216,7 +216,8 @@ test("LB-W1 — pelo editor: Natureza padrão não editável, Condição e Armaz
   // Condição padrão pelo caminho da escolha manual: o plano é calculado (duas parcelas)
   await abrirAbaDoLancamento(page, "Financeiro");
   await expect(page.getByTestId("condicao-pagamento").locator('[data-campo="condicao_pagamento_id"]')).toContainText(condicao.nome);
-  await expect(page.getByText("Plano de parcelas")).toBeVisible();
+  // VISUAL-UX-02 (decisão 270): o desenho não tem o subtítulo "Plano de parcelas"; a prova é o plano calculado na coluna.
+  await expect(page.getByLabel("Nº de parcelas", { exact: true }), "o plano calculado pela condição padrão: duas parcelas").toHaveValue("2");
 });
 
 test("LB-W2 — natureza inativada: a Central abre o campo EDITÁVEL, vazio, com o aviso", async ({ page }) => {
