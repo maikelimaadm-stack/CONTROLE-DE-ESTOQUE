@@ -326,14 +326,12 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
             valor={!d["origin_document_id"] ? "Lançamento direto" : origemDaParte.codigo && origemDaParte.kind ? `${DO_REGISTRO[origemDaParte.kind]?.titulo ?? "Documento"} ${origemDaParte.codigo}` : "Convertido"} />
         </DadosAdicionais>
       </>}
-      itens={<>
-        {saldoEncerradoEm && <p data-testid="saldo-encerrado" className="mb-2 text-sm text-slate-700">
-          Saldo encerrado em {dateBR(saldoEncerradoEm).slice(0, 5)} por {String(d["saldo_encerrado_por_nome"] ?? "—")}: {String(d["saldo_encerrado_motivo"] ?? "")}
-        </p>}
-        {/* A parte gerada não muda produto, quantidade, preço nem descontos: eles vêm do documento de origem. */}
-        {parteGerada && <p data-testid="parte-itens-da-origem" className="mb-2 text-sm text-slate-700">{fraseItensDaOrigem(origemDaParte)}</p>}
-        <ItensSalvos mostrarSaldo={origemComParte} mostrarReservado={reservaAtiva} itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`} />
-      </>}
+      itens={<ItensSalvos mostrarSaldo={origemComParte} mostrarReservado={reservaAtiva} itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`}
+        avisos={[
+          ...(saldoEncerradoEm ? [{ testId: "saldo-encerrado", conteudo: <>Saldo encerrado em {dateBR(saldoEncerradoEm).slice(0, 5)} por {String(d["saldo_encerrado_por_nome"] ?? "—")}: {String(d["saldo_encerrado_motivo"] ?? "")}</> }] : []),
+          // A parte gerada não muda produto, quantidade, preço nem descontos: eles vêm do documento de origem.
+          ...(parteGerada ? [{ testId: "parte-itens-da-origem", conteudo: fraseItensDaOrigem(origemDaParte) }] : [])
+        ]} />}
       abas={[
         /* TOTAIS: Desconto e Outros valores (o desenho) e, ao lado, os números do SERVIDOR — o total do documento
            inclui frete, ICMS do frete e outros valores, que não estão em linha de item nenhuma. */

@@ -477,12 +477,12 @@
 
 /* ═════════════ Itens ═════════════ */
 .itensBarra {
-  height: 42px;
+  height: 36px;
   flex-shrink: 0;
-  box-sizing: border-box;
+  box-sizing: content-box;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 0 10px 0 14px;
   border-bottom: 1px solid #eef1f4;
 }
@@ -559,8 +559,6 @@
 .linha[aria-selected="true"] td:first-child { box-shadow: inset 2px 0 0 #22a85c; }
 .linha:focus-visible td { background: rgba(64, 222, 99, .1); }
 .linhaSemProduto td { background: #fff7f7; }
-.linhaLeitura:nth-child(even) td { background: #fafbfc; }
-.linhaLeitura:hover td { background: rgba(15, 23, 42, .028); }
 .vazio { padding: 28px 16px !important; text-align: center; color: #94a3b8; white-space: normal !important; height: auto !important; }
 
 .remover { width: 26px; height: 26px; border: 0; border-radius: 6px; background: transparent; color: #94a3b8; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; padding: 0; transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io); }
@@ -599,7 +597,7 @@
 .quantidade .entrada { flex: 1 1 auto; min-width: 0; }
 .unidade { flex-shrink: 0; font-size: 10.5px; font-weight: 500; color: #94a3b8; letter-spacing: .02em; }
 
-.itensRodape { height: 32px; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 14px; border-top: 1px solid #eef1f4; background: #fbfcfd; font-size: 12px; color: #64748b; }
+.itensRodape { height: 32px; box-sizing: content-box; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 0 14px; border-top: 1px solid #eef1f4; background: #fbfcfd; font-size: 12px; line-height: normal; color: #64748b; }
 .itensRodape b { color: #111827; font-variant-numeric: tabular-nums; }
 
 /* formulário do item: o MESMO item selecionado, em uma coluna */
@@ -611,46 +609,72 @@
 .itemNavBotao svg { width: 14px; height: 14px; }
 .itemVazio { padding: 28px 16px; text-align: center; font-size: 12.5px; color: #94a3b8; }
 
-/* ═════════════ pesquisa (produto na célula / em fluxo no formulário) ═════════════ */
-.pesquisa {
-  z-index: 70;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, .72);
-  -webkit-backdrop-filter: blur(22px) saturate(180%);
-  backdrop-filter: blur(22px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, .65);
-  box-shadow: 0 12px 28px rgba(15, 23, 42, .14), inset 0 1px 0 rgba(255, 255, 255, .85);
-  animation: sobe var(--mo) var(--ez) backwards;
+/*
+ * ═════════════ ITENS DA CRIAÇÃO NO DESENHO (VISUAL-UX-02, decisão 270) ═════════════
+ * `central-vendas-itens.tsx` está travado nesta fase: a grade da criação ganha as medidas do desenho só por CSS, e
+ * toda regra daqui começa por `.itensBarra`, `.itensCorpo` ou `.itensRodape` — contêineres que SÓ a Central desenha.
+ * `.grade`/`.gradeRolagem` sozinhas continuam como estão, porque também desenham a prévia do configurador de layouts
+ * (`admin/layout-configurador/previa-itens.tsx`, que não tem nenhum desses contêineres). O desenho mede em content-box
+ * (altura + borda): cabeçalho 28+1, linha 23+1. Seleção por círculo, "Nenhum item adicionado.", "Itens (N)" no rodapé,
+ * Duplicar/Remover item e o texto do rodapé do Configurar colunas mudam o TSX: Fase B.
+ */
+.itensBarra .acao {
+  width: 25px;
+  height: 25px;
+  border: 1px solid transparent;
+  background: #f1f3f4;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
 }
-.pesquisaFlutuante { position: fixed; width: 640px; max-width: calc(100vw - 24px); }
-.pesquisaFluxo { position: relative; margin-top: -4px; background: rgba(255, 255, 255, .88); }
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  .pesquisa { background: rgba(255, 255, 255, .97); }
-}
-.pesquisaBusca { display: flex; align-items: center; gap: 8px; height: 40px; box-sizing: border-box; padding: 0 14px; color: #94a3b8; background: rgba(255, 255, 255, .4); border-bottom: 1px solid rgba(15, 23, 42, .07); }
-.pesquisaBusca svg { width: 14px; height: 14px; flex-shrink: 0; }
-.pesquisaBusca input { flex: 1 1 auto; min-width: 0; border: 0; outline: none; background: transparent; font-size: 13px; color: #111827; }
-.pesquisaBusca input::placeholder { color: #a9b2bd; }
-.pesquisaCabecalho,
-.pesquisaOpcao { display: grid; grid-template-columns: 90px minmax(0, 1fr); align-items: center; width: 100%; box-sizing: border-box; }
-.pesquisaCabecalho { height: 31px; padding: 0 14px; font-size: 12px; font-weight: 600; color: #334155; border-bottom: 1px solid rgba(15, 23, 42, .1); }
-.pesquisaLista { max-height: 180px; overflow: auto; }
-.pesquisaLista::-webkit-scrollbar { width: 9px; }
-.pesquisaLista::-webkit-scrollbar-track { background: transparent; }
-.pesquisaLista::-webkit-scrollbar-thumb { background: rgba(15, 23, 42, .16); border-radius: 9px; border: 3px solid transparent; background-clip: padding-box; }
-.pesquisaOpcao { height: 30px; padding: 0 14px; border: 0; background: transparent; text-align: left; font-size: 12.5px; color: #111827; cursor: pointer; transition: background-color var(--mi) var(--ez-io); }
-.pesquisaOpcao + .pesquisaOpcao { box-shadow: inset 0 1px 0 rgba(15, 23, 42, .055); }
-.pesquisaOpcao:hover { background: rgba(15, 23, 42, .04); }
-.pesquisaOpcao[data-ativa="true"],
-.pesquisaOpcao[data-ativa="true"]:hover { background: rgba(64, 222, 99, .15); }
-.pesquisaOpcao[data-ativa="true"] .codigo { color: #15803d; }
-.pesquisaOpcao .codigo { font-weight: 500; color: #7b8694; }
-.pesquisaOpcao > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pesquisaEstado { padding: 18px 12px; text-align: center; font-size: 12px; color: #64748b; }
+.itensBarra .acao:hover:not(:disabled) { background: #e8ecef; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); transform: none; }
+.itensBarra .acao:active:not(:disabled) { background: #dde3e8; transform: scale(.90); }
+.itensBarra .acao svg { width: 16px; height: 16px; }
+.itensBarra .acaoAdicionar { background: #40de63; color: #fff; }
+.itensBarra .acaoAdicionar:hover:not(:disabled) { background: #e8ecef; color: #0f172a; }
+.itensBarra .acaoAdicionar svg { width: 17px; height: 17px; stroke-width: 2; }
+.itensBarra .acaoAberta { background: #e2e8f0; color: #0f172a; box-shadow: inset 0 0 0 1px #cbd5e1, 0 2px 6px rgba(34, 197, 94, .30); }
+.itensBarra .visoes { height: 25px; padding: 2px; gap: 5px; background: #f1f3f4; box-shadow: 0 2px 6px rgba(34, 197, 94, .30); }
+.itensBarra .visoes button { width: 26px; height: 21px; border-radius: 12px; color: #475569; transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), transform var(--mf) var(--ez-io); }
+.itensBarra .visoes button:hover { background: rgba(15, 23, 42, .07); color: #0f172a; }
+.itensBarra .visoes button[aria-pressed="true"] { background: #fff; color: #0f172a; box-shadow: 0 1px 2px rgba(15, 23, 42, .08); }
+.itensBarra .visoes button[aria-pressed="true"]:hover { box-shadow: 0 1px 4px rgba(15, 23, 42, .16); }
+.itensBarra .visoes button:active { transform: scale(.97); }
+.itensBarra .visoes button svg { width: 16px; height: 16px; }
+/* Configurar colunas da criação: o popover do desenho (340px + borda, descendo), caixas ardósia, setas ardósia */
+.itensBarra .config { width: 340px; box-sizing: content-box; z-index: 30; line-height: normal; animation-name: itensDesce; }
+.itensBarra .configLista { box-sizing: content-box; }
+.itensBarra .configLinha { transition: background-color var(--mi) var(--ez-io); }
+.itensBarra .caixa[aria-checked="true"] { background: #334155; border-color: #334155; }
+.itensBarra .caixa:hover:not(:disabled) { border-color: #94a3b8; }
+.itensBarra .caixa[aria-checked="true"]:hover:not(:disabled) { background: #0f172a; border-color: #0f172a; }
+.itensBarra .mover { color: #475569; }
+.itensBarra .mover:disabled { opacity: .3; background: transparent; }
+.itensBarra .popoverRodape { border-radius: 0 0 10px 10px; }
+
+.itensCorpo .grade { font-size: 11.5px; line-height: normal; }
+.itensCorpo .grade th { height: 28px; box-sizing: content-box; padding: 0 8px; }
+.itensCorpo .grade th.numero { text-align: left; }
+.itensCorpo .grade td { height: 23px; box-sizing: content-box; padding: 0 8px; }
+.itensCorpo .grade .excluir { padding: 0; }
+/* o código na grade é texto comum, como no desenho (o monoespaçado fica para a pesquisa) */
+.itensCorpo .grade td .codigo { font-family: inherit; font-size: inherit; font-weight: 400; letter-spacing: normal; color: #111827; }
+.itensCorpo .remover { width: 22px; height: 22px; }
+.itensCorpo .celulaBotao { height: 23px; }
+.itensCorpo .celulaIcone { order: -1; margin-left: 0; margin-right: 2px; color: #475569; }
+.itensCorpo .entrada { height: 19px; font-size: 12px; }
+.itensCorpo td > .entrada { width: 74px; }
+.itensCorpo .quantidade .entrada { flex: 0 1 74px; }
+.itensCorpo .entrada:focus { border-color: #cfd6de; box-shadow: 0 1px 3px rgba(15, 23, 42, .10); }
+.itensCorpo .unidade { width: 18px; font-weight: 400; letter-spacing: normal; text-align: left; }
+.itensCorpo .vazio { padding: 30px 16px !important; font-size: 12.5px; color: #64748b; }
+/* formulário do item: "Item X de N" numa faixa de 38px, campos com 6px entre eles */
+.itensCorpo .itemForm { padding: 0 14px 14px; gap: 6px; }
+.itensCorpo .itemNav { height: 38px; margin-bottom: -6px; font-size: 12.5px; font-weight: 600; color: #1e293b; line-height: normal; }
+.itensCorpo .itemNavBotao { width: 25px; height: 25px; background: #f1f3f4; color: #475569; box-shadow: 0 2px 6px rgba(34, 197, 94, .30); transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), transform var(--mf) var(--ez-io); }
+.itensCorpo .itemNavBotao:hover:not(:disabled) { background: #e5e7eb; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.itensCorpo .itemNavBotao:active:not(:disabled) { transform: scale(.90); }
+.itensCorpo .itemVazio { padding: 20px 14px; text-align: left; color: #64748b; }
+@keyframes itensDesce { from { opacity: 0; transform: translateY(-7px) scale(.985); } to { opacity: 1; transform: none; } }
 
 /* ═════════════ painel inferior ═════════════ */
 .painel {
