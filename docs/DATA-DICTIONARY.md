@@ -14,11 +14,11 @@ Formato do dicionário: versão **2**. Taxonomia própria e neutra `ERP-<MÓDULO
 | Tabelas no schema `erp` | 198 |
 | Tabelas com `organization_id` (escopo de organização) | 141 |
 | Tabelas com coluna de empresa (hoje `farm_id`) | 55 |
-| Entidades curadas neste dicionário | 51 |
+| Entidades curadas neste dicionário | 52 |
 | Entidades com ID Global | 24 |
 | Entidades com Tipo de Operação | 14 |
 | Tipos de Operação referenciados | 19 |
-| Cobertura curada | 25.8% |
+| Cobertura curada | 26.3% |
 
 Cobertura é incremental por projeto: a certificação de 100% é a missão **DATA-GOV** do roteiro
 (`docs/PRE-BASE2-ROADMAP.md`). Toda tabela ainda não curada aparece no apêndice com seus metadados técnicos.
@@ -739,6 +739,33 @@ Local de guarda de estoque, pertencente a uma empresa.
 | `deleted_at` |  | timestamptz | não |  |  |  |  |
 | `empresa_id` |  | uuid | sim |  |  |  |  |
 
+### ERP-CADASTROS-LAYOUT-DOCUMENTO — Layout do Documento
+
+Quais campos o documento comercial de uma família mostra, em que ordem, com que rótulo, se são obrigatórios ou editáveis e com que valor padrão — configurado pela organização e ligado às TOPs (decisões 259 a 262; compras na decisão 269). Cadastro de organização, sem empresa; a conta (catálogo por família, validação, ligado → padrão → sistema) mora no domínio.
+
+| Propriedade | Valor |
+| --- | --- |
+| Tabela | `erp.layouts_documento` |
+| Natureza | entidade |
+| Escopo de organização | sim |
+| Escopo de empresa | não (registro da organização) |
+| Exclusão lógica | sim |
+| ID Global | não |
+
+| Campo | Nome funcional | Tipo | Obrigatório | Chave | Relacionamento | Valores | Descrição |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `id` |  | uuid | não | PK |  |  |  |
+| `organization_id` |  | uuid | sim | FK | `erp.organizations` |  |  |
+| `code` |  | text | sim |  |  |  |  |
+| `nome` |  | text | sim |  |  |  |  |
+| `familia` | Movimento | text | sim |  |  | `vendas.orcamento` · `vendas.pedido` · `vendas.venda` · `compras.pedido` · `compras.compra` | Família canônica do documento: as três de venda e as duas de compra (pedido de compra e compra, decisão 269). Uma TOP só se liga a layout da própria família (gatilho do banco). |
+| `padrao` | Padrão da família | boolean | sim |  |  |  | Usado pela TOP da família que não tem layout ligado. No máximo um ativo e vivo por organização e família (índice único parcial). |
+| `estrutura` |  | jsonb | sim |  |  |  |  |
+| `is_active` |  | boolean | sim |  |  |  |  |
+| `created_at` |  | timestamptz | sim |  |  |  |  |
+| `updated_at` |  | timestamptz | sim |  |  |  |  |
+| `deleted_at` |  | timestamptz | não |  |  |  |  |
+
 ## Estoque
 
 ### ERP-ESTOQUE-ENTRADA — Entrada Manual
@@ -1143,7 +1170,7 @@ Documento comercial de compra (decisão 267). A coluna `especie` decide a etapa 
 | `empresa_id` |  | uuid | sim |  |  |  |  |
 | `especie` | Espécie | text | sim |  |  | `pedido` · `compra` | pedido \| compra. Valor canônico persistido; o rótulo é traduzido na apresentação. |
 | `codigo` |  | text | sim |  |  |  |  |
-| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `cancelado` | aberto \| confirmado (só compra) \| convertido (só pedido: saldo recebido por inteiro ou encerrado) \| cancelado. Cancelado é final; o pedido convertido volta a aberto quando uma compra dele é cancelada, salvo com saldo encerrado (decisão 268). |
+| `situacao` | Situação | text | sim |  |  | `aberto` · `confirmado` · `convertido` · `cancelado` | aberto \| confirmado (só compra) \| convertido (só pedido: saldo recebido por inteiro ou encerrado) \| cancelado. Cancelado é final; o pedido convertido volta a aberto quando uma compra dele é cancelada, salvo com saldo encerrado (decisão 268). |
 | `tipo_operacao_id` |  | uuid | sim |  |  |  |  |
 | `tipo_operacao_versao_id` |  | uuid | sim |  |  |  |  |
 | `fornecedor_id` |  | uuid | sim |  |  |  |  |
@@ -1869,7 +1896,6 @@ Metadados técnicos derivados do schema. Acrescentar a entrada funcional em
 | `erp.job_functions` | 12 | sim | — | sim |
 | `erp.journal_entries` | 13 | sim | `empresa_id` | não |
 | `erp.layout_documento_tops` | 5 | sim | — | não |
-| `erp.layouts_documento` | 11 | sim | — | sim |
 | `erp.legado_escopo_empresa_v0` | 4 | sim | `empresa_id` | não |
 | `erp.livestock_plannings` | 12 | sim | `empresa_id` | sim |
 | `erp.maintenance_items` | 9 | não | — | não |

@@ -6,7 +6,8 @@
  *
  * GRAMÁTICA SUPORTADA — deliberadamente a do repositório, não SQL universal:
  *   create table · alter table … add column · alter column set/drop not null ·
- *   alter table … rename to · drop table · alter table … DROP COLUMN
+ *   alter table … rename to · drop table · alter table … DROP COLUMN ·
+ *   alter table … drop constraint <nome> / add constraint <nome> check (…)   (só CHECK; ver `refazerChecks`)
  *
  * POR QUE `drop column` ENTRA AGORA (PRE-BASE2-05C-0, antes de existir a migration que o usa).
  * Até aqui o repositório só tinha migrations aditivas, e um leitor que ignorasse remoção dizia a verdade
@@ -77,15 +78,33 @@ function parseColumn(def) {
   const typeMatch = /^([a-z][a-z0-9_ ]*?(?:\([^)]*\))?(?:\s*\[\])?)(?=\s|$)/i.exec(rest.trim());
   const ref = /references\s+([a-z_]+\.[a-z_]+)/i.exec(rest);
   const def_ = /\bdefault\s+([^,]+?)(?=\s+(?:not\s+null|references|check|unique|primary)\b|$)/i.exec(rest);
+  const check = inlineCheck(rest);
+  // O NOME do CHECK de coluna (`constraint <nome> check (…)`): é por ele que um `drop constraint` posterior o
+  // alcança. Sem nome declarado fica nulo — o nome automático do PostgreSQL não é reconstruído aqui.
+  const checkNome = check ? (/\bconstraint\s+([a-z_][a-z0-9_]*)\s+check\s*\(/i.exec(rest)?.[1]?.toLowerCase() ?? null) : null;
   return {
     name,
     type: (typeMatch?.[1] ?? rest.split(/\s+/)[0] ?? "").trim().toLowerCase(),
     notNull: /\bnot\s+null\b/i.test(rest),
     primaryKey: /\bprimary\s+key\b/i.test(rest),
     references: ref ? ref[1].toLowerCase() : null,
-    check: inlineCheck(rest),
+    check,
+    checkNome,
     default: def_ ? def_[1].trim() : null
   };
+}
+
+/**
+ * A coluna que um CHECK recriado por `alter table … add constraint` descreve — SÓ quando ele é, inteiro, a lista de
+ * valores de UMA coluna da tabela (`coluna in (…)`, com ou sem parênteses em volta). É exatamente a forma que o
+ * dicionário de dados lê como "Valores" (`scripts/data-dictionary.mjs`, `enumValues`). Qualquer outro predicado
+ * (`a is null or a in (…)`, par de colunas, expressão) é constraint DE TABELA e não vira valor de coluna nenhuma.
+ */
+function colunaDoCheck(corpo, entry) {
+  let e = corpo.trim();
+  for (let b = e.startsWith("(") ? balanced(e, 0) : null; b && b.end === e.length - 1; b = e.startsWith("(") ? balanced(e, 0) : null) e = b.body.trim();
+  const m = /^([a-z_][a-z0-9_]*)\s+in\s*\(([^()]*)\)$/i.exec(e);
+  return m ? entry.columns.get(m[1].toLowerCase()) ?? null : null;
 }
 
 /**
@@ -126,6 +145,36 @@ function alteracoesNaOrdemDoArquivo(sql) {
     const nomes = [...m[2].matchAll(/drop\s+column\s+(?:if\s+exists\s+)?([a-z_][a-z0-9_]*)/gi)].map((x) => x[1].toLowerCase());
     return nomes.length ? { tipo: "removerColuna", tabela: m[1].toLowerCase(), colunas: nomes } : null;
   });
+  /**
+   * `drop constraint <nome>` e `add constraint <nome> check (…)`, soltos ou juntos numa instrução só, na ordem em que
+   * aparecem (COMPRAS-03, item 0 g da revisão da COMPRAS-02).
+   *
+   * POR QUE ENTRA. A 0037 refez o CHECK da situação do documento de compra para acrescentar 'convertido' (drop e add
+   * na MESMA instrução, com o MESMO nome), e a 0038 faz o mesmo com a família do layout do documento. O leitor via
+   * só o CHECK do `create table` e ignorava o `alter table`: o dicionário de dados publicava, VERDE, a lista de
+   * valores de ANTES — `documentos_compra.situacao` sem 'convertido'. É o defeito que o gerador existe para impedir
+   * (documento dizendo o contrário do schema), só que pela porta da constraint em vez da coluna.
+   *
+   * O QUE NÃO ENTRA, de propósito: `add constraint` de UNIQUE, FK, PK ou EXCLUDE continua ignorado — a UNIQUE é lida
+   * por `sequencia-namespace-audit`, e mudar o que ele enxerga está fora do que esta correção precisa. O `drop
+   * constraint` só alcança o que tem NOME conhecido aqui (CHECK de coluna com `constraint <nome>`, constraint de
+   * tabela com `constraint <nome>`, CHECK acrescentado por este mesmo caminho); nome automático do PostgreSQL não é
+   * reconstruído, e o que não se alcança fica como estava (o comportamento de antes).
+   */
+  varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+(?=[^;]*\b(?:add|drop)\s+constraint\b)([^;]*);/gi, (m) => {
+    const corpo = m[2];
+    const acoes = [];
+    const re = /\b(add|drop)\s+constraint\s+(?:if\s+exists\s+)?([a-z_][a-z0-9_]*)/gi;
+    for (let a = re.exec(corpo); a; a = re.exec(corpo)) {
+      const nome = a[2].toLowerCase();
+      if (a[1].toLowerCase() === "drop") { acoes.push({ acao: "remover", nome }); continue; }
+      const ck = /^\s*check\s*\(/i.exec(corpo.slice(re.lastIndex));
+      if (!ck) continue;
+      const bloco = balanced(corpo, re.lastIndex + ck[0].length - 1);
+      if (bloco) acoes.push({ acao: "adicionarCheck", nome, corpo: bloco.body.replace(/\s+/g, " ").trim() });
+    }
+    return acoes.length ? { tipo: "refazerChecks", tabela: m[1].toLowerCase(), acoes } : null;
+  });
   varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+set\s+not\s+null\s*;/gi,
     (m) => ({ tipo: "obrigatoriedade", tabela: m[1].toLowerCase(), coluna: m[2].toLowerCase(), notNull: true }));
   varrer(/alter\s+table\s+(?:if\s+exists\s+)?([a-z_]+\.[a-z_][a-z0-9_]*)\s+alter\s+column\s+([a-z_][a-z0-9_]*)\s+drop\s+not\s+null\s*;/gi,
@@ -156,8 +205,10 @@ function alteracoesNaOrdemDoArquivo(sql) {
  * seria pior do que recusá-la. Estava certo no princípio e errado no fato: ela era aceita pela metade,
  * porque não havia recusa nenhuma. Agora há. O leitor PARA, dizendo arquivo e instrução.
  *
- * As demais cláusulas de `alter table` (constraint, default, tipo, `enable row level security`) continuam
- * ignoradas de propósito: elas não mudam o CONJUNTO de colunas, que é o que este modelo afirma.
+ * COMPRAS-03 (decisão 269): `drop constraint <nome>` e `add constraint <nome> check (…)` de `alter table` passam a
+ * ser modelados (`refazerChecks`) — o CHECK recriado é o que vale para os valores da coluna no dicionário. As demais
+ * cláusulas (UNIQUE/FK/PK/EXCLUDE, default, tipo, `enable row level security`) continuam ignoradas de propósito: elas
+ * não mudam o CONJUNTO de colunas, que é o que este modelo afirma.
  */
 const FORMAS_RECUSADAS = [
   { re: /alter\s+table\s+(?:if\s+exists\s+)?[a-z_]+\.[a-z_][a-z0-9_]*\s+(?=[^;]*\bdrop\s+column\b)(?=[^;]*\badd\s+column\b)[^;]*;/gi,
@@ -225,6 +276,23 @@ function aplicar(tables, op, file) {
   if (op.tipo === "obrigatoriedade") {
     const col = entry.columns.get(op.coluna);
     if (col) col.notNull = op.notNull;
+    return;
+  }
+  if (op.tipo === "refazerChecks") {
+    for (const a of op.acoes) {
+      if (a.acao === "remover") {
+        // O CHECK de coluna com esse nome deixa de valer (e os valores dele saem do dicionário); a constraint de
+        // tabela com esse nome sai da lista. É o que o PostgreSQL faz com `drop constraint`.
+        for (const col of entry.columns.values()) if (col.checkNome === a.nome) { col.check = null; col.checkNome = null; }
+        entry.constraints = entry.constraints.filter((c) => !new RegExp(`^constraint\\s+${a.nome}\\b`, "i").test(c));
+        continue;
+      }
+      // O CHECK que é a lista de valores de UMA coluna volta a ser o check DAQUELA coluna (é o que o dicionário
+      // lê); qualquer outro é constraint de tabela.
+      const col = colunaDoCheck(a.corpo, entry);
+      if (col) { col.check = a.corpo; col.checkNome = a.nome; }
+      else entry.constraints.push(`constraint ${a.nome} check (${a.corpo})`);
+    }
     return;
   }
   if (op.tipo === "renomearTabela") {
