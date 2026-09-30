@@ -88,7 +88,7 @@ const linha = async (id: string) => (await admin.query<Linha>("select * from erp
 const itens = async (id: string) => (await admin.query<Linha & { id: string }>("select * from erp.sales_document_items where document_id=$1 order by position, id", [id])).rows;
 type Evento = { id: string; action: string; before: Record<string, unknown> | null; after: Record<string, unknown> | null; metadata: Record<string, unknown> | null };
 const eventos = async (id: string) => (await admin.query<Evento>(
-  "select id::text, action, before, after, metadata from erp.audit_logs where entity='sales_documents' and entity_id=$1 order by id", [id])).rows;
+  "select a.id::text as id, a.action, a.before, a.after, a.metadata from erp.audit_logs a where a.entity='sales_documents' and a.entity_id=$1 order by a.id", [id])).rows;
 /**
  * O gatilho `erp.audit_row` (0005) grava, a CADA update da linha, um evento `update` com a linha INTEIRA antes/depois.
  * O evento da EDIÇÃO é o outro `update`: o que traz SÓ os campos alterados — nunca a foto inteira do gatilho.
@@ -313,7 +313,10 @@ describe("ED-7 — Idempotency-Key", () => {
     expect(r1.statusCode, r1.body).toBe(200);
     expect(j(r1).version).toBe(mais(v0, 1));
     const r2 = await patch("sale", id, corpoDaPatch, h.headers({ "idempotency-key": chave }));
-    expect([r2.statusCode, r2.body], "a mesma resposta, byte a byte").toEqual([200, r1.body]);
+    // A MESMA resposta (a gravada no helper oficial): o conteúdo inteiro igual. A ordem das chaves não é contrato — o
+    // helper guarda a resposta em jsonb, que reordena as chaves do objeto.
+    expect(r2.statusCode, r2.body).toBe(200);
+    expect(j(r2), "a mesma resposta").toEqual(j(r1));
     const depois = await foto(id);
     expect(depois.doc.version, "gravou uma vez só").toBe(mais(v0, 1));
     expect(depois.doc.note).toBe("idempotente");

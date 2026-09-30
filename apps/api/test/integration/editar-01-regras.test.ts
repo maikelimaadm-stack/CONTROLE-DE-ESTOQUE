@@ -137,7 +137,7 @@ const linha = async (id: string) => (await admin.query<Linha>("select * from erp
 const itens = async (id: string) => (await admin.query<Linha & { id: string }>("select * from erp.sales_document_items where document_id=$1 order by position, id", [id])).rows;
 type Evento = { id: string; action: string; before: Record<string, unknown> | null; after: Record<string, unknown> | null; metadata: Record<string, unknown> | null };
 const eventos = async (id: string) => (await admin.query<Evento>(
-  "select id::text, action, before, after, metadata from erp.audit_logs where entity='sales_documents' and entity_id=$1 order by id", [id])).rows;
+  "select a.id::text as id, a.action, a.before, a.after, a.metadata from erp.audit_logs a where a.entity='sales_documents' and a.entity_id=$1 order by a.id", [id])).rows;
 const foto = async (id: string) => ({ doc: await linha(id), itens: await itens(id), eventos: await eventos(id) });
 const versaoGravada = async (id: string) => (await linha(id)).version as string;
 /** Eventos `update` da EDIÇÃO — não a foto inteira que o gatilho `erp.audit_row` (0005) grava a cada update da linha. */
