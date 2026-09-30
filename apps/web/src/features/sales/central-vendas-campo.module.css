@@ -28,11 +28,19 @@
 /* ═════════════ campo ═════════════ */
 .campo { position: relative; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 
+/*
+ * GEOMETRIA DO DESENHO: a linha tem borda TRANSPARENTE de 1px (o `.fld`), e rótulo, caixa e ícone moram no padding-box
+ * dela — então, com rótulo à frente, o rótulo fica em +1,+1 e a caixa mede (largura − 138) × 28 a partir de +137.
+ * `--ext` é quanto o controle passa da caixa para a esquerda, a direita e embaixo, até a caixa de referência do
+ * desenho (o `.fx` a partir de 136px): é dela que a lista de pesquisa e o calendário saem (x e largura; topo +4).
+ */
 .linha {
   --recuo: 10px;
+  --ext: 2px;
   position: relative;
   height: 30px;
   box-sizing: border-box;
+  border: 1px solid transparent;
 }
 .linha[data-icone] { --recuo: 32px; }
 .linha[data-multilinha] { height: 80px; }
@@ -105,14 +113,22 @@ fieldset:disabled .linha:not([data-estado]) .caixa { background: #e9edf2; border
 
 /* o controle (Input, RefSelect, MgDatePicker, Textarea) perde a caixa própria e ocupa a do desenho */
 .caixa[data-controle] { padding: 0; }
-.caixa[data-controle] > :not([type="hidden"]) { position: absolute; inset: 0; display: flex; align-items: stretch; min-width: 0; width: auto; height: auto; }
+.caixa[data-controle] > :not([type="hidden"]) {
+  position: absolute;
+  inset: 0 calc(-1 * var(--ext)) calc(-1 * var(--ext));
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  width: auto;
+  height: auto;
+}
 .caixa .controle {
   box-sizing: border-box;
   width: 100%;
   height: 100% !important;
   min-height: 0;
   margin: 0;
-  padding: 0 10px 0 var(--recuo) !important;
+  padding: 0 calc(10px + var(--ext)) var(--ext) calc(var(--recuo) + var(--ext)) !important;
   border: 0 !important;
   border-radius: 8px;
   background: transparent !important;
@@ -133,8 +149,8 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .caixa :global(.cmd-display) { display: flex; align-items: center; cursor: pointer; }
 .caixa :global(.cmd-display-placeholder) { color: #94a3b8; font-weight: 500; }
 .caixa :global(.cmd-chevron) { display: none; }
-.caixa :global(.cmd-clear) { right: 10px; }
-.linha:has(:global(.cmd-clear)) .controle { padding-right: 30px !important; }
+.caixa :global(.cmd-clear) { right: calc(10px + var(--ext)); margin-top: calc(-7px - var(--ext) / 2); }
+.linha:has(:global(.cmd-clear)) .controle { padding-right: calc(30px + var(--ext)) !important; }
 
 /* ícone À ESQUERDA, dentro da caixa (lupa, calendário, chevron) */
 .icone {
@@ -149,6 +165,32 @@ fieldset:disabled .caixa .controle { cursor: default; }
   transition: top .22s cubic-bezier(.2, .8, .2, 1);
 }
 .icone svg { width: 14px; height: 14px; flex-shrink: 0; }
+/* data: o botão redondo de 22px do desenho ("Escolher data"), no mesmo lugar do glifo; na consulta, a mesma forma, parada */
+.icone[data-botao] { width: 22px; height: 22px; margin-left: -4px; align-items: center; justify-content: center; border-radius: 999px; }
+.botaoData {
+  position: absolute;
+  left: 11px;
+  top: calc(50% - var(--ext) / 2);
+  transform: translateY(-50%);
+  z-index: 3;
+  width: 22px;
+  height: 22px;
+  margin: 0 0 0 -4px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  transition: background-color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), top .22s cubic-bezier(.2, .8, .2, 1);
+}
+.botaoData svg { width: 14px; height: 14px; flex-shrink: 0; }
+.botaoData:hover:not(:disabled) { background: rgba(15, 23, 42, .06); color: #0f172a; }
+.botaoData:disabled { cursor: default; }
+.botaoData:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
 
 /* erro sob a caixa, com ícone */
 .erro {
@@ -165,10 +207,11 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .abaixo { padding-left: 138px; }
 
 /* ═════════════ compacto: rótulo DENTRO da caixa (flutuante), 32px ═════════════ */
-[data-densidade="compacto"] .linha { height: 32px; }
+[data-densidade="compacto"] .linha { --ext: 1px; height: 32px; }
 [data-densidade="compacto"] .linha[data-multilinha] { height: 80px; }
+/* no compacto a caixa É o `.fld` do desenho: cobre a linha inteira, borda incluída */
 [data-densidade="compacto"] .caixa {
-  left: 0;
+  inset: -1px;
   transition: background-color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), border-color var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), box-shadow var(--mi, 170ms) cubic-bezier(.4, 0, .2, 1), padding .22s cubic-bezier(.2, .8, .2, 1);
 }
 [data-densidade="compacto"] .rotulo {
@@ -196,18 +239,21 @@ fieldset:disabled .caixa .controle { cursor: default; }
 [data-densidade="compacto"] .linha[data-multilinha] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .caixa:not([data-controle]),
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .controle,
-[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: 3px !important; align-items: flex-end; }
+[data-densidade="compacto"] fieldset:disabled .linha .controle { padding-top: 13px !important; padding-bottom: calc(3px + var(--ext)) !important; align-items: flex-end; }
 [data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .icone,
 [data-densidade="compacto"] fieldset:disabled .linha .icone { top: calc(50% + 5px); }
-[data-densidade="compacto"] .linha[data-multilinha] .controle { padding-top: 13px !important; padding-bottom: 3px !important; }
+[data-densidade="compacto"] .linha:is([data-preenchido="true"], [data-estado], :focus-within, :has([aria-expanded="true"])) .botaoData,
+[data-densidade="compacto"] fieldset:disabled .linha .botaoData { top: calc(50% - var(--ext) / 2 + 5px); }
+[data-densidade="compacto"] .linha[data-multilinha] .controle { padding-top: 13px !important; padding-bottom: calc(3px + var(--ext)) !important; }
 /* vazio no compacto: o rótulo ocupa a caixa — o traço de "sem valor" não aparece por baixo dele */
 [data-densidade="compacto"] .caixa :global(.cmd-display-placeholder) { visibility: hidden; }
 
 /* ═════════════ chave sim/não ═════════════ */
 .linha.linha[data-chave] .caixa { background: transparent; border-color: transparent; box-shadow: none; padding-left: 0; padding-right: 0; gap: 9px; }
 [data-densidade="compacto"] .linha[data-chave] { height: auto; min-height: 42px; }
-[data-densidade="compacto"] .linha[data-chave] .caixa { padding-top: 16px !important; padding-bottom: 2px !important; align-items: center; }
-[data-densidade="compacto"] .linha[data-chave] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; padding-left: 0; }
+/* a chave não tem caixa: no compacto ela fica no padding-box da linha (sem cobrir a borda), como o `.fc` do desenho */
+[data-densidade="compacto"] .linha.linha[data-chave] .caixa:not([data-controle]) { inset: 0; border-width: 0; padding-top: 16px !important; padding-bottom: 2px !important; align-items: center; }
+[data-densidade="compacto"] .linha[data-chave] .rotulo { top: 3px; transform: none; font-size: 8.5px; line-height: 1; }
 .chave {
   --sw-w: 42px;
   --sw-h: 20px;
@@ -241,15 +287,16 @@ fieldset:disabled .caixa .controle { cursor: default; }
   transform-origin: left center;
   transition: transform .26s cubic-bezier(.32, 1.4, .5, 1);
 }
-.chave:hover:not(:disabled) { background: #d7d7dc; }
+.chave:hover:not(:disabled):not([aria-readonly="true"]) { background: #d7d7dc; }
 .chave[aria-checked="true"] { background: #40de63; }
-.chave[aria-checked="true"]:hover:not(:disabled) { background: #35cf56; }
+.chave[aria-checked="true"]:hover:not(:disabled):not([aria-readonly="true"]) { background: #35cf56; }
 .chave[aria-checked="true"] .chaveBotao { transform: translateX(calc(var(--sw-w) - var(--sw-g) * 2 - 100%)); transform-origin: right center; }
-.chave:active:not(:disabled) .chaveBotao { transform: scaleX(1.18); }
-.chave[aria-checked="true"]:active:not(:disabled) .chaveBotao { transform: translateX(calc(var(--sw-w) - var(--sw-g) * 2 - 100%)) scaleX(1.18); }
+.chave:active:not(:disabled):not([aria-readonly="true"]) .chaveBotao { transform: scaleX(1.18); }
+.chave[aria-checked="true"]:active:not(:disabled):not([aria-readonly="true"]) .chaveBotao { transform: translateX(calc(var(--sw-w) - var(--sw-g) * 2 - 100%)) scaleX(1.18); }
 .chave:disabled { opacity: .45; cursor: not-allowed; }
+.chave[aria-readonly="true"] { cursor: default; }
 .chave:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-.chaveTexto { font-size: 12.5px; font-weight: 400; color: #475569; }
+.chaveTexto { font-size: 12.5px; font-weight: 500; color: #475569; }
 
 /* ═════════════ Dados adicionais (recolhível) ═════════════ */
 .maisDados {
@@ -262,6 +309,7 @@ fieldset:disabled .caixa .controle { cursor: default; }
   padding: 2px;
   font-size: 12px;
   font-weight: 600;
+  line-height: normal;
   color: #475569;
   cursor: pointer;
   border-radius: 6px;
@@ -343,10 +391,12 @@ fieldset:disabled .caixa .controle { cursor: default; }
 .painelPesquisa :global(.cmd-panel__footer) { border-top: 1px solid rgba(15, 23, 42, .07); background: transparent; }
 
 /* ═════════════ calendário do desenho (painel do MgDatePicker) ═════════════ */
+/* 240px de ÁREA ÚTIL (a caixa do desenho não declara box-sizing: 240 + 2×10 + 2×1 = 262) */
 .calendario {
   width: 240px;
-  box-sizing: border-box;
+  box-sizing: content-box;
   padding: 8px 10px;
+  line-height: normal;
   border-radius: 12px;
   overflow: hidden;
   z-index: 10001;

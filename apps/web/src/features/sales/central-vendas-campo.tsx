@@ -33,10 +33,11 @@ type AtributosDeDados = { [k: `data-${string}`]: string | undefined };
 
 const ICONES: Record<IconeDoCampo, React.ComponentType> = { pesquisa: Search, data: Calendar, selecao: ChevronDown };
 
+/** O ícone à esquerda. O de data ocupa o lugar do botão redondo de 22px do desenho ("Escolher data"). */
 function IconeDaCaixa({ icone }: { icone: IconeDoCampo | null | undefined }) {
   if (!icone) return null;
   const Icone = ICONES[icone];
-  return <span className={estilos.icone} aria-hidden><Icone /></span>;
+  return <span className={estilos.icone} data-parte="icone" data-botao={icone === "data" ? "" : undefined} aria-hidden><Icone /></span>;
 }
 
 export type PropsDoCampo = {
@@ -68,20 +69,23 @@ export function CampoDaCentral({ rotulo, obrigatorio, erro, icone, estado = "edi
   const comControle = estado === "editavel" || estado === "desabilitado";
   let conteudo: React.ReactNode = children;
   let id: string | undefined;
-  if (comControle && React.isValidElement<{ id?: string; className?: string; idDaCaixa?: string; placeholder?: string; classeDoPainel?: string }>(children)) {
+  if (comControle && React.isValidElement<{ id?: string; className?: string; idDaCaixa?: string; placeholder?: string; classeDoPainel?: string; semDestaqueAoAbrir?: boolean }>(children)) {
     const p = children.props;
     if (children.type === RefSelect) {
       id = p.idDaCaixa ?? gerado;
-      conteudo = React.cloneElement(children, { idDaCaixa: id, className: cn(p.className, estilos.controle), placeholder: p.placeholder ?? "—", classeDoPainel: p.classeDoPainel ?? estilos.painelPesquisa });
+      conteudo = React.cloneElement(children, { idDaCaixa: id, className: cn(p.className, estilos.controle), placeholder: p.placeholder ?? "—", classeDoPainel: p.classeDoPainel ?? estilos.painelPesquisa, semDestaqueAoAbrir: true });
     } else {
       id = p.id ?? gerado;
       conteudo = React.cloneElement(children, { id, className: cn(p.className, estilos.controle) });
     }
   }
   const vazio = !comControle && (children === null || children === undefined || children === "");
+  const req = obrigatorio && <span className={estilos.obrigatorio} data-parte="req"> *</span>;
   const rotuloNo = comControle
-    ? <label htmlFor={id} className={estilos.rotulo}>{rotulo}{obrigatorio && <span className={estilos.obrigatorio}> *</span>}</label>
-    : <span className={estilos.rotulo}>{rotulo}{obrigatorio && <span className={estilos.obrigatorio}> *</span>}</span>;
+    ? <label htmlFor={id} className={estilos.rotulo} data-parte="rotulo">{rotulo}{req}</label>
+    : <span className={estilos.rotulo} data-parte="rotulo">{rotulo}{req}</span>;
+  /* a data traz o próprio botão "Escolher data" (dentro do controle); os outros ícones moram na linha */
+  const iconeNaLinha = comControle && icone === "data" ? null : icone;
   return <div className={estilos.campo} data-testid={testId} {...dados}>
     <div className={estilos.linha} title={dica}
       data-estado={estado === "editavel" ? undefined : estado}
@@ -90,12 +94,12 @@ export function CampoDaCentral({ rotulo, obrigatorio, erro, icone, estado = "edi
       data-icone={icone ?? undefined}
       data-multilinha={multilinha ? "" : undefined}>
       {rotuloNo}
-      <div className={estilos.caixa} data-controle={comControle ? "" : undefined}>
-        {comControle ? conteudo : <span className={cn(estilos.valor, vazio && estilos.vazio)}>{vazio ? "—" : typeof children === "string" || typeof children === "number" ? <span>{children}</span> : children}</span>}
+      <div className={estilos.caixa} data-parte="caixa" data-controle={comControle ? "" : undefined}>
+        {comControle ? conteudo : <span className={cn(estilos.valor, vazio && estilos.vazio)} data-parte="valor">{vazio ? "—" : typeof children === "string" || typeof children === "number" ? <span>{children}</span> : children}</span>}
       </div>
-      <IconeDaCaixa icone={icone} />
+      <IconeDaCaixa icone={iconeNaLinha} />
     </div>
-    {erro && <span className={estilos.erro}><CircleAlert aria-hidden />{erro}</span>}
+    {erro && <span className={estilos.erro} data-parte="erro"><CircleAlert aria-hidden />{erro}</span>}
     {abaixo && <div className={estilos.abaixo}>{abaixo}</div>}
   </div>;
 }
@@ -112,9 +116,9 @@ export function CampoLeitura({ rotulo, valor, adorno, testId, multilinha }: { ro
   const vazio = valor === null || valor === undefined || valor === "";
   return <div className={estilos.campo} role="group" aria-label={rotulo} data-testid={testId} data-campo={rotulo}>
     <div className={estilos.linha} data-estado={travado ? "travado" : "leitura"} data-icone={!travado && adorno ? adorno : undefined} data-multilinha={multilinha ? "" : undefined}>
-      <span className={estilos.rotulo}>{rotulo}</span>
-      <div className={estilos.caixa}>
-        <span className={cn(estilos.valor, vazio && estilos.vazio)}>{vazio ? "—" : typeof valor === "string" || typeof valor === "number" ? <span>{valor}</span> : valor}</span>
+      <span className={estilos.rotulo} data-parte="rotulo">{rotulo}</span>
+      <div className={estilos.caixa} data-parte="caixa">
+        <span className={cn(estilos.valor, vazio && estilos.vazio)} data-parte="valor">{vazio ? "—" : typeof valor === "string" || typeof valor === "number" ? <span>{valor}</span> : valor}</span>
       </div>
       {!travado && adorno && <IconeDaCaixa icone={adorno} />}
     </div>
@@ -123,18 +127,19 @@ export function CampoLeitura({ rotulo, valor, adorno, testId, multilinha }: { ro
 
 /**
  * Chave sim/não do desenho (`role="switch"`): trilho de 42×20 com a bolinha, e o texto "Sim"/"Não" ao lado. Sem
- * `onChange`, ou `desabilitado`, ela só mostra (consulta). O valor e o que ele significa no payload são de quem chama.
+ * `onChange` ela só mostra (consulta): opacidade cheia, `aria-readonly`, não reage — como no desenho. `desabilitado`
+ * (ou o fieldset travado do layout) é o estado apagado. O valor e o que ele significa no payload são de quem chama.
  */
 export function ChaveSimNao({ rotulo, valor, onChange, desabilitado, testId, ...dados }: { rotulo: string; valor: boolean; onChange?: (v: boolean) => void; desabilitado?: boolean; testId?: string } & AtributosDeDados) {
   const id = React.useId();
   const soLeitura = !onChange;
   return <div className={estilos.campo} data-testid={testId} {...dados}>
     <div className={estilos.linha} data-chave="" data-estado={soLeitura ? "leitura" : desabilitado ? "desabilitado" : undefined}>
-      <label htmlFor={id} className={estilos.rotulo}>{rotulo}</label>
-      <div className={estilos.caixa}>
-        <button id={id} type="button" role="switch" aria-checked={valor} className={estilos.chave}
-          disabled={desabilitado || soLeitura} onClick={() => onChange?.(!valor)}><span className={estilos.chaveBotao} /></button>
-        <span className={estilos.chaveTexto}>{valor ? "Sim" : "Não"}</span>
+      <label htmlFor={id} className={estilos.rotulo} data-parte="rotulo">{rotulo}</label>
+      <div className={estilos.caixa} data-parte="caixa">
+        <button id={id} type="button" role="switch" aria-checked={valor} aria-label={rotulo} aria-readonly={soLeitura || undefined} className={estilos.chave}
+          disabled={desabilitado} onClick={() => { if (!soLeitura) onChange(!valor); }}><span className={estilos.chaveBotao} /></button>
+        <span className={estilos.chaveTexto} data-parte="valor">{valor ? "Sim" : "Não"}</span>
       </div>
     </div>
   </div>;
@@ -246,6 +251,9 @@ const painelDoCalendario = (rotulo?: string): PainelDoCalendario => ({
   className: estilos.calendario,
   rotulo: rotulo ? `Escolher ${rotulo}` : undefined,
   semIcone: true,
+  /* o botão redondo de 22px do desenho, no lugar do ícone: abre e fecha o calendário */
+  gatilho: ({ alternar, aberto, desabilitado }) => <button type="button" className={estilos.botaoData} data-parte="icone" aria-label="Escolher data" aria-haspopup="dialog"
+    aria-expanded={aberto} disabled={desabilitado} onClick={alternar}><Calendar aria-hidden /></button>,
   desenhar: ({ valor, escolher }) => <CalendarioDoDesenho valor={valor} escolher={escolher} />
 });
 
