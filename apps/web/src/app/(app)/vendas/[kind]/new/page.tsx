@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
 import { ItensDaCentral, Travado } from "@/features/sales/central-vendas-itens";
 import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+import { PainelColuna, PainelLargo, PainelRepartido, PlanoNaColuna, TitulosDoDocumento } from "@/features/sales/central-vendas-painel";
 /* TOP-CONFIG-05 exigências: as regras da operação (só com `capacidades.regrasDaOperacao` exata). */
 import { entendeRegrasDaOperacao, useRegrasDaOperacao, useSituacaoCliente } from "@/features/sales/regras-da-operacao";
 import estilosCv from "@/features/sales/central-vendas-workspace.module.css";
@@ -642,10 +643,11 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       case "discount": return campo(<Field label={rot(chave, "Desconto")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>, chave);
       case "other_values": return campo(<Field label={rot(chave, "Outros valores")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>, chave);
       case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} somenteIds={condicoesPermitidas} /></Field>, chave)}</div>;
+      /* VISUAL-UX-02: o plano entra na coluna do Financeiro, um campo abaixo do outro (o PlanEditor não muda). */
       case "installment_plan": return <>
-        {!condicaoId && <div style={larguraFixa}>{campo(<Field label={rot(chave, "Parcelamento")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>, chave)}</div>}
-        {!condicaoId && h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
-        {condicaoId && planoCalculado && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={ajustarPlano} /></div>}
+        {!condicaoId && campo(<Field label={rot(chave, "Parcelamento")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>, chave)}
+        {!condicaoId && h.installments && <PlanoNaColuna><PlanEditor plan={plan} onChange={setPlan} /></PlanoNaColuna>}
+        {condicaoId && planoCalculado && <PlanoNaColuna><PlanEditor plan={plan} onChange={ajustarPlano} /></PlanoNaColuna>}
       </>;
       case "transporter_id": return pesquisa(<Field label={rot(chave, "Transportadora")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transporter_id")} /></Field>, chave);
       case "driver_name": return campo(<Field label={rot(chave, "Motorista")} required={req(chave, false)} error={err(chave)} span={12}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>, chave);
@@ -714,7 +716,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const posEmpresa = principais.indexOf("empresa_id");
   const posTop = posEmpresa >= 0 ? posEmpresa + 1 : Math.min(2, principais.length);
 
-  /* Rodapé: as abas do layout, na ordem, com os campos dele. A arrumação de cada aba segue a de hoje. */
+  /* Rodapé: as abas do layout, na ordem, com os campos dele — na geometria do desenho (VISUAL-UX-02): uma coluna de
+     330px; a aba do plano (Financeiro) ganha, à direita, os títulos (na criação ainda não há nenhum); Observação
+     sozinha usa a área larga. */
   const VALOR_DA_ABA: Record<string, string> = { "Totais": "totais", "Financeiro": "financeiro", "Frete e transporte": "frete", "Fiscal": "fiscal", "Observações": "observacoes" };
   const usados = new Set<string>();
   const abas = estruturaDesenhada.rodape.flatMap((a, i) => {
@@ -725,15 +729,9 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     usados.add(value);
     const especial = (c: string) => c === "installment_plan" || c === "condicao_pagamento_id";
     let content: React.ReactNode;
-    if (campos.length === 1 && campos[0] === "note") content = <div className={estilosCv.painelLargo}>{render("note")}</div>;
-    else if (campos.some(especial)) content = <div className={estilosCv.painelColuna}>{campos.map((c) => (especial(c) ? render(c) : <div key={c} style={larguraFixa}>{render(c)}</div>))}</div>;
-    else if (campos.length >= 4) {
-      const metade = Math.ceil(campos.length / 2);
-      content = <div className={estilosCv.painelGrade}>
-        <div className={estilosCv.painelColuna}>{campos.slice(0, metade).map(render)}</div>
-        <div className={estilosCv.painelColuna}>{campos.slice(metade).map(render)}</div>
-      </div>;
-    } else content = <div className={estilosCv.painelColuna} style={larguraFixa}>{campos.map(render)}</div>;
+    if (campos.length === 1 && campos[0] === "note") content = <PainelLargo>{render("note")}</PainelLargo>;
+    else if (campos.some(especial)) content = <PainelRepartido lado={<TitulosDoDocumento legenda="Contas a receber do documento" titulos={[]} />}>{campos.map(render)}</PainelRepartido>;
+    else content = <PainelColuna>{campos.map(render)}</PainelColuna>;
     return [{ value, label: a.aba, content }];
   });
   /* TOP-CONFIG-07: com a reserva, a coluna do armazém entra mesmo que o layout não a desenhe (`comColunasDaReserva`). */

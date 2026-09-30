@@ -1,7 +1,7 @@
 "use client";
 import * as React from "react";
 import { cn } from "@/lib/utils";
-import { ChevronDown, FilePlus2, Loader2 } from "lucide-react";
+import { ChevronDown, FilePlus, Loader2 } from "lucide-react";
 import { Tabs } from "@/components/ui";
 import { useWorkspaceImersivo } from "@/components/layout/workspace-imersivo";
 import estilos from "./central-vendas-workspace.module.css";
@@ -47,6 +47,15 @@ import estilos from "./central-vendas-workspace.module.css";
  * │ desenhar a trilha acima dela, e a moldura começa onde o design a põe. A decisão é do shell — rota │
  * │ que admite imersão AND workspace real montado —, nunca um CSS desta folha escondendo o vizinho.  │
  * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+ *
+ * ┌─ AMPLIAR, DENSIDADE E ESQUELETO (VISUAL-UX-02) ────────────────────────────────────────────────┐
+ * │ Ampliar uma região (Dados principais, Itens ou painel inferior) esconde as outras e devolve o   │
+ * │ espaço inteiro a ela; "Restaurar layout" volta ao de antes. É o mesmo tipo de estado que os      │
+ * │ divisores: `useState` da moldura, `data-ampliado` na raiz, nada no navegador nem no perfil. A     │
+ * │ densidade (rótulo antes ou dentro do campo) é da PÁGINA; aqui ela só vira `data-densidade` na     │
+ * │ raiz, que é por onde a folha dos campos a lê. Com a leitura da consulta pendente, `carregando`   │
+ * │ troca os campos por barras de esqueleto — nada é inventado enquanto o servidor não respondeu.    │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 
 /** Limites dos divisores, os mesmos do design aprovado. Percentual para a largura, pixel para a altura. */
@@ -55,7 +64,40 @@ export const ALTURA_PAINEL = { min: 92, max: 430, padrao: 206, passo: 8 } as con
 
 const limitar = (v: number, min: number, max: number) => Math.min(max, Math.max(min, v));
 
-export interface AbaDoPainel { value: string; label: string; content: React.ReactNode }
+export interface AbaDoPainel {
+  value: string; label: string; content: React.ReactNode;
+  /** Selo numérico no rótulo da aba (ex.: quantos títulos o Financeiro tem). Zero ou ausente: sem selo. */
+  contador?: number;
+  /** Ponto vermelho no rótulo: a aba tem campo com pendência. */
+  erro?: boolean;
+}
+
+/** As três regiões que se ampliam. Ampliar é estado de TELA: nada persiste. */
+export type RegiaoAmpliavel = "dados" | "itens" | "painel";
+
+/** O que a página pode pedir à moldura sem conhecer o DOM dela (ex.: a lista de pendências abre uma aba). */
+export interface ControleDaCentral { abrirAba: (valor: string) => void }
+
+const AmpliarContexto = React.createContext<{ ampliado: RegiaoAmpliavel | null; alternar: (r: RegiaoAmpliavel) => void } | null>(null);
+
+const ROTULO_AMPLIAR: Record<RegiaoAmpliavel, string> = { dados: "Ampliar Dados principais", itens: "Ampliar Itens", painel: "Ampliar painel inferior" };
+
+/**
+ * [Ampliar] de uma região: só o ícone, sem fundo. Ampliada, o mesmo botão diz "Restaurar layout". Fora da
+ * moldura não aparece — o estado mora nela, e um botão sem efeito é pior que botão nenhum.
+ */
+export function BotaoAmpliar({ regiao }: { regiao: RegiaoAmpliavel }) {
+  const ctx = React.useContext(AmpliarContexto);
+  if (!ctx) return null;
+  const ativo = ctx.ampliado === regiao;
+  const rotulo = ativo ? "Restaurar layout" : ROTULO_AMPLIAR[regiao];
+  return <button type="button" className={cn(estilos.ampliar, estilos.dicaInicio)} aria-label={rotulo} data-dica={rotulo} aria-pressed={ativo}
+    data-testid={`central-vendas-ampliar-${regiao}`} onClick={() => ctx.alternar(regiao)}>
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      {ativo ? <><path d="M13.5 4.5v6h6" /><path d="M10.5 19.5v-6h-6" /></> : <><path d="M13.5 4.5h6v6" /><path d="M10.5 19.5h-6v-6" /></>}
+    </svg>
+  </button>;
+}
 
 export interface CentralVendasWorkspaceProps {
   /** Nome da região, para leitores de tela (ex.: "Nova Venda"). */
@@ -71,6 +113,8 @@ export interface CentralVendasWorkspaceProps {
    */
   identidade: {
     nome: string; alterado: boolean;
+    /** o nome é o CÓDIGO do servidor (consulta): fonte de código, como no design */
+    codigo?: boolean;
     /** o que este tipo de documento faz — dica do ícone, fora do corpo, como no design */
     dica?: string;
     icone?: React.ReactNode;
@@ -78,13 +122,17 @@ export interface CentralVendasWorkspaceProps {
     tom?: "positive" | "negative" | "warning" | "info" | "neutral";
     situacao?: React.ReactNode;
   };
-  /** Total do documento à direita das abas — só quando o SERVIDOR o calculou (consulta). */
-  totalDoDocumento?: React.ReactNode;
   /** Aviso funcional (ex.: escrita bloqueada). Fica dentro de Dados principais, acima dos campos. */
   aviso?: React.ReactNode;
   dados: React.ReactNode;
   itens: React.ReactNode;
   abas: AbaDoPainel[];
+  /** Posição do rótulo dos campos — estado da PÁGINA; aqui vira `data-densidade` na raiz. */
+  densidade?: "rotulo-a-frente" | "compacto";
+  /** Leitura da consulta pendente: Dados principais mostra o esqueleto, nada do documento é inventado. */
+  carregando?: boolean;
+  /** Preenchido pela moldura ao montar: o que a página pode pedir a ela (abrir uma aba do painel). */
+  controle?: React.MutableRefObject<ControleDaCentral | null>;
   className?: string;
 }
 
@@ -133,13 +181,36 @@ function Divisor({ eixo, valor, min, max, rotulo, onInicio, onMover, onFim, onTe
   </div>;
 }
 
-export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade, aviso, dados, itens, abas, totalDoDocumento, className }: CentralVendasWorkspaceProps) {
+export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade, aviso, dados, itens, abas, densidade = "rotulo-a-frente", carregando = false, controle, className }: CentralVendasWorkspaceProps) {
   const corpoRef = React.useRef<HTMLDivElement>(null);
+  const painelRef = React.useRef<HTMLDivElement>(null);
   const [largura, setLargura] = React.useState<number>(LARGURA_DADOS.padrao);
   const [altura, setAltura] = React.useState<number>(ALTURA_PAINEL.padrao);
   const [arrastando, setArrastando] = React.useState<"vertical" | "horizontal" | null>(null);
   const [recolhido, setRecolhido] = React.useState(false);
+  const [ampliado, setAmpliado] = React.useState<RegiaoAmpliavel | null>(null);
   useWorkspaceImersivo();
+  /** Ampliar o painel inferior recolhido o expande: ampliar para mostrar só a faixa não faria sentido. */
+  const ampliar = React.useMemo(() => ({
+    ampliado,
+    alternar: (r: RegiaoAmpliavel) => { setAmpliado((a) => (a === r ? null : r)); if (r === "painel") setRecolhido(false); }
+  }), [ampliado]);
+  /**
+   * Abrir uma aba pelo nome: expande o painel, desfaz a ampliação de OUTRA região e FOCA a aba — o `Tabs`
+   * oficial ativa a aba que recebe foco, então quem escolhe continua sendo o primitive.
+   */
+  React.useEffect(() => {
+    if (!controle) return;
+    controle.current = {
+      abrirAba: (valor) => {
+        setRecolhido(false);
+        setAmpliado((a) => (a === "painel" ? a : null));
+        const aba = [...(painelRef.current?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])].find((el) => el.id.endsWith(`-trigger-${valor}`));
+        aba?.focus();
+      }
+    };
+    return () => { controle.current = null; };
+  }, [controle]);
   /** Valor no INÍCIO do arrasto: o delta do ponteiro é aplicado sobre ele, não sobre o último render. */
   const base = React.useRef<{ largura: number; altura: number }>({ largura: LARGURA_DADOS.padrao, altura: ALTURA_PAINEL.padrao });
 
@@ -183,59 +254,83 @@ export function CentralVendasWorkspace({ titulo, acoes, acoesDireita, identidade
   const expandirPelaAba = (alvo: EventTarget) => { if (recolhido && ehAba(alvo)) setRecolhido(false); };
   const rotuloRecolher = recolhido ? "Expandir painel" : "Recolher painel";
 
+  /** O selo e o ponto vão pelo `badge` do `Tabs` oficial: o rótulo continua sendo o texto da aba. */
+  const abasDoPainel = abas.map(({ contador, erro, ...a }) => ({
+    ...a,
+    badge: contador || erro ? <>
+      {contador ? <span className={estilos.abaContador}>{contador}</span> : null}
+      {erro ? <span className={estilos.abaErro} role="img" aria-label="Com pendência" /> : null}
+    </> : undefined
+  }));
+
   return <div role="region" aria-label={titulo} data-testid="central-vendas" data-arrastando={arrastando ?? undefined}
+    data-densidade={densidade} data-ampliado={ampliado ?? undefined} aria-busy={carregando || undefined}
     className={cn(estilos.workspace, className)} style={estilo}>
-    {/* A barra é AÇÃO, não cabeçalho: o contexto do documento mora no cabeçalho de Dados principais. */}
-    <div className={estilos.barra} data-testid="central-vendas-acoes" role="toolbar" aria-label={`Ações · ${titulo}`}>
-      {acoes}
-      <span className={estilos.barraEspaco} />
-      {acoesDireita}
-    </div>
-
-    <section className={estilos.doc} aria-label="Documento em edição">
-      <div ref={corpoRef} className={estilos.corpo}>
-        <section className={estilos.coluna} data-testid="central-vendas-dados" aria-label="Dados principais">
-          <div className={estilos.cabecalho}>
-            <span>Dados principais</span>
-            <span className={estilos.cabecalhoEspaco} />
-            <span className={estilos.identidade} data-testid="central-vendas-identidade">
-              <span className={cn(estilos.identidadeIcone, estilos.dicaFim)} data-tom={identidade.tom} data-dica={identidade.dica} tabIndex={identidade.dica ? 0 : undefined} role={identidade.dica ? "img" : undefined} aria-label={identidade.dica} aria-hidden={identidade.dica ? undefined : true}>{identidade.icone ?? <FilePlus2 size={15} />}</span>
-              {/* o nome do documento é o TÍTULO da tela (h1): leitor de tela e atalho de título chegam nele */}
-              <h1 className={estilos.identidadeNome} data-testid="central-vendas-identidade-nome">{identidade.nome}</h1>
-              {identidade.situacao && <span className={estilos.identidadeSituacao} data-testid="central-vendas-situacao">{identidade.situacao}</span>}
-              {identidade.alterado && <span className={estilos.pontoAlterado} role="img" aria-label="Alterações não salvas" data-testid="central-vendas-alterado" />}
-            </span>
-          </div>
-          <div className={estilos.dadosCorpo}>
-            {aviso && <div className={estilos.aviso}>{aviso}</div>}
-            {dados}
-          </div>
-        </section>
-
-        <Divisor eixo="vertical" valor={largura} min={LARGURA_DADOS.min} max={LARGURA_DADOS.max}
-          rotulo="Largura de Dados principais e Itens" onInicio={() => iniciar("vertical")} onMover={moverVertical} onFim={terminar} onTeclado={tecladoVertical}
-          arrastando={arrastando === "vertical"} testId="central-vendas-divisor-vertical" />
-
-        <section className={estilos.coluna} data-testid="central-vendas-itens" aria-label="Itens">
-          {itens}
-        </section>
+    <AmpliarContexto.Provider value={ampliar}>
+      {/* A barra é AÇÃO, não cabeçalho: o contexto do documento mora no cabeçalho de Dados principais.
+          O cartão é a moldura (borda e sombra); a barra de 44px mora dentro dele. */}
+      <div className={estilos.barraCartao}>
+        <div className={estilos.barra} data-testid="central-vendas-acoes" role="toolbar" aria-label={`Ações · ${titulo}`}>
+          {acoes}
+          <span className={estilos.barraEspaco} />
+          {acoesDireita}
+        </div>
       </div>
 
-      {!recolhido && <Divisor eixo="horizontal" valor={altura} min={ALTURA_PAINEL.min} max={ALTURA_PAINEL.max}
-        rotulo="Altura de Itens e do painel inferior" onInicio={() => iniciar("horizontal")} onMover={moverHorizontal} onFim={terminar} onTeclado={tecladoHorizontal}
-        arrastando={arrastando === "horizontal"} testId="central-vendas-divisor-horizontal" />}
+      <section className={estilos.doc} aria-label="Documento em edição">
+        <div ref={corpoRef} className={estilos.corpo}>
+          <section className={estilos.coluna} data-testid="central-vendas-dados" data-regiao="dados" aria-label="Dados principais">
+            <div className={estilos.cabecalho}>
+              <BotaoAmpliar regiao="dados" />
+              <span>Dados principais</span>
+              <span className={estilos.cabecalhoEspaco} />
+              <span className={estilos.identidade} data-testid="central-vendas-identidade">
+                {carregando
+                  ? <span className={estilos.skLinha} aria-hidden />
+                  : <span className={cn(estilos.identidadeIcone, estilos.dicaFim)} data-tom={identidade.tom} data-dica={identidade.dica} tabIndex={identidade.dica ? 0 : undefined} role={identidade.dica ? "img" : undefined} aria-label={identidade.dica} aria-hidden={identidade.dica ? undefined : true}>{identidade.icone ?? <FilePlus />}</span>}
+                {/* o nome do documento é o TÍTULO da tela (h1): leitor de tela e atalho de título chegam nele */}
+                <h1 className={cn(estilos.identidadeNome, carregando && "sr-only")} data-codigo={identidade.codigo ? "true" : undefined} data-testid="central-vendas-identidade-nome">{identidade.nome}</h1>
+                {identidade.situacao && <span className={estilos.identidadeSituacao} data-testid="central-vendas-situacao">{identidade.situacao}</span>}
+                {identidade.alterado && <span className={estilos.pontoAlterado} role="img" aria-label="Alterações não salvas" data-testid="central-vendas-alterado" />}
+              </span>
+            </div>
+            <div className={estilos.dadosCorpo}>
+              {carregando
+                ? <div className={estilos.esqueleto} data-testid="central-vendas-esqueleto" aria-hidden>
+                  {[0, 1, 2, 3, 4].map((i) => <div key={i} className={estilos.sk} />)}
+                </div>
+                : <>
+                  {aviso && <div className={estilos.aviso}>{aviso}</div>}
+                  {dados}
+                </>}
+            </div>
+          </section>
 
-      <div className={estilos.painel} data-testid="central-vendas-painel" data-recolhido={recolhido ? "true" : "false"}
-        onClickCapture={(e) => expandirPelaAba(e.target)}
-        onKeyDownCapture={(e) => { if (["ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(e.key)) expandirPelaAba(e.target); }}>
-        <Tabs className={estilos.abas} tabs={abas} />
-        <span className={estilos.painelAcoes}>
-          {totalDoDocumento !== undefined && <span className={estilos.totalDoDocumento} data-testid="central-vendas-total">{totalDoDocumento}</span>}
-          <button type="button" className={cn(estilos.recolher, estilos.dicaFim)} aria-label={rotuloRecolher} data-dica={rotuloRecolher}
-            aria-expanded={!recolhido} data-testid="central-vendas-recolher" onClick={() => setRecolhido((r) => !r)}><ChevronDown aria-hidden /></button>
-        </span>
-      </div>
-    </section>
+          <Divisor eixo="vertical" valor={largura} min={LARGURA_DADOS.min} max={LARGURA_DADOS.max}
+            rotulo="Largura de Dados principais e Itens" onInicio={() => iniciar("vertical")} onMover={moverVertical} onFim={terminar} onTeclado={tecladoVertical}
+            arrastando={arrastando === "vertical"} testId="central-vendas-divisor-vertical" />
+
+          <section className={estilos.coluna} data-testid="central-vendas-itens" data-regiao="itens" aria-label="Itens">
+            {itens}
+          </section>
+        </div>
+
+        {!recolhido && <Divisor eixo="horizontal" valor={altura} min={ALTURA_PAINEL.min} max={ALTURA_PAINEL.max}
+          rotulo="Altura de Itens e do painel inferior" onInicio={() => iniciar("horizontal")} onMover={moverHorizontal} onFim={terminar} onTeclado={tecladoHorizontal}
+          arrastando={arrastando === "horizontal"} testId="central-vendas-divisor-horizontal" />}
+
+        <div ref={painelRef} className={estilos.painel} data-testid="central-vendas-painel" data-recolhido={recolhido ? "true" : "false"}
+          onClickCapture={(e) => expandirPelaAba(e.target)}
+          onKeyDownCapture={(e) => { if (["ArrowLeft", "ArrowRight", "Home", "End", "Enter", " "].includes(e.key)) expandirPelaAba(e.target); }}>
+          <span className={estilos.painelAmpliar}><BotaoAmpliar regiao="painel" /></span>
+          <Tabs className={estilos.abas} tabs={abasDoPainel} />
+          <span className={estilos.painelAcoes}>
+            <button type="button" className={cn(estilos.recolher, estilos.dicaFim)} aria-label={rotuloRecolher} data-dica={rotuloRecolher}
+              aria-expanded={!recolhido} data-testid="central-vendas-recolher" onClick={() => setRecolhido((r) => !r)}><span className={estilos.recolherIcone}><ChevronDown aria-hidden /></span></button>
+          </span>
+        </div>
+      </section>
+    </AmpliarContexto.Provider>
   </div>;
 }
 

@@ -1,0 +1,68 @@
+/*
+ * CENTRAL DE VENDAS — CONTEÚDO DAS ABAS DO PAINEL INFERIOR (VISUAL-UX-02, decisão 270).
+ *
+ * Medidas do CSS do desenho: grade de 330px + resto com 28px entre as partes; coluna de campos com 6px entre eles;
+ * relação (títulos, derivados) em linhas de 28px + borda, 12px; pílula de situação de 11px/600; área larga de 960px.
+ * Classes locais, hexadecimal repetido como no resto da Central (sem token novo, sem prefixo herdado).
+ */
+
+.repartido { display: grid; grid-template-columns: 330px minmax(0, 1fr); gap: 28px; }
+.coluna { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.colunaEstreita { max-width: 330px; }
+.lado { min-width: 0; }
+.largo { max-width: 960px; }
+
+/* o PlanEditor (docs/shared.tsx) é uma grade de 12 colunas: na coluna do painel, um campo abaixo do outro */
+.plano > div { display: flex; flex-direction: column; gap: 6px; }
+.plano > div > * { min-width: 0; }
+
+/* relação: a pauta dos títulos do desenho — o cabeçalho em negrito, a borda da linha em cinza claro */
+.relacao { min-width: 0; }
+.linha {
+  display: grid;
+  column-gap: 10px;
+  align-items: center;
+  min-height: 29px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border-bottom: 1px solid #eef1f4;
+  font-size: 12px;
+  color: #111827;
+}
+.linha > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.linhaTitulos { grid-template-columns: 70px 110px 1fr 1fr 110px; }
+.linhaDerivados { grid-template-columns: 110px 110px 1fr; }
+.cabecalho { font-weight: 600; color: #334155; border-bottom-color: #e7eaee; }
+.direita { text-align: right; font-variant-numeric: tabular-nums; }
+.codigo {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: -.01em;
+  font-variant-numeric: tabular-nums;
+  color: #1c8a4c;
+  text-decoration: underline;
+}
+.codigo:hover { color: #155a36; }
+.codigo:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.vazio { margin: 22px 0 0; font-size: 12px; color: #64748b; }
+
+/* situação em pílula (o `.bd` do desenho), pela família de tonalidade */
+.selo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 5px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  background: #f1f5f9;
+  color: #334155;
+}
+.selo[data-tom="positive"] { background: #dcfce7; color: #166534; }
+.selo[data-tom="warning"] { background: #fef3c7; color: #92400e; }
+.selo[data-tom="negative"] { background: #fee2e2; color: #991b1b; }
+.selo[data-tom="info"] { background: #e0f2fe; color: #075985; }
+.selo[data-tom="neutral"] { background: #f8fafc; color: #64748b; border: 1px dashed #cbd5e1; }
