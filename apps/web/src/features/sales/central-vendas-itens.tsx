@@ -2,7 +2,7 @@
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Columns2, Columns3, FileText, LayoutGrid, Lock, Plus, Search, Trash2 } from "lucide-react";
-import { getResource, catalogoDaFamilia, FAMILIAS_COM_LAYOUT, type ColunaDoLayout } from "@agro/domain";
+import { getResource, CATALOGO_VENDAS, type ColunaDoLayout } from "@agro/domain";
 import { cn, brl, num } from "@/lib/utils";
 import { api } from "@/lib/api";
 import { Field, Input } from "@/components/ui";
@@ -104,9 +104,13 @@ const ehChaveColuna = (k: string): k is ChaveColuna => k in COLUNAS;
  * Colunas do SISTEMA (produto, quantidade, valor unitário): a grade de hoje não as marca com "*" — quem as exige é o
  * formulário do item e o Salvar desabilitado, como sempre. O "*" da GRADE marca só o que o layout tornou obrigatório,
  * para o layout do sistema desenhar exatamente a Central de hoje.
+ *
+ * COMPRAS-03 (decisão 269): o catálogo de VENDAS pelo nome — não "a primeira família com layout". Com as famílias de
+ * compras na lista, a posição deixou de ser uma promessa de que o catálogo é o da venda (e um catálogo de compras aqui
+ * poria "*" errado na grade de Vendas).
  */
 const COLUNAS_DO_SISTEMA: ReadonlySet<string> = new Set(
-  catalogoDaFamilia(FAMILIAS_COM_LAYOUT[0] ?? "").filter((c) => c.parte === "itens" && c.sistema).map((c) => c.chave)
+  CATALOGO_VENDAS.filter((c) => c.parte === "itens" && c.sistema).map((c) => c.chave)
 );
 
 /** O layout dos itens como esta tela o usa: colunas na ordem do layout, com rótulo e obrigatoriedade. */

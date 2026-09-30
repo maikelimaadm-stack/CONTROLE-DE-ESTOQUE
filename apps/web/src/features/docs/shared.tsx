@@ -93,7 +93,40 @@ export const totalDaLinhaExibido = (it: ItemRow) => { const g = Number(it.quanti
 
 /** Editor de itens (produto, qtd, valor) usado nos documentos de estoque/vendas. */
 export interface ItemRow { product_id: string; warehouse_id?: string; quantity: string; unit_value?: string; cost_center_id?: string; provider_lot?: string; expiration_date?: string; financial_category_id?: string; cost_center?: string; generate_stock?: boolean; discount?: string; discount_percent?: string; description?: string; [k: string]: unknown }
-export function ItemsEditor({ items, onChange, fields, defaults, loteDaLinha, daOrigem }: { items: ItemRow[]; onChange: (i: ItemRow[]) => void; fields: ("warehouse" | "product" | "quantity" | "unit_value" | "cost_center" | "lot" | "expiration" | "financial_category" | "generate_stock" | "discount" | "discount_percent" | "stock")[]; defaults?: Partial<ItemRow>;
+/** As colunas que o editor de itens sabe desenhar (`fields`). Produto e quantidade aparecem sempre. */
+export type ColunaDoEditorDeItens = "warehouse" | "product" | "quantity" | "unit_value" | "cost_center" | "lot" | "expiration" | "financial_category" | "generate_stock" | "discount" | "discount_percent" | "stock";
+/**
+ * COMPRAS-03 (decisão 269): uma coluna do LAYOUT DO DOCUMENTO no editor — a posição (a da lista), o rótulo e o "*".
+ * `coluna` é a coluna do editor que a desenha; `chave` é a chave da linha no CORPO do documento (vai em `data-coluna`,
+ * para o teste achar a coluna pelo contrato, e não pelo texto que o layout renomeou).
+ */
+export interface ColunaDoLayoutNoEditor { coluna: ColunaDoEditorDeItens; chave: string; rotulo?: string; obrigatorio: boolean }
+/** As colunas do desenho: as do editor, mais as duas que ele mesmo põe (Saldo da origem e Valor total). */
+export type ColunaDesenhada = ColunaDoEditorDeItens | "saldo" | "total";
+/** A ORDEM DE SEMPRE do editor. Sem layout, o desenho é exatamente este — o DOM das telas que usam o editor não muda. */
+const ORDEM_DE_SEMPRE: readonly ColunaDesenhada[] = ["warehouse", "product", "stock", "saldo", "quantity", "unit_value", "discount", "discount_percent", "total", "generate_stock", "lot", "expiration", "financial_category", "cost_center"];
+/** As colunas que, na ordem de sempre, vêm ANTES do Valor total. Com layout, o total fica logo depois da última delas. */
+const ANTES_DO_TOTAL: ReadonlySet<ColunaDesenhada> = new Set(ORDEM_DE_SEMPRE.slice(0, ORDEM_DE_SEMPRE.indexOf("total")));
+/**
+ * A ORDEM DAS COLUNAS DESENHADAS. Sem layout: a de sempre. Com layout: as colunas da lista, na ordem dela; as que o
+ * editor desenha e a lista não cita vêm depois, na ordem de sempre (nenhuma coluna some por não estar na lista — quem
+ * decide o que aparece continua sendo `fields`); o Saldo da origem logo antes da Quantidade, como sempre; e o Valor
+ * total logo depois da última coluna que o precede na ordem de sempre — com o layout do sistema da compra (armazém,
+ * produto, quantidade, unitário, descontos, lote, validade), é o desenho de hoje, coluna por coluna.
+ */
+export function ordemDasColunas(visivel: (c: ColunaDesenhada) => boolean, layout: readonly ColunaDoLayoutNoEditor[] | undefined): ColunaDesenhada[] {
+  const deSempre = ORDEM_DE_SEMPRE.filter(visivel);
+  if (!layout) return deSempre;
+  const listadas: ColunaDesenhada[] = [];
+  for (const x of layout) if (visivel(x.coluna) && !listadas.includes(x.coluna)) listadas.push(x.coluna);
+  const lista: ColunaDesenhada[] = [...listadas, ...deSempre.filter((c) => c !== "saldo" && c !== "total" && !listadas.includes(c))];
+  if (visivel("saldo")) lista.splice(lista.indexOf("quantity"), 0, "saldo");
+  let ultimaAntesDoTotal = -1;
+  lista.forEach((c, i) => { if (ANTES_DO_TOTAL.has(c)) ultimaAntesDoTotal = i; });
+  lista.splice(ultimaAntesDoTotal + 1, 0, "total");
+  return lista;
+}
+export function ItemsEditor({ items, onChange, fields, defaults, loteDaLinha, daOrigem, colunasDoLayout }: { items: ItemRow[]; onChange: (i: ItemRow[]) => void; fields: ColunaDoEditorDeItens[]; defaults?: Partial<ItemRow>;
   /** Opcional (Central de Compras): quais campos de lote a linha aceita. Ausente = os dois abertos (o de sempre). */
   loteDaLinha?: (it: ItemRow) => { lote: boolean; validade: boolean };
   /**
@@ -103,29 +136,69 @@ export function ItemsEditor({ items, onChange, fields, defaults, loteDaLinha, da
    * a remoção da linha: recebe-se o saldo inteiro. Ausente = o editor de sempre, sem nenhuma diferença no DOM.
    * É apresentação: quem confere origem, produto e saldo é o servidor (e o gatilho do banco).
    */
-  daOrigem?: { saldo: (it: ItemRow) => string; quantidadeTravada: boolean; testIdDaLinha?: (it: ItemRow) => string } }) {
+  daOrigem?: { saldo: (it: ItemRow) => string; quantidadeTravada: boolean; testIdDaLinha?: (it: ItemRow) => string };
+  /**
+   * Opcional (Central de Compras com LAYOUT DO DOCUMENTO, COMPRAS-03): a ordem, o rótulo e o "*" das colunas, e
+   * `data-coluna="<chave do corpo>"` em cada `th` da lista. Quem decide QUAIS colunas aparecem continua sendo `fields`.
+   * Ausente = o editor de sempre, com o MESMO DOM (a mesma ordem, os mesmos rótulos, nenhum atributo a mais): as telas
+   * que usam o editor sem layout não mudam. É apresentação — quem cobra o obrigatório é o servidor.
+   */
+  colunasDoLayout?: readonly ColunaDoLayoutNoEditor[] }) {
   const upd = (i: number, k: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [k]: v } : it)));
   const add = () => onChange([...items, { product_id: "", quantity: "1", unit_value: "0", generate_stock: true, ...(defaults ?? {}) }]);
   const totalOf = totalDaLinhaExibido;
   const has = (k: (typeof fields)[number]) => fields.includes(k);
+  /* Produto, quantidade e total sempre; Saldo só com a origem; o resto, pelo `fields` — a mesma regra do desenho de sempre. */
+  const visivel = (c: ColunaDesenhada) => c === "product" || c === "quantity" || c === "total" || (c === "saldo" ? Boolean(daOrigem) : has(c));
+  const colunas = ordemDasColunas(visivel, colunasDoLayout);
+  const doLayout = (c: ColunaDesenhada) => colunasDoLayout?.find((x) => x.coluna === c);
+  /** O `th` de cada coluna — o de sempre; com layout, com `data-coluna`, o rótulo do layout e o "*" (o do `Field`). */
+  const cabecalho = (c: ColunaDesenhada, rotuloDeSempre: string, className: string) => {
+    const l = doLayout(c);
+    if (!l) return <th key={c} className={className}>{rotuloDeSempre}</th>;
+    return <th key={c} className={className} data-coluna={l.chave}>{l.rotulo || rotuloDeSempre}{l.obrigatorio && <span className="req text-red-500"> *</span>}</th>;
+  };
+  const th = (c: ColunaDesenhada) => {
+    switch (c) {
+      case "warehouse": return cabecalho(c, "Armazém", "min-w-[160px]");
+      case "product": return cabecalho(c, "Produto", "min-w-[240px]");
+      case "stock": return cabecalho(c, "Estoque", "text-right");
+      case "saldo": return <th key={c} className="w-24 text-right">Saldo</th>;
+      case "quantity": return cabecalho(c, "Quantidade", "w-24");
+      case "unit_value": return cabecalho(c, "Valor unitário", "w-28");
+      case "discount": return cabecalho(c, "Desconto", "w-24");
+      case "discount_percent": return cabecalho(c, "Desconto %", "w-20");
+      case "total": return <th key={c} className="w-28 text-right">Valor total</th>;
+      case "generate_stock": return cabecalho(c, "Gera estoque", "w-24");
+      case "lot": return cabecalho(c, "Lote", "w-28");
+      case "expiration": return cabecalho(c, "Validade", "w-32");
+      case "financial_category": return cabecalho(c, "Natureza", "min-w-[180px]");
+      case "cost_center": return cabecalho(c, "Centro de resultado", "min-w-[160px]");
+    }
+  };
+  const td = (c: ColunaDesenhada, it: ItemRow, i: number) => {
+    switch (c) {
+      case "warehouse": return <td key={c}><RefSelect resource="warehouses" value={it.warehouse_id ?? null} onChange={(v) => upd(i, "warehouse_id", v ?? "")} /></td>;
+      case "product": return <td key={c}><RefSelect resource="products" value={it.product_id || null} disabled={daOrigem ? true : undefined} allowEmpty={!daOrigem} onChange={(v) => upd(i, "product_id", v ?? "")} /></td>;
+      case "stock": return <td key={c} className="num"><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={(v) => { if (!it.unit_value || it.unit_value === "0") upd(i, "unit_value", v); }} /></td>;
+      case "saldo": return <td key={c} className="num" data-testid="item-saldo-da-origem">{num(daOrigem ? daOrigem.saldo(it) : "0", 4)}</td>;
+      case "quantity": return <td key={c}><Input type="number" step="0.0001" min="0" max={daOrigem ? daOrigem.saldo(it) : undefined} disabled={daOrigem?.quantidadeTravada || undefined} value={it.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} /></td>;
+      case "unit_value": return <td key={c}><Input type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => upd(i, "unit_value", e.target.value)} /></td>;
+      case "discount": return <td key={c}><Input type="number" step="0.01" min="0" value={it.discount ?? ""} onChange={(e) => upd(i, "discount", e.target.value)} /></td>;
+      case "discount_percent": return <td key={c}><Input type="number" step="0.01" min="0" max="100" value={it.discount_percent ?? ""} onChange={(e) => upd(i, "discount_percent", e.target.value)} /></td>;
+      case "total": return <td key={c} className="num">{brl(totalOf(it))}</td>;
+      case "generate_stock": return <td key={c}><NativeSelect value={it.generate_stock === false ? "false" : "true"} onChange={(e) => upd(i, "generate_stock", e.target.value === "true")}><option value="true">Sim</option><option value="false">Não</option></NativeSelect></td>;
+      case "lot": return <td key={c}><Input value={it.provider_lot ?? ""} disabled={loteDaLinha ? !loteDaLinha(it).lote : undefined} onChange={(e) => upd(i, "provider_lot", e.target.value)} /></td>;
+      case "expiration": return <td key={c}><Input type="date" value={it.expiration_date ?? ""} disabled={loteDaLinha ? !loteDaLinha(it).validade : undefined} onChange={(e) => upd(i, "expiration_date", e.target.value)} /></td>;
+      case "financial_category": return <td key={c}><RefSelect resource="financial_categories" value={it.financial_category_id ?? null} onChange={(v) => upd(i, "financial_category_id", v ?? "")} filter={{ kind: "analytic" }} /></td>;
+      case "cost_center": return <td key={c}><RefSelect resource="cost_centers" value={it.cost_center_id ?? null} onChange={(v) => upd(i, "cost_center_id", v ?? "")} filter={{ kind: "analytic" }} /></td>;
+    }
+  };
   return <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>
-    {has("warehouse") && <th className="min-w-[160px]">Armazém</th>}<th className="min-w-[240px]">Produto</th>{has("stock") && <th className="text-right">Estoque</th>}{daOrigem && <th className="w-24 text-right">Saldo</th>}<th className="w-24">Quantidade</th>{has("unit_value") && <th className="w-28">Valor unitário</th>}{has("discount") && <th className="w-24">Desconto</th>}{has("discount_percent") && <th className="w-20">Desconto %</th>}<th className="w-28 text-right">Valor total</th>{has("generate_stock") && <th className="w-24">Gera estoque</th>}{has("lot") && <th className="w-28">Lote</th>}{has("expiration") && <th className="w-32">Validade</th>}{has("financial_category") && <th className="min-w-[180px]">Natureza</th>}{has("cost_center") && <th className="min-w-[160px]">Centro de resultado</th>}<th className="w-8" />
+    {colunas.map(th)}<th className="w-8" />
   </tr></thead><tbody>
     {items.map((it, i) => <tr key={i} data-testid={daOrigem?.testIdDaLinha?.(it)}>
-      {has("warehouse") && <td><RefSelect resource="warehouses" value={it.warehouse_id ?? null} onChange={(v) => upd(i, "warehouse_id", v ?? "")} /></td>}
-      <td><RefSelect resource="products" value={it.product_id || null} disabled={daOrigem ? true : undefined} allowEmpty={!daOrigem} onChange={(v) => upd(i, "product_id", v ?? "")} /></td>
-      {has("stock") && <td className="num"><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={(c) => { if (!it.unit_value || it.unit_value === "0") upd(i, "unit_value", c); }} /></td>}
-      {daOrigem && <td className="num" data-testid="item-saldo-da-origem">{num(daOrigem.saldo(it), 4)}</td>}
-      <td><Input type="number" step="0.0001" min="0" max={daOrigem ? daOrigem.saldo(it) : undefined} disabled={daOrigem?.quantidadeTravada || undefined} value={it.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} /></td>
-      {has("unit_value") && <td><Input type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => upd(i, "unit_value", e.target.value)} /></td>}
-      {has("discount") && <td><Input type="number" step="0.01" min="0" value={it.discount ?? ""} onChange={(e) => upd(i, "discount", e.target.value)} /></td>}
-      {has("discount_percent") && <td><Input type="number" step="0.01" min="0" max="100" value={it.discount_percent ?? ""} onChange={(e) => upd(i, "discount_percent", e.target.value)} /></td>}
-      <td className="num">{brl(totalOf(it))}</td>
-      {has("generate_stock") && <td><NativeSelect value={it.generate_stock === false ? "false" : "true"} onChange={(e) => upd(i, "generate_stock", e.target.value === "true")}><option value="true">Sim</option><option value="false">Não</option></NativeSelect></td>}
-      {has("lot") && <td><Input value={it.provider_lot ?? ""} disabled={loteDaLinha ? !loteDaLinha(it).lote : undefined} onChange={(e) => upd(i, "provider_lot", e.target.value)} /></td>}
-      {has("expiration") && <td><Input type="date" value={it.expiration_date ?? ""} disabled={loteDaLinha ? !loteDaLinha(it).validade : undefined} onChange={(e) => upd(i, "expiration_date", e.target.value)} /></td>}
-      {has("financial_category") && <td><RefSelect resource="financial_categories" value={it.financial_category_id ?? null} onChange={(v) => upd(i, "financial_category_id", v ?? "")} filter={{ kind: "analytic" }} /></td>}
-      {has("cost_center") && <td><RefSelect resource="cost_centers" value={it.cost_center_id ?? null} onChange={(v) => upd(i, "cost_center_id", v ?? "")} filter={{ kind: "analytic" }} /></td>}
+      {colunas.map((c) => td(c, it, i))}
       <td>{!daOrigem?.quantidadeTravada && <button type="button" className="p-1 text-slate-400 hover:text-red-600" onClick={() => onChange(items.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button>}</td>
     </tr>)}
   </tbody><tfoot><tr><td colSpan={20} className="p-2">{!daOrigem && <Button type="button" size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5" /> Adicionar item</Button>}<span className={daOrigem ? "font-semibold" : "ml-4 font-semibold"}>Total: {brl(items.reduce((a, it) => a + totalOf(it), 0))}</span></td></tr></tfoot></table></div>;

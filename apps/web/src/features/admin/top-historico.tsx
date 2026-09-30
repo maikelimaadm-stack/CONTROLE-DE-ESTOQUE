@@ -112,7 +112,17 @@ function lerVersao(bruto: unknown): VersaoTop | null {
   };
 }
 
-export function HistoricoDeVersoesTop({ id, codigo, onFechar }: { id: string; codigo: string; onFechar: () => void }) {
+export function HistoricoDeVersoesTop({ id, codigo, comPonte, onFechar }: {
+  id: string; codigo: string;
+  /**
+   * COMPRAS-03 (item 0 b): o movimento da TOP é de VENDAS? Só lá existe a ponte para o caminho anterior (decisão 268):
+   * uma versão sem política declarada, fora de vendas, NÃO seguia caminho nenhum — o documento não oferecia próxima
+   * operação. Quem abre o histórico responde com `ehMovimentoDeVendas`, a MESMA chave do editor; o histórico não tem
+   * regra própria para isso.
+   */
+  comPonte: boolean;
+  onFechar: () => void;
+}) {
   const q = useQuery<unknown, ApiError>({
     queryKey: ["tipos-operacao", id, "versoes"],
     queryFn: () => api<unknown>(`/api/admin/tipos-operacao/${id}/versoes`),
@@ -141,12 +151,12 @@ export function HistoricoDeVersoesTop({ id, codigo, onFechar }: { id: string; co
       : versoes === null ? <ErrorState message="Este servidor respondeu o histórico em um formato que esta tela não reconhece. Nada é exibido, para não mostrar um registro parcial como se fosse completo." />
       : versoes.length === 0 ? <EmptyState title="Nenhuma versão registrada" />
       : <ul className="space-y-2" data-testid="top-versoes-lista">
-          {versoes.map((v) => <LinhaDeVersao key={v.versao} versao={v} />)}
+          {versoes.map((v) => <LinhaDeVersao key={v.versao} versao={v} comPonte={comPonte} />)}
         </ul>}
   </Dialog>;
 }
 
-function LinhaDeVersao({ versao }: { versao: VersaoTop }) {
+function LinhaDeVersao({ versao, comPonte }: { versao: VersaoTop; comPonte: boolean }) {
   const [aberto, setAberto] = React.useState(false);
   return <li data-testid="top-versao-linha" className="rounded border">
     <div className="flex flex-wrap items-center gap-2 px-3 py-2">
@@ -177,7 +187,7 @@ function LinhaDeVersao({ versao }: { versao: VersaoTop }) {
       </p>}
     </div>
     {aberto && <div className="border-t bg-slate-50 px-3 py-2">
-      <DetalheDaVersao versao={versao} />
+      <DetalheDaVersao versao={versao} comPonte={comPonte} />
     </div>}
   </li>;
 }
@@ -205,7 +215,7 @@ function resumoDeSecoes(secoes: SecaoConfiguracaoTopV2[] | null): string {
   return secoes.map((s) => ROTULOS_SECAO_TOP[s]).join(", ");
 }
 
-function DetalheDaVersao({ versao }: { versao: VersaoTop }) {
+function DetalheDaVersao({ versao, comPonte }: { versao: VersaoTop; comPonte: boolean }) {
   const c = versao.configuracao;
   return <div className="space-y-3">
     {c === null
@@ -223,7 +233,7 @@ function DetalheDaVersao({ versao }: { versao: VersaoTop }) {
 
     <div>
       <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Próximas operações</p>
-      <PoliticaDaVersao versao={versao} />
+      <PoliticaDaVersao versao={versao} comPonte={comPonte} />
     </div>
   </div>;
 }
@@ -235,8 +245,12 @@ function DetalheDaVersao({ versao }: { versao: VersaoTop }) {
  * que inferisse contaria a história errada exatamente onde ela importa: a versão que declarou "esta
  * operação não gera nada" apareceria como se nunca tivesse sido configurada, e quem fosse auditar a
  * conversão de um documento daquela data concluiria o oposto do que aconteceu.
+ *
+ * "Não declarada" também não é uma frase só (COMPRAS-03, item 0 b): em vendas a conversão seguia o caminho anterior do
+ * produto; fora de vendas não havia ponte, e o documento simplesmente não oferecia próxima operação. Contar a história
+ * de vendas numa TOP de compras seria registrar um comportamento que o servidor nunca teve.
  */
-function PoliticaDaVersao({ versao }: { versao: VersaoTop }) {
+function PoliticaDaVersao({ versao, comPonte }: { versao: VersaoTop; comPonte: boolean }) {
   const lista = versao.destinos;
   return <>
     {versao.destinosConfigurados === null
@@ -249,7 +263,9 @@ function PoliticaDaVersao({ versao }: { versao: VersaoTop }) {
             encaminhado para outra operação.
           </p>
         : <p data-testid="top-versao-politica-nao-declarada" className="text-[12px] text-slate-600">
-            Política não declarada nesta versão: a conversão seguia o caminho anterior do produto.
+            {comPonte
+              ? "Política não declarada nesta versão: a conversão seguia o caminho anterior do produto."
+              : "Política não declarada nesta versão: um documento criado sob ela não oferecia próxima operação."}
           </p>}
 
     {lista === null

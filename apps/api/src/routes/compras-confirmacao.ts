@@ -163,7 +163,10 @@ async function planejarConfirmacao(ctx: ServiceCtx, d: CompraParaConfirmar, iten
       && itens.some((it) => it.controla_estoque && !it.armazem_id)) {
     exigencias.push({ caminho: "estoque.exigeArmazem", mensagem: "Informe o armazém de todos os itens" });
   }
-  if (politica.financeiro.autoridade === "configurada" && politica.financeiro.efeito === "pagar") {
+  // COMPRAS-03 (item 0): forma e vencimento só quando a compra GERA título (`plano.geraTitulos`: conta a pagar E
+  // valor > 0) — a mesma regra do salvar (`conferirExigenciasDoTitulo`). Compra de valor zero não gera título, e
+  // cobrar aqui o que o salvar dispensou travaria a confirmação de um documento que o próprio sistema aceitou.
+  if (plano.geraTitulos && politica.financeiro.autoridade === "configurada" && politica.financeiro.efeito === "pagar") {
     if (politica.financeiro.exigeFormaPagamento && !d.forma_pagamento_id) exigencias.push({ caminho: "financeiro.exigeFormaPagamento", mensagem: "Informe a forma de pagamento" });
     if (politica.financeiro.exigeVencimento && !(plano.plano?.first_due_date ?? d.data_vencimento)) exigencias.push({ caminho: "financeiro.exigeVencimento", mensagem: "Informe o vencimento" });
   }

@@ -204,6 +204,14 @@ export const DICIONARIO_DE_DADOS = Object.freeze([
     codigo: "ERP-CADASTROS-ARMAZEM", tabela: "erp.warehouses", nome: "Armazém", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
     descricao: "Local de guarda de estoque, pertencente a uma empresa."
   },
+  {
+    codigo: "ERP-CADASTROS-LAYOUT-DOCUMENTO", tabela: "erp.layouts_documento", nome: "Layout do Documento", modulo: "CADASTROS", natureza: "entidade", idGlobal: false,
+    descricao: "Quais campos o documento comercial de uma família mostra, em que ordem, com que rótulo, se são obrigatórios ou editáveis e com que valor padrão — configurado pela organização e ligado às TOPs (decisões 259 a 262; compras na decisão 269). Cadastro de organização, sem empresa; a conta (catálogo por família, validação, ligado → padrão → sistema) mora no domínio.",
+    campos: {
+      familia: { nome: "Movimento", descricao: "Família canônica do documento: as três de venda e as duas de compra (pedido de compra e compra, decisão 269). Uma TOP só se liga a layout da própria família (gatilho do banco)." },
+      padrao: { nome: "Padrão da família", descricao: "Usado pela TOP da família que não tem layout ligado. No máximo um ativo e vivo por organização e família (índice único parcial)." }
+    }
+  },
 
   // ---------- Estoque ----------
   {

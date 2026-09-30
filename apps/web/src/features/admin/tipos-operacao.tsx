@@ -11,7 +11,7 @@ import {
 } from "@/components/ui";
 import { DataTable } from "@/components/ui/data-table";
 import { familiaTemLayout } from "@agro/domain";
-import { EditorTipoOperacao, type FamiliaTop } from "./top-editor";
+import { EditorTipoOperacao, ehMovimentoDeVendas, type FamiliaTop } from "./top-editor";
 import { HistoricoDeVersoesTop } from "./top-historico";
 
 /**
@@ -195,7 +195,8 @@ export function TiposOperacaoPanel() {
       <LinhaLayoutDocumentoTop tipoOperacaoId={vendoLayout.id} familia={vendoLayout.familia.codigo} />
       <p className="mt-2 text-[12px] text-slate-500">Para trocar, ligue esta TOP a um layout em Configurações › Operações › Layouts de documento.</p>
     </Dialog>}
-    {vendoVersoes && <HistoricoDeVersoesTop id={vendoVersoes.id} codigo={vendoVersoes.codigo} onFechar={() => setVendoVersoes(null)} />}
+    {vendoVersoes && <HistoricoDeVersoesTop id={vendoVersoes.id} codigo={vendoVersoes.codigo}
+      comPonte={ehMovimentoDeVendas(vendoVersoes.familia.codigo)} onFechar={() => setVendoVersoes(null)} />}
     <ConfirmDialog
       open={!!excluindo}
       onOpenChange={(o) => { if (!o) setExcluindo(null); }}

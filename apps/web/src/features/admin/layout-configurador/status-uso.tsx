@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { Button, ErrorState, LoadingState } from "@/components/ui";
 import { variantesDeVenda } from "@/features/sales/variantes";
+import { variantesDeCompra } from "@/features/compras/variantes";
 import { BASE_LAYOUTS, TEXTOS, chaveDetalhe, chaveLista, invalidarLayouts, lerLinhaLayout, rotuloDaTop } from "./contrato";
 import { useTopsDoMovimento } from "./tops-do-movimento";
 
@@ -112,6 +113,20 @@ export function useUsoDoLayout(layoutId: string, familia: string): { estado: Est
   return { estado, ligadas, valeEm };
 }
 
+/**
+ * "ABRIR NA CENTRAL" — a Central do movimento: a de Vendas (`/vendas/<segmento>/new`) ou, na COMPRAS-03 (decisão 269), a
+ * de Compras (`/compras/<segmento>/new`). O segmento da rota e a capacidade de lançar vêm do registro de variantes de
+ * cada portal (`variantesDeVenda`, `variantesDeCompra` — os donos da rota e da permissão), nunca de um mapa aqui. Vendas
+ * primeiro: o link de venda é o de antes, byte a byte. Movimento que nenhum portal sabe lançar não tem Central: sem link.
+ */
+function centralDoMovimento(familia: string): { perm: string; rota: (topId: string) => string } | undefined {
+  const venda = variantesDeVenda().find((v) => v.familia === familia);
+  if (venda) return { perm: venda.perm, rota: (topId) => `/vendas/${venda.segmento}/new?tipo_operacao_id=${encodeURIComponent(topId)}` };
+  const compra = variantesDeCompra().find((v) => v.familia === familia);
+  if (compra) return { perm: compra.perm, rota: (topId) => `/compras/${compra.segmento}/new?tipo_operacao_id=${encodeURIComponent(topId)}` };
+  return undefined;
+}
+
 /** POST /:id/padrao — "Usar como padrão do movimento" (a mesma rota da barra da grade). */
 function useUsarComoPadrao(layoutId: string) {
   const qc = useQueryClient();
@@ -161,10 +176,10 @@ export function StatusDeUso({ layoutId, familia, rotuloMovimento, onVisualizarTo
     mutationFn: () => api(`${BASE_LAYOUTS}/${layoutId}/ativo`, { method: "POST", body: { ativo: true } }),
     onSuccess: () => { void invalidarLayouts(qc); }
   });
-  // "Abrir na Central": a rota do lançamento é a da variante de venda do movimento (registry). Sem variante, ou sem
-  // a capacidade de lançar nela, não há link — a Central recusaria.
-  const variante = React.useMemo(() => variantesDeVenda().find((v) => v.familia === familia), [familia]);
-  const podeAbrir = variante !== undefined && can(`${variante.perm}.create`);
+  // "Abrir na Central": a rota do lançamento é a da variante do movimento (registry), de venda ou de compra. Sem
+  // variante, ou sem a capacidade de lançar nela, não há link — a Central recusaria.
+  const central = React.useMemo(() => centralDoMovimento(familia), [familia]);
+  const podeAbrir = central !== undefined && can(`${central.perm}.create`);
 
   const visualizar = can("tipos_operacao.view")
     ? <Button size="sm" variant="outline" data-testid="config-status-visualizar-tops" onClick={onVisualizarTops}><Eye aria-hidden /> {TEXTOS.visualizarTops}</Button>
@@ -202,7 +217,7 @@ export function StatusDeUso({ layoutId, familia, rotuloMovimento, onVisualizarTo
         {sujo
           ? <button type="button" disabled data-testid="config-abrir-central" data-top-id={t.id} className="font-medium text-slate-400">{TEXTOS.abrirNaCentral}</button>
           : <Link data-testid="config-abrir-central" data-top-id={t.id} className="font-medium text-brand-700 underline-offset-2 hover:underline"
-            href={`/vendas/${variante.segmento}/new?tipo_operacao_id=${encodeURIComponent(t.id)}`}>{TEXTOS.abrirNaCentral}</Link>}
+            href={central.rota(t.id)}>{TEXTOS.abrirNaCentral}</Link>}
       </li>)}
     </ul>}
     {/* A navegação do cliente não passa pelo useDirtyTab: com rascunho sujo, o link desliga em vez de descartar. */}

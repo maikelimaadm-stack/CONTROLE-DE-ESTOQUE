@@ -2346,3 +2346,142 @@ test("COMPRAS-02 · RP-K1 — sem os próximos passos do pedido de compra na bas
   }
   v.semBloqueio();
 });
+
+/**
+ * COMPRAS-03 · LC-K1 — A CENTRAL DE COMPRAS DESTE WEB CONTRA A API DA BASE (janela 3 da DEPLOYMENT).
+ *
+ * O web desta PR sabe pedir `/api/compras/<espécie>/layout-efetivo` e aplicar o layout do documento de compra — mas só
+ * com `capacidades.layoutDocumento` declarada no `operation-types` da espécie. Contra uma base que NÃO a declara, a
+ * Central de Compras tem de ser a de hoje: NENHUM pedido a `/layout-efetivo` (conferido no fio, durante todo o
+ * lançamento), nenhum `data-campo`, nenhuma linha do layout, nenhum erro de layout — e a compra nasce como hoje (201,
+ * aberta no banco). Presença positiva (o campo Fornecedor de hoje desenhado) vem antes de toda ausência.
+ *
+ * O MUNDO É MEDIDO, nunca suposto, em DOIS lugares que têm de concordar:
+ *   · no FONTE da rota de compras do COMMIT da base (`.api-anterior.base`, provado pelo caso IDENTIDADE) — a assinatura
+ *     `layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO` no `operation-types`; a MESMA assinatura tem de existir no checkout
+ *     deste HEAD, senão o detector nunca mudaria de mundo depois do merge e o ramo legado passaria a afirmar uma premissa
+ *     vencida;
+ *   · no BINÁRIO que está servindo: o `operation-types` da base traz (ou não) `capacidades.layoutDocumento`.
+ * Base que já declara (depois do merge): o web pergunta o layout, a Central mostra a linha do layout do sistema (TOP nova,
+ * sem layout ligado) e a compra nasce do mesmo jeito.
+ */
+function baseDeclaraLayoutDeCompras(): boolean {
+  const raiz = path.resolve(__dirname, "../../..");
+  const ROTA = "apps/api/src/routes/compras.ts";
+  const ocorrencias = (texto: string) => (texto.match(/\blayoutDocumento\s*:\s*CAPACIDADE_LAYOUT_DOCUMENTO\b/g) ?? []).length;
+  const sha = fs.readFileSync(path.join(raiz, ".api-anterior.base"), "utf8").trim();
+  expect(sha, "`.api-anterior.base` é gravado por scripts/api-anterior.mjs ao montar a árvore").toMatch(/^[0-9a-f]{40}$/);
+  const naBase = ocorrencias(execFileSync("git", ["show", `${sha}:${ROTA}`], { cwd: raiz, encoding: "utf8" }));
+  const noHead = ocorrencias(fs.readFileSync(path.join(raiz, ROTA), "utf8"));
+  expect(noHead, `o detector reconhece a declaração deste HEAD em ${ROTA} — sem isso ele nunca mudaria de mundo`).toBe(1);
+  expect(naBase, "contagem ambígua não decide ramo nenhum").toBeLessThanOrEqual(1);
+  const declara = naBase === 1;
+  console.log(`[skew] COMPRAS-03 · base ${sha} ${declara ? "DECLARA" : "NÃO declara"} o layout do documento de compra (ocorrências=${naBase})`);
+  return declara;
+}
+
+test("COMPRAS-03 · LC-K1 — sem a capacidade declarada pela base, a Central de Compras não pede /layout-efetivo, é a de hoje e a compra nasce como hoje (201)", async ({ page }) => {
+  const v = vigiar(page);
+  // NO FIO, desde antes do login: qualquer pedido a /layout-efetivo durante o lançamento fica registrado.
+  const pedidosLayout: string[] = [];
+  page.on("request", (req) => { if (new URL(req.url()).pathname.includes("/layout-efetivo")) pedidosLayout.push(req.url()); });
+  await login(page);
+  const s = await sessao(page);
+  const cab = await cabecalhosDaSessao(page);
+  const declara = baseDeclaraLayoutDeCompras();
+
+  // O BINÁRIO concorda com o fonte: a capacidade vem (ou não) no operation-types da espécie compra.
+  const desc = await page.request.get(`${API}/api/compras/compras/operation-types`, { headers: cab });
+  expect(desc.status(), "premissa: a base (COMPRAS-01 ou posterior) serve a descoberta da TOP de compra").toBe(200);
+  const corpoDesc = await desc.json() as { contractVersion?: number; capacidades?: { layoutDocumento?: unknown } };
+  expect(corpoDesc.contractVersion, "a declaração é ADITIVA: o contrato continua o 1").toBe(1);
+  expect(corpoDesc.capacidades?.layoutDocumento !== undefined, "o binário da base serve exatamente o que o fonte dela declara").toBe(declara);
+
+  // Os insumos, lidos do banco que a base está servindo: fornecedor, produto sem lote, natureza de despesa e centro.
+  const org = s.orgId!;
+  const [fornecedor, nomeFornecedor] = sql(`select id || '|' || name from erp.people where organization_id='${org}' and is_provider and is_active and deleted_at is null order by code limit 1`).split("|");
+  const [produto, nomeProduto] = sql(`select id || '|' || description from erp.products where organization_id='${org}' and controle_lote='nenhum' and control_stock and is_active and deleted_at is null order by code limit 1`).split("|");
+  expect(fornecedor && produto, "premissa: o seed tem fornecedor e produto sem controle de lote").toBeTruthy();
+  const opcao = async (url: string) => {
+    const r = await page.request.get(`${API}${url}`, { headers: cab });
+    expect(r.status(), `premissa: a base serve ${url}`).toBe(200);
+    const lista = await r.json() as { id: string; label: string }[];
+    expect(lista.length, `premissa: há opção em ${url}`).toBeGreaterThan(0);
+    return lista[0]!;
+  };
+  const natureza = await opcao("/api/resources/financial_categories/options?kind=analytic&nature=expense");
+  const centro = await opcao("/api/resources/cost_centers/options?kind=analytic");
+
+  // Uma TOP de Compra criada PELA API DA BASE, para o lançamento ter o que escolher nos dois mundos.
+  const codigo = `LC${Date.now().toString(36).toUpperCase()}`;
+  const criada = await page.request.post(`${API}/api/admin/tipos-operacao`, { headers: cab, data: { codigo, codigoBase: "compras.compra", nome: `Skew layout de compra ${codigo}` } });
+  expect(criada.status(), await criada.text()).toBe(201);
+  const topId = (await criada.json() as { id: string }).id;
+
+  const literalDe = (t: string) => new RegExp(t.slice(0, 20).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+  const central = page.getByTestId("compras-central");
+  const escolherNoCampo = async (rotulo: string, nome: string) => {
+    await central.locator("label", { hasText: rotulo }).first().locator("..").locator("button").first().click();
+    await page.getByPlaceholder("Pesquisar...").fill(nome.slice(0, 20));
+    await page.locator("div[role='dialog'], [data-radix-popper-content-wrapper]").last().getByRole("option", { name: literalDe(nome) }).first().click();
+  };
+  /**
+   * Fornecedor, natureza, centro e um item; Salvar — o POST vai de verdade para a base, e a compra nasce como hoje.
+   * `comOItem` roda com a linha já na grade, antes do Salvar (o cabeçalho da grade só é conferido com item nela).
+   */
+  const salvarComoHoje = async (comOItem: () => Promise<void>) => {
+    await escolherNoCampo("Fornecedor", nomeFornecedor!);
+    await escolherNoCampo("Natureza de despesa", natureza.label);
+    await escolherNoCampo("Centro de resultado", centro.label);
+    const itens = page.getByTestId("compras-itens");
+    await itens.getByRole("button", { name: "Adicionar item" }).click();
+    const linha = itens.locator("tbody tr").first();
+    await linha.locator("button").nth(1).click();
+    await page.getByPlaceholder("Pesquisar...").fill(nomeProduto!.slice(0, 20));
+    await page.getByRole("option", { name: literalDe(nomeProduto!) }).first().click();
+    await linha.locator("input[type=number]").nth(0).fill("2");
+    await linha.locator("input[type=number]").nth(1).fill("9");
+    await comOItem();
+    const resposta = page.waitForResponse((r) => r.request().method() === "POST" && new URL(r.url()).pathname === "/api/compras/compras");
+    await page.getByTestId("compras-salvar").click();
+    const r = await resposta;
+    expect(r.status(), `a base aceita o que o web enviou — a compra nasce como hoje: ${await r.text()}`).toBe(201);
+    const enviado = r.request().postDataJSON() as Record<string, unknown>;
+    expect(enviado["tipo_operacao_id"], "premissa: o corpo capturado é o deste lançamento").toBe(topId);
+    expect(enviado["fornecedor_id"], "o fornecedor escolhido viajou").toBe(fornecedor);
+    const { id } = await r.json() as { id: string };
+    expect(id).toMatch(UUID);
+    expect(sql(`select situacao from erp.documentos_compra where id = '${id}'`), "no banco: aberta, como hoje").toBe("aberto");
+    await expect(page).toHaveURL(new RegExp(`/compras/compras/${id}$`));
+  };
+
+  await page.goto(`/compras/compras/new?tipo_operacao_id=${topId}`);
+  await expect(central, "premissa: a Central montou").toBeVisible();
+  await expect(central).toHaveAttribute("data-modo", "lancar");
+  await expect(central.locator("label", { hasText: "Fornecedor" }).first(), "presença: o cabeçalho de hoje está desenhado").toBeVisible();
+  await expect(page.getByTestId("compras-layout-nao-carregado"), "nenhum erro de layout, nos dois mundos").toHaveCount(0);
+
+  if (!declara) {
+    // MUNDO LEGADO: a Central é a de hoje — sem invólucro do layout, sem linha do layout, sem data-coluna nos itens.
+    await expect(central.locator("[data-campo]"), "sem layout, nenhum data-campo na Central").toHaveCount(0);
+    await expect(page.getByTestId("compras-layout-efetivo"), "nenhuma linha de layout").toHaveCount(0);
+    await salvarComoHoje(async () => {
+      const grade = page.getByTestId("compras-itens");
+      await expect(grade.locator("th").first(), "presença: a grade de itens de hoje, com o cabeçalho").toBeVisible();
+      await expect(grade.locator("th[data-coluna]"), "sem layout, nenhum data-coluna nos itens").toHaveCount(0);
+    });
+    expect(pedidosLayout, "o web NÃO pede /layout-efetivo a uma API que não declara a capacidade").toEqual([]);
+    v.semBloqueio();
+    return;
+  }
+
+  // MUNDO ATUAL: a base declara e serve o layout — o web pergunta, e a TOP nova (sem layout ligado) cai no do sistema.
+  await expect(page.getByTestId("compras-layout-efetivo"), "a Central mostra o layout que vale").toHaveAttribute("data-origem", "sistema");
+  await expect(central.locator('[data-campo="fornecedor_id"]'), "o layout do sistema governa a Central").toHaveCount(1);
+  expect(pedidosLayout.some((u) => new URL(u).pathname === "/api/compras/compras/layout-efetivo" && new URL(u).searchParams.get("tipo_operacao_id") === topId),
+    "o web perguntou o layout desta TOP à base que o declara").toBe(true);
+  await salvarComoHoje(async () => {
+    await expect(page.getByTestId("compras-itens").locator('th[data-coluna="produto_id"]'), "as colunas também seguem o layout do sistema").toHaveCount(1);
+  });
+  v.semBloqueio();
+});

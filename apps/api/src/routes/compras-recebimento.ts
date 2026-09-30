@@ -49,6 +49,7 @@ export const MSG_PEDIDO_SEM_PROXIMA_OPERACAO = "A TOP deste pedido não tem pró
 export const MSG_PEDIDO_SEM_COMPRA = "Este pedido ainda não tem compra: cancele-o em vez de encerrar o saldo.";
 export const MSG_PEDIDO_SEM_SALDO = "Este pedido não tem saldo a encerrar.";
 export const MSG_PEDIDO_COM_COMPRAS = "Este pedido tem compras: cancele-as ou encerre o saldo.";
+export const MSG_PEDIDO_CONVERTIDO_COM_COMPRAS = "Este pedido tem compras: cancele-as primeiro.";
 export const MSG_PEDIDO_CONVERTIDO_NAO_CANCELA = "Este pedido já foi convertido em compra e não é cancelado.";
 
 /** O corpo do encerramento do saldo: motivo obrigatório, até 500 caracteres. `.strict()`: chave desconhecida é 422. */
@@ -225,14 +226,23 @@ async function encerrarSaldo(ctx: ServiceCtx, pedidoId: string, motivo: string) 
 // ─────────────── cancelamentos (chamados por compras.ts e compras-confirmacao.ts) ───────────────
 
 /**
- * O PEDIDO SE CANCELA? — conferido com o pedido JÁ TRAVADO (as compras geradas vêm da mesma leitura). Convertido
- * nunca (o gatilho também recusa); aberto com compra gerada NÃO cancelada também não: as compras continuariam
- * citando um pedido cancelado. 409 antes de o banco recusar, com a mensagem que diz o que fazer.
+ * O PEDIDO SE CANCELA? — conferido com o pedido JÁ TRAVADO (as compras geradas e o saldo encerrado vêm da mesma
+ * leitura). 409 antes de o banco recusar, com a mensagem que diz o que fazer. Três casos:
+ *  - convertido COM saldo encerrado (com ou sem compra viva): alguém decidiu que o resto não vem; cancelar as
+ *    compras não reabre o pedido (reabrirPedidoDeOrigem), então "cancele-as" seria um caminho sem saída → "já foi
+ *    convertido e não é cancelado";
+ *  - aberto com compra viva: há dois caminhos — cancelar as compras ou encerrar o saldo;
+ *  - convertido SEM saldo encerrado, com compra viva: encerrar o saldo não se aplica (não está aberto); cancelar as
+ *    compras, sim (a que zerou o saldo, cancelada, reabre o pedido) → "cancele-as primeiro".
+ * Convertido sem saldo encerrado e sem compra viva não existe (cancelar a última compra reabre); o gatilho é a rede.
  */
 export function conferirCancelamentoDoPedido(doc: Record<string, unknown>): void {
   const pedido = comoPedido(doc);
-  if (pedido.situacao === "convertido") throw err("CONFLICT", MSG_PEDIDO_CONVERTIDO_NAO_CANCELA);
-  if ((pedido.compras_geradas ?? []).some((c) => c.situacao !== "cancelado")) throw err("CONFLICT", MSG_PEDIDO_COM_COMPRAS);
+  const convertido = pedido.situacao === "convertido";
+  if (convertido && doc.saldo_encerrado_em != null) throw err("CONFLICT", MSG_PEDIDO_CONVERTIDO_NAO_CANCELA);
+  const comCompraViva = (pedido.compras_geradas ?? []).some((c) => c.situacao !== "cancelado");
+  if (comCompraViva) throw err("CONFLICT", convertido ? MSG_PEDIDO_CONVERTIDO_COM_COMPRAS : MSG_PEDIDO_COM_COMPRAS);
+  if (convertido) throw err("CONFLICT", MSG_PEDIDO_CONVERTIDO_NAO_CANCELA);
 }
 
 /** O pedido de origem travado pelo cancelamento da compra: o estado que decide a reabertura. */
@@ -294,7 +304,9 @@ export function registrarRecebimentoCompras(app: FastifyInstance) {
    * devolve a resposta de outro).
    */
   app.post("/compras/pedidos/:id/convert", async (req, reply) => reply.status(201).send(await runService(app, req, "pedidos_compra.edit", async (ctx) => {
-    const { id } = req.params as { id: string };
+    // COMPRAS-03_R1 (c): o :id em minúsculas ANTES do hash — a mesma URL com outra caixa é o mesmo pedido (os uuid
+    // do corpo já saem do parse em minúsculas; o recebimento os compara com o leque e os itens lidos do banco).
+    const id = (req.params as { id: string }).id.toLowerCase();
     const corpo = recebimentoSchema.parse(req.body ?? {});
     await lerDocumentoCompra(ctx, id, "pedido");
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
