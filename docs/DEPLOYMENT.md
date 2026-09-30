@@ -1388,28 +1388,48 @@ vale o padrão da família; sem padrão → a Central de hoje. 4. Editor da TOP 
 ## EDITAR-01 — editar o documento de venda salvo (0039)
 
 Decisão 272. **Uma migration: `0039_versao_do_documento_de_venda.sql`** (pre-deploy; trava (2026,73), `lock_timeout` 2 s,
-[[COORDENADOR: B1 — pré/pós-condições nomeadas `EDITAR-01: ...` e o que conferem]], não destrutiva, sem backfill): a
-coluna `erp.sales_documents.version bigint not null default 0` e o gatilho BEFORE UPDATE `trg_sales_documents_versao`
-(função `erp.sales_documents_versao()`, sem SECURITY DEFINER, `search_path = erp, pg_temp`, `execute` revogado de
-`public`), que soma 1 à versão em todo update da linha; e recria a porta `erp.situacao_atraso_cliente(uuid, int)` (0033,
-SECURITY DEFINER) com a MESMA assinatura, corpo, `search_path` e privilégios — só a reconferência de capacidade de
-dentro passa a aceitar também `budgets.edit`, `orders.edit` e `sales.edit`, além das três `.create` (decisão 272,
-ponto 9). A coluna nasce com o default constante, sem reescrever a tabela; o `alter table` pede a trava exclusiva de
-`erp.sales_documents` por um instante — com uma transação longa segurando a tabela, a migration desiste em 2 s sem
-aplicar nada e se repete. Nenhuma variável nova, nenhuma
-permissão nova: a PATCH e o `/edicao` usam `budgets.edit`, `orders.edit` e `sales.edit`, que já existem. **Sem tela**
-nesta fatia: nenhuma tela chama as rotas novas (o lápis vem na F2, depois da VISUAL-UX-02).
+pré/pós-condições nomeadas `EDITAR-01: ...`, não destrutiva, sem backfill): a coluna
+`erp.sales_documents.version bigint not null default 0` e o gatilho BEFORE UPDATE `trg_sales_documents_versao` (função
+`erp.sales_documents_versao()`, sem SECURITY DEFINER, `search_path = erp, pg_temp`, EXECUTE só do dono), que soma 1 à
+versão em todo update da linha; e recria a porta `erp.situacao_atraso_cliente(uuid, int)` (0033, SECURITY DEFINER)
+com a MESMA assinatura, corpo, `search_path` e privilégios — só a reconferência de capacidade de dentro passa a aceitar
+também `budgets.edit`, `orders.edit` e `sales.edit`, além das três `.create` (decisão 272, ponto 9). A coluna nasce com
+o default constante, sem reescrever a tabela; o `alter table` pede a trava exclusiva de `erp.sales_documents` por um
+instante — com uma transação longa segurando a tabela, a migration desiste em 2 s sem aplicar nada e se repete.
+Nenhuma variável nova, nenhuma permissão nova: a PATCH e o `/edicao` usam `budgets.edit`, `orders.edit` e
+`sales.edit`, que já existem. **Sem tela** nesta fatia: nenhuma tela chama as rotas novas (o lápis vem na F2, depois
+da VISUAL-UX-02).
 
-**Pré-condição:** [[COORDENADOR: B1 — pré-condições da 0039 (papel que aplica, coluna e gatilho ainda inexistentes,
-0038 aplicada) e as mensagens de recusa]]. Em erro, publique o nome do papel, nunca a conexão.
+**Pré-condição:** a 0039 recusa, com a mensagem nomeada e sem aplicar nada:
+- **já aplicada ou schema divergente** — `version`, `erp.sales_documents_versao()` ou `trg_sales_documents_versao` já
+  existem (`EDITAR-01: erp.sales_documents.version ja existe; ...` vem primeiro, para a reaplicação dizer o motivo
+  verdadeiro);
+- **os BEFORE UPDATE por linha de `erp.sales_documents` não são exatamente os dois de hoje**, por nome e por função
+  (`trg_sales_documents_classificacao_financeira` → `erp.venda_classificacao_financeira_guarda` e
+  `trg_sales_documents_execucao_configurada` → `erp.venda_execucao_configurada_guarda`): `EDITAR-01: gatilhos BEFORE
+  UPDATE por linha de erp.sales_documents diferentes dos dois esperados (...)`, que lista os encontrados. É sobre esse
+  conjunto que vale "nenhuma guarda compara a linha inteira" e "a versão é a última";
+- **quem aplica** não é dono de `erp.sales_documents` (`pg_has_role(..., 'USAGE')`), não cria objetos no schema `erp`,
+  ou não é dono de `erp.situacao_atraso_cliente`;
+- **o papel da aplicação poderia contornar o gatilho**: `erp_app` superusuário ou com SET em
+  `session_replication_role`, membro do papel dono da tabela (`MEMBER`, porque ele é NOINHERIT e ainda faria SET ROLE),
+  ou com TRIGGER na tabela;
+- **a porta do atraso não é a da 0033**: ausente ou sem SECURITY DEFINER; corpo que não cita as três `.create` ou já
+  cita alguma `.edit`; dono que não atravessa RLS.
+
+As pós-condições conferem objetos, nunca contagem de tabela viva: a coluna (`bigint`, `not null`, default `0`, sem
+identity nem generated); a função (plpgsql, SECURITY INVOKER, `search_path = erp, pg_temp`, EXECUTE só do dono); o
+gatilho (BEFORE UPDATE por linha, sem coluna, sem WHEN, ligado); a ORDEM (as duas guardas e a versão, a versão por
+último); e a porta do atraso (as seis capacidades, SECURITY DEFINER, `stable`, o mesmo `search_path`, dono que
+atravessa RLS, PUBLIC sem EXECUTE e `erp_app` com EXECUTE). Em erro, publique o nome do papel, nunca a conexão.
 
 **Ordem: banco (0039) → API → web.** Janelas:
 1. **API ANTERIOR × banco novo:** a API anterior nunca escreve `version`. O INSERT dela nomeia as colunas, e o
    documento nasce com o default 0. Cada UPDATE dela (PUT, confirmar, cancelar, converter, encerrar saldo) passa pelo
    gatilho, que só soma 1 à versão — e um `set` explícito seria sobrescrito. O gatilho não recusa nada, não lê outra
    tabela e não toca outra coluna: por ele, nenhuma gravação da API anterior muda de resultado, código ou mensagem. Ele dispara
-   depois das guardas da tabela, e nenhuma delas compara a linha inteira [[COORDENADOR: B1 confirma]], então nenhuma
-   vê a versão mudar. O `select d.*` do `GET` anterior passa a trazer `version`, e o histórico de `erp.audit_row`
+   depois das duas guardas da tabela (0023 e 0024, `before update of status`, que comparam colunas, não a linha
+   inteira), então nenhuma vê a versão mudar; `erp.audit_row` (AFTER) grava antes/depois já com a versão. O `select d.*` do `GET` anterior passa a trazer `version`, e o histórico de `erp.audit_row`
    também: campo aditivo, que a web ignora. A API anterior chama `erp.situacao_atraso_cliente` com a mesma
    assinatura e lê a mesma forma; quem passa a receber linhas é só o usuário com alguma `.edit` de venda e nenhuma
    `.create` — e, para ele,

@@ -1398,82 +1398,116 @@ motor paralelo, como o §12 previu. `compras.pedido` fica FORA da matriz: o pedi
 ## 15. Editar o documento de venda salvo (EDITAR-01)
 
 > Decisão 272 (o porquê mora lá). Esta seção é o contrato: rotas, corpo, códigos e resposta.
-> Recusas de estado num lugar só: `apps/api/src/routes/vendas-edicao-regras.ts` (`recusaDaEdicao`,
-> `limitesDaEdicao`), usadas pela PATCH e pelo `/edicao`, com a ordem e as mensagens das recusas do PUT. Rotas: PATCH
-> em [[COORDENADOR: arquivo da PATCH, quando o A1 entregar]]; `/edicao` em `apps/api/src/routes/vendas-edicao.ts`
-> (`registrarEdicaoDeVenda`). Invariantes: gatilho `trg_sales_documents_versao` e a porta `erp.situacao_atraso_cliente`
-> alargada (0039). Implantação em `docs/DEPLOYMENT.md` § EDITAR-01.
+> PATCH: `app.patch` e o núcleo `salvarEdicao` (o MESMO do PUT) em `apps/api/src/routes/sales.ts`; as funções puras
+> da PATCH (forma do corpo, documento como ficará, plano, evento e as mensagens `MSG_EDICAO_*` e `MSG_DOCUMENTO_MUDOU`)
+> em `apps/api/src/routes/vendas-edicao-patch.ts`. `/edicao`: `registrarEdicaoDeVenda` em
+> `apps/api/src/routes/vendas-edicao.ts`. Recusas de estado num lugar só: `recusaDaEdicao` e `limitesDaEdicao` em
+> `apps/api/src/routes/vendas-edicao-regras.ts` (PUT, PATCH e `/edicao`). Invariantes: gatilho
+> `trg_sales_documents_versao` e a porta `erp.situacao_atraso_cliente` alargada (0039). Implantação em
+> `docs/DEPLOYMENT.md` § EDITAR-01.
 
 **O PUT continua como está (compatibilidade); nenhuma tela o usa. A tela vai usar só a PATCH.** O §0.2 e o §13.3
-continuam valendo para o PUT sem mudança nenhuma.
+continuam valendo para o PUT. O código dele passou a chamar `recusaDaEdicao` (sem exigir TOP) e o núcleo
+`salvarEdicao`, com a mesma ordem, os mesmos códigos, mensagens e efeitos; a única diferença observável possível é a
+conferência de ROW COUNT no update do cabeçalho (404 num caso impossível com a linha travada), além da porta do
+atraso (§15.4).
 
 ### 15.1 A versão do documento
 
-- `erp.sales_documents.version bigint not null default 0`: todo documento que já existia fica com 0, e todo INSERT
-  nasce com 0 (nenhuma rota escreve a coluna).
-- Gatilho BEFORE UPDATE `trg_sales_documents_versao` → `erp.sales_documents_versao()`: `new.version := old.version + 1`
-  em QUALQUER update da linha — PUT, PATCH, confirmar, cancelar, converter, encerrar saldo, reabrir a origem. Um `set`
-  explícito de `version` é sobrescrito. Sem SECURITY DEFINER; `search_path = erp, pg_temp`; `execute` revogado de
-  `public`. Pela ordem alfabética, dispara depois dos outros BEFORE UPDATE da tabela.
+- `erp.sales_documents.version bigint not null default 0`: default constante (só metadado, a tabela não é regravada);
+  todo documento que já existia lê 0, e todo INSERT nasce com 0 (nenhuma rota cita a coluna).
+- Gatilho `trg_sales_documents_versao` → `erp.sales_documents_versao()`: BEFORE UPDATE, por linha, sem lista de
+  colunas e sem WHEN; `new.version := old.version + 1` em QUALQUER update da linha — PUT, PATCH, confirmar, cancelar,
+  converter, encerrar saldo, reabrir a origem, script de suporte —, inclusive o que não muda nada. O valor que o
+  UPDATE mandar em `version` (explícito ou nulo) é sobrescrito. Sem SECURITY DEFINER; `search_path = erp, pg_temp`;
+  EXECUTE só do dono.
+- É o ÚLTIMO BEFORE UPDATE por linha da tabela (ordem de nome), depois de `trg_sales_documents_classificacao_financeira`
+  e `trg_sales_documents_execucao_configurada`; nenhuma das duas compara a linha inteira. A pós-condição da 0039
+  confere essa ordem.
+- O papel da aplicação não desliga, não derruba, não troca nem contorna o gatilho (não é dono nem membro do dono, não
+  é superusuário, não troca `session_replication_role`, não tem TRIGGER na tabela).
 - Na API, `version` sai como string de dígitos (é `bigint`) no `GET <base>/:id`, na resposta da PATCH e no
   `/edicao`. Na entrada da PATCH aceita string de dígitos ou inteiro ≥ 0.
-- [[COORDENADOR: confirmar com o A1 que a PATCH que muda só item também faz o UPDATE do cabeçalho (totais e
-  `updated_at`), para a versão subir, e o que responde a PATCH que não muda nada]]
 
 ### 15.2 PATCH `/api/sales/{budgets,orders,sales}/:id`
 
 Permissão `<variante>.edit` (`budgets.edit`, `orders.edit`, `sales.edit`) — a mesma do PUT. `Idempotency-Key`
 OPCIONAL, pelo helper oficial, como nas outras escritas: com ela, mesma chave e mesmo corpo devolvem a mesma resposta
-sem gravar de novo, e a mesma chave com outro corpo é 409 `CONFLICT`; o hash leva ação, documento, variante, corpo e
-autor.
+sem gravar de novo, e a mesma chave com outro corpo é 409 `CONFLICT`; o hash leva ação (`edit_sales_document`),
+documento, variante, corpo canônico (depois da forma) e autor.
 
-**Corpo ESTRITO** — `{ version, ...os campos que mudam }`, com os mesmos nomes (snake_case) do POST/PUT:
+**Corpo ESTRITO** — `{ version, ...os campos que mudam }`, com os mesmos nomes (snake_case) e os mesmos validadores
+do POST/PUT, sem os valores padrão (na PATCH, ausente quer dizer "fica o gravado"):
 
 | Chave | Regra |
 | --- | --- |
-| `version` | obrigatória: a versão que a tela leu (do `GET` ou do `/edicao`) |
-| campo do cabeçalho | **ausente** = fica como está gravado · **`null`** = limpa (só campo que aceita vazio; senão 422 no campo) · **valor** = troca |
-| `items` | **ausente** = nenhuma linha de item é regravada · **presente** = a LISTA NOVA COMPLETA (tabela abaixo) |
-| `empresa_id`, `tipo_operacao_id` | recusadas: 422 `VALIDATION_ERROR` no campo (`details[].path` = o campo) |
-| qualquer outra chave | 422 `VALIDATION_ERROR` |
+| `version` | obrigatória: a versão que a tela leu (do `GET` ou do `/edicao`); ausente → "Informe a versão do documento que você abriu."; malformada → "Versão inválida: envie a versão que o documento devolveu." |
+| `document_date`, `shipping_date`, `due_date`, `client_id`, `transporter_id`, `proprietary_id`, `driver_name`, `payment_method_id`, `freight`, `freight_icms`, `other_values`, `discount`, `note`, `categoria_financeira_id`, `centro_custo_id`, `condicao_pagamento_id` | **ausente** = fica como está gravado · **`null`** = limpa (só onde o POST aceita vazio; senão 422 no campo) · **valor** = troca; valor igual ao gravado não é mudança |
+| `installment_plan` | enviado (objeto ou `null`) é decisão explícita: o plano é refeito pela conta do PUT |
+| `is_deductible` | muda a marca só se vier diferente da gravada |
+| `items` | **ausente** = nenhuma linha de item é tocada · **presente** = a LISTA NOVA COMPLETA, com pelo menos um item (tabela abaixo) |
+| `empresa_id` | 422 `VALIDATION_ERROR` no campo: "A empresa não muda na edição do documento." |
+| `tipo_operacao_id` | 422 `VALIDATION_ERROR` no campo: "Trocar a operação não é edição: cancele e lance de novo na operação certa." |
+| qualquer outra chave | 422 `VALIDATION_ERROR` no campo: "Campo não reconhecido na edição do documento." |
+
+As recusas de chave (`empresa_id`, `tipo_operacao_id`, `version`, desconhecidas) saem JUNTAS, uma por campo; depois
+vem a validação dos valores, com os caminhos `items[i].<campo>`.
 
 **Itens por id** — sem operações "alterar/incluir/remover": a lista enviada é o documento.
 
 | Linha da lista | Efeito |
 | --- | --- |
-| com `id` de item DESTE documento | é o mesmo item (mantém o id); campo ausente = o que está gravado |
-| sem `id` | item novo; exige `product_id`, `quantity` e `unit_price` |
+| com `id` de item DESTE documento | é o mesmo item (mesmo id, mesma ligação com a origem); campo ausente = o que está gravado |
+| sem `id` | item novo; exige `product_id`, `quantity` e `unit_price` (422 em `items[i].<campo>`, "Campo obrigatório") |
 | item gravado que não vem na lista | sai do documento |
-| `id` que não é deste documento (de outro, inexistente, malformado) ou repetido | 422 `VALIDATION_ERROR`, `details[].path = items[i].id` |
+| `id` que não é deste documento (de outro ou inexistente, indistinguíveis) | 422 `VALIDATION_ERROR` em `items[i].id`: "Este item não é deste documento." |
+| `id` repetido na lista | 422 `VALIDATION_ERROR` em `items[i].id`: "Este item aparece mais de uma vez na lista." |
 
-**As conferências são as do PUT, sobre o documento COMO FICARÁ** (o gravado + o que mudou), pelo mesmo núcleo: limites
-da parte gerada (só armazém e observação do item, decisão 265) e da parte de pedido com reserva (nem o armazém,
-decisão 266), classificação, condição, regras da operação da versão CONGELADA (a PATCH não troca TOP; como no §13.3, a
-condição só é conferida se a PATCH a envia, e o atraso só se troca o cliente), layout ao salvar e reserva de estoque.
-Nenhum código, caminho ou mensagem dessas recusas difere do PUT.
+A gravação é EM LUGAR: UPDATE só dos itens alterados (mesmo id e `origem_item_id`), INSERT dos novos, DELETE dos que
+saíram, `position` = índice na lista; cada escrita confere ROW COUNT. Lista igual à gravada (mesmos ids, ordem e
+valores) não é mudança.
 
-**Ordem das recusas** [[COORDENADOR: confirmar com o A1 em que ponto a forma do corpo (422) é conferida]]:
+**As conferências são as do PUT, sobre o documento COMO FICARÁ** (o gravado + o que mudou), pelo mesmo núcleo
+(`salvarEdicao`): limites da parte gerada (só armazém e observação do item, pareados por id; decisão 265) e da parte de
+pedido com reserva (nem o armazém; decisão 266), classificação, condição, regras da operação da versão CONGELADA (a
+PATCH não troca TOP; como no §13.3, a condição só é conferida se a PATCH a troca, e o atraso só se troca o cliente),
+layout ao salvar e reserva de estoque — esta só quando os itens mudam (ela depende só dos itens e da empresa). Nenhum
+código, caminho ou mensagem dessas recusas difere do PUT.
 
-| # | Quando | Resposta |
+**O plano de parcelas** é refeito pela conta do PUT só quando a PATCH envia `installment_plan`, troca ou remove a
+condição, ou o plano gravado é derivado da condição (há condição e `parcelas_ajustadas = false`) e mudou
+`document_date` ou o total. Em qualquer outro caso `installment_plan` e `parcelas_ajustadas` ficam byte a byte (só a
+marca `is_deductible` muda, se vier diferente).
+
+**Ordem:**
+
+| # | Passo | Recusa |
 | --- | --- | --- |
-| 1 | sem `<variante>.edit` | 403 |
-| 2 | inexistente, de outra organização, fora do escopo de empresa, excluído ou id malformado | a MESMA 404 do `GET <base>/:id` |
-| 3 | `version` diferente da gravada (conferida logo depois de travar a linha) | 409 `CONCURRENCY_CONFLICT` "Este documento mudou desde que você o abriu. Recarregue antes de salvar." |
-| 4 | situação fora de aberto/aprovado | 409 `INVALID_STATUS_TRANSITION` "Documento não editável neste status" |
-| 5 | origem com partes (ativas; depois só canceladas) | 409 `INVALID_STATUS_TRANSITION`, as mensagens de hoje do PUT |
-| 6 | documento sem TOP (acervo) | 409 `INVALID_STATUS_TRANSITION` "Este documento não tem tipo de operação (registro anterior às operações) e não pode ser editado." |
-| 7 | corpo fora do contrato acima | 422 `VALIDATION_ERROR` no campo |
-| 8 | as conferências do PUT | os códigos de sempre (`VALIDATION_ERROR`, `CONDICAO_PAGAMENTO_INVALIDA`, `CONDICAO_PAGAMENTO_NAO_PERMITIDA`, `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA`, `CLIENTE_EM_ATRASO`, `LAYOUT_CAMPO_OBRIGATORIO`; a reserva de estoque e a parte gerada recusam com `VALIDATION_ERROR`) |
+| 1 | capacidade | sem `<variante>.edit` → 403 |
+| 2 | forma do corpo — antes de qualquer leitura e de reservar a chave | 422 `VALIDATION_ERROR` no campo |
+| 3 | id malformado; documento invisível (inexistente, de outra organização, fora do escopo de empresa, excluído) | a MESMA 404 do `GET <base>/:id` |
+| 4 | idempotência (depois da 404: a resposta gravada não passa pelo recorte de empresa) | mesma chave, outro corpo → 409 `CONFLICT` |
+| 5 | trava da linha e, logo depois, a versão | 409 `CONCURRENCY_CONFLICT` "Este documento mudou desde que você o abriu. Recarregue antes de salvar." |
+| 6 | `recusaDaEdicao` (exigindo TOP): situação fora de aberto/aprovado; origem com partes (ativas; depois só canceladas); sem TOP | 409 `INVALID_STATUS_TRANSITION`: "Documento não editável neste status", as mensagens de partes do PUT, "Este documento não tem tipo de operação (registro anterior às operações) e não pode ser editado." |
+| 7 | o documento como ficará (itens por id) | 422 em `items[i].id` |
+| 8 | nada muda | 200 com o documento, SEM escrita e SEM subir a versão |
+| 9 | o núcleo do PUT | os códigos de sempre (`VALIDATION_ERROR` — parte gerada, reserva, classificação —, `CONDICAO_PAGAMENTO_INVALIDA`, `CONDICAO_PAGAMENTO_NAO_PERMITIDA`, `TIPO_OPERACAO_EXIGENCIA_NAO_ATENDIDA`, `CLIENTE_EM_ATRASO`, `LAYOUT_CAMPO_OBRIGATORIO`) |
 
 A 404 vem antes da 409: a diferença entre os dois códigos não pode virar oráculo de existência (a mesma regra do §0.1).
 A versão vem antes da situação: quem editava um documento que outra aba confirmou recebe "recarregue" e, recarregando,
 vê o estado real.
 
-**Resposta 200**: o documento como o `GET <base>/:id` o devolve, com a `version` nova.
+**Resposta 200**: o documento como o `GET <base>/:id` o devolve, com a `version` nova. Toda PATCH que grava faz UM
+update do cabeçalho — também a que só muda item, porque os totais são regravados —, e a versão sobe exatamente 1.
 
 **Histórico**: o gatilho `erp.audit_row` (0005) continua registrando antes/depois da linha inteira do cabeçalho; a
-PATCH acrescenta UM evento `update` (entidade `sales_documents`) com metadata `{ via: "patch", campos: [...] }` e
-antes → depois só dos campos alterados, itens incluídos.
+PATCH que grava acrescenta UM evento `update` (entidade `sales_documents`), lido do banco antes e depois:
+
+- metadata `{ via: "patch", campos, derivados }` — `campos` = tudo o que mudou (inclusive `items`), `derivados` = o que
+  mudou sem ter sido enviado (`subtotal`, `total`, `installment_plan`, `parcelas_ajustadas`);
+- `before`/`after` só das colunas do cabeçalho que mudaram, e `is_deductible` com o próprio nome;
+- itens: `before.items = { alterados, removidos }` e `after.items = { alterados, incluidos }` — em `alterados`, o id e
+  só os campos que mudaram; incluídos e removidos, a linha inteira.
 
 ### 15.3 GET `/api/sales/{budgets,orders,sales}/:id/edicao`
 
