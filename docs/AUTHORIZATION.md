@@ -23,3 +23,27 @@
 3. Regras adicionais: autorizador ativo/valor máximo/cotações mínimas (aprovação), responsável atual (transferência), período congelado, status do documento.
 4. RLS como última linha de defesa (ver `docs/SECURITY.md`).
 5. UI: `can()` apenas oculta ações; testes e2e confirmam que a rota direta é negada pelo servidor.
+
+## Anexos
+
+Rotas `/attachments` (listar, enviar, baixar, excluir). Toda rota chama `authorizeAttachmentParent()`
+(`apps/api/src/lib/attachment-parent.ts`) ANTES de qualquer efeito. A autorização é, com AND:
+`attachments.view` / `attachments.create` / `attachments.delete` ∧ permissão de VER O PAI ∧ escopo de empresa do
+módulo dessa permissão (`moduloDaPermissao`).
+
+- `entity` é resolvido numa whitelist estática e nunca vira SQL; entidade fora da lista → **422**.
+- Inexistente, de outra organização, fora do escopo ou excluído → a **mesma 404** (corpo idêntico).
+- Sem a permissão de ver o pai → **403**.
+- Não há regra por situação do pai: documento confirmado ou cancelado aceita anexo (decisão 271).
+- O histórico do pai registra `attachment_added` e `attachment_removed`.
+
+Pais cuja permissão depende da LINHA (decisão 271) — a porta é a da espécie, nunca a da tabela; espécie
+desconhecida → sem permissão → 404:
+
+| Pai | Classificação | Exclusão lógica | Espécie → permissão de ver o pai |
+|---|---|---|---|
+| `sales_documents` | empresa (organização + empresa da linha) | `deleted_at` | `budget` → `budgets.view` · `order` → `orders.view` · `sale` → `sales.view` |
+| `documentos_compra` | empresa (organização + empresa da linha) | não (fim de vida = `cancelado`) | `pedido` → `pedidos_compra.view` · `compra` → `compras.view` |
+
+A lista completa de pais é a whitelist `ATTACHMENT_PARENTS`; o guardrail `apps/api/test/unit/attachment-parent-guard.test.ts`
+confere cada entrada (inclusive as duas acima). Testes: `apps/api/test/integration/anexos-pesquisa-01-anexos.test.ts` (AX-1…AX-5).
