@@ -3,18 +3,23 @@ import * as React from "react";
 import { use } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRightLeft, Check, FileCheck2, FileText, FileX2, Plus, Printer } from "lucide-react";
+import { FileCheck2, FileText, FileX2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { brl, dateBR } from "@/lib/utils";
-import { Button, Confirm, Dialog, StatusBadge, statusTone } from "@/components/ui";
-import { useTabTitle } from "@/lib/workspace-tabs";
+import { brl, dateBR, todayISO } from "@/lib/utils";
+import { Button, Dialog, StatusBadge, statusTone } from "@/components/ui";
+import { useTabTitle, useWorkspaceTabs, type WsTab } from "@/lib/workspace-tabs";
 import { useDoc, LoadingOr, type Row } from "@/features/docs/shared";
 import { useAction } from "@/features/docs/actions";
 import { Base2Items, type Base2ItemColumn } from "@/features/base2";
 import { HistoryDialog } from "@/features/base1/history-dialog";
-import { AcaoDaBarra, AcaoPrincipal, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
-import { CampoLeitura, ItensSalvos, MaisAcoes, type ItemDoMenu } from "@/features/sales/central-vendas-consulta";
-import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+import { CentralVendasWorkspace } from "@/features/sales/central-vendas-workspace";
+import { CampoLeitura, ItensSalvos } from "@/features/sales/central-vendas-consulta";
+/* VISUAL-UX-02 W1: barra, leque, diálogos, Duplicar e "Salvo" (entrega em memória) */
+import { AcoesRapidas, BotaoDaBarra, ConjuntoDaBarra, ConjuntoDireito, IconeCancelarDocumento, IconeConfirmar, IconeConverter, IconeDuplicar, IconeEncerrarSaldo, IconeHistorico, IconeImprimir, IndicadorConfirmando, IndicadorSalvo, NovoDocumento, PilulaDaBarra, PosicaoDoRotulo, TEMPO_DO_SALVO_MS, chaveDepoisDeSalvar, type DepoisDeSalvar, type ItemRapido, type PosicaoDoRotuloValor } from "@/features/sales/central-vendas-barra";
+import { DialogoCancelarDocumento, DialogoConfirmarVenda } from "@/features/sales/central-vendas-dialogos";
+import { chaveDaCopia, copiaDoDocumento, motivoParaNaoDuplicar } from "@/features/sales/central-vendas-duplicar";
+import { descartarEntrega, entregarEmMemoria, espiarEntrega } from "@/lib/entrega-em-memoria";
+import { ConfirmarFechamentoDeAba } from "@/components/layout/workspace-tabs";
 import estilosCentral from "@/features/sales/central-vendas-workspace.module.css";
 import { tipoOperacaoDoRegistro } from "@agro/domain";
 import { useTradutor } from "@/lib/i18n";
@@ -83,9 +88,10 @@ const COLUNAS_DERIVADOS: Base2ItemColumn<Row>[] = [
  * DOCUMENTO DE VENDA SALVO — NA CENTRAL DE VENDAS, EM CONSULTA (VISUAL-UX-01 R3; antes Modelo Base 2,
  * BASE2-03C — docs/DECISIONS.md 227).
  *
- * Abrir um registro abre a MESMA Central da criação, no conjunto de CONSULTA do design: as ações como
- * ícones (Novo, Confirmar venda / Converter, Imprimir, Documentos abertos, Mais ações → Histórico e
- * Cancelar), os dados principais como campos preenchidos, os itens na grade, e totais, financeiro,
+ * Abrir um registro abre a MESMA Central da criação, no conjunto de CONSULTA do design: as ações do
+ * desenho (VISUAL-UX-02: Novo documento, Duplicar, a pílula Confirmar venda / Converter / Encerrar saldo;
+ * à direita Salvo, Posição do rótulo e o leque de Ações rápidas → Imprimir, Histórico, Documentos
+ * abertos e Cancelar), os dados principais como campos preenchidos, os itens na grade, e totais, financeiro,
  * frete, derivados e observações no painel inferior. Não há "Voltar": a navegação entre documentos é
  * a barra de abas e Documentos abertos. O que a apresentação NÃO passou a decidir: conversão,
  * confirmação, cancelamento, estoque, geração de títulos, idempotência, permissão, escopo de empresa,
@@ -108,18 +114,18 @@ const COLUNAS_DERIVADOS: Base2ItemColumn<Row>[] = [
  * prometer de novo.
  */
 function PreviaNoDialogo({ estado }: { estado: EstadoDaPrevia }) {
-  if (estado.situacao === "carregando") return <p data-testid="previa-confirmacao-carregando" className="text-sm text-slate-600">Carregando o que a confirmação vai fazer nesta venda…</p>;
-  if (estado.situacao === "nao-confirmado") return <p data-testid="previa-confirmacao-neutra" className="text-sm text-slate-600">{TEXTO_SEM_PREVIA}</p>;
+  if (estado.situacao === "carregando") return <p data-testid="previa-confirmacao-carregando" className="text-[12.5px] leading-[1.5] text-slate-600">Carregando o que a confirmação vai fazer nesta venda…</p>;
+  if (estado.situacao === "nao-confirmado") return <p data-testid="previa-confirmacao-neutra" className="text-[12.5px] leading-[1.5] text-slate-600">{TEXTO_SEM_PREVIA}</p>;
   const p = estado.previa;
   if (!p.podeConfirmar) {
-    return <div data-testid="previa-confirmacao-recusa" role="alert" className="space-y-1 text-sm text-slate-700">
+    return <div data-testid="previa-confirmacao-recusa" role="alert" className="space-y-1 text-[12.5px] leading-[1.5] text-slate-700">
       <p className="font-medium">Esta venda não pode ser confirmada agora:</p>
       {p.recusas.map((r, i) => <p key={i} data-testid="previa-confirmacao-recusa-mensagem">{r.message}</p>)}
     </div>;
   }
   const estoque = linhaDeEstoque(p);
   const financeiro = linhaFinanceira(p, { dinheiro: brl, data: dateBR });
-  return <ul data-testid="previa-confirmacao" className="space-y-1 text-sm text-slate-700">
+  return <ul data-testid="previa-confirmacao" className="space-y-1 text-[12.5px] leading-[1.5] text-slate-700">
     {estoque && <li data-testid="previa-confirmacao-estoque">{estoque}</li>}
     {financeiro && <li data-testid="previa-confirmacao-financeiro">{financeiro}</li>}
   </ul>;
@@ -154,6 +160,36 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const vendaAberta = variante === "sale" && ["open", "approved"].includes(String(d?.["status"] ?? ""));
   const avisoPossivel = vendaAberta && !d?.["categoria_financeira_id"];
   const previaDaConfirmacao = usePreviaDaConfirmacao(id, variante === "sale" && (confirmar === "confirm" || avisoPossivel), aberturasDoConfirmar);
+
+  /* ── VISUAL-UX-02 W1 — BARRA DA CONSULTA ─────────────────────────────────────────────────────────────────────────
+   * POSIÇÃO DO RÓTULO: estado só desta tela (nem storage, nem perfil); remontar devolve o padrão.
+   * "SALVO" e CONFIRMAR DEPOIS DE SALVAR: a criação deixa, em memória e com dono, o que esta consulta mostra ao abrir
+   * (`chaveDepoisDeSalvar`). Lida UMA vez (espia ao montar, descarta no efeito); o "Salvo" fica 2,4 s. O Confirmar
+   * venda pedido na criação abre o MESMO diálogo, pelo MESMO caminho do clique (conta a abertura, refaz a prévia) —
+   * e fechá-lo deixa a venda como está: Aberto.
+   * DUPLICAR: a cópia sai do GET deste detalhe (`copiaDoDocumento`) e vai por entrega em memória para a criação da
+   * mesma espécie, com a mesma TOP na URL. Rascunho alterado dessa espécie aberto em outra aba: pergunta antes. */
+  const [densidade, setDensidade] = React.useState<PosicaoDoRotuloValor>("rotulo-a-frente");
+  const [depoisDeSalvar] = React.useState(() => espiarEntrega<DepoisDeSalvar>(chaveDepoisDeSalvar(id)));
+  React.useEffect(() => { descartarEntrega(chaveDepoisDeSalvar(id)); }, [id]);
+  const [salvoVisivel, setSalvoVisivel] = React.useState(false);
+  const chegadaTratada = React.useRef(false);
+  React.useEffect(() => {
+    if (!d || !depoisDeSalvar || chegadaTratada.current) return;
+    chegadaTratada.current = true;
+    setSalvoVisivel(true);
+    if (depoisDeSalvar.confirmar && String(d["kind"]) === "sale" && ["open", "approved"].includes(String(d["status"])) && can("sales.edit")) {
+      setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm");
+    }
+  }, [d, depoisDeSalvar, can]);
+  React.useEffect(() => {
+    if (!salvoVisivel) return;
+    const t = window.setTimeout(() => setSalvoVisivel(false), TEMPO_DO_SALVO_MS);
+    return () => window.clearTimeout(t);
+  }, [salvoVisivel]);
+  const ws = useWorkspaceTabs();
+  const [perguntaDuplicar, setPerguntaDuplicar] = React.useState<WsTab | null>(null);
+  /* ── fim VISUAL-UX-02 W1 ── */
 
   /**
    * OS PRÓXIMOS PASSOS — a política do documento, não a cadeia fixa da tela.
@@ -258,10 +294,31 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const tom = statusTone(situacao);
   const IconeDaSituacao = tom === "positive" ? FileCheck2 : tom === "negative" ? FileX2 : FileText;
   const podeCancelar = Boolean(k) && !["cancelled", "confirmed", "invoiced"].includes(situacao) && can(`${k!.perm}.delete`);
-  const menu: ItemDoMenu[] = [
-    ...(can("audit_logs.view") ? [{ rotulo: "Histórico de alterações", onSelect: () => setHistoricoAberto(true), testId: "central-vendas-historico" }] : []),
-    ...(podeCancelar ? [{ rotulo: `Cancelar ${k!.titulo.toLowerCase()}…`, onSelect: () => setConfirmar("cancel"), perigo: true, separar: true, testId: "central-vendas-cancelar" }] : [])
+  /* VISUAL-UX-02 W1 — o leque de Ações rápidas, de baixo para cima: Imprimir, Histórico, "N documentos abertos" (o
+     próprio leque o põe) e, quando pode, Cancelar. Histórico e Cancelar só com a capacidade — `can` só esconde. */
+  const rapidasAntes: ItemRapido[] = [
+    { chave: "imprimir", rotulo: "Imprimir", testId: "central-vendas-imprimir", icone: <IconeImprimir />, onSelect: () => window.print() },
+    ...(can("audit_logs.view") ? [{ chave: "historico", rotulo: "Histórico de alterações", testId: "central-vendas-historico", icone: <IconeHistorico />, onSelect: () => setHistoricoAberto(true) }] : [])
   ];
+  const rapidasDepois: ItemRapido[] = podeCancelar ? [{ chave: "cancelar", rotulo: `Cancelar ${k!.titulo.toLowerCase()}…`, testId: "central-vendas-cancelar", icone: <IconeCancelarDocumento />, perigo: true, onSelect: () => setConfirmar("cancel") }] : [];
+  /* Duplicar: desabilitado com o motivo na dica (documento gerado de outro; sem TOP). */
+  const motivoSemCopia = motivoParaNaoDuplicar(d);
+  const abrirCopia = () => {
+    if (!k) return;
+    const copia = copiaDoDocumento(d, k.segmento, todayISO());
+    if (!copia) return;
+    entregarEmMemoria(chaveDaCopia(k.segmento), copia);
+    router.push(`/vendas/${k.segmento}/new?tipo_operacao_id=${encodeURIComponent(copia.tipoOperacaoId)}`);
+  };
+  const duplicar = () => {
+    if (!k) return;
+    const chaveDaCriacao = `/vendas/${k.segmento}/new`;
+    const rascunho = ws?.tabs.find((t) => t.key === chaveDaCriacao);
+    if (rascunho && ws?.dirty.has(chaveDaCriacao)) { setPerguntaDuplicar(rascunho); return; }
+    abrirCopia();
+  };
+  const confirmando = confirmar === "confirm" && act.isPending;
+  const varianteDoRegistro = varianteDeVenda(variante);
   const tabela = <T extends Row>(legenda: string, colunas: Base2ItemColumn<T>[], linhas: T[], vazio: string) =>
     <Base2Items legenda={legenda} colunas={colunas} linhas={linhas} vazioTexto={vazio} />;
 
@@ -269,20 +326,25 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     <CentralVendasWorkspace
       titulo={`${titulo} ${codigo}`.trim()}
       identidade={{ nome: codigo || titulo, alterado: false, icone: <IconeDaSituacao />, tom, dica: titulo, situacao: <StatusBadge value={situacao} /> }}
-      acoes={<>
-        {/* NOVO abre o lançador da MESMA variante (TOP-first): a criação continua sendo a de sempre */}
-        {k && can(`${k.perm}.create`) && <><AcaoDaBarra rotulo={k.novo} destaque="novo" dica="inicio" data-testid="central-vendas-novo" onClick={() => router.push(`/vendas/${k.segmento}/new`)}><Plus aria-hidden /></AcaoDaBarra><DivisorDaBarra /></>}
-        {variante === "sale" && editavel && can("sales.edit") && <AcaoPrincipal icone={<Check aria-hidden />} onClick={() => { setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm"); }}>Confirmar venda</AcaoPrincipal>}
+      densidade={densidade}
+      acoes={<ConjuntoDaBarra>
+        {/* VISUAL-UX-02 W1 — consulta: [Novo documento +] [Duplicar documento] [pílula] */}
+        {k && can(`${k.perm}.create`) && varianteDoRegistro && <NovoDocumento variante={varianteDoRegistro} />}
+        {k && can(`${k.perm}.create`) && <BotaoDaBarra rotulo="Duplicar documento" dica={motivoSemCopia ?? "Duplicar documento"} disabled={motivoSemCopia !== null} data-testid="central-vendas-duplicar" onClick={duplicar}><IconeDuplicar /></BotaoDaBarra>}
+        {/* Venda: Confirmar venda, visível e DESABILITADA quando o documento não está aberto (confirmada, cancelada…) */}
+        {variante === "sale" && can("sales.edit") && <PilulaDaBarra icone={<IconeConfirmar />} dica="Confirmar venda" disabled={!editavel || act.isPending} data-testid="central-vendas-confirmar"
+          onClick={() => { setAberturasDoConfirmar((n) => n + 1); setConfirmar("confirm"); }}>Confirmar venda</PilulaDaBarra>}
         {/* CONVERTER exige AS DUAS capacidades, como a API passou a exigir: editar a FONTE e criar o
             DESTINO. Mostrar o botão só com a do destino ofereceria uma ação que a API recusa com 403. */}
-        {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <AcaoPrincipal icone={<ArrowRightLeft aria-hidden />} data-testid="acao-conversao" onClick={abrirConversao}>{rotuloDaConversao}</AcaoPrincipal>}
-        {k && origemComParte && haSaldo && !saldoEncerradoEm && situacao !== "converted" && can(`${k.perm}.edit`) && <AcaoPrincipal icone={<FileX2 aria-hidden />} data-testid="acao-encerrar-saldo" onClick={() => setConfirmar("encerrar")}>Encerrar saldo</AcaoPrincipal>}
-      </>}
-      acoesDireita={<>
-        <AcaoDaBarra rotulo="Imprimir" onClick={() => window.print()}><Printer aria-hidden /></AcaoDaBarra>
-        <DocumentosAbertos />
-        {menu.length > 0 && <><DivisorDaBarra /><MaisAcoes itens={menu} /></>}
-      </>}
+        {k && ofereceConversao && editavel && can(`${k.perm}.edit`) && <PilulaDaBarra icone={<IconeConverter />} data-testid="acao-conversao" onClick={abrirConversao}>{rotuloDaConversao}</PilulaDaBarra>}
+        {k && origemComParte && haSaldo && !saldoEncerradoEm && situacao !== "converted" && can(`${k.perm}.edit`) && <PilulaDaBarra icone={<IconeEncerrarSaldo />} data-testid="acao-encerrar-saldo" onClick={() => setConfirmar("encerrar")}>Encerrar saldo</PilulaDaBarra>}
+      </ConjuntoDaBarra>}
+      acoesDireita={<ConjuntoDireito>
+        {/* [Salvo | Confirmando…] [Posição do rótulo] [Ações rápidas] */}
+        {confirmando ? <IndicadorConfirmando /> : salvoVisivel ? <IndicadorSalvo /> : null}
+        <PosicaoDoRotulo valor={densidade} onChange={setDensidade} />
+        <AcoesRapidas antes={rapidasAntes} depois={rapidasDepois} />
+      </ConjuntoDireito>}
       dados={<>
         <CampoLeitura rotulo="Cliente" adorno="pesquisa" testId="central-vendas-campo" valor={`${d["client_name"] ?? ""} ${d["client_document"] ?? ""}`.trim()} />
         <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["empresa_name"] ?? "")} />
@@ -362,12 +424,13 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
 
     {/* CONFIRMAR VENDA (A5-1): o texto diz o que a confirmação VAI fazer NESTA venda, segundo a prévia do
         servidor. Enquanto ela carrega, e quando ela prevê uma recusa, o botão fica desabilitado; sem prévia
-        (API anterior, erro, corpo desconhecido), texto neutro e botão habilitado — quem recusa é o servidor. */}
-    <Confirm open={confirmar === "confirm"} onOpenChange={() => setConfirmar(null)} title="Confirmar venda" loading={act.isPending}
-      confirmDisabled={previaDaConfirmacao.situacao === "carregando" || (previaDaConfirmacao.situacao === "pronto" && !previaDaConfirmacao.previa.podeConfirmar)}
-      onConfirm={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })}>
+        (API anterior, erro, corpo desconhecido), texto neutro e botão habilitado — quem recusa é o servidor.
+        VISUAL-UX-02: na casca do desenho ("Confirmar venda <código>?", Voltar / Confirmar venda). */}
+    <DialogoConfirmarVenda aberto={confirmar === "confirm"} onFechar={() => setConfirmar(null)} codigo={codigo} carregando={act.isPending}
+      confirmarDesabilitado={previaDaConfirmacao.situacao === "carregando" || (previaDaConfirmacao.situacao === "pronto" && !previaDaConfirmacao.previa.podeConfirmar)}
+      onConfirmar={() => act.mutate({ path: `/api/sales/sales/${id}/confirm`, idem: true })}>
       <PreviaNoDialogo estado={previaDaConfirmacao} />
-    </Confirm>
+    </DialogoConfirmarVenda>
     {/* CONVERSÃO NÃO É MAIS UM "TEM CERTEZA?". O documento de destino é de OUTRA família, então precisa
         da TOP dele — a da fonte não serve e não é herdada. Sem TOP alvo escolhível, o botão não converte. */}
     <Dialog open={confirmar === "convert"} onOpenChange={() => setConfirmar(null)} title={rotuloDaConversao} size={emPartes ? "md" : "sm"} testId="dialog-conversao"
@@ -414,6 +477,12 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     {/* `idem: true` como na confirmação e na conversão: cancelar venda confirmada ESTORNA estoque e
         cancela títulos, e um reenvio do MESMO pedido não pode virar um segundo estorno. Era a única das
         três ações desta tela que mandava o pedido sem chave. */}
-    <Confirm open={confirmar === "cancel"} onOpenChange={() => setConfirmar(null)} title="Cancelar documento" text="O documento será cancelado. Ele não movimentou estoque nem gerou conta a receber." danger loading={act.isPending} onConfirm={() => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, idem: true, body: { reason: "Cancelado pelo usuário" } })} />
+    {/* VISUAL-UX-02: "Cancelar <espécie> <código>?" com Motivo (opcional) — `reason` = motivo aparado, ou o texto padrão de hoje. */}
+    <DialogoCancelarDocumento aberto={confirmar === "cancel"} onFechar={() => setConfirmar(null)} especie={titulo.toLowerCase()} codigo={codigo}
+      texto="O documento será cancelado. Ele não movimentou estoque nem gerou conta a receber." carregando={act.isPending}
+      onCancelar={(reason) => act.mutate({ path: `/api/sales/${rota}/${id}/cancel`, idem: true, body: { reason } })} />
+    {/* Duplicar com rascunho alterado da mesma espécie aberto: a MESMA pergunta de fechar aba, antes de trocar. */}
+    <ConfirmarFechamentoDeAba aba={perguntaDuplicar} onCancelar={() => setPerguntaDuplicar(null)}
+      onConfirmar={(aba) => { ws?.closeTab(aba.key, true); setPerguntaDuplicar(null); abrirCopia(); }} />
   </>;
 }
