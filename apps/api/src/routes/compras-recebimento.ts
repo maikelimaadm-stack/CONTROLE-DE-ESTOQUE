@@ -142,6 +142,21 @@ function recusaDosItens(recusas: readonly RecusaItemDoRecebimento[]): DomainErro
 // ─────────────── receber ───────────────
 
 /**
+ * COMPRAS-02 item 0, na COMPRAS-03: a TOP de destino e cada `item_origem_id` em MINÚSCULAS antes de qualquer
+ * comparação. O leque e os itens do pedido vêm do banco (uuid → texto em minúsculas) e são comparados como TEXTO
+ * (`find`, `Map`, `Set`): o mesmo UUID escrito em maiúsculas dava 422 falso ("TOP fora do leque", "item de outro
+ * pedido"). Aplicado na rota, ANTES do hash da idempotência: corpo em minúsculas tem o mesmo hash de antes, e o
+ * reenvio do mesmo pedido com outra caixa é o mesmo pedido.
+ */
+function idsDoRecebimentoEmMinusculas(corpo: RecebimentoEntrada): RecebimentoEntrada {
+  return {
+    ...corpo,
+    tipo_operacao_id: corpo.tipo_operacao_id.toLowerCase(),
+    itens: corpo.itens.map((i) => ({ ...i, item_origem_id: i.item_origem_id.toLowerCase() })),
+  };
+}
+
+/**
  * RECEBER O PEDIDO — dentro da transação da rota, sob a chave de idempotência. Nada é gravado antes de TODAS as
  * conferências; um throw desfaz a transação inteira (pedido aberto, zero compra, zero auditoria).
  */
@@ -225,14 +240,20 @@ async function encerrarSaldo(ctx: ServiceCtx, pedidoId: string, motivo: string) 
 // ─────────────── cancelamentos (chamados por compras.ts e compras-confirmacao.ts) ───────────────
 
 /**
- * O PEDIDO SE CANCELA? — conferido com o pedido JÁ TRAVADO (as compras geradas vêm da mesma leitura). Convertido
- * nunca (o gatilho também recusa); aberto com compra gerada NÃO cancelada também não: as compras continuariam
- * citando um pedido cancelado. 409 antes de o banco recusar, com a mensagem que diz o que fazer.
+ * O PEDIDO SE CANCELA? — conferido com o pedido JÁ TRAVADO (as compras geradas vêm da mesma leitura). Com compra
+ * gerada NÃO cancelada, não: as compras continuariam citando um pedido cancelado. Convertido também nunca (o gatilho
+ * também recusa). 409 antes de o banco recusar, com a mensagem que diz o que fazer.
+ *
+ * COMPRAS-03 (item 0): as compras vivas são conferidas ANTES da situação, e o pedido CONVERTIDO com compra viva
+ * responde o MESMO que o aberto com compra. O impedimento é o mesmo (há compras citando o pedido) e o caminho começa
+ * igual: cancelar as compras (a que zerou o saldo, cancelada, reabre o pedido). "Convertido não cancela" escondia isso.
+ * A mensagem do convertido fica para o que não tem compra viva (saldo encerrado, compras canceladas depois): esse, de
+ * fato, não tem o que desfazer.
  */
 export function conferirCancelamentoDoPedido(doc: Record<string, unknown>): void {
   const pedido = comoPedido(doc);
-  if (pedido.situacao === "convertido") throw err("CONFLICT", MSG_PEDIDO_CONVERTIDO_NAO_CANCELA);
   if ((pedido.compras_geradas ?? []).some((c) => c.situacao !== "cancelado")) throw err("CONFLICT", MSG_PEDIDO_COM_COMPRAS);
+  if (pedido.situacao === "convertido") throw err("CONFLICT", MSG_PEDIDO_CONVERTIDO_NAO_CANCELA);
 }
 
 /** O pedido de origem travado pelo cancelamento da compra: o estado que decide a reabertura. */
@@ -295,7 +316,7 @@ export function registrarRecebimentoCompras(app: FastifyInstance) {
    */
   app.post("/compras/pedidos/:id/convert", async (req, reply) => reply.status(201).send(await runService(app, req, "pedidos_compra.edit", async (ctx) => {
     const { id } = req.params as { id: string };
-    const corpo = recebimentoSchema.parse(req.body ?? {});
+    const corpo = idsDoRecebimentoEmMinusculas(recebimentoSchema.parse(req.body ?? {}));
     await lerDocumentoCompra(ctx, id, "pedido");
     return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
       { action: "receber_pedido_compra", pedidoId: id, userId: ctx.user.id, corpo },

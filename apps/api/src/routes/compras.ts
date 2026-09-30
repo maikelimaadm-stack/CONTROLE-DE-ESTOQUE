@@ -15,6 +15,10 @@
  * compras geradas, origem da compra) e no cancelamento (pedido com compra não cancela; compra cancelada reabre o
  * pedido).
  *
+ * COMPRAS-03 (decisão 269): o LAYOUT DO DOCUMENTO de vendas vale para as duas espécies, com o catálogo da família —
+ * `operation-types` declara `layoutDocumento`, `/layout-efetivo` responde o contrato de vendas, e `lancar` cobra os
+ * obrigatórios do layout da TOP (inclusive no recebimento). Confirmar e cancelar não cobram layout.
+ *
  * O que NÃO existe aqui (fora da fatia): editar documento salvo.
  */
 import type { FastifyInstance } from "fastify";
@@ -25,6 +29,7 @@ import {
   resolverPoliticaEfetivaDaCompra, planoDaCondicao, camposExigidosTop, exigenciasGeraisFaltando, EXIGENCIAS_GERAIS_COMPRA_TOP,
   ERRO_EXIGENCIA_NAO_ATENDIDA, MENSAGEM_EXIGENCIA_NAO_ATENDIDA, ERRO_CONDICAO_PAGAMENTO_NAO_PERMITIDA, MENSAGEM_CONDICAO_NAO_PERMITIDA,
   CAPACIDADE_CONDICAO_PAGAMENTO, CAPACIDADE_REGRAS_DA_OPERACAO, saldoDoItemDoPedido,
+  CAPACIDADE_LAYOUT_DOCUMENTO, ERRO_LAYOUT_CAMPO_OBRIGATORIO, camposObrigatoriosFaltando, mensagemCampoObrigatorio,
 } from "@agro/domain";
 import { criarTradutor, ptBR } from "@erp/plataforma";
 import { runService, nextCode, idempotent, audit } from "../lib/service.js";
@@ -37,6 +42,7 @@ import {
   resolverTopParaLancamento, validarClassificacaoDoDocumento, recusaDeCampoDaClassificacao, validarCondicaoDoDocumento,
   type ClassificacaoFinanceira, type RegraDaClassificacao, type TopDoLancamento,
 } from "../lib/documento-comercial.js";
+import { layoutEfetivo, respostaDoLayoutEfetivo } from "../lib/layout-documento.js";
 import { regrasDaVersaoTop, regrasDaTopAtual } from "./vendas-regras-operacao.js";
 import { registrarConfirmacaoCompras, cancelarCompraConfirmada, conferirNotaDuplicada } from "./compras-confirmacao.js";
 import {
@@ -437,6 +443,29 @@ async function cobrarRegrasDaCompra(ctx: ServiceCtx, top: TopDoLancamento, d: Do
   }
 }
 
+/**
+ * COMPRAS-03 (decisão 269) — COBRANÇA DO LAYOUT AO LANÇAR: o mecanismo de vendas (`cobrarLayoutAoSalvar`, sales.ts)
+ * com o catálogo da família da espécie. Chamada por `lancar` DEPOIS de todas as recusas que já existiam (nota
+ * duplicada inclusive) e ANTES do número: nenhuma ordem, código ou mensagem anterior muda, e a recusa não queima código.
+ *
+ * `d` é o documento COMO SERÁ GRAVADO — no RECEBIMENTO, com empresa, fornecedor e produto do PEDIDO (a compra de
+ * destino usa o layout da TOP DELA; receber é lançar, decisão 268). Os itens vêm em `d.itens`, e o caminho do erro é
+ * `itens[i].<campo>`, na ordem do corpo.
+ *
+ * O servidor NÃO aplica valor padrão e NÃO recusa campo "não editável": o layout governa a DIGITAÇÃO na tela; aqui só
+ * se cobra o obrigatório vazio. LAYOUT DO SISTEMA = NO-OP: documento sem layout configurado não ganha recusa nova. A
+ * API de compras sempre declara classificação e condição, por isso as duas capacidades vão ligadas (e nenhum campo do
+ * catálogo de compras tem `exige`). Confirmar e cancelar NÃO passam por aqui: só a digitação é cobrada.
+ */
+async function cobrarLayoutDaCompra(ctx: ServiceCtx, familia: string, top: TopDoLancamento, d: DocumentoCompraEntrada): Promise<void> {
+  const layout = await layoutEfetivo(ctx, familia, top.tipoOperacaoId);
+  if (layout.origem === "sistema") return;
+  const faltando = camposObrigatoriosFaltando(familia, layout.estrutura, d, { classificacao: true, condicao: true });
+  if (!faltando.length) return;
+  const details = faltando.map((f) => ({ path: f.caminho, message: mensagemCampoObrigatorio(f.rotulo) }));
+  throw err(ERRO_LAYOUT_CAMPO_OBRIGATORIO, details[0]!.message, details);
+}
+
 const COLUNAS_INSERCAO = `organization_id, empresa_id, especie, codigo, situacao, tipo_operacao_id, tipo_operacao_versao_id,
   fornecedor_id, transportadora_id, data_documento, data_entrada, data_vencimento, numero_nota, serie_nota,
   categoria_financeira_id, centro_custo_id, condicao_pagamento_id, parcelas_ajustadas, plano_parcelas, forma_pagamento_id,
@@ -472,7 +501,8 @@ export async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: Documen
   }
   conferirCamposDaEspecie(especie, d);
   conferirFormaDoDocumento(d);
-  const top = await resolverTopParaLancamento(ctx, familiaDaEspecie(especie), d.tipo_operacao_id);
+  const familia = familiaDaEspecie(especie);
+  const top = await resolverTopParaLancamento(ctx, familia, d.tipo_operacao_id);
   await conferirParceiros(ctx, d);
   const classificacao = await classificacaoDaCompra(ctx, d);
   const condicao = d.condicao_pagamento_id ? await validarCondicaoDoDocumento(ctx, d.condicao_pagamento_id) : null;
@@ -490,6 +520,10 @@ export async function lancar(ctx: ServiceCtx, especie: EspecieCompra, d: Documen
   if (efeitos) conferirExigenciasDoTitulo(d, efeitos, totais.total, plano);
 
   if (especie === "compra" && d.numero_nota) await conferirNotaDuplicada(ctx, { fornecedorId: d.fornecedor_id, numero: d.numero_nota, serie: d.serie_nota, excluirDocumentoId: null });
+
+  // COMPRAS-03: o layout da TOP, por último entre as recusas e antes do número — vale para o POST das duas espécies
+  // e para o RECEBIMENTO (que chega aqui com a TOP de destino).
+  await cobrarLayoutDaCompra(ctx, familia, top, d);
 
   // Derivado no servidor, como na venda: plano próprio sobre uma condição = parcelas ajustadas.
   const parcelasAjustadas = Boolean(d.plano_parcelas) && condicao !== null;
@@ -541,7 +575,9 @@ export default async function comprasRoutes(app: FastifyInstance) {
           order by t.padrao desc, t.codigo, v.nome`, [ctx.orgId, familia]);
       return {
         contractVersion: 1,
-        capacidades: { classificacaoFinanceira: 1, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO },
+        // COMPRAS-03: `layoutDocumento` ADITIVO (depois de condicaoPagamento, como em vendas). A web nova só pede
+        // `/layout-efetivo` com esta declaração — contra a API anterior a Central de Compras continua a de hoje.
+        capacidades: { classificacaoFinanceira: 1, condicaoPagamento: CAPACIDADE_CONDICAO_PAGAMENTO, layoutDocumento: CAPACIDADE_LAYOUT_DOCUMENTO, regrasDaOperacao: CAPACIDADE_REGRAS_DA_OPERACAO },
         family: { code: familia, label: t(chaveI18nDaFamiliaOperacional(familia) ?? familia) },
         defaultId: r.rows.find((x) => x.padrao)?.id ?? null,
         items: r.rows.map((x) => ({ id: x.id, code: x.codigo, name: x.nome, version: x.versao, isDefault: x.padrao })),
@@ -551,6 +587,11 @@ export default async function comprasRoutes(app: FastifyInstance) {
     /**
      * REGRAS DA OPERAÇÃO da TOP escolhida (versão ATUAL): exigências com os campos da COMPRA e condições permitidas.
      * TOP inexistente, de outro tenant, de outra família, inativa, excluída, id malformado ou ausente → MESMA 404.
+     *
+     * COMPRAS-03 (decisão 269): + `exigeFormaPagamento`, `exigeVencimento` e `exigeArmazem` — os MESMOS que o
+     * lançamento cobra (`efeitosPrevistosDaCompra`, da versão ATUAL): a Central desenha esses campos mesmo que o
+     * layout os esconda, porque esconder um campo que a regra vai exigir faria o Salvar recusar algo invisível.
+     * Pedido nunca gera efeito: os três são false.
      */
     app.get(`${base}/regras-da-operacao`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
       const familia = familiaDaEspecie(especie);
@@ -563,15 +604,38 @@ export default async function comprasRoutes(app: FastifyInstance) {
       if (!v.rows[0]) throw notFound("Tipo de operação");
       const { formato, regras } = await regrasDaTopAtual(ctx, bruto);
       // A versão ATUAL gera contas a pagar? (a tela marca natureza/centro como obrigatórios). Pedido nunca gera.
-      const geraTitulos = especie === "compra"
-        && (await efeitosPrevistosDaCompra(ctx, { tipoOperacaoVersaoId: v.rows[0].versao_id, codigoBase: familia }, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED)).titulo;
+      const efeitos = especie === "compra"
+        ? await efeitosPrevistosDaCompra(ctx, { tipoOperacaoVersaoId: v.rows[0].versao_id, codigoBase: familia }, app.config.TOP_EFFECTS_RUNTIME_V1_ENABLED)
+        : null;
       return {
         contractVersion: 1,
         formato,
         exigencias: regras ? camposExigidosTop(regras.config, EXIGENCIAS_GERAIS_COMPRA_TOP) : [],
         condicoesPermitidas: regras?.condicoesPermitidas ?? null,
-        geraTitulos,
+        geraTitulos: efeitos?.titulo ?? false,
+        exigeFormaPagamento: efeitos?.exigeFormaPagamento ?? false,
+        exigeVencimento: efeitos?.exigeVencimento ?? false,
+        exigeArmazem: efeitos?.exigeArmazem ?? false,
       };
+    }));
+
+    /**
+     * COMPRAS-03 (decisão 269) — LAYOUT EFETIVO da TOP escolhida: o MESMO contrato do `/layout-efetivo` de vendas
+     * (`{ estrutura, origem, nome, id }` e, só com padrão de cadastro, `padroesDeCadastro` e `padroesInvalidos`), a
+     * MESMA porta operacional (`<recurso>.create`) e a MESMA 404 de `regras-da-operacao`. Diferença de vendas: a TOP é
+     * OBRIGATÓRIA — todo documento de compra tem TOP, então "sem TOP" não é um pedido que a Central faça, e responder o
+     * layout do sistema a um parâmetro ausente seria inventar um caso. Ausente, malformada, de outra família, inativa,
+     * excluída ou de outra organização → a MESMA 404 (distinguir seria oráculo de existência). Antes de `/:id`.
+     */
+    app.get(`${base}/layout-efetivo`, async (req) => runService(app, req, `${recurso}.create`, async (ctx) => {
+      const familia = familiaDaEspecie(especie);
+      const bruto = ((req.query ?? {}) as Record<string, unknown>)["tipo_operacao_id"];
+      if (typeof bruto !== "string" || !FORMA_UUID.test(bruto)) throw notFound("Tipo de operação");
+      const v = await ctx.tx.query<{ id: string }>(
+        "select id from erp.tipos_operacao where id = $1 and organization_id = $2 and codigo_base = $3 and ativo and excluido_em is null",
+        [bruto, ctx.orgId, familia]);
+      if (!v.rows[0]) throw notFound("Tipo de operação");
+      return respostaDoLayoutEfetivo(ctx, familia, v.rows[0].id);
     }));
 
     app.get(`${base}/:id`, async (req) => runService(app, req, `${recurso}.view`, (ctx) => lerDocumentoCompra(ctx, (req.params as { id: string }).id, especie)));
