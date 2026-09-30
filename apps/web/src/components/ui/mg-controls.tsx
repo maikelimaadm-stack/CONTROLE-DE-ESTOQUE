@@ -14,9 +14,10 @@ import { COPY } from "@/lib/copy";
 export interface SelectOption { value: string; label: string; code?: string | null }
 
 /** Painel de opções do modelo base (cmd-panel): caixa de pesquisa + lista com destaque por teclado. */
-export function CmdPanel({ options, value, onPick, search, onSearch, searchable = true, loading, emptyText = "Nenhuma opção", placeholder = "Pesquisar...", autoFocus = true, footer }: { options: SelectOption[]; value?: string | null; onPick: (o: SelectOption) => void; search: string; onSearch: (s: string) => void; searchable?: boolean; loading?: boolean; emptyText?: string; placeholder?: string; autoFocus?: boolean; /** rodapé fixo (ex.: "+ Cadastrar novo") */ footer?: React.ReactNode }) {
-  const [hi, setHi] = React.useState(0);
-  React.useEffect(() => { setHi(0); }, [search, options.length]);
+export function CmdPanel({ options, value, onPick, search, onSearch, searchable = true, loading, emptyText = "Nenhuma opção", placeholder = "Pesquisar...", autoFocus = true, footer, destaqueAoAbrir = 0 }: { options: SelectOption[]; value?: string | null; onPick: (o: SelectOption) => void; search: string; onSearch: (s: string) => void; searchable?: boolean; loading?: boolean; emptyText?: string; placeholder?: string; autoFocus?: boolean; /** rodapé fixo (ex.: "+ Cadastrar novo") */ footer?: React.ReactNode;
+  /** VISUAL-UX-02: opção destacada enquanto a busca está vazia (−1 = nenhuma; digitar destaca a 1ª). Ausente = 0, o de hoje. */ destaqueAoAbrir?: number }) {
+  const [hi, setHi] = React.useState(destaqueAoAbrir);
+  React.useEffect(() => { setHi(search ? 0 : destaqueAoAbrir); }, [search, options.length, destaqueAoAbrir]);
   const listRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => { const el = listRef.current?.children[hi] as HTMLElement | undefined; el?.scrollIntoView?.({ block: "nearest" }); }, [hi]);
   const onKey = (e: React.KeyboardEvent) => {
@@ -78,11 +79,14 @@ export interface PainelDoCalendario {
   className?: string;
   rotulo?: string;
   semIcone?: boolean;
+  /** botão próprio no lugar do ícone da caixa (ex.: "Escolher data"), que abre e fecha o painel */
+  gatilho?: (p: { alternar: () => void; aberto: boolean; desabilitado: boolean }) => React.ReactNode;
 }
 
 /** Calendário do modelo base: painel 320×320 com dias circulares; título abre meses → anos. Valor ISO (AAAA-MM-DD). */
 export function MgDatePicker({ value, onChange, disabled, id, name, className, onOpenChange, placeholder, painel }: { value: string; onChange: (iso: string) => void; disabled?: boolean; id?: string; name?: string; className?: string; onOpenChange?: (o: boolean) => void; placeholder?: string; painel?: PainelDoCalendario }) {
   const [open, setOpenState] = React.useState(false); const [view, setView] = React.useState<"days" | "months" | "years">("days");
+  const ancora = React.useRef<HTMLDivElement>(null);
   const [text, setText] = React.useState(isoToBR(value));
   React.useEffect(() => { setText(isoToBR(value)); }, [value]);
   const today = new Date(); const sel = value && /^\d{4}-\d{2}-\d{2}/.test(value) ? new Date(`${value.slice(0, 10)}T00:00:00`) : null;
@@ -104,12 +108,13 @@ export function MgDatePicker({ value, onChange, disabled, id, name, className, o
   const fmtInput = (raw: string) => { const digits = raw.replace(/\D/g, "").slice(0, 8); return digits.length > 4 ? `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}` : digits.length > 2 ? `${digits.slice(0, 2)}/${digits.slice(2)}` : digits; };
   return <Popover.Root open={open} onOpenChange={setOpen}>
     <Popover.Anchor asChild>
-      <div className="relative flex w-full items-center">
+      <div ref={ancora} className="relative flex w-full items-center">
         <input id={id} name={name} type="text" inputMode="numeric" className={cn("mg-dp-field", className)} value={text} placeholder={placeholder ?? " "} disabled={disabled} onChange={(e) => setText(fmtInput(e.target.value))} onBlur={commitText} onKeyDown={onKey} onClick={() => setOpen(true)} onFocus={(e) => { if (!open && e.currentTarget.matches(":focus-visible")) setOpen(true); }} autoComplete="off" />
-        {!painel?.semIcone && <span className="mg-dp-icon"><Calendar /></span>}
+        {painel?.gatilho ? painel.gatilho({ alternar: () => setOpen(!open), aberto: open, desabilitado: Boolean(disabled) }) : !painel?.semIcone && <span className="mg-dp-icon"><Calendar /></span>}
       </div>
     </Popover.Anchor>
-    <Popover.Portal>{painel ? <Popover.Content align="start" sideOffset={4} className={painel.className} aria-label={painel.rotulo} onOpenAutoFocus={(e) => e.preventDefault()}>
+    <Popover.Portal>{painel ? <Popover.Content align="start" sideOffset={4} className={painel.className} aria-label={painel.rotulo} onOpenAutoFocus={(e) => e.preventDefault()}
+      onInteractOutside={(e) => { if (e.target instanceof Node && ancora.current?.contains(e.target)) e.preventDefault(); }}>
       {painel.desenhar({ valor: value, escolher: (iso) => { onChange(iso); setOpen(false); }, fechar: () => setOpen(false) })}
     </Popover.Content> : <Popover.Content align="start" sideOffset={4} className="mg-dp-panel z-[10001] outline-none" onOpenAutoFocus={(e) => e.preventDefault()}>
       <div className="mg-dp-header">
