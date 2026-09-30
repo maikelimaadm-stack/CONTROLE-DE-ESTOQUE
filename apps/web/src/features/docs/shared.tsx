@@ -93,21 +93,30 @@ export const totalDaLinhaExibido = (it: ItemRow) => { const g = Number(it.quanti
 
 /** Editor de itens (produto, qtd, valor) usado nos documentos de estoque/vendas. */
 export interface ItemRow { product_id: string; warehouse_id?: string; quantity: string; unit_value?: string; cost_center_id?: string; provider_lot?: string; expiration_date?: string; financial_category_id?: string; cost_center?: string; generate_stock?: boolean; discount?: string; discount_percent?: string; description?: string; [k: string]: unknown }
-export function ItemsEditor({ items, onChange, fields, defaults, loteDaLinha }: { items: ItemRow[]; onChange: (i: ItemRow[]) => void; fields: ("warehouse" | "product" | "quantity" | "unit_value" | "cost_center" | "lot" | "expiration" | "financial_category" | "generate_stock" | "discount" | "discount_percent" | "stock")[]; defaults?: Partial<ItemRow>;
+export function ItemsEditor({ items, onChange, fields, defaults, loteDaLinha, daOrigem }: { items: ItemRow[]; onChange: (i: ItemRow[]) => void; fields: ("warehouse" | "product" | "quantity" | "unit_value" | "cost_center" | "lot" | "expiration" | "financial_category" | "generate_stock" | "discount" | "discount_percent" | "stock")[]; defaults?: Partial<ItemRow>;
   /** Opcional (Central de Compras): quais campos de lote a linha aceita. Ausente = os dois abertos (o de sempre). */
-  loteDaLinha?: (it: ItemRow) => { lote: boolean; validade: boolean } }) {
+  loteDaLinha?: (it: ItemRow) => { lote: boolean; validade: boolean };
+  /**
+   * Opcional (Central de Compras em modo RECEBER PEDIDO, COMPRAS-02): as linhas VÊM de um documento de origem.
+   * O produto fica travado e não se acrescenta linha (item fora da origem é outro documento); a coluna Saldo
+   * aparece e a quantidade vai até ele. `quantidadeTravada` (aresta sem "Em partes") trava também a quantidade e
+   * a remoção da linha: recebe-se o saldo inteiro. Ausente = o editor de sempre, sem nenhuma diferença no DOM.
+   * É apresentação: quem confere origem, produto e saldo é o servidor (e o gatilho do banco).
+   */
+  daOrigem?: { saldo: (it: ItemRow) => string; quantidadeTravada: boolean; testIdDaLinha?: (it: ItemRow) => string } }) {
   const upd = (i: number, k: string, v: unknown) => onChange(items.map((it, j) => (j === i ? { ...it, [k]: v } : it)));
   const add = () => onChange([...items, { product_id: "", quantity: "1", unit_value: "0", generate_stock: true, ...(defaults ?? {}) }]);
   const totalOf = totalDaLinhaExibido;
   const has = (k: (typeof fields)[number]) => fields.includes(k);
   return <div className="overflow-x-auto rounded border"><table className="table-dense w-full text-[12.5px]"><thead><tr>
-    {has("warehouse") && <th className="min-w-[160px]">Armazém</th>}<th className="min-w-[240px]">Produto</th>{has("stock") && <th className="text-right">Estoque</th>}<th className="w-24">Quantidade</th>{has("unit_value") && <th className="w-28">Valor unitário</th>}{has("discount") && <th className="w-24">Desconto</th>}{has("discount_percent") && <th className="w-20">Desconto %</th>}<th className="w-28 text-right">Valor total</th>{has("generate_stock") && <th className="w-24">Gera estoque</th>}{has("lot") && <th className="w-28">Lote</th>}{has("expiration") && <th className="w-32">Validade</th>}{has("financial_category") && <th className="min-w-[180px]">Natureza</th>}{has("cost_center") && <th className="min-w-[160px]">Centro de resultado</th>}<th className="w-8" />
+    {has("warehouse") && <th className="min-w-[160px]">Armazém</th>}<th className="min-w-[240px]">Produto</th>{has("stock") && <th className="text-right">Estoque</th>}{daOrigem && <th className="w-24 text-right">Saldo</th>}<th className="w-24">Quantidade</th>{has("unit_value") && <th className="w-28">Valor unitário</th>}{has("discount") && <th className="w-24">Desconto</th>}{has("discount_percent") && <th className="w-20">Desconto %</th>}<th className="w-28 text-right">Valor total</th>{has("generate_stock") && <th className="w-24">Gera estoque</th>}{has("lot") && <th className="w-28">Lote</th>}{has("expiration") && <th className="w-32">Validade</th>}{has("financial_category") && <th className="min-w-[180px]">Natureza</th>}{has("cost_center") && <th className="min-w-[160px]">Centro de resultado</th>}<th className="w-8" />
   </tr></thead><tbody>
-    {items.map((it, i) => <tr key={i}>
+    {items.map((it, i) => <tr key={i} data-testid={daOrigem?.testIdDaLinha?.(it)}>
       {has("warehouse") && <td><RefSelect resource="warehouses" value={it.warehouse_id ?? null} onChange={(v) => upd(i, "warehouse_id", v ?? "")} /></td>}
-      <td><RefSelect resource="products" value={it.product_id || null} onChange={(v) => upd(i, "product_id", v ?? "")} /></td>
+      <td><RefSelect resource="products" value={it.product_id || null} disabled={daOrigem ? true : undefined} allowEmpty={!daOrigem} onChange={(v) => upd(i, "product_id", v ?? "")} /></td>
       {has("stock") && <td className="num"><StockCell warehouseId={it.warehouse_id} productId={it.product_id} onCost={(c) => { if (!it.unit_value || it.unit_value === "0") upd(i, "unit_value", c); }} /></td>}
-      <td><Input type="number" step="0.0001" min="0" value={it.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} /></td>
+      {daOrigem && <td className="num" data-testid="item-saldo-da-origem">{num(daOrigem.saldo(it), 4)}</td>}
+      <td><Input type="number" step="0.0001" min="0" max={daOrigem ? daOrigem.saldo(it) : undefined} disabled={daOrigem?.quantidadeTravada || undefined} value={it.quantity} onChange={(e) => upd(i, "quantity", e.target.value)} /></td>
       {has("unit_value") && <td><Input type="number" step="0.000001" min="0" value={it.unit_value ?? ""} onChange={(e) => upd(i, "unit_value", e.target.value)} /></td>}
       {has("discount") && <td><Input type="number" step="0.01" min="0" value={it.discount ?? ""} onChange={(e) => upd(i, "discount", e.target.value)} /></td>}
       {has("discount_percent") && <td><Input type="number" step="0.01" min="0" max="100" value={it.discount_percent ?? ""} onChange={(e) => upd(i, "discount_percent", e.target.value)} /></td>}
@@ -117,9 +126,9 @@ export function ItemsEditor({ items, onChange, fields, defaults, loteDaLinha }: 
       {has("expiration") && <td><Input type="date" value={it.expiration_date ?? ""} disabled={loteDaLinha ? !loteDaLinha(it).validade : undefined} onChange={(e) => upd(i, "expiration_date", e.target.value)} /></td>}
       {has("financial_category") && <td><RefSelect resource="financial_categories" value={it.financial_category_id ?? null} onChange={(v) => upd(i, "financial_category_id", v ?? "")} filter={{ kind: "analytic" }} /></td>}
       {has("cost_center") && <td><RefSelect resource="cost_centers" value={it.cost_center_id ?? null} onChange={(v) => upd(i, "cost_center_id", v ?? "")} filter={{ kind: "analytic" }} /></td>}
-      <td><button type="button" className="p-1 text-slate-400 hover:text-red-600" onClick={() => onChange(items.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button></td>
+      <td>{!daOrigem?.quantidadeTravada && <button type="button" className="p-1 text-slate-400 hover:text-red-600" onClick={() => onChange(items.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></button>}</td>
     </tr>)}
-  </tbody><tfoot><tr><td colSpan={20} className="p-2"><Button type="button" size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5" /> Adicionar item</Button><span className="ml-4 font-semibold">Total: {brl(items.reduce((a, it) => a + totalOf(it), 0))}</span></td></tr></tfoot></table></div>;
+  </tbody><tfoot><tr><td colSpan={20} className="p-2">{!daOrigem && <Button type="button" size="sm" variant="outline" onClick={add}><Plus className="h-3.5 w-3.5" /> Adicionar item</Button>}<span className={daOrigem ? "font-semibold" : "ml-4 font-semibold"}>Total: {brl(items.reduce((a, it) => a + totalOf(it), 0))}</span></td></tr></tfoot></table></div>;
 }
 /** Saldo do produto no armazém (e, ao chegar, preenche o unitário vazio com o custo médio — comportamento do editor). */
 export function StockCell({ warehouseId, productId, onCost }: { warehouseId?: string; productId?: string; onCost: (c: string) => void }) {

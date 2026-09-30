@@ -1,16 +1,24 @@
 "use client";
 import * as React from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, newIdem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { toast } from "@/lib/toast";
 import { useTradutor } from "@/lib/i18n";
-import { brl, dateBR, num } from "@/lib/utils";
-import { enumLabel } from "@/lib/copy";
+import { brl, dateBR, dateTimeBR, num } from "@/lib/utils";
+import { COPY, enumLabel } from "@/lib/copy";
 import { Button, Card, CardBody, CardHeader, Dialog, LoadingState, StatusBadge } from "@/components/ui";
 import { DetailShell, KV, LoadingOr, SimpleTable, useDoc, type Row } from "@/features/docs/shared";
+import { DialogoEncerrarSaldo } from "@/features/sales/faturar-em-partes";
 import { usePreviaDaConfirmacaoCompra, type PreviaDaConfirmacaoCompra } from "./previa-confirmacao-compra";
-import type { VarianteDeCompra } from "./variantes";
+import { varianteDeCompra, type VarianteDeCompra } from "./variantes";
+import { rotaDoDocumento } from "./documentos-compra-list";
+import {
+  TEXTO_SEM_PROXIMA_OPERACAO, comprasGeradasDoPedido, pedidoTemSaldo, rotaDeReceber, useProximosPassosDoPedido, type EstadoProximosPassosDoPedido
+} from "./proximos-passos-pedido";
+import { temRecebimentoDeclarado } from "./recebimento-linhas";
 
 /**
  * A CONSULTA DO DOCUMENTO DE COMPRA — só leitura, com Confirmar (compra, depois da prévia) e Cancelar (COMPRAS-01).
@@ -19,20 +27,35 @@ import type { VarianteDeCompra } from "./variantes";
  * impressão); esta é PRÓPRIA, no formato `DetailShell` dos documentos de estoque. Os botões aparecem por
  * capacidade (`can()` só esconde): Confirmar pede `compras.edit`, Cancelar pede `<recurso>.delete`. Quem recusa é
  * o servidor — inclusive quando o botão estava à vista.
+ *
+ * ┌─ COMPRAS-02 (decisão 268): O PEDIDO GERA COMPRAS ──────────────────────────────────────────────────────┐
+ * │ No PEDIDO aberto aparecem os Próximos passos — o leque que a TOP dele declara, no desenho de Vendas —  │
+ * │ e cada passo abre a Central de Compras em modo RECEBER PEDIDO. Os itens ganham Recebido e Saldo, a     │
+ * │ lista das compras geradas aparece, e "Encerrar saldo" vale quando já há compra e ainda há saldo. Na     │
+ * │ COMPRA gerada, a origem (o pedido) aparece com link. Tudo isso só quando o SERVIDOR declara os campos: │
+ * │ com a API anterior (skew), a consulta continua a de antes e os Próximos passos dizem que estão         │
+ * │ indisponíveis nesta versão do servidor — nunca um leque vazio, que afirmaria o que ninguém disse.      │
+ * └──────────────────────────────────────────────────────────────────────────────────────────────────────────┘
  */
 const rotuloClass = (i: { codigo: string; nome: string }) => [i.codigo, i.nome].filter(Boolean).join(" — ");
 const codigoNome = (codigo: unknown, nome: unknown) => (nome ? [codigo, nome].filter(Boolean).join(" — ") : "—");
 const t = (v: unknown) => (v === null || v === undefined || v === "" ? "—" : String(v));
 
 export function ConsultaDeCompra({ variante, id }: { variante: VarianteDeCompra; id: string }) {
-  const { can } = useAuth(); const tr = useTradutor(); const qc = useQueryClient();
+  const { can } = useAuth(); const tr = useTradutor(); const qc = useQueryClient(); const router = useRouter();
   const porta = `/api/compras/${variante.segmento}/${id}`;
   const q = useDoc<Row & { itens?: Row[]; titulos?: Row[]; movimentos?: Row[] }>(porta);
   const [confirmando, setConfirmando] = React.useState(false);
   const [cancelando, setCancelando] = React.useState(false);
+  const [encerrando, setEncerrando] = React.useState(false);
   const chaveConfirmar = React.useRef(newIdem());
   const chaveCancelar = React.useRef(newIdem());
-  const recarregar = () => { void qc.invalidateQueries({ queryKey: ["docone", porta] }); void qc.invalidateQueries({ queryKey: ["compras-previa-confirmacao", id] }); };
+  const chaveEncerrar = React.useRef(newIdem());
+  const recarregar = () => {
+    void qc.invalidateQueries({ queryKey: ["docone", porta] });
+    void qc.invalidateQueries({ queryKey: ["compras-previa-confirmacao", id] });
+    void qc.invalidateQueries({ queryKey: ["compras-proximos-passos", variante.segmento, id] });
+  };
 
   const confirmar = useMutation({
     mutationFn: () => api(`/api/compras/compras/${id}/confirm`, { method: "POST", idempotencyKey: chaveConfirmar.current }),
@@ -44,12 +67,38 @@ export function ConsultaDeCompra({ variante, id }: { variante: VarianteDeCompra;
     onSuccess: () => { toast.success("Documento cancelado"); setCancelando(false); recarregar(); },
     onError: (e) => { chaveCancelar.current = newIdem(); toast.error((e as Error).message); }
   });
+  /** ENCERRAR SALDO (COMPRAS-02): com chave de idempotência, como as outras ações de estado. O motivo vai no corpo. */
+  const encerrar = useMutation({
+    mutationFn: (motivo: string) => api(`/api/compras/${variante.segmento}/${id}/encerrar-saldo`, { method: "POST", body: { motivo }, idempotencyKey: chaveEncerrar.current }),
+    onSuccess: () => { toast.success("Saldo encerrado"); setEncerrando(false); recarregar(); },
+    onError: (e) => { chaveEncerrar.current = newIdem(); toast.error((e as Error).message); }
+  });
 
   const d = q.data;
   const situacao = d ? String(d["situacao"] ?? "") : "";
   const ehCompra = variante.variante === "compra";
+  const ehPedido = variante.variante === "pedido";
+  const itensDoDocumento = d?.itens ?? [];
+  /** As compras geradas: `null` quando o servidor não as declarou (API anterior) — aí nada é inferido delas. */
+  const comprasGeradas = ehPedido ? comprasGeradasDoPedido(d) : null;
+  const comCompraViva = (comprasGeradas ?? []).some((c) => c.situacao !== "cancelado");
+  /** Recebido e Saldo por item: só quando o servidor os declara (API da COMPRAS-02). */
+  const recebimentoDeclarado = ehPedido && temRecebimentoDeclarado(itensDoDocumento);
+  /**
+   * RECEBER exige AS DUAS capacidades, como a API exige: editar o PEDIDO e criar a COMPRA. `can()` aqui é
+   * apresentação — evita oferecer um passo que responderia 403; quem nega é o `/convert`.
+   */
+  const varianteDaCompra = varianteDeCompra("compra");
+  const podeReceber = ehPedido && situacao === "aberto" && can(`${variante.perm}.edit`) && Boolean(varianteDaCompra) && can(`${varianteDaCompra?.perm ?? ""}.create`);
+  const passos = useProximosPassosDoPedido(variante.segmento, id, podeReceber);
+  /** Encerrar saldo vale com o pedido aberto, pelo menos uma compra não cancelada e saldo em algum item. */
+  const podeEncerrarSaldo = ehPedido && situacao === "aberto" && recebimentoDeclarado && comCompraViva && pedidoTemSaldo(itensDoDocumento) && can(`${variante.perm}.edit`);
   const podeConfirmar = ehCompra && situacao === "aberto" && can("compras.edit");
-  const podeCancelar = (situacao === "aberto" || situacao === "confirmado") && can(`${variante.perm}.delete`);
+  // Pedido com compra não cancelada não se cancela (a API responde 409 dizendo o que fazer): o botão não é oferecido.
+  const podeCancelar = (situacao === "aberto" || situacao === "confirmado") && can(`${variante.perm}.delete`) && !(ehPedido && comCompraViva);
+  const origemId = ehCompra && d && typeof d["origem_documento_id"] === "string" ? d["origem_documento_id"] : "";
+  const rotuloDoPedido = enumLabel("especie_documento_compra", "pedido");
+  const saldoEncerradoEm = ehPedido && d && typeof d["saldo_encerrado_em"] === "string" ? d["saldo_encerrado_em"] : "";
   const top = d?.["tipo_operacao"] as { codigo?: string; nome?: string; versao?: number } | null | undefined;
   const titulo = d ? `${tr(variante.chaveI18n)} ${t(d["codigo"])}` : tr(variante.chaveI18n);
 
@@ -57,10 +106,15 @@ export function ConsultaDeCompra({ variante, id }: { variante: VarianteDeCompra;
     status={<StatusBadge domain="situacao_documento_compra" value={situacao} />}
     actions={<>
       {podeConfirmar && <Button size="sm" data-testid="compras-confirmar" onClick={() => setConfirmando(true)}>Confirmar</Button>}
+      {podeEncerrarSaldo && <Button size="sm" variant="outline" data-testid="compras-encerrar-saldo" onClick={() => setEncerrando(true)}>Encerrar saldo</Button>}
       {podeCancelar && <Button size="sm" variant="outline" data-testid="compras-cancelar" onClick={() => setCancelando(true)}>Cancelar documento</Button>}
     </>}>
     <div className="space-y-4" data-testid="compras-consulta-corpo" data-situacao={situacao} data-especie={variante.variante}>
       <Card><CardBody>
+        {/* A ORIGEM da compra gerada: o pedido, com link para ele (o código é o do servidor). */}
+        {origemId && <p data-testid="compras-origem" className="mb-2 text-[12.5px] text-slate-700">
+          Origem: <Link className="text-brand-700 underline" href={rotaDoDocumento({ id: origemId, especie: "pedido" })}>{rotuloDoPedido}{d["origem_codigo"] ? ` ${String(d["origem_codigo"])}` : ""}</Link>
+        </p>}
         <KV items={[
           ["Código", <span key="c" data-testid="compras-consulta-codigo">{t(d["codigo"])}</span>],
           ["Tipo de documento", enumLabel("especie_documento_compra", d["especie"])],
@@ -84,17 +138,32 @@ export function ConsultaDeCompra({ variante, id }: { variante: VarianteDeCompra;
           ["Observação", t(d["observacao"])]
         ]} />
       </CardBody></Card>
+      {podeReceber && <CartaoProximosPassos estado={passos} aoEscolher={(rota) => router.push(rota)} pedidoId={id} />}
       <Card data-testid="compras-consulta-itens"><CardHeader title="Itens" /><CardBody>
+        {saldoEncerradoEm && <p data-testid="compras-saldo-encerrado" className="mb-2 text-[12.5px] text-slate-700">
+          Saldo encerrado em {dateTimeBR(saldoEncerradoEm)} por {t(d["saldo_encerrado_por_nome"])}: {t(d["saldo_encerrado_motivo"])}
+        </p>}
         <SimpleTable rows={d.itens ?? []} cols={[
           { key: "produto_nome", label: "Produto", render: (r) => [r["produto_codigo"], r["produto_nome"]].filter(Boolean).join(" — ") || "—" },
           { key: "armazem_nome", label: "Armazém", render: (r) => t(r["armazem_nome"]) },
           ...(ehCompra ? [{ key: "lote", label: "Lote", render: (r: Row) => t(r["lote"]) }, { key: "validade", label: "Validade", render: (r: Row) => (r["validade"] ? dateBR(r["validade"] as string) : "—") }] : []),
           { key: "quantidade", label: "Quantidade", align: "right", render: (r) => `${num(r["quantidade"] as string, 4)}${r["unidade"] ? ` ${String(r["unidade"])}` : ""}` },
+          // COMPRAS-02: o recebido (compras não canceladas) e o saldo de cada item — só quando o servidor os declara.
+          ...(recebimentoDeclarado ? [
+            { key: "recebido", label: "Recebido", align: "right" as const, render: (r: Row) => <span data-testid="compras-item-recebido">{num(r["recebido"] as string, 4)}</span> },
+            { key: "saldo", label: "Saldo", align: "right" as const, render: (r: Row) => <span data-testid="compras-item-saldo">{num(r["saldo"] as string, 4)}</span> }
+          ] : []),
           { key: "valor_unitario", label: "Valor unitário", align: "right", render: (r) => brl(r["valor_unitario"] as string) },
           { key: "desconto", label: "Desconto", align: "right", render: (r) => brl(r["desconto"] as string) },
           { key: "valor_total", label: "Total", align: "right", render: (r) => brl(r["valor_total"] as string) }
         ]} />
       </CardBody></Card>
+      {comprasGeradas && <Card data-testid="compras-geradas"><CardHeader title="Compras geradas" /><CardBody>
+        {comprasGeradas.length ? <SimpleTable rows={comprasGeradas as unknown as Row[]} cols={[
+          { key: "codigo", label: "Código", render: (r) => <Link className="text-brand-700 underline" data-testid="compras-gerada" href={rotaDoDocumento({ id: r["id"], especie: "compra" })}>{t(r["codigo"])}</Link> },
+          { key: "situacao", label: COPY.situacao, render: (r) => <StatusBadge domain="situacao_documento_compra" value={r["situacao"]} /> }
+        ]} /> : <p className="text-[12.5px] text-slate-500">Nenhuma compra gerada deste pedido.</p>}
+      </CardBody></Card>}
       {ehCompra && <Card data-testid="compras-consulta-movimentos"><CardHeader title="Entradas no estoque" /><CardBody>
         {(d.movimentos ?? []).length ? <SimpleTable rows={d.movimentos ?? []} cols={[
           { key: "movement_date", label: "Data", render: (r) => (r["movement_date"] ? dateBR(r["movement_date"] as string) : "—") },
@@ -117,6 +186,8 @@ export function ConsultaDeCompra({ variante, id }: { variante: VarianteDeCompra;
     </div>
 
     {ehCompra && <DialogoConfirmar id={id} aberto={confirmando} onAberto={setConfirmando} ocupado={confirmar.isPending} onConfirmar={() => confirmar.mutate()} />}
+    {ehPedido && <DialogoEncerrarSaldo open={encerrando} onOpenChange={setEncerrando} loading={encerrar.isPending} onConfirmar={(motivo) => encerrar.mutate(motivo)}
+      descricao="O saldo que falta receber deixa de poder ser recebido, e o pedido passa a convertido. As compras já geradas não mudam." />}
     <Dialog open={cancelando} onOpenChange={setCancelando} size="sm" testId="compras-cancelar-dialogo" title="Cancelar documento"
       description={situacao === "confirmado"
         ? "A compra confirmada é estornada: a entrada sai do estoque e as contas a pagar são canceladas. Conta com baixa precisa ter a baixa cancelada antes."
@@ -128,6 +199,32 @@ export function ConsultaDeCompra({ variante, id }: { variante: VarianteDeCompra;
       <span />
     </Dialog>
   </DetailShell>}</LoadingOr>;
+}
+
+/**
+ * OS PRÓXIMOS PASSOS DO PEDIDO — o leque da TOP dele, no desenho de Vendas: cada passo nomeia a operação de destino
+ * (código e nome, os dois do servidor) e abre a Central de Compras em modo receber. Um passo por botão: aqui não há
+ * diálogo de conversão, porque receber é preencher uma compra (nota, lote, armazém), e isso é a Central.
+ */
+function CartaoProximosPassos({ estado, pedidoId, aoEscolher }: { estado: EstadoProximosPassosDoPedido; pedidoId: string; aoEscolher: (rota: string) => void }) {
+  return <Card data-testid="compras-proximos-passos" data-situacao={estado.situacao}><CardHeader title="Próximos passos" /><CardBody>
+    {estado.situacao === "carregando" && <LoadingState variant="compact" />}
+    {estado.situacao === "indisponivel" && <p data-testid="compras-proximos-passos-indisponivel" className="text-[12.5px] text-amber-700">
+      A lista de próximos passos está indisponível nesta versão do servidor. O pedido continua disponível para consulta.
+    </p>}
+    {estado.situacao === "erro" && <p data-testid="compras-proximos-passos-erro" className="text-[12.5px] text-red-700">{estado.mensagem}</p>}
+    {estado.situacao === "pronto" && estado.itens.length === 0 && <p data-testid="compras-proximos-passos-vazio" className="text-[12.5px] text-slate-500">{TEXTO_SEM_PROXIMA_OPERACAO}</p>}
+    {estado.situacao === "pronto" && estado.itens.length > 0 && <div className="flex flex-wrap gap-2">
+      {estado.itens.map((x) => {
+        const rota = rotaDeReceber(x, pedidoId);
+        return rota && <Button key={x.tipoOperacaoId} size="sm" data-testid={`compras-proximo-passo-${x.codigo}`} data-top-id={x.tipoOperacaoId} data-em-partes={String(x.emPartes)}
+          title={x.emPartes ? "Em partes: a compra pode receber só alguns itens, até o saldo de cada um." : "Recebe o pedido inteiro: cada item com o saldo."}
+          onClick={() => aoEscolher(rota)}>
+          Receber em {x.codigo} — {x.nome}{x.emPartes ? " (em partes)" : ""}
+        </Button>;
+      })}
+    </div>}
+  </CardBody></Card>;
 }
 
 function DialogoConfirmar({ id, aberto, onAberto, ocupado, onConfirmar }: { id: string; aberto: boolean; onAberto: (v: boolean) => void; ocupado: boolean; onConfirmar: () => void }) {

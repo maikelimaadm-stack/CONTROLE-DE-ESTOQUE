@@ -24,8 +24,9 @@ const GENERIC: Record<string, StatusTone> = {
 };
 const BY_DOMAIN: Partial<Record<EnumDomain, Record<string, StatusTone>>> = {
   title_status: { open: "info", overdue: "negative", partially_paid: "warning", paid: "positive", cancelled: "neutral" },
-  // Documento de compra (COMPRAS-01): as mesmas cores da situação da venda (aberto/confirmado/cancelado).
-  situacao_documento_compra: { aberto: "warning", confirmado: "positive", cancelado: "negative" },
+  // Documento de compra (COMPRAS-01): as mesmas cores da situação da venda (aberto/confirmado/cancelado). COMPRAS-02:
+  // o pedido `convertido` (saldo todo recebido ou encerrado) tem a cor do `converted` da venda.
+  situacao_documento_compra: { aberto: "warning", confirmado: "positive", convertido: "positive", cancelado: "negative" },
   purchase_status: { finished: "positive", purchase_received: "positive", cancelled: "negative", not_approved: "negative", under_review: "warning" },
   manifest_status: { confirmed: "positive", awareness: "info", unknown: "negative", not_performed: "negative", none: "neutral" },
   launch_status: { launched: "positive", ignored: "neutral", pending: "warning", draft: "warning" },

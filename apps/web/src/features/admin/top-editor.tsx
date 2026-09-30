@@ -94,7 +94,7 @@ const AJUDA: Record<ChaveAba, string> = {
   geral:
     "As regras de preenchimento e de ciclo de vida do documento: quem confirma, o que é obrigatório informar e o que ainda pode ser alterado depois da confirmação. Confirmação e alteração após confirmar ficam registradas nesta versão, mas ainda não são executadas: a confirmação automática, por exemplo, não confirma documento nenhum. As exigências de preenchimento só são cobradas no lançamento em versões gravadas com as restrições da operação.",
   destinos:
-    "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Enquanto esta operação não declarar a política, a conversão continua seguindo o caminho anterior do produto.",
+    "Para quais operações um documento deste tipo pode ser encaminhado. A lista de opções vem do servidor, já limitada ao que o produto sabe executar; habilitar um caminho aqui não concede permissão a ninguém. Em vendas, enquanto esta operação não declarar a política, a conversão continua seguindo o caminho anterior do produto; nas demais operações, sem política declarada não há próxima operação.",
   estoque:
     "Se esta operação declara movimentação de estoque e em que sentido, além do que ela exige do operador e do que fazer quando o saldo ficaria negativo. Esta seção só é executada quando a aba Execução entrega o estoque à configuração da TOP.",
   financeiro:
@@ -1048,7 +1048,7 @@ function AbaDestinos({ codigoBase, destinos, limite, habilitado, emPartesConfigu
   };
 
   return <div data-testid="top-destinos">
-    <EstadoDaPolitica declarado={declarado} estadoNoServidor={estadoNoServidor} vazio={destinos.length === 0} onDeclarar={onDeclarar} />
+    <EstadoDaPolitica declarado={declarado} estadoNoServidor={estadoNoServidor} vazio={destinos.length === 0} onDeclarar={onDeclarar} comPonte={ehMovimentoDeVendas(codigoBase)} />
 
     <div className="mb-3 flex flex-wrap items-center gap-2">
       <NativeSelect aria-label="Operação de destino" className="w-80" data-testid="top-destino-escolha"
@@ -1102,11 +1102,17 @@ function AbaDestinos({ codigoBase, destinos, limite, habilitado, emPartesConfigu
  * responde a pergunta e uma frase extra seria ruído. As duas primeiras existem justamente porque a lista
  * vazia não responde nada sozinha.
  */
-function EstadoDaPolitica({ declarado, estadoNoServidor, vazio, onDeclarar }: {
+function EstadoDaPolitica({ declarado, estadoNoServidor, vazio, onDeclarar, comPonte }: {
   declarado: boolean;
   estadoNoServidor: boolean | null;
   vazio: boolean;
   onDeclarar: () => void;
+  /**
+   * COMPRAS-02 (decisão 268): a ponte para o caminho anterior só existe em VENDAS (havia acervo convertendo por
+   * ela). Em compras não há ponte — o pedido cuja TOP não declarou política não tem próximo passo —, e dizer ao
+   * administrador que "continua pelo caminho anterior" seria descrever um comportamento que o servidor não tem.
+   */
+  comPonte: boolean;
 }) {
   // O SERVIDOR NÃO DISSE, ENTÃO A TELA NÃO AFIRMA. Dizer "ainda não declarou" aqui seria inventar uma
   // resposta em nome de quem não respondeu — o mesmo defeito, do lado do cliente.
@@ -1118,11 +1124,16 @@ function EstadoDaPolitica({ declarado, estadoNoServidor, vazio, onDeclarar }: {
   }
   if (!declarado) {
     return <div data-testid="top-destinos-politica-nao-declarada" className="mb-3 space-y-2 rounded border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-900">
-      <p>
-        Esta operação ainda não declarou uma política de próximas operações. Por compatibilidade, um
-        documento deste tipo continua sendo encaminhado pelo caminho anterior do produto — comportamento
-        herdado, e não uma decisão registrada aqui.
-      </p>
+      {comPonte
+        ? <p>
+          Esta operação ainda não declarou uma política de próximas operações. Por compatibilidade, um
+          documento deste tipo continua sendo encaminhado pelo caminho anterior do produto — comportamento
+          herdado, e não uma decisão registrada aqui.
+        </p>
+        : <p>
+          Esta operação ainda não declarou uma política de próximas operações: enquanto ela não for declarada,
+          um documento deste tipo não oferece próxima operação.
+        </p>}
       <p>
         Adicione um destino abaixo para dizer para onde esta operação encaminha, ou registre que ela não
         encaminha para lugar nenhum.
