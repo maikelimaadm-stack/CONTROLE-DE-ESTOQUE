@@ -1391,9 +1391,12 @@ Decisão 272. **Uma migration: `0039_versao_do_documento_de_venda.sql`** (pre-de
 [[COORDENADOR: B1 — pré/pós-condições nomeadas `EDITAR-01: ...` e o que conferem]], não destrutiva, sem backfill): a
 coluna `erp.sales_documents.version bigint not null default 0` e o gatilho BEFORE UPDATE `trg_sales_documents_versao`
 (função `erp.sales_documents_versao()`, sem SECURITY DEFINER, `search_path = erp, pg_temp`, `execute` revogado de
-`public`), que soma 1 à versão em todo update da linha. A coluna nasce com o default constante, sem reescrever a
-tabela; o `alter table` pede a trava exclusiva de `erp.sales_documents` por um instante — com uma transação longa
-segurando a tabela, a migration desiste em 2 s sem aplicar nada e se repete. Nenhuma variável nova, nenhuma
+`public`), que soma 1 à versão em todo update da linha; e recria a porta `erp.situacao_atraso_cliente(uuid, int)` (0033,
+SECURITY DEFINER) com a MESMA assinatura, corpo, `search_path` e privilégios — só a reconferência de capacidade de
+dentro passa a aceitar também `budgets.edit`, `orders.edit` e `sales.edit`, além das três `.create` (decisão 272,
+ponto 9). A coluna nasce com o default constante, sem reescrever a tabela; o `alter table` pede a trava exclusiva de
+`erp.sales_documents` por um instante — com uma transação longa segurando a tabela, a migration desiste em 2 s sem
+aplicar nada e se repete. Nenhuma variável nova, nenhuma
 permissão nova: a PATCH e o `/edicao` usam `budgets.edit`, `orders.edit` e `sales.edit`, que já existem. **Sem tela**
 nesta fatia: nenhuma tela chama as rotas novas (o lápis vem na F2, depois da VISUAL-UX-02).
 
@@ -1404,10 +1407,13 @@ nesta fatia: nenhuma tela chama as rotas novas (o lápis vem na F2, depois da VI
 1. **API ANTERIOR × banco novo:** a API anterior nunca escreve `version`. O INSERT dela nomeia as colunas, e o
    documento nasce com o default 0. Cada UPDATE dela (PUT, confirmar, cancelar, converter, encerrar saldo) passa pelo
    gatilho, que só soma 1 à versão — e um `set` explícito seria sobrescrito. O gatilho não recusa nada, não lê outra
-   tabela e não toca outra coluna: nenhuma gravação da API anterior muda de resultado, código ou mensagem. Ele dispara
+   tabela e não toca outra coluna: por ele, nenhuma gravação da API anterior muda de resultado, código ou mensagem. Ele dispara
    depois das guardas da tabela, e nenhuma delas compara a linha inteira [[COORDENADOR: B1 confirma]], então nenhuma
    vê a versão mudar. O `select d.*` do `GET` anterior passa a trazer `version`, e o histórico de `erp.audit_row`
-   também: campo aditivo, que a web ignora.
+   também: campo aditivo, que a web ignora. A API anterior chama `erp.situacao_atraso_cliente` com a mesma
+   assinatura e lê a mesma forma; quem passa a receber linhas é só o usuário com alguma `.edit` de venda e nenhuma
+   `.create` — e, para ele,
+   o PUT da API anterior que troca o cliente para um devedor numa TOP com "bloqueia" passa a ser recusado (abaixo).
 2. **web ANTERIOR × API nova:** a web anterior não chama a PATCH nem o `/edicao` — e nenhuma tela edita documento de
    venda salvo, nem pelo PUT. O PUT não mudou (compatibilidade da API). O `GET` ganha `version` (aditivo). Confirmar,
    cancelar, converter e encerrar saldo pela web anterior somam a versão (são update): quando a tela de edição existir,
@@ -1417,15 +1423,24 @@ nesta fatia: nenhuma tela chama as rotas novas (o lápis vem na F2, depois da VI
 
 **Impacto em dados reais: os documentos de venda ganham a coluna version (0 para todos); nenhum valor existente muda.**
 
+**Mudança de efeito declarada (decisão 272, ponto 9):** o usuário que tem `budgets.edit`, `orders.edit` ou
+`sales.edit` e NENHUMA de `budgets.create`, `orders.create` e `sales.create`, ao editar pelo PUT trocando o cliente para um cliente com título vencido
+numa TOP de formato 3 com "Cliente em atraso: bloqueia", passa a receber 422 `CLIENTE_EM_ATRASO`. Antes a porta lhe
+respondia zero linhas e a regra falhava aberta; não é efeito novo, é a regra que a organização já configurou valendo
+também para quem só edita. Quem tem alguma das três `.create` não percebe diferença (a porta já lhe respondia).
+
 **Reversão:** API e web voltam por redeploy da versão anterior, sem tocar no banco. A 0039 fica: a API anterior
-convive com ela (janela 1). Remover a coluna ou o gatilho só por migration NOVA, e é decisão do Maike — nunca editando
-a 0039. As edições já feitas pela PATCH são edições comuns do documento e ficam; nada de apagar dado de produção
+convive com ela (janela 1) — inclusive com a porta do atraso alargada, que continua valendo para ela. Remover a
+coluna ou o gatilho, ou devolver a porta às três `.create`, só por migration NOVA, e é decisão do Maike — nunca
+editando a 0039. As edições já feitas pela PATCH são edições comuns do documento e ficam; nada de apagar dado de produção
 (decisão 247).
 
 **Roteiro do Maike (produção é operacional — decisões 240 e 247; a prova é só leitura, não cria nem muda documento):**
 1. Depois da 0039, leitura no banco: `select version, count(*) from erp.sales_documents group by version;` → uma linha
    só, `version = 0`, com o total de documentos; e `select tgname, tgenabled from pg_trigger where tgrelid =
-   'erp.sales_documents'::regclass and not tgisinternal order by tgname;` → `trg_sales_documents_versao` ligado (`O`).
+   'erp.sales_documents'::regclass and not tgisinternal order by tgname;` → `trg_sales_documents_versao` ligado (`O`);
+   e `select pg_get_functiondef('erp.situacao_atraso_cliente(uuid,integer)'::regprocedure);` → a reconferência cita as
+   seis capacidades (três `.create` e três `.edit`).
 2. Depois da API nova: Vendas › abrir a consulta de um documento → a resposta de `GET /api/sales/<segmento>/<id>`
    (ferramentas do navegador › Rede) traz `version` — `"0"` no documento que não mudou desde a 0039.
 3. Sem provocar nada: quando a operação confirmar, cancelar ou converter um documento, a mesma leitura do passo 1
