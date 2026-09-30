@@ -274,7 +274,16 @@ test("VD-1 — medidas-chave do desenho na criação e na consulta: barra, botõ
   const rodape = await page.getByTestId("central-vendas-subtotal").evaluate((el) => { let n = el.parentElement; while (n && n.getBoundingClientRect().height < 25) n = n.parentElement; return n ? Math.round(n.getBoundingClientRect().height) : 0; });
   expect.soft(rodape, "rodapé dos itens").toBe(MEDIDAS.itens.rodape);
   // PAINEL: faixa de abas 38 px
-  expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-painel").getByRole("tablist"))).height), "faixa de abas").toBe(MEDIDAS.painel.faixa);
+  // a FAIXA pintada (38 + borda de 1): no produto é o ::before do painel, atrás de Ampliar, abas e Recolher; as abas
+  // (o tablist) têm os 38 de conteúdo. Sem o pseudo, mede-se o tablist.
+  const faixa = await page.getByTestId("central-vendas-painel").evaluate((el) => {
+    const antes = getComputedStyle(el, "::before");
+    if (antes.content !== "none" && antes.content !== "normal") return Math.round(parseFloat(antes.height));
+    const lista = el.querySelector('[role="tablist"]');
+    return lista ? Math.round(lista.getBoundingClientRect().height) : 0;
+  });
+  expect.soft(faixa, "faixa de abas (caixa com a borda)").toBe(MEDIDAS.painel.faixa);
+  expect.soft(Math.round((await caixa(page.getByTestId("central-vendas-painel").getByRole("tablist"))).height), "abas: 38 de altura").toBe(MEDIDAS.painel.faixa - 1);
   // largura máxima 560: ampliado, a coluna é larga e nenhum campo passa de 560
   await page.getByTestId("central-vendas-ampliar-dados").click();
   const larguras = await consulta.getByTestId("central-vendas-dados").locator("[data-campo]").evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
@@ -916,6 +925,8 @@ test("VD-13 — evidência desenho × produto em 1440×900 e 1280×800, sem rola
     if (w === 1440) par(cena);
   };
 
+  const trava: { segura: Promise<void> | null } = { segura: null };
+  await page.route(`**/api/sales/sales/${venda.id}`, async (rota) => { if (rota.request().method() === "GET" && trava.segura) await trava.segura; await rota.continue(); });
   for (const [w, h] of [[1440, 900], [1280, 800]] as const) {
     await page.setViewportSize({ width: w, height: h });
     // criação
@@ -950,15 +961,15 @@ test("VD-13 — evidência desenho × produto em 1440×900 e 1280×800, sem rola
     await page.keyboard.press("Escape");
     await abrirConsulta(page, confirmada);
     await foto("confirmado", w, h);
-    // carregando
+    // carregando: a leitura do documento fica segura no fio (UM ouvinte para as duas viewports)
     let soltar!: () => void;
-    const segura = new Promise<void>((ok) => { soltar = ok; });
-    await page.route(`**/api/sales/sales/${venda.id}`, async (rota) => { if (rota.request().method() === "GET") await segura; await rota.continue(); });
+    trava.segura = new Promise<void>((ok) => { soltar = ok; });
     await page.goto(`/vendas/sales/${venda.id}`);
     await expect(page.getByTestId("central-vendas-esqueleto")).toBeVisible();
     await foto("carregando", w, h);
+    trava.segura = null;
     soltar();
-    await page.unroute(`**/api/sales/sales/${venda.id}`);
+    await expect(page.getByTestId("central-vendas-identidade-nome")).toHaveText(venda.code);
   }
   test.info().annotations.push({ type: "evidencia", description: `pares gravados em ${pasta}${desenhos ? "" : " (sem DESENHO_SHOTS_DIR: só o produto)"}` });
 });
