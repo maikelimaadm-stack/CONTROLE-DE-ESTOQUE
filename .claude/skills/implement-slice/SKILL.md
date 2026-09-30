@@ -66,4 +66,5 @@ Arquivo fora de escopo? Comentário obsoleto? Teste que passa vazio? Corrija ant
   decisão, provas (tabela), fora de escopo e o mapa de colisão (tabela PR · faixa ·
   arquivos em comum · números · banco · contrato · ordem de merge). Se houver ordem:
   "Merge depois de #N" e o motivo.
-- **Não mesclar. Não marcar ready.** Relatório final em um único bloco `text`.
+- **Não mesclar. Não marcar ready.** Relatório final em um único bloco `text`, com o MAPA DE
+  COLISÃO refeito na hora (outra PR pode ter sido aberta desde o anterior).

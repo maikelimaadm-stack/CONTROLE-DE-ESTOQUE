@@ -30,7 +30,8 @@ nunca a descrição da PR. Descrição diz o que o autor quis fazer; diff diz o 
    Limpeza ampla misturada. Cada um é bloqueador de escopo, mesmo se o código for bom.
    Confira o MAPA DE COLISÃO do corpo da PR (PRE-PR-02) contra `gh pr diff <n> --name-only`
    de cada PR aberta, e também número, banco e contrato. Mapa ausente ou colisão não
-   declarada é BLOCKER; ordem de migration sem "Merge depois de #N" também.
+   declarada é BLOCKER; ordem de migration sem "Merge depois de #N" também. Colisão
+   DECLARADA também impede `READY`: a PR para até o Maike decidir qual espera ou como muda o escopo.
 6. **Concorrência.** Idempotência, `version`, lock, ROW COUNT conferido.
 7. **Desempenho.** N+1 (procure `await` dentro de laço e consulta por linha), consulta
    sem índice, autorização depois do `limit`.

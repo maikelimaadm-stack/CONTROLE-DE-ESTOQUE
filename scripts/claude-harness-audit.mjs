@@ -146,10 +146,11 @@ for (const r of REGRAS) {
 //
 // COMENTÁRIO DE HTML NÃO CONTA. `<!-- … -->` não é lido pelo modelo como instrução ativa: comentar
 // a lei é apagá-la com o texto ainda no arquivo, e seria a forma mais barata de passar por aqui. Pelo
-// mesmo motivo, lei anterior dentro de comentário é história, não lei, e não reprova.
+// mesmo motivo, lei anterior dentro de comentário é história, não lei, e não reprova. Um `<!--` sem
+// fechamento esconde o resto do documento (CommonMark): conta como comentário até o fim do arquivo.
 // -------------------------------------------------------------------------------------------------
 /** Texto sem comentário de HTML e com espaço normalizado — a lei quebra linha, o casamento não pode depender disso. */
-const textoDaLei = (t) => t.replace(/<!--[\s\S]*?-->/g, " ").replace(/\s+/g, " ");
+const textoDaLei = (t) => t.replace(/<!--[\s\S]*?-->/g, " ").replace(/<!--[\s\S]*$/, " ").replace(/\s+/g, " ");
 
 const clausulasComuns = (arquivo) => [
   { arquivo, garante: "o identificador da lei", re: /PRE-PR-02/ },
@@ -186,7 +187,7 @@ const LEI_PRE_PR_02 = [
  * depois de "PRs abertas"), então nenhuma casa dentro da outra — o autoteste prova isso acrescentando
  * uma de cada vez e exigindo exatamente UMA acusação.
  */
-const anterior = (frase, decisao, re) => ({ frase, re, garante: `a retirada da lei anterior ("${frase}", ${decisao}) — duas leis contraditórias valem como nenhuma` });
+const anterior = (frase, decisao, re) => ({ re, garante: `a lei anterior ("${frase}", decisão ${decisao}) continua escrita como vigente — duas leis contraditórias valem como nenhuma, e a sessão escolheria a mais frouxa` });
 const LEI_ANTERIOR = [
   anterior("PRs abertas na faixa > 0 ⇒ PR nova nessa faixa = PROIBIDA", 264, /PRs abertas na faixa\s*>\s*0\s*⇒\s*PR nova nessa faixa\s*=\s*PROIBIDA/i),
   anterior("PRs abertas no repositório ≥ 3 ⇒ PR nova = PROIBIDA", 264, /PRs abertas no reposit[óo]rio\s*≥\s*3\s*⇒\s*PR nova\s*=\s*PROIBIDA/i),
@@ -198,17 +199,19 @@ const LEI_ANTERIOR = [
 const clausulasAusentes = (texto, clausulas) => {
   const t = textoDaLei(texto);
   const faltam = clausulas.filter((c) => !c.re.test(t));
-  for (const a of LEI_ANTERIOR) if (a.re.test(t)) faltam.push({ garante: a.garante });
+  for (const a of LEI_ANTERIOR) if (a.re.test(t)) faltam.push({ garante: a.garante, anterior: true });
   return faltam;
 };
 
 // AUTOTESTE — nas duas direções, porque um verificador que nunca acusa é indistinguível de um
 // verificador correto: a tela verde é a mesma. Inclui o caso do comentário, que é a burla barata.
+//
+// AS FRASES SÃO ESCRITAS À MÃO, E NÃO DERIVADAS DAS TABELAS ACIMA. Amostra montada a partir da própria
+// tabela some junto com a entrada que devia vigiar: tirar uma linha de LEI_ANTERIOR tiraria também a
+// amostra dela, e o autoteste continuaria verde. Aqui as listas são a especificação (1.3 da decisão
+// 273), e as tabelas é que são medidas contra elas.
 {
   const doArquivo = (f) => LEI_PRE_PR_02.filter((c) => c.arquivo === f);
-  const DONOS = [["CLAUDE.md", doArquivo("CLAUDE.md")], [".claude/rules/workflow.md", doArquivo(".claude/rules/workflow.md")]];
-  // As frases de 1.3 da especificação, cada uma UMA vez. Se uma cláusula mudar, a frase muda aqui
-  // junto — senão a "lei inteira" deixa de dar zero e o autoteste reprova.
   const FRASES_COMUNS = [
     "PRE-PR-02", "colisão com PR aberta ⇒ PR nova = PROIBIDA", "MAPA DE COLISÃO", "arquivo em comum",
     "reservado no prompt", "a mesma tabela, coluna, função", "rota, corpo, resposta",
@@ -224,6 +227,12 @@ const clausulasAusentes = (texto, clausulas) => {
     'PR "temporária"', "a lei vence o pedido", "`pnpm lint` não fala com a rede",
     "o próximo merge só depois do deploy do anterior conferido", "dois agentes não editam o mesmo arquivo"
   ];
+  const FRASES_PROIBIDAS = [
+    "PRs abertas na faixa > 0 ⇒ PR nova nessa faixa = PROIBIDA",    // 264
+    "PRs abertas no repositório ≥ 3 ⇒ PR nova = PROIBIDA",          // 264
+    "uma PR aberta por faixa",                                       // 264
+    "PRs abertas > 0 ⇒ PR nova = PROIBIDA"                           // 222
+  ];
   // "arquivos em comum" (plural, a coluna do mapa) entra de propósito: a amostra que apaga
   // "arquivo em comum" prova que o plural NÃO satisfaz a cláusula do singular.
   const COMPLETO = [...FRASES_COMUNS, ...FRASES_CLAUDE, ...FRASES_WORKFLOW].map((f) => `Lei: ${f}.`).join(" ")
@@ -232,34 +241,40 @@ const clausulasAusentes = (texto, clausulas) => {
   const comentado = (t) => `<!-- ${t} -->`;
 
   const AMOSTRAS = [];
-  for (const [dono, conjunto] of DONOS) {
+  for (const [dono, exclusivas] of [["CLAUDE.md", FRASES_CLAUDE], [".claude/rules/workflow.md", FRASES_WORKFLOW]]) {
+    const conjunto = doArquivo(dono);
+    // Contado das LISTAS, não do conjunto: 12 no CLAUDE.md, 18 no workflow.md. Um conjunto que perdeu as
+    // comuns (o spread apagado) ou ganhou cláusula sem frase aqui deixa de bater, e o autoteste reprova.
+    const todas = FRASES_COMUNS.length + exclusivas.length;
     AMOSTRAS.push(
       { nome: `lei inteira, contra ${dono}`, texto: COMPLETO, conjunto, ausentes: 0 },
       { nome: `lei quebrada em linhas, contra ${dono}`, texto: COMPLETO.replace(/ /g, "\n"), conjunto, ausentes: 0 },
-      { nome: `lei inteira comentada em HTML, contra ${dono}`, texto: comentado(COMPLETO), conjunto, ausentes: conjunto.length },
-      { nome: `arquivo sem a lei, contra ${dono}`, texto: "# Fluxo\n\nBranch, commit, push.", conjunto, ausentes: conjunto.length },
+      { nome: `lei inteira comentada em HTML, contra ${dono}`, texto: comentado(COMPLETO), conjunto, ausentes: todas },
+      { nome: `lei inteira depois de um <!-- sem fechamento, contra ${dono}`, texto: `# Fluxo\n<!--\n${COMPLETO}`, conjunto, ausentes: todas },
+      { nome: `arquivo sem a lei, contra ${dono}`, texto: "# Fluxo\n\nBranch, commit, push.", conjunto, ausentes: todas },
       // Lei anterior só dentro de comentário é história: o comentário é descartado e nada é acusado.
-      { nome: `leis anteriores em comentário HTML, contra ${dono}`, texto: `${COMPLETO} ${comentado(LEI_ANTERIOR.map((a) => a.frase).join(". "))}`, conjunto, ausentes: 0 }
+      { nome: `leis anteriores em comentário HTML, contra ${dono}`, texto: `${COMPLETO} ${comentado(FRASES_PROIBIDAS.join(". "))}`, conjunto, ausentes: 0 }
     );
-    for (const a of LEI_ANTERIOR) {
-      AMOSTRAS.push({ nome: `lei anterior ainda escrita ("${a.frase}"), contra ${dono}`, texto: `${COMPLETO} ${a.frase}.`, conjunto, ausentes: 1 });
+    // Cada frase proibida, sozinha e quebrada em linhas: exatamente UMA acusação — nem zero (a tabela a
+    // perdeu), nem duas (uma regex anterior casando dentro de outra).
+    for (const f of FRASES_PROIBIDAS) {
+      AMOSTRAS.push(
+        { nome: `lei anterior ainda escrita ("${f}"), contra ${dono}`, texto: `${COMPLETO} ${f}.`, conjunto, ausentes: 1 },
+        { nome: `lei anterior quebrada em linhas ("${f}"), contra ${dono}`, texto: `${COMPLETO}\n${f.replace(/ /g, "\n")}.`, conjunto, ausentes: 1 }
+      );
     }
-  }
-  // Frase COMUM apagada: medida contra clausulasComuns, e não contra o conjunto de um dono, porque
-  // "PRE-PR-02" também é pedaço de "PRE-PR-02 vence o pedido" (cláusula só do CLAUDE.md). O
-  // replaceAll apaga as duas ocorrências, e contra o conjunto do CLAUDE.md a amostra acusaria DUAS —
-  // o que é correto como comportamento, mas não isola a cláusula comum que a amostra quer provar.
-  const COMUNS = clausulasComuns("autoteste");
-  for (const f of FRASES_COMUNS) {
-    AMOSTRAS.push({ nome: `frase comum apagada ("${f}")`, texto: COMPLETO.replaceAll(f, NEUTRO), conjunto: COMUNS, ausentes: 1 });
-  }
-  // Frase EXCLUSIVA apagada: contra o conjunto do próprio dono. Conferido à mão que nenhuma troca
-  // derruba outra cláusula do MESMO conjunto: "branch concorrente" e 'PR "temporária"' também somem
-  // de dentro da frase longa do CLAUDE.md, mas essa frase não está no conjunto do workflow.md; e
-  // apagar "PRE-PR-02 vence o pedido" deixa o "PRE-PR-02" solto, que continua satisfazendo o identificador.
-  for (const [dono, frases] of [["CLAUDE.md", FRASES_CLAUDE], [".claude/rules/workflow.md", FRASES_WORKFLOW]]) {
-    const conjunto = doArquivo(dono);
-    for (const f of frases) {
+    // Frase COMUM apagada, contra o conjunto de CADA dono: prova que as nove comuns estão nos dois.
+    // "PRE-PR-02" também é pedaço de "PRE-PR-02 vence o pedido" (cláusula só do CLAUDE.md): lá o
+    // replaceAll derruba as duas, e o esperado é 2 — escrito aqui, e não relaxado para "≥ 1".
+    for (const f of FRASES_COMUNS) {
+      const ausentes = dono === "CLAUDE.md" && f === "PRE-PR-02" ? 2 : 1;
+      AMOSTRAS.push({ nome: `frase comum apagada ("${f}"), contra ${dono}`, texto: COMPLETO.replaceAll(f, NEUTRO), conjunto, ausentes });
+    }
+    // Frase EXCLUSIVA apagada: contra o conjunto do próprio dono. Conferido à mão que nenhuma troca
+    // derruba outra cláusula do MESMO conjunto: "branch concorrente" e 'PR "temporária"' também somem
+    // de dentro da frase longa do CLAUDE.md, mas essa frase não está no conjunto do workflow.md; e
+    // apagar "PRE-PR-02 vence o pedido" deixa o "PRE-PR-02" solto, que continua satisfazendo o identificador.
+    for (const f of exclusivas) {
       AMOSTRAS.push({ nome: `frase de ${dono} apagada ("${f}")`, texto: COMPLETO.replaceAll(f, NEUTRO), conjunto, ausentes: 1 });
     }
   }
@@ -269,10 +284,13 @@ const clausulasAusentes = (texto, clausulas) => {
   }
 }
 
-for (const f of [...new Set(LEI_PRE_PR_02.map((c) => c.arquivo))]) {
+const DONOS_DA_LEI = [...new Set(LEI_PRE_PR_02.map((c) => c.arquivo))];
+if (DONOS_DA_LEI.length !== 2) erro(`a lei PRE-PR-02 é conferida em ${DONOS_DA_LEI.length} dono(s) e devia ser em 2 (CLAUDE.md e .claude/rules/workflow.md)`);
+for (const f of DONOS_DA_LEI) {
   if (!existe(f)) continue;                                  // a ausência do arquivo já é acusada acima
   for (const c of clausulasAusentes(ler(f), LEI_PRE_PR_02.filter((x) => x.arquivo === f))) {
-    erro(`${f}: a lei PRE-PR-02 perdeu ${c.garante} — uma sessão poderia abrir PR sem provar, com o mapa de colisão, que não colide com as abertas, e nada quebraria`);
+    if (c.anterior) erro(`${f}: ${c.garante}`);
+    else erro(`${f}: a lei PRE-PR-02 perdeu ${c.garante} — uma sessão poderia abrir PR sem provar, com o mapa de colisão, que não colide com as abertas, e nada quebraria`);
   }
 }
 
