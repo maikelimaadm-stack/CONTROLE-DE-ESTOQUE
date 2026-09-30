@@ -12,8 +12,11 @@ import { TEST_URL } from "./setup.js";
  *   · TODO update, de qualquer caminho e por qualquer papel, soma 1 — inclusive o que não muda nada, o de várias
  *     linhas (cada uma +1) e o que manda um valor explícito (vira old+1); o insert nasce 0;
  *   · o gatilho é o ÚLTIMO BEFORE UPDATE por nome, depois das duas guardas da 0023/0024;
- *   · o papel da aplicação não desliga o gatilho (não é dono, não é superusuário, não troca
- *     session_replication_role, não tem TRIGGER na tabela);
+ *   · o papel da aplicação existe e não desliga o gatilho (não é dono, não é superusuário, não troca
+ *     session_replication_role, não tem TRIGGER na tabela, não é MEMBRO — nem sem herdar — de papel que faça
+ *     alguma dessas coisas, e nenhum ajuste guardado liga `replica` na sessão dele);
+ *   · a pré-condição da porta do atraso é o md5 do corpo INTEIRO da 0033, e a pós-condição deixa o EXECUTE dela
+ *     só com o dono e o erp_app;
  *   · a porta do atraso (`erp.situacao_atraso_cliente`, 0033) responde também a quem só EDITA venda
  *     (budgets/orders/sales .edit) — antes, zero linhas = falso "em dia" —, com o mesmo corpo e os mesmos privilégios;
  *     quem não tem nenhuma das seis capacidades continua com zero linhas.
@@ -84,6 +87,11 @@ let antes: Awaited<ReturnType<typeof retrato>>;
 /** A porta do atraso pelo papel da aplicação, com a GUC do usuário dado (tolerância 3 dias). */
 const atraso = (userId: string, tolerancia = 3) => withTx(app, { orgId: demo.orgId, userId, modulo: null }, async (tx) => (await tx.query<{ titulos: number; total: string; vencimento_mais_antigo: string | null }>(
   "select titulos, total::text total, vencimento_mais_antigo::text vencimento_mais_antigo from erp.situacao_atraso_cliente($1, $2)", [cliente, tolerancia])).rows);
+/** Quem tem EXECUTE na porta do atraso, pela ACL (aclexplode), com o dono incluído. */
+const execucaoDaPorta = async () => (await db.query<{ g: string }>(
+  `select case when a.grantee = 0 then 'PUBLIC' else a.grantee::regrole::text end g
+     from pg_proc p cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+    where p.oid = 'erp.situacao_atraso_cliente(uuid,integer)'::regprocedure and a.privilege_type = 'EXECUTE'`)).rows.map((r) => r.g).sort();
 const fonteAtraso = async () => (await db.query<{ src: string }>("select prosrc src from pg_proc where oid = 'erp.situacao_atraso_cliente(uuid,integer)'::regprocedure")).rows[0]!.src;
 async function usuarioComPapel(nome: string, permissoes: string[]): Promise<string> {
   const papel = (await db.query<{ id: string }>("insert into erp.roles(organization_id,name) values ($1,$2) returning id", [demo.orgId, `[TEST] E01 ${nome}`])).rows[0]!.id;
@@ -93,6 +101,16 @@ async function usuarioComPapel(nome: string, permissoes: string[]): Promise<stri
   return u;
 }
 const SEIS = ["budgets.create", "orders.create", "sales.create", "budgets.edit", "orders.edit", "sales.edit"];
+/** md5 do prosrc INTEIRO da porta do atraso da 0033 — a pré-condição da 0039 compara com ele (conferido na produção, só leitura). */
+const MD5_0033 = "d55df1291552c3fdd19b7c0eecf4d22c";
+/** Papéis ACIMA do erp_app (ele é membro, de qualquer forma) que são superusuário, trocam session_replication_role ou têm TRIGGER na tabela. */
+const papeisPerigososDoApp = async (q: Tx | Db = db) => (await q.query<{ rolname: string }>(
+  `select r.rolname from pg_roles r, pg_roles app where app.rolname = 'erp_app' and r.oid <> app.oid and pg_has_role(app.oid, r.oid, 'MEMBER')
+      and (r.rolsuper or has_parameter_privilege(r.oid, 'session_replication_role', 'SET') or has_table_privilege(r.oid, 'erp.sales_documents', 'TRIGGER'))`)).rows.map((r) => r.rolname);
+/** Ajustes guardados de session_replication_role que alcançam a sessão do erp_app (o papel dele, ou todos os papéis). */
+const ajusteReplica = async () => (await db.query<{ ajuste: string }>(
+  `select c.ajuste from pg_db_role_setting s cross join lateral unnest(s.setconfig) c(ajuste)
+    where s.setrole in (0, (select oid from pg_roles where rolname = 'erp_app')) and c.ajuste ilike 'session_replication_role=%'`)).rows.map((r) => r.ajuste);
 
 const versao = async (id: string) => (await db.query<{ v: string }>("select version::text v from erp.sales_documents where id=$1", [id])).rows[0]!.v;
 
@@ -151,6 +169,15 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
               has_table_privilege('erp_app','erp.sales_documents','TRIGGER') trig
          from pg_class c, pg_roles r where c.oid='erp.sales_documents'::regclass and r.rolname='erp_app'`)).rows;
     expect(papel).toEqual([{ dono: false, su: false, srr: false, trig: false }]);
+    // Nem por SET ROLE: o erp_app não é membro de papel nenhum que seja superusuário, troque session_replication_role
+    // ou tenha TRIGGER na tabela, e nenhum ajuste guardado liga `replica` na sessão dele. A DIREÇÃO importa: o
+    // erp_app_test (login do teste) é membro DO erp_app — está abaixo dele, e não conta.
+    expect(await papeisPerigososDoApp()).toEqual([]);
+    expect((await db.query<{ m: boolean }>("select pg_has_role('erp_app_test','erp_app','MEMBER') m")).rows[0]!.m, "a contraprova da direção existe").toBe(true);
+    expect(await ajusteReplica()).toEqual([]);
+    // O corpo da 0033 APLICADA tem o md5 que a pré-condição da 0039 exige (o mesmo conferido na produção).
+    expect((await db.query<{ h: string }>("select md5(prosrc) h from pg_proc where oid = 'erp.situacao_atraso_cliente(uuid,integer)'::regprocedure")).rows[0]!.h)
+      .toBe(MD5_0033);
     // A porta do atraso sob a 0033: quem LANÇA vê o título (o dado existe); quem só EDITA recebe zero linhas —
     // o falso "em dia" que a 0039 fecha —, e quem não tem nenhuma das seis também.
     const devedor = [{ titulos: 1, total: "100.10", vencimento_mais_antigo: vencidoHa10 }];
@@ -187,6 +214,9 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
 
   it("V4 reversas: cada pré-condição quebrada recusa a 0039 com a SUA mensagem, sem efeito", async () => {
     const imitacao = (c: Tx) => c.query("create function erp.e01_imitacao_b1() returns trigger language plpgsql as 'begin return new; end'");
+    // A tabela ausente (a cadeia fora de ordem): a primeira pergunta, antes de qualquer outra sobre ela.
+    expect(await recusaDa0039((c) => c.query("alter table erp.sales_documents rename to sales_documents_e01r_b1")))
+      .toBe("EDITAR-01: erp.sales_documents ausente; a cadeia de migrations esta fora de ordem.");
     // Coluna já existe (a 0039 aplicada, ou schema divergente) — a mensagem de "já aplicada" vem ANTES das outras.
     expect(await recusaDa0039((c) => c.query("alter table erp.sales_documents add column version int")))
       .toBe("EDITAR-01: erp.sales_documents.version ja existe; a 0039 ja foi aplicada ou ha schema divergente.");
@@ -231,6 +261,10 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
       await c.query("alter table erp.sales_documents owner to e01r_aplicador_b1");
       await c.query("set local role e01r_aplicador_b1");
     })).toBe("EDITAR-01: o papel que aplica a migration nao cria objetos no schema erp; o CREATE FUNCTION seria recusado.");
+    // O papel da aplicação não existe: a PRIMEIRA pergunta sobre ele, com o motivo nomeado (e não o "role does not
+    // exist" genérico do primeiro pg_has_role). O nome é fixo na migration; o rename desfeito é a ausência dele.
+    expect(await recusaDa0039((c) => c.query("alter role erp_app rename to e01r_app_ausente_b1")))
+      .toBe("EDITAR-01: o papel erp_app nao existe; a 0007 nao esta aplicada ou ha schema divergente (a porta do atraso ficaria sem quem a execute).");
     // O papel da aplicação é membro do dono da tabela — mesmo sem herdar (o erp_app é NOINHERIT), faria SET ROLE para ele.
     const MEMBRO = "EDITAR-01: o papel da aplicacao (erp_app) e dono de erp.sales_documents ou membro do papel dono; poderia desligar o gatilho da versao.";
     expect(await recusaDa0039(async (c) => {
@@ -254,18 +288,65 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
     // O papel da aplicação tem TRIGGER na tabela.
     expect(await recusaDa0039((c) => c.query("grant trigger on erp.sales_documents to erp_app")))
       .toBe("EDITAR-01: o papel da aplicacao (erp_app) tem TRIGGER em erp.sales_documents; poderia criar um gatilho depois do da versao.");
+    // O papel da aplicação é MEMBRO — sem herdar, direto ou em cadeia — de um papel que desligaria o gatilho: a pergunta
+    // direta (has_*_privilege do erp_app) responde não, e o SET ROLE responde sim.
+    const acima = (papeis: string) => `EDITAR-01: o papel da aplicacao (erp_app) e membro (com ou sem heranca) de papel superusuario, com SET em session_replication_role ou com TRIGGER em erp.sales_documents: {${papeis}}; faria SET ROLE e poderia desligar o gatilho da versao.`;
+    expect(await recusaDa0039(async (c) => {
+      await c.query("create role e01r_gatilho_b1 nologin");
+      await c.query("grant trigger on erp.sales_documents to e01r_gatilho_b1");
+      await c.query("grant e01r_gatilho_b1 to erp_app with inherit false, set true");
+      const r = (await c.query<{ trig: boolean; set: boolean }>(
+        "select has_table_privilege('erp_app','erp.sales_documents','TRIGGER') trig, pg_has_role('erp_app','e01r_gatilho_b1','SET') set")).rows[0]!;
+      expect(r, "contraprova: a pergunta direta não vê o TRIGGER; o SET ROLE alcança").toEqual({ trig: false, set: true });
+    })).toBe(acima("e01r_gatilho_b1"));
+    expect(await recusaDa0039(async (c) => {
+      await c.query("create role e01r_replica_b1 nologin");
+      await c.query("grant set on parameter session_replication_role to e01r_replica_b1");
+      await c.query("grant e01r_replica_b1 to erp_app with inherit false, set true");
+      const r = (await c.query<{ srr: boolean }>("select has_parameter_privilege('erp_app','session_replication_role','SET') srr")).rows[0]!;
+      expect(r, "contraprova: a pergunta direta não vê o SET").toEqual({ srr: false });
+    })).toBe(acima("e01r_replica_b1"));
+    // Em CADEIA e sem SET na primeira aresta: erp_app → e01r_meio_b1 (sem herdar, sem SET) → e01r_su_b1 (superusuário).
+    // Fail closed: MEMBER é qualquer forma de pertencer, e só o papel perigoso aparece no motivo.
+    expect(await recusaDa0039(async (c) => {
+      await c.query("create role e01r_su_b1 nologin superuser");
+      await c.query("create role e01r_meio_b1 nologin");
+      await c.query("grant e01r_su_b1 to e01r_meio_b1");
+      await c.query("grant e01r_meio_b1 to erp_app with inherit false, set false");
+    })).toBe(acima("e01r_su_b1"));
+    // Ajuste guardado que liga `replica` na sessão do erp_app: do papel (neste banco ou em outro) e de todos os papéis.
+    const AJUSTE = "EDITAR-01: ha session_replication_role em pg_db_role_setting para o erp_app (ALTER ROLE erp_app SET, ALTER ROLE ALL SET ou ALTER DATABASE SET); a sessao dele nasceria com o gatilho da versao desligado.";
+    expect(await recusaDa0039((c) => c.query("alter role erp_app set session_replication_role = replica"))).toBe(AJUSTE);
+    expect(await recusaDa0039((c) => c.query("alter role erp_app in database template1 set session_replication_role = replica"))).toBe(AJUSTE);
+    expect(await recusaDa0039((c) => c.query("do $d$ begin execute format('alter database %I set session_replication_role = replica', current_database()); end $d$"))).toBe(AJUSTE);
+    // Contraprova da direção: um ajuste de OUTRO papel (aqui, um papel de ensaio) não alcança a sessão do erp_app.
+    await expect(recusaDa0039(async (c) => {
+      await c.query("create role e01r_outro_b1 nologin");
+      await c.query("alter role e01r_outro_b1 set session_replication_role = replica");
+    })).rejects.toThrow("esperava a 0039 recusar, e ela aplicou");
     // A porta do atraso: ausente, sem SECURITY DEFINER, com corpo que já não é o da 0033, dono sem bypass de RLS,
     // e quem aplica não é dono dela.
     const AUSENTE = "EDITAR-01: erp.situacao_atraso_cliente(uuid, integer) ausente ou sem SECURITY DEFINER; a 0033 nao esta aplicada ou ha schema divergente.";
     expect(await recusaDa0039((c) => c.query("drop function erp.situacao_atraso_cliente(uuid, int)"))).toBe(AUSENTE);
     expect(await recusaDa0039((c) => c.query("alter function erp.situacao_atraso_cliente(uuid, int) security invoker"))).toBe(AUSENTE);
-    const CORPO = "EDITAR-01: o corpo de erp.situacao_atraso_cliente nao e o da 0033 (as tres .create e nenhuma .edit); a 0039 ja foi aplicada ou ha schema divergente.";
+    const CORPO = `EDITAR-01: o corpo de erp.situacao_atraso_cliente nao e o da 0033 (md5 do corpo inteiro diferente de ${MD5_0033}); a 0039 ja foi aplicada ou ha schema divergente.`;
     const substituir = (c: Tx, corpo: string) => c.query(
       `create or replace function erp.situacao_atraso_cliente(p_cliente uuid, p_tolerancia int) returns table (titulos int, total numeric, vencimento_mais_antigo date)
        language plpgsql stable security definer set search_path = erp, pg_temp as $f$${corpo}$f$`);
+    // Contraprova do instrumento: substituir pelo MESMO corpo conserva o md5, e a 0039 aplica (desfeita no fim).
+    await expect(recusaDa0039((c) => substituir(c, fonteAtrasoAntes))).rejects.toThrow("esperava a 0039 recusar, e ela aplicou");
     // (a) já aplicada: o corpo cita uma .edit; (b) divergente: falta uma das três .create.
     expect(await recusaDa0039((c) => substituir(c, fonteAtrasoAntes.replace("'sales.create')", "'sales.create') or erp.has_permission(v_org, v_user, 'orders.edit')")))).toBe(CORPO);
     expect(await recusaDa0039((c) => substituir(c, fonteAtrasoAntes.replace("'budgets.create'", "'budgets.view'")))).toBe(CORPO);
+    // (c) divergente FORA da lista de capacidades: a tolerância máxima 365 → 366. As três .create continuam e nenhuma
+    // .edit aparece — a heurística de trecho antiga aceitaria este corpo; o md5 do corpo inteiro recusa.
+    const tolerancia366 = fonteAtrasoAntes.replace("p_tolerancia > 365", "p_tolerancia > 366");
+    expect(tolerancia366, "a sabotagem mudou o corpo").not.toBe(fonteAtrasoAntes);
+    for (const k of ["budgets.create", "orders.create", "sales.create"]) expect(tolerancia366).toContain(`'${k}'`);
+    expect(tolerancia366).not.toMatch(/\.edit/);
+    expect(await recusaDa0039((c) => substituir(c, tolerancia366))).toBe(CORPO);
+    // (d) um espaço a mais no fim do corpo: o corpo é o da 0033 ou não é — não há "quase".
+    expect(await recusaDa0039((c) => substituir(c, `${fonteAtrasoAntes} `))).toBe(CORPO);
     expect(await recusaDa0039(async (c) => {
       await c.query("create role e01r_dono_atraso_b1 nologin");
       await c.query("alter function erp.situacao_atraso_cliente(uuid, int) owner to e01r_dono_atraso_b1");
@@ -277,6 +358,12 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
       await c.query("alter table erp.sales_documents owner to e01r_aplicador_tabela_b1");
       await c.query("set local role e01r_aplicador_tabela_b1");
     })).toBe("EDITAR-01: o papel que aplica a migration nao e dono de erp.situacao_atraso_cliente; o CREATE OR REPLACE seria recusado.");
+    // PÓS-CONDIÇÃO da porta: um grant antigo de EXECUTE a outro papel passa pelas pré-condições e sobrevive ao CREATE OR
+    // REPLACE (que conserva a ACL); a pós-condição recusa — a porta, agora maior, não abre para mais ninguém.
+    expect(await recusaDa0039(async (c) => {
+      await c.query("create role e01r_intruso_b1 nologin");
+      await c.query("grant execute on function erp.situacao_atraso_cliente(uuid, int) to e01r_intruso_b1");
+    })).toBe("EDITAR-01: EXECUTE de erp.situacao_atraso_cliente concedido alem do dono e do erp_app: {e01r_intruso_b1}");
     // Nada ficou: o ledger, a coluna, a função, os gatilhos, o dono, os privilégios e os papéis de ensaio são os de antes.
     expect(await noLedger()).toBe(false);
     expect(await temColuna()).toBe(false);
@@ -288,6 +375,10 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
          from pg_class c, pg_roles r where c.oid='erp.sales_documents'::regclass and r.rolname='erp_app'`)).rows;
     expect(estado).toEqual([{ dono: "postgres", su: false, srr: false, trig: false }]);
     expect((await db.query("select 1 from pg_roles where rolname like 'e01r\\_%'")).rowCount).toBe(0);
+    expect((await db.query("select 1 from pg_roles where rolname = 'erp_app'")).rowCount, "o rename do erp_app foi desfeito").toBe(1);
+    expect(await papeisPerigososDoApp()).toEqual([]);
+    expect(await ajusteReplica()).toEqual([]);
+    expect(await execucaoDaPorta()).toEqual(["erp_app", "postgres"]);
     expect(await retrato()).toEqual(antes);
     expect(await fonteAtraso(), "a porta do atraso continua a da 0033").toBe(fonteAtrasoAntes);
   });
@@ -334,6 +425,8 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
          from pg_proc p join pg_roles r on r.oid = p.proowner where p.oid = 'erp.situacao_atraso_cliente(uuid,integer)'::regprocedure`)).rows;
     expect(porta).toEqual([{ definer: true, vol: "s", cfg: ["search_path=erp, pg_temp"], retorno: "TABLE(titulos integer, total numeric, vencimento_mais_antigo date)",
       atravessa: true, publico: false, app: true, comentario: true }]);
+    // EXECUTE da porta SÓ do dono e do erp_app (a pós-condição da 0039, lida pela ACL).
+    expect(await execucaoDaPorta()).toEqual(["erp_app", "postgres"]);
   });
 
   it("V6 reaplicar é recusado pela pré-condição de 'já aplicada', sem efeito", async () => {

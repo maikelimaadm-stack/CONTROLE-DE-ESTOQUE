@@ -7,14 +7,24 @@
 --    (attmissingval) e a tabela NÃO é regravada; toda linha que existe hoje passa a ler 0. O lock é o
 --    AccessExclusive do próprio ALTER, curto, e o lock_timeout de 2s faz a migration desistir em vez de
 --    enfileirar as gravações de venda atrás dela.
--- 2) A VERSÃO MUDA QUANDO O DOCUMENTO MUDA — em QUALQUER UPDATE, de QUALQUER caminho: editar, confirmar,
---    cancelar, converter (a origem muda de situação), encerrar saldo, faturar em partes, um script de
---    suporte. Quem soma é o gatilho `trg_sales_documents_versao` (BEFORE UPDATE, por linha, sem lista de
+-- 2) A VERSÃO MUDA QUANDO O CABEÇALHO DO DOCUMENTO MUDA — em QUALQUER UPDATE da linha de erp.sales_documents, de
+--    QUALQUER caminho: editar, confirmar, cancelar, converter (a origem muda de situação), encerrar saldo, um
+--    script de suporte. Quem soma é o gatilho `trg_sales_documents_versao` (BEFORE UPDATE, por linha, sem lista de
 --    colunas e sem WHEN), e não cada rota da API lembrando de somar: a rota que esquecesse deixaria o
 --    documento mudar com a versão parada, e a trava otimista aceitaria uma gravação feita sobre o estado
 --    velho. A função ignora o que o UPDATE mandou na coluna: `new.version := old.version + 1` sempre —
 --    um `SET version = 999` explícito vira old+1, e um UPDATE que não muda nada (`set note = note`) também
 --    soma 1 (o UPDATE aconteceu; o gatilho não tenta adivinhar se "valeu").
+--    FATURAR EM PARTES (apps/api/src/routes/sales.ts, conversão com `emPartes`): a parte gerada é INSERT e nasce
+--    0. A ORIGEM só soma quando a parte ZERA o saldo dela — é aí, e só aí, que a conversão faz o UPDATE da origem
+--    (`status='converted'`). A parte que não zera o saldo não faz UPDATE na origem (só a trava, com SELECT ... FOR
+--    UPDATE, que não dispara gatilho), e a versão da origem fica PARADA, embora o saldo dela tenha mudado: o saldo
+--    é conta sobre as partes, não coluna do cabeçalho. Cancelar uma parte que devolve a origem a `open` é UPDATE
+--    da origem e soma.
+--    A VERSÃO É DO CABEÇALHO: escrita só em itens (erp.sales_document_items) não soma. Na API toda escrita de
+--    item de documento que já existe passa por `writeDoc`, que faz, na MESMA transação, o UPDATE do cabeçalho
+--    (e é esse UPDATE que soma); uma escrita só em itens, fora do `writeDoc` (um script, uma rota
+--    futura), deixaria a versão parada — quem a fizer tem de tocar o cabeçalho na mesma transação.
 --    O INSERT não passa pelo gatilho: o documento nasce com o default (0). Um INSERT que citasse a coluna
 --    gravaria o valor dele — nenhuma rota cita, e a trava continua valendo, porque ela compara igualdade e
 --    todo UPDATE seguinte soma 1 a partir dali.
@@ -29,8 +39,14 @@
 --    tolerância 0..365, só agregados, fora da capacidade zero linhas. CREATE OR REPLACE conserva o dono e os
 --    privilégios, e mesmo assim o revoke de PUBLIC e o grant ao erp_app são reafirmados (a porta PRECISA do
 --    EXECUTE do erp_app; o laço de revogação da função da versão, abaixo, só olha aquela função).
---    Pré-condição: a função existe, é SECURITY DEFINER, e o corpo é o da 0033 (cita as três .create e nenhuma
---    .edit); o dono atravessa RLS (senão a porta veria o recorte de quem chama) e quem aplica pode substituí-la.
+--    Pré-condição: a função existe, é SECURITY DEFINER, e o corpo é EXATAMENTE o da 0033 — md5 do prosrc inteiro
+--    = 'd55df1291552c3fdd19b7c0eecf4d22c' (conferido na produção, só leitura, e no banco de teste com a 0033
+--    aplicada). Não é heurística de trecho: qualquer divergência, dentro ou fora da lista de capacidades (uma .edit
+--    a mais, uma .create a menos, a tolerância 365 trocada), recusa com o motivo nomeado; o dono atravessa RLS
+--    (senão a porta veria o recorte de quem chama) e quem aplica pode substituí-la.
+--    Pós-condição: EXECUTE da porta SÓ do dono e do erp_app (laço aclexplode; qualquer outro grantee, PUBLIC
+--    inclusive, recusa) — o CREATE OR REPLACE conserva a ACL, e um grant antigo a outro papel passaria a abrir
+--    a porta a mais gente.
 --
 -- A ORDEM ENTRE OS GATILHOS BEFORE UPDATE. O PostgreSQL dispara os gatilhos do mesmo momento na ordem do
 -- NOME (byte a byte, collation "C"), e cada BEFORE vê o NEW que os anteriores deixaram — inclusive na
@@ -59,12 +75,21 @@
 --
 -- NÃO PODE SER CONTORNADO PELO PAPEL DA APLICAÇÃO (erp_app, com que a API conecta). A pré-condição confere,
 -- pelo catálogo, que o erp_app:
+--   · EXISTE — primeiro, com motivo nomeado: sem ele nenhuma das perguntas abaixo faz sentido, e a porta do
+--     atraso ficaria sem quem a execute;
 --   · não é dono de erp.sales_documents nem MEMBRO do papel dono → não faz ALTER TABLE ... DISABLE TRIGGER,
 --     não faz DROP TRIGGER. Aqui a pergunta é 'MEMBER', e não 'USAGE': o erp_app nasce NOINHERIT (0007), e
 --     um membro que não herda ainda pode fazer SET ROLE para o dono e desligar o gatilho;
 --   · não é superusuário e não tem SET em session_replication_role → não liga o modo `replica`, em que os
 --     gatilhos ligados como 'O' (origem, o padrão) deixam de disparar;
---   · não tem TRIGGER em erp.sales_documents → não cria um gatilho que ordene depois deste e desfaça a soma.
+--   · não tem TRIGGER em erp.sales_documents → não cria um gatilho que ordene depois deste e desfaça a soma;
+--   · não é MEMBRO — de qualquer forma, direta ou em cadeia, com ou sem herança (pg_has_role ... 'MEMBER') — de
+--     NENHUM papel que seja superusuário, tenha SET em session_replication_role ou tenha TRIGGER em
+--     erp.sales_documents: o membro NOINHERIT não usa o privilégio do papel pelas funções has_*_privilege, mas
+--     faz SET ROLE para ele e passa a ter tudo o que ele tem;
+--   · não tem session_replication_role em pg_db_role_setting que alcance a sessão dele (ALTER ROLE erp_app SET,
+--     em qualquer banco, ou o ajuste de banco/ALTER ROLE ALL, setrole = 0): a sessão nasceria em `replica`,
+--     com o gatilho desligado, sem o erp_app pedir nada.
 --   E o `SET version = x` explícito que ele mande é sobrescrito por old+1. A função é SECURITY INVOKER (não
 --   lê tabela nenhuma: só soma), com search_path fixo `erp, pg_temp`, e o EXECUTE sai de TODO papel além do
 --   dono (PUBLIC e o erp_app que o default privilege da 0007 concede): gatilho não precisa de EXECUTE de
@@ -106,6 +131,8 @@ declare
   v_atraso oid;
   v_src text;
   v_dono_atraso oid;
+  v_app oid;
+  v_perigosos text[];
 begin
   if to_regclass('erp.sales_documents') is null then
     raise exception 'EDITAR-01: erp.sales_documents ausente; a cadeia de migrations esta fora de ordem.';
@@ -127,7 +154,8 @@ begin
   -- "nenhuma guarda compara a linha inteira" e "a versão é a última". Um gatilho a mais (ou a menos, ou o
   -- mesmo nome apontando para outra função) invalida a afirmação, e a decisão volta para um humano.
   -- O nome da função vem de nspname e proname, e não de regprocedure::text (que depende do search_path).
-  -- tgtype: bit 1 = por linha, bit 2 = BEFORE, bit 16 = UPDATE.
+  -- tgtype é uma máscara; 1, 2 e 16 são os VALORES das flags (não posições de bit): 1 = ROW (por linha),
+  -- 2 = BEFORE, 16 = UPDATE (TRIGGER_TYPE_ROW, TRIGGER_TYPE_BEFORE e TRIGGER_TYPE_UPDATE do PostgreSQL).
   select array_agg(t.tgname || ' -> ' || n.nspname || '.' || p.proname order by t.tgname collate "C") into v_antes
     from pg_trigger t
     join pg_proc p on p.oid = t.tgfoid
@@ -150,32 +178,59 @@ begin
   if not has_schema_privilege(current_user, 'erp', 'CREATE') then
     raise exception 'EDITAR-01: o papel que aplica a migration nao cria objetos no schema erp; o CREATE FUNCTION seria recusado.';
   end if;
-  -- O papel da aplicação não desliga nem contorna o gatilho (ver o cabeçalho). Se o erp_app não existir,
-  -- o próprio pg_has_role recusa ("role erp_app does not exist") e nada é aplicado. Superusuário vem
-  -- PRIMEIRO: para ele toda pergunta de papel responde sim, e o motivo nomeado tem de ser o verdadeiro.
-  if (select r.rolsuper from pg_roles r where r.rolname = 'erp_app')
-     or has_parameter_privilege('erp_app', 'session_replication_role', 'SET') then
+  -- O papel da aplicação não desliga nem contorna o gatilho (ver o cabeçalho). A EXISTÊNCIA vem primeiro: sem
+  -- ela, o primeiro pg_has_role abaixo pararia com "role erp_app does not exist", e não com o motivo nomeado.
+  select r.oid into v_app from pg_roles r where r.rolname = 'erp_app';
+  if v_app is null then
+    raise exception 'EDITAR-01: o papel erp_app nao existe; a 0007 nao esta aplicada ou ha schema divergente (a porta do atraso ficaria sem quem a execute).';
+  end if;
+  -- Superusuário vem ANTES das perguntas de papel: para ele toda pergunta de papel responde sim, e o motivo
+  -- nomeado tem de ser o verdadeiro.
+  if (select r.rolsuper from pg_roles r where r.oid = v_app)
+     or has_parameter_privilege(v_app, 'session_replication_role', 'SET') then
     raise exception 'EDITAR-01: o papel da aplicacao (erp_app) e superusuario ou pode trocar session_replication_role; poderia desligar o gatilho da versao.';
   end if;
   -- 'MEMBER' (e não 'USAGE'): o erp_app é NOINHERIT (0007), e ser membro sem herdar ainda permite SET ROLE
   -- para o dono.
-  if pg_has_role('erp_app', v_owner, 'MEMBER') then
+  if pg_has_role(v_app, v_owner, 'MEMBER') then
     raise exception 'EDITAR-01: o papel da aplicacao (erp_app) e dono de erp.sales_documents ou membro do papel dono; poderia desligar o gatilho da versao.';
   end if;
-  if has_table_privilege('erp_app', 'erp.sales_documents', 'TRIGGER') then
+  if has_table_privilege(v_app, 'erp.sales_documents', 'TRIGGER') then
     raise exception 'EDITAR-01: o papel da aplicacao (erp_app) tem TRIGGER em erp.sales_documents; poderia criar um gatilho depois do da versao.';
   end if;
-  -- A porta do atraso (item 3 do cabeçalho): existe, é SECURITY DEFINER, e o corpo é o da 0033 — as três
-  -- capacidades de lançar e nenhuma de editar. Depois da 0039 o corpo cita as .edit, e a reaplicação diz isso.
+  -- Os papéis de que o erp_app é MEMBRO (direto ou em cadeia, com ou sem herança, com ou sem SET): as has_*_privilege
+  -- acima não veem o que ele só alcança por SET ROLE. A direção é esta — os papéis ACIMA do erp_app; quem é membro
+  -- DELE (o login de teste erp_app_test, por exemplo) não entra. Ele mesmo fica de fora (pg_has_role de si é sempre sim).
+  select array_agg(r.rolname::text order by r.rolname collate "C") into v_perigosos
+    from pg_roles r
+   where r.oid <> v_app
+     and pg_has_role(v_app, r.oid, 'MEMBER')
+     and (r.rolsuper
+          or has_parameter_privilege(r.oid, 'session_replication_role', 'SET')
+          or has_table_privilege(r.oid, 'erp.sales_documents', 'TRIGGER'));
+  if v_perigosos is not null then
+    raise exception 'EDITAR-01: o papel da aplicacao (erp_app) e membro (com ou sem heranca) de papel superusuario, com SET em session_replication_role ou com TRIGGER em erp.sales_documents: %; faria SET ROLE e poderia desligar o gatilho da versao.', v_perigosos;
+  end if;
+  -- O ajuste guardado que a sessão do erp_app herdaria ao conectar: o do papel (em qualquer banco) e o de todos
+  -- os papéis (setrole = 0: ALTER DATABASE ... SET, ALTER ROLE ALL SET).
+  if exists (select 1 from pg_db_role_setting s
+               cross join lateral unnest(s.setconfig) c(ajuste)
+              where s.setrole in (v_app, 0)
+                and lower(split_part(c.ajuste, '=', 1)) = 'session_replication_role') then
+    raise exception 'EDITAR-01: ha session_replication_role em pg_db_role_setting para o erp_app (ALTER ROLE erp_app SET, ALTER ROLE ALL SET ou ALTER DATABASE SET); a sessao dele nasceria com o gatilho da versao desligado.';
+  end if;
+  -- A porta do atraso (item 3 do cabeçalho): existe, é SECURITY DEFINER, e o corpo é EXATAMENTE o da 0033 — o
+  -- md5 do prosrc inteiro, conferido na produção (só leitura) e no banco de teste com a 0033 aplicada. Qualquer
+  -- divergência recusa, dentro ou fora da lista de capacidades; depois da 0039 o corpo é outro, e a reaplicação
+  -- diz isso.
   select p.oid, p.prosrc, p.proowner into v_atraso, v_src, v_dono_atraso
     from pg_proc p
    where p.oid = to_regprocedure('erp.situacao_atraso_cliente(uuid,integer)') and p.prosecdef;
   if v_atraso is null then
     raise exception 'EDITAR-01: erp.situacao_atraso_cliente(uuid, integer) ausente ou sem SECURITY DEFINER; a 0033 nao esta aplicada ou ha schema divergente.';
   end if;
-  if position('''budgets.create''' in v_src) = 0 or position('''orders.create''' in v_src) = 0 or position('''sales.create''' in v_src) = 0
-     or v_src ~ '\.edit' then
-    raise exception 'EDITAR-01: o corpo de erp.situacao_atraso_cliente nao e o da 0033 (as tres .create e nenhuma .edit); a 0039 ja foi aplicada ou ha schema divergente.';
+  if md5(v_src) <> 'd55df1291552c3fdd19b7c0eecf4d22c' then
+    raise exception 'EDITAR-01: o corpo de erp.situacao_atraso_cliente nao e o da 0033 (md5 do corpo inteiro diferente de d55df1291552c3fdd19b7c0eecf4d22c); a 0039 ja foi aplicada ou ha schema divergente.';
   end if;
   -- O DONO atravessa a RLS: é com os privilégios dele que a porta soma os títulos de TODAS as empresas da
   -- organização. E quem aplica pode substituí-la (é o dono, ou herda dele) — senão o CREATE OR REPLACE pararia
@@ -279,6 +334,7 @@ grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
 do $$
 declare
   v_depois text[];
+  v_execucao text[];
 begin
   if not exists (select 1 from pg_attribute a
                    join pg_attrdef d on d.adrelid = a.attrelid and d.adnum = a.attnum
@@ -335,5 +391,17 @@ begin
   if has_function_privilege('public', 'erp.situacao_atraso_cliente(uuid,integer)', 'execute')
      or not has_function_privilege('erp_app', 'erp.situacao_atraso_cliente(uuid,integer)', 'execute') then
     raise exception 'EDITAR-01: EXECUTE de erp.situacao_atraso_cliente fora do esperado (PUBLIC nao executa; erp_app executa).';
+  end if;
+  -- EXECUTE da porta SÓ do dono e do erp_app: o mesmo laço aclexplode da função da versão, aqui como RECUSA (não
+  -- revoga: um grantee a mais é schema divergente, e a decisão volta para um humano). O CREATE OR REPLACE
+  -- conservou a ACL de antes, e um grant antigo a outro papel abriria a porta, agora maior, a mais gente.
+  select array_agg(case when a.grantee = 0 then 'PUBLIC' else a.grantee::regrole::text end order by a.grantee) into v_execucao
+    from pg_proc p
+    cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+   where p.oid = 'erp.situacao_atraso_cliente(uuid,integer)'::regprocedure
+     and a.privilege_type = 'EXECUTE' and a.grantee <> p.proowner
+     and a.grantee <> (select r.oid from pg_roles r where r.rolname = 'erp_app');
+  if v_execucao is not null then
+    raise exception 'EDITAR-01: EXECUTE de erp.situacao_atraso_cliente concedido alem do dono e do erp_app: %', v_execucao;
   end if;
 end $$;
