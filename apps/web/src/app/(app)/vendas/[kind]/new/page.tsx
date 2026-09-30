@@ -14,10 +14,11 @@ import { AVISO_PADRAO_INVALIDO_CENTRAL, CAMPOS_SO_NO_RODAPE, camposAdicionaisDoC
 import { api, ApiError } from "@/lib/api";
 import { MensagemTop, entendeClassificacaoFinanceira, entendeCondicaoPagamento, entendeLayoutDocumento, podeLancar, useTopsDaVariante, type EstadoTop, type TopOperacional } from "@/features/sales/tipo-operacao-select";
 import { LancadorDeTipoOperacao, pedidoImpossivel, topSelecionada } from "@/features/sales/lancador-tipo-operacao";
-import { ChevronRight, Repeat2, Save, Search } from "lucide-react";
+import { Repeat2, Save, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { AcaoDaBarra, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
-import { ItensDaCentral, Travado } from "@/features/sales/central-vendas-itens";
+import { ItensDaCentral } from "@/features/sales/central-vendas-itens";
+import { CampoDaCentral, ChaveSimNao, ColunaDeCampos, DadosAdicionais, DataDaCentral, type IconeDoCampo } from "@/features/sales/central-vendas-campo";
 import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
 /* TOP-CONFIG-05 exigências: as regras da operação (só com `capacidades.regrasDaOperacao` exata). */
 import { entendeRegrasDaOperacao, useRegrasDaOperacao, useSituacaoCliente } from "@/features/sales/regras-da-operacao";
@@ -568,9 +569,10 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
     escolha, e quem congela a versão do documento é o servidor, no POST. Exibi-la antes de salvar
     prometeria um snapshot que ainda não existe — a versão congelada é mostrada no DETALHE.
   */
-  const contextoOperacional = <Travado rotulo={familia ? `Tipo de Operação · ${familia}` : "Tipo de Operação"} testId="top-contexto">
+  /* VISUAL-UX-02: travado, "<código> · <nome>", como no desenho; o movimento (família) fica na dica do campo. */
+  const contextoOperacional = <CampoDaCentral rotulo="Tipo de Operação" estado="travado" testId="top-contexto" dica={familia ? `Movimento: ${familia}` : undefined}>
     <span className={estilosCv.codigo}>{top.code}</span><span className={estilosCv.separador}>·</span><span>{top.name}</span>
-  </Travado>;
+  </CampoDaCentral>;
 
   /*
     POR QUE A ESCRITA ESTÁ BLOQUEADA — dentro do formulário, que continua inteiro.
@@ -626,33 +628,44 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const pesquisa = (conteudo: React.ReactNode, chave?: string) => <div className={cn(estilosCv.campo, estilosCv.campoPesquisa)} {...(chave ? dc(chave) : {})}>{conteudo}{avisoDoPadrao(chave)}<span className={estilosCv.adorno} aria-hidden><Search /></span></div>;
   const campo = (conteudo: React.ReactNode, chave?: string) => <div className={estilosCv.campo} {...(chave ? dc(chave) : {})}>{conteudo}</div>;
   const larguraFixa = { maxWidth: 330 };
+  /**
+   * VISUAL-UX-02: o campo do DESENHO (`CampoDaCentral`, nas duas densidades). Rótulo, "*", erro e `data-campo` saem dos
+   * MESMOS helpers de antes (`rot`/`req`/`err`/`dc`); o controle e o valor são os de antes. (`pesquisa`/`campo` acima
+   * ficam para os casos que ainda os usam.)
+   */
+  const cc = (chave: string, hoje: string, o: { obrigatorio?: boolean; icone?: IconeDoCampo; preenchido: boolean; erro?: string; multilinha?: boolean }, controle: React.ReactElement) =>
+    <CampoDaCentral rotulo={rot(chave, hoje)} obrigatorio={req(chave, o.obrigatorio ?? false)} erro={o.erro ?? err(chave)} icone={o.icone ?? null} preenchido={o.preenchido} multilinha={o.multilinha} abaixo={avisoDoPadrao(chave)} {...dc(chave)}>{controle}</CampoDaCentral>;
+  /** Responsável: só leitura, o nome de quem lança (o servidor grava quem faz o POST). Não é campo do layout: sem `data-campo`. */
+  const nomeDeQuemLanca = useAuth().ctx?.user.name ?? "";
+  const responsavel = <CampoDaCentral rotulo="Responsável" estado="travado">{nomeDeQuemLanca}</CampoDaCentral>;
 
   const desenhar = (chave: string): React.ReactNode => {
     switch (chave) {
       /* TOP-CONFIG-05 atraso: erro do 422 no campo Cliente e a faixa LOGO ABAIXO dele (fora do invólucro, sem espaço reservado quando não há faixa). */
-      case "client_id": return <>{pesquisa(<Field label={rot(chave, "Cliente")} required={req(chave, true)} error={err(chave) ?? erroAtrasoDoCliente} span={12}><RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} labelHint={dica("client_id")} /></Field>, chave)}{regrasAtivo && <FaixaAtrasoCliente situacao={situacaoAtraso} />}</>;
-      case "empresa_id": return pesquisa(<Field label={rot(chave, "Empresa")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} /></Field>, chave);
-      case "document_date": return campo(<Field label={rot(chave, "Data")} required={req(chave, true)} error={err(chave)} span={12}><Input type="date" value={h.document_date} onChange={(e) => setH({ ...h, document_date: e.target.value })} /></Field>, chave);
-      case "due_date": return campo(<Field label={rot(chave, "Vencimento")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.due_date} onChange={(e) => setH({ ...h, due_date: e.target.value })} /></Field>, chave);
-      case "payment_method_id": return pesquisa(<Field label={rot(chave, "Forma de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} labelHint={dica("payment_method_id")} /></Field>, chave);
-      case "categoria_financeira_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Natureza")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} labelHint={dica("categoria_financeira_id")} /></Field>, chave);
-      case "centro_custo_id": return classificacaoAtiva && pesquisa(<Field label={rot(chave, "Centro de resultado")} required={req(chave, true)} error={err(chave)} span={12}><RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} labelHint={dica("centro_custo_id")} /></Field>, chave);
-      case "shipping_date": return campo(<Field label={rot(chave, "Data de saída")} required={req(chave, false)} error={err(chave)} span={12}><Input type="date" value={h.shipping_date} onChange={(e) => setH({ ...h, shipping_date: e.target.value })} /></Field>, chave);
-      case "proprietary_id": return pesquisa(<Field label={rot(chave, "Proprietário")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} labelHint={dica("proprietary_id")} /></Field>, chave);
-      case "discount": return campo(<Field label={rot(chave, "Desconto")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} /></Field>, chave);
-      case "other_values": return campo(<Field label={rot(chave, "Outros valores")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} /></Field>, chave);
+      case "client_id": return <>{cc(chave, "Cliente", { obrigatorio: true, icone: "pesquisa", preenchido: Boolean(h.client_id), erro: err(chave) ?? erroAtrasoDoCliente }, <RefSelect resource="people" value={h.client_id} onChange={(v) => setH({ ...h, client_id: v ?? "" })} filter={{ is_client: "true" }} labelHint={dica("client_id")} />)}{regrasAtivo && <FaixaAtrasoCliente situacao={situacaoAtraso} />}</>;
+      case "empresa_id": return cc(chave, "Empresa", { obrigatorio: true, icone: "pesquisa", preenchido: Boolean(h.empresa_id) }, <RefSelect resource="empresas" value={h.empresa_id} onChange={(v) => setH({ ...h, empresa_id: v ?? "" })} />);
+      case "document_date": return cc(chave, "Data", { obrigatorio: true, icone: "data", preenchido: Boolean(h.document_date) }, <DataDaCentral rotulo={rot(chave, "Data")} value={h.document_date} onChange={(v) => setH({ ...h, document_date: v })} />);
+      case "due_date": return cc(chave, "Vencimento", { icone: "data", preenchido: Boolean(h.due_date) }, <DataDaCentral rotulo={rot(chave, "Vencimento")} value={h.due_date} onChange={(v) => setH({ ...h, due_date: v })} />);
+      case "payment_method_id": return cc(chave, "Forma de pagamento", { icone: "pesquisa", preenchido: Boolean(h.payment_method_id) }, <RefSelect resource="payment_methods" value={h.payment_method_id} onChange={(v) => setH({ ...h, payment_method_id: v ?? "" })} labelHint={dica("payment_method_id")} />);
+      case "categoria_financeira_id": return classificacaoAtiva && cc(chave, "Natureza", { obrigatorio: true, icone: "pesquisa", preenchido: Boolean(h.categoria_financeira_id) }, <RefSelect resource="financial_categories" value={h.categoria_financeira_id} onChange={(v) => setH({ ...h, categoria_financeira_id: v ?? "" })} filter={{ kind: "analytic", nature: "income" }} labelHint={dica("categoria_financeira_id")} />);
+      case "centro_custo_id": return classificacaoAtiva && cc(chave, "Centro de resultado", { obrigatorio: true, icone: "pesquisa", preenchido: Boolean(h.centro_custo_id) }, <RefSelect resource="cost_centers" value={h.centro_custo_id} onChange={(v) => setH({ ...h, centro_custo_id: v ?? "" })} filter={{ kind: "analytic" }} labelHint={dica("centro_custo_id")} />);
+      case "shipping_date": return cc(chave, "Data de saída", { icone: "data", preenchido: Boolean(h.shipping_date) }, <DataDaCentral rotulo={rot(chave, "Data de saída")} value={h.shipping_date} onChange={(v) => setH({ ...h, shipping_date: v })} />);
+      case "proprietary_id": return cc(chave, "Proprietário", { icone: "pesquisa", preenchido: Boolean(h.proprietary_id) }, <RefSelect resource="people" value={h.proprietary_id} onChange={(v) => setH({ ...h, proprietary_id: v ?? "" })} filter={{ is_proprietary: "true" }} labelHint={dica("proprietary_id")} />);
+      case "discount": return cc(chave, "Desconto", { preenchido: h.discount !== "" }, <Input type="number" step="0.01" value={h.discount} onChange={(e) => setH({ ...h, discount: e.target.value })} />);
+      case "other_values": return cc(chave, "Outros valores", { preenchido: h.other_values !== "" }, <Input type="number" step="0.01" value={h.other_values} onChange={(e) => setH({ ...h, other_values: e.target.value })} />);
       case "condicao_pagamento_id": return condicaoAtiva && <div style={larguraFixa} data-testid="condicao-pagamento">{pesquisa(<Field label={rot(chave, "Condição de pagamento")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="condicoes_pagamento" value={h.condicao_pagamento_id} onChange={escolherCondicao} labelHint={dica("condicao_pagamento_id")} somenteIds={condicoesPermitidas} /></Field>, chave)}</div>;
       case "installment_plan": return <>
         {!condicaoId && <div style={larguraFixa}>{campo(<Field label={rot(chave, "Parcelamento")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.installments ? "1" : "0"} onChange={(e) => setH({ ...h, installments: e.target.value === "1" })}><option value="0">À vista</option><option value="1">Parcelado</option></NativeSelect></Field>, chave)}</div>}
         {!condicaoId && h.installments && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={setPlan} /></div>}
         {condicaoId && planoCalculado && <div className={estilosCv.painelLargo}><div className={estilosCv.subtitulo}>Plano de parcelas</div><PlanEditor plan={plan} onChange={ajustarPlano} /></div>}
       </>;
-      case "transporter_id": return pesquisa(<Field label={rot(chave, "Transportadora")} required={req(chave, false)} error={err(chave)} span={12}><RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transporter_id")} /></Field>, chave);
-      case "driver_name": return campo(<Field label={rot(chave, "Motorista")} required={req(chave, false)} error={err(chave)} span={12}><Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} /></Field>, chave);
-      case "freight": return campo(<Field label={rot(chave, "Frete")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} /></Field>, chave);
-      case "freight_icms": return campo(<Field label={rot(chave, "ICMS frete")} required={req(chave, false)} error={err(chave)} span={12}><Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} /></Field>, chave);
-      case "is_deductible": return campo(<Field label={rot(chave, "Dedutível")} required={req(chave, false)} error={err(chave)} span={12}><NativeSelect value={h.is_deductible ? "1" : "0"} onChange={(e) => setH({ ...h, is_deductible: e.target.value === "1" })}><option value="0">Não</option><option value="1">Sim</option></NativeSelect></Field>, chave);
-      case "note": return campo(<Field label={rot(chave, "Observação")} required={req(chave, false)} error={err(chave)} span={12}><Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} /></Field>, chave);
+      case "transporter_id": return cc(chave, "Transportadora", { icone: "pesquisa", preenchido: Boolean(h.transporter_id) }, <RefSelect resource="people" value={h.transporter_id} onChange={(v) => setH({ ...h, transporter_id: v ?? "" })} filter={{ is_transporter: "true" }} labelHint={dica("transporter_id")} />);
+      case "driver_name": return cc(chave, "Motorista", { preenchido: Boolean(h.driver_name) }, <Input value={h.driver_name} onChange={(e) => setH({ ...h, driver_name: e.target.value })} />);
+      case "freight": return cc(chave, "Frete", { preenchido: h.freight !== "" }, <Input type="number" step="0.01" value={h.freight} onChange={(e) => setH({ ...h, freight: e.target.value })} />);
+      case "freight_icms": return cc(chave, "ICMS frete", { preenchido: h.freight_icms !== "" }, <Input type="number" step="0.01" value={h.freight_icms} onChange={(e) => setH({ ...h, freight_icms: e.target.value })} />);
+      /* chave sim/não do desenho; o valor e o payload (`is_deductible`) são os de antes */
+      case "is_deductible": return <ChaveSimNao rotulo={rot(chave, "Dedutível")} valor={h.is_deductible} onChange={(v) => setH({ ...h, is_deductible: v })} {...dc(chave)} />;
+      case "note": return cc(chave, "Observação", { preenchido: Boolean(h.note), multilinha: true }, <Textarea value={h.note} onChange={(e) => setH({ ...h, note: e.target.value })} />);
       default: return null;
     }
   };
@@ -713,6 +726,8 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
   const adicionais = cabecalho.filter((c) => adicionaisDoLayout.has(c));
   const posEmpresa = principais.indexOf("empresa_id");
   const posTop = posEmpresa >= 0 ? posEmpresa + 1 : Math.min(2, principais.length);
+  const posSaida = principais.indexOf("shipping_date");
+  const posResponsavel = posSaida >= posTop ? posSaida : principais.length;
 
   /* Rodapé: as abas do layout, na ordem, com os campos dele. A arrumação de cada aba segue a de hoje. */
   const VALOR_DA_ABA: Record<string, string> = { "Totais": "totais", "Financeiro": "financeiro", "Frete e transporte": "frete", "Fiscal": "fiscal", "Observações": "observacoes" };
@@ -764,17 +779,17 @@ function Formulario({ kind, top, familia, estadoTop, escritaTopConfirmada }: {
       aviso={avisoDeLayout ? <>{avisoDeEscrita}{avisoDeLayout}</> : avisoDeEscrita}
       dados={<>
         {linhaDoLayout}
-        {principais.slice(0, posTop).map(render)}
-        {contextoOperacional}
-        {principais.slice(posTop).map(render)}
-        {adicionais.length > 0 && <>
-          <button type="button" className={estilosCv.maisDados} aria-expanded={maisDados} aria-controls="dados-adicionais" onClick={() => setMaisDados((m) => !m)}>
-            <ChevronRight aria-hidden /> Dados adicionais <span className={estilosCv.mudo}>· {adicionais.length} {adicionais.length === 1 ? "campo" : "campos"}</span>
-          </button>
-          {maisDados && <div id="dados-adicionais">
-            {adicionais.map(render)}
-          </div>}
-        </>}
+        {/* VISUAL-UX-02: a coluna do desenho; o Responsável (só leitura) entra antes da Data de saída, como no desenho */}
+        <ColunaDeCampos>
+          {principais.slice(0, posTop).map(render)}
+          {contextoOperacional}
+          {principais.slice(posTop, posResponsavel).map(render)}
+          {responsavel}
+          {principais.slice(posResponsavel).map(render)}
+        </ColunaDeCampos>
+        <DadosAdicionais quantidade={adicionais.length} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)}>
+          {adicionais.map(render)}
+        </DadosAdicionais>
       </>}
       itens={<ItensDaCentral items={items} onChange={setItems} layout={layoutDosItens} erros={layout || regras ? erros : undefined} armazemPadrao={armazemPadrao} reservaEstoque={reservaDosItens} />}
       abas={abas}

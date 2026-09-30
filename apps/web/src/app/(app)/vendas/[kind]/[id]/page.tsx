@@ -13,7 +13,10 @@ import { useAction } from "@/features/docs/actions";
 import { Base2Items, type Base2ItemColumn } from "@/features/base2";
 import { HistoryDialog } from "@/features/base1/history-dialog";
 import { AcaoDaBarra, AcaoPrincipal, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
-import { CampoLeitura, ItensSalvos, MaisAcoes, type ItemDoMenu } from "@/features/sales/central-vendas-consulta";
+import { ItensSalvos, MaisAcoes, type ItemDoMenu } from "@/features/sales/central-vendas-consulta";
+import { CampoLeitura, ColunaDeCampos, DadosAdicionais } from "@/features/sales/central-vendas-campo";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
 import estilosCentral from "@/features/sales/central-vendas-workspace.module.css";
 import { tipoOperacaoDoRegistro } from "@agro/domain";
@@ -206,6 +209,14 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const [linhasDaParte, setLinhasDaParte] = React.useState<LinhaDaParte[]>([]);
   const parteGerada = d ? ehParteGerada(d.items) : false;
   const origemDaParte = useOrigemDaParte(d, parteGerada, can);
+  /**
+   * VISUAL-UX-02 — "Dados adicionais" da consulta (recolhível, estado de tela) e o Proprietário QUANDO LEGÍVEL: o detalhe
+   * traz só o id; o nome vem da MESMA leitura (e da mesma chave de cache) que o RefSelect usa para mostrar um valor. Sem
+   * permissão de ler o cadastro, o campo não aparece — nunca vira um id cru na tela.
+   */
+  const [maisDados, setMaisDados] = React.useState(false);
+  const proprietarioId = typeof d?.["proprietary_id"] === "string" ? d["proprietary_id"] : "";
+  const proprietario = useQuery({ queryKey: ["option-one", "people", proprietarioId], queryFn: () => api<Record<string, unknown>>(`/api/resources/people/${proprietarioId}`), enabled: Boolean(proprietarioId), staleTime: 60_000, retry: false });
   // o rótulo da aba de trabalho é o de antes da Central: título da variante + código do servidor
   useTabTitle(d ? `${k?.titulo ?? "Documento de venda"} ${String(d["code"] ?? "")}`.trim() : null);
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
@@ -284,42 +295,51 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         {menu.length > 0 && <><DivisorDaBarra /><MaisAcoes itens={menu} /></>}
       </>}
       dados={<>
-        <CampoLeitura rotulo="Cliente" adorno="pesquisa" testId="central-vendas-campo" valor={`${d["client_name"] ?? ""} ${d["client_document"] ?? ""}`.trim()} />
-        <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["empresa_name"] ?? "")} />
-        <CampoLeitura rotulo={tr("termos.tipo_operacao")} adorno="travado" testId="top-contexto"
-          valor={topConfigurada ? <><span className={estilosCentral.codigo}>{topConfigurada.codigo}</span><span className={estilosCentral.separador}>·</span><span>{topConfigurada.nome}</span></> : "Não configurada (registro legado)"} />
-        {/* A FAMÍLIA CANÔNICA sai do REGISTRO (`kind`), em memória — campo próprio, ao lado da TOP configurada */}
-        <CampoLeitura rotulo="Movimento" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />
-        {/* TOP-CONFIG-07: a versão CONGELADA no pedido reserva estoque. Só `=== true` do servidor; ausente (API anterior) = nada. */}
-        {/* "ativa" só enquanto o pedido de fato segura estoque (aberto e sem saldo encerrado); a coluna Reservado mostra o que resta. */}
-        {reservaAtiva && (situacao === "open" || situacao === "approved") && !saldoEncerradoEm
-          && <p data-testid="doc-reserva-ativa" className={estilosCentral.descricao}>Reserva de estoque: ativa</p>}
-        <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
-        <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
-        <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
-        {/* CONDIÇÃO DE PAGAMENTO (VENDAS-A4): só quando a API devolve o campo preenchido — API anterior não o conhece. */}
-        {d["condicao_pagamento_id"] !== undefined && d["condicao_pagamento_id"] !== null && <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" testId="consulta-condicao-pagamento"
-          valor={`${[d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"]].filter((x) => x !== null && x !== undefined && x !== "").map(String).join(" · ")}${d["parcelas_ajustadas"] === true ? " (parcelas ajustadas)" : ""}`} />}
-        {/* VENDAS-A1: a classificação financeira escolhida no documento. Venda ainda não confirmada sem classificação
-            confirma pelo padrão automático, e a tela diz isso em vez de deixar o campo vazio. */}
-        <CampoLeitura rotulo="Natureza" adorno="travado" testId="central-vendas-campo"
-          valor={rotuloDaClassificacao(d["categoria_financeira_id"], d["categoria_financeira_codigo"], d["categoria_financeira_nome"], "Não informada", "Informada")} />
-        <CampoLeitura rotulo="Centro de resultado" adorno="travado" testId="central-vendas-campo"
-          valor={rotuloDaClassificacao(d["centro_custo_id"], d["centro_custo_codigo"], d["centro_custo_nome"], "Não informado", "Informado")} />
-        {/* O AVISO DO PADRÃO AUTOMÁTICO (A1, refeito na A5-1). Com a prévia, ele só aparece quando ela diz que a
-            confirmação PODE acontecer e VAI gerar contas a receber pelo recuo — e nomeia o par. Sem a prévia (API
-            anterior), vale a regra da A1: venda aberta sem classificação. Enquanto a prévia carrega, nada. */}
-        {variante === "sale" && !d["categoria_financeira_id"] && editavel && (
-          previaDaConfirmacao.situacao === "pronto"
-            ? padraoAutomaticoPrevisto(previaDaConfirmacao.previa) && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático — {padraoAutomaticoPrevisto(previaDaConfirmacao.previa)}.</p>
-            : previaDaConfirmacao.situacao === "nao-confirmado" && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira natureza de receita e primeiro centro de resultado analíticos, pela ordem do código).</p>
-        )}
-        <CampoLeitura rotulo="Responsável" adorno="travado" testId="central-vendas-campo" valor={String(d["responsible_name"] ?? "")} />
-        <CampoLeitura rotulo="Data de saída" adorno="data" testId="central-vendas-campo" valor={d["shipping_date"] ? dateBR(d["shipping_date"] as string) : ""} />
-        <CampoLeitura rotulo="Número" adorno="travado" testId="central-vendas-campo" valor={codigo} />
-        {/* A versão só faz sentido quando há TOP: num legado ela seria um número sem referente. */}
-        {topConfigurada && <CampoLeitura rotulo="Versão da operação" adorno="travado" testId="central-vendas-campo" valor={String(topConfigurada.versao)} />}
-        <CampoLeitura rotulo="Origem" adorno="travado" testId="central-vendas-campo" valor={d["origin_document_id"] ? "Convertido" : "Manual"} />
+        {/* VISUAL-UX-02: a coluna do desenho. Número, Natureza e Centro ficam em Dados principais (o skew os lê lá). */}
+        <ColunaDeCampos>
+          <CampoLeitura rotulo="Cliente" adorno="pesquisa" testId="central-vendas-campo" valor={`${d["client_name"] ?? ""} ${d["client_document"] ?? ""}`.trim()} />
+          <CampoLeitura rotulo="Empresa" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["empresa_name"] ?? "")} />
+          <CampoLeitura rotulo={tr("termos.tipo_operacao")} adorno="travado" testId="top-contexto"
+            valor={topConfigurada ? <><span className={estilosCentral.codigo}>{topConfigurada.codigo}</span><span className={estilosCentral.separador}>·</span><span>{topConfigurada.nome}</span></> : "Não configurada (registro legado)"} />
+          {/* TOP-CONFIG-07: a versão CONGELADA no pedido reserva estoque. Só `=== true` do servidor; ausente (API anterior) = nada. */}
+          {/* "ativa" só enquanto o pedido de fato segura estoque (aberto e sem saldo encerrado); a coluna Reservado mostra o que resta. */}
+          {reservaAtiva && (situacao === "open" || situacao === "approved") && !saldoEncerradoEm
+            && <p data-testid="doc-reserva-ativa" className={estilosCentral.descricao}>Reserva de estoque: ativa</p>}
+          <CampoLeitura rotulo="Data" adorno="data" testId="central-vendas-campo" valor={dateBR(d["document_date"] as string)} />
+          <CampoLeitura rotulo="Vencimento" adorno="data" testId="central-vendas-campo" valor={d["due_date"] ? dateBR(d["due_date"] as string) : ""} />
+          <CampoLeitura rotulo="Forma de pagamento" adorno="pesquisa" testId="central-vendas-campo" valor={String(d["payment_method_name"] ?? "")} />
+          {/* CONDIÇÃO DE PAGAMENTO (VENDAS-A4): só quando a API devolve o campo preenchido — API anterior não o conhece. */}
+          {d["condicao_pagamento_id"] !== undefined && d["condicao_pagamento_id"] !== null && <CampoLeitura rotulo="Condição de pagamento" adorno="pesquisa" testId="consulta-condicao-pagamento"
+            valor={`${[d["condicao_pagamento_codigo"], d["condicao_pagamento_nome"]].filter((x) => x !== null && x !== undefined && x !== "").map(String).join(" · ")}${d["parcelas_ajustadas"] === true ? " (parcelas ajustadas)" : ""}`} />}
+          {/* VENDAS-A1: a classificação financeira escolhida no documento. Venda ainda não confirmada sem classificação
+              confirma pelo padrão automático, e a tela diz isso em vez de deixar o campo vazio. */}
+          <CampoLeitura rotulo="Natureza" adorno="pesquisa" testId="central-vendas-campo"
+            valor={rotuloDaClassificacao(d["categoria_financeira_id"], d["categoria_financeira_codigo"], d["categoria_financeira_nome"], "Não informada", "Informada")} />
+          <CampoLeitura rotulo="Centro de resultado" adorno="pesquisa" testId="central-vendas-campo"
+            valor={rotuloDaClassificacao(d["centro_custo_id"], d["centro_custo_codigo"], d["centro_custo_nome"], "Não informado", "Informado")} />
+          {/* O AVISO DO PADRÃO AUTOMÁTICO (A1, refeito na A5-1). Com a prévia, ele só aparece quando ela diz que a
+              confirmação PODE acontecer e VAI gerar contas a receber pelo recuo — e nomeia o par. Sem a prévia (API
+              anterior), vale a regra da A1: venda aberta sem classificação. Enquanto a prévia carrega, nada. */}
+          {variante === "sale" && !d["categoria_financeira_id"] && editavel && (
+            previaDaConfirmacao.situacao === "pronto"
+              ? padraoAutomaticoPrevisto(previaDaConfirmacao.previa) && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático — {padraoAutomaticoPrevisto(previaDaConfirmacao.previa)}.</p>
+              : previaDaConfirmacao.situacao === "nao-confirmado" && <p data-testid="classificacao-padrao-automatico" className="text-xs text-muted-foreground">Sem classificação: ao confirmar, a venda usará o padrão automático (primeira natureza de receita e primeiro centro de resultado analíticos, pela ordem do código).</p>
+          )}
+          <CampoLeitura rotulo="Responsável" adorno="travado" testId="central-vendas-campo" valor={String(d["responsible_name"] ?? "")} />
+          <CampoLeitura rotulo="Data de saída" adorno="data" testId="central-vendas-campo" valor={d["shipping_date"] ? dateBR(d["shipping_date"] as string) : ""} />
+          <CampoLeitura rotulo="Número" adorno="travado" testId="central-vendas-campo" valor={codigo} />
+        </ColunaDeCampos>
+        {/* DADOS ADICIONAIS (VISUAL-UX-02): Proprietário (quando legível), Movimento, Versão da TOP e Origem, recolhidos como na criação. */}
+        <DadosAdicionais quantidade={(proprietario.isError ? 0 : 1) + 1 + (topConfigurada ? 1 : 0) + 1} aberto={maisDados} onAlternar={() => setMaisDados((m) => !m)}>
+          {!proprietario.isError && <CampoLeitura rotulo="Proprietário" adorno="pesquisa" testId="central-vendas-campo" valor={proprietarioId && proprietario.data ? String(proprietario.data["name"] ?? "") : ""} />}
+          {/* A FAMÍLIA CANÔNICA sai do REGISTRO (`kind`), em memória — campo próprio, ao lado da TOP configurada */}
+          <CampoLeitura rotulo="Movimento" adorno="travado" testId="central-vendas-campo" valor={top ? tr(top.chaveI18n) : ""} />
+          {/* A versão só faz sentido quando há TOP: num legado ela seria um número sem referente. */}
+          {topConfigurada && <CampoLeitura rotulo="Versão da TOP" adorno="travado" testId="central-vendas-campo" valor={String(topConfigurada.versao)} />}
+          {/* Origem: "Lançamento direto" sem origem; a espécie e o código quando a leitura da parte (TOP-CONFIG-06) os traz; senão, "Convertido". */}
+          <CampoLeitura rotulo="Origem" adorno="travado" testId="central-vendas-campo"
+            valor={!d["origin_document_id"] ? "Lançamento direto" : origemDaParte.codigo && origemDaParte.kind ? `${DO_REGISTRO[origemDaParte.kind]?.titulo ?? "Documento"} ${origemDaParte.codigo}` : "Convertido"} />
+        </DadosAdicionais>
       </>}
       itens={<>
         {saldoEncerradoEm && <p data-testid="saldo-encerrado" className="mb-2 text-sm text-slate-700">
