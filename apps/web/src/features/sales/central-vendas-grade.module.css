@@ -193,7 +193,7 @@
 .corpo[data-visao="ambos"] > :not(.form) { order: 1; }
 .formNav { display: flex; align-items: center; gap: 6px; height: 38px; box-sizing: content-box; flex-shrink: 0; padding: 0 12px 0 14px; line-height: normal; }
 .formNavTitulo { font-size: 12.5px; font-weight: 600; color: #1e293b; }
-.formCampos { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 520px; padding: 0 14px 14px; }
+.formCampos { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 520px; box-sizing: content-box; padding: 0 14px 14px; }
 .formVazio { padding: 20px 14px; font-size: 12.5px; color: #64748b; }
 
 /* ═════════════ Configurar colunas — o popover de vidro do desenho (340px) ═════════════ */

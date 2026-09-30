@@ -118,16 +118,19 @@ const COLUNAS_DA_RESERVA: readonly ColunaDoItemSalvo[] = [
   { chave: "reservado", rotulo: "Reservado", largura: 100, numero: true, testId: "doc-item-reservado", celula: (it) => (ehDecimalDaApi(it["reservado"]) ? num(it["reservado"], 2) : "—") }
 ];
 
-/** Campos do formulário do item, na ordem do desenho; o que o sistema calcula aparece travado. */
+/**
+ * Campos do formulário do item, na ordem do desenho; o que o sistema calcula aparece travado. Os valores seguem o
+ * formulário do desenho (o mesmo do item em edição): números com 2 casas, o total em reais, o estoque com a unidade.
+ */
 const CAMPOS_DO_ITEM_SALVO: readonly CampoDoItemSalvo[] = [
   { chave: "produto", rotulo: "Produto", adorno: "pesquisa", valor: (it) => (it["product_code"] ? `${texto(it["product_code"])} · ${texto(it["product_name"])}` : texto(it["product_name"])) },
   { chave: "armazem", rotulo: "Armazém", adorno: "pesquisa", valor: (it) => texto(it["warehouse_name"]) },
-  { chave: "estoque", rotulo: "Estoque", adorno: "travado", valor: (it) => <SaldoDoItem it={it} /> },
+  { chave: "estoque", rotulo: "Estoque", adorno: "travado", valor: (it) => <><SaldoDoItem it={it} />{it["unit"] ? ` ${texto(it["unit"])}` : ""}</> },
   { chave: "unidade", rotulo: "Unidade", adorno: "travado", valor: (it) => texto(it["unit"]) },
   { chave: "quantidade", rotulo: "Quantidade", valor: (it) => num(String(it["quantity"] ?? "0"), 2) },
-  { chave: "unitario", rotulo: "Valor unitário", valor: (it) => brl(String(it["unit_price"] ?? "0")) },
-  { chave: "desconto", rotulo: "Desconto", valor: (it) => brl(String(it["discount"] || "0")) },
-  { chave: "descontoPercentual", rotulo: "Desconto %", valor: (it) => pct(String(it["discount_percent"] || "0"), 2) },
+  { chave: "unitario", rotulo: "Valor unitário", valor: (it) => num(String(it["unit_price"] ?? "0"), 2) },
+  { chave: "desconto", rotulo: "Desconto", valor: (it) => num(String(it["discount"] || "0"), 2) },
+  { chave: "descontoPercentual", rotulo: "Desconto %", valor: (it) => num(String(it["discount_percent"] || "0"), 2) },
   { chave: "total", rotulo: "Total", adorno: "travado", valor: (it) => brl(String(it["total"] ?? "0")) }
 ];
 const CAMPOS_DO_SALDO: readonly CampoDoItemSalvo[] = [
