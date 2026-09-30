@@ -25,8 +25,9 @@ import { login, api, uniq, pickRef, empresaAtiva, primeiroId, abrirAbaDoLancamen
 const WORKSPACE = "central-vendas";
 
 /**
- * AS MEDIDAS-CHAVE DO DESENHO (seção 2 do pedido), lidas do CSS do desenho. Tolerância 0 px em tamanho, raio e espaço;
- * cor exata (valor calculado pelo navegador). Onde o CSS do desenho diverge do pedido, o CSS vence — e está marcado.
+ * AS MEDIDAS-CHAVE DO DESENHO (seção 2 do pedido), MEDIDAS no DOM renderizado do desenho (getBoundingClientRect +
+ * getComputedStyle, 1440×900 — o ESPEC-MEDIDAS do V1). Tolerância 0 px em tamanho, raio e espaço; cor exata. Onde o
+ * pedido diz outra coisa, o DOM/CSS do desenho vence, e a divergência está anotada (Dn = item do ESPEC-MEDIDAS).
  */
 const MEDIDAS = {
   barra: { altura: 44, raio: "12px", fundo: "rgb(255, 255, 255)", borda: "rgb(231, 234, 238)" },
@@ -39,14 +40,18 @@ const MEDIDAS = {
    *  a caixa medida no desenho é 37. O pedido diz 36 — é o conteúdo; a caixa é 37. */
   cabecalhoDeDados: 37,
   campo: {
-    rotuloLargura: 126, rotuloFonte: "12px", rotuloPeso: "500", rotuloCor: "rgb(100, 116, 139)",
-    caixaInicio: 136, caixaAltura: 30, caixaRaio: "8px",
+    /** D4: conteúdo 126 + `padding-right: 2` (content-box) ⇒ caixa do rótulo 128. */
+    rotuloLargura: 128, rotuloFonte: "12px", rotuloPeso: "500", rotuloCor: "rgb(100, 116, 139)",
+    /** D3: a caixa pintada mora no padding-box da linha (borda transparente de 1 px): começa em 137 e tem 28 de altura. */
+    caixaInicio: 137, caixaAltura: 28, caixaRaio: "8px",
     vazia: "rgb(241, 243, 244)", preenchida: "rgb(255, 255, 255)", preenchidaBorda: "rgb(231, 234, 238)",
     leitura: "rgb(246, 248, 250)", travada: "rgb(233, 237, 242)", valorFonte: "12.5px", larguraMaxima: 560, espaco: 6
   },
   compacto: { caixaAltura: 32 },
-  itens: { barra: 36, cabecalho: 28, linha: 23, rodape: 32 },
-  painel: { faixa: 38 },
+  /** D7: 36/28/23/32 são alturas de CONTEÚDO; com a borda de 1 px, as caixas medidas são 37/29/24/33. */
+  itens: { barra: 37, cabecalho: 29, linha: 24, rodape: 33 },
+  /** D8: faixa 38 + borda = 39 de caixa. */
+  painel: { faixa: 39 },
   esqueleto: { barra: 34, quantas: 5 }
 } as const;
 
@@ -138,7 +143,9 @@ async function nomesDoLeque(page: Page) {
   const botao = page.getByTestId("central-vendas-acoes-rapidas");
   if ((await botao.getAttribute("aria-expanded")) !== "true") await botao.click();
   const leque = page.getByTestId("central-vendas-acoes-rapidas-leque");
-  await expect(leque).toBeVisible();
+  // o contêiner do leque é um PONTO no centro do ⚡ (os círculos saem dele por transformação): o sinal é o ⚡ expandido
+  await expect(botao, "o leque abriu").toHaveAttribute("aria-expanded", "true");
+  await expect(leque.getByRole("menuitem").first(), "os itens do leque estão na tela").toBeVisible();
   return leque.evaluate((raiz) => {
     const todos = [...raiz.querySelectorAll<HTMLElement>('button, [role="menuitem"]')];
     return todos.filter((el) => !todos.some((o) => o !== el && o.contains(el))).map((el) => el.getAttribute("aria-label") ?? (el.textContent ?? "").trim());
@@ -281,7 +288,7 @@ test("VD-2 — posição do rótulo: alterna, não grava NADA no navegador nem n
   const ws = page.getByTestId(WORKSPACE);
   const grupo = page.getByTestId("central-vendas-posicao-rotulo");
   await expect(grupo).toHaveAttribute("role", "group");
-  await expect(grupo).toHaveAccessibleName("Posição do rótulo");
+  await expect(grupo).toHaveAccessibleName("Posição do rótulo dos campos");   // o nome do desenho
   const antesDoCampo = grupo.getByRole("button", { name: "Rótulo antes do campo" });
   const dentroDoCampo = grupo.getByRole("button", { name: "Rótulo dentro do campo" });
   await expect(antesDoCampo, "padrão: rótulo antes do campo").toHaveAttribute("aria-pressed", "true");
@@ -331,7 +338,8 @@ test("VD-3 — leque de Ações rápidas: itens por modo e por permissão; sem A
   await expect(page.getByTestId("central-vendas-imprimir")).toBeDisabled();
   await expect(page.getByTestId("central-vendas-historico")).toBeDisabled();
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("central-vendas-acoes-rapidas-leque"), "Esc fecha").toBeHidden();
+  await expect(page.getByTestId("central-vendas-acoes-rapidas"), "Esc fecha").toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("central-vendas-acoes-rapidas-leque"), "e o leque sai da árvore").toHaveCount(0);
   await expect(page.getByTestId("central-vendas-acoes-rapidas"), "e o foco volta ao botão").toBeFocused();
 
   // CONSULTA (venda aberta, com todas as capacidades)
@@ -347,7 +355,7 @@ test("VD-3 — leque de Ações rápidas: itens por modo e por permissão; sem A
   const [r, g, b] = (cor.match(/\d+/g) ?? []).map(Number);
   expect(r! > g! && r! > b!, `Cancelar em vermelho (${cor})`).toBe(true);
   await page.keyboard.press("Escape");
-  await expect(leque).toBeHidden();
+  await expect(leque).toHaveCount(0);
 
   // POR PERMISSÃO: sem audit_logs.view e sem sales.delete, o leque não OFERECE Histórico nem Cancelar (quem nega é a API)
   await page.route("**/api/auth/context", async (rota) => {
@@ -510,13 +518,13 @@ test("VD-5b — Duplicar: documento com origem ou sem TOP fica desabilitado com 
   const venda = await vendaPelaApi(page, { tipo_operacao_id: top.id, note: "não pode reaparecer" });
   const atual = await api<{ revisao: number }>(page, "GET", `/api/admin/tipos-operacao/${top.id}`);
   await api(page, "PUT", `/api/admin/tipos-operacao/${top.id}`, { ativo: false, revisao: atual.revisao });
+  const outra = await cadastrarTop(page);                          // fixture: antes do registro de escritas da TELA
   await abrirConsulta(page, venda);
   const escritas = registrarEscritas(page);
   await page.getByTestId("central-vendas-duplicar").click();
   await expect(page.getByTestId("top-indisponivel"), "a mensagem de hoje").toBeVisible();
   await expect(page.getByTestId(WORKSPACE), "nada aberto com a TOP inativa").toHaveCount(0);
   // a cópia foi descartada: um lançamento novo com outra TOP nasce limpo
-  const outra = await cadastrarTop(page);
   await abrirCriacao(page, outra.id);
   await expect(page.getByTestId("central-vendas-alterado"), "lançamento limpo").toHaveCount(0);
   await abrirAbaDoLancamento(page, "Observações");
@@ -525,34 +533,36 @@ test("VD-5b — Duplicar: documento com origem ou sem TOP fica desabilitado com 
 });
 
 /**
- * TODO-COORDENADOR: o shell só mantém montada a tela ATIVA e `useDirtyTab` limpa o ponto ao desmontar — trocar para a
- * aba da consulta pode apagar o rascunho antes do clique em Duplicar. Se o caso for inalcançável no produto, a decisão
- * (manter, trocar a prova ou registrar a regra como inaplicável) é do coordenador; este caso prova o que o pedido diz.
+ * VD-5c — A ABA DE LANÇAMENTO DA ESPÉCIE JÁ ABERTA.
+ *
+ * O pedido diz "rascunho alterado da espécie → pergunta com o diálogo de fechar antes de trocar". No produto esse caso
+ * não é alcançável pela interface: o shell só mantém montada a tela ATIVA, e `useDirtyTab` limpa o ponto de alteração ao
+ * desmontar — com a consulta na tela, nenhuma aba de lançamento pode estar suja, e o ramo da pergunta em `duplicar()` não
+ * tem como disparar (registrado como inaplicável no relatório da fatia; uma "aba suja" fabricada seria prova de um estado
+ * que o usuário não produz). O que É alcançável fica provado: com a aba de lançamento da espécie ABERTA e limpa, Duplicar
+ * não pergunta, reaproveita a MESMA aba (continua uma só) e ela passa a mostrar a cópia, na TOP do original.
  */
-test("VD-5c — Duplicar com rascunho alterado da mesma espécie pergunta antes de trocar; Continuar editando preserva o rascunho", async ({ page }) => {
+test("VD-5c — Duplicar com a aba de lançamento da espécie já aberta (limpa): não pergunta, reaproveita a aba e traz a cópia", async ({ page }) => {
   await login(page);
   const top = await cadastrarTop(page);
-  const venda = await vendaPelaApi(page, { tipo_operacao_id: top.id });
-  await abrirConsulta(page, venda);
-  await abrirCriacao(page, top.id);
-  await abrirAbaDoLancamento(page, "Observações");
-  await page.getByLabel("Observação").fill("rascunho que não pode sumir calado");
+  const outra = await cadastrarTop(page);
+  const venda = await vendaPelaApi(page, { tipo_operacao_id: top.id, note: "observação que a cópia leva" });
+  await abrirCriacao(page, outra.id);
   const abaNova = page.locator('[data-testid="workspace-tab"][data-tab-key="/vendas/sales/new"]');
-  await expect(abaNova).toHaveAttribute("data-dirty", "true");
+  await expect(abaNova, "premissa: a aba de lançamento da espécie está aberta").toHaveCount(1);
+  await abrirConsulta(page, venda);
+  await expect(abaNova, "premissa: ela continua aberta").toHaveCount(1);
+  await expect(abaNova, "e limpa (a tela inativa não guarda rascunho)").not.toHaveAttribute("data-dirty", "true");
   const escritas = registrarEscritas(page);
 
-  await page.locator(`[data-testid="workspace-tab"][data-tab-key="/vendas/sales/${venda.id}"]`).click();
-  await expect(page.getByTestId("central-vendas-identidade-nome")).toHaveText(venda.code);
   await page.getByTestId("central-vendas-duplicar").click();
-  const dlg = page.getByTestId("confirm-dialog");
-  await expect(dlg, "rascunho nunca é sobrescrito calado").toBeVisible();
-  await expect(dlg.getByRole("heading", { name: /^Fechar .+\?$/ })).toBeVisible();
-  await dlg.getByRole("button", { name: "Continuar editando", exact: true }).click();
-  await expect(dlg).toBeHidden();
-  await expect(abaNova, "o rascunho continua lá, sujo").toHaveAttribute("data-dirty", "true");
-  await abaNova.click();
+  await expect(page).toHaveURL(new RegExp(`/vendas/sales/new\\?tipo_operacao_id=${top.id}$`));
+  await expect(page.getByTestId("confirm-dialog"), "aba limpa: nada a perguntar").toHaveCount(0);
+  await expect(abaNova, "a MESMA aba de lançamento, não uma segunda").toHaveCount(1);
+  await expect(page.getByTestId("top-contexto"), "com a TOP do original, não a da aba que estava aberta").toContainText(top.codigo);
+  await expect(page.getByTestId("central-vendas-alterado"), "a cópia conta como alteração").toBeVisible();
   await abrirAbaDoLancamento(page, "Observações");
-  await expect(page.getByLabel("Observação"), "e com o que foi digitado").toHaveValue("rascunho que não pode sumir calado");
+  await expect(page.getByLabel("Observação")).toHaveValue("observação que a cópia leva");
   expect(escritas).toEqual([]);
 });
 
@@ -600,6 +610,7 @@ test("VD-6 — Descartar: pergunta, Continuar editando mantém, confirmar volta 
 test("VD-7 — Salvar com pendências: ZERO POST, pílula com a lista, clique leva ao campo; estado (layout) continua DESABILITANDO", async ({ page }) => {
   await login(page);
   const top = await cadastrarTop(page);
+  const outra = await cadastrarTop(page);                          // fixture: antes do registro de escritas da TELA
   await abrirCriacao(page, top.id);
   const escritas = registrarEscritas(page);
   const salvar = page.getByRole("button", { name: "Salvar" });
@@ -618,7 +629,8 @@ test("VD-7 — Salvar com pendências: ZERO POST, pílula com a lista, clique le
   const [r, g, b] = (corDaPilula.match(/\d+/g) ?? []).map(Number);
   expect(r! > g! && r! > b!, `pílula vermelha (${corDaPilula})`).toBe(true);
 
-  await pilula.click();
+  // o clique com pendência já abre a lista; a pílula só a reabre quando ela estiver fechada
+  if ((await pilula.getAttribute("aria-expanded")) !== "true") await pilula.click();
   const lista = page.getByTestId("central-vendas-pendencias-lista");
   await expect(lista.getByTestId("central-vendas-pendencia")).toHaveCount(n);
   await lista.getByTestId("central-vendas-pendencia").filter({ hasText: "Cliente" }).first().click();
@@ -632,7 +644,6 @@ test("VD-7 — Salvar com pendências: ZERO POST, pílula com a lista, clique le
   // `goto` dispara o beforeunload REAL da barra de abas: aceitá-lo é o que o usuário faria ao trocar de endereço.
   page.on("dialog", (d) => { void d.accept(); });
   await page.route("**/api/sales/sales/layout-efetivo**", (rota) => rota.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: { code: "INTERNAL", message: "falha simulada" } }) }));
-  const outra = await cadastrarTop(page);
   await abrirCriacao(page, outra.id);
   await expect(page.getByTestId("layout-nao-carregado"), "premissa: o layout falhou").toBeVisible({ timeout: 20_000 });
   await preencherClassificacaoFinanceira(page);
@@ -781,7 +792,7 @@ test("VD-10 — consulta: Fiscal (NF-e e Dedutível do registro), Financeiro com
   await abrirDadosAdicionais(page);
   const ws = page.getByTestId(WORKSPACE);
   await expect(ws.locator('[data-campo="Movimento"]')).not.toBeEmpty();
-  await expect(ws.locator('[data-campo="Versão da operação"]')).toContainText("1");
+  await expect(ws.locator('[data-campo="Versão da TOP"]')).toContainText("1");
   await expect(ws.locator('[data-campo="Origem"]')).toContainText("Lançamento direto");
   // Número, Natureza e Centro ficam em Dados principais (fora do grupo)
   await expect(ws.getByTestId("central-vendas-dados").locator('[data-campo="Número"]')).toContainText(venda.code);

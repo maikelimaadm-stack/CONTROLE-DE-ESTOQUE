@@ -142,11 +142,22 @@ export async function preencherClassificacaoFinanceira(
 export async function acaoDaCentral(page: Page, testId: string) {
   await expect(page.getByTestId("central-vendas-acoes"), "a barra da Central montou").toBeVisible();
   const item = page.getByTestId(testId);
-  if (await item.isVisible()) return item;
   const leque = page.getByTestId("central-vendas-acoes-rapidas");
+  if (await leque.count()) {
+    // Central nova: quem diz se o leque está aberto é o ⚡ (`aria-expanded`), não a visibilidade do item — um item que
+    // ainda está SAINDO (animação de recolher) é visível e some no meio do clique.
+    if ((await leque.getAttribute("aria-expanded")) !== "true") {
+      await expect(item, "o leque anterior terminou de recolher").toHaveCount(0);
+      await leque.click();
+    }
+    await expect(leque).toHaveAttribute("aria-expanded", "true");
+    await expect(item, `a ação ${testId} aparece no leque`).toBeVisible();
+    return item;
+  }
+  // Central anterior: direto na barra, ou em "Mais ações"
+  if (await item.isVisible()) return item;
   const mais = page.getByTestId("central-vendas-mais-acoes");
-  if (await leque.count()) { if ((await leque.getAttribute("aria-expanded")) !== "true") await leque.click(); }
-  else if (await mais.count()) await mais.click();
+  if (await mais.count()) await mais.click();
   await expect(item, `a ação ${testId} aparece no menu da barra`).toBeVisible();
   return item;
 }

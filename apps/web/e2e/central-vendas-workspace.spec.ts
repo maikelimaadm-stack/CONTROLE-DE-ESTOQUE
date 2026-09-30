@@ -96,7 +96,10 @@ async function nomesDoLeque(page: Page) {
   const botao = page.getByTestId("central-vendas-acoes-rapidas");
   if ((await botao.getAttribute("aria-expanded")) !== "true") await botao.click();
   const leque = page.getByTestId("central-vendas-acoes-rapidas-leque");
-  await expect(leque, "o leque abriu").toBeVisible();
+  // o conteúdo do leque é um PONTO no centro do ⚡ (os círculos saem dele por transformação): o sinal de "abriu" é o ⚡
+  // expandido e os itens visíveis, não a caixa do contêiner
+  await expect(botao, "o leque abriu").toHaveAttribute("aria-expanded", "true");
+  await expect(leque.getByRole("menuitem").first(), "os itens do leque estão na tela").toBeVisible();
   return leque.evaluate((raiz) => {
     const todos = [...raiz.querySelectorAll<HTMLElement>('button, [role="menuitem"]')];
     // um item de menu que embrulha um botão conta UMA vez
@@ -105,10 +108,11 @@ async function nomesDoLeque(page: Page) {
   });
 }
 
-/** Fecha o leque por Esc e prova que fechou. */
+/** Fecha o leque por Esc e prova que fechou: o ⚡ recolhido e o leque fora da árvore (depois da animação de saída). */
 async function fecharLeque(page: Page) {
   await page.keyboard.press("Escape");
-  await expect(page.getByTestId("central-vendas-acoes-rapidas-leque"), "Esc fecha o leque").toBeHidden();
+  await expect(page.getByTestId("central-vendas-acoes-rapidas"), "Esc fecha o leque").toHaveAttribute("aria-expanded", "false");
+  await expect(page.getByTestId("central-vendas-acoes-rapidas-leque"), "e ele sai da árvore").toHaveCount(0);
 }
 
 /**
@@ -117,7 +121,7 @@ async function fecharLeque(page: Page) {
  */
 async function contadorDeDocumentos(page: Page) {
   const contador = page.getByTestId("central-vendas-documentos-contador");
-  const abriu = !(await contador.isVisible());
+  const abriu = (await page.getByTestId("central-vendas-acoes-rapidas").getAttribute("aria-expanded")) !== "true";
   if (abriu) await acaoDaCentral(page, "central-vendas-documentos");
   const texto = (await contador.innerText()).trim();
   if (abriu) await fecharLeque(page);
@@ -138,7 +142,8 @@ async function clicarSalvarComPendencia(page: Page, posts: string[], motivo: str
   expect(n, `${motivo}: ao menos uma pendência`).toBeGreaterThan(0);
   await page.waitForTimeout(300);
   expect(posts.length, `${motivo}: ZERO POST`).toBe(antes);
-  await pilula.click();
+  // o clique com pendência já abre a lista; se ela estiver fechada, a pílula a abre
+  if ((await pilula.getAttribute("aria-expanded")) !== "true") await pilula.click();
   const lista = page.getByTestId("central-vendas-pendencias-lista");
   await expect(lista).toBeVisible();
   await expect(lista.getByTestId("central-vendas-pendencia"), `${motivo}: a lista tem as ${n} pendências`).toHaveCount(n);
@@ -196,7 +201,8 @@ test("W3 — os campos das abas continuam ligados ao MESMO estado: o que se digi
   await abrirAbaDoLancamento(page, "Totais");
   await page.getByLabel("Desconto").fill("12.5");
   await abrirAbaDoLancamento(page, "Fiscal");
-  await page.getByLabel("Dedutível").selectOption("1");
+  // decisão 270: Dedutível é a chave do desenho (role=switch), não mais um <select>
+  await page.getByRole("switch", { name: "Dedutível" }).click();
   await abrirAbaDoLancamento(page, "Financeiro");
   await page.getByLabel("Parcelamento").selectOption("1");
   await expect(page.getByLabel("Nº de parcelas"), "o plano de parcelas existente aparece ao escolher Parcelado").toBeVisible();
@@ -209,7 +215,7 @@ test("W3 — os campos das abas continuam ligados ao MESMO estado: o que se digi
   await abrirAbaDoLancamento(page, "Totais");
   await expect(page.getByLabel("Desconto")).toHaveValue("12.5");
   await abrirAbaDoLancamento(page, "Fiscal");
-  await expect(page.getByLabel("Dedutível")).toHaveValue("1");
+  await expect(page.getByRole("switch", { name: "Dedutível" })).toHaveAttribute("aria-checked", "true");
 });
 
 test("W4 — Salvar continua sujeito às condições funcionais: cliente, item com produto, e o payload é o de antes", async ({ page }) => {
@@ -478,6 +484,7 @@ test("W11 — a barra da criação é a do desenho (Descartar, Salvar, Confirmar
   }
   await expect(leque.getByText(/anexos/i), "nem como texto no leque").toHaveCount(0);
   await fecharLeque(page);
+  await expect(page.getByTestId("central-vendas-acoes-rapidas"), "e o foco volta ao ⚡").toBeFocused();
   await expect(ws.getByText(/anexos/i), "nem como texto, nem como 'em breve'").toHaveCount(0);
 });
 
