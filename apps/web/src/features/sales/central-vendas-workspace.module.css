@@ -4,6 +4,9 @@
  * As medidas saem de `telas-de-referencia.html`, a referência métrica do design aprovado: barra de ações
  * de 44px com botões redondos de 32px, cabeçalho de região de 42px, campos de 38px com 9px entre eles,
  * grade de itens com cabeçalho de 31px e linha de 26px, painel de pesquisa de vidro de 640px, abas de 38px.
+ * VISUAL-UX-02 (decisão 270): a moldura segue o CSS do desenho novo — barra de 44px dentro de um cartão com
+ * borda, cabeçalho de Dados principais de 36px + borda, divisores como faixa cinza de 7px, faixa das abas de
+ * 38px + borda com [Ampliar] e [Recolher], e o esqueleto de 34px da leitura pendente.
  *
  * Esta folha só VESTE: campo, botão de formulário, seletor e abas continuam sendo os primitives de
  * `components/ui`. As cores repetem os tokens globais em hexadecimal porque a catraca de nomenclatura
@@ -28,19 +31,22 @@
   min-width: 0;
 }
 
-/* ═════════════ barra de ações — cartão próprio, 44px fixos ═════════════ */
-.barra {
+/* ═════════════ barra de ações — cartão próprio; a barra de 44px mora dentro dele (46px com a borda) ═════════════ */
+.barraCartao {
   flex-shrink: 0;
-  height: 44px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
   background: #fff;
   border: 1px solid #e7eaee;
   border-radius: 12px;
   box-shadow: 0 1px 2px rgba(15, 23, 42, .03), 0 2px 6px rgba(15, 23, 42, .02);
+}
+.barra {
+  position: relative;
+  height: 44px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
 }
 .barraDivisor { width: 1px; height: 18px; background: #e4e8ec; flex-shrink: 0; margin: 0 3px; }
 .barraEspaco { flex: 1 1 auto; }
@@ -283,8 +289,9 @@
 }
 .coluna { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
+/* cabeçalho de Dados principais: 36px de altura mais a borda (o `.reg` do design: height 36 + border 1) */
 .cabecalho {
-  height: 42px;
+  height: 37px;
   flex-shrink: 0;
   box-sizing: border-box;
   display: flex;
@@ -293,19 +300,58 @@
   padding: 0 12px 0 10px;
   font-size: 12.5px;
   font-weight: 600;
+  line-height: normal;
   color: #1e293b;
   border-bottom: 1px solid #eef1f4;
 }
 .cabecalhoEspaco { flex: 1 1 auto; }
 .identidade { display: inline-flex; align-items: center; gap: 8px; min-width: 0; padding-right: 2px; }
-.identidadeIcone { display: inline-flex; flex-shrink: 0; color: #64748b; }
-.identidadeIcone svg { width: 15px; height: 15px; }
+.identidadeIcone { display: inline-flex; flex-shrink: 0; color: #94a3b8; }
+.identidadeIcone svg { width: 14px; height: 14px; }
 .identidadeIcone[data-tom="warning"] { color: #92400e; }
 .identidadeIcone[data-tom="positive"] { color: #166534; }
 .identidadeIcone[data-tom="negative"] { color: #991b1b; }
 .identidadeSituacao { display: inline-flex; flex-shrink: 0; }
 .identidadeNome { margin: 0; font-size: 13.5px; font-weight: 700; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* o nome é o código do servidor: a fonte de código do design, em 13px */
+.identidadeNome[data-codigo="true"] { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 13px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
 .pontoAlterado { display: inline-block; width: 7px; height: 7px; border-radius: 999px; background: #40de63; flex-shrink: 0; }
+
+/* [Ampliar] de região: só o ícone — sem fundo, sem sombra, sem borda */
+.ampliar {
+  position: relative;
+  width: 25px;
+  height: 25px;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+}
+.ampliar:hover:not(:disabled),
+.ampliar[aria-pressed="true"] { color: #0f172a; }
+.ampliar:active:not(:disabled) { color: #475569; transform: scale(.9); }
+.ampliar:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
+.ampliar svg { flex-shrink: 0; }
+
+/* ═════════════ esqueleto: a leitura da consulta ainda não chegou ═════════════ */
+.esqueleto { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sk,
+.skLinha {
+  border-radius: 8px;
+  background: linear-gradient(90deg, #f1f3f4, #f8fafc, #f1f3f4);
+  background-size: 200% 100%;
+  animation: brilho 1.1s linear infinite;
+}
+.sk { height: 34px; }
+.skLinha { display: inline-block; width: 72px; height: 14px; }
 
 /* ═════════════ Dados principais ═════════════ */
 .dadosCorpo {
@@ -391,12 +437,14 @@
 .mudo { color: #94a3b8; font-weight: 500; }
 
 /* ═════════════ divisores ═════════════ */
+/* o divisor é uma faixa cinza de 7px, arredondada; o traço verde só aparece ao passar, focar ou arrastar */
 .divisorVertical,
 .divisorHorizontal {
   position: relative;
   border: 0;
+  border-radius: 100px;
   padding: 0;
-  background: transparent;
+  background: #e9edf2;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -406,9 +454,9 @@
 .divisorVertical { align-self: stretch; width: 7px; cursor: col-resize; }
 .divisorHorizontal { height: 7px; flex-shrink: 0; cursor: row-resize; }
 .divisorVertical::before,
-.divisorHorizontal::before { content: ""; position: absolute; transition: background-color var(--mf) var(--ez-io), width var(--mf) var(--ez-io), height var(--mf) var(--ez-io); }
-.divisorVertical::before { top: 0; bottom: 0; left: 3px; width: 1px; background: #eef1f4; }
-.divisorHorizontal::before { left: 0; right: 0; top: 3px; height: 1px; background: #e7eaee; }
+.divisorHorizontal::before { content: ""; position: absolute; background: transparent; transition: background-color var(--mf) var(--ez-io), width var(--mf) var(--ez-io), height var(--mf) var(--ez-io), left var(--mf) var(--ez-io), top var(--mf) var(--ez-io); }
+.divisorVertical::before { top: 0; bottom: 0; left: 3px; width: 1px; }
+.divisorHorizontal::before { left: 0; right: 0; top: 3px; height: 1px; }
 .divisorVertical:hover::before,
 .divisorVertical:focus-visible::before,
 .divisorVertical[data-arrastando="true"]::before { background: rgba(64, 222, 99, .6); width: 2px; left: 2.5px; }
@@ -417,7 +465,7 @@
 .divisorHorizontal[data-arrastando="true"]::before { background: rgba(64, 222, 99, .6); height: 2px; top: 2.5px; }
 .divisorVertical:focus-visible,
 .divisorHorizontal:focus-visible { outline: 2px solid #22a85c; outline-offset: -1px; }
-.grip { position: relative; z-index: 1; display: flex; color: #a3adb9; opacity: 0; transition: opacity var(--mf) var(--ez-io); }
+.grip { position: relative; z-index: 1; display: flex; color: #475569; opacity: 0; transition: opacity var(--mf) var(--ez-io); }
 .divisorVertical:hover .grip,
 .divisorVertical:focus-visible .grip,
 .divisorVertical[data-arrastando="true"] .grip,
@@ -616,45 +664,56 @@
   border-top: 1px solid #e7eaee;
   background: #fff;
 }
-/* recolhido: só a faixa das abas (39px, como o protótipo); o conteúdo sai do layout e do foco */
+/*
+ * recolhido: só a faixa das abas (39px, como hoje); o conteúdo sai do layout e do foco. O painel continua
+ * border-box (a altura renderizada é a do divisor): o design soma a borda por fora (206 + 1, 39 + 1).
+ */
 .painel[data-recolhido="true"] { height: 39px; }
 .painel[data-recolhido="true"] [role="tabpanel"] { display: none; }
-.painelAcoes { position: absolute; top: 0; right: 10px; height: 38px; display: flex; align-items: center; gap: 12px; }
-.totalDoDocumento { font-size: 17px; font-weight: 500; color: #1e293b; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* a faixa de 38px (+1 de borda): [Ampliar] à esquerda, abas, … [Recolher] à direita */
+.painelAmpliar { position: absolute; z-index: 1; top: 6.5px; left: 8px; display: flex; }
+.painelAcoes { position: absolute; z-index: 1; top: 0; right: 10px; height: 38px; display: flex; align-items: center; gap: 12px; }
 .recolher {
-  width: 24px;
-  height: 24px;
+  position: relative;
+  width: 25px;
+  height: 25px;
+  box-sizing: border-box;
   border-radius: 999px;
   border: 1px solid transparent;
   background: #f1f3f4;
-  color: #5b6b80;
+  color: #475569;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, .30);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  transition: background-color var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+  transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), opacity var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
 }
-.recolher:hover { background: #e5e7eb; transform: translateY(-1px); }
-.recolher:active { transform: scale(.9); }
+.recolher:hover:not(:disabled) { background: #e5e7eb; color: #0f172a; box-shadow: 0 3px 9px rgba(34, 197, 94, .36); }
+.recolher:active:not(:disabled) { transform: scale(.9); }
+.recolher:disabled { opacity: .45; cursor: not-allowed; }
 .recolher:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
-.recolher svg { width: 14px; height: 14px; transition: transform var(--mi) var(--ez); }
-.recolher[aria-expanded="false"] svg { transform: rotate(180deg); }
+.recolherIcone { display: inline-flex; }
+.recolherIcone svg { width: 14px; height: 14px; flex-shrink: 0; }
+.recolher[aria-expanded="false"] .recolherIcone { transform: rotate(180deg); }
 .abas { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .painel [role="tablist"] {
-  height: 38px;
+  height: 39px;
+  box-sizing: border-box;
   flex-shrink: 0;
   display: flex;
   flex-wrap: nowrap;
   align-items: stretch;
   gap: 2px;
-  padding: 0 10px 0 8px;
+  padding: 0 45px 0 41px;
   border-bottom: 1px solid #eef1f4;
   background: #fbfcfd;
 }
 .painel [role="tab"] {
   height: 100%;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -667,20 +726,34 @@
   color: #64748b;
   cursor: pointer;
   white-space: nowrap;
-  transition: color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
+  transition: background-color var(--mi) var(--ez-io), color var(--mi) var(--ez-io), border-color var(--mi) var(--ez-io), box-shadow var(--mi) var(--ez-io), opacity var(--mi) var(--ez-io), transform var(--mf) var(--ez-io);
 }
 .painel [role="tab"]:hover { color: #1e293b; }
-.painel [role="tab"]:active { transform: translateY(1px); }
 .painel [role="tab"]:focus-visible { outline: 2px solid #22a85c; outline-offset: -2px; border-radius: 4px; }
 .painel [role="tab"][data-state="active"] { color: #15803d; font-weight: 600; border-bottom-color: #22a85c; }
+.abaContador { font-size: 10.5px; font-weight: 600; color: #475569; background: #eef1f4; border-radius: 999px; padding: 0 6px; line-height: 16px; }
+.abaErro { width: 7px; height: 7px; border-radius: 50%; background: #dc2626; display: inline-block; }
 .painel [role="tabpanel"] { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 12px 16px !important; }
-.painel [role="tabpanel"] > * { animation: aparece var(--mo) var(--ez-io) backwards; }
-.painelGrade { display: grid; grid-template-columns: 330px 330px; gap: 9px 28px; align-items: start; }
-.painelColuna { display: flex; flex-direction: column; gap: 9px; min-width: 0; }
-.painelLargo { max-width: 688px; }
-.subtitulo { font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; color: #a3adb9; margin-bottom: 2px; }
+.painel [role="tabpanel"] > * { animation: aparece var(--mi) var(--ez-io) backwards; }
+
+/* ═════════════ ampliar: a região escolhida fica com o documento inteiro ═════════════ */
+.workspace[data-ampliado="dados"] .corpo,
+.workspace[data-ampliado="itens"] .corpo { grid-template-columns: minmax(0, 1fr); }
+.workspace[data-ampliado="dados"] .corpo > .divisorVertical,
+.workspace[data-ampliado="dados"] .corpo > [data-regiao="itens"],
+.workspace[data-ampliado="itens"] .corpo > .divisorVertical,
+.workspace[data-ampliado="itens"] .corpo > [data-regiao="dados"] { display: none; }
+.workspace[data-ampliado="dados"] .doc > .divisorHorizontal,
+.workspace[data-ampliado="dados"] .doc > .painel,
+.workspace[data-ampliado="itens"] .doc > .divisorHorizontal,
+.workspace[data-ampliado="itens"] .doc > .painel,
+.workspace[data-ampliado="painel"] .doc > .corpo,
+.workspace[data-ampliado="painel"] .doc > .divisorHorizontal,
+.workspace[data-ampliado="painel"] .painelAcoes { display: none; }
+.workspace[data-ampliado="painel"] .doc > .painel { flex: 1 1 auto; height: auto; min-height: 0; border-top: 0; }
 
 @keyframes aparece { from { opacity: 0; } to { opacity: 1; } }
+@keyframes brilho { to { background-position: -200% 0; } }
 @keyframes sobe { from { opacity: 0; transform: translateY(7px) scale(.985); } to { opacity: 1; transform: none; } }
 @keyframes girar { to { transform: rotate(360deg); } }
 @keyframes dicaEntra { from { opacity: 0; transform: translateX(-50%) translateY(-2px); } to { opacity: 1; transform: translateX(-50%); } }

@@ -1,16 +1,14 @@
 "use client";
 import * as React from "react";
 import { use } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowRightLeft, Check, FileCheck2, FileText, FileX2, Plus, Printer } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { brl, dateBR } from "@/lib/utils";
+import { brl, dateBR, num } from "@/lib/utils";
 import { Button, Confirm, Dialog, StatusBadge, statusTone } from "@/components/ui";
 import { useTabTitle } from "@/lib/workspace-tabs";
 import { useDoc, LoadingOr, type Row } from "@/features/docs/shared";
 import { useAction } from "@/features/docs/actions";
-import { Base2Items, type Base2ItemColumn } from "@/features/base2";
 import { HistoryDialog } from "@/features/base1/history-dialog";
 import { AcaoDaBarra, AcaoPrincipal, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
 import { ItensSalvos, MaisAcoes, type ItemDoMenu } from "@/features/sales/central-vendas-consulta";
@@ -18,10 +16,10 @@ import { CampoLeitura, ColunaDeCampos, DadosAdicionais } from "@/features/sales/
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
+import { DerivadosDoDocumento, PainelColuna, PainelLargo, PainelRepartido, PlanoEmLeitura, TitulosDoDocumento, dedutivelDoPlano } from "@/features/sales/central-vendas-painel";
 import estilosCentral from "@/features/sales/central-vendas-workspace.module.css";
 import { tipoOperacaoDoRegistro } from "@agro/domain";
 import { useTradutor } from "@/lib/i18n";
-import { COPY, enumLabel, statusLabel } from "@/lib/copy";
 import { CampoTipoOperacao, useTopsDaVariante, usePadraoTop } from "@/features/sales/tipo-operacao-select";
 import { destinoDeCompatibilidade, usaCadeiaDeCompatibilidade, useProximosPassos, type ProximoPasso } from "@/features/sales/proximos-passos";
 import { varianteDeVenda } from "@/features/sales/variantes";
@@ -67,20 +65,6 @@ function rotuloDaClassificacao(id: unknown, codigo: unknown, nome: unknown, ause
   if (!codigo) return semNome;
   return `${String(codigo)} · ${String(nome ?? "")}`;
 }
-
-const COLUNAS_TITULOS: Base2ItemColumn<Row>[] = [
-  { key: "number", label: "Título", render: (r) => <Link className="text-brand-700 underline" href={`/financeiro/contas-a-receber/${r["id"]}`}>{String(r["number"])}</Link> },
-  { key: "due_date", label: "Vencimento", render: (r) => dateBR(r["due_date"] as string) },
-  { key: "amount", label: "Valor", align: "right", render: (r) => brl(r["amount"] as string) },
-  { key: "balance", label: "Saldo", align: "right", render: (r) => brl(r["balance"] as string) },
-  { key: "status", label: COPY.situacao, render: (r) => enumLabel("title_status", r["status"]) }
-];
-
-const COLUNAS_DERIVADOS: Base2ItemColumn<Row>[] = [
-  { key: "kind", label: "Tipo", render: (r) => enumLabel("sales_kind", r["kind"]) },
-  { key: "code", label: "Código", render: (r) => <Link className="text-brand-700 underline" href={`/vendas/${r["kind"]}s/${r["id"]}`}>{String(r["code"])}</Link> },
-  { key: "status", label: COPY.situacao, render: (r) => statusLabel(r["status"]) }
-];
 
 /**
  * DOCUMENTO DE VENDA SALVO — NA CENTRAL DE VENDAS, EM CONSULTA (VISUAL-UX-01 R3; antes Modelo Base 2,
@@ -219,6 +203,9 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
   const proprietario = useQuery({ queryKey: ["option-one", "people", proprietarioId], queryFn: () => api<Record<string, unknown>>(`/api/resources/people/${proprietarioId}`), enabled: Boolean(proprietarioId), staleTime: 60_000, retry: false });
   // o rótulo da aba de trabalho é o de antes da Central: título da variante + código do servidor
   useTabTitle(d ? `${k?.titulo ?? "Documento de venda"} ${String(d["code"] ?? "")}`.trim() : null);
+  /* LEITURA PENDENTE (VISUAL-UX-02): a Central já aparece, com o esqueleto em Dados principais e nada do documento —
+     nem a variante, que só o registro diz. Erro continua no estado oficial (404 igual para tudo o que não se vê). */
+  if (!d && q.isLoading) return <CentralVendasWorkspace carregando titulo="Documento de venda" identidade={{ nome: "Carregando documento", alterado: false }} acoes={null} dados={null} itens={null} abas={[]} />;
   if (!d) return <LoadingOr q={q}>{null}</LoadingOr>;
 
   const passoSelecionado = itens.length === 1 ? itens[0]! : itens.find((x) => x.tipoOperacaoId === passoEscolhido) ?? null;
@@ -273,8 +260,6 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
     ...(can("audit_logs.view") ? [{ rotulo: "Histórico de alterações", onSelect: () => setHistoricoAberto(true), testId: "central-vendas-historico" }] : []),
     ...(podeCancelar ? [{ rotulo: `Cancelar ${k!.titulo.toLowerCase()}…`, onSelect: () => setConfirmar("cancel"), perigo: true, separar: true, testId: "central-vendas-cancelar" }] : [])
   ];
-  const tabela = <T extends Row>(legenda: string, colunas: Base2ItemColumn<T>[], linhas: T[], vazio: string) =>
-    <Base2Items legenda={legenda} colunas={colunas} linhas={linhas} vazioTexto={vazio} />;
 
   return <>
     <CentralVendasWorkspace
@@ -349,33 +334,36 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         {parteGerada && <p data-testid="parte-itens-da-origem" className="mb-2 text-sm text-slate-700">{fraseItensDaOrigem(origemDaParte)}</p>}
         <ItensSalvos mostrarSaldo={origemComParte} mostrarReservado={reservaAtiva} itens={d.items} subtotal={String(d["subtotal"] ?? "0")} legenda={`Itens d${variante === "sale" ? "a venda" : variante === "order" ? "o pedido de venda" : variante === "budget" ? "o orçamento" : "o documento"} ${codigo}`} />
       </>}
-      totalDoDocumento={brl(d["total"] as string)}
       abas={[
-        { value: "totais", label: "Totais", content: <div className={estilosCentral.painelGrade}>
-          <div className={estilosCentral.painelColuna}>
-            <CampoLeitura rotulo="Subtotal dos itens" valor={brl(d["subtotal"] as string)} />
-            <CampoLeitura rotulo="Desconto" valor={brl(d["discount"] as string)} />
-            <CampoLeitura rotulo="Outros valores" valor={brl(d["other_values"] as string)} />
-          </div>
-          <div className={estilosCentral.painelColuna}>
-            <CampoLeitura rotulo="Frete" valor={brl(d["freight"] as string)} />
-            <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
-            <CampoLeitura rotulo="Total do documento" adorno="travado" testId="central-vendas-total-campo" valor={<b>{brl(d["total"] as string)}</b>} />
-          </div>
-        </div> },
-        { value: "financeiro", label: "Financeiro", content: tabela(`Contas a receber geradas pelo documento ${codigo}`, COLUNAS_TITULOS, d.titles, "Nenhuma conta a receber gerada.") },
-        { value: "frete", label: "Frete e transporte", content: <div className={estilosCentral.painelGrade}>
-          <div className={estilosCentral.painelColuna}>
-            <CampoLeitura rotulo="Transportadora" adorno="pesquisa" valor={String(d["transporter_name"] ?? "")} />
-            <CampoLeitura rotulo="Motorista" valor={String(d["driver_name"] ?? "")} />
-          </div>
-          <div className={estilosCentral.painelColuna}>
-            <CampoLeitura rotulo="Frete" valor={brl(d["freight"] as string)} />
-            <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
-          </div>
-        </div> },
-        { value: "derivados", label: "Documentos derivados", content: tabela(`Documentos derivados do documento ${codigo}`, COLUNAS_DERIVADOS, d.derived, "Nenhum documento derivado.") },
-        { value: "observacoes", label: "Observações", content: <div className={estilosCentral.painelLargo}><CampoLeitura rotulo="Observação" valor={String(d["note"] ?? "")} /></div> }
+        /* TOTAIS: Desconto e Outros valores (o desenho) e, ao lado, os números do SERVIDOR — o total do documento
+           inclui frete, ICMS do frete e outros valores, que não estão em linha de item nenhuma. */
+        { value: "totais", label: "Totais", content: <PainelRepartido lado={<PainelColuna>
+          <CampoLeitura rotulo="Subtotal dos itens" valor={brl(d["subtotal"] as string)} />
+          <CampoLeitura rotulo="Frete" valor={brl(d["freight"] as string)} />
+          <CampoLeitura rotulo="ICMS frete" valor={brl(d["freight_icms"] as string)} />
+          <div data-testid="central-vendas-total-campo"><CampoLeitura rotulo="Total do documento" adorno="travado" testId="central-vendas-total" valor={brl(d["total"] as string)} /></div>
+        </PainelColuna>}>
+          <CampoLeitura rotulo="Desconto" valor={num(String(d["discount"] ?? "0"), 2)} />
+          <CampoLeitura rotulo="Outros valores" valor={num(String(d["other_values"] ?? "0"), 2)} />
+        </PainelRepartido> },
+        /* FINANCEIRO: o plano GRAVADO (`installment_plan` do detalhe), em só leitura, e os títulos gerados. */
+        { value: "financeiro", label: "Financeiro", contador: d.titles.length, content: <PainelRepartido lado={<TitulosDoDocumento legenda={`Contas a receber geradas pelo documento ${codigo}`} titulos={d.titles} />}>
+          <PlanoEmLeitura plano={d["installment_plan"]} />
+        </PainelRepartido> },
+        { value: "frete", label: "Frete e transporte", content: <PainelColuna>
+          <CampoLeitura rotulo="Transportadora" adorno="pesquisa" valor={String(d["transporter_name"] ?? "")} />
+          <CampoLeitura rotulo="Motorista" valor={String(d["driver_name"] ?? "")} />
+          <CampoLeitura rotulo="Frete" valor={num(String(d["freight"] ?? "0"), 2)} />
+          <CampoLeitura rotulo="ICMS frete" valor={num(String(d["freight_icms"] ?? "0"), 2)} />
+        </PainelColuna> },
+        /* FISCAL: nenhuma NF-e é vinculada hoje (`nfe_id` nunca é gravado); Dedutível é o do plano gravado. */
+        { value: "fiscal", label: "Fiscal", content: <PainelColuna>
+          <CampoLeitura rotulo="NF-e" valor={d["nfe_id"] ? "Vinculada" : "Nenhuma vinculada"} />
+          <CampoLeitura rotulo="Dedutível" valor={dedutivelDoPlano(d["installment_plan"]) ? "Sim" : "Não"} />
+        </PainelColuna> },
+        /* DERIVADOS só em pedido e orçamento: venda não gera derivado (a conversão não existe para `sale`). */
+        ...(variante === "order" || variante === "budget" ? [{ value: "derivados", label: "Documentos derivados", content: <DerivadosDoDocumento legenda={`Documentos derivados do documento ${codigo}`} derivados={d.derived} /> }] : []),
+        { value: "observacoes", label: "Observações", content: <PainelLargo><CampoLeitura rotulo="Observação" valor={String(d["note"] ?? "")} /></PainelLargo> }
       ]}
     />
     <HistoryDialog open={historicoAberto} onOpenChange={setHistoricoAberto} entity={ENTIDADE} entityId={id} title={`${titulo} ${codigo}`.trim()} />
