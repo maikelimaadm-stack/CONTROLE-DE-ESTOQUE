@@ -228,8 +228,10 @@
 .lequeConteudo .lequeItem:hover:not([data-disabled]) { border-color: #cbd5e1; background: #fff; color: #0f172a; }
 .lequeConteudo .lequeItem:focus-visible { outline: 2px solid #22a85c; outline-offset: 2px; }
 .lequeConteudo .lequeItem[data-disabled] { opacity: .45; cursor: not-allowed; }
-.lequeConteudo .lequeNumero { font-size: 13px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; color: #0f172a; }
-.lequeConteudo .lequePerigo { color: #b91c1c; }
+/* a mesma especificidade da regra base do item (`.lequeConteudo .lequeItem[data-dica]`) + 1 classe: sem isso a cor da
+   base vencia — o número saía #475569 e o Cancelar saía cinza, não vermelho (VD-3) */
+.lequeConteudo .lequeItem.lequeNumero[data-dica] { font-size: 13px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; color: #0f172a; }
+.lequeConteudo .lequeItem.lequePerigo[data-dica] { color: #b91c1c; }
 .lequeConteudo .lequePerigo[data-highlighted]:not([data-disabled]),
 .lequeConteudo .lequePerigo:hover:not([data-disabled]) { border-color: #fecaca; background: #fef2f2; color: #b91c1c; }
 .lequeConteudo[data-state="closed"] .lequeItem[data-dica] {

@@ -85,12 +85,17 @@ export function ListaDeDocumentosAbertos({ aberta, onFechar, ancora, botao, docu
 
   // Com a confirmação de fechamento aberta, clique e Esc são do DIÁLOGO: a lista não fecha por baixo dele,
   // e cancelar devolve o foco ao × da linha, que continua na tela.
+  //
+  // O Esc é ouvido na CAPTURA da janela, antes das camadas do Radix (que escutam na captura do documento): a lista abre
+  // pelo leque, e o leque continua montado durante a animação de recolher — nesse intervalo a camada dele era a mais alta,
+  // consumia o Esc (`preventDefault`) e a lista não fechava (W18). A lista não tem camada por cima dela além do diálogo de
+  // fechar, e com ele aberto este ouvinte nem existe. Tratado aqui, o Esc não recolhe mais nada por baixo.
   React.useEffect(() => {
     if (!aberta || confirmar) return;
     const fora = (e: MouseEvent) => { if (!ancora.current?.contains(e.target as Node)) fecharLista(); };
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { fecharLista(); botao.current?.focus(); } };
-    document.addEventListener("mousedown", fora); document.addEventListener("keydown", esc);
-    return () => { document.removeEventListener("mousedown", fora); document.removeEventListener("keydown", esc); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape" && !e.defaultPrevented) { e.preventDefault(); fecharLista(); botao.current?.focus(); } };
+    document.addEventListener("mousedown", fora); window.addEventListener("keydown", esc, true);
+    return () => { document.removeEventListener("mousedown", fora); window.removeEventListener("keydown", esc, true); };
   }, [aberta, confirmar, ancora, botao, fecharLista]);
 
   const termos = normalizar(busca).split(/\s+/).filter(Boolean);
