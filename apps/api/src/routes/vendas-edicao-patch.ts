@@ -1,8 +1,8 @@
 import type { z } from "zod";
 import { D, DomainError } from "@agro/shared";
-import { documentTotals } from "@agro/domain";
+import { itemTotal } from "@agro/domain";
 import { translateIssue } from "../plugins/errors.js";
-import type { InstallmentPlan } from "../services/financial-core.js";
+import { installmentPlanSchema, type InstallmentPlan } from "../services/financial-core.js";
 
 /**
  * EDITAR-01 (decisão 272, item 1.2) — A PATCH DO DOCUMENTO DE VENDA: a forma do pedido, o documento como ficará, a
@@ -25,6 +25,37 @@ export const MSG_EDICAO_ITEM_REPETIDO = "Este item aparece mais de uma vez na li
 export const MSG_EDICAO_CAMPO_OBRIGATORIO = "Campo obrigatório";
 /** 409 CONCURRENCY_CONFLICT: a versão enviada não é a gravada. */
 export const MSG_DOCUMENTO_MUDOU = "Este documento mudou desde que você o abriu. Recarregue antes de salvar.";
+/** EDITAR-01_R1 (1.2 h) — número fora da forma canônica (vírgula, expoente, espaço, sinal "+", zero à esquerda). */
+export const MSG_NUMERO_INVALIDO = "Número inválido: use dígitos e ponto como separador decimal";
+/** Número além do que a coluna guarda: dígitos inteiros ou casas decimais a mais (nunca arredondado em silêncio). */
+export const msgNumeroForaDoLimite = (inteiros: number, decimais: number) =>
+  `Número fora do limite: até ${inteiros} dígitos inteiros e ${decimais} casas decimais.`;
+/** numeric(18,2): frete, ICMS do frete, outros valores, descontos em valor, entrada do plano. */
+export const MSG_LIMITE_DINHEIRO = msgNumeroForaDoLimite(16, 2);
+/** numeric(18,4): quantidade do item. */
+export const MSG_LIMITE_QUANTIDADE = msgNumeroForaDoLimite(14, 4);
+/** numeric(18,6): preço unitário do item. */
+export const MSG_LIMITE_PRECO = msgNumeroForaDoLimite(12, 6);
+/** numeric(7,4): desconto percentual do item. */
+export const MSG_LIMITE_PERCENTUAL = msgNumeroForaDoLimite(3, 4);
+/** A coluna recusa (`check (quantity > 0)`): 422 no campo, e não a recusa genérica do banco. */
+export const MSG_QUANTIDADE_POSITIVA = "A quantidade deve ser maior que zero.";
+/** A coluna recusa (`check (unit_price >= 0)`). */
+export const MSG_PRECO_NEGATIVO = "O preço unitário não pode ser negativo.";
+/** O total CALCULADO (do item, o subtotal ou o do documento) não cabe na coluna numeric(18,2). */
+export const MSG_EDICAO_TOTAL_FORA_DO_LIMITE = "O total calculado passa do limite: até 16 dígitos inteiros e 2 casas decimais.";
+/** EDITAR-01_R1 (1.2 y) — referência TROCADA pela PATCH que não existe nesta organização (ou foi excluída). */
+export const MSG_EDICAO_CLIENTE_INEXISTENTE = "Cliente não encontrado: escolha uma pessoa cadastrada nesta organização.";
+export const MSG_EDICAO_TRANSPORTADORA_INEXISTENTE = "Transportadora não encontrada: escolha uma pessoa cadastrada nesta organização.";
+export const MSG_EDICAO_PROPRIETARIO_INEXISTENTE = "Proprietário não encontrado: escolha uma pessoa cadastrada nesta organização.";
+export const MSG_EDICAO_FORMA_PAGAMENTO_INEXISTENTE = "Forma de pagamento não encontrada: escolha uma forma de pagamento desta organização.";
+/** As referências de cadastro que a PATCH troca e que são conferidas contra a organização (lista estática). */
+export const REFERENCIAS_DA_EDICAO = {
+  client_id: { tabela: "people", mensagem: MSG_EDICAO_CLIENTE_INEXISTENTE },
+  transporter_id: { tabela: "people", mensagem: MSG_EDICAO_TRANSPORTADORA_INEXISTENTE },
+  proprietary_id: { tabela: "people", mensagem: MSG_EDICAO_PROPRIETARIO_INEXISTENTE },
+  payment_method_id: { tabela: "payment_methods", mensagem: MSG_EDICAO_FORMA_PAGAMENTO_INEXISTENTE },
+} as const;
 
 // ---------------------------------------------------------------------------------------------------------------
 // Tipos
@@ -85,12 +116,54 @@ const recusa = (details: Detalhe[], message = details[0]!.message) => new Domain
 // ---------------------------------------------------------------------------------------------------------------
 // 1. A FORMA DO PEDIDO — conferida ANTES de qualquer leitura de registro e de reservar a chave de idempotência.
 // ---------------------------------------------------------------------------------------------------------------
-const FORMA_VERSAO = /^\d{1,19}$/;
-/** `version` aceita o TEXTO de dígitos que o GET devolve (bigint) ou um inteiro ≥ 0. Canônica = texto decimal. */
+/**
+ * `version` é bigint no banco. Aceita o TEXTO que o GET devolve, na forma CANÔNICA (sem zero à esquerda: "007" é
+ * outra grafia, e duas grafias do mesmo número dariam dois hashes de idempotência) e dentro do bigint — acima do
+ * máximo não é "outra versão" (409 falso), é pedido inválido (422). Inteiro JSON só se for exato (safe) e ≥ 0.
+ */
+const FORMA_VERSAO = /^(0|[1-9]\d{0,18})$/;
+const VERSAO_MAXIMA = 9223372036854775807n;
 function versaoCanonica(v: unknown): string | null {
-  if (typeof v === "string" && FORMA_VERSAO.test(v)) return BigInt(v).toString();
+  if (typeof v === "string" && FORMA_VERSAO.test(v) && BigInt(v) <= VERSAO_MAXIMA) return v;
   if (typeof v === "number" && Number.isSafeInteger(v) && v >= 0) return String(v);
   return null;
+}
+
+/**
+ * EDITAR-01_R1 (1.2 h) — O NÚMERO DA PATCH: forma canônica e o limite da coluna, ANTES de ler qualquer registro.
+ * Forma: sinal "-" opcional, dígitos sem zero à esquerda, ponto e casas (nada de vírgula, expoente, "+", espaço).
+ * Limite: os dígitos inteiros e as casas da coluna `numeric(p,s)` — até `p - s` inteiros e `s` casas. Casa a mais é
+ * RECUSADA, não arredondada: o que foi pedido é o que se grava, ou nada. `positivo`/`naoNegativo` são os `check` das
+ * colunas de item (`quantity > 0`, `unit_price >= 0`): 422 no campo, e não a recusa genérica do banco.
+ * Devolve a mensagem da recusa, ou `null` se o número serve.
+ */
+const FORMA_NUMERO = /^-?(0|[1-9]\d*)(?:\.(\d+))?$/;
+export interface LimiteDoNumero { inteiros: number; decimais: number; positivo?: boolean; naoNegativo?: boolean }
+export const LIMITES_DA_EDICAO = {
+  dinheiro: { inteiros: 16, decimais: 2 },
+  quantidade: { inteiros: 14, decimais: 4, positivo: true },
+  preco: { inteiros: 12, decimais: 6, naoNegativo: true },
+  percentual: { inteiros: 3, decimais: 4 },
+} as const satisfies Record<string, LimiteDoNumero>;
+export function recusaDoNumero(v: string, limite: LimiteDoNumero): string | null {
+  const m = FORMA_NUMERO.exec(v);
+  if (!m) return MSG_NUMERO_INVALIDO;
+  if (m[1]!.length > limite.inteiros || (m[2]?.length ?? 0) > limite.decimais) return msgNumeroForaDoLimite(limite.inteiros, limite.decimais);
+  if (limite.positivo && !D(v).gt(0)) return MSG_QUANTIDADE_POSITIVA;
+  if (limite.naoNegativo && D(v).lt(0)) return MSG_PRECO_NEGATIVO;
+  return null;
+}
+
+/** Item NOVO (sem `id`) exige produto, quantidade e preço — conferido na FORMA do corpo, antes de ler o documento. */
+const OBRIGATORIOS_DO_ITEM_NOVO = ["product_id", "quantity", "unit_price"] as const;
+function faltandoNosItensNovos(itens: readonly ItemDaEdicao[] | undefined): Detalhe[] {
+  return (itens ?? []).flatMap((e, k) => e.id !== undefined ? []
+    : OBRIGATORIOS_DO_ITEM_NOVO.filter((f) => e[f] === undefined).map((f) => ({ path: `items[${k}].${f}`, message: MSG_EDICAO_CAMPO_OBRIGATORIO })));
+}
+/** A mesma mensagem-resumo que o tratador global dá ao 422 do zod no PUT. */
+function resumoDaRecusa(det: readonly Detalhe[]): string {
+  const faltando = det.filter((x) => x.message === MSG_EDICAO_CAMPO_OBRIGATORIO).map((x) => x.path);
+  return faltando.length ? `Campos obrigatórios pendentes: ${faltando.join(", ")}` : det.length === 1 && det[0]!.path ? `${det[0]!.path}: ${det[0]!.message}` : "Dados inválidos";
 }
 
 /** `items.0.id` do zod vira `items[0].id` — o mesmo caminho que as recusas de item do PUT já usam. */
@@ -126,10 +199,11 @@ export function lerPedidoDaEdicao<T extends CamposDaEdicao>(corpo: unknown, sche
     const det: Detalhe[] = r.error.issues.flatMap((i) => i.code === "unrecognized_keys"
       ? i.keys.map((k) => ({ path: caminho([...i.path, k]), message: MSG_EDICAO_CAMPO_DESCONHECIDO }))
       : [{ path: caminho(i.path), message: translateIssue(i) }]);
-    // A mesma mensagem-resumo que o tratador global dá ao 422 do zod no PUT.
-    const faltando = det.filter((x) => x.message === MSG_EDICAO_CAMPO_OBRIGATORIO).map((x) => x.path);
-    throw recusa(det, faltando.length ? `Campos obrigatórios pendentes: ${faltando.join(", ")}` : det.length === 1 && det[0]!.path ? `${det[0]!.path}: ${det[0]!.message}` : "Dados inválidos");
+    throw recusa(det, resumoDaRecusa(det));
   }
+  // Item novo incompleto também é FORMA (1.2 l): 422 antes de ler — num documento confirmado não vira 409.
+  const faltando = faltandoNosItensNovos(r.data.items);
+  if (faltando.length) throw recusa(faltando, resumoDaRecusa(faltando));
   return { versao, campos: r.data };
 }
 
@@ -155,6 +229,41 @@ function iguais(tipo: Tipo, a: unknown, b: unknown): boolean {
 /** A marca de dedutível mora DENTRO do plano gravado (D-1). */
 const dedutivelGravado = (cur: DocumentoGravado) => cur.installment_plan?.["is_deductible"] === true;
 
+/** Decimal igual, sem explodir: texto que não é número (plano legado torto) nunca é "igual". */
+function mesmoDecimal(a: unknown, b: unknown): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  try { return D(String(a)).eq(D(String(b))); } catch { return false; }
+}
+/**
+ * O plano na forma CANÔNICA: os padrões do schema aplicados (é o que o PUT/PATCH grava) e sem a marca
+ * `is_deductible`, que mora no plano gravado mas vem no corpo em campo próprio. Plano que o schema ESTRITO não lê
+ * (chave legada, valor torto) não tem forma canônica → nunca é igual a um plano enviado.
+ */
+function planoCanonico(p: unknown): InstallmentPlan | null {
+  if (p === null || typeof p !== "object" || Array.isArray(p)) return null;
+  const { is_deductible: _marca, ...semMarca } = p as Record<string, unknown>;
+  const r = installmentPlanSchema.strict().safeParse(semMarca);
+  return r.success ? r.data : null;
+}
+/**
+ * EDITAR-01_R1 (1.2 j) — "igual ao gravado" compara VALORES canônicos. A tela manda o plano junto com qualquer
+ * edição; reenviar o plano que já está lá não é decisão nova: não grava, não sobe a versão e, sobretudo, não congela
+ * como "ajustado à mão" (`parcelas_ajustadas`) um plano que era derivado da condição.
+ *   objeto → igual se, com os padrões, cada campo tem o mesmo valor (a entrada comparada como decimal);
+ *   null   → igual só quando não há plano gravado nem condição (nada a remover, nada a derivar).
+ */
+function planoIgualAoGravado(cur: DocumentoGravado, enviado: InstallmentPlan | null): boolean {
+  if (enviado === null) {
+    const { is_deductible: _marca, ...semMarca } = cur.installment_plan ?? {};
+    return Object.keys(semMarca).length === 0 && cur.condicao_pagamento_id === null;
+  }
+  const g = planoCanonico(cur.installment_plan);
+  if (!g) return false;
+  return g.installments === enviado.installments && g.first_due_date === enviado.first_due_date && g.mode === enviado.mode
+    && g.interval_days === enviado.interval_days && g.due_day === enviado.due_day && g.has_down_payment === enviado.has_down_payment
+    && g.down_payment_date === enviado.down_payment_date && mesmoDecimal(g.down_payment_value, enviado.down_payment_value);
+}
+
 const ITEM: Record<Exclude<keyof ItemComoFicara, never>, Tipo> = {
   product_id: "uuid", warehouse_id: "uuid", quantity: "decimal", unit_price: "decimal", discount: "decimal", discount_percent: "decimal", note: "texto",
 };
@@ -177,7 +286,8 @@ export interface EdicaoComoFicara {
  * CABEÇALHO: ausente = fica o gravado; `null` = limpa (o zod só aceita `null` onde o `docSchema` aceita); valor =
  * troca. Valor IGUAL ao gravado não é mudança e sai do corpo de três estados — é isso que faz "a PATCH troca a
  * condição" (e só então ela é conferida) e "a PATCH troca o cliente" (e só então o atraso é conferido) significarem
- * o que dizem, com o MESMO núcleo do PUT. `installment_plan` enviado é sempre decisão explícita (ver `planoDaEdicao`).
+ * o que dizem, com o MESMO núcleo do PUT. `installment_plan` enviado DIFERENTE do gravado (valores canônicos) é decisão
+ * explícita (ver `planoDaEdicao`); o igual ao gravado não é mudança (`planoIgualAoGravado`).
  *
  * ITENS: ausentes = intactos. Presentes = a lista nova completa: com `id` é item DESTE documento (o que não vem fica o
  * gravado, inclusive `origem_item_id`); sem `id` é novo e exige produto, quantidade e preço; o gravado que não vem
@@ -191,7 +301,7 @@ export function edicaoComoFicara(cur: DocumentoGravado, campos: CamposDaEdicao):
     if (v !== undefined && !iguais(tipo, v, cur[campo])) mudancas[campo] = v;
   }
   if (campos.is_deductible !== undefined && campos.is_deductible !== dedutivelGravado(cur)) mudancas["is_deductible"] = campos.is_deductible;
-  if (campos.installment_plan !== undefined) mudancas["installment_plan"] = campos.installment_plan;
+  if (campos.installment_plan !== undefined && !planoIgualAoGravado(cur, campos.installment_plan)) mudancas["installment_plan"] = campos.installment_plan;
 
   let pares: (ItemGravado | undefined)[] = cur.items;
   let itens: ItemComoFicara[] = cur.items.map(itemDoGravado);
@@ -208,8 +318,11 @@ export function edicaoComoFicara(cur: DocumentoGravado, campos: CamposDaEdicao):
         if (!g) { detalhes.push({ path: `items[${k}].id`, message: MSG_EDICAO_ITEM_DE_OUTRO_DOCUMENTO }); return; }
         if (vistos.has(chave)) { detalhes.push({ path: `items[${k}].id`, message: MSG_EDICAO_ITEM_REPETIDO }); return; }
         vistos.add(chave);
+        // Valor canonicamente IGUAL ao gravado fica com a grafia gravada (UUID em maiúsculas é o mesmo registro): as
+        // guardas do núcleo comparam o item com o gravado, e grafia não é troca.
         const item: ItemComoFicara = {
-          product_id: e.product_id ?? g.product_id, warehouse_id: e.warehouse_id !== undefined ? e.warehouse_id : g.warehouse_id,
+          product_id: e.product_id !== undefined && !iguais("uuid", e.product_id, g.product_id) ? e.product_id : g.product_id,
+          warehouse_id: e.warehouse_id !== undefined && !iguais("uuid", e.warehouse_id, g.warehouse_id) ? e.warehouse_id : g.warehouse_id,
           quantity: e.quantity ?? g.quantity, unit_price: e.unit_price ?? g.unit_price, discount: e.discount ?? g.discount,
           discount_percent: e.discount_percent ?? g.discount_percent, note: e.note !== undefined ? e.note : g.note,
         };
@@ -217,7 +330,8 @@ export function edicaoComoFicara(cur: DocumentoGravado, campos: CamposDaEdicao):
         novos.push({ item, par: g, alterado });
         return;
       }
-      const faltando = (["product_id", "quantity", "unit_price"] as const).filter((f) => e[f] === undefined);
+      // Já conferido na forma (`lerPedidoDaEdicao`); repetido aqui só como defesa de quem chamar sem ela.
+      const faltando = OBRIGATORIOS_DO_ITEM_NOVO.filter((f) => e[f] === undefined);
       for (const f of faltando) detalhes.push({ path: `items[${k}].${f}`, message: MSG_EDICAO_CAMPO_OBRIGATORIO });
       if (faltando.length) return;
       novos.push({ item: { product_id: e.product_id!, warehouse_id: e.warehouse_id ?? null, quantity: e.quantity!, unit_price: e.unit_price!, discount: e.discount ?? "0", discount_percent: e.discount_percent ?? "0", note: e.note ?? null }, par: undefined, alterado: true });
@@ -240,7 +354,10 @@ export function edicaoComoFicara(cur: DocumentoGravado, campos: CamposDaEdicao):
     payment_method_id: valor("payment_method_id"), freight: valor("freight"), freight_icms: valor("freight_icms"),
     other_values: valor("other_values"), discount: valor("discount"), note: valor("note"),
     categoria_financeira_id: valor("categoria_financeira_id"), centro_custo_id: valor("centro_custo_id"), condicao_pagamento_id: valor("condicao_pagamento_id"),
-    installment_plan: campos.installment_plan, is_deductible: campos.is_deductible ?? dedutivelGravado(cur), items: itens,
+    // O plano IGUAL ao gravado não é mudança (1.2 j) — e também não entra no documento como "plano enviado": se a
+    // condição ou o total mudarem, o plano derivado é refeito pela conta do PUT, como se o plano não tivesse vindo.
+    installment_plan: "installment_plan" in mudancas ? campos.installment_plan : undefined,
+    is_deductible: campos.is_deductible ?? dedutivelGravado(cur), items: itens,
   };
   return { mudancas, d, pares, itens: modo, mudou: Object.keys(mudancas).length > 0 || modo.modo === "porId" };
 }
@@ -257,7 +374,8 @@ export function edicaoComoFicara(cur: DocumentoGravado, campos: CamposDaEdicao):
  * pagamento tivesse sido editada no cadastro depois do lançamento (a conta lê a condição de HOJE), e desmarcaria
  * `parcelas_ajustadas`. Por isso a regra é:
  *
- *   a) a PATCH envia `installment_plan` (objeto ou null) → é decisão explícita: a MESMA conta do PUT (`calcular`);
+ *   a) a PATCH envia `installment_plan` (objeto ou null) DIFERENTE do gravado → é decisão explícita: a MESMA conta
+ *      do PUT (`calcular`). O plano igual ao gravado nem chega aqui: não está em `mudancas`;
  *   b) a PATCH troca a condição (ou a remove)           → o plano pertence à condição: a MESMA conta do PUT;
  *   c) o plano gravado é DERIVADO da condição (há condição e `parcelas_ajustadas` = false) e mudou a data do
  *      documento ou o total (itens, frete, outros, desconto) → a MESMA conta do PUT (a entrada e o 1º vencimento saem
@@ -267,18 +385,38 @@ export function edicaoComoFicara(cur: DocumentoGravado, campos: CamposDaEdicao):
  *      parcelas, vencimentos —, não valor). Só a marca `is_deductible` muda, e só se a PATCH a enviar diferente.
  *
  * Devolve `null` para "calcular pela conta do PUT" (`writeDoc`), ou o plano a MANTER.
+ *
+ * `total` é o total do documento COMO FICARÁ, calculado pelo núcleo (`salvarEdicao`) no MESMO ponto em que o PUT o
+ * calcula (logo antes de gravar, depois de todas as recusas): é isso que faz "Desconto maior…"/"Total negativo" vir
+ * na mesma ordem nas duas portas (1.2 m).
  */
-export function planoDaEdicao(cur: DocumentoGravado, e: Pick<EdicaoComoFicara, "mudancas" | "d">): { valor: Record<string, unknown>; ajustadas: boolean } | null {
-  const m = e.mudancas;
+export function planoDaEdicao(cur: DocumentoGravado, mudancas: Record<string, unknown>, total: string): { valor: Record<string, unknown>; ajustadas: boolean } | null {
+  const m = mudancas;
   if ("installment_plan" in m || "condicao_pagamento_id" in m) return null;
   const derivado = cur.condicao_pagamento_id !== null && cur.parcelas_ajustadas !== true;
-  if (derivado) {
-    const total = documentTotals(e.d.items.map((i) => ({ quantity: i.quantity, unitPrice: i.unit_price, discount: i.discount, discountPercent: i.discount_percent })),
-      { freight: e.d.freight, freightIcms: e.d.freight_icms, otherValues: e.d.other_values, discount: e.d.discount }).total;
-    if ("document_date" in m || !D(total).eq(D(cur.total))) return null;
-  }
+  if (derivado && ("document_date" in m || !D(total).eq(D(cur.total)))) return null;
   const gravado = cur.installment_plan ?? {};
   return { valor: "is_deductible" in m ? { ...gravado, is_deductible: m["is_deductible"] } : gravado, ajustadas: cur.parcelas_ajustadas === true };
+}
+
+/**
+ * EDITAR-01_R1 (1.2 h) — O TOTAL CALCULADO CABE NA COLUNA? `total` do item, `subtotal` e `total` do documento são
+ * numeric(18,2): até 16 dígitos inteiros. Os valores conferidos são EXATAMENTE os que serão gravados (a mesma conta
+ * do domínio que `writeDoc` usa), sem arredondar para caber: o que não cabe é 422 no campo, e não o 500 do estouro
+ * numérico do banco. Conferido pelo núcleo, logo antes de gravar — depende do documento como ficará.
+ */
+const TETO_DA_COLUNA_DE_DINHEIRO = D("1e16");
+export function recusaDosTotaisDaEdicao(itens: readonly ItemComoFicara[], totais: { subtotal: string; total: string }): void {
+  const estoura = (v: string) => D(v).abs().gte(TETO_DA_COLUNA_DE_DINHEIRO);
+  const detalhes: Detalhe[] = [];
+  itens.forEach((i, k) => {
+    if (estoura(itemTotal({ quantity: i.quantity, unitPrice: i.unit_price, discount: i.discount, discountPercent: i.discount_percent }))) {
+      detalhes.push({ path: `items[${k}].total`, message: MSG_EDICAO_TOTAL_FORA_DO_LIMITE });
+    }
+  });
+  if (estoura(totais.subtotal)) detalhes.push({ path: "subtotal", message: MSG_EDICAO_TOTAL_FORA_DO_LIMITE });
+  if (estoura(totais.total)) detalhes.push({ path: "total", message: MSG_EDICAO_TOTAL_FORA_DO_LIMITE });
+  if (detalhes.length) throw recusa(detalhes);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

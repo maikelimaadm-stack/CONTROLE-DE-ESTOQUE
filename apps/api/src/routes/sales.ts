@@ -21,9 +21,9 @@ import { regrasDaVersaoTop, regrasDaTopAtual, cobrarRegrasDaOperacao, respostaDa
 import { registrarSituacaoCliente } from "./vendas-atraso-cliente.js";
 import { registrarEdicaoDeVenda } from "./vendas-edicao.js";
 // EDITAR-01 (decisão 272): as recusas de estado num lugar só, e a PATCH (forma, documento como ficará, plano, histórico).
-import { recusaDaEdicao } from "./vendas-edicao-regras.js";
+import { recusaDaEdicao, limitesDaEdicao } from "./vendas-edicao-regras.js";
 import { FORMA_UUID_PADRAO } from "@agro/domain";
-import { lerPedidoDaEdicao, edicaoComoFicara, planoDaEdicao, eventoDaEdicao, MSG_DOCUMENTO_MUDOU, type DocumentoGravado, type ItemGravado, type ItensDaEdicao, type CamposDaEdicao } from "./vendas-edicao-patch.js";
+import { lerPedidoDaEdicao, edicaoComoFicara, planoDaEdicao, eventoDaEdicao, recusaDoNumero, recusaDosTotaisDaEdicao, LIMITES_DA_EDICAO, REFERENCIAS_DA_EDICAO, MSG_DOCUMENTO_MUDOU, type LimiteDoNumero, type DocumentoGravado, type ItemGravado, type ItensDaEdicao, type CamposDaEdicao } from "./vendas-edicao-patch.js";
 // TOP-CONFIG-06 (decisão 265): faturar em partes — as contas no domínio, as leituras em `vendas-faturar-em-partes`.
 import { validarItensDaParte, itensDoSaldoInteiro, itensCanonicosDaParte, calcularParte, saldoDoItem, MSG_ITENS_DA_PARTE, type ItemPedidoDaParte } from "@agro/domain";
 import { itensDeOrigemComSaldo, cabecalhoJaAlocado, partesDaOrigem, saldoTotal, MSG_NAO_PERMITE_EM_PARTES, MSG_SEM_SALDO_PARA_CONVERTER, MSG_SEM_PARTES, MSG_SEM_SALDO_A_ENCERRAR, MSG_ORIGEM_COM_PARTES_ATIVAS_CANCEL, msgItensDaParte } from "./vendas-faturar-em-partes.js";
@@ -49,13 +49,20 @@ const docSchema = z.object({ empresa_id: uuid, document_date: date, shipping_dat
 const campoDoc = docSchema.shape;
 const campoItem = campoDoc.items.element.shape;
 /**
- * Número da PATCH: o MESMO `dec` do `docSchema`, com a FORMA conferida aqui. O `dec` aceita qualquer texto e só o
- * `decimal.js` o recusaria, DEPOIS de ler o registro, como erro comum (500); a PATCH promete 422 no campo, antes de
- * ler qualquer coisa. Ponto como separador, sem expoente: "1,50" é recusado, e não lido como outra coisa.
+ * Número da PATCH: o MESMO `dec` do `docSchema`, com a FORMA e o LIMITE DA COLUNA conferidos aqui (`recusaDoNumero`).
+ * O `dec` aceita qualquer texto: o `decimal.js` o recusaria DEPOIS de ler o registro (500), e o que passasse dele com
+ * dígitos demais estouraria a coluna no banco (500) ou seria arredondado em silêncio. A PATCH promete 422 no campo,
+ * antes de ler qualquer coisa — no cabeçalho, no item e na entrada do plano (EDITAR-01_R1, 1.2 h).
  */
-const decDaEdicao = dec.refine((v) => /^-?\d+(\.\d+)?$/.test(v), { message: "Número inválido: use dígitos e ponto como separador decimal" });
-const itemDaEdicaoSchema = z.object({ id: uuid.optional(), product_id: campoItem.product_id.optional(), warehouse_id: campoItem.warehouse_id, quantity: decDaEdicao.optional(), unit_price: decDaEdicao.optional(), discount: decDaEdicao.optional(), discount_percent: decDaEdicao.optional(), note: campoItem.note }).strict();
-const edicaoSchema = z.object({ document_date: campoDoc.document_date.optional(), shipping_date: campoDoc.shipping_date, due_date: campoDoc.due_date, client_id: campoDoc.client_id.optional(), transporter_id: campoDoc.transporter_id, proprietary_id: campoDoc.proprietary_id, driver_name: campoDoc.driver_name, payment_method_id: campoDoc.payment_method_id, freight: decDaEdicao.optional(), freight_icms: decDaEdicao.optional(), other_values: decDaEdicao.optional(), discount: decDaEdicao.optional(), note: campoDoc.note, installment_plan: installmentPlanSchema.strict().optional().nullable(), is_deductible: campoDoc.is_deductible.unwrap().optional(), items: z.array(itemDaEdicaoSchema).min(1).optional(), categoria_financeira_id: campoDoc.categoria_financeira_id, centro_custo_id: campoDoc.centro_custo_id, condicao_pagamento_id: campoDoc.condicao_pagamento_id }).strict() satisfies z.ZodType<CamposDaEdicao>;
+const decDaEdicao = (limite: LimiteDoNumero) => dec.superRefine((v, c) => {
+  const recusa = recusaDoNumero(v, limite);
+  if (recusa) c.addIssue({ code: "custom", message: recusa });
+});
+const dinheiroDaEdicao = decDaEdicao(LIMITES_DA_EDICAO.dinheiro);
+const itemDaEdicaoSchema = z.object({ id: uuid.optional(), product_id: campoItem.product_id.optional(), warehouse_id: campoItem.warehouse_id, quantity: decDaEdicao(LIMITES_DA_EDICAO.quantidade).optional(), unit_price: decDaEdicao(LIMITES_DA_EDICAO.preco).optional(), discount: dinheiroDaEdicao.optional(), discount_percent: decDaEdicao(LIMITES_DA_EDICAO.percentual).optional(), note: campoItem.note }).strict();
+/** O plano da PATCH é ESTRITO nas chaves E nos valores: a entrada é dinheiro canônico ("1,50" → 422, e não um 500 na confirmação). */
+const planoDaEdicaoSchema = installmentPlanSchema.extend({ down_payment_value: dinheiroDaEdicao.optional() }).strict();
+const edicaoSchema = z.object({ document_date: campoDoc.document_date.optional(), shipping_date: campoDoc.shipping_date, due_date: campoDoc.due_date, client_id: campoDoc.client_id.optional(), transporter_id: campoDoc.transporter_id, proprietary_id: campoDoc.proprietary_id, driver_name: campoDoc.driver_name, payment_method_id: campoDoc.payment_method_id, freight: dinheiroDaEdicao.optional(), freight_icms: dinheiroDaEdicao.optional(), other_values: dinheiroDaEdicao.optional(), discount: dinheiroDaEdicao.optional(), note: campoDoc.note, installment_plan: planoDaEdicaoSchema.optional().nullable(), is_deductible: campoDoc.is_deductible.unwrap().optional(), items: z.array(itemDaEdicaoSchema).min(1).optional(), categoria_financeira_id: campoDoc.categoria_financeira_id, centro_custo_id: campoDoc.centro_custo_id, condicao_pagamento_id: campoDoc.condicao_pagamento_id }).strict() satisfies z.ZodType<CamposDaEdicao>;
 const CHAVES_DA_EDICAO: ReadonlySet<string> = new Set(Object.keys(edicaoSchema.shape));
 const permOf = (k: SalesKind) => (k === "budget" ? "budgets" : k === "order" ? "orders" : "sales");
 /**
@@ -426,6 +433,57 @@ export async function getDoc(ctx: ServiceCtx, id: string, expectedKind: SalesKin
 async function exigirDocumentoVisivel(ctx: ServiceCtx, id: string, expectedKind: SalesKind): Promise<void> {
   await getDoc(ctx, id, expectedKind);
 }
+
+/**
+ * EDITAR-01_R1 (1.2 k) — A TRAVA DA PATCH, SEM JUNÇÃO: só `erp.sales_documents`, só `id` e `version`.
+ *
+ * O `getDoc` com `lock` junta `erp.people` (cliente) e trava `of d`. Sob READ COMMITTED, quem espera a trava relê a
+ * linha nova e REAVALIA a junção com o cliente da foto antiga: se a gravação concorrente trocou o cliente, a linha
+ * some da consulta e a edição respondia 404 — "não existe" — sobre um documento que só MUDOU. O certo é o 409 da
+ * versão, e é o que esta trava entrega: sem junção, a reavaliação só olha a própria linha.
+ *
+ * O RECORTE é o MESMO do `getDoc` (organização, variante, excluído e escopo de empresa, pelo `scopedById`): zero
+ * linhas é a MESMA 404. Depois de conferir a versão, a edição lê o documento pelo `getDoc` SEM trava — a linha já está
+ * travada por esta transação, e o que ele lê é o que vale até o commit.
+ */
+async function travarDocumentoDaEdicao(ctx: ServiceCtx, id: string, expectedKind: SalesKind): Promise<{ id: string; version: string }> {
+  const sc = scopedById(ctx, "d", id); sc.params.push(expectedKind);
+  const r = await ctx.tx.query<{ id: string; version: string }>("select d.id, d.version from erp.sales_documents d where d.id=$1 and d.organization_id=$2 and d.deleted_at is null and d.kind=$" + sc.params.length + sc.sql + " for update of d", sc.params);
+  if (!r.rows[0]) throw notFound("Documento");
+  return r.rows[0];
+}
+
+/**
+ * EDITAR-01_R1 (1.2 y) — A REFERÊNCIA QUE A PATCH TROCA EXISTE NESTA ORGANIZAÇÃO?
+ *
+ * A FK de coluna única (`client_id`, `transporter_id`, `proprietary_id` → `erp.people`; `payment_method_id` →
+ * `erp.payment_methods`) prova que a linha existe, não que é do tenant: a checagem da FK não passa pela RLS, e uma
+ * transportadora de OUTRA organização era gravada. Aqui: pessoa desta organização e não excluída; forma de pagamento
+ * desta organização ou a padrão do sistema (`organization_id` nulo — o mesmo recorte do cadastro, `sharedDefaults`).
+ * Inexistente, de outra organização e excluída caem na MESMA recusa (422 no campo): distinguir seria oráculo.
+ * Só o campo que a PATCH TROCA (`mudancas`): o gravado não é reconferido. Duas consultas no máximo, nunca uma por campo.
+ * `for share` nas pessoas: a exclusão concorrente espera o commit desta edição (o mesmo cuidado do documento de compra).
+ * POST e PUT ficam como estão (débito declarado).
+ */
+async function conferirReferenciasDaEdicao(ctx: ServiceCtx, mudancas: Record<string, unknown>): Promise<void> {
+  const trocadas = (Object.keys(REFERENCIAS_DA_EDICAO) as (keyof typeof REFERENCIAS_DA_EDICAO)[])
+    .filter((campo) => typeof mudancas[campo] === "string")
+    .map((campo) => ({ campo, valor: String(mudancas[campo]).toLowerCase(), ...REFERENCIAS_DA_EDICAO[campo] }));
+  if (!trocadas.length) return;
+  const pessoas = trocadas.filter((t) => t.tabela === "people").map((t) => t.valor);
+  const formas = trocadas.filter((t) => t.tabela === "payment_methods").map((t) => t.valor);
+  const achadas = new Set<string>();
+  if (pessoas.length) {
+    const r = await ctx.tx.query<{ id: string }>("select id::text as id from erp.people where organization_id=$1 and deleted_at is null and id = any($2::uuid[]) for share", [ctx.orgId, pessoas]);
+    for (const x of r.rows) achadas.add(`people:${x.id}`);
+  }
+  if (formas.length) {
+    const r = await ctx.tx.query<{ id: string }>("select id::text as id from erp.payment_methods where (organization_id is null or organization_id=$1) and id = any($2::uuid[])", [ctx.orgId, formas]);
+    for (const x of r.rows) achadas.add(`payment_methods:${x.id}`);
+  }
+  const details = trocadas.filter((t) => !achadas.has(`${t.tabela}:${t.valor}`)).map((t) => ({ path: t.campo, message: t.mensagem }));
+  if (details.length) throw err("VALIDATION_ERROR", details[0]!.message, details);
+}
 /**
  * Grava o documento. `top` tem TRÊS estados, e a diferença entre eles é o contrato de preservação:
  *
@@ -477,7 +535,7 @@ async function writeDoc(ctx: ServiceCtx, kind: SalesKind, d: z.infer<typeof docS
     const condSet = `, parcelas_ajustadas=$${n1}` + (condicao.gravar ? `, condicao_pagamento_id=$${n1 + 1}` : "");
     const condParams: unknown[] = condicao.gravar ? [parcelasAjustadas, condicao.linha?.id ?? null] : [parcelasAjustadas];
     const u = await ctx.tx.query(`update erp.sales_documents set document_date=$3, shipping_date=$4, due_date=$5, client_id=$6, transporter_id=$7, proprietary_id=$8, driver_name=$9, payment_method_id=$10, subtotal=$11, freight=$12, freight_icms=$13, other_values=$14, discount=$15, total=$16, note=$17, installment_plan=$18${topSet}${classSet}${condSet}, updated_at=now() where id=$1 and organization_id=$2`, [id, ctx.orgId, d.document_date, d.shipping_date ?? null, d.due_date ?? null, d.client_id, d.transporter_id ?? null, d.proprietary_id ?? null, d.driver_name ?? null, d.payment_method_id ?? null, totals.subtotal, money(d.freight), money(d.freight_icms), money(d.other_values), money(d.discount), totals.total, d.note ?? null, JSON.stringify(plan), ...topParams, ...classParams, ...condParams]);
-    // ROW COUNT SOB RLS: a edição travou a linha antes (o `getDoc` com `lock`), então zero aqui é o impossível — e o
+    // ROW COUNT SOB RLS: a edição travou a linha antes (PUT: `getDoc` com `lock`; PATCH: `travarDocumentoDaEdicao`), então zero aqui é o impossível — e o
     // impossível não vira "salvo" sem efeito.
     if (u.rowCount !== 1) throw notFound("Documento");
     if (modoItens.modo === "substituir") await ctx.tx.query("delete from erp.sales_document_items where document_id=$1", [id]);
@@ -515,7 +573,12 @@ interface EdicaoParaSalvar {
   /** Para cada `d.items[k]`, o item gravado que ele é. PUT: o da MESMA posição; PATCH: o de mesmo `id` (novo = nenhum). */
   pares: readonly (ItemGravado | undefined)[];
   itens: { modo: "substituir"; origemItemIds: readonly (string | null)[] } | ItensDaEdicao;
-  planoMantido?: { valor: Record<string, unknown>; ajustadas: boolean } | null;
+  /**
+   * PATCH (EDITAR-01_R1, 1.2 h e m): logo antes de gravar — no MESMO ponto em que o PUT calcula os totais dentro do
+   * `writeDoc`, depois de todas as recusas —, o núcleo calcula os totais, confere que cabem nas colunas e decide o
+   * plano (`planoDaEdicao`). Ausente = o PUT, exatamente como antes.
+   */
+  parcial?: boolean;
 }
 
 /**
@@ -525,19 +588,22 @@ interface EdicaoParaSalvar {
  * com o documento gravado + o que muda. Não há regra da edição fora daqui — se houvesse, as duas portas divergiriam
  * no primeiro ajuste de uma delas, e a tela que usa a PATCH aceitaria o que o PUT recusa (ou o contrário).
  *
- * Quem chama já travou a linha (`getDoc` com `lock`) e já passou pelas recusas de estado (`recusaDaEdicao`).
+ * Quem chama já travou a linha (PUT: `getDoc` com `lock`; PATCH: `travarDocumentoDaEdicao`, sem junção) e já passou
+ * pelas recusas de estado (`recusaDaEdicao`).
  */
-async function salvarEdicao(ctx: ServiceCtx, kind: SalesKind, cur: DocumentoGravado, e: EdicaoParaSalvar) {
+async function salvarEdicao(ctx: ServiceCtx, kind: SalesKind, id: string, cur: DocumentoGravado, e: EdicaoParaSalvar) {
+  // `id` é o da URL (EDITAR-01_R1, 1.2 n): o PUT devolve `r.id`, e ele volta a ser o da requisição, como antes.
   const { d, corpo } = e;
-  const id = cur.id;
-  // TOP-CONFIG-06 — A PARTE GERADA: itens com mesmo produto, quantidade, preço e descontos (e na mesma quantidade de
-  // linhas). Só armazém e observação do item mudam. O PUT compara pela POSIÇÃO (a ligação é preservada pela posição);
-  // a PATCH, pelo ID do item (`pares`) — a ligação é a do próprio item, que é gravado em lugar.
-  const parteGerada = cur.items.some((i) => i.origem_item_id !== null);
   // A venda gerada de pedido com reserva: a mesma pergunta serve à guarda do armazém da parte (abaixo) e à
   // conferência da reserva (antes de gravar). UMA consulta, e só quando a venda tem origem.
   const origemReserva = kind === "sale" && cur.origin_document_id ? await origemReservaEstoque(ctx, cur.origin_document_id) : false;
-  if (parteGerada) {
+  // TOP-CONFIG-06 — A PARTE GERADA: itens com mesmo produto, quantidade, preço e descontos (e na mesma quantidade de
+  // linhas). Só armazém e observação do item mudam. O PUT compara pela POSIÇÃO (a ligação é preservada pela posição);
+  // a PATCH, pelo ID do item (`pares`) — a ligação é a do próprio item, que é gravado em lugar.
+  // EDITAR-01_R1 (p): os limites saem da função ÚNICA que o `/edicao` também mostra — a tela trava o que a gravação
+  // recusa. A reserva da origem já lida vai junto: nenhuma consulta a mais.
+  const limites = await limitesDaEdicao(ctx, kind, cur, { origemReserva });
+  if (limites.somenteArmazemEObservacao) {
     const iguais = d.items.length === cur.items.length && d.items.every((n, k) => {
       const o = e.pares[k];
       return o !== undefined && n.product_id === o.product_id && D(n.quantity).eq(o.quantity) && D(n.unit_price).eq(o.unit_price) && D(n.discount).eq(o.discount) && D(n.discount_percent).eq(o.discount_percent);
@@ -558,11 +624,12 @@ async function salvarEdicao(ctx: ServiceCtx, kind: SalesKind, cur: DocumentoGrav
      * A comparação é em MINÚSCULAS: o zod aceita UUID em maiúsculas e o gravado vem do banco em minúsculas — o
      * mesmo armazém repetido em maiúsculas não é troca.
      */
-    if (origemReserva) {
-      const trocados = d.items.flatMap((n, k) => e.pares[k]!.product_control_stock !== false && (n.warehouse_id?.toLowerCase() ?? null) !== (e.pares[k]!.warehouse_id?.toLowerCase() ?? null)
-        ? [{ path: `items[${k}].warehouse_id`, message: MSG_PARTE_RESERVA_ARMAZEM }] : []);
-      if (trocados.length) throw err("VALIDATION_ERROR", MSG_PARTE_RESERVA_ARMAZEM, trocados);
-    }
+    // `armazemTravado` é por item GRAVADO (`limites.itens`, na ordem do documento); `pares[k]` é o gravado que o item
+    // k é — no PUT, o da mesma posição; na PATCH, o de mesmo id.
+    const travado = new Map(limites.itens.map((i) => [i.id, i.armazemTravado]));
+    const trocados = d.items.flatMap((n, k) => travado.get(e.pares[k]!.id) === true && (n.warehouse_id?.toLowerCase() ?? null) !== (e.pares[k]!.warehouse_id?.toLowerCase() ?? null)
+      ? [{ path: `items[${k}].warehouse_id`, message: MSG_PARTE_RESERVA_ARMAZEM }] : []);
+    if (trocados.length) throw err("VALIDATION_ERROR", MSG_PARTE_RESERVA_ARMAZEM, trocados);
   }
   /**
    * `null` EXPLÍCITO É RECUSADO — e a diferença para o campo AUSENTE é o contrato inteiro.
@@ -624,7 +691,19 @@ async function salvarEdicao(ctx: ServiceCtx, kind: SalesKind, cur: DocumentoGrav
   const reservaNoPut = e.itens.modo !== "manter" && (kind === "order" ? (top ? await versaoReservaEstoque(ctx, top.tipoOperacaoVersaoId) : cur.reserva_estoque === true)
     : origemReserva);
   if (reservaNoPut) await conferirReservaDoDocumento(ctx, { itens: d.items, empresaId: cur.empresa_id, excluirDocumentoId: id });
-  const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao, condicao, e.itens.modo === "substituir" ? e.itens.origemItemIds : [], { itens: e.itens, planoMantido: e.planoMantido ?? null });
+  /*
+   * EDITAR-01_R1 (1.2 h e m) — SÓ A PATCH, e no ponto exato em que o PUT calcula os totais (a 1ª linha do `writeDoc`):
+   * a MESMA conta do domínio ("Desconto maior…"/"Total negativo" saem daqui, na mesma ordem das duas portas), depois
+   * o total que não cabe na coluna (422 no campo, e não o 500 do banco), e só então o plano, que depende do total.
+   */
+  let planoMantido: { valor: Record<string, unknown>; ajustadas: boolean } | null = null;
+  if (e.parcial) {
+    const totais = documentTotals(d.items.map((i) => ({ quantity: i.quantity, unitPrice: i.unit_price, discount: i.discount, discountPercent: i.discount_percent })),
+      { freight: d.freight, freightIcms: d.freight_icms, otherValues: d.other_values, discount: d.discount });
+    recusaDosTotaisDaEdicao(d.items.map((i) => ({ ...i, warehouse_id: i.warehouse_id ?? null, note: i.note ?? null })), totais);
+    planoMantido = planoDaEdicao(cur, corpo, totais.total);
+  }
+  const r = await writeDoc(ctx, kind, d, id, undefined, top, classificacao, condicao, e.itens.modo === "substituir" ? e.itens.origemItemIds : [], { itens: e.itens, planoMantido });
   return { r, top };
 }
 /**
@@ -1232,7 +1311,7 @@ export default async function salesRoutes(app: FastifyInstance) {
       const corpo = req.body !== null && typeof req.body === "object" ? req.body as Record<string, unknown> : {};
       // O PUT é a lista inteira, casada com a gravada PELA POSIÇÃO (é como a parte gerada preserva a ligação), e os
       // itens são regravados como sempre foram (`substituir`). As regras são as do núcleo, as mesmas da PATCH.
-      const { r, top } = await salvarEdicao(ctx, kind, cur, { d, corpo, pares: d.items.map((_, k) => cur.items[k]),
+      const { r, top } = await salvarEdicao(ctx, kind, id, cur, { d, corpo, pares: d.items.map((_, k) => cur.items[k]),
         itens: { modo: "substituir", origemItemIds: cur.items.map((i) => i.origem_item_id) } });
       await audit(ctx.tx, ctx, "sales_documents", id, "update");
       // Mudança de identidade do lançamento é evento PRÓPRIO: quem trocou a TOP de um documento não pode
@@ -1249,22 +1328,33 @@ export default async function salesRoutes(app: FastifyInstance) {
      * EDIÇÃO PARCIAL — `PATCH <base>/:id` (EDITAR-01, decisão 272). Corpo `{ version, ...só os campos que mudam }`.
      *
      * A ORDEM é o contrato:
-     *   1. a FORMA do pedido (chave desconhecida, `empresa_id`, `tipo_operacao_id`, `version`, valores) → 422, antes de
-     *      ler qualquer registro e antes de reservar a chave de idempotência;
+     *   0. a CAPACIDADE: `<perm>.edit` (a porta) e `<perm>.view` (a resposta é o documento inteiro) → 403, antes de ler
+     *      qualquer coisa, inclusive o corpo;
+     *   1. a FORMA do pedido (chave desconhecida, `empresa_id`, `tipo_operacao_id`, `version` canônica, números na
+     *      forma e no limite da coluna — cabeçalho, item e entrada do plano —, item novo sem produto/quantidade/preço)
+     *      → 422, antes de ler qualquer registro e antes de reservar a chave de idempotência;
      *   2. o documento VISÍVEL (a mesma 404 de sempre) — antes do helper, que devolveria a resposta gravada sem passar
      *      pelo recorte de empresa (`exigirDocumentoVisivel`);
      *   3. a IDEMPOTÊNCIA: mesma chave + mesmo corpo (canônico, pós-zod) → a MESMA resposta, sem gravar de novo; outra
      *      chave/corpo → 409 CONFLICT do helper. `actorId` e `sourceId` no hash, como no cancelamento;
-     *   4. a TRAVA da linha e, LOGO DEPOIS, a VERSÃO: diferente da gravada → 409 CONCURRENCY_CONFLICT, sem gravar nada.
-     *      Antes da situação de propósito: quem editou uma versão velha precisa recarregar, qualquer que seja o estado
-     *      novo — e a versão lida sob a trava é a que vale até o commit;
+     *   4. a TRAVA da linha (só `erp.sales_documents`, sem junção; zero linhas → a mesma 404) e, LOGO DEPOIS, a VERSÃO:
+     *      diferente da gravada → 409 CONCURRENCY_CONFLICT, sem gravar nada. Antes da situação de propósito: quem
+     *      editou uma versão velha precisa recarregar, qualquer que seja o estado novo — e a versão lida sob a trava é
+     *      a que vale até o commit. Só então o documento é lido (`getDoc`, sem trava);
      *   5. as recusas de ESTADO (`recusaDaEdicao`, exigindo TOP) → 409 INVALID_STATUS_TRANSITION;
-     *   6. o documento COMO FICARÁ (`edicaoComoFicara`: `items[i].id` estranho ou repetido → 422) e o NÚCLEO do PUT.
+     *   6. o documento COMO FICARÁ (`edicaoComoFicara`: `items[i].id` estranho ou repetido → 422);
+     *   7. nada muda de fato (valores canônicos iguais ao gravado, plano inclusive) → 200 com o documento, sem escrita;
+     *   8. a referência TROCADA (cliente, transportadora, proprietário, forma de pagamento) fora da organização → 422;
+     *   9. o NÚCLEO do PUT (`salvarEdicao`), na ordem do PUT; os totais (e o que não cabe na coluna → 422) e o plano
+     *      são decididos lá dentro, logo antes de gravar.
      * Nada muda de fato (tudo igual ao gravado) → nenhuma escrita, a versão fica, e a resposta é o documento.
      * Uma PATCH que grava faz UM update no cabeçalho (a versão sobe exatamente 1) e UM evento de histórico.
      * Resposta: o documento como o GET o devolve, com a versão nova.
      */
     app.patch(`${base}/:id`, async (req) => runService(app, req, `${perm}.edit`, async (ctx) => {
+      // EDITAR-01_R1 (1.2 g): a PATCH devolve o documento INTEIRO (também a que não muda nada), então ela é `.edit` E
+      // `.view` — por chave exata, sem implicação. Sem `.view` → 403 antes de ler qualquer coisa, inclusive o corpo.
+      requirePermission(ctx, `${perm}.view`);
       const { id } = req.params as { id: string };
       const pedido = lerPedidoDaEdicao(req.body, edicaoSchema, CHAVES_DA_EDICAO);
       // Id MALFORMADO é inexistente: a MESMA 404 do GET, e não o 500 do 22P02 que o `getDoc` daria ao passá-lo a uma
@@ -1274,13 +1364,18 @@ export default async function salesRoutes(app: FastifyInstance) {
       return (await idempotent(ctx.tx, ctx.orgId, req.headers["idempotency-key"] as string | undefined,
         { action: "edit_sales_document", sourceId: id, sourceKind: kind, body: { version: pedido.versao, ...pedido.campos }, actorId: ctx.user.id },
         async () => {
-          const cur = await getDoc(ctx, id, kind, { lock: true }) as DocumentoGravado;
-          if (BigInt(cur.version) !== BigInt(pedido.versao)) throw err("CONCURRENCY_CONFLICT", MSG_DOCUMENTO_MUDOU);
+          // 1.2 k: trava SEM junção e confere a versão; SÓ DEPOIS lê o documento (sem trava — a linha já é desta transação).
+          const travada = await travarDocumentoDaEdicao(ctx, id, kind);
+          if (BigInt(travada.version) !== BigInt(pedido.versao)) throw err("CONCURRENCY_CONFLICT", MSG_DOCUMENTO_MUDOU);
+          const cur = await getDoc(ctx, id, kind) as DocumentoGravado;
           const recusa = await recusaDaEdicao(ctx, cur, { exigirTop: true });
           if (recusa) throw err("INVALID_STATUS_TRANSITION", recusa);
           const edicao = edicaoComoFicara(cur, pedido.campos);
-          if (!edicao.mudou) return getDoc(ctx, id, kind);
-          await salvarEdicao(ctx, kind, cur, { d: edicao.d, corpo: edicao.mudancas, pares: edicao.pares, itens: edicao.itens, planoMantido: planoDaEdicao(cur, edicao) });
+          // Nada muda: a resposta é o documento lido sob a trava — nenhuma escrita desde então.
+          if (!edicao.mudou) return cur;
+          // 1.2 y: a referência TROCADA existe nesta organização (a FK de coluna única não passa pela RLS).
+          await conferirReferenciasDaEdicao(ctx, edicao.mudancas);
+          await salvarEdicao(ctx, kind, id, cur, { d: edicao.d, corpo: edicao.mudancas, pares: edicao.pares, itens: edicao.itens, parcial: true });
           const depois = await getDoc(ctx, id, kind) as DocumentoGravado;
           const enviados = [...Object.keys(edicao.mudancas), ...(pedido.campos.items !== undefined ? ["items"] : [])];
           const evento = eventoDaEdicao(cur, depois, enviados);
