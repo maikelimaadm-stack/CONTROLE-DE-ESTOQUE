@@ -1,9 +1,11 @@
 /**
  * TOP-CONFIG-05 — CLIENTE EM ATRASO (decisão 263).
  *
- * A API NUNCA lê `erp.financial_titles` para esta pergunta: quem lança venda não precisa enxergar o financeiro.
- * A resposta vem da porta estreita `erp.situacao_atraso_cliente` (0033), que devolve SÓ agregados, reconfere a
- * capacidade de lançar venda e tira organização e usuário da GUC do servidor — nunca de parâmetro.
+ * A API NUNCA lê `erp.financial_titles` para esta pergunta: quem lança ou edita venda não precisa enxergar o financeiro.
+ * A resposta vem da porta estreita `erp.situacao_atraso_cliente` (0033; ampliada na 0039, EDITAR-01), que devolve SÓ
+ * agregados, reconfere a capacidade — qualquer uma das SEIS: `budgets`/`orders`/`sales` `.create` ou `.edit` (desde a
+ * 0039, para o `GET <base>/:id/edicao` e a PATCH, que quem só EDITA também chama) — e tira organização e usuário da
+ * GUC do servidor, nunca de parâmetro. Sem nenhuma das seis → zero linhas.
  */
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -14,7 +16,7 @@ import { runService } from "../lib/service.js";
 import { notFound } from "../lib/errors.js";
 import { regrasDaTopAtual, type RegrasDaVersaoTop } from "./vendas-regras-operacao.js";
 
-/** Agregados do atraso do cliente além da tolerância. Zero linhas (sem capacidade) = nada vencido visível. */
+/** Agregados do atraso do cliente além da tolerância. Zero linhas (sem nenhuma das seis capacidades) = nada vencido visível. */
 export async function situacaoAtrasoCliente(ctx: ServiceCtx, clienteId: string, toleranciaDias: number): Promise<SituacaoAtrasoCliente> {
   const r = await ctx.tx.query<{ titulos: number; total: string; vencimento_mais_antigo: string | null }>(
     `select titulos, total::text as total, vencimento_mais_antigo::text as vencimento_mais_antigo
