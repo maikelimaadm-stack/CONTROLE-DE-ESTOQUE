@@ -185,14 +185,15 @@ const LEI_PRE_PR_02 = [
  * As leis ANTERIORES. Nenhuma pode continuar escrita como vigente em nenhum dos dois donos. Cada
  * regex exige o trecho que a distingue ("na faixa", "no repositório ≥ 3", "por faixa", "> 0" logo
  * depois de "PRs abertas"), então nenhuma casa dentro da outra — o autoteste prova isso acrescentando
- * uma de cada vez e exigindo exatamente UMA acusação.
+ * uma de cada vez e exigindo exatamente UMA acusação. As setas ASCII também acusam (PROCESSO-02_R1):
+ * "=>" no lugar de "⇒" e ">=" no lugar de "≥" escrevem a mesma lei, e trocar o símbolo não a revoga.
  */
 const anterior = (frase, decisao, re) => ({ re, garante: `a lei anterior ("${frase}", decisão ${decisao}) continua escrita como vigente — duas leis contraditórias valem como nenhuma, e a sessão escolheria a mais frouxa` });
 const LEI_ANTERIOR = [
-  anterior("PRs abertas na faixa > 0 ⇒ PR nova nessa faixa = PROIBIDA", 264, /PRs abertas na faixa\s*>\s*0\s*⇒\s*PR nova nessa faixa\s*=\s*PROIBIDA/i),
-  anterior("PRs abertas no repositório ≥ 3 ⇒ PR nova = PROIBIDA", 264, /PRs abertas no reposit[óo]rio\s*≥\s*3\s*⇒\s*PR nova\s*=\s*PROIBIDA/i),
+  anterior("PRs abertas na faixa > 0 ⇒ PR nova nessa faixa = PROIBIDA", 264, /PRs abertas na faixa\s*>\s*0\s*(?:⇒|=>)\s*PR nova nessa faixa\s*=\s*PROIBIDA/i),
+  anterior("PRs abertas no repositório ≥ 3 ⇒ PR nova = PROIBIDA", 264, /PRs abertas no reposit[óo]rio\s*(?:≥|>=)\s*3\s*(?:⇒|=>)\s*PR nova\s*=\s*PROIBIDA/i),
   anterior("uma PR aberta por faixa", 264, /uma PR aberta por faixa/i),
-  anterior("PRs abertas > 0 ⇒ PR nova = PROIBIDA", 222, /PRs abertas\s*>\s*0\s*⇒\s*PR nova\s*=\s*PROIBIDA/i)
+  anterior("PRs abertas > 0 ⇒ PR nova = PROIBIDA", 222, /PRs abertas\s*>\s*0\s*(?:⇒|=>)\s*PR nova\s*=\s*PROIBIDA/i)
 ];
 
 /** As cláusulas ausentes de um texto, e cada lei anterior que continuar escrita. Função pura, para o autoteste. */
@@ -233,6 +234,14 @@ const clausulasAusentes = (texto, clausulas) => {
     "uma PR aberta por faixa",                                       // 264
     "PRs abertas > 0 ⇒ PR nova = PROIBIDA"                           // 222
   ];
+  // As mesmas leis com setas ASCII (PROCESSO-02_R1): uma amostra de cada variante, também à mão.
+  const FRASES_PROIBIDAS_ASCII = [
+    "PRs abertas na faixa > 0 => PR nova nessa faixa = PROIBIDA",    // 264, =>
+    "PRs abertas no repositório >= 3 ⇒ PR nova = PROIBIDA",          // 264, >=
+    "PRs abertas no repositório ≥ 3 => PR nova = PROIBIDA",          // 264, =>
+    "PRs abertas no repositório >= 3 => PR nova = PROIBIDA",         // 264, >= e =>
+    "PRs abertas > 0 => PR nova = PROIBIDA"                          // 222, =>
+  ];
   // "arquivos em comum" (plural, a coluna do mapa) entra de propósito: a amostra que apaga
   // "arquivo em comum" prova que o plural NÃO satisfaz a cláusula do singular.
   const COMPLETO = [...FRASES_COMUNS, ...FRASES_CLAUDE, ...FRASES_WORKFLOW].map((f) => `Lei: ${f}.`).join(" ")
@@ -261,6 +270,13 @@ const clausulasAusentes = (texto, clausulas) => {
       AMOSTRAS.push(
         { nome: `lei anterior ainda escrita ("${f}"), contra ${dono}`, texto: `${COMPLETO} ${f}.`, conjunto, ausentes: 1 },
         { nome: `lei anterior quebrada em linhas ("${f}"), contra ${dono}`, texto: `${COMPLETO}\n${f.replace(/ /g, "\n")}.`, conjunto, ausentes: 1 }
+      );
+    }
+    // Cada variante ASCII: escrita, UMA acusação; só dentro de comentário HTML, nenhuma.
+    for (const f of FRASES_PROIBIDAS_ASCII) {
+      AMOSTRAS.push(
+        { nome: `lei anterior com seta ASCII ainda escrita ("${f}"), contra ${dono}`, texto: `${COMPLETO} ${f}.`, conjunto, ausentes: 1 },
+        { nome: `lei anterior com seta ASCII em comentário HTML ("${f}"), contra ${dono}`, texto: `${COMPLETO} ${comentado(f)}`, conjunto, ausentes: 0 }
       );
     }
     // Frase COMUM apagada, contra o conjunto de CADA dono: prova que as nove comuns estão nos dois.

@@ -28,7 +28,7 @@ faixa convivem se não colidem, e duas de faixas diferentes não convivem se col
 
 | Faixa | O que cabe | Fronteira |
 |---|---|---|
-| **F1 Regra e banco** | domínio, API, banco, regra de negócio | segue a ordem do roteiro (seção "Escopo" do `CLAUDE.md`); número de migration, trava da migration e decisão só com o reservado no prompt |
+| **F1 Regra e banco** | domínio, API, banco, regra de negócio | segue a ordem das FASES do roteiro (seção "Escopo" do `CLAUDE.md`); fatias da mesma fase correm em paralelo quando não colidem; número de migration, trava da migration e decisão só com o reservado no prompt |
 | **F2 Tela** | só `apps/web` e documentação | sem migration, sem rota nova, sem mudar regra, API ou domínio |
 | **F3 Desempenho e operação** | desempenho, importação, infraestrutura, observabilidade | sem regra de negócio nova; número de migration, trava da migration e decisão só com o reservado no prompt |
 
@@ -46,9 +46,20 @@ Colisão se confere contra CADA PR aberta, uma por uma. É qualquer uma destas:
     — cada PR escreve só a sua e nunca edita a de outra;
   - os arquivos de contagem: o total de migrations nos testes do `packages/db` e as bases
     `*.baseline.json` das catracas;
-  - os arquivos gerados: `docs/parity/*` e `pnpm-lock.yaml`.
+  - todo arquivo gerado por script do repositório que o CI confere com --check. A lista de hoje:
+    `pnpm docs:generate` → `docs/DATA-DICTIONARY.md`, `docs/COMPANY-RLS-MATRIX.md`,
+    `docs/NOTIFICATION-SCOPE-MATRIX.md`, `docs/FARM-DEPENDENCY-INVENTORY.md`; `pnpm parity` →
+    `docs/parity/*`; `pnpm install` → `pnpm-lock.yaml`. Migration nunca entra aqui, mesmo com
+    trecho gerado (a seção de carga da `0026`, por `scripts/referencias/gerar-carga.mjs`):
+    migration colide por NÚMERO e BANCO;
+  - a seção própria nova em `docs/`: um arquivo que as duas PRs só ACRESCENTAM — cada uma com a
+    sua seção nova, nenhuma editando texto que já existe — não é colisão de arquivo (exemplos:
+    `docs/TIPO-OPERACAO-CONTRACT.md`, `docs/PORTAIS-OPERACIONAIS-CONTRACT.md`). Editar UMA linha
+    que já existe naquele arquivo, mesmo fora da própria seção, tira a PR desta exceção nele. O
+    CONTRATO continua valendo: se as duas mexem no mesmo contrato (rota, corpo, configuração da
+    TOP…), é colisão, com ou sem seção própria. Quem entra depois mantém as duas seções.
 
-  Contagem e gerados: quem entra depois refaz, depois de trazer a main.
+  Contagem e gerados: quem entra depois roda o gerador e refaz a contagem DEPOIS de trazer a main.
 - **NÚMERO.** Número em comum de migration, trava da migration ou decisão. Em qualquer faixa, só
   vale o número reservado no prompt. Prompt sem reserva, e a fatia precisa de número: pare e
   pergunte — número escolhido pela sessão é o jeito mais barato de duas PRs colidirem sem
