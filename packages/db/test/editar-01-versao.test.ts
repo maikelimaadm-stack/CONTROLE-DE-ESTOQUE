@@ -13,7 +13,10 @@ import { TEST_URL } from "./setup.js";
  *     linhas (cada uma +1) e o que manda um valor explícito (vira old+1); o insert nasce 0;
  *   · o gatilho é o ÚLTIMO BEFORE UPDATE por nome, depois das duas guardas da 0023/0024;
  *   · o papel da aplicação não desliga o gatilho (não é dono, não é superusuário, não troca
- *     session_replication_role, não tem TRIGGER na tabela).
+ *     session_replication_role, não tem TRIGGER na tabela);
+ *   · a porta do atraso (`erp.situacao_atraso_cliente`, 0033) responde também a quem só EDITA venda
+ *     (budgets/orders/sales .edit) — antes, zero linhas = falso "em dia" —, com o mesmo corpo e os mesmos privilégios;
+ *     quem não tem nenhuma das seis capacidades continua com zero linhas.
  *
  * Banco NOVO esconde a prova: sem documento gravado, "o acervo lê 0 sem regravar" seria verdade sobre conjunto
  * vazio. Este arquivo sobe o banco até a 0038, grava documentos de venda pelo caminho de antes e só então aplica a
@@ -28,6 +31,10 @@ let db: Db; let app: Db; let demo: DemoOrg;
 let empresa: string; let cliente: string;
 let filenodeAntes: number;
 const acervo: string[] = [];
+/** A porta do atraso ANTES da 0039 (o corpo da 0033), e os usuários de ensaio por capacidade. */
+let fonteAtrasoAntes: string;
+const usuarios: Record<string, string> = {};
+let vencidoHa10: string;
 
 const ALVO = "0039_versao_do_documento_de_venda.sql";
 const GUARDAS = ["trg_sales_documents_classificacao_financeira", "trg_sales_documents_execucao_configurada"];
@@ -74,6 +81,19 @@ const beforeUpdate = async () => (await db.query<{ tgname: string }>(
 const retrato = async () => (await db.query<{ id: string; linha: Record<string, unknown> }>(
   "select id, to_jsonb(d) - 'version' linha from erp.sales_documents d where id = any($1) order by id", [acervo])).rows;
 let antes: Awaited<ReturnType<typeof retrato>>;
+/** A porta do atraso pelo papel da aplicação, com a GUC do usuário dado (tolerância 3 dias). */
+const atraso = (userId: string, tolerancia = 3) => withTx(app, { orgId: demo.orgId, userId, modulo: null }, async (tx) => (await tx.query<{ titulos: number; total: string; vencimento_mais_antigo: string | null }>(
+  "select titulos, total::text total, vencimento_mais_antigo::text vencimento_mais_antigo from erp.situacao_atraso_cliente($1, $2)", [cliente, tolerancia])).rows);
+const fonteAtraso = async () => (await db.query<{ src: string }>("select prosrc src from pg_proc where oid = 'erp.situacao_atraso_cliente(uuid,integer)'::regprocedure")).rows[0]!.src;
+async function usuarioComPapel(nome: string, permissoes: string[]): Promise<string> {
+  const papel = (await db.query<{ id: string }>("insert into erp.roles(organization_id,name) values ($1,$2) returning id", [demo.orgId, `[TEST] E01 ${nome}`])).rows[0]!.id;
+  for (const k of permissoes) await db.query("insert into erp.role_permissions(role_id,permission_key) values ($1,$2)", [papel, k]);
+  const u = (await db.query<{ id: string }>("insert into erp.users(email,name) values ($1,$2) returning id", [`e01-${nome}@demo.local`, `E01 ${nome}`])).rows[0]!.id;
+  await db.query("insert into erp.organization_members(organization_id,user_id,role_id,is_owner,is_active) values ($1,$2,$3,false,true)", [demo.orgId, u, papel]);
+  return u;
+}
+const SEIS = ["budgets.create", "orders.create", "sales.create", "budgets.edit", "orders.edit", "sales.edit"];
+
 const versao = async (id: string) => (await db.query<{ v: string }>("select version::text v from erp.sales_documents where id=$1", [id])).rows[0]!.v;
 
 let seq = 0;
@@ -105,6 +125,15 @@ beforeAll(async () => {
   await db.query("update erp.sales_documents set note='editado antes da 0039', updated_at=now() where id=$1", [acervo[1]]);
   filenodeAntes = (await db.query<{ f: number }>("select pg_relation_filenode('erp.sales_documents')::int f")).rows[0]!.f;
   antes = await retrato();
+  // A PORTA DO ATRASO: o cliente deve um título a receber vencido há 10 dias (conta com tolerância 3). Um usuário
+  // por capacidade de editar, um que lança (a premissa de que o dado existe) e um sem nenhuma das seis (só ver).
+  await db.query(
+    `insert into erp.financial_titles (organization_id, empresa_id, code, direction, number, person_id, amount, status, emission_date, due_date)
+     values ($1,$2,'E01-T1','receivable','E01-1',$3,100.10,'open',current_date - 30,current_date - 10)`, [demo.orgId, empresa, cliente]);
+  vencidoHa10 = (await db.query<{ d: string }>("select (current_date - 10)::text d")).rows[0]!.d;
+  for (const k of ["budgets.edit", "orders.edit", "sales.edit", "orders.create"]) usuarios[k] = await usuarioComPapel(k.replace(".", "-"), [k]);
+  usuarios.nenhuma = await usuarioComPapel("so-ver", ["budgets.view", "orders.view", "sales.view"]);
+  fonteAtrasoAntes = await fonteAtraso();
 }, 300_000);
 afterAll(async () => { await app?.end(); await db?.end(); });
 
@@ -122,6 +151,12 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
               has_table_privilege('erp_app','erp.sales_documents','TRIGGER') trig
          from pg_class c, pg_roles r where c.oid='erp.sales_documents'::regclass and r.rolname='erp_app'`)).rows;
     expect(papel).toEqual([{ dono: false, su: false, srr: false, trig: false }]);
+    // A porta do atraso sob a 0033: quem LANÇA vê o título (o dado existe); quem só EDITA recebe zero linhas —
+    // o falso "em dia" que a 0039 fecha —, e quem não tem nenhuma das seis também.
+    const devedor = [{ titulos: 1, total: "100.10", vencimento_mais_antigo: vencidoHa10 }];
+    expect(await atraso(usuarios["orders.create"]!)).toEqual(devedor);
+    for (const k of ["budgets.edit", "orders.edit", "sales.edit", "nenhuma"]) expect([k, await atraso(usuarios[k]!)]).toEqual([k, []]);
+    expect(fonteAtrasoAntes).not.toMatch(/\.edit/);
   });
 
   it("V2 trava (2026,73) em uso por outra sessão: a 0039 recusa antes de tudo, sem efeito", async () => {
@@ -219,6 +254,29 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
     // O papel da aplicação tem TRIGGER na tabela.
     expect(await recusaDa0039((c) => c.query("grant trigger on erp.sales_documents to erp_app")))
       .toBe("EDITAR-01: o papel da aplicacao (erp_app) tem TRIGGER em erp.sales_documents; poderia criar um gatilho depois do da versao.");
+    // A porta do atraso: ausente, sem SECURITY DEFINER, com corpo que já não é o da 0033, dono sem bypass de RLS,
+    // e quem aplica não é dono dela.
+    const AUSENTE = "EDITAR-01: erp.situacao_atraso_cliente(uuid, integer) ausente ou sem SECURITY DEFINER; a 0033 nao esta aplicada ou ha schema divergente.";
+    expect(await recusaDa0039((c) => c.query("drop function erp.situacao_atraso_cliente(uuid, int)"))).toBe(AUSENTE);
+    expect(await recusaDa0039((c) => c.query("alter function erp.situacao_atraso_cliente(uuid, int) security invoker"))).toBe(AUSENTE);
+    const CORPO = "EDITAR-01: o corpo de erp.situacao_atraso_cliente nao e o da 0033 (as tres .create e nenhuma .edit); a 0039 ja foi aplicada ou ha schema divergente.";
+    const substituir = (c: Tx, corpo: string) => c.query(
+      `create or replace function erp.situacao_atraso_cliente(p_cliente uuid, p_tolerancia int) returns table (titulos int, total numeric, vencimento_mais_antigo date)
+       language plpgsql stable security definer set search_path = erp, pg_temp as $f$${corpo}$f$`);
+    // (a) já aplicada: o corpo cita uma .edit; (b) divergente: falta uma das três .create.
+    expect(await recusaDa0039((c) => substituir(c, fonteAtrasoAntes.replace("'sales.create')", "'sales.create') or erp.has_permission(v_org, v_user, 'orders.edit')")))).toBe(CORPO);
+    expect(await recusaDa0039((c) => substituir(c, fonteAtrasoAntes.replace("'budgets.create'", "'budgets.view'")))).toBe(CORPO);
+    expect(await recusaDa0039(async (c) => {
+      await c.query("create role e01r_dono_atraso_b1 nologin");
+      await c.query("alter function erp.situacao_atraso_cliente(uuid, int) owner to e01r_dono_atraso_b1");
+    })).toBe("EDITAR-01: o dono de erp.situacao_atraso_cliente nao atravessa RLS; a porta veria so o recorte de quem chama.");
+    expect(await recusaDa0039(async (c) => {
+      // Dono da tabela e com CREATE no schema (passa o resto), mas não é o dono da porta (o superusuário).
+      await c.query("create role e01r_aplicador_tabela_b1 nologin");
+      await c.query("grant usage, create on schema erp to e01r_aplicador_tabela_b1");
+      await c.query("alter table erp.sales_documents owner to e01r_aplicador_tabela_b1");
+      await c.query("set local role e01r_aplicador_tabela_b1");
+    })).toBe("EDITAR-01: o papel que aplica a migration nao e dono de erp.situacao_atraso_cliente; o CREATE OR REPLACE seria recusado.");
     // Nada ficou: o ledger, a coluna, a função, os gatilhos, o dono, os privilégios e os papéis de ensaio são os de antes.
     expect(await noLedger()).toBe(false);
     expect(await temColuna()).toBe(false);
@@ -231,6 +289,7 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
     expect(estado).toEqual([{ dono: "postgres", su: false, srr: false, trig: false }]);
     expect((await db.query("select 1 from pg_roles where rolname like 'e01r\\_%'")).rowCount).toBe(0);
     expect(await retrato()).toEqual(antes);
+    expect(await fonteAtraso(), "a porta do atraso continua a da 0033").toBe(fonteAtrasoAntes);
   });
 
   it("V5 aplica: ledger com 39 (a 0039 por último), tabela NÃO regravada, acervo idêntico e lendo 0, objetos no catálogo", async () => {
@@ -263,12 +322,36 @@ describe("0039 — sobre o acervo de documentos de venda, como o runner aplica",
     }]);
     // A ORDEM: a versão é o último BEFORE UPDATE por linha, depois das duas guardas.
     expect(await beforeUpdate()).toEqual([...GUARDAS, "trg_sales_documents_versao"]);
+    // A porta do atraso: o MESMO corpo da 0033, só com as três .edit na reconferência de capacidade.
+    const fonte = await fonteAtraso();
+    for (const k of SEIS) expect(fonte, `o corpo cita '${k}'`).toContain(`'${k}'`);
+    expect(fonte.replace(/\n\s+or erp\.has_permission\(v_org, v_user, '(?:budgets|orders|sales)\.edit'\)/g, ""), "tirando as três .edit, é o corpo da 0033")
+      .toBe(fonteAtrasoAntes);
+    const porta = (await db.query(
+      `select p.prosecdef definer, p.provolatile vol, p.proconfig cfg, pg_get_function_result(p.oid) retorno, r.rolsuper or r.rolbypassrls atravessa,
+              has_function_privilege('public', p.oid, 'execute') publico, has_function_privilege('erp_app', p.oid, 'execute') app,
+              obj_description(p.oid, 'pg_proc') like '%.create ou .edit%' comentario
+         from pg_proc p join pg_roles r on r.oid = p.proowner where p.oid = 'erp.situacao_atraso_cliente(uuid,integer)'::regprocedure`)).rows;
+    expect(porta).toEqual([{ definer: true, vol: "s", cfg: ["search_path=erp, pg_temp"], retorno: "TABLE(titulos integer, total numeric, vencimento_mais_antigo date)",
+      atravessa: true, publico: false, app: true, comentario: true }]);
   });
 
   it("V6 reaplicar é recusado pela pré-condição de 'já aplicada', sem efeito", async () => {
     expect(await recusaDa0039()).toBe("EDITAR-01: erp.sales_documents.version ja existe; a 0039 ja foi aplicada ou ha schema divergente.");
     for (const id of acervo) expect(await versao(id)).toBe("0");
     expect(await beforeUpdate()).toEqual([...GUARDAS, "trg_sales_documents_versao"]);
+  });
+});
+
+describe("a porta do atraso responde também a quem edita (item 3 da 0039)", () => {
+  it("AT1 pelo papel da aplicação: quem só tem budgets/orders/sales .edit vê os agregados do devedor; quem não tem nenhuma das seis, zero linhas", async () => {
+    const devedor = [{ titulos: 1, total: "100.10", vencimento_mais_antigo: vencidoHa10 }];
+    for (const k of ["budgets.edit", "orders.edit", "sales.edit", "orders.create"]) expect([k, await atraso(usuarios[k]!)]).toEqual([k, devedor]);
+    expect(await atraso(usuarios.nenhuma!), "sem nenhuma das seis: zero linhas, como antes").toEqual([]);
+    // O resto da porta não mudou: tolerância fora de 0..365 continua sem ampliar nada, e 365 não vê o título.
+    expect(await atraso(usuarios["orders.edit"]!, 366)).toEqual([]);
+    expect(await atraso(usuarios["orders.edit"]!, -1)).toEqual([]);
+    expect(await atraso(usuarios["orders.edit"]!, 365)).toEqual([{ titulos: 0, total: "0", vencimento_mais_antigo: null }]);
   });
 });
 

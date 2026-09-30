@@ -18,6 +18,19 @@
 --    O INSERT não passa pelo gatilho: o documento nasce com o default (0). Um INSERT que citasse a coluna
 --    gravaria o valor dele — nenhuma rota cita, e a trava continua valendo, porque ela compara igualdade e
 --    todo UPDATE seguinte soma 1 a partir dali.
+-- 3) erp.situacao_atraso_cliente(uuid, int) (0033, porta estreita SECURITY DEFINER do atraso do cliente) passa
+--    a aceitar também quem EDITA: budgets.edit, orders.edit e sales.edit, além das três .create. Hoje ela só
+--    responde a quem LANÇA venda; quem só tem `<perm>.edit` recebe ZERO linhas — e zero linhas a API lê como
+--    "cliente em dia". O `GET /edicao` (que exige só `.edit`) mostraria devedor como em dia, e a conferência de
+--    atraso da gravação (PATCH/PUT) quando o cliente muda ficaria aberta para quem edita sem lançar: fail-open.
+--    Vai por CREATE OR REPLACE com a MESMA assinatura, o MESMO retorno, `stable security definer`, o MESMO
+--    search_path (`erp, pg_temp`) e o MESMO corpo — só a reconferência de capacidade ganha as três .edit
+--    (lançar OU editar qualquer variante de venda). O resto da porta não muda: organização e usuário só da GUC,
+--    tolerância 0..365, só agregados, fora da capacidade zero linhas. CREATE OR REPLACE conserva o dono e os
+--    privilégios, e mesmo assim o revoke de PUBLIC e o grant ao erp_app são reafirmados (a porta PRECISA do
+--    EXECUTE do erp_app; o laço de revogação da função da versão, abaixo, só olha aquela função).
+--    Pré-condição: a função existe, é SECURITY DEFINER, e o corpo é o da 0033 (cita as três .create e nenhuma
+--    .edit); o dono atravessa RLS (senão a porta veria o recorte de quem chama) e quem aplica pode substituí-la.
 --
 -- A ORDEM ENTRE OS GATILHOS BEFORE UPDATE. O PostgreSQL dispara os gatilhos do mesmo momento na ordem do
 -- NOME (byte a byte, collation "C"), e cada BEFORE vê o NEW que os anteriores deixaram — inclusive na
@@ -58,13 +71,15 @@
 --   quem grava, e a função não é porta de ninguém.
 --
 -- SEM BACKFILL: nenhum UPDATE nesta migration. As linhas de hoje leem 0 pelo default do catálogo; o gatilho
--- nasce depois do ADD COLUMN e não roda para elas.
+-- nasce depois do ADD COLUMN e não roda para elas. A porta do atraso não grava nada.
 -- JANELA DE DEPLOY (pre-deploy, banco → API → web): a API anterior grava o documento por UPDATE sem citar a
 -- coluna, e o gatilho só soma — nada do que ela grava muda de sentido nem é recusado. O `d.*` do GET
 -- anterior passa a trazer `version` na resposta: campo a mais, aditivo, que a web anterior ignora. Criar
--- documento (INSERT sem a coluna) continua igual: nasce 0.
--- VOLTA: API e web voltam por redeploy e convivem com a 0039 (a coluna e o gatilho não recusam nada). Tirar
--- o gatilho, a função ou a coluna do banco é decisão humana, com migration própria.
+-- documento (INSERT sem a coluna) continua igual: nasce 0. A porta do atraso só passa a responder a MAIS
+-- gente (quem edita); a API anterior só a chama em rota que já exige `.create` — nada muda para ela.
+-- VOLTA: API e web voltam por redeploy e convivem com a 0039 (a coluna e o gatilho não recusam nada; a porta
+-- do atraso só responde a mais capacidades). Tirar o gatilho, a função ou a coluna do banco, ou voltar a porta
+-- às três .create, é decisão humana, com migration própria.
 -- O runner (`packages/db/src/migrate.ts`) executa este arquivo inteiro dentro de UMA transação e registra o
 -- nome no ledger. Por isso não há `begin`/`commit` explícito aqui.
 -- =====================================================================
@@ -85,6 +100,9 @@ do $$
 declare
   v_owner oid;
   v_antes text[];
+  v_atraso oid;
+  v_src text;
+  v_dono_atraso oid;
 begin
   if to_regclass('erp.sales_documents') is null then
     raise exception 'EDITAR-01: erp.sales_documents ausente; a cadeia de migrations esta fora de ordem.';
@@ -144,6 +162,27 @@ begin
   if has_table_privilege('erp_app', 'erp.sales_documents', 'TRIGGER') then
     raise exception 'EDITAR-01: o papel da aplicacao (erp_app) tem TRIGGER em erp.sales_documents; poderia criar um gatilho depois do da versao.';
   end if;
+  -- A porta do atraso (item 3 do cabeçalho): existe, é SECURITY DEFINER, e o corpo é o da 0033 — as três
+  -- capacidades de lançar e nenhuma de editar. Depois da 0039 o corpo cita as .edit, e a reaplicação diz isso.
+  select p.oid, p.prosrc, p.proowner into v_atraso, v_src, v_dono_atraso
+    from pg_proc p
+   where p.oid = to_regprocedure('erp.situacao_atraso_cliente(uuid,integer)') and p.prosecdef;
+  if v_atraso is null then
+    raise exception 'EDITAR-01: erp.situacao_atraso_cliente(uuid, integer) ausente ou sem SECURITY DEFINER; a 0033 nao esta aplicada ou ha schema divergente.';
+  end if;
+  if position('''budgets.create''' in v_src) = 0 or position('''orders.create''' in v_src) = 0 or position('''sales.create''' in v_src) = 0
+     or v_src ~ '\.edit' then
+    raise exception 'EDITAR-01: o corpo de erp.situacao_atraso_cliente nao e o da 0033 (as tres .create e nenhuma .edit); a 0039 ja foi aplicada ou ha schema divergente.';
+  end if;
+  -- O DONO atravessa a RLS: é com os privilégios dele que a porta soma os títulos de TODAS as empresas da
+  -- organização. E quem aplica pode substituí-la (é o dono, ou herda dele) — senão o CREATE OR REPLACE pararia
+  -- com um erro de permissão genérico.
+  if not exists (select 1 from pg_roles r where r.oid = v_dono_atraso and (r.rolsuper or r.rolbypassrls)) then
+    raise exception 'EDITAR-01: o dono de erp.situacao_atraso_cliente nao atravessa RLS; a porta veria so o recorte de quem chama.';
+  end if;
+  if not pg_has_role(current_user, v_dono_atraso, 'USAGE') then
+    raise exception 'EDITAR-01: o papel que aplica a migration nao e dono de erp.situacao_atraso_cliente; o CREATE OR REPLACE seria recusado.';
+  end if;
 end $$;
 
 -- ---------- 3) coluna ----------
@@ -191,7 +230,49 @@ create trigger trg_sales_documents_versao
   before update on erp.sales_documents
   for each row execute function erp.sales_documents_versao();
 
--- ---------- 5) pós-condições nomeadas (objetos, nunca contagem de tabela viva) ----------
+-- ---------- 5) a porta do atraso aceita também quem edita (item 3 do cabeçalho) ----------
+-- MESMA assinatura, retorno, volatilidade, SECURITY DEFINER, search_path e corpo da 0033; só a reconferência de
+-- capacidade ganha as três .edit (as três linhas novas vêm DEPOIS das .create, e o resto do texto é idêntico —
+-- o teste confere tirando as três e comparando com o corpo da 0033). Sem comentário dentro do corpo, de propósito.
+create or replace function erp.situacao_atraso_cliente(p_cliente uuid, p_tolerancia int)
+  returns table (titulos int, total numeric, vencimento_mais_antigo date)
+language plpgsql stable security definer set search_path = erp, pg_temp as $$
+declare
+  v_org uuid := erp.current_org_id();
+  v_user uuid := erp.effective_user_id();
+begin
+  if v_org is null or v_user is null or p_cliente is null or p_tolerancia is null
+     or p_tolerancia < 0 or p_tolerancia > 365 then
+    return;
+  end if;
+  if not (erp.has_permission(v_org, v_user, 'budgets.create')
+          or erp.has_permission(v_org, v_user, 'orders.create')
+          or erp.has_permission(v_org, v_user, 'sales.create')
+          or erp.has_permission(v_org, v_user, 'budgets.edit')
+          or erp.has_permission(v_org, v_user, 'orders.edit')
+          or erp.has_permission(v_org, v_user, 'sales.edit')) then
+    return;
+  end if;
+  return query
+    select count(*)::int, coalesce(sum(t.balance), 0)::numeric, min(t.due_date)
+      from erp.financial_titles t
+     where t.organization_id = v_org
+       and t.direction = 'receivable'
+       and t.person_id = p_cliente
+       and t.status in ('open', 'partially_paid')
+       and t.deleted_at is null
+       and t.balance > 0
+       and t.due_date < current_date - p_tolerancia;
+end $$;
+
+comment on function erp.situacao_atraso_cliente(uuid, int) is
+  'TOP-CONFIG-05 (EDITAR-01: tambem quem edita): agregados (quantidade, total, vencimento mais antigo) dos titulos a receber vencidos do cliente, alem da tolerancia, em todas as empresas da organizacao da GUC. Porta estreita: exige capacidade de lancar OU editar venda (budgets/orders/sales .create ou .edit); sem ela, zero linhas.';
+
+-- Reafirmados (CREATE OR REPLACE já conserva os privilégios): PUBLIC não executa; o erp_app executa.
+revoke execute on function erp.situacao_atraso_cliente(uuid, int) from public;
+grant execute on function erp.situacao_atraso_cliente(uuid, int) to erp_app;
+
+-- ---------- 6) pós-condições nomeadas (objetos, nunca contagem de tabela viva) ----------
 do $$
 declare
   v_depois text[];
@@ -236,5 +317,20 @@ begin
   if v_depois is distinct from array['trg_sales_documents_classificacao_financeira', 'trg_sales_documents_execucao_configurada',
                                      'trg_sales_documents_versao'] then
     raise exception 'EDITAR-01: o gatilho da versao nao e o ultimo BEFORE UPDATE por linha de erp.sales_documents (ordem por nome): %', v_depois;
+  end if;
+  -- A porta do atraso: as SEIS capacidades no corpo, SECURITY DEFINER, stable, search_path fixo, dono que atravessa
+  -- RLS, PUBLIC sem EXECUTE e erp_app com EXECUTE.
+  if not exists (select 1 from pg_proc p join pg_roles r on r.oid = p.proowner
+                  where p.oid = 'erp.situacao_atraso_cliente(uuid,integer)'::regprocedure
+                    and p.prosecdef and p.provolatile = 's' and p.proconfig = array['search_path=erp, pg_temp']
+                    and (r.rolsuper or r.rolbypassrls)
+                    and position('''budgets.create''' in p.prosrc) > 0 and position('''orders.create''' in p.prosrc) > 0
+                    and position('''sales.create''' in p.prosrc) > 0 and position('''budgets.edit''' in p.prosrc) > 0
+                    and position('''orders.edit''' in p.prosrc) > 0 and position('''sales.edit''' in p.prosrc) > 0) then
+    raise exception 'EDITAR-01: erp.situacao_atraso_cliente sem as seis capacidades (budgets/orders/sales .create e .edit), sem SECURITY DEFINER, sem search_path "erp, pg_temp" ou com dono que nao atravessa RLS.';
+  end if;
+  if has_function_privilege('public', 'erp.situacao_atraso_cliente(uuid,integer)', 'execute')
+     or not has_function_privilege('erp_app', 'erp.situacao_atraso_cliente(uuid,integer)', 'execute') then
+    raise exception 'EDITAR-01: EXECUTE de erp.situacao_atraso_cliente fora do esperado (PUBLIC nao executa; erp_app executa).';
   end if;
 end $$;
