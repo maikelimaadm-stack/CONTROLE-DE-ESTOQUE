@@ -107,11 +107,11 @@ type Adorno = "pesquisa" | "data" | "travado" | "selecao";
  * "travado" é a caixa travada (#e9edf2, sem ícone); os outros são só leitura (#f6f8fa) com o ícone do tipo.
  * `role="group"` + `aria-label` e `data-campo={rotulo}` continuam — os specs e o skew escolhem o campo por eles.
  */
-export function CampoLeitura({ rotulo, valor, adorno, testId }: { rotulo: string; valor: React.ReactNode; adorno?: Adorno; testId?: string }) {
+export function CampoLeitura({ rotulo, valor, adorno, testId, multilinha }: { rotulo: string; valor: React.ReactNode; adorno?: Adorno; testId?: string; multilinha?: boolean }) {
   const travado = adorno === "travado";
   const vazio = valor === null || valor === undefined || valor === "";
   return <div className={estilos.campo} role="group" aria-label={rotulo} data-testid={testId} data-campo={rotulo}>
-    <div className={estilos.linha} data-estado={travado ? "travado" : "leitura"} data-icone={!travado && adorno ? adorno : undefined}>
+    <div className={estilos.linha} data-estado={travado ? "travado" : "leitura"} data-icone={!travado && adorno ? adorno : undefined} data-multilinha={multilinha ? "" : undefined}>
       <span className={estilos.rotulo}>{rotulo}</span>
       <div className={estilos.caixa}>
         <span className={cn(estilos.valor, vazio && estilos.vazio)}>{vazio ? "—" : typeof valor === "string" || typeof valor === "number" ? <span>{valor}</span> : valor}</span>

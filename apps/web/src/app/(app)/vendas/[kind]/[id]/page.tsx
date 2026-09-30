@@ -12,7 +12,7 @@ import { useAction } from "@/features/docs/actions";
 import { HistoryDialog } from "@/features/base1/history-dialog";
 import { AcaoDaBarra, AcaoPrincipal, CentralVendasWorkspace, DivisorDaBarra } from "@/features/sales/central-vendas-workspace";
 import { ItensSalvos, MaisAcoes, type ItemDoMenu } from "@/features/sales/central-vendas-consulta";
-import { CampoLeitura, ColunaDeCampos, DadosAdicionais } from "@/features/sales/central-vendas-campo";
+import { CampoLeitura, ChaveSimNao, ColunaDeCampos, DadosAdicionais } from "@/features/sales/central-vendas-campo";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { DocumentosAbertos } from "@/features/sales/central-vendas-documentos";
@@ -359,11 +359,11 @@ export default function Page({ params }: { params: Promise<{ kind: string; id: s
         /* FISCAL: nenhuma NF-e é vinculada hoje (`nfe_id` nunca é gravado); Dedutível é o do plano gravado. */
         { value: "fiscal", label: "Fiscal", content: <PainelColuna>
           <CampoLeitura rotulo="NF-e" valor={d["nfe_id"] ? "Vinculada" : "Nenhuma vinculada"} />
-          <CampoLeitura rotulo="Dedutível" valor={dedutivelDoPlano(d["installment_plan"]) ? "Sim" : "Não"} />
+          <ChaveSimNao rotulo="Dedutível" valor={dedutivelDoPlano(d["installment_plan"])} />
         </PainelColuna> },
         /* DERIVADOS só em pedido e orçamento: venda não gera derivado (a conversão não existe para `sale`). */
         ...(variante === "order" || variante === "budget" ? [{ value: "derivados", label: "Documentos derivados", content: <DerivadosDoDocumento legenda={`Documentos derivados do documento ${codigo}`} derivados={d.derived} /> }] : []),
-        { value: "observacoes", label: "Observações", content: <PainelLargo><CampoLeitura rotulo="Observação" valor={String(d["note"] ?? "")} /></PainelLargo> }
+        { value: "observacoes", label: "Observações", content: <PainelLargo><CampoLeitura rotulo="Observação" multilinha valor={String(d["note"] ?? "")} /></PainelLargo> }
       ]}
     />
     <HistoryDialog open={historicoAberto} onOpenChange={setHistoricoAberto} entity={ENTIDADE} entityId={id} title={`${titulo} ${codigo}`.trim()} />

@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils";
 import { ChevronDown, FilePlus, Loader2 } from "lucide-react";
 import { Tabs } from "@/components/ui";
 import { useWorkspaceImersivo } from "@/components/layout/workspace-imersivo";
+import type { Densidade } from "./central-vendas-campo";
 import estilos from "./central-vendas-workspace.module.css";
 
 /**
@@ -128,7 +129,7 @@ export interface CentralVendasWorkspaceProps {
   itens: React.ReactNode;
   abas: AbaDoPainel[];
   /** Posição do rótulo dos campos — estado da PÁGINA; aqui vira `data-densidade` na raiz. */
-  densidade?: "rotulo-a-frente" | "compacto";
+  densidade?: Densidade;
   /** Leitura da consulta pendente: Dados principais mostra o esqueleto, nada do documento é inventado. */
   carregando?: boolean;
   /** Preenchido pela moldura ao montar: o que a página pode pedir a ela (abrir uma aba do painel). */

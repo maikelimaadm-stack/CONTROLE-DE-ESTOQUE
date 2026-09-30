@@ -5,9 +5,8 @@ import { brl, cn, dateBR } from "@/lib/utils";
 import { enumLabel, statusLabel } from "@/lib/copy";
 import { statusTone } from "@/components/ui";
 import type { Row } from "@/features/docs/shared";
-// O campo de leitura é o da Central (um só componente de campo). Quando `central-vendas-campo.tsx` existir, a
-// importação passa a vir de lá — mesma assinatura (`rotulo`, `valor`, `adorno`, `testId`).
-import { CampoLeitura } from "./central-vendas-consulta";
+// O campo de leitura é o da Central: um só componente de campo, o de `central-vendas-campo.tsx`.
+import { CampoLeitura } from "./central-vendas-campo";
 import estilos from "./central-vendas-painel.module.css";
 
 /**
@@ -113,7 +112,7 @@ export function PlanoEmLeitura({ plano }: { plano: unknown }) {
   const modo = typeof p.mode === "string" ? p.mode : "";
   const entrada = p.has_down_payment === true;
   return <>
-    <CampoLeitura rotulo="Parcelamento" valor={parcelado ? "Parcelado" : "À vista"} />
+    <CampoLeitura rotulo="Parcelamento" adorno="selecao" valor={parcelado ? "Parcelado" : "À vista"} />
     <CampoLeitura rotulo="Nº de parcelas" valor={parcelado ? inteiro(p.installments) : ""} />
     <CampoLeitura rotulo="1º vencimento" adorno="data" valor={parcelado ? data(p.first_due_date) : ""} />
     <CampoLeitura rotulo="Intervalo (dias)" valor={parcelado && modo === "interval" ? inteiro(p.interval_days) : ""} />
